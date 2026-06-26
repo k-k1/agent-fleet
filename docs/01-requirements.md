@@ -83,7 +83,8 @@ Claude セッションを起動・操作・管理できる。
 
 1. **コンテナ実行基盤** — ECS(Fargate) を MVP 推奨、EC2 集約を最適化フェーズで検討。→ [03](03-aws-deployment.md)（暫定確定）。
 2. **永続ストレージ** — EFS（アクセスポイント）を主に採用。→ [03](03-aws-deployment.md)（暫定確定）。
-3. **`/login` の対話フロー** — ヘッドレスコンテナでの OAuth 完了手順の具体化。→ [02 §2.6](02-architecture.md#26-claude-login-フロー)。Phase 0 で実機確認。
+3. **`/login` の対話フロー** — 方式は判明（対話コード貼り戻し = 方式 A）。→ [02 §2.6](02-architecture.md#26-claude-login-フロー)。
+   残るは Phase 0 での実機確認（特に H7: remote-control 両立 / 状態判定の精度）。
 4. **scale-to-zero の判定** — アイドル検出とコールドスタート許容時間。
 5. **課金・上限** — ユーザー個人の Claude サブスクを使う前提で会社が負担する範囲。
 6. **Control Plane ↔ Agent の認証** — mTLS か署名付きトークンか。→ [07 §7.5](07-workspace-agent.md#75-control-plane-との認証)。

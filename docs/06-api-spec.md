@@ -92,10 +92,16 @@ status レスポンス例:
 
 | Method | Path | 説明 |
 |--------|------|------|
-| GET | `/claude-auth` | 状態（`active/expired/none`, checked_at）|
-| POST | `/claude-auth/login` | ターミナルに `/login` を投入し対話開始（WS 経由で続行）|
+| GET | `/claude-auth` | 状態（`active/expired/none`, method, checked_at）|
+| POST | `/claude-auth/login` | ターミナルに方式 A（対話コード貼り戻し）を投入し WS で続行 |
+| POST | `/claude-auth/token` | 方式 B: `CLAUDE_CODE_OAUTH_TOKEN`（setup-token）を登録（remote-control 不可な点を警告）|
+| POST | `/claude-auth/logout` | `claude /logout` 相当 |
 
-状態は Agent が `~/.claude/.credentials.json` の有無・期限から算出（[02 §2.6](02-architecture.md#26-claude-login-フロー)）。
+- **状態取得に公式 API は無い**（[02 §2.6](02-architecture.md#26-claude-login-フロー)）。Agent が次で推定する:
+  1. `~/.claude/.credentials.json` の存在（無ければ `none`）。
+  2. 軽量プローブ `claude -p`（タイムアウト付き）の成否で `active/expired` を判別。
+  3. 結果を `checked_at` 付きでキャッシュし、UI は「最終確認時刻」を併記。
+- `method` は `subscription`（方式 A）/ `token`（方式 B）を区別。`token` のとき remote-control 不可を UI に明示。
 
 ## 6.8 設定（settings.json）
 

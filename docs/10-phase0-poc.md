@@ -19,6 +19,8 @@ Phase 0 はこの 1 点を最小コストで潰すことに集中する。コー
 - [ ] H4: `~/.claude/settings.json` をマウントで持ち込め、`remoteControlAtStartup` 等が反映される。
 - [ ] H5: コンテナ内で生成した SSH 公開鍵を Bitbucket に手動登録し、`git clone` できる。
 - [ ] H6: tmux 上で claude を `--session-id` 起動 → 切断 → `--resume` で会話を復帰できる。
+- [ ] H7: 方式 A（対話ログイン）で **remote-control が機能**する。対して `setup-token`（`CLAUDE_CODE_OAUTH_TOKEN`）
+      では remote-control が張れないこと（要件 E2 と衝突）を確認する。
 
 ## 10.3 前提
 
@@ -55,13 +57,15 @@ tmux new -s main            # 本番の「tmux にアタッチ」を手で再現
 ```
 
 ### 3. `claude /login`（H1/H2）
+公式挙動（[02 §2.6](02-architecture.md#26-claude-login-フロー)）では、ヘッドレス環境は**自動でコード方式（方式 A）**に切替わる。
 ```bash
 claude                      # 初回起動。未ログインなら /login を案内、または明示的に /login
 ```
-- **Approach A（既定 / host ネットワーク）**: 表示された認証 URL をホストのブラウザで開く →
-  認可 → `localhost:<port>/callback` に戻り、claude 側が自動でトークン取得。
-- **Approach B（A が通らない時）**: 認可後ページに表示されるコードを、ターミナルの claude に貼り戻す。
-- **記録**: どちらが成立したか、URL/ポートの形、貼り戻しの有無、詰まった点。→ [02 §2.6](02-architecture.md#26-claude-login-フロー) を確定。
+- **方式 A（本命・コード貼り戻し）**: 表示 URL を `c` でコピー → 自分のブラウザで開く → 認可 →
+  画面の**ログインコード**をターミナルに貼り戻す。貼付け不可なら `echo "<code>" | claude auth login`。
+- **（参考）localhost コールバック**: host ネットワークかつ同一マシンなら自動コールバックが返ることもある。
+  返らなくても方式 A で完了できる。
+- **記録**: 自動コールバック/コード貼り戻しのどちらになったか、URL の形、コード桁数、詰まった点。
 
 ### 4. 認証の永続確認（H3）
 ```bash
@@ -124,8 +128,10 @@ PoC の成果は「動いた/動かない」ではなく**手順の確定**。�
 
 - **uid 不一致**: ホストが uid 1000 でない場合、`Dockerfile` に `ARG UID/GID` を足してビルド引数で合わせるか、
   ホーム配下を `chown` する。
-- **Approach A が不成立**: host ネットワークでもコールバックが返らない場合は Approach B に固定。
-  本番（コンテナが外部公開されない構成）では B 方式が現実解になり得る点を設計に反映する。
+- **コード貼り戻しが基本**: コールバックが返らないのは想定内。公式にヘッドレスは方式 A（コード方式）に
+  自動切替わる（[02 §2.6](02-architecture.md#26-claude-login-フロー)）。本番もこれを主経路にする。
+- **remote-control 要件との両立**: `setup-token` 方式は remote-control 不可。E2 を満たすには方式 A が必須。
+  H7 で実機確認する。
 - **隔離は最小**: Phase 0 は検証優先で egress 制限等を省く。隔離強化は Phase 2 以降（[04](04-security.md) / [09 §9.7](09-portability.md#97-パリティと相違点明示しておく差分)）。
 - **claude のインストール方式**: 本 PoC は npm グローバル。ホストは native installer を使用。
   どちらでも可だが、ホーム永続と干渉しない配置（ホーム外）を必須要件とする。

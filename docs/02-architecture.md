@@ -156,19 +156,39 @@ Browser xterm.js ──WSS──▶ ALB ──▶ Control Plane(WSプロキシ) 
 
 ## 2.6 Claude `/login` フロー
 
-ヘッドレスコンテナでの対話ログインが要点。Claude Code の `/login` は次の流れ。
+ヘッドレスコンテナでの認証が要点。Claude Code 公式の挙動（v2.1.x, 出典は §2.6 末尾）に基づき、
+取り得る方式は 2 つ。**remote-control 要件（E2）の都合で主経路は方式 A** とする。
 
-1. Workspace Agent がターミナル内で `claude`（または `/login`）を起動。
-2. CLI が認証 URL を表示。ユーザーはコンソール上のターミナルからその URL を**自分のブラウザ**で開く。
-3. claude.ai で本人の Google/Anthropic アカウントで認可。
-4. 返ってきたコード/コールバックを CLI に貼り戻す（ターミナル経由）。
-5. `~/.claude/.credentials.json` に保存（EFS 永続）。
+### 方式 A（採用・主経路）— 対話 OAuth のコード貼り戻し
+ブラウザを開けない環境（SSH / コンテナ / WSL2）では `/login` が**自動でコード方式に切替**わる。
 
-コンソールの役割:
-- **状態表示** — `.credentials.json` の有無・期限から `active / expired / none` を算出。
-- **誘導** — `expired/none` のとき「再ログイン」ボタンでターミナルに `/login` を流す。
-- 注意: コールバック URL がローカルホスト前提の場合は、URL 手動オープン + コード貼り付け方式に倒す。
-  （ここは PoC で実機確認が必要。→ [01 未決 #6](01-requirements.md#17-未決事項今後詰める)）
+1. Workspace Agent がターミナルで `claude`（または `/login`）を起動。
+2. CLI が認証 URL を表示（`c` でクリップボードへコピー可）。ユーザーが URL を**自分のブラウザ**で開く。
+3. claude.ai で本人アカウントで認可 → 画面に**ログインコード**（自動リダイレクトではない）。
+4. そのコードをターミナルの CLI に**貼り戻す**。貼付けが効かない端末は `echo "<code>" | claude auth login`（stdin）。
+5. `~/.claude/.credentials.json`（Linux, パーミッション 600, 不透明）に保存。EFS/ボリュームで永続。
+
+- **利点**: サブスク（Pro/Max/Team/Enterprise）の本認証。**remote-control セッションを張れる**。
+- コールバックのローカルホスト到達に依存しないため、本番（コンテナ非公開）でも成立する。
+
+### 方式 B（補助）— `claude setup-token`（1 年トークン）
+ブラウザのある端末で 1 回だけ `claude setup-token` を実行 → 1 年有効トークンを取得し、
+`CLAUDE_CODE_OAUTH_TOKEN` で注入。ファイル同期不要でローテーションしやすい。
+
+- **重大な制約**: このトークンは**推論専用で Remote Control セッションを張れない**（要件 E2 と衝突）。
+  → remote-control が不要なユーザー向けの補助に限定。既定経路にはしない。
+- 生成時にブラウザが要るため、コンテナ内では生成不可（外部端末で生成して注入）。
+
+### コンソールの役割
+- **状態表示** — 公式の状態取得 API は無い。`.credentials.json` の有無 + 軽量プローブ
+  （`claude -p` をタイムアウト付き）で `active / expired / none` を推定し、`checked_at` 付きで表示
+  （[06 §6.7](06-api-spec.md#67-claude-認証状態login)）。
+- **誘導** — `expired/none` のとき「再ログイン」ボタンでターミナルに方式 A を流す。
+- 認証情報の精度（期限・リフレッシュの有無）は不透明。Phase 0 で実体を観察し設計に反映（[10](10-phase0-poc.md)）。
+
+> 出典（Claude Code 公式, v2.1.x）: authentication / troubleshoot-install / devcontainer / headless。
+> 確認: 方式 A のコード貼り戻しと setup-token の存在は確定。Remote Control 非対応の制約も同上。
+> 不透明: コールバックポート番号、`.credentials.json` のフォーマット、状態取得の公式 API（いずれも非公開/非提供）。
 
 ## 2.7 サンドボックス設計（C2）
 
