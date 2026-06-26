@@ -85,6 +85,11 @@ function ensureTerm() {
   term = new Terminal({ fontSize: 13, theme: { background: "#1e1e1e" }, cursorBlink: true });
   fitAddon = new FitAddon.FitAddon();
   term.loadAddon(fitAddon);
+  // Make URLs clickable (open in a new tab) so the /login auth URL needn't be
+  // copied out of the terminal — it wraps across rows and breaks on copy.
+  if (window.WebLinksAddon) {
+    term.loadAddon(new WebLinksAddon.WebLinksAddon((e, uri) => window.open(uri, "_blank", "noopener")));
+  }
   term.open($("terminal"));
   fitAddon.fit();
   term.onData((d) => ws && ws.readyState === 1 && ws.send(JSON.stringify({ type: "input", data: d })));
