@@ -7,7 +7,8 @@ Phase 1 MVP 完了時点（2026-06-26, commit `dd2330e`）の運用状態・落�
 ## 1. いま動いているもの（このホスト）
 
 - **Control Plane**: `:8099` で稼働中（静的 Console + REST/WS プロキシ + Docker Runtime）。バイナリ `/tmp/af-cp`。
-- **Workspace コンテナ**: `af-ws-dev`（image `agent-fleet/workspace:dev`, 498MB）。`~`= bind mount `/tmp/af-data/dev/home`（永続。`/login` 済み。per-user 化で `home`→`<user>/home` に移行済、§6.7）。
+- **形態**: **shared（`AUTH=proxy`）でライブ稼働**。CP は oauth2-proxy の `X-Forwarded-Email` から user を解決（§6.7/§6.8 B1）。CP は `127.0.0.1:8099` 束縛＝Caddy 経由のみ。設定は git-ignored の `deploy/local/oauth.env`（`AUTH=proxy`/`CP_ADDR=127.0.0.1:8099`）。
+- **Workspace コンテナ**: 運用者は `af-ws-k1-kami-gmail-com`（image `agent-fleet/workspace:dev`）。`~`= bind mount `/tmp/af-data/<user>/home`（永続・`/login` 済み）。許可ユーザー追加は `~/oauth2-proxy/emails.txt` に1行追記 → その Google ログインで `af-ws-<email>` が自動払い出し（相互不可視: 別 home/別ネットワーク/別トークン）。dev 形態に戻すには oauth.env の `AUTH` 行を外す。
 - **外部アクセス**: `https://af.example.ts.net/agent-fleet/`
   （Tailscale Funnel → oauth2-proxy(Google) → Caddy(strip `/agent-fleet`, :8888) → CP :8099）。設定は `~/docs/funnel-auth-setup.md`。
 - **イメージ**: `agent-fleet/workspace:dev`（最新）/ `:m3`（旧, 削除可）。
@@ -167,8 +168,8 @@ CP のルーティングが user→対象コンテナを解決するだけ。
 - [ ] **A3 資格情報の暗号化** — home 平文（`.git-credentials`/claude/bitbucket トークン）。shared では host operator/他テナント視点で平文 → CP マスタ鍵で at-rest 暗号化（§6.6 末尾）。A1/A2 の後の at-rest 層。
 
 **B. shared 形態を実際に通す（MVP必須・軽い）**
-- [ ] **B1 `AUTH=proxy` 実機検証** — 現状は合成ヘッダで確認のみ。実際の funnel→oauth2-proxy→Caddy が `X-Forwarded-Email` を CP まで通すか未検証。
-- [ ] **B2 oauth2-proxy 複数ユーザー許可**（`hd`/emails 運用）— 既存資産、設定のみ。
+- [x] **B1 `AUTH=proxy` 実機検証 + 有効化** — `GET /api/whoami`（`control-plane/runtime.go`）で実チェーンが `X-Forwarded-Email`（=k1.kami@gmail.com, sanitized `k1-kami-gmail-com`）を CP まで届けることを確認。`AUTH=proxy` を有効化し dev home を email キーへ移行、Console 実機 OK。**併せてセキュリティ修正**: proxy モードはヘッダ欠落＝401（DEV_USER フォールバック廃止＝ゲート迂回封じ）、CP は `127.0.0.1` 束縛。`x_forwarded_user` は Google 数値 subject ID なので user キーは email を採用。
+- [ ] **B2 oauth2-proxy 複数ユーザー許可**（`hd`/emails 運用）— 既存資産、設定のみ。現状 `emails.txt` は運用者1名。追加は1行追記で即時反映（`af-ws-<email>` 自動払い出し）。
 
 **C. 運用に欲しいが MVP では妥協可**
 - [ ] C1 per-user アイドル stop（RAM 逼迫ホストでは実質重要だがロードマップ上 Phase 4）。
@@ -177,7 +178,7 @@ CP のルーティングが user→対象コンテナを解決するだけ。
 **D. 後回し / 格下げ済み**
 - SSH 鍵 → HTTPS トークンに格下げ済（任意）。全ポートの Go interface 整形（MetadataStore/SecretStore 形式化）は Phase 3(AWS) 着手時。AWS アダプタ = Phase 3。
 
-> 推奨残順: **（B1 実機）→ A3 暗号化**。A1・A2 完了済。
+> 残: **A3 暗号化のみ**。A1・A2・B1 完了済（shared 形態ライブ）。A3 完了で MVP（相互不可視＋実ユーザー識別）が揃う。
 
 ## 7. 動作確認の最短手順
 
