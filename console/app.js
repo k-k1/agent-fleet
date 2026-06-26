@@ -82,7 +82,14 @@ $("new-session").onsubmit = async (e) => {
 let term, fitAddon, ws;
 function ensureTerm() {
   if (term) return;
-  term = new Terminal({ fontSize: 13, theme: { background: "#1e1e1e" }, cursorBlink: true });
+  term = new Terminal({
+    fontSize: 13,
+    // 末尾の CJK フォントで日本語等のグリフ・フォールバックを効かせる。
+    fontFamily:
+      'Menlo, Monaco, Consolas, "DejaVu Sans Mono", "Noto Sans Mono CJK JP", "Noto Sans CJK JP", "Hiragino Kaku Gothic ProN", "Yu Gothic", "MS Gothic", monospace',
+    theme: { background: "#1e1e1e" },
+    cursorBlink: true,
+  });
   fitAddon = new FitAddon.FitAddon();
   term.loadAddon(fitAddon);
   // Make URLs clickable (open in a new tab) so the /login auth URL needn't be

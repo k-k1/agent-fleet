@@ -21,6 +21,10 @@ COPY --from=agentbuild /out/workspace-agent /usr/local/bin/workspace-agent
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
+# UTF-8 ロケール。未設定(POSIX)だと tmux が UTF-8 を無効化し日本語等が化ける。
+# C.UTF-8 は locale 生成不要で Debian に存在する。
+ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
+
 # claude は ~/.local/bin に入る。docker exec 等の既定 PATH に追加（非ログインシェル/Agent用）。
 ENV PATH="/home/node/.local/bin:${PATH}"
 # ログインシェル(bash -l)は /etc/profile で PATH を上書きするため、端末で claude を確実に

@@ -26,4 +26,13 @@ if [ "${CLAUDE_INSTALL:-1}" = "1" ]; then
   fi
 fi
 
+# 既定 settings.json を seed（無い場合のみ）。--dangerously-skip-permissions の
+# bypass 警告で誤って exit するのを防ぐ（skipDangerousModePermissionPrompt）。
+SETTINGS="$HOME/.claude/settings.json"
+if [ ! -f "$SETTINGS" ]; then
+  mkdir -p "$HOME/.claude"
+  printf '{\n  "skipDangerousModePermissionPrompt": true\n}\n' > "$SETTINGS"
+  echo "[entrypoint] seeded default ~/.claude/settings.json"
+fi
+
 exec "$@"
