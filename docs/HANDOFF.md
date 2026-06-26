@@ -153,7 +153,31 @@ CP のルーティングが user→対象コンテナを解決するだけ。
     dev コンテナは無影響を確認→teardown。
 - **shared 形態の有効化**: CP に `AUTH=proxy` を渡し、前段 oauth2-proxy が `X-Forwarded-Email` を注入すればよい（funnel 構成は既存）。
   `deploy/local/run-dev.sh` は既定 `AUTH=dev`。複数ユーザーで本番運用する前の残課題: **home 平文→CP マスタ鍵で暗号化**（§6.6 末尾, #3）/ コンテナ間ネットワーク分離 / アイドル stop の per-user スケジューリング。
+- **ネットワーク分離（A1, 実装・検証済）**: 各コンテナを専用 network `af-net-<user>` に載せ、コンテナ間の相互到達を遮断（`control-plane/runtime.go` `ensureNetwork`）。Agent は host `127.0.0.1` publish 経由で CP からのみ到達、egress は NAT で維持。stop で空ネットワークを best-effort 削除。検証: 別ユーザーの Agent IP:7700 は timeout、名前解決も失敗、自分の Agent は OPEN、github:443 egress OK。
 - **注意**: ポートは in-memory 順次採用。多数ユーザー同時 + CP 再起動が絡む極端ケースでは inspect 採用で吸収するが、停止中コンテナのポートは再起動後に再採番されうる（再 Start で publish し直すので実害は薄い）。RAM: per-user はコンテナを増やす → `--memory`（既定 `WS_MEMORY=1g`）必須・`free -h` 確認（`host-oom-fleet-risk`）。
+
+## 6.8 MVP（Phase 2 完了）残チェックリスト
+
+完了条件（[05](05-roadmap.md)）= 「オンプレ1台で複数ユーザーが**相互不可視**に並行利用でき、**全ポートが抽象化**される」。
+コード実態に基づく棚卸し（2026-06-27 整理）。
+
+**A. 相互不可視＝セキュリティ境界（MVP必須）**
+- [x] **A1 コンテナ間ネットワーク分離** — `af-net-<user>`（§6.7 末尾）。実装・検証済。
+- [ ] **A2 CP↔Agent 認証**（[07 §7.5](07-workspace-agent.md#75-control-plane-との認証) 未決）— Agent は現状無認証。署名トークンで CP 専用に。A1 と対だが、A1 で実行時の相互到達は塞いだので緊急度は低下。
+- [ ] **A3 資格情報の暗号化** — home 平文（`.git-credentials`/claude/bitbucket トークン）。shared では host operator/他テナント視点で平文 → CP マスタ鍵で at-rest 暗号化（§6.6 末尾）。A1/A2 の後の at-rest 層。
+
+**B. shared 形態を実際に通す（MVP必須・軽い）**
+- [ ] **B1 `AUTH=proxy` 実機検証** — 現状は合成ヘッダで確認のみ。実際の funnel→oauth2-proxy→Caddy が `X-Forwarded-Email` を CP まで通すか未検証。
+- [ ] **B2 oauth2-proxy 複数ユーザー許可**（`hd`/emails 運用）— 既存資産、設定のみ。
+
+**C. 運用に欲しいが MVP では妥協可**
+- [ ] C1 per-user アイドル stop（RAM 逼迫ホストでは実質重要だがロードマップ上 Phase 4）。
+- [ ] C2 settings.json 編集 UI / remote-control トグル（Phase 2 項目、体験向上どまり）。
+
+**D. 後回し / 格下げ済み**
+- SSH 鍵 → HTTPS トークンに格下げ済（任意）。全ポートの Go interface 整形（MetadataStore/SecretStore 形式化）は Phase 3(AWS) 着手時。AWS アダプタ = Phase 3。
+
+> 推奨残順: **A2 →（B1 実機）→ A3 暗号化**。A1 完了済。
 
 ## 7. 動作確認の最短手順
 
