@@ -33,6 +33,7 @@ Web から起動・操作・管理する。同一コアを**ローカル（Docke
 | [docs/08-bitbucket.md](docs/08-bitbucket.md) | Bitbucket 連携（SSH 鍵・clone・ブランチ・status）|
 | [docs/09-portability.md](docs/09-portability.md) | デプロイ層の分離（ポート&アダプタ、local/aws 両対応）|
 | [docs/10-phase0-poc.md](docs/10-phase0-poc.md) | Phase 0 PoC 手順書（`/login` 検証）。実体は [`phase0/`](phase0/)|
+| [docs/11-phase1-plan.md](docs/11-phase1-plan.md) | Phase 1 実装プラン（Workspace Agent + Console MVP）|
 
 ## 既存プロトタイプ資産（再利用元）
 
