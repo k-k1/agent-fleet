@@ -78,6 +78,11 @@ Agent は内部公開でも認証必須（多層防御）。候補:
 
 → [01 未決 #6](01-requirements.md#17-未決事項今後詰める)。MVP は SG 制限 + 署名トークン、本番で mTLS を推奨。
 
+**実装済（Phase 2 A2）**: per-container `AGENT_TOKEN` を CP が起動時に `-e` 注入し、proxy(REST/WS) と
+Bitbucket callback で `Authorization: Bearer` を付与。Agent の `requireToken` ミドルウェアが `/healthz`
+以外を定数時間比較で検証（未設定時は dev 用に開放）。A1 のネットワーク分離（`af-net-<user>`）と多層で、
+到達制限 + トークン認証を満たす。詳細は `docs/HANDOFF.md` §6.7/§6.8。
+
 ## 7.6 PTY ストリーム
 
 - Agent は `forkpty` で擬似端末を生成し、`tmux attach -t <session>`（または shell）を実行。

@@ -163,7 +163,7 @@ CP のルーティングが user→対象コンテナを解決するだけ。
 
 **A. 相互不可視＝セキュリティ境界（MVP必須）**
 - [x] **A1 コンテナ間ネットワーク分離** — `af-net-<user>`（§6.7 末尾）。実装・検証済。
-- [ ] **A2 CP↔Agent 認証**（[07 §7.5](07-workspace-agent.md#75-control-plane-との認証) 未決）— Agent は現状無認証。署名トークンで CP 専用に。A1 と対だが、A1 で実行時の相互到達は塞いだので緊急度は低下。
+- [x] **A2 CP↔Agent 認証**（[07 §7.5](07-workspace-agent.md#75-control-plane-との認証)）— per-container `AGENT_TOKEN` を CP が `-e` 注入、proxy(REST/WS)+Bitbucket callback に Bearer 付与、Agent は `requireToken`（`/healthz` 除く・定数時間比較）。CP 再起動時は inspect で採用。実装・検証済（no/wrong=401, correct=200, /ws/pty も同様）。
 - [ ] **A3 資格情報の暗号化** — home 平文（`.git-credentials`/claude/bitbucket トークン）。shared では host operator/他テナント視点で平文 → CP マスタ鍵で at-rest 暗号化（§6.6 末尾）。A1/A2 の後の at-rest 層。
 
 **B. shared 形態を実際に通す（MVP必須・軽い）**
@@ -177,7 +177,7 @@ CP のルーティングが user→対象コンテナを解決するだけ。
 **D. 後回し / 格下げ済み**
 - SSH 鍵 → HTTPS トークンに格下げ済（任意）。全ポートの Go interface 整形（MetadataStore/SecretStore 形式化）は Phase 3(AWS) 着手時。AWS アダプタ = Phase 3。
 
-> 推奨残順: **A2 →（B1 実機）→ A3 暗号化**。A1 完了済。
+> 推奨残順: **（B1 実機）→ A3 暗号化**。A1・A2 完了済。
 
 ## 7. 動作確認の最短手順
 
