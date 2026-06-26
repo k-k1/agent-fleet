@@ -38,7 +38,8 @@ Control Plane + 最小 Console が動作し、Tailscale Funnel 越しのブラ�
 | [docs/09-portability.md](docs/09-portability.md) | デプロイ層の分離（ポート&アダプタ、local/aws 両対応）|
 | [docs/10-phase0-poc.md](docs/10-phase0-poc.md) | Phase 0 PoC 手順書（`/login` 検証）。実体は [`phase0/`](phase0/)|
 | [docs/11-phase1-plan.md](docs/11-phase1-plan.md) | Phase 1 実装プラン + 実装結果（§11.10）|
-| [docs/HANDOFF.md](docs/HANDOFF.md) | **引き継ぎ**: 稼働状態・実行作法・落とし穴・Phase 2 入口（次セッションはまず読む）|
+| [docs/12-phase3-multitenant.md](docs/12-phase3-multitenant.md) | **Phase 3 設計**: プロダクト化（パッケージ配布・グループ各社セルフホスト／DB/鍵/バジェット/管理者/MCP/パッケージング）|
+| [docs/HANDOFF.md](docs/HANDOFF.md) | **引き継ぎ**: 稼働状態・実行作法・落とし穴・次フェーズ入口（次セッションはまず読む）|
 
 ## 既存プロトタイプ資産（再利用元）
 

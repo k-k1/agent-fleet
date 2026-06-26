@@ -32,22 +32,34 @@
 - リポジトリ管理 UI（clone / checkout / branch / status）、SSH 鍵の生成・表示。
 - `settings.json` エディタ、remote-control トグル、Claude `/login` 状態表示。
 
-## Phase 3 — AWS アダプタ（同一コアの移植）
+## Phase 3 — プロダクト化（パッケージ配布・グループ各社セルフホスト）
 
-**目的**: コアを変えずに `aws` ターゲットで稼働。
+**目的**: 「AWS 移植」から**プロダクトのパッケージ化**へ再定義。詳細設計は [12 Phase 3](12-phase3-multitenant.md)。
 
-- アダプタ実装: Runtime=ECS、Volume=EFS AP、AuthGateway=ALB OIDC、Metadata=RDS/DynamoDB、Secret=Secrets Manager。
-- ECR へイメージ配信、ALB + ACM、VPC/ネットワーク（[03](03-aws-deployment.md)）。
-- ローカルで検証済みのコアをそのまま載せ替え、差分はアダプタに限定。
+> **提供モデル確定**: 商用 SaaS（外部 BYO は ToS グレー）も、我々が運用する社内マルチテナント SaaS（別法人ホストがグレー寄り）も断念。
+> 採用 = **プロダクトをパッケージ化し、グループ各社が「自社で」セルフホスト**（1 社=1 デプロイ）。各社が自社の社員を自社インフラでホスト＝**ToS 最もクリーン**。我々は vendor/maintainer。
 
-## Phase 4 — 本番化・堅牢化
+確定前提（2026-06-27）: **パッケージ製品・各社セルフホスト / BYO 継続 / 会社間=デプロイ分離（最強）/ デプロイ内マルチテナント=任意（既定 単一）/ 小規模（1 デプロイ 数十〜百ユーザー）/ デプロイ先は各社選択（オンプレ既定・自社 AWS 任意）**。
 
-**目的**: 運用に耐える形へ。
+- **P3-1** MetadataStore（Postgres/極小 SQLite）+ 階層モデル + RBAC — 全ての土台（現状 DB 無し）。Plan 抽象なし、Tenant 直付け。
+- **P3-2** アイデンティティ & テナント解決（AuthGateway 拡張、各社 OAuth、emails.txt→DB）。
+- **P3-3** per-deployment/tenant 封筒暗号鍵（custodian 抽象＝**オンプレ Vault/ファイル優先**、KMS は AWS アダプタ。Phase 2 の単一 master 昇格）。
+- **P3-4** リソースバジェット/クォータ（テナント+ユーザー。**インフラ資源**のみ）。
+- **P3-5/6** 管理コンソール + 管理 API（super_admin 主）、**MCP による Fleet 制御**（同一サービス層）。
+- **P3-7** デプロイ先アダプタ（オンプレ Docker 既定 / 自社 AWS=ECS/EFS/RDS/ALB/KMS 任意）。旧 Phase 3 本体。
+- **P3-8** デプロイ内 専用分離（既定=論理を先に、機微部署のみ dedicated）。
+- **P3-10** **パッケージング & 配布 & アップグレード**（提供モデルの核。compose/Helm + 設定 + マイグレーション + runbook）。
 
-- scale-to-zero（アイドル検出。Runtime アダプタが docker stop / ECS desired=0 を吸収）。
-- セキュリティ強化（[04](04-security.md)）: Task Role 最小権限、IMDS 遮断、Egress 制限、監査ログ。
-- バックアップ（AWS Backup / S3）、イメージ一括更新フロー、管理者画面。
-- IaC（Terraform / CDK）で全構成を再現可能に。
+## Phase 4 — 運用の成熟・グループ横展開
+
+**目的**: グループ各社へ無理なく横展開できる形へ。詳細は [12 §P3-9](12-phase3-multitenant.md)。
+
+- 社内 showback（部署別。外部課金なし）。
+- ライフサイクル（provision は管理者手動 / 停止 / オフボード = 鍵 disable で crypto-shred）。
+- scale-to-zero（アイドル検出。オンプレ単一ホストの RAM 逼迫で前倒し重要）。
+- バックアップ/復元（永続 home + DB が価値の本体）。
+- セキュリティ強化（[04](04-security.md)）: Task Role 最小権限、IMDS 遮断、Egress 制限、監査ログ、rootless/socket-proxy。
+- 観測、CP 冗長化、イメージ一括更新、IaC（Terraform / CDK / Helm）。
 
 ## マイルストーン判定
 
@@ -55,9 +67,9 @@
 |-------|----------|------|
 | 0 | `/login` がコンソール経由で完了でき、手順が文書化される | ✅ 完了（Phase 1 の実機検証で同時達成）|
 | 1 | 1 ユーザーがローカル Docker で Claude セッション起動 + ターミナル操作できる（ホーム永続）| ✅ 完了（[11 §11.10](11-phase1-plan.md#1110-実装結果と実運用の知見phase-1-完了)）|
-| 2 | オンプレ 1 台で複数ユーザーが相互不可視に並行利用でき、全ポートが抽象化される | 次 |
-| 3 | コア無改修で `aws` ターゲットに載り、AWS 上で同等動作する | — |
-| 4 | scale-to-zero + 監査 + バックアップ + IaC が揃い本番投入可能 | — |
+| 2 | オンプレ 1 台で複数ユーザーが相互不可視に並行利用でき、全ポートが抽象化される | ✅ 完了 |
+| 3 | **パッケージとして配布でき**、別のグループ会社が**自社で**（オンプレ既定 / 自社 AWS 任意）セルフホストして、自社ユーザーを管理・バジェット強制・per-deployment 鍵で at-rest 暗号化して運用できる（[12](12-phase3-multitenant.md)）| 次 |
+| 4 | 社内 showback・ライフサイクル・scale-to-zero・バックアップ・観測・（任意）デプロイ内専用分離・MCP 運用が揃い、グループ各社へ無理なく横展開できる | — |
 
 > 注: Phase 1 ではリポジトリ管理(clone 等)は対象外（Phase 2）。セッションは既存ディレクトリに対して張った。
 
