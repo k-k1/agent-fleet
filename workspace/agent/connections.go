@@ -43,8 +43,24 @@ func handleConnectionsGet(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"claude":    map[string]any{"connected": fileExists(claudeTokenPath())},
 		"github":    gitConnStatus("github.com"),
-		"bitbucket": gitConnStatus("bitbucket.org"),
+		"bitbucket": bitbucketStatus(),
 	})
+}
+
+// bitbucketStatus reports connected for either path: a token in ~/.git-credentials
+// (paste) or stored OAuth tokens in bitbucket.json (used via the refresh helper).
+func bitbucketStatus() map[string]any {
+	if user, ok := findGitCredential("bitbucket.org"); ok {
+		m := map[string]any{"connected": true}
+		if user != "" {
+			m["username"] = user
+		}
+		return m
+	}
+	if fileExists(bitbucketJSONPath()) {
+		return map[string]any{"connected": true, "username": "x-token-auth (oauth)"}
+	}
+	return map[string]any{"connected": false}
 }
 
 func gitConnStatus(host string) map[string]any {
@@ -137,6 +153,9 @@ func handleDeleteGitConn(w http.ResponseWriter, r *http.Request) {
 	if err := removeGitCredential(host); err != nil {
 		writeErr(w, http.StatusInternalServerError, "store_failed", err.Error())
 		return
+	}
+	if host == "bitbucket.org" {
+		removeBitbucketOAuth() // also clear OAuth tokens + the refresh helper
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"disconnected": host})
 }

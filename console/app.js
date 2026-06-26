@@ -109,11 +109,11 @@ async function refreshConnections() {
   }
   list.innerHTML = "";
   list.append(claudeConnRow(data.claude));
-  list.append(gitConnRow("GitHub", "github.com", data.github, [{ key: "token", ph: "Personal Access Token", pw: true }]));
+  list.append(gitConnRow("GitHub", "github.com", data.github, [{ key: "token", ph: "Personal Access Token", pw: true }], githubOAuthFlow));
   list.append(gitConnRow("Bitbucket", "bitbucket.org", data.bitbucket, [
     { key: "username", ph: "Atlassian email" },
     { key: "token", ph: "API token", pw: true },
-  ]));
+  ], bitbucketOAuthFlow));
 }
 
 // Claude uses a multi-step flow: start (get authorize URL) → user approves in
@@ -192,7 +192,60 @@ async function startClaudeFlow(li, btn) {
   code.focus();
 }
 
-function gitConnRow(label, host, st, fields) {
+// Bitbucket Authorization Code Grant: open the authorize page in a new tab; the
+// CP callback stores the tokens. We poll the connections status until connected.
+async function bitbucketOAuthFlow(li, btn) {
+  btn.disabled = true;
+  btn.textContent = "…";
+  let res;
+  try {
+    res = await api("api/connections/git/bitbucket/oauth/start");
+  } catch {
+    res = null;
+  }
+  if (!res || res.error || !res.authorize_url) {
+    if (res && res.error && res.error.code === "not_configured") {
+      alert("Bitbucket OAuth は未設定です（key/secret）。「token」からトークン貼付を使ってください。");
+    } else {
+      alert("OAuth 開始に失敗: " + (res && res.error ? res.error.message || res.error : ""));
+    }
+    refreshConnections();
+    return;
+  }
+  window.open(res.authorize_url, "_blank", "noopener");
+  btn.remove();
+  const panel = document.createElement("div");
+  panel.className = "oauth-flow";
+  const link = document.createElement("a");
+  link.href = res.authorize_url;
+  link.target = "_blank";
+  link.rel = "noopener";
+  link.textContent = "承認ページを開く";
+  const status = document.createElement("span");
+  status.className = "oauth-status";
+  status.textContent = "別タブで承認してください…";
+  panel.append(link, status);
+  li.append(panel);
+
+  const deadline = Date.now() + 5 * 60 * 1000;
+  const tick = async () => {
+    if (Date.now() > deadline) {
+      status.textContent = "タイムアウト。やり直してください";
+      return;
+    }
+    let d;
+    try {
+      d = await api("api/connections");
+    } catch {
+      d = null;
+    }
+    if (d && d.bitbucket && d.bitbucket.connected) return refreshConnections();
+    setTimeout(tick, 2000);
+  };
+  setTimeout(tick, 2500);
+}
+
+function gitConnRow(label, host, st, fields, oauthFn) {
   const li = document.createElement("li");
   li.className = "conn";
   const dot = document.createElement("span");
@@ -212,30 +265,106 @@ function gitConnRow(label, host, st, fields) {
       await fetch(rel(`api/connections/git/${host}`), { method: "DELETE" });
       refreshConnections();
     }));
+  } else if (oauthFn) {
+    // OAuth primary; token paste available via the "token" toggle.
+    li.append(mkBtn("OAuth 接続", "sign in with OAuth", (e) => oauthFn(li, e.target)));
+    const tog = mkBtn("token", "paste a token instead", () => {
+      tog.remove();
+      appendTokenForm(li, host, fields);
+    });
+    li.append(tog);
   } else {
-    const inputs = {};
-    for (const f of fields) {
-      const inp = document.createElement("input");
-      inp.placeholder = f.ph;
-      if (f.pw) inp.type = "password";
-      inp.className = "cinput";
-      inputs[f.key] = inp;
-      li.append(inp);
-    }
-    li.append(mkBtn("接続", "connect", async () => {
-      const body = {};
-      for (const k in inputs) body[k] = inputs[k].value.trim();
-      if (!body.token) return inputs.token.focus();
-      const res = await api(`api/connections/git/${host}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      if (res && res.error) return alert("connect failed: " + (res.error.message || res.error));
-      refreshConnections();
-    }));
+    appendTokenForm(li, host, fields);
   }
   return li;
+}
+
+function appendTokenForm(li, host, fields) {
+  const inputs = {};
+  for (const f of fields) {
+    const inp = document.createElement("input");
+    inp.placeholder = f.ph;
+    if (f.pw) inp.type = "password";
+    inp.className = "cinput";
+    inputs[f.key] = inp;
+    li.append(inp);
+  }
+  li.append(mkBtn("接続", "connect", async () => {
+    const body = {};
+    for (const k in inputs) body[k] = inputs[k].value.trim();
+    if (!body.token) return inputs.token.focus();
+    const res = await api(`api/connections/git/${host}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (res && res.error) return alert("connect failed: " + (res.error.message || res.error));
+    refreshConnections();
+  }));
+}
+
+// GitHub Device Flow: show user_code + verification link, poll until approved.
+async function githubOAuthFlow(li, btn) {
+  btn.disabled = true;
+  btn.textContent = "…";
+  let res;
+  try {
+    res = await api("api/connections/git/github/oauth/start", { method: "POST" });
+  } catch {
+    res = null;
+  }
+  if (!res || res.error) {
+    if (res && res.error && res.error.code === "not_configured") {
+      alert("GitHub OAuth は未設定です（client_id）。「token」からトークン貼付を使ってください。");
+    } else {
+      alert("OAuth 開始に失敗: " + (res && res.error ? res.error.message || res.error : ""));
+    }
+    refreshConnections();
+    return;
+  }
+  btn.remove();
+  const panel = document.createElement("div");
+  panel.className = "oauth-flow";
+  const code = document.createElement("span");
+  code.className = "oauth-code";
+  code.textContent = res.user_code; // big, selectable, not truncated
+  const link = document.createElement("a");
+  link.href = res.verification_uri;
+  link.target = "_blank";
+  link.rel = "noopener";
+  link.textContent = "→ " + res.verification_uri + " で入力";
+  const status = document.createElement("span");
+  status.className = "oauth-status";
+  status.textContent = "承認待ち…";
+  panel.append(code, link, status);
+  li.append(panel);
+
+  const deadline = Date.now() + (res.expires_in || 900) * 1000;
+  let iv = (res.interval || 5) * 1000;
+  const tick = async () => {
+    if (Date.now() > deadline) {
+      status.textContent = "期限切れ。やり直してください";
+      return;
+    }
+    let p;
+    try {
+      p = await api("api/connections/git/github/oauth/poll", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ flow_id: res.flow_id }),
+      });
+    } catch {
+      p = null;
+    }
+    if (p && p.connected) return refreshConnections();
+    if (p && p.error) {
+      status.textContent = "失敗: " + (p.error.message || p.error.code || "");
+      return;
+    }
+    if (p && p.interval) iv = p.interval * 1000; // slow_down
+    setTimeout(tick, iv);
+  };
+  setTimeout(tick, iv);
 }
 
 $("conn-refresh").onclick = refreshConnections;

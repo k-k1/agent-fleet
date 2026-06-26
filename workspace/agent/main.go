@@ -13,6 +13,14 @@ import (
 )
 
 func main() {
+	// Subcommand mode: git invokes this binary as a credential helper for
+	// bitbucket.org (`workspace-agent bitbucket-cred get`). It prints creds and
+	// exits without starting the server.
+	if len(os.Args) > 1 && os.Args[1] == "bitbucket-cred" {
+		runBitbucketCredHelper(os.Args[2:])
+		return
+	}
+
 	addr := envOr("AGENT_ADDR", ":7700")
 
 	mux := http.NewServeMux()
@@ -35,6 +43,9 @@ func main() {
 	mux.HandleFunc("GET /connections", handleConnectionsGet)
 	mux.HandleFunc("PUT /connections/git/{host}", handlePutGitConn)
 	mux.HandleFunc("DELETE /connections/git/{host}", handleDeleteGitConn)
+	mux.HandleFunc("POST /connections/git/github/oauth/start", handleGithubOAuthStart)
+	mux.HandleFunc("POST /connections/git/github/oauth/poll", handleGithubOAuthPoll)
+	mux.HandleFunc("PUT /connections/git/bitbucket/oauth", handleBitbucketStore)
 	mux.HandleFunc("POST /connections/claude/start", handleClaudeStart)
 	mux.HandleFunc("POST /connections/claude/complete", handleClaudeComplete)
 	mux.HandleFunc("DELETE /connections/claude", handleClaudeDisconnect)

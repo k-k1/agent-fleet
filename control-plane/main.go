@@ -16,12 +16,19 @@ type config struct {
 	addr       string
 	consoleDir string
 	rt         *dockerRuntime
+	// Bitbucket OAuth (Authorization Code Grant) — CP owns the public callback.
+	bbKey         string
+	bbSecret      string
+	publicBaseURL string // external base, e.g. https://host/agent-fleet (for redirect_uri)
 }
 
 func main() {
 	cfg := config{
-		addr:       envOr("CP_ADDR", ":8080"),
-		consoleDir: envOr("CONSOLE_DIR", "./console"),
+		addr:          envOr("CP_ADDR", ":8080"),
+		consoleDir:    envOr("CONSOLE_DIR", "./console"),
+		bbKey:         os.Getenv("BITBUCKET_OAUTH_KEY"),
+		bbSecret:      os.Getenv("BITBUCKET_OAUTH_SECRET"),
+		publicBaseURL: os.Getenv("PUBLIC_BASE_URL"),
 		rt: &dockerRuntime{
 			image:      envOr("WS_IMAGE", "agent-fleet/workspace:m3"),
 			name:       envOr("WS_NAME", "af-ws-dev"),
@@ -32,6 +39,11 @@ func main() {
 			sessionCmd: os.Getenv("WS_SESSION_CMD"), // empty => claude
 			extraEnv:   splitCSV(os.Getenv("WS_ENV")), // KEY=VAL,KEY=VAL -> container -e
 		},
+	}
+	// OAuth App client_id (non-secret) for the GitHub device flow — injected into
+	// the Workspace so the Agent can run the flow. Reuses the extraEnv -> -e path.
+	if cid := os.Getenv("GITHUB_OAUTH_CLIENT_ID"); cid != "" {
+		cfg.rt.extraEnv = append(cfg.rt.extraEnv, "GITHUB_OAUTH_CLIENT_ID="+cid)
 	}
 
 	mux := http.NewServeMux()
@@ -59,6 +71,11 @@ func main() {
 	mux.HandleFunc("GET /api/connections", cfg.proxyAgentREST)
 	mux.HandleFunc("PUT /api/connections/git/{host}", cfg.proxyAgentREST)
 	mux.HandleFunc("DELETE /api/connections/git/{host}", cfg.proxyAgentREST)
+	mux.HandleFunc("POST /api/connections/git/github/oauth/start", cfg.proxyAgentREST)
+	mux.HandleFunc("POST /api/connections/git/github/oauth/poll", cfg.proxyAgentREST)
+	// Bitbucket OAuth — CP-native (owns the public callback), not proxied.
+	mux.HandleFunc("GET /api/connections/git/bitbucket/oauth/start", cfg.handleBitbucketOAuthStart)
+	mux.HandleFunc("GET /api/oauth/bitbucket/callback", cfg.handleBitbucketOAuthCallback)
 	mux.HandleFunc("POST /api/connections/claude/start", cfg.proxyAgentREST)
 	mux.HandleFunc("POST /api/connections/claude/complete", cfg.proxyAgentREST)
 	mux.HandleFunc("DELETE /api/connections/claude", cfg.proxyAgentREST)
