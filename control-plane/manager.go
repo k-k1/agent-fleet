@@ -78,13 +78,13 @@ func (m *manager) forUser(user string) *dockerRuntime {
 }
 
 // resolveUser maps a request to a Control Plane user key. In dev mode this is a
-// fixed id; in proxy mode it is the sanitized email injected by the AuthGateway
-// (oauth2-proxy). Falls back to the dev user when the header is missing/empty.
+// fixed id. In proxy mode it is the sanitized email injected by the AuthGateway
+// (oauth2-proxy); a missing/empty header returns "" — treated as unauthenticated
+// and denied, so a request that bypasses the gateway can NOT fall through to a
+// real workspace. (Don't fall back to devUser in proxy mode.)
 func (m *manager) resolveUser(r *http.Request) string {
 	if m.authMode == "proxy" {
-		if u := sanitizeUser(r.Header.Get(m.emailHeader)); u != "" {
-			return u
-		}
+		return sanitizeUser(r.Header.Get(m.emailHeader))
 	}
 	return m.devUser
 }

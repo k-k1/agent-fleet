@@ -133,9 +133,18 @@ func (d *dockerRuntime) waitHealthy(ctx context.Context, timeout time.Duration) 
 
 // --- HTTP handlers ---
 
-// rtFor resolves the request's user (AuthGateway) and returns its runtime.
-func (c config) rtFor(r *http.Request) *dockerRuntime {
-	return c.mgr.forUser(c.mgr.resolveUser(r))
+// rtFor resolves the request's user (AuthGateway) and returns its runtime. When
+// the gateway provides no identity (proxy mode, missing header) it writes 401
+// and returns ok=false; callers must stop.
+func (c config) rtFor(w http.ResponseWriter, r *http.Request) (*dockerRuntime, bool) {
+	user := c.mgr.resolveUser(r)
+	if user == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{
+			"error": map[string]string{"code": "unauthenticated", "message": "no gateway identity"},
+		})
+		return nil, false
+	}
+	return c.mgr.forUser(user), true
 }
 
 // handleWhoami reports how the AuthGateway resolved this request, plus the raw
@@ -157,12 +166,18 @@ func (c config) handleWhoami(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c config) handleWorkspaceGet(w http.ResponseWriter, r *http.Request) {
-	rt := c.rtFor(r)
+	rt, ok := c.rtFor(w, r)
+	if !ok {
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"name": rt.name, "state": rt.state(r.Context())})
 }
 
 func (c config) handleWorkspaceStart(w http.ResponseWriter, r *http.Request) {
-	rt := c.rtFor(r)
+	rt, ok := c.rtFor(w, r)
+	if !ok {
+		return
+	}
 	if err := rt.start(r.Context()); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
@@ -171,7 +186,10 @@ func (c config) handleWorkspaceStart(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c config) handleWorkspaceStop(w http.ResponseWriter, r *http.Request) {
-	rt := c.rtFor(r)
+	rt, ok := c.rtFor(w, r)
+	if !ok {
+		return
+	}
 	if err := rt.stop(r.Context()); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return

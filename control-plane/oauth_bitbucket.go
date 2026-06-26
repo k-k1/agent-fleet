@@ -53,8 +53,14 @@ func (c config) handleBitbucketOAuthStart(w http.ResponseWriter, r *http.Request
 		})
 		return
 	}
-	state := randHex(16)
 	user := c.mgr.resolveUser(r)
+	if user == "" {
+		writeJSON(w, http.StatusUnauthorized, map[string]any{
+			"error": map[string]string{"code": "unauthenticated", "message": "no gateway identity"},
+		})
+		return
+	}
+	state := randHex(16)
 	bbStateMu.Lock()
 	for k, s := range bbStates { // reap stale states
 		if time.Since(s.created) > 10*time.Minute {

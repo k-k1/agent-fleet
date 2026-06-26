@@ -13,7 +13,10 @@ import (
 // proxyAgentREST forwards /api/sessions* to the Workspace Agent's /sessions*.
 // The Control Plane never talks to tmux directly; it delegates to the Agent.
 func (c config) proxyAgentREST(w http.ResponseWriter, r *http.Request) {
-	rt := c.rtFor(r)
+	rt, ok := c.rtFor(w, r)
+	if !ok {
+		return
+	}
 	target := rt.agentBase() + strings.TrimPrefix(r.URL.Path, "/api")
 	if r.URL.RawQuery != "" {
 		target += "?" + r.URL.RawQuery
@@ -51,7 +54,10 @@ var upgrader = websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { retu
 // relaying frames in both directions while preserving message types
 // (binary = PTY output, text = input/resize control).
 func (c config) proxyTerminal(w http.ResponseWriter, r *http.Request) {
-	rt := c.rtFor(r)
+	rt, ok := c.rtFor(w, r)
+	if !ok {
+		return
+	}
 	agentURL := url.URL{Scheme: "ws", Host: rt.agentHost + ":" + rt.agentPort, Path: "/ws/pty", RawQuery: r.URL.RawQuery}
 
 	var hdr http.Header
