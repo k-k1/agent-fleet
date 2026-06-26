@@ -49,8 +49,9 @@ func main() {
 	// Terminal PTY — proxied WebSocket.
 	mux.HandleFunc("GET /ws/terminal", cfg.proxyTerminal)
 
-	// Static Console (catch-all).
-	mux.Handle("/", http.FileServer(http.Dir(cfg.consoleDir)))
+	// Static Console (catch-all). no-store so reloads always get fresh assets
+	// during active development.
+	mux.Handle("/", noStore(http.FileServer(http.Dir(cfg.consoleDir))))
 
 	log.Printf("control-plane on %s (console=%s, ws image=%s)", cfg.addr, cfg.consoleDir, cfg.rt.image)
 	srv := &http.Server{Addr: cfg.addr, Handler: logRequests(mux), ReadHeaderTimeout: 10 * time.Second}
@@ -75,6 +76,13 @@ func splitCSV(s string) []string {
 		}
 	}
 	return out
+}
+
+func noStore(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		next.ServeHTTP(w, r)
+	})
 }
 
 func logRequests(next http.Handler) http.Handler {

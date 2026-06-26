@@ -78,39 +78,21 @@ $("new-session").onsubmit = async (e) => {
   attach(name);
 };
 
-// --- login URL banner ---
-// Ink (claude's UI) hard-wraps the /login auth URL at the terminal width, so
-// xterm's web-links only links the first row and copy includes newlines.
-// Reconstruct the full URL from the xterm buffer (join full-width rows) and
-// surface a reliable Open/Copy affordance.
-const banner = $("login-banner");
-let lastUrl = null,
-  dismissedUrl = null,
-  scanTimer;
-$("login-dismiss").onclick = () => {
-  dismissedUrl = lastUrl;
-  banner.hidden = true;
-};
-$("login-copy").onclick = async () => {
-  try {
-    await navigator.clipboard.writeText(lastUrl);
-    const b = $("login-copy");
-    b.textContent = "Copied!";
-    setTimeout(() => (b.textContent = "Copy URL"), 1200);
-  } catch {}
-};
+// --- on-demand sign-in URL copy ---
+// Ink hard-wraps the /login auth URL across terminal rows, so neither plain
+// copy nor web-links yields the whole URL. Reconstruct it from the xterm buffer
+// (join full-width rows) only when the user asks — no auto-popup, no false hits.
 function reconstructURL() {
   const buf = term.buffer.active,
     cols = term.cols;
-  // Only the recent rows, so a stale URL up in the scrollback doesn't re-trigger.
-  for (let y = buf.length - 1; y >= Math.max(0, buf.length - 50); y--) {
+  for (let y = buf.length - 1; y >= Math.max(0, buf.length - 200); y--) {
     const line = buf.getLine(y);
     if (!line) continue;
     const m = line.translateToString(true).match(/(https:\/\/[^\s]*)$/);
     if (!m) continue; // a URL fragment reaching the row end => wrapped onward
     let url = m[1];
     for (let yy = y + 1; yy < buf.length; yy++) {
-      const seg = (buf.getLine(yy)?.translateToString(true) ?? "");
+      const seg = buf.getLine(yy)?.translateToString(true) ?? "";
       if (!seg || /[^\x21-\x7e]/.test(seg)) break; // non-URL char (incl space) => end
       url += seg;
       if (seg.length < cols) break; // shorter than width => last segment
@@ -119,33 +101,21 @@ function reconstructURL() {
   }
   return null;
 }
-// The login prompt is active only while the cursor sits on claude's
-// "Paste code here >" line. Gating on this avoids matching a stale URL that
-// lingers in the buffer after login completes.
-function loginAwaiting() {
-  const buf = term.buffer.active;
-  const cy = buf.baseY + buf.cursorY;
-  for (let y = cy; y >= Math.max(0, cy - 4); y--) {
-    if (/paste code here/i.test(buf.getLine(y)?.translateToString(true) ?? "")) return true;
-  }
-  return false;
-}
-function scanForLoginURL() {
-  if (!ws || ws.readyState !== 1 || !loginAwaiting()) {
-    banner.hidden = true;
-    return;
-  }
-  const url = reconstructURL();
-  if (url && url !== dismissedUrl) {
-    if (url !== lastUrl) {
-      lastUrl = url;
-      $("login-open").href = url;
-    }
-    banner.hidden = false;
+$("copy-login-url").onclick = async () => {
+  const btn = $("copy-login-url");
+  const url = term ? reconstructURL() : null;
+  if (!url) {
+    btn.textContent = "no URL on screen";
   } else {
-    banner.hidden = true;
+    try {
+      await navigator.clipboard.writeText(url);
+      btn.textContent = "Copied!";
+    } catch {
+      btn.textContent = "copy failed";
+    }
   }
-}
+  setTimeout(() => (btn.textContent = "⧉ sign-in URL"), 1400);
+};
 
 // --- terminal ---
 let term, fitAddon, ws;
@@ -200,9 +170,6 @@ function attach(session) {
   ensureTerm();
   if (ws) ws.close();
   term.reset();
-  banner.hidden = true;
-  lastUrl = null;
-  dismissedUrl = null;
   $("term-title").textContent = `session: ${session}`;
   const u = new URL(rel("ws/terminal"));
   u.protocol = location.protocol === "https:" ? "wss:" : "ws:";
@@ -213,15 +180,8 @@ function attach(session) {
   ws.onmessage = (ev) => {
     if (ev.data instanceof ArrayBuffer) term.write(new Uint8Array(ev.data));
     else term.write(ev.data);
-    clearTimeout(scanTimer);
-    scanTimer = setTimeout(scanForLoginURL, 150); // scan once output settles
   };
-  ws.onclose = () => {
-    term.write("\r\n[disconnected]\r\n");
-    banner.hidden = true;
-    lastUrl = null;
-    dismissedUrl = null;
-  };
+  ws.onclose = () => term.write("\r\n[disconnected]\r\n");
 }
 
 refreshWorkspace();
