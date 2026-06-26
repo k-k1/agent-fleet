@@ -14,6 +14,8 @@ Web から起動・操作・管理する。最終的に AWS 上でホストす�
 | ユーザー分離 | ユーザー毎コンテナ | 移植性・隔離が高く AWS と相性が良い |
 | 想定規模 | 〜20 人（同時） | 単一クラスタ + オーケストレーション層で十分 |
 | 永続化 | EBS/EFS で永続化 | ホーム・clone・認証情報・履歴をディスク保持 |
+| Bitbucket 鍵 | ユーザー単位の鍵 + 手動登録 | トークンを預からず責任範囲を限定 |
+| 技術スタック | Console=Next.js / Backend=Go | 常駐・WS プロキシ・ECS 制御に Go が好適 |
 
 ## ドキュメント構成
 
@@ -24,6 +26,9 @@ Web から起動・操作・管理する。最終的に AWS 上でホストす�
 | [docs/03-aws-deployment.md](docs/03-aws-deployment.md) | AWS 構成、ネットワーク、コスト試算 |
 | [docs/04-security.md](docs/04-security.md) | 脅威モデル、隔離境界、権限設計 |
 | [docs/05-roadmap.md](docs/05-roadmap.md) | 段階的な実装計画（PoC → MVP → 本番） |
+| [docs/06-api-spec.md](docs/06-api-spec.md) | Control Plane の REST API と WebSocket プロトコル |
+| [docs/07-workspace-agent.md](docs/07-workspace-agent.md) | Workspace Agent のインターフェースとセッション制御 |
+| [docs/08-bitbucket.md](docs/08-bitbucket.md) | Bitbucket 連携（SSH 鍵・clone・ブランチ・status）|
 
 ## 既存プロトタイプ資産（再利用元）
 

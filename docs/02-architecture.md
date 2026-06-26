@@ -51,7 +51,7 @@
 - `settings.json` エディタ、remote-control トグル
 - SSH 公開鍵の表示・登録、Claude `/login` 状況表示
 
-候補スタック: Next.js (React) + xterm.js。状態は Control Plane API 経由。
+スタック（確定）: **Next.js (React) + xterm.js**。状態は Control Plane API 経由。
 
 ### Control Plane（バックエンド / オーケストレータ）
 Workspace の外側で動く常駐サービス。
@@ -62,7 +62,8 @@ Workspace の外側で動く常駐サービス。
 - API: REST/JSON（操作系）+ WebSocket（ターミナル・ステータス購読）
 - Workspace Agent への中継（ターミナル WS をプロキシ、git/セッション操作 RPC）
 
-候補スタック: Go か Node(TypeScript)。ECS 制御に AWS SDK。
+スタック（確定）: **Go**（常駐 / WS プロキシ / ECS 制御に好適、単体バイナリで運用が軽い）。AWS SDK for Go。
+API 詳細は [06](06-api-spec.md)。
 
 ### Workspace Agent（各コンテナ内の常駐プロセス）
 Control Plane と Workspace の間の薄い仲介層。コンテナ内で最小権限ユーザーとして動く。

@@ -52,6 +52,9 @@
 
 ## 当面の次アクション
 
-1. [01 未決事項](01-requirements.md#17-未決事項今後詰める) のうち #5（技術スタック）#3/#4（鍵粒度・自動登録）を決める。
-2. Phase 0 を着手し `/login` フローを実機確認する。
-3. Console/Control Plane の API 仕様（REST + WS）をドラフト化する。
+1. ~~技術スタック / 鍵粒度の決定~~ → 確定（Next.js + Go / ユーザー単位鍵 + 手動登録）。
+2. ~~API 仕様（REST + WS）のドラフト化~~ → [06](06-api-spec.md)・[07](07-workspace-agent.md) に着手済み。
+3. **Phase 0 を着手し `/login` フローを実機確認する**（最優先の懸念）。
+4. 残る未決を詰める: Control Plane↔Agent 認証（[07 §7.5](07-workspace-agent.md#75-control-plane-との認証)）、
+   scale-to-zero 判定、課金範囲（[01 §1.7](01-requirements.md#17-未決事項今後詰める)）。
+5. Phase 1 のイメージ定義（claude CLI / git / tmux / Agent）と最小 Console の画面設計。

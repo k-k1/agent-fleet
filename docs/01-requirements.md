@@ -76,14 +76,18 @@ Claude セッションを起動・操作・管理できる。
 | 分離方式 | ユーザー毎コンテナ |
 | 規模 | 〜20 人 |
 | 永続化 | EBS/EFS で永続化 |
+| Bitbucket 鍵 | ユーザー単位の鍵 + 手動登録（トークンを預からない）|
+| 技術スタック | Console=Next.js(React)+xterm.js / Backend=Go |
 
 ## 1.7 未決事項（今後詰める）
 
-1. **コンテナ実行基盤** — ECS(Fargate) か ECS(EC2) か EKS か。→ [03](03-aws-deployment.md) で比較。
-2. **永続ストレージ** — EFS（共有 NFS / アクセスポイント）か EBS（タスク専用）か。→ [03](03-aws-deployment.md)。
-3. **Bitbucket 鍵粒度** — ユーザー単位の鍵か Workspace 単位の鍵か。
-4. **公開鍵の自動登録** — Bitbucket API トークンを預かるか、手動登録のみか（B5）。
-5. **Console / Backend の技術スタック** — フロント（Next.js 等）、バックエンド（Node / Go / Python）。
-6. **`/login` の対話フロー** — ヘッドレスコンテナでの OAuth 完了手順の具体化。→ [02](02-architecture.md#26-claude-login-フロー)。
-7. **scale-to-zero の判定** — アイドル検出とコールドスタート許容時間。
-8. **課金・上限** — ユーザー個人の Claude サブスクを使う前提で会社が負担する範囲。
+1. **コンテナ実行基盤** — ECS(Fargate) を MVP 推奨、EC2 集約を最適化フェーズで検討。→ [03](03-aws-deployment.md)（暫定確定）。
+2. **永続ストレージ** — EFS（アクセスポイント）を主に採用。→ [03](03-aws-deployment.md)（暫定確定）。
+3. **`/login` の対話フロー** — ヘッドレスコンテナでの OAuth 完了手順の具体化。→ [02 §2.6](02-architecture.md#26-claude-login-フロー)。Phase 0 で実機確認。
+4. **scale-to-zero の判定** — アイドル検出とコールドスタート許容時間。
+5. **課金・上限** — ユーザー個人の Claude サブスクを使う前提で会社が負担する範囲。
+6. **Control Plane ↔ Agent の認証** — mTLS か署名付きトークンか。→ [07 §7.5](07-workspace-agent.md#75-control-plane-との認証)。
+
+### 解決済み（v1 で確定）
+- Bitbucket 鍵粒度・自動登録 → **ユーザー単位の鍵 + 手動登録**（B4 採用 / B5 は当面見送り）。詳細は [08](08-bitbucket.md)。
+- 技術スタック → **Next.js + Go**。
