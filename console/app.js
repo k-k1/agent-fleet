@@ -131,7 +131,7 @@ function loginAwaiting() {
   return false;
 }
 function scanForLoginURL() {
-  if (!loginAwaiting()) {
+  if (!ws || ws.readyState !== 1 || !loginAwaiting()) {
     banner.hidden = true;
     return;
   }
@@ -216,7 +216,12 @@ function attach(session) {
     clearTimeout(scanTimer);
     scanTimer = setTimeout(scanForLoginURL, 150); // scan once output settles
   };
-  ws.onclose = () => term.write("\r\n[disconnected]\r\n");
+  ws.onclose = () => {
+    term.write("\r\n[disconnected]\r\n");
+    banner.hidden = true;
+    lastUrl = null;
+    dismissedUrl = null;
+  };
 }
 
 refreshWorkspace();
