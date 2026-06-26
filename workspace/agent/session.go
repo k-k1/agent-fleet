@@ -101,7 +101,15 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	program := buildSessionProgram(sid, req.Model)
 
 	// tmux runs the program via sh -c; it stays alive as the session's process.
-	cmd := exec.Command("tmux", "new-session", "-d", "-s", tn, "-c", req.Dir, program)
+	args := []string{"new-session", "-d", "-s", tn, "-c", req.Dir}
+	// Inject the Claude OAuth token (from the WebUI connection) as a per-session
+	// env so claude authenticates without /login. -e sets it on the new session
+	// regardless of the long-lived tmux server's environment (tmux >= 3.2).
+	if tok := readClaudeToken(); tok != "" {
+		args = append(args, "-e", "CLAUDE_CODE_OAUTH_TOKEN="+tok)
+	}
+	args = append(args, program)
+	cmd := exec.Command("tmux", args...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		writeErr(w, http.StatusInternalServerError, "tmux_failed", fmt.Sprintf("%v: %s", err, out))
 		return

@@ -108,11 +108,88 @@ async function refreshConnections() {
     return;
   }
   list.innerHTML = "";
+  list.append(claudeConnRow(data.claude));
   list.append(gitConnRow("GitHub", "github.com", data.github, [{ key: "token", ph: "Personal Access Token", pw: true }]));
   list.append(gitConnRow("Bitbucket", "bitbucket.org", data.bitbucket, [
     { key: "username", ph: "Atlassian email" },
     { key: "token", ph: "API token", pw: true },
   ]));
+}
+
+// Claude uses a multi-step flow: start (get authorize URL) → user approves in
+// browser → paste code → complete. Driven here so no terminal interaction.
+function claudeConnRow(st) {
+  const li = document.createElement("li");
+  li.className = "conn";
+  const dot = document.createElement("span");
+  dot.className = "cdot " + (st && st.connected ? "ok" : "off");
+  dot.textContent = "●";
+  const name = document.createElement("span");
+  name.className = "cname";
+  name.textContent = "Claude";
+  li.append(dot, name);
+
+  if (st && st.connected) {
+    const who = document.createElement("span");
+    who.className = "cwho";
+    who.textContent = "connected";
+    li.append(who, mkBtn("✕", "disconnect", async () => {
+      await fetch(rel("api/connections/claude"), { method: "DELETE" });
+      refreshConnections();
+    }));
+  } else {
+    li.append(mkBtn("接続", "sign in to Claude", (e) => startClaudeFlow(li, e.target)));
+  }
+  return li;
+}
+
+async function startClaudeFlow(li, btn) {
+  btn.disabled = true;
+  btn.textContent = "…";
+  let res;
+  try {
+    res = await api("api/connections/claude/start", { method: "POST" });
+  } catch {
+    res = null;
+  }
+  if (!res || res.error || !res.url) {
+    alert("Claude 認証開始に失敗: " + (res && res.error ? res.error.message || res.error : ""));
+    refreshConnections();
+    return;
+  }
+  btn.remove();
+  const flow = document.createElement("div");
+  flow.className = "claude-flow";
+  const link = document.createElement("a");
+  link.href = res.url;
+  link.target = "_blank";
+  link.rel = "noopener";
+  link.textContent = "① ブラウザでサインイン";
+  link.title = res.url;
+  const code = document.createElement("input");
+  code.className = "cinput";
+  code.placeholder = "② コードを貼付";
+  const done = mkBtn("完了", "complete sign-in", async () => {
+    const c = code.value.trim();
+    if (!c) return code.focus();
+    done.disabled = true;
+    done.textContent = "…";
+    const r = await api("api/connections/claude/complete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ flow_id: res.flow_id, code: c }),
+    });
+    if (r && r.error) {
+      alert("接続に失敗: " + (r.error.message || r.error));
+      done.disabled = false;
+      done.textContent = "完了";
+      return;
+    }
+    refreshConnections();
+  });
+  flow.append(link, code, done);
+  li.append(flow);
+  code.focus();
 }
 
 function gitConnRow(label, host, st, fields) {

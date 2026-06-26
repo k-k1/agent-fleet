@@ -59,6 +59,9 @@ func main() {
 	mux.HandleFunc("GET /api/connections", cfg.proxyAgentREST)
 	mux.HandleFunc("PUT /api/connections/git/{host}", cfg.proxyAgentREST)
 	mux.HandleFunc("DELETE /api/connections/git/{host}", cfg.proxyAgentREST)
+	mux.HandleFunc("POST /api/connections/claude/start", cfg.proxyAgentREST)
+	mux.HandleFunc("POST /api/connections/claude/complete", cfg.proxyAgentREST)
+	mux.HandleFunc("DELETE /api/connections/claude", cfg.proxyAgentREST)
 
 	// Terminal PTY — proxied WebSocket.
 	mux.HandleFunc("GET /ws/terminal", cfg.proxyTerminal)

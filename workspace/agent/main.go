@@ -35,6 +35,9 @@ func main() {
 	mux.HandleFunc("GET /connections", handleConnectionsGet)
 	mux.HandleFunc("PUT /connections/git/{host}", handlePutGitConn)
 	mux.HandleFunc("DELETE /connections/git/{host}", handleDeleteGitConn)
+	mux.HandleFunc("POST /connections/claude/start", handleClaudeStart)
+	mux.HandleFunc("POST /connections/claude/complete", handleClaudeComplete)
+	mux.HandleFunc("DELETE /connections/claude", handleClaudeDisconnect)
 
 	log.Printf("workspace-agent listening on %s", addr)
 	if err := http.ListenAndServe(addr, logRequests(mux)); err != nil {
