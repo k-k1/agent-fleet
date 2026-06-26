@@ -1,5 +1,9 @@
 # 03. AWS デプロイ構成
 
+本書は `aws` ターゲット（[09 ポータビリティ](09-portability.md)）の具体像。
+ローカル（Docker）で動かす構成は [09](09-portability.md) を参照。コア（Console / Control Plane /
+Workspace Agent / Workspace イメージ）は両者で共通。
+
 ## 3.1 実行基盤の選定
 
 ユーザー毎の長寿命コンテナ（tmux + claude が常駐）を 〜20 個、永続ホーム付きで動かす。

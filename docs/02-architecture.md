@@ -181,7 +181,14 @@ Browser xterm.js ──WSS──▶ ALB ──▶ Control Plane(WSプロキシ) 
    - Claude Code のコマンド実行サンドボックス（権限制御）を `settings.json` で有効化。
    - 破壊的操作の既定許可は Workspace 単位の方針として管理。
 
-## 2.8 既存資産の写像
+## 2.8 デプロイ層の分離（ポート & アダプタ）
+
+本構成図は `aws` ターゲットの具体像。プラットフォーム依存（Runtime / Volume / AuthGateway /
+MetadataStore / SecretStore / Ingress）は**ポート**として抽象化し、`local`（Docker）と `aws`（ECS）の
+アダプタを差し替える。Console / Control Plane コア / Workspace Agent / Workspace イメージは両ターゲット共通。
+詳細は [09 ポータビリティ](09-portability.md)。
+
+## 2.9 既存資産の写像
 
 | 既存（個人運用） | サービス版 |
 |------------------|-----------|

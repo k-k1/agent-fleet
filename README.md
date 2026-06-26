@@ -2,7 +2,8 @@
 
 社内の複数メンバーが Claude Code を効率良く共同利用するための Web サービス。
 ユーザー毎の隔離環境（コンテナ）で Bitbucket リポジトリを扱い、Claude セッションを
-Web から起動・操作・管理する。最終的に AWS 上でホストする。
+Web から起動・操作・管理する。同一コアを**ローカル（Docker）でも AWS でも**動かせるよう
+デプロイ層をポート&アダプタで分離する（[docs/09](docs/09-portability.md)）。
 
 このリポジトリは現時点では**設計ドキュメント置き場**。実装はまだ無い。
 
@@ -16,6 +17,7 @@ Web から起動・操作・管理する。最終的に AWS 上でホストす�
 | 永続化 | EBS/EFS で永続化 | ホーム・clone・認証情報・履歴をディスク保持 |
 | Bitbucket 鍵 | ユーザー単位の鍵 + 手動登録 | トークンを預からず責任範囲を限定 |
 | 技術スタック | Console=Next.js / Backend=Go | 常駐・WS プロキシ・ECS 制御に Go が好適 |
+| デプロイ層 | local / aws を同一コアで切替 | ポート&アダプタで分離（local は Docker、local-first で進める）|
 
 ## ドキュメント構成
 
@@ -29,6 +31,7 @@ Web から起動・操作・管理する。最終的に AWS 上でホストす�
 | [docs/06-api-spec.md](docs/06-api-spec.md) | Control Plane の REST API と WebSocket プロトコル |
 | [docs/07-workspace-agent.md](docs/07-workspace-agent.md) | Workspace Agent のインターフェースとセッション制御 |
 | [docs/08-bitbucket.md](docs/08-bitbucket.md) | Bitbucket 連携（SSH 鍵・clone・ブランチ・status）|
+| [docs/09-portability.md](docs/09-portability.md) | デプロイ層の分離（ポート&アダプタ、local/aws 両対応）|
 
 ## 既存プロトタイプ資産（再利用元）
 
