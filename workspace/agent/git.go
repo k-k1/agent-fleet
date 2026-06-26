@@ -147,6 +147,55 @@ func deriveRepoName(remote string) string {
 	return s
 }
 
+// gitClone clones remoteURL into dir (optionally at branch). GIT_TERMINAL_PROMPT=0
+// fails fast instead of blocking on an interactive credential/host-key prompt.
+// A failed clone leaves no half-written directory behind.
+func gitClone(dir, remoteURL, branch string) error {
+	if err := os.MkdirAll(reposRoot(), 0o755); err != nil {
+		return err
+	}
+	args := []string{"clone"}
+	if b := strings.TrimSpace(branch); b != "" && !strings.HasPrefix(b, "-") {
+		args = append(args, "--branch", b)
+	}
+	args = append(args, "--", remoteURL, dir)
+	cmd := exec.Command("git", args...)
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		_ = os.RemoveAll(dir)
+		return fmt.Errorf("%v: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// ensureRepo guarantees a working copy for remoteURL exists under ~/repos and
+// returns its path, so a session can launch with that dir as CWD. An existing
+// copy is reused (and checked out to branch when one is given); otherwise it is
+// cloned at branch. This is the "clone-then-start" path for session.create.
+func ensureRepo(remoteURL, branch string) (string, error) {
+	remoteURL = strings.TrimSpace(remoteURL)
+	if remoteURL == "" || strings.HasPrefix(remoteURL, "-") {
+		return "", fmt.Errorf("remote_url is required and must not start with '-'")
+	}
+	name := deriveRepoName(remoteURL)
+	dir, ok := resolveRepoDir(name)
+	if !ok {
+		return "", fmt.Errorf("derived repo name is invalid: %q", name)
+	}
+	if isGitRepo(dir) {
+		if b := strings.TrimSpace(branch); b != "" && !strings.HasPrefix(b, "-") {
+			if out, err := exec.Command("git", "-C", dir, "checkout", b).CombinedOutput(); err != nil {
+				return "", fmt.Errorf("checkout %s: %v: %s", b, err, strings.TrimSpace(string(out)))
+			}
+		}
+		return dir, nil
+	}
+	if err := gitClone(dir, remoteURL, branch); err != nil {
+		return "", err
+	}
+	return dir, nil
+}
+
 func handleCloneRepo(w http.ResponseWriter, r *http.Request) {
 	var req cloneReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -171,22 +220,8 @@ func handleCloneRepo(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusConflict, "exists", "repo already exists: "+name)
 		return
 	}
-	if err := os.MkdirAll(reposRoot(), 0o755); err != nil {
-		writeErr(w, http.StatusInternalServerError, "mkdir_failed", err.Error())
-		return
-	}
-
-	args := []string{"clone"}
-	if b := strings.TrimSpace(req.Branch); b != "" && !strings.HasPrefix(b, "-") {
-		args = append(args, "--branch", b)
-	}
-	args = append(args, "--", req.RemoteURL, dir)
-	cmd := exec.Command("git", args...)
-	// Never block on an interactive credential/host-key prompt; fail fast instead.
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
-	if out, err := cmd.CombinedOutput(); err != nil {
-		_ = os.RemoveAll(dir) // don't leave a half-clone behind
-		writeErr(w, http.StatusBadGateway, "clone_failed", fmt.Sprintf("%v: %s", err, strings.TrimSpace(string(out))))
+	if err := gitClone(dir, req.RemoteURL, req.Branch); err != nil {
+		writeErr(w, http.StatusBadGateway, "clone_failed", err.Error())
 		return
 	}
 	st, _ := gitStatus(dir)

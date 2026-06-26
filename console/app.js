@@ -67,15 +67,31 @@ $("new-session").onsubmit = async (e) => {
   e.preventDefault();
   const name = $("ns-name").value.trim();
   const dir = $("ns-dir").value.trim();
-  await fetch(rel("api/sessions"), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name, dir }),
-  });
-  $("ns-name").value = "";
-  $("ns-dir").value = "";
-  await refreshSessions();
-  attach(name);
+  // Optional clone-then-start: when a URL is given the Agent clones (or reuses)
+  // the repo under ~/repos and uses it as the session CWD, ignoring dir.
+  const remote_url = $("ns-url").value.trim();
+  const branch = $("ns-branch").value.trim();
+  const btn = e.target.querySelector("button");
+  btn.disabled = true;
+  btn.textContent = remote_url ? "Cloning…" : "…";
+  try {
+    const res = await api("api/sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, dir, remote_url, branch }),
+    });
+    if (res && res.error) {
+      alert("create failed: " + (res.error.message || res.error));
+      return;
+    }
+    ["ns-name", "ns-dir", "ns-url", "ns-branch"].forEach((id) => ($(id).value = ""));
+    await refreshSessions();
+    if (remote_url) await refreshRepos(); // a new working copy may have appeared
+    attach(name);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "New";
+  }
 };
 
 // --- repos ---

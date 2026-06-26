@@ -57,6 +57,10 @@ type createReq struct {
 	Name  string `json:"name"`
 	Dir   string `json:"dir"`
 	Model string `json:"model"`
+	// Optional clone-then-start: when remote_url is set, the repo is cloned
+	// (or reused) under ~/repos and its path becomes the session CWD, ignoring dir.
+	RemoteURL string `json:"remote_url"`
+	Branch    string `json:"branch"`
 }
 
 // handleCreateSession launches a claude session inside a detached tmux session.
@@ -69,6 +73,15 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	if !nameRe.MatchString(req.Name) {
 		writeErr(w, http.StatusBadRequest, "bad_name", "name must match [A-Za-z0-9_-]{1,40}")
 		return
+	}
+	// Clone-then-start: ensure the repo exists and use it as the working dir.
+	if strings.TrimSpace(req.RemoteURL) != "" {
+		dir, err := ensureRepo(req.RemoteURL, req.Branch)
+		if err != nil {
+			writeErr(w, http.StatusBadGateway, "clone_failed", err.Error())
+			return
+		}
+		req.Dir = dir
 	}
 	if req.Dir == "" {
 		req.Dir = os.Getenv("HOME")
