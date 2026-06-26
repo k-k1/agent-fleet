@@ -27,8 +27,11 @@ import (
 var (
 	// CSI/escape sequences and lone control chars Ink emits while redrawing.
 	ansiRe  = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b[()][AB012]|\x1b[<>=]|[\x00-\x08\x0b\x0c\x0e-\x1f]`)
-	urlRe   = regexp.MustCompile(`https://claude\.com/cai/oauth/authorize\?\S+`)
-	tokenRe = regexp.MustCompile(`sk-ant-oat[0-9]*-[A-Za-z0-9_-]{20,}`)
+	urlRe = regexp.MustCompile(`https://claude\.com/cai/oauth/authorize\?\S+`)
+	// CLAUDE_CODE_OAUTH_TOKEN is an Anthropic secret token; match the sk-ant-
+	// family broadly (oat01/oat02/…) so a format tweak doesn't break capture.
+	tokenRe = regexp.MustCompile(`sk-ant-[A-Za-z0-9_-]{20,}`)
+	errRe   = regexp.MustCompile(`OAuth error:[^\n]*`)
 )
 
 type claudeFlow struct {
@@ -147,13 +150,26 @@ func handleClaudeComplete(w http.ResponseWriter, r *http.Request) {
 	}
 	defer f.close()
 
-	if _, err := f.ptmx.Write([]byte(code + "\r")); err != nil {
+	// Submit the code, then send Enter as a SEPARATE keystroke after a short
+	// delay. Ink ignores the carriage return if it arrives in the same write as
+	// the pasted code, leaving the form unsubmitted (verified via a PTY probe).
+	if _, err := f.ptmx.Write([]byte(code)); err != nil {
 		writeErr(w, http.StatusInternalServerError, "write_failed", err.Error())
 		return
 	}
-	token := waitFor(f, tokenRe, 25*time.Second)
+	time.Sleep(300 * time.Millisecond)
+	if _, err := f.ptmx.Write([]byte("\r")); err != nil {
+		writeErr(w, http.StatusInternalServerError, "write_failed", err.Error())
+		return
+	}
+
+	token, oauthErr := awaitToken(f, 30*time.Second)
 	if token == "" {
-		writeErr(w, http.StatusBadGateway, "no_token", "did not capture a token (code wrong or expired?)")
+		if oauthErr != "" {
+			writeErr(w, http.StatusBadGateway, "oauth_error", oauthErr)
+		} else {
+			writeErr(w, http.StatusBadGateway, "no_token", "did not capture a token (code wrong or expired?)")
+		}
 		return
 	}
 	if err := storeClaudeToken(token); err != nil {
@@ -169,6 +185,24 @@ func handleClaudeDisconnect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"disconnected": "claude"})
+}
+
+// awaitToken polls for the printed token, or a surfaced OAuth error, until the
+// timeout. setup-token prints "OAuth error: ... Press Enter to retry." on a bad
+// or expired code, which we return instead of a generic timeout.
+func awaitToken(f *claudeFlow, timeout time.Duration) (token, oauthErr string) {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		c := f.clean()
+		if m := tokenRe.FindString(c); m != "" {
+			return m, ""
+		}
+		if m := errRe.FindString(c); m != "" {
+			return "", strings.TrimSpace(m)
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	return "", ""
 }
 
 // waitFor polls the flow's cleaned output until re matches or the timeout hits.

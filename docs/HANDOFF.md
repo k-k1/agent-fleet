@@ -108,9 +108,11 @@ Google 認証ゲートするため、リダイレクト型 OAuth コールバッ
   を注入 → `/login` 不要で claude 認証（コンテナ再起動不要）。`CLAUDE_CODE_OAUTH_TOKEN` は claude-code-guide で挙動確認済み。
 - **CP**: `/api/connections*` を `proxyAgentREST` で委譲（**秘密は CP を保持・解釈しない**）。**Console**: Connections パネル（Claude/GitHub/Bitbucket、接続/切断/状態●）。
 - **保存は home 平文**（0600、`.credentials.json` と同レベル＝コンテナ home が隔離境界）。**shared 形態では CP マスタ鍵で暗号化が必要（別タスク）**。
-- **残継ぎ目**: Claude の **実 OAuth（ブラウザ承認→実コード→実トークン捕捉）はユーザーが 1 回実施して確定**。
-  URL 抽出・コード注入・env 注入・トークン正規表現の骨格は検証済み。もし `complete` が `no_token` を返すなら
-  実トークンの prefix を確認し `claude_auth.go` の `tokenRe` を調整。
+- **実 OAuth 検証済**（2026-06-26）: ブラウザ承認→コード貼付→トークン捕捉→保存まで成功し、
+  `CLAUDE_CODE_OAUTH_TOKEN=<captured> claude -p …` が応答（=`/login` 無しで認証）を確認。
+  ハマり: コードと Enter を**同一書き込み**で送ると Ink が Enter を認識せず未送信になる →
+  コード送信→300ms→`\r` を**別送**する必要（`claude_auth.go`）。コード誤り/失効時は
+  setup-token が `OAuth error: …` を出すので `errRe` で検出し明示。トークンは `sk-ant-oat…`。
 - **後続**: GitHub Device Flow（要 OAuth App、PAT 作成を不要化）/ Bitbucket OAuth / トークン暗号化 / SSH 鍵（任意）。
 
 ## 7. 動作確認の最短手順
