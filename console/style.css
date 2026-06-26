@@ -1,0 +1,32 @@
+* { box-sizing: border-box; }
+body {
+  margin: 0; height: 100vh; display: flex; flex-direction: column;
+  font: 14px/1.5 system-ui, sans-serif; color: #ddd; background: #1e1e1e;
+}
+header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 14px; background: #111; border-bottom: 1px solid #333;
+}
+h1 { font-size: 16px; margin: 0; }
+h1 small { color: #888; font-weight: normal; font-size: 11px; }
+#ws-controls { display: flex; gap: 10px; align-items: center; }
+#ws-state { color: #6cf; }
+button {
+  background: #2b2b2b; color: #ddd; border: 1px solid #444; border-radius: 4px;
+  padding: 4px 10px; cursor: pointer;
+}
+button:hover { background: #3a3a3a; }
+main { flex: 1; display: flex; min-height: 0; }
+#sidebar { width: 280px; border-right: 1px solid #333; padding: 10px; overflow: auto; }
+.row { display: flex; align-items: center; justify-content: space-between; }
+h2 { font-size: 13px; text-transform: uppercase; color: #999; margin: 6px 0; }
+#new-session { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 10px; }
+#new-session input { flex: 1; min-width: 90px; background: #2b2b2b; color: #ddd; border: 1px solid #444; border-radius: 4px; padding: 4px; }
+#session-list { list-style: none; margin: 0; padding: 0; }
+#session-list li { display: flex; align-items: center; gap: 6px; padding: 6px 4px; border-bottom: 1px solid #2a2a2a; }
+#session-list .name { flex: 1; cursor: pointer; }
+#session-list .name:hover { color: #6cf; }
+#session-list .dir { color: #777; font-size: 11px; }
+#terminal-pane { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+#term-title { padding: 6px 10px; background: #111; border-bottom: 1px solid #333; color: #6cf; }
+#terminal { flex: 1; min-height: 0; }
