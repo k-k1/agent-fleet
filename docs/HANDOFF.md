@@ -106,9 +106,10 @@ Google 認証ゲートするため、リダイレクト型 OAuth コールバッ
     user_code を `github.com/login/device` で承認→poll→`~/.git-credentials` に保存。scope `repo`、トークン実質無期限。**実承認まで検証済（github ok）**。
   - **Bitbucket = Auth Code Grant**（CP ネイティブ: `GET /api/connections/git/bitbucket/oauth/start`・`GET /api/oauth/bitbucket/callback`）。
     `BITBUCKET_OAUTH_KEY/SECRET`・`PUBLIC_BASE_URL`(CP env)。callback はブラウザの Google cookie で oauth2-proxy を素通り（**前段改変不要**）。
-    トークンは 2h 失効 → **git credential helper `workspace-agent bitbucket-cred`**（agent バイナリのサブコマンド）が `bitbucket.json` を読み
+    トークンは失効 → **git credential helper `workspace-agent bitbucket-cred`**（agent バイナリのサブコマンド）が `bitbucket.json` を読み
     refresh して `x-token-auth`+token を出力。bitbucket.org の helper は store をリセットして本 helper のみに。
-    **start は検証済（authorize_url 生成）。callback→保存→refresh の実承認はユーザー初回 OAuth 待ち**（consumer の Callback URL 一致が前提）。
+    **実 OAuth 検証済（2026-06-27）**: 承認→callback→`bitbucket.json`(0600)保存→`git credential fill` が token 返却→
+    expiry 強制失効で helper 実行→**自動 refresh で expiry 更新**を確認。consumer の Callback URL 完全一致が前提。
 - **Claude**（`claude_auth.go`）: `POST /connections/claude/{start,complete}`・`DELETE /connections/claude`。
   Agent が `claude setup-token` を **PTY 駆動**（広い PTY で Ink 折返し回避→ANSI 除去で authorize URL を1行抽出）。
   Console が URL 表示→ユーザーがブラウザ承認→コード貼付→**長命トークン(`sk-ant-oat…`, 1年, サブスク, 可搬)** を捕捉し
