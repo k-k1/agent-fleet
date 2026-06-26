@@ -138,6 +138,24 @@ func (c config) rtFor(r *http.Request) *dockerRuntime {
 	return c.mgr.forUser(c.mgr.resolveUser(r))
 }
 
+// handleWhoami reports how the AuthGateway resolved this request, plus the raw
+// gateway headers — used to verify the funnel -> oauth2-proxy -> Caddy -> CP
+// chain actually delivers the authenticated email. In dev mode resolved_user is
+// the fixed id, but the email/sanitized fields still show what proxy mode would
+// pick, so the chain can be verified without flipping AUTH globally.
+func (c config) handleWhoami(w http.ResponseWriter, r *http.Request) {
+	email := r.Header.Get(c.mgr.emailHeader)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"auth_mode":          c.mgr.authMode,
+		"resolved_user":      c.mgr.resolveUser(r),
+		"email_header":       c.mgr.emailHeader,
+		"email":              email,
+		"sanitized_user":     sanitizeUser(email),
+		"x_forwarded_user":   r.Header.Get("X-Forwarded-User"),
+		"preferred_username": r.Header.Get("X-Forwarded-Preferred-Username"),
+	})
+}
+
 func (c config) handleWorkspaceGet(w http.ResponseWriter, r *http.Request) {
 	rt := c.rtFor(r)
 	writeJSON(w, http.StatusOK, map[string]any{"name": rt.name, "state": rt.state(r.Context())})

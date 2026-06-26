@@ -55,6 +55,10 @@ func main() {
 
 	mux := http.NewServeMux()
 
+	// Identity — who the AuthGateway resolved this request to (and the raw
+	// gateway headers, for verifying the oauth2-proxy -> Caddy -> CP chain).
+	mux.HandleFunc("GET /api/whoami", cfg.handleWhoami)
+
 	// Workspace lifecycle (local Docker Runtime adapter).
 	mux.HandleFunc("GET /api/workspace", cfg.handleWorkspaceGet)
 	mux.HandleFunc("POST /api/workspace/start", cfg.handleWorkspaceStart)
