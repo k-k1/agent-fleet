@@ -18,6 +18,7 @@ import (
 type dockerRuntime struct {
 	image      string
 	name       string
+	network    string // per-user docker network; isolates containers from each other
 	dataDir    string // host path; <dataDir>/home is bind-mounted to ~ in the container
 	agentHost  string
 	agentPort  string
@@ -56,11 +57,22 @@ func (d *dockerRuntime) start(ctx context.Context) error {
 		return fmt.Errorf("mkdir data home: %w", err)
 	}
 
+	// Each user's container sits alone on a dedicated network, so containers
+	// cannot reach each other (相互不可視, docs/09 §9.7). The Agent is still
+	// reached by the CP via the host-published 127.0.0.1 port; egress (git,
+	// Claude API) works via the network's NAT.
+	if err := d.ensureNetwork(ctx); err != nil {
+		return err
+	}
+
 	args := []string{
 		"run", "-d", "--name", d.name,
 		"--memory", d.memory,
 		"-p", fmt.Sprintf("127.0.0.1:%s:7700", d.agentPort),
 		"-v", home + ":/home/node",
+	}
+	if d.network != "" {
+		args = append(args, "--network", d.network)
 	}
 	if d.sessionCmd != "" {
 		args = append(args, "-e", "AGENT_SESSION_CMD="+d.sessionCmd)
@@ -75,9 +87,27 @@ func (d *dockerRuntime) start(ctx context.Context) error {
 	return d.waitHealthy(ctx, 15*time.Second)
 }
 
+// ensureNetwork creates the per-user network if it does not already exist.
+func (d *dockerRuntime) ensureNetwork(ctx context.Context) error {
+	if d.network == "" {
+		return nil
+	}
+	if exec.CommandContext(ctx, "docker", "network", "inspect", d.network).Run() == nil {
+		return nil // already exists
+	}
+	if out, err := exec.CommandContext(ctx, "docker", "network", "create", d.network).CombinedOutput(); err != nil {
+		return fmt.Errorf("docker network create %s: %v: %s", d.network, err, out)
+	}
+	return nil
+}
+
 func (d *dockerRuntime) stop(ctx context.Context) error {
 	if out, err := exec.CommandContext(ctx, "docker", "rm", "-f", d.name).CombinedOutput(); err != nil {
 		return fmt.Errorf("docker rm: %v: %s", err, out)
+	}
+	// Best-effort: drop the now-empty per-user network (recreated on next start).
+	if d.network != "" {
+		_ = exec.CommandContext(ctx, "docker", "network", "rm", d.network).Run()
 	}
 	return nil
 }

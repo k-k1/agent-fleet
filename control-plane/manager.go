@@ -59,6 +59,7 @@ func (m *manager) forUser(user string) *dockerRuntime {
 	rt := &dockerRuntime{
 		image:      m.image,
 		name:       name,
+		network:    "af-net-" + user,
 		dataDir:    filepath.Join(m.dataRoot, user),
 		agentHost:  m.agentHost,
 		agentPort:  port,
