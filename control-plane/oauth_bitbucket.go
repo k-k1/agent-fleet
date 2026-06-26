@@ -28,9 +28,14 @@ const (
 	bbTokenURL     = "https://bitbucket.org/site/oauth2/access_token"
 )
 
+type bbState struct {
+	user    string
+	created time.Time
+}
+
 var (
 	bbStateMu sync.Mutex
-	bbStates  = map[string]time.Time{} // state -> created
+	bbStates  = map[string]bbState{} // csrf state -> {user, created}
 )
 
 func (c config) bbConfigured() bool {
@@ -49,13 +54,14 @@ func (c config) handleBitbucketOAuthStart(w http.ResponseWriter, r *http.Request
 		return
 	}
 	state := randHex(16)
+	user := c.mgr.resolveUser(r)
 	bbStateMu.Lock()
-	for k, t := range bbStates { // reap stale states
-		if time.Since(t) > 10*time.Minute {
+	for k, s := range bbStates { // reap stale states
+		if time.Since(s.created) > 10*time.Minute {
 			delete(bbStates, k)
 		}
 	}
-	bbStates[state] = time.Now()
+	bbStates[state] = bbState{user: user, created: time.Now()}
 	bbStateMu.Unlock()
 
 	au := bbAuthorizeURL + "?client_id=" + url.QueryEscape(c.bbKey) +
@@ -69,7 +75,7 @@ func (c config) handleBitbucketOAuthCallback(w http.ResponseWriter, r *http.Requ
 	state := r.URL.Query().Get("state")
 
 	bbStateMu.Lock()
-	_, ok := bbStates[state]
+	st, ok := bbStates[state]
 	delete(bbStates, state)
 	bbStateMu.Unlock()
 	if !ok {
@@ -111,7 +117,7 @@ func (c config) handleBitbucketOAuthCallback(w http.ResponseWriter, r *http.Requ
 		"access_token": tok.AccessToken, "refresh_token": tok.RefreshToken,
 		"expires_in": tok.ExpiresIn, "key": c.bbKey, "secret": c.bbSecret,
 	})
-	areq, _ := http.NewRequest("PUT", c.rt.agentBase()+"/connections/git/bitbucket/oauth", strings.NewReader(string(payload)))
+	areq, _ := http.NewRequest("PUT", c.mgr.forUser(st.user).agentBase()+"/connections/git/bitbucket/oauth", strings.NewReader(string(payload)))
 	areq.Header.Set("Content-Type", "application/json")
 	aresp, err := http.DefaultClient.Do(areq)
 	if err != nil {

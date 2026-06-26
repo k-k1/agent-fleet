@@ -99,24 +99,32 @@ func (d *dockerRuntime) waitHealthy(ctx context.Context, timeout time.Duration) 
 
 // --- HTTP handlers ---
 
+// rtFor resolves the request's user (AuthGateway) and returns its runtime.
+func (c config) rtFor(r *http.Request) *dockerRuntime {
+	return c.mgr.forUser(c.mgr.resolveUser(r))
+}
+
 func (c config) handleWorkspaceGet(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"name": c.rt.name, "state": c.rt.state(r.Context())})
+	rt := c.rtFor(r)
+	writeJSON(w, http.StatusOK, map[string]any{"name": rt.name, "state": rt.state(r.Context())})
 }
 
 func (c config) handleWorkspaceStart(w http.ResponseWriter, r *http.Request) {
-	if err := c.rt.start(r.Context()); err != nil {
+	rt := c.rtFor(r)
+	if err := rt.start(r.Context()); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"name": c.rt.name, "state": "running"})
+	writeJSON(w, http.StatusOK, map[string]any{"name": rt.name, "state": "running"})
 }
 
 func (c config) handleWorkspaceStop(w http.ResponseWriter, r *http.Request) {
-	if err := c.rt.stop(r.Context()); err != nil {
+	rt := c.rtFor(r)
+	if err := rt.stop(r.Context()); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"name": c.rt.name, "state": "stopped"})
+	writeJSON(w, http.StatusOK, map[string]any{"name": rt.name, "state": "stopped"})
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -15,7 +16,7 @@ import (
 type config struct {
 	addr       string
 	consoleDir string
-	rt         *dockerRuntime
+	mgr        *manager
 	// Bitbucket OAuth (Authorization Code Grant) — CP owns the public callback.
 	bbKey         string
 	bbSecret      string
@@ -23,27 +24,33 @@ type config struct {
 }
 
 func main() {
+	portBase, _ := strconv.Atoi(envOr("WS_AGENT_PORT", "7700"))
+	mgr := &manager{
+		rts:         map[string]*dockerRuntime{},
+		image:       envOr("WS_IMAGE", "agent-fleet/workspace:m3"),
+		dataRoot:    envOr("WS_DATA", "/tmp/af-data"),
+		agentHost:   envOr("WS_AGENT_HOST", "127.0.0.1"),
+		memory:      envOr("WS_MEMORY", "1g"),
+		sessionCmd:  os.Getenv("WS_SESSION_CMD"), // empty => claude
+		extraEnv:    splitCSV(os.Getenv("WS_ENV")), // KEY=VAL,KEY=VAL -> container -e
+		portBase:    portBase,
+		nextPort:    portBase,
+		authMode:    envOr("AUTH", "dev"), // dev (fixed id) | proxy (gateway header)
+		devUser:     envOr("DEV_USER", "dev"),
+		emailHeader: envOr("AUTH_EMAIL_HEADER", "X-Forwarded-Email"),
+	}
+	// OAuth App client_id (non-secret) for the GitHub device flow — injected into
+	// the Workspace so the Agent can run the flow. Reuses the extraEnv -> -e path.
+	if cid := os.Getenv("GITHUB_OAUTH_CLIENT_ID"); cid != "" {
+		mgr.extraEnv = append(mgr.extraEnv, "GITHUB_OAUTH_CLIENT_ID="+cid)
+	}
 	cfg := config{
 		addr:          envOr("CP_ADDR", ":8080"),
 		consoleDir:    envOr("CONSOLE_DIR", "./console"),
 		bbKey:         os.Getenv("BITBUCKET_OAUTH_KEY"),
 		bbSecret:      os.Getenv("BITBUCKET_OAUTH_SECRET"),
 		publicBaseURL: os.Getenv("PUBLIC_BASE_URL"),
-		rt: &dockerRuntime{
-			image:      envOr("WS_IMAGE", "agent-fleet/workspace:m3"),
-			name:       envOr("WS_NAME", "af-ws-dev"),
-			dataDir:    envOr("WS_DATA", "/tmp/af-data"),
-			agentHost:  envOr("WS_AGENT_HOST", "127.0.0.1"),
-			agentPort:  envOr("WS_AGENT_PORT", "7700"),
-			memory:     envOr("WS_MEMORY", "1g"),
-			sessionCmd: os.Getenv("WS_SESSION_CMD"), // empty => claude
-			extraEnv:   splitCSV(os.Getenv("WS_ENV")), // KEY=VAL,KEY=VAL -> container -e
-		},
-	}
-	// OAuth App client_id (non-secret) for the GitHub device flow — injected into
-	// the Workspace so the Agent can run the flow. Reuses the extraEnv -> -e path.
-	if cid := os.Getenv("GITHUB_OAUTH_CLIENT_ID"); cid != "" {
-		cfg.rt.extraEnv = append(cfg.rt.extraEnv, "GITHUB_OAUTH_CLIENT_ID="+cid)
+		mgr:           mgr,
 	}
 
 	mux := http.NewServeMux()
@@ -87,7 +94,7 @@ func main() {
 	// during active development.
 	mux.Handle("/", noStore(http.FileServer(http.Dir(cfg.consoleDir))))
 
-	log.Printf("control-plane on %s (console=%s, ws image=%s)", cfg.addr, cfg.consoleDir, cfg.rt.image)
+	log.Printf("control-plane on %s (console=%s, ws image=%s, auth=%s)", cfg.addr, cfg.consoleDir, cfg.mgr.image, cfg.mgr.authMode)
 	srv := &http.Server{Addr: cfg.addr, Handler: logRequests(mux), ReadHeaderTimeout: 10 * time.Second}
 	if err := srv.ListenAndServe(); err != nil {
 		log.Fatal(err)

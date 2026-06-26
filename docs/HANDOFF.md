@@ -7,7 +7,7 @@ Phase 1 MVP 完了時点（2026-06-26, commit `dd2330e`）の運用状態・落�
 ## 1. いま動いているもの（このホスト）
 
 - **Control Plane**: `:8099` で稼働中（静的 Console + REST/WS プロキシ + Docker Runtime）。バイナリ `/tmp/af-cp`。
-- **Workspace コンテナ**: `af-ws-dev`（image `agent-fleet/workspace:dev`, 498MB）。`~`= bind mount `/tmp/af-data/home`（永続。`/login` 済み）。
+- **Workspace コンテナ**: `af-ws-dev`（image `agent-fleet/workspace:dev`, 498MB）。`~`= bind mount `/tmp/af-data/dev/home`（永続。`/login` 済み。per-user 化で `home`→`<user>/home` に移行済、§6.7）。
 - **外部アクセス**: `https://af.example.ts.net/agent-fleet/`
   （Tailscale Funnel → oauth2-proxy(Google) → Caddy(strip `/agent-fleet`, :8888) → CP :8099）。設定は `~/docs/funnel-auth-setup.md`。
 - **イメージ**: `agent-fleet/workspace:dev`（最新）/ `:m3`（旧, 削除可）。
@@ -71,17 +71,12 @@ API/契約は [06](06-api-spec.md)・[07](07-workspace-agent.md)。CP↔Agent �
 
 目標: オンプレ 1 台で**複数ユーザーが相互不可視**に並行利用 + アダプタ層を固める（[05](05-roadmap.md) / [09 §9.5](09-portability.md#95-ローカルの-2-形態authgateway-で切替)）。
 
-> **▶ 次セッションの起点 = #1 per-user Workspace 化（+ #2 AuthGateway は対）。** リポジトリ管理(§6.5)・Connections/git+Claude OAuth(§6.6)
-> は実装・実機検証まで完了。残るコア未着手は per-user 化（複数ユーザーの本丸）。**このホストは RAM 逼迫（`host-oom-fleet-risk`）→
-> コンテナを増やす per-user 化は検証時に OOM 注意**（`free -h` で数 GiB 確保 / `--memory` 必須 / フリート縮小）。
+> **▶ 次セッションの起点 = #3 トークン暗号化 / shared 形態の実機検証。** per-user 化(#1)+AuthGateway(#2) は
+> 実装・検証まで完了（§6.7）。リポジトリ管理(§6.5)・Connections/git+Claude OAuth(§6.6) も完了。**このホストは
+> RAM 逼迫（`host-oom-fleet-risk`）→ コンテナを増やす検証は OOM 注意**（`free -h` で数 GiB 確保 / `--memory` 必須 / フリート縮小）。
 
-1. **per-user Workspace 化** — 今は単一 `af-ws-dev`。CP が user→container を払い出し（`af-ws-<user>`）、
-   ホームを `/tmp/af-data/<user>/home` に分離。Runtime/Volume/AuthGateway を [09 §9.3](09-portability.md#93-ポート定義go-インターフェース概略) のインターフェースに整理。
-   - 現状の `dockerRuntime`（`control-plane/runtime.go`）は name/dataDir 固定の単一コンテナ。これを user キーの map 化し、
-     `af-ws-<user>` を払い出す。Connections のストアは既に「コンテナ home＝隔離境界」なので、home を user 別に分ければ資格情報も自然に分離。
-   - Agent 契約（/sessions, /repos, /connections）は不変。CP のルーティングが user→対象コンテナを解決するだけ。
-   - dev は単一固定ユーザーのまま動かしつつ、#2 AuthGateway で実ユーザー識別（oauth2-proxy のメールヘッダ）に置換。
-2. **AuthGateway = oauth2-proxy** — CP は `X-Forwarded-...`/oauth2-proxy のヘッダ（認証済みメール）から user を解決（dev 固定IDを置換）。
+1. ~~**per-user Workspace 化**~~ ✅ **実装・検証済**（§6.7）。`manager`（`control-plane/manager.go`）が user→`af-ws-<user>` を払い出し、home を `/tmp/af-data/<user>/home` に分離。
+2. ~~**AuthGateway = oauth2-proxy**~~ ✅ **実装・検証済**（§6.7）。`AUTH=proxy` で `X-Forwarded-Email` から user 解決（既定 `AUTH=dev` は固定 `DEV_USER`）。
 3. ~~**リポジトリ管理** — clone/checkout/branch/status~~ ✅ **実装済**（§6.5）。clone-then-start 込み。private は §6.6 の git コネクタで解決。
 4. ~~**SSH 鍵**~~ → **HTTPS トークン方式に変更**（§6.6 Connections）。ホスト型・多人数では token/OAuth が運用素直（失効・スコープ・API 一覧）。SSH ed25519 は任意の後付けに格下げ。
 5. ~~**Claude 認証状態表示**~~ ✅ **実装済**（§6.6。`GET /connections` の claude.connected = トークンファイル有無）。残: settings.json 編集 UI。
@@ -134,6 +129,31 @@ Google 認証ゲートするため、リダイレクト型 OAuth コールバッ
   コード送信→300ms→`\r` を**別送**する必要（`claude_auth.go`）。コード誤り/失効時は
   setup-token が `OAuth error: …` を出すので `errRe` で検出し明示。トークンは `sk-ant-oat…`。
 - **後続**: GitHub Device Flow（要 OAuth App、PAT 作成を不要化）/ Bitbucket OAuth / トークン暗号化 / SSH 鍵（任意）。
+
+## 6.7 Phase 2 進捗（per-user Workspace 化 + AuthGateway — 実装・検証済）
+
+CP が**利用者ごとに独立した Workspace コンテナ**を払い出す。単一固定 `af-ws-dev` を user キーの map 化した。
+コア未着手の本丸（複数ユーザー相互不可視）が解消。Agent 契約（/sessions, /repos, /connections）は**完全に不変**——
+CP のルーティングが user→対象コンテナを解決するだけ。
+
+- **`manager`**（新規 `control-plane/manager.go`）: `map[user]*dockerRuntime`。`forUser(user)` が初回アクセスで
+  `name=af-ws-<user>` / `home=<WS_DATA>/<user>/home` / **専用 agent ポート**（base `WS_AGENT_PORT`=7700 から順次）を払い出す。
+  既存コンテナがあれば `docker inspect` で publish 済みポートを**採用**（CP 再起動耐性）。`dockerRuntime`（runtime.go）は不変のまま、
+  manager がインスタンスを構築。`config.rt` を廃し、各ハンドラは `c.rtFor(r)`（=`mgr.forUser(mgr.resolveUser(r))`）で解決。
+- **AuthGateway（user 解決）**: `resolveUser(r)` が `AUTH` env で分岐。
+  - `AUTH=dev`（既定）= 固定 `DEV_USER`（既定 `dev`）。**従来の dev 形態と完全に同一挙動**（user=dev → af-ws-dev → 7700）。
+  - `AUTH=proxy` = oauth2-proxy の `X-Forwarded-Email`（`AUTH_EMAIL_HEADER` で変更可）を sanitize（小文字化・非英数を `-`・40字上限。
+    例 `Alice.B@example.com`→`alice-b-example-com`）。ヘッダ欠落時は `DEV_USER` にフォールバック。
+  - Bitbucket OAuth callback は state に user を束ねて解決（`oauth_bitbucket.go`）。GitHub Device Flow / Claude は proxyAgentREST 経由で自然に per-user。
+- **home 移行（実施済）**: 既存 dev home を `/tmp/af-data/home`→`/tmp/af-data/dev/home` へ `mv`。`/login`・Connections（github/bitbucket/claude）・repos すべて保持を確認。
+- **検証済（2026-06-27）**:
+  - dev（`AUTH=dev`）: 移行後も mount=`/tmp/af-data/dev/home`・port 7700・connections 3件 connected を確認。**従来と無差別**。
+  - 複数ユーザー（`AUTH=proxy`, throwaway CP）: alice/bob が別コンテナ名で解決、同一メール再訪はポート安定、ヘッダ無しは dev フォールバック。
+  - 実コンテナ E2E: `tester@example.com` を Start→**別ポート 7710**（dev は 7700）・**別home** `/tmp/af-data/tester-example-com/home` 作成・
+    dev コンテナは無影響を確認→teardown。
+- **shared 形態の有効化**: CP に `AUTH=proxy` を渡し、前段 oauth2-proxy が `X-Forwarded-Email` を注入すればよい（funnel 構成は既存）。
+  `deploy/local/run-dev.sh` は既定 `AUTH=dev`。複数ユーザーで本番運用する前の残課題: **home 平文→CP マスタ鍵で暗号化**（§6.6 末尾, #3）/ コンテナ間ネットワーク分離 / アイドル stop の per-user スケジューリング。
+- **注意**: ポートは in-memory 順次採用。多数ユーザー同時 + CP 再起動が絡む極端ケースでは inspect 採用で吸収するが、停止中コンテナのポートは再起動後に再採番されうる（再 Start で publish し直すので実害は薄い）。RAM: per-user はコンテナを増やす → `--memory`（既定 `WS_MEMORY=1g`）必須・`free -h` 確認（`host-oom-fleet-risk`）。
 
 ## 7. 動作確認の最短手順
 
