@@ -27,22 +27,20 @@ type Session struct {
 func tmuxName(name string) string { return tmuxPrefix + name }
 
 // handleListSessions returns the live claude_* tmux sessions.
+// We query names and each session's cwd separately rather than packing both
+// into one -F line: a tab/control-char delimiter is mangled by some tmux
+// builds (e.g. Debian bookworm 3.3a), so a single delimited format is fragile.
 func handleListSessions(w http.ResponseWriter, r *http.Request) {
-	out, err := exec.Command("tmux", "list-sessions", "-F", "#{session_name}\t#{pane_current_path}").Output()
 	sessions := []Session{}
+	out, err := exec.Command("tmux", "list-sessions", "-F", "#{session_name}").Output()
 	if err == nil { // no server / no sessions => err; treat as empty
-		for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-			if line == "" {
-				continue
-			}
-			parts := strings.SplitN(line, "\t", 2)
-			tn := parts[0]
-			if !strings.HasPrefix(tn, tmuxPrefix) {
+		for _, tn := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+			if tn == "" || !strings.HasPrefix(tn, tmuxPrefix) {
 				continue
 			}
 			dir := ""
-			if len(parts) == 2 {
-				dir = parts[1]
+			if p, e := exec.Command("tmux", "display-message", "-p", "-t", tn, "#{pane_current_path}").Output(); e == nil {
+				dir = strings.TrimSpace(string(p))
 			}
 			sessions = append(sessions, Session{
 				Name:  strings.TrimPrefix(tn, tmuxPrefix),
