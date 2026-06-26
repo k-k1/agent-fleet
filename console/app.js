@@ -153,20 +153,44 @@ function ensureTerm() {
   if (term) return;
   term = new Terminal({
     fontSize: 13,
-    // 末尾の CJK フォントで日本語等のグリフ・フォールバックを効かせる。
+    // JetBrains Mono を主に、末尾の CJK フォントで日本語等のフォールバックを効かせる。
     fontFamily:
-      'Menlo, Monaco, Consolas, "DejaVu Sans Mono", "Noto Sans Mono CJK JP", "Noto Sans CJK JP", "Hiragino Kaku Gothic ProN", "Yu Gothic", "MS Gothic", monospace',
+      '"JetBrains Mono", "Cascadia Code", "SF Mono", Menlo, Consolas, "DejaVu Sans Mono", "Noto Sans Mono CJK JP", "Noto Sans CJK JP", "Hiragino Kaku Gothic ProN", "Yu Gothic", monospace',
     theme: { background: "#1e1e1e" },
     cursorBlink: true,
+    allowProposedApi: true,
   });
   fitAddon = new FitAddon.FitAddon();
   term.loadAddon(fitAddon);
+  // Unicode 11 widths so emoji / wide glyphs occupy 2 cells (no half-clipping).
+  if (window.Unicode11Addon) {
+    term.loadAddon(new Unicode11Addon.Unicode11Addon());
+    term.unicode.activeVersion = "11";
+  }
   // Make URLs clickable (open in a new tab) so the /login auth URL needn't be
   // copied out of the terminal — it wraps across rows and breaks on copy.
   if (window.WebLinksAddon) {
     term.loadAddon(new WebLinksAddon.WebLinksAddon((e, uri) => window.open(uri, "_blank", "noopener")));
   }
   term.open($("terminal"));
+  // Crisp GPU rendering; fall back silently to the default renderer if WebGL2
+  // is unavailable or the context is lost.
+  if (window.WebglAddon) {
+    try {
+      const webgl = new WebglAddon.WebglAddon();
+      webgl.onContextLoss(() => webgl.dispose());
+      term.loadAddon(webgl);
+    } catch {}
+  }
+  // The web font loads async — refit/redraw once it's ready so metrics are right.
+  if (document.fonts && document.fonts.ready) {
+    document.fonts.ready.then(() => {
+      try {
+        fitAddon.fit();
+        term.refresh(0, term.rows - 1);
+      } catch {}
+    });
+  }
   fitAddon.fit();
   term.onData((d) => ws && ws.readyState === 1 && ws.send(JSON.stringify({ type: "input", data: d })));
   term.onResize(({ cols, rows }) => ws && ws.readyState === 1 && ws.send(JSON.stringify({ type: "resize", cols, rows })));
