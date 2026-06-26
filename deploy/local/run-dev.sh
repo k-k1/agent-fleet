@@ -14,9 +14,21 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
+# Go is user-local on this host; ensure `go` is found even when invoked from a
+# non-login shell (e.g. `sg docker -c "deploy/local/run-dev.sh"`).
+export PATH="$HOME/.local/go/bin:$HOME/go/bin:$PATH"
+
 WS_IMAGE="${WS_IMAGE:-agent-fleet/workspace:dev}"
 CP_ADDR="${CP_ADDR:-:8099}"
 WS_DATA="${WS_DATA:-/tmp/af-data}"
+
+# git-provider OAuth config (contains a secret -> git-ignored). If present, export
+# GITHUB_OAUTH_CLIENT_ID / BITBUCKET_OAUTH_KEY / BITBUCKET_OAUTH_SECRET / PUBLIC_BASE_URL.
+# See deploy/local/oauth.env.example.
+OAUTH_ENV="$ROOT/deploy/local/oauth.env"
+if [ -f "$OAUTH_ENV" ]; then
+  set -a; . "$OAUTH_ENV"; set +a
+fi
 
 echo "==> build workspace image ($WS_IMAGE)"
 docker build -t "$WS_IMAGE" "$ROOT/workspace"
@@ -32,4 +44,8 @@ exec env \
   WS_DATA="$WS_DATA" \
   ${WS_SESSION_CMD:+WS_SESSION_CMD="$WS_SESSION_CMD"} \
   ${WS_ENV:+WS_ENV="$WS_ENV"} \
+  ${GITHUB_OAUTH_CLIENT_ID:+GITHUB_OAUTH_CLIENT_ID="$GITHUB_OAUTH_CLIENT_ID"} \
+  ${BITBUCKET_OAUTH_KEY:+BITBUCKET_OAUTH_KEY="$BITBUCKET_OAUTH_KEY"} \
+  ${BITBUCKET_OAUTH_SECRET:+BITBUCKET_OAUTH_SECRET="$BITBUCKET_OAUTH_SECRET"} \
+  ${PUBLIC_BASE_URL:+PUBLIC_BASE_URL="$PUBLIC_BASE_URL"} \
   /tmp/af-cp

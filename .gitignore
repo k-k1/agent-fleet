@@ -1,0 +1,3 @@
+# Local OAuth secrets (per-deployment; never commit).
+# Copy deploy/local/oauth.env.example -> deploy/local/oauth.env and fill in.
+deploy/local/oauth.env

@@ -17,14 +17,17 @@ Phase 1 MVP 完了時点（2026-06-26, commit `dd2330e`）の運用状態・落�
 - **Go**: user-local。`export PATH="$HOME/.local/go/bin:$HOME/go/bin:$PATH"`（go1.26）。
 - **Node**: nvm（`~/.nvm/versions/node/v22.23.1`）。ログインシェルで有効。
 - **Docker**: `k1` は `docker` グループだが**非ログインシェルでは未反映**。コマンドは `sg docker -c '...'` で実行する（または `sudo docker`）。
-- **CP 起動**（host で）:
+- **CP 起動 / 再起動（推奨）**（host で）:
   ```bash
   cd ~/workspace-private/agent-fleet
-  ( cd control-plane && PATH="$HOME/.local/go/bin:$PATH" go build -o /tmp/af-cp . )
-  sg docker -c 'CP_ADDR=:8099 WS_IMAGE=agent-fleet/workspace:dev \
-    CONSOLE_DIR=$PWD/console WS_DATA=/tmp/af-data /tmp/af-cp'
-  # もしくは: sg docker -c "$PWD/deploy/local/run-dev.sh"   # イメージbuild+CP起動
+  pkill -x af-cp 2>/dev/null
+  sg docker -c "cd $PWD && nohup ./deploy/local/run-dev.sh > /tmp/af-cp.log 2>&1 &"
   ```
+  `run-dev.sh` は イメージ build + CP build + 起動を一括で行い、**`deploy/local/oauth.env`（git管理外）を自動 source して
+  OAuth env（`GITHUB_OAUTH_CLIENT_ID`/`BITBUCKET_OAUTH_KEY`/`BITBUCKET_OAUTH_SECRET`/`PUBLIC_BASE_URL`）を CP に渡す**。
+  Go PATH もスクリプト内で前置するので `sg docker -c` でも動く。**この env を渡さないと Console の「OAuth 接続」が
+  「未設定」になり token 貼付にフォールバック**（設定は `deploy/local/oauth.env.example` 参照）。
+  - 手動で CP だけ起動する場合も OAuth を効かせるには先に `set -a; . deploy/local/oauth.env; set +a` してから `/tmp/af-cp` を起動する。
 - **CP 停止**: `pkill -x af-cp`（`pkill -f /tmp/af-cp` は自分のシェルも巻き込むので使わない）。
 - Console は CP がディスクから配信し `Cache-Control: no-store`。**編集はリロードだけで反映**（再ビルド不要）。
 - Go/Agent やイメージを変えたら: イメージ再ビルド → CP の UI で **Stop→Start**（または `docker rm -f af-ws-dev`）。ホーム(`/login`)は永続。
@@ -68,8 +71,16 @@ API/契約は [06](06-api-spec.md)・[07](07-workspace-agent.md)。CP↔Agent �
 
 目標: オンプレ 1 台で**複数ユーザーが相互不可視**に並行利用 + アダプタ層を固める（[05](05-roadmap.md) / [09 §9.5](09-portability.md#95-ローカルの-2-形態authgateway-で切替)）。
 
+> **▶ 次セッションの起点 = #1 per-user Workspace 化（+ #2 AuthGateway は対）。** リポジトリ管理(§6.5)・Connections/git+Claude OAuth(§6.6)
+> は実装・実機検証まで完了。残るコア未着手は per-user 化（複数ユーザーの本丸）。**このホストは RAM 逼迫（`host-oom-fleet-risk`）→
+> コンテナを増やす per-user 化は検証時に OOM 注意**（`free -h` で数 GiB 確保 / `--memory` 必須 / フリート縮小）。
+
 1. **per-user Workspace 化** — 今は単一 `af-ws-dev`。CP が user→container を払い出し（`af-ws-<user>`）、
    ホームを `/tmp/af-data/<user>/home` に分離。Runtime/Volume/AuthGateway を [09 §9.3](09-portability.md#93-ポート定義go-インターフェース概略) のインターフェースに整理。
+   - 現状の `dockerRuntime`（`control-plane/runtime.go`）は name/dataDir 固定の単一コンテナ。これを user キーの map 化し、
+     `af-ws-<user>` を払い出す。Connections のストアは既に「コンテナ home＝隔離境界」なので、home を user 別に分ければ資格情報も自然に分離。
+   - Agent 契約（/sessions, /repos, /connections）は不変。CP のルーティングが user→対象コンテナを解決するだけ。
+   - dev は単一固定ユーザーのまま動かしつつ、#2 AuthGateway で実ユーザー識別（oauth2-proxy のメールヘッダ）に置換。
 2. **AuthGateway = oauth2-proxy** — CP は `X-Forwarded-...`/oauth2-proxy のヘッダ（認証済みメール）から user を解決（dev 固定IDを置換）。
 3. ~~**リポジトリ管理** — clone/checkout/branch/status~~ ✅ **実装済**（§6.5）。clone-then-start 込み。private は §6.6 の git コネクタで解決。
 4. ~~**SSH 鍵**~~ → **HTTPS トークン方式に変更**（§6.6 Connections）。ホスト型・多人数では token/OAuth が運用素直（失効・スコープ・API 一覧）。SSH ed25519 は任意の後付けに格下げ。
