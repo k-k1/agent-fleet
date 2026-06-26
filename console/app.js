@@ -119,7 +119,22 @@ function reconstructURL() {
   }
   return null;
 }
+// The login prompt is active only while the cursor sits on claude's
+// "Paste code here >" line. Gating on this avoids matching a stale URL that
+// lingers in the buffer after login completes.
+function loginAwaiting() {
+  const buf = term.buffer.active;
+  const cy = buf.baseY + buf.cursorY;
+  for (let y = cy; y >= Math.max(0, cy - 4); y--) {
+    if (/paste code here/i.test(buf.getLine(y)?.translateToString(true) ?? "")) return true;
+  }
+  return false;
+}
 function scanForLoginURL() {
+  if (!loginAwaiting()) {
+    banner.hidden = true;
+    return;
+  }
   const url = reconstructURL();
   if (url && url !== dismissedUrl) {
     if (url !== lastUrl) {
@@ -128,7 +143,7 @@ function scanForLoginURL() {
     }
     banner.hidden = false;
   } else {
-    banner.hidden = true; // URL scrolled away / not present => hide
+    banner.hidden = true;
   }
 }
 
