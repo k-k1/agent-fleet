@@ -45,7 +45,7 @@ Phase 1 MVP 完了時点（2026-06-26, commit `dd2330e`）の運用状態・落�
 workspace/          Workspace イメージ
   Dockerfile        multi-stage(golang→node:22-slim)。claudeは焼かず entrypoint で起動時 install。
   entrypoint.sh     最新claude install/update → settings.json seed → exec agent。CLAUDE_INSTALL/CLAUDE_AUTO_UPDATE で制御。
-  agent/            Workspace Agent(Go)。main/session/terminal/uuid/git.go。HTTP:/sessions・/repos, WS:/ws/pty。
+  agent/            Workspace Agent(Go)。main/session/terminal/uuid/git/connections/claude_auth.go。HTTP:/sessions・/repos・/connections, WS:/ws/pty。
 control-plane/      Control Plane(Go)。main(routing+no-store)/runtime(docker)/proxy(REST+WS)。
 console/            最小Console(xterm.js: fit/web-links/unicode11/webgl)。index.html/app.js/style.css。
 deploy/local/run-dev.sh   dev 起動スクリプト。
@@ -71,9 +71,9 @@ API/契約は [06](06-api-spec.md)・[07](07-workspace-agent.md)。CP↔Agent �
 1. **per-user Workspace 化** — 今は単一 `af-ws-dev`。CP が user→container を払い出し（`af-ws-<user>`）、
    ホームを `/tmp/af-data/<user>/home` に分離。Runtime/Volume/AuthGateway を [09 §9.3](09-portability.md#93-ポート定義go-インターフェース概略) のインターフェースに整理。
 2. **AuthGateway = oauth2-proxy** — CP は `X-Forwarded-...`/oauth2-proxy のヘッダ（認証済みメール）から user を解決（dev 固定IDを置換）。
-3. ~~**リポジトリ管理** — clone/checkout/branch/status~~ ✅ **実装済**（下記「Phase 2 進捗」）。残: SSH 鍵連携で private repo clone。
-4. **SSH 鍵** — ユーザー単位 ed25519 を `~/.ssh` に生成、公開鍵表示 + 接続テスト（[08](08-bitbucket.md)）。
-5. **settings.json 編集 UI** + **Claude 認証状態表示**（[06 §6.7/6.8](06-api-spec.md#67-claude-認証状態login)。状態は `.credentials.json` 有無 + `claude -p` プローブ）。
+3. ~~**リポジトリ管理** — clone/checkout/branch/status~~ ✅ **実装済**（§6.5）。clone-then-start 込み。private は §6.6 の git コネクタで解決。
+4. ~~**SSH 鍵**~~ → **HTTPS トークン方式に変更**（§6.6 Connections）。ホスト型・多人数では token/OAuth が運用素直（失効・スコープ・API 一覧）。SSH ed25519 は任意の後付けに格下げ。
+5. ~~**Claude 認証状態表示**~~ ✅ **実装済**（§6.6。`GET /connections` の claude.connected = トークンファイル有無）。残: settings.json 編集 UI。
 6. （任意）**claude 終了時にシェルへフォールバック** — セッション突然切断の体験を改善（session.go の tmux 起動を `claude …; exec bash -l` 等）。
 
 ## 6.5 Phase 2 進捗（リポジトリ管理 — 実装済）
@@ -86,7 +86,32 @@ API/契約は [06](06-api-spec.md)・[07](07-workspace-agent.md)。CP↔Agent �
 - **CP**（`control-plane/main.go`）: `/api/repos*` を追加。既存 `proxyAgentREST`（`/api` 剥がし）でそのまま Agent へ委譲。
 - **Console**: サイドバーに **Repos パネル**（clone URL+branch / 一覧+dirty●/branch切替select(遅延ロード)/fetch⤓/`▶`そのdirでsession起動/✕delete）。
 - **検証済**（CP経由 E2E）: list→clone(`octocat/Hello-World`)→status→branches→checkout(test)→fetch→dirty検出→409/400エラー系→delete。`docs/06 §6.4` のレスポンス形に整合。
-- **残課題**: private repo は **SSH 鍵（[Phase 2 #4](#6-phase-2-でやること次の作業)）未実装**のため未対応。clone は非対話で即失敗する。per-user 化したら repos は各ユーザーのホーム配下に自然に分離される（Agent 契約は不変）。
+- **clone-then-start**（追加実装）: `POST /sessions` が `remote_url`+`branch` を受け、clone（既存なら再利用＋checkout）→その working copy を CWD に claude 起動。Console の New session フォームに clone URL/branch 欄。
+- per-user 化したら repos は各ユーザーのホーム配下に自然に分離される（Agent 契約は不変）。
+
+## 6.6 Phase 2 進捗（Connections — WebUI 駆動の統合認証・実装済）
+
+CP 利用者がプロバイダごとに **WebUI で認証**し、得た資格情報を**コンテナ home に保存→コンテナ内の git/claude が利用**。
+ターミナル CLI 認証は不要。前段の **Google oauth2-proxy は「閉鎖空間の周縁ゲート」にすぎず別レイヤ**（funnel が全リクエストを
+Google 認証ゲートするため、リダイレクト型 OAuth コールバックは壁に当たる → **コールバック不要の方式**を採用）。設計詳細は
+`~/.claude/plans/abundant-honking-scroll.md`。参考: `../git-reader`(CodeLeaf) の HTTPS トークン束縛。
+
+- **モデル**: 接続 = CP 利用者 × プロバイダ。dev は単一固定ユーザー（ストアはコンテナ home そのもの）。**真の利用者識別は AuthGateway（#2）の別タスク**。
+- **git**（`connections.go`）: `PUT/DELETE /connections/git/{host}`（host∈`github.com|bitbucket.org`）。
+  `~/.git-credentials` に `https://user:token@host` を upsert + `credential.helper=store` を保証 → clone/fetch/**push** が透過認証。
+  GitHub=`x-access-token`+PAT、Bitbucket=Atlassian email+API token（CodeLeaf 準拠）。任意で `user.name/email` も設定。
+  **検証済**: `git credential fill` が stored token を返す＝git が実利用することを実証。
+- **Claude**（`claude_auth.go`）: `POST /connections/claude/{start,complete}`・`DELETE /connections/claude`。
+  Agent が `claude setup-token` を **PTY 駆動**（広い PTY で Ink 折返し回避→ANSI 除去で authorize URL を1行抽出）。
+  Console が URL 表示→ユーザーがブラウザ承認→コード貼付→**長命トークン(`sk-ant-oat…`, 1年, サブスク, 可搬)** を捕捉し
+  `~/.config/agent-fleet/claude-oauth-token`(0600) に保存。`session.go` が新規 tmux セッションへ `-e CLAUDE_CODE_OAUTH_TOKEN`
+  を注入 → `/login` 不要で claude 認証（コンテナ再起動不要）。`CLAUDE_CODE_OAUTH_TOKEN` は claude-code-guide で挙動確認済み。
+- **CP**: `/api/connections*` を `proxyAgentREST` で委譲（**秘密は CP を保持・解釈しない**）。**Console**: Connections パネル（Claude/GitHub/Bitbucket、接続/切断/状態●）。
+- **保存は home 平文**（0600、`.credentials.json` と同レベル＝コンテナ home が隔離境界）。**shared 形態では CP マスタ鍵で暗号化が必要（別タスク）**。
+- **残継ぎ目**: Claude の **実 OAuth（ブラウザ承認→実コード→実トークン捕捉）はユーザーが 1 回実施して確定**。
+  URL 抽出・コード注入・env 注入・トークン正規表現の骨格は検証済み。もし `complete` が `no_token` を返すなら
+  実トークンの prefix を確認し `claude_auth.go` の `tokenRe` を調整。
+- **後続**: GitHub Device Flow（要 OAuth App、PAT 作成を不要化）/ Bitbucket OAuth / トークン暗号化 / SSH 鍵（任意）。
 
 ## 7. 動作確認の最短手順
 
@@ -94,7 +119,11 @@ API/契約は [06](06-api-spec.md)・[07](07-workspace-agent.md)。CP↔Agent �
 # CP が落ちていたら 2. の手順で起動
 curl -s http://127.0.0.1:8099/api/workspace            # {"state":"running"|"stopped"}
 # ブラウザ: https://af.example.ts.net/agent-fleet/  (ハードリロード)
-#   Start → New(name=main, dir空) → 端末に claude → 必要なら /login(⧉ sign-in URL でURL取得)
+#   Start
+#   Connections: [Claude 接続]→URL承認→コード貼付 / [GitHub 接続]→PAT / [Bitbucket]→email+token
+#   Repos: clone URL→Clone（private は上の git 接続が前提）
+#   New(name=main, dir空 または clone URL 指定) → 端末で claude（接続済なら /login 不要）
+# 旧来の手動経路: 端末で claude → /login（⧉ sign-in URL でURL取得）も併用可
 ```
 
 ## 8. コミット規約
