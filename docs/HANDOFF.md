@@ -123,7 +123,7 @@ Google 認証ゲートするため、リダイレクト型 OAuth コールバッ
   `~/.config/agent-fleet/claude-oauth-token`(0600) に保存。`session.go` が新規 tmux セッションへ `-e CLAUDE_CODE_OAUTH_TOKEN`
   を注入 → `/login` 不要で claude 認証（コンテナ再起動不要）。`CLAUDE_CODE_OAUTH_TOKEN` は claude-code-guide で挙動確認済み。
 - **CP**: `/api/connections*` を `proxyAgentREST` で委譲（**秘密は CP を保持・解釈しない**）。**Console**: Connections パネル（Claude/GitHub/Bitbucket、接続/切断/状態●）。
-- **保存は home 平文**（0600、`.credentials.json` と同レベル＝コンテナ home が隔離境界）。**shared 形態では CP マスタ鍵で暗号化が必要（別タスク）**。
+- **保存は暗号ストア `secrets.enc`**（AES-256-GCM、0600、§6.8 A3）。CP マスタ鍵から per-user サブ鍵を導出し起動時注入。旧 home 平文（`.git-credentials`/`bitbucket.json`/`claude-oauth-token`）は廃止し起動時に自動移行。claude 自身の `/login` 資格（`.claude/.credentials.json`）は claude が書くので範囲外。
 - **実 OAuth 検証済**（2026-06-26）: ブラウザ承認→コード貼付→トークン捕捉→保存まで成功し、
   `CLAUDE_CODE_OAUTH_TOKEN=<captured> claude -p …` が応答（=`/login` 無しで認証）を確認。
   ハマり: コードと Enter を**同一書き込み**で送ると Ink が Enter を認識せず未送信になる →
@@ -165,7 +165,7 @@ CP のルーティングが user→対象コンテナを解決するだけ。
 **A. 相互不可視＝セキュリティ境界（MVP必須）**
 - [x] **A1 コンテナ間ネットワーク分離** — `af-net-<user>`（§6.7 末尾）。実装・検証済。
 - [x] **A2 CP↔Agent 認証**（[07 §7.5](07-workspace-agent.md#75-control-plane-との認証)）— per-container `AGENT_TOKEN` を CP が `-e` 注入、proxy(REST/WS)+Bitbucket callback に Bearer 付与、Agent は `requireToken`（`/healthz` 除く・定数時間比較）。CP 再起動時は inspect で採用。実装・検証済（no/wrong=401, correct=200, /ws/pty も同様）。
-- [ ] **A3 資格情報の暗号化** — home 平文（`.git-credentials`/claude/bitbucket トークン）。shared では host operator/他テナント視点で平文 → CP マスタ鍵で at-rest 暗号化（§6.6 末尾）。A1/A2 の後の at-rest 層。
+- [x] **A3 資格情報の at-rest 暗号化** — 全資格を単一暗号ストア `secrets.enc`（AES-256-GCM）へ集約（`workspace/agent/secrets.go`）。鍵は CP 注入の per-user `AF_SECRET_KEY`（=HMAC(SHA256(`AF_MASTER_KEY`),user)、master はデータ領域外）。git は統一 helper `workspace-agent cred` が都度復号出力（平文ファイルを作らない）。起動時に旧平文を自動移行。実装・実機検証済（ディスクは ciphertext のみ、`git credential fill` 復号OK、運用者コンテナ移行済）。`AF_MASTER_KEY` 未設定の dev は `secrets.json` 平文（同一経路）。
 
 **B. shared 形態を実際に通す（MVP必須・軽い）**
 - [x] **B1 `AUTH=proxy` 実機検証 + 有効化** — `GET /api/whoami`（`control-plane/runtime.go`）で実チェーンが `X-Forwarded-Email`（=k1.kami@gmail.com, sanitized `k1-kami-gmail-com`）を CP まで届けることを確認。`AUTH=proxy` を有効化し dev home を email キーへ移行、Console 実機 OK。**併せてセキュリティ修正**: proxy モードはヘッダ欠落＝401（DEV_USER フォールバック廃止＝ゲート迂回封じ）、CP は `127.0.0.1` 束縛。`x_forwarded_user` は Google 数値 subject ID なので user キーは email を採用。
@@ -178,7 +178,7 @@ CP のルーティングが user→対象コンテナを解決するだけ。
 **D. 後回し / 格下げ済み**
 - SSH 鍵 → HTTPS トークンに格下げ済（任意）。全ポートの Go interface 整形（MetadataStore/SecretStore 形式化）は Phase 3(AWS) 着手時。AWS アダプタ = Phase 3。
 
-> 残: **A3 暗号化のみ**。A1・A2・B1 完了済（shared 形態ライブ）。A3 完了で MVP（相互不可視＋実ユーザー識別）が揃う。
+> **MVP（Phase 2 完了条件）達成**: A1（ネットワーク分離）・A2（CP↔Agent 認証）・B1（shared ライブ）・A3（at-rest 暗号化）すべて完了。相互不可視＋実ユーザー識別＋秘密の at-rest 暗号化が揃った。残 C/D は任意・後続フェーズ。
 
 ## 7. 動作確認の最短手順
 
