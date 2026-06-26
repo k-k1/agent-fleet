@@ -5,10 +5,12 @@
 package main
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -51,9 +53,33 @@ func main() {
 	mux.HandleFunc("DELETE /connections/claude", handleClaudeDisconnect)
 
 	log.Printf("workspace-agent listening on %s", addr)
-	if err := http.ListenAndServe(addr, logRequests(mux)); err != nil {
+	if err := http.ListenAndServe(addr, logRequests(requireToken(mux))); err != nil {
 		log.Fatal(err)
 	}
+}
+
+// requireToken enforces the CP↔Agent shared token (docs/07 §7.5): the Control
+// Plane injects AGENT_TOKEN at container start and presents it as a Bearer on
+// every request. /healthz stays open (used for the startup readiness probe).
+// If AGENT_TOKEN is unset the gate is disabled — a safety valve for manual
+// debugging; the CP always injects one in normal operation.
+func requireToken(next http.Handler) http.Handler {
+	token := os.Getenv("AGENT_TOKEN")
+	if token == "" {
+		log.Printf("WARNING: AGENT_TOKEN unset — CP↔Agent auth disabled (dev only)")
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if token == "" || r.URL.Path == "/healthz" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		got := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		if subtle.ConstantTimeCompare([]byte(got), []byte(token)) != 1 {
+			writeErr(w, http.StatusUnauthorized, "unauthorized", "missing or invalid agent token")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func handleHealth(w http.ResponseWriter, r *http.Request) {

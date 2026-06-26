@@ -13,7 +13,8 @@ import (
 // proxyAgentREST forwards /api/sessions* to the Workspace Agent's /sessions*.
 // The Control Plane never talks to tmux directly; it delegates to the Agent.
 func (c config) proxyAgentREST(w http.ResponseWriter, r *http.Request) {
-	target := c.rtFor(r).agentBase() + strings.TrimPrefix(r.URL.Path, "/api")
+	rt := c.rtFor(r)
+	target := rt.agentBase() + strings.TrimPrefix(r.URL.Path, "/api")
 	if r.URL.RawQuery != "" {
 		target += "?" + r.URL.RawQuery
 	}
@@ -24,6 +25,9 @@ func (c config) proxyAgentREST(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.Header = r.Header.Clone()
+	if rt.token != "" {
+		req.Header.Set("Authorization", "Bearer "+rt.token) // CP↔Agent auth
+	}
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -50,8 +54,12 @@ func (c config) proxyTerminal(w http.ResponseWriter, r *http.Request) {
 	rt := c.rtFor(r)
 	agentURL := url.URL{Scheme: "ws", Host: rt.agentHost + ":" + rt.agentPort, Path: "/ws/pty", RawQuery: r.URL.RawQuery}
 
+	var hdr http.Header
+	if rt.token != "" {
+		hdr = http.Header{"Authorization": []string{"Bearer " + rt.token}} // CP↔Agent auth
+	}
 	dialer := websocket.Dialer{HandshakeTimeout: 10 * time.Second}
-	up, _, err := dialer.Dial(agentURL.String(), nil)
+	up, _, err := dialer.Dial(agentURL.String(), hdr)
 	if err != nil {
 		http.Error(w, "cannot reach workspace agent terminal", http.StatusBadGateway)
 		return

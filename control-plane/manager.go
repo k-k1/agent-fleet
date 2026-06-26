@@ -56,6 +56,11 @@ func (m *manager) forUser(user string) *dockerRuntime {
 	} else if p, err := strconv.Atoi(port); err == nil && p >= m.nextPort {
 		m.nextPort = p + 1 // keep the allocator ahead of adopted ports
 	}
+	// Adopt a running container's token across CP restarts; else mint a fresh one.
+	token := dockerEnvValue(name, "AGENT_TOKEN")
+	if token == "" {
+		token = randHex(24)
+	}
 	rt := &dockerRuntime{
 		image:      m.image,
 		name:       name,
@@ -63,6 +68,7 @@ func (m *manager) forUser(user string) *dockerRuntime {
 		dataDir:    filepath.Join(m.dataRoot, user),
 		agentHost:  m.agentHost,
 		agentPort:  port,
+		token:      token,
 		memory:     m.memory,
 		sessionCmd: m.sessionCmd,
 		extraEnv:   m.extraEnv,
@@ -106,4 +112,21 @@ func dockerPublishedPort(name string) string {
 		return ""
 	}
 	return strings.TrimSpace(string(out))
+}
+
+// dockerEnvValue returns the value of an env var baked into a container's config
+// (e.g. AGENT_TOKEN), or "" if the container does not exist or lacks the var.
+func dockerEnvValue(name, key string) string {
+	out, err := exec.Command("docker", "inspect", "-f",
+		`{{range .Config.Env}}{{println .}}{{end}}`, name).Output()
+	if err != nil {
+		return ""
+	}
+	prefix := key + "="
+	for _, line := range strings.Split(string(out), "\n") {
+		if strings.HasPrefix(line, prefix) {
+			return strings.TrimSpace(strings.TrimPrefix(line, prefix))
+		}
+	}
+	return ""
 }

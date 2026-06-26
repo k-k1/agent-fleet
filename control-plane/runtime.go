@@ -22,6 +22,7 @@ type dockerRuntime struct {
 	dataDir    string // host path; <dataDir>/home is bind-mounted to ~ in the container
 	agentHost  string
 	agentPort  string
+	token      string // CP↔Agent shared secret (injected as AGENT_TOKEN; docs/07 §7.5)
 	memory     string
 	sessionCmd string
 	extraEnv   []string // KEY=VAL passed to the workspace container (e.g. CLAUDE_INSTALL=0)
@@ -73,6 +74,9 @@ func (d *dockerRuntime) start(ctx context.Context) error {
 	}
 	if d.network != "" {
 		args = append(args, "--network", d.network)
+	}
+	if d.token != "" {
+		args = append(args, "-e", "AGENT_TOKEN="+d.token)
 	}
 	if d.sessionCmd != "" {
 		args = append(args, "-e", "AGENT_SESSION_CMD="+d.sessionCmd)
