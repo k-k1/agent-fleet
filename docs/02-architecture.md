@@ -190,6 +190,27 @@ Browser xterm.js ──WSS──▶ ALB ──▶ Control Plane(WSプロキシ) 
 > 確認: 方式 A のコード貼り戻しと setup-token の存在は確定。Remote Control 非対応の制約も同上。
 > 不透明: コールバックポート番号、`.credentials.json` のフォーマット、状態取得の公式 API（いずれも非公開/非提供）。
 
+### 検証結果（実機確認, 2026-06-26 / claude v2.1.193）
+ヘッドレスコンテナ内 + Tailscale Funnel 越しの Web ターミナルで方式 A を実走させ、次を確定。
+
+- ログイン方法の選択肢は 3 つ:
+  `1. Claude account with subscription` / `2. Anthropic Console account` / `3. 3rd-party platform`。
+  各自アカウント運用なので **1 を採用**。
+- 1 を選ぶと CLI は認証 URL を表示し、その **`redirect_uri` は `https://platform.claude.com/oauth/code/callback`**
+  （`code=true`）。**localhost コールバックに一切依存しない**＝ヘッドレス/リモートで無条件に成立する。
+  → 設計最大のリスク（localhost コールバック到達性）は**消滅**。方式 A は「フォールバック」ではなく本流。
+- 認可後 `platform.claude.com` 側にコードが表示され、それをターミナルに貼り戻すと完了。
+  `~/.claude/.credentials.json`（`{"claudeAiOauth":{"accessToken":"sk-ant-oat01-…"}}`, 600）に保存され、
+  **永続ホームのため再起動後も再ログイン不要**。
+- 観測したスコープ: `org:create_api_key user:profile user:inference user:sessions claude_code
+  user:mcp_servers user:file_upload`（`user:sessions` 等を含む本認証）。
+
+### コンソールの URL 受け渡し（実装上の注意）
+claude の UI（Ink）は認証 URL を**端末幅でハード改行**するため、端末内の選択コピーは改行が混入し、
+xterm の web-links も 1 行目しかリンク化できない。→ Console は **xterm バッファから折返し行を連結して
+URL 全体を復元**し、ヘッダの「⧉ sign-in URL」ボタンでオンデマンドにコピーさせる（自動バナーは誤検出の
+温床になり廃止）。詳細は [11 §11.10](11-phase1-plan.md#1110-実装結果と実運用の知見phase-1-完了)。
+
 ## 2.7 サンドボックス設計（C2）
 
 二段構え。

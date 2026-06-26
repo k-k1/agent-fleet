@@ -5,7 +5,11 @@
 Web から起動・操作・管理する。同一コアを**ローカル（Docker）でも AWS でも**動かせるよう
 デプロイ層をポート&アダプタで分離する（[docs/09](docs/09-portability.md)）。
 
-このリポジトリは現時点では**設計ドキュメント置き場**。実装はまだ無い。
+**状態: Phase 1 MVP 完了（実機検証済み, 2026-06-26）。** ローカル Docker 上で Workspace Agent +
+Control Plane + 最小 Console が動作し、Tailscale Funnel 越しのブラウザから各自アカウントの `/login` を含む
+フルチェーンを確認済み（[docs/11 §11.10](docs/11-phase1-plan.md#1110-実装結果と実運用の知見phase-1-完了)）。
+コード: [`workspace/`](workspace/)（Agent + イメージ）/ [`control-plane/`](control-plane/) /
+[`console/`](console/) / 起動は [`deploy/local/run-dev.sh`](deploy/local/run-dev.sh)。次は Phase 2。
 
 ## 確定済みの前提（v1）
 

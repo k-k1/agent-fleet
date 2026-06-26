@@ -3,6 +3,12 @@
 ロードマップ [Phase 0](05-roadmap.md#phase-0--pocローカル-dev-既存資産の延長) の実行手順。
 最小スキャフォールドは [`phase0/`](../phase0/)。本書は「何を確かめ、何を記録し、どこで合格とするか」を定義する。
 
+> **状態: 検証完了（2026-06-26 / claude v2.1.193）。** 最大リスク（ヘッドレスでの `/login`）は解消。
+> サブスク認証は `redirect_uri=platform.claude.com/oauth/code/callback` で **localhost コールバック非依存**、
+> ヘッドレス/リモートで無条件に成立する（H1〜H3 達成）。`.credentials.json` は永続ホームで再起動後も有効。
+> 実機の確定事項は [02 §2.6 検証結果](02-architecture.md#26-claude-login-フロー) と
+> [11 §11.10](11-phase1-plan.md#1110-実装結果と実運用の知見phase-1-完了)。以下は当初の検証計画（記録として残す）。
+
 ## 10.1 目的と最大リスク
 
 設計最大の未知は **「ヘッドレスコンテナで `claude /login`（claude.ai の OAuth）が完了できるか」**。

@@ -123,3 +123,36 @@ docker compose up --build -d
 - Phase 1 は dev 形態（認証バイパス・単一ユーザー）。隔離/認証強化は Phase 2 以降。
 - `claude /login` は [10](10-phase0-poc.md) の方式 A（対話コード貼り戻し）をターミナルから実施。
 - docker.sock を CP に渡す = ホスト root 相当（[09 §9.8](09-portability.md#98-ローカル特有のセキュリティ留意)）。dev 前提で許容。
+
+## 11.10 実装結果と実運用の知見（Phase 1 完了）
+
+**状態: 完了・実機検証済み（2026-06-26）。** M1〜M5 を実装し、実際の公開経路で E2E 動作を確認した。
+
+### 検証した経路（実機）
+```
+ブラウザ → Tailscale Funnel(HTTPS) → oauth2-proxy(Google) → Caddy(strip /agent-fleet)
+        → Control Plane → Docker で Workspace 起動 → Agent → PTY → tmux → 実 claude
+```
+Workspace 起動/停止、セッション作成/一覧/停止、ターミナル往復、ホーム永続、tmux 分離、
+各自アカウントの `/login`（方式A）、日本語表示までを確認。
+
+### 計画からの差分（確定）
+- **claude は実行時 install**（イメージに焼かない）。entrypoint が起動時に最新を `~/.local` へ install/update
+  → 再ビルドなしで常に最新。`INSTALL_CLAUDE` build-arg は廃止、`CLAUDE_INSTALL` env で制御。
+- **M5 は host-CP 版**（`deploy/local/run-dev.sh`）で実現。compose（CP もコンテナ化 + afnet）は後続（[09](09-portability.md)）。
+- CP のポートは **8099**（8080 はこの環境で使用中）。
+- まだ**単一 Workspace**（`af-ws-dev`）。per-user 化は Phase 2。
+
+### 実運用で潰した点（再発防止メモ）
+- **base-path**: Console は API/WS/アセットを相対パス化し、`/agent-fleet` strip 配下でも動くように（`<base>` 補正つき）。
+- **UTF-8 locale**: コンテナ既定の POSIX だと tmux が UTF-8 を無効化し CJK が化ける → `ENV LANG=C.UTF-8`。
+- **bypass 警告の誤 exit**: `--dangerously-skip-permissions` の初回警告で `No, exit` を選ぶと claude 終了
+  → entrypoint で `~/.claude/settings.json` に `skipDangerousModePermissionPrompt: true` を seed。
+- **Console キャッシュ**: 静的配信に `Cache-Control: no-store`（dev 中の反映漏れを防止）。
+- **端末描画**: 絵文字の半クリップは unicode11 アドオン、見栄えは WebGL + JetBrains Mono。
+- **/login URL の受け渡し**: Ink がハード改行するため、バッファから折返し連結で URL を復元し
+  「⧉ sign-in URL」ボタンでオンデマンド Copy（自動バナーは誤検出が多く廃止）。→ [02 §2.6](02-architecture.md#26-claude-login-フロー)。
+
+### 次フェーズの入口
+per-user Workspace 化（CP が user→container を払い出し）、リポジトリ管理、SSH 鍵、settings.json 編集 UI、
+Claude 認証状態表示。→ [05 ロードマップ](05-roadmap.md)。
