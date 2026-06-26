@@ -41,7 +41,7 @@
 
 確定前提（2026-06-27）: **パッケージ製品・各社セルフホスト / BYO 継続 / 会社間=デプロイ分離（最強）/ デプロイ内マルチテナント=任意（既定 単一）/ 小規模（1 デプロイ 数十〜百ユーザー）/ デプロイ先は各社選択（オンプレ既定・自社 AWS 任意）**。
 
-- **P3-1** MetadataStore（Postgres/極小 SQLite）+ 階層モデル + RBAC — 全ての土台（現状 DB 無し）。Plan 抽象なし、Tenant 直付け。
+- **P3-1** MetadataStore（**SQLite 既定**、Postgres は AWS/HA 時）+ 階層モデル + RBAC — 全ての土台（現状 DB 無し）。Plan 抽象なし、Tenant 直付け。
 - **P3-2** アイデンティティ & テナント解決（AuthGateway 拡張、各社 OAuth、emails.txt→DB）。
 - **P3-3** per-deployment/tenant 封筒暗号鍵（custodian 抽象＝**オンプレ Vault/ファイル優先**、KMS は AWS アダプタ。Phase 2 の単一 master 昇格）。
 - **P3-4** リソースバジェット/クォータ（テナント+ユーザー。**インフラ資源**のみ）。

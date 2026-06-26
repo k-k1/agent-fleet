@@ -188,7 +188,7 @@ CP のルーティングが user→対象コンテナを解決するだけ。
 確定前提（2026-06-27）: **パッケージ製品・各社セルフホスト / BYO 継続 / 会社間=デプロイ分離（最強）/ デプロイ内マルチテナント=任意（既定 単一） / 小規模 / デプロイ先は各社選択（オンプレ既定・自社 AWS 任意）**。
 
 - **構造**: 1 デプロイ = 1 社。中は `super_admin`（その社情シス）/ `Tenant`（部署, 既定 1）/ `User`。旧 `platform_admin`(=我々)は廃止（我々は運用しない）。
-- **gating item = P3-1 DB 化**: 現状 DB 無し（フォルダ名=ID、in-memory map）。Postgres（極小は SQLite）MetadataStore が土台。Plan 抽象は持たず Tenant 直付け。
+- **gating item = P3-1 DB 化**: 現状 DB 無し（フォルダ名=ID、in-memory map）。**SQLite 既定**の MetadataStore（pure-Go `modernc.org/sqlite`・WAL・goose）が土台。Postgres は港の裏で AWS/HA 時のみ。Plan 抽象は持たず Tenant 直付け。
 - **バジェット**=インフラ資源（Workspace/セッション/ディスク/メモリ）。各社の自社ホスト資源保護 + 社内 showback。外部課金なし。
 - **鍵**: 単一 `AF_MASTER_KEY`→HMAC を **封筒暗号 + custodian 抽象**へ昇格（**オンプレ=Vault/ファイル KEK 優先、KMS は AWS アダプタ**）。per-workspace DEK。Agent `secrets.go` 無改修。会社/部署離脱は鍵 disable で crypto-shred。
 - **P3-10 パッケージング**=提供モデルの核（compose/Helm + 設定 + マイグレーション + runbook、phone-home なし）。完了判定=**第2デプロイをゼロから立てて E2E 通過**。

@@ -20,7 +20,7 @@ Phase 2 で「オンプレ 1 台・複数ユーザー相互不可視・at-rest �
 | デプロイ内マルチテナント | **任意機能（既定=単一テナント=全社）** | 大きい社が**部署/プロジェクト単位**で分割したい時のみ有効化。`tenant` 概念はモデル/API に残し、UI/委譲は後付け。 |
 | バジェット | **per-deployment・その社の管理者が設定** | Workspace 数・セッション数・ディスク GB・メモリ/CPU。自社ホスト保護 + 社内 showback（部署別は任意）。外部課金なし。 |
 | デプロイ先 | **各社の選択**（既定 = オンプレ Docker/compose、任意で自社 AWS）| ポート&アダプタ（[09](09-portability.md)）はそのまま「**各社が選ぶ**」軸に。我々は両アダプタを同梱。 |
-| 想定規模 | **小（1 デプロイ = 数十〜百ユーザー）** | 分散基盤を作り込まない。**Postgres 単体（極小は SQLite）+ per-deployment 鍵**。 |
+| 想定規模 | **小（1 デプロイ = 数十〜百ユーザー）** | 分散基盤を作り込まない。**DB は SQLite 既定**（CP 1 プロセス/1 ホストに最適・外部依存ゼロ）。Postgres は AWS/HA 時のみ。+ per-deployment 鍵。 |
 
 > **最重要の含意**: 「我々が運用する基盤」は無い。各デプロイは**その社のもの**——データ・鍵・OAuth 設定・ユーザー管理は**すべてその社が握る**。
 > 我々の責務は「**正しく動き・安全に隔離し・楽に設置/更新できるパッケージ**」を作ること。多くの社は**単一テナント**で運用し、マルチテナントは大企業向けの任意拡張。
@@ -50,7 +50,7 @@ Deployment（1 社が自社ホスト。データ・鍵・設定をその社が�
 
 | # | ワークストリーム | 依存 | 旧ロードマップ対応 | 規模配慮（小） |
 |---|------------------|------|--------------------|----------------|
-| P3-1 | **MetadataStore（Postgres）+ 階層モデル + RBAC** | — | （新規・全ての土台）| Postgres 単体（極小は SQLite）。Plan 抽象は持たず Tenant 直付け。 |
+| P3-1 | **MetadataStore（SQLite 既定）+ 階層モデル + RBAC** | — | （新規・全ての土台）| SQLite アダプタのみ実装。Postgres は港の裏で AWS/HA 時。Plan 抽象なし Tenant 直付け。 |
 | P3-2 | **アイデンティティ & テナント解決**（AuthGateway 拡張）| P3-1 | Phase 2 §6.7 の延長 | 各社が自社 OAuth を設定。emails.txt→DB。 |
 | P3-3 | **per-deployment/tenant 封筒暗号鍵**（custodian 抽象）| P3-1 | 旧 §6.8 A3 の昇格 | **オンプレ優先**＝Vault/ファイル KEK。KMS は AWS アダプタ。 |
 | P3-4 | **リソースバジェット/クォータ**（テナント+ユーザー）| P3-1 | （新規）| ハードクォータ（block）のみ。 |
@@ -65,13 +65,19 @@ Deployment（1 社が自社ホスト。データ・鍵・設定をその社が�
 
 ---
 
-## P3-1. MetadataStore（Postgres）— 全ての土台
+## P3-1. MetadataStore（SQLite 既定）— 全ての土台
 
 **現状の欠落**: DB が**一切無い**。フォルダ名=ID、ポートは in-memory map、CP 再起動で再採番されうる（[HANDOFF §6.7 末尾の注意](HANDOFF.md)）。
 テナント・バジェット・管理者・クォータ・監査は**すべて永続レコードを要する**。ここが全ワークストリームの gating item。
 
-- **DB 選定**: **Postgres**（極小デプロイは **SQLite** でも可）。階層・クォータ・監査にリレーショナルが素直。1 デプロイ 1 インスタンスで十分。
-  [09 §9.4](09-portability.md#94-プロファイル別アダプタ対応表) の `MetadataStore` 港は維持し、local/極小=SQLite / 通常=Postgres でアダプタ切替。
+- **DB 選定 = SQLite 既定**: 1 デプロイ = CP 1 プロセス / 1 ホスト（オンプレ compose 既定）に**埋め込み DB がベストフィット**。外部 DB サーバ不要＝自己ホスト製品（P3-10）と相性最良。
+  持つのは制御メタデータのみ（重いのは PTY であり DB ではない）で、数十〜百ユーザーは SQLite の余裕圏。
+  **今は SQLite アダプタだけ実装**し、**Postgres は `MetadataStore` 港の裏で AWS/HA 時に後追い**（[09 §9.4](09-portability.md#94-プロファイル別アダプタ対応表)）。投機的に Postgres を作らない（リーン）。
+- **SQLite 運用規律**（外すと後で痛い）:
+  - 接続: `journal_mode=WAL` / `busy_timeout` / `foreign_keys=ON` / `synchronous=NORMAL`、書き込みは単一ライターに。
+  - ドライバ: **pure-Go（`modernc.org/sqlite`）** 推奨（cgo 回避＝静的バイナリ運用と整合）。
+  - 方言ポータブル SQL: bool/uuid/jsonb を避け TEXT/INTEGER + JSON は TEXT、`ON CONFLICT` upsert、マイグレーションは **goose**（SQLite/Postgres 両対応）→ Postgres 追加時に港がそのまま効く。
+  - バックアップ: online backup API / `VACUUM INTO`（書き込み中の naive cp は不可）。P3-9 の home+DB バックアップに乗る。
 - **スキーマ（概略）** — B3 反映: `Plan` 抽象を廃し、limits と isolation を **Tenant に直付け**:
   ```
   Tenant      { id, slug, name, status(active|suspended|deleting),
@@ -269,7 +275,7 @@ CP の管理サービスを **MCP サーバ**として公開し、**その社の
 
 各ステップで「実機検証 → 設計確定」を回す（[05](05-roadmap.md) の流儀踏襲）。**オンプレ優先**で、AWS と専用化は後。
 
-1. **P3-1 + P3-2（オンプレ, SQLite/Postgres）**: 階層モデル/RBAC を CP に入れ、現ライブを**既定テナント 1 + 既存ユーザー**として包む（B5 移行）。既存挙動を壊さず DB 化。
+1. **P3-1 + P3-2（オンプレ, SQLite）**: 階層モデル/RBAC を CP に入れ、現ライブを**既定テナント 1 + 既存ユーザー**として包む（B5 移行）。既存挙動を壊さず DB 化。
 2. **P3-3（オンプレ）**: 封筒暗号 + custodian（Vault/ファイル KEK）。Phase 2 の HMAC から移行。**KMS は後（P3-7 で AWS アダプタ化）**。
 3. **P3-4（オンプレ）**: クォータ強制を Start/SessionCreate/clone に差す（メモリは既存 `--memory` ですぐ）。
 4. **P3-5 + P3-6（オンプレ）**: 管理サービス層 → admin API（単一テナント）→ MCP を同一層で。
