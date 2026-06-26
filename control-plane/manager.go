@@ -1,6 +1,9 @@
 package main
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"net/http"
 	"os/exec"
 	"path/filepath"
@@ -36,6 +39,22 @@ type manager struct {
 	authMode    string
 	devUser     string
 	emailHeader string
+
+	// at-rest encryption (SecretStore). master32 = SHA-256 of AF_MASTER_KEY, or
+	// nil when unset (then no AF_SECRET_KEY is injected and the Agent stores
+	// secrets as plaintext JSON — dev). Per-user subkey = HMAC(master32, user).
+	master32 []byte
+}
+
+// secretKeyFor derives the per-user encryption subkey (hex) injected as
+// AF_SECRET_KEY, or "" when no master key is configured.
+func (m *manager) secretKeyFor(user string) string {
+	if len(m.master32) == 0 {
+		return ""
+	}
+	mac := hmac.New(sha256.New, m.master32)
+	mac.Write([]byte(user))
+	return hex.EncodeToString(mac.Sum(nil))
 }
 
 // forUser returns the runtime descriptor for a user, allocating its name, home
@@ -69,6 +88,7 @@ func (m *manager) forUser(user string) *dockerRuntime {
 		agentHost:  m.agentHost,
 		agentPort:  port,
 		token:      token,
+		secretKey:  m.secretKeyFor(user),
 		memory:     m.memory,
 		sessionCmd: m.sessionCmd,
 		extraEnv:   m.extraEnv,

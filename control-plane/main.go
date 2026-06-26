@@ -5,6 +5,7 @@
 package main
 
 import (
+	"crypto/sha256"
 	"log"
 	"net/http"
 	"os"
@@ -43,6 +44,13 @@ func main() {
 	// the Workspace so the Agent can run the flow. Reuses the extraEnv -> -e path.
 	if cid := os.Getenv("GITHUB_OAUTH_CLIENT_ID"); cid != "" {
 		mgr.extraEnv = append(mgr.extraEnv, "GITHUB_OAUTH_CLIENT_ID="+cid)
+	}
+	// Deployment master key for at-rest credential encryption (A3). Per-user
+	// subkeys are derived from its SHA-256 and injected as AF_SECRET_KEY. Unset
+	// => no encryption (dev: Agent stores secrets as plaintext JSON).
+	if mk := os.Getenv("AF_MASTER_KEY"); mk != "" {
+		sum := sha256.Sum256([]byte(mk))
+		mgr.master32 = sum[:]
 	}
 	cfg := config{
 		addr:          envOr("CP_ADDR", ":8080"),

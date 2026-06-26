@@ -23,6 +23,7 @@ type dockerRuntime struct {
 	agentHost  string
 	agentPort  string
 	token      string // CP↔Agent shared secret (injected as AGENT_TOKEN; docs/07 §7.5)
+	secretKey  string // per-user at-rest key (injected as AF_SECRET_KEY; A3)
 	memory     string
 	sessionCmd string
 	extraEnv   []string // KEY=VAL passed to the workspace container (e.g. CLAUDE_INSTALL=0)
@@ -77,6 +78,9 @@ func (d *dockerRuntime) start(ctx context.Context) error {
 	}
 	if d.token != "" {
 		args = append(args, "-e", "AGENT_TOKEN="+d.token)
+	}
+	if d.secretKey != "" {
+		args = append(args, "-e", "AF_SECRET_KEY="+d.secretKey)
 	}
 	if d.sessionCmd != "" {
 		args = append(args, "-e", "AGENT_SESSION_CMD="+d.sessionCmd)

@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -180,7 +179,13 @@ func handleClaudeComplete(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleClaudeDisconnect(w http.ResponseWriter, r *http.Request) {
-	if err := os.Remove(claudeTokenPath()); err != nil && !os.IsNotExist(err) {
+	s, err := loadSecrets()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "store_failed", err.Error())
+		return
+	}
+	s.Claude = ""
+	if err := s.save(); err != nil {
 		writeErr(w, http.StatusInternalServerError, "delete_failed", err.Error())
 		return
 	}
@@ -218,18 +223,19 @@ func waitFor(f *claudeFlow, re *regexp.Regexp, timeout time.Duration) string {
 }
 
 func storeClaudeToken(token string) error {
-	p := claudeTokenPath()
-	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+	s, err := loadSecrets()
+	if err != nil {
 		return err
 	}
-	return os.WriteFile(p, []byte(token+"\n"), 0o600)
+	s.Claude = token
+	return s.save()
 }
 
 // readClaudeToken returns the stored CLAUDE_CODE_OAUTH_TOKEN, or "" if unset.
 func readClaudeToken() string {
-	b, err := os.ReadFile(claudeTokenPath())
+	s, err := loadSecrets()
 	if err != nil {
 		return ""
 	}
-	return strings.TrimSpace(string(b))
+	return s.Claude
 }

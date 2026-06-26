@@ -6,8 +6,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -117,7 +115,6 @@ func handleGithubOAuthPoll(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusInternalServerError, "store_failed", err.Error())
 			return
 		}
-		_ = gitConfigGlobal("credential.helper", "store")
 		ghForget(req.FlowID)
 		writeJSON(w, http.StatusOK, map[string]any{"connected": true})
 	case resp.Error == "authorization_pending":
@@ -161,16 +158,12 @@ func ghPostForm(endpoint string, form url.Values, out any) error {
 //
 // Bitbucket has no device flow, so the Control Plane runs the auth-code grant
 // (it owns the public callback) and hands the tokens here to store. Bitbucket
-// access tokens expire in ~2h, so git uses a credential helper — this same
-// binary invoked as `workspace-agent bitbucket-cred` — which refreshes on
-// demand. The helper covers BOTH our /repos calls and git run inside claude
-// sessions. Secret lives in bitbucket.json (0600, home) for refresh. See plan.
+// access tokens expire in ~2h, so git uses the cred helper (secrets.go,
+// `workspace-agent cred`), which refreshes on demand. The helper covers BOTH our
+// /repos calls and git run inside claude sessions. Refresh creds live in the
+// encrypted store (secrets.Bitbucket). See plan.
 
 const bbTokenURL = "https://bitbucket.org/site/oauth2/access_token"
-
-func bitbucketJSONPath() string {
-	return filepath.Join(homeDir(), ".config", "agent-fleet", "bitbucket.json")
-}
 
 type bitbucketCreds struct {
 	AccessToken  string `json:"access_token"`
@@ -180,25 +173,14 @@ type bitbucketCreds struct {
 	Secret       string `json:"secret"`
 }
 
-func readBitbucketCreds() (bitbucketCreds, error) {
-	var c bitbucketCreds
-	b, err := os.ReadFile(bitbucketJSONPath())
-	if err != nil {
-		return c, err
-	}
-	return c, json.Unmarshal(b, &c)
-}
-
+// writeBitbucketCreds persists the OAuth refresh creds into the encrypted store.
 func writeBitbucketCreds(c bitbucketCreds) error {
-	p := bitbucketJSONPath()
-	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
-		return err
-	}
-	b, err := json.Marshal(c)
+	s, err := loadSecrets()
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(p, b, 0o600)
+	s.Bitbucket = &c
+	return s.save()
 }
 
 type bitbucketStoreReq struct {
@@ -234,27 +216,22 @@ func handleBitbucketStore(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "store_failed", err.Error())
 		return
 	}
-	const helperKey = "credential.https://bitbucket.org.helper"
-	_ = gitConfigGlobal(helperKey, "")                                  // reset inherited helpers
-	if err := gitConfigAddGlobal(helperKey, "!workspace-agent bitbucket-cred"); err != nil {
+	if err := ensureCredHelper(); err != nil { // unified cred helper handles refresh
 		writeErr(w, http.StatusInternalServerError, "config_failed", err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"connected": true})
 }
 
-// removeBitbucketOAuth clears the stored tokens and the per-host helper. Called
-// from the generic disconnect (connections.go) so one ✕ covers both paths.
+// removeBitbucketOAuth clears the stored OAuth refresh creds. Called from the
+// generic disconnect (connections.go) so one ✕ covers both paths.
 func removeBitbucketOAuth() {
-	_ = os.Remove(bitbucketJSONPath())
-	_ = exec.Command("git", "config", "--global", "--unset-all", "credential.https://bitbucket.org.helper").Run()
-}
-
-func gitConfigAddGlobal(key, val string) error {
-	if out, err := exec.Command("git", "config", "--global", "--add", key, val).CombinedOutput(); err != nil {
-		return fmt.Errorf("git config --add %s: %v: %s", key, err, strings.TrimSpace(string(out)))
+	s, err := loadSecrets()
+	if err != nil {
+		return
 	}
-	return nil
+	s.Bitbucket = nil
+	_ = s.save()
 }
 
 // refreshBitbucket exchanges the refresh_token for a fresh access token.
@@ -294,26 +271,3 @@ func refreshBitbucket(c bitbucketCreds) (bitbucketCreds, error) {
 	return c, nil
 }
 
-// runBitbucketCredHelper implements the git credential helper protocol for
-// bitbucket.org. git invokes `workspace-agent bitbucket-cred get` (op as argv);
-// we refresh if the token is expired/near-expiry, then emit username/password.
-func runBitbucketCredHelper(args []string) {
-	op := ""
-	if len(args) > 0 {
-		op = args[0]
-	}
-	if op != "get" {
-		return // store/erase: nothing to do
-	}
-	c, err := readBitbucketCreds()
-	if err != nil {
-		return // no creds: emit nothing, git falls through to other helpers
-	}
-	if time.Now().Unix() >= c.Expiry-120 { // refresh within 2 min of expiry
-		if nc, rerr := refreshBitbucket(c); rerr == nil {
-			c = nc
-			_ = writeBitbucketCreds(c)
-		}
-	}
-	fmt.Printf("username=x-token-auth\npassword=%s\n", c.AccessToken)
-}

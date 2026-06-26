@@ -15,13 +15,17 @@ import (
 )
 
 func main() {
-	// Subcommand mode: git invokes this binary as a credential helper for
-	// bitbucket.org (`workspace-agent bitbucket-cred get`). It prints creds and
-	// exits without starting the server.
-	if len(os.Args) > 1 && os.Args[1] == "bitbucket-cred" {
-		runBitbucketCredHelper(os.Args[2:])
+	// Subcommand mode: git invokes this binary as its credential helper
+	// (`workspace-agent cred get`), backed by the encrypted store. It prints
+	// creds and exits without starting the server. `bitbucket-cred` is kept as
+	// an alias for any git config left over from before the unified helper.
+	if len(os.Args) > 1 && (os.Args[1] == "cred" || os.Args[1] == "bitbucket-cred") {
+		runCredHelper(os.Args[2:])
 		return
 	}
+
+	// Fold any pre-A3 plaintext credential files into the encrypted store.
+	migrateLegacySecrets()
 
 	addr := envOr("AGENT_ADDR", ":7700")
 
