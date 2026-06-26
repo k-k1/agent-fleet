@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -29,6 +30,7 @@ func main() {
 			agentPort:  envOr("WS_AGENT_PORT", "7700"),
 			memory:     envOr("WS_MEMORY", "1g"),
 			sessionCmd: os.Getenv("WS_SESSION_CMD"), // empty => claude
+			extraEnv:   splitCSV(os.Getenv("WS_ENV")), // KEY=VAL,KEY=VAL -> container -e
 		},
 	}
 
@@ -62,6 +64,17 @@ func envOr(k, def string) string {
 		return v
 	}
 	return def
+}
+
+// splitCSV parses "A=1,B=2" into ["A=1","B=2"], dropping blanks.
+func splitCSV(s string) []string {
+	var out []string
+	for _, p := range strings.Split(s, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func logRequests(next http.Handler) http.Handler {

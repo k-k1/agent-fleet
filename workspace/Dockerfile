@@ -1,6 +1,8 @@
-# Workspace image: Claude CLI + git + tmux + Workspace Agent.
-# 設計原則: ツールは /usr/local（イメージ）に置き、ホーム(volume)を丸ごと永続化しても
-# CLI が shadow されないようにする。docs/11-phase1-plan.md / docs/09-portability.md 参照。
+# Workspace image: git + tmux + Workspace Agent.
+# Claude CLI はイメージに焼き込まず、コンテナ起動時(entrypoint)に最新を取得して
+# 永続ホーム(~/.local)へ置く。これで再ビルドなしに常に最新 CLI を使える。
+# ツール本体は /usr/local（イメージ）、ユーザーデータと claude は home(volume)。
+# docs/11-phase1-plan.md / docs/09-portability.md 参照。
 
 # --- build the agent (Go) ---
 FROM golang:1.26-bookworm AS agentbuild
@@ -12,16 +14,22 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -o /out/workspace-agent .
 
 # --- runtime ---
 FROM node:22-bookworm-slim
-# claude 同梱はビルド時に切替可能。メモリ制約下の検証では INSTALL_CLAUDE=0 で軽くする。
-ARG INSTALL_CLAUDE=1
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      git tmux openssh-client ca-certificates ripgrep less procps \
+      git tmux openssh-client ca-certificates curl ripgrep less procps \
  && rm -rf /var/lib/apt/lists/*
-RUN if [ "$INSTALL_CLAUDE" = "1" ]; then npm install -g @anthropic-ai/claude-code; fi
 COPY --from=agentbuild /out/workspace-agent /usr/local/bin/workspace-agent
+COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
+# claude は ~/.local/bin に入る。docker exec 等の既定 PATH に追加（非ログインシェル/Agent用）。
+ENV PATH="/home/node/.local/bin:${PATH}"
+# ログインシェル(bash -l)は /etc/profile で PATH を上書きするため、端末で claude を確実に
+# 見つけられるよう profile.d でも ~/.local/bin を前置する。
+RUN echo 'export PATH="$HOME/.local/bin:$PATH"' > /etc/profile.d/claude-path.sh
 
 # node:22 の既定ユーザー node は uid/gid=1000（ホストの uid 1000 と一致 → bind mount 素通し）。
 USER node
 WORKDIR /home/node
 EXPOSE 7700
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 CMD ["workspace-agent"]

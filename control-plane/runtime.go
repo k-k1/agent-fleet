@@ -23,6 +23,7 @@ type dockerRuntime struct {
 	agentPort  string
 	memory     string
 	sessionCmd string
+	extraEnv   []string // KEY=VAL passed to the workspace container (e.g. CLAUDE_INSTALL=0)
 }
 
 func (d *dockerRuntime) agentBase() string {
@@ -63,6 +64,9 @@ func (d *dockerRuntime) start(ctx context.Context) error {
 	}
 	if d.sessionCmd != "" {
 		args = append(args, "-e", "AGENT_SESSION_CMD="+d.sessionCmd)
+	}
+	for _, e := range d.extraEnv {
+		args = append(args, "-e", e)
 	}
 	args = append(args, d.image)
 	if out, err := exec.CommandContext(ctx, "docker", args...).CombinedOutput(); err != nil {

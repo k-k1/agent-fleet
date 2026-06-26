@@ -5,20 +5,21 @@
 # 前提: docker（docker グループ有効、無ければ `sg docker -c "deploy/local/run-dev.sh"`）と
 #       Go（host）。ブラウザで http://localhost:8099 を開く。
 #
+# claude CLI はイメージに焼き込まず、コンテナ起動時(entrypoint)に最新を取得する。
+#
 # 例:
-#   deploy/local/run-dev.sh                      # claude 同梱イメージで起動
-#   INSTALL_CLAUDE=0 WS_SESSION_CMD=bash \        # claude 非同梱の軽量検証
+#   deploy/local/run-dev.sh                          # 起動時に最新 claude を install
+#   WS_ENV=CLAUDE_INSTALL=0 WS_SESSION_CMD=bash \      # claude 抜きの軽量検証
 #     deploy/local/run-dev.sh
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 WS_IMAGE="${WS_IMAGE:-agent-fleet/workspace:dev}"
-INSTALL_CLAUDE="${INSTALL_CLAUDE:-1}"
 CP_ADDR="${CP_ADDR:-:8099}"
 WS_DATA="${WS_DATA:-/tmp/af-data}"
 
-echo "==> build workspace image ($WS_IMAGE, INSTALL_CLAUDE=$INSTALL_CLAUDE)"
-docker build -t "$WS_IMAGE" --build-arg INSTALL_CLAUDE="$INSTALL_CLAUDE" "$ROOT/workspace"
+echo "==> build workspace image ($WS_IMAGE)"
+docker build -t "$WS_IMAGE" "$ROOT/workspace"
 
 echo "==> build control-plane"
 ( cd "$ROOT/control-plane" && go build -o /tmp/af-cp . )
@@ -30,4 +31,5 @@ exec env \
   CONSOLE_DIR="$ROOT/console" \
   WS_DATA="$WS_DATA" \
   ${WS_SESSION_CMD:+WS_SESSION_CMD="$WS_SESSION_CMD"} \
+  ${WS_ENV:+WS_ENV="$WS_ENV"} \
   /tmp/af-cp
