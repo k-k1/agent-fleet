@@ -85,8 +85,12 @@ $("new-session").onsubmit = async (e) => {
 // surface a reliable Open/Copy affordance.
 const banner = $("login-banner");
 let lastUrl = null,
+  dismissedUrl = null,
   scanTimer;
-$("login-dismiss").onclick = () => (banner.hidden = true);
+$("login-dismiss").onclick = () => {
+  dismissedUrl = lastUrl;
+  banner.hidden = true;
+};
 $("login-copy").onclick = async () => {
   try {
     await navigator.clipboard.writeText(lastUrl);
@@ -98,7 +102,8 @@ $("login-copy").onclick = async () => {
 function reconstructURL() {
   const buf = term.buffer.active,
     cols = term.cols;
-  for (let y = buf.length - 1; y >= Math.max(0, buf.length - 400); y--) {
+  // Only the recent rows, so a stale URL up in the scrollback doesn't re-trigger.
+  for (let y = buf.length - 1; y >= Math.max(0, buf.length - 50); y--) {
     const line = buf.getLine(y);
     if (!line) continue;
     const m = line.translateToString(true).match(/(https:\/\/[^\s]*)$/);
@@ -116,10 +121,14 @@ function reconstructURL() {
 }
 function scanForLoginURL() {
   const url = reconstructURL();
-  if (url && url !== lastUrl) {
-    lastUrl = url;
-    $("login-open").href = url;
+  if (url && url !== dismissedUrl) {
+    if (url !== lastUrl) {
+      lastUrl = url;
+      $("login-open").href = url;
+    }
     banner.hidden = false;
+  } else {
+    banner.hidden = true; // URL scrolled away / not present => hide
   }
 }
 
@@ -154,6 +163,7 @@ function attach(session) {
   term.reset();
   banner.hidden = true;
   lastUrl = null;
+  dismissedUrl = null;
   $("term-title").textContent = `session: ${session}`;
   const u = new URL(rel("ws/terminal"));
   u.protocol = location.protocol === "https:" ? "wss:" : "ws:";
