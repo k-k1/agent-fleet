@@ -123,7 +123,11 @@ func (c config) handleBitbucketOAuthCallback(w http.ResponseWriter, r *http.Requ
 		"access_token": tok.AccessToken, "refresh_token": tok.RefreshToken,
 		"expires_in": tok.ExpiresIn, "key": c.bbKey, "secret": c.bbSecret,
 	})
-	rt := c.mgr.forUser(st.user)
+	rt, err := c.mgr.forUser(r.Context(), st.user, "")
+	if err != nil {
+		bbCallbackPage(w, "Workspace の解決に失敗しました: "+err.Error())
+		return
+	}
 	areq, _ := http.NewRequest("PUT", rt.agentBase()+"/connections/git/bitbucket/oauth", strings.NewReader(string(payload)))
 	areq.Header.Set("Content-Type", "application/json")
 	if rt.token != "" {

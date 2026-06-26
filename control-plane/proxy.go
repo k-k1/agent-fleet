@@ -79,9 +79,9 @@ func (c config) proxyTerminal(w http.ResponseWriter, r *http.Request) {
 	defer down.Close()
 
 	errc := make(chan error, 2)
-	go relay(up, down, errc)   // agent -> browser
-	go relay(down, up, errc)   // browser -> agent
-	<-errc                     // first side to close ends the bridge
+	go relay(up, down, errc) // agent -> browser
+	go relay(down, up, errc) // browser -> agent
+	<-errc                   // first side to close ends the bridge
 }
 
 func relay(src, dst *websocket.Conn, errc chan<- error) {

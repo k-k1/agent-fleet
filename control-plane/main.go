@@ -5,10 +5,12 @@
 package main
 
 import (
+	"context"
 	"crypto/sha256"
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -32,10 +34,9 @@ func main() {
 		dataRoot:    envOr("WS_DATA", "/tmp/af-data"),
 		agentHost:   envOr("WS_AGENT_HOST", "127.0.0.1"),
 		memory:      envOr("WS_MEMORY", "1g"),
-		sessionCmd:  os.Getenv("WS_SESSION_CMD"), // empty => claude
+		sessionCmd:  os.Getenv("WS_SESSION_CMD"),   // empty => claude
 		extraEnv:    splitCSV(os.Getenv("WS_ENV")), // KEY=VAL,KEY=VAL -> container -e
 		portBase:    portBase,
-		nextPort:    portBase,
 		authMode:    envOr("AUTH", "dev"), // dev (fixed id) | proxy (gateway header)
 		devUser:     envOr("DEV_USER", "dev"),
 		emailHeader: envOr("AUTH_EMAIL_HEADER", "X-Forwarded-Email"),
@@ -52,6 +53,28 @@ func main() {
 		sum := sha256.Sum256([]byte(mk))
 		mgr.master32 = sum[:]
 	}
+
+	// MetadataStore (P3-1, docs/13): SQLite is the source of truth for the
+	// tenant/user/workspace records. Migrate, ensure the default tenant, then
+	// backfill existing on-disk users so the live deployment is wrapped as the
+	// default tenant without recreating containers.
+	dbPath := envOr("AF_DB", filepath.Join(mgr.dataRoot, "control-plane.db"))
+	store, err := openSQLite(dbPath)
+	if err != nil {
+		log.Fatalf("open db %s: %v", dbPath, err)
+	}
+	ctx := context.Background()
+	if err := store.migrate(ctx); err != nil {
+		log.Fatalf("db migrate: %v", err)
+	}
+	mgr.store = store
+	if _, err := store.EnsureDefaultTenant(ctx); err != nil {
+		log.Fatalf("ensure default tenant: %v", err)
+	}
+	if err := mgr.backfill(ctx); err != nil {
+		log.Printf("backfill warning: %v", err)
+	}
+
 	cfg := config{
 		addr:          envOr("CP_ADDR", ":8080"),
 		consoleDir:    envOr("CONSOLE_DIR", "./console"),

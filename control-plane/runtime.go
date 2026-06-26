@@ -141,14 +141,19 @@ func (d *dockerRuntime) waitHealthy(ctx context.Context, timeout time.Duration) 
 // the gateway provides no identity (proxy mode, missing header) it writes 401
 // and returns ok=false; callers must stop.
 func (c config) rtFor(w http.ResponseWriter, r *http.Request) (*dockerRuntime, bool) {
-	user := c.mgr.resolveUser(r)
-	if user == "" {
+	id := c.mgr.resolveIdentity(r)
+	if id.key == "" {
 		writeJSON(w, http.StatusUnauthorized, map[string]any{
 			"error": map[string]string{"code": "unauthenticated", "message": "no gateway identity"},
 		})
 		return nil, false
 	}
-	return c.mgr.forUser(user), true
+	rt, err := c.mgr.forUser(r.Context(), id.key, id.email)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return nil, false
+	}
+	return rt, true
 }
 
 // handleWhoami reports how the AuthGateway resolved this request, plus the raw
