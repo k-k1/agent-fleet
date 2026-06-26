@@ -3,12 +3,17 @@
 // Workspace Agent's PTY).
 
 const $ = (id) => document.getElementById(id);
-const api = (path, opts) => fetch(path, opts).then((r) => r.json());
+
+// Resolve URLs relative to where the Console is mounted, so it works both at
+// the host root (http://localhost:8099/) and behind a path-stripping proxy
+// (e.g. Tailscale Funnel + Caddy at /agent-fleet/). Use the trailing-slash URL.
+const rel = (p) => new URL(p, document.baseURI).toString();
+const api = (path, opts) => fetch(rel(path), opts).then((r) => r.json());
 
 // --- workspace lifecycle ---
 async function refreshWorkspace() {
   try {
-    const ws = await api("/api/workspace");
+    const ws = await api("api/workspace");
     $("ws-state").textContent = ws.state;
   } catch {
     $("ws-state").textContent = "unknown";
@@ -16,12 +21,12 @@ async function refreshWorkspace() {
 }
 $("ws-start").onclick = async () => {
   $("ws-state").textContent = "starting…";
-  await api("/api/workspace/start", { method: "POST" });
+  await api("api/workspace/start", { method: "POST" });
   await refreshWorkspace();
   await refreshSessions();
 };
 $("ws-stop").onclick = async () => {
-  await api("/api/workspace/stop", { method: "POST" });
+  await api("api/workspace/stop", { method: "POST" });
   await refreshWorkspace();
   await refreshSessions();
 };
@@ -32,7 +37,7 @@ async function refreshSessions() {
   list.innerHTML = "";
   let data;
   try {
-    data = await api("/api/sessions");
+    data = await api("api/sessions");
   } catch {
     return;
   }
@@ -50,7 +55,7 @@ async function refreshSessions() {
     stop.textContent = "✕";
     stop.title = "stop";
     stop.onclick = async () => {
-      await fetch(`/api/sessions/${encodeURIComponent(s.name)}/stop`, { method: "POST" });
+      await fetch(rel(`api/sessions/${encodeURIComponent(s.name)}/stop`), { method: "POST" });
       refreshSessions();
     };
     li.append(name, dir, stop);
@@ -62,7 +67,7 @@ $("new-session").onsubmit = async (e) => {
   e.preventDefault();
   const name = $("ns-name").value.trim();
   const dir = $("ns-dir").value.trim();
-  await fetch("/api/sessions", {
+  await fetch(rel("api/sessions"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ name, dir }),
@@ -91,8 +96,10 @@ function attach(session) {
   if (ws) ws.close();
   term.reset();
   $("term-title").textContent = `session: ${session}`;
-  const proto = location.protocol === "https:" ? "wss" : "ws";
-  ws = new WebSocket(`${proto}://${location.host}/ws/terminal?session=${encodeURIComponent(session)}`);
+  const u = new URL(rel("ws/terminal"));
+  u.protocol = location.protocol === "https:" ? "wss:" : "ws:";
+  u.search = `?session=${encodeURIComponent(session)}`;
+  ws = new WebSocket(u);
   ws.binaryType = "arraybuffer";
   ws.onopen = () => { fitAddon.fit(); ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows })); };
   ws.onmessage = (ev) => {

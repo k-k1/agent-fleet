@@ -2,6 +2,16 @@
 <html lang="ja">
 <head>
   <meta charset="utf-8" />
+  <script>
+    // Behind a path-stripping proxy (e.g. Caddy strips /agent-fleet), ensure a
+    // trailing slash so relative asset/API/WS URLs resolve under the mount.
+    (function () {
+      var p = location.pathname;
+      if (!p.endsWith("/") && !/\.[a-z0-9]+$/i.test(p.split("/").pop())) {
+        document.write('<base href="' + p + '/">');
+      }
+    })();
+  </script>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Agent Fleet — Console (Phase 1 MVP)</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.css" />
