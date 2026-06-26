@@ -31,6 +31,11 @@ func main() {
 	mux.HandleFunc("POST /repos/{name}/checkout", handleRepoCheckout)
 	mux.HandleFunc("POST /repos/{name}/fetch", handleRepoFetch)
 
+	// Connections — per-user provider credentials (git tokens; Claude in Stage 3).
+	mux.HandleFunc("GET /connections", handleConnectionsGet)
+	mux.HandleFunc("PUT /connections/git/{host}", handlePutGitConn)
+	mux.HandleFunc("DELETE /connections/git/{host}", handleDeleteGitConn)
+
 	log.Printf("workspace-agent listening on %s", addr)
 	if err := http.ListenAndServe(addr, logRequests(mux)); err != nil {
 		log.Fatal(err)

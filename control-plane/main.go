@@ -55,6 +55,11 @@ func main() {
 	mux.HandleFunc("POST /api/repos/{name}/checkout", cfg.proxyAgentREST)
 	mux.HandleFunc("POST /api/repos/{name}/fetch", cfg.proxyAgentREST)
 
+	// Connections ops — proxied to the Workspace Agent (/api stripped).
+	mux.HandleFunc("GET /api/connections", cfg.proxyAgentREST)
+	mux.HandleFunc("PUT /api/connections/git/{host}", cfg.proxyAgentREST)
+	mux.HandleFunc("DELETE /api/connections/git/{host}", cfg.proxyAgentREST)
+
 	// Terminal PTY — proxied WebSocket.
 	mux.HandleFunc("GET /ws/terminal", cfg.proxyTerminal)
 

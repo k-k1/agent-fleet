@@ -94,6 +94,75 @@ $("new-session").onsubmit = async (e) => {
   }
 };
 
+// --- connections ---
+// Per-provider credentials the Workspace consumes (git tokens; Claude in Stage 3).
+// The auth flow happens here in the WebUI; the token is stored in the container
+// home and used by git/claude inside — no terminal CLI auth.
+async function refreshConnections() {
+  const list = $("conn-list");
+  let data;
+  try {
+    data = await api("api/connections");
+  } catch {
+    list.innerHTML = "";
+    return;
+  }
+  list.innerHTML = "";
+  list.append(gitConnRow("GitHub", "github.com", data.github, [{ key: "token", ph: "Personal Access Token", pw: true }]));
+  list.append(gitConnRow("Bitbucket", "bitbucket.org", data.bitbucket, [
+    { key: "username", ph: "Atlassian email" },
+    { key: "token", ph: "API token", pw: true },
+  ]));
+}
+
+function gitConnRow(label, host, st, fields) {
+  const li = document.createElement("li");
+  li.className = "conn";
+  const dot = document.createElement("span");
+  dot.className = "cdot " + (st && st.connected ? "ok" : "off");
+  dot.textContent = "●";
+  const name = document.createElement("span");
+  name.className = "cname";
+  name.textContent = label;
+  li.append(dot, name);
+
+  if (st && st.connected) {
+    const who = document.createElement("span");
+    who.className = "cwho";
+    who.textContent = st.username || "connected";
+    who.title = st.username || "";
+    li.append(who, mkBtn("✕", "disconnect", async () => {
+      await fetch(rel(`api/connections/git/${host}`), { method: "DELETE" });
+      refreshConnections();
+    }));
+  } else {
+    const inputs = {};
+    for (const f of fields) {
+      const inp = document.createElement("input");
+      inp.placeholder = f.ph;
+      if (f.pw) inp.type = "password";
+      inp.className = "cinput";
+      inputs[f.key] = inp;
+      li.append(inp);
+    }
+    li.append(mkBtn("接続", "connect", async () => {
+      const body = {};
+      for (const k in inputs) body[k] = inputs[k].value.trim();
+      if (!body.token) return inputs.token.focus();
+      const res = await api(`api/connections/git/${host}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (res && res.error) return alert("connect failed: " + (res.error.message || res.error));
+      refreshConnections();
+    }));
+  }
+  return li;
+}
+
+$("conn-refresh").onclick = refreshConnections;
+
 // --- repos ---
 // A repo is a working copy under ~/repos/<name>; the folder name is its id.
 const repoSafeSession = (name) => name.replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 40) || "repo";
@@ -337,5 +406,6 @@ function attach(session) {
 }
 
 refreshWorkspace();
+refreshConnections();
 refreshRepos();
 refreshSessions();

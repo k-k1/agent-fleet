@@ -32,6 +32,15 @@ h2 { font-size: 13px; text-transform: uppercase; color: #999; margin: 6px 0; }
 #repo-list .branch { max-width: 96px; background: #2b2b2b; color: #bbb; border: 1px solid #444; border-radius: 4px; font-size: 11px; padding: 2px; }
 #repo-list .ab { color: #888; font-size: 11px; }
 button.icon { padding: 2px 5px; font-size: 12px; line-height: 1; }
+
+#conn-list { list-style: none; margin: 0 0 14px; padding: 0; }
+#conn-list li.conn { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; padding: 6px 2px; border-bottom: 1px solid #2a2a2a; }
+#conn-list .cdot { font-size: 10px; }
+#conn-list .cdot.ok { color: #67c23a; }
+#conn-list .cdot.off { color: #666; }
+#conn-list .cname { min-width: 64px; }
+#conn-list .cwho { flex: 1; color: #888; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#conn-list .cinput { flex: 1; min-width: 80px; background: #2b2b2b; color: #ddd; border: 1px solid #444; border-radius: 4px; padding: 3px; font-size: 11px; }
 #session-list { list-style: none; margin: 0; padding: 0; }
 #session-list li { display: flex; align-items: center; gap: 6px; padding: 6px 4px; border-bottom: 1px solid #2a2a2a; }
 #session-list .name { flex: 1; cursor: pointer; }
