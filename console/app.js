@@ -78,6 +78,51 @@ $("new-session").onsubmit = async (e) => {
   attach(name);
 };
 
+// --- login URL banner ---
+// Ink (claude's UI) hard-wraps the /login auth URL at the terminal width, so
+// xterm's web-links only links the first row and copy includes newlines.
+// Reconstruct the full URL from the xterm buffer (join full-width rows) and
+// surface a reliable Open/Copy affordance.
+const banner = $("login-banner");
+let lastUrl = null,
+  scanTimer;
+$("login-dismiss").onclick = () => (banner.hidden = true);
+$("login-copy").onclick = async () => {
+  try {
+    await navigator.clipboard.writeText(lastUrl);
+    const b = $("login-copy");
+    b.textContent = "Copied!";
+    setTimeout(() => (b.textContent = "Copy URL"), 1200);
+  } catch {}
+};
+function reconstructURL() {
+  const buf = term.buffer.active,
+    cols = term.cols;
+  for (let y = buf.length - 1; y >= Math.max(0, buf.length - 400); y--) {
+    const line = buf.getLine(y);
+    if (!line) continue;
+    const m = line.translateToString(true).match(/(https:\/\/[^\s]*)$/);
+    if (!m) continue; // a URL fragment reaching the row end => wrapped onward
+    let url = m[1];
+    for (let yy = y + 1; yy < buf.length; yy++) {
+      const seg = (buf.getLine(yy)?.translateToString(true) ?? "");
+      if (!seg || /[^\x21-\x7e]/.test(seg)) break; // non-URL char (incl space) => end
+      url += seg;
+      if (seg.length < cols) break; // shorter than width => last segment
+    }
+    if (/oauth|authorize/i.test(url)) return url;
+  }
+  return null;
+}
+function scanForLoginURL() {
+  const url = reconstructURL();
+  if (url && url !== lastUrl) {
+    lastUrl = url;
+    $("login-open").href = url;
+    banner.hidden = false;
+  }
+}
+
 // --- terminal ---
 let term, fitAddon, ws;
 function ensureTerm() {
@@ -107,6 +152,8 @@ function attach(session) {
   ensureTerm();
   if (ws) ws.close();
   term.reset();
+  banner.hidden = true;
+  lastUrl = null;
   $("term-title").textContent = `session: ${session}`;
   const u = new URL(rel("ws/terminal"));
   u.protocol = location.protocol === "https:" ? "wss:" : "ws:";
@@ -117,6 +164,8 @@ function attach(session) {
   ws.onmessage = (ev) => {
     if (ev.data instanceof ArrayBuffer) term.write(new Uint8Array(ev.data));
     else term.write(ev.data);
+    clearTimeout(scanTimer);
+    scanTimer = setTimeout(scanForLoginURL, 150); // scan once output settles
   };
   ws.onclose = () => term.write("\r\n[disconnected]\r\n");
 }
