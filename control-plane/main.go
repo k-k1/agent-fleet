@@ -46,6 +46,15 @@ func main() {
 	mux.HandleFunc("POST /api/sessions", cfg.proxyAgentREST)
 	mux.HandleFunc("POST /api/sessions/{name}/stop", cfg.proxyAgentREST)
 
+	// Repository ops — proxied to the Workspace Agent (/api stripped -> /repos*).
+	mux.HandleFunc("GET /api/repos", cfg.proxyAgentREST)
+	mux.HandleFunc("POST /api/repos", cfg.proxyAgentREST)
+	mux.HandleFunc("DELETE /api/repos/{name}", cfg.proxyAgentREST)
+	mux.HandleFunc("GET /api/repos/{name}/status", cfg.proxyAgentREST)
+	mux.HandleFunc("GET /api/repos/{name}/branches", cfg.proxyAgentREST)
+	mux.HandleFunc("POST /api/repos/{name}/checkout", cfg.proxyAgentREST)
+	mux.HandleFunc("POST /api/repos/{name}/fetch", cfg.proxyAgentREST)
+
 	// Terminal PTY — proxied WebSocket.
 	mux.HandleFunc("GET /ws/terminal", cfg.proxyTerminal)
 

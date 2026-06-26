@@ -45,7 +45,7 @@ Phase 1 MVP 完了時点（2026-06-26, commit `dd2330e`）の運用状態・落�
 workspace/          Workspace イメージ
   Dockerfile        multi-stage(golang→node:22-slim)。claudeは焼かず entrypoint で起動時 install。
   entrypoint.sh     最新claude install/update → settings.json seed → exec agent。CLAUDE_INSTALL/CLAUDE_AUTO_UPDATE で制御。
-  agent/            Workspace Agent(Go)。main/session/terminal/uuid.go。HTTP:/sessions, WS:/ws/pty。
+  agent/            Workspace Agent(Go)。main/session/terminal/uuid/git.go。HTTP:/sessions・/repos, WS:/ws/pty。
 control-plane/      Control Plane(Go)。main(routing+no-store)/runtime(docker)/proxy(REST+WS)。
 console/            最小Console(xterm.js: fit/web-links/unicode11/webgl)。index.html/app.js/style.css。
 deploy/local/run-dev.sh   dev 起動スクリプト。
@@ -71,10 +71,22 @@ API/契約は [06](06-api-spec.md)・[07](07-workspace-agent.md)。CP↔Agent �
 1. **per-user Workspace 化** — 今は単一 `af-ws-dev`。CP が user→container を払い出し（`af-ws-<user>`）、
    ホームを `/tmp/af-data/<user>/home` に分離。Runtime/Volume/AuthGateway を [09 §9.3](09-portability.md#93-ポート定義go-インターフェース概略) のインターフェースに整理。
 2. **AuthGateway = oauth2-proxy** — CP は `X-Forwarded-...`/oauth2-proxy のヘッダ（認証済みメール）から user を解決（dev 固定IDを置換）。
-3. **リポジトリ管理** — clone/checkout/branch/status（Agent に `git.*`、[07 §7.3](07-workspace-agent.md#73-制御-apiagent-内部) / [08](08-bitbucket.md)）。Console に UI。
+3. ~~**リポジトリ管理** — clone/checkout/branch/status~~ ✅ **実装済**（下記「Phase 2 進捗」）。残: SSH 鍵連携で private repo clone。
 4. **SSH 鍵** — ユーザー単位 ed25519 を `~/.ssh` に生成、公開鍵表示 + 接続テスト（[08](08-bitbucket.md)）。
 5. **settings.json 編集 UI** + **Claude 認証状態表示**（[06 §6.7/6.8](06-api-spec.md#67-claude-認証状態login)。状態は `.credentials.json` 有無 + `claude -p` プローブ）。
 6. （任意）**claude 終了時にシェルへフォールバック** — セッション突然切断の体験を改善（session.go の tmux 起動を `claude …; exec bash -l` 等）。
+
+## 6.5 Phase 2 進捗（リポジトリ管理 — 実装済）
+
+`af-ws-<user>` 化の前に、新規コンテナ0でこのホストのRAM制約に安全な**リポジトリ管理**を先行実装。
+
+- **モデル**: リポジトリ = `~/repos/<name>` の working copy。**フォルダ名が id**（MetadataStore はまだ無いので不要。docs [09 §9.6](09-portability.md#96-ローカル構成compose-概略) の `repos/` 配置と一致）。
+- **Agent**（`workspace/agent/git.go`）: `GET/POST /repos`・`DELETE /repos/{name}`・`GET /repos/{name}/status|branches`・`POST /repos/{name}/checkout|fetch`。
+  status は `git status --porcelain=v2 --branch` を解析（branch/dirty/ahead/behind/staged/unstaged/untracked）。clone/fetch は `GIT_TERMINAL_PROMPT=0` で対話プロンプトに詰まらず fail-fast。name は `^[A-Za-z0-9][A-Za-z0-9._-]{0,59}$` で traversal 防御。
+- **CP**（`control-plane/main.go`）: `/api/repos*` を追加。既存 `proxyAgentREST`（`/api` 剥がし）でそのまま Agent へ委譲。
+- **Console**: サイドバーに **Repos パネル**（clone URL+branch / 一覧+dirty●/branch切替select(遅延ロード)/fetch⤓/`▶`そのdirでsession起動/✕delete）。
+- **検証済**（CP経由 E2E）: list→clone(`octocat/Hello-World`)→status→branches→checkout(test)→fetch→dirty検出→409/400エラー系→delete。`docs/06 §6.4` のレスポンス形に整合。
+- **残課題**: private repo は **SSH 鍵（[Phase 2 #4](#6-phase-2-でやること次の作業)）未実装**のため未対応。clone は非対話で即失敗する。per-user 化したら repos は各ユーザーのホーム配下に自然に分離される（Agent 契約は不変）。
 
 ## 7. 動作確認の最短手順
 

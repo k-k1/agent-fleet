@@ -78,6 +78,142 @@ $("new-session").onsubmit = async (e) => {
   attach(name);
 };
 
+// --- repos ---
+// A repo is a working copy under ~/repos/<name>; the folder name is its id.
+const repoSafeSession = (name) => name.replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 40) || "repo";
+
+async function refreshRepos() {
+  const list = $("repo-list");
+  let data;
+  try {
+    data = await api("api/repos");
+  } catch {
+    list.innerHTML = "";
+    return;
+  }
+  list.innerHTML = "";
+  for (const r of data.repos || []) {
+    list.append(repoRow(r));
+  }
+}
+
+function repoRow(r) {
+  const li = document.createElement("li");
+
+  const dot = document.createElement("span");
+  dot.className = "dot " + (r.dirty ? "dirty" : "clean");
+  dot.title = r.dirty ? "uncommitted changes" : "clean";
+  dot.textContent = "●";
+
+  const name = document.createElement("span");
+  name.className = "name";
+  name.textContent = r.name;
+  name.title = r.path;
+
+  // Branch switcher: options are filled lazily on first interaction to avoid
+  // an N+1 branch fetch for every repo on list.
+  const branch = document.createElement("select");
+  branch.className = "branch";
+  branch.innerHTML = `<option>${r.branch || "?"}</option>`;
+  let loaded = false;
+  const loadBranches = async () => {
+    if (loaded) return;
+    loaded = true;
+    try {
+      const b = await api(`api/repos/${encodeURIComponent(r.name)}/branches`);
+      branch.innerHTML = "";
+      for (const name of b.local || []) {
+        const o = document.createElement("option");
+        o.value = name;
+        o.textContent = name;
+        if (name === b.current) o.selected = true;
+        branch.append(o);
+      }
+    } catch {
+      loaded = false;
+    }
+  };
+  branch.onmousedown = loadBranches;
+  branch.onchange = async () => {
+    await api(`api/repos/${encodeURIComponent(r.name)}/checkout`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ branch: branch.value }),
+    });
+    refreshRepos();
+  };
+
+  const ab = document.createElement("span");
+  ab.className = "ab";
+  ab.textContent = (r.ahead ? `↑${r.ahead}` : "") + (r.behind ? `↓${r.behind}` : "");
+
+  const fetchBtn = mkBtn("⤓", "git fetch --prune", async () => {
+    fetchBtn.disabled = true;
+    await api(`api/repos/${encodeURIComponent(r.name)}/fetch`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prune: true }),
+    });
+    await refreshRepos();
+  });
+
+  const sessBtn = mkBtn("▶", "start a Claude session in this repo", async () => {
+    const sname = repoSafeSession(r.name);
+    await fetch(rel("api/sessions"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: sname, dir: r.path }),
+    });
+    await refreshSessions();
+    attach(sname);
+  });
+
+  const delBtn = mkBtn("✕", "delete working copy", async () => {
+    if (!confirm(`Delete working copy "${r.name}"? (history/remote untouched)`)) return;
+    await fetch(rel(`api/repos/${encodeURIComponent(r.name)}`), { method: "DELETE" });
+    refreshRepos();
+  });
+
+  li.append(dot, name, branch, ab, fetchBtn, sessBtn, delBtn);
+  return li;
+}
+
+function mkBtn(label, title, onclick) {
+  const b = document.createElement("button");
+  b.className = "icon";
+  b.textContent = label;
+  b.title = title;
+  b.onclick = onclick;
+  return b;
+}
+
+$("repos-refresh").onclick = refreshRepos;
+$("clone-repo").onsubmit = async (e) => {
+  e.preventDefault();
+  const url = $("cr-url").value.trim();
+  const branch = $("cr-branch").value.trim();
+  const btn = e.target.querySelector("button");
+  btn.disabled = true;
+  btn.textContent = "Cloning…";
+  try {
+    const res = await api("api/repos", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ remote_url: url, branch }),
+    });
+    if (res && res.error) {
+      alert("clone failed: " + (res.error.message || res.error));
+    } else {
+      $("cr-url").value = "";
+      $("cr-branch").value = "";
+    }
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Clone";
+  }
+  await refreshRepos();
+};
+
 // --- on-demand sign-in URL copy ---
 // Ink hard-wraps the /login auth URL across terminal rows, so neither plain
 // copy nor web-links yields the whole URL. Reconstruct it from the xterm buffer
@@ -185,4 +321,5 @@ function attach(session) {
 }
 
 refreshWorkspace();
+refreshRepos();
 refreshSessions();

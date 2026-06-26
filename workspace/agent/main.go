@@ -22,6 +22,15 @@ func main() {
 	mux.HandleFunc("POST /sessions/{name}/stop", handleStopSession)
 	mux.HandleFunc("GET /ws/pty", handlePTY)
 
+	// Repository management — git ops on working copies under ~/repos.
+	mux.HandleFunc("GET /repos", handleListRepos)
+	mux.HandleFunc("POST /repos", handleCloneRepo)
+	mux.HandleFunc("DELETE /repos/{name}", handleDeleteRepo)
+	mux.HandleFunc("GET /repos/{name}/status", handleRepoStatus)
+	mux.HandleFunc("GET /repos/{name}/branches", handleRepoBranches)
+	mux.HandleFunc("POST /repos/{name}/checkout", handleRepoCheckout)
+	mux.HandleFunc("POST /repos/{name}/fetch", handleRepoFetch)
+
 	log.Printf("workspace-agent listening on %s", addr)
 	if err := http.ListenAndServe(addr, logRequests(mux)); err != nil {
 		log.Fatal(err)
