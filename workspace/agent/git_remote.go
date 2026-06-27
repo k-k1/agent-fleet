@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -22,6 +23,36 @@ type remoteRepo struct {
 	CloneURL  string `json:"clone_url"`
 	Private   bool   `json:"private"`
 	UpdatedAt string `json:"updated_at"`
+}
+
+// remoteBranch is one branch of a remote repo with its last-commit time and subject,
+// so the Console can sort newest-first and show context (matching the local branch
+// modal). Default flags the repo's default branch.
+type remoteBranch struct {
+	Name    string `json:"name"`
+	Unix    int64  `json:"unix"`
+	Date    string `json:"date"`
+	Subject string `json:"subject"`
+	Default bool   `json:"default"`
+}
+
+// parseISOUnix parses an RFC3339 (optionally fractional) timestamp to unix seconds
+// (0 on failure). GitHub uses "…Z"; Bitbucket uses "…+00:00", sometimes fractional.
+func parseISOUnix(s string) int64 {
+	for _, layout := range []string{time.RFC3339, time.RFC3339Nano} {
+		if t, err := time.Parse(layout, s); err == nil {
+			return t.Unix()
+		}
+	}
+	return 0
+}
+
+// firstLine returns the first line of s (commit subject from a full message).
+func firstLine(s string) string {
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		return s[:i]
+	}
+	return s
 }
 
 // GET /connections/git/{host}/repos
@@ -96,7 +127,7 @@ func handleListRemoteBranches(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusBadRequest, "not_connected", err.Error())
 			return
 		}
-		branches, def, err := bitbucketListBranches(auth, repo)
+		branches, def, err := bitbucketListBranchesRich(auth, repo)
 		if err != nil {
 			writeErr(w, http.StatusBadGateway, "provider_error", err.Error())
 			return
@@ -107,87 +138,100 @@ func handleListRemoteBranches(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// githubListBranches returns branch names for owner/repo with the default branch
-// first (so the dropdown preselects it).
-func githubListBranches(token, repo string) ([]string, string, error) {
-	client := &http.Client{Timeout: 15 * time.Second}
-	def := githubDefaultBranch(client, token, repo) // best-effort; "" on failure
+// splitRepo splits "owner/name" into its parts.
+func splitRepo(repo string) (owner, name string, ok bool) {
+	i := strings.IndexByte(repo, '/')
+	if i <= 0 || i == len(repo)-1 {
+		return "", "", false
+	}
+	return repo[:i], repo[i+1:], true
+}
 
-	next := "https://api.github.com/repos/" + repo + "/branches?per_page=100"
-	names := []string{}
-	for page := 0; page < 10 && next != ""; page++ {
-		req, err := http.NewRequest("GET", next, nil)
+// githubListBranches lists branches of owner/repo with each branch's last-commit
+// time and subject, ordered newest-commit-first. It uses the GraphQL API because the
+// REST branches endpoint carries no commit date (and can't order by it); GraphQL's
+// refs(orderBy: TAG_COMMIT_DATE) does both in one round trip.
+func githubListBranches(token, repo string) ([]remoteBranch, string, error) {
+	owner, name, ok := splitRepo(repo)
+	if !ok {
+		return nil, "", fmt.Errorf("repo must be owner/name")
+	}
+	const query = `query($owner:String!,$name:String!,$cursor:String){repository(owner:$owner,name:$name){` +
+		`defaultBranchRef{name} refs(refPrefix:"refs/heads/",first:100,after:$cursor,` +
+		`orderBy:{field:TAG_COMMIT_DATE,direction:DESC}){nodes{name target{... on Commit{committedDate messageHeadline}}}` +
+		`pageInfo{hasNextPage endCursor}}}}`
+	client := &http.Client{Timeout: 20 * time.Second}
+	out := []remoteBranch{}
+	def, cursor := "", ""
+	for page := 0; page < 10; page++ {
+		vars := map[string]any{"owner": owner, "name": name}
+		if cursor != "" {
+			vars["cursor"] = cursor
+		}
+		body, _ := json.Marshal(map[string]any{"query": query, "variables": vars})
+		req, err := http.NewRequest("POST", "https://api.github.com/graphql", bytes.NewReader(body))
 		if err != nil {
 			return nil, "", err
 		}
-		githubHeaders(req, token)
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("Content-Type", "application/json")
 		resp, err := client.Do(req)
 		if err != nil {
 			return nil, "", err
 		}
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
-			b, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-			resp.Body.Close()
 			if resp.StatusCode == http.StatusUnauthorized {
 				return nil, "", fmt.Errorf("github token rejected (re-connect GitHub)")
 			}
-			return nil, "", fmt.Errorf("github %d: %s", resp.StatusCode, strings.TrimSpace(string(b)))
+			return nil, "", fmt.Errorf("github graphql %d: %s", resp.StatusCode, strings.TrimSpace(string(b)))
 		}
-		var batch []struct {
-			Name string `json:"name"`
+		var gr struct {
+			Data struct {
+				Repository struct {
+					DefaultBranchRef struct {
+						Name string `json:"name"`
+					} `json:"defaultBranchRef"`
+					Refs struct {
+						Nodes []struct {
+							Name   string `json:"name"`
+							Target struct {
+								CommittedDate   string `json:"committedDate"`
+								MessageHeadline string `json:"messageHeadline"`
+							} `json:"target"`
+						} `json:"nodes"`
+						PageInfo struct {
+							HasNextPage bool   `json:"hasNextPage"`
+							EndCursor   string `json:"endCursor"`
+						} `json:"pageInfo"`
+					} `json:"refs"`
+				} `json:"repository"`
+			} `json:"data"`
+			Errors []struct {
+				Message string `json:"message"`
+			} `json:"errors"`
 		}
-		err = json.NewDecoder(resp.Body).Decode(&batch)
-		link := resp.Header.Get("Link")
-		resp.Body.Close()
-		if err != nil {
+		if err := json.Unmarshal(b, &gr); err != nil {
 			return nil, "", err
 		}
-		for _, b := range batch {
-			names = append(names, b.Name)
+		if len(gr.Errors) > 0 {
+			return nil, "", fmt.Errorf("github graphql: %s", gr.Errors[0].Message)
 		}
-		next = nextLink(link)
-	}
-	return orderDefaultFirst(names, def), def, nil
-}
-
-func githubDefaultBranch(client *http.Client, token, repo string) string {
-	req, err := http.NewRequest("GET", "https://api.github.com/repos/"+repo, nil)
-	if err != nil {
-		return ""
-	}
-	githubHeaders(req, token)
-	resp, err := client.Do(req)
-	if err != nil {
-		return ""
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return ""
-	}
-	var meta struct {
-		DefaultBranch string `json:"default_branch"`
-	}
-	if json.NewDecoder(resp.Body).Decode(&meta) != nil {
-		return ""
-	}
-	return meta.DefaultBranch
-}
-
-func orderDefaultFirst(names []string, def string) []string {
-	if def == "" {
-		return names
-	}
-	out := make([]string, 0, len(names))
-	out = append(out, def)
-	for _, n := range names {
-		if n != def {
-			out = append(out, n)
+		def = gr.Data.Repository.DefaultBranchRef.Name
+		for _, n := range gr.Data.Repository.Refs.Nodes {
+			out = append(out, remoteBranch{
+				Name: n.Name, Unix: parseISOUnix(n.Target.CommittedDate),
+				Date: n.Target.CommittedDate, Subject: n.Target.MessageHeadline,
+				Default: n.Name == def,
+			})
 		}
+		if !gr.Data.Repository.Refs.PageInfo.HasNextPage {
+			break
+		}
+		cursor = gr.Data.Repository.Refs.PageInfo.EndCursor
 	}
-	if len(out) == 1 && len(names) == 0 {
-		return names // default wasn't actually in the list and list was empty
-	}
-	return out
+	return out, def, nil
 }
 
 func githubHeaders(req *http.Request, token string) {
@@ -393,14 +437,16 @@ func bitbucketRepoPage(client *http.Client, auth, url string) ([]remoteRepo, str
 	return out, resp.Next, nil
 }
 
-// bitbucketListBranches returns branch names for workspace/repo_slug with the
-// default (main) branch first.
-func bitbucketListBranches(auth, repo string) ([]string, string, error) {
+// bitbucketListBranchesRich lists branches of workspace/repo_slug with each branch's
+// last-commit time and subject, ordered newest-commit-first. Bitbucket's branch
+// listing includes target.date/message, so one paged call (sort=-target.date) does it.
+func bitbucketListBranchesRich(auth, repo string) ([]remoteBranch, string, error) {
 	client := &http.Client{Timeout: 15 * time.Second}
 	def := bitbucketDefaultBranch(client, auth, repo) // best-effort
 
-	next := "https://api.bitbucket.org/2.0/repositories/" + repo + "/refs/branches?pagelen=100&sort=name"
-	names := []string{}
+	next := "https://api.bitbucket.org/2.0/repositories/" + repo +
+		"/refs/branches?pagelen=100&sort=-target.date&fields=values.name,values.target.date,values.target.message,next"
+	out := []remoteBranch{}
 	for page := 0; page < 10 && next != ""; page++ {
 		body, err := bitbucketGet(client, auth, next)
 		if err != nil {
@@ -408,7 +454,11 @@ func bitbucketListBranches(auth, repo string) ([]string, string, error) {
 		}
 		var resp struct {
 			Values []struct {
-				Name string `json:"name"`
+				Name   string `json:"name"`
+				Target struct {
+					Date    string `json:"date"`
+					Message string `json:"message"`
+				} `json:"target"`
 			} `json:"values"`
 			Next string `json:"next"`
 		}
@@ -416,11 +466,14 @@ func bitbucketListBranches(auth, repo string) ([]string, string, error) {
 			return nil, "", err
 		}
 		for _, b := range resp.Values {
-			names = append(names, b.Name)
+			out = append(out, remoteBranch{
+				Name: b.Name, Unix: parseISOUnix(b.Target.Date), Date: b.Target.Date,
+				Subject: firstLine(b.Target.Message), Default: b.Name == def,
+			})
 		}
 		next = resp.Next
 	}
-	return orderDefaultFirst(names, def), def, nil
+	return out, def, nil
 }
 
 func bitbucketDefaultBranch(client *http.Client, auth, repo string) string {
