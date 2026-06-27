@@ -28,6 +28,13 @@ type Membership struct {
 	ID, IdentityID, TenantID, Role, Status, CreatedAt string
 }
 
+// UserLimit is a per-membership quota override (docs/16 P3-4). 0 = unset.
+type UserLimit struct {
+	MembershipID        string
+	MaxSessions, DiskGB int
+	CreatedAt           string
+}
+
 // MembershipView is a membership enriched with its tenant's slug/name, for the
 // /api/tenants picker and per-request tenant resolution.
 type MembershipView struct {
@@ -46,7 +53,9 @@ type Workspace struct {
 type Store interface {
 	EnsureDefaultTenant(ctx context.Context) (Tenant, error)
 	CreateTenant(ctx context.Context, slug, name string) (Tenant, error)
+	GetTenant(ctx context.Context, id string) (Tenant, error)
 	GetTenantBySlug(ctx context.Context, slug string) (Tenant, bool, error)
+	SetTenantLimits(ctx context.Context, tenantID, limitsJSON string) error
 
 	// UpsertIdentity creates/updates the person. roleHint, when non-empty,
 	// upgrades the deployment role (e.g. "super_admin" from SUPER_ADMIN_EMAILS);
@@ -55,11 +64,17 @@ type Store interface {
 
 	ListMemberships(ctx context.Context, identityID string) ([]MembershipView, error)
 	EnsureMembership(ctx context.Context, identityID, tenantID, role string) (Membership, error)
+	GetMembership(ctx context.Context, identityID, tenantID string) (Membership, bool, error)
 
 	GetWorkspaceByMembership(ctx context.Context, membershipID string) (Workspace, bool, error)
 	CreateWorkspace(ctx context.Context, ws Workspace) error
+	SetWorkspaceState(ctx context.Context, workspaceID, state string) error
 	MaxAgentPort(ctx context.Context) (int, error)
 	ListWorkspaces(ctx context.Context, tenantID string) ([]Workspace, error)
+
+	// Per-membership quota override (docs/16 P3-4).
+	GetUserLimit(ctx context.Context, membershipID string) (UserLimit, bool, error)
+	PutUserLimit(ctx context.Context, membershipID string, maxSessions, diskGB int) error
 
 	// Envelope-encrypted per-workspace DEK (docs/15 P3-3).
 	GetWrappedDEK(ctx context.Context, workspaceID string) (ciphertext, keyRef string, ok bool, err error)

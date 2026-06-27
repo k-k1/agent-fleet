@@ -246,6 +246,15 @@ func (s *sqliteStore) GetTenantBySlug(ctx context.Context, slug string) (Tenant,
 	return t, err == nil, err
 }
 
+func (s *sqliteStore) GetTenant(ctx context.Context, id string) (Tenant, error) {
+	return s.getTenant(ctx, id)
+}
+
+func (s *sqliteStore) SetTenantLimits(ctx context.Context, tenantID, limitsJSON string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE tenant SET limits=? WHERE id=?`, limitsJSON, tenantID)
+	return err
+}
+
 func (s *sqliteStore) getTenant(ctx context.Context, id string) (Tenant, error) {
 	var t Tenant
 	var keyRef sql.NullString
@@ -317,6 +326,50 @@ func (s *sqliteStore) EnsureMembership(ctx context.Context, identityID, tenantID
 		 WHERE identity_id=? AND tenant_id=?`, identityID, tenantID).
 		Scan(&m.ID, &m.IdentityID, &m.TenantID, &m.Role, &m.Status, &m.CreatedAt)
 	return m, err
+}
+
+func (s *sqliteStore) GetMembership(ctx context.Context, identityID, tenantID string) (Membership, bool, error) {
+	var m Membership
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id, identity_id, tenant_id, role, status, created_at FROM membership
+		 WHERE identity_id=? AND tenant_id=?`, identityID, tenantID).
+		Scan(&m.ID, &m.IdentityID, &m.TenantID, &m.Role, &m.Status, &m.CreatedAt)
+	if err == sql.ErrNoRows {
+		return Membership{}, false, nil
+	}
+	if err != nil {
+		return Membership{}, false, err
+	}
+	return m, true, nil
+}
+
+func (s *sqliteStore) GetUserLimit(ctx context.Context, membershipID string) (UserLimit, bool, error) {
+	var u UserLimit
+	err := s.db.QueryRowContext(ctx,
+		`SELECT membership_id, max_sessions, disk_gb, created_at FROM user_limit WHERE membership_id=?`, membershipID).
+		Scan(&u.MembershipID, &u.MaxSessions, &u.DiskGB, &u.CreatedAt)
+	if err == sql.ErrNoRows {
+		return UserLimit{}, false, nil
+	}
+	if err != nil {
+		return UserLimit{}, false, err
+	}
+	return u, true, nil
+}
+
+func (s *sqliteStore) PutUserLimit(ctx context.Context, membershipID string, maxSessions, diskGB int) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO user_limit(membership_id, max_sessions, disk_gb, created_at)
+		 VALUES(?, ?, ?, ?)
+		 ON CONFLICT(membership_id) DO UPDATE SET max_sessions=excluded.max_sessions, disk_gb=excluded.disk_gb`,
+		membershipID, maxSessions, diskGB, nowTS())
+	return err
+}
+
+func (s *sqliteStore) SetWorkspaceState(ctx context.Context, workspaceID, state string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE workspace SET state=?, last_active_at=? WHERE id=?`, state, nowTS(), workspaceID)
+	return err
 }
 
 func (s *sqliteStore) GetWorkspaceByMembership(ctx context.Context, membershipID string) (Workspace, bool, error) {

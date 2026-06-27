@@ -5,6 +5,7 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"net/http"
 	"os"
 	"os/exec"
@@ -24,7 +25,7 @@ import (
 // runtimes keyed by membership id. The Agent contract is unchanged.
 type manager struct {
 	mu    sync.Mutex
-	rts   map[string]*dockerRuntime // cache keyed by membership id; DB is source of truth
+	rts   map[string]cachedRT // cache keyed by membership id; DB is source of truth
 	store Store
 
 	// template fields shared by every runtime
@@ -165,10 +166,25 @@ func (m *manager) membershipsFor(ctx context.Context, ident Identity) ([]Members
 	return ms, nil
 }
 
-// resolve maps a request's identity + selected tenant to its runtime, creating
-// the workspace record on first use. tenantSel is the X-AF-Tenant value (slug or
-// tenant id); empty means "default selection".
-func (m *manager) resolve(ctx context.Context, key, email, tenantSel string) (*dockerRuntime, *apiError) {
+// cachedRT memoizes a built runtime + its workspace record per membership.
+type cachedRT struct {
+	rt *dockerRuntime
+	ws Workspace
+}
+
+// resolved is the full per-request resolution: runtime + workspace record +
+// identity + selected membership. Handlers needing tenant/quota context use this.
+type resolved struct {
+	rt    *dockerRuntime
+	ws    Workspace
+	ident Identity
+	mv    MembershipView
+}
+
+// resolveFull maps a request's identity + selected tenant to its runtime and
+// records, creating the workspace on first use. tenantSel is the X-AF-Tenant
+// value (slug or tenant id); empty means "default selection".
+func (m *manager) resolveFull(ctx context.Context, key, email, tenantSel string) (*resolved, *apiError) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -200,8 +216,8 @@ func (m *manager) resolve(ctx context.Context, key, email, tenantSel string) (*d
 		return nil, &apiError{http.StatusConflict, "tenant_selection_required", "specify X-AF-Tenant; you belong to multiple tenants"}
 	}
 
-	if rt, ok := m.rts[mv.MembershipID]; ok {
-		return rt, nil
+	if c, ok := m.rts[mv.MembershipID]; ok {
+		return &resolved{rt: c.rt, ws: c.ws, ident: ident, mv: mv}, nil
 	}
 	ws, ok, err := m.store.GetWorkspaceByMembership(ctx, mv.MembershipID)
 	if err != nil {
@@ -218,8 +234,67 @@ func (m *manager) resolve(ctx context.Context, key, email, tenantSel string) (*d
 		return nil, internalErr(err)
 	}
 	rt := m.runtimeFor(ws, dekHex)
-	m.rts[mv.MembershipID] = rt
-	return rt, nil
+	m.rts[mv.MembershipID] = cachedRT{rt: rt, ws: ws}
+	return &resolved{rt: rt, ws: ws, ident: ident, mv: mv}, nil
+}
+
+// resolve returns just the runtime (proxy/terminal handlers).
+func (m *manager) resolve(ctx context.Context, key, email, tenantSel string) (*dockerRuntime, *apiError) {
+	res, aerr := m.resolveFull(ctx, key, email, tenantSel)
+	if aerr != nil {
+		return nil, aerr
+	}
+	return res.rt, nil
+}
+
+// tenantLimits is the parsed tenant.limits JSON (0 = unlimited).
+type tenantLimits struct {
+	MaxWorkspaces int `json:"max_workspaces"`
+	MaxSessions   int `json:"max_sessions"`
+}
+
+func parseLimits(s string) tenantLimits {
+	var l tenantLimits
+	if s != "" {
+		_ = json.Unmarshal([]byte(s), &l)
+	}
+	return l
+}
+
+// countRunningInTenant counts running Workspace containers in a tenant via docker
+// (authoritative — independent of the DB state column).
+func (m *manager) countRunningInTenant(ctx context.Context, tenantID string) (int, error) {
+	wss, err := m.store.ListWorkspaces(ctx, tenantID)
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, ws := range wss {
+		if (&dockerRuntime{name: ws.ContainerName}).state(ctx) == "running" {
+			n++
+		}
+	}
+	return n, nil
+}
+
+// countSessions asks the Agent how many sessions a workspace currently has.
+func (m *manager) countSessions(ctx context.Context, rt *dockerRuntime) (int, error) {
+	req, _ := http.NewRequestWithContext(ctx, "GET", rt.agentBase()+"/sessions", nil)
+	if rt.token != "" {
+		req.Header.Set("Authorization", "Bearer "+rt.token)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	var body struct {
+		Sessions []json.RawMessage `json:"sessions"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return 0, err
+	}
+	return len(body.Sessions), nil
 }
 
 // workspaceNames derives the container/network/home for a (tenant, user). The

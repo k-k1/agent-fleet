@@ -131,3 +131,87 @@ func (c config) handleAdminAddMembership(w http.ResponseWriter, r *http.Request)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"user_key": key, "tenant": t.Slug, "role": role})
 }
+
+// handleAdminSetTenantLimits (PUT /api/admin/tenants/{slug}/limits) — docs/16 P3-4.
+func (c config) handleAdminSetTenantLimits(w http.ResponseWriter, r *http.Request) {
+	if _, ok := c.requireSuperAdmin(w, r); !ok {
+		return
+	}
+	var body struct {
+		MaxWorkspaces int `json:"max_workspaces"`
+		MaxSessions   int `json:"max_sessions"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid json"})
+		return
+	}
+	t, ok, err := c.mgr.store.GetTenantBySlug(r.Context(), r.PathValue("slug"))
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	if !ok {
+		writeAPIErr(w, &apiError{http.StatusNotFound, "no_tenant", "unknown tenant"})
+		return
+	}
+	lj, _ := json.Marshal(map[string]int{"max_workspaces": body.MaxWorkspaces, "max_sessions": body.MaxSessions})
+	if err := c.mgr.store.SetTenantLimits(r.Context(), t.ID, string(lj)); err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"tenant": t.Slug, "max_workspaces": body.MaxWorkspaces, "max_sessions": body.MaxSessions})
+}
+
+// handleAdminSetUserLimit (PUT /api/admin/user-limits) — per-membership override.
+func (c config) handleAdminSetUserLimit(w http.ResponseWriter, r *http.Request) {
+	if _, ok := c.requireSuperAdmin(w, r); !ok {
+		return
+	}
+	var body struct {
+		Email       string `json:"email"`
+		UserKey     string `json:"user_key"`
+		TenantSlug  string `json:"tenant_slug"`
+		MaxSessions int    `json:"max_sessions"`
+		DiskGB      int    `json:"disk_gb"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid json"})
+		return
+	}
+	key := body.UserKey
+	if key == "" {
+		key = sanitizeUser(body.Email)
+	}
+	if key == "" {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "email or user_key required"})
+		return
+	}
+	t, ok, err := c.mgr.store.GetTenantBySlug(r.Context(), body.TenantSlug)
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	if !ok {
+		writeAPIErr(w, &apiError{http.StatusNotFound, "no_tenant", "unknown tenant " + body.TenantSlug})
+		return
+	}
+	ident, err := c.mgr.store.UpsertIdentity(r.Context(), "", key, "")
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	mem, ok, err := c.mgr.store.GetMembership(r.Context(), ident.ID, t.ID)
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	if !ok {
+		writeAPIErr(w, &apiError{http.StatusNotFound, "no_membership", "user is not a member of " + t.Slug})
+		return
+	}
+	if err := c.mgr.store.PutUserLimit(r.Context(), mem.ID, body.MaxSessions, body.DiskGB); err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"user_key": key, "tenant": t.Slug, "max_sessions": body.MaxSessions, "disk_gb": body.DiskGB})
+}

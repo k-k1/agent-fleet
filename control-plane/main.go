@@ -29,7 +29,7 @@ type config struct {
 func main() {
 	portBase, _ := strconv.Atoi(envOr("WS_AGENT_PORT", "7700"))
 	mgr := &manager{
-		rts:         map[string]*dockerRuntime{},
+		rts:         map[string]cachedRT{},
 		image:       envOr("WS_IMAGE", "agent-fleet/workspace:m3"),
 		dataRoot:    envOr("WS_DATA", "/tmp/af-data"),
 		agentHost:   envOr("WS_AGENT_HOST", "127.0.0.1"),
@@ -101,6 +101,8 @@ func main() {
 	mux.HandleFunc("GET /api/tenants", cfg.handleTenants)
 	mux.HandleFunc("POST /api/admin/tenants", cfg.handleAdminCreateTenant)
 	mux.HandleFunc("POST /api/admin/memberships", cfg.handleAdminAddMembership)
+	mux.HandleFunc("PUT /api/admin/tenants/{slug}/limits", cfg.handleAdminSetTenantLimits)
+	mux.HandleFunc("PUT /api/admin/user-limits", cfg.handleAdminSetUserLimit)
 
 	// Workspace lifecycle (local Docker Runtime adapter).
 	mux.HandleFunc("GET /api/workspace", cfg.handleWorkspaceGet)
@@ -109,7 +111,7 @@ func main() {
 
 	// Session ops — proxied to the Workspace Agent.
 	mux.HandleFunc("GET /api/sessions", cfg.proxyAgentREST)
-	mux.HandleFunc("POST /api/sessions", cfg.proxyAgentREST)
+	mux.HandleFunc("POST /api/sessions", cfg.handleSessionCreate)
 	mux.HandleFunc("POST /api/sessions/{name}/stop", cfg.proxyAgentREST)
 
 	// Repository ops — proxied to the Workspace Agent (/api stripped -> /repos*).

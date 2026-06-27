@@ -140,28 +140,33 @@ func (d *dockerRuntime) waitHealthy(ctx context.Context, timeout time.Duration) 
 // rtFor resolves the request's user (AuthGateway) and returns its runtime. When
 // the gateway provides no identity (proxy mode, missing header) it writes 401
 // and returns ok=false; callers must stop.
-func (c config) rtFor(w http.ResponseWriter, r *http.Request) (*dockerRuntime, bool) {
+// resolvedFor returns the full per-request resolution (runtime + workspace +
+// identity + membership). Tenant selection: header for REST; query param for the
+// terminal WebSocket (browsers can't set custom headers on a WS handshake).
+func (c config) resolvedFor(w http.ResponseWriter, r *http.Request) (*resolved, bool) {
 	id := c.mgr.resolveIdentity(r)
 	if id.key == "" {
-		writeJSON(w, http.StatusUnauthorized, map[string]any{
-			"error": map[string]string{"code": "unauthenticated", "message": "no gateway identity"},
-		})
+		writeAPIErr(w, &apiError{http.StatusUnauthorized, "unauthenticated", "no gateway identity"})
 		return nil, false
 	}
-	// Tenant selection: header for REST; query param for the terminal WebSocket
-	// (browsers can't set custom headers on a WS handshake).
 	tenantSel := r.Header.Get("X-AF-Tenant")
 	if tenantSel == "" {
 		tenantSel = r.URL.Query().Get("tenant")
 	}
-	rt, aerr := c.mgr.resolve(r.Context(), id.key, id.email, tenantSel)
+	res, aerr := c.mgr.resolveFull(r.Context(), id.key, id.email, tenantSel)
 	if aerr != nil {
-		writeJSON(w, aerr.status, map[string]any{
-			"error": map[string]string{"code": aerr.code, "message": aerr.message},
-		})
+		writeAPIErr(w, aerr)
 		return nil, false
 	}
-	return rt, true
+	return res, true
+}
+
+func (c config) rtFor(w http.ResponseWriter, r *http.Request) (*dockerRuntime, bool) {
+	res, ok := c.resolvedFor(w, r)
+	if !ok {
+		return nil, false
+	}
+	return res.rt, true
 }
 
 // handleWhoami reports how the AuthGateway resolved this request, plus the raw
@@ -191,27 +196,76 @@ func (c config) handleWorkspaceGet(w http.ResponseWriter, r *http.Request) {
 }
 
 func (c config) handleWorkspaceStart(w http.ResponseWriter, r *http.Request) {
-	rt, ok := c.rtFor(w, r)
+	res, ok := c.resolvedFor(w, r)
 	if !ok {
 		return
 	}
-	if err := rt.start(r.Context()); err != nil {
+	rt, ctx := res.rt, r.Context()
+	// Quota (docs/16 P3-4): block a new running workspace once the tenant is at
+	// its max_workspaces. 0/unset = unlimited. Counted authoritatively via docker.
+	if rt.state(ctx) != "running" {
+		t, err := c.mgr.store.GetTenant(ctx, res.ws.TenantID)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+			return
+		}
+		if lim := parseLimits(t.Limits); lim.MaxWorkspaces > 0 {
+			n, err := c.mgr.countRunningInTenant(ctx, res.ws.TenantID)
+			if err != nil {
+				writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+				return
+			}
+			if n >= lim.MaxWorkspaces {
+				writeAPIErr(w, &apiError{http.StatusTooManyRequests, "quota_workspaces",
+					fmt.Sprintf("tenant workspace limit reached (%d)", lim.MaxWorkspaces)})
+				return
+			}
+		}
+	}
+	if err := rt.start(ctx); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
 	}
+	_ = c.mgr.store.SetWorkspaceState(ctx, res.ws.ID, "running")
 	writeJSON(w, http.StatusOK, map[string]any{"name": rt.name, "state": "running"})
 }
 
 func (c config) handleWorkspaceStop(w http.ResponseWriter, r *http.Request) {
-	rt, ok := c.rtFor(w, r)
+	res, ok := c.resolvedFor(w, r)
 	if !ok {
 		return
 	}
-	if err := rt.stop(r.Context()); err != nil {
+	if err := res.rt.stop(r.Context()); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"name": rt.name, "state": "stopped"})
+	_ = c.mgr.store.SetWorkspaceState(r.Context(), res.ws.ID, "stopped")
+	writeJSON(w, http.StatusOK, map[string]any{"name": res.rt.name, "state": "stopped"})
+}
+
+// handleSessionCreate enforces the per-user session quota (docs/16 P3-4) then
+// proxies POST /api/sessions to the Agent.
+func (c config) handleSessionCreate(w http.ResponseWriter, r *http.Request) {
+	res, ok := c.resolvedFor(w, r)
+	if !ok {
+		return
+	}
+	ctx := r.Context()
+	lim := 0
+	if ul, ok, _ := c.mgr.store.GetUserLimit(ctx, res.mv.MembershipID); ok && ul.MaxSessions > 0 {
+		lim = ul.MaxSessions
+	} else if t, err := c.mgr.store.GetTenant(ctx, res.ws.TenantID); err == nil {
+		lim = parseLimits(t.Limits).MaxSessions
+	}
+	if lim > 0 {
+		// If the workspace isn't reachable, skip the check; the proxy will report it.
+		if n, err := c.mgr.countSessions(ctx, res.rt); err == nil && n >= lim {
+			writeAPIErr(w, &apiError{http.StatusTooManyRequests, "quota_sessions",
+				fmt.Sprintf("session limit reached (%d)", lim)})
+			return
+		}
+	}
+	c.proxyAgentREST(w, r)
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
