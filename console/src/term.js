@@ -28,6 +28,26 @@ function setSession(name) {
   for (const fn of sessionListeners) fn(name);
 }
 
+// Clipboard helpers. Browsers route Ctrl+C/Ctrl+V inside a focused terminal to the
+// PTY (SIGINT / literal ^V), NOT the system clipboard — so plain copy/paste never
+// worked. We wire explicit gestures (copy-on-select, Ctrl+Shift+C / Ctrl+Insert,
+// right/middle-click paste, Shift+Insert / Ctrl+Shift+V) to the async Clipboard API,
+// leaving Ctrl+C free to interrupt the foreground program.
+function copySelection() {
+  const sel = term && term.getSelection();
+  if (sel && navigator.clipboard) navigator.clipboard.writeText(sel).catch(() => {});
+}
+function pasteClipboard() {
+  if (!term || !navigator.clipboard) return;
+  navigator.clipboard
+    .readText()
+    .then((t) => {
+      // term.paste() routes through onData (incl. bracketed-paste wrapping) → PTY.
+      if (t) term.paste(t);
+    })
+    .catch(() => {});
+}
+
 // ensureTerm builds the terminal once and opens it into `el`. Subsequent calls
 // with the same element are no-ops; the instance (and scrollback) persists.
 export function ensureTerm(el) {
@@ -61,6 +81,24 @@ export function ensureTerm(el) {
     term.loadAddon(new WebLinksAddon((e, uri) => window.open(uri, "_blank", "noopener")));
   } catch {}
   term.open(el);
+  // Mouse clipboard (terminal idiom): left-release auto-copies the current
+  // selection; right/middle click pastes. This is the reliable path even where the
+  // browser reserves Ctrl+Shift+C (DevTools) outside fullscreen.
+  if (term.element) {
+    term.element.addEventListener("mouseup", (ev) => {
+      if (ev.button === 0 && term.hasSelection()) copySelection();
+    });
+    term.element.addEventListener("contextmenu", (ev) => {
+      ev.preventDefault();
+      pasteClipboard();
+    });
+    term.element.addEventListener("auxclick", (ev) => {
+      if (ev.button === 1) {
+        ev.preventDefault();
+        pasteClipboard();
+      }
+    });
+  }
   // Crisp GPU rendering; fall back silently if WebGL2 is unavailable/lost.
   try {
     const webgl = new WebglAddon();
@@ -84,9 +122,43 @@ export function ensureTerm(el) {
   // forwards the key to the PTY (e.g. Ctrl+W = delete-word in the shell).
   const GRAB = new Set(["KeyW", "KeyT", "KeyN", "KeyS", "KeyP"]);
   term.attachCustomKeyEventHandler((e) => {
-    if (e.type === "keydown" && (e.ctrlKey || e.metaKey) && !e.altKey && GRAB.has(e.code)) {
+    if (e.type !== "keydown") return true;
+    const mod = e.ctrlKey || e.metaKey;
+    // Clipboard shortcuts — return false so xterm does NOT also forward them to the
+    // PTY. Ctrl+C/V (without shift) are deliberately left alone (SIGINT / ^V).
+    if (mod && e.shiftKey && e.code === "KeyC") {
+      copySelection();
       e.preventDefault();
+      return false;
     }
+    if (mod && e.shiftKey && e.code === "KeyV") {
+      pasteClipboard();
+      e.preventDefault();
+      return false;
+    }
+    if (e.ctrlKey && !e.shiftKey && e.code === "Insert") {
+      copySelection();
+      e.preventDefault();
+      return false;
+    }
+    if (e.shiftKey && !e.ctrlKey && e.code === "Insert") {
+      pasteClipboard();
+      e.preventDefault();
+      return false;
+    }
+    // macOS conventions: ⌘C copies (only when there's a selection, else fall
+    // through), ⌘V pastes. (metaKey is Super on Win/Linux — harmless there.)
+    if (e.metaKey && !e.ctrlKey && !e.shiftKey && e.code === "KeyC" && term.hasSelection()) {
+      copySelection();
+      e.preventDefault();
+      return false;
+    }
+    if (e.metaKey && !e.ctrlKey && !e.shiftKey && e.code === "KeyV") {
+      pasteClipboard();
+      e.preventDefault();
+      return false;
+    }
+    if (mod && !e.altKey && GRAB.has(e.code)) e.preventDefault();
     return true;
   });
   // Engage the Keyboard Lock API while the terminal is focused so that, in
@@ -95,7 +167,9 @@ export function ensureTerm(el) {
   // Escape, so it still exits fullscreen.
   const kb = navigator.keyboard;
   if (kb && kb.lock && term.textarea) {
-    const KEYS = ["KeyW", "KeyT", "KeyN", "KeyR", "KeyL", "KeyS", "KeyP", "PageUp", "PageDown"];
+    // KeyC/KeyV so that in fullscreen Ctrl+Shift+C reaches us (copy) instead of
+    // opening DevTools, and Ctrl+Shift+V reaches us (paste) instead of the browser.
+    const KEYS = ["KeyW", "KeyT", "KeyN", "KeyR", "KeyL", "KeyS", "KeyP", "KeyC", "KeyV", "PageUp", "PageDown"];
     term.textarea.addEventListener("focus", () => kb.lock(KEYS).catch(() => {}));
     term.textarea.addEventListener("blur", () => {
       try {

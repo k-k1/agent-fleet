@@ -16,8 +16,14 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -o /out/workspace-agent .
 FROM node:22-bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
       git git-lfs tmux openssh-client ca-certificates curl ripgrep less procps tzdata \
+      python3 python3-pip python3-venv python-is-python3 \
  && rm -rf /var/lib/apt/lists/* \
  && git lfs install --system --skip-repo
+# Python 3 (bookworm = 3.11) baked in as a baseline tool, like git/tmux. python-is-
+# python3 provides `python`. Debian (PEP 668) marks the system env externally-managed,
+# which blocks `pip install` into it; allow break-system-packages so `pip install
+# --user <pkg>` lands in the persistent home (~/.local, on PATH). venvs work as usual.
+RUN printf '[global]\nbreak-system-packages = true\n' > /etc/pip.conf
 # git-lfs filters live in the system gitconfig (/etc/gitconfig) so clones/checkouts
 # smudge LFS objects for every user regardless of home state. LFS auth reuses the
 # HTTPS credential helper (same host token), so private LFS objects fetch too.
