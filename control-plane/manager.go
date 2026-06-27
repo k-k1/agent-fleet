@@ -95,27 +95,40 @@ func (m *manager) forUser(ctx context.Context, key, email string) (*dockerRuntim
 	if rt, ok := m.rts[key]; ok {
 		return rt, nil
 	}
-	t, err := m.store.EnsureDefaultTenant(ctx)
+	ws, userKey, err := m.ensureWorkspace(ctx, key, email)
 	if err != nil {
 		return nil, err
+	}
+	rt := m.runtimeFor(ws, userKey)
+	m.rts[key] = rt
+	return rt, nil
+}
+
+// ensureWorkspace get-or-creates the tenant/user/workspace records and returns
+// the workspace plus the user key (for the secret subkey). It does NOT touch the
+// runtime cache — so backfill can populate records at boot without caching a
+// runtime built from a not-yet-known email, letting the user's first real login
+// update app_user.email. Caller holds m.mu (or runs single-threaded at boot).
+func (m *manager) ensureWorkspace(ctx context.Context, key, email string) (Workspace, string, error) {
+	t, err := m.store.EnsureDefaultTenant(ctx)
+	if err != nil {
+		return Workspace{}, "", err
 	}
 	u, err := m.store.UpsertUser(ctx, t.ID, email, key)
 	if err != nil {
-		return nil, err
+		return Workspace{}, "", err
 	}
 	ws, ok, err := m.store.GetWorkspaceByUser(ctx, u.ID)
 	if err != nil {
-		return nil, err
+		return Workspace{}, "", err
 	}
 	if !ok {
 		ws, err = m.createWorkspace(ctx, t, u)
 		if err != nil {
-			return nil, err
+			return Workspace{}, "", err
 		}
 	}
-	rt := m.runtimeFor(ws, u.UserKey)
-	m.rts[key] = rt
-	return rt, nil
+	return ws, u.UserKey, nil
 }
 
 // createWorkspace allocates a new workspace record for a user. If a container of
@@ -197,7 +210,8 @@ func (m *manager) backfill(ctx context.Context) error {
 		if _, err := os.Stat(filepath.Join(m.dataRoot, key, "home")); err != nil {
 			continue // not a user home layout; skip (e.g. db files)
 		}
-		if _, err := m.forUser(ctx, key, ""); err != nil {
+		// Record-only (no cache): the user's first real login then fills email.
+		if _, _, err := m.ensureWorkspace(ctx, key, ""); err != nil {
 			return err
 		}
 	}
