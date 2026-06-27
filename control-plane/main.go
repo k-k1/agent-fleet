@@ -40,6 +40,9 @@ func main() {
 		authMode:    envOr("AUTH", "dev"), // dev (fixed id) | proxy (gateway header)
 		devUser:     envOr("DEV_USER", "dev"),
 		emailHeader: envOr("AUTH_EMAIL_HEADER", "X-Forwarded-Email"),
+		// P3-2: provisioning policy + deployment super-admins.
+		provisionMode: envOr("AF_PROVISION", "auto"), // auto | invite
+		superAdmins:   emailSet(os.Getenv("SUPER_ADMIN_EMAILS")),
 	}
 	// OAuth App client_id (non-secret) for the GitHub device flow — injected into
 	// the Workspace so the Agent can run the flow. Reuses the extraEnv -> -e path.
@@ -89,6 +92,12 @@ func main() {
 	// Identity — who the AuthGateway resolved this request to (and the raw
 	// gateway headers, for verifying the oauth2-proxy -> Caddy -> CP chain).
 	mux.HandleFunc("GET /api/whoami", cfg.handleWhoami)
+
+	// Tenants — the caller's memberships (Console picker) + minimal admin API
+	// (super_admin only; full UI is P3-5). docs/14 P3-2.
+	mux.HandleFunc("GET /api/tenants", cfg.handleTenants)
+	mux.HandleFunc("POST /api/admin/tenants", cfg.handleAdminCreateTenant)
+	mux.HandleFunc("POST /api/admin/memberships", cfg.handleAdminAddMembership)
 
 	// Workspace lifecycle (local Docker Runtime adapter).
 	mux.HandleFunc("GET /api/workspace", cfg.handleWorkspaceGet)
@@ -141,6 +150,17 @@ func envOr(k, def string) string {
 		return v
 	}
 	return def
+}
+
+// emailSet parses a CSV of emails into a lowercased lookup set (SUPER_ADMIN_EMAILS).
+func emailSet(s string) map[string]bool {
+	m := map[string]bool{}
+	for _, p := range strings.Split(s, ",") {
+		if p = strings.TrimSpace(strings.ToLower(p)); p != "" {
+			m[p] = true
+		}
+	}
+	return m
 }
 
 // splitCSV parses "A=1,B=2" into ["A=1","B=2"], dropping blanks.

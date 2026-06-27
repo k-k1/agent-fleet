@@ -148,9 +148,11 @@ func (c config) rtFor(w http.ResponseWriter, r *http.Request) (*dockerRuntime, b
 		})
 		return nil, false
 	}
-	rt, err := c.mgr.forUser(r.Context(), id.key, id.email)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+	rt, aerr := c.mgr.resolve(r.Context(), id.key, id.email, r.Header.Get("X-AF-Tenant"))
+	if aerr != nil {
+		writeJSON(w, aerr.status, map[string]any{
+			"error": map[string]string{"code": aerr.code, "message": aerr.message},
+		})
 		return nil, false
 	}
 	return rt, true

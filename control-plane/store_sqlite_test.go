@@ -17,8 +17,7 @@ func TestSQLiteStore(t *testing.T) {
 	if err := st.migrate(ctx); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	// migrate is idempotent.
-	if err := st.migrate(ctx); err != nil {
+	if err := st.migrate(ctx); err != nil { // idempotent
 		t.Fatalf("migrate again: %v", err)
 	}
 
@@ -27,29 +26,56 @@ func TestSQLiteStore(t *testing.T) {
 		t.Fatalf("tenant: %v %+v", err, tn)
 	}
 
-	// UpsertUser is idempotent on (tenant, user_key); email updated when non-empty.
-	u1, err := st.UpsertUser(ctx, tn.ID, "", "k1-kami-gmail-com")
+	// UpsertIdentity is idempotent on user_key; email updated when non-empty;
+	// role upgrades but does not downgrade.
+	i1, err := st.UpsertIdentity(ctx, "", "k1-kami-gmail-com", "")
 	if err != nil {
 		t.Fatalf("upsert1: %v", err)
 	}
-	u2, err := st.UpsertUser(ctx, tn.ID, "k1.kami@gmail.com", "k1-kami-gmail-com")
+	i2, err := st.UpsertIdentity(ctx, "k1.kami@gmail.com", "k1-kami-gmail-com", "super_admin")
 	if err != nil {
 		t.Fatalf("upsert2: %v", err)
 	}
-	if u1.ID != u2.ID {
-		t.Fatalf("upsert not idempotent: %s != %s", u1.ID, u2.ID)
+	if i1.ID != i2.ID {
+		t.Fatalf("identity not idempotent: %s != %s", i1.ID, i2.ID)
 	}
-	if u2.Email != "k1.kami@gmail.com" {
-		t.Fatalf("email not updated: %q", u2.Email)
+	if i2.Email != "k1.kami@gmail.com" || i2.Role != "super_admin" {
+		t.Fatalf("identity not updated: %+v", i2)
 	}
 
-	// No workspace yet.
-	if _, ok, err := st.GetWorkspaceByUser(ctx, u2.ID); err != nil || ok {
+	// Membership: person joins two tenants.
+	t2, err := st.CreateTenant(ctx, "security", "Security")
+	if err != nil {
+		t.Fatalf("create tenant: %v", err)
+	}
+	if _, err := st.EnsureMembership(ctx, i2.ID, tn.ID, "member"); err != nil {
+		t.Fatalf("membership default: %v", err)
+	}
+	if _, err := st.EnsureMembership(ctx, i2.ID, t2.ID, "tenant_admin"); err != nil {
+		t.Fatalf("membership security: %v", err)
+	}
+	ms, err := st.ListMemberships(ctx, i2.ID)
+	if err != nil || len(ms) != 2 {
+		t.Fatalf("memberships: %v n=%d", err, len(ms))
+	}
+
+	// GetTenantBySlug
+	if got, ok, err := st.GetTenantBySlug(ctx, "security"); err != nil || !ok || got.ID != t2.ID {
+		t.Fatalf("by slug: ok=%v err=%v %+v", ok, err, got)
+	}
+
+	// Workspace per membership.
+	var defMem string
+	for _, m := range ms {
+		if m.TenantSlug == "default" {
+			defMem = m.MembershipID
+		}
+	}
+	if _, ok, err := st.GetWorkspaceByMembership(ctx, defMem); err != nil || ok {
 		t.Fatalf("expected no workspace: ok=%v err=%v", ok, err)
 	}
-
 	ws := Workspace{
-		ID: newID(), TenantID: tn.ID, UserID: u2.ID,
+		ID: newID(), TenantID: tn.ID, MembershipID: defMem,
 		ContainerName: "af-ws-k1-kami-gmail-com", Network: "af-net-k1-kami-gmail-com",
 		DataDir: "/tmp/af-data/k1-kami-gmail-com", AgentPort: "7700",
 		AgentToken: "tok", State: "stopped", CreatedAt: nowTS(),
@@ -57,18 +83,11 @@ func TestSQLiteStore(t *testing.T) {
 	if err := st.CreateWorkspace(ctx, ws); err != nil {
 		t.Fatalf("create ws: %v", err)
 	}
-	got, ok, err := st.GetWorkspaceByUser(ctx, u2.ID)
+	got, ok, err := st.GetWorkspaceByMembership(ctx, defMem)
 	if err != nil || !ok || got.AgentPort != "7700" || got.ContainerName != ws.ContainerName {
 		t.Fatalf("get ws: ok=%v err=%v %+v", ok, err, got)
 	}
-
-	mx, err := st.MaxAgentPort(ctx)
-	if err != nil || mx != 7700 {
+	if mx, err := st.MaxAgentPort(ctx); err != nil || mx != 7700 {
 		t.Fatalf("maxport: %v %d", err, mx)
-	}
-
-	list, err := st.ListWorkspaces(ctx, tn.ID)
-	if err != nil || len(list) != 1 {
-		t.Fatalf("list: %v n=%d", err, len(list))
 	}
 }

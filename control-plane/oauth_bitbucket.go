@@ -29,13 +29,14 @@ const (
 )
 
 type bbState struct {
-	user    string
+	user    string // identity user key
+	tenant  string // selected tenant (X-AF-Tenant) at start time
 	created time.Time
 }
 
 var (
 	bbStateMu sync.Mutex
-	bbStates  = map[string]bbState{} // csrf state -> {user, created}
+	bbStates  = map[string]bbState{} // csrf state -> {user, tenant, created}
 )
 
 func (c config) bbConfigured() bool {
@@ -67,7 +68,7 @@ func (c config) handleBitbucketOAuthStart(w http.ResponseWriter, r *http.Request
 			delete(bbStates, k)
 		}
 	}
-	bbStates[state] = bbState{user: user, created: time.Now()}
+	bbStates[state] = bbState{user: user, tenant: r.Header.Get("X-AF-Tenant"), created: time.Now()}
 	bbStateMu.Unlock()
 
 	au := bbAuthorizeURL + "?client_id=" + url.QueryEscape(c.bbKey) +
@@ -123,9 +124,9 @@ func (c config) handleBitbucketOAuthCallback(w http.ResponseWriter, r *http.Requ
 		"access_token": tok.AccessToken, "refresh_token": tok.RefreshToken,
 		"expires_in": tok.ExpiresIn, "key": c.bbKey, "secret": c.bbSecret,
 	})
-	rt, err := c.mgr.forUser(r.Context(), st.user, "")
-	if err != nil {
-		bbCallbackPage(w, "Workspace の解決に失敗しました: "+err.Error())
+	rt, aerr := c.mgr.resolve(r.Context(), st.user, "", st.tenant)
+	if aerr != nil {
+		bbCallbackPage(w, "Workspace の解決に失敗しました: "+aerr.message)
 		return
 	}
 	areq, _ := http.NewRequest("PUT", rt.agentBase()+"/connections/git/bitbucket/oauth", strings.NewReader(string(payload)))

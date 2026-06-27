@@ -5,36 +5,62 @@ import (
 	"time"
 )
 
-// MetadataStore (docs/12 P3-1) — the persistent source of truth for the tenant
-// hierarchy, replacing the old in-memory map + docker-inspect reconstruction.
-// P3-1 keeps it minimal: tenant / app_user / workspace. The default adapter is
-// SQLite (store_sqlite.go); Postgres is added behind this same interface for
-// AWS/HA later (docs/12 P3-7). Sessions/repos stay in the Agent (proxied).
+// MetadataStore (docs/12 P3-1/P3-2) — the persistent source of truth for the
+// identity/tenant hierarchy, replacing the old in-memory map. As of P3-2 (docs/14)
+// identity↔tenant is many-to-many: an Identity (person, unique email) joins one or
+// more Tenants via Membership, and a Workspace exists per Membership (= identity ×
+// tenant, fully isolated). The default adapter is SQLite (store_sqlite.go);
+// Postgres drops in behind this interface for AWS/HA later (docs/12 P3-7).
 
 type Tenant struct {
 	ID, Slug, Name, Status, Limits, Isolation, KeyRef, CreatedAt string
 }
 
-type User struct {
-	ID, TenantID, Email, UserKey, Role, Status, LastLoginAt string
+// Identity is a person, unique by email within the deployment. role is the
+// deployment-scoped role (user | super_admin).
+type Identity struct {
+	ID, Email, UserKey, Role, Status, LastLoginAt string
 }
 
+// Membership joins an Identity to a Tenant with a tenant-scoped role
+// (member | tenant_admin).
+type Membership struct {
+	ID, IdentityID, TenantID, Role, Status, CreatedAt string
+}
+
+// MembershipView is a membership enriched with its tenant's slug/name, for the
+// /api/tenants picker and per-request tenant resolution.
+type MembershipView struct {
+	MembershipID, TenantID, TenantSlug, TenantName, Role string
+}
+
+// Workspace is one container per Membership (= identity × tenant).
 type Workspace struct {
-	ID, TenantID, UserID            string
+	ID, TenantID, MembershipID      string
 	ContainerName, Network, DataDir string
 	AgentPort, AgentToken, State    string
 	CreatedAt, LastActiveAt         string
 }
 
-// Store is the MetadataStore port. The SQLite adapter is the only implementation
-// in P3-1; the interface keeps a Postgres adapter a drop-in for AWS/HA.
+// Store is the MetadataStore port. SQLite is the only adapter in P3-1/P3-2.
 type Store interface {
 	EnsureDefaultTenant(ctx context.Context) (Tenant, error)
-	UpsertUser(ctx context.Context, tenantID, email, key string) (User, error)
-	GetWorkspaceByUser(ctx context.Context, userID string) (Workspace, bool, error)
+	CreateTenant(ctx context.Context, slug, name string) (Tenant, error)
+	GetTenantBySlug(ctx context.Context, slug string) (Tenant, bool, error)
+
+	// UpsertIdentity creates/updates the person. roleHint, when non-empty,
+	// upgrades the deployment role (e.g. "super_admin" from SUPER_ADMIN_EMAILS);
+	// it never downgrades.
+	UpsertIdentity(ctx context.Context, email, key, roleHint string) (Identity, error)
+
+	ListMemberships(ctx context.Context, identityID string) ([]MembershipView, error)
+	EnsureMembership(ctx context.Context, identityID, tenantID, role string) (Membership, error)
+
+	GetWorkspaceByMembership(ctx context.Context, membershipID string) (Workspace, bool, error)
 	CreateWorkspace(ctx context.Context, ws Workspace) error
 	MaxAgentPort(ctx context.Context) (int, error)
 	ListWorkspaces(ctx context.Context, tenantID string) ([]Workspace, error)
+
 	Close() error
 }
 
