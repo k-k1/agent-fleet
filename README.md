@@ -39,7 +39,8 @@ Control Plane + 最小 Console が動作し、Tailscale Funnel 越しのブラ�
 | [docs/10-phase0-poc.md](docs/10-phase0-poc.md) | Phase 0 PoC 手順書（`/login` 検証）。実体は [`phase0/`](phase0/)|
 | [docs/11-phase1-plan.md](docs/11-phase1-plan.md) | Phase 1 実装プラン + 実装結果（§11.10）|
 | [docs/12-phase3-multitenant.md](docs/12-phase3-multitenant.md) | **Phase 3 設計**: プロダクト化（パッケージ配布・グループ各社セルフホスト／DB/鍵/バジェット/管理者/MCP/パッケージング）|
-| [docs/13-p3-1-plan.md](docs/13-p3-1-plan.md) | **P3-1 実装プラン**: MetadataStore（SQLite）導入。現ライブを既定テナントで包む DB 化 |
+| [docs/13-p3-1-plan.md](docs/13-p3-1-plan.md) | **P3-1 実装プラン**: MetadataStore（SQLite）導入。現ライブを既定テナントで包む DB 化（実装・検証済）|
+| [docs/14-p3-2-plan.md](docs/14-p3-2-plan.md) | **P3-2 実装プラン**: identity↔tenant 多対多。email で人を特定／作業対象テナントは明示選択 |
 | [docs/HANDOFF.md](docs/HANDOFF.md) | **引き継ぎ**: 稼働状態・実行作法・落とし穴・次フェーズ入口（次セッションはまず読む）|
 
 ## 既存プロトタイプ資産（再利用元）

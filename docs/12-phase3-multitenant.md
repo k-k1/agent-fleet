@@ -28,23 +28,30 @@ Phase 2 で「オンプレ 1 台・複数ユーザー相互不可視・at-rest �
 ## 12.1 アイデンティティ階層（パッケージ・セルフホスト版）
 
 各デプロイ（= 1 社の自社ホストインスタンス）の中の階層。我々（vendor）は**実行時の階層に登場しない**。
+**identity（人）と tenant は多対多**——同一人物が複数テナント（部署）に所属できる（2026-06-27 決定）。
 
 ```
 Deployment（1 社が自社ホスト。データ・鍵・設定をその社が保有）
-  ├── super_admin（その社の情シス）            ← デプロイ全体を統治
-  └── Tenant（部署/プロジェクト, 既定 1 = 全社）  ← 任意の内部分割。多くの社は 1 つ
-        ├── tenant_admin（部署管理者, 任意）
-        └── User（社員）                         ← 既存の "user"。tenant_id と role を持つ
-              └── Workspace（コンテナ）           ← tenant_id を継承
-                    ├── Repository
-                    └── Session
+  ├── super_admin（その社の情シス。identity.role）            ← デプロイ全体を統治・全テナント横断
+  ├── Identity（人。email で一意・デプロイ内グローバル）
+  │       └──< Membership >── Tenant                          ← 多対多。role はテナントごと
+  └── Tenant（部署/プロジェクト, 既定 1 = 全社）
+        ├── tenant_admin / member（membership.role）           ← テナント内ロール
+        └── Workspace（コンテナ）＝ Membership ごと（= identity×tenant）  ← テナント完全分離
+              ├── Repository
+              └── Session
 ```
 
-- **既存エンティティに `tenant_id` が付く**（既定テナント 1 つに全 User がぶら下がる単一テナント運用がデフォルト）。
-- **user キーの変更**: 現状 `af-ws-<email>`（フラット）→ **不透明 ID**（DB の `workspace.id`）でコンテナ/ボリュームを命名。
-  単一テナントでも email 直書きを脱し ID 化（改名・同名衝突・将来のマルチテナントに耐える）。
-- **ロール**: `super_admin`（その社の情シス）/ `tenant_admin`（部署管理者・任意）/ `member`。RBAC を CP ハンドラで強制。
-  ※ 旧設計の `platform_admin`（=我々）は**廃止**。我々は運用しないため実行時ロールを持たない。
+- **多対多**: `Identity`（人）×`Tenant` を `Membership` で結ぶ。1 人が Platform と Security の両部署に属し、
+  **テナントごとに別 role・別 Workspace（別コンテナ/home/資格情報）= 完全分離**（per-tenant 鍵と整合）。
+- **Workspace は Membership 単位**（= identity×tenant）。1 人が N テナントに居れば最大 N コンテナ（RAM。idle-stop が効く・バジェットはテナント別）。
+- **作業対象テナントの識別 = 明示選択**: gateway の email で identity を特定 → 作業対象テナントは**リクエストの明示指定**
+  （Console のピッカー → `X-AF-Tenant`）を membership で検証。**ネットワーク信号からは推定しない**（[P3-2](#p3-2-アイデンティティ--テナント解決authgateway-拡張)）。
+  - 未指定の既定: 所属が 1 件なら自動（**単一テナント運用は摩擦ゼロ**）/ 複数なら last-used or 選択要求。
+- **命名**: コンテナ/ボリュームは `workspace.id`（不透明）/ 既定スキーム `af-ws-<tenant>-<user_key>` で命名。
+  既存ライブは `container_name`/`data_dir` を DB 保存済みのため**既定テナントの membership は旧名 `af-ws-<key>` を維持**（無改修移行）。
+- **ロール（2 スコープ）**: `identity.role`=`super_admin`（情シス・全テナント横断）/ `membership.role`=`tenant_admin|member`（テナント内）。
+  RBAC を CP ハンドラで強制。※ 旧 `platform_admin`（=我々）は**廃止**（我々は運用しない）。
 
 ## 12.2 ワークストリーム一覧（依存順）
 
@@ -86,12 +93,15 @@ Deployment（1 社が自社ホスト。データ・鍵・設定をその社が�
                 key_ref,                         -- このテナントの DEK を解く KEK/CMK の参照（P3-3）
                 placement_ref,                   -- dedicated 時の cluster/subnet/EFS（任意）
                 created_at }
-  User        { id, tenant_id, email, display_name, role, status, last_login_at }
-  Workspace   { id, tenant_id, user_id, runtime_handle(task_arn/container_id),
-                endpoint(agent host:port / service), state, cpu, mem, disk_gb, last_active_at }
+  -- 注: P3-1 は app_user{ id, tenant_id, email, user_key, role, ... } で出荷（1ユーザー=1テナント）。
+  -- P3-2 で identity↔tenant 多対多へ進化（§12.1, docs/14, migration 0002）:
+  Identity    { id, email(unique), user_key(unique), role(super_admin|user), status, last_login_at }
+  Membership  { id, identity_id, tenant_id, role(tenant_admin|member), status, unique(identity_id,tenant_id) }
+  Workspace   { id, tenant_id, membership_id(unique), container_name, network, data_dir,
+                agent_port, agent_token, state, last_active_at }   -- = identity×tenant ごと
   Repository  { id, workspace_id, name, remote_url, default_branch, last_status }
   Session     { id, workspace_id, repository_id, tmux_name, claude_session_id, state, started_at, last_active_at }
-  UserLimit   { user_id, max_sessions, disk_gb, mem_mb }   -- 管理者がテナント枠内で設定
+  UserLimit   { membership_id, max_sessions, disk_gb, mem_mb }   -- 管理者がテナント枠内で設定
   UsageCounter{ tenant_id, running_workspaces, running_sessions, used_disk_gb, allocated_mem_mb, sampled_at }
   WrappedDEK  { workspace_id, ciphertext_dek, key_version } -- P3-3
   AuditLog    { id, tenant_id, actor_user_id, actor_kind(user|admin|mcp|system), action, target, detail, at }
@@ -106,16 +116,29 @@ Deployment（1 社が自社ホスト。データ・鍵・設定をその社が�
 
 ## P3-2. アイデンティティ & テナント解決（AuthGateway 拡張）
 
-現状の `AuthGateway.Identify` は email→sanitized user を返すだけ。マルチテナントでは **Identity = {tenant_id, user_id, role}** を返す。
+現状の `AuthGateway.Identify` は email→sanitized user を返すだけ。マルチテナントでは、**email は人（identity）を特定し、作業対象 tenant はリクエストの明示選択**で決める（identity↔tenant 多対多, §12.1）。
+詳細な実装プランは [14 P3-2 実装プラン](14-p3-2-plan.md)。
 
+- **テナントはネットワーク信号から推定しない**: 中央 SaaS の subdomain/path ルーティングは採らない（会社の区別はデプロイ自体）。
+  デプロイ内の作業対象テナントは**ユーザーが明示選択**（Console ピッカー → `X-AF-Tenant`）し、CP が membership で検証する。
+- **解決アルゴリズム**:
+  ```
+  email = gateway（L1, 不変）
+  identity = upsert(email, key)                       // 人。email で一意
+  memberships = list(identity)
+    len==0 → provisioning ポリシー（auto: 既定テナントへ membership 作成 / invite-only: 403）
+  tenant = request X-AF-Tenant（or 既定: 所属1件なら自動 / last-used / 選択要求 409）
+    validate membership(identity, tenant) else 403
+  role = identity.role==super_admin か membership.role
+  workspace = getOrCreate(identity, tenant)            // テナントごとに別コンテナ
+  ```
 - **L1（認証）は不変**: 各社が**自社の** oauth2-proxy（Google）/ ALB OIDC を設定（自社ドメイン `hd` 制限が自然）。我々は設定方法を文書化（P3-10）。
-- **L2-authz（認可）を DB に移す**: emails.txt の静的許可を廃し、**CP が email を DB と突合**し「provisioned user か / どのテナントか」を判定。未登録 email は **403（not provisioned）**。
-- **テナント解決**（単一テナントが既定なので通常は自明。マルチテナント時のみ）:
-  1. **招待ベース（主）**: 管理者が email を招待 → `User` レコード先行作成。consumer ドメイン（gmail 等）も扱える。
-  2. **ドメインマッピング（従）**: `Tenant.domains[]` に部署ドメインを登録 → 自動 provision（任意）。
-- **単一テナント運用**: 認証済みユーザーは自動的に唯一のテナントに属す。テナント解決ロジックは「テナント数 1 なら即決」で軽い。
+- **L2-authz（認可）を DB に移す**: emails.txt の静的許可を廃し、**CP が email を DB と突合**し identity/membership を判定。未登録 email は provisioning ポリシー依存（既定 auto-provision / 厳格は 403）。
+- **新エンドポイント**: `GET /api/tenants` = 呼び出し元の membership 一覧（tenant slug/name/role）→ Console のピッカー。
+- **provisioning ポリシー**（env で切替）: 既定 **auto-provision**（ゲートウェイを通れた=その社の正規メンバー → 既定テナントへ自動）/ 厳格運用は **invite-only**（管理者が招待で membership 先行作成、未知は 403）。マルチテナントの部署割当は招待ベース。
+- **role ブートストラップ**: env `SUPER_ADMIN_EMAILS` 一致で `identity.role=super_admin`（最初の管理者の鶏卵問題を解消）。
 - **ゲート迂回封じは Phase 2 の規律を継承**: proxy モードでヘッダ欠落＝401、CP は `127.0.0.1` 束縛（[HANDOFF §6.8 B1](HANDOFF.md)）。
-- **注意**: oauth2-proxy を `--email-domain=*` にすると L1 が「正当な Google アカウント」までしか絞らないので、**CP の DB メンバーシップ判定（403）と そのレート制限**が実質ゲート。自社ドメイン限定で運用するなら `hd`/`--email-domain` を効かせる方が堅い。
+  `--email-domain=*` だと L1 は「正当な Google アカウント」までしか絞らないので、**DB メンバーシップ判定（403）+ レート制限**が実質ゲート。自社ドメイン限定なら `hd` を効かせる方が堅い。
 
 ---
 
