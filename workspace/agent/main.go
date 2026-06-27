@@ -58,6 +58,8 @@ func main() {
 
 	// Connections — per-user provider credentials (git tokens; Claude in Stage 3).
 	mux.HandleFunc("GET /connections", handleConnectionsGet)
+	mux.HandleFunc("GET /connections/git/{host}/repos", handleListRemoteRepos)
+	mux.HandleFunc("GET /connections/git/{host}/branches", handleListRemoteBranches)
 	mux.HandleFunc("PUT /connections/git/{host}", handlePutGitConn)
 	mux.HandleFunc("DELETE /connections/git/{host}", handleDeleteGitConn)
 	mux.HandleFunc("POST /connections/git/github/oauth/start", handleGithubOAuthStart)

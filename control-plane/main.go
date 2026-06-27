@@ -111,6 +111,7 @@ func main() {
 	mux.HandleFunc("GET /api/workspace", cfg.handleWorkspaceGet)
 	mux.HandleFunc("POST /api/workspace/start", cfg.handleWorkspaceStart)
 	mux.HandleFunc("POST /api/workspace/stop", cfg.handleWorkspaceStop)
+	mux.HandleFunc("POST /api/workspace/recreate", cfg.handleWorkspaceRecreate)
 
 	// Session ops — proxied to the Workspace Agent.
 	mux.HandleFunc("GET /api/sessions", cfg.proxyAgentREST)
@@ -139,6 +140,8 @@ func main() {
 
 	// Connections ops — proxied to the Workspace Agent (/api stripped).
 	mux.HandleFunc("GET /api/connections", cfg.proxyAgentREST)
+	mux.HandleFunc("GET /api/connections/git/{host}/repos", cfg.proxyAgentREST)
+	mux.HandleFunc("GET /api/connections/git/{host}/branches", cfg.proxyAgentREST)
 	mux.HandleFunc("PUT /api/connections/git/{host}", cfg.proxyAgentREST)
 	mux.HandleFunc("DELETE /api/connections/git/{host}", cfg.proxyAgentREST)
 	mux.HandleFunc("POST /api/connections/git/github/oauth/start", cfg.proxyAgentREST)

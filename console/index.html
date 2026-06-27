@@ -1,153 +1,31 @@
 <!doctype html>
 <html lang="ja">
-<head>
-  <meta charset="utf-8" />
-  <script>
-    // Behind a path-stripping proxy (e.g. Caddy strips /agent-fleet), ensure a
-    // trailing slash so relative asset/API/WS URLs resolve under the mount.
-    (function () {
-      var p = location.pathname;
-      if (!p.endsWith("/") && !/\.[a-z0-9]+$/i.test(p.split("/").pop())) {
-        document.write('<base href="' + p + '/">');
-      }
-    })();
-  </script>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Agent Fleet — Console (Phase 1 MVP)</title>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.css" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap" />
-  <link rel="stylesheet" href="style.css" />
-</head>
-<body>
-  <header>
-    <h1>Agent Fleet <small>Phase 1 MVP / dev</small></h1>
-    <div id="ws-controls">
-      <span id="tenant-wrap" style="display:none">Tenant: <select id="tenant-picker"></select></span>
-      <button id="open-admin" hidden title="tenant / user / quota admin">⚙ admin</button>
-      <span>Workspace: <b id="ws-state">…</b></span>
-      <button id="ws-start">Start</button>
-      <button id="ws-stop">Stop</button>
-    </div>
-  </header>
-
-  <main>
-    <section id="sidebar">
-      <div class="row">
-        <h2>Connections</h2>
-        <button id="conn-refresh" title="refresh">⟳</button>
-      </div>
-      <ul id="conn-list"></ul>
-
-      <div class="row">
-        <h2>Repos</h2>
-        <button id="repos-refresh" title="refresh">⟳</button>
-      </div>
-      <form id="clone-repo">
-        <input id="cr-url" placeholder="git clone URL" required />
-        <input id="cr-branch" placeholder="branch (optional)" />
-        <button type="submit">Clone</button>
-      </form>
-      <ul id="repo-list"></ul>
-
-      <div class="row">
-        <h2>Sessions</h2>
-        <button id="sessions-refresh" title="refresh">⟳</button>
-      </div>
-      <form id="new-session">
-        <input id="ns-name" placeholder="name (a-z0-9_-)" required />
-        <input id="ns-dir" placeholder="dir (default ~)" />
-        <input id="ns-url" placeholder="clone URL (optional) — CWD = repo" />
-        <input id="ns-branch" placeholder="branch (optional)" />
-        <select id="ns-kind" title="session kind">
-          <option value="claude">claude</option>
-          <option value="shell">shell</option>
-        </select>
-        <button type="submit">New</button>
-      </form>
-      <ul id="session-list"></ul>
-    </section>
-
-    <section id="terminal-pane">
-      <div id="term-header">
-        <span id="term-title">no session attached</span>
-        <button id="open-files" title="browse files in this workspace">🗂 files</button>
-        <button id="copy-login-url" title="copy the most recent sign-in URL shown in the terminal">⧉ sign-in URL</button>
-      </div>
-      <div id="terminal"></div>
-
-      <!-- Admin overlay (super_admin only) -->
-      <div id="admin-pane" hidden>
-        <div id="admin-header">
-          <b>Admin</b>
-          <span class="spacer"></span>
-          <button id="admin-refresh" class="icon" title="refresh">⟳</button>
-          <button id="admin-close" class="icon" title="back to terminal">✕</button>
-        </div>
-        <div id="admin-body">
-          <div id="admin-left">
-            <div class="scm-section">Tenants</div>
-            <ul id="admin-tenants"></ul>
-            <form id="admin-new-tenant" class="admin-block">
-              <div class="scm-section">New tenant</div>
-              <input id="ant-slug" placeholder="slug" />
-              <input id="ant-name" placeholder="name" />
-              <button type="submit">Create</button>
-            </form>
-          </div>
-          <div id="admin-detail">select a tenant</div>
-        </div>
-      </div>
-
-      <!-- File explorer overlay (docs/17 P3-5 段2) -->
-      <div id="fs-pane" hidden>
-        <div id="fs-header">
-          <b>Files</b>
-          <span class="spacer"></span>
-          <button id="fs-refresh" class="icon" title="refresh">⟳</button>
-          <button id="fs-close" class="icon" title="back to terminal">✕</button>
-        </div>
-        <div id="fs-body">
-          <ul id="fs-tree"></ul>
-          <div id="fs-viewwrap">
-            <div id="fs-viewpath" class="muted"></div>
-            <pre id="fs-view"></pre>
-          </div>
-        </div>
-      </div>
-
-      <!-- Source control overlay (docs/17 P3-5) -->
-      <div id="scm-pane" hidden>
-        <div id="scm-header">
-          <b id="scm-title">repo</b>
-          <span id="scm-branch" class="muted"></span>
-          <span class="spacer"></span>
-          <button id="scm-refresh" class="icon" title="refresh">⟳</button>
-          <button id="scm-close" class="icon" title="back to terminal">✕</button>
-        </div>
-        <div id="scm-body">
-          <div id="scm-left">
-            <div class="scm-section">Changes</div>
-            <ul id="scm-changes"></ul>
-            <div id="scm-commit-box">
-              <textarea id="scm-msg" rows="2" placeholder="commit message"></textarea>
-              <label class="muted"><input type="checkbox" id="scm-all" /> stage all tracked (-a)</label>
-              <button id="scm-commit">Commit</button>
-            </div>
-            <div class="scm-section">History</div>
-            <ul id="scm-log"></ul>
-          </div>
-          <pre id="scm-diff"></pre>
-        </div>
-      </div>
-    </section>
-  </main>
-
-  <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-web-links@0.11.0/lib/addon-web-links.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-unicode11@0.8.0/lib/addon-unicode11.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-webgl@0.18.0/lib/addon-webgl.js"></script>
-  <script src="app.js"></script>
-</body>
+  <head>
+    <meta charset="utf-8" />
+    <script>
+      // Behind a path-stripping proxy (e.g. Caddy strips /agent-fleet), ensure a
+      // trailing slash so relative asset/API/WS URLs resolve under the mount.
+      (function () {
+        var p = location.pathname;
+        if (!p.endsWith("/") && !/\.[a-z0-9]+$/i.test(p.split("/").pop())) {
+          document.write('<base href="' + p + '/">');
+        }
+      })();
+    </script>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Agent Fleet — Console</title>
+    <link
+      rel="preconnect"
+      href="https://fonts.gstatic.com"
+      crossorigin
+    />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap"
+    />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
 </html>

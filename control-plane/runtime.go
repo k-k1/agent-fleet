@@ -209,6 +209,30 @@ func (c config) handleWorkspaceStart(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	c.startResolved(w, r, res)
+}
+
+// handleWorkspaceRecreate tears the container down and starts a fresh one from
+// the current image — a clean rebuild (pick up a new build / clear a wedged
+// container). Login (a separate CLAUDE_CONFIG_DIR mount) and connections (the
+// encrypted store under ~/.config) persist; the cloned working copies under
+// ~/repos are wiped (the user accepts losing them, incl. uncommitted work) and
+// running sessions are lost — so the Console guards this behind a warning dialog.
+func (c config) handleWorkspaceRecreate(w http.ResponseWriter, r *http.Request) {
+	res, ok := c.resolvedFor(w, r)
+	if !ok {
+		return
+	}
+	_ = res.rt.stop(r.Context()) // best-effort: may not exist yet
+	// Clear the working copies while the container is down. Targeted: we keep the
+	// encrypted secrets store and everything else in home.
+	_ = os.RemoveAll(filepath.Join(res.rt.dataDir, "home", "repos"))
+	c.startResolved(w, r, res)
+}
+
+// startResolved applies the workspace quota then starts the container, writing
+// the JSON result. Shared by start and recreate.
+func (c config) startResolved(w http.ResponseWriter, r *http.Request, res *resolved) {
 	rt, ctx := res.rt, r.Context()
 	// Quota (docs/16 P3-4): block a new running workspace once the tenant is at
 	// its max_workspaces. 0/unset = unlimited. Counted authoritatively via docker.

@@ -33,6 +33,21 @@ fi
 echo "==> build workspace image ($WS_IMAGE)"
 docker build -t "$WS_IMAGE" "$ROOT/workspace"
 
+# Console is now a Vite + React app: build it to console/dist, which the CP serves
+# statically (no-store). Node is user-local via nvm and not on a non-login shell's
+# PATH (e.g. under `sg docker`), so source nvm first. Run `npm --prefix console run
+# dev` (vite build --watch) in a separate shell during active UI work for fast
+# rebuilds; this script does a one-shot production build.
+echo "==> build console (vite)"
+export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+# shellcheck disable=SC1091
+[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh" >/dev/null 2>&1 || true
+if ! command -v npm >/dev/null 2>&1; then
+  echo "ERROR: npm not found (need Node via nvm). Skipping console build." >&2
+  exit 1
+fi
+( cd "$ROOT/console" && { [ -d node_modules ] || npm ci; } && npm run build )
+
 echo "==> build control-plane"
 ( cd "$ROOT/control-plane" && go build -o /tmp/af-cp . )
 
@@ -40,7 +55,7 @@ echo "==> control-plane on $CP_ADDR  (console: http://localhost${CP_ADDR})"
 exec env \
   CP_ADDR="$CP_ADDR" \
   WS_IMAGE="$WS_IMAGE" \
-  CONSOLE_DIR="$ROOT/console" \
+  CONSOLE_DIR="$ROOT/console/dist" \
   WS_DATA="$WS_DATA" \
   ${AUTH:+AUTH="$AUTH"} \
   ${DEV_USER:+DEV_USER="$DEV_USER"} \
