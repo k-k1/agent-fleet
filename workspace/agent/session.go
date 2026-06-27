@@ -35,10 +35,12 @@ func tmuxName(name string) string { return tmuxPrefix + name }
 
 // sessionMeta records how to (re)launch a session. tmux destroys a session when
 // its program exits (e.g. the user quits claude), losing the kind/dir/model we
-// need to relaunch. We persist it per-container under /tmp so the session stays
-// listed and clicking it re-runs claude --resume in the SAME session id (derived
-// from dir+name) instead of falling back to a bare shell. Lifecycle matches tmux:
-// /tmp clears on container restart, exactly when tmux sessions are lost too.
+// need to relaunch. We persist it in the home volume so the session stays listed
+// and clicking it re-runs claude --resume in the SAME session id (derived from
+// dir+name). Home survives Stop→Start, so a stopped session remains listed and
+// resumable across a Workspace restart (claude --resume reads the jsonl, also
+// persisted). The dir is denylisted in the file browser. "作り直す"(recreate)
+// wipes home, intentionally clearing sessions too.
 type sessionMeta struct {
 	Name      string `json:"name"`
 	Dir       string `json:"dir"`
@@ -51,14 +53,16 @@ type sessionMeta struct {
 }
 
 // stoppedTTL is how long a stopped (exited) session stays listed/resumable before
-// it is pruned. Configurable; default 24h. Container restart clears /tmp anyway.
+// it is pruned. Configurable; default 7d (metas now persist across Stop→Start, so
+// the window spans restarts). A session running at shutdown is marked stopped on
+// the next list after restart, starting its TTL then.
 func stoppedTTL() time.Duration {
 	if v := os.Getenv("AF_SESSION_STOPPED_TTL"); v != "" {
 		if d, err := time.ParseDuration(v); err == nil {
 			return d
 		}
 	}
-	return 24 * time.Hour
+	return 7 * 24 * time.Hour
 }
 
 // wireSession builds the API representation from a meta and liveness.
@@ -75,7 +79,11 @@ func wireSession(m sessionMeta, alive bool) Session {
 	}
 }
 
-func sessionsMetaDir() string { return envOr("AF_SESSIONS_DIR", "/tmp/af-sessions") }
+// sessionsMetaDir lives in the home volume (persists across Stop→Start) under the
+// denylisted .config/agent-fleet, so stopped sessions survive a Workspace restart.
+func sessionsMetaDir() string {
+	return envOr("AF_SESSIONS_DIR", filepath.Join(homeDir(), ".config", "agent-fleet", "sessions"))
+}
 
 func sessionMetaPath(name string) string { return filepath.Join(sessionsMetaDir(), name+".json") }
 
@@ -124,7 +132,14 @@ func listSessionMetas() []sessionMeta {
 // --resume once a jsonl exists); for shell it runs a login bash.
 func startSessionTmux(m sessionMeta) error {
 	tn := tmuxName(m.Name)
-	args := []string{"new-session", "-d", "-s", tn, "-c", m.Dir}
+	// The pane cwd falls back to home if the recorded dir is gone (e.g. its repo
+	// was deleted by "作り直す"); the sid still derives from the ORIGINAL dir so a
+	// resume keeps finding the same jsonl.
+	cwd := m.Dir
+	if fi, err := os.Stat(cwd); err != nil || !fi.IsDir() {
+		cwd = homeDir()
+	}
+	args := []string{"new-session", "-d", "-s", tn, "-c", cwd}
 	var program string
 	if m.Kind == "shell" {
 		program = "bash -l"
@@ -299,6 +314,41 @@ func handleStopSession(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"stopped": name})
 }
 
+// handleRecreateSession discards the session's conversation and starts it fresh in
+// the same slot (name/dir/model). This is distinct from resume: the deterministic
+// sid is reused but its jsonl is deleted first, so claude opens a NEW conversation
+// (--session-id) instead of --resume. The display name/time are refreshed.
+func handleRecreateSession(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if !nameRe.MatchString(name) {
+		writeErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
+		return
+	}
+	m, ok := readSessionMeta(name)
+	if !ok {
+		writeErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
+		return
+	}
+	if tn := tmuxName(name); tmuxHasSession(tn) {
+		_ = exec.Command("tmux", "kill-session", "-t", tn).Run()
+	}
+	// Throw away the past conversation so the same sid starts clean.
+	for _, p := range jsonlPaths(sessionUUID(m.Dir, m.Name)) {
+		_ = os.Remove(p)
+	}
+	m.CreatedAt = time.Now().Format(time.RFC3339)
+	if m.Kind == "claude" {
+		m.Label = sessionLabel(m.Dir)
+	}
+	m.StoppedAt = ""
+	if err := startSessionTmux(m); err != nil {
+		writeErr(w, http.StatusInternalServerError, "tmux_failed", err.Error())
+		return
+	}
+	writeSessionMeta(m)
+	writeJSON(w, http.StatusCreated, wireSession(m, true))
+}
+
 func tmuxHasSession(tn string) bool {
 	return exec.Command("tmux", "has-session", "-t", tn).Run() == nil
 }
@@ -333,14 +383,17 @@ func sessionLabel(dir string) string {
 	return fmt.Sprintf("[AF] %s @%s", filepath.Base(dir), time.Now().Format("0102-1504"))
 }
 
-// sessionJSONLExists reports whether a conversation log for sid is on disk.
-// It must look where claude actually stores projects — claudeConfigDir()
-// (CLAUDE_CONFIG_DIR when set, P3-5 段2), NOT a hardcoded ~/.claude. Otherwise a
-// resumable session is missed and we hand claude `--session-id <existing>`, which
-// claude rejects with "Session ID is already in use" and exits immediately.
-func sessionJSONLExists(sid string) bool {
-	matches, _ := filepath.Glob(filepath.Join(claudeConfigDir(), "projects", "*", sid+".jsonl"))
-	return len(matches) > 0
+// jsonlPaths returns the conversation log file(s) for sid. claude stores them
+// under claudeConfigDir()/projects/<project>/<sid>.jsonl (CLAUDE_CONFIG_DIR when
+// set, P3-5 段2) — NOT a hardcoded ~/.claude.
+func jsonlPaths(sid string) []string {
+	m, _ := filepath.Glob(filepath.Join(claudeConfigDir(), "projects", "*", sid+".jsonl"))
+	return m
 }
+
+// sessionJSONLExists reports whether a conversation log for sid is on disk. When
+// it exists buildSessionProgram uses --resume; otherwise --session-id starts new.
+// A wrong answer here makes claude exit ("Session ID is already in use").
+func sessionJSONLExists(sid string) bool { return len(jsonlPaths(sid)) > 0 }
 
 func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }

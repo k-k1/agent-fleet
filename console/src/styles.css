@@ -286,18 +286,20 @@ textarea:focus {
   font-size: 11px;
 }
 
-/* session rows: two lines (display name + 起動日時 / セッション名 + 状態) */
+/* session rows: two lines (display name + 起動日時 / セッション名 + 状態), plus a
+   recreate (↻) action on the right */
 .list > li.session-row {
-  flex-direction: column;
+  flex-direction: row;
   align-items: stretch;
-  gap: 0;
+  gap: 2px;
   padding: 0;
 }
 .session-btn {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   text-align: left;
   background: none;
   border: none;
@@ -305,6 +307,20 @@ textarea:focus {
   cursor: pointer;
   padding: 6px 6px;
   border-radius: 4px;
+}
+.session-recreate {
+  flex: none;
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 15px;
+  padding: 0 6px;
+  border-radius: 4px;
+}
+.session-recreate:hover {
+  background: var(--btn);
+  color: var(--fg);
 }
 .session-btn:hover {
   background: var(--btn);

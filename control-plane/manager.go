@@ -319,6 +319,26 @@ func (m *manager) countSessions(ctx context.Context, rt *dockerRuntime) (int, er
 	return len(body.Sessions), nil
 }
 
+// agentSessions fetches the Agent's full session list (for the DB mirror).
+func (m *manager) agentSessions(ctx context.Context, rt *dockerRuntime) ([]sessionWire, error) {
+	req, _ := http.NewRequestWithContext(ctx, "GET", rt.agentBase()+"/sessions", nil)
+	if rt.token != "" {
+		req.Header.Set("Authorization", "Bearer "+rt.token)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	var body struct {
+		Sessions []sessionWire `json:"sessions"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return nil, err
+	}
+	return body.Sessions, nil
+}
+
 // workspaceNames derives the container/network/home for a (tenant, user). The
 // default tenant keeps the flat af-ws-<key> scheme so the existing live
 // deployment is reused unchanged; other tenants are scoped by slug.

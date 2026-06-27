@@ -54,6 +54,14 @@ type Workspace struct {
 	CreatedAt, LastActiveAt         string
 }
 
+// SessionRow mirrors one Agent session into the CP DB so the session list can be
+// served while the Workspace container is stopped (the Agent is the source of
+// truth when running). state is "running" | "stopped".
+type SessionRow struct {
+	WorkspaceID, Name, Kind, Dir, Repo, Label string
+	CreatedAt, State, LastSeen                string
+}
+
 // Store is the MetadataStore port. SQLite is the only adapter in P3-1/P3-2.
 type Store interface {
 	EnsureDefaultTenant(ctx context.Context) (Tenant, error)
@@ -86,6 +94,11 @@ type Store interface {
 	// Envelope-encrypted per-workspace DEK (docs/15 P3-3).
 	GetWrappedDEK(ctx context.Context, workspaceID string) (ciphertext, keyRef string, ok bool, err error)
 	PutWrappedDEK(ctx context.Context, workspaceID, ciphertext, keyRef string) error
+
+	// Session index mirror: ReplaceSessions swaps the workspace's rows for the
+	// Agent's current list; ListSessions serves them while the container is down.
+	ReplaceSessions(ctx context.Context, workspaceID string, rows []SessionRow) error
+	ListSessions(ctx context.Context, workspaceID string) ([]SessionRow, error)
 
 	Close() error
 }

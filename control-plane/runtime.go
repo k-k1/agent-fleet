@@ -286,6 +286,69 @@ func (c config) handleWorkspaceStop(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"name": res.rt.name, "state": "stopped"})
 }
 
+// sessionWire is the session shape exchanged with the Agent and the Console. The
+// CP mirrors it into the DB so it can be re-served while the container is down.
+type sessionWire struct {
+	Name      string `json:"name"`
+	Kind      string `json:"kind"`
+	Dir       string `json:"dir"`
+	Repo      string `json:"repo"`
+	Label     string `json:"label"`
+	Started   string `json:"started"`
+	CreatedAt string `json:"createdAt"`
+	Alive     bool   `json:"alive"`
+}
+
+func fmtStarted(createdAt string) string {
+	if t, err := time.Parse(time.RFC3339, createdAt); err == nil {
+		return t.Local().Format("01/02 15:04")
+	}
+	return ""
+}
+
+// handleSessionsList serves GET /api/sessions. While the Workspace runs the Agent
+// is authoritative: fetch its list and mirror it into the DB. While it is stopped
+// (or the Agent is briefly unreachable) serve the last mirrored list from the DB —
+// as stopped — so the user still sees, and can resume, their sessions.
+func (c config) handleSessionsList(w http.ResponseWriter, r *http.Request) {
+	res, ok := c.resolvedFor(w, r)
+	if !ok {
+		return
+	}
+	ctx := r.Context()
+	if res.rt.state(ctx) == "running" {
+		if list, err := c.mgr.agentSessions(ctx, res.rt); err == nil {
+			rows := make([]SessionRow, 0, len(list))
+			for _, s := range list {
+				state := "stopped"
+				if s.Alive {
+					state = "running"
+				}
+				rows = append(rows, SessionRow{
+					Name: s.Name, Kind: s.Kind, Dir: s.Dir, Repo: s.Repo,
+					Label: s.Label, CreatedAt: s.CreatedAt, State: state,
+				})
+			}
+			_ = c.mgr.store.ReplaceSessions(ctx, res.ws.ID, rows)
+			writeJSON(w, http.StatusOK, map[string]any{"sessions": list})
+			return
+		}
+		// Agent unreachable (e.g. mid-start): fall through to the DB mirror.
+	}
+	rows, err := c.mgr.store.ListSessions(ctx, res.ws.ID)
+	if err != nil {
+		rows = nil
+	}
+	out := make([]sessionWire, 0, len(rows))
+	for _, r0 := range rows {
+		out = append(out, sessionWire{
+			Name: r0.Name, Kind: r0.Kind, Dir: r0.Dir, Repo: r0.Repo, Label: r0.Label,
+			Started: fmtStarted(r0.CreatedAt), CreatedAt: r0.CreatedAt, Alive: false,
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"sessions": out})
+}
+
 // handleSessionCreate enforces the per-user session quota (docs/16 P3-4) then
 // proxies POST /api/sessions to the Agent.
 func (c config) handleSessionCreate(w http.ResponseWriter, r *http.Request) {

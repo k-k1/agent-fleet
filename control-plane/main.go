@@ -114,9 +114,10 @@ func main() {
 	mux.HandleFunc("POST /api/workspace/recreate", cfg.handleWorkspaceRecreate)
 
 	// Session ops — proxied to the Workspace Agent.
-	mux.HandleFunc("GET /api/sessions", cfg.proxyAgentREST)
+	mux.HandleFunc("GET /api/sessions", cfg.handleSessionsList)
 	mux.HandleFunc("POST /api/sessions", cfg.handleSessionCreate)
 	mux.HandleFunc("POST /api/sessions/{name}/stop", cfg.proxyAgentREST)
+	mux.HandleFunc("POST /api/sessions/{name}/recreate", cfg.proxyAgentREST)
 
 	// Repository ops — proxied to the Workspace Agent (/api stripped -> /repos*).
 	mux.HandleFunc("GET /api/repos", cfg.proxyAgentREST)

@@ -34,6 +34,7 @@ func main() {
 	mux.HandleFunc("GET /sessions", handleListSessions)
 	mux.HandleFunc("POST /sessions", handleCreateSession)
 	mux.HandleFunc("POST /sessions/{name}/stop", handleStopSession)
+	mux.HandleFunc("POST /sessions/{name}/recreate", handleRecreateSession)
 	mux.HandleFunc("GET /ws/pty", handlePTY)
 
 	// Repository management — git ops on working copies under ~/repos.

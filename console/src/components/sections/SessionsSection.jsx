@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useApp } from "../../state.jsx";
-import { api } from "../../api.js";
+import { api, raw } from "../../api.js";
 import Section from "../Section.jsx";
 import NewSessionModal from "../NewSessionModal.jsx";
 
@@ -15,6 +15,18 @@ export default function SessionsSection() {
   const { sessionsKey, bumpSessions, bumpRepos, showTerminal, session } = useApp();
   const [sessions, setSessions] = useState([]);
   const [showModal, setShowModal] = useState(false);
+
+  // Discard the conversation and start the same slot fresh (≠ resume).
+  const recreate = async (name) => {
+    if (!confirm(`セッション "${name}" の会話を破棄して新規に開始しますか？\n（元の会話は復元できません）`)) return;
+    const res = await raw(`api/sessions/${encodeURIComponent(name)}/recreate`, { method: "POST" });
+    if (!res.ok) {
+      alert("作り直しに失敗しました");
+      return;
+    }
+    bumpSessions();
+    showTerminal(name);
+  };
 
   useEffect(() => {
     let alive = true;
@@ -58,6 +70,13 @@ export default function SessionsSection() {
                     {s.alive ? "● 起動中" : "停止中 — クリックで再開"}
                   </span>
                 </span>
+              </button>
+              <button
+                className="session-recreate"
+                title="作り直す（会話を破棄して新規セッションを開始）"
+                onClick={() => recreate(s.name)}
+              >
+                ↻
               </button>
             </li>
           );

@@ -253,6 +253,12 @@ CP のルーティングが user→対象コンテナを解決するだけ。
 - **2 行表示**（`console/src/components/sections/SessionsSection.jsx`）: 1 行目=**表示名 `[AF|SH] {repo}` ＋ 起動日時**（`started`="MM/DD HH:mm" ローカル時刻）、2 行目=**セッション名 ＋ kind ＋ 状態（● 起動中 / 停止中—クリックで再開）**。**4 秒ポーリング**で 起動中⇄停止中 と TTL 剪定を自動反映。`Session` に `repo`/`label`/`started`/`createdAt` を追加。CSS は `styles.css` の `.session-*`。
 - **検証**: claude×2＋shell を同一 dir に作成→1 つ kill で当該のみ `alive:false`・他は生存、WS 再接続で `cmd=claude` 復帰、`stoppedAt` を古く偽装→**剪定**を確認。
 
+**🔧 改善（2026-06-27 続き3）— セッション永続（Stop→Start 跨ぎ）/ DB ミラー / セッション recreate**:
+- **メタを永続 home へ**: `sessionsMetaDir` を `/tmp/af-sessions` →**`~/.config/agent-fleet/sessions`**（denylist 済）に変更。home は Stop→Start で残るので**停止セッションが Workspace 再起動を跨いで一覧＋再開可能**（jsonl も別マウントで残る）。TTL 既定 **24h→7d**（`AF_SESSION_STOPPED_TTL`）。`startSessionTmux` は dir 消失時に cwd を home フォールバック（sid は元 dir 由来で不変）。
+- **DB ミラー（B 案）**: agent が一次、CP が `GET /api/sessions` で **running 時は agent 取得→DB に `ReplaceSessions`**、**stopped/agent 不達時は DB から `alive:false` で配信**。これで**Workspace 停止中でも一覧が見える**（コンテナ横断ビューの素地）。migration `0005_session.sql`（`session` 表、PK=workspace_id+name）、`store.ReplaceSessions/ListSessions`、`runtime.handleSessionsList`/`manager.agentSessions`。**⚠️ migration はコメント文中の `;` で壊れる**（マイグレータは `;` 分割）＝コメントに `;` を入れない。
+- **セッション recreate（≠ 再開）**: 過去 jsonl を捨てて**同一スロットで新規会話**。Agent `POST /sessions/{name}/recreate`（kill tmux→`jsonlPaths(sid)` 削除→meta の createdAt/label 刷新・stoppedAt クリア→`startSessionTmux`＝jsonl 無で `--session-id` の新規）。CP は proxy。Console は各行の **↻ ボタン**（確認ダイアログ＝会話破棄）。
+- **検証**: Stop→Start 後も停止セッション表示＋WS で `cmd=claude` 復帰、**Workspace 停止中に DB から一覧配信**、recreate 後に `--session-id`（新規会話）で claude 生存。**注意**: `docker run` は既に running だと **no-op**＝新イメージ反映には **Stop→Start**（start 単独は不可）。
+
 ## 7. 動作確認の最短手順
 
 ```bash

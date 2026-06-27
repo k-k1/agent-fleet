@@ -478,6 +478,45 @@ func (s *sqliteStore) PutWrappedDEK(ctx context.Context, workspaceID, ciphertext
 	return err
 }
 
+func (s *sqliteStore) ReplaceSessions(ctx context.Context, workspaceID string, rows []SessionRow) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM session WHERE workspace_id=?`, workspaceID); err != nil {
+		return err
+	}
+	for _, r := range rows {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO session(workspace_id, name, kind, dir, repo, label, created_at, state, last_seen)
+			 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			workspaceID, r.Name, r.Kind, r.Dir, r.Repo, r.Label, r.CreatedAt, r.State, nowTS()); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (s *sqliteStore) ListSessions(ctx context.Context, workspaceID string) ([]SessionRow, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT name, kind, dir, repo, label, created_at, state, last_seen
+		 FROM session WHERE workspace_id=? ORDER BY created_at DESC`, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []SessionRow
+	for rows.Next() {
+		r := SessionRow{WorkspaceID: workspaceID}
+		if err := rows.Scan(&r.Name, &r.Kind, &r.Dir, &r.Repo, &r.Label, &r.CreatedAt, &r.State, &r.LastSeen); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
 const workspaceCols = `SELECT id, tenant_id, membership_id, container_name, network, data_dir,
 	agent_port, agent_token, state, created_at, COALESCE(last_active_at,'') FROM workspace`
 
