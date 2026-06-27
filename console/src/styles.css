@@ -1095,6 +1095,28 @@ textarea:focus {
   font-size: 12px;
 }
 
+/* settings modal: segmented section selector (like the New Session modal) */
+.settings-modal .modal-body {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.settings-seg {
+  display: inline-flex;
+  align-self: flex-start;
+  margin-bottom: 16px;
+}
+.settings-seg .seg-btn {
+  flex: 0 0 auto;
+  padding: 6px 20px;
+  font-size: 12px;
+}
+.settings-content {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
 /* display settings tab */
 .ds-group {
   margin-bottom: 22px;
@@ -1118,6 +1140,54 @@ textarea:focus {
   width: 120px;
   flex-shrink: 0;
   font-size: 13px;
+}
+.font-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.font-chip {
+  padding: 5px 12px;
+  font-size: 12px;
+  background: var(--btn);
+  border: 1px solid #444;
+  border-radius: 5px;
+  color: var(--fg);
+  cursor: pointer;
+}
+.font-chip:hover:not(.active) {
+  background: var(--btn-h);
+}
+.font-chip.active {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: #20303a;
+}
+.choice-seg {
+  display: inline-flex;
+}
+.choice-seg .seg-btn {
+  flex: 0 0 auto;
+  padding: 5px 16px;
+  font-size: 12px;
+}
+.stepper {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.stepper button {
+  width: 28px;
+  height: 26px;
+  padding: 0;
+  font-size: 15px;
+  line-height: 1;
+}
+.stepper-val {
+  min-width: 44px;
+  text-align: center;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
 }
 .ds-row select,
 .ds-row input[type="number"] {

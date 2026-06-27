@@ -1,7 +1,8 @@
 import { useSettings, setSetting, CODE_FONTS, fontStack } from "../lib/settings.js";
 
 // DisplayTab: font + file-viewer preferences (CodeLeaf-inspired), persisted via the
-// settings store. Terminal and viewer fonts are independent.
+// settings store. Every control is a horizontal selection (segmented buttons /
+// chips / stepper) for a consistent feel. Terminal and viewer fonts are separate.
 export default function DisplayTab() {
   const s = useSettings();
   return (
@@ -12,7 +13,7 @@ export default function DisplayTab() {
           <FontSelect value={s.termFont} onChange={(v) => setSetting("termFont", v)} />
         </Row>
         <Row label="文字サイズ">
-          <SizeInput value={s.termSize} onChange={(v) => setSetting("termSize", v)} />
+          <Stepper value={s.termSize} onChange={(v) => setSetting("termSize", v)} />
         </Row>
       </section>
 
@@ -22,25 +23,19 @@ export default function DisplayTab() {
           <FontSelect value={s.viewerFont} onChange={(v) => setSetting("viewerFont", v)} />
         </Row>
         <Row label="文字サイズ">
-          <SizeInput value={s.viewerSize} onChange={(v) => setSetting("viewerSize", v)} />
-        </Row>
-        <Row label="行番号">
-          <Toggle checked={s.lineNumbers} onChange={(v) => setSetting("lineNumbers", v)} />
-        </Row>
-        <Row label="折り返し">
-          <Toggle checked={s.wrap} onChange={(v) => setSetting("wrap", v)} />
-        </Row>
-        <Row label="ミニマップ">
-          <Toggle checked={s.minimap} onChange={(v) => setSetting("minimap", v)} />
+          <Stepper value={s.viewerSize} onChange={(v) => setSetting("viewerSize", v)} />
         </Row>
         <Row label="タブ幅">
-          <select value={s.tabSize} onChange={(e) => setSetting("tabSize", +e.target.value)}>
-            {[2, 4, 8].map((n) => (
-              <option key={n} value={n}>
-                {n}
-              </option>
-            ))}
-          </select>
+          <Choice value={s.tabSize} options={[[2, "2"], [4, "4"], [8, "8"]]} onChange={(v) => setSetting("tabSize", v)} />
+        </Row>
+        <Row label="行番号">
+          <OnOff value={s.lineNumbers} onChange={(v) => setSetting("lineNumbers", v)} />
+        </Row>
+        <Row label="折り返し">
+          <OnOff value={s.wrap} onChange={(v) => setSetting("wrap", v)} />
+        </Row>
+        <Row label="ミニマップ">
+          <OnOff value={s.minimap} onChange={(v) => setSetting("minimap", v)} />
         </Row>
       </section>
 
@@ -53,38 +48,73 @@ export default function DisplayTab() {
 
 function Row({ label, children }) {
   return (
-    <label className="ds-row">
+    <div className="ds-row">
       <span className="ds-label">{label}</span>
       {children}
-    </label>
+    </div>
   );
 }
 
+// FontSelect lays the choices out horizontally, each rendered in its own font so
+// the user can compare them at a glance.
 function FontSelect({ value, onChange }) {
   return (
-    <select value={value} onChange={(e) => onChange(e.target.value)} style={{ fontFamily: fontStack(value) }}>
+    <div className="font-choices">
       {CODE_FONTS.map((f) => (
-        <option key={f} value={f} style={{ fontFamily: fontStack(f) }}>
+        <button
+          key={f}
+          type="button"
+          className={"font-chip" + (f === value ? " active" : "")}
+          style={{ fontFamily: fontStack(f) }}
+          onClick={() => onChange(f)}
+        >
           {f}
-        </option>
+        </button>
       ))}
-    </select>
+    </div>
   );
 }
 
-function SizeInput({ value, onChange }) {
+// Choice is a small horizontal segmented control.
+function Choice({ value, options, onChange }) {
   return (
-    <input
-      type="number"
-      min={9}
-      max={28}
-      value={value}
-      onChange={(e) => onChange(Math.min(28, Math.max(9, +e.target.value || 13)))}
-      style={{ width: 64 }}
+    <div className="seg choice-seg">
+      {options.map(([v, label]) => (
+        <button
+          key={String(v)}
+          type="button"
+          className={"seg-btn" + (v === value ? " active" : "")}
+          onClick={() => onChange(v)}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function OnOff({ value, onChange }) {
+  return (
+    <Choice
+      value={!!value}
+      options={[[true, "オン"], [false, "オフ"]]}
+      onChange={onChange}
     />
   );
 }
 
-function Toggle({ checked, onChange }) {
-  return <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />;
+// Stepper keeps font size button-driven but allows any size in range.
+function Stepper({ value, onChange, min = 9, max = 28 }) {
+  const set = (n) => onChange(Math.min(max, Math.max(min, n)));
+  return (
+    <div className="stepper">
+      <button type="button" onClick={() => set(value - 1)} disabled={value <= min} aria-label="小さく">
+        −
+      </button>
+      <span className="stepper-val">{value}px</span>
+      <button type="button" onClick={() => set(value + 1)} disabled={value >= max} aria-label="大きく">
+        ＋
+      </button>
+    </div>
+  );
 }
