@@ -14,4 +14,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
  && for v in 8 21 25; do \
       apt-get install -y --no-install-recommends "temurin-$v-jdk" || echo "WARN: temurin-$v-jdk unavailable"; \
     done \
+ # Temurin ships each JDK's lib/security/cacerts as a symlink to
+ # /etc/ssl/certs/adoptium/cacerts, which lives OUTSIDE /usr/lib/jvm. Since only
+ # /usr/lib/jvm is extracted and bind-mounted read-only into workspaces, that
+ # target is absent there and the symlink dangles => empty truststore => Java/
+ # gradle SSL handshakes fail. Replace each symlink with its real file so the
+ # extracted JVM tree is self-contained.
+ && for c in $(find /usr/lib/jvm -name cacerts -type l); do \
+      real="$(readlink -f "$c")" && [ -f "$real" ] && cp --remove-destination "$real" "$c"; \
+    done \
  && rm -rf /var/lib/apt/lists/*
