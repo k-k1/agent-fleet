@@ -235,6 +235,13 @@ CP のルーティングが user→対象コンテナを解決するだけ。
 
 **適用手順（運用者）**: WS BAR の **Stop→Start**（スリム image＋JVM マウント＋新 agent。**repos/home 保持**。「作り直す」は repos も消す）→ ⚙設定 → 環境/Claude で選択 → 再度 Stop→Start で有効化（java は即・node は初回 nvm DL）。
 
+**🔧 修正（2026-06-27）— セッションが即死するリグレッション**:
+- **症状**: 端末セッションを開始しても claude が即終了（ペイン空→attach の `tmux new-session -A` が bash で作り直し→ `[claude] <defunct>` ゾンビ蓄積）。
+- **原因**: P3-5 段2 で claude 状態を `CLAUDE_CONFIG_DIR=/var/lib/af/claude` へ退避したが、`session.go` の `sessionJSONLExists` は依然 `~/.claude/projects` を走査。claude は jsonl を `$CLAUDE_CONFIG_DIR/projects` に書くため**同一 (dir,name) の2回目以降に jsonl を見落とし** → `--resume` ではなく `--session-id <既存ID>` を渡し、claude が `Session ID is already in use` で即終了。
+- **修正**: `claude_settings.go` に `claudeConfigDir()`（`CLAUDE_CONFIG_DIR`→無ければ `~/.claude`）を切り出し、`claudeSettingsPath` と `sessionJSONLExists` の双方を準拠化（`workspace/agent/session.go`/`claude_settings.go`）。image 再ビルド＋運用者コンテナ Stop→Start 済み。**検証**: 既存 sid の repo セッションが `--resume` で生存（`cmd=claude dead=0`/`/rc active`）、接続3件は実再起動跨ぎで復号 OK。
+- **既定 ON 化**: RC/通知は seed 既定で true（運用者も true）。**RTK は焼き込み済 rtk(`/usr/local/bin/rtk` v0.40.0) があるのに運用者の settings.json が rtk 導入前 seed でフック欠落** → `PUT /api/claude/settings {rtk:true}` で補填（settings.json に `rtk hook claude` の PreToolUse/Bash 追加）。新規コンテナは seed が3種とも付与。
+- **副次（解決済）**: コンテナ PID 1 = `workspace-agent`(Go) は zombie を reap せず、セッション停止毎に tmux/claude のゾンビが残っていた → `control-plane/runtime.go` の `docker run` に **`--init`** を追加（tini を PID 1 に注入＝orphan を reap）。CP 再ビルド＋運用者コンテナ Stop→Start で適用。**検証**: PID 1=`/sbin/docker-init`、session create+stop 後のゾンビ 0件。CP のみ変更（image/agent 再ビルド不要）。
+
 ## 7. 動作確認の最短手順
 
 ```bash

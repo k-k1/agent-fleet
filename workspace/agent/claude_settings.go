@@ -14,11 +14,19 @@ import (
 // so the Console can toggle them. Changes take effect for NEW claude sessions
 // (claude reads settings at startup). Unknown keys in the file are preserved.
 
-func claudeSettingsPath() string {
+// claudeConfigDir resolves where claude reads/writes its state. P3-5 段2 relocates
+// plaintext claude state out of home via CLAUDE_CONFIG_DIR; when unset it is the
+// classic ~/.claude. Both settings.json and projects/*.jsonl live under this dir,
+// so session resume detection must agree with it (see sessionJSONLExists).
+func claudeConfigDir() string {
 	if d := os.Getenv("CLAUDE_CONFIG_DIR"); d != "" {
-		return filepath.Join(d, "settings.json")
+		return d
 	}
-	return filepath.Join(homeDir(), ".claude", "settings.json")
+	return filepath.Join(homeDir(), ".claude")
+}
+
+func claudeSettingsPath() string {
+	return filepath.Join(claudeConfigDir(), "settings.json")
 }
 
 func readClaudeSettings() map[string]any {

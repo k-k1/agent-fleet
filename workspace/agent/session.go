@@ -167,9 +167,12 @@ func buildSessionProgram(sid, model string) string {
 }
 
 // sessionJSONLExists reports whether a conversation log for sid is on disk.
+// It must look where claude actually stores projects — claudeConfigDir()
+// (CLAUDE_CONFIG_DIR when set, P3-5 段2), NOT a hardcoded ~/.claude. Otherwise a
+// resumable session is missed and we hand claude `--session-id <existing>`, which
+// claude rejects with "Session ID is already in use" and exits immediately.
 func sessionJSONLExists(sid string) bool {
-	home, _ := os.UserHomeDir()
-	matches, _ := filepath.Glob(filepath.Join(home, ".claude", "projects", "*", sid+".jsonl"))
+	matches, _ := filepath.Glob(filepath.Join(claudeConfigDir(), "projects", "*", sid+".jsonl"))
 	return len(matches) > 0
 }
 

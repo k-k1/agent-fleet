@@ -76,6 +76,10 @@ func (d *dockerRuntime) start(ctx context.Context) error {
 
 	args := []string{
 		"run", "-d", "--name", d.name,
+		// --init runs tini as PID 1 to reap orphaned children. workspace-agent is
+		// otherwise PID 1 and Go does not reap, so every claude/tmux session exit
+		// would leave a <defunct> zombie that lives for the container's lifetime.
+		"--init",
 		"--memory", d.memory,
 		"-p", fmt.Sprintf("127.0.0.1:%s:7700", d.agentPort),
 		"-v", home + ":/home/node",
