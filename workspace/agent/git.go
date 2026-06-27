@@ -154,7 +154,11 @@ func gitClone(dir, remoteURL, branch string) error {
 	if err := os.MkdirAll(reposRoot(), 0o755); err != nil {
 		return err
 	}
-	args := []string{"clone", "--recurse-submodules"}
+	// The parent clone must NOT use --recurse-submodules: a submodule pinned to an
+	// SSH URL (git@host:) with no SSH key fails "Host key verification failed" and
+	// would abort the whole clone. Clone the parent first, then fetch submodules
+	// best-effort (over HTTPS via the token helper; see gitSubmodulesUpdate).
+	args := []string{"clone"}
 	if b := strings.TrimSpace(branch); b != "" && !strings.HasPrefix(b, "-") {
 		args = append(args, "--branch", b)
 	}
@@ -165,18 +169,72 @@ func gitClone(dir, remoteURL, branch string) error {
 		_ = os.RemoveAll(dir)
 		return fmt.Errorf("%v: %s", err, strings.TrimSpace(string(out)))
 	}
+	gitSubmodulesUpdate(dir)
 	return nil
 }
 
-// gitSubmodulesUpdate syncs submodules of an existing working copy (after a reuse or
-// a branch switch — the .gitmodules set/commits differ per branch). Best-effort: a
-// repo with no submodules is a no-op, and a failure (e.g. an unauthenticated private
-// submodule) is non-fatal so the parent checkout still succeeds. The unified
-// credential helper (workspace-agent cred) carries auth for private submodules.
+// gitSubmodulesUpdate fetches/updates submodules of a working copy (after a clone,
+// reuse, or branch switch — the .gitmodules set/commits differ per branch).
+//
+// The workspace has no SSH key, so a submodule pinned to an SSH URL (git@host: /
+// ssh://) would fail "Host key verification failed". Following CodeLeaf's JGit
+// client, we `submodule init` (expanding .gitmodules into .git/config), rewrite any
+// SSH-form submodule URL to HTTPS so the unified credential helper (workspace-agent
+// cred) can authenticate it, then `submodule update`. Best-effort throughout: no
+// submodules is a no-op, and an unreachable submodule is non-fatal so the parent
+// operation still succeeds.
 func gitSubmodulesUpdate(dir string) {
-	cmd := exec.Command("git", "-C", dir, "submodule", "update", "--init", "--recursive")
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
-	_ = cmd.Run()
+	env := append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	run := func(args ...string) {
+		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		cmd.Env = env
+		_ = cmd.Run()
+	}
+	run("submodule", "init")
+	rewriteSubmoduleSSHURLs(dir)
+	run("submodule", "update", "--recursive")
+}
+
+// rewriteSubmoduleSSHURLs replaces SSH-form submodule URLs in .git/config with their
+// HTTPS equivalents (so the token credential helper applies). Operates on the URLs
+// `submodule init` materialized; nested submodules are handled best-effort by the
+// recursive update.
+func rewriteSubmoduleSSHURLs(dir string) {
+	out, err := exec.Command("git", "-C", dir, "config", "--get-regexp", `^submodule\..*\.url$`).Output()
+	if err != nil {
+		return // no submodules / no config
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		key, url, ok := strings.Cut(line, " ")
+		if !ok {
+			continue
+		}
+		if https := sshToHTTPS(url); https != url {
+			_ = exec.Command("git", "-C", dir, "config", key, https).Run()
+		}
+	}
+}
+
+var (
+	// scp-like form: user@host:owner/repo(.git). "https://…" is not matched because
+	// it contains '/' before any ':', which [^@/] rejects.
+	scpURLRe = regexp.MustCompile(`^[^@/\s]+@([^:/\s]+):(.+)$`)
+	// ssh://[user@]host[:port]/owner/repo(.git)
+	sshURLRe = regexp.MustCompile(`^ssh://(?:[^@/\s]+@)?([^:/\s]+)(?::\d+)?/(.+)$`)
+)
+
+// sshToHTTPS converts an SSH git URL to HTTPS (returns the input unchanged if it is
+// not SSH). Mirrors CodeLeaf's sshToHttps. Host-agnostic, so self-hosted providers
+// work too.
+func sshToHTTPS(url string) string {
+	u := strings.TrimSpace(url)
+	if m := scpURLRe.FindStringSubmatch(u); m != nil {
+		return "https://" + m[1] + "/" + strings.TrimPrefix(m[2], "/")
+	}
+	if m := sshURLRe.FindStringSubmatch(u); m != nil {
+		return "https://" + m[1] + "/" + m[2]
+	}
+	return u
 }
 
 // ensureRepo guarantees a working copy for remoteURL exists under ~/repos and
