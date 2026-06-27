@@ -41,7 +41,7 @@ export function ensureTerm(el) {
     fontSize: 13,
     // JetBrains Mono first, with CJK fallbacks so Japanese etc. render.
     fontFamily:
-      '"JetBrains Mono", "Cascadia Code", "SF Mono", Menlo, Consolas, "DejaVu Sans Mono", "Noto Sans Mono CJK JP", "Noto Sans CJK JP", "Hiragino Kaku Gothic ProN", "Yu Gothic", monospace',
+      '"Source Code Pro", "SF Mono", Menlo, Consolas, "DejaVu Sans Mono", "Noto Sans Mono CJK JP", "Noto Sans CJK JP", "Hiragino Kaku Gothic ProN", "Yu Gothic", monospace',
     theme: { background: "#1e1e1e" },
     cursorBlink: true,
     allowProposedApi: true,

@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect, useCallback } from "react";
+import { createContext, useContext, useState, useEffect, useCallback, useRef } from "react";
 import { api, getTenant, setTenant as persistTenant } from "./api.js";
 import { attach as termAttach, detach as termDetach } from "./term.js";
 
@@ -18,11 +18,43 @@ export function AppProvider({ children }) {
 
   const [wsState, setWsState] = useState("…");
 
-  // main-area navigation
-  const [mode, setMode] = useState("terminal"); // 'terminal' | 'scm' | 'file'
-  const [scmRepo, setScmRepo] = useState(null);
-  const [filePath, setFilePath] = useState(null);
+  // main-area navigation, as a single object so we can mirror it into browser
+  // history (back/forward). { mode: 'terminal'|'scm'|'file', scmRepo, filePath }.
+  const [nav, setNav] = useState({ mode: "terminal", scmRepo: null, filePath: null });
+  const navRef = useRef(nav);
+  navRef.current = nav;
   const [session, setSession] = useState(null);
+
+  // go applies a partial nav change and (by default) pushes a browser history
+  // entry, so the browser's back/forward — and the mouse back button — traverse
+  // the views you visited. We keep the URL unchanged (state-only pushState): the
+  // Console lives behind a path-stripping proxy, so putting paths in the URL would
+  // break reloads / the base path. History therefore restores within a session,
+  // not across reloads.
+  const go = useCallback((partial, push = true) => {
+    const next = { ...navRef.current, ...partial };
+    if (push && JSON.stringify(next) === JSON.stringify(navRef.current)) return; // no dup entry
+    setNav(next);
+    if (push) {
+      try {
+        history.pushState({ __af: true, ...next }, "");
+      } catch {}
+    }
+  }, []);
+
+  // Restore nav on browser back/forward. Does NOT re-attach sessions — switching
+  // to the terminal view just shows whatever is currently attached.
+  useEffect(() => {
+    const onPop = (e) => {
+      const s = e.state && e.state.__af ? e.state : { mode: "terminal", scmRepo: null, filePath: null };
+      setNav({ mode: s.mode ?? "terminal", scmRepo: s.scmRepo ?? null, filePath: s.filePath ?? null });
+    };
+    window.addEventListener("popstate", onPop);
+    try {
+      history.replaceState({ __af: true, ...navRef.current }, "");
+    } catch {}
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
 
   const [settingsOpen, setSettingsOpen] = useState(false);
 
@@ -63,31 +95,28 @@ export function AppProvider({ children }) {
   const recreateWs = useCallback(async () => {
     termDetach();
     setSession(null);
-    setMode("terminal");
+    go({ mode: "terminal" });
     setWsState("recreating…");
     const res = await api("api/workspace/recreate", { method: "POST" });
     if (res && res.error) alert("作り直しに失敗: " + (res.error.message || res.error));
     await refreshWs();
     bumpSessions();
     bumpRepos();
-  }, [refreshWs, bumpSessions, bumpRepos]);
+  }, [go, refreshWs, bumpSessions, bumpRepos]);
 
-  // navigation helpers used across the UI
-  const showTerminal = useCallback((sess) => {
-    if (sess) {
-      termAttach(sess);
-      setSession(sess);
-    }
-    setMode("terminal");
-  }, []);
-  const showSCM = useCallback((repo) => {
-    setScmRepo(repo);
-    setMode("scm");
-  }, []);
-  const showFile = useCallback((path) => {
-    setFilePath(path);
-    setMode("file");
-  }, []);
+  // navigation helpers used across the UI (each pushes a history entry via go)
+  const showTerminal = useCallback(
+    (sess) => {
+      if (sess) {
+        termAttach(sess);
+        setSession(sess);
+      }
+      go({ mode: "terminal" });
+    },
+    [go],
+  );
+  const showSCM = useCallback((repo) => go({ mode: "scm", scmRepo: repo }), [go]);
+  const showFile = useCallback((path) => go({ mode: "file", filePath: path }), [go]);
 
   // initTenants: resolve identity + memberships. Single-membership users never
   // see a picker; super_admin unlocks the Admin settings tab.
@@ -127,13 +156,13 @@ export function AppProvider({ children }) {
       setTenantState(slug);
       termDetach();
       setSession(null);
-      setMode("terminal");
+      go({ mode: "terminal" });
       refreshWs();
       bumpSessions();
       bumpRepos();
       bumpConn();
     },
-    [refreshWs, bumpSessions, bumpRepos, bumpConn],
+    [go, refreshWs, bumpSessions, bumpRepos, bumpConn],
   );
 
   // boot
@@ -156,9 +185,9 @@ export function AppProvider({ children }) {
     startWs,
     stopWs,
     recreateWs,
-    mode,
-    scmRepo,
-    filePath,
+    mode: nav.mode,
+    scmRepo: nav.scmRepo,
+    filePath: nav.filePath,
     session,
     showTerminal,
     showSCM,

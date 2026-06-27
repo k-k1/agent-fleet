@@ -1,13 +1,19 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import hljs from "highlight.js/lib/common";
+import "highlight.js/styles/github-dark.css";
 import { useApp } from "../state.jsx";
 import { api } from "../api.js";
+import { baseName, langFor, langLabel, humanSize, countLines } from "../lib/filemeta.js";
+import MarkdownView from "./MarkdownView.jsx";
 
-// FileView shows a single file's contents (read-only). Driven by the file the user
-// clicked in the Files section. Binary / truncated files are reported, not dumped.
+// FileView shows a single file (read-only) with CodeLeaf-style affordances: an info
+// bar (name / language / size / line count / truncation) and syntax-highlighted
+// content with a line-number gutter. Binary files report a summary, not bytes.
 export default function FileView() {
-  const { filePath } = useApp();
+  const { filePath, showFile } = useApp();
   const [data, setData] = useState(null);
   const [err, setErr] = useState("");
+  const [mdMode, setMdMode] = useState("preview"); // markdown only: 'preview' | 'source'
 
   useEffect(() => {
     if (!filePath) return;
@@ -26,23 +32,86 @@ export default function FileView() {
     };
   }, [filePath]);
 
-  const body = err
-    ? `(${err})`
-    : data == null
-      ? "…"
-      : data.binary
-        ? `(バイナリ, ${data.size || 0} bytes)`
-        : (data.content ?? "");
+  const isText = data && !data.binary && typeof data.content === "string";
+  const lines = isText ? countLines(data.content) : 0;
+  const isMarkdown = isText && langFor(filePath) === "markdown";
+  const showPreview = isMarkdown && mdMode === "preview";
+
+  // Highlight once per file load. Fall back to escaped plain text if the language
+  // is unknown or highlighting throws.
+  const html = useMemo(() => {
+    if (!isText) return "";
+    const lang = langFor(filePath);
+    try {
+      if (lang && hljs.getLanguage(lang)) {
+        return hljs.highlight(data.content, { language: lang, ignoreIllegals: true }).value;
+      }
+    } catch {}
+    return escapeHtml(data.content);
+  }, [isText, data, filePath]);
+
+  if (!filePath) return <div className="fileview" />;
 
   return (
     <div className="fileview">
-      <header className="view-head">
-        <span className="view-title mono">
+      <header className="view-head fileinfo">
+        <span className="fi-name mono">📄 {baseName(filePath)}</span>
+        {isText && <span className="fi-tag">{langLabel(filePath)}</span>}
+        <span className="fi-meta muted">
+          {humanSize(data?.size)}
+          {isText ? ` · ${lines} 行` : ""}
+          {data?.truncated ? " · 先頭のみ" : ""}
+        </span>
+        {isMarkdown && (
+          <span className="seg sm md-toggle">
+            <button
+              type="button"
+              className={"seg-btn" + (mdMode === "preview" ? " active" : "")}
+              onClick={() => setMdMode("preview")}
+            >
+              プレビュー
+            </button>
+            <button
+              type="button"
+              className={"seg-btn" + (mdMode === "source" ? " active" : "")}
+              onClick={() => setMdMode("source")}
+            >
+              ソース
+            </button>
+          </span>
+        )}
+        <span className="fi-path muted" title={filePath}>
           {filePath}
-          {data?.truncated ? " (truncated)" : ""}
         </span>
       </header>
-      <pre className="filebody">{body}</pre>
+
+      {err ? (
+        <pre className="filebody muted">({err})</pre>
+      ) : data == null ? (
+        <pre className="filebody muted">…</pre>
+      ) : data.binary ? (
+        <pre className="filebody muted">(バイナリ, {humanSize(data.size)})</pre>
+      ) : showPreview ? (
+        <div className="md-scroll">
+          <MarkdownView source={data.content} basePath={filePath} onOpenFile={showFile} />
+        </div>
+      ) : (
+        <div className="codeview">
+          <pre className="gutter" aria-hidden="true">
+            {Array.from({ length: Math.max(lines, 1) }, (_, i) => i + 1).join("\n")}
+          </pre>
+          <pre className="code">
+            <code className="hljs" dangerouslySetInnerHTML={{ __html: html }} />
+          </pre>
+        </div>
+      )}
     </div>
   );
+}
+
+function escapeHtml(s) {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
 }

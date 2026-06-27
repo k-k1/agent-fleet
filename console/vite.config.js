@@ -16,6 +16,9 @@ export default defineConfig({
   build: {
     outDir: "dist",
     emptyOutDir: true,
-    sourcemap: true,
+    // No sourcemaps: mermaid is large and sourcemap generation blew the Node heap
+    // on this RAM-constrained host. Re-enable locally if you need to debug.
+    sourcemap: false,
+    chunkSizeWarningLimit: 1500,
   },
 });

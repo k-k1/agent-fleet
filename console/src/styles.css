@@ -14,8 +14,8 @@
   --ok: #67c23a;
   --warn: #e6a23c;
   --del: #e06c75;
-  --mono: "JetBrains Mono", "Cascadia Code", "SF Mono", Menlo, Consolas,
-    "DejaVu Sans Mono", "Noto Sans Mono CJK JP", monospace;
+  --mono: "Source Code Pro", "SF Mono", Menlo, Consolas, "DejaVu Sans Mono",
+    "Noto Sans Mono CJK JP", monospace;
 }
 
 * {
@@ -579,6 +579,203 @@ textarea:focus {
   padding: 8px 12px;
   font: 12px/1.45 var(--mono);
   white-space: pre;
+}
+
+/* file viewer: info bar + line-numbered, highlighted code */
+.fileinfo {
+  gap: 10px;
+}
+.fi-name {
+  font-size: 12px;
+  color: var(--fg);
+}
+.fi-tag {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--accent);
+  border: 1px solid #2f5a6a;
+  border-radius: 3px;
+  padding: 0 6px;
+}
+.fi-meta {
+  font-size: 11px;
+}
+.fi-path {
+  flex: 1;
+  min-width: 0;
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+}
+.codeview {
+  flex: 1;
+  display: flex;
+  overflow: auto;
+  background: var(--bg);
+}
+.codeview .gutter {
+  margin: 0;
+  padding: 8px 8px 8px 12px;
+  position: sticky;
+  left: 0;
+  text-align: right;
+  color: #5a5a5a;
+  background: var(--panel2);
+  border-right: 1px solid var(--border2);
+  user-select: none;
+  white-space: pre;
+  font: 12px/1.55 var(--mono);
+}
+.codeview .code {
+  margin: 0;
+  padding: 8px 14px;
+  white-space: pre;
+  font: 12px/1.55 var(--mono);
+}
+.codeview .code .hljs {
+  background: transparent;
+  padding: 0;
+}
+
+/* small segmented toggle (markdown preview/source in the file header) */
+.seg.sm .seg-btn {
+  padding: 2px 10px;
+  font-size: 11px;
+}
+.md-toggle {
+  flex: 0 0 auto;
+}
+
+/* rendered markdown */
+.md-scroll {
+  flex: 1;
+  overflow: auto;
+  background: var(--bg);
+}
+.markdown {
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 20px 28px 60px;
+  font: 14px/1.7 system-ui, sans-serif;
+  color: var(--fg);
+}
+.markdown h1,
+.markdown h2,
+.markdown h3,
+.markdown h4 {
+  margin: 1.4em 0 0.6em;
+  line-height: 1.3;
+}
+.markdown h1 {
+  font-size: 1.7em;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.3em;
+}
+.markdown h2 {
+  font-size: 1.4em;
+  border-bottom: 1px solid var(--border2);
+  padding-bottom: 0.25em;
+}
+.markdown h3 {
+  font-size: 1.2em;
+}
+.markdown p,
+.markdown ul,
+.markdown ol,
+.markdown blockquote,
+.markdown table {
+  margin: 0.7em 0;
+}
+.markdown a {
+  color: var(--accent);
+}
+/* link kinds: external opens a new tab (↗); repo-internal opens in the viewer */
+.markdown a.ext-link::after {
+  content: " ↗";
+  font-size: 0.8em;
+  opacity: 0.65;
+}
+.markdown a.repo-link {
+  color: #7fd6a6;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.markdown a.repo-link:hover {
+  color: #a6e8c4;
+}
+.markdown a.anchor-link {
+  color: var(--accent);
+}
+.markdown code {
+  font-family: var(--mono);
+  font-size: 0.88em;
+  background: var(--panel2);
+  border: 1px solid var(--border2);
+  border-radius: 4px;
+  padding: 0.1em 0.4em;
+}
+.markdown pre {
+  background: var(--panel2);
+  border: 1px solid var(--border2);
+  border-radius: 6px;
+  padding: 12px 14px;
+  overflow: auto;
+}
+.markdown pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 12px;
+  line-height: 1.55;
+}
+.markdown blockquote {
+  border-left: 3px solid var(--border);
+  margin-left: 0;
+  padding: 0.2em 1em;
+  color: var(--muted);
+}
+.markdown table {
+  border-collapse: collapse;
+  display: block;
+  overflow: auto;
+}
+.markdown th,
+.markdown td {
+  border: 1px solid var(--border);
+  padding: 5px 10px;
+}
+.markdown th {
+  background: var(--panel2);
+}
+.markdown img {
+  max-width: 100%;
+}
+.markdown hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 1.5em 0;
+}
+.markdown ul,
+.markdown ol {
+  padding-left: 1.6em;
+}
+.mermaid-diagram {
+  margin: 1em 0;
+  padding: 12px;
+  background: var(--panel2);
+  border: 1px solid var(--border2);
+  border-radius: 6px;
+  overflow: auto;
+  text-align: center;
+}
+.mermaid-diagram svg {
+  max-width: 100%;
+  height: auto;
 }
 
 /* SCM */
