@@ -277,6 +277,28 @@ func (m *manager) countRunningInTenant(ctx context.Context, tenantID string) (in
 	return n, nil
 }
 
+// workspaceStateByMembership returns a membership's container name + live docker
+// state ("none" if no workspace record) for the admin UI.
+func (m *manager) workspaceStateByMembership(ctx context.Context, membershipID string) (string, string) {
+	ws, ok, err := m.store.GetWorkspaceByMembership(ctx, membershipID)
+	if err != nil || !ok {
+		return "", "none"
+	}
+	return ws.ContainerName, (&dockerRuntime{name: ws.ContainerName}).state(ctx)
+}
+
+// stopWorkspaceByMembership force-stops a member's workspace (admin action).
+func (m *manager) stopWorkspaceByMembership(ctx context.Context, membershipID string) error {
+	ws, ok, err := m.store.GetWorkspaceByMembership(ctx, membershipID)
+	if err != nil || !ok {
+		return err
+	}
+	if err := (&dockerRuntime{name: ws.ContainerName, network: ws.Network}).stop(ctx); err != nil {
+		return err
+	}
+	return m.store.SetWorkspaceState(ctx, ws.ID, "stopped")
+}
+
 // countSessions asks the Agent how many sessions a workspace currently has.
 func (m *manager) countSessions(ctx context.Context, rt *dockerRuntime) (int, error) {
 	req, _ := http.NewRequestWithContext(ctx, "GET", rt.agentBase()+"/sessions", nil)

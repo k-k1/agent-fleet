@@ -86,6 +86,28 @@ button.icon { padding: 2px 5px; font-size: 12px; line-height: 1; }
 #open-files { margin-left: auto; font-size: 12px; }
 #copy-login-url { font-size: 12px; }
 
+/* Admin overlay (super_admin) */
+#admin-pane { position: absolute; inset: 0; background: #1e1e1e; display: flex; flex-direction: column; z-index: 6; }
+#admin-header { display: flex; align-items: center; gap: 10px; padding: 6px 10px; background: #111; border-bottom: 1px solid #333; }
+#admin-header b { color: #6cf; }
+#admin-header .spacer { flex: 1; }
+#admin-body { flex: 1; display: flex; min-height: 0; }
+#admin-left { width: 300px; border-right: 1px solid #333; overflow: auto; padding: 8px; }
+#admin-tenants { list-style: none; margin: 0 0 10px; padding: 0; }
+#admin-tenants li { padding: 5px 4px; border-bottom: 1px solid #2a2a2a; cursor: pointer; font-size: 12px; }
+#admin-tenants li:hover { background: #2a2a2a; }
+#admin-detail { flex: 1; overflow: auto; padding: 10px 14px; }
+.admin-block { margin: 8px 0; display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.admin-block input, .admin-block select { background: #2b2b2b; color: #ddd; border: 1px solid #444; border-radius: 4px; padding: 4px; font-size: 12px; }
+.admin-block input[type=number] { width: 64px; }
+.admin-block label { font-size: 12px; color: #bbb; }
+#admin-members { margin: 4px 0 8px; }
+.admin-mrow { display: flex; align-items: center; gap: 8px; padding: 4px 2px; border-bottom: 1px solid #2a2a2a; }
+.admin-who { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: "JetBrains Mono", monospace; font-size: 12px; }
+.admin-state { font-size: 11px; }
+.admin-state.on { color: #67c23a; }
+.admin-state.off { color: #777; }
+
 /* File explorer overlay (docs/17 P3-5 段2) */
 #fs-pane { position: absolute; inset: 0; background: #1e1e1e; display: flex; flex-direction: column; z-index: 5; }
 #fs-header { display: flex; align-items: center; gap: 10px; padding: 6px 10px; background: #111; border-bottom: 1px solid #333; }

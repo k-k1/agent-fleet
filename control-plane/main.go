@@ -99,8 +99,11 @@ func main() {
 	// Tenants — the caller's memberships (Console picker) + minimal admin API
 	// (super_admin only; full UI is P3-5). docs/14 P3-2.
 	mux.HandleFunc("GET /api/tenants", cfg.handleTenants)
+	mux.HandleFunc("GET /api/admin/tenants", cfg.handleAdminListTenants)
+	mux.HandleFunc("GET /api/admin/tenants/{slug}/members", cfg.handleAdminListMembers)
 	mux.HandleFunc("POST /api/admin/tenants", cfg.handleAdminCreateTenant)
 	mux.HandleFunc("POST /api/admin/memberships", cfg.handleAdminAddMembership)
+	mux.HandleFunc("POST /api/admin/stop-workspace", cfg.handleAdminStopWorkspace)
 	mux.HandleFunc("PUT /api/admin/tenants/{slug}/limits", cfg.handleAdminSetTenantLimits)
 	mux.HandleFunc("PUT /api/admin/user-limits", cfg.handleAdminSetUserLimit)
 

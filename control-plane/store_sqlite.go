@@ -292,6 +292,45 @@ func (s *sqliteStore) UpsertIdentity(ctx context.Context, email, key, roleHint s
 	return id, err
 }
 
+func (s *sqliteStore) ListTenants(ctx context.Context) ([]Tenant, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, slug, name, status, limits, isolation, COALESCE(key_ref,''), created_at
+		 FROM tenant ORDER BY slug`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Tenant
+	for rows.Next() {
+		var t Tenant
+		if err := rows.Scan(&t.ID, &t.Slug, &t.Name, &t.Status, &t.Limits, &t.Isolation, &t.KeyRef, &t.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+func (s *sqliteStore) ListMembersByTenant(ctx context.Context, tenantID string) ([]MemberInfo, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT m.id, i.user_key, i.email, i.role, m.role
+		 FROM membership m JOIN identity i ON i.id = m.identity_id
+		 WHERE m.tenant_id=? AND m.status='active' ORDER BY i.user_key`, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []MemberInfo
+	for rows.Next() {
+		var mi MemberInfo
+		if err := rows.Scan(&mi.MembershipID, &mi.UserKey, &mi.Email, &mi.IdentityRole, &mi.MemberRole); err != nil {
+			return nil, err
+		}
+		out = append(out, mi)
+	}
+	return out, rows.Err()
+}
+
 func (s *sqliteStore) ListMemberships(ctx context.Context, identityID string) ([]MembershipView, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT m.id, m.tenant_id, t.slug, t.name, m.role

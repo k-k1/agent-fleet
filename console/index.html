@@ -24,6 +24,7 @@
     <h1>Agent Fleet <small>Phase 1 MVP / dev</small></h1>
     <div id="ws-controls">
       <span id="tenant-wrap" style="display:none">Tenant: <select id="tenant-picker"></select></span>
+      <button id="open-admin" hidden title="tenant / user / quota admin">⚙ admin</button>
       <span>Workspace: <b id="ws-state">…</b></span>
       <button id="ws-start">Start</button>
       <button id="ws-stop">Stop</button>
@@ -74,6 +75,29 @@
         <button id="copy-login-url" title="copy the most recent sign-in URL shown in the terminal">⧉ sign-in URL</button>
       </div>
       <div id="terminal"></div>
+
+      <!-- Admin overlay (super_admin only) -->
+      <div id="admin-pane" hidden>
+        <div id="admin-header">
+          <b>Admin</b>
+          <span class="spacer"></span>
+          <button id="admin-refresh" class="icon" title="refresh">⟳</button>
+          <button id="admin-close" class="icon" title="back to terminal">✕</button>
+        </div>
+        <div id="admin-body">
+          <div id="admin-left">
+            <div class="scm-section">Tenants</div>
+            <ul id="admin-tenants"></ul>
+            <form id="admin-new-tenant" class="admin-block">
+              <div class="scm-section">New tenant</div>
+              <input id="ant-slug" placeholder="slug" />
+              <input id="ant-name" placeholder="name" />
+              <button type="submit">Create</button>
+            </form>
+          </div>
+          <div id="admin-detail">select a tenant</div>
+        </div>
+      </div>
 
       <!-- File explorer overlay (docs/17 P3-5 段2) -->
       <div id="fs-pane" hidden>

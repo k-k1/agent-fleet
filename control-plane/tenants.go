@@ -46,6 +46,108 @@ func (c config) requireSuperAdmin(w http.ResponseWriter, r *http.Request) (Ident
 	return ident, true
 }
 
+// handleAdminListTenants (GET /api/admin/tenants) — overview for the admin UI.
+func (c config) handleAdminListTenants(w http.ResponseWriter, r *http.Request) {
+	if _, ok := c.requireSuperAdmin(w, r); !ok {
+		return
+	}
+	tenants, err := c.mgr.store.ListTenants(r.Context())
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	out := make([]map[string]any, 0, len(tenants))
+	for _, t := range tenants {
+		members, _ := c.mgr.store.ListMembersByTenant(r.Context(), t.ID)
+		running, _ := c.mgr.countRunningInTenant(r.Context(), t.ID)
+		lim := parseLimits(t.Limits)
+		out = append(out, map[string]any{
+			"slug": t.Slug, "name": t.Name, "status": t.Status, "isolation": t.Isolation,
+			"users": len(members), "running": running,
+			"max_workspaces": lim.MaxWorkspaces, "max_sessions": lim.MaxSessions,
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"tenants": out})
+}
+
+// handleAdminListMembers (GET /api/admin/tenants/{slug}/members).
+func (c config) handleAdminListMembers(w http.ResponseWriter, r *http.Request) {
+	if _, ok := c.requireSuperAdmin(w, r); !ok {
+		return
+	}
+	t, ok, err := c.mgr.store.GetTenantBySlug(r.Context(), r.PathValue("slug"))
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	if !ok {
+		writeAPIErr(w, &apiError{http.StatusNotFound, "no_tenant", "unknown tenant"})
+		return
+	}
+	members, err := c.mgr.store.ListMembersByTenant(r.Context(), t.ID)
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	out := make([]map[string]any, 0, len(members))
+	for _, m := range members {
+		container, state := c.mgr.workspaceStateByMembership(r.Context(), m.MembershipID)
+		row := map[string]any{
+			"user_key": m.UserKey, "email": m.Email, "role": m.MemberRole,
+			"super_admin": m.IdentityRole == "super_admin",
+			"container":   container, "state": state,
+		}
+		if ul, ok, _ := c.mgr.store.GetUserLimit(r.Context(), m.MembershipID); ok {
+			row["max_sessions"] = ul.MaxSessions
+		}
+		out = append(out, row)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"tenant": t.Slug, "members": out})
+}
+
+// handleAdminStopWorkspace (POST /api/admin/stop-workspace {tenant_slug,user_key}).
+func (c config) handleAdminStopWorkspace(w http.ResponseWriter, r *http.Request) {
+	if _, ok := c.requireSuperAdmin(w, r); !ok {
+		return
+	}
+	var body struct {
+		UserKey    string `json:"user_key"`
+		TenantSlug string `json:"tenant_slug"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid json"})
+		return
+	}
+	t, ok, err := c.mgr.store.GetTenantBySlug(r.Context(), body.TenantSlug)
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	if !ok {
+		writeAPIErr(w, &apiError{http.StatusNotFound, "no_tenant", "unknown tenant"})
+		return
+	}
+	ident, err := c.mgr.store.UpsertIdentity(r.Context(), "", body.UserKey, "")
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	mem, ok, err := c.mgr.store.GetMembership(r.Context(), ident.ID, t.ID)
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	if !ok {
+		writeAPIErr(w, &apiError{http.StatusNotFound, "no_membership", "not a member"})
+		return
+	}
+	if err := c.mgr.stopWorkspaceByMembership(r.Context(), mem.ID); err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"stopped": body.UserKey, "tenant": t.Slug})
+}
+
 // handleAdminCreateTenant (POST /api/admin/tenants {slug,name}).
 func (c config) handleAdminCreateTenant(w http.ResponseWriter, r *http.Request) {
 	if _, ok := c.requireSuperAdmin(w, r); !ok {

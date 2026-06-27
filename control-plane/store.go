@@ -41,6 +41,11 @@ type MembershipView struct {
 	MembershipID, TenantID, TenantSlug, TenantName, Role string
 }
 
+// MemberInfo is a tenant member for the admin UI (docs/12 P3-6 / admin).
+type MemberInfo struct {
+	MembershipID, UserKey, Email, IdentityRole, MemberRole string
+}
+
 // Workspace is one container per Membership (= identity × tenant).
 type Workspace struct {
 	ID, TenantID, MembershipID      string
@@ -62,7 +67,9 @@ type Store interface {
 	// it never downgrades.
 	UpsertIdentity(ctx context.Context, email, key, roleHint string) (Identity, error)
 
+	ListTenants(ctx context.Context) ([]Tenant, error)
 	ListMemberships(ctx context.Context, identityID string) ([]MembershipView, error)
+	ListMembersByTenant(ctx context.Context, tenantID string) ([]MemberInfo, error)
 	EnsureMembership(ctx context.Context, identityID, tenantID, role string) (Membership, error)
 	GetMembership(ctx context.Context, identityID, tenantID string) (Membership, bool, error)
 

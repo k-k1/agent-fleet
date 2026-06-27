@@ -32,6 +32,8 @@ async function initTenants() {
   } catch {
     return; // dev/single-tenant or CP without the endpoint: carry on
   }
+  isSuperAdmin = !!data.super_admin;
+  if ($("open-admin")) $("open-admin").hidden = !isSuperAdmin;
   const tenants = data.tenants || [];
   const wrap = $("tenant-wrap");
   const sel = $("tenant-picker");
@@ -705,6 +707,173 @@ $("clone-repo").onsubmit = async (e) => {
     btn.textContent = "Clone";
   }
   await refreshRepos();
+};
+
+// --- admin panel (super_admin only) ---
+let isSuperAdmin = false;
+let adminTenant = null;
+const adminLimitsCache = {};
+
+async function openAdmin() {
+  $("admin-pane").hidden = false;
+  adminTenant = null;
+  $("admin-detail").textContent = "select a tenant";
+  await loadAdminTenants();
+}
+
+async function loadAdminTenants() {
+  const ul = $("admin-tenants");
+  ul.innerHTML = "";
+  let d;
+  try {
+    d = await api("api/admin/tenants");
+  } catch {
+    ul.innerHTML = '<li class="muted">forbidden</li>';
+    return;
+  }
+  for (const t of d.tenants || []) {
+    adminLimitsCache[t.slug] = { max_workspaces: t.max_workspaces || 0, max_sessions: t.max_sessions || 0 };
+    const li = document.createElement("li");
+    li.textContent = `${t.name} · ${t.users}u · ${t.running}▶ · w:${t.max_workspaces || "∞"} s:${t.max_sessions || "∞"}`;
+    li.title = t.slug;
+    li.onclick = () => openAdminTenant(t.slug);
+    ul.append(li);
+  }
+}
+
+async function openAdminTenant(slug) {
+  adminTenant = slug;
+  const host = $("admin-detail");
+  host.innerHTML = "";
+  const lim = adminLimitsCache[slug] || { max_workspaces: 0, max_sessions: 0 };
+
+  const limBlock = document.createElement("div");
+  limBlock.className = "admin-block";
+  limBlock.innerHTML =
+    `<div class="scm-section">Limits (0 = unlimited)</div>` +
+    `<label>max workspaces <input id="al-ws" type="number" min="0" value="${lim.max_workspaces}" /></label> ` +
+    `<label>max sessions <input id="al-ss" type="number" min="0" value="${lim.max_sessions}" /></label> ` +
+    `<button id="al-save">Save limits</button>`;
+  host.append(limBlock);
+
+  const sec = document.createElement("div");
+  sec.className = "scm-section";
+  sec.textContent = "Members";
+  host.append(sec);
+  const tbl = document.createElement("div");
+  tbl.id = "admin-members";
+  host.append(tbl);
+
+  const addBlock = document.createElement("div");
+  addBlock.className = "admin-block";
+  addBlock.innerHTML =
+    `<div class="scm-section">Add member</div>` +
+    `<input id="am-email" placeholder="email" /> <input id="am-key" placeholder="or user_key" /> ` +
+    `<select id="am-role"><option value="member">member</option><option value="tenant_admin">tenant_admin</option></select> ` +
+    `<button id="am-add">Add</button>`;
+  host.append(addBlock);
+
+  $("al-save").onclick = async () => {
+    await fetch(rel(`api/admin/tenants/${encodeURIComponent(slug)}/limits`), {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ max_workspaces: +$("al-ws").value || 0, max_sessions: +$("al-ss").value || 0 }),
+    });
+    await loadAdminTenants();
+    openAdminTenant(slug);
+  };
+  $("am-add").onclick = async () => {
+    const r = await fetch(rel("api/admin/memberships"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: $("am-email").value.trim(), user_key: $("am-key").value.trim(), tenant_slug: slug, role: $("am-role").value }),
+    });
+    if (!r.ok) {
+      const e = await r.json().catch(() => ({}));
+      alert("add failed: " + (e.error?.message || r.status));
+      return;
+    }
+    openAdminTenant(slug);
+  };
+
+  await loadAdminMembers(slug);
+}
+
+async function loadAdminMembers(slug) {
+  const host = $("admin-members");
+  host.innerHTML = "";
+  let d;
+  try {
+    d = await api(`api/admin/tenants/${encodeURIComponent(slug)}/members`);
+  } catch {
+    host.textContent = "unavailable";
+    return;
+  }
+  if (!(d.members || []).length) {
+    host.innerHTML = '<div class="muted">no members</div>';
+    return;
+  }
+  for (const m of d.members) {
+    const row = document.createElement("div");
+    row.className = "admin-mrow";
+    const who = document.createElement("span");
+    who.className = "admin-who";
+    who.textContent = m.user_key + (m.email ? ` <${m.email}>` : "") + (m.super_admin ? " ★" : "");
+    who.title = who.textContent;
+    const role = document.createElement("span");
+    role.className = "muted";
+    role.textContent = m.role + (m.max_sessions != null ? ` · s≤${m.max_sessions}` : "");
+    const state = document.createElement("span");
+    state.className = "admin-state " + (m.state === "running" ? "on" : "off");
+    state.textContent = m.state;
+    const acts = document.createElement("span");
+    acts.className = "chg-acts";
+    if (m.state === "running")
+      acts.append(mkBtn("⏹", "force stop workspace", async () => {
+        if (!confirm(`Stop ${m.user_key}'s workspace in ${slug}?`)) return;
+        await fetch(rel("api/admin/stop-workspace"), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ tenant_slug: slug, user_key: m.user_key }),
+        });
+        loadAdminMembers(slug);
+        loadAdminTenants();
+      }));
+    acts.append(mkBtn("≤", "set session limit", async () => {
+      const v = prompt(`max sessions for ${m.user_key} (0 = unlimited)`, m.max_sessions ?? 0);
+      if (v == null) return;
+      await fetch(rel("api/admin/user-limits"), {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ user_key: m.user_key, tenant_slug: slug, max_sessions: +v || 0 }),
+      });
+      loadAdminMembers(slug);
+    }));
+    row.append(who, role, state, acts);
+    host.append(row);
+  }
+}
+
+$("open-admin").onclick = openAdmin;
+$("admin-close").onclick = () => ($("admin-pane").hidden = true);
+$("admin-refresh").onclick = () => loadAdminTenants();
+$("admin-new-tenant").onsubmit = async (e) => {
+  e.preventDefault();
+  const slug = $("ant-slug").value.trim();
+  if (!slug) return;
+  const r = await fetch(rel("api/admin/tenants"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ slug, name: $("ant-name").value.trim() }),
+  });
+  if (r.ok) {
+    $("ant-slug").value = "";
+    $("ant-name").value = "";
+    loadAdminTenants();
+  } else {
+    const er = await r.json().catch(() => ({}));
+    alert("create failed: " + (er.error?.message || r.status));
+  }
 };
 
 // --- file explorer (docs/17 P3-5 段2) ---
