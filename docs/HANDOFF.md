@@ -6,12 +6,12 @@ Phase 1 MVP 完了時点（2026-06-26, commit `dd2330e`）の運用状態・落�
 
 ## 1. いま動いているもの（このホスト）
 
-- **Control Plane**: `:8099` で稼働中（静的 Console + REST/WS プロキシ + Docker Runtime）。バイナリ `/tmp/af-cp`。
+- **Control Plane**: `:8099` で稼働中（**React+Vite Console（`console/dist`）** + REST/WS プロキシ + Docker Runtime）。バイナリ `/tmp/af-cp`。Console の作りは **§6.10**。
 - **形態**: **shared（`AUTH=proxy`）でライブ稼働**。CP は oauth2-proxy の `X-Forwarded-Email` から user を解決（§6.7/§6.8 B1）。CP は `127.0.0.1:8099` 束縛＝Caddy 経由のみ。設定は git-ignored の `deploy/local/oauth.env`（`AUTH=proxy`/`CP_ADDR=127.0.0.1:8099`）。
 - **Workspace コンテナ**: 運用者は `af-ws-k1-kami-gmail-com`（image `agent-fleet/workspace:dev`）。`~`= bind mount `/tmp/af-data/<user>/home`（永続・`/login` 済み）。許可ユーザー追加は `~/oauth2-proxy/emails.txt` に1行追記 → その Google ログインで `af-ws-<email>` が自動払い出し（相互不可視: 別 home/別ネットワーク/別トークン）。dev 形態に戻すには oauth.env の `AUTH` 行を外す。
 - **外部アクセス**: `https://af.example.ts.net/agent-fleet/`
   （Tailscale Funnel → oauth2-proxy(Google) → Caddy(strip `/agent-fleet`, :8888) → CP :8099）。設定は `~/docs/funnel-auth-setup.md`。
-- **イメージ**: `agent-fleet/workspace:dev`（最新）/ `:m3`（旧, 削除可）。
+- **イメージ**: `agent-fleet/workspace:dev`（最新, **rtk + claude CLI 焼き込み**, 約1.0G）。**Java は image 外**＝ホスト共有 dir `WS_DATA/shared/jvm`（Temurin 8/21/25）を `/usr/lib/jvm:ro` でマウント（§6.10）。`:m3`（旧, 削除可）。
 
 ## 2. ツールチェーン / 実行の作法
 
@@ -196,14 +196,44 @@ CP のルーティングが user→対象コンテナを解決するだけ。
 - ✅ **P3-5 段1 = メンバー Console（git ソース管理 + shell セッション）実装・ライブ検証済**（[17 実装プラン](17-p3-5-plan.md)）。P3-5 を**メンバー(開発者)向け Console UX** に再定義（管理 UI は別 increment）。Agent に read/write git エンドポイント（`workspace/agent/git_view.go`: GET changes/diff/log・POST stage/unstage/discard/commit、traversal 防御・サイズ上限）、`session.go` に `kind`(claude|shell、shell=`bash -l`)、CP は proxy、Console に **⎇ ソース管理パネル**（変更一覧→色付き diff・stage/unstage/discard・commit・履歴・ブランチ）＋ New session の kind セレクタ。ライブ検証: 運用者コンテナを**新イメージで再起動（connections 維持＝P3-3 封筒鍵が実再起動跨ぎで復号 OK）**、Hello-World で changes/diff/stage/commit/log・shell・配信を確認。
 - ✅ **P3-5 段2 = ファイルブラウザ + 機微状態の home 外退避 実装・ライブ検証済**。Agent `fs.go`（`GET /fs/tree`・`/fs/file`、home ルート・traversal 防御・サイズ上限・バイナリ判定、**denylist** `.claude`/`.claude.json`/`.config/agent-fleet`/`.ssh`/`.git-credentials` は一覧非表示＋直アクセス 400）。退避(D): `runtime.go` が 2nd mount `<dataDir>/claude-config:/var/lib/af/claude` ＋ `CLAUDE_CONFIG_DIR` 注入で平文 claude 状態を browse ルート外へ、`entrypoint.sh` が claude 実行前に `~/.claude` を移行。暗号化済み `secrets.enc` は home 据置＋denylist。Console: 端末ヘッダ 🗂 files → エクスプローラ（遅延ツリー＋ビューア）。**限界**: 同一 uid shell 完全不可視は原理的に不可（本人の BYO トークン）→ ブラウザ不可視＋at-rest 暗号＋env 注入で実用十分。ライブ検証: 運用者再起動で connections 維持・home ツリーに claude 成果物が出ない・denylist 400 を確認。**P3-5 完了**（段1+段2）。
 - ✅ **管理 UI（テナント/メンバー/クォータ/使用量、super_admin）実装・ライブ検証済**。store `ListTenants`/`ListMembersByTenant`、manager `workspaceStateByMembership`/`stopWorkspaceByMembership`。CP admin API（super_admin gate）: `GET /api/admin/tenants`（users/running/limits）・`GET /api/admin/tenants/{slug}/members`・`POST /api/admin/stop-workspace`（既存 create-tenant/add-member/set-limits 併用）。Console: ヘッダ **⚙ admin**（super_admin のみ）→ オーバーレイ（左=テナント一覧+新規、右=limits 編集・メンバー表[state/上限/強制停止]・メンバー追加）。**CP のみ変更**（Agent/イメージ再ビルド不要）。ライブ検証: list/create/add/limits/user-limit・非admin 403・カウント反映を確認。
-- ⚠️ **Console UI は刷新待ち（ハンドオフ済）**: 現 UI は Phase 1 最小 vanilla JS が肥大化し IA 破綻（オーバーレイ乱立・暗号アイコン・詰め込みフォーム）。**バックエンド API は完成・安定**なのでフロント作り直しに限定可。診断・機能インベントリ・API・制約・推奨 IA（左アクティビティレール）・**最大の要決定=vanilla 維持 vs React** を [18 Console UI 刷新](18-console-ui-redesign.md) にまとめた。触るのは `console/` のみ・no-store 即反映・headless 不可ゆえ目視前提。
-- 次は **Console UI 刷新（[18](18-console-ui-redesign.md)）/ P3-7（AWS アダプタ）/ P3-8（専用分離）/ P3-9（運用成熟: idle-stop/showback/backup/観測）/ P3-10（パッケージング）**。
+- ✅ **Console 全面刷新（React+Vite）+ Claude/環境 設定 + ツールチェーン共有 = 実装・ライブ反映済**（[18 ハンドオフ](18-console-ui-redesign.md) を実施）。**詳細は §6.10**。React 採用（決定: vanilla→React）、`console/` は Vite プロジェクト（`src/`→`console/dist` を CP が no-store 配信、旧 vanilla は `console/legacy-phase1/`）。
+- 次は **P3-7（AWS アダプタ）/ P3-8（専用分離）/ P3-9（運用成熟: idle-stop/showback/backup/観測）/ P3-10（パッケージング）**。Console の残（後述 §6.10 末尾の保留: Remote Control 実機検証 + カスタム名 / trust）。
 - **バジェット**=インフラ資源（Workspace/セッション/ディスク/メモリ）。各社の自社ホスト資源保護 + 社内 showback。外部課金なし。
 - **鍵**: 単一 `AF_MASTER_KEY`→HMAC を **封筒暗号 + custodian 抽象**へ昇格（**オンプレ=Vault/ファイル KEK 優先、KMS は AWS アダプタ**）。per-workspace DEK。Agent `secrets.go` 無改修。会社/部署離脱は鍵 disable で crypto-shred。
 - **P3-10 パッケージング**=提供モデルの核（compose/Helm + 設定 + マイグレーション + runbook、phone-home なし）。完了判定=**第2デプロイをゼロから立てて E2E 通過**。
 - **MCP**: 管理サービス層を MCP 化し、その社の運用チームが自社 Fleet を Claude で運用。
 - **⚠️ 残存リスク**: 1 デプロイ内は CP が docker.sock（=ホスト root）+ 平文 DEK 注入 → CP/ホスト侵害でそのデプロイ内分離が一括崩壊。**会社間は別デプロイゆえ波及しない**のが本モデルの強み（[12 §12.3](12-phase3-multitenant.md#123-tos-と分離の留意自社ホスト前提)）。
 - **推奨シーケンス**: オンプレで P3-1→3→4→5/6→**P3-10(第2デプロイ検証)** → 希望社向け AWS で P3-7 → P3-8/9（[12 §12.4](12-phase3-multitenant.md#124-推奨シーケンス小規模local-first-継続)）。
+
+## 6.10 Console 全面刷新（React+Vite）+ Claude/環境設定 + ツールチェーン共有（このセッション）
+
+**Console を React+Vite で全面刷新**（docs/18 を実施）。`console/` は Vite プロジェクト（`src/`、ビルド→`console/dist` を CP が `no-store` 配信）。旧 vanilla は `console/legacy-phase1/`。`run-dev.sh` が `NODE_OPTIONS=--max-old-space-size=3072 npm run build`（mermaid で heap OOM 回避）し `CONSOLE_DIR=console/dist`。**フロントだけの調整は `npm --prefix console run dev`（=`vite build --watch`）→ ブラウザ・リロードで反映、CP 再起動不要**。依存: react/react-dom・@xterm/*・highlight.js・marked・dompurify・mermaid（mermaid は遅延 import チャンク）。
+
+**IA**: 2 段バー（TOP=アプリ名/テナント picker/`whoami`/⚙設定、WS=状態●/Start/Stop/**作り直す**）＋ 左ペイン3セクション常駐（Sessions / Repos / Files）＋ メインが選択で切替（端末 / Source Control / ファイルビュアー）。⚙設定はモーダル＋**セグメント選択（接続 / Claude / 環境 / 表示 / 管理[super_admin]）**。端末は常駐（非表示でも WS 維持）。`api()/rel()/X-AF-Tenant 注入/attach` は資産として `src/api.js`・`src/term.js` に再編。
+
+**主な機能（フロント; 既存 API は不変が基本）**:
+- 新規セッション/clone は**モーダル**。**repo/branch はドロップダウン**（接続済み GitHub のリモートリポ/ブランチを列挙、git-reader 準拠、branch は遅延）。**モデル選択**（既定/Opus/Sonnet/Haiku → `--model`）。
+- Repos 各行に **▶claude / ▶shell 即起動**（`api/sessions` を見てユニーク採番＝同 repo 複製可）。
+- ファイルビュアー: 構文ハイライト(highlight.js)・行番号・情報バー・**ミニマップ**・**Markdown プレビュー＋Mermaid**（marked+DOMPurify サニタイズ）・**リンク**（外部=新タブ↗ / リポ内=ファイラで開く / `#anchor`=スクロール）。
+- **履歴ナビ**（History API、URL 据置の `pushState`＋`popstate` 復元、戻る/進む）。
+- 表示設定（端末/ビュアー別フォント＝Source Code Pro/JetBrains Mono/Fira Code/IBM Plex Mono、サイズ stepper、行番号/折返し/ミニマップ/タブ幅、`localStorage`、`src/lib/settings.js`）。
+- キーボード: ファイルツリー ↑↓←→Enter・**Ctrl+↑↓=フォルダ移動**・**Shift+↑↓=ビュアースクロール**、**Ctrl+PgUp/Dn=セッション切替**。端末はフォーカス時 **Keyboard Lock**（⛶全画面・Chromium のみ Ctrl+W 等捕捉）＋セッション接続中 **beforeunload ガード**。
+
+**バックエンド追加（image/agent 再ビルド要、CP は無印は再起動のみ）**:
+- Agent: `GET /connections/git/{host}/repos|branches`（GitHub 実装、Bitbucket は 501）／`GET-PUT /claude/settings`（`claude_settings.go`: RC/通知/RTK フック）／`GET-PUT /env/toolchains`（`env_toolchains.go`: node/java、`availableJava` は `/usr/lib/jvm` 走査）。CP は全て proxy（`/api/...`）。
+- CP: `POST /api/workspace/recreate`（`runtime.go` `handleWorkspaceRecreate`: 停止→**`home/repos` のみ破棄**→最新 image で再生成。login(別 mount)/接続(`secrets.enc`)は保持。Console「作り直す」が警告ダイアログ付きで呼ぶ）。
+- **image インストール**: rtk（`workspace/vendor/rtk` 静的バイナリを Dockerfile で `/usr/local/bin`、git 管理外＝`run-dev.sh` がホスト `~/.local/bin/rtk` を vendor）＋ claude CLI（`npm i -g @anthropic-ai/claude-code`）。entrypoint は `~/.local` の claude のみ自動更新・焼いた版は固定。
+- **settings.json は「無い時のみ」seed**（`skipDangerousModePermissionPrompt`/`remoteControlAtStartup`/`agentPushNotifEnabled` ＋ rtk あればフック）。以後は ⚙→Claude が真実（毎起動 force だと UI と喧嘩するため）。
+- **Java は image 外で共有**: `workspace/jvm.Dockerfile`＋`deploy/local/provision-jvm.sh`（冪等）でホスト共有 dir `WS_DATA/shared/jvm` に Temurin **8/21/25** を1回展開→ `runtime.go` が **`WS_JVM_DIR` を `/usr/lib/jvm:ro`** で各コンテナにマウント。**image は 2.1G→1.0G**。node は **nvm**（home volume・オンデマンド）。**JDK 版変更**＝`jvm.Dockerfile` 編集→共有 dir を `rm -rf` 再 provision。
+
+**反映タイミング**: Claude設定/環境(toolchains) は entrypoint が適用＝**Stop→Start で反映**。Console フロントのみの変更はリロード即時。
+
+**⚠️ 未解決/保留**:
+- **Remote Control は現状の `CLAUDE_CODE_OAUTH_TOKEN`（`claude setup-token`）では確立できない可能性**（claude-code-guide 報告: inference-only token は RC 不可）。`remoteControlAtStartup` は seed/トグル可だが **実機で RC が繋がるか未検証**。繋がれば `[AF] {repo} @MMDD-HHMM` のカスタム名を agent CLI `--remote-control "名前"` で実装予定（CLI 形は token 非対応時に**起動を hard-error** させるため、RC 接続を確認するまで保留）。
+- **ディレクトリ trust の無条件化は非対話の手段が無い**（docs 上、設定キー無し）。repo サブディレクトリ起動なら初回承認後は当該 dir で永続。
+- セッション名のタイムスタンプは **MMDD-HHMM**（依頼の "HHSS" を時分で実装）。
+
+**適用手順（運用者）**: WS BAR の **Stop→Start**（スリム image＋JVM マウント＋新 agent。**repos/home 保持**。「作り直す」は repos も消す）→ ⚙設定 → 環境/Claude で選択 → 再度 Stop→Start で有効化（java は即・node は初回 nvm DL）。
 
 ## 7. 動作確認の最短手順
 
