@@ -403,6 +403,23 @@ textarea:focus {
 .session-state.off {
   color: var(--warn);
 }
+.session-state.working {
+  color: var(--accent);
+  animation: af-pulse 1.4s ease-in-out infinite;
+}
+.session-state.question {
+  color: var(--warn);
+  font-weight: 600;
+}
+@keyframes af-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
 .session-row.stopped .session-display {
   color: var(--muted);
 }

@@ -1,8 +1,31 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useApp } from "../../state.jsx";
 import { api, raw } from "../../api.js";
 import Section from "../Section.jsx";
 import NewSessionModal from "../NewSessionModal.jsx";
+
+// stateInfo maps a session to its line-2 status chip.
+const stateInfo = (s) => {
+  if (!s.alive) return { cls: "off", text: "停止中 — クリックで再開" };
+  if (s.kind === "shell") return { cls: "on", text: "● 起動中" };
+  switch (s.state) {
+    case "working":
+      return { cls: "working", text: "● 進行中…" };
+    case "question":
+      return { cls: "question", text: "❓ 質問あり" };
+    default:
+      return { cls: "on", text: "✓ 入力待ち" };
+  }
+};
+
+const notify = (title, body) => {
+  if (!("Notification" in window) || Notification.permission !== "granted") return;
+  try {
+    new Notification(title, { body });
+  } catch {
+    /* ignore */
+  }
+};
 
 // stamp formats a timestamp as MMDD-HHMM (matching the agent's claude --name), so
 // shell rows show a launch time consistent with claude rows.
@@ -34,6 +57,7 @@ export default function SessionsSection() {
   const [sessions, setSessions] = useState([]);
   const [showModal, setShowModal] = useState(false);
   const [menuFor, setMenuFor] = useState(null); // session name whose ⋯ menu is open
+  const prevStates = useRef({}); // name → last seen claude state, for arrival notifications
 
   // Discard the conversation and start the same slot fresh (≠ resume).
   const recreate = async (name) => {
@@ -47,19 +71,47 @@ export default function SessionsSection() {
     showTerminal(name);
   };
 
+  // Ask once for notification permission (best-effort; badges work regardless).
+  useEffect(() => {
+    if ("Notification" in window && Notification.permission === "default") {
+      Notification.requestPermission().catch(() => {});
+    }
+  }, []);
+
   useEffect(() => {
     let alive = true;
     const load = () =>
       api("api/sessions")
-        .then((d) => alive && setSessions(d.sessions || []))
+        .then((d) => {
+          if (!alive) return;
+          const list = d.sessions || [];
+          // Notify on claude state arrivals (skip the session being viewed).
+          const prev = prevStates.current;
+          const seen = {};
+          for (const s of list) {
+            seen[s.name] = true;
+            if (s.kind === "shell" || !s.alive) {
+              prev[s.name] = s.state;
+              continue;
+            }
+            const before = prev[s.name];
+            if (before !== undefined && before !== s.state && s.name !== session) {
+              if (s.state === "idle" && before === "working") notify("回答が返ってきました", s.name);
+              else if (s.state === "question") notify("質問が来ています", s.name);
+            }
+            prev[s.name] = s.state;
+          }
+          for (const n of Object.keys(prev)) if (!seen[n]) delete prev[n];
+          setSessions(list);
+        })
         .catch(() => alive && setSessions([]));
     load();
-    const id = setInterval(load, 4000); // reflect running→停止中 and TTL pruning
+    const id = setInterval(load, 4000); // reflect state changes and TTL pruning
     return () => {
       alive = false;
       clearInterval(id);
     };
-  }, [sessionsKey]);
+  }, [sessionsKey, session]);
 
   // Close the ⋯ menu on any outside click.
   useEffect(() => {
@@ -89,9 +141,10 @@ export default function SessionsSection() {
               <span className="session-l2">
                 <span className="kind-tag">{s.kind === "shell" ? "shell" : "claude"}</span>
                 <span className="session-name">{s.name}</span>
-                <span className={"session-state " + (s.alive ? "on" : "off")}>
-                  {s.alive ? "● 起動中" : "停止中 — クリックで再開"}
-                </span>
+                {(() => {
+                  const st = stateInfo(s);
+                  return <span className={"session-state " + st.cls}>{st.text}</span>;
+                })()}
               </span>
             </button>
             <div className="session-menu-wrap" onMouseDown={(e) => e.stopPropagation()}>

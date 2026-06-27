@@ -29,6 +29,7 @@ type Session struct {
 	Started   string `json:"started"`  // "01/02 15:04" local time, for the list
 	CreatedAt string `json:"createdAt"`// RFC3339
 	RemoteUrl string `json:"remoteUrl"`// claude.ai Remote Control URL, when RC is bridged
+	State     string `json:"state"`    // claude live state: working | idle | question | ""
 	Alive     bool   `json:"alive"`    // true = live tmux session; false = stopped (resumable)
 }
 
@@ -74,14 +75,23 @@ func wireSession(m sessionMeta, alive bool) Session {
 			started = t.Local().Format("01/02 15:04")
 		}
 	}
-	remote := ""
+	remote, state := "", ""
 	if m.Kind == "claude" {
-		remote = remoteSessionURL(sessionUUID(m.Dir, m.Name))
+		sid := sessionUUID(m.Dir, m.Name)
+		remote = remoteSessionURL(sid)
+		if alive {
+			// Default a live claude with no recorded event yet to idle (it sits at
+			// the prompt waiting for input). Hook events refine it.
+			state = "idle"
+			if st, ok := readSessionStatus(sid); ok {
+				state = st.State
+			}
+		}
 	}
 	return Session{
 		Name: m.Name, Tmux: tmuxName(m.Name), Dir: m.Dir, Kind: m.Kind,
 		Repo: m.Repo, Label: m.Label, Started: started, CreatedAt: m.CreatedAt,
-		RemoteUrl: remote, Alive: alive,
+		RemoteUrl: remote, State: state, Alive: alive,
 	}
 }
 
@@ -346,11 +356,14 @@ func handleStopSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	tn := tmuxName(name)
-	_, hadMeta := readSessionMeta(name)
+	meta, hadMeta := readSessionMeta(name)
 	live := tmuxHasSession(tn)
 	if !live && !hadMeta {
 		writeErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
 		return
+	}
+	if hadMeta {
+		removeSessionStatus(sessionUUID(meta.Dir, name))
 	}
 	if live {
 		if out, err := exec.Command("tmux", "kill-session", "-t", tn).CombinedOutput(); err != nil {
@@ -380,10 +393,12 @@ func handleRecreateSession(w http.ResponseWriter, r *http.Request) {
 	if tn := tmuxName(name); tmuxHasSession(tn) {
 		_ = exec.Command("tmux", "kill-session", "-t", tn).Run()
 	}
-	// Throw away the past conversation so the same sid starts clean.
-	for _, p := range jsonlPaths(sessionUUID(m.Dir, m.Name)) {
+	// Throw away the past conversation and stale state so the same sid starts clean.
+	sid := sessionUUID(m.Dir, m.Name)
+	for _, p := range jsonlPaths(sid) {
 		_ = os.Remove(p)
 	}
+	removeSessionStatus(sid)
 	m.CreatedAt = time.Now().Format(time.RFC3339)
 	if m.Kind == "claude" {
 		m.Label = sessionLabel(m.Dir)

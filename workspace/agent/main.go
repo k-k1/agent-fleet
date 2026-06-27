@@ -23,9 +23,16 @@ func main() {
 		runCredHelper(os.Args[2:])
 		return
 	}
+	// claude hook helper: records session working/idle/question state.
+	if len(os.Args) > 1 && os.Args[1] == "session-status" {
+		runSessionStatusHook(os.Args[2:])
+		return
+	}
 
 	// Fold any pre-A3 plaintext credential files into the encrypted store.
 	migrateLegacySecrets()
+	// Make claude emit working/idle/question via hooks into the status files.
+	ensureStatusHooks()
 
 	addr := envOr("AGENT_ADDR", ":7700")
 

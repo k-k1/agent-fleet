@@ -265,6 +265,12 @@ CP のルーティングが user→対象コンテナを解決するだけ。
 - **⚠️ bridge-session の resume クラッシュ（重要）**: RC 既定 ON のため、会話前でも jsonl に **`{"type":"bridge-session",...}` の1行だけ**が書かれる。`sessionJSONLExists` は存在＝true とし `--resume` → claude が **「No conversation found」で即終了**（停止セッションが起動できない隠れ原因）。修正: `jsonlResumable(sid)`＝jsonl に **`"type":"user"`/`"type":"assistant"` 実会話行があるか**を判定し、`startSessionTmux` は**非 resumable なら jsonl を削除して `--session-id`（新規）**で起動。検証: bridge-only→フレッシュ起動（クラッシュ無）、実会話→`--resume` 復帰の両方。
 - **⚠️ 運用注意（自戒）**: 検証の後始末で `tmux kill-server` ＋ `rm ~/.config/agent-fleet/sessions/*.json` を実行すると**運用者の生きたセッションも巻き込む**。本番コンテナでの広域 kill/rm は避け、対象セッションのみ操作する。
 
+**🔧 改善（2026-06-28）— セッション進行状態の可視化（バッジ + 到着通知）**:
+- **claude の hooks で状態捕捉**（`session_status.go`）: claude のイベントが `workspace-agent session-status <state>`（agent のサブコマンド）を発火し、`session_id`（=決定的 sid）で `~/.config/agent-fleet/session-status/<sid>.json`＝`{state,ts}` を記録。`wireSession` が `Session.state` に載せ（live claude のみ、既定 `idle`）、CP `sessionWire` 透過。状態: **`working`（UserPromptSubmit）/ `idle`（Stop＝応答あり・入力待ち）/ `question`（PreToolUse matcher `AskUserQuestion`＝QA来た）**。`PostToolUse(AskUserQuestion)`→working で質問解消。`--dangerously-skip-permissions` でツール許可QAは出ないが、**AskUserQuestion は別物で確実に検出**できる。
+- **hooks の共存**: `ensureStatusHooks()`（agent 起動時）が settings.json に状態フックを**加算マージ**。`PreToolUse` は **matcher 単位**で rtk(`Bash`) と状態(`AskUserQuestion`) が共存。`setRTK` も matcher 単位に変更（`ensurePreToolUseMatcher`/`removePreToolUseMatcher`）＝RTK トグルが状態フックを壊さない。stop/recreate で status をクリア。
+- **Console**（`SessionsSection.jsx`）: 2 行目に状態チップ（**● 進行中…**（pulse）/ **❓ 質問あり** / **✓ 入力待ち** / 停止中）。`Stop`(working→idle) と `question` 到着で**ブラウザ通知**（`Notification`、初回 permission 要求、閲覧中セッションは通知抑止）。
+- **検証**: 作成→`idle`、プロンプト送信→`working`、応答完了→`idle` を実機確認。settings.json に4イベント分マージ＋RC/通知/rtk 保持を確認。
+
 ## 7. 動作確認の最短手順
 
 ```bash
