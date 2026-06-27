@@ -352,38 +352,41 @@ textarea:focus {
   background: #4a2222;
 }
 
-/* file tree */
-.fstree,
-.fstree ul {
+/* file tree: flattened rows, keyboard-navigable (↑↓ ←→ Enter) */
+.fstree {
   list-style: none;
   margin: 0;
   padding: 0;
+  outline: none;
 }
-.fstree ul {
-  padding-left: 12px;
-}
-.fstree li {
-  padding: 1px 0;
-}
-.fs-dir,
-.fs-file {
+.fstree li.fsrow {
   cursor: pointer;
   white-space: nowrap;
   font-family: var(--mono);
   font-size: 12px;
-  display: block;
-  padding: 1px 2px;
+  padding: 1px 4px;
   border-radius: 3px;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-.fs-dir {
-  color: var(--accent);
-}
-.fs-dir:hover,
-.fs-file:hover {
+.fsrow:hover {
   background: var(--btn);
 }
-.fs-file.active {
-  background: #20303a;
+.fsrow.selected {
+  background: #2a3a44;
+}
+.fstree:focus .fsrow.selected {
+  background: #2f5a6a;
+}
+.fsrow .fs-dir {
+  color: var(--accent);
+}
+.fsrow .fs-file {
+  color: var(--fg);
+}
+.fsrow .fs-file.active {
+  color: var(--accent);
+  font-weight: 600;
 }
 
 /* ---- forms ---- */
