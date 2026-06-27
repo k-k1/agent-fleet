@@ -467,9 +467,100 @@ textarea:focus {
   color: var(--ok);
 }
 .repo-row .branch {
-  max-width: 96px;
+  max-width: 140px;
   font-size: 11px;
-  padding: 1px 3px;
+  padding: 1px 6px;
+  background: var(--btn);
+  border: 1px solid #444;
+  border-radius: 4px;
+  color: var(--fg);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.repo-row .branch:hover {
+  border-color: var(--accent);
+}
+
+/* ---- branch switch modal ---- */
+.branch-modal {
+  width: min(560px, 92vw);
+  max-height: 80vh;
+}
+.branch-filter {
+  width: 100%;
+  box-sizing: border-box;
+  margin-bottom: 8px;
+  padding: 6px 8px;
+  background: var(--btn);
+  border: 1px solid #444;
+  border-radius: 4px;
+  color: var(--fg);
+  font-size: 13px;
+}
+.branch-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  max-height: 56vh;
+}
+.branch-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  text-align: left;
+  padding: 6px 8px;
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  color: var(--fg);
+  cursor: pointer;
+}
+.branch-item:hover {
+  background: var(--btn);
+}
+.branch-item.current {
+  color: var(--accent);
+  cursor: default;
+}
+.branch-item:disabled {
+  cursor: default;
+}
+.bi-main {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.bi-name {
+  font-family: var(--mono);
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bi-remote {
+  font-size: 9px;
+  color: var(--muted);
+  border: 1px solid #444;
+  border-radius: 3px;
+  padding: 0 4px;
+  flex: none;
+}
+.bi-time {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--muted);
+  flex: none;
+}
+.bi-subject {
+  font-size: 11px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .repo-row .ab {
   color: var(--muted);

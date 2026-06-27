@@ -3,6 +3,7 @@ import { useApp } from "../../state.jsx";
 import { api, apiJSON, raw } from "../../api.js";
 import Section from "../Section.jsx";
 import NewRepoModal from "../NewRepoModal.jsx";
+import BranchModal from "../BranchModal.jsx";
 
 const repoSafeSession = (name) =>
   name.replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 40) || "repo";
@@ -91,19 +92,8 @@ export default function ReposSection() {
 }
 
 function RepoRow({ r, active, onSCM, onLaunch, onChanged }) {
-  const [branches, setBranches] = useState(null);
+  const [showBranch, setShowBranch] = useState(false);
 
-  const loadBranches = async () => {
-    if (branches) return;
-    try {
-      const b = await api(`api/repos/${encodeURIComponent(r.name)}/branches`);
-      setBranches(b.local || []);
-    } catch {}
-  };
-  const checkout = async (br) => {
-    await apiJSON(`api/repos/${encodeURIComponent(r.name)}/checkout`, "POST", { branch: br });
-    onChanged();
-  };
   const fetchRepo = async () => {
     await apiJSON(`api/repos/${encodeURIComponent(r.name)}/fetch`, "POST", { prune: true });
     onChanged();
@@ -124,19 +114,14 @@ function RepoRow({ r, active, onSCM, onLaunch, onChanged }) {
           <span className="repo-ic">📁</span>
           {r.name}
         </button>
-        <select
+        <button
           className="branch"
-          value={r.branch || "?"}
-          onMouseDown={loadBranches}
-          onChange={(e) => checkout(e.target.value)}
+          type="button"
+          onClick={() => setShowBranch(true)}
           title="ブランチ切替"
         >
-          {branches ? (
-            branches.map((b) => <option key={b} value={b}>{b}</option>)
-          ) : (
-            <option>{r.branch || "?"}</option>
-          )}
-        </select>
+          ⎇ {r.branch || "?"} ▾
+        </button>
         {(r.ahead || r.behind) > 0 && (
           <span className="ab">
             {r.ahead ? `↑${r.ahead}` : ""}
@@ -161,6 +146,16 @@ function RepoRow({ r, active, onSCM, onLaunch, onChanged }) {
           🗑
         </button>
       </div>
+      {showBranch && (
+        <BranchModal
+          repoName={r.name}
+          onClose={() => setShowBranch(false)}
+          onChecked={() => {
+            setShowBranch(false);
+            onChanged();
+          }}
+        />
+      )}
     </li>
   );
 }
