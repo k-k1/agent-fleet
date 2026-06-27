@@ -30,6 +30,9 @@ export default function DisplayTab() {
         <Row label="折り返し">
           <Toggle checked={s.wrap} onChange={(v) => setSetting("wrap", v)} />
         </Row>
+        <Row label="ミニマップ">
+          <Toggle checked={s.minimap} onChange={(v) => setSetting("minimap", v)} />
+        </Row>
         <Row label="タブ幅">
           <select value={s.tabSize} onChange={(e) => setSetting("tabSize", +e.target.value)}>
             {[2, 4, 8].map((n) => (

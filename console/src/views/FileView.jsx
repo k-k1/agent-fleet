@@ -6,6 +6,7 @@ import { api } from "../api.js";
 import { baseName, langFor, langLabel, humanSize, countLines } from "../lib/filemeta.js";
 import { useSettings, fontStack } from "../lib/settings.js";
 import MarkdownView from "./MarkdownView.jsx";
+import CodeView from "./CodeView.jsx";
 
 // FileView shows a single file (read-only) with CodeLeaf-style affordances: an info
 // bar (name / language / size / line count / truncation) and syntax-highlighted
@@ -104,16 +105,13 @@ export default function FileView() {
           <MarkdownView source={data.content} basePath={filePath} onOpenFile={showFile} />
         </div>
       ) : (
-        <div className={"codeview" + (settings.wrap ? " wrap" : "")}>
-          {settings.lineNumbers && (
-            <pre className="gutter" aria-hidden="true">
-              {Array.from({ length: Math.max(lines, 1) }, (_, i) => i + 1).join("\n")}
-            </pre>
-          )}
-          <pre className="code">
-            <code className="hljs" dangerouslySetInnerHTML={{ __html: html }} />
-          </pre>
-        </div>
+        <CodeView
+          html={html}
+          lines={lines}
+          lineNumbers={settings.lineNumbers}
+          wrap={settings.wrap}
+          minimap={settings.minimap}
+        />
       )}
     </div>
   );

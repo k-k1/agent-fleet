@@ -610,11 +610,48 @@ textarea:focus {
   white-space: nowrap;
   font-size: 11px;
 }
+.codeview-wrap {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  overflow: hidden;
+}
 .codeview {
   flex: 1;
   display: flex;
   overflow: auto;
   background: var(--bg);
+}
+
+/* minimap: a scaled mirror of the code with a draggable viewport box */
+.minimap {
+  position: relative;
+  width: 110px;
+  flex-shrink: 0;
+  overflow: hidden;
+  background: var(--panel2);
+  border-left: 1px solid var(--border2);
+  cursor: pointer;
+}
+.minimap-inner {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: top left;
+  pointer-events: none;
+  opacity: 0.85;
+}
+.minimap-inner .code {
+  padding: 6px 8px;
+}
+.minimap-viewport {
+  position: absolute;
+  left: 0;
+  right: 0;
+  background: rgba(130, 170, 210, 0.16);
+  border-top: 1px solid rgba(150, 185, 215, 0.35);
+  border-bottom: 1px solid rgba(150, 185, 215, 0.35);
+  pointer-events: none;
 }
 .codeview .gutter {
   margin: 0;

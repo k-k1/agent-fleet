@@ -23,6 +23,7 @@ const DEFAULTS = {
   lineNumbers: true,
   wrap: false,
   tabSize: 4,
+  minimap: true,
 };
 
 // Build a CSS font-family stack for a chosen family, with CJK + generic fallbacks.
