@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -327,31 +328,73 @@ func handleRepoStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, st)
 }
 
+// branchInfo describes one checkout target for the branch-switch modal.
+type branchInfo struct {
+	Name    string `json:"name"`    // checkout name (remote prefix stripped → DWIM tracking)
+	Remote  bool   `json:"remote"`  // remote-only (no local branch of this name)
+	Unix    int64  `json:"unix"`    // last-commit time, for newest-first sorting
+	Date    string `json:"date"`    // last-commit ISO date (display/tooltip)
+	Subject string `json:"subject"` // last-commit subject
+	Current bool   `json:"current"` // currently checked out
+}
+
 func handleRepoBranches(w http.ResponseWriter, r *http.Request) {
 	dir, ok := repoDirFromPath(w, r)
 	if !ok {
 		return
 	}
-	local := gitRefs(dir, "refs/heads")
-	remote := gitRefs(dir, "refs/remotes")
 	st, _ := gitStatus(dir)
-	writeJSON(w, http.StatusOK, map[string]any{"local": local, "remote": remote, "current": st.Branch})
+	writeJSON(w, http.StatusOK, map[string]any{"branches": gitBranchInfos(dir, st.Branch), "current": st.Branch})
 }
 
-// gitRefs lists short ref names under a namespace, one per line. Ref names
-// contain no spaces, so a bare for-each-ref format parses cleanly.
-func gitRefs(dir, namespace string) []string {
-	refs := []string{}
-	out, err := exec.Command("git", "-C", dir, "for-each-ref", "--format=%(refname:short)", namespace).Output()
-	if err != nil {
-		return refs
-	}
-	for _, l := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		if l = strings.TrimSpace(l); l != "" {
-			refs = append(refs, l)
+// gitBranchInfos lists local branches plus remote-only branches (those without a
+// local counterpart), each with its last-commit time and subject, sorted newest
+// commit first. Remote-only entries use the short branch name (remote prefix
+// stripped) so `git checkout <name>` creates a tracking branch (DWIM).
+func gitBranchInfos(dir, current string) []branchInfo {
+	const sep = "\x1f" // unit separator: absent from ref names, dates, and subjects
+	format := strings.Join([]string{
+		"%(refname:short)", "%(committerdate:unix)", "%(committerdate:iso8601)", "%(contents:subject)",
+	}, sep)
+	infos := []branchInfo{}
+	seen := map[string]bool{}
+	// Local first so a local branch wins over its remote duplicate.
+	for _, ns := range []string{"refs/heads", "refs/remotes"} {
+		out, err := exec.Command("git", "-C", dir, "for-each-ref", "--format="+format, ns).Output()
+		if err != nil {
+			continue
+		}
+		isRemote := ns == "refs/remotes"
+		for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+			if line == "" {
+				continue
+			}
+			f := strings.Split(line, sep)
+			if len(f) < 4 {
+				continue
+			}
+			name := f[0]
+			if isRemote {
+				if i := strings.IndexByte(name, '/'); i >= 0 {
+					name = name[i+1:] // origin/foo -> foo
+				}
+				if name == "HEAD" || name == "" {
+					continue // skip the remote's symbolic HEAD
+				}
+			}
+			if seen[name] {
+				continue
+			}
+			seen[name] = true
+			unix, _ := strconv.ParseInt(f[1], 10, 64)
+			infos = append(infos, branchInfo{
+				Name: name, Remote: isRemote, Unix: unix, Date: f[2], Subject: f[3],
+				Current: name == current,
+			})
 		}
 	}
-	return refs
+	sort.Slice(infos, func(i, j int) bool { return infos[i].Unix > infos[j].Unix })
+	return infos
 }
 
 type checkoutReq struct {
