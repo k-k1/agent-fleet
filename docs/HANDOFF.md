@@ -271,12 +271,25 @@ CP のルーティングが user→対象コンテナを解決するだけ。
 - **Console**（`SessionsSection.jsx`）: 2 行目に状態チップ（**● 進行中…**（pulse）/ **❓ 質問あり** / **✓ 入力待ち** / 停止中）。`Stop`(working→idle) と `question` 到着で**ブラウザ通知**（`Notification`、初回 permission 要求、閲覧中セッションは通知抑止）。
 - **検証**: 作成→`idle`、プロンプト送信→`working`、応答完了→`idle` を実機確認。settings.json に4イベント分マージ＋RC/通知/rtk 保持を確認。
 
-**🗒 フォローアップ（未着手・`../git-reader`＝CodeLeaf 参照）**:
-CodeLeaf は Android(Kotlin) 実装だが、下記4点の**参照実装がある**（API 仕様・git 手順・UX を流用できる）。
-- **Bitbucket 対応（repo/branch 列挙）**: 現状 `workspace/agent/git_remote.go:46/82` が **501**（`Bitbucket repo/branch listing is not implemented`）。GitHub は同ファイルに実装済。Bitbucket Cloud API（`GET 2.0/repositories/{workspace}`・`/refs/branches`）を、既存の Bitbucket 接続（Connections の OAuth/token）で叩いて実装。Console の `RepoPicker` で host=bitbucket.org を選択可に。参照: CodeLeaf `android/app/src/main/java/jp/<dev-deployment>/codeleaf/data/oauth/BitbucketApi.kt`（+ `BitbucketApiTest.kt`）。
-- **clone 時 submodule 対応**: `workspace/agent/git.go` `gitClone`（`args := []string{"clone"}`）に **`--recurse-submodules`** を付与（+ 既存 working copy には `git submodule update --init --recursive`）。private submodule は統一 credential helper（`workspace-agent cred`）で透過するはず（要確認）。参照: CodeLeaf `git/JgitClient.kt`・`git/JgitSubmoduleTest.kt`。
-- **ファイルブラウザのたたみ込み**: `console/src/components/sections/FilesSection.jsx` は per-folder の expand/collapse はあるが、**全たたみ/全展開**やルート単位の折りたたみが無い。fold-all ボタン＋状態保持を追加。参照: CodeLeaf `ui/FileBrowserScreen.kt`。
-- **アイコン**: ファイル種別アイコン（拡張子→アイコン）を**ツリー / ファイルビュアーのタブ / Repos・Sessions 行**へ。現状は記号（▸/▾ 等）のみ。参照: CodeLeaf `ui/FileBrowserScreen.kt`（ファイル種別表示）。
+**🔧 改善（2026-06-28 続き）— フォローアップ4点（実装済）+ submodule修正 + セッション管理 + LFS + ブランチ選択UI**:
+下記 CodeLeaf 参照の**フォローアップ4点はすべて実装・ライブ検証済**。あわせて派生バグ修正と新規 UX を実施。コミット `ed3c792`〜`37fb1d5`、image/console/CP 全反映済（運用者コンテナ Stop→Start・CP 再起動済）。`../git-reader`＝CodeLeaf（Android/Kotlin の読み取り専用ビューア、API 仕様・git 手順を流用）。
+- ✅ **Bitbucket repo/branch 列挙**（`git_remote.go`）: 501 を解消。CodeLeaf の知見で廃止 API（`?role=member` は 410）を避け `GET /2.0/user/workspaces`→各 slug の repos 集約。認証は OAuth Bearer（期限内 refresh+永続）優先・token 貼付は email:token の HTTP Basic。実機 56 リポ+branches を確認。参照: CodeLeaf `data/oauth/BitbucketApi.kt`。
+- ✅ **clone 時 submodule**（`git.go`）: 当初 `--recurse-submodules` を付けたが**親 clone ごと失敗する回帰**（SSH 登録 submodule を SSH 鍵無しで取得→`Host key verification failed`）。修正＝親 clone から外し clone 後に best-effort 取得。`submodule init`→`.git/config` の SSH URL を `sshToHTTPS`（host 非依存・scp/`ssh://` 両形式、CodeLeaf `sshToHttps` 準拠）で HTTPS 書換→`update --recursive`。private は統一 cred helper 透過・失敗は非致命。`git_submodule_test.go` 追加。参照: CodeLeaf `git/JgitClient.kt`。
+- ✅ **ファイルブラウザ畳み込み + compact folders**（`FilesSection.jsx`）: 「すべて畳む（⊟）」追加。さらに**単一サブフォルダだけの中間 dir を `a/b/c` に畳む**（VS Code 流 compact folders）＋展開で空 dir をスキップして自動潜行。←→ ナビ対応。
+- ✅ **ファイル種別アイコン**（`lib/fileicons.js`）: 拡張子→emoji（py🐍/rs🦀/docker🐳…、AI✨/secret🔑 優先、CodeLeaf typeKey/mark 流用）。ツリー・ビュアーヘッダ・Repos 行・Sessions バッジ（✦/🐚）に適用。
+- ✅ **セッション管理**（`session.go`・`runtime.go` sessionWire・`SessionsSection.jsx`）: 停止中 claude は**作業フォルダ消失で再開不可**（`wireSession` が `resumable=false`、`startSessionTmux` は claude の dir 欠落で home フォールバックせずエラー、CP 透過、Console は打消し線+クリック無効）。⋯メニューに**アーカイブ（一覧から消す）**＝stop エンドポイント（tmux kill+meta 破棄・**jsonl は保持**）。dead 行では「作り直す」を隠す。
+- ✅ **Git LFS**（`Dockerfile`・`fs.go`・`FileView.jsx`）: image に git-lfs 3.3.0 + `git lfs install --system`（/etc/gitconfig に filter 焼込）→ clone/checkout で実体を smudge 取得（認証は HTTPS cred helper 再利用）。残ポインタは `fs.go` が検出（`lfs:true`、CodeLeaf isLfsPointerHead 準拠）→ ビュアー「LFS ポインタ」バッジ（端末で `git lfs pull` を促す）。**既存 working copy はポインタが残るので手動 pull が要る**。
+- ✅ **ブランチ選択の刷新**（`git.go`・`git_remote.go`・`BranchList.jsx`・`BranchModal.jsx`・`RepoPicker.jsx`・`ReposSection.jsx`）:
+  - Repos のブランチ切替を**モーダル化**（`select`→`⎇ {branch}▾` ボタン→`BranchModal`）。
+  - 共通 `BranchList`（フィルタ＋**最終コミット降順**＋相対時刻＋subject）を `BranchModal`（ローカル）と `RepoPicker`（リモート＝clone/セッション開始）で共用。
+  - ローカル `api/repos/{name}/branches`: `for-each-ref` を name+committerdate+subject に拡張・降順・local+remote-only を dedup（remote prefix 除去で DWIM tracking）。
+  - リモート `api/connections/git/{host}/branches`: GitHub=GraphQL（`refs orderBy TAG_COMMIT_DATE` で committedDate+messageHeadline を1往復）、Bitbucket=REST（`sort=-target.date`）。形は `{name,unix,date,subject,default}`。
+  - clone の provider 選択を **Bitbucket→GitHub** 順・**既定 Bitbucket**（未接続なら接続済みへ自動）。
+  - 既知の軽微点: Bitbucket の `default` バッジは mainbranch 判定がリポにより一致せず付かない場合あり（ソート/選択は正常）。
+
+**🗒 フォローアップ（次セッション・未調査）**:
+- **Java/gradle の SSL トラストストアが空で失敗**: gradle 実行時に SSL 証明書のトラストストアが空で失敗。**疑い＝共有 JVM の `cacerts` symlink 問題**。Temurin は Adoptium apt（`temurin-$v-jdk`、`workspace/jvm.Dockerfile`）で入れ host 共有 dir に展開し `/usr/lib/jvm:ro` でマウント（§6.10）。Debian の Temurin パッケージは `lib/security/cacerts` を `/etc/ssl/certs/java/cacerts`（`ca-certificates-java` 管理）への **symlink** にしがちで、ワークスペース image にその実体が無い/空→トラストストア空。調査: コンテナ内で `readlink -f $JAVA_HOME/lib/security/cacerts` と実体の有無。対策候補＝provision 時に symlink を**実 cacerts に置換**（`ca-certificates-java` 生成物 / Adoptium 同梱 cacerts を取り込む）か workspace image にターゲットを用意。`jvm.Dockerfile`/`provision-jvm.sh`/`runtime.go`（JVM マウント）周辺。
+- **ブラウザ端末でコピペ不可**: xterm.js の選択テキストをコピーできない。**Ctrl-C はホスト側クリップボードに行っている**様子（端末の clipboard 連携が無く OS/ブラウザ既定動作）。貼り付けも不可。要: xterm.js の clipboard 連携（選択→`navigator.clipboard.writeText`、貼付は `Ctrl+Shift+V`/右クリック/paste ハンドラ）。**Keyboard Lock（§6.10、フォーカス時に Ctrl+W 等を捕捉、Chromium のみ）が Ctrl+C/V を奪う可能性**も併せて確認。`console/src/term.js` 周辺。
 
 ## 7. 動作確認の最短手順
 
