@@ -11,7 +11,8 @@ const stateInfo = (s) => {
     if (s.resumable === false) return { cls: "off dead", text: "フォルダ無し — 再開不可" };
     return { cls: "off", text: "停止中 — クリックで再開" };
   }
-  if (s.kind === "shell") return { cls: "on", text: "● 起動中" };
+  // Only claude reports a live state (via hooks). shell/opencode just show running.
+  if (s.kind !== "claude") return { cls: "on", text: "● 起動中" };
   switch (s.state) {
     case "working":
       return { cls: "working", text: "● 進行中…" };
@@ -110,7 +111,7 @@ export default function SessionsSection() {
           const seen = {};
           for (const s of list) {
             seen[s.name] = true;
-            if (s.kind === "shell" || !s.alive) {
+            if (s.kind !== "claude" || !s.alive) {
               prev[s.name] = s.state;
               continue;
             }
@@ -166,7 +167,9 @@ export default function SessionsSection() {
                 <span className="session-display">{displayName(s)}</span>
               </span>
               <span className="session-l2">
-                <span className="kind-tag">{s.kind === "shell" ? "🐚 shell" : "✦ claude"}</span>
+                <span className="kind-tag">
+                  {s.kind === "shell" ? "🐚 shell" : s.kind === "opencode" ? "◆ opencode" : "✦ claude"}
+                </span>
                 <span className="session-name">{s.name}</span>
                 {(() => {
                   const st = stateInfo(s);
@@ -204,7 +207,9 @@ export default function SessionsSection() {
                   >
                     アーカイブする（一覧から消す）
                   </button>
-                  {!dead && (
+                  {/* opencode resume is --continue (no fresh-start flag), so 作り直す
+                      would not actually discard its conversation — hide it there. */}
+                  {!dead && s.kind !== "opencode" && (
                     <button
                       className="session-menu-item danger"
                       onClick={() => {

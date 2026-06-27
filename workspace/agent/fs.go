@@ -29,6 +29,7 @@ var fsDeny = map[string]bool{
 	".config/agent-fleet": true, // encrypted secrets store + connection state
 	".ssh":                true,
 	".git-credentials":    true,
+	".local/share/opencode": true, // opencode auth.json (API keys) + session db
 }
 
 func isDenied(rel string) bool {

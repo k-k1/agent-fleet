@@ -293,8 +293,18 @@ CP のルーティングが user→対象コンテナを解決するだけ。
 - ✅ **Python 3 を image 同梱**（依頼: 「python3系を内部で使えるように」）。`workspace/Dockerfile` の apt に `python3 python3-pip python3-venv python-is-python3`（bookworm = **3.11.2**、`python` も提供）。Debian PEP 668 の externally-managed で `pip install` がブロックされる件は `/etc/pip.conf` に `break-system-packages = true` を置き、`pip install --user <pkg>` が**永続 home `~/.local`（PATH 済）** に入るように（venv は通常通り）。Java（重い→共有マウント）と違い軽量ゆえ git/tmux 等と同じベースツール扱いで焼き込み。**検証**: `python3 --version`=3.11.2、`python`=同、`python3 -m venv`→pip 動作、`pip install --user cowsay`→`~/.local/bin/cowsay` 実行 OK。**反映**: workspace を Stop→Start（`start()` は `docker rm -f`→新 image で `docker run` ＝確実に新 image）。image/CP/console 全再ビルド・CP 再起動済（`auth=proxy` ライブ）。
   - **将来の選択肢**（未実施）: node/java と同じく env タブで**Python バージョン選択**したいなら pyenv を home volume に入れる方式（現状は 3.11 固定の焼き込み）。
 
+**🔧 機能追加（2026-06-28 続き6）— opencode をエージェントとして追加（kind="opencode"）**:
+依頼「codex / Antigravity CLI / opencode をエージェントとして使えるように」のうち **opencode を最優先で実装**（codex/antigravity は未着手＝下の未調査）。claude と並ぶ第2のコーディングエージェントとして session kind に追加。
+- **image**: `workspace/Dockerfile` の global npm install に `opencode-ai` を追加（claude と同 RUN＝root で焼き込み、v1.17.11）。auth/セッションは `~/.local/share/opencode`（home volume ＝Stop→Start・再起動跨ぎで永続）。
+- **agent**（`session.go`）: kind に `opencode` を追加。起動は cwd で **`opencode --continue`**（opencode はセッションを `~/.local/share/opencode/opencode.db`(SQLite) に保存。`--continue` は**前セッションが無くても安全に新規開始**し、あれば直近を継続＝検証済 → 初回/再開を1コマンドで統一）。model 指定時のみ `--model`（opencode は `provider/model` 形式）。claude 専用処理（OAuth トークン注入・決定的 sid・jsonl resume・`--name` ラベル・Remote Control URL・状態フック）は **opencode では一切無効**。dir 消失時は claude 同様 `resumable=false`。`buildOpencodeProgram()` 追加、`handleCreateSession` の kind 検証に opencode 追加。
+- **認証**: opencode はユーザー自身の `opencode auth login`（または TUI の `/connect`）で各プロバイダ認証＝home に永続。claude のような専用トークン注入は無し（v1）。**将来**: Connections 風の UI でプロバイダキーを `auth.json` に書く統合も可能（未実装）。
+- **fs.go denylist** に `~/.local/share/opencode` 追加（auth.json の API キー平文＋会話 DB をファイルブラウザから隠す）。
+- **Console**: New session モーダルに **opencode** 種別（claude 同様にリポジトリ/dir を選択、モデル選択は claude 専用なので非表示、初回認証の案内チップ）。Repos 行に **▶ opencode** 即起動（名前 suffix `-oc`）。Sessions 一覧バッジ **◆ opencode**、状態は「● 起動中」（状態フックは claude のみ）、停止中は「クリックで再開」（`opencode --continue`）。`作り直す` は opencode では非表示（--continue ゆえ会話破棄にならないため）。
+- **検証**: 使い捨てコンテナで agent API E2E — opencode セッション作成→tmux で `opencode --continue` 起動（プロセス生存）→kill→一覧に `alive:false/resumable:true` 残存を確認。image/console/agent 全再ビルド・CP 稼働中。**運用反映**: Console ハードリロード＋Workspace **Stop→Start**（新 image: opencode/python/新 agent）→ New session で opencode → 初回のみ `opencode auth login`。
+
 **🗒 フォローアップ（次セッション・未調査）**:
-- （現在なし。直近の宿題2件は上で解決。）
+- **codex CLI / Antigravity CLI をエージェント追加**（opencode と同枠の kind 追加）。codex = OpenAI Codex CLI（`@openai/codex`、auth は `codex login`/`OPENAI_API_KEY`、resume は `codex resume`）。Antigravity CLI = Google（CLI 形態・インストール/認証要調査）。opencode の実装（kind 分岐・Console 種別・denylist・即起動）が雛形。
+- **opencode の per-slot resume 厳密化**（任意）: 現状 `--continue` は同一 dir で最新セッションを継続＝同 dir に複数 opencode スロットがあると最新を共有。厳密化するなら作成時に session id を捕捉し `--session <id>` で resume（opencode.db 参照が必要）。
 
 ## 7. 動作確認の最短手順
 
