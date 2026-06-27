@@ -48,8 +48,10 @@ type manager struct {
 	provisionMode string
 	superAdmins   map[string]bool
 
-	// at-rest encryption key derivation (HMAC; P3-3 replaces with envelope).
-	master32 []byte
+	// at-rest encryption (P3-3). master32 = SHA-256 of AF_MASTER_KEY (nil in dev).
+	// custodian wraps/unwraps per-workspace DEKs; nil in dev (no encryption).
+	master32  []byte
+	custodian KeyCustodian
 }
 
 // apiError carries an HTTP status + machine code for handlers to return.
@@ -63,13 +65,44 @@ func internalErr(err error) *apiError {
 	return &apiError{status: http.StatusInternalServerError, code: "internal", message: err.Error()}
 }
 
-func (m *manager) secretKeyFor(user string) string {
-	if len(m.master32) == 0 {
-		return ""
-	}
+// legacyDEK returns the raw DEK the Phase 2 / pre-P3-3 path derived as
+// HMAC(master, userKey). It's used as the *first* DEK for a workspace so any
+// existing secrets.enc (encrypted with this exact key) keeps decrypting after the
+// move to envelope storage — no re-encryption.
+func (m *manager) legacyDEK(userKey string) []byte {
 	mac := hmac.New(sha256.New, m.master32)
-	mac.Write([]byte(user))
-	return hex.EncodeToString(mac.Sum(nil))
+	mac.Write([]byte(userKey))
+	return mac.Sum(nil)
+}
+
+// resolveDEK returns the hex DEK to inject as AF_SECRET_KEY for a workspace,
+// stored wrapped by the tenant KEK (docs/15 P3-3). On first use it mints the
+// legacy DEK, wraps it via the custodian, and persists it. Returns "" in dev
+// (no master/custodian) so the Agent stores secrets in plaintext as before.
+func (m *manager) resolveDEK(ctx context.Context, ws Workspace, userKey string) (string, error) {
+	if len(m.master32) == 0 || m.custodian == nil {
+		return "", nil
+	}
+	keyRef := ws.TenantID
+	ct, kr, ok, err := m.store.GetWrappedDEK(ctx, ws.ID)
+	if err != nil {
+		return "", err
+	}
+	var dek []byte
+	if ok {
+		if dek, err = m.custodian.Unwrap(ctx, kr, ct); err != nil {
+			return "", err
+		}
+	} else {
+		dek = m.legacyDEK(userKey) // preserve existing secrets.enc
+		if ct, err = m.custodian.Wrap(ctx, keyRef, dek); err != nil {
+			return "", err
+		}
+		if err := m.store.PutWrappedDEK(ctx, ws.ID, ct, keyRef); err != nil {
+			return "", err
+		}
+	}
+	return hex.EncodeToString(dek), nil
 }
 
 // identity is what the AuthGateway resolves a request to.
@@ -180,7 +213,11 @@ func (m *manager) resolve(ctx context.Context, key, email, tenantSel string) (*d
 			return nil, internalErr(err)
 		}
 	}
-	rt := m.runtimeFor(ws, ident.UserKey)
+	dekHex, err := m.resolveDEK(ctx, ws, ident.UserKey)
+	if err != nil {
+		return nil, internalErr(err)
+	}
+	rt := m.runtimeFor(ws, dekHex)
 	m.rts[mv.MembershipID] = rt
 	return rt, nil
 }
@@ -234,7 +271,7 @@ func (m *manager) createWorkspace(ctx context.Context, mv MembershipView, userKe
 	return ws, nil
 }
 
-func (m *manager) runtimeFor(ws Workspace, userKey string) *dockerRuntime {
+func (m *manager) runtimeFor(ws Workspace, secretKey string) *dockerRuntime {
 	return &dockerRuntime{
 		image:      m.image,
 		name:       ws.ContainerName,
@@ -243,7 +280,7 @@ func (m *manager) runtimeFor(ws Workspace, userKey string) *dockerRuntime {
 		agentHost:  m.agentHost,
 		agentPort:  ws.AgentPort,
 		token:      ws.AgentToken,
-		secretKey:  m.secretKeyFor(userKey),
+		secretKey:  secretKey,
 		memory:     m.memory,
 		sessionCmd: m.sessionCmd,
 		extraEnv:   m.extraEnv,

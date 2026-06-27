@@ -55,6 +55,9 @@ func main() {
 	if mk := os.Getenv("AF_MASTER_KEY"); mk != "" {
 		sum := sha256.Sum256([]byte(mk))
 		mgr.master32 = sum[:]
+		// P3-3: envelope key custodian (on-prem default). Vault/KMS adapters
+		// implement the same interface for true per-tenant crypto-shred.
+		mgr.custodian = newLocalCustodian(mgr.master32)
 	}
 
 	// MetadataStore (P3-1, docs/13): SQLite is the source of truth for the

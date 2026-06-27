@@ -364,6 +364,28 @@ func (s *sqliteStore) ListWorkspaces(ctx context.Context, tenantID string) ([]Wo
 	return out, rows.Err()
 }
 
+func (s *sqliteStore) GetWrappedDEK(ctx context.Context, workspaceID string) (string, string, bool, error) {
+	var ct, kr string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT ciphertext, key_ref FROM wrapped_dek WHERE workspace_id=?`, workspaceID).Scan(&ct, &kr)
+	if err == sql.ErrNoRows {
+		return "", "", false, nil
+	}
+	if err != nil {
+		return "", "", false, err
+	}
+	return ct, kr, true, nil
+}
+
+func (s *sqliteStore) PutWrappedDEK(ctx context.Context, workspaceID, ciphertext, keyRef string) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO wrapped_dek(workspace_id, ciphertext, key_ref, key_version, created_at)
+		 VALUES(?, ?, ?, 1, ?)
+		 ON CONFLICT(workspace_id) DO UPDATE SET ciphertext=excluded.ciphertext, key_ref=excluded.key_ref`,
+		workspaceID, ciphertext, keyRef, nowTS())
+	return err
+}
+
 const workspaceCols = `SELECT id, tenant_id, membership_id, container_name, network, data_dir,
 	agent_port, agent_token, state, created_at, COALESCE(last_active_at,'') FROM workspace`
 

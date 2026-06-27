@@ -61,6 +61,10 @@ type Store interface {
 	MaxAgentPort(ctx context.Context) (int, error)
 	ListWorkspaces(ctx context.Context, tenantID string) ([]Workspace, error)
 
+	// Envelope-encrypted per-workspace DEK (docs/15 P3-3).
+	GetWrappedDEK(ctx context.Context, workspaceID string) (ciphertext, keyRef string, ok bool, err error)
+	PutWrappedDEK(ctx context.Context, workspaceID, ciphertext, keyRef string) error
+
 	Close() error
 }
 
