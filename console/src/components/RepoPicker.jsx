@@ -1,14 +1,21 @@
 import { useEffect, useState } from "react";
 import { api } from "../api.js";
+import BranchList from "./BranchList.jsx";
 
-// RepoPicker: choose a repository and branch from a connected provider via two
-// dropdowns (the CodeLeaf / git-reader pattern — branches lazy-load when a repo is
-// selected). Calls onChange({ host, cloneUrl, fullName, branch }) on every change,
-// or onChange(null) when nothing valid is selected. Both GitHub and Bitbucket are
-// supported (the provider tabs enable only connected hosts).
+// Provider tabs, Bitbucket first (the default selection).
+const PROVIDERS = [
+  ["bitbucket.org", "Bitbucket"],
+  ["github.com", "GitHub"],
+];
+
+// RepoPicker: choose a repository (dropdown) and branch (filterable, newest-commit-
+// first list — same UI as the branch-switch modal) from a connected provider; the
+// branch list lazy-loads when a repo is selected. Calls onChange({ host, cloneUrl,
+// fullName, branch }) on every change, or onChange(null) when nothing valid is
+// selected. Both GitHub and Bitbucket are supported (tabs enable only connected hosts).
 export default function RepoPicker({ onChange }) {
   const [conns, setConns] = useState(null);
-  const [host, setHost] = useState("github.com");
+  const [host, setHost] = useState("bitbucket.org");
   const [repos, setRepos] = useState(null); // null = not loaded
   const [reposErr, setReposErr] = useState("");
   const [loadingRepos, setLoadingRepos] = useState(false);
@@ -25,6 +32,14 @@ export default function RepoPicker({ onChange }) {
 
   const connected = (h) =>
     h === "github.com" ? !!conns?.github?.connected : !!conns?.bitbucket?.connected;
+
+  // If the default (Bitbucket) isn't connected, fall back to the first connected
+  // provider so the picker isn't stuck on an unusable tab.
+  useEffect(() => {
+    if (!conns || connected(host)) return;
+    const fallback = PROVIDERS.map(([h]) => h).find(connected);
+    if (fallback) setHost(fallback);
+  }, [conns]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // load repos when the active (connected) provider changes
   useEffect(() => {
@@ -75,7 +90,7 @@ export default function RepoPicker({ onChange }) {
       }
       const list = d.branches || [];
       setBranches(list);
-      const def = d.default || list[0] || "";
+      const def = d.default || (list[0] && list[0].name) || "";
       setBranch(def);
       emit(fn, def);
     } catch {
@@ -99,10 +114,7 @@ export default function RepoPicker({ onChange }) {
   return (
     <div className="repopicker">
       <div className="provider-tabs">
-        {[
-          ["github.com", "GitHub"],
-          ["bitbucket.org", "Bitbucket"],
-        ].map(([h, label]) => (
+        {PROVIDERS.map(([h, label]) => (
           <button
             key={h}
             type="button"
@@ -142,23 +154,20 @@ export default function RepoPicker({ onChange }) {
             </select>
           </label>
 
-          <label className="pick-field">
+          <div className="pick-field">
             <span>ブランチ</span>
-            <select
-              value={branch}
-              disabled={!fullName || loadingBranches || branches.length === 0}
-              onChange={(e) => pickBranch(e.target.value)}
-            >
-              <option value="">
-                {!fullName ? "先にリポジトリを選択" : loadingBranches ? "読み込み中…" : branchErr || "—"}
-              </option>
-              {branches.map((b) => (
-                <option key={b} value={b}>
-                  {b}
-                </option>
-              ))}
-            </select>
-          </label>
+            {!fullName ? (
+              <p className="muted pad">先にリポジトリを選択</p>
+            ) : branchErr ? (
+              <p className="muted pad">{branchErr}</p>
+            ) : (
+              <BranchList
+                branches={loadingBranches ? null : branches}
+                selected={branch}
+                onPick={pickBranch}
+              />
+            )}
+          </div>
         </>
       )}
     </div>
