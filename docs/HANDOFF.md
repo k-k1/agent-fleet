@@ -229,9 +229,8 @@ CP のルーティングが user→対象コンテナを解決するだけ。
 **反映タイミング**: Claude設定/環境(toolchains) は entrypoint が適用＝**Stop→Start で反映**。Console フロントのみの変更はリロード即時。
 
 **⚠️ 未解決/保留**:
-- **Remote Control は現状の `CLAUDE_CODE_OAUTH_TOKEN`（`claude setup-token`）では確立できない可能性**（claude-code-guide 報告: inference-only token は RC 不可）。`remoteControlAtStartup` は seed/トグル可だが **実機で RC が繋がるか未検証**。繋がれば `[AF] {repo} @MMDD-HHMM` のカスタム名を agent CLI `--remote-control "名前"` で実装予定（CLI 形は token 非対応時に**起動を hard-error** させるため、RC 接続を確認するまで保留）。
-- **ディレクトリ trust の無条件化は非対話の手段が無い**（docs 上、設定キー無し）。repo サブディレクトリ起動なら初回承認後は当該 dir で永続。
-- セッション名のタイムスタンプは **MMDD-HHMM**（依頼の "HHSS" を時分で実装）。
+- **セッション表示名 `[AF] {repo} @MMDD-HHSS` 実装済**（2026-06-27）: `claude --remote-control` の hard-error を避け、**`-n/--name`**（RC picker＋端末タイトルの表示名、RC は `remoteControlAtStartup` で別途有効）で実装。`session.go` `sessionLabel(dir)`＝`[AF] {basename(dir)} @{time "0102-1505"}`（{repo}=作業 dir のベース名、HH=時/SS=秒）。作成時に確定し meta に保存＝**再起動でも不変**。claude セッションのみ付与。**注意**: タイムスタンプは**コンテナ TZ（既定 UTC）**。JST 等に揃えるには runtime に `-e TZ=...` 注入が要る（未実装）。RC が実機で繋がるかは引き続き要確認だが、`--name` は token 非対応でも hard-error しない（起動検証済）。
+- **ディレクトリ trust の無条件化は非対話の手段が無い**（docs 上、設定キー無し）。repo サブディレクトリ起動なら初回承認後は当該 dir で永続。**`node`→`dev` リネームで home/repo パスが変わったため、初回は trust ダイアログが再度出る**（1 回承認で以後永続）。
 
 **適用手順（運用者）**: WS BAR の **Stop→Start**（スリム image＋JVM マウント＋新 agent。**repos/home 保持**。「作り直す」は repos も消す）→ ⚙設定 → 環境/Claude で選択 → 再度 Stop→Start で有効化（java は即・node は初回 nvm DL）。
 

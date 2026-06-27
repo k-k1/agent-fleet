@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 )
 
 // tmux session naming: friendly name "slot01" <-> tmux "claude_slot01".
@@ -38,6 +39,7 @@ type sessionMeta struct {
 	Dir   string `json:"dir"`
 	Model string `json:"model"`
 	Kind  string `json:"kind"`
+	Label string `json:"label"` // claude --name (display); set once at create
 }
 
 func sessionsMetaDir() string { return envOr("AF_SESSIONS_DIR", "/tmp/af-sessions") }
@@ -97,7 +99,7 @@ func startSessionTmux(m sessionMeta) error {
 		if tok := readClaudeToken(); tok != "" {
 			args = append(args, "-e", "CLAUDE_CODE_OAUTH_TOKEN="+tok)
 		}
-		program = buildSessionProgram(sessionUUID(m.Dir, m.Name), m.Model)
+		program = buildSessionProgram(sessionUUID(m.Dir, m.Name), m.Model, m.Label)
 	}
 	args = append(args, program)
 	if out, err := exec.Command("tmux", args...).CombinedOutput(); err != nil {
@@ -217,7 +219,11 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	if kind != "shell" {
 		kind = "claude"
 	}
-	meta := sessionMeta{Name: req.Name, Dir: req.Dir, Model: req.Model, Kind: kind}
+	label := ""
+	if kind == "claude" {
+		label = sessionLabel(req.Dir)
+	}
+	meta := sessionMeta{Name: req.Name, Dir: req.Dir, Model: req.Model, Kind: kind, Label: label}
 	if err := startSessionTmux(meta); err != nil {
 		writeErr(w, http.StatusInternalServerError, "tmux_failed", err.Error())
 		return
@@ -259,19 +265,30 @@ func tmuxHasSession(tn string) bool {
 // buildSessionProgram returns the shell command tmux should run for a session.
 // AGENT_SESSION_CMD overrides claude entirely (e.g. "bash") for plumbing tests.
 // Otherwise it resumes when a session jsonl already exists, else starts new.
-func buildSessionProgram(sid, model string) string {
+// label, when non-empty, becomes claude's --name (display name shown in the
+// Remote Control picker and terminal title), e.g. "[AF] agent-fleet @0627-2115".
+func buildSessionProgram(sid, model, label string) string {
 	if override := os.Getenv("AGENT_SESSION_CMD"); override != "" {
 		return override
 	}
 	flags := envOr("AGENT_CLAUDE_FLAGS", "--dangerously-skip-permissions")
-	modelFlag := ""
 	if model != "" {
-		modelFlag = " --model " + shellQuote(model)
+		flags += " --model " + shellQuote(model)
+	}
+	if label != "" {
+		flags += " --name " + shellQuote(label)
 	}
 	if sessionJSONLExists(sid) {
-		return fmt.Sprintf("claude --resume %s %s%s", sid, flags, modelFlag)
+		return fmt.Sprintf("claude --resume %s %s", sid, flags)
 	}
-	return fmt.Sprintf("claude --session-id %s %s%s", sid, flags, modelFlag)
+	return fmt.Sprintf("claude --session-id %s %s", sid, flags)
+}
+
+// sessionLabel builds the claude --name for a session: "[AF] {repo} @MMDD-HHSS"
+// where {repo} is the working dir's basename. Computed once at create and stored
+// in the meta so relaunch keeps the same name.
+func sessionLabel(dir string) string {
+	return fmt.Sprintf("[AF] %s @%s", filepath.Base(dir), time.Now().Format("0102-1505"))
 }
 
 // sessionJSONLExists reports whether a conversation log for sid is on disk.
