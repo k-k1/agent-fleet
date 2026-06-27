@@ -4,6 +4,7 @@ import "highlight.js/styles/github-dark.css";
 import { useApp } from "../state.jsx";
 import { api } from "../api.js";
 import { baseName, langFor, langLabel, humanSize, countLines } from "../lib/filemeta.js";
+import { useSettings, fontStack } from "../lib/settings.js";
 import MarkdownView from "./MarkdownView.jsx";
 
 // FileView shows a single file (read-only) with CodeLeaf-style affordances: an info
@@ -11,6 +12,7 @@ import MarkdownView from "./MarkdownView.jsx";
 // content with a line-number gutter. Binary files report a summary, not bytes.
 export default function FileView() {
   const { filePath, showFile } = useApp();
+  const settings = useSettings();
   const [data, setData] = useState(null);
   const [err, setErr] = useState("");
   const [mdMode, setMdMode] = useState("preview"); // markdown only: 'preview' | 'source'
@@ -52,8 +54,14 @@ export default function FileView() {
 
   if (!filePath) return <div className="fileview" />;
 
+  const viewerStyle = {
+    "--viewer-font": fontStack(settings.viewerFont),
+    "--viewer-size": settings.viewerSize + "px",
+    "--viewer-tab": settings.tabSize,
+  };
+
   return (
-    <div className="fileview">
+    <div className="fileview" style={viewerStyle}>
       <header className="view-head fileinfo">
         <span className="fi-name mono">📄 {baseName(filePath)}</span>
         {isText && <span className="fi-tag">{langLabel(filePath)}</span>}
@@ -96,10 +104,12 @@ export default function FileView() {
           <MarkdownView source={data.content} basePath={filePath} onOpenFile={showFile} />
         </div>
       ) : (
-        <div className="codeview">
-          <pre className="gutter" aria-hidden="true">
-            {Array.from({ length: Math.max(lines, 1) }, (_, i) => i + 1).join("\n")}
-          </pre>
+        <div className={"codeview" + (settings.wrap ? " wrap" : "")}>
+          {settings.lineNumbers && (
+            <pre className="gutter" aria-hidden="true">
+              {Array.from({ length: Math.max(lines, 1) }, (_, i) => i + 1).join("\n")}
+            </pre>
+          )}
           <pre className="code">
             <code className="hljs" dangerouslySetInnerHTML={{ __html: html }} />
           </pre>

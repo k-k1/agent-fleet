@@ -627,13 +627,22 @@ textarea:focus {
   border-right: 1px solid var(--border2);
   user-select: none;
   white-space: pre;
-  font: 12px/1.55 var(--mono);
+  font-family: var(--viewer-font, var(--mono));
+  font-size: var(--viewer-size, 12px);
+  line-height: 1.55;
 }
 .codeview .code {
   margin: 0;
   padding: 8px 14px;
   white-space: pre;
-  font: 12px/1.55 var(--mono);
+  font-family: var(--viewer-font, var(--mono));
+  font-size: var(--viewer-size, 12px);
+  line-height: 1.55;
+  tab-size: var(--viewer-tab, 4);
+}
+.codeview.wrap .code {
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 .codeview .code .hljs {
   background: transparent;
@@ -712,7 +721,7 @@ textarea:focus {
   color: var(--accent);
 }
 .markdown code {
-  font-family: var(--mono);
+  font-family: var(--viewer-font, var(--mono));
   font-size: 0.88em;
   background: var(--panel2);
   border: 1px solid var(--border2);
@@ -1047,6 +1056,41 @@ textarea:focus {
 .add-member input,
 .add-member select {
   font-size: 12px;
+}
+
+/* display settings tab */
+.ds-group {
+  margin-bottom: 22px;
+}
+.ds-title {
+  margin: 0 0 10px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  border-bottom: 1px solid var(--border2);
+  padding-bottom: 6px;
+}
+.ds-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 0;
+}
+.ds-label {
+  width: 120px;
+  flex-shrink: 0;
+  font-size: 13px;
+}
+.ds-row select,
+.ds-row input[type="number"] {
+  font-size: 13px;
+}
+.ds-note {
+  margin-top: 8px;
+}
+.ds-note span {
+  color: var(--fg);
 }
 
 /* danger button (recreate / destructive) */

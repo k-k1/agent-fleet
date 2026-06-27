@@ -9,6 +9,7 @@ import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { WebglAddon } from "@xterm/addon-webgl";
 import "@xterm/xterm/css/xterm.css";
 import { wsURL } from "./api.js";
+import { getSettings, subscribe as subscribeSettings, fontStack } from "./lib/settings.js";
 
 let term = null;
 let fitAddon = null;
@@ -37,15 +38,16 @@ export function ensureTerm(el) {
     fit();
     return term;
   }
+  const s0 = getSettings();
   term = new Terminal({
-    fontSize: 13,
-    // JetBrains Mono first, with CJK fallbacks so Japanese etc. render.
-    fontFamily:
-      '"Source Code Pro", "SF Mono", Menlo, Consolas, "DejaVu Sans Mono", "Noto Sans Mono CJK JP", "Noto Sans CJK JP", "Hiragino Kaku Gothic ProN", "Yu Gothic", monospace',
+    fontSize: s0.termSize,
+    fontFamily: fontStack(s0.termFont),
     theme: { background: "#1e1e1e" },
     cursorBlink: true,
     allowProposedApi: true,
   });
+  // Apply terminal font/size from settings, live, when the user changes them.
+  subscribeSettings(applyTermSettings);
   fitAddon = new FitAddon();
   term.loadAddon(fitAddon);
   // Unicode 11 widths so emoji / wide glyphs occupy 2 cells (no half-clipping).
@@ -112,6 +114,19 @@ export function ensureTerm(el) {
 export function fit() {
   try {
     fitAddon && fitAddon.fit();
+  } catch {}
+}
+
+// applyTermSettings pushes the current font family/size into the live terminal and
+// refits so the grid matches the new metrics.
+function applyTermSettings() {
+  if (!term) return;
+  const s = getSettings();
+  term.options.fontFamily = fontStack(s.termFont);
+  term.options.fontSize = s.termSize;
+  fit();
+  try {
+    term.refresh(0, term.rows - 1);
   } catch {}
 }
 
