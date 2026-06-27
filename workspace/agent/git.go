@@ -154,7 +154,7 @@ func gitClone(dir, remoteURL, branch string) error {
 	if err := os.MkdirAll(reposRoot(), 0o755); err != nil {
 		return err
 	}
-	args := []string{"clone"}
+	args := []string{"clone", "--recurse-submodules"}
 	if b := strings.TrimSpace(branch); b != "" && !strings.HasPrefix(b, "-") {
 		args = append(args, "--branch", b)
 	}
@@ -166,6 +166,17 @@ func gitClone(dir, remoteURL, branch string) error {
 		return fmt.Errorf("%v: %s", err, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+// gitSubmodulesUpdate syncs submodules of an existing working copy (after a reuse or
+// a branch switch — the .gitmodules set/commits differ per branch). Best-effort: a
+// repo with no submodules is a no-op, and a failure (e.g. an unauthenticated private
+// submodule) is non-fatal so the parent checkout still succeeds. The unified
+// credential helper (workspace-agent cred) carries auth for private submodules.
+func gitSubmodulesUpdate(dir string) {
+	cmd := exec.Command("git", "-C", dir, "submodule", "update", "--init", "--recursive")
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	_ = cmd.Run()
 }
 
 // ensureRepo guarantees a working copy for remoteURL exists under ~/repos and
@@ -188,6 +199,7 @@ func ensureRepo(remoteURL, branch string) (string, error) {
 				return "", fmt.Errorf("checkout %s: %v: %s", b, err, strings.TrimSpace(string(out)))
 			}
 		}
+		gitSubmodulesUpdate(dir)
 		return dir, nil
 	}
 	if err := gitClone(dir, remoteURL, branch); err != nil {
@@ -317,6 +329,7 @@ func handleRepoCheckout(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadGateway, "checkout_failed", fmt.Sprintf("%v: %s", err, strings.TrimSpace(string(out))))
 		return
 	}
+	gitSubmodulesUpdate(dir)
 	st, _ := gitStatus(dir)
 	writeJSON(w, http.StatusOK, st)
 }
