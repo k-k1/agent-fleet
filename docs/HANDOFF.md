@@ -247,6 +247,12 @@ CP のルーティングが user→対象コンテナを解決するだけ。
 - **新規セッションモーダル刷新**（`console/src/components/NewSessionModal.jsx`）: 種類は **shell を左・既定**に。**shell 時はモデル/リポジトリ/ディレクトリを非表示**（repo 不要・dir 不要）。**セッション名は自動入力**（`GET /api/sessions` で既存名を取得し `shell`/`claude`/repo 名 → 衝突時 `-2`,`-3`、ユーザー編集で固定）。claude 時のみ従来のモデル＋リポジトリ（接続/URL/なし）を表示。
 - **コンテナ OS ユーザー `node`→`dev`**（Node.js と紛らわしいため）: `workspace/Dockerfile` で `usermod -l dev -d /home/dev -m node && groupmod -n dev node`（**uid/gid=1000 維持**＝host uid 1000 と一致）、`control-plane/runtime.go` の home マウント先を **`/home/dev`** に。`$HOME=/home/dev`・repos/connections は保持（secrets 鍵は email 由来でユーザー名非依存）。**注意**: claude の旧 project は `-home-node-*` キーで、新規は `-home-dev-*`＝**旧会話は resume 不可**（既知・許容）。**image/CP 再ビルド＋ Stop→Start で適用済**。
 
+**🔧 改善（2026-06-27 続き2）— セッション一覧の刷新（× 廃止 / 停止状態 / 再開 / 2 行表示）**:
+- **× ボタン廃止**: 「同一 repo で複数セッション時に × で全終了」との指摘（実機ではバックエンドの stop は分離＝再現せずだが UI として撤廃）。**停止は端末で claude/shell を終了**＝そのセッションが `停止中` 表示になり、クリックで**再開**（`ensureSessionTmux`＝同一 sid で `--resume`）。
+- **停止状態の保持＋自動失効**: `sessionMeta` に `repo`/`createdAt`/`stoppedAt` を追加。`handleListSessions` を**メタ駆動**に変更（live tmux で `stoppedAt` クリア、終了済みは初回観測時に `stoppedAt` を刻み、**TTL 超過で剪定**）。TTL=`AF_SESSION_STOPPED_TTL`（既定 24h、`/tmp` ゆえコンテナ再起動でも消える）。一覧は `createdAt` 降順。
+- **2 行表示**（`console/src/components/sections/SessionsSection.jsx`）: 1 行目=**表示名 `[AF|SH] {repo}` ＋ 起動日時**（`started`="MM/DD HH:mm" ローカル時刻）、2 行目=**セッション名 ＋ kind ＋ 状態（● 起動中 / 停止中—クリックで再開）**。**4 秒ポーリング**で 起動中⇄停止中 と TTL 剪定を自動反映。`Session` に `repo`/`label`/`started`/`createdAt` を追加。CSS は `styles.css` の `.session-*`。
+- **検証**: claude×2＋shell を同一 dir に作成→1 つ kill で当該のみ `alive:false`・他は生存、WS 再接続で `cmd=claude` 復帰、`stoppedAt` を古く偽装→**剪定**を確認。
+
 ## 7. 動作確認の最短手順
 
 ```bash

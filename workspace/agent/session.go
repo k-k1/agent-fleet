@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 )
@@ -19,11 +20,15 @@ var nameRe = regexp.MustCompile(`^[A-Za-z0-9_-]{1,40}$`)
 
 // Session is the wire representation of a Claude session (one tmux session).
 type Session struct {
-	Name  string `json:"name"`
-	Tmux  string `json:"tmux"`
-	Dir   string `json:"dir"`
-	Kind  string `json:"kind"`  // "claude" | "shell"
-	Alive bool   `json:"alive"` // true = live tmux session; false = recorded but exited
+	Name      string `json:"name"`
+	Tmux      string `json:"tmux"`
+	Dir       string `json:"dir"`
+	Kind      string `json:"kind"`     // "claude" | "shell"
+	Repo      string `json:"repo"`     // working dir basename (display)
+	Label     string `json:"label"`    // claude --name display name (claude only)
+	Started   string `json:"started"`  // "01/02 15:04" local time, for the list
+	CreatedAt string `json:"createdAt"`// RFC3339
+	Alive     bool   `json:"alive"`    // true = live tmux session; false = stopped (resumable)
 }
 
 func tmuxName(name string) string { return tmuxPrefix + name }
@@ -35,11 +40,39 @@ func tmuxName(name string) string { return tmuxPrefix + name }
 // from dir+name) instead of falling back to a bare shell. Lifecycle matches tmux:
 // /tmp clears on container restart, exactly when tmux sessions are lost too.
 type sessionMeta struct {
-	Name  string `json:"name"`
-	Dir   string `json:"dir"`
-	Model string `json:"model"`
-	Kind  string `json:"kind"`
-	Label string `json:"label"` // claude --name (display); set once at create
+	Name      string `json:"name"`
+	Dir       string `json:"dir"`
+	Model     string `json:"model"`
+	Kind      string `json:"kind"`
+	Label     string `json:"label"`     // claude --name (display); set once at create
+	Repo      string `json:"repo"`      // working dir basename
+	CreatedAt string `json:"createdAt"` // RFC3339, set at create
+	StoppedAt string `json:"stoppedAt"` // RFC3339, set lazily when first seen exited; "" while live
+}
+
+// stoppedTTL is how long a stopped (exited) session stays listed/resumable before
+// it is pruned. Configurable; default 24h. Container restart clears /tmp anyway.
+func stoppedTTL() time.Duration {
+	if v := os.Getenv("AF_SESSION_STOPPED_TTL"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			return d
+		}
+	}
+	return 24 * time.Hour
+}
+
+// wireSession builds the API representation from a meta and liveness.
+func wireSession(m sessionMeta, alive bool) Session {
+	started := ""
+	if m.CreatedAt != "" {
+		if t, err := time.Parse(time.RFC3339, m.CreatedAt); err == nil {
+			started = t.Local().Format("01/02 15:04")
+		}
+	}
+	return Session{
+		Name: m.Name, Tmux: tmuxName(m.Name), Dir: m.Dir, Kind: m.Kind,
+		Repo: m.Repo, Label: m.Label, Started: started, CreatedAt: m.CreatedAt, Alive: alive,
+	}
 }
 
 func sessionsMetaDir() string { return envOr("AF_SESSIONS_DIR", "/tmp/af-sessions") }
@@ -133,7 +166,6 @@ func handleListSessions(w http.ResponseWriter, r *http.Request) {
 		metas[m.Name] = m
 	}
 
-	sessions := []Session{}
 	live := map[string]bool{}
 	out, err := exec.Command("tmux", "list-sessions", "-F", "#{session_name}").Output()
 	if err == nil { // no server / no sessions => err; treat as empty
@@ -141,30 +173,36 @@ func handleListSessions(w http.ResponseWriter, r *http.Request) {
 			if tn == "" || !strings.HasPrefix(tn, tmuxPrefix) {
 				continue
 			}
-			name := strings.TrimPrefix(tn, tmuxPrefix)
-			live[name] = true
-			dir := ""
-			if p, e := exec.Command("tmux", "display-message", "-p", "-t", tn, "#{pane_current_path}").Output(); e == nil {
-				dir = strings.TrimSpace(string(p))
-			}
-			kind := "claude"
-			if m, ok := metas[name]; ok {
-				kind = m.Kind
-				if dir == "" {
-					dir = m.Dir
-				}
-			}
-			sessions = append(sessions, Session{Name: name, Tmux: tn, Dir: dir, Kind: kind, Alive: true})
+			live[strings.TrimPrefix(tn, tmuxPrefix)] = true
 		}
 	}
-	// Recorded-but-exited sessions stay listed (alive=false) so a claude session
-	// the user quit remains clickable; attaching relaunches it (ensureSessionTmux).
+
+	now := time.Now()
+	ttl := stoppedTTL()
+	sessions := []Session{}
 	for name, m := range metas {
 		if live[name] {
+			// Running: clear any prior stopped mark so resume resets the clock.
+			if m.StoppedAt != "" {
+				m.StoppedAt = ""
+				writeSessionMeta(m)
+			}
+			sessions = append(sessions, wireSession(m, true))
 			continue
 		}
-		sessions = append(sessions, Session{Name: name, Tmux: tmuxName(name), Dir: m.Dir, Kind: m.Kind, Alive: false})
+		// Stopped (exited): stamp when first noticed, prune once older than the TTL,
+		// otherwise keep it listed as resumable.
+		if m.StoppedAt == "" {
+			m.StoppedAt = now.Format(time.RFC3339)
+			writeSessionMeta(m)
+		} else if t, e := time.Parse(time.RFC3339, m.StoppedAt); e == nil && now.Sub(t) > ttl {
+			removeSessionMeta(name)
+			continue
+		}
+		sessions = append(sessions, wireSession(m, false))
 	}
+	// Stable order: newest first by creation time.
+	sort.Slice(sessions, func(i, j int) bool { return sessions[i].CreatedAt > sessions[j].CreatedAt })
 	writeJSON(w, http.StatusOK, map[string]any{"sessions": sessions})
 }
 
@@ -223,14 +261,17 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	if kind == "claude" {
 		label = sessionLabel(req.Dir)
 	}
-	meta := sessionMeta{Name: req.Name, Dir: req.Dir, Model: req.Model, Kind: kind, Label: label}
+	meta := sessionMeta{
+		Name: req.Name, Dir: req.Dir, Model: req.Model, Kind: kind, Label: label,
+		Repo: filepath.Base(req.Dir), CreatedAt: time.Now().Format(time.RFC3339),
+	}
 	if err := startSessionTmux(meta); err != nil {
 		writeErr(w, http.StatusInternalServerError, "tmux_failed", err.Error())
 		return
 	}
 	writeSessionMeta(meta)
 
-	writeJSON(w, http.StatusCreated, Session{Name: req.Name, Tmux: tn, Dir: req.Dir, Kind: kind, Alive: true})
+	writeJSON(w, http.StatusCreated, wireSession(meta, true))
 }
 
 // handleStopSession kills the tmux session and forgets its meta so it stops

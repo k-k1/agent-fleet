@@ -286,6 +286,78 @@ textarea:focus {
   font-size: 11px;
 }
 
+/* session rows: two lines (display name + 起動日時 / セッション名 + 状態) */
+.list > li.session-row {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
+  padding: 0;
+}
+.session-btn {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  color: var(--fg);
+  cursor: pointer;
+  padding: 6px 6px;
+  border-radius: 4px;
+}
+.session-btn:hover {
+  background: var(--btn);
+}
+.session-l1 {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.session-display {
+  font-weight: 600;
+  font-size: 12.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.session-time {
+  flex: none;
+  color: var(--muted);
+  font-size: 11px;
+  font-family: var(--mono);
+}
+.session-l2 {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.session-name {
+  color: var(--muted);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.session-state {
+  margin-left: auto;
+  flex: none;
+  font-size: 10px;
+}
+.session-state.on {
+  color: var(--ok);
+}
+.session-state.off {
+  color: var(--warn);
+}
+.session-row.stopped .session-display {
+  color: var(--muted);
+}
+.session-row.active > .session-btn {
+  background: #20303a;
+}
+
 /* repo rows are two lines: info + labelled action chips */
 .list > li.repo-row {
   flex-direction: column;
