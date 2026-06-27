@@ -30,7 +30,8 @@ type Session struct {
 	CreatedAt string `json:"createdAt"`// RFC3339
 	RemoteUrl string `json:"remoteUrl"`// claude.ai Remote Control URL, when RC is bridged
 	State     string `json:"state"`    // claude live state: working | idle | question | ""
-	Alive     bool   `json:"alive"`    // true = live tmux session; false = stopped (resumable)
+	Alive     bool   `json:"alive"`    // true = live tmux session; false = stopped
+	Resumable bool   `json:"resumable"`// false = stopped claude whose working dir is gone
 }
 
 func tmuxName(name string) string { return tmuxPrefix + name }
@@ -76,6 +77,7 @@ func wireSession(m sessionMeta, alive bool) Session {
 		}
 	}
 	remote, state := "", ""
+	resumable := true
 	if m.Kind == "claude" {
 		sid := sessionUUID(m.Dir, m.Name)
 		remote = remoteSessionURL(sid)
@@ -86,13 +88,23 @@ func wireSession(m sessionMeta, alive bool) Session {
 			if st, ok := readSessionStatus(sid); ok {
 				state = st.State
 			}
+		} else if !dirExists(m.Dir) {
+			// A stopped claude whose working dir was removed (its repo deleted) can't
+			// be resumed there; the Console marks it non-resumable (archive only).
+			resumable = false
 		}
 	}
 	return Session{
 		Name: m.Name, Tmux: tmuxName(m.Name), Dir: m.Dir, Kind: m.Kind,
 		Repo: m.Repo, Label: m.Label, Started: started, CreatedAt: m.CreatedAt,
-		RemoteUrl: remote, State: state, Alive: alive,
+		RemoteUrl: remote, State: state, Alive: alive, Resumable: resumable,
 	}
+}
+
+// dirExists reports whether p is an existing directory.
+func dirExists(p string) bool {
+	fi, err := os.Stat(p)
+	return err == nil && fi.IsDir()
 }
 
 // remoteSessionURL derives the claude.ai Remote Control page for sid from its
@@ -177,18 +189,24 @@ func listSessionMetas() []sessionMeta {
 // --resume once a jsonl exists); for shell it runs a login bash.
 func startSessionTmux(m sessionMeta) error {
 	tn := tmuxName(m.Name)
-	// The pane cwd falls back to home if the recorded dir is gone (e.g. its repo
-	// was deleted by "作り直す"); the sid still derives from the ORIGINAL dir so a
-	// resume keeps finding the same jsonl.
 	cwd := m.Dir
-	if fi, err := os.Stat(cwd); err != nil || !fi.IsDir() {
-		cwd = homeDir()
-	}
+	dirOK := dirExists(cwd)
 	args := []string{"new-session", "-d", "-s", tn, "-c", cwd}
 	var program string
 	if m.Kind == "shell" {
+		// A shell falls back to home if its recorded dir is gone.
+		if !dirOK {
+			cwd = homeDir()
+			args[len(args)-1] = cwd
+		}
 		program = "bash -l"
 	} else {
+		// A claude session must launch in its real working dir: if the dir is gone
+		// (its repo was deleted) we refuse rather than resume the conversation in an
+		// unrelated cwd. wireSession reports this as non-resumable.
+		if !dirOK {
+			return fmt.Errorf("作業フォルダが存在しないため再開できません: %s", m.Dir)
+		}
 		// Pre-trust the launch dir so claude doesn't stall on the folder-trust
 		// dialog (not skippable via --dangerously-skip-permissions).
 		ensureFolderTrusted(cwd)

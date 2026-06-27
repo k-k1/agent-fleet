@@ -6,7 +6,11 @@ import NewSessionModal from "../NewSessionModal.jsx";
 
 // stateInfo maps a session to its line-2 status chip.
 const stateInfo = (s) => {
-  if (!s.alive) return { cls: "off", text: "停止中 — クリックで再開" };
+  if (!s.alive) {
+    // A stopped claude whose working dir was deleted can't be resumed (archive only).
+    if (s.resumable === false) return { cls: "off dead", text: "フォルダ無し — 再開不可" };
+    return { cls: "off", text: "停止中 — クリックで再開" };
+  }
   if (s.kind === "shell") return { cls: "on", text: "● 起動中" };
   switch (s.state) {
     case "working":
@@ -58,6 +62,22 @@ export default function SessionsSection() {
   const [showModal, setShowModal] = useState(false);
   const [menuFor, setMenuFor] = useState(null); // session name whose ⋯ menu is open
   const prevStates = useRef({}); // name → last seen claude state, for arrival notifications
+
+  // Archive: remove the session from the list (keeps its conversation log). A live
+  // session is stopped first so it doesn't linger invisibly. Backed by the stop
+  // endpoint (kill tmux if any + forget meta), which does not delete the jsonl.
+  const archive = async (s) => {
+    const msg = s.alive
+      ? `実行中のセッション "${s.name}" を停止して一覧から削除しますか？`
+      : `セッション "${s.name}" を一覧から削除しますか？\n（会話ログは保持されます）`;
+    if (!confirm(msg)) return;
+    const res = await raw(`api/sessions/${encodeURIComponent(s.name)}/stop`, { method: "POST" });
+    if (!res.ok) {
+      alert("アーカイブに失敗しました");
+      return;
+    }
+    bumpSessions();
+  };
 
   // Discard the conversation and start the same slot fresh (≠ resume).
   const recreate = async (name) => {
@@ -132,9 +152,16 @@ export default function SessionsSection() {
     >
       <ul className="list">
         {sessions.length === 0 && <li className="muted">セッションなし</li>}
-        {sessions.map((s) => (
-          <li key={s.name} className={"session-row" + (session === s.name ? " active" : "") + (s.alive ? "" : " stopped")}>
-            <button className="session-btn" title={s.dir || ""} onClick={() => showTerminal(s.name)}>
+        {sessions.map((s) => {
+          const dead = !s.alive && s.resumable === false; // dir gone → can't resume
+          return (
+          <li key={s.name} className={"session-row" + (session === s.name ? " active" : "") + (s.alive ? "" : " stopped") + (dead ? " dead" : "")}>
+            <button
+              className="session-btn"
+              title={dead ? "作業フォルダが存在しないため再開できません" : s.dir || ""}
+              disabled={dead}
+              onClick={() => !dead && showTerminal(s.name)}
+            >
               <span className="session-l1">
                 <span className="session-display">{displayName(s)}</span>
               </span>
@@ -169,19 +196,31 @@ export default function SessionsSection() {
                     </button>
                   )}
                   <button
-                    className="session-menu-item danger"
+                    className="session-menu-item"
                     onClick={() => {
                       setMenuFor(null);
-                      recreate(s.name);
+                      archive(s);
                     }}
                   >
-                    作り直す（会話を破棄）
+                    アーカイブする（一覧から消す）
                   </button>
+                  {!dead && (
+                    <button
+                      className="session-menu-item danger"
+                      onClick={() => {
+                        setMenuFor(null);
+                        recreate(s.name);
+                      }}
+                    >
+                      作り直す（会話を破棄）
+                    </button>
+                  )}
                 </div>
               )}
             </div>
           </li>
-        ))}
+          );
+        })}
       </ul>
 
       {showModal && (
