@@ -150,7 +150,17 @@ func startSessionTmux(m sessionMeta) error {
 		if tok := readClaudeToken(); tok != "" {
 			args = append(args, "-e", "CLAUDE_CODE_OAUTH_TOKEN="+tok)
 		}
-		program = buildSessionProgram(sessionUUID(m.Dir, m.Name), m.Model, m.Label)
+		sid := sessionUUID(m.Dir, m.Name)
+		// A jsonl can exist yet hold no real conversation — e.g. only a Remote
+		// Control "bridge-session" line when RC connected but nothing was said.
+		// claude --resume then dies with "No conversation found". Drop such a stub
+		// so buildSessionProgram starts fresh (--session-id) instead of resuming.
+		if !jsonlResumable(sid) {
+			for _, p := range jsonlPaths(sid) {
+				_ = os.Remove(p)
+			}
+		}
+		program = buildSessionProgram(sid, m.Model, m.Label)
 	}
 	args = append(args, program)
 	if out, err := exec.Command("tmux", args...).CombinedOutput(); err != nil {
@@ -398,5 +408,23 @@ func jsonlPaths(sid string) []string {
 // it exists buildSessionProgram uses --resume; otherwise --session-id starts new.
 // A wrong answer here makes claude exit ("Session ID is already in use").
 func sessionJSONLExists(sid string) bool { return len(jsonlPaths(sid)) > 0 }
+
+// jsonlResumable reports whether sid's log holds an actual conversation (a user or
+// assistant turn) — not just bookkeeping lines (Remote Control "bridge-session",
+// a lone summary, …). claude --resume fails ("No conversation found") on a stub
+// log even though the file exists, so we gate resume on real content.
+func jsonlResumable(sid string) bool {
+	for _, p := range jsonlPaths(sid) {
+		b, err := os.ReadFile(p)
+		if err != nil {
+			continue
+		}
+		s := string(b)
+		if strings.Contains(s, `"type":"user"`) || strings.Contains(s, `"type":"assistant"`) {
+			return true
+		}
+	}
+	return false
+}
 
 func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }

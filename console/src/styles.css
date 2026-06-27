@@ -308,19 +308,55 @@ textarea:focus {
   padding: 6px 6px;
   border-radius: 4px;
 }
-.session-recreate {
+.session-menu-wrap {
   flex: none;
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.session-menu-btn {
   background: none;
   border: none;
   color: var(--muted);
   cursor: pointer;
-  font-size: 15px;
+  font-size: 16px;
+  line-height: 1;
   padding: 0 6px;
   border-radius: 4px;
 }
-.session-recreate:hover {
+.session-menu-btn:hover {
   background: var(--btn);
   color: var(--fg);
+}
+.session-menu {
+  position: absolute;
+  right: 0;
+  top: 100%;
+  z-index: 20;
+  min-width: 160px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+  padding: 4px;
+}
+.session-menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  color: var(--fg);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 6px 8px;
+  border-radius: 4px;
+}
+.session-menu-item:hover {
+  background: var(--btn);
+}
+.session-menu-item.danger {
+  color: var(--del);
 }
 .session-btn:hover {
   background: var(--btn);
