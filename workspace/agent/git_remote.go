@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,8 +13,9 @@ import (
 // Remote repository listing: enumerate the repositories the connected provider
 // account can clone, using the stored token, so the Console can offer a picker
 // instead of asking the user to paste a clone URL. The token never leaves the
-// Agent (the Control Plane only proxies). GitHub is implemented; Bitbucket — whose
-// OAuth token needs on-the-fly refresh — is a follow-up.
+// Agent (the Control Plane only proxies). Both GitHub and Bitbucket are supported;
+// Bitbucket's OAuth token is refreshed on the fly (or token-paste falls back to
+// HTTP Basic).
 
 type remoteRepo struct {
 	FullName  string `json:"full_name"`
@@ -44,7 +46,17 @@ func handleListRemoteRepos(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"host": host, "repos": repos})
 	case "bitbucket.org":
-		writeErr(w, http.StatusNotImplemented, "not_implemented", "Bitbucket repo listing is not implemented yet")
+		auth, err := bitbucketAuthHeader(s)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "not_connected", err.Error())
+			return
+		}
+		repos, err := bitbucketListRepos(auth)
+		if err != nil {
+			writeErr(w, http.StatusBadGateway, "provider_error", err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"host": host, "repos": repos})
 	default:
 		writeErr(w, http.StatusBadRequest, "bad_host", "unsupported host: "+host)
 	}
@@ -79,7 +91,17 @@ func handleListRemoteBranches(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"branches": branches, "default": def})
 	case "bitbucket.org":
-		writeErr(w, http.StatusNotImplemented, "not_implemented", "Bitbucket branch listing is not implemented yet")
+		auth, err := bitbucketAuthHeader(s)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "not_connected", err.Error())
+			return
+		}
+		branches, def, err := bitbucketListBranches(auth, repo)
+		if err != nil {
+			writeErr(w, http.StatusBadGateway, "provider_error", err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"branches": branches, "default": def})
 	default:
 		writeErr(w, http.StatusBadRequest, "bad_host", "unsupported host: "+host)
 	}
@@ -215,6 +237,206 @@ func githubReposPage(client *http.Client, token, url string) ([]remoteRepo, stri
 		return nil, "", err
 	}
 	return batch, resp.Header.Get("Link"), nil
+}
+
+// --- Bitbucket Cloud (read-only listing) ---
+
+// bitbucketAuthHeader returns the Authorization header value for the Bitbucket API.
+// OAuth creds (refreshed on the fly, like the git credential helper) are preferred;
+// a token-paste connection (Atlassian email + API token) falls back to HTTP Basic.
+// May refresh and persist the OAuth token as a side effect.
+func bitbucketAuthHeader(s *secretsData) (string, error) {
+	if s.Bitbucket != nil && s.Bitbucket.AccessToken != "" {
+		c := *s.Bitbucket
+		if time.Now().Unix() >= c.Expiry-120 { // refresh within 2 min of expiry
+			if nc, err := refreshBitbucket(c); err == nil {
+				c = nc
+				s.Bitbucket = &c
+				_ = s.save()
+			}
+		}
+		return "Bearer " + c.AccessToken, nil
+	}
+	if e, ok := s.Git["bitbucket.org"]; ok && e.Token != "" {
+		basic := base64.StdEncoding.EncodeToString([]byte(e.User + ":" + e.Token))
+		return "Basic " + basic, nil
+	}
+	return "", fmt.Errorf("Bitbucket is not connected")
+}
+
+// bitbucketGet does an authorized GET and returns the body, mapping common errors.
+func bitbucketGet(client *http.Client, auth, url string) ([]byte, error) {
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", auth)
+	req.Header.Set("Accept", "application/json")
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode != http.StatusOK {
+		if resp.StatusCode == http.StatusUnauthorized {
+			return nil, fmt.Errorf("bitbucket token rejected (re-connect Bitbucket)")
+		}
+		msg := strings.TrimSpace(string(body))
+		if len(msg) > 300 {
+			msg = msg[:300]
+		}
+		return nil, fmt.Errorf("bitbucket %d: %s", resp.StatusCode, msg)
+	}
+	return body, nil
+}
+
+// bitbucketListRepos enumerates clonable repos. The cross-workspace listing
+// (GET /2.0/repositories?role=member) was retired (410, CHANGE-2770), so we list
+// the user's workspaces and aggregate each workspace's repositories instead.
+func bitbucketListRepos(auth string) ([]remoteRepo, error) {
+	const maxRepos = 500
+	client := &http.Client{Timeout: 15 * time.Second}
+	slugs, err := bitbucketWorkspaces(client, auth)
+	if err != nil {
+		return nil, err
+	}
+	out := []remoteRepo{}
+	for _, slug := range slugs {
+		next := "https://api.bitbucket.org/2.0/repositories/" + slug + "?sort=-updated_on&pagelen=100"
+		for page := 0; page < 20 && next != "" && len(out) < maxRepos; page++ {
+			batch, n, err := bitbucketRepoPage(client, auth, next)
+			if err != nil {
+				break // skip a failing workspace; keep aggregating the others
+			}
+			out = append(out, batch...)
+			next = n
+		}
+		if len(out) >= maxRepos {
+			break
+		}
+	}
+	return out, nil
+}
+
+// bitbucketWorkspaces lists the slugs of workspaces the token can access.
+func bitbucketWorkspaces(client *http.Client, auth string) ([]string, error) {
+	next := "https://api.bitbucket.org/2.0/user/workspaces?pagelen=100"
+	slugs := []string{}
+	for page := 0; page < 10 && next != ""; page++ {
+		body, err := bitbucketGet(client, auth, next)
+		if err != nil {
+			return nil, err
+		}
+		var resp struct {
+			Values []struct {
+				Slug      string `json:"slug"`
+				Workspace struct {
+					Slug string `json:"slug"`
+				} `json:"workspace"`
+			} `json:"values"`
+			Next string `json:"next"`
+		}
+		if err := json.Unmarshal(body, &resp); err != nil {
+			return nil, err
+		}
+		for _, v := range resp.Values {
+			slug := v.Workspace.Slug
+			if slug == "" {
+				slug = v.Slug
+			}
+			if slug != "" {
+				slugs = append(slugs, slug)
+			}
+		}
+		next = resp.Next
+	}
+	return slugs, nil
+}
+
+// bitbucketRepoPage parses one page of a workspace's repositories.
+func bitbucketRepoPage(client *http.Client, auth, url string) ([]remoteRepo, string, error) {
+	body, err := bitbucketGet(client, auth, url)
+	if err != nil {
+		return nil, "", err
+	}
+	var resp struct {
+		Values []struct {
+			FullName  string `json:"full_name"`
+			IsPrivate bool   `json:"is_private"`
+			UpdatedOn string `json:"updated_on"`
+			Links     struct {
+				Clone []struct {
+					Name string `json:"name"`
+					Href string `json:"href"`
+				} `json:"clone"`
+			} `json:"links"`
+		} `json:"values"`
+		Next string `json:"next"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, "", err
+	}
+	out := make([]remoteRepo, 0, len(resp.Values))
+	for _, v := range resp.Values {
+		href := ""
+		for _, c := range v.Links.Clone {
+			if c.Name == "https" {
+				href = c.Href
+				break
+			}
+		}
+		out = append(out, remoteRepo{
+			FullName: v.FullName, CloneURL: href, Private: v.IsPrivate, UpdatedAt: v.UpdatedOn,
+		})
+	}
+	return out, resp.Next, nil
+}
+
+// bitbucketListBranches returns branch names for workspace/repo_slug with the
+// default (main) branch first.
+func bitbucketListBranches(auth, repo string) ([]string, string, error) {
+	client := &http.Client{Timeout: 15 * time.Second}
+	def := bitbucketDefaultBranch(client, auth, repo) // best-effort
+
+	next := "https://api.bitbucket.org/2.0/repositories/" + repo + "/refs/branches?pagelen=100&sort=name"
+	names := []string{}
+	for page := 0; page < 10 && next != ""; page++ {
+		body, err := bitbucketGet(client, auth, next)
+		if err != nil {
+			return nil, "", err
+		}
+		var resp struct {
+			Values []struct {
+				Name string `json:"name"`
+			} `json:"values"`
+			Next string `json:"next"`
+		}
+		if err := json.Unmarshal(body, &resp); err != nil {
+			return nil, "", err
+		}
+		for _, b := range resp.Values {
+			names = append(names, b.Name)
+		}
+		next = resp.Next
+	}
+	return orderDefaultFirst(names, def), def, nil
+}
+
+func bitbucketDefaultBranch(client *http.Client, auth, repo string) string {
+	body, err := bitbucketGet(client, auth, "https://api.bitbucket.org/2.0/repositories/"+repo)
+	if err != nil {
+		return ""
+	}
+	var meta struct {
+		MainBranch struct {
+			Name string `json:"name"`
+		} `json:"mainbranch"`
+	}
+	if json.Unmarshal(body, &meta) != nil {
+		return ""
+	}
+	return meta.MainBranch.Name
 }
 
 // nextLink extracts the rel="next" URL from a GitHub Link header, or "" if none.
