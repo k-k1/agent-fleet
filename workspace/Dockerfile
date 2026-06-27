@@ -1,7 +1,7 @@
-# Workspace image: git + tmux + Workspace Agent.
-# Claude CLI はイメージに焼き込まず、コンテナ起動時(entrypoint)に最新を取得して
-# 永続ホーム(~/.local)へ置く。これで再ビルドなしに常に最新 CLI を使える。
-# ツール本体は /usr/local（イメージ）、ユーザーデータと claude は home(volume)。
+# Workspace image: git + tmux + Workspace Agent + Claude CLI.
+# Claude CLI はイメージに焼く（/usr/local、高速・オフライン起動）。ユーザー home の
+# ~/.local に claude があれば PATH 優先で、entrypoint が自動更新する（焼いた版は固定の
+# フォールバック / 新規 home の既定）。ツール本体は /usr/local、ユーザーデータは home(volume)。
 # docs/11-phase1-plan.md / docs/09-portability.md 参照。
 
 # --- build the agent (Go) ---
@@ -20,6 +20,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=agentbuild /out/workspace-agent /usr/local/bin/workspace-agent
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
+
+# Optional: install a vendored rtk binary (static) so the claude PreToolUse hook
+# can route Bash through it for token savings. Other deployments leave vendor/
+# empty (only .gitkeep) → no rtk, and the entrypoint seeds the hook only when rtk
+# is present. The binary is git-ignored; run-dev.sh copies the host's rtk in.
+COPY vendor/ /opt/vendor/
+RUN if [ -f /opt/vendor/rtk ]; then \
+      install -m 0755 /opt/vendor/rtk /usr/local/bin/rtk && echo "installed rtk"; \
+    fi
+
+# Claude CLI baked into the image (stable /usr/local install) for fast, offline
+# container start. A user-home ~/.local install still takes PATH precedence and is
+# auto-updated by the entrypoint; this is the pinned fallback / fresh-home default.
+RUN npm install -g @anthropic-ai/claude-code && claude --version
 
 # UTF-8 ロケール。未設定(POSIX)だと tmux が UTF-8 を無効化し日本語等が化ける。
 # C.UTF-8 は locale 生成不要で Debian に存在する。

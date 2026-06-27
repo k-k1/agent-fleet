@@ -26,10 +26,18 @@ fi
 
 if [ "${CLAUDE_INSTALL:-1}" = "1" ]; then
   if command -v claude >/dev/null 2>&1; then
-    if [ "${CLAUDE_AUTO_UPDATE:-1}" = "1" ]; then
-      echo "[entrypoint] updating Claude CLI ..."
-      claude update || echo "[entrypoint] WARN: claude update failed (continuing)"
-    fi
+    case "$(command -v claude)" in
+      "$HOME"/*)
+        # User-home install (~/.local) takes PATH precedence → keep it current.
+        if [ "${CLAUDE_AUTO_UPDATE:-1}" = "1" ]; then
+          echo "[entrypoint] updating Claude CLI (user install) ..."
+          claude update || echo "[entrypoint] WARN: claude update failed (continuing)"
+        fi
+        ;;
+      *)
+        # Baked into the image (/usr/local) → version-pinned, no self-update.
+        : ;;
+    esac
   else
     echo "[entrypoint] installing latest Claude CLI ..."
     curl -fsSL https://claude.ai/install.sh | bash || echo "[entrypoint] WARN: claude install failed (continuing)"
@@ -41,12 +49,27 @@ if [ "${CLAUDE_INSTALL:-1}" = "1" ]; then
   fi
 fi
 
-# 既定 settings.json を seed（無い場合のみ）。--dangerously-skip-permissions の
-# bypass 警告で誤って exit するのを防ぐ（skipDangerousModePermissionPrompt）。
+# 既定 settings.json を seed（ファイルが無い時のみ。以後は Console の Claude 設定が真実）。
+#   skipDangerousModePermissionPrompt … bypass 警告での誤 exit を防ぐ
+#   remoteControlAtStartup            … 起動時に Remote Control を有効化
+#   agentPushNotifEnabled             … プッシュ通知を有効化
+#   hooks(PreToolUse/Bash → rtk hook claude) … rtk がコンテナにあれば seed（トークン節約）
 SETTINGS="$CCD/settings.json"
+mkdir -p "$CCD"
 if [ ! -f "$SETTINGS" ]; then
-  printf '{\n  "skipDangerousModePermissionPrompt": true\n}\n' > "$SETTINGS"
-  echo "[entrypoint] seeded default $SETTINGS"
+  RTK=0; command -v rtk >/dev/null 2>&1 && RTK=1
+  node -e '
+    const fs = require("fs"), p = process.argv[1], rtk = process.argv[2] === "1";
+    const s = {
+      skipDangerousModePermissionPrompt: true,
+      remoteControlAtStartup: true,
+      agentPushNotifEnabled: true,
+    };
+    if (rtk) s.hooks = { PreToolUse: [{ matcher: "Bash", hooks: [{ type: "command", command: "rtk hook claude" }] }] };
+    fs.writeFileSync(p, JSON.stringify(s, null, 2) + "\n");
+  ' "$SETTINGS" "$RTK" \
+    && echo "[entrypoint] seeded default $SETTINGS (rtk=$RTK)" \
+    || echo "[entrypoint] WARN: failed to seed $SETTINGS"
 fi
 
 exec "$@"

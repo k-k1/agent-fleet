@@ -56,6 +56,10 @@ func main() {
 	mux.HandleFunc("GET /fs/tree", handleFSTree)
 	mux.HandleFunc("GET /fs/file", handleFSFile)
 
+	// Claude settings (Remote Control / notifications / RTK hook) — Console toggles.
+	mux.HandleFunc("GET /claude/settings", handleClaudeSettingsGet)
+	mux.HandleFunc("PUT /claude/settings", handleClaudeSettingsPut)
+
 	// Connections — per-user provider credentials (git tokens; Claude in Stage 3).
 	mux.HandleFunc("GET /connections", handleConnectionsGet)
 	mux.HandleFunc("GET /connections/git/{host}/repos", handleListRemoteRepos)

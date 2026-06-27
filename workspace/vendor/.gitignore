@@ -1,0 +1,3 @@
+# Host-specific vendored binaries copied in by run-dev.sh at build time.
+# Not committed (the product image is built without them unless provided locally).
+rtk

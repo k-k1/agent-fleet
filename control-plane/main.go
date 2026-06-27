@@ -138,6 +138,10 @@ func main() {
 	mux.HandleFunc("GET /api/fs/tree", cfg.proxyAgentREST)
 	mux.HandleFunc("GET /api/fs/file", cfg.proxyAgentREST)
 
+	// Claude settings (Remote Control / notifications / RTK) — proxied to the Agent.
+	mux.HandleFunc("GET /api/claude/settings", cfg.proxyAgentREST)
+	mux.HandleFunc("PUT /api/claude/settings", cfg.proxyAgentREST)
+
 	// Connections ops — proxied to the Workspace Agent (/api stripped).
 	mux.HandleFunc("GET /api/connections", cfg.proxyAgentREST)
 	mux.HandleFunc("GET /api/connections/git/{host}/repos", cfg.proxyAgentREST)

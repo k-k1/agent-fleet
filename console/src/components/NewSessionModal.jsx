@@ -17,6 +17,7 @@ const SOURCE_HELP = {
 export default function NewSessionModal({ onClose, onCreated }) {
   const [name, setName] = useState("");
   const [kind, setKind] = useState("claude");
+  const [model, setModel] = useState(""); // "" = claude default
   const [source, setSource] = useState("picker"); // 'picker' | 'url' | 'none'
   const [sel, setSel] = useState(null); // picker: { cloneUrl, fullName, branch }
   const [url, setUrl] = useState("");
@@ -44,6 +45,7 @@ export default function NewSessionModal({ onClose, onCreated }) {
       const res = await apiJSON("api/sessions", "POST", {
         name: name.trim(),
         kind,
+        model: kind === "claude" ? model : "",
         dir: source === "none" ? dir.trim() : "",
         remote_url: cloning ? cloneUrl : "",
         branch: cloning ? cloneBranch : "",
@@ -91,6 +93,30 @@ export default function NewSessionModal({ onClose, onCreated }) {
               </button>
             </div>
           </div>
+
+          {/* モデル（claude のみ） */}
+          {kind === "claude" && (
+            <div className="field">
+              <div className="field-label">モデル</div>
+              <div className="seg">
+                {[
+                  ["", "既定"],
+                  ["opus", "Opus"],
+                  ["sonnet", "Sonnet"],
+                  ["haiku", "Haiku"],
+                ].map(([v, label]) => (
+                  <button
+                    key={v || "default"}
+                    type="button"
+                    className={"seg-btn" + (model === v ? " active" : "")}
+                    onClick={() => setModel(v)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* リポジトリ */}
           <div className="field">

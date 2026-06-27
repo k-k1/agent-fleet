@@ -30,6 +30,16 @@ if [ -f "$OAUTH_ENV" ]; then
   set -a; . "$OAUTH_ENV"; set +a
 fi
 
+# Vendor a host rtk binary into the build context so the image installs it
+# (token-saving claude hook). Static binary → runs in the slim container. Other
+# deployments leave vendor/ empty. Override the source with WS_RTK_BIN.
+RTK_SRC="${WS_RTK_BIN:-$HOME/.local/bin/rtk}"
+if [ -x "$RTK_SRC" ]; then
+  install -m 0755 "$RTK_SRC" "$ROOT/workspace/vendor/rtk" && echo "==> vendored rtk from $RTK_SRC"
+else
+  rm -f "$ROOT/workspace/vendor/rtk" 2>/dev/null || true
+fi
+
 echo "==> build workspace image ($WS_IMAGE)"
 docker build -t "$WS_IMAGE" "$ROOT/workspace"
 
@@ -46,7 +56,9 @@ if ! command -v npm >/dev/null 2>&1; then
   echo "ERROR: npm not found (need Node via nvm). Skipping console build." >&2
   exit 1
 fi
-( cd "$ROOT/console" && { [ -d node_modules ] || npm ci; } && npm run build )
+# mermaid is large; raise the Node heap so the production build doesn't OOM on
+# this RAM-constrained host.
+( cd "$ROOT/console" && { [ -d node_modules ] || npm ci; } && NODE_OPTIONS="--max-old-space-size=3072" npm run build )
 
 echo "==> build control-plane"
 ( cd "$ROOT/control-plane" && go build -o /tmp/af-cp . )
