@@ -72,6 +72,11 @@ export default function FileView() {
           {isText ? ` · ${lines} 行` : ""}
           {data?.truncated ? " · 先頭のみ" : ""}
         </span>
+        {data?.lfs && (
+          <span className="fi-tag" title="Git LFS の実体は未取得です。端末で `git lfs pull` を実行してください。">
+            LFS ポインタ
+          </span>
+        )}
         {isMarkdown && (
           <span className="seg sm md-toggle">
             <button

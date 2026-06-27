@@ -15,8 +15,12 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -o /out/workspace-agent .
 # --- runtime ---
 FROM node:22-bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      git tmux openssh-client ca-certificates curl ripgrep less procps tzdata \
- && rm -rf /var/lib/apt/lists/*
+      git git-lfs tmux openssh-client ca-certificates curl ripgrep less procps tzdata \
+ && rm -rf /var/lib/apt/lists/* \
+ && git lfs install --system --skip-repo
+# git-lfs filters live in the system gitconfig (/etc/gitconfig) so clones/checkouts
+# smudge LFS objects for every user regardless of home state. LFS auth reuses the
+# HTTPS credential helper (same host token), so private LFS objects fetch too.
 
 # Java is NOT baked into the image (it would add ~1.5GB). Instead the Temurin JDKs
 # live once on the host (provisioned by deploy/local/provision-jvm.sh) and the
