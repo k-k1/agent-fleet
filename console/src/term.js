@@ -95,7 +95,7 @@ export function ensureTerm(el) {
   // Escape, so it still exits fullscreen.
   const kb = navigator.keyboard;
   if (kb && kb.lock && term.textarea) {
-    const KEYS = ["KeyW", "KeyT", "KeyN", "KeyR", "KeyL", "KeyS", "KeyP"];
+    const KEYS = ["KeyW", "KeyT", "KeyN", "KeyR", "KeyL", "KeyS", "KeyP", "PageUp", "PageDown"];
     term.textarea.addEventListener("focus", () => kb.lock(KEYS).catch(() => {}));
     term.textarea.addEventListener("blur", () => {
       try {

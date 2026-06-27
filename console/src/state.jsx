@@ -24,6 +24,8 @@ export function AppProvider({ children }) {
   const navRef = useRef(nav);
   navRef.current = nav;
   const [session, setSession] = useState(null);
+  const sessionRef = useRef(session);
+  sessionRef.current = session;
 
   // go applies a partial nav change and (by default) pushes a browser history
   // entry, so the browser's back/forward — and the mouse back button — traverse
@@ -117,6 +119,41 @@ export function AppProvider({ children }) {
   );
   const showSCM = useCallback((repo) => go({ mode: "scm", scmRepo: repo }), [go]);
   const showFile = useCallback((path) => go({ mode: "file", filePath: path }), [go]);
+
+  // cycleSession attaches the previous/next session (wrapping), for Ctrl+PgUp/PgDn.
+  const cycleSession = useCallback(
+    async (dir) => {
+      let list = [];
+      try {
+        const d = await api("api/sessions");
+        list = d.sessions || [];
+      } catch {}
+      const names = list.map((s) => s.name);
+      if (names.length < 2) {
+        if (names.length === 1) showTerminal(names[0]);
+        return;
+      }
+      let i = names.indexOf(sessionRef.current);
+      if (i < 0) i = 0;
+      const next = (i + dir + names.length) % names.length;
+      showTerminal(names[next]);
+    },
+    [showTerminal],
+  );
+
+  // Global Ctrl/⌘ + PageUp/PageDown switches sessions. Capture phase so it beats
+  // xterm; note the browser may still claim it for tab-switching unless the page
+  // holds a Keyboard Lock (fullscreen, Chromium) — see TerminalView ⛶.
+  useEffect(() => {
+    const onKey = (e) => {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+      if (e.key !== "PageUp" && e.key !== "PageDown") return;
+      e.preventDefault();
+      cycleSession(e.key === "PageDown" ? 1 : -1);
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [cycleSession]);
 
   // initTenants: resolve identity + memberships. Single-membership users never
   // see a picker; super_admin unlocks the Admin settings tab.
