@@ -4,6 +4,7 @@ import "highlight.js/styles/github-dark.css";
 import { useApp } from "../state.jsx";
 import { api } from "../api.js";
 import { baseName, langFor, langLabel, humanSize, countLines } from "../lib/filemeta.js";
+import { fileIcon } from "../lib/fileicons.js";
 import { useSettings, fontStack } from "../lib/settings.js";
 import MarkdownView from "./MarkdownView.jsx";
 import CodeView from "./CodeView.jsx";
@@ -64,7 +65,7 @@ export default function FileView() {
   return (
     <div className="fileview" style={viewerStyle}>
       <header className="view-head fileinfo">
-        <span className="fi-name mono">📄 {baseName(filePath)}</span>
+        <span className="fi-name mono">{fileIcon(baseName(filePath))} {baseName(filePath)}</span>
         {isText && <span className="fi-tag">{langLabel(filePath)}</span>}
         <span className="fi-meta muted">
           {humanSize(data?.size)}

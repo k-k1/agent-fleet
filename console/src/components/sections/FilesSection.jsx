@@ -2,7 +2,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useApp } from "../../state.jsx";
 import { api } from "../../api.js";
 import { dirName } from "../../lib/filemeta.js";
+import { fileIcon, dirIcon } from "../../lib/fileicons.js";
 import Section from "../Section.jsx";
+
+// A directory is a "passthrough" link in a compact chain when its sole entry is one
+// subdirectory (no files) — these get folded into one row (a/b/c) so deep, single-
+// child paths don't waste vertical space, and expanding one descends the whole chain.
+const soleChildDir = (entries) =>
+  entries && entries.length === 1 && entries[0].type === "dir" ? entries[0] : null;
 
 const fsList = (path) =>
   api(`api/fs/tree?path=${encodeURIComponent(path)}`).catch(() => ({ entries: [] }));
@@ -36,52 +43,91 @@ export default function FilesSection() {
     };
   }, [reloadKey]);
 
-  // Flatten the open tree into the list of visible rows.
+  // Flatten the open tree into the list of visible rows. Single-child directory
+  // chains are compacted into one row: name = "a/b/c", path = deepest segment,
+  // segPaths = every folded segment (so collapse closes the whole chain).
   const rows = useMemo(() => {
     const out = [];
     const walk = (entries, parent, depth) => {
       for (const e of entries) {
         const path = parent ? parent + "/" + e.name : e.name;
-        out.push({ path, name: e.name, type: e.type, depth });
-        if (e.type === "dir" && open.has(path) && cache[path]) {
-          walk(cache[path], path, depth + 1);
+        if (e.type !== "dir") {
+          out.push({ path, name: e.name, type: "file", depth, segPaths: [path] });
+          continue;
         }
+        // Fold consecutive open single-subdir directories into one segment.
+        let p = path;
+        const segs = [e.name];
+        const segPaths = [path];
+        while (open.has(p) && soleChildDir(cache[p])) {
+          const child = cache[p][0];
+          p = p + "/" + child.name;
+          segs.push(child.name);
+          segPaths.push(p);
+        }
+        out.push({ path: p, name: segs.join("/"), type: "dir", depth, segPaths });
+        if (open.has(p) && cache[p]) walk(cache[p], p, depth + 1);
       }
     };
     walk(root || [], "", 0);
     return out;
   }, [root, open, cache]);
 
-  const loadChildren = useCallback(
+  // fetchInto loads a directory's entries (cached) and returns them, so callers can
+  // decide whether to keep descending through a single-child chain.
+  const fetchInto = useCallback(
     async (path) => {
-      if (cache[path]) return;
+      if (cache[path]) return cache[path];
       const d = await fsList(path);
-      setCache((c) => ({ ...c, [path]: d.entries || [] }));
+      const entries = d.entries || [];
+      setCache((c) => (c[path] ? c : { ...c, [path]: entries }));
+      return entries;
     },
     [cache],
   );
 
+  // expand opens `path` and auto-descends through single-subdir directories (skipping
+  // "empty" passthrough folders). Returns the deepest opened path so the caller can
+  // keep the selection on the now-visible row.
   const expand = useCallback(
     async (path) => {
-      await loadChildren(path);
-      setOpen((s) => new Set(s).add(path));
+      const toOpen = [];
+      let cur = path;
+      for (let i = 0; i < 64; i++) {
+        toOpen.push(cur);
+        const entries = await fetchInto(cur);
+        const child = soleChildDir(entries);
+        if (!child) break;
+        cur = cur + "/" + child.name;
+      }
+      setOpen((s) => {
+        const n = new Set(s);
+        for (const p of toOpen) n.add(p);
+        return n;
+      });
+      return cur;
     },
-    [loadChildren],
+    [fetchInto],
   );
-  const collapse = useCallback((path) => {
+  const collapse = useCallback((row) => {
     setOpen((s) => {
       const n = new Set(s);
-      n.delete(path);
+      for (const p of row.segPaths || [row.path]) n.delete(p);
       return n;
     });
   }, []);
 
   const activate = useCallback(
     (row) => {
-      setSelected(row.path);
-      if (row.type === "file") showFile(row.path);
-      else if (open.has(row.path)) collapse(row.path);
-      else expand(row.path);
+      if (row.type === "file") {
+        setSelected(row.path);
+        showFile(row.path);
+      } else if (open.has(row.path)) {
+        setSelected(row.path);
+        collapse(row);
+      } else {
+        expand(row.path).then((deep) => setSelected(deep));
+      }
     },
     [open, collapse, expand, showFile],
   );
@@ -130,18 +176,20 @@ export default function FilesSection() {
       case "ArrowRight":
         e.preventDefault();
         if (cur.type === "dir") {
-          if (!open.has(cur.path)) expand(cur.path);
+          if (!open.has(cur.path)) expand(cur.path).then((deep) => setSelected(deep));
           else select(idx + 1); // already open → step into first child
         }
         break;
       case "ArrowLeft":
         e.preventDefault();
         if (cur.type === "dir" && open.has(cur.path)) {
-          collapse(cur.path);
+          collapse(cur);
         } else {
           const parent = dirName(cur.path);
-          const pIdx = rows.findIndex((r) => r.path === parent);
-          if (pIdx >= 0) setSelected(parent);
+          const pIdx = rows.findIndex(
+            (r) => r.path === parent || (r.segPaths && r.segPaths.includes(parent)),
+          );
+          if (pIdx >= 0) setSelected(rows[pIdx].path);
         }
         break;
       case "Enter":
@@ -152,13 +200,30 @@ export default function FilesSection() {
     }
   };
 
+  const collapseAll = useCallback(() => {
+    setOpen(new Set());
+    // keep selection visible by snapping it back to its top-level ancestor
+    setSelected((s) => (s ? s.split("/")[0] : s));
+  }, []);
+  const hasOpen = open.size > 0;
+
   return (
     <Section
       title="Files"
       actions={
-        <button className="ghost" title="更新" onClick={() => setReloadKey((k) => k + 1)}>
-          ⟳
-        </button>
+        <>
+          <button
+            className="ghost"
+            title="すべて畳む"
+            disabled={!hasOpen}
+            onClick={collapseAll}
+          >
+            ⊟
+          </button>
+          <button className="ghost" title="更新" onClick={() => setReloadKey((k) => k + 1)}>
+            ⟳
+          </button>
+        </>
       }
     >
       <ul
@@ -187,7 +252,8 @@ export default function FilesSection() {
               }}
             >
               <span className={r.type === "dir" ? "fs-dir" : "fs-file" + (isActiveFile ? " active" : "")}>
-                {r.type === "dir" ? (isOpen ? "▾ " : "▸ ") : "　"}
+                <span className="fs-chev">{r.type === "dir" ? (isOpen ? "▾" : "▸") : ""}</span>
+                <span className="fs-ic">{r.type === "dir" ? dirIcon(isOpen) : fileIcon(r.name)}</span>
                 {r.name}
               </span>
             </li>
