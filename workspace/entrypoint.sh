@@ -9,14 +9,22 @@
 set -e
 export PATH="$HOME/.local/bin:$PATH"
 
-# A stale user-home claude install can shadow the baked /usr/local claude on PATH
-# and break. After the node→dev rename, ~/.local/bin/claude is a symlink left
-# pointing at the old /home/node/.local/share/claude/... (now gone) — a dangling
-# link that claude flags as "missing or broken". Drop the stale user install so
-# the pinned, baked /usr/local/bin/claude is used.
-if [ -L "$HOME/.local/bin/claude" ] && [ ! -e "$HOME/.local/bin/claude" ]; then
-  echo "[entrypoint] removing broken ~/.local claude (dangling symlink → use baked)"
-  rm -rf "$HOME/.local/bin/claude" "$HOME/.local/share/claude"
+# claude records installMethod="native" and self-checks its launcher at
+# ~/.local/bin/claude on every start, warning "claude command … missing or broken"
+# when it is gone/dangling. After the node→dev rename that launcher dangled (it
+# pointed at the old /home/node/.local/share/claude/…). Removing it isn't enough —
+# claude still expects a native install — so REPAIR it via the baked claude
+# (`claude install`), which reinstalls a valid ~/.local install (and keeps it
+# auto-updatable). Gated on installMethod=native so fresh homes just use the baked
+# /usr/local claude. Best-effort (needs network); claude still runs if it fails.
+CCD_EARLY="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+if [ -x /usr/local/bin/claude ] && [ ! -e "$HOME/.local/bin/claude" ] \
+   && grep -q '"installMethod"[[:space:]]*:[[:space:]]*"native"' "$CCD_EARLY/.claude.json" 2>/dev/null; then
+  rm -f "$HOME/.local/bin/claude" # clear a dangling symlink first
+  echo "[entrypoint] repairing native claude install (claude install) ..."
+  /usr/local/bin/claude install >/dev/null 2>&1 \
+    && echo "[entrypoint] claude install ok" \
+    || echo "[entrypoint] WARN: claude install failed (using baked /usr/local)"
 fi
 
 # Relocate Claude state out of the browsable home BEFORE claude runs (docs/17
