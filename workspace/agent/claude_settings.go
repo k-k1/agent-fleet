@@ -29,6 +29,51 @@ func claudeSettingsPath() string {
 	return filepath.Join(claudeConfigDir(), "settings.json")
 }
 
+// claudeJSONPath is claude's per-user state file (project trust, onboarding, …).
+// With CLAUDE_CONFIG_DIR set claude reads/writes it under that dir — NOT home.
+func claudeJSONPath() string {
+	return filepath.Join(claudeConfigDir(), ".claude.json")
+}
+
+// ensureFolderTrusted pre-accepts the directory-trust dialog for dir by setting
+// projects[dir].hasTrustDialogAccepted in .claude.json. The trust dialog ("Is this
+// a project you trust?") is NOT skipped by --dangerously-skip-permissions, so a
+// fresh dir (every repo, and /home/dev after the node→dev rename) would otherwise
+// stall every interactive session at the prompt. Only writes when not already
+// trusted, to minimize racing with claude's own writes; write is atomic (rename).
+func ensureFolderTrusted(dir string) {
+	if dir == "" {
+		return
+	}
+	p := claudeJSONPath()
+	root := map[string]any{}
+	if b, err := os.ReadFile(p); err == nil {
+		_ = json.Unmarshal(b, &root)
+	}
+	projects, _ := root["projects"].(map[string]any)
+	if projects == nil {
+		projects = map[string]any{}
+	}
+	entry, _ := projects[dir].(map[string]any)
+	if entry == nil {
+		entry = map[string]any{}
+	}
+	if trusted, _ := entry["hasTrustDialogAccepted"].(bool); trusted {
+		return
+	}
+	entry["hasTrustDialogAccepted"] = true
+	projects[dir] = entry
+	root["projects"] = projects
+	b, err := json.MarshalIndent(root, "", "  ")
+	if err != nil {
+		return
+	}
+	tmp := p + ".af-tmp"
+	if os.WriteFile(tmp, b, 0o600) == nil {
+		_ = os.Rename(tmp, p)
+	}
+}
+
 func readClaudeSettings() map[string]any {
 	m := map[string]any{}
 	if b, err := os.ReadFile(claudeSettingsPath()); err == nil {

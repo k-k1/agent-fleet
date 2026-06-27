@@ -144,6 +144,9 @@ func startSessionTmux(m sessionMeta) error {
 	if m.Kind == "shell" {
 		program = "bash -l"
 	} else {
+		// Pre-trust the launch dir so claude doesn't stall on the folder-trust
+		// dialog (not skippable via --dangerously-skip-permissions).
+		ensureFolderTrusted(cwd)
 		if tok := readClaudeToken(); tok != "" {
 			args = append(args, "-e", "CLAUDE_CODE_OAUTH_TOKEN="+tok)
 		}
