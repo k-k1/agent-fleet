@@ -4,8 +4,8 @@ import { api } from "../api.js";
 // RepoPicker: choose a repository and branch from a connected provider via two
 // dropdowns (the CodeLeaf / git-reader pattern — branches lazy-load when a repo is
 // selected). Calls onChange({ host, cloneUrl, fullName, branch }) on every change,
-// or onChange(null) when nothing valid is selected. GitHub is supported now;
-// Bitbucket reports not-implemented (501) from the backend and we surface that.
+// or onChange(null) when nothing valid is selected. Both GitHub and Bitbucket are
+// supported (the provider tabs enable only connected hosts).
 export default function RepoPicker({ onChange }) {
   const [conns, setConns] = useState(null);
   const [host, setHost] = useState("github.com");
