@@ -130,5 +130,25 @@ func handleFSFile(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"path": rel, "size": fi.Size(), "binary": true})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"path": rel, "size": fi.Size(), "content": string(b)})
+	resp := map[string]any{"path": rel, "size": fi.Size(), "content": string(b)}
+	if isLFSPointer(b) {
+		// The working-tree file is a Git LFS pointer, not the real binary (LFS wasn't
+		// smudged — e.g. the repo was cloned before git-lfs was configured). Flag it so
+		// the viewer can say so and suggest `git lfs pull`.
+		resp["lfs"] = true
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// lfsPointerMagic is the first line of a Git LFS pointer file.
+const lfsPointerMagic = "version https://git-lfs.github.com/spec/v1"
+
+// isLFSPointer reports whether b is a Git LFS pointer placeholder (a small text
+// file standing in for an un-fetched binary). Mirrors CodeLeaf's isLfsPointerHead
+// with the same size bounds (pointers are ~120–200 bytes).
+func isLFSPointer(b []byte) bool {
+	if len(b) < 50 || len(b) > 1024 {
+		return false
+	}
+	return bytes.HasPrefix(b, []byte(lfsPointerMagic))
 }
