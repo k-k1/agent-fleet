@@ -148,7 +148,13 @@ func (c config) rtFor(w http.ResponseWriter, r *http.Request) (*dockerRuntime, b
 		})
 		return nil, false
 	}
-	rt, aerr := c.mgr.resolve(r.Context(), id.key, id.email, r.Header.Get("X-AF-Tenant"))
+	// Tenant selection: header for REST; query param for the terminal WebSocket
+	// (browsers can't set custom headers on a WS handshake).
+	tenantSel := r.Header.Get("X-AF-Tenant")
+	if tenantSel == "" {
+		tenantSel = r.URL.Query().Get("tenant")
+	}
+	rt, aerr := c.mgr.resolve(r.Context(), id.key, id.email, tenantSel)
 	if aerr != nil {
 		writeJSON(w, aerr.status, map[string]any{
 			"error": map[string]string{"code": aerr.code, "message": aerr.message},

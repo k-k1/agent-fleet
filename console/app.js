@@ -10,6 +10,67 @@ const $ = (id) => document.getElementById(id);
 const rel = (p) => new URL(p, document.baseURI).toString();
 const api = (path, opts) => fetch(rel(path), opts).then((r) => r.json());
 
+// --- tenant selection (P3-2) ---
+// The active tenant is sent on every request as X-AF-Tenant so the Control Plane
+// resolves the right per-membership workspace. Single-membership users never see
+// a picker. We inject the header globally so all existing fetch() calls carry it.
+let selectedTenant = localStorage.getItem("af-tenant") || "";
+const _fetch = window.fetch.bind(window);
+window.fetch = (input, init = {}) => {
+  if (selectedTenant) {
+    const h = new Headers(init.headers || {});
+    if (!h.has("X-AF-Tenant")) h.set("X-AF-Tenant", selectedTenant);
+    init = { ...init, headers: h };
+  }
+  return _fetch(input, init);
+};
+
+async function initTenants() {
+  let data;
+  try {
+    data = await api("api/tenants");
+  } catch {
+    return; // dev/single-tenant or CP without the endpoint: carry on
+  }
+  const tenants = data.tenants || [];
+  const wrap = $("tenant-wrap");
+  const sel = $("tenant-picker");
+  if (tenants.length <= 1) {
+    selectedTenant = tenants[0] ? tenants[0].slug : "";
+    localStorage.setItem("af-tenant", selectedTenant);
+    if (wrap) wrap.style.display = "none";
+    return;
+  }
+  sel.innerHTML = "";
+  for (const t of tenants) {
+    const o = document.createElement("option");
+    o.value = t.slug;
+    o.textContent = `${t.name} (${t.role})`;
+    sel.appendChild(o);
+  }
+  if (!tenants.some((t) => t.slug === selectedTenant)) selectedTenant = tenants[0].slug;
+  sel.value = selectedTenant;
+  localStorage.setItem("af-tenant", selectedTenant);
+  if (wrap) wrap.style.display = "";
+  sel.onchange = () => {
+    selectedTenant = sel.value;
+    localStorage.setItem("af-tenant", selectedTenant);
+    reloadAll();
+  };
+}
+
+// reloadAll re-syncs every panel for the current tenant (called on tenant switch).
+function reloadAll() {
+  if (typeof ws !== "undefined" && ws) {
+    try { ws.close(); } catch {}
+  }
+  $("term-title").textContent = "no session attached";
+  refreshWorkspace();
+  refreshConnections();
+  refreshRepos();
+  refreshSessions();
+}
+
 // --- workspace lifecycle ---
 async function refreshWorkspace() {
   try {
@@ -600,7 +661,8 @@ function attach(session) {
   $("term-title").textContent = `session: ${session}`;
   const u = new URL(rel("ws/terminal"));
   u.protocol = location.protocol === "https:" ? "wss:" : "ws:";
-  u.search = `?session=${encodeURIComponent(session)}`;
+  u.search = `?session=${encodeURIComponent(session)}` +
+    (selectedTenant ? `&tenant=${encodeURIComponent(selectedTenant)}` : "");
   ws = new WebSocket(u);
   ws.binaryType = "arraybuffer";
   ws.onopen = () => { fitAddon.fit(); ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows })); };
@@ -611,7 +673,7 @@ function attach(session) {
   ws.onclose = () => term.write("\r\n[disconnected]\r\n");
 }
 
-refreshWorkspace();
-refreshConnections();
-refreshRepos();
-refreshSessions();
+(async () => {
+  await initTenants();
+  reloadAll();
+})();
