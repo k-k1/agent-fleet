@@ -242,6 +242,11 @@ CP のルーティングが user→対象コンテナを解決するだけ。
 - **既定 ON 化**: RC/通知は seed 既定で true（運用者も true）。**RTK は焼き込み済 rtk(`/usr/local/bin/rtk` v0.40.0) があるのに運用者の settings.json が rtk 導入前 seed でフック欠落** → `PUT /api/claude/settings {rtk:true}` で補填（settings.json に `rtk hook claude` の PreToolUse/Bash 追加）。新規コンテナは seed が3種とも付与。
 - **副次（解決済）**: コンテナ PID 1 = `workspace-agent`(Go) は zombie を reap せず、セッション停止毎に tmux/claude のゾンビが残っていた → `control-plane/runtime.go` の `docker run` に **`--init`** を追加（tini を PID 1 に注入＝orphan を reap）。CP 再ビルド＋運用者コンテナ Stop→Start で適用。**検証**: PID 1=`/sbin/docker-init`、session create+stop 後のゾンビ 0件。CP のみ変更（image/agent 再ビルド不要）。
 
+**🔧 改善（2026-06-27 続き）— セッション再起動 / モーダル / ユーザー名**:
+- **claude 終了後のセッション復帰**: claude を端末で終了すると tmux セッションが破棄され、左ペインで再クリックすると `new-session -A` が**素の bash で作り直し**ていた。`session.go` に **per-session メタ永続**（`/tmp/af-sessions/<name>.json` = kind/dir/model、`AF_SESSIONS_DIR` で変更可、ライフサイクルは tmux と一致＝コンテナ再起動でクリア）を導入。`handleListSessions` は live tmux と**メタをマージ**し、終了済みは `alive:false` で**一覧に残す**。`terminal.go` の attach は `ensureSessionTmux` で**メタから claude を再起動**（決定的 sid=`uuidv5(dir|name)` が同一＝jsonl があれば `--resume` で会話継続）。`Session` に `kind` を追加（一覧の sh/ai タグが正しく出る）。stop はメタ削除＋終了済みも 200。**検証**: 作成→kill→一覧に `alive:false` 残存→WS 再接続で `cmd=claude`（bash でなく）復帰を確認。
+- **新規セッションモーダル刷新**（`console/src/components/NewSessionModal.jsx`）: 種類は **shell を左・既定**に。**shell 時はモデル/リポジトリ/ディレクトリを非表示**（repo 不要・dir 不要）。**セッション名は自動入力**（`GET /api/sessions` で既存名を取得し `shell`/`claude`/repo 名 → 衝突時 `-2`,`-3`、ユーザー編集で固定）。claude 時のみ従来のモデル＋リポジトリ（接続/URL/なし）を表示。
+- **コンテナ OS ユーザー `node`→`dev`**（Node.js と紛らわしいため）: `workspace/Dockerfile` で `usermod -l dev -d /home/dev -m node && groupmod -n dev node`（**uid/gid=1000 維持**＝host uid 1000 と一致）、`control-plane/runtime.go` の home マウント先を **`/home/dev`** に。`$HOME=/home/dev`・repos/connections は保持（secrets 鍵は email 由来でユーザー名非依存）。**注意**: claude の旧 project は `-home-node-*` キーで、新規は `-home-dev-*`＝**旧会話は resume 不可**（既知・許容）。**image/CP 再ビルド＋ Stop→Start で適用済**。
+
 ## 7. 動作確認の最短手順
 
 ```bash

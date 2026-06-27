@@ -44,15 +44,19 @@ RUN npm install -g @anthropic-ai/claude-code && claude --version
 # C.UTF-8 は locale 生成不要で Debian に存在する。
 ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
 
+# node:22 の既定ユーザー node（uid/gid=1000）を dev にリネーム。Node.js と紛らわしい
+# ため改名するが uid/gid=1000 は維持（ホストの uid 1000 と一致 → bind mount 素通し）。
+# -m で home を /home/node → /home/dev へ移設（実行時は home が bind mount で上書きされる）。
+RUN usermod -l dev -d /home/dev -m node && groupmod -n dev node
+
 # claude は ~/.local/bin に入る。docker exec 等の既定 PATH に追加（非ログインシェル/Agent用）。
-ENV PATH="/home/node/.local/bin:${PATH}"
+ENV PATH="/home/dev/.local/bin:${PATH}"
 # ログインシェル(bash -l)は /etc/profile で PATH を上書きするため、端末で claude を確実に
 # 見つけられるよう profile.d でも ~/.local/bin を前置する。
 RUN echo 'export PATH="$HOME/.local/bin:$PATH"' > /etc/profile.d/claude-path.sh
 
-# node:22 の既定ユーザー node は uid/gid=1000（ホストの uid 1000 と一致 → bind mount 素通し）。
-USER node
-WORKDIR /home/node
+USER dev
+WORKDIR /home/dev
 EXPOSE 7700
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 CMD ["workspace-agent"]

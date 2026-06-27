@@ -82,7 +82,7 @@ func (d *dockerRuntime) start(ctx context.Context) error {
 		"--init",
 		"--memory", d.memory,
 		"-p", fmt.Sprintf("127.0.0.1:%s:7700", d.agentPort),
-		"-v", home + ":/home/node",
+		"-v", home + ":/home/dev",
 		"-v", claudeCfg + ":/var/lib/af/claude",
 		"-e", "CLAUDE_CONFIG_DIR=/var/lib/af/claude",
 	}
