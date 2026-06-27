@@ -188,7 +188,8 @@ CP のルーティングが user→対象コンテナを解決するだけ。
 確定前提（2026-06-27）: **パッケージ製品・各社セルフホスト / BYO 継続 / 会社間=デプロイ分離（最強）/ デプロイ内マルチテナント=任意（既定 単一） / 小規模 / デプロイ先は各社選択（オンプレ既定・自社 AWS 任意）**。
 
 - **構造**: 1 デプロイ = 1 社。中は `super_admin`（その社情シス）/ `Tenant`（部署, 既定 1）/ `User`。旧 `platform_admin`(=我々)は廃止（我々は運用しない）。
-- **gating item = P3-1 DB 化**: 現状 DB 無し（フォルダ名=ID、in-memory map）。**SQLite 既定**の MetadataStore（pure-Go `modernc.org/sqlite`・WAL・goose）が土台。Postgres は港の裏で AWS/HA 時のみ。Plan 抽象は持たず Tenant 直付け。
+- ✅ **P3-1 DB 化 = 実装・ライブ検証済**（[13 実装プラン](13-p3-1-plan.md)）。**SQLite 既定**の MetadataStore（pure-Go `modernc.org/sqlite`・WAL・`//go:embed` 冪等マイグレータ）を導入し、`manager.go` の in-memory map + docker-inspect 再構成 + nextPort 採番を置換。port/token を永続（再採番レース解消）、既存 `af-ws-*` は inspect で採用＝**再作成しない**。CP は `AF_DB`（既定 `<WS_DATA>/control-plane.db`）。新ファイル `control-plane/store.go`・`store_sqlite.go`・`migrations/0001_init.sql`。**S5 ライブ検証**: 現 `/tmp/af-cp` を差し替え→既定テナント+運用者をバックフィル（コンテナ ID 不変）、sessions/connections を adopted token で proxy 成功、CP 再起動で port 7700 不変、初回ログインで email 記録。残: DB の `workspace.state` は未同期（ライブ状態は docker から読む、P3-5 で `SetWorkspaceState` 配線）。
+- 次は **P3-2/P3-3/P3-4**（テナント解決 / 封筒鍵 custodian / クォータ）。封筒鍵は HMAC 据置のまま P3-3 で昇格。
 - **バジェット**=インフラ資源（Workspace/セッション/ディスク/メモリ）。各社の自社ホスト資源保護 + 社内 showback。外部課金なし。
 - **鍵**: 単一 `AF_MASTER_KEY`→HMAC を **封筒暗号 + custodian 抽象**へ昇格（**オンプレ=Vault/ファイル KEK 優先、KMS は AWS アダプタ**）。per-workspace DEK。Agent `secrets.go` 無改修。会社/部署離脱は鍵 disable で crypto-shred。
 - **P3-10 パッケージング**=提供モデルの核（compose/Helm + 設定 + マイグレーション + runbook、phone-home なし）。完了判定=**第2デプロイをゼロから立てて E2E 通過**。
