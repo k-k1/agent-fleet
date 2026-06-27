@@ -9,6 +9,16 @@
 set -e
 export PATH="$HOME/.local/bin:$PATH"
 
+# A stale user-home claude install can shadow the baked /usr/local claude on PATH
+# and break. After the node→dev rename, ~/.local/bin/claude is a symlink left
+# pointing at the old /home/node/.local/share/claude/... (now gone) — a dangling
+# link that claude flags as "missing or broken". Drop the stale user install so
+# the pinned, baked /usr/local/bin/claude is used.
+if [ -L "$HOME/.local/bin/claude" ] && [ ! -e "$HOME/.local/bin/claude" ]; then
+  echo "[entrypoint] removing broken ~/.local claude (dangling symlink → use baked)"
+  rm -rf "$HOME/.local/bin/claude" "$HOME/.local/share/claude"
+fi
+
 # Relocate Claude state out of the browsable home BEFORE claude runs (docs/17
 # P3-5 段2): when CLAUDE_CONFIG_DIR points outside home, migrate a pre-existing
 # ~/.claude into it once (must precede claude install/update, which would
