@@ -299,6 +299,7 @@ type sessionWire struct {
 	RemoteUrl string `json:"remoteUrl"`
 	State     string `json:"state"`
 	Alive     bool   `json:"alive"`
+	Resumable bool   `json:"resumable"`
 }
 
 func fmtStarted(createdAt string) string {
@@ -346,6 +347,9 @@ func (c config) handleSessionsList(w http.ResponseWriter, r *http.Request) {
 		out = append(out, sessionWire{
 			Name: r0.Name, Kind: r0.Kind, Dir: r0.Dir, Repo: r0.Repo, Label: r0.Label,
 			Started: fmtStarted(r0.CreatedAt), CreatedAt: r0.CreatedAt, Alive: false,
+			// Container is down: we can't check the dir, so assume resumable; the
+			// Agent re-checks and refuses on actual attach if the dir is gone.
+			Resumable: true,
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"sessions": out})

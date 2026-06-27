@@ -403,6 +403,17 @@ textarea:focus {
 .session-state.off {
   color: var(--warn);
 }
+/* dir-gone, can't be resumed: muted + struck-through, click disabled */
+.session-state.dead {
+  color: var(--muted);
+}
+.session-row.dead .session-display {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+.session-row.dead .session-btn {
+  cursor: not-allowed;
+}
 .session-state.working {
   color: var(--accent);
   animation: af-pulse 1.4s ease-in-out infinite;
