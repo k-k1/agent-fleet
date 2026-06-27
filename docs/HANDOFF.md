@@ -271,6 +271,13 @@ CP のルーティングが user→対象コンテナを解決するだけ。
 - **Console**（`SessionsSection.jsx`）: 2 行目に状態チップ（**● 進行中…**（pulse）/ **❓ 質問あり** / **✓ 入力待ち** / 停止中）。`Stop`(working→idle) と `question` 到着で**ブラウザ通知**（`Notification`、初回 permission 要求、閲覧中セッションは通知抑止）。
 - **検証**: 作成→`idle`、プロンプト送信→`working`、応答完了→`idle` を実機確認。settings.json に4イベント分マージ＋RC/通知/rtk 保持を確認。
 
+**🗒 フォローアップ（未着手・`../git-reader`＝CodeLeaf 参照）**:
+CodeLeaf は Android(Kotlin) 実装だが、下記4点の**参照実装がある**（API 仕様・git 手順・UX を流用できる）。
+- **Bitbucket 対応（repo/branch 列挙）**: 現状 `workspace/agent/git_remote.go:46/82` が **501**（`Bitbucket repo/branch listing is not implemented`）。GitHub は同ファイルに実装済。Bitbucket Cloud API（`GET 2.0/repositories/{workspace}`・`/refs/branches`）を、既存の Bitbucket 接続（Connections の OAuth/token）で叩いて実装。Console の `RepoPicker` で host=bitbucket.org を選択可に。参照: CodeLeaf `android/app/src/main/java/jp/<dev-deployment>/codeleaf/data/oauth/BitbucketApi.kt`（+ `BitbucketApiTest.kt`）。
+- **clone 時 submodule 対応**: `workspace/agent/git.go` `gitClone`（`args := []string{"clone"}`）に **`--recurse-submodules`** を付与（+ 既存 working copy には `git submodule update --init --recursive`）。private submodule は統一 credential helper（`workspace-agent cred`）で透過するはず（要確認）。参照: CodeLeaf `git/JgitClient.kt`・`git/JgitSubmoduleTest.kt`。
+- **ファイルブラウザのたたみ込み**: `console/src/components/sections/FilesSection.jsx` は per-folder の expand/collapse はあるが、**全たたみ/全展開**やルート単位の折りたたみが無い。fold-all ボタン＋状態保持を追加。参照: CodeLeaf `ui/FileBrowserScreen.kt`。
+- **アイコン**: ファイル種別アイコン（拡張子→アイコン）を**ツリー / ファイルビュアーのタブ / Repos・Sessions 行**へ。現状は記号（▸/▾ 等）のみ。参照: CodeLeaf `ui/FileBrowserScreen.kt`（ファイル種別表示）。
+
 ## 7. 動作確認の最短手順
 
 ```bash
