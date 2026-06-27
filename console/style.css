@@ -52,7 +52,35 @@ button.icon { padding: 2px 5px; font-size: 12px; line-height: 1; }
 #session-list .name { flex: 1; cursor: pointer; }
 #session-list .name:hover { color: #6cf; }
 #session-list .dir { color: #777; font-size: 11px; }
-#terminal-pane { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+#terminal-pane { flex: 1; display: flex; flex-direction: column; min-width: 0; position: relative; }
+#new-session select, #ns-kind { background: #2b2b2b; color: #ddd; border: 1px solid #444; border-radius: 4px; padding: 4px; font-size: 12px; }
+
+/* Source control overlay (docs/17 P3-5) */
+#scm-pane { position: absolute; inset: 0; background: #1e1e1e; display: flex; flex-direction: column; z-index: 5; }
+#scm-header { display: flex; align-items: center; gap: 10px; padding: 6px 10px; background: #111; border-bottom: 1px solid #333; }
+#scm-header b { color: #6cf; }
+#scm-header .spacer { flex: 1; }
+#scm-body { flex: 1; display: flex; min-height: 0; }
+#scm-left { width: 340px; border-right: 1px solid #333; overflow: auto; padding: 8px; }
+.scm-section { font-size: 11px; text-transform: uppercase; color: #999; margin: 10px 0 4px; }
+#scm-changes, #scm-log { list-style: none; margin: 0; padding: 0; }
+#scm-changes li { display: flex; align-items: center; gap: 6px; padding: 3px 2px; }
+#scm-changes .chg { font-family: "JetBrains Mono", monospace; width: 14px; text-align: center; border-radius: 3px; }
+#scm-changes .chg.staged { color: #67c23a; }
+#scm-changes .chg.unstaged { color: #e6a23c; }
+#scm-changes .chg.untracked { color: #888; }
+#scm-changes .chg-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+#scm-changes .chg-name:hover { color: #6cf; }
+#scm-changes .chg-acts { display: flex; gap: 2px; }
+#scm-commit-box { margin: 8px 0; display: flex; flex-direction: column; gap: 4px; }
+#scm-msg { background: #2b2b2b; color: #ddd; border: 1px solid #444; border-radius: 4px; padding: 4px; resize: vertical; font: inherit; }
+#scm-log li { padding: 3px 2px; border-bottom: 1px solid #2a2a2a; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#scm-log code { color: #c9a; }
+.muted { color: #777; font-size: 11px; }
+#scm-diff { flex: 1; margin: 0; overflow: auto; padding: 8px 10px; font: 12px/1.45 "JetBrains Mono", monospace; white-space: pre; }
+#scm-diff .dl.add { color: #67c23a; }
+#scm-diff .dl.del { color: #e06c75; }
+#scm-diff .dl.hunk { color: #6cf; }
 #term-header { display: flex; align-items: center; gap: 10px; padding: 6px 10px; background: #111; border-bottom: 1px solid #333; }
 #term-title { color: #6cf; }
 #copy-login-url { margin-left: auto; font-size: 12px; }

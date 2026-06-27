@@ -25,8 +25,8 @@ import (
 
 var (
 	// CSI/escape sequences and lone control chars Ink emits while redrawing.
-	ansiRe  = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b[()][AB012]|\x1b[<>=]|[\x00-\x08\x0b\x0c\x0e-\x1f]`)
-	urlRe = regexp.MustCompile(`https://claude\.com/cai/oauth/authorize\?\S+`)
+	ansiRe = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b[()][AB012]|\x1b[<>=]|[\x00-\x08\x0b\x0c\x0e-\x1f]`)
+	urlRe  = regexp.MustCompile(`https://claude\.com/cai/oauth/authorize\?\S+`)
 	// CLAUDE_CODE_OAUTH_TOKEN is an Anthropic secret token; match the sk-ant-
 	// family broadly (oat01/oat02/…) so a format tweak doesn't break capture.
 	tokenRe = regexp.MustCompile(`sk-ant-[A-Za-z0-9_-]{20,}`)

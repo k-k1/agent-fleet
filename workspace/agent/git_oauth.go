@@ -270,4 +270,3 @@ func refreshBitbucket(c bitbucketCreds) (bitbucketCreds, error) {
 	c.Expiry = time.Now().Unix() + exp
 	return c, nil
 }
-

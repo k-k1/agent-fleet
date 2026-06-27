@@ -132,6 +132,7 @@ $("new-session").onsubmit = async (e) => {
   // the repo under ~/repos and uses it as the session CWD, ignoring dir.
   const remote_url = $("ns-url").value.trim();
   const branch = $("ns-branch").value.trim();
+  const kind = $("ns-kind") ? $("ns-kind").value : "claude";
   const btn = e.target.querySelector("button");
   btn.disabled = true;
   btn.textContent = remote_url ? "Cloning…" : "…";
@@ -139,7 +140,7 @@ $("new-session").onsubmit = async (e) => {
     const res = await api("api/sessions", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name, dir, remote_url, branch }),
+      body: JSON.stringify({ name, dir, remote_url, branch, kind }),
     });
     if (res && res.error) {
       alert("create failed: " + (res.error.message || res.error));
@@ -526,9 +527,149 @@ function repoRow(r) {
     refreshRepos();
   });
 
-  li.append(dot, name, branch, ab, fetchBtn, sessBtn, delBtn);
+  const scmBtn = mkBtn("⎇", "source control (changes / diff / history)", () => openSCM(r.name));
+
+  li.append(dot, name, branch, ab, fetchBtn, scmBtn, sessBtn, delBtn);
   return li;
 }
+
+// --- source control panel (docs/17 P3-5) ---
+let scmRepo = null;
+
+function openSCM(name) {
+  scmRepo = name;
+  $("scm-title").textContent = name;
+  $("scm-diff").textContent = "";
+  $("scm-pane").hidden = false;
+  refreshSCM();
+}
+
+async function refreshSCM() {
+  if (!scmRepo) return;
+  const enc = encodeURIComponent(scmRepo);
+  try {
+    const st = await api(`api/repos/${enc}/status`);
+    $("scm-branch").textContent =
+      `${st.branch || "?"}${st.ahead ? ` ↑${st.ahead}` : ""}${st.behind ? ` ↓${st.behind}` : ""}`;
+  } catch {}
+  const cl = $("scm-changes");
+  cl.innerHTML = "";
+  try {
+    const d = await api(`api/repos/${enc}/changes`);
+    const changes = d.changes || [];
+    if (!changes.length) cl.innerHTML = '<li class="muted">no changes</li>';
+    for (const c of changes) cl.append(changeRow(c));
+  } catch {
+    cl.innerHTML = '<li class="muted">unavailable</li>';
+  }
+  const lg = $("scm-log");
+  lg.innerHTML = "";
+  try {
+    const d = await api(`api/repos/${enc}/log?limit=50`);
+    for (const c of d.commits || []) {
+      const li = document.createElement("li");
+      const code = document.createElement("code");
+      code.textContent = c.short;
+      const sub = document.createElement("span");
+      sub.className = "subj";
+      sub.textContent = " " + c.subject;
+      const meta = document.createElement("span");
+      meta.className = "muted";
+      meta.textContent = `  ${c.author} · ${(c.date || "").slice(0, 10)}`;
+      li.append(code, sub, meta);
+      lg.append(li);
+    }
+  } catch {}
+}
+
+function changeRow(c) {
+  const li = document.createElement("li");
+  const staged = !c.untracked && c.index !== " ";
+  const tag = document.createElement("span");
+  tag.className = "chg " + (c.untracked ? "untracked" : staged ? "staged" : "unstaged");
+  tag.textContent = c.untracked ? "U" : staged ? c.index : c.worktree;
+  const nm = document.createElement("span");
+  nm.className = "chg-name";
+  nm.textContent = c.path;
+  nm.title = c.path;
+  nm.onclick = () => showDiff(c.path, staged);
+  const acts = document.createElement("span");
+  acts.className = "chg-acts";
+  if (staged) acts.append(mkBtn("−", "unstage", () => scmOp("unstage", [c.path])));
+  else acts.append(mkBtn("+", "stage", () => scmOp("stage", [c.path])));
+  if (!c.untracked)
+    acts.append(mkBtn("⤺", "discard changes", () => {
+      if (confirm(`Discard changes to ${c.path}? This cannot be undone.`)) scmOp("discard", [c.path]);
+    }));
+  li.append(tag, nm, acts);
+  return li;
+}
+
+async function showDiff(path, staged) {
+  const enc = encodeURIComponent(scmRepo);
+  try {
+    const d = await api(`api/repos/${enc}/diff?path=${encodeURIComponent(path)}${staged ? "&staged=1" : ""}`);
+    renderDiff(d.diff && d.diff.length ? d.diff : "(no textual diff)");
+  } catch {
+    renderDiff("(diff failed)");
+  }
+}
+
+function renderDiff(text) {
+  const pre = $("scm-diff");
+  pre.innerHTML = "";
+  for (const line of text.split("\n")) {
+    const s = document.createElement("span");
+    s.className =
+      "dl " +
+      (line.startsWith("+") && !line.startsWith("+++")
+        ? "add"
+        : line.startsWith("-") && !line.startsWith("---")
+          ? "del"
+          : line.startsWith("@@")
+            ? "hunk"
+            : "");
+    s.textContent = line + "\n";
+    pre.append(s);
+  }
+}
+
+async function scmOp(op, paths) {
+  const enc = encodeURIComponent(scmRepo);
+  await fetch(rel(`api/repos/${enc}/${op}`), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ paths }),
+  });
+  refreshSCM();
+}
+
+$("scm-close").onclick = () => {
+  $("scm-pane").hidden = true;
+  scmRepo = null;
+};
+$("scm-refresh").onclick = () => refreshSCM();
+$("scm-commit").onclick = async () => {
+  if (!scmRepo) return;
+  const msg = $("scm-msg").value.trim();
+  if (!msg) {
+    alert("commit message required");
+    return;
+  }
+  const r = await fetch(rel(`api/repos/${encodeURIComponent(scmRepo)}/commit`), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ message: msg, all: $("scm-all").checked }),
+  });
+  if (r.ok) {
+    $("scm-msg").value = "";
+    refreshSCM();
+    refreshRepos();
+  } else {
+    const e = await r.json().catch(() => ({}));
+    alert("commit failed: " + (e.error?.message || r.status));
+  }
+};
 
 function mkBtn(label, title, onclick) {
   const b = document.createElement("button");

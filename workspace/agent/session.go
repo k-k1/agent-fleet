@@ -57,6 +57,7 @@ type createReq struct {
 	Name  string `json:"name"`
 	Dir   string `json:"dir"`
 	Model string `json:"model"`
+	Kind  string `json:"kind"` // "claude" (default) | "shell"
 	// Optional clone-then-start: when remote_url is set, the repo is cloned
 	// (or reused) under ~/repos and its path becomes the session CWD, ignoring dir.
 	RemoteURL string `json:"remote_url"`
@@ -97,16 +98,22 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sid := sessionUUID(req.Dir, req.Name)
-	program := buildSessionProgram(sid, req.Model)
+	shell := req.Kind == "shell"
 
 	// tmux runs the program via sh -c; it stays alive as the session's process.
 	args := []string{"new-session", "-d", "-s", tn, "-c", req.Dir}
-	// Inject the Claude OAuth token (from the WebUI connection) as a per-session
-	// env so claude authenticates without /login. -e sets it on the new session
-	// regardless of the long-lived tmux server's environment (tmux >= 3.2).
-	if tok := readClaudeToken(); tok != "" {
-		args = append(args, "-e", "CLAUDE_CODE_OAUTH_TOKEN="+tok)
+	var program string
+	if shell {
+		// Plain interactive shell session (docs/17 A) — no claude, no token.
+		program = "bash -l"
+	} else {
+		// Inject the Claude OAuth token (from the WebUI connection) as a per-session
+		// env so claude authenticates without /login. -e sets it on the new session
+		// regardless of the long-lived tmux server's environment (tmux >= 3.2).
+		if tok := readClaudeToken(); tok != "" {
+			args = append(args, "-e", "CLAUDE_CODE_OAUTH_TOKEN="+tok)
+		}
+		program = buildSessionProgram(sessionUUID(req.Dir, req.Name), req.Model)
 	}
 	args = append(args, program)
 	cmd := exec.Command("tmux", args...)

@@ -44,6 +44,14 @@ func main() {
 	mux.HandleFunc("GET /repos/{name}/branches", handleRepoBranches)
 	mux.HandleFunc("POST /repos/{name}/checkout", handleRepoCheckout)
 	mux.HandleFunc("POST /repos/{name}/fetch", handleRepoFetch)
+	// Source-control view + light edits (docs/17 P3-5).
+	mux.HandleFunc("GET /repos/{name}/changes", handleRepoChanges)
+	mux.HandleFunc("GET /repos/{name}/diff", handleRepoDiff)
+	mux.HandleFunc("GET /repos/{name}/log", handleRepoLog)
+	mux.HandleFunc("POST /repos/{name}/stage", handleRepoStage)
+	mux.HandleFunc("POST /repos/{name}/unstage", handleRepoUnstage)
+	mux.HandleFunc("POST /repos/{name}/discard", handleRepoDiscard)
+	mux.HandleFunc("POST /repos/{name}/commit", handleRepoCommit)
 
 	// Connections — per-user provider credentials (git tokens; Claude in Stage 3).
 	mux.HandleFunc("GET /connections", handleConnectionsGet)

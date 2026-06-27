@@ -58,6 +58,10 @@
         <input id="ns-dir" placeholder="dir (default ~)" />
         <input id="ns-url" placeholder="clone URL (optional) — CWD = repo" />
         <input id="ns-branch" placeholder="branch (optional)" />
+        <select id="ns-kind" title="session kind">
+          <option value="claude">claude</option>
+          <option value="shell">shell</option>
+        </select>
         <button type="submit">New</button>
       </form>
       <ul id="session-list"></ul>
@@ -69,6 +73,31 @@
         <button id="copy-login-url" title="copy the most recent sign-in URL shown in the terminal">⧉ sign-in URL</button>
       </div>
       <div id="terminal"></div>
+
+      <!-- Source control overlay (docs/17 P3-5) -->
+      <div id="scm-pane" hidden>
+        <div id="scm-header">
+          <b id="scm-title">repo</b>
+          <span id="scm-branch" class="muted"></span>
+          <span class="spacer"></span>
+          <button id="scm-refresh" class="icon" title="refresh">⟳</button>
+          <button id="scm-close" class="icon" title="back to terminal">✕</button>
+        </div>
+        <div id="scm-body">
+          <div id="scm-left">
+            <div class="scm-section">Changes</div>
+            <ul id="scm-changes"></ul>
+            <div id="scm-commit-box">
+              <textarea id="scm-msg" rows="2" placeholder="commit message"></textarea>
+              <label class="muted"><input type="checkbox" id="scm-all" /> stage all tracked (-a)</label>
+              <button id="scm-commit">Commit</button>
+            </div>
+            <div class="scm-section">History</div>
+            <ul id="scm-log"></ul>
+          </div>
+          <pre id="scm-diff"></pre>
+        </div>
+      </div>
     </section>
   </main>
 

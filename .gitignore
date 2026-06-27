@@ -4,3 +4,7 @@ deploy/local/oauth.env
 
 # Local build artifact from `go build` without -o (CP binary is built to /tmp/af-cp).
 control-plane/control-plane
+
+# compiled agent binary (built into image, never committed)
+workspace/agent/agent
+/tmp/af-cp
