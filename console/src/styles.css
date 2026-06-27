@@ -442,6 +442,10 @@ textarea:focus {
 .repo-name {
   font-weight: 500;
 }
+.repo-name .repo-ic {
+  margin-right: 4px;
+  font-style: normal;
+}
 .repo-row .dot {
   font-size: 10px;
 }
@@ -528,6 +532,19 @@ textarea:focus {
 .fsrow .fs-file.active {
   color: var(--accent);
   font-weight: 600;
+}
+/* fixed-width chevron + icon columns so names line up regardless of folder/file. */
+.fsrow .fs-chev {
+  display: inline-block;
+  width: 0.9em;
+  color: var(--muted);
+}
+.fsrow .fs-ic {
+  display: inline-block;
+  width: 1.3em;
+  text-align: center;
+  margin-right: 2px;
+  font-style: normal;
 }
 
 /* ---- forms ---- */

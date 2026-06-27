@@ -121,6 +121,7 @@ function RepoRow({ r, active, onSCM, onLaunch, onChanged }) {
           ●
         </span>
         <button className="link grow repo-name" title={r.path} onClick={onSCM}>
+          <span className="repo-ic">📁</span>
           {r.name}
         </button>
         <select

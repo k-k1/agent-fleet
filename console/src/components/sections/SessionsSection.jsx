@@ -139,7 +139,7 @@ export default function SessionsSection() {
                 <span className="session-display">{displayName(s)}</span>
               </span>
               <span className="session-l2">
-                <span className="kind-tag">{s.kind === "shell" ? "shell" : "claude"}</span>
+                <span className="kind-tag">{s.kind === "shell" ? "🐚 shell" : "✦ claude"}</span>
                 <span className="session-name">{s.name}</span>
                 {(() => {
                   const st = stateInfo(s);
