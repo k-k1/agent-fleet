@@ -104,6 +104,17 @@ export default function SessionsSection() {
               </button>
               {menuFor === s.name && (
                 <div className="session-menu">
+                  {s.remoteUrl && (
+                    <button
+                      className="session-menu-item"
+                      onClick={() => {
+                        setMenuFor(null);
+                        window.open(s.remoteUrl, "_blank", "noopener");
+                      }}
+                    >
+                      リモートセッションを開く ↗
+                    </button>
+                  )}
                   <button
                     className="session-menu-item danger"
                     onClick={() => {

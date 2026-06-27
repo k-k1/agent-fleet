@@ -260,7 +260,8 @@ CP のルーティングが user→対象コンテナを解決するだけ。
 - **検証**: Stop→Start 後も停止セッション表示＋WS で `cmd=claude` 復帰、**Workspace 停止中に DB から一覧配信**、recreate 後に `--session-id`（新規会話）で claude 生存。**注意**: `docker run` は既に running だと **no-op**＝新イメージ反映には **Stop→Start**（start 単独は不可）。
 
 **🔧 改善（2026-06-27 続き4）— SESSIONS 表示調整 + bridge-session の resume クラッシュ修正**:
-- **表示名 = claude `--name`**（`SessionsSection.jsx`）: 1 行目を claude の `--name`（`[AF]` 省略）に。shell は `{repo} @MMDD-HHMM`（[SH] 廃止）。2 行目バッジは **`claude`/`shell`**（旧 `ai`/`sh`）。**作り直すは ↻ ボタン → `⋯` プルダウンメニュー内**（破壊的操作を隔離、確認ダイアログ付き、outside-click で閉じる）。フロントのみ＝リロード反映。
+- **表示名 = claude `--name`**（`SessionsSection.jsx`）: 1 行目を claude の `--name`（`[AF]` 省略）に。shell は `{repo} @MMDD-HHMM`（[SH] 廃止）。2 行目バッジは **`claude`/`shell`**（旧 `ai`/`sh`）。**作り直すは ↻ ボタン → `⋯` プルダウンメニュー内**（破壊的操作を隔離、確認ダイアログ付き、outside-click で閉じる）。
+- **`⋯` メニューに「リモートセッションを開く ↗」**: RC の claude.ai ページを別タブで開く。URL は **`https://claude.ai/code/session_<bridgeSessionId から `cse_` を除いた値>`**。agent が jsonl の `{"type":"bridge-session",…,"bridgeSessionId":"cse_…"}` 行（head 64KB のみ読む）から導出し `Session.remoteUrl` に載せ、CP `sessionWire` が透過。`remoteUrl` がある claude セッションのみメニュー表示（停止中/shell は非表示）。検証: codeleaf の `remoteUrl` が `…/session_01PAx9SuYsNMHvKDAD4hWQpP`（実値一致）。
 - **⚠️ bridge-session の resume クラッシュ（重要）**: RC 既定 ON のため、会話前でも jsonl に **`{"type":"bridge-session",...}` の1行だけ**が書かれる。`sessionJSONLExists` は存在＝true とし `--resume` → claude が **「No conversation found」で即終了**（停止セッションが起動できない隠れ原因）。修正: `jsonlResumable(sid)`＝jsonl に **`"type":"user"`/`"type":"assistant"` 実会話行があるか**を判定し、`startSessionTmux` は**非 resumable なら jsonl を削除して `--session-id`（新規）**で起動。検証: bridge-only→フレッシュ起動（クラッシュ無）、実会話→`--resume` 復帰の両方。
 - **⚠️ 運用注意（自戒）**: 検証の後始末で `tmux kill-server` ＋ `rm ~/.config/agent-fleet/sessions/*.json` を実行すると**運用者の生きたセッションも巻き込む**。本番コンテナでの広域 kill/rm は避け、対象セッションのみ操作する。
 

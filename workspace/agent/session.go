@@ -28,6 +28,7 @@ type Session struct {
 	Label     string `json:"label"`    // claude --name display name (claude only)
 	Started   string `json:"started"`  // "01/02 15:04" local time, for the list
 	CreatedAt string `json:"createdAt"`// RFC3339
+	RemoteUrl string `json:"remoteUrl"`// claude.ai Remote Control URL, when RC is bridged
 	Alive     bool   `json:"alive"`    // true = live tmux session; false = stopped (resumable)
 }
 
@@ -73,10 +74,44 @@ func wireSession(m sessionMeta, alive bool) Session {
 			started = t.Local().Format("01/02 15:04")
 		}
 	}
+	remote := ""
+	if m.Kind == "claude" {
+		remote = remoteSessionURL(sessionUUID(m.Dir, m.Name))
+	}
 	return Session{
 		Name: m.Name, Tmux: tmuxName(m.Name), Dir: m.Dir, Kind: m.Kind,
-		Repo: m.Repo, Label: m.Label, Started: started, CreatedAt: m.CreatedAt, Alive: alive,
+		Repo: m.Repo, Label: m.Label, Started: started, CreatedAt: m.CreatedAt,
+		RemoteUrl: remote, Alive: alive,
 	}
+}
+
+// remoteSessionURL derives the claude.ai Remote Control page for sid from its
+// jsonl "bridge-session" line (written when RC connects). The web URL is
+// "…/code/session_<bridgeSessionId without the cse_ prefix>". We read only the
+// head of the log (the bridge line is written at session start) to stay cheap on
+// the polled list. Returns "" when there is no bridge (RC off / not yet connected).
+func remoteSessionURL(sid string) string {
+	for _, p := range jsonlPaths(sid) {
+		f, err := os.Open(p)
+		if err != nil {
+			continue
+		}
+		buf := make([]byte, 64*1024)
+		n, _ := f.Read(buf)
+		f.Close()
+		for _, line := range strings.Split(string(buf[:n]), "\n") {
+			if !strings.Contains(line, `"type":"bridge-session"`) {
+				continue
+			}
+			var b struct {
+				BridgeSessionID string `json:"bridgeSessionId"`
+			}
+			if json.Unmarshal([]byte(line), &b) == nil && b.BridgeSessionID != "" {
+				return "https://claude.ai/code/session_" + strings.TrimPrefix(b.BridgeSessionID, "cse_")
+			}
+		}
+	}
+	return ""
 }
 
 // sessionsMetaDir lives in the home volume (persists across Stop→Start) under the

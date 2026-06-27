@@ -296,6 +296,7 @@ type sessionWire struct {
 	Label     string `json:"label"`
 	Started   string `json:"started"`
 	CreatedAt string `json:"createdAt"`
+	RemoteUrl string `json:"remoteUrl"`
 	Alive     bool   `json:"alive"`
 }
 
