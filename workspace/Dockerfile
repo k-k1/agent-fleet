@@ -17,6 +17,11 @@ FROM node:22-bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
       git tmux openssh-client ca-certificates curl ripgrep less procps \
  && rm -rf /var/lib/apt/lists/*
+
+# Java is NOT baked into the image (it would add ~1.5GB). Instead the Temurin JDKs
+# live once on the host (provisioned by deploy/local/provision-jvm.sh) and the
+# Control Plane bind-mounts that dir read-only at /usr/lib/jvm into every workspace
+# (WS_JVM_DIR), so they're shared. The entrypoint picks JAVA_HOME from there.
 COPY --from=agentbuild /out/workspace-agent /usr/local/bin/workspace-agent
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh

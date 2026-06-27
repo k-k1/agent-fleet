@@ -4,6 +4,7 @@ import ConnectionsTab from "./ConnectionsTab.jsx";
 import AdminTab from "./AdminTab.jsx";
 import DisplayTab from "./DisplayTab.jsx";
 import ClaudeTab from "./ClaudeTab.jsx";
+import EnvTab from "./EnvTab.jsx";
 
 // SettingsDialog is the single modal in the app. Sections are chosen with a
 // segmented control (matching the New Session modal), not tabs: Connections and
@@ -15,6 +16,7 @@ export default function SettingsDialog() {
   const sections = [
     ["connections", "接続"],
     ["claude", "Claude"],
+    ["env", "環境"],
     ["display", "表示"],
     ...(superAdmin ? [["admin", "管理"]] : []),
   ];
@@ -44,6 +46,7 @@ export default function SettingsDialog() {
           <div className="settings-content">
             {section === "connections" && <ConnectionsTab />}
             {section === "claude" && <ClaudeTab />}
+            {section === "env" && <EnvTab />}
             {section === "display" && <DisplayTab />}
             {section === "admin" && superAdmin && <AdminTab />}
           </div>

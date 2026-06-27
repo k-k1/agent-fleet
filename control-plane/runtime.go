@@ -82,6 +82,12 @@ func (d *dockerRuntime) start(ctx context.Context) error {
 		"-v", claudeCfg + ":/var/lib/af/claude",
 		"-e", "CLAUDE_CONFIG_DIR=/var/lib/af/claude",
 	}
+	// Shared Temurin JDKs: mounted read-only from one host dir into every
+	// workspace (kept out of the image to stay slim). The entrypoint/agent pick
+	// JAVA_HOME from /usr/lib/jvm. Opt-in via WS_JVM_DIR.
+	if jvm := os.Getenv("WS_JVM_DIR"); jvm != "" {
+		args = append(args, "-v", jvm+":/usr/lib/jvm:ro")
+	}
 	if d.network != "" {
 		args = append(args, "--network", d.network)
 	}

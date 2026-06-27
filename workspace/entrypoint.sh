@@ -72,4 +72,45 @@ if [ ! -f "$SETTINGS" ]; then
     || echo "[entrypoint] WARN: failed to seed $SETTINGS"
 fi
 
+# Toolchains: node (nvm, installed into the home volume) and java (pre-baked
+# Temurin). The selection lives per-workspace in toolchains.json, chosen in the
+# Console. We apply it HERE so the agent — and every tmux session it spawns —
+# inherits JAVA_HOME and the selected node on PATH.
+TOOLS="$HOME/.config/agent-fleet/toolchains.json"
+NODE_VER=""; JAVA_VER=""
+if [ -f "$TOOLS" ]; then
+  NODE_VER=$(node -e 'try{process.stdout.write(String((require(process.argv[1]).node)||""))}catch{}' "$TOOLS" 2>/dev/null)
+  JAVA_VER=$(node -e 'try{process.stdout.write(String((require(process.argv[1]).java)||""))}catch{}' "$TOOLS" 2>/dev/null)
+fi
+
+# java: point JAVA_HOME at the selected Temurin (if installed).
+if [ -n "$JAVA_VER" ]; then
+  JH=$(ls -d /usr/lib/jvm/temurin-"$JAVA_VER"-jdk* 2>/dev/null | head -1)
+  if [ -n "$JH" ]; then
+    export JAVA_HOME="$JH"
+    export PATH="$JH/bin:$PATH"
+    echo "[entrypoint] JAVA_HOME=$JH"
+  else
+    echo "[entrypoint] WARN: temurin-$JAVA_VER-jdk not installed"
+  fi
+fi
+
+# node: install/activate the selected version via nvm (home volume → persists).
+# "system" / empty keeps the image's base node.
+if [ -n "$NODE_VER" ] && [ "$NODE_VER" != "system" ]; then
+  export NVM_DIR="$HOME/.nvm"
+  if [ ! -s "$NVM_DIR/nvm.sh" ]; then
+    echo "[entrypoint] installing nvm ..."
+    curl -fsSL https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash >/dev/null 2>&1 \
+      || echo "[entrypoint] WARN: nvm install failed (continuing)"
+  fi
+  if [ -s "$NVM_DIR/nvm.sh" ]; then
+    # shellcheck disable=SC1091
+    . "$NVM_DIR/nvm.sh"
+    nvm install "$NODE_VER" >/dev/null 2>&1 && nvm alias default "$NODE_VER" >/dev/null 2>&1
+    nvm use "$NODE_VER" >/dev/null 2>&1
+    echo "[entrypoint] node $(node -v 2>/dev/null)"
+  fi
+fi
+
 exec "$@"

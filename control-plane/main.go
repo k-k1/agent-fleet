@@ -142,6 +142,10 @@ func main() {
 	mux.HandleFunc("GET /api/claude/settings", cfg.proxyAgentREST)
 	mux.HandleFunc("PUT /api/claude/settings", cfg.proxyAgentREST)
 
+	// Toolchain selection (node / java) — proxied to the Agent.
+	mux.HandleFunc("GET /api/env/toolchains", cfg.proxyAgentREST)
+	mux.HandleFunc("PUT /api/env/toolchains", cfg.proxyAgentREST)
+
 	// Connections ops — proxied to the Workspace Agent (/api stripped).
 	mux.HandleFunc("GET /api/connections", cfg.proxyAgentREST)
 	mux.HandleFunc("GET /api/connections/git/{host}/repos", cfg.proxyAgentREST)

@@ -60,6 +60,10 @@ func main() {
 	mux.HandleFunc("GET /claude/settings", handleClaudeSettingsGet)
 	mux.HandleFunc("PUT /claude/settings", handleClaudeSettingsPut)
 
+	// Toolchain selection (node via nvm / java via pre-baked Temurin) — Console.
+	mux.HandleFunc("GET /env/toolchains", handleToolchainsGet)
+	mux.HandleFunc("PUT /env/toolchains", handleToolchainsPut)
+
 	// Connections — per-user provider credentials (git tokens; Claude in Stage 3).
 	mux.HandleFunc("GET /connections", handleConnectionsGet)
 	mux.HandleFunc("GET /connections/git/{host}/repos", handleListRemoteRepos)

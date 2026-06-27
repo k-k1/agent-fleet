@@ -21,6 +21,9 @@ export PATH="$HOME/.local/go/bin:$HOME/go/bin:$PATH"
 WS_IMAGE="${WS_IMAGE:-agent-fleet/workspace:dev}"
 CP_ADDR="${CP_ADDR:-:8099}"
 WS_DATA="${WS_DATA:-/tmp/af-data}"
+# Shared Temurin JDKs live here on the host (provisioned once below) and are
+# bind-mounted read-only into every workspace at /usr/lib/jvm.
+WS_JVM_DIR="${WS_JVM_DIR:-$WS_DATA/shared/jvm}"
 
 # git-provider OAuth config (contains a secret -> git-ignored). If present, export
 # GITHUB_OAUTH_CLIENT_ID / BITBUCKET_OAUTH_KEY / BITBUCKET_OAUTH_SECRET / PUBLIC_BASE_URL.
@@ -39,6 +42,9 @@ if [ -x "$RTK_SRC" ]; then
 else
   rm -f "$ROOT/workspace/vendor/rtk" 2>/dev/null || true
 fi
+
+# Provision the shared JDKs into WS_JVM_DIR (idempotent; first run is slow).
+bash "$ROOT/deploy/local/provision-jvm.sh" "$WS_JVM_DIR" || echo "WARN: jvm provision failed (java unavailable)"
 
 echo "==> build workspace image ($WS_IMAGE)"
 docker build -t "$WS_IMAGE" "$ROOT/workspace"
@@ -69,6 +75,7 @@ exec env \
   WS_IMAGE="$WS_IMAGE" \
   CONSOLE_DIR="$ROOT/console/dist" \
   WS_DATA="$WS_DATA" \
+  ${WS_JVM_DIR:+WS_JVM_DIR="$WS_JVM_DIR"} \
   ${AUTH:+AUTH="$AUTH"} \
   ${DEV_USER:+DEV_USER="$DEV_USER"} \
   ${AUTH_EMAIL_HEADER:+AUTH_EMAIL_HEADER="$AUTH_EMAIL_HEADER"} \
