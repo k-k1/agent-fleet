@@ -70,9 +70,27 @@
     <section id="terminal-pane">
       <div id="term-header">
         <span id="term-title">no session attached</span>
+        <button id="open-files" title="browse files in this workspace">🗂 files</button>
         <button id="copy-login-url" title="copy the most recent sign-in URL shown in the terminal">⧉ sign-in URL</button>
       </div>
       <div id="terminal"></div>
+
+      <!-- File explorer overlay (docs/17 P3-5 段2) -->
+      <div id="fs-pane" hidden>
+        <div id="fs-header">
+          <b>Files</b>
+          <span class="spacer"></span>
+          <button id="fs-refresh" class="icon" title="refresh">⟳</button>
+          <button id="fs-close" class="icon" title="back to terminal">✕</button>
+        </div>
+        <div id="fs-body">
+          <ul id="fs-tree"></ul>
+          <div id="fs-viewwrap">
+            <div id="fs-viewpath" class="muted"></div>
+            <pre id="fs-view"></pre>
+          </div>
+        </div>
+      </div>
 
       <!-- Source control overlay (docs/17 P3-5) -->
       <div id="scm-pane" hidden>

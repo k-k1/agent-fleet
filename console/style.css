@@ -83,5 +83,22 @@ button.icon { padding: 2px 5px; font-size: 12px; line-height: 1; }
 #scm-diff .dl.hunk { color: #6cf; }
 #term-header { display: flex; align-items: center; gap: 10px; padding: 6px 10px; background: #111; border-bottom: 1px solid #333; }
 #term-title { color: #6cf; }
-#copy-login-url { margin-left: auto; font-size: 12px; }
+#open-files { margin-left: auto; font-size: 12px; }
+#copy-login-url { font-size: 12px; }
+
+/* File explorer overlay (docs/17 P3-5 段2) */
+#fs-pane { position: absolute; inset: 0; background: #1e1e1e; display: flex; flex-direction: column; z-index: 5; }
+#fs-header { display: flex; align-items: center; gap: 10px; padding: 6px 10px; background: #111; border-bottom: 1px solid #333; }
+#fs-header b { color: #6cf; }
+#fs-header .spacer { flex: 1; }
+#fs-body { flex: 1; display: flex; min-height: 0; }
+#fs-tree { width: 300px; border-right: 1px solid #333; overflow: auto; padding: 8px; list-style: none; margin: 0; }
+#fs-tree ul { list-style: none; margin: 0; padding-left: 14px; }
+#fs-tree li { padding: 1px 0; }
+#fs-tree .fs-dir, #fs-tree .fs-file { cursor: pointer; white-space: nowrap; font-family: "JetBrains Mono", monospace; font-size: 12px; }
+#fs-tree .fs-dir { color: #6cf; }
+#fs-tree .fs-file:hover, #fs-tree .fs-dir:hover { background: #2a2a2a; }
+#fs-viewwrap { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+#fs-viewpath { padding: 4px 10px; border-bottom: 1px solid #2a2a2a; }
+#fs-view { flex: 1; margin: 0; overflow: auto; padding: 8px 10px; font: 12px/1.45 "JetBrains Mono", monospace; white-space: pre; }
 #terminal { flex: 1; min-height: 0; }

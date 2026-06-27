@@ -52,6 +52,9 @@ func main() {
 	mux.HandleFunc("POST /repos/{name}/unstage", handleRepoUnstage)
 	mux.HandleFunc("POST /repos/{name}/discard", handleRepoDiscard)
 	mux.HandleFunc("POST /repos/{name}/commit", handleRepoCommit)
+	// Read-only file browser (docs/17 P3-5 段2).
+	mux.HandleFunc("GET /fs/tree", handleFSTree)
+	mux.HandleFunc("GET /fs/file", handleFSFile)
 
 	// Connections — per-user provider credentials (git tokens; Claude in Stage 3).
 	mux.HandleFunc("GET /connections", handleConnectionsGet)

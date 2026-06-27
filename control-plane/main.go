@@ -130,6 +130,9 @@ func main() {
 	mux.HandleFunc("POST /api/repos/{name}/unstage", cfg.proxyAgentREST)
 	mux.HandleFunc("POST /api/repos/{name}/discard", cfg.proxyAgentREST)
 	mux.HandleFunc("POST /api/repos/{name}/commit", cfg.proxyAgentREST)
+	// File browser (docs/17 P3-5 段2) — proxied to the Agent.
+	mux.HandleFunc("GET /api/fs/tree", cfg.proxyAgentREST)
+	mux.HandleFunc("GET /api/fs/file", cfg.proxyAgentREST)
 
 	// Connections ops — proxied to the Workspace Agent (/api stripped).
 	mux.HandleFunc("GET /api/connections", cfg.proxyAgentREST)

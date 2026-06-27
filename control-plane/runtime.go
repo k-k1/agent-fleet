@@ -58,6 +58,13 @@ func (d *dockerRuntime) start(ctx context.Context) error {
 	if err := os.MkdirAll(home, 0o755); err != nil {
 		return fmt.Errorf("mkdir data home: %w", err)
 	}
+	// Plaintext Claude state (CLAUDE_CONFIG_DIR) lives OUTSIDE the browsable home
+	// so the Console file browser never exposes it (docs/17 P3-5 段2). Persisted
+	// via its own mount; auth still works via the per-session env token.
+	claudeCfg := filepath.Join(d.dataDir, "claude-config")
+	if err := os.MkdirAll(claudeCfg, 0o700); err != nil {
+		return fmt.Errorf("mkdir claude-config: %w", err)
+	}
 
 	// Each user's container sits alone on a dedicated network, so containers
 	// cannot reach each other (相互不可視, docs/09 §9.7). The Agent is still
@@ -72,6 +79,8 @@ func (d *dockerRuntime) start(ctx context.Context) error {
 		"--memory", d.memory,
 		"-p", fmt.Sprintf("127.0.0.1:%s:7700", d.agentPort),
 		"-v", home + ":/home/node",
+		"-v", claudeCfg + ":/var/lib/af/claude",
+		"-e", "CLAUDE_CONFIG_DIR=/var/lib/af/claude",
 	}
 	if d.network != "" {
 		args = append(args, "--network", d.network)

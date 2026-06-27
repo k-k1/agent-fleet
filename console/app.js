@@ -707,6 +707,67 @@ $("clone-repo").onsubmit = async (e) => {
   await refreshRepos();
 };
 
+// --- file explorer (docs/17 P3-5 段2) ---
+async function fsList(path) {
+  try {
+    return await api(`api/fs/tree?path=${encodeURIComponent(path)}`);
+  } catch {
+    return { entries: [] };
+  }
+}
+
+function fsRow(entry, parentPath) {
+  const full = parentPath ? parentPath + "/" + entry.name : entry.name;
+  const li = document.createElement("li");
+  const label = document.createElement("span");
+  label.className = "fs-" + entry.type;
+  label.textContent = (entry.type === "dir" ? "▸ " : "   ") + entry.name;
+  li.append(label);
+  if (entry.type === "dir") {
+    let open = false,
+      childUl = null;
+    label.onclick = async () => {
+      open = !open;
+      label.textContent = (open ? "▾ " : "▸ ") + entry.name;
+      if (open) {
+        if (!childUl) {
+          childUl = document.createElement("ul");
+          const d = await fsList(full);
+          for (const c of d.entries || []) childUl.append(fsRow(c, full));
+          li.append(childUl);
+        } else childUl.style.display = "";
+      } else if (childUl) childUl.style.display = "none";
+    };
+  } else {
+    label.onclick = () => showFile(full);
+  }
+  return li;
+}
+
+async function openFiles() {
+  $("fs-pane").hidden = false;
+  $("fs-viewpath").textContent = "";
+  $("fs-view").textContent = "select a file";
+  const root = $("fs-tree");
+  root.innerHTML = "";
+  const d = await fsList("");
+  for (const c of d.entries || []) root.append(fsRow(c, ""));
+}
+
+async function showFile(path) {
+  try {
+    const d = await api(`api/fs/file?path=${encodeURIComponent(path)}`);
+    $("fs-viewpath").textContent = path + (d.truncated ? " (truncated)" : "");
+    $("fs-view").textContent = d.binary ? `(binary file, ${d.size || 0} bytes)` : (d.content ?? "");
+  } catch {
+    $("fs-view").textContent = "(cannot read)";
+  }
+}
+
+$("open-files").onclick = openFiles;
+$("fs-refresh").onclick = openFiles;
+$("fs-close").onclick = () => ($("fs-pane").hidden = true);
+
 // --- on-demand sign-in URL copy ---
 // Ink hard-wraps the /login auth URL across terminal rows, so neither plain
 // copy nor web-links yields the whole URL. Reconstruct it from the xterm buffer
