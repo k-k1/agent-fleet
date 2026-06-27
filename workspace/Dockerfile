@@ -15,7 +15,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -o /out/workspace-agent .
 # --- runtime ---
 FROM node:22-bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      git tmux openssh-client ca-certificates curl ripgrep less procps \
+      git tmux openssh-client ca-certificates curl ripgrep less procps tzdata \
  && rm -rf /var/lib/apt/lists/*
 
 # Java is NOT baked into the image (it would add ~1.5GB). Instead the Temurin JDKs

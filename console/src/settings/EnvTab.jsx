@@ -22,7 +22,7 @@ export default function EnvTab() {
   useEffect(load, [load]);
 
   const update = async (patch) => {
-    const next = { node: d.node || "", java: d.java || "", ...patch };
+    const next = { node: d.node || "", java: d.java || "", timezone: d.timezone || "", ...patch };
     const res = await apiJSON("api/env/toolchains", "PUT", next);
     if (res && res.error) {
       alert("保存に失敗: " + (res.error.message || ""));
@@ -36,10 +36,22 @@ export default function EnvTab() {
 
   const nodeOpts = d.node_options || ["system"];
   const javaOpts = d.java_available || [];
+  const tz = d.timezone || "Asia/Tokyo";
+  const tzOpts = d.tz_options && d.tz_options.length ? d.tz_options : [tz];
+  const tzList = tzOpts.includes(tz) ? tzOpts : [tz, ...tzOpts];
 
   return (
     <div className="display-settings">
       <p className="muted ds-note">変更は Stop → Start（コンテナ再生成）で反映されます。</p>
+      <Row label="タイムゾーン (TZ)">
+        <select value={tz} onChange={(e) => update({ timezone: e.target.value })}>
+          {tzList.map((v) => (
+            <option key={v} value={v}>
+              {v}
+            </option>
+          ))}
+        </select>
+      </Row>
       <Row label="Node.js">
         <select value={d.node || "system"} onChange={(e) => update({ node: e.target.value })}>
           {nodeOpts.map((v) => (

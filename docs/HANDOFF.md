@@ -229,7 +229,8 @@ CP のルーティングが user→対象コンテナを解決するだけ。
 **反映タイミング**: Claude設定/環境(toolchains) は entrypoint が適用＝**Stop→Start で反映**。Console フロントのみの変更はリロード即時。
 
 **⚠️ 未解決/保留**:
-- **セッション表示名 `[AF] {repo} @MMDD-HHSS` 実装済**（2026-06-27）: `claude --remote-control` の hard-error を避け、**`-n/--name`**（RC picker＋端末タイトルの表示名、RC は `remoteControlAtStartup` で別途有効）で実装。`session.go` `sessionLabel(dir)`＝`[AF] {basename(dir)} @{time "0102-1505"}`（{repo}=作業 dir のベース名、HH=時/SS=秒）。作成時に確定し meta に保存＝**再起動でも不変**。claude セッションのみ付与。**注意**: タイムスタンプは**コンテナ TZ（既定 UTC）**。JST 等に揃えるには runtime に `-e TZ=...` 注入が要る（未実装）。RC が実機で繋がるかは引き続き要確認だが、`--name` は token 非対応でも hard-error しない（起動検証済）。
+- **セッション表示名 `[AF] {repo} @MMDD-HHMM` 実装済**（2026-06-27）: `claude --remote-control` の hard-error を避け、**`-n/--name`**（RC picker＋端末タイトルの表示名、RC は `remoteControlAtStartup` で別途有効）で実装。`session.go` `sessionLabel(dir)`＝`[AF] {basename(dir)} @{time "0102-1504"}`（{repo}=作業 dir ベース名、時分）。作成時に確定し meta に保存＝**再起動でも不変**。claude セッションのみ付与。RC 実機接続は要確認だが `--name` は token 非対応でも hard-error しない（検証済）。
+- **タイムゾーン = per-user・既定 JST 実装済**（2026-06-27）: image に `tzdata`、`entrypoint.sh` が `toolchains.json` の `timezone`（無ければ `Asia/Tokyo`）を **`export TZ`** → agent・各セッション label・shell・claude が同一ローカル時刻。Agent `GET/PUT /env/toolchains` に `timezone`＋`tz_options`（IANA 名検証 `tzNameRe`）、Console **環境タブにタイムゾーン選択**。反映は Stop→Start。**検証**: 既定で label が JST（UTC 12:48→`@…-2148`）、agent PID env `TZ=Asia/Tokyo`。
 - **ディレクトリ trust の無条件化は非対話の手段が無い**（docs 上、設定キー無し）。repo サブディレクトリ起動なら初回承認後は当該 dir で永続。**`node`→`dev` リネームで home/repo パスが変わったため、初回は trust ダイアログが再度出る**（1 回承認で以後永続）。
 
 **適用手順（運用者）**: WS BAR の **Stop→Start**（スリム image＋JVM マウント＋新 agent。**repos/home 保持**。「作り直す」は repos も消す）→ ⚙設定 → 環境/Claude で選択 → 再度 Stop→Start で有効化（java は即・node は初回 nvm DL）。

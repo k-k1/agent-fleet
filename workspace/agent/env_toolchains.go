@@ -20,8 +20,19 @@ func toolchainsPath() string {
 }
 
 type toolchains struct {
-	Node string `json:"node"`
-	Java string `json:"java"`
+	Node     string `json:"node"`
+	Java     string `json:"java"`
+	Timezone string `json:"timezone"`
+}
+
+// defaultTimezone is the initial per-user timezone (entrypoint exports TZ from it,
+// so session timestamps, the shell, and claude all use it). JST per request.
+const defaultTimezone = "Asia/Tokyo"
+
+// tzOptions are common zones offered in the Console; any IANA name is accepted.
+var tzOptions = []string{
+	"Asia/Tokyo", "UTC", "Asia/Shanghai", "Asia/Kolkata", "Asia/Singapore",
+	"Europe/London", "Europe/Berlin", "America/New_York", "America/Los_Angeles",
 }
 
 func readToolchains() toolchains {
@@ -29,8 +40,15 @@ func readToolchains() toolchains {
 	if b, err := os.ReadFile(toolchainsPath()); err == nil {
 		_ = json.Unmarshal(b, &t)
 	}
+	if t.Timezone == "" {
+		t.Timezone = defaultTimezone
+	}
 	return t
 }
+
+// tzNameRe guards the timezone against shell/path injection (entrypoint exports it
+// and resolves /usr/share/zoneinfo/<tz>). IANA names: letters, digits, _ + - / .
+var tzNameRe = regexp.MustCompile(`^[A-Za-z0-9_+./-]{1,64}$`)
 
 // availableJava lists the major versions of the Temurin JDKs baked into the image
 // (dirs like /usr/lib/jvm/temurin-21-jdk-amd64), sorted ascending.
@@ -65,8 +83,10 @@ func handleToolchainsGet(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"node":           t.Node,
 		"java":           t.Java,
+		"timezone":       t.Timezone,
 		"java_available": availableJava(),
 		"node_options":   nodeOptions,
+		"tz_options":     tzOptions,
 	})
 }
 
@@ -74,6 +94,13 @@ func handleToolchainsPut(w http.ResponseWriter, r *http.Request) {
 	var req toolchains
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeErr(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
+		return
+	}
+	if req.Timezone == "" {
+		req.Timezone = defaultTimezone
+	}
+	if !tzNameRe.MatchString(req.Timezone) {
+		writeErr(w, http.StatusBadRequest, "bad_timezone", "invalid timezone name")
 		return
 	}
 	p := toolchainsPath()

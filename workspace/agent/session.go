@@ -284,11 +284,12 @@ func buildSessionProgram(sid, model, label string) string {
 	return fmt.Sprintf("claude --session-id %s %s", sid, flags)
 }
 
-// sessionLabel builds the claude --name for a session: "[AF] {repo} @MMDD-HHSS"
-// where {repo} is the working dir's basename. Computed once at create and stored
-// in the meta so relaunch keeps the same name.
+// sessionLabel builds the claude --name for a session: "[AF] {repo} @MMDD-HHMM"
+// where {repo} is the working dir's basename and the time is the workspace's local
+// time (the entrypoint exports TZ from the per-user timezone setting, default JST).
+// Computed once at create and stored in the meta so relaunch keeps the same name.
 func sessionLabel(dir string) string {
-	return fmt.Sprintf("[AF] %s @%s", filepath.Base(dir), time.Now().Format("0102-1505"))
+	return fmt.Sprintf("[AF] %s @%s", filepath.Base(dir), time.Now().Format("0102-1504"))
 }
 
 // sessionJSONLExists reports whether a conversation log for sid is on disk.

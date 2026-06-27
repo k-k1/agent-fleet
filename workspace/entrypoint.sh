@@ -77,10 +77,23 @@ fi
 # Console. We apply it HERE so the agent — and every tmux session it spawns —
 # inherits JAVA_HOME and the selected node on PATH.
 TOOLS="$HOME/.config/agent-fleet/toolchains.json"
-NODE_VER=""; JAVA_VER=""
+NODE_VER=""; JAVA_VER=""; TZ_VAL=""
 if [ -f "$TOOLS" ]; then
   NODE_VER=$(node -e 'try{process.stdout.write(String((require(process.argv[1]).node)||""))}catch{}' "$TOOLS" 2>/dev/null)
   JAVA_VER=$(node -e 'try{process.stdout.write(String((require(process.argv[1]).java)||""))}catch{}' "$TOOLS" 2>/dev/null)
+  TZ_VAL=$(node -e 'try{process.stdout.write(String((require(process.argv[1]).timezone)||""))}catch{}' "$TOOLS" 2>/dev/null)
+fi
+
+# Timezone (per-user, default JST). Export TZ so the agent — and every session
+# label / shell / claude it spawns — uses the user's local time. glibc and Go both
+# honor TZ; tzdata is baked into the image. We can't symlink /etc/localtime as a
+# non-root user, but TZ alone is sufficient.
+[ -n "$TZ_VAL" ] || TZ_VAL="Asia/Tokyo"
+if [ -f "/usr/share/zoneinfo/$TZ_VAL" ]; then
+  export TZ="$TZ_VAL"
+  echo "[entrypoint] TZ=$TZ"
+else
+  echo "[entrypoint] WARN: unknown timezone '$TZ_VAL' (falling back to UTC)"
 fi
 
 # java: point JAVA_HOME at the selected Temurin (if installed).
