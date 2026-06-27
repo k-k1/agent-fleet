@@ -68,7 +68,8 @@ export default function ReposSection() {
             active={mode === "scm" && scmRepo === r.name}
             onSCM={() => showSCM(r.name)}
             onLaunch={async (kind) => {
-              const base = repoSafeSession(r.name) + (kind === "shell" ? "-sh" : "");
+              const suffix = kind === "shell" ? "-sh" : kind === "opencode" ? "-oc" : "";
+              const base = repoSafeSession(r.name) + suffix;
               let used = new Set();
               try {
                 const d = await api("api/sessions");
@@ -132,6 +133,9 @@ function RepoRow({ r, active, onSCM, onLaunch, onChanged }) {
       <div className="repo-actions">
         <button className="chip launch" title="このディレクトリで claude セッションを起動（複数可）" onClick={() => onLaunch("claude")}>
           ▶ claude
+        </button>
+        <button className="chip launch" title="このディレクトリで opencode を起動（複数可）" onClick={() => onLaunch("opencode")}>
+          ▶ opencode
         </button>
         <button className="chip launch" title="このディレクトリで shell を起動" onClick={() => onLaunch("shell")}>
           ▶ shell

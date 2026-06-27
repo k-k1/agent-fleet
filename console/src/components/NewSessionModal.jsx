@@ -49,22 +49,24 @@ export default function NewSessionModal({ onClose, onCreated }) {
     };
   }, []);
 
-  // Auto-fill the name (until the user types their own). claude with a chosen repo
+  const isClaude = kind === "claude";
+  const isAgent = kind !== "shell"; // claude or opencode — both run in a working dir
+
+  // Auto-fill the name (until the user types their own). An agent with a chosen repo
   // names after the repo; otherwise the name is the kind word.
-  const base = kind === "claude" && sel ? lastSeg(sel.fullName) : kind;
+  const base = isAgent && sel ? lastSeg(sel.fullName) : kind;
   useEffect(() => {
     if (!nameEdited) setName(uniqueName(base, taken));
   }, [base, taken, nameEdited]);
 
   const onPick = (s) => setSel(s);
 
-  const isClaude = kind === "claude";
-  const cloneUrl = !isClaude ? "" : source === "picker" ? sel?.cloneUrl : source === "url" ? url.trim() : "";
+  const cloneUrl = !isAgent ? "" : source === "picker" ? sel?.cloneUrl : source === "url" ? url.trim() : "";
   const cloneBranch = source === "picker" ? sel?.branch || "" : branch.trim();
-  const cloning = isClaude && source !== "none" && !!cloneUrl;
+  const cloning = isAgent && source !== "none" && !!cloneUrl;
 
-  // shell never needs a repo; claude's repo is optional (none is allowed).
-  const sourceOk = !isClaude || source === "none" || !!cloneUrl;
+  // shell never needs a repo; an agent's repo is optional (none is allowed).
+  const sourceOk = !isAgent || source === "none" || !!cloneUrl;
   const canSubmit = !!name.trim() && sourceOk && !busy;
 
   const submit = async (e) => {
@@ -76,7 +78,7 @@ export default function NewSessionModal({ onClose, onCreated }) {
         name: name.trim(),
         kind,
         model: isClaude ? model : "",
-        dir: isClaude && source === "none" ? dir.trim() : "",
+        dir: isAgent && source === "none" ? dir.trim() : "",
         remote_url: cloning ? cloneUrl : "",
         branch: cloning ? cloneBranch : "",
       });
@@ -121,33 +123,50 @@ export default function NewSessionModal({ onClose, onCreated }) {
                 claude
                 <span className="seg-sub">Claude Code を起動</span>
               </button>
+              <button
+                type="button"
+                className={"seg-btn" + (kind === "opencode" ? " active" : "")}
+                onClick={() => setKind("opencode")}
+              >
+                opencode
+                <span className="seg-sub">opencode を起動</span>
+              </button>
             </div>
+            {kind === "opencode" && (
+              <div className="field-help">
+                初回はプロバイダ認証が必要です。起動後の TUI で <code>/connect</code>、または端末で{" "}
+                <code>opencode auth login</code>（認証は home に保存され再起動後も保持）。
+              </div>
+            )}
           </div>
 
-          {/* モデル + リポジトリ（claude のみ） */}
+          {/* モデル（claude のみ） */}
           {isClaude && (
-            <>
-              <div className="field">
-                <div className="field-label">モデル</div>
-                <div className="seg">
-                  {[
-                    ["", "既定"],
-                    ["opus", "Opus"],
-                    ["sonnet", "Sonnet"],
-                    ["haiku", "Haiku"],
-                  ].map(([v, label]) => (
-                    <button
-                      key={v || "default"}
-                      type="button"
-                      className={"seg-btn" + (model === v ? " active" : "")}
-                      onClick={() => setModel(v)}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
+            <div className="field">
+              <div className="field-label">モデル</div>
+              <div className="seg">
+                {[
+                  ["", "既定"],
+                  ["opus", "Opus"],
+                  ["sonnet", "Sonnet"],
+                  ["haiku", "Haiku"],
+                ].map(([v, label]) => (
+                  <button
+                    key={v || "default"}
+                    type="button"
+                    className={"seg-btn" + (model === v ? " active" : "")}
+                    onClick={() => setModel(v)}
+                  >
+                    {label}
+                  </button>
+                ))}
               </div>
+            </div>
+          )}
 
+          {/* リポジトリ（claude / opencode） */}
+          {isAgent && (
+            <>
               <div className="field">
                 <div className="field-label">リポジトリ</div>
                 <div className="seg">

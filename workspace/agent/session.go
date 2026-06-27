@@ -93,6 +93,9 @@ func wireSession(m sessionMeta, alive bool) Session {
 			// be resumed there; the Console marks it non-resumable (archive only).
 			resumable = false
 		}
+	} else if m.Kind == "opencode" && !alive && !dirExists(m.Dir) {
+		// Same as claude: opencode --continue needs its real project dir.
+		resumable = false
 	}
 	return Session{
 		Name: m.Name, Tmux: tmuxName(m.Name), Dir: m.Dir, Kind: m.Kind,
@@ -193,14 +196,21 @@ func startSessionTmux(m sessionMeta) error {
 	dirOK := dirExists(cwd)
 	args := []string{"new-session", "-d", "-s", tn, "-c", cwd}
 	var program string
-	if m.Kind == "shell" {
+	switch m.Kind {
+	case "shell":
 		// A shell falls back to home if its recorded dir is gone.
 		if !dirOK {
 			cwd = homeDir()
 			args[len(args)-1] = cwd
 		}
 		program = "bash -l"
-	} else {
+	case "opencode":
+		// opencode resumes (or starts) in its real project dir; refuse if it's gone.
+		if !dirOK {
+			return fmt.Errorf("作業フォルダが存在しないため再開できません: %s", m.Dir)
+		}
+		program = buildOpencodeProgram(m.Model)
+	default:
 		// A claude session must launch in its real working dir: if the dir is gone
 		// (its repo was deleted) we refuse rather than resume the conversation in an
 		// unrelated cwd. wireSession reports this as non-resumable.
@@ -345,7 +355,10 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	kind := req.Kind
-	if kind != "shell" {
+	switch kind {
+	case "shell", "opencode":
+		// supported as-is
+	default:
 		kind = "claude"
 	}
 	label := ""
@@ -454,6 +467,23 @@ func buildSessionProgram(sid, model, label string) string {
 		return fmt.Sprintf("claude --resume %s %s", sid, flags)
 	}
 	return fmt.Sprintf("claude --session-id %s %s", sid, flags)
+}
+
+// buildOpencodeProgram returns the tmux program for an opencode session. opencode
+// keeps its sessions in a local SQLite db (~/.local/share/opencode) and --continue
+// resumes the most recent session for the current project, while safely starting a
+// new one when none exists — so we always pass it (first launch = fresh, relaunch =
+// continue). Auth is the user's own `opencode auth login` (persisted in home), so
+// there's no token to inject. Caveat: multiple opencode slots in the SAME dir share
+// --continue's "most recent" target.
+func buildOpencodeProgram(model string) string {
+	flags := "--continue"
+	if model != "" {
+		// opencode expects provider/model (e.g. anthropic/claude-...); passed through
+		// verbatim. The Console only sends this for opencode when explicitly chosen.
+		flags += " --model " + shellQuote(model)
+	}
+	return "opencode " + flags
 }
 
 // sessionLabel builds the claude --name for a session: "[AF] {repo} @MMDD-HHMM"

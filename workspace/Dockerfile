@@ -45,10 +45,13 @@ RUN if [ -f /opt/vendor/rtk ]; then \
       install -m 0755 /opt/vendor/rtk /usr/local/bin/rtk && echo "installed rtk"; \
     fi
 
-# Claude CLI baked into the image (stable /usr/local install) for fast, offline
-# container start. A user-home ~/.local install still takes PATH precedence and is
-# auto-updated by the entrypoint; this is the pinned fallback / fresh-home default.
-RUN npm install -g @anthropic-ai/claude-code && claude --version
+# Coding-agent CLIs baked into the image (stable /usr/local install) for fast,
+# offline container start. claude: a user-home ~/.local install still takes PATH
+# precedence and is auto-updated by the entrypoint; this is the pinned fallback /
+# fresh-home default. opencode: an alternative agent (kind="opencode"); its auth
+# (opencode auth login) and sessions persist under ~/.local/share/opencode (home).
+RUN npm install -g @anthropic-ai/claude-code opencode-ai \
+ && claude --version && opencode --version
 
 # UTF-8 ロケール。未設定(POSIX)だと tmux が UTF-8 を無効化し日本語等が化ける。
 # C.UTF-8 は locale 生成不要で Debian に存在する。
