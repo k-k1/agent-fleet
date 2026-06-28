@@ -4,10 +4,13 @@ import Icon from "./Icon.jsx";
 // Top bar: product name, tenant picker (hidden for single-membership users),
 // the signed-in identity, and the settings button (Connections + Admin tabs).
 export default function TopBar() {
-  const { whoami, tenants, tenant, showPicker, selectTenant, openSettings, openAdmin, superAdmin } = useApp();
+  const { whoami, tenants, tenant, showPicker, selectTenant, openSettings, openAdmin, superAdmin, toggleNav } = useApp();
   const me = whoami?.email || whoami?.user || "";
   return (
     <header className="topbar">
+      <button className="nav-toggle" title="メニュー（Sessions / Repos / Files）" onClick={toggleNav}>
+        <Icon name="menu" />
+      </button>
       <div className="brand">
         Agent Fleet <span className="brand-sub">Console</span>
       </div>

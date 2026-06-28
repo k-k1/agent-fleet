@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ensureTerm, fit, focusTerm, onSession, reconstructURL } from "../term.js";
 import Icon from "../components/Icon.jsx";
+import TermKeys from "../components/TermKeys.jsx";
 
 // TerminalView hosts the persistent xterm instance. The container stays mounted
 // across mode switches (App hides it rather than unmounting), so the PTY socket
@@ -93,6 +94,7 @@ export default function TerminalView({ active }) {
         </button>
       </header>
       <div className="terminal" ref={ref} />
+      <TermKeys />
     </div>
   );
 }

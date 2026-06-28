@@ -62,6 +62,14 @@ export function AppProvider({ children }) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [adminOpen, setAdminOpen] = useState(false);
 
+  // navOpen drives the mobile navigator drawer. On desktop the drawer styles are
+  // inert (the left pane is always visible), so this flag is a no-op there; under
+  // the mobile breakpoint it slides the navigator in/out. Selecting any item closes
+  // it (wired into the show* helpers below) so the main area comes forward.
+  const [navOpen, setNavOpen] = useState(false);
+  const closeNav = useCallback(() => setNavOpen(false), []);
+  const toggleNav = useCallback(() => setNavOpen((o) => !o), []);
+
   // refresh signals — bump to make the matching section refetch
   const [sessionsKey, setSessionsKey] = useState(0);
   const [reposKey, setReposKey] = useState(0);
@@ -128,11 +136,24 @@ export function AppProvider({ children }) {
         setSession(sess);
       }
       go({ mode: "terminal" });
+      setNavOpen(false);
     },
     [go],
   );
-  const showSCM = useCallback((repo) => go({ mode: "scm", scmRepo: repo }), [go]);
-  const showFile = useCallback((path) => go({ mode: "file", filePath: path }), [go]);
+  const showSCM = useCallback(
+    (repo) => {
+      go({ mode: "scm", scmRepo: repo });
+      setNavOpen(false);
+    },
+    [go],
+  );
+  const showFile = useCallback(
+    (path) => {
+      go({ mode: "file", filePath: path });
+      setNavOpen(false);
+    },
+    [go],
+  );
 
   // cycleSession attaches the previous/next session (wrapping), for Ctrl+PgUp/PgDn.
   const cycleSession = useCallback(
@@ -250,6 +271,9 @@ export function AppProvider({ children }) {
     adminOpen,
     openAdmin: () => setAdminOpen(true),
     closeAdmin: () => setAdminOpen(false),
+    navOpen,
+    toggleNav,
+    closeNav,
     sessionsKey,
     reposKey,
     connKey,

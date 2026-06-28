@@ -1927,3 +1927,135 @@ button.primary:hover:not(:disabled) {
 .session-modal .repopicker {
   margin-top: 8px;
 }
+
+/* ---- mobile (≤760px) ---------------------------------------------------------
+   Desktop is untouched: the three elements below exist only for the phone layout
+   and stay hidden until the breakpoint. On small screens the fixed 300px left
+   pane becomes an off-canvas drawer, the main area goes full-width, dialogs go
+   full-screen, and the terminal gains a tap-able control-key strip. */
+.nav-toggle,
+.nav-backdrop,
+.termkeys {
+  display: none;
+}
+
+@media (max-width: 760px) {
+  /* top bar: hamburger in, secondary chrome trimmed so it fits a phone width */
+  .nav-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: none;
+    color: var(--fg);
+    font-size: 20px;
+    padding: 4px 6px;
+  }
+  .topbar {
+    gap: 8px;
+    padding: 8px 10px;
+  }
+  .brand {
+    font-size: 14px;
+  }
+  .brand-sub {
+    display: none;
+  }
+  .topbar-right {
+    gap: 8px;
+  }
+  .whoami {
+    max-width: 96px;
+  }
+
+  /* WS bar wraps and grows its tap targets */
+  .wsbar {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .wsbar button {
+    min-height: 40px;
+    padding: 6px 12px;
+  }
+
+  /* navigator → off-canvas drawer. Pad the top (plus the notch's safe area) so the
+     first section header (SESSIONS) sits a little lower and reads clearly instead
+     of jamming against the status bar. */
+  .leftpane {
+    position: fixed;
+    z-index: 60;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: min(86vw, 320px);
+    padding-top: calc(14px + env(safe-area-inset-top));
+    transform: translateX(-100%);
+    transition: transform 0.2s ease;
+    box-shadow: 2px 0 14px rgba(0, 0, 0, 0.45);
+  }
+  .body.nav-open .leftpane {
+    transform: none;
+  }
+  .nav-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 55;
+    background: rgba(0, 0, 0, 0.5);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s ease;
+  }
+  .body.nav-open .nav-backdrop {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .main {
+    width: 100%;
+  }
+
+  /* roomier tap targets in the navigator lists */
+  .pane-head {
+    padding: 6px 8px;
+  }
+  .pane-toggle {
+    font-size: 12px;
+    padding: 6px 4px;
+  }
+  .session-btn,
+  .repo-name,
+  .fsrow {
+    min-height: 40px;
+  }
+
+  /* dialogs go full-screen on a phone */
+  .modal-backdrop {
+    align-items: stretch;
+    justify-content: stretch;
+  }
+  .modal {
+    width: 100vw;
+    height: 100dvh;
+    max-width: 100vw;
+    border: none;
+    border-radius: 0;
+  }
+
+  /* terminal control-key strip (taps inject Esc / arrows / Ctrl-C / Enter) */
+  .termkeys {
+    display: flex;
+    gap: 4px;
+    padding: 6px;
+    overflow-x: auto;
+    background: var(--bar);
+    border-top: 1px solid var(--border);
+    -webkit-overflow-scrolling: touch;
+  }
+  .termkey {
+    flex: 0 0 auto;
+    min-width: 46px;
+    min-height: 40px;
+    font-family: var(--mono);
+    font-size: 14px;
+  }
+}

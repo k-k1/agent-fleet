@@ -98,6 +98,48 @@ export function ensureTerm(el) {
         pasteClipboard();
       }
     });
+    // Touch scrolling: a phone has no wheel, so translate a one-finger vertical
+    // drag into scrollback movement. Drag down to reveal older lines, up for newer
+    // — the natural "content follows the finger" direction. We accumulate pixels and
+    // scroll whole rows so it tracks smoothly. (In an alt-screen TUI there's no
+    // scrollback, so scrollLines is a no-op there and the app's own keys page.)
+    let lastY = null,
+      acc = 0;
+    const cellH = () => {
+      const vp = term.element.querySelector(".xterm-viewport");
+      return vp && term.rows ? vp.clientHeight / term.rows : 18;
+    };
+    term.element.addEventListener(
+      "touchstart",
+      (ev) => {
+        if (ev.touches.length === 1) {
+          lastY = ev.touches[0].clientY;
+          acc = 0;
+        }
+      },
+      { passive: true },
+    );
+    term.element.addEventListener(
+      "touchmove",
+      (ev) => {
+        if (lastY == null || ev.touches.length !== 1) return;
+        const y = ev.touches[0].clientY;
+        acc += lastY - y;
+        lastY = y;
+        const h = cellH();
+        const lines = Math.trunc(acc / h);
+        if (lines !== 0) {
+          term.scrollLines(lines);
+          acc -= lines * h;
+        }
+      },
+      { passive: true },
+    );
+    const endTouch = () => {
+      lastY = null;
+    };
+    term.element.addEventListener("touchend", endTouch, { passive: true });
+    term.element.addEventListener("touchcancel", endTouch, { passive: true });
   }
   // Crisp GPU rendering; fall back silently if WebGL2 is unavailable/lost.
   try {
@@ -182,7 +224,21 @@ export function ensureTerm(el) {
   term.onData((d) => ws && ws.readyState === 1 && ws.send(JSON.stringify({ type: "input", data: d })));
   term.onResize(({ cols, rows }) => ws && ws.readyState === 1 && ws.send(JSON.stringify({ type: "resize", cols, rows })));
   window.addEventListener("resize", fit);
+  // On mobile the soft keyboard shrinks the layout viewport rather than firing a
+  // window resize; visualViewport fires its own resize so the grid refits and the
+  // prompt isn't left hidden behind the keyboard.
+  if (window.visualViewport) window.visualViewport.addEventListener("resize", fit);
   return term;
+}
+
+// sendInput pushes a raw byte sequence to the PTY exactly like a typed key (no
+// bracketed-paste wrapping), so the mobile control-key strip can emit Esc / arrows
+// / Ctrl-C / Enter. We deliberately do NOT focus the terminal: input goes straight
+// over the socket, so focusing would only summon the soft keyboard (Gboard) when
+// it's closed. The strip's buttons preventDefault on mousedown, so an already-open
+// keyboard keeps its focus and stays up.
+export function sendInput(data) {
+  if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: "input", data }));
 }
 
 export function fit() {
