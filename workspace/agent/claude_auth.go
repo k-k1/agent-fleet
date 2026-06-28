@@ -224,6 +224,24 @@ func claudeLoggedIn() bool {
 	return st.LoggedIn
 }
 
+// claudeStatus reports connection status plus the authenticated account (email,
+// plan) for the Console — `claude auth status` exposes the logged-in identity.
+func claudeStatus() map[string]any {
+	out, err := exec.Command("claude", "auth", "status").Output()
+	if err != nil {
+		return map[string]any{"connected": false}
+	}
+	var st struct {
+		LoggedIn         bool   `json:"loggedIn"`
+		Email            string `json:"email"`
+		SubscriptionType string `json:"subscriptionType"`
+	}
+	if json.Unmarshal(out, &st) != nil || !st.LoggedIn {
+		return map[string]any{"connected": false}
+	}
+	return map[string]any{"connected": true, "email": st.Email, "plan": st.SubscriptionType}
+}
+
 // waitFor polls the flow's cleaned output until re matches or the timeout hits.
 func waitFor(f *claudeFlow, re *regexp.Regexp, timeout time.Duration) string {
 	deadline := time.Now().Add(timeout)

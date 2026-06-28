@@ -101,7 +101,10 @@ function CodexRow({ st, reload }) {
       <span className="cname">Codex</span>
       {st?.connected ? (
         <>
-          <span className="cwho">connected</span>
+          <span className="cwho" title={st.email || ""}>
+            {st.email || (st.method === "apikey" ? "API キー" : "ChatGPT")}
+            {st.plan ? ` · ${st.plan}` : ""}
+          </span>
           <button className="icon danger" title="切断" onClick={disconnect}>
             ✕
           </button>
@@ -297,7 +300,10 @@ function ClaudeRow({ st, reload }) {
       <span className="cname">Claude</span>
       {st?.connected ? (
         <>
-          <span className="cwho">connected</span>
+          <span className="cwho" title={st.email || "connected"}>
+            {st.email || "connected"}
+            {st.plan ? ` · ${st.plan}` : ""}
+          </span>
           <button className="icon danger" title="切断" onClick={disconnect}>
             ✕
           </button>
