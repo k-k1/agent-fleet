@@ -9,7 +9,7 @@ const stateInfo = (s) => {
   if (!s.alive) {
     // A stopped claude whose working dir was deleted can't be resumed (archive only).
     if (s.resumable === false) return { cls: "off dead", text: "フォルダ無し — 再開不可" };
-    return { cls: "off", text: "停止中 — クリックで再開" };
+    return { cls: "off", text: "停止中" };
   }
   if (s.kind === "shell") return { cls: "on", text: "● 起動中" };
   // claude (hooks) and opencode (plugin) both report working/idle. opencode has no
@@ -160,9 +160,9 @@ export default function SessionsSection() {
           <li key={s.name} className={"session-row" + (session === s.name ? " active" : "") + (s.alive ? "" : " stopped") + (dead ? " dead" : "")}>
             <button
               className="session-btn"
-              title={dead ? "作業フォルダが存在しないため再開できません" : s.dir || ""}
-              disabled={dead}
-              onClick={() => !dead && showTerminal(s.name)}
+              title={dead ? "作業フォルダが存在しないため再開できません" : !s.alive ? "停止中（⋯メニューから再開）" : s.dir || ""}
+              disabled={!s.alive}
+              onClick={() => s.alive && showTerminal(s.name)}
             >
               <span className="session-l1">
                 <span className="session-display">{displayName(s)}</span>
@@ -188,6 +188,17 @@ export default function SessionsSection() {
               </button>
               {menuFor === s.name && (
                 <div className="session-menu">
+                  {!s.alive && !dead && (
+                    <button
+                      className="session-menu-item"
+                      onClick={() => {
+                        setMenuFor(null);
+                        showTerminal(s.name);
+                      }}
+                    >
+                      再開する
+                    </button>
+                  )}
                   {s.remoteUrl && (
                     <button
                       className="session-menu-item"
