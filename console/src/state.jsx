@@ -51,6 +51,8 @@ export function AppProvider({ children }) {
     const onPop = (e) => {
       const s = e.state && e.state.__af ? e.state : { mode: "terminal", scmRepo: null, filePath: null };
       setNav({ mode: s.mode ?? "terminal", scmRepo: s.scmRepo ?? null, filePath: s.filePath ?? null });
+      // Reopen the mobile drawer when stepping back onto a "drawer open" entry.
+      setNavOpen(!!s.drawer);
     };
     window.addEventListener("popstate", onPop);
     try {
@@ -67,8 +69,21 @@ export function AppProvider({ children }) {
   // the mobile breakpoint it slides the navigator in/out. Selecting any item closes
   // it (wired into the show* helpers below) so the main area comes forward.
   const [navOpen, setNavOpen] = useState(false);
+  const navOpenRef = useRef(navOpen);
+  navOpenRef.current = navOpen;
   const closeNav = useCallback(() => setNavOpen(false), []);
   const toggleNav = useCallback(() => setNavOpen((o) => !o), []);
+
+  // pushDrawerEntry records a history entry representing "the mobile drawer is open
+  // over the current view". The show* helpers push it just before navigating away
+  // from an OPEN drawer, so the device/browser back button reopens the drawer
+  // instead of jumping straight to the previous main view. popstate reads the
+  // `drawer` flag to restore navOpen. No-op-ish on desktop (navOpen stays false).
+  const pushDrawerEntry = useCallback(() => {
+    try {
+      history.pushState({ __af: true, ...navRef.current, drawer: true }, "");
+    } catch {}
+  }, []);
 
   // refresh signals — bump to make the matching section refetch
   const [sessionsKey, setSessionsKey] = useState(0);
@@ -128,9 +143,12 @@ export function AppProvider({ children }) {
     bumpFiles();
   }, [go, refreshWs, bumpSessions, bumpRepos, bumpFiles]);
 
-  // navigation helpers used across the UI (each pushes a history entry via go)
+  // navigation helpers used across the UI (each pushes a history entry via go).
+  // When invoked while the mobile drawer is open, they first record a "drawer open"
+  // history entry so the back button reopens the drawer (see pushDrawerEntry).
   const showTerminal = useCallback(
     (sess) => {
+      if (navOpenRef.current) pushDrawerEntry();
       if (sess) {
         termAttach(sess);
         setSession(sess);
@@ -138,21 +156,23 @@ export function AppProvider({ children }) {
       go({ mode: "terminal" });
       setNavOpen(false);
     },
-    [go],
+    [go, pushDrawerEntry],
   );
   const showSCM = useCallback(
     (repo) => {
+      if (navOpenRef.current) pushDrawerEntry();
       go({ mode: "scm", scmRepo: repo });
       setNavOpen(false);
     },
-    [go],
+    [go, pushDrawerEntry],
   );
   const showFile = useCallback(
     (path) => {
+      if (navOpenRef.current) pushDrawerEntry();
       go({ mode: "file", filePath: path });
       setNavOpen(false);
     },
-    [go],
+    [go, pushDrawerEntry],
   );
 
   // cycleSession attaches the previous/next session (wrapping), for Ctrl+PgUp/PgDn.
