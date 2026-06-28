@@ -2,9 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useApp } from "../../state.jsx";
 import { api } from "../../api.js";
 import { dirName } from "../../lib/filemeta.js";
-import { fileIcon, dirIcon } from "../../lib/fileicons.js";
 import Section from "../Section.jsx";
 import Icon from "../Icon.jsx";
+import FileIcon, { DirIcon } from "../FileIcon.jsx";
 
 // A directory is a "passthrough" link in a compact chain when its sole entry is one
 // subdirectory (no files) — these get folded into one row (a/b/c) so deep, single-
@@ -307,7 +307,7 @@ export default function FilesSection() {
             >
               <span className={r.type === "dir" ? "fs-dir" : "fs-file" + (isActiveFile ? " active" : "")}>
                 <span className="fs-chev">{r.type === "dir" ? (isOpen ? "▾" : "▸") : ""}</span>
-                <span className="fs-ic">{r.type === "dir" ? dirIcon(isOpen) : fileIcon(r.name)}</span>
+                <span className="fs-ic">{r.type === "dir" ? <DirIcon open={isOpen} /> : <FileIcon name={r.name} />}</span>
                 {r.name}
               </span>
             </li>

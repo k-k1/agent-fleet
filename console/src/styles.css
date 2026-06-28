@@ -764,6 +764,27 @@ textarea:focus {
   font-style: normal;
 }
 
+/* file-type icons: colorful brand SVGs (VS Code icons set) + monochrome codicon
+   fallbacks. The brand <img> is sized to the line; codicons follow currentColor. */
+.fi-svg {
+  width: 1.15em;
+  height: 1.15em;
+  vertical-align: -0.22em;
+  object-fit: contain;
+}
+.fi-folder {
+  color: #8cb4d8;
+}
+.fi-generic {
+  color: var(--muted);
+}
+.fi-ai {
+  color: var(--accent);
+}
+.fi-secret {
+  color: var(--warn);
+}
+
 /* ---- forms ---- */
 .form {
   display: flex;
