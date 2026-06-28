@@ -13,7 +13,7 @@ Phase 1 MVP 完了（2026-06-26, commit `dd2330e`）以降、Phase 2 完了・Ph
 - **Workspace コンテナ**: 運用者は `af-ws-k1-kami-gmail-com`（image `agent-fleet/workspace:dev`）。`~`= bind mount `/tmp/af-data/<user>/home`（永続・`/login` 済み）。許可ユーザー追加は `~/oauth2-proxy/emails.txt` に1行追記 → その Google ログインで `af-ws-<email>` が自動払い出し（相互不可視: 別 home/別ネットワーク/別トークン）。dev 形態に戻すには oauth.env の `AUTH` 行を外す。
 - **外部アクセス**: `https://af.example.ts.net/agent-fleet/`
   （Tailscale Funnel → oauth2-proxy(Google) → Caddy(strip `/agent-fleet`, :8888) → CP :8099）。設定は `~/docs/funnel-auth-setup.md`。
-- **イメージ**: `agent-fleet/workspace:dev`（最新, 約1.0G, 焼き込み内容は §6.10.7）。**Java は image 外**＝ホスト共有 dir `WS_DATA/shared/jvm`（Temurin 8/21/25）を `/usr/lib/jvm:ro` でマウント（§6.10.7）。
+- **イメージ**: `agent-fleet/workspace:dev`（最新, 約2.8G, 焼き込み内容は §6.10.7）。**Java は image 外**＝ホスト共有 dir `WS_DATA/shared/jvm`（Temurin 8/21/25）を `/usr/lib/jvm:ro` でマウント（§6.10.7）。
 
 ## 2. ツールチェーン / 実行の作法
 
@@ -272,12 +272,14 @@ claude と並ぶ session `kind="opencode"`。codex / Antigravity は未着手（
 - **キーボード**: ファイルツリー ↑↓←→Enter・**Ctrl+↑↓=フォルダ移動**・**Shift+↑↓=ビュアースクロール**・**Ctrl+PgUp/Dn=セッション切替**。
 - **表示設定**（`lib/settings.js`）: 端末/ビュアー別フォント（Source Code Pro/JetBrains Mono/Fira Code/IBM Plex Mono）・サイズ stepper・行番号/折返し/ミニマップ/タブ幅。**per-user でサーバー保存**（`ui_prefs.go`: `GET/PUT /env/ui-prefs`、`~/.config/agent-fleet/ui-prefs.json`(0600)＝denylist 配下・home 永続、JSON object 検証＋64KiB cap）。localStorage を即時キャッシュにしつつ `setSetting` で 600ms デバウンス PUT、boot 時 `hydrateUIPrefs()` が GET→マージ（**server が localStorage に優先**、不達は localStorage で動作）＝別ブラウザ/端末でも追従。
 - **管理の分離**: 管理（super_admin）は SettingsDialog から撤去し独立モーダル `AdminDialog.jsx`（`AdminTab` 内包）に。TopBar に `shield` ボタン（super_admin のみ）。
+- **スマホ対応（監視＋軽操作・2026-06-28）**: 全分岐を **`@media (max-width:760px)`** に閉じ込め、デスクトップは不変。左ペイン（Sessions/Repos/Files）を**オフキャンバスのドロワー**化（TopBar のハンバーガー `codicon-menu` で開閉、バックドロップでクローズ、項目選択で自動クローズ＝`state.jsx` の `navOpen` を `show*` に配線）。メイン全幅・**モーダル全画面**（`100vw`×`100dvh`）・リスト行 40px タッチターゲット・ドロワー頭に `safe-area-inset` 余白。**端末**: 最小コントロールキー列 `Esc/Tab/矢印/Ctrl-C/Enter`（`TermKeys.jsx`、`onMouseDown preventDefault` でフォーカスを奪わない、`sendInput` が WS 直送＝**Gboard を不要に呼ばない**）、`visualViewport` resize で `fit()`（ソフトキーボード追従）、**1 本指縦スワイプ→`scrollLines`** でスクロールバックを遡れる。範囲外（据置）: フル・タッチ端末の全キー/タッチ選択コピー、PWA/バックグラウンド push（通知は前景 `Notification` のまま）。
 
 ### 6.10.7 インフラ（image 同梱・JVM・tz・ゾンビ reap）
 
-- **image**（`workspace/Dockerfile`、約 1.0G、multi-stage golang→node:22-slim）。焼き込み: rtk（`workspace/vendor/rtk` 静的バイナリ、git 管理外＝`run-dev.sh` がホスト `~/.local/bin/rtk` を vendor）/ claude CLI（`npm i -g @anthropic-ai/claude-code`）/ opencode-ai / python3 / vim / git-lfs。entrypoint は `~/.local` の claude のみ自動更新、焼いた版は固定。
+- **image**（`workspace/Dockerfile`、約 2.8G、multi-stage golang→node:22-slim）。焼き込み: rtk（`workspace/vendor/rtk` 静的バイナリ、git 管理外＝`run-dev.sh` がホスト `~/.local/bin/rtk` を vendor）/ claude CLI（`npm i -g @anthropic-ai/claude-code`）/ opencode-ai / python3 / vim / git-lfs。entrypoint は `~/.local` の claude のみ自動更新、焼いた版は固定。
+  - **言語ツールチェーン**（2026-06-28 追加）: **Go**（公式 tarball を `ARG GO_VERSION`（=1.26.4、go.mod の `go` 指定と歩調を合わせる）+ アーキ検出で導入。`COPY --from` ではなくビルダーから独立。`go install` 先 / モジュールキャッシュは `~/go`＝home volume 永続。PATH に `/usr/local/go/bin`・`~/go/bin` を ENV と profile.d 双方で前置）。**C/C++ ビルド基盤** `build-essential`+`pkg-config`+`python3-dev`（cgo / node-gyp / ソースビルド wheel / Makefile が動く）。**定番ツール** jq/unzip/zip/wget/gnupg/htop、`fd-find`/`bat`（Debian 命名 `fdfind`/`batcat`→ `fd`/`bat` シンボリックリンク）。**git-delta は bookworm 非収録で除外**（必要なら GitHub の .deb）、**sudo は隔離維持で非導入**。Java は依然 image 外（共有 JVM dir マウント、下記）。
 - **settings.json は「無い時のみ」seed**（`skipDangerousModePermissionPrompt`/`remoteControlAtStartup`/`agentPushNotifEnabled` ＋ rtk フック。RC/通知は seed 既定 true）。以後は ⚙→Claude が真実（毎起動 force だと UI と喧嘩する）。`PUT /api/claude/settings {rtk:true}` で後付け補填可。
-- **Java は image 外で共有**: `workspace/jvm.Dockerfile`＋`deploy/local/provision-jvm.sh`（冪等）でホスト共有 dir `WS_DATA/shared/jvm` に Temurin **8/21/25** を展開→`runtime.go` が **`WS_JVM_DIR` を `/usr/lib/jvm:ro`** でマウント。**image は 2.1G→1.0G**。**JDK 版変更**＝`jvm.Dockerfile` 編集→共有 dir を `rm -rf` 再 provision。
+- **Java は image 外で共有**: `workspace/jvm.Dockerfile`＋`deploy/local/provision-jvm.sh`（冪等）でホスト共有 dir `WS_DATA/shared/jvm` に Temurin **8/21/25** を展開→`runtime.go` が **`WS_JVM_DIR` を `/usr/lib/jvm:ro`** でマウント。**image は JVM 外出しで 2.1G→1.0G**（その後 §言語ツールチェーン追加で約 2.8G）。**JDK 版変更**＝`jvm.Dockerfile` 編集→共有 dir を `rm -rf` 再 provision。
   - **⚠️ cacerts**: Temurin の cacerts は `/etc/ssl/certs/adoptium/cacerts`（`/usr/lib/jvm` の外）への symlink。共有 dir には `/usr/lib/jvm/.` だけ抽出するためマウント先で **dangling＝空トラストストア→SSL 失敗**。修正＝`jvm.Dockerfile` が install 後に `find /usr/lib/jvm -name cacerts -type l` を `readlink -f` の実体で置換。**運用反映には共有 JVM dir の再 provision が必要**（既存 dir があると provision はスキップ）。
 - **Python 3 同梱**: `python3 python3-pip python3-venv python-is-python3`（bookworm = 3.11.2）。PEP 668 対策に `/etc/pip.conf` で `break-system-packages = true`＝`pip install --user` が永続 home `~/.local`（PATH 済）に入る。将来 pyenv で版選択は未実施。
 - **node**: nvm（home volume・オンデマンド）。
