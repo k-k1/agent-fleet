@@ -234,58 +234,73 @@ func githubListBranches(token, repo string) ([]remoteBranch, string, error) {
 	return out, def, nil
 }
 
-// githubAccount returns the authenticated GitHub login (e.g. "octocat") for the
-// token, via GET /user. Used to show the real account in Connections instead of the
-// "x-access-token" git-username placeholder.
-func githubAccount(token string) (string, error) {
+// githubAccount returns the authenticated GitHub login (e.g. "octocat") and its
+// email (may be "" when the account hides it), via GET /user. Used to show the real
+// account in Connections instead of the "x-access-token" git-username placeholder.
+func githubAccount(token string) (login, email string, err error) {
 	client := &http.Client{Timeout: 10 * time.Second}
 	req, err := http.NewRequest("GET", "https://api.github.com/user", nil)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	githubHeaders(req, token)
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("github /user %d", resp.StatusCode)
+		return "", "", fmt.Errorf("github /user %d", resp.StatusCode)
 	}
 	var u struct {
 		Login string `json:"login"`
+		Email string `json:"email"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&u); err != nil {
-		return "", err
+		return "", "", err
 	}
-	return u.Login, nil
+	return u.Login, u.Email, nil
 }
 
-// bitbucketAccount returns the authenticated Bitbucket account name via GET
-// /2.0/user (display name preferred, else username/nickname). Requires the token's
-// "account" scope; callers fall back to the stored email / placeholder on error.
-func bitbucketAccount(auth string) (string, error) {
+// bitbucketAccount returns the authenticated Bitbucket handle (username/nickname)
+// and primary email. The handle comes from GET /2.0/user; the email from a second,
+// best-effort GET /2.0/user/emails (empty when the token lacks the email scope).
+// Requires the token's "account" scope; callers fall back to email/placeholder.
+func bitbucketAccount(auth string) (handle, email string, err error) {
 	client := &http.Client{Timeout: 10 * time.Second}
 	body, err := bitbucketGet(client, auth, "https://api.bitbucket.org/2.0/user")
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	var u struct {
 		Username    string `json:"username"`
-		DisplayName string `json:"display_name"`
 		Nickname    string `json:"nickname"`
+		DisplayName string `json:"display_name"`
 	}
 	if err := json.Unmarshal(body, &u); err != nil {
-		return "", err
+		return "", "", err
 	}
-	switch {
-	case u.DisplayName != "":
-		return u.DisplayName, nil
-	case u.Username != "":
-		return u.Username, nil
-	default:
-		return u.Nickname, nil
+	handle = firstNonEmpty(u.Username, u.Nickname, u.DisplayName)
+	if eb, eerr := bitbucketGet(client, auth, "https://api.bitbucket.org/2.0/user/emails"); eerr == nil {
+		var er struct {
+			Values []struct {
+				Email     string `json:"email"`
+				IsPrimary bool   `json:"is_primary"`
+			} `json:"values"`
+		}
+		if json.Unmarshal(eb, &er) == nil {
+			for _, v := range er.Values {
+				if v.IsPrimary {
+					email = v.Email
+					break
+				}
+			}
+			if email == "" && len(er.Values) > 0 {
+				email = er.Values[0].Email
+			}
+		}
 	}
+	return handle, email, nil
 }
 
 func githubHeaders(req *http.Request, token string) {

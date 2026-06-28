@@ -51,7 +51,9 @@
 - サービスプレビュー（`/preview/<port>` 経路、commit `7649c64`）。CP `handlePreview`（`rtFor` 認証 + `Bearer` 付与 + `X-Forwarded-*`）→ Agent `/proxy/<port>`（ReverseProxy）→ コンテナ内 `127.0.0.1:<port>`。隔離不変。Console は WS バーのポート入力＋新タブ（`?tenant=` fallback）。HTTP のみ（WS/HMR は次段）。詳細 [reference/preview](reference/preview.md)、HANDOFF §6.10.9。
 ## 2026-06-29
 - 設定→接続で**認証アカウントを表示**。claude（`claude auth status` の email/plan）、codex（`auth.json` の `auth_mode` + id_token claims から email/plan、例 `…@gmail.com · plus`）。
-- 接続を**「エージェント / git ホスティング」にカテゴリ分け**。GitHub/Bitbucket も実アカウント表示（`/user`・`/2.0/user`、store キャッシュ＝polled endpoint で都度 API を叩かない、`gitEntry.Login`/`bitbucketCreds.Account`）。例: github `k-k1` / bitbucket `Example User`。
+- 接続を**「エージェント / git ホスティング」にカテゴリ分け**。GitHub/Bitbucket も実アカウント表示（`/user`・`/2.0/user`、store キャッシュ＝polled endpoint で都度 API を叩かない、`gitEntry.Login`/`bitbucketCreds.Account`）。
+- git 接続に **ID（ハンドル）+ email** を表示（GitHub `/user`、Bitbucket `/2.0/user` + `/user/emails`、`gitEntry.Email`/`bitbucketCreds.Email` にキャッシュ）。例: github `k-k1 · k1.kami@gmail.com` / bitbucket `bb-user · dev@example.com`。
+- 表示: アイコンセット選択を折り返しチップ化（スマホで見切れ解消、`ChipChoice`）。設定/管理モーダルのヘッダ余白拡大 + ✕ タップ域確保（スマホは `safe-area-inset-top`）。
 
 ## 2026-06-28（続き）
 - codex をエージェント追加（`kind="codex"`、OpenAI Codex CLI `@openai/codex` を image 焼き込み）。認証2経路（API キー=`codex login --with-api-key` stdin / サブスク=`codex login --device-auth` device flow、ともに codex 所有の `~/.codex/auth.json` を書く＝secrets.enc 不要）。状態は claude 同型フックを**起動時 `-c` 注入**（per-slot sid 埋め込み・`--dangerously-bypass-hook-trust`）で working/idle。resume はフック stdin の `session_id` 捕捉 →`codex resume <id>`。`~/.codex` を denylist。`codex_auth.go` 新規。実 CLI 0.142.3 で hooks 形式 / device-auth 出力 / login 経路を実検証（認証完了は要 OpenAI 資格）。詳細 HANDOFF §6.10.4。

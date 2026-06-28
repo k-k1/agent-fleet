@@ -29,7 +29,8 @@ import (
 type gitEntry struct {
 	User  string `json:"user"`
 	Token string `json:"token"`
-	Login string `json:"login,omitempty"` // cached real provider account (resolved from the API)
+	Login string `json:"login,omitempty"` // cached real provider account/handle (resolved from the API)
+	Email string `json:"email,omitempty"` // cached account email (resolved from the API)
 }
 
 type secretsData struct {

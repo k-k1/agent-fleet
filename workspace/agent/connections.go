@@ -47,10 +47,10 @@ func handleConnectionsGet(w http.ResponseWriter, r *http.Request) {
 func bitbucketStatus(s *secretsData) map[string]any {
 	if e, ok := s.Git["bitbucket.org"]; ok {
 		m := map[string]any{"connected": true}
-		if e.Login == "" && e.Token != "" {
+		if (e.Login == "" || e.Email == "") && e.Token != "" {
 			if auth, err := bitbucketAuthHeader(s); err == nil {
-				if l, err := bitbucketAccount(auth); err == nil && l != "" {
-					e.Login = l
+				if h, email, err := bitbucketAccount(auth); err == nil && h != "" {
+					e.Login, e.Email = h, email
 					s.Git["bitbucket.org"] = e
 					_ = s.save()
 				}
@@ -59,42 +59,52 @@ func bitbucketStatus(s *secretsData) map[string]any {
 		if name := firstNonEmpty(e.Login, e.User); name != "" {
 			m["username"] = name
 		}
+		if e.Email != "" {
+			m["email"] = e.Email
+		}
 		return m
 	}
 	if s.Bitbucket != nil {
 		m := map[string]any{"connected": true}
-		if s.Bitbucket.Account == "" {
+		if s.Bitbucket.Account == "" || s.Bitbucket.Email == "" {
 			if auth, err := bitbucketAuthHeader(s); err == nil {
-				if l, err := bitbucketAccount(auth); err == nil && l != "" {
-					s.Bitbucket.Account = l
+				if h, email, err := bitbucketAccount(auth); err == nil && h != "" {
+					s.Bitbucket.Account, s.Bitbucket.Email = h, email
 					_ = s.save()
 				}
 			}
 		}
 		m["username"] = firstNonEmpty(s.Bitbucket.Account, "x-token-auth (oauth)")
+		if s.Bitbucket.Email != "" {
+			m["email"] = s.Bitbucket.Email
+		}
 		return m
 	}
 	return map[string]any{"connected": false}
 }
 
-// gitConnStatus reports a git provider's connection + the real account, resolved
-// once from the provider API and cached in the store (write-through), so the
-// polled endpoint doesn't re-fetch. Falls back to the git-username placeholder.
+// gitConnStatus reports a git provider's connection + the real account (handle +
+// email), resolved once from the provider API and cached in the store
+// (write-through), so the polled endpoint doesn't re-fetch. Falls back to the
+// git-username placeholder; email is omitted when unavailable.
 func gitConnStatus(s *secretsData, host string) map[string]any {
 	e, ok := s.Git[host]
 	m := map[string]any{"connected": ok}
 	if !ok {
 		return m
 	}
-	if host == "github.com" && e.Login == "" && e.Token != "" {
-		if l, err := githubAccount(e.Token); err == nil && l != "" {
-			e.Login = l
+	if host == "github.com" && (e.Login == "" || e.Email == "") && e.Token != "" {
+		if login, email, err := githubAccount(e.Token); err == nil && login != "" {
+			e.Login, e.Email = login, email
 			s.Git[host] = e
 			_ = s.save()
 		}
 	}
 	if name := firstNonEmpty(e.Login, e.User); name != "" {
 		m["username"] = name
+	}
+	if e.Email != "" {
+		m["email"] = e.Email
 	}
 	return m
 }

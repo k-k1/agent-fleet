@@ -1525,9 +1525,18 @@ textarea:focus {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 6px 10px;
+  padding: 9px 12px;
   background: var(--bar);
   border-bottom: 1px solid var(--border);
+}
+/* The close button is a comfortable tap target, not cramped against the top edge. */
+.modal-head .icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 32px;
+  min-height: 32px;
+  font-size: 15px;
 }
 .tabs {
   display: flex;
@@ -2065,6 +2074,15 @@ button.primary:hover:not(:disabled) {
     max-width: 100vw;
     border: none;
     border-radius: 0;
+  }
+  /* Full-screen modal header sits at the very top edge: clear the status bar/notch
+     and give the close button a finger-sized target so it's easy to tap. */
+  .modal-head {
+    padding: calc(10px + env(safe-area-inset-top)) calc(12px + env(safe-area-inset-right)) 10px 12px;
+  }
+  .modal-head .icon {
+    min-width: 40px;
+    min-height: 40px;
   }
 
   /* terminal control-key strip (taps inject Esc / arrows / Ctrl-C / Enter) */
