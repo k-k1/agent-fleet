@@ -20,6 +20,98 @@ export default function ConnectionsTab() {
       <ClaudeRow st={conns.claude} reload={reload} />
       <GithubRow st={conns.github} reload={reload} />
       <BitbucketRow st={conns.bitbucket} reload={reload} />
+      <OpencodeRow st={conns.opencode} reload={reload} />
+    </div>
+  );
+}
+
+// opencode auth: provider API keys kept in the encrypted store and injected as env
+// vars (ANTHROPIC_API_KEY, …) when an opencode session launches — the same
+// "settings-driven, stored, injected" model as Claude, but multi-provider.
+const OC_PRESETS = [
+  ["anthropic", "Anthropic", "ANTHROPIC_API_KEY"],
+  ["openai", "OpenAI", "OPENAI_API_KEY"],
+  ["openrouter", "OpenRouter", "OPENROUTER_API_KEY"],
+  ["google", "Google Gemini", "GEMINI_API_KEY"],
+  ["custom", "カスタム…", ""],
+];
+
+function OpencodeRow({ st, reload }) {
+  const [preset, setPreset] = useState("anthropic");
+  const [customEnv, setCustomEnv] = useState("");
+  const [key, setKey] = useState("");
+  const [busy, setBusy] = useState(false);
+  const envs = st?.envs || [];
+  const envName =
+    preset === "custom" ? customEnv.trim().toUpperCase() : OC_PRESETS.find((p) => p[0] === preset)?.[2] || "";
+
+  const add = async () => {
+    if (!envName || !key.trim()) return;
+    setBusy(true);
+    try {
+      const res = await apiJSON("api/connections/opencode", "PUT", { env: envName, key: key.trim() });
+      if (res && res.error) {
+        alert("保存に失敗: " + (res.error.message || res.error));
+        return;
+      }
+      setKey("");
+      setCustomEnv("");
+      reload();
+    } finally {
+      setBusy(false);
+    }
+  };
+  const remove = async (env) => {
+    await raw(`api/connections/opencode/${encodeURIComponent(env)}`, { method: "DELETE" });
+    reload();
+  };
+
+  return (
+    <div className="conn-row conn-block">
+      <div className="conn-head">
+        <Dot on={envs.length > 0} />
+        <span className="cname">opencode</span>
+        <span className="muted">プロバイダ API キー（起動時に env 注入）</span>
+      </div>
+      {envs.length > 0 && (
+        <ul className="oc-keys">
+          {envs.map((e) => (
+            <li key={e}>
+              <code>{e}</code>
+              <button className="icon danger" title="削除" onClick={() => remove(e)}>
+                ✕
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="flow">
+        <select className="cinput" value={preset} onChange={(e) => setPreset(e.target.value)}>
+          {OC_PRESETS.map(([v, label]) => (
+            <option key={v} value={v}>
+              {label}
+            </option>
+          ))}
+        </select>
+        {preset === "custom" && (
+          <input
+            className="cinput"
+            placeholder="ENV 名 (例 GROQ_API_KEY)"
+            value={customEnv}
+            onChange={(e) => setCustomEnv(e.target.value)}
+          />
+        )}
+        <input
+          className="cinput"
+          type="password"
+          placeholder={envName ? envName + " の値" : "API キー"}
+          value={key}
+          onChange={(e) => setKey(e.target.value)}
+        />
+        <button disabled={busy || !envName || !key.trim()} onClick={add}>
+          接続
+        </button>
+      </div>
     </div>
   );
 }

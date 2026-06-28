@@ -161,6 +161,8 @@ func main() {
 	mux.HandleFunc("POST /api/connections/claude/start", cfg.proxyAgentREST)
 	mux.HandleFunc("POST /api/connections/claude/complete", cfg.proxyAgentREST)
 	mux.HandleFunc("DELETE /api/connections/claude", cfg.proxyAgentREST)
+	mux.HandleFunc("PUT /api/connections/opencode", cfg.proxyAgentREST)
+	mux.HandleFunc("DELETE /api/connections/opencode/{env}", cfg.proxyAgentREST)
 
 	// Terminal PTY — proxied WebSocket.
 	mux.HandleFunc("GET /ws/terminal", cfg.proxyTerminal)

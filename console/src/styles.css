@@ -1245,6 +1245,29 @@ textarea:focus {
   padding: 10px 4px;
   border-bottom: 1px solid var(--border2);
 }
+.conn-block {
+  flex-direction: column;
+  align-items: stretch;
+}
+.conn-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.oc-keys {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0 0 0 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.oc-keys li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
 .cdot {
   font-size: 10px;
 }

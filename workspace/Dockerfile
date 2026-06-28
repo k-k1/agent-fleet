@@ -35,6 +35,8 @@ RUN printf '[global]\nbreak-system-packages = true\n' > /etc/pip.conf
 COPY --from=agentbuild /out/workspace-agent /usr/local/bin/workspace-agent
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
+# opencode status plugin (seeded into ~/.config/opencode/plugin by the entrypoint).
+COPY opencode-plugin/ /usr/local/share/agent-fleet/opencode-plugin/
 
 # Optional: install a vendored rtk binary (static) so the claude PreToolUse hook
 # can route Bash through it for token savings. Other deployments leave vendor/

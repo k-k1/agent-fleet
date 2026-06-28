@@ -34,6 +34,7 @@ func handleConnectionsGet(w http.ResponseWriter, r *http.Request) {
 		"claude":    map[string]any{"connected": s.Claude != ""},
 		"github":    gitConnStatus(s, "github.com"),
 		"bitbucket": bitbucketStatus(s),
+		"opencode":  opencodeStatus(s),
 	})
 }
 

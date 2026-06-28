@@ -11,8 +11,9 @@ const stateInfo = (s) => {
     if (s.resumable === false) return { cls: "off dead", text: "フォルダ無し — 再開不可" };
     return { cls: "off", text: "停止中 — クリックで再開" };
   }
-  // Only claude reports a live state (via hooks). shell/opencode just show running.
-  if (s.kind !== "claude") return { cls: "on", text: "● 起動中" };
+  if (s.kind === "shell") return { cls: "on", text: "● 起動中" };
+  // claude (hooks) and opencode (plugin) both report working/idle. opencode has no
+  // "question" state; for either, an empty state means idle (awaiting input).
   switch (s.state) {
     case "working":
       return { cls: "working", text: "● 進行中…" };
@@ -111,7 +112,7 @@ export default function SessionsSection() {
           const seen = {};
           for (const s of list) {
             seen[s.name] = true;
-            if (s.kind !== "claude" || !s.alive) {
+            if (s.kind === "shell" || !s.alive) {
               prev[s.name] = s.state;
               continue;
             }
