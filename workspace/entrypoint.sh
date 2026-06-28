@@ -90,6 +90,19 @@ if [ ! -f "$SETTINGS" ]; then
     || echo "[entrypoint] WARN: failed to seed $SETTINGS"
 fi
 
+# opencode status plugin: copy the bundled plugin into the user's opencode plugin
+# dir (home, persists) so opencode reports session working/idle state back to the
+# agent — the opencode analog of claude's settings.json hooks. Refreshed each start
+# so it tracks the image version. opencode auto-loads ~/.config/opencode/plugin/*.js.
+OC_PLUG_SRC="/usr/local/share/agent-fleet/opencode-plugin"
+OC_PLUG_DST="$HOME/.config/opencode/plugin"
+if [ -d "$OC_PLUG_SRC" ]; then
+  mkdir -p "$OC_PLUG_DST"
+  cp -f "$OC_PLUG_SRC"/*.js "$OC_PLUG_DST"/ 2>/dev/null \
+    && echo "[entrypoint] seeded opencode status plugin" \
+    || echo "[entrypoint] WARN: failed to seed opencode plugin"
+fi
+
 # Toolchains: node (nvm, installed into the home volume) and java (pre-baked
 # Temurin). The selection lives per-workspace in toolchains.json, chosen in the
 # Console. We apply it HERE so the agent — and every tmux session it spawns —

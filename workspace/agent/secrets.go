@@ -35,6 +35,7 @@ type secretsData struct {
 	Git       map[string]gitEntry `json:"git"`       // host -> https cred
 	Claude    string              `json:"claude"`    // CLAUDE_CODE_OAUTH_TOKEN
 	Bitbucket *bitbucketCreds     `json:"bitbucket"` // OAuth refresh creds (bitbucket.org)
+	Opencode  map[string]string   `json:"opencode"`  // provider env var name -> API key (injected for opencode sessions)
 }
 
 // agentSecretKey returns the 32-byte per-user key from AF_SECRET_KEY (hex), or

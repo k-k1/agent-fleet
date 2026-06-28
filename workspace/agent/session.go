@@ -93,9 +93,18 @@ func wireSession(m sessionMeta, alive bool) Session {
 			// be resumed there; the Console marks it non-resumable (archive only).
 			resumable = false
 		}
-	} else if m.Kind == "opencode" && !alive && !dirExists(m.Dir) {
-		// Same as claude: opencode --continue needs its real project dir.
-		resumable = false
+	} else if m.Kind == "opencode" {
+		if alive {
+			// State comes from the bundled opencode plugin (keyed by our sid). No
+			// recorded event yet => idle (sitting at the prompt).
+			state = "idle"
+			if st, ok := readSessionStatus(sessionUUID(m.Dir, m.Name)); ok {
+				state = st.State
+			}
+		} else if !dirExists(m.Dir) {
+			// Same as claude: opencode --continue needs its real project dir.
+			resumable = false
+		}
 	}
 	return Session{
 		Name: m.Name, Tmux: tmuxName(m.Name), Dir: m.Dir, Kind: m.Kind,
@@ -209,7 +218,14 @@ func startSessionTmux(m sessionMeta) error {
 		if !dirOK {
 			return fmt.Errorf("作業フォルダが存在しないため再開できません: %s", m.Dir)
 		}
-		program = buildOpencodeProgram(m.Model)
+		// AF_SESSION_SID lets the bundled opencode plugin report this session's
+		// working/idle state back keyed by OUR deterministic sid (same store claude
+		// uses), so wireSession can surface it. Provider API keys are injected as env
+		// (ANTHROPIC_API_KEY, …) so opencode authenticates without a plaintext file.
+		// The env is prefixed onto the command itself (not tmux -e, which sets only
+		// the session environment and does NOT reach the pane's process).
+		envs := append([]string{"AF_SESSION_SID=" + sessionUUID(m.Dir, m.Name)}, opencodeEnv()...)
+		program = buildOpencodeProgram(m.Model, envs)
 	default:
 		// A claude session must launch in its real working dir: if the dir is gone
 		// (its repo was deleted) we refuse rather than resume the conversation in an
@@ -220,9 +236,6 @@ func startSessionTmux(m sessionMeta) error {
 		// Pre-trust the launch dir so claude doesn't stall on the folder-trust
 		// dialog (not skippable via --dangerously-skip-permissions).
 		ensureFolderTrusted(cwd)
-		if tok := readClaudeToken(); tok != "" {
-			args = append(args, "-e", "CLAUDE_CODE_OAUTH_TOKEN="+tok)
-		}
 		sid := sessionUUID(m.Dir, m.Name)
 		// A jsonl can exist yet hold no real conversation — e.g. only a Remote
 		// Control "bridge-session" line when RC connected but nothing was said.
@@ -234,6 +247,13 @@ func startSessionTmux(m sessionMeta) error {
 			}
 		}
 		program = buildSessionProgram(sid, m.Model, m.Label)
+		// Inject the Claude OAuth token by prefixing it onto the command. tmux's -e
+		// only sets the session environment, which does NOT reach the pane's process,
+		// so a session on a fresh home (no stored ~/.claude credentials) would fail
+		// to authenticate. Prefixing guarantees claude's process receives it.
+		if tok := readClaudeToken(); tok != "" {
+			program = "CLAUDE_CODE_OAUTH_TOKEN=" + shellQuote(tok) + " " + program
+		}
 	}
 	args = append(args, program)
 	if out, err := exec.Command("tmux", args...).CombinedOutput(); err != nil {
@@ -476,14 +496,25 @@ func buildSessionProgram(sid, model, label string) string {
 // continue). Auth is the user's own `opencode auth login` (persisted in home), so
 // there's no token to inject. Caveat: multiple opencode slots in the SAME dir share
 // --continue's "most recent" target.
-func buildOpencodeProgram(model string) string {
+func buildOpencodeProgram(model string, envs []string) string {
+	// Prefix env assignments onto the command so the opencode process actually
+	// receives them (NAME='value' … opencode). Values are shell-quoted; names are
+	// trusted (our sid + validated ALL_CAPS provider env names).
+	prefix := ""
+	for _, kv := range envs {
+		i := strings.IndexByte(kv, '=')
+		if i <= 0 {
+			continue
+		}
+		prefix += kv[:i] + "=" + shellQuote(kv[i+1:]) + " "
+	}
 	flags := "--continue"
 	if model != "" {
 		// opencode expects provider/model (e.g. anthropic/claude-...); passed through
 		// verbatim. The Console only sends this for opencode when explicitly chosen.
 		flags += " --model " + shellQuote(model)
 	}
-	return "opencode " + flags
+	return prefix + "opencode " + flags
 }
 
 // sessionLabel builds the claude --name for a session: "[AF] {repo} @MMDD-HHMM"

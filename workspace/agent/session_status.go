@@ -30,23 +30,31 @@ type sessionStatus struct {
 	TS    string `json:"ts"`    // RFC3339
 }
 
-// runSessionStatusHook is `workspace-agent session-status <state>`: it reads
-// claude's hook JSON from stdin (for session_id) and records the state.
+// runSessionStatusHook is `workspace-agent session-status <state> [sid]`. claude
+// calls it with just <state> and supplies session_id via its hook JSON on stdin;
+// the opencode plugin calls it with the sid as a second arg (it has no stdin JSON).
 func runSessionStatusHook(args []string) {
 	state := "idle"
 	if len(args) > 0 {
 		state = args[0]
 	}
-	var in struct {
-		SessionID string `json:"session_id"`
+	sid := ""
+	if len(args) > 1 {
+		sid = args[1] // opencode plugin path
 	}
-	_ = json.NewDecoder(os.Stdin).Decode(&in)
-	if in.SessionID == "" {
+	if sid == "" {
+		var in struct {
+			SessionID string `json:"session_id"`
+		}
+		_ = json.NewDecoder(os.Stdin).Decode(&in)
+		sid = in.SessionID
+	}
+	if sid == "" {
 		return
 	}
 	_ = os.MkdirAll(sessionStatusDir(), 0o700)
 	b, _ := json.Marshal(sessionStatus{State: state, TS: time.Now().Format(time.RFC3339)})
-	_ = os.WriteFile(sessionStatusPath(in.SessionID), b, 0o600)
+	_ = os.WriteFile(sessionStatusPath(sid), b, 0o600)
 }
 
 func readSessionStatus(sid string) (sessionStatus, bool) {
