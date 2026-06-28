@@ -248,13 +248,10 @@ func startSessionTmux(m sessionMeta) error {
 			}
 		}
 		program = buildSessionProgram(sid, m.Model, m.Label)
-		// Inject the Claude OAuth token by prefixing it onto the command. tmux's -e
-		// only sets the session environment, which does NOT reach the pane's process,
-		// so a session on a fresh home (no stored ~/.claude credentials) would fail
-		// to authenticate. Prefixing guarantees claude's process receives it.
-		if tok := readClaudeToken(); tok != "" {
-			program = "CLAUDE_CODE_OAUTH_TOKEN=" + shellQuote(tok) + " " + program
-		}
+		// No env token is injected: the interactive TUI authenticates from the
+		// credentials file (ensureClaudeCredentials / storeClaudeToken write it from
+		// the connected token), not from CLAUDE_CODE_OAUTH_TOKEN. This also keeps the
+		// secret out of the process command line.
 	}
 	args = append(args, program)
 	if out, err := exec.Command("tmux", args...).CombinedOutput(); err != nil {

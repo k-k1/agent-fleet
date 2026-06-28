@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -189,6 +190,7 @@ func handleClaudeDisconnect(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "delete_failed", err.Error())
 		return
 	}
+	removeClaudeCredentials() // also log the interactive TUI out
 	writeJSON(w, http.StatusOK, map[string]any{"disconnected": "claude"})
 }
 
@@ -228,7 +230,64 @@ func storeClaudeToken(token string) error {
 		return err
 	}
 	s.Claude = token
-	return s.save()
+	if err := s.save(); err != nil {
+		return err
+	}
+	// Also authenticate the INTERACTIVE TUI. Unlike `claude -p`, the interactive
+	// claude does not read CLAUDE_CODE_OAUTH_TOKEN — it requires a credentials file.
+	// Write the OAuth token into claude's subscription credential slot (the same
+	// shape /login produces), so launched sessions start authenticated and keep
+	// subscription features (Remote Control etc.).
+	return writeClaudeCredentials(token)
+}
+
+// claudeCredentialsPath is claude's credentials file under the (possibly relocated)
+// config dir. claude reads it for interactive auth.
+func claudeCredentialsPath() string {
+	return filepath.Join(claudeConfigDir(), ".credentials.json")
+}
+
+// writeClaudeCredentials writes claude's .credentials.json from a setup-token
+// access token. We have no refresh token (setup-token doesn't yield one), so we set
+// a far-future expiry; when the token actually expires the API 401s and the user
+// re-connects via Connections (which rewrites this file).
+func writeClaudeCredentials(token string) error {
+	if token == "" {
+		return nil
+	}
+	ccd := claudeConfigDir()
+	if err := os.MkdirAll(ccd, 0o700); err != nil {
+		return err
+	}
+	cred := map[string]any{
+		"claudeAiOauth": map[string]any{
+			"accessToken":      token,
+			"refreshToken":     "",
+			"expiresAt":        time.Now().Add(365 * 24 * time.Hour).UnixMilli(),
+			"scopes":           []string{"user:inference", "user:profile"},
+			"subscriptionType": "max",
+		},
+	}
+	b, err := json.Marshal(cred)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(claudeCredentialsPath(), b, 0o600)
+}
+
+func removeClaudeCredentials() { _ = os.Remove(claudeCredentialsPath()) }
+
+// ensureClaudeCredentials, at agent startup, materializes the credentials file from
+// a stored token when it's absent — so a connected Claude authenticates the
+// interactive TUI across container restarts. It does not clobber an existing file
+// (e.g. one written by a real interactive /login with a refresh token).
+func ensureClaudeCredentials() {
+	if _, err := os.Stat(claudeCredentialsPath()); err == nil {
+		return // present — leave it
+	}
+	if tok := readClaudeToken(); tok != "" {
+		_ = writeClaudeCredentials(tok)
+	}
 }
 
 // readClaudeToken returns the stored CLAUDE_CODE_OAUTH_TOKEN, or "" if unset.
