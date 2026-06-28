@@ -16,8 +16,17 @@
 // State mapping (debounced — only fires on transitions, so ~2 calls per turn):
 //   message.* (assistant producing output / user just submitted) -> working
 //   session.idle (response finished, awaiting input)             -> idle
+//
+// It also records the opencode session id (ses_…) on session.created, keyed by
+// AF_SESSION_SID, into ~/.config/agent-fleet/opencode-sid/<AF_SESSION_SID>. The Agent
+// reads it to resume THIS slot's own session (opencode --session <id>) on relaunch,
+// so each slot keeps a distinct conversation instead of sharing via --continue.
+import { writeFileSync, mkdirSync } from "fs";
+import { join } from "path";
+
 export const AgentFleetStatus = async ({ $ }) => {
   const sid = process.env.AF_SESSION_SID;
+  const sidDir = process.env.HOME ? join(process.env.HOME, ".config/agent-fleet/opencode-sid") : null;
   let cur = "";
   const set = (state) => {
     if (!sid || state === cur) return;
@@ -29,10 +38,20 @@ export const AgentFleetStatus = async ({ $ }) => {
       /* ignore */
     }
   };
+  const recordOcid = (ocid) => {
+    if (!sid || !ocid || !sidDir) return;
+    try {
+      mkdirSync(sidDir, { recursive: true });
+      writeFileSync(join(sidDir, sid), ocid);
+    } catch {
+      /* ignore */
+    }
+  };
   return {
     event: async ({ event }) => {
       const t = event && event.type;
       if (!t) return;
+      if (t === "session.created") recordOcid(event.properties && event.properties.sessionID);
       if (t === "session.idle") set("idle");
       else if (t.startsWith("message.")) set("working");
     },

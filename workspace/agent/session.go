@@ -224,8 +224,9 @@ func startSessionTmux(m sessionMeta) error {
 		// (ANTHROPIC_API_KEY, …) so opencode authenticates without a plaintext file.
 		// The env is prefixed onto the command itself (not tmux -e, which sets only
 		// the session environment and does NOT reach the pane's process).
-		envs := append([]string{"AF_SESSION_SID=" + sessionUUID(m.Dir, m.Name)}, opencodeEnv()...)
-		program = buildOpencodeProgram(m.Model, envs)
+		ocSid := sessionUUID(m.Dir, m.Name)
+		envs := append([]string{"AF_SESSION_SID=" + ocSid}, opencodeEnv()...)
+		program = buildOpencodeProgram(m.Model, envs, readOpencodeSid(ocSid))
 	default:
 		// A claude session must launch in its real working dir: if the dir is gone
 		// (its repo was deleted) we refuse rather than resume the conversation in an
@@ -483,6 +484,9 @@ func handleRecreateSession(w http.ResponseWriter, r *http.Request) {
 		_ = os.Remove(p)
 	}
 	removeSessionStatus(sid)
+	// opencode: forget the captured session id so recreate starts a NEW opencode
+	// conversation (plain launch) instead of resuming the old one.
+	removeOpencodeSid(sid)
 	m.CreatedAt = time.Now().Format(time.RFC3339)
 	if m.Kind == "claude" {
 		m.Label = sessionLabel(m.Dir)
@@ -529,7 +533,7 @@ func buildSessionProgram(sid, model, label string) string {
 // continue). Auth is the user's own `opencode auth login` (persisted in home), so
 // there's no token to inject. Caveat: multiple opencode slots in the SAME dir share
 // --continue's "most recent" target.
-func buildOpencodeProgram(model string, envs []string) string {
+func buildOpencodeProgram(model string, envs []string, ocid string) string {
 	// Prefix env assignments onto the command so the opencode process actually
 	// receives them (NAME='value' … opencode). Values are shell-quoted; names are
 	// trusted (our sid + validated ALL_CAPS provider env names).
@@ -541,14 +545,39 @@ func buildOpencodeProgram(model string, envs []string) string {
 		}
 		prefix += kv[:i] + "=" + shellQuote(kv[i+1:]) + " "
 	}
-	flags := "--continue"
+	parts := []string{"opencode"}
+	// Per-slot session: when we've captured this slot's opencode session id (the
+	// plugin records it on session.created, keyed by AF_SESSION_SID), resume exactly
+	// THAT session. Otherwise launch plain opencode — the TUI creates a fresh session
+	// on first message, distinct from other slots. We deliberately do NOT use
+	// --continue: it resumes the most-recent session in the project, so two slots in
+	// the same dir would collide on one shared conversation.
+	if ocid != "" {
+		parts = append(parts, "--session", shellQuote(ocid))
+	}
 	if model != "" {
 		// opencode expects provider/model (e.g. anthropic/claude-...); passed through
 		// verbatim. The Console only sends this for opencode when explicitly chosen.
-		flags += " --model " + shellQuote(model)
+		parts = append(parts, "--model", shellQuote(model))
 	}
-	return prefix + "opencode " + flags
+	return prefix + strings.Join(parts, " ")
 }
+
+// opencode session-id store: maps our deterministic slot sid (AF_SESSION_SID) to the
+// opencode session id (ses_…) the plugin captured, so a slot resumes its OWN session.
+func opencodeSidDir() string {
+	return filepath.Join(homeDir(), ".config", "agent-fleet", "opencode-sid")
+}
+
+func readOpencodeSid(sid string) string {
+	b, err := os.ReadFile(filepath.Join(opencodeSidDir(), sid))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
+}
+
+func removeOpencodeSid(sid string) { _ = os.Remove(filepath.Join(opencodeSidDir(), sid)) }
 
 // sessionLabel builds the claude --name for a session: "[AF] {repo} @MMDD-HHMM"
 // where {repo} is the working dir's basename and the time is the workspace's local
