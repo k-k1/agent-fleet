@@ -40,28 +40,72 @@ func handleConnectionsGet(w http.ResponseWriter, r *http.Request) {
 }
 
 // bitbucketStatus reports connected for either path: a pasted token (Git entry)
-// or stored OAuth refresh creds (used via the cred helper).
+// or stored OAuth refresh creds (used via the cred helper). It surfaces the real
+// Bitbucket account, resolved once from the API and cached in the store (so the
+// polled endpoint doesn't re-fetch); on resolve failure it falls back to the
+// stored email (token paste) or a placeholder (OAuth).
 func bitbucketStatus(s *secretsData) map[string]any {
 	if e, ok := s.Git["bitbucket.org"]; ok {
 		m := map[string]any{"connected": true}
-		if e.User != "" {
-			m["username"] = e.User
+		if e.Login == "" && e.Token != "" {
+			if auth, err := bitbucketAuthHeader(s); err == nil {
+				if l, err := bitbucketAccount(auth); err == nil && l != "" {
+					e.Login = l
+					s.Git["bitbucket.org"] = e
+					_ = s.save()
+				}
+			}
+		}
+		if name := firstNonEmpty(e.Login, e.User); name != "" {
+			m["username"] = name
 		}
 		return m
 	}
 	if s.Bitbucket != nil {
-		return map[string]any{"connected": true, "username": "x-token-auth (oauth)"}
+		m := map[string]any{"connected": true}
+		if s.Bitbucket.Account == "" {
+			if auth, err := bitbucketAuthHeader(s); err == nil {
+				if l, err := bitbucketAccount(auth); err == nil && l != "" {
+					s.Bitbucket.Account = l
+					_ = s.save()
+				}
+			}
+		}
+		m["username"] = firstNonEmpty(s.Bitbucket.Account, "x-token-auth (oauth)")
+		return m
 	}
 	return map[string]any{"connected": false}
 }
 
+// gitConnStatus reports a git provider's connection + the real account, resolved
+// once from the provider API and cached in the store (write-through), so the
+// polled endpoint doesn't re-fetch. Falls back to the git-username placeholder.
 func gitConnStatus(s *secretsData, host string) map[string]any {
 	e, ok := s.Git[host]
 	m := map[string]any{"connected": ok}
-	if ok && e.User != "" {
-		m["username"] = e.User
+	if !ok {
+		return m
+	}
+	if host == "github.com" && e.Login == "" && e.Token != "" {
+		if l, err := githubAccount(e.Token); err == nil && l != "" {
+			e.Login = l
+			s.Git[host] = e
+			_ = s.save()
+		}
+	}
+	if name := firstNonEmpty(e.Login, e.User); name != "" {
+		m["username"] = name
 	}
 	return m
+}
+
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 type gitConnReq struct {
