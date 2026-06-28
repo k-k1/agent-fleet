@@ -18,6 +18,20 @@
   /* selection / hover surfaces (so light theme can override the old hardcoded blues) */
   --active-bg: #20303a;
   --hover-bg: #1b2730;
+  /* highlight.js syntax palette (GitHub Dark) — themed via vars so the file viewer
+     follows light/dark instead of the dark-only github-dark.css import. */
+  --hl-fg: #c9d1d9;
+  --hl-comment: #8b949e;
+  --hl-keyword: #ff7b72;
+  --hl-title: #d2a8ff;
+  --hl-attr: #79c0ff;
+  --hl-string: #a5d6ff;
+  --hl-built: #ffa657;
+  --hl-name: #7ee787;
+  --hl-add-fg: #aff5b4;
+  --hl-add-bg: #033a16;
+  --hl-del-fg: #ffdcd7;
+  --hl-del-bg: #67060c;
   /* region backgrounds — overridable independently of the base theme (Display
      settings → カラーテーマ). Default to the theme's bar / panel. */
   --topbar-bg: var(--bar);
@@ -46,6 +60,19 @@
   --del: #c0392b;
   --active-bg: #d7e6fb;
   --hover-bg: #eaf1fb;
+  /* highlight.js syntax palette (GitHub Light). */
+  --hl-fg: #24292f;
+  --hl-comment: #6e7781;
+  --hl-keyword: #cf222e;
+  --hl-title: #8250df;
+  --hl-attr: #0550ae;
+  --hl-string: #0a3069;
+  --hl-built: #953800;
+  --hl-name: #116329;
+  --hl-add-fg: #1a7f37;
+  --hl-add-bg: #dafbe1;
+  --hl-del-fg: #82071e;
+  --hl-del-bg: #ffebe9;
 }
 
 /* codicon (VS Code icon font) — inherit size/color from the surrounding element so
@@ -1196,6 +1223,84 @@ textarea:focus {
 .codeview .code .hljs {
   background: transparent;
   padding: 0;
+}
+
+/* highlight.js token colors — themed via --hl-* (see :root). Mirrors the GitHub
+   theme's class groupings so the file viewer / markdown code follow light & dark. */
+.hljs {
+  color: var(--hl-fg);
+  background: transparent;
+}
+.hljs-doctag,
+.hljs-keyword,
+.hljs-meta .hljs-keyword,
+.hljs-template-tag,
+.hljs-template-variable,
+.hljs-type,
+.hljs-variable.language_ {
+  color: var(--hl-keyword);
+}
+.hljs-title,
+.hljs-title.class_,
+.hljs-title.class_.inherited__,
+.hljs-title.function_ {
+  color: var(--hl-title);
+}
+.hljs-attr,
+.hljs-attribute,
+.hljs-literal,
+.hljs-meta,
+.hljs-number,
+.hljs-operator,
+.hljs-variable,
+.hljs-selector-attr,
+.hljs-selector-class,
+.hljs-selector-id {
+  color: var(--hl-attr);
+}
+.hljs-regexp,
+.hljs-string,
+.hljs-meta .hljs-string {
+  color: var(--hl-string);
+}
+.hljs-built_in,
+.hljs-symbol {
+  color: var(--hl-built);
+}
+.hljs-comment,
+.hljs-code,
+.hljs-formula {
+  color: var(--hl-comment);
+}
+.hljs-name,
+.hljs-quote,
+.hljs-selector-tag,
+.hljs-selector-pseudo {
+  color: var(--hl-name);
+}
+.hljs-subst {
+  color: var(--hl-fg);
+}
+.hljs-section {
+  color: var(--hl-attr);
+  font-weight: bold;
+}
+.hljs-bullet {
+  color: var(--hl-built);
+}
+.hljs-emphasis {
+  font-style: italic;
+}
+.hljs-strong {
+  font-weight: bold;
+}
+.hljs-addition {
+  color: var(--hl-add-fg);
+  background: var(--hl-add-bg);
+}
+.hljs-deletion {
+  color: var(--hl-del-fg);
+  background: var(--hl-del-bg);
 }
 
 /* small segmented toggle (markdown preview/source in the file header) */

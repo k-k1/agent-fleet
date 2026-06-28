@@ -287,7 +287,7 @@ opencode を雛形に追加。**ただし codex のフックは Claude Code と�
 ### 6.10.6 UI / 表示（アイコン・テーマ・コピペ・設定保存）
 
 - **アイコンの役割分担**: **クローム＝VS Code codicon の単色**（`@vscode/codicons`、共通 `Icon.jsx`＝`<i class="codicon codicon-NAME">`、currentColor 追従・spin 対応）。**ファイル種別＝カラー SVG**（codeleaf の `assets/vscode_icons` を `console/src/assets/fileicons/` に取込、`lib/fileicons.js` の ext/name→typeKey、`FileIcon.jsx`。AI=`sparkle`/secret=`key` は codicon で強調）。
-- **カラーテーマ**（`styles.css`）: `:root` dark 既定、`:root[data-theme="light"]` で override。region 用 `--topbar-bg`/`--leftpane-bg` で上部・左ペインを独立着色（view-head/modal は不影響）。`settings.js` の `theme`/`topbarColor`/`leftpaneColor`、`SURFACE_COLORS` は per-theme tint（ライトで暗色バー＝文字潰れ を回避）。`applyTheme(state)` が `<html data-theme>` と変数を設定。設定は DisplayTab。**既知の限界**: xterm（term.js）と highlight.js（github-dark）はライトでも暗いまま。
+- **カラーテーマ**（`styles.css`）: `:root` dark 既定、`:root[data-theme="light"]` で override。region 用 `--topbar-bg`/`--leftpane-bg` で上部・左ペインを独立着色（view-head/modal は不影響）。`settings.js` の `theme`/`topbarColor`/`leftpaneColor`、`SURFACE_COLORS` は per-theme tint（ライトで暗色バー＝文字潰れ を回避）。`applyTheme(state)` が `<html data-theme>` と変数を設定。設定は DisplayTab。highlight.js（ファイルビュアー）は `--hl-*` 変数で**テーマ追従**（GitHub Dark/Light、`github-dark.css` 固定 import を廃止）。**既知の限界**: xterm（term.js）はライトでも暗いまま。
 - **端末コピペ**（`term.js`）: フォーカス端末では Ctrl+C/V は PTY（SIGINT/`^V`）＝素通し。**コピー**=左ドラッグ選択の `mouseup` で自動コピー＋`Ctrl+Shift+C`/`Ctrl+Insert`/`⌘C`。**ペースト**=右/中クリック・`Shift+Insert`・`Ctrl+Shift+V`・`⌘V`（`clipboard.readText()`→`term.paste()`＝bracketed-paste）。Keyboard Lock の KEYS に `KeyC`/`KeyV` を追加（全画面で Ctrl+Shift+C が DevTools を開かず端末へ）。
 - **端末**: フォーカス時 Keyboard Lock（⛶全画面・Chromium のみ）＋接続中 `beforeunload` ガード。
 - **キーボード**: ファイルツリー ↑↓←→Enter・**Ctrl+↑↓=フォルダ移動**・**Shift+↑↓=ビュアースクロール**・**Ctrl+PgUp/Dn=セッション切替**。

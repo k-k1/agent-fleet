@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import hljs from "highlight.js/lib/common";
-import "highlight.js/styles/github-dark.css";
+// Syntax theme is defined in styles.css via CSS variables so it follows the app
+// theme (the github-dark.css import was dark-only → unreadable in light mode).
 import { useApp } from "../state.jsx";
 import { api } from "../api.js";
 import { baseName, langFor, langLabel, humanSize, countLines } from "../lib/filemeta.js";
