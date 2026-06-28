@@ -310,6 +310,11 @@ opencode を「設定から認証」「状態バッジ」まで claude と同等
 - **fs.go denylist** は前回追加済みの `~/.local/share/opencode`（auth.json/db）に加え、`~/.config/opencode`（プラグイン・設定）は非機微ゆえ表示のまま。
 - **反映**: image/console/CP 全再ビルド・CP 再起動済。運用者は Workspace **Stop→Start**（新 image: プラグイン seed + env 前置）→ 設定→接続→opencode でキー保存 → opencode セッションで認証＆状態バッジが効く。**claude 既存セッションも Stop→Start で env 前置に移行**（資格は維持）。
 
+**🔧 修正（2026-06-28 続き8）— 孤児セッション（`session already running` の真因）**:
+- **症状**: opencode 起動後に claude を起動すると `起動に失敗: session already running: novel-idea`。一覧に出ていないのに名前が取られている。
+- **真因**: `handleListSessions` は **meta を起点に列挙**するため、「**tmux は生存・meta が無い孤児セッション**」が一覧に出ない。自動命名（`NewSessionModal`/`ReposSection` の `freeName`/`uniqueName` は `GET /api/sessions` の名前集合で重複回避）はその名を知らず再利用 → `handleCreateSession` の `tmuxHasSession` で衝突＝`session already running`。孤児は一覧で見えず**アーカイブもできない**手詰まり。archive(`handleStopSession`)自体は live tmux を正しく kill する（＝archive のバグではない）。孤児の発生源は Stop→Start 跨ぎや過去の手動操作等の端ケース。
+- **修正**（`session.go handleListSessions`）: meta の無い生 `claude_*` tmux も一覧に追加（`Alive:true/Resumable:true`、kind は `paneKind()`＝ペイン起動コマンドから sniff）。これで孤児が**可視化＋名前重複回避＋アーカイブ可能**に。検証: 使い捨てコンテナで meta だけ削除した生 tmux が一覧に出る（旧: 出ない）ことを確認。**反映は image 再ビルド＋Stop→Start**（現運用者コンテナは現状クリーン＝孤児なし。再発防止のため次回 Stop→Start で適用）。
+
 **🗒 フォローアップ（次セッション・未調査）**:
 - **codex CLI / Antigravity CLI をエージェント追加**（opencode と同枠の kind 追加）。codex = OpenAI Codex CLI（`@openai/codex`、auth は `codex login`/`OPENAI_API_KEY`、resume は `codex resume`）。Antigravity CLI = Google（CLI 形態・インストール/認証要調査）。opencode の実装（kind 分岐・Console 種別・denylist・即起動・auth env 注入・状態プラグイン）が雛形。
 - **opencode の per-slot resume 厳密化**（任意）: 現状 `--continue` は同一 dir で最新セッションを継続＝同 dir に複数 opencode スロットがあると最新を共有。厳密化するなら作成時に session id を捕捉し `--session <id>` で resume（opencode.db 参照が必要）。

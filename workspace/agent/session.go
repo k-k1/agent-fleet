@@ -322,9 +322,42 @@ func handleListSessions(w http.ResponseWriter, r *http.Request) {
 		}
 		sessions = append(sessions, wireSession(m, false))
 	}
+	// Surface ORPHAN sessions: a live claude_* tmux session with no meta. These are
+	// invisible to the meta-driven list above, so the auto-namer would reuse their
+	// name and handleCreateSession then fails with "session already running" — a
+	// confusing dead end (the session can't be seen or archived). List them so they
+	// show up, count toward name uniqueness, and can be attached/archived. We can't
+	// recover dir/model without a meta; kind is sniffed from the pane command.
+	for name := range live {
+		if _, ok := metas[name]; ok {
+			continue
+		}
+		sessions = append(sessions, Session{
+			Name: name, Tmux: tmuxName(name), Kind: paneKind(name), Repo: name,
+			Alive: true, Resumable: true,
+		})
+	}
 	// Stable order: newest first by creation time.
 	sort.Slice(sessions, func(i, j int) bool { return sessions[i].CreatedAt > sessions[j].CreatedAt })
 	writeJSON(w, http.StatusOK, map[string]any{"sessions": sessions})
+}
+
+// paneKind sniffs a session's kind from its tmux pane start command, used for
+// orphan sessions that have no meta. Best-effort; defaults to shell.
+func paneKind(name string) string {
+	out, err := exec.Command("tmux", "list-panes", "-t", tmuxName(name), "-F", "#{pane_start_command}").Output()
+	if err != nil {
+		return "shell"
+	}
+	s := string(out)
+	switch {
+	case strings.Contains(s, "opencode"):
+		return "opencode"
+	case strings.Contains(s, "claude"):
+		return "claude"
+	default:
+		return "shell"
+	}
 }
 
 type createReq struct {
