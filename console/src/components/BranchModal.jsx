@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, apiJSON } from "../api.js";
 import BranchList from "./BranchList.jsx";
-import Icon from "./Icon.jsx";
+import Modal from "./Modal.jsx";
 
 // BranchModal: switch a repo's branch. Lists branches newest-commit-first with a
 // filter (via BranchList); clicking one checks it out (a remote-only name DWIMs into
@@ -55,29 +55,14 @@ export default function BranchModal({ repoName, onClose, onChecked }) {
   };
 
   return (
-    <div className="modal-backdrop" onClick={busy ? undefined : onClose}>
-      <div className="modal branch-modal" onClick={(e) => e.stopPropagation()}>
-        <header className="modal-head">
-          <h3 className="modal-title">ブランチ切替 — {repoName}</h3>
-          <button type="button" className="icon" title="閉じる" onClick={onClose}>
-            <Icon name="close" />
-          </button>
-        </header>
-        <div className="modal-body">
-          {err ? (
-            <p className="muted pad">{err}</p>
-          ) : (
-            <BranchList
-              branches={branches}
-              selected={current}
-              onPick={checkout}
-              busy={busy}
-              disableActive
-              autoFocus
-            />
-          )}
-        </div>
+    <Modal title={`ブランチ切替 — ${repoName}`} onClose={onClose} className="branch-modal" lockClose={!!busy}>
+      <div className="modal-body">
+        {err ? (
+          <p className="muted pad">{err}</p>
+        ) : (
+          <BranchList branches={branches} selected={current} onPick={checkout} busy={busy} disableActive autoFocus />
+        )}
       </div>
-    </div>
+    </Modal>
   );
 }

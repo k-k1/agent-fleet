@@ -5,6 +5,8 @@ import Section from "../Section.jsx";
 import Icon from "../Icon.jsx";
 import NewRepoModal from "../NewRepoModal.jsx";
 import BranchModal from "../BranchModal.jsx";
+import { kindIcon, kindLabel } from "../../lib/sessionkind.js";
+import { pinFirst } from "../../lib/listutil.js";
 
 const repoSafeSession = (name) =>
   name.replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 40) || "repo";
@@ -59,10 +61,8 @@ export default function ReposSection() {
     };
   }, [session]);
 
-  // Pin the active session's repo to the top (stable sort keeps the rest in order).
-  const ordered = activeRepo
-    ? [...repos].sort((a, b) => (a.name === activeRepo ? -1 : 0) - (b.name === activeRepo ? -1 : 0))
-    : repos;
+  // Pin the active session's repo to the top (stable, keeps the rest in order).
+  const ordered = pinFirst(repos, (r) => r.name === activeRepo);
 
   return (
     <Section
@@ -189,9 +189,11 @@ function RepoRow({ r, active, pinned, onOpen, onLaunch, onChanged }) {
           </button>
           {showLaunch && (
             <div className="launch-menu">
-              <button onClick={() => { setShowLaunch(false); onLaunch("claude"); }}><Icon name="sparkle" /> claude</button>
-              <button onClick={() => { setShowLaunch(false); onLaunch("opencode"); }}><Icon name="hubot" /> opencode</button>
-              <button onClick={() => { setShowLaunch(false); onLaunch("shell"); }}><Icon name="terminal" /> shell</button>
+              {["claude", "opencode", "shell"].map((k) => (
+                <button key={k} onClick={() => { setShowLaunch(false); onLaunch(k); }}>
+                  <Icon name={kindIcon(k)} /> {kindLabel(k)}
+                </button>
+              ))}
             </div>
           )}
         </div>
