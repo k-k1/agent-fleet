@@ -353,6 +353,20 @@ opencode を「設定から認証」「状態バッジ」まで claude と同等
 6. **アーカイブ復帰モーダル**（新規 `ArchivedModal.jsx`）: ヘッダ 🗄 ボタン→モーダル（アーカイブ一覧・復帰・完全削除）。⋯ の「アーカイブする」は **`/stop`(削除) → `/archive`(復帰可)** に変更。**バックエンド**: `sessionMeta.Archived`、`handleListSessions` は Archived を除外（TTL prune もスキップ）、新 `POST /sessions/{name}/archive`・`POST /sessions/{name}/restore`・`GET /sessions/archived`（CP も proxy 追加）。アーカイブ=meta+jsonl 保持で非表示、復帰=stopped として一覧復帰（クリックで resume）。**検証**: 使い捨てコンテナで create→archive→archived 一覧→restore→active(alive:false) を確認。
 - **反映**: image/CP/console 再ビルド・CP 再起動済。**#1〜#5 の大半はリロードで反映**（#4 一括削除は既存 `/stop` 使用）。**#6 アーカイブ復帰と ⋯ アーカイブ（`/archive`）は新 agent が必要＝Workspace Stop→Start 後に有効**（旧 agent は `/archive` 404）。
 
+**🔧 UI 調整（2026-06-28 続き14）— Repos→ソース管理一本化 / 履歴クリックで commit diff / vim**:
+- **Repos の「⎇ 変更」チップ廃止 → レポジトリ名クリックに一本化**（`ReposSection.jsx`）: 名前クリックで **FILES ツリー展開（`revealInFiles`）＋ 右ペインにソース管理ビューを開く（`showSCM`）** を同時実行。`onSCM`/`onOpenFiles` プロップを単一 `onOpen` に統合、行アクションは `▶起動▾ / ⤓fetch / 🗑` のみに。
+- **履歴クリックで commit diff（codeleaf CommitDetail 風）**（`SourceControlView.jsx` 刷新）: 右ペインを `sel`（`{kind:'file'}` or `{kind:'commit'}`）駆動に。**履歴行をクリック可能**にし、`GET /api/repos/{name}/show?sha=` で **ヘッダ（件名/本文/著者/日時/short）＋変更ファイル一覧＋全体パッチ（色付き）** を表示。変更ファイルクリックは従来の file diff。diff レンダラに `diff --git` 行のファイル見出し色＋truncated 表示を追加。CSS: `.log-row`(hover/active)・`.commit-detail`/`.cd-*`・`.dl.fileh`。
+- **backend**: agent `git_view.go` `handleRepoShow`（`sha` は hex 検証 `shaRe`、`git log -1`＋`git show --name-status`＋`git show --format=` を maxViewBytes でキャップ）、`main.go` に `GET /repos/{name}/show`、CP `main.go` に `GET /api/repos/{name}/show`（proxy）。
+- **vim を image 同梱**（`workspace/Dockerfile` の apt に `vim`）。
+- **ビルド**: agent/CP `go build` OK、console `npm run build` OK。git コマンド出力は throwaway repo で確認。**反映**: console はリロード即時 / **show エンドポイントと vim は image 再ビルド＋CP 再起動＋Workspace Stop→Start が必要**（旧 agent は `/show` 404・vim 無し）。
+
+**🔧 修正（2026-06-28 続き15）— `session already running` の真因は tmux の `-t` 前方一致**:
+- **症状**: 既存セッション `agent-fleet-sh` がある状態で repo `agent-fleet` の claude セッションを新規作成 →「起動に失敗: session already running: agent-fleet」。一覧に `agent-fleet`（claude）は無いのに作成できない。
+- **真因（重要）**: tmux の `-t <target>` は **exact→prefix→fnmatch** で解決するため、`tmux has-session -t claude_agent-fleet` が**前方一致で `claude_agent-fleet-sh` にマッチ**＝存在扱い。自動命名は `GET /api/sessions`（exact 名集合）で衝突回避するため `agent-fleet` を選ぶが、`tmuxHasSession` が前方一致で true を返し `handleCreateSession` が弾いていた。続き8 の「孤児を一覧に出す」とは別問題（孤児ではなく前方一致）。
+- **影響範囲**: `kill-session -t`（stop/archive/recreate）も同じ前方一致＝**兄弟セッションを誤 kill しうる**（例: `agent-fleet` を停止すると `agent-fleet-sh` が落ちる）。`list-panes -t`（paneKind）も誤読のリスク。
+- **修正**（`session.go`）: ヘルパー `exactT(tn)=="="+tn` を追加し、tmux の **target 参照を全て exact 化**（`has-session`/`kill-session`×3/`list-panes`）。`new-session -d -s`（作成名）と `new-session -A -s`（attach、別名なら新規作成で prefix attach しないことを実機確認済）は変更不要。
+- **検証**: 実コンテナで `=claude_x` は exact・無印は prefix MATCH を確認。Stop→Start 後の E2E で **live `agent-fleet-sh` と共存して `agent-fleet`(claude) 作成成功**（旧: 弾かれる）。image 再ビルド＋運用者コンテナ Stop→Start 済み。
+
 **🗒 フォローアップ（次セッション・未調査）**:
 - **（任意）セッション識別の完全 ID 化**: tmux 名・meta・API・Console を name でなくランダムな一意IDで keying し、表示名は単なるラベル（重複可）に。現状は内部IDはユニーク・表示名がルーティングキー。
 - **codex CLI / Antigravity CLI をエージェント追加**（opencode と同枠の kind 追加）。codex = OpenAI Codex CLI（`@openai/codex`、auth は `codex login`/`OPENAI_API_KEY`、resume は `codex resume`）。Antigravity CLI = Google（CLI 形態・インストール/認証要調査）。opencode の実装（kind 分岐・Console 種別・denylist・即起動・auth env 注入・状態プラグイン）が雛形。

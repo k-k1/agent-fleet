@@ -134,6 +134,7 @@ func main() {
 	mux.HandleFunc("GET /api/repos/{name}/changes", cfg.proxyAgentREST)
 	mux.HandleFunc("GET /api/repos/{name}/diff", cfg.proxyAgentREST)
 	mux.HandleFunc("GET /api/repos/{name}/log", cfg.proxyAgentREST)
+	mux.HandleFunc("GET /api/repos/{name}/show", cfg.proxyAgentREST)
 	mux.HandleFunc("POST /api/repos/{name}/stage", cfg.proxyAgentREST)
 	mux.HandleFunc("POST /api/repos/{name}/unstage", cfg.proxyAgentREST)
 	mux.HandleFunc("POST /api/repos/{name}/discard", cfg.proxyAgentREST)

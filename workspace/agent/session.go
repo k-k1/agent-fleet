@@ -346,7 +346,7 @@ func handleListSessions(w http.ResponseWriter, r *http.Request) {
 // paneKind sniffs a session's kind from its tmux pane start command, used for
 // orphan sessions that have no meta. Best-effort; defaults to shell.
 func paneKind(name string) string {
-	out, err := exec.Command("tmux", "list-panes", "-t", tmuxName(name), "-F", "#{pane_start_command}").Output()
+	out, err := exec.Command("tmux", "list-panes", "-t", exactT(tmuxName(name)), "-F", "#{pane_start_command}").Output()
 	if err != nil {
 		return "shell"
 	}
@@ -451,7 +451,7 @@ func handleStopSession(w http.ResponseWriter, r *http.Request) {
 		removeSessionStatus(sessionUUID(meta.Dir, name))
 	}
 	if live {
-		if out, err := exec.Command("tmux", "kill-session", "-t", tn).CombinedOutput(); err != nil {
+		if out, err := exec.Command("tmux", "kill-session", "-t", exactT(tn)).CombinedOutput(); err != nil {
 			writeErr(w, http.StatusInternalServerError, "tmux_failed", fmt.Sprintf("%v: %s", err, out))
 			return
 		}
@@ -475,7 +475,7 @@ func handleArchiveSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if tn := tmuxName(name); tmuxHasSession(tn) {
-		_ = exec.Command("tmux", "kill-session", "-t", tn).Run()
+		_ = exec.Command("tmux", "kill-session", "-t", exactT(tn)).Run()
 	}
 	removeSessionStatus(sessionUUID(m.Dir, name))
 	m.Archived = true
@@ -530,7 +530,7 @@ func handleRecreateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if tn := tmuxName(name); tmuxHasSession(tn) {
-		_ = exec.Command("tmux", "kill-session", "-t", tn).Run()
+		_ = exec.Command("tmux", "kill-session", "-t", exactT(tn)).Run()
 	}
 	// Throw away the past conversation and stale state so the same sid starts clean.
 	sid := sessionUUID(m.Dir, m.Name)
@@ -554,8 +554,14 @@ func handleRecreateSession(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, wireSession(m, true))
 }
 
+// exactT returns a tmux target that matches NAME exactly. Without the leading '=',
+// tmux's -t resolution prefix-matches, so a target like "claude_agent-fleet" would
+// match an unrelated "claude_agent-fleet-sh" — wrongly reporting "already running"
+// (blocking session creation) or killing the sibling on stop/archive/recreate.
+func exactT(tn string) string { return "=" + tn }
+
 func tmuxHasSession(tn string) bool {
-	return exec.Command("tmux", "has-session", "-t", tn).Run() == nil
+	return exec.Command("tmux", "has-session", "-t", exactT(tn)).Run() == nil
 }
 
 // buildSessionProgram returns the shell command tmux should run for a session.
