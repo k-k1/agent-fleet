@@ -23,9 +23,11 @@ const freeName = (base, used) => {
 // switch branch, fetch, start a session in the repo, delete, or open Source
 // Control (→ main area). The dirty dot mirrors uncommitted changes.
 export default function ReposSection() {
-  const { reposKey, bumpRepos, bumpSessions, bumpFiles, revealInFiles, showSCM, showTerminal, scmRepo, mode } = useApp();
+  const { reposKey, bumpRepos, bumpSessions, bumpFiles, revealInFiles, showSCM, showTerminal, scmRepo, mode, session } =
+    useApp();
   const [repos, setRepos] = useState([]);
   const [showClone, setShowClone] = useState(false);
+  const [activeRepo, setActiveRepo] = useState(null); // repo used by the attached session
 
   useEffect(() => {
     let alive = true;
@@ -36,6 +38,31 @@ export default function ReposSection() {
       alive = false;
     };
   }, [reposKey]);
+
+  // Resolve which repo the currently-attached session works in, so we can pin it to
+  // the top (mirrors the session pin). Refetched when the attached session changes.
+  useEffect(() => {
+    if (!session) {
+      setActiveRepo(null);
+      return;
+    }
+    let alive = true;
+    api("api/sessions")
+      .then((d) => {
+        if (!alive) return;
+        const s = (d.sessions || []).find((x) => x.name === session);
+        setActiveRepo(s ? s.repo : null);
+      })
+      .catch(() => alive && setActiveRepo(null));
+    return () => {
+      alive = false;
+    };
+  }, [session]);
+
+  // Pin the active session's repo to the top (stable sort keeps the rest in order).
+  const ordered = activeRepo
+    ? [...repos].sort((a, b) => (a.name === activeRepo ? -1 : 0) - (b.name === activeRepo ? -1 : 0))
+    : repos;
 
   return (
     <Section
@@ -65,11 +92,12 @@ export default function ReposSection() {
       )}
       <ul className="list">
         {repos.length === 0 && <li className="muted">リポジトリなし</li>}
-        {repos.map((r) => (
+        {ordered.map((r) => (
           <RepoRow
             key={r.name}
             r={r}
             active={mode === "scm" && scmRepo === r.name}
+            pinned={r.name === activeRepo}
             // One click on the repo: reveal it in the Files tree AND open the
             // (renewed) Source Control workbench in the main pane. The separate
             // "変更" chip is gone — the repo row itself is the entry point.
@@ -102,7 +130,7 @@ export default function ReposSection() {
   );
 }
 
-function RepoRow({ r, active, onOpen, onLaunch, onChanged }) {
+function RepoRow({ r, active, pinned, onOpen, onLaunch, onChanged }) {
   const [showBranch, setShowBranch] = useState(false);
   const [showLaunch, setShowLaunch] = useState(false);
 
@@ -125,8 +153,9 @@ function RepoRow({ r, active, onOpen, onLaunch, onChanged }) {
   };
 
   return (
-    <li className={"repo-row" + (active ? " active" : "")}>
+    <li className={"repo-row" + (active ? " active" : "") + (pinned ? " pinned" : "")}>
       <div className="repo-info">
+        {pinned && <Icon name="pin" className="repo-pin" title="現在のセッションのリポジトリ" />}
         <span className={"dot " + (r.dirty ? "dirty" : "clean")} title={r.dirty ? "未コミット変更あり" : "clean"}>
           ●
         </span>
