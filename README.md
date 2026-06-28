@@ -45,7 +45,8 @@ Control Plane + 最小 Console が動作し、Tailscale Funnel 越しのブラ�
 | [docs/16-p3-4-plan.md](docs/16-p3-4-plan.md) | **P3-4 実装プラン**: リソースバジェット/クォータ（Workspace数/セッション数、ハード block、既定無制限、state 同期）（実装・検証済）|
 | [docs/17-p3-5-plan.md](docs/17-p3-5-plan.md) | **P3-5 実装プラン**: メンバー Console UX（shell セッション / git 閲覧・操作 / ファイルブラウザ / 機微状態退避）（実装・検証済）|
 | [docs/18-console-ui-redesign.md](docs/18-console-ui-redesign.md) | **Console UI 刷新 ハンドオフ**: 現状診断・機能インベントリ・API・制約・推奨 IA・要決定（vanilla vs React）|
-| [docs/HANDOFF.md](docs/HANDOFF.md) | **引き継ぎ**: 稼働状態・実行作法・落とし穴・次フェーズ入口（次セッションはまず読む）|
+| [docs/HANDOFF.md](docs/HANDOFF.md) | **引き継ぎ**: 稼働状態・実行作法・落とし穴・テーマ別機能リファレンス（次セッションはまず読む）|
+| [docs/CHANGELOG-handoff.md](docs/CHANGELOG-handoff.md) | HANDOFF の時系列ログ（日付＋1行）。現状は HANDOFF 本体、ここは履歴 |
 
 ## 既存プロトタイプ資産（再利用元）
 
