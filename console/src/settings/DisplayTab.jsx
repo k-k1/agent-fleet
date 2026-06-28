@@ -1,4 +1,13 @@
-import { useSettings, setSetting, CODE_FONTS, fontStack, ICON_SETS } from "../lib/settings.js";
+import {
+  useSettings,
+  setSetting,
+  CODE_FONTS,
+  fontStack,
+  ICON_SETS,
+  THEMES,
+  SURFACE_COLORS,
+  surfaceValue,
+} from "../lib/settings.js";
 import FileIcon from "../components/FileIcon.jsx";
 
 // DisplayTab: font + file-viewer preferences (CodeLeaf-inspired), persisted via the
@@ -8,6 +17,23 @@ export default function DisplayTab() {
   const s = useSettings();
   return (
     <div className="display-settings">
+      <section className="ds-group">
+        <h4 className="ds-title">カラーテーマ</h4>
+        <Row label="テーマ">
+          <Choice
+            value={s.theme}
+            options={THEMES.map((t) => [t.id, t.label])}
+            onChange={(v) => setSetting("theme", v)}
+          />
+        </Row>
+        <Row label="上部バーの背景">
+          <SwatchChoice theme={s.theme} value={s.topbarColor} onChange={(v) => setSetting("topbarColor", v)} />
+        </Row>
+        <Row label="左ペインの背景">
+          <SwatchChoice theme={s.theme} value={s.leftpaneColor} onChange={(v) => setSetting("leftpaneColor", v)} />
+        </Row>
+      </section>
+
       <section className="ds-group">
         <h4 className="ds-title">ターミナル</h4>
         <Row label="フォント">
@@ -110,6 +136,30 @@ function Choice({ value, options, onChange }) {
           {label}
         </button>
       ))}
+    </div>
+  );
+}
+
+// SwatchChoice picks a surface (top bar / left pane) color. Each swatch previews the
+// color as it'll look in the active theme; "デフォルト" shows a slashed neutral chip.
+function SwatchChoice({ theme, value, onChange }) {
+  return (
+    <div className="swatch-row">
+      {SURFACE_COLORS.map((c) => {
+        const col = surfaceValue(c.id, theme);
+        return (
+          <button
+            key={c.id}
+            type="button"
+            title={c.label}
+            className={"swatch" + (c.id === value ? " active" : "") + (col ? "" : " swatch-default")}
+            style={col ? { background: col } : undefined}
+            onClick={() => onChange(c.id)}
+          >
+            {c.id === value ? "✓" : ""}
+          </button>
+        );
+      })}
     </div>
   );
 }
