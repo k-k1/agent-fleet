@@ -1171,6 +1171,8 @@ textarea:focus {
   background: var(--panel2);
   border-left: 1px solid var(--border2);
   cursor: pointer;
+  /* Own touch gestures (tap/swipe to scroll) instead of letting the page scroll. */
+  touch-action: none;
 }
 .minimap-inner {
   position: absolute;
@@ -2095,6 +2097,10 @@ button.primary:hover:not(:disabled) {
 }
 
 @media (max-width: 760px) {
+  /* narrower minimap on a phone (saves horizontal room; swipe to scroll). */
+  .minimap {
+    width: 48px;
+  }
   /* top bar: hamburger in, secondary chrome trimmed so it fits a phone width */
   .nav-toggle {
     display: inline-flex;
