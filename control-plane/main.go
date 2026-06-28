@@ -171,6 +171,12 @@ func main() {
 	mux.HandleFunc("DELETE /api/connections/claude", cfg.proxyAgentREST)
 	mux.HandleFunc("PUT /api/connections/opencode", cfg.proxyAgentREST)
 	mux.HandleFunc("DELETE /api/connections/opencode/{env}", cfg.proxyAgentREST)
+	// Codex auth — proxied to the Agent (codex owns auth.json; no public callback,
+	// device-auth polls OpenAI from inside the container).
+	mux.HandleFunc("POST /api/connections/codex/api-key", cfg.proxyAgentREST)
+	mux.HandleFunc("POST /api/connections/codex/device/start", cfg.proxyAgentREST)
+	mux.HandleFunc("POST /api/connections/codex/device/poll", cfg.proxyAgentREST)
+	mux.HandleFunc("DELETE /api/connections/codex", cfg.proxyAgentREST)
 
 	// Terminal PTY — proxied WebSocket.
 	mux.HandleFunc("GET /ws/terminal", cfg.proxyTerminal)

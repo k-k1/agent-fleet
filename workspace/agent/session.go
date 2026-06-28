@@ -23,7 +23,7 @@ type Session struct {
 	Name      string `json:"name"`
 	Tmux      string `json:"tmux"`
 	Dir       string `json:"dir"`
-	Kind      string `json:"kind"`     // "claude" | "shell"
+	Kind      string `json:"kind"`     // "claude" | "opencode" | "codex" | "shell"
 	Repo      string `json:"repo"`     // working dir basename (display)
 	Label     string `json:"label"`    // claude --name display name (claude only)
 	Started   string `json:"started"`  // "01/02 15:04" local time, for the list
@@ -94,16 +94,17 @@ func wireSession(m sessionMeta, alive bool) Session {
 			// be resumed there; the Console marks it non-resumable (archive only).
 			resumable = false
 		}
-	} else if m.Kind == "opencode" {
+	} else if m.Kind == "opencode" || m.Kind == "codex" {
 		if alive {
-			// State comes from the bundled opencode plugin (keyed by our sid). No
-			// recorded event yet => idle (sitting at the prompt).
+			// State comes from the agent's status files keyed by our sid: the bundled
+			// opencode plugin (opencode) or codex's -c-injected status hooks (codex).
+			// No recorded event yet => idle (sitting at the prompt).
 			state = "idle"
 			if st, ok := readSessionStatus(sessionUUID(m.Dir, m.Name)); ok {
 				state = st.State
 			}
 		} else if !dirExists(m.Dir) {
-			// Same as claude: opencode --continue needs its real project dir.
+			// Same as claude: opencode/codex resume needs its real project dir.
 			resumable = false
 		}
 	}
@@ -228,6 +229,17 @@ func startSessionTmux(m sessionMeta) error {
 		ocSid := sessionUUID(m.Dir, m.Name)
 		envs := append([]string{"AF_SESSION_SID=" + ocSid}, opencodeEnv()...)
 		program = buildOpencodeProgram(m.Model, envs, readOpencodeSid(ocSid))
+	case "codex":
+		// codex resumes (or starts) in its real project dir; refuse if it's gone.
+		if !dirOK {
+			return fmt.Errorf("作業フォルダが存在しないため再開できません: %s", m.Dir)
+		}
+		// Auth is codex's own ~/.codex/auth.json (codex login, written via the
+		// Connections flow), so no token is injected. State + per-slot resume are
+		// wired purely through codex hooks injected on the command line (-c), keyed
+		// by our deterministic slot sid — see buildCodexProgram.
+		cxSid := sessionUUID(m.Dir, m.Name)
+		program = buildCodexProgram(m.Model, cxSid, readCodexSid(cxSid))
 	default:
 		// A claude session must launch in its real working dir: if the dir is gone
 		// (its repo was deleted) we refuse rather than resume the conversation in an
@@ -354,6 +366,8 @@ func paneKind(name string) string {
 	switch {
 	case strings.Contains(s, "opencode"):
 		return "opencode"
+	case strings.Contains(s, "codex"):
+		return "codex"
 	case strings.Contains(s, "claude"):
 		return "claude"
 	default:
@@ -365,7 +379,7 @@ type createReq struct {
 	Name  string `json:"name"`
 	Dir   string `json:"dir"`
 	Model string `json:"model"`
-	Kind  string `json:"kind"` // "claude" (default) | "shell"
+	Kind  string `json:"kind"` // "claude" (default) | "opencode" | "codex" | "shell"
 	// Optional clone-then-start: when remote_url is set, the repo is cloned
 	// (or reused) under ~/repos and its path becomes the session CWD, ignoring dir.
 	RemoteURL string `json:"remote_url"`
@@ -410,7 +424,7 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 
 	kind := req.Kind
 	switch kind {
-	case "shell", "opencode":
+	case "shell", "opencode", "codex":
 		// supported as-is
 	default:
 		kind = "claude"
@@ -538,9 +552,10 @@ func handleRecreateSession(w http.ResponseWriter, r *http.Request) {
 		_ = os.Remove(p)
 	}
 	removeSessionStatus(sid)
-	// opencode: forget the captured session id so recreate starts a NEW opencode
+	// opencode/codex: forget the captured session id so recreate starts a NEW
 	// conversation (plain launch) instead of resuming the old one.
 	removeOpencodeSid(sid)
+	removeCodexSid(sid)
 	m.CreatedAt = time.Now().Format(time.RFC3339)
 	if m.Kind == "claude" {
 		m.Label = sessionLabel(m.Dir)
@@ -638,6 +653,76 @@ func readOpencodeSid(sid string) string {
 }
 
 func removeOpencodeSid(sid string) { _ = os.Remove(filepath.Join(opencodeSidDir(), sid)) }
+
+// buildCodexProgram returns the tmux program for a codex session. codex owns its
+// auth (~/.codex/auth.json) so no token is injected. It generates its OWN session
+// id (no --session-id flag), so we:
+//   - inject status hooks via -c, baking OUR slot sid into the hook command so the
+//     reported working/idle state is keyed by the slot (codex's hook JSON carries
+//     codex's own session_id, which the helper records for resume);
+//   - resume exactly THIS slot's codex session when we've captured its id
+//     (codexResumeID), else launch plain codex (a fresh session) — mirroring the
+//     opencode per-slot model so two codex slots in one dir don't collide.
+// The bypass flags make codex run unattended like claude's --dangerously-skip-
+// permissions: the container IS the sandbox, and we author the injected hooks so
+// hook-trust is bypassed too (otherwise the status hooks wouldn't fire).
+func buildCodexProgram(model, slotSid, codexResumeID string) string {
+	if override := os.Getenv("AGENT_CODEX_CMD"); override != "" {
+		return override
+	}
+	flags := envOr("AGENT_CODEX_FLAGS", "--dangerously-bypass-approvals-and-sandbox --dangerously-bypass-hook-trust")
+	exe := agentExe()
+	// A hook entry as a TOML inline array-of-tables value for `-c hooks.<event>=…`.
+	// The command bakes in our slot sid + the "codex" marker so the status helper
+	// keys by the slot and captures codex's own session id from the hook's stdin.
+	hookFlag := func(event, state string) string {
+		cmd := fmt.Sprintf("%s session-status %s %s codex", exe, state, slotSid)
+		val := fmt.Sprintf(`hooks.%s=[{type="command",command=%s}]`, event, tomlString(cmd))
+		return "-c " + shellQuote(val)
+	}
+	parts := []string{"codex"}
+	if codexResumeID != "" {
+		parts = append(parts, "resume", shellQuote(codexResumeID))
+	}
+	parts = append(parts, flags)
+	parts = append(parts, hookFlag("UserPromptSubmit", "working"))
+	parts = append(parts, hookFlag("Stop", "idle"))
+	if model != "" {
+		parts = append(parts, "-m", shellQuote(model))
+	}
+	return strings.Join(parts, " ")
+}
+
+// codex session-id store: maps our deterministic slot sid to the codex session id
+// (a UUID) captured from codex's hook JSON, so a slot resumes its OWN session via
+// `codex resume <id>` (codex has no --session-id flag to pin it ourselves).
+func codexSidDir() string {
+	return filepath.Join(homeDir(), ".config", "agent-fleet", "codex-sid")
+}
+
+func readCodexSid(sid string) string {
+	b, err := os.ReadFile(filepath.Join(codexSidDir(), sid))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
+}
+
+func writeCodexSid(sid, codexID string) {
+	if err := os.MkdirAll(codexSidDir(), 0o700); err != nil {
+		return
+	}
+	_ = os.WriteFile(filepath.Join(codexSidDir(), sid), []byte(codexID), 0o600)
+}
+
+func removeCodexSid(sid string) { _ = os.Remove(filepath.Join(codexSidDir(), sid)) }
+
+// tomlString renders s as a TOML basic string (double-quoted, backslash/quote
+// escaped) for embedding in a `-c key=value` override.
+func tomlString(s string) string {
+	r := strings.NewReplacer(`\`, `\\`, `"`, `\"`)
+	return `"` + r.Replace(s) + `"`
+}
 
 // sessionLabel builds the claude --name for a session: "[AF] {repo} @MMDD-HHMM"
 // where {repo} is the working dir's basename and the time is the workspace's local

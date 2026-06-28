@@ -124,11 +124,25 @@ export default function NewSessionModal({ onClose, onCreated }) {
                 opencode
                 <span className="seg-sub">opencode を起動</span>
               </button>
+              <button
+                type="button"
+                className={"seg-btn" + (kind === "codex" ? " active" : "")}
+                onClick={() => setKind("codex")}
+              >
+                codex
+                <span className="seg-sub">Codex CLI を起動</span>
+              </button>
             </div>
             {kind === "opencode" && (
               <div className="field-help">
                 初回はプロバイダ認証が必要です。起動後の TUI で <code>/connect</code>、または端末で{" "}
                 <code>opencode auth login</code>（認証は home に保存され再起動後も保持）。
+              </div>
+            )}
+            {kind === "codex" && (
+              <div className="field-help">
+                初回は <b>設定 → 接続 → Codex</b> で認証してください（API キー or ChatGPT サブスク）。認証は{" "}
+                <code>~/.codex</code> に保存され再起動後も保持されます。
               </div>
             )}
           </div>

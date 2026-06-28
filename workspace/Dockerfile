@@ -75,8 +75,10 @@ RUN set -eux; \
 # precedence and is auto-updated by the entrypoint; this is the pinned fallback /
 # fresh-home default. opencode: an alternative agent (kind="opencode"); its auth
 # (opencode auth login) and sessions persist under ~/.local/share/opencode (home).
-RUN npm install -g @anthropic-ai/claude-code opencode-ai \
- && claude --version && opencode --version
+# codex: OpenAI Codex CLI (kind="codex"); auth (codex login --with-api-key /
+# --device-auth) writes ~/.codex/auth.json and sessions land in ~/.codex (home).
+RUN npm install -g @anthropic-ai/claude-code opencode-ai @openai/codex \
+ && claude --version && opencode --version && codex --version
 
 # UTF-8 ロケール。未設定(POSIX)だと tmux が UTF-8 を無効化し日本語等が化ける。
 # C.UTF-8 は locale 生成不要で Debian に存在する。
