@@ -51,6 +51,16 @@ export const rawJSON = (path, method, body) =>
     body: JSON.stringify(body),
   });
 
+// Build the preview URL for a port the user started a service on inside the
+// container (Spring Boot, dev server, ...). Opened as a top-level navigation, so
+// the tenant rides as a query param — a new tab can't carry the X-AF-Tenant
+// header that fetch() injects. The CP resolves tenant from this fallback.
+export function previewURL(port) {
+  const u = new URL(rel(`preview/${encodeURIComponent(port)}/`));
+  if (selectedTenant) u.searchParams.set("tenant", selectedTenant);
+  return u.toString();
+}
+
 // Build the terminal WebSocket URL for a session under the current mount, with
 // the tenant carried as a query param (headers aren't available on WS).
 export function wsURL(session) {

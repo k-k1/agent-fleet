@@ -19,6 +19,7 @@
 - [api-agent.md](reference/api-agent.md) — API 表面の地図 + Workspace Agent 設計（契約はコードが正）
 - [portability.md](reference/portability.md) — ポート&アダプタ（local/aws 両対応）
 - [security.md](reference/security.md) — 脅威モデル、隔離境界、シークレット管理（封筒暗号）
+- [preview.md](reference/preview.md) — コンテナ内サービスのプレビュー（/preview/{port} 経路）
 - [aws.md](reference/aws.md) — AWS 構成、ネットワーク、コスト試算
 
 ## decisions/ — 意思決定の記録（ADR）
