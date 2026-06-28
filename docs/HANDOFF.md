@@ -266,7 +266,8 @@ opencode を雛形に追加。**ただし codex のフックは Claude Code と�
 - **denylist**: `fs.go` に `~/.codex`（auth.json トークン + sessions + helper bin）。
 - **Console**: New session に codex 種別（モデル選択は非表示、認証案内チップ）。Repos 行 ▶codex 即起動（suffix `-cx`）。バッジ `rocket`。設定→接続に **Codex 行**（`ChatGPT で接続`＝device flow / `API キー`貼付、`ConnectionsTab.jsx` `CodexRow`）。**接続を「エージェント / git ホスティング」にカテゴリ分け**（`ConnectionsTab.jsx` `.conn-cat`）。**接続済みは認証アカウントを表示**:
 - claude＝email・plan（`claudeStatus`＝`claude auth status` の `email`/`subscriptionType`）。codex＝`auth.json` の `auth_mode` + id_token claims から email・plan（例 `…@gmail.com · plus`、`codexStatus`/`codexIDTokenInfo`）。
-- GitHub＝`/user` の `login`、Bitbucket＝`/2.0/user` の `display_name`/`username`（`githubAccount`/`bitbucketAccount`）。**API は接続毎に1回だけ叩き store にキャッシュ**（`gitEntry.Login`/`bitbucketCreds.Account`、polled な `GET /connections` で都度叩かない）。失敗時は email/プレースホルダにフォールバック。Bitbucket の実名解決は token の `account` スコープが必要。
+- GitHub/Bitbucket は **ID（ハンドル）+ email** を表示。GitHub＝`/user` の `login`+`email`、Bitbucket＝`/2.0/user` の `username` + `/2.0/user/emails` の primary（`githubAccount`/`bitbucketAccount`）。**API は接続毎に1回だけ叩き store にキャッシュ**（`gitEntry.{Login,Email}`/`bitbucketCreds.{Account,Email}`、polled な `GET /connections` で都度叩かない＝`Login=="" || Email==""` で解決）。失敗時は email/プレースホルダにフォールバック。Bitbucket の実名/メール解決は token の `account`/`email` スコープが必要。
+- **表示**: アイコンセット選択をフォントと同じ**折り返しチップ**（`ChipChoice`＝`.font-choices`）に（旧 1 行セグメントはスマホで見切れた）。モーダルヘッダの余白を拡げ ✕ ボタンのタップ域を確保（`.modal-head` padding + スマホは `safe-area-inset-top` でノッチ回避・40px ターゲット）。
 - **CP**: `/api/connections/codex/*` を `proxyAgentREST` で委譲（device-auth はコンテナ内で OpenAI を直接 polling＝CP ネイティブ callback 不要、Bitbucket と異なる）。
 
 ### 6.10.5 git / リポジトリ / SCM / ファイルブラウザ

@@ -69,7 +69,7 @@ export default function DisplayTab() {
       <section className="ds-group">
         <h4 className="ds-title">ファイルアイコン</h4>
         <Row label="アイコンセット">
-          <Choice
+          <ChipChoice
             value={s.iconSet}
             options={ICON_SETS.map((x) => [x.id, x.label])}
             onChange={(v) => setSetting("iconSet", v)}
@@ -116,6 +116,25 @@ function FontSelect({ value, onChange }) {
           onClick={() => onChange(f)}
         >
           {f}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// ChipChoice lays the options out as wrapping chips (same as FontSelect) so a long
+// list doesn't overflow off-screen on a phone, unlike the single-row segmented Choice.
+function ChipChoice({ value, options, onChange }) {
+  return (
+    <div className="font-choices">
+      {options.map(([v, label]) => (
+        <button
+          key={String(v)}
+          type="button"
+          className={"font-chip" + (v === value ? " active" : "")}
+          onClick={() => onChange(v)}
+        >
+          {label}
         </button>
       ))}
     </div>

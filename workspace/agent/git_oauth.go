@@ -171,7 +171,8 @@ type bitbucketCreds struct {
 	Expiry       int64  `json:"expiry"` // unix seconds
 	Key          string `json:"key"`
 	Secret       string `json:"secret"`
-	Account      string `json:"account,omitempty"` // cached real Bitbucket account (resolved from the API)
+	Account      string `json:"account,omitempty"` // cached real Bitbucket handle (resolved from the API)
+	Email        string `json:"email,omitempty"`   // cached account email (resolved from the API)
 }
 
 // writeBitbucketCreds persists the OAuth refresh creds into the encrypted store.

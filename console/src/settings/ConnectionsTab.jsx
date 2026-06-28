@@ -403,7 +403,10 @@ function GithubRow({ st, reload }) {
       <span className="cname">GitHub</span>
       {st?.connected ? (
         <>
-          <span className="cwho" title={st.username || ""}>{st.username || "connected"}</span>
+          <span className="cwho" title={st.email || st.username || ""}>
+            {st.username || "connected"}
+            {st.email ? ` · ${st.email}` : ""}
+          </span>
           <button className="icon danger" title="切断" onClick={disconnect}>
             ✕
           </button>
@@ -507,7 +510,10 @@ function BitbucketRow({ st, reload }) {
       <span className="cname">Bitbucket</span>
       {st?.connected ? (
         <>
-          <span className="cwho" title={st.username || ""}>{st.username || "connected"}</span>
+          <span className="cwho" title={st.email || st.username || ""}>
+            {st.username || "connected"}
+            {st.email ? ` · ${st.email}` : ""}
+          </span>
           <button className="icon danger" title="切断" onClick={disconnect}>
             ✕
           </button>
