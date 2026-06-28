@@ -322,6 +322,14 @@ opencode を「設定から認証」「状態バッジ」まで claude と同等
 - **検証**（使い捨てコンテナ）: 同一 dir・別 sid の2スロットが**別 `ses_…` を捕捉**（DISTINCT）、各々 `--session` 再開で ALPHA/BRAVO を正しく想起＝独立を確認。
 - **セッションIDをキーに（#1 の方針）について**: 会話の実体IDは claude=`sessionUUID(dir,name)`、opencode=捕捉した `ses_…`（同 uuid をキーに保存）＝**内部識別子は既にユニークID**。tmux 名/作成/停止/attach の API キーは表示名のままだが、名前衝突の手詰まりは「孤児を一覧に出す」修正（続き8）で解消済み。表示名を完全に重複許可（tmux も純粋にID採番）する全面 re-key は大きめの変更なので別途（未着手）。
 
+**🔧 修正（2026-06-28 続き10）— claude 対話 TUI に認証が渡らない（重大）**:
+- **症状**: claude セッションが「Select login method」を出し認証されない。
+- **真因（重要）**: **claude の対話 TUI は `CLAUDE_CODE_OAUTH_TOKEN`(env) を認証に使わない**——`claude -p`（headless）専用。対話 TUI は `.credentials.json` を要求する（claude-code-guide で確認・auth 優先順位で OAuth env は #5、対話 TUI は読まない版がある）。運用者の `.credentials.json`（`CLAUDE_CONFIG_DIR=/var/lib/af/claude`）は node→dev リネームや recreate 等で消えており、保存 OAuth トークンも env では対話 TUI に効かず未認証だった（`-p` は効いていたので「トークンは有効」と切り分け済）。これまで動いていたのは過去の手動 /login が書いた `.credentials.json` に依存していたため。
+- **検証で確定**: 同コンテナで `CLAUDE_CODE_OAUTH_TOKEN=… claude -p` は PONG（OK）だが対話 TUI はログイン画面。`ANTHROPIC_AUTH_TOKEN`(env, 優先#2) でも `.credentials.json`(accessToken のみ) でも**対話 TUI が認証され推論 PONG**。RC 等サブスク機能維持のため **`.credentials.json`（サブスク OAuth スロット）方式**を採用（`ANTHROPIC_AUTH_TOKEN` は API課金扱いでサブスク機能を殺す恐れ）。
+- **修正**（`claude_auth.go`/`main.go`/`session.go`）: 保存トークンから `.credentials.json` を生成。`writeClaudeCredentials`＝`{"claudeAiOauth":{accessToken,refreshToken:"",expiresAt:今+365日(ms),scopes:[user:inference,user:profile],subscriptionType:"max"}}` を `claudeConfigDir()/.credentials.json`(0600) に。`storeClaudeToken`(接続時=上書き)・`ensureClaudeCredentials`(起動時=不在なら生成、既存は非破壊)・`handleClaudeDisconnect`(削除) で同期。`session.go` の **`CLAUDE_CODE_OAUTH_TOKEN` env 前置注入は廃止**（対話で無効＋コマンドラインに秘密が露出するため）。setup-token は refresh token を返さないので expiry は遠未来固定＝失効時は API 401→再接続で再生成。
+- **検証**: 新イメージで「secrets にトークン→再起動→`ensureClaudeCredentials` が `.credentials.json` 生成→API で claude セッション→『Welcome to Claude Code』（ログイン画面でない）」を確認。運用者コンテナにも即時に `.credentials.json` を配置済（新規 claude セッションは即認証。完全反映は Stop→Start）。
+- **⚠️ ついでの留意**: opencode の env 注入（`OPENCODE_API_KEY` 等）と claude の旧 env 前置は**プロセスのコマンドライン（`ps`/`tmux pane_start_command`/`/proc/pid/cmdline`）に平文露出**する。claude は本修正で env 前置を廃止し露出解消。opencode は env 注入が必要なため露出は残る（同一 uid・同一コンテナ＝本人の BYO キーが見える範囲＝P3-5 段2 で許容済の境界）。
+
 **🗒 フォローアップ（次セッション・未調査）**:
 - **（任意）セッション識別の完全 ID 化**: tmux 名・meta・API・Console を name でなくランダムな一意IDで keying し、表示名は単なるラベル（重複可）に。現状は内部IDはユニーク・表示名がルーティングキー。
 - **codex CLI / Antigravity CLI をエージェント追加**（opencode と同枠の kind 追加）。codex = OpenAI Codex CLI（`@openai/codex`、auth は `codex login`/`OPENAI_API_KEY`、resume は `codex resume`）。Antigravity CLI = Google（CLI 形態・インストール/認証要調査）。opencode の実装（kind 分岐・Console 種別・denylist・即起動・auth env 注入・状態プラグイン）が雛形。
