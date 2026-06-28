@@ -4,7 +4,7 @@ import Icon from "./Icon.jsx";
 // Top bar: product name, tenant picker (hidden for single-membership users),
 // the signed-in identity, and the settings button (Connections + Admin tabs).
 export default function TopBar() {
-  const { whoami, tenants, tenant, showPicker, selectTenant, openSettings } = useApp();
+  const { whoami, tenants, tenant, showPicker, selectTenant, openSettings, openAdmin, superAdmin } = useApp();
   const me = whoami?.email || whoami?.user || "";
   return (
     <header className="topbar">
@@ -25,7 +25,12 @@ export default function TopBar() {
           </label>
         )}
         {me && <span className="whoami" title={me}>{me}</span>}
-        <button className="gear" title="設定（接続 / 管理）" onClick={openSettings}>
+        {superAdmin && (
+          <button className="gear" title="管理（テナント / メンバー / クォータ）" onClick={openAdmin}>
+            <Icon name="shield" /> 管理
+          </button>
+        )}
+        <button className="gear" title="設定（接続 / Claude / 環境 / 表示）" onClick={openSettings}>
           <Icon name="gear" /> 設定
         </button>
       </div>

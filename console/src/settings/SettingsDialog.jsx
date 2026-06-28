@@ -1,17 +1,17 @@
 import { useState } from "react";
 import { useApp } from "../state.jsx";
 import ConnectionsTab from "./ConnectionsTab.jsx";
-import AdminTab from "./AdminTab.jsx";
 import DisplayTab from "./DisplayTab.jsx";
 import ClaudeTab from "./ClaudeTab.jsx";
 import EnvTab from "./EnvTab.jsx";
 import Icon from "../components/Icon.jsx";
 
-// SettingsDialog is the single modal in the app. Sections are chosen with a
-// segmented control (matching the New Session modal), not tabs: Connections and
-// Display for everyone, Admin for super_admin only.
+// SettingsDialog holds the per-user settings (Connections / Claude / 環境 / 表示).
+// Super_admin (tenant/member/quota) management lives in a SEPARATE modal — see
+// AdminDialog, opened from its own top-bar button — so admin actions are clearly
+// distinct from personal settings.
 export default function SettingsDialog() {
-  const { closeSettings, superAdmin } = useApp();
+  const { closeSettings } = useApp();
   const [section, setSection] = useState("connections");
 
   const sections = [
@@ -19,7 +19,6 @@ export default function SettingsDialog() {
     ["claude", "Claude"],
     ["env", "環境"],
     ["display", "表示"],
-    ...(superAdmin ? [["admin", "管理"]] : []),
   ];
 
   return (
@@ -49,7 +48,6 @@ export default function SettingsDialog() {
             {section === "claude" && <ClaudeTab />}
             {section === "env" && <EnvTab />}
             {section === "display" && <DisplayTab />}
-            {section === "admin" && superAdmin && <AdminTab />}
           </div>
         </div>
       </div>

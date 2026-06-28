@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, useEffect, useCallback, useRef } from "react";
 import { api, getTenant, setTenant as persistTenant } from "./api.js";
 import { attach as termAttach, detach as termDetach } from "./term.js";
+import { hydrateUIPrefs } from "./lib/settings.js";
 
 // AppContext holds everything shared across the top bar, WS bar, left pane, main
 // area, and settings dialog: identity, tenant selection, workspace state, the
@@ -59,6 +60,7 @@ export function AppProvider({ children }) {
   }, []);
 
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [adminOpen, setAdminOpen] = useState(false);
 
   // refresh signals — bump to make the matching section refetch
   const [sessionsKey, setSessionsKey] = useState(0);
@@ -218,6 +220,7 @@ export function AppProvider({ children }) {
   useEffect(() => {
     (async () => {
       await initTenants();
+      hydrateUIPrefs(); // pull per-user display settings from the server (after tenant)
       refreshWs();
     })();
   }, [initTenants, refreshWs]);
@@ -244,6 +247,9 @@ export function AppProvider({ children }) {
     settingsOpen,
     openSettings: () => setSettingsOpen(true),
     closeSettings: () => setSettingsOpen(false),
+    adminOpen,
+    openAdmin: () => setAdminOpen(true),
+    closeAdmin: () => setAdminOpen(false),
     sessionsKey,
     reposKey,
     connKey,

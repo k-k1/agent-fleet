@@ -382,6 +382,11 @@ opencode を「設定から認証」「状態バッジ」まで claude と同等
 - **DisplayTab**: 「カラーテーマ」セクション＝テーマ選択 + 上部/左ペインのスウォッチ選択（`SwatchChoice`、現テーマでの実色プレビュー、default は斜線チップ）。
 - フロントのみ＝**リロードで反映**（CP に `[data-theme=light]`/`--topbar-bg`/`--active-bg` bundle・配信 200 確認）。**既知の限界**: 端末(xterm)とコード表示(highlight.js github-dark)はライトでも暗いまま（端末は通常暗色で許容、コードのライト構文テーマ化は別途）。
 
+**🔧 UI 調整（2026-06-28 続き19）— 表示設定のサーバー保存（端末間同期）/ 管理設定を別モーダルに分離**:
+- **表示設定を per-user でサーバー保存**（従来は localStorage のみ＝ブラウザ依存）: agent `ui_prefs.go`（`GET/PUT /env/ui-prefs`、`~/.config/agent-fleet/ui-prefs.json`(0600)＝denylist 配下・home volume で Stop→Start 跨ぎ永続、JSON object 検証＋64KiB cap、ペイロードは Console 所有の不透明 blob）。CP は proxy 2本。`settings.js`: localStorage を即時キャッシュにしつつ **setSetting で 600ms デバウンス PUT**、boot 時（tenant 解決後、`state.jsx`）に `hydrateUIPrefs()` が GET→既知キーをマージ（**server が localStorage に優先**、未起動/不達は catch で握り潰し＝localStorage で動作）。これで別ブラウザ/端末でもテーマ・アイコン・フォント等が追従。
+- **管理（super_admin）を設定モーダルから分離**: SettingsDialog から「管理」セクションを撤去（接続/Claude/環境/表示の per-user 設定のみに）。新 `AdminDialog.jsx`（AdminTab を内包）を**独立モーダル**化し、TopBar に **`shield` 管理ボタン（super_admin のみ表示）**を追加（`state.jsx` に `adminOpen`/`openAdmin`/`closeAdmin`、App で描画）。管理操作と個人設定の区別を明確化。
+- **反映**: 管理分離・テーマ・アイコンはフロントのみ＝リロード即時。**ui-prefs のサーバー保存は新 agent + CP が必要**（image 再ビルド＋CP 再起動＋Stop→Start。未反映だと GET/PUT 404 → localStorage フォールバックで従来通り動作）。agent/CP/console ビルド OK。
+
 **🗒 フォローアップ（次セッション・未調査）**:
 - **（任意）ライトテーマの精度向上**: xterm テーマ（term.js）とファイルビュアーの highlight.js をライト時に明色へ切替。danger hover 等の残ハードコード色。
 - **（任意）アイコンセット拡張**: 現在 4 セット（vscode/material/devicon/seti）。選択セットのみ動的ロードでバンドル削減も可。
