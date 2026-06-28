@@ -298,6 +298,16 @@ claude と並ぶ session `kind="opencode"`。codex / Antigravity は未着手（
 - **（任意）opencode 状態の `question` 相当**: opencode の permission/質問イベントを拾えれば claude の ❓質問あり に相当する状態を足せる（現状 working/idle のみ）。
 - **Remote Control 実機接続の確認 + カスタムセッション名 / trust**（Console 残）。
 
+### 6.10.9 サービスプレビュー（コンテナ内 HTTP サービスを Console から開く）
+
+ユーザーが Workspace 内で起動した HTTP サービス（Spring Boot / dev server / 任意 Web アプリ）を、**追加のホスト公開ポートもコンテナ再作成も無し**で新タブから確認する経路。設計の詳細は [reference/preview](reference/preview.md)。
+
+- **経路**: ブラウザ `…/preview/<port>/<path>` → Caddy（`/agent-fleet` strip）→ **CP `GET /preview/<port>/<rest>`**（`control-plane/preview.go` `handlePreview`。`rtFor` で他ルートと同じ gateway identity 認証、CP↔Agent の `Bearer <AGENT_TOKEN>` 付与、`X-Forwarded-Prefix/Host/Proto` 付与）→ **Agent `/proxy/<port>/…`**（`workspace/agent/preview.go`。内部 Authorization を除去し `httputil.ReverseProxy` で転送）→ コンテナ内 `127.0.0.1:<port>`。Agent はコンテナ netns 共有ゆえ loopback で届く＝**隔離（専用ネットワーク・相互不可視）は不変**。
+- **Console**（`WsBar.jsx`）: WS バー右のポート入力＋「プレビュー」。Workspace running 時のみ。新タブ遷移は `X-AF-Tenant` を運べないため `?tenant=<slug>` を付与（CP の query fallback で解決＝terminal WS と同方式）。`/preview/<port>`→`…/<port>/` への 301（`handlePreviewRedirect`）で相対資産がサブパス配下に解決。
+- **アプリ側**: JSON REST / 静的配信は無設定で動く。Spring Boot のリンク/リダイレクトは `server.forward-headers-strategy=framework`（or `native`）で `X-Forwarded-Prefix` を尊重させる。
+- **現状の制約**: **HTTP のみ。WebSocket / SSE 未対応**＝Vite/React の HMR は不可（WS ブリッジは次段）。ポートは手入力（listen 自動検出なし）。`forward-headers` 非対応アプリは絶対パス資産が 404 → アプリ側で base path 設定。
+- **反映**: CP 経路＝**CP 再起動**、Agent `/proxy` エンドポイント＝**image 再ビルド + Stop→Start**（§2 早見表）。2026-06-28 に CP/Console/image へ反映済み。
+
 ## 7. 動作確認の最短手順
 
 ```bash

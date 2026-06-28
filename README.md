@@ -46,6 +46,7 @@ P3-1〜P3-5 + Console 全面刷新（React+Vite）まで完了。次は P3-7（A
 | [portability.md](docs/reference/portability.md) | デプロイ層の分離（ポート&アダプタ、local/aws 両対応）|
 | [security.md](docs/reference/security.md) | 脅威モデル、隔離境界、シークレット管理（封筒暗号）|
 | [aws.md](docs/reference/aws.md) | AWS 構成、ネットワーク、コスト試算 |
+| [preview.md](docs/reference/preview.md) | コンテナ内サービスのプレビュー（`/preview/{port}` 経路）|
 
 **decisions/ — 意思決定（なぜ・捨てた選択肢）**
 | ファイル | 内容 |
