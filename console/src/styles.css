@@ -772,6 +772,19 @@ textarea:focus {
   vertical-align: -0.22em;
   object-fit: contain;
 }
+/* tinted (monochrome) brand icon: the SVG is a mask, filled with the type color. */
+.fi-mask {
+  display: inline-block;
+  width: 1.15em;
+  height: 1.15em;
+  vertical-align: -0.22em;
+  mask-size: contain;
+  mask-repeat: no-repeat;
+  mask-position: center;
+  -webkit-mask-size: contain;
+  -webkit-mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+}
 .fi-folder {
   color: #8cb4d8;
 }
@@ -783,6 +796,18 @@ textarea:focus {
 }
 .fi-secret {
   color: var(--warn);
+}
+.icon-preview {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+}
+.icon-preview-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted);
 }
 
 /* ---- forms ---- */

@@ -1,4 +1,5 @@
-import { useSettings, setSetting, CODE_FONTS, fontStack } from "../lib/settings.js";
+import { useSettings, setSetting, CODE_FONTS, fontStack, ICON_SETS } from "../lib/settings.js";
+import FileIcon from "../components/FileIcon.jsx";
 
 // DisplayTab: font + file-viewer preferences (CodeLeaf-inspired), persisted via the
 // settings store. Every control is a horizontal selection (segmented buttons /
@@ -36,6 +37,26 @@ export default function DisplayTab() {
         </Row>
         <Row label="ミニマップ">
           <OnOff value={s.minimap} onChange={(v) => setSetting("minimap", v)} />
+        </Row>
+      </section>
+
+      <section className="ds-group">
+        <h4 className="ds-title">ファイルアイコン</h4>
+        <Row label="アイコンセット">
+          <Choice
+            value={s.iconSet}
+            options={ICON_SETS.map((x) => [x.id, x.label])}
+            onChange={(v) => setSetting("iconSet", v)}
+          />
+        </Row>
+        <Row label="プレビュー">
+          <span className="icon-preview">
+            {["main.py", "lib.rs", "App.tsx", "style.css", "Dockerfile", "main.go", "data.json", "README.md"].map((n) => (
+              <span key={n} className="icon-preview-item" title={n}>
+                <FileIcon name={n} /> {n}
+              </span>
+            ))}
+          </span>
         </Row>
       </section>
 
