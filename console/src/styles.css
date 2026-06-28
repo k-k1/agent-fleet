@@ -342,9 +342,16 @@ textarea:focus {
   background: var(--active-bg);
   box-shadow: 0 1px 0 var(--border);
 }
+/* The pin badge sits in the row's top-right corner (above the ⋯ menu), so the
+   session name stays left-aligned and the row layout doesn't shift when pinned. */
 .session-pin {
+  position: absolute;
+  top: 3px;
+  right: 6px;
   font-size: 10px;
-  margin-right: 3px;
+  color: var(--accent);
+  z-index: 1;
+  pointer-events: none;
 }
 /* The repo of the attached session is pinned to the top of the Repos list. */
 .repo-row.pinned {
@@ -377,6 +384,7 @@ textarea:focus {
 /* session rows: two lines (display name + 起動日時 / セッション名 + 状態), plus a
    recreate (↻) action on the right */
 .list > li.session-row {
+  position: relative;
   flex-direction: row;
   align-items: stretch;
   gap: 2px;
@@ -591,8 +599,11 @@ textarea:focus {
     opacity: 0.45;
   }
 }
+/* Stopped sessions are dimmed but must stay readable (var(--muted) was too faint,
+   especially on dark): use the normal foreground at reduced opacity. */
 .session-row.stopped .session-display {
-  color: var(--muted);
+  color: var(--fg);
+  opacity: 0.72;
 }
 .session-row.active > .session-btn {
   background: var(--active-bg);
@@ -780,10 +791,10 @@ textarea:focus {
   background: var(--btn);
 }
 .fsrow.selected {
-  background: #2a3a44;
+  background: var(--hover-bg);
 }
 .fstree:focus .fsrow.selected {
-  background: #2f5a6a;
+  background: var(--active-bg);
 }
 .fsrow .fs-dir {
   color: var(--accent);
