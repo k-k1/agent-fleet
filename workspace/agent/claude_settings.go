@@ -35,12 +35,21 @@ func claudeJSONPath() string {
 	return filepath.Join(claudeConfigDir(), ".claude.json")
 }
 
-// ensureFolderTrusted pre-accepts the directory-trust dialog for dir by setting
-// projects[dir].hasTrustDialogAccepted in .claude.json. The trust dialog ("Is this
-// a project you trust?") is NOT skipped by --dangerously-skip-permissions, so a
-// fresh dir (every repo, and /home/dev after the node→dev rename) would otherwise
-// stall every interactive session at the prompt. Only writes when not already
-// trusted, to minimize racing with claude's own writes; write is atomic (rename).
+// ensureFolderTrusted prepares .claude.json so an interactive claude session
+// starts straight at the prompt: (1) it marks onboarding complete, and (2) it
+// pre-accepts the directory-trust dialog for dir. Both are NOT skipped by
+// --dangerously-skip-permissions.
+//
+//	hasCompletedOnboarding: when this is unset, claude re-runs the SETUP WIZARD,
+//	  whose first step is "Select login method" — so a .claude.json that lost this
+//	  flag (e.g. after a re-login or a workspace recreate) makes every session show
+//	  the login screen EVEN WHEN credentials are valid. (This was the real cause of
+//	  "claude auth not passing": creds were fine; onboarding was re-prompting login.)
+//	hasTrustDialogAccepted: the per-dir "Is this a project you trust?" prompt that
+//	  otherwise stalls a fresh dir (every repo, and /home/dev after node→dev).
+//
+// Writes once, only when something changed, atomically (rename), to minimize racing
+// with claude's own writes.
 func ensureFolderTrusted(dir string) {
 	if dir == "" {
 		return
@@ -50,6 +59,17 @@ func ensureFolderTrusted(dir string) {
 	if b, err := os.ReadFile(p); err == nil {
 		_ = json.Unmarshal(b, &root)
 	}
+	changed := false
+
+	if v, _ := root["hasCompletedOnboarding"].(bool); !v {
+		root["hasCompletedOnboarding"] = true
+		changed = true
+	}
+	if _, ok := root["theme"]; !ok {
+		root["theme"] = "dark"
+		changed = true
+	}
+
 	projects, _ := root["projects"].(map[string]any)
 	if projects == nil {
 		projects = map[string]any{}
@@ -58,12 +78,16 @@ func ensureFolderTrusted(dir string) {
 	if entry == nil {
 		entry = map[string]any{}
 	}
-	if trusted, _ := entry["hasTrustDialogAccepted"].(bool); trusted {
+	if trusted, _ := entry["hasTrustDialogAccepted"].(bool); !trusted {
+		entry["hasTrustDialogAccepted"] = true
+		projects[dir] = entry
+		root["projects"] = projects
+		changed = true
+	}
+
+	if !changed {
 		return
 	}
-	entry["hasTrustDialogAccepted"] = true
-	projects[dir] = entry
-	root["projects"] = projects
 	b, err := json.MarshalIndent(root, "", "  ")
 	if err != nil {
 		return

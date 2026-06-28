@@ -337,6 +337,13 @@ opencode を「設定から認証」「状態バッジ」まで claude と同等
 - **⚠️ `ANTHROPIC_AUTH_TOKEN` は不採用**: 対話を認証できるが claude が「API Usage Billing」扱いになりサブスク（RC 等）を殺す恐れ。サブスク維持のため `claude auth login` を採用。
 - **検証**: `claude auth login --claudeai` が authorize URL を出しコード待ち、`claude auth status` が JSON で loggedIn を返す（合成 creds=対話で login 画面になることも確認済）。**運用者コンテナの誤った合成 creds は削除済**（loggedIn=False に）。**運用反映**: image 再ビルド済→Stop→Start→設定→接続→**Claude 接続（=本物の /login。URL 承認→コード貼付）** で対話セッションが認証される。**即時の代替**: 画面に出ている claude のログイン方式選択でそのまま 1 を選び承認→コード貼付すれば claude が本物 creds を書き全セッション認証（=従来手動 /login と同じ。新イメージ不要）。
 
+**🔧 修正（2026-06-28 続き12）— claude ログイン画面の真因は「オンボーディング未完了」だった（creds ではない）**:
+- **続き10・11 の訂正・最終結論**: claude が「Select login method」を出していた真因は**認証情報ではなく `.claude.json` の `hasCompletedOnboarding` 未設定**。**`claude auth status` が `loggedIn:true`（本物アカウント k1.kami@gmail.com・max・refreshToken 付き creds）でも、対話 TUI はオンボード・ウィザードを再実行し、その先頭ステップが「ログイン方式選択」**なので、認証済みでもログイン画面に見えていた。`hasCompletedOnboarding=true` を入れた瞬間、既存 creds で認証されプロンプト到達＋**`/rc active`（Remote Control 稼働）**を実機確認（「Welcome back Sample User Name!」→ `PONG` 応答）。
+- **これが「opencode 対応前は動いていた」理由**: 当時の `.claude.json` にはオンボード済みフラグがあり、その後 recreate／再ログイン等で `.claude.json` が作り直されフラグが消えていた。続き11 で `claude auth login` に変えた（本物 creds 生成）のは**正しいが、それだけでは不十分**だった（オンボードフラグが別途必要）。
+- **修正**（`claude_settings.go` `ensureFolderTrusted`）: フォルダ信頼（`hasTrustDialogAccepted`）に加え **`hasCompletedOnboarding=true`（＋`theme` 未設定なら `dark`）を `.claude.json` に seed**。claude セッション起動毎（create/recreate/resume）に呼ばれるので recreate/再起動を跨いでも維持。`--dangerously-skip-permissions` ではオンボードも trust も飛ばせないため明示 seed が必須。
+- **検証**: エージェント経由の新規 claude が「Welcome back」＋プロンプト＋`/rc active`。運用者の固まっていた claude セッションも recreate で認証済みに。運用者 `.claude.json` には即時に `hasCompletedOnboarding=true` を設定済（新規/作り直しセッションは現コンテナでも認証）。image 再ビルド済（Stop→Start で恒久化）。
+- **教訓（自戒）**: claude の認証可否は「`claude auth status`」「`Welcome to Claude Code` バナー」では判定できない（前者は creds ファイルだけ見る／後者はログイン中も出る）。**send-keys で実プロンプト→応答**でのみ確証できる。auth と onboarding は別物。
+
 **🗒 フォローアップ（次セッション・未調査）**:
 - **（任意）セッション識別の完全 ID 化**: tmux 名・meta・API・Console を name でなくランダムな一意IDで keying し、表示名は単なるラベル（重複可）に。現状は内部IDはユニーク・表示名がルーティングキー。
 - **codex CLI / Antigravity CLI をエージェント追加**（opencode と同枠の kind 追加）。codex = OpenAI Codex CLI（`@openai/codex`、auth は `codex login`/`OPENAI_API_KEY`、resume は `codex resume`）。Antigravity CLI = Google（CLI 形態・インストール/認証要調査）。opencode の実装（kind 分岐・Console 種別・denylist・即起動・auth env 注入・状態プラグイン）が雛形。
