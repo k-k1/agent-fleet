@@ -677,7 +677,10 @@ func buildCodexProgram(model, slotSid, codexResumeID string) string {
 	// keys by the slot and captures codex's own session id from the hook's stdin.
 	hookFlag := func(event, state string) string {
 		cmd := fmt.Sprintf("%s session-status %s %s codex", exe, state, slotSid)
-		val := fmt.Sprintf(`hooks.%s=[{type="command",command=%s}]`, event, tomlString(cmd))
+		// codex uses claude's hook schema: hooks.<Event> is an array of entries that
+		// each hold a NESTED "hooks" list of {type,command}. A flat [{type,command}]
+		// parses without error but never fires, so the nesting is required.
+		val := fmt.Sprintf(`hooks.%s=[{hooks=[{type="command",command=%s}]}]`, event, tomlString(cmd))
 		return "-c " + shellQuote(val)
 	}
 	parts := []string{"codex"}
