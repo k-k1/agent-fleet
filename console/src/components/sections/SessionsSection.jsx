@@ -208,9 +208,7 @@ export default function SessionsSection() {
                   >
                     アーカイブする（一覧から消す）
                   </button>
-                  {/* opencode resume is --continue (no fresh-start flag), so 作り直す
-                      would not actually discard its conversation — hide it there. */}
-                  {!dead && s.kind !== "opencode" && (
+                  {!dead && (
                     <button
                       className="session-menu-item danger"
                       onClick={() => {

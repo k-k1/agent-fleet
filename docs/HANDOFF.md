@@ -315,7 +315,15 @@ opencode を「設定から認証」「状態バッジ」まで claude と同等
 - **真因**: `handleListSessions` は **meta を起点に列挙**するため、「**tmux は生存・meta が無い孤児セッション**」が一覧に出ない。自動命名（`NewSessionModal`/`ReposSection` の `freeName`/`uniqueName` は `GET /api/sessions` の名前集合で重複回避）はその名を知らず再利用 → `handleCreateSession` の `tmuxHasSession` で衝突＝`session already running`。孤児は一覧で見えず**アーカイブもできない**手詰まり。archive(`handleStopSession`)自体は live tmux を正しく kill する（＝archive のバグではない）。孤児の発生源は Stop→Start 跨ぎや過去の手動操作等の端ケース。
 - **修正**（`session.go handleListSessions`）: meta の無い生 `claude_*` tmux も一覧に追加（`Alive:true/Resumable:true`、kind は `paneKind()`＝ペイン起動コマンドから sniff）。これで孤児が**可視化＋名前重複回避＋アーカイブ可能**に。検証: 使い捨てコンテナで meta だけ削除した生 tmux が一覧に出る（旧: 出ない）ことを確認。**反映は image 再ビルド＋Stop→Start**（現運用者コンテナは現状クリーン＝孤児なし。再発防止のため次回 Stop→Start で適用）。
 
+**🔧 修正（2026-06-28 続き9）— opencode のスロット毎に独立セッション（2枚目が同じになる問題）**:
+- **症状**: 同一 dir で opencode を2枚起動すると CLI は2枚立つが**中の会話が同じ**。
+- **原因**: 全launch で `opencode --continue` を渡していた＝`--continue` は**プロジェクト最新セッションを継続**するため、2枚目が1枚目の会話を掴む。`opencode --session <id>` は任意IDの新規作成不可（`Session not found`、id 形式は `ses_…`）＝claude のように決定的 uuid を渡せない。
+- **修正**: 同梱プラグインが **`session.created` の `event.properties.sessionID`（`ses_…`）を捕捉**し `~/.config/agent-fleet/opencode-sid/<AF_SESSION_SID>`（=スロットの `sessionUUID(dir,name)`）に保存。`session.go` は起動時、保存があれば **`opencode --session <id>`（そのスロット専用を再開）**、無ければ**素の `opencode`**（TUI が初回メッセージで新規作成＝スロット毎に別。`--continue` は廃止）。`buildOpencodeProgram(model, envs, ocid)`、`readOpencodeSid`/`removeOpencodeSid` 追加。recreate（会話破棄）は `removeOpencodeSid` で次回新規に。Console は opencode の「作り直す」を再表示（実際に新会話になるため）。
+- **検証**（使い捨てコンテナ）: 同一 dir・別 sid の2スロットが**別 `ses_…` を捕捉**（DISTINCT）、各々 `--session` 再開で ALPHA/BRAVO を正しく想起＝独立を確認。
+- **セッションIDをキーに（#1 の方針）について**: 会話の実体IDは claude=`sessionUUID(dir,name)`、opencode=捕捉した `ses_…`（同 uuid をキーに保存）＝**内部識別子は既にユニークID**。tmux 名/作成/停止/attach の API キーは表示名のままだが、名前衝突の手詰まりは「孤児を一覧に出す」修正（続き8）で解消済み。表示名を完全に重複許可（tmux も純粋にID採番）する全面 re-key は大きめの変更なので別途（未着手）。
+
 **🗒 フォローアップ（次セッション・未調査）**:
+- **（任意）セッション識別の完全 ID 化**: tmux 名・meta・API・Console を name でなくランダムな一意IDで keying し、表示名は単なるラベル（重複可）に。現状は内部IDはユニーク・表示名がルーティングキー。
 - **codex CLI / Antigravity CLI をエージェント追加**（opencode と同枠の kind 追加）。codex = OpenAI Codex CLI（`@openai/codex`、auth は `codex login`/`OPENAI_API_KEY`、resume は `codex resume`）。Antigravity CLI = Google（CLI 形態・インストール/認証要調査）。opencode の実装（kind 分岐・Console 種別・denylist・即起動・auth env 注入・状態プラグイン）が雛形。
 - **opencode の per-slot resume 厳密化**（任意）: 現状 `--continue` は同一 dir で最新セッションを継続＝同 dir に複数 opencode スロットがあると最新を共有。厳密化するなら作成時に session id を捕捉し `--session <id>` で resume（opencode.db 参照が必要）。
 - **opencode 状態の question 相当**（任意）: opencode の permission/質問イベントを拾えれば claude の `❓質問あり` に相当する状態を足せる（現状 working/idle のみ）。
