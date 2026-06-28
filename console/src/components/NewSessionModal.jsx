@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, apiJSON } from "../api.js";
 import RepoPicker from "./RepoPicker.jsx";
-import Icon from "./Icon.jsx";
+import Modal from "./Modal.jsx";
 
 // NewSessionModal: a clear, roomy dialog for creating a session.
 // shell is the left / default kind — a one-click shell needs no repo, no dir, and
@@ -94,15 +94,7 @@ export default function NewSessionModal({ onClose, onCreated }) {
   };
 
   return (
-    <div className="modal-backdrop" onClick={busy ? undefined : onClose}>
-      <form className="modal session-modal" onClick={(e) => e.stopPropagation()} onSubmit={submit}>
-        <header className="modal-head">
-          <h3 className="modal-title">新しいセッション</h3>
-          <button type="button" className="icon" title="閉じる" onClick={onClose}>
-            <Icon name="close" />
-          </button>
-        </header>
-
+    <Modal title="新しいセッション" onClose={onClose} className="session-modal" as="form" onSubmit={submit} lockClose={busy}>
         <div className="modal-body">
           {/* 種類 — shell 左 / 既定 */}
           <div className="field">
@@ -235,7 +227,6 @@ export default function NewSessionModal({ onClose, onCreated }) {
             {busy ? (cloning ? "Cloning…" : "作成中…") : "作成して開く"}
           </button>
         </footer>
-      </form>
-    </div>
+    </Modal>
   );
 }

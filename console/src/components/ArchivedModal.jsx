@@ -1,13 +1,13 @@
 import { useEffect, useState } from "react";
 import { api, raw } from "../api.js";
 import Icon from "./Icon.jsx";
+import Modal from "./Modal.jsx";
+import { kindIcon, kindLabel } from "../lib/sessionkind.js";
 
 // ArchivedModal lists archived sessions (hidden from the active list but kept on
 // disk) and lets the user restore them (back into the list as a stopped session,
 // click to resume) or delete them permanently. Backed by /api/sessions/archived,
 // /restore, and /stop.
-const kindIcon = (k) => (k === "shell" ? "terminal" : k === "opencode" ? "hubot" : "sparkle");
-const kindName = (k) => (k === "shell" ? "shell" : k === "opencode" ? "opencode" : "claude");
 
 export default function ArchivedModal({ onClose, onRestored }) {
   const [items, setItems] = useState(null);
@@ -48,48 +48,40 @@ export default function ArchivedModal({ onClose, onRestored }) {
   };
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
-        <header className="modal-head">
-          <h3 className="modal-title">アーカイブ済みセッション</h3>
-          <button type="button" className="icon" title="閉じる" onClick={onClose}>
-            <Icon name="close" />
-          </button>
-        </header>
-        <div className="modal-body">
-          {items === null && <p className="muted">読み込み中…</p>}
-          {items && items.length === 0 && <p className="muted">アーカイブはありません。</p>}
-          {items && items.length > 0 && (
-            <ul className="archived-list">
-              {items.map((s) => (
-                <li key={s.name} className="archived-row">
-                  <div className="archived-info">
-                    <span className="archived-name">{s.label ? s.label.replace(/^\[AF\]\s*/, "") : s.repo || s.name}</span>
-                    <span className="archived-sub muted">
-                      <Icon name={kindIcon(s.kind)} /> {kindName(s.kind)} · {s.name}
-                      {s.started ? " · " + s.started : ""}
-                      {s.resumable === false ? " · フォルダ無し" : ""}
-                    </span>
-                  </div>
-                  <div className="archived-actions">
-                    <button disabled={busy} onClick={() => restore(s.name)}>
-                      復帰
-                    </button>
-                    <button className="ghost danger" disabled={busy} title="完全に削除" onClick={() => del(s.name)}>
-                      <Icon name="trash" />
-                    </button>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-        <footer className="modal-foot">
-          <button type="button" className="ghost" onClick={onClose}>
-            閉じる
-          </button>
-        </footer>
+    <Modal title="アーカイブ済みセッション" onClose={onClose}>
+      <div className="modal-body">
+        {items === null && <p className="muted">読み込み中…</p>}
+        {items && items.length === 0 && <p className="muted">アーカイブはありません。</p>}
+        {items && items.length > 0 && (
+          <ul className="archived-list">
+            {items.map((s) => (
+              <li key={s.name} className="archived-row">
+                <div className="archived-info">
+                  <span className="archived-name">{s.label ? s.label.replace(/^\[AF\]\s*/, "") : s.repo || s.name}</span>
+                  <span className="archived-sub muted">
+                    <Icon name={kindIcon(s.kind)} /> {kindLabel(s.kind)} · {s.name}
+                    {s.started ? " · " + s.started : ""}
+                    {s.resumable === false ? " · フォルダ無し" : ""}
+                  </span>
+                </div>
+                <div className="archived-actions">
+                  <button disabled={busy} onClick={() => restore(s.name)}>
+                    復帰
+                  </button>
+                  <button className="ghost danger" disabled={busy} title="完全に削除" onClick={() => del(s.name)}>
+                    <Icon name="trash" />
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
       </div>
-    </div>
+      <footer className="modal-foot">
+        <button type="button" className="ghost" onClick={onClose}>
+          閉じる
+        </button>
+      </footer>
+    </Modal>
   );
 }

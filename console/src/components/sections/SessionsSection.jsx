@@ -5,9 +5,8 @@ import Section from "../Section.jsx";
 import Icon from "../Icon.jsx";
 import NewSessionModal from "../NewSessionModal.jsx";
 import ArchivedModal from "../ArchivedModal.jsx";
-
-// kindIcon maps a session kind to its codicon glyph.
-const kindIcon = (k) => (k === "shell" ? "terminal" : k === "opencode" ? "hubot" : "sparkle");
+import { kindIcon, kindLabel } from "../../lib/sessionkind.js";
+import { pinFirst } from "../../lib/listutil.js";
 
 // stateInfo maps a session to its line-2 status chip (codicon + label).
 const stateInfo = (s) => {
@@ -169,12 +168,9 @@ export default function SessionsSection() {
     return () => document.removeEventListener("mousedown", close);
   }, [menuFor]);
 
-  // Pin the currently-attached session to the very top of the list (stable sort
-  // keeps the rest in their backend order). The .pinned row is also sticky so it
-  // stays visible while the list scrolls.
-  const ordered = session
-    ? [...sessions].sort((a, b) => (a.name === session ? -1 : 0) - (b.name === session ? -1 : 0))
-    : sessions;
+  // Pin the currently-attached session to the very top of the list (stable, keeps
+  // the rest in backend order). The .pinned row is also sticky while the list scrolls.
+  const ordered = pinFirst(sessions, (s) => s.name === session);
 
   return (
     <Section
@@ -217,7 +213,7 @@ export default function SessionsSection() {
               </span>
               <span className="session-l2">
                 <span className="kind-tag">
-                  <Icon name={kindIcon(s.kind)} /> {s.kind === "shell" ? "shell" : s.kind === "opencode" ? "opencode" : "claude"}
+                  <Icon name={kindIcon(s.kind)} /> {kindLabel(s.kind)}
                 </span>
                 <span className="session-name">{s.name}</span>
                 {(() => {
