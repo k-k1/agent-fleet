@@ -113,11 +113,11 @@ docker compose（ホスト 1 台）
 
 - **Docker ソケット権限**: Control Plane に `docker.sock` を渡すとホスト root 相当。dev/信頼された
   オンプレでは許容、untrusted 環境では rootless Docker / ソケットプロキシ（権限絞り）を検討。
-- shared 形態は AWS と同じ脅威モデル（[04](04-security.md)）を適用。dev 形態は単一信頼ユーザー前提で簡略化。
+- shared 形態は AWS と同じ脅威モデル（[04](../reference/security.md)）を適用。dev 形態は単一信頼ユーザー前提で簡略化。
 
 ## 9.9 ロードマップへの影響（local-first）
 
 - Phase 0/1 を **ローカル（dev → shared）で先に完成**させ、AWS アダプタを後付けする方が速い。
 - ローカルが「AWS の縮小版」ではなく「同一コアの別アダプタ」になるため、開発・デモ・オフライン検証が
   そのまま本番設計の検証になる。
-- [05 ロードマップ](05-roadmap.md) を local-first に更新済み。
+- [05 ロードマップ](../roadmap.md) を local-first に更新済み。

@@ -1,9 +1,11 @@
 # 13. P3-1 実装プラン — MetadataStore（SQLite）導入
 
-[12 Phase 3](12-phase3-multitenant.md) の最初のワークストリーム **P3-1（DB 化）** の実装計画。
+> 🗄 **歴史的記録（完了）** — 現状は [HANDOFF §6.9](../HANDOFF.md)、設計は [ロードマップ P3-1](../roadmap.md#p3-1-metadatastoresqlite-既定-全ての土台)。以下は当時の実装プラン。
+
+[12 Phase 3](../roadmap.md) の最初のワークストリーム **P3-1（DB 化）** の実装計画。
 現状は `control-plane/manager.go` の `rts`（in-memory map）が source of truth で、port/token を
 `docker inspect` から都度再構成し、`nextPort` カウンタで採番する（CP 再起動で停止中コンテナの
-port が再採番されうる弱点 = [HANDOFF §6.7 末尾](HANDOFF.md)）。本作業でこれを **SQLite を
+port が再採番されうる弱点 = [HANDOFF §6.7 末尾](../HANDOFF.md)）。本作業でこれを **SQLite を
 source of truth** に置き換える。
 
 ## 13.1 ゴールと不変条件
@@ -13,7 +15,7 @@ source of truth** に置き換える。
 - **後方互換**: `AUTH=dev`（`devUser`）/ `AUTH=proxy`（email）とも従来通り。
   **稼働中の `af-ws-*` は再作成しない**（port/token を inspect で採用し DB へ取り込む）。
 - **Agent 契約は不変**（/sessions・/repos・/connections）。proxy 系（`proxy.go`）は無改修。
-- **DB 既定 = SQLite**（[12 P3-1](12-phase3-multitenant.md)）。pure-Go `modernc.org/sqlite`・WAL・goose 相当の冪等マイグレーション。
+- **DB 既定 = SQLite**（[12 P3-1](../roadmap.md)）。pure-Go `modernc.org/sqlite`・WAL・goose 相当の冪等マイグレーション。
 
 ### スコープ外（P3-1 では「やらない」）
 

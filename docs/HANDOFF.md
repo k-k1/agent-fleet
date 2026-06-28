@@ -2,8 +2,9 @@
 
 Phase 1 MVP 完了（2026-06-26, commit `dd2330e`）以降、Phase 2 完了・Phase 3 進行中。
 このファイルは**現在の正しい状態を表す構造化リファレンス**。時系列の作業ログは [CHANGELOG-handoff.md](CHANGELOG-handoff.md)。
-プロジェクトの背景と確定事項はメモリ（`agent-fleet-overview`）と [README](../README.md) / [docs/01〜18](.) を参照。
-**まず読む順**: この HANDOFF（§1〜§3 → §6 フェーズ状況 → §6.10 機能リファレンス）→ [11 §11.10](11-phase1-plan.md#1110-実装結果と実運用の知見phase-1-完了) → [05 ロードマップ](05-roadmap.md)。
+プロジェクトの背景と確定事項はメモリ（`agent-fleet-overview`）と [README](../README.md) / [docs 索引](README.md) を参照。
+ドキュメントはジャンル別: 不変設計＝[reference/](reference/)、意思決定＝[decisions/](decisions/)、計画＝[roadmap](roadmap.md)、使い終わった計画＝[history/](history/)。
+**まず読む順**: この HANDOFF（§1〜§3 → §6 フェーズ状況 → §6.10 機能リファレンス）→ [phase1-plan §11.10](history/phase1-plan.md#1110-実装結果と実運用の知見phase-1-完了) → [ロードマップ](roadmap.md)。
 
 ## 1. いま動いているもの（このホスト）
 
@@ -67,24 +68,24 @@ control-plane/      Control Plane(Go)。main/runtime/proxy/manager/store(_sqlite
   migrations/       0001_init 〜 0005_session。`//go:embed` 冪等マイグレータ。
 console/            React+Vite Console（src/→console/dist）。旧 vanilla は console/legacy-phase1/。
 deploy/local/run-dev.sh   dev 起動スクリプト。provision-jvm.sh 共有 JVM 展開。
-docs/               設計 01〜18 + 本書 + CHANGELOG-handoff。
+docs/               reference/(設計) + decisions/(ADR) + roadmap.md + history/(済プラン) + 本書 + CHANGELOG-handoff。
 phase0/             /login 検証 PoC(参考)。
 ```
 
-API/契約は [06](06-api-spec.md)・[07](07-workspace-agent.md)。CP↔Agent は内部HTTP/WS（per-container `AGENT_TOKEN` で Bearer 認証、§6.8 A2）。
+API/契約は [06](reference/api-agent.md)・[07](reference/api-agent.md)。CP↔Agent は内部HTTP/WS（per-container `AGENT_TOKEN` で Bearer 認証、§6.8 A2）。
 
 ## 5. 検証で確定した重要事実
 
 - **`/login` は localhost 非依存**: サブスク認証(方式A)の `redirect_uri=https://platform.claude.com/oauth/code/callback`。
-  ヘッドレス/リモートで無条件に成立。コードを `platform.claude.com` で表示→ターミナルに貼り戻し。→ [02 §2.6](02-architecture.md#26-claude-login-フロー)。
+  ヘッドレス/リモートで無条件に成立。コードを `platform.claude.com` で表示→ターミナルに貼り戻し。→ [02 §2.6](reference/architecture.md#26-claude-login-フロー)。
 - 認証/設定は永続ホーム（`~/.claude/.credentials.json`, `settings.json`）に集約。再起動後も維持。
 - 実運用で潰した点（再発防止）: base-path 相対化 / `LANG=C.UTF-8` / `skipDangerousModePermissionPrompt` seed /
   Console no-store / 端末描画(unicode11+WebGL+JetBrainsMono) / `/login` URL はヘッダ「⧉ sign-in URL」でオンデマンドCopy。
-  詳細 [11 §11.10](11-phase1-plan.md#1110-実装結果と実運用の知見phase-1-完了)。
+  詳細 [11 §11.10](history/phase1-plan.md#1110-実装結果と実運用の知見phase-1-完了)。
 
 ## 6. フェーズ状況
 
-目標: オンプレ 1 台で**複数ユーザーが相互不可視**に並行利用 + アダプタ層を固める（[05](05-roadmap.md) / [09 §9.5](09-portability.md#95-ローカルの-2-形態authgateway-で切替)）。
+目標: オンプレ 1 台で**複数ユーザーが相互不可視**に並行利用 + アダプタ層を固める（[05](roadmap.md) / [09 §9.5](reference/portability.md#95-ローカルの-2-形態authgateway-で切替)）。
 
 > **▶ いまの起点 = Phase 3 のプロダクト化（P3-7 以降、§6.9）。** Phase 2（MVP: 相互不可視）は完了（§6.7/§6.8）。
 > **このホストは RAM 逼迫（`host-oom-fleet-risk`）→ コンテナを増やす検証は OOM 注意**（`free -h` で数 GiB 確保 / `--memory` 必須 / フリート縮小）。
@@ -96,7 +97,7 @@ SSH 鍵は HTTPS トークン方式へ格下げ（任意の後付け、§6.6 Con
 
 `af-ws-<user>` 化の前に、新規コンテナ0でこのホストのRAM制約に安全な**リポジトリ管理**を先行実装。
 
-- **モデル**: リポジトリ = `~/repos/<name>` の working copy。**フォルダ名が id**（MetadataStore はまだ無いので不要。docs [09 §9.6](09-portability.md#96-ローカル構成compose-概略) の `repos/` 配置と一致）。
+- **モデル**: リポジトリ = `~/repos/<name>` の working copy。**フォルダ名が id**（MetadataStore はまだ無いので不要。docs [09 §9.6](reference/portability.md#96-ローカル構成compose-概略) の `repos/` 配置と一致）。
 - **Agent**（`workspace/agent/git.go`）: `GET/POST /repos`・`DELETE /repos/{name}`・`GET /repos/{name}/status|branches`・`POST /repos/{name}/checkout|fetch`。
   status は `git status --porcelain=v2 --branch` を解析（branch/dirty/ahead/behind/staged/unstaged/untracked）。clone/fetch は `GIT_TERMINAL_PROMPT=0` で対話プロンプトに詰まらず fail-fast。name は `^[A-Za-z0-9][A-Za-z0-9._-]{0,59}$` で traversal 防御。
 - **CP**（`control-plane/main.go`）: `/api/repos*` を追加。既存 `proxyAgentREST`（`/api` 剥がし）でそのまま Agent へ委譲。
@@ -147,11 +148,11 @@ CP のルーティングが user→対象コンテナを解決するだけ。
 
 ## 6.8 MVP（Phase 2 完了）残チェックリスト
 
-完了条件（[05](05-roadmap.md)）= 「オンプレ1台で複数ユーザーが**相互不可視**に並行利用でき、**全ポートが抽象化**される」。
+完了条件（[05](roadmap.md)）= 「オンプレ1台で複数ユーザーが**相互不可視**に並行利用でき、**全ポートが抽象化**される」。
 
 **A. 相互不可視＝セキュリティ境界（MVP必須）**
 - [x] **A1 コンテナ間ネットワーク分離** — `af-net-<user>`（§6.7）。実装・検証済。
-- [x] **A2 CP↔Agent 認証**（[07 §7.5](07-workspace-agent.md#75-control-plane-との認証)）— per-container `AGENT_TOKEN` を CP が `-e` 注入、proxy(REST/WS)+Bitbucket callback に Bearer 付与、Agent は `requireToken`（`/healthz` 除く・定数時間比較）。CP 再起動時は inspect で採用。実装・検証済（no/wrong=401, correct=200, /ws/pty も同様）。
+- [x] **A2 CP↔Agent 認証**（[07 §7.5](reference/api-agent.md#75-control-plane-との認証)）— per-container `AGENT_TOKEN` を CP が `-e` 注入、proxy(REST/WS)+Bitbucket callback に Bearer 付与、Agent は `requireToken`（`/healthz` 除く・定数時間比較）。CP 再起動時は inspect で採用。実装・検証済（no/wrong=401, correct=200, /ws/pty も同様）。
 - [x] **A3 資格情報の at-rest 暗号化** — 全資格を単一暗号ストア `secrets.enc`（AES-256-GCM）へ集約（`workspace/agent/secrets.go`）。鍵は CP 注入の per-user `AF_SECRET_KEY`（=HMAC(SHA256(`AF_MASTER_KEY`),user)、master はデータ領域外）。git は統一 helper `workspace-agent cred` が都度復号出力（平文ファイルを作らない）。起動時に旧平文を自動移行。実装・実機検証済。`AF_MASTER_KEY` 未設定の dev は `secrets.json` 平文（同一経路）。封筒化は §6.9 P3-3。
 
 **B. shared 形態を実際に通す（MVP必須・軽い）**
@@ -169,23 +170,23 @@ CP のルーティングが user→対象コンテナを解決するだけ。
 
 ## 6.9 次フェーズ = Phase 3 プロダクト化（パッケージ配布・グループ各社セルフホスト）
 
-社内利用 MVP は完了。次は**プロダクトのパッケージ化**。設計は [12 Phase 3](12-phase3-multitenant.md)。
+社内利用 MVP は完了。次は**プロダクトのパッケージ化**。設計は [12 Phase 3](roadmap.md)。
 **提供モデル確定**: 商用 SaaS も我々が運用する社内マルチテナント SaaS も断念。採用 = **プロダクトをパッケージ化し、グループ各社が「自社で」セルフホスト**（1 社=1 デプロイ）＝**ToS posture が最もクリーン**、我々は vendor/maintainer。
 確定前提（2026-06-27）: **パッケージ製品・各社セルフホスト / BYO 継続 / 会社間=デプロイ分離 / デプロイ内マルチテナント=任意（既定 単一） / 小規模 / デプロイ先は各社選択（オンプレ既定・自社 AWS 任意）**。
 
 - **構造**: 1 デプロイ = 1 社。中は `super_admin`（その社情シス）/ `Tenant`（部署, 既定 1）/ `User`。旧 `platform_admin`(=我々)は廃止。
-- ✅ **P3-1 DB 化**（[13](13-p3-1-plan.md)）。**SQLite 既定**の MetadataStore（pure-Go `modernc.org/sqlite`・WAL・`//go:embed` 冪等マイグレータ）。`manager.go` の in-memory map + docker-inspect 再構成 + nextPort 採番を置換し port/token を永続。既存 `af-ws-*` は inspect で採用＝**再作成しない**。CP は `AF_DB`（既定 `<WS_DATA>/control-plane.db`）。`control-plane/store.go`・`store_sqlite.go`・`migrations/0001_init.sql`。
-- ✅ **P3-2 identity↔tenant 多対多**（[14](14-p3-2-plan.md)）。email で identity 特定 → 作業対象テナントは `X-AF-Tenant` を membership で検証（所属1件は自動、複数で未指定=409、非所属=403）。Workspace は membership 単位で完全分離（`af-ws-<slug>-<key>`、既定テナントは旧 `af-ws-<key>` 維持）。migration 0002（`app_user`→`identity`+`membership`、`store_sqlite.go` `migrateMemberships`）。`GET /api/tenants` + 最小 super_admin API（`POST /api/admin/tenants|memberships`、RBAC=`identity.role`）。env `AF_PROVISION`(auto|invite)/`SUPER_ADMIN_EMAILS`。Console テナントピッカー（所属1件は非表示、`window.fetch` ラップで `X-AF-Tenant` 付与、端末 WS は `&tenant=<slug>`、`rtFor` は header→query 順で解決）。
-- ✅ **P3-3 封筒暗号 + custodian 抽象**（[15](15-p3-3-plan.md)）。per-workspace DEK を per-tenant KEK で wrap し `wrapped_dek` に保存→CP が unwrap して `AF_SECRET_KEY` 注入（**Agent 無改修**）。`custodian.go` `KeyCustodian{Wrap,Unwrap}` + `localCustodian`（KEK=`HMAC(master,"af-kek:"+tenantID)`・AES-GCM・AAD=keyRef）。Vault/KMS は同 IF で後追い。migration 0003。移行: 初回 DEK=legacy `HMAC(master,userKey)` を wrap 保存＝既存 `secrets.enc` 再暗号化なし。⚠️ on-prem localCustodian は KEK が master 由来ゆえ強度は単一 master と同等（真の失効は Vault/KMS 時、[15 §15.2](15-p3-3-plan.md#152-honest-な限界on-prem-localcustodian)）。
-- ✅ **P3-4 リソースバジェット/クォータ**（[16](16-p3-4-plan.md)）。ハードクォータ（超過 `429`・**既定無制限**）。Workspace 数/テナント（`max_workspaces`）+ セッション数/ユーザー（`max_sessions`、user_limit→tenant 既定）。`tenant.limits` JSON + `user_limit` 表（migration 0004）。`PUT /api/admin/tenants/{slug}/limits`・`PUT /api/admin/user-limits`（super_admin）。**`workspace.state` DB 同期もここで配線**（Start→running/Stop→stopped）。残: ディスク強制 / per-tenant セッション合計 / mem 個別サイズ / showback（P3-9）。
-- ✅ **P3-5 メンバー Console**（[17](17-p3-5-plan.md)）。段1=git ソース管理 + shell セッション、段2=ファイルブラウザ + 機微状態の home 外退避。詳細は §6.10.5。**段2 の退避(D)**: `runtime.go` が 2nd mount `<dataDir>/claude-config:/var/lib/af/claude` ＋ `CLAUDE_CONFIG_DIR` 注入で平文 claude 状態を browse ルート外へ、`entrypoint.sh` が claude 実行前に `~/.claude` を移行。暗号化済み `secrets.enc` は home 据置＋denylist。**限界**: 同一 uid shell 完全不可視は原理的に不可（本人の BYO トークン）→ ブラウザ不可視＋at-rest 暗号＋env 注入で実用十分。
+- ✅ **P3-1 DB 化**（[13](history/p3-1-metadatastore.md)）。**SQLite 既定**の MetadataStore（pure-Go `modernc.org/sqlite`・WAL・`//go:embed` 冪等マイグレータ）。`manager.go` の in-memory map + docker-inspect 再構成 + nextPort 採番を置換し port/token を永続。既存 `af-ws-*` は inspect で採用＝**再作成しない**。CP は `AF_DB`（既定 `<WS_DATA>/control-plane.db`）。`control-plane/store.go`・`store_sqlite.go`・`migrations/0001_init.sql`。
+- ✅ **P3-2 identity↔tenant 多対多**（[14](history/p3-2-identity-tenant.md)）。email で identity 特定 → 作業対象テナントは `X-AF-Tenant` を membership で検証（所属1件は自動、複数で未指定=409、非所属=403）。Workspace は membership 単位で完全分離（`af-ws-<slug>-<key>`、既定テナントは旧 `af-ws-<key>` 維持）。migration 0002（`app_user`→`identity`+`membership`、`store_sqlite.go` `migrateMemberships`）。`GET /api/tenants` + 最小 super_admin API（`POST /api/admin/tenants|memberships`、RBAC=`identity.role`）。env `AF_PROVISION`(auto|invite)/`SUPER_ADMIN_EMAILS`。Console テナントピッカー（所属1件は非表示、`window.fetch` ラップで `X-AF-Tenant` 付与、端末 WS は `&tenant=<slug>`、`rtFor` は header→query 順で解決）。
+- ✅ **P3-3 封筒暗号 + custodian 抽象**（[15](history/p3-3-envelope-crypto.md)）。per-workspace DEK を per-tenant KEK で wrap し `wrapped_dek` に保存→CP が unwrap して `AF_SECRET_KEY` 注入（**Agent 無改修**）。`custodian.go` `KeyCustodian{Wrap,Unwrap}` + `localCustodian`（KEK=`HMAC(master,"af-kek:"+tenantID)`・AES-GCM・AAD=keyRef）。Vault/KMS は同 IF で後追い。migration 0003。移行: 初回 DEK=legacy `HMAC(master,userKey)` を wrap 保存＝既存 `secrets.enc` 再暗号化なし。⚠️ on-prem localCustodian は KEK が master 由来ゆえ強度は単一 master と同等（真の失効は Vault/KMS 時、[15 §15.2](history/p3-3-envelope-crypto.md#152-honest-な限界on-prem-localcustodian)）。
+- ✅ **P3-4 リソースバジェット/クォータ**（[16](history/p3-4-quota.md)）。ハードクォータ（超過 `429`・**既定無制限**）。Workspace 数/テナント（`max_workspaces`）+ セッション数/ユーザー（`max_sessions`、user_limit→tenant 既定）。`tenant.limits` JSON + `user_limit` 表（migration 0004）。`PUT /api/admin/tenants/{slug}/limits`・`PUT /api/admin/user-limits`（super_admin）。**`workspace.state` DB 同期もここで配線**（Start→running/Stop→stopped）。残: ディスク強制 / per-tenant セッション合計 / mem 個別サイズ / showback（P3-9）。
+- ✅ **P3-5 メンバー Console**（[17](history/p3-5-member-console.md)）。段1=git ソース管理 + shell セッション、段2=ファイルブラウザ + 機微状態の home 外退避。詳細は §6.10.5。**段2 の退避(D)**: `runtime.go` が 2nd mount `<dataDir>/claude-config:/var/lib/af/claude` ＋ `CLAUDE_CONFIG_DIR` 注入で平文 claude 状態を browse ルート外へ、`entrypoint.sh` が claude 実行前に `~/.claude` を移行。暗号化済み `secrets.enc` は home 据置＋denylist。**限界**: 同一 uid shell 完全不可視は原理的に不可（本人の BYO トークン）→ ブラウザ不可視＋at-rest 暗号＋env 注入で実用十分。
 - ✅ **管理 UI（super_admin）**。store `ListTenants`/`ListMembersByTenant`、manager `workspaceStateByMembership`/`stopWorkspaceByMembership`。admin API（super_admin gate）: `GET /api/admin/tenants`・`GET /api/admin/tenants/{slug}/members`・`POST /api/admin/stop-workspace`。Console は独立モーダル `AdminDialog`（§6.10.6）。**CP のみ変更**。
-- ✅ **Console 全面刷新（React+Vite）+ Claude/環境設定 + ツールチェーン共有**（[18](18-console-ui-redesign.md) を実施）。詳細は **§6.10**。
+- ✅ **Console 全面刷新（React+Vite）+ Claude/環境設定 + ツールチェーン共有**（[18](history/console-redesign.md) を実施）。詳細は **§6.10**。
 - **次は P3-7（AWS アダプタ）/ P3-8（専用分離）/ P3-9（運用成熟: idle-stop/showback/backup/観測）/ P3-10（パッケージング）**。Console の残は §6.10.8。
 - **P3-10 パッケージング**=提供モデルの核（compose/Helm + 設定 + マイグレーション + runbook、phone-home なし）。完了判定=**第2デプロイをゼロから立てて E2E 通過**。
 - **MCP**: 管理サービス層を MCP 化し、その社の運用チームが自社 Fleet を Claude で運用。
-- **⚠️ 残存リスク**: 1 デプロイ内は CP が docker.sock（=ホスト root）+ 平文 DEK 注入 → CP/ホスト侵害でそのデプロイ内分離が一括崩壊。**会社間は別デプロイゆえ波及しない**のが本モデルの強み（[12 §12.3](12-phase3-multitenant.md#123-tos-と分離の留意自社ホスト前提)）。
-- **推奨シーケンス**: オンプレで P3-1→3→4→5/6→**P3-10(第2デプロイ検証)** → 希望社向け AWS で P3-7 → P3-8/9（[12 §12.4](12-phase3-multitenant.md#124-推奨シーケンス小規模local-first-継続)）。
+- **⚠️ 残存リスク**: 1 デプロイ内は CP が docker.sock（=ホスト root）+ 平文 DEK 注入 → CP/ホスト侵害でそのデプロイ内分離が一括崩壊。**会社間は別デプロイゆえ波及しない**のが本モデルの強み（[12 §12.3](roadmap.md#123-tos-と分離の留意自社ホスト前提)）。
+- **推奨シーケンス**: オンプレで P3-1→3→4→5/6→**P3-10(第2デプロイ検証)** → 希望社向け AWS で P3-7 → P3-8/9（[12 §12.4](roadmap.md#124-推奨シーケンス小規模local-first-継続)）。
 
 ## 6.10 機能リファレンス（テーマ別・現状）
 

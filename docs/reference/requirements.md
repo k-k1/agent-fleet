@@ -10,7 +10,7 @@ Claude セッションを起動・操作・管理できる。
 
 | 用語 | 定義 |
 |------|------|
-| Workspace | ユーザー 1 人に対応する永続コンテナ環境。`~/.claude` `~/.ssh` working copy を保持 |
+| Workspace | ユーザー 1 人に対応する永続コンテナ環境。`~/.claude`・暗号ストア・working copy を保持 |
 | Working copy | Workspace 内に clone した Bitbucket リポジトリの作業ディレクトリ |
 | Session | Working copy に紐づく Claude CLI プロセス（tmux セッション 1 本）|
 | Control Plane | Workspace の生成・破棄・仲介を行うバックエンド（コンテナ群の外側）|
@@ -36,13 +36,13 @@ Claude セッションを起動・操作・管理できる。
 - B1. リポジトリの clone。
 - B2. checkout / ブランチ変更 / ブランチ作成。
 - B3. working copy の状況確認（`git status` 相当、現在ブランチ、差分概要、未コミット有無）。
-- B4. SSH 公開鍵の生成と表示（Bitbucket へ手動登録するため）。
-- B5. （任意）Bitbucket API トークンを使った公開鍵の自動登録。
+- B4. git 認証情報の登録（Console から HTTPS トークン/OAuth で接続）。当初の SSH 公開鍵生成・手動登録から
+  Connections へ格下げ（[decisions/0003](../decisions/0003-ssh-to-connections.md)）。
 
 ### C. Workspace / サンドボックス
 - C1. ユーザー毎に隔離されたコンテナ環境を生成。
 - C2. clone したディレクトリ単位、またはユーザー単位でサンドボックスを構成できる。
-- C3. ユーザー毎の `~/.claude` `~/.ssh` working copy を永続管理。
+- C3. ユーザー毎の `~/.claude`・資格情報（暗号ストア）・working copy を永続管理。
 - C4. Workspace の起動・停止・再作成。
 
 ### D. Claude セッション・ターミナル
@@ -76,19 +76,22 @@ Claude セッションを起動・操作・管理できる。
 | 分離方式 | ユーザー毎コンテナ |
 | 規模 | 〜20 人 |
 | 永続化 | EBS/EFS で永続化 |
-| Bitbucket 鍵 | ユーザー単位の鍵 + 手動登録（トークンを預からない）|
-| 技術スタック | Console=Next.js(React)+xterm.js / Backend=Go |
+| git 認証 | Console から HTTPS トークン/OAuth（Connections）。秘密を CP は保持しない |
+| 技術スタック | Console=React+Vite+xterm.js / Backend=Go |
 
 ## 1.7 未決事項（今後詰める）
 
-1. **コンテナ実行基盤** — ECS(Fargate) を MVP 推奨、EC2 集約を最適化フェーズで検討。→ [03](03-aws-deployment.md)（暫定確定）。
-2. **永続ストレージ** — EFS（アクセスポイント）を主に採用。→ [03](03-aws-deployment.md)（暫定確定）。
-3. **`/login` の対話フロー** — 方式は判明（対話コード貼り戻し = 方式 A）。→ [02 §2.6](02-architecture.md#26-claude-login-フロー)。
-   残るは Phase 0 での実機確認（特に H7: remote-control 両立 / 状態判定の精度）。
-4. **scale-to-zero の判定** — アイドル検出とコールドスタート許容時間。
-5. **課金・上限** — ユーザー個人の Claude サブスクを使う前提で会社が負担する範囲。
-6. **Control Plane ↔ Agent の認証** — mTLS か署名付きトークンか。→ [07 §7.5](07-workspace-agent.md#75-control-plane-との認証)。
+> Phase 0〜2 + P3-1〜5 完了で多くが確定済み。下記は**現に残る**もの。決定の経緯は [decisions/](../decisions/)、
+> 現状は [HANDOFF](../HANDOFF.md)、前向きの計画は [ロードマップ](../roadmap.md)。
 
-### 解決済み（v1 で確定）
-- Bitbucket 鍵粒度・自動登録 → **ユーザー単位の鍵 + 手動登録**（B4 採用 / B5 は当面見送り）。詳細は [08](08-bitbucket.md)。
-- 技術スタック → **Next.js + Go**。
+1. **scale-to-zero / idle-stop** — アイドル検出とコールドスタート許容時間。オンプレ単一ホストの RAM 逼迫で
+   優先度が上がっている（ロードマップ P3-9）。
+2. **課金・上限** — ユーザー個人の Claude サブスクを使う前提で会社が負担する範囲（BYO・社内 showback は P3-9）。
+3. **ディスククォータの強制** — メータリング止まり（FS ハードクォータは後付け、P3-4 スコープ外）。
+
+### 解決済み（確定）
+- **コンテナ実行基盤 / 永続ストレージ** → `aws`=ECS(Fargate)+EFS、`local`=Docker+bind mount（[aws](aws.md) / [ポータビリティ](portability.md)）。
+- **`/login` の対話フロー** → 方式 A（コード貼り戻し）。auth と onboarding は別物が最終結論（[decisions/0002](../decisions/0002-claude-auth-onboarding.md) / [architecture §2.6](architecture.md#26-claude-login-フロー)）。
+- **Control Plane ↔ Agent の認証** → per-container `AGENT_TOKEN`（Bearer）+ ネットワーク分離（[api-agent §7.5](api-agent.md#75-control-plane-との認証)）。
+- **git 認証** → SSH 鍵廃止・Connections へ（[decisions/0003](../decisions/0003-ssh-to-connections.md)）。
+- **技術スタック** → **React+Vite + Go**（[decisions/0004](../decisions/0004-vanilla-to-react.md)）。

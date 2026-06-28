@@ -1,7 +1,7 @@
 # 03. AWS デプロイ構成
 
-本書は `aws` ターゲット（[09 ポータビリティ](09-portability.md)）の具体像。
-ローカル（Docker）で動かす構成は [09](09-portability.md) を参照。コア（Console / Control Plane /
+本書は `aws` ターゲット（[09 ポータビリティ](../reference/portability.md)）の具体像。
+ローカル（Docker）で動かす構成は [09](../reference/portability.md) を参照。コア（Console / Control Plane /
 Workspace Agent / Workspace イメージ）は両者で共通。
 
 ## 3.1 実行基盤の選定
@@ -54,7 +54,7 @@ Internet
   ドメイン制限は Google の `hd` クレーム検証で行う。
 - Workspace コンテナは ALB のターゲットにしない。Control Plane からのみ内部到達
   （ECS Service Connect / 内部 NLB / awsvpc 同一 SG 内）。
-- **Egress 制御**: Workspace から外部は Bitbucket と Anthropic/claude.ai に限定（NAT + 制限 or VPC エンドポイント方針は [04](04-security.md) で）。
+- **Egress 制御**: Workspace から外部は Bitbucket と Anthropic/claude.ai に限定（NAT + 制限 or VPC エンドポイント方針は [04](../reference/security.md) で）。
 
 ## 3.4 主要 AWS サービス一覧
 

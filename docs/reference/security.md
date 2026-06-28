@@ -33,14 +33,26 @@
 
 ## 4.4 シークレット管理
 
+ユーザーの git / Claude 資格情報は**単一の暗号ストア `secrets.enc`**（AES-256-GCM, 0600）に集約する。
+SSH 秘密鍵モデルは廃し HTTPS トークン/OAuth（Connections）へ格下げした（[decisions/0003](../decisions/0003-ssh-to-connections.md)）。
+Agent は統一 cred helper（`workspace-agent cred`）が都度復号して出力し、**平文ファイルを作らない**。
+
 | シークレット | 保管 | 露出範囲 |
 |-------------|------|----------|
-| Google OAuth クライアントシークレット | Secrets Manager | Control Plane / ALB のみ |
-| Bitbucket SSH 秘密鍵 | 各 Workspace の `~/.ssh`（EFS, 600）| 当該ユーザーのみ |
-| Claude 認証情報 `.credentials.json` | 各 Workspace の `~/.claude`（EFS）| 当該ユーザーのみ |
-| Bitbucket API トークン（任意, B5）| Secrets Manager（ユーザー毎エントリ）| Control Plane が代理利用 |
+| Google OAuth クライアントシークレット（システム）| `aws`=Secrets Manager / `local`=`oauth.env`（git 管理外）| Control Plane のみ |
+| git 資格情報（GitHub PAT/Device, Bitbucket OAuth/token）| Workspace home の `secrets.enc` | 当該ユーザーのみ |
+| Claude 認証情報 `.credentials.json` | Workspace の `CLAUDE_CONFIG_DIR`（home 外・browse 範囲外, P3-5）| 当該ユーザーのみ |
 
-- 秘密鍵・認証情報は EFS のユーザー領域に閉じ、他ユーザー・Control Plane から読めない設計にする。
+**at-rest 鍵の保護 = 封筒暗号 + custodian 抽象**（P3-3, [decisions/0005](../decisions/0005-envelope-custodian.md)）:
+
+- per-workspace の DEK を per-tenant KEK で wrap し `WrappedDEK` に保存。CP が Workspace 起動時に
+  custodian で unwrap し `AF_SECRET_KEY` としてコンテナへ注入（Agent は無改修）。
+- custodian は環境で差し替え: `local`=`AF_MASTER_KEY` 由来 KEK（または Vault transit）/ `aws`=KMS。
+- **テナント鍵を disable すればそのデータが暗号的に到達不能＝crypto-shred**。ただし on-prem の
+  localCustodian は KEK が master 由来ゆえ強度は単一 master と同等で、真の per-tenant 失効は
+  Vault/KMS 採用時に達成する（正直な限界は decisions/0005 / [history/p3-3 §15.2](../history/p3-3-envelope-crypto.md#152-honest-な限界on-prem-localcustodian)）。
+
+- 秘密はユーザー領域に閉じ、他ユーザー・（平文では）Control Plane から読めない設計にする。
 - ログに秘密を出さない。ターミナルストリームの保存可否は方針決定する。
 
 ## 4.5 認証・認可
@@ -62,5 +74,9 @@
    コンテナ境界が唯一の砦になるため 4.3 を厳格に。
 2. **EFS のクロスユーザー設定ミス** — アクセスポイントの uid/gid と root を取り違えると漏洩。
    IaC でテンプレート化し手作業を排除。
-3. **`/login` 認証情報の持続** — 長期保持する認証情報の失効・ローテーション方針が要る。
+3. **`/login` 認証情報の持続** — 長期保持する認証情報の失効・ローテーション。封筒暗号 + custodian
+   （P3-3, §4.4）で枠組みは入った。**真の per-tenant crypto-shred は Vault/KMS 採用時**（[decisions/0005](../decisions/0005-envelope-custodian.md)）。
 4. **サプライチェーン** — Workspace イメージに入れるツールの出所管理、定期更新。
+5. **CP/ホスト侵害＝デプロイ内分離の一括崩壊** — 1 デプロイ内では CP が `docker.sock`（ホスト root 相当）
+   を持ち平文 DEK を注入するため、CP/ホストが侵害されればそのデプロイ内の分離（鍵・ネットワーク）が
+   一括で破れる。**会社間は別デプロイゆえ波及しない**のが提供モデルの強み（[decisions/0001](../decisions/0001-self-host-vs-saas.md) / [ロードマップ §12.3](../roadmap.md#123-tos-と分離の留意自社ホスト前提)）。緩和は rootless Docker / socket-proxy / CP 最小権限。
