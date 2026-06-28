@@ -82,8 +82,15 @@ export default function FilesSection() {
   // Flatten the open tree into the list of visible rows. Single-child directory
   // chains are compacted into one row: name = "a/b/c", path = deepest segment,
   // segPaths = every folded segment (so collapse closes the whole chain).
-  const rows = useMemo(() => {
+  //
+  // Folding now applies even to CLOSED dirs — so the tree shows "a/b/c" without
+  // having to expand it. That needs each visible dir's children to decide whether
+  // it's a sole-child chain, so the walk records `need` (dir paths whose entries
+  // aren't cached yet) and an effect prefetches them (one level each; chains
+  // cascade). The descend into children still only happens when the row is open.
+  const { rows, need } = useMemo(() => {
     const out = [];
+    const need = [];
     const walk = (entries, parent, depth) => {
       for (const e of entries) {
         const path = parent ? parent + "/" + e.name : e.name;
@@ -91,23 +98,33 @@ export default function FilesSection() {
           out.push({ path, name: e.name, type: "file", depth, segPaths: [path] });
           continue;
         }
-        // Fold consecutive open single-subdir directories into one segment.
+        // Fold consecutive single-subdir directories into one segment (regardless of
+        // open state), as far as we have their entries cached.
         let p = path;
         const segs = [e.name];
         const segPaths = [path];
-        while (open.has(p) && soleChildDir(cache[p])) {
+        while (cache[p] && soleChildDir(cache[p])) {
           const child = cache[p][0];
           p = p + "/" + child.name;
           segs.push(child.name);
           segPaths.push(p);
         }
+        // We don't yet know p's children — fetch them so we can decide/extend the fold.
+        if (cache[p] === undefined) need.push(p);
         out.push({ path: p, name: segs.join("/"), type: "dir", depth, segPaths });
         if (open.has(p) && cache[p]) walk(cache[p], p, depth + 1);
       }
     };
     walk(root || [], "", 0);
-    return out;
+    return { rows: out, need };
   }, [root, open, cache]);
+
+  // Prefetch entries for visible dirs whose children we don't have yet, so closed
+  // single-child chains fold. fetchInto is cached + guarded, so this converges.
+  useEffect(() => {
+    need.forEach((p) => fetchInto(p));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [need.join("\n")]);
 
   // fetchInto loads a directory's entries (cached) and returns them, so callers can
   // decide whether to keep descending through a single-child chain.
