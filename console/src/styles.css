@@ -238,6 +238,21 @@ textarea:focus {
 .wsbar button {
   padding: 3px 12px;
 }
+.ws-spacer {
+  flex: 1;
+}
+.preview-port {
+  width: 64px;
+  padding: 3px 8px;
+  background: var(--panel);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 13px;
+}
+.preview-port:disabled {
+  opacity: 0.5;
+}
 
 .body {
   flex: 1;

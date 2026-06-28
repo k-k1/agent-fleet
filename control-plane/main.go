@@ -175,6 +175,12 @@ func main() {
 	// Terminal PTY — proxied WebSocket.
 	mux.HandleFunc("GET /ws/terminal", cfg.proxyTerminal)
 
+	// Preview — proxy to a service the user started inside their container
+	// (Spring Boot, dev server, ...) via the Agent's /proxy/{port}. The redirect
+	// adds the trailing slash so the app resolves relative assets under the path.
+	mux.HandleFunc("/preview/{port}", cfg.handlePreviewRedirect)
+	mux.HandleFunc("/preview/{port}/{rest...}", cfg.handlePreview)
+
 	// Static Console (catch-all). no-store so reloads always get fresh assets
 	// during active development.
 	mux.Handle("/", noStore(http.FileServer(http.Dir(cfg.consoleDir))))

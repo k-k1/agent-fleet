@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useApp } from "../state.jsx";
+import { previewURL } from "../api.js";
 import ConfirmDialog from "./ConfirmDialog.jsx";
 import Icon from "./Icon.jsx";
 
@@ -10,7 +11,15 @@ export default function WsBar() {
   const { wsState, startWs, stopWs, recreateWs, refreshWs } = useApp();
   const [confirm, setConfirm] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [port, setPort] = useState("");
   const running = wsState === "running";
+
+  // Open a service the user started inside the container (e.g. a Spring Boot app
+  // on :8080) in a new tab, proxied through the CP /preview/{port}.
+  const openPreview = () => {
+    const p = port.trim();
+    if (p) window.open(previewURL(p), "_blank", "noopener");
+  };
 
   const doRecreate = async () => {
     setBusy(true);
@@ -38,6 +47,23 @@ export default function WsBar() {
       </button>
       <button className="ghost" title="状態を更新" onClick={refreshWs}>
         <Icon name="refresh" />
+      </button>
+
+      <span className="ws-spacer" />
+      <input
+        className="preview-port"
+        type="number"
+        min="1"
+        max="65535"
+        placeholder="port"
+        value={port}
+        disabled={!running}
+        onChange={(e) => setPort(e.target.value)}
+        onKeyDown={(e) => e.key === "Enter" && openPreview()}
+        title="コンテナ内で起動したサービスのポート（例: 8080）"
+      />
+      <button onClick={openPreview} disabled={!running || !port.trim()} title="新しいタブでプレビュー">
+        プレビュー
       </button>
 
       {confirm && (
