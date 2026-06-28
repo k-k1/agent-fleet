@@ -1,10 +1,12 @@
 package main
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -34,9 +36,65 @@ func codexLoggedIn() bool {
 	return !strings.Contains(strings.ToLower(string(out)), "not logged in")
 }
 
-// codexStatus reports connection status (never secrets) for the Console.
+// codexStatus reports connection status plus the authenticated account for the
+// Console. `codex login status` only prints the method ("Logged in using ChatGPT"),
+// so we read ~/.codex/auth.json for the auth_mode and, for a ChatGPT login, the
+// account email + plan from the id_token's claims (codex stores them there). Only
+// non-secret claims are surfaced; tokens themselves are never returned.
 func codexStatus() map[string]any {
-	return map[string]any{"connected": codexLoggedIn()}
+	if !codexLoggedIn() {
+		return map[string]any{"connected": false}
+	}
+	info := map[string]any{"connected": true}
+	b, err := os.ReadFile(filepath.Join(homeDir(), ".codex", "auth.json"))
+	if err != nil {
+		return info
+	}
+	var a struct {
+		AuthMode string `json:"auth_mode"`
+		Tokens   struct {
+			IDToken string `json:"id_token"`
+		} `json:"tokens"`
+	}
+	if json.Unmarshal(b, &a) != nil {
+		return info
+	}
+	if a.AuthMode != "" {
+		info["method"] = a.AuthMode // "chatgpt" | "apikey"
+	}
+	if a.AuthMode == "chatgpt" {
+		if email, plan := codexIDTokenInfo(a.Tokens.IDToken); email != "" {
+			info["email"] = email
+			if plan != "" {
+				info["plan"] = plan
+			}
+		}
+	}
+	return info
+}
+
+// codexIDTokenInfo decodes the (unverified) JWT payload of a ChatGPT id_token and
+// returns the account email + plan claim. We only read identity claims for display;
+// no signature check is needed since we're reading codex's own stored token.
+func codexIDTokenInfo(idToken string) (email, plan string) {
+	parts := strings.Split(idToken, ".")
+	if len(parts) < 2 {
+		return "", ""
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return "", ""
+	}
+	var claims struct {
+		Email string `json:"email"`
+		Auth  struct {
+			Plan string `json:"chatgpt_plan_type"`
+		} `json:"https://api.openai.com/auth"`
+	}
+	if json.Unmarshal(raw, &claims) != nil {
+		return "", ""
+	}
+	return claims.Email, claims.Auth.Plan
 }
 
 type codexKeyReq struct {

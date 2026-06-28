@@ -49,4 +49,8 @@
 - 続き20: スマホ端末対応（監視＋軽操作）。`@media(max-width:760px)` に閉じ込め、左ペインをドロワー化（ハンバーガー/バックドロップ/選択で自動クローズ）・モーダル全画面・タッチターゲット拡大。端末に最小コントロールキー列（Esc/Tab/矢印/Ctrl-C/Enter, `TermKeys.jsx`）+ `visualViewport` refit + 1本指スワイプでスクロールバック。`sendInput` は PTY 直送（Gboard を不要に呼ばない）。
 - 続き21: Workspace image にツールチェーン追加。Go（公式 tarball・`ARG GO_VERSION=1.26.4`・アーキ検出、`~/go` 永続）+ C/C++ 基盤（build-essential/pkg-config/python3-dev=cgo・node-gyp・wheel ソースビルド）+ jq/unzip/zip/wget/gnupg/htop/fd/bat。実ビルド + cgo 検証済。image 約1.0G→2.82GB。git-delta は bookworm 非収録で除外、sudo は隔離維持で非導入。
 - サービスプレビュー（`/preview/<port>` 経路、commit `7649c64`）。CP `handlePreview`（`rtFor` 認証 + `Bearer` 付与 + `X-Forwarded-*`）→ Agent `/proxy/<port>`（ReverseProxy）→ コンテナ内 `127.0.0.1:<port>`。隔離不変。Console は WS バーのポート入力＋新タブ（`?tenant=` fallback）。HTTP のみ（WS/HMR は次段）。詳細 [reference/preview](reference/preview.md)、HANDOFF §6.10.9。
+## 2026-06-29
+- 設定→接続で**認証アカウントを表示**。claude（`claude auth status` の email/plan）、codex（`auth.json` の `auth_mode` + id_token claims から email/plan、例 `…@gmail.com · plus`）。git 系は git ユーザー名のプレースホルダのまま。
+
+## 2026-06-28（続き）
 - codex をエージェント追加（`kind="codex"`、OpenAI Codex CLI `@openai/codex` を image 焼き込み）。認証2経路（API キー=`codex login --with-api-key` stdin / サブスク=`codex login --device-auth` device flow、ともに codex 所有の `~/.codex/auth.json` を書く＝secrets.enc 不要）。状態は claude 同型フックを**起動時 `-c` 注入**（per-slot sid 埋め込み・`--dangerously-bypass-hook-trust`）で working/idle。resume はフック stdin の `session_id` 捕捉 →`codex resume <id>`。`~/.codex` を denylist。`codex_auth.go` 新規。実 CLI 0.142.3 で hooks 形式 / device-auth 出力 / login 経路を実検証（認証完了は要 OpenAI 資格）。詳細 HANDOFF §6.10.4。
