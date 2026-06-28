@@ -23,6 +23,30 @@ export const ICON_SETS = [
   { id: "seti", label: "Seti（単色・タイプ別着色）" },
 ];
 
+// Base UI theme.
+export const THEMES = [
+  { id: "dark", label: "ダーク" },
+  { id: "light", label: "ライト" },
+];
+
+// Surface (top bar / left pane) background choices. Each color has a per-theme tint
+// so it always contrasts with the theme's text color. "default" = theme default.
+export const SURFACE_COLORS = [
+  { id: "default", label: "デフォルト", dark: null, light: null },
+  { id: "slate", label: "スレート", dark: "#1b2733", light: "#e2e8f0" },
+  { id: "blue", label: "ブルー", dark: "#16263f", light: "#dbe7fb" },
+  { id: "green", label: "グリーン", dark: "#15291f", light: "#dcefe0" },
+  { id: "purple", label: "パープル", dark: "#241a33", light: "#ece0fb" },
+  { id: "warm", label: "ウォーム", dark: "#2a1f17", light: "#f6e8da" },
+];
+
+// Resolve a surface color id to its value for the active theme (null = no override).
+export function surfaceValue(id, theme) {
+  const c = SURFACE_COLORS.find((x) => x.id === id);
+  if (!c) return null;
+  return theme === "light" ? c.light : c.dark;
+}
+
 const DEFAULTS = {
   termFont: "Source Code Pro",
   termSize: 13,
@@ -33,6 +57,9 @@ const DEFAULTS = {
   tabSize: 4,
   minimap: true,
   iconSet: "vscode",
+  theme: "dark",
+  topbarColor: "default",
+  leftpaneColor: "default",
 };
 
 // Build a CSS font-family stack for a chosen family, with CJK + generic fallbacks.
@@ -54,6 +81,20 @@ function load() {
 let state = load();
 const subs = new Set();
 
+// applyTheme writes the base theme + region color overrides onto <html>, so the
+// whole CSS-variable palette switches. Called at load (before paint) and on change.
+export function applyTheme(s) {
+  if (typeof document === "undefined") return;
+  const root = document.documentElement;
+  const theme = s.theme === "light" ? "light" : "dark";
+  root.dataset.theme = theme;
+  const setVar = (name, val) =>
+    val ? root.style.setProperty(name, val) : root.style.removeProperty(name);
+  setVar("--topbar-bg", surfaceValue(s.topbarColor, theme));
+  setVar("--leftpane-bg", surfaceValue(s.leftpaneColor, theme));
+}
+applyTheme(state);
+
 export function getSettings() {
   return state;
 }
@@ -63,6 +104,7 @@ export function setSetting(key, value) {
   try {
     localStorage.setItem(KEY, JSON.stringify(state));
   } catch {}
+  applyTheme(state);
   subs.forEach((fn) => fn());
 }
 

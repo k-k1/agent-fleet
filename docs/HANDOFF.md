@@ -376,8 +376,15 @@ opencode を「設定から認証」「状態バッジ」まで claude と同等
 - **現在のセッションの repo を Repos 上部にピン留め**（`ReposSection.jsx`）: 接続中 session の `repo` を `/api/sessions` から解決（`session` 変化で再取得）、安定ソートで先頭へ。`📌`＋`position:sticky`（セッションのピン留めと同挙動・CSS `.repo-row.pinned`）。
 - **ファイル種別アイコンを VS Code Icons（カラー SVG）に**（ユーザー選択「案2」＝codeleaf 流用）: 絵文字 `fileicons.js` を廃し、codeleaf の `assets/vscode_icons`（31 個・MIT）を `console/src/assets/fileicons/` に取り込み、`FileIcons.kt` の ext/name→typeKey マップを `lib/fileicons.js` に移植。`import.meta.glob('../assets/fileicons/*.svg', {eager,query:'?url'})` で URL 解決（小さい SVG は Vite が data-URI inline・docker/rust 等大きいものは emit＝CP 配信 200 確認）。新 `components/FileIcon.jsx`: AI=`sparkle`/secret=`key`(codicon 強調) → ブランド SVG(`<img class=fi-svg>`) → 不明は codicon `file`、`DirIcon`=codicon folder/folder-opened。呼び出しは tree(`FilesSection`)+ビュアーヘッダ(`FileView`)の2箇所。**役割分担: ファイル種別=カラー / クローム=単色 codicon（VS Code と同じ構成）**。attribution は `assets/fileicons/ATTRIBUTION.md`。フロントのみ＝リロード反映。
 
+**🔧 UI 調整（2026-06-28 続き18）— カラーテーマ（ダーク/ライト + 上部/左ペイン背景色）**:
+- **CSS 変数の全面テーマ化**（`styles.css`）: `:root` を dark 既定にし、`:root[data-theme="light"]` で全パレット override。ハードコード色（`#20303a`/`#1b2730`/`#444`）を `--active-bg`/`--hover-bg`/`--btn-border` に変数化（sed 一括）。region 用 `--topbar-bg`(既定 `var(--bar)`)/`--leftpane-bg`(既定 `var(--panel)`) を新設し、`.topbar`→`--topbar-bg`、`.leftpane`/`.pane-head`→`--leftpane-bg` に。上部・左ペインだけ独立に着色でき、view-head/modal は影響を受けない。
+- **設定**（`settings.js`）: `theme`(dark/light)・`topbarColor`・`leftpaneColor`（既定 default）。`SURFACE_COLORS` は **per-theme tint**（slate/blue/green/purple/warm に dark/light 2値）＝選んだ色は常にテーマの fg と対比（ライトで暗色バー＝文字潰れ、を回避）。`applyTheme(state)` が `<html data-theme>` と `--topbar-bg`/`--leftpane-bg` を設定（モジュール load 時＋`setSetting` 毎、FOUC 回避）。
+- **DisplayTab**: 「カラーテーマ」セクション＝テーマ選択 + 上部/左ペインのスウォッチ選択（`SwatchChoice`、現テーマでの実色プレビュー、default は斜線チップ）。
+- フロントのみ＝**リロードで反映**（CP に `[data-theme=light]`/`--topbar-bg`/`--active-bg` bundle・配信 200 確認）。**既知の限界**: 端末(xterm)とコード表示(highlight.js github-dark)はライトでも暗いまま（端末は通常暗色で許容、コードのライト構文テーマ化は別途）。
+
 **🗒 フォローアップ（次セッション・未調査）**:
-- **（任意）アイコンセット切替**: codeleaf は Devicon/Material/VSCode/Seti を選択可。今は VSCode Icons 固定。設定で選べるようにするなら他セットの SVG も取り込み＋DisplayTab に選択を追加。
+- **（任意）ライトテーマの精度向上**: xterm テーマ（term.js）とファイルビュアーの highlight.js をライト時に明色へ切替。danger hover 等の残ハードコード色。
+- **（任意）アイコンセット拡張**: 現在 4 セット（vscode/material/devicon/seti）。選択セットのみ動的ロードでバンドル削減も可。
 - **（任意）codicon 化の残り**: 設定タブ（ConnectionsTab/AdminTab/DisplayTab/EnvTab/ClaudeTab）内の絵文字・ステータス●。
 - **（任意）セッション識別の完全 ID 化**: tmux 名・meta・API・Console を name でなくランダムな一意IDで keying し、表示名は単なるラベル（重複可）に。現状は内部IDはユニーク・表示名がルーティングキー。
 - **codex CLI / Antigravity CLI をエージェント追加**（opencode と同枠の kind 追加）。codex = OpenAI Codex CLI（`@openai/codex`、auth は `codex login`/`OPENAI_API_KEY`、resume は `codex resume`）。Antigravity CLI = Google（CLI 形態・インストール/認証要調査）。opencode の実装（kind 分岐・Console 種別・denylist・即起動・auth env 注入・状態プラグイン）が雛形。

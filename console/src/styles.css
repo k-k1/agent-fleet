@@ -11,11 +11,41 @@
   --accent: #6cf;
   --btn: #2b2b2b;
   --btn-h: #3a3a3a;
+  --btn-border: #444;
   --ok: #67c23a;
   --warn: #e6a23c;
   --del: #e06c75;
+  /* selection / hover surfaces (so light theme can override the old hardcoded blues) */
+  --active-bg: #20303a;
+  --hover-bg: #1b2730;
+  /* region backgrounds — overridable independently of the base theme (Display
+     settings → カラーテーマ). Default to the theme's bar / panel. */
+  --topbar-bg: var(--bar);
+  --leftpane-bg: var(--panel);
   --mono: "Source Code Pro", "SF Mono", Menlo, Consolas, "DejaVu Sans Mono",
     "Noto Sans Mono CJK JP", monospace;
+}
+
+/* Light theme — applied via document.documentElement[data-theme="light"]. */
+:root[data-theme="light"] {
+  --bg: #ffffff;
+  --panel: #f4f5f7;
+  --panel2: #eaecef;
+  --bar: #eef0f3;
+  --border: #d2d6dc;
+  --border2: #e6e8ec;
+  --fg: #1c2024;
+  --muted: #6b7280;
+  --muted2: #828a94;
+  --accent: #2563eb;
+  --btn: #e8eaee;
+  --btn-h: #dcdfe5;
+  --btn-border: #c6cbd2;
+  --ok: #1a7f37;
+  --warn: #b7791f;
+  --del: #c0392b;
+  --active-bg: #d7e6fb;
+  --hover-bg: #eaf1fb;
 }
 
 /* codicon (VS Code icon font) — inherit size/color from the surrounding element so
@@ -51,7 +81,7 @@ body {
 button {
   background: var(--btn);
   color: var(--fg);
-  border: 1px solid #444;
+  border: 1px solid var(--btn-border);
   border-radius: 4px;
   padding: 4px 10px;
   cursor: pointer;
@@ -100,7 +130,7 @@ select,
 textarea {
   background: var(--btn);
   color: var(--fg);
-  border: 1px solid #444;
+  border: 1px solid var(--btn-border);
   border-radius: 4px;
   padding: 4px 6px;
   font: inherit;
@@ -141,7 +171,7 @@ textarea:focus {
   justify-content: space-between;
   gap: 12px;
   padding: 8px 14px;
-  background: var(--bar);
+  background: var(--topbar-bg);
   border-bottom: 1px solid var(--border);
 }
 .brand {
@@ -220,7 +250,7 @@ textarea:focus {
   width: 300px;
   flex-shrink: 0;
   border-right: 1px solid var(--border);
-  background: var(--panel);
+  background: var(--leftpane-bg);
   overflow: auto;
   display: flex;
   flex-direction: column;
@@ -235,7 +265,7 @@ textarea:focus {
   padding: 4px 8px;
   position: sticky;
   top: 0;
-  background: var(--panel);
+  background: var(--leftpane-bg);
 }
 .pane-toggle {
   background: none;
@@ -284,7 +314,7 @@ textarea:focus {
 
 .session-row.active,
 .repo-row.active {
-  background: #20303a;
+  background: var(--active-bg);
   border-radius: 4px;
 }
 /* The attached session is pinned to the top of the Sessions list and stays there
@@ -294,7 +324,7 @@ textarea:focus {
   position: sticky;
   top: 26px;
   z-index: 2;
-  background: #20303a;
+  background: var(--active-bg);
   box-shadow: 0 1px 0 var(--border);
 }
 .session-pin {
@@ -306,7 +336,7 @@ textarea:focus {
   position: sticky;
   top: 26px;
   z-index: 2;
-  background: #20303a;
+  background: var(--active-bg);
   box-shadow: 0 1px 0 var(--border);
 }
 .repo-pin {
@@ -318,7 +348,7 @@ textarea:focus {
   display: inline-block;
   font-size: 9px;
   background: var(--btn);
-  border: 1px solid #444;
+  border: 1px solid var(--btn-border);
   border-radius: 3px;
   padding: 0 4px;
   margin-right: 6px;
@@ -550,7 +580,7 @@ textarea:focus {
   color: var(--muted);
 }
 .session-row.active > .session-btn {
-  background: #20303a;
+  background: var(--active-bg);
 }
 
 /* repo rows are two lines: info + labelled action chips */
@@ -586,7 +616,7 @@ textarea:focus {
   font-size: 11px;
   padding: 1px 6px;
   background: var(--btn);
-  border: 1px solid #444;
+  border: 1px solid var(--btn-border);
   border-radius: 4px;
   color: var(--fg);
   cursor: pointer;
@@ -609,7 +639,7 @@ textarea:focus {
   margin-bottom: 8px;
   padding: 6px 8px;
   background: var(--btn);
-  border: 1px solid #444;
+  border: 1px solid var(--btn-border);
   border-radius: 4px;
   color: var(--fg);
   font-size: 13px;
@@ -659,7 +689,7 @@ textarea:focus {
 .bi-remote {
   font-size: 9px;
   color: var(--muted);
-  border: 1px solid #444;
+  border: 1px solid var(--btn-border);
   border-radius: 3px;
   padding: 0 4px;
   flex: none;
@@ -688,7 +718,7 @@ textarea:focus {
 }
 .chip {
   background: var(--btn);
-  border: 1px solid #444;
+  border: 1px solid var(--btn-border);
   border-radius: 4px;
   padding: 2px 8px;
   font-size: 11px;
@@ -704,7 +734,7 @@ textarea:focus {
   color: var(--accent);
 }
 .chip.launch:hover {
-  background: #20303a;
+  background: var(--active-bg);
 }
 .chip.danger {
   color: var(--del);
@@ -809,6 +839,34 @@ textarea:focus {
   font-size: 12px;
   color: var(--muted);
 }
+.swatch-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.swatch {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border-radius: 6px;
+  border: 1px solid var(--btn-border);
+  color: var(--fg);
+  font-size: 12px;
+  line-height: 1;
+}
+.swatch.active {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.swatch-default {
+  background: repeating-linear-gradient(
+    45deg,
+    var(--btn),
+    var(--btn) 4px,
+    var(--panel2) 4px,
+    var(--panel2) 8px
+  );
+}
 
 /* ---- forms ---- */
 .form {
@@ -850,7 +908,7 @@ textarea:focus {
 .seg {
   display: flex;
   gap: 0;
-  border: 1px solid #444;
+  border: 1px solid var(--btn-border);
   border-radius: 6px;
   overflow: hidden;
 }
@@ -923,7 +981,7 @@ textarea:focus {
   background: var(--btn);
 }
 .repo-choice.active {
-  background: #20303a;
+  background: var(--active-bg);
 }
 .rc-name {
   flex: 1;
@@ -1277,7 +1335,7 @@ textarea:focus {
   border-radius: 4px;
 }
 .change.active {
-  background: #20303a;
+  background: var(--active-bg);
 }
 .chg {
   font-family: var(--mono);
@@ -1340,10 +1398,10 @@ textarea:focus {
   cursor: pointer;
 }
 .log-row:hover {
-  background: #1b2730;
+  background: var(--hover-bg);
 }
 .log-row.active {
-  background: #20303a;
+  background: var(--active-bg);
 }
 .diff .dl.add {
   color: var(--ok);
@@ -1588,7 +1646,7 @@ textarea:focus {
   background: var(--btn);
 }
 .admin-tenant.active {
-  background: #20303a;
+  background: var(--active-bg);
 }
 .admin-detail {
   flex: 1;
@@ -1682,7 +1740,7 @@ textarea:focus {
   padding: 5px 12px;
   font-size: 12px;
   background: var(--btn);
-  border: 1px solid #444;
+  border: 1px solid var(--btn-border);
   border-radius: 5px;
   color: var(--fg);
   cursor: pointer;
@@ -1693,7 +1751,7 @@ textarea:focus {
 .font-chip.active {
   border-color: var(--accent);
   color: var(--accent);
-  background: #20303a;
+  background: var(--active-bg);
 }
 .choice-seg {
   display: inline-flex;
