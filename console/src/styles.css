@@ -2103,6 +2103,22 @@ button.primary:hover:not(:disabled) {
   .minimap {
     width: 48px;
   }
+  /* The phone drawer is a transformed, fixed, padded, scrolling container, where
+     stacking the pinned-row sticky under the sticky section header renders
+     unreliably (the pinned row peeks above SESSIONS / sits offset). Drop the
+     sticky on mobile: the attached session/repo stays hoisted-first + highlighted,
+     just not stuck while scrolling. `position: relative; top: auto` keeps the
+     absolute pin badge anchored without the 26px sticky offset. */
+  .session-row.pinned {
+    position: relative;
+    top: auto;
+    z-index: auto;
+    box-shadow: none;
+  }
+  .repo-row.pinned {
+    position: static;
+    box-shadow: none;
+  }
   /* top bar: hamburger in, secondary chrome trimmed so it fits a phone width */
   .nav-toggle {
     display: inline-flex;
