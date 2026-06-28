@@ -1,29 +1,53 @@
-# 12. Phase 3 — プロダクト化（パッケージ配布・グループ各社セルフホスト）
+# ロードマップ
 
-Phase 2 で「オンプレ 1 台・複数ユーザー相互不可視・at-rest 暗号化」の社内利用 MVP が完成した（[HANDOFF](HANDOFF.md)）。
-本書は Phase 3 を **「AWS 移植」から「プロダクトのパッケージ化（グループ各社が自社でセルフホスト）」へ再定義**する設計。
-旧 [05 ロードマップ](05-roadmap.md) の Phase 3（AWS アダプタ）と Phase 4（堅牢化）は、本書の要件の**substrate**として吸収する。
+既存資産（`oauth2-proxy` / `tmux-claude.sh` / `CLAUDE_CONFIG_DIR`）を踏み台に **local-first** で進め、同一コアに
+AWS アダプタを後付けする（[ポータビリティ](reference/portability.md)）。各フェーズで「実機検証 → 設計確定」を回す。
+**現状の運用詳細は [HANDOFF](HANDOFF.md)、意思決定の経緯は [decisions/](decisions/)。**
 
-> **提供モデルの確定経緯（2026-06-27）**:
-> 1. 当初は外部顧客向けの**商用マルチテナント SaaS** を検討 → **BYO（個人サブスクの Claude を第三者ホストの共有サービスで動かす）は Anthropic ToS グレー**で断念。
-> 2. 次に**我々が 1 基盤を運用する社内マルチテナント SaaS**（自社+関連会社）を検討 → 関連会社（別法人）の社員を我々のインフラでホストする posture が依然グレー寄り。
-> 3. **採用 = プロダクトをパッケージ化し、グループ各社が「自社で」セルフホスト**（1 社 = 1 デプロイ）。
->    各社が**自社の社員を自社インフラでホスト**するだけなので **ToS posture が最もクリーン**。我々は運用者でなく **vendor/maintainer**。
+## フェーズ一覧
 
-## 12.0 確定した前提（2026-06-27 の意思決定）
+### Phase 0 — PoC（ローカル dev, 既存資産の延長）　✅ 完了
+`/login` の対話フローを最小コストで検証。ヘッドレスで **localhost コールバック非依存**と判明し最大リスクが消えた
+（[decisions/0002](decisions/0002-claude-auth-onboarding.md)）。記録は [history/phase0-poc](history/phase0-poc.md)。
 
-| 論点 | 決定 | 設計への効き方 |
-|------|------|----------------|
-| 提供形態 | **パッケージ製品。グループ各社が自社でセルフホスト**（1 社 = 1 デプロイ）| 我々は vendor/maintainer。中央基盤に各社が依存しない（phone-home なし）。**配布・設定・アップグレードが一級の関心事**（P3-10）。 |
-| Claude 認証 | **BYO 継続**（各ユーザー自分の `/login`）| 各社が**自社の社員を自社インフラでホスト**＝最もクリーンな posture。サブスクは**会社所有の Team/Enterprise シート推奨**（個人 Pro/Max は避ける、§12.3）。 |
-| 会社間分離 | **デプロイ分離（最強・無料）** | 別法人＝別デプロイ＝別インフラ・別 DB・別ルート鍵。共有ホスト由来のクロステナント懸念が原理的に消える。 |
-| デプロイ内マルチテナント | **任意機能（既定=単一テナント=全社）** | 大きい社が**部署/プロジェクト単位**で分割したい時のみ有効化。`tenant` 概念はモデル/API に残し、UI/委譲は後付け。 |
-| バジェット | **per-deployment・その社の管理者が設定** | Workspace 数・セッション数・ディスク GB・メモリ/CPU。自社ホスト保護 + 社内 showback（部署別は任意）。外部課金なし。 |
-| デプロイ先 | **各社の選択**（既定 = オンプレ Docker/compose、任意で自社 AWS）| ポート&アダプタ（[09](09-portability.md)）はそのまま「**各社が選ぶ**」軸に。我々は両アダプタを同梱。 |
-| 想定規模 | **小（1 デプロイ = 数十〜百ユーザー）** | 分散基盤を作り込まない。**DB は SQLite 既定**（CP 1 プロセス/1 ホストに最適・外部依存ゼロ）。Postgres は AWS/HA 時のみ。+ per-deployment 鍵。 |
+### Phase 1 — Workspace イメージ + Console MVP（ローカル dev）　✅ 完了
+1 ユーザー分のコンテナ化 + 最小 Console を local Docker で完成。Runtime/Volume ポートを実装。
+実装結果と実運用の知見は [history/phase1-plan §11.10](history/phase1-plan.md#1110-実装結果と実運用の知見phase-1-完了)。
 
-> **最重要の含意**: 「我々が運用する基盤」は無い。各デプロイは**その社のもの**——データ・鍵・OAuth 設定・ユーザー管理は**すべてその社が握る**。
-> 我々の責務は「**正しく動き・安全に隔離し・楽に設置/更新できるパッケージ**」を作ること。多くの社は**単一テナント**で運用し、マルチテナントは大企業向けの任意拡張。
+### Phase 2 — マルチユーザー（ローカル shared）+ ポート確立　✅ 完了
+オンプレ 1 台で複数ユーザーが相互不可視に並行利用 + 全ポート抽象化。per-user Workspace / AuthGateway
+（`AUTH=proxy`）/ ネットワーク分離（`af-net-<user>`）/ at-rest 暗号化（[HANDOFF §6.7/§6.8](HANDOFF.md)）。
+
+### Phase 3 — プロダクト化（パッケージ配布・グループ各社セルフホスト）　▶ 進行中
+「AWS 移植」から**プロダクトのパッケージ化**へ再定義。提供モデルの意思決定（SaaS 断念の経緯・ToS 根拠）は
+[decisions/0001](decisions/0001-self-host-vs-saas.md)。**P3-1〜P3-5 + Console 刷新は完了**、次は P3-7（AWS アダプタ）
+以降。詳細は本書「Phase 3 詳細設計」章（↓）。
+
+### Phase 4 — 運用の成熟・グループ横展開　— 未着手
+社内 showback / ライフサイクル / idle-stop / バックアップ / 観測。Phase 3 の **P3-9** に吸収して進める。
+
+## マイルストーン判定
+
+| Phase | 完了条件 | 状態 |
+|-------|----------|------|
+| 0 | `/login` がコンソール経由で完了でき、手順が文書化される | ✅ 完了 |
+| 1 | 1 ユーザーがローカル Docker で Claude セッション起動 + ターミナル操作（ホーム永続）| ✅ 完了 |
+| 2 | オンプレ 1 台で複数ユーザーが相互不可視に並行利用でき、全ポートが抽象化される | ✅ 完了 |
+| 3 | **パッケージとして配布でき**、別のグループ会社が**自社で**（オンプレ既定 / 自社 AWS 任意）セルフホストし、自社ユーザーを管理・バジェット強制・per-deployment 鍵で at-rest 暗号化して運用できる | ▶ 進行中（P3-1〜5 完了, 次 P3-7）|
+| 4 | 社内 showback・ライフサイクル・idle-stop・バックアップ・観測・（任意）デプロイ内専用分離・MCP 運用が揃い、グループ各社へ無理なく横展開できる | — |
+
+---
+
+# Phase 3 詳細設計（パッケージ化・各社セルフホスト）
+
+Phase 3 を **「AWS 移植」から「プロダクトのパッケージ化（グループ各社が自社でセルフホスト）」へ再定義**した設計。
+**提供モデルの意思決定**（商用 SaaS / 中央運用マルチテナント SaaS の断念、各社セルフホスト採用、確定前提一覧、
+ToS 根拠・残存リスク）は [decisions/0001](decisions/0001-self-host-vs-saas.md) に集約。本章はその設計と
+ワークストリームを扱う。旧 Phase 3（AWS アダプタ）/ Phase 4（堅牢化）は本章の substrate として吸収する。
+
+> 要点: 「我々が運用する基盤」は無い。各デプロイは**その社のもの**——データ・鍵・OAuth 設定・ユーザー管理は
+> すべてその社が握る（phone-home なし）。多くの社は**単一テナント**で運用し、マルチテナントは大企業向けの任意拡張。
+> DB は **SQLite 既定**（Postgres は AWS/HA 時のみ、`MetadataStore` 港の裏）。
 
 ## 12.1 アイデンティティ階層（パッケージ・セルフホスト版）
 
@@ -73,13 +97,14 @@ Deployment（1 社が自社ホスト。データ・鍵・設定をその社が�
 ---
 
 ## P3-1. MetadataStore（SQLite 既定）— 全ての土台
+> ✅ **完了**。実装プランは [history/p3-1-metadatastore](history/p3-1-metadatastore.md)、現状は [HANDOFF §6.9](HANDOFF.md)。データモデルは [architecture §2.3](reference/architecture.md#23-データモデルcontrol-plane)。
 
 **現状の欠落**: DB が**一切無い**。フォルダ名=ID、ポートは in-memory map、CP 再起動で再採番されうる（[HANDOFF §6.7 末尾の注意](HANDOFF.md)）。
 テナント・バジェット・管理者・クォータ・監査は**すべて永続レコードを要する**。ここが全ワークストリームの gating item。
 
 - **DB 選定 = SQLite 既定**: 1 デプロイ = CP 1 プロセス / 1 ホスト（オンプレ compose 既定）に**埋め込み DB がベストフィット**。外部 DB サーバ不要＝自己ホスト製品（P3-10）と相性最良。
   持つのは制御メタデータのみ（重いのは PTY であり DB ではない）で、数十〜百ユーザーは SQLite の余裕圏。
-  **今は SQLite アダプタだけ実装**し、**Postgres は `MetadataStore` 港の裏で AWS/HA 時に後追い**（[09 §9.4](09-portability.md#94-プロファイル別アダプタ対応表)）。投機的に Postgres を作らない（リーン）。
+  **今は SQLite アダプタだけ実装**し、**Postgres は `MetadataStore` 港の裏で AWS/HA 時に後追い**（[09 §9.4](reference/portability.md#94-プロファイル別アダプタ対応表)）。投機的に Postgres を作らない（リーン）。
 - **SQLite 運用規律**（外すと後で痛い）:
   - 接続: `journal_mode=WAL` / `busy_timeout` / `foreign_keys=ON` / `synchronous=NORMAL`、書き込みは単一ライターに。
   - ドライバ: **pure-Go（`modernc.org/sqlite`）** 推奨（cgo 回避＝静的バイナリ運用と整合）。
@@ -115,9 +140,10 @@ Deployment（1 社が自社ホスト。データ・鍵・設定をその社が�
 ---
 
 ## P3-2. アイデンティティ & テナント解決（AuthGateway 拡張）
+> ✅ **完了**。実装プランは [history/p3-2-identity-tenant](history/p3-2-identity-tenant.md)、現状は [HANDOFF §6.9](HANDOFF.md)。
 
 現状の `AuthGateway.Identify` は email→sanitized user を返すだけ。マルチテナントでは、**email は人（identity）を特定し、作業対象 tenant はリクエストの明示選択**で決める（identity↔tenant 多対多, §12.1）。
-詳細な実装プランは [14 P3-2 実装プラン](14-p3-2-plan.md)。
+詳細な実装プランは [14 P3-2 実装プラン](history/p3-2-identity-tenant.md)。
 
 - **テナントはネットワーク信号から推定しない**: 中央 SaaS の subdomain/path ルーティングは採らない（会社の区別はデプロイ自体）。
   デプロイ内の作業対象テナントは**ユーザーが明示選択**（Console ピッカー → `X-AF-Tenant`）し、CP が membership で検証する。
@@ -143,6 +169,7 @@ Deployment（1 社が自社ホスト。データ・鍵・設定をその社が�
 ---
 
 ## P3-3. per-deployment/tenant 封筒暗号鍵（custodian 抽象・オンプレ優先）
+> ✅ **完了**。決定と限界は [decisions/0005](decisions/0005-envelope-custodian.md)、実装プランは [history/p3-3-envelope-crypto](history/p3-3-envelope-crypto.md)。
 
 **現状（Phase 2 A3）**: 単一 `AF_MASTER_KEY`(env) → `HMAC(SHA256(master), user)` で per-user サブ鍵を導出し起動時注入。
 → 不十分: master が単一障害点、テナント単位の鍵ローテ/失効ができない、鍵が CP env に常在。
@@ -168,6 +195,7 @@ Deployment ルート鍵 / Tenant KEK   ← custodian が保護。AWS=KMS CMK、�
 ---
 
 ## P3-4. リソースバジェット / クォータ（テナント + ユーザー）
+> ✅ **完了**（ハードクォータ・既定無制限）。実装プランは [history/p3-4-quota](history/p3-4-quota.md)、現状は [HANDOFF §6.9](HANDOFF.md)。残: ディスク強制 / showback（P3-9）。
 
 **BYO のため対象はインフラ資源のみ**（Claude 利用量ではない）。その社の自社ホスト資源を守るためのもの。
 
@@ -188,6 +216,8 @@ Deployment ルート鍵 / Tenant KEK   ← custodian が保護。AWS=KMS CMK、�
 ---
 
 ## P3-5. 管理コンソール + 管理 API
+> ✅ **完了**。管理 UI（super_admin の `AdminDialog`）+ メンバー Console（git/ファイル可視化・shell）を実装。
+> メンバー Console プランは [history/p3-5-member-console](history/p3-5-member-console.md)、現状は [HANDOFF §6.10](HANDOFF.md)。
 
 その社の中の管理。**単一テナント運用（super_admin が全社を見る）を先に**完成させ、部署 admin は任意拡張。
 
@@ -204,6 +234,7 @@ Deployment ルート鍵 / Tenant KEK   ← custodian が保護。AWS=KMS CMK、�
 ---
 
 ## P3-6. MCP による Agent Fleet 制御
+> ▶ **未着手**。P3-5 の管理サービス層の薄いラッパとして後続。
 
 CP の管理サービスを **MCP サーバ**として公開し、**その社の運用チーム**が Claude 経由で自社 Fleet を運用・トリアージできる。
 
@@ -219,8 +250,9 @@ CP の管理サービスを **MCP サーバ**として公開し、**その社の
 ---
 
 ## P3-7. デプロイ先アダプタ（オンプレ Docker 既定 / 自社 AWS 任意）
+> ▶ **次の起点**。旧 Phase 3 本体。AWS 構成は [reference/aws](reference/aws.md)。
 
-各社が**自社のデプロイ先を選ぶ**。コアは無改修、周縁アダプタのみ（[09](09-portability.md)）。我々は両方を同梱（P3-10）。
+各社が**自社のデプロイ先を選ぶ**。コアは無改修、周縁アダプタのみ（[09](reference/portability.md)）。我々は両方を同梱（P3-10）。
 
 | 港 | オンプレ（既定）| 自社 AWS（任意）|
 |----|-----------------|-----------------|
@@ -232,13 +264,14 @@ CP の管理サービスを **MCP サーバ**として公開し、**その社の
 | Ingress/TLS | Caddy（自己署名/社内 CA）| ALB + ACM |
 | Agent 認証 | 同一ホスト + Bearer（Phase2 A2）| SG 制限 + Bearer → 将来 mTLS |
 
-- **Agent 契約は不変**（/sessions・/repos・/connections）。Workspace イメージと Agent は両ターゲットで**同一物**（[09 §9.2](09-portability.md#92-移植可能なコア-vs-差し替える周縁)）。
+- **Agent 契約は不変**（/sessions・/repos・/connections）。Workspace イメージと Agent は両ターゲットで**同一物**（[09 §9.2](reference/portability.md#92-移植可能なコア-vs-差し替える周縁)）。
 - **CP↔Agent 到達**: ECS では publish host:port が無いので Service Connect / 内部 NLB / awsvpc ENI へ。`Runtime.Endpoint` 港が差を吸収。
-- 詳細な AWS 構成は [03 AWS](03-aws-deployment.md)。**多くの社はオンプレ compose で足りる**見込み。
+- 詳細な AWS 構成は [03 AWS](reference/aws.md)。**多くの社はオンプレ compose で足りる**見込み。
 
 ---
 
 ## P3-8. デプロイ内 専用分離（機微部署・任意）
+> ▶ **未着手**（P3-7 後）。
 
 1 デプロイの中で、部署ごとに分離強度を変える。**既定=論理分離を先に**。大企業が内部に機微部署を持つ場合のみ。
 
@@ -255,6 +288,7 @@ CP の管理サービスを **MCP サーバ**として公開し、**その社の
 ---
 
 ## P3-9. 運用の成熟（社内・旧 Phase 4 を吸収）
+> ▶ **未着手**。idle-stop は RAM 逼迫ゆえ前倒し候補。
 
 各社が自社デプロイを運用するための成熟。我々は機能と runbook を提供。
 
@@ -270,6 +304,7 @@ CP の管理サービスを **MCP サーバ**として公開し、**その社の
 ---
 
 ## P3-10. パッケージング & 配布 & アップグレード（提供モデルの核）
+> ▶ **未着手**（提供モデルの核）。完了判定 = 第 2 デプロイをゼロから立てて E2E 通過（[decisions/0001](decisions/0001-self-host-vs-saas.md)）。
 
 「グループ各社が自社でセルフホスト」を成立させる工程。機能（P3-1〜P3-9）を**他社の情シスが設置・運用・更新できる形**にする。
 
@@ -290,25 +325,21 @@ CP の管理サービスを **MCP サーバ**として公開し、**その社の
   つまり **CP/ホストが侵害されれば、その社・そのデプロイ内の全ユーザーの分離（鍵・ネットワーク含む）が一括で破れる**。
   - これは「単一ホスト論理分離」の原理的限界。**会社間は別デプロイなので波及しない**のが本モデルの強み。
   - デプロイ内でさらに強い分離が要る部署は P3-8（dedicated）/ 別デプロイ / AWS（タスク分離・IMDS 遮断・docker.sock 非共有）へ。
-  - 緩和: rootless Docker / ソケットプロキシ（権限絞り）/ CP 最小権限（[09 §9.8](09-portability.md#98-ローカル特有のセキュリティ留意)）。
+  - 緩和: rootless Docker / ソケットプロキシ（権限絞り）/ CP 最小権限（[09 §9.8](reference/portability.md#98-ローカル特有のセキュリティ留意)）。
 - **データ責任は各社に閉じる**: データ・鍵・OAuth はその社が保有。我々（vendor）は実行時にアクセスしない（phone-home なし）。
-- **可用性**: その社の SLA 相応。全社が依存するなら CP 冗長化 + DB バックアップを runbook で案内（[01 非機能](01-requirements.md#15-非機能要件)）。
+- **可用性**: その社の SLA 相応。全社が依存するなら CP 冗長化 + DB バックアップを runbook で案内（[01 非機能](reference/requirements.md#15-非機能要件)）。
 
 ## 12.4 推奨シーケンス（小規模・local-first 継続）
 
-各ステップで「実機検証 → 設計確定」を回す（[05](05-roadmap.md) の流儀踏襲）。**オンプレ優先**で、AWS と専用化は後。
+各ステップで「実機検証 → 設計確定」を回す。**オンプレ優先**で、AWS と専用化は後。
+**完了状況は各 P3-x 節の冒頭バナーを参照**（P3-1〜P3-5 完了、次は P3-7）。
 
-1. **P3-1 + P3-2（オンプレ, SQLite）**: 階層モデル/RBAC を CP に入れ、現ライブを**既定テナント 1 + 既存ユーザー**として包む（B5 移行）。既存挙動を壊さず DB 化。
-2. **P3-3（オンプレ）**: 封筒暗号 + custodian（Vault/ファイル KEK）。Phase 2 の HMAC から移行。**KMS は後（P3-7 で AWS アダプタ化）**。
-3. **P3-4（オンプレ）**: クォータ強制を Start/SessionCreate/clone に差す（メモリは既存 `--memory` ですぐ）。
-4. **P3-5 + P3-6（オンプレ）**: 管理サービス層 → admin API（単一テナント）→ MCP を同一層で。
-5. **P3-10（オンプレ）**: compose パッケージ + 設定ファイル + マイグレーション + 設置/更新 runbook → **第 2 デプロイ（別のグループ会社）を実際に立てて検証**。
-6. **P3-7（AWS）**: 希望する社向けに ECS/EFS/RDS/ALB アダプタ + KMS custodian。
-7. **P3-8 / P3-9**: 専用分離・showback・idle-stop・バックアップ・観測を需要に応じ。
+1. ✅ **P3-1 + P3-2（オンプレ, SQLite）**: 階層モデル/RBAC を CP に入れ、現ライブを**既定テナント 1 + 既存ユーザー**として包む（B5 移行）。既存挙動を壊さず DB 化。
+2. ✅ **P3-3（オンプレ）**: 封筒暗号 + custodian（Vault/ファイル KEK）。Phase 2 の HMAC から移行。**KMS は後（P3-7 で AWS アダプタ化）**。
+3. ✅ **P3-4（オンプレ）**: クォータ強制を Start/SessionCreate/clone に差す（メモリは既存 `--memory` ですぐ）。
+4. ✅/▶ **P3-5 + P3-6（オンプレ）**: 管理サービス層 → admin API（単一テナント）→ MCP を同一層で（管理 UI 済・MCP 未）。
+5. ▶ **P3-10（オンプレ）**: compose パッケージ + 設定ファイル + マイグレーション + 設置/更新 runbook → **第 2 デプロイ（別のグループ会社）を実際に立てて検証**。
+6. ▶ **P3-7（AWS）**: 希望する社向けに ECS/EFS/RDS/ALB アダプタ + KMS custodian。
+7. ▶ **P3-8 / P3-9**: 専用分離・showback・idle-stop・バックアップ・観測を需要に応じ。
 
-> **マイルストーン判定（改訂）**
->
-> | Phase | 完了条件 | 状態 |
-> |-------|----------|------|
-> | 3 | **パッケージとして配布でき**、別のグループ会社が**自社で**（オンプレ既定 / 自社 AWS 任意）セルフホストして、自社ユーザーを管理・バジェット強制・per-deployment 鍵で at-rest 暗号化して運用できる | 次 |
-> | 4 | 社内 showback・ライフサイクル・idle-stop・バックアップ・観測・（任意）デプロイ内専用分離・MCP 運用が揃い、**グループ各社へ無理なく横展開できる** | — |
+（Phase 3/4 の完了条件は冒頭「[マイルストーン判定](#マイルストーン判定)」を参照。）

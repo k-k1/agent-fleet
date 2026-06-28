@@ -1,6 +1,8 @@
 # 14. P3-2 実装プラン — アイデンティティ & テナント解決（多対多）
 
-[12 Phase 3](12-phase3-multitenant.md) の P3-2。P3-1（[13](13-p3-1-plan.md)）で SQLite MetadataStore を入れ、
+> 🗄 **歴史的記録（完了）** — 現状は [HANDOFF §6.9](../HANDOFF.md)、設計は [ロードマップ §12.1](../roadmap.md#121-アイデンティティ階層パッケージセルフホスト版)。以下は当時の実装プラン。
+
+[12 Phase 3](../roadmap.md) の P3-2。P3-1（[13](../history/p3-1-metadatastore.md)）で SQLite MetadataStore を入れ、
 `app_user(tenant_id)`（1 ユーザー=1 テナント）まで来た。P3-2 で **identity↔tenant を多対多**にし、
 **email で人を特定 → 作業対象テナントは明示選択**という解決に進化させる（2026-06-27 決定: 同一人物が複数テナントに所属、
 テナントごとに別 role・**別 Workspace（完全分離）**）。

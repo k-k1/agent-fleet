@@ -1,7 +1,7 @@
 # Phase 0 PoC — クイックスタート
 
 ヘッドレスコンテナで `claude /login` が通るか等を実機検証する最小構成。
-詳細な観察項目と完了条件は [../docs/10-phase0-poc.md](../docs/10-phase0-poc.md)。
+詳細な観察項目と完了条件は [../docs/history/phase0-poc.md](../docs/history/phase0-poc.md)。
 
 ```bash
 cd phase0

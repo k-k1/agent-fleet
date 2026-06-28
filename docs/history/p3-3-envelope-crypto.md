@@ -1,6 +1,8 @@
 # 15. P3-3 実装プラン — per-deployment/tenant 封筒暗号鍵（custodian 抽象）
 
-[12 Phase 3](12-phase3-multitenant.md) の P3-3。Phase 2 / 現状の鍵は **単一 `AF_MASTER_KEY` → `HMAC(master, userKey)` を
+> 🗄 **歴史的記録（完了）** — 決定と正直な限界は [decisions/0005](../decisions/0005-envelope-custodian.md)、現状は [HANDOFF §6.9](../HANDOFF.md)。以下は当時の実装プラン。
+
+[12 Phase 3](../roadmap.md) の P3-3。Phase 2 / 現状の鍵は **単一 `AF_MASTER_KEY` → `HMAC(master, userKey)` を
 `AF_SECRET_KEY` として注入**（manager.secretKeyFor）。これを **封筒暗号 + custodian 抽象**へ昇格する。
 **オンプレ優先**（custodian = AF_MASTER_KEY 由来の KEK / 将来 Vault・KMS）。Agent (`secrets.go`) は**無改修**。
 
@@ -29,7 +31,7 @@ localCustodian の KEK は AF_MASTER_KEY 由来。よって **master を握れ�
 3. **per-tenant `key_ref` の配線**（テナント鍵の概念を実体化）。
 
 **真の per-tenant crypto-shred（テナント鍵を disable してそのテナントだけ復号不能化）は Vault/KMS アダプタで達成**。
-P3-3 はその手前までを安全に敷く（[12 §12.3](12-phase3-multitenant.md#123-tos-と分離の留意自社ホスト前提) の正直さに準拠）。
+P3-3 はその手前までを安全に敷く（[12 §12.3](../roadmap.md#123-tos-と分離の留意自社ホスト前提) の正直さに準拠）。
 
 ## 15.3 スキーマ（migration `0003`）
 

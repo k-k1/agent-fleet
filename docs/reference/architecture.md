@@ -49,9 +49,11 @@
 - セッション一覧・起動・停止
 - ターミナル（xterm.js を WSS で Workspace Agent の PTY に接続）
 - `settings.json` エディタ、remote-control トグル
-- SSH 公開鍵の表示・登録、Claude `/login` 状況表示
+- Connections（Claude / GitHub / Bitbucket の接続・状態表示）、Claude `/login` 状況表示
 
-スタック（確定）: **Next.js (React) + xterm.js**。状態は Control Plane API 経由。
+スタック（確定）: **React + xterm.js**。実装は **React + Vite**（`console/dist` を CP が `no-store` 配信）。
+当初構想の Next.js から no-build 系を経て React+Vite に着地した経緯は [decisions/0004](../decisions/0004-vanilla-to-react.md)。
+状態は Control Plane API 経由。
 
 ### Control Plane（バックエンド / オーケストレータ）
 Workspace の外側で動く常駐サービス。
@@ -63,7 +65,7 @@ Workspace の外側で動く常駐サービス。
 - Workspace Agent への中継（ターミナル WS をプロキシ、git/セッション操作 RPC）
 
 スタック（確定）: **Go**（常駐 / WS プロキシ / ECS 制御に好適、単体バイナリで運用が軽い）。AWS SDK for Go。
-API 詳細は [06](06-api-spec.md)。
+API 詳細は [06](../reference/api-agent.md)。
 
 ### Workspace Agent（各コンテナ内の常駐プロセス）
 Control Plane と Workspace の間の薄い仲介層。コンテナ内で最小権限ユーザーとして動く。
@@ -77,28 +79,48 @@ Control Plane と Workspace の間の薄い仲介層。コンテナ内で最小�
 > Control Plane から各 Agent へは、VPC 内部のみで到達可能にする（ALB のターゲットにしない／
 > あるいは ECS Service Connect / 内部 NLB 経由）。外部公開しない。
 
-### データストア
-- **EFS** — ユーザー毎ホーム（`~/.claude` `~/.ssh` working copy）。アクセスポイントで uid/gid と
-  ルートディレクトリをユーザー毎に固定し相互不可視にする。
-- **RDS(Postgres) もしくは DynamoDB** — Control Plane メタデータ。
-- **Secrets Manager / SSM Parameter Store** — Google OAuth クライアントシークレット、
-  Bitbucket known_hosts、（任意の）Bitbucket API トークン。
-- **S3** — バックアップ、監査ログのアーカイブ。
-- **ECR** — Workspace イメージ。
+### データストア（`aws` ターゲットの具体。`local` の対応は [ポータビリティ §9.4](portability.md#94-プロファイル別アダプタ対応表)）
+- **EFS** — ユーザー毎ホーム（`~/.claude` working copy ほか）。アクセスポイントで uid/gid と
+  ルートディレクトリをユーザー毎に固定し相互不可視にする（`local` は bind mount）。
+- **MetadataStore** — `aws`=RDS(Postgres) / `local`=SQLite 既定（§2.3）。
+- **ユーザー資格情報（Claude/git OAuth・トークン）** — Workspace home の暗号ストア `secrets.enc`
+  （AES-256-GCM）。鍵は **封筒暗号 + custodian 抽象**で provisioning する：per-workspace DEK を
+  per-tenant KEK で wrap し、CP が起動時に unwrap して注入。custodian は `local`=ファイル/Vault・
+  `aws`=KMS（[decisions/0005](../decisions/0005-envelope-custodian.md) / [security §4.4](security.md#44-シークレット管理)）。
+- **システムシークレット** — Google OAuth クライアントシークレット等は `aws`=Secrets Manager/SSM・
+  `local`=`oauth.env`（git 管理外）。
+- **S3** — バックアップ、監査ログのアーカイブ（`aws`）。
+- **ECR** — Workspace イメージ（`aws`）。
 
 ## 2.3 データモデル（Control Plane）
 
+Phase 3（P3-1 SQLite 化 / P3-2 identity↔tenant 多対多）で確定した現行モデル。MetadataStore は
+`local`=SQLite 既定 / `aws`=RDS で同一スキーマ（[ポータビリティ](portability.md)）。**人（Identity）と
+テナント（部署）は多対多**で、`Membership` ごとに Workspace が完全分離される。階層の意図と RBAC は
+[ロードマップ §12.1](../roadmap.md#121-アイデンティティ階層パッケージセルフホスト版)、移行履歴は
+[P3-1 プラン](../history/p3-1-metadatastore.md)（migration 0001〜0005）。
+
 ```
-User        { id, email, display_name, role, status, created_at }
-Workspace   { id, user_id, ecs_task_arn, efs_ap_id, state(running/stopped/creating),
-              cpu, mem, last_active_at }
-Repository  { id, workspace_id, name, remote_url, default_branch, clone_path, last_status }
+Tenant      { id, slug, name, status, limits(json: max_workspaces/max_sessions/disk_gb/mem_mb/cpu),
+              isolation(shared|dedicated), key_ref, placement_ref, created_at }   -- 既定 1 テナント=全社
+Identity    { id, email(unique), user_key(unique), role(super_admin|user), status, last_login_at }
+Membership  { id, identity_id, tenant_id, role(tenant_admin|member), status,
+              unique(identity_id, tenant_id) }                                     -- 多対多の結節
+Workspace   { id, tenant_id, membership_id(unique), container_name, network, data_dir,
+              agent_port, agent_token, state, last_active_at }                     -- = identity×tenant ごと
+Repository  { id, workspace_id, name, remote_url, default_branch, last_status }
 Session     { id, workspace_id, repository_id, tmux_name, claude_session_id,
-              state(running/stopped), model, started_at, last_active_at }
-SshKey      { id, workspace_id, fingerprint, public_key, created_at }
-ClaudeAuth  { workspace_id, status(active/expired/none), checked_at }   // 状態キャッシュ
-AuditLog    { id, user_id, action, target, detail, at }
+              state, model, started_at, last_active_at }                           -- DB ミラー(0005)
+UserLimit   { membership_id, max_sessions, disk_gb, mem_mb }                       -- 管理者がテナント枠内で設定
+UsageCounter{ tenant_id, running_workspaces, running_sessions, used_disk_gb, allocated_mem_mb, sampled_at }
+WrappedDEK  { workspace_id, ciphertext, key_ref, key_version, created_at }         -- 封筒暗号(P3-3)
+AuditLog    { id, tenant_id, actor_user_id, actor_kind(user|admin|mcp|system), action, target, detail, at }
 ```
+
+- **SshKey は廃止**。git 認証は SSH 鍵から HTTPS トークン/OAuth（Connections）へ格下げした
+  （[decisions/0003](../decisions/0003-ssh-to-connections.md)）。資格情報は暗号ストア `secrets.enc` に集約。
+- **ClaudeAuth はテーブルでなく実行時プローブ**（`claude auth status`）。`/login` の最終結論は
+  [decisions/0002](../decisions/0002-claude-auth-onboarding.md)。
 
 ## 2.4 認証は 2 層に分離する（重要）
 
@@ -182,9 +204,9 @@ Browser xterm.js ──WSS──▶ ALB ──▶ Control Plane(WSプロキシ) 
 ### コンソールの役割
 - **状態表示** — 公式の状態取得 API は無い。`.credentials.json` の有無 + 軽量プローブ
   （`claude -p` をタイムアウト付き）で `active / expired / none` を推定し、`checked_at` 付きで表示
-  （[06 §6.7](06-api-spec.md#67-claude-認証状態login)）。
+  （[06 §6.7](../reference/api-agent.md)）。
 - **誘導** — `expired/none` のとき「再ログイン」ボタンでターミナルに方式 A を流す。
-- 認証情報の精度（期限・リフレッシュの有無）は不透明。Phase 0 で実体を観察し設計に反映（[10](10-phase0-poc.md)）。
+- 認証情報の精度（期限・リフレッシュの有無）は不透明。Phase 0 で実体を観察し設計に反映（[10](../history/phase0-poc.md)）。
 
 > 出典（Claude Code 公式, v2.1.x）: authentication / troubleshoot-install / devcontainer / headless。
 > 確認: 方式 A のコード貼り戻しと setup-token の存在は確定。Remote Control 非対応の制約も同上。
@@ -209,7 +231,7 @@ Browser xterm.js ──WSS──▶ ALB ──▶ Control Plane(WSプロキシ) 
 claude の UI（Ink）は認証 URL を**端末幅でハード改行**するため、端末内の選択コピーは改行が混入し、
 xterm の web-links も 1 行目しかリンク化できない。→ Console は **xterm バッファから折返し行を連結して
 URL 全体を復元**し、ヘッダの「⧉ sign-in URL」ボタンでオンデマンドにコピーさせる（自動バナーは誤検出の
-温床になり廃止）。詳細は [11 §11.10](11-phase1-plan.md#1110-実装結果と実運用の知見phase-1-完了)。
+温床になり廃止）。詳細は [11 §11.10](../history/phase1-plan.md#1110-実装結果と実運用の知見phase-1-完了)。
 
 ## 2.7 サンドボックス設計（C2）
 
@@ -227,7 +249,7 @@ URL 全体を復元**し、ヘッダの「⧉ sign-in URL」ボタンでオン�
 本構成図は `aws` ターゲットの具体像。プラットフォーム依存（Runtime / Volume / AuthGateway /
 MetadataStore / SecretStore / Ingress）は**ポート**として抽象化し、`local`（Docker）と `aws`（ECS）の
 アダプタを差し替える。Console / Control Plane コア / Workspace Agent / Workspace イメージは両ターゲット共通。
-詳細は [09 ポータビリティ](09-portability.md)。
+詳細は [09 ポータビリティ](../reference/portability.md)。
 
 ## 2.9 既存資産の写像
 
