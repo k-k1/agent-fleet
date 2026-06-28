@@ -264,7 +264,9 @@ opencode を雛形に追加。**ただし codex のフックは Claude Code と�
   - **API キー**: `POST /connections/codex/api-key` → `codex login --with-api-key`（鍵を stdin パイプ）。
   - **サブスク（ChatGPT）**: `POST /connections/codex/device/start` が `codex login --device-auth` を PTY 駆動し検証 URL（`https://auth.openai.com/codex/device`）+ ワンタイムコード（`XXXX-XXXXX`）をスクレイプ → Console が表示、`/device/poll` で `codex login status` を polling。codex プロセスが OpenAI 側を自前 polling（**コールバック不要**＝前段 oauth2-proxy と無干渉）。⚠️ device code ログインは ChatGPT 設定で各自/管理者の有効化が必要（openai/codex#9253）。`GET /connections` の `codex.connected`＝`codexLoggedIn()`、切断 `DELETE /connections/codex`＝`codex logout`。
 - **denylist**: `fs.go` に `~/.codex`（auth.json トークン + sessions + helper bin）。
-- **Console**: New session に codex 種別（モデル選択は非表示、認証案内チップ）。Repos 行 ▶codex 即起動（suffix `-cx`）。バッジ `rocket`。設定→接続に **Codex 行**（`ChatGPT で接続`＝device flow / `API キー`貼付、`ConnectionsTab.jsx` `CodexRow`）。**接続済みは認証アカウントを表示**（codex は `auth.json` の `auth_mode` + id_token claims から email・plan＝例 `…@gmail.com · plus`、`codexStatus`/`codexIDTokenInfo`）。claude 行も同様に email・plan を表示（`claudeStatus`＝`claude auth status` の `email`/`subscriptionType`）。git 系（GitHub/Bitbucket）は現状 git ユーザー名のプレースホルダ表示（実アカウント解決は API 追加が必要・未実施）。
+- **Console**: New session に codex 種別（モデル選択は非表示、認証案内チップ）。Repos 行 ▶codex 即起動（suffix `-cx`）。バッジ `rocket`。設定→接続に **Codex 行**（`ChatGPT で接続`＝device flow / `API キー`貼付、`ConnectionsTab.jsx` `CodexRow`）。**接続を「エージェント / git ホスティング」にカテゴリ分け**（`ConnectionsTab.jsx` `.conn-cat`）。**接続済みは認証アカウントを表示**:
+- claude＝email・plan（`claudeStatus`＝`claude auth status` の `email`/`subscriptionType`）。codex＝`auth.json` の `auth_mode` + id_token claims から email・plan（例 `…@gmail.com · plus`、`codexStatus`/`codexIDTokenInfo`）。
+- GitHub＝`/user` の `login`、Bitbucket＝`/2.0/user` の `display_name`/`username`（`githubAccount`/`bitbucketAccount`）。**API は接続毎に1回だけ叩き store にキャッシュ**（`gitEntry.Login`/`bitbucketCreds.Account`、polled な `GET /connections` で都度叩かない）。失敗時は email/プレースホルダにフォールバック。Bitbucket の実名解決は token の `account` スコープが必要。
 - **CP**: `/api/connections/codex/*` を `proxyAgentREST` で委譲（device-auth はコンテナ内で OpenAI を直接 polling＝CP ネイティブ callback 不要、Bitbucket と異なる）。
 
 ### 6.10.5 git / リポジトリ / SCM / ファイルブラウザ

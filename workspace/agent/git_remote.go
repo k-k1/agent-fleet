@@ -234,6 +234,60 @@ func githubListBranches(token, repo string) ([]remoteBranch, string, error) {
 	return out, def, nil
 }
 
+// githubAccount returns the authenticated GitHub login (e.g. "octocat") for the
+// token, via GET /user. Used to show the real account in Connections instead of the
+// "x-access-token" git-username placeholder.
+func githubAccount(token string) (string, error) {
+	client := &http.Client{Timeout: 10 * time.Second}
+	req, err := http.NewRequest("GET", "https://api.github.com/user", nil)
+	if err != nil {
+		return "", err
+	}
+	githubHeaders(req, token)
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("github /user %d", resp.StatusCode)
+	}
+	var u struct {
+		Login string `json:"login"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&u); err != nil {
+		return "", err
+	}
+	return u.Login, nil
+}
+
+// bitbucketAccount returns the authenticated Bitbucket account name via GET
+// /2.0/user (display name preferred, else username/nickname). Requires the token's
+// "account" scope; callers fall back to the stored email / placeholder on error.
+func bitbucketAccount(auth string) (string, error) {
+	client := &http.Client{Timeout: 10 * time.Second}
+	body, err := bitbucketGet(client, auth, "https://api.bitbucket.org/2.0/user")
+	if err != nil {
+		return "", err
+	}
+	var u struct {
+		Username    string `json:"username"`
+		DisplayName string `json:"display_name"`
+		Nickname    string `json:"nickname"`
+	}
+	if err := json.Unmarshal(body, &u); err != nil {
+		return "", err
+	}
+	switch {
+	case u.DisplayName != "":
+		return u.DisplayName, nil
+	case u.Username != "":
+		return u.Username, nil
+	default:
+		return u.Nickname, nil
+	}
+}
+
 func githubHeaders(req *http.Request, token string) {
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Accept", "application/vnd.github+json")

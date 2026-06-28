@@ -17,11 +17,13 @@ export default function ConnectionsTab() {
   if (!conns) return <p className="muted pad">読み込み中…</p>;
   return (
     <div className="conns">
+      <div className="conn-cat">エージェント</div>
       <ClaudeRow st={conns.claude} reload={reload} />
-      <GithubRow st={conns.github} reload={reload} />
-      <BitbucketRow st={conns.bitbucket} reload={reload} />
       <CodexRow st={conns.codex} reload={reload} />
       <OpencodeRow st={conns.opencode} reload={reload} />
+      <div className="conn-cat">git ホスティング</div>
+      <GithubRow st={conns.github} reload={reload} />
+      <BitbucketRow st={conns.bitbucket} reload={reload} />
     </div>
   );
 }
