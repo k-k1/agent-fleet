@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -16,22 +15,22 @@ import (
 	"github.com/creack/pty"
 )
 
-// Claude auth is driven from the WebUI, not the terminal. `claude setup-token`
-// is an interactive (Ink/TTY) OAuth flow that emits an authorize URL and waits
-// for a pasted code, then prints a long-lived CLAUDE_CODE_OAUTH_TOKEN (1 year,
-// subscription, portable). We drive it through a PTY: a very wide PTY keeps Ink
-// from wrapping the URL across rows, we strip ANSI to scrape it, the Console
-// shows it + collects the code, we submit the code and capture the token, then
-// store it for per-session env injection (session.go). See plan / docs/06 §6.8.
+// Claude auth is driven from the WebUI, not the terminal. We run the real
+// subscription login — `claude auth login --claudeai` — an interactive (Ink/TTY)
+// OAuth flow that emits an authorize URL and waits for a pasted code, then writes
+// claude's own .credentials.json (subscription, WITH a refresh token) under
+// CLAUDE_CONFIG_DIR. This is what authenticates the INTERACTIVE TUI (the env-only
+// `claude setup-token` does not — it's headless-only, and a synthetic creds file
+// without a refresh token is rejected). We drive it through a PTY: a very wide PTY
+// keeps Ink from wrapping the URL, we strip ANSI to scrape it, the Console shows it
+// + collects the code, we submit the code, then confirm via `claude auth status`.
+// No env injection or token storage is needed — claude owns the credentials file.
 
 var (
 	// CSI/escape sequences and lone control chars Ink emits while redrawing.
 	ansiRe = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b[()][AB012]|\x1b[<>=]|[\x00-\x08\x0b\x0c\x0e-\x1f]`)
-	urlRe  = regexp.MustCompile(`https://claude\.com/cai/oauth/authorize\?\S+`)
-	// CLAUDE_CODE_OAUTH_TOKEN is an Anthropic secret token; match the sk-ant-
-	// family broadly (oat01/oat02/…) so a format tweak doesn't break capture.
-	tokenRe = regexp.MustCompile(`sk-ant-[A-Za-z0-9_-]{20,}`)
-	errRe   = regexp.MustCompile(`OAuth error:[^\n]*`)
+	urlRe = regexp.MustCompile(`https://claude\.com/cai/oauth/authorize\?\S+`)
+	errRe = regexp.MustCompile(`OAuth error:[^\n]*`)
 )
 
 type claudeFlow struct {
@@ -84,7 +83,10 @@ func reapFlows() {
 // returns it with a flow_id the client uses to submit the code.
 func handleClaudeStart(w http.ResponseWriter, r *http.Request) {
 	reapFlows()
-	cmd := exec.Command("claude", "setup-token")
+	// Real subscription login (writes .credentials.json with a refresh token).
+	// CLAUDE_CONFIG_DIR is inherited from os.Environ() so creds land where sessions
+	// read them. Same authorize URL as setup-token (claude.com/cai/oauth/authorize).
+	cmd := exec.Command("claude", "auth", "login", "--claudeai")
 	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
 	ptmx, err := pty.Start(cmd)
 	if err != nil {
@@ -163,53 +165,63 @@ func handleClaudeComplete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, oauthErr := awaitToken(f, 30*time.Second)
-	if token == "" {
+	ok, oauthErr := awaitClaudeLogin(f, 40*time.Second)
+	if !ok {
 		if oauthErr != "" {
 			writeErr(w, http.StatusBadGateway, "oauth_error", oauthErr)
 		} else {
-			writeErr(w, http.StatusBadGateway, "no_token", "did not capture a token (code wrong or expired?)")
+			writeErr(w, http.StatusBadGateway, "login_failed", "login did not complete (code wrong or expired?)")
 		}
 		return
 	}
-	if err := storeClaudeToken(token); err != nil {
-		writeErr(w, http.StatusInternalServerError, "store_failed", err.Error())
-		return
-	}
+	// claude wrote its own .credentials.json; nothing for us to store.
 	writeJSON(w, http.StatusOK, map[string]any{"connected": true})
 }
 
 func handleClaudeDisconnect(w http.ResponseWriter, r *http.Request) {
-	s, err := loadSecrets()
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "store_failed", err.Error())
-		return
+	// claude owns its credentials; log out via the CLI so it clears them properly.
+	_ = exec.Command("claude", "auth", "logout").Run()
+	// Best-effort: drop any legacy stored token from the encrypted store too.
+	if s, err := loadSecrets(); err == nil && s.Claude != "" {
+		s.Claude = ""
+		_ = s.save()
 	}
-	s.Claude = ""
-	if err := s.save(); err != nil {
-		writeErr(w, http.StatusInternalServerError, "delete_failed", err.Error())
-		return
-	}
-	removeClaudeCredentials() // also log the interactive TUI out
 	writeJSON(w, http.StatusOK, map[string]any{"disconnected": "claude"})
 }
 
-// awaitToken polls for the printed token, or a surfaced OAuth error, until the
-// timeout. setup-token prints "OAuth error: ... Press Enter to retry." on a bad
-// or expired code, which we return instead of a generic timeout.
-func awaitToken(f *claudeFlow, timeout time.Duration) (token, oauthErr string) {
+// awaitClaudeLogin polls `claude auth status` until login succeeds, or surfaces an
+// OAuth error from the flow output, until the timeout. `claude auth login` prints
+// "OAuth error: …" on a bad/expired code, which we return instead of a generic
+// timeout.
+func awaitClaudeLogin(f *claudeFlow, timeout time.Duration) (ok bool, oauthErr string) {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		c := f.clean()
-		if m := tokenRe.FindString(c); m != "" {
-			return m, ""
+		if claudeLoggedIn() {
+			return true, ""
 		}
-		if m := errRe.FindString(c); m != "" {
-			return "", strings.TrimSpace(m)
+		if m := errRe.FindString(f.clean()); m != "" {
+			return false, strings.TrimSpace(m)
 		}
-		time.Sleep(200 * time.Millisecond)
+		time.Sleep(300 * time.Millisecond)
 	}
-	return "", ""
+	return false, ""
+}
+
+// claudeLoggedIn reports whether claude has valid credentials, via `claude auth
+// status` (JSON: {"loggedIn": bool, …}). This reads the same CLAUDE_CONFIG_DIR the
+// sessions use, so it reflects the interactive TUI's auth state.
+func claudeLoggedIn() bool {
+	out, err := exec.Command("claude", "auth", "status").Output()
+	if err != nil {
+		return false // non-zero exit = not logged in
+	}
+	var st struct {
+		LoggedIn bool `json:"loggedIn"`
+	}
+	if json.Unmarshal(out, &st) != nil {
+		return false
+	}
+	return st.LoggedIn
 }
 
 // waitFor polls the flow's cleaned output until re matches or the timeout hits.
@@ -222,79 +234,4 @@ func waitFor(f *claudeFlow, re *regexp.Regexp, timeout time.Duration) string {
 		time.Sleep(200 * time.Millisecond)
 	}
 	return ""
-}
-
-func storeClaudeToken(token string) error {
-	s, err := loadSecrets()
-	if err != nil {
-		return err
-	}
-	s.Claude = token
-	if err := s.save(); err != nil {
-		return err
-	}
-	// Also authenticate the INTERACTIVE TUI. Unlike `claude -p`, the interactive
-	// claude does not read CLAUDE_CODE_OAUTH_TOKEN — it requires a credentials file.
-	// Write the OAuth token into claude's subscription credential slot (the same
-	// shape /login produces), so launched sessions start authenticated and keep
-	// subscription features (Remote Control etc.).
-	return writeClaudeCredentials(token)
-}
-
-// claudeCredentialsPath is claude's credentials file under the (possibly relocated)
-// config dir. claude reads it for interactive auth.
-func claudeCredentialsPath() string {
-	return filepath.Join(claudeConfigDir(), ".credentials.json")
-}
-
-// writeClaudeCredentials writes claude's .credentials.json from a setup-token
-// access token. We have no refresh token (setup-token doesn't yield one), so we set
-// a far-future expiry; when the token actually expires the API 401s and the user
-// re-connects via Connections (which rewrites this file).
-func writeClaudeCredentials(token string) error {
-	if token == "" {
-		return nil
-	}
-	ccd := claudeConfigDir()
-	if err := os.MkdirAll(ccd, 0o700); err != nil {
-		return err
-	}
-	cred := map[string]any{
-		"claudeAiOauth": map[string]any{
-			"accessToken":      token,
-			"refreshToken":     "",
-			"expiresAt":        time.Now().Add(365 * 24 * time.Hour).UnixMilli(),
-			"scopes":           []string{"user:inference", "user:profile"},
-			"subscriptionType": "max",
-		},
-	}
-	b, err := json.Marshal(cred)
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(claudeCredentialsPath(), b, 0o600)
-}
-
-func removeClaudeCredentials() { _ = os.Remove(claudeCredentialsPath()) }
-
-// ensureClaudeCredentials, at agent startup, materializes the credentials file from
-// a stored token when it's absent — so a connected Claude authenticates the
-// interactive TUI across container restarts. It does not clobber an existing file
-// (e.g. one written by a real interactive /login with a refresh token).
-func ensureClaudeCredentials() {
-	if _, err := os.Stat(claudeCredentialsPath()); err == nil {
-		return // present — leave it
-	}
-	if tok := readClaudeToken(); tok != "" {
-		_ = writeClaudeCredentials(tok)
-	}
-}
-
-// readClaudeToken returns the stored CLAUDE_CODE_OAUTH_TOKEN, or "" if unset.
-func readClaudeToken() string {
-	s, err := loadSecrets()
-	if err != nil {
-		return ""
-	}
-	return s.Claude
 }

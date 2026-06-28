@@ -31,9 +31,6 @@ func main() {
 
 	// Fold any pre-A3 plaintext credential files into the encrypted store.
 	migrateLegacySecrets()
-	// Materialize claude's credentials file from a stored token so the interactive
-	// TUI starts authenticated (it does not read CLAUDE_CODE_OAUTH_TOKEN).
-	ensureClaudeCredentials()
 	// Make claude emit working/idle/question via hooks into the status files.
 	ensureStatusHooks()
 

@@ -248,10 +248,9 @@ func startSessionTmux(m sessionMeta) error {
 			}
 		}
 		program = buildSessionProgram(sid, m.Model, m.Label)
-		// No env token is injected: the interactive TUI authenticates from the
-		// credentials file (ensureClaudeCredentials / storeClaudeToken write it from
-		// the connected token), not from CLAUDE_CODE_OAUTH_TOKEN. This also keeps the
-		// secret out of the process command line.
+		// No env token is injected: the interactive TUI authenticates from claude's
+		// own .credentials.json, written by `claude auth login` via the Connections
+		// flow (claude_auth.go). CLAUDE_CODE_OAUTH_TOKEN is headless-only.
 	}
 	args = append(args, program)
 	if out, err := exec.Command("tmux", args...).CombinedOutput(); err != nil {
