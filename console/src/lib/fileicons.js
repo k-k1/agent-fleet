@@ -5,15 +5,21 @@
 // See assets/fileicons/ATTRIBUTION.md. The colorful file icons pair with the
 // monochrome codicon chrome the way VS Code's file-icon theme pairs with its codicons.
 
-// Eagerly resolve every bundled brand SVG to its hashed URL (Vite). Keyed by basename
-// so typeKey "kotlin" -> ICON_URL["kotlin"]. ~31 tiny SVGs, bundled once at load.
-const mods = import.meta.glob("../assets/fileicons/*.svg", {
+// Eagerly resolve every bundled brand SVG to its hashed URL (Vite), across all sets
+// (assets/fileicons/<set>/<key>.svg). Keyed "set/key" so a chosen set + type key
+// (e.g. "seti/kotlin") resolves to its url. Tiny SVGs, bundled once at load.
+const mods = import.meta.glob("../assets/fileicons/*/*.svg", {
   eager: true,
   query: "?url",
   import: "default",
 });
-const ICON_URL = {};
-for (const p in mods) ICON_URL[p.split("/").pop().replace(".svg", "")] = mods[p];
+const ICON_URL = {}; // "set/key" -> url
+for (const p in mods) {
+  const parts = p.split("/");
+  const key = parts.pop().replace(".svg", "");
+  const set = parts.pop();
+  ICON_URL[set + "/" + key] = mods[p];
+}
 
 // extension -> type key (set-independent). Mirrors CodeLeaf FileIcons.byExt.
 const BY_EXT = {};
@@ -68,10 +74,37 @@ export function typeKey(name) {
   return BY_EXT[ext] || null;
 }
 
-// brandIconURL returns the bundled SVG url for a filename, or null if none.
-export function brandIconURL(name) {
-  const k = typeKey(name);
-  return k ? ICON_URL[k] || null : null;
+// --- per-set resolution + tint (ported from FileIcons.kt spec/coverage) ---
+
+// Seti glyphs are monochrome; tint them per type (seti-ui mapping.less palette).
+const SETI_DEFAULT = "#d4d7d6";
+const SETI_COLOR = {
+  kotlin: "#e37933", java: "#cc3e44", gradle: "#519aba", scala: "#cc3e44",
+  c: "#519aba", cplusplus: "#519aba", csharp: "#519aba", javascript: "#cbcb41",
+  typescript: "#519aba", react: "#519aba", css3: "#519aba", sass: "#f55385",
+  less: "#519aba", html5: "#e37933", xml: "#e37933", python: "#519aba",
+  go: "#519aba", swift: "#e37933", dart: "#519aba", markdown: "#519aba",
+  ruby: "#cc3e44", php: "#a074c4", rust: "#d4d7d6", bash: "#8dc149",
+  vuejs: "#8dc149", json: "#cbcb41", docker: "#519aba", git: "#687d8a",
+};
+// Devicon ships these as black logos (no fill colors) → tint to theme text color.
+const DEVICON_MONO = new Set(["markdown", "rust", "json", "yaml"]);
+// Seti lacks these keys → fall back to the generic icon for them.
+const SETI_MISSING = new Set(["groovy", "nodejs"]);
+
+// resolveIcon returns how to render a filename's icon in the chosen set:
+//   { url, tint: "none" }                — render the SVG as-is (full color)
+//   { url, tint: "mask", color }         — tint a monochrome SVG to `color`
+//   null                                 — no brand icon; caller uses a codicon
+export function resolveIcon(set, name) {
+  const key = typeKey(name);
+  if (!key) return null;
+  if (set === "seti" && SETI_MISSING.has(key)) return null;
+  const url = ICON_URL[set + "/" + key];
+  if (!url) return null;
+  if (set === "seti") return { url, tint: "mask", color: SETI_COLOR[key] || SETI_DEFAULT };
+  if (set === "devicon" && DEVICON_MONO.has(key)) return { url, tint: "mask", color: "currentColor" };
+  return { url, tint: "none" };
 }
 
 // --- special marks (priority order) — drive emphasis, ported from FileIcons.kt ---

@@ -15,6 +15,14 @@ export const CODE_FONTS = [
   "システム等幅",
 ];
 
+// File-icon sets (brand SVGs under assets/fileicons/<id>/). value = asset subdir.
+export const ICON_SETS = [
+  { id: "vscode", label: "VS Code Icons（カラー）" },
+  { id: "material", label: "Material（カラー）" },
+  { id: "devicon", label: "Devicon（カラー）" },
+  { id: "seti", label: "Seti（単色・タイプ別着色）" },
+];
+
 const DEFAULTS = {
   termFont: "Source Code Pro",
   termSize: 13,
@@ -24,6 +32,7 @@ const DEFAULTS = {
   wrap: false,
   tabSize: 4,
   minimap: true,
+  iconSet: "vscode",
 };
 
 // Build a CSS font-family stack for a chosen family, with CJK + generic fallbacks.
