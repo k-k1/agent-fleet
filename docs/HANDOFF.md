@@ -367,7 +367,13 @@ opencode を「設定から認証」「状態バッジ」まで claude と同等
 - **修正**（`session.go`）: ヘルパー `exactT(tn)=="="+tn` を追加し、tmux の **target 参照を全て exact 化**（`has-session`/`kill-session`×3/`list-panes`）。`new-session -d -s`（作成名）と `new-session -A -s`（attach、別名なら新規作成で prefix attach しないことを実機確認済）は変更不要。
 - **検証**: 実コンテナで `=claude_x` は exact・無印は prefix MATCH を確認。Stop→Start 後の E2E で **live `agent-fleet-sh` と共存して `agent-fleet`(claude) 作成成功**（旧: 弾かれる）。image 再ビルド＋運用者コンテナ Stop→Start 済み。
 
+**🔧 UI 調整（2026-06-28 続き16）— 接続中セッションのピン留め / アイコンを codicon 化 / アーカイブモーダル**:
+- **接続中(attach 中)セッションを左ペイン上部にピン留め**（`SessionsSection.jsx`）: `session`(context) を安定ソートで先頭へ。`📌`(codicon `pin`)マーカー付き、`position:sticky; top:26px`(セクションヘッダ直下)でスクロールしても上部に残る（section 内で bounded）。
+- **UI アイコンを VS Code codicon に統一**（ユーザー選択: codicon 風）: `@vscode/codicons` 導入、`main.jsx` で `codicon.css` import（フォントは Vite が dist にハッシュ付きで bundle・CSS は相対 `./codicon-*.ttf` 参照ゆえ base-path 非依存）。共通 `components/Icon.jsx`（`<i class="codicon codicon-NAME">`、currentColor 追従・`spin` 対応）。**操作系/種別タグ/状態のクローム**を置換: 種別=sparkle(claude)/hubot(opencode)/terminal(shell)、状態=loading⟳spin(進行中)/question/check(入力待ち)/debug-pause(停止)/circle-slash(dir無)、操作=add/refresh/collapse-all/clear-all/archive/ellipsis/pin/repo/git-branch/play/cloud-download/trash/discard/remove、close/gear/screen-full ほか。対象: Sessions/Repos/Files/SCM/WsBar/TopBar/TerminalView/各モーダル close。**`lib/fileicons.js`（ファイル種別の色付き emoji）は意図的システムゆえ維持**（クローム=codicon・ファイル種別=emoji の役割分担）。フロントのみ＝**リロードで反映**（CP 再起動不要、フォントも CP 配信 200 確認）。
+- **アーカイブモーダルは「動かない」→ 実は正常**: archive→`/sessions/archived`→restore→delete の全サイクルを実機 E2E で確認（200・一覧反映・active から除外）。原因は**今セッション前の旧 agent が `/archive`/`/restore`/`/archived` を 404**（続き13 #6 の既知「新 agent 必須」）。今回の Stop→Start で新 agent が入り解消。コード変更なし。
+
 **🗒 フォローアップ（次セッション・未調査）**:
+- **（任意）codicon 化の残り**: 設定タブ（ConnectionsTab/AdminTab/DisplayTab/EnvTab/ClaudeTab）内の絵文字・ステータス●、`lib/fileicons.js` を codicon の `symbol-*`/`file-*` 系に寄せるか（現状は色付き emoji を意図的に維持）。
 - **（任意）セッション識別の完全 ID 化**: tmux 名・meta・API・Console を name でなくランダムな一意IDで keying し、表示名は単なるラベル（重複可）に。現状は内部IDはユニーク・表示名がルーティングキー。
 - **codex CLI / Antigravity CLI をエージェント追加**（opencode と同枠の kind 追加）。codex = OpenAI Codex CLI（`@openai/codex`、auth は `codex login`/`OPENAI_API_KEY`、resume は `codex resume`）。Antigravity CLI = Google（CLI 形態・インストール/認証要調査）。opencode の実装（kind 分岐・Console 種別・denylist・即起動・auth env 注入・状態プラグイン）が雛形。
 - **opencode の per-slot resume 厳密化**（任意）: 現状 `--continue` は同一 dir で最新セッションを継続＝同 dir に複数 opencode スロットがあると最新を共有。厳密化するなら作成時に session id を捕捉し `--session <id>` で resume（opencode.db 参照が必要）。

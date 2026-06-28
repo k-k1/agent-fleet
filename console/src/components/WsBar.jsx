@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useApp } from "../state.jsx";
 import ConfirmDialog from "./ConfirmDialog.jsx";
+import Icon from "./Icon.jsx";
 
 // WS bar: the (single) workspace's state plus Start / Stop / Recreate. The backend
 // models one workspace per membership, so there is no select / create / delete —
@@ -36,7 +37,7 @@ export default function WsBar() {
         作り直す
       </button>
       <button className="ghost" title="状態を更新" onClick={refreshWs}>
-        ⟳
+        <Icon name="refresh" />
       </button>
 
       {confirm && (
@@ -49,9 +50,9 @@ export default function WsBar() {
         >
           <p>コンテナを破棄し、最新イメージで新しく作り直します。</p>
           <ul className="confirm-list">
-            <li className="keep">✓ ログイン・接続（GitHub / Bitbucket / Claude）は保持されます</li>
-            <li className="lose">✗ 実行中のセッションは失われます</li>
-            <li className="lose">✗ clone 済みリポジトリ（未コミット変更を含む）は削除されます</li>
+            <li className="keep"><Icon name="check" /> ログイン・接続（GitHub / Bitbucket / Claude）は保持されます</li>
+            <li className="lose"><Icon name="close" /> 実行中のセッションは失われます</li>
+            <li className="lose"><Icon name="close" /> clone 済みリポジトリ（未コミット変更を含む）は削除されます</li>
           </ul>
         </ConfirmDialog>
       )}

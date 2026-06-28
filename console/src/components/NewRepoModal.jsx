@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { apiJSON } from "../api.js";
 import RepoPicker from "./RepoPicker.jsx";
+import Icon from "./Icon.jsx";
 
 // NewRepoModal: clone a repository into the workspace (~/repos) — a roomy dialog
 // matching the New Session modal. Pick from a connected provider, or paste a URL.
@@ -42,7 +43,7 @@ export default function NewRepoModal({ onClose, onCloned }) {
         <header className="modal-head">
           <h3 className="modal-title">リポジトリを clone</h3>
           <button type="button" className="icon" title="閉じる" onClick={onClose}>
-            ✕
+            <Icon name="close" />
           </button>
         </header>
 

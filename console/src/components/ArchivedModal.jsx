@@ -1,11 +1,13 @@
 import { useEffect, useState } from "react";
 import { api, raw } from "../api.js";
+import Icon from "./Icon.jsx";
 
 // ArchivedModal lists archived sessions (hidden from the active list but kept on
 // disk) and lets the user restore them (back into the list as a stopped session,
 // click to resume) or delete them permanently. Backed by /api/sessions/archived,
 // /restore, and /stop.
-const kindLabel = (k) => (k === "shell" ? "🐚 shell" : k === "opencode" ? "◆ opencode" : "✦ claude");
+const kindIcon = (k) => (k === "shell" ? "terminal" : k === "opencode" ? "hubot" : "sparkle");
+const kindName = (k) => (k === "shell" ? "shell" : k === "opencode" ? "opencode" : "claude");
 
 export default function ArchivedModal({ onClose, onRestored }) {
   const [items, setItems] = useState(null);
@@ -51,7 +53,7 @@ export default function ArchivedModal({ onClose, onRestored }) {
         <header className="modal-head">
           <h3 className="modal-title">アーカイブ済みセッション</h3>
           <button type="button" className="icon" title="閉じる" onClick={onClose}>
-            ✕
+            <Icon name="close" />
           </button>
         </header>
         <div className="modal-body">
@@ -64,7 +66,7 @@ export default function ArchivedModal({ onClose, onRestored }) {
                   <div className="archived-info">
                     <span className="archived-name">{s.label ? s.label.replace(/^\[AF\]\s*/, "") : s.repo || s.name}</span>
                     <span className="archived-sub muted">
-                      {kindLabel(s.kind)} · {s.name}
+                      <Icon name={kindIcon(s.kind)} /> {kindName(s.kind)} · {s.name}
                       {s.started ? " · " + s.started : ""}
                       {s.resumable === false ? " · フォルダ無し" : ""}
                     </span>
@@ -74,7 +76,7 @@ export default function ArchivedModal({ onClose, onRestored }) {
                       復帰
                     </button>
                     <button className="ghost danger" disabled={busy} title="完全に削除" onClick={() => del(s.name)}>
-                      🗑
+                      <Icon name="trash" />
                     </button>
                   </div>
                 </li>

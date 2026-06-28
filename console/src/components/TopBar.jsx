@@ -1,4 +1,5 @@
 import { useApp } from "../state.jsx";
+import Icon from "./Icon.jsx";
 
 // Top bar: product name, tenant picker (hidden for single-membership users),
 // the signed-in identity, and the settings button (Connections + Admin tabs).
@@ -25,7 +26,7 @@ export default function TopBar() {
         )}
         {me && <span className="whoami" title={me}>{me}</span>}
         <button className="gear" title="設定（接続 / 管理）" onClick={openSettings}>
-          ⚙ 設定
+          <Icon name="gear" /> 設定
         </button>
       </div>
     </header>

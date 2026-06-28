@@ -18,6 +18,22 @@
     "Noto Sans Mono CJK JP", monospace;
 }
 
+/* codicon (VS Code icon font) — inherit size/color from the surrounding element so
+   icons sit on the text baseline and follow currentColor / the button's color. */
+.codicon {
+  font-size: inherit;
+  line-height: inherit;
+  vertical-align: -0.12em;
+}
+.codicon-spin {
+  animation: codicon-spin 1.2s steps(12) infinite;
+}
+@keyframes codicon-spin {
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
 * {
   box-sizing: border-box;
 }

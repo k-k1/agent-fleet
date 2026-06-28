@@ -2,26 +2,30 @@ import { useEffect, useRef, useState } from "react";
 import { useApp } from "../../state.jsx";
 import { api, raw } from "../../api.js";
 import Section from "../Section.jsx";
+import Icon from "../Icon.jsx";
 import NewSessionModal from "../NewSessionModal.jsx";
 import ArchivedModal from "../ArchivedModal.jsx";
 
-// stateInfo maps a session to its line-2 status chip.
+// kindIcon maps a session kind to its codicon glyph.
+const kindIcon = (k) => (k === "shell" ? "terminal" : k === "opencode" ? "hubot" : "sparkle");
+
+// stateInfo maps a session to its line-2 status chip (codicon + label).
 const stateInfo = (s) => {
   if (!s.alive) {
     // A stopped claude whose working dir was deleted can't be resumed (archive only).
-    if (s.resumable === false) return { cls: "off dead", text: "フォルダ無し — 再開不可" };
-    return { cls: "off", text: "停止中" };
+    if (s.resumable === false) return { cls: "off dead", icon: "circle-slash", text: "フォルダ無し — 再開不可" };
+    return { cls: "off", icon: "debug-pause", text: "停止中" };
   }
-  if (s.kind === "shell") return { cls: "on", text: "● 起動中" };
+  if (s.kind === "shell") return { cls: "on", icon: "pulse", text: "起動中" };
   // claude (hooks) and opencode (plugin) both report working/idle. opencode has no
   // "question" state; for either, an empty state means idle (awaiting input).
   switch (s.state) {
     case "working":
-      return { cls: "working", text: "● 進行中…" };
+      return { cls: "working", icon: "loading", spin: true, text: "進行中…" };
     case "question":
-      return { cls: "question", text: "❓ 質問あり" };
+      return { cls: "question", icon: "question", text: "質問あり" };
     default:
-      return { cls: "on", text: "✓ 入力待ち" };
+      return { cls: "on", icon: "check", text: "入力待ち" };
   }
 };
 
@@ -183,13 +187,13 @@ export default function SessionsSection() {
             disabled={!sessions.some((s) => !s.alive)}
             onClick={deleteStopped}
           >
-            🧹
+            <Icon name="clear-all" />
           </button>
           <button className="ghost" title="アーカイブを開く（復帰）" onClick={() => setShowArchived(true)}>
-            🗄
+            <Icon name="archive" />
           </button>
           <button className="ghost" title="新規セッション" onClick={() => setShowModal(true)}>
-            ＋
+            <Icon name="add" />
           </button>
         </>
       }
@@ -208,17 +212,21 @@ export default function SessionsSection() {
               onClick={() => s.alive && showTerminal(s.name)}
             >
               <span className="session-l1">
-                {pinned && <span className="session-pin" title="接続中">📌</span>}
+                {pinned && <Icon name="pin" className="session-pin" title="接続中" />}
                 <span className="session-display">{displayName(s)}</span>
               </span>
               <span className="session-l2">
                 <span className="kind-tag">
-                  {s.kind === "shell" ? "🐚 shell" : s.kind === "opencode" ? "◆ opencode" : "✦ claude"}
+                  <Icon name={kindIcon(s.kind)} /> {s.kind === "shell" ? "shell" : s.kind === "opencode" ? "opencode" : "claude"}
                 </span>
                 <span className="session-name">{s.name}</span>
                 {(() => {
                   const st = stateInfo(s);
-                  return <span className={"session-state " + st.cls}>{st.text}</span>;
+                  return (
+                    <span className={"session-state " + st.cls}>
+                      <Icon name={st.icon} spin={st.spin} /> {st.text}
+                    </span>
+                  );
                 })()}
               </span>
             </button>
@@ -228,7 +236,7 @@ export default function SessionsSection() {
                 title="メニュー"
                 onClick={() => setMenuFor(menuFor === s.name ? null : s.name)}
               >
-                ⋯
+                <Icon name="ellipsis" />
               </button>
               {menuFor === s.name && (
                 <div className="session-menu">

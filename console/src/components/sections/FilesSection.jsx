@@ -4,6 +4,7 @@ import { api } from "../../api.js";
 import { dirName } from "../../lib/filemeta.js";
 import { fileIcon, dirIcon } from "../../lib/fileicons.js";
 import Section from "../Section.jsx";
+import Icon from "../Icon.jsx";
 
 // A directory is a "passthrough" link in a compact chain when its sole entry is one
 // subdirectory (no files) — these get folded into one row (a/b/c) so deep, single-
@@ -271,10 +272,10 @@ export default function FilesSection() {
             disabled={!hasOpen}
             onClick={collapseAll}
           >
-            ⊟
+            <Icon name="collapse-all" />
           </button>
           <button className="ghost" title="更新" onClick={() => setReloadKey((k) => k + 1)}>
-            ⟳
+            <Icon name="refresh" />
           </button>
         </>
       }
