@@ -64,9 +64,17 @@ export function AppProvider({ children }) {
   const [sessionsKey, setSessionsKey] = useState(0);
   const [reposKey, setReposKey] = useState(0);
   const [connKey, setConnKey] = useState(0);
+  const [filesKey, setFilesKey] = useState(0);
   const bumpSessions = useCallback(() => setSessionsKey((k) => k + 1), []);
   const bumpRepos = useCallback(() => setReposKey((k) => k + 1), []);
   const bumpConn = useCallback(() => setConnKey((k) => k + 1), []);
+  const bumpFiles = useCallback(() => setFilesKey((k) => k + 1), []);
+
+  // reveal: a home-relative path (e.g. "repos/foo") the Files tree should expand to
+  // and select — set when the user clicks a repo. {path, n} so repeat clicks on the
+  // same repo still re-trigger the effect (n increments).
+  const [reveal, setReveal] = useState({ path: null, n: 0 });
+  const revealInFiles = useCallback((path) => setReveal((r) => ({ path, n: r.n + 1 })), []);
 
   const refreshWs = useCallback(async () => {
     try {
@@ -82,13 +90,16 @@ export function AppProvider({ children }) {
     await api("api/workspace/start", { method: "POST" });
     await refreshWs();
     bumpSessions();
-  }, [refreshWs, bumpSessions]);
+    bumpRepos();
+    bumpFiles();
+  }, [refreshWs, bumpSessions, bumpRepos, bumpFiles]);
 
   const stopWs = useCallback(async () => {
     await api("api/workspace/stop", { method: "POST" });
     await refreshWs();
     bumpSessions();
-  }, [refreshWs, bumpSessions]);
+    bumpFiles();
+  }, [refreshWs, bumpSessions, bumpFiles]);
 
   // recreateWs tears the container down and starts a fresh one from the current
   // image. Login + connections persist; cloned repos and running sessions are
@@ -104,7 +115,8 @@ export function AppProvider({ children }) {
     await refreshWs();
     bumpSessions();
     bumpRepos();
-  }, [go, refreshWs, bumpSessions, bumpRepos]);
+    bumpFiles();
+  }, [go, refreshWs, bumpSessions, bumpRepos, bumpFiles]);
 
   // navigation helpers used across the UI (each pushes a history entry via go)
   const showTerminal = useCallback(
@@ -235,9 +247,13 @@ export function AppProvider({ children }) {
     sessionsKey,
     reposKey,
     connKey,
+    filesKey,
     bumpSessions,
     bumpRepos,
     bumpConn,
+    bumpFiles,
+    reveal,
+    revealInFiles,
   };
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 }

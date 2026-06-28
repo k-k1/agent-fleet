@@ -344,6 +344,15 @@ opencode を「設定から認証」「状態バッジ」まで claude と同等
 - **検証**: エージェント経由の新規 claude が「Welcome back」＋プロンプト＋`/rc active`。運用者の固まっていた claude セッションも recreate で認証済みに。運用者 `.claude.json` には即時に `hasCompletedOnboarding=true` を設定済（新規/作り直しセッションは現コンテナでも認証）。image 再ビルド済（Stop→Start で恒久化）。
 - **教訓（自戒）**: claude の認証可否は「`claude auth status`」「`Welcome to Claude Code` バナー」では判定できない（前者は creds ファイルだけ見る／後者はログイン中も出る）。**send-keys で実プロンプト→応答**でのみ確証できる。auth と onboarding は別物。
 
+**🔧 UI 調整（2026-06-28 続き13）— 6件**:
+1. **4秒ポーリングのカーソル待機ちらつき解消**（`SessionsSection`）: 毎回 `setSessions` で再レンダリング→メインスレッド瞬断→マウスが busy カーソルに。**list を JSON 化し変化時のみ setState**（`lastSer` ref）。通知ロジックは毎回走るが再レンダリングしない。
+2. **Repos の起動ボタンをドロップダウン化**（`ReposSection` RepoRow）: ▶claude/▶opencode/▶shell の3チップ→ **`▶ 起動 ▾` 1ボタン＋小メニュー**（claude/opencode/shell、outside-click で閉じる）。CSS `.launch-wrap/.launch-menu`。
+3. **repo クリックで FILES を clone ディレクトリで開く**: repo 名クリックを SCM でなく **Files reveal** に（SCM は `⎇ 変更` チップに残す）。state に `reveal {path,n}`＋`revealInFiles(path)`、`FilesSection` が `reveal.n` 変化で root＋各セグメントを fresh 取得→展開→選択（`repos/<name>`）。
+4. **停止中セッションの一括削除**（`SessionsSection`）: ヘッダ 🧹 ボタン。停止中(`!alive`)を全て `/stop`（meta 削除＝アーカイブでなく削除、jsonl は残る）。
+5. **clone 後・Workspace stop/start 後に FILES 自動更新**: state に `filesKey`＋`bumpFiles()`。`startWs/stopWs/recreateWs` で `bumpFiles`（＋start で `bumpRepos`）、`FilesSection` の reload を `[reloadKey, filesKey]` に。clone は `revealInFiles("repos/"+name)`（root 再取得込み＝新規 repo も出る）。`NewRepoModal` が clone 応答(name)を `onCloned(res)` で渡す。
+6. **アーカイブ復帰モーダル**（新規 `ArchivedModal.jsx`）: ヘッダ 🗄 ボタン→モーダル（アーカイブ一覧・復帰・完全削除）。⋯ の「アーカイブする」は **`/stop`(削除) → `/archive`(復帰可)** に変更。**バックエンド**: `sessionMeta.Archived`、`handleListSessions` は Archived を除外（TTL prune もスキップ）、新 `POST /sessions/{name}/archive`・`POST /sessions/{name}/restore`・`GET /sessions/archived`（CP も proxy 追加）。アーカイブ=meta+jsonl 保持で非表示、復帰=stopped として一覧復帰（クリックで resume）。**検証**: 使い捨てコンテナで create→archive→archived 一覧→restore→active(alive:false) を確認。
+- **反映**: image/CP/console 再ビルド・CP 再起動済。**#1〜#5 の大半はリロードで反映**（#4 一括削除は既存 `/stop` 使用）。**#6 アーカイブ復帰と ⋯ アーカイブ（`/archive`）は新 agent が必要＝Workspace Stop→Start 後に有効**（旧 agent は `/archive` 404）。
+
 **🗒 フォローアップ（次セッション・未調査）**:
 - **（任意）セッション識別の完全 ID 化**: tmux 名・meta・API・Console を name でなくランダムな一意IDで keying し、表示名は単なるラベル（重複可）に。現状は内部IDはユニーク・表示名がルーティングキー。
 - **codex CLI / Antigravity CLI をエージェント追加**（opencode と同枠の kind 追加）。codex = OpenAI Codex CLI（`@openai/codex`、auth は `codex login`/`OPENAI_API_KEY`、resume は `codex resume`）。Antigravity CLI = Google（CLI 形態・インストール/認証要調査）。opencode の実装（kind 分岐・Console 種別・denylist・即起動・auth env 注入・状態プラグイン）が雛形。

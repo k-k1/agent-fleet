@@ -358,6 +358,78 @@ textarea:focus {
 .session-menu-item.danger {
   color: var(--del);
 }
+/* Repo launch dropdown (claude/opencode/shell) */
+.launch-wrap {
+  position: relative;
+  display: inline-flex;
+}
+.launch-menu {
+  position: absolute;
+  left: 0;
+  top: 100%;
+  z-index: 20;
+  min-width: 130px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+  padding: 4px;
+  margin-top: 2px;
+}
+.launch-menu button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  color: var(--fg);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 6px 8px;
+  border-radius: 4px;
+}
+.launch-menu button:hover {
+  background: var(--btn);
+}
+
+/* Archived-sessions modal */
+.archived-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.archived-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 4px;
+  border-bottom: 1px solid var(--border2);
+}
+.archived-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.archived-name {
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.archived-sub {
+  font-size: 11px;
+}
+.archived-actions {
+  display: flex;
+  gap: 6px;
+  flex: none;
+}
+
 .session-btn:hover {
   background: var(--btn);
 }

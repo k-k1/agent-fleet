@@ -19,7 +19,7 @@ const fsList = (path) =>
 // set) so it's keyboard-navigable: ↑/↓ move, → expand / into child, ← collapse /
 // to parent, Enter opens a file (or toggles a folder).
 export default function FilesSection() {
-  const { filePath, showFile } = useApp();
+  const { filePath, showFile, filesKey, reveal } = useApp();
   const [root, setRoot] = useState(null);
   const [open, setOpen] = useState(() => new Set()); // expanded dir paths
   const [cache, setCache] = useState({}); // dir path -> entries
@@ -28,6 +28,7 @@ export default function FilesSection() {
   const treeRef = useRef(null);
   const selRef = useRef(null);
 
+  // Full reload: on manual ⟳, and on filesKey bumps (clone / workspace stop·start).
   useEffect(() => {
     let alive = true;
     setOpen(new Set());
@@ -41,7 +42,42 @@ export default function FilesSection() {
     return () => {
       alive = false;
     };
-  }, [reloadKey]);
+  }, [reloadKey, filesKey]);
+
+  // Reveal: expand the tree to a home-relative path (e.g. "repos/foo") and select it
+  // — used when a repo is clicked / just cloned. Refetches root + each segment fresh
+  // (so a newly-cloned dir shows even if the tree was stale) and opens the chain.
+  useEffect(() => {
+    if (!reveal || !reveal.path) return;
+    let alive = true;
+    (async () => {
+      const r = await fsList("");
+      if (!alive) return;
+      setRoot(r.entries || []);
+      const segs = reveal.path.split("/").filter(Boolean);
+      const opened = [];
+      let cur = "";
+      for (const seg of segs) {
+        cur = cur ? cur + "/" + seg : seg;
+        const d = await fsList(cur);
+        if (!alive) return;
+        const entries = d.entries || [];
+        setCache((c) => ({ ...c, [cur]: entries }));
+        opened.push(cur);
+      }
+      if (!alive) return;
+      setOpen((s) => {
+        const n = new Set(s);
+        opened.forEach((p) => n.add(p));
+        return n;
+      });
+      setSelected(reveal.path);
+    })();
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reveal && reveal.n]);
 
   // Flatten the open tree into the list of visible rows. Single-child directory
   // chains are compacted into one row: name = "a/b/c", path = deepest segment,
