@@ -54,6 +54,7 @@
 - 接続を**「エージェント / git ホスティング」にカテゴリ分け**。GitHub/Bitbucket も実アカウント表示（`/user`・`/2.0/user`、store キャッシュ＝polled endpoint で都度 API を叩かない、`gitEntry.Login`/`bitbucketCreds.Account`）。
 - git 接続に **ID（ハンドル）+ email** を表示（GitHub `/user`、Bitbucket `/2.0/user` + `/user/emails`、`gitEntry.Email`/`bitbucketCreds.Email` にキャッシュ）。例: github `k-k1 · k1.kami@gmail.com` / bitbucket `bb-user · dev@example.com`。
 - 表示: アイコンセット選択を折り返しチップ化（スマホで見切れ解消、`ChipChoice`）。設定/管理モーダルのヘッダ余白拡大 + ✕ タップ域確保（スマホは `safe-area-inset-top`）。
+- セッション一覧/ファイルツリーの UI 微修正4件: (1) 停止中セッション名を `--muted`→`--fg` opacity0.72 で可読に / (2) 接続中セッションを**トップへ hoist せず自然順を維持**（pinFirst 廃止、sticky と pin バッジは継続）/ (3) pin バッジを行の**右上に絶対配置**＝セッション名は左寄せ固定 / (4) ファイルツリー選択色のハードコード（`#2a3a44`/`#2f5a6a`）を `--hover-bg`/`--active-bg` に＝ライトモードで暗いままを解消。
 - codex resume が新規セッションになるバグ修正。codex のフックは claude 同様**入れ子スキーマ** `hooks.<E>=[{hooks=[{type,command}]}]` が必要（フラットはパースは通るが無音で発火しない）。フラットだとフック未発火→session_id 未捕捉→resume で id 無し→新規化。実機で発火・session_id 捕捉・resume を確認。
 
 ## 2026-06-28（続き）

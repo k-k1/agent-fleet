@@ -6,7 +6,6 @@ import Icon from "../Icon.jsx";
 import NewSessionModal from "../NewSessionModal.jsx";
 import ArchivedModal from "../ArchivedModal.jsx";
 import { kindIcon, kindLabel } from "../../lib/sessionkind.js";
-import { pinFirst } from "../../lib/listutil.js";
 
 // stateInfo maps a session to its line-2 status chip (codicon + label).
 const stateInfo = (s) => {
@@ -168,9 +167,9 @@ export default function SessionsSection() {
     return () => document.removeEventListener("mousedown", close);
   }, [menuFor]);
 
-  // Pin the currently-attached session to the very top of the list (stable, keeps
-  // the rest in backend order). The .pinned row is also sticky while the list scrolls.
-  const ordered = pinFirst(sessions, (s) => s.name === session);
+  // The attached session is marked .pinned (highlight + a pin badge top-right) and
+  // is sticky while the list scrolls, but it is NOT hoisted to the top: the list
+  // keeps its stable backend order so rows don't jump around as you attach/switch.
 
   return (
     <Section
@@ -196,11 +195,12 @@ export default function SessionsSection() {
     >
       <ul className="list">
         {sessions.length === 0 && <li className="muted">セッションなし</li>}
-        {ordered.map((s) => {
+        {sessions.map((s) => {
           const dead = !s.alive && s.resumable === false; // dir gone → can't resume
           const pinned = session === s.name; // currently attached → pinned to the top
           return (
           <li key={s.name} className={"session-row" + (pinned ? " active pinned" : "") + (s.alive ? "" : " stopped") + (dead ? " dead" : "")}>
+            {pinned && <Icon name="pin" className="session-pin" title="接続中" />}
             <button
               className="session-btn"
               title={dead ? "作業フォルダが存在しないため再開できません" : !s.alive ? "停止中（⋯メニューから再開）" : s.dir || ""}
@@ -208,7 +208,6 @@ export default function SessionsSection() {
               onClick={() => s.alive && showTerminal(s.name)}
             >
               <span className="session-l1">
-                {pinned && <Icon name="pin" className="session-pin" title="接続中" />}
                 <span className="session-display">{displayName(s)}</span>
               </span>
               <span className="session-l2">
