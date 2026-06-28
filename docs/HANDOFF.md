@@ -205,7 +205,7 @@ CP のルーティングが user→対象コンテナを解決するだけ。
 - **共通資産**: `src/api.js`（`api()/rel()`/`X-AF-Tenant` 注入）・`src/term.js`（attach・コピペ）・`src/lib/settings.js`。
 - **新規セッション/clone はモーダル**（`NewSessionModal.jsx`/`NewRepoModal.jsx`）。shell を左・既定（shell 時はモデル/リポジトリ/dir 非表示）。**セッション名は自動入力**（`GET /api/sessions` の既存名から衝突回避 `-2`,`-3`）。モデル選択（既定/Opus/Sonnet/Haiku → `--model`、claude のみ）。
 - **CP バックエンド**: `POST /api/workspace/recreate`（`runtime.go` `handleWorkspaceRecreate`: 停止→**`home/repos` のみ破棄**→最新 image で再生成。login(別 mount)/接続(`secrets.enc`)は保持。Console「作り直す」が警告ダイアログ付きで呼ぶ）。Agent の各 UI 系エンドポイント（`/claude/settings`・`/env/toolchains`・`/env/ui-prefs`・`/connections/...`・`/fs/...`・`/repos/.../show`）は CP が `/api/...` で proxy。
-- **履歴ナビ**（History API、`pushState`＋`popstate`、戻る/進む）。
+- **履歴ナビ**（History API、`pushState`＋`popstate`、戻る/進む）。スマホはドロワーから項目を開く際に `drawer:true` の履歴を差し込み、戻るでドロワーを再オープン（`pushDrawerEntry`/`navOpen`）。
 
 ### 6.10.2 セッション管理
 
