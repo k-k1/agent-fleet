@@ -71,6 +71,13 @@ export default function CodeView({ html, lines, lineNumbers, wrap, minimap }) {
     window.addEventListener("mouseup", up);
   };
 
+  // Touch: tap or swipe up/down on the minimap to scroll. `touch-action: none` on
+  // .minimap (styles.css) hands us the gesture so the page doesn't scroll instead.
+  const onMiniTouch = (e) => {
+    const t = e.touches[0];
+    if (t) scrollToMini(t.clientY, e.currentTarget);
+  };
+
   return (
     <div className="codeview-wrap">
       <div className={"codeview" + (wrap ? " wrap" : "")} ref={scrollRef}>
@@ -84,7 +91,12 @@ export default function CodeView({ html, lines, lineNumbers, wrap, minimap }) {
         </pre>
       </div>
       {minimap && (
-        <div className="minimap" onMouseDown={onMiniDown}>
+        <div
+          className="minimap"
+          onMouseDown={onMiniDown}
+          onTouchStart={onMiniTouch}
+          onTouchMove={onMiniTouch}
+        >
           <div className="minimap-inner" ref={miniInnerRef} style={{ transform: `translateY(${-vp.offset}px) scale(${SCALE})` }}>
             <pre className="code">
               <code className="hljs" dangerouslySetInnerHTML={{ __html: html }} />
