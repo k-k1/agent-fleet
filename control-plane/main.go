@@ -151,6 +151,10 @@ func main() {
 	mux.HandleFunc("GET /api/env/toolchains", cfg.proxyAgentREST)
 	mux.HandleFunc("PUT /api/env/toolchains", cfg.proxyAgentREST)
 
+	// Per-user UI preferences (Console display settings) — proxied to the Agent.
+	mux.HandleFunc("GET /api/env/ui-prefs", cfg.proxyAgentREST)
+	mux.HandleFunc("PUT /api/env/ui-prefs", cfg.proxyAgentREST)
+
 	// Connections ops — proxied to the Workspace Agent (/api stripped).
 	mux.HandleFunc("GET /api/connections", cfg.proxyAgentREST)
 	mux.HandleFunc("GET /api/connections/git/{host}/repos", cfg.proxyAgentREST)

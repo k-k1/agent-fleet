@@ -1,9 +1,12 @@
 import { useSyncExternalStore } from "react";
+import { api, apiJSON } from "../api.js";
 
-// Display settings (font / file-viewer options), persisted in localStorage and
-// shared across React (useSettings) and non-React code (term.js via getSettings +
-// subscribe). Terminal and viewer fonts are independent — they default to
-// different families so they're visibly distinct out of the box.
+// Display settings (theme / fonts / file-viewer options / icon set). Persisted in
+// localStorage for instant load + offline, AND mirrored to the server per-user
+// (GET/PUT /api/env/ui-prefs) so they follow the user across browsers/devices.
+// Shared across React (useSettings) and non-React code (term.js via getSettings +
+// subscribe). Terminal and viewer fonts are independent — they default to different
+// families so they're visibly distinct out of the box.
 
 const KEY = "af-display-settings";
 
@@ -99,12 +102,51 @@ export function getSettings() {
   return state;
 }
 
+// Debounced mirror of the full settings object to the per-user server store. Best
+// effort: if the workspace is stopped / agent unreachable, localStorage still holds it.
+let saveTimer = null;
+function scheduleServerSave() {
+  if (saveTimer) clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    apiJSON("api/env/ui-prefs", "PUT", state).catch(() => {});
+  }, 600);
+}
+
+// hydrateUIPrefs pulls the server-stored prefs (if any) and merges the known keys
+// over the local state, so a fresh browser inherits the user's settings. Called once
+// at boot after the tenant is resolved (state.jsx). Server wins over localStorage.
+export async function hydrateUIPrefs() {
+  let srv;
+  try {
+    srv = await api("api/env/ui-prefs");
+  } catch {
+    return;
+  }
+  if (!srv || typeof srv !== "object" || srv.error) return;
+  let changed = false;
+  const merged = { ...state };
+  for (const k of Object.keys(DEFAULTS)) {
+    if (k in srv && srv[k] !== merged[k]) {
+      merged[k] = srv[k];
+      changed = true;
+    }
+  }
+  if (!changed) return;
+  state = merged;
+  try {
+    localStorage.setItem(KEY, JSON.stringify(state));
+  } catch {}
+  applyTheme(state);
+  subs.forEach((fn) => fn());
+}
+
 export function setSetting(key, value) {
   state = { ...state, [key]: value };
   try {
     localStorage.setItem(KEY, JSON.stringify(state));
   } catch {}
   applyTheme(state);
+  scheduleServerSave();
   subs.forEach((fn) => fn());
 }
 

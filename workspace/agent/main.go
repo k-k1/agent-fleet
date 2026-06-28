@@ -76,6 +76,10 @@ func main() {
 	mux.HandleFunc("GET /env/toolchains", handleToolchainsGet)
 	mux.HandleFunc("PUT /env/toolchains", handleToolchainsPut)
 
+	// Per-user UI preferences (Console display settings, synced across browsers).
+	mux.HandleFunc("GET /env/ui-prefs", handleGetUIPrefs)
+	mux.HandleFunc("PUT /env/ui-prefs", handlePutUIPrefs)
+
 	// Connections — per-user provider credentials (git tokens; Claude in Stage 3).
 	mux.HandleFunc("GET /connections", handleConnectionsGet)
 	mux.HandleFunc("GET /connections/git/{host}/repos", handleListRemoteRepos)

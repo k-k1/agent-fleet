@@ -6,13 +6,14 @@ import TerminalView from "./views/TerminalView.jsx";
 import SourceControlView from "./views/SourceControlView.jsx";
 import FileView from "./views/FileView.jsx";
 import SettingsDialog from "./settings/SettingsDialog.jsx";
+import AdminDialog from "./settings/AdminDialog.jsx";
 
 // App lays out the persistent frame: top bar (identity / tenant / settings), WS
 // bar (workspace state + start/stop), the left navigator pane (Sessions / Repos /
 // Files), and the main detail area. The terminal stays mounted regardless of mode
 // so its WebSocket and scrollback survive switching to the SCM / file views.
 export default function App() {
-  const { mode, settingsOpen } = useApp();
+  const { mode, settingsOpen, adminOpen } = useApp();
   return (
     <div className="app">
       <TopBar />
@@ -29,6 +30,7 @@ export default function App() {
         </main>
       </div>
       {settingsOpen && <SettingsDialog />}
+      {adminOpen && <AdminDialog />}
     </div>
   );
 }
