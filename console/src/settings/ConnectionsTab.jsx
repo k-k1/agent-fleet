@@ -28,7 +28,10 @@ export default function ConnectionsTab() {
 // opencode auth: provider API keys kept in the encrypted store and injected as env
 // vars (ANTHROPIC_API_KEY, …) when an opencode session launches — the same
 // "settings-driven, stored, injected" model as Claude, but multi-provider.
+// OpenCode Zen is the default: the user issues an API key on the web
+// (opencode.ai/auth) and pastes it; opencode reads it from OPENCODE_API_KEY.
 const OC_PRESETS = [
+  ["zen", "OpenCode Zen", "OPENCODE_API_KEY"],
   ["anthropic", "Anthropic", "ANTHROPIC_API_KEY"],
   ["openai", "OpenAI", "OPENAI_API_KEY"],
   ["openrouter", "OpenRouter", "OPENROUTER_API_KEY"],
@@ -37,7 +40,7 @@ const OC_PRESETS = [
 ];
 
 function OpencodeRow({ st, reload }) {
-  const [preset, setPreset] = useState("anthropic");
+  const [preset, setPreset] = useState("zen");
   const [customEnv, setCustomEnv] = useState("");
   const [key, setKey] = useState("");
   const [busy, setBusy] = useState(false);
@@ -73,6 +76,14 @@ function OpencodeRow({ st, reload }) {
         <span className="cname">opencode</span>
         <span className="muted">プロバイダ API キー（起動時に env 注入）</span>
       </div>
+      {preset === "zen" && (
+        <div className="field-help">
+          <a href="https://opencode.ai/auth" target="_blank" rel="noopener" className="flow-link">
+            → opencode.ai/auth
+          </a>{" "}
+          でサインイン → 課金設定 → API キーを発行し、下に貼り付けてください。
+        </div>
+      )}
       {envs.length > 0 && (
         <ul className="oc-keys">
           {envs.map((e) => (
