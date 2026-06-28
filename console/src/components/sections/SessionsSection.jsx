@@ -3,6 +3,7 @@ import { useApp } from "../../state.jsx";
 import { api, raw } from "../../api.js";
 import Section from "../Section.jsx";
 import NewSessionModal from "../NewSessionModal.jsx";
+import ArchivedModal from "../ArchivedModal.jsx";
 
 // stateInfo maps a session to its line-2 status chip.
 const stateInfo = (s) => {
@@ -62,22 +63,32 @@ export default function SessionsSection() {
   const { sessionsKey, bumpSessions, bumpRepos, showTerminal, session } = useApp();
   const [sessions, setSessions] = useState([]);
   const [showModal, setShowModal] = useState(false);
+  const [showArchived, setShowArchived] = useState(false);
   const [menuFor, setMenuFor] = useState(null); // session name whose ⋯ menu is open
   const prevStates = useRef({}); // name → last seen claude state, for arrival notifications
+  const lastSer = useRef(""); // last serialized list, to skip no-op re-renders (cursor jank)
 
-  // Archive: remove the session from the list (keeps its conversation log). A live
-  // session is stopped first so it doesn't linger invisibly. Backed by the stop
-  // endpoint (kill tmux if any + forget meta), which does not delete the jsonl.
+  // Archive: hide the session from the list but KEEP it (restorable via the archive
+  // modal). Live sessions are stopped first. Backed by /archive (sets a flag; meta +
+  // jsonl kept), as opposed to deletion which forgets the meta.
   const archive = async (s) => {
-    const msg = s.alive
-      ? `実行中のセッション "${s.name}" を停止して一覧から削除しますか？`
-      : `セッション "${s.name}" を一覧から削除しますか？\n（会話ログは保持されます）`;
-    if (!confirm(msg)) return;
-    const res = await raw(`api/sessions/${encodeURIComponent(s.name)}/stop`, { method: "POST" });
+    const res = await raw(`api/sessions/${encodeURIComponent(s.name)}/archive`, { method: "POST" });
     if (!res.ok) {
       alert("アーカイブに失敗しました");
       return;
     }
+    bumpSessions();
+  };
+
+  // Delete all stopped sessions (forget the meta). The conversation log (jsonl) is
+  // kept on disk, but the session leaves the list and is not in the archive.
+  const deleteStopped = async () => {
+    const stopped = sessions.filter((s) => !s.alive);
+    if (stopped.length === 0) return;
+    if (!confirm(`停止中の ${stopped.length} 件のセッションを一覧から削除しますか？\n（会話ログはディスクに残ります）`)) return;
+    await Promise.all(
+      stopped.map((s) => raw(`api/sessions/${encodeURIComponent(s.name)}/stop`, { method: "POST" }).catch(() => {})),
+    );
     bumpSessions();
   };
 
@@ -124,9 +135,20 @@ export default function SessionsSection() {
             prev[s.name] = s.state;
           }
           for (const n of Object.keys(prev)) if (!seen[n]) delete prev[n];
-          setSessions(list);
+          // Only re-render when the list actually changed — an unconditional setState
+          // every 4s repaints the tree and makes the cursor flicker "busy".
+          const ser = JSON.stringify(list);
+          if (ser !== lastSer.current) {
+            lastSer.current = ser;
+            setSessions(list);
+          }
         })
-        .catch(() => alive && setSessions([]));
+        .catch(() => {
+          if (alive && lastSer.current !== "[]") {
+            lastSer.current = "[]";
+            setSessions([]);
+          }
+        });
     load();
     const id = setInterval(load, 4000); // reflect state changes and TTL pruning
     return () => {
@@ -147,9 +169,22 @@ export default function SessionsSection() {
     <Section
       title="Sessions"
       actions={
-        <button className="ghost" title="新規セッション" onClick={() => setShowModal(true)}>
-          ＋
-        </button>
+        <>
+          <button
+            className="ghost"
+            title="停止中をまとめて削除"
+            disabled={!sessions.some((s) => !s.alive)}
+            onClick={deleteStopped}
+          >
+            🧹
+          </button>
+          <button className="ghost" title="アーカイブを開く（復帰）" onClick={() => setShowArchived(true)}>
+            🗄
+          </button>
+          <button className="ghost" title="新規セッション" onClick={() => setShowModal(true)}>
+            ＋
+          </button>
+        </>
       }
     >
       <ul className="list">
@@ -247,6 +282,13 @@ export default function SessionsSection() {
             showTerminal(name);
             setShowModal(false);
           }}
+        />
+      )}
+
+      {showArchived && (
+        <ArchivedModal
+          onClose={() => setShowArchived(false)}
+          onRestored={() => bumpSessions()}
         />
       )}
     </Section>

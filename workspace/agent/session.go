@@ -53,6 +53,7 @@ type sessionMeta struct {
 	Repo      string `json:"repo"`      // working dir basename
 	CreatedAt string `json:"createdAt"` // RFC3339, set at create
 	StoppedAt string `json:"stoppedAt"` // RFC3339, set lazily when first seen exited; "" while live
+	Archived  bool   `json:"archived"`  // true = hidden from the active list, restorable (jsonl kept)
 }
 
 // stoppedTTL is how long a stopped (exited) session stays listed/resumable before
@@ -299,6 +300,9 @@ func handleListSessions(w http.ResponseWriter, r *http.Request) {
 	ttl := stoppedTTL()
 	sessions := []Session{}
 	for name, m := range metas {
+		if m.Archived {
+			continue // hidden from the active list; restorable via the archive modal
+		}
 		if live[name] {
 			// Running: clear any prior stopped mark so resume resets the clock.
 			if m.StoppedAt != "" {
@@ -454,6 +458,60 @@ func handleStopSession(w http.ResponseWriter, r *http.Request) {
 	}
 	removeSessionMeta(name)
 	writeJSON(w, http.StatusOK, map[string]any{"stopped": name})
+}
+
+// handleArchiveSession hides a session from the active list but KEEPS its meta (and
+// jsonl), so it can be restored later. Kills the live tmux session if any. This is
+// the non-destructive counterpart to stop (which forgets the meta).
+func handleArchiveSession(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if !nameRe.MatchString(name) {
+		writeErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
+		return
+	}
+	m, ok := readSessionMeta(name)
+	if !ok {
+		writeErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
+		return
+	}
+	if tn := tmuxName(name); tmuxHasSession(tn) {
+		_ = exec.Command("tmux", "kill-session", "-t", tn).Run()
+	}
+	removeSessionStatus(sessionUUID(m.Dir, name))
+	m.Archived = true
+	writeSessionMeta(m)
+	writeJSON(w, http.StatusOK, map[string]any{"archived": name})
+}
+
+// handleRestoreSession brings an archived session back into the active list as a
+// stopped session (the user clicks it to resume). The conversation (jsonl) is intact.
+func handleRestoreSession(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if !nameRe.MatchString(name) {
+		writeErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
+		return
+	}
+	m, ok := readSessionMeta(name)
+	if !ok {
+		writeErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
+		return
+	}
+	m.Archived = false
+	m.StoppedAt = "" // re-stamped on next list, resetting the prune clock
+	writeSessionMeta(m)
+	writeJSON(w, http.StatusOK, wireSession(m, false))
+}
+
+// handleListArchived returns archived sessions (for the restore modal).
+func handleListArchived(w http.ResponseWriter, r *http.Request) {
+	sessions := []Session{}
+	for _, m := range listSessionMetas() {
+		if m.Archived {
+			sessions = append(sessions, wireSession(m, false))
+		}
+	}
+	sort.Slice(sessions, func(i, j int) bool { return sessions[i].CreatedAt > sessions[j].CreatedAt })
+	writeJSON(w, http.StatusOK, map[string]any{"sessions": sessions})
 }
 
 // handleRecreateSession discards the session's conversation and starts it fresh in

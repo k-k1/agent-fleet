@@ -30,7 +30,7 @@ export default function NewRepoModal({ onClose, onCloned }) {
         alert("clone に失敗: " + (res.error.message || res.error));
         return;
       }
-      onCloned();
+      onCloned(res);
     } finally {
       setBusy(false);
     }

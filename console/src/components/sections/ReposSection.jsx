@@ -22,7 +22,7 @@ const freeName = (base, used) => {
 // switch branch, fetch, start a session in the repo, delete, or open Source
 // Control (→ main area). The dirty dot mirrors uncommitted changes.
 export default function ReposSection() {
-  const { reposKey, bumpRepos, bumpSessions, showSCM, showTerminal, scmRepo, mode } = useApp();
+  const { reposKey, bumpRepos, bumpSessions, bumpFiles, revealInFiles, showSCM, showTerminal, scmRepo, mode } = useApp();
   const [repos, setRepos] = useState([]);
   const [showClone, setShowClone] = useState(false);
 
@@ -53,8 +53,11 @@ export default function ReposSection() {
       {showClone && (
         <NewRepoModal
           onClose={() => setShowClone(false)}
-          onCloned={() => {
+          onCloned={(res) => {
             bumpRepos();
+            // Open the freshly-cloned dir in the Files tree (also refreshes it).
+            if (res && res.name) revealInFiles("repos/" + res.name);
+            else bumpFiles();
             setShowClone(false);
           }}
         />
@@ -67,6 +70,7 @@ export default function ReposSection() {
             r={r}
             active={mode === "scm" && scmRepo === r.name}
             onSCM={() => showSCM(r.name)}
+            onOpenFiles={() => revealInFiles("repos/" + r.name)}
             onLaunch={async (kind) => {
               const suffix = kind === "shell" ? "-sh" : kind === "opencode" ? "-oc" : "";
               const base = repoSafeSession(r.name) + suffix;
@@ -92,8 +96,17 @@ export default function ReposSection() {
   );
 }
 
-function RepoRow({ r, active, onSCM, onLaunch, onChanged }) {
+function RepoRow({ r, active, onSCM, onOpenFiles, onLaunch, onChanged }) {
   const [showBranch, setShowBranch] = useState(false);
+  const [showLaunch, setShowLaunch] = useState(false);
+
+  // Close the launch dropdown on any outside click.
+  useEffect(() => {
+    if (!showLaunch) return;
+    const close = () => setShowLaunch(false);
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [showLaunch]);
 
   const fetchRepo = async () => {
     await apiJSON(`api/repos/${encodeURIComponent(r.name)}/fetch`, "POST", { prune: true });
@@ -111,7 +124,7 @@ function RepoRow({ r, active, onSCM, onLaunch, onChanged }) {
         <span className={"dot " + (r.dirty ? "dirty" : "clean")} title={r.dirty ? "未コミット変更あり" : "clean"}>
           ●
         </span>
-        <button className="link grow repo-name" title={r.path} onClick={onSCM}>
+        <button className="link grow repo-name" title={"ファイルで開く: " + r.path} onClick={onOpenFiles}>
           <span className="repo-ic">📁</span>
           {r.name}
         </button>
@@ -131,15 +144,22 @@ function RepoRow({ r, active, onSCM, onLaunch, onChanged }) {
         )}
       </div>
       <div className="repo-actions">
-        <button className="chip launch" title="このディレクトリで claude セッションを起動（複数可）" onClick={() => onLaunch("claude")}>
-          ▶ claude
-        </button>
-        <button className="chip launch" title="このディレクトリで opencode を起動（複数可）" onClick={() => onLaunch("opencode")}>
-          ▶ opencode
-        </button>
-        <button className="chip launch" title="このディレクトリで shell を起動" onClick={() => onLaunch("shell")}>
-          ▶ shell
-        </button>
+        <div className="launch-wrap" onMouseDown={(e) => e.stopPropagation()}>
+          <button
+            className="chip launch"
+            title="このディレクトリでセッションを起動（複数可）"
+            onClick={() => setShowLaunch((v) => !v)}
+          >
+            ▶ 起動 ▾
+          </button>
+          {showLaunch && (
+            <div className="launch-menu">
+              <button onClick={() => { setShowLaunch(false); onLaunch("claude"); }}>✦ claude</button>
+              <button onClick={() => { setShowLaunch(false); onLaunch("opencode"); }}>◆ opencode</button>
+              <button onClick={() => { setShowLaunch(false); onLaunch("shell"); }}>🐚 shell</button>
+            </div>
+          )}
+        </div>
         <button className="chip" title="ソース管理（変更 / diff / 履歴）" onClick={onSCM}>
           ⎇ 変更
         </button>
