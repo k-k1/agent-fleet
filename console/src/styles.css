@@ -415,7 +415,9 @@ textarea:focus {
 /* session rows: two lines (display name + 起動日時 / セッション名 + 状態), plus a
    recreate (↻) action on the right */
 .list > li.session-row {
-  position: relative;
+  /* No position here: it would out-specify (and override) the .session-row.pinned
+     `position: sticky` below, breaking the top-pin. The absolute pin badge only
+     renders on the pinned row, which is sticky (= a positioning context) already. */
   flex-direction: row;
   align-items: stretch;
   gap: 2px;
