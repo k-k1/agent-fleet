@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useApp } from "../../state.jsx";
 import { api, apiJSON, raw } from "../../api.js";
 import Section from "../Section.jsx";
+import Icon from "../Icon.jsx";
 import NewRepoModal from "../NewRepoModal.jsx";
 import BranchModal from "../BranchModal.jsx";
 
@@ -42,10 +43,10 @@ export default function ReposSection() {
       actions={
         <>
           <button className="ghost" title="clone" onClick={() => setShowClone((s) => !s)}>
-            ＋
+            <Icon name="add" />
           </button>
           <button className="ghost" title="更新" onClick={bumpRepos}>
-            ⟳
+            <Icon name="refresh" />
           </button>
         </>
       }
@@ -130,7 +131,7 @@ function RepoRow({ r, active, onOpen, onLaunch, onChanged }) {
           ●
         </span>
         <button className="link grow repo-name" title={"開く（ファイル + ソース管理）: " + r.path} onClick={onOpen}>
-          <span className="repo-ic">📁</span>
+          <Icon name="repo" className="repo-ic" />
           {r.name}
         </button>
         <button
@@ -139,7 +140,7 @@ function RepoRow({ r, active, onOpen, onLaunch, onChanged }) {
           onClick={() => setShowBranch(true)}
           title="ブランチ切替"
         >
-          ⎇ {r.branch || "?"} ▾
+          <Icon name="git-branch" /> {r.branch || "?"} <Icon name="chevron-down" />
         </button>
         {(r.ahead || r.behind) > 0 && (
           <span className="ab">
@@ -155,21 +156,21 @@ function RepoRow({ r, active, onOpen, onLaunch, onChanged }) {
             title="このディレクトリでセッションを起動（複数可）"
             onClick={() => setShowLaunch((v) => !v)}
           >
-            ▶ 起動 ▾
+            <Icon name="play" /> 起動 <Icon name="chevron-down" />
           </button>
           {showLaunch && (
             <div className="launch-menu">
-              <button onClick={() => { setShowLaunch(false); onLaunch("claude"); }}>✦ claude</button>
-              <button onClick={() => { setShowLaunch(false); onLaunch("opencode"); }}>◆ opencode</button>
-              <button onClick={() => { setShowLaunch(false); onLaunch("shell"); }}>🐚 shell</button>
+              <button onClick={() => { setShowLaunch(false); onLaunch("claude"); }}><Icon name="sparkle" /> claude</button>
+              <button onClick={() => { setShowLaunch(false); onLaunch("opencode"); }}><Icon name="hubot" /> opencode</button>
+              <button onClick={() => { setShowLaunch(false); onLaunch("shell"); }}><Icon name="terminal" /> shell</button>
             </div>
           )}
         </div>
         <button className="chip" title="git fetch --prune" onClick={fetchRepo}>
-          ⤓ fetch
+          <Icon name="cloud-download" /> fetch
         </button>
         <button className="chip danger" title="ワーキングコピーを削除" onClick={del}>
-          🗑
+          <Icon name="trash" />
         </button>
       </div>
       {showBranch && (

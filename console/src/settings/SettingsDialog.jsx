@@ -5,6 +5,7 @@ import AdminTab from "./AdminTab.jsx";
 import DisplayTab from "./DisplayTab.jsx";
 import ClaudeTab from "./ClaudeTab.jsx";
 import EnvTab from "./EnvTab.jsx";
+import Icon from "../components/Icon.jsx";
 
 // SettingsDialog is the single modal in the app. Sections are chosen with a
 // segmented control (matching the New Session modal), not tabs: Connections and
@@ -27,7 +28,7 @@ export default function SettingsDialog() {
         <header className="modal-head">
           <h3 className="modal-title">設定</h3>
           <button className="icon" title="閉じる" onClick={closeSettings}>
-            ✕
+            <Icon name="close" />
           </button>
         </header>
         <div className="modal-body">

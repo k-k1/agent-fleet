@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { ensureTerm, fit, focusTerm, onSession, reconstructURL } from "../term.js";
+import Icon from "../components/Icon.jsx";
 
 // TerminalView hosts the persistent xterm instance. The container stays mounted
 // across mode switches (App hides it rather than unmounting), so the PTY socket
@@ -81,7 +82,7 @@ export default function TerminalView({ active }) {
           }
           onClick={toggleFullscreen}
         >
-          {fullscreen ? "⛶ 全画面解除" : "⛶ 全画面"}
+          <Icon name="screen-full" /> {fullscreen ? "全画面解除" : "全画面"}
         </button>
         <button
           className="ghost"

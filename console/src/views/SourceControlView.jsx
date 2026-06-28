@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useApp } from "../state.jsx";
 import { api, apiJSON, rawJSON } from "../api.js";
+import Icon from "../components/Icon.jsx";
 
 // SourceControlView is the per-repo git workbench, opened by clicking a repo in the
 // Repos section. Left column: changed files (stage / unstage / discard), a commit
@@ -90,7 +91,7 @@ export default function SourceControlView() {
   return (
     <div className="scmview">
       <header className="view-head">
-        <span className="view-title">⎇ {scmRepo}</span>
+        <span className="view-title"><Icon name="git-branch" /> {scmRepo}</span>
         {status && (
           <span className="muted">
             {status.branch || "?"}
@@ -100,7 +101,7 @@ export default function SourceControlView() {
         )}
         <span className="spacer" />
         <button className="ghost" title="更新" onClick={refresh}>
-          ⟳
+          <Icon name="refresh" />
         </button>
       </header>
       <div className="scmbody">
@@ -174,11 +175,11 @@ function ChangeRow({ c, selected, onOpen, onOp }) {
       <span className="chg-acts">
         {staged ? (
           <button className="icon" title="unstage" onClick={() => onOp("unstage", [c.path])}>
-            −
+            <Icon name="remove" />
           </button>
         ) : (
           <button className="icon" title="stage" onClick={() => onOp("stage", [c.path])}>
-            ＋
+            <Icon name="add" />
           </button>
         )}
         {!c.untracked && (
@@ -189,7 +190,7 @@ function ChangeRow({ c, selected, onOpen, onOp }) {
               if (confirm(`${c.path} の変更を破棄しますか？元に戻せません。`)) onOp("discard", [c.path]);
             }}
           >
-            ⤺
+            <Icon name="discard" />
           </button>
         )}
       </span>

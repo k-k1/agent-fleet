@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, apiJSON } from "../api.js";
 import RepoPicker from "./RepoPicker.jsx";
+import Icon from "./Icon.jsx";
 
 // NewSessionModal: a clear, roomy dialog for creating a session.
 // shell is the left / default kind — a one-click shell needs no repo, no dir, and
@@ -98,7 +99,7 @@ export default function NewSessionModal({ onClose, onCreated }) {
         <header className="modal-head">
           <h3 className="modal-title">新しいセッション</h3>
           <button type="button" className="icon" title="閉じる" onClick={onClose}>
-            ✕
+            <Icon name="close" />
           </button>
         </header>
 

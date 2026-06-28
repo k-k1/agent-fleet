@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, apiJSON } from "../api.js";
 import BranchList from "./BranchList.jsx";
+import Icon from "./Icon.jsx";
 
 // BranchModal: switch a repo's branch. Lists branches newest-commit-first with a
 // filter (via BranchList); clicking one checks it out (a remote-only name DWIMs into
@@ -59,7 +60,7 @@ export default function BranchModal({ repoName, onClose, onChecked }) {
         <header className="modal-head">
           <h3 className="modal-title">ブランチ切替 — {repoName}</h3>
           <button type="button" className="icon" title="閉じる" onClick={onClose}>
-            ✕
+            <Icon name="close" />
           </button>
         </header>
         <div className="modal-body">
