@@ -6,6 +6,7 @@ import Icon from "../Icon.jsx";
 import NewSessionModal from "../NewSessionModal.jsx";
 import ArchivedModal from "../ArchivedModal.jsx";
 import { kindIcon, kindLabel } from "../../lib/sessionkind.js";
+import { pinFirst } from "../../lib/listutil.js";
 
 // stateInfo maps a session to its line-2 status chip (codicon + label).
 const stateInfo = (s) => {
@@ -167,9 +168,10 @@ export default function SessionsSection() {
     return () => document.removeEventListener("mousedown", close);
   }, [menuFor]);
 
-  // The attached session is marked .pinned (highlight + a pin badge top-right) and
-  // is sticky while the list scrolls, but it is NOT hoisted to the top: the list
-  // keeps its stable backend order so rows don't jump around as you attach/switch.
+  // Hoist the attached session to the top of the list (stable: the rest keep their
+  // backend order) and mark it .pinned — highlighted, a pin badge in the top-right
+  // corner, and sticky while the list scrolls.
+  const ordered = pinFirst(sessions, (s) => s.name === session);
 
   return (
     <Section
@@ -195,7 +197,7 @@ export default function SessionsSection() {
     >
       <ul className="list">
         {sessions.length === 0 && <li className="muted">セッションなし</li>}
-        {sessions.map((s) => {
+        {ordered.map((s) => {
           const dead = !s.alive && s.resumable === false; // dir gone → can't resume
           const pinned = session === s.name; // currently attached → pinned to the top
           return (

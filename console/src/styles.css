@@ -280,6 +280,10 @@ textarea:focus {
   padding: 4px 8px;
   position: sticky;
   top: 0;
+  /* Above the rows: session rows are position:relative (for the absolute pin) and
+     the pinned row is z-index:2, so the sticky header needs a higher level or the
+     rows paint over it (they come later in the DOM). */
+  z-index: 3;
   background: var(--leftpane-bg);
 }
 .pane-toggle {
