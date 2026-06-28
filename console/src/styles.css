@@ -1247,6 +1247,15 @@ textarea:focus {
 .log code {
   color: #c9a;
 }
+.log-row {
+  cursor: pointer;
+}
+.log-row:hover {
+  background: #1b2730;
+}
+.log-row.active {
+  background: #20303a;
+}
 .diff .dl.add {
   color: var(--ok);
 }
@@ -1255,6 +1264,79 @@ textarea:focus {
 }
 .diff .dl.hunk {
   color: var(--accent);
+}
+.diff .dl.fileh {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+/* commit detail (history → diff pane, codeleaf style) */
+.commit-detail {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.cd-head {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  max-height: 45%;
+  overflow: auto;
+}
+.cd-subject {
+  font-size: 13px;
+  color: var(--fg);
+  font-weight: 600;
+}
+.cd-meta {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 3px;
+}
+.cd-meta code {
+  color: #c9a;
+}
+.cd-body {
+  margin: 8px 0 0;
+  font: 12px/1.45 var(--mono);
+  color: var(--muted);
+  white-space: pre-wrap;
+}
+.cd-files {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+}
+.cd-files li {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  font-size: 12px;
+  padding: 1px 0;
+}
+.cd-st {
+  font-family: var(--mono);
+  font-size: 11px;
+  min-width: 28px;
+}
+.cd-st-m {
+  color: var(--warn);
+}
+.cd-st-a {
+  color: var(--ok);
+}
+.cd-st-d {
+  color: var(--del);
+}
+.cd-st-r {
+  color: var(--accent);
+}
+.cd-path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* ---- modal (settings) ---- */

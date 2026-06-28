@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -146,6 +147,70 @@ func handleRepoLog(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"commits": commits})
+}
+
+// shaRe guards the ?sha= param: hex only (full or abbreviated), so it can't be an
+// option flag or a revision range that reaches outside the single commit.
+var shaRe = regexp.MustCompile(`^[0-9a-fA-F]{4,64}$`)
+
+type commitFile struct {
+	Status string `json:"status"` // M / A / D / R100 / ...
+	Path   string `json:"path"`
+}
+
+// handleRepoShow returns one commit's detail for the history → diff pane (codeleaf
+// CommitDetail style): header (subject/body/author/date/sha), the changed-file list,
+// and the full colored patch. Diff is size-capped like handleRepoDiff.
+func handleRepoShow(w http.ResponseWriter, r *http.Request) {
+	dir, ok := repoDirFromPath(w, r)
+	if !ok {
+		return
+	}
+	sha := strings.TrimSpace(r.URL.Query().Get("sha"))
+	if !shaRe.MatchString(sha) {
+		writeErr(w, http.StatusBadRequest, "bad_sha", "sha must be a hex commit id")
+		return
+	}
+
+	// Header: one record, fields separated by \x1f; body is last (may hold newlines).
+	hdr, err := exec.Command("git", "-C", dir, "log", "-1",
+		"--pretty=format:%H%x1f%h%x1f%an%x1f%aI%x1f%s%x1f%b", sha).Output()
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "not_found", "no such commit")
+		return
+	}
+	out := map[string]any{}
+	if p := strings.SplitN(string(hdr), "\x1f", 6); len(p) == 6 {
+		out["hash"], out["short"], out["author"] = p[0], p[1], p[2]
+		out["date"], out["subject"], out["body"] = p[3], p[4], strings.TrimRight(p[5], "\n")
+	}
+
+	// Changed files (name-status). First token = status, last = path (rename → new).
+	files := []commitFile{}
+	if ns, err := exec.Command("git", "-C", dir, "show", "--name-status",
+		"--format=", "--no-color", sha).Output(); err == nil {
+		for _, line := range strings.Split(string(ns), "\n") {
+			f := strings.Split(strings.TrimSpace(line), "\t")
+			if len(f) >= 2 && f[0] != "" {
+				files = append(files, commitFile{Status: f[0], Path: f[len(f)-1]})
+			}
+		}
+	}
+	out["files"] = files
+
+	// Full patch.
+	diff, err := exec.Command("git", "-C", dir, "show", "--format=", "--no-color", sha).Output()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "git_failed", err.Error())
+		return
+	}
+	s := string(diff)
+	truncated := false
+	if len(s) > maxViewBytes {
+		s, truncated = s[:maxViewBytes], true
+	}
+	out["diff"], out["truncated"] = s, truncated
+	writeJSON(w, http.StatusOK, out)
 }
 
 type pathsReq struct {

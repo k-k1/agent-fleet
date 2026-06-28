@@ -69,8 +69,13 @@ export default function ReposSection() {
             key={r.name}
             r={r}
             active={mode === "scm" && scmRepo === r.name}
-            onSCM={() => showSCM(r.name)}
-            onOpenFiles={() => revealInFiles("repos/" + r.name)}
+            // One click on the repo: reveal it in the Files tree AND open the
+            // (renewed) Source Control workbench in the main pane. The separate
+            // "変更" chip is gone — the repo row itself is the entry point.
+            onOpen={() => {
+              revealInFiles("repos/" + r.name);
+              showSCM(r.name);
+            }}
             onLaunch={async (kind) => {
               const suffix = kind === "shell" ? "-sh" : kind === "opencode" ? "-oc" : "";
               const base = repoSafeSession(r.name) + suffix;
@@ -96,7 +101,7 @@ export default function ReposSection() {
   );
 }
 
-function RepoRow({ r, active, onSCM, onOpenFiles, onLaunch, onChanged }) {
+function RepoRow({ r, active, onOpen, onLaunch, onChanged }) {
   const [showBranch, setShowBranch] = useState(false);
   const [showLaunch, setShowLaunch] = useState(false);
 
@@ -124,7 +129,7 @@ function RepoRow({ r, active, onSCM, onOpenFiles, onLaunch, onChanged }) {
         <span className={"dot " + (r.dirty ? "dirty" : "clean")} title={r.dirty ? "未コミット変更あり" : "clean"}>
           ●
         </span>
-        <button className="link grow repo-name" title={"ファイルで開く: " + r.path} onClick={onOpenFiles}>
+        <button className="link grow repo-name" title={"開く（ファイル + ソース管理）: " + r.path} onClick={onOpen}>
           <span className="repo-ic">📁</span>
           {r.name}
         </button>
@@ -160,9 +165,6 @@ function RepoRow({ r, active, onSCM, onOpenFiles, onLaunch, onChanged }) {
             </div>
           )}
         </div>
-        <button className="chip" title="ソース管理（変更 / diff / 履歴）" onClick={onSCM}>
-          ⎇ 変更
-        </button>
         <button className="chip" title="git fetch --prune" onClick={fetchRepo}>
           ⤓ fetch
         </button>

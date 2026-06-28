@@ -2,17 +2,21 @@ import { useCallback, useEffect, useState } from "react";
 import { useApp } from "../state.jsx";
 import { api, apiJSON, rawJSON } from "../api.js";
 
-// SourceControlView is the per-repo git workbench: changed files (stage / unstage /
-// discard), a colored diff of the selected file, a commit box, and recent history.
-// The repo comes from context (set when the user picks a repo in the Repos section).
+// SourceControlView is the per-repo git workbench, opened by clicking a repo in the
+// Repos section. Left column: changed files (stage / unstage / discard), a commit
+// box, and recent history. Right pane: the diff of the selected change OR — when a
+// history commit is clicked — that commit's detail (header + file list + patch),
+// codeleaf CommitDetail style. The repo comes from context.
 export default function SourceControlView() {
   const { scmRepo, bumpRepos } = useApp();
   const enc = encodeURIComponent(scmRepo || "");
   const [status, setStatus] = useState(null);
   const [changes, setChanges] = useState([]);
   const [log, setLog] = useState([]);
-  const [diff, setDiff] = useState("");
-  const [selected, setSelected] = useState(null); // { path, staged }
+  // sel drives the right pane: { kind:'file', path, staged } | { kind:'commit', sha }.
+  const [sel, setSel] = useState(null);
+  const [diff, setDiff] = useState(""); // file diff (kind:'file')
+  const [commit, setCommit] = useState(null); // commit detail (kind:'commit')
   const [msg, setMsg] = useState("");
   const [all, setAll] = useState(false);
 
@@ -35,13 +39,15 @@ export default function SourceControlView() {
   }, [enc]);
 
   useEffect(() => {
+    setSel(null);
     setDiff("");
-    setSelected(null);
+    setCommit(null);
     refresh();
   }, [refresh]);
 
   const showDiff = async (path, staged) => {
-    setSelected({ path, staged });
+    setSel({ kind: "file", path, staged });
+    setCommit(null);
     try {
       const d = await api(`api/repos/${enc}/diff?path=${encodeURIComponent(path)}${staged ? "&staged=1" : ""}`);
       setDiff(d.diff && d.diff.length ? d.diff : "(差分なし)");
@@ -50,12 +56,22 @@ export default function SourceControlView() {
     }
   };
 
+  const showCommit = async (sha) => {
+    setSel({ kind: "commit", sha });
+    setCommit(null);
+    try {
+      setCommit(await api(`api/repos/${enc}/show?sha=${encodeURIComponent(sha)}`));
+    } catch {
+      setCommit({ error: true });
+    }
+  };
+
   const op = async (name, paths) => {
     await apiJSON(`api/repos/${enc}/${name}`, "POST", { paths });
     refresh();
   };
 
-  const commit = async () => {
+  const commitOp = async () => {
     if (!msg.trim()) {
       alert("コミットメッセージが必要です");
       return;
@@ -96,7 +112,7 @@ export default function SourceControlView() {
               <ChangeRow
                 key={c.path + (c.untracked ? "?" : "")}
                 c={c}
-                selected={selected?.path === c.path}
+                selected={sel?.kind === "file" && sel.path === c.path}
                 onOpen={showDiff}
                 onOp={op}
               />
@@ -113,13 +129,18 @@ export default function SourceControlView() {
             <label className="muted">
               <input type="checkbox" checked={all} onChange={(e) => setAll(e.target.checked)} /> 追跡中を全て stage (-a)
             </label>
-            <button onClick={commit}>Commit</button>
+            <button onClick={commitOp}>Commit</button>
           </div>
 
           <div className="sub-head">履歴</div>
           <ul className="log">
             {log.map((c) => (
-              <li key={c.short} title={c.subject}>
+              <li
+                key={c.short}
+                title={c.subject}
+                className={"log-row" + (sel?.kind === "commit" && sel.sha === c.short ? " active" : "")}
+                onClick={() => showCommit(c.short)}
+              >
                 <code>{c.short}</code> <span className="subj">{c.subject}</span>
                 <span className="muted">
                   {"  "}
@@ -129,10 +150,15 @@ export default function SourceControlView() {
             ))}
           </ul>
         </div>
-        <Diff text={diff} />
+        <RightPane sel={sel} diff={diff} commit={commit} />
       </div>
     </div>
   );
+}
+
+function RightPane({ sel, diff, commit }) {
+  if (sel?.kind === "commit") return <CommitDetail commit={commit} />;
+  return <Diff text={diff} />;
 }
 
 function ChangeRow({ c, selected, onOpen, onOp }) {
@@ -171,8 +197,45 @@ function ChangeRow({ c, selected, onOpen, onOp }) {
   );
 }
 
-function Diff({ text }) {
-  if (!text) return <pre className="diff muted">ファイルを選ぶと差分を表示</pre>;
+// CommitDetail renders one commit (codeleaf style): header (subject/body/meta), the
+// changed-file list, then the full colored patch.
+function CommitDetail({ commit }) {
+  if (!commit) return <pre className="diff muted">読み込み中…</pre>;
+  if (commit.error) return <pre className="diff muted">(コミット取得失敗)</pre>;
+  const files = commit.files || [];
+  return (
+    <div className="commit-detail">
+      <div className="cd-head">
+        <div className="cd-subject">{commit.subject || "(no message)"}</div>
+        <div className="cd-meta">
+          {commit.author} · {(commit.date || "").slice(0, 10)} · <code>{commit.short}</code>
+        </div>
+        {commit.body && <pre className="cd-body">{commit.body}</pre>}
+        {files.length > 0 && (
+          <ul className="cd-files">
+            {files.map((f) => (
+              <li key={f.path}>
+                <span className={"cd-st cd-st-" + (f.status[0] || "x").toLowerCase()}>{f.status}</span>
+                <span className="cd-path" title={f.path}>
+                  {f.path}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+      <Diff text={commit.diff} embedded truncated={commit.truncated} />
+    </div>
+  );
+}
+
+function Diff({ text, embedded, truncated }) {
+  if (!text)
+    return embedded ? (
+      <pre className="diff muted">(差分なし)</pre>
+    ) : (
+      <pre className="diff muted">ファイルまたはコミットを選ぶと差分を表示</pre>
+    );
   return (
     <pre className="diff">
       {text.split("\n").map((line, i) => {
@@ -180,12 +243,14 @@ function Diff({ text }) {
         if (line.startsWith("+") && !line.startsWith("+++")) cls = "add";
         else if (line.startsWith("-") && !line.startsWith("---")) cls = "del";
         else if (line.startsWith("@@")) cls = "hunk";
+        else if (line.startsWith("diff --git") || line.startsWith("diff ")) cls = "fileh";
         return (
           <span key={i} className={"dl " + cls}>
             {line + "\n"}
           </span>
         );
       })}
+      {truncated && <span className="dl muted">{"…（差分が大きいため省略）\n"}</span>}
     </pre>
   );
 }

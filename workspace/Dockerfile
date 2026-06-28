@@ -15,7 +15,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -o /out/workspace-agent .
 # --- runtime ---
 FROM node:22-bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      git git-lfs tmux openssh-client ca-certificates curl ripgrep less procps tzdata \
+      git git-lfs tmux vim openssh-client ca-certificates curl ripgrep less procps tzdata \
       python3 python3-pip python3-venv python-is-python3 \
  && rm -rf /var/lib/apt/lists/* \
  && git lfs install --system --skip-repo
