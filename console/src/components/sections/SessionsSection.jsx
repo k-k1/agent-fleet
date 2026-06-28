@@ -16,8 +16,8 @@ const stateInfo = (s) => {
     return { cls: "off", icon: "debug-pause", text: "停止中" };
   }
   if (s.kind === "shell") return { cls: "on", icon: "pulse", text: "起動中" };
-  // claude (hooks) and opencode (plugin) both report working/idle. opencode has no
-  // "question" state; for either, an empty state means idle (awaiting input).
+  // claude (hooks), opencode (plugin) and codex (injected hooks) all report
+  // working/idle. opencode/codex have no "question" state; an empty state = idle.
   switch (s.state) {
     case "working":
       return { cls: "working", icon: "loading", spin: true, text: "進行中…" };

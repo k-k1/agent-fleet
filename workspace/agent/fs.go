@@ -30,6 +30,7 @@ var fsDeny = map[string]bool{
 	".ssh":                true,
 	".git-credentials":    true,
 	".local/share/opencode": true, // opencode auth.json (API keys) + session db
+	".codex":                true, // codex auth.json (tokens) + sessions + helper bins
 }
 
 func isDenied(rel string) bool {

@@ -20,7 +20,123 @@ export default function ConnectionsTab() {
       <ClaudeRow st={conns.claude} reload={reload} />
       <GithubRow st={conns.github} reload={reload} />
       <BitbucketRow st={conns.bitbucket} reload={reload} />
+      <CodexRow st={conns.codex} reload={reload} />
       <OpencodeRow st={conns.opencode} reload={reload} />
+    </div>
+  );
+}
+
+// Codex auth: codex owns its credential file (~/.codex/auth.json), so the Console
+// just drives `codex login` and reports `codex login status`. Two paths: paste an
+// API key (codex login --with-api-key), or ChatGPT subscription via device-auth
+// (show a one-time code + URL, then poll until approved). Mirrors the Claude row.
+function CodexRow({ st, reload }) {
+  const [mode, setMode] = useState("idle"); // idle | device | key
+  const [dev, setDev] = useState(null); // { user_code, url, flow_id, status }
+  const [key, setKey] = useState("");
+  const [busy, setBusy] = useState(false);
+  const alive = useRef(true);
+  useEffect(() => () => (alive.current = false), []);
+
+  const startDevice = async () => {
+    setBusy(true);
+    try {
+      const res = await api("api/connections/codex/device/start", { method: "POST" });
+      if (!res || res.error || !res.url) {
+        alert("Codex 認証開始に失敗: " + (res?.error?.message || "device code ログインが無効かもしれません"));
+        return;
+      }
+      setMode("device");
+      setDev({ user_code: res.user_code, url: res.url, flow_id: res.flow_id, status: "承認待ち…" });
+      const deadline = Date.now() + 15 * 60 * 1000;
+      const tick = async () => {
+        if (!alive.current) return;
+        if (Date.now() > deadline) {
+          setDev((d) => ({ ...d, status: "期限切れ。やり直してください" }));
+          return;
+        }
+        let p;
+        try {
+          p = await apiJSON("api/connections/codex/device/poll", "POST", { flow_id: res.flow_id });
+        } catch {
+          p = null;
+        }
+        if (p && p.connected) {
+          setMode("idle");
+          reload();
+          return;
+        }
+        setTimeout(tick, 2500);
+      };
+      setTimeout(tick, 3000);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const saveKey = async () => {
+    if (!key.trim()) return;
+    setBusy(true);
+    try {
+      const res = await apiJSON("api/connections/codex/api-key", "POST", { key: key.trim() });
+      if (res && res.error) {
+        alert("接続に失敗: " + (res.error.message || res.error));
+        return;
+      }
+      setKey("");
+      setMode("idle");
+      reload();
+    } finally {
+      setBusy(false);
+    }
+  };
+  const disconnect = async () => {
+    await raw("api/connections/codex", { method: "DELETE" });
+    reload();
+  };
+
+  return (
+    <div className="conn-row">
+      <Dot on={st?.connected} />
+      <span className="cname">Codex</span>
+      {st?.connected ? (
+        <>
+          <span className="cwho">connected</span>
+          <button className="icon danger" title="切断" onClick={disconnect}>
+            ✕
+          </button>
+        </>
+      ) : mode === "device" && dev ? (
+        <div className="flow">
+          {dev.user_code && <span className="oauth-code">{dev.user_code}</span>}
+          <a href={dev.url} target="_blank" rel="noopener" className="flow-link">
+            → {dev.url} でコード入力
+          </a>
+          <span className="muted">{dev.status}</span>
+        </div>
+      ) : mode === "key" ? (
+        <div className="flow">
+          <input
+            className="cinput"
+            type="password"
+            placeholder="OpenAI API キー (sk-…)"
+            value={key}
+            onChange={(e) => setKey(e.target.value)}
+          />
+          <button disabled={busy || !key.trim()} onClick={saveKey}>
+            接続
+          </button>
+        </div>
+      ) : (
+        <>
+          <button disabled={busy} onClick={startDevice}>
+            ChatGPT で接続
+          </button>
+          <button className="ghost" onClick={() => setMode("key")}>
+            API キー
+          </button>
+        </>
+      )}
     </div>
   );
 }

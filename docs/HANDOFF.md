@@ -58,11 +58,11 @@ Phase 1 MVP 完了（2026-06-26, commit `dd2330e`）以降、Phase 2 完了・Ph
 
 ```
 workspace/          Workspace イメージ
-  Dockerfile        multi-stage(golang→node:22-slim)。claude/opencode/rtk/python3/vim/git-lfs を焼き込み。
+  Dockerfile        multi-stage(golang→node:22-slim)。claude/opencode/codex/rtk/python3/vim/git-lfs を焼き込み。
   entrypoint.sh     claude install/update → settings.json seed → opencode plugin seed → TZ → exec agent。
   jvm.Dockerfile    共有 JVM の抽出元（image 外）。
   opencode-plugin/  agent-fleet-status.js（opencode の状態通知プラグイン）。
-  agent/            Workspace Agent(Go)。main/session/terminal/git/connections/claude_auth/opencode_auth/
+  agent/            Workspace Agent(Go)。main/session/terminal/git/connections/claude_auth/opencode_auth/codex_auth/
                     fs/secrets/session_status/ui_prefs ほか。HTTP:/sessions・/repos・/connections・/fs・/env, WS:/ws/pty。
 control-plane/      Control Plane(Go)。main/runtime/proxy/manager/store(_sqlite)/custodian/tenants/oauth_bitbucket。
   migrations/       0001_init 〜 0005_session。`//go:embed` 冪等マイグレータ。
@@ -238,9 +238,11 @@ CP のルーティングが user→対象コンテナを解決するだけ。
 - **⚠️ `tmux new-session -e VAR=val` はセッション環境にしか入らずペインのプロセスに伝播しない**（`/proc/<pid>/environ` に出ず `show-environment` にだけ出る）。claude の旧 env 注入は実は claude プロセスに届いていなかった（運用者は永続 creds で動いていて顕在化せず）。**env はコマンド前置**（`NAME='val' … claude/opencode`、`shellQuote`）で確実に渡す。claude は `auth login` 方式採用後に env 前置を廃止（秘密の cmdline 露出も解消）。opencode は env 注入が必要なため前置のまま（同一 uid・同一コンテナ＝本人 BYO の範囲で許容）。
 - **教訓（自戒）**: claude の認証可否は `claude auth status` でも「Welcome to Claude Code」バナーでも判定できない（前者は creds ファイルのみ・後者はログイン中でも出る）。**`send-keys` で実プロンプト→応答**でのみ確証する。**auth と onboarding は別物**。
 
-### 6.10.4 opencode（第2のコーディングエージェント）
+### 6.10.4 追加コーディングエージェント（opencode / codex）
 
-claude と並ぶ session `kind="opencode"`。codex / Antigravity は未着手（§6.10.8）。
+claude と並ぶ session `kind`。**opencode** と **codex** が実装済み、**Antigravity** は未着手（§6.10.8）。
+雛形は opencode（kind 分岐・Console 種別・denylist・即起動・認証・状態通知）。codex は状態通知が
+**claude のフック方式**（opencode の plugin と違う）に乗る点が要。
 
 - **image**: `workspace/Dockerfile` の global npm に `opencode-ai`（claude と同 RUN・root 焼き込み）。auth/セッションは `~/.local/share/opencode`（home volume・再起動跨ぎ永続）。
 - **agent**（`session.go` `buildOpencodeProgram(model, envs, ocid)`）: claude 専用処理（OAuth/sid/jsonl resume/`--name`/RC URL/状態フック）は無効。model 指定時のみ `--model`（`provider/model` 形式）。
@@ -249,6 +251,21 @@ claude と並ぶ session `kind="opencode"`。codex / Antigravity は未着手（
 - **状態**: `workspace/opencode-plugin/agent-fleet-status.js`（image 同梱→entrypoint が `~/.config/opencode/plugin/` に毎起動 seed）が `event` を購読し `message.*→working` / `session.idle→idle`（遷移時のみ）を `workspace-agent session-status <state> <sid>` に通知。sid は起動時注入の `AF_SESSION_SID`。`wireSession` の opencode 分岐が同 sid で status を読む。question 状態は無し。
 - **denylist**: `fs.go` で `~/.local/share/opencode`（auth.json/db）を非表示。`~/.config/opencode`（プラグイン・設定）は非機微で表示のまま。
 - **Console**: New session に opencode 種別（リポ/dir 選択、モデル選択は非表示、初回認証チップ）。Repos 行 ▶opencode 即起動（suffix `-oc`）。バッジ `hubot`。「作り直す」は per-slot 独立化で表示（実際に新会話になる）。
+
+#### codex（OpenAI Codex CLI、`kind="codex"`）
+
+opencode を雛形に追加。**ただし codex のフックは Claude Code とほぼ同型**（`UserPromptSubmit`/`Stop`/`PermissionRequest`、stdin に `session_id` の JSON）なので、状態通知は opencode の plugin 方式ではなく **claude のフック方式（`session_status.go`）** に乗る。実 CLI `codex-cli 0.142.3` で hooks 形式・device-auth 出力・login 経路を実検証済（認証完了は要 OpenAI 資格）。
+
+- **image**: `workspace/Dockerfile` の global npm に `@openai/codex`（claude/opencode と同 RUN）。auth/セッションは `~/.codex`（home volume・永続）。
+- **agent 起動**（`session.go` `buildCodexProgram(model, slotSid, resumeID)`）: `codex <flags>`。flags 既定 `AGENT_CODEX_FLAGS`＝`--dangerously-bypass-approvals-and-sandbox --dangerously-bypass-hook-trust`（claude の `--dangerously-skip-permissions` 相当＝コンテナが sandbox。**bypass-hook-trust が無いと自前注入フックが発火しない**）。auth は codex 所有の `~/.codex/auth.json` ゆえ env/token 注入なし。
+  - **状態フックを起動時 `-c` 注入**: `-c 'hooks.UserPromptSubmit=[{type="command",command="workspace-agent session-status working <slotSid> codex"}]'`（同様に `Stop→idle`）。**per-slot sid をコマンドに直接埋める**＝global な `~/.codex/config.toml` を触らず、env 継承前提も不要。`--dangerously-bypass-approvals-and-sandbox` 下では承認が出ないので `PermissionRequest`（question 相当）は発火せず＝working/idle のみ（opencode と同等）。
+  - **⚠️ codex は独自の session id を生成**（`--session-id` 相当のピン留め不可）。status は埋め込んだ slot sid で keying し、resume 用に codex 自身の `session_id` を**フックの stdin から捕捉**（`runSessionStatusHook` の `codex` マーカー分岐 → `writeCodexSid`）。`session.go` は保存があれば `codex resume <id>`、無ければ素の `codex`（新規）。recreate は `removeCodexSid` で次回新規。opencode のスロット独立と同型。
+- **認証（設定から、2 経路）**（`codex_auth.go`）: env 注入は codex では効かない（`codex login status`＝Not logged in）ため**両経路とも `codex login` で auth.json を書く**。claude と同じく codex が資格ファイルを所有＝secrets.enc 対象外・denylist。
+  - **API キー**: `POST /connections/codex/api-key` → `codex login --with-api-key`（鍵を stdin パイプ）。
+  - **サブスク（ChatGPT）**: `POST /connections/codex/device/start` が `codex login --device-auth` を PTY 駆動し検証 URL（`https://auth.openai.com/codex/device`）+ ワンタイムコード（`XXXX-XXXXX`）をスクレイプ → Console が表示、`/device/poll` で `codex login status` を polling。codex プロセスが OpenAI 側を自前 polling（**コールバック不要**＝前段 oauth2-proxy と無干渉）。⚠️ device code ログインは ChatGPT 設定で各自/管理者の有効化が必要（openai/codex#9253）。`GET /connections` の `codex.connected`＝`codexLoggedIn()`、切断 `DELETE /connections/codex`＝`codex logout`。
+- **denylist**: `fs.go` に `~/.codex`（auth.json トークン + sessions + helper bin）。
+- **Console**: New session に codex 種別（モデル選択は非表示、認証案内チップ）。Repos 行 ▶codex 即起動（suffix `-cx`）。バッジ `rocket`。設定→接続に **Codex 行**（`ChatGPT で接続`＝device flow / `API キー`貼付、`ConnectionsTab.jsx` `CodexRow`）。
+- **CP**: `/api/connections/codex/*` を `proxyAgentREST` で委譲（device-auth はコンテナ内で OpenAI を直接 polling＝CP ネイティブ callback 不要、Bitbucket と異なる）。
 
 ### 6.10.5 git / リポジトリ / SCM / ファイルブラウザ
 
@@ -259,7 +276,7 @@ claude と並ぶ session `kind="opencode"`。codex / Antigravity は未着手（
 - **ブランチ選択**（`BranchModal.jsx`/`BranchList.jsx`/`RepoPicker.jsx`）: select→モーダル化。共通 `BranchList`（フィルタ＋**最終コミット降順**＋相対時刻＋subject）をローカル（`BranchModal`）とリモート clone/起動（`RepoPicker`）で共用。ローカル `api/repos/{name}/branches`=`for-each-ref`（name+committerdate+subject・降順・local+remote dedup）。リモート `api/connections/git/{host}/branches`=GitHub GraphQL（`refs orderBy TAG_COMMIT_DATE`）/ Bitbucket REST（`sort=-target.date`）。clone provider は Bitbucket→GitHub 順・既定 Bitbucket。軽微: Bitbucket の `default` バッジは付かない場合あり。
 - **Bitbucket repo/branch 列挙**（`git_remote.go`）: 廃止 API（`?role=member`=410）を避け `GET /2.0/user/workspaces`→各 slug の repos 集約。認証は OAuth Bearer 優先・token 貼付は email:token Basic。参照 CodeLeaf `BitbucketApi.kt`。
 - **clone 時 submodule**（`git.go`）: ⚠️ `--recurse-submodules` を親 clone に付けると SSH 登録 submodule で `Host key verification failed`＝**親 clone ごと失敗**。→ 親 clone から外し、clone 後に best-effort（`submodule init`→`.git/config` の SSH URL を `sshToHTTPS`（host 非依存・scp/`ssh://`）で HTTPS 書換→`update --recursive`）。private は統一 cred helper 透過・失敗は非致命。`git_submodule_test.go`。
-- **ファイルブラウザ**（`fs.go`: `GET /fs/tree`・`/fs/file`、home ルート・traversal 防御・サイズ上限・バイナリ判定）。**denylist**（一覧非表示＋直アクセス 400）: `.claude`・`.claude.json`・`.config/agent-fleet`・`.ssh`・`.git-credentials`・`~/.local/share/opencode`。Console（`FilesSection.jsx`）: 遅延ツリー＋ビュアー、「すべて畳む（⊟）」、**compact folders**（単一サブフォルダの中間 dir を `a/b/c` に畳む VS Code 流）＋展開で空 dir を自動潜行。clone 後・Workspace stop/start 後に **FILES 自動更新**（`filesKey`/`bumpFiles`）。
+- **ファイルブラウザ**（`fs.go`: `GET /fs/tree`・`/fs/file`、home ルート・traversal 防御・サイズ上限・バイナリ判定）。**denylist**（一覧非表示＋直アクセス 400）: `.claude`・`.claude.json`・`.config/agent-fleet`・`.ssh`・`.git-credentials`・`~/.local/share/opencode`・`~/.codex`。Console（`FilesSection.jsx`）: 遅延ツリー＋ビュアー、「すべて畳む（⊟）」、**compact folders**（単一サブフォルダの中間 dir を `a/b/c` に畳む VS Code 流）＋展開で空 dir を自動潜行。clone 後・Workspace stop/start 後に **FILES 自動更新**（`filesKey`/`bumpFiles`）。
 - **ファイルビュアー**（`FileView.jsx`）: 構文ハイライト(highlight.js)・行番号・ミニマップ・**Markdown プレビュー＋Mermaid**（marked+DOMPurify）・リンク（外部=新タブ↗ / リポ内=ファイラで開く / `#anchor`=スクロール）。
 - **Git LFS**（`Dockerfile` git-lfs 3.3.0 + `git lfs install --system`）: clone/checkout で smudge 取得（HTTPS cred helper 再利用）。残ポインタは `fs.go` が検出（`lfs:true`）→ ビュアーに「LFS ポインタ」バッジ。**既存 working copy はポインタが残るので手動 `git lfs pull`**。
 
@@ -276,7 +293,7 @@ claude と並ぶ session `kind="opencode"`。codex / Antigravity は未着手（
 
 ### 6.10.7 インフラ（image 同梱・JVM・tz・ゾンビ reap）
 
-- **image**（`workspace/Dockerfile`、約 2.8G、multi-stage golang→node:22-slim）。焼き込み: rtk（`workspace/vendor/rtk` 静的バイナリ、git 管理外＝`run-dev.sh` がホスト `~/.local/bin/rtk` を vendor）/ claude CLI（`npm i -g @anthropic-ai/claude-code`）/ opencode-ai / python3 / vim / git-lfs。entrypoint は `~/.local` の claude のみ自動更新、焼いた版は固定。
+- **image**（`workspace/Dockerfile`、約 2.8G、multi-stage golang→node:22-slim）。焼き込み: rtk（`workspace/vendor/rtk` 静的バイナリ、git 管理外＝`run-dev.sh` がホスト `~/.local/bin/rtk` を vendor）/ claude CLI（`npm i -g @anthropic-ai/claude-code`）/ opencode-ai / codex（`@openai/codex`）/ python3 / vim / git-lfs。entrypoint は `~/.local` の claude のみ自動更新、焼いた版は固定。
   - **言語ツールチェーン**（2026-06-28 追加）: **Go**（公式 tarball を `ARG GO_VERSION`（=1.26.4、go.mod の `go` 指定と歩調を合わせる）+ アーキ検出で導入。`COPY --from` ではなくビルダーから独立。`go install` 先 / モジュールキャッシュは `~/go`＝home volume 永続。PATH に `/usr/local/go/bin`・`~/go/bin` を ENV と profile.d 双方で前置）。**C/C++ ビルド基盤** `build-essential`+`pkg-config`+`python3-dev`（cgo / node-gyp / ソースビルド wheel / Makefile が動く）。**定番ツール** jq/unzip/zip/wget/gnupg/htop、`fd-find`/`bat`（Debian 命名 `fdfind`/`batcat`→ `fd`/`bat` シンボリックリンク）。**git-delta は bookworm 非収録で除外**（必要なら GitHub の .deb）、**sudo は隔離維持で非導入**。Java は依然 image 外（共有 JVM dir マウント、下記）。
 - **settings.json は「無い時のみ」seed**（`skipDangerousModePermissionPrompt`/`remoteControlAtStartup`/`agentPushNotifEnabled` ＋ rtk フック。RC/通知は seed 既定 true）。以後は ⚙→Claude が真実（毎起動 force だと UI と喧嘩する）。`PUT /api/claude/settings {rtk:true}` で後付け補填可。
 - **Java は image 外で共有**: `workspace/jvm.Dockerfile`＋`deploy/local/provision-jvm.sh`（冪等）でホスト共有 dir `WS_DATA/shared/jvm` に Temurin **8/21/25** を展開→`runtime.go` が **`WS_JVM_DIR` を `/usr/lib/jvm:ro`** でマウント。**image は JVM 外出しで 2.1G→1.0G**（その後 §言語ツールチェーン追加で約 2.8G）。**JDK 版変更**＝`jvm.Dockerfile` 編集→共有 dir を `rm -rf` 再 provision。
@@ -290,7 +307,8 @@ claude と並ぶ session `kind="opencode"`。codex / Antigravity は未着手（
 
 ### 6.10.8 次セッションの未調査 / 任意 TODO
 
-- **codex CLI / Antigravity CLI をエージェント追加**（opencode と同枠の kind 追加）。codex = OpenAI Codex CLI（`@openai/codex`、auth は `codex login`/`OPENAI_API_KEY`、resume は `codex resume`）。Antigravity = Google（CLI 形態・インストール/認証要調査）。opencode の実装（kind 分岐・Console 種別・denylist・即起動・auth env 注入・状態プラグイン）が雛形。
+- ✅ **codex CLI 追加済**（`kind="codex"`、§6.10.4）。残るは認証完了後の実運用検証（status バッジ発火 / resume）＝要 OpenAI 資格。
+- **Antigravity CLI をエージェント追加**（opencode/codex と同枠の kind 追加）。Antigravity（`agy`）= Google の Go 製ターミナルエージェント（2026-05 登場、Gemini CLI の後継、`antigravity.google/download`）。インストール（npm でなくバイナリ）・認証（Google ログイン vs `GEMINI_API_KEY` vs gcloud）・resume・フック仕様は一次ドキュメントが薄く**スパイク先行が必要**。env キー経路があれば opencode 型、無く Google OAuth ブラウザ必須なら funnel コールバック問題と同種の壁。
 - **（任意）ライトテーマの精度向上**: xterm テーマ（term.js）とファイルビュアーの highlight.js をライト時に明色へ。danger hover 等の残ハードコード色。
 - **（任意）アイコンセット拡張**: 現在 4 セット（vscode/material/devicon/seti）。選択セットのみ動的ロードでバンドル削減も可。
 - **（任意）codicon 化の残り**: 設定タブ（ConnectionsTab/AdminTab/DisplayTab/EnvTab/ClaudeTab）内の絵文字・ステータス●。

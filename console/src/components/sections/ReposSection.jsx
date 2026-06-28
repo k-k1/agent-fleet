@@ -106,7 +106,8 @@ export default function ReposSection() {
               showSCM(r.name);
             }}
             onLaunch={async (kind) => {
-              const suffix = kind === "shell" ? "-sh" : kind === "opencode" ? "-oc" : "";
+              const suffix =
+                kind === "shell" ? "-sh" : kind === "opencode" ? "-oc" : kind === "codex" ? "-cx" : "";
               const base = repoSafeSession(r.name) + suffix;
               let used = new Set();
               try {
@@ -189,7 +190,7 @@ function RepoRow({ r, active, pinned, onOpen, onLaunch, onChanged }) {
           </button>
           {showLaunch && (
             <div className="launch-menu">
-              {["claude", "opencode", "shell"].map((k) => (
+              {["claude", "opencode", "codex", "shell"].map((k) => (
                 <button key={k} onClick={() => { setShowLaunch(false); onLaunch(k); }}>
                   <Icon name={kindIcon(k)} /> {kindLabel(k)}
                 </button>

@@ -35,6 +35,7 @@ func handleConnectionsGet(w http.ResponseWriter, r *http.Request) {
 		"github":    gitConnStatus(s, "github.com"),
 		"bitbucket": bitbucketStatus(s),
 		"opencode":  opencodeStatus(s),
+		"codex":     codexStatus(),
 	})
 }
 

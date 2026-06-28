@@ -30,24 +30,42 @@ type sessionStatus struct {
 	TS    string `json:"ts"`    // RFC3339
 }
 
-// runSessionStatusHook is `workspace-agent session-status <state> [sid]`. claude
-// calls it with just <state> and supplies session_id via its hook JSON on stdin;
-// the opencode plugin calls it with the sid as a second arg (it has no stdin JSON).
+// runSessionStatusHook is `workspace-agent session-status <state> [sid] [codex]`.
+// Three callers key the status differently:
+//   - claude:   `session-status <state>` — session_id comes from claude's hook JSON
+//     on stdin and equals our deterministic sid (we launch with --session-id).
+//   - opencode: `session-status <state> <sid>` — the bundled plugin passes OUR sid
+//     directly (no stdin JSON).
+//   - codex:    `session-status <state> <sid> codex` — codex generates its OWN
+//     session id, so we bake our slot sid into the hook command (-c injection) to
+//     key the status, AND read codex's session_id from its hook JSON on stdin to
+//     record the slot→codex-id mapping used for `codex resume <id>`.
 func runSessionStatusHook(args []string) {
 	state := "idle"
 	if len(args) > 0 {
 		state = args[0]
 	}
 	sid := ""
-	if len(args) > 1 {
+	codexMarker := false
+	if len(args) > 2 && args[2] == "codex" {
+		sid, codexMarker = args[1], true
+	} else if len(args) > 1 {
 		sid = args[1] // opencode plugin path
 	}
-	if sid == "" {
+	// Read stdin when claude needs the sid from it, or when codex wants to capture
+	// its own session id for resume (status itself is keyed by the baked-in slot sid).
+	if sid == "" || codexMarker {
 		var in struct {
 			SessionID string `json:"session_id"`
 		}
 		_ = json.NewDecoder(os.Stdin).Decode(&in)
-		sid = in.SessionID
+		if codexMarker {
+			if in.SessionID != "" {
+				writeCodexSid(sid, in.SessionID)
+			}
+		} else {
+			sid = in.SessionID // claude
+		}
 	}
 	if sid == "" {
 		return
@@ -71,14 +89,20 @@ func readSessionStatus(sid string) (sessionStatus, bool) {
 
 func removeSessionStatus(sid string) { _ = os.Remove(sessionStatusPath(sid)) }
 
+// agentExe is the absolute path to this binary, used to build hook commands that
+// resolve in an agent's hook context regardless of PATH.
+func agentExe() string {
+	exe, err := os.Executable()
+	if err != nil || exe == "" {
+		return "/usr/local/bin/workspace-agent"
+	}
+	return exe
+}
+
 // statusHookCmd is the absolute command claude runs for an event (absolute so it
 // resolves in claude's hook context regardless of PATH).
 func statusHookCmd(state string) string {
-	exe, err := os.Executable()
-	if err != nil || exe == "" {
-		exe = "/usr/local/bin/workspace-agent"
-	}
-	return exe + " session-status " + state
+	return agentExe() + " session-status " + state
 }
 
 // ensureStatusHooks makes settings.json carry the hooks that feed session state,

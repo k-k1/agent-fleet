@@ -98,6 +98,10 @@ func main() {
 	mux.HandleFunc("DELETE /connections/claude", handleClaudeDisconnect)
 	mux.HandleFunc("PUT /connections/opencode", handlePutOpencodeConn)
 	mux.HandleFunc("DELETE /connections/opencode/{env}", handleDeleteOpencodeConn)
+	mux.HandleFunc("POST /connections/codex/api-key", handleCodexApiKey)
+	mux.HandleFunc("POST /connections/codex/device/start", handleCodexDeviceStart)
+	mux.HandleFunc("POST /connections/codex/device/poll", handleCodexDevicePoll)
+	mux.HandleFunc("DELETE /connections/codex", handleCodexDisconnect)
 
 	log.Printf("workspace-agent listening on %s", addr)
 	if err := http.ListenAndServe(addr, logRequests(requireToken(mux))); err != nil {
