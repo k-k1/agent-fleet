@@ -165,6 +165,13 @@ export default function SessionsSection() {
     return () => document.removeEventListener("mousedown", close);
   }, [menuFor]);
 
+  // Pin the currently-attached session to the very top of the list (stable sort
+  // keeps the rest in their backend order). The .pinned row is also sticky so it
+  // stays visible while the list scrolls.
+  const ordered = session
+    ? [...sessions].sort((a, b) => (a.name === session ? -1 : 0) - (b.name === session ? -1 : 0))
+    : sessions;
+
   return (
     <Section
       title="Sessions"
@@ -189,10 +196,11 @@ export default function SessionsSection() {
     >
       <ul className="list">
         {sessions.length === 0 && <li className="muted">セッションなし</li>}
-        {sessions.map((s) => {
+        {ordered.map((s) => {
           const dead = !s.alive && s.resumable === false; // dir gone → can't resume
+          const pinned = session === s.name; // currently attached → pinned to the top
           return (
-          <li key={s.name} className={"session-row" + (session === s.name ? " active" : "") + (s.alive ? "" : " stopped") + (dead ? " dead" : "")}>
+          <li key={s.name} className={"session-row" + (pinned ? " active pinned" : "") + (s.alive ? "" : " stopped") + (dead ? " dead" : "")}>
             <button
               className="session-btn"
               title={dead ? "作業フォルダが存在しないため再開できません" : !s.alive ? "停止中（⋯メニューから再開）" : s.dir || ""}
@@ -200,6 +208,7 @@ export default function SessionsSection() {
               onClick={() => s.alive && showTerminal(s.name)}
             >
               <span className="session-l1">
+                {pinned && <span className="session-pin" title="接続中">📌</span>}
                 <span className="session-display">{displayName(s)}</span>
               </span>
               <span className="session-l2">

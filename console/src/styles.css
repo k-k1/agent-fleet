@@ -271,6 +271,20 @@ textarea:focus {
   background: #20303a;
   border-radius: 4px;
 }
+/* The attached session is pinned to the top of the Sessions list and stays there
+   while the pane scrolls — sticking just below the sticky section header (~26px),
+   bounded by its section so it scrolls away once the section is fully passed. */
+.session-row.pinned {
+  position: sticky;
+  top: 26px;
+  z-index: 2;
+  background: #20303a;
+  box-shadow: 0 1px 0 var(--border);
+}
+.session-pin {
+  font-size: 10px;
+  margin-right: 3px;
+}
 .kind-tag {
   display: inline-block;
   font-size: 9px;
