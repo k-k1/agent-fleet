@@ -1337,6 +1337,9 @@ textarea:focus {
 .view {
   flex: 1;
   min-width: 0;
+  /* min-height:0 lets the terminal shrink to its flex track instead of overflowing
+     the pane (the height chain runs through nested grids → flex). */
+  min-height: 0;
   display: flex;
 }
 .view[hidden] {
@@ -1344,11 +1347,19 @@ textarea:focus {
 }
 
 /* ---- main-area pane layout (split view) ---- */
+/* panehost = up to 4 columns; each .panecol is a sub-grid of 1–2 stacked rows. */
 .panehost {
   flex: 1;
   min-width: 0;
   display: grid;
   grid-template-rows: minmax(0, 1fr);
+}
+.panecol {
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+  display: grid;
 }
 .pane {
   position: relative;
@@ -1373,22 +1384,50 @@ textarea:focus {
   right: 8px;
   z-index: 6;
   display: flex;
-  gap: 4px;
+  gap: 3px;
 }
 .pane-btn {
-  padding: 2px 6px;
+  padding: 2px 5px;
   line-height: 1;
 }
-/* draggable column divider between split panes */
+.pane-controls .pane-btn {
+  width: 22px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.pane-grip {
+  cursor: grab;
+}
+.pane-grip:active {
+  cursor: grabbing;
+}
+/* drop target while dragging a pane onto this one (swap) */
+.pane.droptarget {
+  outline: 2px dashed var(--accent);
+  outline-offset: -2px;
+}
+/* draggable dividers: .col between columns (resize width), .row inside a split
+   column (resize the two rows' heights). */
 .pane-divider {
-  cursor: col-resize;
   background: var(--border);
+}
+.pane-divider.col {
+  cursor: col-resize;
+}
+.pane-divider.row {
+  cursor: row-resize;
 }
 .pane-divider:hover {
   background: var(--accent);
 }
 body.col-resizing {
   cursor: col-resize;
+  user-select: none;
+}
+body.row-resizing {
+  cursor: row-resize;
   user-select: none;
 }
 .termview,
@@ -1406,9 +1445,10 @@ body.col-resizing {
   display: flex;
   align-items: center;
   gap: 10px;
-  /* extra right padding reserves room for the pane control cluster (split / close)
-     overlaid at the pane's top-right, so it never covers a view-head action. */
-  padding: 6px 42px 6px 12px;
+  /* extra right padding reserves room for the pane control cluster (grip /
+     split-right / split-down / close, up to 4) overlaid at the pane's top-right, so
+     it never covers a view-head action. */
+  padding: 6px 108px 6px 12px;
   background: var(--bar);
   border-bottom: 1px solid var(--border);
 }
@@ -2812,15 +2852,20 @@ button.primary:hover:not(:disabled) {
     width: 100%;
   }
 
-  /* Split view is desktop-only: collapse to the first pane, hide the divider and
-     the pane chrome so a phone always shows a single full-width view. */
+  /* On a phone the split is limited to ONE column, optionally split top/bottom (the
+     split-right control is hidden in JS via the mobile breakpoint). Force a single
+     column and hide any extra columns / column dividers from a desktop layout; the
+     first column's own rows (and their row divider + controls) stay so a top/bottom
+     split still works. */
   .panehost {
     grid-template-columns: 1fr !important;
   }
-  .pane-divider,
-  .pane-controls,
-  .panehost > .pane:nth-child(3) {
+  .panehost > *:not(.panecol:first-child) {
     display: none;
+  }
+  /* tighter control reserve on a phone (no split-right button = 3 controls max) */
+  .view-head {
+    padding-right: 84px;
   }
 
   /* roomier tap targets in the navigator lists */
