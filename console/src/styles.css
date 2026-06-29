@@ -513,11 +513,13 @@ textarea:focus {
 }
 .kind-tag {
   display: inline-block;
-  font-size: 9px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
   background: var(--btn);
   border: 1px solid var(--btn-border);
   border-radius: 3px;
-  padding: 0 4px;
+  padding: 1px 5px;
   margin-right: 6px;
   color: var(--muted);
 }
@@ -542,6 +544,28 @@ textarea:focus {
   color: #46c9d0;
   background: rgba(70, 201, 208, 0.14);
   border-color: rgba(70, 201, 208, 0.45);
+}
+/* Light theme: the medium kind colors wash out on a near-white tint, so use
+   darker text + a slightly stronger fill/border for legibility. */
+[data-theme="light"] .kind-tag.kind-claude {
+  color: #a85f1c;
+  background: rgba(224, 164, 94, 0.2);
+  border-color: rgba(224, 164, 94, 0.55);
+}
+[data-theme="light"] .kind-tag.kind-codex {
+  color: #18854a;
+  background: rgba(78, 201, 122, 0.2);
+  border-color: rgba(78, 201, 122, 0.55);
+}
+[data-theme="light"] .kind-tag.kind-opencode {
+  color: #6d2fce;
+  background: rgba(176, 124, 242, 0.2);
+  border-color: rgba(176, 124, 242, 0.55);
+}
+[data-theme="light"] .kind-tag.kind-shell {
+  color: #15828a;
+  background: rgba(70, 201, 208, 0.2);
+  border-color: rgba(70, 201, 208, 0.55);
 }
 .sub {
   color: var(--muted2);
