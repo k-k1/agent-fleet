@@ -149,11 +149,26 @@ export default function SessionsSection() {
           const dead = !s.alive && s.resumable === false; // dir gone → can't resume
           const selected = session === s.name; // currently attached → highlighted in place
           return (
-          <li key={s.name} className={"session-row" + (selected ? " active" : "") + (s.alive ? "" : " stopped") + (dead ? " dead" : "")}>
+          <li
+            key={s.name}
+            className={"session-row" + (selected ? " active" : "") + (s.alive ? "" : " stopped") + (dead ? " dead" : "")}
+            // Right-click anywhere on the row opens the same ⋯ menu. preventDefault
+            // suppresses the native context menu; the outside-click listener (a
+            // mousedown handler) fires on this same right-click and would close the
+            // menu, so open it on the trailing contextMenu event to win the race.
+            onContextMenu={(e) => {
+              e.preventDefault();
+              setMenuFor(s.name);
+            }}
+          >
             <button
               className="session-btn"
               title={dead ? "作業フォルダが存在しないため再開できません" : !s.alive ? "停止中（⋯メニューから再開）" : (s.dir ? s.dir + "（中クリックで新ペインに開く）" : "中クリックで新ペインに開く")}
-              disabled={!s.alive}
+              // aria-disabled (not the disabled attribute): a truly disabled button
+              // fires no events at all, so right-clicking a stopped session would
+              // never reach the row's onContextMenu and the native menu would show.
+              // onClick already guards on s.alive, so this stays inert for stopped.
+              aria-disabled={!s.alive || undefined}
               onClick={() => s.alive && showTerminal(s.name)}
               // Middle-click opens the session in a freshly split pane. Suppress the
               // mousedown default so the browser doesn't start autoscroll instead.

@@ -719,6 +719,15 @@ textarea:focus {
 .session-btn:hover {
   background: var(--btn);
 }
+/* Stopped sessions use aria-disabled (not the disabled attr) so right-click still
+   reaches the row's context-menu handler; mirror the disabled look here. */
+.session-btn[aria-disabled="true"] {
+  opacity: 0.4;
+  cursor: default;
+}
+.session-btn[aria-disabled="true"]:hover {
+  background: none;
+}
 .session-l1 {
   display: flex;
   align-items: baseline;
