@@ -1495,7 +1495,8 @@ body.row-resizing {
   max-width: min(72%, 440px);
   max-height: 62%;
   object-fit: contain;
-  opacity: 0.55;
+  /* うっすら透けるウォーターマーク程度に淡く */
+  opacity: 0.16;
   user-select: none;
   -webkit-user-drag: none;
 }
