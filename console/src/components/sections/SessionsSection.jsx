@@ -26,7 +26,7 @@ const notify = (title, body) => {
 // window (agent-side TTL). The ⋯ menu holds destructive actions (作り直す). The
 // list polls so state updates on its own.
 export default function SessionsSection() {
-  const { sessions, bumpSessions, bumpRepos, showTerminal, showTerminalSplit, session } = useApp();
+  const { sessions, bumpSessions, bumpRepos, bumpFiles, revealInFiles, showTerminal, showTerminalSplit, session } = useApp();
   const [showModal, setShowModal] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
   const [menuFor, setMenuFor] = useState(null); // session name whose ⋯ menu is open
@@ -261,9 +261,15 @@ export default function SessionsSection() {
       {showModal && (
         <NewSessionModal
           onClose={() => setShowModal(false)}
-          onCreated={(name, cloned) => {
+          onCreated={(name, cloned, repo) => {
             bumpSessions();
-            if (cloned) bumpRepos();
+            if (cloned) {
+              bumpRepos();
+              // Clone finished server-side before this fired, so the files exist:
+              // refresh the Files tree (and expand to the new repo when we know it).
+              if (repo) revealInFiles("repos/" + repo);
+              else bumpFiles();
+            }
             showTerminal(name);
             setShowModal(false);
           }}

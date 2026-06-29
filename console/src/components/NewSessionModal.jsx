@@ -87,7 +87,9 @@ export default function NewSessionModal({ onClose, onCreated }) {
         alert("作成に失敗: " + (res.error.message || res.error));
         return;
       }
-      onCreated(name.trim(), cloning);
+      // Pass the cloned repo dir basename (server echoes it as `repo`) so the
+      // caller can refresh + reveal it in the Files tree once the clone lands.
+      onCreated(name.trim(), cloning, cloning ? (res && res.repo) || "" : "");
     } finally {
       setBusy(false);
     }
