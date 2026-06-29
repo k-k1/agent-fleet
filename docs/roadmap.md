@@ -158,7 +158,7 @@ Deployment（1 社が自社ホスト。データ・鍵・設定をその社が�
   role = identity.role==super_admin か membership.role
   workspace = getOrCreate(identity, tenant)            // テナントごとに別コンテナ
   ```
-- **L1（認証）は不変**: 各社が**自社の** oauth2-proxy（Google）/ ALB OIDC を設定（自社ドメイン `hd` 制限が自然）。我々は設定方法を文書化（P3-10）。
+- **L1（認証）**: 既定は **CP ネイティブ Google OAuth（`AUTH=oauth`）**＝外部ゲートウェイ不要で各社が許可ドメイン/メールを設定（[reference/auth.md](reference/auth.md)、2026-06-29 ライブ採用）。大規模/既存資産がある社は自社の ALB OIDC / oauth2-proxy（`AUTH=proxy`）も選べる。我々は設定方法を文書化（P3-10）。
 - **L2-authz（認可）を DB に移す**: emails.txt の静的許可を廃し、**CP が email を DB と突合**し identity/membership を判定。未登録 email は provisioning ポリシー依存（既定 auto-provision / 厳格は 403）。
 - **新エンドポイント**: `GET /api/tenants` = 呼び出し元の membership 一覧（tenant slug/name/role）→ Console のピッカー。
 - **provisioning ポリシー**（env で切替）: 既定 **auto-provision**（ゲートウェイを通れた=その社の正規メンバー → 既定テナントへ自動）/ 厳格運用は **invite-only**（管理者が招待で membership 先行作成、未知は 403）。マルチテナントの部署割当は招待ベース。
@@ -266,7 +266,7 @@ CP に `/mcp` を 1 本生やし、**管理面（運用チーム）と作業面�
 |----|-----------------|-----------------|
 | Runtime | Docker Engine（compose）| ECS（Fargate）|
 | Volume | bind mount | EFS アクセスポイント |
-| AuthGateway | oauth2-proxy（各社の Google）| ALB OIDC または oauth2-proxy |
+| AuthGateway | **CP ネイティブ OAuth（`AUTH=oauth`）** 既定 / 外部 oauth2-proxy 任意 | ALB OIDC または oauth2-proxy |
 | MetadataStore | Postgres/SQLite | RDS(Postgres) 単一 |
 | KeyCustodian（P3-3）| Vault transit / ファイル KEK | KMS |
 | Ingress/TLS | Caddy（自己署名/社内 CA）| ALB + ACM |
