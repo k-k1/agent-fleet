@@ -47,6 +47,13 @@ RUN chmod +x /usr/local/bin/entrypoint.sh
 # opencode status plugin (seeded into ~/.config/opencode/plugin by the entrypoint).
 COPY opencode-plugin/ /usr/local/share/agent-fleet/opencode-plugin/
 
+# Workspace 利用ガイド（やってはいけないこと等）を各エージェントの「常時読込」位置へ。
+# claude は managed-policy ファイル /etc/claude-code/CLAUDE.md（毎セッション読込・除外不可）
+# として焼き込み、codex/opencode 分は home 永続なので entrypoint が毎起動で seed する。
+COPY workspace-notes.md /usr/local/share/agent-fleet/workspace-notes.md
+RUN mkdir -p /etc/claude-code \
+ && cp /usr/local/share/agent-fleet/workspace-notes.md /etc/claude-code/CLAUDE.md
+
 # Optional: install a vendored rtk binary (static) so the claude PreToolUse hook
 # can route Bash through it for token savings. Other deployments leave vendor/
 # empty (only .gitkeep) → no rtk, and the entrypoint seeds the hook only when rtk
