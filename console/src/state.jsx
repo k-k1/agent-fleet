@@ -221,6 +221,39 @@ export function AppProvider({ children }) {
   const [connKey, setConnKey] = useState(0);
   const [filesKey, setFilesKey] = useState(0);
   const bumpSessions = useCallback(() => setSessionsKey((k) => k + 1), []);
+
+  // Canonical session list, polled once here and shared via context (the left-pane
+  // Sessions list and each terminal pane's header both read it). Re-polls every 4s
+  // and immediately on bumpSessions (create/recreate/archive/tenant switch). Only
+  // setState on an actual change — an unconditional 4s repaint flickers the cursor.
+  const [sessions, setSessions] = useState([]);
+  const sessionsSer = useRef("");
+  useEffect(() => {
+    let alive = true;
+    const load = () =>
+      api("api/sessions")
+        .then((d) => {
+          if (!alive) return;
+          const list = d.sessions || [];
+          const ser = JSON.stringify(list);
+          if (ser !== sessionsSer.current) {
+            sessionsSer.current = ser;
+            setSessions(list);
+          }
+        })
+        .catch(() => {
+          if (alive && sessionsSer.current !== "[]") {
+            sessionsSer.current = "[]";
+            setSessions([]);
+          }
+        });
+    load();
+    const id = setInterval(load, 4000);
+    return () => {
+      alive = false;
+      clearInterval(id);
+    };
+  }, [sessionsKey, tenant]);
   const bumpRepos = useCallback(() => setReposKey((k) => k + 1), []);
   const bumpConn = useCallback(() => setConnKey((k) => k + 1), []);
   const bumpFiles = useCallback(() => setFilesKey((k) => k + 1), []);
@@ -625,6 +658,7 @@ export function AppProvider({ children }) {
     navOpen,
     toggleNav,
     closeNav,
+    sessions,
     sessionsKey,
     reposKey,
     connKey,

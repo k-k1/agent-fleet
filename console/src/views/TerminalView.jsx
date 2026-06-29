@@ -2,6 +2,9 @@ import { useEffect, useMemo, useRef } from "react";
 import { ensureTerm, fit, focusTerm, attach, detach } from "../term.js";
 import { rel } from "../api.js";
 import TermKeys from "../components/TermKeys.jsx";
+import Icon from "../components/Icon.jsx";
+import { kindIcon, kindLabel, kindClass } from "../lib/sessionkind.js";
+import { displayName, stateInfo } from "../lib/sessionview.js";
 
 // Brand artwork shown over an unattached terminal so a freshly split (or initial)
 // pane isn't a bare black rectangle. Each empty pane picks one of these at random.
@@ -15,7 +18,7 @@ const IDLE_ARTWORK = Array.from({ length: 7 }, (_, i) => rel(`brand/idle-${i + 1
 // connection follows the `session` prop declaratively: the pane descriptor is the
 // source of truth, and we attach/detach to match it. (Fullscreen is a global
 // control in TopBar.)
-export default function TerminalView({ paneId = "p0", session = null, active }) {
+export default function TerminalView({ paneId = "p0", session = null, sessionMeta = null, active }) {
   const ref = useRef(null);
 
   // Pick one idle image per mounted pane and keep it stable across re-renders
@@ -57,11 +60,28 @@ export default function TerminalView({ paneId = "p0", session = null, active }) 
     }
   }, [active, paneId]);
 
+  // Header mirrors the left-pane Sessions row: kind badge + display name + the
+  // session id + a status chip. Falls back to bare text before the session's
+  // metadata has arrived (freshly created), or when the pane has no session.
+  const st = sessionMeta ? stateInfo(sessionMeta) : null;
+
   return (
     <div className="termview">
       <header className="view-head">
-        <span className="view-title">{session ? `session: ${session}` : "セッション未接続"}</span>
-        <span className="spacer" />
+        {session && sessionMeta ? (
+          <span className="pane-session">
+            <span className={"kind-tag kind-" + kindClass(sessionMeta.kind)}>
+              <Icon name={kindIcon(sessionMeta.kind)} /> {kindLabel(sessionMeta.kind)}
+            </span>
+            <span className="session-display">{displayName(sessionMeta)}</span>
+            <span className="session-name">{sessionMeta.name}</span>
+            <span className={"session-state " + st.cls}>
+              <Icon name={st.icon} spin={st.spin} /> {st.text}
+            </span>
+          </span>
+        ) : (
+          <span className="view-title">{session ? `session: ${session}` : "セッション未接続"}</span>
+        )}
       </header>
       <div className="term-body">
         <div className="terminal" ref={ref} />

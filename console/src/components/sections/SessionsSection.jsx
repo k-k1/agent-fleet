@@ -1,31 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { useApp } from "../../state.jsx";
-import { api, raw } from "../../api.js";
+import { raw } from "../../api.js";
 import Section from "../Section.jsx";
 import Icon from "../Icon.jsx";
 import NewSessionModal from "../NewSessionModal.jsx";
 import ArchivedModal from "../ArchivedModal.jsx";
 import { kindIcon, kindLabel, kindClass } from "../../lib/sessionkind.js";
-
-// stateInfo maps a session to its line-2 status chip (codicon + label).
-const stateInfo = (s) => {
-  if (!s.alive) {
-    // A stopped claude whose working dir was deleted can't be resumed (archive only).
-    if (s.resumable === false) return { cls: "off dead", icon: "circle-slash", text: "フォルダ無し — 再開不可" };
-    return { cls: "off", icon: "debug-pause", text: "停止中" };
-  }
-  if (s.kind === "shell") return { cls: "on", icon: "pulse", text: "起動中" };
-  // claude (hooks), opencode (plugin) and codex (injected hooks) all report
-  // working/idle. opencode/codex have no "question" state; an empty state = idle.
-  switch (s.state) {
-    case "working":
-      return { cls: "working", icon: "loading", spin: true, text: "進行中…" };
-    case "question":
-      return { cls: "question", icon: "question", text: "質問あり" };
-    default:
-      return { cls: "on", icon: "check", text: "入力待ち" };
-  }
-};
+import { displayName, stateInfo } from "../../lib/sessionview.js";
 
 const notify = (title, body) => {
   if (!("Notification" in window) || Notification.permission !== "granted") return;
@@ -34,23 +15,6 @@ const notify = (title, body) => {
   } catch {
     /* ignore */
   }
-};
-
-// stamp formats a timestamp as MMDD-HHMM (matching the agent's claude --name), so
-// shell rows show a launch time consistent with claude rows.
-const stamp = (iso) => {
-  const d = new Date(iso);
-  if (isNaN(d)) return "";
-  const p = (n) => String(n).padStart(2, "0");
-  return `${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`;
-};
-
-// displayName: line-1 label = the claude session's --name (minus the "[AF] " tag);
-// shell sessions (no --name) use "{repo} @MMDD-HHMM". The kind is shown by the
-// line-2 badge, so no [AF]/[SH] prefix is needed.
-const displayName = (s) => {
-  if (s.kind !== "shell" && s.label) return s.label.replace(/^\[AF\]\s*/, "");
-  return `${s.repo || s.name} @${stamp(s.createdAt)}`;
 };
 
 // Sessions: claude/shell sessions as two-line rows —
@@ -62,13 +26,11 @@ const displayName = (s) => {
 // window (agent-side TTL). The ⋯ menu holds destructive actions (作り直す). The
 // list polls so state updates on its own.
 export default function SessionsSection() {
-  const { sessionsKey, bumpSessions, bumpRepos, showTerminal, showTerminalSplit, session } = useApp();
-  const [sessions, setSessions] = useState([]);
+  const { sessions, bumpSessions, bumpRepos, showTerminal, showTerminalSplit, session } = useApp();
   const [showModal, setShowModal] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
   const [menuFor, setMenuFor] = useState(null); // session name whose ⋯ menu is open
   const prevStates = useRef({}); // name → last seen claude state, for arrival notifications
-  const lastSer = useRef(""); // last serialized list, to skip no-op re-renders (cursor jank)
 
   // Archive: hide the session from the list but KEEP it (restorable via the archive
   // modal). Live sessions are stopped first. Backed by /archive (sets a flag; meta +
@@ -127,51 +89,26 @@ export default function SessionsSection() {
     }
   }, []);
 
+  // Notify on claude state arrivals (skip the session being viewed). Driven by the
+  // shared `sessions` list (polled in state.jsx), comparing each poll to the last.
   useEffect(() => {
-    let alive = true;
-    const load = () =>
-      api("api/sessions")
-        .then((d) => {
-          if (!alive) return;
-          const list = d.sessions || [];
-          // Notify on claude state arrivals (skip the session being viewed).
-          const prev = prevStates.current;
-          const seen = {};
-          for (const s of list) {
-            seen[s.name] = true;
-            if (s.kind === "shell" || !s.alive) {
-              prev[s.name] = s.state;
-              continue;
-            }
-            const before = prev[s.name];
-            if (before !== undefined && before !== s.state && s.name !== session) {
-              if (s.state === "idle" && before === "working") notify("回答が返ってきました", s.name);
-              else if (s.state === "question") notify("質問が来ています", s.name);
-            }
-            prev[s.name] = s.state;
-          }
-          for (const n of Object.keys(prev)) if (!seen[n]) delete prev[n];
-          // Only re-render when the list actually changed — an unconditional setState
-          // every 4s repaints the tree and makes the cursor flicker "busy".
-          const ser = JSON.stringify(list);
-          if (ser !== lastSer.current) {
-            lastSer.current = ser;
-            setSessions(list);
-          }
-        })
-        .catch(() => {
-          if (alive && lastSer.current !== "[]") {
-            lastSer.current = "[]";
-            setSessions([]);
-          }
-        });
-    load();
-    const id = setInterval(load, 4000); // reflect state changes and TTL pruning
-    return () => {
-      alive = false;
-      clearInterval(id);
-    };
-  }, [sessionsKey, session]);
+    const prev = prevStates.current;
+    const seen = {};
+    for (const s of sessions) {
+      seen[s.name] = true;
+      if (s.kind === "shell" || !s.alive) {
+        prev[s.name] = s.state;
+        continue;
+      }
+      const before = prev[s.name];
+      if (before !== undefined && before !== s.state && s.name !== session) {
+        if (s.state === "idle" && before === "working") notify("回答が返ってきました", s.name);
+        else if (s.state === "question") notify("質問が来ています", s.name);
+      }
+      prev[s.name] = s.state;
+    }
+    for (const n of Object.keys(prev)) if (!seen[n]) delete prev[n];
+  }, [sessions, session]);
 
   // Close the ⋯ menu on any outside click.
   useEffect(() => {
