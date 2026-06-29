@@ -265,6 +265,10 @@ func startSessionTmux(m sessionMeta) error {
 		// own .credentials.json, written by `claude auth login` via the Connections
 		// flow (claude_auth.go). CLAUDE_CODE_OAUTH_TOKEN is headless-only.
 	}
+	// Inject the current toolchain selection (JAVA_HOME / node / TZ) so a Console
+	// change applies to this freshly-launched session without a Stop→Start. tmux
+	// runs the pane command via /bin/sh -c, so the export prefix takes effect.
+	program = toolchainShellPrefix() + program
 	args = append(args, program)
 	if out, err := exec.Command("tmux", args...).CombinedOutput(); err != nil {
 		return fmt.Errorf("%v: %s", err, out)

@@ -48,7 +48,9 @@ func handlePTY(w http.ResponseWriter, r *http.Request) {
 	} else {
 		cmd = exec.Command(envOr("AGENT_SHELL", "bash"), "-l")
 	}
-	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
+	// Overlay the current toolchain selection so a no-session shell also reflects a
+	// Console change without a Stop→Start (sessions get it via toolchainShellPrefix).
+	cmd.Env = applyToolchainEnv(append(os.Environ(), "TERM=xterm-256color"))
 
 	ptmx, err := pty.Start(cmd)
 	if err != nil {
