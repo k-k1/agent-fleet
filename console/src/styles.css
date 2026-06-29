@@ -1187,6 +1187,22 @@ textarea:focus {
   color: #06222e;
   font-weight: 600;
 }
+/* clone-in-progress row in the Repos list, and the busy spinner in a modal head. */
+.repo-row.cloning {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.repo-row.cloning .codicon {
+  color: var(--accent);
+}
+.modal-busy {
+  color: var(--accent);
+  font-size: 18px;
+}
 /* Light theme: the accent (#2563eb) is a saturated blue, so a solid fill reads
    too heavy. Use the soft selection background with accent-colored text instead. */
 [data-theme="light"] .seg-btn.active {

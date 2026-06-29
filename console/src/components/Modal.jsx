@@ -9,14 +9,22 @@ export default function Modal({ title, onClose, className = "", as = "div", onSu
   const Panel = as;
   const panelProps = { className: ("modal " + className).trim(), onClick: (e) => e.stopPropagation() };
   if (as === "form") panelProps.onSubmit = onSubmit;
+  // While an operation is in flight (lockClose), make the whole panel inert so
+  // nothing inside is operable, and the backdrop click is ignored. The close
+  // button is replaced by a spinner so there's no way to dismiss mid-op.
+  if (lockClose) panelProps.inert = "";
   return (
     <div className="modal-backdrop" onClick={lockClose ? undefined : onClose}>
       <Panel {...panelProps}>
         <header className="modal-head">
           <h3 className="modal-title">{title}</h3>
-          <button type="button" className="icon" title="閉じる" onClick={onClose}>
-            <Icon name="close" />
-          </button>
+          {lockClose ? (
+            <Icon name="loading" spin className="modal-busy" title="処理中…" />
+          ) : (
+            <button type="button" className="icon" title="閉じる" onClick={onClose}>
+              <Icon name="close" />
+            </button>
+          )}
         </header>
         {children}
       </Panel>
