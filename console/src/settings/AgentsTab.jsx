@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, apiJSON } from "../api.js";
+import { api, apiJSON, ocwebURL } from "../api.js";
 
 // AgentsTab consolidates per-agent settings. claude: Remote Control / push
 // notifications / RTK hook (settings.json, via api/claude/settings). codex &
@@ -9,6 +9,7 @@ import { api, apiJSON } from "../api.js";
 export default function AgentsTab() {
   const [claude, setClaude] = useState(null);
   const [agents, setAgents] = useState(null);
+  const [ocweb, setOcweb] = useState(null);
   const [err, setErr] = useState("");
 
   const load = useCallback(() => {
@@ -23,6 +24,12 @@ export default function AgentsTab() {
         setAgents(a);
       })
       .catch(() => setErr("Workspace が起動しているか確認してください"));
+    // opencode web is optional (older images lack it) — never blocks the tab.
+    api("api/agents/opencode-web")
+      .then((d) => {
+        if (d && !d.error) setOcweb(d);
+      })
+      .catch(() => {});
   }, []);
   useEffect(load, [load]);
 
@@ -41,6 +48,14 @@ export default function AgentsTab() {
       return;
     }
     setAgents(d);
+  };
+  const updateOcweb = async (patch) => {
+    const d = await apiJSON("api/agents/opencode-web", "PUT", patch);
+    if (d && d.error) {
+      alert("保存に失敗: " + (d.error.message || ""));
+      return;
+    }
+    setOcweb(d);
   };
 
   if (err) return <p className="muted pad">{err}</p>;
@@ -73,6 +88,24 @@ export default function AgentsTab() {
         value={agents.opencode_rtk}
         onChange={(v) => updateAgents({ opencode_rtk: v })}
       />
+      {ocweb && ocweb.available && (
+        <div className="ds-row ds-row-wrap">
+          <span className="ds-label">Web UI</span>
+          <OnOff value={ocweb.enabled} onChange={(v) => updateOcweb({ enabled: v })} />
+          {ocweb.enabled &&
+            (ocweb.running ? (
+              <button className="ghost" onClick={() => window.open(ocwebURL(), "_blank", "noopener")}>
+                開く ↗
+              </button>
+            ) : (
+              <span className="muted">起動中…</span>
+            ))}
+          <span className="ds-hint">
+            ブラウザ版 opencode（pk-opencode-webui）。オンにすると opencode serve とともに起動し、「開く」で
+            新しいタブに表示します。全セッションを Web UI で扱えます。
+          </span>
+        </div>
+      )}
     </div>
   );
 }
