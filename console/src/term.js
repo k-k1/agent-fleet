@@ -204,9 +204,24 @@ export function ensureTerm(paneId, el) {
   }
   // Crisp GPU rendering; fall back silently if WebGL2 is unavailable/lost. One
   // WebGL context per terminal — browsers cap ~16, so splits stay well within.
+  // On context loss (GPU reset / tab backgrounded / the browser reclaiming the
+  // oldest context once its ~16 cap is hit across all tabs) we dispose the addon
+  // so xterm reverts to the DOM renderer. Disposing alone leaves the grid blank —
+  // the existing rows aren't marked dirty, so nothing repaints until the next PTY
+  // write or resize. That's the "pane content sometimes goes blank" symptom. Force
+  // a refit + full repaint right after dispose so the fallback renderer paints the
+  // current screen immediately.
   try {
     const webgl = new WebglAddon();
-    webgl.onContextLoss(() => webgl.dispose());
+    webgl.onContextLoss(() => {
+      try {
+        webgl.dispose();
+      } catch {}
+      try {
+        fitInst(it);
+        term.refresh(0, term.rows - 1);
+      } catch {}
+    });
     term.loadAddon(webgl);
   } catch {}
   // The web font loads async — refit/redraw once ready so metrics are right.
