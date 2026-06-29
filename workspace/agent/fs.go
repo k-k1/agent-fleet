@@ -265,6 +265,89 @@ func handleFSUpload(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"path": dirRel, "written": written, "conflicts": conflicts})
 }
 
+// handleFSMkdir creates a new directory at path. The parent must already exist
+// (os.Mkdir, not MkdirAll — no accidental deep create). 409 if it exists.
+func handleFSMkdir(w http.ResponseWriter, r *http.Request) {
+	full, rel, ok := safeBrowsePath(r.URL.Query().Get("path"))
+	if !ok || rel == "" {
+		writeErr(w, http.StatusBadRequest, "bad_path", "invalid path")
+		return
+	}
+	if _, err := os.Stat(full); err == nil {
+		writeErr(w, http.StatusConflict, "exists", "already exists: "+rel)
+		return
+	}
+	if err := os.Mkdir(full, 0o755); err != nil {
+		writeErr(w, http.StatusInternalServerError, "mkdir_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"path": rel})
+}
+
+// handleFSNewFile creates an empty file at path (O_EXCL => 409 if it exists).
+func handleFSNewFile(w http.ResponseWriter, r *http.Request) {
+	full, rel, ok := safeBrowsePath(r.URL.Query().Get("path"))
+	if !ok || rel == "" {
+		writeErr(w, http.StatusBadRequest, "bad_path", "invalid path")
+		return
+	}
+	f, err := os.OpenFile(full, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+	if err != nil {
+		if os.IsExist(err) {
+			writeErr(w, http.StatusConflict, "exists", "already exists: "+rel)
+			return
+		}
+		writeErr(w, http.StatusInternalServerError, "create_failed", err.Error())
+		return
+	}
+	_ = f.Close()
+	writeJSON(w, http.StatusOK, map[string]any{"path": rel})
+}
+
+// handleFSRename moves from -> to within the browse root. Both ends are guarded
+// (traversal + denylist); the destination must not already exist.
+func handleFSRename(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	srcFull, srcRel, ok1 := safeBrowsePath(q.Get("from"))
+	dstFull, dstRel, ok2 := safeBrowsePath(q.Get("to"))
+	if !ok1 || !ok2 || srcRel == "" || dstRel == "" {
+		writeErr(w, http.StatusBadRequest, "bad_path", "invalid path")
+		return
+	}
+	if _, err := os.Stat(srcFull); err != nil {
+		writeErr(w, http.StatusNotFound, "not_found", "no such path: "+srcRel)
+		return
+	}
+	if _, err := os.Stat(dstFull); err == nil {
+		writeErr(w, http.StatusConflict, "exists", "already exists: "+dstRel)
+		return
+	}
+	if err := os.Rename(srcFull, dstFull); err != nil {
+		writeErr(w, http.StatusInternalServerError, "rename_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"path": dstRel})
+}
+
+// handleFSDelete removes a file or directory (recursive). Refuses the browse
+// root and denylisted paths (safeBrowsePath). The Console confirms first.
+func handleFSDelete(w http.ResponseWriter, r *http.Request) {
+	full, rel, ok := safeBrowsePath(r.URL.Query().Get("path"))
+	if !ok || rel == "" {
+		writeErr(w, http.StatusBadRequest, "bad_path", "invalid path")
+		return
+	}
+	if _, err := os.Stat(full); err != nil {
+		writeErr(w, http.StatusNotFound, "not_found", "no such path: "+rel)
+		return
+	}
+	if err := os.RemoveAll(full); err != nil {
+		writeErr(w, http.StatusInternalServerError, "delete_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"deleted": rel})
+}
+
 // lfsPointerMagic is the first line of a Git LFS pointer file.
 const lfsPointerMagic = "version https://git-lfs.github.com/spec/v1"
 
