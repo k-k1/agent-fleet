@@ -308,6 +308,8 @@ func isAuthExempt(p string) bool {
 		return true
 	case strings.HasPrefix(p, "/brand/"):
 		return true
+	case p == "/agent-fleet" || strings.HasPrefix(p, "/agent-fleet/"):
+		return true // legacy-path redirect; fires before login so next= stays clean
 	}
 	return false
 }

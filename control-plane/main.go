@@ -241,6 +241,24 @@ func main() {
 	mux.HandleFunc("/preview/{port}", cfg.handlePreviewRedirect)
 	mux.HandleFunc("/preview/{port}/{rest...}", cfg.handlePreview)
 
+	// Legacy path compatibility: the deployment used to be served under
+	// /agent-fleet (oauth2-proxy + Caddy stripped it). Now it's at the root, so
+	// old bookmarks — and any stale post-login next=/agent-fleet/… — would 404.
+	// Redirect /agent-fleet[/…] -> /… (auth-exempt, so it fires before login and
+	// the dead prefix never reaches next=).
+	legacyRedirect := func(w http.ResponseWriter, r *http.Request) {
+		dest := strings.TrimPrefix(r.URL.Path, "/agent-fleet")
+		if !strings.HasPrefix(dest, "/") {
+			dest = "/" + dest
+		}
+		if r.URL.RawQuery != "" {
+			dest += "?" + r.URL.RawQuery
+		}
+		http.Redirect(w, r, dest, http.StatusFound)
+	}
+	mux.HandleFunc("/agent-fleet", legacyRedirect)
+	mux.HandleFunc("/agent-fleet/", legacyRedirect)
+
 	// Static Console (catch-all). no-store so reloads always get fresh assets
 	// during active development.
 	mux.Handle("/", noStore(http.FileServer(http.Dir(cfg.consoleDir))))
