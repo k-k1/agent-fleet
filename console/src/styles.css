@@ -925,6 +925,21 @@ textarea:focus {
 .chip.launch:hover {
   background: var(--active-bg);
 }
+/* Left-pane icons read a touch large next to their labels — shrink them slightly:
+   the session kind badge (Agent icon), the 起動 dropdown (▷ / ⌄ + menu items), and
+   the repo icon. Relative em so they still scale with the label. */
+.kind-tag .codicon {
+  font-size: 0.85em;
+}
+.chip.launch .codicon {
+  font-size: 0.85em;
+}
+.launch-menu button .codicon {
+  font-size: 0.9em;
+}
+.repo-name .repo-ic {
+  font-size: 0.9em;
+}
 .chip.danger {
   color: var(--del);
   border-color: #5a3030;
