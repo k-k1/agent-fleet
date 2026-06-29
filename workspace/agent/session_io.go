@@ -41,13 +41,20 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusConflict, "not_running", "session is not running; start it first")
 		return
 	}
-	// Send the prompt literally (-l: no key-name interpretation), then Enter to
-	// submit. exactT(=) avoids tmux's prefix matching hitting a sibling session.
-	if out, err := exec.Command("tmux", "send-keys", "-t", exactT(tn), "-l", body.Prompt).CombinedOutput(); err != nil {
+	// Resolve the active pane id. send-keys takes a target-PANE, where tmux's "="
+	// exact-session prefix is read literally ("can't find pane: =claude_x"); a
+	// globally-unique pane id (%N) is unambiguous and avoids tmux's prefix matching.
+	pane := sessionPaneID(tn)
+	if pane == "" {
+		writeErr(w, http.StatusInternalServerError, "no_pane", "could not resolve session pane")
+		return
+	}
+	// Send the prompt literally (-l: no key-name interpretation), then Enter to submit.
+	if out, err := exec.Command("tmux", "send-keys", "-t", pane, "-l", body.Prompt).CombinedOutput(); err != nil {
 		writeErr(w, http.StatusInternalServerError, "tmux_failed", string(out))
 		return
 	}
-	if out, err := exec.Command("tmux", "send-keys", "-t", exactT(tn), "Enter").CombinedOutput(); err != nil {
+	if out, err := exec.Command("tmux", "send-keys", "-t", pane, "Enter").CombinedOutput(); err != nil {
 		writeErr(w, http.StatusInternalServerError, "tmux_failed", string(out))
 		return
 	}
@@ -60,6 +67,30 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 		_ = os.WriteFile(sessionStatusPath(sid), b, 0o600)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"sent": name})
+}
+
+// sessionPaneID returns the active pane id (e.g. "%0") of a session's current
+// window, or "" if none. Uses the "=" exact target for list-panes (a target-
+// SESSION context, where "=" is honored), then returns the active pane.
+func sessionPaneID(tn string) string {
+	out, err := exec.Command("tmux", "list-panes", "-t", exactT(tn), "-F", "#{pane_active} #{pane_id}").Output()
+	if err != nil {
+		return ""
+	}
+	first := ""
+	for _, ln := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		f := strings.Fields(ln)
+		if len(f) != 2 {
+			continue
+		}
+		if first == "" {
+			first = f[1]
+		}
+		if f[0] == "1" {
+			return f[1]
+		}
+	}
+	return first // fall back to the first pane if none flagged active
 }
 
 // handleSessionStatus (GET /sessions/{name}/status) returns the session's live
