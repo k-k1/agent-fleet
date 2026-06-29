@@ -1,0 +1,162 @@
+/* @theme af-deck */
+/*
+ * af-deck — Marp theme for Agent Fleet decks.
+ * Brand cues: mint-teal accent (#2EB6A7), a signature left gradient rail
+ * (purple → teal), teal section labels with a hairline rule, white slides /
+ * dark-ink body text. Inherits marp-core's `default` for base typography.
+ */
+@import 'default';
+
+:root {
+  --acc-teal: #2eb6a7;
+  --acc-teal-d: #1f8e83;
+  --acc-purple: #453697;
+  --acc-blue: #3b879e;
+  --acc-ink: #1a1f2b;
+  --acc-muted: #6b7280;
+  --acc-rule: #e2e8e6;
+}
+
+section {
+  background: #ffffff;
+  color: var(--acc-ink);
+  font-family: "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Yu Gothic", Meiryo,
+    system-ui, sans-serif;
+  font-size: 26px;
+  line-height: 1.6;
+  padding: 56px 64px 72px;
+  letter-spacing: 0.01em;
+}
+
+/* Signature left gradient rail (purple → teal-blue → teal). */
+section::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 10px;
+  background: linear-gradient(
+    180deg,
+    var(--acc-purple) 0%,
+    var(--acc-blue) 55%,
+    var(--acc-teal) 100%
+  );
+}
+
+/* Page title. */
+h1 {
+  font-size: 1.65em;
+  font-weight: 700;
+  color: var(--acc-ink);
+  margin: 0 0 0.6em;
+}
+
+/* Section label: teal text + trailing hairline rule (IR "LABEL ──────" look). */
+h2 {
+  display: flex;
+  align-items: center;
+  gap: 0.6em;
+  font-size: 1.12em;
+  font-weight: 700;
+  color: var(--acc-teal);
+  margin: 1.1em 0 0.5em;
+}
+h2::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--acc-teal);
+  opacity: 0.5;
+}
+
+h3 {
+  color: var(--acc-teal-d);
+  font-size: 1em;
+}
+
+a {
+  color: var(--acc-teal-d);
+  text-decoration: none;
+  border-bottom: 1px solid rgba(31, 142, 131, 0.4);
+}
+strong {
+  color: var(--acc-ink);
+}
+
+ul > li::marker {
+  color: var(--acc-teal);
+}
+
+blockquote {
+  border-left: 4px solid var(--acc-teal);
+  background: #f3fbfa;
+  color: #2b3340;
+  padding: 0.4em 0.9em;
+  margin: 0.6em 0;
+}
+
+/* Tables: teal header, soft zebra, quiet borders. */
+table {
+  font-size: 0.82em;
+  border-collapse: collapse;
+}
+th {
+  background: var(--acc-teal);
+  color: #ffffff;
+  font-weight: 600;
+  border: 1px solid var(--acc-teal);
+}
+td {
+  border: 1px solid #d9e2e0;
+}
+tbody tr:nth-child(even) td {
+  background: #f5faf9;
+}
+
+code {
+  background: #eef4f3;
+  color: #14635b;
+}
+
+hr {
+  border: none;
+  border-top: 1px solid var(--acc-rule);
+}
+
+/* Keep marp's pagination content; just tint it. */
+section::after {
+  color: var(--acc-muted);
+  font-size: 14px;
+}
+
+/* Cover / divider slides: use `<!-- _class: lead -->`. Brand gradient, white text. */
+section.lead {
+  background: linear-gradient(
+    135deg,
+    var(--acc-purple) 0%,
+    #2f6e9e 50%,
+    var(--acc-teal) 100%
+  );
+  color: #ffffff;
+  justify-content: center;
+}
+section.lead::before {
+  opacity: 0;
+}
+section.lead h1 {
+  color: #ffffff;
+  font-size: 2.1em;
+}
+section.lead h2 {
+  color: #e6f7f3;
+}
+section.lead h2::after {
+  background: #e6f7f3;
+  opacity: 0.4;
+}
+section.lead h3,
+section.lead strong,
+section.lead a {
+  color: #e6f7f3;
+}

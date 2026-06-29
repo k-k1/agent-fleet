@@ -1317,6 +1317,7 @@ textarea:focus {
   margin-left: auto;
 }
 .marp-stage {
+  position: relative;
   flex: 1;
   min-height: 0;
   display: flex;
@@ -1325,6 +1326,24 @@ textarea:focus {
   padding: 16px;
   overflow: auto;
   outline: none;
+}
+/* Left / right click-to-page zones, with a ←/→ arrow cursor as a hover hint.
+   The arrow is an inline-SVG (black outline + white fill so it reads on any
+   background); w-/e-resize is the fallback. */
+.marp-nav {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 22%;
+  z-index: 2;
+}
+.marp-nav.left {
+  left: 0;
+  cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32'%3E%3Cpath d='M15 7 L6 16 L15 25 M6 16 H27' fill='none' stroke='black' stroke-width='6' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M15 7 L6 16 L15 25 M6 16 H27' fill='none' stroke='white' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") 16 16, w-resize;
+}
+.marp-nav.right {
+  right: 0;
+  cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32'%3E%3Cpath d='M17 7 L26 16 L17 25 M26 16 H5' fill='none' stroke='black' stroke-width='6' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M17 7 L26 16 L17 25 M26 16 H5' fill='none' stroke='white' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") 16 16, e-resize;
 }
 .marp-stage:fullscreen {
   background: #000;
