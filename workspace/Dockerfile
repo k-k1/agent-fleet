@@ -90,7 +90,10 @@ RUN echo 'export PATH="$HOME/.local/bin:$HOME/go/bin:/usr/local/go/bin:$PATH"' >
 COPY --from=agentbuild /out/workspace-agent /usr/local/bin/workspace-agent
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
-# opencode status plugin (seeded into ~/.config/opencode/plugin by the entrypoint).
+# opencode plugins source (seeded into ~/.config/opencode/plugin at runtime):
+# agent-fleet-status.js (session working/idle bridge — seeded by the entrypoint) +
+# rtk.ts (token-saving command rewrite, the opencode analog of claude's rtk hook —
+# seeded/removed by the agent per the ~/.config/agent-fleet/rtk.json toggle).
 COPY opencode-plugin/ /usr/local/share/agent-fleet/opencode-plugin/
 
 # Workspace 利用ガイド（やってはいけないこと等）を各エージェントの「常時読込」位置へ。

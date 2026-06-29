@@ -2,12 +2,12 @@ import { useState } from "react";
 import { useApp } from "../state.jsx";
 import ConnectionsTab from "./ConnectionsTab.jsx";
 import DisplayTab from "./DisplayTab.jsx";
-import ClaudeTab from "./ClaudeTab.jsx";
+import AgentsTab from "./AgentsTab.jsx";
 import EnvTab from "./EnvTab.jsx";
 import TokensTab from "./TokensTab.jsx";
 import Modal from "../components/Modal.jsx";
 
-// SettingsDialog holds the per-user settings (Connections / Claude / 環境 / 表示).
+// SettingsDialog holds the per-user settings (Connections / エージェント / 環境 / 表示).
 // Super_admin (tenant/member/quota) management lives in a SEPARATE modal — see
 // AdminDialog, opened from its own top-bar button — so admin actions are clearly
 // distinct from personal settings.
@@ -17,7 +17,7 @@ export default function SettingsDialog() {
 
   const sections = [
     ["connections", "接続"],
-    ["claude", "Claude"],
+    ["agents", "エージェント"],
     ["env", "環境"],
     ["tokens", "MCP"],
     ["display", "表示"],
@@ -40,7 +40,7 @@ export default function SettingsDialog() {
         </div>
         <div className="settings-content">
           {section === "connections" && <ConnectionsTab />}
-          {section === "claude" && <ClaudeTab />}
+          {section === "agents" && <AgentsTab />}
           {section === "env" && <EnvTab />}
           {section === "tokens" && <TokensTab />}
           {section === "display" && <DisplayTab />}
