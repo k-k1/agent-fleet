@@ -384,6 +384,28 @@ textarea:focus {
   margin-right: 6px;
   color: var(--muted);
 }
+/* Per-kind colors so claude / codex / opencode / shell are distinguishable
+   at a glance (icon alone wasn't enough). */
+.kind-tag.kind-claude {
+  color: #e0a45e;
+  background: rgba(224, 164, 94, 0.14);
+  border-color: rgba(224, 164, 94, 0.45);
+}
+.kind-tag.kind-codex {
+  color: #4ec97a;
+  background: rgba(78, 201, 122, 0.14);
+  border-color: rgba(78, 201, 122, 0.45);
+}
+.kind-tag.kind-opencode {
+  color: #b07cf2;
+  background: rgba(176, 124, 242, 0.16);
+  border-color: rgba(176, 124, 242, 0.45);
+}
+.kind-tag.kind-shell {
+  color: #46c9d0;
+  background: rgba(70, 201, 208, 0.14);
+  border-color: rgba(70, 201, 208, 0.45);
+}
 .sub {
   color: var(--muted2);
   font-size: 11px;

@@ -5,7 +5,7 @@ import Section from "../Section.jsx";
 import Icon from "../Icon.jsx";
 import NewSessionModal from "../NewSessionModal.jsx";
 import ArchivedModal from "../ArchivedModal.jsx";
-import { kindIcon, kindLabel } from "../../lib/sessionkind.js";
+import { kindIcon, kindLabel, kindClass } from "../../lib/sessionkind.js";
 
 // stateInfo maps a session to its line-2 status chip (codicon + label).
 const stateInfo = (s) => {
@@ -209,7 +209,7 @@ export default function SessionsSection() {
                 <span className="session-display">{displayName(s)}</span>
               </span>
               <span className="session-l2">
-                <span className="kind-tag">
+                <span className={"kind-tag kind-" + kindClass(s.kind)}>
                   <Icon name={kindIcon(s.kind)} /> {kindLabel(s.kind)}
                 </span>
                 <span className="session-name">{s.name}</span>
