@@ -374,8 +374,10 @@ textarea:focus {
   box-shadow: 0 1px 0 var(--border);
 }
 /* The pin badge sits in the row's top-right corner (above the ⋯ menu), so the
-   session name stays left-aligned and the row layout doesn't shift when pinned. */
-.session-pin {
+   session name stays left-aligned and the row layout doesn't shift when pinned.
+   The repo pin uses the identical badge for a unified look. */
+.session-pin,
+.repo-pin {
   position: absolute;
   top: 3px;
   right: 6px;
@@ -384,18 +386,14 @@ textarea:focus {
   z-index: 1;
   pointer-events: none;
 }
-/* The repo of the attached session is pinned to the top of the Repos list. */
+/* The repo of the attached session is pinned to the top of the Repos list — same
+   behaviour as the Sessions pin (sticky, highlighted, accent corner badge). */
 .repo-row.pinned {
   position: sticky;
   top: 26px;
   z-index: 2;
   background: var(--active-bg);
   box-shadow: 0 1px 0 var(--border);
-}
-.repo-pin {
-  font-size: 10px;
-  margin-right: 1px;
-  color: var(--muted);
 }
 .kind-tag {
   display: inline-block;
@@ -1768,7 +1766,12 @@ textarea:focus {
   font-size: 12px;
   min-width: 160px;
 }
+/* The device-flow code is a button: clicking copies it to the clipboard (the glyph
+   flips to a check on success). It still reads as a code, just clickable. */
 .oauth-code {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   font-family: var(--mono);
   font-size: 15px;
   font-weight: 700;
@@ -1776,8 +1779,21 @@ textarea:focus {
   color: #fff;
   background: #333;
   padding: 1px 8px;
+  border: none;
   border-radius: 4px;
-  user-select: all;
+  cursor: pointer;
+}
+.oauth-code:hover {
+  background: #444;
+}
+.oauth-copy-ic {
+  font-size: 11px;
+  letter-spacing: 0;
+  opacity: 0.7;
+}
+/* "切断" — the live-connection sever action; danger-red on hover (via .danger). */
+.conn-disconnect {
+  font-size: 12px;
 }
 
 /* admin */
@@ -2021,6 +2037,34 @@ textarea:focus {
   background: #5a2a2a;
 }
 
+/* danger zone: a clearly-separated block at the bottom of a settings tab that
+   holds destructive workspace actions (作り直す), kept away from routine controls. */
+.danger-zone {
+  margin-top: 28px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+.danger-zone-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 10px;
+  font-size: 12px;
+  color: #f3b6b6;
+}
+.danger-zone-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.danger-zone-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+}
+
 /* repo/branch picker dropdowns */
 .pick-field {
   display: flex;
@@ -2171,14 +2215,11 @@ button.primary:hover:not(:disabled) {
      sticky on mobile: the attached session/repo stays hoisted-first + highlighted,
      just not stuck while scrolling. `position: relative; top: auto` keeps the
      absolute pin badge anchored without the 26px sticky offset. */
-  .session-row.pinned {
+  .session-row.pinned,
+  .repo-row.pinned {
     position: relative;
     top: auto;
     z-index: auto;
-    box-shadow: none;
-  }
-  .repo-row.pinned {
-    position: static;
     box-shadow: none;
   }
   /* top bar: hamburger in, secondary chrome trimmed so it fits a phone width */

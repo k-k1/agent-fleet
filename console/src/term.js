@@ -300,27 +300,3 @@ export function detach() {
   }
   setSession(null);
 }
-
-// reconstructURL rebuilds the /login sign-in URL from the xterm buffer. Ink hard-
-// wraps it across rows, so neither plain copy nor web-links yields the whole URL;
-// we join full-width rows only on demand (no auto-popup, no false hits).
-export function reconstructURL() {
-  if (!term) return null;
-  const buf = term.buffer.active,
-    cols = term.cols;
-  for (let y = buf.length - 1; y >= Math.max(0, buf.length - 200); y--) {
-    const line = buf.getLine(y);
-    if (!line) continue;
-    const m = line.translateToString(true).match(/(https:\/\/[^\s]*)$/);
-    if (!m) continue; // a URL fragment reaching the row end => wrapped onward
-    let url = m[1];
-    for (let yy = y + 1; yy < buf.length; yy++) {
-      const seg = buf.getLine(yy)?.translateToString(true) ?? "";
-      if (!seg || /[^\x21-\x7e]/.test(seg)) break; // non-URL char (incl space) => end
-      url += seg;
-      if (seg.length < cols) break; // shorter than width => last segment
-    }
-    if (/oauth|authorize/i.test(url)) return url;
-  }
-  return null;
-}

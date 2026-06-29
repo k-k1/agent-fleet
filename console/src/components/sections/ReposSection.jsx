@@ -155,8 +155,8 @@ function RepoRow({ r, active, pinned, onOpen, onLaunch, onChanged }) {
 
   return (
     <li className={"repo-row" + (active ? " active" : "") + (pinned ? " pinned" : "")}>
+      {pinned && <Icon name="pin" className="repo-pin" title="現在のセッションのリポジトリ" />}
       <div className="repo-info">
-        {pinned && <Icon name="pin" className="repo-pin" title="現在のセッションのリポジトリ" />}
         <span className={"dot " + (r.dirty ? "dirty" : "clean")} title={r.dirty ? "未コミット変更あり" : "clean"}>
           ●
         </span>

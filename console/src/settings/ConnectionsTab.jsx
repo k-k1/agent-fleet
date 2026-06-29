@@ -1,5 +1,37 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, apiJSON, raw } from "../api.js";
+import Icon from "../components/Icon.jsx";
+
+// CopyCode renders a one-time auth code that copies to the clipboard on click. The
+// code stays visible (so it can be read), but clicking saves the manual select —
+// used for the Codex / GitHub device-flow codes.
+function CopyCode({ children }) {
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(String(children));
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1400);
+    } catch {
+      /* clipboard blocked — the code stays selectable as a fallback */
+    }
+  };
+  return (
+    <button type="button" className="oauth-code" title="クリックでコピー" onClick={copy}>
+      {children}
+      <Icon name={copied ? "check" : "copy"} className="oauth-copy-ic" />
+    </button>
+  );
+}
+
+// DisconnectButton: the per-provider "切断" action shown when a connection is live.
+function DisconnectButton({ onClick }) {
+  return (
+    <button className="ghost danger conn-disconnect" title="切断" onClick={onClick}>
+      切断
+    </button>
+  );
+}
 
 // ConnectionsTab drives the per-user provider auth flows entirely in the WebUI:
 // Claude (start → approve → paste code → complete), GitHub (OAuth device flow or
@@ -107,13 +139,11 @@ function CodexRow({ st, reload }) {
             {st.email || (st.method === "apikey" ? "API キー" : "ChatGPT")}
             {st.plan ? ` · ${st.plan}` : ""}
           </span>
-          <button className="icon danger" title="切断" onClick={disconnect}>
-            ✕
-          </button>
+          <DisconnectButton onClick={disconnect} />
         </>
       ) : mode === "device" && dev ? (
         <div className="flow">
-          {dev.user_code && <span className="oauth-code">{dev.user_code}</span>}
+          {dev.user_code && <CopyCode>{dev.user_code}</CopyCode>}
           <a href={dev.url} target="_blank" rel="noopener" className="flow-link">
             → {dev.url} でコード入力
           </a>
@@ -267,6 +297,9 @@ function ClaudeRow({ st, reload }) {
         alert("Claude 認証開始に失敗: " + (res?.error?.message || ""));
         return;
       }
+      // Like GitHub / Bitbucket OAuth: pop the sign-in page open in a new tab
+      // automatically. Claude has no poll-back, so we still take the pasted code.
+      window.open(res.url, "_blank", "noopener");
       setFlow({ url: res.url, flow_id: res.flow_id });
     } finally {
       setBusy(false);
@@ -306,18 +339,16 @@ function ClaudeRow({ st, reload }) {
             {st.email || "connected"}
             {st.plan ? ` · ${st.plan}` : ""}
           </span>
-          <button className="icon danger" title="切断" onClick={disconnect}>
-            ✕
-          </button>
+          <DisconnectButton onClick={disconnect} />
         </>
       ) : flow ? (
         <div className="flow">
           <a href={flow.url} target="_blank" rel="noopener" className="flow-link">
-            ① ブラウザでサインイン
+            別タブが開かない場合はこちらでサインイン ↗
           </a>
           <input
             className="cinput"
-            placeholder="② コードを貼付"
+            placeholder="コードを貼付"
             value={code}
             onChange={(e) => setCode(e.target.value)}
             autoFocus
@@ -328,7 +359,7 @@ function ClaudeRow({ st, reload }) {
         </div>
       ) : (
         <button disabled={busy} onClick={start}>
-          接続
+          OAuth 接続
         </button>
       )}
     </div>
@@ -407,13 +438,11 @@ function GithubRow({ st, reload }) {
             {st.username || "connected"}
             {st.email ? ` · ${st.email}` : ""}
           </span>
-          <button className="icon danger" title="切断" onClick={disconnect}>
-            ✕
-          </button>
+          <DisconnectButton onClick={disconnect} />
         </>
       ) : mode === "oauth" && oauth ? (
         <div className="flow">
-          <span className="oauth-code">{oauth.user_code}</span>
+          <CopyCode>{oauth.user_code}</CopyCode>
           <a href={oauth.verification_uri} target="_blank" rel="noopener" className="flow-link">
             → {oauth.verification_uri} で入力
           </a>
@@ -514,9 +543,7 @@ function BitbucketRow({ st, reload }) {
             {st.username || "connected"}
             {st.email ? ` · ${st.email}` : ""}
           </span>
-          <button className="icon danger" title="切断" onClick={disconnect}>
-            ✕
-          </button>
+          <DisconnectButton onClick={disconnect} />
         </>
       ) : mode === "oauth" ? (
         <span className="muted">{status}</span>
