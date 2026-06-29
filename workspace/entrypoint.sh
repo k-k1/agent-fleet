@@ -102,6 +102,10 @@ if [ -d "$OC_PLUG_SRC" ]; then
     && echo "[entrypoint] seeded opencode status plugin" \
     || echo "[entrypoint] WARN: failed to seed opencode plugin"
 fi
+# The opencode rtk plugin (rtk.ts) and codex's AGENTS.md rtk block are applied by
+# the agent (reconcileAgentRTK in agent_rtk.go) from the durable ~/.config/agent-
+# fleet/rtk.json toggle — NOT seeded here — so the Console on/off choice survives
+# restarts. The agent runs immediately after this entrypoint (exec workspace-agent).
 
 # Workspace 利用ガイド（やってはいけないこと等）を各エージェントが常時読み込む位置へ配置。
 #   claude   … /etc/claude-code/CLAUDE.md（イメージに焼込済の managed policy。毎セッション読込）
@@ -117,6 +121,9 @@ if [ -f "$WS_NOTES" ]; then
   cp -f "$WS_NOTES" "$HOME/.config/opencode/AGENTS.md" 2>/dev/null \
     && echo "[entrypoint] seeded ~/.config/opencode/AGENTS.md" \
     || echo "[entrypoint] WARN: failed to seed opencode AGENTS.md"
+  # The agent appends codex's rtk-usage block to ~/.codex/AGENTS.md after this (see
+  # reconcileAgentRTK), driven by the durable rtk toggle. We seed the base file fresh
+  # here; the agent re-applies the block so the toggle survives restarts.
 fi
 
 # Gradle defaults for a shared, memory-constrained host (seed only when missing, so

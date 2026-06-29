@@ -2638,6 +2638,18 @@ body.row-resizing {
 .ds-note span {
   color: var(--fg);
 }
+/* A wrapping row whose sub-note (ds-hint) drops to its own line, aligned under
+   the control (ds-label width 120 + row gap 12). Used by the codex RTK toggle. */
+.ds-row-wrap {
+  flex-wrap: wrap;
+}
+.ds-hint {
+  flex-basis: 100%;
+  margin-left: 132px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--muted);
+}
 
 /* PAT / MCP tokens (docs/0006 P3-6) */
 .ds-row input[type="text"] {

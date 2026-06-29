@@ -33,6 +33,10 @@ func main() {
 	migrateLegacySecrets()
 	// Make claude emit working/idle/question via hooks into the status files.
 	ensureStatusHooks()
+	// Apply the durable codex/opencode rtk prefs to their artifacts (the entrypoint
+	// reseeded the base AGENTS.md / status plugin just before us). claude's rtk is
+	// handled separately via its settings.json hook.
+	reconcileAgentRTK()
 
 	addr := envOr("AGENT_ADDR", ":7700")
 
@@ -88,6 +92,9 @@ func main() {
 	// Claude settings (Remote Control / notifications / RTK hook) — Console toggles.
 	mux.HandleFunc("GET /claude/settings", handleClaudeSettingsGet)
 	mux.HandleFunc("PUT /claude/settings", handleClaudeSettingsPut)
+	// codex / opencode rtk toggle (durable pref → on-disk artifacts) — Console.
+	mux.HandleFunc("GET /agents/rtk", handleAgentRTKGet)
+	mux.HandleFunc("PUT /agents/rtk", handleAgentRTKPut)
 
 	// Toolchain selection (node via nvm / java via pre-baked Temurin) — Console.
 	mux.HandleFunc("GET /env/toolchains", handleToolchainsGet)
