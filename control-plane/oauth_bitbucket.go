@@ -19,9 +19,9 @@ import (
 // a CSRF state, handles the redirect, exchanges the code for tokens, and hands
 // them to the Agent to store + install the refreshing credential helper.
 //
-// No oauth2-proxy exemption is needed: the callback is a browser redirect, and
-// the user's browser already carries the Google session cookie (they're in the
-// Console), so it passes the perimeter and Caddy routes /agent-fleet/* to here.
+// No auth exemption is needed for the callback: it's a browser redirect that
+// carries the CP session cookie (the user is signed in to the Console), so
+// authGate lets it through like any other authenticated request.
 
 const (
 	bbAuthorizeURL = "https://bitbucket.org/site/oauth2/authorize"

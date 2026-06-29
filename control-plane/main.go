@@ -7,6 +7,7 @@ package main
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"log"
 	"net/http"
 	"os"
@@ -23,7 +24,16 @@ type config struct {
 	// Bitbucket OAuth (Authorization Code Grant) — CP owns the public callback.
 	bbKey         string
 	bbSecret      string
-	publicBaseURL string // external base, e.g. https://host/agent-fleet (for redirect_uri)
+	publicBaseURL string // external base, e.g. https://host (for redirect_uri)
+	// CP-native Google OAuth (AUTH=oauth) — replaces oauth2-proxy. See oauth_google.go.
+	googleClientID     string
+	googleClientSecret string
+	cookieSecret       []byte        // HMAC key for the signed session cookie
+	cookieSecure       bool          // Secure flag (true behind https Funnel)
+	sessionTTL         time.Duration // session cookie lifetime
+	allowEmails        map[string]bool
+	allowDomains       map[string]bool // allowed email domains (lowercased, no leading @)
+	allowEmailsFile    string          // emails.txt-style allowlist, read live per callback
 }
 
 func main() {
@@ -37,7 +47,7 @@ func main() {
 		sessionCmd:  os.Getenv("WS_SESSION_CMD"),   // empty => claude
 		extraEnv:    splitCSV(os.Getenv("WS_ENV")), // KEY=VAL,KEY=VAL -> container -e
 		portBase:    portBase,
-		authMode:    envOr("AUTH", "dev"), // dev (fixed id) | proxy (gateway header)
+		authMode:    envOr("AUTH", "dev"), // dev (fixed id) | proxy (oauth2-proxy header) | oauth (CP-native Google)
 		devUser:     envOr("DEV_USER", "dev"),
 		emailHeader: envOr("AUTH_EMAIL_HEADER", "X-Forwarded-Email"),
 		// P3-2: provisioning policy + deployment super-admins.
@@ -81,16 +91,35 @@ func main() {
 		log.Printf("backfill warning: %v", err)
 	}
 
+	publicBaseURL := os.Getenv("PUBLIC_BASE_URL")
 	cfg := config{
 		addr:          envOr("CP_ADDR", ":8080"),
 		consoleDir:    envOr("CONSOLE_DIR", "./console"),
 		bbKey:         os.Getenv("BITBUCKET_OAUTH_KEY"),
 		bbSecret:      os.Getenv("BITBUCKET_OAUTH_SECRET"),
-		publicBaseURL: os.Getenv("PUBLIC_BASE_URL"),
+		publicBaseURL: publicBaseURL,
 		mgr:           mgr,
+		// CP-native Google OAuth (AUTH=oauth).
+		googleClientID:     os.Getenv("GOOGLE_OAUTH_CLIENT_ID"),
+		googleClientSecret: os.Getenv("GOOGLE_OAUTH_CLIENT_SECRET"),
+		cookieSecret:       decodeKey(os.Getenv("AF_COOKIE_SECRET")),
+		cookieSecure:       strings.HasPrefix(publicBaseURL, "https"),
+		sessionTTL:         parseDurationOr(os.Getenv("AF_SESSION_TTL"), 168*time.Hour),
+		allowEmails:        emailSet(os.Getenv("AF_OAUTH_ALLOWED_EMAILS")),
+		allowDomains:       domainSet(os.Getenv("AF_OAUTH_ALLOWED_DOMAINS")),
+		allowEmailsFile:    os.Getenv("AF_OAUTH_ALLOWED_EMAILS_FILE"),
 	}
 
 	mux := http.NewServeMux()
+
+	// Health + CP-native Google OAuth (AUTH=oauth). The login page, OAuth
+	// endpoints and health check are reachable without a session (authGate
+	// exempts them); see oauth_google.go.
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("ok")) })
+	mux.HandleFunc("GET /login", cfg.handleLogin)
+	mux.HandleFunc("GET /oauth2/login", cfg.handleOAuthLogin)
+	mux.HandleFunc("GET /oauth2/callback", cfg.handleOAuthCallback)
+	mux.HandleFunc("GET /oauth2/logout", cfg.handleOAuthLogout)
 
 	// Identity — who the AuthGateway resolved this request to (and the raw
 	// gateway headers, for verifying the oauth2-proxy -> Caddy -> CP chain).
@@ -208,8 +237,22 @@ func main() {
 	// during active development.
 	mux.Handle("/", noStore(http.FileServer(http.Dir(cfg.consoleDir))))
 
+	// In oauth mode the CP is the edge (behind Funnel): gate every request on a
+	// verified Google session. dev/proxy modes keep the prior behavior (no gate;
+	// proxy trusts the upstream oauth2-proxy header).
+	var handler http.Handler = mux
+	if cfg.mgr.authMode == "oauth" {
+		if !cfg.oauthConfigured() {
+			log.Fatalf("AUTH=oauth requires GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET, AF_COOKIE_SECRET, PUBLIC_BASE_URL")
+		}
+		if len(cfg.allowEmails) == 0 && len(cfg.allowDomains) == 0 && cfg.allowEmailsFile == "" {
+			log.Printf("WARNING: AUTH=oauth with no allowlist (AF_OAUTH_ALLOWED_EMAILS / AF_OAUTH_ALLOWED_DOMAINS / AF_OAUTH_ALLOWED_EMAILS_FILE) — every login is denied")
+		}
+		handler = cfg.authGate(mux)
+	}
+
 	log.Printf("control-plane on %s (console=%s, ws image=%s, auth=%s)", cfg.addr, cfg.consoleDir, cfg.mgr.image, cfg.mgr.authMode)
-	srv := &http.Server{Addr: cfg.addr, Handler: logRequests(mux), ReadHeaderTimeout: 10 * time.Second}
+	srv := &http.Server{Addr: cfg.addr, Handler: logRequests(handler), ReadHeaderTimeout: 10 * time.Second}
 	if err := srv.ListenAndServe(); err != nil {
 		log.Fatal(err)
 	}
@@ -222,11 +265,47 @@ func envOr(k, def string) string {
 	return def
 }
 
+// decodeKey reads a cookie/HMAC key: base64 (std or url, padded or raw) if it
+// decodes, else the raw bytes. Empty => nil (oauth mode then fails the config
+// check rather than running with a zero-length key).
+func decodeKey(s string) []byte {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil
+	}
+	for _, enc := range []*base64.Encoding{base64.StdEncoding, base64.RawStdEncoding, base64.URLEncoding, base64.RawURLEncoding} {
+		if b, err := enc.DecodeString(s); err == nil && len(b) >= 16 {
+			return b
+		}
+	}
+	return []byte(s)
+}
+
+func parseDurationOr(s string, def time.Duration) time.Duration {
+	if d, err := time.ParseDuration(strings.TrimSpace(s)); err == nil && d > 0 {
+		return d
+	}
+	return def
+}
+
 // emailSet parses a CSV of emails into a lowercased lookup set (SUPER_ADMIN_EMAILS).
 func emailSet(s string) map[string]bool {
 	m := map[string]bool{}
 	for _, p := range strings.Split(s, ",") {
 		if p = strings.TrimSpace(strings.ToLower(p)); p != "" {
+			m[p] = true
+		}
+	}
+	return m
+}
+
+// domainSet parses a CSV of email domains into a lowercased lookup set, tolerating
+// a leading "@" on each entry (AF_OAUTH_ALLOWED_DOMAINS).
+func domainSet(s string) map[string]bool {
+	m := map[string]bool{}
+	for _, p := range strings.Split(s, ",") {
+		p = strings.TrimPrefix(strings.TrimSpace(strings.ToLower(p)), "@")
+		if p != "" {
 			m[p] = true
 		}
 	}
