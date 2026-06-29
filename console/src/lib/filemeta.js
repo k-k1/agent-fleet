@@ -83,6 +83,30 @@ export function isMarpDoc(source) {
   return /^\s*marp\s*:\s*true\s*$/m.test(m[1]);
 }
 
+// Image extensions the browser can render in an <img>. Maps to a lowercase
+// display format (mirrors CodeLeaf's FileKind.Image(format)). svg is text on the
+// wire but still previewed as an image (with a source toggle in the viewer).
+const IMAGE_EXT = {
+  png: "png", apng: "png",
+  jpg: "jpeg", jpeg: "jpeg", jfif: "jpeg",
+  gif: "gif",
+  webp: "webp",
+  avif: "avif",
+  bmp: "bmp",
+  ico: "ico",
+  svg: "svg",
+};
+
+// imageFormat returns the display format (png/jpeg/svg…) for an image path, or
+// "" when the path isn't a previewable image. Detection is by extension only —
+// the viewer sources the bytes from the download endpoint, which the browser
+// sniffs and decodes regardless of the Content-Type header.
+export function imageFormat(path) {
+  const name = baseName(path).toLowerCase();
+  const ext = name.includes(".") ? name.split(".").pop() : "";
+  return IMAGE_EXT[ext] || "";
+}
+
 export function langFor(path) {
   const name = baseName(path).toLowerCase();
   if (NAME_LANG[name]) return NAME_LANG[name];

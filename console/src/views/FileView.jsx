@@ -4,13 +4,14 @@ import hljs from "highlight.js/lib/common";
 // theme (the github-dark.css import was dark-only → unreadable in light mode).
 import { useApp } from "../state.jsx";
 import { api, downloadURL } from "../api.js";
-import { baseName, langFor, langLabel, humanSize, countLines, isMarpDoc } from "../lib/filemeta.js";
+import { baseName, langFor, langLabel, humanSize, countLines, isMarpDoc, imageFormat } from "../lib/filemeta.js";
 import FileIcon from "../components/FileIcon.jsx";
 import Icon from "../components/Icon.jsx";
 import { useSettings, fontStack } from "../lib/settings.js";
 import MarkdownView from "./MarkdownView.jsx";
 import MarpView from "./MarpView.jsx";
 import CodeView from "./CodeView.jsx";
+import ImageView from "./ImageView.jsx";
 
 // FileView shows a single file (read-only) with CodeLeaf-style affordances: an info
 // bar (name / language / size / line count / truncation) and syntax-highlighted
@@ -25,7 +26,12 @@ export default function FileView({ filePath: filePathProp }) {
   const [data, setData] = useState(null);
   const [err, setErr] = useState("");
   const [mdMode, setMdMode] = useState("preview"); // markdown only: 'preview' | 'source' | 'slides'
+  const [imgMode, setImgMode] = useState("preview"); // svg only: 'preview' | 'source'
+  const [imgDims, setImgDims] = useState(null); // image natural size {w,h}, reported by ImageView
   const [marks, setMarks] = useState(null); // git change marks for the gutter (repos/* only)
+
+  const imgFmt = imageFormat(filePath); // "" unless filePath is a previewable image
+  const isImage = !!imgFmt;
 
   // Fetch editor-style change marks for git-tracked working-tree files; the
   // viewer draws a change bar from them. Non-repo paths clear the marks.
@@ -46,6 +52,8 @@ export default function FileView({ filePath: filePathProp }) {
     let alive = true;
     setData(null);
     setErr("");
+    setImgDims(null);
+    setImgMode("preview");
     api(`api/fs/file?path=${encodeURIComponent(filePath)}`)
       .then((d) => {
         if (!alive) return;
@@ -96,10 +104,15 @@ export default function FileView({ filePath: filePathProp }) {
     <div className="fileview" style={viewerStyle}>
       <header className="view-head fileinfo">
         <span className="fi-name mono"><FileIcon name={baseName(filePath)} /> {baseName(filePath)}</span>
-        {isText && <span className="fi-tag">{langLabel(filePath)}</span>}
+        {isImage ? (
+          <span className="fi-tag">{imgFmt.toUpperCase()}</span>
+        ) : isText ? (
+          <span className="fi-tag">{langLabel(filePath)}</span>
+        ) : null}
         <span className="fi-meta muted">
           {humanSize(data?.size)}
-          {isText ? ` · ${lines} 行` : ""}
+          {isImage && imgDims ? ` · ${imgDims.w}×${imgDims.h}` : ""}
+          {!isImage && isText ? ` · ${lines} 行` : ""}
           {data?.truncated ? " · 先頭のみ" : ""}
         </span>
         {data?.lfs && (
@@ -134,6 +147,24 @@ export default function FileView({ filePath: filePathProp }) {
             </button>
           </span>
         )}
+        {isImage && isText && (
+          <span className="seg sm md-toggle">
+            <button
+              type="button"
+              className={"seg-btn" + (imgMode === "preview" ? " active" : "")}
+              onClick={() => setImgMode("preview")}
+            >
+              プレビュー
+            </button>
+            <button
+              type="button"
+              className={"seg-btn" + (imgMode === "source" ? " active" : "")}
+              onClick={() => setImgMode("source")}
+            >
+              ソース
+            </button>
+          </span>
+        )}
         <span className="fi-path muted" title={filePath}>
           {filePath}
         </span>
@@ -151,6 +182,8 @@ export default function FileView({ filePath: filePathProp }) {
         <pre className="filebody muted">({err})</pre>
       ) : data == null ? (
         <pre className="filebody muted">…</pre>
+      ) : isImage && (!isText || imgMode === "preview") ? (
+        <ImageView src={downloadURL(filePath)} alt={baseName(filePath)} onLoad={setImgDims} />
       ) : data.binary ? (
         <pre className="filebody muted">(バイナリ, {humanSize(data.size)})</pre>
       ) : showSlides ? (
