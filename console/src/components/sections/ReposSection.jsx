@@ -30,7 +30,7 @@ const freeName = (base, used) => {
 // switch branch, fetch, start a session in the repo, delete, or open Source
 // Control (→ main area). The dirty dot mirrors uncommitted changes.
 export default function ReposSection() {
-  const { reposKey, bumpRepos, bumpSessions, bumpFiles, revealInFiles, showSCM, showTerminal, scmRepo, mode, session } =
+  const { reposKey, bumpRepos, bumpSessions, bumpFiles, revealInFiles, showSCM, showTerminal, showTerminalSplit, scmRepo, mode, session } =
     useApp();
   const [repos, setRepos] = useState([]);
   const [showClone, setShowClone] = useState(false);
@@ -124,7 +124,9 @@ export default function ReposSection() {
               revealInFiles("repos/" + r.name);
               showSCM(r.name);
             }}
-            onLaunch={async (kind) => {
+            // split=true (middle-click) opens the new session in a freshly split
+            // pane instead of replacing the active pane's content.
+            onLaunch={async (kind, split) => {
               const suffix =
                 kind === "shell" ? "-sh" : kind === "opencode" ? "-oc" : kind === "codex" ? "-cx" : "";
               const base = repoSafeSession(r.name) + suffix;
@@ -140,7 +142,7 @@ export default function ReposSection() {
                 return;
               }
               bumpSessions();
-              showTerminal(name);
+              (split ? showTerminalSplit : showTerminal)(name);
             }}
           />
         ))}
@@ -187,7 +189,21 @@ function RepoRow({ r, active, selected, onOpen, onLaunch }) {
           {showLaunch && (
             <div className="launch-menu">
               {["claude", "opencode", "codex", "shell"].map((k) => (
-                <button key={k} onClick={() => { setShowLaunch(false); onLaunch(k); }}>
+                <button
+                  key={k}
+                  title="中クリックで新ペインに起動"
+                  onClick={() => { setShowLaunch(false); onLaunch(k); }}
+                  // Middle-click launches into a freshly split pane. Suppress the
+                  // mousedown default so the browser doesn't start autoscroll.
+                  onMouseDown={(e) => e.button === 1 && e.preventDefault()}
+                  onAuxClick={(e) => {
+                    if (e.button === 1) {
+                      e.preventDefault();
+                      setShowLaunch(false);
+                      onLaunch(k, true);
+                    }
+                  }}
+                >
                   <Icon name={kindIcon(k)} /> {kindLabel(k)}
                 </button>
               ))}
