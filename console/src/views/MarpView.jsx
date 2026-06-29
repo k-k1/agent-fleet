@@ -1,5 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
+// Custom Marp themes live as CSS files (each with a `/* @theme name */` header) in
+// ../marp-themes and are registered with the renderer so decks can select them via
+// `theme: <name>` frontmatter (on top of marp-core's built-in default/gaia/uncover).
+const THEME_CSS = import.meta.glob("../marp-themes/*.css", {
+  query: "?raw",
+  import: "default",
+  eager: true,
+});
+
 // MarpView renders a `marp: true` Markdown document as a real Marp slide deck and
 // presents it one slide at a time (stepper + fullscreen + keyboard). marp-core is
 // loaded lazily — only when a deck is actually opened — to keep it out of the main
@@ -28,11 +37,34 @@ const STAGE_CSS = `
 .marpit > section { width: 100%; }
 `;
 
+// Marp slides are a fixed 1280x720 frame and do NOT shrink content that overflows
+// (a long table just spills past the bottom). fitSection shrinks the slide's font
+// until its content fits the frame height — never enlarges, so sparse slides keep
+// the theme's intended size. Coordinates are in the frame's CSS px (the SVG scales
+// the whole frame to the container), so we compare against a constant 720.
+const FRAME_H = 720;
+function fitSection(section) {
+  if (!section) return;
+  section.style.fontSize = ""; // reset any prior fit before measuring
+  const base = parseFloat(getComputedStyle(section).fontSize) || 24;
+  const h0 = section.scrollHeight;
+  if (h0 <= FRAME_H) return;
+  // Linear first guess (content height ≈ ∝ font size), then refine: shrinking the
+  // font also unwraps lines so height usually drops a bit faster than linear.
+  let scale = (FRAME_H / h0) * 0.98;
+  section.style.fontSize = base * scale + "px";
+  for (let g = 0; g < 8 && section.scrollHeight > FRAME_H; g++) {
+    scale *= 0.96;
+    section.style.fontSize = base * scale + "px";
+  }
+}
+
 export default function MarpView({ source }) {
   const hostRef = useRef(null); // shadow host element
   const stageRef = useRef(null); // fullscreen target (wraps the host)
   const shadowRef = useRef(null);
   const slidesRef = useRef([]);
+  const wheelAtRef = useRef(0); // throttle wheel paging
   const [count, setCount] = useState(0);
   const [cur, setCur] = useState(0);
   const [err, setErr] = useState("");
@@ -60,6 +92,13 @@ export default function MarpView({ source }) {
           // html:false escapes raw HTML, script:false drops <script>, math:false
           // skips KaTeX — together they keep the injected markup safe and lighter.
           const marp = new Marp({ html: false, script: false, math: false });
+          for (const css of Object.values(THEME_CSS)) {
+            try {
+              marp.themeSet.add(css);
+            } catch {
+              // a malformed theme file shouldn't break rendering of the deck
+            }
+          }
           out = marp.render(source ?? "");
         } catch {
           setErr("スライドの描画に失敗しました");
@@ -68,6 +107,9 @@ export default function MarpView({ source }) {
         if (!alive) return;
         shadow.innerHTML = `<style>${STAGE_CSS}</style><style>${out.css}</style><div class="deck">${out.html}</div>`;
         const slides = [...shadow.querySelectorAll(".marpit > svg[data-marpit-svg], .marpit > section")];
+        // Auto-fit while every slide is still visible (before the display effect
+        // hides the non-current ones, which would zero out their measurements).
+        slides.forEach((el) => fitSection(el.querySelector("section") || el));
         slidesRef.current = slides;
         setCount(slides.length);
       })
@@ -117,6 +159,28 @@ export default function MarpView({ source }) {
     return () => stage.removeEventListener("keydown", onKey);
   }, [go, count]);
 
+  // Mouse-wheel paging: down → next, up → prev. Throttled so one flick doesn't
+  // skip many slides. Non-passive so we can stop the page from scrolling. A tall
+  // slide that overflows the stage still scrolls first; we only page at its edges.
+  useEffect(() => {
+    const stage = stageRef.current;
+    if (!stage) return;
+    function onWheel(e) {
+      const dy = e.deltaY;
+      if (!dy) return;
+      const atTop = stage.scrollTop <= 0;
+      const atBottom = stage.scrollTop + stage.clientHeight >= stage.scrollHeight - 1;
+      if ((dy > 0 && !atBottom) || (dy < 0 && !atTop)) return; // let it scroll first
+      e.preventDefault();
+      const now = e.timeStamp || performance.now();
+      if (now - wheelAtRef.current < 280) return;
+      wheelAtRef.current = now;
+      go((c) => c + (dy > 0 ? 1 : -1));
+    }
+    stage.addEventListener("wheel", onWheel, { passive: false });
+    return () => stage.removeEventListener("wheel", onWheel);
+  }, [go]);
+
   const toggleFs = useCallback(() => {
     const stage = stageRef.current;
     if (!stage) return;
@@ -147,7 +211,17 @@ export default function MarpView({ source }) {
         </button>
       </div>
       <div className="marp-stage" ref={stageRef} tabIndex={0}>
-        {err ? <div className="filebody muted">({err})</div> : <div className="marp-host" ref={hostRef} />}
+        {err ? (
+          <div className="filebody muted">({err})</div>
+        ) : (
+          <>
+            {/* Left / right click zones page back / forward; the cursor turns into a
+                ←/→ arrow over them (see styles.css). The middle is inert. */}
+            <div className="marp-nav left" onClick={() => go((c) => c - 1)} title="前のスライド" />
+            <div className="marp-host" ref={hostRef} />
+            <div className="marp-nav right" onClick={() => go((c) => c + 1)} title="次のスライド" />
+          </>
+        )}
       </div>
     </div>
   );
