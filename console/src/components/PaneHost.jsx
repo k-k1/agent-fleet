@@ -20,7 +20,7 @@ function useIsMobile() {
 // split column resizes its top/bottom heights. Every pane's terminal refits via its
 // own ResizeObserver (see term.js), so dragging either divider reflows the grids.
 export default function PaneHost() {
-  const { layout, activePaneId, setActivePane, splitRight, splitDown, closePane, setColRatios, setRowRatio, swapPanes } =
+  const { layout, activePaneId, setActivePane, splitRight, splitDown, closePane, setColRatios, setRowRatio, swapPanes, dropSplit } =
     useApp();
   const hostRef = useRef(null);
   const isMobile = useIsMobile();
@@ -90,6 +90,7 @@ export default function PaneHost() {
       onSplitDown={splitDown}
       onClose={closePane}
       onSwap={swapPanes}
+      onDropSplit={dropSplit}
     />
   );
 

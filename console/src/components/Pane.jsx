@@ -26,36 +26,53 @@ export default function Pane({
   onSplitDown,
   onClose,
   onSwap,
+  onDropSplit,
 }) {
   const isTerm = pane.kind === "terminal";
-  const [dropping, setDropping] = useState(false);
+  // null when not a drop target; otherwise the zone the pointer is in:
+  //   'center' → swap with the dragged pane; 'right'/'down' → tear the dragged
+  //   pane off into a new split (new right column / downward split of this column).
+  const [zone, setZone] = useState(null);
 
   const onDragStart = (e) => {
     e.dataTransfer.setData(DND, pane.id);
     e.dataTransfer.effectAllowed = "move";
   };
+  // Outer 30% of the splittable edges is a split zone; the center swaps. A split
+  // edge is only offered when this pane can grow that way (else it stays center).
+  const zoneFor = (e) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    const rd = canSplitRight ? (e.clientX - r.left) / r.width - 0.7 : -1;
+    const dd = canSplitDown ? (e.clientY - r.top) / r.height - 0.7 : -1;
+    if (rd < 0 && dd < 0) return "center";
+    return dd > rd ? "down" : "right";
+  };
   const onDragOver = (e) => {
     if (!canDrag || !e.dataTransfer.types.includes(DND)) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = "move";
-    if (!dropping) setDropping(true);
+    const z = zoneFor(e);
+    setZone((prev) => (prev === z ? prev : z));
   };
   const onDragLeave = (e) => {
     // Ignore bubbling from descendants; only clear when leaving the pane itself.
     if (e.currentTarget.contains(e.relatedTarget)) return;
-    setDropping(false);
+    setZone(null);
   };
   const onDrop = (e) => {
     if (!e.dataTransfer.types.includes(DND)) return;
     e.preventDefault();
-    setDropping(false);
+    const z = zone;
+    setZone(null);
     const src = e.dataTransfer.getData(DND);
-    if (src) onSwap(src, pane.id);
+    if (!src) return;
+    if (z === "right" || z === "down") onDropSplit(src, pane.id, z);
+    else onSwap(src, pane.id);
   };
 
   return (
     <div
-      className={"pane" + (active ? " active" : "") + (dropping ? " droptarget" : "")}
+      className={"pane" + (active ? " active" : "") + (zone ? " droptarget" : "")}
       onMouseDownCapture={() => onActivate(pane.id)}
       onDragOver={onDragOver}
       onDragLeave={onDragLeave}
@@ -99,6 +116,10 @@ export default function Pane({
           </button>
         )}
       </div>
+
+      {/* Drop hint while dragging a pane over this one: a full-pane ring for a
+          swap (center), or a half-pane box on the edge where the new split lands. */}
+      {zone && <div className={"drop-indicator zone-" + zone} />}
 
       {/* Terminal is always mounted while the pane exists; hidden when showing
           another kind so its socket + scrollback persist. */}

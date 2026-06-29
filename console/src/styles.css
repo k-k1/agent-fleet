@@ -1408,6 +1408,30 @@ textarea:focus {
   outline: 2px dashed var(--accent);
   outline-offset: -2px;
 }
+/* where the drop lands: full pane for a swap (center), or the half-pane the new
+   split tears off into (right column / bottom row). */
+.drop-indicator {
+  position: absolute;
+  pointer-events: none;
+  z-index: 5;
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  border: 2px solid var(--accent);
+}
+.drop-indicator.zone-center {
+  inset: 0;
+}
+.drop-indicator.zone-right {
+  top: 0;
+  bottom: 0;
+  right: 0;
+  left: 50%;
+}
+.drop-indicator.zone-down {
+  left: 0;
+  right: 0;
+  bottom: 0;
+  top: 50%;
+}
 /* draggable dividers: .col between columns (resize width), .row inside a split
    column (resize the two rows' heights). */
 .pane-divider {
