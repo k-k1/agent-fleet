@@ -119,6 +119,26 @@ if [ -f "$WS_NOTES" ]; then
     || echo "[entrypoint] WARN: failed to seed opencode AGENTS.md"
 fi
 
+# Gradle defaults for a shared, memory-constrained host (seed only when missing, so
+# user/project tuning persists). Real harm seen: builds ballooned RAM and the daemon
+# stayed resident (Gradle's idle-timeout defaults to 3h). Cap the heap, reap idle
+# daemons after 2min, and disable parallelism. Projects can override these in their
+# own gradle.properties (project + CLI flags take precedence over $HOME/.gradle).
+GRADLE_PROPS="$HOME/.gradle/gradle.properties"
+if [ ! -f "$GRADLE_PROPS" ]; then
+  mkdir -p "$HOME/.gradle"
+  cat > "$GRADLE_PROPS" <<'EOF'
+# agent-fleet defaults for a shared, memory-constrained workspace.
+# Override per project in the project's own gradle.properties when a build needs more.
+org.gradle.jvmargs=-Xmx768m -XX:MaxMetaspaceSize=384m
+org.gradle.daemon.idletimeout=120000
+org.gradle.parallel=false
+org.gradle.workers.max=2
+org.gradle.caching=true
+EOF
+  echo "[entrypoint] seeded $GRADLE_PROPS"
+fi
+
 # Toolchains: node (nvm, installed into the home volume) and java (pre-baked
 # Temurin). The selection lives per-workspace in toolchains.json, chosen in the
 # Console. We apply it HERE so the agent — and every tmux session it spawns —
