@@ -169,7 +169,8 @@ function fmtDate(s) {
   if (!s) return "";
   const d = new Date(s);
   if (isNaN(d)) return "";
-  return d.toLocaleDateString();
+  const p = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
 
 function Row({ label, children }) {
