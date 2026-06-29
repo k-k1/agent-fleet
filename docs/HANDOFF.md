@@ -201,7 +201,7 @@ CP のルーティングが user→対象コンテナを解決するだけ。
 依存: react/react-dom・@xterm/*・highlight.js・marked・dompurify・mermaid（遅延 import チャンク）・@vscode/codicons。
 
 - **IA**: 2 段バー（TOP=アプリ名/テナント picker/`whoami`/⚙設定/`shield`管理[super_admin]、WS=状態●/Start/Stop/**作り直す**）＋ 左ペイン3セクション常駐（Sessions / Repos / Files）＋ メインが選択で切替（端末 / Source Control / ファイルビュアー）。端末は常駐（非表示でも WS 維持）。
-- **設定モーダル**（`SettingsDialog.jsx`）: セグメント（接続 / Claude / 環境 / 表示）。管理は別モーダル `AdminDialog.jsx`（super_admin のみ、TopBar の `shield`）。
+- **設定モーダル**（`SettingsDialog.jsx`）: セグメント（接続 / Claude / 環境 / **MCP** / 表示）。**MCP**（`TokensTab.jsx`）= MCP 用 PAT の発行/一覧/失効（token は発行時 1 回だけ表示、scope=read|write|admin:dangerous を発行者 role 以下で選択、日付は `YYYY-MM-DD`）。管理は別モーダル `AdminDialog.jsx`（super_admin のみ、TopBar の `shield`）。
 - **共通資産**: `src/api.js`（`api()/rel()`/`X-AF-Tenant` 注入）・`src/term.js`（attach・コピペ）・`src/lib/settings.js`。
 - **新規セッション/clone はモーダル**（`NewSessionModal.jsx`/`NewRepoModal.jsx`）。shell を左・既定（shell 時はモデル/リポジトリ/dir 非表示）。**セッション名は自動入力**（`GET /api/sessions` の既存名から衝突回避 `-2`,`-3`）。モデル選択（既定/Opus/Sonnet/Haiku → `--model`、claude のみ）。
 - **CP バックエンド**: `POST /api/workspace/recreate`（`runtime.go` `handleWorkspaceRecreate`: 停止→**`home/repos` のみ破棄**→最新 image で再生成。login(別 mount)/接続(`secrets.enc`)は保持。Console「作り直す」が警告ダイアログ付きで呼ぶ）。Agent の各 UI 系エンドポイント（`/claude/settings`・`/env/toolchains`・`/env/ui-prefs`・`/connections/...`・`/fs/...`・`/repos/.../show`）は CP が `/api/...` で proxy。
