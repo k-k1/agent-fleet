@@ -5,8 +5,8 @@
   "type": "module",
   "description": "Agent Fleet Console — React + Vite frontend served statically by the Control Plane.",
   "scripts": {
-    "dev": "vite build --watch --mode development",
-    "build": "vite build",
+    "dev": "NODE_OPTIONS=--max-old-space-size=4096 vite build --watch --mode development",
+    "build": "NODE_OPTIONS=--max-old-space-size=4096 vite build",
     "preview": "vite preview"
   },
   "dependencies": {
