@@ -449,6 +449,42 @@ export function AppProvider({ children }) {
     [commit],
   );
 
+  // dropSplit "tears off" a dragged pane into a NEW split pane: it carries the
+  // source pane's content into a fresh pane (a new right column, or a downward
+  // split of the pane it was dropped onto) and resets the source pane to a blank
+  // terminal in place. dir: 'right' | 'down'; refId is the pane dropped onto (its
+  // column is the one split when dir==='down'). One commit, new pane made active.
+  const dropSplit = useCallback(
+    (srcId, refId, dir) => {
+      const cur = layoutRef.current;
+      const src = cur.cols.flatMap((c) => c.panes).find((p) => p.id === srcId);
+      if (!src) return;
+      const carried = { kind: src.kind, session: src.session, filePath: src.filePath, scmRepo: src.scmRepo };
+      const id = newPaneId();
+      const blankSrc = (p) => (p.id === srcId ? blankPane(p.id) : p); // reset origin
+      const newPane = { ...blankPane(id), ...carried };
+
+      if (dir === "right") {
+        if (cur.cols.length >= MAX_COLS) return;
+        const cols = cur.cols
+          .map((c) => ({ ...c, panes: c.panes.map(blankSrc) }))
+          .concat([{ id: newColId(), rowRatio: 0.5, panes: [newPane] }]);
+        commit({ ...cur, cols, colRatios: equalRatios(cols.length), activeId: id });
+        return;
+      }
+      // dir === 'down': split the dropped-onto pane's column into two rows.
+      const col = cur.cols.find((c) => c.panes.some((p) => p.id === refId));
+      if (!col || col.panes.length >= 2) return;
+      const cols = cur.cols.map((c) =>
+        c.id === col.id
+          ? { ...c, rowRatio: 0.5, panes: [...c.panes.map(blankSrc), newPane] }
+          : { ...c, panes: c.panes.map(blankSrc) },
+      );
+      commit({ ...cur, cols, activeId: id });
+    },
+    [commit],
+  );
+
   // cycleSession attaches the previous/next session (wrapping) to the active pane,
   // for Ctrl+PgUp/PgDn.
   const cycleSession = useCallback(
@@ -574,6 +610,7 @@ export function AppProvider({ children }) {
     setColRatios,
     setRowRatio,
     swapPanes,
+    dropSplit,
     showTerminal,
     showTerminalSplit,
     openInNewPane,
