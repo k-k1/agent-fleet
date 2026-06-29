@@ -18,6 +18,7 @@ every Claude / Codex / OpenCode session reads it at startup. Edit it in the repo
 
 ## Build memory (important — this has caused real incidents)
 The shared host is memory-constrained; build tools are the main cause of OOM trouble.
+- **No system `gradle` / `mvn` is installed — use the project wrapper** (`./gradlew`, `./mvnw`). A JDK is provided, so the wrapper fetches the version a project pins. Do not `apt install gradle`/`maven` (it will not work and is the wrong version). A project that lacks a wrapper cannot be bootstrapped here (no system `gradle`/`mvn` to run `gradle wrapper`) — commit the wrapper upstream instead.
 - **Gradle:** a conservative `~/.gradle/gradle.properties` is seeded for you — capped heap, a short daemon idle-timeout, no parallelism, limited workers. Projects may override it in their own `gradle.properties`.
   - Do not raise `org.gradle.jvmargs` heap unless a build genuinely needs it.
   - When you finish building, stop lingering daemons: `./gradlew --stop`.
