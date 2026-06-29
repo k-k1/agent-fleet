@@ -69,7 +69,7 @@ fi
 echo "==> build control-plane"
 ( cd "$ROOT/control-plane" && go build -o /tmp/af-cp . )
 
-echo "==> control-plane on $CP_ADDR  (console: http://localhost${CP_ADDR})"
+echo "==> control-plane on $CP_ADDR  (console: http://${CP_ADDR/#:/localhost:})"
 exec env \
   CP_ADDR="$CP_ADDR" \
   WS_IMAGE="$WS_IMAGE" \
