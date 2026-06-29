@@ -300,6 +300,16 @@ textarea:focus {
 .pane-section {
   border-bottom: 1px solid var(--border2);
 }
+/* The left pane is a flex column, so each section is a flex item that paints in
+   document order — a dropdown (起動 / session ⋯) escaping its row is otherwise
+   covered by the later section below (FILES), since its z-index is scoped to this
+   flex item. While a menu is open, lift the whole section into its own stacking
+   context above the following ones so the dropdown shows over them. */
+.pane-section:has(.launch-menu),
+.pane-section:has(.session-menu) {
+  position: relative;
+  z-index: 10;
+}
 .pane-head {
   display: flex;
   align-items: center;
