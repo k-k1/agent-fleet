@@ -41,27 +41,9 @@ RUN printf '[global]\nbreak-system-packages = true\n' > /etc/pip.conf
 # live once on the host (provisioned by deploy/local/provision-jvm.sh) and the
 # Control Plane bind-mounts that dir read-only at /usr/lib/jvm into every workspace
 # (WS_JVM_DIR), so they're shared. The entrypoint picks JAVA_HOME from there.
-COPY --from=agentbuild /out/workspace-agent /usr/local/bin/workspace-agent
-COPY entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN chmod +x /usr/local/bin/entrypoint.sh
-# opencode status plugin (seeded into ~/.config/opencode/plugin by the entrypoint).
-COPY opencode-plugin/ /usr/local/share/agent-fleet/opencode-plugin/
-
-# Workspace 利用ガイド（やってはいけないこと等）を各エージェントの「常時読込」位置へ。
-# claude は managed-policy ファイル /etc/claude-code/CLAUDE.md（毎セッション読込・除外不可）
-# として焼き込み、codex/opencode 分は home 永続なので entrypoint が毎起動で seed する。
-COPY workspace-notes.md /usr/local/share/agent-fleet/workspace-notes.md
-RUN mkdir -p /etc/claude-code \
- && cp /usr/local/share/agent-fleet/workspace-notes.md /etc/claude-code/CLAUDE.md
-
-# Optional: install a vendored rtk binary (static) so the claude PreToolUse hook
-# can route Bash through it for token savings. Other deployments leave vendor/
-# empty (only .gitkeep) → no rtk, and the entrypoint seeds the hook only when rtk
-# is present. The binary is git-ignored; run-dev.sh copies the host's rtk in.
-COPY vendor/ /opt/vendor/
-RUN if [ -f /opt/vendor/rtk ]; then \
-      install -m 0755 /opt/vendor/rtk /usr/local/bin/rtk && echo "installed rtk"; \
-    fi
+# ── 重い・滅多に変わらないレイヤを先に置く（Go toolchain / agent CLI / リネーム）。
+# entrypoint や workspace-notes など変更頻度の高い COPY はこの後ろに集約し、小修正で
+# これらがキャッシュ無効化されないようにする（layer ordering = ビルド時間最適化）。
 
 # Go toolchain from the official pinned tarball (decoupled from the agent builder
 # image; arch auto-detected). Pure-Go builds work as-is; cgo / node-gyp / native
@@ -102,6 +84,30 @@ ENV PATH="/home/dev/.local/bin:/home/dev/go/bin:/usr/local/go/bin:${PATH}"
 # ログインシェル(bash -l)は /etc/profile で PATH を上書きするため、端末で claude / go を
 # 確実に見つけられるよう profile.d でも前置する。
 RUN echo 'export PATH="$HOME/.local/bin:$HOME/go/bin:/usr/local/go/bin:$PATH"' > /etc/profile.d/claude-path.sh
+
+# ── ここから下は変更頻度の高い入力（COPY 主体・低コスト）。上の go/npm レイヤを
+# 無効化しないよう末尾に集約する。すべて root 操作なので USER dev の前に置く。
+COPY --from=agentbuild /out/workspace-agent /usr/local/bin/workspace-agent
+COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
+# opencode status plugin (seeded into ~/.config/opencode/plugin by the entrypoint).
+COPY opencode-plugin/ /usr/local/share/agent-fleet/opencode-plugin/
+
+# Workspace 利用ガイド（やってはいけないこと等）を各エージェントの「常時読込」位置へ。
+# claude は managed-policy ファイル /etc/claude-code/CLAUDE.md（毎セッション読込・除外不可）
+# として焼き込み、codex/opencode 分は home 永続なので entrypoint が毎起動で seed する。
+COPY workspace-notes.md /usr/local/share/agent-fleet/workspace-notes.md
+RUN mkdir -p /etc/claude-code \
+ && cp /usr/local/share/agent-fleet/workspace-notes.md /etc/claude-code/CLAUDE.md
+
+# Optional: install a vendored rtk binary (static) so the claude PreToolUse hook
+# can route Bash through it for token savings. Other deployments leave vendor/
+# empty (only .gitkeep) → no rtk, and the entrypoint seeds the hook only when rtk
+# is present. The binary is git-ignored; run-dev.sh copies the host's rtk in.
+COPY vendor/ /opt/vendor/
+RUN if [ -f /opt/vendor/rtk ]; then \
+      install -m 0755 /opt/vendor/rtk /usr/local/bin/rtk && echo "installed rtk"; \
+    fi
 
 USER dev
 WORKDIR /home/dev
