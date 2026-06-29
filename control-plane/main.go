@@ -107,6 +107,18 @@ func main() {
 	mux.HandleFunc("PUT /api/admin/tenants/{slug}/limits", cfg.handleAdminSetTenantLimits)
 	mux.HandleFunc("PUT /api/admin/user-limits", cfg.handleAdminSetUserLimit)
 
+	// Personal Access Tokens (Console-issued) for the MCP endpoint (docs/0006).
+	mux.HandleFunc("GET /api/pat", cfg.handlePATList)
+	mux.HandleFunc("POST /api/pat", cfg.handlePATCreate)
+	mux.HandleFunc("DELETE /api/pat/{id}", cfg.handlePATRevoke)
+
+	// MCP endpoint (P3-6) — opt-in. Bearer PAT auth (not the gateway header), so
+	// the ingress must pass /mcp through without oauth2-proxy.
+	if envOr("AF_MCP_ENABLED", "") == "true" {
+		mux.HandleFunc("/mcp", cfg.handleMCP)
+		log.Printf("MCP endpoint enabled at /mcp")
+	}
+
 	// Workspace lifecycle (local Docker Runtime adapter).
 	mux.HandleFunc("GET /api/workspace", cfg.handleWorkspaceGet)
 	mux.HandleFunc("POST /api/workspace/start", cfg.handleWorkspaceStart)
@@ -121,6 +133,11 @@ func main() {
 	mux.HandleFunc("GET /api/sessions/archived", cfg.proxyAgentREST)
 	mux.HandleFunc("POST /api/sessions/{name}/archive", cfg.proxyAgentREST)
 	mux.HandleFunc("POST /api/sessions/{name}/restore", cfg.proxyAgentREST)
+	// Programmatic drive I/O (docs/0006 P3-6 E) — proxied to the Agent. Also used
+	// by the MCP tools, which call the Agent directly via the resolved runtime.
+	mux.HandleFunc("POST /api/sessions/{name}/input", cfg.proxyAgentREST)
+	mux.HandleFunc("GET /api/sessions/{name}/status", cfg.proxyAgentREST)
+	mux.HandleFunc("GET /api/sessions/{name}/output", cfg.proxyAgentREST)
 
 	// Repository ops — proxied to the Workspace Agent (/api stripped -> /repos*).
 	mux.HandleFunc("GET /api/repos", cfg.proxyAgentREST)

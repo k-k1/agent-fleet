@@ -1,0 +1,172 @@
+package main
+
+import (
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
+	"net/http"
+	"strings"
+	"time"
+)
+
+// Personal Access Tokens (docs/decisions/0006, P3-6). A user issues PATs in the
+// Console; they authenticate the MCP endpoint. The token carries the issuer's
+// identity+membership; role is resolved live at call time. scope is fixed at
+// issuance and clamped to the issuer's ceiling.
+//
+// scope ladder (read < write < admin:dangerous): a token grants its level and
+// every level below it. member/drive read tools need `read`, send_to_session
+// needs `write`; admin mutating tools (P3-6 later phases) need higher levels.
+const (
+	scopeRead      = "read"
+	scopeWrite     = "write"
+	scopeDangerous = "admin:dangerous"
+)
+
+func scopeRank(s string) int {
+	switch s {
+	case scopeRead:
+		return 1
+	case scopeWrite:
+		return 2
+	case scopeDangerous:
+		return 3
+	}
+	return 0
+}
+
+// ceilingScope is the highest scope a person may mint, from their deployment role.
+func ceilingScope(role string) string {
+	if role == "super_admin" {
+		return scopeDangerous
+	}
+	return scopeWrite
+}
+
+// clampScope normalizes a requested scope and caps it at the ceiling.
+func clampScope(requested, ceiling string) string {
+	if scopeRank(requested) == 0 {
+		requested = scopeRead
+	}
+	if scopeRank(requested) > scopeRank(ceiling) {
+		return ceiling
+	}
+	return requested
+}
+
+// newPATToken mints a fresh token and its storage hash. The plaintext is shown
+// to the user exactly once; only the hash is persisted.
+func newPATToken() (token, hash string) {
+	var b [32]byte
+	_, _ = rand.Read(b[:])
+	token = "af_pat_" + base64.RawURLEncoding.EncodeToString(b[:])
+	return token, hashPAT(token)
+}
+
+func hashPAT(token string) string {
+	sum := sha256.Sum256([]byte(strings.TrimSpace(token)))
+	return hex.EncodeToString(sum[:])
+}
+
+// handlePATList (GET /api/pat) — the caller's tokens (no secrets/hashes).
+func (c config) handlePATList(w http.ResponseWriter, r *http.Request) {
+	ident, aerr := c.mgr.identityFor(r.Context(), r)
+	if aerr != nil {
+		writeAPIErr(w, aerr)
+		return
+	}
+	pats, err := c.mgr.store.ListPATsByIdentity(r.Context(), ident.ID)
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	out := make([]map[string]any, 0, len(pats))
+	for _, p := range pats {
+		out = append(out, map[string]any{
+			"id": p.ID, "name": p.Name, "scope": p.Scope,
+			"created_at": p.CreatedAt, "expires_at": p.ExpiresAt,
+			"revoked_at": p.RevokedAt, "last_used_at": p.LastUsedAt,
+			"revoked": p.RevokedAt != "",
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"tokens": out, "ceiling": ceilingScope(ident.Role)})
+}
+
+// handlePATCreate (POST /api/pat {name, scope, tenant, ttl_days}) mints a token.
+// scope is clamped to the issuer's ceiling. ttl_days: omitted/0 = 90 days,
+// negative = never expires, positive = that many days. Returns the secret once.
+func (c config) handlePATCreate(w http.ResponseWriter, r *http.Request) {
+	ident, aerr := c.mgr.identityFor(r.Context(), r)
+	if aerr != nil {
+		writeAPIErr(w, aerr)
+		return
+	}
+	var body struct {
+		Name    string `json:"name"`
+		Scope   string `json:"scope"`
+		Tenant  string `json:"tenant"`
+		TTLDays *int   `json:"ttl_days"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+
+	ms, aerr := c.mgr.membershipsFor(r.Context(), ident)
+	if aerr != nil {
+		writeAPIErr(w, aerr)
+		return
+	}
+	tenantSel := body.Tenant
+	if tenantSel == "" {
+		tenantSel = r.Header.Get("X-AF-Tenant") // Console injects the active tenant
+	}
+	mv, aerr := selectMembership(ms, tenantSel)
+	if aerr != nil {
+		writeAPIErr(w, aerr)
+		return
+	}
+
+	scope := clampScope(body.Scope, ceilingScope(ident.Role))
+	expires := ""
+	switch {
+	case body.TTLDays == nil || *body.TTLDays == 0:
+		expires = time.Now().UTC().AddDate(0, 0, 90).Format(time.RFC3339)
+	case *body.TTLDays > 0:
+		expires = time.Now().UTC().AddDate(0, 0, *body.TTLDays).Format(time.RFC3339)
+		// negative => never expires (expires stays "")
+	}
+
+	token, hash := newPATToken()
+	p := PAT{
+		ID:           newID(),
+		IdentityID:   ident.ID,
+		MembershipID: mv.MembershipID,
+		Scope:        scope,
+		Name:         strings.TrimSpace(body.Name),
+		CreatedAt:    nowTS(),
+		ExpiresAt:    expires,
+	}
+	if err := c.mgr.store.CreatePAT(r.Context(), p, hash); err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"token": token, // shown once
+		"id":    p.ID, "name": p.Name, "scope": scope,
+		"tenant": mv.TenantSlug, "expires_at": expires,
+	})
+}
+
+// handlePATRevoke (DELETE /api/pat/{id}) revokes one of the caller's tokens.
+func (c config) handlePATRevoke(w http.ResponseWriter, r *http.Request) {
+	ident, aerr := c.mgr.identityFor(r.Context(), r)
+	if aerr != nil {
+		writeAPIErr(w, aerr)
+		return
+	}
+	if err := c.mgr.store.RevokePAT(r.Context(), r.PathValue("id"), ident.ID); err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}

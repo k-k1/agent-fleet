@@ -1,7 +1,9 @@
 # P3-6 実装プラン — MCP（管理面 + 作業面を一体・E が主目的）
 
-> ▶ **計画（未着手）** — 設計確定は [decisions/0006](../decisions/0006-mcp-unified.md)、フェーズ要約は [roadmap P3-6](../roadmap.md#p3-6-mcp-による-agent-fleet-制御)。
+> ▶ **段1 backend 実装済・未ライブ検証** — 設計確定は [decisions/0006](../decisions/0006-mcp-unified.md)、フェーズ要約は [roadmap P3-6](../roadmap.md#p3-6-mcp-による-agent-fleet-制御)。
 > 完了したらこのバナーを 🗄 に替え、現状は [HANDOFF](../HANDOFF.md) を正とする。
+>
+> **実装状況（段1）**: CP（migration 0006 / PAT store+API / `/mcp` Streamable HTTP / member-drive 4 ツール）・Agent（`/sessions/{name}/input|status|output`）・Console（設定→MCP タブで PAT 発行/失効）を実装。`go build` 全通過。**isolated dev E2E green**（別ポート+temp DB、live 非接触）: migration 適用 / `/mcp` の AF_MCP_ENABLED ゲート（有効→動作・無効→404）/ PAT 発行（once 表示・hash 非漏洩・既定 90 日）/ initialize+tools/list / **scope フィルタ（write=4 ツール・read=3、send_to_session は read で unauthorized）** / no・bad・revoked トークン=401。**残＝ライブ image E2E**（実 tmux send-keys + jsonl output）: workspace image 再ビルド + 運用者 Workspace Stop→Start（＝稼働セッション喪失）を要すため未実施。
 
 CP に `/mcp`（Streamable HTTP）を 1 本生やし、PAT で identity+membership+role を解決して
 **member（自分の遠隔セッション駆動＝E）と admin（fleet 運用）を role で出し分ける**。

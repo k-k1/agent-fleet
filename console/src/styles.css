@@ -1949,6 +1949,68 @@ textarea:focus {
   color: var(--fg);
 }
 
+/* PAT / MCP tokens (docs/0006 P3-6) */
+.ds-row input[type="text"] {
+  font-size: 13px;
+  padding: 4px 8px;
+  background: var(--btn);
+  border: 1px solid var(--btn-border);
+  border-radius: 5px;
+  color: var(--fg);
+  min-width: 200px;
+}
+.pat-issued {
+  margin: 10px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: var(--active-bg);
+}
+.pat-issued-head {
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+.pat-secret {
+  display: block;
+  word-break: break-all;
+  font-size: 12px;
+  padding: 6px 8px;
+  background: var(--btn);
+  border-radius: 4px;
+}
+.pat-issued-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+.pat-form {
+  margin: 6px 0 4px;
+}
+.pat-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 8px;
+  font-size: 12px;
+}
+.pat-table th,
+.pat-table td {
+  text-align: left;
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--btn-border);
+}
+.pat-table th {
+  color: var(--muted, #888);
+  font-weight: 500;
+}
+.pat-revoked {
+  opacity: 0.5;
+}
+.btn-ghost {
+  background: transparent;
+  border: 1px solid var(--btn-border);
+  color: var(--fg);
+}
+
 /* danger button (recreate / destructive) */
 .danger-btn {
   background: #4a2222;

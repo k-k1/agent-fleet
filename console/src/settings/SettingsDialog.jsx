@@ -4,6 +4,7 @@ import ConnectionsTab from "./ConnectionsTab.jsx";
 import DisplayTab from "./DisplayTab.jsx";
 import ClaudeTab from "./ClaudeTab.jsx";
 import EnvTab from "./EnvTab.jsx";
+import TokensTab from "./TokensTab.jsx";
 import Modal from "../components/Modal.jsx";
 
 // SettingsDialog holds the per-user settings (Connections / Claude / 環境 / 表示).
@@ -18,6 +19,7 @@ export default function SettingsDialog() {
     ["connections", "接続"],
     ["claude", "Claude"],
     ["env", "環境"],
+    ["tokens", "MCP"],
     ["display", "表示"],
   ];
 
@@ -40,6 +42,7 @@ export default function SettingsDialog() {
           {section === "connections" && <ConnectionsTab />}
           {section === "claude" && <ClaudeTab />}
           {section === "env" && <EnvTab />}
+          {section === "tokens" && <TokensTab />}
           {section === "display" && <DisplayTab />}
         </div>
       </div>
