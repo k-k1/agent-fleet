@@ -341,7 +341,7 @@ textarea:focus {
   flex: 1;
 }
 .preview-port {
-  width: 64px;
+  width: 80px;
   padding: 3px 8px;
   background: var(--panel);
   color: var(--fg);
@@ -351,6 +351,44 @@ textarea:focus {
 }
 .preview-port:disabled {
   opacity: 0.5;
+}
+
+/* port preview popover: one button on the bar, a small panel on click — so it
+   never wraps to a second line on a phone. */
+.ws-preview {
+  position: relative;
+}
+.ws-preview-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 50;
+  width: min(86vw, 300px);
+  padding: 12px;
+  background: var(--panel2, var(--panel));
+  border: 1px solid var(--border2, var(--border));
+  border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+}
+.ws-preview-pop .pv-label {
+  display: block;
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+.ws-preview-pop .pv-row {
+  display: flex;
+  gap: 6px;
+}
+.ws-preview-pop .preview-port {
+  flex: 1;
+  width: auto;
+}
+.ws-preview-pop .pv-hint {
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.5;
 }
 
 .body {
