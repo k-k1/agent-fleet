@@ -20,10 +20,14 @@ function useIsMobile() {
 // split column resizes its top/bottom heights. Every pane's terminal refits via its
 // own ResizeObserver (see term.js), so dragging either divider reflows the grids.
 export default function PaneHost() {
-  const { layout, activePaneId, setActivePane, splitRight, splitDown, closePane, setColRatios, setRowRatio, swapPanes, dropSplit } =
+  const { layout, activePaneId, setActivePane, splitRight, splitDown, closePane, setColRatios, setRowRatio, swapPanes, dropSplit, sessions } =
     useApp();
   const hostRef = useRef(null);
   const isMobile = useIsMobile();
+
+  // Look up a pane's session so the terminal header can render it like the
+  // left-pane Sessions row (kind badge + name + state) instead of bare text.
+  const sessionByName = new Map((sessions || []).map((s) => [s.name, s]));
 
   const cols = layout.cols;
   const colCount = cols.length;
@@ -91,6 +95,7 @@ export default function PaneHost() {
       onClose={closePane}
       onSwap={swapPanes}
       onDropSplit={dropSplit}
+      sessionMeta={pane.session ? sessionByName.get(pane.session) : null}
     />
   );
 

@@ -27,6 +27,7 @@ export default function Pane({
   onClose,
   onSwap,
   onDropSplit,
+  sessionMeta,
 }) {
   const isTerm = pane.kind === "terminal";
   // null when not a drop target; otherwise the zone the pointer is in:
@@ -124,7 +125,7 @@ export default function Pane({
       {/* Terminal is always mounted while the pane exists; hidden when showing
           another kind so its socket + scrollback persist. */}
       <div className="view" hidden={!isTerm}>
-        <TerminalView paneId={pane.id} session={pane.session} active={(single || active) && isTerm} />
+        <TerminalView paneId={pane.id} session={pane.session} sessionMeta={sessionMeta} active={(single || active) && isTerm} />
       </div>
       {pane.kind === "scm" && <SourceControlView repo={pane.scmRepo} />}
       {pane.kind === "file" && <FileView filePath={pane.filePath} />}
