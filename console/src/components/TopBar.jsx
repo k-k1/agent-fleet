@@ -12,7 +12,20 @@ export default function TopBar() {
   const me = whoami?.email || whoami?.user || "";
   const canLogout = whoami?.auth_mode === "oauth"; // CP-native session we can clear
   const [menuOpen, setMenuOpen] = useState(false);
+  const [fullscreen, setFullscreen] = useState(false);
   const acctRef = useRef(null);
+
+  // Global fullscreen toggle (whole app). Tracks the browser's fullscreen state so
+  // the icon/label flips even when fullscreen is exited via Esc.
+  useEffect(() => {
+    const onFs = () => setFullscreen(!!document.fullscreenElement);
+    document.addEventListener("fullscreenchange", onFs);
+    return () => document.removeEventListener("fullscreenchange", onFs);
+  }, []);
+  const toggleFullscreen = () => {
+    if (document.fullscreenElement) document.exitFullscreen?.();
+    else document.documentElement.requestFullscreen?.().catch(() => {});
+  };
 
   // Close the account menu on an outside click or Escape.
   useEffect(() => {
@@ -43,6 +56,13 @@ export default function TopBar() {
         Agent Fleet <span className="brand-sub">Console</span>
       </div>
       <div className="topbar-right">
+        <button
+          className="gear fs-toggle"
+          title={fullscreen ? "全画面解除" : "全画面表示"}
+          onClick={toggleFullscreen}
+        >
+          <Icon name={fullscreen ? "screen-normal" : "screen-full"} />
+        </button>
         {showPicker && (
           <label className="tenant-pick">
             <span className="lbl">Tenant</span>
