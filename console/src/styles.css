@@ -832,7 +832,52 @@ textarea:focus {
   color: var(--accent);
   font-weight: 600;
 }
-/* fixed-width chevron + icon columns so names line up regardless of folder/file. */
+/* drag-and-drop upload targets: highlight the hovered folder (or whole tree). */
+.fstree.drop-root {
+  outline: 2px dashed var(--accent);
+  outline-offset: -2px;
+  border-radius: 4px;
+}
+.fsrow.drop-hover {
+  background: var(--active-bg);
+  outline: 1px dashed var(--accent);
+}
+
+/* changes view: grouped-by-repo list with a status badge per file. */
+.changeslist .chg-group > .chg-repo {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+  padding: 4px 6px 2px;
+  text-transform: none;
+}
+.changeslist .chg-group > ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.changeslist .chg-row {
+  padding-left: 6px;
+}
+.chg-badge {
+  display: inline-block;
+  width: 1.2em;
+  text-align: center;
+  margin-right: 4px;
+  font-weight: 700;
+  font-size: 11px;
+}
+.chg-badge.st-add {
+  color: #2ea043;
+}
+.chg-badge.st-mod {
+  color: #1f6feb;
+}
+.chg-badge.st-del {
+  color: #f85149;
+}
+
+/* file-type icons: colorful brand SVGs (VS Code icons set) + monochrome codicon */
 .fsrow .fs-chev {
   display: inline-block;
   width: 0.9em;
@@ -1144,6 +1189,18 @@ textarea:focus {
   white-space: nowrap;
   font-size: 11px;
 }
+/* download affordance sits at the end of the info bar (after the right-aligned
+   path, which already takes the remaining width). */
+.fi-dl {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  color: var(--muted);
+  text-decoration: none;
+}
+.fi-dl:hover {
+  color: var(--fg);
+}
 .codeview-wrap {
   flex: 1;
   display: flex;
@@ -1189,20 +1246,48 @@ textarea:focus {
   border-bottom: 1px solid rgba(150, 185, 215, 0.35);
   pointer-events: none;
 }
-.codeview .gutter {
-  margin: 0;
-  padding: 8px 8px 8px 12px;
+/* sticky gutter container: optional change bar + line numbers, pinned together
+   while the code scrolls horizontally. */
+.codeview .gutterwrap {
   position: sticky;
   left: 0;
-  text-align: right;
-  color: #5a5a5a;
+  display: flex;
+  align-items: stretch;
   background: var(--panel2);
   border-right: 1px solid var(--border2);
   user-select: none;
+}
+.codeview .gutter {
+  margin: 0;
+  padding: 8px 8px 8px 10px;
+  text-align: right;
+  color: #5a5a5a;
   white-space: pre;
   font-family: var(--viewer-font, var(--mono));
   font-size: var(--viewer-size, 12px);
   line-height: 1.55;
+}
+/* change bar: one block per line, same metrics as the gutter so cells align. */
+.codeview .changebar {
+  margin: 0;
+  padding: 8px 0 8px 0;
+  font-size: var(--viewer-size, 12px);
+  line-height: 1.55;
+  width: 3px;
+}
+.codeview .changebar .cb {
+  display: block;
+  height: 1.55em;
+}
+.codeview .changebar .cb-add {
+  background: #2ea043;
+}
+.codeview .changebar .cb-mod {
+  background: #1f6feb;
+}
+/* a deletion between lines: a small wedge at the top edge of the line. */
+.codeview .changebar .cb-del {
+  box-shadow: 0 -2px 0 -0.5px #f85149;
 }
 .codeview .code {
   margin: 0;

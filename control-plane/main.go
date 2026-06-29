@@ -188,6 +188,10 @@ func main() {
 	// File browser (docs/17 P3-5 段2) — proxied to the Agent.
 	mux.HandleFunc("GET /api/fs/tree", cfg.proxyAgentREST)
 	mux.HandleFunc("GET /api/fs/file", cfg.proxyAgentREST)
+	mux.HandleFunc("GET /api/fs/download", cfg.proxyAgentREST)
+	mux.HandleFunc("POST /api/fs/upload", cfg.proxyAgentREST)
+	mux.HandleFunc("GET /api/fs/changes", cfg.proxyAgentREST)
+	mux.HandleFunc("GET /api/fs/linemarks", cfg.proxyAgentREST)
 
 	// Claude settings (Remote Control / notifications / RTK) — proxied to the Agent.
 	mux.HandleFunc("GET /api/claude/settings", cfg.proxyAgentREST)

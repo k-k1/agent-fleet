@@ -72,9 +72,14 @@ func main() {
 	mux.HandleFunc("POST /repos/{name}/unstage", handleRepoUnstage)
 	mux.HandleFunc("POST /repos/{name}/discard", handleRepoDiscard)
 	mux.HandleFunc("POST /repos/{name}/commit", handleRepoCommit)
-	// Read-only file browser (docs/17 P3-5 段2).
+	// File browser (docs/17 P3-5 段2 + FILES 改善): read tree/file, download raw,
+	// upload into a dir, git-changes filter + viewer line marks.
 	mux.HandleFunc("GET /fs/tree", handleFSTree)
 	mux.HandleFunc("GET /fs/file", handleFSFile)
+	mux.HandleFunc("GET /fs/download", handleFSDownload)
+	mux.HandleFunc("POST /fs/upload", handleFSUpload)
+	mux.HandleFunc("GET /fs/changes", handleFSChanges)
+	mux.HandleFunc("GET /fs/linemarks", handleFSLineMarks)
 
 	// Claude settings (Remote Control / notifications / RTK hook) — Console toggles.
 	mux.HandleFunc("GET /claude/settings", handleClaudeSettingsGet)

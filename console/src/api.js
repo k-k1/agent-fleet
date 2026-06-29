@@ -73,6 +73,30 @@ export function previewURL(port) {
   return u.toString();
 }
 
+// Build a download URL for a home-relative file. Opened as a top-level
+// navigation (anchor), so — like preview/terminal — the tenant rides as a query
+// param (a download click can't carry the X-AF-Tenant header fetch() injects).
+export function downloadURL(path) {
+  const u = new URL(rel("api/fs/download"));
+  u.searchParams.set("path", path);
+  if (selectedTenant) u.searchParams.set("tenant", selectedTenant);
+  return u.toString();
+}
+
+// Upload files into a home-relative directory (multipart, field "file"). The
+// global fetch wrapper adds X-AF-Tenant. Don't set Content-Type — the browser
+// sets the multipart boundary. With overwrite=false a name collision returns
+// HTTP 409 + {conflicts:[…]}; the caller then confirms and resends overwrite.
+export function uploadFiles(dir, files, { overwrite = false } = {}) {
+  const fd = new FormData();
+  for (const f of files) fd.append("file", f, f.name);
+  const qs = new URLSearchParams({ path: dir });
+  if (overwrite) qs.set("overwrite", "1");
+  return fetch(rel(`api/fs/upload?${qs.toString()}`), { method: "POST", body: fd }).then((r) =>
+    r.json().then((j) => ({ status: r.status, ...j })).catch(() => ({ status: r.status })),
+  );
+}
+
 // Build the terminal WebSocket URL for a session under the current mount, with
 // the tenant carried as a query param (headers aren't available on WS).
 export function wsURL(session) {
