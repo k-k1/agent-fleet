@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useApp } from "../state.jsx";
 import { api, apiJSON, raw, rawJSON } from "../api.js";
 import Icon from "../components/Icon.jsx";
@@ -266,28 +266,122 @@ function CommitDetail({ commit }) {
   );
 }
 
+// ---- diff rendering: split a unified diff into per-file blocks (codeleaf-style
+// fold), each with old/new line-number gutters parsed from the @@ hunk headers ----
+
+// splitDiffFiles breaks a unified diff into one entry per file — each `diff --git`
+// starts a new file. A bare diff with no such header becomes a single entry.
+function splitDiffFiles(text) {
+  const files = [];
+  let cur = null;
+  for (const line of text.split("\n")) {
+    if (line.startsWith("diff --git ") || line.startsWith("diff --cc ") || !cur) {
+      cur = { lines: [] };
+      files.push(cur);
+    }
+    cur.lines.push(line);
+  }
+  for (const f of files) f.path = diffPath(f.lines);
+  return files;
+}
+
+// diffPath picks the display path: prefer the new side (+++ b/…), fall back to the
+// old side (--- a/…) for deletions, then the `diff --git` header.
+function diffPath(lines) {
+  let plus = "", minus = "", git = "";
+  for (const l of lines) {
+    if (l.startsWith("+++ ")) plus = l.slice(4).replace(/^b\//, "").replace(/\t.*$/, "");
+    else if (l.startsWith("--- ")) minus = l.slice(4).replace(/^a\//, "").replace(/\t.*$/, "");
+    else if (l.startsWith("diff --git ")) git = l;
+  }
+  if (plus && plus !== "/dev/null") return plus;
+  if (minus && minus !== "/dev/null") return minus;
+  const m = git.match(/ b\/(.+)$/);
+  return m ? m[1] : git.replace(/^diff --(git|cc) /, "");
+}
+
+// diffRows turns a file's lines into renderable rows, tracking old/new line numbers
+// across hunks. Redundant file-meta lines (diff/index/---/+++/mode) are dropped —
+// the fold header already shows the path; a binary/empty body yields no code rows.
+function diffRows(lines) {
+  const rows = [];
+  let oldLn = 0, newLn = 0;
+  for (const text of lines) {
+    if (text.startsWith("@@")) {
+      const m = text.match(/@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+      if (m) { oldLn = +m[1]; newLn = +m[2]; }
+      rows.push({ type: "hunk", text });
+    } else if (text.startsWith("Binary ")) {
+      rows.push({ type: "meta", text });
+    } else if (
+      text.startsWith("diff ") || text.startsWith("index ") ||
+      text.startsWith("+++ ") || text.startsWith("--- ") ||
+      text.startsWith("new file") || text.startsWith("deleted file") ||
+      text.startsWith("old mode") || text.startsWith("new mode") ||
+      text.startsWith("similarity ") || text.startsWith("rename ") || text.startsWith("copy ")
+    ) {
+      // redundant meta — skip
+    } else if (text.startsWith("+")) {
+      rows.push({ type: "add", newLn, text });
+      newLn++;
+    } else if (text.startsWith("-")) {
+      rows.push({ type: "del", oldLn, text });
+      oldLn++;
+    } else {
+      rows.push({ type: "ctx", oldLn, newLn, text });
+      oldLn++;
+      newLn++;
+    }
+  }
+  return rows;
+}
+
 function Diff({ text, embedded, truncated }) {
-  if (!text)
-    return embedded ? (
-      <pre className="diff muted">(差分なし)</pre>
-    ) : (
-      <pre className="diff muted">ファイルまたはコミットを選ぶと差分を表示</pre>
-    );
+  // Real diffs carry an @@ hunk or a `diff --git` header; anything else (placeholder
+  // "(差分なし)", error strings, empty) is shown as a plain message, not parsed.
+  if (!text || !/(^|\n)(@@ |diff --(git|cc) )/.test(text)) {
+    const msg = text && text.trim() ? text : embedded ? "(差分なし)" : "ファイルまたはコミットを選ぶと差分を表示";
+    return <pre className="diff muted">{msg}</pre>;
+  }
+  const files = splitDiffFiles(text);
   return (
-    <pre className="diff">
-      {text.split("\n").map((line, i) => {
-        let cls = "";
-        if (line.startsWith("+") && !line.startsWith("+++")) cls = "add";
-        else if (line.startsWith("-") && !line.startsWith("---")) cls = "del";
-        else if (line.startsWith("@@")) cls = "hunk";
-        else if (line.startsWith("diff --git") || line.startsWith("diff ")) cls = "fileh";
-        return (
-          <span key={i} className={"dl " + cls}>
-            {line + "\n"}
-          </span>
-        );
-      })}
-      {truncated && <span className="dl muted">{"…（差分が大きいため省略）\n"}</span>}
-    </pre>
+    <div className="diff-files">
+      {files.map((f, i) => (
+        <FileDiff key={(f.path || "") + i} file={f} />
+      ))}
+      {truncated && <div className="diff-trunc">…（差分が大きいため省略）</div>}
+    </div>
+  );
+}
+
+// FileDiff: one foldable file block — a sticky header (chevron + path + ±counts)
+// over a line-numbered patch body. Defaults open; click the header to collapse.
+function FileDiff({ file }) {
+  const [open, setOpen] = useState(true);
+  const rows = useMemo(() => diffRows(file.lines), [file.lines]);
+  const adds = rows.reduce((n, r) => n + (r.type === "add" ? 1 : 0), 0);
+  const dels = rows.reduce((n, r) => n + (r.type === "del" ? 1 : 0), 0);
+  return (
+    <section className="filediff">
+      <button className="filediff-head" type="button" onClick={() => setOpen((o) => !o)}>
+        <Icon name={open ? "chevron-down" : "chevron-right"} />
+        <span className="filediff-path" title={file.path}>{file.path || "(diff)"}</span>
+        <span className="filediff-stat">
+          {adds > 0 && <span className="add">+{adds}</span>}
+          {dels > 0 && <span className="del">−{dels}</span>}
+        </span>
+      </button>
+      {open && (
+        <pre className="diff-body">
+          {rows.map((r, i) => (
+            <span key={i} className={"dl " + (r.type === "ctx" ? "" : r.type === "meta" ? "fileh" : r.type)}>
+              <span className="dl-num">{r.oldLn ?? ""}</span>
+              <span className="dl-num">{r.newLn ?? ""}</span>
+              <span className="dl-text">{r.text}</span>
+            </span>
+          ))}
+        </pre>
+      )}
+    </section>
   );
 }
