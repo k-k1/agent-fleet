@@ -271,7 +271,14 @@ export function focusTerm() {
 // attach opens a fresh WebSocket to the session's PTY, replacing any current one.
 export function attach(session) {
   if (!term) return; // ensureTerm must have run (Terminal view mounted)
-  if (ws) ws.close();
+  // Detach the old socket's handlers before closing it: an intentional switch
+  // must not fire its onclose (which would flash "[disconnected]" over the
+  // freshly-reset terminal). Only an unexpected server-side drop should show it.
+  if (ws) {
+    ws.onclose = null;
+    ws.onmessage = null;
+    ws.close();
+  }
   term.reset();
   setSession(session);
   ws = new WebSocket(wsURL(session));
@@ -294,6 +301,7 @@ export function attach(session) {
 export function detach() {
   if (ws) {
     try {
+      ws.onclose = null; // intentional detach — don't print "[disconnected]"
       ws.close();
     } catch {}
     ws = null;
