@@ -258,12 +258,33 @@ textarea:focus {
   top: calc(100% + 4px);
   right: 0;
   z-index: 50;
-  min-width: 200px;
+  min-width: 232px;
   background: var(--panel2, var(--panel));
   border: 1px solid var(--border2, var(--border));
   border-radius: 8px;
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
   padding: 4px;
+}
+/* quick theme palette inside the account menu */
+.acct-theme {
+  padding: 6px 8px 2px;
+}
+.acct-theme-seg {
+  display: flex;
+  width: 100%;
+  margin-bottom: 8px;
+}
+.acct-theme-seg .seg-btn {
+  flex: 1;
+}
+.acct-swatch-row {
+  margin-bottom: 8px;
+}
+.acct-swatch-lbl {
+  display: block;
+  font-size: 10px;
+  color: var(--muted);
+  margin-bottom: 4px;
 }
 .acct-email {
   padding: 6px 10px;
