@@ -37,6 +37,9 @@ func main() {
 	// reseeded the base AGENTS.md / status plugin just before us). claude's rtk is
 	// handled separately via its settings.json hook.
 	reconcileAgentRTK()
+	// Restart the opencode web UI (opencode serve + pk-webui) if its durable toggle
+	// is on. Best-effort; failure leaves the rest of the agent running.
+	reconcileOpencodeWeb()
 
 	addr := envOr("AGENT_ADDR", ":7700")
 
@@ -95,6 +98,10 @@ func main() {
 	// codex / opencode rtk toggle (durable pref → on-disk artifacts) — Console.
 	mux.HandleFunc("GET /agents/rtk", handleAgentRTKGet)
 	mux.HandleFunc("PUT /agents/rtk", handleAgentRTKPut)
+	// opencode web (opencode serve + pk-webui) toggle + its /ocweb proxy — Console.
+	mux.HandleFunc("GET /agents/opencode-web", handleOpencodeWebGet)
+	mux.HandleFunc("PUT /agents/opencode-web", handleOpencodeWebPut)
+	mux.HandleFunc("/ocweb/{rest...}", handleOcwebProxy)
 
 	// Toolchain selection (node via nvm / java via pre-baked Temurin) — Console.
 	mux.HandleFunc("GET /env/toolchains", handleToolchainsGet)
