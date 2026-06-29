@@ -292,6 +292,22 @@ func (s *sqliteStore) UpsertIdentity(ctx context.Context, email, key, roleHint s
 	return id, err
 }
 
+func (s *sqliteStore) GetIdentityByID(ctx context.Context, id string) (Identity, bool, error) {
+	var idn Identity
+	var last sql.NullString
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id, email, user_key, role, status, COALESCE(last_login_at,'') FROM identity WHERE id=?`, id).
+		Scan(&idn.ID, &idn.Email, &idn.UserKey, &idn.Role, &idn.Status, &last)
+	if err == sql.ErrNoRows {
+		return Identity{}, false, nil
+	}
+	if err != nil {
+		return Identity{}, false, err
+	}
+	idn.LastLoginAt = last.String
+	return idn, true, nil
+}
+
 func (s *sqliteStore) ListTenants(ctx context.Context) ([]Tenant, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, slug, name, status, limits, isolation, COALESCE(key_ref,''), created_at
@@ -515,6 +531,76 @@ func (s *sqliteStore) ListSessions(ctx context.Context, workspaceID string) ([]S
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+// --- Personal Access Tokens (docs/decisions/0006, P3-6) ---
+
+func (s *sqliteStore) CreatePAT(ctx context.Context, p PAT, tokenHash string) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO pat(id, identity_id, membership_id, token_hash, scope, name, created_at, expires_at)
+		 VALUES(?, ?, ?, ?, ?, ?, ?, ?)`,
+		p.ID, p.IdentityID, nullable(p.MembershipID), tokenHash, p.Scope, p.Name, p.CreatedAt, nullable(p.ExpiresAt))
+	return err
+}
+
+func (s *sqliteStore) GetPATByHash(ctx context.Context, tokenHash string) (PAT, bool, error) {
+	var p PAT
+	var mid, exp, rev, last sql.NullString
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id, identity_id, COALESCE(membership_id,''), scope, name, created_at,
+		        expires_at, revoked_at, last_used_at FROM pat WHERE token_hash=?`, tokenHash).
+		Scan(&p.ID, &p.IdentityID, &mid, &p.Scope, &p.Name, &p.CreatedAt, &exp, &rev, &last)
+	if err == sql.ErrNoRows {
+		return PAT{}, false, nil
+	}
+	if err != nil {
+		return PAT{}, false, err
+	}
+	p.MembershipID, p.ExpiresAt, p.RevokedAt, p.LastUsedAt = mid.String, exp.String, rev.String, last.String
+	return p, true, nil
+}
+
+func (s *sqliteStore) ListPATsByIdentity(ctx context.Context, identityID string) ([]PAT, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, identity_id, COALESCE(membership_id,''), scope, name, created_at,
+		        COALESCE(expires_at,''), COALESCE(revoked_at,''), COALESCE(last_used_at,'')
+		 FROM pat WHERE identity_id=? ORDER BY created_at DESC`, identityID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []PAT
+	for rows.Next() {
+		var p PAT
+		if err := rows.Scan(&p.ID, &p.IdentityID, &p.MembershipID, &p.Scope, &p.Name,
+			&p.CreatedAt, &p.ExpiresAt, &p.RevokedAt, &p.LastUsedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// RevokePAT marks a token revoked, scoped to its owner so a user can only revoke
+// their own tokens.
+func (s *sqliteStore) RevokePAT(ctx context.Context, id, identityID string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE pat SET revoked_at=? WHERE id=? AND identity_id=? AND revoked_at IS NULL`,
+		nowTS(), id, identityID)
+	return err
+}
+
+func (s *sqliteStore) TouchPAT(ctx context.Context, id string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE pat SET last_used_at=? WHERE id=?`, nowTS(), id)
+	return err
+}
+
+// nullable maps "" to a SQL NULL so empty optional columns stay NULL.
+func nullable(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
 }
 
 const workspaceCols = `SELECT id, tenant_id, membership_id, container_name, network, data_dir,

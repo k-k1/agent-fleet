@@ -45,6 +45,10 @@ func main() {
 	mux.HandleFunc("GET /sessions/archived", handleListArchived)
 	mux.HandleFunc("POST /sessions/{name}/archive", handleArchiveSession)
 	mux.HandleFunc("POST /sessions/{name}/restore", handleRestoreSession)
+	// Programmatic drive I/O for the MCP tools (docs/0006 P3-6 E).
+	mux.HandleFunc("POST /sessions/{name}/input", handleSessionInput)
+	mux.HandleFunc("GET /sessions/{name}/status", handleSessionStatus)
+	mux.HandleFunc("GET /sessions/{name}/output", handleSessionOutput)
 	mux.HandleFunc("GET /ws/pty", handlePTY)
 
 	// Preview — reverse-proxy to a service the user started inside the container

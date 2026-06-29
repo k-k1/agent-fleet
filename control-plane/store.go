@@ -46,6 +46,16 @@ type MemberInfo struct {
 	MembershipID, UserKey, Email, IdentityRole, MemberRole string
 }
 
+// PAT is a Personal Access Token (docs/decisions/0006, P3-6). It authenticates
+// the MCP endpoint. role is NOT stored — it is resolved live from identity +
+// membership at call time so a demotion/revocation takes effect immediately.
+// scope is fixed at issuance (read | write | admin:dangerous), clamped to the
+// issuer's ceiling. Timestamps are RFC3339 ("" = unset).
+type PAT struct {
+	ID, IdentityID, MembershipID, Scope, Name string
+	CreatedAt, ExpiresAt, RevokedAt, LastUsedAt string
+}
+
 // Workspace is one container per Membership (= identity × tenant).
 type Workspace struct {
 	ID, TenantID, MembershipID      string
@@ -74,6 +84,7 @@ type Store interface {
 	// upgrades the deployment role (e.g. "super_admin" from SUPER_ADMIN_EMAILS);
 	// it never downgrades.
 	UpsertIdentity(ctx context.Context, email, key, roleHint string) (Identity, error)
+	GetIdentityByID(ctx context.Context, id string) (Identity, bool, error)
 
 	ListTenants(ctx context.Context) ([]Tenant, error)
 	ListMemberships(ctx context.Context, identityID string) ([]MembershipView, error)
@@ -99,6 +110,13 @@ type Store interface {
 	// Agent's current list; ListSessions serves them while the container is down.
 	ReplaceSessions(ctx context.Context, workspaceID string, rows []SessionRow) error
 	ListSessions(ctx context.Context, workspaceID string) ([]SessionRow, error)
+
+	// Personal Access Tokens for the MCP endpoint (docs/decisions/0006, P3-6).
+	CreatePAT(ctx context.Context, p PAT, tokenHash string) error
+	GetPATByHash(ctx context.Context, tokenHash string) (PAT, bool, error)
+	ListPATsByIdentity(ctx context.Context, identityID string) ([]PAT, error)
+	RevokePAT(ctx context.Context, id, identityID string) error
+	TouchPAT(ctx context.Context, id string) error
 
 	Close() error
 }

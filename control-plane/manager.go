@@ -196,26 +196,35 @@ func (m *manager) resolveFull(ctx context.Context, key, email, tenantSel string)
 	if aerr != nil {
 		return nil, aerr
 	}
+	mv, aerr := selectMembership(ms, tenantSel)
+	if aerr != nil {
+		return nil, aerr
+	}
+	return m.buildResolvedLocked(ctx, ident, mv)
+}
 
-	var mv MembershipView
+// selectMembership picks the active membership for a request. tenantSel (slug or
+// id) is required when the person belongs to more than one tenant; a single
+// membership is auto-selected.
+func selectMembership(ms []MembershipView, tenantSel string) (MembershipView, *apiError) {
 	switch {
 	case tenantSel != "":
-		found := false
 		for _, x := range ms {
 			if x.TenantSlug == tenantSel || x.TenantID == tenantSel {
-				mv, found = x, true
-				break
+				return x, nil
 			}
 		}
-		if !found {
-			return nil, &apiError{http.StatusForbidden, "forbidden_tenant", "not a member of tenant " + tenantSel}
-		}
+		return MembershipView{}, &apiError{http.StatusForbidden, "forbidden_tenant", "not a member of tenant " + tenantSel}
 	case len(ms) == 1:
-		mv = ms[0]
+		return ms[0], nil
 	default:
-		return nil, &apiError{http.StatusConflict, "tenant_selection_required", "specify X-AF-Tenant; you belong to multiple tenants"}
+		return MembershipView{}, &apiError{http.StatusConflict, "tenant_selection_required", "specify X-AF-Tenant; you belong to multiple tenants"}
 	}
+}
 
+// buildResolvedLocked maps an (identity, membership) to its runtime + workspace,
+// creating the workspace on first use. Assumes m.mu is held.
+func (m *manager) buildResolvedLocked(ctx context.Context, ident Identity, mv MembershipView) (*resolved, *apiError) {
 	if c, ok := m.rts[mv.MembershipID]; ok {
 		return &resolved{rt: c.rt, ws: c.ws, ident: ident, mv: mv}, nil
 	}
@@ -236,6 +245,31 @@ func (m *manager) resolveFull(ctx context.Context, key, email, tenantSel string)
 	rt := m.runtimeFor(ws, dekHex)
 	m.rts[mv.MembershipID] = cachedRT{rt: rt, ws: ws}
 	return &resolved{rt: rt, ws: ws, ident: ident, mv: mv}, nil
+}
+
+// resolveByMembership resolves a runtime from a PAT's stored identity+membership
+// (the MCP path, which has no gateway headers). The membership must still be an
+// active membership of the identity — so a revoked membership 403s here.
+func (m *manager) resolveByMembership(ctx context.Context, identityID, membershipID string) (*resolved, *apiError) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	ident, ok, err := m.store.GetIdentityByID(ctx, identityID)
+	if err != nil {
+		return nil, internalErr(err)
+	}
+	if !ok {
+		return nil, &apiError{http.StatusUnauthorized, "unauthenticated", "identity not found"}
+	}
+	ms, err := m.store.ListMemberships(ctx, identityID)
+	if err != nil {
+		return nil, internalErr(err)
+	}
+	for _, mv := range ms {
+		if mv.MembershipID == membershipID {
+			return m.buildResolvedLocked(ctx, ident, mv)
+		}
+	}
+	return nil, &apiError{http.StatusForbidden, "forbidden_tenant", "membership not active"}
 }
 
 // resolve returns just the runtime (proxy/terminal handlers).
