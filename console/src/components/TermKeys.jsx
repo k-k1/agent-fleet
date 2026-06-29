@@ -16,7 +16,7 @@ const KEYS = [
   { label: "⏎", seq: "\r" },
 ];
 
-export default function TermKeys() {
+export default function TermKeys({ paneId = "p0" }) {
   return (
     <div className="termkeys">
       {KEYS.map((k) => (
@@ -25,7 +25,7 @@ export default function TermKeys() {
           type="button"
           className="termkey"
           onMouseDown={(e) => e.preventDefault()}
-          onClick={() => sendInput(k.seq)}
+          onClick={() => sendInput(paneId, k.seq)}
         >
           {k.label}
         </button>

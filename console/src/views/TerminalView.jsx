@@ -1,23 +1,31 @@
-import { useEffect, useRef, useState } from "react";
-import { ensureTerm, fit, focusTerm, onSession } from "../term.js";
+import { useEffect, useRef } from "react";
+import { ensureTerm, fit, focusTerm, attach, detach } from "../term.js";
 import TermKeys from "../components/TermKeys.jsx";
 
-// TerminalView hosts the persistent xterm instance. The container stays mounted
-// across mode switches (App hides it rather than unmounting), so the PTY socket
-// and scrollback survive. On re-show we refit so the geometry is correct.
-// (Fullscreen is a global control in the TopBar.)
-export default function TerminalView({ active }) {
+// TerminalView hosts one pane's xterm instance (keyed by paneId). The container
+// stays mounted while the pane shows a terminal (Pane hides it rather than
+// unmounting), so the PTY socket and scrollback survive view switches. The PTY
+// connection follows the `session` prop declaratively: the pane descriptor is the
+// source of truth, and we attach/detach to match it. (Fullscreen is a global
+// control in TopBar.)
+export default function TerminalView({ paneId = "p0", session = null, active }) {
   const ref = useRef(null);
-  const [session, setSession] = useState(null);
 
   useEffect(() => {
-    ensureTerm(ref.current);
-    return onSession(setSession);
-  }, []);
+    ensureTerm(paneId, ref.current);
+  }, [paneId]);
+
+  // Sync the WebSocket to the descriptor. Attaching resets + reconnects, so this
+  // only fires when the session value actually changes (React skips re-render on an
+  // unchanged prop), preserving scrollback while the same session stays open.
+  useEffect(() => {
+    if (session) attach(paneId, session);
+    else detach(paneId);
+  }, [paneId, session]);
 
   // While a session is attached, guard against accidentally closing/reloading the
   // tab (e.g. Ctrl+W on Firefox, which can't be captured) — the browser shows its
-  // "leave page?" confirmation. Removed as soon as no session is attached.
+  // "leave page?" confirmation. Any pane with a live session arms it.
   useEffect(() => {
     if (!session) return;
     const handler = (e) => {
@@ -30,10 +38,10 @@ export default function TerminalView({ active }) {
 
   useEffect(() => {
     if (active) {
-      fit();
-      focusTerm();
+      fit(paneId);
+      focusTerm(paneId);
     }
-  }, [active]);
+  }, [active, paneId]);
 
   return (
     <div className="termview">
@@ -42,7 +50,7 @@ export default function TerminalView({ active }) {
         <span className="spacer" />
       </header>
       <div className="terminal" ref={ref} />
-      <TermKeys />
+      <TermKeys paneId={paneId} />
     </div>
   );
 }

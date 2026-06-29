@@ -1342,6 +1342,55 @@ textarea:focus {
 .view[hidden] {
   display: none;
 }
+
+/* ---- main-area pane layout (split view) ---- */
+.panehost {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+}
+.pane {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+/* active-pane outline only matters when split; an inset ring avoids layout shift. */
+.pane.active::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border: 2px solid var(--accent);
+  z-index: 4;
+}
+.pane-controls {
+  position: absolute;
+  top: 4px;
+  right: 8px;
+  z-index: 6;
+  display: flex;
+  gap: 4px;
+}
+.pane-btn {
+  padding: 2px 6px;
+  line-height: 1;
+}
+/* draggable column divider between split panes */
+.pane-divider {
+  cursor: col-resize;
+  background: var(--border);
+}
+.pane-divider:hover {
+  background: var(--accent);
+}
+body.col-resizing {
+  cursor: col-resize;
+  user-select: none;
+}
 .termview,
 .scmview,
 .fileview {
@@ -1357,7 +1406,9 @@ textarea:focus {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 6px 12px;
+  /* extra right padding reserves room for the pane control cluster (split / close)
+     overlaid at the pane's top-right, so it never covers a view-head action. */
+  padding: 6px 42px 6px 12px;
   background: var(--bar);
   border-bottom: 1px solid var(--border);
 }
@@ -2759,6 +2810,17 @@ button.primary:hover:not(:disabled) {
   }
   .main {
     width: 100%;
+  }
+
+  /* Split view is desktop-only: collapse to the first pane, hide the divider and
+     the pane chrome so a phone always shows a single full-width view. */
+  .panehost {
+    grid-template-columns: 1fr !important;
+  }
+  .pane-divider,
+  .pane-controls,
+  .panehost > .pane:nth-child(3) {
+    display: none;
   }
 
   /* roomier tap targets in the navigator lists */

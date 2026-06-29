@@ -15,8 +15,12 @@ import CodeView from "./CodeView.jsx";
 // FileView shows a single file (read-only) with CodeLeaf-style affordances: an info
 // bar (name / language / size / line count / truncation) and syntax-highlighted
 // content with a line-number gutter. Binary files report a summary, not bytes.
-export default function FileView() {
-  const { filePath, showFile } = useApp();
+// filePath comes from the owning pane's descriptor; markdown link navigation opens
+// in the active pane via the context showFile (falls back to context filePath when
+// rendered standalone).
+export default function FileView({ filePath: filePathProp }) {
+  const { filePath: ctxFilePath, showFile } = useApp();
+  const filePath = filePathProp !== undefined ? filePathProp : ctxFilePath;
   const settings = useSettings();
   const [data, setData] = useState(null);
   const [err, setErr] = useState("");
