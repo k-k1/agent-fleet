@@ -94,16 +94,26 @@ export default function SessionsSection() {
     bumpSessions();
   };
 
-  // Discard the conversation and start the same slot fresh (≠ resume).
+  // Discard the conversation and start the same slot fresh, then re-attach the
+  // terminal so it resumes running (≠ resume of the old conversation). The Agent
+  // /recreate kills tmux, clears state, and relaunches; surface its real error so
+  // a genuine failure (e.g. the working dir is gone) is visible instead of being
+  // masked as a generic message and leaving the row "stopped".
   const recreate = async (name) => {
     if (!confirm(`セッション "${name}" の会話を破棄して新規に開始しますか？\n（元の会話は復元できません）`)) return;
     const res = await raw(`api/sessions/${encodeURIComponent(name)}/recreate`, { method: "POST" });
     if (!res.ok) {
-      alert("作り直しに失敗しました");
+      let msg = "作り直しに失敗しました";
+      try {
+        const j = await res.json();
+        if (j?.error?.message) msg += "：" + j.error.message;
+      } catch {}
+      alert(msg);
+      bumpSessions();
       return;
     }
     bumpSessions();
-    showTerminal(name);
+    showTerminal(name); // freshly-started slot → re-attach so it's running, not stopped
   };
 
   // Ask once for notification permission (best-effort; badges work regardless).
