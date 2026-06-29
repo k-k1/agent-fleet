@@ -9,10 +9,10 @@ Phase 1 MVP 完了（2026-06-26, commit `dd2330e`）以降、Phase 2 完了・Ph
 ## 1. いま動いているもの（このホスト）
 
 - **Control Plane**: `:8099` で稼働中（**React+Vite Console（`console/dist`）** + REST/WS プロキシ + Docker Runtime）。バイナリ `/tmp/af-cp`。Console の作りは **§6.10.1**。
-- **形態**: **shared（`AUTH=proxy`）でライブ稼働**。CP は oauth2-proxy の `X-Forwarded-Email` から user を解決（§6.7/§6.8 B1）。CP は `127.0.0.1:8099` 束縛＝Caddy 経由のみ。設定は git-ignored の `deploy/local/oauth.env`（`AUTH=proxy`/`CP_ADDR=127.0.0.1:8099`）。
-- **Workspace コンテナ**: 運用者は `af-ws-k1-kami-gmail-com`（image `agent-fleet/workspace:dev`）。`~`= bind mount `/tmp/af-data/<user>/home`（永続・`/login` 済み）。許可ユーザー追加は `~/oauth2-proxy/emails.txt` に1行追記 → その Google ログインで `af-ws-<email>` が自動払い出し（相互不可視: 別 home/別ネットワーク/別トークン）。dev 形態に戻すには oauth.env の `AUTH` 行を外す。
-- **外部アクセス**: `https://af.example.ts.net/agent-fleet/`
-  （Tailscale Funnel → oauth2-proxy(Google) → Caddy(strip `/agent-fleet`, :8888) → CP :8099）。設定は `~/docs/funnel-auth-setup.md`。
+- **形態**: **shared（`AUTH=oauth`）でライブ稼働**（2026-06-29 刷新, commit `fca6592`）。**CP が Google OAuth を内蔵**（oauth2-proxy + Caddy は廃止）。`authGate` が署名セッション cookie を検証して email を解決（§6.7）。CP は `127.0.0.1:8099` 束縛＝Funnel 経由のみ。設定は git-ignored の `deploy/local/oauth.env`（`AUTH=oauth`/`CP_ADDR=127.0.0.1:8099`/`GOOGLE_OAUTH_CLIENT_ID|SECRET`/`AF_COOKIE_SECRET`/許可リスト）。
+- **Workspace コンテナ**: 運用者は `af-ws-k1-kami-gmail-com`（image `agent-fleet/workspace:dev`）。`~`= bind mount `/tmp/af-data/<user>/home`（永続・`/login` 済み）。許可ユーザー追加は `deploy/local/allowed-emails.txt` に1行（メール or `@domain`）→ ログイン毎にライブ反映、その Google ログインで `af-ws-<email>` が自動払い出し（相互不可視: 別 home/別ネットワーク/別トークン）。dev 形態に戻すには oauth.env の `AUTH` 行を外す。
+- **外部アクセス**: `https://af.example.ts.net/`（**ルート配信**、旧 `/agent-fleet` プレフィクス廃止）
+  （Tailscale Funnel → CP `:8099` 直結。未認証は `/login` → Google → Console）。設定と切替手順は [`docs/reference/auth.md`](reference/auth.md)。
 - **イメージ**: `agent-fleet/workspace:dev`（最新, 約2.8G, 焼き込み内容は §6.10.7）。**Java は image 外**＝ホスト共有 dir `WS_DATA/shared/jvm`（Temurin 8/21/25）を `/usr/lib/jvm:ro` でマウント（§6.10.7）。
 
 ## 2. ツールチェーン / 実行の作法
@@ -27,7 +27,9 @@ Phase 1 MVP 完了（2026-06-26, commit `dd2330e`）以降、Phase 2 完了・Ph
   sg docker -c "cd $PWD && nohup ./deploy/local/run-dev.sh > /tmp/af-cp.log 2>&1 &"
   ```
   `run-dev.sh` は イメージ build + CP build + 起動を一括で行い、**`deploy/local/oauth.env`（git管理外）を自動 source して
-  OAuth env（`GITHUB_OAUTH_CLIENT_ID`/`BITBUCKET_OAUTH_KEY`/`BITBUCKET_OAUTH_SECRET`/`PUBLIC_BASE_URL`）を CP に渡す**。
+  OAuth env（git プロバイダ: `GITHUB_OAUTH_CLIENT_ID`/`BITBUCKET_OAUTH_KEY`/`BITBUCKET_OAUTH_SECRET`/`PUBLIC_BASE_URL`、
+  コンソール認証 `AUTH=oauth`: `GOOGLE_OAUTH_CLIENT_ID`/`GOOGLE_OAUTH_CLIENT_SECRET`/`AF_COOKIE_SECRET`/`AF_SESSION_TTL`/
+  `AF_OAUTH_ALLOWED_EMAILS`/`AF_OAUTH_ALLOWED_DOMAINS`/`AF_OAUTH_ALLOWED_EMAILS_FILE`）を CP に渡す**。
   Go PATH もスクリプト内で前置するので `sg docker -c` でも動く。**この env を渡さないと Console の「OAuth 接続」が
   「未設定」になり token 貼付にフォールバック**（設定は `deploy/local/oauth.env.example` 参照）。
   - 手動で CP だけ起動する場合も OAuth を効かせるには先に `set -a; . deploy/local/oauth.env; set +a` してから `/tmp/af-cp` を起動する。
@@ -109,8 +111,9 @@ SSH 鍵は HTTPS トークン方式へ格下げ（任意の後付け、§6.6 Con
 ## 6.6 Phase 2 進捗（Connections — WebUI 駆動の統合認証・実装済）
 
 CP 利用者がプロバイダごとに **WebUI で認証**し、得た資格情報を**コンテナ home に保存→コンテナ内の git/claude が利用**。
-ターミナル CLI 認証は不要。前段の **Google oauth2-proxy は「閉鎖空間の周縁ゲート」にすぎず別レイヤ**（funnel が全リクエストを
-Google 認証ゲートするため、リダイレクト型 OAuth コールバックは壁に当たる → **コールバック不要の方式**を採用）。設計詳細は
+ターミナル CLI 認証は不要。前段の **Google 認証（現 CP ネイティブ OAuth、旧 oauth2-proxy）は「閉鎖空間の周縁ゲート」にすぎず別レイヤ**
+（funnel 配下は全リクエストが Google 認証を要するため、GitHub は **コールバック不要の Device Flow** を採用。Bitbucket は CP がコールバックを
+所有し、ブラウザの CP セッション cookie で `authGate` を通過＝§6.7）。設計詳細は
 `~/.claude/plans/abundant-honking-scroll.md`。参考: `../git-reader`(CodeLeaf) の HTTPS トークン束縛。
 ※ Claude 接続の現行方式は**続10〜12 の訂正を経た最終結論が §6.10.3** にある（ここは git/Bitbucket 中心）。
 
@@ -123,7 +126,7 @@ Google 認証ゲートするため、リダイレクト型 OAuth コールバッ
   - **GitHub = Device Flow**（`POST /connections/git/github/oauth/{start,poll}`）。`GITHUB_OAUTH_CLIENT_ID`(CP→コンテナ env 注入、Enable Device Flow 必須)。
     user_code を `github.com/login/device` で承認→poll→保存。scope `repo`、トークン実質無期限。**実承認まで検証済**。
   - **Bitbucket = Auth Code Grant**（CP ネイティブ: `GET /api/connections/git/bitbucket/oauth/start`・`GET /api/oauth/bitbucket/callback`）。
-    `BITBUCKET_OAUTH_KEY/SECRET`・`PUBLIC_BASE_URL`(CP env)。callback はブラウザの Google cookie で oauth2-proxy を素通り（**前段改変不要**）。
+    `BITBUCKET_OAUTH_KEY/SECRET`・`PUBLIC_BASE_URL`(CP env、現在はルート `https://<host>`)。callback はブラウザの CP セッション cookie で `authGate` を通過（**除外設定不要**）。
     トークンは失効 → **git credential helper `workspace-agent bitbucket-cred`**（agent バイナリのサブコマンド）が `bitbucket.json` を読み
     refresh して `x-token-auth`+token を出力。bitbucket.org の helper は store をリセットして本 helper のみに。
     **実 OAuth 検証済（2026-06-27）**: 承認→callback→保存→`git credential fill` が token 返却→expiry 強制失効で helper 実行→**自動 refresh で expiry 更新**を確認。consumer の Callback URL 完全一致が前提。
@@ -138,9 +141,10 @@ CP のルーティングが user→対象コンテナを解決するだけ。
 - **`manager`**（`control-plane/manager.go`）: user/membership ごとに `name=af-ws-<user>` / `home=<WS_DATA>/<user>/home` / **専用 agent ポート**（base `WS_AGENT_PORT`=7700 から順次）を払い出す。
   既存コンテナがあれば `docker inspect` で publish 済みポートを**採用**（CP 再起動耐性）。
   - **⚠️ stale 注意**: 当初（P3-1）は `forUser(user)` + in-memory map だったが、**P3-2 以降は membership 解決に再編**（`resolveIdentity`/`resolveUser`、`runtimeFor(ws, secretKey)`、CP ハンドラは `rtFor(w,r)`＝runtime.go）。`forUser`/`config.rt` は廃止。ポート/トークンは DB 永続（§6.9 P3-1）。
-- **AuthGateway（user 解決）**: `AUTH` env で分岐。
+- **AuthGateway（user 解決）**: `AUTH` env で分岐。いずれも email を sanitize（小文字化・非英数を `-`・40字上限。例 `Alice.B@example.com`→`alice-b-example-com`）。
   - `AUTH=dev`（既定）= 固定 `DEV_USER`（既定 `dev`）。従来の dev 形態と同一挙動。
-  - `AUTH=proxy` = oauth2-proxy の `X-Forwarded-Email`（`AUTH_EMAIL_HEADER` で変更可）を sanitize（小文字化・非英数を `-`・40字上限。例 `Alice.B@example.com`→`alice-b-example-com`）。**proxy モードはヘッダ欠落＝401**（DEV_USER フォールバック廃止＝ゲート迂回封じ、§6.8 B1）。
+  - `AUTH=oauth`（**ライブ採用**, `control-plane/oauth_google.go`）= **CP ネイティブ Google OAuth**。`authGate` ミドルウェアが署名セッション cookie（HMAC、`AF_COOKIE_SECRET`）を検証し、**受信 `X-Forwarded-Email` を必ず削除**してから検証済み email を同ヘッダに注入（Funnel 直結の成りすまし防止）→ 以降は `resolveIdentity` 以下を proxy と共有・無改修。`/oauth2/{login,callback,logout}`・`/login` ランディング。許可リスト=`AF_OAUTH_ALLOWED_EMAILS`/`_DOMAINS`/`_FILE`（ファイルはログイン毎ライブ読込・`@domain` 行可、全空＝全拒否）。除外パス=`/oauth2/*` `/login` `/healthz` `/brand/*` `/mcp`(Bearer PAT)。Google client/secret/cookie_secret は旧 oauth2-proxy から流用可（redirect_uri `/oauth2/callback` 同一）。詳細 [`reference/auth.md`](reference/auth.md)。
+  - `AUTH=proxy` = 外部ゲートウェイ（oauth2-proxy / ALB OIDC 等）の `X-Forwarded-Email`（`AUTH_EMAIL_HEADER` で変更可）を信頼。**proxy モードはヘッダ欠落＝401**（DEV_USER フォールバック廃止＝ゲート迂回封じ、§6.8 B1）。CP は loopback 束縛前提。
   - Bitbucket OAuth callback は state に user を束ねて解決（`oauth_bitbucket.go`）。GitHub Device Flow / Claude は proxyAgentREST 経由で自然に per-user。
 - **ネットワーク分離（A1）**: 各コンテナを専用 network `af-net-<user>` に載せ相互到達を遮断（`control-plane/runtime.go` `ensureNetwork`）。Agent は host `127.0.0.1` publish 経由で CP からのみ到達、egress は NAT で維持。検証: 別ユーザーの Agent IP:7700 は timeout・名前解決失敗、自分の Agent は OPEN、github:443 egress OK。
 - **検証済（2026-06-27）**: dev は移行後も mount/port/connections 不変＝従来と無差別。proxy で alice/bob が別コンテナ・同一メール再訪はポート安定。実コンテナ E2E で別ポート・別 home・dev 無影響→teardown。
@@ -157,7 +161,7 @@ CP のルーティングが user→対象コンテナを解決するだけ。
 
 **B. shared 形態を実際に通す（MVP必須・軽い）**
 - [x] **B1 `AUTH=proxy` 実機検証 + 有効化** — `GET /api/whoami`（`control-plane/runtime.go`）で実チェーンが `X-Forwarded-Email`（=k1.kami@gmail.com, sanitized `k1-kami-gmail-com`）を CP まで届けることを確認。`AUTH=proxy` を有効化し dev home を email キーへ移行、Console 実機 OK。**セキュリティ修正**: proxy モードはヘッダ欠落＝401、CP は `127.0.0.1` 束縛。`x_forwarded_user` は Google 数値 subject ID なので user キーは email を採用。
-- [ ] **B2 oauth2-proxy 複数ユーザー許可**（`hd`/emails 運用）— 既存資産、設定のみ。現状 `emails.txt` は運用者1名。追加は1行追記で即時反映（`af-ws-<email>` 自動払い出し）。
+- [x] **B2 複数ユーザー許可** — oauth2-proxy `emails.txt` から **CP ネイティブ OAuth の許可リスト**へ移行（`AUTH=oauth`, 2026-06-29）。`deploy/local/allowed-emails.txt` にメール or `@domain` を1行追記で即時反映（`af-ws-<email>` 自動払い出し）。env の `AF_OAUTH_ALLOWED_EMAILS`/`_DOMAINS` も可。
 
 **C. 運用に欲しいが MVP では妥協可**
 - [ ] C1 per-user アイドル stop（RAM 逼迫ホストでは実質重要だがロードマップ上 Phase 4）。
@@ -328,7 +332,7 @@ opencode を雛形に追加。**ただし codex のフックは Claude Code と�
 
 ユーザーが Workspace 内で起動した HTTP サービス（Spring Boot / dev server / 任意 Web アプリ）を、**追加のホスト公開ポートもコンテナ再作成も無し**で新タブから確認する経路。設計の詳細は [reference/preview](reference/preview.md)。
 
-- **経路**: ブラウザ `…/preview/<port>/<path>` → Caddy（`/agent-fleet` strip）→ **CP `GET /preview/<port>/<rest>`**（`control-plane/preview.go` `handlePreview`。`rtFor` で他ルートと同じ gateway identity 認証、CP↔Agent の `Bearer <AGENT_TOKEN>` 付与、`X-Forwarded-Prefix/Host/Proto` 付与）→ **Agent `/proxy/<port>/…`**（`workspace/agent/preview.go`。内部 Authorization を除去し `httputil.ReverseProxy` で転送）→ コンテナ内 `127.0.0.1:<port>`。Agent はコンテナ netns 共有ゆえ loopback で届く＝**隔離（専用ネットワーク・相互不可視）は不変**。
+- **経路**: ブラウザ `…/preview/<port>/<path>` → Funnel → **CP `GET /preview/<port>/<rest>`**（ルート配信。旧 Caddy `/agent-fleet` strip は廃止）（`control-plane/preview.go` `handlePreview`。`rtFor` で他ルートと同じ gateway identity 認証、CP↔Agent の `Bearer <AGENT_TOKEN>` 付与、`X-Forwarded-Prefix/Host/Proto` 付与）→ **Agent `/proxy/<port>/…`**（`workspace/agent/preview.go`。内部 Authorization を除去し `httputil.ReverseProxy` で転送）→ コンテナ内 `127.0.0.1:<port>`。Agent はコンテナ netns 共有ゆえ loopback で届く＝**隔離（専用ネットワーク・相互不可視）は不変**。
 - **Console**（`WsBar.jsx`）: WS バー右のポート入力＋「プレビュー」。Workspace running 時のみ。新タブ遷移は `X-AF-Tenant` を運べないため `?tenant=<slug>` を付与（CP の query fallback で解決＝terminal WS と同方式）。`/preview/<port>`→`…/<port>/` への 301（`handlePreviewRedirect`）で相対資産がサブパス配下に解決。
 - **アプリ側**: JSON REST / 静的配信は無設定で動く。Spring Boot のリンク/リダイレクトは `server.forward-headers-strategy=framework`（or `native`）で `X-Forwarded-Prefix` を尊重させる。
 - **現状の制約**: **HTTP のみ。WebSocket / SSE 未対応**＝Vite/React の HMR は不可（WS ブリッジは次段）。ポートは手入力（listen 自動検出なし）。`forward-headers` 非対応アプリは絶対パス資産が 404 → アプリ側で base path 設定。
@@ -339,7 +343,7 @@ opencode を雛形に追加。**ただし codex のフックは Claude Code と�
 ```bash
 # CP が落ちていたら §2 の手順で起動
 curl -s http://127.0.0.1:8099/api/workspace            # {"state":"running"|"stopped"}
-# ブラウザ: https://af.example.ts.net/agent-fleet/  (ハードリロード)
+# ブラウザ: https://af.example.ts.net/  (ハードリロード。未認証は /login → Google)
 #   Start
 #   設定→接続: [Claude 接続]→URL承認→コード貼付 / [GitHub 接続]→PAT or Device Flow / [Bitbucket]→email+token or OAuth
 #   Repos: clone URL→Clone（private は上の git 接続が前提）

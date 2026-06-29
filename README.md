@@ -73,7 +73,7 @@ P3-1〜P3-5 + Console 全面刷新（React+Vite）まで完了。次は P3-7（A
 
 個人用フリート運用の仕組みがすでに存在し、これをサービス化する。
 
-- **`oauth2-proxy`** — Google ドメイン制限の認証ゲート（`emails.txt` ホワイトリスト運用済み）
+- **`oauth2-proxy`** — Google ドメイン制限の認証ゲート（`emails.txt` ホワイトリスト）。**現行はこれを廃し CP ネイティブ Google OAuth（`AUTH=oauth`）に集約**——許可リストは `deploy/local/allowed-emails.txt`（メール / `@domain`）。設計 [docs/reference/auth.md](docs/reference/auth.md)
 - **`scripts/tmux-claude.sh`** — detached tmux で複数 Claude CLI を冪等起動・resume・世代管理
 - **`CLAUDE_CONFIG_DIR` プロファイル分離** — ディレクトリ配下で別 `~/.claude` を使い分ける仕組み
 - **`~/.claude/settings.json`** — `remoteControlAtStartup` / `skipDangerousModePermissionPrompt` 設定済み

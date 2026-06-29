@@ -131,8 +131,7 @@ AuditLog    { id, tenant_id, actor_user_id, actor_kind(user|admin|mcp|system), a
 | L1 コンソール認証 | 「誰がコンソールを使えるか」 | Google OAuth + `hd` ドメイン制限 | セッション Cookie / JWT |
 | L2 Claude 認証 | 「各ユーザーの Claude を誰として動かすか」 | 各自 `claude /login`（claude.ai OAuth）| Workspace の `~/.claude/.credentials.json`（EFS）|
 
-L1 は ALB の OIDC 認証（Google）か `oauth2-proxy`（既存資産）を VPC 端に置いて実現。
-L2 はユーザー本人の作業で、コンソールは**状態の可視化と再ログイン誘導**を担う。
+L1 は3通り: **CP ネイティブ Google OAuth**（`AUTH=oauth`、外部依存なし＝local/小規模デプロイの既定。CP が `authGate` で署名セッションを検証、許可リストでドメイン/メール制限。設計 [auth.md](auth.md)）／ALB の OIDC 認証（Google、`aws` ターゲット）／`oauth2-proxy` 等の外部ゲートウェイ（`AUTH=proxy`）。L2 はユーザー本人の作業で、コンソールは**状態の可視化と再ログイン誘導**を担う。
 
 ## 2.5 主要フロー
 
@@ -255,7 +254,7 @@ MetadataStore / SecretStore / Ingress）は**ポート**として抽象化し、
 
 | 既存（個人運用） | サービス版 |
 |------------------|-----------|
-| `oauth2-proxy` + `emails.txt` | L1 コンソール認証（ALB OIDC か oauth2-proxy 常設）|
+| `oauth2-proxy` + `emails.txt` | L1 コンソール認証 = **CP ネイティブ Google OAuth（`AUTH=oauth`、許可リスト）**／ALB OIDC／外部 oauth2-proxy（`AUTH=proxy`）|
 | `tmux-claude.sh`（決定論的 session-id, resume/renew/reset）| Workspace Agent のセッション制御ロジック |
 | `CLAUDE_CONFIG_DIR` プロファイル分離 | ディレクトリ単位サンドボックス（2.7）|
 | `~/.claude/settings.json` | ユーザー毎設定 + 管理者テンプレート（E1-E3）|
