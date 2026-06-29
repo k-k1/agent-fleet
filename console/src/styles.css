@@ -278,14 +278,29 @@ textarea:focus {
   display: flex;
   align-items: center;
   gap: 8px;
+  width: 100%;
   padding: 8px 10px;
   font-size: 13px;
+  font-family: inherit;
   color: var(--fg);
   text-decoration: none;
+  border: 0;
+  background: none;
   border-radius: 6px;
+  cursor: pointer;
+  text-align: left;
 }
 .acct-item:hover {
   background: var(--hover-bg, var(--btn));
+}
+.acct-sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--border2, var(--border));
+}
+.acct-caret {
+  font-size: 11px;
+  color: var(--muted);
 }
 .gear {
   font-size: 13px;
