@@ -1,10 +1,9 @@
 import { useEffect, useState } from "react";
 import { useApp } from "../../state.jsx";
-import { api, apiJSON, raw } from "../../api.js";
+import { api, apiJSON } from "../../api.js";
 import Section from "../Section.jsx";
 import Icon from "../Icon.jsx";
 import NewRepoModal from "../NewRepoModal.jsx";
-import BranchModal from "../BranchModal.jsx";
 import { kindIcon, kindLabel } from "../../lib/sessionkind.js";
 import { pinFirst } from "../../lib/listutil.js";
 
@@ -123,7 +122,6 @@ export default function ReposSection() {
               bumpSessions();
               showTerminal(name);
             }}
-            onChanged={bumpRepos}
           />
         ))}
       </ul>
@@ -131,8 +129,11 @@ export default function ReposSection() {
   );
 }
 
-function RepoRow({ r, active, pinned, onOpen, onLaunch, onChanged }) {
-  const [showBranch, setShowBranch] = useState(false);
+// RepoRow: click the name to open the repo (Files + Source Control in the right
+// pane), or 起動 to spawn a session in it. Branch switch / fetch / delete used to
+// live here too — they now live in the Source Control header (the right pane), so
+// the row stays compact: name + 起動 (where the branch chip used to sit).
+function RepoRow({ r, active, pinned, onOpen, onLaunch }) {
   const [showLaunch, setShowLaunch] = useState(false);
 
   // Close the launch dropdown on any outside click.
@@ -142,16 +143,6 @@ function RepoRow({ r, active, pinned, onOpen, onLaunch, onChanged }) {
     document.addEventListener("mousedown", close);
     return () => document.removeEventListener("mousedown", close);
   }, [showLaunch]);
-
-  const fetchRepo = async () => {
-    await apiJSON(`api/repos/${encodeURIComponent(r.name)}/fetch`, "POST", { prune: true });
-    onChanged();
-  };
-  const del = async () => {
-    if (!confirm(`ワーキングコピー "${r.name}" を削除しますか？（履歴・リモートはそのまま）`)) return;
-    await raw(`api/repos/${encodeURIComponent(r.name)}`, { method: "DELETE" });
-    onChanged();
-  };
 
   return (
     <li className={"repo-row" + (active ? " active" : "") + (pinned ? " pinned" : "")}>
@@ -164,22 +155,6 @@ function RepoRow({ r, active, pinned, onOpen, onLaunch, onChanged }) {
           <Icon name="repo" className="repo-ic" />
           {r.name}
         </button>
-        <button
-          className="branch"
-          type="button"
-          onClick={() => setShowBranch(true)}
-          title="ブランチ切替"
-        >
-          <Icon name="git-branch" /> {r.branch || "?"} <Icon name="chevron-down" />
-        </button>
-        {(r.ahead || r.behind) > 0 && (
-          <span className="ab">
-            {r.ahead ? `↑${r.ahead}` : ""}
-            {r.behind ? `↓${r.behind}` : ""}
-          </span>
-        )}
-      </div>
-      <div className="repo-actions">
         <div className="launch-wrap" onMouseDown={(e) => e.stopPropagation()}>
           <button
             className="chip launch"
@@ -198,23 +173,13 @@ function RepoRow({ r, active, pinned, onOpen, onLaunch, onChanged }) {
             </div>
           )}
         </div>
-        <button className="chip" title="git fetch --prune" onClick={fetchRepo}>
-          <Icon name="cloud-download" /> fetch
-        </button>
-        <button className="chip danger" title="ワーキングコピーを削除" onClick={del}>
-          <Icon name="trash" />
-        </button>
+        {(r.ahead || r.behind) > 0 && (
+          <span className="ab">
+            {r.ahead ? `↑${r.ahead}` : ""}
+            {r.behind ? `↓${r.behind}` : ""}
+          </span>
+        )}
       </div>
-      {showBranch && (
-        <BranchModal
-          repoName={r.name}
-          onClose={() => setShowBranch(false)}
-          onChecked={() => {
-            setShowBranch(false);
-            onChanged();
-          }}
-        />
-      )}
     </li>
   );
 }

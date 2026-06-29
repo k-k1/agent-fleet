@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { useApp } from "../state.jsx";
-import { api, apiJSON, rawJSON } from "../api.js";
+import { api, apiJSON, raw, rawJSON } from "../api.js";
 import Icon from "../components/Icon.jsx";
+import BranchModal from "../components/BranchModal.jsx";
 
 // SourceControlView is the per-repo git workbench, opened by clicking a repo in the
 // Repos section. Left column: changed files (stage / unstage / discard), a commit
@@ -9,11 +10,12 @@ import Icon from "../components/Icon.jsx";
 // history commit is clicked — that commit's detail (header + file list + patch),
 // codeleaf CommitDetail style. The repo comes from context.
 export default function SourceControlView() {
-  const { scmRepo, bumpRepos } = useApp();
+  const { scmRepo, bumpRepos, bumpFiles, showTerminal } = useApp();
   const enc = encodeURIComponent(scmRepo || "");
   const [status, setStatus] = useState(null);
   const [changes, setChanges] = useState([]);
   const [log, setLog] = useState([]);
+  const [showBranch, setShowBranch] = useState(false);
   // sel drives the right pane: { kind:'file', path, staged } | { kind:'commit', sha }.
   const [sel, setSel] = useState(null);
   const [diff, setDiff] = useState(""); // file diff (kind:'file')
@@ -72,6 +74,21 @@ export default function SourceControlView() {
     refresh();
   };
 
+  // Repo-level actions, moved here from the Repos list row: fetch, delete the
+  // working copy (then leave the now-gone repo view), and branch switch (modal).
+  const fetchRepo = async () => {
+    await apiJSON(`api/repos/${enc}/fetch`, "POST", { prune: true });
+    refresh();
+    bumpRepos();
+  };
+  const del = async () => {
+    if (!confirm(`ワーキングコピー "${scmRepo}" を削除しますか？（履歴・リモートはそのまま）`)) return;
+    await raw(`api/repos/${enc}`, { method: "DELETE" });
+    bumpRepos();
+    bumpFiles();
+    showTerminal();
+  };
+
   const commitOp = async () => {
     if (!msg.trim()) {
       alert("コミットメッセージが必要です");
@@ -91,17 +108,25 @@ export default function SourceControlView() {
   return (
     <div className="scmview">
       <header className="view-head">
-        <span className="view-title"><Icon name="git-branch" /> {scmRepo}</span>
-        {status && (
-          <span className="muted">
-            {status.branch || "?"}
-            {status.ahead ? ` ↑${status.ahead}` : ""}
-            {status.behind ? ` ↓${status.behind}` : ""}
+        <span className="view-title"><Icon name="repo" /> {scmRepo}</span>
+        <button className="branch" type="button" title="ブランチ切替" onClick={() => setShowBranch(true)}>
+          <Icon name="git-branch" /> {status?.branch || "?"} <Icon name="chevron-down" />
+        </button>
+        {status && (status.ahead || status.behind) ? (
+          <span className="ab">
+            {status.ahead ? `↑${status.ahead}` : ""}
+            {status.behind ? `↓${status.behind}` : ""}
           </span>
-        )}
+        ) : null}
         <span className="spacer" />
+        <button className="ghost" title="git fetch --prune" onClick={fetchRepo}>
+          <Icon name="cloud-download" /> fetch
+        </button>
         <button className="ghost" title="更新" onClick={refresh}>
           <Icon name="refresh" />
+        </button>
+        <button className="ghost danger" title="ワーキングコピーを削除" onClick={del}>
+          <Icon name="trash" />
         </button>
       </header>
       <div className="scmbody">
@@ -153,6 +178,17 @@ export default function SourceControlView() {
         </div>
         <RightPane sel={sel} diff={diff} commit={commit} />
       </div>
+      {showBranch && (
+        <BranchModal
+          repoName={scmRepo}
+          onClose={() => setShowBranch(false)}
+          onChecked={() => {
+            setShowBranch(false);
+            refresh();
+            bumpRepos();
+          }}
+        />
+      )}
     </div>
   );
 }
