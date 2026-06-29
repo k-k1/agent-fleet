@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ensureTerm, fit, focusTerm, onSession, reconstructURL } from "../term.js";
+import { ensureTerm, fit, focusTerm, onSession } from "../term.js";
 import Icon from "../components/Icon.jsx";
 import TermKeys from "../components/TermKeys.jsx";
 
@@ -9,7 +9,6 @@ import TermKeys from "../components/TermKeys.jsx";
 export default function TerminalView({ active }) {
   const ref = useRef(null);
   const [session, setSession] = useState(null);
-  const [copyLabel, setCopyLabel] = useState("⧉ sign-in URL");
   const [fullscreen, setFullscreen] = useState(false);
   // The Keyboard Lock API (which lets fullscreen capture Ctrl+W etc.) is
   // Chromium-only; Firefox / Safari don't implement it, so be honest in the UI.
@@ -54,21 +53,6 @@ export default function TerminalView({ active }) {
     }
   }, [active]);
 
-  const copyLogin = async () => {
-    const url = reconstructURL();
-    if (!url) {
-      setCopyLabel("画面に URL なし");
-    } else {
-      try {
-        await navigator.clipboard.writeText(url);
-        setCopyLabel("コピーしました");
-      } catch {
-        setCopyLabel("コピー失敗");
-      }
-    }
-    setTimeout(() => setCopyLabel("⧉ sign-in URL"), 1400);
-  };
-
   return (
     <div className="termview">
       <header className="view-head">
@@ -84,13 +68,6 @@ export default function TerminalView({ active }) {
           onClick={toggleFullscreen}
         >
           <Icon name="screen-full" /> {fullscreen ? "全画面解除" : "全画面"}
-        </button>
-        <button
-          className="ghost"
-          title="端末に表示された最新のサインイン URL をコピー"
-          onClick={copyLogin}
-        >
-          {copyLabel}
         </button>
       </header>
       <div className="terminal" ref={ref} />
