@@ -138,7 +138,7 @@ export function applyTheme(s) {
   // File viewer background: a deeper shade of the chosen surface so it reads a
   // step darker than the top bar / left pane (per request). Unset => theme --bg.
   const vw = surfaceValue(s.viewerColor, theme);
-  setVar("--viewer-bg", vw ? mixHex(vw, "#000000", theme === "light" ? 0.12 : 0.34) : null);
+  setVar("--viewer-bg", vw ? mixHex(vw, "#000000", theme === "light" ? 0.22 : 0.34) : null);
 }
 applyTheme(state);
 
