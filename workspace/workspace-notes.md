@@ -17,12 +17,17 @@ every Claude / Codex / OpenCode session reads it at startup. Edit it in the repo
 - **Do not hog resources.** The host is shared and memory-constrained. Heavy builds and large parallelism can exhaust memory and disrupt the whole fleet.
 
 ## Build memory (important — this has caused real incidents)
-JVM build tools are the main cause of out-of-memory trouble on the shared host.
+The shared host is memory-constrained; build tools are the main cause of OOM trouble.
 - **Gradle:** a conservative `~/.gradle/gradle.properties` is seeded for you — capped heap, a short daemon idle-timeout, no parallelism, limited workers. Projects may override it in their own `gradle.properties`.
   - Do not raise `org.gradle.jvmargs` heap unless a build genuinely needs it.
   - When you finish building, stop lingering daemons: `./gradlew --stop`.
   - If memory is tight, build with `./gradlew --no-daemon`, and avoid `--parallel` / a large `--max-workers`.
 - **Maven and other JVM tools:** keep heaps small (e.g. `MAVEN_OPTS=-Xmx768m`) and do not leave watchers or daemons running.
+- **Node / JavaScript builds (Vite, webpack, Next.js, etc.):** memory-spiky, and the right heap is build-specific, so no global cap is forced — manage it per command.
+  - If a build runs out of memory, raise the heap for that command only: `NODE_OPTIONS=--max-old-space-size=2048 npm run build`. Use the smallest value that works (e.g. this repo's Console build needs ~3072). Do not export a huge `NODE_OPTIONS` globally — it lets every node process hog RAM.
+  - Cap test-runner parallelism: `jest --maxWorkers=2`, `vitest --maxWorkers=2`. Defaults spawn one worker per CPU and balloon memory.
+  - Do not leave dev servers or watchers running (`vite`, `next dev`, `tsc --watch`, `nodemon`); stop them when done.
+  - Run one heavy build at a time; do not build several projects in parallel.
 - For long-running servers, open the port via the WS bar "Preview" instead of leaving ad-hoc processes up.
 
 ## Also
