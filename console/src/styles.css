@@ -1468,11 +1468,36 @@ body.row-resizing {
   letter-spacing: 0.04em;
 }
 
+/* wraps the xterm container so the empty-state placeholder can overlay it */
+.term-body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
 .terminal {
   flex: 1;
   min-height: 0;
   padding: 4px 6px;
   background: var(--bg);
+}
+/* shown over an unattached terminal: FileViewer-tinted surface + centered banner */
+.term-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: var(--viewer-bg, var(--bg));
+}
+.term-empty-img {
+  max-width: min(72%, 440px);
+  max-height: 62%;
+  object-fit: contain;
+  opacity: 0.55;
+  user-select: none;
+  -webkit-user-drag: none;
 }
 
 .filebody,

@@ -1,6 +1,12 @@
 import { useEffect, useRef } from "react";
 import { ensureTerm, fit, focusTerm, attach, detach } from "../term.js";
+import { rel } from "../api.js";
 import TermKeys from "../components/TermKeys.jsx";
+
+// Brand banner shown over an unattached terminal so a freshly split (or initial)
+// pane isn't a bare black rectangle. Resolved against baseURI so it works behind the
+// path-stripping proxy. (Lives in public/brand, served by the Control Plane.)
+const BANNER = rel("brand/agent-fleet-banner.png");
 
 // TerminalView hosts one pane's xterm instance (keyed by paneId). The container
 // stays mounted while the pane shows a terminal (Pane hides it rather than
@@ -49,7 +55,16 @@ export default function TerminalView({ paneId = "p0", session = null, active }) 
         <span className="view-title">{session ? `session: ${session}` : "セッション未接続"}</span>
         <span className="spacer" />
       </header>
-      <div className="terminal" ref={ref} />
+      <div className="term-body">
+        <div className="terminal" ref={ref} />
+        {/* No session: cover the bare terminal with the FileViewer-tinted brand
+            placeholder instead of an empty black box. */}
+        {!session && (
+          <div className="term-empty">
+            <img className="term-empty-img" src={BANNER} alt="Agent Fleet" />
+          </div>
+        )}
+      </div>
       <TermKeys paneId={paneId} />
     </div>
   );
