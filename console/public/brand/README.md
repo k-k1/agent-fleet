@@ -18,3 +18,10 @@ Drop the Agent Fleet banner here with exactly this name:
 Recommended: a wide banner (~2000×860) carrying the wordmark + "Deploy. Connect.
 Scale." tagline. Until the file exists the login page falls back to a plain text
 wordmark (the `onerror` handler), so sign-in still works.
+
+## `idle-1.png` … `idle-7.png`
+
+Brand artwork shown over an **unattached** terminal pane (see
+`console/src/views/TerminalView.jsx`). Each empty pane picks one at random. Keep
+them roughly square and lightweight (~640px, ≲150KB each — downscale + 256-color
+quantize the source art); they're only ever rendered small (`max-width ~440px`).

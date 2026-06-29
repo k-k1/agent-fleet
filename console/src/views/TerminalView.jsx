@@ -1,12 +1,13 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { ensureTerm, fit, focusTerm, attach, detach } from "../term.js";
 import { rel } from "../api.js";
 import TermKeys from "../components/TermKeys.jsx";
 
-// Brand banner shown over an unattached terminal so a freshly split (or initial)
-// pane isn't a bare black rectangle. Resolved against baseURI so it works behind the
-// path-stripping proxy. (Lives in public/brand, served by the Control Plane.)
-const BANNER = rel("brand/agent-fleet-banner.png");
+// Brand artwork shown over an unattached terminal so a freshly split (or initial)
+// pane isn't a bare black rectangle. Each empty pane picks one of these at random.
+// Resolved against baseURI so they work behind the path-stripping proxy.
+// (Live in public/brand, served by the Control Plane.)
+const IDLE_ARTWORK = Array.from({ length: 7 }, (_, i) => rel(`brand/idle-${i + 1}.png`));
 
 // TerminalView hosts one pane's xterm instance (keyed by paneId). The container
 // stays mounted while the pane shows a terminal (Pane hides it rather than
@@ -16,6 +17,13 @@ const BANNER = rel("brand/agent-fleet-banner.png");
 // control in TopBar.)
 export default function TerminalView({ paneId = "p0", session = null, active }) {
   const ref = useRef(null);
+
+  // Pick one idle image per mounted pane and keep it stable across re-renders
+  // (so it doesn't reshuffle every time the session prop toggles).
+  const idleSrc = useMemo(
+    () => IDLE_ARTWORK[Math.floor(Math.random() * IDLE_ARTWORK.length)],
+    [],
+  );
 
   useEffect(() => {
     ensureTerm(paneId, ref.current);
@@ -61,7 +69,7 @@ export default function TerminalView({ paneId = "p0", session = null, active }) 
             placeholder instead of an empty black box. */}
         {!session && (
           <div className="term-empty">
-            <img className="term-empty-img" src={BANNER} alt="Agent Fleet" />
+            <img className="term-empty-img" src={idleSrc} alt="Agent Fleet" />
           </div>
         )}
       </div>
