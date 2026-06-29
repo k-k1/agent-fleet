@@ -184,7 +184,7 @@ CP のルーティングが user→対象コンテナを解決するだけ。
 - ✅ **Console 全面刷新（React+Vite）+ Claude/環境設定 + ツールチェーン共有**（[18](history/console-redesign.md) を実施）。詳細は **§6.10**。
 - **次は P3-7（AWS アダプタ）/ P3-8（専用分離）/ P3-9（運用成熟: idle-stop/showback/backup/観測）/ P3-10（パッケージング）**。Console の残は §6.10.8。
 - **P3-10 パッケージング**=提供モデルの核（compose/Helm + 設定 + マイグレーション + runbook、phone-home なし）。完了判定=**第2デプロイをゼロから立てて E2E 通過**。
-- **MCP**: 管理サービス層を MCP 化し、その社の運用チームが自社 Fleet を Claude で運用。
+- **MCP（P3-6, 設計確定・未着手）**: `/mcp`（Streamable HTTP）で管理面+作業面を一体公開。PAT（Console 発行・発行者 role を live 継承・scope≤role）認証。**主目的 E=手元 Claude が自分の遠隔 claude セッション群を駆動**（段 1 で前倒し）。設計 [decisions/0006](decisions/0006-mcp-unified.md)、実装プラン [history/p3-6-mcp](history/p3-6-mcp.md)。
 - **⚠️ 残存リスク**: 1 デプロイ内は CP が docker.sock（=ホスト root）+ 平文 DEK 注入 → CP/ホスト侵害でそのデプロイ内分離が一括崩壊。**会社間は別デプロイゆえ波及しない**のが本モデルの強み（[12 §12.3](roadmap.md#123-tos-と分離の留意自社ホスト前提)）。
 - **推奨シーケンス**: オンプレで P3-1→3→4→5/6→**P3-10(第2デプロイ検証)** → 希望社向け AWS で P3-7 → P3-8/9（[12 §12.4](roadmap.md#124-推奨シーケンス小規模local-first-継続)）。
 

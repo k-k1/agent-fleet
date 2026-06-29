@@ -29,8 +29,9 @@
 - [0003-ssh-to-connections.md](decisions/0003-ssh-to-connections.md) — SSH 鍵 → Connections
 - [0004-vanilla-to-react.md](decisions/0004-vanilla-to-react.md) — Console は React + Vite
 - [0005-envelope-custodian.md](decisions/0005-envelope-custodian.md) — 封筒暗号 + custodian 抽象
+- [0006-mcp-unified.md](decisions/0006-mcp-unified.md) — MCP は管理面+作業面を一体・PAT 認証・E が主目的
 
-## history/ — 使い終わった実装プラン
+## history/ — 使い終わった実装プラン（P3-6 のみ ▶ 計画中）
 
 - [phase0-poc.md](history/phase0-poc.md) — Phase 0 PoC（`/login` 検証）
 - [phase1-plan.md](history/phase1-plan.md) — Phase 1 MVP（§11.10 は今も有効な知見）
@@ -40,3 +41,4 @@
 - [p3-4-quota.md](history/p3-4-quota.md) — リソースバジェット/クォータ
 - [p3-5-member-console.md](history/p3-5-member-console.md) — メンバー Console UX
 - [console-redesign.md](history/console-redesign.md) — Console UI 刷新ブリーフ
+- [p3-6-mcp.md](history/p3-6-mcp.md) — MCP（管理面+作業面を一体・E 駆動）実装プラン（▶ 未着手）
