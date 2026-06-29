@@ -5,7 +5,6 @@ import Section from "../Section.jsx";
 import Icon from "../Icon.jsx";
 import NewRepoModal from "../NewRepoModal.jsx";
 import { kindIcon, kindLabel } from "../../lib/sessionkind.js";
-import { pinFirst } from "../../lib/listutil.js";
 
 const repoSafeSession = (name) =>
   name.replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 40) || "repo";
@@ -40,8 +39,8 @@ export default function ReposSection() {
     };
   }, [reposKey]);
 
-  // Resolve which repo the currently-attached session works in, so we can pin it to
-  // the top (mirrors the session pin). Refetched when the attached session changes.
+  // Resolve which repo the currently-attached session works in, so we can show it
+  // selected (highlighted) in place. Refetched when the attached session changes.
   useEffect(() => {
     if (!session) {
       setActiveRepo(null);
@@ -59,9 +58,6 @@ export default function ReposSection() {
       alive = false;
     };
   }, [session]);
-
-  // Pin the active session's repo to the top (stable, keeps the rest in order).
-  const ordered = pinFirst(repos, (r) => r.name === activeRepo);
 
   return (
     <Section
@@ -91,12 +87,12 @@ export default function ReposSection() {
       )}
       <ul className="list">
         {repos.length === 0 && <li className="muted">リポジトリなし</li>}
-        {ordered.map((r) => (
+        {repos.map((r) => (
           <RepoRow
             key={r.name}
             r={r}
             active={mode === "scm" && scmRepo === r.name}
-            pinned={r.name === activeRepo}
+            selected={r.name === activeRepo}
             // One click on the repo: reveal it in the Files tree AND open the
             // (renewed) Source Control workbench in the main pane. The separate
             // "変更" chip is gone — the repo row itself is the entry point.
@@ -132,8 +128,10 @@ export default function ReposSection() {
 // RepoRow: click the name to open the repo (Files + Source Control in the right
 // pane), or 起動 to spawn a session in it. Branch switch / fetch / delete used to
 // live here too — they now live in the Source Control header (the right pane), so
-// the row stays compact: name + 起動 (where the branch chip used to sit).
-function RepoRow({ r, active, pinned, onOpen, onLaunch }) {
+// the row stays compact: name + 起動 (where the branch chip used to sit). `active`
+// = open in the SCM pane; `selected` = the attached session's repo — both just
+// highlight the row in place (no reordering).
+function RepoRow({ r, active, selected, onOpen, onLaunch }) {
   const [showLaunch, setShowLaunch] = useState(false);
 
   // Close the launch dropdown on any outside click.
@@ -145,8 +143,7 @@ function RepoRow({ r, active, pinned, onOpen, onLaunch }) {
   }, [showLaunch]);
 
   return (
-    <li className={"repo-row" + (active ? " active" : "") + (pinned ? " pinned" : "")}>
-      {pinned && <Icon name="pin" className="repo-pin" title="現在のセッションのリポジトリ" />}
+    <li className={"repo-row" + (active || selected ? " active" : "")}>
       <div className="repo-info">
         <span className={"dot " + (r.dirty ? "dirty" : "clean")} title={r.dirty ? "未コミット変更あり" : "clean"}>
           ●

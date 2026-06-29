@@ -6,7 +6,6 @@ import Icon from "../Icon.jsx";
 import NewSessionModal from "../NewSessionModal.jsx";
 import ArchivedModal from "../ArchivedModal.jsx";
 import { kindIcon, kindLabel } from "../../lib/sessionkind.js";
-import { pinFirst } from "../../lib/listutil.js";
 
 // stateInfo maps a session to its line-2 status chip (codicon + label).
 const stateInfo = (s) => {
@@ -168,10 +167,8 @@ export default function SessionsSection() {
     return () => document.removeEventListener("mousedown", close);
   }, [menuFor]);
 
-  // Hoist the attached session to the top of the list (stable: the rest keep their
-  // backend order) and mark it .pinned — highlighted, a pin badge in the top-right
-  // corner, and sticky while the list scrolls.
-  const ordered = pinFirst(sessions, (s) => s.name === session);
+  // The attached session is shown selected (highlighted) in place — no reordering,
+  // so the rows keep their backend order and don't jump around as state changes.
 
   return (
     <Section
@@ -197,12 +194,11 @@ export default function SessionsSection() {
     >
       <ul className="list">
         {sessions.length === 0 && <li className="muted">セッションなし</li>}
-        {ordered.map((s) => {
+        {sessions.map((s) => {
           const dead = !s.alive && s.resumable === false; // dir gone → can't resume
-          const pinned = session === s.name; // currently attached → pinned to the top
+          const selected = session === s.name; // currently attached → highlighted in place
           return (
-          <li key={s.name} className={"session-row" + (pinned ? " active pinned" : "") + (s.alive ? "" : " stopped") + (dead ? " dead" : "")}>
-            {pinned && <Icon name="pin" className="session-pin" title="接続中" />}
+          <li key={s.name} className={"session-row" + (selected ? " active" : "") + (s.alive ? "" : " stopped") + (dead ? " dead" : "")}>
             <button
               className="session-btn"
               title={dead ? "作業フォルダが存在しないため再開できません" : !s.alive ? "停止中（⋯メニューから再開）" : s.dir || ""}

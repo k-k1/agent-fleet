@@ -317,9 +317,8 @@ textarea:focus {
   padding: 4px 8px;
   position: sticky;
   top: 0;
-  /* Above the rows: session rows are position:relative (for the absolute pin) and
-     the pinned row is z-index:2, so the sticky header needs a higher level or the
-     rows paint over it (they come later in the DOM). */
+  /* Keep the section header above the rows that scroll under it (rows come later in
+     the DOM, so without this they paint over the sticky header). */
   z-index: 3;
   background: var(--leftpane-bg);
 }
@@ -368,42 +367,12 @@ textarea:focus {
   padding: 6px 2px;
 }
 
+/* The attached session and its repo are shown selected (highlighted) in place — no
+   pin/reorder, so rows keep their backend order and don't jump around. */
 .session-row.active,
 .repo-row.active {
   background: var(--active-bg);
   border-radius: 4px;
-}
-/* The attached session is pinned to the top of the Sessions list and stays there
-   while the pane scrolls — sticking just below the sticky section header (~26px),
-   bounded by its section so it scrolls away once the section is fully passed. */
-.session-row.pinned {
-  position: sticky;
-  top: 26px;
-  z-index: 2;
-  background: var(--active-bg);
-  box-shadow: 0 1px 0 var(--border);
-}
-/* The pin badge sits in the row's top-right corner (above the ⋯ menu), so the
-   session name stays left-aligned and the row layout doesn't shift when pinned.
-   The repo pin uses the identical badge for a unified look. */
-.session-pin,
-.repo-pin {
-  position: absolute;
-  top: 3px;
-  right: 6px;
-  font-size: 10px;
-  color: var(--accent);
-  z-index: 1;
-  pointer-events: none;
-}
-/* The repo of the attached session is pinned to the top of the Repos list — same
-   behaviour as the Sessions pin (sticky, highlighted, accent corner badge). */
-.repo-row.pinned {
-  position: sticky;
-  top: 26px;
-  z-index: 2;
-  background: var(--active-bg);
-  box-shadow: 0 1px 0 var(--border);
 }
 .kind-tag {
   display: inline-block;
@@ -423,9 +392,6 @@ textarea:focus {
 /* session rows: two lines (display name + 起動日時 / セッション名 + 状態), plus a
    recreate (↻) action on the right */
 .list > li.session-row {
-  /* No position here: it would out-specify (and override) the .session-row.pinned
-     `position: sticky` below, breaking the top-pin. The absolute pin badge only
-     renders on the pinned row, which is sticky (= a positioning context) already. */
   flex-direction: row;
   align-items: stretch;
   gap: 2px;
@@ -2299,19 +2265,6 @@ button.primary:hover:not(:disabled) {
   /* narrower minimap on a phone (saves horizontal room; swipe to scroll). */
   .minimap {
     width: 48px;
-  }
-  /* The phone drawer is a transformed, fixed, padded, scrolling container, where
-     stacking the pinned-row sticky under the sticky section header renders
-     unreliably (the pinned row peeks above SESSIONS / sits offset). Drop the
-     sticky on mobile: the attached session/repo stays hoisted-first + highlighted,
-     just not stuck while scrolling. `position: relative; top: auto` keeps the
-     absolute pin badge anchored without the 26px sticky offset. */
-  .session-row.pinned,
-  .repo-row.pinned {
-    position: relative;
-    top: auto;
-    z-index: auto;
-    box-shadow: none;
   }
   /* top bar: hamburger in, secondary chrome trimmed so it fits a phone width */
   .nav-toggle {
