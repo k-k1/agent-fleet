@@ -1187,6 +1187,12 @@ textarea:focus {
   color: #06222e;
   font-weight: 600;
 }
+/* Light theme: the accent (#2563eb) is a saturated blue, so a solid fill reads
+   too heavy. Use the soft selection background with accent-colored text instead. */
+[data-theme="light"] .seg-btn.active {
+  background: var(--active-bg);
+  color: var(--accent);
+}
 .picked {
   font-size: 11px;
   font-family: var(--mono);
