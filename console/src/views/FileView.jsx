@@ -4,10 +4,11 @@ import hljs from "highlight.js/lib/common";
 // theme (the github-dark.css import was dark-only → unreadable in light mode).
 import { useApp } from "../state.jsx";
 import { api } from "../api.js";
-import { baseName, langFor, langLabel, humanSize, countLines } from "../lib/filemeta.js";
+import { baseName, langFor, langLabel, humanSize, countLines, isMarpDoc } from "../lib/filemeta.js";
 import FileIcon from "../components/FileIcon.jsx";
 import { useSettings, fontStack } from "../lib/settings.js";
 import MarkdownView from "./MarkdownView.jsx";
+import MarpView from "./MarpView.jsx";
 import CodeView from "./CodeView.jsx";
 
 // FileView shows a single file (read-only) with CodeLeaf-style affordances: an info
@@ -18,7 +19,7 @@ export default function FileView() {
   const settings = useSettings();
   const [data, setData] = useState(null);
   const [err, setErr] = useState("");
-  const [mdMode, setMdMode] = useState("preview"); // markdown only: 'preview' | 'source'
+  const [mdMode, setMdMode] = useState("preview"); // markdown only: 'preview' | 'source' | 'slides'
 
   useEffect(() => {
     if (!filePath) return;
@@ -40,6 +41,14 @@ export default function FileView() {
   const isText = data && !data.binary && typeof data.content === "string";
   const lines = isText ? countLines(data.content) : 0;
   const isMarkdown = isText && langFor(filePath) === "markdown";
+  const isMarp = isMarkdown && isMarpDoc(data.content);
+
+  // Default a freshly opened Marp deck to the slides view; other markdown to preview.
+  useEffect(() => {
+    if (isText) setMdMode(isMarp ? "slides" : "preview");
+  }, [data, isMarp, isText]);
+
+  const showSlides = isMarp && mdMode === "slides";
   const showPreview = isMarkdown && mdMode === "preview";
 
   // Highlight once per file load. Fall back to escaped plain text if the language
@@ -80,6 +89,15 @@ export default function FileView() {
         )}
         {isMarkdown && (
           <span className="seg sm md-toggle">
+            {isMarp && (
+              <button
+                type="button"
+                className={"seg-btn" + (mdMode === "slides" ? " active" : "")}
+                onClick={() => setMdMode("slides")}
+              >
+                スライド
+              </button>
+            )}
             <button
               type="button"
               className={"seg-btn" + (mdMode === "preview" ? " active" : "")}
@@ -107,6 +125,8 @@ export default function FileView() {
         <pre className="filebody muted">…</pre>
       ) : data.binary ? (
         <pre className="filebody muted">(バイナリ, {humanSize(data.size)})</pre>
+      ) : showSlides ? (
+        <MarpView source={data.content} />
       ) : showPreview ? (
         <div className="md-scroll">
           <MarkdownView source={data.content} basePath={filePath} onOpenFile={showFile} />

@@ -73,6 +73,16 @@ export function slug(text) {
     .replace(/\s+/g, "-");
 }
 
+// isMarpDoc reports whether a Markdown source opts into Marp slides via YAML
+// frontmatter (`marp: true`) at the very top of the file. We only sniff the
+// leading `---` … `---` block, not the whole document, and don't fully parse YAML.
+export function isMarpDoc(source) {
+  if (!source) return false;
+  const m = source.match(/^---\r?\n([\s\S]*?)\r?\n---\s*(\r?\n|$)/);
+  if (!m) return false;
+  return /^\s*marp\s*:\s*true\s*$/m.test(m[1]);
+}
+
 export function langFor(path) {
   const name = baseName(path).toLowerCase();
   if (NAME_LANG[name]) return NAME_LANG[name];
