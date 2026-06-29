@@ -427,6 +427,12 @@ textarea:focus {
   overflow: auto;
   display: flex;
   flex-direction: column;
+  /* Rebind the row-state colors to shades derived from the chosen left-pane
+     surface (always set by applyTheme — derived when a surface is chosen, else the
+     theme default) so session/repo/file active+hover follow the theme instead of a
+     fixed blue. */
+  --active-bg: var(--lp-active-bg);
+  --hover-bg: var(--lp-hover-bg);
 }
 .pane-section {
   border-bottom: 1px solid var(--border2);

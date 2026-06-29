@@ -50,6 +50,32 @@ export function surfaceValue(id, theme) {
   return theme === "light" ? c.light : c.dark;
 }
 
+// Linear blend between two #rrggbb colors (t in 0..1 toward `to`).
+function mixHex(from, to, t) {
+  const p = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
+  const a = p(from);
+  const b = p(to);
+  const c = a.map((v, i) => Math.round(v + (b[i] - v) * t));
+  return "#" + c.map((v) => v.toString(16).padStart(2, "0")).join("");
+}
+
+// Default row highlight per theme — mirrors --active-bg / --hover-bg in styles.css
+// (:root dark, [data-theme="light"]). Used when no left-pane surface is chosen, so
+// the highlight matches the prior fixed behavior.
+const THEME_ROW_DEFAULTS = {
+  dark: { active: "#20303a", hover: "#1b2730" },
+  light: { active: "#d7e6fb", hover: "#eaf1fb" },
+};
+
+// shadeForSurface derives a row highlight from a left-pane surface color so the
+// active/hover stays in the surface's color family: darken toward black in light
+// mode, lighten toward white in dark mode.
+function shadeForSurface(hex, theme, kind) {
+  const t =
+    kind === "active" ? (theme === "light" ? 0.12 : 0.16) : theme === "light" ? 0.06 : 0.08;
+  return mixHex(hex, theme === "light" ? "#000000" : "#ffffff", t);
+}
+
 const DEFAULTS = {
   termFont: "Source Code Pro",
   termSize: 13,
@@ -94,7 +120,20 @@ export function applyTheme(s) {
   const setVar = (name, val) =>
     val ? root.style.setProperty(name, val) : root.style.removeProperty(name);
   setVar("--topbar-bg", surfaceValue(s.topbarColor, theme));
-  setVar("--leftpane-bg", surfaceValue(s.leftpaneColor, theme));
+  const lp = surfaceValue(s.leftpaneColor, theme);
+  setVar("--leftpane-bg", lp);
+  // Make the left-pane row highlight follow the chosen surface color (sessions /
+  // repos / files active + hover). The .leftpane rule rebinds --active-bg /
+  // --hover-bg to these. When no surface is chosen, fall back to the theme default
+  // (read live so it tracks dark/light) so behavior is unchanged.
+  if (lp) {
+    setVar("--lp-active-bg", shadeForSurface(lp, theme, "active"));
+    setVar("--lp-hover-bg", shadeForSurface(lp, theme, "hover"));
+  } else {
+    const d = THEME_ROW_DEFAULTS[theme];
+    setVar("--lp-active-bg", d.active);
+    setVar("--lp-hover-bg", d.hover);
+  }
 }
 applyTheme(state);
 
