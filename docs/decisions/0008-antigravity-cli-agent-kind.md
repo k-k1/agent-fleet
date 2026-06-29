@@ -69,22 +69,41 @@ codex/opencode 追加と同じ轍。触る範囲は限定的:
 6. **AGENTS.md シード** — entrypoint の `WS_NOTES`→`AGENTS.md` コピー先に `agy` の
    参照パス（プロジェクト root の `AGENTS.md` を既に読む）を含める。rtk ブロック追記も同様。
 
-## 未解決・PoC で潰す点
+## PoC 結果（2026-06-30、使い捨てコンテナ `agent-fleet/workspace:dev`）
 
-実機 PoC は[ホスト OOM リスク](../HANDOFF.md)（重い Docker ビルドがライブフリートを落とす）に
-配慮し、空きメモリ確保後に行う。確認項目:
+ビルドせず既存イメージの使い捨てコンテナで実施（[ホスト OOM リスク](../HANDOFF.md)回避）。
+
+- ✅ **インストール成功**: `curl -fsSL https://antigravity.google/cli/install.sh | bash` は
+  **非対話・冪等・sha512 検証つき**で `$HOME/.local/bin/agy` に設置（Cloud Run の manifest→
+  flat native build を取得）。`--dir` で設置先指定可、既存なら skip。Debian12/curl/x86_64 でOK。
+- ❌ **起動不可（本開発ホストのみ）**: `agy` が起動直後に `CRNGT failed` → SIGABRT。スタックは
+  `crypto/internal/boring._goboringcrypto_RAND_bytes`。**agy は Go BoringCrypto(FIPS) ビルド**で、
+  x86 の FIPS 乱数モジュールが **RDRAND 命令を必須**とする。本ホスト（AMD Ryzen Embedded
+  R2514・ベアメタル・`detect-virt: none`）は **`/proc/cpuinfo` に rdrand 非提示**（カーネル
+  マスク/BIOS 無効の疑い）→ 自己テスト abort。`seccomp=unconfined` でも変わらず、プリビルド
+  ゆえ FIPS 無効化スイッチもなく**ユーザー空間からは回避不可**。
+
+→ **新たな配備要件: agy を動かすホストは RDRAND 有効が必須**（一般的なクラウド VM・現行 CPU の
+多くは満たすが、この開発ホストは満たさない）。これは agy/Agent-Fleet 固有の欠陥ではなく FIPS
+ビルドの性質。**この開発ホストでは対話/認証/resume の実機確認まで到達できない**ため、以下は
+RDRAND 有効ホストで再 PoC する。
+
+## 未解決（RDRAND 有効ホストで再確認）
 
 - `agy` のヘッドレス/SSH 認可 URL を **コンテナ内で**完走できるか（keyring 不在環境の挙動）。
 - **GCP プロジェクト経路の per-user ログイン**手順（`gcloud` 連携要否、env で渡す資格の形）。
 - ログイン状態照会・logout の正確なサブコマンド名（codex の `login status` 相当）。
 - resume の単位（codex/opencode はスロット sid で resume。`agy` の persistent history との対応）。
 - keyring を使う場合のコンテナ永続化先（home 配下に落ちるか＝denylist 追加要否）。
+- イメージ同梱は `--dir /usr/local/bin` で root 設置（claude/codex と同列）か、home 設置で
+  自己更新を許すか（root 設置だと dev ユーザーの background self-update が効かない）。
 
 ## 決定（提案）
 
 **`kind=agy` を第4のエージェント種別として追加する**。ToS ゲートは GCP プロジェクト経路で通過済み。
 実装は codex 追加の轍（launch 分岐＋`agy_auth.go` device-auth 流用＋CP プロキシ＋Console パネル）に
-乗り、構造差分はイメージ導入が npm でなく `install.sh` の 1 点のみ。**次アクション=コンテナ内
-PoC（上記未解決点の実機確認）→ 段階実装**。
+乗り、構造差分はイメージ導入が npm でなく `install.sh` の 1 点のみ。**PoC でインストールは確認済
+だが、agy の FIPS ビルドが RDRAND を必須とし本開発ホストでは起動不可**（上記）。**次アクション=
+RDRAND 有効ホストで対話/認証/resume を再 PoC → 段階実装**。配備ドキュメントに RDRAND 要件を明記。
 
 [Issue #78]: https://github.com/google-antigravity/antigravity-cli/issues/78
