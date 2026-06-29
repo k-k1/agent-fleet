@@ -112,8 +112,12 @@ export default function SessionsSection() {
       bumpSessions();
       return;
     }
+    // Attaching is what launches the slot (handlePTY → ensureSessionTmux), so it
+    // resumes running. Re-poll shortly after so the row flips to 起動中 fast
+    // instead of lingering on 停止中 until the 4s poll.
+    showTerminal(name);
     bumpSessions();
-    showTerminal(name); // freshly-started slot → re-attach so it's running, not stopped
+    setTimeout(() => bumpSessions(), 1200);
   };
 
   // Ask once for notification permission (best-effort; badges work regardless).
