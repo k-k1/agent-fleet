@@ -97,6 +97,18 @@ export function uploadFiles(dir, files, { overwrite = false } = {}) {
   );
 }
 
+// File-management ops (create / rename / delete). Each returns {status, …json}
+// so callers can branch on 409 (exists) etc. The fetch wrapper adds X-AF-Tenant.
+const fsWrite = (path, opts) =>
+  fetch(rel(path), opts).then((r) =>
+    r.json().then((j) => ({ status: r.status, ...j })).catch(() => ({ status: r.status })),
+  );
+const q = encodeURIComponent;
+export const fsMkdir = (path) => fsWrite(`api/fs/mkdir?path=${q(path)}`, { method: "POST" });
+export const fsNewFile = (path) => fsWrite(`api/fs/newfile?path=${q(path)}`, { method: "POST" });
+export const fsRename = (from, to) => fsWrite(`api/fs/rename?from=${q(from)}&to=${q(to)}`, { method: "POST" });
+export const fsDelete = (path) => fsWrite(`api/fs/delete?path=${q(path)}`, { method: "DELETE" });
+
 // Build the terminal WebSocket URL for a session under the current mount, with
 // the tenant carried as a query param (headers aren't available on WS).
 export function wsURL(session) {

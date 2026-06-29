@@ -80,6 +80,10 @@ func main() {
 	mux.HandleFunc("POST /fs/upload", handleFSUpload)
 	mux.HandleFunc("GET /fs/changes", handleFSChanges)
 	mux.HandleFunc("GET /fs/linemarks", handleFSLineMarks)
+	mux.HandleFunc("POST /fs/mkdir", handleFSMkdir)
+	mux.HandleFunc("POST /fs/newfile", handleFSNewFile)
+	mux.HandleFunc("POST /fs/rename", handleFSRename)
+	mux.HandleFunc("DELETE /fs/delete", handleFSDelete)
 
 	// Claude settings (Remote Control / notifications / RTK hook) — Console toggles.
 	mux.HandleFunc("GET /claude/settings", handleClaudeSettingsGet)

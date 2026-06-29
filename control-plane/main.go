@@ -192,6 +192,10 @@ func main() {
 	mux.HandleFunc("POST /api/fs/upload", cfg.proxyAgentREST)
 	mux.HandleFunc("GET /api/fs/changes", cfg.proxyAgentREST)
 	mux.HandleFunc("GET /api/fs/linemarks", cfg.proxyAgentREST)
+	mux.HandleFunc("POST /api/fs/mkdir", cfg.proxyAgentREST)
+	mux.HandleFunc("POST /api/fs/newfile", cfg.proxyAgentREST)
+	mux.HandleFunc("POST /api/fs/rename", cfg.proxyAgentREST)
+	mux.HandleFunc("DELETE /api/fs/delete", cfg.proxyAgentREST)
 
 	// Claude settings (Remote Control / notifications / RTK) — proxied to the Agent.
 	mux.HandleFunc("GET /api/claude/settings", cfg.proxyAgentREST)

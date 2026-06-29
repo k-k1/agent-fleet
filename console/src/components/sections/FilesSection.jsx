@@ -1,10 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useApp } from "../../state.jsx";
-import { api, uploadFiles } from "../../api.js";
+import { api, uploadFiles, downloadURL, fsMkdir, fsNewFile, fsRename, fsDelete } from "../../api.js";
 import { dirName } from "../../lib/filemeta.js";
 import Section from "../Section.jsx";
 import Icon from "../Icon.jsx";
 import FileIcon, { DirIcon } from "../FileIcon.jsx";
+
+const joinPath = (d, n) => (d ? d + "/" + n : n);
+const parentOf = (p) => {
+  const i = p.lastIndexOf("/");
+  return i < 0 ? "" : p.slice(0, i);
+};
 
 // git status (porcelain XY) -> a one-char badge + color class for the changes list.
 function changeBadge(c) {
@@ -40,6 +46,7 @@ export default function FilesSection() {
   const [changes, setChanges] = useState(null); // changes-mode: aggregated git status
   const [dropTarget, setDropTarget] = useState(null); // dir path being hovered with a drag ("" = root)
   const [uploading, setUploading] = useState(false);
+  const [menu, setMenu] = useState(null); // context menu: { x, y, row|null }
   const treeRef = useRef(null);
   const selRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -122,6 +129,82 @@ export default function FilesSection() {
     },
     [],
   );
+
+  // --- file operations (new / rename / delete) ---
+  const newFolder = useCallback(
+    async (parent) => {
+      const name = window.prompt("新しいフォルダ名", "");
+      if (!name || !name.trim()) return;
+      const p = joinPath(parent, name.trim());
+      const res = await fsMkdir(p);
+      if (res.error) return window.alert("作成失敗: " + (res.error.message || res.error));
+      await refreshDir(parent);
+      setSelected(p);
+    },
+    [refreshDir],
+  );
+  const newFile = useCallback(
+    async (parent) => {
+      const name = window.prompt("新しいファイル名", "");
+      if (!name || !name.trim()) return;
+      const p = joinPath(parent, name.trim());
+      const res = await fsNewFile(p);
+      if (res.error) return window.alert("作成失敗: " + (res.error.message || res.error));
+      await refreshDir(parent);
+      setSelected(p);
+      showFile(p);
+    },
+    [refreshDir, showFile],
+  );
+  const renameRow = useCallback(
+    async (row) => {
+      const base = row.path.split("/").pop();
+      const name = window.prompt("名前を変更", base);
+      if (!name || !name.trim() || name.trim() === base) return;
+      const parent = parentOf(row.path);
+      const to = joinPath(parent, name.trim());
+      const res = await fsRename(row.path, to);
+      if (res.error) return window.alert("変更失敗: " + (res.error.message || res.error));
+      await refreshDir(parent);
+      setSelected(to);
+    },
+    [refreshDir],
+  );
+  const deleteRow = useCallback(
+    async (row) => {
+      if (!window.confirm(`${row.path} を削除しますか？${row.type === "dir" ? "（中身ごと）" : ""}`)) return;
+      const res = await fsDelete(row.path);
+      if (res.error) return window.alert("削除失敗: " + (res.error.message || res.error));
+      await refreshDir(parentOf(row.path));
+      setSelected(parentOf(row.path) || null);
+    },
+    [refreshDir],
+  );
+
+  // Context menu: open at the cursor; close on outside click / Escape / scroll.
+  const openMenu = useCallback((e, row) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setMenu({ x: e.clientX, y: e.clientY, row });
+  }, []);
+  useEffect(() => {
+    if (!menu) return;
+    const close = () => setMenu(null);
+    const onKey = (e) => e.key === "Escape" && close();
+    document.addEventListener("mousedown", close);
+    document.addEventListener("keydown", onKey);
+    window.addEventListener("blur", close);
+    return () => {
+      document.removeEventListener("mousedown", close);
+      document.removeEventListener("keydown", onKey);
+      window.removeEventListener("blur", close);
+    };
+  }, [menu]);
+  // runMenu closes the menu, then runs the action.
+  const runMenu = (fn) => {
+    setMenu(null);
+    fn();
+  };
 
   // Full reload: on manual ⟳, and on filesKey bumps (clone / workspace stop·start).
   useEffect(() => {
@@ -354,12 +437,10 @@ export default function FilesSection() {
     setSelected((s) => (s ? s.split("/")[0] : s));
   }, []);
   const hasOpen = open.size > 0;
-  const parentOf = (p) => {
-    const i = p.lastIndexOf("/");
-    return i < 0 ? "" : p.slice(0, i);
-  };
   const selRow = rows.find((r) => r.path === selected);
   const uploadDir = selRow ? (selRow.type === "dir" ? selRow.path : parentOf(selRow.path)) : "";
+  // Context menu target dir: the row's dir (or its parent for a file), else root.
+  const menuDir = menu && menu.row ? (menu.row.type === "dir" ? menu.row.path : parentOf(menu.row.path)) : "";
 
   const viewToggle = (
     <span className="seg sm files-view">
@@ -390,6 +471,20 @@ export default function FilesSection() {
           {viewToggle}
           {view === "tree" && (
             <>
+              <button
+                className="ghost"
+                title={`新規ファイル${uploadDir ? "（" + uploadDir + "）" : "（home）"}`}
+                onClick={() => newFile(uploadDir)}
+              >
+                <Icon name="new-file" />
+              </button>
+              <button
+                className="ghost"
+                title={`新規フォルダ${uploadDir ? "（" + uploadDir + "）" : "（home）"}`}
+                onClick={() => newFolder(uploadDir)}
+              >
+                <Icon name="new-folder" />
+              </button>
               <button
                 className="ghost"
                 title={`アップロード${uploadDir ? "（" + uploadDir + "）" : "（home）"}`}
@@ -468,6 +563,7 @@ export default function FilesSection() {
           onDragOver={onDragOverTo("")}
           onDragLeave={() => setDropTarget(null)}
           onDrop={onDropTo("")}
+          onContextMenu={(e) => e.target === e.currentTarget && openMenu(e, null)}
           role="tree"
           aria-label="ファイル"
         >
@@ -490,6 +586,7 @@ export default function FilesSection() {
                   treeRef.current?.focus();
                   activate(r);
                 }}
+                onContextMenu={(e) => openMenu(e, r)}
                 onDragOver={isDir ? onDragOverTo(r.path) : undefined}
                 onDrop={isDir ? onDropTo(r.path) : undefined}
               >
@@ -501,6 +598,25 @@ export default function FilesSection() {
               </li>
             );
           })}
+        </ul>
+      )}
+      {menu && (
+        <ul className="ctxmenu" style={{ left: menu.x, top: menu.y }} role="menu" onMouseDown={(e) => e.stopPropagation()}>
+          <li onClick={() => runMenu(() => newFile(menuDir))}>新規ファイル</li>
+          <li onClick={() => runMenu(() => newFolder(menuDir))}>新規フォルダ</li>
+          {menu.row && menu.row.type === "file" && (
+            <li>
+              <a className="ctx-a" href={downloadURL(menu.row.path)} download onClick={() => setMenu(null)}>
+                ダウンロード
+              </a>
+            </li>
+          )}
+          {menu.row && <li onClick={() => runMenu(() => renameRow(menu.row))}>名前を変更</li>}
+          {menu.row && (
+            <li className="danger" onClick={() => runMenu(() => deleteRow(menu.row))}>
+              削除
+            </li>
+          )}
         </ul>
       )}
     </Section>
