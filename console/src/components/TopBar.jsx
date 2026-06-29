@@ -102,6 +102,7 @@ export default function TopBar() {
                   </div>
                   <SwatchRow label="上部バー" theme={s.theme} value={s.topbarColor} onPick={(v) => setSetting("topbarColor", v)} />
                   <SwatchRow label="左ペイン" theme={s.theme} value={s.leftpaneColor} onPick={(v) => setSetting("leftpaneColor", v)} />
+                  <SwatchRow label="ビュアー" theme={s.theme} value={s.viewerColor} onPick={(v) => setSetting("viewerColor", v)} />
                 </div>
                 <div className="acct-sep" />
                 <button className="acct-item" role="menuitem" onClick={() => run(openSettings)}>

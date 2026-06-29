@@ -1349,6 +1349,9 @@ textarea:focus {
   min-width: 0;
   display: flex;
   flex-direction: column;
+  /* Optional tinted viewer background (a step darker than the surfaces); the
+     content panes below are transparent so they sit on it. Default = theme --bg. */
+  background: var(--viewer-bg, var(--bg));
 }
 .view-head {
   display: flex;
@@ -1442,7 +1445,7 @@ textarea:focus {
   flex: 1;
   display: flex;
   overflow: auto;
-  background: var(--bg);
+  background: transparent; /* inherit the .fileview tint (--viewer-bg) */
 }
 
 /* minimap: a scaled mirror of the code with a draggable viewport box */
@@ -1699,7 +1702,7 @@ textarea:focus {
 .md-scroll {
   flex: 1;
   overflow: auto;
-  background: var(--bg);
+  background: transparent; /* inherit the .fileview tint (--viewer-bg) */
 }
 .markdown {
   max-width: 860px;
