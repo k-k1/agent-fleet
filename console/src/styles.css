@@ -668,7 +668,8 @@ textarea:focus {
 .repo-row .dot.clean {
   color: var(--ok);
 }
-.repo-row .branch {
+.repo-row .branch,
+.view-head .branch {
   max-width: 140px;
   font-size: 11px;
   padding: 1px 6px;
@@ -764,14 +765,10 @@ textarea:focus {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.repo-row .ab {
+.repo-row .ab,
+.view-head .ab {
   color: var(--muted);
   font-size: 11px;
-}
-.repo-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
 }
 .chip {
   background: var(--btn);
