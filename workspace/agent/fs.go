@@ -2,10 +2,13 @@ package main
 
 import (
 	"bytes"
+	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 )
@@ -140,6 +143,126 @@ func handleFSFile(w http.ResponseWriter, r *http.Request) {
 		resp["lfs"] = true
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// handleFSDownload streams a file's raw bytes as an attachment. Same guards as
+// the viewer (safeBrowsePath: traversal + denylist), but no size cap and no
+// text/binary handling — http.ServeContent streams (Range-capable) so large or
+// binary files download directly without buffering.
+func handleFSDownload(w http.ResponseWriter, r *http.Request) {
+	full, rel, ok := safeBrowsePath(r.URL.Query().Get("path"))
+	if !ok {
+		writeErr(w, http.StatusBadRequest, "bad_path", "invalid path")
+		return
+	}
+	fi, err := os.Stat(full)
+	if err != nil || fi.IsDir() {
+		writeErr(w, http.StatusNotFound, "not_file", "not a file: "+rel)
+		return
+	}
+	f, err := os.Open(full)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "read_failed", err.Error())
+		return
+	}
+	defer f.Close()
+	name := filepath.Base(rel)
+	w.Header().Set("Content-Type", "application/octet-stream")
+	// filename* (RFC 5987) carries UTF-8 names safely.
+	w.Header().Set("Content-Disposition", "attachment; filename*=UTF-8''"+url.PathEscape(name))
+	http.ServeContent(w, r, name, fi.ModTime(), f)
+}
+
+const defaultMaxUpload = 64 << 20 // 64 MiB per file unless AF_UPLOAD_MAX overrides
+
+func maxUploadBytes() int64 {
+	if v := os.Getenv("AF_UPLOAD_MAX"); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
+			return n
+		}
+	}
+	return defaultMaxUpload
+}
+
+// handleFSUpload writes uploaded files into an existing directory (multipart,
+// field "file", one or more). Guards: the target dir is inside the browse root
+// and not denied; each destination name is reduced to its base and re-checked
+// against denylist/traversal; a per-file size cap applies. A name collision
+// returns 409 with the conflicting names unless ?overwrite=1. Writes go via a
+// temp file + rename so a failed upload never leaves a partial file.
+func handleFSUpload(w http.ResponseWriter, r *http.Request) {
+	dirFull, dirRel, ok := safeBrowsePath(r.URL.Query().Get("path"))
+	if !ok {
+		writeErr(w, http.StatusBadRequest, "bad_path", "invalid path")
+		return
+	}
+	if fi, err := os.Stat(dirFull); err != nil || !fi.IsDir() {
+		writeErr(w, http.StatusBadRequest, "not_dir", "target is not a directory")
+		return
+	}
+	overwrite := r.URL.Query().Get("overwrite") == "1"
+	max := maxUploadBytes()
+	mr, err := r.MultipartReader()
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "bad_form", "expected multipart/form-data")
+		return
+	}
+	written := []string{}
+	conflicts := []string{}
+	for {
+		part, err := mr.NextPart()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "bad_part", err.Error())
+			return
+		}
+		if part.FormName() != "file" || part.FileName() == "" {
+			continue
+		}
+		name := filepath.Base(part.FileName())
+		if name == "" || name == "." || name == ".." || strings.ContainsRune(name, '/') || strings.ContainsRune(name, filepath.Separator) {
+			writeErr(w, http.StatusBadRequest, "bad_name", "invalid filename")
+			return
+		}
+		if isDenied(filepath.Join(dirRel, name)) {
+			writeErr(w, http.StatusForbidden, "denied", "destination not allowed")
+			return
+		}
+		destFull := filepath.Join(dirFull, name)
+		if _, err := os.Stat(destFull); err == nil && !overwrite {
+			conflicts = append(conflicts, name)
+			continue
+		}
+		tmp, err := os.CreateTemp(dirFull, ".upload-*")
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, "write_failed", err.Error())
+			return
+		}
+		n, err := io.Copy(tmp, io.LimitReader(part, max+1))
+		_ = tmp.Close()
+		if err != nil || n > max {
+			_ = os.Remove(tmp.Name())
+			if n > max {
+				writeErr(w, http.StatusRequestEntityTooLarge, "too_large", "file exceeds AF_UPLOAD_MAX")
+			} else {
+				writeErr(w, http.StatusInternalServerError, "write_failed", "upload failed")
+			}
+			return
+		}
+		if err := os.Rename(tmp.Name(), destFull); err != nil {
+			_ = os.Remove(tmp.Name())
+			writeErr(w, http.StatusInternalServerError, "write_failed", err.Error())
+			return
+		}
+		written = append(written, name)
+	}
+	if len(conflicts) > 0 && !overwrite {
+		writeJSON(w, http.StatusConflict, map[string]any{"path": dirRel, "written": written, "conflicts": conflicts})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"path": dirRel, "written": written, "conflicts": conflicts})
 }
 
 // lfsPointerMagic is the first line of a Git LFS pointer file.

@@ -3,9 +3,10 @@ import hljs from "highlight.js/lib/common";
 // Syntax theme is defined in styles.css via CSS variables so it follows the app
 // theme (the github-dark.css import was dark-only → unreadable in light mode).
 import { useApp } from "../state.jsx";
-import { api } from "../api.js";
+import { api, downloadURL } from "../api.js";
 import { baseName, langFor, langLabel, humanSize, countLines, isMarpDoc } from "../lib/filemeta.js";
 import FileIcon from "../components/FileIcon.jsx";
+import Icon from "../components/Icon.jsx";
 import { useSettings, fontStack } from "../lib/settings.js";
 import MarkdownView from "./MarkdownView.jsx";
 import MarpView from "./MarpView.jsx";
@@ -20,6 +21,21 @@ export default function FileView() {
   const [data, setData] = useState(null);
   const [err, setErr] = useState("");
   const [mdMode, setMdMode] = useState("preview"); // markdown only: 'preview' | 'source' | 'slides'
+  const [marks, setMarks] = useState(null); // git change marks for the gutter (repos/* only)
+
+  // Fetch editor-style change marks for git-tracked working-tree files; the
+  // viewer draws a change bar from them. Non-repo paths clear the marks.
+  useEffect(() => {
+    setMarks(null);
+    if (!filePath || !filePath.startsWith("repos/")) return;
+    let alive = true;
+    api(`api/fs/linemarks?path=${encodeURIComponent(filePath)}`)
+      .then((d) => alive && d && !d.error && setMarks(d))
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [filePath]);
 
   useEffect(() => {
     if (!filePath) return;
@@ -117,6 +133,14 @@ export default function FileView() {
         <span className="fi-path muted" title={filePath}>
           {filePath}
         </span>
+        <a
+          className="ghost fi-dl"
+          href={downloadURL(filePath)}
+          download={baseName(filePath)}
+          title="ダウンロード"
+        >
+          <Icon name="cloud-download" />
+        </a>
       </header>
 
       {err ? (
@@ -138,6 +162,7 @@ export default function FileView() {
           lineNumbers={settings.lineNumbers}
           wrap={settings.wrap}
           minimap={settings.minimap}
+          marks={marks}
         />
       )}
     </div>

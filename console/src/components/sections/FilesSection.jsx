@@ -1,10 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useApp } from "../../state.jsx";
-import { api } from "../../api.js";
+import { api, uploadFiles } from "../../api.js";
 import { dirName } from "../../lib/filemeta.js";
 import Section from "../Section.jsx";
 import Icon from "../Icon.jsx";
 import FileIcon, { DirIcon } from "../FileIcon.jsx";
+
+// git status (porcelain XY) -> a one-char badge + color class for the changes list.
+function changeBadge(c) {
+  if (c.untracked) return { ch: "U", cls: "st-add", label: "未追跡" };
+  const code = c.worktree !== " " && c.worktree !== "" ? c.worktree : c.index;
+  if (code === "D") return { ch: "D", cls: "st-del", label: "削除" };
+  if (code === "A") return { ch: "A", cls: "st-add", label: "追加" };
+  if (code === "R" || code === "C") return { ch: code, cls: "st-mod", label: "改名" };
+  return { ch: "M", cls: "st-mod", label: "変更" };
+}
 
 // A directory is a "passthrough" link in a compact chain when its sole entry is one
 // subdirectory (no files) — these get folded into one row (a/b/c) so deep, single-
@@ -26,8 +36,92 @@ export default function FilesSection() {
   const [cache, setCache] = useState({}); // dir path -> entries
   const [selected, setSelected] = useState(null); // path
   const [reloadKey, setReloadKey] = useState(0);
+  const [view, setView] = useState(() => localStorage.getItem("af-files-view") || "tree"); // tree | changes
+  const [changes, setChanges] = useState(null); // changes-mode: aggregated git status
+  const [dropTarget, setDropTarget] = useState(null); // dir path being hovered with a drag ("" = root)
+  const [uploading, setUploading] = useState(false);
   const treeRef = useRef(null);
   const selRef = useRef(null);
+  const fileInputRef = useRef(null);
+
+  const setViewPersist = useCallback((v) => {
+    setView(v);
+    localStorage.setItem("af-files-view", v);
+  }, []);
+
+  // Changes mode: aggregate git status across repos/. Refetch on view switch,
+  // manual ⟳, and filesKey bumps (clone / workspace lifecycle / upload).
+  useEffect(() => {
+    if (view !== "changes") return;
+    let alive = true;
+    setChanges(null);
+    api("api/fs/changes")
+      .then((d) => alive && setChanges(d.changes || []))
+      .catch(() => alive && setChanges([]));
+    return () => {
+      alive = false;
+    };
+  }, [view, reloadKey, filesKey]);
+
+  // Replace one directory's cached entries from the server (after an upload), and
+  // make sure it's expanded so the new file is visible.
+  const refreshDir = useCallback(async (dir) => {
+    const d = await fsList(dir);
+    const entries = d.entries || [];
+    if (dir === "") setRoot(entries);
+    else {
+      setCache((c) => ({ ...c, [dir]: entries }));
+      setOpen((s) => new Set(s).add(dir));
+    }
+  }, []);
+
+  // Upload dropped/picked files into `dir`. On a name collision the server
+  // returns 409 + conflicts; confirm once, then resend with overwrite.
+  const doUpload = useCallback(
+    async (dir, fileList) => {
+      const files = Array.from(fileList || []).filter((f) => f && f.size >= 0 && f.name);
+      if (!files.length) return;
+      setUploading(true);
+      try {
+        let res = await uploadFiles(dir, files);
+        if (res.status === 409 && res.conflicts && res.conflicts.length) {
+          if (window.confirm(`${res.conflicts.join(", ")} は既に存在します。上書きしますか？`)) {
+            res = await uploadFiles(dir, files, { overwrite: true });
+          }
+        }
+        if (res.error) window.alert("アップロード失敗: " + (res.error.message || res.error));
+        await refreshDir(dir);
+        setSelected(dir || (files[0] ? files[0].name : null));
+      } finally {
+        setUploading(false);
+        setDropTarget(null);
+      }
+    },
+    [refreshDir],
+  );
+
+  // Drop onto a dir row uploads into it; onto the empty tree uploads into root.
+  const onDropTo = useCallback(
+    (dir) => (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const files = e.dataTransfer?.files;
+      setDropTarget(null);
+      if (files && files.length) doUpload(dir, files);
+    },
+    [doUpload],
+  );
+  const onDragOverTo = useCallback(
+    (dir) => (e) => {
+      if (e.dataTransfer && Array.from(e.dataTransfer.types || []).includes("Files")) {
+        e.preventDefault();
+        e.stopPropagation();
+        e.dataTransfer.dropEffect = "copy";
+        setDropTarget(dir);
+      }
+    },
+    [],
+  );
 
   // Full reload: on manual ⟳, and on filesKey bumps (clone / workspace stop·start).
   useEffect(() => {
@@ -260,60 +354,155 @@ export default function FilesSection() {
     setSelected((s) => (s ? s.split("/")[0] : s));
   }, []);
   const hasOpen = open.size > 0;
+  const parentOf = (p) => {
+    const i = p.lastIndexOf("/");
+    return i < 0 ? "" : p.slice(0, i);
+  };
+  const selRow = rows.find((r) => r.path === selected);
+  const uploadDir = selRow ? (selRow.type === "dir" ? selRow.path : parentOf(selRow.path)) : "";
+
+  const viewToggle = (
+    <span className="seg sm files-view">
+      <button
+        type="button"
+        className={"seg-btn" + (view === "tree" ? " active" : "")}
+        title="ツリー"
+        onClick={() => setViewPersist("tree")}
+      >
+        <Icon name="list-tree" />
+      </button>
+      <button
+        type="button"
+        className={"seg-btn" + (view === "changes" ? " active" : "")}
+        title="変更ファイルのみ"
+        onClick={() => setViewPersist("changes")}
+      >
+        <Icon name="git-compare" />
+      </button>
+    </span>
+  );
 
   return (
     <Section
       title="Files"
       actions={
         <>
-          <button
-            className="ghost"
-            title="すべて畳む"
-            disabled={!hasOpen}
-            onClick={collapseAll}
-          >
-            <Icon name="collapse-all" />
-          </button>
+          {viewToggle}
+          {view === "tree" && (
+            <>
+              <button
+                className="ghost"
+                title={`アップロード${uploadDir ? "（" + uploadDir + "）" : "（home）"}`}
+                disabled={uploading}
+                onClick={() => fileInputRef.current?.click()}
+              >
+                <Icon name="cloud-upload" spin={uploading} />
+              </button>
+              <button className="ghost" title="すべて畳む" disabled={!hasOpen} onClick={collapseAll}>
+                <Icon name="collapse-all" />
+              </button>
+            </>
+          )}
           <button className="ghost" title="更新" onClick={() => setReloadKey((k) => k + 1)}>
             <Icon name="refresh" />
           </button>
         </>
       }
     >
-      <ul
-        className="fstree"
-        tabIndex={0}
-        ref={treeRef}
-        onKeyDown={onKeyDown}
-        role="tree"
-        aria-label="ファイル"
-      >
-        {root === null && <li className="muted">…</li>}
-        {root && root.length === 0 && <li className="muted">空</li>}
-        {rows.map((r) => {
-          const isOpen = r.type === "dir" && open.has(r.path);
-          const isSel = r.path === selected;
-          const isActiveFile = r.type === "file" && filePath === r.path;
-          return (
-            <li
-              key={r.path}
-              ref={isSel ? selRef : null}
-              className={"fsrow" + (isSel ? " selected" : "")}
-              style={{ paddingLeft: 4 + r.depth * 14 }}
-              onClick={() => {
-                treeRef.current?.focus();
-                activate(r);
-              }}
-            >
-              <span className={r.type === "dir" ? "fs-dir" : "fs-file" + (isActiveFile ? " active" : "")}>
-                <span className="fs-chev">{r.type === "dir" ? (isOpen ? "▾" : "▸") : ""}</span>
-                <span className="fs-ic">{r.type === "dir" ? <DirIcon open={isOpen} /> : <FileIcon name={r.name} />}</span>
-                {r.name}
-              </span>
-            </li>
-          );
-        })}
-      </ul>
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        hidden
+        onChange={(e) => {
+          doUpload(uploadDir, e.target.files);
+          e.target.value = "";
+        }}
+      />
+      {view === "changes" ? (
+        <ul className="fstree changeslist" role="list" aria-label="変更ファイル">
+          {changes === null && <li className="muted">…</li>}
+          {changes && changes.length === 0 && <li className="muted">変更なし</li>}
+          {changes &&
+            Object.entries(
+              changes.reduce((acc, c) => {
+                (acc[c.repo] = acc[c.repo] || []).push(c);
+                return acc;
+              }, {}),
+            ).map(([repo, list]) => (
+              <li key={repo} className="chg-group">
+                <div className="chg-repo">{repo}</div>
+                <ul>
+                  {list.map((c) => {
+                    const b = changeBadge(c);
+                    const rel = c.path.slice(("repos/" + repo + "/").length);
+                    const isSel = c.path === selected;
+                    const isActive = filePath === c.path;
+                    return (
+                      <li
+                        key={c.path}
+                        className={"fsrow chg-row" + (isSel ? " selected" : "")}
+                        onClick={() => {
+                          setSelected(c.path);
+                          showFile(c.path);
+                        }}
+                      >
+                        <span className={"fs-file" + (isActive ? " active" : "")}>
+                          <span className={"chg-badge " + b.cls} title={b.label}>{b.ch}</span>
+                          <span className="fs-ic"><FileIcon name={rel.split("/").pop()} /></span>
+                          {rel}
+                        </span>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </li>
+            ))}
+        </ul>
+      ) : (
+        <ul
+          className={"fstree" + (dropTarget === "" ? " drop-root" : "")}
+          tabIndex={0}
+          ref={treeRef}
+          onKeyDown={onKeyDown}
+          onDragOver={onDragOverTo("")}
+          onDragLeave={() => setDropTarget(null)}
+          onDrop={onDropTo("")}
+          role="tree"
+          aria-label="ファイル"
+        >
+          {root === null && <li className="muted">…</li>}
+          {root && root.length === 0 && <li className="muted">空（ここにファイルをドロップ）</li>}
+          {rows.map((r) => {
+            const isOpen = r.type === "dir" && open.has(r.path);
+            const isSel = r.path === selected;
+            const isActiveFile = r.type === "file" && filePath === r.path;
+            const isDir = r.type === "dir";
+            return (
+              <li
+                key={r.path}
+                ref={isSel ? selRef : null}
+                className={
+                  "fsrow" + (isSel ? " selected" : "") + (isDir && dropTarget === r.path ? " drop-hover" : "")
+                }
+                style={{ paddingLeft: 4 + r.depth * 14 }}
+                onClick={() => {
+                  treeRef.current?.focus();
+                  activate(r);
+                }}
+                onDragOver={isDir ? onDragOverTo(r.path) : undefined}
+                onDrop={isDir ? onDropTo(r.path) : undefined}
+              >
+                <span className={isDir ? "fs-dir" : "fs-file" + (isActiveFile ? " active" : "")}>
+                  <span className="fs-chev">{isDir ? (isOpen ? "▾" : "▸") : ""}</span>
+                  <span className="fs-ic">{isDir ? <DirIcon open={isOpen} /> : <FileIcon name={r.name} />}</span>
+                  {r.name}
+                </span>
+              </li>
+            );
+          })}
+        </ul>
+      )}
     </Section>
   );
 }
