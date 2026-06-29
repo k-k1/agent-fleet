@@ -32,6 +32,9 @@ export default function DisplayTab() {
         <Row label="左ペインの背景">
           <SwatchChoice theme={s.theme} value={s.leftpaneColor} onChange={(v) => setSetting("leftpaneColor", v)} />
         </Row>
+        <Row label="ファイルビュアーの背景">
+          <SwatchChoice theme={s.theme} value={s.viewerColor} onChange={(v) => setSetting("viewerColor", v)} />
+        </Row>
       </section>
 
       <section className="ds-group">

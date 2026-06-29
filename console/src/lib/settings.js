@@ -89,6 +89,7 @@ const DEFAULTS = {
   theme: "dark",
   topbarColor: "default",
   leftpaneColor: "default",
+  viewerColor: "default",
 };
 
 // Build a CSS font-family stack for a chosen family, with CJK + generic fallbacks.
@@ -134,6 +135,10 @@ export function applyTheme(s) {
     setVar("--lp-active-bg", d.active);
     setVar("--lp-hover-bg", d.hover);
   }
+  // File viewer background: a deeper shade of the chosen surface so it reads a
+  // step darker than the top bar / left pane (per request). Unset => theme --bg.
+  const vw = surfaceValue(s.viewerColor, theme);
+  setVar("--viewer-bg", vw ? mixHex(vw, "#000000", theme === "light" ? 0.12 : 0.34) : null);
 }
 applyTheme(state);
 
