@@ -8,11 +8,18 @@ import { hydrateUIPrefs } from "./lib/settings.js";
 // main-area pane layout, and refresh signals that let one section trigger another
 // to refetch (e.g. clone-then-start refreshes repos).
 //
-// The main area is a "layout" of one or two panes shown side by side. Each pane
-// independently shows a terminal, the source-control workbench, or a file viewer.
-// Clicking an item in the left navigator opens it in the ACTIVE pane. Back-compat
-// selectors (mode/scmRepo/filePath/session) project the active pane so existing
-// components keep working.
+// The main area is a "layout" of up to 4 columns shown side by side; each column
+// can itself be split top/bottom into 2 rows — so up to 8 panes. Each pane shows a
+// terminal, the source-control workbench, or a file viewer, independently. Clicking
+// an item in the left navigator opens it in the ACTIVE pane. Back-compat selectors
+// (mode/scmRepo/filePath/session) project the active pane so existing components
+// keep working.
+//
+//   layout = {
+//     cols: [ { id, rowRatio, panes: [pane] | [pane, pane] }, ... ],  // 1–4 columns
+//     colRatios: number[],   // column width fractions, sums to 1, len == cols.length
+//     activeId,              // id of the active pane (click target / key target)
+//   }
 const AppContext = createContext(null);
 export const useApp = () => useContext(AppContext);
 
@@ -22,17 +29,25 @@ function blankPane(id, patch) {
   return { id, kind: "terminal", session: null, filePath: null, scmRepo: null, ...patch };
 }
 
+const equalRatios = (n) => Array(n).fill(1 / n);
+const MAX_COLS = 4;
+
+// localStorage key for the persisted pane layout, namespaced per tenant so one
+// tenant's sessions never leak into another's restored split.
+const LKEY = (slug) => "af.layout." + (slug || "");
+
 const initialLayout = {
-  split: "single", // 'single' | 'vertical'
-  ratio: 0.5, // left pane fraction when split (clamped 0.2–0.8)
+  cols: [{ id: "c0", rowRatio: 0.5, panes: [blankPane("p0")] }],
+  colRatios: [1],
   activeId: "p0",
-  panes: [blankPane("p0")],
 };
 
 export function AppProvider({ children }) {
   const [whoami, setWhoami] = useState(null); // { email, user, ... }
   const [tenants, setTenants] = useState([]); // [{ slug, name, role }]
   const [tenant, setTenantState] = useState(getTenant());
+  const tenantRef = useRef(tenant);
+  tenantRef.current = tenant;
   const [showPicker, setShowPicker] = useState(false);
   const [superAdmin, setSuperAdmin] = useState(false);
 
@@ -43,15 +58,29 @@ export function AppProvider({ children }) {
   const layoutRef = useRef(layout);
   layoutRef.current = layout;
   const paneSeq = useRef(1); // next pane id suffix (p0 already used)
+  const colSeq = useRef(1); // next column id suffix (c0 already used)
   const newPaneId = () => `p${paneSeq.current++}`;
+  const newColId = () => `c${colSeq.current++}`;
+  const hydrated = useRef(false); // becomes true once the saved layout is loaded
 
   // Tear down terminal instances whose pane no longer exists (pane closed, browser
   // back, tenant switch). Each pane keeps its xterm alive while the pane exists —
   // even while showing a file/scm view — so the terminal (and its scrollback +
   // socket) survives view switches, exactly like the original single-terminal app.
-  // Runs after every layout change; cheap (a set diff over ≤2 panes).
+  // Runs after every layout change; cheap (a set diff over a handful of panes).
   useEffect(() => {
-    termKeepOnly(layout.panes.map((p) => p.id));
+    termKeepOnly(layout.cols.flatMap((c) => c.panes.map((p) => p.id)));
+  }, [layout]);
+
+  // Persist the layout per tenant so a reload / re-login restores the same split.
+  // Gated on `hydrated` so the initial single-pane render doesn't clobber the saved
+  // layout before loadLayout() has read it. Reads tenantRef so it always writes
+  // under the currently-active tenant.
+  useEffect(() => {
+    if (!hydrated.current) return;
+    try {
+      localStorage.setItem(LKEY(tenantRef.current), JSON.stringify(layout));
+    } catch {}
   }, [layout]);
 
   // commit applies a new layout and (by default) pushes a browser history entry, so
@@ -72,8 +101,11 @@ export function AppProvider({ children }) {
   // patchActive returns a new layout with the active pane shallow-merged with patch.
   const patchActive = useCallback((patch, push = true) => {
     const cur = layoutRef.current;
-    const panes = cur.panes.map((p) => (p.id === cur.activeId ? { ...p, ...patch } : p));
-    commit({ ...cur, panes }, push);
+    const cols = cur.cols.map((c) => ({
+      ...c,
+      panes: c.panes.map((p) => (p.id === cur.activeId ? { ...p, ...patch } : p)),
+    }));
+    commit({ ...cur, cols }, push);
   }, [commit]);
 
   // shows returns true if pane already displays exactly the target described by patch
@@ -94,16 +126,22 @@ export function AppProvider({ children }) {
   const openActive = useCallback(
     (patch) => {
       const cur = layoutRef.current;
-      if (cur.split === "vertical") {
-        const active = cur.panes.find((p) => p.id === cur.activeId);
-        const other = cur.panes.find((p) => p.id !== cur.activeId);
-        if (shows(other, patch)) {
-          const panes = cur.panes.map((p) =>
-            p.id === cur.activeId ? { ...other, id: cur.activeId } : { ...active, id: other.id },
-          );
-          commit({ ...cur, panes });
-          return;
-        }
+      const all = cur.cols.flatMap((c) => c.panes);
+      const active = all.find((p) => p.id === cur.activeId);
+      const other = all.find((p) => p.id !== cur.activeId && shows(p, patch));
+      if (other && active) {
+        const cols = cur.cols.map((c) => ({
+          ...c,
+          panes: c.panes.map((p) =>
+            p.id === cur.activeId
+              ? { ...other, id: cur.activeId }
+              : p.id === other.id
+                ? { ...active, id: other.id }
+                : p,
+          ),
+        }));
+        commit({ ...cur, cols });
+        return;
       }
       patchActive(patch);
     },
@@ -194,8 +232,47 @@ export function AppProvider({ children }) {
   // terminal-kind reconciler then disposes every other pane's xterm + socket.
   const resetToTerminal = useCallback(() => {
     paneSeq.current = 1;
-    commit({ split: "single", ratio: 0.5, activeId: "p0", panes: [blankPane("p0")] });
+    colSeq.current = 1;
+    commit({ cols: [{ id: "c0", rowRatio: 0.5, panes: [blankPane("p0")] }], colRatios: [1], activeId: "p0" });
   }, [commit]);
+
+  // loadLayout restores a tenant's saved split from localStorage (or resets to a
+  // single terminal when none/invalid). It advances the id counters past the
+  // restored ids so later splits don't collide, and marks hydration done so the
+  // persist effect starts saving.
+  const loadLayout = useCallback(
+    (slug) => {
+      hydrated.current = true;
+      let l = null;
+      try {
+        const s = localStorage.getItem(LKEY(slug));
+        if (s) l = JSON.parse(s);
+      } catch {}
+      if (!l || !Array.isArray(l.cols) || l.cols.length === 0) {
+        resetToTerminal();
+        return;
+      }
+      let pMax = 0;
+      let cMax = 0;
+      for (const c of l.cols) {
+        const cn = parseInt(String(c.id).slice(1), 10);
+        if (!Number.isNaN(cn)) cMax = Math.max(cMax, cn);
+        for (const p of c.panes || []) {
+          const pn = parseInt(String(p.id).slice(1), 10);
+          if (!Number.isNaN(pn)) pMax = Math.max(pMax, pn);
+        }
+      }
+      paneSeq.current = pMax + 1;
+      colSeq.current = cMax + 1;
+      if (!Array.isArray(l.colRatios) || l.colRatios.length !== l.cols.length) l.colRatios = equalRatios(l.cols.length);
+      if (!l.cols.some((c) => c.panes.some((p) => p.id === l.activeId))) l.activeId = l.cols[0].panes[0].id;
+      setLayout(l);
+      try {
+        history.replaceState({ __af: true, layout: l }, "");
+      } catch {}
+    },
+    [resetToTerminal],
+  );
 
   // recreateWs tears the container down and starts a fresh one from the current
   // image. Login + connections persist; cloned repos and running sessions are
@@ -246,25 +323,49 @@ export function AppProvider({ children }) {
   );
 
   // ---- pane layout controls ----
-  // splitPane goes single → vertical, adding a fresh empty terminal pane on the
-  // right and making it active (so the next click opens there). No-op if already
-  // split.
-  const splitPane = useCallback(() => {
+  // splitRight appends a new full-height column (up to MAX_COLS) holding a fresh
+  // terminal pane, made active. Column widths reset to equal. No-op at the cap.
+  const splitRight = useCallback(() => {
     const cur = layoutRef.current;
-    if (cur.split === "vertical") return;
+    if (cur.cols.length >= MAX_COLS) return;
     const id = newPaneId();
-    commit({ ...cur, split: "vertical", panes: [...cur.panes, blankPane(id)], activeId: id });
+    const cols = [...cur.cols, { id: newColId(), rowRatio: 0.5, panes: [blankPane(id)] }];
+    commit({ ...cur, cols, colRatios: equalRatios(cols.length), activeId: id });
   }, [commit]);
 
-  // closePane removes a pane (vertical → single). The surviving pane becomes active.
-  // The reconciler effect disposes the closed pane's terminal.
-  const closePane = useCallback(
-    (id) => {
+  // splitDown splits the column holding paneId into two rows (top/bottom), adding a
+  // fresh terminal pane below, made active. No-op if that column already has 2 rows.
+  const splitDown = useCallback(
+    (paneId) => {
       const cur = layoutRef.current;
-      if (cur.split !== "vertical") return;
-      const panes = cur.panes.filter((p) => p.id !== id);
-      if (panes.length === 0) return;
-      commit({ ...cur, split: "single", panes, activeId: panes[0].id });
+      const col = cur.cols.find((c) => c.panes.some((p) => p.id === paneId));
+      if (!col || col.panes.length >= 2) return;
+      const id = newPaneId();
+      const cols = cur.cols.map((c) =>
+        c.id === col.id ? { ...c, rowRatio: 0.5, panes: [...c.panes, blankPane(id)] } : c,
+      );
+      commit({ ...cur, cols, activeId: id });
+    },
+    [commit],
+  );
+
+  // closePane removes a pane. A column losing one of its two rows collapses to a
+  // single row; an emptied column is dropped and widths re-equalize. The surviving
+  // (or first) pane becomes active. The reconciler disposes the closed terminal.
+  const closePane = useCallback(
+    (paneId) => {
+      const cur = layoutRef.current;
+      const cols = cur.cols
+        .map((c) => {
+          const panes = c.panes.filter((p) => p.id !== paneId);
+          return panes.length === c.panes.length ? c : { ...c, rowRatio: 0.5, panes };
+        })
+        .filter((c) => c.panes.length > 0);
+      const remaining = cols.flatMap((c) => c.panes);
+      if (remaining.length === 0) return;
+      const activeId = remaining.some((p) => p.id === cur.activeId) ? cur.activeId : remaining[0].id;
+      const colRatios = cols.length === cur.cols.length ? cur.colRatios : equalRatios(cols.length);
+      commit({ ...cur, cols, colRatios, activeId });
     },
     [commit],
   );
@@ -278,15 +379,36 @@ export function AppProvider({ children }) {
     [commit],
   );
 
-  // setRatio updates the split fraction during divider drag (no history entry).
-  const setRatio = useCallback(
-    (r) => {
+  // setColRatios / setRowRatio update split fractions during divider drag (no
+  // history entry; they fire many times per drag).
+  const setColRatios = useCallback((ratios) => {
+    setLayout((cur) => ({ ...cur, colRatios: ratios }));
+  }, []);
+  const setRowRatio = useCallback((colId, r) => {
+    const ratio = Math.min(0.8, Math.max(0.2, r));
+    setLayout((cur) => ({
+      ...cur,
+      cols: cur.cols.map((c) => (c.id === colId ? { ...c, rowRatio: ratio } : c)),
+    }));
+  }, []);
+
+  // swapPanes exchanges the contents of two panes (kept in place by id), made by a
+  // drag-and-drop from one pane onto another. The drop target becomes active.
+  const swapPanes = useCallback(
+    (aId, bId) => {
+      if (!aId || !bId || aId === bId) return;
       const cur = layoutRef.current;
-      const ratio = Math.min(0.8, Math.max(0.2, r));
-      if (ratio === cur.ratio) return;
-      setLayout({ ...cur, ratio });
+      const all = cur.cols.flatMap((c) => c.panes);
+      const a = all.find((p) => p.id === aId);
+      const b = all.find((p) => p.id === bId);
+      if (!a || !b) return;
+      const cols = cur.cols.map((c) => ({
+        ...c,
+        panes: c.panes.map((p) => (p.id === aId ? { ...b, id: aId } : p.id === bId ? { ...a, id: bId } : p)),
+      }));
+      commit({ ...cur, cols, activeId: bId });
     },
-    [],
+    [commit],
   );
 
   // cycleSession attaches the previous/next session (wrapping) to the active pane,
@@ -304,7 +426,8 @@ export function AppProvider({ children }) {
         return;
       }
       const cur = layoutRef.current;
-      const active = cur.panes.find((p) => p.id === cur.activeId) || cur.panes[0];
+      const all = cur.cols.flatMap((c) => c.panes);
+      const active = all.find((p) => p.id === cur.activeId) || all[0];
       let i = names.indexOf(active.session);
       if (i < 0) i = 0;
       const next = (i + dir + names.length) % names.length;
@@ -363,26 +486,28 @@ export function AppProvider({ children }) {
     (slug) => {
       persistTenant(slug);
       setTenantState(slug);
-      resetToTerminal();
+      loadLayout(slug); // restore this tenant's saved split (or reset if none)
       refreshWs();
       bumpSessions();
       bumpRepos();
       bumpConn();
     },
-    [resetToTerminal, refreshWs, bumpSessions, bumpRepos, bumpConn],
+    [loadLayout, refreshWs, bumpSessions, bumpRepos, bumpConn],
   );
 
   // boot
   useEffect(() => {
     (async () => {
       await initTenants();
+      loadLayout(getTenant()); // restore the saved split for the resolved tenant
       hydrateUIPrefs(); // pull per-user display settings from the server (after tenant)
       refreshWs();
     })();
-  }, [initTenants, refreshWs]);
+  }, [initTenants, loadLayout, refreshWs]);
 
   // Back-compat projection of the active pane, for components not yet pane-aware.
-  const activePane = layout.panes.find((p) => p.id === layout.activeId) || layout.panes[0];
+  const allPanes = layout.cols.flatMap((c) => c.panes);
+  const activePane = allPanes.find((p) => p.id === layout.activeId) || allPanes[0];
 
   const value = {
     whoami,
@@ -404,10 +529,13 @@ export function AppProvider({ children }) {
     // pane layout
     layout,
     activePaneId: layout.activeId,
-    splitPane,
+    splitRight,
+    splitDown,
     closePane,
     setActivePane,
-    setRatio,
+    setColRatios,
+    setRowRatio,
+    swapPanes,
     showTerminal,
     showSCM,
     showFile,
