@@ -1,44 +1,36 @@
 import { useState } from "react";
-import { apiJSON } from "../api.js";
 import RepoPicker from "./RepoPicker.jsx";
 import Modal from "./Modal.jsx";
 
 // NewRepoModal: clone a repository into the workspace (~/repos) — a roomy dialog
 // matching the New Session modal. Pick from a connected provider, or paste a URL.
+// Submitting hands the clone to the parent (ReposSection) and closes immediately;
+// progress shows as a spinner row in the left pane, so the user isn't trapped in a
+// busy dialog while the clone runs.
 const SOURCE_HELP = {
   picker: "接続済みの GitHub / Bitbucket からリポジトリとブランチを選んで clone します。",
   url: "clone URL を手入力します（接続していないリポジトリ向け）。",
 };
 
-export default function NewRepoModal({ onClose, onCloned }) {
+export default function NewRepoModal({ onClose, onClone }) {
   const [source, setSource] = useState("picker"); // 'picker' | 'url'
   const [sel, setSel] = useState(null); // picker: { cloneUrl, branch }
   const [url, setUrl] = useState("");
   const [branch, setBranch] = useState("");
-  const [busy, setBusy] = useState(false);
 
   const cloneUrl = source === "picker" ? sel?.cloneUrl : url.trim();
   const cloneBranch = source === "picker" ? sel?.branch || "" : branch.trim();
-  const canSubmit = !!cloneUrl && !busy;
+  const canSubmit = !!cloneUrl;
 
-  const submit = async (e) => {
+  const submit = (e) => {
     e.preventDefault();
     if (!canSubmit) return;
-    setBusy(true);
-    try {
-      const res = await apiJSON("api/repos", "POST", { remote_url: cloneUrl, branch: cloneBranch });
-      if (res && res.error) {
-        alert("clone に失敗: " + (res.error.message || res.error));
-        return;
-      }
-      onCloned(res);
-    } finally {
-      setBusy(false);
-    }
+    onClone({ remote_url: cloneUrl, branch: cloneBranch });
+    onClose();
   };
 
   return (
-    <Modal title="リポジトリを clone" onClose={onClose} className="session-modal" as="form" onSubmit={submit} lockClose={busy}>
+    <Modal title="リポジトリを clone" onClose={onClose} className="session-modal" as="form" onSubmit={submit}>
         <div className="modal-body">
           <div className="field">
             <div className="field-label">取得元</div>
@@ -77,11 +69,11 @@ export default function NewRepoModal({ onClose, onCloned }) {
         </div>
 
         <footer className="modal-foot">
-          <button type="button" className="ghost" onClick={onClose} disabled={busy}>
+          <button type="button" className="ghost" onClick={onClose}>
             キャンセル
           </button>
           <button type="submit" className="primary" disabled={!canSubmit}>
-            {busy ? "Cloning…" : "Clone"}
+            Clone
           </button>
         </footer>
     </Modal>

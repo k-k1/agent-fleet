@@ -9,6 +9,13 @@ import { kindIcon, kindLabel } from "../../lib/sessionkind.js";
 const repoSafeSession = (name) =>
   name.replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 40) || "repo";
 
+// guessRepoName derives a display name from a clone URL (last path segment minus
+// .git) for the in-progress spinner row, before the server reports the real name.
+const guessRepoName = (u) => {
+  const s = String(u || "").replace(/\.git$/, "").replace(/\/+$/, "");
+  return s.split(/[/:]/).pop() || "repo";
+};
+
 // freeName picks the first unused session name: base, base-2, base-3, … so the
 // same repo can spawn several sessions ("複製") without name collisions.
 const freeName = (base, used) => {
@@ -27,7 +34,28 @@ export default function ReposSection() {
     useApp();
   const [repos, setRepos] = useState([]);
   const [showClone, setShowClone] = useState(false);
+  const [cloning, setCloning] = useState(null); // { name } while a clone runs (left-pane spinner)
   const [activeRepo, setActiveRepo] = useState(null); // repo used by the attached session
+
+  // Run a clone in the background: the modal closed already, so progress shows as a
+  // spinner row here until the server finishes, then the repo appears + is revealed.
+  const doClone = async ({ remote_url, branch }) => {
+    setCloning({ name: guessRepoName(remote_url) });
+    try {
+      const res = await apiJSON("api/repos", "POST", { remote_url, branch });
+      if (res && res.error) {
+        alert("clone に失敗: " + (res.error.message || res.error));
+        return;
+      }
+      bumpRepos();
+      if (res && res.name) revealInFiles("repos/" + res.name);
+      else bumpFiles();
+    } catch (e) {
+      alert("clone に失敗: " + e);
+    } finally {
+      setCloning(null);
+    }
+  };
 
   useEffect(() => {
     let alive = true;
@@ -64,7 +92,7 @@ export default function ReposSection() {
       title="Repos"
       actions={
         <>
-          <button className="ghost" title="clone" onClick={() => setShowClone((s) => !s)}>
+          <button className="ghost" title="clone" disabled={!!cloning} onClick={() => setShowClone((s) => !s)}>
             <Icon name="add" />
           </button>
           <button className="ghost" title="更新" onClick={bumpRepos}>
@@ -73,20 +101,14 @@ export default function ReposSection() {
         </>
       }
     >
-      {showClone && (
-        <NewRepoModal
-          onClose={() => setShowClone(false)}
-          onCloned={(res) => {
-            bumpRepos();
-            // Open the freshly-cloned dir in the Files tree (also refreshes it).
-            if (res && res.name) revealInFiles("repos/" + res.name);
-            else bumpFiles();
-            setShowClone(false);
-          }}
-        />
-      )}
+      {showClone && <NewRepoModal onClose={() => setShowClone(false)} onClone={doClone} />}
       <ul className="list">
-        {repos.length === 0 && <li className="muted">リポジトリなし</li>}
+        {cloning && (
+          <li className="repo-row cloning">
+            <Icon name="loading" spin /> Cloning {cloning.name}…
+          </li>
+        )}
+        {repos.length === 0 && !cloning && <li className="muted">リポジトリなし</li>}
         {repos.map((r) => (
           <RepoRow
             key={r.name}
