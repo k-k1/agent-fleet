@@ -79,18 +79,18 @@ export default function Pane({
       onDragLeave={onDragLeave}
       onDrop={onDrop}
     >
+      {canDrag && (
+        <button
+          type="button"
+          className="ghost pane-btn pane-grip"
+          title="ドラッグして他のペインと入れ替え"
+          draggable
+          onDragStart={onDragStart}
+        >
+          <Icon name="gripper" />
+        </button>
+      )}
       <div className="pane-controls">
-        {canDrag && (
-          <button
-            type="button"
-            className="ghost pane-btn pane-grip"
-            title="ドラッグして他のペインと入れ替え"
-            draggable
-            onDragStart={onDragStart}
-          >
-            <Icon name="gripper" />
-          </button>
-        )}
         {canSplitRight && (
           <button type="button" className="ghost pane-btn" title="右に分割" onClick={onSplitRight}>
             <Icon name="split-horizontal" />

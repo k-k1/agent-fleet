@@ -1406,7 +1406,19 @@ textarea:focus {
   align-items: center;
   justify-content: center;
 }
+/* drag grip sits at the pane's top-left, just left of the view-head's left
+   badge (kind-tag / view-title); the view-head reserves matching left padding
+   so the grip never covers it. */
 .pane-grip {
+  position: absolute;
+  top: 4px;
+  left: 6px;
+  z-index: 6;
+  width: 22px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   cursor: grab;
 }
 .pane-grip:active {
@@ -1478,10 +1490,10 @@ body.row-resizing {
   display: flex;
   align-items: center;
   gap: 10px;
-  /* extra right padding reserves room for the pane control cluster (grip /
-     split-right / split-down / close, up to 4) overlaid at the pane's top-right, so
-     it never covers a view-head action. */
-  padding: 6px 108px 6px 12px;
+  /* right padding reserves room for the pane control cluster (split-right /
+     split-down / close) overlaid at the top-right; left padding reserves room
+     for the drag grip overlaid at the top-left, just left of the badge. */
+  padding: 6px 84px 6px 34px;
   background: var(--bar);
   border-bottom: 1px solid var(--border);
 }
