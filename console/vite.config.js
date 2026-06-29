@@ -1,5 +1,12 @@
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+
+// marp-core statically requires mathjax-full (~43MB) and katex for its math
+// feature. We render with { math: false } and verified those modules are never
+// touched at runtime in that mode, so we alias them to a tiny stub to keep them
+// out of the bundle — otherwise the production build hangs at minification.
+const mathStub = fileURLToPath(new URL("./marp-math-stub.js", import.meta.url));
 
 // The Console is served as static files by the Control Plane and may live behind
 // a path-stripping proxy (Tailscale Funnel + Caddy strips /agent-fleet). All asset
@@ -13,6 +20,13 @@ import react from "@vitejs/plugin-react";
 export default defineConfig({
   base: "./",
   plugins: [react()],
+  resolve: {
+    alias: [
+      { find: /^mathjax-full(\/.*)?$/, replacement: mathStub },
+      { find: /^katex$/, replacement: mathStub },
+      { find: /^katex\/package\.json$/, replacement: mathStub },
+    ],
+  },
   build: {
     outDir: "dist",
     emptyOutDir: true,
