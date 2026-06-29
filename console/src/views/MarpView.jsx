@@ -26,7 +26,9 @@ const THEME_CSS = import.meta.glob("../marp-themes/*.css", {
 const STAGE_CSS = `
 :host { display: block; height: 100%; }
 .deck, .marpit { width: 100%; height: 100%; margin: 0; }
-.marpit { display: flex; align-items: center; justify-content: center; }
+/* Pin the slide to the top of the stage (not vertically centered) so a 16:9 slide
+   in a taller viewer keeps its title row at the top; the letterbox falls below. */
+.marpit { display: flex; align-items: flex-start; justify-content: center; }
 .marpit > svg[data-marpit-svg] {
   width: 100%;
   height: auto;
