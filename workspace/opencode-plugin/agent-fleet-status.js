@@ -17,6 +17,12 @@
 //   message.* (assistant producing output / user just submitted) -> working
 //   session.idle (response finished, awaiting input)             -> idle
 //
+// opencode can emit a finalization message.* shortly AFTER session.idle (the
+// assistant message settling, usage, etc.). Taken literally that flips the badge
+// back to working with no following idle => stuck 進行中. So message.* within a
+// short grace window after session.idle is treated as trailing and ignored; a
+// genuine new turn always arrives well after that window.
+//
 // It also records the opencode session id (ses_…) on session.created, keyed by
 // AF_SESSION_SID, into ~/.config/agent-fleet/opencode-sid/<AF_SESSION_SID>. The Agent
 // reads it to resume THIS slot's own session (opencode --session <id>) on relaunch,
@@ -28,6 +34,8 @@ export const AgentFleetStatus = async ({ $ }) => {
   const sid = process.env.AF_SESSION_SID;
   const sidDir = process.env.HOME ? join(process.env.HOME, ".config/agent-fleet/opencode-sid") : null;
   let cur = "";
+  let idleAt = 0;
+  const GRACE_MS = 1500; // ignore message.* this long after session.idle (trailing finalize)
   const set = (state) => {
     if (!sid || state === cur) return;
     cur = state;
@@ -52,8 +60,13 @@ export const AgentFleetStatus = async ({ $ }) => {
       const t = event && event.type;
       if (!t) return;
       if (t === "session.created") recordOcid(event.properties && event.properties.sessionID);
-      if (t === "session.idle") set("idle");
-      else if (t.startsWith("message.")) set("working");
+      if (t === "session.idle") {
+        idleAt = Date.now();
+        set("idle");
+      } else if (t.startsWith("message.")) {
+        if (Date.now() - idleAt < GRACE_MS) return; // trailing finalize after idle
+        set("working");
+      }
     },
   };
 };
