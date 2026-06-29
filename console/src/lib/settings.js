@@ -135,10 +135,11 @@ export function applyTheme(s) {
     setVar("--lp-active-bg", d.active);
     setVar("--lp-hover-bg", d.hover);
   }
-  // File viewer background: a deeper shade of the chosen surface so it reads a
-  // step darker than the top bar / left pane (per request). Unset => theme --bg.
+  // File viewer background, derived from the chosen surface: lighter than the
+  // surfaces in light theme (toward white), darker in dark theme (toward black).
+  // Unset => theme --bg.
   const vw = surfaceValue(s.viewerColor, theme);
-  setVar("--viewer-bg", vw ? mixHex(vw, "#000000", theme === "light" ? 0.22 : 0.34) : null);
+  setVar("--viewer-bg", vw ? (theme === "light" ? mixHex(vw, "#ffffff", 0.45) : mixHex(vw, "#000000", 0.34)) : null);
 }
 applyTheme(state);
 
