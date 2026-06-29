@@ -36,7 +36,20 @@ const fsList = (path) =>
 // set) so it's keyboard-navigable: ↑/↓ move, → expand / into child, ← collapse /
 // to parent, Enter opens a file (or toggles a folder).
 export default function FilesSection() {
-  const { filePath, showFile, filesKey, reveal } = useApp();
+  const { filePath, showFile, showFileSplit, filesKey, reveal } = useApp();
+
+  // Middle-click opens a file in a freshly split pane (like the Sessions list).
+  // Suppress the mousedown default so the browser doesn't start autoscroll.
+  const onAuxOpen = (path) => ({
+    onMouseDown: (e) => e.button === 1 && e.preventDefault(),
+    onAuxClick: (e) => {
+      if (e.button === 1) {
+        e.preventDefault();
+        setSelected(path);
+        showFileSplit(path);
+      }
+    },
+  });
   const [root, setRoot] = useState(null);
   const [open, setOpen] = useState(() => new Set()); // expanded dir paths
   const [cache, setCache] = useState({}); // dir path -> entries
@@ -537,10 +550,12 @@ export default function FilesSection() {
                       <li
                         key={c.path}
                         className={"fsrow chg-row" + (isSel ? " selected" : "")}
+                        title="中クリックで新ペインに開く"
                         onClick={() => {
                           setSelected(c.path);
                           showFile(c.path);
                         }}
+                        {...onAuxOpen(c.path)}
                       >
                         <span className={"fs-file" + (isActive ? " active" : "")}>
                           <span className={"chg-badge " + b.cls} title={b.label}>{b.ch}</span>
@@ -582,6 +597,7 @@ export default function FilesSection() {
                   "fsrow" + (isSel ? " selected" : "") + (isDir && dropTarget === r.path ? " drop-hover" : "")
                 }
                 style={{ paddingLeft: 4 + r.depth * 14 }}
+                title={isDir ? undefined : "中クリックで新ペインに開く"}
                 onClick={() => {
                   treeRef.current?.focus();
                   activate(r);
@@ -589,6 +605,7 @@ export default function FilesSection() {
                 onContextMenu={(e) => openMenu(e, r)}
                 onDragOver={isDir ? onDragOverTo(r.path) : undefined}
                 onDrop={isDir ? onDropTo(r.path) : undefined}
+                {...(isDir ? {} : onAuxOpen(r.path))}
               >
                 <span className={isDir ? "fs-dir" : "fs-file" + (isActiveFile ? " active" : "")}>
                   <span className="fs-chev">{isDir ? (isOpen ? "▾" : "▸") : ""}</span>

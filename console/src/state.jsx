@@ -392,6 +392,15 @@ export function AppProvider({ children }) {
     },
     [openActive, pushDrawerEntry],
   );
+  // showFileSplit opens a file in a freshly split pane (middle-click in the Files
+  // tree), instead of replacing the active pane's content.
+  const showFileSplit = useCallback(
+    (path) => {
+      openInNewPane({ kind: "file", filePath: path });
+      setNavOpen(false);
+    },
+    [openInNewPane],
+  );
 
   // ---- pane layout controls ----
   // splitRight appends a new full-height column (up to MAX_COLS) holding a fresh
@@ -649,6 +658,7 @@ export function AppProvider({ children }) {
     openInNewPane,
     showSCM,
     showFile,
+    showFileSplit,
     settingsOpen,
     openSettings: () => setSettingsOpen(true),
     closeSettings: () => setSettingsOpen(false),
