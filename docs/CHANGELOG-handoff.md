@@ -57,6 +57,16 @@
 - セッション一覧/ファイルツリーの UI 微修正: (1) 停止中セッション名を `--muted`→`--fg` opacity0.72 で可読に / (2) 接続中セッションは**先頭固定（hoist）を維持** + pin バッジを行の**右上に絶対配置**（セッション名は左寄せ固定。`.session-row` を `position:relative`、pin は `position:absolute`）/ (3) ファイルツリー選択色のハードコード（`#2a3a44`/`#2f5a6a`）を `--hover-bg`/`--active-bg` に＝ライトモードで暗いままを解消 / (4) **`.pane-head` に `z-index:3`**＝sticky なセクションヘッダ（SESSIONS 等）が sticky なピン行に覆われないように。
 - ピン留め行の sticky 固定が効かない回帰を修正。pin 右上化で足した `.list>li.session-row{position:relative}` が `.session-row.pinned{position:sticky}` を**詳細度で上書き**し上部固定を無効化（少し下にズレる/SESSIONS の隙間から見える）。pin はピン留め行のみ＝sticky が包含ブロックなので relative 不要 → 削除して sticky 復活。
 - codex resume が新規セッションになるバグ修正。codex のフックは claude 同様**入れ子スキーマ** `hooks.<E>=[{hooks=[{type,command}]}]` が必要（フラットはパースは通るが無音で発火しない）。フラットだとフック未発火→session_id 未捕捉→resume で id 無し→新規化。実機で発火・session_id 捕捉・resume を確認。
+- Console 接続 UI 刷新: Claude を **OAuth 接続ボタン**化（クリックでサインインを別タブ自動オープン＋コード貼付、`window.open`）/ Codex・GitHub の認証コードを**クリックでコピー**（`CopyCode`）/ 接続中の **✕→「切断」** テキストボタン（`DisconnectButton`）。端末の「sign-in URL」コピー機能は廃止（`reconstructURL` 撤去）＝設定>接続で代替。
+- Workspace「**作り直す**」を WS バーから **設定>環境の危険ゾーン**（警告ダイアログ付き、`EnvTab` の `WorkspaceDangerZone`）へ移設。WS バーは Start/Stop/更新/プレビューのみに。
+- Repos 行を簡素化: **fetch / 🗑削除 / ブランチ切替を右ペイン（ソース管理ヘッダ）へ移設**し、**起動ボタンをブランチ位置（名前の右）**へ。削除後は端末へ戻る。
+- 左ペインのドロップダウン（起動 / セッション⋯）が下のセクション（FILES 等）に隠れる問題を修正。flex item にスコープされる z-index を、メニュー展開中だけ `:has()` で当該 `.pane-section` を上位スタッキングへ引き上げて解消。
+- SCM diff を**ファイル毎の折り畳み＋旧/新行番号ガター**（codeleaf 風、`splitDiffFiles`/`diffRows`/`FileDiff`）。スマホは `scmbody` を縦積みし変更/履歴を上部（最大38vh）＋ diff 全幅。
+- **SESSIONS/REPOS のピン留めを廃止**（順序が入れ替わり使いづらいとの FB）。`pinFirst`/`listutil.js`・pin バッジ・sticky を撤去し、接続中/SCM 表示中を **選択ハイライト（`.active`）のみ**に。← 6/29 前段（57/58）の「ピン先頭固定＋バッジ＋sticky 回帰修正」系はこれで撤回。
+- **Workspace 利用ガイドを全エージェントへ自動配置**（`workspace/workspace-notes.md` 単一ソース・英語＝やってはいけないこと/注意点）。claude=`/etc/claude-code/CLAUDE.md`（managed policy・毎セッション読込・除外不可、image 焼込）/ codex=`~/.codex/AGENTS.md` / opencode=`~/.config/opencode/AGENTS.md`（後二者は entrypoint が毎起動 `cp -f` で refresh）。CLAUDE_CONFIG_DIR がユーザーメモリ参照に追従する保証がないため Claude は managed policy を採用。
+- **ビルドメモリ実害対策**: entrypoint が `~/.gradle/gradle.properties` を seed（無い時のみ。heap 768m / `daemon.idletimeout=120000`〔既定3h でデーモン居座り＝実害〕/ parallel 無効 / workers 2 / caching）。Node/JS は適正ヒープがビルド依存ゆえ強制キャップせずガイドに指針（OOM 時のみ `NODE_OPTIONS=--max-old-space-size`、テストランナー並列抑制、watcher 放置禁止）。
+- Dockerfile レイヤ順最適化: 重い go toolchain/npm(claude/opencode/codex) を前段、entrypoint/notes/vendor 等の COPY を `USER dev` 直前へ集約（小修正で重レイヤを再実行しない）。`.dockerignore` に `!workspace-notes.md`（`**/*.md` 除外の例外）。
+- イメージ再ビルド＋運用者コンテナ作り直し済み。`/etc/claude-code/CLAUDE.md`・`~/.codex/AGENTS.md`・`~/.config/opencode/AGENTS.md`・`~/.gradle/gradle.properties` のライブ配置を確認。
 
 ## 2026-06-28（続き）
 - codex をエージェント追加（`kind="codex"`、OpenAI Codex CLI `@openai/codex` を image 焼き込み）。認証2経路（API キー=`codex login --with-api-key` stdin / サブスク=`codex login --device-auth` device flow、ともに codex 所有の `~/.codex/auth.json` を書く＝secrets.enc 不要）。状態は claude 同型フックを**起動時 `-c` 注入**（per-slot sid 埋め込み・`--dangerously-bypass-hook-trust`）で working/idle。resume はフック stdin の `session_id` 捕捉 →`codex resume <id>`。`~/.codex` を denylist。`codex_auth.go` 新規。実 CLI 0.142.3 で hooks 形式 / device-auth 出力 / login 経路を実検証（認証完了は要 OpenAI 資格）。詳細 HANDOFF §6.10.4。
