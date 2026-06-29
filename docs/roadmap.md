@@ -233,19 +233,27 @@ Deployment ルート鍵 / Tenant KEK   ← custodian が保護。AWS=KMS CMK、�
 
 ---
 
-## P3-6. MCP による Agent Fleet 制御
-> ▶ **未着手**。P3-5 の管理サービス層の薄いラッパとして後続。
+## P3-6. MCP による Agent Fleet 制御（管理面 + 作業面を一体で）
+> ▶ **未着手**。設計確定は [decisions/0006](decisions/0006-mcp-unified.md)、実装プランは [history/p3-6-mcp](history/p3-6-mcp.md)。
 
-CP の管理サービスを **MCP サーバ**として公開し、**その社の運用チーム**が Claude 経由で自社 Fleet を運用・トリアージできる。
+CP に `/mcp` を 1 本生やし、**管理面（運用チーム）と作業面（メンバー自身の遠隔セッション駆動）を同一サーバで** role 出し分けする。
+**そもそもの目的 = E**: 1 つの手元 Claude が、自分の Workspace 内の claude/opencode/codex セッション群を束ねて駆動する（フリート運用の MCP 化）。
 
-- **形**: P3-5 の管理サービス層の**薄いラッパ**（Go の HTTP/SSE MCP サーバ）。新ロジックを足さない。
-- **ツール例**:
-  - 読み取り: `get_usage` / `list_workspaces` / `list_sessions` / `tail_audit`
-  - 変更: `start_workspace` / `stop_workspace` / `stop_session` / `set_user_quota` / `rotate_key`
-- **authz**: MCP は **super_admin 相当の scoped service principal**。RBAC を必ず通す。
-  **既定は読み取り専用**、変更系は別 principal の opt-in + dry-run/confirm（鍵ローテ等は強力なため）。
-- **監査**: MCP 経由の全操作を `actor_kind=mcp` で記録。
-- **用途**: 「idle workspace を止めて」「監査ログの異常を要約」等、自社運用を Claude に委譲。
+- **一体化する層は入口だけ**（transport / 認証・RBAC / 監査）。裏は admin=CP 管理サービス層 / member=Agent proxy の 2 本のまま。**新ロジックを足さない薄いラッパ**。
+- **transport**: **Streamable HTTP**（旧 HTTP+SSE ではない）。公式 Go SDK・バージョン pin。新プロセス不要。
+- **認証 = PAT（各ユーザーが Console で発行・発行者の role を継承）**:
+  - トークンは identity+membership 参照、**role は呼び出し毎に live 解決**（降格で即失効）。role が能力の天井。
+  - **scope は発行時に選択（≤role）**: `read`（既定）/ `write` / `admin:dangerous`。「読む Claude は read トークン・壊す操作は別トークン」で injection 分離。
+  - テナントはトークンに固定（クライアント供給 `X-AF-Tenant` は受けない）。oauth2-proxy（Google forward-auth）と MCP の OAuth2.1/DCR は噛み合わないので PAT 主・OAuth は後（AWS 以降）。
+- **ツール（単一レジストリ・principal で capability フィルタ）**:
+  - **member/drive（E・主目的）**: `list_my_sessions` / `send_to_session` / `get_session_status` / `get_session_output`。自分の BYO claude が自分の Workspace を駆動＝自己完結ゆえ read/write 厳格分離の対象外。
+  - 読み取り（admin）: `get_usage` / `list_workspaces` / `list_sessions` / `tail_audit`
+  - 変更（admin, `write`）: `start_workspace` / `stop_workspace` / `stop_session` / `set_user_quota`
+  - 強権（admin, `admin:dangerous` ＋ confirm ＋ dry-run）: `rotate_key` / `recreate_workspace` / `stop_all_idle`
+- **authz**: RBAC は**必ずサービス層で再検証**（MCP の capability フィルタは UX、権威にしない）。
+- **監査**: 全操作を `actor_kind=mcp`（principal・token_id 付き）で記録。
+- **固有リスク**: prompt-injection × 変更系の confused-deputy（admin 側）→ read/write 別トークン分離 + dangerous の人手 confirm/dry-run で殺す。E は自己完結ゆえ対象外。
+- **配布**: 既定 OFF（`AF_MCP_ENABLED`）で同梱、ingress は `/mcp` を Bearer 通し（oauth2-proxy パス除外 1 点）。phone-home なし（P3-10）。
 
 ---
 
