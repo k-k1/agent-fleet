@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, apiJSON, ocwebURL } from "../api.js";
+import { useApp } from "../state.jsx";
 
 // AgentsTab consolidates per-agent settings. claude: Remote Control / push
 // notifications / RTK hook (settings.json, via api/claude/settings). codex &
@@ -7,9 +8,11 @@ import { api, apiJSON, ocwebURL } from "../api.js";
 // api/agents/rtk). Reads/writes go through the Agent, so the workspace must be
 // running; changes apply to NEW sessions of each agent.
 export default function AgentsTab() {
+  // opencode web state is shared with the WS bar via the app context, so toggling
+  // here updates the bar's "open" entry immediately (and vice-versa).
+  const { ocweb, setOcweb, refreshOcweb } = useApp();
   const [claude, setClaude] = useState(null);
   const [agents, setAgents] = useState(null);
-  const [ocweb, setOcweb] = useState(null);
   const [err, setErr] = useState("");
 
   const load = useCallback(() => {
@@ -24,13 +27,8 @@ export default function AgentsTab() {
         setAgents(a);
       })
       .catch(() => setErr("Workspace が起動しているか確認してください"));
-    // opencode web is optional (older images lack it) — never blocks the tab.
-    api("api/agents/opencode-web")
-      .then((d) => {
-        if (d && !d.error) setOcweb(d);
-      })
-      .catch(() => {});
-  }, []);
+    refreshOcweb(); // optional; never blocks the tab
+  }, [refreshOcweb]);
   useEffect(load, [load]);
 
   const updateClaude = async (patch) => {

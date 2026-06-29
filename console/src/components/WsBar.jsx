@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useApp } from "../state.jsx";
-import { previewURL } from "../api.js";
+import { previewURL, ocwebURL } from "../api.js";
 import Icon from "./Icon.jsx";
 
 // WS bar: the (single) workspace's state plus Start / Stop. The backend models one
@@ -9,7 +9,7 @@ import Icon from "./Icon.jsx";
 // Port preview is a popover (a single button on the bar) so it never wraps to a
 // second line on a phone.
 export default function WsBar() {
-  const { wsState, startWs, stopWs, refreshWs } = useApp();
+  const { wsState, startWs, stopWs, refreshWs, ocweb } = useApp();
   const [port, setPort] = useState("");
   const [pvOpen, setPvOpen] = useState(false);
   const pvRef = useRef(null);
@@ -55,6 +55,16 @@ export default function WsBar() {
       </button>
 
       <span className="ws-spacer" />
+      {ocweb && ocweb.available && ocweb.enabled && (
+        <button
+          className="ghost"
+          disabled={!running || !ocweb.running}
+          title={ocweb.running ? "opencode web を新しいタブで開く" : "opencode web 起動中…"}
+          onClick={() => ocweb.running && window.open(ocwebURL(), "_blank", "noopener")}
+        >
+          <Icon name="globe" /> opencode web ↗
+        </button>
+      )}
       <div className="ws-preview" ref={pvRef}>
         <button
           className="ghost ws-preview-btn"
