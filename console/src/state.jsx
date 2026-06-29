@@ -148,6 +148,35 @@ export function AppProvider({ children }) {
     [commit, patchActive],
   );
 
+  // openInNewPane creates a fresh pane and opens `patch` in it (made active) in a
+  // SINGLE commit — splitting in one call then opening in another would read a
+  // stale layoutRef and patch the old active pane instead. It prefers a new right
+  // column; when columns are capped it splits the active pane's column downward;
+  // when fully split (4×2) it falls back to opening in the active pane.
+  const openInNewPane = useCallback(
+    (patch) => {
+      const cur = layoutRef.current;
+      const fresh = (id) => ({ ...blankPane(id), ...patch });
+      if (cur.cols.length < MAX_COLS) {
+        const id = newPaneId();
+        const cols = [...cur.cols, { id: newColId(), rowRatio: 0.5, panes: [fresh(id)] }];
+        commit({ ...cur, cols, colRatios: equalRatios(cols.length), activeId: id });
+        return;
+      }
+      const col = cur.cols.find((c) => c.panes.some((p) => p.id === cur.activeId));
+      if (col && col.panes.length < 2) {
+        const id = newPaneId();
+        const cols = cur.cols.map((c) =>
+          c.id === col.id ? { ...c, rowRatio: 0.5, panes: [...c.panes, fresh(id)] } : c,
+        );
+        commit({ ...cur, cols, activeId: id });
+        return;
+      }
+      openActive(patch); // fully split — nowhere to grow; reuse the active pane
+    },
+    [commit, openActive],
+  );
+
   // Restore layout on browser back/forward.
   useEffect(() => {
     const onPop = (e) => {
@@ -304,6 +333,15 @@ export function AppProvider({ children }) {
       setNavOpen(false);
     },
     [openActive, pushDrawerEntry],
+  );
+  // showTerminalSplit attaches a session in a freshly split pane (middle-click in
+  // the session list), instead of replacing the active pane's content.
+  const showTerminalSplit = useCallback(
+    (sess) => {
+      openInNewPane({ kind: "terminal", session: sess });
+      setNavOpen(false);
+    },
+    [openInNewPane],
   );
   const showSCM = useCallback(
     (repo) => {
@@ -537,6 +575,8 @@ export function AppProvider({ children }) {
     setRowRatio,
     swapPanes,
     showTerminal,
+    showTerminalSplit,
+    openInNewPane,
     showSCM,
     showFile,
     settingsOpen,

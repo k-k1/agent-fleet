@@ -62,7 +62,7 @@ const displayName = (s) => {
 // window (agent-side TTL). The ⋯ menu holds destructive actions (作り直す). The
 // list polls so state updates on its own.
 export default function SessionsSection() {
-  const { sessionsKey, bumpSessions, bumpRepos, showTerminal, session } = useApp();
+  const { sessionsKey, bumpSessions, bumpRepos, showTerminal, showTerminalSplit, session } = useApp();
   const [sessions, setSessions] = useState([]);
   const [showModal, setShowModal] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
@@ -215,9 +215,18 @@ export default function SessionsSection() {
           <li key={s.name} className={"session-row" + (selected ? " active" : "") + (s.alive ? "" : " stopped") + (dead ? " dead" : "")}>
             <button
               className="session-btn"
-              title={dead ? "作業フォルダが存在しないため再開できません" : !s.alive ? "停止中（⋯メニューから再開）" : s.dir || ""}
+              title={dead ? "作業フォルダが存在しないため再開できません" : !s.alive ? "停止中（⋯メニューから再開）" : (s.dir ? s.dir + "（中クリックで新ペインに開く）" : "中クリックで新ペインに開く")}
               disabled={!s.alive}
               onClick={() => s.alive && showTerminal(s.name)}
+              // Middle-click opens the session in a freshly split pane. Suppress the
+              // mousedown default so the browser doesn't start autoscroll instead.
+              onMouseDown={(e) => e.button === 1 && e.preventDefault()}
+              onAuxClick={(e) => {
+                if (e.button === 1 && s.alive) {
+                  e.preventDefault();
+                  showTerminalSplit(s.name);
+                }
+              }}
             >
               <span className="session-l1">
                 <span className="session-display">{displayName(s)}</span>
