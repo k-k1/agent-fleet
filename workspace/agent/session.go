@@ -561,12 +561,15 @@ func handleRecreateSession(w http.ResponseWriter, r *http.Request) {
 		m.Label = sessionLabel(m.Dir)
 	}
 	m.StoppedAt = ""
-	if err := startSessionTmux(m); err != nil {
-		writeErr(w, http.StatusInternalServerError, "tmux_failed", err.Error())
-		return
-	}
 	writeSessionMeta(m)
-	writeJSON(w, http.StatusCreated, wireSession(m, true))
+	// Do NOT pre-launch here. With a reused session id (same dir+name), a claude
+	// launched detached and left without a client for the ~100ms until the browser
+	// reconnects exits ([exited]) — whereas a fresh-id create survives the same gap.
+	// The terminal attach path (handlePTY → ensureSessionTmux → `tmux new-session
+	// -A`) launches AND attaches a client in the same request, which is the proven
+	// "再開" flow that stays alive. So we leave it stopped and let the Console's
+	// showTerminal(name) drive the (immediately-attached) relaunch.
+	writeJSON(w, http.StatusOK, wireSession(m, false))
 }
 
 // exactT returns a tmux target that matches NAME exactly. Without the leading '=',
