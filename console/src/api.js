@@ -21,13 +21,25 @@ export function setTenant(slug) {
 }
 
 const _fetch = window.fetch.bind(window);
+// When AUTH=oauth the Control Plane gates every request on a verified Google
+// session and answers an expired/absent one with 401 on XHR. Bounce the whole
+// page to the login landing so the user can re-authenticate (a top-level nav,
+// which the CP turns into the Google redirect). Guarded so we redirect once.
+let _authRedirecting = false;
 window.fetch = (input, init = {}) => {
   if (selectedTenant) {
     const h = new Headers(init.headers || {});
     if (!h.has("X-AF-Tenant")) h.set("X-AF-Tenant", selectedTenant);
     init = { ...init, headers: h };
   }
-  return _fetch(input, init);
+  return _fetch(input, init).then((res) => {
+    if (res.status === 401 && !_authRedirecting) {
+      _authRedirecting = true;
+      const next = encodeURIComponent(location.pathname + location.search);
+      location.assign(rel("login") + "?next=" + next);
+    }
+    return res;
+  });
 };
 
 // api() resolves the path against baseURI and parses JSON. Mirrors the legacy

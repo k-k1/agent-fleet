@@ -110,7 +110,9 @@ func (m *manager) resolveDEK(ctx context.Context, ws Workspace, userKey string) 
 type identity struct{ key, email string }
 
 func (m *manager) resolveIdentity(r *http.Request) identity {
-	if m.authMode == "proxy" {
+	// proxy: trust the upstream oauth2-proxy header. oauth: authGate has verified
+	// the Google session and set the same header (stripping any inbound value).
+	if m.authMode == "proxy" || m.authMode == "oauth" {
 		e := r.Header.Get(m.emailHeader)
 		return identity{key: sanitizeUser(e), email: e}
 	}
