@@ -53,6 +53,11 @@ export function AppProvider({ children }) {
 
   const [wsState, setWsState] = useState("…");
 
+  // opencode web (per-workspace pk-webui) status: {available,enabled,running,port}
+  // or null when unavailable/unreachable. Shared so the WS bar surfaces an "open"
+  // entry while the toggle lives in 設定 > エージェント — both read/write this.
+  const [ocweb, setOcweb] = useState(null);
+
   // The main-area pane layout. Mirrored into browser history (back/forward).
   const [layout, setLayout] = useState(initialLayout);
   const layoutRef = useRef(layout);
@@ -273,18 +278,31 @@ export function AppProvider({ children }) {
     }
   }, []);
 
+  // opencode web status is optional (older images lack the endpoint) — a failure
+  // just leaves it null and the bar/settings hide their controls.
+  const refreshOcweb = useCallback(async () => {
+    try {
+      const d = await api("api/agents/opencode-web");
+      setOcweb(d && !d.error ? d : null);
+    } catch {
+      setOcweb(null);
+    }
+  }, []);
+
   const startWs = useCallback(async () => {
     setWsState("starting…");
     await api("api/workspace/start", { method: "POST" });
     await refreshWs();
+    refreshOcweb();
     bumpSessions();
     bumpRepos();
     bumpFiles();
-  }, [refreshWs, bumpSessions, bumpRepos, bumpFiles]);
+  }, [refreshWs, refreshOcweb, bumpSessions, bumpRepos, bumpFiles]);
 
   const stopWs = useCallback(async () => {
     await api("api/workspace/stop", { method: "POST" });
     await refreshWs();
+    setOcweb(null);
     bumpSessions();
     bumpFiles();
   }, [refreshWs, bumpSessions, bumpFiles]);
@@ -618,8 +636,9 @@ export function AppProvider({ children }) {
       loadLayout(getTenant()); // restore the saved split for the resolved tenant
       hydrateUIPrefs(); // pull per-user display settings from the server (after tenant)
       refreshWs();
+      refreshOcweb();
     })();
-  }, [initTenants, loadLayout, refreshWs]);
+  }, [initTenants, loadLayout, refreshWs, refreshOcweb]);
 
   // Back-compat projection of the active pane, for components not yet pane-aware.
   const allPanes = layout.cols.flatMap((c) => c.panes);
@@ -637,6 +656,9 @@ export function AppProvider({ children }) {
     startWs,
     stopWs,
     recreateWs,
+    ocweb,
+    setOcweb,
+    refreshOcweb,
     // active-pane projection (back-compat)
     mode: activePane.kind,
     scmRepo: activePane.scmRepo,
