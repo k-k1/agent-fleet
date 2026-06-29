@@ -1547,18 +1547,102 @@ textarea:focus {
 .log-row.active {
   background: var(--active-bg);
 }
-.diff .dl.add {
+/* per-file foldable diff (codeleaf-style) with old/new line-number gutters */
+.diff-files {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+  padding: 8px;
+}
+.filediff {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin-bottom: 10px;
+  overflow: hidden;
+  background: var(--panel);
+}
+.filediff-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 10px;
+  background: var(--btn);
+  border: none;
+  border-bottom: 1px solid var(--border);
+  color: var(--fg);
+  cursor: pointer;
+  text-align: left;
+}
+.filediff-head:hover {
+  background: var(--btn-h);
+}
+.filediff-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: 12px var(--mono);
+}
+.filediff-stat {
+  flex: none;
+  font: 11px var(--mono);
+}
+.filediff-stat .add {
+  color: var(--ok);
+  margin-left: 6px;
+}
+.filediff-stat .del {
+  color: var(--del);
+  margin-left: 6px;
+}
+.diff-body {
+  margin: 0;
+  overflow-x: auto;
+  font: 12px/1.45 var(--mono);
+  white-space: normal;
+}
+.diff-body .dl {
+  display: flex;
+  min-height: 1.45em;
+}
+.dl-num {
+  flex: none;
+  width: 3.2em;
+  padding: 0 8px 0 4px;
+  text-align: right;
+  color: var(--muted2);
+  user-select: none;
+  white-space: nowrap;
+}
+.dl-text {
+  flex: 1;
+  white-space: pre;
+  padding-left: 10px;
+  border-left: 1px solid var(--border2);
+}
+.diff-body .dl.add {
+  background: rgba(46, 160, 67, 0.1);
   color: var(--ok);
 }
-.diff .dl.del {
+.diff-body .dl.del {
+  background: rgba(248, 81, 73, 0.1);
   color: var(--del);
 }
-.diff .dl.hunk {
+.diff-body .dl.hunk {
   color: var(--accent);
 }
-.diff .dl.fileh {
+.diff-body .dl.fileh {
   color: var(--muted);
-  font-weight: 600;
+}
+.diff-trunc {
+  color: var(--muted);
+  font-size: 11px;
+  padding: 4px 8px;
 }
 
 /* commit detail (history → diff pane, codeleaf style) */
@@ -2255,6 +2339,19 @@ button.primary:hover:not(:disabled) {
   }
   .whoami {
     max-width: 96px;
+  }
+
+  /* Source Control: the 変更/履歴 column eats the width on a phone, leaving no room
+     for the diff. Stack it — the list becomes a capped, scrollable top panel and the
+     diff takes the full width below it. */
+  .scmbody {
+    flex-direction: column;
+  }
+  .scmleft {
+    width: auto;
+    max-height: 38vh;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
   }
 
   /* WS bar wraps and grows its tap targets */
