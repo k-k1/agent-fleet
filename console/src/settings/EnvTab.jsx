@@ -6,7 +6,9 @@ import Icon from "../components/Icon.jsx";
 
 // EnvTab selects the workspace toolchains: node (via nvm) and java (a pre-baked
 // Temurin JDK). Reads/writes via the Agent, so the workspace must be running.
-// Changes take effect on Stop → Start (the entrypoint applies them).
+// Changes apply to sessions/shells started AFTER the change (the Agent injects the
+// selection at launch); already-running ones and the agent process itself pick it
+// up on the next Stop → Start.
 export default function EnvTab() {
   const [d, setD] = useState(null);
   const [err, setErr] = useState("");
@@ -57,7 +59,9 @@ function Toolchains({ d, update }) {
 
   return (
     <>
-      <p className="muted ds-note">変更は Stop → Start（コンテナ再生成）で反映されます。</p>
+      <p className="muted ds-note">
+        変更は<strong>この後に起動するセッション/シェル</strong>に反映されます（起動中のものと既存プロセスは Stop → Start で反映）。
+      </p>
       <Row label="タイムゾーン (TZ)">
         <select value={tz} onChange={(e) => update({ timezone: e.target.value })}>
           {tzList.map((v) => (

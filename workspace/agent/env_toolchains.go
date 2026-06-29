@@ -8,12 +8,17 @@ import (
 	"regexp"
 	"sort"
 	"strconv"
+	"strings"
 )
 
 // Toolchain selection (node via nvm, java via pre-baked Temurin), stored per-
 // workspace and applied by the entrypoint on container start. The Console reads
 // the available java versions (detected from the image) and the current choice,
-// and writes the selection. Changing a version takes effect on Stop → Start.
+// and writes the selection. The entrypoint applies it to the agent process on
+// container start; in addition, every session/shell launched afterward re-reads
+// the selection and injects it (resolvedToolchains / toolchainShellPrefix /
+// applyToolchainEnv) so a Console change takes effect on the NEXT launch without a
+// Stop → Start.
 
 func toolchainsPath() string {
 	return filepath.Join(homeDir(), ".config", "agent-fleet", "toolchains.json")
@@ -77,6 +82,88 @@ func availableJava() []string {
 // nodeOptions are the versions the Console offers for nvm. "system" keeps the
 // image's base node.
 var nodeOptions = []string{"system", "18", "20", "22", "24"}
+
+// resolvedToolchains resolves the current selection to concrete values for
+// injection into freshly-launched sessions/shells. node uses the highest installed
+// patch of the chosen major under the home nvm dir (must already be installed —
+// session launch won't run a network install); java globs the baked Temurin; tz is
+// honored only if its zoneinfo exists. Empty strings mean "no override".
+func resolvedToolchains() (javaHome, nodeBin, tz string) {
+	t := readToolchains()
+	if t.Java != "" {
+		if m, _ := filepath.Glob("/usr/lib/jvm/temurin-" + t.Java + "-jdk*"); len(m) > 0 {
+			javaHome = m[0]
+		}
+	}
+	if t.Node != "" && t.Node != "system" {
+		if m, _ := filepath.Glob(filepath.Join(homeDir(), ".nvm", "versions", "node", "v"+t.Node+".*", "bin")); len(m) > 0 {
+			sort.Strings(m)
+			nodeBin = m[len(m)-1] // highest installed patch
+		}
+	}
+	if t.Timezone != "" {
+		if _, err := os.Stat("/usr/share/zoneinfo/" + t.Timezone); err == nil {
+			tz = t.Timezone
+		}
+	}
+	return
+}
+
+// toolchainShellPrefix is an `sh -c` prefix that exports the selected toolchain
+// for a tmux-launched program (tmux runs the pane command via /bin/sh -c, so the
+// existing PATH expands via "$PATH"). Empty when nothing is selected. The new java
+// / node bins are prepended, so they win over the entrypoint's stale ones.
+func toolchainShellPrefix() string {
+	jh, nodeBin, tz := resolvedToolchains()
+	var b strings.Builder
+	if jh != "" {
+		b.WriteString("export JAVA_HOME=" + shellQuote(jh) + "; ")
+		b.WriteString("export PATH=" + shellQuote(jh+"/bin") + ":\"$PATH\"; ")
+	}
+	if nodeBin != "" {
+		b.WriteString("export PATH=" + shellQuote(nodeBin) + ":\"$PATH\"; ")
+	}
+	if tz != "" {
+		b.WriteString("export TZ=" + shellQuote(tz) + "; ")
+	}
+	return b.String()
+}
+
+// applyToolchainEnv overlays the selected toolchain onto a process environment (the
+// default shell in handlePTY, launched directly from Go). It rewrites a single PATH
+// entry (avoiding duplicate keys, where getenv would keep the first/stale one).
+func applyToolchainEnv(env []string) []string {
+	jh, nodeBin, tz := resolvedToolchains()
+	if jh == "" && nodeBin == "" && tz == "" {
+		return env
+	}
+	path := ""
+	out := make([]string, 0, len(env)+3)
+	for _, e := range env {
+		switch {
+		case strings.HasPrefix(e, "PATH="):
+			path = strings.TrimPrefix(e, "PATH=")
+		case jh != "" && strings.HasPrefix(e, "JAVA_HOME="):
+			// dropped; re-added below
+		case tz != "" && strings.HasPrefix(e, "TZ="):
+			// dropped; re-added below
+		default:
+			out = append(out, e)
+		}
+	}
+	if nodeBin != "" {
+		path = nodeBin + ":" + path
+	}
+	if jh != "" {
+		out = append(out, "JAVA_HOME="+jh)
+		path = jh + "/bin:" + path
+	}
+	if tz != "" {
+		out = append(out, "TZ="+tz)
+	}
+	out = append(out, "PATH="+path)
+	return out
+}
 
 func handleToolchainsGet(w http.ResponseWriter, r *http.Request) {
 	t := readToolchains()
