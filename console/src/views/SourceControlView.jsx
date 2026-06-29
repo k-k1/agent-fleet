@@ -9,8 +9,11 @@ import BranchModal from "../components/BranchModal.jsx";
 // box, and recent history. Right pane: the diff of the selected change OR — when a
 // history commit is clicked — that commit's detail (header + file list + patch),
 // codeleaf CommitDetail style. The repo comes from context.
-export default function SourceControlView() {
-  const { scmRepo, bumpRepos, bumpFiles, showTerminal } = useApp();
+// repo comes from the owning pane's descriptor (falls back to context scmRepo when
+// rendered standalone).
+export default function SourceControlView({ repo }) {
+  const { scmRepo: ctxRepo, bumpRepos, bumpFiles, showTerminal } = useApp();
+  const scmRepo = repo !== undefined ? repo : ctxRepo;
   const enc = encodeURIComponent(scmRepo || "");
   const [status, setStatus] = useState(null);
   const [changes, setChanges] = useState([]);

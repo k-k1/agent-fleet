@@ -1,6 +1,8 @@
-// xterm.js terminal singleton. Kept outside React so the terminal instance and its
-// WebSocket survive view switches (the Terminal view's DOM container stays mounted
-// and we just open() the term into it once). Ported from legacy-phase1/app.js.
+// xterm.js terminal manager. Terminals live outside React so each instance and its
+// WebSocket survive view switches (a pane's DOM container stays mounted and we just
+// open() the term into it once). Originally a module singleton; now keyed by paneId
+// so the console can show several sessions side by side (split panes). Ported from
+// legacy-phase1/app.js.
 
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
@@ -11,21 +13,28 @@ import "@xterm/xterm/css/xterm.css";
 import { wsURL } from "./api.js";
 import { getSettings, subscribe as subscribeSettings, fontStack } from "./lib/settings.js";
 
-let term = null;
-let fitAddon = null;
-let ws = null;
-
-// listeners notified when the attached session name changes (so the UI can show it)
-const sessionListeners = new Set();
-let currentSession = null;
-export function onSession(fn) {
-  sessionListeners.add(fn);
-  fn(currentSession);
-  return () => sessionListeners.delete(fn);
+// One entry per pane. { term, fitAddon, ws, session, sessionListeners, ro }.
+const insts = new Map();
+function inst(paneId) {
+  return insts.get(paneId) || null;
 }
-function setSession(name) {
-  currentSession = name;
-  for (const fn of sessionListeners) fn(name);
+
+// listeners notified when a pane's attached session name changes (so the UI can
+// show it). Registered per pane; survive across ensureTerm calls.
+export function onSession(paneId, fn) {
+  let it = insts.get(paneId);
+  if (!it) {
+    // Allow subscribing before ensureTerm: stash a listener set on a placeholder.
+    it = { sessionListeners: new Set(), session: null };
+    insts.set(paneId, it);
+  }
+  it.sessionListeners.add(fn);
+  fn(it.session ?? null);
+  return () => it.sessionListeners && it.sessionListeners.delete(fn);
+}
+function setSession(it, name) {
+  it.session = name;
+  for (const fn of it.sessionListeners) fn(name);
 }
 
 // Clipboard helpers. Browsers route Ctrl+C/Ctrl+V inside a focused terminal to the
@@ -33,11 +42,11 @@ function setSession(name) {
 // worked. We wire explicit gestures (copy-on-select, Ctrl+Shift+C / Ctrl+Insert,
 // right/middle-click paste, Shift+Insert / Ctrl+Shift+V) to the async Clipboard API,
 // leaving Ctrl+C free to interrupt the foreground program.
-function copySelection() {
+function copySelection(term) {
   const sel = term && term.getSelection();
   if (sel && navigator.clipboard) navigator.clipboard.writeText(sel).catch(() => {});
 }
-function pasteClipboard() {
+function pasteClipboard(term) {
   if (!term || !navigator.clipboard) return;
   navigator.clipboard
     .readText()
@@ -48,27 +57,79 @@ function pasteClipboard() {
     .catch(() => {});
 }
 
-// ensureTerm builds the terminal once and opens it into `el`. Subsequent calls
-// with the same element are no-ops; the instance (and scrollback) persists.
-export function ensureTerm(el) {
-  if (term) {
-    // Re-open into the element if React remounted the container (shouldn't happen
-    // while the Terminal view stays mounted, but be safe).
-    if (el && term.element?.parentElement !== el) term.open(el);
-    fit();
-    return term;
+// Apply the current font family/size from settings to every live terminal, live,
+// when the user changes them. Registered once for all panes.
+let settingsSubscribed = false;
+function applyTermSettingsAll() {
+  const s = getSettings();
+  for (const it of insts.values()) {
+    if (!it.term) continue;
+    it.term.options.fontFamily = fontStack(s.termFont);
+    it.term.options.fontSize = s.termSize;
+    fitInst(it);
+    try {
+      it.term.refresh(0, it.term.rows - 1);
+    } catch {}
+  }
+}
+
+// Refit every live terminal — the window/visualViewport resize path. Per-pane split
+// resizes don't fire window resize, so each pane also gets its own ResizeObserver.
+function fitAll() {
+  for (const it of insts.values()) fitInst(it);
+}
+let globalResizeWired = false;
+function wireGlobalResize() {
+  if (globalResizeWired) return;
+  globalResizeWired = true;
+  window.addEventListener("resize", fitAll);
+  // On mobile the soft keyboard shrinks the layout viewport rather than firing a
+  // window resize; visualViewport fires its own resize so grids refit and the
+  // prompt isn't left hidden behind the keyboard.
+  if (window.visualViewport) window.visualViewport.addEventListener("resize", fitAll);
+}
+
+function fitInst(it) {
+  try {
+    it && it.fitAddon && it.fitAddon.fit();
+  } catch {}
+}
+
+// ensureTerm builds a pane's terminal once and opens it into `el`. Subsequent calls
+// for the same pane re-open into the element if React remounted the container; the
+// instance (and scrollback) persists.
+export function ensureTerm(paneId, el) {
+  let it = insts.get(paneId);
+  if (it && it.term) {
+    // Re-open into the element if React remounted the container.
+    if (el && it.term.element?.parentElement !== el) it.term.open(el);
+    observe(it, el);
+    fitInst(it);
+    return it.term;
+  }
+  // May already hold a placeholder from an early onSession() subscription.
+  if (!it) {
+    it = { sessionListeners: new Set(), session: null };
+    insts.set(paneId, it);
   }
   const s0 = getSettings();
-  term = new Terminal({
+  const term = new Terminal({
     fontSize: s0.termSize,
     fontFamily: fontStack(s0.termFont),
     theme: { background: "#1e1e1e" },
     cursorBlink: true,
     allowProposedApi: true,
   });
+  it.term = term;
+  it.ws = null;
   // Apply terminal font/size from settings, live, when the user changes them.
-  subscribeSettings(applyTermSettings);
-  fitAddon = new FitAddon();
+  if (!settingsSubscribed) {
+    settingsSubscribed = true;
+    subscribeSettings(applyTermSettingsAll);
+  }
+  wireGlobalResize();
+  const fitAddon = new FitAddon();
+  it.fitAddon = fitAddon;
   term.loadAddon(fitAddon);
   // Unicode 11 widths so emoji / wide glyphs occupy 2 cells (no half-clipping).
   try {
@@ -86,16 +147,16 @@ export function ensureTerm(el) {
   // browser reserves Ctrl+Shift+C (DevTools) outside fullscreen.
   if (term.element) {
     term.element.addEventListener("mouseup", (ev) => {
-      if (ev.button === 0 && term.hasSelection()) copySelection();
+      if (ev.button === 0 && term.hasSelection()) copySelection(term);
     });
     term.element.addEventListener("contextmenu", (ev) => {
       ev.preventDefault();
-      pasteClipboard();
+      pasteClipboard(term);
     });
     term.element.addEventListener("auxclick", (ev) => {
       if (ev.button === 1) {
         ev.preventDefault();
-        pasteClipboard();
+        pasteClipboard(term);
       }
     });
     // Touch scrolling: a phone has no wheel, so translate a one-finger vertical
@@ -141,7 +202,8 @@ export function ensureTerm(el) {
     term.element.addEventListener("touchend", endTouch, { passive: true });
     term.element.addEventListener("touchcancel", endTouch, { passive: true });
   }
-  // Crisp GPU rendering; fall back silently if WebGL2 is unavailable/lost.
+  // Crisp GPU rendering; fall back silently if WebGL2 is unavailable/lost. One
+  // WebGL context per terminal — browsers cap ~16, so splits stay well within.
   try {
     const webgl = new WebglAddon();
     webgl.onContextLoss(() => webgl.dispose());
@@ -169,34 +231,34 @@ export function ensureTerm(el) {
     // Clipboard shortcuts — return false so xterm does NOT also forward them to the
     // PTY. Ctrl+C/V (without shift) are deliberately left alone (SIGINT / ^V).
     if (mod && e.shiftKey && e.code === "KeyC") {
-      copySelection();
+      copySelection(term);
       e.preventDefault();
       return false;
     }
     if (mod && e.shiftKey && e.code === "KeyV") {
-      pasteClipboard();
+      pasteClipboard(term);
       e.preventDefault();
       return false;
     }
     if (e.ctrlKey && !e.shiftKey && e.code === "Insert") {
-      copySelection();
+      copySelection(term);
       e.preventDefault();
       return false;
     }
     if (e.shiftKey && !e.ctrlKey && e.code === "Insert") {
-      pasteClipboard();
+      pasteClipboard(term);
       e.preventDefault();
       return false;
     }
     // macOS conventions: ⌘C copies (only when there's a selection, else fall
     // through), ⌘V pastes. (metaKey is Super on Win/Linux — harmless there.)
     if (e.metaKey && !e.ctrlKey && !e.shiftKey && e.code === "KeyC" && term.hasSelection()) {
-      copySelection();
+      copySelection(term);
       e.preventDefault();
       return false;
     }
     if (e.metaKey && !e.ctrlKey && !e.shiftKey && e.code === "KeyV") {
-      pasteClipboard();
+      pasteClipboard(term);
       e.preventDefault();
       return false;
     }
@@ -221,90 +283,133 @@ export function ensureTerm(el) {
   }
 
   fitAddon.fit();
-  term.onData((d) => ws && ws.readyState === 1 && ws.send(JSON.stringify({ type: "input", data: d })));
-  term.onResize(({ cols, rows }) => ws && ws.readyState === 1 && ws.send(JSON.stringify({ type: "resize", cols, rows })));
-  window.addEventListener("resize", fit);
-  // On mobile the soft keyboard shrinks the layout viewport rather than firing a
-  // window resize; visualViewport fires its own resize so the grid refits and the
-  // prompt isn't left hidden behind the keyboard.
-  if (window.visualViewport) window.visualViewport.addEventListener("resize", fit);
+  term.onData((d) => it.ws && it.ws.readyState === 1 && it.ws.send(JSON.stringify({ type: "input", data: d })));
+  term.onResize(({ cols, rows }) => it.ws && it.ws.readyState === 1 && it.ws.send(JSON.stringify({ type: "resize", cols, rows })));
+  observe(it, el);
   return term;
 }
 
-// sendInput pushes a raw byte sequence to the PTY exactly like a typed key (no
+// observe attaches a ResizeObserver to the pane container so the grid refits when
+// the split divider drags the pane (which does NOT fire a window resize event).
+function observe(it, el) {
+  if (!el || typeof ResizeObserver === "undefined") return;
+  if (it.ro) it.ro.disconnect();
+  it.ro = new ResizeObserver(() => fitInst(it));
+  it.ro.observe(el);
+}
+
+// sendInput pushes a raw byte sequence to a pane's PTY exactly like a typed key (no
 // bracketed-paste wrapping), so the mobile control-key strip can emit Esc / arrows
 // / Ctrl-C / Enter. We deliberately do NOT focus the terminal: input goes straight
 // over the socket, so focusing would only summon the soft keyboard (Gboard) when
 // it's closed. The strip's buttons preventDefault on mousedown, so an already-open
 // keyboard keeps its focus and stays up.
-export function sendInput(data) {
-  if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: "input", data }));
+export function sendInput(paneId, data) {
+  const it = inst(paneId);
+  if (it && it.ws && it.ws.readyState === 1) it.ws.send(JSON.stringify({ type: "input", data }));
 }
 
-export function fit() {
-  try {
-    fitAddon && fitAddon.fit();
-  } catch {}
+export function fit(paneId) {
+  fitInst(inst(paneId));
 }
 
-// applyTermSettings pushes the current font family/size into the live terminal and
-// refits so the grid matches the new metrics.
-function applyTermSettings() {
-  if (!term) return;
-  const s = getSettings();
-  term.options.fontFamily = fontStack(s.termFont);
-  term.options.fontSize = s.termSize;
-  fit();
-  try {
-    term.refresh(0, term.rows - 1);
-  } catch {}
-}
-
-// focusTerm moves keyboard focus into the terminal so the user can type right
+// focusTerm moves keyboard focus into a pane's terminal so the user can type right
 // after launching/attaching a session without clicking first.
-export function focusTerm() {
+export function focusTerm(paneId) {
+  const it = inst(paneId);
   try {
-    term && term.focus();
+    it && it.term && it.term.focus();
   } catch {}
 }
 
-// attach opens a fresh WebSocket to the session's PTY, replacing any current one.
-export function attach(session) {
-  if (!term) return; // ensureTerm must have run (Terminal view mounted)
+// attach opens a fresh WebSocket to the session's PTY for a pane, replacing any
+// current one on that pane.
+export function attach(paneId, session) {
+  const it = inst(paneId);
+  if (!it || !it.term) return; // ensureTerm must have run (pane mounted)
   // Detach the old socket's handlers before closing it: an intentional switch
   // must not fire its onclose (which would flash "[disconnected]" over the
   // freshly-reset terminal). Only an unexpected server-side drop should show it.
-  if (ws) {
-    ws.onclose = null;
-    ws.onmessage = null;
-    ws.close();
+  if (it.ws) {
+    it.ws.onclose = null;
+    it.ws.onmessage = null;
+    it.ws.close();
   }
-  term.reset();
-  setSession(session);
-  ws = new WebSocket(wsURL(session));
+  it.term.reset();
+  setSession(it, session);
+  const ws = new WebSocket(wsURL(session));
+  it.ws = ws;
   ws.binaryType = "arraybuffer";
   ws.onopen = () => {
-    fit();
-    ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
+    fitInst(it);
+    ws.send(JSON.stringify({ type: "resize", cols: it.term.cols, rows: it.term.rows }));
   };
   ws.onmessage = (ev) => {
-    if (ev.data instanceof ArrayBuffer) term.write(new Uint8Array(ev.data));
-    else term.write(ev.data);
+    if (ev.data instanceof ArrayBuffer) it.term.write(new Uint8Array(ev.data));
+    else it.term.write(ev.data);
   };
-  ws.onclose = () => term.write("\r\n[disconnected]\r\n");
-  // Focus after the next paint, by when the terminal view has been un-hidden
-  // (showTerminal flips the mode in the same React batch). So the user can type
-  // immediately after launching a session.
-  requestAnimationFrame(() => focusTerm());
+  ws.onclose = () => it.term.write("\r\n[disconnected]\r\n");
+  // Focus after the next paint, by when the pane has been un-hidden (the caller
+  // flips state in the same React batch). So the user can type immediately after
+  // launching a session.
+  requestAnimationFrame(() => focusTerm(paneId));
 }
 
-export function detach() {
-  if (ws) {
+export function detach(paneId) {
+  const it = inst(paneId);
+  if (!it) return;
+  if (it.ws) {
     try {
-      ws.onclose = null; // intentional detach — don't print "[disconnected]"
-      ws.close();
+      it.ws.onclose = null; // intentional detach — don't print "[disconnected]"
+      it.ws.close();
     } catch {}
-    ws = null;
+    it.ws = null;
   }
-  setSession(null);
+  setSession(it, null);
+}
+
+// disposeTerm tears a pane's terminal down entirely: closes the socket, disposes the
+// xterm instance and its ResizeObserver, and forgets the pane. Called when a split
+// pane is closed / replaced by a non-terminal view / wiped on tenant switch.
+export function disposeTerm(paneId) {
+  const it = inst(paneId);
+  if (!it) return;
+  if (it.ws) {
+    try {
+      it.ws.onclose = null;
+      it.ws.onmessage = null;
+      it.ws.close();
+    } catch {}
+    it.ws = null;
+  }
+  if (it.ro) {
+    try {
+      it.ro.disconnect();
+    } catch {}
+    it.ro = null;
+  }
+  if (it.term) {
+    try {
+      it.term.dispose();
+    } catch {}
+    it.term = null;
+  }
+  setSession(it, null);
+  insts.delete(paneId);
+}
+
+// sessionOf returns the session name currently attached to a pane (or null).
+export function sessionOf(paneId) {
+  const it = inst(paneId);
+  return it ? it.session ?? null : null;
+}
+
+// keepOnly disposes every terminal whose pane id is not in `ids` — the reconciler
+// for layout changes (pane closed, browser back/forward dropping a pane, tenant
+// switch wiping all panes). Prevents orphaned xterm instances + WebSockets.
+export function keepOnly(ids) {
+  const keep = new Set(ids);
+  for (const id of [...insts.keys()]) {
+    if (!keep.has(id)) disposeTerm(id);
+  }
 }
