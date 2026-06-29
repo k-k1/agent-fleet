@@ -103,6 +103,22 @@ if [ -d "$OC_PLUG_SRC" ]; then
     || echo "[entrypoint] WARN: failed to seed opencode plugin"
 fi
 
+# Workspace 利用ガイド（やってはいけないこと等）を各エージェントが常時読み込む位置へ配置。
+#   claude   … /etc/claude-code/CLAUDE.md（イメージに焼込済の managed policy。毎セッション読込）
+#   codex    … ~/.codex/AGENTS.md（$CODEX_HOME/AGENTS.md。全セッションに適用）
+#   opencode … ~/.config/opencode/AGENTS.md（全セッションに適用）
+# codex/opencode 分は home 永続のため、毎起動で最新イメージの内容へ refresh する。
+WS_NOTES="/usr/local/share/agent-fleet/workspace-notes.md"
+if [ -f "$WS_NOTES" ]; then
+  mkdir -p "$HOME/.codex" "$HOME/.config/opencode"
+  cp -f "$WS_NOTES" "$HOME/.codex/AGENTS.md" 2>/dev/null \
+    && echo "[entrypoint] seeded ~/.codex/AGENTS.md" \
+    || echo "[entrypoint] WARN: failed to seed ~/.codex/AGENTS.md"
+  cp -f "$WS_NOTES" "$HOME/.config/opencode/AGENTS.md" 2>/dev/null \
+    && echo "[entrypoint] seeded ~/.config/opencode/AGENTS.md" \
+    || echo "[entrypoint] WARN: failed to seed opencode AGENTS.md"
+fi
+
 # Toolchains: node (nvm, installed into the home volume) and java (pre-baked
 # Temurin). The selection lives per-workspace in toolchains.json, chosen in the
 # Console. We apply it HERE so the agent — and every tmux session it spawns —
