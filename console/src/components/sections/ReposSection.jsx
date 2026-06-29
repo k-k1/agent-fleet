@@ -79,7 +79,9 @@ export default function ReposSection() {
       .then((d) => {
         if (!alive) return;
         const s = (d.sessions || []).find((x) => x.name === session);
-        setActiveRepo(s ? s.repo : null);
+        // A shell session doesn't "own" a repo for highlighting purposes — only
+        // agent sessions (claude/opencode/codex) mark their working repo.
+        setActiveRepo(s && s.kind !== "shell" ? s.repo : null);
       })
       .catch(() => alive && setActiveRepo(null));
     return () => {
