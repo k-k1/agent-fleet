@@ -11,7 +11,7 @@ import Icon from "./Icon.jsx";
 const DISMISS_KEY = "af.onboarding.dismissed";
 
 export default function OnboardingCard() {
-  const { wsState, startWs, openSettings, openNewSession, connKey } = useApp();
+  const { wsState, sessions, startWs, openSettings, openNewSession, connKey } = useApp();
   const [conns, setConns] = useState(null); // null = still probing
   const [dismissed, setDismissed] = useState(() => {
     try {
@@ -33,16 +33,15 @@ export default function OnboardingCard() {
     };
   }, [connKey]);
 
-  if (dismissed) return null;
+  // Show until the user has a session (then they're past first-run), or dismisses.
+  // We keep showing even after git/agent are connected so the final step — create
+  // the first session — stays guided while there are zero sessions.
+  if (dismissed || sessions.length > 0) return null;
   if (conns === null) return null; // wait for the probe so checks don't flash wrong
 
   const running = wsState === "running";
   const gitOk = !!(conns.github?.connected || conns.bitbucket?.connected);
   const agentOk = !!(conns.claude?.connected || conns.codex?.connected || conns.opencode?.envs?.length > 0);
-
-  // Show while setup is incomplete (a git provider or an agent isn't connected),
-  // independent of how many sessions exist. Once both are connected, it's gone.
-  if (gitOk && agentOk) return null;
 
   const dismiss = () => {
     try {
