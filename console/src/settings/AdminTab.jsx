@@ -324,6 +324,10 @@ function MemberView({ slug, member, isSuper, onChanged }) {
   const [limit, setLimit] = useState(member.max_sessions ?? 0);
   const [role, setMemberRole] = useState(member.role); // tenant-scoped role, live-updated on grant/revoke
   const timer = useRef(null);
+  // Only setState on an actual change so an unchanged 4s poll doesn't re-render
+  // (and flicker the cursor); mirrors the sessions poller in state.jsx.
+  const statsSer = useRef("");
+  const sessSer = useRef("");
 
   const key = member.user_key;
   const base = `api/admin/tenants/${encodeURIComponent(slug)}/members/${encodeURIComponent(key)}`;
@@ -331,14 +335,26 @@ function MemberView({ slug, member, isSuper, onChanged }) {
   const poll = useCallback(async () => {
     try {
       const [s, ss] = await Promise.all([api(`${base}/stats`), api(`${base}/sessions`)]);
-      setStats(s && !s.error ? s : { running: false });
-      setSessions(ss && ss.sessions ? ss.sessions : []);
+      const st = s && !s.error ? s : { running: false };
+      const stSer = JSON.stringify(st);
+      if (stSer !== statsSer.current) {
+        statsSer.current = stSer;
+        setStats(st);
+      }
+      const list = ss && ss.sessions ? ss.sessions : [];
+      const ssSer = JSON.stringify(list);
+      if (ssSer !== sessSer.current) {
+        sessSer.current = ssSer;
+        setSessions(list);
+      }
     } catch {
       /* keep last values; transient */
     }
   }, [base]);
 
   useEffect(() => {
+    statsSer.current = "";
+    sessSer.current = "";
     setStats(null);
     setSessions(null);
     poll();
