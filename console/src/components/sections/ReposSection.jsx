@@ -30,8 +30,9 @@ const freeName = (base, used) => {
 // switch branch, fetch, start a session in the repo, delete, or open Source
 // Control (→ main area). The dirty dot mirrors uncommitted changes.
 export default function ReposSection() {
-  const { reposKey, connKey, bumpRepos, bumpSessions, bumpFiles, revealInFiles, showSCM, showTerminal, showTerminalSplit, scmRepo, mode, session } =
+  const { reposKey, connKey, bumpRepos, bumpSessions, bumpFiles, revealInFiles, showSCM, showTerminal, showTerminalSplit, scmRepo, mode, session, wsState } =
     useApp();
+  const running = wsState === "running"; // WS down → clone/open/launch are inert
   const [repos, setRepos] = useState([]);
   const [conns, setConns] = useState(null); // null = unknown (loading/failed) → show all
   const [showClone, setShowClone] = useState(false);
@@ -120,7 +121,12 @@ export default function ReposSection() {
       title="Repos"
       actions={
         <>
-          <button className="ghost" title="clone" disabled={!!cloning} onClick={() => setShowClone((s) => !s)}>
+          <button
+            className="ghost"
+            title={running ? "clone" : "clone（ワークスペース停止中）"}
+            disabled={!!cloning || !running}
+            onClick={() => setShowClone((s) => !s)}
+          >
             <Icon name="add" />
           </button>
           <button className="ghost" title="更新" onClick={bumpRepos}>
@@ -142,6 +148,7 @@ export default function ReposSection() {
             key={r.name}
             r={r}
             kinds={launchKinds}
+            running={running}
             active={mode === "scm" && scmRepo === r.name}
             selected={r.name === activeRepo}
             // One click on the repo: reveal it in the Files tree AND open the
@@ -184,7 +191,7 @@ export default function ReposSection() {
 // the row stays compact: name + 起動 (where the branch chip used to sit). `active`
 // = open in the SCM pane; `selected` = the attached session's repo — both just
 // highlight the row in place (no reordering).
-function RepoRow({ r, kinds = ["claude", "opencode", "codex", "shell"], active, selected, onOpen, onLaunch }) {
+function RepoRow({ r, kinds = ["claude", "opencode", "codex", "shell"], running = true, active, selected, onOpen, onLaunch }) {
   const [showLaunch, setShowLaunch] = useState(false);
 
   // Close the launch dropdown on any outside click.
@@ -201,14 +208,20 @@ function RepoRow({ r, kinds = ["claude", "opencode", "codex", "shell"], active, 
         <span className={"dot " + (r.dirty ? "dirty" : "clean")} title={r.dirty ? "未コミット変更あり" : "clean"}>
           ●
         </span>
-        <button className="link grow repo-name" title={"開く（ファイル + ソース管理）: " + r.path} onClick={onOpen}>
+        <button
+          className="link grow repo-name"
+          title={running ? "開く（ファイル + ソース管理）: " + r.path : "ワークスペース停止中"}
+          disabled={!running}
+          onClick={onOpen}
+        >
           <Icon name="repo" className="repo-ic" />
           {r.name}
         </button>
         <div className="launch-wrap" onMouseDown={(e) => e.stopPropagation()}>
           <button
             className="chip launch"
-            title="このディレクトリでセッションを起動（複数可）"
+            title={running ? "このディレクトリでセッションを起動（複数可）" : "ワークスペース停止中"}
+            disabled={!running}
             onClick={() => setShowLaunch((v) => !v)}
           >
             <Icon name="play" /> 起動 <Icon name="chevron-down" />

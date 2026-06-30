@@ -26,7 +26,8 @@ const notify = (title, body) => {
 // window (agent-side TTL). The ⋯ menu holds destructive actions (作り直す). The
 // list polls so state updates on its own.
 export default function SessionsSection() {
-  const { sessions, bumpSessions, bumpRepos, bumpFiles, revealInFiles, showTerminal, showTerminalSplit, session, newSessionTick } = useApp();
+  const { sessions, bumpSessions, bumpRepos, bumpFiles, revealInFiles, showTerminal, showTerminalSplit, session, newSessionTick, wsState } = useApp();
+  const running = wsState === "running"; // WS down → attach/resume/create are inert
   const [showModal, setShowModal] = useState(false);
 
   // Open the New Session dialog when something elsewhere requests it (the onboarding
@@ -143,7 +144,12 @@ export default function SessionsSection() {
           <button className="ghost" title="アーカイブを開く（復帰）" onClick={() => setShowArchived(true)}>
             <Icon name="archive" />
           </button>
-          <button className="ghost" title="新規セッション" onClick={() => setShowModal(true)}>
+          <button
+            className="ghost"
+            title={running ? "新規セッション" : "新規セッション（ワークスペース停止中）"}
+            disabled={!running}
+            onClick={() => setShowModal(true)}
+          >
             <Icon name="add" />
           </button>
         </>
@@ -157,7 +163,7 @@ export default function SessionsSection() {
           return (
           <li
             key={s.name}
-            className={"session-row" + (selected ? " active" : "") + (s.alive ? "" : " stopped") + (dead ? " dead" : "")}
+            className={"session-row" + (selected ? " active" : "") + (s.alive ? "" : " stopped") + (dead ? " dead" : "") + (running ? "" : " ws-down")}
             // Right-click anywhere on the row opens the same ⋯ menu. preventDefault
             // suppresses the native context menu; the outside-click listener (a
             // mousedown handler) fires on this same right-click and would close the
@@ -214,7 +220,7 @@ export default function SessionsSection() {
               </button>
               {menuFor === s.name && (
                 <div className="session-menu">
-                  {!s.alive && !dead && (
+                  {!s.alive && !dead && running && (
                     <button
                       className="session-menu-item"
                       onClick={() => {
