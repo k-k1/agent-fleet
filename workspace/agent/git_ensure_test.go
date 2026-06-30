@@ -1,0 +1,114 @@
+package main
+
+import (
+	"os"
+	"os/exec"
+	"path/filepath"
+	"testing"
+)
+
+func TestNormalizeRemote(t *testing.T) {
+	cases := []struct{ a, b string; same bool }{
+		// SSH vs HTTPS, .git suffix, trailing slash, case — all "same repo".
+		{"git@github.com:owner/repo.git", "https://github.com/owner/repo", true},
+		{"https://github.com/owner/repo.git", "https://github.com/owner/repo/", true},
+		{"https://GitHub.com/Owner/Repo", "https://github.com/owner/repo", true},
+		// Different owner / different repo => not the same.
+		{"https://github.com/alice/app", "https://github.com/bob/app", false},
+		{"https://github.com/owner/a", "https://github.com/owner/b", false},
+	}
+	for _, c := range cases {
+		if got := normalizeRemote(c.a) == normalizeRemote(c.b); got != c.same {
+			t.Errorf("normalizeRemote(%q)==normalizeRemote(%q) = %v, want %v", c.a, c.b, got, c.same)
+		}
+	}
+}
+
+// gitInit creates a local repo at dir with one commit on main and a "feature"
+// branch, usable as a clone source (file:// path).
+func gitInit(t *testing.T, dir string) {
+	t.Helper()
+	run := func(args ...string) {
+		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	run("init", "-b", "main")
+	if err := os.WriteFile(filepath.Join(dir, "f"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run("add", "f")
+	run("commit", "-m", "init")
+	run("branch", "feature")
+}
+
+func TestEnsureRepoSideBySideBranches(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	src := filepath.Join(t.TempDir(), "app")
+	gitInit(t, src)
+	remote := "file://" + src
+
+	// Default branch into the legacy bare-name folder.
+	dirMain, err := ensureRepo(remote, "main", "")
+	if err != nil {
+		t.Fatalf("ensureRepo main: %v", err)
+	}
+	if want := filepath.Join(home, "repos", "app"); dirMain != want {
+		t.Fatalf("main dir = %q, want %q", dirMain, want)
+	}
+
+	// Same repo, different branch, explicit distinct name => a separate clone.
+	dirFeat, err := ensureRepo(remote, "feature", "app-feature")
+	if err != nil {
+		t.Fatalf("ensureRepo feature: %v", err)
+	}
+	if dirFeat == dirMain {
+		t.Fatalf("feature reused the main clone (%q); want a separate dir", dirFeat)
+	}
+	if !isGitRepo(dirMain) || !isGitRepo(dirFeat) {
+		t.Fatalf("both working copies should exist: main=%v feature=%v", isGitRepo(dirMain), isGitRepo(dirFeat))
+	}
+	if br, _ := gitStatus(dirFeat); br.Branch != "feature" {
+		t.Fatalf("feature clone branch = %q, want feature", br.Branch)
+	}
+	if br, _ := gitStatus(dirMain); br.Branch != "main" {
+		t.Fatalf("main clone branch = %q, want main (should be untouched)", br.Branch)
+	}
+}
+
+func TestEnsureRepoOriginMismatch(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	// Two distinct remotes whose last path segment collides on "app".
+	srcA := filepath.Join(t.TempDir(), "alice", "app")
+	srcB := filepath.Join(t.TempDir(), "bob", "app")
+	gitInit(t, srcA)
+	gitInit(t, srcB)
+
+	if _, err := ensureRepo("file://"+srcA, "main", ""); err != nil {
+		t.Fatalf("ensureRepo A: %v", err)
+	}
+	// Same derived name "app", different remote => must refuse, not silently reuse.
+	if _, err := ensureRepo("file://"+srcB, "main", ""); err == nil {
+		t.Fatalf("ensureRepo B: expected origin-mismatch error, got nil (silent reuse)")
+	}
+	// With a distinct name it succeeds as an independent clone.
+	if _, err := ensureRepo("file://"+srcB, "main", "app-bob"); err != nil {
+		t.Fatalf("ensureRepo B with distinct name: %v", err)
+	}
+}

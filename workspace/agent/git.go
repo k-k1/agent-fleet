@@ -238,21 +238,53 @@ func sshToHTTPS(url string) string {
 	return u
 }
 
+// gitOriginURL returns dir's origin remote URL (ok=false when there is none).
+func gitOriginURL(dir string) (string, bool) {
+	out, err := exec.Command("git", "-C", dir, "remote", "get-url", "origin").Output()
+	if err != nil {
+		return "", false
+	}
+	return strings.TrimSpace(string(out)), true
+}
+
+// normalizeRemote canonicalizes a clone URL for equality comparison: SSH→HTTPS,
+// drop a trailing ".git"/slash, lowercase (hosts and GitHub/Bitbucket owner/repo
+// are case-insensitive). Good enough to tell "same repo" from "different repo".
+func normalizeRemote(u string) string {
+	u = sshToHTTPS(strings.TrimSpace(u))
+	u = strings.TrimSuffix(strings.TrimRight(u, "/"), ".git")
+	return strings.ToLower(u)
+}
+
 // ensureRepo guarantees a working copy for remoteURL exists under ~/repos and
-// returns its path, so a session can launch with that dir as CWD. An existing
-// copy is reused (and checked out to branch when one is given); otherwise it is
-// cloned at branch. This is the "clone-then-start" path for session.create.
-func ensureRepo(remoteURL, branch string) (string, error) {
+// returns its path, so a session can launch with that dir as CWD.
+//
+// name is the target folder. An explicit name (e.g. "<repo>-<branch>") lets two
+// branches of the same repo live side by side as independent clones; an empty
+// name derives the bare repo name, keeping back-compat with existing
+// ~/repos/<repo> clones. An existing copy is reused (checked out to branch when
+// one is given) only when it is the SAME remote; otherwise it is cloned at
+// branch. This is the "clone-then-start" path for session.create.
+func ensureRepo(remoteURL, branch, name string) (string, error) {
 	remoteURL = strings.TrimSpace(remoteURL)
 	if remoteURL == "" || strings.HasPrefix(remoteURL, "-") {
 		return "", fmt.Errorf("remote_url is required and must not start with '-'")
 	}
-	name := deriveRepoName(remoteURL)
+	if name = strings.TrimSpace(name); name == "" {
+		name = deriveRepoName(remoteURL)
+	}
 	dir, ok := resolveRepoDir(name)
 	if !ok {
-		return "", fmt.Errorf("derived repo name is invalid: %q", name)
+		return "", fmt.Errorf("repo name is invalid: %q", name)
 	}
 	if isGitRepo(dir) {
+		// Reuse only when the existing clone is the SAME remote; otherwise two
+		// distinct repos sharing a derived name (alice/app vs bob/app) would
+		// silently collide on one directory. Mismatch => the caller must
+		// disambiguate by passing an explicit, distinct name.
+		if origin, ok := gitOriginURL(dir); ok && normalizeRemote(origin) != normalizeRemote(remoteURL) {
+			return "", fmt.Errorf("repo %q already exists for a different remote (%s); choose a different name", name, origin)
+		}
 		if b := strings.TrimSpace(branch); b != "" && !strings.HasPrefix(b, "-") {
 			if out, err := exec.Command("git", "-C", dir, "checkout", b).CombinedOutput(); err != nil {
 				return "", fmt.Errorf("checkout %s: %v: %s", b, err, strings.TrimSpace(string(out)))

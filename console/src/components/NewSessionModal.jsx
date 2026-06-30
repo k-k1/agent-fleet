@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api, apiJSON } from "../api.js";
 import RepoPicker from "./RepoPicker.jsx";
 import Modal from "./Modal.jsx";
+import { deriveRepoName, sanitizeSeg, uniqueRepoName, repoNameRe } from "../lib/reponame.js";
 
 // NewSessionModal: a clear, roomy dialog for creating a session.
 // shell is the left / default kind — a one-click shell needs no repo, no dir, and
@@ -20,6 +21,7 @@ const uniqueName = (base, taken) => {
   return base;
 };
 
+
 const SOURCE_HELP = {
   picker: "接続済みの GitHub / Bitbucket からリポジトリとブランチを選んで clone します。",
   url: "clone URL を手入力します（接続していないリポジトリ向け）。",
@@ -37,6 +39,10 @@ export default function NewSessionModal({ onClose, onCreated }) {
   const [branch, setBranch] = useState("");
   const [dir, setDir] = useState("");
   const [taken, setTaken] = useState(new Set());
+  const [repos, setRepos] = useState([]); // existing working copies: { name, branch }
+  const [copyMode, setCopyMode] = useState("new"); // when a copy exists: 'reuse' | 'new'
+  const [repoName, setRepoName] = useState(""); // target folder for a separate copy
+  const [repoNameEdited, setRepoNameEdited] = useState(false);
   const [busy, setBusy] = useState(false);
 
   // Existing session names, for auto-naming uniqueness.
@@ -44,6 +50,18 @@ export default function NewSessionModal({ onClose, onCreated }) {
     let alive = true;
     api("api/sessions")
       .then((d) => alive && setTaken(new Set((d.sessions || []).map((s) => s.name))))
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  // Existing working copies, to detect "this repo is already cloned" and offer a
+  // separate working copy for a different branch.
+  useEffect(() => {
+    let alive = true;
+    api("api/repos")
+      .then((d) => alive && setRepos(d.repos || []))
       .catch(() => {});
     return () => {
       alive = false;
@@ -66,9 +84,35 @@ export default function NewSessionModal({ onClose, onCreated }) {
   const cloneBranch = source === "picker" ? sel?.branch || "" : branch.trim();
   const cloning = isAgent && source !== "none" && !!cloneUrl;
 
+  // Detect an existing working copy at the default (derived) folder name.
+  const derivedRepo = cloning ? deriveRepoName(cloneUrl) : "";
+  const existing = (cloning && repos.find((r) => r.name === derivedRepo)) || null;
+  const repoNames = new Set(repos.map((r) => r.name));
+  const suggestedRepoName = derivedRepo
+    ? uniqueRepoName(`${derivedRepo}-${sanitizeSeg(cloneBranch)}`, repoNames)
+    : "";
+
+  // Default the mode when a copy is found: reuse it when the wanted branch is
+  // already checked out, otherwise default to a separate copy (don't clobber).
+  useEffect(() => {
+    const e = repos.find((r) => r.name === derivedRepo) || null;
+    if (e) setCopyMode(e.branch === cloneBranch ? "reuse" : "new");
+  }, [derivedRepo, cloneBranch, repos]);
+
+  // Auto-fill the separate-copy folder name until the user edits it.
+  useEffect(() => {
+    if (!repoNameEdited) setRepoName(suggestedRepoName);
+  }, [suggestedRepoName, repoNameEdited]);
+
+  // A separate copy is used when cloning a repo that already exists and the user
+  // chose "new"; that target folder name is sent as repo_name (else the server
+  // derives/reuses the legacy name).
+  const newCopy = cloning && !!existing && copyMode === "new";
+  const repoNameOk = !newCopy || (repoNameRe.test(repoName.trim()) && !repoNames.has(repoName.trim()));
+
   // shell never needs a repo; an agent's repo is optional (none is allowed).
   const sourceOk = !isAgent || source === "none" || !!cloneUrl;
-  const canSubmit = !!name.trim() && sourceOk && !busy;
+  const canSubmit = !!name.trim() && sourceOk && repoNameOk && !busy;
 
   const submit = async (e) => {
     e.preventDefault();
@@ -82,6 +126,7 @@ export default function NewSessionModal({ onClose, onCreated }) {
         dir: isAgent && source === "none" ? dir.trim() : "",
         remote_url: cloning ? cloneUrl : "",
         branch: cloning ? cloneBranch : "",
+        repo_name: newCopy ? repoName.trim() : "",
       });
       if (res && res.error) {
         alert("作成に失敗: " + (res.error.message || res.error));
@@ -216,6 +261,52 @@ export default function NewSessionModal({ onClose, onCreated }) {
                   </label>
                 )}
               </div>
+
+              {/* 既存の作業コピーがある場合：checkout で共用するか、別フォルダへ並行 clone するか */}
+              {cloning && existing && (
+                <div className="field">
+                  <div className="field-label">作業コピー</div>
+                  <div className="field-help">
+                    この repo の作業コピー「{existing.name}」(現在 <code>{existing.branch}</code>) が既にあります。
+                  </div>
+                  <div className="seg">
+                    <button
+                      type="button"
+                      className={"seg-btn" + (copyMode === "reuse" ? " active" : "")}
+                      onClick={() => setCopyMode("reuse")}
+                    >
+                      既存で作業
+                      <span className="seg-sub">{cloneBranch || "既定ブランチ"} に checkout</span>
+                    </button>
+                    <button
+                      type="button"
+                      className={"seg-btn" + (copyMode === "new" ? " active" : "")}
+                      onClick={() => setCopyMode("new")}
+                    >
+                      別コピーを新規
+                      <span className="seg-sub">並行作業用に別フォルダへ clone</span>
+                    </button>
+                  </div>
+                  {copyMode === "new" && (
+                    <label className="pick-field">
+                      <span>フォルダ名</span>
+                      <input
+                        value={repoName}
+                        onChange={(e) => {
+                          setRepoName(e.target.value);
+                          setRepoNameEdited(true);
+                        }}
+                        placeholder={suggestedRepoName}
+                      />
+                      {!repoNameOk && (
+                        <span className="field-help">
+                          英数字始まりの一意な名前にしてください（既存の作業コピーと重複不可）。
+                        </span>
+                      )}
+                    </label>
+                  )}
+                </div>
+              )}
             </>
           )}
 
