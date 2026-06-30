@@ -12,7 +12,9 @@ export default function Modal({ title, onClose, className = "", as = "div", onSu
   // While an operation is in flight (lockClose), make the whole panel inert so
   // nothing inside is operable, and the backdrop click is ignored. The close
   // button is replaced by a spinner so there's no way to dismiss mid-op.
-  if (lockClose) panelProps.inert = "";
+  // React 19 treats `inert` as a boolean prop; an empty string is falsy and would
+  // NOT apply it (leaving the panel operable mid-op), so pass `true`.
+  if (lockClose) panelProps.inert = true;
   return (
     <div className="modal-backdrop" onClick={lockClose ? undefined : onClose}>
       <Panel {...panelProps}>

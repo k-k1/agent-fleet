@@ -63,6 +63,12 @@ export default function FilesSection() {
   const treeRef = useRef(null);
   const selRef = useRef(null);
   const fileInputRef = useRef(null);
+  // Mirror `open` into a ref so the reload effect can refetch the expanded dirs
+  // without taking `open` as a dependency (which would refetch on every toggle).
+  const openRef = useRef(open);
+  useEffect(() => {
+    openRef.current = open;
+  }, [open]);
 
   const setViewPersist = useCallback((v) => {
     setView(v);
@@ -219,17 +225,28 @@ export default function FilesSection() {
     fn();
   };
 
-  // Full reload: on manual ⟳, and on filesKey bumps (clone / workspace stop·start).
+  // Reload: on manual ⟳, and on filesKey bumps (clone / workspace stop·start).
+  // PRESERVES the expanded folders (and selection): it refetches root and every
+  // currently-open dir from the server, rather than collapsing the whole tree.
   useEffect(() => {
     let alive = true;
-    setOpen(new Set());
-    setCache({});
-    fsList("").then((d) => {
+    (async () => {
+      const r = await fsList("");
       if (!alive) return;
-      const entries = d.entries || [];
-      setRoot(entries);
-      setSelected(entries[0] ? entries[0].name : null);
-    });
+      const rootEntries = r.entries || [];
+      setRoot(rootEntries);
+      // Refetch each open dir so the refresh reflects server state while keeping
+      // it expanded. A dir that vanished returns no entries and just won't render.
+      const fresh = {};
+      for (const p of Array.from(openRef.current)) {
+        const d = await fsList(p);
+        if (!alive) return;
+        fresh[p] = d.entries || [];
+      }
+      if (!alive) return;
+      setCache(fresh);
+      setSelected((s) => s || (rootEntries[0] ? rootEntries[0].name : null));
+    })();
     return () => {
       alive = false;
     };
