@@ -148,6 +148,51 @@ func (c config) handleAdminStopWorkspace(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, map[string]any{"stopped": body.UserKey, "tenant": t.Slug})
 }
 
+// handleAdminCleanHome (POST /api/admin/clean-home {tenant_slug,user_key}) wipes a
+// member's workspace home except auth/connection state. Same target resolution as
+// stop-workspace; the container is stopped first.
+func (c config) handleAdminCleanHome(w http.ResponseWriter, r *http.Request) {
+	if _, ok := c.requireSuperAdmin(w, r); !ok {
+		return
+	}
+	var body struct {
+		UserKey    string `json:"user_key"`
+		TenantSlug string `json:"tenant_slug"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid json"})
+		return
+	}
+	t, ok, err := c.mgr.store.GetTenantBySlug(r.Context(), body.TenantSlug)
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	if !ok {
+		writeAPIErr(w, &apiError{http.StatusNotFound, "no_tenant", "unknown tenant"})
+		return
+	}
+	ident, err := c.mgr.store.UpsertIdentity(r.Context(), "", body.UserKey, "")
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	mem, ok, err := c.mgr.store.GetMembership(r.Context(), ident.ID, t.ID)
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	if !ok {
+		writeAPIErr(w, &apiError{http.StatusNotFound, "no_membership", "not a member"})
+		return
+	}
+	if err := c.mgr.cleanHomeByMembership(r.Context(), mem.ID); err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"cleaned": body.UserKey, "tenant": t.Slug})
+}
+
 // handleAdminCreateTenant (POST /api/admin/tenants {slug,name}).
 func (c config) handleAdminCreateTenant(w http.ResponseWriter, r *http.Request) {
 	if _, ok := c.requireSuperAdmin(w, r); !ok {

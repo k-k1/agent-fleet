@@ -133,6 +133,7 @@ func main() {
 	mux.HandleFunc("POST /api/admin/tenants", cfg.handleAdminCreateTenant)
 	mux.HandleFunc("POST /api/admin/memberships", cfg.handleAdminAddMembership)
 	mux.HandleFunc("POST /api/admin/stop-workspace", cfg.handleAdminStopWorkspace)
+	mux.HandleFunc("POST /api/admin/clean-home", cfg.handleAdminCleanHome) // wipe home (keep auth/connections)
 	mux.HandleFunc("PUT /api/admin/tenants/{slug}/limits", cfg.handleAdminSetTenantLimits)
 	mux.HandleFunc("PUT /api/admin/user-limits", cfg.handleAdminSetUserLimit)
 	mux.HandleFunc("GET /api/admin/host", cfg.handleHostStats) // host load / memory (super_admin)

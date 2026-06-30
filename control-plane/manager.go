@@ -335,6 +335,21 @@ func (m *manager) stopWorkspaceByMembership(ctx context.Context, membershipID st
 	return m.store.SetWorkspaceState(ctx, ws.ID, "stopped")
 }
 
+// cleanHomeByMembership wipes a member's workspace home except auth/connection state
+// (admin action). Stops the container first and leaves it stopped; the home is
+// recreated on the next start.
+func (m *manager) cleanHomeByMembership(ctx context.Context, membershipID string) error {
+	ws, ok, err := m.store.GetWorkspaceByMembership(ctx, membershipID)
+	if err != nil || !ok {
+		return err
+	}
+	_ = (&dockerRuntime{name: ws.ContainerName, network: ws.Network}).stop(ctx) // best-effort
+	if err := cleanHome(ws.DataDir); err != nil {
+		return err
+	}
+	return m.store.SetWorkspaceState(ctx, ws.ID, "stopped")
+}
+
 // countSessions asks the Agent how many sessions a workspace currently has.
 func (m *manager) countSessions(ctx context.Context, rt *dockerRuntime) (int, error) {
 	req, _ := http.NewRequestWithContext(ctx, "GET", rt.agentBase()+"/sessions", nil)
