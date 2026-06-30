@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useApp } from "../state.jsx";
 import Pane from "./Pane.jsx";
 
@@ -27,7 +27,9 @@ export default function PaneHost() {
 
   // Look up a pane's session so the terminal header can render it like the
   // left-pane Sessions row (kind badge + name + state) instead of bare text.
-  const sessionByName = new Map((sessions || []).map((s) => [s.name, s]));
+  // Memoized on `sessions` so a layout-only re-render (drag, split) doesn't
+  // rebuild the Map + its entry arrays — needless garbage that feeds GC.
+  const sessionByName = useMemo(() => new Map((sessions || []).map((s) => [s.name, s])), [sessions]);
 
   const cols = layout.cols;
   const colCount = cols.length;
