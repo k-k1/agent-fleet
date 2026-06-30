@@ -21,6 +21,9 @@ export PATH="$HOME/.local/go/bin:$HOME/go/bin:$PATH"
 WS_IMAGE="${WS_IMAGE:-agent-fleet/workspace:dev}"
 CP_ADDR="${CP_ADDR:-:8099}"
 WS_DATA="${WS_DATA:-/tmp/af-data}"
+# Per-workspace RAM cap (docker --memory; applied at container start). Raise with
+# care — this host is RAM-constrained and over-committing can OOM the fleet.
+WS_MEMORY="${WS_MEMORY:-5g}"
 # Shared Temurin JDKs live here on the host (provisioned once below) and are
 # bind-mounted read-only into every workspace at /usr/lib/jvm.
 WS_JVM_DIR="${WS_JVM_DIR:-$WS_DATA/shared/jvm}"
@@ -75,6 +78,7 @@ exec env \
   WS_IMAGE="$WS_IMAGE" \
   CONSOLE_DIR="$ROOT/console/dist" \
   WS_DATA="$WS_DATA" \
+  WS_MEMORY="$WS_MEMORY" \
   ${WS_JVM_DIR:+WS_JVM_DIR="$WS_JVM_DIR"} \
   ${AUTH:+AUTH="$AUTH"} \
   ${DEV_USER:+DEV_USER="$DEV_USER"} \
