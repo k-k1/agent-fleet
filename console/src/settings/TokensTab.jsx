@@ -58,6 +58,17 @@ export default function TokensTab() {
 
   const mcpURL = rel("mcp");
 
+  // A ready-to-paste .mcp.json for Claude Code (Streamable HTTP server). The PAT
+  // already carries the issuer's identity+membership, so no tenant header is needed
+  // — just the Bearer. Built only while the once-shown secret is in hand.
+  const mcpJson = issued
+    ? JSON.stringify(
+        { mcpServers: { "agent-fleet": { type: "http", url: mcpURL, headers: { Authorization: `Bearer ${issued.token}` } } } },
+        null,
+        2,
+      )
+    : "";
+
   return (
     <div className="display-settings">
       <p className="muted ds-note">
@@ -76,10 +87,20 @@ export default function TokensTab() {
               type="button"
               onClick={() => navigator.clipboard?.writeText(issued.token)}
             >
-              コピー
+              トークンをコピー
             </button>
             <button type="button" className="btn-ghost" onClick={() => setIssued(null)}>
               閉じる
+            </button>
+          </div>
+
+          <div className="pat-tmpl-head">
+            Claude Code 用 <code>.mcp.json</code>（プロジェクト直下に保存、または既存ファイルへ <code>agent-fleet</code> を追記）
+          </div>
+          <pre className="pat-tmpl">{mcpJson}</pre>
+          <div className="pat-issued-actions">
+            <button type="button" onClick={() => navigator.clipboard?.writeText(mcpJson)}>
+              .mcp.json をコピー
             </button>
           </div>
         </div>
