@@ -3318,6 +3318,15 @@ body.row-resizing {
   min-height: 0;
   overflow: auto;
 }
+/* The secondary/note text in the settings dialog was too faint at plain --muted.
+   Lift it toward --fg so it stays legible while still reading as secondary. color-mix
+   keeps it theme-adaptive (dark / light / custom color themes). Emphasized inline
+   spans (.ds-note span) stay full --fg via their own, equally-specific rule. */
+.settings-content .muted,
+.settings-content .ds-hint,
+.settings-content .pat-tmpl-head {
+  color: color-mix(in srgb, var(--fg) 62%, var(--muted));
+}
 
 /* display settings tab */
 .ds-group {
