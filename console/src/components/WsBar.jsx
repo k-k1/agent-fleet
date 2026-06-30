@@ -15,16 +15,30 @@ const HIST_N = 60; // sparkline ring buffer: ~4 min at the 4s poll cadence
 function useWsResourceChips(tenant, superAdmin) {
   const [wsStats, setWsStats] = useState(null);
   const [wsHist, setWsHist] = useState([]); // [{cpu, mem}]
+  const wsKey = useRef("");
   useEffect(() => {
     let alive = true;
+    wsKey.current = "";
     setWsHist([]); // tenant switch → start the trend fresh
-    const load = () =>
+    const load = () => {
+      if (document.hidden) return; // a backgrounded tab needn't poll (or repaint)
       api("api/workspace/stats")
         .then((d) => {
           if (!alive) return;
           const ok = d && !d.error;
+          const running = !!(ok && d.running && d.mem_used != null);
+          // Re-render only when a DISPLAYED value changes. memory.current jitters
+          // by bytes every read, so keying on the raw stats would repaint the
+          // sparkline every 4s even at a steady 0% — which on a remote display
+          // flickered the cursor. Key on the rounded mem%/cpu% the chip actually
+          // shows, so an idle workspace produces the same key and no re-render.
+          const memPct = running && d.mem_max ? Math.round((d.mem_used / d.mem_max) * 100) : -1;
+          const cpuPct = running && d.cpu_pct != null ? Math.round(d.cpu_pct) : -1;
+          const key = ok ? `${!!(d && d.running)}|${memPct}|${cpuPct}` : "off";
+          if (key === wsKey.current) return;
+          wsKey.current = key;
           setWsStats(ok ? d : null);
-          if (ok && d.running && d.mem_used != null) {
+          if (running) {
             const mem = d.mem_max ? d.mem_used / d.mem_max : null;
             const cpu = typeof d.cpu_pct === "number" ? d.cpu_pct : null;
             setWsHist((h) => [...h, { cpu, mem }].slice(-HIST_N));
@@ -33,20 +47,26 @@ function useWsResourceChips(tenant, superAdmin) {
           }
         })
         .catch(() => {
-          if (!alive) return;
+          if (!alive || wsKey.current === "off") return;
+          wsKey.current = "off";
           setWsStats(null);
           setWsHist([]);
         });
+    };
     load();
     const id = setInterval(load, 4000);
+    const onVis = () => !document.hidden && load();
+    document.addEventListener("visibilitychange", onVis);
     return () => {
       alive = false;
       clearInterval(id);
+      document.removeEventListener("visibilitychange", onVis);
     };
   }, [tenant]);
 
   const [hostStats, setHostStats] = useState(null);
   const [hostHist, setHostHist] = useState([]); // [{load, mem}], load normalized to cores
+  const hostKey = useRef("");
   useEffect(() => {
     if (!superAdmin) {
       setHostStats(null);
@@ -54,24 +74,39 @@ function useWsResourceChips(tenant, superAdmin) {
       return;
     }
     let alive = true;
-    const load = () =>
+    hostKey.current = "";
+    const load = () => {
+      if (document.hidden) return;
       api("api/admin/host")
         .then((d) => {
           if (!alive) return;
-          const ok = d && !d.error;
+          const ok = d && d.mem_total != null;
+          // Key on the displayed load (2dp) + rounded mem% so a steady host
+          // doesn't repaint the chips every 4s.
+          const key = ok ? `${Number(d.load1).toFixed(2)}|${Math.round((d.mem_used / d.mem_total) * 100)}` : "off";
+          if (key === hostKey.current) return;
+          hostKey.current = key;
           setHostStats(ok ? d : null);
-          if (ok && d.mem_total != null) {
+          if (ok) {
             const ldNorm = d.ncpu ? d.load1 / d.ncpu : null;
             const mem = d.mem_used / d.mem_total;
             setHostHist((h) => [...h, { load: ldNorm, mem }].slice(-HIST_N));
           }
         })
-        .catch(() => alive && setHostStats(null));
+        .catch(() => {
+          if (!alive || hostKey.current === "off") return;
+          hostKey.current = "off";
+          setHostStats(null);
+        });
+    };
     load();
     const id = setInterval(load, 4000);
+    const onVis = () => !document.hidden && load();
+    document.addEventListener("visibilitychange", onVis);
     return () => {
       alive = false;
       clearInterval(id);
+      document.removeEventListener("visibilitychange", onVis);
     };
   }, [superAdmin]);
 
