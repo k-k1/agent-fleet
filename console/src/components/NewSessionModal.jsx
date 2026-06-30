@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, apiJSON } from "../api.js";
+import { api, apiJSON, errText } from "../api.js";
 import RepoPicker from "./RepoPicker.jsx";
 import Modal from "./Modal.jsx";
 import { deriveRepoName, sanitizeSeg, uniqueRepoName, repoNameRe } from "../lib/reponame.js";
@@ -129,7 +129,7 @@ export default function NewSessionModal({ onClose, onCreated }) {
         repo_name: newCopy ? repoName.trim() : "",
       });
       if (res && res.error) {
-        alert("作成に失敗: " + (res.error.message || res.error));
+        alert("作成に失敗: " + errText(res.error));
         return;
       }
       // Pass the cloned repo dir basename (server echoes it as `repo`) so the

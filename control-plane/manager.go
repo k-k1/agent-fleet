@@ -362,7 +362,9 @@ func (m *manager) cleanHomeByMembership(ctx context.Context, membershipID string
 	return m.store.SetWorkspaceState(ctx, ws.ID, "stopped")
 }
 
-// countSessions asks the Agent how many sessions a workspace currently has.
+// countSessions asks the Agent how many sessions are currently running. The quota
+// caps concurrency, so only live (alive) sessions count — stopped/resumable ones,
+// which the Agent keeps listed for the stopped-TTL window, do not occupy a slot.
 func (m *manager) countSessions(ctx context.Context, rt *dockerRuntime) (int, error) {
 	req, _ := http.NewRequestWithContext(ctx, "GET", rt.agentBase()+"/sessions", nil)
 	if rt.token != "" {
@@ -374,12 +376,20 @@ func (m *manager) countSessions(ctx context.Context, rt *dockerRuntime) (int, er
 	}
 	defer resp.Body.Close()
 	var body struct {
-		Sessions []json.RawMessage `json:"sessions"`
+		Sessions []struct {
+			Alive bool `json:"alive"`
+		} `json:"sessions"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 		return 0, err
 	}
-	return len(body.Sessions), nil
+	n := 0
+	for _, s := range body.Sessions {
+		if s.Alive {
+			n++
+		}
+	}
+	return n, nil
 }
 
 // agentSessions fetches the Agent's full session list (for the DB mirror).
