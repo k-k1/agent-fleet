@@ -259,6 +259,44 @@ export function AppProvider({ children }) {
       clearInterval(id);
     };
   }, [sessionsKey, tenant]);
+  // Resource chips for the WsBar. Container stats (own workspace, mem/CPU vs
+  // quota) for everyone; host stats (load / memory) only for super_admin — the CP
+  // gates /api/admin/host server-side too. Polled every 4s like the session list;
+  // a failure just nulls the chip (older CP without the endpoint, or down).
+  const [wsStats, setWsStats] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    const load = () =>
+      api("api/workspace/stats")
+        .then((d) => alive && setWsStats(d && !d.error ? d : null))
+        .catch(() => alive && setWsStats(null));
+    load();
+    const id = setInterval(load, 4000);
+    return () => {
+      alive = false;
+      clearInterval(id);
+    };
+  }, [tenant]);
+
+  const [hostStats, setHostStats] = useState(null);
+  useEffect(() => {
+    if (!superAdmin) {
+      setHostStats(null);
+      return;
+    }
+    let alive = true;
+    const load = () =>
+      api("api/admin/host")
+        .then((d) => alive && setHostStats(d && !d.error ? d : null))
+        .catch(() => alive && setHostStats(null));
+    load();
+    const id = setInterval(load, 4000);
+    return () => {
+      alive = false;
+      clearInterval(id);
+    };
+  }, [superAdmin]);
+
   const bumpRepos = useCallback(() => setReposKey((k) => k + 1), []);
   const bumpConn = useCallback(() => setConnKey((k) => k + 1), []);
   const bumpFiles = useCallback(() => setFilesKey((k) => k + 1), []);
@@ -659,6 +697,8 @@ export function AppProvider({ children }) {
     ocweb,
     setOcweb,
     refreshOcweb,
+    wsStats,
+    hostStats,
     // active-pane projection (back-compat)
     mode: activePane.kind,
     scmRepo: activePane.scmRepo,

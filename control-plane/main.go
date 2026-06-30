@@ -135,6 +135,7 @@ func main() {
 	mux.HandleFunc("POST /api/admin/stop-workspace", cfg.handleAdminStopWorkspace)
 	mux.HandleFunc("PUT /api/admin/tenants/{slug}/limits", cfg.handleAdminSetTenantLimits)
 	mux.HandleFunc("PUT /api/admin/user-limits", cfg.handleAdminSetUserLimit)
+	mux.HandleFunc("GET /api/admin/host", cfg.handleHostStats) // host load / memory (super_admin)
 
 	// Personal Access Tokens (Console-issued) for the MCP endpoint (docs/0006).
 	mux.HandleFunc("GET /api/pat", cfg.handlePATList)
@@ -153,6 +154,8 @@ func main() {
 	mux.HandleFunc("POST /api/workspace/start", cfg.handleWorkspaceStart)
 	mux.HandleFunc("POST /api/workspace/stop", cfg.handleWorkspaceStop)
 	mux.HandleFunc("POST /api/workspace/recreate", cfg.handleWorkspaceRecreate)
+	// Own-workspace resource chip (mem / CPU vs quota) — host-read cgroup, all users.
+	mux.HandleFunc("GET /api/workspace/stats", cfg.handleWorkspaceStats)
 
 	// Session ops — proxied to the Workspace Agent.
 	mux.HandleFunc("GET /api/sessions", cfg.handleSessionsList)
