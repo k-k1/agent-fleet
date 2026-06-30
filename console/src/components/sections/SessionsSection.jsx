@@ -63,6 +63,20 @@ export default function SessionsSection() {
     bumpSessions();
   };
 
+  // Halt a running session into 停止中 (resumable): kills the live tmux but keeps
+  // the meta, so the row stays listed and can be resumed later (≠ archive, which
+  // hides it; ≠ recreate, which discards the conversation). The button counterpart
+  // of quitting in the terminal. Frees a concurrency quota slot.
+  const halt = async (name) => {
+    const res = await raw(`api/sessions/${encodeURIComponent(name)}/halt`, { method: "POST" });
+    if (!res.ok) {
+      alert("停止に失敗しました");
+      return;
+    }
+    bumpSessions();
+    setTimeout(() => bumpSessions(), 1200);
+  };
+
   // Discard the conversation and start the same slot fresh, then re-attach the
   // terminal so it resumes running (≠ resume of the old conversation). The Agent
   // /recreate kills tmux, clears state, and relaunches; surface its real error so
@@ -235,6 +249,17 @@ export default function SessionsSection() {
                       }}
                     >
                       再開する
+                    </button>
+                  )}
+                  {s.alive && (
+                    <button
+                      className="session-menu-item"
+                      onClick={() => {
+                        setMenuFor(null);
+                        halt(s.name);
+                      }}
+                    >
+                      停止する（あとで再開できる）
                     </button>
                   )}
                   {s.remoteUrl && (

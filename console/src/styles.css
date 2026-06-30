@@ -358,6 +358,20 @@ textarea:focus {
 .wsbar button {
   padding: 3px 12px;
 }
+/* Single Start/Stop toggle: fixed width so it doesn't shift the bar as the label
+   flips, color-coded by which action it offers (green = Start, amber = Stop). */
+.ws-toggle {
+  min-width: 64px;
+  font-variant-numeric: tabular-nums;
+}
+.ws-toggle.start:not(:disabled) {
+  color: var(--ok);
+  border-color: var(--ok);
+}
+.ws-toggle.stop:not(:disabled) {
+  color: var(--warn);
+  border-color: var(--warn);
+}
 .ws-spacer {
   flex: 1;
 }

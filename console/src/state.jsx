@@ -382,6 +382,22 @@ export function AppProvider({ children }) {
     bumpFiles();
   }, [refreshWs, bumpSessions, bumpFiles]);
 
+  // Auto-sync wsState every 4s so an externally-changed workspace (admin stop, OOM
+  // death, crash) reflects on its own — this replaces the manual "状態を更新" button
+  // that WsBar used to carry. Skipped while a transition is in flight (state ends in
+  // "…": starting…/stopping…/recreating…) so a poll can't clobber the optimistic
+  // label, and while the tab is hidden. setWsState with an unchanged value is a
+  // no-op re-render, so a steady workspace costs nothing.
+  const wsStateRef = useRef(wsState);
+  wsStateRef.current = wsState;
+  useEffect(() => {
+    const id = setInterval(() => {
+      if (document.hidden || wsStateRef.current.endsWith("…")) return;
+      refreshWs();
+    }, 4000);
+    return () => clearInterval(id);
+  }, [refreshWs]);
+
   // resetToTerminal collapses the layout back to a single, empty terminal pane. Used
   // when the world changes underneath the views (recreate / tenant switch): the
   // terminal-kind reconciler then disposes every other pane's xterm + socket.
