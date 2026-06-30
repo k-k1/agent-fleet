@@ -1707,28 +1707,69 @@ body.row-resizing {
   text-align: center;
   line-height: 1.6;
 }
+/* Each turn is its own card so the boundary between turns is unmistakable. The
+   role tints the left edge: accent for the user, neutral for the assistant. */
 .mirror-turn {
-  max-width: 100%;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  overflow: hidden;
 }
-/* The user's own prompt (echoed locally on send): a compact right-aligned bubble,
-   visually distinct from the assistant's rendered Markdown. */
 .mirror-turn.user {
-  align-self: flex-end;
-  max-width: 80%;
+  border-left-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 7%, var(--bg));
+}
+.mirror-turn-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px 4px 11px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+  font-size: 12px;
+}
+.mt-who {
+  font-weight: 600;
+}
+.mirror-turn.user .mt-who {
+  color: var(--accent);
+}
+.mt-time {
+  font-variant-numeric: tabular-nums;
+}
+/* Push the copy button to the right edge of the turn header. */
+.mt-copy {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 7px;
+  font-size: 12px;
+  border-radius: 6px;
+}
+.mt-copy:hover {
+  background: var(--hover-bg);
+}
+.mirror-turn-body {
+  padding: 8px 11px;
 }
 .mirror-user-text {
   margin: 0;
-  padding: 7px 11px;
-  border-radius: 10px 10px 2px 10px;
-  background: color-mix(in srgb, var(--accent) 16%, transparent);
-  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
   white-space: pre-wrap;
   word-break: break-word;
   font: inherit;
 }
 .mirror-turn.assistant .markdown {
-  /* Sits directly on the viewer background; MarkdownView brings its own spacing. */
-  padding: 2px 0;
+  /* MarkdownView brings its own block spacing; trim the outer margins so the card
+     padding controls the gap. */
+  padding: 0;
+}
+.mirror-turn .markdown > :first-child {
+  margin-top: 0;
+}
+.mirror-turn .markdown > :last-child {
+  margin-bottom: 0;
 }
 .mirror-compose {
   display: flex;
