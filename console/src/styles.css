@@ -2817,48 +2817,236 @@ body.row-resizing {
 }
 
 /* admin */
-.admin {
-  display: flex;
-  gap: 14px;
-  min-height: 0;
-  height: 100%;
-}
-.admin-left {
-  width: 280px;
-  flex-shrink: 0;
-  border-right: 1px solid var(--border);
-  padding-right: 12px;
-  overflow: auto;
-}
-.admin-tenant {
-  padding: 6px 4px;
-  border-bottom: 1px solid var(--border2);
-  cursor: pointer;
-  font-size: 12px;
-  list-style: none;
-}
-.admin-tenant:hover {
-  background: var(--btn);
-}
-.admin-tenant.active {
-  background: var(--active-bg);
-}
-.admin-detail {
-  flex: 1;
-  overflow: auto;
-}
-.members {
+/* ===== Admin surface (super_admin management) ===== */
+/* Near-full-screen overlay panel (not a small centered modal): the staged
+   drill-down + per-member resource/session views need the room. */
+.admin-surface {
+  position: relative;
   display: flex;
   flex-direction: column;
+  width: min(1100px, 94vw);
+  height: min(900px, 92vh);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
 }
-.member {
+.admin-surface-head {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 5px 2px;
-  border-bottom: 1px solid var(--border2);
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
 }
-.m-who {
+.admin-surface-head .modal-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  flex: 1;
+}
+.admin-surface-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 16px;
+}
+.admin {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-height: 0;
+}
+
+/* nav row: back button + breadcrumb */
+.admin-nav {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.admin-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+}
+/* breadcrumb */
+.admin-crumbs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.admin-crumbs .crumb {
+  background: none;
+  border: none;
+  padding: 3px 6px;
+  border-radius: 5px;
+  font-size: 13px;
+  color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+}
+.admin-crumbs .crumb:hover:not(.here) {
+  background: var(--hover-bg);
+  color: var(--fg);
+}
+.admin-crumbs .crumb.here {
+  color: var(--fg);
+  font-weight: 600;
+  cursor: default;
+}
+.admin-crumbs .crumb-sep {
+  color: var(--muted2);
+  font-size: 14px;
+}
+
+.admin-stage {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.stage-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.stage-head h4 {
+  margin: 0;
+}
+
+/* tenant cards */
+.tenant-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 10px;
+}
+.tenant-card {
+  text-align: left;
+  background: var(--panel2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.tenant-card:hover {
+  border-color: var(--accent);
+  background: var(--hover-bg);
+}
+.tc-top {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.tc-name {
+  font-size: 14px;
+  font-weight: 600;
+}
+.tc-slug {
+  font-size: 11px;
+  color: var(--muted2);
+}
+.tc-stats {
+  display: flex;
+  gap: 14px;
+  font-size: 12px;
+}
+.tc-stats span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.tc-run.on {
+  color: var(--ok);
+}
+.tc-limits {
+  font-size: 11px;
+}
+.new-tenant {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  padding: 12px;
+  background: var(--panel2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+/* panels (tenant detail + member detail sections) */
+.admin-panel {
+  background: var(--panel2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px;
+}
+.admin-panel h4 {
+  margin: 0 0 10px;
+}
+.saved-note {
+  color: var(--ok);
+  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.form-err {
+  color: var(--del);
+  font-size: 12px;
+}
+
+/* member rows (tenant detail) */
+.member-rows {
+  display: flex;
+  flex-direction: column;
+}
+.member-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 6px;
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--border2);
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+  color: var(--fg);
+}
+.member-row:hover {
+  background: var(--hover-bg);
+}
+.state-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--muted2);
+}
+.state-dot.on {
+  background: var(--ok);
+}
+.state-dot.off {
+  background: var(--muted2);
+}
+.mr-key {
+  font-size: 13px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.mr-star {
+  color: var(--warn);
+  font-size: 12px;
+}
+.mr-email {
   flex: 1;
   min-width: 0;
   overflow: hidden;
@@ -2866,18 +3054,222 @@ body.row-resizing {
   white-space: nowrap;
   font-size: 12px;
 }
-.m-state {
+.mr-role {
+  font-size: 11px;
+  padding: 1px 7px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.mr-lim {
   font-size: 11px;
 }
-.m-state.on {
-  color: var(--ok);
-}
-.m-state.off {
+.mr-go {
   color: var(--muted2);
+}
+.add-member {
+  margin-top: 12px;
 }
 .add-member input,
 .add-member select {
   font-size: 12px;
+}
+
+/* member detail */
+.member-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.mh-key {
+  font-size: 15px;
+  font-weight: 600;
+}
+.mh-role {
+  font-size: 11px;
+  padding: 1px 7px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.mh-email {
+  font-size: 12px;
+}
+
+/* resource tiles */
+.res-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+}
+.res-tile {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 10px 12px;
+}
+.res-tile.warn {
+  border-color: var(--warn);
+}
+.res-tile.crit {
+  border-color: var(--del);
+}
+.rt-label {
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.rt-value {
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+.rt-sub {
+  font-size: 11px;
+}
+.rt-bar {
+  margin-top: 8px;
+  height: 4px;
+  background: var(--border2);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.rt-fill {
+  height: 100%;
+  background: var(--ok);
+}
+.res-tile.warn .rt-fill {
+  background: var(--warn);
+}
+.res-tile.crit .rt-fill {
+  background: var(--del);
+}
+
+/* admin session list (read-only) */
+.admin-sessions {
+  display: flex;
+  flex-direction: column;
+}
+.adm-session {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 4px;
+  border-bottom: 1px solid var(--border2);
+  font-size: 12px;
+}
+.as-name {
+  flex-shrink: 0;
+  max-width: 30%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.as-repo {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.as-time {
+  flex-shrink: 0;
+  font-size: 11px;
+}
+
+/* member actions */
+.member-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.member-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.limit-edit {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+/* Admin surface on a phone: full-bleed, single column, stacked forms, and a big
+   tap-target back button. Scoped to .admin* so global form-row etc. are untouched. */
+@media (max-width: 760px) {
+  .admin-surface {
+    width: 100vw;
+    height: 100dvh;
+    max-width: none;
+    border: none;
+    border-radius: 0;
+  }
+  .admin-surface-body {
+    padding: 12px;
+  }
+  .admin-back {
+    padding: 8px 14px;
+    font-size: 14px;
+  }
+  .admin-crumbs {
+    font-size: 12px;
+  }
+  .tenant-cards {
+    grid-template-columns: 1fr;
+  }
+  /* stack the limits / add-member rows vertically so inputs get full width */
+  .admin .form-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .admin .form-row input,
+  .admin .form-row select,
+  .admin .form-row button {
+    width: 100%;
+  }
+  .new-tenant input,
+  .new-tenant button {
+    width: 100%;
+  }
+  .res-tiles {
+    grid-template-columns: 1fr 1fr;
+  }
+  /* member row: let the email/role wrap under the key instead of overflowing */
+  .member-row {
+    flex-wrap: wrap;
+    row-gap: 2px;
+  }
+  .mr-email {
+    flex-basis: 100%;
+    order: 5;
+  }
+  .mr-go {
+    margin-left: auto;
+  }
+  /* session row: wrap to two lines on narrow screens */
+  .adm-session {
+    flex-wrap: wrap;
+    row-gap: 2px;
+  }
+  .as-name {
+    max-width: 100%;
+  }
+  .as-repo {
+    flex-basis: 100%;
+    order: 5;
+  }
+  .member-actions button {
+    flex: 1 1 100%;
+    justify-content: center;
+  }
+  .limit-edit {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .limit-edit button {
+    width: 100%;
+  }
 }
 
 /* settings modal: segmented section selector (like the New Session modal) */

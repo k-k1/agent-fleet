@@ -152,23 +152,22 @@ func containerCPUPct(id, scope string) (float64, bool) {
 	return float64(usage-prev.usageUsec) / float64(wall) * 100, true
 }
 
-func (c config) handleWorkspaceStats(w http.ResponseWriter, r *http.Request) {
-	rt, ok := c.rtFor(w, r)
-	if !ok {
-		return
-	}
-	id := dockerContainerID(r.Context(), rt.name)
+// containerStats reads a container's live mem/CPU from its cgroup v2 scope,
+// keyed by container name. Returns {running:false} when the container is gone,
+// {running:true} (no metrics) when the scope path is unreadable, or the full
+// {running, mem_used, mem_max?, cpu_pct?} otherwise. Shared by the own-workspace
+// chip and the admin per-member view.
+func containerStats(ctx context.Context, name string) map[string]any {
+	id := dockerContainerID(ctx, name)
 	if id == "" {
-		writeJSON(w, http.StatusOK, map[string]any{"running": false})
-		return
+		return map[string]any{"running": false}
 	}
 	scope := cgroupScope(id)
 	memUsed, okMem := readCgroupUint(scope + "/memory.current")
 	if !okMem {
 		// Scope path absent (e.g. cgroupfs driver or a different layout): the
 		// container is up but we can't read it — degrade rather than 500.
-		writeJSON(w, http.StatusOK, map[string]any{"running": true})
-		return
+		return map[string]any{"running": true}
 	}
 	out := map[string]any{"running": true, "mem_used": memUsed}
 	if memMax, ok := readCgroupUint(scope + "/memory.max"); ok {
@@ -177,5 +176,62 @@ func (c config) handleWorkspaceStats(w http.ResponseWriter, r *http.Request) {
 	if pct, ok := containerCPUPct(id, scope); ok {
 		out["cpu_pct"] = pct
 	}
-	writeJSON(w, http.StatusOK, out)
+	return out
+}
+
+func (c config) handleWorkspaceStats(w http.ResponseWriter, r *http.Request) {
+	rt, ok := c.rtFor(w, r)
+	if !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, containerStats(r.Context(), rt.name))
+}
+
+// --- Disk usage (admin per-member view) ---
+//
+// Unlike mem/CPU (a cheap cgroup file read) disk usage means walking the home
+// tree, which is expensive on a large workspace. So it is computed on demand
+// (admin opens a member) and cached per dataDir with a short TTL; the admin view
+// polls every few seconds but only triggers a fresh du once per diskTTL.
+
+const diskTTL = 60 * time.Second
+
+type diskSample struct {
+	bytes uint64
+	at    time.Time
+}
+
+var (
+	diskMu    sync.Mutex
+	diskCache = map[string]diskSample{}
+)
+
+// dirDiskUsage returns the byte size of <dataDir>/home via `du -sb`, cached for
+// diskTTL per dataDir. Reports !ok when du fails (path gone, etc.).
+func dirDiskUsage(ctx context.Context, dataDir string) (uint64, bool) {
+	home := dataDir + "/home"
+	now := time.Now()
+	diskMu.Lock()
+	if s, ok := diskCache[home]; ok && now.Sub(s.at) < diskTTL {
+		diskMu.Unlock()
+		return s.bytes, true
+	}
+	diskMu.Unlock()
+
+	out, err := exec.CommandContext(ctx, "du", "-sb", home).Output()
+	if err != nil {
+		return 0, false
+	}
+	f := strings.Fields(string(out))
+	if len(f) == 0 {
+		return 0, false
+	}
+	v, err := strconv.ParseUint(f[0], 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	diskMu.Lock()
+	diskCache[home] = diskSample{bytes: v, at: now}
+	diskMu.Unlock()
+	return v, true
 }

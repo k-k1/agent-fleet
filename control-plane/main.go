@@ -130,6 +130,8 @@ func main() {
 	mux.HandleFunc("GET /api/tenants", cfg.handleTenants)
 	mux.HandleFunc("GET /api/admin/tenants", cfg.handleAdminListTenants)
 	mux.HandleFunc("GET /api/admin/tenants/{slug}/members", cfg.handleAdminListMembers)
+	mux.HandleFunc("GET /api/admin/tenants/{slug}/members/{key}/stats", cfg.handleAdminMemberStats)       // per-member mem/CPU/disk
+	mux.HandleFunc("GET /api/admin/tenants/{slug}/members/{key}/sessions", cfg.handleAdminMemberSessions) // per-member session list (read-only)
 	mux.HandleFunc("POST /api/admin/tenants", cfg.handleAdminCreateTenant)
 	mux.HandleFunc("POST /api/admin/memberships", cfg.handleAdminAddMembership)
 	mux.HandleFunc("POST /api/admin/stop-workspace", cfg.handleAdminStopWorkspace)
