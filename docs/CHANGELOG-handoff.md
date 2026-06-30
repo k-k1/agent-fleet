@@ -82,3 +82,4 @@
 ## 2026-07-01
 - **稼働中セッションに「停止する」を追加**（⋯メニュー）。Agent `POST /sessions/{name}/halt`（`handleHaltSession`）= tmux kill + **meta 保持**で停止中（再開可能）へ＝端末 quit と同等。既存 stop（meta 破棄＝一覧から削除）/ archive（隠す）と別の3つ目の動詞。CP は `/api/sessions/{name}/halt` を proxy 追加。停止でクォータ枠も解放（同時稼働カウントは alive のみ）。※ Agent 変更ゆえ稼働中 Workspace は **Stop→Start** で反映。
 - **WS バーの Start/Stop を1ボタン化**（`WsBar.jsx` `ws-toggle`、状態でラベル/動作が切替・遷移中は無効・固定幅で色分け green/amber）。隣の「状態を更新」ボタンを**撤去**し、代わりに `wsState` を**4秒ポールで自動同期**（`state.jsx`。遷移中=`…` 接尾辞・タブ非表示時はスキップ、同値 setState は no-op）＝管理者 Stop / OOM 死など外部変化も自前で追従。
+- **WS 状態ラベルを平易化**（`WsBar.jsx` `wsLabel()`）。CP は docker 由来の生 state（`runtime.go state()` = running/stopped/**none**）を返す。Stop は `docker rm -f`＝コンテナ削除なので**通常の停止は `none`**（データは bind mount で保持・Start で再作成）、`stopped` はコンテナ自走終了（クラッシュ/OOM）時のみ。生語が UI に漏れ「none＝意味不明」だったのを `none/stopped→停止`・`running→稼働中`・transient も和訳し、生 state は tooltip に退避。表示層のみ（状態機械の値・ロジックは不変）。
