@@ -297,6 +297,13 @@ export function ensureTerm(paneId, el) {
     });
   }
 
+  // Auto-reconnect on focus: refocusing a pane whose PTY socket dropped re-opens it.
+  // Covers both ways a pane regains focus — clicking into the terminal, or it
+  // becoming the active pane (which calls focusTerm → focuses this textarea).
+  if (term.textarea) {
+    term.textarea.addEventListener("focus", () => reconnect(paneId));
+  }
+
   fitAddon.fit();
   term.onData((d) => it.ws && it.ws.readyState === 1 && it.ws.send(JSON.stringify({ type: "input", data: d })));
   term.onResize(({ cols, rows }) => it.ws && it.ws.readyState === 1 && it.ws.send(JSON.stringify({ type: "resize", cols, rows })));
@@ -352,6 +359,7 @@ export function attach(paneId, session) {
   }
   it.term.reset();
   setSession(it, session);
+  it.dropped = false; // fresh socket: clear any prior unexpected-drop flag
   const ws = new WebSocket(wsURL(session));
   it.ws = ws;
   ws.binaryType = "arraybuffer";
@@ -363,11 +371,29 @@ export function attach(paneId, session) {
     if (ev.data instanceof ArrayBuffer) it.term.write(new Uint8Array(ev.data));
     else it.term.write(ev.data);
   };
-  ws.onclose = () => it.term.write("\r\n[disconnected]\r\n");
+  // An unexpected server-side drop (intentional switches/detach null this handler
+  // first). Flag it so refocusing the pane reconnects — see reconnect().
+  ws.onclose = () => {
+    it.dropped = true;
+    it.term.write("\r\n[disconnected]\r\n");
+  };
   // Focus after the next paint, by when the pane has been un-hidden (the caller
   // flips state in the same React batch). So the user can type immediately after
   // launching a session.
   requestAnimationFrame(() => focusTerm(paneId));
+}
+
+// reconnect re-opens a pane's PTY socket if it dropped unexpectedly. No-op when the
+// pane has no session, is already connecting/open, or wasn't dropped (e.g. an
+// intentional detach). Wired to the terminal's focus so returning to a dead pane —
+// by clicking it or making it the active pane — brings the session back. We do this
+// on focus rather than instantly so a dropped pane stays put (and its
+// "[disconnected]" notice readable) until the user comes back to it.
+export function reconnect(paneId) {
+  const it = inst(paneId);
+  if (!it || !it.term || !it.session || !it.dropped) return;
+  if (it.ws && (it.ws.readyState === WebSocket.CONNECTING || it.ws.readyState === WebSocket.OPEN)) return;
+  attach(paneId, it.session);
 }
 
 export function detach(paneId) {
