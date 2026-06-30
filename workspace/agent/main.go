@@ -48,6 +48,7 @@ func main() {
 	mux.HandleFunc("GET /sessions", handleListSessions)
 	mux.HandleFunc("POST /sessions", handleCreateSession)
 	mux.HandleFunc("POST /sessions/{name}/stop", handleStopSession)
+	mux.HandleFunc("POST /sessions/{name}/halt", handleHaltSession)
 	mux.HandleFunc("POST /sessions/{name}/recreate", handleRecreateSession)
 	mux.HandleFunc("GET /sessions/archived", handleListArchived)
 	mux.HandleFunc("POST /sessions/{name}/archive", handleArchiveSession)

@@ -152,7 +152,7 @@ function tile({ k, series, max, track, value, level, title }) {
 }
 
 export default function WsBar() {
-  const { wsState, startWs, stopWs, refreshWs, ocweb, tenant, superAdmin, layout, resetToTerminal } = useApp();
+  const { wsState, startWs, stopWs, ocweb, tenant, superAdmin, layout, resetToTerminal } = useApp();
   const { wsStats, wsHist, hostStats, hostHist } = useWsResourceChips(tenant, superAdmin);
   const isMobile = useIsMobile();
   const [port, setPort] = useState("");
@@ -161,6 +161,7 @@ export default function WsBar() {
   const pvRef = useRef(null);
   const moreRef = useRef(null);
   const running = wsState === "running";
+  const busy = wsState.endsWith("…"); // starting… / stopping… / recreating… — toggle inert
 
   // "Close all panes" collapses the split layout back to one empty terminal pane.
   // Disabled when there's already just a single empty pane (nothing to close).
@@ -304,14 +305,17 @@ export default function WsBar() {
       <span className="ws-label">Workspace</span>
       <span className={"ws-dot " + (running ? "on" : "off")}>●</span>
       <span className="ws-state">{wsState}</span>
-      <button onClick={startWs} disabled={running}>
-        Start
-      </button>
-      <button onClick={stopWs} disabled={!running}>
-        Stop
-      </button>
-      <button className="ghost" title="状態を更新" onClick={refreshWs}>
-        <Icon name="refresh" />
+      {/* One toggle instead of separate Start/Stop: label + action follow the state.
+          The bar auto-syncs wsState from the 4s stats poll (state.jsx), so an
+          externally-changed workspace (admin stop / OOM) reflects without a manual
+          refresh. Disabled mid-transition (starting…/stopping…). */}
+      <button
+        className={"ws-toggle " + (running ? "stop" : "start")}
+        onClick={running ? stopWs : startWs}
+        disabled={busy}
+        title={running ? "ワークスペースを停止" : "ワークスペースを起動"}
+      >
+        {running ? "Stop" : "Start"}
       </button>
       <button
         className="ghost"

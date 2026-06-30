@@ -481,6 +481,40 @@ func handleStopSession(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"stopped": name})
 }
 
+// handleHaltSession stops a RUNNING session into the 停止中 (resumable) state: it
+// kills the live tmux but KEEPS the meta visible (Archived stays false), so the row
+// stays listed and the user can resume it later (claude --resume). This is the
+// button counterpart of quitting in the terminal — distinct from /stop (which also
+// forgets the meta = removes it from the list) and /archive (which hides it).
+func handleHaltSession(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if !nameRe.MatchString(name) {
+		writeErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
+		return
+	}
+	m, ok := readSessionMeta(name)
+	if !ok {
+		writeErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
+		return
+	}
+	tn := tmuxName(name)
+	if !tmuxHasSession(tn) {
+		// Already stopped — nothing to do; report the current (stopped) wire.
+		writeJSON(w, http.StatusOK, wireSession(m, false))
+		return
+	}
+	if out, err := exec.Command("tmux", "kill-session", "-t", exactT(tn)).CombinedOutput(); err != nil {
+		writeErr(w, http.StatusInternalServerError, "tmux_failed", fmt.Sprintf("%v: %s", err, out))
+		return
+	}
+	removeSessionStatus(sessionUUID(m.Dir, name))
+	// Stamp StoppedAt now so the prune TTL starts here (handleListSessions would
+	// otherwise stamp it on the next poll; doing it here keeps the wire consistent).
+	m.StoppedAt = time.Now().Format(time.RFC3339)
+	writeSessionMeta(m)
+	writeJSON(w, http.StatusOK, wireSession(m, false))
+}
+
 // handleArchiveSession hides a session from the active list but KEEPS its meta (and
 // jsonl), so it can be restored later. Kills the live tmux session if any. This is
 // the non-destructive counterpart to stop (which forgets the meta).

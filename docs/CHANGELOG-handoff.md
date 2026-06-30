@@ -78,3 +78,7 @@
 - **セッションクォータを同時稼働数で数えるよう修正**（`control-plane/manager.go countSessions`）。Agent の `/sessions` は停止中（再開可能・TTL 7d）も返すため、稼働中が上限未満でも `session limit reached` で新規作成が弾かれていた。`alive==true` のみカウントへ。
 - **API エラー文言を i18n 対応の形へ**: サーバは言語非依存の `code`（`quota_sessions`）＋開発者向け英語フォールバックのみ返し、表示文言は Console の `errText()`（`src/api.js`）が `code` から組み立て（未知 code はサーバ message にフォールバック）。`ReposSection`/`NewSessionModal` を移行。将来のロケール辞書はこの map を差し替えるだけ。
 - **dev 反映の軽量経路を整備**: `deploy/local/restart-cp.sh` 追加（Workspace image を再ビルドせず console+CP を build → `af-cp` をその場再起動 → `/healthz` 検証。`SKIP_CONSOLE=1` で CP だけ）。§3 の OOM リスクを避ける常用手順。反映早見表（HANDOFF §2）も更新し、稼働中 Workspace の image 入れ替えは**利用者の Stop→Start**と明記。
+
+## 2026-07-01
+- **稼働中セッションに「停止する」を追加**（⋯メニュー）。Agent `POST /sessions/{name}/halt`（`handleHaltSession`）= tmux kill + **meta 保持**で停止中（再開可能）へ＝端末 quit と同等。既存 stop（meta 破棄＝一覧から削除）/ archive（隠す）と別の3つ目の動詞。CP は `/api/sessions/{name}/halt` を proxy 追加。停止でクォータ枠も解放（同時稼働カウントは alive のみ）。※ Agent 変更ゆえ稼働中 Workspace は **Stop→Start** で反映。
+- **WS バーの Start/Stop を1ボタン化**（`WsBar.jsx` `ws-toggle`、状態でラベル/動作が切替・遷移中は無効・固定幅で色分け green/amber）。隣の「状態を更新」ボタンを**撤去**し、代わりに `wsState` を**4秒ポールで自動同期**（`state.jsx`。遷移中=`…` 接尾辞・タブ非表示時はスキップ、同値 setState は no-op）＝管理者 Stop / OOM 死など外部変化も自前で追従。

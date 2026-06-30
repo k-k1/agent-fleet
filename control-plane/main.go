@@ -165,6 +165,7 @@ func main() {
 	mux.HandleFunc("GET /api/sessions", cfg.handleSessionsList)
 	mux.HandleFunc("POST /api/sessions", cfg.handleSessionCreate)
 	mux.HandleFunc("POST /api/sessions/{name}/stop", cfg.proxyAgentREST)
+	mux.HandleFunc("POST /api/sessions/{name}/halt", cfg.proxyAgentREST)
 	mux.HandleFunc("POST /api/sessions/{name}/recreate", cfg.proxyAgentREST)
 	mux.HandleFunc("GET /api/sessions/archived", cfg.proxyAgentREST)
 	mux.HandleFunc("POST /api/sessions/{name}/archive", cfg.proxyAgentREST)

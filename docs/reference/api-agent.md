@@ -16,7 +16,7 @@ Console ↔ Control Plane（公開）と CP ↔ Workspace Agent（内部）の 2
 |----------|--------------------|------|
 | whoami / tenants | `GET /api/whoami`・`GET /api/tenants` | HANDOFF §6.7 / §6.10.1 |
 | workspace | `GET /api/workspace`・`POST /api/workspace/{start,stop,recreate}` | §6.10.1 |
-| sessions | `GET/POST /api/sessions`・`POST /api/sessions/{name}/{stop,recreate,archive,restore}`・`GET /api/sessions/archived` | §6.10.2 |
+| sessions | `GET/POST /api/sessions`・`POST /api/sessions/{name}/{stop,halt,recreate,archive,restore}`・`GET /api/sessions/archived` | §6.10.2 |
 | repos | `GET/POST /api/repos`・`/api/repos/{name}/{status,branches,checkout,fetch,changes,diff,log,stage,unstage,discard,commit,show}` | §6.10.5 |
 | connections | `GET /api/connections`・git/claude/opencode の `PUT/DELETE` + OAuth（GitHub Device / Bitbucket Auth Code）| §6.6 / §6.10.3-4 |
 | fs / env / settings | `GET /api/fs/{tree,file}`・`GET/PUT /api/env/{toolchains,ui-prefs}`・`PUT /api/claude/settings` | §6.10.5-7 |
