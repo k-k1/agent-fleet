@@ -644,9 +644,15 @@ export default function FilesSection() {
                   "fsrow" + (isSel ? " selected" : "") + (isDir && dropTarget === r.path ? " drop-hover" : "")
                 }
                 style={{ paddingLeft: 4 + r.depth * 14 }}
-                title={isDir ? undefined : "中クリックで新ペインに開く"}
-                onClick={() => {
+                title={isDir ? undefined : "Ctrl/中クリックで新ペインに開く"}
+                onClick={(e) => {
                   treeRef.current?.focus();
+                  // Ctrl/Cmd+click on a file mirrors the middle-click: open split.
+                  if (!isDir && (e.ctrlKey || e.metaKey)) {
+                    setSelected(r.path);
+                    showFileSplit(r.path);
+                    return;
+                  }
                   activate(r);
                 }}
                 onContextMenu={(e) => openMenu(e, r)}

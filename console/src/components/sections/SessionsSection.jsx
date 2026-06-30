@@ -176,13 +176,18 @@ export default function SessionsSection() {
           >
             <button
               className="session-btn"
-              title={dead ? "作業フォルダが存在しないため再開できません" : !s.alive ? "停止中（⋯メニューから再開）" : (s.dir ? s.dir + "（中クリックで新ペインに開く）" : "中クリックで新ペインに開く")}
+              title={dead ? "作業フォルダが存在しないため再開できません" : !s.alive ? "停止中（⋯メニューから再開）" : (s.dir ? s.dir + "（Ctrl/中クリックで新ペインに開く）" : "Ctrl/中クリックで新ペインに開く")}
               // aria-disabled (not the disabled attribute): a truly disabled button
               // fires no events at all, so right-clicking a stopped session would
               // never reach the row's onContextMenu and the native menu would show.
               // onClick already guards on s.alive, so this stays inert for stopped.
               aria-disabled={!s.alive || undefined}
-              onClick={() => s.alive && showTerminal(s.name)}
+              // Ctrl/Cmd+click mirrors the middle-click: open in a freshly split pane.
+              onClick={(e) => {
+                if (!s.alive) return;
+                if (e.ctrlKey || e.metaKey) showTerminalSplit(s.name);
+                else showTerminal(s.name);
+              }}
               // Middle-click opens the session in a freshly split pane. Suppress the
               // mousedown default so the browser doesn't start autoscroll instead.
               onMouseDown={(e) => e.button === 1 && e.preventDefault()}
