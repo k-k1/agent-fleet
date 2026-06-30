@@ -132,22 +132,29 @@ export default function FilesSection() {
     (dir) => (e) => {
       e.preventDefault();
       e.stopPropagation();
-      const files = e.dataTransfer?.files;
       setDropTarget(null);
+      if (!running) return; // WS stopped → ignore the drop (still prevented above)
+      const files = e.dataTransfer?.files;
       if (files && files.length) doUpload(dir, files);
     },
-    [doUpload],
+    [doUpload, running],
   );
   const onDragOverTo = useCallback(
     (dir) => (e) => {
       if (e.dataTransfer && Array.from(e.dataTransfer.types || []).includes("Files")) {
+        // preventDefault even when stopped so the browser doesn't navigate to the
+        // dropped file; just deny the drop and skip the upload affordance.
         e.preventDefault();
         e.stopPropagation();
+        if (!running) {
+          e.dataTransfer.dropEffect = "none";
+          return;
+        }
         e.dataTransfer.dropEffect = "copy";
         setDropTarget(dir);
       }
     },
-    [],
+    [running],
   );
 
   // --- file operations (new / rename / delete) ---
@@ -602,8 +609,13 @@ export default function FilesSection() {
           role="tree"
           aria-label="ファイル"
         >
-          {root === null && <li className="muted">…</li>}
-          {root && root.length === 0 && <li className="muted">空（ここにファイルをドロップ）</li>}
+          {!running ? (
+            <li className="muted">ワークスペース停止中</li>
+          ) : root === null ? (
+            <li className="muted">…</li>
+          ) : root.length === 0 ? (
+            <li className="muted">空（ここにファイルをドロップ）</li>
+          ) : null}
           {rows.map((r) => {
             const isOpen = r.type === "dir" && open.has(r.path);
             const isSel = r.path === selected;
