@@ -318,13 +318,31 @@ export function AppProvider({ children }) {
   // quota) for everyone; host stats (load / memory) only for super_admin — the CP
   // gates /api/admin/host server-side too. Polled every 4s like the session list;
   // a failure just nulls the chip (older CP without the endpoint, or down).
+  const HIST_N = 60; // sparkline ring buffer: ~4 min at the 4s poll cadence
   const [wsStats, setWsStats] = useState(null);
+  const [wsHist, setWsHist] = useState([]); // [{cpu, mem}] for the WsBar sparklines
   useEffect(() => {
     let alive = true;
+    setWsHist([]); // tenant switch → start the trend fresh
     const load = () =>
       api("api/workspace/stats")
-        .then((d) => alive && setWsStats(d && !d.error ? d : null))
-        .catch(() => alive && setWsStats(null));
+        .then((d) => {
+          if (!alive) return;
+          const ok = d && !d.error;
+          setWsStats(ok ? d : null);
+          if (ok && d.running && d.mem_used != null) {
+            const mem = d.mem_max ? d.mem_used / d.mem_max : null;
+            const cpu = typeof d.cpu_pct === "number" ? d.cpu_pct : null;
+            setWsHist((h) => [...h, { cpu, mem }].slice(-HIST_N));
+          } else {
+            setWsHist([]); // stopped / unreachable → drop the stale trend
+          }
+        })
+        .catch(() => {
+          if (!alive) return;
+          setWsStats(null);
+          setWsHist([]);
+        });
     load();
     const id = setInterval(load, 4000);
     return () => {
@@ -334,15 +352,26 @@ export function AppProvider({ children }) {
   }, [tenant]);
 
   const [hostStats, setHostStats] = useState(null);
+  const [hostHist, setHostHist] = useState([]); // [{load, mem}], load normalized to cores
   useEffect(() => {
     if (!superAdmin) {
       setHostStats(null);
+      setHostHist([]);
       return;
     }
     let alive = true;
     const load = () =>
       api("api/admin/host")
-        .then((d) => alive && setHostStats(d && !d.error ? d : null))
+        .then((d) => {
+          if (!alive) return;
+          const ok = d && !d.error;
+          setHostStats(ok ? d : null);
+          if (ok && d.mem_total != null) {
+            const ldNorm = d.ncpu ? d.load1 / d.ncpu : null;
+            const mem = d.mem_used / d.mem_total;
+            setHostHist((h) => [...h, { load: ldNorm, mem }].slice(-HIST_N));
+          }
+        })
         .catch(() => alive && setHostStats(null));
     load();
     const id = setInterval(load, 4000);
@@ -754,6 +783,8 @@ export function AppProvider({ children }) {
     refreshOcweb,
     wsStats,
     hostStats,
+    wsHist,
+    hostHist,
     // active-pane projection (back-compat)
     mode: activePane.kind,
     scmRepo: activePane.scmRepo,
