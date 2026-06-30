@@ -3,7 +3,7 @@ import { ensureTerm, fit, focusTerm, attach, detach, reconnect } from "../term.j
 import { rel } from "../api.js";
 import TermKeys from "../components/TermKeys.jsx";
 import Icon from "../components/Icon.jsx";
-import { kindIcon, kindLabel, kindClass } from "../lib/sessionkind.js";
+import { kindIcon, kindLabel, kindShort, kindClass } from "../lib/sessionkind.js";
 import { displayName, stateInfo } from "../lib/sessionview.js";
 
 // Brand artwork shown over an unattached terminal so a freshly split (or initial)
@@ -72,7 +72,9 @@ export default function TerminalView({ paneId = "p0", session = null, sessionMet
         {session && sessionMeta ? (
           <span className="pane-session">
             <span className={"kind-tag kind-" + kindClass(sessionMeta.kind)}>
-              <Icon name={kindIcon(sessionMeta.kind)} /> {kindLabel(sessionMeta.kind)}
+              <Icon name={kindIcon(sessionMeta.kind)} />
+              <span className="kt-label kt-full">{kindLabel(sessionMeta.kind)}</span>
+              <span className="kt-label kt-short">{kindShort(sessionMeta.kind)}</span>
             </span>
             <span className="session-display">{displayName(sessionMeta)}</span>
             <span className="session-name">{sessionMeta.name}</span>
