@@ -386,8 +386,11 @@ type createReq struct {
 	Kind  string `json:"kind"` // "claude" (default) | "opencode" | "codex" | "shell"
 	// Optional clone-then-start: when remote_url is set, the repo is cloned
 	// (or reused) under ~/repos and its path becomes the session CWD, ignoring dir.
+	// RepoName overrides the target folder so two branches of the same repo can
+	// be cloned side by side (empty => derived from remote_url, the legacy name).
 	RemoteURL string `json:"remote_url"`
 	Branch    string `json:"branch"`
+	RepoName  string `json:"repo_name"`
 }
 
 // handleCreateSession launches a claude session inside a detached tmux session.
@@ -403,7 +406,7 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	}
 	// Clone-then-start: ensure the repo exists and use it as the working dir.
 	if strings.TrimSpace(req.RemoteURL) != "" {
-		dir, err := ensureRepo(req.RemoteURL, req.Branch)
+		dir, err := ensureRepo(req.RemoteURL, req.Branch, req.RepoName)
 		if err != nil {
 			writeErr(w, http.StatusBadGateway, "clone_failed", err.Error())
 			return
