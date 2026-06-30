@@ -1670,7 +1670,8 @@ body.row-resizing {
 }
 .termview,
 .scmview,
-.fileview {
+.fileview,
+.mirrorview {
   flex: 1;
   min-width: 0;
   /* min-height:0 lets the viewer shrink to its flex track in .pane (column,
@@ -1684,6 +1685,80 @@ body.row-resizing {
   /* Optional tinted viewer background (a step darker than the surfaces); the
      content panes below are transparent so they sit on it. Default = theme --bg. */
   background: var(--viewer-bg, var(--bg));
+}
+/* ---- Markdown mirror (case-A: read-mostly view of a claude session) ---- */
+/* Right-align the ターミナル/ミラー switch in the view-head, left of the pane
+   control cluster (the head already reserves 84px on the right for it). */
+.mirror-toggle {
+  margin-left: auto;
+}
+.mirror-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.mirror-empty {
+  margin: auto;
+  max-width: 42ch;
+  text-align: center;
+  line-height: 1.6;
+}
+.mirror-turn {
+  max-width: 100%;
+}
+/* The user's own prompt (echoed locally on send): a compact right-aligned bubble,
+   visually distinct from the assistant's rendered Markdown. */
+.mirror-turn.user {
+  align-self: flex-end;
+  max-width: 80%;
+}
+.mirror-user-text {
+  margin: 0;
+  padding: 7px 11px;
+  border-radius: 10px 10px 2px 10px;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  white-space: pre-wrap;
+  word-break: break-word;
+  font: inherit;
+}
+.mirror-turn.assistant .markdown {
+  /* Sits directly on the viewer background; MarkdownView brings its own spacing. */
+  padding: 2px 0;
+}
+.mirror-compose {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+  background: var(--bar);
+}
+.mirror-input {
+  flex: 1;
+  resize: vertical;
+  min-height: 38px;
+  max-height: 40vh;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  line-height: 1.4;
+}
+.mirror-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.mirror-send {
+  flex: none;
+  height: 38px;
+  padding: 0 12px;
 }
 .view-head {
   display: flex;

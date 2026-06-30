@@ -2,6 +2,7 @@ import { useState } from "react";
 import TerminalView from "../views/TerminalView.jsx";
 import SourceControlView from "../views/SourceControlView.jsx";
 import FileView from "../views/FileView.jsx";
+import MirrorView from "../views/MirrorView.jsx";
 import Icon from "./Icon.jsx";
 
 // Drag payload MIME — identifies a pane-to-pane swap drag (vs any other drag).
@@ -35,6 +36,14 @@ export default function Pane({
   //   'center' → swap with the dragged pane; 'right'/'down' → tear the dragged
   //   pane off into a new split (new right column / downward split of this column).
   const [zone, setZone] = useState(null);
+
+  // Markdown mirror toggle (case-A): a claude session pane can swap its raw terminal
+  // for a read-mostly Markdown view of the conversation, driven by the same Agent
+  // /output + /input the MCP tools use. Only offered for claude (the /output endpoint
+  // is claude-only). The terminal stays mounted underneath so the PTY survives.
+  const [mirror, setMirror] = useState(false);
+  const canMirror = isTerm && !!pane.session && sessionMeta?.kind === "claude";
+  const showMirror = canMirror && mirror;
 
   const onDragStart = (e) => {
     e.dataTransfer.setData(DND, pane.id);
@@ -125,10 +134,27 @@ export default function Pane({
       {zone && <div className={"drop-indicator zone-" + zone} />}
 
       {/* Terminal is always mounted while the pane exists; hidden when showing
-          another kind so its socket + scrollback persist. */}
-      <div className="view" hidden={!isTerm}>
-        <TerminalView paneId={pane.id} session={pane.session} sessionMeta={sessionMeta} active={(single || active) && isTerm} />
+          another kind (or the Markdown mirror) so its socket + scrollback persist. */}
+      <div className="view" hidden={!isTerm || showMirror}>
+        <TerminalView
+          paneId={pane.id}
+          session={pane.session}
+          sessionMeta={sessionMeta}
+          active={(single || active) && isTerm && !showMirror}
+          canMirror={canMirror}
+          mirror={mirror}
+          onToggleMirror={setMirror}
+        />
       </div>
+      {showMirror && (
+        <MirrorView
+          session={pane.session}
+          sessionMeta={sessionMeta}
+          active={single || active}
+          mirror={mirror}
+          onToggleMirror={setMirror}
+        />
+      )}
       {pane.kind === "scm" && <SourceControlView repo={pane.scmRepo} />}
       {pane.kind === "file" && <FileView filePath={pane.filePath} />}
     </div>

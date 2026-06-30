@@ -90,7 +90,16 @@ const DEFAULTS = {
   topbarColor: "default",
   leftpaneColor: "default",
   viewerColor: "default",
+  // Markdown mirror composer: "mod-enter" = Ctrl/⌘+Enter submits, Enter inserts a
+  // newline (phone-friendly default); "enter" = Enter submits, Shift+Enter newline.
+  mirrorSend: "mod-enter",
 };
+
+// Mirror composer submit-key options, shared by the settings UI.
+export const MIRROR_SEND_MODES = [
+  { id: "mod-enter", label: "Ctrl+Enter で送信" },
+  { id: "enter", label: "Enter で送信" },
+];
 
 // Build a CSS font-family stack for a chosen family, with CJK + generic fallbacks.
 export function fontStack(name) {
