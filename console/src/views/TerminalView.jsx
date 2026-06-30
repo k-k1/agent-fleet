@@ -3,6 +3,7 @@ import { ensureTerm, fit, focusTerm, attach, detach, reconnect } from "../term.j
 import { rel } from "../api.js";
 import TermKeys from "../components/TermKeys.jsx";
 import Icon from "../components/Icon.jsx";
+import MirrorToggle from "../components/MirrorToggle.jsx";
 import OnboardingCard from "../components/OnboardingCard.jsx";
 import { kindIcon, kindLabel, kindShort, kindClass } from "../lib/sessionkind.js";
 import { displayName, stateInfo } from "../lib/sessionview.js";
@@ -19,7 +20,15 @@ const IDLE_ARTWORK = Array.from({ length: 7 }, (_, i) => rel(`brand/idle-${i + 1
 // connection follows the `session` prop declaratively: the pane descriptor is the
 // source of truth, and we attach/detach to match it. (Fullscreen is a global
 // control in TopBar.)
-export default function TerminalView({ paneId = "p0", session = null, sessionMeta = null, active }) {
+export default function TerminalView({
+  paneId = "p0",
+  session = null,
+  sessionMeta = null,
+  active,
+  canMirror = false,
+  mirror = false,
+  onToggleMirror,
+}) {
   const ref = useRef(null);
 
   // Pick one idle image per mounted pane and keep it stable across re-renders
@@ -86,6 +95,7 @@ export default function TerminalView({ paneId = "p0", session = null, sessionMet
         ) : (
           <span className="view-title">{session ? `session: ${session}` : "セッション未接続"}</span>
         )}
+        {canMirror && <MirrorToggle mirror={mirror} onToggle={onToggleMirror} />}
       </header>
       <div className="term-body">
         <div className="terminal" ref={ref} />

@@ -7,6 +7,7 @@ import {
   THEMES,
   SURFACE_COLORS,
   surfaceValue,
+  MIRROR_SEND_MODES,
 } from "../lib/settings.js";
 import FileIcon from "../components/FileIcon.jsx";
 
@@ -67,6 +68,22 @@ export default function DisplayTab() {
         <Row label="ミニマップ">
           <OnOff value={s.minimap} onChange={(v) => setSetting("minimap", v)} />
         </Row>
+      </section>
+
+      <section className="ds-group">
+        <h4 className="ds-title">チャット（Markdownビュー）</h4>
+        <Row label="送信キー">
+          <Choice
+            value={s.mirrorSend}
+            options={MIRROR_SEND_MODES.map((m) => [m.id, m.label])}
+            onChange={(v) => setSetting("mirrorSend", v)}
+          />
+        </Row>
+        <p className="muted ds-note">
+          {s.mirrorSend === "enter"
+            ? "Enter で送信、Shift+Enter で改行。"
+            : "Ctrl+Enter（⌘+Enter）で送信、Enter で改行。スマホ向け。"}
+        </p>
       </section>
 
       <section className="ds-group">
