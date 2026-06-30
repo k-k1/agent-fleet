@@ -560,12 +560,18 @@ export function AppProvider({ children }) {
         })
         .filter((c) => c.panes.length > 0);
       const remaining = cols.flatMap((c) => c.panes);
-      if (remaining.length === 0) return;
+      if (remaining.length === 0) {
+        // Closing the only pane: the layout always needs ≥1 pane, so reset it to a
+        // fresh blank terminal instead of removing it — i.e. "close" clears whatever
+        // it held (session / file / SCM) back to an empty terminal.
+        resetToTerminal();
+        return;
+      }
       const activeId = remaining.some((p) => p.id === cur.activeId) ? cur.activeId : remaining[0].id;
       const colRatios = cols.length === cur.cols.length ? cur.colRatios : equalRatios(cols.length);
       commit({ ...cur, cols, colRatios, activeId });
     },
-    [commit],
+    [commit, resetToTerminal],
   );
 
   const setActivePane = useCallback(
