@@ -3448,6 +3448,22 @@ body.row-resizing {
   gap: 8px;
   margin-top: 8px;
 }
+.pat-tmpl-head {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 14px 0 6px;
+}
+.pat-tmpl {
+  margin: 0;
+  padding: 8px 10px;
+  background: var(--btn);
+  border-radius: 4px;
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre;
+  overflow-x: auto;
+  font-variant-numeric: tabular-nums;
+}
 .pat-form {
   margin: 6px 0 4px;
 }
