@@ -20,7 +20,9 @@ export PATH="$HOME/.local/go/bin:$HOME/go/bin:$PATH"
 
 WS_IMAGE="${WS_IMAGE:-agent-fleet/workspace:dev}"
 CP_ADDR="${CP_ADDR:-:8099}"
-WS_DATA="${WS_DATA:-/tmp/af-data}"
+# Persistent data root (DB + per-user homes + shared JDKs). NOT under /tmp: that's
+# tmpfs (RAM) here, so it would be wiped on reboot and permanently occupy RAM.
+WS_DATA="${WS_DATA:-$HOME/.local/share/agent-fleet}"
 # Per-workspace RAM cap (docker --memory; applied at container start). Raise with
 # care — this host is RAM-constrained and over-committing can OOM the fleet.
 WS_MEMORY="${WS_MEMORY:-5g}"
