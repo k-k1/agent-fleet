@@ -39,12 +39,16 @@ echo "==> build control-plane"
 ( cd "$ROOT/control-plane" && go build -o /tmp/af-cp . )
 
 # --- restart in place --------------------------------------------------------
-OLD_PID="$(ss -ltnp 2>/dev/null | sed -n "s/.*:${PORT} .*pid=\([0-9]*\).*/\1/p" | head -1)"
-if [ -n "${OLD_PID:-}" ]; then
-  echo "==> stopping current af-cp (pid $OLD_PID)"
-  kill "$OLD_PID" 2>/dev/null || true
-  for _ in $(seq 1 50); do ss -ltn 2>/dev/null | grep -q ":${PORT} " || break; sleep 0.1; done
+# Stop the running af-cp by program name, NOT by scraping its pid from
+# `ss -ltnp`: a non-login `sg docker` shell can't read the socket owner pid, so
+# the old pid-scrape silently found nothing, skipped the kill, and the new bind
+# died with "address already in use" (the stale CP kept serving — healthz passed
+# against it, masking the failed restart). pkill -x targets the af-cp process
+# directly regardless of shell privilege.
+if pkill -x af-cp 2>/dev/null; then
+  echo "==> stopping current af-cp"
 fi
+for _ in $(seq 1 50); do ss -ltn 2>/dev/null | grep -q ":${PORT} " || break; sleep 0.1; done
 
 echo "==> starting af-cp on $CP_ADDR (log: /tmp/af-cp.log)"
 cd "$ROOT/control-plane"
