@@ -139,6 +139,43 @@ func (d *dockerRuntime) stop(ctx context.Context) error {
 	return nil
 }
 
+// homeKeep are the top-level ~ entries preserved by an admin "home 掃除": connection
+// secrets and auth/identity. Everything else under home (repos, caches, dotfiles)
+// is removed. Claude login also survives because it lives outside home (a separate
+// claude-config mount, docs/17 P3-5).
+var homeKeep = map[string]bool{
+	".config":          true, // agent-fleet encrypted secrets store (git/agent connections)
+	".ssh":             true, // git over SSH
+	".git-credentials": true, // git over HTTPS
+	".gitconfig":       true, // git identity
+	".claude":          true, // Claude CLI state
+	".claude.json":     true,
+	".codex":           true, // Codex CLI auth
+}
+
+// cleanHome removes everything under <dataDir>/home except the auth/connection
+// entries in homeKeep. The caller MUST stop the container first — we mutate the host
+// bind-mount source, and deleting under a live mount risks inconsistency.
+func cleanHome(dataDir string) error {
+	home := filepath.Join(dataDir, "home")
+	entries, err := os.ReadDir(home)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	for _, e := range entries {
+		if homeKeep[e.Name()] {
+			continue
+		}
+		if err := os.RemoveAll(filepath.Join(home, e.Name())); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (d *dockerRuntime) waitHealthy(ctx context.Context, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {

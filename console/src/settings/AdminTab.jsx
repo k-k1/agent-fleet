@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, apiJSON, rawJSON } from "../api.js";
+import ConfirmDialog from "../components/ConfirmDialog.jsx";
 
 // AdminTab (super_admin only): list tenants, create them, edit per-tenant limits,
 // manage members (add / set session limit / force-stop their workspace).
@@ -150,10 +151,24 @@ function TenantDetail({ slug, tenant, onChanged }) {
 }
 
 function MemberRow({ m, slug, onChanged }) {
+  const [confirmClean, setConfirmClean] = useState(false);
+  const [cleaning, setCleaning] = useState(false);
   const stop = async () => {
     if (!confirm(`${m.user_key} の ${slug} の Workspace を停止しますか？`)) return;
     await apiJSON("api/admin/stop-workspace", "POST", { tenant_slug: slug, user_key: m.user_key });
     onChanged();
+  };
+  const cleanHome = async () => {
+    setCleaning(true);
+    try {
+      await apiJSON("api/admin/clean-home", "POST", { tenant_slug: slug, user_key: m.user_key });
+      setConfirmClean(false);
+      onChanged();
+    } catch (e) {
+      alert("home の掃除に失敗: " + e);
+    } finally {
+      setCleaning(false);
+    }
   };
   const setLimit = async () => {
     const v = prompt(`${m.user_key} の最大セッション数 (0 = 無制限)`, m.max_sessions ?? 0);
@@ -186,7 +201,23 @@ function MemberRow({ m, slug, onChanged }) {
         <button className="icon" title="セッション上限を設定" onClick={setLimit}>
           ≤
         </button>
+        <button className="icon danger" title="home を掃除（repos・キャッシュを削除、接続/認証は保持）" onClick={() => setConfirmClean(true)}>
+          🧹
+        </button>
       </span>
+      {confirmClean && (
+        <ConfirmDialog
+          title={`${m.user_key} の home を掃除`}
+          confirmLabel="掃除する"
+          busy={cleaning}
+          onCancel={() => setConfirmClean(false)}
+          onConfirm={cleanHome}
+        >
+          <p>このユーザーの Workspace home を掃除します。コンテナは停止されます。</p>
+          <p className="muted">保持: 接続情報 / git 認証 / Claude・Codex ログイン</p>
+          <p className="muted">削除: repos（未コミット含む）/ キャッシュ / その他 home 配下</p>
+        </ConfirmDialog>
+      )}
     </div>
   );
 }
