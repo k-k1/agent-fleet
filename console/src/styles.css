@@ -608,7 +608,11 @@ textarea:focus {
   border-radius: 4px;
 }
 .kind-tag {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex: none; /* never shrink/wrap the badge */
+  white-space: nowrap;
   font-size: 10px;
   font-weight: 600;
   letter-spacing: 0.02em;
@@ -618,6 +622,26 @@ textarea:focus {
   padding: 1px 5px;
   margin-right: 6px;
   color: var(--muted);
+}
+/* The 2-char short label is hidden until the pane header gets narrow (below).
+   In the left-pane Sessions list (no size container) the full label always shows. */
+.kind-tag .kt-short {
+  display: none;
+}
+/* The terminal pane is an inline-size container so its header badge can collapse
+   to icon + 2-char label when the pane is narrow (split panes), instead of the
+   full word wrapping. Named so the left-pane Sessions list (not inside it) is
+   unaffected. */
+.termview {
+  container: paneview / inline-size;
+}
+@container paneview (max-width: 360px) {
+  .view-head .kind-tag .kt-full {
+    display: none;
+  }
+  .view-head .kind-tag .kt-short {
+    display: inline;
+  }
 }
 /* Per-kind colors so claude / codex / opencode / shell are distinguishable
    at a glance (icon alone wasn't enough). */
