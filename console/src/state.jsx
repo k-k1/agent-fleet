@@ -385,6 +385,19 @@ export function AppProvider({ children }) {
   const bumpConn = useCallback(() => setConnKey((k) => k + 1), []);
   const bumpFiles = useCallback(() => setFilesKey((k) => k + 1), []);
 
+  // openNewSession: a global signal so anything (e.g. the onboarding card) can open
+  // the New Session dialog, which otherwise lives as local state inside the left-pane
+  // Sessions section. SessionsSection watches this tick and opens the modal.
+  const [newSessionTick, setNewSessionTick] = useState(0);
+  const openNewSession = useCallback(() => {
+    // The dialog is mounted inside the left-pane Sessions section. On mobile that
+    // pane is an off-canvas drawer with a CSS transform, which would offset the
+    // modal's fixed positioning — so open the drawer first (a no-op on desktop,
+    // where the pane is always in flow). The full-screen mobile modal covers it.
+    setNavOpen(true);
+    setNewSessionTick((t) => t + 1);
+  }, []);
+
   // reveal: a home-relative path (e.g. "repos/foo") the Files tree should expand to
   // and select — set when the user clicks a repo. {path, n} so repeat clicks on the
   // same repo still re-trigger the effect (n increments).
@@ -826,6 +839,8 @@ export function AppProvider({ children }) {
     bumpRepos,
     bumpConn,
     bumpFiles,
+    newSessionTick,
+    openNewSession,
     reveal,
     revealInFiles,
   };

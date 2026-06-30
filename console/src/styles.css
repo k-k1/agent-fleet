@@ -1674,11 +1674,18 @@ body.row-resizing {
   min-height: 0;
   padding: 4px 6px;
   background: var(--bg);
+  /* Confine xterm's internal layers (z-index up to 10) to their own stacking
+     context. Without this they leak into the pane's context and paint, transparently,
+     ABOVE the empty-state overlay — stealing clicks from the onboarding card
+     ("visible but unclickable"). z-index:0 traps them so .term-empty sits on top. */
+  position: relative;
+  z-index: 0;
 }
 /* shown over an unattached terminal: FileViewer-tinted surface + centered banner */
 .term-empty {
   position: absolute;
   inset: 0;
+  z-index: 1; /* above the trapped .terminal (z-index:0) so its overlay takes clicks */
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1693,6 +1700,98 @@ body.row-resizing {
   opacity: 0.16;
   user-select: none;
   -webkit-user-drag: none;
+}
+
+/* First-run onboarding card, overlaid on the empty starter pane. */
+.onboard {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  overflow: auto;
+}
+.onboard-card {
+  width: min(94%, 460px);
+  padding: 22px 22px 14px;
+  background: var(--panel2, var(--panel));
+  border: 1px solid var(--border2, var(--border));
+  border-radius: 14px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45);
+}
+.onboard-title {
+  font-size: 17px;
+  font-weight: 600;
+}
+.onboard-sub {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.onboard-steps {
+  list-style: none;
+  margin: 16px 0 6px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.onboard-step {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+}
+.onboard-step.next {
+  border-color: var(--accent);
+  background: rgba(120, 170, 255, 0.1);
+}
+.onboard-mark {
+  flex-shrink: 0;
+  font-size: 16px;
+  color: var(--muted2);
+}
+.onboard-step.done .onboard-mark {
+  color: var(--ok);
+}
+.onboard-step.next .onboard-mark {
+  color: var(--accent);
+}
+.onboard-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.onboard-label {
+  font-size: 13px;
+}
+.onboard-step.done .onboard-label {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+.onboard-hint {
+  font-size: 11px;
+  color: var(--muted);
+}
+.onboard-cta {
+  flex-shrink: 0;
+  padding: 6px 12px;
+  min-height: 34px;
+}
+.onboard-cta.primary {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+.onboard-foot {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 8px;
 }
 
 .filebody,

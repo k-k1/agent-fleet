@@ -3,6 +3,7 @@ import { ensureTerm, fit, focusTerm, attach, detach, reconnect } from "../term.j
 import { rel } from "../api.js";
 import TermKeys from "../components/TermKeys.jsx";
 import Icon from "../components/Icon.jsx";
+import OnboardingCard from "../components/OnboardingCard.jsx";
 import { kindIcon, kindLabel, kindShort, kindClass } from "../lib/sessionkind.js";
 import { displayName, stateInfo } from "../lib/sessionview.js";
 
@@ -93,6 +94,9 @@ export default function TerminalView({ paneId = "p0", session = null, sessionMet
         {!session && (
           <div className="term-empty">
             <img className="term-empty-img" src={idleSrc} alt="Agent Fleet" />
+            {/* First-run checklist, only on the active empty pane. Renders null once
+                set up / dismissed, leaving just the brand placeholder. */}
+            {active && <OnboardingCard />}
           </div>
         )}
       </div>
