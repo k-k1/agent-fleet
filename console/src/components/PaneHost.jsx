@@ -92,6 +92,13 @@ export default function PaneHost() {
     window.addEventListener("pointerup", onUp);
   };
 
+  // A lone, empty terminal is the base state — nothing to close. Any other single
+  // pane (a session / file / SCM, or a terminal showing a session) CAN be closed:
+  // closePane resets it to a blank terminal (clears its content). Mirrors the WsBar
+  // "全ペインを閉じる" enablement.
+  const isBlankSingle = (pane) =>
+    total === 1 && pane.kind === "terminal" && !pane.session && !pane.filePath && !pane.scmRepo;
+
   const renderPane = (pane, col, i, rect) => (
     <Pane
       key={pane.id}
@@ -103,7 +110,7 @@ export default function PaneHost() {
       // columns, only a single top/bottom split (max 2 panes total).
       canSplitRight={!isMobile && N < 4}
       canSplitDown={isMobile ? total < 2 : col.panes.length < 2}
-      canClose={total > 1}
+      canClose={total > 1 || !isBlankSingle(pane)}
       canDrag={total > 1}
       onActivate={setActivePane}
       onSplitRight={splitRight}
