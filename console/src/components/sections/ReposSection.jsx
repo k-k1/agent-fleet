@@ -232,8 +232,9 @@ function RepoRow({ r, kinds = ["claude", "opencode", "codex", "shell"], running 
               {kinds.map((k) => (
                 <button
                   key={k}
-                  title="中クリックで新ペインに起動"
-                  onClick={() => { setShowLaunch(false); onLaunch(k); }}
+                  title="Ctrl/中クリックで新ペインに起動"
+                  // Ctrl/Cmd+click mirrors the middle-click: launch into a split pane.
+                  onClick={(e) => { setShowLaunch(false); onLaunch(k, e.ctrlKey || e.metaKey); }}
                   // Middle-click launches into a freshly split pane. Suppress the
                   // mousedown default so the browser doesn't start autoscroll.
                   onMouseDown={(e) => e.button === 1 && e.preventDefault()}
