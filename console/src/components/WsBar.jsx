@@ -43,7 +43,8 @@ function tile({ k, series, max, track, value, level, title }) {
 }
 
 export default function WsBar() {
-  const { wsState, startWs, stopWs, refreshWs, ocweb, wsStats, hostStats, wsHist, hostHist } = useApp();
+  const { wsState, startWs, stopWs, refreshWs, ocweb, wsStats, hostStats, wsHist, hostHist, layout, resetToTerminal } =
+    useApp();
   const isMobile = useIsMobile();
   const [port, setPort] = useState("");
   const [pvOpen, setPvOpen] = useState(false); // desktop port-preview popover
@@ -51,6 +52,12 @@ export default function WsBar() {
   const pvRef = useRef(null);
   const moreRef = useRef(null);
   const running = wsState === "running";
+
+  // "Close all panes" collapses the split layout back to one empty terminal pane.
+  // Disabled when there's already just a single empty pane (nothing to close).
+  const totalPanes = layout.cols.reduce((n, c) => n + c.panes.length, 0);
+  const onlyPane = totalPanes === 1 ? layout.cols[0].panes[0] : null;
+  const canCloseAll = !(onlyPane && onlyPane.kind === "terminal" && !onlyPane.session && !onlyPane.filePath && !onlyPane.scmRepo);
 
   // Open a service the user started inside the container (e.g. a Spring Boot app
   // on :8080) in a new tab, proxied through the CP /preview/{port}.
@@ -196,6 +203,14 @@ export default function WsBar() {
       </button>
       <button className="ghost" title="状態を更新" onClick={refreshWs}>
         <Icon name="refresh" />
+      </button>
+      <button
+        className="ghost"
+        title="全ペインを閉じる"
+        disabled={!canCloseAll}
+        onClick={resetToTerminal}
+      >
+        <Icon name="close-all" />
       </button>
 
       <span className="ws-spacer" />

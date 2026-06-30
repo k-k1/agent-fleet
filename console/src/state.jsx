@@ -796,6 +796,7 @@ export function AppProvider({ children }) {
     splitRight,
     splitDown,
     closePane,
+    resetToTerminal,
     setActivePane,
     setColRatios,
     setRowRatio,
