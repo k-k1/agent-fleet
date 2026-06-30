@@ -9,32 +9,33 @@ import { displayName, stateInfo } from "../lib/sessionview.js";
 
 const q = encodeURIComponent;
 
-// MirrorView is a read-mostly Markdown view of a claude session, built on the SAME
-// Agent endpoints the MCP drive tools use: GET /sessions/{name}/output?since=<cursor>
-// (the jsonl transcript's assistant text + a line cursor + live status) and POST
+// MirrorView (user-facing: チャット) is a read-mostly Markdown view of a claude
+// session, built on the same Agent endpoints the MCP drive tools use: GET
+// /sessions/{name}/messages?since=<cursor> (the jsonl transcript as structured turns
+// — role + Markdown text + timestamp — plus a line cursor and live status) and POST
 // /sessions/{name}/input (tmux send-keys). It overlays the still-mounted terminal
-// (Pane keeps the PTY socket alive), so the user toggles ターミナル⇄ミラー freely.
+// (Pane keeps the PTY socket alive), so the user toggles ターミナル⇄チャット freely.
 //
-// Limits (by design, see the case-A plan): the transcript is written per turn, so
-// this updates per response, not token-by-token; and /output carries only assistant
-// text, so a user's own prompts appear only when sent from here (optimistic echo) —
-// prompts typed in the raw terminal won't show as user turns.
+// Limits (case-A): the transcript is written per turn, so turns appear per response,
+// not token-by-token. Prompts typed in the raw terminal DO appear (they're logged as
+// user turns), just at the next poll.
 export default function MirrorView({ session, sessionMeta, active, mirror, onToggleMirror }) {
   const settings = useSettings();
   // "mod-enter" (default): Ctrl/⌘+Enter submits, plain Enter newlines (phone-safe).
   // "enter": Enter submits, Shift+Enter newlines.
   const modSend = settings.mirrorSend !== "enter";
-  const [turns, setTurns] = useState([]); // {role:'user'|'assistant', text}
+  const [turns, setTurns] = useState([]); // {role:'user'|'assistant', text, ts, idx}
   const [status, setStatus] = useState("");
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const cursorRef = useRef(0);
   const statusRef = useRef("");
+  const tickRef = useRef(null); // lets send() trigger an immediate refresh
   const bodyRef = useRef(null);
   const inputRef = useRef(null);
 
-  // Reset accumulated transcript when the session changes (cursor is a line index
-  // into that session's jsonl, meaningless across sessions).
+  // Reset accumulated turns when the session changes (cursor is a line index into
+  // that session's jsonl, meaningless across sessions).
   useEffect(() => {
     cursorRef.current = 0;
     statusRef.current = "";
@@ -42,21 +43,21 @@ export default function MirrorView({ session, sessionMeta, active, mirror, onTog
     setStatus("");
   }, [session]);
 
-  // Poll the assistant transcript since our cursor while this mirror is mounted
-  // (Pane only mounts it while visible). Faster while claude is working, slower at
-  // rest. A non-empty output slice is appended as one assistant turn.
+  // Poll the transcript since our cursor while this view is mounted (Pane only mounts
+  // it while visible). Faster while claude is working, slower at rest. New turns are
+  // appended; the cursor advances by the transcript's line count.
   useEffect(() => {
     if (!session) return;
     let alive = true;
     let timer = null;
     const tick = async () => {
       try {
-        const d = await api(`api/sessions/${q(session)}/output?since=${cursorRef.current}`);
+        const d = await api(`api/sessions/${q(session)}/messages?since=${cursorRef.current}`);
         if (!alive) return;
         if (d && !d.error) {
           if (typeof d.cursor === "number") cursorRef.current = d.cursor;
-          if (d.output && d.output.trim()) {
-            setTurns((t) => [...t, { role: "assistant", text: d.output }]);
+          if (Array.isArray(d.messages) && d.messages.length) {
+            setTurns((t) => [...t, ...d.messages]);
           }
           if (d.status) {
             statusRef.current = d.status;
@@ -69,10 +70,15 @@ export default function MirrorView({ session, sessionMeta, active, mirror, onTog
       if (!alive) return;
       timer = setTimeout(tick, statusRef.current === "working" ? 1200 : 3000);
     };
+    tickRef.current = () => {
+      if (timer) clearTimeout(timer);
+      tick();
+    };
     tick();
     return () => {
       alive = false;
       if (timer) clearTimeout(timer);
+      tickRef.current = null;
     };
   }, [session]);
 
@@ -82,7 +88,7 @@ export default function MirrorView({ session, sessionMeta, active, mirror, onTog
     if (el) el.scrollTop = el.scrollHeight;
   }, [turns]);
 
-  // Focus the composer when this pane becomes the active mirror.
+  // Focus the composer when this pane becomes the active chat.
   useEffect(() => {
     if (active) inputRef.current?.focus();
   }, [active]);
@@ -91,7 +97,6 @@ export default function MirrorView({ session, sessionMeta, active, mirror, onTog
     const text = draft.trim();
     if (!text || sending) return;
     setSending(true);
-    setTurns((t) => [...t, { role: "user", text }]); // optimistic: /output won't echo it
     setDraft("");
     statusRef.current = "working";
     setStatus("working");
@@ -102,6 +107,8 @@ export default function MirrorView({ session, sessionMeta, active, mirror, onTog
     }
     setSending(false);
     inputRef.current?.focus();
+    // Pick up the just-logged user turn quickly rather than waiting a full interval.
+    setTimeout(() => tickRef.current?.(), 250);
   };
 
   const onKeyDown = (e) => {
@@ -155,21 +162,11 @@ export default function MirrorView({ session, sessionMeta, active, mirror, onTog
       <div className="mirror-body" ref={bodyRef}>
         {turns.length === 0 ? (
           <div className="mirror-empty muted">
-            まだ応答はありません。下の欄からプロンプトを送るか、ターミナルで対話すると、ここに
-            Markdown で映ります。
+            まだ会話はありません。下の欄からプロンプトを送るか、ターミナルで対話すると、ここに
+            ターンごとの Markdown で表示されます。
           </div>
         ) : (
-          turns.map((t, i) =>
-            t.role === "user" ? (
-              <div className="mirror-turn user" key={i}>
-                <pre className="mirror-user-text">{t.text}</pre>
-              </div>
-            ) : (
-              <div className="mirror-turn assistant" key={i}>
-                <MarkdownView source={t.text} />
-              </div>
-            ),
-          )
+          turns.map((t) => <Turn key={t.idx} turn={t} />)
         )}
       </div>
 
@@ -199,4 +196,59 @@ export default function MirrorView({ session, sessionMeta, active, mirror, onTog
       </div>
     </div>
   );
+}
+
+// Turn renders one conversation block: a header (who + when + copy) and the body —
+// the user's prompt as preformatted text, the assistant's reply as rendered Markdown.
+function Turn({ turn }) {
+  const isUser = turn.role === "user";
+  return (
+    <div className={"mirror-turn " + (isUser ? "user" : "assistant")}>
+      <div className="mirror-turn-head">
+        <span className="mt-who">{isUser ? "あなた" : "Claude"}</span>
+        {turn.ts && <span className="mt-time muted">{formatTS(turn.ts)}</span>}
+        <CopyButton text={turn.text} />
+      </div>
+      <div className="mirror-turn-body">
+        {isUser ? (
+          <pre className="mirror-user-text">{turn.text}</pre>
+        ) : (
+          <MarkdownView source={turn.text} />
+        )}
+      </div>
+    </div>
+  );
+}
+
+// CopyButton copies the turn's RAW Markdown (not the rendered HTML) to the clipboard.
+function CopyButton({ text }) {
+  const [done, setDone] = useState(false);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setDone(true);
+      setTimeout(() => setDone(false), 1500);
+    } catch {
+      /* clipboard blocked (insecure context / permission) — no-op */
+    }
+  };
+  return (
+    <button
+      type="button"
+      className="ghost mt-copy"
+      title="Markdown をコピー"
+      onClick={copy}
+    >
+      <Icon name={done ? "check" : "copy"} /> {done ? "コピー済" : "コピー"}
+    </button>
+  );
+}
+
+// formatTS renders an RFC3339 timestamp as local "MM/DD HH:MM" (date kept so a long
+// session that spans days stays unambiguous).
+function formatTS(iso) {
+  const d = new Date(iso);
+  if (isNaN(d)) return "";
+  const p = (n) => String(n).padStart(2, "0");
+  return `${p(d.getMonth() + 1)}/${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }

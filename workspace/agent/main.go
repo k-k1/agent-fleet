@@ -57,6 +57,8 @@ func main() {
 	mux.HandleFunc("POST /sessions/{name}/input", handleSessionInput)
 	mux.HandleFunc("GET /sessions/{name}/status", handleSessionStatus)
 	mux.HandleFunc("GET /sessions/{name}/output", handleSessionOutput)
+	// Structured transcript (role + text + timestamp) for the Console chat view.
+	mux.HandleFunc("GET /sessions/{name}/messages", handleSessionMessages)
 	mux.HandleFunc("GET /ws/pty", handlePTY)
 
 	// Preview — reverse-proxy to a service the user started inside the container
