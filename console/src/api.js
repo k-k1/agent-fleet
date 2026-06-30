@@ -42,6 +42,18 @@ window.fetch = (input, init = {}) => {
   });
 };
 
+// Server error messages are language-neutral developer fallbacks. The user-facing
+// text is localized here, keyed by the stable error `code`. Add a locale layer over
+// this map when i18n lands; unknown codes fall back to the server's message.
+const ERR_TEXT = {
+  quota_sessions:
+    "同時に稼働できるセッション数の上限に達しています。稼働中のセッションをどれか停止してから作成してください。",
+};
+
+// errText turns a `res.error` ({code, message}) into a user-facing string.
+export const errText = (error) =>
+  (error && ERR_TEXT[error.code]) || (error && error.message) || String(error ?? "");
+
 // api() resolves the path against baseURI and parses JSON. Mirrors the legacy
 // helper: callers handle `res.error` shapes themselves.
 export const api = (path, opts) => fetch(rel(path), opts).then((r) => r.json());

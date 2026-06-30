@@ -409,8 +409,9 @@ func (c config) handleSessionCreate(w http.ResponseWriter, r *http.Request) {
 	if lim > 0 {
 		// If the workspace isn't reachable, skip the check; the proxy will report it.
 		if n, err := c.mgr.countSessions(ctx, res.rt); err == nil && n >= lim {
+			// Developer-facing fallback; the Console localizes by `code` (quota_sessions).
 			writeAPIErr(w, &apiError{http.StatusTooManyRequests, "quota_sessions",
-				fmt.Sprintf("session limit reached (%d)", lim)})
+				fmt.Sprintf("concurrent session limit reached (%d running, max %d)", n, lim)})
 			return
 		}
 	}

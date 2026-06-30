@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useApp } from "../../state.jsx";
-import { api, apiJSON } from "../../api.js";
+import { api, apiJSON, errText } from "../../api.js";
 import Section from "../Section.jsx";
 import Icon from "../Icon.jsx";
 import NewRepoModal from "../NewRepoModal.jsx";
@@ -175,7 +175,7 @@ export default function ReposSection() {
               const name = freeName(base, used);
               const res = await apiJSON("api/sessions", "POST", { name, dir: r.path, kind });
               if (res && res.error) {
-                alert("起動に失敗: " + (res.error.message || res.error));
+                alert("起動に失敗: " + errText(res.error));
                 return;
               }
               bumpSessions();
