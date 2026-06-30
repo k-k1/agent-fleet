@@ -361,6 +361,15 @@ textarea:focus {
 .ws-spacer {
   flex: 1;
 }
+.ws-stat {
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.ws-stat.warn {
+  color: var(--warn);
+}
 .preview-port {
   width: 80px;
   padding: 3px 8px;
