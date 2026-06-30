@@ -927,6 +927,14 @@ textarea:focus {
 .session-row.active > .session-btn {
   background: var(--active-bg);
 }
+/* WS stopped: sessions can't be attached/resumed — grey the row and make the
+   attach target inert (the ⋯ menu stays usable for archive). */
+.session-row.ws-down {
+  opacity: 0.5;
+}
+.session-row.ws-down .session-btn {
+  pointer-events: none;
+}
 
 /* repo rows are two lines: info + labelled action chips */
 .list > li.repo-row {

@@ -36,7 +36,8 @@ const fsList = (path) =>
 // set) so it's keyboard-navigable: ↑/↓ move, → expand / into child, ← collapse /
 // to parent, Enter opens a file (or toggles a folder).
 export default function FilesSection() {
-  const { filePath, showFile, showFileSplit, filesKey, reveal } = useApp();
+  const { filePath, showFile, showFileSplit, filesKey, reveal, wsState } = useApp();
+  const running = wsState === "running"; // WS down → file mutations are inert
 
   // Middle-click opens a file in a freshly split pane (like the Sessions list).
   // Suppress the mousedown default so the browser doesn't start autoscroll.
@@ -498,27 +499,28 @@ export default function FilesSection() {
       title="Files"
       actions={
         <>
-          {viewToggle}
           {view === "tree" && (
             <>
               <button
                 className="ghost"
-                title={`新規ファイル${uploadDir ? "（" + uploadDir + "）" : "（home）"}`}
+                title={running ? `新規ファイル${uploadDir ? "（" + uploadDir + "）" : "（home）"}` : "ワークスペース停止中"}
+                disabled={!running}
                 onClick={() => newFile(uploadDir)}
               >
                 <Icon name="new-file" />
               </button>
               <button
                 className="ghost"
-                title={`新規フォルダ${uploadDir ? "（" + uploadDir + "）" : "（home）"}`}
+                title={running ? `新規フォルダ${uploadDir ? "（" + uploadDir + "）" : "（home）"}` : "ワークスペース停止中"}
+                disabled={!running}
                 onClick={() => newFolder(uploadDir)}
               >
                 <Icon name="new-folder" />
               </button>
               <button
                 className="ghost"
-                title={`アップロード${uploadDir ? "（" + uploadDir + "）" : "（home）"}`}
-                disabled={uploading}
+                title={running ? `アップロード${uploadDir ? "（" + uploadDir + "）" : "（home）"}` : "ワークスペース停止中"}
+                disabled={uploading || !running}
                 onClick={() => fileInputRef.current?.click()}
               >
                 <Icon name="cloud-upload" spin={uploading} />
@@ -528,6 +530,7 @@ export default function FilesSection() {
               </button>
             </>
           )}
+          {viewToggle}
           <button className="ghost" title="更新" onClick={() => setReloadKey((k) => k + 1)}>
             <Icon name="refresh" />
           </button>
