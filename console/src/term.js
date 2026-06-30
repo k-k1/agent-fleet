@@ -89,6 +89,24 @@ function wireGlobalResize() {
   if (window.visualViewport) window.visualViewport.addEventListener("resize", fitAll);
 }
 
+// Returning to the app reconnects any dropped panes. This is the recovery path for
+// a single pane: with no other pane to switch to, the per-terminal focus event
+// never fires, so a drop while idle/backgrounded would otherwise sit at
+// "[disconnected]" with no way to re-trigger. reconnect() is a no-op on panes that
+// aren't dropped, so firing it for all is safe.
+let globalReconnectWired = false;
+function wireGlobalReconnect() {
+  if (globalReconnectWired) return;
+  globalReconnectWired = true;
+  const recoverAll = () => {
+    for (const id of insts.keys()) reconnect(id);
+  };
+  window.addEventListener("focus", recoverAll);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") recoverAll();
+  });
+}
+
 function fitInst(it) {
   try {
     it && it.fitAddon && it.fitAddon.fit();
@@ -128,6 +146,7 @@ export function ensureTerm(paneId, el) {
     subscribeSettings(applyTermSettingsAll);
   }
   wireGlobalResize();
+  wireGlobalReconnect();
   const fitAddon = new FitAddon();
   it.fitAddon = fitAddon;
   term.loadAddon(fitAddon);
