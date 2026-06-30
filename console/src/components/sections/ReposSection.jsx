@@ -30,7 +30,7 @@ const freeName = (base, used) => {
 // switch branch, fetch, start a session in the repo, delete, or open Source
 // Control (→ main area). The dirty dot mirrors uncommitted changes.
 export default function ReposSection() {
-  const { reposKey, connKey, bumpRepos, bumpSessions, bumpFiles, revealInFiles, showSCM, showTerminal, showTerminalSplit, scmRepo, mode, session, wsState } =
+  const { reposKey, connKey, bumpRepos, bumpSessions, bumpFiles, revealInFiles, showSCM, showSCMSplit, showTerminal, showTerminalSplit, scmRepo, mode, session, wsState } =
     useApp();
   const running = wsState === "running"; // WS down → clone/open/launch are inert
   const [repos, setRepos] = useState([]);
@@ -155,9 +155,11 @@ export default function ReposSection() {
             // One click on the repo: reveal it in the Files tree AND open the
             // (renewed) Source Control workbench in the main pane. The separate
             // "変更" chip is gone — the repo row itself is the entry point.
-            onOpen={() => {
+            // Ctrl/Cmd/middle-click opens Source Control in a freshly split pane.
+            onOpen={(e) => {
               revealInFiles("repos/" + r.name);
-              showSCM(r.name);
+              if (e && (e.ctrlKey || e.metaKey || e.button === 1)) showSCMSplit(r.name);
+              else showSCM(r.name);
             }}
             // split=true (middle-click) opens the new session in a freshly split
             // pane instead of replacing the active pane's content.
@@ -211,9 +213,12 @@ function RepoRow({ r, kinds = ["claude", "opencode", "codex", "shell"], running 
         </span>
         <button
           className="link grow repo-name"
-          title={running ? "開く（ファイル + ソース管理）: " + r.path : "ワークスペース停止中"}
+          title={running ? "開く（ファイル + ソース管理）: " + r.path + "（Ctrl/中クリックで新ペイン）" : "ワークスペース停止中"}
           disabled={!running}
           onClick={onOpen}
+          // Middle-click opens Source Control in a split pane (same as Ctrl+click).
+          onMouseDown={(e) => e.button === 1 && e.preventDefault()}
+          onAuxClick={(e) => e.button === 1 && onOpen(e)}
         >
           <Icon name="repo" className="repo-ic" />
           {r.name}
