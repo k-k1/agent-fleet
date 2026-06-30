@@ -601,6 +601,37 @@ func (s *sqliteStore) TouchPAT(ctx context.Context, id string) error {
 	return err
 }
 
+func (s *sqliteStore) InsertAudit(ctx context.Context, a AuditLog) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO audit_log(id, tenant_id, actor_kind, actor_id, action, target, detail, at)
+		 VALUES(?, ?, ?, ?, ?, ?, ?, ?)`,
+		a.ID, a.TenantID, a.ActorKind, a.ActorID, a.Action, a.Target, a.Detail, a.At)
+	return err
+}
+
+func (s *sqliteStore) ListAuditByTenant(ctx context.Context, tenantID string, limit int) ([]AuditLog, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, tenant_id, actor_kind, actor_id, action, target, detail, at
+		 FROM audit_log WHERE tenant_id=? ORDER BY at DESC, id DESC LIMIT ?`, tenantID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []AuditLog
+	for rows.Next() {
+		var a AuditLog
+		if err := rows.Scan(&a.ID, &a.TenantID, &a.ActorKind, &a.ActorID,
+			&a.Action, &a.Target, &a.Detail, &a.At); err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
 // nullable maps "" to a SQL NULL so empty optional columns stay NULL.
 func nullable(s string) any {
 	if s == "" {

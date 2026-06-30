@@ -1,6 +1,6 @@
 # 0006. MCP — 管理面と作業面を一体で公開（PAT 認証・E を主目的）
 
-- 状態: 確定（P3-6・実装前）
+- 状態: 確定。実装 = 段1（member/drive + PAT + `/mcp`）+ admin read/write、ともにライブ E2E green（2026-07-01）/ dangerous 段残（鍵ローテ・idle 検出の土台待ち）
 - 関連: [roadmap P3-6](../roadmap.md#p3-6-mcp-による-agent-fleet-制御) / [history/p3-6-mcp](../history/p3-6-mcp.md) / [architecture §認証スコープ](../reference/architecture.md) / [security](../reference/security.md)
 
 ## 背景

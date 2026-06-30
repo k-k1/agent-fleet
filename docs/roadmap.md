@@ -234,7 +234,11 @@ Deployment ルート鍵 / Tenant KEK   ← custodian が保護。AWS=KMS CMK、�
 ---
 
 ## P3-6. MCP による Agent Fleet 制御（管理面 + 作業面を一体で）
-> ▶ **未着手**。設計確定は [decisions/0006](decisions/0006-mcp-unified.md)、実装プランは [history/p3-6-mcp](history/p3-6-mcp.md)。
+> ◐ **段1（member/drive）ライブ稼働 + admin read/write 実装済（未ライブ検証）/ dangerous 段は残**。
+> - **段1 = member 4 ツール**（`list_my_sessions`/`get_session_status`/`get_session_output`/`send_to_session`）+ PAT 発行/失効（Console）+ `/mcp`（Streamable HTTP）を実装・**E2E green でライブ稼働**（現状は [HANDOFF §6.9 MCP](HANDOFF.md)）。
+> - **admin read/write 実装・ライブ E2E green**（2026-07-01）: read=`list_workspaces`/`get_usage`/`list_sessions`、write=`stop_workspace`/`stop_session`/`set_user_quota`。PAT の tenant に固定し、live role（super_admin / その tenant の tenant_admin）で gate、write は `AuditLog`（`actor_kind=mcp`）へ記録。監査ログ書き込み（migration 0007 `audit_log` + `InsertAudit`/`ListAuditByTenant`）をここで導入。ライブ検証（運用者デプロイ）= super_admin PAT で全10ツール可視・`get_usage` に host stats／tenant_admin は admin ツール可視だが host stats 無し／plain member は member 4ツールのみ・admin ツールは 401／`set_user_quota` の write が `audit_log` へ `actor_kind=mcp` 記録、を確認。
+> - **残 = dangerous 段**（`rotate_key`/`recreate_workspace`/`stop_all_idle`、confirm+dry-run）。土台（鍵ローテ実装・idle 検出 P3-9・`tail_audit`）が未整備ゆえ後続。
+> - 設計確定は [decisions/0006](decisions/0006-mcp-unified.md)、実装プランは [history/p3-6-mcp](history/p3-6-mcp.md)。
 
 CP に `/mcp` を 1 本生やし、**管理面（運用チーム）と作業面（メンバー自身の遠隔セッション駆動）を同一サーバで** role 出し分けする。
 **そもそもの目的 = E**: 1 つの手元 Claude が、自分の Workspace 内の claude/opencode/codex セッション群を束ねて駆動する（フリート運用の MCP 化）。
