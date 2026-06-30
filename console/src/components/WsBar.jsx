@@ -126,6 +126,30 @@ const fg = (b) => {
   return v < 10 ? v.toFixed(2) : v.toFixed(1);
 };
 
+// Friendly label for the raw container state. The CP returns docker-derived states
+// (runtime.go state()): "running" | "stopped" | "none". Stop does `docker rm -f`,
+// so the *normal* stopped state is "none" (no container — data persists in the bind
+// mount, recreated on Start); "stopped" only appears when a container exists but
+// exited on its own (crash / OOM). Both read as 停止 to the user; the raw state stays
+// in the tooltip. Transient states (set optimistically in state.jsx) end in "…".
+function wsLabel(s) {
+  switch (s) {
+    case "running":
+      return "稼働中";
+    case "none":
+    case "stopped":
+      return "停止";
+    case "starting…":
+      return "起動中…";
+    case "recreating…":
+      return "再作成中…";
+    case "unknown":
+      return "不明";
+    default:
+      return s; // "…" initial, or any future state
+  }
+}
+
 // Matches the 760px breakpoint in styles.css (the phone layout).
 function useIsMobile() {
   const [m, setM] = useState(() => typeof window !== "undefined" && window.matchMedia("(max-width: 760px)").matches);
@@ -304,7 +328,18 @@ export default function WsBar() {
     <div className="wsbar">
       <span className="ws-label">Workspace</span>
       <span className={"ws-dot " + (running ? "on" : "off")}>●</span>
-      <span className="ws-state">{wsState}</span>
+      <span
+        className="ws-state"
+        title={
+          wsState === "none"
+            ? "停止（コンテナなし — Stop で削除済み。データは保持、Start で再作成）"
+            : wsState === "stopped"
+              ? "停止（コンテナが自走終了 — クラッシュ / OOM の可能性）"
+              : `状態: ${wsState}`
+        }
+      >
+        {wsLabel(wsState)}
+      </span>
       {/* One toggle instead of separate Start/Stop: label + action follow the state.
           The bar auto-syncs wsState from the 4s stats poll (state.jsx), so an
           externally-changed workspace (admin stop / OOM) reflects without a manual
