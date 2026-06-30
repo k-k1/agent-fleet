@@ -477,6 +477,15 @@ export function AppProvider({ children }) {
     },
     [openActive, pushDrawerEntry],
   );
+  // showSCMSplit opens a repo's Source Control in a freshly split pane (Ctrl/middle-
+  // click on a repo), instead of replacing the active pane's content.
+  const showSCMSplit = useCallback(
+    (repo) => {
+      openInNewPane({ kind: "scm", scmRepo: repo });
+      setNavOpen(false);
+    },
+    [openInNewPane],
+  );
   const showFile = useCallback(
     (path) => {
       if (navOpenRef.current) pushDrawerEntry();
@@ -762,6 +771,7 @@ export function AppProvider({ children }) {
     showTerminalSplit,
     openInNewPane,
     showSCM,
+    showSCMSplit,
     showFile,
     showFileSplit,
     settingsOpen,
