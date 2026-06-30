@@ -26,8 +26,14 @@ const notify = (title, body) => {
 // window (agent-side TTL). The ⋯ menu holds destructive actions (作り直す). The
 // list polls so state updates on its own.
 export default function SessionsSection() {
-  const { sessions, bumpSessions, bumpRepos, bumpFiles, revealInFiles, showTerminal, showTerminalSplit, session } = useApp();
+  const { sessions, bumpSessions, bumpRepos, bumpFiles, revealInFiles, showTerminal, showTerminalSplit, session, newSessionTick } = useApp();
   const [showModal, setShowModal] = useState(false);
+
+  // Open the New Session dialog when something elsewhere requests it (the onboarding
+  // card). Skip the initial 0 so it doesn't pop on load.
+  useEffect(() => {
+    if (newSessionTick > 0) setShowModal(true);
+  }, [newSessionTick]);
   const [showArchived, setShowArchived] = useState(false);
   const [menuFor, setMenuFor] = useState(null); // session name whose ⋯ menu is open
   const prevStates = useRef({}); // name → last seen claude state, for arrival notifications
