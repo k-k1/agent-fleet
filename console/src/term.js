@@ -183,10 +183,7 @@ export function ensureTerm(paneId, el) {
     fontSize: s0.termSize,
     fontFamily: fontStack(s0.termFont),
     theme: { background: "#1e1e1e" },
-    // No cursor blink: blinking forces a sub-second render/repaint per terminal
-    // forever, which adds steady main-thread churn (and WebGL redraws) that feeds
-    // GC. A static block cursor is just as usable and removes that baseline cost.
-    cursorBlink: false,
+    cursorBlink: true,
     allowProposedApi: true,
   });
   it.term = term;
