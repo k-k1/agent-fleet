@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, apiJSON, raw } from "../api.js";
+import { useApp } from "../state.jsx";
 import Icon from "../components/Icon.jsx";
 
 // CopyCode renders a one-time auth code that copies to the clipboard on click. The
@@ -38,12 +39,17 @@ function DisconnectButton({ onClick }) {
 // PAT paste), Bitbucket (OAuth code grant or email+token). Secrets are stored in
 // the container home by the Agent — the Console never holds them.
 export default function ConnectionsTab() {
+  const { bumpConn } = useApp();
   const [conns, setConns] = useState(null);
   const reload = useCallback(() => {
     api("api/connections")
       .then(setConns)
       .catch(() => setConns({}));
-  }, []);
+    // Notify global listeners (onboarding card, REPOS launch filter) that
+    // connection state may have changed so they refetch — this tab keeps its own
+    // local copy and would otherwise leave them stale after a connect/disconnect.
+    bumpConn();
+  }, [bumpConn]);
   useEffect(reload, [reload]);
 
   if (!conns) return <p className="muted pad">読み込み中…</p>;
