@@ -584,38 +584,45 @@ export function AppProvider({ children }) {
     [commit],
   );
 
-  // dropSplit "tears off" a dragged pane into a NEW split pane: it carries the
-  // source pane's content into a fresh pane (a new right column, or a downward
-  // split of the pane it was dropped onto) and resets the source pane to a blank
-  // terminal in place. dir: 'right' | 'down'; refId is the pane dropped onto (its
-  // column is the one split when dir==='down'). One commit, new pane made active.
+  // dropSplit MOVES a dragged pane to a NEW split position (a new right column, or a
+  // downward split of the pane it was dropped onto). It relocates the SAME pane
+  // object — keeping its id — rather than minting a new pane and copying content:
+  // a new id would build a fresh xterm + a fresh WebGL context, and creating that
+  // context (before the old one is reconciled away, and while the moving grid hasn't
+  // settled) is what left the moved terminal blank until it was closed (see the
+  // WebGL note in term.js). Reusing the id re-homes the live terminal instead. The
+  // origin is closed for free (the pane just isn't in its old column anymore). dir:
+  // 'right' | 'down'; refId is the pane dropped onto. (Center drops are swaps.)
   const dropSplit = useCallback(
     (srcId, refId, dir) => {
       const cur = layoutRef.current;
       const src = cur.cols.flatMap((c) => c.panes).find((p) => p.id === srcId);
-      if (!src) return;
-      const carried = { kind: src.kind, session: src.session, filePath: src.filePath, scmRepo: src.scmRepo };
-      const id = newPaneId();
-      const blankSrc = (p) => (p.id === srcId ? blankPane(p.id) : p); // reset origin
-      const newPane = { ...blankPane(id), ...carried };
+      if (!src || srcId === refId) return;
+
+      // Pull the pane out of its current column; drop a column it leaves empty.
+      const without = cur.cols
+        .map((c) => {
+          const panes = c.panes.filter((p) => p.id !== srcId);
+          return panes.length === c.panes.length ? c : { ...c, rowRatio: 0.5, panes };
+        })
+        .filter((c) => c.panes.length > 0);
 
       if (dir === "right") {
-        if (cur.cols.length >= MAX_COLS) return;
-        const cols = cur.cols
-          .map((c) => ({ ...c, panes: c.panes.map(blankSrc) }))
-          .concat([{ id: newColId(), rowRatio: 0.5, panes: [newPane] }]);
-        commit({ ...cur, cols, colRatios: equalRatios(cols.length), activeId: id });
+        const cols = without.concat([{ id: newColId(), rowRatio: 0.5, panes: [src] }]);
+        if (cols.length > MAX_COLS) return; // the freed origin column may offset this, so re-check
+        commit({ ...cur, cols, colRatios: equalRatios(cols.length), activeId: srcId });
         return;
       }
-      // dir === 'down': split the dropped-onto pane's column into two rows.
-      const col = cur.cols.find((c) => c.panes.some((p) => p.id === refId));
+      // dir === 'down': add the pane as a second row under the dropped-onto pane's
+      // column. The down zone is only offered when that column has a single pane, so
+      // after pulling the source out, the target still has room for the row.
+      const col = without.find((c) => c.panes.some((p) => p.id === refId));
       if (!col || col.panes.length >= 2) return;
-      const cols = cur.cols.map((c) =>
-        c.id === col.id
-          ? { ...c, rowRatio: 0.5, panes: [...c.panes.map(blankSrc), newPane] }
-          : { ...c, panes: c.panes.map(blankSrc) },
+      const cols = without.map((c) =>
+        c.id === col.id ? { ...c, rowRatio: 0.5, panes: [...c.panes, src] } : c,
       );
-      commit({ ...cur, cols, activeId: id });
+      const colRatios = cols.length === cur.cols.length ? cur.colRatios : equalRatios(cols.length);
+      commit({ ...cur, cols, colRatios, activeId: srcId });
     },
     [commit],
   );

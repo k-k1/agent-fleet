@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useApp } from "../state.jsx";
 import Pane from "./Pane.jsx";
 
+const D = 6; // divider thickness in px
+
 // Tracks the mobile breakpoint (matches the 760px media query in styles.css). On a
 // phone the split is limited to a single column split top/bottom (max 2 panes).
 function useIsMobile() {
@@ -15,32 +17,47 @@ function useIsMobile() {
   return m;
 }
 
-// PaneHost lays the main area out as up to 4 columns (a CSS grid), each column a
-// sub-grid of 1 or 2 rows. Column dividers resize widths; a row divider inside a
-// split column resizes its top/bottom heights. Every pane's terminal refits via its
-// own ResizeObserver (see term.js), so dragging either divider reflows the grids.
+// PaneHost lays the main area out as up to 4 columns, each a stack of 1 or 2 panes.
+// All panes (and the dividers) are FLAT, position:absolute children of one stable
+// .panehost — a pane's column/row is expressed purely by its computed CSS rect, not
+// by DOM nesting. So dragging a pane to another column only changes its rect: React
+// keeps the same keyed DOM node (no remount), and term.js never re-opens / re-parents
+// the xterm (which left the moved terminal blank). Moves become a pure resize.
 export default function PaneHost() {
   const { layout, activePaneId, setActivePane, splitRight, splitDown, closePane, setColRatios, setRowRatio, swapPanes, dropSplit, sessions } =
     useApp();
   const hostRef = useRef(null);
   const isMobile = useIsMobile();
 
-  // Look up a pane's session so the terminal header can render it like the
-  // left-pane Sessions row (kind badge + name + state) instead of bare text.
-  // Memoized on `sessions` so a layout-only re-render (drag, split) doesn't
-  // rebuild the Map + its entry arrays — needless garbage that feeds GC.
+  // Look up a pane's session so the terminal header can render it like the left-pane
+  // Sessions row (kind badge + name + state). Memoized so a layout-only re-render
+  // (drag/move) doesn't rebuild the Map.
   const sessionByName = useMemo(() => new Map((sessions || []).map((s) => [s.name, s])), [sessions]);
 
   const cols = layout.cols;
-  const colCount = cols.length;
+  const N = cols.length;
+  const ratios = layout.colRatios;
   const total = cols.reduce((n, c) => n + c.panes.length, 0);
 
-  // Drag a column divider at index i (between col i and i+1): shift width fraction
-  // from one neighbor to the other based on pointer x within the host.
+  // Cumulative left-ratio before column i (sum of widths to its left).
+  const cum = [];
+  for (let i = 0, acc = 0; i < N; i++) {
+    cum.push(acc);
+    acc += ratios[i] ?? 0;
+  }
+  // Width budget = 100% minus the (N-1) column dividers; height budget = 100% minus
+  // the one row divider in a split column. Positions are calc() over these so the fr
+  // ratios and the fixed-px dividers compose exactly.
+  const Wb = `(100% - ${(N - 1) * D}px)`;
+  const Hb = `(100% - ${D}px)`;
+  const colLeft = (i) => `calc(${cum[i]} * ${Wb} + ${i * D}px)`;
+  const colWidth = (i) => `calc(${ratios[i]} * ${Wb})`;
+
+  // Drag a column divider at index i: shift width fraction between col i and i+1.
   const onColDown = (i) => (e) => {
     e.preventDefault();
     const start = e.clientX;
-    const base = layout.colRatios.slice();
+    const base = ratios.slice();
     const rect = hostRef.current.getBoundingClientRect();
     document.body.classList.add("col-resizing");
     const onMove = (ev) => {
@@ -59,12 +76,11 @@ export default function PaneHost() {
     window.addEventListener("pointerup", onUp);
   };
 
-  // Drag a row divider inside column colId: translate pointer y into the top row's
-  // height fraction of that column's element.
+  // Drag a row divider inside a column: columns span the full host height now, so the
+  // top row's fraction is just the pointer's y within the host.
   const onRowDown = (colId) => (e) => {
     e.preventDefault();
-    const colEl = e.currentTarget.parentElement; // the .panecol
-    const rect = colEl.getBoundingClientRect();
+    const rect = hostRef.current.getBoundingClientRect();
     document.body.classList.add("row-resizing");
     const onMove = (ev) => setRowRatio(colId, (ev.clientY - rect.top) / rect.height);
     const onUp = () => {
@@ -76,18 +92,16 @@ export default function PaneHost() {
     window.addEventListener("pointerup", onUp);
   };
 
-  // grid-template-columns: r0fr 6px r1fr 6px … (a 6px track per divider).
-  const colsTemplate = layout.colRatios.map((r) => `${r}fr`).join(" 6px ");
-
-  const renderPane = (pane, col) => (
+  const renderPane = (pane, col, i, rect) => (
     <Pane
       key={pane.id}
       pane={pane}
+      style={{ position: "absolute", ...rect }}
       active={total > 1 && pane.id === activePaneId}
       single={total === 1}
       // Desktop: up to 4 columns, each splittable top/bottom. Mobile: no extra
       // columns, only a single top/bottom split (max 2 panes total).
-      canSplitRight={!isMobile && colCount < 4}
+      canSplitRight={!isMobile && N < 4}
       canSplitDown={isMobile ? total < 2 : col.panes.length < 2}
       canClose={total > 1}
       canDrag={total > 1}
@@ -101,27 +115,49 @@ export default function PaneHost() {
     />
   );
 
-  return (
-    <div className="panehost" ref={hostRef} style={{ gridTemplateColumns: colsTemplate }}>
-      {cols.map((col, i) => [
+  const paneEls = [];
+  const dividerEls = [];
+  cols.forEach((col, i) => {
+    const panes = col.panes;
+    // On a phone only the first column is shown full-width (matching the old layout);
+    // panes in any other column stay mounted (terminal + socket alive) but hidden.
+    if (isMobile && i > 0) {
+      panes.forEach((p) => paneEls.push(renderPane(p, col, i, { display: "none" })));
+      return;
+    }
+    const left = isMobile ? "0" : colLeft(i);
+    const width = isMobile ? "100%" : colWidth(i);
+    if (panes.length === 1) {
+      paneEls.push(renderPane(panes[0], col, i, { left, top: 0, width, height: "100%" }));
+    } else {
+      const r = col.rowRatio;
+      paneEls.push(renderPane(panes[0], col, i, { left, top: 0, width, height: `calc(${r} * ${Hb})` }));
+      dividerEls.push(
         <div
-          key={col.id}
-          className="panecol"
-          style={{
-            gridTemplateRows:
-              col.panes.length === 2 ? `${col.rowRatio}fr 6px ${1 - col.rowRatio}fr` : "minmax(0, 1fr)",
-          }}
-        >
-          {renderPane(col.panes[0], col)}
-          {col.panes.length === 2 && (
-            <div className="pane-divider row" onPointerDown={onRowDown(col.id)} />
-          )}
-          {col.panes.length === 2 && renderPane(col.panes[1], col)}
-        </div>,
-        i < colCount - 1 && (
-          <div key={`d${col.id}`} className="pane-divider col" onPointerDown={onColDown(i)} />
-        ),
-      ])}
+          key={`r${col.id}`}
+          className="pane-divider row"
+          style={{ left, width, top: `calc(${r} * ${Hb})`, height: `${D}px` }}
+          onPointerDown={onRowDown(col.id)}
+        />,
+      );
+      paneEls.push(renderPane(panes[1], col, i, { left, top: `calc(${r} * ${Hb} + ${D}px)`, width, height: `calc(${1 - r} * ${Hb})` }));
+    }
+    if (!isMobile && i < N - 1) {
+      dividerEls.push(
+        <div
+          key={`c${col.id}`}
+          className="pane-divider col"
+          style={{ left: `calc(${cum[i + 1]} * ${Wb} + ${i * D}px)`, top: 0, width: `${D}px`, height: "100%" }}
+          onPointerDown={onColDown(i)}
+        />,
+      );
+    }
+  });
+
+  return (
+    <div className="panehost" ref={hostRef}>
+      {paneEls}
+      {dividerEls}
     </div>
   );
 }

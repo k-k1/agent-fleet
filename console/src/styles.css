@@ -1536,22 +1536,19 @@ textarea:focus {
 }
 
 /* ---- main-area pane layout (split view) ---- */
-/* panehost = up to 4 columns; each .panecol is a sub-grid of 1–2 stacked rows. */
+/* panehost = up to 4 columns × 1–2 rows. Panes + dividers are FLAT, absolutely
+   positioned children (their rect is computed in PaneHost.jsx), so moving a pane to
+   another column only changes its CSS rect — the DOM node (and its xterm) is reused,
+   never re-parented. */
 .panehost {
   flex: 1;
   min-width: 0;
-  display: grid;
-  grid-template-rows: minmax(0, 1fr);
-}
-.panecol {
-  min-width: 0;
   min-height: 0;
-  height: 100%;
+  position: relative;
   overflow: hidden;
-  display: grid;
 }
 .pane {
-  position: relative;
+  position: absolute;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
@@ -1636,6 +1633,8 @@ textarea:focus {
 /* draggable dividers: .col between columns (resize width), .row inside a split
    column (resize the two rows' heights). */
 .pane-divider {
+  position: absolute;
+  z-index: 3; /* above panes so the thin bar stays grabbable */
   background: var(--border);
 }
 .pane-divider.col {
@@ -3733,16 +3732,9 @@ button.primary:hover:not(:disabled) {
   }
 
   /* On a phone the split is limited to ONE column, optionally split top/bottom (the
-     split-right control is hidden in JS via the mobile breakpoint). Force a single
-     column and hide any extra columns / column dividers from a desktop layout; the
-     first column's own rows (and their row divider + controls) stay so a top/bottom
-     split still works. */
-  .panehost {
-    grid-template-columns: 1fr !important;
-  }
-  .panehost > *:not(.panecol:first-child) {
-    display: none;
-  }
+     split-right control is hidden in JS via the mobile breakpoint). PaneHost lays the
+     first column out full-width and hides any extra columns' panes (kept mounted) on
+     mobile, so no extra CSS is needed here. */
   /* tighter control reserve on a phone (no split-right button = 3 controls max) */
   .view-head {
     padding-right: 84px;

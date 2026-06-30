@@ -15,6 +15,7 @@ const DND = "application/x-af-pane";
 // makes this the active pane (clicks then open here).
 export default function Pane({
   pane,
+  style,
   active,
   single,
   canSplitRight,
@@ -74,6 +75,7 @@ export default function Pane({
   return (
     <div
       className={"pane" + (active ? " active" : "") + (zone ? " droptarget" : "")}
+      style={style}
       onMouseDownCapture={() => onActivate(pane.id)}
       onDragOver={onDragOver}
       onDragLeave={onDragLeave}
