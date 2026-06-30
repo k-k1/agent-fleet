@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# Rebuild ONLY the Control Plane (Go) + Console (Vite) and restart the running
+# `af-cp` host process in place — no Workspace image rebuild. Use this to reflect
+# changes under control-plane/ or console/ during dev. For Workspace/Agent changes
+# (workspace/), rebuild the image instead — see docs/HANDOFF.md §2 (反映早見表).
+#
+# Env is reproduced exactly as deploy/local/run-dev.sh would: oauth.env supplies
+# AUTH + secrets + CP_ADDR; the WS_* defaults below match run-dev.sh.
+#
+# Run from a shell that has the `docker` group (the launched CP shells out to
+# docker for Workspace start/stop) — on a non-login shell use `sg docker -c`.
+#
+#   deploy/local/restart-cp.sh            # rebuild console + CP, restart
+#   SKIP_CONSOLE=1 deploy/local/restart-cp.sh   # CP-only change: skip vite build
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+export PATH="$HOME/.local/go/bin:$HOME/go/bin:$PATH"
+
+# --- env (mirror run-dev.sh) -------------------------------------------------
+set -a; . "$ROOT/deploy/local/oauth.env"; set +a   # AUTH, CP_ADDR, AF_*, *_OAUTH_*
+export CONSOLE_DIR="$ROOT/console/dist"
+export WS_IMAGE="${WS_IMAGE:-agent-fleet/workspace:dev}"
+export WS_DATA="${WS_DATA:-$HOME/.local/share/agent-fleet}"
+export WS_MEMORY="${WS_MEMORY:-5g}"
+export WS_JVM_DIR="${WS_JVM_DIR:-$WS_DATA/shared/jvm}"
+CP_ADDR="${CP_ADDR:-127.0.0.1:8099}"
+PORT="${CP_ADDR##*:}"
+
+# --- build -------------------------------------------------------------------
+if [ "${SKIP_CONSOLE:-0}" != "1" ]; then
+  echo "==> build console (vite)"
+  export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+  # shellcheck disable=SC1091
+  [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh" >/dev/null 2>&1 || true
+  ( cd "$ROOT/console" && { [ -d node_modules ] || npm ci; } \
+      && NODE_OPTIONS="--max-old-space-size=3072" npm run build )
+fi
+echo "==> build control-plane"
+( cd "$ROOT/control-plane" && go build -o /tmp/af-cp . )
+
+# --- restart in place --------------------------------------------------------
+OLD_PID="$(ss -ltnp 2>/dev/null | sed -n "s/.*:${PORT} .*pid=\([0-9]*\).*/\1/p" | head -1)"
+if [ -n "${OLD_PID:-}" ]; then
+  echo "==> stopping current af-cp (pid $OLD_PID)"
+  kill "$OLD_PID" 2>/dev/null || true
+  for _ in $(seq 1 50); do ss -ltn 2>/dev/null | grep -q ":${PORT} " || break; sleep 0.1; done
+fi
+
+echo "==> starting af-cp on $CP_ADDR (log: /tmp/af-cp.log)"
+cd "$ROOT/control-plane"
+setsid env CP_ADDR="$CP_ADDR" CONSOLE_DIR="$CONSOLE_DIR" \
+  WS_IMAGE="$WS_IMAGE" WS_DATA="$WS_DATA" WS_MEMORY="$WS_MEMORY" WS_JVM_DIR="$WS_JVM_DIR" \
+  /tmp/af-cp >>/tmp/af-cp.log 2>&1 < /dev/null &
+disown || true
+
+# --- verify ------------------------------------------------------------------
+for _ in $(seq 1 50); do
+  [ "$(curl -fsS "http://${CP_ADDR}/healthz" 2>/dev/null)" = "ok" ] && { echo "==> healthz OK"; exit 0; }
+  sleep 0.1
+done
+echo "ERROR: af-cp did not become healthy; see /tmp/af-cp.log" >&2
+exit 1

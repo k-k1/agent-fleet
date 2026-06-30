@@ -20,7 +20,17 @@ Phase 1 MVP 完了（2026-06-26, commit `dd2330e`）以降、Phase 2 完了・Ph
 - **Go**: user-local。`export PATH="$HOME/.local/go/bin:$HOME/go/bin:$PATH"`（go1.26）。
 - **Node**: nvm（`~/.nvm/versions/node/v22.23.1`）。ログインシェルで有効。
 - **Docker**: `k1` は `docker` グループだが**非ログインシェルでは未反映**。コマンドは `sg docker -c '...'` で実行する（または `sudo docker`）。
-- **CP 起動 / 再起動（推奨）**（host で）:
+- **CP / Console だけ反映（推奨・軽量）**（host で。`control-plane/**` か `console/src/**` を変えたとき）:
+  ```bash
+  cd ~/workspace-private/agent-fleet
+  sg docker -c "./deploy/local/restart-cp.sh"            # console+CP を build → af-cp を**その場で**再起動→ /healthz 検証
+  sg docker -c "SKIP_CONSOLE=1 ./deploy/local/restart-cp.sh"   # CP の Go だけ変えたとき（vite build を省く）
+  ```
+  `restart-cp.sh` は **Workspace イメージを再ビルドしない**（§3 の OOM リスクを避ける軽量経路）。oauth.env を source し
+  WS_* 既定を run-dev.sh と揃えて env を忠実に再現、現 `af-cp`（:8099 を握る pid）を `kill`→新バイナリを `setsid` で起動し
+  `/healthz=ok` まで待つ。ログは `/tmp/af-cp.log`。**docker グループのあるシェルで**（CP が Workspace start/stop に docker を叩くため。
+  非ログインシェルは `sg docker -c`）。
+- **初回起動 / イメージも込みで一括**（host で）:
   ```bash
   cd ~/workspace-private/agent-fleet
   pkill -x af-cp 2>/dev/null
@@ -38,13 +48,13 @@ Phase 1 MVP 完了（2026-06-26, commit `dd2330e`）以降、Phase 2 完了・Ph
 
   | 変更したもの | 反映に必要な操作 |
   |---|---|
-  | Console フロント（`console/src/**`） | ビルド（`npm --prefix console run dev`＝`vite build --watch`）→ ブラウザ**リロードのみ**。CP は `console/dist` を `no-store` 配信 |
-  | CP の Go（proxy ルート追加 / `--init` / recreate 等） | **CP 再起動**（§2 の手順）。image/agent 再ビルド不要 |
-  | Agent の Go / image 焼き込み（新エンドポイント・denylist・plugin seed・python/vim 等） | **image 再ビルド + Workspace を Stop→Start** |
+  | Console フロント（`console/src/**`） | ビルド（`npm --prefix console run dev`＝`vite build --watch`）→ ブラウザ**リロードのみ**。CP は `console/dist` を `no-store` 配信。一括反映は `restart-cp.sh` |
+  | CP の Go（proxy ルート追加 / `--init` / recreate 等） | **`restart-cp.sh`（推奨・軽量）** で CP をその場再起動。image/agent 再ビルド不要（手順は §2 冒頭）|
+  | Agent の Go / image 焼き込み（新エンドポイント・denylist・plugin seed・python/vim 等） | **image 再ビルド**（`sg docker -c "docker build -t agent-fleet/workspace:dev workspace"`）→ 稼働中 Workspace は**利用者が Console で Stop→Start** すると新 image で入れ替わる |
   | Claude 設定・環境（toolchains / timezone / ui-prefs サーバー保存） | entrypoint が適用＝**Stop→Start** |
   | 共有 JVM（JDK 版変更・cacerts 修正） | `jvm.Dockerfile` 編集 → 共有 dir を `rm -rf` して**再 provision** |
 
-  - **Stop→Start の要点**: `start()` は `docker rm -f`→新 image で `docker run`＝確実に新 image。**`docker run` は既に running だと no-op**＝`start` 単独では新 image を反映できない（必ず Stop→Start）。ホーム（`/login`・接続・repos）は永続。
+  - **Stop→Start の要点**: `start()` は `docker rm -f`→新 image で `docker run`＝確実に新 image。**`docker run` は既に running だと no-op**＝`start` 単独では新 image を反映できない（必ず Stop→Start）。ホーム（`/login`・接続・repos）は永続。image を再ビルドしても**走行中コンテナは旧 image のまま**＝CP 側からは差し替えず、各**利用者の Stop→Start で随時反映**（強制入れ替えはしない）。
 
 ## 3. ⚠️ 最重要の落とし穴（メモリ / フリート）
 
@@ -69,7 +79,8 @@ workspace/          Workspace イメージ
 control-plane/      Control Plane(Go)。main/runtime/proxy/manager/store(_sqlite)/custodian/tenants/oauth_bitbucket。
   migrations/       0001_init 〜 0005_session。`//go:embed` 冪等マイグレータ。
 console/            React+Vite Console（src/→console/dist）。旧 vanilla は console/legacy-phase1/。
-deploy/local/run-dev.sh   dev 起動スクリプト。provision-jvm.sh 共有 JVM 展開。
+deploy/local/run-dev.sh   dev 一括起動（image+CP build+起動）。provision-jvm.sh 共有 JVM 展開。
+deploy/local/restart-cp.sh  CP/Console だけ軽量反映（image 再ビルドなしで af-cp をその場再起動）。
 docs/               reference/(設計) + decisions/(ADR) + roadmap.md + history/(済プラン) + 本書 + CHANGELOG-handoff。
 phase0/             /login 検証 PoC(参考)。
 ```
