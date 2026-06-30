@@ -91,6 +91,9 @@ type Store interface {
 	ListMembersByTenant(ctx context.Context, tenantID string) ([]MemberInfo, error)
 	EnsureMembership(ctx context.Context, identityID, tenantID, role string) (Membership, error)
 	GetMembership(ctx context.Context, identityID, tenantID string) (Membership, bool, error)
+	// SetMembershipRole changes a membership's tenant-scoped role (member |
+	// tenant_admin). EnsureMembership only inserts, so this is the update path.
+	SetMembershipRole(ctx context.Context, membershipID, role string) error
 
 	GetWorkspaceByMembership(ctx context.Context, membershipID string) (Workspace, bool, error)
 	CreateWorkspace(ctx context.Context, ws Workspace) error

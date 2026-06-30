@@ -3194,6 +3194,18 @@ body.row-resizing {
   gap: 8px;
   margin-top: 12px;
 }
+.role-now {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 13px;
+  color: var(--ok);
+}
+.role-hint {
+  margin-top: 10px;
+  font-size: 11px;
+  line-height: 1.5;
+}
 
 /* Admin surface on a phone: full-bleed, single column, stacked forms, and a big
    tap-target back button. Scoped to .admin* so global form-row etc. are untouched. */

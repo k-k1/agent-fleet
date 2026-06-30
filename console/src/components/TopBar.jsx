@@ -108,7 +108,7 @@ export default function TopBar() {
                 <button className="acct-item" role="menuitem" onClick={() => run(openSettings)}>
                   <Icon name="gear" /> 設定
                 </button>
-                {superAdmin && (
+                {(superAdmin || tenants?.some((t) => t.role === "tenant_admin")) && (
                   <button className="acct-item" role="menuitem" onClick={() => run(openAdmin)}>
                     <Icon name="shield" /> 管理
                   </button>

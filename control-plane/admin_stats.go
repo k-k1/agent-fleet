@@ -43,7 +43,7 @@ func (c config) adminResolveMember(r *http.Request, slug, key string) (mem Membe
 // from `du` on the home tree, plus the disk quota if one is set. Disk is reported
 // even while the container is stopped (the home path persists on the host).
 func (c config) handleAdminMemberStats(w http.ResponseWriter, r *http.Request) {
-	if _, ok := c.requireSuperAdmin(w, r); !ok {
+	if _, _, ok := c.requireTenantAdmin(w, r, r.PathValue("slug")); !ok {
 		return
 	}
 	mem, ws, hasWS, aerr := c.adminResolveMember(r, r.PathValue("slug"), r.PathValue("key"))
@@ -70,7 +70,7 @@ func (c config) handleAdminMemberStats(w http.ResponseWriter, r *http.Request) {
 // membership: the Agent is authoritative while the container runs (and we refresh
 // the DB mirror); otherwise serve the last mirrored list as stopped.
 func (c config) handleAdminMemberSessions(w http.ResponseWriter, r *http.Request) {
-	if _, ok := c.requireSuperAdmin(w, r); !ok {
+	if _, _, ok := c.requireTenantAdmin(w, r, r.PathValue("slug")); !ok {
 		return
 	}
 	_, ws, hasWS, aerr := c.adminResolveMember(r, r.PathValue("slug"), r.PathValue("key"))

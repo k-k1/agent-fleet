@@ -46,16 +46,69 @@ func (c config) requireSuperAdmin(w http.ResponseWriter, r *http.Request) (Ident
 	return ident, true
 }
 
-// handleAdminListTenants (GET /api/admin/tenants) — overview for the admin UI.
-func (c config) handleAdminListTenants(w http.ResponseWriter, r *http.Request) {
-	if _, ok := c.requireSuperAdmin(w, r); !ok {
-		return
+// requireTenantAdmin gates a per-tenant admin endpoint: allows a deployment
+// super_admin (any tenant) or a tenant_admin of `slug`. Resolves and returns the
+// caller's identity and the target tenant. Writes 401/403/404 and returns ok=false
+// on failure. slug comes from the path on some routes and the body on others, so
+// it is passed explicitly.
+func (c config) requireTenantAdmin(w http.ResponseWriter, r *http.Request, slug string) (Identity, Tenant, bool) {
+	ident, aerr := c.mgr.identityFor(r.Context(), r)
+	if aerr != nil {
+		writeAPIErr(w, aerr)
+		return Identity{}, Tenant{}, false
 	}
-	tenants, err := c.mgr.store.ListTenants(r.Context())
+	t, ok, err := c.mgr.store.GetTenantBySlug(r.Context(), slug)
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
+		return Identity{}, Tenant{}, false
+	}
+	if !ok {
+		writeAPIErr(w, &apiError{http.StatusNotFound, "no_tenant", "unknown tenant"})
+		return Identity{}, Tenant{}, false
+	}
+	if !c.mgr.tenantAdminFor(r.Context(), ident, t.ID) {
+		writeAPIErr(w, &apiError{http.StatusForbidden, "forbidden", "tenant admin required"})
+		return Identity{}, Tenant{}, false
+	}
+	return ident, t, true
+}
+
+// handleAdminListTenants (GET /api/admin/tenants) — overview for the admin UI.
+// super_admin sees every tenant; a tenant_admin sees only the tenants they
+// administer. The super_admin flag lets the Console hide deployment-wide controls
+// (create tenant, tenant quotas, clean-home, role grants) for tenant_admins.
+func (c config) handleAdminListTenants(w http.ResponseWriter, r *http.Request) {
+	ident, aerr := c.mgr.identityFor(r.Context(), r)
+	if aerr != nil {
+		writeAPIErr(w, aerr)
 		return
 	}
+	isSuper := ident.Role == "super_admin"
+
+	var tenants []Tenant
+	if isSuper {
+		ts, err := c.mgr.store.ListTenants(r.Context())
+		if err != nil {
+			writeAPIErr(w, internalErr(err))
+			return
+		}
+		tenants = ts
+	} else {
+		ms, err := c.mgr.store.ListMemberships(r.Context(), ident.ID)
+		if err != nil {
+			writeAPIErr(w, internalErr(err))
+			return
+		}
+		for _, m := range ms {
+			if m.Role != "tenant_admin" {
+				continue
+			}
+			if t, err := c.mgr.store.GetTenant(r.Context(), m.TenantID); err == nil {
+				tenants = append(tenants, t)
+			}
+		}
+	}
+
 	out := make([]map[string]any, 0, len(tenants))
 	for _, t := range tenants {
 		members, _ := c.mgr.store.ListMembersByTenant(r.Context(), t.ID)
@@ -67,21 +120,13 @@ func (c config) handleAdminListTenants(w http.ResponseWriter, r *http.Request) {
 			"max_workspaces": lim.MaxWorkspaces, "max_sessions": lim.MaxSessions,
 		})
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"tenants": out})
+	writeJSON(w, http.StatusOK, map[string]any{"tenants": out, "super_admin": isSuper})
 }
 
 // handleAdminListMembers (GET /api/admin/tenants/{slug}/members).
 func (c config) handleAdminListMembers(w http.ResponseWriter, r *http.Request) {
-	if _, ok := c.requireSuperAdmin(w, r); !ok {
-		return
-	}
-	t, ok, err := c.mgr.store.GetTenantBySlug(r.Context(), r.PathValue("slug"))
-	if err != nil {
-		writeAPIErr(w, internalErr(err))
-		return
-	}
+	_, t, ok := c.requireTenantAdmin(w, r, r.PathValue("slug"))
 	if !ok {
-		writeAPIErr(w, &apiError{http.StatusNotFound, "no_tenant", "unknown tenant"})
 		return
 	}
 	members, err := c.mgr.store.ListMembersByTenant(r.Context(), t.ID)
@@ -107,9 +152,6 @@ func (c config) handleAdminListMembers(w http.ResponseWriter, r *http.Request) {
 
 // handleAdminStopWorkspace (POST /api/admin/stop-workspace {tenant_slug,user_key}).
 func (c config) handleAdminStopWorkspace(w http.ResponseWriter, r *http.Request) {
-	if _, ok := c.requireSuperAdmin(w, r); !ok {
-		return
-	}
 	var body struct {
 		UserKey    string `json:"user_key"`
 		TenantSlug string `json:"tenant_slug"`
@@ -118,13 +160,8 @@ func (c config) handleAdminStopWorkspace(w http.ResponseWriter, r *http.Request)
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid json"})
 		return
 	}
-	t, ok, err := c.mgr.store.GetTenantBySlug(r.Context(), body.TenantSlug)
-	if err != nil {
-		writeAPIErr(w, internalErr(err))
-		return
-	}
+	_, t, ok := c.requireTenantAdmin(w, r, body.TenantSlug)
 	if !ok {
-		writeAPIErr(w, &apiError{http.StatusNotFound, "no_tenant", "unknown tenant"})
 		return
 	}
 	ident, err := c.mgr.store.UpsertIdentity(r.Context(), "", body.UserKey, "")
@@ -233,9 +270,6 @@ func (c config) handleAdminCreateTenant(w http.ResponseWriter, r *http.Request) 
 // handleAdminAddMembership (POST /api/admin/memberships {email|user_key, tenant_slug, role}).
 // Pre-creates the target identity if needed (invite-by-key/email).
 func (c config) handleAdminAddMembership(w http.ResponseWriter, r *http.Request) {
-	if _, ok := c.requireSuperAdmin(w, r); !ok {
-		return
-	}
 	var body struct {
 		Email      string `json:"email"`
 		UserKey    string `json:"user_key"`
@@ -246,6 +280,10 @@ func (c config) handleAdminAddMembership(w http.ResponseWriter, r *http.Request)
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid json"})
 		return
 	}
+	caller, t, ok := c.requireTenantAdmin(w, r, body.TenantSlug)
+	if !ok {
+		return
+	}
 	key := body.UserKey
 	if key == "" {
 		key = sanitizeUser(body.Email)
@@ -254,18 +292,11 @@ func (c config) handleAdminAddMembership(w http.ResponseWriter, r *http.Request)
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "email or user_key required"})
 		return
 	}
-	t, ok, err := c.mgr.store.GetTenantBySlug(r.Context(), body.TenantSlug)
-	if err != nil {
-		writeAPIErr(w, internalErr(err))
-		return
-	}
-	if !ok {
-		writeAPIErr(w, &apiError{http.StatusNotFound, "no_tenant", "unknown tenant " + body.TenantSlug})
-		return
-	}
-	role := body.Role
-	if role != "tenant_admin" {
-		role = "member"
+	// Only a super_admin may mint a tenant_admin (privilege escalation); a
+	// tenant_admin adding members can only add plain members.
+	role := "member"
+	if body.Role == "tenant_admin" && caller.Role == "super_admin" {
+		role = "tenant_admin"
 	}
 	ident, err := c.mgr.store.UpsertIdentity(r.Context(), body.Email, key, "")
 	if err != nil {
@@ -311,9 +342,6 @@ func (c config) handleAdminSetTenantLimits(w http.ResponseWriter, r *http.Reques
 
 // handleAdminSetUserLimit (PUT /api/admin/user-limits) — per-membership override.
 func (c config) handleAdminSetUserLimit(w http.ResponseWriter, r *http.Request) {
-	if _, ok := c.requireSuperAdmin(w, r); !ok {
-		return
-	}
 	var body struct {
 		Email       string `json:"email"`
 		UserKey     string `json:"user_key"`
@@ -325,21 +353,16 @@ func (c config) handleAdminSetUserLimit(w http.ResponseWriter, r *http.Request) 
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid json"})
 		return
 	}
+	_, t, ok := c.requireTenantAdmin(w, r, body.TenantSlug)
+	if !ok {
+		return
+	}
 	key := body.UserKey
 	if key == "" {
 		key = sanitizeUser(body.Email)
 	}
 	if key == "" {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "email or user_key required"})
-		return
-	}
-	t, ok, err := c.mgr.store.GetTenantBySlug(r.Context(), body.TenantSlug)
-	if err != nil {
-		writeAPIErr(w, internalErr(err))
-		return
-	}
-	if !ok {
-		writeAPIErr(w, &apiError{http.StatusNotFound, "no_tenant", "unknown tenant " + body.TenantSlug})
 		return
 	}
 	ident, err := c.mgr.store.UpsertIdentity(r.Context(), "", key, "")
@@ -361,4 +384,56 @@ func (c config) handleAdminSetUserLimit(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"user_key": key, "tenant": t.Slug, "max_sessions": body.MaxSessions, "disk_gb": body.DiskGB})
+}
+
+// handleAdminSetMembershipRole (PUT /api/admin/membership-role
+// {tenant_slug, user_key, role}) grants or revokes a member's tenant-scoped admin
+// role (member | tenant_admin). super_admin only: minting a tenant_admin is a
+// privilege escalation kept to the deployment operator (a tenant_admin cannot
+// promote others). Deployment-wide super_admin stays env-only (SUPER_ADMIN_EMAILS).
+func (c config) handleAdminSetMembershipRole(w http.ResponseWriter, r *http.Request) {
+	if _, ok := c.requireSuperAdmin(w, r); !ok {
+		return
+	}
+	var body struct {
+		UserKey    string `json:"user_key"`
+		TenantSlug string `json:"tenant_slug"`
+		Role       string `json:"role"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid json"})
+		return
+	}
+	role := "member"
+	if body.Role == "tenant_admin" {
+		role = "tenant_admin"
+	}
+	t, ok, err := c.mgr.store.GetTenantBySlug(r.Context(), body.TenantSlug)
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	if !ok {
+		writeAPIErr(w, &apiError{http.StatusNotFound, "no_tenant", "unknown tenant"})
+		return
+	}
+	ident, err := c.mgr.store.UpsertIdentity(r.Context(), "", body.UserKey, "")
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	mem, ok, err := c.mgr.store.GetMembership(r.Context(), ident.ID, t.ID)
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	if !ok {
+		writeAPIErr(w, &apiError{http.StatusNotFound, "no_membership", "not a member of " + t.Slug})
+		return
+	}
+	if err := c.mgr.store.SetMembershipRole(r.Context(), mem.ID, role); err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"user_key": body.UserKey, "tenant": t.Slug, "role": role})
 }
