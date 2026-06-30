@@ -314,72 +314,12 @@ export function AppProvider({ children }) {
       clearInterval(id);
     };
   }, [sessionsKey, tenant]);
-  // Resource chips for the WsBar. Container stats (own workspace, mem/CPU vs
-  // quota) for everyone; host stats (load / memory) only for super_admin — the CP
-  // gates /api/admin/host server-side too. Polled every 4s like the session list;
-  // a failure just nulls the chip (older CP without the endpoint, or down).
-  const HIST_N = 60; // sparkline ring buffer: ~4 min at the 4s poll cadence
-  const [wsStats, setWsStats] = useState(null);
-  const [wsHist, setWsHist] = useState([]); // [{cpu, mem}] for the WsBar sparklines
-  useEffect(() => {
-    let alive = true;
-    setWsHist([]); // tenant switch → start the trend fresh
-    const load = () =>
-      api("api/workspace/stats")
-        .then((d) => {
-          if (!alive) return;
-          const ok = d && !d.error;
-          setWsStats(ok ? d : null);
-          if (ok && d.running && d.mem_used != null) {
-            const mem = d.mem_max ? d.mem_used / d.mem_max : null;
-            const cpu = typeof d.cpu_pct === "number" ? d.cpu_pct : null;
-            setWsHist((h) => [...h, { cpu, mem }].slice(-HIST_N));
-          } else {
-            setWsHist([]); // stopped / unreachable → drop the stale trend
-          }
-        })
-        .catch(() => {
-          if (!alive) return;
-          setWsStats(null);
-          setWsHist([]);
-        });
-    load();
-    const id = setInterval(load, 4000);
-    return () => {
-      alive = false;
-      clearInterval(id);
-    };
-  }, [tenant]);
-
-  const [hostStats, setHostStats] = useState(null);
-  const [hostHist, setHostHist] = useState([]); // [{load, mem}], load normalized to cores
-  useEffect(() => {
-    if (!superAdmin) {
-      setHostStats(null);
-      setHostHist([]);
-      return;
-    }
-    let alive = true;
-    const load = () =>
-      api("api/admin/host")
-        .then((d) => {
-          if (!alive) return;
-          const ok = d && !d.error;
-          setHostStats(ok ? d : null);
-          if (ok && d.mem_total != null) {
-            const ldNorm = d.ncpu ? d.load1 / d.ncpu : null;
-            const mem = d.mem_used / d.mem_total;
-            setHostHist((h) => [...h, { load: ldNorm, mem }].slice(-HIST_N));
-          }
-        })
-        .catch(() => alive && setHostStats(null));
-    load();
-    const id = setInterval(load, 4000);
-    return () => {
-      alive = false;
-      clearInterval(id);
-    };
-  }, [superAdmin]);
+  // The WsBar resource chips (own workspace mem/CPU, host load/mem) poll every 4s.
+  // That polling lives in WsBar itself (useWsResourceChips), NOT here: keeping the
+  // 4s-changing stats out of this top-level provider stops every 4s tick from
+  // re-rendering the whole app (terminals included) — which janked the main thread
+  // and flickered the cursor. WsBar is the sole consumer, so the re-render is now
+  // confined to it. WsBar reads `tenant` and `superAdmin` from this context.
 
   const bumpRepos = useCallback(() => setReposKey((k) => k + 1), []);
   const bumpConn = useCallback(() => setConnKey((k) => k + 1), []);
@@ -794,10 +734,6 @@ export function AppProvider({ children }) {
     ocweb,
     setOcweb,
     refreshOcweb,
-    wsStats,
-    hostStats,
-    wsHist,
-    hostHist,
     // active-pane projection (back-compat)
     mode: activePane.kind,
     scmRepo: activePane.scmRepo,

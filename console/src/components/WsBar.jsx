@@ -1,8 +1,82 @@
 import { useEffect, useRef, useState } from "react";
 import { useApp } from "../state.jsx";
-import { previewURL, ocwebURL } from "../api.js";
+import { api, previewURL, ocwebURL } from "../api.js";
 import Icon from "./Icon.jsx";
 import Sparkline from "./Sparkline.jsx";
+
+const HIST_N = 60; // sparkline ring buffer: ~4 min at the 4s poll cadence
+
+// useWsResourceChips polls the workspace + host resource stats every 4s. It lives
+// here (not in the global state provider) on purpose: these values change every
+// tick, so holding them in the top-level context would re-render the whole app
+// (terminals included) every 4s and jank/flicker the cursor. Confined to WsBar,
+// only the small bar re-renders. Container stats are for everyone; host stats are
+// super_admin-only (the CP gates /api/admin/host server-side too).
+function useWsResourceChips(tenant, superAdmin) {
+  const [wsStats, setWsStats] = useState(null);
+  const [wsHist, setWsHist] = useState([]); // [{cpu, mem}]
+  useEffect(() => {
+    let alive = true;
+    setWsHist([]); // tenant switch → start the trend fresh
+    const load = () =>
+      api("api/workspace/stats")
+        .then((d) => {
+          if (!alive) return;
+          const ok = d && !d.error;
+          setWsStats(ok ? d : null);
+          if (ok && d.running && d.mem_used != null) {
+            const mem = d.mem_max ? d.mem_used / d.mem_max : null;
+            const cpu = typeof d.cpu_pct === "number" ? d.cpu_pct : null;
+            setWsHist((h) => [...h, { cpu, mem }].slice(-HIST_N));
+          } else {
+            setWsHist([]); // stopped / unreachable → drop the stale trend
+          }
+        })
+        .catch(() => {
+          if (!alive) return;
+          setWsStats(null);
+          setWsHist([]);
+        });
+    load();
+    const id = setInterval(load, 4000);
+    return () => {
+      alive = false;
+      clearInterval(id);
+    };
+  }, [tenant]);
+
+  const [hostStats, setHostStats] = useState(null);
+  const [hostHist, setHostHist] = useState([]); // [{load, mem}], load normalized to cores
+  useEffect(() => {
+    if (!superAdmin) {
+      setHostStats(null);
+      setHostHist([]);
+      return;
+    }
+    let alive = true;
+    const load = () =>
+      api("api/admin/host")
+        .then((d) => {
+          if (!alive) return;
+          const ok = d && !d.error;
+          setHostStats(ok ? d : null);
+          if (ok && d.mem_total != null) {
+            const ldNorm = d.ncpu ? d.load1 / d.ncpu : null;
+            const mem = d.mem_used / d.mem_total;
+            setHostHist((h) => [...h, { load: ldNorm, mem }].slice(-HIST_N));
+          }
+        })
+        .catch(() => alive && setHostStats(null));
+    load();
+    const id = setInterval(load, 4000);
+    return () => {
+      alive = false;
+      clearInterval(id);
+    };
+  }, [superAdmin]);
+
+  return { wsStats, wsHist, hostStats, hostHist };
+}
 
 // WS bar: the (single) workspace's state plus Start / Stop. The backend models one
 // workspace per membership, so there is no select / create / delete. The
@@ -43,8 +117,8 @@ function tile({ k, series, max, track, value, level, title }) {
 }
 
 export default function WsBar() {
-  const { wsState, startWs, stopWs, refreshWs, ocweb, wsStats, hostStats, wsHist, hostHist, layout, resetToTerminal } =
-    useApp();
+  const { wsState, startWs, stopWs, refreshWs, ocweb, tenant, superAdmin, layout, resetToTerminal } = useApp();
+  const { wsStats, wsHist, hostStats, hostHist } = useWsResourceChips(tenant, superAdmin);
   const isMobile = useIsMobile();
   const [port, setPort] = useState("");
   const [pvOpen, setPvOpen] = useState(false); // desktop port-preview popover
