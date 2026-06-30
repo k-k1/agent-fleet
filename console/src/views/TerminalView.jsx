@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef } from "react";
-import { ensureTerm, fit, focusTerm, attach, detach } from "../term.js";
+import { ensureTerm, fit, focusTerm, attach, detach, reconnect } from "../term.js";
 import { rel } from "../api.js";
 import TermKeys from "../components/TermKeys.jsx";
 import Icon from "../components/Icon.jsx";
@@ -57,6 +57,7 @@ export default function TerminalView({ paneId = "p0", session = null, sessionMet
     if (active) {
       fit(paneId);
       focusTerm(paneId);
+      reconnect(paneId); // recover a dropped PTY when this pane becomes active
     }
   }, [active, paneId]);
 
