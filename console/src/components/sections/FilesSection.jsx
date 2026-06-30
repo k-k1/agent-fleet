@@ -60,6 +60,7 @@ export default function FilesSection() {
   const [changes, setChanges] = useState(null); // changes-mode: aggregated git status
   const [dropTarget, setDropTarget] = useState(null); // dir path being hovered with a drag ("" = root)
   const [uploading, setUploading] = useState(false);
+  const [opsOpen, setOpsOpen] = useState(false); // ＋ (new / upload) header dropdown
   const [menu, setMenu] = useState(null); // context menu: { x, y, row|null }
   const treeRef = useRef(null);
   const selRef = useRef(null);
@@ -157,10 +158,18 @@ export default function FilesSection() {
     [running],
   );
 
+  // Close the ＋ header menu on any outside click (the wrap stops its own clicks).
+  useEffect(() => {
+    if (!opsOpen) return;
+    const close = () => setOpsOpen(false);
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [opsOpen]);
+
   // --- file operations (new / rename / delete) ---
   const newFolder = useCallback(
     async (parent) => {
-      const name = window.prompt("新しいフォルダ名", "");
+      const name = window.prompt(`新しいフォルダ名（作成先: ${parent || "home"}）`, "");
       if (!name || !name.trim()) return;
       const p = joinPath(parent, name.trim());
       const res = await fsMkdir(p);
@@ -172,7 +181,7 @@ export default function FilesSection() {
   );
   const newFile = useCallback(
     async (parent) => {
-      const name = window.prompt("新しいファイル名", "");
+      const name = window.prompt(`新しいファイル名（作成先: ${parent || "home"}）`, "");
       if (!name || !name.trim()) return;
       const p = joinPath(parent, name.trim());
       const res = await fsNewFile(p);
@@ -509,30 +518,35 @@ export default function FilesSection() {
         <>
           {view === "tree" && (
             <>
-              <button
-                className="ghost"
-                title={running ? `新規ファイル${uploadDir ? "（" + uploadDir + "）" : "（home）"}` : "ワークスペース停止中"}
-                disabled={!running}
-                onClick={() => newFile(uploadDir)}
-              >
-                <Icon name="new-file" />
-              </button>
-              <button
-                className="ghost"
-                title={running ? `新規フォルダ${uploadDir ? "（" + uploadDir + "）" : "（home）"}` : "ワークスペース停止中"}
-                disabled={!running}
-                onClick={() => newFolder(uploadDir)}
-              >
-                <Icon name="new-folder" />
-              </button>
-              <button
-                className="ghost"
-                title={running ? `アップロード${uploadDir ? "（" + uploadDir + "）" : "（home）"}` : "ワークスペース停止中"}
-                disabled={uploading || !running}
-                onClick={() => fileInputRef.current?.click()}
-              >
-                <Icon name="cloud-upload" spin={uploading} />
-              </button>
+              <div className="launch-wrap files-ops" onMouseDown={(e) => e.stopPropagation()}>
+                <button
+                  className="ghost"
+                  title={running ? "新規 / アップロード" : "ワークスペース停止中"}
+                  disabled={!running}
+                  onClick={() => setOpsOpen((v) => !v)}
+                >
+                  <Icon name="add" />
+                </button>
+                {opsOpen && (
+                  <div className="launch-menu">
+                    {/* The target folder once, as a header, instead of repeating it
+                        on every item. */}
+                    <div className="menu-head" title={uploadDir || "home"}>
+                      <Icon name="folder" />
+                      <span className="menu-head-path">{uploadDir || "home"}</span>
+                    </div>
+                    <button onClick={() => { setOpsOpen(false); newFile(uploadDir); }}>
+                      <Icon name="new-file" /> 新規ファイル
+                    </button>
+                    <button onClick={() => { setOpsOpen(false); newFolder(uploadDir); }}>
+                      <Icon name="new-folder" /> 新規フォルダ
+                    </button>
+                    <button disabled={uploading} onClick={() => { setOpsOpen(false); fileInputRef.current?.click(); }}>
+                      <Icon name="cloud-upload" spin={uploading} /> アップロード
+                    </button>
+                  </div>
+                )}
+              </div>
               <button className="ghost" title="すべて畳む" disabled={!hasOpen} onClick={collapseAll}>
                 <Icon name="collapse-all" />
               </button>

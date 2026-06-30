@@ -808,6 +808,29 @@ textarea:focus {
 .launch-menu button:hover {
   background: var(--btn);
 }
+/* Header row naming the target folder once, so the items below don't each repeat
+   it (e.g. "新規ファイル（.cache）" ×3). Non-interactive; the path ellipsizes. */
+.launch-menu .menu-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 260px;
+  padding: 4px 8px 6px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 11px;
+}
+.launch-menu .menu-head .codicon {
+  flex: none;
+  color: var(--accent);
+}
+.launch-menu .menu-head-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--mono);
+}
 
 /* Archived-sessions modal */
 .archived-list {
@@ -1407,6 +1430,18 @@ textarea:focus {
 [data-theme="light"] .seg-btn.active {
   background: var(--active-bg);
   color: var(--accent);
+}
+/* Files tree/changes toggle: a gentler, theme-following active state instead of the
+   full accent fill the other segmented controls use. */
+.files-view .seg-btn.active {
+  background: var(--active-bg);
+  color: var(--fg);
+}
+/* The ＋ (new / upload) menu sits near the right edge of the narrow pane — open it
+   leftward so it doesn't overflow. */
+.files-ops .launch-menu {
+  left: auto;
+  right: 0;
 }
 .picked {
   font-size: 11px;
