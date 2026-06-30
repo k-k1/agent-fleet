@@ -56,6 +56,13 @@ type PAT struct {
 	CreatedAt, ExpiresAt, RevokedAt, LastUsedAt string
 }
 
+// AuditLog records one administrative action (docs/decisions/0006, P3-6).
+// ActorKind ∈ user | admin | mcp | system; ActorID is the identity/PAT id behind
+// it. TenantID scopes the entry ("" = deployment-wide). At is RFC3339.
+type AuditLog struct {
+	ID, TenantID, ActorKind, ActorID, Action, Target, Detail, At string
+}
+
 // Workspace is one container per Membership (= identity × tenant).
 type Workspace struct {
 	ID, TenantID, MembershipID      string
@@ -120,6 +127,11 @@ type Store interface {
 	ListPATsByIdentity(ctx context.Context, identityID string) ([]PAT, error)
 	RevokePAT(ctx context.Context, id, identityID string) error
 	TouchPAT(ctx context.Context, id string) error
+
+	// Audit log (docs/decisions/0006, P3-6). InsertAudit records one action;
+	// ListAuditByTenant serves the most recent entries (newest first) for a tenant.
+	InsertAudit(ctx context.Context, a AuditLog) error
+	ListAuditByTenant(ctx context.Context, tenantID string, limit int) ([]AuditLog, error)
 
 	Close() error
 }
