@@ -504,6 +504,7 @@ export default function FilesSection() {
   return (
     <Section
       title="Files"
+      icon="files"
       actions={
         <>
           {view === "tree" && (

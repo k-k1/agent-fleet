@@ -131,6 +131,7 @@ export default function SessionsSection() {
   return (
     <Section
       title="Sessions"
+      icon="terminal"
       actions={
         <>
           <button

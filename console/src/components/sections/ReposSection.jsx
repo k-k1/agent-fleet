@@ -119,6 +119,7 @@ export default function ReposSection() {
   return (
     <Section
       title="Repos"
+      icon="repo"
       actions={
         <>
           <button
