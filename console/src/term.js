@@ -86,7 +86,13 @@ function wireGlobalResize() {
   // On mobile the soft keyboard shrinks the layout viewport rather than firing a
   // window resize; visualViewport fires its own resize so grids refit and the
   // prompt isn't left hidden behind the keyboard.
-  if (window.visualViewport) window.visualViewport.addEventListener("resize", fitAll);
+  if (window.visualViewport)
+    window.visualViewport.addEventListener("resize", () => {
+      fitAll();
+      // Keyboard opened/closed (or rotated): re-place the focused prompt above it,
+      // or clear the shift when it's gone.
+      keepInputVisible(focusedInst());
+    });
 }
 
 // Returning to the app reconnects any dropped panes. This is the recovery path for
@@ -111,6 +117,48 @@ function fitInst(it) {
   try {
     it && it.fitAddon && it.fitAddon.fit();
   } catch {}
+}
+
+// Show the mobile soft keyboard (GBoard) only while a PTY is actually connected.
+// inputmode="none" lets the terminal still take focus — so tapping a dropped pane
+// still triggers reconnect — without the keyboard filling a phone screen over a
+// disconnected/empty terminal. Desktop browsers ignore inputmode, so typing there
+// is unaffected.
+function setSoftKeyboard(it, enabled) {
+  const ta = it && it.term && it.term.textarea;
+  if (ta) ta.inputMode = enabled ? "" : "none";
+}
+
+// The pane whose terminal currently holds focus (its hidden helper textarea is the
+// active element), or null.
+function focusedInst() {
+  const ae = document.activeElement;
+  for (const it of insts.values()) {
+    if (it.term && it.term.textarea === ae) return it;
+  }
+  return null;
+}
+
+// Keep the focused terminal's prompt above the mobile soft keyboard. GBoard overlays
+// the bottom of the page without shrinking the layout (viewport default
+// resizes-visual), and the app is locked to 100% with no scrollable overflow — so
+// there's nothing to scroll. Instead we translate the main area up by however much
+// the focused pane sits behind the keyboard. A bottom/single pane computes a
+// positive overlap and rises; a top pane (its bottom already above the keyboard)
+// computes a non-positive overlap and stays put. Desktop / no-keyboard → overlap
+// path is skipped and any prior shift is cleared.
+function keepInputVisible(it) {
+  const vv = window.visualViewport;
+  const main = document.querySelector(".main");
+  if (!vv || !main) return;
+  main.style.transform = ""; // measure against the natural (untranslated) position
+  const el = it && it.term && it.term.element;
+  if (!el) return;
+  const keyboard = window.innerHeight - vv.height; // ~0 unless a soft keyboard is up
+  if (keyboard < 150) return; // ignore URL-bar show/hide; only react to a keyboard
+  const pane = el.closest(".pane") || el;
+  const overlap = pane.getBoundingClientRect().bottom - (vv.offsetTop + vv.height);
+  if (overlap > 0) main.style.transform = `translateY(-${Math.ceil(overlap) + 4}px)`;
 }
 
 // ensureTerm builds a pane's terminal once and opens it into `el`. Subsequent calls
@@ -320,8 +368,18 @@ export function ensureTerm(paneId, el) {
   // Covers both ways a pane regains focus — clicking into the terminal, or it
   // becoming the active pane (which calls focusTerm → focuses this textarea).
   if (term.textarea) {
-    term.textarea.addEventListener("focus", () => reconnect(paneId));
+    term.textarea.addEventListener("focus", () => {
+      reconnect(paneId);
+      // First focus opens the keyboard (the visualViewport resize will place the
+      // prompt); this handles switching panes while the keyboard is already up.
+      requestAnimationFrame(() => keepInputVisible(inst(paneId)));
+    });
+    // Refocus elsewhere / keyboard closing: re-place for the new focus, or clear.
+    term.textarea.addEventListener("blur", () => {
+      requestAnimationFrame(() => keepInputVisible(focusedInst()));
+    });
   }
+  setSoftKeyboard(it, false); // no session yet → keep the soft keyboard down
 
   fitAddon.fit();
   term.onData((d) => it.ws && it.ws.readyState === 1 && it.ws.send(JSON.stringify({ type: "input", data: d })));
@@ -379,11 +437,13 @@ export function attach(paneId, session) {
   it.term.reset();
   setSession(it, session);
   it.dropped = false; // fresh socket: clear any prior unexpected-drop flag
+  setSoftKeyboard(it, false); // keep the keyboard down until the PTY is live
   const ws = new WebSocket(wsURL(session));
   it.ws = ws;
   ws.binaryType = "arraybuffer";
   ws.onopen = () => {
     fitInst(it);
+    setSoftKeyboard(it, true); // PTY connected → allow the soft keyboard for input
     ws.send(JSON.stringify({ type: "resize", cols: it.term.cols, rows: it.term.rows }));
   };
   ws.onmessage = (ev) => {
@@ -394,6 +454,7 @@ export function attach(paneId, session) {
   // first). Flag it so refocusing the pane reconnects — see reconnect().
   ws.onclose = () => {
     it.dropped = true;
+    setSoftKeyboard(it, false); // no live PTY → don't summon the keyboard on focus
     it.term.write("\r\n[disconnected]\r\n");
   };
   // Focus after the next paint, by when the pane has been un-hidden (the caller
@@ -425,6 +486,7 @@ export function detach(paneId) {
     } catch {}
     it.ws = null;
   }
+  setSoftKeyboard(it, false); // empty pane → keep the soft keyboard down
   setSession(it, null);
 }
 
