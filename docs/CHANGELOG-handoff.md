@@ -73,3 +73,8 @@
 
 ## 2026-06-29
 - **ファイルビュアーに Marp スライドプレビュー追加**（`MarpView.jsx`＋`@marp-team/marp-core`、`FileView.jsx`/`lib/filemeta.js` の `isMarpDoc()`）。frontmatter `marp: true` の `.md` を本物の Marp スライドとして表示（スライド/プレビュー/ソースの3トグル・既定スライド）。Shadow DOM 隔離・遅延 import・ステッパー＋全画面（Fullscreen API）。**ハマり**: marp-core が `mathjax-full`(~43MB)/`katex` を静的 require → `math:false` でも素では Vite ビルドがミニファイ段でハング（>9分）。`math:false` 時に実行時アクセスなしを trap-proxy で検証し、`vite.config.js` の alias で `marp-math-stub.js` に差し替えバンドル除外（28s 復帰）。詳細 HANDOFF ファイルビュアー節。※**未目視検証**（console は headless 不可）＝要ブラウザ確認。
+
+## 2026-06-30
+- **セッションクォータを同時稼働数で数えるよう修正**（`control-plane/manager.go countSessions`）。Agent の `/sessions` は停止中（再開可能・TTL 7d）も返すため、稼働中が上限未満でも `session limit reached` で新規作成が弾かれていた。`alive==true` のみカウントへ。
+- **API エラー文言を i18n 対応の形へ**: サーバは言語非依存の `code`（`quota_sessions`）＋開発者向け英語フォールバックのみ返し、表示文言は Console の `errText()`（`src/api.js`）が `code` から組み立て（未知 code はサーバ message にフォールバック）。`ReposSection`/`NewSessionModal` を移行。将来のロケール辞書はこの map を差し替えるだけ。
+- **dev 反映の軽量経路を整備**: `deploy/local/restart-cp.sh` 追加（Workspace image を再ビルドせず console+CP を build → `af-cp` をその場再起動 → `/healthz` 検証。`SKIP_CONSOLE=1` で CP だけ）。§3 の OOM リスクを避ける常用手順。反映早見表（HANDOFF §2）も更新し、稼働中 Workspace の image 入れ替えは**利用者の Stop→Start**と明記。
