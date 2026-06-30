@@ -30,9 +30,10 @@ const freeName = (base, used) => {
 // switch branch, fetch, start a session in the repo, delete, or open Source
 // Control (→ main area). The dirty dot mirrors uncommitted changes.
 export default function ReposSection() {
-  const { reposKey, bumpRepos, bumpSessions, bumpFiles, revealInFiles, showSCM, showTerminal, showTerminalSplit, scmRepo, mode, session } =
+  const { reposKey, connKey, bumpRepos, bumpSessions, bumpFiles, revealInFiles, showSCM, showTerminal, showTerminalSplit, scmRepo, mode, session } =
     useApp();
   const [repos, setRepos] = useState([]);
+  const [conns, setConns] = useState(null); // null = unknown (loading/failed) → show all
   const [showClone, setShowClone] = useState(false);
   const [cloning, setCloning] = useState(null); // { name } while a clone runs (left-pane spinner)
   const [activeRepo, setActiveRepo] = useState(null); // repo used by the attached session
@@ -66,6 +67,31 @@ export default function ReposSection() {
       alive = false;
     };
   }, [reposKey]);
+
+  // Agent connection state, so the 起動 menu only offers agents the user has set up.
+  // Refetched when a connect/disconnect bumps connKey. Only a clean response sets it;
+  // on error/unknown we leave it null and show every kind (don't hide on a blip).
+  useEffect(() => {
+    let alive = true;
+    api("api/connections")
+      .then((d) => alive && setConns(d && !d.error ? d : null))
+      .catch(() => alive && setConns(null));
+    return () => {
+      alive = false;
+    };
+  }, [connKey]);
+
+  // shell is always available; an agent kind only appears once its connection is set
+  // up (Claude/Codex signed in, opencode has at least one API key env). While conns
+  // is unknown (null) we show all so a slow/failed probe never hides a valid option.
+  const ready = (k) => {
+    if (k === "shell" || !conns) return true;
+    if (k === "claude") return !!conns.claude?.connected;
+    if (k === "codex") return !!conns.codex?.connected;
+    if (k === "opencode") return !!(conns.opencode?.envs?.length > 0);
+    return true;
+  };
+  const launchKinds = ["claude", "opencode", "codex", "shell"].filter(ready);
 
   // Resolve which repo the currently-attached session works in, so we can show it
   // selected (highlighted) in place. Refetched when the attached session changes.
@@ -115,6 +141,7 @@ export default function ReposSection() {
           <RepoRow
             key={r.name}
             r={r}
+            kinds={launchKinds}
             active={mode === "scm" && scmRepo === r.name}
             selected={r.name === activeRepo}
             // One click on the repo: reveal it in the Files tree AND open the
@@ -157,7 +184,7 @@ export default function ReposSection() {
 // the row stays compact: name + 起動 (where the branch chip used to sit). `active`
 // = open in the SCM pane; `selected` = the attached session's repo — both just
 // highlight the row in place (no reordering).
-function RepoRow({ r, active, selected, onOpen, onLaunch }) {
+function RepoRow({ r, kinds = ["claude", "opencode", "codex", "shell"], active, selected, onOpen, onLaunch }) {
   const [showLaunch, setShowLaunch] = useState(false);
 
   // Close the launch dropdown on any outside click.
@@ -188,7 +215,7 @@ function RepoRow({ r, active, selected, onOpen, onLaunch }) {
           </button>
           {showLaunch && (
             <div className="launch-menu">
-              {["claude", "opencode", "codex", "shell"].map((k) => (
+              {kinds.map((k) => (
                 <button
                   key={k}
                   title="中クリックで新ペインに起動"
