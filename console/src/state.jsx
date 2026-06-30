@@ -209,6 +209,61 @@ export function AppProvider({ children }) {
   const closeNav = useCallback(() => setNavOpen(false), []);
   const toggleNav = useCallback(() => setNavOpen((o) => !o), []);
 
+  // Mobile: swipe right to open the navigator drawer (same as the hamburger), swipe
+  // left to close it while open. Only under the 760px breakpoint (where the drawer
+  // is a slide-in). "open" arms when the touch starts in the left region with the
+  // drawer shut; "close" arms anywhere with it open. We deliberately DON'T require
+  // the extreme edge: Android reserves the first ~tens of px for its system back
+  // gesture, which eats edge-start touches before the page sees them — so we accept
+  // a rightward swipe starting anywhere in the left third. Passive listeners (no
+  // preventDefault) so terminal/list scrolling is unaffected — a vertical drag
+  // (dy ≥ dx) is ignored.
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 760px)");
+    const DIST = 50; // px of horizontal travel to trigger
+    let sx = 0, sy = 0, mode = null; // "open" | "close" | null
+    const onStart = (e) => {
+      const t = e.touches[0];
+      mode = null;
+      if (t && mq.matches) {
+        if (navOpenRef.current) mode = "close";
+        else if (t.clientX < Math.min(window.innerWidth * 0.33, 160)) mode = "open";
+      }
+      if (t) {
+        sx = t.clientX;
+        sy = t.clientY;
+      }
+    };
+    const onMove = (e) => {
+      if (!mode) return;
+      const t = e.touches[0];
+      if (!t) return;
+      const dx = t.clientX - sx;
+      const dy = t.clientY - sy;
+      if (Math.abs(dx) <= Math.abs(dy)) return; // vertical → leave it for scrolling
+      if (mode === "open" && dx > DIST) {
+        setNavOpen(true);
+        mode = null;
+      } else if (mode === "close" && dx < -DIST) {
+        setNavOpen(false);
+        mode = null;
+      }
+    };
+    const onEnd = () => {
+      mode = null;
+    };
+    window.addEventListener("touchstart", onStart, { passive: true });
+    window.addEventListener("touchmove", onMove, { passive: true });
+    window.addEventListener("touchend", onEnd, { passive: true });
+    window.addEventListener("touchcancel", onEnd, { passive: true });
+    return () => {
+      window.removeEventListener("touchstart", onStart);
+      window.removeEventListener("touchmove", onMove);
+      window.removeEventListener("touchend", onEnd);
+      window.removeEventListener("touchcancel", onEnd);
+    };
+  }, []);
+
   // pushDrawerEntry records a history entry representing "the mobile drawer is open
   // over the current view". The show* helpers push it just before navigating away
   // from an OPEN drawer, so the device/browser back button reopens the drawer
