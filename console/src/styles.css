@@ -886,6 +886,12 @@ textarea:focus {
   overflow-y: auto;
   max-height: 56vh;
 }
+/* In the New Session / New Repo picker, cap the branch list to ~5 rows so a long
+   list can't push the "作成して開く" button off-screen (accidental early submit).
+   The branch-switch modal keeps the taller 56vh list above. */
+.repopicker .branch-list {
+  max-height: 230px;
+}
 .branch-item {
   display: flex;
   flex-direction: column;
