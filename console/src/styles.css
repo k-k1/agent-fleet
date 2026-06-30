@@ -1712,8 +1712,15 @@ body.row-resizing {
 .fi-name {
   font-size: 12px;
   color: var(--fg);
+  /* shrink + ellipsis a long filename instead of letting the bar wrap */
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .fi-tag {
+  flex: none;
+  white-space: nowrap;
   font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.03em;
@@ -1723,6 +1730,8 @@ body.row-resizing {
   padding: 0 6px;
 }
 .fi-meta {
+  flex: none;
+  white-space: nowrap;
   font-size: 11px;
 }
 .fi-path {
@@ -1734,10 +1743,11 @@ body.row-resizing {
   white-space: nowrap;
   font-size: 11px;
 }
-/* download affordance sits at the end of the info bar (after the right-aligned
-   path, which already takes the remaining width). */
+/* download affordance sits at the end of the info bar; margin-left:auto pins it
+   to the right edge even when the (right-aligned) path is hidden on narrow panes. */
 .fi-dl {
   flex: 0 0 auto;
+  margin-left: auto;
   display: inline-flex;
   align-items: center;
   color: var(--muted);
@@ -1745,6 +1755,19 @@ body.row-resizing {
 }
 .fi-dl:hover {
   color: var(--fg);
+}
+/* Narrow pane: the full path duplicates the filename and is the first thing to
+   drop; very narrow, also drop the size/lines meta so the bar stays one clean
+   line (filename + type tag + download). (.fileview is the `filepane` container.) */
+@container filepane (max-width: 520px) {
+  .fileinfo .fi-path {
+    display: none;
+  }
+}
+@container filepane (max-width: 340px) {
+  .fileinfo .fi-meta {
+    display: none;
+  }
 }
 .codeview-wrap {
   flex: 1;
