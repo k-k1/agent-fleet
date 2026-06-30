@@ -128,6 +128,18 @@ func (m *manager) roleHintFor(email string) string {
 	return ""
 }
 
+// tenantAdminFor reports whether ident may administer tenant tID: a deployment
+// super_admin (any tenant) or a tenant_admin member of that specific tenant.
+// This is the per-tenant admin gate; deployment-wide actions (create tenant,
+// tenant quotas, clean-home, host stats, role grants) stay super_admin-only.
+func (m *manager) tenantAdminFor(ctx context.Context, ident Identity, tID string) bool {
+	if ident.Role == "super_admin" {
+		return true
+	}
+	mem, ok, err := m.store.GetMembership(ctx, ident.ID, tID)
+	return err == nil && ok && mem.Role == "tenant_admin"
+}
+
 // identityFor upserts and returns the caller's identity (used by /api/tenants and
 // admin RBAC). 401 if the gateway gave no identity.
 func (m *manager) identityFor(ctx context.Context, r *http.Request) (Identity, *apiError) {

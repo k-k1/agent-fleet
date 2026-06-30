@@ -138,6 +138,7 @@ func main() {
 	mux.HandleFunc("POST /api/admin/clean-home", cfg.handleAdminCleanHome) // wipe home (keep auth/connections)
 	mux.HandleFunc("PUT /api/admin/tenants/{slug}/limits", cfg.handleAdminSetTenantLimits)
 	mux.HandleFunc("PUT /api/admin/user-limits", cfg.handleAdminSetUserLimit)
+	mux.HandleFunc("PUT /api/admin/membership-role", cfg.handleAdminSetMembershipRole) // grant/revoke tenant_admin (super_admin only)
 	mux.HandleFunc("GET /api/admin/host", cfg.handleHostStats) // host load / memory (super_admin)
 
 	// Personal Access Tokens (Console-issued) for the MCP endpoint (docs/0006).

@@ -22,6 +22,7 @@ const fmtPct = (n) => (n == null ? "–" : Math.round(n) + "%");
 export default function AdminTab() {
   const [tenants, setTenants] = useState(null);
   const [forbidden, setForbidden] = useState(false);
+  const [isSuper, setIsSuper] = useState(false); // super_admin: unlocks deployment-wide controls
   // view: {stage:'tenants'} | {stage:'tenant', slug} | {stage:'member', slug, member}
   const [view, setView] = useState({ stage: "tenants" });
 
@@ -33,6 +34,7 @@ export default function AdminTab() {
         return;
       }
       setTenants(d.tenants || []);
+      setIsSuper(!!d.super_admin);
     } catch {
       setForbidden(true);
     }
@@ -87,6 +89,7 @@ export default function AdminTab() {
       {view.stage === "tenants" && (
         <TenantsList
           tenants={tenants}
+          isSuper={isSuper}
           onReload={loadTenants}
           onOpen={(slug) => setView({ stage: "tenant", slug })}
         />
@@ -95,6 +98,7 @@ export default function AdminTab() {
         <TenantView
           slug={view.slug}
           tenant={tenant}
+          isSuper={isSuper}
           onChanged={loadTenants}
           onOpenMember={(member) => setView({ stage: "member", slug: view.slug, member })}
         />
@@ -103,6 +107,7 @@ export default function AdminTab() {
         <MemberView
           slug={view.slug}
           member={view.member}
+          isSuper={isSuper}
           onChanged={loadTenants}
           onBack={() => setView({ stage: "tenant", slug: view.slug })}
         />
@@ -113,17 +118,19 @@ export default function AdminTab() {
 
 // --- Stage 1: tenant list ---------------------------------------------------
 
-function TenantsList({ tenants, onReload, onOpen }) {
+function TenantsList({ tenants, isSuper, onReload, onOpen }) {
   const [adding, setAdding] = useState(false);
   return (
     <div className="admin-stage">
       <div className="stage-head">
         <h4>テナント一覧</h4>
-        <button className="primary" onClick={() => setAdding((v) => !v)}>
-          <Icon name="add" /> 新規テナント
-        </button>
+        {isSuper && (
+          <button className="primary" onClick={() => setAdding((v) => !v)}>
+            <Icon name="add" /> 新規テナント
+          </button>
+        )}
       </div>
-      {adding && <NewTenant onCreated={() => { setAdding(false); onReload(); }} onCancel={() => setAdding(false)} />}
+      {isSuper && adding && <NewTenant onCreated={() => { setAdding(false); onReload(); }} onCancel={() => setAdding(false)} />}
       {tenants.length === 0 ? (
         <p className="muted">テナントがありません。「新規テナント」から作成してください。</p>
       ) : (
@@ -179,7 +186,7 @@ function NewTenant({ onCreated, onCancel }) {
 
 // --- Stage 2: tenant detail (limits + members) ------------------------------
 
-function TenantView({ slug, tenant, onChanged, onOpenMember }) {
+function TenantView({ slug, tenant, isSuper, onChanged, onOpenMember }) {
   const [maxWs, setMaxWs] = useState(tenant?.max_workspaces || 0);
   const [maxSs, setMaxSs] = useState(tenant?.max_sessions || 0);
   const [saved, setSaved] = useState(false);
@@ -215,21 +222,23 @@ function TenantView({ slug, tenant, onChanged, onOpenMember }) {
 
   return (
     <div className="admin-stage">
-      <section className="admin-panel">
-        <h4>上限（0 = 無制限）</h4>
-        <div className="form-row">
-          <label>
-            最大 Workspace
-            <input type="number" min="0" value={maxWs} onChange={(e) => setMaxWs(e.target.value)} />
-          </label>
-          <label>
-            最大 Session
-            <input type="number" min="0" value={maxSs} onChange={(e) => setMaxSs(e.target.value)} />
-          </label>
-          <button onClick={saveLimits} className="primary">保存</button>
-          {saved && <span className="saved-note"><Icon name="check" /> 保存しました</span>}
-        </div>
-      </section>
+      {isSuper && (
+        <section className="admin-panel">
+          <h4>上限（0 = 無制限）</h4>
+          <div className="form-row">
+            <label>
+              最大 Workspace
+              <input type="number" min="0" value={maxWs} onChange={(e) => setMaxWs(e.target.value)} />
+            </label>
+            <label>
+              最大 Session
+              <input type="number" min="0" value={maxSs} onChange={(e) => setMaxSs(e.target.value)} />
+            </label>
+            <button onClick={saveLimits} className="primary">保存</button>
+            {saved && <span className="saved-note"><Icon name="check" /> 保存しました</span>}
+          </div>
+        </section>
+      )}
 
       <section className="admin-panel">
         <h4>メンバー</h4>
@@ -254,13 +263,13 @@ function TenantView({ slug, tenant, onChanged, onOpenMember }) {
             ))}
           </div>
         )}
-        <AddMember slug={slug} onAdded={loadMembers} />
+        <AddMember slug={slug} isSuper={isSuper} onAdded={loadMembers} />
       </section>
     </div>
   );
 }
 
-function AddMember({ slug, onAdded }) {
+function AddMember({ slug, isSuper, onAdded }) {
   const [email, setEmail] = useState("");
   const [key, setKey] = useState("");
   const [role, setRole] = useState("member");
@@ -289,10 +298,12 @@ function AddMember({ slug, onAdded }) {
       <div className="form-row">
         <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="email" />
         <input value={key} onChange={(e) => setKey(e.target.value)} placeholder="または user_key" />
-        <select value={role} onChange={(e) => setRole(e.target.value)}>
-          <option value="member">member</option>
-          <option value="tenant_admin">tenant_admin</option>
-        </select>
+        {isSuper && (
+          <select value={role} onChange={(e) => setRole(e.target.value)}>
+            <option value="member">member</option>
+            <option value="tenant_admin">tenant_admin</option>
+          </select>
+        )}
         <button type="submit" className="primary">追加</button>
       </div>
       {err && <span className="form-err">{err}</span>}
@@ -302,14 +313,16 @@ function AddMember({ slug, onAdded }) {
 
 // --- Stage 3: member detail (resources + sessions + actions) ----------------
 
-function MemberView({ slug, member, onChanged }) {
+function MemberView({ slug, member, isSuper, onChanged }) {
   const [stats, setStats] = useState(null);
   const [sessions, setSessions] = useState(null);
   const [confirmStop, setConfirmStop] = useState(false);
   const [confirmClean, setConfirmClean] = useState(false);
+  const [confirmGrant, setConfirmGrant] = useState(false);
   const [busy, setBusy] = useState(false);
   const [limitOpen, setLimitOpen] = useState(false);
   const [limit, setLimit] = useState(member.max_sessions ?? 0);
+  const [role, setMemberRole] = useState(member.role); // tenant-scoped role, live-updated on grant/revoke
   const timer = useRef(null);
 
   const key = member.user_key;
@@ -364,14 +377,25 @@ function MemberView({ slug, member, onChanged }) {
     setLimitOpen(false);
     onChanged();
   };
+  const setRoleTo = async (newRole) => {
+    setBusy(true);
+    try {
+      await apiJSON("api/admin/membership-role", "PUT", { user_key: key, tenant_slug: slug, role: newRole });
+      setMemberRole(newRole);
+      setConfirmGrant(false);
+      onChanged();
+    } finally {
+      setBusy(false);
+    }
+  };
 
   return (
     <div className="admin-stage member-detail">
       <header className="member-head">
         <span className={"state-dot " + (running ? "on" : "off")} />
         <span className="mh-key mono">{key}</span>
-        {member.super_admin && <Icon name="star-full" className="mr-star" title="super_admin" />}
-        <span className="mh-role">{member.role}</span>
+        {member.super_admin && <Icon name="star-full" className="mr-star" title="super_admin（デプロイ全体）" />}
+        <span className="mh-role">{role}{role === "tenant_admin" ? "（テナント管理者）" : ""}</span>
         {member.email && <span className="mh-email muted">{member.email}</span>}
       </header>
 
@@ -438,6 +462,35 @@ function MemberView({ slug, member, onChanged }) {
         )}
       </section>
 
+      {isSuper && (
+        <section className="admin-panel">
+          <h4>権限</h4>
+          {member.super_admin ? (
+            <p className="muted">
+              <Icon name="star-full" className="mr-star" /> このユーザーはデプロイ全体の super_admin です（env <code>SUPER_ADMIN_EMAILS</code> で管理）。
+            </p>
+          ) : (
+            <div className="member-actions">
+              {role === "tenant_admin" ? (
+                <>
+                  <span className="role-now"><Icon name="shield" /> テナント管理者（tenant_admin）</span>
+                  <button disabled={busy} onClick={() => setRoleTo("member")}>
+                    管理者権限を解除
+                  </button>
+                </>
+              ) : (
+                <button className="primary" disabled={busy} onClick={() => setConfirmGrant(true)}>
+                  <Icon name="shield" /> このテナントの管理者にする
+                </button>
+              )}
+            </div>
+          )}
+          <p className="muted role-hint">
+            テナント管理者は <b>{slug}</b> 内のメンバー管理・リソース閲覧・Workspace 強制停止・セッション上限設定ができます（テナント作成・上限変更・home掃除・権限付与は不可）。
+          </p>
+        </section>
+      )}
+
       <section className="admin-panel">
         <h4>操作</h4>
         <div className="member-actions">
@@ -447,9 +500,11 @@ function MemberView({ slug, member, onChanged }) {
           <button onClick={() => { setLimit(member.max_sessions ?? 0); setLimitOpen(true); }}>
             <Icon name="settings" /> セッション上限を設定
           </button>
-          <button className="danger-btn" onClick={() => setConfirmClean(true)}>
-            <Icon name="trash" /> home を掃除
-          </button>
+          {isSuper && (
+            <button className="danger-btn" onClick={() => setConfirmClean(true)}>
+              <Icon name="trash" /> home を掃除
+            </button>
+          )}
         </div>
         {limitOpen && (
           <div className="limit-edit">
@@ -485,6 +540,19 @@ function MemberView({ slug, member, onChanged }) {
           <p>このユーザーの Workspace home を掃除します。コンテナは停止されます。</p>
           <p className="muted">保持: 接続情報 / git 認証 / Claude・Codex ログイン</p>
           <p className="muted">削除: repos（未コミット含む）/ キャッシュ / その他 home 配下</p>
+        </ConfirmDialog>
+      )}
+      {confirmGrant && (
+        <ConfirmDialog
+          title={`${key} を ${slug} の管理者にする`}
+          confirmLabel="管理者にする"
+          danger={false}
+          busy={busy}
+          onCancel={() => setConfirmGrant(false)}
+          onConfirm={() => setRoleTo("tenant_admin")}
+        >
+          <p>このメンバーに <b>{slug}</b> のテナント管理者権限を付与します。</p>
+          <p className="muted">付与後はこのテナント内のメンバー管理・リソース閲覧・Workspace 強制停止・セッション上限設定ができるようになります（他テナントには影響しません）。</p>
         </ConfirmDialog>
       )}
     </div>

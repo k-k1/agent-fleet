@@ -398,6 +398,12 @@ func (s *sqliteStore) GetMembership(ctx context.Context, identityID, tenantID st
 	return m, true, nil
 }
 
+func (s *sqliteStore) SetMembershipRole(ctx context.Context, membershipID, role string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE membership SET role=? WHERE id=?`, role, membershipID)
+	return err
+}
+
 func (s *sqliteStore) GetUserLimit(ctx context.Context, membershipID string) (UserLimit, bool, error) {
 	var u UserLimit
 	err := s.db.QueryRowContext(ctx,
