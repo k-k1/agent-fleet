@@ -58,15 +58,20 @@ func runSessionStatusHook(args []string) {
 	// tool_input.questions — capture it so the Console can show/answer the PENDING
 	// question (the tool_use isn't written to the transcript until it's answered).
 	var questions json.RawMessage
-	var plan, message, ntype string
+	var plan, message, ntype, toolDetail string
 	if sid == "" || codexMarker {
 		var in struct {
 			SessionID        string `json:"session_id"`
 			Message          string `json:"message"`           // Notification
 			NotificationType string `json:"notification_type"` // Notification
+			ToolName         string `json:"tool_name"`         // PreToolUse
 			ToolInput        struct {
-				Questions json.RawMessage `json:"questions"` // AskUserQuestion
-				Plan      string          `json:"plan"`      // ExitPlanMode
+				Questions    json.RawMessage `json:"questions"` // AskUserQuestion
+				Plan         string          `json:"plan"`      // ExitPlanMode
+				FilePath     string          `json:"file_path"` // Write/Edit
+				NotebookPath string          `json:"notebook_path"`
+				Path         string          `json:"path"`
+				Command      string          `json:"command"` // Bash
 			} `json:"tool_input"`
 		}
 		_ = json.NewDecoder(os.Stdin).Decode(&in)
@@ -80,9 +85,17 @@ func runSessionStatusHook(args []string) {
 			plan = in.ToolInput.Plan
 			message = in.Message
 			ntype = in.NotificationType
+			toolDetail = permToolDetail(in.ToolName, in.ToolInput.FilePath, in.ToolInput.NotebookPath, in.ToolInput.Path, in.ToolInput.Command)
 		}
 	}
 	if sid == "" {
+		return
+	}
+	// permtool: a PreToolUse hook for edit/command tools that just records what is
+	// about to run (for the permission block's detail) — it fires in EVERY mode, so
+	// it must not change the session status.
+	if state == "permtool" {
+		writeLastTool(sid, toolDetail)
 		return
 	}
 	// The Notification hook fires for several reasons (idle, permission, …); only
@@ -107,14 +120,64 @@ func runSessionStatusHook(args []string) {
 		removePendingPlan(sid)
 	}
 	if state == "permission" {
-		if message == "" {
+		// Prefer the specific tool detail captured just before the prompt.
+		if detail, ok := readLastTool(sid); ok && detail != "" {
+			message = detail
+		} else if message == "" {
 			message = "Claude needs your permission"
 		}
+		removeLastTool(sid)
 		writePendingPermission(sid, message)
 	} else {
 		removePendingPermission(sid)
 	}
 }
+
+// permToolDetail renders "Tool · target" for the permission block (target = the file
+// or the first line of the command); just the tool name when no recognizable arg.
+func permToolDetail(name, file, notebook, path, command string) string {
+	if name == "" {
+		return ""
+	}
+	arg := firstNonEmpty(file, notebook, path, command)
+	arg = strings.TrimSpace(arg)
+	if i := strings.IndexByte(arg, '\n'); i >= 0 {
+		arg = arg[:i]
+	}
+	if r := []rune(arg); len(r) > 100 {
+		arg = string(r[:100]) + "…"
+	}
+	if arg == "" {
+		return name
+	}
+	return name + " · " + arg
+}
+
+// last-tool: the tool about to run, recorded by the permtool PreToolUse hook and read
+// when a permission prompt fires, to give the permission block a concrete subject.
+func lastToolPath(sid string) string {
+	return filepath.Join(pendingPermDir(), sid+".tool")
+}
+
+func writeLastTool(sid, detail string) {
+	if detail == "" {
+		return
+	}
+	if err := os.MkdirAll(pendingPermDir(), 0o700); err != nil {
+		return
+	}
+	_ = os.WriteFile(lastToolPath(sid), []byte(detail), 0o600)
+}
+
+func readLastTool(sid string) (string, bool) {
+	b, err := os.ReadFile(lastToolPath(sid))
+	if err != nil || len(b) == 0 {
+		return "", false
+	}
+	return string(b), true
+}
+
+func removeLastTool(sid string) { _ = os.Remove(lastToolPath(sid)) }
 
 // A pending AskUserQuestion (the tool_input.questions array), kept only while the
 // session is in the question state so the Console can render and answer it.
@@ -230,6 +293,10 @@ func statusHookCmd(state string) string {
 	return agentExe() + " session-status " + state
 }
 
+// permToolMatcher is the PreToolUse regex for edit/command tools whose permission
+// prompts we surface (with the file/command) in the Console.
+const permToolMatcher = "Write|Edit|MultiEdit|NotebookEdit|Bash"
+
 // ensureStatusHooks makes settings.json carry the hooks that feed session state,
 // merging without disturbing the rtk PreToolUse/Bash hook or other settings.
 // Idempotent; called at agent startup (before sessions launch). States:
@@ -261,6 +328,13 @@ func ensureStatusHooks() {
 	}
 	if !preToolUseHasMatcher(hooks, "ExitPlanMode") {
 		ensurePreToolUseMatcher(hooks, "ExitPlanMode", statusHookCmd("plan"))
+		changed = true
+	}
+	// Edit/command tools: record what's about to run so the permission block (below)
+	// can name the file/command. Matcher is a regex over the tool name; permtool never
+	// changes status, so it's harmless when no prompt follows (bypass/accept modes).
+	if !preToolUseHasMatcher(hooks, permToolMatcher) {
+		ensurePreToolUseMatcher(hooks, permToolMatcher, statusHookCmd("permtool"))
 		changed = true
 	}
 	// PostToolUse: both resume to working once answered/approved. Re-set when the
