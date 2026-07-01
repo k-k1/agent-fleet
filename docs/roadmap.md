@@ -304,7 +304,7 @@ CP に `/mcp` を 1 本生やし、**管理面（運用チーム）と作業面�
 
 ## P3-9. 運用の成熟（社内・旧 Phase 4 を吸収）
 > ◐ **idle-stop 実装済**（[p3-9-idle-stop](history/p3-9-idle-stop.md)）+ **showback 段1+段2 実装済**（バックエンド + Console 使用量ダッシュボード、[p3-9-showback](history/p3-9-showback.md)、段2 は要目視確認）。
-> 残＝観測 / egress 統制 / auto-start。バックアップ/復元は P3-10 段3 で実装済。
+> **auto-start（オンデマンド起動）実装済**（idle-stop の対＝scale-to-zero 完結、`AF_AUTOSTART`, 既定 on）。残＝観測 / egress 統制。バックアップ/復元は P3-10 段3 で実装済。
 
 各社が自社デプロイを運用するための成熟。我々は機能と runbook を提供。
 
@@ -312,7 +312,7 @@ CP に `/mcp` を 1 本生やし、**管理面（運用チーム）と作業面�
 |------|------|----------------|
 | **社内 showback** ◐ | 部署別に使用量を可視化（任意の chargeback）。外部課金なし | **段1 実装済**: workspace 占有秒を per-(membership,day) にサンプリング累積（`AF_USAGE_SAMPLE_INTERVAL`, 既定 5m）→ `GET /api/admin/usage`（JSON=days+member 別 totals / CSV）。gate=super_admin（全社）or tenant_admin（自社 scope, `?tenant=`）。段2=Console ダッシュボード。設計 [p3-9-showback](history/p3-9-showback.md)。 |
 | **ライフサイクル** | provision は管理者手動 / 停止（部署解散→stop・データ N 日保持）/ オフボード（エクスポート + 鍵 disable で crypto-shred）| crypto-shred は P3-3 で無料。 |
-| **idle-stop（scale-to-zero）** ✅ | オンプレ単一ホストは RAM 逼迫（[[host-oom-fleet-risk]]）ゆえ**実運用上きわめて重要**（旧 Phase 4 C1 を前倒し）| **実装済**: 二段構え（第1段=idle claude を halt で resumable 化 / 第2段=冷えた WS を docker stop）。テナント別 timeout（super_admin 編集）。設計 [p3-9-idle-stop](history/p3-9-idle-stop.md)。残=auto-start / ECS desired=0（P3-7 と共通化）。 |
+| **idle-stop（scale-to-zero）** ✅ | オンプレ単一ホストは RAM 逼迫（[[host-oom-fleet-risk]]）ゆえ**実運用上きわめて重要**（旧 Phase 4 C1 を前倒し）| **実装済**: 二段構え（第1段=idle claude を halt で resumable 化 / 第2段=冷えた WS を docker stop）。テナント別 timeout（super_admin 編集）。設計 [p3-9-idle-stop](history/p3-9-idle-stop.md)。**auto-start（停止中 WS を端末アタッチ/セッション作成で自動起動、`AF_AUTOSTART` 既定 on）実装済**。残= ECS desired=0（P3-7 と共通化）。 |
 | **バックアップ/復元** | **価値の本体は永続 home（資格情報・履歴・clone）**。home + DB のバックアップ/復元は必須機能 | オンプレ=ディスクスナップ/rsync、AWS=AWS Backup/S3。runbook 同梱。 |
 | **観測** ◐ | メトリクス・アラート。noisy-neighbor 防止（クォータ + cgroup で緩和）| 簡易ダッシュボード + CloudWatch（AWS 時）。**全ユーザーのセッション俯瞰**を admin UI に実装（`GET /api/admin/sessions`＝running は Agent live / stopped は DB ミラー、テナント横断・検索・5s ポーリング。super_admin=全社 / tenant_admin=自社）。 |
 | **egress 統制** | 情報持ち出し統制として egress allowlist | github/bitbucket/anthropic/claude.ai。 |

@@ -34,6 +34,7 @@ type config struct {
 	allowEmails        map[string]bool
 	allowDomains       map[string]bool // allowed email domains (lowercased, no leading @)
 	allowEmailsFile    string          // emails.txt-style allowlist, read live per callback
+	autostart          bool            // P3-9: on-demand start of a stopped workspace on intentful access
 }
 
 func main() {
@@ -123,6 +124,9 @@ func main() {
 		allowEmails:        emailSet(os.Getenv("AF_OAUTH_ALLOWED_EMAILS")),
 		allowDomains:       domainSet(os.Getenv("AF_OAUTH_ALLOWED_DOMAINS")),
 		allowEmailsFile:    os.Getenv("AF_OAUTH_ALLOWED_EMAILS_FILE"),
+		// P3-9 auto-start (scale-to-zero counterpart): default on; AF_AUTOSTART=0
+		// disables it so a stopped workspace only starts on an explicit start click.
+		autostart: envBool("AF_AUTOSTART", true),
 	}
 
 	// P3-9 idle-stop (docs/19): a background reaper halts idle claude sessions
@@ -339,6 +343,19 @@ func main() {
 	srv := &http.Server{Addr: cfg.addr, Handler: logRequests(handler), ReadHeaderTimeout: 10 * time.Second}
 	if err := srv.ListenAndServe(); err != nil {
 		log.Fatal(err)
+	}
+}
+
+// envBool parses a boolean env var (1/true/yes/on = true, 0/false/no/off = false);
+// blank or unrecognized falls back to def.
+func envBool(k string, def bool) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(k))) {
+	case "1", "true", "yes", "on":
+		return true
+	case "0", "false", "no", "off":
+		return false
+	default:
+		return def
 	}
 }
 

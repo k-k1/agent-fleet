@@ -67,11 +67,22 @@ per-session live state を読むだけ、Agent は無改修）。
 
 段の staging: `session(30m) < ws(60m)` により、まず claude が畳まれ（RAM の大半を回収）、その後コンテナが停止。
 
-## 19.4 スコープ外（後続）
+## 19.4 auto-start（オンデマンド起動）= 実装済（scale-to-zero 完結）
 
-- **auto-start**（停止中 WS への次アクセスでオンデマンド起動）: 今回は見送り。停止中は従来通り Console の
-  Start ボタンで手動起動。reaper を先行させ RAM を回収、UX 補完は後続。
-- ディスク強制 / showback / メータリング（P3-9 の残項目）/ ECS desired=0（AWS アダプタ P3-7 と共通化）。
+idle-stop の**対**。停止中 WS へユーザーが**意図的にアクセス**した時、透過的にコンテナを起動する
+（手動 Start ボタン不要に）。これで「冷えたら止まる → 使う時に自動で戻る」が完結。
+
+- **トリガは 2 つの明確な "今から使う" 動作のみ**: 端末 WS アタッチ（`proxyTerminal`）とセッション作成
+  （`handleSessionCreate`）。**背景 GET ポーリング（session list / workspace state）は通さない**ので idle-stop の
+  意味論（開きっぱなしタブで温め続けない）を壊さない。
+- **共有コア** `config.ensureWorkspaceStarted`: State!=running なら max_workspaces クォータ（P3-4）を課してから
+  `Runtime.Start`（healthz 待ち）→ DB state=running。手動 start/recreate もこれに集約。`res.rt` は DEK 付きで
+  ビルド済ゆえ Start が `AF_SECRET_KEY` を正しく注入。
+- **既定 on**、`AF_AUTOSTART=0` で無効（明示 Start のみに戻す）。Runtime 港越しゆえ ECS では desired=0→1 が同じ
+  seam に載る（P3-7 と共通化）。
+- 検証: 隔離した使い捨て CP + テスト WS で start→stop→意図的 POST の後に state が **stopped→running** へ復帰する
+  ことを確認（セッション作成ペイロードが不正でも auto-start は先に発火＝proxy 前）。運用者の実 WS には非接触。
+- 残（スコープ外）: ディスク強制 / 観測アラート / egress 統制（P3-9 の残項目）。
 
 ## 19.5 触れたファイル
 
@@ -79,3 +90,5 @@ per-session live state を読むだけ、Agent は無改修）。
   manager.conns）、`proxy.go`/`preview.go`/`ocweb.go`（ingress 配線）、`tenants.go`（limits API 拡張）、
   `main.go`（env 既定 + reaper 起動）、`console/src/settings/AdminTab.jsx`（編集 UI）。
 - **スキーマ変更なし**（既存 `tenant.limits` JSON 列を再利用）。**Agent 無改修**（既存 halt / `GET /sessions` を利用）。
+- auto-start（19.4）: `runtime.go`（`ensureWorkspaceStarted` 抽出・`startResolved` 委譲・`handleSessionCreate` 注入）、
+  `proxy.go`（`proxyTerminal` 注入）、`main.go`（`config.autostart` + `envBool` + `AF_AUTOSTART`）。**Agent 無改修**。
