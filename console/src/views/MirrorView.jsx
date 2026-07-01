@@ -35,14 +35,12 @@ export default function MirrorView({ session, sessionMeta, active, mirror, onTog
   const tickRef = useRef(null); // lets send() trigger an immediate refresh
   const bodyRef = useRef(null);
   const inputRef = useRef(null);
-  const historyRef = useRef([]); // prompts sent from the composer (oldest→newest)
 
   // Reset accumulated turns when the session changes (cursor is a line index into
   // that session's jsonl, meaningless across sessions).
   useEffect(() => {
     cursorRef.current = 0;
     statusRef.current = "";
-    historyRef.current = [];
     setTurns([]);
     setStatus("");
     setPending(null);
@@ -142,19 +140,27 @@ export default function MirrorView({ session, sessionMeta, active, mirror, onTog
   const send = async () => {
     const text = draft.trim();
     if (!text) return;
-    const h = historyRef.current;
-    if (h[h.length - 1] !== text) h.push(text); // skip consecutive duplicates
     setHistIdx(null);
     setDraft("");
     await sendPrompt(text);
     inputRef.current?.focus();
   };
 
+  // Composer history = the user's own prompts in this conversation (so ↑ works even
+  // after a reload, not just for prompts typed since mount). Newest last.
+  const history = [];
+  for (const t of turns) {
+    if (t.role === "user" && t.text && !isNoise(t)) {
+      const s = t.text.trim();
+      if (s && history[history.length - 1] !== s) history.push(s);
+    }
+  }
+
   const onKeyDown = (e) => {
     // Shell-style history: ↑/↓ recall past prompts when the field is empty (or once
     // recall is underway). With text present, arrows move the caret as usual.
     if ((e.key === "ArrowUp" || e.key === "ArrowDown") && !e.nativeEvent.isComposing) {
-      const h = historyRef.current;
+      const h = history;
       const navigating = histIdx !== null;
       if (e.key === "ArrowUp" && (draft === "" || navigating) && h.length) {
         e.preventDefault();
