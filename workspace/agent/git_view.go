@@ -45,7 +45,11 @@ type Change struct {
 }
 
 func gitChanges(dir string) ([]Change, error) {
-	out, err := exec.Command("git", "-C", dir, "status", "--porcelain").Output()
+	// core.quotePath=false: emit non-ASCII (e.g. Japanese) paths verbatim as UTF-8
+	// instead of C-style octal escapes ("\346\227\245…"). Without it the escaped
+	// name reaches the Console FILES list and no longer matches the real path, so
+	// clicking a changed file fails to open it.
+	out, err := exec.Command("git", "-C", dir, "-c", "core.quotePath=false", "status", "--porcelain").Output()
 	if err != nil {
 		return nil, err
 	}
@@ -58,7 +62,7 @@ func gitChanges(dir string) ([]Change, error) {
 		if i := strings.Index(rest, " -> "); i >= 0 { // rename: show the new path
 			rest = rest[i+4:]
 		}
-		rest = strings.Trim(rest, `"`) // v1 quotes special-char paths
+		rest = strings.Trim(rest, `"`) // still quoted for control chars/quotes/backslashes
 		cs = append(cs, Change{Path: rest, Index: string(xy[0]), Worktree: string(xy[1]), Untracked: xy == "??"})
 	}
 	return cs, nil
@@ -83,7 +87,9 @@ func handleRepoDiff(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := r.URL.Query()
-	args := []string{"-C", dir, "diff"}
+	// core.quotePath=false: keep non-ASCII paths in the +++/--- headers as UTF-8
+	// so the Console renders them as text (see gitChanges).
+	args := []string{"-C", dir, "-c", "core.quotePath=false", "diff"}
 	if v := q.Get("staged"); v == "1" || v == "true" {
 		args = append(args, "--staged")
 	}
@@ -187,7 +193,7 @@ func handleRepoShow(w http.ResponseWriter, r *http.Request) {
 
 	// Changed files (name-status). First token = status, last = path (rename → new).
 	files := []commitFile{}
-	if ns, err := exec.Command("git", "-C", dir, "show", "--name-status",
+	if ns, err := exec.Command("git", "-C", dir, "-c", "core.quotePath=false", "show", "--name-status",
 		"--format=", "--no-color", sha).Output(); err == nil {
 		for _, line := range strings.Split(string(ns), "\n") {
 			f := strings.Split(strings.TrimSpace(line), "\t")
@@ -199,7 +205,7 @@ func handleRepoShow(w http.ResponseWriter, r *http.Request) {
 	out["files"] = files
 
 	// Full patch.
-	diff, err := exec.Command("git", "-C", dir, "show", "--format=", "--no-color", sha).Output()
+	diff, err := exec.Command("git", "-C", dir, "-c", "core.quotePath=false", "show", "--format=", "--no-color", sha).Output()
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "git_failed", err.Error())
 		return
