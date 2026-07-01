@@ -1598,6 +1598,11 @@ textarea:focus {
   align-items: center;
   justify-content: center;
 }
+/* an on/off toggle in the control cluster (line-wrap) — accent when active */
+.pane-controls .pane-btn.active {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+}
 /* drag grip sits at the pane's top-left, just left of the view-head's left
    badge (kind-tag / view-title); the view-head reserves matching left padding
    so the grip never covers it. */

@@ -26,7 +26,7 @@ export const useApp = () => useContext(AppContext);
 // A pane descriptor. kind drives which view renders; the *Path/Repo/session fields
 // are the per-kind payload. Empty terminal pane = "セッション未接続".
 function blankPane(id, patch) {
-  return { id, kind: "terminal", session: null, filePath: null, scmRepo: null, docTitle: null, docContent: null, diffTool: null, diffEdits: null, ...patch };
+  return { id, kind: "terminal", session: null, filePath: null, scmRepo: null, docTitle: null, docContent: null, diffTool: null, diffEdits: null, wrap: null, ...patch };
 }
 
 const equalRatios = (n) => Array(n).fill(1 / n);
@@ -111,6 +111,17 @@ export function AppProvider({ children }) {
       panes: c.panes.map((p) => (p.id === cur.activeId ? { ...p, ...patch } : p)),
     }));
     commit({ ...cur, cols }, push);
+  }, [commit]);
+
+  // setPaneWrap toggles line-wrapping for one pane (by id) — a per-pane override of the
+  // global wrap setting. Not pushed to history (a wrap toggle isn't a navigation step).
+  const setPaneWrap = useCallback((id, wrap) => {
+    const cur = layoutRef.current;
+    const cols = cur.cols.map((c) => ({
+      ...c,
+      panes: c.panes.map((p) => (p.id === id ? { ...p, wrap } : p)),
+    }));
+    commit({ ...cur, cols }, false);
   }, [commit]);
 
   // shows returns true if pane already displays exactly the target described by patch
@@ -819,6 +830,7 @@ export function AppProvider({ children }) {
     showFileSplit,
     showDoc,
     showDiff,
+    setPaneWrap,
     settingsOpen,
     openSettings: () => setSettingsOpen(true),
     closeSettings: () => setSettingsOpen(false),
