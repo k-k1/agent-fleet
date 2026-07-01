@@ -68,8 +68,27 @@ export default function MirrorView({ session, sessionMeta, active, mirror, onTog
         if (!alive) return;
         if (d && !d.error) {
           if (typeof d.cursor === "number") cursorRef.current = d.cursor;
-          if (Array.isArray(d.messages) && d.messages.length) {
+          // reset: the server's jsonl shrank or was replaced (compaction, or a
+          // different <sid>.jsonl became live), so our line cursor was stale and it
+          // re-sent from the top — replace, don't append. Otherwise append new turns.
+          if (d.reset) {
+            setTurns(Array.isArray(d.messages) ? d.messages : []);
+          } else if (Array.isArray(d.messages) && d.messages.length) {
             setTurns((t) => [...t, ...d.messages]);
+          }
+          // Diagnostic: surface the anomalies behind "sent but nothing shows" — no
+          // jsonl found, multiple <sid>.jsonl siblings (newest wins, an older one may
+          // have been read before), or a cursor reset. Quiet in the normal case.
+          if (d.reset || d.jsonlMatches > 1 || (d.alive && !d.jsonlPath)) {
+            // eslint-disable-next-line no-console
+            console.warn("[mirror] transcript diagnostic", {
+              session,
+              reset: !!d.reset,
+              jsonlPath: d.jsonlPath,
+              jsonlLines: d.jsonlLines,
+              jsonlMtime: d.jsonlMtime,
+              jsonlMatches: d.jsonlMatches,
+            });
           }
           if (d.status) {
             statusRef.current = d.status;
