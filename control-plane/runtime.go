@@ -508,6 +508,41 @@ func (c config) handleSessionCreate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if aerr := c.sessionQuotaExceeded(ctx, res); aerr != nil {
+		writeAPIErr(w, aerr)
+		return
+	}
+	c.proxyAgentREST(w, r)
+}
+
+// handleSessionFork forks a claude session into a new one (POST
+// /api/sessions/{name}/fork). Like create, it auto-starts a cold workspace and
+// enforces the per-user session quota (a fork adds a session), then proxies to the
+// Agent's fork endpoint.
+func (c config) handleSessionFork(w http.ResponseWriter, r *http.Request) {
+	res, ok := c.resolvedFor(w, r)
+	if !ok {
+		return
+	}
+	ctx := r.Context()
+	if c.autostart {
+		if aerr := c.ensureWorkspaceStarted(ctx, res); aerr != nil {
+			writeAPIErr(w, aerr)
+			return
+		}
+	}
+	if aerr := c.sessionQuotaExceeded(ctx, res); aerr != nil {
+		writeAPIErr(w, aerr)
+		return
+	}
+	c.proxyAgentREST(w, r)
+}
+
+// sessionQuotaExceeded returns a 429 apiError when the caller is at its per-user
+// (or tenant-default) concurrent-session cap, else nil. 0/unset = unlimited. Shared
+// by session create and fork (both add a running session). If the workspace isn't
+// reachable the check is skipped — the proxy reports the real error.
+func (c config) sessionQuotaExceeded(ctx context.Context, res *resolved) *apiError {
 	lim := 0
 	if ul, ok, _ := c.mgr.store.GetUserLimit(ctx, res.mv.MembershipID); ok && ul.MaxSessions > 0 {
 		lim = ul.MaxSessions
@@ -515,15 +550,13 @@ func (c config) handleSessionCreate(w http.ResponseWriter, r *http.Request) {
 		lim = parseLimits(t.Limits).MaxSessions
 	}
 	if lim > 0 {
-		// If the workspace isn't reachable, skip the check; the proxy will report it.
 		if n, err := c.mgr.countSessions(ctx, res.rt); err == nil && n >= lim {
 			// Developer-facing fallback; the Console localizes by `code` (quota_sessions).
-			writeAPIErr(w, &apiError{http.StatusTooManyRequests, "quota_sessions",
-				fmt.Sprintf("concurrent session limit reached (%d running, max %d)", n, lim)})
-			return
+			return &apiError{http.StatusTooManyRequests, "quota_sessions",
+				fmt.Sprintf("concurrent session limit reached (%d running, max %d)", n, lim)}
 		}
 	}
-	c.proxyAgentREST(w, r)
+	return nil
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
