@@ -482,10 +482,15 @@ function PendingQuestions({ questions, onSendOne, onSubmitKeys, sending }) {
   // Every single-select question needs a pick before we can drive the modal.
   const canSubmit = qs.every((q, qi) => q.multiSelect || (sel[qi] || []).length > 0);
 
-  // Drive the modal with named keys: for each question page (cursor starts at the
-  // top), move Down to each chosen option; single-select confirms with Enter, multi-
-  // select toggles with Space then confirms the page with Enter. Enter advances to
-  // the next question, so the whole sequence answers every page in one send.
+  // Drive the modal with named keys, matching the real AskUserQuestion behavior
+  // (verified against the terminal). Each question page starts with the cursor at the
+  // top option; ↑/↓ navigate options, ←/→ switch question tabs, Enter selects/toggles.
+  //   single-select: move Down to the choice, Enter — this selects AND auto-advances
+  //                  to the next tab.
+  //   multi-select:  Enter TOGGLES in place (cursor stays); after toggling every
+  //                  choice, Right advances to the next tab.
+  // After all questions we land on the Submit tab (Review page); a final Enter
+  // activates "Submit answers".
   const submit = () => {
     const keys = [];
     qs.forEach((q, qi) => {
@@ -494,23 +499,22 @@ function PendingQuestions({ questions, onSendOne, onSubmitKeys, sending }) {
         .map((l) => opts.findIndex((o) => o.label === l))
         .filter((i) => i >= 0)
         .sort((a, b) => a - b);
-      let cur = 0;
       if (q.multiSelect) {
-        // Space toggles AND auto-advances the cursor by one, so after toggling index
-        // ci the cursor sits at ci+1 — don't re-Down over the option we just checked.
+        let cur = 0;
         for (const ci of idx) {
           for (let k = 0; k < ci - cur; k++) keys.push("Down");
-          keys.push("Space");
-          cur = ci + 1;
+          keys.push("Enter"); // toggle in place
+          cur = ci;
         }
-        keys.push("Enter");
+        keys.push("Right"); // advance to the next question / Submit tab
       } else {
         const ci = idx[0] ?? 0;
         for (let k = 0; k < ci; k++) keys.push("Down");
-        keys.push("Enter");
+        keys.push("Enter"); // select + auto-advance to the next tab
       }
     });
-    if (keys.length) onSubmitKeys(keys);
+    keys.push("Enter"); // Review page: "Submit answers"
+    onSubmitKeys(keys);
   };
 
   return (

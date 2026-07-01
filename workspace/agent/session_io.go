@@ -68,7 +68,7 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if i < len(body.Keys)-1 {
-				time.Sleep(45 * time.Millisecond)
+				time.Sleep(90 * time.Millisecond)
 			}
 		}
 		markSessionWorking(name)
