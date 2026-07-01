@@ -262,7 +262,10 @@ CP に `/mcp` を 1 本生やし、**管理面（運用チーム）と作業面�
 ---
 
 ## P3-7. デプロイ先アダプタ（オンプレ Docker 既定 / 自社 AWS 任意）
-> ▶ **次の起点**。旧 Phase 3 本体。AWS 構成は [reference/aws](reference/aws.md)。
+> ◐ **段1（シーム固め）完了**（実装記録 [p3-7-aws-adapter](history/p3-7-aws-adapter.md)）。`RuntimeFactory` 港を
+> 唯一の生成口にし、`&dockerRuntime{}` 直生成を factory 経由へ統一。`AF_RUNTIME=local|ecs` 分岐（unknown=起動時 fail-fast）。
+> `ecsRuntime` スケルトン（港は満たすが lifecycle は未実装で fail-loud）。`go build/vet/test` で検証済（`runtime_test.go`）。
+> 残＝段2 ecsRuntime 本実装+EFS / 段3 RDS+KMS / 段4 IaC(Terraform) / 段5 実 AWS E2E（要 AWS）。AWS 構成は [reference/aws](reference/aws.md)。
 
 各社が**自社のデプロイ先を選ぶ**。コアは無改修、周縁アダプタのみ（[09](reference/portability.md)）。我々は両方を同梱（P3-10）。
 

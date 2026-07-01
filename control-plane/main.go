@@ -95,6 +95,17 @@ func main() {
 		log.Printf("backfill warning: %v", err)
 	}
 
+	// Runtime port adapter (docs/09, P3-7): pick the deployment profile. Default
+	// "local" (Docker Engine / compose, the on-prem target); "ecs" selects the AWS
+	// adapter. Built here — after extraEnv/store/defaultTenantID are finalized —
+	// because the docker factory captures those template fields by value.
+	rtProfile := envOr("AF_RUNTIME", "local")
+	rtFactory, err := newRuntimeFactory(rtProfile, mgr)
+	if err != nil {
+		log.Fatalf("runtime factory: %v", err)
+	}
+	mgr.rtFactory = rtFactory
+
 	publicBaseURL := os.Getenv("PUBLIC_BASE_URL")
 	cfg := config{
 		addr:          envOr("CP_ADDR", ":8080"),
@@ -313,7 +324,7 @@ func main() {
 		handler = cfg.authGate(mux)
 	}
 
-	log.Printf("control-plane on %s (console=%s, ws image=%s, auth=%s)", cfg.addr, cfg.consoleDir, cfg.mgr.image, cfg.mgr.authMode)
+	log.Printf("control-plane on %s (console=%s, ws image=%s, auth=%s, runtime=%s)", cfg.addr, cfg.consoleDir, cfg.mgr.image, cfg.mgr.authMode, rtProfile)
 	srv := &http.Server{Addr: cfg.addr, Handler: logRequests(handler), ReadHeaderTimeout: 10 * time.Second}
 	if err := srv.ListenAndServe(); err != nil {
 		log.Fatal(err)

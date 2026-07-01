@@ -47,6 +47,74 @@ type Runtime interface {
 // the same contract. This assertion fails the build if either drifts.
 var _ Runtime = (*dockerRuntime)(nil)
 
+// RuntimeFactory is the single construction seam for the Runtime port. Every call
+// site (handlers, manager, reaper, admin, mcp) builds its Runtime through the
+// factory rather than instantiating a concrete adapter, so swapping the local
+// Docker adapter for the ECS adapter (P3-7) is a one-line profile switch in
+// main.go — no concrete type ever leaks into the backend-agnostic core.
+//
+// secretKey is the per-workspace at-rest DEK (injected as AF_SECRET_KEY on Start).
+// Pass "" for state/stop/read-only calls that never touch secrets.
+type RuntimeFactory interface {
+	New(ws Workspace, secretKey string) Runtime
+}
+
+// dockerFactory is the `local` (compose) RuntimeFactory. It carries the template
+// fields shared by every container plus rootDataDir, a closure that re-bases a
+// workspace's stored data_dir onto the CURRENT dataRoot (docs/history/
+// p3-10-packaging.md §20.3) — kept as a closure so the factory need not know the
+// manager's tenant/path internals.
+type dockerFactory struct {
+	image       string
+	agentHost   string
+	memory      string
+	sessionCmd  string
+	extraEnv    []string
+	rootDataDir func(Workspace) string
+}
+
+func (f *dockerFactory) New(ws Workspace, secretKey string) Runtime {
+	return &dockerRuntime{
+		image:      f.image,
+		name:       ws.ContainerName,
+		network:    ws.Network,
+		dataDir:    f.rootDataDir(ws),
+		agentHost:  f.agentHost,
+		agentPort:  ws.AgentPort,
+		token:      ws.AgentToken,
+		secretKey:  secretKey,
+		memory:     f.memory,
+		sessionCmd: f.sessionCmd,
+		extraEnv:   f.extraEnv,
+	}
+}
+
+var _ RuntimeFactory = (*dockerFactory)(nil)
+
+// newRuntimeFactory selects the Runtime adapter by deployment profile (AF_RUNTIME):
+// "" / "local" / "docker" → Docker Engine (compose, the on-prem default); "ecs" /
+// "aws" → AWS ECS (P3-7). Unknown profiles fail fast at boot rather than silently
+// defaulting to Docker. The docker factory captures the manager's template fields
+// by value, so it MUST be built after those fields are finalized (e.g. extraEnv
+// appends in main.go).
+func newRuntimeFactory(profile string, m *manager) (RuntimeFactory, error) {
+	switch profile {
+	case "", "local", "docker":
+		return &dockerFactory{
+			image:       m.image,
+			agentHost:   m.agentHost,
+			memory:      m.memory,
+			sessionCmd:  m.sessionCmd,
+			extraEnv:    m.extraEnv,
+			rootDataDir: m.rootedDataDir,
+		}, nil
+	case "ecs", "aws":
+		return newECSFactory(m)
+	default:
+		return nil, fmt.Errorf("unknown AF_RUNTIME profile %q (want local|ecs)", profile)
+	}
+}
+
 func (d *dockerRuntime) Endpoint() string {
 	return fmt.Sprintf("http://%s:%s", d.agentHost, d.agentPort)
 }
