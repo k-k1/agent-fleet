@@ -2383,6 +2383,13 @@ button.mt-tool-diff .codicon {
   background: var(--bar);
   border-bottom: 1px solid var(--border);
 }
+/* file / scm / diff panes add a wrap toggle to the control cluster, so their headers
+   need extra right room or the cluster overlaps the header's own right-edge buttons
+   (e.g. the SCM "削除" trash button). */
+.fileview > .view-head,
+.scmview > .view-head {
+  padding-right: 112px;
+}
 .view-title {
   color: var(--accent);
 }
@@ -3312,6 +3319,18 @@ button.mt-tool-diff .codicon {
   font: 12px/1.45 var(--mono);
   color: var(--muted);
   white-space: pre-wrap;
+}
+.cd-more {
+  margin: 4px 0 0;
+  padding: 1px 6px;
+  font-size: 11px;
+  color: var(--accent);
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+.cd-more:hover {
+  text-decoration: underline;
 }
 .cd-files {
   list-style: none;

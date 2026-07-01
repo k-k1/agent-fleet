@@ -242,7 +242,12 @@ function ChangeRow({ c, selected, onOpen, onOp }) {
 function CommitDetail({ commit, wrap }) {
   if (!commit) return <pre className="diff muted">読み込み中…</pre>;
   if (commit.error) return <pre className="diff muted">(コミット取得失敗)</pre>;
-  const files = commit.files || [];
+  // Show the first 5 lines of the message body; the rest folds behind "さらに表示"
+  // (long commit bodies would otherwise push the diff far down). The changed-file
+  // list is dropped — the diff below already lists every file.
+  const [bodyOpen, setBodyOpen] = useState(false);
+  const bodyLines = commit.body ? commit.body.split("\n") : [];
+  const clampBody = bodyLines.length > 5 && !bodyOpen;
   return (
     <div className="commit-detail">
       <div className="cd-head">
@@ -250,18 +255,13 @@ function CommitDetail({ commit, wrap }) {
         <div className="cd-meta">
           {commit.author} · {(commit.date || "").slice(0, 10)} · <code>{commit.short}</code>
         </div>
-        {commit.body && <pre className="cd-body">{commit.body}</pre>}
-        {files.length > 0 && (
-          <ul className="cd-files">
-            {files.map((f) => (
-              <li key={f.path}>
-                <span className={"cd-st cd-st-" + (f.status[0] || "x").toLowerCase()}>{f.status}</span>
-                <span className="cd-path" title={f.path}>
-                  {f.path}
-                </span>
-              </li>
-            ))}
-          </ul>
+        {commit.body && (
+          <pre className="cd-body">{clampBody ? bodyLines.slice(0, 5).join("\n") : commit.body}</pre>
+        )}
+        {bodyLines.length > 5 && (
+          <button type="button" className="cd-more" onClick={() => setBodyOpen((o) => !o)}>
+            {bodyOpen ? "折りたたむ" : `さらに表示（残り ${bodyLines.length - 5} 行）`}
+          </button>
         )}
       </div>
       <Diff text={commit.diff} embedded truncated={commit.truncated} wrap={wrap} />
@@ -288,19 +288,57 @@ function splitDiffFiles(text) {
   return files;
 }
 
+// unquotePath decodes git's C-quoted path form. With core.quotepath on (the default),
+// git wraps paths with non-ASCII bytes in double quotes and octal-escapes each byte
+// (e.g. "docs/\343\201\202" → "docs/あ"). Reads from the opening quote to the closing
+// one (ignoring any trailing \t…), turns escapes back into bytes, decodes as UTF-8.
+// Unquoted paths are returned as-is (minus a trailing tab).
+function unquotePath(s) {
+  if (!s || s[0] !== '"') return s.replace(/\t.*$/, "");
+  const bytes = [];
+  const simple = { n: 10, t: 9, r: 13, a: 7, b: 8, f: 12, v: 11, '"': 34, "\\": 92 };
+  for (let i = 1; i < s.length; i++) {
+    const c = s[i];
+    if (c === '"') break; // closing quote
+    if (c === "\\") {
+      const n = s[i + 1];
+      if (n >= "0" && n <= "7") {
+        let oct = "";
+        let j = i + 1;
+        while (j < s.length && oct.length < 3 && s[j] >= "0" && s[j] <= "7") oct += s[j++];
+        bytes.push(parseInt(oct, 8));
+        i = j - 1;
+      } else {
+        bytes.push(simple[n] !== undefined ? simple[n] : (n || "").charCodeAt(0));
+        i++;
+      }
+    } else if (c.charCodeAt(0) < 128) {
+      bytes.push(c.charCodeAt(0));
+    } else {
+      for (const b of new TextEncoder().encode(c)) bytes.push(b);
+    }
+  }
+  try {
+    return new TextDecoder("utf-8").decode(new Uint8Array(bytes));
+  } catch {
+    return s;
+  }
+}
+
 // diffPath picks the display path: prefer the new side (+++ b/…), fall back to the
-// old side (--- a/…) for deletions, then the `diff --git` header.
+// old side (--- a/…) for deletions, then the `diff --git` header. Paths are un-quoted
+// so non-ASCII (e.g. Japanese) filenames render as text, not octal escapes.
 function diffPath(lines) {
   let plus = "", minus = "", git = "";
   for (const l of lines) {
-    if (l.startsWith("+++ ")) plus = l.slice(4).replace(/^b\//, "").replace(/\t.*$/, "");
-    else if (l.startsWith("--- ")) minus = l.slice(4).replace(/^a\//, "").replace(/\t.*$/, "");
+    if (l.startsWith("+++ ")) plus = unquotePath(l.slice(4)).replace(/^b\//, "");
+    else if (l.startsWith("--- ")) minus = unquotePath(l.slice(4)).replace(/^a\//, "");
     else if (l.startsWith("diff --git ")) git = l;
   }
   if (plus && plus !== "/dev/null") return plus;
   if (minus && minus !== "/dev/null") return minus;
   const m = git.match(/ b\/(.+)$/);
-  return m ? m[1] : git.replace(/^diff --(git|cc) /, "");
+  return m ? unquotePath(m[1]) : git.replace(/^diff --(git|cc) /, "");
 }
 
 // diffRows turns a file's lines into renderable rows, tracking old/new line numbers
