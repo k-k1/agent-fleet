@@ -1812,6 +1812,20 @@ body.row-resizing {
 .mirror-toggle {
   margin-left: auto;
 }
+/* Fork button sits at the right of the chat head, just left of the ターミナル⇄
+   チャット switch. It takes the auto-margin so the pair groups on the right; the
+   toggle then only needs a fixed gap (its own auto-margin would split the space). */
+.fork-btn {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.fork-btn + .mirror-toggle {
+  margin-left: 8px;
+}
 /* Flat transcript (not cards): a scrolling column of full-width turns separated by
    a hairline, each with a small speaker header. block layout (not flex) so a turn
    takes its natural height and the column scrolls — a flex column shrinks children

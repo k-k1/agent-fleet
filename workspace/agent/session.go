@@ -23,15 +23,15 @@ type Session struct {
 	Name      string `json:"name"`
 	Tmux      string `json:"tmux"`
 	Dir       string `json:"dir"`
-	Kind      string `json:"kind"`     // "claude" | "opencode" | "codex" | "shell"
-	Repo      string `json:"repo"`     // working dir basename (display)
-	Label     string `json:"label"`    // claude --name display name (claude only)
-	Started   string `json:"started"`  // "01/02 15:04" local time, for the list
-	CreatedAt string `json:"createdAt"`// RFC3339
-	RemoteUrl string `json:"remoteUrl"`// claude.ai Remote Control URL, when RC is bridged
-	State     string `json:"state"`    // claude live state: working | idle | question | ""
-	Alive     bool   `json:"alive"`    // true = live tmux session; false = stopped
-	Resumable bool   `json:"resumable"`// false = stopped claude whose working dir is gone
+	Kind      string `json:"kind"`      // "claude" | "opencode" | "codex" | "shell"
+	Repo      string `json:"repo"`      // working dir basename (display)
+	Label     string `json:"label"`     // claude --name display name (claude only)
+	Started   string `json:"started"`   // "01/02 15:04" local time, for the list
+	CreatedAt string `json:"createdAt"` // RFC3339
+	RemoteUrl string `json:"remoteUrl"` // claude.ai Remote Control URL, when RC is bridged
+	State     string `json:"state"`     // claude live state: working | idle | question | ""
+	Alive     bool   `json:"alive"`     // true = live tmux session; false = stopped
+	Resumable bool   `json:"resumable"` // false = stopped claude whose working dir is gone
 	// BackgroundBusy: state is idle (turn done) but a run_in_background task is still
 	// running under the pane. Lets the Console mark 入力待ち as "still working in bg".
 	BackgroundBusy bool `json:"backgroundBusy"`
@@ -57,6 +57,13 @@ type sessionMeta struct {
 	CreatedAt string `json:"createdAt"` // RFC3339, set at create
 	StoppedAt string `json:"stoppedAt"` // RFC3339, set lazily when first seen exited; "" while live
 	Archived  bool   `json:"archived"`  // true = hidden from the active list, restorable (jsonl kept)
+	// ForkFrom is the SOURCE session's sid this session was forked from (claude
+	// only). It only affects the FIRST launch: buildSessionProgram then runs
+	// `claude --resume <ForkFrom> --fork-session --session-id <ownsid>`, which copies
+	// the source history into this session's own jsonl. Once that jsonl exists,
+	// later launches resume normally and ForkFrom is ignored — so a restart never
+	// re-forks. Empty for non-forked sessions.
+	ForkFrom string `json:"forkFrom,omitempty"`
 }
 
 // stoppedTTL is how long a stopped (exited) session stays listed/resumable before
@@ -277,7 +284,7 @@ func startSessionTmux(m sessionMeta) error {
 				_ = os.Remove(p)
 			}
 		}
-		program = buildSessionProgram(sid, m.Model, m.Label)
+		program = buildSessionProgram(sid, m.Model, m.Label, m.ForkFrom)
 		// No env token is injected: the interactive TUI authenticates from claude's
 		// own .credentials.json, written by `claude auth login` via the Connections
 		// flow (claude_auth.go). CLAUDE_CODE_OAUTH_TOKEN is headless-only.
@@ -468,6 +475,78 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	writeSessionMeta(meta)
 
 	writeJSON(w, http.StatusCreated, wireSession(meta, true))
+}
+
+// handleForkSession forks a claude session's conversation into a NEW session
+// (POST /sessions/{name}/fork). The fork shares the source's history up to now but
+// then diverges independently — the official `claude --fork-session` copies the
+// transcript, leaving the source running/intact. Only claude sessions carry a
+// resumable jsonl to fork; the fork's first launch (via ForkFrom) materializes its
+// own jsonl (see buildSessionProgram), so restarts resume it normally.
+func handleForkSession(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	src, ok := readSessionMeta(name)
+	if !ok {
+		writeErr(w, http.StatusNotFound, "no_session", "session not found: "+name)
+		return
+	}
+	if src.Kind != "" && src.Kind != "claude" {
+		writeErr(w, http.StatusBadRequest, "not_claude", "分岐できるのは claude セッションのみです")
+		return
+	}
+	if !dirExists(src.Dir) {
+		writeErr(w, http.StatusBadRequest, "bad_dir", "作業フォルダが存在しないため分岐できません")
+		return
+	}
+	srcSid := sessionUUID(src.Dir, name)
+	if !jsonlResumable(srcSid) {
+		writeErr(w, http.StatusBadRequest, "not_resumable", "分岐できる会話がまだありません")
+		return
+	}
+	forkName, ok := deriveForkName(name)
+	if !ok {
+		writeErr(w, http.StatusConflict, "fork_name", "分岐名を作成できませんでした")
+		return
+	}
+	meta := sessionMeta{
+		Name: forkName, Dir: src.Dir, Model: src.Model, Kind: "claude",
+		Label: sessionLabel(src.Dir), Repo: filepath.Base(src.Dir),
+		CreatedAt: time.Now().Format(time.RFC3339), ForkFrom: srcSid,
+	}
+	if err := startSessionTmux(meta); err != nil {
+		writeErr(w, http.StatusInternalServerError, "tmux_failed", err.Error())
+		return
+	}
+	writeSessionMeta(meta)
+	writeJSON(w, http.StatusCreated, wireSession(meta, true))
+}
+
+// deriveForkName builds a unique, valid ([A-Za-z0-9_-]{1,40}) name for a fork of
+// base: base+"-fork", then "-fork2".."-fork9", truncating base so the whole stays
+// within 40 chars. Returns ok=false if every candidate is taken.
+func deriveForkName(base string) (string, bool) {
+	for i := 1; i <= 9; i++ {
+		suffix := "-fork"
+		if i > 1 {
+			suffix = fmt.Sprintf("-fork%d", i)
+		}
+		b := base
+		if len(b)+len(suffix) > 40 {
+			b = b[:40-len(suffix)]
+		}
+		cand := b + suffix
+		if !nameRe.MatchString(cand) {
+			continue
+		}
+		if _, exists := readSessionMeta(cand); exists {
+			continue
+		}
+		if tmuxHasSession(tmuxName(cand)) {
+			continue
+		}
+		return cand, true
+	}
+	return "", false
 }
 
 // handleStopSession kills the tmux session and forgets its meta so it stops
@@ -674,7 +753,7 @@ func sessionAtIdlePrompt(name string) bool {
 // Otherwise it resumes when a session jsonl already exists, else starts new.
 // label, when non-empty, becomes claude's --name (display name shown in the
 // Remote Control picker and terminal title), e.g. "[AF] agent-fleet @0627-2115".
-func buildSessionProgram(sid, model, label string) string {
+func buildSessionProgram(sid, model, label, forkFrom string) string {
 	if override := os.Getenv("AGENT_SESSION_CMD"); override != "" {
 		return override
 	}
@@ -686,7 +765,17 @@ func buildSessionProgram(sid, model, label string) string {
 		flags += " --name " + shellQuote(label)
 	}
 	if sessionJSONLExists(sid) {
+		// Already materialized (normal session, or a fork after its first launch):
+		// resume our own jsonl. ForkFrom is intentionally ignored here so a restart
+		// never re-copies the source.
 		return fmt.Sprintf("claude --resume %s %s", sid, flags)
+	}
+	if forkFrom != "" {
+		// First launch of a fork: copy the source conversation into OUR sid via the
+		// official --fork-session, pinning the new id with --session-id so it lands
+		// exactly on our deterministic jsonl (verified: --session-id sets the fork's
+		// id). The source jsonl is left untouched.
+		return fmt.Sprintf("claude --resume %s --fork-session --session-id %s %s", forkFrom, sid, flags)
 	}
 	return fmt.Sprintf("claude --session-id %s %s", sid, flags)
 }
@@ -753,6 +842,7 @@ func removeOpencodeSid(sid string) { _ = os.Remove(filepath.Join(opencodeSidDir(
 //   - resume exactly THIS slot's codex session when we've captured its id
 //     (codexResumeID), else launch plain codex (a fresh session) — mirroring the
 //     opencode per-slot model so two codex slots in one dir don't collide.
+//
 // The bypass flags make codex run unattended like claude's --dangerously-skip-
 // permissions: the container IS the sandbox, and we author the injected hooks so
 // hook-trust is bypassed too (otherwise the status hooks wouldn't fire).

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { api, apiJSON } from "../api.js";
+import { api, apiJSON, raw, errText } from "../api.js";
 import { useSettings, chatFontStack } from "../lib/settings.js";
 import { useApp } from "../state.jsx";
 import Icon from "../components/Icon.jsx";
@@ -32,7 +32,8 @@ function readDraft(key) {
 // user turns), just at the next poll.
 export default function MirrorView({ session, sessionMeta, active, mirror, onToggleMirror }) {
   const settings = useSettings();
-  const { showDoc, showDiff } = useApp();
+  const { showDoc, showDiff, showTerminalSplit, bumpSessions } = useApp();
+  const [forking, setForking] = useState(false);
   // "mod-enter" (default): Ctrl/⌘+Enter submits, plain Enter newlines (phone-safe).
   // "enter": Enter submits, Shift+Enter newlines.
   const modSend = settings.mirrorSend !== "enter";
@@ -218,6 +219,29 @@ export default function MirrorView({ session, sessionMeta, active, mirror, onTog
 
   // Open a plan's Markdown in its own pane (manual — via a button, not automatic).
   const openPlan = (plan) => showDoc(planTitle(plan), plan);
+
+  // Fork this conversation into a new session (P3-9): the Agent runs
+  // `claude --resume <sid> --fork-session`, copying the history so far into a fresh
+  // session that diverges independently — this one is left untouched. On success we
+  // open the fork in a split pane and refresh the session list.
+  const doFork = async () => {
+    if (forking || !session) return;
+    setForking(true);
+    try {
+      const res = await raw(`api/sessions/${q(session)}/fork`, { method: "POST" });
+      const j = await res.json().catch(() => ({}));
+      if (res.ok && j.name) {
+        bumpSessions();
+        showTerminalSplit(j.name);
+      } else {
+        alert(j.error ? errText(j.error) : `分岐に失敗しました (${res.status})`);
+      }
+    } catch {
+      alert("分岐に失敗しました（通信エラー）");
+    } finally {
+      setForking(false);
+    }
+  };
   const openDiff = (p) => showDiff(p.file, p.edits, p.tool);
 
   // Composer history = the user's own prompts in this conversation (so ↑ works even
@@ -323,6 +347,18 @@ export default function MirrorView({ session, sessionMeta, active, mirror, onTog
           </span>
         ) : (
           <span className="view-title">session: {session}</span>
+        )}
+        {sessionMeta?.kind === "claude" && (
+          <button
+            type="button"
+            className="icon fork-btn"
+            title="この会話を分岐（ここまでの履歴を引き継いだ新セッションを作成。元は残ります）"
+            onClick={doFork}
+            disabled={forking}
+          >
+            <Icon name={forking ? "loading" : "git-branch"} spin={forking} />
+            <span className="fork-label">分岐</span>
+          </button>
         )}
         <MirrorToggle mirror={mirror} onToggle={onToggleMirror} />
       </header>
