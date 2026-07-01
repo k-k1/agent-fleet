@@ -56,7 +56,7 @@ func (c config) handleAdminMemberStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := containerStats(r.Context(), ws.ContainerName)
-	if used, ok := dirDiskUsage(r.Context(), ws.DataDir); ok {
+	if used, ok := dirDiskUsage(r.Context(), c.mgr.rootedDataDir(ws)); ok {
 		out["disk_used"] = used
 	}
 	if ul, ok, _ := c.mgr.store.GetUserLimit(r.Context(), mem.ID); ok && ul.DiskGB > 0 {

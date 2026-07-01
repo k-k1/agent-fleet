@@ -294,7 +294,7 @@ func (c config) handleWorkspaceRecreate(w http.ResponseWriter, r *http.Request) 
 	_ = res.rt.Stop(r.Context()) // best-effort: may not exist yet
 	// Clear the working copies while the container is down. Targeted: we keep the
 	// encrypted secrets store and everything else in home.
-	_ = os.RemoveAll(filepath.Join(res.ws.DataDir, "home", "repos"))
+	_ = os.RemoveAll(filepath.Join(c.mgr.rootedDataDir(res.ws), "home", "repos"))
 	c.startResolved(w, r, res)
 }
 

@@ -86,8 +86,10 @@ func main() {
 		log.Fatalf("db migrate: %v", err)
 	}
 	mgr.store = store
-	if _, err := store.EnsureDefaultTenant(ctx); err != nil {
+	if dt, err := store.EnsureDefaultTenant(ctx); err != nil {
 		log.Fatalf("ensure default tenant: %v", err)
+	} else {
+		mgr.defaultTenantID = dt.ID // used by rootedDataDir to detect flat paths
 	}
 	if err := mgr.backfill(ctx); err != nil {
 		log.Printf("backfill warning: %v", err)

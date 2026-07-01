@@ -31,12 +31,16 @@ type manager struct {
 	conns *connRegistry // P3-9: live activity/attachment tracking for idle-stop
 
 	// template fields shared by every runtime
-	image      string
-	dataRoot   string
-	agentHost  string
-	memory     string
-	sessionCmd string
-	extraEnv   []string
+	image    string
+	dataRoot string
+	// defaultTenantID is cached at boot so rootedDataDir can tell a flat
+	// (<dataRoot>/<key>) default-tenant path from a nested (<dataRoot>/<slug>/<key>)
+	// one without a per-call store lookup.
+	defaultTenantID string
+	agentHost       string
+	memory          string
+	sessionCmd      string
+	extraEnv        []string
 
 	portBase int
 
@@ -378,7 +382,7 @@ func (m *manager) cleanHomeByMembership(ctx context.Context, membershipID string
 		return err
 	}
 	_ = (&dockerRuntime{name: ws.ContainerName, network: ws.Network}).Stop(ctx) // best-effort
-	if err := cleanHome(ws.DataDir); err != nil {
+	if err := cleanHome(m.rootedDataDir(ws)); err != nil {
 		return err
 	}
 	return m.store.SetWorkspaceState(ctx, ws.ID, "stopped")
@@ -483,12 +487,34 @@ func (m *manager) createWorkspace(ctx context.Context, mv MembershipView, userKe
 	return ws, nil
 }
 
+// rootedDataDir re-bases a workspace's on-disk root onto the CURRENT dataRoot.
+// data_dir is persisted at creation with the then-current dataRoot, so a restore
+// or move to a different DATA_DIR (or a changed WS_DATA) leaves the stored value
+// stale — mounting it would silently give the workspace an empty home. The stable
+// part is the suffix (<key> for the default tenant, <slug>/<key> otherwise, per
+// workspaceNames); we keep the trailing segment(s) and swap the root. Idempotent
+// when the path is already current. See docs/history/p3-10-packaging.md §20.3(B).
+func (m *manager) rootedDataDir(ws Workspace) string {
+	if ws.DataDir == "" {
+		return ws.DataDir
+	}
+	segs := strings.Split(filepath.ToSlash(strings.TrimRight(ws.DataDir, "/")), "/")
+	n := 2 // <slug>/<key>
+	if ws.TenantID == m.defaultTenantID {
+		n = 1 // <key>
+	}
+	if n > len(segs) {
+		n = len(segs)
+	}
+	return filepath.Join(append([]string{m.dataRoot}, segs[len(segs)-n:]...)...)
+}
+
 func (m *manager) runtimeFor(ws Workspace, secretKey string) Runtime {
 	return &dockerRuntime{
 		image:      m.image,
 		name:       ws.ContainerName,
 		network:    ws.Network,
-		dataDir:    ws.DataDir,
+		dataDir:    m.rootedDataDir(ws),
 		agentHost:  m.agentHost,
 		agentPort:  ws.AgentPort,
 		token:      ws.AgentToken,
@@ -514,6 +540,7 @@ func (m *manager) backfill(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	m.defaultTenantID = t.ID
 	for _, e := range entries {
 		if !e.IsDir() {
 			continue
