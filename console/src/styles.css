@@ -1886,6 +1886,15 @@ body.row-resizing {
   border-radius: 999px;
   background: color-mix(in srgb, var(--chat-accent) 22%, transparent);
 }
+.mt-plan-badge.ok {
+  background: color-mix(in srgb, #2fb872 26%, transparent);
+  color: color-mix(in srgb, #2fb872 60%, var(--fg));
+}
+/* A decided (historical) plan sits quieter than a pending one. */
+.mt-plan.decided {
+  border-left-color: color-mix(in srgb, var(--chat-accent) 45%, var(--border));
+  background: color-mix(in srgb, var(--fg) 3%, var(--bg));
+}
 .mt-plan-summary {
   margin: 5px 0 8px;
   font-size: 12px;

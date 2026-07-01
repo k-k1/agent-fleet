@@ -105,7 +105,7 @@ func handleSessionMessages(w http.ResponseWriter, r *http.Request) {
 			continue // tool results, summaries, bridge/meta bookkeeping
 		}
 		for pi := range t.Parts {
-			if t.Parts[pi].Kind == "question" && t.Parts[pi].qid != "" {
+			if (t.Parts[pi].Kind == "question" || t.Parts[pi].Kind == "plan") && t.Parts[pi].qid != "" {
 				t.Parts[pi].Answer = answers[t.Parts[pi].qid]
 			}
 		}
@@ -238,7 +238,7 @@ func assistantParts(raw json.RawMessage) (parts []chatPart, text string) {
 					Plan string `json:"plan"`
 				}
 				if json.Unmarshal(b.Input, &pin) == nil && pin.Plan != "" {
-					parts = append(parts, chatPart{Kind: "plan", Tool: b.Name, Plan: pin.Plan})
+					parts = append(parts, chatPart{Kind: "plan", Tool: b.Name, Plan: pin.Plan, qid: b.ID})
 					continue
 				}
 			}
