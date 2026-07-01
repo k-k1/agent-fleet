@@ -156,29 +156,40 @@ export default function MirrorView({ session, sessionMeta, active, mirror, onTog
     }
   }
 
+  // Recall the previous / next prompt from history (shared by ↑/↓ and the on-screen
+  // buttons shown on phones, which have no arrow keys).
+  const recallPrev = () => {
+    if (!history.length) return;
+    const ni = histIdx !== null ? Math.max(0, histIdx - 1) : history.length - 1;
+    setHistIdx(ni);
+    setDraft(history[ni]);
+    inputRef.current?.focus();
+  };
+  const recallNext = () => {
+    if (histIdx === null) return;
+    const ni = histIdx + 1;
+    if (ni >= history.length) {
+      setHistIdx(null);
+      setDraft("");
+    } else {
+      setHistIdx(ni);
+      setDraft(history[ni]);
+    }
+    inputRef.current?.focus();
+  };
+
   const onKeyDown = (e) => {
     // Shell-style history: ↑/↓ recall past prompts when the field is empty (or once
     // recall is underway). With text present, arrows move the caret as usual.
     if ((e.key === "ArrowUp" || e.key === "ArrowDown") && !e.nativeEvent.isComposing) {
-      const h = history;
-      const navigating = histIdx !== null;
-      if (e.key === "ArrowUp" && (draft === "" || navigating) && h.length) {
+      if (e.key === "ArrowUp" && (draft === "" || histIdx !== null) && history.length) {
         e.preventDefault();
-        const ni = navigating ? Math.max(0, histIdx - 1) : h.length - 1;
-        setHistIdx(ni);
-        setDraft(h[ni]);
+        recallPrev();
         return;
       }
-      if (e.key === "ArrowDown" && navigating) {
+      if (e.key === "ArrowDown" && histIdx !== null) {
         e.preventDefault();
-        const ni = histIdx + 1;
-        if (ni >= h.length) {
-          setHistIdx(null);
-          setDraft("");
-        } else {
-          setHistIdx(ni);
-          setDraft(h[ni]);
-        }
+        recallNext();
         return;
       }
     }
@@ -280,6 +291,27 @@ export default function MirrorView({ session, sessionMeta, active, mirror, onTog
       </div>
 
       <div className="mirror-compose">
+        {/* History nav for phones (no arrow keys); hidden on wider screens via CSS. */}
+        <div className="mirror-hist">
+          <button
+            type="button"
+            className="ghost mirror-hist-btn"
+            title="前の入力"
+            disabled={!history.length}
+            onClick={recallPrev}
+          >
+            <Icon name="chevron-up" />
+          </button>
+          <button
+            type="button"
+            className="ghost mirror-hist-btn"
+            title="次の入力"
+            disabled={histIdx === null}
+            onClick={recallNext}
+          >
+            <Icon name="chevron-down" />
+          </button>
+        </div>
         <textarea
           ref={inputRef}
           className="mirror-input"
