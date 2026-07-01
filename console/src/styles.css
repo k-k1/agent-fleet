@@ -1077,10 +1077,10 @@ button.wu-reload {
   }
 }
 /* Stopped sessions are dimmed but must stay readable (var(--muted) was too faint,
-   especially on dark): use the normal foreground at reduced opacity. */
+   especially on dark): use the normal foreground at a light dim. */
 .session-row.stopped .session-display {
   color: var(--fg);
-  opacity: 0.72;
+  opacity: 0.9;
 }
 .session-row.active > .session-btn {
   background: var(--active-bg);
@@ -1088,7 +1088,7 @@ button.wu-reload {
 /* WS stopped: sessions can't be attached/resumed — grey the row and make the
    attach target inert (the ⋯ menu stays usable for archive). */
 .session-row.ws-down {
-  opacity: 0.5;
+  opacity: 0.72;
 }
 .session-row.ws-down .session-btn {
   pointer-events: none;
