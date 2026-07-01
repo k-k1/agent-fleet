@@ -12,6 +12,21 @@ P3-1〜P3-5 + Console 全面刷新（React+Vite）まで完了。次は P3-7（A
 コード: [`workspace/`](workspace/)（Agent + イメージ）/ [`control-plane/`](control-plane/) /
 [`console/`](console/) / 起動は [`deploy/local/run-dev.sh`](deploy/local/run-dev.sh)。
 
+## セルフホスト（オンプレ / Docker Compose）
+
+各社が自社インフラで 1 デプロイを立てる想定。イメージ一式を `compose up` するだけ
+（Caddy が Let's Encrypt で自動 TLS、CP ネイティブ Google OAuth でログイン）。
+
+```bash
+cd deploy/compose
+cp .env.example .env     # 秘密を生成して記入（AF_MASTER_KEY 等）
+docker compose up -d --build
+```
+
+手順・鍵生成・バックアップ/復元・アップグレード・障害対応・DooD 制約は
+**[deploy/compose/README.md](deploy/compose/README.md)（runbook）** に集約。ローカル dev
+（ホストプロセス起動）は従来どおり [`deploy/local/run-dev.sh`](deploy/local/run-dev.sh)。
+
 ## 確定済みの前提（v1）
 
 | 論点 | 決定 | 理由・補足 |
@@ -83,3 +98,9 @@ P3-1〜P3-5 + Console 全面刷新（React+Vite）まで完了。次は P3-7（A
 - **Workspace** — ユーザー 1 人に対応する永続コンテナ環境。ホームボリュームと稼働プロセスを持つ。
 - **Working copy** — Workspace 内に clone した Bitbucket リポジトリの作業ディレクトリ。
 - **Session** — Working copy に紐づく Claude CLI プロセス（tmux セッション 1 本）。
+
+## ライセンス
+
+[Apache License 2.0](LICENSE)（特許グラント付き permissive）。資格情報を扱うツールの
+ソースを公開し各社が暗号/隔離実装を監査できることを採用の強みとする。貢献は
+[CONTRIBUTING.md](CONTRIBUTING.md)、脆弱性報告と脅威モデルは [SECURITY.md](SECURITY.md)。
