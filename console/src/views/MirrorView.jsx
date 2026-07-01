@@ -290,18 +290,28 @@ function latestContext(groups) {
     const g = groups[i];
     if (g.role === "user") continue;
     if (g.inTok + g.cacheRead + g.cacheCreate > 0) {
-      return { read: g.cacheRead, create: g.cacheCreate, fresh: g.inTok };
+      return { read: g.cacheRead, create: g.cacheCreate, fresh: g.inTok, model: g.model };
     }
   }
   return null;
 }
 
+// contextWindow returns the model's context length. The current Claude family
+// (Opus 4.6/4.7/4.8, Sonnet 4.6, Fable/Mythos 5) is 1M-native — 1M is the default
+// window, not a 200k default you grow into. Haiku is 200k. Unknown/older models
+// assume 200k but grow to fit if a 1M beta is clearly in use.
+function contextWindow(model, used) {
+  const m = (model || "").toLowerCase();
+  if (/opus-4-[678]|sonnet-4-6|fable-5|mythos-5/.test(m)) return 1000000;
+  if (/haiku/.test(m)) return 200000;
+  return used > 200000 ? 1000000 : 200000;
+}
+
 // ContextBar is a /context-like fill gauge for the context window, segmented by how
-// the prompt tokens break down (cache read / cache creation / fresh input). The
-// window auto-scales to 1M once usage passes the 200k default (the [1m] beta).
-function ContextBar({ read, create, fresh }) {
+// the prompt tokens break down (cache read / cache creation / fresh input).
+function ContextBar({ read, create, fresh, model }) {
   const used = read + create + fresh;
-  const window = used <= 200000 ? 200000 : 1000000;
+  const window = contextWindow(model, used);
   const pct = Math.min(100, (used / window) * 100);
   const w = (n) => (n / window) * 100 + "%";
   const title =
