@@ -414,6 +414,26 @@ export function AppProvider({ children }) {
     return () => clearInterval(id);
   }, [refreshWs]);
 
+  // Refresh FILES (and repos/sessions on start) whenever the workspace actually flips
+  // running↔stopped — including external changes the 4s sync catches (admin stop, OOM,
+  // restart). Keyed on the transition, and on the RUNNING edge (not the "starting…"
+  // click), so the tree loads once the agent is really up rather than showing the
+  // pre-toggle tree. Transient "…" states are ignored until they settle.
+  const prevWsRef = useRef(wsState);
+  useEffect(() => {
+    const settle = (s) => (s === "running" ? "running" : s === "none" || s === "stopped" ? "stopped" : "");
+    const from = settle(prevWsRef.current);
+    const to = settle(wsState);
+    if (to !== "" && to !== from) {
+      bumpFiles();
+      if (to === "running") {
+        bumpRepos();
+        bumpSessions();
+      }
+    }
+    prevWsRef.current = wsState;
+  }, [wsState, bumpFiles, bumpRepos, bumpSessions]);
+
   // resetToTerminal collapses the layout back to a single, empty terminal pane. Used
   // when the world changes underneath the views (recreate / tenant switch): the
   // terminal-kind reconciler then disposes every other pane's xterm + socket.

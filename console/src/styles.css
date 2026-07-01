@@ -9,6 +9,7 @@
   --muted: #888;
   --muted2: #777;
   --accent: #6cf;
+  --on-accent: #06222e; /* text/icon on an accent-filled button (dark theme: dark on light cyan) */
   --chat-accent: var(--accent); /* chat highlights follow the chosen surface color (overridden in applyTheme) */
   --btn: #2b2b2b;
   --btn-h: #3a3a3a;
@@ -53,6 +54,7 @@
   --muted: #6b7280;
   --muted2: #828a94;
   --accent: #2563eb;
+  --on-accent: #ffffff; /* light theme: white text on the saturated blue accent */
   --btn: #e8eaee;
   --btn-h: #dcdfe5;
   --btn-border: #c6cbd2;
@@ -390,9 +392,9 @@ textarea:focus {
 .ws-graph {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   color: var(--muted);
-  font-size: 11px;
+  font-size: 10.5px;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
@@ -404,38 +406,119 @@ textarea:focus {
 }
 .ws-graph-k {
   text-transform: uppercase;
-  letter-spacing: 0.04em;
-  opacity: 0.75;
+  letter-spacing: 0.02em;
+  opacity: 0.7;
 }
 .ws-graph-v {
-  min-width: 32px;
+  min-width: 22px;
 }
 .ws-graph-sep {
   width: 1px;
   align-self: stretch;
-  margin: 2px 4px;
+  margin: 2px 3px;
   background: var(--border2, var(--border));
 }
-/* Claude usage chip is a button (click = refresh to latest); keep the chip look but
-   reset the button chrome and add a hover affordance + a small refresh glyph. */
-button.ws-usage {
+/* Claude usage: a compact trigger (glyph + max %) that opens a detail dropdown. */
+.ws-usage-wrap {
+  position: relative;
+  display: inline-flex;
+}
+button.ws-usage-btn {
   border: 0;
   background: none;
   font: inherit;
-  padding: 2px 4px;
+  padding: 2px 5px;
   margin: 0 -2px;
   border-radius: 4px;
   cursor: pointer;
+  gap: 3px;
 }
-button.ws-usage:hover:not(:disabled) {
+button.ws-usage-btn:hover {
   background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
-button.ws-usage:disabled {
-  cursor: default;
-}
-.ws-usage .codicon {
+.ws-usage-btn .codicon {
   font-size: 11px;
-  opacity: 0.7;
+  opacity: 0.75;
+}
+.ws-usage-btn .codicon-chevron-down {
+  font-size: 9px;
+  opacity: 0.6;
+}
+.ws-usage-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 50;
+  width: min(88vw, 280px);
+  padding: 12px;
+  background: var(--panel2, var(--panel));
+  border: 1px solid var(--border2, var(--border));
+  border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  white-space: normal;
+}
+.wu-title {
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 10px;
+}
+.wu-row + .wu-row {
+  margin-top: 12px;
+}
+.wu-row-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 12px;
+}
+.wu-pct {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+.wu-pct.warn {
+  color: var(--warn);
+}
+.wu-pct.crit {
+  color: var(--del);
+}
+.wu-bar {
+  height: 6px;
+  margin: 4px 0;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--fg) 12%, transparent);
+  overflow: hidden;
+}
+.wu-bar-fill {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--accent);
+}
+.wu-bar-fill.warn {
+  background: var(--warn);
+}
+.wu-bar-fill.crit {
+  background: var(--del);
+}
+.wu-reset {
+  font-size: 11px;
+}
+.wu-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 12px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border2, var(--border));
+}
+.wu-ago {
+  font-size: 11px;
+}
+button.wu-reload {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
 }
 .spark {
   display: block;
@@ -1447,7 +1530,7 @@ button.ws-usage:disabled {
 }
 .seg-btn.active {
   background: var(--accent);
-  color: #06222e;
+  color: var(--on-accent);
   font-weight: 600;
 }
 /* clone-in-progress row in the Repos list, and the busy spinner in a modal head. */
@@ -4439,12 +4522,12 @@ button.mt-toolrun-head:hover {
 
 /* danger button (recreate / destructive) */
 .danger-btn {
-  background: #4a2222;
-  border-color: #6a3030;
-  color: #f3b6b6;
+  background: color-mix(in srgb, var(--del) 16%, transparent);
+  border-color: color-mix(in srgb, var(--del) 45%, var(--border));
+  color: var(--del);
 }
 .danger-btn:hover:not(:disabled) {
-  background: #5a2a2a;
+  background: color-mix(in srgb, var(--del) 26%, transparent);
 }
 
 /* danger zone: a clearly-separated block at the bottom of a settings tab that
@@ -4571,12 +4654,12 @@ button.mt-toolrun-head:hover {
 }
 button.primary {
   background: var(--accent);
-  color: #06222e;
+  color: var(--on-accent);
   border-color: var(--accent);
   font-weight: 600;
 }
 button.primary:hover:not(:disabled) {
-  background: #8ad8ff;
+  background: color-mix(in srgb, var(--accent) 85%, #fff);
 }
 
 /* segmented control: large variant with a subtitle (session kind) */

@@ -4,7 +4,7 @@
 // to the series (right for an unbounded rate like CPU%). `track` draws a faint
 // full-height baseline so a fullness metric shows its headroom. Colour follows
 // currentColor, so the caller tints the whole tile by threshold.
-export default function Sparkline({ data, max, track = false, width = 46, height = 16 }) {
+export default function Sparkline({ data, max, track = false, width = 28, height = 14 }) {
   const pts = (data || []).filter((v) => typeof v === "number" && isFinite(v));
   const svgProps = {
     className: "spark",
