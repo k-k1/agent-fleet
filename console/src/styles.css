@@ -416,6 +416,27 @@ textarea:focus {
   margin: 2px 4px;
   background: var(--border2, var(--border));
 }
+/* Claude usage chip is a button (click = refresh to latest); keep the chip look but
+   reset the button chrome and add a hover affordance + a small refresh glyph. */
+button.ws-usage {
+  border: 0;
+  background: none;
+  font: inherit;
+  padding: 2px 4px;
+  margin: 0 -2px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+button.ws-usage:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+button.ws-usage:disabled {
+  cursor: default;
+}
+.ws-usage .codicon {
+  font-size: 11px;
+  opacity: 0.7;
+}
 .spark {
   display: block;
 }
