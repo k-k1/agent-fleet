@@ -221,22 +221,33 @@ const SYS_PREFIXES = [
 
 function isNoise(t) {
   if (t.role !== "user") return false;
-  const s = t.text.replace(/^\s+/, "");
+  const s = (t.text || "").replace(/^\s+/, "");
   return SYS_PREFIXES.some((p) => s.startsWith(p));
 }
 
-// groupTurns folds consecutive same-role turns into one block (joined by blank
-// lines) and drops noise. The block keeps the FIRST turn's idx (stable key) and
-// timestamp (when the exchange began).
+// partsOf returns a turn's ordered parts, synthesizing a single text part for turns
+// from an older Agent that predates the parts field (backward compatible).
+function partsOf(t) {
+  if (Array.isArray(t.parts) && t.parts.length) return t.parts;
+  return t.text ? [{ kind: "text", text: t.text }] : [];
+}
+
+// groupTurns folds consecutive same-role turns into one block (concatenating their
+// ordered parts, and their text for copy) and drops noise. The block keeps the FIRST
+// turn's idx (stable key) and timestamp (when the exchange began).
 function groupTurns(turns) {
   const out = [];
   for (const t of turns) {
     if (isNoise(t)) continue;
+    const parts = partsOf(t);
+    if (!parts.length) continue;
     const last = out[out.length - 1];
     if (last && last.role === t.role) {
-      last.text += "\n\n" + t.text;
+      last.parts.push(...parts);
+      if (t.text) last.text += (last.text ? "\n\n" : "") + t.text;
+      if (!last.model && t.model) last.model = t.model;
     } else {
-      out.push({ role: t.role, text: t.text, ts: t.ts, idx: t.idx });
+      out.push({ role: t.role, parts: [...parts], text: t.text || "", model: t.model || "", ts: t.ts, idx: t.idx });
     }
   }
   return out;
@@ -250,12 +261,24 @@ function Turn({ turn }) {
     <div className={"mirror-turn " + (isUser ? "user" : "assistant")}>
       <div className="mirror-turn-head">
         <span className="mt-who">{isUser ? "あなた" : "Claude"}</span>
+        {!isUser && turn.model && <span className="mt-model">{prettyModel(turn.model)}</span>}
       </div>
       <div className="mirror-turn-body">
         {isUser ? (
           <pre className="mirror-user-text">{turn.text}</pre>
         ) : (
-          <MarkdownView source={turn.text} />
+          turn.parts.map((p, i) =>
+            p.kind === "tool" ? (
+              // A faint trace of what claude did between paragraphs (Read/Bash/…).
+              <div className="mt-tool" key={i}>
+                <Icon name="tools" />
+                <span className="mt-tool-name">{p.tool}</span>
+                {p.info && <span className="mt-tool-info">{p.info}</span>}
+              </div>
+            ) : (
+              <MarkdownView key={i} source={p.text} />
+            ),
+          )
         )}
       </div>
       <div className="mirror-turn-foot">
@@ -288,6 +311,14 @@ function CopyButton({ text }) {
       <Icon name={done ? "check" : "copy"} /> {done ? "コピー済" : "コピー"}
     </button>
   );
+}
+
+// prettyModel shortens a model id for the turn header: "claude-opus-4-8" → "opus 4.8".
+function prettyModel(m) {
+  return m
+    .replace(/^claude-/, "")
+    .replace(/-(\d+)-(\d+)$/, " $1.$2")
+    .replace(/-latest$/, "");
 }
 
 // formatTS renders an RFC3339 timestamp as local "MM/DD HH:MM" (date kept so a long
