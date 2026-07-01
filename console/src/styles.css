@@ -1801,6 +1801,11 @@ body.row-resizing {
      content panes below are transparent so they sit on it. Default = theme --bg. */
   background: var(--viewer-bg, var(--bg));
 }
+/* The chat (Markdown mirror) has its own surface, independent of the file viewer;
+   when unset it falls back to the viewer surface, then the theme --bg. */
+.mirrorview {
+  background: var(--chat-bg, var(--viewer-bg, var(--bg)));
+}
 /* ---- Markdown mirror (case-A: read-mostly view of a claude session) ---- */
 /* Right-align the ターミナル/ミラー switch in the view-head, left of the pane
    control cluster (the head already reserves 84px on the right for it). */
