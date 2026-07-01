@@ -1718,12 +1718,10 @@ body.row-resizing {
 .mirror-turn.user {
   background: color-mix(in srgb, var(--accent) 6%, var(--bg));
 }
+/* Header carries only the speaker; the timestamp + copy move to a footer row. */
 .mirror-turn-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 4px;
   font-size: 12px;
+  margin-bottom: 3px;
 }
 .mt-who {
   font-weight: 600;
@@ -1731,12 +1729,23 @@ body.row-resizing {
 .mirror-turn.user .mt-who {
   color: var(--accent);
 }
+/* The response body is indented a touch past the flush-left speaker label. */
+.mirror-turn-body {
+  padding-left: 15px;
+}
+/* Timestamp + copy sit together at the bottom-right of the turn. */
+.mirror-turn-foot {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  font-size: 12px;
+}
 .mt-time {
   font-variant-numeric: tabular-nums;
 }
-/* Copy sits at the right edge of the turn header; understated until hovered. */
 .mt-copy {
-  margin-left: auto;
   display: inline-flex;
   align-items: center;
   gap: 3px;
@@ -1754,15 +1763,35 @@ body.row-resizing {
   white-space: pre-wrap;
   word-break: break-word;
   font: inherit;
+  line-height: 1.5;
 }
 .mirror-turn.assistant .markdown {
   /* MarkdownView is shared with the file viewer, which centers a max-width column
      (margin:0 auto). In the transcript that reads as "everything is indented", so
-     reset it to fill the width, left-aligned. */
+     reset it to fill the width, left-aligned. Tighter leading than the file viewer. */
   padding: 0;
   max-width: none;
   margin: 0;
   font-size: 13.5px;
+  line-height: 1.5;
+}
+/* Tighten the vertical rhythm inside a chat turn (the file viewer's 0.7em/1.4em
+   gaps are too airy for a conversation). */
+.mirror-turn .markdown p,
+.mirror-turn .markdown ul,
+.mirror-turn .markdown ol,
+.mirror-turn .markdown blockquote,
+.mirror-turn .markdown table {
+  margin: 0.4em 0;
+}
+.mirror-turn .markdown li {
+  margin: 0.15em 0;
+}
+.mirror-turn .markdown h1,
+.mirror-turn .markdown h2,
+.mirror-turn .markdown h3,
+.mirror-turn .markdown h4 {
+  margin: 0.7em 0 0.35em;
 }
 .mirror-turn .markdown > :first-child {
   margin-top: 0;
