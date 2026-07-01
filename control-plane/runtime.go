@@ -366,37 +366,44 @@ func (c config) handleWorkspaceRecreate(w http.ResponseWriter, r *http.Request) 
 	c.startResolved(w, r, res)
 }
 
-// startResolved applies the workspace quota then starts the container, writing
-// the JSON result. Shared by start and recreate.
-func (c config) startResolved(w http.ResponseWriter, r *http.Request, res *resolved) {
-	rt, ctx := res.rt, r.Context()
-	// Quota (docs/16 P3-4): block a new running workspace once the tenant is at
-	// its max_workspaces. 0/unset = unlimited. Counted authoritatively via docker.
-	if rt.State(ctx) != "running" {
-		t, err := c.mgr.store.GetTenant(ctx, res.ws.TenantID)
+// ensureWorkspaceStarted brings a stopped workspace up, enforcing the same
+// max_workspaces quota as a manual start (docs/16 P3-4; 0/unset = unlimited,
+// counted authoritatively via docker). No-op if already running. Shared by the
+// explicit start/recreate handlers and P3-9 auto-start.
+func (c config) ensureWorkspaceStarted(ctx context.Context, res *resolved) *apiError {
+	rt := res.rt
+	if rt.State(ctx) == "running" {
+		return nil
+	}
+	t, err := c.mgr.store.GetTenant(ctx, res.ws.TenantID)
+	if err != nil {
+		return internalErr(err)
+	}
+	if lim := parseLimits(t.Limits); lim.MaxWorkspaces > 0 {
+		n, err := c.mgr.countRunningInTenant(ctx, res.ws.TenantID)
 		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
-			return
+			return internalErr(err)
 		}
-		if lim := parseLimits(t.Limits); lim.MaxWorkspaces > 0 {
-			n, err := c.mgr.countRunningInTenant(ctx, res.ws.TenantID)
-			if err != nil {
-				writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
-				return
-			}
-			if n >= lim.MaxWorkspaces {
-				writeAPIErr(w, &apiError{http.StatusTooManyRequests, "quota_workspaces",
-					fmt.Sprintf("tenant workspace limit reached (%d)", lim.MaxWorkspaces)})
-				return
-			}
+		if n >= lim.MaxWorkspaces {
+			return &apiError{http.StatusTooManyRequests, "quota_workspaces",
+				fmt.Sprintf("tenant workspace limit reached (%d)", lim.MaxWorkspaces)}
 		}
 	}
 	if err := rt.Start(ctx); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
-		return
+		return internalErr(err)
 	}
 	_ = c.mgr.store.SetWorkspaceState(ctx, res.ws.ID, "running")
-	writeJSON(w, http.StatusOK, map[string]any{"name": rt.Name(), "state": "running"})
+	return nil
+}
+
+// startResolved starts the container (with quota) and writes the JSON result.
+// Shared by the explicit start and recreate handlers.
+func (c config) startResolved(w http.ResponseWriter, r *http.Request, res *resolved) {
+	if aerr := c.ensureWorkspaceStarted(r.Context(), res); aerr != nil {
+		writeAPIErr(w, aerr)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"name": res.rt.Name(), "state": "running"})
 }
 
 func (c config) handleWorkspaceStop(w http.ResponseWriter, r *http.Request) {
@@ -493,6 +500,14 @@ func (c config) handleSessionCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
+	// P3-9 auto-start: creating a session needs a running Agent, so bring a cold
+	// (idle-stopped or manually stopped) workspace back up on demand first.
+	if c.autostart {
+		if aerr := c.ensureWorkspaceStarted(ctx, res); aerr != nil {
+			writeAPIErr(w, aerr)
+			return
+		}
+	}
 	lim := 0
 	if ul, ok, _ := c.mgr.store.GetUserLimit(ctx, res.mv.MembershipID); ok && ul.MaxSessions > 0 {
 		lim = ul.MaxSessions
