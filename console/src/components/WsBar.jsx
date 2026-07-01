@@ -113,6 +113,53 @@ function useWsResourceChips(tenant, superAdmin) {
   return { wsStats, wsHist, hostStats, hostHist };
 }
 
+// useClaudeUsage polls the Claude subscription usage (5-hour + weekly) every 60s —
+// it changes slowly, and the endpoint (proxied to the Agent, which caches it) is
+// rate-limited, so we poll far less often than the resource chips. Returns null
+// whenever it's unavailable (workspace stopped, no token, endpoint changed), which
+// simply hides the chip. Kept in WsBar like the resource poll so it doesn't re-render
+// the whole app.
+function useClaudeUsage(tenant) {
+  const [usage, setUsage] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    const load = () => {
+      if (document.hidden) return;
+      api("api/claude/usage")
+        .then((d) => alive && setUsage(d && d.ok ? d : null))
+        .catch(() => alive && setUsage(null));
+    };
+    load();
+    const id = setInterval(load, 60000);
+    const onVis = () => !document.hidden && load();
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      alive = false;
+      clearInterval(id);
+      document.removeEventListener("visibilitychange", onVis);
+    };
+  }, [tenant]);
+  return usage;
+}
+
+// untilText: a reset instant → a compact relative "あとN日/N時間/N分" (the weekday+time
+// the app shows is hard to read; relative is glanceable, the absolute date-time goes
+// in the tooltip). whenText: the absolute local "M/D HH:MM".
+function untilText(iso) {
+  const t = new Date(iso).getTime();
+  if (isNaN(t)) return "";
+  const min = Math.max(0, Math.round((t - Date.now()) / 60000));
+  if (min >= 1440) return `あと${Math.round(min / 1440)}日`;
+  if (min >= 60) return `あと${Math.round(min / 60)}時間`;
+  return `あと${min}分`;
+}
+function whenText(iso) {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  const p = (n) => String(n).padStart(2, "0");
+  return `${d.getMonth() + 1}/${d.getDate()} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
 // WS bar: the (single) workspace's state plus Start / Stop. The backend models one
 // workspace per membership, so there is no select / create / delete. The
 // destructive "作り直す" lives deep in 設定 > 環境 (warning-gated), off this bar.
@@ -178,6 +225,7 @@ function tile({ k, series, max, track, value, level, title }) {
 export default function WsBar() {
   const { wsState, startWs, stopWs, ocweb, tenant, superAdmin, layout, resetToTerminal } = useApp();
   const { wsStats, wsHist, hostStats, hostHist } = useWsResourceChips(tenant, superAdmin);
+  const usage = useClaudeUsage(tenant);
   const isMobile = useIsMobile();
   const [port, setPort] = useState("");
   const [pvOpen, setPvOpen] = useState(false); // desktop port-preview popover
@@ -286,6 +334,46 @@ export default function WsBar() {
     </>
   );
 
+  // Claude subscription usage: 5-hour + weekly percent, each with a relative reset on
+  // the chip and the absolute date-time in the tooltip. Colored by the higher of the
+  // two. Unofficial/best-effort — absent (null) whenever the endpoint didn't answer,
+  // so the chip just doesn't appear.
+  const usageWin = (w) => ({ pct: Math.round(w.pct), until: untilText(w.resetsAt), when: whenText(w.resetsAt) });
+  const uh = usage && usage.fiveHour && usageWin(usage.fiveHour);
+  const uw = usage && usage.sevenDay && usageWin(usage.sevenDay);
+  const usageChip = (uh || uw) && (() => {
+    const face = [];
+    const detail = ["Claude 使用状況"];
+    if (uh) {
+      face.push(`5h ${uh.pct}% ${uh.until}`);
+      detail.push(`5時間制限 ${uh.pct}%・${uh.until}でリセット（${uh.when}）`);
+    }
+    if (uw) {
+      face.push(`週 ${uw.pct}% ${uw.until}`);
+      detail.push(`週次・全モデル ${uw.pct}%・${uw.until}でリセット（${uw.when}）`);
+    }
+    const maxPct = Math.max(uh ? uh.pct : 0, uw ? uw.pct : 0);
+    const level = lvl(maxPct, 80, 95);
+    return (
+      <span
+        className={"ws-graph ws-usage" + (level === 2 ? " crit" : level === 1 ? " warn" : "")}
+        title={detail.join("\n")}
+        key="claude-usage"
+      >
+        <span className="ws-graph-k">Claude</span>
+        <span className="ws-graph-v">{face.join(" · ")}</span>
+      </span>
+    );
+  })();
+
+  const statsBlock = (graphs || usageChip) && (
+    <>
+      {graphs}
+      {graphs && usageChip && <span className="ws-graph-sep" />}
+      {usageChip}
+    </>
+  );
+
   const ocwebBtn = ocweb && ocweb.available && ocweb.enabled && (
     <button
       className="ghost"
@@ -374,7 +462,7 @@ export default function WsBar() {
           </button>
           {moreOpen && (
             <div className="ws-more-pop">
-              {graphs && <div className="ws-more-stats">{graphs}</div>}
+              {statsBlock && <div className="ws-more-stats">{statsBlock}</div>}
               {ocwebBtn}
               {previewForm}
             </div>
@@ -382,7 +470,7 @@ export default function WsBar() {
         </div>
       ) : (
         <>
-          {graphs}
+          {statsBlock}
           {ocwebBtn}
           <div className="ws-preview" ref={pvRef}>
             <button
