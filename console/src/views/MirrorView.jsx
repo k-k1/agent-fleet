@@ -118,22 +118,6 @@ export default function MirrorView({ session, sessionMeta, active, mirror, onTog
     setTimeout(() => tickRef.current?.(), 250);
   };
 
-  // sendAnswers submits one answer per AskUserQuestion page in order, pausing between
-  // so the terminal's question modal advances to the next page (multi-question), and
-  // joins multi-select choices into a single answer per page.
-  const sendAnswers = async (answers) => {
-    const list = (answers || []).map((a) => (a || "").trim());
-    if (!list.some(Boolean) || sending) return;
-    setSending(true);
-    statusRef.current = "working";
-    setStatus("working");
-    for (let i = 0; i < list.length; i++) {
-      await postInput(list[i]); // an empty page answer still advances the modal
-      if (i < list.length - 1) await new Promise((r) => setTimeout(r, 500));
-    }
-    setSending(false);
-    setTimeout(() => tickRef.current?.(), 300);
-  };
 
   const send = async () => {
     const text = draft.trim();
@@ -224,7 +208,7 @@ export default function MirrorView({ session, sessionMeta, active, mirror, onTog
                 questions={pending}
                 sending={sending}
                 onSendOne={sendPrompt}
-                onSubmit={sendAnswers}
+                onSubmit={sendPrompt}
               />
             </div>
           </div>
@@ -479,7 +463,20 @@ function PendingQuestions({ questions, onSendOne, onSubmit, sending }) {
     });
   };
 
-  const submit = () => onSubmit(qs.map((_, qi) => (sel[qi] || []).join(", ")));
+  // The question modal submits the whole tool on the first free-text Enter, so we
+  // send ALL answers as one line (no newlines — those would submit early): e.g.
+  // "DB: PostgreSQL / デプロイ: AWS, GCP". claude reads it as the tool's answer.
+  const submit = () => {
+    const combined = qs
+      .map((q, qi) => {
+        const chosen = (sel[qi] || []).join(", ");
+        if (!chosen) return null;
+        return `${q.header || q.question || `質問${qi + 1}`}: ${chosen}`;
+      })
+      .filter(Boolean)
+      .join(" / ");
+    if (combined) onSubmit(combined);
+  };
 
   return (
     <div className="mt-question">
