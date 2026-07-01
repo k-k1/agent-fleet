@@ -128,6 +128,11 @@ export default function MirrorView({ session, sessionMeta, active, mirror, onTog
     }
   };
 
+  // claude writes one logical response as several assistant events (text split by
+  // tool calls), so merge consecutive same-role turns into one block and drop the
+  // system-injected user lines (bash i/o, task notifications, slash-command echoes).
+  const groups = groupTurns(turns);
+
   // Status chip: prefer the live polled status, fall back to the session meta.
   const chip = status
     ? stateInfo({ kind: "claude", alive: status !== "stopped", state: status })
@@ -160,13 +165,13 @@ export default function MirrorView({ session, sessionMeta, active, mirror, onTog
       </header>
 
       <div className="mirror-body" ref={bodyRef}>
-        {turns.length === 0 ? (
+        {groups.length === 0 ? (
           <div className="mirror-empty muted">
             まだ会話はありません。下の欄からプロンプトを送るか、ターミナルで対話すると、ここに
             ターンごとの Markdown で表示されます。
           </div>
         ) : (
-          turns.map((t) => <Turn key={t.idx} turn={t} />)
+          groups.map((g) => <Turn key={g.idx} turn={g} />)
         )}
       </div>
 
@@ -196,6 +201,45 @@ export default function MirrorView({ session, sessionMeta, active, mirror, onTog
       </div>
     </div>
   );
+}
+
+// System-injected user lines that aren't real prompts: slash-command echoes, the
+// bash tool's stdin/stdout, task-notification frames, memory captures. We hide them
+// so the chat reads as the actual conversation. Matched at the start of the text.
+const SYS_PREFIXES = [
+  "<task-notification>",
+  "<bash-input>",
+  "<bash-stdout>",
+  "<bash-stderr>",
+  "<local-command",
+  "<command-message>",
+  "<command-name>",
+  "<command-args>",
+  "<user-memory-input>",
+  "<system-reminder>",
+];
+
+function isNoise(t) {
+  if (t.role !== "user") return false;
+  const s = t.text.replace(/^\s+/, "");
+  return SYS_PREFIXES.some((p) => s.startsWith(p));
+}
+
+// groupTurns folds consecutive same-role turns into one block (joined by blank
+// lines) and drops noise. The block keeps the FIRST turn's idx (stable key) and
+// timestamp (when the exchange began).
+function groupTurns(turns) {
+  const out = [];
+  for (const t of turns) {
+    if (isNoise(t)) continue;
+    const last = out[out.length - 1];
+    if (last && last.role === t.role) {
+      last.text += "\n\n" + t.text;
+    } else {
+      out.push({ role: t.role, text: t.text, ts: t.ts, idx: t.idx });
+    }
+  }
+  return out;
 }
 
 // Turn renders one conversation block: a header (who + when + copy) and the body —

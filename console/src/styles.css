@@ -1761,9 +1761,13 @@ body.row-resizing {
   font: inherit;
 }
 .mirror-turn.assistant .markdown {
-  /* MarkdownView brings its own block spacing; trim the outer margins so the card
-     padding controls the gap. */
+  /* MarkdownView is shared with the file viewer, which centers a max-width column
+     (margin:0 auto). In a chat card that reads as "everything is indented/centered",
+     so reset it to fill the card, left-aligned; the card padding controls the gap. */
   padding: 0;
+  max-width: none;
+  margin: 0;
+  font-size: 13.5px;
 }
 .mirror-turn .markdown > :first-child {
   margin-top: 0;
