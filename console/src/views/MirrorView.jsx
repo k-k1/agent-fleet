@@ -544,13 +544,13 @@ function PendingQuestions({ questions, onSendOne, onSubmitKeys, sending }) {
                   onClick={() => (single ? onSendOne(o.label) : toggle(qi, o.label, qn.multiSelect))}
                   title={o.description || o.label}
                 >
-                  <span className="mq-opt-label">
-                    {!single && (
-                      <span className="mq-check">{qn.multiSelect ? (checked ? "☑" : "☐") : checked ? "◉" : "○"}</span>
-                    )}
-                    {o.label}
+                  {!single && (
+                    <span className="mq-mark">{qn.multiSelect ? (checked ? "☑" : "☐") : checked ? "◉" : "○"}</span>
+                  )}
+                  <span className="mq-opt-body">
+                    <span className="mq-opt-label">{o.label}</span>
+                    {o.description && <span className="mq-opt-desc">{o.description}</span>}
                   </span>
-                  {o.description && <span className="mq-opt-desc">{o.description}</span>}
                 </button>
               );
             })}
@@ -581,10 +581,13 @@ function QuestionBlock({ questions, answered, answer }) {
     <div className={"mt-question" + (answered ? " answered" : "")}>
       {(questions || []).map((qn, qi) => {
         const opts = qn.options || [];
-        // The chosen option, matched by exact label then containment (the answer text
-        // may be a free-text reply that mentions the label).
-        const chosen =
-          answered && norm ? opts.find((o) => o.label === norm) || opts.find((o) => norm.includes(o.label)) : null;
+        // Which options the answer picked. The answer is a free-text reply that may
+        // list several labels ("AWS, セルフホスト"), so match every label present as a
+        // token; fall back to containment when no token matches exactly.
+        const tokens = norm ? norm.split(/[,、\/\s]+/).map((s) => s.trim()).filter(Boolean) : [];
+        let chosen = answered ? opts.filter((o) => tokens.includes(o.label)) : [];
+        if (answered && !chosen.length && norm) chosen = opts.filter((o) => norm.includes(o.label));
+        const chosenSet = new Set(chosen);
         return (
           <div className="mq" key={qi}>
             <div className="mq-head">
@@ -596,7 +599,7 @@ function QuestionBlock({ questions, answered, answer }) {
             {qn.question && <div className="mq-text">{qn.question}</div>}
             <div className="mq-options">
               {opts.map((o, oi) => {
-                const sel = o === chosen;
+                const sel = chosenSet.has(o);
                 return (
                   <button
                     type="button"
@@ -605,16 +608,16 @@ function QuestionBlock({ questions, answered, answer }) {
                     disabled
                     title={o.description || o.label}
                   >
-                    <span className="mq-opt-label">
-                      {sel && "✓ "}
-                      {o.label}
+                    <span className="mq-mark">{sel ? "✔" : qn.multiSelect ? "☐" : "○"}</span>
+                    <span className="mq-opt-body">
+                      <span className="mq-opt-label">{o.label}</span>
+                      {o.description && <span className="mq-opt-desc">{o.description}</span>}
                     </span>
-                    {o.description && <span className="mq-opt-desc">{o.description}</span>}
                   </button>
                 );
               })}
             </div>
-            {answered && norm && !chosen && <div className="mq-answer muted">回答: {norm}</div>}
+            {answered && norm && !chosenSet.size && <div className="mq-answer muted">回答: {norm}</div>}
           </div>
         );
       })}
