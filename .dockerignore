@@ -1,0 +1,22 @@
+# Build context for control-plane/Dockerfile is the repo root; keep it lean.
+# (This root .dockerignore only affects root-context builds — i.e. the CP image.
+# The workspace image builds with context workspace/ and is unaffected.)
+.git
+**/node_modules
+console/dist
+control-plane/control-plane
+control-plane/af-cp
+workspace/agent/agent
+**/*.db
+**/*.db-wal
+**/*.db-shm
+
+# Not needed to build the CP image.
+docs
+phase0
+workspace
+
+# Per-deployment secrets (never bake into an image).
+deploy/local/oauth.env
+deploy/local/allowed-emails.txt
+deploy/compose/.env
