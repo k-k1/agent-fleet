@@ -2073,6 +2073,38 @@ button.mt-tool-diff .codicon {
   color: var(--chat-accent);
 }
 
+/* Collapsed run of consecutive tool traces: a single foldable summary row. The head
+   reuses .mt-tool for the faint look; the chevron + hover lift mark it interactive. */
+.mt-toolrun {
+  margin: 0.3em 0;
+}
+button.mt-toolrun-head {
+  width: 100%;
+  margin: 0;
+  padding: 2px 6px;
+  border: 0;
+  border-radius: 5px;
+  background: none;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: opacity 0.12s, background 0.12s;
+}
+button.mt-toolrun-head:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--chat-accent) 12%, transparent);
+}
+.mt-toolrun.open > .mt-toolrun-head {
+  opacity: 0.7;
+}
+/* Expanded traces sit indented under the head, aligned past the chevron. */
+.mt-toolrun-body {
+  margin: 0.1em 0 0.2em 14px;
+}
+.mt-toolrun-body .mt-tool {
+  margin: 0.15em 0;
+}
+
 /* Diff pane: an edit-family tool's before/after, rendered line-level. */
 .diffview .dv-scroll {
   flex: 1;

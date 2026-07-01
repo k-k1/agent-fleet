@@ -594,44 +594,26 @@ function Turn({ turn, onAnswer, onOpenPlan, onOpenDiff }) {
         {isUser ? (
           <pre className="mirror-user-text">{turn.text}</pre>
         ) : (
-          turn.parts.map((p, i) =>
-            p.kind === "tool" ? (
-              // A faint trace of what claude did between paragraphs (Read/Bash/…).
-              // Edit-family tools carry their before/after — click to open a diff pane.
-              p.edits && p.edits.length ? (
-                <button
-                  type="button"
-                  className="mt-tool mt-tool-diff"
-                  key={i}
-                  onClick={() => onOpenDiff && onOpenDiff(p)}
-                  title="差分を別ペインで開く"
-                >
-                  <Icon name="diff" />
-                  <span className="mt-tool-name">{p.tool}</span>
-                  {p.info && <span className="mt-tool-info">{p.info}</span>}
-                </button>
-              ) : (
-                <div className="mt-tool" key={i}>
-                  <Icon name="tools" />
-                  <span className="mt-tool-name">{p.tool}</span>
-                  {p.info && <span className="mt-tool-info">{p.info}</span>}
-                </div>
-              )
-            ) : p.kind === "question" ? (
+          foldParts(turn.parts).map((item) =>
+            // Consecutive tool traces collapse into one foldable row (Edit/Write bursts
+            // between paragraphs). A lone tool renders inline (ToolRun handles length 1).
+            item.kind === "toolrun" ? (
+              <ToolRun key={"tr" + item.tools[0].i} tools={item.tools} onOpenDiff={onOpenDiff} />
+            ) : item.p.kind === "question" ? (
               // A question from the transcript is already answered (claude writes the
               // tool_use only after the answer) — show it resolved, not clickable.
-              <QuestionBlock key={i} questions={p.questions} answered answer={p.answer} />
-            ) : p.kind === "plan" ? (
+              <QuestionBlock key={item.i} questions={item.p.questions} answered answer={item.p.answer} />
+            ) : item.p.kind === "plan" ? (
               // A historical plan (already decided) — show the outcome, open in a pane.
               <PlanBlock
-                key={i}
-                plan={p.plan}
+                key={item.i}
+                plan={item.p.plan}
                 answered
-                outcome={p.answer}
-                onOpen={() => onOpenPlan && onOpenPlan(p.plan)}
+                outcome={item.p.answer}
+                onOpen={() => onOpenPlan && onOpenPlan(item.p.plan)}
               />
             ) : (
-              <MarkdownView key={i} source={p.text} />
+              <MarkdownView key={item.i} source={item.p.text} />
             ),
           )
         )}
@@ -645,6 +627,96 @@ function Turn({ turn, onAnswer, onOpenPlan, onOpenDiff }) {
         )}
         <CopyButton text={turn.text} />
       </div>
+    </div>
+  );
+}
+
+// foldParts walks a block's ordered parts and coalesces each maximal run of
+// consecutive tool traces into one { kind:"toolrun", tools:[{p,i}] } item; every
+// other part passes through as { kind:"part", p, i }. A run of length 1 still
+// becomes a toolrun (ToolRun renders it inline), so callers only branch two ways.
+function foldParts(parts) {
+  const items = [];
+  let run = null;
+  parts.forEach((p, i) => {
+    if (p.kind === "tool") {
+      if (!run) {
+        run = { kind: "toolrun", tools: [] };
+        items.push(run);
+      }
+      run.tools.push({ p, i });
+    } else {
+      run = null;
+      items.push({ kind: "part", p, i });
+    }
+  });
+  return items;
+}
+
+// ToolTrace renders one faint tool line. Edit-family tools carry their before/after,
+// so they render as a button that opens a diff pane; the rest are a static trace.
+function ToolTrace({ p, onOpenDiff }) {
+  if (p.edits && p.edits.length) {
+    return (
+      <button
+        type="button"
+        className="mt-tool mt-tool-diff"
+        onClick={() => onOpenDiff && onOpenDiff(p)}
+        title="差分を別ペインで開く"
+      >
+        <Icon name="diff" />
+        <span className="mt-tool-name">{p.tool}</span>
+        {p.info && <span className="mt-tool-info">{p.info}</span>}
+      </button>
+    );
+  }
+  return (
+    <div className="mt-tool">
+      <Icon name="tools" />
+      <span className="mt-tool-name">{p.tool}</span>
+      {p.info && <span className="mt-tool-info">{p.info}</span>}
+    </div>
+  );
+}
+
+// ToolRun renders a run of consecutive tool traces. A lone tool shows inline as
+// before; two or more collapse (default) into a summary row — "N 件のツール" with a
+// per-tool tally (Edit×3 · Bash×2) — that expands on click to the individual traces,
+// keeping each edit's click-to-diff.
+function ToolRun({ tools, onOpenDiff }) {
+  const [open, setOpen] = useState(false);
+  if (tools.length === 1) return <ToolTrace p={tools[0].p} onOpenDiff={onOpenDiff} />;
+  const tally = [];
+  const at = {};
+  for (const { p } of tools) {
+    const name = p.tool || "tool";
+    if (at[name] === undefined) {
+      at[name] = tally.length;
+      tally.push([name, 0]);
+    }
+    tally[at[name]][1]++;
+  }
+  const summary = tally.map(([n, c]) => (c > 1 ? `${n}×${c}` : n)).join(" · ");
+  return (
+    <div className={"mt-toolrun" + (open ? " open" : "")}>
+      <button
+        type="button"
+        className="mt-tool mt-toolrun-head"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        title={open ? "ツールをたたむ" : "ツールを展開"}
+      >
+        <Icon name={open ? "chevron-down" : "chevron-right"} />
+        <span className="mt-tool-name">{tools.length} 件のツール</span>
+        <span className="mt-tool-info">{summary}</span>
+      </button>
+      {open && (
+        <div className="mt-toolrun-body">
+          {tools.map(({ p, i }) => (
+            <ToolTrace key={i} p={p} onOpenDiff={onOpenDiff} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
