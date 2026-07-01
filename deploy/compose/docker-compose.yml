@@ -1,5 +1,5 @@
-# agent-fleet — on-prem compose (P3-10 段1: CP のみ・TLS なし・骨).
-# Caddy/ACME は 段2、backup/restore は 段3、設定一元化+runbook は 段4 で追加する。
+# agent-fleet — on-prem compose (P3-10 段2: CP + Caddy 自動 TLS).
+# backup/restore は 段3、設定一元化+runbook は 段4 で追加する。
 #
 #   cp deploy/compose/.env.example deploy/compose/.env   # then fill it in
 #   docker compose -f deploy/compose/docker-compose.yml up -d --build
@@ -37,4 +37,22 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       # (B) 同一絶対パス bind。
       - ${DATA_DIR}:${DATA_DIR}
+    restart: unless-stopped
+
+  # Caddy: 公開ドメインの自動 TLS（ACME/Let's Encrypt）+ CP への reverse proxy。
+  # host-net で host loopback を共有し 127.0.0.1:8099(CP) へ到達（§20.4: 両方 host-net）。
+  # 80/443 を bind するため root のまま（privileged port）。証明書は DATA_DIR 配下に
+  # 永続化＝段3 backup が同時に拾える。既存プロキシで前段する社はこのサービスを外す
+  # （Caddyfile 代替2 参照）。
+  caddy:
+    image: caddy:2-alpine
+    network_mode: host
+    env_file:
+      - .env
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ${DATA_DIR}/caddy/data:/data
+      - ${DATA_DIR}/caddy/config:/config
+    depends_on:
+      - cp
     restart: unless-stopped
