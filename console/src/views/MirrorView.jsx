@@ -7,6 +7,7 @@ import MarkdownView from "./MarkdownView.jsx";
 import MirrorToggle from "../components/MirrorToggle.jsx";
 import { kindIcon, kindLabel, kindShort, kindClass } from "../lib/sessionkind.js";
 import { displayName, stateInfo } from "../lib/sessionview.js";
+import { coarsePointer } from "../lib/device.js";
 
 const q = encodeURIComponent;
 
@@ -164,9 +165,13 @@ export default function MirrorView({ session, sessionMeta, active, mirror, onTog
     if (el) el.scrollTop = el.scrollHeight;
   }, [turns, pending, pendingPlan, pendingPerm, status]);
 
-  // Focus the composer when this pane becomes the active chat.
+  // Focus the composer when this pane becomes the active chat — but not on touch
+  // devices, where auto-focus would pop the on-screen keyboard just from switching
+  // to read the chat. There the user taps the composer to type. (The other focus
+  // calls below are keystroke-driven — send / history nav — so the keyboard is
+  // already up and refocusing is fine.)
   useEffect(() => {
-    if (active) inputRef.current?.focus();
+    if (active && !coarsePointer()) inputRef.current?.focus();
   }, [active]);
 
   // Low-level: type one prompt into the session (tmux send-keys). No state/guard.
