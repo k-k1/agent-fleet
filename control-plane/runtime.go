@@ -29,12 +29,33 @@ type dockerRuntime struct {
 	extraEnv   []string // KEY=VAL passed to the workspace container (e.g. CLAUDE_INSTALL=0)
 }
 
-func (d *dockerRuntime) agentBase() string {
+// Runtime is the port that abstracts where a Workspace container runs and how the
+// CP reaches its Agent. dockerRuntime is the local/compose adapter (docker CLI);
+// the AWS adapter (ECS, P3-7) implements the same port so the handlers, manager
+// and reaper stay backend-agnostic. Endpoint() hides the reachability difference
+// (host-published 127.0.0.1:port locally vs Service Connect on ECS).
+type Runtime interface {
+	Start(ctx context.Context) error
+	Stop(ctx context.Context) error
+	State(ctx context.Context) string // running | stopped | none
+	Endpoint() string                 // http base URL for CP→Agent REST
+	Token() string                    // Bearer secret for CP→Agent (may be "")
+	Name() string                     // container / display name
+}
+
+// dockerRuntime is the first Runtime adapter; the ECS adapter (P3-7) must satisfy
+// the same contract. This assertion fails the build if either drifts.
+var _ Runtime = (*dockerRuntime)(nil)
+
+func (d *dockerRuntime) Endpoint() string {
 	return fmt.Sprintf("http://%s:%s", d.agentHost, d.agentPort)
 }
 
-// state returns running | stopped | none.
-func (d *dockerRuntime) state(ctx context.Context) string {
+func (d *dockerRuntime) Token() string { return d.token }
+func (d *dockerRuntime) Name() string  { return d.name }
+
+// State returns running | stopped | none.
+func (d *dockerRuntime) State(ctx context.Context) string {
 	out, err := exec.CommandContext(ctx, "docker", "inspect", "-f", "{{.State.Status}}", d.name).Output()
 	if err != nil {
 		return "none"
@@ -47,9 +68,9 @@ func (d *dockerRuntime) state(ctx context.Context) string {
 	}
 }
 
-// start launches the Workspace container and waits for the Agent to be healthy.
-func (d *dockerRuntime) start(ctx context.Context) error {
-	if d.state(ctx) == "running" {
+// Start launches the Workspace container and waits for the Agent to be healthy.
+func (d *dockerRuntime) Start(ctx context.Context) error {
+	if d.State(ctx) == "running" {
 		return nil
 	}
 	_ = exec.CommandContext(ctx, "docker", "rm", "-f", d.name).Run() // clear any stopped remnant
@@ -128,7 +149,7 @@ func (d *dockerRuntime) ensureNetwork(ctx context.Context) error {
 	return nil
 }
 
-func (d *dockerRuntime) stop(ctx context.Context) error {
+func (d *dockerRuntime) Stop(ctx context.Context) error {
 	if out, err := exec.CommandContext(ctx, "docker", "rm", "-f", d.name).CombinedOutput(); err != nil {
 		return fmt.Errorf("docker rm: %v: %s", err, out)
 	}
@@ -179,7 +200,7 @@ func cleanHome(dataDir string) error {
 func (d *dockerRuntime) waitHealthy(ctx context.Context, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		req, _ := http.NewRequestWithContext(ctx, "GET", d.agentBase()+"/healthz", nil)
+		req, _ := http.NewRequestWithContext(ctx, "GET", d.Endpoint()+"/healthz", nil)
 		if resp, err := http.DefaultClient.Do(req); err == nil {
 			resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {
@@ -217,7 +238,7 @@ func (c config) resolvedFor(w http.ResponseWriter, r *http.Request) (*resolved, 
 	return res, true
 }
 
-func (c config) rtFor(w http.ResponseWriter, r *http.Request) (*dockerRuntime, bool) {
+func (c config) rtFor(w http.ResponseWriter, r *http.Request) (Runtime, bool) {
 	res, ok := c.resolvedFor(w, r)
 	if !ok {
 		return nil, false
@@ -248,7 +269,7 @@ func (c config) handleWorkspaceGet(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"name": rt.name, "state": rt.state(r.Context())})
+	writeJSON(w, http.StatusOK, map[string]any{"name": rt.Name(), "state": rt.State(r.Context())})
 }
 
 func (c config) handleWorkspaceStart(w http.ResponseWriter, r *http.Request) {
@@ -270,10 +291,10 @@ func (c config) handleWorkspaceRecreate(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
-	_ = res.rt.stop(r.Context()) // best-effort: may not exist yet
+	_ = res.rt.Stop(r.Context()) // best-effort: may not exist yet
 	// Clear the working copies while the container is down. Targeted: we keep the
 	// encrypted secrets store and everything else in home.
-	_ = os.RemoveAll(filepath.Join(res.rt.dataDir, "home", "repos"))
+	_ = os.RemoveAll(filepath.Join(res.ws.DataDir, "home", "repos"))
 	c.startResolved(w, r, res)
 }
 
@@ -283,7 +304,7 @@ func (c config) startResolved(w http.ResponseWriter, r *http.Request, res *resol
 	rt, ctx := res.rt, r.Context()
 	// Quota (docs/16 P3-4): block a new running workspace once the tenant is at
 	// its max_workspaces. 0/unset = unlimited. Counted authoritatively via docker.
-	if rt.state(ctx) != "running" {
+	if rt.State(ctx) != "running" {
 		t, err := c.mgr.store.GetTenant(ctx, res.ws.TenantID)
 		if err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
@@ -302,12 +323,12 @@ func (c config) startResolved(w http.ResponseWriter, r *http.Request, res *resol
 			}
 		}
 	}
-	if err := rt.start(ctx); err != nil {
+	if err := rt.Start(ctx); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
 	}
 	_ = c.mgr.store.SetWorkspaceState(ctx, res.ws.ID, "running")
-	writeJSON(w, http.StatusOK, map[string]any{"name": rt.name, "state": "running"})
+	writeJSON(w, http.StatusOK, map[string]any{"name": rt.Name(), "state": "running"})
 }
 
 func (c config) handleWorkspaceStop(w http.ResponseWriter, r *http.Request) {
@@ -315,12 +336,12 @@ func (c config) handleWorkspaceStop(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := res.rt.stop(r.Context()); err != nil {
+	if err := res.rt.Stop(r.Context()); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
 		return
 	}
 	_ = c.mgr.store.SetWorkspaceState(r.Context(), res.ws.ID, "stopped")
-	writeJSON(w, http.StatusOK, map[string]any{"name": res.rt.name, "state": "stopped"})
+	writeJSON(w, http.StatusOK, map[string]any{"name": res.rt.Name(), "state": "stopped"})
 }
 
 // sessionWire is the session shape exchanged with the Agent and the Console. The
@@ -356,7 +377,7 @@ func (c config) handleSessionsList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-	if res.rt.state(ctx) == "running" {
+	if res.rt.State(ctx) == "running" {
 		if list, err := c.mgr.agentSessions(ctx, res.rt); err == nil {
 			rows := make([]SessionRow, 0, len(list))
 			for _, s := range list {

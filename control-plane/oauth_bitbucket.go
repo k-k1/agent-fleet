@@ -129,10 +129,10 @@ func (c config) handleBitbucketOAuthCallback(w http.ResponseWriter, r *http.Requ
 		bbCallbackPage(w, "Workspace の解決に失敗しました: "+aerr.message)
 		return
 	}
-	areq, _ := http.NewRequest("PUT", rt.agentBase()+"/connections/git/bitbucket/oauth", strings.NewReader(string(payload)))
+	areq, _ := http.NewRequest("PUT", rt.Endpoint()+"/connections/git/bitbucket/oauth", strings.NewReader(string(payload)))
 	areq.Header.Set("Content-Type", "application/json")
-	if rt.token != "" {
-		areq.Header.Set("Authorization", "Bearer "+rt.token) // CP↔Agent auth
+	if rt.Token() != "" {
+		areq.Header.Set("Authorization", "Bearer "+rt.Token()) // CP↔Agent auth
 	}
 	aresp, err := http.DefaultClient.Do(areq)
 	if err != nil {

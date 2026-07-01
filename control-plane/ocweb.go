@@ -27,7 +27,7 @@ func (c config) handleOcweb(w http.ResponseWriter, r *http.Request) {
 	}
 	rt := res.rt
 	c.mgr.conns.touch(res.ws.ID) // P3-9: opencode web traffic keeps the workspace warm
-	agentURL, err := url.Parse(rt.agentBase())
+	agentURL, err := url.Parse(rt.Endpoint())
 	if err != nil {
 		http.Error(w, "bad agent base", http.StatusBadGateway)
 		return
@@ -36,8 +36,8 @@ func (c config) handleOcweb(w http.ResponseWriter, r *http.Request) {
 	director := rp.Director
 	rp.Director = func(req *http.Request) {
 		director(req) // scheme/host → agent; req.URL.Path kept as /ocweb/…
-		if rt.token != "" {
-			req.Header.Set("Authorization", "Bearer "+rt.token) // CP↔Agent auth
+		if rt.Token() != "" {
+			req.Header.Set("Authorization", "Bearer "+rt.Token()) // CP↔Agent auth
 		}
 		// Tell pk-webui where it really lives as the browser sees it.
 		req.Header.Set("X-Forwarded-Prefix", c.externalPrefix()+"/ocweb")
@@ -83,15 +83,15 @@ func (c config) handleOpencodeWebToggle(w http.ResponseWriter, r *http.Request) 
 	body["base_prefix"] = c.externalPrefix()
 	buf, _ := json.Marshal(body)
 
-	target := rt.agentBase() + strings.TrimPrefix(r.URL.Path, "/api")
+	target := rt.Endpoint() + strings.TrimPrefix(r.URL.Path, "/api")
 	req, err := http.NewRequestWithContext(r.Context(), r.Method, target, bytes.NewReader(buf))
 	if err != nil {
 		http.Error(w, "bad proxy request", http.StatusBadGateway)
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if rt.token != "" {
-		req.Header.Set("Authorization", "Bearer "+rt.token) // CP↔Agent auth
+	if rt.Token() != "" {
+		req.Header.Set("Authorization", "Bearer "+rt.Token()) // CP↔Agent auth
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {

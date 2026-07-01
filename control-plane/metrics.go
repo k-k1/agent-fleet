@@ -184,7 +184,7 @@ func (c config) handleWorkspaceStats(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	writeJSON(w, http.StatusOK, containerStats(r.Context(), rt.name))
+	writeJSON(w, http.StatusOK, containerStats(r.Context(), rt.Name()))
 }
 
 // --- Disk usage (admin per-member view) ---

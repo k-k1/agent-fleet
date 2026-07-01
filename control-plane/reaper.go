@@ -196,7 +196,7 @@ func (rp *reaper) sweep(ctx context.Context) {
 
 func (rp *reaper) sweepWorkspace(ctx context.Context, ws Workspace, sessTO time.Duration, sessOn bool, wsTO time.Duration, wsOn bool, live map[string]bool) {
 	rt := rp.mgr.runtimeFor(ws, "") // secretKey unused for read/halt calls
-	if rt.state(ctx) != "running" {
+	if rt.State(ctx) != "running" {
 		return
 	}
 	now := time.Now()
@@ -258,10 +258,10 @@ func (rp *reaper) sweepWorkspace(ctx context.Context, ws Workspace, sessTO time.
 }
 
 // haltSession halts one idle claude session (Agent POST /sessions/{name}/halt).
-func (rp *reaper) haltSession(ctx context.Context, rt *dockerRuntime, ws Workspace, name string) {
-	req, _ := http.NewRequestWithContext(ctx, "POST", rt.agentBase()+"/sessions/"+name+"/halt", nil)
-	if rt.token != "" {
-		req.Header.Set("Authorization", "Bearer "+rt.token)
+func (rp *reaper) haltSession(ctx context.Context, rt Runtime, ws Workspace, name string) {
+	req, _ := http.NewRequestWithContext(ctx, "POST", rt.Endpoint()+"/sessions/"+name+"/halt", nil)
+	if rt.Token() != "" {
+		req.Header.Set("Authorization", "Bearer "+rt.Token())
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -273,8 +273,8 @@ func (rp *reaper) haltSession(ctx context.Context, rt *dockerRuntime, ws Workspa
 }
 
 // stopWorkspace docker-stops a cold workspace and mirrors state to the DB.
-func (rp *reaper) stopWorkspace(ctx context.Context, rt *dockerRuntime, ws Workspace) {
-	if err := rt.stop(ctx); err != nil {
+func (rp *reaper) stopWorkspace(ctx context.Context, rt Runtime, ws Workspace) {
+	if err := rt.Stop(ctx); err != nil {
 		log.Printf("idle-stop: stop %s: %v", ws.ContainerName, err)
 		return
 	}

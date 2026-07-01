@@ -84,7 +84,7 @@ func (c config) handleAdminMemberSessions(w http.ResponseWriter, r *http.Request
 	}
 	ctx := r.Context()
 	rt := c.mgr.runtimeFor(ws, "")
-	if rt.state(ctx) == "running" {
+	if rt.State(ctx) == "running" {
 		if list, err := c.mgr.agentSessions(ctx, rt); err == nil {
 			rows := make([]SessionRow, 0, len(list))
 			for _, s := range list {

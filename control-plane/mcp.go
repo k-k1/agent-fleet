@@ -547,7 +547,7 @@ func (c config) mcpAudit(ctx context.Context, ac *adminCtx, action, target, deta
 // container runs, DB mirror otherwise) — same precedence as the admin REST view.
 func (c config) mcpMemberSessions(ctx context.Context, ws Workspace) []map[string]any {
 	rt := c.mgr.runtimeFor(ws, "")
-	if rt.state(ctx) == "running" {
+	if rt.State(ctx) == "running" {
 		if list, err := c.mgr.agentSessions(ctx, rt); err == nil {
 			out := make([]map[string]any, 0, len(list))
 			for _, s := range list {
@@ -657,7 +657,7 @@ func (c config) mcpStopSession(ctx context.Context, ac *adminCtx, userKey, name 
 		return "", fmt.Errorf("%q has no workspace", userKey)
 	}
 	rt := c.mgr.runtimeFor(ws, "")
-	if rt.state(ctx) != "running" {
+	if rt.State(ctx) != "running" {
 		return "", fmt.Errorf("%q workspace is not running", userKey)
 	}
 	text, err := agentText(ctx, rt, "POST", "/sessions/"+url.PathEscape(name)+"/halt", nil)
@@ -682,20 +682,20 @@ func (c config) mcpSetUserQuota(ctx context.Context, ac *adminCtx, userKey strin
 
 // agentText performs an authenticated CP→Agent request and returns the body as
 // text (the Agent already returns JSON; we pass it through to the model).
-func agentText(ctx context.Context, rt *dockerRuntime, method, path string, body []byte) (string, error) {
+func agentText(ctx context.Context, rt Runtime, method, path string, body []byte) (string, error) {
 	var r io.Reader
 	if body != nil {
 		r = bytes.NewReader(body)
 	}
-	req, err := http.NewRequestWithContext(ctx, method, rt.agentBase()+path, r)
+	req, err := http.NewRequestWithContext(ctx, method, rt.Endpoint()+path, r)
 	if err != nil {
 		return "", err
 	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	if rt.token != "" {
-		req.Header.Set("Authorization", "Bearer "+rt.token)
+	if rt.Token() != "" {
+		req.Header.Set("Authorization", "Bearer "+rt.Token())
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
