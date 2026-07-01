@@ -496,10 +496,12 @@ function PendingQuestions({ questions, onSendOne, onSubmitKeys, sending }) {
         .sort((a, b) => a - b);
       let cur = 0;
       if (q.multiSelect) {
+        // Space toggles AND auto-advances the cursor by one, so after toggling index
+        // ci the cursor sits at ci+1 — don't re-Down over the option we just checked.
         for (const ci of idx) {
           for (let k = 0; k < ci - cur; k++) keys.push("Down");
           keys.push("Space");
-          cur = ci;
+          cur = ci + 1;
         }
         keys.push("Enter");
       } else {
