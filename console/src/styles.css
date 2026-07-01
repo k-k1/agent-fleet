@@ -954,6 +954,11 @@ textarea:focus {
   color: var(--accent);
   animation: af-pulse 1.4s ease-in-out infinite;
 }
+/* idle by hook, but a run_in_background task is still running — a calmer teal than
+   the accent "working", since the session isn't awaiting a reply from claude. */
+.session-state.bg {
+  color: #17a2a2;
+}
 .session-state.question {
   color: var(--warn);
   font-weight: 600;
@@ -4898,6 +4903,9 @@ button.primary:hover:not(:disabled) {
 }
 .lm-dot.question {
   background: var(--warn);
+}
+.lm-dot.bg {
+  background: #17a2a2;
 }
 .lm-dot.off,
 .lm-dot.dead {
