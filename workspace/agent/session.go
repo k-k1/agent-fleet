@@ -637,7 +637,13 @@ func tmuxHasSession(tn string) bool {
 // prompt; a busy spinner ("esc to interrupt") or any modal ("Enter to select", "Esc to
 // cancel", "Do you want to", …) means NOT idle. Best-effort TUI read.
 func sessionAtIdlePrompt(name string) bool {
-	out, err := exec.Command("tmux", "capture-pane", "-p", "-t", exactT(tmuxName(name))).Output()
+	// capture-pane needs a PANE target; the "=name" exact-SESSION form fails with
+	// "can't find pane" (same reason send-keys resolves a %N pane id first).
+	pane := sessionPaneID(tmuxName(name))
+	if pane == "" {
+		return false
+	}
+	out, err := exec.Command("tmux", "capture-pane", "-p", "-t", pane).Output()
 	if err != nil {
 		return false
 	}
