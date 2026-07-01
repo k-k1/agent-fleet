@@ -250,8 +250,6 @@ function Turn({ turn }) {
     <div className={"mirror-turn " + (isUser ? "user" : "assistant")}>
       <div className="mirror-turn-head">
         <span className="mt-who">{isUser ? "あなた" : "Claude"}</span>
-        {turn.ts && <span className="mt-time muted">{formatTS(turn.ts)}</span>}
-        <CopyButton text={turn.text} />
       </div>
       <div className="mirror-turn-body">
         {isUser ? (
@@ -259,6 +257,10 @@ function Turn({ turn }) {
         ) : (
           <MarkdownView source={turn.text} />
         )}
+      </div>
+      <div className="mirror-turn-foot">
+        {turn.ts && <span className="mt-time muted">{formatTS(turn.ts)}</span>}
+        <CopyButton text={turn.text} />
       </div>
     </div>
   );
