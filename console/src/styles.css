@@ -1929,9 +1929,35 @@ body.row-resizing {
   cursor: pointer;
   font: inherit;
 }
-.mq-opt:hover {
+.mq-opt:hover:not(:disabled) {
   border-color: var(--accent);
   background: color-mix(in srgb, var(--accent) 10%, var(--bg));
+}
+/* Answered question: options are inert; the chosen one stays highlighted. */
+.mt-question.answered {
+  opacity: 0.9;
+  border-left-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  background: color-mix(in srgb, var(--fg) 3%, var(--bg));
+}
+.mq-opt:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+.mq-opt.selected {
+  opacity: 1;
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, var(--bg));
+}
+.mq-opt.selected .mq-opt-label {
+  color: var(--accent);
+}
+.mq-done {
+  font-size: 11px;
+  margin-left: auto;
+}
+.mq-answer {
+  margin-top: 6px;
+  font-size: 12px;
 }
 .mq-opt-label {
   font-weight: 600;

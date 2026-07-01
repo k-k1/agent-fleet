@@ -410,7 +410,9 @@ function Turn({ turn, onAnswer }) {
                 {p.info && <span className="mt-tool-info">{p.info}</span>}
               </div>
             ) : p.kind === "question" ? (
-              <QuestionBlock key={i} questions={p.questions} onAnswer={onAnswer} />
+              // A question from the transcript is already answered (claude writes the
+              // tool_use only after the answer) — show it resolved, not clickable.
+              <QuestionBlock key={i} questions={p.questions} answered answer={p.answer} />
             ) : (
               <MarkdownView key={i} source={p.text} />
             ),
@@ -433,33 +435,50 @@ function Turn({ turn, onAnswer }) {
 // QuestionBlock renders an AskUserQuestion: header + prompt + clickable options. A
 // click submits that option's label as the answer via the same send-keys input path
 // (best-effort: it types the label into the session, as if answered in the terminal).
-function QuestionBlock({ questions, onAnswer }) {
+function QuestionBlock({ questions, onAnswer, answered, answer }) {
+  const norm = (answer || "").trim();
   return (
-    <div className="mt-question">
-      {(questions || []).map((qn, qi) => (
-        <div className="mq" key={qi}>
-          <div className="mq-head">
-            <Icon name="comment-discussion" />
-            {qn.header && <span className="mq-header">{qn.header}</span>}
-            {qn.multiSelect && <span className="mq-multi muted">複数選択可</span>}
+    <div className={"mt-question" + (answered ? " answered" : "")}>
+      {(questions || []).map((qn, qi) => {
+        const opts = qn.options || [];
+        // The chosen option, matched by exact label then containment (the answer text
+        // may be a free-text reply that mentions the label).
+        const chosen =
+          answered && norm ? opts.find((o) => o.label === norm) || opts.find((o) => norm.includes(o.label)) : null;
+        return (
+          <div className="mq" key={qi}>
+            <div className="mq-head">
+              <Icon name="comment-discussion" />
+              {qn.header && <span className="mq-header">{qn.header}</span>}
+              {qn.multiSelect && <span className="mq-multi muted">複数選択可</span>}
+              {answered && <span className="mq-done muted">回答済み</span>}
+            </div>
+            {qn.question && <div className="mq-text">{qn.question}</div>}
+            <div className="mq-options">
+              {opts.map((o, oi) => {
+                const sel = o === chosen;
+                return (
+                  <button
+                    type="button"
+                    className={"mq-opt" + (sel ? " selected" : "")}
+                    key={oi}
+                    disabled={answered}
+                    onClick={answered ? undefined : () => onAnswer && onAnswer(o.label)}
+                    title={o.description || o.label}
+                  >
+                    <span className="mq-opt-label">
+                      {sel && "✓ "}
+                      {o.label}
+                    </span>
+                    {o.description && <span className="mq-opt-desc">{o.description}</span>}
+                  </button>
+                );
+              })}
+            </div>
+            {answered && norm && !chosen && <div className="mq-answer muted">回答: {norm}</div>}
           </div>
-          {qn.question && <div className="mq-text">{qn.question}</div>}
-          <div className="mq-options">
-            {(qn.options || []).map((o, oi) => (
-              <button
-                type="button"
-                className="mq-opt"
-                key={oi}
-                onClick={() => onAnswer && onAnswer(o.label)}
-                title={o.description || o.label}
-              >
-                <span className="mq-opt-label">{o.label}</span>
-                {o.description && <span className="mq-opt-desc">{o.description}</span>}
-              </button>
-            ))}
-          </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
