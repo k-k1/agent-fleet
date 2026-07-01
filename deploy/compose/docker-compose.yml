@@ -1,0 +1,40 @@
+# agent-fleet — on-prem compose (P3-10 段1: CP のみ・TLS なし・骨).
+# Caddy/ACME は 段2、backup/restore は 段3、設定一元化+runbook は 段4 で追加する。
+#
+#   cp deploy/compose/.env.example deploy/compose/.env   # then fill it in
+#   docker compose -f deploy/compose/docker-compose.yml up -d --build
+#
+# DooD の3制約（docs/history/p3-10-packaging.md §20.3）を compose で封じ込める:
+#   (A) network_mode: host   — CP が発行する 127.0.0.1:<port> publish は host デーモンが
+#       実行するので、CP も host loopback を共有しないと agent へ到達できない。
+#   (B) ${DATA_DIR}:${DATA_DIR} 同一パス bind — CP が host デーモンに渡す -v は host パスと
+#       して解決されるため、CP 内でも同一絶対パスで DATA_DIR を見せる必要がある。
+#   (C) user: "1000:1000" + group_add ${DOCKER_GID} — home は uid 1000(dev) 所有で作らせ、
+#       docker.sock アクセスは host の docker gid を付与する。
+services:
+  cp:
+    image: ${REGISTRY:-agent-fleet}/control-plane:${VERSION:-dev}
+    build:
+      context: ../..
+      dockerfile: control-plane/Dockerfile
+    # (A)
+    network_mode: host
+    # (C)
+    user: "1000:1000"
+    group_add:
+      - "${DOCKER_GID}"
+    env_file:
+      - .env
+    environment:
+      # CP は loopback のみ bind（host-net でも 0.0.0.0 にはしない＝既存の
+      # loopback-only 不変条件を維持）。外部公開は 段2 の Caddy が担う。
+      CP_ADDR: ${CP_ADDR:-127.0.0.1:8099}
+      # (B) CP が DB/home を作る先。workspace の -v ソースと同一パスでなければならない。
+      WS_DATA: ${DATA_DIR}
+      WS_JVM_DIR: ${DATA_DIR}/shared/jvm
+    volumes:
+      # docker-out-of-docker: host デーモンを叩く。
+      - /var/run/docker.sock:/var/run/docker.sock
+      # (B) 同一絶対パス bind。
+      - ${DATA_DIR}:${DATA_DIR}
+    restart: unless-stopped

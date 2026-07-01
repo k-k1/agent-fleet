@@ -5,6 +5,9 @@ deploy/local/oauth.env
 # Per-deployment Google OAuth allowlist (AF_OAUTH_ALLOWED_EMAILS_FILE).
 deploy/local/allowed-emails.txt
 
+# On-prem compose per-deployment settings/secrets (P3-10). Copy .env.example -> .env.
+deploy/compose/.env
+
 # Local build artifact from `go build` without -o (CP binary is built to /tmp/af-cp).
 control-plane/control-plane
 
