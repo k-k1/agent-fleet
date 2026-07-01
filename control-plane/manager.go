@@ -30,6 +30,10 @@ type manager struct {
 	store Store
 	conns *connRegistry // P3-9: live activity/attachment tracking for idle-stop
 
+	// rtFactory is the profile-selected Runtime adapter builder (Docker locally,
+	// ECS on AWS; P3-7). Every runtime is constructed through it — see runtimeFor.
+	rtFactory RuntimeFactory
+
 	// template fields shared by every runtime
 	image    string
 	dataRoot string
@@ -344,7 +348,7 @@ func (m *manager) countRunningInTenant(ctx context.Context, tenantID string) (in
 	}
 	n := 0
 	for _, ws := range wss {
-		if (&dockerRuntime{name: ws.ContainerName}).State(ctx) == "running" {
+		if m.runtimeFor(ws, "").State(ctx) == "running" {
 			n++
 		}
 	}
@@ -358,7 +362,7 @@ func (m *manager) workspaceStateByMembership(ctx context.Context, membershipID s
 	if err != nil || !ok {
 		return "", "none"
 	}
-	return ws.ContainerName, (&dockerRuntime{name: ws.ContainerName}).State(ctx)
+	return ws.ContainerName, m.runtimeFor(ws, "").State(ctx)
 }
 
 // stopWorkspaceByMembership force-stops a member's workspace (admin action).
@@ -367,7 +371,7 @@ func (m *manager) stopWorkspaceByMembership(ctx context.Context, membershipID st
 	if err != nil || !ok {
 		return err
 	}
-	if err := (&dockerRuntime{name: ws.ContainerName, network: ws.Network}).Stop(ctx); err != nil {
+	if err := m.runtimeFor(ws, "").Stop(ctx); err != nil {
 		return err
 	}
 	return m.store.SetWorkspaceState(ctx, ws.ID, "stopped")
@@ -381,7 +385,7 @@ func (m *manager) cleanHomeByMembership(ctx context.Context, membershipID string
 	if err != nil || !ok {
 		return err
 	}
-	_ = (&dockerRuntime{name: ws.ContainerName, network: ws.Network}).Stop(ctx) // best-effort
+	_ = m.runtimeFor(ws, "").Stop(ctx) // best-effort
 	if err := cleanHome(m.rootedDataDir(ws)); err != nil {
 		return err
 	}
@@ -509,20 +513,12 @@ func (m *manager) rootedDataDir(ws Workspace) string {
 	return filepath.Join(append([]string{m.dataRoot}, segs[len(segs)-n:]...)...)
 }
 
+// runtimeFor builds the Runtime for a workspace through the profile-selected
+// factory (Docker locally, ECS on AWS). It is the one construction call the rest
+// of the CP uses; the state/stop-only sites below also route through it (secretKey
+// "") so no concrete adapter leaks into manager.
 func (m *manager) runtimeFor(ws Workspace, secretKey string) Runtime {
-	return &dockerRuntime{
-		image:      m.image,
-		name:       ws.ContainerName,
-		network:    ws.Network,
-		dataDir:    m.rootedDataDir(ws),
-		agentHost:  m.agentHost,
-		agentPort:  ws.AgentPort,
-		token:      ws.AgentToken,
-		secretKey:  secretKey,
-		memory:     m.memory,
-		sessionCmd: m.sessionCmd,
-		extraEnv:   m.extraEnv,
-	}
+	return m.rtFactory.New(ws, secretKey)
 }
 
 // backfill records existing on-disk default-tenant users into the store on boot
