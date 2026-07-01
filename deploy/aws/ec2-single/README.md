@@ -83,8 +83,25 @@ aws cloudformation wait stack-delete-complete --stack-name agent-fleet-test
 ```
 
 The Elastic IP, security group, instance, Route53 record and key pair are all
-deleted with the stack. (The SSM-stored private key parameter is removed with the
-key pair.)
+deleted with the stack.
+
+> **KeyPair delete gotcha.** The `AWS::EC2::KeyPair` handler touches SSM
+> Parameter Store even for imported keys; if the deploying user lacks `ssm:*`
+> (e.g. only `AmazonSSMReadOnlyAccess`), the KeyPair fails to delete with an
+> opaque `InternalFailure` and the stack goes `DELETE_FAILED`. Work around it by
+> retaining that one resource and deleting the key pair directly:
+>
+> ```bash
+> aws cloudformation delete-stack --stack-name agent-fleet-test --retain-resources KeyPair
+> aws cloudformation wait stack-delete-complete --stack-name agent-fleet-test
+> aws ec2 delete-key-pair --key-name agent-fleet-test-key
+> ```
+>
+> (Or grant the deploying user `ssm:PutParameter`/`ssm:DeleteParameter` on
+> `/ec2/keypair/*` to avoid it entirely.)
+
+Also delete the throwaway **Google OAuth client** in Google Cloud Console — its
+secret was used during testing.
 
 ## Notes
 
