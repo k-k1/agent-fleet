@@ -14,12 +14,27 @@ import (
 // with the assistant's text, so the Console can faintly show what claude was doing
 // (Read/Bash/Edit …) between paragraphs. Both read the same jsonl (cursor = line #).
 
-// chatPart is one ordered piece of a turn: rendered text, or a faint tool trace.
+// chatPart is one ordered piece of a turn: rendered text, a faint tool trace, or an
+// AskUserQuestion the user can answer inline.
 type chatPart struct {
-	Kind string `json:"kind"`           // "text" | "tool"
-	Text string `json:"text,omitempty"` // kind=text: Markdown
-	Tool string `json:"tool,omitempty"` // kind=tool: tool name (Bash, Read, …)
-	Info string `json:"info,omitempty"` // kind=tool: short arg summary (command/path)
+	Kind      string         `json:"kind"`                // "text" | "tool" | "question"
+	Text      string         `json:"text,omitempty"`      // kind=text: Markdown
+	Tool      string         `json:"tool,omitempty"`      // kind=tool/question: tool name
+	Info      string         `json:"info,omitempty"`      // kind=tool: short arg summary
+	Questions []chatQuestion `json:"questions,omitempty"` // kind=question: AskUserQuestion
+}
+
+// chatQuestion mirrors one AskUserQuestion entry (header + prompt + options).
+type chatQuestion struct {
+	Header      string       `json:"header,omitempty"`
+	Question    string       `json:"question"`
+	MultiSelect bool         `json:"multiSelect,omitempty"`
+	Options     []chatOption `json:"options,omitempty"`
+}
+
+type chatOption struct {
+	Label       string `json:"label"`
+	Description string `json:"description,omitempty"`
 }
 
 // chatTurn is one displayable conversation turn.
@@ -180,10 +195,32 @@ func assistantParts(raw json.RawMessage) (parts []chatPart, text string) {
 			}
 			sb.WriteString(b.Text)
 		case "tool_use":
+			// AskUserQuestion becomes an answerable question block, not a faint trace.
+			if b.Name == "AskUserQuestion" {
+				if qs := parseQuestions(b.Input); len(qs) > 0 {
+					parts = append(parts, chatPart{Kind: "question", Tool: b.Name, Questions: qs})
+					continue
+				}
+			}
 			parts = append(parts, chatPart{Kind: "tool", Tool: b.Name, Info: toolInfo(b.Name, b.Input)})
 		}
 	}
 	return parts, strings.TrimSpace(sb.String())
+}
+
+// parseQuestions pulls the AskUserQuestion tool input into chatQuestions. Returns
+// nil when the input doesn't carry a questions array (falls back to a tool trace).
+func parseQuestions(input json.RawMessage) []chatQuestion {
+	if len(input) == 0 {
+		return nil
+	}
+	var in struct {
+		Questions []chatQuestion `json:"questions"`
+	}
+	if json.Unmarshal(input, &in) != nil {
+		return nil
+	}
+	return in.Questions
 }
 
 // toolInfo renders a short, single-line summary of a tool_use's input — the piece a
