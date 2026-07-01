@@ -24,7 +24,16 @@ type chatPart struct {
 	Questions []chatQuestion `json:"questions,omitempty"` // kind=question: AskUserQuestion
 	Answer    string         `json:"answer,omitempty"`    // kind=question: the chosen answer text
 	Plan      string         `json:"plan,omitempty"`      // kind=plan: ExitPlanMode plan Markdown
+	File      string         `json:"file,omitempty"`      // kind=tool: edit/write target (openable as a diff)
+	Edits     []chatEdit     `json:"edits,omitempty"`     // kind=tool: before/after per edit (Edit/Write/MultiEdit)
 	qid       string         // kind=question: tool_use id, to resolve the answer (unexported)
+}
+
+// chatEdit is one before/after pair for an edit-family tool, so the Console can render
+// a diff. Write is a single all-added entry (Old=""); MultiEdit is one entry per edit.
+type chatEdit struct {
+	Old string `json:"old"`
+	New string `json:"new"`
 }
 
 // chatQuestion mirrors one AskUserQuestion entry (header + prompt + options).
@@ -253,7 +262,11 @@ func assistantParts(raw json.RawMessage) (parts []chatPart, text string) {
 					continue
 				}
 			}
-			parts = append(parts, chatPart{Kind: "tool", Tool: b.Name, Info: toolInfo(b.Name, b.Input)})
+			part := chatPart{Kind: "tool", Tool: b.Name, Info: toolInfo(b.Name, b.Input)}
+			if f, es := toolEdits(b.Name, b.Input); len(es) > 0 {
+				part.File, part.Edits = f, es
+			}
+			parts = append(parts, part)
 		}
 	}
 	return parts, strings.TrimSpace(sb.String())
@@ -376,6 +389,74 @@ func toolInfo(name string, input json.RawMessage) string {
 		s = string(r[:80]) + "…"
 	}
 	return s
+}
+
+// editCap bounds each before/after block so a huge Write can't bloat the messages
+// payload. The full turn is sent once (the poll uses a cursor), so this only guards
+// pathological cases; the Console shows the truncation marker.
+const editCap = 20000
+
+func capEdit(s string) string {
+	if r := []rune(s); len(r) > editCap {
+		return string(r[:editCap]) + "\n…（省略）"
+	}
+	return s
+}
+
+// toolEdits extracts the before/after content of an edit-family tool so the Console can
+// render a diff pane. Returns the target file and one entry per edit; non-edit tools
+// (or malformed input) return nil, so the tool part stays a plain trace.
+func toolEdits(name string, input json.RawMessage) (string, []chatEdit) {
+	if len(input) == 0 {
+		return "", nil
+	}
+	switch name {
+	case "Edit":
+		var in struct {
+			FilePath  string `json:"file_path"`
+			OldString string `json:"old_string"`
+			NewString string `json:"new_string"`
+		}
+		if json.Unmarshal(input, &in) != nil || in.FilePath == "" {
+			return "", nil
+		}
+		return in.FilePath, []chatEdit{{Old: capEdit(in.OldString), New: capEdit(in.NewString)}}
+	case "Write":
+		var in struct {
+			FilePath string `json:"file_path"`
+			Content  string `json:"content"`
+		}
+		if json.Unmarshal(input, &in) != nil || in.FilePath == "" {
+			return "", nil
+		}
+		return in.FilePath, []chatEdit{{Old: "", New: capEdit(in.Content)}}
+	case "MultiEdit":
+		var in struct {
+			FilePath string `json:"file_path"`
+			Edits    []struct {
+				OldString string `json:"old_string"`
+				NewString string `json:"new_string"`
+			} `json:"edits"`
+		}
+		if json.Unmarshal(input, &in) != nil || in.FilePath == "" {
+			return "", nil
+		}
+		var es []chatEdit
+		for _, e := range in.Edits {
+			es = append(es, chatEdit{Old: capEdit(e.OldString), New: capEdit(e.NewString)})
+		}
+		return in.FilePath, es
+	case "NotebookEdit":
+		var in struct {
+			NotebookPath string `json:"notebook_path"`
+			NewSource    string `json:"new_source"`
+		}
+		if json.Unmarshal(input, &in) != nil || in.NotebookPath == "" {
+			return "", nil
+		}
+		return in.NotebookPath, []chatEdit{{Old: "", New: capEdit(in.NewSource)}}
+	}
+	return "", nil
 }
 
 // contentText pulls the human text out of a message's content, which claude encodes
