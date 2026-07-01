@@ -171,7 +171,7 @@ export default function MirrorView({ session, sessionMeta, active, mirror, onTog
             ターンごとの Markdown で表示されます。
           </div>
         ) : (
-          groups.map((g) => <Turn key={g.idx} turn={g} />)
+          renderGroups(groups)
         )}
       </div>
 
@@ -233,8 +233,10 @@ function partsOf(t) {
 }
 
 // groupTurns folds consecutive same-role turns into one block (concatenating their
-// ordered parts, and their text for copy) and drops noise. The block keeps the FIRST
-// turn's idx (stable key) and timestamp (when the exchange began).
+// ordered parts, and their text for copy) and drops noise. A block breaks on a role
+// OR sidechain change so a subagent's turns stay separate from the main thread. It
+// keeps the FIRST turn's idx/timestamp/branch/cwd, and for tokens sums output while
+// taking the last event's input/cache as the context size.
 function groupTurns(turns) {
   const out = [];
   for (const t of turns) {
@@ -242,25 +244,79 @@ function groupTurns(turns) {
     const parts = partsOf(t);
     if (!parts.length) continue;
     const last = out[out.length - 1];
-    if (last && last.role === t.role) {
+    if (last && last.role === t.role && last.sidechain === !!t.sidechain) {
       last.parts.push(...parts);
       if (t.text) last.text += (last.text ? "\n\n" : "") + t.text;
       if (!last.model && t.model) last.model = t.model;
+      last.outTok += t.outTok || 0;
+      if (t.inTok || t.cacheRead || t.cacheCreate) {
+        last.inTok = t.inTok || 0;
+        last.cacheRead = t.cacheRead || 0;
+        last.cacheCreate = t.cacheCreate || 0;
+      }
     } else {
-      out.push({ role: t.role, parts: [...parts], text: t.text || "", model: t.model || "", ts: t.ts, idx: t.idx });
+      out.push({
+        role: t.role,
+        sidechain: !!t.sidechain,
+        parts: [...parts],
+        text: t.text || "",
+        model: t.model || "",
+        branch: t.branch || "",
+        cwd: t.cwd || "",
+        inTok: t.inTok || 0,
+        outTok: t.outTok || 0,
+        cacheRead: t.cacheRead || 0,
+        cacheCreate: t.cacheCreate || 0,
+        ts: t.ts,
+        idx: t.idx,
+      });
     }
   }
   return out;
 }
 
-// Turn renders one conversation block: a header (who + when + copy) and the body —
-// the user's prompt as preformatted text, the assistant's reply as rendered Markdown.
+// renderGroups lays the blocks out, inserting a context strip (branch · cwd) above a
+// block whenever either changes from the previously shown one — so a branch switch or
+// cd is marked once, not repeated on every turn. Empty context leaves the marker as-is.
+function renderGroups(groups) {
+  const els = [];
+  let prevCtx = "";
+  for (const g of groups) {
+    const ctx = g.branch || g.cwd ? (g.branch || "") + " " + (g.cwd || "") : "";
+    if (ctx && ctx !== prevCtx) {
+      els.push(<ContextLine key={"ctx-" + g.idx} branch={g.branch} cwd={g.cwd} />);
+    }
+    if (ctx) prevCtx = ctx;
+    els.push(<Turn key={g.idx} turn={g} />);
+  }
+  return els;
+}
+
+// ContextLine marks the git branch / working dir in effect from here on.
+function ContextLine({ branch, cwd }) {
+  return (
+    <div className="mirror-context">
+      {branch && (
+        <span className="mc-branch">
+          <Icon name="git-branch" /> {branch}
+        </span>
+      )}
+      {cwd && <span className="mc-cwd">{prettyCwd(cwd)}</span>}
+    </div>
+  );
+}
+
+// Turn renders one conversation block: a header (who + model), the body (user prompt
+// as text, assistant reply as Markdown with faint tool traces), and a footer (time +
+// token usage + copy). Subagent (sidechain) turns get a distinct label and tint.
 function Turn({ turn }) {
   const isUser = turn.role === "user";
+  const who = isUser ? "あなた" : turn.sidechain ? "サブエージェント" : "Claude";
+  const ctxTok = turn.inTok + turn.cacheRead + turn.cacheCreate;
   return (
-    <div className={"mirror-turn " + (isUser ? "user" : "assistant")}>
+    <div className={"mirror-turn " + (isUser ? "user" : "assistant") + (turn.sidechain ? " sidechain" : "")}>
       <div className="mirror-turn-head">
-        <span className="mt-who">{isUser ? "あなた" : "Claude"}</span>
+        <span className="mt-who">{who}</span>
         {!isUser && turn.model && <span className="mt-model">{prettyModel(turn.model)}</span>}
       </div>
       <div className="mirror-turn-body">
@@ -283,6 +339,11 @@ function Turn({ turn }) {
       </div>
       <div className="mirror-turn-foot">
         {turn.ts && <span className="mt-time muted">{formatTS(turn.ts)}</span>}
+        {turn.outTok > 0 && (
+          <span className="mt-tok muted" title="入力(文脈)↑ / 出力↓ トークン">
+            ↑{fmtTok(ctxTok)} ↓{fmtTok(turn.outTok)}
+          </span>
+        )}
         <CopyButton text={turn.text} />
       </div>
     </div>
@@ -319,6 +380,18 @@ function prettyModel(m) {
     .replace(/^claude-/, "")
     .replace(/-(\d+)-(\d+)$/, " $1.$2")
     .replace(/-latest$/, "");
+}
+
+// prettyCwd collapses the home prefix to ~ so the working dir reads compactly.
+function prettyCwd(p) {
+  return p.replace(/^\/home\/[^/]+/, "~");
+}
+
+// fmtTok renders a token count compactly: 927 → "927", 30371 → "30k", 3092 → "3.1k".
+function fmtTok(n) {
+  if (!n) return "0";
+  if (n < 1000) return String(n);
+  return (n / 1000).toFixed(n < 10000 ? 1 : 0).replace(/\.0$/, "") + "k";
 }
 
 // formatTS renders an RFC3339 timestamp as local "MM/DD HH:MM" (date kept so a long

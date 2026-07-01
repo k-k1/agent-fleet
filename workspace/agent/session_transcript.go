@@ -24,12 +24,21 @@ type chatPart struct {
 
 // chatTurn is one displayable conversation turn.
 type chatTurn struct {
-	Role  string     `json:"role"`            // "user" | "assistant"
-	Parts []chatPart `json:"parts"`           // ordered text/tool pieces
-	Text  string     `json:"text"`            // concatenated text only (for copy / fallback)
-	Model string     `json:"model,omitempty"` // assistant only: the model that answered
-	TS    string     `json:"ts"`              // RFC3339 from the transcript line, "" if absent
-	Idx   int        `json:"idx"`             // transcript line index — a stable render key
+	Role      string     `json:"role"`                // "user" | "assistant"
+	Parts     []chatPart `json:"parts"`               // ordered text/tool pieces
+	Text      string     `json:"text"`                // concatenated text only (for copy / fallback)
+	Model     string     `json:"model,omitempty"`     // assistant only: the model that answered
+	Sidechain bool       `json:"sidechain,omitempty"` // true = a subagent (Task) sidechain turn
+	Branch    string     `json:"branch,omitempty"`    // git branch at the time of the turn
+	Cwd       string     `json:"cwd,omitempty"`       // working dir at the time of the turn
+	// Token usage (assistant only), per event; the Console sums output across a turn's
+	// events and takes the last event's input/cache as the context size.
+	InTok       int    `json:"inTok,omitempty"`
+	OutTok      int    `json:"outTok,omitempty"`
+	CacheRead   int    `json:"cacheRead,omitempty"`
+	CacheCreate int    `json:"cacheCreate,omitempty"`
+	TS          string `json:"ts"`  // RFC3339 from the transcript line, "" if absent
+	Idx         int    `json:"idx"` // transcript line index — a stable render key
 }
 
 // handleSessionMessages (GET /sessions/{name}/messages?since=<cursor>) returns the
@@ -69,12 +78,12 @@ func handleSessionMessages(w http.ResponseWriter, r *http.Request) {
 	turns := []chatTurn{}
 	budget := 0
 	for i := since; i < len(lines); i++ {
-		role, parts, text, model, ts := parseTurn(lines[i])
-		if len(parts) == 0 {
+		t, ok := parseTurn(lines[i], i)
+		if !ok {
 			continue // tool results, summaries, bridge/meta bookkeeping
 		}
-		turns = append(turns, chatTurn{Role: role, Parts: parts, Text: text, Model: model, TS: ts, Idx: i})
-		if budget += len(text); budget > 1<<20 { // cap a single response at 1 MiB
+		turns = append(turns, t)
+		if budget += len(t.Text); budget > 1<<20 { // cap a single response at 1 MiB
 			break
 		}
 	}
@@ -84,31 +93,55 @@ func handleSessionMessages(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// parseTurn extracts {role, parts, text, timestamp} from a transcript line. parts is
-// empty for lines that carry nothing displayable: tool_result-only user turns,
-// summaries, the Remote Control bridge-session line, and meta entries (isMeta).
-func parseTurn(line []byte) (role string, parts []chatPart, text, model, ts string) {
+// parseTurn builds a chatTurn from a transcript line. ok is false for lines that
+// carry nothing displayable: tool_result-only user turns, summaries, the Remote
+// Control bridge-session line, and meta entries (isMeta).
+func parseTurn(line []byte, idx int) (chatTurn, bool) {
 	var ev struct {
-		Type      string `json:"type"`
-		Timestamp string `json:"timestamp"`
-		IsMeta    bool   `json:"isMeta"`
-		Message   struct {
+		Type        string `json:"type"`
+		Timestamp   string `json:"timestamp"`
+		IsMeta      bool   `json:"isMeta"`
+		IsSidechain bool   `json:"isSidechain"`
+		GitBranch   string `json:"gitBranch"`
+		Cwd         string `json:"cwd"`
+		Message     struct {
 			Model   string          `json:"model"`
 			Content json.RawMessage `json:"content"`
+			Usage   struct {
+				InputTokens              int `json:"input_tokens"`
+				OutputTokens             int `json:"output_tokens"`
+				CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+				CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+			} `json:"usage"`
 		} `json:"message"`
 	}
 	if json.Unmarshal(line, &ev) != nil {
-		return "", nil, "", "", ""
+		return chatTurn{}, false
 	}
 	if ev.IsMeta || (ev.Type != "user" && ev.Type != "assistant") {
-		return "", nil, "", "", ""
+		return chatTurn{}, false
 	}
+	var parts []chatPart
+	var text string
 	if ev.Type == "assistant" {
 		parts, text = assistantParts(ev.Message.Content)
 	} else if t := contentText(ev.Message.Content); t != "" {
 		parts, text = []chatPart{{Kind: "text", Text: t}}, t
 	}
-	return ev.Type, parts, text, ev.Message.Model, ev.Timestamp
+	if len(parts) == 0 {
+		return chatTurn{}, false
+	}
+	t := chatTurn{
+		Role: ev.Type, Parts: parts, Text: text, Idx: idx, TS: ev.Timestamp,
+		Sidechain: ev.IsSidechain, Branch: ev.GitBranch, Cwd: ev.Cwd,
+	}
+	if ev.Type == "assistant" {
+		u := ev.Message.Usage
+		t.Model = ev.Message.Model
+		t.InTok, t.OutTok = u.InputTokens, u.OutputTokens
+		t.CacheRead, t.CacheCreate = u.CacheReadInputTokens, u.CacheCreationInputTokens
+	}
+	return t, true
 }
 
 // assistantParts walks an assistant message's content blocks in order, emitting a
