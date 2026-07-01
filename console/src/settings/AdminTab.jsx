@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, apiJSON, rawJSON, errText } from "../api.js";
+import { api, apiJSON, rawJSON, errText, rel } from "../api.js";
 import Icon from "../components/Icon.jsx";
 import ConfirmDialog from "../components/ConfirmDialog.jsx";
 import { kindLabel, kindClass, kindIcon } from "../lib/sessionkind.js";
@@ -23,6 +23,7 @@ export default function AdminTab() {
   const [tenants, setTenants] = useState(null);
   const [forbidden, setForbidden] = useState(false);
   const [isSuper, setIsSuper] = useState(false); // super_admin: unlocks deployment-wide controls
+  const [mode, setMode] = useState("manage"); // manage (tenant drilldown) | usage (showback)
   // view: {stage:'tenants'} | {stage:'tenant', slug} | {stage:'member', slug, member}
   const [view, setView] = useState({ stage: "tenants" });
 
@@ -56,6 +57,19 @@ export default function AdminTab() {
 
   return (
     <div className="admin">
+      <div className="seg admin-modes">
+        <button type="button" className={"seg-btn" + (mode === "manage" ? " active" : "")} onClick={() => setMode("manage")}>
+          <Icon name="organization" /> テナント管理
+        </button>
+        <button type="button" className={"seg-btn" + (mode === "usage" ? " active" : "")} onClick={() => setMode("usage")}>
+          <Icon name="graph" /> 使用量
+        </button>
+      </div>
+
+      {mode === "usage" && <UsageView tenants={tenants} isSuper={isSuper} />}
+
+      {mode === "manage" && (
+      <>
       <div className="admin-nav">
         {view.stage !== "tenants" && (
           <button className="admin-back" onClick={goBack}>
@@ -112,6 +126,152 @@ export default function AdminTab() {
           onBack={() => setView({ stage: "tenant", slug: view.slug })}
         />
       )}
+      </>
+      )}
+    </div>
+  );
+}
+
+// --- Usage (showback, P3-9 段2) ---------------------------------------------
+// Deployment-wide occupancy the operator can attribute per tenant/member. Reads
+// GET /api/admin/usage (JSON: per-member totals over the window). super_admin sees
+// every tenant (optionally filtered); a tenant_admin is scoped to a tenant they
+// administer. CSV export is a plain download link (cookie-authed; the endpoint
+// scopes by the ?tenant= query param, so no X-AF-Tenant header is needed).
+
+const fmtHrs = (secs) => (secs / 3600).toFixed(secs < 3600 ? 2 : 1) + " h";
+
+function UsageView({ tenants, isSuper }) {
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  // Non-super callers must scope to a tenant they administer (the API rejects the
+  // deployment-wide view); default to their first tenant.
+  const [tenant, setTenant] = useState(isSuper ? "" : tenants[0]?.slug || "");
+  const [data, setData] = useState(null);
+  const [err, setErr] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const usageQuery = useCallback(() => {
+    const qs = new URLSearchParams();
+    if (from) qs.set("from", from);
+    if (to) qs.set("to", to);
+    if (tenant) qs.set("tenant", tenant);
+    return qs.toString();
+  }, [from, to, tenant]);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setErr("");
+    try {
+      const q = usageQuery();
+      const d = await api("api/admin/usage" + (q ? "?" + q : ""));
+      if (d?.error) {
+        setErr(errText(d.error));
+        setData(null);
+      } else {
+        setData(d);
+      }
+    } catch {
+      setErr("読み込みに失敗しました。");
+      setData(null);
+    } finally {
+      setLoading(false);
+    }
+  }, [usageQuery]);
+
+  // Load once on mount and whenever the tenant filter changes; the date range is
+  // applied explicitly via the 適用 button so typing a partial date doesn't refetch.
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tenant]);
+
+  const csvHref = () => {
+    const u = new URL(rel("api/admin/usage"));
+    u.searchParams.set("format", "csv");
+    if (from) u.searchParams.set("from", from);
+    if (to) u.searchParams.set("to", to);
+    if (tenant) u.searchParams.set("tenant", tenant);
+    return u.toString();
+  };
+
+  const totals = (data?.totals || []).slice().sort((a, b) => b.running_secs - a.running_secs);
+  const maxSecs = totals.reduce((m, t) => Math.max(m, t.running_secs), 0);
+  const grandSecs = totals.reduce((s, t) => s + t.running_secs, 0);
+
+  return (
+    <div className="admin-stage usage-view">
+      <section className="admin-panel">
+        <h4>使用量（Workspace 稼働時間）</h4>
+        <p className="muted" style={{ margin: "0 0 12px" }}>
+          インフラ占有＝Workspace が起動していた時間の集計です（Claude 利用料は各自のサブスクで、ここには含みません）。約 5 分ごとのサンプリングのため誤差があります。
+        </p>
+        <div className="usage-toolbar">
+          <label>
+            開始
+            <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+          </label>
+          <label>
+            終了
+            <input type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+          </label>
+          {isSuper && (
+            <label>
+              テナント
+              <select value={tenant} onChange={(e) => setTenant(e.target.value)}>
+                <option value="">全テナント</option>
+                {tenants.map((t) => (
+                  <option key={t.slug} value={t.slug}>{t.name}</option>
+                ))}
+              </select>
+            </label>
+          )}
+          <button className="primary" onClick={load} disabled={loading}>
+            {loading ? "…" : "適用"}
+          </button>
+          <a className="ghost usage-csv" href={csvHref()} download>
+            <Icon name="cloud-download" /> CSV
+          </a>
+        </div>
+        {err && <p className="form-err">{err}</p>}
+      </section>
+
+      <section className="admin-panel">
+        <div className="usage-summary">
+          <div className="us-metric">
+            <div className="us-val">{fmtHrs(grandSecs)}</div>
+            <div className="us-lab muted">合計稼働</div>
+          </div>
+          <div className="us-metric">
+            <div className="us-val">{totals.length}</div>
+            <div className="us-lab muted">メンバー</div>
+          </div>
+          {data && (
+            <div className="us-range muted">
+              {data.from} 〜 {data.to}
+            </div>
+          )}
+        </div>
+
+        {data === null ? (
+          <p className="muted">読み込み中…</p>
+        ) : totals.length === 0 ? (
+          <p className="muted">この期間の稼働記録はありません。</p>
+        ) : (
+          <div className="usage-rows">
+            {totals.map((t) => (
+              <div key={(t.tenant || "") + "|" + t.user_key} className="usage-row">
+                <span className="ur-key mono" title={t.email || ""}>{t.user_key || "(不明)"}</span>
+                {isSuper && !tenant && <span className="ur-tenant muted">{t.tenant}</span>}
+                <span className="ur-bar">
+                  <span className="ur-fill" style={{ width: (maxSecs ? Math.round((t.running_secs / maxSecs) * 100) : 0) + "%" }} />
+                </span>
+                <span className="ur-hrs mono">{fmtHrs(t.running_secs)}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
     </div>
   );
 }

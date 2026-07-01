@@ -57,8 +57,11 @@ CREATE INDEX idx_usage_tenant_day ON usage_daily(tenant_id, day);
 - ✅ **段1 — バックエンド（このホストで検証完結）**: migration 0008 / `Store.AddUsage`+`ListUsage` / `usageSampler` /
   admin API（JSON+CSV, gate）。検証: `go test`（store 往復・集計・窓・テナントフィルタ）＋ CP 実起動 smoke（migration 適用・
   sampler 起動・route 登録・super_admin 200 / 非 super 403 / 不正 range 400 / CSV ヘッダ）。
-- ▶ **段2 — Console 管理ダッシュボード**（要目視）: admin オーバーレイに「使用量」タブ（member 別 running_hours 表 + 日次チャート
-  + CSV ダウンロードボタン、範囲ピッカー）。React（`console/`）ゆえ headless 不可＝実ブラウザで確認。
+- ✅ **段2 — Console 管理ダッシュボード**（実装済・要目視確認）: admin オーバーレイ最上部に mode トグル（テナント管理 / 使用量）を追加、
+  「使用量」= `UsageView`（範囲ピッカー from/to・super_admin はテナント絞り込み select・member 別 running_hours の横棒 + 合計/人数サマリ・
+  CSV ダウンロードリンク）。CSV は cookie 認証の素の `<a download>`（endpoint は `?tenant=` で scope ゆえ X-AF-Tenant 不要）。
+  `console/src/settings/AdminTab.jsx` + `styles.css`。**data 契約は段1 の JSON keys(tenant/user_key/email/running_secs/running_hours)と一致**
+  （`TestSQLiteUsage` が JOIN ラベルを、API smoke が JSON 形を検証済）。React ゆえ最終レイアウトは実ブラウザで目視。
 - ▶ **後続**: ディスク占有（home GB）の showback / per-tenant 合計・グラフ / 保持期間（古い `usage_daily` の間引き）。
 
 ## 19b.6 触ったファイル（段1）
