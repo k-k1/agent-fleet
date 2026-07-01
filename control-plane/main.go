@@ -175,6 +175,8 @@ func main() {
 	mux.HandleFunc("POST /api/sessions/{name}/input", cfg.proxyAgentREST)
 	mux.HandleFunc("GET /api/sessions/{name}/status", cfg.proxyAgentREST)
 	mux.HandleFunc("GET /api/sessions/{name}/output", cfg.proxyAgentREST)
+	// Structured transcript for the Console chat view (case-A).
+	mux.HandleFunc("GET /api/sessions/{name}/messages", cfg.proxyAgentREST)
 
 	// Repository ops — proxied to the Workspace Agent (/api stripped -> /repos*).
 	mux.HandleFunc("GET /api/repos", cfg.proxyAgentREST)
