@@ -58,11 +58,13 @@ func runSessionStatusHook(args []string) {
 	// tool_input.questions — capture it so the Console can show/answer the PENDING
 	// question (the tool_use isn't written to the transcript until it's answered).
 	var questions json.RawMessage
-	var plan string
+	var plan, message, ntype string
 	if sid == "" || codexMarker {
 		var in struct {
-			SessionID string `json:"session_id"`
-			ToolInput struct {
+			SessionID        string `json:"session_id"`
+			Message          string `json:"message"`           // Notification
+			NotificationType string `json:"notification_type"` // Notification
+			ToolInput        struct {
 				Questions json.RawMessage `json:"questions"` // AskUserQuestion
 				Plan      string          `json:"plan"`      // ExitPlanMode
 			} `json:"tool_input"`
@@ -76,16 +78,24 @@ func runSessionStatusHook(args []string) {
 			sid = in.SessionID // claude
 			questions = in.ToolInput.Questions
 			plan = in.ToolInput.Plan
+			message = in.Message
+			ntype = in.NotificationType
 		}
 	}
 	if sid == "" {
 		return
 	}
+	// The Notification hook fires for several reasons (idle, permission, …); only
+	// "permission_prompt" means the session is blocked awaiting a tool-permission
+	// decision. Ignore the others so they don't clobber the real state.
+	if state == "permission" && ntype != "permission_prompt" {
+		return
+	}
 	_ = os.MkdirAll(sessionStatusDir(), 0o700)
 	b, _ := json.Marshal(sessionStatus{State: state, TS: time.Now().Format(time.RFC3339)})
 	_ = os.WriteFile(sessionStatusPath(sid), b, 0o600)
-	// Persist/clear the pending AskUserQuestion / ExitPlanMode payloads alongside the
-	// status (each cleared whenever the session isn't in that waiting state).
+	// Persist/clear the pending AskUserQuestion / ExitPlanMode / permission payloads
+	// alongside the status (each cleared whenever the session isn't in that state).
 	if state == "question" && len(questions) > 0 {
 		writePendingQuestion(sid, questions)
 	} else {
@@ -95,6 +105,14 @@ func runSessionStatusHook(args []string) {
 		writePendingPlan(sid, plan)
 	} else {
 		removePendingPlan(sid)
+	}
+	if state == "permission" {
+		if message == "" {
+			message = "Claude needs your permission"
+		}
+		writePendingPermission(sid, message)
+	} else {
+		removePendingPermission(sid)
 	}
 }
 
@@ -152,6 +170,31 @@ func readPendingPlan(sid string) (string, bool) {
 
 func removePendingPlan(sid string) { _ = os.Remove(pendingPlanPath(sid)) }
 
+// A pending tool-permission prompt (the Notification message), kept while the session
+// is blocked awaiting an allow/deny decision so the Console can approve it inline.
+func pendingPermDir() string {
+	return filepath.Join(homeDir(), ".config", "agent-fleet", "pending-perm")
+}
+
+func pendingPermPath(sid string) string { return filepath.Join(pendingPermDir(), sid+".txt") }
+
+func writePendingPermission(sid, message string) {
+	if err := os.MkdirAll(pendingPermDir(), 0o700); err != nil {
+		return
+	}
+	_ = os.WriteFile(pendingPermPath(sid), []byte(message), 0o600)
+}
+
+func readPendingPermission(sid string) (string, bool) {
+	b, err := os.ReadFile(pendingPermPath(sid))
+	if err != nil || len(b) == 0 {
+		return "", false
+	}
+	return string(b), true
+}
+
+func removePendingPermission(sid string) { _ = os.Remove(pendingPermPath(sid)) }
+
 func readSessionStatus(sid string) (sessionStatus, bool) {
 	var s sessionStatus
 	b, err := os.ReadFile(sessionStatusPath(sid))
@@ -168,6 +211,7 @@ func removeSessionStatus(sid string) {
 	_ = os.Remove(sessionStatusPath(sid))
 	removePendingQuestion(sid)
 	removePendingPlan(sid)
+	removePendingPermission(sid)
 }
 
 // agentExe is the absolute path to this binary, used to build hook commands that
@@ -226,6 +270,15 @@ func ensureStatusHooks() {
 			map[string]any{"matcher": "AskUserQuestion", "hooks": []any{map[string]any{"type": "command", "command": statusHookCmd("working")}}},
 			map[string]any{"matcher": "ExitPlanMode", "hooks": []any{map[string]any{"type": "command", "command": statusHookCmd("working")}}},
 		}
+		changed = true
+	}
+	// Notification → permission: fires when claude is blocked on a tool-permission
+	// prompt (notification_type=permission_prompt). The handler ignores other
+	// notification types, so this matcher-less hook is safe to always set.
+	if b, _ := json.Marshal(hooks["Notification"]); !strings.Contains(string(b), "session-status") {
+		hooks["Notification"] = []any{map[string]any{
+			"hooks": []any{map[string]any{"type": "command", "command": statusHookCmd("permission")}},
+		}}
 		changed = true
 	}
 

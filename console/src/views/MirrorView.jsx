@@ -30,6 +30,7 @@ export default function MirrorView({ session, sessionMeta, active, mirror, onTog
   const [status, setStatus] = useState("");
   const [pending, setPending] = useState(null); // currently-awaiting AskUserQuestion
   const [pendingPlan, setPendingPlan] = useState(null); // ExitPlanMode plan awaiting approval
+  const [pendingPerm, setPendingPerm] = useState(null); // tool-permission prompt awaiting allow/deny
   const [mode, setMode] = useState(""); // session permission mode ("plan" | …)
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
@@ -49,6 +50,7 @@ export default function MirrorView({ session, sessionMeta, active, mirror, onTog
     setStatus("");
     setPending(null);
     setPendingPlan(null);
+    setPendingPerm(null);
     setMode("");
     setHistIdx(null);
   }, [session]);
@@ -75,6 +77,7 @@ export default function MirrorView({ session, sessionMeta, active, mirror, onTog
           }
           setPending(Array.isArray(d.pendingQuestions) ? d.pendingQuestions : null);
           setPendingPlan(typeof d.pendingPlan === "string" && d.pendingPlan ? d.pendingPlan : null);
+          setPendingPerm(typeof d.pendingPermission === "string" && d.pendingPermission ? d.pendingPermission : null);
           setMode(typeof d.mode === "string" ? d.mode : "");
         }
       } catch {
@@ -99,7 +102,7 @@ export default function MirrorView({ session, sessionMeta, active, mirror, onTog
   useEffect(() => {
     const el = bodyRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [turns, pending, pendingPlan, status]);
+  }, [turns, pending, pendingPlan, pendingPerm, status]);
 
   // Focus the composer when this pane becomes the active chat.
   useEffect(() => {
@@ -269,7 +272,7 @@ export default function MirrorView({ session, sessionMeta, active, mirror, onTog
       )}
 
       <div className="mirror-body" ref={bodyRef}>
-        {groups.length === 0 && !pending && !pendingPlan ? (
+        {groups.length === 0 && !pending && !pendingPlan && !pendingPerm ? (
           <div className="mirror-empty muted">
             まだ会話はありません。下の欄からプロンプトを送るか、ターミナルで対話すると、ここに
             ターンごとの Markdown で表示されます。
@@ -291,6 +294,50 @@ export default function MirrorView({ session, sessionMeta, active, mirror, onTog
                 onOpen={() => openPlan(pendingPlan)}
                 onApprove={() => sendKeys(["Enter"])}
               />
+            </div>
+          </div>
+        )}
+        {pendingPerm && (
+          <div className="mirror-turn assistant">
+            <div className="mirror-turn-head">
+              <span className="mt-who">Claude</span>
+              <span className="mt-model muted">許可待ち</span>
+            </div>
+            <div className="mirror-turn-body">
+              <div className="mt-perm">
+                <div className="mt-perm-head">
+                  <Icon name="shield" /> 許可を求めています（編集・コマンド等）
+                </div>
+                <div className="mt-perm-msg">{pendingPerm}</div>
+                <div className="mt-perm-actions">
+                  <button
+                    type="button"
+                    className="btn primary mt-perm-btn"
+                    disabled={sending}
+                    onClick={() => sendKeys(["Enter"])}
+                  >
+                    <Icon name="check" /> 許可
+                  </button>
+                  <button
+                    type="button"
+                    className="ghost mt-perm-btn"
+                    disabled={sending}
+                    title="以降このセッションでは自動許可（2番目の選択肢）"
+                    onClick={() => sendKeys(["Down", "Enter"])}
+                  >
+                    常に許可
+                  </button>
+                  <button
+                    type="button"
+                    className="ghost mt-perm-btn"
+                    disabled={sending}
+                    onClick={() => sendKeys(["Down", "Down", "Enter"])}
+                  >
+                    <Icon name="close" /> 拒否
+                  </button>
+                </div>
+                <div className="mt-perm-hint muted">対象（ファイル・コマンド）や差分はターミナルで確認できます</div>
+              </div>
             </div>
           </div>
         )}

@@ -1927,6 +1927,49 @@ body.row-resizing {
   gap: 4px;
   padding: 4px 12px;
 }
+/* Tool-permission prompt (edit/command approval when not in bypass/accept mode). */
+.mt-perm {
+  margin: 0.4em 0;
+  border: 1px solid color-mix(in srgb, var(--chat-accent) 40%, var(--border));
+  border-left: 3px solid var(--chat-accent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--chat-accent) 6%, var(--bg));
+  padding: 9px 11px;
+}
+.mt-perm-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  font-size: 13px;
+}
+.mt-perm-msg {
+  margin: 4px 0 8px;
+  font-size: 12px;
+  opacity: 0.8;
+}
+.mt-perm-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.mt-perm-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 12px;
+  border-radius: 6px;
+}
+.mt-perm-btn.ghost {
+  border: 1px solid var(--border);
+}
+.mt-perm-btn.ghost:hover {
+  border-color: var(--chat-accent);
+}
+.mt-perm-hint {
+  margin-top: 7px;
+  font-size: 11px;
+}
 /* "Claude is typing" indicator, shown while the session is working. */
 .mirror-typing {
   display: flex;
