@@ -96,22 +96,43 @@ export default function MirrorView({ session, sessionMeta, active, mirror, onTog
     if (active) inputRef.current?.focus();
   }, [active]);
 
-  // sendPrompt submits arbitrary text (the composer, or an answer chosen from an
-  // AskUserQuestion block). Both route through the same tmux send-keys endpoint.
+  // Low-level: type one prompt into the session (tmux send-keys). No state/guard.
+  const postInput = async (text) => {
+    try {
+      await apiJSON(`api/sessions/${q(session)}/input`, "POST", { prompt: text });
+    } catch {
+      /* the Agent also marks working; the next poll reconciles real state */
+    }
+  };
+
+  // sendPrompt submits one prompt (the composer, or a single-select answer).
   const sendPrompt = async (text) => {
     const t = (text || "").trim();
     if (!t || sending) return;
     setSending(true);
     statusRef.current = "working";
     setStatus("working");
-    try {
-      await apiJSON(`api/sessions/${q(session)}/input`, "POST", { prompt: t });
-    } catch {
-      /* the Agent also marks working; the next poll reconciles real state */
-    }
+    await postInput(t);
     setSending(false);
     // Pick up the just-logged user turn quickly rather than waiting a full interval.
     setTimeout(() => tickRef.current?.(), 250);
+  };
+
+  // sendAnswers submits one answer per AskUserQuestion page in order, pausing between
+  // so the terminal's question modal advances to the next page (multi-question), and
+  // joins multi-select choices into a single answer per page.
+  const sendAnswers = async (answers) => {
+    const list = (answers || []).map((a) => (a || "").trim());
+    if (!list.some(Boolean) || sending) return;
+    setSending(true);
+    statusRef.current = "working";
+    setStatus("working");
+    for (let i = 0; i < list.length; i++) {
+      await postInput(list[i]); // an empty page answer still advances the modal
+      if (i < list.length - 1) await new Promise((r) => setTimeout(r, 500));
+    }
+    setSending(false);
+    setTimeout(() => tickRef.current?.(), 300);
   };
 
   const send = async () => {
@@ -198,7 +219,13 @@ export default function MirrorView({ session, sessionMeta, active, mirror, onTog
               <span className="mt-model muted">質問中</span>
             </div>
             <div className="mirror-turn-body">
-              <QuestionBlock questions={pending} onAnswer={sendPrompt} />
+              <PendingQuestions
+                key={"pq-" + (pending[0]?.question || "")}
+                questions={pending}
+                sending={sending}
+                onSendOne={sendPrompt}
+                onSubmit={sendAnswers}
+              />
             </div>
           </div>
         )}
@@ -432,10 +459,82 @@ function Turn({ turn, onAnswer }) {
   );
 }
 
-// QuestionBlock renders an AskUserQuestion: header + prompt + clickable options. A
-// click submits that option's label as the answer via the same send-keys input path
-// (best-effort: it types the label into the session, as if answered in the terminal).
-function QuestionBlock({ questions, onAnswer, answered, answer }) {
+// PendingQuestions is the interactive form for the currently-awaiting AskUserQuestion.
+// One question with a single choice → click-to-send (the common, low-friction case).
+// Multi-select or multiple questions → build a selection, then submit: answers are
+// sent one page at a time (multi-select choices joined) so the terminal modal advances
+// through each question and doesn't close after the first pick.
+function PendingQuestions({ questions, onSendOne, onSubmit, sending }) {
+  const qs = questions || [];
+  const [sel, setSel] = useState(() => qs.map(() => []));
+  const single = qs.length === 1 && !qs[0]?.multiSelect;
+
+  const toggle = (qi, label, multi) => {
+    setSel((prev) => {
+      const next = prev.map((a) => a.slice());
+      const cur = next[qi] || [];
+      if (multi) next[qi] = cur.includes(label) ? cur.filter((x) => x !== label) : [...cur, label];
+      else next[qi] = cur[0] === label ? [] : [label];
+      return next;
+    });
+  };
+
+  const submit = () => onSubmit(qs.map((_, qi) => (sel[qi] || []).join(", ")));
+
+  return (
+    <div className="mt-question">
+      {qs.map((qn, qi) => (
+        <div className="mq" key={qi}>
+          <div className="mq-head">
+            <Icon name="comment-discussion" />
+            {qn.header && <span className="mq-header">{qn.header}</span>}
+            {qs.length > 1 && (
+              <span className="mq-page muted">
+                {qi + 1}/{qs.length}
+              </span>
+            )}
+            {qn.multiSelect && <span className="mq-multi muted">複数選択</span>}
+          </div>
+          {qn.question && <div className="mq-text">{qn.question}</div>}
+          <div className="mq-options">
+            {(qn.options || []).map((o, oi) => {
+              const checked = (sel[qi] || []).includes(o.label);
+              return (
+                <button
+                  type="button"
+                  className={"mq-opt" + (checked ? " checked" : "")}
+                  key={oi}
+                  disabled={sending}
+                  onClick={() => (single ? onSendOne(o.label) : toggle(qi, o.label, qn.multiSelect))}
+                  title={o.description || o.label}
+                >
+                  <span className="mq-opt-label">
+                    {!single && (
+                      <span className="mq-check">{qn.multiSelect ? (checked ? "☑" : "☐") : checked ? "◉" : "○"}</span>
+                    )}
+                    {o.label}
+                  </span>
+                  {o.description && <span className="mq-opt-desc">{o.description}</span>}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+      {!single && (
+        <div className="mq-submit-row">
+          <button type="button" className="btn primary mq-submit" disabled={sending} onClick={submit}>
+            回答を送信
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// QuestionBlock renders an already-answered AskUserQuestion from the transcript:
+// header + prompt + options, inert, with the chosen option highlighted.
+function QuestionBlock({ questions, answered, answer }) {
   const norm = (answer || "").trim();
   return (
     <div className={"mt-question" + (answered ? " answered" : "")}>
@@ -462,8 +561,7 @@ function QuestionBlock({ questions, onAnswer, answered, answer }) {
                     type="button"
                     className={"mq-opt" + (sel ? " selected" : "")}
                     key={oi}
-                    disabled={answered}
-                    onClick={answered ? undefined : () => onAnswer && onAnswer(o.label)}
+                    disabled
                     title={o.description || o.label}
                   >
                     <span className="mq-opt-label">
