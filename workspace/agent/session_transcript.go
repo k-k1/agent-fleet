@@ -109,12 +109,19 @@ func handleSessionMessages(w http.ResponseWriter, r *http.Request) {
 	}
 	sid := sessionUUID(meta.Dir, name)
 	lines, jpath, jmatched := transcriptRead(sid)
-	// The client's cursor is a line index into the jsonl. If it's now past the end,
-	// the log shrank or was replaced (compaction, or a different <sid>.jsonl became
-	// the live one) — the cursor is stale. Restart from the top and tell the client
-	// to reload from scratch instead of silently appending nothing.
+	// cursor is normally the new line count. Two edge cases refine it:
 	reset := false
-	if since > len(lines) {
+	cursor := len(lines)
+	switch {
+	case len(lines) == 0 && alive && since > 0:
+		// A live session read as empty — almost always transient: a stub was briefly
+		// the newest file, or the log was mid-write during a workflow's heavy
+		// concurrent writes. Do NOT blank the chat: hold the client's cursor and turns
+		// and send nothing this tick (it recovers on the next read).
+		cursor = since
+	case since > len(lines):
+		// The live log is genuinely shorter than the cursor (compaction / a replaced
+		// file). Restart from the top and tell the client to reload from scratch.
 		since = 0
 		reset = true
 	}
@@ -140,7 +147,7 @@ func handleSessionMessages(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	resp := map[string]any{
-		"name": name, "messages": turns, "cursor": len(lines),
+		"name": name, "messages": turns, "cursor": cursor,
 		"status": state, "alive": alive, "reset": reset,
 		// Diagnostics: which jsonl we're reading, how long it is, when it last changed,
 		// and how many <sid>.jsonl matched (>1 means siblings exist — the newest wins).

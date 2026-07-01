@@ -36,6 +36,7 @@ export default function MirrorView({ session, sessionMeta, active, mirror, onTog
   const [sending, setSending] = useState(false);
   const [histIdx, setHistIdx] = useState(null); // position in composer history, or null
   const cursorRef = useRef(0);
+  const diagRef = useRef(""); // last transcript-diagnostic signature (warn once per change)
   const statusRef = useRef("");
   const tickRef = useRef(null); // lets send() trigger an immediate refresh
   const bodyRef = useRef(null);
@@ -45,6 +46,7 @@ export default function MirrorView({ session, sessionMeta, active, mirror, onTog
   // that session's jsonl, meaningless across sessions).
   useEffect(() => {
     cursorRef.current = 0;
+    diagRef.current = "";
     statusRef.current = "";
     setTurns([]);
     setStatus("");
@@ -77,18 +79,23 @@ export default function MirrorView({ session, sessionMeta, active, mirror, onTog
             setTurns((t) => [...t, ...d.messages]);
           }
           // Diagnostic: surface the anomalies behind "sent but nothing shows" — no
-          // jsonl found, multiple <sid>.jsonl siblings (newest wins, an older one may
-          // have been read before), or a cursor reset. Quiet in the normal case.
+          // jsonl found, multiple <sid>.jsonl siblings (a stub may shadow the real
+          // log), or a cursor reset. Logged once per distinct situation (not every
+          // poll) so it's quiet in the normal case.
           if (d.reset || d.jsonlMatches > 1 || (d.alive && !d.jsonlPath)) {
-            // eslint-disable-next-line no-console
-            console.warn("[mirror] transcript diagnostic", {
-              session,
-              reset: !!d.reset,
-              jsonlPath: d.jsonlPath,
-              jsonlLines: d.jsonlLines,
-              jsonlMtime: d.jsonlMtime,
-              jsonlMatches: d.jsonlMatches,
-            });
+            const sig = `${d.reset ? 1 : 0}|${d.jsonlPath || ""}|${d.jsonlMatches || 0}`;
+            if (sig !== diagRef.current) {
+              diagRef.current = sig;
+              // eslint-disable-next-line no-console
+              console.warn("[mirror] transcript diagnostic", {
+                session,
+                reset: !!d.reset,
+                jsonlPath: d.jsonlPath,
+                jsonlLines: d.jsonlLines,
+                jsonlMtime: d.jsonlMtime,
+                jsonlMatches: d.jsonlMatches,
+              });
+            }
           }
           if (d.status) {
             statusRef.current = d.status;
