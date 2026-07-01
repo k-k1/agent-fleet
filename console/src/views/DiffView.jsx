@@ -6,7 +6,7 @@ import { baseName } from "../lib/filemeta.js";
 // line-level diff in its own pane. The edits live in the pane descriptor (diffEdits),
 // captured from the transcript — no file on disk is read, so it shows exactly what that
 // tool call changed (a Write is all-added; an Edit shows its changed region in context).
-export default function DiffView({ title, tool, edits }) {
+export default function DiffView({ title, tool, edits, wrap }) {
   const settings = useSettings();
   const viewerStyle = {
     "--viewer-font": fontStack(settings.viewerFont),
@@ -25,7 +25,7 @@ export default function DiffView({ title, tool, edits }) {
     return rows;
   });
   return (
-    <div className="fileview diffview" style={viewerStyle}>
+    <div className={"fileview diffview" + (wrap ? "" : " nowrap")} style={viewerStyle}>
       <header className="view-head fileinfo">
         <span className="fi-name mono" title={title}>
           <Icon name="diff" /> {baseName(title) || title || "差分"}

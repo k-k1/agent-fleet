@@ -54,6 +54,7 @@ export default function Pane({
   const { setPaneWrap } = useApp();
   const settings = useSettings();
   const wrapOn = pane.wrap ?? settings.wrap;
+  const canWrap = pane.kind === "file" || pane.kind === "scm" || pane.kind === "diff";
 
   const onDragStart = (e) => {
     e.dataTransfer.setData(DND, pane.id);
@@ -112,7 +113,7 @@ export default function Pane({
         </button>
       )}
       <div className="pane-controls">
-        {pane.kind === "file" && (
+        {canWrap && (
           <button
             type="button"
             className={"ghost pane-btn" + (wrapOn ? " active" : "")}
@@ -175,11 +176,11 @@ export default function Pane({
           onToggleMirror={setMirror}
         />
       )}
-      {pane.kind === "scm" && <SourceControlView repo={pane.scmRepo} />}
+      {pane.kind === "scm" && <SourceControlView repo={pane.scmRepo} wrap={wrapOn} />}
       {pane.kind === "file" && <FileView filePath={pane.filePath} wrap={wrapOn} />}
       {pane.kind === "doc" && <DocView title={pane.docTitle} content={pane.docContent} />}
       {pane.kind === "diff" && (
-        <DiffView title={pane.docTitle} tool={pane.diffTool} edits={pane.diffEdits} />
+        <DiffView title={pane.docTitle} tool={pane.diffTool} edits={pane.diffEdits} wrap={wrapOn} />
       )}
     </div>
   );

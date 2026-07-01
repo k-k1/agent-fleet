@@ -2133,6 +2133,11 @@ button.mt-tool-diff .codicon {
   white-space: pre-wrap;
   word-break: break-word;
 }
+/* wrap toggle off: long lines scroll horizontally instead of wrapping */
+.diffview.nowrap .dv-code {
+  white-space: pre;
+  word-break: normal;
+}
 .dv-row.dv-add {
   background: rgba(63, 185, 80, 0.14);
 }
@@ -3248,6 +3253,12 @@ button.mt-tool-diff .codicon {
   white-space: pre;
   padding-left: 10px;
   border-left: 1px solid var(--border2);
+}
+/* wrap toggle (pane toolbar): let long diff lines wrap instead of scrolling. The
+   line-number bar aligns to the first row only (wrapped rows vary in height). */
+.diff-files.wrap .dl-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 .diff-body .dl.add {
   background: rgba(46, 160, 67, 0.1);

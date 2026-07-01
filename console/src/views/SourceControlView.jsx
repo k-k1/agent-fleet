@@ -11,7 +11,7 @@ import BranchModal from "../components/BranchModal.jsx";
 // codeleaf CommitDetail style. The repo comes from context.
 // repo comes from the owning pane's descriptor (falls back to context scmRepo when
 // rendered standalone).
-export default function SourceControlView({ repo }) {
+export default function SourceControlView({ repo, wrap }) {
   const { scmRepo: ctxRepo, bumpRepos, bumpFiles, showTerminal } = useApp();
   const scmRepo = repo !== undefined ? repo : ctxRepo;
   const enc = encodeURIComponent(scmRepo || "");
@@ -179,7 +179,7 @@ export default function SourceControlView({ repo }) {
             ))}
           </ul>
         </div>
-        <RightPane sel={sel} diff={diff} commit={commit} />
+        <RightPane sel={sel} diff={diff} commit={commit} wrap={wrap} />
       </div>
       {showBranch && (
         <BranchModal
@@ -196,9 +196,9 @@ export default function SourceControlView({ repo }) {
   );
 }
 
-function RightPane({ sel, diff, commit }) {
-  if (sel?.kind === "commit") return <CommitDetail commit={commit} />;
-  return <Diff text={diff} />;
+function RightPane({ sel, diff, commit, wrap }) {
+  if (sel?.kind === "commit") return <CommitDetail commit={commit} wrap={wrap} />;
+  return <Diff text={diff} wrap={wrap} />;
 }
 
 function ChangeRow({ c, selected, onOpen, onOp }) {
@@ -239,7 +239,7 @@ function ChangeRow({ c, selected, onOpen, onOp }) {
 
 // CommitDetail renders one commit (codeleaf style): header (subject/body/meta), the
 // changed-file list, then the full colored patch.
-function CommitDetail({ commit }) {
+function CommitDetail({ commit, wrap }) {
   if (!commit) return <pre className="diff muted">読み込み中…</pre>;
   if (commit.error) return <pre className="diff muted">(コミット取得失敗)</pre>;
   const files = commit.files || [];
@@ -264,7 +264,7 @@ function CommitDetail({ commit }) {
           </ul>
         )}
       </div>
-      <Diff text={commit.diff} embedded truncated={commit.truncated} />
+      <Diff text={commit.diff} embedded truncated={commit.truncated} wrap={wrap} />
     </div>
   );
 }
@@ -339,7 +339,7 @@ function diffRows(lines) {
   return rows;
 }
 
-function Diff({ text, embedded, truncated }) {
+function Diff({ text, embedded, truncated, wrap }) {
   // Real diffs carry an @@ hunk or a `diff --git` header; anything else (placeholder
   // "(差分なし)", error strings, empty) is shown as a plain message, not parsed.
   if (!text || !/(^|\n)(@@ |diff --(git|cc) )/.test(text)) {
@@ -348,7 +348,7 @@ function Diff({ text, embedded, truncated }) {
   }
   const files = splitDiffFiles(text);
   return (
-    <div className="diff-files">
+    <div className={"diff-files" + (wrap ? " wrap" : "")}>
       {files.map((f, i) => (
         <FileDiff key={(f.path || "") + i} file={f} />
       ))}
