@@ -1709,6 +1709,42 @@ body.row-resizing {
   text-align: center;
   line-height: 1.6;
 }
+/* /context-like fill gauge under the header: a segmented bar (cache read / cache
+   creation / fresh input) sized against the context window. */
+.mirror-ctxbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bar);
+  font-size: 11.5px;
+}
+.cb-track {
+  flex: 1;
+  min-width: 60px;
+  display: flex;
+  height: 6px;
+  border-radius: 3px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--fg) 10%, transparent);
+}
+.cb-seg {
+  height: 100%;
+}
+.cb-read {
+  background: color-mix(in srgb, var(--accent) 32%, transparent);
+}
+.cb-create {
+  background: color-mix(in srgb, var(--accent) 58%, transparent);
+}
+.cb-fresh {
+  background: var(--accent);
+}
+.cb-label {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
 /* Context strip: shown above a turn only when the git branch / working dir changes,
    marking the switch once instead of repeating it on every turn. */
 .mirror-context {

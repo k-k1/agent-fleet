@@ -133,6 +133,11 @@ export default function MirrorView({ session, sessionMeta, active, mirror, onTog
   // system-injected user lines (bash i/o, task notifications, slash-command echoes).
   const groups = groupTurns(turns);
 
+  // A /context-like gauge: the newest assistant turn's prompt size (input + cache) is
+  // the current context fill. The per-category split (/context) is computed inside
+  // claude and isn't in the transcript, but the cache breakdown is real usage data.
+  const ctxUsage = latestContext(groups);
+
   // Status chip: prefer the live polled status, fall back to the session meta.
   const chip = status
     ? stateInfo({ kind: "claude", alive: status !== "stopped", state: status })
@@ -163,6 +168,8 @@ export default function MirrorView({ session, sessionMeta, active, mirror, onTog
         )}
         <MirrorToggle mirror={mirror} onToggle={onToggleMirror} />
       </header>
+
+      {ctxUsage && <ContextBar {...ctxUsage} />}
 
       <div className="mirror-body" ref={bodyRef}>
         {groups.length === 0 ? (
@@ -273,6 +280,45 @@ function groupTurns(turns) {
     }
   }
   return out;
+}
+
+// latestContext returns the newest assistant turn's prompt breakdown (reused-cache,
+// newly-cached, fresh) — the current context fill — or null if no usage is recorded
+// yet (e.g. an Agent that predates the usage field, before a Stop/Start).
+function latestContext(groups) {
+  for (let i = groups.length - 1; i >= 0; i--) {
+    const g = groups[i];
+    if (g.role === "user") continue;
+    if (g.inTok + g.cacheRead + g.cacheCreate > 0) {
+      return { read: g.cacheRead, create: g.cacheCreate, fresh: g.inTok };
+    }
+  }
+  return null;
+}
+
+// ContextBar is a /context-like fill gauge for the context window, segmented by how
+// the prompt tokens break down (cache read / cache creation / fresh input). The
+// window auto-scales to 1M once usage passes the 200k default (the [1m] beta).
+function ContextBar({ read, create, fresh }) {
+  const used = read + create + fresh;
+  const window = used <= 200000 ? 200000 : 1000000;
+  const pct = Math.min(100, (used / window) * 100);
+  const w = (n) => (n / window) * 100 + "%";
+  const title =
+    `文脈 ${used.toLocaleString()} / ${window.toLocaleString()} トークン (${pct.toFixed(0)}%)\n` +
+    `キャッシュ再利用 ${read.toLocaleString()} · 新規キャッシュ ${create.toLocaleString()} · 未キャッシュ ${fresh.toLocaleString()}`;
+  return (
+    <div className="mirror-ctxbar" title={title}>
+      <div className="cb-track">
+        <div className="cb-seg cb-read" style={{ width: w(read) }} />
+        <div className="cb-seg cb-create" style={{ width: w(create) }} />
+        <div className="cb-seg cb-fresh" style={{ width: w(fresh) }} />
+      </div>
+      <span className="cb-label muted">
+        コンテキスト {fmtTok(used)} / {fmtTok(window)}・{pct.toFixed(0)}%
+      </span>
+    </div>
+  );
 }
 
 // renderGroups lays the blocks out, inserting a context strip (branch · cwd) above a
@@ -387,9 +433,10 @@ function prettyCwd(p) {
   return p.replace(/^\/home\/[^/]+/, "~");
 }
 
-// fmtTok renders a token count compactly: 927 → "927", 30371 → "30k", 3092 → "3.1k".
+// fmtTok renders a token count compactly: 927 → "927", 30371 → "30k", 1000000 → "1M".
 function fmtTok(n) {
   if (!n) return "0";
+  if (n >= 1e6) return (n / 1e6).toFixed(n < 1e7 ? 1 : 0).replace(/\.0$/, "") + "M";
   if (n < 1000) return String(n);
   return (n / 1000).toFixed(n < 10000 ? 1 : 0).replace(/\.0$/, "") + "k";
 }
