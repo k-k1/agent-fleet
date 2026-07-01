@@ -19,7 +19,13 @@ import (
 // briefly so the Console's poll can't hammer the endpoint (it rate-limits).
 
 const claudeUsageURL = "https://api.anthropic.com/api/oauth/usage"
-const claudeUsageTTL = 60 * time.Second
+
+// The unofficial usage endpoint is rate-limited, so we keep it soft: the cached value
+// is served for up to 5 minutes, and the real endpoint is hit only when the cache is
+// empty/older than that on a request, or on an explicit ?refresh=1 from the user.
+// Forced refreshes are floored so a user mashing the button can't hammer it.
+const claudeUsageTTL = 5 * time.Minute
+const claudeUsageMinRefresh = 10 * time.Second
 
 // usageWindow is one limit window: percent used (0–100) and the ISO reset instant
 // (the Console formats it as a relative "あとN時間/N日" + an absolute date-time).
@@ -41,11 +47,18 @@ var (
 )
 
 func handleClaudeUsage(w http.ResponseWriter, r *http.Request) {
+	refresh := r.URL.Query().Get("refresh") == "1"
+
 	usageMu.Lock()
-	if !usageAt.IsZero() && time.Since(usageAt) < claudeUsageTTL {
-		v := usageVal
+	have := !usageAt.IsZero()
+	age := time.Since(usageAt)
+	// Hit the real endpoint only when the cache is empty or older than the TTL, or on
+	// an explicit refresh that isn't within the floor window. Else serve the cache.
+	fetch := !have || age >= claudeUsageTTL || (refresh && age >= claudeUsageMinRefresh)
+	if !fetch {
+		v, at := usageVal, usageAt
 		usageMu.Unlock()
-		writeJSON(w, http.StatusOK, v)
+		writeClaudeUsage(w, v, at)
 		return
 	}
 	usageMu.Unlock()
@@ -53,9 +66,24 @@ func handleClaudeUsage(w http.ResponseWriter, r *http.Request) {
 	v := fetchClaudeUsage(r.Context())
 
 	usageMu.Lock()
-	usageVal, usageAt = v, time.Now()
+	// Keep the last good value if a refresh failed — don't blank a working chip; the
+	// growing age tells the user it's stale. Only overwrite on success (or first time).
+	if v.OK || !have {
+		usageVal, usageAt = v, time.Now()
+	}
+	rv, rat := usageVal, usageAt
 	usageMu.Unlock()
-	writeJSON(w, http.StatusOK, v)
+	writeClaudeUsage(w, rv, rat)
+}
+
+// writeClaudeUsage emits the usage plus its age in seconds (so the Console can show
+// "N分前" and offer a manual refresh).
+func writeClaudeUsage(w http.ResponseWriter, v claudeUsage, at time.Time) {
+	out := map[string]any{"ok": v.OK, "fiveHour": v.FiveHour, "sevenDay": v.SevenDay}
+	if !at.IsZero() {
+		out["ageSec"] = int(time.Since(at).Seconds())
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // claudeOAuthToken reads the subscription OAuth access token from the credentials

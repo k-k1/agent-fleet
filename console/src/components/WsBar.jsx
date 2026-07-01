@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useApp } from "../state.jsx";
 import { api, previewURL, ocwebURL } from "../api.js";
 import Icon from "./Icon.jsx";
@@ -113,33 +113,45 @@ function useWsResourceChips(tenant, superAdmin) {
   return { wsStats, wsHist, hostStats, hostHist };
 }
 
-// useClaudeUsage polls the Claude subscription usage (5-hour + weekly) every 60s —
-// it changes slowly, and the endpoint (proxied to the Agent, which caches it) is
-// rate-limited, so we poll far less often than the resource chips. Returns null
-// whenever it's unavailable (workspace stopped, no token, endpoint changed), which
-// simply hides the chip. Kept in WsBar like the resource poll so it doesn't re-render
-// the whole app.
+// useClaudeUsage surfaces the Claude subscription usage (5-hour + weekly). The real
+// (unofficial, rate-limited) endpoint is hit only on the Agent's first request and on
+// an explicit user refresh — never on a background timer. The Console just reads the
+// Agent's CACHED value: once on mount, and a slow 5-min re-read (which the Agent
+// serves from cache, so it does NOT call the endpoint) to recover the chip if the
+// workspace started after mount / stay in sync across tabs. refresh() asks the Agent
+// to fetch the latest (?refresh=1). Kept in WsBar so it doesn't re-render the app.
 function useClaudeUsage(tenant) {
   const [usage, setUsage] = useState(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const load = useCallback((force) => {
+    if (document.hidden && !force) return;
+    if (force) setRefreshing(true);
+    api("api/claude/usage" + (force ? "?refresh=1" : ""))
+      // Keep the last value on a transient error (don't blank); only replace on ok.
+      .then((d) => setUsage(d && d.ok ? d : (force ? null : (u) => u)))
+      .catch(() => {})
+      .finally(() => force && setRefreshing(false));
+  }, []);
   useEffect(() => {
-    let alive = true;
-    const load = () => {
-      if (document.hidden) return;
-      api("api/claude/usage")
-        .then((d) => alive && setUsage(d && d.ok ? d : null))
-        .catch(() => alive && setUsage(null));
-    };
-    load();
-    const id = setInterval(load, 60000);
-    const onVis = () => !document.hidden && load();
+    setUsage(null);
+    load(false);
+    const id = setInterval(() => load(false), 300000); // 5 min, Agent-cached (no endpoint hit)
+    const onVis = () => !document.hidden && load(false);
     document.addEventListener("visibilitychange", onVis);
     return () => {
-      alive = false;
       clearInterval(id);
       document.removeEventListener("visibilitychange", onVis);
     };
-  }, [tenant]);
-  return usage;
+  }, [tenant, load]);
+  return { usage, refreshing, refresh: () => load(true) };
+}
+
+// agoText: seconds since the usage was fetched → "N秒/分/時間前" (chip freshness).
+function agoText(sec) {
+  if (sec == null) return "";
+  if (sec >= 3600) return `${Math.round(sec / 3600)}時間前`;
+  if (sec >= 60) return `${Math.round(sec / 60)}分前`;
+  return `${Math.max(0, sec)}秒前`;
 }
 
 // untilText: a reset instant → a compact relative "あとN日/N時間/N分" (the weekday+time
@@ -225,7 +237,7 @@ function tile({ k, series, max, track, value, level, title }) {
 export default function WsBar() {
   const { wsState, startWs, stopWs, ocweb, tenant, superAdmin, layout, resetToTerminal } = useApp();
   const { wsStats, wsHist, hostStats, hostHist } = useWsResourceChips(tenant, superAdmin);
-  const usage = useClaudeUsage(tenant);
+  const { usage, refreshing, refresh } = useClaudeUsage(tenant);
   const isMobile = useIsMobile();
   const [port, setPort] = useState("");
   const [pvOpen, setPvOpen] = useState(false); // desktop port-preview popover
@@ -352,17 +364,22 @@ export default function WsBar() {
       face.push(`週 ${uw.pct}% ${uw.until}`);
       detail.push(`週次・全モデル ${uw.pct}%・${uw.until}でリセット（${uw.when}）`);
     }
+    detail.push(`取得 ${agoText(usage.ageSec)}・クリックで最新に更新`);
     const maxPct = Math.max(uh ? uh.pct : 0, uw ? uw.pct : 0);
     const level = lvl(maxPct, 80, 95);
     return (
-      <span
+      <button
+        type="button"
         className={"ws-graph ws-usage" + (level === 2 ? " crit" : level === 1 ? " warn" : "")}
         title={detail.join("\n")}
+        onClick={refresh}
+        disabled={refreshing}
         key="claude-usage"
       >
         <span className="ws-graph-k">Claude</span>
         <span className="ws-graph-v">{face.join(" · ")}</span>
-      </span>
+        <Icon name="refresh" spin={refreshing} />
+      </button>
     );
   })();
 
