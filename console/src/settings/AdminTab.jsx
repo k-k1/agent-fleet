@@ -464,6 +464,7 @@ function TenantView({ slug, tenant, isSuper, onChanged, onOpenMember }) {
   const [maxSs, setMaxSs] = useState(tenant?.max_sessions || 0);
   const [sessIdle, setSessIdle] = useState(tenant?.session_idle_timeout || "");
   const [wsIdle, setWsIdle] = useState(tenant?.ws_idle_timeout || "");
+  const [allowUpd, setAllowUpd] = useState(!!tenant?.allow_agent_self_update);
   const [saved, setSaved] = useState(false);
   const [err, setErr] = useState("");
   const [members, setMembers] = useState(null);
@@ -473,6 +474,7 @@ function TenantView({ slug, tenant, isSuper, onChanged, onOpenMember }) {
     setMaxSs(tenant?.max_sessions || 0);
     setSessIdle(tenant?.session_idle_timeout || "");
     setWsIdle(tenant?.ws_idle_timeout || "");
+    setAllowUpd(!!tenant?.allow_agent_self_update);
   }, [slug, tenant]);
 
   const loadMembers = useCallback(async () => {
@@ -495,6 +497,7 @@ function TenantView({ slug, tenant, isSuper, onChanged, onOpenMember }) {
       max_sessions: +maxSs || 0,
       session_idle_timeout: sessIdle.trim(),
       ws_idle_timeout: wsIdle.trim(),
+      allow_agent_self_update: allowUpd,
     });
     if (res?.error) {
       setErr(errText(res.error));
@@ -533,6 +536,14 @@ function TenantView({ slug, tenant, isSuper, onChanged, onOpenMember }) {
           </div>
           <p className="muted" style={{ margin: "0 0 8px" }}>
             放置された claude セッションは Session halt まで で停止中（再開可）に畳まれ、接続も稼働も無い Workspace は Workspace 停止まで で docker 停止します。書式は <code>30m</code> / <code>2h</code> / <code>90s</code>。空欄はデプロイ既定（既定は無効）に従い、<code>0</code> で明示的に無効化します。
+          </p>
+          <h4>エージェント CLI の更新</h4>
+          <label className="admin-check">
+            <input type="checkbox" checked={allowUpd} onChange={(e) => setAllowUpd(e.target.checked)} />
+            <span>メンバーが claude / opencode / codex を自分で最新へ更新するのを許可</span>
+          </label>
+          <p className="muted" style={{ margin: "0 0 8px" }}>
+            OFF（既定）は全員がこのデプロイのイメージ版で固定。ON にすると各メンバーが自分の設定で「起動時に最新へ更新」を選べます（コンテナ内 in-place 更新・Stop → Start で反映／戻せます）。
           </p>
           <div className="form-row">
             <button onClick={saveLimits} className="primary">保存</button>

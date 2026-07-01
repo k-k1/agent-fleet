@@ -28,7 +28,16 @@ func (c config) handleTenants(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]map[string]any, 0, len(ms))
 	for _, m := range ms {
-		out = append(out, map[string]any{"slug": m.TenantSlug, "name": m.TenantName, "role": m.Role})
+		// allow_agent_self_update: the operator gate, surfaced so the Console can
+		// show/hide the member's "keep CLIs updated" toggle for this tenant.
+		allowUpd := false
+		if t, err := c.mgr.store.GetTenant(r.Context(), m.TenantID); err == nil {
+			allowUpd = parseLimits(t.Limits).AllowAgentSelfUpdate
+		}
+		out = append(out, map[string]any{
+			"slug": m.TenantSlug, "name": m.TenantName, "role": m.Role,
+			"allow_agent_self_update": allowUpd,
+		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"tenants": out, "super_admin": ident.Role == "super_admin"})
 }
@@ -120,6 +129,7 @@ func (c config) handleAdminListTenants(w http.ResponseWriter, r *http.Request) {
 			"users": len(members), "running": running,
 			"max_workspaces": lim.MaxWorkspaces, "max_sessions": lim.MaxSessions,
 			"session_idle_timeout": lim.SessionIdleTimeout, "ws_idle_timeout": lim.WSIdleTimeout,
+			"allow_agent_self_update": lim.AllowAgentSelfUpdate,
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"tenants": out, "super_admin": isSuper})
@@ -324,6 +334,8 @@ func (c config) handleAdminSetTenantLimits(w http.ResponseWriter, r *http.Reques
 		// "0" => disabled for this tenant.
 		SessionIdleTimeout string `json:"session_idle_timeout"`
 		WSIdleTimeout      string `json:"ws_idle_timeout"`
+		// Operator gate for member CLI self-update (claude/opencode/codex).
+		AllowAgentSelfUpdate bool `json:"allow_agent_self_update"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid json"})
@@ -348,18 +360,23 @@ func (c config) handleAdminSetTenantLimits(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	lj, _ := json.Marshal(tenantLimits{
-		MaxWorkspaces:      body.MaxWorkspaces,
-		MaxSessions:        body.MaxSessions,
-		SessionIdleTimeout: body.SessionIdleTimeout,
-		WSIdleTimeout:      body.WSIdleTimeout,
+		MaxWorkspaces:        body.MaxWorkspaces,
+		MaxSessions:          body.MaxSessions,
+		SessionIdleTimeout:   body.SessionIdleTimeout,
+		WSIdleTimeout:        body.WSIdleTimeout,
+		AllowAgentSelfUpdate: body.AllowAgentSelfUpdate,
 	})
 	if err := c.mgr.store.SetTenantLimits(r.Context(), t.ID, string(lj)); err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
+	// Rebuild cached runtimes for this tenant so the new gate reaches the next
+	// container start (the gate is injected as env when the runtime is built).
+	c.mgr.evictTenantCache(t.ID)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"tenant": t.Slug, "max_workspaces": body.MaxWorkspaces, "max_sessions": body.MaxSessions,
 		"session_idle_timeout": body.SessionIdleTimeout, "ws_idle_timeout": body.WSIdleTimeout,
+		"allow_agent_self_update": body.AllowAgentSelfUpdate,
 	})
 }
 

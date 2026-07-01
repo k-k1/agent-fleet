@@ -32,6 +32,9 @@ type ecsRuntime struct {
 	// secretKey is the per-workspace at-rest DEK, injected as AF_SECRET_KEY in the
 	// task definition on Start (same contract the docker adapter satisfies via -e).
 	secretKey string
+	// extraEnv carries per-workspace KEY=VAL task env (e.g. the per-tenant
+	// AF_AGENT_SELF_UPDATE_ALLOWED gate); 段2 wires these into the task definition.
+	extraEnv []string
 }
 
 var _ Runtime = (*ecsRuntime)(nil)
@@ -57,12 +60,13 @@ type ecsFactory struct {
 	cfg ecsConfig
 }
 
-func (f *ecsFactory) New(ws Workspace, secretKey string) Runtime {
+func (f *ecsFactory) New(ws Workspace, secretKey string, extraEnv []string) Runtime {
 	return &ecsRuntime{
 		cfg:       f.cfg,
 		name:      ws.ContainerName,
 		token:     ws.AgentToken,
 		secretKey: secretKey,
+		extraEnv:  extraEnv,
 	}
 }
 

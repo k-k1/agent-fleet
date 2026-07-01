@@ -59,9 +59,13 @@ func TestDockerFactoryNew(t *testing.T) {
 		TenantID: "T-acme", ContainerName: "af-ws-acme-alice", Network: "af-net-acme-alice",
 		DataDir: "/old/root/acme/alice", AgentPort: "7731", AgentToken: "tok-xyz",
 	}
-	rt, ok := f.New(ws, "dek-hex").(*dockerRuntime)
+	rt, ok := f.New(ws, "dek-hex", []string{"AF_AGENT_SELF_UPDATE_ALLOWED=1"}).(*dockerRuntime)
 	if !ok {
-		t.Fatalf("New returned %T, want *dockerRuntime", f.New(ws, "dek-hex"))
+		t.Fatalf("New returned %T, want *dockerRuntime", f.New(ws, "dek-hex", nil))
+	}
+	// Per-workspace extraEnv is appended after the (empty here) template env.
+	if len(rt.extraEnv) == 0 || rt.extraEnv[len(rt.extraEnv)-1] != "AF_AGENT_SELF_UPDATE_ALLOWED=1" {
+		t.Errorf("extraEnv = %v, want it to include the per-workspace gate", rt.extraEnv)
 	}
 	if rt.name != ws.ContainerName || rt.network != ws.Network {
 		t.Errorf("name/network = %q/%q, want %q/%q", rt.name, rt.network, ws.ContainerName, ws.Network)
@@ -82,7 +86,7 @@ func TestDockerFactoryNew(t *testing.T) {
 // so a misconfigured AF_RUNTIME=ecs can't silently no-op.
 func TestECSRuntimeSkeleton(t *testing.T) {
 	f := &ecsFactory{}
-	rt := f.New(Workspace{ContainerName: "af-ws-x", AgentToken: "t"}, "")
+	rt := f.New(Workspace{ContainerName: "af-ws-x", AgentToken: "t"}, "", nil)
 	if rt.Name() != "af-ws-x" || rt.Token() != "t" {
 		t.Errorf("Name/Token = %q/%q, want af-ws-x/t", rt.Name(), rt.Token())
 	}

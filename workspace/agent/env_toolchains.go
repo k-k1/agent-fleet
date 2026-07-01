@@ -28,6 +28,11 @@ type toolchains struct {
 	Node     string `json:"node"`
 	Java     string `json:"java"`
 	Timezone string `json:"timezone"`
+	// AgentUpdate: member opt-in to update the baked CLIs (claude/opencode/codex) to
+	// latest at container start. Only honored when the operator allows it (the
+	// entrypoint gates on AF_AGENT_SELF_UPDATE_ALLOWED); a Stop→Start reverts to the
+	// image versions when turned off. Persists in the home volume like the rest.
+	AgentUpdate bool `json:"agentUpdate,omitempty"`
 }
 
 // defaultTimezone is the initial per-user timezone (entrypoint exports TZ from it,
@@ -171,6 +176,7 @@ func handleToolchainsGet(w http.ResponseWriter, r *http.Request) {
 		"node":           t.Node,
 		"java":           t.Java,
 		"timezone":       t.Timezone,
+		"agentUpdate":    t.AgentUpdate,
 		"java_available": availableJava(),
 		"node_options":   nodeOptions,
 		"tz_options":     tzOptions,

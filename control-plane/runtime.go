@@ -54,9 +54,11 @@ var _ Runtime = (*dockerRuntime)(nil)
 // main.go — no concrete type ever leaks into the backend-agnostic core.
 //
 // secretKey is the per-workspace at-rest DEK (injected as AF_SECRET_KEY on Start).
-// Pass "" for state/stop/read-only calls that never touch secrets.
+// Pass "" for state/stop/read-only calls that never touch secrets. extraEnv carries
+// per-workspace KEY=VAL env appended after the shared template env (e.g. the
+// per-tenant AF_AGENT_SELF_UPDATE_ALLOWED gate); nil for state/stop-only calls.
 type RuntimeFactory interface {
-	New(ws Workspace, secretKey string) Runtime
+	New(ws Workspace, secretKey string, extraEnv []string) Runtime
 }
 
 // dockerFactory is the `local` (compose) RuntimeFactory. It carries the template
@@ -73,7 +75,10 @@ type dockerFactory struct {
 	rootDataDir func(Workspace) string
 }
 
-func (f *dockerFactory) New(ws Workspace, secretKey string) Runtime {
+func (f *dockerFactory) New(ws Workspace, secretKey string, extraEnv []string) Runtime {
+	// Shared template env first, then the per-workspace extras (copied so we never
+	// mutate the factory's slice).
+	env := append(append([]string(nil), f.extraEnv...), extraEnv...)
 	return &dockerRuntime{
 		image:      f.image,
 		name:       ws.ContainerName,
@@ -85,7 +90,7 @@ func (f *dockerFactory) New(ws Workspace, secretKey string) Runtime {
 		secretKey:  secretKey,
 		memory:     f.memory,
 		sessionCmd: f.sessionCmd,
-		extraEnv:   f.extraEnv,
+		extraEnv:   env,
 	}
 }
 

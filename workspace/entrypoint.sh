@@ -67,6 +67,27 @@ if [ "${CLAUDE_INSTALL:-1}" = "1" ]; then
   fi
 fi
 
+# Agent CLI self-update (opt-in + operator-gated). The CLIs (claude/opencode/codex)
+# are baked at /usr/local, pinned to the image version. A member who opts in via the
+# Console (toolchains.agentUpdate=true) AND whose operator allows it (the CP injects
+# AF_AGENT_SELF_UPDATE_ALLOWED=1 from the tenant policy) gets them updated to latest
+# IN PLACE here at container start — no waiting for an image rebuild. The npm-global
+# tree is dev-owned (Dockerfile chown), so this needs no root. Stop→Start recreates
+# the container from the image, so turning the toggle off reverts to the baked
+# versions. The env gate is authoritative: editing toolchains.json in a shell can't
+# enable updates when the operator hasn't allowed them.
+if [ "${AF_AGENT_SELF_UPDATE_ALLOWED:-0}" = "1" ]; then
+  TCJSON="$HOME/.config/agent-fleet/toolchains.json"
+  if [ -f "$TCJSON" ] && node -e 'process.exit(require(process.argv[1]).agentUpdate?0:1)' "$TCJSON" 2>/dev/null; then
+    echo "[entrypoint] updating agent CLIs to latest (member opt-in, operator-allowed) ..."
+    if npm install -g @anthropic-ai/claude-code@latest opencode-ai@latest @openai/codex@latest >/dev/null 2>&1; then
+      echo "[entrypoint] agent CLIs updated: claude $(claude --version 2>/dev/null | head -1) | opencode $(opencode --version 2>/dev/null | head -1) | codex $(codex --version 2>/dev/null | head -1)"
+    else
+      echo "[entrypoint] WARN: agent CLI update failed (using baked versions)"
+    fi
+  fi
+fi
+
 # 既定 settings.json を seed（ファイルが無い時のみ。以後は Console の Claude 設定が真実）。
 #   skipDangerousModePermissionPrompt … bypass 警告での誤 exit を防ぐ
 #   remoteControlAtStartup            … 起動時に Remote Control を有効化

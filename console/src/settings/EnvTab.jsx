@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, apiJSON } from "../api.js";
+import { api, apiJSON, getTenant } from "../api.js";
 import { useApp } from "../state.jsx";
 import ConfirmDialog from "../components/ConfirmDialog.jsx";
 import Icon from "../components/Icon.jsx";
@@ -12,6 +12,9 @@ import Icon from "../components/Icon.jsx";
 export default function EnvTab() {
   const [d, setD] = useState(null);
   const [err, setErr] = useState("");
+  // allowUpdate: the operator gate for member CLI self-update, read from the active
+  // tenant's policy (GET /api/tenants). The toggle is only offered when allowed.
+  const [allowUpdate, setAllowUpdate] = useState(false);
 
   const load = useCallback(() => {
     setErr("");
@@ -26,8 +29,26 @@ export default function EnvTab() {
   }, []);
   useEffect(load, [load]);
 
+  useEffect(() => {
+    api("api/tenants")
+      .then((res) => {
+        const ts = (res && res.tenants) || [];
+        const sel = getTenant();
+        // Single-membership users have no explicit selection (auto-selected).
+        const t = ts.find((x) => x.slug === sel) || (ts.length === 1 ? ts[0] : null);
+        setAllowUpdate(!!(t && t.allow_agent_self_update));
+      })
+      .catch(() => setAllowUpdate(false));
+  }, []);
+
   const update = async (patch) => {
-    const next = { node: d.node || "", java: d.java || "", timezone: d.timezone || "", ...patch };
+    const next = {
+      node: d.node || "",
+      java: d.java || "",
+      timezone: d.timezone || "",
+      agentUpdate: !!d.agentUpdate,
+      ...patch,
+    };
     const res = await apiJSON("api/env/toolchains", "PUT", next);
     if (res && res.error) {
       alert("保存に失敗: " + (res.error.message || ""));
@@ -43,14 +64,14 @@ export default function EnvTab() {
       ) : !d ? (
         <p className="muted pad">読み込み中…</p>
       ) : (
-        <Toolchains d={d} update={update} />
+        <Toolchains d={d} update={update} allowUpdate={allowUpdate} />
       )}
       <WorkspaceDangerZone />
     </div>
   );
 }
 
-function Toolchains({ d, update }) {
+function Toolchains({ d, update, allowUpdate }) {
   const nodeOpts = d.node_options || ["system"];
   const javaOpts = d.java_available || [];
   const tz = d.timezone || "Asia/Tokyo";
@@ -94,6 +115,21 @@ function Toolchains({ d, update }) {
           </select>
         )}
       </Row>
+      {allowUpdate && (
+        <Row label="エージェント CLI の更新">
+          <label className="ds-check">
+            <input
+              type="checkbox"
+              checked={!!d.agentUpdate}
+              onChange={(e) => update({ agentUpdate: e.target.checked })}
+            />
+            <span>起動時に claude / opencode / codex を最新へ更新する</span>
+          </label>
+          <p className="muted ds-sub">
+            OFF（既定）は会社が焼いたイメージ版で固定。ON にすると次の起動時に最新へ更新します（Stop → Start で反映／OFF に戻して再起動すればイメージ版へ戻ります）。
+          </p>
+        </Row>
+      )}
     </>
   );
 }

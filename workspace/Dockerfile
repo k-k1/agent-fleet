@@ -95,6 +95,14 @@ RUN npm install -g @anthropic-ai/claude-code opencode-ai @openai/codex bun \
 # DISABLE_UPDATES, so explicit `claude update`/`claude install` still work).
 ENV DISABLE_AUTOUPDATER=1
 
+# Hand the npm-global tree to `dev` so an opted-in member can update the baked CLIs
+# (claude/opencode/codex) to latest IN PLACE at container start (entrypoint runs as
+# dev). Single-user container, so dev owning its own /usr/local node_modules is no
+# escalation. Gated by the operator (AF_AGENT_SELF_UPDATE_ALLOWED); Stop→Start
+# recreates from the image, so turning the toggle off reverts to these baked versions.
+# Numeric uid:gid 1000 (the node/dev user; the node→dev rename happens further down).
+RUN chown -R 1000:1000 /usr/local/lib/node_modules /usr/local/bin
+
 # opencode web UI (pk-opencode-webui), built in ocwebbuild → /opt/opencode-web.
 # The agent runs `bun /opt/opencode-web/serve-ui.ts` (with BASE_PATH/API_URL/PORT)
 # in front of `opencode serve` when the Console toggle is on (kept off by default).
