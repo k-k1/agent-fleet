@@ -118,6 +118,22 @@ export default function MirrorView({ session, sessionMeta, active, mirror, onTog
     setTimeout(() => tickRef.current?.(), 250);
   };
 
+  // sendKeys drives the AskUserQuestion modal via named keys (Down/Space/Enter), the
+  // only way to answer multi-select / multi-question forms (free text can't).
+  const sendKeys = async (keys) => {
+    if (!keys || !keys.length || sending) return;
+    setSending(true);
+    statusRef.current = "working";
+    setStatus("working");
+    try {
+      await apiJSON(`api/sessions/${q(session)}/input`, "POST", { keys });
+    } catch {
+      /* next poll reconciles */
+    }
+    setSending(false);
+    setTimeout(() => tickRef.current?.(), 400);
+  };
+
 
   const send = async () => {
     const text = draft.trim();
@@ -208,7 +224,7 @@ export default function MirrorView({ session, sessionMeta, active, mirror, onTog
                 questions={pending}
                 sending={sending}
                 onSendOne={sendPrompt}
-                onSubmit={sendPrompt}
+                onSubmitKeys={sendKeys}
               />
             </div>
           </div>
@@ -448,7 +464,7 @@ function Turn({ turn, onAnswer }) {
 // Multi-select or multiple questions → build a selection, then submit: answers are
 // sent one page at a time (multi-select choices joined) so the terminal modal advances
 // through each question and doesn't close after the first pick.
-function PendingQuestions({ questions, onSendOne, onSubmit, sending }) {
+function PendingQuestions({ questions, onSendOne, onSubmitKeys, sending }) {
   const qs = questions || [];
   const [sel, setSel] = useState(() => qs.map(() => []));
   const single = qs.length === 1 && !qs[0]?.multiSelect;
@@ -463,19 +479,36 @@ function PendingQuestions({ questions, onSendOne, onSubmit, sending }) {
     });
   };
 
-  // The question modal submits the whole tool on the first free-text Enter, so we
-  // send ALL answers as one line (no newlines — those would submit early): e.g.
-  // "DB: PostgreSQL / デプロイ: AWS, GCP". claude reads it as the tool's answer.
+  // Every single-select question needs a pick before we can drive the modal.
+  const canSubmit = qs.every((q, qi) => q.multiSelect || (sel[qi] || []).length > 0);
+
+  // Drive the modal with named keys: for each question page (cursor starts at the
+  // top), move Down to each chosen option; single-select confirms with Enter, multi-
+  // select toggles with Space then confirms the page with Enter. Enter advances to
+  // the next question, so the whole sequence answers every page in one send.
   const submit = () => {
-    const combined = qs
-      .map((q, qi) => {
-        const chosen = (sel[qi] || []).join(", ");
-        if (!chosen) return null;
-        return `${q.header || q.question || `質問${qi + 1}`}: ${chosen}`;
-      })
-      .filter(Boolean)
-      .join(" / ");
-    if (combined) onSubmit(combined);
+    const keys = [];
+    qs.forEach((q, qi) => {
+      const opts = q.options || [];
+      const idx = (sel[qi] || [])
+        .map((l) => opts.findIndex((o) => o.label === l))
+        .filter((i) => i >= 0)
+        .sort((a, b) => a - b);
+      let cur = 0;
+      if (q.multiSelect) {
+        for (const ci of idx) {
+          for (let k = 0; k < ci - cur; k++) keys.push("Down");
+          keys.push("Space");
+          cur = ci;
+        }
+        keys.push("Enter");
+      } else {
+        const ci = idx[0] ?? 0;
+        for (let k = 0; k < ci; k++) keys.push("Down");
+        keys.push("Enter");
+      }
+    });
+    if (keys.length) onSubmitKeys(keys);
   };
 
   return (
@@ -520,7 +553,12 @@ function PendingQuestions({ questions, onSendOne, onSubmit, sending }) {
       ))}
       {!single && (
         <div className="mq-submit-row">
-          <button type="button" className="btn primary mq-submit" disabled={sending} onClick={submit}>
+          <button
+            type="button"
+            className="btn primary mq-submit"
+            disabled={sending || !canSubmit}
+            onClick={submit}
+          >
             回答を送信
           </button>
         </div>
