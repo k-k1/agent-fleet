@@ -98,6 +98,8 @@ func main() {
 	// Claude settings (Remote Control / notifications / RTK hook) — Console toggles.
 	mux.HandleFunc("GET /claude/settings", handleClaudeSettingsGet)
 	mux.HandleFunc("PUT /claude/settings", handleClaudeSettingsPut)
+	// Claude subscription usage (5-hour + weekly bars) for the WsBar chip.
+	mux.HandleFunc("GET /claude/usage", handleClaudeUsage)
 	// codex / opencode rtk toggle (durable pref → on-disk artifacts) — Console.
 	mux.HandleFunc("GET /agents/rtk", handleAgentRTKGet)
 	mux.HandleFunc("PUT /agents/rtk", handleAgentRTKPut)

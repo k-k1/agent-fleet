@@ -246,6 +246,7 @@ func main() {
 	// Claude settings (Remote Control / notifications / RTK) — proxied to the Agent.
 	mux.HandleFunc("GET /api/claude/settings", cfg.proxyAgentREST)
 	mux.HandleFunc("PUT /api/claude/settings", cfg.proxyAgentREST)
+	mux.HandleFunc("GET /api/claude/usage", cfg.proxyAgentREST)
 	// codex / opencode rtk toggle — proxied to the Agent.
 	mux.HandleFunc("GET /api/agents/rtk", cfg.proxyAgentREST)
 	mux.HandleFunc("PUT /api/agents/rtk", cfg.proxyAgentREST)
