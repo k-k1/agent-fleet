@@ -1,12 +1,15 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useApp } from "../../state.jsx";
 import { raw } from "../../api.js";
 import Section from "../Section.jsx";
 import Icon from "../Icon.jsx";
+import LayoutMap from "../LayoutMap.jsx";
 import NewSessionModal from "../NewSessionModal.jsx";
 import ArchivedModal from "../ArchivedModal.jsx";
 import { kindIcon, kindLabel, kindClass } from "../../lib/sessionkind.js";
 import { displayName, stateInfo } from "../../lib/sessionview.js";
+import { sessionPanes, ordClass, paneCount } from "../../lib/panebadge.js";
+import { usePaneHover } from "../../lib/panehover.jsx";
 
 const notify = (title, body) => {
   if (!("Notification" in window) || Notification.permission !== "granted") return;
@@ -26,9 +29,16 @@ const notify = (title, body) => {
 // window (agent-side TTL). The ⋯ menu holds destructive actions (作り直す). The
 // list polls so state updates on its own.
 export default function SessionsSection() {
-  const { sessions, bumpSessions, bumpRepos, bumpFiles, revealInFiles, showTerminal, showTerminalSplit, session, newSessionTick, wsState } = useApp();
+  const { sessions, bumpSessions, bumpRepos, bumpFiles, revealInFiles, showTerminal, showTerminalSplit, session, newSessionTick, wsState, layout, setActivePane } = useApp();
   const running = wsState === "running"; // WS down → attach/resume/create are inert
   const [showModal, setShowModal] = useState(false);
+  const { hover, setHover } = usePaneHover();
+
+  // session name → panes showing it ([{ ordinal, id }]). Drives the per-row ordinal
+  // badge, the "open in a pane" mark, and the click-to-focus target. Dormant when
+  // there's a single pane — nothing to disambiguate (the pane shows no chip either).
+  const multi = paneCount(layout) > 1;
+  const openBy = useMemo(() => (multi ? sessionPanes(layout) : new Map()), [multi, layout]);
 
   // Open the New Session dialog when something elsewhere requests it (the onboarding
   // card). Skip the initial 0 so it doesn't pop on load.
@@ -170,15 +180,21 @@ export default function SessionsSection() {
         </>
       }
     >
+      <LayoutMap />
       <ul className="list">
         {sessions.length === 0 && <li className="muted">セッションなし</li>}
         {sessions.map((s) => {
           const dead = !s.alive && s.resumable === false; // dir gone → can't resume
-          const selected = session === s.name; // currently attached → highlighted in place
+          const selected = session === s.name; // active pane's session → highlighted in place
+          const opens = openBy.get(s.name) || []; // panes this session is shown in
+          const open = opens.length > 0;
+          const hl = open && hover?.session === s.name; // cross-highlight from a pane/map
           return (
           <li
             key={s.name}
-            className={"session-row" + (selected ? " active" : "") + (s.alive ? "" : " stopped") + (dead ? " dead" : "") + (running ? "" : " ws-down")}
+            className={"session-row" + (selected ? " active" : "") + (open ? " open" : "") + (hl ? " hover" : "") + (s.alive ? "" : " stopped") + (dead ? " dead" : "") + (running ? "" : " ws-down")}
+            onMouseEnter={open ? () => setHover({ session: s.name }) : undefined}
+            onMouseLeave={open ? () => setHover(null) : undefined}
             // Right-click anywhere on the row opens the same ⋯ menu. preventDefault
             // suppresses the native context menu; the outside-click listener (a
             // mousedown handler) fires on this same right-click and would close the
@@ -188,6 +204,30 @@ export default function SessionsSection() {
               setMenuFor(s.name);
             }}
           >
+            {/* Ordinal gutter: color-matched pane numbers for a session shown in one
+                or more panes; click focuses that pane. Present on every row while
+                split (empty when the session isn't open) so row text stays aligned;
+                absent entirely with a single pane. */}
+            {multi && (
+            <div className="session-ords">
+              {opens.map((o) => (
+                <button
+                  key={o.id}
+                  type="button"
+                  className={"session-ord " + ordClass(o.ordinal)}
+                  title={`ペイン${o.ordinal}にフォーカス`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setActivePane(o.id);
+                  }}
+                  onMouseEnter={() => setHover({ session: s.name, paneId: o.id })}
+                  onMouseLeave={() => setHover(null)}
+                >
+                  {o.ordinal}
+                </button>
+              ))}
+            </div>
+            )}
             <button
               className="session-btn"
               title={dead ? "作業フォルダが存在しないため再開できません" : !s.alive ? "停止中（⋯メニューから再開）" : (s.dir ? s.dir + "（Ctrl/中クリックで新ペインに開く）" : "Ctrl/中クリックで新ペインに開く")}

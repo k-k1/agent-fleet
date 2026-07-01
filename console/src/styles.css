@@ -4743,3 +4743,164 @@ button.primary:hover:not(:disabled) {
     font-size: 14px;
   }
 }
+
+/* ============================================================================
+   Pane ordinals + cross-highlight — ties a Sessions-list row, the layout
+   mini-map, and the on-screen pane together by a shared number + color, so it's
+   clear at a glance which session sits in which pane. See lib/panebadge.js.
+   ========================================================================== */
+.pane-ord-1 { --ord: #2f74d0; }
+.pane-ord-2 { --ord: #d9631b; }
+.pane-ord-3 { --ord: #1f9d57; }
+.pane-ord-4 { --ord: #8b45d6; }
+.pane-ord-5 { --ord: #d63384; }
+.pane-ord-6 { --ord: #0f8f84; }
+.pane-ord-7 { --ord: #b8860b; }
+.pane-ord-8 { --ord: #d53b3b; }
+
+/* The pane's drag grip rendered as its colored ordinal chip (still draggable). */
+.pane-grip.pane-ord {
+  background: var(--ord);
+  border: none;
+  border-radius: 4px;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+}
+.pane-grip.pane-ord .pane-ord-num {
+  line-height: 1;
+}
+
+/* Cross-highlight ring while the pane's row / map cell is hovered (color-matched);
+   the accent active-outline still wins when the pane is also the active one. */
+.pane.pane-hover::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border: 2px solid var(--ord, var(--accent));
+  z-index: 3;
+}
+.pane.active.pane-hover::after {
+  border-color: var(--accent);
+}
+
+/* Sessions-row ordinal gutter: colored pane numbers, click focuses that pane.
+   Always occupies a fixed width (even when empty) so row text stays aligned. */
+.session-ords {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 18px;
+  padding-left: 2px;
+}
+.session-ord {
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: var(--ord);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.session-ord:hover {
+  filter: brightness(1.12);
+}
+/* Row cross-highlight when a pane / map cell for this session is hovered. */
+.session-row.hover {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border-radius: 4px;
+}
+
+/* ---- Layout mini-map: a schematic of the current split (columns × rows) ---- */
+.layoutmap {
+  display: flex;
+  gap: 3px;
+  padding: 6px 2px 8px;
+  margin-bottom: 2px;
+  border-bottom: 1px solid var(--border2);
+}
+.lm-col {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.lm-cell {
+  flex: 1;
+  min-width: 0;
+  min-height: 26px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 5px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--ord);
+  border-radius: 4px;
+  background: var(--btn);
+  color: var(--fg);
+  cursor: pointer;
+  overflow: hidden;
+}
+.lm-cell:hover,
+.lm-cell.hover {
+  background: color-mix(in srgb, var(--ord) 16%, var(--btn));
+}
+.lm-cell.active {
+  border-color: var(--accent);
+  border-left-color: var(--ord);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+.lm-ord {
+  flex: none;
+  width: 15px;
+  height: 15px;
+  border-radius: 3px;
+  background: var(--ord);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.lm-kind {
+  flex: 1;
+  min-width: 0;
+  font-size: 10.5px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lm-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+.lm-dot.on {
+  background: var(--ok);
+}
+.lm-dot.working {
+  background: var(--accent);
+}
+.lm-dot.question {
+  background: var(--warn);
+}
+.lm-dot.off,
+.lm-dot.dead {
+  background: var(--muted);
+  opacity: 0.5;
+}

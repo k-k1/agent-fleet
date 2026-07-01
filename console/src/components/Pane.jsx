@@ -8,6 +8,8 @@ import DiffView from "../views/DiffView.jsx";
 import Icon from "./Icon.jsx";
 import { useApp } from "../state.jsx";
 import { useSettings } from "../lib/settings.js";
+import { ordClass } from "../lib/panebadge.js";
+import { usePaneHover, hoverMatches } from "../lib/panehover.jsx";
 
 // Drag payload MIME — identifies a pane-to-pane swap drag (vs any other drag).
 const DND = "application/x-af-pane";
@@ -34,8 +36,15 @@ export default function Pane({
   onSwap,
   onDropSplit,
   sessionMeta,
+  ordinal,
 }) {
   const isTerm = pane.kind === "terminal";
+  // Cross-highlight: glow this pane while its Sessions-list row or mini-map cell is
+  // hovered (and vice-versa — entering the pane lights them). Keyed by pane id or a
+  // shared session name. See lib/panehover.jsx.
+  const { hover, setHover } = usePaneHover();
+  const hovered = hoverMatches(hover, pane.id, pane.session);
+  const ordCls = ordinal ? ordClass(ordinal) : "";
   // null when not a drop target; otherwise the zone the pointer is in:
   //   'center' → swap with the dragged pane; 'right'/'down' → tear the dragged
   //   pane off into a new split (new right column / downward split of this column).
@@ -94,22 +103,36 @@ export default function Pane({
 
   return (
     <div
-      className={"pane" + (active ? " active" : "") + (zone ? " droptarget" : "")}
+      className={
+        "pane" +
+        (active ? " active" : "") +
+        (zone ? " droptarget" : "") +
+        (hovered ? " pane-hover" : "") +
+        (ordCls ? " " + ordCls : "")
+      }
       style={style}
       onMouseDownCapture={() => onActivate(pane.id)}
+      onMouseEnter={() => setHover({ session: pane.session || null, paneId: pane.id })}
+      onMouseLeave={() => setHover(null)}
       onDragOver={onDragOver}
       onDragLeave={onDragLeave}
       onDrop={onDrop}
     >
       {canDrag && (
+        // The drag grip doubles as the pane's ordinal chip: a colored number that
+        // matches the Sessions row and mini-map, and is still draggable to swap.
         <button
           type="button"
-          className="ghost pane-btn pane-grip"
-          title="ドラッグして他のペインと入れ替え"
+          className={"pane-grip" + (ordinal ? " pane-ord " + ordCls : " ghost pane-btn")}
+          title={
+            ordinal
+              ? `ペイン${ordinal} — ドラッグして他のペインと入れ替え`
+              : "ドラッグして他のペインと入れ替え"
+          }
           draggable
           onDragStart={onDragStart}
         >
-          <Icon name="gripper" />
+          {ordinal ? <span className="pane-ord-num">{ordinal}</span> : <Icon name="gripper" />}
         </button>
       )}
       <div className="pane-controls">
