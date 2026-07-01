@@ -86,6 +86,15 @@ RUN set -eux; \
 RUN npm install -g @anthropic-ai/claude-code opencode-ai @openai/codex bun \
  && claude --version && opencode --version && codex --version && bun --version
 
+# The baked claude is a root-owned npm-global install run as the non-root `dev`
+# user, so Claude Code's background auto-updater can never write to
+# /usr/local/lib/node_modules and prints "auto-update failed" on every start. We
+# manage the claude version through image rebuilds (and the entrypoint still runs
+# `claude update` for a native ~/.local install), so the background updater is both
+# redundant and impossible — disable just it (DISABLE_AUTOUPDATER, not
+# DISABLE_UPDATES, so explicit `claude update`/`claude install` still work).
+ENV DISABLE_AUTOUPDATER=1
+
 # opencode web UI (pk-opencode-webui), built in ocwebbuild → /opt/opencode-web.
 # The agent runs `bun /opt/opencode-web/serve-ui.ts` (with BASE_PATH/API_URL/PORT)
 # in front of `opencode serve` when the Console toggle is on (kept off by default).
