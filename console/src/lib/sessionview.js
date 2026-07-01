@@ -36,6 +36,8 @@ export const stateInfo = (s) => {
       return { cls: "question", icon: "question", text: "質問あり" };
     case "plan":
       return { cls: "question", icon: "checklist", text: "プランあり" };
+    case "permission":
+      return { cls: "question", icon: "shield", text: "許可待ち" };
     default:
       return { cls: "on", icon: "check", text: "入力待ち" };
   }

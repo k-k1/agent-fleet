@@ -131,6 +131,11 @@ func handleSessionMessages(w http.ResponseWriter, r *http.Request) {
 			resp["pendingPlan"] = pp
 		}
 	}
+	if state == "permission" {
+		if pm, ok := readPendingPermission(sid); ok {
+			resp["pendingPermission"] = pm
+		}
+	}
 	if md := latestMode(lines); md != "" {
 		resp["mode"] = md
 	}
