@@ -1970,6 +1970,15 @@ body.row-resizing {
   margin-top: 7px;
   font-size: 11px;
 }
+/* Chat primary actions (許可 / 承認して実行 / 回答を送信 / 送信) follow the theme
+   accent instead of the fixed app blue. */
+.mirrorview button.primary {
+  background: var(--chat-accent);
+  border-color: var(--chat-accent);
+}
+.mirrorview button.primary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--chat-accent) 82%, #ffffff);
+}
 /* "Claude is typing" indicator, shown while the session is working. */
 .mirror-typing {
   display: flex;
