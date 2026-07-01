@@ -19,10 +19,13 @@ import ImageView from "./ImageView.jsx";
 // filePath comes from the owning pane's descriptor; markdown link navigation opens
 // in the active pane via the context showFile (falls back to context filePath when
 // rendered standalone).
-export default function FileView({ filePath: filePathProp }) {
+export default function FileView({ filePath: filePathProp, wrap }) {
   const { filePath: ctxFilePath, showFile } = useApp();
   const filePath = filePathProp !== undefined ? filePathProp : ctxFilePath;
   const settings = useSettings();
+  // wrap is a per-pane override (from the pane's toolbar toggle); fall back to the
+  // global setting when the pane doesn't force it either way.
+  const wrapOn = wrap === undefined ? settings.wrap : wrap;
   const [data, setData] = useState(null);
   const [err, setErr] = useState("");
   const [mdMode, setMdMode] = useState("preview"); // markdown only: 'preview' | 'source' | 'slides'
@@ -197,7 +200,7 @@ export default function FileView({ filePath: filePathProp }) {
           html={html}
           lines={lines}
           lineNumbers={settings.lineNumbers}
-          wrap={settings.wrap}
+          wrap={wrapOn}
           minimap={settings.minimap}
           marks={marks}
         />

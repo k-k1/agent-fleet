@@ -6,6 +6,8 @@ import MirrorView from "../views/MirrorView.jsx";
 import DocView from "../views/DocView.jsx";
 import DiffView from "../views/DiffView.jsx";
 import Icon from "./Icon.jsx";
+import { useApp } from "../state.jsx";
+import { useSettings } from "../lib/settings.js";
 
 // Drag payload MIME — identifies a pane-to-pane swap drag (vs any other drag).
 const DND = "application/x-af-pane";
@@ -46,6 +48,12 @@ export default function Pane({
   const [mirror, setMirror] = useState(false);
   const canMirror = isTerm && !!pane.session && sessionMeta?.kind === "claude";
   const showMirror = canMirror && mirror;
+
+  // Per-pane line-wrap: a file pane can toggle wrapping independently of the global
+  // setting (null = inherit the setting). The toggle sits in the pane-control cluster.
+  const { setPaneWrap } = useApp();
+  const settings = useSettings();
+  const wrapOn = pane.wrap ?? settings.wrap;
 
   const onDragStart = (e) => {
     e.dataTransfer.setData(DND, pane.id);
@@ -104,6 +112,16 @@ export default function Pane({
         </button>
       )}
       <div className="pane-controls">
+        {pane.kind === "file" && (
+          <button
+            type="button"
+            className={"ghost pane-btn" + (wrapOn ? " active" : "")}
+            title={wrapOn ? "折り返しを解除" : "行を折り返す"}
+            onClick={() => setPaneWrap(pane.id, !wrapOn)}
+          >
+            <Icon name="word-wrap" />
+          </button>
+        )}
         {canSplitRight && (
           <button type="button" className="ghost pane-btn" title="右に分割" onClick={onSplitRight}>
             <Icon name="split-horizontal" />
@@ -158,7 +176,7 @@ export default function Pane({
         />
       )}
       {pane.kind === "scm" && <SourceControlView repo={pane.scmRepo} />}
-      {pane.kind === "file" && <FileView filePath={pane.filePath} />}
+      {pane.kind === "file" && <FileView filePath={pane.filePath} wrap={wrapOn} />}
       {pane.kind === "doc" && <DocView title={pane.docTitle} content={pane.docContent} />}
       {pane.kind === "diff" && (
         <DiffView title={pane.docTitle} tool={pane.diffTool} edits={pane.diffEdits} />
