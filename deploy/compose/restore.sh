@@ -9,10 +9,11 @@
 #      home の secrets.enc / claude-config でユーザーの接続・claude ログインが復活）
 #
 # ⚠️ AF_MASTER_KEY が元と違う/欠落なら wrapped DEK を unwrap できず資格は復号不能。
-# ⚠️ 復元先 DATA_DIR は**バックアップ元と同一の絶対パス**であること。CP DB は各
-#    workspace の DataDir を絶対パスで保持するため、別パスへ復元すると Start 時に
-#    旧パスを掘りに行って失敗する（§20.3(B) パス同一性）。災害復旧は同一ホスト/同一
-#    DATA_DIR への復元が前提。
+# 復元先の親パスはバックアップ元と違ってよい（例 /srv→/mnt）。CP は起動時に各
+# workspace の on-disk root を現在の WS_DATA(=DATA_DIR) へ re-root する（rootedDataDir）
+# ため、.env の DATA_DIR を復元先に合わせておけば別ホスト/別パスでも home を正しく
+# マウントする。ただしアーカイブ先頭ディレクトリ名（= 元 DATA_DIR の basename）と復元先
+# DATA_DIR の basename は一致させること（下でチェック）。
 #
 #   deploy/compose/restore.sh backups/agent-fleet-YYYYMMDD-HHMMSS.tar.gz
 #   deploy/compose/restore.sh <archive>   # DATA_DIR が空でなければ拒否（--force で上書き）
