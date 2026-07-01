@@ -2115,6 +2115,30 @@ body.row-resizing {
   height: 38px;
   padding: 0 12px;
 }
+/* Composer history buttons: only on phones (no arrow keys). Hidden elsewhere. */
+.mirror-hist {
+  display: none;
+  flex-direction: column;
+  gap: 2px;
+  flex: none;
+}
+.mirror-hist-btn {
+  width: 34px;
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.mirror-hist-btn:disabled {
+  opacity: 0.4;
+}
+@media (max-width: 760px) {
+  .mirror-hist {
+    display: flex;
+  }
+}
 .view-head {
   display: flex;
   align-items: center;
