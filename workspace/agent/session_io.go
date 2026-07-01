@@ -239,25 +239,59 @@ func jsonlMtime(p string) time.Time {
 	return fi.ModTime()
 }
 
-// transcriptRead reads the session's live jsonl (newest by mtime) as raw lines —
-// one JSON event per line, the line count being the cursor — and also returns the
-// chosen path and every matching path (for the /messages diagnostics).
+// transcriptRead reads the session's live jsonl as raw lines — one JSON event per
+// line, the line count being the cursor — and returns the chosen path plus every
+// matching path (for the /messages diagnostics).
+//
+// It prefers the NEWEST log that actually holds a conversation. A session commonly
+// has sibling <sid>.jsonl files: the real transcript, plus stubs (a Remote Control
+// "bridge-session", a lone summary) that can carry a NEWER mtime — while a workflow
+// runs, a bridge stub may be touched more recently than the main log. Reading a stub
+// would show an empty chat, so we skip stubs and fall back to the newest file only
+// when none has real turns yet.
 func transcriptRead(sid string) (lines [][]byte, path string, matched []string) {
 	matched = jsonlByMtime(sid)
 	if len(matched) == 0 {
 		return nil, "", nil
 	}
-	path = matched[0]
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return nil, path, matched
-	}
-	for _, ln := range strings.Split(string(b), "\n") {
-		if strings.TrimSpace(ln) != "" {
-			lines = append(lines, []byte(ln))
+	var fallback [][]byte
+	fallbackPath := matched[0]
+	for i, p := range matched {
+		ls := readJSONLLines(p)
+		if i == 0 {
+			fallback = ls
+		}
+		if jsonlHasConversation(ls) {
+			return ls, p, matched
 		}
 	}
-	return lines, path, matched
+	return fallback, fallbackPath, matched
+}
+
+// readJSONLLines reads a jsonl file into its non-empty raw lines.
+func readJSONLLines(p string) [][]byte {
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return nil
+	}
+	var out [][]byte
+	for _, ln := range strings.Split(string(b), "\n") {
+		if strings.TrimSpace(ln) != "" {
+			out = append(out, []byte(ln))
+		}
+	}
+	return out
+}
+
+// jsonlHasConversation reports whether the lines include a real user/assistant turn
+// (not just bookkeeping) — the per-file form of jsonlResumable, so we can skip stubs.
+func jsonlHasConversation(lines [][]byte) bool {
+	for _, ln := range lines {
+		if bytesContains(ln, `"type":"user"`) || bytesContains(ln, `"type":"assistant"`) {
+			return true
+		}
+	}
+	return false
 }
 
 // transcriptLines is the lines-only view (the /output MCP poll doesn't need the
