@@ -29,7 +29,7 @@ func (c config) handlePreview(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rest := r.PathValue("rest")
-	target := rt.agentBase() + "/proxy/" + port + "/" + rest
+	target := rt.Endpoint() + "/proxy/" + port + "/" + rest
 	if r.URL.RawQuery != "" {
 		target += "?" + r.URL.RawQuery
 	}
@@ -40,8 +40,8 @@ func (c config) handlePreview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.Header = r.Header.Clone()
-	if rt.token != "" {
-		req.Header.Set("Authorization", "Bearer "+rt.token) // CP↔Agent auth
+	if rt.Token() != "" {
+		req.Header.Set("Authorization", "Bearer "+rt.Token()) // CP↔Agent auth
 	}
 	// Tell the previewed app where it really lives, as the browser sees it:
 	// <public base path>/preview/{port}. Spring Boot uses these to build correct

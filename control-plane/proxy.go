@@ -25,7 +25,7 @@ func (c config) proxyAgentREST(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		c.mgr.conns.touch(res.ws.ID)
 	}
-	target := rt.agentBase() + strings.TrimPrefix(r.URL.Path, "/api")
+	target := rt.Endpoint() + strings.TrimPrefix(r.URL.Path, "/api")
 	if r.URL.RawQuery != "" {
 		target += "?" + r.URL.RawQuery
 	}
@@ -36,8 +36,8 @@ func (c config) proxyAgentREST(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.Header = r.Header.Clone()
-	if rt.token != "" {
-		req.Header.Set("Authorization", "Bearer "+rt.token) // CP↔Agent auth
+	if rt.Token() != "" {
+		req.Header.Set("Authorization", "Bearer "+rt.Token()) // CP↔Agent auth
 	}
 
 	resp, err := http.DefaultClient.Do(req)
@@ -72,11 +72,18 @@ func (c config) proxyTerminal(w http.ResponseWriter, r *http.Request) {
 	session := r.URL.Query().Get("session")
 	c.mgr.conns.addConn(res.ws.ID, session)
 	defer c.mgr.conns.doneConn(res.ws.ID, session)
-	agentURL := url.URL{Scheme: "ws", Host: rt.agentHost + ":" + rt.agentPort, Path: "/ws/pty", RawQuery: r.URL.RawQuery}
+	// Derive the Agent's ws:// URL from its (http) Endpoint so the reachability
+	// detail (host:port locally, Service Connect on ECS) stays behind the port.
+	base, err := url.Parse(rt.Endpoint())
+	if err != nil {
+		http.Error(w, "bad agent endpoint", http.StatusBadGateway)
+		return
+	}
+	agentURL := url.URL{Scheme: "ws", Host: base.Host, Path: "/ws/pty", RawQuery: r.URL.RawQuery}
 
 	var hdr http.Header
-	if rt.token != "" {
-		hdr = http.Header{"Authorization": []string{"Bearer " + rt.token}} // CP↔Agent auth
+	if rt.Token() != "" {
+		hdr = http.Header{"Authorization": []string{"Bearer " + rt.Token()}} // CP↔Agent auth
 	}
 	dialer := websocket.Dialer{HandshakeTimeout: 10 * time.Second}
 	up, _, err := dialer.Dial(agentURL.String(), hdr)

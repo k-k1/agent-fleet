@@ -184,14 +184,14 @@ func (m *manager) membershipsFor(ctx context.Context, ident Identity) ([]Members
 
 // cachedRT memoizes a built runtime + its workspace record per membership.
 type cachedRT struct {
-	rt *dockerRuntime
+	rt Runtime
 	ws Workspace
 }
 
 // resolved is the full per-request resolution: runtime + workspace record +
 // identity + selected membership. Handlers needing tenant/quota context use this.
 type resolved struct {
-	rt    *dockerRuntime
+	rt    Runtime
 	ws    Workspace
 	ident Identity
 	mv    MembershipView
@@ -289,7 +289,7 @@ func (m *manager) resolveByMembership(ctx context.Context, identityID, membershi
 }
 
 // resolve returns just the runtime (proxy/terminal handlers).
-func (m *manager) resolve(ctx context.Context, key, email, tenantSel string) (*dockerRuntime, *apiError) {
+func (m *manager) resolve(ctx context.Context, key, email, tenantSel string) (Runtime, *apiError) {
 	res, aerr := m.resolveFull(ctx, key, email, tenantSel)
 	if aerr != nil {
 		return nil, aerr
@@ -340,7 +340,7 @@ func (m *manager) countRunningInTenant(ctx context.Context, tenantID string) (in
 	}
 	n := 0
 	for _, ws := range wss {
-		if (&dockerRuntime{name: ws.ContainerName}).state(ctx) == "running" {
+		if (&dockerRuntime{name: ws.ContainerName}).State(ctx) == "running" {
 			n++
 		}
 	}
@@ -354,7 +354,7 @@ func (m *manager) workspaceStateByMembership(ctx context.Context, membershipID s
 	if err != nil || !ok {
 		return "", "none"
 	}
-	return ws.ContainerName, (&dockerRuntime{name: ws.ContainerName}).state(ctx)
+	return ws.ContainerName, (&dockerRuntime{name: ws.ContainerName}).State(ctx)
 }
 
 // stopWorkspaceByMembership force-stops a member's workspace (admin action).
@@ -363,7 +363,7 @@ func (m *manager) stopWorkspaceByMembership(ctx context.Context, membershipID st
 	if err != nil || !ok {
 		return err
 	}
-	if err := (&dockerRuntime{name: ws.ContainerName, network: ws.Network}).stop(ctx); err != nil {
+	if err := (&dockerRuntime{name: ws.ContainerName, network: ws.Network}).Stop(ctx); err != nil {
 		return err
 	}
 	return m.store.SetWorkspaceState(ctx, ws.ID, "stopped")
@@ -377,7 +377,7 @@ func (m *manager) cleanHomeByMembership(ctx context.Context, membershipID string
 	if err != nil || !ok {
 		return err
 	}
-	_ = (&dockerRuntime{name: ws.ContainerName, network: ws.Network}).stop(ctx) // best-effort
+	_ = (&dockerRuntime{name: ws.ContainerName, network: ws.Network}).Stop(ctx) // best-effort
 	if err := cleanHome(ws.DataDir); err != nil {
 		return err
 	}
@@ -387,10 +387,10 @@ func (m *manager) cleanHomeByMembership(ctx context.Context, membershipID string
 // countSessions asks the Agent how many sessions are currently running. The quota
 // caps concurrency, so only live (alive) sessions count — stopped/resumable ones,
 // which the Agent keeps listed for the stopped-TTL window, do not occupy a slot.
-func (m *manager) countSessions(ctx context.Context, rt *dockerRuntime) (int, error) {
-	req, _ := http.NewRequestWithContext(ctx, "GET", rt.agentBase()+"/sessions", nil)
-	if rt.token != "" {
-		req.Header.Set("Authorization", "Bearer "+rt.token)
+func (m *manager) countSessions(ctx context.Context, rt Runtime) (int, error) {
+	req, _ := http.NewRequestWithContext(ctx, "GET", rt.Endpoint()+"/sessions", nil)
+	if rt.Token() != "" {
+		req.Header.Set("Authorization", "Bearer "+rt.Token())
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -415,10 +415,10 @@ func (m *manager) countSessions(ctx context.Context, rt *dockerRuntime) (int, er
 }
 
 // agentSessions fetches the Agent's full session list (for the DB mirror).
-func (m *manager) agentSessions(ctx context.Context, rt *dockerRuntime) ([]sessionWire, error) {
-	req, _ := http.NewRequestWithContext(ctx, "GET", rt.agentBase()+"/sessions", nil)
-	if rt.token != "" {
-		req.Header.Set("Authorization", "Bearer "+rt.token)
+func (m *manager) agentSessions(ctx context.Context, rt Runtime) ([]sessionWire, error) {
+	req, _ := http.NewRequestWithContext(ctx, "GET", rt.Endpoint()+"/sessions", nil)
+	if rt.Token() != "" {
+		req.Header.Set("Authorization", "Bearer "+rt.Token())
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -483,7 +483,7 @@ func (m *manager) createWorkspace(ctx context.Context, mv MembershipView, userKe
 	return ws, nil
 }
 
-func (m *manager) runtimeFor(ws Workspace, secretKey string) *dockerRuntime {
+func (m *manager) runtimeFor(ws Workspace, secretKey string) Runtime {
 	return &dockerRuntime{
 		image:      m.image,
 		name:       ws.ContainerName,
