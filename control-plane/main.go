@@ -175,6 +175,7 @@ func main() {
 	mux.HandleFunc("PUT /api/admin/membership-role", cfg.handleAdminSetMembershipRole) // grant/revoke tenant_admin (super_admin only)
 	mux.HandleFunc("GET /api/admin/host", cfg.handleHostStats)                         // host load / memory (super_admin)
 	mux.HandleFunc("GET /api/admin/usage", cfg.handleAdminUsage)                       // showback: occupancy per tenant/member (json|csv)
+	mux.HandleFunc("GET /api/admin/sessions", cfg.handleAdminAllSessions)              // deployment-wide session overview (super_admin / tenant_admin)
 
 	// Personal Access Tokens (Console-issued) for the MCP endpoint (docs/0006).
 	mux.HandleFunc("GET /api/pat", cfg.handlePATList)
