@@ -11,6 +11,9 @@ deploy/compose/.env
 # Local backup archives (backup.sh default OUT_DIR). Sensitive — never commit.
 deploy/compose/backups/
 
+# Release bundles built by release.sh.
+deploy/compose/dist/
+
 # Local build artifact from `go build` without -o (CP binary is built to /tmp/af-cp).
 control-plane/control-plane
 
