@@ -29,20 +29,24 @@ export default function MirrorView({ session, sessionMeta, active, mirror, onTog
   const [pending, setPending] = useState(null); // currently-awaiting AskUserQuestion
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
+  const [histIdx, setHistIdx] = useState(null); // position in composer history, or null
   const cursorRef = useRef(0);
   const statusRef = useRef("");
   const tickRef = useRef(null); // lets send() trigger an immediate refresh
   const bodyRef = useRef(null);
   const inputRef = useRef(null);
+  const historyRef = useRef([]); // prompts sent from the composer (oldest→newest)
 
   // Reset accumulated turns when the session changes (cursor is a line index into
   // that session's jsonl, meaningless across sessions).
   useEffect(() => {
     cursorRef.current = 0;
     statusRef.current = "";
+    historyRef.current = [];
     setTurns([]);
     setStatus("");
     setPending(null);
+    setHistIdx(null);
   }, [session]);
 
   // Poll the transcript since our cursor while this view is mounted (Pane only mounts
@@ -85,11 +89,11 @@ export default function MirrorView({ session, sessionMeta, active, mirror, onTog
     };
   }, [session]);
 
-  // Keep the conversation pinned to the latest turn (or the pending question).
+  // Keep the conversation pinned to the latest turn / pending question / typing dots.
   useEffect(() => {
     const el = bodyRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [turns, pending]);
+  }, [turns, pending, status]);
 
   // Focus the composer when this pane becomes the active chat.
   useEffect(() => {
@@ -138,12 +142,40 @@ export default function MirrorView({ session, sessionMeta, active, mirror, onTog
   const send = async () => {
     const text = draft.trim();
     if (!text) return;
+    const h = historyRef.current;
+    if (h[h.length - 1] !== text) h.push(text); // skip consecutive duplicates
+    setHistIdx(null);
     setDraft("");
     await sendPrompt(text);
     inputRef.current?.focus();
   };
 
   const onKeyDown = (e) => {
+    // Shell-style history: ↑/↓ recall past prompts when the field is empty (or once
+    // recall is underway). With text present, arrows move the caret as usual.
+    if ((e.key === "ArrowUp" || e.key === "ArrowDown") && !e.nativeEvent.isComposing) {
+      const h = historyRef.current;
+      const navigating = histIdx !== null;
+      if (e.key === "ArrowUp" && (draft === "" || navigating) && h.length) {
+        e.preventDefault();
+        const ni = navigating ? Math.max(0, histIdx - 1) : h.length - 1;
+        setHistIdx(ni);
+        setDraft(h[ni]);
+        return;
+      }
+      if (e.key === "ArrowDown" && navigating) {
+        e.preventDefault();
+        const ni = histIdx + 1;
+        if (ni >= h.length) {
+          setHistIdx(null);
+          setDraft("");
+        } else {
+          setHistIdx(ni);
+          setDraft(h[ni]);
+        }
+        return;
+      }
+    }
     // Don't intercept Enter while an IME candidate window is open (JP/CJK input).
     if (e.key !== "Enter" || e.nativeEvent.isComposing) return;
     const mod = e.ctrlKey || e.metaKey;
@@ -229,6 +261,16 @@ export default function MirrorView({ session, sessionMeta, active, mirror, onTog
             </div>
           </div>
         )}
+        {status === "working" && !pending && (
+          <div className="mirror-typing" aria-label="Claude が入力中">
+            <span className="mt-who">Claude</span>
+            <span className="typing-dots">
+              <i />
+              <i />
+              <i />
+            </span>
+          </div>
+        )}
       </div>
 
       <div className="mirror-compose">
@@ -242,7 +284,10 @@ export default function MirrorView({ session, sessionMeta, active, mirror, onTog
               : "プロンプトを入力（Enter で送信 / Shift+Enter で改行）"
           }
           value={draft}
-          onChange={(e) => setDraft(e.target.value)}
+          onChange={(e) => {
+            setDraft(e.target.value);
+            setHistIdx(null); // typing leaves history-recall mode
+          }}
           onKeyDown={onKeyDown}
         />
         <button
