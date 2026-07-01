@@ -2,7 +2,9 @@ import {
   useSettings,
   setSetting,
   CODE_FONTS,
+  CHAT_FONTS,
   fontStack,
+  chatFontStack,
   ICON_SETS,
   THEMES,
   SURFACE_COLORS,
@@ -75,6 +77,12 @@ export default function DisplayTab() {
 
       <section className="ds-group">
         <h4 className="ds-title">チャット（Markdownビュー）</h4>
+        <Row label="フォント">
+          <FontSelect value={s.chatFont} onChange={(v) => setSetting("chatFont", v)} fonts={CHAT_FONTS} stack={chatFontStack} />
+        </Row>
+        <Row label="文字サイズ">
+          <Stepper value={s.chatSize} onChange={(v) => setSetting("chatSize", v)} />
+        </Row>
         <Row label="送信キー">
           <Choice
             value={s.mirrorSend}
@@ -127,15 +135,15 @@ function Row({ label, children }) {
 
 // FontSelect lays the choices out horizontally, each rendered in its own font so
 // the user can compare them at a glance.
-function FontSelect({ value, onChange }) {
+function FontSelect({ value, onChange, fonts = CODE_FONTS, stack = fontStack }) {
   return (
     <div className="font-choices">
-      {CODE_FONTS.map((f) => (
+      {fonts.map((f) => (
         <button
           key={f}
           type="button"
           className={"font-chip" + (f === value ? " active" : "")}
-          style={{ fontFamily: fontStack(f) }}
+          style={{ fontFamily: stack(f) }}
           onClick={() => onChange(f)}
         >
           {f}
