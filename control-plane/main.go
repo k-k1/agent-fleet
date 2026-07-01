@@ -53,6 +53,8 @@ func main() {
 		// P3-2: provisioning policy + deployment super-admins.
 		provisionMode: envOr("AF_PROVISION", "auto"), // auto | invite
 		superAdmins:   emailSet(os.Getenv("SUPER_ADMIN_EMAILS")),
+		// P3-9: live activity tracking for idle-stop.
+		conns: newConnRegistry(),
 	}
 	// OAuth App client_id (non-secret) for the GitHub device flow — injected into
 	// the Workspace so the Agent can run the flow. Reuses the extraEnv -> -e path.
@@ -110,6 +112,17 @@ func main() {
 		allowEmailsFile:    os.Getenv("AF_OAUTH_ALLOWED_EMAILS_FILE"),
 	}
 
+	// P3-9 idle-stop (docs/19): a background reaper halts idle claude sessions
+	// (tier 1) and stops cold workspaces (tier 2). Deployment defaults are
+	// DISABLED (0) — safe by default, like the P3-4 quotas; an operator opts in
+	// per-tenant via limits (no restart needed) or deployment-wide via env.
+	// AF_IDLE_SWEEP_INTERVAL=0 disables the reaper entirely.
+	if iv := parseDurationOr(os.Getenv("AF_IDLE_SWEEP_INTERVAL"), time.Minute); iv > 0 {
+		sessDef := parseDurationOr(os.Getenv("AF_SESSION_IDLE_TIMEOUT"), 0)
+		wsDef := parseDurationOr(os.Getenv("AF_WS_IDLE_TIMEOUT"), 0)
+		go newReaper(mgr, iv, sessDef, wsDef).run(context.Background())
+	}
+
 	mux := http.NewServeMux()
 
 	// Health + CP-native Google OAuth (AUTH=oauth). The login page, OAuth
@@ -139,7 +152,7 @@ func main() {
 	mux.HandleFunc("PUT /api/admin/tenants/{slug}/limits", cfg.handleAdminSetTenantLimits)
 	mux.HandleFunc("PUT /api/admin/user-limits", cfg.handleAdminSetUserLimit)
 	mux.HandleFunc("PUT /api/admin/membership-role", cfg.handleAdminSetMembershipRole) // grant/revoke tenant_admin (super_admin only)
-	mux.HandleFunc("GET /api/admin/host", cfg.handleHostStats) // host load / memory (super_admin)
+	mux.HandleFunc("GET /api/admin/host", cfg.handleHostStats)                         // host load / memory (super_admin)
 
 	// Personal Access Tokens (Console-issued) for the MCP endpoint (docs/0006).
 	mux.HandleFunc("GET /api/pat", cfg.handlePATList)

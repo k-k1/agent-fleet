@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"net/http"
+	"time"
 )
 
 func writeAPIErr(w http.ResponseWriter, e *apiError) {
@@ -118,6 +119,7 @@ func (c config) handleAdminListTenants(w http.ResponseWriter, r *http.Request) {
 			"slug": t.Slug, "name": t.Name, "status": t.Status, "isolation": t.Isolation,
 			"users": len(members), "running": running,
 			"max_workspaces": lim.MaxWorkspaces, "max_sessions": lim.MaxSessions,
+			"session_idle_timeout": lim.SessionIdleTimeout, "ws_idle_timeout": lim.WSIdleTimeout,
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"tenants": out, "super_admin": isSuper})
@@ -318,10 +320,23 @@ func (c config) handleAdminSetTenantLimits(w http.ResponseWriter, r *http.Reques
 	var body struct {
 		MaxWorkspaces int `json:"max_workspaces"`
 		MaxSessions   int `json:"max_sessions"`
+		// P3-9 idle-stop: duration strings ("30m"); "" => deployment default,
+		// "0" => disabled for this tenant.
+		SessionIdleTimeout string `json:"session_idle_timeout"`
+		WSIdleTimeout      string `json:"ws_idle_timeout"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid json"})
 		return
+	}
+	// Reject unparseable durations up front (empty stays empty = use default).
+	for _, v := range []string{body.SessionIdleTimeout, body.WSIdleTimeout} {
+		if v != "" {
+			if _, err := time.ParseDuration(v); err != nil {
+				writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_duration", "invalid idle timeout: " + v})
+				return
+			}
+		}
 	}
 	t, ok, err := c.mgr.store.GetTenantBySlug(r.Context(), r.PathValue("slug"))
 	if err != nil {
@@ -332,12 +347,20 @@ func (c config) handleAdminSetTenantLimits(w http.ResponseWriter, r *http.Reques
 		writeAPIErr(w, &apiError{http.StatusNotFound, "no_tenant", "unknown tenant"})
 		return
 	}
-	lj, _ := json.Marshal(map[string]int{"max_workspaces": body.MaxWorkspaces, "max_sessions": body.MaxSessions})
+	lj, _ := json.Marshal(tenantLimits{
+		MaxWorkspaces:      body.MaxWorkspaces,
+		MaxSessions:        body.MaxSessions,
+		SessionIdleTimeout: body.SessionIdleTimeout,
+		WSIdleTimeout:      body.WSIdleTimeout,
+	})
 	if err := c.mgr.store.SetTenantLimits(r.Context(), t.ID, string(lj)); err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"tenant": t.Slug, "max_workspaces": body.MaxWorkspaces, "max_sessions": body.MaxSessions})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"tenant": t.Slug, "max_workspaces": body.MaxWorkspaces, "max_sessions": body.MaxSessions,
+		"session_idle_timeout": body.SessionIdleTimeout, "ws_idle_timeout": body.WSIdleTimeout,
+	})
 }
 
 // handleAdminSetUserLimit (PUT /api/admin/user-limits) — per-membership override.

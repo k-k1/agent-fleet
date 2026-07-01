@@ -13,9 +13,17 @@ import (
 // proxyAgentREST forwards /api/sessions* to the Workspace Agent's /sessions*.
 // The Control Plane never talks to tmux directly; it delegates to the Agent.
 func (c config) proxyAgentREST(w http.ResponseWriter, r *http.Request) {
-	rt, ok := c.rtFor(w, r)
+	res, ok := c.resolvedFor(w, r)
 	if !ok {
 		return
+	}
+	rt := res.rt
+	// P3-9: only mutating calls (session input/create, repo clone, connections…)
+	// count as activity. Background GET polling (session list, workspace state)
+	// must NOT keep a workspace warm, or a left-open tab would defeat idle-stop —
+	// real presence is instead signalled by an attached terminal or a busy session.
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		c.mgr.conns.touch(res.ws.ID)
 	}
 	target := rt.agentBase() + strings.TrimPrefix(r.URL.Path, "/api")
 	if r.URL.RawQuery != "" {
@@ -54,10 +62,16 @@ var upgrader = websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { retu
 // relaying frames in both directions while preserving message types
 // (binary = PTY output, text = input/resize control).
 func (c config) proxyTerminal(w http.ResponseWriter, r *http.Request) {
-	rt, ok := c.rtFor(w, r)
+	res, ok := c.resolvedFor(w, r)
 	if !ok {
 		return
 	}
+	rt := res.rt
+	// P3-9: an attached terminal keeps the workspace warm and pins its session
+	// (tier 1 won't halt a session someone is watching).
+	session := r.URL.Query().Get("session")
+	c.mgr.conns.addConn(res.ws.ID, session)
+	defer c.mgr.conns.doneConn(res.ws.ID, session)
 	agentURL := url.URL{Scheme: "ws", Host: rt.agentHost + ":" + rt.agentPort, Path: "/ws/pty", RawQuery: r.URL.RawQuery}
 
 	var hdr http.Header
