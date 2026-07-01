@@ -18,6 +18,11 @@ export const CODE_FONTS = [
   "システム等幅",
 ];
 
+// Chat fonts: unlike the code viewer, the chat reads as prose, so proportional
+// families are offered first ("システム" = system sans, "セリフ" = serif), with the
+// monospace code fonts still available for anyone who prefers them.
+export const CHAT_FONTS = ["システム", "セリフ", "Source Code Pro", "JetBrains Mono", "Fira Code", "IBM Plex Mono"];
+
 // File-icon sets (brand SVGs under assets/fileicons/<id>/). value = asset subdir.
 export const ICON_SETS = [
   { id: "vscode", label: "VS Code Icons（カラー）" },
@@ -88,6 +93,8 @@ const DEFAULTS = {
   termSize: 13,
   viewerFont: "JetBrains Mono",
   viewerSize: 13,
+  chatFont: "システム",
+  chatSize: 14,
   lineNumbers: true,
   wrap: false,
   tabSize: 4,
@@ -115,6 +122,18 @@ export function fontStack(name) {
     return 'ui-monospace, SFMono-Regular, Menlo, Consolas, "DejaVu Sans Mono", "Noto Sans Mono CJK JP", monospace';
   }
   return `"${name}", "Noto Sans Mono CJK JP", ui-monospace, Menlo, Consolas, monospace`;
+}
+
+// Chat font stack — proportional by default. "システム"/"セリフ" map to sans/serif
+// system stacks (with CJK fallbacks); any other name is a code font (monospace).
+export function chatFontStack(name) {
+  if (!name || name === "システム") {
+    return 'system-ui, -apple-system, "Hiragino Kaku Gothic ProN", "Noto Sans CJK JP", sans-serif';
+  }
+  if (name === "セリフ") {
+    return 'Georgia, "Times New Roman", "Hiragino Mincho ProN", "Noto Serif CJK JP", serif';
+  }
+  return fontStack(name);
 }
 
 function load() {

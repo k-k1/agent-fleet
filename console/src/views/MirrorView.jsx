@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api, apiJSON } from "../api.js";
-import { useSettings } from "../lib/settings.js";
+import { useSettings, chatFontStack } from "../lib/settings.js";
 import { useApp } from "../state.jsx";
 import Icon from "../components/Icon.jsx";
 import MarkdownView from "./MarkdownView.jsx";
@@ -301,7 +301,10 @@ export default function MirrorView({ session, sessionMeta, active, mirror, onTog
       : null;
 
   return (
-    <div className="mirrorview">
+    <div
+      className="mirrorview"
+      style={{ "--chat-font": chatFontStack(settings.chatFont), "--chat-size": settings.chatSize + "px" }}
+    >
       <header className="view-head">
         {sessionMeta ? (
           <span className="pane-session">

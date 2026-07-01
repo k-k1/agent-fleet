@@ -1967,7 +1967,8 @@ body.row-resizing {
   margin: 0;
   white-space: pre-wrap;
   word-break: break-word;
-  font: inherit;
+  font-family: var(--chat-font, system-ui, sans-serif);
+  font-size: var(--chat-size, 14px);
   line-height: 1.5;
 }
 /* Plan-mode banner + ExitPlanMode plan block. */
@@ -2437,8 +2438,13 @@ button.mt-toolrun-head:hover {
   padding: 0;
   max-width: none;
   margin: 0;
-  font-size: 13.5px;
+  font-size: var(--chat-size, 13.5px);
   line-height: 1.5;
+}
+/* Chat prose follows the configurable chat font (proportional by default), scoped so
+   the file viewer's own markdown is untouched. */
+.mirror-turn .markdown {
+  font-family: var(--chat-font, system-ui, sans-serif);
 }
 /* Tighten the vertical rhythm inside a chat turn (the file viewer's 0.7em/1.4em
    gaps are too airy for a conversation). */
@@ -2482,7 +2488,8 @@ button.mt-toolrun-head:hover {
   border-radius: 8px;
   background: var(--bg);
   color: var(--fg);
-  font: inherit;
+  font-family: var(--chat-font, system-ui, sans-serif);
+  font-size: var(--chat-size, 14px);
   line-height: 1.4;
 }
 .mirror-input:focus {
