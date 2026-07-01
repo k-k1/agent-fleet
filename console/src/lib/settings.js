@@ -97,6 +97,7 @@ const DEFAULTS = {
   topbarColor: "default",
   leftpaneColor: "default",
   viewerColor: "default",
+  chatColor: "default",
   // Markdown mirror composer: "mod-enter" = Ctrl/⌘+Enter submits, Enter inserts a
   // newline (phone-friendly default); "enter" = Enter submits, Shift+Enter newline.
   mirrorSend: "mod-enter",
@@ -156,12 +157,20 @@ export function applyTheme(s) {
   // Unset => theme --bg.
   const vw = surfaceValue(s.viewerColor, theme);
   setVar("--viewer-bg", vw ? (theme === "light" ? mixHex(vw, "#ffffff", 0.45) : mixHex(vw, "#000000", 0.34)) : null);
-  // Chat highlights (question options, "あなた" block, gauge…) follow the chosen
-  // surface color's accent — viewer first (the chat sits on the viewer surface), then
-  // left pane / top bar; null falls back to the CSS default (--accent, the app blue).
+  // Chat surface (the Markdown mirror) is independent of the file viewer: its own
+  // background, derived the same way. Unset => falls back to the viewer surface (then
+  // the theme --bg) in CSS, preserving the prior "chat sits on the viewer" behavior.
+  const cw = surfaceValue(s.chatColor, theme);
+  setVar("--chat-bg", cw ? (theme === "light" ? mixHex(cw, "#ffffff", 0.45) : mixHex(cw, "#000000", 0.34)) : null);
+  // Chat highlights (question options, "あなた" block, gauge…) follow the chat's own
+  // surface accent first, then the viewer / left pane / top bar; null falls back to
+  // the CSS default (--accent, the app blue).
   setVar(
     "--chat-accent",
-    surfaceAccent(s.viewerColor) || surfaceAccent(s.leftpaneColor) || surfaceAccent(s.topbarColor),
+    surfaceAccent(s.chatColor) ||
+      surfaceAccent(s.viewerColor) ||
+      surfaceAccent(s.leftpaneColor) ||
+      surfaceAccent(s.topbarColor),
   );
 }
 applyTheme(state);
