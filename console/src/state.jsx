@@ -26,7 +26,7 @@ export const useApp = () => useContext(AppContext);
 // A pane descriptor. kind drives which view renders; the *Path/Repo/session fields
 // are the per-kind payload. Empty terminal pane = "セッション未接続".
 function blankPane(id, patch) {
-  return { id, kind: "terminal", session: null, filePath: null, scmRepo: null, ...patch };
+  return { id, kind: "terminal", session: null, filePath: null, scmRepo: null, docTitle: null, docContent: null, ...patch };
 }
 
 const equalRatios = (n) => Array(n).fill(1 / n);
@@ -120,6 +120,7 @@ export function AppProvider({ children }) {
     if (patch.kind === "terminal") return patch.session !== undefined && pane.session === patch.session;
     if (patch.kind === "file") return pane.filePath === patch.filePath;
     if (patch.kind === "scm") return pane.scmRepo === patch.scmRepo;
+    if (patch.kind === "doc") return pane.docTitle === patch.docTitle;
     return false;
   };
 
@@ -519,6 +520,14 @@ export function AppProvider({ children }) {
     },
     [openInNewPane],
   );
+  // showDoc opens arbitrary Markdown (e.g. a plan) in a freshly split pane — no file
+  // on disk needed; the content travels in the pane descriptor.
+  const showDoc = useCallback(
+    (title, content) => {
+      openInNewPane({ kind: "doc", docTitle: title, docContent: content });
+    },
+    [openInNewPane],
+  );
 
   // ---- pane layout controls ----
   // splitRight appends a new full-height column (up to MAX_COLS) holding a fresh
@@ -796,6 +805,7 @@ export function AppProvider({ children }) {
     showSCMSplit,
     showFile,
     showFileSplit,
+    showDoc,
     settingsOpen,
     openSettings: () => setSettingsOpen(true),
     closeSettings: () => setSettingsOpen(false),

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api, apiJSON } from "../api.js";
 import { useSettings } from "../lib/settings.js";
+import { useApp } from "../state.jsx";
 import Icon from "../components/Icon.jsx";
 import MarkdownView from "./MarkdownView.jsx";
 import MirrorToggle from "../components/MirrorToggle.jsx";
@@ -21,12 +22,15 @@ const q = encodeURIComponent;
 // user turns), just at the next poll.
 export default function MirrorView({ session, sessionMeta, active, mirror, onToggleMirror }) {
   const settings = useSettings();
+  const { showDoc } = useApp();
   // "mod-enter" (default): Ctrl/⌘+Enter submits, plain Enter newlines (phone-safe).
   // "enter": Enter submits, Shift+Enter newlines.
   const modSend = settings.mirrorSend !== "enter";
   const [turns, setTurns] = useState([]); // {role:'user'|'assistant', text, ts, idx}
   const [status, setStatus] = useState("");
   const [pending, setPending] = useState(null); // currently-awaiting AskUserQuestion
+  const [pendingPlan, setPendingPlan] = useState(null); // ExitPlanMode plan awaiting approval
+  const [mode, setMode] = useState(""); // session permission mode ("plan" | …)
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const [histIdx, setHistIdx] = useState(null); // position in composer history, or null
@@ -44,6 +48,8 @@ export default function MirrorView({ session, sessionMeta, active, mirror, onTog
     setTurns([]);
     setStatus("");
     setPending(null);
+    setPendingPlan(null);
+    setMode("");
     setHistIdx(null);
   }, [session]);
 
@@ -68,6 +74,8 @@ export default function MirrorView({ session, sessionMeta, active, mirror, onTog
             setStatus(d.status);
           }
           setPending(Array.isArray(d.pendingQuestions) ? d.pendingQuestions : null);
+          setPendingPlan(typeof d.pendingPlan === "string" && d.pendingPlan ? d.pendingPlan : null);
+          setMode(typeof d.mode === "string" ? d.mode : "");
         }
       } catch {
         /* transient; retry on the next tick */
@@ -91,7 +99,7 @@ export default function MirrorView({ session, sessionMeta, active, mirror, onTog
   useEffect(() => {
     const el = bodyRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [turns, pending, status]);
+  }, [turns, pending, pendingPlan, status]);
 
   // Focus the composer when this pane becomes the active chat.
   useEffect(() => {
@@ -145,6 +153,9 @@ export default function MirrorView({ session, sessionMeta, active, mirror, onTog
     await sendPrompt(text);
     inputRef.current?.focus();
   };
+
+  // Open a plan's Markdown in its own pane (manual — via a button, not automatic).
+  const openPlan = (plan) => showDoc(planTitle(plan), plan);
 
   // Composer history = the user's own prompts in this conversation (so ↑ works even
   // after a reload, not just for prompts typed since mount). Newest last.
@@ -251,15 +262,37 @@ export default function MirrorView({ session, sessionMeta, active, mirror, onTog
       </header>
 
       {ctxUsage && <ContextBar {...ctxUsage} />}
+      {mode === "plan" && (
+        <div className="mirror-planmode">
+          <Icon name="debug-pause" /> 計画モード — 承認するまで実装しません
+        </div>
+      )}
 
       <div className="mirror-body" ref={bodyRef}>
-        {groups.length === 0 && !pending ? (
+        {groups.length === 0 && !pending && !pendingPlan ? (
           <div className="mirror-empty muted">
             まだ会話はありません。下の欄からプロンプトを送るか、ターミナルで対話すると、ここに
             ターンごとの Markdown で表示されます。
           </div>
         ) : (
-          renderGroups(groups, sendPrompt)
+          renderGroups(groups, sendPrompt, openPlan)
+        )}
+        {pendingPlan && (
+          <div className="mirror-turn assistant">
+            <div className="mirror-turn-head">
+              <span className="mt-who">Claude</span>
+              <span className="mt-model muted">プラン承認待ち</span>
+            </div>
+            <div className="mirror-turn-body">
+              <PlanBlock
+                plan={pendingPlan}
+                pending
+                sending={sending}
+                onOpen={() => openPlan(pendingPlan)}
+                onApprove={() => sendKeys(["Enter"])}
+              />
+            </div>
+          </div>
         )}
         {pending && pending.length > 0 && (
           <div className="mirror-turn assistant">
@@ -466,7 +499,7 @@ function ContextBar({ read, create, fresh, model }) {
 // renderGroups lays the blocks out, inserting a context strip (branch · cwd) above a
 // block whenever either changes from the previously shown one — so a branch switch or
 // cd is marked once, not repeated on every turn. Empty context leaves the marker as-is.
-function renderGroups(groups, onAnswer) {
+function renderGroups(groups, onAnswer, onOpenPlan) {
   const els = [];
   let prevCtx = "";
   for (const g of groups) {
@@ -475,7 +508,7 @@ function renderGroups(groups, onAnswer) {
       els.push(<ContextLine key={"ctx-" + g.idx} branch={g.branch} cwd={g.cwd} />);
     }
     if (ctx) prevCtx = ctx;
-    els.push(<Turn key={g.idx} turn={g} onAnswer={onAnswer} />);
+    els.push(<Turn key={g.idx} turn={g} onAnswer={onAnswer} onOpenPlan={onOpenPlan} />);
   }
   return els;
 }
@@ -497,7 +530,7 @@ function ContextLine({ branch, cwd }) {
 // Turn renders one conversation block: a header (who + model), the body (user prompt
 // as text, assistant reply as Markdown with faint tool traces), and a footer (time +
 // token usage + copy). Subagent (sidechain) turns get a distinct label and tint.
-function Turn({ turn, onAnswer }) {
+function Turn({ turn, onAnswer, onOpenPlan }) {
   const isUser = turn.role === "user";
   const who = isUser ? "あなた" : turn.sidechain ? "サブエージェント" : "Claude";
   const ctxTok = turn.inTok + turn.cacheRead + turn.cacheCreate;
@@ -523,6 +556,9 @@ function Turn({ turn, onAnswer }) {
               // A question from the transcript is already answered (claude writes the
               // tool_use only after the answer) — show it resolved, not clickable.
               <QuestionBlock key={i} questions={p.questions} answered answer={p.answer} />
+            ) : p.kind === "plan" ? (
+              // A historical plan (already approved/decided) — open it in a pane.
+              <PlanBlock key={i} plan={p.plan} onOpen={() => onOpenPlan && onOpenPlan(p.plan)} />
             ) : (
               <MarkdownView key={i} source={p.text} />
             ),
@@ -706,6 +742,47 @@ function QuestionBlock({ questions, answered, answer }) {
       })}
     </div>
   );
+}
+
+// PlanBlock shows an ExitPlanMode plan compactly (title + one-line summary) with a
+// button to open the full Markdown in its own pane, and — while pending — an approve
+// button that confirms the plan (Enter = "Yes, and bypass permissions").
+function PlanBlock({ plan, pending, onOpen, onApprove, sending }) {
+  return (
+    <div className="mt-plan">
+      <div className="mt-plan-head">
+        <Icon name="checklist" />
+        <span className="mt-plan-title">{planTitle(plan)}</span>
+        {pending && <span className="mt-plan-badge">承認待ち</span>}
+      </div>
+      {planSummary(plan) && <div className="mt-plan-summary">{planSummary(plan)}</div>}
+      <div className="mt-plan-actions">
+        <button type="button" className="ghost mt-plan-open" onClick={onOpen}>
+          <Icon name="split-horizontal" /> 別ペインで開く
+        </button>
+        {pending && (
+          <button type="button" className="btn primary mt-plan-approve" disabled={sending} onClick={onApprove}>
+            <Icon name="check" /> 承認して実行
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// planTitle / planSummary derive a compact heading + lead line from the plan Markdown.
+function planTitle(md) {
+  const m = (md || "").match(/^#{1,3}\s+(.+)$/m);
+  return m ? m[1].trim() : "プラン";
+}
+function planSummary(md) {
+  for (const line of (md || "").split("\n")) {
+    const s = line.trim();
+    if (s && !s.startsWith("#") && !s.startsWith("```")) {
+      return s.length > 100 ? s.slice(0, 100) + "…" : s;
+    }
+  }
+  return "";
 }
 
 // CopyButton copies the turn's RAW Markdown (not the rendered HTML) to the clipboard.

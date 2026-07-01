@@ -14,15 +14,16 @@ import (
 // with the assistant's text, so the Console can faintly show what claude was doing
 // (Read/Bash/Edit …) between paragraphs. Both read the same jsonl (cursor = line #).
 
-// chatPart is one ordered piece of a turn: rendered text, a faint tool trace, or an
-// AskUserQuestion the user can answer inline.
+// chatPart is one ordered piece of a turn: rendered text, a faint tool trace, an
+// AskUserQuestion the user can answer inline, or an ExitPlanMode plan.
 type chatPart struct {
-	Kind      string         `json:"kind"`                // "text" | "tool" | "question"
+	Kind      string         `json:"kind"`                // "text" | "tool" | "question" | "plan"
 	Text      string         `json:"text,omitempty"`      // kind=text: Markdown
-	Tool      string         `json:"tool,omitempty"`      // kind=tool/question: tool name
+	Tool      string         `json:"tool,omitempty"`      // kind=tool/question/plan: tool name
 	Info      string         `json:"info,omitempty"`      // kind=tool: short arg summary
 	Questions []chatQuestion `json:"questions,omitempty"` // kind=question: AskUserQuestion
 	Answer    string         `json:"answer,omitempty"`    // kind=question: the chosen answer text
+	Plan      string         `json:"plan,omitempty"`      // kind=plan: ExitPlanMode plan Markdown
 	qid       string         // kind=question: tool_use id, to resolve the answer (unexported)
 }
 
@@ -117,13 +118,21 @@ func handleSessionMessages(w http.ResponseWriter, r *http.Request) {
 		"name": name, "messages": turns, "cursor": len(lines),
 		"status": state, "alive": alive,
 	}
-	// A currently-pending AskUserQuestion isn't in the transcript yet (claude writes
-	// the tool_use only after it's answered), so surface it from the status hook's
-	// captured tool_input so the Console can render and answer it.
+	// A currently-pending AskUserQuestion / ExitPlanMode isn't in the transcript yet
+	// (claude writes the tool_use only after it's resolved), so surface it from the
+	// status hook's captured tool_input so the Console can render/answer/approve it.
 	if state == "question" {
 		if pq, ok := readPendingQuestion(sid); ok {
 			resp["pendingQuestions"] = pq
 		}
+	}
+	if state == "plan" {
+		if pp, ok := readPendingPlan(sid); ok {
+			resp["pendingPlan"] = pp
+		}
+	}
+	if md := latestMode(lines); md != "" {
+		resp["mode"] = md
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -223,6 +232,16 @@ func assistantParts(raw json.RawMessage) (parts []chatPart, text string) {
 					continue
 				}
 			}
+			// ExitPlanMode carries the plan Markdown — a plan block, openable in a pane.
+			if b.Name == "ExitPlanMode" {
+				var pin struct {
+					Plan string `json:"plan"`
+				}
+				if json.Unmarshal(b.Input, &pin) == nil && pin.Plan != "" {
+					parts = append(parts, chatPart{Kind: "plan", Tool: b.Name, Plan: pin.Plan})
+					continue
+				}
+			}
 			parts = append(parts, chatPart{Kind: "tool", Tool: b.Name, Info: toolInfo(b.Name, b.Input)})
 		}
 	}
@@ -260,6 +279,31 @@ func collectAnswers(lines [][]byte) map[string]string {
 		}
 	}
 	return out
+}
+
+// latestMode returns the session's current permission mode from the last "mode"
+// event ("normal" | "plan" | "acceptEdits" | …), or "" if none. Lets the Console
+// show a plan-mode indicator.
+func latestMode(lines [][]byte) string {
+	mode := ""
+	for _, ln := range lines {
+		if !bytesContains(ln, `"type":"mode"`) {
+			continue
+		}
+		var ev struct {
+			Type string `json:"type"`
+			Mode string `json:"mode"`
+		}
+		if json.Unmarshal(ln, &ev) == nil && ev.Type == "mode" && ev.Mode != "" {
+			mode = ev.Mode
+		}
+	}
+	return mode
+}
+
+// bytesContains is strings.Contains for a []byte without allocating a string.
+func bytesContains(b []byte, sub string) bool {
+	return strings.Contains(string(b), sub)
 }
 
 // parseQuestions pulls the AskUserQuestion tool input into chatQuestions. Returns

@@ -3,6 +3,7 @@ import TerminalView from "../views/TerminalView.jsx";
 import SourceControlView from "../views/SourceControlView.jsx";
 import FileView from "../views/FileView.jsx";
 import MirrorView from "../views/MirrorView.jsx";
+import DocView from "../views/DocView.jsx";
 import Icon from "./Icon.jsx";
 
 // Drag payload MIME — identifies a pane-to-pane swap drag (vs any other drag).
@@ -157,6 +158,7 @@ export default function Pane({
       )}
       {pane.kind === "scm" && <SourceControlView repo={pane.scmRepo} />}
       {pane.kind === "file" && <FileView filePath={pane.filePath} />}
+      {pane.kind === "doc" && <DocView title={pane.docTitle} content={pane.docContent} />}
     </div>
   );
 }

@@ -58,11 +58,13 @@ func runSessionStatusHook(args []string) {
 	// tool_input.questions — capture it so the Console can show/answer the PENDING
 	// question (the tool_use isn't written to the transcript until it's answered).
 	var questions json.RawMessage
+	var plan string
 	if sid == "" || codexMarker {
 		var in struct {
 			SessionID string `json:"session_id"`
 			ToolInput struct {
-				Questions json.RawMessage `json:"questions"`
+				Questions json.RawMessage `json:"questions"` // AskUserQuestion
+				Plan      string          `json:"plan"`      // ExitPlanMode
 			} `json:"tool_input"`
 		}
 		_ = json.NewDecoder(os.Stdin).Decode(&in)
@@ -73,6 +75,7 @@ func runSessionStatusHook(args []string) {
 		} else {
 			sid = in.SessionID // claude
 			questions = in.ToolInput.Questions
+			plan = in.ToolInput.Plan
 		}
 	}
 	if sid == "" {
@@ -81,11 +84,17 @@ func runSessionStatusHook(args []string) {
 	_ = os.MkdirAll(sessionStatusDir(), 0o700)
 	b, _ := json.Marshal(sessionStatus{State: state, TS: time.Now().Format(time.RFC3339)})
 	_ = os.WriteFile(sessionStatusPath(sid), b, 0o600)
-	// Persist/clear the pending question alongside the status.
+	// Persist/clear the pending AskUserQuestion / ExitPlanMode payloads alongside the
+	// status (each cleared whenever the session isn't in that waiting state).
 	if state == "question" && len(questions) > 0 {
 		writePendingQuestion(sid, questions)
-	} else if state != "question" {
+	} else {
 		removePendingQuestion(sid)
+	}
+	if state == "plan" && plan != "" {
+		writePendingPlan(sid, plan)
+	} else {
+		removePendingPlan(sid)
 	}
 }
 
@@ -116,6 +125,33 @@ func readPendingQuestion(sid string) (json.RawMessage, bool) {
 
 func removePendingQuestion(sid string) { _ = os.Remove(pendingQuestionPath(sid)) }
 
+// A pending ExitPlanMode plan (the tool_input.plan markdown), kept only while the
+// session waits for plan approval so the Console can show it / open it in a pane.
+func pendingPlanDir() string {
+	return filepath.Join(homeDir(), ".config", "agent-fleet", "pending-plan")
+}
+
+func pendingPlanPath(sid string) string {
+	return filepath.Join(pendingPlanDir(), sid+".md")
+}
+
+func writePendingPlan(sid, plan string) {
+	if err := os.MkdirAll(pendingPlanDir(), 0o700); err != nil {
+		return
+	}
+	_ = os.WriteFile(pendingPlanPath(sid), []byte(plan), 0o600)
+}
+
+func readPendingPlan(sid string) (string, bool) {
+	b, err := os.ReadFile(pendingPlanPath(sid))
+	if err != nil || len(b) == 0 {
+		return "", false
+	}
+	return string(b), true
+}
+
+func removePendingPlan(sid string) { _ = os.Remove(pendingPlanPath(sid)) }
+
 func readSessionStatus(sid string) (sessionStatus, bool) {
 	var s sessionStatus
 	b, err := os.ReadFile(sessionStatusPath(sid))
@@ -131,6 +167,7 @@ func readSessionStatus(sid string) (sessionStatus, bool) {
 func removeSessionStatus(sid string) {
 	_ = os.Remove(sessionStatusPath(sid))
 	removePendingQuestion(sid)
+	removePendingPlan(sid)
 }
 
 // agentExe is the absolute path to this binary, used to build hook commands that
@@ -170,17 +207,25 @@ func ensureStatusHooks() {
 			changed = true
 		}
 	}
-	// AskUserQuestion: a distinct "needs your answer" state (not suppressed by
-	// --dangerously-skip-permissions, unlike tool-permission prompts).
+	// AskUserQuestion → question, ExitPlanMode → plan: distinct "needs your input"
+	// states (not suppressed by --dangerously-skip-permissions). Their tool_use is
+	// written to the transcript only after it's resolved, so the hook is how the
+	// Console learns about the pending question / plan.
 	if !preToolUseHasMatcher(hooks, "AskUserQuestion") {
 		ensurePreToolUseMatcher(hooks, "AskUserQuestion", statusHookCmd("question"))
 		changed = true
 	}
-	if b, _ := json.Marshal(hooks["PostToolUse"]); !strings.Contains(string(b), "session-status") {
-		hooks["PostToolUse"] = []any{map[string]any{
-			"matcher": "AskUserQuestion",
-			"hooks":   []any{map[string]any{"type": "command", "command": statusHookCmd("working")}},
-		}}
+	if !preToolUseHasMatcher(hooks, "ExitPlanMode") {
+		ensurePreToolUseMatcher(hooks, "ExitPlanMode", statusHookCmd("plan"))
+		changed = true
+	}
+	// PostToolUse: both resume to working once answered/approved. Re-set when the
+	// ExitPlanMode matcher is missing (older settings only had AskUserQuestion).
+	if b, _ := json.Marshal(hooks["PostToolUse"]); !strings.Contains(string(b), "ExitPlanMode") {
+		hooks["PostToolUse"] = []any{
+			map[string]any{"matcher": "AskUserQuestion", "hooks": []any{map[string]any{"type": "command", "command": statusHookCmd("working")}}},
+			map[string]any{"matcher": "ExitPlanMode", "hooks": []any{map[string]any{"type": "command", "command": statusHookCmd("working")}}},
+		}
 		changed = true
 	}
 
