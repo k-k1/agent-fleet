@@ -8,6 +8,9 @@ deploy/local/allowed-emails.txt
 # On-prem compose per-deployment settings/secrets (P3-10). Copy .env.example -> .env.
 deploy/compose/.env
 
+# Local backup archives (backup.sh default OUT_DIR). Sensitive — never commit.
+deploy/compose/backups/
+
 # Local build artifact from `go build` without -o (CP binary is built to /tmp/af-cp).
 control-plane/control-plane
 
