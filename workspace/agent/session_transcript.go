@@ -22,6 +22,8 @@ type chatPart struct {
 	Tool      string         `json:"tool,omitempty"`      // kind=tool/question: tool name
 	Info      string         `json:"info,omitempty"`      // kind=tool: short arg summary
 	Questions []chatQuestion `json:"questions,omitempty"` // kind=question: AskUserQuestion
+	Answer    string         `json:"answer,omitempty"`    // kind=question: the chosen answer text
+	qid       string         // kind=question: tool_use id, to resolve the answer (unexported)
 }
 
 // chatQuestion mirrors one AskUserQuestion entry (header + prompt + options).
@@ -90,12 +92,21 @@ func handleSessionMessages(w http.ResponseWriter, r *http.Request) {
 	}
 	sid := sessionUUID(meta.Dir, name)
 	lines := transcriptLines(sid)
+	// A transcript AskUserQuestion is always already answered (claude writes the
+	// tool_use only after the answer), so resolve each one's chosen answer from its
+	// tool_result for display. The currently-pending question is separate (below).
+	answers := collectAnswers(lines)
 	turns := []chatTurn{}
 	budget := 0
 	for i := since; i < len(lines); i++ {
 		t, ok := parseTurn(lines[i], i)
 		if !ok {
 			continue // tool results, summaries, bridge/meta bookkeeping
+		}
+		for pi := range t.Parts {
+			if t.Parts[pi].Kind == "question" && t.Parts[pi].qid != "" {
+				t.Parts[pi].Answer = answers[t.Parts[pi].qid]
+			}
 		}
 		turns = append(turns, t)
 		if budget += len(t.Text); budget > 1<<20 { // cap a single response at 1 MiB
@@ -186,6 +197,7 @@ func assistantParts(raw json.RawMessage) (parts []chatPart, text string) {
 		Type  string          `json:"type"`
 		Text  string          `json:"text"`
 		Name  string          `json:"name"`
+		ID    string          `json:"id"`
 		Input json.RawMessage `json:"input"`
 	}
 	if json.Unmarshal(raw, &blocks) != nil {
@@ -207,7 +219,7 @@ func assistantParts(raw json.RawMessage) (parts []chatPart, text string) {
 			// AskUserQuestion becomes an answerable question block, not a faint trace.
 			if b.Name == "AskUserQuestion" {
 				if qs := parseQuestions(b.Input); len(qs) > 0 {
-					parts = append(parts, chatPart{Kind: "question", Tool: b.Name, Questions: qs})
+					parts = append(parts, chatPart{Kind: "question", Tool: b.Name, Questions: qs, qid: b.ID})
 					continue
 				}
 			}
@@ -215,6 +227,39 @@ func assistantParts(raw json.RawMessage) (parts []chatPart, text string) {
 		}
 	}
 	return parts, strings.TrimSpace(sb.String())
+}
+
+// collectAnswers maps each tool_use id to the text of its tool_result — used to show
+// which option an answered AskUserQuestion resolved to. Best-effort: the answer text
+// is whatever text the tool_result carried (a selected label, or a free-text reply).
+func collectAnswers(lines [][]byte) map[string]string {
+	out := map[string]string{}
+	for _, ln := range lines {
+		var ev struct {
+			Message struct {
+				Content json.RawMessage `json:"content"`
+			} `json:"message"`
+		}
+		if json.Unmarshal(ln, &ev) != nil || len(ev.Message.Content) == 0 || ev.Message.Content[0] != '[' {
+			continue
+		}
+		var blocks []struct {
+			Type      string          `json:"type"`
+			ToolUseID string          `json:"tool_use_id"`
+			Content   json.RawMessage `json:"content"`
+		}
+		if json.Unmarshal(ev.Message.Content, &blocks) != nil {
+			continue
+		}
+		for _, b := range blocks {
+			if b.Type == "tool_result" && b.ToolUseID != "" {
+				if t := contentText(b.Content); t != "" {
+					out[b.ToolUseID] = t
+				}
+			}
+		}
+	}
+	return out
 }
 
 // parseQuestions pulls the AskUserQuestion tool input into chatQuestions. Returns
