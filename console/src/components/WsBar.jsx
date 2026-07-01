@@ -146,12 +146,32 @@ function useClaudeUsage(tenant) {
   return { usage, refreshing, refresh: () => load(true) };
 }
 
-// agoText: seconds since the usage was fetched → "N秒/分/時間前" (chip freshness).
+// agoText: seconds since the usage was fetched → "N秒/分/時間前" (freshness label).
 function agoText(sec) {
   if (sec == null) return "";
   if (sec >= 3600) return `${Math.round(sec / 3600)}時間前`;
   if (sec >= 60) return `${Math.round(sec / 60)}分前`;
   return `${Math.max(0, sec)}秒前`;
+}
+
+// UsageRow: one limit window in the usage dropdown — label + percent, a fill bar, and
+// the reset shown both relatively ("あとN時間") and as an absolute date-time.
+function UsageRow({ label, w }) {
+  const level = w.pct >= 95 ? " crit" : w.pct >= 80 ? " warn" : "";
+  return (
+    <div className="wu-row">
+      <div className="wu-row-head">
+        <span className="wu-label">{label}</span>
+        <span className={"wu-pct" + level}>{w.pct}%</span>
+      </div>
+      <div className="wu-bar">
+        <span className={"wu-bar-fill" + level} style={{ width: Math.min(100, w.pct) + "%" }} />
+      </div>
+      <div className="wu-reset muted">
+        {w.until}でリセット（{w.when}）
+      </div>
+    </div>
+  );
 }
 
 // untilText: a reset instant → a compact relative "あとN日/N時間/N分" (the weekday+time
@@ -242,8 +262,10 @@ export default function WsBar() {
   const [port, setPort] = useState("");
   const [pvOpen, setPvOpen] = useState(false); // desktop port-preview popover
   const [moreOpen, setMoreOpen] = useState(false); // mobile overflow popover
+  const [usageOpen, setUsageOpen] = useState(false); // Claude usage detail dropdown
   const pvRef = useRef(null);
   const moreRef = useRef(null);
+  const usageRef = useRef(null);
   const running = wsState === "running";
   const busy = wsState.endsWith("…"); // starting… / stopping… / recreating… — toggle inert
 
@@ -265,15 +287,17 @@ export default function WsBar() {
 
   // Close the popovers on an outside click / Escape.
   useEffect(() => {
-    if (!pvOpen && !moreOpen) return;
+    if (!pvOpen && !moreOpen && !usageOpen) return;
     const onDown = (e) => {
       if (pvRef.current && !pvRef.current.contains(e.target)) setPvOpen(false);
       if (moreRef.current && !moreRef.current.contains(e.target)) setMoreOpen(false);
+      if (usageRef.current && !usageRef.current.contains(e.target)) setUsageOpen(false);
     };
     const onKey = (e) => {
       if (e.key === "Escape") {
         setPvOpen(false);
         setMoreOpen(false);
+        setUsageOpen(false);
       }
     };
     document.addEventListener("mousedown", onDown);
@@ -282,7 +306,7 @@ export default function WsBar() {
       document.removeEventListener("mousedown", onDown);
       document.removeEventListener("keydown", onKey);
     };
-  }, [pvOpen, moreOpen]);
+  }, [pvOpen, moreOpen, usageOpen]);
 
   // --- pieces shared between the inline (desktop) and folded (mobile) layouts ---
   const lvl = (v, warn, crit) => (v == null ? 0 : v >= crit ? 2 : v >= warn ? 1 : 0);
@@ -346,48 +370,50 @@ export default function WsBar() {
     </>
   );
 
-  // Claude subscription usage: 5-hour + weekly percent, each with a relative reset on
-  // the chip and the absolute date-time in the tooltip. Colored by the higher of the
-  // two. Unofficial/best-effort — absent (null) whenever the endpoint didn't answer,
-  // so the chip just doesn't appear.
+  // Claude subscription usage: a COMPACT trigger (Claude glyph + the higher of the two
+  // percentages, tinted by level) that opens a dropdown with both windows (5-hour /
+  // weekly), each with a bar, its reset (relative + absolute date-time), and a reload
+  // button. Unofficial/best-effort — absent (null) when the endpoint didn't answer, so
+  // nothing shows.
   const usageWin = (w) => ({ pct: Math.round(w.pct), until: untilText(w.resetsAt), when: whenText(w.resetsAt) });
   const uh = usage && usage.fiveHour && usageWin(usage.fiveHour);
   const uw = usage && usage.sevenDay && usageWin(usage.sevenDay);
-  const usageChip = (uh || uw) && (() => {
-    const face = [];
-    const detail = ["Claude 使用状況"];
-    if (uh) {
-      face.push(`5h ${uh.pct}% ${uh.until}`);
-      detail.push(`5時間制限 ${uh.pct}%・${uh.until}でリセット（${uh.when}）`);
-    }
-    if (uw) {
-      face.push(`週 ${uw.pct}% ${uw.until}`);
-      detail.push(`週次・全モデル ${uw.pct}%・${uw.until}でリセット（${uw.when}）`);
-    }
-    detail.push(`取得 ${agoText(usage.ageSec)}・クリックで最新に更新`);
-    const maxPct = Math.max(uh ? uh.pct : 0, uw ? uw.pct : 0);
-    const level = lvl(maxPct, 80, 95);
-    return (
+  const usageMax = Math.max(uh ? uh.pct : 0, uw ? uw.pct : 0);
+  const usageLevel = lvl(usageMax, 80, 95);
+  const usageEl = (uh || uw) && (
+    <div className="ws-usage-wrap" ref={usageRef}>
       <button
         type="button"
-        className={"ws-graph ws-usage" + (level === 2 ? " crit" : level === 1 ? " warn" : "")}
-        title={detail.join("\n")}
-        onClick={refresh}
-        disabled={refreshing}
-        key="claude-usage"
+        className={"ws-graph ws-usage-btn" + (usageLevel === 2 ? " crit" : usageLevel === 1 ? " warn" : "")}
+        title="Claude 使用状況"
+        aria-expanded={usageOpen}
+        onClick={() => setUsageOpen((o) => !o)}
       >
-        <span className="ws-graph-k">Claude</span>
-        <span className="ws-graph-v">{face.join(" · ")}</span>
-        <Icon name="refresh" spin={refreshing} />
+        <Icon name="sparkle" />
+        <span className="ws-graph-v">{usageMax}%</span>
+        <Icon name="chevron-down" />
       </button>
-    );
-  })();
+      {usageOpen && (
+        <div className="ws-usage-pop">
+          <div className="wu-title">Claude 使用状況</div>
+          {uh && <UsageRow label="5時間制限" w={uh} />}
+          {uw && <UsageRow label="週次・全モデル" w={uw} />}
+          <div className="wu-foot">
+            <span className="wu-ago muted">取得 {agoText(usage.ageSec)}</span>
+            <button type="button" className="ghost wu-reload" onClick={refresh} disabled={refreshing}>
+              <Icon name="refresh" spin={refreshing} /> 更新
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
 
-  const statsBlock = (graphs || usageChip) && (
+  const statsBlock = (graphs || usageEl) && (
     <>
       {graphs}
-      {graphs && usageChip && <span className="ws-graph-sep" />}
-      {usageChip}
+      {graphs && usageEl && <span className="ws-graph-sep" />}
+      {usageEl}
     </>
   );
 
