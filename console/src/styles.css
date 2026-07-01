@@ -1729,6 +1729,13 @@ body.row-resizing {
 .mirror-turn.user .mt-who {
   color: var(--accent);
 }
+/* The model that produced the turn, faint beside the speaker. */
+.mt-model {
+  margin-left: 6px;
+  font-size: 11px;
+  opacity: 0.5;
+  font-variant-numeric: tabular-nums;
+}
 /* The response body is indented a touch past the flush-left speaker label. */
 .mirror-turn-body {
   padding-left: 15px;
@@ -1764,6 +1771,33 @@ body.row-resizing {
   word-break: break-word;
   font: inherit;
   line-height: 1.5;
+}
+/* A faint trace of claude's tool activity, interleaved between text parts. Kept
+   low-contrast and single-line so it reads as "background work", not content. */
+.mt-tool {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin: 0.3em 0;
+  font-size: 12px;
+  line-height: 1.4;
+  opacity: 0.42;
+}
+.mt-tool .codicon {
+  font-size: 12px;
+  position: relative;
+  top: 1px;
+}
+.mt-tool-name {
+  font-weight: 600;
+  flex: none;
+}
+.mt-tool-info {
+  font-family: var(--viewer-font, var(--mono));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
 }
 .mirror-turn.assistant .markdown {
   /* MarkdownView is shared with the file viewer, which centers a max-width column

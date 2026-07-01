@@ -9,15 +9,27 @@ import (
 
 // Structured transcript for the Console chat view. Where /output (session_io.go)
 // flattens a claude session's assistant text for the MCP drive poll, /messages keeps
-// turn boundaries and adds what a readable chat needs: the user's own prompts and
-// each turn's timestamp. Both read the same jsonl and use the line count as cursor.
+// turn boundaries and adds what a readable chat needs: the user's own prompts, each
+// turn's timestamp, and — as ordered "parts" — the tool_use activity interleaved
+// with the assistant's text, so the Console can faintly show what claude was doing
+// (Read/Bash/Edit …) between paragraphs. Both read the same jsonl (cursor = line #).
+
+// chatPart is one ordered piece of a turn: rendered text, or a faint tool trace.
+type chatPart struct {
+	Kind string `json:"kind"`           // "text" | "tool"
+	Text string `json:"text,omitempty"` // kind=text: Markdown
+	Tool string `json:"tool,omitempty"` // kind=tool: tool name (Bash, Read, …)
+	Info string `json:"info,omitempty"` // kind=tool: short arg summary (command/path)
+}
 
 // chatTurn is one displayable conversation turn.
 type chatTurn struct {
-	Role string `json:"role"` // "user" | "assistant"
-	Text string `json:"text"` // the turn's Markdown text (tool blocks excluded)
-	TS   string `json:"ts"`   // RFC3339 from the transcript line, "" if absent
-	Idx  int    `json:"idx"`  // transcript line index — a stable render key
+	Role  string     `json:"role"`            // "user" | "assistant"
+	Parts []chatPart `json:"parts"`           // ordered text/tool pieces
+	Text  string     `json:"text"`            // concatenated text only (for copy / fallback)
+	Model string     `json:"model,omitempty"` // assistant only: the model that answered
+	TS    string     `json:"ts"`              // RFC3339 from the transcript line, "" if absent
+	Idx   int        `json:"idx"`             // transcript line index — a stable render key
 }
 
 // handleSessionMessages (GET /sessions/{name}/messages?since=<cursor>) returns the
@@ -57,11 +69,11 @@ func handleSessionMessages(w http.ResponseWriter, r *http.Request) {
 	turns := []chatTurn{}
 	budget := 0
 	for i := since; i < len(lines); i++ {
-		role, text, ts := parseTurn(lines[i])
-		if text == "" {
-			continue // tool round-trips, summaries, bridge/meta bookkeeping
+		role, parts, text, model, ts := parseTurn(lines[i])
+		if len(parts) == 0 {
+			continue // tool results, summaries, bridge/meta bookkeeping
 		}
-		turns = append(turns, chatTurn{Role: role, Text: text, TS: ts, Idx: i})
+		turns = append(turns, chatTurn{Role: role, Parts: parts, Text: text, Model: model, TS: ts, Idx: i})
 		if budget += len(text); budget > 1<<20 { // cap a single response at 1 MiB
 			break
 		}
@@ -72,26 +84,119 @@ func handleSessionMessages(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// parseTurn extracts {role, text, timestamp} from a transcript line. text is "" for
-// lines that carry no displayable message: tool_use/tool_result turns, summaries,
-// the Remote Control bridge-session line, and meta entries (isMeta).
-func parseTurn(line []byte) (role, text, ts string) {
+// parseTurn extracts {role, parts, text, timestamp} from a transcript line. parts is
+// empty for lines that carry nothing displayable: tool_result-only user turns,
+// summaries, the Remote Control bridge-session line, and meta entries (isMeta).
+func parseTurn(line []byte) (role string, parts []chatPart, text, model, ts string) {
 	var ev struct {
 		Type      string `json:"type"`
 		Timestamp string `json:"timestamp"`
 		IsMeta    bool   `json:"isMeta"`
 		Message   struct {
-			Role    string          `json:"role"`
+			Model   string          `json:"model"`
 			Content json.RawMessage `json:"content"`
 		} `json:"message"`
 	}
 	if json.Unmarshal(line, &ev) != nil {
-		return "", "", ""
+		return "", nil, "", "", ""
 	}
 	if ev.IsMeta || (ev.Type != "user" && ev.Type != "assistant") {
-		return "", "", ""
+		return "", nil, "", "", ""
 	}
-	return ev.Type, contentText(ev.Message.Content), ev.Timestamp
+	if ev.Type == "assistant" {
+		parts, text = assistantParts(ev.Message.Content)
+	} else if t := contentText(ev.Message.Content); t != "" {
+		parts, text = []chatPart{{Kind: "text", Text: t}}, t
+	}
+	return ev.Type, parts, text, ev.Message.Model, ev.Timestamp
+}
+
+// assistantParts walks an assistant message's content blocks in order, emitting a
+// text part per text block and a tool part per tool_use (thinking/other are skipped).
+// It also returns the concatenated text (for copy). content is normally an array of
+// blocks; a bare-string form is handled as a single text part.
+func assistantParts(raw json.RawMessage) (parts []chatPart, text string) {
+	if len(raw) == 0 {
+		return nil, ""
+	}
+	if raw[0] != '[' {
+		if s := contentText(raw); s != "" {
+			return []chatPart{{Kind: "text", Text: s}}, s
+		}
+		return nil, ""
+	}
+	var blocks []struct {
+		Type  string          `json:"type"`
+		Text  string          `json:"text"`
+		Name  string          `json:"name"`
+		Input json.RawMessage `json:"input"`
+	}
+	if json.Unmarshal(raw, &blocks) != nil {
+		return nil, ""
+	}
+	var sb strings.Builder
+	for _, b := range blocks {
+		switch b.Type {
+		case "text":
+			if strings.TrimSpace(b.Text) == "" {
+				continue
+			}
+			parts = append(parts, chatPart{Kind: "text", Text: b.Text})
+			if sb.Len() > 0 {
+				sb.WriteString("\n")
+			}
+			sb.WriteString(b.Text)
+		case "tool_use":
+			parts = append(parts, chatPart{Kind: "tool", Tool: b.Name, Info: toolInfo(b.Name, b.Input)})
+		}
+	}
+	return parts, strings.TrimSpace(sb.String())
+}
+
+// toolInfo renders a short, single-line summary of a tool_use's input — the piece a
+// human would recognize (the command, the file, the pattern). Best-effort; unknown
+// tools fall back to the first recognizable string field.
+func toolInfo(name string, input json.RawMessage) string {
+	if len(input) == 0 {
+		return ""
+	}
+	var m map[string]any
+	if json.Unmarshal(input, &m) != nil {
+		return ""
+	}
+	pick := func(keys ...string) string {
+		for _, k := range keys {
+			if v, ok := m[k].(string); ok && v != "" {
+				return v
+			}
+		}
+		return ""
+	}
+	var s string
+	switch name {
+	case "Bash":
+		s = pick("command")
+	case "Read", "Write", "Edit", "NotebookEdit":
+		s = pick("file_path", "notebook_path", "path")
+	case "Grep", "Glob":
+		s = pick("pattern")
+	case "Task":
+		s = pick("description")
+	case "WebFetch":
+		s = pick("url")
+	case "WebSearch":
+		s = pick("query")
+	default:
+		s = pick("file_path", "path", "command", "pattern", "query", "description", "url")
+	}
+	s = strings.TrimSpace(s)
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		s = s[:i] // first line only
+	}
+	if r := []rune(s); len(r) > 80 {
+		s = string(r[:80]) + "…"
+	}
+	return s
 }
 
 // contentText pulls the human text out of a message's content, which claude encodes
