@@ -80,6 +80,12 @@ func handleSessionMessages(w http.ResponseWriter, r *http.Request) {
 		if st, ok := readSessionStatus(sessionUUID(meta.Dir, name)); ok {
 			state = st.State
 		}
+		// Self-heal a stale waiting/working cache: if the pane is back at the ready
+		// prompt (rejected permission, abandoned question, killed+resumed), it's idle.
+		if state != "idle" && sessionAtIdlePrompt(name) {
+			state = "idle"
+			removeSessionStatus(sessionUUID(meta.Dir, name))
+		}
 	}
 	if meta.Kind != "claude" {
 		writeErr(w, http.StatusBadRequest, "unsupported_kind", "messages are available for claude sessions only")

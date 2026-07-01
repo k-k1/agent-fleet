@@ -155,6 +155,10 @@ func handleSessionStatus(w http.ResponseWriter, r *http.Request) {
 		if st, ok := readSessionStatus(sessionUUID(meta.Dir, name)); ok {
 			state = st.State
 		}
+		if state != "idle" && sessionAtIdlePrompt(name) {
+			state = "idle"
+			removeSessionStatus(sessionUUID(meta.Dir, name))
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"name": name, "kind": meta.Kind, "alive": alive, "status": state})
 }

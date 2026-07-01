@@ -89,6 +89,13 @@ func wireSession(m sessionMeta, alive bool) Session {
 			if st, ok := readSessionStatus(sid); ok {
 				state = st.State
 			}
+			// Self-heal a stale cache: a non-idle state that no longer matches the
+			// terminal (killed+resumed, rejected permission, abandoned question) —
+			// if the pane is back at the ready prompt, it's idle.
+			if state != "idle" && sessionAtIdlePrompt(m.Name) {
+				state = "idle"
+				removeSessionStatus(sid)
+			}
 		} else if !dirExists(m.Dir) {
 			// A stopped claude whose working dir was removed (its repo deleted) can't
 			// be resumed there; the Console marks it non-resumable (archive only).
@@ -621,6 +628,29 @@ func exactT(tn string) string { return "=" + tn }
 
 func tmuxHasSession(tn string) bool {
 	return exec.Command("tmux", "has-session", "-t", exactT(tn)).Run() == nil
+}
+
+// sessionAtIdlePrompt reports whether a claude pane is sitting at its ready input
+// prompt — used to self-heal a stale status cache (a killed+resumed session, or a
+// rejected permission / abandoned question, where no resolving hook fired). The
+// mode-cycle footer ("shift+tab to cycle" / "? for shortcuts") shows only at the ready
+// prompt; a busy spinner ("esc to interrupt") or any modal ("Enter to select", "Esc to
+// cancel", "Do you want to", …) means NOT idle. Best-effort TUI read.
+func sessionAtIdlePrompt(name string) bool {
+	out, err := exec.Command("tmux", "capture-pane", "-p", "-t", exactT(tmuxName(name))).Output()
+	if err != nil {
+		return false
+	}
+	s := string(out)
+	for _, busy := range []string{
+		"esc to interrupt", "Enter to select", "Esc to cancel", "to approve",
+		"Do you want to", "Would you like to proceed", "Ready to submit",
+	} {
+		if strings.Contains(s, busy) {
+			return false
+		}
+	}
+	return strings.Contains(s, "shift+tab to cycle") || strings.Contains(s, "? for shortcuts")
 }
 
 // buildSessionProgram returns the shell command tmux should run for a session.
