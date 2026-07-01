@@ -266,7 +266,7 @@ func (m *manager) buildResolvedLocked(ctx context.Context, ident Identity, mv Me
 	if err != nil {
 		return nil, internalErr(err)
 	}
-	rt := m.runtimeFor(ws, dekHex)
+	rt := m.runtimeFor(ws, dekHex, m.workspaceExtraEnv(ctx, ws)...)
 	m.rts[mv.MembershipID] = cachedRT{rt: rt, ws: ws}
 	return &resolved{rt: rt, ws: ws, ident: ident, mv: mv}, nil
 }
@@ -315,6 +315,14 @@ type tenantLimits struct {
 	// P3-9 idle-stop (docs/19): per-tenant, super_admin-editable.
 	SessionIdleTimeout string `json:"session_idle_timeout,omitempty"` // tier-1: idle claude -> halt
 	WSIdleTimeout      string `json:"ws_idle_timeout,omitempty"`      // tier-2: cold workspace -> docker stop
+	// AllowAgentSelfUpdate: the operator gate for member-driven CLI self-update
+	// (claude/opencode/codex). When true the CP injects AF_AGENT_SELF_UPDATE_ALLOWED=1
+	// so a member who opted in (toolchains.agentUpdate) gets the baked /usr/local CLIs
+	// updated to latest IN PLACE at container start; false (default) pins everyone to
+	// the image versions. Enforced in the entrypoint (the env gate), so a member
+	// editing toolchains.json can't bypass. Stop→Start recreates from the image, so
+	// turning the toggle off reverts to the baked versions.
+	AllowAgentSelfUpdate bool `json:"allow_agent_self_update,omitempty"`
 }
 
 func parseLimits(s string) tenantLimits {
@@ -517,8 +525,40 @@ func (m *manager) rootedDataDir(ws Workspace) string {
 // factory (Docker locally, ECS on AWS). It is the one construction call the rest
 // of the CP uses; the state/stop-only sites below also route through it (secretKey
 // "") so no concrete adapter leaks into manager.
-func (m *manager) runtimeFor(ws Workspace, secretKey string) Runtime {
-	return m.rtFactory.New(ws, secretKey)
+func (m *manager) runtimeFor(ws Workspace, secretKey string, extraEnv ...string) Runtime {
+	return m.rtFactory.New(ws, secretKey, extraEnv)
+}
+
+// evictTenantCache drops the memoized runtimes for a tenant so they are rebuilt
+// with fresh per-tenant env (e.g. the AF_AGENT_SELF_UPDATE_ALLOWED gate) on the
+// next request — called after an admin edits the tenant's limits, so the policy
+// takes effect at the following container start without a CP restart.
+func (m *manager) evictTenantCache(tenantID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for k, c := range m.rts {
+		if c.ws.TenantID == tenantID {
+			delete(m.rts, k)
+		}
+	}
+}
+
+// workspaceExtraEnv derives per-workspace container env from the workspace's tenant
+// policy — currently just the agent self-update gate (allow_agent_self_update):
+// when the tenant allows it, inject AF_AGENT_SELF_UPDATE_ALLOWED=1 so the entrypoint
+// honors a member's opt-in. Resolved when the runtime is built (cached per
+// membership); an admin limits edit evicts the tenant's cache (evictTenantCache) so
+// a policy change reaches the next container start. Best-effort: on a lookup error
+// we inject nothing (safe default = pinned).
+func (m *manager) workspaceExtraEnv(ctx context.Context, ws Workspace) []string {
+	t, err := m.store.GetTenant(ctx, ws.TenantID)
+	if err != nil {
+		return nil
+	}
+	if parseLimits(t.Limits).AllowAgentSelfUpdate {
+		return []string{"AF_AGENT_SELF_UPDATE_ALLOWED=1"}
+	}
+	return nil
 }
 
 // backfill records existing on-disk default-tenant users into the store on boot

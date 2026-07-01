@@ -1826,6 +1826,23 @@ body.row-resizing {
 .fork-btn + .mirror-toggle {
   margin-left: 8px;
 }
+/* Checkbox rows: the EnvTab agent-update opt-in and the AdminTab operator gate. */
+.ds-check,
+.admin-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.ds-check input,
+.admin-check input {
+  flex: 0 0 auto;
+}
+.ds-sub {
+  margin: 4px 0 0;
+  font-size: 12px;
+}
 /* Flat transcript (not cards): a scrolling column of full-width turns separated by
    a hairline, each with a small speaker header. block layout (not flex) so a turn
    takes its natural height and the column scrolls — a flex column shrinks children
