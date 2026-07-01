@@ -35,12 +35,12 @@ export const THEMES = [
 // Surface (top bar / left pane) background choices. Each color has a per-theme tint
 // so it always contrasts with the theme's text color. "default" = theme default.
 export const SURFACE_COLORS = [
-  { id: "default", label: "デフォルト", dark: null, light: null },
-  { id: "slate", label: "スレート", dark: "#1b2733", light: "#e2e8f0" },
-  { id: "blue", label: "ブルー", dark: "#16263f", light: "#dbe7fb" },
-  { id: "green", label: "グリーン", dark: "#15291f", light: "#dcefe0" },
-  { id: "purple", label: "パープル", dark: "#241a33", light: "#ece0fb" },
-  { id: "warm", label: "ウォーム", dark: "#2a1f17", light: "#f6e8da" },
+  { id: "default", label: "デフォルト", dark: null, light: null, accent: null },
+  { id: "slate", label: "スレート", dark: "#1b2733", light: "#e2e8f0", accent: "#6b8fc4" },
+  { id: "blue", label: "ブルー", dark: "#16263f", light: "#dbe7fb", accent: "#3b82f6" },
+  { id: "green", label: "グリーン", dark: "#15291f", light: "#dcefe0", accent: "#2fb872" },
+  { id: "purple", label: "パープル", dark: "#241a33", light: "#ece0fb", accent: "#a875f5" },
+  { id: "warm", label: "ウォーム", dark: "#2a1f17", light: "#f6e8da", accent: "#e0964a" },
 ];
 
 // Resolve a surface color id to its value for the active theme (null = no override).
@@ -48,6 +48,13 @@ export function surfaceValue(id, theme) {
   const c = SURFACE_COLORS.find((x) => x.id === id);
   if (!c) return null;
   return theme === "light" ? c.light : c.dark;
+}
+
+// The vivid accent that matches a surface color's family (theme-independent), used to
+// tint the chat highlights so they follow the chosen palette instead of a fixed blue.
+export function surfaceAccent(id) {
+  const c = SURFACE_COLORS.find((x) => x.id === id);
+  return (c && c.accent) || null;
 }
 
 // Linear blend between two #rrggbb colors (t in 0..1 toward `to`).
@@ -149,6 +156,13 @@ export function applyTheme(s) {
   // Unset => theme --bg.
   const vw = surfaceValue(s.viewerColor, theme);
   setVar("--viewer-bg", vw ? (theme === "light" ? mixHex(vw, "#ffffff", 0.45) : mixHex(vw, "#000000", 0.34)) : null);
+  // Chat highlights (question options, "あなた" block, gauge…) follow the chosen
+  // surface color's accent — viewer first (the chat sits on the viewer surface), then
+  // left pane / top bar; null falls back to the CSS default (--accent, the app blue).
+  setVar(
+    "--chat-accent",
+    surfaceAccent(s.viewerColor) || surfaceAccent(s.leftpaneColor) || surfaceAccent(s.topbarColor),
+  );
 }
 applyTheme(state);
 

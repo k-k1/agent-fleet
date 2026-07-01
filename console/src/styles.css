@@ -9,6 +9,7 @@
   --muted: #888;
   --muted2: #777;
   --accent: #6cf;
+  --chat-accent: var(--accent); /* chat highlights follow the chosen surface color (overridden in applyTheme) */
   --btn: #2b2b2b;
   --btn-h: #3a3a3a;
   --btn-border: #444;
@@ -1733,13 +1734,13 @@ body.row-resizing {
   height: 100%;
 }
 .cb-read {
-  background: color-mix(in srgb, var(--accent) 32%, transparent);
+  background: color-mix(in srgb, var(--chat-accent) 32%, transparent);
 }
 .cb-create {
-  background: color-mix(in srgb, var(--accent) 58%, transparent);
+  background: color-mix(in srgb, var(--chat-accent) 58%, transparent);
 }
 .cb-fresh {
-  background: var(--accent);
+  background: var(--chat-accent);
 }
 .cb-label {
   flex: none;
@@ -1781,16 +1782,16 @@ body.row-resizing {
   border-bottom: 1px solid var(--border);
 }
 .mirror-turn.user {
-  background: color-mix(in srgb, var(--accent) 6%, var(--bg));
+  background: color-mix(in srgb, var(--chat-accent) 6%, var(--bg));
 }
 /* Subagent (Task sidechain) turns: nested-looking left rule + faint tint so they
    read as "work happening under the main thread", not top-level replies. */
 .mirror-turn.sidechain {
-  border-left: 2px solid color-mix(in srgb, var(--accent) 45%, var(--border));
+  border-left: 2px solid color-mix(in srgb, var(--chat-accent) 45%, var(--border));
   background: color-mix(in srgb, var(--fg) 3%, var(--bg));
 }
 .mirror-turn.sidechain .mt-who {
-  color: color-mix(in srgb, var(--accent) 65%, var(--fg));
+  color: color-mix(in srgb, var(--chat-accent) 65%, var(--fg));
 }
 /* Header carries only the speaker; the timestamp + copy move to a footer row. */
 .mirror-turn-head {
@@ -1801,7 +1802,7 @@ body.row-resizing {
   font-weight: 600;
 }
 .mirror-turn.user .mt-who {
-  color: var(--accent);
+  color: var(--chat-accent);
 }
 /* The model that produced the turn, faint beside the speaker. */
 .mt-model {
@@ -1870,7 +1871,7 @@ body.row-resizing {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--accent);
+  background: var(--chat-accent);
   opacity: 0.35;
   animation: typing-bounce 1.2s infinite ease-in-out;
 }
@@ -1920,10 +1921,10 @@ body.row-resizing {
 /* AskUserQuestion: a prominent, answerable block (not a faint trace). */
 .mt-question {
   margin: 0.5em 0;
-  border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--border));
-  border-left: 3px solid var(--accent);
+  border: 1px solid color-mix(in srgb, var(--chat-accent) 40%, var(--border));
+  border-left: 3px solid var(--chat-accent);
   border-radius: 8px;
-  background: color-mix(in srgb, var(--accent) 6%, var(--bg));
+  background: color-mix(in srgb, var(--chat-accent) 6%, var(--bg));
   padding: 10px 12px;
 }
 .mq + .mq {
@@ -1940,7 +1941,7 @@ body.row-resizing {
 }
 .mq-header {
   font-weight: 600;
-  color: var(--accent);
+  color: var(--chat-accent);
 }
 .mq-multi {
   font-size: 11px;
@@ -1973,13 +1974,13 @@ body.row-resizing {
   min-width: 0;
 }
 .mq-opt:hover:not(:disabled) {
-  border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 10%, var(--bg));
+  border-color: var(--chat-accent);
+  background: color-mix(in srgb, var(--chat-accent) 10%, var(--bg));
 }
 /* Answered question: options are inert; the chosen one stays highlighted. */
 .mt-question.answered {
   opacity: 0.9;
-  border-left-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  border-left-color: color-mix(in srgb, var(--chat-accent) 45%, var(--border));
   background: color-mix(in srgb, var(--fg) 3%, var(--bg));
 }
 .mq-opt:disabled {
@@ -1988,11 +1989,11 @@ body.row-resizing {
 }
 .mq-opt.selected {
   opacity: 1;
-  border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 14%, var(--bg));
+  border-color: var(--chat-accent);
+  background: color-mix(in srgb, var(--chat-accent) 14%, var(--bg));
 }
 .mq-opt.selected .mq-opt-label {
-  color: var(--accent);
+  color: var(--chat-accent);
 }
 .mq-done {
   font-size: 11px;
@@ -2008,8 +2009,8 @@ body.row-resizing {
 }
 /* A toggled option in a multi-select / multi-question form (before submit). */
 .mq-opt.checked {
-  border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 12%, var(--bg));
+  border-color: var(--chat-accent);
+  background: color-mix(in srgb, var(--chat-accent) 12%, var(--bg));
 }
 /* The leading radio/checkbox marker (◉/○, ☑/☐, ✔). */
 .mq-mark {
@@ -2019,7 +2020,7 @@ body.row-resizing {
 }
 .mq-opt.selected .mq-mark,
 .mq-opt.checked .mq-mark {
-  color: var(--accent);
+  color: var(--chat-accent);
   opacity: 1;
 }
 .mq-opt-body {
@@ -2107,7 +2108,7 @@ body.row-resizing {
 }
 .mirror-input:focus {
   outline: none;
-  border-color: var(--accent);
+  border-color: var(--chat-accent);
 }
 .mirror-send {
   flex: none;
