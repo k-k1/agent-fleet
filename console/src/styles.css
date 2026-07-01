@@ -1959,6 +1959,27 @@ body.row-resizing {
   margin-top: 6px;
   font-size: 12px;
 }
+.mq-page {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+/* A toggled option in a multi-select / multi-question form (before submit). */
+.mq-opt.checked {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg));
+}
+.mq-check {
+  margin-right: 6px;
+  opacity: 0.85;
+}
+.mq-submit-row {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 10px;
+}
+.mq-submit {
+  padding: 6px 14px;
+}
 .mq-opt-label {
   font-weight: 600;
 }
