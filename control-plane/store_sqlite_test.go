@@ -91,3 +91,75 @@ func TestSQLiteStore(t *testing.T) {
 		t.Fatalf("maxport: %v %d", err, mx)
 	}
 }
+
+// Showback usage accounting (P3-9): AddUsage must accumulate per (membership, day),
+// ListUsage must window by day + enrich with tenant slug / member key, and the
+// tenant filter must scope correctly.
+func TestSQLiteUsage(t *testing.T) {
+	ctx := context.Background()
+	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer st.Close()
+	if err := st.migrate(ctx); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	tn, _ := st.EnsureDefaultTenant(ctx)
+	ident, _ := st.UpsertIdentity(ctx, "a@x.com", "a-x-com", "")
+	mem, err := st.EnsureMembership(ctx, ident.ID, tn.ID, "member")
+	if err != nil {
+		t.Fatalf("membership: %v", err)
+	}
+
+	// Two samples same day accumulate; a different day is its own bucket.
+	for _, s := range []int{300, 300} {
+		if err := st.AddUsage(ctx, mem.ID, tn.ID, "2026-06-30", s); err != nil {
+			t.Fatalf("add usage: %v", err)
+		}
+	}
+	if err := st.AddUsage(ctx, mem.ID, tn.ID, "2026-07-01", 600); err != nil {
+		t.Fatalf("add usage day2: %v", err)
+	}
+
+	rows, err := st.ListUsage(ctx, "", "2026-06-01", "2026-06-30")
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(rows) != 1 || rows[0].RunningSecs != 600 {
+		t.Fatalf("windowed rows = %+v, want 1 row of 600s", rows)
+	}
+	if rows[0].TenantSlug != "default" || rows[0].UserKey != "a-x-com" {
+		t.Fatalf("enrichment missing: %+v", rows[0])
+	}
+
+	// Full window sees both days; tenant filter for a foreign tenant sees none.
+	all, _ := st.ListUsage(ctx, "", "2026-06-01", "2026-07-31")
+	if len(all) != 2 {
+		t.Fatalf("full window rows = %d, want 2", len(all))
+	}
+	none, _ := st.ListUsage(ctx, "no-such-tenant", "2026-06-01", "2026-07-31")
+	if len(none) != 0 {
+		t.Fatalf("foreign tenant rows = %d, want 0", len(none))
+	}
+}
+
+// aggregateUsage must sum per member across days and compute hours.
+func TestAggregateUsage(t *testing.T) {
+	rows := []UsageRow{
+		{TenantID: "default", TenantSlug: "default", MembershipID: "m1", UserKey: "a", Day: "2026-06-30", RunningSecs: 3600},
+		{TenantID: "default", TenantSlug: "default", MembershipID: "m1", UserKey: "a", Day: "2026-07-01", RunningSecs: 1800},
+		{TenantID: "default", TenantSlug: "default", MembershipID: "m2", UserKey: "b", Day: "2026-07-01", RunningSecs: 900},
+	}
+	got := aggregateUsage(rows)
+	if len(got) != 2 {
+		t.Fatalf("totals = %d, want 2 members", len(got))
+	}
+	if got[0].UserKey != "a" || got[0].RunningSecs != 5400 || got[0].RunningHrs != 1.5 {
+		t.Fatalf("member a total wrong: %+v", got[0])
+	}
+	if got[1].UserKey != "b" || got[1].RunningHrs != 0.25 {
+		t.Fatalf("member b total wrong: %+v", got[1])
+	}
+}

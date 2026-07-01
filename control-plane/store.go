@@ -52,7 +52,7 @@ type MemberInfo struct {
 // scope is fixed at issuance (read | write | admin:dangerous), clamped to the
 // issuer's ceiling. Timestamps are RFC3339 ("" = unset).
 type PAT struct {
-	ID, IdentityID, MembershipID, Scope, Name string
+	ID, IdentityID, MembershipID, Scope, Name   string
 	CreatedAt, ExpiresAt, RevokedAt, LastUsedAt string
 }
 
@@ -61,6 +61,15 @@ type PAT struct {
 // it. TenantID scopes the entry ("" = deployment-wide). At is RFC3339.
 type AuditLog struct {
 	ID, TenantID, ActorKind, ActorID, Action, Target, Detail, At string
+}
+
+// UsageRow is one (membership, day) showback bucket enriched with human labels
+// for reporting (docs/roadmap.md P3-9). RunningSecs is accumulated workspace
+// occupancy in seconds. A member with no membership record still surfaces (its
+// workspace outlived the membership) with empty UserKey/Email.
+type UsageRow struct {
+	TenantID, TenantSlug, MembershipID, UserKey, Email, Day string
+	RunningSecs                                             int
 }
 
 // Workspace is one container per Membership (= identity × tenant).
@@ -132,6 +141,13 @@ type Store interface {
 	// ListAuditByTenant serves the most recent entries (newest first) for a tenant.
 	InsertAudit(ctx context.Context, a AuditLog) error
 	ListAuditByTenant(ctx context.Context, tenantID string, limit int) ([]AuditLog, error)
+
+	// Showback usage (docs/roadmap.md P3-9). AddUsage accumulates workspace
+	// running-seconds into the (membership, day) bucket; ListUsage returns the
+	// per-day rows in [fromDay, toDay] (inclusive, YYYY-MM-DD), scoped to one
+	// tenant or, when tenantID=="", every tenant (super_admin).
+	AddUsage(ctx context.Context, membershipID, tenantID, day string, secs int) error
+	ListUsage(ctx context.Context, tenantID, fromDay, toDay string) ([]UsageRow, error)
 
 	Close() error
 }
