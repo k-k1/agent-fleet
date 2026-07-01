@@ -1877,6 +1877,70 @@ body.row-resizing {
   text-overflow: ellipsis;
   min-width: 0;
 }
+/* AskUserQuestion: a prominent, answerable block (not a faint trace). */
+.mt-question {
+  margin: 0.5em 0;
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--border));
+  border-left: 3px solid var(--accent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 6%, var(--bg));
+  padding: 10px 12px;
+}
+.mq + .mq {
+  margin-top: 12px;
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+.mq-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+.mq-header {
+  font-weight: 600;
+  color: var(--accent);
+}
+.mq-multi {
+  font-size: 11px;
+}
+.mq-text {
+  line-height: 1.5;
+  margin-bottom: 8px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.mq-options {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.mq-opt {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  text-align: left;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+  cursor: pointer;
+  font: inherit;
+}
+.mq-opt:hover {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg));
+}
+.mq-opt-label {
+  font-weight: 600;
+}
+.mq-opt-desc {
+  font-size: 12px;
+  opacity: 0.75;
+  line-height: 1.4;
+}
 .mirror-turn.assistant .markdown {
   /* MarkdownView is shared with the file viewer, which centers a max-width column
      (margin:0 auto). In the transcript that reads as "everything is indented", so

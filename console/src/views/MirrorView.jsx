@@ -93,22 +93,30 @@ export default function MirrorView({ session, sessionMeta, active, mirror, onTog
     if (active) inputRef.current?.focus();
   }, [active]);
 
-  const send = async () => {
-    const text = draft.trim();
-    if (!text || sending) return;
+  // sendPrompt submits arbitrary text (the composer, or an answer chosen from an
+  // AskUserQuestion block). Both route through the same tmux send-keys endpoint.
+  const sendPrompt = async (text) => {
+    const t = (text || "").trim();
+    if (!t || sending) return;
     setSending(true);
-    setDraft("");
     statusRef.current = "working";
     setStatus("working");
     try {
-      await apiJSON(`api/sessions/${q(session)}/input`, "POST", { prompt: text });
+      await apiJSON(`api/sessions/${q(session)}/input`, "POST", { prompt: t });
     } catch {
       /* the Agent also marks working; the next poll reconciles real state */
     }
     setSending(false);
-    inputRef.current?.focus();
     // Pick up the just-logged user turn quickly rather than waiting a full interval.
     setTimeout(() => tickRef.current?.(), 250);
+  };
+
+  const send = async () => {
+    const text = draft.trim();
+    if (!text) return;
+    setDraft("");
+    await sendPrompt(text);
+    inputRef.current?.focus();
   };
 
   const onKeyDown = (e) => {
@@ -178,7 +186,7 @@ export default function MirrorView({ session, sessionMeta, active, mirror, onTog
             ターンごとの Markdown で表示されます。
           </div>
         ) : (
-          renderGroups(groups)
+          renderGroups(groups, sendPrompt)
         )}
       </div>
 
@@ -334,7 +342,7 @@ function ContextBar({ read, create, fresh, model }) {
 // renderGroups lays the blocks out, inserting a context strip (branch · cwd) above a
 // block whenever either changes from the previously shown one — so a branch switch or
 // cd is marked once, not repeated on every turn. Empty context leaves the marker as-is.
-function renderGroups(groups) {
+function renderGroups(groups, onAnswer) {
   const els = [];
   let prevCtx = "";
   for (const g of groups) {
@@ -343,7 +351,7 @@ function renderGroups(groups) {
       els.push(<ContextLine key={"ctx-" + g.idx} branch={g.branch} cwd={g.cwd} />);
     }
     if (ctx) prevCtx = ctx;
-    els.push(<Turn key={g.idx} turn={g} />);
+    els.push(<Turn key={g.idx} turn={g} onAnswer={onAnswer} />);
   }
   return els;
 }
@@ -365,7 +373,7 @@ function ContextLine({ branch, cwd }) {
 // Turn renders one conversation block: a header (who + model), the body (user prompt
 // as text, assistant reply as Markdown with faint tool traces), and a footer (time +
 // token usage + copy). Subagent (sidechain) turns get a distinct label and tint.
-function Turn({ turn }) {
+function Turn({ turn, onAnswer }) {
   const isUser = turn.role === "user";
   const who = isUser ? "あなた" : turn.sidechain ? "サブエージェント" : "Claude";
   const ctxTok = turn.inTok + turn.cacheRead + turn.cacheCreate;
@@ -387,6 +395,8 @@ function Turn({ turn }) {
                 <span className="mt-tool-name">{p.tool}</span>
                 {p.info && <span className="mt-tool-info">{p.info}</span>}
               </div>
+            ) : p.kind === "question" ? (
+              <QuestionBlock key={i} questions={p.questions} onAnswer={onAnswer} />
             ) : (
               <MarkdownView key={i} source={p.text} />
             ),
@@ -402,6 +412,40 @@ function Turn({ turn }) {
         )}
         <CopyButton text={turn.text} />
       </div>
+    </div>
+  );
+}
+
+// QuestionBlock renders an AskUserQuestion: header + prompt + clickable options. A
+// click submits that option's label as the answer via the same send-keys input path
+// (best-effort: it types the label into the session, as if answered in the terminal).
+function QuestionBlock({ questions, onAnswer }) {
+  return (
+    <div className="mt-question">
+      {(questions || []).map((qn, qi) => (
+        <div className="mq" key={qi}>
+          <div className="mq-head">
+            <Icon name="comment-discussion" />
+            {qn.header && <span className="mq-header">{qn.header}</span>}
+            {qn.multiSelect && <span className="mq-multi muted">複数選択可</span>}
+          </div>
+          {qn.question && <div className="mq-text">{qn.question}</div>}
+          <div className="mq-options">
+            {(qn.options || []).map((o, oi) => (
+              <button
+                type="button"
+                className="mq-opt"
+                key={oi}
+                onClick={() => onAnswer && onAnswer(o.label)}
+                title={o.description || o.label}
+              >
+                <span className="mq-opt-label">{o.label}</span>
+                {o.description && <span className="mq-opt-desc">{o.description}</span>}
+              </button>
+            ))}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
