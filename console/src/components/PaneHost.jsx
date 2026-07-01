@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useApp } from "../state.jsx";
+import { paneOrdinals } from "../lib/panebadge.js";
 import Pane from "./Pane.jsx";
 
 const D = 6; // divider thickness in px
@@ -38,6 +39,10 @@ export default function PaneHost() {
   const N = cols.length;
   const ratios = layout.colRatios;
   const total = cols.reduce((n, c) => n + c.panes.length, 0);
+
+  // Pane id → visual-order ordinal (1-based), the badge shared with the Sessions
+  // list and the layout mini-map. Only meaningful when split (total > 1).
+  const ordinalById = useMemo(() => paneOrdinals(layout), [layout]);
 
   // Cumulative left-ratio before column i (sum of widths to its left).
   const cum = [];
@@ -119,6 +124,7 @@ export default function PaneHost() {
       onSwap={swapPanes}
       onDropSplit={dropSplit}
       sessionMeta={pane.session ? sessionByName.get(pane.session) : null}
+      ordinal={total > 1 ? ordinalById.get(pane.id) : null}
     />
   );
 
