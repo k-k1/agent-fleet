@@ -54,9 +54,16 @@ func runSessionStatusHook(args []string) {
 	}
 	// Read stdin when claude needs the sid from it, or when codex wants to capture
 	// its own session id for resume (status itself is keyed by the baked-in slot sid).
+	// For the AskUserQuestion PreToolUse hook (state=question) the same stdin carries
+	// tool_input.questions — capture it so the Console can show/answer the PENDING
+	// question (the tool_use isn't written to the transcript until it's answered).
+	var questions json.RawMessage
 	if sid == "" || codexMarker {
 		var in struct {
 			SessionID string `json:"session_id"`
+			ToolInput struct {
+				Questions json.RawMessage `json:"questions"`
+			} `json:"tool_input"`
 		}
 		_ = json.NewDecoder(os.Stdin).Decode(&in)
 		if codexMarker {
@@ -65,6 +72,7 @@ func runSessionStatusHook(args []string) {
 			}
 		} else {
 			sid = in.SessionID // claude
+			questions = in.ToolInput.Questions
 		}
 	}
 	if sid == "" {
@@ -73,7 +81,40 @@ func runSessionStatusHook(args []string) {
 	_ = os.MkdirAll(sessionStatusDir(), 0o700)
 	b, _ := json.Marshal(sessionStatus{State: state, TS: time.Now().Format(time.RFC3339)})
 	_ = os.WriteFile(sessionStatusPath(sid), b, 0o600)
+	// Persist/clear the pending question alongside the status.
+	if state == "question" && len(questions) > 0 {
+		writePendingQuestion(sid, questions)
+	} else if state != "question" {
+		removePendingQuestion(sid)
+	}
 }
+
+// A pending AskUserQuestion (the tool_input.questions array), kept only while the
+// session is in the question state so the Console can render and answer it.
+func pendingQuestionDir() string {
+	return filepath.Join(homeDir(), ".config", "agent-fleet", "pending-question")
+}
+
+func pendingQuestionPath(sid string) string {
+	return filepath.Join(pendingQuestionDir(), sid+".json")
+}
+
+func writePendingQuestion(sid string, questions json.RawMessage) {
+	if err := os.MkdirAll(pendingQuestionDir(), 0o700); err != nil {
+		return
+	}
+	_ = os.WriteFile(pendingQuestionPath(sid), questions, 0o600)
+}
+
+func readPendingQuestion(sid string) (json.RawMessage, bool) {
+	b, err := os.ReadFile(pendingQuestionPath(sid))
+	if err != nil || len(b) == 0 {
+		return nil, false
+	}
+	return b, true
+}
+
+func removePendingQuestion(sid string) { _ = os.Remove(pendingQuestionPath(sid)) }
 
 func readSessionStatus(sid string) (sessionStatus, bool) {
 	var s sessionStatus
@@ -87,7 +128,10 @@ func readSessionStatus(sid string) (sessionStatus, bool) {
 	return s, true
 }
 
-func removeSessionStatus(sid string) { _ = os.Remove(sessionStatusPath(sid)) }
+func removeSessionStatus(sid string) {
+	_ = os.Remove(sessionStatusPath(sid))
+	removePendingQuestion(sid)
+}
 
 // agentExe is the absolute path to this binary, used to build hook commands that
 // resolve in an agent's hook context regardless of PATH.

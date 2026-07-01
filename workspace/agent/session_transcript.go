@@ -102,10 +102,19 @@ func handleSessionMessages(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
+	resp := map[string]any{
 		"name": name, "messages": turns, "cursor": len(lines),
 		"status": state, "alive": alive,
-	})
+	}
+	// A currently-pending AskUserQuestion isn't in the transcript yet (claude writes
+	// the tool_use only after it's answered), so surface it from the status hook's
+	// captured tool_input so the Console can render and answer it.
+	if state == "question" {
+		if pq, ok := readPendingQuestion(sid); ok {
+			resp["pendingQuestions"] = pq
+		}
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // parseTurn builds a chatTurn from a transcript line. ok is false for lines that

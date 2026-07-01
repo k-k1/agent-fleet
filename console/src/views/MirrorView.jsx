@@ -26,6 +26,7 @@ export default function MirrorView({ session, sessionMeta, active, mirror, onTog
   const modSend = settings.mirrorSend !== "enter";
   const [turns, setTurns] = useState([]); // {role:'user'|'assistant', text, ts, idx}
   const [status, setStatus] = useState("");
+  const [pending, setPending] = useState(null); // currently-awaiting AskUserQuestion
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
   const cursorRef = useRef(0);
@@ -41,6 +42,7 @@ export default function MirrorView({ session, sessionMeta, active, mirror, onTog
     statusRef.current = "";
     setTurns([]);
     setStatus("");
+    setPending(null);
   }, [session]);
 
   // Poll the transcript since our cursor while this view is mounted (Pane only mounts
@@ -63,6 +65,7 @@ export default function MirrorView({ session, sessionMeta, active, mirror, onTog
             statusRef.current = d.status;
             setStatus(d.status);
           }
+          setPending(Array.isArray(d.pendingQuestions) ? d.pendingQuestions : null);
         }
       } catch {
         /* transient; retry on the next tick */
@@ -82,11 +85,11 @@ export default function MirrorView({ session, sessionMeta, active, mirror, onTog
     };
   }, [session]);
 
-  // Keep the conversation pinned to the latest turn.
+  // Keep the conversation pinned to the latest turn (or the pending question).
   useEffect(() => {
     const el = bodyRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [turns]);
+  }, [turns, pending]);
 
   // Focus the composer when this pane becomes the active chat.
   useEffect(() => {
@@ -180,13 +183,24 @@ export default function MirrorView({ session, sessionMeta, active, mirror, onTog
       {ctxUsage && <ContextBar {...ctxUsage} />}
 
       <div className="mirror-body" ref={bodyRef}>
-        {groups.length === 0 ? (
+        {groups.length === 0 && !pending ? (
           <div className="mirror-empty muted">
             まだ会話はありません。下の欄からプロンプトを送るか、ターミナルで対話すると、ここに
             ターンごとの Markdown で表示されます。
           </div>
         ) : (
           renderGroups(groups, sendPrompt)
+        )}
+        {pending && pending.length > 0 && (
+          <div className="mirror-turn assistant">
+            <div className="mirror-turn-head">
+              <span className="mt-who">Claude</span>
+              <span className="mt-model muted">質問中</span>
+            </div>
+            <div className="mirror-turn-body">
+              <QuestionBlock questions={pending} onAnswer={sendPrompt} />
+            </div>
+          </div>
         )}
       </div>
 
