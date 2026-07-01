@@ -163,7 +163,10 @@ export function AppProvider({ children }) {
     (patch) => {
       const cur = layoutRef.current;
       const fresh = (id) => ({ ...blankPane(id), ...patch });
-      if (cur.cols.length < MAX_COLS) {
+      // A phone shows only the first column (others are hidden), so a new right column
+      // would be invisible — split the active column downward (top/bottom) instead.
+      const mobile = typeof window !== "undefined" && window.matchMedia("(max-width: 760px)").matches;
+      if (!mobile && cur.cols.length < MAX_COLS) {
         const id = newPaneId();
         const cols = [...cur.cols, { id: newColId(), rowRatio: 0.5, panes: [fresh(id)] }];
         commit({ ...cur, cols, colRatios: equalRatios(cols.length), activeId: id });
