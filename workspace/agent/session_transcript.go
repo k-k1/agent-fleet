@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Structured transcript for the Console chat view. Where /output (session_io.go)
@@ -107,7 +108,16 @@ func handleSessionMessages(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	sid := sessionUUID(meta.Dir, name)
-	lines := transcriptLines(sid)
+	lines, jpath, jmatched := transcriptRead(sid)
+	// The client's cursor is a line index into the jsonl. If it's now past the end,
+	// the log shrank or was replaced (compaction, or a different <sid>.jsonl became
+	// the live one) — the cursor is stale. Restart from the top and tell the client
+	// to reload from scratch instead of silently appending nothing.
+	reset := false
+	if since > len(lines) {
+		since = 0
+		reset = true
+	}
 	// A transcript AskUserQuestion is always already answered (claude writes the
 	// tool_use only after the answer), so resolve each one's chosen answer from its
 	// tool_result for display. The currently-pending question is separate (below).
@@ -131,7 +141,13 @@ func handleSessionMessages(w http.ResponseWriter, r *http.Request) {
 	}
 	resp := map[string]any{
 		"name": name, "messages": turns, "cursor": len(lines),
-		"status": state, "alive": alive,
+		"status": state, "alive": alive, "reset": reset,
+		// Diagnostics: which jsonl we're reading, how long it is, when it last changed,
+		// and how many <sid>.jsonl matched (>1 means siblings exist — the newest wins).
+		// Lets us confirm from real data whether the file is found and growing, vs a
+		// message merely queued in the TUI (uncommitted).
+		"jsonlPath": jpath, "jsonlLines": len(lines),
+		"jsonlMtime": jsonlMtime(jpath).Format(time.RFC3339), "jsonlMatches": len(jmatched),
 	}
 	// A currently-pending AskUserQuestion / ExitPlanMode isn't in the transcript yet
 	// (claude writes the tool_use only after it's resolved), so surface it from the

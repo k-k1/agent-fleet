@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -216,24 +217,54 @@ func handleSessionOutput(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// transcriptLines reads the session's jsonl conversation log as raw lines. claude
-// stores one JSON event per line; we treat the line count as the cursor.
-func transcriptLines(sid string) [][]byte {
+// jsonlByMtime returns sid's conversation logs newest-first. claude can leave more
+// than one <sid>.jsonl under projects/* (a cwd change, a CLAUDE_CONFIG_DIR switch,
+// or a stale log from an earlier run all produce siblings under different project
+// dirs). glob order is lexical, so paths[0] can be an OLD file that never grows —
+// the chat then freezes on stale content. The live log is the most recently written
+// one, so we sort by mtime and read that.
+func jsonlByMtime(sid string) []string {
 	paths := jsonlPaths(sid)
-	if len(paths) == 0 {
-		return nil
-	}
-	b, err := os.ReadFile(paths[0])
+	sort.SliceStable(paths, func(i, j int) bool {
+		return jsonlMtime(paths[i]).After(jsonlMtime(paths[j]))
+	})
+	return paths
+}
+
+func jsonlMtime(p string) time.Time {
+	fi, err := os.Stat(p)
 	if err != nil {
-		return nil
+		return time.Time{}
 	}
-	var out [][]byte
+	return fi.ModTime()
+}
+
+// transcriptRead reads the session's live jsonl (newest by mtime) as raw lines —
+// one JSON event per line, the line count being the cursor — and also returns the
+// chosen path and every matching path (for the /messages diagnostics).
+func transcriptRead(sid string) (lines [][]byte, path string, matched []string) {
+	matched = jsonlByMtime(sid)
+	if len(matched) == 0 {
+		return nil, "", nil
+	}
+	path = matched[0]
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, path, matched
+	}
 	for _, ln := range strings.Split(string(b), "\n") {
 		if strings.TrimSpace(ln) != "" {
-			out = append(out, []byte(ln))
+			lines = append(lines, []byte(ln))
 		}
 	}
-	return out
+	return lines, path, matched
+}
+
+// transcriptLines is the lines-only view (the /output MCP poll doesn't need the
+// source path); both share the newest-file selection above.
+func transcriptLines(sid string) [][]byte {
+	lines, _, _ := transcriptRead(sid)
+	return lines
 }
 
 // assistantText extracts the concatenated text blocks from an assistant event
