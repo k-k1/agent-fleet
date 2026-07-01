@@ -16,10 +16,12 @@ import (
 // server.forward-headers-strategy) generate correct absolute URLs/redirects under
 // the /preview/{port} sub-path. HTTP only for now; WebSocket/HMR is a follow-up.
 func (c config) handlePreview(w http.ResponseWriter, r *http.Request) {
-	rt, ok := c.rtFor(w, r)
+	res, ok := c.resolvedFor(w, r)
 	if !ok {
 		return
 	}
+	rt := res.rt
+	c.mgr.conns.touch(res.ws.ID) // P3-9: preview traffic keeps the workspace warm
 	port := r.PathValue("port")
 	if n, err := strconv.Atoi(port); err != nil || n < 1 || n > 65535 {
 		http.Error(w, "bad preview port", http.StatusBadRequest)

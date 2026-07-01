@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 // manager owns the set of per-membership Workspace runtimes. As of P3-2 (docs/14)
@@ -27,6 +28,7 @@ type manager struct {
 	mu    sync.Mutex
 	rts   map[string]cachedRT // cache keyed by membership id; DB is source of truth
 	store Store
+	conns *connRegistry // P3-9: live activity/attachment tracking for idle-stop
 
 	// template fields shared by every runtime
 	image      string
@@ -295,10 +297,16 @@ func (m *manager) resolve(ctx context.Context, key, email, tenantSel string) (*d
 	return res.rt, nil
 }
 
-// tenantLimits is the parsed tenant.limits JSON (0 = unlimited).
+// tenantLimits is the parsed tenant.limits JSON (0 = unlimited for the int
+// quotas). The idle timeouts are human-editable duration strings (e.g. "30m"):
+// "" => fall back to the deployment default (env); "0" => idle-stop disabled for
+// this tenant. See idleTimeout for resolution.
 type tenantLimits struct {
 	MaxWorkspaces int `json:"max_workspaces"`
 	MaxSessions   int `json:"max_sessions"`
+	// P3-9 idle-stop (docs/19): per-tenant, super_admin-editable.
+	SessionIdleTimeout string `json:"session_idle_timeout,omitempty"` // tier-1: idle claude -> halt
+	WSIdleTimeout      string `json:"ws_idle_timeout,omitempty"`      // tier-2: cold workspace -> docker stop
 }
 
 func parseLimits(s string) tenantLimits {
@@ -307,6 +315,20 @@ func parseLimits(s string) tenantLimits {
 		_ = json.Unmarshal([]byte(s), &l)
 	}
 	return l
+}
+
+// idleTimeout resolves a tenant idle-timeout field to a duration and whether
+// idle-stop is enabled. Empty => the deployment default (def); an explicit "0"
+// (or any non-positive value) disables idle-stop for that tenant; a bad string
+// falls back to the default rather than silently disabling.
+func idleTimeout(tenantVal string, def time.Duration) (d time.Duration, enabled bool) {
+	d = def
+	if tenantVal != "" {
+		if p, err := time.ParseDuration(tenantVal); err == nil {
+			d = p
+		}
+	}
+	return d, d > 0
 }
 
 // countRunningInTenant counts running Workspace containers in a tenant via docker

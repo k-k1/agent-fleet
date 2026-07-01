@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, apiJSON, rawJSON } from "../api.js";
+import { api, apiJSON, rawJSON, errText } from "../api.js";
 import Icon from "../components/Icon.jsx";
 import ConfirmDialog from "../components/ConfirmDialog.jsx";
 import { kindLabel, kindClass, kindIcon } from "../lib/sessionkind.js";
@@ -189,12 +189,17 @@ function NewTenant({ onCreated, onCancel }) {
 function TenantView({ slug, tenant, isSuper, onChanged, onOpenMember }) {
   const [maxWs, setMaxWs] = useState(tenant?.max_workspaces || 0);
   const [maxSs, setMaxSs] = useState(tenant?.max_sessions || 0);
+  const [sessIdle, setSessIdle] = useState(tenant?.session_idle_timeout || "");
+  const [wsIdle, setWsIdle] = useState(tenant?.ws_idle_timeout || "");
   const [saved, setSaved] = useState(false);
+  const [err, setErr] = useState("");
   const [members, setMembers] = useState(null);
 
   useEffect(() => {
     setMaxWs(tenant?.max_workspaces || 0);
     setMaxSs(tenant?.max_sessions || 0);
+    setSessIdle(tenant?.session_idle_timeout || "");
+    setWsIdle(tenant?.ws_idle_timeout || "");
   }, [slug, tenant]);
 
   const loadMembers = useCallback(async () => {
@@ -211,10 +216,17 @@ function TenantView({ slug, tenant, isSuper, onChanged, onOpenMember }) {
   }, [loadMembers]);
 
   const saveLimits = async () => {
-    await apiJSON(`api/admin/tenants/${encodeURIComponent(slug)}/limits`, "PUT", {
+    setErr("");
+    const res = await apiJSON(`api/admin/tenants/${encodeURIComponent(slug)}/limits`, "PUT", {
       max_workspaces: +maxWs || 0,
       max_sessions: +maxSs || 0,
+      session_idle_timeout: sessIdle.trim(),
+      ws_idle_timeout: wsIdle.trim(),
     });
+    if (res?.error) {
+      setErr(errText(res.error));
+      return;
+    }
     setSaved(true);
     setTimeout(() => setSaved(false), 1500);
     onChanged();
@@ -234,8 +246,25 @@ function TenantView({ slug, tenant, isSuper, onChanged, onOpenMember }) {
               最大 Session
               <input type="number" min="0" value={maxSs} onChange={(e) => setMaxSs(e.target.value)} />
             </label>
+          </div>
+          <h4>アイドル自動停止（空=無効 / デプロイ既定に従う）</h4>
+          <div className="form-row">
+            <label>
+              Session halt まで
+              <input type="text" placeholder="例 30m（空=無効）" value={sessIdle} onChange={(e) => setSessIdle(e.target.value)} />
+            </label>
+            <label>
+              Workspace 停止まで
+              <input type="text" placeholder="例 60m（空=無効）" value={wsIdle} onChange={(e) => setWsIdle(e.target.value)} />
+            </label>
+          </div>
+          <p className="muted" style={{ margin: "0 0 8px" }}>
+            放置された claude セッションは Session halt まで で停止中（再開可）に畳まれ、接続も稼働も無い Workspace は Workspace 停止まで で docker 停止します。書式は <code>30m</code> / <code>2h</code> / <code>90s</code>。空欄はデプロイ既定（既定は無効）に従い、<code>0</code> で明示的に無効化します。
+          </p>
+          <div className="form-row">
             <button onClick={saveLimits} className="primary">保存</button>
             {saved && <span className="saved-note"><Icon name="check" /> 保存しました</span>}
+            {err && <span className="form-err">{err}</span>}
           </div>
         </section>
       )}

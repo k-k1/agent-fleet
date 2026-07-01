@@ -21,10 +21,12 @@ import (
 // which fronts the per-workspace pk-webui. httputil.ReverseProxy carries both
 // plain HTTP and WebSocket upgrades.
 func (c config) handleOcweb(w http.ResponseWriter, r *http.Request) {
-	rt, ok := c.rtFor(w, r)
+	res, ok := c.resolvedFor(w, r)
 	if !ok {
 		return
 	}
+	rt := res.rt
+	c.mgr.conns.touch(res.ws.ID) // P3-9: opencode web traffic keeps the workspace warm
 	agentURL, err := url.Parse(rt.agentBase())
 	if err != nil {
 		http.Error(w, "bad agent base", http.StatusBadGateway)
