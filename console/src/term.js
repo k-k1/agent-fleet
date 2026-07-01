@@ -8,6 +8,7 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
+import { coarsePointer } from "./lib/device.js";
 import { WebglAddon } from "@xterm/addon-webgl";
 import "@xterm/xterm/css/xterm.css";
 import { wsURL } from "./api.js";
@@ -413,8 +414,12 @@ export function fit(paneId) {
 }
 
 // focusTerm moves keyboard focus into a pane's terminal so the user can type right
-// after launching/attaching a session without clicking first.
+// after launching/attaching a session without clicking first. On touch devices this
+// is a no-op: auto-focusing xterm's textarea would pop the on-screen keyboard just
+// from switching to read a terminal. There the user taps the terminal to focus (and
+// summon the keyboard) when they actually want to type.
 export function focusTerm(paneId) {
+  if (coarsePointer()) return;
   const it = inst(paneId);
   try {
     it && it.term && it.term.focus();
