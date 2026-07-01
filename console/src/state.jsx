@@ -167,33 +167,60 @@ export function AppProvider({ children }) {
   );
 
   // openInNewPane creates a fresh pane and opens `patch` in it (made active) in a
-  // SINGLE commit — splitting in one call then opening in another would read a
-  // stale layoutRef and patch the old active pane instead. It prefers a new right
-  // column; when columns are capped it splits the active pane's column downward;
-  // when fully split (4×2) it falls back to opening in the active pane.
+  // SINGLE commit — splitting in one call then opening in another would read a stale
+  // layoutRef and patch the old active pane instead. It grows to the full 4×2 = 8
+  // panes: first fills columns (up to MAX_COLS), then splits any single-pane column
+  // downward (the active one first, else the leftmost) until every column holds 2.
+  // Once all 8 slots are used it overwrites the LAST pane (bottom of the rightmost
+  // column) so a further open still lands somewhere instead of being capped.
   const openInNewPane = useCallback(
     (patch) => {
       const cur = layoutRef.current;
       const fresh = (id) => ({ ...blankPane(id), ...patch });
-      // A phone shows only the first column (others are hidden), so a new right column
-      // would be invisible — split the active column downward (top/bottom) instead.
-      const mobile = typeof window !== "undefined" && window.matchMedia("(max-width: 760px)").matches;
-      if (!mobile && cur.cols.length < MAX_COLS) {
-        const id = newPaneId();
-        const cols = [...cur.cols, { id: newColId(), rowRatio: 0.5, panes: [fresh(id)] }];
-        commit({ ...cur, cols, colRatios: equalRatios(cols.length), activeId: id });
-        return;
-      }
-      const col = cur.cols.find((c) => c.panes.some((p) => p.id === cur.activeId));
-      if (col && col.panes.length < 2) {
+      const splitCol = (col) => {
         const id = newPaneId();
         const cols = cur.cols.map((c) =>
           c.id === col.id ? { ...c, rowRatio: 0.5, panes: [...c.panes, fresh(id)] } : c,
         );
         commit({ ...cur, cols, activeId: id });
+      };
+
+      // A phone shows only the first column (others are hidden), so a new right column
+      // would be invisible — grow the active column downward (top/bottom), max 2.
+      const mobile = typeof window !== "undefined" && window.matchMedia("(max-width: 760px)").matches;
+      if (mobile) {
+        const col = cur.cols.find((c) => c.panes.some((p) => p.id === cur.activeId)) || cur.cols[0];
+        if (col && col.panes.length < 2) splitCol(col);
+        else openActive(patch);
         return;
       }
-      openActive(patch); // fully split — nowhere to grow; reuse the active pane
+
+      // Desktop: add a new right column while under the column cap.
+      if (cur.cols.length < MAX_COLS) {
+        const id = newPaneId();
+        const cols = [...cur.cols, { id: newColId(), rowRatio: 0.5, panes: [fresh(id)] }];
+        commit({ ...cur, cols, colRatios: equalRatios(cols.length), activeId: id });
+        return;
+      }
+
+      // Columns are capped: split a single-pane column (the active one first, else the
+      // leftmost) so all four fill to two rows — up to 8 panes.
+      const activeCol = cur.cols.find((c) => c.panes.some((p) => p.id === cur.activeId));
+      const target = activeCol && activeCol.panes.length < 2 ? activeCol : cur.cols.find((c) => c.panes.length < 2);
+      if (target) {
+        splitCol(target);
+        return;
+      }
+
+      // All 8 slots are full — overwrite the last pane (bottom of the rightmost column).
+      const lastCol = cur.cols[cur.cols.length - 1];
+      const last = lastCol.panes[lastCol.panes.length - 1];
+      const cols = cur.cols.map((c) =>
+        c.id === lastCol.id
+          ? { ...c, panes: c.panes.map((p) => (p.id === last.id ? { ...blankPane(last.id), ...patch } : p)) }
+          : c,
+      );
+      commit({ ...cur, cols, activeId: last.id });
     },
     [commit, openActive],
   );
