@@ -2046,6 +2046,101 @@ body.row-resizing {
   text-overflow: ellipsis;
   min-width: 0;
 }
+/* Edit-family traces are clickable — they open a diff pane. Reset the button and
+   lift the opacity so they read as interactive, not just a faint trace. */
+button.mt-tool-diff {
+  width: 100%;
+  padding: 2px 6px;
+  border: 0;
+  border-radius: 5px;
+  background: none;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  opacity: 0.6;
+  transition: opacity 0.12s, background 0.12s;
+}
+button.mt-tool-diff:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--chat-accent) 12%, transparent);
+}
+button.mt-tool-diff .codicon {
+  color: var(--chat-accent);
+}
+
+/* Diff pane: an edit-family tool's before/after, rendered line-level. */
+.diffview .dv-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  font-family: var(--viewer-font, var(--mono));
+  font-size: var(--viewer-size, 13px);
+  line-height: 1.5;
+  background: transparent;
+}
+.dv-stat {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.dv-stat .dv-add {
+  color: #3fb950;
+  font-weight: 600;
+}
+.dv-stat .dv-del {
+  color: #f85149;
+  font-weight: 600;
+}
+.dv-hunk + .dv-hunk {
+  border-top: 1px solid var(--border);
+}
+.dv-hunk-head {
+  padding: 3px 10px;
+  font-size: 11px;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+}
+.dv-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.dv-row td {
+  padding: 0 4px;
+  vertical-align: top;
+}
+.dv-gutter {
+  width: 1%;
+  white-space: nowrap;
+  text-align: right;
+  color: var(--muted);
+  opacity: 0.55;
+  user-select: none;
+  padding: 0 6px;
+}
+.dv-mark {
+  width: 1ch;
+  text-align: center;
+  user-select: none;
+  color: var(--muted);
+}
+.dv-code {
+  width: 100%;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.dv-row.dv-add {
+  background: rgba(63, 185, 80, 0.14);
+}
+.dv-row.dv-add .dv-mark {
+  color: #3fb950;
+}
+.dv-row.dv-del {
+  background: rgba(248, 81, 73, 0.14);
+}
+.dv-row.dv-del .dv-mark {
+  color: #f85149;
+}
+
 /* AskUserQuestion: a prominent, answerable block (not a faint trace). */
 .mt-question {
   margin: 0.5em 0;

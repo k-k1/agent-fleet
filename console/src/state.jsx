@@ -26,7 +26,7 @@ export const useApp = () => useContext(AppContext);
 // A pane descriptor. kind drives which view renders; the *Path/Repo/session fields
 // are the per-kind payload. Empty terminal pane = "セッション未接続".
 function blankPane(id, patch) {
-  return { id, kind: "terminal", session: null, filePath: null, scmRepo: null, docTitle: null, docContent: null, ...patch };
+  return { id, kind: "terminal", session: null, filePath: null, scmRepo: null, docTitle: null, docContent: null, diffTool: null, diffEdits: null, ...patch };
 }
 
 const equalRatios = (n) => Array(n).fill(1 / n);
@@ -121,6 +121,7 @@ export function AppProvider({ children }) {
     if (patch.kind === "file") return pane.filePath === patch.filePath;
     if (patch.kind === "scm") return pane.scmRepo === patch.scmRepo;
     if (patch.kind === "doc") return pane.docTitle === patch.docTitle;
+    if (patch.kind === "diff") return pane.docTitle === patch.docTitle && pane.diffEdits === patch.diffEdits;
     return false;
   };
 
@@ -531,6 +532,14 @@ export function AppProvider({ children }) {
     },
     [openInNewPane],
   );
+  // showDiff opens an edit-family tool's before/after as a diff pane. The edits array
+  // (captured from the transcript) travels in the pane descriptor — no file is read.
+  const showDiff = useCallback(
+    (title, edits, tool) => {
+      openInNewPane({ kind: "diff", docTitle: title, diffEdits: edits, diffTool: tool });
+    },
+    [openInNewPane],
+  );
 
   // ---- pane layout controls ----
   // splitRight appends a new full-height column (up to MAX_COLS) holding a fresh
@@ -809,6 +818,7 @@ export function AppProvider({ children }) {
     showFile,
     showFileSplit,
     showDoc,
+    showDiff,
     settingsOpen,
     openSettings: () => setSettingsOpen(true),
     closeSettings: () => setSettingsOpen(false),

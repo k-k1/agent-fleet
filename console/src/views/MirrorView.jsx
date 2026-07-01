@@ -22,7 +22,7 @@ const q = encodeURIComponent;
 // user turns), just at the next poll.
 export default function MirrorView({ session, sessionMeta, active, mirror, onToggleMirror }) {
   const settings = useSettings();
-  const { showDoc } = useApp();
+  const { showDoc, showDiff } = useApp();
   // "mod-enter" (default): Ctrl/⌘+Enter submits, plain Enter newlines (phone-safe).
   // "enter": Enter submits, Shift+Enter newlines.
   const modSend = settings.mirrorSend !== "enter";
@@ -159,6 +159,7 @@ export default function MirrorView({ session, sessionMeta, active, mirror, onTog
 
   // Open a plan's Markdown in its own pane (manual — via a button, not automatic).
   const openPlan = (plan) => showDoc(planTitle(plan), plan);
+  const openDiff = (p) => showDiff(p.file, p.edits, p.tool);
 
   // Composer history = the user's own prompts in this conversation (so ↑ works even
   // after a reload, not just for prompts typed since mount). Newest last.
@@ -278,7 +279,7 @@ export default function MirrorView({ session, sessionMeta, active, mirror, onTog
             ターンごとの Markdown で表示されます。
           </div>
         ) : (
-          renderGroups(groups, sendPrompt, openPlan)
+          renderGroups(groups, sendPrompt, openPlan, openDiff)
         )}
         {pendingPlan && (
           <div className="mirror-turn assistant">
@@ -546,7 +547,7 @@ function ContextBar({ read, create, fresh, model }) {
 // renderGroups lays the blocks out, inserting a context strip (branch · cwd) above a
 // block whenever either changes from the previously shown one — so a branch switch or
 // cd is marked once, not repeated on every turn. Empty context leaves the marker as-is.
-function renderGroups(groups, onAnswer, onOpenPlan) {
+function renderGroups(groups, onAnswer, onOpenPlan, onOpenDiff) {
   const els = [];
   let prevCtx = "";
   for (const g of groups) {
@@ -555,7 +556,9 @@ function renderGroups(groups, onAnswer, onOpenPlan) {
       els.push(<ContextLine key={"ctx-" + g.idx} branch={g.branch} cwd={g.cwd} />);
     }
     if (ctx) prevCtx = ctx;
-    els.push(<Turn key={g.idx} turn={g} onAnswer={onAnswer} onOpenPlan={onOpenPlan} />);
+    els.push(
+      <Turn key={g.idx} turn={g} onAnswer={onAnswer} onOpenPlan={onOpenPlan} onOpenDiff={onOpenDiff} />,
+    );
   }
   return els;
 }
@@ -577,7 +580,7 @@ function ContextLine({ branch, cwd }) {
 // Turn renders one conversation block: a header (who + model), the body (user prompt
 // as text, assistant reply as Markdown with faint tool traces), and a footer (time +
 // token usage + copy). Subagent (sidechain) turns get a distinct label and tint.
-function Turn({ turn, onAnswer, onOpenPlan }) {
+function Turn({ turn, onAnswer, onOpenPlan, onOpenDiff }) {
   const isUser = turn.role === "user";
   const who = isUser ? "あなた" : turn.sidechain ? "サブエージェント" : "Claude";
   const ctxTok = turn.inTok + turn.cacheRead + turn.cacheCreate;
@@ -594,11 +597,26 @@ function Turn({ turn, onAnswer, onOpenPlan }) {
           turn.parts.map((p, i) =>
             p.kind === "tool" ? (
               // A faint trace of what claude did between paragraphs (Read/Bash/…).
-              <div className="mt-tool" key={i}>
-                <Icon name="tools" />
-                <span className="mt-tool-name">{p.tool}</span>
-                {p.info && <span className="mt-tool-info">{p.info}</span>}
-              </div>
+              // Edit-family tools carry their before/after — click to open a diff pane.
+              p.edits && p.edits.length ? (
+                <button
+                  type="button"
+                  className="mt-tool mt-tool-diff"
+                  key={i}
+                  onClick={() => onOpenDiff && onOpenDiff(p)}
+                  title="差分を別ペインで開く"
+                >
+                  <Icon name="diff" />
+                  <span className="mt-tool-name">{p.tool}</span>
+                  {p.info && <span className="mt-tool-info">{p.info}</span>}
+                </button>
+              ) : (
+                <div className="mt-tool" key={i}>
+                  <Icon name="tools" />
+                  <span className="mt-tool-name">{p.tool}</span>
+                  {p.info && <span className="mt-tool-info">{p.info}</span>}
+                </div>
+              )
             ) : p.kind === "question" ? (
               // A question from the transcript is already answered (claude writes the
               // tool_use only after the answer) — show it resolved, not clickable.
