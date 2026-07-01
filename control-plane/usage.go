@@ -102,10 +102,12 @@ func usageRange(r *http.Request) (from, to string, aerr *apiError) {
 	return from, to, nil
 }
 
-// usageScope applies the admin gate and returns the tenant filter. With a `tenant`
-// query param, a super_admin OR that tenant's tenant_admin may read it (scoped).
-// Without it, only a super_admin may read the deployment-wide view (tenantID="").
-func (c config) usageScope(w http.ResponseWriter, r *http.Request) (tenantID string, ok bool) {
+// adminTenantScope applies the admin gate and returns the tenant filter shared by
+// the deployment-wide admin views (usage, all-sessions). With a `tenant` query
+// param, a super_admin OR that tenant's tenant_admin may read it (scoped to that
+// tenant). Without it, only a super_admin may read the deployment-wide view
+// (tenantID="" = every tenant).
+func (c config) adminTenantScope(w http.ResponseWriter, r *http.Request) (tenantID string, ok bool) {
 	if slug := r.URL.Query().Get("tenant"); slug != "" {
 		_, t, ok := c.requireTenantAdmin(w, r, slug)
 		if !ok {
@@ -159,7 +161,7 @@ func hoursOf(secs int) float64 {
 // Returns the per-day rows (for a dashboard chart) and per-member totals (for a
 // table); format=csv streams the daily rows as a spreadsheet.
 func (c config) handleAdminUsage(w http.ResponseWriter, r *http.Request) {
-	tenantID, ok := c.usageScope(w, r)
+	tenantID, ok := c.adminTenantScope(w, r)
 	if !ok {
 		return
 	}

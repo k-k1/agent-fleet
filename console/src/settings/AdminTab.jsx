@@ -61,11 +61,15 @@ export default function AdminTab() {
         <button type="button" className={"seg-btn" + (mode === "manage" ? " active" : "")} onClick={() => setMode("manage")}>
           <Icon name="organization" /> テナント管理
         </button>
+        <button type="button" className={"seg-btn" + (mode === "sessions" ? " active" : "")} onClick={() => setMode("sessions")}>
+          <Icon name="list-tree" /> セッション
+        </button>
         <button type="button" className={"seg-btn" + (mode === "usage" ? " active" : "")} onClick={() => setMode("usage")}>
           <Icon name="graph" /> 使用量
         </button>
       </div>
 
+      {mode === "sessions" && <AllSessionsView tenants={tenants} isSuper={isSuper} />}
       {mode === "usage" && <UsageView tenants={tenants} isSuper={isSuper} />}
 
       {mode === "manage" && (
@@ -128,6 +132,115 @@ export default function AdminTab() {
       )}
       </>
       )}
+    </div>
+  );
+}
+
+// --- All sessions overview (P3-9 admin) -------------------------------------
+// A flat, cross-user list of every session so an operator can see at a glance
+// what is running / resumable across the deployment. Reads GET /api/admin/sessions
+// (super_admin: all tenants, optionally filtered; tenant_admin: their tenant).
+// Polled like the per-member view; a client-side search narrows by user/label/repo.
+
+function AllSessionsView({ tenants, isSuper }) {
+  const [tenant, setTenant] = useState(isSuper ? "" : tenants[0]?.slug || "");
+  const [q, setQ] = useState("");
+  const [rows, setRows] = useState(null);
+  const [err, setErr] = useState("");
+  const timer = useRef(null);
+  const ser = useRef("");
+
+  const poll = useCallback(async () => {
+    try {
+      const d = await api("api/admin/sessions" + (tenant ? "?tenant=" + encodeURIComponent(tenant) : ""));
+      if (d?.error) {
+        setErr(errText(d.error));
+        return;
+      }
+      setErr("");
+      const list = d.sessions || [];
+      const s = JSON.stringify(list);
+      if (s !== ser.current) {
+        ser.current = s;
+        setRows(list);
+      }
+    } catch {
+      /* transient; keep last */
+    }
+  }, [tenant]);
+
+  useEffect(() => {
+    ser.current = "";
+    setRows(null);
+    poll();
+    timer.current = setInterval(poll, 5000);
+    return () => clearInterval(timer.current);
+  }, [poll]);
+
+  const all = rows || [];
+  const needle = q.trim().toLowerCase();
+  const shown = needle
+    ? all.filter((s) =>
+        [s.user_key, s.email, s.label, s.repo, s.name, s.tenant]
+          .some((v) => (v || "").toLowerCase().includes(needle)),
+      )
+    : all;
+  const aliveCount = all.filter((s) => s.alive).length;
+
+  return (
+    <div className="admin-stage all-sessions-view">
+      <section className="admin-panel">
+        <div className="usage-toolbar">
+          {isSuper && (
+            <label>
+              テナント
+              <select value={tenant} onChange={(e) => setTenant(e.target.value)}>
+                <option value="">全テナント</option>
+                {tenants.map((t) => (
+                  <option key={t.slug} value={t.slug}>{t.name}</option>
+                ))}
+              </select>
+            </label>
+          )}
+          <label className="as-search">
+            検索
+            <input type="text" value={q} onChange={(e) => setQ(e.target.value)} placeholder="ユーザー / ラベル / リポジトリ" />
+          </label>
+          <span className="as-count muted">
+            {all.length} セッション・{aliveCount} 稼働中
+          </span>
+        </div>
+        {err && <p className="form-err">{err}</p>}
+      </section>
+
+      <section className="admin-panel">
+        {rows === null ? (
+          <p className="muted">読み込み中…</p>
+        ) : shown.length === 0 ? (
+          <p className="muted">{all.length === 0 ? "セッションはありません。" : "一致するセッションがありません。"}</p>
+        ) : (
+          <div className="all-sessions">
+            {shown.map((s) => {
+              const st = stateInfo(s);
+              return (
+                <div key={s.tenant + "|" + s.user_key + "|" + s.name} className="all-session">
+                  <span className={"kind-tag kind-" + kindClass(s.kind)}>
+                    <Icon name={kindIcon(s.kind)} /> {kindLabel(s.kind)}
+                  </span>
+                  <span className="asx-user mono" title={s.email || ""}>{s.user_key || "(不明)"}</span>
+                  {isSuper && !tenant && <span className="asx-tenant muted">{s.tenant}</span>}
+                  <span className="asx-name mono" title={s.dir || ""}>{s.label ? s.label.replace(/^\[AF\]\s*/, "") : s.name}</span>
+                  <span className="asx-repo muted">{s.repo || ""}</span>
+                  <span className={"session-state " + st.cls}>
+                    <Icon name={st.icon} spin={st.spin} /> {st.text}
+                  </span>
+                  <span className="asx-time muted">{s.started || ""}</span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
     </div>
   );
 }

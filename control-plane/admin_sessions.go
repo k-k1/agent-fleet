@@ -1,0 +1,121 @@
+package main
+
+import (
+	"context"
+	"net/http"
+)
+
+// Deployment-wide session overview (P3-9 admin). A flat, cross-user list so an
+// operator can see every running/resumable session at a glance without drilling
+// into each member. Running workspaces are queried live from the Agent (the
+// source of truth); stopped ones fall back to the DB mirror so their resumable
+// sessions still appear.
+
+// adminSessionRow is one session tagged with the member (tenant × user) that owns
+// it and the owning workspace's docker state.
+type adminSessionRow struct {
+	Tenant         string `json:"tenant"`
+	UserKey        string `json:"user_key"`
+	Email          string `json:"email"`
+	WorkspaceState string `json:"workspace_state"` // running | stopped | none
+	Name           string `json:"name"`
+	Kind           string `json:"kind"`
+	Label          string `json:"label"`
+	Repo           string `json:"repo"`
+	Dir            string `json:"dir"`
+	State          string `json:"state"` // idle | working | question | stopped
+	Alive          bool   `json:"alive"`
+	Resumable      bool   `json:"resumable"`
+	Started        string `json:"started"`
+}
+
+// handleAdminAllSessions (GET /api/admin/sessions?tenant=<slug>) serves the
+// overview. super_admin spans every tenant; a tenant_admin is scoped to a tenant
+// they administer (via ?tenant=), enforced by adminTenantScope.
+func (c config) handleAdminAllSessions(w http.ResponseWriter, r *http.Request) {
+	tenantID, ok := c.adminTenantScope(w, r)
+	if !ok {
+		return
+	}
+	ctx := r.Context()
+	tenants, aerr := c.mgr.tenantsInScope(ctx, tenantID)
+	if aerr != nil {
+		writeAPIErr(w, aerr)
+		return
+	}
+	out := make([]adminSessionRow, 0)
+	for _, t := range tenants {
+		members, err := c.mgr.store.ListMembersByTenant(ctx, t.ID)
+		if err != nil {
+			continue
+		}
+		byMembership := make(map[string]MemberInfo, len(members))
+		for _, m := range members {
+			byMembership[m.MembershipID] = m
+		}
+		wss, err := c.mgr.store.ListWorkspaces(ctx, t.ID)
+		if err != nil {
+			continue
+		}
+		for _, ws := range wss {
+			mi := byMembership[ws.MembershipID]
+			rt := c.mgr.runtimeFor(ws, "")
+			state := rt.State(ctx)
+			for _, s := range c.mgr.sessionsForOverview(ctx, ws, rt, state) {
+				out = append(out, adminSessionRow{
+					Tenant: t.Slug, UserKey: mi.UserKey, Email: mi.Email, WorkspaceState: state,
+					Name: s.Name, Kind: s.Kind, Label: s.Label, Repo: s.Repo, Dir: s.Dir,
+					State: s.State, Alive: s.Alive, Resumable: s.Resumable, Started: s.Started,
+				})
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"sessions": out})
+}
+
+// tenantsInScope returns the tenants an admin view should span: exactly the one
+// when tenantID is set (already gate-checked by adminTenantScope), else all.
+func (m *manager) tenantsInScope(ctx context.Context, tenantID string) ([]Tenant, *apiError) {
+	if tenantID != "" {
+		t, err := m.store.GetTenant(ctx, tenantID)
+		if err != nil {
+			return nil, internalErr(err)
+		}
+		return []Tenant{t}, nil
+	}
+	ts, err := m.store.ListTenants(ctx)
+	if err != nil {
+		return nil, internalErr(err)
+	}
+	return ts, nil
+}
+
+// sessionsForOverview returns a workspace's sessions for the admin overview: live
+// from the Agent when running (with a computed Started), else the DB mirror marked
+// stopped/resumable. Mirrors handleSessionsList so the two views agree.
+func (m *manager) sessionsForOverview(ctx context.Context, ws Workspace, rt Runtime, state string) []sessionWire {
+	if state == "running" {
+		if list, err := m.agentSessions(ctx, rt); err == nil {
+			for i := range list {
+				if list[i].Started == "" {
+					list[i].Started = fmtStarted(list[i].CreatedAt)
+				}
+			}
+			return list
+		}
+		// Agent unreachable (mid-start/unhealthy): fall through to the DB mirror.
+	}
+	rows, err := m.store.ListSessions(ctx, ws.ID)
+	if err != nil {
+		return nil
+	}
+	out := make([]sessionWire, 0, len(rows))
+	for _, r0 := range rows {
+		out = append(out, sessionWire{
+			Name: r0.Name, Kind: r0.Kind, Dir: r0.Dir, Repo: r0.Repo, Label: r0.Label,
+			Started: fmtStarted(r0.CreatedAt), CreatedAt: r0.CreatedAt,
+			State: r0.State, Alive: false, Resumable: true,
+		})
+	}
+	return out
+}
