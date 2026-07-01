@@ -14,6 +14,11 @@ deploy/compose/backups/
 # Release bundles built by release.sh.
 deploy/compose/dist/
 
+# EC2 test-harness SSH keys (private key stays local; never commit).
+deploy/aws/ec2-single/*-key
+deploy/aws/ec2-single/*-key.pub
+deploy/aws/ec2-single/*.pem
+
 # Local build artifact from `go build` without -o (CP binary is built to /tmp/af-cp).
 control-plane/control-plane
 
