@@ -39,6 +39,9 @@ export const stateInfo = (s) => {
     case "permission":
       return { cls: "question", icon: "shield", text: "許可待ち" };
     default:
+      // Idle by hook, but a run_in_background task is still running under the pane:
+      // show it's not actually done (spinner + "BG実行中" alongside 入力待ち).
+      if (s.backgroundBusy) return { cls: "bg", icon: "loading", spin: true, text: "入力待ち · BG実行中" };
       return { cls: "on", icon: "check", text: "入力待ち" };
   }
 };

@@ -32,6 +32,9 @@ type Session struct {
 	State     string `json:"state"`    // claude live state: working | idle | question | ""
 	Alive     bool   `json:"alive"`    // true = live tmux session; false = stopped
 	Resumable bool   `json:"resumable"`// false = stopped claude whose working dir is gone
+	// BackgroundBusy: state is idle (turn done) but a run_in_background task is still
+	// running under the pane. Lets the Console mark 入力待ち as "still working in bg".
+	BackgroundBusy bool `json:"backgroundBusy"`
 }
 
 func tmuxName(name string) string { return tmuxPrefix + name }
@@ -79,6 +82,7 @@ func wireSession(m sessionMeta, alive bool) Session {
 	}
 	remote, state := "", ""
 	resumable := true
+	backgroundBusy := false
 	if m.Kind == "claude" {
 		sid := sessionUUID(m.Dir, m.Name)
 		remote = remoteSessionURL(sid)
@@ -95,6 +99,11 @@ func wireSession(m sessionMeta, alive bool) Session {
 			if state != "idle" && sessionAtIdlePrompt(m.Name) {
 				state = "idle"
 				removeSessionStatus(sid)
+			}
+			// Idle by hook, but a run_in_background task may still be running under
+			// the pane — surface that so 入力待ち isn't mistaken for "done".
+			if state == "idle" {
+				backgroundBusy = sessionBackgroundBusy(m.Name)
 			}
 		} else if !dirExists(m.Dir) {
 			// A stopped claude whose working dir was removed (its repo deleted) can't
@@ -119,6 +128,7 @@ func wireSession(m sessionMeta, alive bool) Session {
 		Name: m.Name, Tmux: tmuxName(m.Name), Dir: m.Dir, Kind: m.Kind,
 		Repo: m.Repo, Label: m.Label, Started: started, CreatedAt: m.CreatedAt,
 		RemoteUrl: remote, State: state, Alive: alive, Resumable: resumable,
+		BackgroundBusy: backgroundBusy,
 	}
 }
 

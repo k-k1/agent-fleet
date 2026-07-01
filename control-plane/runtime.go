@@ -426,6 +426,10 @@ type sessionWire struct {
 	State     string `json:"state"`
 	Alive     bool   `json:"alive"`
 	Resumable bool   `json:"resumable"`
+	// BackgroundBusy passes through the Agent's "idle but a run_in_background task is
+	// still running" flag so the Console can badge it. Not persisted to the DB mirror
+	// (a stopped workspace has no live background work).
+	BackgroundBusy bool `json:"backgroundBusy"`
 }
 
 func fmtStarted(createdAt string) string {
