@@ -136,6 +136,14 @@ func main() {
 		go newReaper(mgr, iv, sessDef, wsDef).run(context.Background())
 	}
 
+	// Showback usage sampler (P3-9): credits running-seconds per workspace so the
+	// admin usage view can attribute infra occupancy per tenant/member. Non-
+	// destructive (DB writes only), so it is on by default; AF_USAGE_SAMPLE_INTERVAL=0
+	// disables it.
+	if iv := parseDurationOr(os.Getenv("AF_USAGE_SAMPLE_INTERVAL"), 5*time.Minute); iv > 0 {
+		go newUsageSampler(mgr, iv).run(context.Background())
+	}
+
 	mux := http.NewServeMux()
 
 	// Health + CP-native Google OAuth (AUTH=oauth). The login page, OAuth
@@ -166,6 +174,7 @@ func main() {
 	mux.HandleFunc("PUT /api/admin/user-limits", cfg.handleAdminSetUserLimit)
 	mux.HandleFunc("PUT /api/admin/membership-role", cfg.handleAdminSetMembershipRole) // grant/revoke tenant_admin (super_admin only)
 	mux.HandleFunc("GET /api/admin/host", cfg.handleHostStats)                         // host load / memory (super_admin)
+	mux.HandleFunc("GET /api/admin/usage", cfg.handleAdminUsage)                       // showback: occupancy per tenant/member (json|csv)
 
 	// Personal Access Tokens (Console-issued) for the MCP endpoint (docs/0006).
 	mux.HandleFunc("GET /api/pat", cfg.handlePATList)

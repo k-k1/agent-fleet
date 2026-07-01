@@ -632,6 +632,52 @@ func (s *sqliteStore) ListAuditByTenant(ctx context.Context, tenantID string, li
 	return out, rows.Err()
 }
 
+// AddUsage accumulates workspace running-seconds into the (membership, day)
+// showback bucket (docs/roadmap.md P3-9). Upsert += so repeated samples add up.
+func (s *sqliteStore) AddUsage(ctx context.Context, membershipID, tenantID, day string, secs int) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO usage_daily(membership_id, tenant_id, day, running_secs)
+		 VALUES(?, ?, ?, ?)
+		 ON CONFLICT(membership_id, day) DO UPDATE SET running_secs = running_secs + excluded.running_secs`,
+		membershipID, tenantID, day, secs)
+	return err
+}
+
+// ListUsage returns per-day showback rows in [fromDay, toDay] (inclusive),
+// enriched with tenant slug + member key/email via LEFT JOINs (a row survives
+// even if its membership/identity was later removed). tenantID=="" spans all
+// tenants (super_admin); otherwise it is scoped to that tenant.
+func (s *sqliteStore) ListUsage(ctx context.Context, tenantID, fromDay, toDay string) ([]UsageRow, error) {
+	q := `SELECT u.tenant_id, COALESCE(t.slug,''), u.membership_id,
+	             COALESCE(i.user_key,''), COALESCE(i.email,''), u.day, u.running_secs
+	      FROM usage_daily u
+	      LEFT JOIN tenant t ON t.id = u.tenant_id
+	      LEFT JOIN membership m ON m.id = u.membership_id
+	      LEFT JOIN identity i ON i.id = m.identity_id
+	      WHERE u.day BETWEEN ? AND ?`
+	args := []any{fromDay, toDay}
+	if tenantID != "" {
+		q += ` AND u.tenant_id=?`
+		args = append(args, tenantID)
+	}
+	q += ` ORDER BY u.tenant_id, i.user_key, u.day`
+	rows, err := s.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []UsageRow
+	for rows.Next() {
+		var u UsageRow
+		if err := rows.Scan(&u.TenantID, &u.TenantSlug, &u.MembershipID,
+			&u.UserKey, &u.Email, &u.Day, &u.RunningSecs); err != nil {
+			return nil, err
+		}
+		out = append(out, u)
+	}
+	return out, rows.Err()
+}
+
 // nullable maps "" to a SQL NULL so empty optional columns stay NULL.
 func nullable(s string) any {
 	if s == "" {
