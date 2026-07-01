@@ -25,15 +25,19 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
 		return
 	}
+	// Body is either {prompt} (type text + Enter) or {keys:[...]} (send named keys —
+	// used to drive the AskUserQuestion modal: Down/Space/Enter navigation, which
+	// free text can't do because a typed answer submits the whole tool at once).
 	var body struct {
-		Prompt string `json:"prompt"`
+		Prompt string   `json:"prompt"`
+		Keys   []string `json:"keys"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&body); err != nil {
 		writeErr(w, http.StatusBadRequest, "bad_body", "invalid JSON body")
 		return
 	}
-	if strings.TrimSpace(body.Prompt) == "" {
-		writeErr(w, http.StatusBadRequest, "empty_prompt", "prompt is required")
+	if len(body.Keys) == 0 && strings.TrimSpace(body.Prompt) == "" {
+		writeErr(w, http.StatusBadRequest, "empty_prompt", "prompt or keys is required")
 		return
 	}
 	tn := tmuxName(name)
@@ -49,6 +53,28 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "no_pane", "could not resolve session pane")
 		return
 	}
+	if len(body.Keys) > 0 {
+		// Named-key navigation. Send one at a time with a small gap so the TUI can
+		// re-render between keys (e.g. after Enter advances to the next question page).
+		for _, k := range body.Keys {
+			if !allowedKey(k) {
+				writeErr(w, http.StatusBadRequest, "bad_key", "unsupported key: "+k)
+				return
+			}
+		}
+		for i, k := range body.Keys {
+			if out, err := exec.Command("tmux", "send-keys", "-t", pane, k).CombinedOutput(); err != nil {
+				writeErr(w, http.StatusInternalServerError, "tmux_failed", string(out))
+				return
+			}
+			if i < len(body.Keys)-1 {
+				time.Sleep(45 * time.Millisecond)
+			}
+		}
+		markSessionWorking(name)
+		writeJSON(w, http.StatusOK, map[string]any{"sent": name})
+		return
+	}
 	// Send the prompt literally (-l: no key-name interpretation), then Enter to submit.
 	if out, err := exec.Command("tmux", "send-keys", "-t", pane, "-l", body.Prompt).CombinedOutput(); err != nil {
 		writeErr(w, http.StatusInternalServerError, "tmux_failed", string(out))
@@ -58,15 +84,31 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "tmux_failed", string(out))
 		return
 	}
-	// Optimistically mark working so a poll immediately after send doesn't read a
-	// stale idle before claude's UserPromptSubmit hook fires.
-	if meta, ok := readSessionMeta(name); ok {
-		sid := sessionUUID(meta.Dir, name)
-		_ = os.MkdirAll(sessionStatusDir(), 0o700)
-		b, _ := json.Marshal(sessionStatus{State: "working", TS: time.Now().Format(time.RFC3339)})
-		_ = os.WriteFile(sessionStatusPath(sid), b, 0o600)
-	}
+	markSessionWorking(name)
 	writeJSON(w, http.StatusOK, map[string]any{"sent": name})
+}
+
+// markSessionWorking optimistically marks the session working so a poll immediately
+// after a send doesn't read a stale idle before claude's UserPromptSubmit hook fires.
+func markSessionWorking(name string) {
+	meta, ok := readSessionMeta(name)
+	if !ok {
+		return
+	}
+	sid := sessionUUID(meta.Dir, name)
+	_ = os.MkdirAll(sessionStatusDir(), 0o700)
+	b, _ := json.Marshal(sessionStatus{State: "working", TS: time.Now().Format(time.RFC3339)})
+	_ = os.WriteFile(sessionStatusPath(sid), b, 0o600)
+}
+
+// allowedKey is the whitelist of tmux key names the Console may send to drive a TUI
+// (the AskUserQuestion modal): navigation + confirm, nothing that could run a command.
+func allowedKey(k string) bool {
+	switch k {
+	case "Up", "Down", "Left", "Right", "Enter", "Space", "Escape", "Tab", "BSpace", "Home", "End":
+		return true
+	}
+	return false
 }
 
 // sessionPaneID returns the active pane id (e.g. "%0") of a session's current
