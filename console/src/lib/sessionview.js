@@ -34,6 +34,8 @@ export const stateInfo = (s) => {
       return { cls: "working", icon: "loading", spin: true, text: "進行中…" };
     case "question":
       return { cls: "question", icon: "question", text: "質問あり" };
+    case "plan":
+      return { cls: "question", icon: "checklist", text: "プランあり" };
     default:
       return { cls: "on", icon: "check", text: "入力待ち" };
   }
