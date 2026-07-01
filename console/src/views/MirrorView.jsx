@@ -557,8 +557,14 @@ function Turn({ turn, onAnswer, onOpenPlan }) {
               // tool_use only after the answer) — show it resolved, not clickable.
               <QuestionBlock key={i} questions={p.questions} answered answer={p.answer} />
             ) : p.kind === "plan" ? (
-              // A historical plan (already approved/decided) — open it in a pane.
-              <PlanBlock key={i} plan={p.plan} onOpen={() => onOpenPlan && onOpenPlan(p.plan)} />
+              // A historical plan (already decided) — show the outcome, open in a pane.
+              <PlanBlock
+                key={i}
+                plan={p.plan}
+                answered
+                outcome={p.answer}
+                onOpen={() => onOpenPlan && onOpenPlan(p.plan)}
+              />
             ) : (
               <MarkdownView key={i} source={p.text} />
             ),
@@ -747,13 +753,19 @@ function QuestionBlock({ questions, answered, answer }) {
 // PlanBlock shows an ExitPlanMode plan compactly (title + one-line summary) with a
 // button to open the full Markdown in its own pane, and — while pending — an approve
 // button that confirms the plan (Enter = "Yes, and bypass permissions").
-function PlanBlock({ plan, pending, onOpen, onApprove, sending }) {
+function PlanBlock({ plan, pending, answered, outcome, onOpen, onApprove, sending }) {
+  // A plan in the transcript was presented and resolved — treat as approved unless the
+  // outcome text clearly says otherwise (best-effort; the exact result text may vary).
+  const approved = !outcome || isApproved(outcome) || !isRejected(outcome);
   return (
-    <div className="mt-plan">
+    <div className={"mt-plan" + (answered ? " decided" : "")}>
       <div className="mt-plan-head">
         <Icon name="checklist" />
         <span className="mt-plan-title">{planTitle(plan)}</span>
         {pending && <span className="mt-plan-badge">承認待ち</span>}
+        {answered && (
+          <span className={"mt-plan-badge" + (approved ? " ok" : "")}>{approved ? "承認済み" : "決定済み"}</span>
+        )}
       </div>
       {planSummary(plan) && <div className="mt-plan-summary">{planSummary(plan)}</div>}
       <div className="mt-plan-actions">
@@ -768,6 +780,15 @@ function PlanBlock({ plan, pending, onOpen, onApprove, sending }) {
       </div>
     </div>
   );
+}
+
+// isApproved guesses whether an ExitPlanMode tool_result text is an approval, to badge
+// a historical plan. Best-effort keyword match (the exact result text may vary).
+function isApproved(outcome) {
+  return /approv|proceed|start coding|going to code|承認|実行してよい|yes/i.test(outcome || "");
+}
+function isRejected(outcome) {
+  return /keep planning|not approv|reject|refine|declin|却下|中止|やり直/i.test(outcome || "");
 }
 
 // planTitle / planSummary derive a compact heading + lead line from the plan Markdown.
