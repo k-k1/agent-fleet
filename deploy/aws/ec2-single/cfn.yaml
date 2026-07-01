@@ -1,0 +1,119 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Agent Fleet — single EC2 VM to run the on-prem Docker Compose deployment
+  (deploy/compose). Provisions an Ubuntu 24.04 instance with Docker, a security
+  group (SSH + 80/443), a stable Elastic IP, an auto-generated SSH key pair (the
+  private key is stored in SSM Parameter Store), and a Route53 A record. This is
+  a single-VM host for the compose stack — NOT the ECS adapter (P3-7). Tear down
+  with a single `aws cloudformation delete-stack`.
+
+Parameters:
+  HostedZoneName:
+    Type: String
+    Description: Existing Route53 public hosted zone, WITH trailing dot (e.g. example.com.)
+  Fqdn:
+    Type: String
+    Description: Fully-qualified host for the Console (e.g. af.example.com) — used for TLS + OAuth redirect.
+  SSHLocation:
+    Type: String
+    Default: 0.0.0.0/0
+    Description: CIDR allowed to SSH (tighten to your IP/32).
+    AllowedPattern: ^(\d{1,3}\.){3}\d{1,3}/\d{1,2}$
+  InstanceType:
+    Type: String
+    Default: t3.large
+    AllowedValues: [t3.medium, t3.large, t3.xlarge]
+    Description: t3.large (8GB) recommended; t3.medium (4GB) works if WS_MEMORY is lowered.
+  VolumeSizeGb:
+    Type: Number
+    Default: 30
+  LatestUbuntuAmi:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id
+    Description: Canonical-published SSM parameter resolving the latest Ubuntu 24.04 AMI (leave as-is).
+  PublicKey:
+    Type: String
+    Description: >-
+      SSH public key to import (contents of your *.pub). The private key stays on
+      your machine — nothing is stored in AWS/SSM, so only ec2:ImportKeyPair is
+      needed. Generate with: ssh-keygen -t ed25519 -f agent-fleet-test-key
+
+Resources:
+  KeyPair:
+    Type: AWS::EC2::KeyPair
+    Properties:
+      KeyName: !Sub "${AWS::StackName}-key"
+      # Import a public key you generated locally. No private key is stored in AWS
+      # (no SSM write), so this only needs ec2:ImportKeyPair.
+      PublicKeyMaterial: !Ref PublicKey
+
+  SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub "agent-fleet ${AWS::StackName}: ssh + http(s)"
+      SecurityGroupIngress:
+        - { IpProtocol: tcp, FromPort: 22,  ToPort: 22,  CidrIp: !Ref SSHLocation, Description: SSH }
+        - { IpProtocol: tcp, FromPort: 80,  ToPort: 80,  CidrIp: 0.0.0.0/0, Description: HTTP (ACME challenge + redirect) }
+        - { IpProtocol: tcp, FromPort: 443, ToPort: 443, CidrIp: 0.0.0.0/0, Description: HTTPS (Console) }
+
+  Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: !Ref InstanceType
+      ImageId: !Ref LatestUbuntuAmi
+      KeyName: !Ref KeyPair
+      SecurityGroupIds: [!Ref SecurityGroup]
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs: { VolumeSize: !Ref VolumeSizeGb, VolumeType: gp3, DeleteOnTermination: true }
+      Tags:
+        - { Key: Name, Value: !Sub "agent-fleet-${AWS::StackName}" }
+      # cloud-init: install Docker (matches deploy/compose/README.md prerequisite)
+      # so the box is compose-ready on first boot.
+      UserData:
+        Fn::Base64: |
+          #!/bin/bash
+          set -eux
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update
+          apt-get install -y ca-certificates curl
+          install -m 0755 -d /etc/apt/keyrings
+          curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+          chmod a+r /etc/apt/keyrings/docker.asc
+          . /etc/os-release
+          echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu ${VERSION_CODENAME} stable" \
+            > /etc/apt/sources.list.d/docker.list
+          apt-get update
+          apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+          usermod -aG docker ubuntu
+          touch /var/lib/cloud/agent-fleet-bootstrapped
+
+  EIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      InstanceId: !Ref Instance
+      Tags:
+        - { Key: Name, Value: !Sub "agent-fleet-${AWS::StackName}" }
+
+  DnsRecord:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneName: !Ref HostedZoneName
+      Name: !Ref Fqdn
+      Type: A
+      TTL: "60"
+      ResourceRecords: [!Ref EIP]
+
+Outputs:
+  PublicIp:
+    Value: !Ref EIP
+  Fqdn:
+    Value: !Ref Fqdn
+  ConsoleUrl:
+    Value: !Sub "https://${Fqdn}"
+  OAuthRedirectUri:
+    Description: Register this in the Google OAuth client's Authorized redirect URIs.
+    Value: !Sub "https://${Fqdn}/oauth2/callback"
+  SshCommand:
+    Description: Use the private key you generated locally (the imported public key's pair).
+    Value: !Sub "ssh -i ${AWS::StackName}-key ubuntu@${EIP}"
