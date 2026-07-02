@@ -8,7 +8,6 @@ import ContextBar from "../components/ContextBar.jsx";
 import OnboardingCard from "../components/OnboardingCard.jsx";
 import { kindIcon, kindLabel, kindShort, kindClass } from "../lib/sessionkind.js";
 import { displayName, stateInfo } from "../lib/sessionview.js";
-import { useContextUsage } from "../lib/usecontextusage.js";
 
 // Brand artwork shown over an unattached terminal so a freshly split (or initial)
 // pane isn't a bare black rectangle. Each empty pane picks one of these at random.
@@ -78,10 +77,10 @@ export default function TerminalView({
   // metadata has arrived (freshly created), or when the pane has no session.
   const st = sessionMeta ? stateInfo(sessionMeta) : null;
 
-  // Current context fill, shown as a strip under the head like the chat view. Poll
-  // only while the terminal is the visible view (!mirror) — the chat view runs its
-  // own poll when it's up, so at most one is active per pane.
-  const ctxUsage = useContextUsage(session, sessionMeta?.kind, !mirror);
+  // Current context fill, shown as a strip under the head like the chat view. Comes
+  // straight off the session (the Agent computes it into the sessions list), so the
+  // terminal needs no transcript poll of its own — claude only, absent otherwise.
+  const ctxUsage = sessionMeta?.context || null;
 
   return (
     <div className="termview">

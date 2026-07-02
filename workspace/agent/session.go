@@ -35,6 +35,10 @@ type Session struct {
 	// BackgroundBusy: state is idle (turn done) but a run_in_background task is still
 	// running under the pane. Lets the Console mark 入力待ち as "still working in bg".
 	BackgroundBusy bool `json:"backgroundBusy"`
+	// Context: current context-window fill (newest assistant turn's prompt tokens),
+	// claude only, nil when none recorded yet. Drives the Console's ContextBar in
+	// both the terminal and chat heads without a separate transcript poll.
+	Context *contextUsage `json:"context,omitempty"`
 }
 
 func tmuxName(name string) string { return tmuxPrefix + name }
@@ -108,9 +112,11 @@ func wireSession(m sessionMeta, alive bool) Session {
 	remote, state := "", ""
 	resumable := true
 	backgroundBusy := false
+	var ctx *contextUsage
 	if m.Kind == "claude" {
 		sid := sessionUUID(m.Dir, m.Name)
 		remote = remoteSessionURL(sid)
+		ctx = latestSessionContext(sid)
 		if alive {
 			// Default a live claude with no recorded event yet to idle (it sits at
 			// the prompt waiting for input). Hook events refine it.
@@ -153,7 +159,7 @@ func wireSession(m sessionMeta, alive bool) Session {
 		Name: m.Name, Tmux: tmuxName(m.Name), Dir: m.Dir, Kind: m.Kind,
 		Repo: m.Repo, Label: m.Label, Started: started, CreatedAt: m.CreatedAt,
 		RemoteUrl: remote, State: state, Alive: alive, Resumable: resumable,
-		BackgroundBusy: backgroundBusy,
+		BackgroundBusy: backgroundBusy, Context: ctx,
 	}
 }
 
