@@ -559,6 +559,19 @@ button.wu-reload {
 
 /* port preview popover: one button on the bar, a small panel on click — so it
    never wraps to a second line on a phone. */
+/* Close-all: icon + label so the affordance reads; label hides on a phone to keep
+   the tight left cluster compact (the title still names it). */
+.ws-closeall {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+@media (max-width: 760px) {
+  .ws-closeall .lbl {
+    display: none;
+  }
+}
+
 /* Resource chip: a compact summary that opens the trend tiles in a popover, so the
    bar isn't a row of sparklines. */
 .ws-res {
