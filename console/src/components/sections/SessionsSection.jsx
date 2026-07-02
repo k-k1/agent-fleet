@@ -30,7 +30,7 @@ const notify = (title, body) => {
 // window (agent-side TTL). The ⋯ menu holds destructive actions (作り直す). The
 // list polls so state updates on its own.
 export default function SessionsSection() {
-  const { sessions, bumpSessions, bumpRepos, bumpFiles, revealInFiles, showTerminal, showTerminalSplit, showChat, session, newSessionTick, wsState, layout, setActivePane } = useApp();
+  const { sessions, bumpSessions, bumpRepos, bumpFiles, revealInFiles, showTerminal, showTerminalSplit, showChat, showChatSplit, session, newSessionTick, wsState, layout, setActivePane } = useApp();
   const running = wsState === "running"; // WS down → attach/resume/create are inert
   const [showModal, setShowModal] = useState(false);
   const { hover, setHover } = usePaneHover();
@@ -249,7 +249,7 @@ export default function SessionsSection() {
                   ? "作業フォルダが存在しないため再開できません"
                   : !s.alive
                     ? s.kind === "claude"
-                      ? "会話履歴を表示（クリック / 再開はチャット内から）"
+                      ? "会話履歴を表示（クリック / 再開はチャット内から・Ctrl/中クリックで新ペイン）"
                       : "停止中（⋯メニューから再開）"
                     : s.dir
                       ? s.dir + "（Ctrl/中クリックで新ペインに開く）"
@@ -265,8 +265,11 @@ export default function SessionsSection() {
               onClick={(e) => {
                 if (!s.alive) {
                   // Stopped claude → open its conversation as read-only chat (no resume);
-                  // resume happens from inside the chat. Other kinds: resume via ⋯ menu.
-                  if (!dead && s.kind === "claude") showChat(s.name);
+                  // resume happens from inside the chat. Ctrl/Cmd+click opens it in a
+                  // fresh split, mirroring the alive path. Other kinds: resume via ⋯ menu.
+                  if (!dead && s.kind === "claude") {
+                    (e.ctrlKey || e.metaKey ? showChatSplit : showChat)(s.name);
+                  }
                   return;
                 }
                 if (e.ctrlKey || e.metaKey) showTerminalSplit(s.name);
@@ -276,9 +279,14 @@ export default function SessionsSection() {
               // mousedown default so the browser doesn't start autoscroll instead.
               onMouseDown={(e) => e.button === 1 && e.preventDefault()}
               onAuxClick={(e) => {
-                if (e.button === 1 && s.alive) {
+                if (e.button !== 1) return;
+                // Middle-click: alive → terminal split; stopped claude → chat-history split.
+                if (s.alive) {
                   e.preventDefault();
                   showTerminalSplit(s.name);
+                } else if (!dead && s.kind === "claude") {
+                  e.preventDefault();
+                  showChatSplit(s.name);
                 }
               }}
             >
