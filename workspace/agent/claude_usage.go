@@ -104,14 +104,85 @@ func claudeOAuthToken() string {
 	return c.ClaudeAiOauth.AccessToken
 }
 
+// claudeProfileURL is the (undocumented) OAuth profile endpoint; we read the
+// account's organization uuid from it.
+const claudeProfileURL = "https://api.anthropic.com/api/oauth/profile"
+
+// The org uuid is stable for a container's lifetime, so cache it once resolved.
+var (
+	orgUUIDMu    sync.Mutex
+	orgUUIDVal   string
+	orgUUIDKnown bool
+)
+
+// claudeOrgUUID resolves the account's organization uuid (cached). Team-plan
+// tokens require ?organization_uuid=<uuid> on the usage endpoint — without it the
+// server returns 401; personal Pro/Max tokens accept the param too — so we always
+// pass it when we can resolve it. Returns "" on failure (caller falls back to the
+// bare URL, which still works for personal accounts).
+func claudeOrgUUID(ctx context.Context, tok string) string {
+	orgUUIDMu.Lock()
+	if orgUUIDKnown {
+		v := orgUUIDVal
+		orgUUIDMu.Unlock()
+		return v
+	}
+	orgUUIDMu.Unlock()
+
+	uuid := fetchClaudeOrgUUID(ctx, tok)
+	if uuid != "" {
+		orgUUIDMu.Lock()
+		orgUUIDVal, orgUUIDKnown = uuid, true
+		orgUUIDMu.Unlock()
+	}
+	return uuid
+}
+
+func fetchClaudeOrgUUID(ctx context.Context, tok string) string {
+	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, claudeProfileURL, nil)
+	if err != nil {
+		return ""
+	}
+	req.Header.Set("Authorization", "Bearer "+tok)
+	req.Header.Set("anthropic-version", "2023-06-01")
+	req.Header.Set("anthropic-beta", "oauth-2025-04-20")
+	req.Header.Set("User-Agent", "agent-fleet-console")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return ""
+	}
+	var raw struct {
+		Organization struct {
+			UUID string `json:"uuid"`
+		} `json:"organization"`
+	}
+	if json.NewDecoder(resp.Body).Decode(&raw) != nil {
+		return ""
+	}
+	return raw.Organization.UUID
+}
+
 func fetchClaudeUsage(ctx context.Context) claudeUsage {
 	tok := claudeOAuthToken()
 	if tok == "" {
 		return claudeUsage{OK: false}
 	}
+	// Team tokens require the org uuid on the usage endpoint; personal Pro/Max
+	// tokens accept it too, so always include it when resolvable (uuid chars are
+	// query-safe, no escaping needed).
+	url := claudeUsageURL
+	if org := claudeOrgUUID(ctx, tok); org != "" {
+		url += "?organization_uuid=" + org
+	}
 	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, claudeUsageURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return claudeUsage{OK: false}
 	}
