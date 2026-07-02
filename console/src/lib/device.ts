@@ -5,8 +5,10 @@
 // keyboard) when they actually want to type. Desktop (fine pointer) keeps
 // auto-focus, where there's no keyboard to intrude. Evaluated at call time so it
 // follows a device/input change (e.g. a detachable keyboard) rather than page load.
-export const coarsePointer = () =>
+export const coarsePointer = (): boolean =>
   typeof window !== "undefined" &&
-  (window.matchMedia?.("(pointer: coarse)").matches ||
-    "ontouchstart" in window ||
-    (navigator.maxTouchPoints || 0) > 0);
+  Boolean(
+    window.matchMedia?.("(pointer: coarse)")?.matches ||
+      "ontouchstart" in window ||
+      (navigator.maxTouchPoints || 0) > 0,
+  );

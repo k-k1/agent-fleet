@@ -3,23 +3,34 @@
 // 1-based visual reading order (columns left→right; within a column, panes
 // top→bottom). Color cycles a fixed 8-hue palette (.pane-ord-1..8 in styles.css),
 // so the same pane reads identically as a corner chip, a list badge, and a map cell.
+import type { Layout, Pane } from "../types/layout.ts";
 
 export const PANE_ORD_COUNT = 8;
 
+// A pane tagged with its visual ordinal and grid position.
+export interface PaneRow {
+  id: string;
+  ordinal: number;
+  col: number;
+  row: number;
+  pane: Pane;
+}
+
 // ordClass maps a 1-based ordinal to its color class (cycling past 8, though the
 // layout caps at 8 panes so cycling is only a safety net).
-export function ordClass(ordinal) {
+export function ordClass(ordinal: number): string {
   const n = ((ordinal - 1) % PANE_ORD_COUNT) + 1;
   return "pane-ord-" + n;
 }
 
 // paneRows flattens a layout into visual order, tagging each pane with its ordinal
 // and grid position (col/row indices). One pass, reused by every consumer.
-export function paneRows(layout) {
-  const rows = [];
+export function paneRows(layout: Layout | null | undefined): PaneRow[] {
+  const rows: PaneRow[] = [];
+  const cols = layout?.cols ?? [];
   let ord = 0;
-  for (let ci = 0; ci < (layout?.cols?.length || 0); ci++) {
-    const col = layout.cols[ci];
+  for (let ci = 0; ci < cols.length; ci++) {
+    const col = cols[ci];
     for (let ri = 0; ri < col.panes.length; ri++) {
       ord += 1;
       rows.push({ id: col.panes[ri].id, ordinal: ord, col: ci, row: ri, pane: col.panes[ri] });
@@ -29,8 +40,8 @@ export function paneRows(layout) {
 }
 
 // paneOrdinals maps pane id → ordinal.
-export function paneOrdinals(layout) {
-  const m = new Map();
+export function paneOrdinals(layout: Layout | null | undefined): Map<string, number> {
+  const m = new Map<string, number>();
   for (const r of paneRows(layout)) m.set(r.id, r.ordinal);
   return m;
 }
@@ -38,8 +49,10 @@ export function paneOrdinals(layout) {
 // sessionPanes maps a session name → the panes currently showing it, as
 // [{ ordinal, id }] in visual order. Usually one entry, but the same session can
 // be attached in two panes. Only terminal panes carry a session.
-export function sessionPanes(layout) {
-  const m = new Map();
+export function sessionPanes(
+  layout: Layout | null | undefined,
+): Map<string, { ordinal: number; id: string }[]> {
+  const m = new Map<string, { ordinal: number; id: string }[]>();
   for (const r of paneRows(layout)) {
     const p = r.pane;
     if (p.kind !== "terminal" || !p.session) continue;
@@ -52,8 +65,8 @@ export function sessionPanes(layout) {
 
 // paneCount totals the panes in a layout (1 means a single, unsplit pane — no
 // ordinals/map are shown in that case, since there's nothing to disambiguate).
-export function paneCount(layout) {
+export function paneCount(layout: Layout | null | undefined): number {
   let n = 0;
-  for (const c of layout?.cols || []) n += c.panes.length;
+  for (const c of layout?.cols ?? []) n += c.panes.length;
   return n;
 }

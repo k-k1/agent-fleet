@@ -3,7 +3,7 @@
 
 // extension -> highlight.js language id. Unmapped extensions fall back to no
 // highlighting (plain text) to avoid slow / wrong auto-detection on big files.
-const EXT_LANG = {
+const EXT_LANG: Record<string, string> = {
   js: "javascript", mjs: "javascript", cjs: "javascript", jsx: "javascript",
   ts: "typescript", tsx: "typescript",
   json: "json", jsonc: "json",
@@ -23,18 +23,18 @@ const EXT_LANG = {
 };
 
 // Some files are identified by name, not extension.
-const NAME_LANG = {
+const NAME_LANG: Record<string, string> = {
   dockerfile: "dockerfile",
   makefile: "makefile",
   ".gitignore": "bash",
   ".env": "bash",
 };
 
-export function baseName(path) {
+export function baseName(path: string): string {
   return path.split("/").pop() || path;
 }
 
-export function dirName(path) {
+export function dirName(path: string): string {
   const i = path.lastIndexOf("/");
   return i >= 0 ? path.slice(0, i) : "";
 }
@@ -43,9 +43,9 @@ export function dirName(path) {
 // segments. Used to turn a Markdown link's relative href into a home-relative
 // path the file browser can open. (Traversal above home is still rejected by the
 // Agent's safeBrowsePath, so this needn't be airtight.)
-export function joinPath(baseDir, rel) {
+export function joinPath(baseDir: string, rel: string): string {
   const segs = (baseDir ? baseDir.split("/") : []).concat(rel.split("/"));
-  const out = [];
+  const out: string[] = [];
   for (const s of segs) {
     if (s === "" || s === ".") continue;
     if (s === "..") {
@@ -59,13 +59,13 @@ export function joinPath(baseDir, rel) {
 
 // A URL is "external" when it carries a scheme (http:, mailto:, …) or is protocol-
 // relative (//host). Everything else is treated as a path inside the workspace.
-export function isExternalUrl(href) {
+export function isExternalUrl(href: string): boolean {
   return /^[a-z][a-z0-9+.-]*:/i.test(href) || href.startsWith("//");
 }
 
 // GitHub-ish heading slug, so in-page #anchors resolve. Keeps letters/numbers
 // (incl. CJK) and dashes, turns whitespace into "-".
-export function slug(text) {
+export function slug(text: string): string {
   return text
     .toLowerCase()
     .trim()
@@ -76,7 +76,7 @@ export function slug(text) {
 // isMarpDoc reports whether a Markdown source opts into Marp slides via YAML
 // frontmatter (`marp: true`) at the very top of the file. We only sniff the
 // leading `---` … `---` block, not the whole document, and don't fully parse YAML.
-export function isMarpDoc(source) {
+export function isMarpDoc(source: string | null | undefined): boolean {
   if (!source) return false;
   const m = source.match(/^---\r?\n([\s\S]*?)\r?\n---\s*(\r?\n|$)/);
   if (!m) return false;
@@ -86,7 +86,7 @@ export function isMarpDoc(source) {
 // Image extensions the browser can render in an <img>. Maps to a lowercase
 // display format (mirrors CodeLeaf's FileKind.Image(format)). svg is text on the
 // wire but still previewed as an image (with a source toggle in the viewer).
-const IMAGE_EXT = {
+const IMAGE_EXT: Record<string, string> = {
   png: "png", apng: "png",
   jpg: "jpeg", jpeg: "jpeg", jfif: "jpeg",
   gif: "gif",
@@ -101,29 +101,29 @@ const IMAGE_EXT = {
 // "" when the path isn't a previewable image. Detection is by extension only —
 // the viewer sources the bytes from the download endpoint, which the browser
 // sniffs and decodes regardless of the Content-Type header.
-export function imageFormat(path) {
+export function imageFormat(path: string): string {
   const name = baseName(path).toLowerCase();
-  const ext = name.includes(".") ? name.split(".").pop() : "";
+  const ext = name.includes(".") ? name.split(".").pop() ?? "" : "";
   return IMAGE_EXT[ext] || "";
 }
 
-export function langFor(path) {
+export function langFor(path: string): string {
   const name = baseName(path).toLowerCase();
   if (NAME_LANG[name]) return NAME_LANG[name];
-  const ext = name.includes(".") ? name.split(".").pop() : name;
+  const ext = name.includes(".") ? name.split(".").pop() ?? name : name;
   return EXT_LANG[ext] || "";
 }
 
 // A short human label for the info bar (uppercased language, or extension).
-export function langLabel(path) {
+export function langLabel(path: string): string {
   const lang = langFor(path);
   if (lang) return lang;
   const name = baseName(path);
-  const ext = name.includes(".") ? name.split(".").pop() : "";
+  const ext = name.includes(".") ? name.split(".").pop() ?? "" : "";
   return ext ? ext.toLowerCase() : "text";
 }
 
-export function humanSize(bytes) {
+export function humanSize(bytes: number | null | undefined): string {
   if (bytes == null) return "";
   if (bytes < 1024) return `${bytes} B`;
   const u = ["KB", "MB", "GB"];
@@ -136,7 +136,7 @@ export function humanSize(bytes) {
   return `${n.toFixed(n < 10 ? 1 : 0)} ${u[i]}`;
 }
 
-export function countLines(text) {
+export function countLines(text: string | null | undefined): number {
   if (!text) return 0;
   let n = 1;
   for (let i = 0; i < text.length; i++) if (text.charCodeAt(i) === 10) n++;
