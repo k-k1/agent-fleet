@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import TerminalView from "../views/TerminalView.jsx";
 import SourceControlView from "../views/SourceControlView.jsx";
 import FileView from "../views/FileView.jsx";
@@ -51,12 +51,35 @@ export default function Pane({
   const [zone, setZone] = useState(null);
 
   // Markdown mirror toggle (case-A): a claude session pane can swap its raw terminal
-  // for a read-mostly Markdown view of the conversation, driven by the same Agent
-  // /output + /input the MCP tools use. Only offered for claude (the /output endpoint
-  // is claude-only). The terminal stays mounted underneath so the PTY survives.
-  const [mirror, setMirror] = useState(false);
+  // for a read-mostly Markdown view of the conversation. Only offered for claude (the
+  // /messages endpoint is claude-only). `attached` = the TerminalView is mounted (PTY
+  // live). A stopped session opened as chat (pane.chat) starts DETACHED: chat history
+  // is shown read-only WITHOUT resuming; pressing 再開して続ける (or the ターミナル
+  // toggle) attaches, which relaunches the session. The terminal stays mounted once
+  // attached so the PTY survives view switches.
+  const [mirror, setMirror] = useState(pane.chat === true);
+  const [attached, setAttached] = useState(pane.chat !== true);
+  // Re-sync when the pane's session/chat descriptor changes (a new session opened in
+  // this pane). Local toggles (setMirror/setAttached) don't touch these deps, so a
+  // user's resume/switch within the same session persists.
+  useEffect(() => {
+    setMirror(pane.chat === true);
+    setAttached(pane.chat !== true);
+  }, [pane.session, pane.chat]);
   const canMirror = isTerm && !!pane.session && sessionMeta?.kind === "claude";
   const showMirror = canMirror && mirror;
+  // ターミナル toggle shows the terminal AND ensures the session is attached (resuming a
+  // stopped one). チャット toggle just shows the chat overlay.
+  const onToggleMirror = (toChat) => {
+    if (toChat) setMirror(true);
+    else {
+      setMirror(false);
+      setAttached(true);
+    }
+  };
+  // 再開して続ける: attach in the background (resume) while keeping the chat open; the
+  // composer enables once the session is live (MirrorView watches its alive status).
+  const onResume = () => setAttached(true);
 
   // Per-pane line-wrap: a file pane can toggle wrapping independently of the global
   // setting (null = inherit the setting). The toggle sits in the pane-control cluster.
@@ -177,26 +200,31 @@ export default function Pane({
           swap (center), or a half-pane box on the edge where the new split lands. */}
       {zone && <div className={"drop-indicator zone-" + zone} />}
 
-      {/* Terminal is always mounted while the pane exists; hidden when showing
-          another kind (or the Markdown mirror) so its socket + scrollback persist. */}
-      <div className="view" hidden={!isTerm || showMirror}>
-        <TerminalView
-          paneId={pane.id}
-          session={pane.session}
-          sessionMeta={sessionMeta}
-          active={(single || active) && isTerm && !showMirror}
-          canMirror={canMirror}
-          mirror={mirror}
-          onToggleMirror={setMirror}
-        />
-      </div>
+      {/* Terminal is mounted while the pane is attached (PTY live); hidden when showing
+          another kind (or the Markdown mirror) so its socket + scrollback persist. A
+          chat/history pane (attached=false) does NOT mount it, so no PTY = no resume. */}
+      {isTerm && attached && (
+        <div className="view" hidden={showMirror}>
+          <TerminalView
+            paneId={pane.id}
+            session={pane.session}
+            sessionMeta={sessionMeta}
+            active={(single || active) && isTerm && !showMirror}
+            canMirror={canMirror}
+            mirror={mirror}
+            onToggleMirror={onToggleMirror}
+          />
+        </div>
+      )}
       {showMirror && (
         <MirrorView
           session={pane.session}
           sessionMeta={sessionMeta}
           active={single || active}
           mirror={mirror}
-          onToggleMirror={setMirror}
+          onToggleMirror={onToggleMirror}
+          readOnly={!attached}
+          onResume={onResume}
         />
       )}
       {pane.kind === "scm" && <SourceControlView repo={pane.scmRepo} wrap={wrapOn} />}

@@ -2545,6 +2545,20 @@ button.mt-toolrun-head:hover {
   border-top: 1px solid var(--border);
   background: var(--bar);
 }
+/* Read-only (history) / resuming composer: centered affordance instead of the input. */
+.mirror-compose-resume {
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  min-height: 54px;
+}
+.mirror-resume-hint,
+.mirror-resuming {
+  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
 .mirror-input {
   flex: 1;
   resize: vertical;

@@ -33,7 +33,7 @@ function readDraft(key) {
 // Limits (case-A): the transcript is written per turn, so turns appear per response,
 // not token-by-token. Prompts typed in the raw terminal DO appear (they're logged as
 // user turns), just at the next poll.
-export default function MirrorView({ session, sessionMeta, active, mirror, onToggleMirror }) {
+export default function MirrorView({ session, sessionMeta, active, mirror, onToggleMirror, readOnly = false, onResume }) {
   const settings = useSettings();
   const { showDoc, showDiff, showTerminalSplit, bumpSessions } = useApp();
   const [forking, setForking] = useState(false);
@@ -42,6 +42,7 @@ export default function MirrorView({ session, sessionMeta, active, mirror, onTog
   const modSend = settings.mirrorSend !== "enter";
   const [turns, setTurns] = useState([]); // {role:'user'|'assistant', text, ts, idx}
   const [status, setStatus] = useState("");
+  const [alive, setAlive] = useState(!!sessionMeta?.alive); // live session ⇒ composer usable
   const [pending, setPending] = useState(null); // currently-awaiting AskUserQuestion
   const [pendingPlan, setPendingPlan] = useState(null); // ExitPlanMode plan awaiting approval
   const [pendingPerm, setPendingPerm] = useState(null); // tool-permission prompt awaiting allow/deny
@@ -68,6 +69,7 @@ export default function MirrorView({ session, sessionMeta, active, mirror, onTog
     statusRef.current = "";
     setTurns([]);
     setStatus("");
+    setAlive(!!sessionMeta?.alive);
     setPending(null);
     setPendingPlan(null);
     setPendingPerm(null);
@@ -138,6 +140,9 @@ export default function MirrorView({ session, sessionMeta, active, mirror, onTog
             statusRef.current = d.status;
             setStatus(d.status);
           }
+          // Track liveness so a read-only (history) view can enable its composer the
+          // moment a background resume brings the session up.
+          setAlive(!!d.alive);
           setPending(Array.isArray(d.pendingQuestions) ? d.pendingQuestions : null);
           setPendingPlan(typeof d.pendingPlan === "string" && d.pendingPlan ? d.pendingPlan : null);
           setPendingPerm(typeof d.pendingPermission === "string" && d.pendingPermission ? d.pendingPermission : null);
@@ -476,54 +481,73 @@ export default function MirrorView({ session, sessionMeta, active, mirror, onTog
         )}
       </div>
 
-      <div className="mirror-compose">
-        {/* History nav for phones (no arrow keys); hidden on wider screens via CSS. */}
-        <div className="mirror-hist">
-          <button
-            type="button"
-            className="ghost mirror-hist-btn"
-            title="前の入力"
-            disabled={!history.length}
-            onClick={recallPrev}
-          >
-            <Icon name="chevron-up" />
+      {readOnly ? (
+        // History (read-only): the session isn't attached, so input is disabled. The
+        // button attaches (resumes) in the background while keeping this chat open —
+        // the composer enables once the session is live (alive from the poll).
+        <div className="mirror-compose mirror-compose-resume">
+          <button type="button" className="btn primary mirror-resume" onClick={() => onResume && onResume()}>
+            <Icon name="play" /> 再開して続ける
           </button>
+          <span className="muted mirror-resume-hint">履歴を閲覧中（入力するには再開）</span>
+        </div>
+      ) : !alive ? (
+        // Attached but the session is still coming up (resume in flight).
+        <div className="mirror-compose mirror-compose-resume">
+          <span className="muted mirror-resuming">
+            <Icon name="loading" spin /> 再開中… 準備ができると入力できます
+          </span>
+        </div>
+      ) : (
+        <div className="mirror-compose">
+          {/* History nav for phones (no arrow keys); hidden on wider screens via CSS. */}
+          <div className="mirror-hist">
+            <button
+              type="button"
+              className="ghost mirror-hist-btn"
+              title="前の入力"
+              disabled={!history.length}
+              onClick={recallPrev}
+            >
+              <Icon name="chevron-up" />
+            </button>
+            <button
+              type="button"
+              className="ghost mirror-hist-btn"
+              title="次の入力"
+              disabled={histIdx === null}
+              onClick={recallNext}
+            >
+              <Icon name="chevron-down" />
+            </button>
+          </div>
+          <textarea
+            ref={inputRef}
+            className="mirror-input"
+            rows={2}
+            placeholder={
+              modSend
+                ? "プロンプトを入力（Ctrl+Enter で送信 / Enter で改行）"
+                : "プロンプトを入力（Enter で送信 / Shift+Enter で改行）"
+            }
+            value={draft}
+            onChange={(e) => {
+              setDraft(e.target.value);
+              setHistIdx(null); // typing leaves history-recall mode
+            }}
+            onKeyDown={onKeyDown}
+          />
           <button
             type="button"
-            className="ghost mirror-hist-btn"
-            title="次の入力"
-            disabled={histIdx === null}
-            onClick={recallNext}
+            className="btn primary mirror-send"
+            disabled={!draft.trim() || sending}
+            onClick={send}
+            title="送信"
           >
-            <Icon name="chevron-down" />
+            <Icon name="send" />
           </button>
         </div>
-        <textarea
-          ref={inputRef}
-          className="mirror-input"
-          rows={2}
-          placeholder={
-            modSend
-              ? "プロンプトを入力（Ctrl+Enter で送信 / Enter で改行）"
-              : "プロンプトを入力（Enter で送信 / Shift+Enter で改行）"
-          }
-          value={draft}
-          onChange={(e) => {
-            setDraft(e.target.value);
-            setHistIdx(null); // typing leaves history-recall mode
-          }}
-          onKeyDown={onKeyDown}
-        />
-        <button
-          type="button"
-          className="btn primary mirror-send"
-          disabled={!draft.trim() || sending}
-          onClick={send}
-          title="送信"
-        >
-          <Icon name="send" />
-        </button>
-      </div>
+      )}
     </div>
   );
 }

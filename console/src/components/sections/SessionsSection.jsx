@@ -30,7 +30,7 @@ const notify = (title, body) => {
 // window (agent-side TTL). The ⋯ menu holds destructive actions (作り直す). The
 // list polls so state updates on its own.
 export default function SessionsSection() {
-  const { sessions, bumpSessions, bumpRepos, bumpFiles, revealInFiles, showTerminal, showTerminalSplit, session, newSessionTick, wsState, layout, setActivePane } = useApp();
+  const { sessions, bumpSessions, bumpRepos, bumpFiles, revealInFiles, showTerminal, showTerminalSplit, showChat, session, newSessionTick, wsState, layout, setActivePane } = useApp();
   const running = wsState === "running"; // WS down → attach/resume/create are inert
   const [showModal, setShowModal] = useState(false);
   const { hover, setHover } = usePaneHover();
@@ -244,15 +244,31 @@ export default function SessionsSection() {
             )}
             <button
               className="session-btn"
-              title={dead ? "作業フォルダが存在しないため再開できません" : !s.alive ? "停止中（⋯メニューから再開）" : (s.dir ? s.dir + "（Ctrl/中クリックで新ペインに開く）" : "Ctrl/中クリックで新ペインに開く")}
+              title={
+                dead
+                  ? "作業フォルダが存在しないため再開できません"
+                  : !s.alive
+                    ? s.kind === "claude"
+                      ? "会話履歴を表示（クリック / 再開はチャット内から）"
+                      : "停止中（⋯メニューから再開）"
+                    : s.dir
+                      ? s.dir + "（Ctrl/中クリックで新ペインに開く）"
+                      : "Ctrl/中クリックで新ペインに開く"
+              }
               // aria-disabled (not the disabled attribute): a truly disabled button
               // fires no events at all, so right-clicking a stopped session would
               // never reach the row's onContextMenu and the native menu would show.
-              // onClick already guards on s.alive, so this stays inert for stopped.
-              aria-disabled={!s.alive || undefined}
+              // A stopped claude session IS interactive (opens read-only chat history),
+              // so only stopped non-claude (and dead) rows are aria-disabled.
+              aria-disabled={((!s.alive && !(!dead && s.kind === "claude"))) || undefined}
               // Ctrl/Cmd+click mirrors the middle-click: open in a freshly split pane.
               onClick={(e) => {
-                if (!s.alive) return;
+                if (!s.alive) {
+                  // Stopped claude → open its conversation as read-only chat (no resume);
+                  // resume happens from inside the chat. Other kinds: resume via ⋯ menu.
+                  if (!dead && s.kind === "claude") showChat(s.name);
+                  return;
+                }
                 if (e.ctrlKey || e.metaKey) showTerminalSplit(s.name);
                 else showTerminal(s.name);
               }}
