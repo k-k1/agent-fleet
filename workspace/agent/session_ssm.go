@@ -63,7 +63,7 @@ func handleSSMLoginStatus(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
 		return
 	}
-	if meta.Kind != "ssm" {
+	if meta.Kind != kindSSM {
 		writeErr(w, http.StatusBadRequest, "unsupported_kind", "ssm-login is for ssm sessions only")
 		return
 	}
@@ -81,6 +81,11 @@ func handleSSMLoginStatus(w http.ResponseWriter, r *http.Request) {
 
 // parseSSMLogin derives the login phase from the pane buffer. Order matters: an
 // established session buffer still contains the earlier URL, so check ready first.
+//
+// Fragile by nature: it matches the aws CLI's on-screen wording ("Starting session
+// with SessionId:") and device-authorization URL shapes via regex. An aws-cli version
+// that rewords the banner or changes the SSO URL host would silently regress this
+// to "pending"/"error"; behavior is pinned by the current CLI output, not a contract.
 func parseSSMLogin(buf string, alive bool) ssmLoginStatus {
 	if strings.Contains(buf, "Starting session with SessionId:") {
 		return ssmLoginStatus{Phase: "ready"}

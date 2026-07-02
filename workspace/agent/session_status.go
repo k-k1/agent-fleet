@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -41,51 +42,22 @@ type sessionStatus struct {
 //     key the status, AND read codex's session_id from its hook JSON on stdin to
 //     record the slot→codex-id mapping used for `codex resume <id>`.
 func runSessionStatusHook(args []string) {
-	state := "idle"
-	if len(args) > 0 {
-		state = args[0]
-	}
-	sid := ""
-	codexMarker := false
-	if len(args) > 2 && args[2] == "codex" {
-		sid, codexMarker = args[1], true
-	} else if len(args) > 1 {
-		sid = args[1] // opencode plugin path
-	}
-	// Read stdin when claude needs the sid from it, or when codex wants to capture
-	// its own session id for resume (status itself is keyed by the baked-in slot sid).
-	// For the AskUserQuestion PreToolUse hook (state=question) the same stdin carries
-	// tool_input.questions — capture it so the Console can show/answer the PENDING
-	// question (the tool_use isn't written to the transcript until it's answered).
-	var questions json.RawMessage
-	var plan, message, ntype, toolDetail string
+	state, sid, codexMarker := parseStatusHookArgs(args)
+	// Read stdin when claude needs the sid from it, or when codex wants to capture its
+	// own session id for resume (status itself is keyed by the baked-in slot sid).
+	var h hookInput
 	if sid == "" || codexMarker {
-		var in struct {
-			SessionID        string `json:"session_id"`
-			Message          string `json:"message"`           // Notification
-			NotificationType string `json:"notification_type"` // Notification
-			ToolName         string `json:"tool_name"`         // PreToolUse
-			ToolInput        struct {
-				Questions    json.RawMessage `json:"questions"` // AskUserQuestion
-				Plan         string          `json:"plan"`      // ExitPlanMode
-				FilePath     string          `json:"file_path"` // Write/Edit
-				NotebookPath string          `json:"notebook_path"`
-				Path         string          `json:"path"`
-				Command      string          `json:"command"` // Bash
-			} `json:"tool_input"`
-		}
-		_ = json.NewDecoder(os.Stdin).Decode(&in)
+		in := decodeHookStdin()
 		if codexMarker {
-			if in.SessionID != "" {
-				writeCodexSid(sid, in.SessionID)
+			// codex: status stays keyed by the baked-in slot sid; only capture codex's
+			// own session id for `codex resume`. The question/plan/permission payloads
+			// are claude-only, so they are intentionally NOT carried over here.
+			if in.sessionID != "" {
+				codexSids.write(sid, in.sessionID)
 			}
 		} else {
-			sid = in.SessionID // claude
-			questions = in.ToolInput.Questions
-			plan = in.ToolInput.Plan
-			message = in.Message
-			ntype = in.NotificationType
-			toolDetail = permToolDetail(in.ToolName, in.ToolInput.FilePath, in.ToolInput.NotebookPath, in.ToolInput.Path, in.ToolInput.Command)
+			h = in             // claude: sid + pending payloads come from stdin
+			sid = in.sessionID // claude's session_id == our deterministic sid
 		}
 	}
 	if sid == "" {
@@ -95,37 +67,110 @@ func runSessionStatusHook(args []string) {
 	// about to run (for the permission block's detail) — it fires in EVERY mode, so
 	// it must not change the session status.
 	if state == "permtool" {
-		writeLastTool(sid, toolDetail)
+		writeLastTool(sid, h.toolDetail)
 		return
 	}
 	// The Notification hook fires for several reasons (idle, permission, …); only
 	// "permission_prompt" means the session is blocked awaiting a tool-permission
 	// decision. Ignore the others so they don't clobber the real state.
-	if state == "permission" && ntype != "permission_prompt" {
+	if state == "permission" && h.ntype != "permission_prompt" {
 		return
 	}
-	_ = os.MkdirAll(sessionStatusDir(), 0o700)
+	persistSessionStatus(sid, state)
+	applyPendingPayloads(sid, state, h)
+}
+
+// parseStatusHookArgs decodes the `session-status <state> [sid] [codex]` positional
+// args into the state, the (possibly empty) sid, and whether the codex marker is set.
+func parseStatusHookArgs(args []string) (state, sid string, codexMarker bool) {
+	state = "idle"
+	if len(args) > 0 {
+		state = args[0]
+	}
+	if len(args) > 2 && args[2] == "codex" {
+		return state, args[1], true // codex: slot sid baked into the hook command
+	}
+	if len(args) > 1 {
+		return state, args[1], false // opencode plugin path
+	}
+	return state, "", false // claude: sid comes from stdin
+}
+
+// hookInput is the subset of a claude/codex hook's stdin JSON we consume. For the
+// AskUserQuestion PreToolUse hook (state=question) the stdin carries the pending
+// tool_input.questions — captured so the Console can show/answer the question before
+// it lands in the transcript (the tool_use is written only after it's answered).
+type hookInput struct {
+	sessionID  string
+	questions  json.RawMessage
+	plan       string
+	message    string
+	ntype      string
+	toolDetail string
+}
+
+func decodeHookStdin() hookInput {
+	var in struct {
+		SessionID        string `json:"session_id"`
+		Message          string `json:"message"`           // Notification
+		NotificationType string `json:"notification_type"` // Notification
+		ToolName         string `json:"tool_name"`         // PreToolUse
+		ToolInput        struct {
+			Questions    json.RawMessage `json:"questions"` // AskUserQuestion
+			Plan         string          `json:"plan"`      // ExitPlanMode
+			FilePath     string          `json:"file_path"` // Write/Edit
+			NotebookPath string          `json:"notebook_path"`
+			Path         string          `json:"path"`
+			Command      string          `json:"command"` // Bash
+		} `json:"tool_input"`
+	}
+	_ = json.NewDecoder(os.Stdin).Decode(&in)
+	return hookInput{
+		sessionID:  in.SessionID,
+		questions:  in.ToolInput.Questions,
+		plan:       in.ToolInput.Plan,
+		message:    in.Message,
+		ntype:      in.NotificationType,
+		toolDetail: permToolDetail(in.ToolName, in.ToolInput.FilePath, in.ToolInput.NotebookPath, in.ToolInput.Path, in.ToolInput.Command),
+	}
+}
+
+// persistSessionStatus writes {state, ts} keyed by sid. Errors are logged (not
+// swallowed): a failed write leaves the Console's 進行中/応答あり badge silently
+// stale, so a log line is the only breadcrumb the write ever failed.
+func persistSessionStatus(sid, state string) {
+	if err := os.MkdirAll(sessionStatusDir(), 0o700); err != nil {
+		log.Printf("session-status: mkdir %s: %v", sessionStatusDir(), err)
+		return
+	}
 	b, _ := json.Marshal(sessionStatus{State: state, TS: time.Now().Format(time.RFC3339)})
-	_ = os.WriteFile(sessionStatusPath(sid), b, 0o600)
-	// Persist/clear the pending AskUserQuestion / ExitPlanMode / permission payloads
-	// alongside the status (each cleared whenever the session isn't in that state) —
-	// except that a permission prompt must NOT clear a pending question/plan. When
-	// AskUserQuestion (or ExitPlanMode) needs approval, its permission_prompt fires
-	// between that tool's PreToolUse (which captured the question) and its PostToolUse,
-	// overwriting state to "permission" with an empty questions payload. Clearing here
-	// would destroy the captured question, so the Console loses the options. The
-	// question/plan is instead cleared by its own lifecycle (PostToolUse→working, idle).
-	if state == "question" && len(questions) > 0 {
-		writePendingQuestion(sid, questions)
+	if err := os.WriteFile(sessionStatusPath(sid), b, 0o600); err != nil {
+		log.Printf("session-status: write %s: %v", sessionStatusPath(sid), err)
+	}
+}
+
+// applyPendingPayloads persists/clears the pending AskUserQuestion / ExitPlanMode /
+// permission payloads alongside the status (each cleared whenever the session isn't
+// in that state) — except that a permission prompt must NOT clear a pending
+// question/plan. When AskUserQuestion (or ExitPlanMode) needs approval, its
+// permission_prompt fires between that tool's PreToolUse (which captured the question)
+// and its PostToolUse, overwriting state to "permission" with an empty questions
+// payload. Clearing here would destroy the captured question, so the Console loses the
+// options. The question/plan is instead cleared by its own lifecycle
+// (PostToolUse→working, idle).
+func applyPendingPayloads(sid, state string, h hookInput) {
+	if state == "question" && len(h.questions) > 0 {
+		writePendingQuestion(sid, h.questions)
 	} else if state != "permission" {
 		removePendingQuestion(sid)
 	}
-	if state == "plan" && plan != "" {
-		writePendingPlan(sid, plan)
+	if state == "plan" && h.plan != "" {
+		writePendingPlan(sid, h.plan)
 	} else if state != "permission" {
 		removePendingPlan(sid)
 	}
 	if state == "permission" {
+		message := h.message
 		// Prefer the specific tool detail captured just before the prompt.
 		if detail, ok := readLastTool(sid); ok && detail != "" {
 			message = detail
