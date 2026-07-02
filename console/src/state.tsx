@@ -254,6 +254,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsSection, setSettingsSection] = useState("connections"); // initial tab when opened
   const [adminOpen, setAdminOpen] = useState(false);
 
   // navOpen drives the mobile navigator drawer. On desktop the drawer styles are
@@ -923,7 +924,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     showDiff,
     setPaneWrap,
     settingsOpen,
-    openSettings: () => setSettingsOpen(true),
+    settingsSection,
+    openSettings: (section?: string) => {
+      setSettingsSection(section || "connections");
+      setSettingsOpen(true);
+    },
     closeSettings: () => setSettingsOpen(false),
     adminOpen,
     openAdmin: () => setAdminOpen(true),

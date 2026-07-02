@@ -13,8 +13,8 @@ import Modal from "../components/Modal.jsx";
 // AdminDialog, opened from its own top-bar button — so admin actions are clearly
 // distinct from personal settings.
 export default function SettingsDialog() {
-  const { closeSettings } = useApp();
-  const [section, setSection] = useState("connections");
+  const { closeSettings, settingsSection } = useApp();
+  const [section, setSection] = useState(settingsSection || "connections");
 
   const sections = [
     ["connections", "接続"],
