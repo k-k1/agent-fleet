@@ -3,6 +3,7 @@ import { api, apiJSON, raw } from "../api.js";
 import { useApp } from "../state.jsx";
 import type { ReactNode } from "react";
 import Icon from "../components/Icon.jsx";
+import { useToast } from "../components/ToastProvider.jsx";
 
 // Common props for a per-provider connection row: the provider's status (API shape,
 // kept as any) and a reload callback that refetches after connect/disconnect.
@@ -79,6 +80,7 @@ export default function ConnectionsTab() {
 // API key (codex login --with-api-key), or ChatGPT subscription via device-auth
 // (show a one-time code + URL, then poll until approved). Mirrors the Claude row.
 function CodexRow({ st, reload }: RowProps) {
+  const toast = useToast();
   const [mode, setMode] = useState("idle"); // idle | device | key
   const [dev, setDev] = useState<any>(null); // { user_code, url, flow_id, status }
   const [key, setKey] = useState("");
@@ -93,7 +95,7 @@ function CodexRow({ st, reload }: RowProps) {
     try {
       const res = await api("api/connections/codex/device/start", { method: "POST" });
       if (!res || res.error || !res.url) {
-        alert("Codex 認証開始に失敗: " + (res?.error?.message || "device code ログインが無効かもしれません"));
+        toast("Codex 認証開始に失敗: " + (res?.error?.message || "device code ログインが無効かもしれません"));
         return;
       }
       setMode("device");
@@ -130,7 +132,7 @@ function CodexRow({ st, reload }: RowProps) {
     try {
       const res = await apiJSON("api/connections/codex/api-key", "POST", { key: key.trim() });
       if (res && res.error) {
-        alert("接続に失敗: " + (res.error.message || res.error));
+        toast("接続に失敗: " + (res.error.message || res.error));
         return;
       }
       setKey("");
@@ -209,6 +211,7 @@ const OC_PRESETS = [
 ];
 
 function OpencodeRow({ st, reload }: RowProps) {
+  const toast = useToast();
   const [preset, setPreset] = useState("go");
   const [customEnv, setCustomEnv] = useState("");
   const [key, setKey] = useState("");
@@ -223,7 +226,7 @@ function OpencodeRow({ st, reload }: RowProps) {
     try {
       const res = await apiJSON("api/connections/opencode", "PUT", { env: envName, key: key.trim() });
       if (res && res.error) {
-        alert("保存に失敗: " + (res.error.message || res.error));
+        toast("保存に失敗: " + (res.error.message || res.error));
         return;
       }
       setKey("");
@@ -301,6 +304,7 @@ function Dot({ on }: { on?: boolean }) {
 }
 
 function ClaudeRow({ st, reload }: RowProps) {
+  const toast = useToast();
   const [flow, setFlow] = useState<any>(null); // { url, flow_id }
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
@@ -310,7 +314,7 @@ function ClaudeRow({ st, reload }: RowProps) {
     try {
       const res = await api("api/connections/claude/start", { method: "POST" });
       if (!res || res.error || !res.url) {
-        alert("Claude 認証開始に失敗: " + (res?.error?.message || ""));
+        toast("Claude 認証開始に失敗: " + (res?.error?.message || ""));
         return;
       }
       // Like GitHub / Bitbucket OAuth: pop the sign-in page open in a new tab
@@ -330,7 +334,7 @@ function ClaudeRow({ st, reload }: RowProps) {
         code: code.trim(),
       });
       if (r && r.error) {
-        alert("接続に失敗: " + (r.error.message || r.error));
+        toast("接続に失敗: " + (r.error.message || r.error));
         return;
       }
       setFlow(null);
@@ -383,6 +387,7 @@ function ClaudeRow({ st, reload }: RowProps) {
 }
 
 function GithubRow({ st, reload }: RowProps) {
+  const toast = useToast();
   const [mode, setMode] = useState("idle"); // idle | oauth | token
   const [oauth, setOauth] = useState<any>(null); // { user_code, verification_uri, status }
   const [token, setToken] = useState("");
@@ -395,8 +400,8 @@ function GithubRow({ st, reload }: RowProps) {
     const res = await api("api/connections/git/github/oauth/start", { method: "POST" });
     if (!res || res.error) {
       if (res?.error?.code === "not_configured")
-        alert("GitHub OAuth は未設定です（client_id）。「token」から貼付を使ってください。");
-      else alert("OAuth 開始に失敗: " + (res?.error?.message || ""));
+        toast("GitHub OAuth は未設定です（client_id）。「token」から貼付を使ってください。", { kind: "warn" });
+      else toast("OAuth 開始に失敗: " + (res?.error?.message || ""));
       return;
     }
     setMode("oauth");
@@ -434,7 +439,7 @@ function GithubRow({ st, reload }: RowProps) {
     if (!token.trim()) return;
     const res = await apiJSON("api/connections/git/github.com", "PUT", { token: token.trim() });
     if (res && res.error) {
-      alert("接続に失敗: " + (res.error.message || res.error));
+      toast("接続に失敗: " + (res.error.message || res.error));
       return;
     }
     setToken("");
@@ -490,6 +495,7 @@ function GithubRow({ st, reload }: RowProps) {
 }
 
 function BitbucketRow({ st, reload }: RowProps) {
+  const toast = useToast();
   const [mode, setMode] = useState("idle"); // idle | oauth | token
   const [status, setStatus] = useState("");
   const [username, setUsername] = useState("");
@@ -503,8 +509,8 @@ function BitbucketRow({ st, reload }: RowProps) {
     const res = await api("api/connections/git/bitbucket/oauth/start");
     if (!res || res.error || !res.authorize_url) {
       if (res?.error?.code === "not_configured")
-        alert("Bitbucket OAuth は未設定です（key/secret）。「token」から貼付を使ってください。");
-      else alert("OAuth 開始に失敗: " + (res?.error?.message || ""));
+        toast("Bitbucket OAuth は未設定です（key/secret）。「token」から貼付を使ってください。", { kind: "warn" });
+      else toast("OAuth 開始に失敗: " + (res?.error?.message || ""));
       return;
     }
     window.open(res.authorize_url, "_blank", "noopener");
@@ -540,7 +546,7 @@ function BitbucketRow({ st, reload }: RowProps) {
       token: token.trim(),
     });
     if (res && res.error) {
-      alert("接続に失敗: " + (res.error.message || res.error));
+      toast("接続に失敗: " + (res.error.message || res.error));
       return;
     }
     setToken("");

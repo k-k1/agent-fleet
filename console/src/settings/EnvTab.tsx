@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { useToast } from "../components/ToastProvider.jsx";
 import type { ReactNode } from "react";
 import { api, apiJSON, getTenant } from "../api.js";
 import { useApp } from "../state.jsx";
@@ -11,6 +12,7 @@ import Icon from "../components/Icon.jsx";
 // selection at launch); already-running ones and the agent process itself pick it
 // up on the next Stop → Start.
 export default function EnvTab() {
+  const toast = useToast();
   const { wsState } = useApp();
   const running = wsState === "running";
   const [d, setD] = useState<any>(null);
@@ -58,7 +60,7 @@ export default function EnvTab() {
   const setAgentUpdate = async (on: boolean) => {
     const res = await apiJSON("api/env/ws-settings", "PUT", { agentUpdate: on });
     if (res && !res.error) setAu(res);
-    else alert("保存に失敗しました");
+    else toast("保存に失敗しました");
   };
 
   const update = async (patch: Record<string, string>) => {
@@ -70,7 +72,7 @@ export default function EnvTab() {
     };
     const res = await apiJSON("api/env/toolchains", "PUT", next);
     if (res && res.error) {
-      alert("保存に失敗: " + (res.error.message || ""));
+      toast("保存に失敗: " + (res.error.message || ""));
       return;
     }
     setD(res);

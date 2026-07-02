@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { useToast } from "../components/ToastProvider.jsx";
 import type { ReactNode } from "react";
 import { api, apiJSON, ocwebURL } from "../api.js";
 import { useApp } from "../state.jsx";
@@ -9,6 +10,7 @@ import { useApp } from "../state.jsx";
 // api/agents/rtk). Reads/writes go through the Agent, so the workspace must be
 // running; changes apply to NEW sessions of each agent.
 export default function AgentsTab() {
+  const toast = useToast();
   // opencode web state is shared with the WS bar via the app context, so toggling
   // here updates the bar's "open" entry immediately (and vice-versa).
   const { ocweb, setOcweb, refreshOcweb } = useApp();
@@ -41,7 +43,7 @@ export default function AgentsTab() {
   const updateClaude = async (patch: unknown) => {
     const d = await apiJSON("api/claude/settings", "PUT", patch);
     if (d && d.error) {
-      alert("保存に失敗: " + (d.error.message || ""));
+      toast("保存に失敗: " + (d.error.message || ""));
       return;
     }
     setClaude(d);
@@ -49,7 +51,7 @@ export default function AgentsTab() {
   const updateAgents = async (patch: unknown) => {
     const d = await apiJSON("api/agents/rtk", "PUT", patch);
     if (d && d.error) {
-      alert("保存に失敗: " + (d.error.message || ""));
+      toast("保存に失敗: " + (d.error.message || ""));
       return;
     }
     setAgents(d);
@@ -57,7 +59,7 @@ export default function AgentsTab() {
   const updateOcweb = async (patch: unknown) => {
     const d = await apiJSON("api/agents/opencode-web", "PUT", patch);
     if (d && d.error) {
-      alert("保存に失敗: " + (d.error.message || ""));
+      toast("保存に失敗: " + (d.error.message || ""));
       return;
     }
     setOcweb(d);
