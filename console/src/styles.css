@@ -423,26 +423,23 @@ textarea:focus {
   position: relative;
   display: inline-flex;
 }
+/* The frame + color come from .kind-tag.kind-claude (same as the Sessions badge);
+   here we only reset the button chrome, drop the badge's row margin, and size the
+   caret. */
 button.ws-usage-btn {
-  border: 0;
-  background: none;
-  font: inherit;
-  padding: 2px 5px;
-  margin: 0 -2px;
-  border-radius: 4px;
+  margin: 0;
   cursor: pointer;
-  gap: 3px;
+  line-height: 1.5;
 }
 button.ws-usage-btn:hover {
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  filter: brightness(1.12);
 }
 .ws-usage-btn .codicon {
   font-size: 11px;
-  opacity: 0.75;
 }
 .ws-usage-btn .codicon-chevron-down {
   font-size: 9px;
-  opacity: 0.6;
+  opacity: 0.7;
 }
 .ws-usage-pop {
   position: absolute;
