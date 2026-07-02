@@ -288,9 +288,11 @@ export default function WsBar() {
   const [pvOpen, setPvOpen] = useState(false); // desktop port-preview popover
   const [moreOpen, setMoreOpen] = useState(false); // mobile overflow popover
   const [usageOpen, setUsageOpen] = useState(false); // Claude usage detail dropdown
+  const [resOpen, setResOpen] = useState(false); // desktop resource-tiles popover
   const pvRef = useRef<HTMLDivElement>(null);
   const moreRef = useRef<HTMLDivElement>(null);
   const usageRef = useRef<HTMLDivElement>(null);
+  const resRef = useRef<HTMLDivElement>(null);
   const running = wsState === "running";
   const busy = wsState.endsWith("…"); // starting… / stopping… / recreating… — toggle inert
 
@@ -312,17 +314,19 @@ export default function WsBar() {
 
   // Close the popovers on an outside click / Escape.
   useEffect(() => {
-    if (!pvOpen && !moreOpen && !usageOpen) return;
+    if (!pvOpen && !moreOpen && !usageOpen && !resOpen) return;
     const onDown = (e: MouseEvent) => {
       if (pvRef.current && !pvRef.current.contains(e.target as Node)) setPvOpen(false);
       if (moreRef.current && !moreRef.current.contains(e.target as Node)) setMoreOpen(false);
       if (usageRef.current && !usageRef.current.contains(e.target as Node)) setUsageOpen(false);
+      if (resRef.current && !resRef.current.contains(e.target as Node)) setResOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         setPvOpen(false);
         setMoreOpen(false);
         setUsageOpen(false);
+        setResOpen(false);
       }
     };
     document.addEventListener("mousedown", onDown);
@@ -331,7 +335,7 @@ export default function WsBar() {
       document.removeEventListener("mousedown", onDown);
       document.removeEventListener("keydown", onKey);
     };
-  }, [pvOpen, moreOpen, usageOpen]);
+  }, [pvOpen, moreOpen, usageOpen, resOpen]);
 
   // --- pieces shared between the inline (desktop) and folded (mobile) layouts ---
   const lvl = (v: number | null, warn: number, crit: number) => (v == null ? 0 : v >= crit ? 2 : v >= warn ? 1 : 0);
@@ -393,6 +397,33 @@ export default function WsBar() {
       {containerTiles && hostTiles && <span className="ws-graph-sep" />}
       {hostTiles}
     </>
+  );
+
+  // Desktop: collapse the resource sparkline tiles behind one "リソース" chip so the
+  // bar isn't a wall of tiles. The chip shows a glanceable container summary
+  // (mem/cpu %) and opens a popover with the full trend tiles (incl. host for
+  // super_admin). On mobile the tiles already live in the ⋯ overflow, so this is
+  // desktop-only (graphs is reused there).
+  const resSummary = hasWs
+    ? `mem ${memRatio != null ? Math.round(memRatio * 100) : "–"}% · cpu ${
+        wsStats.cpu_pct != null ? Math.round(wsStats.cpu_pct) : "–"
+      }%`
+    : null;
+  const resourcesEl = graphs && (
+    <div className="ws-res" ref={resRef}>
+      <button
+        type="button"
+        className="ghost ws-res-btn"
+        title="リソース使用状況"
+        aria-expanded={resOpen}
+        onClick={() => setResOpen((o) => !o)}
+      >
+        <Icon name="pulse" />
+        <span className="ws-res-sum">{resSummary || "リソース"}</span>
+        <Icon name="chevron-down" />
+      </button>
+      {resOpen && <div className="ws-res-pop">{graphs}</div>}
+    </div>
   );
 
   // Claude subscription usage: a COMPACT trigger (Claude glyph + the higher of the two
@@ -545,7 +576,9 @@ export default function WsBar() {
         </div>
       ) : (
         <>
-          {statsBlock}
+          {resourcesEl}
+          {resourcesEl && usageEl && <span className="ws-graph-sep" />}
+          {usageEl}
           {ocwebBtn}
           <div className="ws-preview" ref={pvRef}>
             <button
