@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import type { MouseEvent as RMouseEvent, TouchEvent as RTouchEvent } from "react";
 
 // CodeView renders highlighted code with an optional line-number gutter and a
 // VSCode-style minimap on the right edge: a scaled-down mirror of the file with a
@@ -7,10 +8,33 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 // VSCode-style change bar in the gutter when the file is git-modified.
 const SCALE = 0.16; // minimap size relative to the real code
 
-export default function CodeView({ html, lines, lineNumbers, wrap, minimap, marks }) {
-  const scrollRef = useRef(null);
-  const miniInnerRef = useRef(null);
-  const [vp, setVp] = useState({ visible: false, top: 0, height: 0, offset: 0 });
+// Per-line change marks for the gutter change bar.
+export interface LineMarks {
+  added?: number[];
+  modified?: number[];
+  deleted?: number[];
+}
+
+interface CodeViewProps {
+  html: string;
+  lines: number;
+  lineNumbers?: boolean;
+  wrap?: boolean;
+  minimap?: boolean;
+  marks?: LineMarks | null;
+}
+
+interface Viewport {
+  visible: boolean;
+  top: number;
+  height: number;
+  offset: number;
+}
+
+export default function CodeView({ html, lines, lineNumbers, wrap, minimap, marks }: CodeViewProps) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const miniInnerRef = useRef<HTMLDivElement>(null);
+  const [vp, setVp] = useState<Viewport>({ visible: false, top: 0, height: 0, offset: 0 });
 
   const sync = useCallback(() => {
     const sc = scrollRef.current;
@@ -50,7 +74,7 @@ export default function CodeView({ html, lines, lineNumbers, wrap, minimap, mark
   }, [sync]);
 
   // Map a Y within the minimap pane to a scroll position (centred on the cursor).
-  const scrollToMini = (clientY, paneEl) => {
+  const scrollToMini = (clientY: number, paneEl: HTMLElement) => {
     const sc = scrollRef.current;
     const inner = miniInnerRef.current;
     if (!sc || !inner) return;
@@ -61,10 +85,10 @@ export default function CodeView({ html, lines, lineNumbers, wrap, minimap, mark
     sc.scrollTop = main - sc.clientHeight / 2;
   };
 
-  const onMiniDown = (e) => {
-    const pane = e.currentTarget;
+  const onMiniDown = (e: RMouseEvent) => {
+    const pane = e.currentTarget as HTMLElement;
     scrollToMini(e.clientY, pane);
-    const move = (ev) => scrollToMini(ev.clientY, pane);
+    const move = (ev: MouseEvent) => scrollToMini(ev.clientY, pane);
     const up = () => {
       window.removeEventListener("mousemove", move);
       window.removeEventListener("mouseup", up);
@@ -75,16 +99,16 @@ export default function CodeView({ html, lines, lineNumbers, wrap, minimap, mark
 
   // Touch: tap or swipe up/down on the minimap to scroll. `touch-action: none` on
   // .minimap (styles.css) hands us the gesture so the page doesn't scroll instead.
-  const onMiniTouch = (e) => {
+  const onMiniTouch = (e: RTouchEvent) => {
     const t = e.touches[0];
-    if (t) scrollToMini(t.clientY, e.currentTarget);
+    if (t) scrollToMini(t.clientY, e.currentTarget as HTMLElement);
   };
 
   // Per-line change classes. The bar can't align with wrapped lines (their
   // heights vary), so it's only drawn when wrap is off.
   const changes = useMemo(() => {
     if (!marks || wrap) return null;
-    const cls = {};
+    const cls: Record<number, string> = {};
     for (const n of marks.added || []) cls[n] = "cb-add";
     for (const n of marks.modified || []) cls[n] = "cb-mod";
     const del = new Set(marks.deleted || []);
