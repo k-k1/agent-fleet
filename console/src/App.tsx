@@ -5,6 +5,7 @@ import LeftPane from "./components/LeftPane.jsx";
 import PaneHost from "./components/PaneHost.jsx";
 import SettingsDialog from "./settings/SettingsDialog.jsx";
 import AdminDialog from "./settings/AdminDialog.jsx";
+import ConfirmProvider from "./components/ConfirmProvider.jsx";
 
 // App lays out the persistent frame: top bar (identity / tenant / settings), WS
 // bar (workspace state + start/stop), the left navigator pane (Sessions / Repos /
@@ -13,19 +14,21 @@ import AdminDialog from "./settings/AdminDialog.jsx";
 export default function App() {
   const { settingsOpen, adminOpen, navOpen, closeNav } = useApp();
   return (
-    <div className="app">
-      <TopBar />
-      <WsBar />
-      <div className={"body" + (navOpen ? " nav-open" : "")}>
-        <LeftPane />
-        {/* Mobile-only: dims the main area and dismisses the navigator drawer. */}
-        <div className="nav-backdrop" onClick={closeNav} />
-        <main className="main">
-          <PaneHost />
-        </main>
+    <ConfirmProvider>
+      <div className="app">
+        <TopBar />
+        <WsBar />
+        <div className={"body" + (navOpen ? " nav-open" : "")}>
+          <LeftPane />
+          {/* Mobile-only: dims the main area and dismisses the navigator drawer. */}
+          <div className="nav-backdrop" onClick={closeNav} />
+          <main className="main">
+            <PaneHost />
+          </main>
+        </div>
+        {settingsOpen && <SettingsDialog />}
+        {adminOpen && <AdminDialog />}
       </div>
-      {settingsOpen && <SettingsDialog />}
-      {adminOpen && <AdminDialog />}
-    </div>
+    </ConfirmProvider>
   );
 }
