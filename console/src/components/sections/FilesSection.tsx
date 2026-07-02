@@ -651,7 +651,7 @@ export default function FilesSection() {
                         {...onAuxOpen(c.path)}
                       >
                         <span className={"fs-file" + (isActive ? " active" : "")}>
-                          <span className={"chg-badge " + b.cls} title={b.label}>{b.ch}</span>
+                          <span className={"chg-badge " + b.cls}>{b.label}</span>
                           <span className="fs-ic"><FileIcon name={rel.split("/").pop() || ""} /></span>
                           {rel}
                         </span>
