@@ -8,22 +8,22 @@
 // Eagerly resolve every bundled brand SVG to its hashed URL (Vite), across all sets
 // (assets/fileicons/<set>/<key>.svg). Keyed "set/key" so a chosen set + type key
 // (e.g. "seti/kotlin") resolves to its url. Tiny SVGs, bundled once at load.
-const mods = import.meta.glob("../assets/fileicons/*/*.svg", {
+const mods = import.meta.glob<string>("../assets/fileicons/*/*.svg", {
   eager: true,
   query: "?url",
   import: "default",
 });
-const ICON_URL = {}; // "set/key" -> url
+const ICON_URL: Record<string, string> = {}; // "set/key" -> url
 for (const p in mods) {
   const parts = p.split("/");
-  const key = parts.pop().replace(".svg", "");
-  const set = parts.pop();
+  const key = (parts.pop() ?? "").replace(".svg", "");
+  const set = parts.pop() ?? "";
   ICON_URL[set + "/" + key] = mods[p];
 }
 
 // extension -> type key (set-independent). Mirrors CodeLeaf FileIcons.byExt.
-const BY_EXT = {};
-const reg = (key, ...exts) => exts.forEach((e) => (BY_EXT[e] = key));
+const BY_EXT: Record<string, string> = {};
+const reg = (key: string, ...exts: string[]) => exts.forEach((e) => (BY_EXT[e] = key));
 reg("kotlin", "kt", "kts");
 reg("java", "java", "jar", "class");
 reg("groovy", "groovy");
@@ -56,7 +56,7 @@ reg("yaml", "yml", "yaml");
 reg("docker", "dockerfile");
 
 // whole-filename (lowercased) -> type key, for files with no useful extension.
-const BY_NAME = {
+const BY_NAME: Record<string, string> = {
   dockerfile: "docker",
   ".gitignore": "git",
   ".gitattributes": "git",
@@ -67,10 +67,10 @@ const BY_NAME = {
 };
 
 // typeKey resolves a filename to its brand key (or null). Whole-name wins over ext.
-export function typeKey(name) {
+export function typeKey(name: string | null | undefined): string | null {
   const n = (name || "").toLowerCase();
   if (BY_NAME[n]) return BY_NAME[n];
-  const ext = n.includes(".") ? n.split(".").pop() : "";
+  const ext = n.includes(".") ? n.split(".").pop() ?? "" : "";
   return BY_EXT[ext] || null;
 }
 
@@ -78,7 +78,7 @@ export function typeKey(name) {
 
 // Seti glyphs are monochrome; tint them per type (seti-ui mapping.less palette).
 const SETI_DEFAULT = "#d4d7d6";
-const SETI_COLOR = {
+const SETI_COLOR: Record<string, string> = {
   kotlin: "#e37933", java: "#cc3e44", gradle: "#519aba", scala: "#cc3e44",
   c: "#519aba", cplusplus: "#519aba", csharp: "#519aba", javascript: "#cbcb41",
   typescript: "#519aba", react: "#519aba", css3: "#519aba", sass: "#f55385",
@@ -92,11 +92,14 @@ const DEVICON_MONO = new Set(["markdown", "rust", "json", "yaml"]);
 // Seti lacks these keys → fall back to the generic icon for them.
 const SETI_MISSING = new Set(["groovy", "nodejs"]);
 
-// resolveIcon returns how to render a filename's icon in the chosen set:
-//   { url, tint: "none" }                — render the SVG as-is (full color)
-//   { url, tint: "mask", color }         — tint a monochrome SVG to `color`
-//   null                                 — no brand icon; caller uses a codicon
-export function resolveIcon(set, name) {
+// How to render a filename's icon in the chosen set.
+export type IconRender =
+  | { url: string; tint: "none" }
+  | { url: string; tint: "mask"; color: string };
+
+// resolveIcon returns how to render a filename's icon in the chosen set, or null
+// when there's no brand icon (caller uses a codicon).
+export function resolveIcon(set: string, name: string | null | undefined): IconRender | null {
   const key = typeKey(name);
   if (!key) return null;
   if (set === "seti" && SETI_MISSING.has(key)) return null;
@@ -116,19 +119,19 @@ const AI_NAMES = new Set([
 ]);
 const SECRET_EXTS = new Set(["pem", "key", "keystore", "jks", "p12", "pfx", "ppk"]);
 
-function isSecret(n) {
+function isSecret(n: string): boolean {
   if (n.endsWith(".pub")) return false;
   if (n === ".env" || n.startsWith(".env.")) {
     return !["example", "sample", "template", "dist", "defaults"].includes(n.slice(5));
   }
   if (n === "credentials" || n.startsWith("credentials.")) return true;
   if (/^id_(rsa|dsa|ecdsa|ed25519)/.test(n)) return true;
-  return SECRET_EXTS.has(n.includes(".") ? n.split(".").pop() : "");
+  return SECRET_EXTS.has(n.includes(".") ? n.split(".").pop() ?? "" : "");
 }
 
 // mark classifies a filename for emphasis. AI / SECRET also override the glyph
 // (handled in FileIcon); the rest are styling hints the tree may apply later.
-export function mark(name) {
+export function mark(name: string | null | undefined): "ai" | "secret" | "none" {
   const n = (name || "").toLowerCase();
   if (AI_NAMES.has(n)) return "ai";
   if (isSecret(n)) return "secret";

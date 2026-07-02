@@ -6,15 +6,18 @@
 // within a beat.
 const KEY = "af-kind-avail";
 
-export function readKindAvail() {
+// kind → is-available flags (shell is implicitly always available, so it's omitted).
+export type KindAvail = Record<string, boolean>;
+
+export function readKindAvail(): KindAvail {
   try {
-    return JSON.parse(localStorage.getItem(KEY)) || {};
+    return JSON.parse(localStorage.getItem(KEY) || "null") || {};
   } catch {
     return {};
   }
 }
 
-export function writeKindAvail(a) {
+export function writeKindAvail(a: KindAvail): void {
   try {
     localStorage.setItem(KEY, JSON.stringify(a));
   } catch {

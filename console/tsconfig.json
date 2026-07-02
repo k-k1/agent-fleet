@@ -1,0 +1,31 @@
+{
+  // Incremental TS migration (see docs plan refactor/console-ts-agent-abstraction).
+  // allowJs + checkJs:false: the remaining .js/.jsx source is passed through without
+  // type-checking, so the app always builds; only files already renamed to .ts/.tsx
+  // are held to `strict`. Vite (esbuild) does the actual transpile for the build —
+  // this config only powers the `tsc --noEmit` typecheck gate.
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+
+    "allowJs": true,
+    "checkJs": false,
+    "allowImportingTsExtensions": true,
+    "strict": true,
+    "noUnusedLocals": true,
+    "noFallthroughCasesInSwitch": true,
+
+    "noEmit": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "useDefineForClassFields": true,
+
+    "types": ["node"]
+  },
+  "include": ["src"]
+}
