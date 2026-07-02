@@ -378,6 +378,8 @@ export default function NewSessionModal({ onClose, onCreated }) {
                   <div className="field-help">
                     作成後、端末に <code>aws sso login</code> の認証 URL が表示されます。クリックして別タブで承認すると
                     SSM セッションが開始します（AWS の秘密情報は Agent Fleet に保存されません）。
+                    <br />
+                    ⚠ <b>自分で開始したこのログインのみ承認してください</b>（身に覚えのないコード/URL は入力しない）。
                   </div>
                 </>
               )}
