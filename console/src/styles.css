@@ -1803,6 +1803,10 @@ body.row-resizing {
 .mirrorview {
   flex: 1;
   min-width: 0;
+  /* Inline-size container (like .termview) so the head's fork / ターミナル⇄チャット
+     controls can collapse to icon-only when the pane is narrow (mobile or a slim
+     split), via the @container paneview rules below. */
+  container: paneview / inline-size;
   /* min-height:0 lets the viewer shrink to its flex track in .pane (column,
      overflow:hidden) instead of overflowing it. Without it a body sub-view that
      can't itself shrink (e.g. .md-scroll) pushes .fileview to full content
@@ -1839,6 +1843,24 @@ body.row-resizing {
 }
 .fork-btn + .mirror-toggle {
   margin-left: 8px;
+}
+/* Each ターミナル/チャット segment is an icon + label; center them with a small gap
+   so the button reads well both with the label and (on narrow panes) icon-only. */
+.mirror-toggle .seg-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+/* Narrow pane (mobile or a slim split): collapse the head's text controls to
+   icon-only. Driven by the paneview container (.termview / .mirrorview), so it
+   tracks the PANE width, not the viewport — a narrow split in a wide window
+   collapses too. The title attributes keep the words reachable as tooltips. */
+@container paneview (max-width: 420px) {
+  .mirror-toggle .seg-label,
+  .fork-label {
+    display: none;
+  }
 }
 /* Checkbox rows: the EnvTab agent-update opt-in and the AdminTab operator gate. */
 .ds-check,
