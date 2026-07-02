@@ -8,6 +8,7 @@ import SsmLoginModal from "../SsmLoginModal.jsx";
 import ArchivedModal from "../ArchivedModal.jsx";
 import { useConfirm } from "../ConfirmProvider.jsx";
 import { useToast } from "../ToastProvider.jsx";
+import EmptyState from "../EmptyState.jsx";
 import { kindIcon, kindLabel, kindClass } from "../../lib/sessionkind.js";
 import { displayName, stateInfo } from "../../lib/sessionview.js";
 import { agentOf } from "../../agents/registry.ts";
@@ -241,7 +242,14 @@ export default function SessionsSection() {
       }
     >
       <ul className="list">
-        {sessions.length === 0 && <li className="muted">セッションなし</li>}
+        {sessions.length === 0 && (
+          <EmptyState
+            icon="comment-discussion"
+            message="セッションがありません"
+            hint="エージェントを起動するとここに並びます"
+            action={running ? { label: "新規セッション", icon: "add", onClick: () => setShowModal(true) } : undefined}
+          />
+        )}
         {sessions.map((s) => {
           const dead = !s.alive && s.resumable === false; // dir gone → can't resume
           const selected = session === s.name; // active pane's session → highlighted in place
