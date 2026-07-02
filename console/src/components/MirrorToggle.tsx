@@ -10,7 +10,13 @@ import Icon from "./Icon.jsx";
 // Each button carries an icon + label. On a narrow pane (mobile or a slim split)
 // the .seg-label collapses to icon-only via the paneview container query — see
 // styles.css. The title keeps the full word reachable as a tooltip.
-export default function MirrorToggle({ mirror, onToggle, running = true }) {
+interface MirrorToggleProps {
+  mirror: boolean;
+  onToggle: (toChat: boolean) => void;
+  running?: boolean;
+}
+
+export default function MirrorToggle({ mirror, onToggle, running = true }: MirrorToggleProps) {
   return (
     <span className="seg sm md-toggle mirror-toggle">
       <button
