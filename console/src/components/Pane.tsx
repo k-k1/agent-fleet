@@ -265,7 +265,7 @@ export default function Pane({
           onResume={onResume}
         />
       )}
-      {pane.kind === "scm" && <SourceControlView repo={pane.scmRepo} wrap={wrapOn} />}
+      {pane.kind === "scm" && <SourceControlView repo={pane.scmRepo ?? undefined} wrap={wrapOn} />}
       {pane.kind === "file" && <FileView filePath={pane.filePath} wrap={wrapOn} />}
       {pane.kind === "doc" && <DocView title={pane.docTitle ?? undefined} content={pane.docContent ?? undefined} />}
       {pane.kind === "diff" && (

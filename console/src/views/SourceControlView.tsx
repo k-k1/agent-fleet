@@ -4,6 +4,45 @@ import { api, apiJSON, raw, rawJSON } from "../api.js";
 import Icon from "../components/Icon.jsx";
 import BranchModal from "../components/BranchModal.jsx";
 
+interface Change {
+  path: string;
+  untracked?: boolean;
+  index?: string;
+  worktree?: string;
+}
+interface LogEntry {
+  short: string;
+  subject: string;
+  author: string;
+  date: string;
+}
+interface ScmStatus {
+  branch?: string;
+  ahead?: number;
+  behind?: number;
+}
+interface CommitData {
+  error?: boolean;
+  subject?: string;
+  body?: string;
+  author?: string;
+  date?: string;
+  short?: string;
+  diff?: string;
+  truncated?: boolean;
+}
+type Sel = { kind: "file"; path: string; staged: boolean } | { kind: "commit"; sha: string };
+interface DiffFile {
+  lines: string[];
+  path?: string;
+}
+interface DiffRow {
+  type: string;
+  text: string;
+  oldLn?: number;
+  newLn?: number;
+}
+
 // SourceControlView is the per-repo git workbench, opened by clicking a repo in the
 // Repos section. Left column: changed files (stage / unstage / discard), a commit
 // box, and recent history. Right pane: the diff of the selected change OR — when a
@@ -11,18 +50,18 @@ import BranchModal from "../components/BranchModal.jsx";
 // codeleaf CommitDetail style. The repo comes from context.
 // repo comes from the owning pane's descriptor (falls back to context scmRepo when
 // rendered standalone).
-export default function SourceControlView({ repo, wrap }) {
+export default function SourceControlView({ repo, wrap }: { repo?: string; wrap?: boolean }) {
   const { scmRepo: ctxRepo, bumpRepos, bumpFiles, showTerminal } = useApp();
   const scmRepo = repo !== undefined ? repo : ctxRepo;
   const enc = encodeURIComponent(scmRepo || "");
-  const [status, setStatus] = useState(null);
-  const [changes, setChanges] = useState([]);
-  const [log, setLog] = useState([]);
+  const [status, setStatus] = useState<ScmStatus | null>(null);
+  const [changes, setChanges] = useState<Change[]>([]);
+  const [log, setLog] = useState<LogEntry[]>([]);
   const [showBranch, setShowBranch] = useState(false);
   // sel drives the right pane: { kind:'file', path, staged } | { kind:'commit', sha }.
-  const [sel, setSel] = useState(null);
+  const [sel, setSel] = useState<Sel | null>(null);
   const [diff, setDiff] = useState(""); // file diff (kind:'file')
-  const [commit, setCommit] = useState(null); // commit detail (kind:'commit')
+  const [commit, setCommit] = useState<CommitData | null>(null); // commit detail (kind:'commit')
   const [msg, setMsg] = useState("");
   const [all, setAll] = useState(false);
 
@@ -51,7 +90,7 @@ export default function SourceControlView({ repo, wrap }) {
     refresh();
   }, [refresh]);
 
-  const showDiff = async (path, staged) => {
+  const showDiff = async (path: string, staged: boolean) => {
     setSel({ kind: "file", path, staged });
     setCommit(null);
     try {
@@ -62,7 +101,7 @@ export default function SourceControlView({ repo, wrap }) {
     }
   };
 
-  const showCommit = async (sha) => {
+  const showCommit = async (sha: string) => {
     setSel({ kind: "commit", sha });
     setCommit(null);
     try {
@@ -72,7 +111,7 @@ export default function SourceControlView({ repo, wrap }) {
     }
   };
 
-  const op = async (name, paths) => {
+  const op = async (name: string, paths: string[]) => {
     await apiJSON(`api/repos/${enc}/${name}`, "POST", { paths });
     refresh();
   };
@@ -183,7 +222,7 @@ export default function SourceControlView({ repo, wrap }) {
       </div>
       {showBranch && (
         <BranchModal
-          repoName={scmRepo}
+          repoName={scmRepo || ""}
           onClose={() => setShowBranch(false)}
           onChecked={() => {
             setShowBranch(false);
@@ -196,12 +235,32 @@ export default function SourceControlView({ repo, wrap }) {
   );
 }
 
-function RightPane({ sel, diff, commit, wrap }) {
+function RightPane({
+  sel,
+  diff,
+  commit,
+  wrap,
+}: {
+  sel: Sel | null;
+  diff: string;
+  commit: CommitData | null;
+  wrap?: boolean;
+}) {
   if (sel?.kind === "commit") return <CommitDetail commit={commit} wrap={wrap} />;
   return <Diff text={diff} wrap={wrap} />;
 }
 
-function ChangeRow({ c, selected, onOpen, onOp }) {
+function ChangeRow({
+  c,
+  selected,
+  onOpen,
+  onOp,
+}: {
+  c: Change;
+  selected: boolean;
+  onOpen: (path: string, staged: boolean) => void;
+  onOp: (name: string, paths: string[]) => void;
+}) {
   const staged = !c.untracked && c.index !== " ";
   const tag = c.untracked ? "U" : staged ? c.index : c.worktree;
   const cls = c.untracked ? "untracked" : staged ? "staged" : "unstaged";
@@ -239,7 +298,7 @@ function ChangeRow({ c, selected, onOpen, onOp }) {
 
 // CommitDetail renders one commit (codeleaf style): header (subject/body/meta), the
 // changed-file list, then the full colored patch.
-function CommitDetail({ commit, wrap }) {
+function CommitDetail({ commit, wrap }: { commit: CommitData | null; wrap?: boolean }) {
   if (!commit) return <pre className="diff muted">読み込み中…</pre>;
   if (commit.error) return <pre className="diff muted">(コミット取得失敗)</pre>;
   // Show the first 5 lines of the message body; the rest folds behind "さらに表示"
@@ -274,9 +333,9 @@ function CommitDetail({ commit, wrap }) {
 
 // splitDiffFiles breaks a unified diff into one entry per file — each `diff --git`
 // starts a new file. A bare diff with no such header becomes a single entry.
-function splitDiffFiles(text) {
-  const files = [];
-  let cur = null;
+function splitDiffFiles(text: string): DiffFile[] {
+  const files: DiffFile[] = [];
+  let cur: DiffFile | null = null;
   for (const line of text.split("\n")) {
     if (line.startsWith("diff --git ") || line.startsWith("diff --cc ") || !cur) {
       cur = { lines: [] };
@@ -293,10 +352,10 @@ function splitDiffFiles(text) {
 // (e.g. "docs/\343\201\202" → "docs/あ"). Reads from the opening quote to the closing
 // one (ignoring any trailing \t…), turns escapes back into bytes, decodes as UTF-8.
 // Unquoted paths are returned as-is (minus a trailing tab).
-function unquotePath(s) {
+function unquotePath(s: string): string {
   if (!s || s[0] !== '"') return s.replace(/\t.*$/, "");
-  const bytes = [];
-  const simple = { n: 10, t: 9, r: 13, a: 7, b: 8, f: 12, v: 11, '"': 34, "\\": 92 };
+  const bytes: number[] = [];
+  const simple: Record<string, number> = { n: 10, t: 9, r: 13, a: 7, b: 8, f: 12, v: 11, '"': 34, "\\": 92 };
   for (let i = 1; i < s.length; i++) {
     const c = s[i];
     if (c === '"') break; // closing quote
@@ -328,7 +387,7 @@ function unquotePath(s) {
 // diffPath picks the display path: prefer the new side (+++ b/…), fall back to the
 // old side (--- a/…) for deletions, then the `diff --git` header. Paths are un-quoted
 // so non-ASCII (e.g. Japanese) filenames render as text, not octal escapes.
-function diffPath(lines) {
+function diffPath(lines: string[]): string {
   let plus = "", minus = "", git = "";
   for (const l of lines) {
     if (l.startsWith("+++ ")) plus = unquotePath(l.slice(4)).replace(/^b\//, "");
@@ -344,8 +403,8 @@ function diffPath(lines) {
 // diffRows turns a file's lines into renderable rows, tracking old/new line numbers
 // across hunks. Redundant file-meta lines (diff/index/---/+++/mode) are dropped —
 // the fold header already shows the path; a binary/empty body yields no code rows.
-function diffRows(lines) {
-  const rows = [];
+function diffRows(lines: string[]): DiffRow[] {
+  const rows: DiffRow[] = [];
   let oldLn = 0, newLn = 0;
   for (const text of lines) {
     if (text.startsWith("@@")) {
@@ -377,7 +436,17 @@ function diffRows(lines) {
   return rows;
 }
 
-function Diff({ text, embedded, truncated, wrap }) {
+function Diff({
+  text,
+  embedded,
+  truncated,
+  wrap,
+}: {
+  text?: string;
+  embedded?: boolean;
+  truncated?: boolean;
+  wrap?: boolean;
+}) {
   // Real diffs carry an @@ hunk or a `diff --git` header; anything else (placeholder
   // "(差分なし)", error strings, empty) is shown as a plain message, not parsed.
   if (!text || !/(^|\n)(@@ |diff --(git|cc) )/.test(text)) {
@@ -397,7 +466,7 @@ function Diff({ text, embedded, truncated, wrap }) {
 
 // FileDiff: one foldable file block — a sticky header (chevron + path + ±counts)
 // over a line-numbered patch body. Defaults open; click the header to collapse.
-function FileDiff({ file }) {
+function FileDiff({ file }: { file: DiffFile }) {
   const [open, setOpen] = useState(true);
   const rows = useMemo(() => diffRows(file.lines), [file.lines]);
   const adds = rows.reduce((n, r) => n + (r.type === "add" ? 1 : 0), 0);
