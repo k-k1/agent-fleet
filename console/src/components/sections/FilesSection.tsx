@@ -6,6 +6,7 @@ import { dirName } from "../../lib/filemeta.js";
 import Section from "../Section.jsx";
 import Icon from "../Icon.jsx";
 import FileIcon, { DirIcon } from "../FileIcon.jsx";
+import { useConfirm } from "../ConfirmProvider.jsx";
 
 // A server directory entry (api/fs/tree). Visible tree rows are flattened into Row.
 interface Entry {
@@ -64,6 +65,7 @@ const fsList = (path: string) =>
 // to parent, Enter opens a file (or toggles a folder).
 export default function FilesSection() {
   const { filePath, showFile, showFileSplit, filesKey, reveal, wsState } = useApp();
+  const askConfirm = useConfirm();
   const running = wsState === "running"; // WS down → file mutations are inert
 
   // Middle-click opens a file in a freshly split pane (like the Sessions list).
@@ -141,7 +143,13 @@ export default function FilesSection() {
       try {
         let res: any = await uploadFiles(dir, files);
         if (res.status === 409 && res.conflicts && res.conflicts.length) {
-          if (window.confirm(`${res.conflicts.join(", ")} は既に存在します。上書きしますか？`)) {
+          const ok = await askConfirm({
+            title: "ファイルを上書き",
+            body: `${res.conflicts.join(", ")} は既に存在します。上書きしますか？`,
+            confirmLabel: "上書きする",
+            danger: true,
+          });
+          if (ok) {
             res = await uploadFiles(dir, files, { overwrite: true });
           }
         }
@@ -153,7 +161,7 @@ export default function FilesSection() {
         setDropTarget(null);
       }
     },
-    [refreshDir],
+    [refreshDir, askConfirm],
   );
 
   // Drop onto a dir row uploads into it; onto the empty tree uploads into root.
@@ -239,13 +247,19 @@ export default function FilesSection() {
   );
   const deleteRow = useCallback(
     async (row: Row) => {
-      if (!window.confirm(`${row.path} を削除しますか？${row.type === "dir" ? "（中身ごと）" : ""}`)) return;
+      const ok = await askConfirm({
+        title: "削除",
+        body: `${row.path} を削除します。${row.type === "dir" ? "フォルダの中身ごと削除されます。" : ""}`,
+        confirmLabel: "削除する",
+        danger: true,
+      });
+      if (!ok) return;
       const res: any = await fsDelete(row.path);
       if (res.error) return window.alert("削除失敗: " + (res.error.message || res.error));
       await refreshDir(parentOf(row.path));
       setSelected(parentOf(row.path) || null);
     },
-    [refreshDir],
+    [refreshDir, askConfirm],
   );
 
   // Context menu: open at the cursor; close on outside click / Escape / scroll.

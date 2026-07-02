@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type { ChangeEvent, ReactNode } from "react";
 import { api, raw, rawJSON } from "../api.js";
+import { useConfirm } from "../components/ConfirmProvider.jsx";
 
 // SsmTab manages the member's own AWS SSM login config (docs/history/p3-ssm-session.md)
 // in two tiers so the form isn't cluttered:
@@ -74,6 +75,7 @@ const emptyProfile: Record<string, string> = { label: "", startUrl: "", ssoRegio
 type FieldEvent = ChangeEvent<HTMLInputElement | HTMLSelectElement>;
 
 function ProfileSection({ profiles, reload }: { profiles: any[] | null; reload: () => void }) {
+  const askConfirm = useConfirm();
   const [f, setF] = useState<Record<string, string>>(emptyProfile);
   const [busy, setBusy] = useState(false);
   const set = (k: string) => (e: FieldEvent) => setF((p) => ({ ...p, [k]: e.target.value }));
@@ -98,7 +100,13 @@ function ProfileSection({ profiles, reload }: { profiles: any[] | null; reload: 
     }
   };
   const remove = async (id: string) => {
-    if (!confirm("このプロファイルを削除しますか？（参照中のホストはログインできなくなります）")) return;
+    const ok = await askConfirm({
+      title: "プロファイルを削除",
+      body: "このプロファイルを削除します。参照中のホストはログインできなくなります。",
+      confirmLabel: "削除する",
+      danger: true,
+    });
+    if (!ok) return;
     await raw(`api/ssm/profiles/${encodeURIComponent(id)}`, { method: "DELETE" });
     reload();
   };
@@ -156,6 +164,7 @@ function ProfileSection({ profiles, reload }: { profiles: any[] | null; reload: 
 const emptyHost: Record<string, string> = { alias: "", profileId: "", instanceId: "", documentName: "", region: "" };
 
 function HostSection({ hosts, profiles, reload }: { hosts: any[] | null; profiles: any[] | null; reload: () => void }) {
+  const askConfirm = useConfirm();
   const [f, setF] = useState<Record<string, string>>(emptyHost);
   const [busy, setBusy] = useState(false);
   const set = (k: string) => (e: FieldEvent) => setF((p) => ({ ...p, [k]: e.target.value }));
@@ -181,7 +190,13 @@ function HostSection({ hosts, profiles, reload }: { hosts: any[] | null; profile
     }
   };
   const remove = async (id: string) => {
-    if (!confirm("このホストを削除しますか？")) return;
+    const ok = await askConfirm({
+      title: "ホストを削除",
+      body: "このホストを削除します。",
+      confirmLabel: "削除する",
+      danger: true,
+    });
+    if (!ok) return;
     await raw(`api/ssm/hosts/${encodeURIComponent(id)}`, { method: "DELETE" });
     reload();
   };

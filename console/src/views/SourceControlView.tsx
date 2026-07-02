@@ -3,6 +3,7 @@ import { useApp } from "../state.jsx";
 import { api, apiJSON, raw, rawJSON } from "../api.js";
 import Icon from "../components/Icon.jsx";
 import BranchModal from "../components/BranchModal.jsx";
+import { useConfirm } from "../components/ConfirmProvider.jsx";
 
 interface Change {
   path: string;
@@ -52,6 +53,7 @@ interface DiffRow {
 // rendered standalone).
 export default function SourceControlView({ repo, wrap }: { repo?: string; wrap?: boolean }) {
   const { scmRepo: ctxRepo, bumpRepos, bumpFiles, showTerminal } = useApp();
+  const askConfirm = useConfirm();
   const scmRepo = repo !== undefined ? repo : ctxRepo;
   const enc = encodeURIComponent(scmRepo || "");
   const [status, setStatus] = useState<ScmStatus | null>(null);
@@ -112,6 +114,16 @@ export default function SourceControlView({ repo, wrap }: { repo?: string; wrap?
   };
 
   const op = async (name: string, paths: string[]) => {
+    // discard is irreversible (working-tree changes are lost) — confirm first.
+    if (name === "discard") {
+      const ok = await askConfirm({
+        title: "変更を破棄",
+        body: `${paths.join(", ")} の変更を破棄します。元に戻せません。`,
+        confirmLabel: "破棄する",
+        danger: true,
+      });
+      if (!ok) return;
+    }
     await apiJSON(`api/repos/${enc}/${name}`, "POST", { paths });
     refresh();
   };
@@ -124,7 +136,13 @@ export default function SourceControlView({ repo, wrap }: { repo?: string; wrap?
     bumpRepos();
   };
   const del = async () => {
-    if (!confirm(`ワーキングコピー "${scmRepo}" を削除しますか？（履歴・リモートはそのまま）`)) return;
+    const ok = await askConfirm({
+      title: "ワーキングコピーを削除",
+      body: `"${scmRepo}" のローカル作業コピーを削除します。履歴・リモートはそのまま残ります。`,
+      confirmLabel: "削除する",
+      danger: true,
+    });
+    if (!ok) return;
     await raw(`api/repos/${enc}`, { method: "DELETE" });
     bumpRepos();
     bumpFiles();
@@ -284,9 +302,7 @@ function ChangeRow({
           <button
             className="icon danger"
             title="変更を破棄"
-            onClick={() => {
-              if (confirm(`${c.path} の変更を破棄しますか？元に戻せません。`)) onOp("discard", [c.path]);
-            }}
+            onClick={() => onOp("discard", [c.path])}
           >
             <Icon name="discard" />
           </button>
