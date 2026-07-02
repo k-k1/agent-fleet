@@ -73,6 +73,26 @@ RUN set -eux; \
     rm /tmp/go.tgz; \
     /usr/local/go/bin/go version
 
+# AWS CLI v2 + Session Manager plugin for SSM login sessions (kind="ssm"): a member
+# opens a browser terminal that runs `aws sso login` (device-code URL surfaced in the
+# terminal) + `aws ssm start-session` against their OWN AWS account. NO AWS credentials
+# are baked or stored anywhere — auth is per-session via SSO and cached in the home
+# volume; the Control Plane only resolves non-secret host bookmarks. arch auto-detected.
+RUN set -eux; \
+    arch="$(dpkg --print-architecture)"; \
+    case "$arch" in \
+      amd64) awsarch=x86_64; smparch=64bit ;; \
+      arm64) awsarch=aarch64; smparch=arm64 ;; \
+      *) echo "unsupported arch: $arch" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-${awsarch}.zip" -o /tmp/awscliv2.zip; \
+    unzip -q /tmp/awscliv2.zip -d /tmp; \
+    /tmp/aws/install; \
+    curl -fsSL "https://s3.amazonaws.com/session-manager-downloads/plugin/latest/ubuntu_${smparch}/session-manager-plugin.deb" -o /tmp/smp.deb; \
+    dpkg -i /tmp/smp.deb; \
+    rm -rf /tmp/awscliv2.zip /tmp/aws /tmp/smp.deb; \
+    aws --version && session-manager-plugin --version
+
 # Coding-agent CLIs baked into the image (stable /usr/local install) for fast,
 # offline container start. claude: a user-home ~/.local install still takes PATH
 # precedence and is auto-updated by the entrypoint; this is the pinned fallback /

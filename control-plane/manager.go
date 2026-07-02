@@ -227,6 +227,27 @@ func (m *manager) resolveFull(ctx context.Context, key, email, tenantSel string)
 	return m.buildResolvedLocked(ctx, ident, mv)
 }
 
+// resolveMembership maps a request's identity + selected tenant to its identity and
+// membership WITHOUT building/creating a workspace — for lightweight per-member
+// resources (e.g. SSM host bookmarks) that don't need a running container.
+func (m *manager) resolveMembership(ctx context.Context, key, email, tenantSel string) (Identity, MembershipView, *apiError) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	ident, err := m.store.UpsertIdentity(ctx, email, key, m.roleHintFor(email))
+	if err != nil {
+		return Identity{}, MembershipView{}, internalErr(err)
+	}
+	ms, aerr := m.membershipsFor(ctx, ident)
+	if aerr != nil {
+		return Identity{}, MembershipView{}, aerr
+	}
+	mv, aerr := selectMembership(ms, tenantSel)
+	if aerr != nil {
+		return Identity{}, MembershipView{}, aerr
+	}
+	return ident, mv, nil
+}
+
 // selectMembership picks the active membership for a request. tenantSel (slug or
 // id) is required when the person belongs to more than one tenant; a single
 // membership is auto-selected.

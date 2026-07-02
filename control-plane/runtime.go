@@ -505,6 +505,13 @@ func (c config) handleSessionCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
+	// SSM sessions (docs/history/p3-ssm-session.md): resolve the host bookmark
+	// server-side and rewrite the body with the (non-secret) instance/document/SSO
+	// coordinates before proxying — the client only sends ssm_host_id.
+	if aerr := c.rewriteSSMCreate(ctx, res, r); aerr != nil {
+		writeAPIErr(w, aerr)
+		return
+	}
 	// P3-9 auto-start: creating a session needs a running Agent, so bring a cold
 	// (idle-stopped or manually stopped) workspace back up on demand first.
 	if c.autostart {

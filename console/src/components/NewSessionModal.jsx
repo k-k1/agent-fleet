@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, apiJSON, errText } from "../api.js";
+import { useApp } from "../state.jsx";
 import RepoPicker from "./RepoPicker.jsx";
 import Modal from "./Modal.jsx";
 import { deriveRepoName, sanitizeSeg, uniqueRepoName, repoNameRe } from "../lib/reponame.js";
@@ -29,9 +30,12 @@ const SOURCE_HELP = {
 };
 
 export default function NewSessionModal({ onClose, onCreated }) {
+  const { openSettings } = useApp();
   const [name, setName] = useState("");
   const [nameEdited, setNameEdited] = useState(false);
   const [kind, setKind] = useState("shell"); // shell is the default (left) kind
+  const [ssmHosts, setSsmHosts] = useState(null); // registered SSM host bookmarks
+  const [ssmHostId, setSsmHostId] = useState("");
   const [model, setModel] = useState(""); // "" = claude default
   const [source, setSource] = useState("picker"); // 'picker' | 'url' | 'none'
   const [sel, setSel] = useState(null); // picker: { cloneUrl, fullName, branch }
@@ -68,12 +72,27 @@ export default function NewSessionModal({ onClose, onCreated }) {
     };
   }, []);
 
+  // Load SSM host bookmarks when the SSM kind is first chosen.
+  useEffect(() => {
+    if (kind !== "ssm" || ssmHosts !== null) return;
+    let alive = true;
+    api("api/ssm/hosts")
+      .then((d) => alive && setSsmHosts(Array.isArray(d) ? d : []))
+      .catch(() => alive && setSsmHosts([]));
+    return () => {
+      alive = false;
+    };
+  }, [kind, ssmHosts]);
+
   const isClaude = kind === "claude";
-  const isAgent = kind !== "shell"; // claude or opencode — both run in a working dir
+  const isSSM = kind === "ssm";
+  const isAgent = kind === "claude" || kind === "opencode" || kind === "codex"; // run in a working dir
+
+  const ssmHost = (ssmHosts || []).find((h) => h.id === ssmHostId) || null;
 
   // Auto-fill the name (until the user types their own). An agent with a chosen repo
-  // names after the repo; otherwise the name is the kind word.
-  const base = isAgent && sel ? lastSeg(sel.fullName) : kind;
+  // names after the repo; an SSM session after its host alias; else the kind word.
+  const base = isAgent && sel ? lastSeg(sel.fullName) : isSSM && ssmHost ? lastSeg(ssmHost.alias) : kind;
   useEffect(() => {
     if (!nameEdited) setName(uniqueName(base, taken));
   }, [base, taken, nameEdited]);
@@ -112,7 +131,8 @@ export default function NewSessionModal({ onClose, onCreated }) {
 
   // shell never needs a repo; an agent's repo is optional (none is allowed).
   const sourceOk = !isAgent || source === "none" || !!cloneUrl;
-  const canSubmit = !!name.trim() && sourceOk && repoNameOk && !busy;
+  const ssmOk = !isSSM || !!ssmHostId;
+  const canSubmit = !!name.trim() && sourceOk && repoNameOk && ssmOk && !busy;
 
   const submit = async (e) => {
     e.preventDefault();
@@ -127,6 +147,7 @@ export default function NewSessionModal({ onClose, onCreated }) {
         remote_url: cloning ? cloneUrl : "",
         branch: cloning ? cloneBranch : "",
         repo_name: newCopy ? repoName.trim() : "",
+        ssm_host_id: isSSM ? ssmHostId : "",
       });
       if (res && res.error) {
         alert("作成に失敗: " + errText(res.error));
@@ -178,6 +199,14 @@ export default function NewSessionModal({ onClose, onCreated }) {
               >
                 codex
                 <span className="seg-sub">Codex CLI を起動</span>
+              </button>
+              <button
+                type="button"
+                className={"seg-btn" + (kind === "ssm" ? " active" : "")}
+                onClick={() => setKind("ssm")}
+              >
+                ssm
+                <span className="seg-sub">AWS EC2 に SSM ログイン</span>
               </button>
             </div>
             {kind === "opencode" && (
@@ -308,6 +337,51 @@ export default function NewSessionModal({ onClose, onCreated }) {
                 </div>
               )}
             </>
+          )}
+
+          {/* SSM ログイン先 */}
+          {isSSM && (
+            <div className="field">
+              <div className="field-label">ログイン先ホスト</div>
+              {ssmHosts === null ? (
+                <p className="muted">読み込み中…</p>
+              ) : ssmHosts.length === 0 ? (
+                <div className="field-help">
+                  登録済みのホストがありません。
+                  <button
+                    type="button"
+                    className="linklike"
+                    onClick={() => {
+                      onClose();
+                      openSettings();
+                    }}
+                  >
+                    設定 → SSM
+                  </button>
+                  で登録してください。
+                </div>
+              ) : (
+                <>
+                  <select
+                    className="cinput"
+                    value={ssmHostId}
+                    onChange={(e) => setSsmHostId(e.target.value)}
+                  >
+                    <option value="">— ホストを選択 —</option>
+                    {ssmHosts.map((h) => (
+                      <option key={h.id} value={h.id}>
+                        {h.alias}
+                        {h.accountId ? ` (acct ${h.accountId})` : ""}
+                      </option>
+                    ))}
+                  </select>
+                  <div className="field-help">
+                    作成後、端末に <code>aws sso login</code> の認証 URL が表示されます。クリックして別タブで承認すると
+                    SSM セッションが開始します（AWS の秘密情報は Agent Fleet に保存されません）。
+                  </div>
+                </>
+              )}
+            </div>
           )}
 
           {/* 名前 */}

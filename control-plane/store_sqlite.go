@@ -711,3 +711,118 @@ func scanWorkspace(row scanner) (Workspace, error) {
 		&ws.DataDir, &ws.AgentPort, &ws.AgentToken, &ws.State, &ws.CreatedAt, &ws.LastActiveAt)
 	return ws, err
 }
+
+// --- SSM login config (docs/history/p3-ssm-session.md) --------------------------
+
+func (s *sqliteStore) ListSSOSessions(ctx context.Context, membershipID string) ([]SSOSession, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, membership_id, label, start_url, sso_region, created_at
+		   FROM sso_session WHERE membership_id=? ORDER BY created_at`, membershipID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []SSOSession
+	for rows.Next() {
+		var v SSOSession
+		if err := rows.Scan(&v.ID, &v.MembershipID, &v.Label, &v.StartURL, &v.SSORegion, &v.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+
+func (s *sqliteStore) GetSSOSession(ctx context.Context, id string) (SSOSession, bool, error) {
+	var v SSOSession
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id, membership_id, label, start_url, sso_region, created_at
+		   FROM sso_session WHERE id=?`, id).
+		Scan(&v.ID, &v.MembershipID, &v.Label, &v.StartURL, &v.SSORegion, &v.CreatedAt)
+	if err == sql.ErrNoRows {
+		return SSOSession{}, false, nil
+	}
+	return v, err == nil, err
+}
+
+func (s *sqliteStore) CreateSSOSession(ctx context.Context, v SSOSession) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO sso_session(id, membership_id, label, start_url, sso_region, created_at)
+		 VALUES(?,?,?,?,?,?)`,
+		v.ID, v.MembershipID, v.Label, v.StartURL, v.SSORegion, v.CreatedAt)
+	return err
+}
+
+func (s *sqliteStore) UpdateSSOSession(ctx context.Context, v SSOSession) error {
+	// membership_id is part of the WHERE so a member can only update their own row.
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE sso_session SET label=?, start_url=?, sso_region=? WHERE id=? AND membership_id=?`,
+		v.Label, v.StartURL, v.SSORegion, v.ID, v.MembershipID)
+	return err
+}
+
+func (s *sqliteStore) DeleteSSOSession(ctx context.Context, id, membershipID string) error {
+	_, err := s.db.ExecContext(ctx,
+		`DELETE FROM sso_session WHERE id=? AND membership_id=?`, id, membershipID)
+	return err
+}
+
+func (s *sqliteStore) ListSSMHosts(ctx context.Context, membershipID string) ([]SSMHost, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, membership_id, alias, sso_session_id, account_id, role_name, region,
+		        instance_id, document_name, created_at
+		   FROM ssm_host WHERE membership_id=? ORDER BY alias`, membershipID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []SSMHost
+	for rows.Next() {
+		var h SSMHost
+		if err := rows.Scan(&h.ID, &h.MembershipID, &h.Alias, &h.SSOSessionID, &h.AccountID,
+			&h.RoleName, &h.Region, &h.InstanceID, &h.DocumentName, &h.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, h)
+	}
+	return out, rows.Err()
+}
+
+func (s *sqliteStore) GetSSMHost(ctx context.Context, id string) (SSMHost, bool, error) {
+	var h SSMHost
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id, membership_id, alias, sso_session_id, account_id, role_name, region,
+		        instance_id, document_name, created_at
+		   FROM ssm_host WHERE id=?`, id).
+		Scan(&h.ID, &h.MembershipID, &h.Alias, &h.SSOSessionID, &h.AccountID,
+			&h.RoleName, &h.Region, &h.InstanceID, &h.DocumentName, &h.CreatedAt)
+	if err == sql.ErrNoRows {
+		return SSMHost{}, false, nil
+	}
+	return h, err == nil, err
+}
+
+func (s *sqliteStore) CreateSSMHost(ctx context.Context, h SSMHost) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO ssm_host(id, membership_id, alias, sso_session_id, account_id, role_name,
+		   region, instance_id, document_name, created_at)
+		 VALUES(?,?,?,?,?,?,?,?,?,?)`,
+		h.ID, h.MembershipID, h.Alias, h.SSOSessionID, h.AccountID, h.RoleName,
+		h.Region, h.InstanceID, h.DocumentName, h.CreatedAt)
+	return err
+}
+
+func (s *sqliteStore) UpdateSSMHost(ctx context.Context, h SSMHost) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE ssm_host SET alias=?, sso_session_id=?, account_id=?, role_name=?, region=?,
+		   instance_id=?, document_name=? WHERE id=? AND membership_id=?`,
+		h.Alias, h.SSOSessionID, h.AccountID, h.RoleName, h.Region,
+		h.InstanceID, h.DocumentName, h.ID, h.MembershipID)
+	return err
+}
+
+func (s *sqliteStore) DeleteSSMHost(ctx context.Context, id, membershipID string) error {
+	_, err := s.db.ExecContext(ctx,
+		`DELETE FROM ssm_host WHERE id=? AND membership_id=?`, id, membershipID)
+	return err
+}
