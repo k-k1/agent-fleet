@@ -61,7 +61,7 @@ export default function TerminalView({
   );
 
   useEffect(() => {
-    ensureTerm(paneId, ref.current);
+    ensureTerm(paneId, ref.current!);
   }, [paneId]);
 
   // Sync the WebSocket to the descriptor. Attaching resets + reconnects, so this

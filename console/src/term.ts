@@ -15,14 +15,25 @@ import { wsURL } from "./api.js";
 import { getSettings, subscribe as subscribeSettings, fontStack } from "./lib/settings.js";
 
 // One entry per pane. { term, fitAddon, ws, session, sessionListeners, ro }.
-const insts = new Map();
-function inst(paneId) {
+// A placeholder (from an early onSession) may hold only session + sessionListeners,
+// so the terminal-side fields are optional.
+interface Inst {
+  term?: Terminal | null;
+  fitAddon?: FitAddon;
+  ws?: WebSocket | null;
+  session: string | null;
+  sessionListeners: Set<(name: string | null) => void>;
+  ro?: ResizeObserver | null;
+  dropped?: boolean;
+}
+const insts = new Map<string, Inst>();
+function inst(paneId: string): Inst | null {
   return insts.get(paneId) || null;
 }
 
 // listeners notified when a pane's attached session name changes (so the UI can
 // show it). Registered per pane; survive across ensureTerm calls.
-export function onSession(paneId, fn) {
+export function onSession(paneId: string, fn: (name: string | null) => void) {
   let it = insts.get(paneId);
   if (!it) {
     // Allow subscribing before ensureTerm: stash a listener set on a placeholder.
@@ -33,7 +44,7 @@ export function onSession(paneId, fn) {
   fn(it.session ?? null);
   return () => it.sessionListeners && it.sessionListeners.delete(fn);
 }
-function setSession(it, name) {
+function setSession(it: Inst, name: string | null) {
   it.session = name;
   for (const fn of it.sessionListeners) fn(name);
 }
@@ -43,11 +54,11 @@ function setSession(it, name) {
 // worked. We wire explicit gestures (copy-on-select, Ctrl+Shift+C / Ctrl+Insert,
 // right/middle-click paste, Shift+Insert / Ctrl+Shift+V) to the async Clipboard API,
 // leaving Ctrl+C free to interrupt the foreground program.
-function copySelection(term) {
+function copySelection(term: Terminal) {
   const sel = term && term.getSelection();
   if (sel && navigator.clipboard) navigator.clipboard.writeText(sel).catch(() => {});
 }
-function pasteClipboard(term) {
+function pasteClipboard(term: Terminal) {
   if (!term || !navigator.clipboard) return;
   navigator.clipboard
     .readText()
@@ -114,7 +125,7 @@ function wireGlobalReconnect() {
   });
 }
 
-function fitInst(it) {
+function fitInst(it: Inst | null | undefined) {
   try {
     it && it.fitAddon && it.fitAddon.fit();
   } catch {}
@@ -125,7 +136,7 @@ function fitInst(it) {
 // still triggers reconnect — without the keyboard filling a phone screen over a
 // disconnected/empty terminal. Desktop browsers ignore inputmode, so typing there
 // is unaffected.
-function setSoftKeyboard(it, enabled) {
+function setSoftKeyboard(it: Inst | null | undefined, enabled: boolean) {
   const ta = it && it.term && it.term.textarea;
   if (ta) ta.inputMode = enabled ? "" : "none";
 }
@@ -148,9 +159,9 @@ function focusedInst() {
 // positive overlap and rises; a top pane (its bottom already above the keyboard)
 // computes a non-positive overlap and stays put. Desktop / no-keyboard → overlap
 // path is skipped and any prior shift is cleared.
-function keepInputVisible(it) {
+function keepInputVisible(it: Inst | null) {
   const vv = window.visualViewport;
-  const main = document.querySelector(".main");
+  const main = document.querySelector<HTMLElement>(".main");
   if (!vv || !main) return;
   main.style.transform = ""; // measure against the natural (untranslated) position
   const el = it && it.term && it.term.element;
@@ -165,7 +176,7 @@ function keepInputVisible(it) {
 // ensureTerm builds a pane's terminal once and opens it into `el`. Subsequent calls
 // for the same pane re-open into the element if React remounted the container; the
 // instance (and scrollback) persists.
-export function ensureTerm(paneId, el) {
+export function ensureTerm(paneId: string, el: HTMLElement) {
   let it = insts.get(paneId);
   if (it && it.term) {
     // Re-open into the element if React remounted the container.
@@ -232,10 +243,10 @@ export function ensureTerm(paneId, el) {
     // — the natural "content follows the finger" direction. We accumulate pixels and
     // scroll whole rows so it tracks smoothly. (In an alt-screen TUI there's no
     // scrollback, so scrollLines is a no-op there and the app's own keys page.)
-    let lastY = null,
+    let lastY: number | null = null,
       acc = 0;
     const cellH = () => {
-      const vp = term.element.querySelector(".xterm-viewport");
+      const vp = term.element!.querySelector(".xterm-viewport");
       return vp && term.rows ? vp.clientHeight / term.rows : 18;
     };
     term.element.addEventListener(
@@ -352,7 +363,7 @@ export function ensureTerm(paneId, el) {
   // fullscreen, browser-reserved combos are delivered here instead of the browser.
   // Outside fullscreen lock() is a harmless no-op. We deliberately do NOT lock
   // Escape, so it still exits fullscreen.
-  const kb = navigator.keyboard;
+  const kb = (navigator as any).keyboard;
   if (kb && kb.lock && term.textarea) {
     // KeyC/KeyV so that in fullscreen Ctrl+Shift+C reaches us (copy) instead of
     // opening DevTools, and Ctrl+Shift+V reaches us (paste) instead of the browser.
@@ -391,7 +402,7 @@ export function ensureTerm(paneId, el) {
 
 // observe attaches a ResizeObserver to the pane container so the grid refits when
 // the split divider drags the pane (which does NOT fire a window resize event).
-function observe(it, el) {
+function observe(it: Inst, el: HTMLElement) {
   if (!el || typeof ResizeObserver === "undefined") return;
   if (it.ro) it.ro.disconnect();
   it.ro = new ResizeObserver(() => fitInst(it));
@@ -404,12 +415,12 @@ function observe(it, el) {
 // over the socket, so focusing would only summon the soft keyboard (Gboard) when
 // it's closed. The strip's buttons preventDefault on mousedown, so an already-open
 // keyboard keeps its focus and stays up.
-export function sendInput(paneId, data) {
+export function sendInput(paneId: string, data: string) {
   const it = inst(paneId);
   if (it && it.ws && it.ws.readyState === 1) it.ws.send(JSON.stringify({ type: "input", data }));
 }
 
-export function fit(paneId) {
+export function fit(paneId: string) {
   fitInst(inst(paneId));
 }
 
@@ -418,7 +429,7 @@ export function fit(paneId) {
 // is a no-op: auto-focusing xterm's textarea would pop the on-screen keyboard just
 // from switching to read a terminal. There the user taps the terminal to focus (and
 // summon the keyboard) when they actually want to type.
-export function focusTerm(paneId) {
+export function focusTerm(paneId: string) {
   if (coarsePointer()) return;
   const it = inst(paneId);
   try {
@@ -428,7 +439,7 @@ export function focusTerm(paneId) {
 
 // attach opens a fresh WebSocket to the session's PTY for a pane, replacing any
 // current one on that pane.
-export function attach(paneId, session) {
+export function attach(paneId: string, session: string) {
   const it = inst(paneId);
   if (!it || !it.term) return; // ensureTerm must have run (pane mounted)
   // Detach the old socket's handlers before closing it: an intentional switch
@@ -449,18 +460,18 @@ export function attach(paneId, session) {
   ws.onopen = () => {
     fitInst(it);
     setSoftKeyboard(it, true); // PTY connected → allow the soft keyboard for input
-    ws.send(JSON.stringify({ type: "resize", cols: it.term.cols, rows: it.term.rows }));
+    ws.send(JSON.stringify({ type: "resize", cols: it.term!.cols, rows: it.term!.rows }));
   };
   ws.onmessage = (ev) => {
-    if (ev.data instanceof ArrayBuffer) it.term.write(new Uint8Array(ev.data));
-    else it.term.write(ev.data);
+    if (ev.data instanceof ArrayBuffer) it.term!.write(new Uint8Array(ev.data));
+    else it.term!.write(ev.data);
   };
   // An unexpected server-side drop (intentional switches/detach null this handler
   // first). Flag it so refocusing the pane reconnects — see reconnect().
   ws.onclose = () => {
     it.dropped = true;
     setSoftKeyboard(it, false); // no live PTY → don't summon the keyboard on focus
-    it.term.write("\r\n[disconnected]\r\n");
+    it.term!.write("\r\n[disconnected]\r\n");
   };
   // Focus after the next paint, by when the pane has been un-hidden (the caller
   // flips state in the same React batch). So the user can type immediately after
@@ -474,7 +485,7 @@ export function attach(paneId, session) {
 // by clicking it or making it the active pane — brings the session back. We do this
 // on focus rather than instantly so a dropped pane stays put (and its
 // "[disconnected]" notice readable) until the user comes back to it.
-export function reconnect(paneId) {
+export function reconnect(paneId: string) {
   const it = inst(paneId);
   if (!it || !it.term || !it.session || !it.dropped) return;
   if (it.ws && (it.ws.readyState === WebSocket.CONNECTING || it.ws.readyState === WebSocket.OPEN)) return;
@@ -485,14 +496,14 @@ export function reconnect(paneId) {
 // when the user re-clicks an already-open but disconnected session in the list: that
 // doesn't change the pane's props, so the declarative attach and the active/focus
 // reconnect paths don't fire. No-op on panes that aren't dropped.
-export function reconnectSession(name) {
+export function reconnectSession(name: string) {
   if (!name) return;
   for (const [id, it] of insts) {
     if (it && it.session === name) reconnect(id);
   }
 }
 
-export function detach(paneId) {
+export function detach(paneId: string) {
   const it = inst(paneId);
   if (!it) return;
   if (it.ws) {
@@ -509,7 +520,7 @@ export function detach(paneId) {
 // disposeTerm tears a pane's terminal down entirely: closes the socket, disposes the
 // xterm instance and its ResizeObserver, and forgets the pane. Called when a split
 // pane is closed / replaced by a non-terminal view / wiped on tenant switch.
-export function disposeTerm(paneId) {
+export function disposeTerm(paneId: string) {
   const it = inst(paneId);
   if (!it) return;
   if (it.ws) {
@@ -537,7 +548,7 @@ export function disposeTerm(paneId) {
 }
 
 // sessionOf returns the session name currently attached to a pane (or null).
-export function sessionOf(paneId) {
+export function sessionOf(paneId: string) {
   const it = inst(paneId);
   return it ? it.session ?? null : null;
 }
@@ -545,7 +556,7 @@ export function sessionOf(paneId) {
 // keepOnly disposes every terminal whose pane id is not in `ids` — the reconciler
 // for layout changes (pane closed, browser back/forward dropping a pane, tenant
 // switch wiping all panes). Prevents orphaned xterm instances + WebSockets.
-export function keepOnly(ids) {
+export function keepOnly(ids: string[]) {
   const keep = new Set(ids);
   for (const id of [...insts.keys()]) {
     if (!keep.has(id)) disposeTerm(id);
