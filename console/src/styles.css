@@ -1590,6 +1590,18 @@ button.wu-reload {
   background: var(--active-bg);
   color: var(--fg);
 }
+/* Labeled tree/changes toggle: icon + short word so the two modes read without
+   hovering (the bare list-tree vs git-compare glyphs were the least legible). */
+.files-view .seg-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+.files-view .seg-btn .codicon {
+  font-size: 12px;
+}
 /* The ＋ (new / upload) menu sits near the right edge of the narrow pane — open it
    leftward so it doesn't overflow. */
 .files-ops .launch-menu {
