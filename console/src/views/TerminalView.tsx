@@ -9,12 +9,25 @@ import OnboardingCard from "../components/OnboardingCard.jsx";
 import { kindIcon, kindLabel, kindShort, kindClass } from "../lib/sessionkind.js";
 import { displayName, stateInfo } from "../lib/sessionview.js";
 import { useApp } from "../state.jsx";
+import type { Session } from "../types/session.ts";
 
 // Brand artwork shown over an unattached terminal so a freshly split (or initial)
 // pane isn't a bare black rectangle. Each empty pane picks one of these at random.
 // Resolved against baseURI so they work behind the path-stripping proxy.
 // (Live in public/brand, served by the Control Plane.)
 const IDLE_ARTWORK = Array.from({ length: 7 }, (_, i) => rel(`brand/idle-${i + 1}.png`));
+
+interface TerminalViewProps {
+  paneId?: string;
+  session?: string | null;
+  sessionMeta?: Session | null;
+  active?: boolean;
+  attached?: boolean;
+  canMirror?: boolean;
+  mirror?: boolean;
+  onToggleMirror?: (toChat: boolean) => void;
+  onResume?: () => void;
+}
 
 // TerminalView hosts one pane's xterm instance (keyed by paneId). The container
 // stays mounted while the pane shows a terminal (Pane hides it rather than
@@ -32,8 +45,8 @@ export default function TerminalView({
   mirror = false,
   onToggleMirror,
   onResume,
-}) {
-  const ref = useRef(null);
+}: TerminalViewProps) {
+  const ref = useRef<HTMLDivElement>(null);
   const { wsState } = useApp();
   const running = wsState === "running";
   // Session is stopped while shown here → mask the disconnected terminal with an
@@ -72,7 +85,7 @@ export default function TerminalView({
   // "leave page?" confirmation. Any pane with a live session arms it.
   useEffect(() => {
     if (!session) return;
-    const handler = (e) => {
+    const handler = (e: BeforeUnloadEvent) => {
       e.preventDefault();
       e.returnValue = "";
     };
@@ -99,7 +112,7 @@ export default function TerminalView({
   // Current context fill, shown as a strip under the head like the chat view. Comes
   // straight off the session (the Agent computes it into the sessions list), so the
   // terminal needs no transcript poll of its own — claude only, absent otherwise.
-  const ctxUsage = sessionMeta?.context || null;
+  const ctxUsage: any = sessionMeta?.context || null;
 
   return (
     <div className="termview">
@@ -113,8 +126,8 @@ export default function TerminalView({
             </span>
             <span className="session-display">{displayName(sessionMeta)}</span>
             <span className="session-name">{sessionMeta.name}</span>
-            <span className={"session-state " + st.cls}>
-              <Icon name={st.icon} spin={st.spin} /> {st.text}
+            <span className={"session-state " + st!.cls}>
+              <Icon name={st!.icon} spin={st!.spin} /> {st!.text}
             </span>
           </span>
         ) : (
