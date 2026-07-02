@@ -1,7 +1,11 @@
 import { createContext, useContext, useState, useEffect, useCallback, useRef } from "react";
+import type { ReactNode } from "react";
 import { api, getTenant, setTenant as persistTenant } from "./api.js";
 import { keepOnly as termKeepOnly, reconnectSession as termReconnectSession } from "./term.js";
 import { hydrateUIPrefs } from "./lib/settings.js";
+import type { Layout, Pane, Column } from "./types/layout.ts";
+import type { Session } from "./types/session.ts";
+import type { AppState, Whoami, Tenant, Ocweb, PanePatch, Reveal } from "./types/app.ts";
 
 // AppContext holds everything shared across the top bar, WS bar, left pane, main
 // area, and settings dialog: identity, tenant selection, workspace state, the
@@ -20,31 +24,32 @@ import { hydrateUIPrefs } from "./lib/settings.js";
 //     colRatios: number[],   // column width fractions, sums to 1, len == cols.length
 //     activeId,              // id of the active pane (click target / key target)
 //   }
-const AppContext = createContext(null);
-export const useApp = () => useContext(AppContext);
+const AppContext = createContext<AppState | null>(null);
+// useApp is always called within AppProvider, so the value is non-null in practice.
+export const useApp = (): AppState => useContext(AppContext) as AppState;
 
 // A pane descriptor. kind drives which view renders; the *Path/Repo/session fields
 // are the per-kind payload. Empty terminal pane = "セッション未接続".
-function blankPane(id, patch) {
+function blankPane(id: string, patch?: PanePatch): Pane {
   return { id, kind: "terminal", session: null, chat: false, filePath: null, scmRepo: null, docTitle: null, docContent: null, diffTool: null, diffEdits: null, wrap: null, ...patch };
 }
 
-const equalRatios = (n) => Array(n).fill(1 / n);
+const equalRatios = (n: number): number[] => Array(n).fill(1 / n);
 const MAX_COLS = 4;
 
 // localStorage key for the persisted pane layout, namespaced per tenant so one
 // tenant's sessions never leak into another's restored split.
-const LKEY = (slug) => "af.layout." + (slug || "");
+const LKEY = (slug: string): string => "af.layout." + (slug || "");
 
-const initialLayout = {
+const initialLayout: Layout = {
   cols: [{ id: "c0", rowRatio: 0.5, panes: [blankPane("p0")] }],
   colRatios: [1],
   activeId: "p0",
 };
 
-export function AppProvider({ children }) {
-  const [whoami, setWhoami] = useState(null); // { email, user, ... }
-  const [tenants, setTenants] = useState([]); // [{ slug, name, role }]
+export function AppProvider({ children }: { children: ReactNode }) {
+  const [whoami, setWhoami] = useState<Whoami | null>(null); // { email, user, ... }
+  const [tenants, setTenants] = useState<Tenant[]>([]); // [{ slug, name, role }]
   const [tenant, setTenantState] = useState(getTenant());
   const tenantRef = useRef(tenant);
   tenantRef.current = tenant;
@@ -56,7 +61,7 @@ export function AppProvider({ children }) {
   // opencode web (per-workspace pk-webui) status: {available,enabled,running,port}
   // or null when unavailable/unreachable. Shared so the WS bar surfaces an "open"
   // entry while the toggle lives in 設定 > エージェント — both read/write this.
-  const [ocweb, setOcweb] = useState(null);
+  const [ocweb, setOcweb] = useState<Ocweb | null>(null);
 
   // The main-area pane layout. Mirrored into browser history (back/forward).
   const [layout, setLayout] = useState(initialLayout);
@@ -93,7 +98,7 @@ export function AppProvider({ children }) {
   // visited. We keep the URL unchanged (state-only pushState): the Console lives
   // behind a path-stripping proxy, so putting paths in the URL would break reloads /
   // the base path. History therefore restores within a session, not across reloads.
-  const commit = useCallback((next, push = true) => {
+  const commit = useCallback((next: Layout, push = true) => {
     if (push && JSON.stringify(next) === JSON.stringify(layoutRef.current)) return; // no dup entry
     setLayout(next);
     if (push) {
@@ -104,7 +109,7 @@ export function AppProvider({ children }) {
   }, []);
 
   // patchActive returns a new layout with the active pane shallow-merged with patch.
-  const patchActive = useCallback((patch, push = true) => {
+  const patchActive = useCallback((patch: PanePatch, push = true) => {
     const cur = layoutRef.current;
     const cols = cur.cols.map((c) => ({
       ...c,
@@ -115,7 +120,7 @@ export function AppProvider({ children }) {
 
   // setPaneWrap toggles line-wrapping for one pane (by id) — a per-pane override of the
   // global wrap setting. Not pushed to history (a wrap toggle isn't a navigation step).
-  const setPaneWrap = useCallback((id, wrap) => {
+  const setPaneWrap = useCallback((id: string, wrap: boolean | null) => {
     const cur = layoutRef.current;
     const cols = cur.cols.map((c) => ({
       ...c,
@@ -126,7 +131,7 @@ export function AppProvider({ children }) {
 
   // shows returns true if pane already displays exactly the target described by patch
   // (same kind + identity). Used to avoid showing one thing in both split panes.
-  const shows = (pane, patch) => {
+  const shows = (pane: Pane | undefined, patch: PanePatch): boolean => {
     if (!pane || pane.kind !== patch.kind) return false;
     if (patch.kind === "terminal") return patch.session !== undefined && pane.session === patch.session;
     if (patch.kind === "file") return pane.filePath === patch.filePath;
@@ -142,7 +147,7 @@ export function AppProvider({ children }) {
   // content slides to the other side), keeping ids + which side is active. Otherwise
   // it's a plain patch of the active pane.
   const openActive = useCallback(
-    (patch) => {
+    (patch: PanePatch) => {
       const cur = layoutRef.current;
       const all = cur.cols.flatMap((c) => c.panes);
       const active = all.find((p) => p.id === cur.activeId);
@@ -181,10 +186,10 @@ export function AppProvider({ children }) {
   // Once all 8 slots are used it overwrites the LAST pane (bottom of the rightmost
   // column) so a further open still lands somewhere instead of being capped.
   const openInNewPane = useCallback(
-    (patch) => {
+    (patch: PanePatch) => {
       const cur = layoutRef.current;
-      const fresh = (id) => ({ ...blankPane(id), ...patch });
-      const splitCol = (col) => {
+      const fresh = (id: string) => ({ ...blankPane(id), ...patch });
+      const splitCol = (col: Column) => {
         const id = newPaneId();
         const cols = cur.cols.map((c) =>
           c.id === col.id ? { ...c, rowRatio: 0.5, panes: [...c.panes, fresh(id)] } : c,
@@ -234,7 +239,7 @@ export function AppProvider({ children }) {
 
   // Restore layout on browser back/forward.
   useEffect(() => {
-    const onPop = (e) => {
+    const onPop = (e: PopStateEvent) => {
       const l = e.state && e.state.__af && e.state.layout ? e.state.layout : initialLayout;
       setLayout(l);
       setNavOpen(!!(e.state && e.state.drawer));
@@ -271,8 +276,8 @@ export function AppProvider({ children }) {
   useEffect(() => {
     const mq = window.matchMedia("(max-width: 760px)");
     const DIST = 50; // px of horizontal travel to trigger
-    let sx = 0, sy = 0, mode = null; // "open" | "close" | null
-    const onStart = (e) => {
+    let sx = 0, sy = 0, mode: "open" | "close" | null = null;
+    const onStart = (e: TouchEvent) => {
       const t = e.touches[0];
       mode = null;
       if (t && mq.matches) {
@@ -284,7 +289,7 @@ export function AppProvider({ children }) {
         sy = t.clientY;
       }
     };
-    const onMove = (e) => {
+    const onMove = (e: TouchEvent) => {
       if (!mode) return;
       const t = e.touches[0];
       if (!t) return;
@@ -336,7 +341,7 @@ export function AppProvider({ children }) {
   // Sessions list and each terminal pane's header both read it). Re-polls every 4s
   // and immediately on bumpSessions (create/recreate/archive/tenant switch). Only
   // setState on an actual change — an unconditional 4s repaint flickers the cursor.
-  const [sessions, setSessions] = useState([]);
+  const [sessions, setSessions] = useState<Session[]>([]);
   const sessionsSer = useRef("");
   useEffect(() => {
     let alive = true;
@@ -391,8 +396,8 @@ export function AppProvider({ children }) {
   // reveal: a home-relative path (e.g. "repos/foo") the Files tree should expand to
   // and select — set when the user clicks a repo. {path, n} so repeat clicks on the
   // same repo still re-trigger the effect (n increments).
-  const [reveal, setReveal] = useState({ path: null, n: 0 });
-  const revealInFiles = useCallback((path) => setReveal((r) => ({ path, n: r.n + 1 })), []);
+  const [reveal, setReveal] = useState<Reveal>({ path: null, n: 0 });
+  const revealInFiles = useCallback((path: string) => setReveal((r) => ({ path, n: r.n + 1 })), []);
 
   const refreshWs = useCallback(async () => {
     try {
@@ -455,7 +460,7 @@ export function AppProvider({ children }) {
   // pre-toggle tree. Transient "…" states are ignored until they settle.
   const prevWsRef = useRef(wsState);
   useEffect(() => {
-    const settle = (s) => (s === "running" ? "running" : s === "none" || s === "stopped" ? "stopped" : "");
+    const settle = (s: string) => (s === "running" ? "running" : s === "none" || s === "stopped" ? "stopped" : "");
     const from = settle(prevWsRef.current);
     const to = settle(wsState);
     if (to !== "" && to !== from) {
@@ -482,9 +487,10 @@ export function AppProvider({ children }) {
   // restored ids so later splits don't collide, and marks hydration done so the
   // persist effect starts saving.
   const loadLayout = useCallback(
-    (slug) => {
+    (slug: string) => {
       hydrated.current = true;
-      let l = null;
+      // Untrusted parsed JSON from localStorage — validated at runtime below.
+      let l: any = null;
       try {
         const s = localStorage.getItem(LKEY(slug));
         if (s) l = JSON.parse(s);
@@ -506,7 +512,7 @@ export function AppProvider({ children }) {
       paneSeq.current = pMax + 1;
       colSeq.current = cMax + 1;
       if (!Array.isArray(l.colRatios) || l.colRatios.length !== l.cols.length) l.colRatios = equalRatios(l.cols.length);
-      if (!l.cols.some((c) => c.panes.some((p) => p.id === l.activeId))) l.activeId = l.cols[0].panes[0].id;
+      if (!l.cols.some((c: any) => c.panes.some((p: any) => p.id === l.activeId))) l.activeId = l.cols[0].panes[0].id;
       setLayout(l);
       try {
         history.replaceState({ __af: true, layout: l }, "");
@@ -534,7 +540,7 @@ export function AppProvider({ children }) {
   // pushes a history entry. When invoked while the mobile drawer is open, they first
   // record a "drawer open" history entry so the back button reopens the drawer.
   const showTerminal = useCallback(
-    (sess) => {
+    (sess?: string) => {
       if (navOpenRef.current) pushDrawerEntry();
       // With an arg: attach that session. Without: just switch the pane to terminal
       // (keep whatever it was showing). The pane's TerminalView attaches declaratively
@@ -542,7 +548,7 @@ export function AppProvider({ children }) {
       // panes instead of duplicating when the other pane already shows this session.
       // chat:false — a terminal open always means "attach the live session" (clears any
       // prior read-only chat/history mode on this pane).
-      const patch = sess !== undefined ? { kind: "terminal", session: sess, chat: false } : { kind: "terminal", chat: false };
+      const patch: PanePatch = sess !== undefined ? { kind: "terminal", session: sess, chat: false } : { kind: "terminal", chat: false };
       openActive(patch);
       // Re-clicking an already-open but disconnected session doesn't change the pane's
       // props (so the declarative attach won't re-run) — revive its dropped socket here
@@ -556,7 +562,7 @@ export function AppProvider({ children }) {
   // attaching the terminal (no resume) — used for clicking a stopped claude session.
   // The chat's "再開して続ける" (or the ターミナル toggle) attaches + resumes on demand.
   const showChat = useCallback(
-    (sess) => {
+    (sess: string) => {
       if (navOpenRef.current) pushDrawerEntry();
       openActive({ kind: "terminal", session: sess, chat: true });
       setNavOpen(false);
@@ -566,7 +572,7 @@ export function AppProvider({ children }) {
   // showTerminalSplit attaches a session in a freshly split pane (middle-click in
   // the session list), instead of replacing the active pane's content.
   const showTerminalSplit = useCallback(
-    (sess) => {
+    (sess: string) => {
       openInNewPane({ kind: "terminal", session: sess, chat: false });
       setNavOpen(false);
     },
@@ -576,14 +582,14 @@ export function AppProvider({ children }) {
   // read-only chat history in a fresh pane (Ctrl/middle-click in the session list),
   // still without attaching (no resume).
   const showChatSplit = useCallback(
-    (sess) => {
+    (sess: string) => {
       openInNewPane({ kind: "terminal", session: sess, chat: true });
       setNavOpen(false);
     },
     [openInNewPane],
   );
   const showSCM = useCallback(
-    (repo) => {
+    (repo: string) => {
       if (navOpenRef.current) pushDrawerEntry();
       openActive({ kind: "scm", scmRepo: repo });
       setNavOpen(false);
@@ -593,14 +599,14 @@ export function AppProvider({ children }) {
   // showSCMSplit opens a repo's Source Control in a freshly split pane (Ctrl/middle-
   // click on a repo), instead of replacing the active pane's content.
   const showSCMSplit = useCallback(
-    (repo) => {
+    (repo: string) => {
       openInNewPane({ kind: "scm", scmRepo: repo });
       setNavOpen(false);
     },
     [openInNewPane],
   );
   const showFile = useCallback(
-    (path) => {
+    (path: string) => {
       if (navOpenRef.current) pushDrawerEntry();
       openActive({ kind: "file", filePath: path });
       setNavOpen(false);
@@ -610,7 +616,7 @@ export function AppProvider({ children }) {
   // showFileSplit opens a file in a freshly split pane (middle-click in the Files
   // tree), instead of replacing the active pane's content.
   const showFileSplit = useCallback(
-    (path) => {
+    (path: string) => {
       openInNewPane({ kind: "file", filePath: path });
       setNavOpen(false);
     },
@@ -619,7 +625,7 @@ export function AppProvider({ children }) {
   // showDoc opens arbitrary Markdown (e.g. a plan) in a freshly split pane — no file
   // on disk needed; the content travels in the pane descriptor.
   const showDoc = useCallback(
-    (title, content) => {
+    (title: string, content: string) => {
       openInNewPane({ kind: "doc", docTitle: title, docContent: content });
     },
     [openInNewPane],
@@ -627,7 +633,7 @@ export function AppProvider({ children }) {
   // showDiff opens an edit-family tool's before/after as a diff pane. The edits array
   // (captured from the transcript) travels in the pane descriptor — no file is read.
   const showDiff = useCallback(
-    (title, edits, tool) => {
+    (title: string, edits: unknown, tool: string) => {
       openInNewPane({ kind: "diff", docTitle: title, diffEdits: edits, diffTool: tool });
     },
     [openInNewPane],
@@ -647,7 +653,7 @@ export function AppProvider({ children }) {
   // splitDown splits the column holding paneId into two rows (top/bottom), adding a
   // fresh terminal pane below, made active. No-op if that column already has 2 rows.
   const splitDown = useCallback(
-    (paneId) => {
+    (paneId: string) => {
       const cur = layoutRef.current;
       const col = cur.cols.find((c) => c.panes.some((p) => p.id === paneId));
       if (!col || col.panes.length >= 2) return;
@@ -664,7 +670,7 @@ export function AppProvider({ children }) {
   // single row; an emptied column is dropped and widths re-equalize. The surviving
   // (or first) pane becomes active. The reconciler disposes the closed terminal.
   const closePane = useCallback(
-    (paneId) => {
+    (paneId: string) => {
       const cur = layoutRef.current;
       const cols = cur.cols
         .map((c) => {
@@ -688,7 +694,7 @@ export function AppProvider({ children }) {
   );
 
   const setActivePane = useCallback(
-    (id) => {
+    (id: string) => {
       const cur = layoutRef.current;
       if (cur.activeId === id) return;
       commit({ ...cur, activeId: id }, false); // not a history-worthy navigation
@@ -698,10 +704,10 @@ export function AppProvider({ children }) {
 
   // setColRatios / setRowRatio update split fractions during divider drag (no
   // history entry; they fire many times per drag).
-  const setColRatios = useCallback((ratios) => {
+  const setColRatios = useCallback((ratios: number[]) => {
     setLayout((cur) => ({ ...cur, colRatios: ratios }));
   }, []);
-  const setRowRatio = useCallback((colId, r) => {
+  const setRowRatio = useCallback((colId: string, r: number) => {
     const ratio = Math.min(0.8, Math.max(0.2, r));
     setLayout((cur) => ({
       ...cur,
@@ -712,7 +718,7 @@ export function AppProvider({ children }) {
   // swapPanes exchanges the contents of two panes (kept in place by id), made by a
   // drag-and-drop from one pane onto another. The drop target becomes active.
   const swapPanes = useCallback(
-    (aId, bId) => {
+    (aId: string, bId: string) => {
       if (!aId || !bId || aId === bId) return;
       const cur = layoutRef.current;
       const all = cur.cols.flatMap((c) => c.panes);
@@ -738,7 +744,7 @@ export function AppProvider({ children }) {
   // origin is closed for free (the pane just isn't in its old column anymore). dir:
   // 'right' | 'down'; refId is the pane dropped onto. (Center drops are swaps.)
   const dropSplit = useCallback(
-    (srcId, refId, dir) => {
+    (srcId: string, refId: string, dir: "right" | "down") => {
       const cur = layoutRef.current;
       const src = cur.cols.flatMap((c) => c.panes).find((p) => p.id === srcId);
       if (!src || srcId === refId) return;
@@ -774,8 +780,8 @@ export function AppProvider({ children }) {
   // cycleSession attaches the previous/next session (wrapping) to the active pane,
   // for Ctrl+PgUp/PgDn.
   const cycleSession = useCallback(
-    async (dir) => {
-      let list = [];
+    async (dir: number) => {
+      let list: Session[] = [];
       try {
         const d = await api("api/sessions");
         list = d.sessions || [];
@@ -788,7 +794,7 @@ export function AppProvider({ children }) {
       const cur = layoutRef.current;
       const all = cur.cols.flatMap((c) => c.panes);
       const active = all.find((p) => p.id === cur.activeId) || all[0];
-      let i = names.indexOf(active.session);
+      let i = names.indexOf(active.session ?? "");
       if (i < 0) i = 0;
       const next = (i + dir + names.length) % names.length;
       showTerminal(names[next]);
@@ -800,7 +806,7 @@ export function AppProvider({ children }) {
   // so it beats xterm; note the browser may still claim it for tab-switching unless
   // the page holds a Keyboard Lock (fullscreen, Chromium) — see TerminalView ⛶.
   useEffect(() => {
-    const onKey = (e) => {
+    const onKey = (e: KeyboardEvent) => {
       if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
       if (e.key !== "PageUp" && e.key !== "PageDown") return;
       e.preventDefault();
@@ -824,7 +830,7 @@ export function AppProvider({ children }) {
       return; // dev/single-tenant or CP without the endpoint
     }
     setSuperAdmin(!!data.super_admin);
-    const list = data.tenants || [];
+    const list: Tenant[] = data.tenants || [];
     setTenants(list);
     if (list.length <= 1) {
       const slug = list[0] ? list[0].slug : "";
@@ -843,7 +849,7 @@ export function AppProvider({ children }) {
   // selectTenant re-syncs everything for the newly active tenant (the legacy
   // reloadAll): collapse to a single empty terminal, refetch lists.
   const selectTenant = useCallback(
-    (slug) => {
+    (slug: string) => {
       persistTenant(slug);
       setTenantState(slug);
       loadLayout(slug); // restore this tenant's saved split (or reset if none)
@@ -870,7 +876,7 @@ export function AppProvider({ children }) {
   const allPanes = layout.cols.flatMap((c) => c.panes);
   const activePane = allPanes.find((p) => p.id === layout.activeId) || allPanes[0];
 
-  const value = {
+  const value: AppState = {
     whoami,
     tenants,
     tenant,
