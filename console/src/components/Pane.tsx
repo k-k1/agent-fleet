@@ -11,6 +11,28 @@ import { useSettings } from "../lib/settings.js";
 import { ordClass } from "../lib/panebadge.js";
 import { usePaneHover, hoverMatches } from "../lib/panehover.jsx";
 import { agentOf } from "../agents/registry.ts";
+import type { CSSProperties, DragEvent as RDragEvent } from "react";
+import type { Pane as PaneT } from "../types/layout.ts";
+import type { Session } from "../types/session.ts";
+
+interface PaneProps {
+  pane: PaneT;
+  style?: CSSProperties;
+  active?: boolean;
+  single?: boolean;
+  canSplitRight?: boolean;
+  canSplitDown?: boolean;
+  canClose?: boolean;
+  canDrag?: boolean;
+  onActivate: (id: string) => void;
+  onSplitRight: () => void;
+  onSplitDown: (id: string) => void;
+  onClose: (id: string) => void;
+  onSwap: (aId: string, bId: string) => void;
+  onDropSplit: (srcId: string, refId: string, dir: "right" | "down") => void;
+  sessionMeta?: Session | null;
+  ordinal?: number | null;
+}
 
 // Drag payload MIME — identifies a pane-to-pane swap drag (vs any other drag).
 const DND = "application/x-af-pane";
@@ -38,7 +60,7 @@ export default function Pane({
   onDropSplit,
   sessionMeta,
   ordinal,
-}) {
+}: PaneProps) {
   const isTerm = pane.kind === "terminal";
   // Cross-highlight: glow this pane while its Sessions-list row or mini-map cell is
   // hovered (and vice-versa — entering the pane lights them). Keyed by pane id or a
@@ -49,7 +71,7 @@ export default function Pane({
   // null when not a drop target; otherwise the zone the pointer is in:
   //   'center' → swap with the dragged pane; 'right'/'down' → tear the dragged
   //   pane off into a new split (new right column / downward split of this column).
-  const [zone, setZone] = useState(null);
+  const [zone, setZone] = useState<string | null>(null);
 
   // Markdown mirror toggle (case-A): a claude session pane can swap its raw terminal
   // for a read-mostly Markdown view of the conversation. Only offered for claude (the
@@ -82,7 +104,7 @@ export default function Pane({
   const showMirror = canMirror && mirror;
   // ターミナル toggle shows the terminal AND ensures the session is attached (resuming a
   // stopped one). チャット toggle just shows the chat overlay.
-  const onToggleMirror = (toChat) => {
+  const onToggleMirror = (toChat: boolean) => {
     if (toChat) setMirror(true);
     else {
       setMirror(false);
@@ -100,32 +122,32 @@ export default function Pane({
   const wrapOn = pane.wrap ?? settings.wrap;
   const canWrap = pane.kind === "file" || pane.kind === "scm" || pane.kind === "diff";
 
-  const onDragStart = (e) => {
+  const onDragStart = (e: RDragEvent) => {
     e.dataTransfer.setData(DND, pane.id);
     e.dataTransfer.effectAllowed = "move";
   };
   // Outer 30% of the splittable edges is a split zone; the center swaps. A split
   // edge is only offered when this pane can grow that way (else it stays center).
-  const zoneFor = (e) => {
+  const zoneFor = (e: RDragEvent): "center" | "down" | "right" => {
     const r = e.currentTarget.getBoundingClientRect();
     const rd = canSplitRight ? (e.clientX - r.left) / r.width - 0.7 : -1;
     const dd = canSplitDown ? (e.clientY - r.top) / r.height - 0.7 : -1;
     if (rd < 0 && dd < 0) return "center";
     return dd > rd ? "down" : "right";
   };
-  const onDragOver = (e) => {
+  const onDragOver = (e: RDragEvent) => {
     if (!canDrag || !e.dataTransfer.types.includes(DND)) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = "move";
     const z = zoneFor(e);
     setZone((prev) => (prev === z ? prev : z));
   };
-  const onDragLeave = (e) => {
+  const onDragLeave = (e: RDragEvent) => {
     // Ignore bubbling from descendants; only clear when leaving the pane itself.
-    if (e.currentTarget.contains(e.relatedTarget)) return;
+    if (e.currentTarget.contains(e.relatedTarget as Node)) return;
     setZone(null);
   };
-  const onDrop = (e) => {
+  const onDrop = (e: RDragEvent) => {
     if (!e.dataTransfer.types.includes(DND)) return;
     e.preventDefault();
     const z = zone;
@@ -245,9 +267,14 @@ export default function Pane({
       )}
       {pane.kind === "scm" && <SourceControlView repo={pane.scmRepo} wrap={wrapOn} />}
       {pane.kind === "file" && <FileView filePath={pane.filePath} wrap={wrapOn} />}
-      {pane.kind === "doc" && <DocView title={pane.docTitle} content={pane.docContent} />}
+      {pane.kind === "doc" && <DocView title={pane.docTitle ?? undefined} content={pane.docContent ?? undefined} />}
       {pane.kind === "diff" && (
-        <DiffView title={pane.docTitle} tool={pane.diffTool} edits={pane.diffEdits} wrap={wrapOn} />
+        <DiffView
+          title={pane.docTitle ?? undefined}
+          tool={pane.diffTool ?? undefined}
+          edits={pane.diffEdits as any}
+          wrap={wrapOn}
+        />
       )}
     </div>
   );
