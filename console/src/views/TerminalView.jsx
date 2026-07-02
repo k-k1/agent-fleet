@@ -55,12 +55,17 @@ export default function TerminalView({
   // only fires when the session value actually changes (React skips re-render on an
   // unchanged prop), preserving scrollback while the same session stays open.
   useEffect(() => {
-    // Attach (open the PTY) only when the pane is attached — a stopped/read-only pane
-    // stays detached (no socket = no resume). detach clears the inst's session, so the
-    // global focus-reconnect can't silently revive it either.
-    if (session && attached) attach(paneId, session);
+    // Attach (open the PTY) only when the pane is attached AND the workspace is running.
+    // Gating on `running` matters because opening the PTY (/ws/pty) is what the Control
+    // Plane treats as intent-to-work and uses to AUTO-START a cold workspace (P3-9). So
+    // without this, merely clicking a session while the WS is stopped would silently
+    // boot the whole workspace. Now nothing attaches until the user explicitly starts it
+    // (the WORKSPACE Start button); a stopped/read-only pane also stays detached (no
+    // socket = no resume), and detach clears the inst's session so the global
+    // focus-reconnect can't revive it either.
+    if (session && attached && running) attach(paneId, session);
     else detach(paneId);
-  }, [paneId, session, attached]);
+  }, [paneId, session, attached, running]);
 
   // While a session is attached, guard against accidentally closing/reloading the
   // tab (e.g. Ctrl+W on Firefox, which can't be captured) — the browser shows its
@@ -79,11 +84,12 @@ export default function TerminalView({
     if (active) {
       fit(paneId);
       focusTerm(paneId);
-      // Recover a dropped PTY when this pane becomes active — but only while attached,
-      // so a stopped session is never silently resumed just by focusing its pane.
-      if (attached) reconnect(paneId);
+      // Recover a dropped PTY when this pane becomes active — but only while attached
+      // and the workspace is running, so focusing a pane never silently resumes a
+      // stopped session or auto-starts a stopped workspace.
+      if (attached && running) reconnect(paneId);
     }
-  }, [active, paneId, attached]);
+  }, [active, paneId, attached, running]);
 
   // Header mirrors the left-pane Sessions row: kind badge + display name + the
   // session id + a status chip. Falls back to bare text before the session's
