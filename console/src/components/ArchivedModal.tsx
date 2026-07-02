@@ -3,14 +3,23 @@ import { api, raw } from "../api.js";
 import Icon from "./Icon.jsx";
 import Modal from "./Modal.jsx";
 import { kindIcon, kindLabel } from "../lib/sessionkind.js";
+import type { Session } from "../types/session.ts";
 
 // ArchivedModal lists archived sessions (hidden from the active list but kept on
 // disk) and lets the user restore them (back into the list as a stopped session,
 // click to resume) or delete them permanently. Backed by /api/sessions/archived,
 // /restore, and /stop.
 
-export default function ArchivedModal({ onClose, onRestored }) {
-  const [items, setItems] = useState(null);
+// Archived sessions carry a `started` timestamp on top of the base Session shape.
+type ArchivedSession = Session & { started?: string };
+
+interface ArchivedModalProps {
+  onClose?: () => void;
+  onRestored?: () => void;
+}
+
+export default function ArchivedModal({ onClose, onRestored }: ArchivedModalProps) {
+  const [items, setItems] = useState<ArchivedSession[] | null>(null);
   const [busy, setBusy] = useState(false);
 
   const load = () =>
@@ -21,7 +30,7 @@ export default function ArchivedModal({ onClose, onRestored }) {
     load();
   }, []);
 
-  const restore = async (name) => {
+  const restore = async (name: string) => {
     setBusy(true);
     try {
       const res = await raw(`api/sessions/${encodeURIComponent(name)}/restore`, { method: "POST" });
@@ -36,7 +45,7 @@ export default function ArchivedModal({ onClose, onRestored }) {
     }
   };
 
-  const del = async (name) => {
+  const del = async (name: string) => {
     if (!confirm(`アーカイブ "${name}" を完全に削除しますか？\n（一覧から消えます。会話ログのファイルは残ります）`)) return;
     setBusy(true);
     try {

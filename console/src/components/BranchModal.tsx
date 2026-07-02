@@ -1,13 +1,20 @@
 import { useEffect, useState } from "react";
 import { api, apiJSON } from "../api.js";
 import BranchList from "./BranchList.jsx";
+import type { Branch } from "./BranchList.jsx";
 import Modal from "./Modal.jsx";
 
 // BranchModal: switch a repo's branch. Lists branches newest-commit-first with a
 // filter (via BranchList); clicking one checks it out (a remote-only name DWIMs into
 // a tracking branch). Backed by GET branches / POST checkout under api/repos/{name}.
-export default function BranchModal({ repoName, onClose, onChecked }) {
-  const [branches, setBranches] = useState(null); // null = loading
+interface BranchModalProps {
+  repoName: string;
+  onClose?: () => void;
+  onChecked: () => void;
+}
+
+export default function BranchModal({ repoName, onClose, onChecked }: BranchModalProps) {
+  const [branches, setBranches] = useState<Branch[] | null>(null); // null = loading
   const [current, setCurrent] = useState("");
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState("");
@@ -35,7 +42,7 @@ export default function BranchModal({ repoName, onClose, onChecked }) {
     };
   }, [repoName]);
 
-  const checkout = async (name) => {
+  const checkout = async (name: string) => {
     if (busy) return;
     setBusy(name);
     try {
