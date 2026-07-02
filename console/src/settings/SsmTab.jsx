@@ -1,5 +1,29 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, apiJSON, raw } from "../api.js";
+import { api, raw, rawJSON } from "../api.js";
+
+// postJSON POSTs and surfaces failures loudly (a stale CP without the /api/ssm routes
+// returns 404 non-JSON, which apiJSON would swallow — making the button look dead).
+// Returns true on success. On failure it alerts with the HTTP status so a missing
+// reflect (restart-cp.sh) is obvious rather than silent.
+async function postJSON(path, method, body) {
+  let res;
+  try {
+    res = await rawJSON(path, method, body);
+  } catch (e) {
+    alert("通信に失敗しました: " + (e?.message || e));
+    return false;
+  }
+  if (!res.ok) {
+    const j = await res.json().catch(() => null);
+    alert(
+      "保存に失敗: HTTP " +
+        res.status +
+        (j?.error?.message ? " — " + j.error.message : res.status === 404 ? "（/api/ssm 未提供。CP の再起動が必要かもしれません）" : ""),
+    );
+    return false;
+  }
+  return true;
+}
 
 // SsmTab manages the member's own AWS SSM login config (docs/history/p3-ssm-session.md):
 // SSO sessions (the access-portal start URL + region) and SSM host bookmarks (which
@@ -41,15 +65,12 @@ function SsoSection({ ssos, reload }) {
     if (!/^https:\/\//.test(startUrl.trim()) || !ssoRegion.trim()) return;
     setBusy(true);
     try {
-      const res = await apiJSON("api/ssm/sso-sessions", "POST", {
+      const ok = await postJSON("api/ssm/sso-sessions", "POST", {
         label: label.trim(),
         startUrl: startUrl.trim(),
         ssoRegion: ssoRegion.trim(),
       });
-      if (res && res.error) {
-        alert("保存に失敗: " + (res.error.message || res.error));
-        return;
-      }
+      if (!ok) return;
       setLabel("");
       setStartUrl("");
       setSsoRegion("");
@@ -120,7 +141,7 @@ function HostSection({ hosts, ssos, reload }) {
     if (!f.alias.trim() || !f.instanceId.trim()) return;
     setBusy(true);
     try {
-      const res = await apiJSON("api/ssm/hosts", "POST", {
+      const ok = await postJSON("api/ssm/hosts", "POST", {
         alias: f.alias.trim(),
         ssoSessionId: f.ssoSessionId,
         accountId: f.accountId.trim(),
@@ -129,10 +150,7 @@ function HostSection({ hosts, ssos, reload }) {
         instanceId: f.instanceId.trim(),
         documentName: f.documentName.trim(),
       });
-      if (res && res.error) {
-        alert("保存に失敗: " + (res.error.message || res.error));
-        return;
-      }
+      if (!ok) return;
       setF(emptyHost);
       reload();
     } finally {
