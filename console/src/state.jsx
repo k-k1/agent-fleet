@@ -567,7 +567,17 @@ export function AppProvider({ children }) {
   // the session list), instead of replacing the active pane's content.
   const showTerminalSplit = useCallback(
     (sess) => {
-      openInNewPane({ kind: "terminal", session: sess });
+      openInNewPane({ kind: "terminal", session: sess, chat: false });
+      setNavOpen(false);
+    },
+    [openInNewPane],
+  );
+  // showChatSplit is the split-pane form of showChat: open a stopped session's
+  // read-only chat history in a fresh pane (Ctrl/middle-click in the session list),
+  // still without attaching (no resume).
+  const showChatSplit = useCallback(
+    (sess) => {
+      openInNewPane({ kind: "terminal", session: sess, chat: true });
       setNavOpen(false);
     },
     [openInNewPane],
@@ -895,6 +905,7 @@ export function AppProvider({ children }) {
     showTerminal,
     showTerminalSplit,
     showChat,
+    showChatSplit,
     openInNewPane,
     showSCM,
     showSCMSplit,
