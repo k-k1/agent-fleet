@@ -284,7 +284,7 @@ func writeSSMConfig(path string, s ssmMeta) error {
 // only when the cached token is missing/expired (surfacing the login URL in the
 // terminal), then exec start-session. When StartURL is set an isolated aws config is
 // generated; otherwise the profile is assumed to exist in the member's own ~/.aws.
-func buildSSMProgram(name string, s ssmMeta) (string, error) {
+func buildSSMProgram(name string, s ssmMeta, force bool) (string, error) {
 	var b strings.Builder
 	if s.StartURL != "" && s.Profile != "" {
 		cfg := ssmConfigPath(name)
@@ -303,11 +303,16 @@ func buildSSMProgram(name string, s ssmMeta) (string, error) {
 	// browser is on the user's machine and the CLI runs in this remote container.
 	// --no-browser prints the URL instead of trying to open a (nonexistent) browser.
 	// Phishing guard: the device-code grant is only safe when the user approves a code
-	// they themselves initiated. Warn right before the URL/code appears (only when a
-	// login is actually triggered).
-	b.WriteString("aws sts get-caller-identity >/dev/null 2>&1 || { " +
-		"echo '[Agent Fleet] 自分で開始したこのログインのみ承認してください（身に覚えのないコード/URL は入力しない）'; " +
-		"aws sso login --use-device-code --no-browser; }; ")
+	// they themselves initiated. Warn right before the URL/code appears. force drops the
+	// cached-token short-circuit (logout+login) so the user can re-authenticate on demand.
+	if force {
+		b.WriteString("echo '[Agent Fleet] 再ログインします（自分で開始したこのログインのみ承認してください）'; " +
+			"aws sso logout >/dev/null 2>&1; aws sso login --use-device-code --no-browser; ")
+	} else {
+		b.WriteString("aws sts get-caller-identity >/dev/null 2>&1 || { " +
+			"echo '[Agent Fleet] 自分で開始したこのログインのみ承認してください（身に覚えのないコード/URL は入力しない）'; " +
+			"aws sso login --use-device-code --no-browser; }; ")
+	}
 	b.WriteString("exec aws ssm start-session")
 	fmt.Fprintf(&b, " --target %s", shellQuote(s.Target))
 	if s.Document != "" {
@@ -322,7 +327,7 @@ func buildSSMProgram(name string, s ssmMeta) (string, error) {
 // startSessionTmux launches the detached tmux session for m. For claude it injects
 // the OAuth token and builds the resume/new program (buildSessionProgram picks
 // --resume once a jsonl exists); for shell it runs a login bash.
-func startSessionTmux(m sessionMeta) error {
+func startSessionTmux(m sessionMeta, ssmForce bool) error {
 	tn := tmuxName(m.Name)
 	cwd := m.Dir
 	dirOK := dirExists(cwd)
@@ -373,7 +378,7 @@ func startSessionTmux(m sessionMeta) error {
 		}
 		cwd = homeDir()
 		args[len(args)-1] = cwd
-		p, err := buildSSMProgram(m.Name, *m.SSM)
+		p, err := buildSSMProgram(m.Name, *m.SSM, ssmForce)
 		if err != nil {
 			return err
 		}
@@ -417,7 +422,7 @@ func startSessionTmux(m sessionMeta) error {
 // ensureSessionTmux (re)creates the tmux session from its recorded meta when it is
 // not currently alive — used on attach so a clicked-but-exited session relaunches
 // claude rather than the default shell. Reports whether a meta was found.
-func ensureSessionTmux(name string) bool {
+func ensureSessionTmux(name string, ssmForce bool) bool {
 	if tmuxHasSession(tmuxName(name)) {
 		return true
 	}
@@ -425,7 +430,7 @@ func ensureSessionTmux(name string) bool {
 	if !ok {
 		return false
 	}
-	_ = startSessionTmux(m)
+	_ = startSessionTmux(m, ssmForce)
 	return true
 }
 
@@ -539,6 +544,9 @@ type createReq struct {
 	SSORegion    string `json:"sso_region"`
 	SSOAccountID string `json:"sso_account_id"`
 	SSORoleName  string `json:"sso_role_name"`
+	// SSMForceLogin: run `aws sso logout` + `aws sso login` unconditionally at launch
+	// (skip the cached-token short-circuit) so the user re-authenticates. One-shot.
+	SSMForceLogin bool `json:"ssm_force_login"`
 }
 
 // handleCreateSession launches a claude session inside a detached tmux session.
@@ -607,7 +615,7 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		Name: req.Name, Dir: req.Dir, Model: req.Model, Kind: kind, Label: label,
 		Repo: filepath.Base(req.Dir), CreatedAt: time.Now().Format(time.RFC3339), SSM: ssm,
 	}
-	if err := startSessionTmux(meta); err != nil {
+	if err := startSessionTmux(meta, req.SSMForceLogin); err != nil {
 		writeErr(w, http.StatusInternalServerError, "tmux_failed", err.Error())
 		return
 	}
@@ -652,7 +660,7 @@ func handleForkSession(w http.ResponseWriter, r *http.Request) {
 		Label: sessionLabel(src.Dir), Repo: filepath.Base(src.Dir),
 		CreatedAt: time.Now().Format(time.RFC3339), ForkFrom: srcSid,
 	}
-	if err := startSessionTmux(meta); err != nil {
+	if err := startSessionTmux(meta, false); err != nil {
 		writeErr(w, http.StatusInternalServerError, "tmux_failed", err.Error())
 		return
 	}

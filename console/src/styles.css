@@ -3791,6 +3791,14 @@ button.mt-toolrun-head:hover {
   min-width: 0;
   width: 100%;
 }
+.ssm-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 8px;
+}
 /* The device-flow code is a button: clicking copies it to the clipboard (the glyph
    flips to a check on success). It still reads as a code, just clickable. */
 .oauth-code {

@@ -5,6 +5,7 @@ import Section from "../Section.jsx";
 import Icon from "../Icon.jsx";
 import LayoutMap from "../LayoutMap.jsx";
 import NewSessionModal from "../NewSessionModal.jsx";
+import SsmLoginModal from "../SsmLoginModal.jsx";
 import ArchivedModal from "../ArchivedModal.jsx";
 import { kindIcon, kindLabel, kindClass } from "../../lib/sessionkind.js";
 import { displayName, stateInfo } from "../../lib/sessionview.js";
@@ -46,6 +47,7 @@ export default function SessionsSection() {
     if (newSessionTick > 0) setShowModal(true);
   }, [newSessionTick]);
   const [showArchived, setShowArchived] = useState(false);
+  const [resumeSsm, setResumeSsm] = useState(null); // { name, force } — SSM resume via login modal
   const menuRef = useRef(null); // wrap of the currently-open ⋯ menu (outside-click test)
   const [menuFor, setMenuFor] = useState(null); // session name whose ⋯ menu is open
   const prevStates = useRef({}); // name → last seen claude state, for arrival notifications
@@ -290,10 +292,24 @@ export default function SessionsSection() {
                       className="session-menu-item"
                       onClick={() => {
                         setMenuFor(null);
-                        showTerminal(s.name);
+                        // SSM resumes through the login modal (SSO handshake before
+                        // attach); other kinds attach directly (relaunch on attach).
+                        if (s.kind === "ssm") setResumeSsm({ name: s.name, force: false });
+                        else showTerminal(s.name);
                       }}
                     >
                       再開する
+                    </button>
+                  )}
+                  {!s.alive && !dead && running && s.kind === "ssm" && (
+                    <button
+                      className="session-menu-item"
+                      onClick={() => {
+                        setMenuFor(null);
+                        setResumeSsm({ name: s.name, force: true });
+                      }}
+                    >
+                      再ログインして再開
                     </button>
                   )}
                   {s.alive && (
@@ -360,6 +376,24 @@ export default function SessionsSection() {
             }
             showTerminal(name);
             setShowModal(false);
+          }}
+        />
+      )}
+
+      {resumeSsm && (
+        <SsmLoginModal
+          name={resumeSsm.name}
+          start
+          force={resumeSsm.force}
+          onReady={(n) => {
+            setResumeSsm(null);
+            showTerminal(n);
+            bumpSessions();
+            setTimeout(() => bumpSessions(), 1200);
+          }}
+          onCancel={() => {
+            setResumeSsm(null);
+            bumpSessions();
           }}
         />
       )}

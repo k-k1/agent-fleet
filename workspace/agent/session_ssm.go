@@ -30,6 +30,28 @@ type ssmLoginStatus struct {
 	Message string `json:"message,omitempty"`
 }
 
+// handleStartSession (POST /sessions/{name}/start) relaunches a stopped session from
+// its recorded meta WITHOUT attaching a terminal — used by the SSM login modal so the
+// SSO handshake runs before the pane is shown (resume flow). ?force=1 forces re-login
+// (logout + login) for ssm sessions. Idempotent: a live session is left as-is.
+func handleStartSession(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if !nameRe.MatchString(name) {
+		writeErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
+		return
+	}
+	if _, ok := readSessionMeta(name); !ok {
+		writeErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
+		return
+	}
+	force := r.URL.Query().Get("force") == "1"
+	if !ensureSessionTmux(name, force) {
+		writeErr(w, http.StatusInternalServerError, "start_failed", "could not start session")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
 func handleSSMLoginStatus(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if !nameRe.MatchString(name) {

@@ -219,6 +219,7 @@ func main() {
 	// SSM login status polled by the New Session modal (docs/history/p3-ssm-session.md)
 	// — surfaces the device-auth URL and the "ready" transition without attaching yet.
 	mux.HandleFunc("GET /api/sessions/{name}/ssm-login", cfg.proxyAgentREST)
+	mux.HandleFunc("POST /api/sessions/{name}/start", cfg.handleSessionStart)
 	// Structured transcript for the Console chat view (case-A).
 	mux.HandleFunc("GET /api/sessions/{name}/messages", cfg.proxyAgentREST)
 
