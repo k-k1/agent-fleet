@@ -4,9 +4,11 @@ import { rel } from "../api.js";
 import TermKeys from "../components/TermKeys.jsx";
 import Icon from "../components/Icon.jsx";
 import MirrorToggle from "../components/MirrorToggle.jsx";
+import ContextBar from "../components/ContextBar.jsx";
 import OnboardingCard from "../components/OnboardingCard.jsx";
 import { kindIcon, kindLabel, kindShort, kindClass } from "../lib/sessionkind.js";
 import { displayName, stateInfo } from "../lib/sessionview.js";
+import { useContextUsage } from "../lib/usecontextusage.js";
 
 // Brand artwork shown over an unattached terminal so a freshly split (or initial)
 // pane isn't a bare black rectangle. Each empty pane picks one of these at random.
@@ -76,6 +78,11 @@ export default function TerminalView({
   // metadata has arrived (freshly created), or when the pane has no session.
   const st = sessionMeta ? stateInfo(sessionMeta) : null;
 
+  // Current context fill, shown as a strip under the head like the chat view. Poll
+  // only while the terminal is the visible view (!mirror) — the chat view runs its
+  // own poll when it's up, so at most one is active per pane.
+  const ctxUsage = useContextUsage(session, sessionMeta?.kind, !mirror);
+
   return (
     <div className="termview">
       <header className="view-head">
@@ -97,6 +104,7 @@ export default function TerminalView({
         )}
         {canMirror && <MirrorToggle mirror={mirror} onToggle={onToggleMirror} />}
       </header>
+      {ctxUsage && <ContextBar {...ctxUsage} />}
       <div className="term-body">
         <div className="terminal" ref={ref} />
         {/* No session: cover the bare terminal with the FileViewer-tinted brand

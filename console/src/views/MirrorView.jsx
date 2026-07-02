@@ -5,6 +5,8 @@ import { useApp } from "../state.jsx";
 import Icon from "../components/Icon.jsx";
 import MarkdownView from "./MarkdownView.jsx";
 import MirrorToggle from "../components/MirrorToggle.jsx";
+import ContextBar from "../components/ContextBar.jsx";
+import { fmtTok } from "../lib/fmttok.js";
 import { kindIcon, kindLabel, kindShort, kindClass } from "../lib/sessionkind.js";
 import { displayName, stateInfo } from "../lib/sessionview.js";
 import { coarsePointer } from "../lib/device.js";
@@ -612,41 +614,6 @@ function latestContext(groups) {
   return null;
 }
 
-// contextWindow returns the model's context length. The current Claude family
-// (Opus 4.6/4.7/4.8, Sonnet 4.6, Fable/Mythos 5) is 1M-native — 1M is the default
-// window, not a 200k default you grow into. Haiku is 200k. Unknown/older models
-// assume 200k but grow to fit if a 1M beta is clearly in use.
-function contextWindow(model, used) {
-  const m = (model || "").toLowerCase();
-  if (/opus-4-[678]|sonnet-4-6|fable-5|mythos-5/.test(m)) return 1000000;
-  if (/haiku/.test(m)) return 200000;
-  return used > 200000 ? 1000000 : 200000;
-}
-
-// ContextBar is a /context-like fill gauge for the context window, segmented by how
-// the prompt tokens break down (cache read / cache creation / fresh input).
-function ContextBar({ read, create, fresh, model }) {
-  const used = read + create + fresh;
-  const window = contextWindow(model, used);
-  const pct = Math.min(100, (used / window) * 100);
-  const w = (n) => (n / window) * 100 + "%";
-  const title =
-    `文脈 ${used.toLocaleString()} / ${window.toLocaleString()} トークン (${pct.toFixed(0)}%)\n` +
-    `キャッシュ再利用 ${read.toLocaleString()} · 新規キャッシュ ${create.toLocaleString()} · 未キャッシュ ${fresh.toLocaleString()}`;
-  return (
-    <div className="mirror-ctxbar" title={title}>
-      <div className="cb-track">
-        <div className="cb-seg cb-read" style={{ width: w(read) }} />
-        <div className="cb-seg cb-create" style={{ width: w(create) }} />
-        <div className="cb-seg cb-fresh" style={{ width: w(fresh) }} />
-      </div>
-      <span className="cb-label muted">
-        コンテキスト {fmtTok(used)} / {fmtTok(window)}・{pct.toFixed(0)}%
-      </span>
-    </div>
-  );
-}
-
 // renderGroups lays the blocks out, inserting a context strip (branch · cwd) above a
 // block whenever either changes from the previously shown one — so a branch switch or
 // cd is marked once, not repeated on every turn. Empty context leaves the marker as-is.
@@ -1081,14 +1048,6 @@ function prettyModel(m) {
 // prettyCwd collapses the home prefix to ~ so the working dir reads compactly.
 function prettyCwd(p) {
   return p.replace(/^\/home\/[^/]+/, "~");
-}
-
-// fmtTok renders a token count compactly: 927 → "927", 30371 → "30k", 1000000 → "1M".
-function fmtTok(n) {
-  if (!n) return "0";
-  if (n >= 1e6) return (n / 1e6).toFixed(n < 1e7 ? 1 : 0).replace(/\.0$/, "") + "M";
-  if (n < 1000) return String(n);
-  return (n / 1000).toFixed(n < 10000 ? 1 : 0).replace(/\.0$/, "") + "k";
 }
 
 // formatTS renders an RFC3339 timestamp as local "MM/DD HH:MM" (date kept so a long
