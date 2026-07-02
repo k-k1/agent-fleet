@@ -8,6 +8,7 @@ import ContextBar from "../components/ContextBar.jsx";
 import OnboardingCard from "../components/OnboardingCard.jsx";
 import { kindIcon, kindLabel, kindShort, kindClass } from "../lib/sessionkind.js";
 import { displayName, stateInfo } from "../lib/sessionview.js";
+import { useApp } from "../state.jsx";
 
 // Brand artwork shown over an unattached terminal so a freshly split (or initial)
 // pane isn't a bare black rectangle. Each empty pane picks one of these at random.
@@ -26,11 +27,18 @@ export default function TerminalView({
   session = null,
   sessionMeta = null,
   active,
+  attached = true,
   canMirror = false,
   mirror = false,
   onToggleMirror,
+  onResume,
 }) {
   const ref = useRef(null);
+  const { wsState } = useApp();
+  const running = wsState === "running";
+  // Session is stopped while shown here → mask the disconnected terminal with an
+  // in-place 再開 (auto-resume was removed, so resuming is explicit).
+  const stopped = !!session && sessionMeta && sessionMeta.alive === false;
 
   // Pick one idle image per mounted pane and keep it stable across re-renders
   // (so it doesn't reshuffle every time the session prop toggles).
@@ -47,9 +55,12 @@ export default function TerminalView({
   // only fires when the session value actually changes (React skips re-render on an
   // unchanged prop), preserving scrollback while the same session stays open.
   useEffect(() => {
-    if (session) attach(paneId, session);
+    // Attach (open the PTY) only when the pane is attached — a stopped/read-only pane
+    // stays detached (no socket = no resume). detach clears the inst's session, so the
+    // global focus-reconnect can't silently revive it either.
+    if (session && attached) attach(paneId, session);
     else detach(paneId);
-  }, [paneId, session]);
+  }, [paneId, session, attached]);
 
   // While a session is attached, guard against accidentally closing/reloading the
   // tab (e.g. Ctrl+W on Firefox, which can't be captured) — the browser shows its
@@ -68,9 +79,11 @@ export default function TerminalView({
     if (active) {
       fit(paneId);
       focusTerm(paneId);
-      reconnect(paneId); // recover a dropped PTY when this pane becomes active
+      // Recover a dropped PTY when this pane becomes active — but only while attached,
+      // so a stopped session is never silently resumed just by focusing its pane.
+      if (attached) reconnect(paneId);
     }
-  }, [active, paneId]);
+  }, [active, paneId, attached]);
 
   // Header mirrors the left-pane Sessions row: kind badge + display name + the
   // session id + a status chip. Falls back to bare text before the session's
@@ -114,6 +127,28 @@ export default function TerminalView({
             {/* First-run checklist, only on the active empty pane. Renders null once
                 set up / dismissed, leaving just the brand placeholder. */}
             {active && <OnboardingCard />}
+          </div>
+        )}
+        {/* Stopped session: mask the disconnected terminal with an in-place 再開 so the
+            user needn't close the pane or hunt through the ⋯ menu. claude's read-only
+            chat history stays reachable via the ターミナル/チャット toggle above. */}
+        {stopped && (
+          <div className="term-mask">
+            {attached ? (
+              <span className="term-mask-msg">
+                <Icon name="loading" spin /> 再開中…
+              </span>
+            ) : (
+              <button
+                type="button"
+                className="btn primary term-resume"
+                disabled={!running}
+                title={running ? "このセッションを再開" : "ワークスペース停止中"}
+                onClick={() => onResume && onResume()}
+              >
+                <Icon name="play" /> 再開
+              </button>
+            )}
           </div>
         )}
       </div>
