@@ -434,6 +434,9 @@ button.ws-usage-btn {
 button.ws-usage-btn:hover {
   filter: brightness(1.12);
 }
+.ws-usage-nums {
+  font-variant-numeric: tabular-nums;
+}
 .ws-usage-btn .codicon {
   font-size: 11px;
 }
