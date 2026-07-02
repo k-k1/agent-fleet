@@ -1896,6 +1896,13 @@ body.row-resizing {
   text-align: center;
   line-height: 1.6;
 }
+/* Loading spinner shown while the first transcript fetch is in flight. */
+.mirror-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
 /* /context-like fill gauge under the header: a segmented bar (cache read / cache
    creation / fresh input) sized against the context window. */
 .mirror-ctxbar {
