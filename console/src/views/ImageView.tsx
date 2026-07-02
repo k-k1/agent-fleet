@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { WheelEvent as RWheelEvent, MouseEvent as RMouseEvent, PointerEvent as RPointerEvent } from "react";
 
 // ImageView previews a single image (CodeLeaf-style affordances): the image is
 // fit to the viewport, the wheel / pinch zooms (anchored at the pointer), drag
@@ -10,18 +11,27 @@ import { useCallback, useEffect, useRef, useState } from "react";
 const MIN = 1;
 const MAX = 8;
 
-const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+const clamp = (v: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, v));
 
-export default function ImageView({ src, alt, onLoad }) {
-  const boxRef = useRef(null);
+interface ImageViewProps {
+  src: string;
+  alt?: string;
+  onLoad?: (size: { w: number; h: number }) => void;
+}
+
+// A point relative to the box center, derived from an event carrying client coords.
+type ClientPoint = { clientX: number; clientY: number };
+
+export default function ImageView({ src, alt, onLoad }: ImageViewProps) {
+  const boxRef = useRef<HTMLDivElement>(null);
   const [scale, setScale] = useState(1);
   const [tx, setTx] = useState(0);
   const [ty, setTy] = useState(0);
   const [broken, setBroken] = useState(false);
 
   // Active pointers (id -> {x,y}) drive drag (one pointer) and pinch (two).
-  const pointers = useRef(new Map());
-  const pinch = useRef(null); // {dist, scale} captured when the 2nd pointer lands
+  const pointers = useRef(new Map<number, { x: number; y: number }>());
+  const pinch = useRef<{ dist: number; scale: number } | null>(null); // captured when the 2nd pointer lands
 
   // Reset transform whenever the image source changes.
   useEffect(() => {
@@ -33,7 +43,7 @@ export default function ImageView({ src, alt, onLoad }) {
 
   // Pan is clamped so the (assumed viewport-filling) image can't be dragged off
   // past its own edges. Letterboxed images may over-pan slightly; harmless.
-  const clampPan = useCallback((s, x, y) => {
+  const clampPan = useCallback((s: number, x: number, y: number) => {
     const box = boxRef.current;
     if (!box) return { x, y };
     const mx = ((s - 1) * box.clientWidth) / 2;
@@ -44,7 +54,7 @@ export default function ImageView({ src, alt, onLoad }) {
   // Zoom toward a screen point (relative to the box center) so that point stays
   // put — the standard anchored-zoom math for `translate() scale()`.
   const zoomTo = useCallback(
-    (nextScale, cx, cy) => {
+    (nextScale: number, cx: number, cy: number) => {
       setScale((prev) => {
         const s = clamp(nextScale, MIN, MAX);
         const px = (cx - tx) / prev;
@@ -58,19 +68,20 @@ export default function ImageView({ src, alt, onLoad }) {
     [tx, ty, clampPan],
   );
 
-  const pointFromEvent = (e) => {
+  const pointFromEvent = (e: ClientPoint) => {
     const box = boxRef.current;
+    if (!box) return { x: 0, y: 0 };
     const r = box.getBoundingClientRect();
     return { x: e.clientX - r.left - r.width / 2, y: e.clientY - r.top - r.height / 2 };
   };
 
-  const onWheel = (e) => {
+  const onWheel = (e: RWheelEvent) => {
     e.preventDefault();
     const { x, y } = pointFromEvent(e);
     zoomTo(scale * Math.exp(-e.deltaY * 0.0015), x, y);
   };
 
-  const onDoubleClick = (e) => {
+  const onDoubleClick = (e: RMouseEvent) => {
     const { x, y } = pointFromEvent(e);
     if (scale > 1) {
       setScale(1);
@@ -81,8 +92,8 @@ export default function ImageView({ src, alt, onLoad }) {
     }
   };
 
-  const onPointerDown = (e) => {
-    boxRef.current.setPointerCapture?.(e.pointerId);
+  const onPointerDown = (e: RPointerEvent) => {
+    boxRef.current?.setPointerCapture?.(e.pointerId);
     pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
     if (pointers.current.size === 2) {
       const [a, b] = [...pointers.current.values()];
@@ -90,7 +101,7 @@ export default function ImageView({ src, alt, onLoad }) {
     }
   };
 
-  const onPointerMove = (e) => {
+  const onPointerMove = (e: RPointerEvent) => {
     const prev = pointers.current.get(e.pointerId);
     if (!prev) return;
     const cur = { x: e.clientX, y: e.clientY };
@@ -100,7 +111,8 @@ export default function ImageView({ src, alt, onLoad }) {
       // Pinch: scale by the change in finger distance, anchored at the midpoint.
       const [a, b] = [...pointers.current.values()];
       const dist = Math.hypot(a.x - b.x, a.y - b.y);
-      const box = boxRef.current.getBoundingClientRect();
+      const box = boxRef.current?.getBoundingClientRect();
+      if (!box) return;
       const mx = (a.x + b.x) / 2 - box.left - box.width / 2;
       const my = (a.y + b.y) / 2 - box.top - box.height / 2;
       zoomTo((pinch.current.scale * dist) / pinch.current.dist, mx, my);
@@ -113,7 +125,7 @@ export default function ImageView({ src, alt, onLoad }) {
     }
   };
 
-  const endPointer = (e) => {
+  const endPointer = (e: RPointerEvent) => {
     pointers.current.delete(e.pointerId);
     if (pointers.current.size < 2) pinch.current = null;
   };

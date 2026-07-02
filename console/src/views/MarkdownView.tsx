@@ -10,15 +10,21 @@ import { dirName, joinPath, isExternalUrl, slug } from "../lib/filemeta.js";
 // links open that file in the viewer via onOpenFile.
 let mermaidSeq = 0;
 
-export default function MarkdownView({ source, basePath = "", onOpenFile }) {
-  const ref = useRef(null);
+interface MarkdownViewProps {
+  source?: string;
+  basePath?: string;
+  onOpenFile?: (path: string) => void;
+}
+
+export default function MarkdownView({ source, basePath = "", onOpenFile }: MarkdownViewProps) {
+  const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
     let alive = true;
 
-    const rawHtml = marked.parse(source ?? "", { gfm: true, breaks: false });
+    const rawHtml = marked.parse(source ?? "", { gfm: true, breaks: false }) as string;
     el.innerHTML = DOMPurify.sanitize(rawHtml);
 
     // Give headings slug ids so in-page #anchors can resolve.
@@ -29,7 +35,7 @@ export default function MarkdownView({ source, basePath = "", onOpenFile }) {
     wireLinks(el, basePath, onOpenFile);
 
     // Syntax-highlight every fenced code block except mermaid (handled below).
-    el.querySelectorAll("pre > code").forEach((code) => {
+    el.querySelectorAll<HTMLElement>("pre > code").forEach((code) => {
       if (code.classList.contains("language-mermaid")) return;
       try {
         hljs.highlightElement(code);
@@ -37,7 +43,7 @@ export default function MarkdownView({ source, basePath = "", onOpenFile }) {
     });
 
     // Render mermaid diagrams, replacing their <pre> with the produced SVG.
-    const blocks = [...el.querySelectorAll("pre > code.language-mermaid")];
+    const blocks = [...el.querySelectorAll<HTMLElement>("pre > code.language-mermaid")];
     if (blocks.length) {
       import("mermaid").then(({ default: mermaid }) => {
         if (!alive) return;
@@ -68,14 +74,14 @@ export default function MarkdownView({ source, basePath = "", onOpenFile }) {
 }
 
 // wireLinks classifies and rewires every <a> in the rendered markdown.
-function wireLinks(el, basePath, onOpenFile) {
+function wireLinks(el: HTMLElement, basePath: string, onOpenFile?: (path: string) => void) {
   // Repo-absolute (/foo) links resolve from the repo root; everything else from
   // the markdown file's own directory.
   const m = basePath.match(/^(repos\/[^/]+)\//);
   const repoRoot = m ? m[1] : dirName(basePath);
   const fileDir = dirName(basePath);
 
-  el.querySelectorAll("a[href]").forEach((a) => {
+  el.querySelectorAll<HTMLAnchorElement>("a[href]").forEach((a) => {
     const href = a.getAttribute("href") || "";
 
     if (href.startsWith("#")) {
@@ -83,7 +89,7 @@ function wireLinks(el, basePath, onOpenFile) {
       a.addEventListener("click", (e) => {
         e.preventDefault();
         const id = decodeURIComponent(href.slice(1));
-        let t = null;
+        let t: Element | null = null;
         try {
           t = el.querySelector("#" + CSS.escape(id));
         } catch {}
@@ -104,7 +110,7 @@ function wireLinks(el, basePath, onOpenFile) {
     a.addEventListener("click", (e) => {
       e.preventDefault();
       if (!onOpenFile) return;
-      let p = href.split("#")[0].split("?")[0];
+      const p = href.split("#")[0].split("?")[0];
       if (!p) return;
       const base = p.startsWith("/") ? repoRoot : fileDir;
       const target = joinPath(base, p.replace(/^\/+/, ""));
