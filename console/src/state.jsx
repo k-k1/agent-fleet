@@ -1,6 +1,6 @@
 import { createContext, useContext, useState, useEffect, useCallback, useRef } from "react";
 import { api, getTenant, setTenant as persistTenant } from "./api.js";
-import { keepOnly as termKeepOnly } from "./term.js";
+import { keepOnly as termKeepOnly, reconnectSession as termReconnectSession } from "./term.js";
 import { hydrateUIPrefs } from "./lib/settings.js";
 
 // AppContext holds everything shared across the top bar, WS bar, left pane, main
@@ -535,6 +535,10 @@ export function AppProvider({ children }) {
       // panes instead of duplicating when the other pane already shows this session.
       const patch = sess !== undefined ? { kind: "terminal", session: sess } : { kind: "terminal" };
       openActive(patch);
+      // Re-clicking an already-open but disconnected session doesn't change the pane's
+      // props (so the declarative attach won't re-run) — revive its dropped socket here
+      // so clicking a "[disconnected]" session in the list reconnects it.
+      if (sess !== undefined) termReconnectSession(sess);
       setNavOpen(false);
     },
     [openActive, pushDrawerEntry],

@@ -481,6 +481,17 @@ export function reconnect(paneId) {
   attach(paneId, it.session);
 }
 
+// reconnectSession revives any pane currently showing `name` whose PTY dropped. Used
+// when the user re-clicks an already-open but disconnected session in the list: that
+// doesn't change the pane's props, so the declarative attach and the active/focus
+// reconnect paths don't fire. No-op on panes that aren't dropped.
+export function reconnectSession(name) {
+  if (!name) return;
+  for (const [id, it] of insts) {
+    if (it && it.session === name) reconnect(id);
+  }
+}
+
 export function detach(paneId) {
   const it = inst(paneId);
   if (!it) return;
