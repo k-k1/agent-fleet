@@ -368,9 +368,13 @@ export default function MirrorView({ session, sessionMeta, active, mirror, onTog
           <button
             type="button"
             className="icon fork-btn"
-            title="この会話を分岐（ここまでの履歴を引き継いだ新セッションを作成。元は残ります）"
+            title={
+              running
+                ? "この会話を分岐（ここまでの履歴を引き継いだ新セッションを作成。元は残ります）"
+                : "ワークスペース停止中（分岐にはエージェント稼働が必要）"
+            }
             onClick={doFork}
-            disabled={forking}
+            disabled={forking || !running}
           >
             <Icon name={forking ? "loading" : "git-branch"} spin={forking} />
             <span className="fork-label">分岐</span>
