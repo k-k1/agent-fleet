@@ -135,6 +135,11 @@ COPY --from=ocwebbuild /src/shared /opt/shared
 # C.UTF-8 は locale 生成不要で Debian に存在する。
 ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
 
+# tmux: attach したクライアントを1セッションに閉じ込める設定。/etc は bind mount で
+# 上書きされない(=home と違い確実に残る)ため /etc/tmux.conf に置く。agent が最初に
+# tmux を叩いてサーバ起動する時点で読まれる。
+COPY tmux.conf /etc/tmux.conf
+
 # node:22 の既定ユーザー node（uid/gid=1000）を dev にリネーム。Node.js と紛らわしい
 # ため改名するが uid/gid=1000 は維持（ホストの uid 1000 と一致 → bind mount 素通し）。
 # -m で home を /home/node → /home/dev へ移設（実行時は home が bind mount で上書きされる）。
