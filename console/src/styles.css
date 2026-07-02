@@ -4987,6 +4987,101 @@ button.mt-toolrun-head:hover {
   margin-top: 16px;
 }
 
+/* ---- toast notifications (non-blocking replacement for window.alert) ---- */
+.toast-stack {
+  position: fixed;
+  left: 50%;
+  bottom: 20px;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(460px, calc(100vw - 24px));
+  /* Above modals (z-index 50) so a failure raised from within a dialog is seen. */
+  z-index: 200;
+  pointer-events: none;
+}
+.toast {
+  pointer-events: auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--panel);
+  border: 1px solid var(--border2);
+  /* A left stripe carries the severity color so kind reads at a glance. */
+  border-left: 3px solid var(--muted);
+  box-shadow: 0 8px 26px rgba(0, 0, 0, 0.45);
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--fg);
+}
+.toast-ic {
+  font-size: 15px;
+  margin-top: 1px;
+  flex: none;
+}
+.toast-msg {
+  flex: 1;
+  min-width: 0;
+  word-break: break-word;
+}
+.toast-x {
+  flex: none;
+  background: none;
+  border: none;
+  color: var(--muted);
+  padding: 0 2px;
+  margin: -2px -4px 0 0;
+}
+.toast-x:hover:not(:disabled) {
+  background: none;
+  color: var(--fg);
+}
+.toast-error {
+  border-left-color: var(--del);
+}
+.toast-error .toast-ic {
+  color: var(--del);
+}
+.toast-warn {
+  border-left-color: var(--warn);
+}
+.toast-warn .toast-ic {
+  color: var(--warn);
+}
+.toast-success {
+  border-left-color: var(--ok);
+}
+.toast-success .toast-ic {
+  color: var(--ok);
+}
+.toast-info {
+  border-left-color: var(--accent);
+}
+.toast-info .toast-ic {
+  color: var(--accent);
+}
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.toast {
+  animation: toast-in 0.16s ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .toast {
+    animation: none;
+  }
+}
+
 /* ---- new session modal ---- */
 .session-modal {
   width: min(540px, 94vw);

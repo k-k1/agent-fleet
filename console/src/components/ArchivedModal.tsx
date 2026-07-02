@@ -3,6 +3,7 @@ import { api, raw } from "../api.js";
 import Icon from "./Icon.jsx";
 import Modal from "./Modal.jsx";
 import { useConfirm } from "./ConfirmProvider.jsx";
+import { useToast } from "./ToastProvider.jsx";
 import { kindIcon, kindLabel } from "../lib/sessionkind.js";
 import type { Session } from "../types/session.ts";
 
@@ -23,6 +24,7 @@ export default function ArchivedModal({ onClose, onRestored }: ArchivedModalProp
   const [items, setItems] = useState<ArchivedSession[] | null>(null);
   const [busy, setBusy] = useState(false);
   const askConfirm = useConfirm();
+  const toast = useToast();
 
   const load = () =>
     api("api/sessions/archived")
@@ -37,7 +39,7 @@ export default function ArchivedModal({ onClose, onRestored }: ArchivedModalProp
     try {
       const res = await raw(`api/sessions/${encodeURIComponent(name)}/restore`, { method: "POST" });
       if (!res.ok) {
-        alert("復帰に失敗しました");
+        toast("復帰に失敗しました");
         return;
       }
       await load();

@@ -7,6 +7,7 @@ import Section from "../Section.jsx";
 import Icon from "../Icon.jsx";
 import FileIcon, { DirIcon } from "../FileIcon.jsx";
 import { useConfirm } from "../ConfirmProvider.jsx";
+import { useToast } from "../ToastProvider.jsx";
 
 // A server directory entry (api/fs/tree). Visible tree rows are flattened into Row.
 interface Entry {
@@ -66,6 +67,7 @@ const fsList = (path: string) =>
 export default function FilesSection() {
   const { filePath, showFile, showFileSplit, filesKey, reveal, wsState } = useApp();
   const askConfirm = useConfirm();
+  const toast = useToast();
   const running = wsState === "running"; // WS down → file mutations are inert
 
   // Middle-click opens a file in a freshly split pane (like the Sessions list).
@@ -153,7 +155,7 @@ export default function FilesSection() {
             res = await uploadFiles(dir, files, { overwrite: true });
           }
         }
-        if (res.error) window.alert("アップロード失敗: " + (res.error.message || res.error));
+        if (res.error) toast("アップロード失敗: " + (res.error.message || res.error));
         await refreshDir(dir);
         setSelected(dir || (files[0] ? files[0].name : null));
       } finally {
@@ -161,7 +163,7 @@ export default function FilesSection() {
         setDropTarget(null);
       }
     },
-    [refreshDir, askConfirm],
+    [refreshDir, askConfirm, toast],
   );
 
   // Drop onto a dir row uploads into it; onto the empty tree uploads into root.
@@ -212,7 +214,7 @@ export default function FilesSection() {
       if (!name || !name.trim()) return;
       const p = joinPath(parent, name.trim());
       const res: any = await fsMkdir(p);
-      if (res.error) return window.alert("作成失敗: " + (res.error.message || res.error));
+      if (res.error) return toast("作成失敗: " + (res.error.message || res.error));
       await refreshDir(parent);
       setSelected(p);
     },
@@ -224,7 +226,7 @@ export default function FilesSection() {
       if (!name || !name.trim()) return;
       const p = joinPath(parent, name.trim());
       const res: any = await fsNewFile(p);
-      if (res.error) return window.alert("作成失敗: " + (res.error.message || res.error));
+      if (res.error) return toast("作成失敗: " + (res.error.message || res.error));
       await refreshDir(parent);
       setSelected(p);
       showFile(p);
@@ -239,7 +241,7 @@ export default function FilesSection() {
       const parent = parentOf(row.path);
       const to = joinPath(parent, name.trim());
       const res: any = await fsRename(row.path, to);
-      if (res.error) return window.alert("変更失敗: " + (res.error.message || res.error));
+      if (res.error) return toast("変更失敗: " + (res.error.message || res.error));
       await refreshDir(parent);
       setSelected(to);
     },
@@ -255,11 +257,11 @@ export default function FilesSection() {
       });
       if (!ok) return;
       const res: any = await fsDelete(row.path);
-      if (res.error) return window.alert("削除失敗: " + (res.error.message || res.error));
+      if (res.error) return toast("削除失敗: " + (res.error.message || res.error));
       await refreshDir(parentOf(row.path));
       setSelected(parentOf(row.path) || null);
     },
-    [refreshDir, askConfirm],
+    [refreshDir, askConfirm, toast],
   );
 
   // Context menu: open at the cursor; close on outside click / Escape / scroll.

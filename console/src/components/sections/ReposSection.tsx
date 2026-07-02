@@ -3,6 +3,7 @@ import { useApp } from "../../state.jsx";
 import { api, apiJSON, errText } from "../../api.js";
 import Section from "../Section.jsx";
 import Icon from "../Icon.jsx";
+import { useToast } from "../ToastProvider.jsx";
 import NewRepoModal from "../NewRepoModal.jsx";
 import { kindIcon, kindLabel } from "../../lib/sessionkind.js";
 import { agentOf, repoLaunchKinds } from "../../agents/registry.ts";
@@ -45,6 +46,7 @@ const freeName = (base: string, used: Set<string>): string => {
 export default function ReposSection() {
   const { reposKey, connKey, bumpRepos, bumpSessions, bumpFiles, revealInFiles, showSCM, showSCMSplit, showTerminal, showTerminalSplit, scmRepo, mode, session, wsState } =
     useApp();
+  const toast = useToast();
   const running = wsState === "running"; // WS down → clone/open/launch are inert
   const [repos, setRepos] = useState<Repo[]>([]);
   const [conns, setConns] = useState<ConnectionsStatus | null>(null); // null = unknown (loading/failed) → show all
@@ -59,14 +61,14 @@ export default function ReposSection() {
     try {
       const res = await apiJSON("api/repos", "POST", { remote_url, branch, name });
       if (res && res.error) {
-        alert("clone に失敗: " + (res.error.message || res.error));
+        toast("clone に失敗: " + (res.error.message || res.error));
         return;
       }
       bumpRepos();
       if (res && res.name) revealInFiles("repos/" + res.name);
       else bumpFiles();
     } catch (e) {
-      alert("clone に失敗: " + e);
+      toast("clone に失敗: " + e);
     } finally {
       setCloning(null);
     }
@@ -184,7 +186,7 @@ export default function ReposSection() {
               const name = freeName(base, used);
               const res = await apiJSON("api/sessions", "POST", { name, dir: r.path, kind });
               if (res && res.error) {
-                alert("起動に失敗: " + errText(res.error));
+                toast("起動に失敗: " + errText(res.error));
                 return;
               }
               bumpSessions();

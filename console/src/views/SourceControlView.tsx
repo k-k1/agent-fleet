@@ -4,6 +4,7 @@ import { api, apiJSON, raw, rawJSON } from "../api.js";
 import Icon from "../components/Icon.jsx";
 import BranchModal from "../components/BranchModal.jsx";
 import { useConfirm } from "../components/ConfirmProvider.jsx";
+import { useToast } from "../components/ToastProvider.jsx";
 
 interface Change {
   path: string;
@@ -54,6 +55,7 @@ interface DiffRow {
 export default function SourceControlView({ repo, wrap }: { repo?: string; wrap?: boolean }) {
   const { scmRepo: ctxRepo, bumpRepos, bumpFiles, showTerminal } = useApp();
   const askConfirm = useConfirm();
+  const toast = useToast();
   const scmRepo = repo !== undefined ? repo : ctxRepo;
   const enc = encodeURIComponent(scmRepo || "");
   const [status, setStatus] = useState<ScmStatus | null>(null);
@@ -151,7 +153,7 @@ export default function SourceControlView({ repo, wrap }: { repo?: string; wrap?
 
   const commitOp = async () => {
     if (!msg.trim()) {
-      alert("コミットメッセージが必要です");
+      toast("コミットメッセージが必要です", { kind: "warn" });
       return;
     }
     const r = await rawJSON(`api/repos/${enc}/commit`, "POST", { message: msg.trim(), all });
@@ -161,7 +163,7 @@ export default function SourceControlView({ repo, wrap }: { repo?: string; wrap?
       bumpRepos();
     } else {
       const e = await r.json().catch(() => ({}));
-      alert("commit 失敗: " + (e.error?.message || r.status));
+      toast("commit 失敗: " + (e.error?.message || r.status));
     }
   };
 
