@@ -46,6 +46,7 @@ export default function SessionsSection() {
     if (newSessionTick > 0) setShowModal(true);
   }, [newSessionTick]);
   const [showArchived, setShowArchived] = useState(false);
+  const menuRef = useRef(null); // wrap of the currently-open ⋯ menu (outside-click test)
   const [menuFor, setMenuFor] = useState(null); // session name whose ⋯ menu is open
   const prevStates = useRef({}); // name → last seen claude state, for arrival notifications
 
@@ -141,10 +142,14 @@ export default function SessionsSection() {
     for (const n of Object.keys(prev)) if (!seen[n]) delete prev[n];
   }, [sessions, session]);
 
-  // Close the ⋯ menu on any outside click.
+  // Close the ⋯ menu on any outside click. Containment check (not
+  // stopPropagation on the wrap): stopPropagation would swallow OTHER
+  // dropdowns' document-level close listeners, so opening a REPOS 起動 menu
+  // wouldn't close this one — both would stay open, both .pane-section would
+  // lift to z-index:10, and the later REPOS section would paint over this menu.
   useEffect(() => {
     if (!menuFor) return;
-    const close = () => setMenuFor(null);
+    const close = (e) => { if (!menuRef.current?.contains(e.target)) setMenuFor(null); };
     document.addEventListener("mousedown", close);
     return () => document.removeEventListener("mousedown", close);
   }, [menuFor]);
@@ -270,7 +275,7 @@ export default function SessionsSection() {
                 })()}
               </span>
             </button>
-            <div className="session-menu-wrap" onMouseDown={(e) => e.stopPropagation()}>
+            <div className="session-menu-wrap" ref={menuFor === s.name ? menuRef : undefined}>
               <button
                 className="session-menu-btn"
                 title="メニュー"
