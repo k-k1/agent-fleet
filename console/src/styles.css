@@ -711,6 +711,19 @@ button.wu-reload {
   display: flex;
   gap: 2px;
 }
+/* Labeled section-header action: icon + short word, so the affordance reads
+   without hovering for its title. Kept compact to fit the 300px rail. */
+.pane-actions .lblbtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  padding: 2px 7px;
+  white-space: nowrap;
+}
+.pane-actions .lblbtn .codicon {
+  font-size: 12px;
+}
 .pane-body {
   padding: 4px 8px 10px;
 }
