@@ -4,6 +4,7 @@ import { api, apiJSON, errText } from "../../api.js";
 import Section from "../Section.jsx";
 import Icon from "../Icon.jsx";
 import { useToast } from "../ToastProvider.jsx";
+import EmptyState from "../EmptyState.jsx";
 import NewRepoModal from "../NewRepoModal.jsx";
 import { kindIcon, kindLabel } from "../../lib/sessionkind.js";
 import { agentOf, repoLaunchKinds } from "../../agents/registry.ts";
@@ -156,7 +157,14 @@ export default function ReposSection() {
             <Icon name="loading" spin /> Cloning {cloning.name}…
           </li>
         )}
-        {repos.length === 0 && !cloning && <li className="muted">リポジトリなし</li>}
+        {repos.length === 0 && !cloning && (
+          <EmptyState
+            icon="repo"
+            message="リポジトリがありません"
+            hint="clone するとここに並びます"
+            action={running ? { label: "クローン", icon: "add", onClick: () => setShowClone(true) } : undefined}
+          />
+        )}
         {repos.map((r) => (
           <RepoRow
             key={r.name}

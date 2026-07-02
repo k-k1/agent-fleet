@@ -8,6 +8,7 @@ import Icon from "../Icon.jsx";
 import FileIcon, { DirIcon } from "../FileIcon.jsx";
 import { useConfirm } from "../ConfirmProvider.jsx";
 import { useToast } from "../ToastProvider.jsx";
+import EmptyState from "../EmptyState.jsx";
 
 // A server directory entry (api/fs/tree). Visible tree rows are flattened into Row.
 interface Entry {
@@ -621,8 +622,8 @@ export default function FilesSection() {
       />
       {view === "changes" ? (
         <ul className="fstree changeslist" role="list" aria-label="変更ファイル">
-          {changes === null && <li className="muted">…</li>}
-          {changes && changes.length === 0 && <li className="muted">変更なし</li>}
+          {changes === null && <EmptyState loading message="読み込み中" />}
+          {changes && changes.length === 0 && <EmptyState icon="check" message="変更はありません" />}
           {changes &&
             Object.entries(
               changes.reduce((acc: Record<string, FsChange[]>, c) => {
@@ -675,11 +676,11 @@ export default function FilesSection() {
           aria-label="ファイル"
         >
           {!running ? (
-            <li className="muted">ワークスペース停止中</li>
+            <EmptyState icon="debug-disconnect" message="ワークスペース停止中" />
           ) : root === null ? (
-            <li className="muted">…</li>
+            <EmptyState loading message="読み込み中" />
           ) : root.length === 0 ? (
-            <li className="muted">空（ここにファイルをドロップ）</li>
+            <EmptyState icon="new-file" message="ファイルがありません" hint="ここにドロップしてアップロード" />
           ) : null}
           {rows.map((r) => {
             const isOpen = r.type === "dir" && open.has(r.path);

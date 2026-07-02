@@ -5,6 +5,7 @@ import Icon from "../components/Icon.jsx";
 import BranchModal from "../components/BranchModal.jsx";
 import { useConfirm } from "../components/ConfirmProvider.jsx";
 import { useToast } from "../components/ToastProvider.jsx";
+import EmptyState from "../components/EmptyState.jsx";
 
 interface Change {
   path: string;
@@ -195,7 +196,7 @@ export default function SourceControlView({ repo, wrap }: { repo?: string; wrap?
         <div className="scmleft">
           <div className="sub-head">変更</div>
           <ul className="changes">
-            {changes.length === 0 && <li className="muted">変更なし</li>}
+            {changes.length === 0 && <EmptyState icon="check" message="変更はありません" />}
             {changes.map((c) => (
               <ChangeRow
                 key={c.path + (c.untracked ? "?" : "")}
