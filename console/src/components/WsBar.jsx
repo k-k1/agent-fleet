@@ -378,7 +378,9 @@ export default function WsBar() {
   const usageWin = (w) => ({ pct: Math.round(w.pct), until: untilText(w.resetsAt), when: whenText(w.resetsAt) });
   const uh = usage && usage.fiveHour && usageWin(usage.fiveHour);
   const uw = usage && usage.sevenDay && usageWin(usage.sevenDay);
-  const usageMax = Math.max(uh ? uh.pct : 0, uw ? uw.pct : 0);
+  // Compact trigger shows BOTH windows as "5時間 / 週次" (e.g. "55% / 7%"); when only one
+  // window answered, show just that one.
+  const usageLabel = [uh && `${uh.pct}%`, uw && `${uw.pct}%`].filter(Boolean).join(" / ");
   const usageEl = (uh || uw) && (
     <div className="ws-usage-wrap" ref={usageRef}>
       {/* Same badge look as the Sessions-list Claude kind badge (kind-tag kind-claude):
@@ -386,12 +388,12 @@ export default function WsBar() {
       <button
         type="button"
         className="kind-tag kind-claude ws-usage-btn"
-        title="Claude 使用状況"
+        title="Claude 使用状況（5時間 / 週次）"
         aria-expanded={usageOpen}
         onClick={() => setUsageOpen((o) => !o)}
       >
         <Icon name="sparkle" />
-        <span>{usageMax}%</span>
+        <span className="ws-usage-nums">{usageLabel}</span>
         <Icon name="chevron-down" />
       </button>
       {usageOpen && (
