@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 // Custom Marp themes live as CSS files (each with a `/* @theme name */` header) in
 // ../marp-themes and are registered with the renderer so decks can select them via
 // `theme: <name>` frontmatter (on top of marp-core's built-in default/gaia/uncover).
-const THEME_CSS = import.meta.glob("../marp-themes/*.css", {
+const THEME_CSS = import.meta.glob<string>("../marp-themes/*.css", {
   query: "?raw",
   import: "default",
   eager: true,
@@ -45,7 +45,7 @@ const STAGE_CSS = `
 // the theme's intended size. Coordinates are in the frame's CSS px (the SVG scales
 // the whole frame to the container), so we compare against a constant 720.
 const FRAME_H = 720;
-function fitSection(section) {
+function fitSection(section: HTMLElement | null) {
   if (!section) return;
   section.style.fontSize = ""; // reset any prior fit before measuring
   const base = parseFloat(getComputedStyle(section).fontSize) || 24;
@@ -61,18 +61,19 @@ function fitSection(section) {
   }
 }
 
-export default function MarpView({ source }) {
-  const hostRef = useRef(null); // shadow host element
-  const stageRef = useRef(null); // fullscreen target (wraps the host)
-  const shadowRef = useRef(null);
-  const slidesRef = useRef([]);
+export default function MarpView({ source }: { source?: string }) {
+  const hostRef = useRef<HTMLDivElement>(null); // shadow host element
+  const stageRef = useRef<HTMLDivElement>(null); // fullscreen target (wraps the host)
+  const shadowRef = useRef<ShadowRoot | null>(null);
+  const slidesRef = useRef<HTMLElement[]>([]);
   const wheelAtRef = useRef(0); // throttle wheel paging
   const [count, setCount] = useState(0);
   const [cur, setCur] = useState(0);
   const [err, setErr] = useState("");
 
   const go = useCallback(
-    (next) => setCur((c) => Math.max(0, Math.min(next instanceof Function ? next(c) : next, count - 1))),
+    (next: number | ((c: number) => number)) =>
+      setCur((c) => Math.max(0, Math.min(next instanceof Function ? next(c) : next, count - 1))),
     [count],
   );
 
@@ -89,7 +90,7 @@ export default function MarpView({ source }) {
     import("@marp-team/marp-core")
       .then(({ Marp }) => {
         if (!alive) return;
-        let out;
+        let out: any;
         try {
           // html:false escapes raw HTML, script:false drops <script>, math:false
           // skips KaTeX — together they keep the injected markup safe and lighter.
@@ -108,10 +109,10 @@ export default function MarpView({ source }) {
         }
         if (!alive) return;
         shadow.innerHTML = `<style>${STAGE_CSS}</style><style>${out.css}</style><div class="deck">${out.html}</div>`;
-        const slides = [...shadow.querySelectorAll(".marpit > svg[data-marpit-svg], .marpit > section")];
+        const slides = [...shadow.querySelectorAll<HTMLElement>(".marpit > svg[data-marpit-svg], .marpit > section")];
         // Auto-fit while every slide is still visible (before the display effect
         // hides the non-current ones, which would zero out their measurements).
-        slides.forEach((el) => fitSection(el.querySelector("section") || el));
+        slides.forEach((el) => fitSection((el.querySelector("section") as HTMLElement) || el));
         slidesRef.current = slides;
         setCount(slides.length);
       })
@@ -133,7 +134,7 @@ export default function MarpView({ source }) {
   useEffect(() => {
     const stage = stageRef.current;
     if (!stage) return;
-    function onKey(e) {
+    function onKey(e: KeyboardEvent) {
       switch (e.key) {
         case "ArrowRight":
         case "PageDown":
@@ -167,7 +168,7 @@ export default function MarpView({ source }) {
   useEffect(() => {
     const stage = stageRef.current;
     if (!stage) return;
-    function onWheel(e) {
+    const onWheel = (e: WheelEvent) => {
       const dy = e.deltaY;
       if (!dy) return;
       const atTop = stage.scrollTop <= 0;

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import type { CSSProperties } from "react";
 import hljs from "highlight.js/lib/common";
 // Syntax theme is defined in styles.css via CSS variables so it follows the app
 // theme (the github-dark.css import was dark-only → unreadable in light mode).
@@ -19,19 +20,24 @@ import ImageView from "./ImageView.jsx";
 // filePath comes from the owning pane's descriptor; markdown link navigation opens
 // in the active pane via the context showFile (falls back to context filePath when
 // rendered standalone).
-export default function FileView({ filePath: filePathProp, wrap }) {
+interface FileViewProps {
+  filePath?: string | null;
+  wrap?: boolean | null;
+}
+
+export default function FileView({ filePath: filePathProp, wrap }: FileViewProps) {
   const { filePath: ctxFilePath, showFile } = useApp();
-  const filePath = filePathProp !== undefined ? filePathProp : ctxFilePath;
+  const filePath: string = (filePathProp !== undefined ? filePathProp : ctxFilePath) || "";
   const settings = useSettings();
   // wrap is a per-pane override (from the pane's toolbar toggle); fall back to the
   // global setting when the pane doesn't force it either way.
-  const wrapOn = wrap === undefined ? settings.wrap : wrap;
-  const [data, setData] = useState(null);
+  const wrapOn = wrap === undefined || wrap === null ? settings.wrap : wrap;
+  const [data, setData] = useState<any>(null);
   const [err, setErr] = useState("");
-  const [mdMode, setMdMode] = useState("preview"); // markdown only: 'preview' | 'source' | 'slides'
-  const [imgMode, setImgMode] = useState("preview"); // svg only: 'preview' | 'source'
-  const [imgDims, setImgDims] = useState(null); // image natural size {w,h}, reported by ImageView
-  const [marks, setMarks] = useState(null); // git change marks for the gutter (repos/* only)
+  const [mdMode, setMdMode] = useState<"preview" | "source" | "slides">("preview");
+  const [imgMode, setImgMode] = useState<"preview" | "source">("preview");
+  const [imgDims, setImgDims] = useState<{ w: number; h: number } | null>(null); // reported by ImageView
+  const [marks, setMarks] = useState<any>(null); // git change marks for the gutter (repos/* only)
 
   const imgFmt = imageFormat(filePath); // "" unless filePath is a previewable image
   const isImage = !!imgFmt;
@@ -101,7 +107,7 @@ export default function FileView({ filePath: filePathProp, wrap }) {
     "--viewer-font": fontStack(settings.viewerFont),
     "--viewer-size": settings.viewerSize + "px",
     "--viewer-tab": settings.tabSize,
-  };
+  } as CSSProperties;
 
   return (
     <div className="fileview" style={viewerStyle}>
@@ -209,7 +215,7 @@ export default function FileView({ filePath: filePathProp, wrap }) {
   );
 }
 
-function escapeHtml(s) {
+function escapeHtml(s: string) {
   return s
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")

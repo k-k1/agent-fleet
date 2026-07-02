@@ -7,16 +7,19 @@ import SsmLoginModal from "./SsmLoginModal.jsx";
 import { readKindAvail, writeKindAvail } from "../lib/kindavail.js";
 import { deriveRepoName, sanitizeSeg, uniqueRepoName, repoNameRe } from "../lib/reponame.js";
 import { agentOf, availableKinds, newSessionKinds } from "../agents/registry.ts";
+import type { FormEvent } from "react";
+import type { Session, SsmHost } from "../types/session.ts";
+import type { RepoSelection } from "./RepoPicker.jsx";
 
 // NewSessionModal: a clear, roomy dialog for creating a session.
 // shell is the left / default kind — a one-click shell needs no repo, no dir, and
 // an auto-filled name. claude additionally offers a model and a repo source
 // (provider picker / clone URL / none).
-const lastSeg = (full) =>
+const lastSeg = (full: string) =>
   (full.split("/").pop() || "").replace(/[^A-Za-z0-9._-]/g, "-").slice(0, 40);
 
 // uniqueName returns base, or base-2 / base-3 … when already taken.
-const uniqueName = (base, taken) => {
+const uniqueName = (base: string, taken: Set<string>) => {
   if (!taken.has(base)) return base;
   for (let i = 2; i < 1000; i++) {
     const n = `${base}-${i}`;
@@ -32,16 +35,21 @@ const SOURCE_HELP = {
   none: "リポジトリを clone せず、ホーム(~) でそのまま起動します。",
 };
 
-export default function NewSessionModal({ onClose, onCreated }) {
+interface NewSessionModalProps {
+  onClose: () => void;
+  onCreated: (name: string, cloned: boolean, repo: string) => void;
+}
+
+export default function NewSessionModal({ onClose, onCreated }: NewSessionModalProps) {
   const { openSettings } = useApp();
   const [name, setName] = useState("");
   const [nameEdited, setNameEdited] = useState(false);
   const [kind, setKind] = useState("shell"); // shell is the default (left) kind
-  const [ssmHosts, setSsmHosts] = useState(null); // registered SSM host bookmarks
+  const [ssmHosts, setSsmHosts] = useState<SsmHost[] | null>(null); // registered SSM host bookmarks
   const [ssmHostId, setSsmHostId] = useState("");
   // After creating a kind=ssm session, hand off to the shared SsmLoginModal (below):
   // this holds the created session name while the SSO handshake runs. null = not yet.
-  const [ssmLogin, setSsmLogin] = useState(null); // session name (string)
+  const [ssmLogin, setSsmLogin] = useState<string | null>(null); // session name (string)
   const [ssmForce, setSsmForce] = useState(false); // 強制再ログイン
   // Kind availability, seeded from the last-known cache so the buttons render instantly
   // (no shell-only flash); refreshed from the server below. loaded gates the "nothing
@@ -49,14 +57,14 @@ export default function NewSessionModal({ onClose, onCreated }) {
   const [avail, setAvail] = useState(readKindAvail); // { claude, codex, opencode, ssm }
   const [loaded, setLoaded] = useState(false);
   const [model, setModel] = useState(""); // "" = claude default
-  const [source, setSource] = useState("picker"); // 'picker' | 'url' | 'none'
-  const [sel, setSel] = useState(null); // picker: { cloneUrl, fullName, branch }
+  const [source, setSource] = useState<"picker" | "url" | "none">("picker");
+  const [sel, setSel] = useState<RepoSelection | null>(null); // picker: { cloneUrl, fullName, branch }
   const [url, setUrl] = useState("");
   const [branch, setBranch] = useState("");
   const [dir, setDir] = useState("");
-  const [taken, setTaken] = useState(new Set());
-  const [repos, setRepos] = useState([]); // existing working copies: { name, branch }
-  const [copyMode, setCopyMode] = useState("new"); // when a copy exists: 'reuse' | 'new'
+  const [taken, setTaken] = useState<Set<string>>(new Set());
+  const [repos, setRepos] = useState<{ name: string; branch?: string }[]>([]); // existing working copies
+  const [copyMode, setCopyMode] = useState<"reuse" | "new">("new"); // when a copy exists
   const [repoName, setRepoName] = useState(""); // target folder for a separate copy
   const [repoNameEdited, setRepoNameEdited] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -65,7 +73,7 @@ export default function NewSessionModal({ onClose, onCreated }) {
   useEffect(() => {
     let alive = true;
     api("api/sessions")
-      .then((d) => alive && setTaken(new Set((d.sessions || []).map((s) => s.name))))
+      .then((d) => alive && setTaken(new Set((d.sessions || []).map((s: Session) => s.name))))
       .catch(() => {});
     return () => {
       alive = false;
@@ -114,7 +122,7 @@ export default function NewSessionModal({ onClose, onCreated }) {
   const isAgent = agent.caps.runsInDir; // claude/opencode/codex run in a working dir
 
   // shell always; the rest from the (cached, then refreshed) availability.
-  const kindAvail = { ...avail, shell: true };
+  const kindAvail: Record<string, boolean> = { ...avail, shell: true };
 
   const ssmHost = (ssmHosts || []).find((h) => h.id === ssmHostId) || null;
 
@@ -125,7 +133,7 @@ export default function NewSessionModal({ onClose, onCreated }) {
     if (!nameEdited) setName(uniqueName(base, taken));
   }, [base, taken, nameEdited]);
 
-  const onPick = (s) => setSel(s);
+  const onPick = (s: RepoSelection | null) => setSel(s);
 
   const cloneUrl = !isAgent ? "" : source === "picker" ? sel?.cloneUrl : source === "url" ? url.trim() : "";
   const cloneBranch = source === "picker" ? sel?.branch || "" : branch.trim();
@@ -162,7 +170,7 @@ export default function NewSessionModal({ onClose, onCreated }) {
   const ssmOk = !isSSM || !!ssmHostId;
   const canSubmit = !!name.trim() && sourceOk && repoNameOk && ssmOk && !busy;
 
-  const submit = async (e) => {
+  const submit = async (e: FormEvent) => {
     e.preventDefault();
     if (ssmLogin || !canSubmit) return;
     setBusy(true);
@@ -270,11 +278,11 @@ export default function NewSessionModal({ onClose, onCreated }) {
               <div className="field">
                 <div className="field-label">リポジトリ</div>
                 <div className="seg">
-                  {[
+                  {([
                     ["picker", "接続から選ぶ"],
                     ["url", "URL 手入力"],
                     ["none", "リポなし"],
-                  ].map(([v, label]) => (
+                  ] as const).map(([v, label]) => (
                     <button
                       key={v}
                       type="button"
