@@ -4,6 +4,7 @@ import { useApp } from "../state.jsx";
 import RepoPicker from "./RepoPicker.jsx";
 import Modal from "./Modal.jsx";
 import SsmLoginModal from "./SsmLoginModal.jsx";
+import { readKindAvail, writeKindAvail } from "../lib/kindavail.js";
 import { deriveRepoName, sanitizeSeg, uniqueRepoName, repoNameRe } from "../lib/reponame.js";
 
 // NewSessionModal: a clear, roomy dialog for creating a session.
@@ -41,7 +42,11 @@ export default function NewSessionModal({ onClose, onCreated }) {
   // this holds the created session name while the SSO handshake runs. null = not yet.
   const [ssmLogin, setSsmLogin] = useState(null); // session name (string)
   const [ssmForce, setSsmForce] = useState(false); // 強制再ログイン
-  const [conns, setConns] = useState(null); // provider auth status (gates kind options)
+  // Kind availability, seeded from the last-known cache so the buttons render instantly
+  // (no shell-only flash); refreshed from the server below. loaded gates the "nothing
+  // set up" hint so it doesn't flash before the real status arrives.
+  const [avail, setAvail] = useState(readKindAvail); // { claude, codex, opencode, ssm }
+  const [loaded, setLoaded] = useState(false);
   const [model, setModel] = useState(""); // "" = claude default
   const [source, setSource] = useState("picker"); // 'picker' | 'url' | 'none'
   const [sel, setSel] = useState(null); // picker: { cloneUrl, fullName, branch }
@@ -78,17 +83,29 @@ export default function NewSessionModal({ onClose, onCreated }) {
     };
   }, []);
 
-  // Provider auth status + SSM hosts, fetched up front so we can gate the kind
-  // options: a kind is offered only when it's ready to use (claude/codex/opencode
-  // authenticated, ssm has a host). shell is always available.
+  // Provider auth status + SSM hosts, fetched up front to gate the kind options: a kind
+  // is offered only when it's ready (claude/codex/opencode authenticated, ssm has a
+  // host). shell is always available. Result is cached (localStorage) so the next open
+  // renders the buttons immediately; this fetch reconciles.
   useEffect(() => {
     let alive = true;
-    api("api/connections")
-      .then((d) => alive && setConns(d || {}))
-      .catch(() => alive && setConns({}));
-    api("api/ssm/hosts")
-      .then((d) => alive && setSsmHosts(Array.isArray(d) ? d : []))
-      .catch(() => alive && setSsmHosts([]));
+    Promise.all([
+      api("api/connections").catch(() => ({})),
+      api("api/ssm/hosts").catch(() => []),
+    ]).then(([c, hosts]) => {
+      if (!alive) return;
+      const hs = Array.isArray(hosts) ? hosts : [];
+      setSsmHosts(hs);
+      const a = {
+        claude: !!c?.claude?.connected,
+        codex: !!c?.codex?.connected,
+        opencode: (c?.opencode?.envs?.length || 0) > 0 || !!c?.opencode?.connected,
+        ssm: hs.length > 0,
+      };
+      setAvail(a);
+      writeKindAvail(a);
+      setLoaded(true);
+    });
     return () => {
       alive = false;
     };
@@ -98,14 +115,14 @@ export default function NewSessionModal({ onClose, onCreated }) {
   const isSSM = kind === "ssm";
   const isAgent = kind === "claude" || kind === "opencode" || kind === "codex"; // run in a working dir
 
-  // A kind is offered only when it's ready: shell always; the agents when their auth
-  // is connected; ssm when at least one host is registered. Before the fetch resolves
-  // (conns/ssmHosts null) the extra kinds stay hidden, so an unset workspace shows shell.
-  const canClaude = !!conns?.claude?.connected;
-  const canCodex = !!conns?.codex?.connected;
-  const canOpencode = (conns?.opencode?.envs?.length || 0) > 0 || !!conns?.opencode?.connected;
-  const canSSM = (ssmHosts?.length || 0) > 0;
-  const kindAvail = { shell: true, claude: canClaude, codex: canCodex, opencode: canOpencode, ssm: canSSM };
+  // shell always; the rest from the (cached, then refreshed) availability.
+  const kindAvail = {
+    shell: true,
+    claude: !!avail.claude,
+    codex: !!avail.codex,
+    opencode: !!avail.opencode,
+    ssm: !!avail.ssm,
+  };
 
   const ssmHost = (ssmHosts || []).find((h) => h.id === ssmHostId) || null;
 
@@ -251,7 +268,7 @@ export default function NewSessionModal({ onClose, onCreated }) {
                 </button>
               )}
             </div>
-            {conns && !canClaude && !canCodex && !canOpencode && !canSSM && (
+            {loaded && !kindAvail.claude && !kindAvail.codex && !kindAvail.opencode && !kindAvail.ssm && (
               <div className="field-help">
                 claude / codex / opencode / ssm は、
                 <button type="button" className="linklike" onClick={() => { onClose(); openSettings(); }}>
