@@ -3,7 +3,6 @@ import { useApp } from "../../state.jsx";
 import { raw } from "../../api.js";
 import Section from "../Section.jsx";
 import Icon from "../Icon.jsx";
-import LayoutMap from "../LayoutMap.jsx";
 import NewSessionModal from "../NewSessionModal.jsx";
 import SsmLoginModal from "../SsmLoginModal.jsx";
 import ArchivedModal from "../ArchivedModal.jsx";
@@ -194,7 +193,6 @@ export default function SessionsSection() {
         </>
       }
     >
-      <LayoutMap />
       <ul className="list">
         {sessions.length === 0 && <li className="muted">セッションなし</li>}
         {sessions.map((s) => {

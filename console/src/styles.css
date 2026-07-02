@@ -639,7 +639,9 @@ button.wu-reload {
   flex-shrink: 0;
   border-right: 1px solid var(--border);
   background: var(--leftpane-bg);
-  overflow: auto;
+  /* The pane map is pinned at the top; only the sections below scroll — so the
+     leftpane itself doesn't scroll, its inner .leftpane-scroll does. */
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   /* Rebind the row-state colors to shades derived from the chosen left-pane
@@ -1856,7 +1858,7 @@ body.row-resizing {
    icon-only. Driven by the paneview container (.termview / .mirrorview), so it
    tracks the PANE width, not the viewport — a narrow split in a wide window
    collapses too. The title attributes keep the words reachable as tooltips. */
-@container paneview (max-width: 420px) {
+@container paneview (max-width: 560px) {
   .mirror-toggle .seg-label,
   .fork-label {
     display: none;
@@ -5174,11 +5176,20 @@ button.primary:hover:not(:disabled) {
 
 /* ---- Layout mini-map: a schematic of the current split (columns × rows) ---- */
 .layoutmap {
+  flex: none; /* pinned above .leftpane-scroll — never grows or scrolls away */
   display: flex;
   gap: 3px;
-  padding: 6px 2px 8px;
-  margin-bottom: 2px;
+  padding: 6px 8px 8px;
   border-bottom: 1px solid var(--border2);
+  background: var(--leftpane-bg);
+}
+/* The scrolling region below the pinned pane map: holds the three sections. */
+.leftpane-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
 }
 .lm-col {
   flex: 1;
