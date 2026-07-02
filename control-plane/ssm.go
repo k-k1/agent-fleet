@@ -335,9 +335,10 @@ func ssmProfileName(label string) string {
 // ownership is enforced here. Non-ssm requests pass through untouched.
 func (c config) rewriteSSMCreate(ctx context.Context, res *resolved, r *http.Request) *apiError {
 	var peek struct {
-		Name      string `json:"name"`
-		Kind      string `json:"kind"`
-		SSMHostID string `json:"ssm_host_id"`
+		Name          string `json:"name"`
+		Kind          string `json:"kind"`
+		SSMHostID     string `json:"ssm_host_id"`
+		SSMForceLogin bool   `json:"ssm_force_login"`
 	}
 	body, err := readAllBody(r)
 	if err != nil {
@@ -373,16 +374,17 @@ func (c config) rewriteSSMCreate(ctx context.Context, res *resolved, r *http.Req
 		region = p.Region
 	}
 	out := map[string]any{
-		"name":           peek.Name,
-		"kind":           "ssm",
-		"ssm_profile":    ssmProfileName(p.Label),
-		"ssm_target":     h.InstanceID,
-		"ssm_document":   h.DocumentName,
-		"ssm_region":     region,
-		"sso_start_url":  p.StartURL,
-		"sso_region":     p.SSORegion,
-		"sso_account_id": p.AccountID,
-		"sso_role_name":  p.RoleName,
+		"name":            peek.Name,
+		"kind":            "ssm",
+		"ssm_profile":     ssmProfileName(p.Label),
+		"ssm_target":      h.InstanceID,
+		"ssm_document":    h.DocumentName,
+		"ssm_region":      region,
+		"sso_start_url":   p.StartURL,
+		"sso_region":      p.SSORegion,
+		"sso_account_id":  p.AccountID,
+		"sso_role_name":   p.RoleName,
+		"ssm_force_login": peek.SSMForceLogin,
 	}
 	nb, err := json.Marshal(out)
 	if err != nil {
