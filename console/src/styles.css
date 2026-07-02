@@ -2676,6 +2676,31 @@ button.mt-toolrun-head:hover {
   position: relative;
   z-index: 0;
 }
+/* Stopped-session mask: dims the disconnected terminal and centers a 再開 button so
+   the session can be resumed in place. z-index:2 so it sits above both the trapped
+   .terminal (0) and the empty-state overlay (1). */
+.term-mask {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(1px);
+}
+.term-mask-msg {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.term-resume {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
 /* shown over an unattached terminal: FileViewer-tinted surface + centered banner */
 .term-empty {
   position: absolute;

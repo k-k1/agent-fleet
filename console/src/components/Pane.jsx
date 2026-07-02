@@ -66,6 +66,14 @@ export default function Pane({
     setMirror(pane.chat === true);
     setAttached(pane.chat !== true);
   }, [pane.session, pane.chat]);
+  // Auto-resume is abolished: when the shown session goes stopped (a WS Stop→Start,
+  // or the user quit in the terminal), drop `attached` so nothing silently reconnects
+  // and resumes it. The terminal then shows a 再開 mask (TerminalView); resume is
+  // explicit. Only flips OFF on death — a user resume sets attached=true and, since
+  // alive stays false until the next poll, this effect won't undo it.
+  useEffect(() => {
+    if (sessionMeta && sessionMeta.alive === false) setAttached(false);
+  }, [sessionMeta?.alive]);
   const canMirror = isTerm && !!pane.session && sessionMeta?.kind === "claude";
   const showMirror = canMirror && mirror;
   // ターミナル toggle shows the terminal AND ensures the session is attached (resuming a
@@ -200,19 +208,23 @@ export default function Pane({
           swap (center), or a half-pane box on the edge where the new split lands. */}
       {zone && <div className={"drop-indicator zone-" + zone} />}
 
-      {/* Terminal is mounted while the pane is attached (PTY live); hidden when showing
-          another kind (or the Markdown mirror) so its socket + scrollback persist. A
-          chat/history pane (attached=false) does NOT mount it, so no PTY = no resume. */}
-      {isTerm && attached && (
+      {/* Terminal stays mounted for any terminal-kind pane so its xterm/scrollback are
+          stable across view switches; `hidden` handles visibility. Whether the PTY is
+          live (and thus whether a stopped session resumes) is gated by `attached`, not
+          by mounting — a read-only/stopped pane mounts the terminal but doesn't attach,
+          so there's no socket and no resume. */}
+      {isTerm && (
         <div className="view" hidden={showMirror}>
           <TerminalView
             paneId={pane.id}
             session={pane.session}
             sessionMeta={sessionMeta}
             active={(single || active) && isTerm && !showMirror}
+            attached={attached}
             canMirror={canMirror}
             mirror={mirror}
             onToggleMirror={onToggleMirror}
+            onResume={onResume}
           />
         </div>
       )}
