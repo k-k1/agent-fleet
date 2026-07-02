@@ -2080,6 +2080,38 @@ body.row-resizing {
   align-items: center;
   gap: 6px;
 }
+/* Compaction summary in the transcript: a collapsed disclosure (closed by default). */
+.mirror-compact {
+  margin: 6px 16px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bar);
+}
+.mirror-compact-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--muted);
+  list-style: none;
+}
+.mirror-compact-head::-webkit-details-marker {
+  display: none;
+}
+.mirror-compact-head .mc-title {
+  color: var(--fg);
+}
+.mirror-compact-head .mc-time {
+  margin-left: auto;
+}
+.mirror-compact[open] .mirror-compact-head {
+  border-bottom: 1px solid var(--border);
+}
+.mirror-compact-body {
+  padding: 8px 12px;
+}
 /* Auto-compaction in progress: an informational spinner strip. */
 .mirror-compacting {
   display: flex;
@@ -3340,6 +3372,41 @@ button.mt-toolrun-head:hover {
   border-radius: 6px;
   padding: 12px 14px;
   overflow: auto;
+}
+/* Per-code-block copy button, pinned to the visible bottom-right of the block. The
+   wrapper (non-scrolling) holds it so it doesn't scroll away with wide code. */
+.md-pre-wrap {
+  position: relative;
+}
+.md-copy {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--panel2) 82%, transparent);
+  color: var(--muted);
+  cursor: pointer;
+  opacity: 0.55;
+  transition: opacity 0.12s, color 0.12s, background 0.12s;
+}
+.md-pre-wrap:hover .md-copy,
+.md-copy:focus-visible {
+  opacity: 1;
+}
+.md-copy:hover {
+  color: var(--fg);
+  background: var(--panel2);
+}
+.md-copy.copied {
+  color: var(--ok, #4ec97a);
+  opacity: 1;
 }
 .markdown pre code {
   background: none;

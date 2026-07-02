@@ -656,7 +656,9 @@ function groupTurns(turns) {
     const parts = partsOf(t);
     if (!parts.length) continue;
     const last = out[out.length - 1];
-    if (last && last.role === t.role && last.sidechain === !!t.sidechain) {
+    // A compaction summary is its own standalone block — never merge it into an
+    // adjacent user turn (nor merge a normal turn into it).
+    if (last && last.role === t.role && last.sidechain === !!t.sidechain && !last.compact && !t.compact) {
       last.parts.push(...parts);
       if (t.text) last.text += (last.text ? "\n\n" : "") + t.text;
       if (!last.model && t.model) last.model = t.model;
@@ -670,6 +672,7 @@ function groupTurns(turns) {
       out.push({
         role: t.role,
         sidechain: !!t.sidechain,
+        compact: !!t.compact,
         parts: [...parts],
         text: t.text || "",
         model: t.model || "",
@@ -714,10 +717,32 @@ function renderGroups(groups, onAnswer, onOpenPlan, onOpenDiff) {
     }
     if (ctx) prevCtx = ctx;
     els.push(
-      <Turn key={g.idx} turn={g} onAnswer={onAnswer} onOpenPlan={onOpenPlan} onOpenDiff={onOpenDiff} />,
+      g.compact ? (
+        <CompactBlock key={g.idx} turn={g} />
+      ) : (
+        <Turn key={g.idx} turn={g} onAnswer={onAnswer} onOpenPlan={onOpenPlan} onOpenDiff={onOpenDiff} />
+      ),
     );
   }
   return els;
+}
+
+// CompactBlock renders claude's auto-compaction summary as a collapsed disclosure —
+// "コンテキストが圧縮されました" — rather than a giant user turn. Closed by default
+// (native <details>); expand to read the summary that replaced the earlier context.
+function CompactBlock({ turn }) {
+  return (
+    <details className="mirror-compact">
+      <summary className="mirror-compact-head">
+        <Icon name="archive" />
+        <span className="mc-title">コンテキストが圧縮されました</span>
+        {turn.ts && <span className="mc-time muted">{formatTS(turn.ts)}</span>}
+      </summary>
+      <div className="mirror-compact-body">
+        <MarkdownView source={turn.text} />
+      </div>
+    </details>
+  );
 }
 
 // ContextLine marks the git branch / working dir in effect from here on.
