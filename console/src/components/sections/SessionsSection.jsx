@@ -64,15 +64,22 @@ export default function SessionsSection() {
     bumpSessions();
   };
 
-  // Delete all stopped sessions (forget the meta). The conversation log (jsonl) is
-  // kept on disk, but the session leaves the list and is not in the archive.
-  const deleteStopped = async () => {
+  // Clear all stopped sessions: agent sessions (claude/opencode/codex) are archived
+  // (kept + restorable via the archive), while shell/ssm have no conversation worth
+  // keeping, so they're deleted outright (/stop forgets the meta).
+  const clearStopped = async () => {
     const stopped = sessions.filter((s) => !s.alive);
     if (stopped.length === 0) return;
-    if (!confirm(`停止中の ${stopped.length} 件のセッションを一覧から削除しますか？\n（会話ログはディスクに残ります）`)) return;
-    await Promise.all(
-      stopped.map((s) => raw(`api/sessions/${encodeURIComponent(s.name)}/stop`, { method: "POST" }).catch(() => {})),
-    );
+    const ephemeral = stopped.filter((s) => s.kind === "shell" || s.kind === "ssm");
+    const keepable = stopped.filter((s) => s.kind !== "shell" && s.kind !== "ssm");
+    const parts = [];
+    if (keepable.length) parts.push(`${keepable.length} 件をアーカイブ`);
+    if (ephemeral.length) parts.push(`shell/ssm ${ephemeral.length} 件を削除`);
+    if (!confirm(`停止中のセッションを整理します（${parts.join("・")}）。よろしいですか？`)) return;
+    await Promise.all([
+      ...keepable.map((s) => raw(`api/sessions/${encodeURIComponent(s.name)}/archive`, { method: "POST" }).catch(() => {})),
+      ...ephemeral.map((s) => raw(`api/sessions/${encodeURIComponent(s.name)}/stop`, { method: "POST" }).catch(() => {})),
+    ]);
     bumpSessions();
   };
 
@@ -167,9 +174,9 @@ export default function SessionsSection() {
         <>
           <button
             className="ghost"
-            title="停止中をまとめて削除"
+            title="停止中をまとめてアーカイブ（shell/ssm は削除）"
             disabled={!sessions.some((s) => !s.alive)}
-            onClick={deleteStopped}
+            onClick={clearStopped}
           >
             <Icon name="clear-all" />
           </button>
