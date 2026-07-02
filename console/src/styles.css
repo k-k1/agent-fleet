@@ -911,7 +911,11 @@ button.wu-reload {
 }
 .launch-menu {
   position: absolute;
-  left: 0;
+  /* Anchor to the right so the menu opens inward (leftward), like .session-menu.
+     The 起動 / ＋ buttons sit near the right edge of the 300px .leftpane; a
+     left-anchored menu would extend past the pane and get clipped by
+     .leftpane { overflow: auto } — hidden behind the right pane. */
+  right: 0;
   top: 100%;
   z-index: 20;
   min-width: 130px;
