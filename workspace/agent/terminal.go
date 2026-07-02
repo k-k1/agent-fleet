@@ -42,7 +42,7 @@ func handlePTY(w http.ResponseWriter, r *http.Request) {
 		// If the session exited (e.g. the user quit claude), recreate it from its
 		// recorded meta first so claude --resume relaunches in the same session id —
 		// otherwise the bare new-session -A below would spawn a default shell.
-		ensureSessionTmux(session)
+		ensureSessionTmux(session, false)
 		// new-session -A: attach if exists, else create — robust against races.
 		cmd = exec.Command("tmux", "new-session", "-A", "-s", tmuxName(session))
 	} else {

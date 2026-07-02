@@ -550,6 +550,24 @@ func (c config) handleSessionFork(w http.ResponseWriter, r *http.Request) {
 	c.proxyAgentREST(w, r)
 }
 
+// handleSessionStart relaunches a stopped session (POST /api/sessions/{name}/start)
+// without attaching — used by the SSM login modal's resume flow. Auto-starts a cold
+// workspace first, then proxies to the Agent (which runs ensureSessionTmux). No quota
+// check: resuming doesn't create a new session slot the user didn't already have.
+func (c config) handleSessionStart(w http.ResponseWriter, r *http.Request) {
+	res, ok := c.resolvedFor(w, r)
+	if !ok {
+		return
+	}
+	if c.autostart {
+		if aerr := c.ensureWorkspaceStarted(r.Context(), res); aerr != nil {
+			writeAPIErr(w, aerr)
+			return
+		}
+	}
+	c.proxyAgentREST(w, r)
+}
+
 // sessionQuotaExceeded returns a 429 apiError when the caller is at its per-user
 // (or tenant-default) concurrent-session cap, else nil. 0/unset = unlimited. Shared
 // by session create and fork (both add a running session). If the workspace isn't

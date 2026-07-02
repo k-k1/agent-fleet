@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from "react";
-import { api, apiJSON, errText, raw } from "../api.js";
+import { useEffect, useState } from "react";
+import { api, apiJSON, errText } from "../api.js";
 import { useApp } from "../state.jsx";
 import RepoPicker from "./RepoPicker.jsx";
 import Modal from "./Modal.jsx";
+import SsmLoginModal from "./SsmLoginModal.jsx";
 import { deriveRepoName, sanitizeSeg, uniqueRepoName, repoNameRe } from "../lib/reponame.js";
 
 // NewSessionModal: a clear, roomy dialog for creating a session.
@@ -36,11 +37,10 @@ export default function NewSessionModal({ onClose, onCreated }) {
   const [kind, setKind] = useState("shell"); // shell is the default (left) kind
   const [ssmHosts, setSsmHosts] = useState(null); // registered SSM host bookmarks
   const [ssmHostId, setSsmHostId] = useState("");
-  // ssmLogin drives the in-modal SSO handshake for a kind=ssm session: the session
-  // (tmux) runs in the background while we poll its login phase; the terminal is only
-  // attached once "ready". null = not started.
-  const [ssmLogin, setSsmLogin] = useState(null); // { name, phase, url, code, error }
-  const ssmOpenedRef = useRef(false);
+  // After creating a kind=ssm session, hand off to the shared SsmLoginModal (below):
+  // this holds the created session name while the SSO handshake runs. null = not yet.
+  const [ssmLogin, setSsmLogin] = useState(null); // session name (string)
+  const [ssmForce, setSsmForce] = useState(false); // 強制再ログイン
   const [model, setModel] = useState(""); // "" = claude default
   const [source, setSource] = useState("picker"); // 'picker' | 'url' | 'none'
   const [sel, setSel] = useState(null); // picker: { cloneUrl, fullName, branch }
@@ -104,61 +104,6 @@ export default function NewSessionModal({ onClose, onCreated }) {
 
   const onPick = (s) => setSel(s);
 
-  // Poll the SSM login phase while a handshake is in flight. Auto-opens the device
-  // authorization URL once; attaches the terminal (onCreated) on "ready"; stops on
-  // "ready"/"error". Keyed on the session name so phase updates don't restart it.
-  useEffect(() => {
-    if (!ssmLogin?.name) return;
-    const name = ssmLogin.name;
-    let alive = true;
-    const tick = async () => {
-      if (!alive) return;
-      let d = null;
-      try {
-        d = await api(`api/sessions/${encodeURIComponent(name)}/ssm-login`);
-      } catch {
-        d = null;
-      }
-      if (!alive) return;
-      if (d && !d.error) {
-        if (d.phase === "authorize" && d.url && !ssmOpenedRef.current) {
-          ssmOpenedRef.current = true;
-          window.open(d.url, "_blank", "noopener");
-        }
-        if (d.phase === "ready") {
-          onCreated(name, false, "");
-          return;
-        }
-        setSsmLogin((s) =>
-          s && s.name === name
-            ? { ...s, phase: d.phase, url: d.url || s.url, code: d.code || s.code, error: d.message || "" }
-            : s,
-        );
-        if (d.phase === "error") return;
-      }
-      if (alive) setTimeout(tick, 1500);
-    };
-    const t = setTimeout(tick, 700);
-    return () => {
-      alive = false;
-      clearTimeout(t);
-    };
-  }, [ssmLogin?.name]);
-
-  // Cancel an in-flight SSM login: stop the background session and close.
-  const cancelSsm = async () => {
-    const n = ssmLogin?.name;
-    setSsmLogin(null);
-    if (n) {
-      try {
-        await raw(`api/sessions/${encodeURIComponent(n)}/stop`, { method: "POST" });
-      } catch {
-        /* best effort */
-      }
-    }
-    onClose();
-  };
-
   const cloneUrl = !isAgent ? "" : source === "picker" ? sel?.cloneUrl : source === "url" ? url.trim() : "";
   const cloneBranch = source === "picker" ? sel?.branch || "" : branch.trim();
   const cloning = isAgent && source !== "none" && !!cloneUrl;
@@ -208,16 +153,16 @@ export default function NewSessionModal({ onClose, onCreated }) {
         branch: cloning ? cloneBranch : "",
         repo_name: newCopy ? repoName.trim() : "",
         ssm_host_id: isSSM ? ssmHostId : "",
+        ssm_force_login: isSSM ? ssmForce : false,
       });
       if (res && res.error) {
         alert("作成に失敗: " + errText(res.error));
         return;
       }
-      // SSM: keep the modal open and drive the SSO login here (poll ssm-login); the
-      // terminal is attached only once the remote session is established.
+      // SSM: the session (tmux) is launched; hand off to SsmLoginModal to drive the SSO
+      // handshake and attach the terminal only once ready (see early return below).
       if (isSSM) {
-        ssmOpenedRef.current = false;
-        setSsmLogin({ name: name.trim(), phase: "pending", url: "", code: "", error: "" });
+        setSsmLogin(name.trim());
         return;
       }
       // Pass the cloned repo dir basename (server echoes it as `repo`) so the
@@ -228,59 +173,16 @@ export default function NewSessionModal({ onClose, onCreated }) {
     }
   };
 
+  // After an ssm session is created, the SSO handshake is driven by the shared modal;
+  // it attaches the terminal (onCreated) on ready, or closes on cancel.
+  if (ssmLogin) {
+    return (
+      <SsmLoginModal name={ssmLogin} onReady={(n) => onCreated(n, false, "")} onCancel={onClose} />
+    );
+  }
+
   return (
-    <Modal title="新しいセッション" onClose={onClose} className="session-modal" as="form" onSubmit={submit} lockClose={!!ssmLogin || busy}>
-      {ssmLogin ? (
-        <>
-          <div className="modal-body">
-            <div className="field">
-              <div className="field-label">SSM ログイン</div>
-              {ssmLogin.phase === "error" ? (
-                <div className="field-help danger">
-                  ログインに失敗しました。{ssmLogin.error ? " " + ssmLogin.error : ""}
-                </div>
-              ) : ssmLogin.phase === "authorize" ? (
-                <>
-                  <div className="field-help">
-                    別タブで AWS にサインインして承認してください。承認後、自動で接続します（別タブが開かない場合は下のリンク）。
-                  </div>
-                  <div className="flow">
-                    {ssmLogin.url && (
-                      <a href={ssmLogin.url} target="_blank" rel="noopener" className="flow-link">
-                        → 別タブでサインイン ↗
-                      </a>
-                    )}
-                    {ssmLogin.code && <span className="oauth-code">{ssmLogin.code}</span>}
-                  </div>
-                  <div className="field-help">⚠ 自分で開始したこのログインのみ承認してください。</div>
-                </>
-              ) : (
-                <div className="field-help">
-                  接続中… しばらくお待ちください（認証が必要な場合はここに URL が表示されます）。
-                </div>
-              )}
-            </div>
-          </div>
-          <footer className="modal-foot">
-            <button type="button" className="ghost" onClick={cancelSsm}>
-              キャンセル
-            </button>
-            {ssmLogin.phase === "error" && (
-              <button
-                type="button"
-                className="primary"
-                onClick={() => {
-                  ssmOpenedRef.current = false;
-                  setSsmLogin(null);
-                }}
-              >
-                戻る
-              </button>
-            )}
-          </footer>
-        </>
-      ) : (
-        <>
+    <Modal title="新しいセッション" onClose={onClose} className="session-modal" as="form" onSubmit={submit} lockClose={busy}>
         <div className="modal-body">
           {/* 種類 — shell 左 / 既定 */}
           <div className="field">
@@ -493,9 +395,13 @@ export default function NewSessionModal({ onClose, onCreated }) {
                       </option>
                     ))}
                   </select>
+                  <label className="ssm-check">
+                    <input type="checkbox" checked={ssmForce} onChange={(e) => setSsmForce(e.target.checked)} />
+                    強制的に再ログイン（キャッシュ済みでも aws sso logout → login）
+                  </label>
                   <div className="field-help">
-                    作成後、端末に <code>aws sso login</code> の認証 URL が表示されます。クリックして別タブで承認すると
-                    SSM セッションが開始します（AWS の秘密情報は Agent Fleet に保存されません）。
+                    作成後、認証が必要ならモーダルに <code>aws sso login</code> の URL が出ます。別タブで承認すると
+                    接続します（AWS の秘密情報は Agent Fleet に保存されません）。
                     <br />
                     ⚠ <b>自分で開始したこのログインのみ承認してください</b>（身に覚えのないコード/URL は入力しない）。
                   </div>
@@ -528,8 +434,6 @@ export default function NewSessionModal({ onClose, onCreated }) {
             {busy ? (cloning ? "Cloning…" : "作成中…") : isSSM ? "接続" : "作成して開く"}
           </button>
         </footer>
-        </>
-      )}
     </Modal>
   );
 }
