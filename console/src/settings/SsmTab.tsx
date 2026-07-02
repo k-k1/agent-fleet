@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { ChangeEvent, ReactNode } from "react";
 import { api, raw, rawJSON } from "../api.js";
 import { useConfirm } from "../components/ConfirmProvider.jsx";
+import { useToast } from "../components/ToastProvider.jsx";
 
 // SsmTab manages the member's own AWS SSM login config (docs/history/p3-ssm-session.md)
 // in two tiers so the form isn't cluttered:
@@ -15,17 +16,17 @@ import { useConfirm } from "../components/ConfirmProvider.jsx";
 
 // postJSON POSTs/PUTs and surfaces failures loudly (a stale CP without the routes
 // returns 404 non-JSON, which would otherwise be swallowed). Returns true on success.
-async function postJSON(path: string, method: string, body: unknown): Promise<boolean> {
+async function postJSON(path: string, method: string, body: unknown, toast: (msg: string) => void): Promise<boolean> {
   let res;
   try {
     res = await rawJSON(path, method, body);
   } catch (e: any) {
-    alert("通信に失敗しました: " + (e?.message || e));
+    toast("通信に失敗しました: " + (e?.message || e));
     return false;
   }
   if (!res.ok) {
     const j = await res.json().catch(() => null);
-    alert(
+    toast(
       "保存に失敗: HTTP " +
         res.status +
         (j?.error?.message ? " — " + j.error.message : res.status === 404 ? "（/api/ssm 未提供。CP の再起動が必要かもしれません）" : ""),
@@ -76,6 +77,7 @@ type FieldEvent = ChangeEvent<HTMLInputElement | HTMLSelectElement>;
 
 function ProfileSection({ profiles, reload }: { profiles: any[] | null; reload: () => void }) {
   const askConfirm = useConfirm();
+  const toast = useToast();
   const [f, setF] = useState<Record<string, string>>(emptyProfile);
   const [busy, setBusy] = useState(false);
   const set = (k: string) => (e: FieldEvent) => setF((p) => ({ ...p, [k]: e.target.value }));
@@ -91,7 +93,7 @@ function ProfileSection({ profiles, reload }: { profiles: any[] | null; reload: 
         accountId: f.accountId.trim(),
         roleName: f.roleName.trim(),
         region: f.region.trim(),
-      });
+      }, toast);
       if (!ok) return;
       setF(emptyProfile);
       reload();
@@ -165,6 +167,7 @@ const emptyHost: Record<string, string> = { alias: "", profileId: "", instanceId
 
 function HostSection({ hosts, profiles, reload }: { hosts: any[] | null; profiles: any[] | null; reload: () => void }) {
   const askConfirm = useConfirm();
+  const toast = useToast();
   const [f, setF] = useState<Record<string, string>>(emptyHost);
   const [busy, setBusy] = useState(false);
   const set = (k: string) => (e: FieldEvent) => setF((p) => ({ ...p, [k]: e.target.value }));
@@ -181,7 +184,7 @@ function HostSection({ hosts, profiles, reload }: { hosts: any[] | null; profile
         instanceId: f.instanceId.trim(),
         documentName: f.documentName.trim(),
         region: f.region.trim(),
-      });
+      }, toast);
       if (!ok) return;
       setF(emptyHost);
       reload();
