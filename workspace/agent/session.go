@@ -64,6 +64,24 @@ type sessionMeta struct {
 	// later launches resume normally and ForkFrom is ignored — so a restart never
 	// re-forks. Empty for non-forked sessions.
 	ForkFrom string `json:"forkFrom,omitempty"`
+	// SSM holds the (non-secret) coordinates for a kind=ssm session: which instance,
+	// run-as document, region, and the SSO profile to authenticate with. Persisted so
+	// a relaunch regenerates ~/.aws/config and re-runs `aws sso login` (if the cached
+	// token expired) before start-session. No AWS credentials are stored anywhere —
+	// the aws CLI obtains them via SSO at launch and caches them in the home volume.
+	SSM *ssmMeta `json:"ssm,omitempty"`
+}
+
+// ssmMeta is the persisted, non-secret description of an SSM login target.
+type ssmMeta struct {
+	Profile   string `json:"profile"`   // ~/.aws/config profile name (derived from alias)
+	Target    string `json:"target"`    // EC2 instance id (i-...)
+	Document  string `json:"document"`  // run-as SSM document ("" = default shell)
+	Region    string `json:"region"`    // instance region ("" = profile default)
+	StartURL  string `json:"startUrl"`  // SSO access-portal start URL ("" = use existing ~/.aws)
+	SSORegion string `json:"ssoRegion"` // SSO region
+	AccountID string `json:"accountId"` // SSO account id
+	RoleName  string `json:"roleName"`  // SSO permission-set role name
 }
 
 // stoppedTTL is how long a stopped (exited) session stays listed/resumable before
@@ -222,6 +240,75 @@ func listSessionMetas() []sessionMeta {
 	return out
 }
 
+// ssmConfigPath is the per-session ~/.aws config file for an SSM session. It is
+// per-session (not shared) so concurrent SSM sessions to different accounts don't
+// clobber each other's AWS_CONFIG_FILE; the SSO token cache stays in the default
+// ~/.aws/sso/cache so one `aws sso login` is reused across sessions of the same
+// portal. The ".aws" tree is denylisted from the file browser (fs.go).
+func ssmConfigPath(name string) string {
+	return filepath.Join(homeDir(), ".aws", "af-sessions", name+".config")
+}
+
+// writeSSMConfig writes an isolated aws config (sso-session + profile) from the
+// non-secret SSM meta. Idempotent — rewritten on every (re)launch. Contains no
+// secrets (only the SSO start URL / account / role).
+func writeSSMConfig(path string, s ssmMeta) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	region := s.Region
+	if region == "" {
+		region = s.SSORegion
+	}
+	ssoName := "af-" + s.Profile
+	var b strings.Builder
+	fmt.Fprintf(&b, "[sso-session %s]\n", ssoName)
+	fmt.Fprintf(&b, "sso_start_url = %s\n", s.StartURL)
+	fmt.Fprintf(&b, "sso_region = %s\n", s.SSORegion)
+	b.WriteString("sso_registration_scopes = sso:account:access\n\n")
+	fmt.Fprintf(&b, "[profile %s]\n", s.Profile)
+	fmt.Fprintf(&b, "sso_session = %s\n", ssoName)
+	if s.AccountID != "" {
+		fmt.Fprintf(&b, "sso_account_id = %s\n", s.AccountID)
+	}
+	if s.RoleName != "" {
+		fmt.Fprintf(&b, "sso_role_name = %s\n", s.RoleName)
+	}
+	if region != "" {
+		fmt.Fprintf(&b, "region = %s\n", region)
+	}
+	return os.WriteFile(path, []byte(b.String()), 0o600)
+}
+
+// buildSSMProgram assembles the pane command for an SSM session: refresh SSO creds
+// only when the cached token is missing/expired (surfacing the login URL in the
+// terminal), then exec start-session. When StartURL is set an isolated aws config is
+// generated; otherwise the profile is assumed to exist in the member's own ~/.aws.
+func buildSSMProgram(name string, s ssmMeta) (string, error) {
+	var b strings.Builder
+	if s.StartURL != "" && s.Profile != "" {
+		cfg := ssmConfigPath(name)
+		if err := writeSSMConfig(cfg, s); err != nil {
+			return "", err
+		}
+		fmt.Fprintf(&b, "export AWS_CONFIG_FILE=%s; ", shellQuote(cfg))
+	}
+	if s.Profile != "" {
+		fmt.Fprintf(&b, "export AWS_PROFILE=%s; ", shellQuote(s.Profile))
+	}
+	// aws sso login is a no-op message when the cached token is still valid.
+	b.WriteString("aws sts get-caller-identity >/dev/null 2>&1 || aws sso login --no-browser; ")
+	b.WriteString("exec aws ssm start-session")
+	fmt.Fprintf(&b, " --target %s", shellQuote(s.Target))
+	if s.Document != "" {
+		fmt.Fprintf(&b, " --document-name %s", shellQuote(s.Document))
+	}
+	if s.Region != "" {
+		fmt.Fprintf(&b, " --region %s", shellQuote(s.Region))
+	}
+	return b.String(), nil
+}
+
 // startSessionTmux launches the detached tmux session for m. For claude it injects
 // the OAuth token and builds the resume/new program (buildSessionProgram picks
 // --resume once a jsonl exists); for shell it runs a login bash.
@@ -264,6 +351,23 @@ func startSessionTmux(m sessionMeta) error {
 		// by our deterministic slot sid — see buildCodexProgram.
 		cxSid := sessionUUID(m.Dir, m.Name)
 		program = buildCodexProgram(m.Model, cxSid, readCodexSid(cxSid))
+	case "ssm":
+		// An SSM session logs into the operator's OWN AWS via `aws sso login` (the
+		// device-code URL is surfaced in this terminal — click it to authenticate in
+		// another tab) then opens Session Manager on the target instance. No AWS
+		// credentials pass through Agent Fleet: the aws CLI authenticates directly and
+		// caches the short-lived token in the home volume. Launch dir is home (the work
+		// happens on the remote instance).
+		if m.SSM == nil || m.SSM.Target == "" {
+			return fmt.Errorf("SSM セッションの接続先が指定されていません")
+		}
+		cwd = homeDir()
+		args[len(args)-1] = cwd
+		p, err := buildSSMProgram(m.Name, *m.SSM)
+		if err != nil {
+			return err
+		}
+		program = p
 	default:
 		// A claude session must launch in its real working dir: if the dir is gone
 		// (its repo was deleted) we refuse rather than resume the conversation in an
@@ -415,6 +519,16 @@ type createReq struct {
 	RemoteURL string `json:"remote_url"`
 	Branch    string `json:"branch"`
 	RepoName  string `json:"repo_name"`
+	// SSM (kind=ssm) coordinates, resolved and forwarded by the Control Plane from a
+	// host bookmark (control-plane/ssm.go). No secrets — SSO login happens in-pane.
+	SSMProfile   string `json:"ssm_profile"`
+	SSMTarget    string `json:"ssm_target"`
+	SSMDocument  string `json:"ssm_document"`
+	SSMRegion    string `json:"ssm_region"`
+	SSOStartURL  string `json:"sso_start_url"`
+	SSORegion    string `json:"sso_region"`
+	SSOAccountID string `json:"sso_account_id"`
+	SSORoleName  string `json:"sso_role_name"`
 }
 
 // handleCreateSession launches a claude session inside a detached tmux session.
@@ -455,7 +569,7 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 
 	kind := req.Kind
 	switch kind {
-	case "shell", "opencode", "codex":
+	case "shell", "opencode", "codex", "ssm":
 		// supported as-is
 	default:
 		kind = "claude"
@@ -464,9 +578,24 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	if kind == "claude" {
 		label = sessionLabel(req.Dir)
 	}
+	var ssm *ssmMeta
+	if kind == "ssm" {
+		if strings.TrimSpace(req.SSMTarget) == "" {
+			writeErr(w, http.StatusBadRequest, "bad_ssm", "ssm_target (instance id) is required")
+			return
+		}
+		ssm = &ssmMeta{
+			Profile: req.SSMProfile, Target: req.SSMTarget, Document: req.SSMDocument,
+			Region: req.SSMRegion, StartURL: req.SSOStartURL, SSORegion: req.SSORegion,
+			AccountID: req.SSOAccountID, RoleName: req.SSORoleName,
+		}
+		if ssm.Region == "" {
+			ssm.Region = ssm.SSORegion
+		}
+	}
 	meta := sessionMeta{
 		Name: req.Name, Dir: req.Dir, Model: req.Model, Kind: kind, Label: label,
-		Repo: filepath.Base(req.Dir), CreatedAt: time.Now().Format(time.RFC3339),
+		Repo: filepath.Base(req.Dir), CreatedAt: time.Now().Format(time.RFC3339), SSM: ssm,
 	}
 	if err := startSessionTmux(meta); err != nil {
 		writeErr(w, http.StatusInternalServerError, "tmux_failed", err.Error())

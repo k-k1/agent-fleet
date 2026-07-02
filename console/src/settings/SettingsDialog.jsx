@@ -5,6 +5,7 @@ import DisplayTab from "./DisplayTab.jsx";
 import AgentsTab from "./AgentsTab.jsx";
 import EnvTab from "./EnvTab.jsx";
 import TokensTab from "./TokensTab.jsx";
+import SsmTab from "./SsmTab.jsx";
 import Modal from "../components/Modal.jsx";
 
 // SettingsDialog holds the per-user settings (Connections / エージェント / 環境 / 表示).
@@ -19,6 +20,7 @@ export default function SettingsDialog() {
     ["connections", "接続"],
     ["agents", "エージェント"],
     ["env", "環境"],
+    ["ssm", "SSM"],
     ["tokens", "MCP"],
     ["display", "表示"],
   ];
@@ -42,6 +44,7 @@ export default function SettingsDialog() {
           {section === "connections" && <ConnectionsTab />}
           {section === "agents" && <AgentsTab />}
           {section === "env" && <EnvTab />}
+          {section === "ssm" && <SsmTab />}
           {section === "tokens" && <TokensTab />}
           {section === "display" && <DisplayTab />}
         </div>

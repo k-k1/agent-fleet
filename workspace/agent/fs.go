@@ -27,13 +27,14 @@ func browseRoot() string {
 
 // fsDeny lists browse-root-relative paths that are never exposed.
 var fsDeny = map[string]bool{
-	".claude":             true, // plaintext claude state (also relocated via CLAUDE_CONFIG_DIR)
-	".claude.json":        true, // claude keeps this in home even with CLAUDE_CONFIG_DIR
-	".config/agent-fleet": true, // encrypted secrets store + connection state
-	".ssh":                true,
-	".git-credentials":    true,
+	".claude":               true, // plaintext claude state (also relocated via CLAUDE_CONFIG_DIR)
+	".claude.json":          true, // claude keeps this in home even with CLAUDE_CONFIG_DIR
+	".config/agent-fleet":   true, // encrypted secrets store + connection state
+	".ssh":                  true,
+	".git-credentials":      true,
 	".local/share/opencode": true, // opencode auth.json (API keys) + session db
 	".codex":                true, // codex auth.json (tokens) + sessions + helper bins
+	".aws":                  true, // SSM login: SSO token cache + generated configs
 }
 
 func isDenied(rel string) bool {

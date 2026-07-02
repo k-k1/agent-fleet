@@ -219,6 +219,17 @@ func main() {
 	// Structured transcript for the Console chat view (case-A).
 	mux.HandleFunc("GET /api/sessions/{name}/messages", cfg.proxyAgentREST)
 
+	// SSM login config (docs/history/p3-ssm-session.md) — per-member SSO sessions and
+	// SSM host bookmarks. No AWS secrets; the aws CLI in the workspace authenticates.
+	mux.HandleFunc("GET /api/ssm/sso-sessions", cfg.handleSSOSessionsList)
+	mux.HandleFunc("POST /api/ssm/sso-sessions", cfg.handleSSOSessionCreate)
+	mux.HandleFunc("PUT /api/ssm/sso-sessions/{id}", cfg.handleSSOSessionUpdate)
+	mux.HandleFunc("DELETE /api/ssm/sso-sessions/{id}", cfg.handleSSOSessionDelete)
+	mux.HandleFunc("GET /api/ssm/hosts", cfg.handleSSMHostsList)
+	mux.HandleFunc("POST /api/ssm/hosts", cfg.handleSSMHostCreate)
+	mux.HandleFunc("PUT /api/ssm/hosts/{id}", cfg.handleSSMHostUpdate)
+	mux.HandleFunc("DELETE /api/ssm/hosts/{id}", cfg.handleSSMHostDelete)
+
 	// Repository ops — proxied to the Workspace Agent (/api stripped -> /repos*).
 	mux.HandleFunc("GET /api/repos", cfg.proxyAgentREST)
 	mux.HandleFunc("POST /api/repos", cfg.proxyAgentREST)
