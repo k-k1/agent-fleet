@@ -302,7 +302,12 @@ func buildSSMProgram(name string, s ssmMeta) (string, error) {
 	// local 127.0.0.1 listener and redirects the browser there — unreachable when the
 	// browser is on the user's machine and the CLI runs in this remote container.
 	// --no-browser prints the URL instead of trying to open a (nonexistent) browser.
-	b.WriteString("aws sts get-caller-identity >/dev/null 2>&1 || aws sso login --use-device-code --no-browser; ")
+	// Phishing guard: the device-code grant is only safe when the user approves a code
+	// they themselves initiated. Warn right before the URL/code appears (only when a
+	// login is actually triggered).
+	b.WriteString("aws sts get-caller-identity >/dev/null 2>&1 || { " +
+		"echo '[Agent Fleet] 自分で開始したこのログインのみ承認してください（身に覚えのないコード/URL は入力しない）'; " +
+		"aws sso login --use-device-code --no-browser; }; ")
 	b.WriteString("exec aws ssm start-session")
 	fmt.Fprintf(&b, " --target %s", shellQuote(s.Target))
 	if s.Document != "" {
