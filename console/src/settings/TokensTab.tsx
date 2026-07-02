@@ -1,18 +1,30 @@
 import { useCallback, useEffect, useState } from "react";
+import type { ReactNode } from "react";
 import { api, apiJSON, raw, rel } from "../api.js";
 
 // TokensTab issues and revokes Personal Access Tokens for the MCP endpoint
 // (docs/decisions/0006, P3-6). A token carries the issuer's identity+membership;
 // role is resolved live at call time, scope is fixed here and capped at the
 // issuer's ceiling. The secret is shown exactly once.
+
+// A Personal Access Token row from GET /api/pat.
+interface PatToken {
+  id: string;
+  name?: string;
+  scope?: string;
+  expires_at?: string;
+  last_used_at?: string;
+  revoked?: boolean;
+}
+
 export default function TokensTab() {
-  const [tokens, setTokens] = useState(null);
+  const [tokens, setTokens] = useState<PatToken[] | null>(null);
   const [ceiling, setCeiling] = useState("write");
   const [err, setErr] = useState("");
   const [name, setName] = useState("");
   const [scope, setScope] = useState("write");
   const [ttl, setTtl] = useState("90");
-  const [issued, setIssued] = useState(null); // the once-shown secret
+  const [issued, setIssued] = useState<{ token: string } | null>(null); // the once-shown secret
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(() => {
@@ -47,7 +59,7 @@ export default function TokensTab() {
     load();
   };
 
-  const revoke = async (id) => {
+  const revoke = async (id: string) => {
     if (!confirm("このトークンを失効しますか？ 使用中の接続は次回から 401 になります。")) return;
     await raw(`api/pat/${encodeURIComponent(id)}`, { method: "DELETE" });
     load();
@@ -186,15 +198,15 @@ export default function TokensTab() {
   );
 }
 
-function fmtDate(s) {
+function fmtDate(s: string | undefined): string {
   if (!s) return "";
   const d = new Date(s);
-  if (isNaN(d)) return "";
-  const p = (n) => String(n).padStart(2, "0");
+  if (isNaN(d.getTime())) return "";
+  const p = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
 
-function Row({ label, children }) {
+function Row({ label, children }: { label: ReactNode; children?: ReactNode }) {
   return (
     <div className="ds-row">
       <span className="ds-label">{label}</span>
