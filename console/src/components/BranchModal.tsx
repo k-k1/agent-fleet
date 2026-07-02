@@ -3,6 +3,7 @@ import { api, apiJSON } from "../api.js";
 import BranchList from "./BranchList.jsx";
 import type { Branch } from "./BranchList.jsx";
 import Modal from "./Modal.jsx";
+import { useToast } from "./ToastProvider.jsx";
 
 // BranchModal: switch a repo's branch. Lists branches newest-commit-first with a
 // filter (via BranchList); clicking one checks it out (a remote-only name DWIMs into
@@ -14,6 +15,7 @@ interface BranchModalProps {
 }
 
 export default function BranchModal({ repoName, onClose, onChecked }: BranchModalProps) {
+  const toast = useToast();
   const [branches, setBranches] = useState<Branch[] | null>(null); // null = loading
   const [current, setCurrent] = useState("");
   const [err, setErr] = useState("");
@@ -52,7 +54,7 @@ export default function BranchModal({ repoName, onClose, onChecked }: BranchModa
         { branch: name },
       );
       if (res && res.error) {
-        alert("ブランチ切替に失敗: " + (res.error.message || res.error));
+        toast("ブランチ切替に失敗: " + (res.error.message || res.error));
         return;
       }
       onChecked();

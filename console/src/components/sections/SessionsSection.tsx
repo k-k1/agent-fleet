@@ -7,6 +7,7 @@ import NewSessionModal from "../NewSessionModal.jsx";
 import SsmLoginModal from "../SsmLoginModal.jsx";
 import ArchivedModal from "../ArchivedModal.jsx";
 import { useConfirm } from "../ConfirmProvider.jsx";
+import { useToast } from "../ToastProvider.jsx";
 import { kindIcon, kindLabel, kindClass } from "../../lib/sessionkind.js";
 import { displayName, stateInfo } from "../../lib/sessionview.js";
 import { agentOf } from "../../agents/registry.ts";
@@ -35,6 +36,7 @@ export default function SessionsSection() {
   const { sessions, bumpSessions, bumpRepos, bumpFiles, revealInFiles, showTerminal, showTerminalSplit, showChat, showChatSplit, session, newSessionTick, wsState, layout, setActivePane } = useApp();
   const running = wsState === "running"; // WS down → attach/resume/create are inert
   const askConfirm = useConfirm();
+  const toast = useToast();
   const [showModal, setShowModal] = useState(false);
   const { hover, setHover } = usePaneHover();
 
@@ -64,7 +66,7 @@ export default function SessionsSection() {
   const archive = async (s: Session) => {
     const res = await raw(`api/sessions/${encodeURIComponent(s.name)}/archive`, { method: "POST" });
     if (!res.ok) {
-      alert("アーカイブに失敗しました");
+      toast("アーカイブに失敗しました");
       return;
     }
     bumpSessions();
@@ -115,7 +117,7 @@ export default function SessionsSection() {
       return;
     const res = await raw(`api/sessions/${encodeURIComponent(name)}/halt`, { method: "POST" });
     if (!res.ok) {
-      alert("停止に失敗しました");
+      toast("停止に失敗しました");
       return;
     }
     bumpSessions();
@@ -150,7 +152,7 @@ export default function SessionsSection() {
         const j = await res.json();
         if (j?.error?.message) msg += "：" + j.error.message;
       } catch {}
-      alert(msg);
+      toast(msg);
       bumpSessions();
       return;
     }

@@ -7,6 +7,7 @@ import Icon from "../components/Icon.jsx";
 import MarkdownView from "./MarkdownView.jsx";
 import MirrorToggle from "../components/MirrorToggle.jsx";
 import ContextBar from "../components/ContextBar.jsx";
+import { useToast } from "../components/ToastProvider.jsx";
 import { fmtTok } from "../lib/fmttok.js";
 import { kindIcon, kindLabel, kindShort, kindClass } from "../lib/sessionkind.js";
 import { displayName, stateInfo } from "../lib/sessionview.js";
@@ -114,6 +115,7 @@ export default function MirrorView({
 }) {
   const settings = useSettings();
   const { showDoc, showDiff, showTerminalSplit, bumpSessions, wsState } = useApp();
+  const toast = useToast();
   const running = wsState === "running"; // WS down → resume is inert, mirror the terminal 再開
   const [forking, setForking] = useState(false);
   // "mod-enter" (default): Ctrl/⌘+Enter submits, plain Enter newlines (phone-safe).
@@ -331,10 +333,10 @@ export default function MirrorView({
         bumpSessions();
         showTerminalSplit(j.name);
       } else {
-        alert(j.error ? errText(j.error) : `分岐に失敗しました (${res.status})`);
+        toast(j.error ? errText(j.error) : `分岐に失敗しました (${res.status})`);
       }
     } catch {
-      alert("分岐に失敗しました（通信エラー）");
+      toast("分岐に失敗しました（通信エラー）");
     } finally {
       setForking(false);
     }

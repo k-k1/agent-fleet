@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { api, getTenant, setTenant as persistTenant } from "./api.js";
 import { keepOnly as termKeepOnly, reconnectSession as termReconnectSession } from "./term.js";
 import { hydrateUIPrefs } from "./lib/settings.js";
+import { useToast } from "./components/ToastProvider.jsx";
 import type { Layout, Pane, Column } from "./types/layout.ts";
 import type { Session } from "./types/session.ts";
 import type { AppState, Whoami, Tenant, Ocweb, PanePatch, Reveal } from "./types/app.ts";
@@ -48,6 +49,7 @@ const initialLayout: Layout = {
 };
 
 export function AppProvider({ children }: { children: ReactNode }) {
+  const toast = useToast();
   const [whoami, setWhoami] = useState<Whoami | null>(null); // { email, user, ... }
   const [tenants, setTenants] = useState<Tenant[]>([]); // [{ slug, name, role }]
   const [tenant, setTenantState] = useState(getTenant());
@@ -529,7 +531,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     resetToTerminal();
     setWsState("recreating…");
     const res = await api("api/workspace/recreate", { method: "POST" });
-    if (res && res.error) alert("作り直しに失敗: " + (res.error.message || res.error));
+    if (res && res.error) toast("作り直しに失敗: " + (res.error.message || res.error));
     await refreshWs();
     bumpSessions();
     bumpRepos();
