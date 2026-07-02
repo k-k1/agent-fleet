@@ -4913,6 +4913,16 @@ button.primary:hover:not(:disabled) {
     max-width: 96px;
   }
 
+  /* Narrow screen: the pane head's text controls collapse to icon-only. This is
+     the viewport-width companion to the @container paneview rule (which handles a
+     slim split on a wide screen): on a phone the leftpane goes off-canvas so the
+     pane is full-width and the container query wouldn't catch it. The title
+     attributes keep the words reachable as tooltips. */
+  .mirror-toggle .seg-label,
+  .fork-label {
+    display: none;
+  }
+
   /* Source Control: the 変更/履歴 column eats the width on a phone, leaving no room
      for the diff. Stack it — the list becomes a capped, scrollable top panel and the
      diff takes the full width below it. */
