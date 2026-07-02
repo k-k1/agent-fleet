@@ -26,7 +26,7 @@ export const useApp = () => useContext(AppContext);
 // A pane descriptor. kind drives which view renders; the *Path/Repo/session fields
 // are the per-kind payload. Empty terminal pane = "セッション未接続".
 function blankPane(id, patch) {
-  return { id, kind: "terminal", session: null, filePath: null, scmRepo: null, docTitle: null, docContent: null, diffTool: null, diffEdits: null, wrap: null, ...patch };
+  return { id, kind: "terminal", session: null, chat: false, filePath: null, scmRepo: null, docTitle: null, docContent: null, diffTool: null, diffEdits: null, wrap: null, ...patch };
 }
 
 const equalRatios = (n) => Array(n).fill(1 / n);
@@ -533,12 +533,25 @@ export function AppProvider({ children }) {
       // (keep whatever it was showing). The pane's TerminalView attaches declaratively
       // from the `session` field, so we only set state here. openActive swaps the
       // panes instead of duplicating when the other pane already shows this session.
-      const patch = sess !== undefined ? { kind: "terminal", session: sess } : { kind: "terminal" };
+      // chat:false — a terminal open always means "attach the live session" (clears any
+      // prior read-only chat/history mode on this pane).
+      const patch = sess !== undefined ? { kind: "terminal", session: sess, chat: false } : { kind: "terminal", chat: false };
       openActive(patch);
       // Re-clicking an already-open but disconnected session doesn't change the pane's
       // props (so the declarative attach won't re-run) — revive its dropped socket here
       // so clicking a "[disconnected]" session in the list reconnects it.
       if (sess !== undefined) termReconnectSession(sess);
+      setNavOpen(false);
+    },
+    [openActive, pushDrawerEntry],
+  );
+  // showChat opens a session's conversation history in read-only chat mode WITHOUT
+  // attaching the terminal (no resume) — used for clicking a stopped claude session.
+  // The chat's "再開して続ける" (or the ターミナル toggle) attaches + resumes on demand.
+  const showChat = useCallback(
+    (sess) => {
+      if (navOpenRef.current) pushDrawerEntry();
+      openActive({ kind: "terminal", session: sess, chat: true });
       setNavOpen(false);
     },
     [openActive, pushDrawerEntry],
@@ -874,6 +887,7 @@ export function AppProvider({ children }) {
     dropSplit,
     showTerminal,
     showTerminalSplit,
+    showChat,
     openInNewPane,
     showSCM,
     showSCMSplit,
