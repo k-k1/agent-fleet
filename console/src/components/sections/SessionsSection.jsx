@@ -8,6 +8,7 @@ import SsmLoginModal from "../SsmLoginModal.jsx";
 import ArchivedModal from "../ArchivedModal.jsx";
 import { kindIcon, kindLabel, kindClass } from "../../lib/sessionkind.js";
 import { displayName, stateInfo } from "../../lib/sessionview.js";
+import { agentOf } from "../../agents/registry.ts";
 import { sessionPanes, ordClass, paneCount } from "../../lib/panebadge.js";
 import { usePaneHover } from "../../lib/panehover.jsx";
 
@@ -69,8 +70,8 @@ export default function SessionsSection() {
   const clearStopped = async () => {
     const stopped = sessions.filter((s) => !s.alive);
     if (stopped.length === 0) return;
-    const ephemeral = stopped.filter((s) => s.kind === "shell" || s.kind === "ssm");
-    const keepable = stopped.filter((s) => s.kind !== "shell" && s.kind !== "ssm");
+    const ephemeral = stopped.filter((s) => agentOf(s.kind).caps.ephemeral);
+    const keepable = stopped.filter((s) => !agentOf(s.kind).caps.ephemeral);
     const parts = [];
     if (keepable.length) parts.push(`${keepable.length} 件をアーカイブ`);
     if (ephemeral.length) parts.push(`shell/ssm ${ephemeral.length} 件を削除`);
@@ -136,7 +137,9 @@ export default function SessionsSection() {
     const seen = {};
     for (const s of sessions) {
       seen[s.name] = true;
-      if (s.kind === "shell" || !s.alive) {
+      // shell (and any kind with no working/idle state model) never transitions,
+      // so there's no "回答が返ってきました" notification to raise for it.
+      if (agentOf(s.kind).caps.fixedAliveChip || !s.alive) {
         prev[s.name] = s.state;
         continue;
       }
@@ -246,7 +249,7 @@ export default function SessionsSection() {
                 dead
                   ? "作業フォルダが存在しないため再開できません"
                   : !s.alive
-                    ? s.kind === "claude"
+                    ? agentOf(s.kind).caps.transcript
                       ? "会話履歴を表示（クリック / 再開はチャット内から・Ctrl/中クリックで新ペイン）"
                       : "停止中（⋯メニューから再開）"
                     : s.dir
@@ -258,14 +261,14 @@ export default function SessionsSection() {
               // never reach the row's onContextMenu and the native menu would show.
               // A stopped claude session IS interactive (opens read-only chat history),
               // so only stopped non-claude (and dead) rows are aria-disabled.
-              aria-disabled={((!s.alive && !(!dead && s.kind === "claude"))) || undefined}
+              aria-disabled={((!s.alive && !(!dead && agentOf(s.kind).caps.transcript))) || undefined}
               // Ctrl/Cmd+click mirrors the middle-click: open in a freshly split pane.
               onClick={(e) => {
                 if (!s.alive) {
                   // Stopped claude → open its conversation as read-only chat (no resume);
                   // resume happens from inside the chat. Ctrl/Cmd+click opens it in a
                   // fresh split, mirroring the alive path. Other kinds: resume via ⋯ menu.
-                  if (!dead && s.kind === "claude") {
+                  if (!dead && agentOf(s.kind).caps.transcript) {
                     (e.ctrlKey || e.metaKey ? showChatSplit : showChat)(s.name);
                   }
                   return;
@@ -282,7 +285,7 @@ export default function SessionsSection() {
                 if (s.alive) {
                   e.preventDefault();
                   showTerminalSplit(s.name);
-                } else if (!dead && s.kind === "claude") {
+                } else if (!dead && agentOf(s.kind).caps.transcript) {
                   e.preventDefault();
                   showChatSplit(s.name);
                 }

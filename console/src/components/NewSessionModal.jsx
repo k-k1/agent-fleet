@@ -6,6 +6,7 @@ import Modal from "./Modal.jsx";
 import SsmLoginModal from "./SsmLoginModal.jsx";
 import { readKindAvail, writeKindAvail } from "../lib/kindavail.js";
 import { deriveRepoName, sanitizeSeg, uniqueRepoName, repoNameRe } from "../lib/reponame.js";
+import { agentOf, availableKinds, newSessionKinds } from "../agents/registry.ts";
 
 // NewSessionModal: a clear, roomy dialog for creating a session.
 // shell is the left / default kind — a one-click shell needs no repo, no dir, and
@@ -96,12 +97,8 @@ export default function NewSessionModal({ onClose, onCreated }) {
       if (!alive) return;
       const hs = Array.isArray(hosts) ? hosts : [];
       setSsmHosts(hs);
-      const a = {
-        claude: !!c?.claude?.connected,
-        codex: !!c?.codex?.connected,
-        opencode: (c?.opencode?.envs?.length || 0) > 0 || !!c?.opencode?.connected,
-        ssm: hs.length > 0,
-      };
+      // Availability per kind lives on the agent descriptors (src/agents/registry).
+      const a = availableKinds({ conns: c, ssmHostCount: hs.length });
       setAvail(a);
       writeKindAvail(a);
       setLoaded(true);
@@ -111,18 +108,13 @@ export default function NewSessionModal({ onClose, onCreated }) {
     };
   }, []);
 
-  const isClaude = kind === "claude";
-  const isSSM = kind === "ssm";
-  const isAgent = kind === "claude" || kind === "opencode" || kind === "codex"; // run in a working dir
+  const agent = agentOf(kind);
+  const hasModel = agent.caps.model; // claude offers a model selector
+  const isSSM = kind === "ssm"; // ssm has a bespoke SSO login handoff
+  const isAgent = agent.caps.runsInDir; // claude/opencode/codex run in a working dir
 
   // shell always; the rest from the (cached, then refreshed) availability.
-  const kindAvail = {
-    shell: true,
-    claude: !!avail.claude,
-    codex: !!avail.codex,
-    opencode: !!avail.opencode,
-    ssm: !!avail.ssm,
-  };
+  const kindAvail = { ...avail, shell: true };
 
   const ssmHost = (ssmHosts || []).find((h) => h.id === ssmHostId) || null;
 
@@ -178,7 +170,7 @@ export default function NewSessionModal({ onClose, onCreated }) {
       const res = await apiJSON("api/sessions", "POST", {
         name: name.trim(),
         kind,
-        model: isClaude ? model : "",
+        model: hasModel ? model : "",
         dir: isAgent && source === "none" ? dir.trim() : "",
         remote_url: cloning ? cloneUrl : "",
         branch: cloning ? cloneBranch : "",
@@ -219,56 +211,25 @@ export default function NewSessionModal({ onClose, onCreated }) {
           <div className="field">
             <div className="field-label">種類</div>
             <div className="seg big">
-              <button
-                type="button"
-                className={"seg-btn" + (kind === "shell" ? " active" : "")}
-                onClick={() => setKind("shell")}
-              >
-                shell
-                <span className="seg-sub">通常のシェル (bash)</span>
-              </button>
-              {kindAvail.claude && (
-                <button
-                  type="button"
-                  className={"seg-btn" + (kind === "claude" ? " active" : "")}
-                  onClick={() => setKind("claude")}
-                >
-                  claude
-                  <span className="seg-sub">Claude Code を起動</span>
-                </button>
-              )}
-              {kindAvail.opencode && (
-                <button
-                  type="button"
-                  className={"seg-btn" + (kind === "opencode" ? " active" : "")}
-                  onClick={() => setKind("opencode")}
-                >
-                  opencode
-                  <span className="seg-sub">opencode を起動</span>
-                </button>
-              )}
-              {kindAvail.codex && (
-                <button
-                  type="button"
-                  className={"seg-btn" + (kind === "codex" ? " active" : "")}
-                  onClick={() => setKind("codex")}
-                >
-                  codex
-                  <span className="seg-sub">Codex CLI を起動</span>
-                </button>
-              )}
-              {kindAvail.ssm && (
-                <button
-                  type="button"
-                  className={"seg-btn" + (kind === "ssm" ? " active" : "")}
-                  onClick={() => setKind("ssm")}
-                >
-                  ssm
-                  <span className="seg-sub">AWS EC2 に SSM ログイン</span>
-                </button>
-              )}
+              {/* Data-driven from the agent registry: shell is always shown; the rest
+                  appear once available. Adding an agent descriptor surfaces it here. */}
+              {newSessionKinds.map((k) => {
+                if (k !== "shell" && !kindAvail[k]) return null;
+                const a = agentOf(k);
+                return (
+                  <button
+                    key={k}
+                    type="button"
+                    className={"seg-btn" + (kind === k ? " active" : "")}
+                    onClick={() => setKind(k)}
+                  >
+                    {a.label}
+                    <span className="seg-sub">{a.launchHint}</span>
+                  </button>
+                );
+              })}
             </div>
-            {loaded && !kindAvail.claude && !kindAvail.codex && !kindAvail.opencode && !kindAvail.ssm && (
+            {loaded && !newSessionKinds.some((k) => k !== "shell" && kindAvail[k]) && (
               <div className="field-help">
                 claude / codex / opencode / ssm は、
                 <button type="button" className="linklike" onClick={() => { onClose(); openSettings(); }}>
@@ -280,7 +241,7 @@ export default function NewSessionModal({ onClose, onCreated }) {
           </div>
 
           {/* モデル（claude のみ） */}
-          {isClaude && (
+          {hasModel && (
             <div className="field">
               <div className="field-label">モデル</div>
               <div className="seg">
