@@ -67,6 +67,10 @@ type chatTurn struct {
 	CacheCreate int    `json:"cacheCreate,omitempty"`
 	TS          string `json:"ts"`  // RFC3339 from the transcript line, "" if absent
 	Idx         int    `json:"idx"` // transcript line index — a stable render key
+	// Compact: this "turn" is claude's auto-compaction summary (jsonl isCompactSummary),
+	// written as a user message. The Console shows it as a collapsible "圧縮されました"
+	// block instead of a normal user prompt.
+	Compact bool `json:"compact,omitempty"`
 }
 
 // handleSessionMessages (GET /sessions/{name}/messages?since=<cursor>) returns the
@@ -198,12 +202,13 @@ func handleSessionMessages(w http.ResponseWriter, r *http.Request) {
 // Control bridge-session line, and meta entries (isMeta).
 func parseTurn(line []byte, idx int) (chatTurn, bool) {
 	var ev struct {
-		Type        string `json:"type"`
-		Timestamp   string `json:"timestamp"`
-		IsMeta      bool   `json:"isMeta"`
-		IsSidechain bool   `json:"isSidechain"`
-		GitBranch   string `json:"gitBranch"`
-		Cwd         string `json:"cwd"`
+		Type             string `json:"type"`
+		Timestamp        string `json:"timestamp"`
+		IsMeta           bool   `json:"isMeta"`
+		IsSidechain      bool   `json:"isSidechain"`
+		IsCompactSummary bool   `json:"isCompactSummary"`
+		GitBranch        string `json:"gitBranch"`
+		Cwd              string `json:"cwd"`
 		Message     struct {
 			Model   string          `json:"model"`
 			Content json.RawMessage `json:"content"`
@@ -234,6 +239,7 @@ func parseTurn(line []byte, idx int) (chatTurn, bool) {
 	t := chatTurn{
 		Role: ev.Type, Parts: parts, Text: text, Idx: idx, TS: ev.Timestamp,
 		Sidechain: ev.IsSidechain, Branch: ev.GitBranch, Cwd: ev.Cwd,
+		Compact: ev.IsCompactSummary,
 	}
 	if ev.Type == "assistant" {
 		u := ev.Message.Usage

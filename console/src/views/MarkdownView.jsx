@@ -28,12 +28,14 @@ export default function MarkdownView({ source, basePath = "", onOpenFile }) {
 
     wireLinks(el, basePath, onOpenFile);
 
-    // Syntax-highlight every fenced code block except mermaid (handled below).
+    // Syntax-highlight every fenced code block except mermaid (handled below), and
+    // give each one a copy button (bottom-right) that copies just that block.
     el.querySelectorAll("pre > code").forEach((code) => {
       if (code.classList.contains("language-mermaid")) return;
       try {
         hljs.highlightElement(code);
       } catch {}
+      addCopyButton(code);
     });
 
     // Render mermaid diagrams, replacing their <pre> with the produced SVG.
@@ -65,6 +67,41 @@ export default function MarkdownView({ source, basePath = "", onOpenFile }) {
   }, [source, basePath, onOpenFile]);
 
   return <div className="markdown" ref={ref} />;
+}
+
+// addCopyButton pins a copy control at the bottom-right of a fenced code block that
+// copies exactly that block's text (not the whole message). Imperative because the
+// markdown is rendered as sanitized innerHTML, not React nodes.
+function addCopyButton(code) {
+  const pre = code.parentElement;
+  if (!pre) return;
+  // Wrap the <pre> so the button pins to the visible bottom-right corner rather than
+  // scrolling away with the code (the <pre> itself is overflow:auto).
+  if (pre.parentElement?.classList.contains("md-pre-wrap")) return; // already wrapped
+  const wrap = document.createElement("div");
+  wrap.className = "md-pre-wrap";
+  pre.replaceWith(wrap);
+  wrap.appendChild(pre);
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "md-copy";
+  btn.title = "このコードをコピー";
+  btn.innerHTML = '<i class="codicon codicon-copy"></i>';
+  btn.addEventListener("click", () => {
+    const text = code.textContent || "";
+    const done = () => {
+      btn.classList.add("copied");
+      btn.innerHTML = '<i class="codicon codicon-check"></i>';
+      setTimeout(() => {
+        btn.classList.remove("copied");
+        btn.innerHTML = '<i class="codicon codicon-copy"></i>';
+      }, 1200);
+    };
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(text).then(done).catch(() => {});
+    }
+  });
+  wrap.appendChild(btn);
 }
 
 // wireLinks classifies and rewires every <a> in the rendered markdown.
