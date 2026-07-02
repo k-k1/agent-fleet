@@ -96,10 +96,7 @@ func markSessionWorking(name string) {
 	if !ok {
 		return
 	}
-	sid := sessionUUID(meta.Dir, name)
-	_ = os.MkdirAll(sessionStatusDir(), 0o700)
-	b, _ := json.Marshal(sessionStatus{State: "working", TS: time.Now().Format(time.RFC3339)})
-	_ = os.WriteFile(sessionStatusPath(sid), b, 0o600)
+	persistSessionStatus(sessionUUID(meta.Dir, name), "working")
 }
 
 // allowedKey is the whitelist of tmux key names the Console may send to drive a TUI
