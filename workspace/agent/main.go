@@ -58,6 +58,7 @@ func main() {
 	mux.HandleFunc("POST /sessions/{name}/input", handleSessionInput)
 	mux.HandleFunc("GET /sessions/{name}/status", handleSessionStatus)
 	mux.HandleFunc("GET /sessions/{name}/output", handleSessionOutput)
+	mux.HandleFunc("GET /sessions/{name}/ssm-login", handleSSMLoginStatus)
 	// Structured transcript (role + text + timestamp) for the Console chat view.
 	mux.HandleFunc("GET /sessions/{name}/messages", handleSessionMessages)
 	mux.HandleFunc("GET /ws/pty", handlePTY)
