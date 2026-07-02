@@ -115,11 +115,12 @@ var (
 	orgUUIDKnown bool
 )
 
-// claudeOrgUUID resolves the account's organization uuid (cached). Team-plan
-// tokens require ?organization_uuid=<uuid> on the usage endpoint — without it the
-// server returns 401; personal Pro/Max tokens accept the param too — so we always
-// pass it when we can resolve it. Returns "" on failure (caller falls back to the
-// bare URL, which still works for personal accounts).
+// claudeOrgUUID resolves the account's organization uuid (cached). Only used as the
+// Team-plan fallback: the usage endpoint returns 401 for a Team token without
+// ?organization_uuid=<uuid>. We deliberately do NOT attach it to a request that
+// already works (personal Pro/Max) — a Pro/Max account can also belong to other
+// orgs, and the profile's organization may not be the usage context we want.
+// Returns "" on failure.
 func claudeOrgUUID(ctx context.Context, tok string) string {
 	orgUUIDMu.Lock()
 	if orgUUIDKnown {
@@ -173,18 +174,32 @@ func fetchClaudeUsage(ctx context.Context) claudeUsage {
 	if tok == "" {
 		return claudeUsage{OK: false}
 	}
-	// Team tokens require the org uuid on the usage endpoint; personal Pro/Max
-	// tokens accept it too, so always include it when resolvable (uuid chars are
-	// query-safe, no escaping needed).
-	url := claudeUsageURL
-	if org := claudeOrgUUID(ctx, tok); org != "" {
-		url += "?organization_uuid=" + org
+	// Try the bare endpoint first — this is what personal Pro/Max accounts need,
+	// and it leaves their usage context untouched. ONLY when it rejects with 401
+	// (the Team-plan signal) do we resolve the org uuid and retry with
+	// ?organization_uuid=. Don't attach an org to a request that already works.
+	if u, status := getClaudeUsage(ctx, tok, claudeUsageURL); status == http.StatusOK {
+		return u
+	} else if status == http.StatusUnauthorized {
+		if org := claudeOrgUUID(ctx, tok); org != "" {
+			// uuid chars are query-safe, no escaping needed.
+			u2, s2 := getClaudeUsage(ctx, tok, claudeUsageURL+"?organization_uuid="+org)
+			if s2 == http.StatusOK {
+				return u2
+			}
+		}
 	}
+	return claudeUsage{OK: false}
+}
+
+// getClaudeUsage performs one usage GET and returns the parsed value plus the HTTP
+// status (0 on a transport/parse error). The caller decides whether to retry.
+func getClaudeUsage(ctx context.Context, tok, url string) (claudeUsage, int) {
 	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return claudeUsage{OK: false}
+		return claudeUsage{OK: false}, 0
 	}
 	req.Header.Set("Authorization", "Bearer "+tok)
 	req.Header.Set("anthropic-version", "2023-06-01")
@@ -192,11 +207,11 @@ func fetchClaudeUsage(ctx context.Context) claudeUsage {
 	req.Header.Set("User-Agent", "agent-fleet-console")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return claudeUsage{OK: false}
+		return claudeUsage{OK: false}, 0
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return claudeUsage{OK: false}
+		return claudeUsage{OK: false}, resp.StatusCode
 	}
 	var raw struct {
 		FiveHour *struct {
@@ -209,7 +224,7 @@ func fetchClaudeUsage(ctx context.Context) claudeUsage {
 		} `json:"seven_day"`
 	}
 	if json.NewDecoder(resp.Body).Decode(&raw) != nil {
-		return claudeUsage{OK: false}
+		return claudeUsage{OK: false}, resp.StatusCode
 	}
 	out := claudeUsage{OK: true}
 	if raw.FiveHour != nil {
@@ -218,5 +233,5 @@ func fetchClaudeUsage(ctx context.Context) claudeUsage {
 	if raw.SevenDay != nil {
 		out.SevenDay = &usageWindow{Pct: raw.SevenDay.Utilization, ResetsAt: raw.SevenDay.ResetsAt}
 	}
-	return out
+	return out, resp.StatusCode
 }
