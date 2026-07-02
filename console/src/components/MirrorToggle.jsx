@@ -10,13 +10,17 @@ import Icon from "./Icon.jsx";
 // Each button carries an icon + label. On a narrow pane (mobile or a slim split)
 // the .seg-label collapses to icon-only via the paneview container query — see
 // styles.css. The title keeps the full word reachable as a tooltip.
-export default function MirrorToggle({ mirror, onToggle }) {
+export default function MirrorToggle({ mirror, onToggle, running = true }) {
   return (
     <span className="seg sm md-toggle mirror-toggle">
       <button
         type="button"
         className={"seg-btn" + (!mirror ? " active" : "")}
-        title="ターミナル"
+        // Switching to the terminal attaches (resumes) the session, which needs the
+        // workspace running. While it's stopped, disable it — otherwise the resume
+        // mask would spin "再開中…" forever (attach is gated on running).
+        title={running ? "ターミナル" : "ターミナル（ワークスペース停止中）"}
+        disabled={!running}
         onClick={() => onToggle(false)}
       >
         <Icon name="terminal" />

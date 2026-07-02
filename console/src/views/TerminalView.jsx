@@ -120,7 +120,7 @@ export default function TerminalView({
         ) : (
           <span className="view-title">{session ? `session: ${session}` : "セッション未接続"}</span>
         )}
-        {canMirror && <MirrorToggle mirror={mirror} onToggle={onToggleMirror} />}
+        {canMirror && <MirrorToggle mirror={mirror} onToggle={onToggleMirror} running={running} />}
       </header>
       {ctxUsage && <ContextBar {...ctxUsage} />}
       <div className="term-body">
@@ -140,7 +140,10 @@ export default function TerminalView({
             chat history stays reachable via the ターミナル/チャット toggle above. */}
         {stopped && (
           <div className="term-mask">
-            {attached ? (
+            {attached && running ? (
+              // Actually attaching (resume in flight) → spinner. `attached && !running`
+              // (e.g. toggled to terminal while the WS is stopped) is NOT resuming, so
+              // fall through to the disabled 再開 button instead of spinning forever.
               <span className="term-mask-msg">
                 <Icon name="loading" spin /> 再開中…
               </span>
