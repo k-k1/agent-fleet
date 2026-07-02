@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { api, raw, rawJSON } from "../api.js";
 import Modal from "./Modal.jsx";
 
@@ -17,7 +17,6 @@ export default function SsmLoginModal({ name, start = false, force = false, onRe
   const [url, setUrl] = useState("");
   const [code, setCode] = useState("");
   const [error, setError] = useState("");
-  const opened = useRef(false);
 
   useEffect(() => {
     let alive = true;
@@ -32,12 +31,11 @@ export default function SsmLoginModal({ name, start = false, force = false, onRe
       if (!alive) return;
       if (d && !d.error) {
         if (d.phase === "authorize") {
+          // Do NOT auto-open the URL: the user should read the auth code here first,
+          // then open the page and confirm it matches before approving (device-code
+          // phishing guard). Opening is a manual button (below).
           if (d.url) setUrl(d.url);
           if (d.code) setCode(d.code);
-          if (d.url && !opened.current) {
-            opened.current = true;
-            window.open(d.url, "_blank", "noopener");
-          }
         }
         if (d.phase === "ready") {
           onReady(name);
@@ -87,17 +85,28 @@ export default function SsmLoginModal({ name, start = false, force = false, onRe
           ) : phase === "authorize" ? (
             <>
               <div className="field-help">
-                別タブで AWS にサインインして承認してください。承認後、自動で接続します（別タブが開かない場合は下のリンク）。
+                下の認証コードを確認し、「サインインして承認」を押してください。開いたページに表示されるコードが
+                一致することを確かめてから承認してください。承認後、自動で接続します。
               </div>
+              {code && (
+                <div className="ssm-code-row">
+                  <span className="ssm-code-label">認証コード</span>
+                  <span className="oauth-code">{code}</span>
+                </div>
+              )}
               <div className="flow">
-                {url && (
-                  <a href={url} target="_blank" rel="noopener" className="flow-link">
-                    → 別タブでサインイン ↗
-                  </a>
-                )}
-                {code && <span className="oauth-code">{code}</span>}
+                <button
+                  type="button"
+                  className="primary"
+                  disabled={!url}
+                  onClick={() => url && window.open(url, "_blank", "noopener")}
+                >
+                  サインインして承認 ↗
+                </button>
               </div>
-              <div className="field-help">⚠ 自分で開始したこのログインのみ承認してください。</div>
+              <div className="field-help">
+                ⚠ 自分で開始したこのログインのみ承認してください（コードが一致しない場合は承認しない）。
+              </div>
             </>
           ) : (
             <div className="field-help">接続中… しばらくお待ちください（認証が必要な場合はここに URL が表示されます）。</div>
