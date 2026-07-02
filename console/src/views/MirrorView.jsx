@@ -380,7 +380,7 @@ export default function MirrorView({ session, sessionMeta, active, mirror, onTog
             <span className="fork-label">分岐</span>
           </button>
         )}
-        <MirrorToggle mirror={mirror} onToggle={onToggleMirror} />
+        <MirrorToggle mirror={mirror} onToggle={onToggleMirror} running={running} />
       </header>
 
       {ctxUsage && <ContextBar {...ctxUsage} />}
@@ -392,11 +392,19 @@ export default function MirrorView({ session, sessionMeta, active, mirror, onTog
 
       <div className="mirror-body" ref={bodyRef}>
         {!loaded ? (
-          // First fetch in flight (opening a session, or switching ターミナル→チャット):
-          // show a spinner instead of flashing the "no conversation yet" text.
-          <div className="mirror-empty muted mirror-loading">
-            <Icon name="loading" spin /> 読み込み中…
-          </div>
+          running ? (
+            // First fetch in flight (opening a session, or switching ターミナル→チャット):
+            // show a spinner instead of flashing the "no conversation yet" text.
+            <div className="mirror-empty muted mirror-loading">
+              <Icon name="loading" spin /> 読み込み中…
+            </div>
+          ) : (
+            // Workspace stopped: the transcript can't be fetched (the Agent is down), so
+            // never spin forever — say so and point at the explicit Start.
+            <div className="mirror-empty muted">
+              ワークスペースが停止しています。上部の Start で起動すると履歴を表示できます。
+            </div>
+          )
         ) : groups.length === 0 && !pending && !pendingPlan && !pendingPerm ? (
           <div className="mirror-empty muted">
             {readOnly
