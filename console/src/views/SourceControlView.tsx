@@ -176,8 +176,12 @@ export default function SourceControlView({ repo, wrap }: { repo?: string; wrap?
           <Icon name="git-branch" /> {status?.branch || "?"} <Icon name="chevron-down" />
         </button>
         {status && (status.ahead || status.behind) ? (
-          <span className="ab">
+          <span
+            className="repo-state-chip ab"
+            title={`リモートに対して 先行 ${status.ahead ?? 0} / 遅延 ${status.behind ?? 0}`}
+          >
             {status.ahead ? `↑${status.ahead}` : ""}
+            {status.ahead && status.behind ? " " : ""}
             {status.behind ? `↓${status.behind}` : ""}
           </span>
         ) : null}
