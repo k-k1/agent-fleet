@@ -547,12 +547,13 @@ export default function WsBar() {
         {running ? "Stop" : "Start"}
       </button>
       <button
-        className="ghost"
+        className="ghost ws-closeall"
         title="全ペインを閉じる"
         disabled={!canCloseAll}
         onClick={resetToTerminal}
       >
         <Icon name="close-all" />
+        <span className="lbl">全て閉じる</span>
       </button>
 
       <span className="ws-spacer" />
