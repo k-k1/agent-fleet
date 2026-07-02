@@ -96,10 +96,7 @@ func markSessionWorking(name string) {
 	if !ok {
 		return
 	}
-	sid := sessionUUID(meta.Dir, name)
-	_ = os.MkdirAll(sessionStatusDir(), 0o700)
-	b, _ := json.Marshal(sessionStatus{State: "working", TS: time.Now().Format(time.RFC3339)})
-	_ = os.WriteFile(sessionStatusPath(sid), b, 0o600)
+	persistSessionStatus(sessionUUID(meta.Dir, name), "working")
 }
 
 // allowedKey is the whitelist of tmux key names the Console may send to drive a TUI
@@ -150,17 +147,7 @@ func handleSessionStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	alive := tmuxHasSession(tmuxName(name))
-	state := "stopped"
-	if alive {
-		state = "idle"
-		if st, ok := readSessionStatus(sessionUUID(meta.Dir, name)); ok {
-			state = st.State
-		}
-		if state != "idle" && sessionAtIdlePrompt(name) {
-			state = "idle"
-			removeSessionStatus(sessionUUID(meta.Dir, name))
-		}
-	}
+	state := driveState(meta, alive, true)
 	writeJSON(w, http.StatusOK, map[string]any{"name": name, "kind": meta.Kind, "alive": alive, "status": state})
 }
 
@@ -180,14 +167,9 @@ func handleSessionOutput(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	alive := tmuxHasSession(tmuxName(name))
-	state := "stopped"
-	if alive {
-		state = "idle"
-		if st, ok := readSessionStatus(sessionUUID(meta.Dir, name)); ok {
-			state = st.State
-		}
-	}
-	if meta.Kind != "claude" {
+	// /output opts out of the idle-heal (heal=false) to preserve its historical behavior.
+	state := driveState(meta, alive, false)
+	if !agentOf(meta.Kind).caps().canTranscript {
 		writeErr(w, http.StatusBadRequest, "unsupported_kind", "output is available for claude sessions only (phase 1)")
 		return
 	}

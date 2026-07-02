@@ -88,20 +88,10 @@ func handleSessionMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	alive := tmuxHasSession(tmuxName(name))
-	state := "stopped"
-	if alive {
-		state = "idle"
-		if st, ok := readSessionStatus(sessionUUID(meta.Dir, name)); ok {
-			state = st.State
-		}
-		// Self-heal a stale waiting/working cache: if the pane is back at the ready
-		// prompt (rejected permission, abandoned question, killed+resumed), it's idle.
-		if state != "idle" && sessionAtIdlePrompt(name) {
-			state = "idle"
-			removeSessionStatus(sessionUUID(meta.Dir, name))
-		}
-	}
-	if meta.Kind != "claude" {
+	// heal=true: self-correct a stale waiting/working cache when the pane is back at
+	// the ready prompt (rejected permission, abandoned question, killed+resumed).
+	state := driveState(meta, alive, true)
+	if !agentOf(meta.Kind).caps().canTranscript {
 		writeErr(w, http.StatusBadRequest, "unsupported_kind", "messages are available for claude sessions only")
 		return
 	}
@@ -129,9 +119,37 @@ func handleSessionMessages(w http.ResponseWriter, r *http.Request) {
 		since = 0
 		reset = true
 	}
-	// A transcript AskUserQuestion is always already answered (claude writes the
-	// tool_use only after the answer), so resolve each one's chosen answer from its
-	// tool_result for display. The currently-pending question is separate (below).
+	turns := collectTurns(lines, since)
+	resp := map[string]any{
+		"name": name, "messages": turns, "cursor": cursor,
+		"status": state, "alive": alive, "reset": reset,
+		// Diagnostics: which jsonl we're reading, how long it is, when it last changed,
+		// and how many <sid>.jsonl matched (>1 means siblings exist — the newest wins).
+		// Lets us confirm from real data whether the file is found and growing, vs a
+		// message merely queued in the TUI (uncommitted).
+		"jsonlPath": jpath, "jsonlLines": len(lines),
+		"jsonlMtime": jsonlMtime(jpath).Format(time.RFC3339), "jsonlMatches": len(jmatched),
+	}
+	surfacePendingPayloads(resp, sid, state)
+	if md := latestMode(lines); md != "" {
+		resp["mode"] = md
+	}
+	// Surface terminal-only states (startup resume menu / auto-compaction) the chat
+	// can't otherwise see, so the Console can prompt the user or show a 圧縮中 badge.
+	if alive {
+		if ts := sessionTerminalState(name); ts != "" {
+			resp["terminalState"] = ts
+		}
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// collectTurns builds the displayable turns from lines[since:]. A transcript
+// AskUserQuestion/ExitPlanMode is always already answered (claude writes the tool_use
+// only after the answer), so it resolves each one's chosen answer from its tool_result
+// for display (the currently-pending one is surfaced separately). The batch is capped
+// at 1 MiB of text so one response can't balloon the payload.
+func collectTurns(lines [][]byte, since int) []chatTurn {
 	answers := collectAnswers(lines)
 	turns := []chatTurn{}
 	budget := 0
@@ -150,51 +168,34 @@ func handleSessionMessages(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 	}
-	resp := map[string]any{
-		"name": name, "messages": turns, "cursor": cursor,
-		"status": state, "alive": alive, "reset": reset,
-		// Diagnostics: which jsonl we're reading, how long it is, when it last changed,
-		// and how many <sid>.jsonl matched (>1 means siblings exist — the newest wins).
-		// Lets us confirm from real data whether the file is found and growing, vs a
-		// message merely queued in the TUI (uncommitted).
-		"jsonlPath": jpath, "jsonlLines": len(lines),
-		"jsonlMtime": jsonlMtime(jpath).Format(time.RFC3339), "jsonlMatches": len(jmatched),
-	}
-	// A currently-pending AskUserQuestion / ExitPlanMode isn't in the transcript yet
-	// (claude writes the tool_use only after it's resolved), so surface it from the
-	// status hook's captured tool_input so the Console can render/answer/approve it.
+	return turns
+}
+
+// surfacePendingPayloads adds any currently-pending AskUserQuestion / ExitPlanMode /
+// permission to resp. These aren't in the transcript yet (claude writes the tool_use
+// only after it's resolved), so they come from the status hook's captured payloads.
+func surfacePendingPayloads(resp map[string]any, sid, state string) {
 	if state == "permission" {
 		// A permission prompt takes priority while the session is blocked on allow/deny:
 		// surface only it, because answer keystrokes must reach the permission dialog, not
 		// a still-pending question underneath. The captured question/plan stays on disk and
-		// resurfaces (below) once the prompt is resolved and state leaves "permission".
+		// resurfaces once the prompt is resolved and state leaves "permission".
 		if pm, ok := readPendingPermission(sid); ok {
 			resp["pendingPermission"] = pm
 		}
-	} else {
-		// Surface a pending AskUserQuestion / ExitPlanMode by the captured payload's
-		// presence rather than the live status. A permission prompt for the tool overwrites
-		// the status to "permission"→"working" while the question/plan is still pending, so
-		// gating on state == "question"/"plan" would drop it after approval; the payload is
-		// cleared by its own lifecycle (PostToolUse→working, idle) once actually resolved.
-		if pq, ok := readPendingQuestion(sid); ok {
-			resp["pendingQuestions"] = pq
-		}
-		if pp, ok := readPendingPlan(sid); ok {
-			resp["pendingPlan"] = pp
-		}
+		return
 	}
-	if md := latestMode(lines); md != "" {
-		resp["mode"] = md
+	// Surface a pending AskUserQuestion / ExitPlanMode by the captured payload's presence
+	// rather than the live status. A permission prompt for the tool overwrites the status
+	// to "permission"→"working" while the question/plan is still pending, so gating on
+	// state == "question"/"plan" would drop it after approval; the payload is cleared by
+	// its own lifecycle (PostToolUse→working, idle) once actually resolved.
+	if pq, ok := readPendingQuestion(sid); ok {
+		resp["pendingQuestions"] = pq
 	}
-	// Surface terminal-only states (startup resume menu / auto-compaction) the chat
-	// can't otherwise see, so the Console can prompt the user or show a 圧縮中 badge.
-	if alive {
-		if ts := sessionTerminalState(name); ts != "" {
-			resp["terminalState"] = ts
-		}
+	if pp, ok := readPendingPlan(sid); ok {
+		resp["pendingPlan"] = pp
 	}
-	writeJSON(w, http.StatusOK, resp)
 }
 
 // parseTurn builds a chatTurn from a transcript line. ok is false for lines that
