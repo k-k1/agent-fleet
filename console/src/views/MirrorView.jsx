@@ -43,6 +43,7 @@ export default function MirrorView({ session, sessionMeta, active, mirror, onTog
   const modSend = settings.mirrorSend !== "enter";
   const [turns, setTurns] = useState([]); // {role:'user'|'assistant', text, ts, idx}
   const [loaded, setLoaded] = useState(false); // false until the first transcript fetch returns
+  const [termState, setTermState] = useState(""); // terminal-only state: "resume" | "compacting" | ""
   const [status, setStatus] = useState("");
   const [alive, setAlive] = useState(!!sessionMeta?.alive); // live session ⇒ composer usable
   const [pending, setPending] = useState(null); // currently-awaiting AskUserQuestion
@@ -71,6 +72,7 @@ export default function MirrorView({ session, sessionMeta, active, mirror, onTog
     statusRef.current = "";
     setTurns([]);
     setLoaded(false);
+    setTermState("");
     setStatus("");
     setAlive(!!sessionMeta?.alive);
     setPending(null);
@@ -150,6 +152,7 @@ export default function MirrorView({ session, sessionMeta, active, mirror, onTog
           setPendingPlan(typeof d.pendingPlan === "string" && d.pendingPlan ? d.pendingPlan : null);
           setPendingPerm(typeof d.pendingPermission === "string" && d.pendingPermission ? d.pendingPermission : null);
           setMode(typeof d.mode === "string" ? d.mode : "");
+          setTermState(typeof d.terminalState === "string" ? d.terminalState : "");
           setLoaded(true); // first (and every) successful fetch: drop the loading spinner
         }
       } catch {
@@ -389,6 +392,26 @@ export default function MirrorView({ session, sessionMeta, active, mirror, onTog
           <Icon name="debug-pause" /> 計画モード — 承認するまで実装しません
         </div>
       )}
+      {termState === "resume" && (
+        // The startup resume menu is showing in the terminal (invisible from chat) —
+        // prompt the user to go choose. "2. Resume full session as-is" keeps the full
+        // context; the recommended summary option would drop it.
+        <div className="mirror-attention">
+          <Icon name="warning" />
+          <span className="ma-text">
+            ターミナルで再開方法の選択待ちです。コンテキストをそのまま維持するには
+            「2. Resume full session as-is」を選んでください。
+          </span>
+          <button type="button" className="btn primary ma-btn" onClick={() => onToggleMirror(false)}>
+            <Icon name="terminal" /> ターミナルを開く
+          </button>
+        </div>
+      )}
+      {termState === "compacting" && (
+        <div className="mirror-compacting">
+          <Icon name="loading" spin /> コンテキストを圧縮中…
+        </div>
+      )}
 
       <div className="mirror-body" ref={bodyRef}>
         {!loaded ? (
@@ -521,6 +544,15 @@ export default function MirrorView({ session, sessionMeta, active, mirror, onTog
           <span className="muted mirror-resume-hint">
             {running ? "履歴を閲覧中（入力するには再開）" : "履歴を閲覧中（ワークスペース停止中）"}
           </span>
+        </div>
+      ) : termState === "resume" ? (
+        // Resume menu is up in the terminal: block the composer (keystrokes would go to
+        // the menu) and send the user there to choose.
+        <div className="mirror-compose mirror-compose-resume">
+          <button type="button" className="btn primary mirror-resume" onClick={() => onToggleMirror(false)}>
+            <Icon name="terminal" /> ターミナルで選択
+          </button>
+          <span className="muted mirror-resume-hint">再開方法の選択待ち（コンテキスト維持は「2」）</span>
         </div>
       ) : !alive ? (
         // Attached but the session is still coming up (resume in flight).

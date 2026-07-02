@@ -2058,6 +2058,39 @@ body.row-resizing {
   background: color-mix(in srgb, var(--chat-accent) 10%, var(--bar));
   color: var(--fg);
 }
+/* Attention banner: a terminal-only state (resume menu) needs the user in the
+   terminal. Warning-tinted, with the guidance text growing and a right-aligned CTA. */
+.mirror-attention {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 16px;
+  font-size: 12px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--warn, #e0a45e) 16%, var(--bar));
+  color: var(--fg);
+}
+.mirror-attention .ma-text {
+  flex: 1;
+  min-width: 0;
+}
+.mirror-attention .ma-btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+/* Auto-compaction in progress: an informational spinner strip. */
+.mirror-compacting {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 16px;
+  font-size: 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bar);
+  color: var(--muted);
+}
 .mt-plan {
   margin: 0.4em 0;
   border: 1px solid color-mix(in srgb, var(--chat-accent) 40%, var(--border));

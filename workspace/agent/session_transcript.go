@@ -183,6 +183,13 @@ func handleSessionMessages(w http.ResponseWriter, r *http.Request) {
 	if md := latestMode(lines); md != "" {
 		resp["mode"] = md
 	}
+	// Surface terminal-only states (startup resume menu / auto-compaction) the chat
+	// can't otherwise see, so the Console can prompt the user or show a 圧縮中 badge.
+	if alive {
+		if ts := sessionTerminalState(name); ts != "" {
+			resp["terminalState"] = ts
+		}
+	}
 	writeJSON(w, http.StatusOK, resp)
 }
 
