@@ -152,7 +152,14 @@ export function AppProvider({ children }) {
           ...c,
           panes: c.panes.map((p) =>
             p.id === cur.activeId
-              ? { ...other, id: cur.activeId }
+              // Honor the patch's view intent when swapping in the existing pane:
+              // showTerminal (chat:false) must land on the terminal even if the
+              // session is currently shown as chat in `other`, and showChat
+              // (chat:true) the reverse. Without this the swap kept other.chat, so
+              // clicking an alive session already open as chat elsewhere left it in
+              // chat — its terminal never appeared. Non-terminal patches omit chat,
+              // so it falls back to other.chat (unchanged).
+              ? { ...other, id: cur.activeId, chat: patch.chat ?? other.chat }
               : p.id === other.id
                 ? { ...active, id: other.id }
                 : p,
