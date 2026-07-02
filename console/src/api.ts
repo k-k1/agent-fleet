@@ -75,7 +75,7 @@ export const api = (path: string, opts?: RequestInit): Promise<any> =>
 
 // apiJSON is a convenience for the common "POST/PUT JSON body" shape.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export const apiJSON = (path: string, method: string, body: unknown): Promise<any> =>
+export const apiJSON = (path: string, method: string, body?: unknown): Promise<any> =>
   api(path, {
     method,
     headers: { "Content-Type": "application/json" },
@@ -84,7 +84,7 @@ export const apiJSON = (path: string, method: string, body: unknown): Promise<an
 
 // raw() returns the Response (not parsed) for callers that need r.ok / status.
 export const raw = (path: string, opts?: RequestInit): Promise<Response> => fetch(rel(path), opts);
-export const rawJSON = (path: string, method: string, body: unknown): Promise<Response> =>
+export const rawJSON = (path: string, method: string, body?: unknown): Promise<Response> =>
   raw(path, {
     method,
     headers: { "Content-Type": "application/json" },

@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
+import type { FormEvent } from "react";
 import RepoPicker from "./RepoPicker.jsx";
+import type { RepoSelection } from "./RepoPicker.jsx";
 import Modal from "./Modal.jsx";
 import { deriveRepoName, sanitizeSeg, uniqueRepoName, repoNameRe } from "../lib/reponame.js";
 
@@ -8,14 +10,26 @@ import { deriveRepoName, sanitizeSeg, uniqueRepoName, repoNameRe } from "../lib/
 // Submitting hands the clone to the parent (ReposSection) and closes immediately;
 // progress shows as a spinner row in the left pane, so the user isn't trapped in a
 // busy dialog while the clone runs.
-const SOURCE_HELP = {
+const SOURCE_HELP: Record<string, string> = {
   picker: "接続済みの GitHub / Bitbucket からリポジトリとブランチを選んで clone します。",
   url: "clone URL を手入力します（接続していないリポジトリ向け）。",
 };
 
-export default function NewRepoModal({ onClose, onClone, repos = [] }) {
-  const [source, setSource] = useState("picker"); // 'picker' | 'url'
-  const [sel, setSel] = useState(null); // picker: { cloneUrl, branch }
+interface CloneRequest {
+  remote_url: string;
+  branch: string;
+  name: string;
+}
+
+interface NewRepoModalProps {
+  onClose?: () => void;
+  onClone: (req: CloneRequest) => void;
+  repos?: { name: string }[];
+}
+
+export default function NewRepoModal({ onClose, onClone, repos = [] }: NewRepoModalProps) {
+  const [source, setSource] = useState<"picker" | "url">("picker");
+  const [sel, setSel] = useState<RepoSelection | null>(null); // picker: { cloneUrl, branch }
   const [url, setUrl] = useState("");
   const [branch, setBranch] = useState("");
   const [name, setName] = useState(""); // target folder (auto-filled on collision)
@@ -40,11 +54,11 @@ export default function NewRepoModal({ onClose, onClone, repos = [] }) {
   const nameOk = !collision || (repoNameRe.test(name.trim()) && !repoNames.has(name.trim()));
   const canSubmit = !!cloneUrl && nameOk;
 
-  const submit = (e) => {
+  const submit = (e: FormEvent) => {
     e.preventDefault();
     if (!canSubmit) return;
-    onClone({ remote_url: cloneUrl, branch: cloneBranch, name: collision ? name.trim() : "" });
-    onClose();
+    onClone({ remote_url: cloneUrl || "", branch: cloneBranch, name: collision ? name.trim() : "" });
+    onClose?.();
   };
 
   return (
@@ -53,10 +67,10 @@ export default function NewRepoModal({ onClose, onClone, repos = [] }) {
           <div className="field">
             <div className="field-label">取得元</div>
             <div className="seg">
-              {[
+              {([
                 ["picker", "接続から選ぶ"],
                 ["url", "URL 手入力"],
-              ].map(([v, label]) => (
+              ] as const).map(([v, label]) => (
                 <button
                   key={v}
                   type="button"

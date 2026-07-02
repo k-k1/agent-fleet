@@ -12,7 +12,15 @@ import Modal from "./Modal.jsx";
 //   - error     → shows the failure
 // `start` (resume) first POSTs /start to relaunch the stopped session; `force`
 // re-authenticates (logout + login). Cancel stops the background session.
-export default function SsmLoginModal({ name, start = false, force = false, onReady, onCancel }) {
+interface SsmLoginModalProps {
+  name: string;
+  start?: boolean;
+  force?: boolean;
+  onReady: (name: string) => void;
+  onCancel: () => void;
+}
+
+export default function SsmLoginModal({ name, start = false, force = false, onReady, onCancel }: SsmLoginModalProps) {
   const [phase, setPhase] = useState("pending");
   const [url, setUrl] = useState("");
   const [code, setCode] = useState("");
