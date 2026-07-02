@@ -7,7 +7,11 @@ import Icon from "./Icon.jsx";
 // known type get the brand SVG (full-color, or tinted for monochrome sets like
 // Seti / Devicon mono logos via CSS mask); everything else falls back to a
 // monochrome codicon. Pairs with DirIcon for folders.
-export default function FileIcon({ name }) {
+interface FileIconProps {
+  name: string;
+}
+
+export default function FileIcon({ name }: FileIconProps) {
   const { iconSet } = useSettings();
   const m = mark(name);
   if (m === "ai") return <Icon name="sparkle" className="fi-ai" title="AI 関連" />;
@@ -28,6 +32,6 @@ export default function FileIcon({ name }) {
 }
 
 // DirIcon: open vs closed folder (monochrome codicon, matching the chrome).
-export function DirIcon({ open }) {
+export function DirIcon({ open }: { open: boolean }) {
   return <Icon name={open ? "folder-opened" : "folder"} className="fi-folder" />;
 }
