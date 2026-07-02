@@ -1,3 +1,4 @@
+import type { ReactNode, MouseEvent, FormEvent } from "react";
 import Icon from "./Icon.jsx";
 
 // Modal is the shared dialog shell: a backdrop, a centered panel, and a header with
@@ -5,9 +6,30 @@ import Icon from "./Icon.jsx";
 // backdrop closes on click unless `lockClose` (e.g. a clone/checkout in flight).
 // Pass `as="form"` + `onSubmit` for form dialogs; `className` adds a size variant
 // (session-modal / branch-modal / settings-modal). Children are the body/footer.
-export default function Modal({ title, onClose, className = "", as = "div", onSubmit, lockClose = false, children }) {
+interface ModalProps {
+  title?: ReactNode;
+  onClose?: () => void;
+  className?: string;
+  as?: "div" | "form";
+  onSubmit?: (e: FormEvent) => void;
+  lockClose?: boolean;
+  children?: ReactNode;
+}
+
+export default function Modal({
+  title,
+  onClose,
+  className = "",
+  as = "div",
+  onSubmit,
+  lockClose = false,
+  children,
+}: ModalProps) {
   const Panel = as;
-  const panelProps = { className: ("modal " + className).trim(), onClick: (e) => e.stopPropagation() };
+  const panelProps: Record<string, unknown> = {
+    className: ("modal " + className).trim(),
+    onClick: (e: MouseEvent) => e.stopPropagation(),
+  };
   if (as === "form") panelProps.onSubmit = onSubmit;
   // While an operation is in flight (lockClose), make the whole panel inert so
   // nothing inside is operable, and the backdrop click is ignored. The close
