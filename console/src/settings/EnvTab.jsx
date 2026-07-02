@@ -10,23 +10,42 @@ import Icon from "../components/Icon.jsx";
 // selection at launch); already-running ones and the agent process itself pick it
 // up on the next Stop → Start.
 export default function EnvTab() {
+  const { wsState } = useApp();
+  const running = wsState === "running";
   const [d, setD] = useState(null);
   const [err, setErr] = useState("");
   // allowUpdate: the operator gate for member CLI self-update, read from the active
   // tenant's policy (GET /api/tenants). The toggle is only offered when allowed.
   const [allowUpdate, setAllowUpdate] = useState(false);
 
+  // Cache the last good toolchains payload per tenant, so while the workspace is
+  // stopped (Agent unreachable) we can still SHOW the form — disabled — from the
+  // last-known values, instead of only an error. Options are static/host-baked, so
+  // a cached copy stays accurate across a Stop → Start.
+  const cacheKey = "af.toolchains." + getTenant();
   const load = useCallback(() => {
     setErr("");
     api("api/env/toolchains")
       .then((res) => {
-        if (res && res.error) {
-          setErr(res.error.message || "取得に失敗しました");
-          setD(null);
-        } else setD(res);
+        if (res && res.error) throw new Error(res.error.message || "");
+        setD(res);
+        try {
+          localStorage.setItem(cacheKey, JSON.stringify(res));
+        } catch {
+          /* storage unavailable — just don't cache */
+        }
       })
-      .catch(() => setErr("Workspace が起動しているか確認してください"));
-  }, []);
+      .catch(() => {
+        let cached = null;
+        try {
+          cached = JSON.parse(localStorage.getItem(cacheKey) || "null");
+        } catch {
+          /* ignore */
+        }
+        setD(cached);
+        if (!cached) setErr("Workspace を起動すると編集できます");
+      });
+  }, [cacheKey]);
   useEffect(load, [load]);
 
   useEffect(() => {
@@ -59,19 +78,19 @@ export default function EnvTab() {
 
   return (
     <div className="display-settings">
-      {err ? (
+      {d ? (
+        <Toolchains d={d} update={update} allowUpdate={allowUpdate} running={running} />
+      ) : err ? (
         <p className="muted pad">{err}</p>
-      ) : !d ? (
-        <p className="muted pad">読み込み中…</p>
       ) : (
-        <Toolchains d={d} update={update} allowUpdate={allowUpdate} />
+        <p className="muted pad">読み込み中…</p>
       )}
       <WorkspaceDangerZone />
     </div>
   );
 }
 
-function Toolchains({ d, update, allowUpdate }) {
+function Toolchains({ d, update, allowUpdate, running }) {
   const nodeOpts = d.node_options || ["system"];
   const javaOpts = d.java_available || [];
   const tz = d.timezone || "Asia/Tokyo";
@@ -83,8 +102,13 @@ function Toolchains({ d, update, allowUpdate }) {
       <p className="muted ds-note">
         変更は<strong>この後に起動するセッション/シェル</strong>に反映されます（起動中のものと既存プロセスは Stop → Start で反映）。
       </p>
+      {!running && (
+        <p className="muted ds-note">
+          Workspace が停止中です。起動すると変更できます。
+        </p>
+      )}
       <Row label="タイムゾーン (TZ)">
-        <select value={tz} onChange={(e) => update({ timezone: e.target.value })}>
+        <select value={tz} disabled={!running} onChange={(e) => update({ timezone: e.target.value })}>
           {tzList.map((v) => (
             <option key={v} value={v}>
               {v}
@@ -93,7 +117,7 @@ function Toolchains({ d, update, allowUpdate }) {
         </select>
       </Row>
       <Row label="Node.js">
-        <select value={d.node || "system"} onChange={(e) => update({ node: e.target.value })}>
+        <select value={d.node || "system"} disabled={!running} onChange={(e) => update({ node: e.target.value })}>
           {nodeOpts.map((v) => (
             <option key={v} value={v}>
               {v === "system" ? "既定 (image の node)" : "v" + v}
@@ -105,7 +129,7 @@ function Toolchains({ d, update, allowUpdate }) {
         {javaOpts.length === 0 ? (
           <span className="muted">この workspace に JDK がありません</span>
         ) : (
-          <select value={d.java || ""} onChange={(e) => update({ java: e.target.value })}>
+          <select value={d.java || ""} disabled={!running} onChange={(e) => update({ java: e.target.value })}>
             <option value="">未選択</option>
             {javaOpts.map((v) => (
               <option key={v} value={v}>
@@ -121,12 +145,13 @@ function Toolchains({ d, update, allowUpdate }) {
             <input
               type="checkbox"
               checked={!!d.agentUpdate}
+              disabled={!running}
               onChange={(e) => update({ agentUpdate: e.target.checked })}
             />
             <span>起動時に claude / opencode / codex を最新へ更新する</span>
           </label>
           <p className="muted ds-sub">
-            OFF（既定）は会社が焼いたイメージ版で固定。ON にすると次の起動時に最新へ更新します（Stop → Start で反映／OFF に戻して再起動すればイメージ版へ戻ります）。
+            OFF（既定）はシステムが焼いたイメージ版で固定。ON にすると次の起動時に最新へ更新します（Stop → Start で反映／OFF に戻して再起動すればイメージ版へ戻ります）。
           </p>
         </Row>
       )}
