@@ -49,7 +49,7 @@ export const SURFACE_COLORS = [
 ];
 
 // Resolve a surface color id to its value for the active theme (null = no override).
-export function surfaceValue(id, theme) {
+export function surfaceValue(id: string, theme: string): string | null {
   const c = SURFACE_COLORS.find((x) => x.id === id);
   if (!c) return null;
   return theme === "light" ? c.light : c.dark;
@@ -57,14 +57,14 @@ export function surfaceValue(id, theme) {
 
 // The vivid accent that matches a surface color's family (theme-independent), used to
 // tint the chat highlights so they follow the chosen palette instead of a fixed blue.
-export function surfaceAccent(id) {
+export function surfaceAccent(id: string): string | null {
   const c = SURFACE_COLORS.find((x) => x.id === id);
   return (c && c.accent) || null;
 }
 
 // Linear blend between two #rrggbb colors (t in 0..1 toward `to`).
-function mixHex(from, to, t) {
-  const p = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
+function mixHex(from: string, to: string, t: number): string {
+  const p = (h: string) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
   const a = p(from);
   const b = p(to);
   const c = a.map((v, i) => Math.round(v + (b[i] - v) * t));
@@ -82,13 +82,33 @@ const THEME_ROW_DEFAULTS = {
 // shadeForSurface derives a row highlight from a left-pane surface color so the
 // active/hover stays in the surface's color family: darken toward black in light
 // mode, lighten toward white in dark mode.
-function shadeForSurface(hex, theme, kind) {
+function shadeForSurface(hex: string, theme: string, kind: string): string {
   const t =
     kind === "active" ? (theme === "light" ? 0.12 : 0.16) : theme === "light" ? 0.06 : 0.08;
   return mixHex(hex, theme === "light" ? "#000000" : "#ffffff", t);
 }
 
-const DEFAULTS = {
+export interface Settings {
+  termFont: string;
+  termSize: number;
+  viewerFont: string;
+  viewerSize: number;
+  chatFont: string;
+  chatSize: number;
+  lineNumbers: boolean;
+  wrap: boolean;
+  tabSize: number;
+  minimap: boolean;
+  iconSet: string;
+  theme: string;
+  topbarColor: string;
+  leftpaneColor: string;
+  viewerColor: string;
+  chatColor: string;
+  mirrorSend: string;
+}
+
+const DEFAULTS: Settings = {
   termFont: "Source Code Pro",
   termSize: 13,
   viewerFont: "JetBrains Mono",
@@ -117,7 +137,7 @@ export const MIRROR_SEND_MODES = [
 ];
 
 // Build a CSS font-family stack for a chosen family, with CJK + generic fallbacks.
-export function fontStack(name) {
+export function fontStack(name: string): string {
   if (!name || name === "システム等幅") {
     return 'ui-monospace, SFMono-Regular, Menlo, Consolas, "DejaVu Sans Mono", "Noto Sans Mono CJK JP", monospace';
   }
@@ -126,7 +146,7 @@ export function fontStack(name) {
 
 // Chat font stack — proportional by default. "システム"/"セリフ" map to sans/serif
 // system stacks (with CJK fallbacks); any other name is a code font (monospace).
-export function chatFontStack(name) {
+export function chatFontStack(name: string): string {
   if (!name || name === "システム") {
     return 'system-ui, -apple-system, "Hiragino Kaku Gothic ProN", "Noto Sans CJK JP", sans-serif';
   }
@@ -136,7 +156,7 @@ export function chatFontStack(name) {
   return fontStack(name);
 }
 
-function load() {
+function load(): Settings {
   try {
     return { ...DEFAULTS, ...JSON.parse(localStorage.getItem(KEY) || "{}") };
   } catch {
@@ -145,16 +165,16 @@ function load() {
 }
 
 let state = load();
-const subs = new Set();
+const subs = new Set<() => void>();
 
 // applyTheme writes the base theme + region color overrides onto <html>, so the
 // whole CSS-variable palette switches. Called at load (before paint) and on change.
-export function applyTheme(s) {
+export function applyTheme(s: Settings): void {
   if (typeof document === "undefined") return;
   const root = document.documentElement;
   const theme = s.theme === "light" ? "light" : "dark";
   root.dataset.theme = theme;
-  const setVar = (name, val) =>
+  const setVar = (name: string, val: string | null) =>
     val ? root.style.setProperty(name, val) : root.style.removeProperty(name);
   setVar("--topbar-bg", surfaceValue(s.topbarColor, theme));
   const lp = surfaceValue(s.leftpaneColor, theme);
@@ -194,14 +214,14 @@ export function applyTheme(s) {
 }
 applyTheme(state);
 
-export function getSettings() {
+export function getSettings(): Settings {
   return state;
 }
 
 // Debounced mirror of the full settings object to the per-user server store. Best
 // effort: if the workspace is stopped / agent unreachable, localStorage still holds it.
-let saveTimer = null;
-function scheduleServerSave() {
+let saveTimer: ReturnType<typeof setTimeout> | null = null;
+function scheduleServerSave(): void {
   if (saveTimer) clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
     apiJSON("api/env/ui-prefs", "PUT", state).catch(() => {});
@@ -211,8 +231,8 @@ function scheduleServerSave() {
 // hydrateUIPrefs pulls the server-stored prefs (if any) and merges the known keys
 // over the local state, so a fresh browser inherits the user's settings. Called once
 // at boot after the tenant is resolved (state.jsx). Server wins over localStorage.
-export async function hydrateUIPrefs() {
-  let srv;
+export async function hydrateUIPrefs(): Promise<void> {
+  let srv: any;
   try {
     srv = await api("api/env/ui-prefs");
   } catch {
@@ -220,10 +240,10 @@ export async function hydrateUIPrefs() {
   }
   if (!srv || typeof srv !== "object" || srv.error) return;
   let changed = false;
-  const merged = { ...state };
+  const merged: Settings = { ...state };
   for (const k of Object.keys(DEFAULTS)) {
-    if (k in srv && srv[k] !== merged[k]) {
-      merged[k] = srv[k];
+    if (k in srv && srv[k] !== (merged as any)[k]) {
+      (merged as any)[k] = srv[k];
       changed = true;
     }
   }
@@ -236,7 +256,7 @@ export async function hydrateUIPrefs() {
   subs.forEach((fn) => fn());
 }
 
-export function setSetting(key, value) {
+export function setSetting(key: keyof Settings, value: Settings[keyof Settings]): void {
   state = { ...state, [key]: value };
   try {
     localStorage.setItem(KEY, JSON.stringify(state));
@@ -246,11 +266,13 @@ export function setSetting(key, value) {
   subs.forEach((fn) => fn());
 }
 
-export function subscribe(fn) {
+export function subscribe(fn: () => void): () => void {
   subs.add(fn);
-  return () => subs.delete(fn);
+  return () => {
+    subs.delete(fn);
+  };
 }
 
-export function useSettings() {
+export function useSettings(): Settings {
   return useSyncExternalStore(subscribe, getSettings, getSettings);
 }
