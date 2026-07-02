@@ -379,18 +379,19 @@ export default function WsBar() {
   const uh = usage && usage.fiveHour && usageWin(usage.fiveHour);
   const uw = usage && usage.sevenDay && usageWin(usage.sevenDay);
   const usageMax = Math.max(uh ? uh.pct : 0, uw ? uw.pct : 0);
-  const usageLevel = lvl(usageMax, 80, 95);
   const usageEl = (uh || uw) && (
     <div className="ws-usage-wrap" ref={usageRef}>
+      {/* Same badge look as the Sessions-list Claude kind badge (kind-tag kind-claude):
+          reuse those classes for the frame + color, then reset the button chrome. */}
       <button
         type="button"
-        className={"ws-graph ws-usage-btn" + (usageLevel === 2 ? " crit" : usageLevel === 1 ? " warn" : "")}
+        className="kind-tag kind-claude ws-usage-btn"
         title="Claude 使用状況"
         aria-expanded={usageOpen}
         onClick={() => setUsageOpen((o) => !o)}
       >
         <Icon name="sparkle" />
-        <span className="ws-graph-v">{usageMax}%</span>
+        <span>{usageMax}%</span>
         <Icon name="chevron-down" />
       </button>
       {usageOpen && (
