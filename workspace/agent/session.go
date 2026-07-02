@@ -109,57 +109,14 @@ func wireSession(m sessionMeta, alive bool) Session {
 			started = t.Local().Format("01/02 15:04")
 		}
 	}
-	remote, state := "", ""
-	resumable := true
-	backgroundBusy := false
-	var ctx *contextUsage
-	if m.Kind == "claude" {
-		sid := sessionUUID(m.Dir, m.Name)
-		remote = remoteSessionURL(sid)
-		ctx = latestSessionContext(sid)
-		if alive {
-			// Default a live claude with no recorded event yet to idle (it sits at
-			// the prompt waiting for input). Hook events refine it.
-			state = "idle"
-			if st, ok := readSessionStatus(sid); ok {
-				state = st.State
-			}
-			// Self-heal a stale cache: a non-idle state that no longer matches the
-			// terminal (killed+resumed, rejected permission, abandoned question) —
-			// if the pane is back at the ready prompt, it's idle.
-			if state != "idle" && sessionAtIdlePrompt(m.Name) {
-				state = "idle"
-				removeSessionStatus(sid)
-			}
-			// Idle by hook, but a run_in_background task may still be running under
-			// the pane — surface that so 入力待ち isn't mistaken for "done".
-			if state == "idle" {
-				backgroundBusy = sessionBackgroundBusy(m.Name)
-			}
-		} else if !dirExists(m.Dir) {
-			// A stopped claude whose working dir was removed (its repo deleted) can't
-			// be resumed there; the Console marks it non-resumable (archive only).
-			resumable = false
-		}
-	} else if m.Kind == "opencode" || m.Kind == "codex" {
-		if alive {
-			// State comes from the agent's status files keyed by our sid: the bundled
-			// opencode plugin (opencode) or codex's -c-injected status hooks (codex).
-			// No recorded event yet => idle (sitting at the prompt).
-			state = "idle"
-			if st, ok := readSessionStatus(sessionUUID(m.Dir, m.Name)); ok {
-				state = st.State
-			}
-		} else if !dirExists(m.Dir) {
-			// Same as claude: opencode/codex resume needs its real project dir.
-			resumable = false
-		}
-	}
+	// The live-dependent fields (state / remote URL / context / resumable / bg-busy)
+	// diverge by kind — the agent computes them (see wireLive per implementation).
+	li := agentOf(m.Kind).wireLive(m, alive)
 	return Session{
 		Name: m.Name, Tmux: tmuxName(m.Name), Dir: m.Dir, Kind: m.Kind,
 		Repo: m.Repo, Label: m.Label, Started: started, CreatedAt: m.CreatedAt,
-		RemoteUrl: remote, State: state, Alive: alive, Resumable: resumable,
-		BackgroundBusy: backgroundBusy, Context: ctx,
+		RemoteUrl: li.remoteURL, State: li.state, Alive: alive, Resumable: li.resumable,
+		BackgroundBusy: li.backgroundBusy, Context: li.context,
 	}
 }
 
@@ -334,91 +291,16 @@ func buildSSMProgram(name string, s ssmMeta, force bool) (string, error) {
 // the OAuth token and builds the resume/new program (buildSessionProgram picks
 // --resume once a jsonl exists); for shell it runs a login bash.
 func startSessionTmux(m sessionMeta, ssmForce bool) error {
-	tn := tmuxName(m.Name)
-	cwd := m.Dir
-	dirOK := dirExists(cwd)
-	args := []string{"new-session", "-d", "-s", tn, "-c", cwd}
-	var program string
-	switch m.Kind {
-	case "shell":
-		// A shell falls back to home if its recorded dir is gone.
-		if !dirOK {
-			cwd = homeDir()
-			args[len(args)-1] = cwd
-		}
-		program = "bash -l"
-	case "opencode":
-		// opencode resumes (or starts) in its real project dir; refuse if it's gone.
-		if !dirOK {
-			return fmt.Errorf("作業フォルダが存在しないため再開できません: %s", m.Dir)
-		}
-		// AF_SESSION_SID lets the bundled opencode plugin report this session's
-		// working/idle state back keyed by OUR deterministic sid (same store claude
-		// uses), so wireSession can surface it. Provider API keys are injected as env
-		// (ANTHROPIC_API_KEY, …) so opencode authenticates without a plaintext file.
-		// The env is prefixed onto the command itself (not tmux -e, which sets only
-		// the session environment and does NOT reach the pane's process).
-		ocSid := sessionUUID(m.Dir, m.Name)
-		envs := append([]string{"AF_SESSION_SID=" + ocSid}, opencodeEnv()...)
-		program = buildOpencodeProgram(m.Model, envs, readOpencodeSid(ocSid))
-	case "codex":
-		// codex resumes (or starts) in its real project dir; refuse if it's gone.
-		if !dirOK {
-			return fmt.Errorf("作業フォルダが存在しないため再開できません: %s", m.Dir)
-		}
-		// Auth is codex's own ~/.codex/auth.json (codex login, written via the
-		// Connections flow), so no token is injected. State + per-slot resume are
-		// wired purely through codex hooks injected on the command line (-c), keyed
-		// by our deterministic slot sid — see buildCodexProgram.
-		cxSid := sessionUUID(m.Dir, m.Name)
-		program = buildCodexProgram(m.Model, cxSid, readCodexSid(cxSid))
-	case "ssm":
-		// An SSM session logs into the operator's OWN AWS via `aws sso login` (the
-		// device-code URL is surfaced in this terminal — click it to authenticate in
-		// another tab) then opens Session Manager on the target instance. No AWS
-		// credentials pass through Agent Fleet: the aws CLI authenticates directly and
-		// caches the short-lived token in the home volume. Launch dir is home (the work
-		// happens on the remote instance).
-		if m.SSM == nil || m.SSM.Target == "" {
-			return fmt.Errorf("SSM セッションの接続先が指定されていません")
-		}
-		cwd = homeDir()
-		args[len(args)-1] = cwd
-		p, err := buildSSMProgram(m.Name, *m.SSM, ssmForce)
-		if err != nil {
-			return err
-		}
-		program = p
-	default:
-		// A claude session must launch in its real working dir: if the dir is gone
-		// (its repo was deleted) we refuse rather than resume the conversation in an
-		// unrelated cwd. wireSession reports this as non-resumable.
-		if !dirOK {
-			return fmt.Errorf("作業フォルダが存在しないため再開できません: %s", m.Dir)
-		}
-		// Pre-trust the launch dir so claude doesn't stall on the folder-trust
-		// dialog (not skippable via --dangerously-skip-permissions).
-		ensureFolderTrusted(cwd)
-		sid := sessionUUID(m.Dir, m.Name)
-		// A jsonl can exist yet hold no real conversation — e.g. only a Remote
-		// Control "bridge-session" line when RC connected but nothing was said.
-		// claude --resume then dies with "No conversation found". Drop such a stub
-		// so buildSessionProgram starts fresh (--session-id) instead of resuming.
-		if !jsonlResumable(sid) {
-			for _, p := range jsonlPaths(sid) {
-				_ = os.Remove(p)
-			}
-		}
-		program = buildSessionProgram(sid, m.Model, m.Label, m.ForkFrom)
-		// No env token is injected: the interactive TUI authenticates from claude's
-		// own .credentials.json, written by `claude auth login` via the Connections
-		// flow (claude_auth.go). CLAUDE_CODE_OAUTH_TOKEN is headless-only.
+	// The kind decides the pane program and launch dir; the agent builds both.
+	plan, err := agentOf(m.Kind).buildLaunch(m, launchOpts{ssmForce: ssmForce})
+	if err != nil {
+		return err
 	}
 	// Inject the current toolchain selection (JAVA_HOME / node / TZ) so a Console
 	// change applies to this freshly-launched session without a Stop→Start. tmux
 	// runs the pane command via /bin/sh -c, so the export prefix takes effect.
-	program = toolchainShellPrefix() + program
-	args = append(args, program)
+	program := toolchainShellPrefix() + plan.program
+	args := []string{"new-session", "-d", "-s", tmuxName(m.Name), "-c", plan.cwd, program}
 	if out, err := exec.Command("tmux", args...).CombinedOutput(); err != nil {
 		return fmt.Errorf("%v: %s", err, out)
 	}
@@ -591,19 +473,13 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	kind := req.Kind
-	switch kind {
-	case "shell", "opencode", "codex", "ssm":
-		// supported as-is
-	default:
-		kind = "claude"
-	}
+	kind := normalizeKind(req.Kind)
 	label := ""
-	if kind == "claude" {
+	if agentOf(kind).caps().usesLabel {
 		label = sessionLabel(req.Dir)
 	}
 	var ssm *ssmMeta
-	if kind == "ssm" {
+	if kind == kindSSM {
 		if strings.TrimSpace(req.SSMTarget) == "" {
 			writeErr(w, http.StatusBadRequest, "bad_ssm", "ssm_target (instance id) is required")
 			return
@@ -643,7 +519,7 @@ func handleForkSession(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "no_session", "session not found: "+name)
 		return
 	}
-	if src.Kind != "" && src.Kind != "claude" {
+	if !agentOf(src.Kind).caps().canFork {
 		writeErr(w, http.StatusBadRequest, "not_claude", "分岐できるのは claude セッションのみです")
 		return
 	}
@@ -843,11 +719,11 @@ func handleRecreateSession(w http.ResponseWriter, r *http.Request) {
 	}
 	removeSessionStatus(sid)
 	// opencode/codex: forget the captured session id so recreate starts a NEW
-	// conversation (plain launch) instead of resuming the old one.
-	removeOpencodeSid(sid)
-	removeCodexSid(sid)
+	// conversation (plain launch) instead of resuming the old one. No-op for the
+	// agents that pin their own id (claude) or keep no resume state (shell/ssm).
+	agentOf(m.Kind).clearResume(sid)
 	m.CreatedAt = time.Now().Format(time.RFC3339)
-	if m.Kind == "claude" {
+	if agentOf(m.Kind).caps().usesLabel {
 		m.Label = sessionLabel(m.Dir)
 	}
 	m.StoppedAt = ""
@@ -970,22 +846,6 @@ func buildOpencodeProgram(model string, envs []string, ocid string) string {
 	return prefix + strings.Join(parts, " ")
 }
 
-// opencode session-id store: maps our deterministic slot sid (AF_SESSION_SID) to the
-// opencode session id (ses_…) the plugin captured, so a slot resumes its OWN session.
-func opencodeSidDir() string {
-	return filepath.Join(homeDir(), ".config", "agent-fleet", "opencode-sid")
-}
-
-func readOpencodeSid(sid string) string {
-	b, err := os.ReadFile(filepath.Join(opencodeSidDir(), sid))
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(b))
-}
-
-func removeOpencodeSid(sid string) { _ = os.Remove(filepath.Join(opencodeSidDir(), sid)) }
-
 // buildCodexProgram returns the tmux program for a codex session. codex owns its
 // auth (~/.codex/auth.json) so no token is injected. It generates its OWN session
 // id (no --session-id flag), so we:
@@ -1028,30 +888,6 @@ func buildCodexProgram(model, slotSid, codexResumeID string) string {
 	}
 	return strings.Join(parts, " ")
 }
-
-// codex session-id store: maps our deterministic slot sid to the codex session id
-// (a UUID) captured from codex's hook JSON, so a slot resumes its OWN session via
-// `codex resume <id>` (codex has no --session-id flag to pin it ourselves).
-func codexSidDir() string {
-	return filepath.Join(homeDir(), ".config", "agent-fleet", "codex-sid")
-}
-
-func readCodexSid(sid string) string {
-	b, err := os.ReadFile(filepath.Join(codexSidDir(), sid))
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(b))
-}
-
-func writeCodexSid(sid, codexID string) {
-	if err := os.MkdirAll(codexSidDir(), 0o700); err != nil {
-		return
-	}
-	_ = os.WriteFile(filepath.Join(codexSidDir(), sid), []byte(codexID), 0o600)
-}
-
-func removeCodexSid(sid string) { _ = os.Remove(filepath.Join(codexSidDir(), sid)) }
 
 // tomlString renders s as a TOML basic string (double-quoted, backslash/quote
 // escaped) for embedding in a `-c key=value` override.

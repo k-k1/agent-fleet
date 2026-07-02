@@ -150,17 +150,7 @@ func handleSessionStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	alive := tmuxHasSession(tmuxName(name))
-	state := "stopped"
-	if alive {
-		state = "idle"
-		if st, ok := readSessionStatus(sessionUUID(meta.Dir, name)); ok {
-			state = st.State
-		}
-		if state != "idle" && sessionAtIdlePrompt(name) {
-			state = "idle"
-			removeSessionStatus(sessionUUID(meta.Dir, name))
-		}
-	}
+	state := driveState(meta, alive, true)
 	writeJSON(w, http.StatusOK, map[string]any{"name": name, "kind": meta.Kind, "alive": alive, "status": state})
 }
 
@@ -180,14 +170,9 @@ func handleSessionOutput(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	alive := tmuxHasSession(tmuxName(name))
-	state := "stopped"
-	if alive {
-		state = "idle"
-		if st, ok := readSessionStatus(sessionUUID(meta.Dir, name)); ok {
-			state = st.State
-		}
-	}
-	if meta.Kind != "claude" {
+	// /output opts out of the idle-heal (heal=false) to preserve its historical behavior.
+	state := driveState(meta, alive, false)
+	if !agentOf(meta.Kind).caps().canTranscript {
 		writeErr(w, http.StatusBadRequest, "unsupported_kind", "output is available for claude sessions only (phase 1)")
 		return
 	}
