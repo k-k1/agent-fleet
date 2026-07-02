@@ -132,15 +132,17 @@ export default function ReposSection() {
       actions={
         <>
           <button
-            className="ghost"
+            className="ghost lblbtn"
             title={running ? "clone" : "clone（ワークスペース停止中）"}
             disabled={!!cloning || !running}
             onClick={() => setShowClone((s) => !s)}
           >
             <Icon name="add" />
+            <span className="lbl">クローン</span>
           </button>
-          <button className="ghost" title="更新" onClick={bumpRepos}>
+          <button className="ghost lblbtn" title="更新" onClick={bumpRepos}>
             <Icon name="refresh" />
+            <span className="lbl">更新</span>
           </button>
         </>
       }

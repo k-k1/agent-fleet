@@ -530,6 +530,7 @@ export default function FilesSection() {
         onClick={() => setViewPersist("tree")}
       >
         <Icon name="list-tree" />
+        <span className="lbl">ツリー</span>
       </button>
       <button
         type="button"
@@ -538,6 +539,7 @@ export default function FilesSection() {
         onClick={() => setViewPersist("changes")}
       >
         <Icon name="git-compare" />
+        <span className="lbl">変更</span>
       </button>
     </span>
   );
