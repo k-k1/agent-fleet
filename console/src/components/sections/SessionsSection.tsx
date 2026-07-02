@@ -179,23 +179,26 @@ export default function SessionsSection() {
       actions={
         <>
           <button
-            className="ghost"
+            className="ghost lblbtn"
             title="停止中をまとめてアーカイブ（shell/ssm は削除）"
             disabled={!sessions.some((s) => !s.alive)}
             onClick={clearStopped}
           >
             <Icon name="clear-all" />
+            <span className="lbl">整理</span>
           </button>
-          <button className="ghost" title="アーカイブを開く（復帰）" onClick={() => setShowArchived(true)}>
+          <button className="ghost lblbtn" title="アーカイブを開く（復帰）" onClick={() => setShowArchived(true)}>
             <Icon name="archive" />
+            <span className="lbl">アーカイブ</span>
           </button>
           <button
-            className="ghost"
+            className="ghost lblbtn"
             title={running ? "新規セッション" : "新規セッション（ワークスペース停止中）"}
             disabled={!running}
             onClick={() => setShowModal(true)}
           >
             <Icon name="add" />
+            <span className="lbl">新規</span>
           </button>
         </>
       }
