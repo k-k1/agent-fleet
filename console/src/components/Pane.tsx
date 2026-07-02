@@ -256,7 +256,7 @@ export default function Pane({
       )}
       {showMirror && (
         <MirrorView
-          session={pane.session}
+          session={pane.session!}
           sessionMeta={sessionMeta}
           active={single || active}
           mirror={mirror}

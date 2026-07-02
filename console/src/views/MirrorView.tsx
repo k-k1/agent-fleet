@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import type { CSSProperties, KeyboardEvent as RKeyboardEvent } from "react";
 import { api, apiJSON, raw, errText } from "../api.js";
 import { useSettings, chatFontStack } from "../lib/settings.js";
 import { useApp } from "../state.jsx";
@@ -13,8 +14,67 @@ import { coarsePointer } from "../lib/device.js";
 
 const q = encodeURIComponent;
 
+// One option in an AskUserQuestion, and one such question.
+interface QuestionOption {
+  label: string;
+  description?: string;
+}
+interface Question {
+  header?: string;
+  question?: string;
+  multiSelect?: boolean;
+  options?: QuestionOption[];
+}
+// One ordered part of a turn (Markdown text, a tool trace, a question, or a plan).
+interface Part {
+  kind: string;
+  text?: string;
+  tool?: string;
+  info?: string;
+  file?: string;
+  edits?: any[];
+  questions?: Question[];
+  answer?: string;
+  plan?: string;
+}
+// A raw transcript turn (GET …/messages) and a grouped block (groupTurns output).
+interface Turn {
+  role: string;
+  text?: string;
+  ts?: string;
+  idx?: number;
+  parts?: Part[];
+  sidechain?: boolean;
+  model?: string;
+  branch?: string;
+  cwd?: string;
+  inTok?: number;
+  outTok?: number;
+  cacheRead?: number;
+  cacheCreate?: number;
+}
+interface Group {
+  role: string;
+  sidechain: boolean;
+  parts: Part[];
+  text: string;
+  model: string;
+  branch: string;
+  cwd: string;
+  inTok: number;
+  outTok: number;
+  cacheRead: number;
+  cacheCreate: number;
+  ts?: string;
+  idx?: number;
+}
+// foldParts output: a run of tool traces, or a single passthrough part.
+type FoldItem =
+  | { kind: "toolrun"; tools: { p: Part; i: number }[] }
+  | { kind: "part"; p: Part; i: number };
+
 // readDraft loads a session's persisted composer draft ("" when none / unavailable).
-function readDraft(key) {
+function readDraft(key: string | null): string {
   if (!key) return "";
   try {
     return localStorage.getItem(key) || "";
@@ -33,7 +93,23 @@ function readDraft(key) {
 // Limits (case-A): the transcript is written per turn, so turns appear per response,
 // not token-by-token. Prompts typed in the raw terminal DO appear (they're logged as
 // user turns), just at the next poll.
-export default function MirrorView({ session, sessionMeta, active, mirror, onToggleMirror, readOnly = false, onResume }) {
+export default function MirrorView({
+  session,
+  sessionMeta,
+  active,
+  mirror,
+  onToggleMirror,
+  readOnly = false,
+  onResume,
+}: {
+  session: string;
+  sessionMeta?: any;
+  active?: boolean;
+  mirror?: boolean;
+  onToggleMirror: (v: boolean) => void;
+  readOnly?: boolean;
+  onResume?: () => void;
+}) {
   const settings = useSettings();
   const { showDoc, showDiff, showTerminalSplit, bumpSessions, wsState } = useApp();
   const running = wsState === "running"; // WS down → resume is inert, mirror the terminal 再開
@@ -41,28 +117,28 @@ export default function MirrorView({ session, sessionMeta, active, mirror, onTog
   // "mod-enter" (default): Ctrl/⌘+Enter submits, plain Enter newlines (phone-safe).
   // "enter": Enter submits, Shift+Enter newlines.
   const modSend = settings.mirrorSend !== "enter";
-  const [turns, setTurns] = useState([]); // {role:'user'|'assistant', text, ts, idx}
+  const [turns, setTurns] = useState<Turn[]>([]); // {role:'user'|'assistant', text, ts, idx}
   const [loaded, setLoaded] = useState(false); // false until the first transcript fetch returns
   const [termState, setTermState] = useState(""); // terminal-only state: "resume" | "compacting" | ""
   const [status, setStatus] = useState("");
   const [alive, setAlive] = useState(!!sessionMeta?.alive); // live session ⇒ composer usable
-  const [pending, setPending] = useState(null); // currently-awaiting AskUserQuestion
-  const [pendingPlan, setPendingPlan] = useState(null); // ExitPlanMode plan awaiting approval
-  const [pendingPerm, setPendingPerm] = useState(null); // tool-permission prompt awaiting allow/deny
+  const [pending, setPending] = useState<Question[] | null>(null); // currently-awaiting AskUserQuestion
+  const [pendingPlan, setPendingPlan] = useState<string | null>(null); // ExitPlanMode plan awaiting approval
+  const [pendingPerm, setPendingPerm] = useState<string | null>(null); // tool-permission prompt awaiting allow/deny
   const [mode, setMode] = useState(""); // session permission mode ("plan" | …)
   // Composer draft, persisted per session so switching ターミナル⇄チャット (which
   // unmounts this view) — or a reload — keeps what you were typing. Key by session.
   const draftKey = session ? "af.mirror-draft." + session : null;
   const [draft, setDraft] = useState(() => readDraft(draftKey));
-  const draftKeyRef = useRef(draftKey);
+  const draftKeyRef = useRef<string | null>(draftKey);
   const [sending, setSending] = useState(false);
-  const [histIdx, setHistIdx] = useState(null); // position in composer history, or null
+  const [histIdx, setHistIdx] = useState<number | null>(null); // position in composer history, or null
   const cursorRef = useRef(0);
   const diagRef = useRef(""); // last transcript-diagnostic signature (warn once per change)
   const statusRef = useRef("");
-  const tickRef = useRef(null); // lets send() trigger an immediate refresh
-  const bodyRef = useRef(null);
-  const inputRef = useRef(null);
+  const tickRef = useRef<(() => void) | null>(null); // lets send() trigger an immediate refresh
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
 
   // Reset accumulated turns when the session changes (cursor is a line index into
   // that session's jsonl, meaningless across sessions).
@@ -107,7 +183,7 @@ export default function MirrorView({ session, sessionMeta, active, mirror, onTog
   useEffect(() => {
     if (!session) return;
     let alive = true;
-    let timer = null;
+    let timer: ReturnType<typeof setTimeout> | null = null;
     const tick = async () => {
       try {
         const d = await api(`api/sessions/${q(session)}/messages?since=${cursorRef.current}`);
@@ -189,7 +265,7 @@ export default function MirrorView({ session, sessionMeta, active, mirror, onTog
   }, [active]);
 
   // Low-level: type one prompt into the session (tmux send-keys). No state/guard.
-  const postInput = async (text) => {
+  const postInput = async (text: string) => {
     try {
       await apiJSON(`api/sessions/${q(session)}/input`, "POST", { prompt: text });
     } catch {
@@ -198,7 +274,7 @@ export default function MirrorView({ session, sessionMeta, active, mirror, onTog
   };
 
   // sendPrompt submits one prompt (the composer, or a single-select answer).
-  const sendPrompt = async (text) => {
+  const sendPrompt = async (text: string) => {
     const t = (text || "").trim();
     if (!t || sending) return;
     setSending(true);
@@ -212,7 +288,7 @@ export default function MirrorView({ session, sessionMeta, active, mirror, onTog
 
   // sendKeys drives the AskUserQuestion modal via named keys (Down/Space/Enter), the
   // only way to answer multi-select / multi-question forms (free text can't).
-  const sendKeys = async (keys) => {
+  const sendKeys = async (keys: string[]) => {
     if (!keys || !keys.length || sending) return;
     setSending(true);
     statusRef.current = "working";
@@ -237,7 +313,7 @@ export default function MirrorView({ session, sessionMeta, active, mirror, onTog
   };
 
   // Open a plan's Markdown in its own pane (manual — via a button, not automatic).
-  const openPlan = (plan) => showDoc(planTitle(plan), plan);
+  const openPlan = (plan: string) => showDoc(planTitle(plan), plan);
 
   // Fork this conversation into a new session (P3-9): the Agent runs
   // `claude --resume <sid> --fork-session`, copying the history so far into a fresh
@@ -261,11 +337,11 @@ export default function MirrorView({ session, sessionMeta, active, mirror, onTog
       setForking(false);
     }
   };
-  const openDiff = (p) => showDiff(p.file, p.edits, p.tool);
+  const openDiff = (p: Part) => showDiff(p.file || "", p.edits, p.tool || "");
 
   // Composer history = the user's own prompts in this conversation (so ↑ works even
   // after a reload, not just for prompts typed since mount). Newest last.
-  const history = [];
+  const history: string[] = [];
   for (const t of turns) {
     if (t.role === "user" && t.text && !isNoise(t)) {
       const s = t.text.trim();
@@ -295,7 +371,7 @@ export default function MirrorView({ session, sessionMeta, active, mirror, onTog
     inputRef.current?.focus();
   };
 
-  const onKeyDown = (e) => {
+  const onKeyDown = (e: RKeyboardEvent) => {
     // Shell-style history: ↑/↓ recall past prompts when the field is empty (or once
     // recall is underway). With text present, arrows move the caret as usual.
     if ((e.key === "ArrowUp" || e.key === "ArrowDown") && !e.nativeEvent.isComposing) {
@@ -338,7 +414,7 @@ export default function MirrorView({ session, sessionMeta, active, mirror, onTog
 
   // Status chip: prefer the live polled status, fall back to the session meta.
   const chip = status
-    ? stateInfo({ kind: "claude", alive: status !== "stopped", state: status })
+    ? stateInfo({ kind: "claude", alive: status !== "stopped", state: status } as any)
     : sessionMeta
       ? stateInfo(sessionMeta)
       : null;
@@ -346,7 +422,7 @@ export default function MirrorView({ session, sessionMeta, active, mirror, onTog
   return (
     <div
       className="mirrorview"
-      style={{ "--chat-font": chatFontStack(settings.chatFont), "--chat-size": settings.chatSize + "px" }}
+      style={{ "--chat-font": chatFontStack(settings.chatFont), "--chat-size": settings.chatSize + "px" } as CSSProperties}
     >
       <header className="view-head">
         {sessionMeta ? (
@@ -383,7 +459,7 @@ export default function MirrorView({ session, sessionMeta, active, mirror, onTog
             <span className="fork-label">分岐</span>
           </button>
         )}
-        <MirrorToggle mirror={mirror} onToggle={onToggleMirror} running={running} />
+        <MirrorToggle mirror={!!mirror} onToggle={onToggleMirror} running={running} />
       </header>
 
       {ctxUsage && <ContextBar {...ctxUsage} />}
@@ -631,7 +707,7 @@ const SYS_PREFIXES = [
   "<system-reminder>",
 ];
 
-function isNoise(t) {
+function isNoise(t: Turn): boolean {
   if (t.role !== "user") return false;
   const s = (t.text || "").replace(/^\s+/, "");
   return SYS_PREFIXES.some((p) => s.startsWith(p));
@@ -639,7 +715,7 @@ function isNoise(t) {
 
 // partsOf returns a turn's ordered parts, synthesizing a single text part for turns
 // from an older Agent that predates the parts field (backward compatible).
-function partsOf(t) {
+function partsOf(t: Turn): Part[] {
   if (Array.isArray(t.parts) && t.parts.length) return t.parts;
   return t.text ? [{ kind: "text", text: t.text }] : [];
 }
@@ -649,8 +725,8 @@ function partsOf(t) {
 // OR sidechain change so a subagent's turns stay separate from the main thread. It
 // keeps the FIRST turn's idx/timestamp/branch/cwd, and for tokens sums output while
 // taking the last event's input/cache as the context size.
-function groupTurns(turns) {
-  const out = [];
+function groupTurns(turns: Turn[]): Group[] {
+  const out: Group[] = [];
   for (const t of turns) {
     if (isNoise(t)) continue;
     const parts = partsOf(t);
@@ -690,7 +766,7 @@ function groupTurns(turns) {
 // latestContext returns the newest assistant turn's prompt breakdown (reused-cache,
 // newly-cached, fresh) — the current context fill — or null if no usage is recorded
 // yet (e.g. an Agent that predates the usage field, before a Stop/Start).
-function latestContext(groups) {
+function latestContext(groups: Group[]) {
   for (let i = groups.length - 1; i >= 0; i--) {
     const g = groups[i];
     if (g.role === "user") continue;
@@ -704,7 +780,12 @@ function latestContext(groups) {
 // renderGroups lays the blocks out, inserting a context strip (branch · cwd) above a
 // block whenever either changes from the previously shown one — so a branch switch or
 // cd is marked once, not repeated on every turn. Empty context leaves the marker as-is.
-function renderGroups(groups, onAnswer, onOpenPlan, onOpenDiff) {
+function renderGroups(
+  groups: Group[],
+  onAnswer: (t: string) => void,
+  onOpenPlan: (plan: string) => void,
+  onOpenDiff: (p: Part) => void,
+) {
   const els = [];
   let prevCtx = "";
   for (const g of groups) {
@@ -721,7 +802,7 @@ function renderGroups(groups, onAnswer, onOpenPlan, onOpenDiff) {
 }
 
 // ContextLine marks the git branch / working dir in effect from here on.
-function ContextLine({ branch, cwd }) {
+function ContextLine({ branch, cwd }: { branch?: string; cwd?: string }) {
   return (
     <div className="mirror-context">
       {branch && (
@@ -737,7 +818,17 @@ function ContextLine({ branch, cwd }) {
 // Turn renders one conversation block: a header (who + model), the body (user prompt
 // as text, assistant reply as Markdown with faint tool traces), and a footer (time +
 // token usage + copy). Subagent (sidechain) turns get a distinct label and tint.
-function Turn({ turn, onAnswer, onOpenPlan, onOpenDiff }) {
+function Turn({
+  turn,
+  onAnswer,
+  onOpenPlan,
+  onOpenDiff,
+}: {
+  turn: Group;
+  onAnswer: (t: string) => void;
+  onOpenPlan: (plan: string) => void;
+  onOpenDiff: (p: Part) => void;
+}) {
   const isUser = turn.role === "user";
   const who = isUser ? "あなた" : turn.sidechain ? "サブエージェント" : "Claude";
   const ctxTok = turn.inTok + turn.cacheRead + turn.cacheCreate;
@@ -767,7 +858,7 @@ function Turn({ turn, onAnswer, onOpenPlan, onOpenDiff }) {
                 plan={item.p.plan}
                 answered
                 outcome={item.p.answer}
-                onOpen={() => onOpenPlan && onOpenPlan(item.p.plan)}
+                onOpen={() => onOpenPlan && onOpenPlan(item.p.plan || "")}
               />
             ) : (
               <MarkdownView key={item.i} source={item.p.text} />
@@ -792,9 +883,9 @@ function Turn({ turn, onAnswer, onOpenPlan, onOpenDiff }) {
 // consecutive tool traces into one { kind:"toolrun", tools:[{p,i}] } item; every
 // other part passes through as { kind:"part", p, i }. A run of length 1 still
 // becomes a toolrun (ToolRun renders it inline), so callers only branch two ways.
-function foldParts(parts) {
-  const items = [];
-  let run = null;
+function foldParts(parts: Part[]): FoldItem[] {
+  const items: FoldItem[] = [];
+  let run: { kind: "toolrun"; tools: { p: Part; i: number }[] } | null = null;
   parts.forEach((p, i) => {
     if (p.kind === "tool") {
       if (!run) {
@@ -812,7 +903,7 @@ function foldParts(parts) {
 
 // ToolTrace renders one faint tool line. Edit-family tools carry their before/after,
 // so they render as a button that opens a diff pane; the rest are a static trace.
-function ToolTrace({ p, onOpenDiff }) {
+function ToolTrace({ p, onOpenDiff }: { p: Part; onOpenDiff?: (p: Part) => void }) {
   if (p.edits && p.edits.length) {
     return (
       <button
@@ -840,11 +931,11 @@ function ToolTrace({ p, onOpenDiff }) {
 // before; two or more collapse (default) into a summary row — "N 件のツール" with a
 // per-tool tally (Edit×3 · Bash×2) — that expands on click to the individual traces,
 // keeping each edit's click-to-diff.
-function ToolRun({ tools, onOpenDiff }) {
+function ToolRun({ tools, onOpenDiff }: { tools: { p: Part; i: number }[]; onOpenDiff?: (p: Part) => void }) {
   const [open, setOpen] = useState(false);
   if (tools.length === 1) return <ToolTrace p={tools[0].p} onOpenDiff={onOpenDiff} />;
-  const tally = [];
-  const at = {};
+  const tally: [string, number][] = [];
+  const at: Record<string, number> = {};
   for (const { p } of tools) {
     const name = p.tool || "tool";
     if (at[name] === undefined) {
@@ -883,12 +974,22 @@ function ToolRun({ tools, onOpenDiff }) {
 // Multi-select or multiple questions → build a selection, then submit: answers are
 // sent one page at a time (multi-select choices joined) so the terminal modal advances
 // through each question and doesn't close after the first pick.
-function PendingQuestions({ questions, onSendOne, onSubmitKeys, sending }) {
+function PendingQuestions({
+  questions,
+  onSendOne,
+  onSubmitKeys,
+  sending,
+}: {
+  questions: Question[];
+  onSendOne: (label: string) => void;
+  onSubmitKeys: (keys: string[]) => void;
+  sending: boolean;
+}) {
   const qs = questions || [];
-  const [sel, setSel] = useState(() => qs.map(() => []));
+  const [sel, setSel] = useState<string[][]>(() => qs.map(() => []));
   const single = qs.length === 1 && !qs[0]?.multiSelect;
 
-  const toggle = (qi, label, multi) => {
+  const toggle = (qi: number, label: string, multi?: boolean) => {
     setSel((prev) => {
       const next = prev.map((a) => a.slice());
       const cur = next[qi] || [];
@@ -911,7 +1012,7 @@ function PendingQuestions({ questions, onSendOne, onSubmitKeys, sending }) {
   // After all questions we land on the Submit tab (Review page); a final Enter
   // activates "Submit answers".
   const submit = () => {
-    const keys = [];
+    const keys: string[] = [];
     qs.forEach((q, qi) => {
       const opts = q.options || [];
       const idx = (sel[qi] || [])
@@ -994,7 +1095,15 @@ function PendingQuestions({ questions, onSendOne, onSubmitKeys, sending }) {
 
 // QuestionBlock renders an already-answered AskUserQuestion from the transcript:
 // header + prompt + options, inert, with the chosen option highlighted.
-function QuestionBlock({ questions, answered, answer }) {
+function QuestionBlock({
+  questions,
+  answered,
+  answer,
+}: {
+  questions?: Question[];
+  answered?: boolean;
+  answer?: string;
+}) {
   const norm = (answer || "").trim();
   return (
     <div className={"mt-question" + (answered ? " answered" : "")}>
@@ -1047,7 +1156,23 @@ function QuestionBlock({ questions, answered, answer }) {
 // PlanBlock shows an ExitPlanMode plan compactly (title + one-line summary) with a
 // button to open the full Markdown in its own pane, and — while pending — an approve
 // button that confirms the plan (Enter = "Yes, and bypass permissions").
-function PlanBlock({ plan, pending, answered, outcome, onOpen, onApprove, sending }) {
+function PlanBlock({
+  plan,
+  pending,
+  answered,
+  outcome,
+  onOpen,
+  onApprove,
+  sending,
+}: {
+  plan?: string;
+  pending?: boolean;
+  answered?: boolean;
+  outcome?: string;
+  onOpen?: () => void;
+  onApprove?: () => void;
+  sending?: boolean;
+}) {
   // A plan in the transcript was presented and resolved — treat as approved unless the
   // outcome text clearly says otherwise (best-effort; the exact result text may vary).
   const approved = !outcome || isApproved(outcome) || !isRejected(outcome);
@@ -1078,19 +1203,19 @@ function PlanBlock({ plan, pending, answered, outcome, onOpen, onApprove, sendin
 
 // isApproved guesses whether an ExitPlanMode tool_result text is an approval, to badge
 // a historical plan. Best-effort keyword match (the exact result text may vary).
-function isApproved(outcome) {
+function isApproved(outcome?: string) {
   return /approv|proceed|start coding|going to code|承認|実行してよい|yes/i.test(outcome || "");
 }
-function isRejected(outcome) {
+function isRejected(outcome?: string) {
   return /keep planning|not approv|reject|refine|declin|却下|中止|やり直/i.test(outcome || "");
 }
 
 // planTitle / planSummary derive a compact heading + lead line from the plan Markdown.
-function planTitle(md) {
+function planTitle(md?: string) {
   const m = (md || "").match(/^#{1,3}\s+(.+)$/m);
   return m ? m[1].trim() : "プラン";
 }
-function planSummary(md) {
+function planSummary(md?: string) {
   for (const line of (md || "").split("\n")) {
     const s = line.trim();
     if (s && !s.startsWith("#") && !s.startsWith("```")) {
@@ -1101,7 +1226,7 @@ function planSummary(md) {
 }
 
 // CopyButton copies the turn's RAW Markdown (not the rendered HTML) to the clipboard.
-function CopyButton({ text }) {
+function CopyButton({ text }: { text: string }) {
   const [done, setDone] = useState(false);
   const copy = async () => {
     try {
@@ -1125,7 +1250,7 @@ function CopyButton({ text }) {
 }
 
 // prettyModel shortens a model id for the turn header: "claude-opus-4-8" → "opus 4.8".
-function prettyModel(m) {
+function prettyModel(m: string) {
   return m
     .replace(/^claude-/, "")
     .replace(/-(\d+)-(\d+)$/, " $1.$2")
@@ -1133,15 +1258,15 @@ function prettyModel(m) {
 }
 
 // prettyCwd collapses the home prefix to ~ so the working dir reads compactly.
-function prettyCwd(p) {
+function prettyCwd(p: string) {
   return p.replace(/^\/home\/[^/]+/, "~");
 }
 
 // formatTS renders an RFC3339 timestamp as local "MM/DD HH:MM" (date kept so a long
 // session that spans days stays unambiguous).
-function formatTS(iso) {
+function formatTS(iso: string) {
   const d = new Date(iso);
-  if (isNaN(d)) return "";
-  const p = (n) => String(n).padStart(2, "0");
+  if (isNaN(d.getTime())) return "";
+  const p = (n: number) => String(n).padStart(2, "0");
   return `${p(d.getMonth() + 1)}/${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
