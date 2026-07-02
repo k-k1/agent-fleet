@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api, raw } from "../api.js";
 import Icon from "./Icon.jsx";
 import Modal from "./Modal.jsx";
+import { useConfirm } from "./ConfirmProvider.jsx";
 import { kindIcon, kindLabel } from "../lib/sessionkind.js";
 import type { Session } from "../types/session.ts";
 
@@ -21,6 +22,7 @@ interface ArchivedModalProps {
 export default function ArchivedModal({ onClose, onRestored }: ArchivedModalProps) {
   const [items, setItems] = useState<ArchivedSession[] | null>(null);
   const [busy, setBusy] = useState(false);
+  const askConfirm = useConfirm();
 
   const load = () =>
     api("api/sessions/archived")
@@ -46,7 +48,13 @@ export default function ArchivedModal({ onClose, onRestored }: ArchivedModalProp
   };
 
   const del = async (name: string) => {
-    if (!confirm(`アーカイブ "${name}" を完全に削除しますか？\n（一覧から消えます。会話ログのファイルは残ります）`)) return;
+    const ok = await askConfirm({
+      title: "アーカイブを完全に削除",
+      body: `"${name}" を一覧から完全に削除します。会話ログのファイルは残ります。`,
+      confirmLabel: "削除する",
+      danger: true,
+    });
+    if (!ok) return;
     setBusy(true);
     try {
       await raw(`api/sessions/${encodeURIComponent(name)}/stop`, { method: "POST" }).catch(() => {});
