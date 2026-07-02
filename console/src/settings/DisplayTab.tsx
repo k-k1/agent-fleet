@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import {
   useSettings,
   setSetting,
@@ -124,7 +125,7 @@ export default function DisplayTab() {
   );
 }
 
-function Row({ label, children }) {
+function Row({ label, children }: { label: ReactNode; children?: ReactNode }) {
   return (
     <div className="ds-row">
       <span className="ds-label">{label}</span>
@@ -135,7 +136,17 @@ function Row({ label, children }) {
 
 // FontSelect lays the choices out horizontally, each rendered in its own font so
 // the user can compare them at a glance.
-function FontSelect({ value, onChange, fonts = CODE_FONTS, stack = fontStack }) {
+function FontSelect({
+  value,
+  onChange,
+  fonts = CODE_FONTS,
+  stack = fontStack,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  fonts?: string[];
+  stack?: (f: string) => string;
+}) {
   return (
     <div className="font-choices">
       {fonts.map((f) => (
@@ -153,9 +164,15 @@ function FontSelect({ value, onChange, fonts = CODE_FONTS, stack = fontStack }) 
   );
 }
 
+interface ChoiceProps {
+  value: unknown;
+  options: unknown[][];
+  onChange: (v: any) => void;
+}
+
 // ChipChoice lays the options out as wrapping chips (same as FontSelect) so a long
 // list doesn't overflow off-screen on a phone, unlike the single-row segmented Choice.
-function ChipChoice({ value, options, onChange }) {
+function ChipChoice({ value, options, onChange }: ChoiceProps) {
   return (
     <div className="font-choices">
       {options.map(([v, label]) => (
@@ -165,7 +182,7 @@ function ChipChoice({ value, options, onChange }) {
           className={"font-chip" + (v === value ? " active" : "")}
           onClick={() => onChange(v)}
         >
-          {label}
+          {label as ReactNode}
         </button>
       ))}
     </div>
@@ -173,7 +190,7 @@ function ChipChoice({ value, options, onChange }) {
 }
 
 // Choice is a small horizontal segmented control.
-function Choice({ value, options, onChange }) {
+function Choice({ value, options, onChange }: ChoiceProps) {
   return (
     <div className="seg choice-seg">
       {options.map(([v, label]) => (
@@ -183,7 +200,7 @@ function Choice({ value, options, onChange }) {
           className={"seg-btn" + (v === value ? " active" : "")}
           onClick={() => onChange(v)}
         >
-          {label}
+          {label as ReactNode}
         </button>
       ))}
     </div>
@@ -192,7 +209,7 @@ function Choice({ value, options, onChange }) {
 
 // SwatchChoice picks a surface (top bar / left pane) color. Each swatch previews the
 // color as it'll look in the active theme; "デフォルト" shows a slashed neutral chip.
-function SwatchChoice({ theme, value, onChange }) {
+function SwatchChoice({ theme, value, onChange }: { theme: string; value: string; onChange: (v: string) => void }) {
   return (
     <div className="swatch-row">
       {SURFACE_COLORS.map((c) => {
@@ -214,7 +231,7 @@ function SwatchChoice({ theme, value, onChange }) {
   );
 }
 
-function OnOff({ value, onChange }) {
+function OnOff({ value, onChange }: { value: boolean; onChange: (v: boolean) => void }) {
   return (
     <Choice
       value={!!value}
@@ -225,8 +242,18 @@ function OnOff({ value, onChange }) {
 }
 
 // Stepper keeps font size button-driven but allows any size in range.
-function Stepper({ value, onChange, min = 9, max = 28 }) {
-  const set = (n) => onChange(Math.min(max, Math.max(min, n)));
+function Stepper({
+  value,
+  onChange,
+  min = 9,
+  max = 28,
+}: {
+  value: number;
+  onChange: (v: number) => void;
+  min?: number;
+  max?: number;
+}) {
+  const set = (n: number) => onChange(Math.min(max, Math.max(min, n)));
   return (
     <div className="stepper">
       <button type="button" onClick={() => set(value - 1)} disabled={value <= min} aria-label="小さく">

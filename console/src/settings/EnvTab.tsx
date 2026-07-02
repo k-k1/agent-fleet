@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import type { ReactNode } from "react";
 import { api, apiJSON, getTenant } from "../api.js";
 import { useApp } from "../state.jsx";
 import ConfirmDialog from "../components/ConfirmDialog.jsx";
@@ -12,11 +13,11 @@ import Icon from "../components/Icon.jsx";
 export default function EnvTab() {
   const { wsState } = useApp();
   const running = wsState === "running";
-  const [d, setD] = useState(null);
+  const [d, setD] = useState<any>(null);
   const [err, setErr] = useState("");
   // CP-owned per-workspace settings: the agent CLI self-update opt-in + its operator
   // gate. DB-backed, so it loads/saves whether the workspace is running or stopped.
-  const [au, setAu] = useState(null); // { agentUpdate, allowAgentUpdate } | null
+  const [au, setAu] = useState<any>(null); // { agentUpdate, allowAgentUpdate } | null
 
   // Cache the last good toolchains payload per tenant, so while the workspace is
   // stopped (Agent unreachable) we can still SHOW the form — disabled — from the
@@ -54,13 +55,13 @@ export default function EnvTab() {
       .catch(() => setAu({ agentUpdate: false, allowAgentUpdate: false }));
   }, []);
 
-  const setAgentUpdate = async (on) => {
+  const setAgentUpdate = async (on: boolean) => {
     const res = await apiJSON("api/env/ws-settings", "PUT", { agentUpdate: on });
     if (res && !res.error) setAu(res);
     else alert("保存に失敗しました");
   };
 
-  const update = async (patch) => {
+  const update = async (patch: Record<string, string>) => {
     const next = {
       node: d.node || "",
       java: d.java || "",
@@ -90,11 +91,11 @@ export default function EnvTab() {
   );
 }
 
-function Toolchains({ d, update, running }) {
-  const nodeOpts = d.node_options || ["system"];
-  const javaOpts = d.java_available || [];
+function Toolchains({ d, update, running }: { d: any; update: (patch: Record<string, string>) => void; running: boolean }) {
+  const nodeOpts: string[] = d.node_options || ["system"];
+  const javaOpts: string[] = d.java_available || [];
   const tz = d.timezone || "Asia/Tokyo";
-  const tzOpts = d.tz_options && d.tz_options.length ? d.tz_options : [tz];
+  const tzOpts: string[] = d.tz_options && d.tz_options.length ? d.tz_options : [tz];
   const tzList = tzOpts.includes(tz) ? tzOpts : [tz, ...tzOpts];
 
   return (
@@ -147,7 +148,7 @@ function Toolchains({ d, update, running }) {
 // in the CP DB), so — unlike the toolchains above — it can be toggled even while the
 // workspace is STOPPED; the value is applied at the next container start. Shown only
 // when the operator allows it (tenant policy).
-function AgentUpdateRow({ au, onChange }) {
+function AgentUpdateRow({ au, onChange }: { au: any; onChange: (on: boolean) => void }) {
   return (
     <section className="ds-group">
       <h4 className="ds-title">エージェント CLI の更新</h4>
@@ -214,7 +215,7 @@ function WorkspaceDangerZone() {
   );
 }
 
-function Row({ label, children }) {
+function Row({ label, children }: { label: ReactNode; children?: ReactNode }) {
   return (
     <div className="ds-row">
       <span className="ds-label">{label}</span>

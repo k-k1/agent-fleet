@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import type { ChangeEvent, ReactNode } from "react";
 import { api, raw, rawJSON } from "../api.js";
 
 // SsmTab manages the member's own AWS SSM login config (docs/history/p3-ssm-session.md)
@@ -13,11 +14,11 @@ import { api, raw, rawJSON } from "../api.js";
 
 // postJSON POSTs/PUTs and surfaces failures loudly (a stale CP without the routes
 // returns 404 non-JSON, which would otherwise be swallowed). Returns true on success.
-async function postJSON(path, method, body) {
+async function postJSON(path: string, method: string, body: unknown): Promise<boolean> {
   let res;
   try {
     res = await rawJSON(path, method, body);
-  } catch (e) {
+  } catch (e: any) {
     alert("通信に失敗しました: " + (e?.message || e));
     return false;
   }
@@ -35,7 +36,7 @@ async function postJSON(path, method, body) {
 
 // Meta renders one labeled key/value row inside a list card. Empty values show "—".
 // `wide` spans the full grid width (for long values like a start URL).
-function Meta({ k, v, mono = true, wide = false }) {
+function Meta({ k, v, mono = true, wide = false }: { k: ReactNode; v?: ReactNode; mono?: boolean; wide?: boolean }) {
   return (
     <div className={"ssm-meta-row" + (wide ? " wide" : "")}>
       <span className="ssm-meta-k">{k}</span>
@@ -45,8 +46,8 @@ function Meta({ k, v, mono = true, wide = false }) {
 }
 
 export default function SsmTab() {
-  const [profiles, setProfiles] = useState(null);
-  const [hosts, setHosts] = useState(null);
+  const [profiles, setProfiles] = useState<any[] | null>(null);
+  const [hosts, setHosts] = useState<any[] | null>(null);
 
   const reload = useCallback(() => {
     api("api/ssm/profiles").then((d) => setProfiles(Array.isArray(d) ? d : [])).catch(() => setProfiles([]));
@@ -68,12 +69,14 @@ export default function SsmTab() {
 
 // --- profiles (common) ----------------------------------------------------------
 
-const emptyProfile = { label: "", startUrl: "", ssoRegion: "", accountId: "", roleName: "", region: "" };
+const emptyProfile: Record<string, string> = { label: "", startUrl: "", ssoRegion: "", accountId: "", roleName: "", region: "" };
 
-function ProfileSection({ profiles, reload }) {
-  const [f, setF] = useState(emptyProfile);
+type FieldEvent = ChangeEvent<HTMLInputElement | HTMLSelectElement>;
+
+function ProfileSection({ profiles, reload }: { profiles: any[] | null; reload: () => void }) {
+  const [f, setF] = useState<Record<string, string>>(emptyProfile);
   const [busy, setBusy] = useState(false);
-  const set = (k) => (e) => setF((p) => ({ ...p, [k]: e.target.value }));
+  const set = (k: string) => (e: FieldEvent) => setF((p) => ({ ...p, [k]: e.target.value }));
 
   const add = async () => {
     if (!f.label.trim() || !/^https:\/\//.test(f.startUrl.trim()) || !f.ssoRegion.trim()) return;
@@ -94,7 +97,7 @@ function ProfileSection({ profiles, reload }) {
       setBusy(false);
     }
   };
-  const remove = async (id) => {
+  const remove = async (id: string) => {
     if (!confirm("このプロファイルを削除しますか？（参照中のホストはログインできなくなります）")) return;
     await raw(`api/ssm/profiles/${encodeURIComponent(id)}`, { method: "DELETE" });
     reload();
@@ -150,13 +153,13 @@ function ProfileSection({ profiles, reload }) {
 
 // --- hosts (per-instance) -------------------------------------------------------
 
-const emptyHost = { alias: "", profileId: "", instanceId: "", documentName: "", region: "" };
+const emptyHost: Record<string, string> = { alias: "", profileId: "", instanceId: "", documentName: "", region: "" };
 
-function HostSection({ hosts, profiles, reload }) {
-  const [f, setF] = useState(emptyHost);
+function HostSection({ hosts, profiles, reload }: { hosts: any[] | null; profiles: any[] | null; reload: () => void }) {
+  const [f, setF] = useState<Record<string, string>>(emptyHost);
   const [busy, setBusy] = useState(false);
-  const set = (k) => (e) => setF((p) => ({ ...p, [k]: e.target.value }));
-  const profileLabel = (id) => (profiles || []).find((p) => p.id === id)?.label || "?";
+  const set = (k: string) => (e: FieldEvent) => setF((p) => ({ ...p, [k]: e.target.value }));
+  const profileLabel = (id: string) => (profiles || []).find((p) => p.id === id)?.label || "?";
   const noProfiles = profiles !== null && profiles.length === 0;
 
   const add = async () => {
@@ -177,7 +180,7 @@ function HostSection({ hosts, profiles, reload }) {
       setBusy(false);
     }
   };
-  const remove = async (id) => {
+  const remove = async (id: string) => {
     if (!confirm("このホストを削除しますか？")) return;
     await raw(`api/ssm/hosts/${encodeURIComponent(id)}`, { method: "DELETE" });
     reload();

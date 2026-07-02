@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import type { ReactNode } from "react";
 import { api, apiJSON, ocwebURL } from "../api.js";
 import { useApp } from "../state.jsx";
 
@@ -11,8 +12,10 @@ export default function AgentsTab() {
   // opencode web state is shared with the WS bar via the app context, so toggling
   // here updates the bar's "open" entry immediately (and vice-versa).
   const { ocweb, setOcweb, refreshOcweb } = useApp();
-  const [claude, setClaude] = useState(null);
-  const [agents, setAgents] = useState(null);
+  // API-driven config blobs; shapes are per-endpoint so kept loose. agents is
+  // tri-state: null = loading, false = endpoint missing (old image), object = ready.
+  const [claude, setClaude] = useState<any>(null);
+  const [agents, setAgents] = useState<any>(null);
   const [err, setErr] = useState("");
 
   const load = useCallback(() => {
@@ -35,7 +38,7 @@ export default function AgentsTab() {
   }, [refreshOcweb]);
   useEffect(load, [load]);
 
-  const updateClaude = async (patch) => {
+  const updateClaude = async (patch: unknown) => {
     const d = await apiJSON("api/claude/settings", "PUT", patch);
     if (d && d.error) {
       alert("保存に失敗: " + (d.error.message || ""));
@@ -43,7 +46,7 @@ export default function AgentsTab() {
     }
     setClaude(d);
   };
-  const updateAgents = async (patch) => {
+  const updateAgents = async (patch: unknown) => {
     const d = await apiJSON("api/agents/rtk", "PUT", patch);
     if (d && d.error) {
       alert("保存に失敗: " + (d.error.message || ""));
@@ -51,7 +54,7 @@ export default function AgentsTab() {
     }
     setAgents(d);
   };
-  const updateOcweb = async (patch) => {
+  const updateOcweb = async (patch: unknown) => {
     const d = await apiJSON("api/agents/opencode-web", "PUT", patch);
     if (d && d.error) {
       alert("保存に失敗: " + (d.error.message || ""));
@@ -131,7 +134,14 @@ export default function AgentsTab() {
   );
 }
 
-function RTKRow({ available, value, onChange, note }) {
+interface RTKRowProps {
+  available?: boolean;
+  value?: boolean;
+  onChange: (v: boolean) => void;
+  note?: string;
+}
+
+function RTKRow({ available, value, onChange, note }: RTKRowProps) {
   return (
     <div className="ds-row ds-row-wrap">
       <span className="ds-label">RTK（トークン節約）</span>
@@ -145,7 +155,7 @@ function RTKRow({ available, value, onChange, note }) {
   );
 }
 
-function Row({ label, children }) {
+function Row({ label, children }: { label: ReactNode; children?: ReactNode }) {
   return (
     <div className="ds-row">
       <span className="ds-label">{label}</span>
@@ -154,13 +164,14 @@ function Row({ label, children }) {
   );
 }
 
-function OnOff({ value, onChange }) {
+function OnOff({ value, onChange }: { value?: boolean; onChange: (v: boolean) => void }) {
+  const opts: [boolean, string][] = [
+    [true, "オン"],
+    [false, "オフ"],
+  ];
   return (
     <div className="seg choice-seg">
-      {[
-        [true, "オン"],
-        [false, "オフ"],
-      ].map(([v, label]) => (
+      {opts.map(([v, label]) => (
         <button
           key={String(v)}
           type="button"
