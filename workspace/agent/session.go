@@ -390,23 +390,28 @@ func handleListSessions(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"sessions": sessions})
 }
 
-// paneKind sniffs a session's kind from its tmux pane start command, used for
-// orphan sessions that have no meta. Best-effort; defaults to shell.
+// paneKind sniffs a session's kind from its tmux pane start command. This is a LAST
+// RESORT, used ONLY for orphan sessions that have no meta (handleListSessions); a
+// session with a meta always takes the recorded meta.Kind and never reaches here.
+// The match is a fragile substring test: a claude/shell pane that merely RAN
+// `opencode`/`codex` as a command (or a wrapper whose path contains one of these
+// words) would misclassify. Kept because an orphan has no other signal, and the only
+// cost is a wrong badge on a session that already lost its meta. Defaults to shell.
 func paneKind(name string) string {
 	out, err := exec.Command("tmux", "list-panes", "-t", exactT(tmuxName(name)), "-F", "#{pane_start_command}").Output()
 	if err != nil {
-		return "shell"
+		return kindShell
 	}
 	s := string(out)
 	switch {
 	case strings.Contains(s, "opencode"):
-		return "opencode"
+		return kindOpencode
 	case strings.Contains(s, "codex"):
-		return "codex"
+		return kindCodex
 	case strings.Contains(s, "claude"):
-		return "claude"
+		return kindClaude
 	default:
-		return "shell"
+		return kindShell
 	}
 }
 
@@ -538,7 +543,7 @@ func handleForkSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	meta := sessionMeta{
-		Name: forkName, Dir: src.Dir, Model: src.Model, Kind: "claude",
+		Name: forkName, Dir: src.Dir, Model: src.Model, Kind: kindClaude,
 		Label: sessionLabel(src.Dir), Repo: filepath.Base(src.Dir),
 		CreatedAt: time.Now().Format(time.RFC3339), ForkFrom: srcSid,
 	}
