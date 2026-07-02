@@ -24,6 +24,8 @@ export interface Session {
   label?: string; // claude --name (with an "[AF] " tag); absent for shell
   repo?: string | null; // working-copy folder the (agent) session runs in
   path?: string; // absolute working dir
+  dir?: string; // working dir shown in the row tooltip
+  remoteUrl?: string; // clone URL (agent sessions with a repo)
   state?: SessionState | string; // live hook/plugin state ("" = idle)
   alive?: boolean; // tmux session is running
   resumable?: boolean; // a stopped session whose dir still exists (false = archive only)

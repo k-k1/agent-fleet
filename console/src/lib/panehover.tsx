@@ -14,7 +14,7 @@ import type { ReactNode } from "react";
 
 export interface PaneHover {
   session: string | null;
-  paneId: string | null;
+  paneId?: string | null;
 }
 
 interface PaneHoverCtx {

@@ -11,8 +11,9 @@ import { displayName, stateInfo } from "../../lib/sessionview.js";
 import { agentOf } from "../../agents/registry.ts";
 import { sessionPanes, ordClass, paneCount } from "../../lib/panebadge.js";
 import { usePaneHover } from "../../lib/panehover.jsx";
+import type { Session } from "../../types/session.ts";
 
-const notify = (title, body) => {
+const notify = (title: string, body: string) => {
   if (!("Notification" in window) || Notification.permission !== "granted") return;
   try {
     new Notification(title, { body });
@@ -39,7 +40,10 @@ export default function SessionsSection() {
   // badge, the "open in a pane" mark, and the click-to-focus target. Dormant when
   // there's a single pane — nothing to disambiguate (the pane shows no chip either).
   const multi = paneCount(layout) > 1;
-  const openBy = useMemo(() => (multi ? sessionPanes(layout) : new Map()), [multi, layout]);
+  const openBy = useMemo(
+    () => (multi ? sessionPanes(layout) : new Map<string, { ordinal: number; id: string }[]>()),
+    [multi, layout],
+  );
 
   // Open the New Session dialog when something elsewhere requests it (the onboarding
   // card). Skip the initial 0 so it doesn't pop on load.
@@ -47,15 +51,15 @@ export default function SessionsSection() {
     if (newSessionTick > 0) setShowModal(true);
   }, [newSessionTick]);
   const [showArchived, setShowArchived] = useState(false);
-  const [resumeSsm, setResumeSsm] = useState(null); // { name, force } — SSM resume via login modal
-  const menuRef = useRef(null); // wrap of the currently-open ⋯ menu (outside-click test)
-  const [menuFor, setMenuFor] = useState(null); // session name whose ⋯ menu is open
-  const prevStates = useRef({}); // name → last seen claude state, for arrival notifications
+  const [resumeSsm, setResumeSsm] = useState<{ name: string; force: boolean } | null>(null); // SSM resume via login modal
+  const menuRef = useRef<HTMLDivElement>(null); // wrap of the currently-open ⋯ menu (outside-click test)
+  const [menuFor, setMenuFor] = useState<string | null>(null); // session name whose ⋯ menu is open
+  const prevStates = useRef<Record<string, string | undefined>>({}); // name → last seen claude state
 
   // Archive: hide the session from the list but KEEP it (restorable via the archive
   // modal). Live sessions are stopped first. Backed by /archive (sets a flag; meta +
   // jsonl kept), as opposed to deletion which forgets the meta.
-  const archive = async (s) => {
+  const archive = async (s: Session) => {
     const res = await raw(`api/sessions/${encodeURIComponent(s.name)}/archive`, { method: "POST" });
     if (!res.ok) {
       alert("アーカイブに失敗しました");
@@ -87,7 +91,7 @@ export default function SessionsSection() {
   // the meta, so the row stays listed and can be resumed later (≠ archive, which
   // hides it; ≠ recreate, which discards the conversation). The button counterpart
   // of quitting in the terminal. Frees a concurrency quota slot.
-  const halt = async (name) => {
+  const halt = async (name: string) => {
     const res = await raw(`api/sessions/${encodeURIComponent(name)}/halt`, { method: "POST" });
     if (!res.ok) {
       alert("停止に失敗しました");
@@ -102,7 +106,7 @@ export default function SessionsSection() {
   // /recreate kills tmux, clears state, and relaunches; surface its real error so
   // a genuine failure (e.g. the working dir is gone) is visible instead of being
   // masked as a generic message and leaving the row "stopped".
-  const recreate = async (name) => {
+  const recreate = async (name: string) => {
     if (!confirm(`セッション "${name}" の会話を破棄して新規に開始しますか？\n（元の会話は復元できません）`)) return;
     const res = await raw(`api/sessions/${encodeURIComponent(name)}/recreate`, { method: "POST" });
     if (!res.ok) {
@@ -134,7 +138,7 @@ export default function SessionsSection() {
   // shared `sessions` list (polled in state.jsx), comparing each poll to the last.
   useEffect(() => {
     const prev = prevStates.current;
-    const seen = {};
+    const seen: Record<string, boolean> = {};
     for (const s of sessions) {
       seen[s.name] = true;
       // shell (and any kind with no working/idle state model) never transitions,
@@ -160,7 +164,7 @@ export default function SessionsSection() {
   // lift to z-index:10, and the later REPOS section would paint over this menu.
   useEffect(() => {
     if (!menuFor) return;
-    const close = (e) => { if (!menuRef.current?.contains(e.target)) setMenuFor(null); };
+    const close = (e: MouseEvent) => { if (!menuRef.current?.contains(e.target as Node)) setMenuFor(null); };
     document.addEventListener("mousedown", close);
     return () => document.removeEventListener("mousedown", close);
   }, [menuFor]);
@@ -397,7 +401,7 @@ export default function SessionsSection() {
       {showModal && (
         <NewSessionModal
           onClose={() => setShowModal(false)}
-          onCreated={(name, cloned, repo) => {
+          onCreated={(name: string, cloned: boolean, repo: string) => {
             bumpSessions();
             if (cloned) {
               bumpRepos();
