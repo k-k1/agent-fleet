@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { MouseEvent as RMouseEvent, DragEvent as RDragEvent, KeyboardEvent as RKeyboardEvent } from "react";
 import { useApp } from "../../state.jsx";
 import { api, uploadFiles, downloadURL, fsMkdir, fsNewFile, fsRename, fsDelete } from "../../api.js";
 import { dirName } from "../../lib/filemeta.js";
@@ -6,14 +7,40 @@ import Section from "../Section.jsx";
 import Icon from "../Icon.jsx";
 import FileIcon, { DirIcon } from "../FileIcon.jsx";
 
-const joinPath = (d, n) => (d ? d + "/" + n : n);
-const parentOf = (p) => {
+// A server directory entry (api/fs/tree). Visible tree rows are flattened into Row.
+interface Entry {
+  name: string;
+  type: string;
+}
+interface Row {
+  path: string;
+  name: string;
+  type: string;
+  depth: number;
+  segPaths: string[];
+}
+// A git change in "changes" view (api/fs/changes), grouped by repo.
+interface FsChange {
+  path: string;
+  repo: string;
+  untracked?: boolean;
+  index?: string;
+  worktree?: string;
+}
+interface Menu {
+  x: number;
+  y: number;
+  row: Row | null;
+}
+
+const joinPath = (d: string, n: string) => (d ? d + "/" + n : n);
+const parentOf = (p: string) => {
   const i = p.lastIndexOf("/");
   return i < 0 ? "" : p.slice(0, i);
 };
 
 // git status (porcelain XY) -> a one-char badge + color class for the changes list.
-function changeBadge(c) {
+function changeBadge(c: FsChange) {
   if (c.untracked) return { ch: "U", cls: "st-add", label: "未追跡" };
   const code = c.worktree !== " " && c.worktree !== "" ? c.worktree : c.index;
   if (code === "D") return { ch: "D", cls: "st-del", label: "削除" };
@@ -25,10 +52,10 @@ function changeBadge(c) {
 // A directory is a "passthrough" link in a compact chain when its sole entry is one
 // subdirectory (no files) — these get folded into one row (a/b/c) so deep, single-
 // child paths don't waste vertical space, and expanding one descends the whole chain.
-const soleChildDir = (entries) =>
+const soleChildDir = (entries: Entry[] | undefined): Entry | null =>
   entries && entries.length === 1 && entries[0].type === "dir" ? entries[0] : null;
 
-const fsList = (path) =>
+const fsList = (path: string) =>
   api(`api/fs/tree?path=${encodeURIComponent(path)}`).catch(() => ({ entries: [] }));
 
 // Files: a lazily-expanded, read-only tree of the workspace home (denylist applied
@@ -41,9 +68,9 @@ export default function FilesSection() {
 
   // Middle-click opens a file in a freshly split pane (like the Sessions list).
   // Suppress the mousedown default so the browser doesn't start autoscroll.
-  const onAuxOpen = (path) => ({
-    onMouseDown: (e) => e.button === 1 && e.preventDefault(),
-    onAuxClick: (e) => {
+  const onAuxOpen = (path: string) => ({
+    onMouseDown: (e: RMouseEvent) => e.button === 1 && e.preventDefault(),
+    onAuxClick: (e: RMouseEvent) => {
       if (e.button === 1) {
         e.preventDefault();
         setSelected(path);
@@ -51,21 +78,21 @@ export default function FilesSection() {
       }
     },
   });
-  const [root, setRoot] = useState(null);
-  const [open, setOpen] = useState(() => new Set()); // expanded dir paths
-  const [cache, setCache] = useState({}); // dir path -> entries
-  const [selected, setSelected] = useState(null); // path
+  const [root, setRoot] = useState<Entry[] | null>(null);
+  const [open, setOpen] = useState<Set<string>>(() => new Set()); // expanded dir paths
+  const [cache, setCache] = useState<Record<string, Entry[]>>({}); // dir path -> entries
+  const [selected, setSelected] = useState<string | null>(null); // path
   const [reloadKey, setReloadKey] = useState(0);
   const [view, setView] = useState(() => localStorage.getItem("af-files-view") || "tree"); // tree | changes
-  const [changes, setChanges] = useState(null); // changes-mode: aggregated git status
-  const [dropTarget, setDropTarget] = useState(null); // dir path being hovered with a drag ("" = root)
+  const [changes, setChanges] = useState<FsChange[] | null>(null); // changes-mode: aggregated git status
+  const [dropTarget, setDropTarget] = useState<string | null>(null); // dir path being hovered with a drag ("" = root)
   const [uploading, setUploading] = useState(false);
-  const opsRef = useRef(null); // ＋ menu wrap (outside-click test)
+  const opsRef = useRef<HTMLDivElement>(null); // ＋ menu wrap (outside-click test)
   const [opsOpen, setOpsOpen] = useState(false); // ＋ (new / upload) header dropdown
-  const [menu, setMenu] = useState(null); // context menu: { x, y, row|null }
-  const treeRef = useRef(null);
-  const selRef = useRef(null);
-  const fileInputRef = useRef(null);
+  const [menu, setMenu] = useState<Menu | null>(null); // context menu: { x, y, row|null }
+  const treeRef = useRef<HTMLUListElement>(null);
+  const selRef = useRef<HTMLLIElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   // Mirror `open` into a ref so the reload effect can refetch the expanded dirs
   // without taking `open` as a dependency (which would refetch on every toggle).
   const openRef = useRef(open);
@@ -73,7 +100,7 @@ export default function FilesSection() {
     openRef.current = open;
   }, [open]);
 
-  const setViewPersist = useCallback((v) => {
+  const setViewPersist = useCallback((v: string) => {
     setView(v);
     localStorage.setItem("af-files-view", v);
   }, []);
@@ -94,7 +121,7 @@ export default function FilesSection() {
 
   // Replace one directory's cached entries from the server (after an upload), and
   // make sure it's expanded so the new file is visible.
-  const refreshDir = useCallback(async (dir) => {
+  const refreshDir = useCallback(async (dir: string) => {
     const d = await fsList(dir);
     const entries = d.entries || [];
     if (dir === "") setRoot(entries);
@@ -107,12 +134,12 @@ export default function FilesSection() {
   // Upload dropped/picked files into `dir`. On a name collision the server
   // returns 409 + conflicts; confirm once, then resend with overwrite.
   const doUpload = useCallback(
-    async (dir, fileList) => {
+    async (dir: string, fileList: FileList | null) => {
       const files = Array.from(fileList || []).filter((f) => f && f.size >= 0 && f.name);
       if (!files.length) return;
       setUploading(true);
       try {
-        let res = await uploadFiles(dir, files);
+        let res: any = await uploadFiles(dir, files);
         if (res.status === 409 && res.conflicts && res.conflicts.length) {
           if (window.confirm(`${res.conflicts.join(", ")} は既に存在します。上書きしますか？`)) {
             res = await uploadFiles(dir, files, { overwrite: true });
@@ -131,7 +158,7 @@ export default function FilesSection() {
 
   // Drop onto a dir row uploads into it; onto the empty tree uploads into root.
   const onDropTo = useCallback(
-    (dir) => (e) => {
+    (dir: string) => (e: RDragEvent) => {
       e.preventDefault();
       e.stopPropagation();
       setDropTarget(null);
@@ -142,7 +169,7 @@ export default function FilesSection() {
     [doUpload, running],
   );
   const onDragOverTo = useCallback(
-    (dir) => (e) => {
+    (dir: string) => (e: RDragEvent) => {
       if (e.dataTransfer && Array.from(e.dataTransfer.types || []).includes("Files")) {
         // preventDefault even when stopped so the browser doesn't navigate to the
         // dropped file; just deny the drop and skip the upload affordance.
@@ -165,18 +192,18 @@ export default function FilesSection() {
   // lifting several .pane-section into z-index:10, which stack-overlap.
   useEffect(() => {
     if (!opsOpen) return;
-    const close = (e) => { if (!opsRef.current?.contains(e.target)) setOpsOpen(false); };
+    const close = (e: MouseEvent) => { if (!opsRef.current?.contains(e.target as Node)) setOpsOpen(false); };
     document.addEventListener("mousedown", close);
     return () => document.removeEventListener("mousedown", close);
   }, [opsOpen]);
 
   // --- file operations (new / rename / delete) ---
   const newFolder = useCallback(
-    async (parent) => {
+    async (parent: string) => {
       const name = window.prompt(`新しいフォルダ名（作成先: ${parent || "home"}）`, "");
       if (!name || !name.trim()) return;
       const p = joinPath(parent, name.trim());
-      const res = await fsMkdir(p);
+      const res: any = await fsMkdir(p);
       if (res.error) return window.alert("作成失敗: " + (res.error.message || res.error));
       await refreshDir(parent);
       setSelected(p);
@@ -184,11 +211,11 @@ export default function FilesSection() {
     [refreshDir],
   );
   const newFile = useCallback(
-    async (parent) => {
+    async (parent: string) => {
       const name = window.prompt(`新しいファイル名（作成先: ${parent || "home"}）`, "");
       if (!name || !name.trim()) return;
       const p = joinPath(parent, name.trim());
-      const res = await fsNewFile(p);
+      const res: any = await fsNewFile(p);
       if (res.error) return window.alert("作成失敗: " + (res.error.message || res.error));
       await refreshDir(parent);
       setSelected(p);
@@ -197,13 +224,13 @@ export default function FilesSection() {
     [refreshDir, showFile],
   );
   const renameRow = useCallback(
-    async (row) => {
+    async (row: Row) => {
       const base = row.path.split("/").pop();
       const name = window.prompt("名前を変更", base);
       if (!name || !name.trim() || name.trim() === base) return;
       const parent = parentOf(row.path);
       const to = joinPath(parent, name.trim());
-      const res = await fsRename(row.path, to);
+      const res: any = await fsRename(row.path, to);
       if (res.error) return window.alert("変更失敗: " + (res.error.message || res.error));
       await refreshDir(parent);
       setSelected(to);
@@ -211,9 +238,9 @@ export default function FilesSection() {
     [refreshDir],
   );
   const deleteRow = useCallback(
-    async (row) => {
+    async (row: Row) => {
       if (!window.confirm(`${row.path} を削除しますか？${row.type === "dir" ? "（中身ごと）" : ""}`)) return;
-      const res = await fsDelete(row.path);
+      const res: any = await fsDelete(row.path);
       if (res.error) return window.alert("削除失敗: " + (res.error.message || res.error));
       await refreshDir(parentOf(row.path));
       setSelected(parentOf(row.path) || null);
@@ -222,7 +249,7 @@ export default function FilesSection() {
   );
 
   // Context menu: open at the cursor; close on outside click / Escape / scroll.
-  const openMenu = useCallback((e, row) => {
+  const openMenu = useCallback((e: RMouseEvent, row: Row | null) => {
     e.preventDefault();
     e.stopPropagation();
     setMenu({ x: e.clientX, y: e.clientY, row });
@@ -230,7 +257,7 @@ export default function FilesSection() {
   useEffect(() => {
     if (!menu) return;
     const close = () => setMenu(null);
-    const onKey = (e) => e.key === "Escape" && close();
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && close();
     document.addEventListener("mousedown", close);
     document.addEventListener("keydown", onKey);
     window.addEventListener("blur", close);
@@ -241,7 +268,7 @@ export default function FilesSection() {
     };
   }, [menu]);
   // runMenu closes the menu, then runs the action.
-  const runMenu = (fn) => {
+  const runMenu = (fn: () => void) => {
     setMenu(null);
     fn();
   };
@@ -258,7 +285,7 @@ export default function FilesSection() {
       setRoot(rootEntries);
       // Refetch each open dir so the refresh reflects server state while keeping
       // it expanded. A dir that vanished returns no entries and just won't render.
-      const fresh = {};
+      const fresh: Record<string, Entry[]> = {};
       for (const p of Array.from(openRef.current)) {
         const d = await fsList(p);
         if (!alive) return;
@@ -278,13 +305,14 @@ export default function FilesSection() {
   // (so a newly-cloned dir shows even if the tree was stale) and opens the chain.
   useEffect(() => {
     if (!reveal || !reveal.path) return;
+    const revealPath: string = reveal.path;
     let alive = true;
     (async () => {
       const r = await fsList("");
       if (!alive) return;
       setRoot(r.entries || []);
-      const segs = reveal.path.split("/").filter(Boolean);
-      const opened = [];
+      const segs = revealPath.split("/").filter(Boolean);
+      const opened: string[] = [];
       let cur = "";
       for (const seg of segs) {
         cur = cur ? cur + "/" + seg : seg;
@@ -300,7 +328,7 @@ export default function FilesSection() {
         opened.forEach((p) => n.add(p));
         return n;
       });
-      setSelected(reveal.path);
+      setSelected(revealPath);
     })();
     return () => {
       alive = false;
@@ -318,9 +346,9 @@ export default function FilesSection() {
   // aren't cached yet) and an effect prefetches them (one level each; chains
   // cascade). The descend into children still only happens when the row is open.
   const { rows, need } = useMemo(() => {
-    const out = [];
-    const need = [];
-    const walk = (entries, parent, depth) => {
+    const out: Row[] = [];
+    const need: string[] = [];
+    const walk = (entries: Entry[], parent: string, depth: number) => {
       for (const e of entries) {
         const path = parent ? parent + "/" + e.name : e.name;
         if (e.type !== "dir") {
@@ -358,7 +386,7 @@ export default function FilesSection() {
   // fetchInto loads a directory's entries (cached) and returns them, so callers can
   // decide whether to keep descending through a single-child chain.
   const fetchInto = useCallback(
-    async (path) => {
+    async (path: string) => {
       if (cache[path]) return cache[path];
       const d = await fsList(path);
       const entries = d.entries || [];
@@ -372,8 +400,8 @@ export default function FilesSection() {
   // "empty" passthrough folders). Returns the deepest opened path so the caller can
   // keep the selection on the now-visible row.
   const expand = useCallback(
-    async (path) => {
-      const toOpen = [];
+    async (path: string) => {
+      const toOpen: string[] = [];
       let cur = path;
       for (let i = 0; i < 64; i++) {
         toOpen.push(cur);
@@ -391,7 +419,7 @@ export default function FilesSection() {
     },
     [fetchInto],
   );
-  const collapse = useCallback((row) => {
+  const collapse = useCallback((row: Row) => {
     setOpen((s) => {
       const n = new Set(s);
       for (const p of row.segPaths || [row.path]) n.delete(p);
@@ -400,7 +428,7 @@ export default function FilesSection() {
   }, []);
 
   const activate = useCallback(
-    (row) => {
+    (row: Row) => {
       if (row.type === "file") {
         setSelected(row.path);
         showFile(row.path);
@@ -419,12 +447,12 @@ export default function FilesSection() {
     selRef.current?.scrollIntoView({ block: "nearest" });
   }, [selected]);
 
-  const onKeyDown = (e) => {
+  const onKeyDown = (e: RKeyboardEvent) => {
     if (!rows.length) return;
     let idx = rows.findIndex((r) => r.path === selected);
     if (idx < 0) idx = 0;
     const cur = rows[idx];
-    const select = (i) => setSelected(rows[Math.min(rows.length - 1, Math.max(0, i))].path);
+    const select = (i: number) => setSelected(rows[Math.min(rows.length - 1, Math.max(0, i))].path);
 
     // Shift + ↑/↓ scrolls the viewer pane (right side) instead of moving selection.
     if (e.shiftKey && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
@@ -485,7 +513,7 @@ export default function FilesSection() {
   const collapseAll = useCallback(() => {
     setOpen(new Set());
     // keep selection visible by snapping it back to its top-level ancestor
-    setSelected((s) => (s ? s.split("/")[0] : s));
+    setSelected((s: string | null) => (s ? s.split("/")[0] : s));
   }, []);
   const hasOpen = open.size > 0;
   const selRow = rows.find((r) => r.path === selected);
@@ -579,10 +607,10 @@ export default function FilesSection() {
           {changes && changes.length === 0 && <li className="muted">変更なし</li>}
           {changes &&
             Object.entries(
-              changes.reduce((acc, c) => {
+              changes.reduce((acc: Record<string, FsChange[]>, c) => {
                 (acc[c.repo] = acc[c.repo] || []).push(c);
                 return acc;
-              }, {}),
+              }, {} as Record<string, FsChange[]>),
             ).map(([repo, list]) => (
               <li key={repo} className="chg-group">
                 <div className="chg-repo">{repo}</div>
@@ -605,7 +633,7 @@ export default function FilesSection() {
                       >
                         <span className={"fs-file" + (isActive ? " active" : "")}>
                           <span className={"chg-badge " + b.cls} title={b.label}>{b.ch}</span>
-                          <span className="fs-ic"><FileIcon name={rel.split("/").pop()} /></span>
+                          <span className="fs-ic"><FileIcon name={rel.split("/").pop() || ""} /></span>
                           {rel}
                         </span>
                       </li>
@@ -685,9 +713,9 @@ export default function FilesSection() {
               </a>
             </li>
           )}
-          {menu.row && <li onClick={() => runMenu(() => renameRow(menu.row))}>名前を変更</li>}
+          {menu.row && <li onClick={() => runMenu(() => renameRow(menu.row!))}>名前を変更</li>}
           {menu.row && (
-            <li className="danger" onClick={() => runMenu(() => deleteRow(menu.row))}>
+            <li className="danger" onClick={() => runMenu(() => deleteRow(menu.row!))}>
               削除
             </li>
           )}
