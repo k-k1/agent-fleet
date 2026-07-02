@@ -6,15 +6,24 @@ import Sparkline from "./Sparkline.jsx";
 
 const HIST_N = 60; // sparkline ring buffer: ~4 min at the 4s poll cadence
 
+interface WsHistPoint {
+  cpu: number | null;
+  mem: number | null;
+}
+interface HostHistPoint {
+  load: number | null;
+  mem: number;
+}
+
 // useWsResourceChips polls the workspace + host resource stats every 4s. It lives
 // here (not in the global state provider) on purpose: these values change every
 // tick, so holding them in the top-level context would re-render the whole app
 // (terminals included) every 4s and jank/flicker the cursor. Confined to WsBar,
 // only the small bar re-renders. Container stats are for everyone; host stats are
 // super_admin-only (the CP gates /api/admin/host server-side too).
-function useWsResourceChips(tenant, superAdmin) {
-  const [wsStats, setWsStats] = useState(null);
-  const [wsHist, setWsHist] = useState([]); // [{cpu, mem}]
+function useWsResourceChips(tenant: string | null, superAdmin: boolean) {
+  const [wsStats, setWsStats] = useState<any>(null);
+  const [wsHist, setWsHist] = useState<WsHistPoint[]>([]); // [{cpu, mem}]
   const wsKey = useRef("");
   useEffect(() => {
     let alive = true;
@@ -64,8 +73,8 @@ function useWsResourceChips(tenant, superAdmin) {
     };
   }, [tenant]);
 
-  const [hostStats, setHostStats] = useState(null);
-  const [hostHist, setHostHist] = useState([]); // [{load, mem}], load normalized to cores
+  const [hostStats, setHostStats] = useState<any>(null);
+  const [hostHist, setHostHist] = useState<HostHistPoint[]>([]); // [{load, mem}], load normalized to cores
   const hostKey = useRef("");
   useEffect(() => {
     if (!superAdmin) {
@@ -120,15 +129,15 @@ function useWsResourceChips(tenant, superAdmin) {
 // serves from cache, so it does NOT call the endpoint) to recover the chip if the
 // workspace started after mount / stay in sync across tabs. refresh() asks the Agent
 // to fetch the latest (?refresh=1). Kept in WsBar so it doesn't re-render the app.
-function useClaudeUsage(tenant) {
-  const [usage, setUsage] = useState(null);
+function useClaudeUsage(tenant: string | null) {
+  const [usage, setUsage] = useState<any>(null);
   const [refreshing, setRefreshing] = useState(false);
-  const load = useCallback((force) => {
+  const load = useCallback((force: boolean) => {
     if (document.hidden && !force) return;
     if (force) setRefreshing(true);
     api("api/claude/usage" + (force ? "?refresh=1" : ""))
       // Keep the last value on a transient error (don't blank); only replace on ok.
-      .then((d) => setUsage(d && d.ok ? d : (force ? null : (u) => u)))
+      .then((d) => setUsage(d && d.ok ? d : force ? null : (u: any) => u))
       .catch(() => {})
       .finally(() => force && setRefreshing(false));
   }, []);
@@ -147,7 +156,7 @@ function useClaudeUsage(tenant) {
 }
 
 // agoText: seconds since the usage was fetched → "N秒/分/時間前" (freshness label).
-function agoText(sec) {
+function agoText(sec: number | null | undefined) {
   if (sec == null) return "";
   if (sec >= 3600) return `${Math.round(sec / 3600)}時間前`;
   if (sec >= 60) return `${Math.round(sec / 60)}分前`;
@@ -156,7 +165,7 @@ function agoText(sec) {
 
 // UsageRow: one limit window in the usage dropdown — label + percent, a fill bar, and
 // the reset shown both relatively ("あとN時間") and as an absolute date-time.
-function UsageRow({ label, w }) {
+function UsageRow({ label, w }: { label: string; w: { pct: number; until: string; when: string } }) {
   const level = w.pct >= 95 ? " crit" : w.pct >= 80 ? " warn" : "";
   return (
     <div className="wu-row">
@@ -177,7 +186,7 @@ function UsageRow({ label, w }) {
 // untilText: a reset instant → a compact relative "あとN日/N時間/N分" (the weekday+time
 // the app shows is hard to read; relative is glanceable, the absolute date-time goes
 // in the tooltip). whenText: the absolute local "M/D HH:MM".
-function untilText(iso) {
+function untilText(iso: string) {
   const t = new Date(iso).getTime();
   if (isNaN(t)) return "";
   const min = Math.max(0, Math.round((t - Date.now()) / 60000));
@@ -185,10 +194,10 @@ function untilText(iso) {
   if (min >= 60) return `あと${Math.round(min / 60)}時間`;
   return `あと${min}分`;
 }
-function whenText(iso) {
+function whenText(iso: string) {
   const d = new Date(iso);
   if (isNaN(d.getTime())) return "";
-  const p = (n) => String(n).padStart(2, "0");
+  const p = (n: number) => String(n).padStart(2, "0");
   return `${d.getMonth() + 1}/${d.getDate()} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
@@ -200,7 +209,7 @@ function whenText(iso) {
 // overflow popover instead.
 // GiB with adaptive precision: 2 decimals under 10 (so 0.98 stays visible),
 // 1 above (so 26.9 stays compact).
-const fg = (b) => {
+const fg = (b: number) => {
   const v = b / 1073741824;
   return v < 10 ? v.toFixed(2) : v.toFixed(1);
 };
@@ -211,7 +220,7 @@ const fg = (b) => {
 // mount, recreated on Start); "stopped" only appears when a container exists but
 // exited on its own (crash / OOM). Both read as 停止 to the user; the raw state stays
 // in the tooltip. Transient states (set optimistically in state.jsx) end in "…".
-function wsLabel(s) {
+function wsLabel(s: string): string {
   switch (s) {
     case "running":
       return "稼働中";
@@ -244,7 +253,23 @@ function useIsMobile() {
 // One resource tile: label + trend sparkline + current value, tinted by level
 // (0 normal / 1 warn / 2 crit). Called as a plain function (not <Tile/>) so it's
 // just inline JSX, no extra component instance.
-function tile({ k, series, max, track, value, level, title }) {
+function tile({
+  k,
+  series,
+  max,
+  track,
+  value,
+  level,
+  title,
+}: {
+  k: string;
+  series: (number | null)[];
+  max?: number;
+  track?: boolean;
+  value: string;
+  level: number;
+  title: string;
+}) {
   return (
     <span className={"ws-graph" + (level === 2 ? " crit" : level === 1 ? " warn" : "")} title={title} key={k + title}>
       <span className="ws-graph-k">{k}</span>
@@ -263,9 +288,9 @@ export default function WsBar() {
   const [pvOpen, setPvOpen] = useState(false); // desktop port-preview popover
   const [moreOpen, setMoreOpen] = useState(false); // mobile overflow popover
   const [usageOpen, setUsageOpen] = useState(false); // Claude usage detail dropdown
-  const pvRef = useRef(null);
-  const moreRef = useRef(null);
-  const usageRef = useRef(null);
+  const pvRef = useRef<HTMLDivElement>(null);
+  const moreRef = useRef<HTMLDivElement>(null);
+  const usageRef = useRef<HTMLDivElement>(null);
   const running = wsState === "running";
   const busy = wsState.endsWith("…"); // starting… / stopping… / recreating… — toggle inert
 
@@ -288,12 +313,12 @@ export default function WsBar() {
   // Close the popovers on an outside click / Escape.
   useEffect(() => {
     if (!pvOpen && !moreOpen && !usageOpen) return;
-    const onDown = (e) => {
-      if (pvRef.current && !pvRef.current.contains(e.target)) setPvOpen(false);
-      if (moreRef.current && !moreRef.current.contains(e.target)) setMoreOpen(false);
-      if (usageRef.current && !usageRef.current.contains(e.target)) setUsageOpen(false);
+    const onDown = (e: MouseEvent) => {
+      if (pvRef.current && !pvRef.current.contains(e.target as Node)) setPvOpen(false);
+      if (moreRef.current && !moreRef.current.contains(e.target as Node)) setMoreOpen(false);
+      if (usageRef.current && !usageRef.current.contains(e.target as Node)) setUsageOpen(false);
     };
-    const onKey = (e) => {
+    const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         setPvOpen(false);
         setMoreOpen(false);
@@ -309,7 +334,7 @@ export default function WsBar() {
   }, [pvOpen, moreOpen, usageOpen]);
 
   // --- pieces shared between the inline (desktop) and folded (mobile) layouts ---
-  const lvl = (v, warn, crit) => (v == null ? 0 : v >= crit ? 2 : v >= warn ? 1 : 0);
+  const lvl = (v: number | null, warn: number, crit: number) => (v == null ? 0 : v >= crit ? 2 : v >= warn ? 1 : 0);
 
   // Container (own workspace): memory fill (vs quota) + CPU%. Shown to everyone.
   const hasWs = wsStats && wsStats.running && wsStats.mem_used != null;
@@ -375,7 +400,11 @@ export default function WsBar() {
   // weekly), each with a bar, its reset (relative + absolute date-time), and a reload
   // button. Unofficial/best-effort — absent (null) when the endpoint didn't answer, so
   // nothing shows.
-  const usageWin = (w) => ({ pct: Math.round(w.pct), until: untilText(w.resetsAt), when: whenText(w.resetsAt) });
+  const usageWin = (w: { pct: number; resetsAt: string }) => ({
+    pct: Math.round(w.pct),
+    until: untilText(w.resetsAt),
+    when: whenText(w.resetsAt),
+  });
   const uh = usage && usage.fiveHour && usageWin(usage.fiveHour);
   const uw = usage && usage.sevenDay && usageWin(usage.sevenDay);
   // Compact trigger shows BOTH windows as "5時間 / 週次" (e.g. "55% / 7%"); when only one
