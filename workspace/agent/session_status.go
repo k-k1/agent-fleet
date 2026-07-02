@@ -108,15 +108,21 @@ func runSessionStatusHook(args []string) {
 	b, _ := json.Marshal(sessionStatus{State: state, TS: time.Now().Format(time.RFC3339)})
 	_ = os.WriteFile(sessionStatusPath(sid), b, 0o600)
 	// Persist/clear the pending AskUserQuestion / ExitPlanMode / permission payloads
-	// alongside the status (each cleared whenever the session isn't in that state).
+	// alongside the status (each cleared whenever the session isn't in that state) —
+	// except that a permission prompt must NOT clear a pending question/plan. When
+	// AskUserQuestion (or ExitPlanMode) needs approval, its permission_prompt fires
+	// between that tool's PreToolUse (which captured the question) and its PostToolUse,
+	// overwriting state to "permission" with an empty questions payload. Clearing here
+	// would destroy the captured question, so the Console loses the options. The
+	// question/plan is instead cleared by its own lifecycle (PostToolUse→working, idle).
 	if state == "question" && len(questions) > 0 {
 		writePendingQuestion(sid, questions)
-	} else {
+	} else if state != "permission" {
 		removePendingQuestion(sid)
 	}
 	if state == "plan" && plan != "" {
 		writePendingPlan(sid, plan)
-	} else {
+	} else if state != "permission" {
 		removePendingPlan(sid)
 	}
 	if state == "permission" {

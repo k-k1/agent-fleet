@@ -159,19 +159,25 @@ func handleSessionMessages(w http.ResponseWriter, r *http.Request) {
 	// A currently-pending AskUserQuestion / ExitPlanMode isn't in the transcript yet
 	// (claude writes the tool_use only after it's resolved), so surface it from the
 	// status hook's captured tool_input so the Console can render/answer/approve it.
-	if state == "question" {
+	if state == "permission" {
+		// A permission prompt takes priority while the session is blocked on allow/deny:
+		// surface only it, because answer keystrokes must reach the permission dialog, not
+		// a still-pending question underneath. The captured question/plan stays on disk and
+		// resurfaces (below) once the prompt is resolved and state leaves "permission".
+		if pm, ok := readPendingPermission(sid); ok {
+			resp["pendingPermission"] = pm
+		}
+	} else {
+		// Surface a pending AskUserQuestion / ExitPlanMode by the captured payload's
+		// presence rather than the live status. A permission prompt for the tool overwrites
+		// the status to "permission"→"working" while the question/plan is still pending, so
+		// gating on state == "question"/"plan" would drop it after approval; the payload is
+		// cleared by its own lifecycle (PostToolUse→working, idle) once actually resolved.
 		if pq, ok := readPendingQuestion(sid); ok {
 			resp["pendingQuestions"] = pq
 		}
-	}
-	if state == "plan" {
 		if pp, ok := readPendingPlan(sid); ok {
 			resp["pendingPlan"] = pp
-		}
-	}
-	if state == "permission" {
-		if pm, ok := readPendingPermission(sid); ok {
-			resp["pendingPermission"] = pm
 		}
 	}
 	if md := latestMode(lines); md != "" {
