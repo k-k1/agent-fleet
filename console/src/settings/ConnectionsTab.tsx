@@ -1,12 +1,20 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, apiJSON, raw } from "../api.js";
 import { useApp } from "../state.jsx";
+import type { ReactNode } from "react";
 import Icon from "../components/Icon.jsx";
+
+// Common props for a per-provider connection row: the provider's status (API shape,
+// kept as any) and a reload callback that refetches after connect/disconnect.
+interface RowProps {
+  st: any;
+  reload: () => void;
+}
 
 // CopyCode renders a one-time auth code that copies to the clipboard on click. The
 // code stays visible (so it can be read), but clicking saves the manual select —
 // used for the Codex / GitHub device-flow codes.
-function CopyCode({ children }) {
+function CopyCode({ children }: { children: ReactNode }) {
   const [copied, setCopied] = useState(false);
   const copy = async () => {
     try {
@@ -26,7 +34,7 @@ function CopyCode({ children }) {
 }
 
 // DisconnectButton: the per-provider "切断" action shown when a connection is live.
-function DisconnectButton({ onClick }) {
+function DisconnectButton({ onClick }: { onClick: () => void }) {
   return (
     <button className="ghost danger conn-disconnect" title="切断" onClick={onClick}>
       切断
@@ -40,7 +48,7 @@ function DisconnectButton({ onClick }) {
 // the container home by the Agent — the Console never holds them.
 export default function ConnectionsTab() {
   const { bumpConn } = useApp();
-  const [conns, setConns] = useState(null);
+  const [conns, setConns] = useState<any>(null);
   const reload = useCallback(() => {
     api("api/connections")
       .then(setConns)
@@ -70,13 +78,15 @@ export default function ConnectionsTab() {
 // just drives `codex login` and reports `codex login status`. Two paths: paste an
 // API key (codex login --with-api-key), or ChatGPT subscription via device-auth
 // (show a one-time code + URL, then poll until approved). Mirrors the Claude row.
-function CodexRow({ st, reload }) {
+function CodexRow({ st, reload }: RowProps) {
   const [mode, setMode] = useState("idle"); // idle | device | key
-  const [dev, setDev] = useState(null); // { user_code, url, flow_id, status }
+  const [dev, setDev] = useState<any>(null); // { user_code, url, flow_id, status }
   const [key, setKey] = useState("");
   const [busy, setBusy] = useState(false);
   const alive = useRef(true);
-  useEffect(() => () => (alive.current = false), []);
+  useEffect(() => () => {
+    alive.current = false;
+  }, []);
 
   const startDevice = async () => {
     setBusy(true);
@@ -92,7 +102,7 @@ function CodexRow({ st, reload }) {
       const tick = async () => {
         if (!alive.current) return;
         if (Date.now() > deadline) {
-          setDev((d) => ({ ...d, status: "期限切れ。やり直してください" }));
+          setDev((d: any) => ({ ...d, status: "期限切れ。やり直してください" }));
           return;
         }
         let p;
@@ -198,7 +208,7 @@ const OC_PRESETS = [
   ["custom", "カスタム…", ""],
 ];
 
-function OpencodeRow({ st, reload }) {
+function OpencodeRow({ st, reload }: RowProps) {
   const [preset, setPreset] = useState("go");
   const [customEnv, setCustomEnv] = useState("");
   const [key, setKey] = useState("");
@@ -223,7 +233,7 @@ function OpencodeRow({ st, reload }) {
       setBusy(false);
     }
   };
-  const remove = async (env) => {
+  const remove = async (env: string) => {
     await raw(`api/connections/opencode/${encodeURIComponent(env)}`, { method: "DELETE" });
     reload();
   };
@@ -245,7 +255,7 @@ function OpencodeRow({ st, reload }) {
       )}
       {envs.length > 0 && (
         <ul className="oc-keys">
-          {envs.map((e) => (
+          {envs.map((e: string) => (
             <li key={e}>
               <code>{e}</code>
               <button className="icon danger" title="削除" onClick={() => remove(e)}>
@@ -286,12 +296,12 @@ function OpencodeRow({ st, reload }) {
   );
 }
 
-function Dot({ on }) {
+function Dot({ on }: { on?: boolean }) {
   return <span className={"cdot " + (on ? "ok" : "off")}>●</span>;
 }
 
-function ClaudeRow({ st, reload }) {
-  const [flow, setFlow] = useState(null); // { url, flow_id }
+function ClaudeRow({ st, reload }: RowProps) {
+  const [flow, setFlow] = useState<any>(null); // { url, flow_id }
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -372,12 +382,14 @@ function ClaudeRow({ st, reload }) {
   );
 }
 
-function GithubRow({ st, reload }) {
+function GithubRow({ st, reload }: RowProps) {
   const [mode, setMode] = useState("idle"); // idle | oauth | token
-  const [oauth, setOauth] = useState(null); // { user_code, verification_uri, status }
+  const [oauth, setOauth] = useState<any>(null); // { user_code, verification_uri, status }
   const [token, setToken] = useState("");
   const alive = useRef(true);
-  useEffect(() => () => (alive.current = false), []);
+  useEffect(() => () => {
+    alive.current = false;
+  }, []);
 
   const startOAuth = async () => {
     const res = await api("api/connections/git/github/oauth/start", { method: "POST" });
@@ -394,7 +406,7 @@ function GithubRow({ st, reload }) {
     const tick = async () => {
       if (!alive.current) return;
       if (Date.now() > deadline) {
-        setOauth((o) => ({ ...o, status: "期限切れ。やり直してください" }));
+        setOauth((o: any) => ({ ...o, status: "期限切れ。やり直してください" }));
         return;
       }
       let p;
@@ -409,7 +421,7 @@ function GithubRow({ st, reload }) {
         return;
       }
       if (p && p.error) {
-        setOauth((o) => ({ ...o, status: "失敗: " + (p.error.message || p.error.code || "") }));
+        setOauth((o: any) => ({ ...o, status: "失敗: " + (p.error.message || p.error.code || "") }));
         return;
       }
       if (p && p.interval) iv = p.interval * 1000;
@@ -477,13 +489,15 @@ function GithubRow({ st, reload }) {
   );
 }
 
-function BitbucketRow({ st, reload }) {
+function BitbucketRow({ st, reload }: RowProps) {
   const [mode, setMode] = useState("idle"); // idle | oauth | token
   const [status, setStatus] = useState("");
   const [username, setUsername] = useState("");
   const [token, setToken] = useState("");
   const alive = useRef(true);
-  useEffect(() => () => (alive.current = false), []);
+  useEffect(() => () => {
+    alive.current = false;
+  }, []);
 
   const startOAuth = async () => {
     const res = await api("api/connections/git/bitbucket/oauth/start");
