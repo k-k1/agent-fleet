@@ -42,6 +42,7 @@ export default function MirrorView({ session, sessionMeta, active, mirror, onTog
   // "enter": Enter submits, Shift+Enter newlines.
   const modSend = settings.mirrorSend !== "enter";
   const [turns, setTurns] = useState([]); // {role:'user'|'assistant', text, ts, idx}
+  const [loaded, setLoaded] = useState(false); // false until the first transcript fetch returns
   const [status, setStatus] = useState("");
   const [alive, setAlive] = useState(!!sessionMeta?.alive); // live session ⇒ composer usable
   const [pending, setPending] = useState(null); // currently-awaiting AskUserQuestion
@@ -69,6 +70,7 @@ export default function MirrorView({ session, sessionMeta, active, mirror, onTog
     diagRef.current = "";
     statusRef.current = "";
     setTurns([]);
+    setLoaded(false);
     setStatus("");
     setAlive(!!sessionMeta?.alive);
     setPending(null);
@@ -148,6 +150,7 @@ export default function MirrorView({ session, sessionMeta, active, mirror, onTog
           setPendingPlan(typeof d.pendingPlan === "string" && d.pendingPlan ? d.pendingPlan : null);
           setPendingPerm(typeof d.pendingPermission === "string" && d.pendingPermission ? d.pendingPermission : null);
           setMode(typeof d.mode === "string" ? d.mode : "");
+          setLoaded(true); // first (and every) successful fetch: drop the loading spinner
         }
       } catch {
         /* transient; retry on the next tick */
@@ -384,10 +387,17 @@ export default function MirrorView({ session, sessionMeta, active, mirror, onTog
       )}
 
       <div className="mirror-body" ref={bodyRef}>
-        {groups.length === 0 && !pending && !pendingPlan && !pendingPerm ? (
+        {!loaded ? (
+          // First fetch in flight (opening a session, or switching ターミナル→チャット):
+          // show a spinner instead of flashing the "no conversation yet" text.
+          <div className="mirror-empty muted mirror-loading">
+            <Icon name="loading" spin /> 読み込み中…
+          </div>
+        ) : groups.length === 0 && !pending && !pendingPlan && !pendingPerm ? (
           <div className="mirror-empty muted">
-            まだ会話はありません。下の欄からプロンプトを送るか、ターミナルで対話すると、ここに
-            ターンごとの Markdown で表示されます。
+            {readOnly
+              ? "この会話に表示できる履歴はありません。"
+              : "まだ会話はありません。下の欄からプロンプトを送るか、ターミナルで対話すると、ここに ターンごとの Markdown で表示されます。"}
           </div>
         ) : (
           renderGroups(groups, sendPrompt, openPlan, openDiff)
