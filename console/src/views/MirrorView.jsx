@@ -35,7 +35,8 @@ function readDraft(key) {
 // user turns), just at the next poll.
 export default function MirrorView({ session, sessionMeta, active, mirror, onToggleMirror, readOnly = false, onResume }) {
   const settings = useSettings();
-  const { showDoc, showDiff, showTerminalSplit, bumpSessions } = useApp();
+  const { showDoc, showDiff, showTerminalSplit, bumpSessions, wsState } = useApp();
+  const running = wsState === "running"; // WS down → resume is inert, mirror the terminal 再開
   const [forking, setForking] = useState(false);
   // "mod-enter" (default): Ctrl/⌘+Enter submits, plain Enter newlines (phone-safe).
   // "enter": Enter submits, Shift+Enter newlines.
@@ -486,10 +487,18 @@ export default function MirrorView({ session, sessionMeta, active, mirror, onTog
         // button attaches (resumes) in the background while keeping this chat open —
         // the composer enables once the session is live (alive from the poll).
         <div className="mirror-compose mirror-compose-resume">
-          <button type="button" className="btn primary mirror-resume" onClick={() => onResume && onResume()}>
+          <button
+            type="button"
+            className="btn primary mirror-resume"
+            disabled={!running}
+            title={running ? "このセッションを再開" : "ワークスペース停止中"}
+            onClick={() => onResume && onResume()}
+          >
             <Icon name="play" /> 再開して続ける
           </button>
-          <span className="muted mirror-resume-hint">履歴を閲覧中（入力するには再開）</span>
+          <span className="muted mirror-resume-hint">
+            {running ? "履歴を閲覧中（入力するには再開）" : "履歴を閲覧中（ワークスペース停止中）"}
+          </span>
         </div>
       ) : !alive ? (
         // Attached but the session is still coming up (resume in flight).
