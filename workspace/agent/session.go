@@ -296,8 +296,13 @@ func buildSSMProgram(name string, s ssmMeta) (string, error) {
 	if s.Profile != "" {
 		fmt.Fprintf(&b, "export AWS_PROFILE=%s; ", shellQuote(s.Profile))
 	}
-	// aws sso login is a no-op message when the cached token is still valid.
-	b.WriteString("aws sts get-caller-identity >/dev/null 2>&1 || aws sso login --no-browser; ")
+	// aws sso login refreshes only when the cached token is missing/expired.
+	// --use-device-code forces the device-authorization grant (user_code + verify URL,
+	// polled) instead of the default authorization-code+PKCE flow, which spins up a
+	// local 127.0.0.1 listener and redirects the browser there — unreachable when the
+	// browser is on the user's machine and the CLI runs in this remote container.
+	// --no-browser prints the URL instead of trying to open a (nonexistent) browser.
+	b.WriteString("aws sts get-caller-identity >/dev/null 2>&1 || aws sso login --use-device-code --no-browser; ")
 	b.WriteString("exec aws ssm start-session")
 	fmt.Fprintf(&b, " --target %s", shellQuote(s.Target))
 	if s.Document != "" {

@@ -219,12 +219,13 @@ func main() {
 	// Structured transcript for the Console chat view (case-A).
 	mux.HandleFunc("GET /api/sessions/{name}/messages", cfg.proxyAgentREST)
 
-	// SSM login config (docs/history/p3-ssm-session.md) — per-member SSO sessions and
-	// SSM host bookmarks. No AWS secrets; the aws CLI in the workspace authenticates.
-	mux.HandleFunc("GET /api/ssm/sso-sessions", cfg.handleSSOSessionsList)
-	mux.HandleFunc("POST /api/ssm/sso-sessions", cfg.handleSSOSessionCreate)
-	mux.HandleFunc("PUT /api/ssm/sso-sessions/{id}", cfg.handleSSOSessionUpdate)
-	mux.HandleFunc("DELETE /api/ssm/sso-sessions/{id}", cfg.handleSSOSessionDelete)
+	// SSM login config (docs/history/p3-ssm-session.md) — per-member profiles (common
+	// auth bundle) + host bookmarks (per-instance). No AWS secrets; the aws CLI in the
+	// workspace authenticates via SSO.
+	mux.HandleFunc("GET /api/ssm/profiles", cfg.handleSSMProfilesList)
+	mux.HandleFunc("POST /api/ssm/profiles", cfg.handleSSMProfileCreate)
+	mux.HandleFunc("PUT /api/ssm/profiles/{id}", cfg.handleSSMProfileUpdate)
+	mux.HandleFunc("DELETE /api/ssm/profiles/{id}", cfg.handleSSMProfileDelete)
 	mux.HandleFunc("GET /api/ssm/hosts", cfg.handleSSMHostsList)
 	mux.HandleFunc("POST /api/ssm/hosts", cfg.handleSSMHostCreate)
 	mux.HandleFunc("PUT /api/ssm/hosts/{id}", cfg.handleSSMHostUpdate)

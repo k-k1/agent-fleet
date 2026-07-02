@@ -72,23 +72,25 @@ type UsageRow struct {
 	RunningSecs                                             int
 }
 
-// SSOSession is a per-member AWS IAM Identity Center (SSO) config used to obtain
-// short-lived credentials via `aws sso login` (docs/history/p3-ssm-session.md).
-// Personal scope (one membership). NON-SECRET: the CP never sees AWS credentials —
-// the in-container aws CLI logs in directly against StartURL and caches the token in
-// the workspace home. One SSO session usually covers many accounts/roles.
-type SSOSession struct {
-	ID, MembershipID, Label, StartURL, SSORegion, CreatedAt string
+// SSMProfile is the COMMON auth bundle shared by many hosts (docs/history/p3-ssm-
+// session.md): the AWS IAM Identity Center (SSO) portal + account/role/default region.
+// It maps to one ~/.aws named profile; `aws sso login` authenticates it. Personal
+// scope. NON-SECRET: the CP never sees AWS credentials — the in-container aws CLI logs
+// in directly against StartURL and caches the token in the workspace home.
+type SSMProfile struct {
+	ID, MembershipID, Label                  string
+	StartURL, SSORegion, AccountID, RoleName string
+	Region, CreatedAt                        string
 }
 
-// SSMHost is a per-member bookmark for one SSM Session Manager target: which
-// instance, which run-as SSM document, and which SSO profile (account/role/region)
-// to authenticate with. No secrets. Mirrors the operator's hand-rolled bash map
-// (host alias -> "document instance") as first-class WebUI records.
+// SSMHost is a per-member bookmark for one SSM Session Manager target: which instance,
+// which run-as SSM document, an optional region override, and which profile to
+// authenticate with. No secrets. Mirrors the operator's hand-rolled bash map (host
+// alias -> "document instance") as first-class WebUI records.
 type SSMHost struct {
-	ID, MembershipID, Alias, SSOSessionID string
-	AccountID, RoleName, Region           string
-	InstanceID, DocumentName, CreatedAt   string
+	ID, MembershipID, Alias, ProfileID  string
+	Region                              string // optional per-host override ("" = profile default)
+	InstanceID, DocumentName, CreatedAt string
 }
 
 // Workspace is one container per Membership (= identity × tenant).
@@ -174,12 +176,12 @@ type Store interface {
 
 	// SSM login config (docs/history/p3-ssm-session.md), personal scope. No AWS
 	// secrets stored. Mutations are scoped by membership so a member only touches
-	// their own rows.
-	ListSSOSessions(ctx context.Context, membershipID string) ([]SSOSession, error)
-	GetSSOSession(ctx context.Context, id string) (SSOSession, bool, error)
-	CreateSSOSession(ctx context.Context, s SSOSession) error
-	UpdateSSOSession(ctx context.Context, s SSOSession) error
-	DeleteSSOSession(ctx context.Context, id, membershipID string) error
+	// their own rows. A profile is the common auth bundle; a host references one.
+	ListSSMProfiles(ctx context.Context, membershipID string) ([]SSMProfile, error)
+	GetSSMProfile(ctx context.Context, id string) (SSMProfile, bool, error)
+	CreateSSMProfile(ctx context.Context, p SSMProfile) error
+	UpdateSSMProfile(ctx context.Context, p SSMProfile) error
+	DeleteSSMProfile(ctx context.Context, id, membershipID string) error
 	ListSSMHosts(ctx context.Context, membershipID string) ([]SSMHost, error)
 	GetSSMHost(ctx context.Context, id string) (SSMHost, bool, error)
 	CreateSSMHost(ctx context.Context, h SSMHost) error
