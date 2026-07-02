@@ -72,15 +72,14 @@ func (c config) proxyTerminal(w http.ResponseWriter, r *http.Request) {
 	session := r.URL.Query().Get("session")
 	c.mgr.conns.addConn(res.ws.ID, session)
 	defer c.mgr.conns.doneConn(res.ws.ID, session)
-	// P3-9 auto-start: opening a terminal is clear intent to work, so bring a cold
-	// (idle-stopped or manually stopped) workspace back up on demand before dialing
-	// its Agent — the counterpart to idle-stop's tier-2 docker stop. Blocks briefly
-	// while the container boots (Start waits for the Agent healthz).
-	if c.autostart {
-		if aerr := c.ensureWorkspaceStarted(r.Context(), res); aerr != nil {
-			writeAPIErr(w, aerr)
-			return
-		}
+	// No auto-start: opening a terminal must NOT boot a stopped workspace. Otherwise a
+	// mere session click (which opens /ws/pty) would silently revive the whole WS. A
+	// stopped workspace is brought up only by the explicit WORKSPACE Start control;
+	// here we fail fast so the terminal stays down and the user resumes on purpose.
+	if rt.State(r.Context()) != "running" {
+		writeAPIErr(w, &apiError{http.StatusConflict, "workspace_stopped",
+			"workspace is stopped — start it first"})
+		return
 	}
 	// Derive the Agent's ws:// URL from its (http) Endpoint so the reachability
 	// detail (host:port locally, Service Connect on ECS) stays behind the port.
