@@ -454,6 +454,20 @@ func (s *sqliteStore) CreateWorkspace(ctx context.Context, ws Workspace) error {
 	return err
 }
 
+func (s *sqliteStore) GetWorkspaceSettings(ctx context.Context, workspaceID string) (string, error) {
+	var v string
+	err := s.db.QueryRowContext(ctx, `SELECT COALESCE(settings,'') FROM workspace WHERE id=?`, workspaceID).Scan(&v)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return v, err
+}
+
+func (s *sqliteStore) SetWorkspaceSettings(ctx context.Context, workspaceID, settingsJSON string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE workspace SET settings=? WHERE id=?`, settingsJSON, workspaceID)
+	return err
+}
+
 func (s *sqliteStore) MaxAgentPort(ctx context.Context) (int, error) {
 	var max int
 	err := s.db.QueryRowContext(ctx,

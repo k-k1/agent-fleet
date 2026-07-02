@@ -114,6 +114,10 @@ type Store interface {
 	GetWorkspaceByMembership(ctx context.Context, membershipID string) (Workspace, bool, error)
 	CreateWorkspace(ctx context.Context, ws Workspace) error
 	SetWorkspaceState(ctx context.Context, workspaceID, state string) error
+	// Per-workspace member settings (JSON blob; "" = none). CP-owned so they can be
+	// read/written while the container is stopped; mapped to env at container start.
+	GetWorkspaceSettings(ctx context.Context, workspaceID string) (string, error)
+	SetWorkspaceSettings(ctx context.Context, workspaceID, settingsJSON string) error
 	MaxAgentPort(ctx context.Context) (int, error)
 	ListWorkspaces(ctx context.Context, tenantID string) ([]Workspace, error)
 

@@ -262,6 +262,9 @@ func main() {
 	// Toolchain selection (node / java) — proxied to the Agent.
 	mux.HandleFunc("GET /api/env/toolchains", cfg.proxyAgentREST)
 	mux.HandleFunc("PUT /api/env/toolchains", cfg.proxyAgentREST)
+	// CP-owned per-workspace settings (editable while stopped; applied at start).
+	mux.HandleFunc("GET /api/env/ws-settings", cfg.handleWSSettingsGet)
+	mux.HandleFunc("PUT /api/env/ws-settings", cfg.handleWSSettingsPut)
 
 	// Per-user UI preferences (Console display settings) — proxied to the Agent.
 	mux.HandleFunc("GET /api/env/ui-prefs", cfg.proxyAgentREST)
