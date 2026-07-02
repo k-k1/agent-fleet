@@ -2696,7 +2696,10 @@ button.mt-toolrun-head:hover {
   color: var(--muted);
   font-size: 13px;
 }
-.term-resume {
+/* Shared look for the two resume buttons: the terminal mask's 再開 and the chat
+   composer's 再開して続ける — both sit on .btn.primary, this just aligns the icon. */
+.term-resume,
+.mirror-resume {
   display: inline-flex;
   align-items: center;
   gap: 6px;
