@@ -41,6 +41,7 @@ export default function NewSessionModal({ onClose, onCreated }) {
   // this holds the created session name while the SSO handshake runs. null = not yet.
   const [ssmLogin, setSsmLogin] = useState(null); // session name (string)
   const [ssmForce, setSsmForce] = useState(false); // 強制再ログイン
+  const [conns, setConns] = useState(null); // provider auth status (gates kind options)
   const [model, setModel] = useState(""); // "" = claude default
   const [source, setSource] = useState("picker"); // 'picker' | 'url' | 'none'
   const [sel, setSel] = useState(null); // picker: { cloneUrl, fullName, branch }
@@ -77,21 +78,34 @@ export default function NewSessionModal({ onClose, onCreated }) {
     };
   }, []);
 
-  // Load SSM host bookmarks when the SSM kind is first chosen.
+  // Provider auth status + SSM hosts, fetched up front so we can gate the kind
+  // options: a kind is offered only when it's ready to use (claude/codex/opencode
+  // authenticated, ssm has a host). shell is always available.
   useEffect(() => {
-    if (kind !== "ssm" || ssmHosts !== null) return;
     let alive = true;
+    api("api/connections")
+      .then((d) => alive && setConns(d || {}))
+      .catch(() => alive && setConns({}));
     api("api/ssm/hosts")
       .then((d) => alive && setSsmHosts(Array.isArray(d) ? d : []))
       .catch(() => alive && setSsmHosts([]));
     return () => {
       alive = false;
     };
-  }, [kind, ssmHosts]);
+  }, []);
 
   const isClaude = kind === "claude";
   const isSSM = kind === "ssm";
   const isAgent = kind === "claude" || kind === "opencode" || kind === "codex"; // run in a working dir
+
+  // A kind is offered only when it's ready: shell always; the agents when their auth
+  // is connected; ssm when at least one host is registered. Before the fetch resolves
+  // (conns/ssmHosts null) the extra kinds stay hidden, so an unset workspace shows shell.
+  const canClaude = !!conns?.claude?.connected;
+  const canCodex = !!conns?.codex?.connected;
+  const canOpencode = (conns?.opencode?.envs?.length || 0) > 0 || !!conns?.opencode?.connected;
+  const canSSM = (ssmHosts?.length || 0) > 0;
+  const kindAvail = { shell: true, claude: canClaude, codex: canCodex, opencode: canOpencode, ssm: canSSM };
 
   const ssmHost = (ssmHosts || []).find((h) => h.id === ssmHostId) || null;
 
@@ -196,49 +210,54 @@ export default function NewSessionModal({ onClose, onCreated }) {
                 shell
                 <span className="seg-sub">通常のシェル (bash)</span>
               </button>
-              <button
-                type="button"
-                className={"seg-btn" + (kind === "claude" ? " active" : "")}
-                onClick={() => setKind("claude")}
-              >
-                claude
-                <span className="seg-sub">Claude Code を起動</span>
-              </button>
-              <button
-                type="button"
-                className={"seg-btn" + (kind === "opencode" ? " active" : "")}
-                onClick={() => setKind("opencode")}
-              >
-                opencode
-                <span className="seg-sub">opencode を起動</span>
-              </button>
-              <button
-                type="button"
-                className={"seg-btn" + (kind === "codex" ? " active" : "")}
-                onClick={() => setKind("codex")}
-              >
-                codex
-                <span className="seg-sub">Codex CLI を起動</span>
-              </button>
-              <button
-                type="button"
-                className={"seg-btn" + (kind === "ssm" ? " active" : "")}
-                onClick={() => setKind("ssm")}
-              >
-                ssm
-                <span className="seg-sub">AWS EC2 に SSM ログイン</span>
-              </button>
+              {kindAvail.claude && (
+                <button
+                  type="button"
+                  className={"seg-btn" + (kind === "claude" ? " active" : "")}
+                  onClick={() => setKind("claude")}
+                >
+                  claude
+                  <span className="seg-sub">Claude Code を起動</span>
+                </button>
+              )}
+              {kindAvail.opencode && (
+                <button
+                  type="button"
+                  className={"seg-btn" + (kind === "opencode" ? " active" : "")}
+                  onClick={() => setKind("opencode")}
+                >
+                  opencode
+                  <span className="seg-sub">opencode を起動</span>
+                </button>
+              )}
+              {kindAvail.codex && (
+                <button
+                  type="button"
+                  className={"seg-btn" + (kind === "codex" ? " active" : "")}
+                  onClick={() => setKind("codex")}
+                >
+                  codex
+                  <span className="seg-sub">Codex CLI を起動</span>
+                </button>
+              )}
+              {kindAvail.ssm && (
+                <button
+                  type="button"
+                  className={"seg-btn" + (kind === "ssm" ? " active" : "")}
+                  onClick={() => setKind("ssm")}
+                >
+                  ssm
+                  <span className="seg-sub">AWS EC2 に SSM ログイン</span>
+                </button>
+              )}
             </div>
-            {kind === "opencode" && (
+            {conns && !canClaude && !canCodex && !canOpencode && !canSSM && (
               <div className="field-help">
-                初回はプロバイダ認証が必要です。起動後の TUI で <code>/connect</code>、または端末で{" "}
-                <code>opencode auth login</code>（認証は home に保存され再起動後も保持）。
-              </div>
-            )}
-            {kind === "codex" && (
-              <div className="field-help">
-                初回は <b>設定 → 接続 → Codex</b> で認証してください（API キー or ChatGPT サブスク）。認証は{" "}
-                <code>~/.codex</code> に保存され再起動後も保持されます。
+                claude / codex / opencode / ssm は、
+                <button type="button" className="linklike" onClick={() => { onClose(); openSettings(); }}>
+                  設定
+                </button>
+                で認証・ホスト登録すると選べるようになります。
               </div>
             )}
           </div>
