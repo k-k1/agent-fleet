@@ -1,27 +1,48 @@
 import { useEffect, useState } from "react";
 import { api } from "../api.js";
 import BranchList from "./BranchList.jsx";
+import type { Branch } from "./BranchList.jsx";
+import type { ConnectionsStatus } from "../types/session.ts";
 
 // Provider tabs, Bitbucket first (the default selection).
-const PROVIDERS = [
+const PROVIDERS: [string, string][] = [
   ["bitbucket.org", "Bitbucket"],
   ["github.com", "GitHub"],
 ];
+
+// A remote repo from GET /api/connections/git/{host}/repos.
+interface RepoItem {
+  full_name: string;
+  clone_url: string;
+  private?: boolean;
+}
+
+// The selection RepoPicker emits (or null when nothing valid is chosen).
+export interface RepoSelection {
+  host: string;
+  cloneUrl: string;
+  fullName: string;
+  branch: string;
+}
+
+interface RepoPickerProps {
+  onChange?: (sel: RepoSelection | null) => void;
+}
 
 // RepoPicker: choose a repository (dropdown) and branch (filterable, newest-commit-
 // first list — same UI as the branch-switch modal) from a connected provider; the
 // branch list lazy-loads when a repo is selected. Calls onChange({ host, cloneUrl,
 // fullName, branch }) on every change, or onChange(null) when nothing valid is
 // selected. Both GitHub and Bitbucket are supported (tabs enable only connected hosts).
-export default function RepoPicker({ onChange }) {
-  const [conns, setConns] = useState(null);
+export default function RepoPicker({ onChange }: RepoPickerProps) {
+  const [conns, setConns] = useState<ConnectionsStatus | null>(null);
   const [host, setHost] = useState("bitbucket.org");
-  const [repos, setRepos] = useState(null); // null = not loaded
+  const [repos, setRepos] = useState<RepoItem[] | null>(null); // null = not loaded
   const [reposErr, setReposErr] = useState("");
   const [loadingRepos, setLoadingRepos] = useState(false);
 
   const [fullName, setFullName] = useState("");
-  const [branches, setBranches] = useState([]);
+  const [branches, setBranches] = useState<Branch[]>([]);
   const [branch, setBranch] = useState("");
   const [loadingBranches, setLoadingBranches] = useState(false);
   const [branchErr, setBranchErr] = useState("");
@@ -30,7 +51,7 @@ export default function RepoPicker({ onChange }) {
     api("api/connections").then(setConns).catch(() => setConns({}));
   }, []);
 
-  const connected = (h) =>
+  const connected = (h: string): boolean =>
     h === "github.com" ? !!conns?.github?.connected : !!conns?.bitbucket?.connected;
 
   // If the default (Bitbucket) isn't connected, fall back to the first connected
@@ -74,7 +95,7 @@ export default function RepoPicker({ onChange }) {
   }, [conns, host]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // load branches when a repo is picked
-  const pickRepo = async (fn) => {
+  const pickRepo = async (fn: string) => {
     setFullName(fn);
     setBranches([]);
     setBranch("");
@@ -88,7 +109,7 @@ export default function RepoPicker({ onChange }) {
         setBranchErr(d.error.message || d.error.code || "ブランチ取得に失敗");
         return;
       }
-      const list = d.branches || [];
+      const list: Branch[] = d.branches || [];
       setBranches(list);
       const def = d.default || (list[0] && list[0].name) || "";
       setBranch(def);
@@ -100,12 +121,12 @@ export default function RepoPicker({ onChange }) {
     }
   };
 
-  const pickBranch = (b) => {
+  const pickBranch = (b: string) => {
     setBranch(b);
     emit(fullName, b);
   };
 
-  const emit = (fn, b) => {
+  const emit = (fn: string, b: string) => {
     const repo = (repos || []).find((r) => r.full_name === fn);
     if (repo) onChange?.({ host, cloneUrl: repo.clone_url, fullName: fn, branch: b });
     else onChange?.(null);

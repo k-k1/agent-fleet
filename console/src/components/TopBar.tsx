@@ -15,7 +15,7 @@ export default function TopBar() {
   const canLogout = whoami?.auth_mode === "oauth"; // CP-native session we can clear
   const [menuOpen, setMenuOpen] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
-  const acctRef = useRef(null);
+  const acctRef = useRef<HTMLDivElement>(null);
 
   // Global fullscreen toggle (whole app). Tracks the browser's fullscreen state so
   // the icon/label flips even when fullscreen is exited via Esc.
@@ -32,10 +32,10 @@ export default function TopBar() {
   // Close the account menu on an outside click or Escape.
   useEffect(() => {
     if (!menuOpen) return;
-    const onDown = (e) => {
-      if (acctRef.current && !acctRef.current.contains(e.target)) setMenuOpen(false);
+    const onDown = (e: MouseEvent) => {
+      if (acctRef.current && !acctRef.current.contains(e.target as Node)) setMenuOpen(false);
     };
-    const onKey = (e) => e.key === "Escape" && setMenuOpen(false);
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setMenuOpen(false);
     document.addEventListener("mousedown", onDown);
     document.addEventListener("keydown", onKey);
     return () => {
@@ -44,7 +44,7 @@ export default function TopBar() {
     };
   }, [menuOpen]);
 
-  const run = (fn) => {
+  const run = (fn: () => void) => {
     setMenuOpen(false);
     fn();
   };
@@ -138,7 +138,14 @@ export default function TopBar() {
 // SwatchRow: surface-color picker (top bar / left pane). Each swatch previews the
 // color in the active theme; "default" shows a slashed neutral chip. Tapping
 // applies immediately and keeps the menu open. Mirrors DisplayTab's SwatchChoice.
-function SwatchRow({ label, theme, value, onPick }) {
+interface SwatchRowProps {
+  label: string;
+  theme: string;
+  value: string;
+  onPick: (v: string) => void;
+}
+
+function SwatchRow({ label, theme, value, onPick }: SwatchRowProps) {
   return (
     <div className="acct-swatch-row">
       <span className="acct-swatch-lbl">{label}</span>
