@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 
 // relTime renders a unix seconds timestamp as a short Japanese "… ago" label.
-export function relTime(unix) {
+export function relTime(unix: number | undefined): string {
   if (!unix) return "";
   const s = Math.floor(Date.now() / 1000) - unix;
   if (s < 60) return "たった今";
@@ -16,16 +16,33 @@ export function relTime(unix) {
   return `${Math.floor(mo / 12)}年前`;
 }
 
+// A branch row: null = loading list, [] = none.
+export interface Branch {
+  name: string;
+  unix?: number;
+  date?: string;
+  subject?: string;
+  default?: boolean;
+  remote?: boolean;
+  current?: boolean;
+}
+
+interface BranchListProps {
+  branches: Branch[] | null;
+  selected?: string;
+  onPick: (name: string) => void;
+  busy?: string | boolean;
+  disableActive?: boolean;
+  autoFocus?: boolean;
+}
+
 // BranchList: a filterable, newest-commit-first list of branches. Shared by the repo
 // branch-switch modal (local branches, checkout on pick) and the new-session repo
 // picker (remote branches, select on pick). Each branch row shows name, last-commit
 // relative time, subject, and default/remote badges. `selected` highlights a branch;
 // `onPick(name)` fires on click; `busy` (a name being applied) disables the list;
 // `disableActive` prevents re-picking the highlighted branch.
-//
-// branches: null = loading, [] = none; each item is {name, unix, date, subject,
-// default?, remote?, current?}.
-export default function BranchList({ branches, selected, onPick, busy, disableActive, autoFocus }) {
+export default function BranchList({ branches, selected, onPick, busy, disableActive, autoFocus }: BranchListProps) {
   const [filter, setFilter] = useState("");
 
   const shown = useMemo(() => {

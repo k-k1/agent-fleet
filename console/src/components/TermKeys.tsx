@@ -16,7 +16,7 @@ const KEYS = [
   { label: "⏎", seq: "\r" },
 ];
 
-export default function TermKeys({ paneId = "p0" }) {
+export default function TermKeys({ paneId = "p0" }: { paneId?: string }) {
   return (
     <div className="termkeys">
       {KEYS.map((k) => (

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useApp } from "../state.jsx";
 import { api } from "../api.js";
 import Icon from "./Icon.jsx";
+import type { ConnectionsStatus } from "../types/session.ts";
 
 // First-run getting-started card, overlaid on the empty starter pane. A live
 // checklist — start workspace → connect a git provider → connect an agent → create
@@ -12,7 +13,7 @@ const DISMISS_KEY = "af.onboarding.dismissed";
 
 export default function OnboardingCard() {
   const { wsState, sessions, startWs, openSettings, openNewSession, connKey } = useApp();
-  const [conns, setConns] = useState(null); // null = still probing
+  const [conns, setConns] = useState<ConnectionsStatus | null>(null); // null = still probing
   const [dismissed, setDismissed] = useState(() => {
     try {
       return localStorage.getItem(DISMISS_KEY) === "1";
@@ -41,7 +42,11 @@ export default function OnboardingCard() {
 
   const running = wsState === "running";
   const gitOk = !!(conns.github?.connected || conns.bitbucket?.connected);
-  const agentOk = !!(conns.claude?.connected || conns.codex?.connected || conns.opencode?.envs?.length > 0);
+  const agentOk = !!(
+    conns.claude?.connected ||
+    conns.codex?.connected ||
+    (conns.opencode?.envs?.length ?? 0) > 0
+  );
 
   const dismiss = () => {
     try {

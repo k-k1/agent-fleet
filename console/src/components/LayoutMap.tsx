@@ -4,9 +4,10 @@ import { paneRows, ordClass, paneCount } from "../lib/panebadge.js";
 import { usePaneHover, hoverMatches } from "../lib/panehover.jsx";
 import { kindShort } from "../lib/sessionkind.js";
 import { stateInfo } from "../lib/sessionview.js";
+import type { Session } from "../types/session.ts";
 
 // Short label for a non-session pane (file / scm / doc / diff) shown in a map cell.
-const KIND_ABBR = { file: "file", scm: "scm", doc: "doc", diff: "diff" };
+const KIND_ABBR: Record<string, string> = { file: "file", scm: "scm", doc: "doc", diff: "diff" };
 
 // LayoutMap draws a schematic of the current split — columns side by side, each a
 // stack of its 1–2 panes — so "which session is in which pane" is one glance. Each
@@ -17,19 +18,19 @@ export default function LayoutMap() {
   const { layout, sessions, activePaneId, setActivePane } = useApp();
   const { hover, setHover } = usePaneHover();
 
-  const byName = useMemo(() => new Map((sessions || []).map((s) => [s.name, s])), [sessions]);
+  const byName = useMemo(() => new Map((sessions || []).map((s) => [s.name, s] as const)), [sessions]);
   const rows = useMemo(() => paneRows(layout), [layout]);
   if (paneCount(layout) <= 1) return null;
 
-  const ordOf = new Map(rows.map((r) => [r.id, r.ordinal]));
+  const ordOf = new Map(rows.map((r) => [r.id, r.ordinal] as const));
 
   return (
     <div className="layoutmap" role="group" aria-label="ペイン配置">
       {layout.cols.map((col) => (
         <div className="lm-col" key={col.id}>
           {col.panes.map((p) => {
-            const ord = ordOf.get(p.id);
-            const s = p.kind === "terminal" && p.session ? byName.get(p.session) : null;
+            const ord = ordOf.get(p.id) ?? 0;
+            const s: Session | null = p.kind === "terminal" && p.session ? byName.get(p.session) ?? null : null;
             const st = s ? stateInfo(s) : null;
             const kindTxt = s ? kindShort(s.kind) : KIND_ABBR[p.kind] || "–";
             const on = hoverMatches(hover, p.id, p.session);
