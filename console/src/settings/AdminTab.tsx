@@ -1,9 +1,37 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { FormEvent } from "react";
 import { api, apiJSON, rawJSON, errText, rel } from "../api.js";
 import Icon from "../components/Icon.jsx";
 import ConfirmDialog from "../components/ConfirmDialog.jsx";
 import { kindLabel, kindClass, kindIcon } from "../lib/sessionkind.js";
 import { stateInfo } from "../lib/sessionview.js";
+
+// Admin API shapes (only the fields the UI reads; server responses may carry more).
+interface Tenant {
+  slug: string;
+  name: string;
+  users?: number;
+  running?: number;
+  max_workspaces?: number;
+  max_sessions?: number;
+  session_idle_timeout?: string;
+  ws_idle_timeout?: string;
+  allow_agent_self_update?: boolean;
+}
+interface Member {
+  user_key: string;
+  email?: string;
+  role: string;
+  super_admin?: boolean;
+  state?: string;
+  max_sessions?: number | null;
+}
+// Drill-down location: stage plus (optionally) the tenant slug / member being viewed.
+interface View {
+  stage: string;
+  slug?: string;
+  member?: Member;
+}
 
 // AdminTab (super_admin only): a staged drill-down —
 //   テナント一覧 → テナント詳細 → メンバー詳細
@@ -13,19 +41,19 @@ import { stateInfo } from "../lib/sessionview.js";
 
 const GiB = 1073741824;
 // GiB with adaptive precision (matches WsBar): 2 decimals under 10, 1 above.
-const fmtG = (b) => {
+const fmtG = (b: number) => {
   const v = b / GiB;
   return (v < 10 ? v.toFixed(2) : v.toFixed(1)) + "G";
 };
-const fmtPct = (n) => (n == null ? "–" : Math.round(n) + "%");
+const fmtPct = (n: number | null | undefined) => (n == null ? "–" : Math.round(n) + "%");
 
 export default function AdminTab() {
-  const [tenants, setTenants] = useState(null);
+  const [tenants, setTenants] = useState<Tenant[] | null>(null);
   const [forbidden, setForbidden] = useState(false);
   const [isSuper, setIsSuper] = useState(false); // super_admin: unlocks deployment-wide controls
   const [mode, setMode] = useState("manage"); // manage (tenant drilldown) | usage (showback)
   // view: {stage:'tenants'} | {stage:'tenant', slug} | {stage:'member', slug, member}
-  const [view, setView] = useState({ stage: "tenants" });
+  const [view, setView] = useState<View>({ stage: "tenants" });
 
   const loadTenants = useCallback(async () => {
     try {
@@ -98,7 +126,7 @@ export default function AdminTab() {
           {view.stage === "member" && (
             <>
               <Icon name="chevron-right" className="crumb-sep" />
-              <span className="crumb here">{view.member.user_key}</span>
+              <span className="crumb here">{view.member?.user_key}</span>
             </>
           )}
         </nav>
@@ -114,7 +142,7 @@ export default function AdminTab() {
       )}
       {view.stage === "tenant" && (
         <TenantView
-          slug={view.slug}
+          slug={view.slug!}
           tenant={tenant}
           isSuper={isSuper}
           onChanged={loadTenants}
@@ -123,8 +151,8 @@ export default function AdminTab() {
       )}
       {view.stage === "member" && (
         <MemberView
-          slug={view.slug}
-          member={view.member}
+          slug={view.slug!}
+          member={view.member!}
           isSuper={isSuper}
           onChanged={loadTenants}
           onBack={() => setView({ stage: "tenant", slug: view.slug })}
@@ -142,12 +170,12 @@ export default function AdminTab() {
 // (super_admin: all tenants, optionally filtered; tenant_admin: their tenant).
 // Polled like the per-member view; a client-side search narrows by user/label/repo.
 
-function AllSessionsView({ tenants, isSuper }) {
+function AllSessionsView({ tenants, isSuper }: { tenants: Tenant[]; isSuper: boolean }) {
   const [tenant, setTenant] = useState(isSuper ? "" : tenants[0]?.slug || "");
   const [q, setQ] = useState("");
-  const [rows, setRows] = useState(null);
+  const [rows, setRows] = useState<any[] | null>(null);
   const [err, setErr] = useState("");
-  const timer = useRef(null);
+  const timer = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
   const ser = useRef("");
 
   const poll = useCallback(async () => {
@@ -180,12 +208,12 @@ function AllSessionsView({ tenants, isSuper }) {
   const all = rows || [];
   const needle = q.trim().toLowerCase();
   const shown = needle
-    ? all.filter((s) =>
+    ? all.filter((s: any) =>
         [s.user_key, s.email, s.label, s.repo, s.name, s.tenant]
           .some((v) => (v || "").toLowerCase().includes(needle)),
       )
     : all;
-  const aliveCount = all.filter((s) => s.alive).length;
+  const aliveCount = all.filter((s: any) => s.alive).length;
 
   return (
     <div className="admin-stage all-sessions-view">
@@ -220,7 +248,7 @@ function AllSessionsView({ tenants, isSuper }) {
           <p className="muted">{all.length === 0 ? "セッションはありません。" : "一致するセッションがありません。"}</p>
         ) : (
           <div className="all-sessions">
-            {shown.map((s) => {
+            {shown.map((s: any) => {
               const st = stateInfo(s);
               return (
                 <div key={s.tenant + "|" + s.user_key + "|" + s.name} className="all-session">
@@ -252,15 +280,15 @@ function AllSessionsView({ tenants, isSuper }) {
 // administer. CSV export is a plain download link (cookie-authed; the endpoint
 // scopes by the ?tenant= query param, so no X-AF-Tenant header is needed).
 
-const fmtHrs = (secs) => (secs / 3600).toFixed(secs < 3600 ? 2 : 1) + " h";
+const fmtHrs = (secs: number) => (secs / 3600).toFixed(secs < 3600 ? 2 : 1) + " h";
 
-function UsageView({ tenants, isSuper }) {
+function UsageView({ tenants, isSuper }: { tenants: Tenant[]; isSuper: boolean }) {
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   // Non-super callers must scope to a tenant they administer (the API rejects the
   // deployment-wide view); default to their first tenant.
   const [tenant, setTenant] = useState(isSuper ? "" : tenants[0]?.slug || "");
-  const [data, setData] = useState(null);
+  const [data, setData] = useState<any>(null);
   const [err, setErr] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -308,9 +336,9 @@ function UsageView({ tenants, isSuper }) {
     return u.toString();
   };
 
-  const totals = (data?.totals || []).slice().sort((a, b) => b.running_secs - a.running_secs);
-  const maxSecs = totals.reduce((m, t) => Math.max(m, t.running_secs), 0);
-  const grandSecs = totals.reduce((s, t) => s + t.running_secs, 0);
+  const totals: any[] = (data?.totals || []).slice().sort((a: any, b: any) => b.running_secs - a.running_secs);
+  const maxSecs = totals.reduce((m: number, t: any) => Math.max(m, t.running_secs), 0);
+  const grandSecs = totals.reduce((s: number, t: any) => s + t.running_secs, 0);
 
   return (
     <div className="admin-stage usage-view">
@@ -372,7 +400,7 @@ function UsageView({ tenants, isSuper }) {
           <p className="muted">この期間の稼働記録はありません。</p>
         ) : (
           <div className="usage-rows">
-            {totals.map((t) => (
+            {totals.map((t: any) => (
               <div key={(t.tenant || "") + "|" + t.user_key} className="usage-row">
                 <span className="ur-key mono" title={t.email || ""}>{t.user_key || "(不明)"}</span>
                 {isSuper && !tenant && <span className="ur-tenant muted">{t.tenant}</span>}
@@ -391,7 +419,17 @@ function UsageView({ tenants, isSuper }) {
 
 // --- Stage 1: tenant list ---------------------------------------------------
 
-function TenantsList({ tenants, isSuper, onReload, onOpen }) {
+function TenantsList({
+  tenants,
+  isSuper,
+  onReload,
+  onOpen,
+}: {
+  tenants: Tenant[];
+  isSuper: boolean;
+  onReload: () => void;
+  onOpen: (slug: string) => void;
+}) {
   const [adding, setAdding] = useState(false);
   return (
     <div className="admin-stage">
@@ -416,7 +454,7 @@ function TenantsList({ tenants, isSuper, onReload, onOpen }) {
               </div>
               <div className="tc-stats">
                 <span title="メンバー数"><Icon name="person" /> {t.users} 人</span>
-                <span className={t.running > 0 ? "tc-run on" : "tc-run"} title="起動中の Workspace">
+                <span className={(t.running || 0) > 0 ? "tc-run on" : "tc-run"} title="起動中の Workspace">
                   <Icon name="vm-running" /> {t.running} 起動中
                 </span>
               </div>
@@ -431,11 +469,11 @@ function TenantsList({ tenants, isSuper, onReload, onOpen }) {
   );
 }
 
-function NewTenant({ onCreated, onCancel }) {
+function NewTenant({ onCreated, onCancel }: { onCreated: () => void; onCancel: () => void }) {
   const [slug, setSlug] = useState("");
   const [name, setName] = useState("");
   const [err, setErr] = useState("");
-  const submit = async (e) => {
+  const submit = async (e: FormEvent) => {
     e.preventDefault();
     if (!slug.trim()) return;
     const r = await rawJSON("api/admin/tenants", "POST", { slug: slug.trim(), name: name.trim() });
@@ -459,15 +497,27 @@ function NewTenant({ onCreated, onCancel }) {
 
 // --- Stage 2: tenant detail (limits + members) ------------------------------
 
-function TenantView({ slug, tenant, isSuper, onChanged, onOpenMember }) {
-  const [maxWs, setMaxWs] = useState(tenant?.max_workspaces || 0);
-  const [maxSs, setMaxSs] = useState(tenant?.max_sessions || 0);
+function TenantView({
+  slug,
+  tenant,
+  isSuper,
+  onChanged,
+  onOpenMember,
+}: {
+  slug: string;
+  tenant: Tenant | null | undefined;
+  isSuper: boolean;
+  onChanged: () => void;
+  onOpenMember: (m: Member) => void;
+}) {
+  const [maxWs, setMaxWs] = useState<number | string>(tenant?.max_workspaces || 0);
+  const [maxSs, setMaxSs] = useState<number | string>(tenant?.max_sessions || 0);
   const [sessIdle, setSessIdle] = useState(tenant?.session_idle_timeout || "");
   const [wsIdle, setWsIdle] = useState(tenant?.ws_idle_timeout || "");
   const [allowUpd, setAllowUpd] = useState(!!tenant?.allow_agent_self_update);
   const [saved, setSaved] = useState(false);
   const [err, setErr] = useState("");
-  const [members, setMembers] = useState(null);
+  const [members, setMembers] = useState<Member[] | null>(null);
 
   useEffect(() => {
     setMaxWs(tenant?.max_workspaces || 0);
@@ -582,12 +632,12 @@ function TenantView({ slug, tenant, isSuper, onChanged, onOpenMember }) {
   );
 }
 
-function AddMember({ slug, isSuper, onAdded }) {
+function AddMember({ slug, isSuper, onAdded }: { slug: string; isSuper: boolean; onAdded: () => void }) {
   const [email, setEmail] = useState("");
   const [key, setKey] = useState("");
   const [role, setRole] = useState("member");
   const [err, setErr] = useState("");
-  const submit = async (e) => {
+  const submit = async (e: FormEvent) => {
     e.preventDefault();
     const r = await rawJSON("api/admin/memberships", "POST", {
       email: email.trim(),
@@ -626,17 +676,28 @@ function AddMember({ slug, isSuper, onAdded }) {
 
 // --- Stage 3: member detail (resources + sessions + actions) ----------------
 
-function MemberView({ slug, member, isSuper, onChanged }) {
-  const [stats, setStats] = useState(null);
-  const [sessions, setSessions] = useState(null);
+function MemberView({
+  slug,
+  member,
+  isSuper,
+  onChanged,
+}: {
+  slug: string;
+  member: Member;
+  isSuper: boolean;
+  onChanged: () => void;
+  onBack?: () => void;
+}) {
+  const [stats, setStats] = useState<any>(null);
+  const [sessions, setSessions] = useState<any[] | null>(null);
   const [confirmStop, setConfirmStop] = useState(false);
   const [confirmClean, setConfirmClean] = useState(false);
   const [confirmGrant, setConfirmGrant] = useState(false);
   const [busy, setBusy] = useState(false);
   const [limitOpen, setLimitOpen] = useState(false);
-  const [limit, setLimit] = useState(member.max_sessions ?? 0);
+  const [limit, setLimit] = useState<number | string>(member.max_sessions ?? 0);
   const [role, setMemberRole] = useState(member.role); // tenant-scoped role, live-updated on grant/revoke
-  const timer = useRef(null);
+  const timer = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
   // Only setState on an actual change so an unchanged 4s poll doesn't re-render
   // (and flicker the cursor); mirrors the sessions poller in state.jsx.
   const statsSer = useRef("");
@@ -706,7 +767,7 @@ function MemberView({ slug, member, isSuper, onChanged }) {
     setLimitOpen(false);
     onChanged();
   };
-  const setRoleTo = async (newRole) => {
+  const setRoleTo = async (newRole: string) => {
     setBusy(true);
     try {
       await apiJSON("api/admin/membership-role", "PUT", { user_key: key, tenant_slug: slug, role: newRole });
@@ -771,7 +832,7 @@ function MemberView({ slug, member, isSuper, onChanged }) {
           <p className="muted">セッションなし</p>
         ) : (
           <div className="admin-sessions">
-            {sessions.map((s) => {
+            {sessions.map((s: any) => {
               const st = stateInfo(s);
               return (
                 <div key={s.name} className="adm-session">
@@ -889,7 +950,21 @@ function MemberView({ slug, member, isSuper, onChanged }) {
 }
 
 // One resource tile: label, big value, sub-line, and a fill bar tinted by level.
-function ResTile({ label, value, sub, ratio, warn, crit }) {
+function ResTile({
+  label,
+  value,
+  sub,
+  ratio,
+  warn,
+  crit,
+}: {
+  label: string;
+  value: string;
+  sub: string;
+  ratio: number | null;
+  warn: number;
+  crit: number;
+}) {
   const level = ratio == null ? 0 : ratio >= crit ? 2 : ratio >= warn ? 1 : 0;
   const cls = "res-tile" + (level === 2 ? " crit" : level === 1 ? " warn" : "");
   return (
