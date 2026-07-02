@@ -32,34 +32,37 @@ func restoreBody(r *http.Request, b []byte) {
 
 var httpsURLRe = regexp.MustCompile(`^https://[^\s]+$`)
 
-// ssoSessionDTO / ssmHostDTO are the JSON wire shapes (no secrets).
-type ssoSessionDTO struct {
+// ssmProfileDTO / ssmHostDTO are the JSON wire shapes (no secrets). A profile is the
+// COMMON auth bundle; a host references one and adds only per-instance fields.
+type ssmProfileDTO struct {
 	ID        string `json:"id"`
 	Label     string `json:"label"`
 	StartURL  string `json:"startUrl"`
 	SSORegion string `json:"ssoRegion"`
+	AccountID string `json:"accountId"`
+	RoleName  string `json:"roleName"`
+	Region    string `json:"region"`
 	CreatedAt string `json:"createdAt"`
 }
 
 type ssmHostDTO struct {
 	ID           string `json:"id"`
 	Alias        string `json:"alias"`
-	SSOSessionID string `json:"ssoSessionId"`
-	AccountID    string `json:"accountId"`
-	RoleName     string `json:"roleName"`
-	Region       string `json:"region"`
+	ProfileID    string `json:"profileId"`
+	Region       string `json:"region"` // optional per-host override ("" = profile default)
 	InstanceID   string `json:"instanceId"`
 	DocumentName string `json:"documentName"`
 	CreatedAt    string `json:"createdAt"`
 }
 
-func ssoToDTO(v SSOSession) ssoSessionDTO {
-	return ssoSessionDTO{ID: v.ID, Label: v.Label, StartURL: v.StartURL, SSORegion: v.SSORegion, CreatedAt: v.CreatedAt}
+func profileToDTO(p SSMProfile) ssmProfileDTO {
+	return ssmProfileDTO{ID: p.ID, Label: p.Label, StartURL: p.StartURL, SSORegion: p.SSORegion,
+		AccountID: p.AccountID, RoleName: p.RoleName, Region: p.Region, CreatedAt: p.CreatedAt}
 }
 
 func hostToDTO(h SSMHost) ssmHostDTO {
-	return ssmHostDTO{ID: h.ID, Alias: h.Alias, SSOSessionID: h.SSOSessionID, AccountID: h.AccountID,
-		RoleName: h.RoleName, Region: h.Region, InstanceID: h.InstanceID, DocumentName: h.DocumentName, CreatedAt: h.CreatedAt}
+	return ssmHostDTO{ID: h.ID, Alias: h.Alias, ProfileID: h.ProfileID, Region: h.Region,
+		InstanceID: h.InstanceID, DocumentName: h.DocumentName, CreatedAt: h.CreatedAt}
 }
 
 // membershipFor resolves the caller's identity + active membership without building a
@@ -82,96 +85,112 @@ func (c config) membershipFor(w http.ResponseWriter, r *http.Request) (Identity,
 	return ident, mv, true
 }
 
-// --- SSO sessions ----------------------------------------------------------------
+// --- profiles (common auth bundle) -----------------------------------------------
 
-func (c config) handleSSOSessionsList(w http.ResponseWriter, r *http.Request) {
+func (c config) handleSSMProfilesList(w http.ResponseWriter, r *http.Request) {
 	_, mv, ok := c.membershipFor(w, r)
 	if !ok {
 		return
 	}
-	rows, err := c.mgr.store.ListSSOSessions(r.Context(), mv.MembershipID)
+	rows, err := c.mgr.store.ListSSMProfiles(r.Context(), mv.MembershipID)
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
-	out := make([]ssoSessionDTO, 0, len(rows))
-	for _, v := range rows {
-		out = append(out, ssoToDTO(v))
+	out := make([]ssmProfileDTO, 0, len(rows))
+	for _, p := range rows {
+		out = append(out, profileToDTO(p))
 	}
 	writeJSON(w, http.StatusOK, out)
 }
 
-func (c config) handleSSOSessionCreate(w http.ResponseWriter, r *http.Request) {
+// validateProfile trims + checks a profile DTO. Returns a normalized SSMProfile
+// (id/created_at unset).
+func validateProfile(mv MembershipView, in ssmProfileDTO) (SSMProfile, *apiError) {
+	p := SSMProfile{
+		MembershipID: mv.MembershipID,
+		Label:        strings.TrimSpace(in.Label),
+		StartURL:     strings.TrimSpace(in.StartURL),
+		SSORegion:    strings.TrimSpace(in.SSORegion),
+		AccountID:    strings.TrimSpace(in.AccountID),
+		RoleName:     strings.TrimSpace(in.RoleName),
+		Region:       strings.TrimSpace(in.Region),
+	}
+	if p.Label == "" {
+		return SSMProfile{}, &apiError{http.StatusBadRequest, "bad_label", "label is required"}
+	}
+	if !httpsURLRe.MatchString(p.StartURL) {
+		return SSMProfile{}, &apiError{http.StatusBadRequest, "bad_start_url", "startUrl must be an https:// URL"}
+	}
+	if p.SSORegion == "" {
+		return SSMProfile{}, &apiError{http.StatusBadRequest, "bad_region", "ssoRegion is required"}
+	}
+	return p, nil
+}
+
+func (c config) handleSSMProfileCreate(w http.ResponseWriter, r *http.Request) {
 	_, mv, ok := c.membershipFor(w, r)
 	if !ok {
 		return
 	}
-	var in ssoSessionDTO
+	var in ssmProfileDTO
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid JSON body"})
 		return
 	}
-	in.StartURL = strings.TrimSpace(in.StartURL)
-	in.SSORegion = strings.TrimSpace(in.SSORegion)
-	if !httpsURLRe.MatchString(in.StartURL) {
-		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_start_url", "startUrl must be an https:// URL"})
+	p, aerr := validateProfile(mv, in)
+	if aerr != nil {
+		writeAPIErr(w, aerr)
 		return
 	}
-	if in.SSORegion == "" {
-		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_region", "ssoRegion is required"})
-		return
-	}
-	v := SSOSession{ID: newID(), MembershipID: mv.MembershipID, Label: strings.TrimSpace(in.Label),
-		StartURL: in.StartURL, SSORegion: in.SSORegion, CreatedAt: nowTS()}
-	if err := c.mgr.store.CreateSSOSession(r.Context(), v); err != nil {
+	p.ID = newID()
+	p.CreatedAt = nowTS()
+	if err := c.mgr.store.CreateSSMProfile(r.Context(), p); err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
-	writeJSON(w, http.StatusCreated, ssoToDTO(v))
+	writeJSON(w, http.StatusCreated, profileToDTO(p))
 }
 
-func (c config) handleSSOSessionUpdate(w http.ResponseWriter, r *http.Request) {
+func (c config) handleSSMProfileUpdate(w http.ResponseWriter, r *http.Request) {
 	_, mv, ok := c.membershipFor(w, r)
 	if !ok {
 		return
 	}
-	id := r.PathValue("id")
-	var in ssoSessionDTO
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid JSON body"})
-		return
-	}
-	cur, found, err := c.mgr.store.GetSSOSession(r.Context(), id)
+	cur, found, err := c.mgr.store.GetSSMProfile(r.Context(), r.PathValue("id"))
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
 	if !found || cur.MembershipID != mv.MembershipID {
-		writeAPIErr(w, &apiError{http.StatusNotFound, "not_found", "sso session not found"})
+		writeAPIErr(w, &apiError{http.StatusNotFound, "not_found", "profile not found"})
 		return
 	}
-	in.StartURL = strings.TrimSpace(in.StartURL)
-	in.SSORegion = strings.TrimSpace(in.SSORegion)
-	if !httpsURLRe.MatchString(in.StartURL) || in.SSORegion == "" {
-		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "startUrl (https) and ssoRegion are required"})
+	var in ssmProfileDTO
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid JSON body"})
 		return
 	}
-	cur.Label = strings.TrimSpace(in.Label)
-	cur.StartURL = in.StartURL
-	cur.SSORegion = in.SSORegion
-	if err := c.mgr.store.UpdateSSOSession(r.Context(), cur); err != nil {
+	p, aerr := validateProfile(mv, in)
+	if aerr != nil {
+		writeAPIErr(w, aerr)
+		return
+	}
+	p.ID = cur.ID
+	p.CreatedAt = cur.CreatedAt
+	if err := c.mgr.store.UpdateSSMProfile(r.Context(), p); err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
-	writeJSON(w, http.StatusOK, ssoToDTO(cur))
+	writeJSON(w, http.StatusOK, profileToDTO(p))
 }
 
-func (c config) handleSSOSessionDelete(w http.ResponseWriter, r *http.Request) {
+func (c config) handleSSMProfileDelete(w http.ResponseWriter, r *http.Request) {
 	_, mv, ok := c.membershipFor(w, r)
 	if !ok {
 		return
 	}
-	if err := c.mgr.store.DeleteSSOSession(r.Context(), r.PathValue("id"), mv.MembershipID); err != nil {
+	if err := c.mgr.store.DeleteSSMProfile(r.Context(), r.PathValue("id"), mv.MembershipID); err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
@@ -197,15 +216,13 @@ func (c config) handleSSMHostsList(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
-// validateHost trims and checks a host DTO, and verifies any referenced SSO session
+// validateHost trims and checks a host DTO, and verifies the referenced profile
 // belongs to the caller. Returns a normalized SSMHost (id/created_at unset).
 func (c config) validateHost(ctx context.Context, mv MembershipView, in ssmHostDTO) (SSMHost, *apiError) {
 	h := SSMHost{
 		MembershipID: mv.MembershipID,
 		Alias:        strings.TrimSpace(in.Alias),
-		SSOSessionID: strings.TrimSpace(in.SSOSessionID),
-		AccountID:    strings.TrimSpace(in.AccountID),
-		RoleName:     strings.TrimSpace(in.RoleName),
+		ProfileID:    strings.TrimSpace(in.ProfileID),
 		Region:       strings.TrimSpace(in.Region),
 		InstanceID:   strings.TrimSpace(in.InstanceID),
 		DocumentName: strings.TrimSpace(in.DocumentName),
@@ -216,14 +233,15 @@ func (c config) validateHost(ctx context.Context, mv MembershipView, in ssmHostD
 	if h.InstanceID == "" {
 		return SSMHost{}, &apiError{http.StatusBadRequest, "bad_instance", "instanceId is required"}
 	}
-	if h.SSOSessionID != "" {
-		s, found, err := c.mgr.store.GetSSOSession(ctx, h.SSOSessionID)
-		if err != nil {
-			return SSMHost{}, internalErr(err)
-		}
-		if !found || s.MembershipID != mv.MembershipID {
-			return SSMHost{}, &apiError{http.StatusBadRequest, "bad_sso_session", "unknown ssoSessionId"}
-		}
+	if h.ProfileID == "" {
+		return SSMHost{}, &apiError{http.StatusBadRequest, "bad_profile", "profileId is required"}
+	}
+	p, found, err := c.mgr.store.GetSSMProfile(ctx, h.ProfileID)
+	if err != nil {
+		return SSMHost{}, internalErr(err)
+	}
+	if !found || p.MembershipID != mv.MembershipID {
+		return SSMHost{}, &apiError{http.StatusBadRequest, "bad_profile", "unknown profileId"}
 	}
 	return h, nil
 }
@@ -301,9 +319,9 @@ func (c config) handleSSMHostDelete(w http.ResponseWriter, r *http.Request) {
 // ssmProfileRe strips characters unsafe for an ~/.aws/config profile header.
 var ssmProfileRe = regexp.MustCompile(`[^A-Za-z0-9._@-]+`)
 
-// ssmProfileName derives a stable aws profile name from a host alias.
-func ssmProfileName(alias string) string {
-	p := ssmProfileRe.ReplaceAllString(strings.TrimSpace(alias), "-")
+// ssmProfileName derives a stable aws profile name from a profile label.
+func ssmProfileName(label string) string {
+	p := ssmProfileRe.ReplaceAllString(strings.TrimSpace(label), "-")
 	if p == "" {
 		p = "ssm"
 	}
@@ -342,27 +360,29 @@ func (c config) rewriteSSMCreate(ctx context.Context, res *resolved, r *http.Req
 	if !found || h.MembershipID != res.mv.MembershipID {
 		return &apiError{http.StatusNotFound, "not_found", "ssm host not found"}
 	}
-	var startURL, ssoRegion string
-	if h.SSOSessionID != "" {
-		s, sok, serr := c.mgr.store.GetSSOSession(ctx, h.SSOSessionID)
-		if serr != nil {
-			return internalErr(serr)
-		}
-		if sok && s.MembershipID == res.mv.MembershipID {
-			startURL, ssoRegion = s.StartURL, s.SSORegion
-		}
+	p, pok, err := c.mgr.store.GetSSMProfile(ctx, h.ProfileID)
+	if err != nil {
+		return internalErr(err)
+	}
+	if !pok || p.MembershipID != res.mv.MembershipID {
+		return &apiError{http.StatusBadRequest, "bad_profile", "host has no valid profile; edit it in 設定 → SSM"}
+	}
+	// The instance region overrides the profile's default when set.
+	region := h.Region
+	if region == "" {
+		region = p.Region
 	}
 	out := map[string]any{
 		"name":           peek.Name,
 		"kind":           "ssm",
-		"ssm_profile":    ssmProfileName(h.Alias),
+		"ssm_profile":    ssmProfileName(p.Label),
 		"ssm_target":     h.InstanceID,
 		"ssm_document":   h.DocumentName,
-		"ssm_region":     h.Region,
-		"sso_start_url":  startURL,
-		"sso_region":     ssoRegion,
-		"sso_account_id": h.AccountID,
-		"sso_role_name":  h.RoleName,
+		"ssm_region":     region,
+		"sso_start_url":  p.StartURL,
+		"sso_region":     p.SSORegion,
+		"sso_account_id": p.AccountID,
+		"sso_role_name":  p.RoleName,
 	}
 	nb, err := json.Marshal(out)
 	if err != nil {

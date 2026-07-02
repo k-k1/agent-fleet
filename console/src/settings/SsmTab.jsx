@@ -1,10 +1,18 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, raw, rawJSON } from "../api.js";
 
-// postJSON POSTs and surfaces failures loudly (a stale CP without the /api/ssm routes
-// returns 404 non-JSON, which apiJSON would swallow — making the button look dead).
-// Returns true on success. On failure it alerts with the HTTP status so a missing
-// reflect (restart-cp.sh) is obvious rather than silent.
+// SsmTab manages the member's own AWS SSM login config (docs/history/p3-ssm-session.md)
+// in two tiers so the form isn't cluttered:
+//   プロファイル (共通) = the shared auth bundle (SSO portal + account/role/region);
+//                         many hosts reuse one. Maps to a ~/.aws named profile.
+//   ホスト (個別)       = per-instance only (alias, instance id, run-as document,
+//                         optional region override) + which profile to use.
+// NO AWS secrets are stored or entered here — at session start the in-container aws CLI
+// runs `aws sso login` (device-code URL surfaced in the terminal) and caches the
+// short-lived token in the workspace home.
+
+// postJSON POSTs/PUTs and surfaces failures loudly (a stale CP without the routes
+// returns 404 non-JSON, which would otherwise be swallowed). Returns true on success.
 async function postJSON(path, method, body) {
   let res;
   try {
@@ -25,18 +33,12 @@ async function postJSON(path, method, body) {
   return true;
 }
 
-// SsmTab manages the member's own AWS SSM login config (docs/history/p3-ssm-session.md):
-// SSO sessions (the access-portal start URL + region) and SSM host bookmarks (which
-// instance, run-as document, account/role). Personal scope. NO AWS secrets are stored
-// or entered here — at session start the in-container aws CLI runs `aws sso login`
-// (device-code URL surfaced in the terminal) and caches the short-lived token in the
-// workspace home. These records are just the non-secret coordinates.
 export default function SsmTab() {
-  const [ssos, setSsos] = useState(null);
+  const [profiles, setProfiles] = useState(null);
   const [hosts, setHosts] = useState(null);
 
   const reload = useCallback(() => {
-    api("api/ssm/sso-sessions").then((d) => setSsos(Array.isArray(d) ? d : [])).catch(() => setSsos([]));
+    api("api/ssm/profiles").then((d) => setProfiles(Array.isArray(d) ? d : [])).catch(() => setProfiles([]));
     api("api/ssm/hosts").then((d) => setHosts(Array.isArray(d) ? d : [])).catch(() => setHosts([]));
   }, []);
   useEffect(reload, [reload]);
@@ -47,80 +49,85 @@ export default function SsmTab() {
         自社 AWS の EC2 に SSM Session Manager でログインするための設定です。ここには <b>AWS の秘密情報は保存しません</b>
         （短命の資格情報はセッション起動時に <code>aws sso login</code> でブラウザ認証し、ワークスペース内にのみ保持されます）。
       </p>
-      <SsoSection ssos={ssos} reload={reload} />
-      <HostSection hosts={hosts} ssos={ssos} reload={reload} />
+      <ProfileSection profiles={profiles} reload={reload} />
+      <HostSection hosts={hosts} profiles={profiles} reload={reload} />
     </div>
   );
 }
 
-// --- SSO sessions ---------------------------------------------------------------
+// --- profiles (common) ----------------------------------------------------------
 
-function SsoSection({ ssos, reload }) {
-  const [label, setLabel] = useState("");
-  const [startUrl, setStartUrl] = useState("");
-  const [ssoRegion, setSsoRegion] = useState("");
+const emptyProfile = { label: "", startUrl: "", ssoRegion: "", accountId: "", roleName: "", region: "" };
+
+function ProfileSection({ profiles, reload }) {
+  const [f, setF] = useState(emptyProfile);
   const [busy, setBusy] = useState(false);
+  const set = (k) => (e) => setF((p) => ({ ...p, [k]: e.target.value }));
 
   const add = async () => {
-    if (!/^https:\/\//.test(startUrl.trim()) || !ssoRegion.trim()) return;
+    if (!f.label.trim() || !/^https:\/\//.test(f.startUrl.trim()) || !f.ssoRegion.trim()) return;
     setBusy(true);
     try {
-      const ok = await postJSON("api/ssm/sso-sessions", "POST", {
-        label: label.trim(),
-        startUrl: startUrl.trim(),
-        ssoRegion: ssoRegion.trim(),
+      const ok = await postJSON("api/ssm/profiles", "POST", {
+        label: f.label.trim(),
+        startUrl: f.startUrl.trim(),
+        ssoRegion: f.ssoRegion.trim(),
+        accountId: f.accountId.trim(),
+        roleName: f.roleName.trim(),
+        region: f.region.trim(),
       });
       if (!ok) return;
-      setLabel("");
-      setStartUrl("");
-      setSsoRegion("");
+      setF(emptyProfile);
       reload();
     } finally {
       setBusy(false);
     }
   };
   const remove = async (id) => {
-    if (!confirm("この SSO セッションを削除しますか？")) return;
-    await raw(`api/ssm/sso-sessions/${encodeURIComponent(id)}`, { method: "DELETE" });
+    if (!confirm("このプロファイルを削除しますか？（参照中のホストはログインできなくなります）")) return;
+    await raw(`api/ssm/profiles/${encodeURIComponent(id)}`, { method: "DELETE" });
     reload();
   };
 
   return (
     <section className="ssm-section">
-      <div className="conn-cat">SSO セッション</div>
+      <div className="conn-cat">プロファイル（共通設定）</div>
       <div className="field-help">
-        AWS アクセスポータル（IAM Identity Center）の開始 URL とリージョン。1 つの SSO で配下の複数アカウントを賄えます。
+        AWS アクセスポータル（IAM Identity Center）と、その中のアカウント／ロール。複数のホストで使い回します。
+        1 つのプロファイル＝1 つの <code>~/.aws</code> プロファイル。
       </div>
-      {ssos === null ? (
+      {profiles === null ? (
         <p className="muted pad">読み込み中…</p>
-      ) : ssos.length === 0 ? (
-        <p className="muted">まだ登録がありません。</p>
+      ) : profiles.length === 0 ? (
+        <p className="muted">まだ登録がありません。まずここを 1 つ作成してください。</p>
       ) : (
         <ul className="ssm-list">
-          {ssos.map((s) => (
-            <li key={s.id}>
-              <span className="ssm-alias">{s.label || s.startUrl}</span>
-              <span className="muted">{s.startUrl} · {s.ssoRegion}</span>
-              <button className="icon danger" title="削除" onClick={() => remove(s.id)}>✕</button>
+          {profiles.map((p) => (
+            <li key={p.id}>
+              <span className="ssm-alias">{p.label}</span>
+              <span className="muted">
+                {p.accountId ? `acct ${p.accountId}` : "acct —"}
+                {p.roleName ? ` · ${p.roleName}` : ""}
+                {p.region ? ` · ${p.region}` : ""}
+                {" · "}
+                {p.startUrl}
+              </span>
+              <button className="icon danger" title="削除" onClick={() => remove(p.id)}>✕</button>
             </li>
           ))}
         </ul>
       )}
-      <div className="flow ssm-form">
-        <input className="cinput" placeholder="ラベル（任意）" value={label} onChange={(e) => setLabel(e.target.value)} />
-        <input
-          className="cinput"
-          placeholder="start URL (https://xxx.awsapps.com/start)"
-          value={startUrl}
-          onChange={(e) => setStartUrl(e.target.value)}
-        />
-        <input
-          className="cinput"
-          placeholder="SSO リージョン (例 ap-northeast-1)"
-          value={ssoRegion}
-          onChange={(e) => setSsoRegion(e.target.value)}
-        />
-        <button disabled={busy || !/^https:\/\//.test(startUrl.trim()) || !ssoRegion.trim()} onClick={add}>
+      <div className="ssm-form-grid">
+        <input className="cinput" placeholder="ラベル (例 sics-ssm)" value={f.label} onChange={set("label")} />
+        <input className="cinput" placeholder="start URL (https://xxx.awsapps.com/start)" value={f.startUrl} onChange={set("startUrl")} />
+        <input className="cinput" placeholder="SSO リージョン (例 ap-northeast-1)" value={f.ssoRegion} onChange={set("ssoRegion")} />
+        <input className="cinput" placeholder="既定リージョン（任意）" value={f.region} onChange={set("region")} />
+        <input className="cinput" placeholder="アカウント ID（任意）" value={f.accountId} onChange={set("accountId")} />
+        <input className="cinput" placeholder="ロール名（任意）" value={f.roleName} onChange={set("roleName")} />
+        <button
+          disabled={busy || !f.label.trim() || !/^https:\/\//.test(f.startUrl.trim()) || !f.ssoRegion.trim()}
+          onClick={add}
+        >
           追加
         </button>
       </div>
@@ -128,27 +135,27 @@ function SsoSection({ ssos, reload }) {
   );
 }
 
-// --- SSM hosts ------------------------------------------------------------------
+// --- hosts (per-instance) -------------------------------------------------------
 
-const emptyHost = { alias: "", ssoSessionId: "", accountId: "", roleName: "", region: "", instanceId: "", documentName: "" };
+const emptyHost = { alias: "", profileId: "", instanceId: "", documentName: "", region: "" };
 
-function HostSection({ hosts, ssos, reload }) {
+function HostSection({ hosts, profiles, reload }) {
   const [f, setF] = useState(emptyHost);
   const [busy, setBusy] = useState(false);
   const set = (k) => (e) => setF((p) => ({ ...p, [k]: e.target.value }));
+  const profileLabel = (id) => (profiles || []).find((p) => p.id === id)?.label || "?";
+  const noProfiles = profiles !== null && profiles.length === 0;
 
   const add = async () => {
-    if (!f.alias.trim() || !f.instanceId.trim()) return;
+    if (!f.alias.trim() || !f.instanceId.trim() || !f.profileId) return;
     setBusy(true);
     try {
       const ok = await postJSON("api/ssm/hosts", "POST", {
         alias: f.alias.trim(),
-        ssoSessionId: f.ssoSessionId,
-        accountId: f.accountId.trim(),
-        roleName: f.roleName.trim(),
-        region: f.region.trim(),
+        profileId: f.profileId,
         instanceId: f.instanceId.trim(),
         documentName: f.documentName.trim(),
+        region: f.region.trim(),
       });
       if (!ok) return;
       setF(emptyHost);
@@ -165,9 +172,9 @@ function HostSection({ hosts, ssos, reload }) {
 
   return (
     <section className="ssm-section">
-      <div className="conn-cat">SSM ホスト</div>
+      <div className="conn-cat">SSM ホスト（個別）</div>
       <div className="field-help">
-        ログイン先の別名 → インスタンス ID・run-as ドキュメント・アカウント/ロールの対応。
+        ログイン先の別名 → インスタンス ID・run-as ドキュメント。認証はプロファイルを選ぶだけ。
         <code>aws ssm start-session --target &lt;instance&gt; --document-name &lt;document&gt;</code> に対応します。
       </div>
       {hosts === null ? (
@@ -183,30 +190,33 @@ function HostSection({ hosts, ssos, reload }) {
                 {h.instanceId}
                 {h.documentName ? ` · ${h.documentName}` : ""}
                 {h.region ? ` · ${h.region}` : ""}
-                {h.accountId ? ` · acct ${h.accountId}` : ""}
+                {" · "}
+                {profileLabel(h.profileId)}
               </span>
               <button className="icon danger" title="削除" onClick={() => remove(h.id)}>✕</button>
             </li>
           ))}
         </ul>
       )}
-      <div className="ssm-form-grid">
-        <input className="cinput" placeholder="別名 (例 mng@g3prod-mon01)" value={f.alias} onChange={set("alias")} />
-        <input className="cinput" placeholder="インスタンス ID (i-...)" value={f.instanceId} onChange={set("instanceId")} />
-        <input className="cinput" placeholder="run-as ドキュメント（任意）" value={f.documentName} onChange={set("documentName")} />
-        <input className="cinput" placeholder="リージョン（任意）" value={f.region} onChange={set("region")} />
-        <input className="cinput" placeholder="アカウント ID（任意）" value={f.accountId} onChange={set("accountId")} />
-        <input className="cinput" placeholder="ロール名（任意）" value={f.roleName} onChange={set("roleName")} />
-        <select className="cinput" value={f.ssoSessionId} onChange={set("ssoSessionId")}>
-          <option value="">SSO セッション（任意）</option>
-          {(ssos || []).map((s) => (
-            <option key={s.id} value={s.id}>{s.label || s.startUrl}</option>
-          ))}
-        </select>
-        <button disabled={busy || !f.alias.trim() || !f.instanceId.trim()} onClick={add}>
-          追加
-        </button>
-      </div>
+      {noProfiles ? (
+        <p className="muted">先にプロファイルを 1 つ作成してください。</p>
+      ) : (
+        <div className="ssm-form-grid">
+          <input className="cinput" placeholder="別名 (例 mng@g3prod-mon01)" value={f.alias} onChange={set("alias")} />
+          <input className="cinput" placeholder="インスタンス ID (i-...)" value={f.instanceId} onChange={set("instanceId")} />
+          <input className="cinput" placeholder="run-as ドキュメント（任意）" value={f.documentName} onChange={set("documentName")} />
+          <input className="cinput" placeholder="リージョン上書き（任意）" value={f.region} onChange={set("region")} />
+          <select className="cinput" value={f.profileId} onChange={set("profileId")}>
+            <option value="">プロファイルを選択</option>
+            {(profiles || []).map((p) => (
+              <option key={p.id} value={p.id}>{p.label}</option>
+            ))}
+          </select>
+          <button disabled={busy || !f.alias.trim() || !f.instanceId.trim() || !f.profileId} onClick={add}>
+            追加
+          </button>
+        </div>
+      )}
     </section>
   );
 }
