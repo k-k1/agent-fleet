@@ -233,9 +233,6 @@ function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected,
   return (
     <li className={"repo-row" + (active || selected ? " active" : "")}>
       <div className="repo-info">
-        <span className={"dot " + (r.dirty ? "dirty" : "clean")} title={r.dirty ? "未コミット変更あり" : "clean"}>
-          ●
-        </span>
         <button
           className="link grow repo-name"
           title={running ? "開く（ファイル + ソース管理）: " + r.path + "（Ctrl/中クリックで新ペイン）" : "ワークスペース停止中"}
@@ -248,6 +245,25 @@ function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected,
           <Icon name="repo" className="repo-ic" />
           {r.name}
         </button>
+        {(r.dirty || ((r.ahead || r.behind) ?? 0) > 0) && (
+          <span className="repo-state">
+            {r.dirty && (
+              <span className="repo-state-chip dirty" title="未コミット変更あり">
+                <Icon name="circle-filled" /> 未コミット
+              </span>
+            )}
+            {((r.ahead || r.behind) ?? 0) > 0 && (
+              <span
+                className="repo-state-chip ab"
+                title={`リモートに対して 先行 ${r.ahead ?? 0} / 遅延 ${r.behind ?? 0}`}
+              >
+                {r.ahead ? `↑${r.ahead}` : ""}
+                {r.ahead && r.behind ? " " : ""}
+                {r.behind ? `↓${r.behind}` : ""}
+              </span>
+            )}
+          </span>
+        )}
         <div className="launch-wrap" ref={wrapRef}>
           <button
             className="chip launch"
@@ -282,12 +298,6 @@ function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected,
             </div>
           )}
         </div>
-        {((r.ahead || r.behind) ?? 0) > 0 && (
-          <span className="ab">
-            {r.ahead ? `↑${r.ahead}` : ""}
-            {r.behind ? `↓${r.behind}` : ""}
-          </span>
-        )}
       </div>
     </li>
   );

@@ -1142,14 +1142,31 @@ button.wu-reload {
   margin-right: 4px;
   font-style: normal;
 }
-.repo-row .dot {
-  font-size: 10px;
+/* Repo working-tree status — same "icon + colored label" language as the session
+   state chip (no bare ● / ↑↓ glyphs). Only shown when there's something to report;
+   a clean, in-sync repo carries no marker. */
+.repo-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  font-size: 10.5px;
 }
-.repo-row .dot.dirty {
+.repo-state-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  white-space: nowrap;
+}
+.repo-state-chip .codicon {
+  font-size: 8px;
+}
+.repo-state-chip.dirty {
   color: var(--warn);
 }
-.repo-row .dot.clean {
-  color: var(--ok);
+.repo-state-chip.ab {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
 }
 .repo-row .branch,
 .view-head .branch {
