@@ -118,7 +118,7 @@ function ProfileSection({ profiles, reload }) {
         </ul>
       )}
       <div className="ssm-form-grid">
-        <input className="cinput" placeholder="ラベル (例 sics-ssm)" value={f.label} onChange={set("label")} />
+        <input className="cinput" placeholder="ラベル (例 my-profile)" value={f.label} onChange={set("label")} />
         <input className="cinput" placeholder="start URL (https://xxx.awsapps.com/start)" value={f.startUrl} onChange={set("startUrl")} />
         <input className="cinput" placeholder="SSO リージョン (例 ap-northeast-1)" value={f.ssoRegion} onChange={set("ssoRegion")} />
         <input className="cinput" placeholder="既定リージョン（任意）" value={f.region} onChange={set("region")} />
@@ -202,7 +202,7 @@ function HostSection({ hosts, profiles, reload }) {
         <p className="muted">先にプロファイルを 1 つ作成してください。</p>
       ) : (
         <div className="ssm-form-grid">
-          <input className="cinput" placeholder="別名 (例 mng@g3prod-mon01)" value={f.alias} onChange={set("alias")} />
+          <input className="cinput" placeholder="別名 (例 admin@web-01)" value={f.alias} onChange={set("alias")} />
           <input className="cinput" placeholder="インスタンス ID (i-...)" value={f.instanceId} onChange={set("instanceId")} />
           <input className="cinput" placeholder="run-as ドキュメント（任意）" value={f.documentName} onChange={set("documentName")} />
           <input className="cinput" placeholder="リージョン上書き（任意）" value={f.region} onChange={set("region")} />
