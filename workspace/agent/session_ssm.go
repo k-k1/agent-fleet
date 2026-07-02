@@ -63,7 +63,7 @@ func handleSSMLoginStatus(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
 		return
 	}
-	if meta.Kind != "ssm" {
+	if meta.Kind != kindSSM {
 		writeErr(w, http.StatusBadRequest, "unsupported_kind", "ssm-login is for ssm sessions only")
 		return
 	}

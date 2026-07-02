@@ -77,7 +77,7 @@ func runSessionStatusHook(args []string) {
 		_ = json.NewDecoder(os.Stdin).Decode(&in)
 		if codexMarker {
 			if in.SessionID != "" {
-				writeCodexSid(sid, in.SessionID)
+				codexSids.write(sid, in.SessionID)
 			}
 		} else {
 			sid = in.SessionID // claude

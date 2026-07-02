@@ -84,20 +84,10 @@ func handleSessionMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	alive := tmuxHasSession(tmuxName(name))
-	state := "stopped"
-	if alive {
-		state = "idle"
-		if st, ok := readSessionStatus(sessionUUID(meta.Dir, name)); ok {
-			state = st.State
-		}
-		// Self-heal a stale waiting/working cache: if the pane is back at the ready
-		// prompt (rejected permission, abandoned question, killed+resumed), it's idle.
-		if state != "idle" && sessionAtIdlePrompt(name) {
-			state = "idle"
-			removeSessionStatus(sessionUUID(meta.Dir, name))
-		}
-	}
-	if meta.Kind != "claude" {
+	// heal=true: self-correct a stale waiting/working cache when the pane is back at
+	// the ready prompt (rejected permission, abandoned question, killed+resumed).
+	state := driveState(meta, alive, true)
+	if !agentOf(meta.Kind).caps().canTranscript {
 		writeErr(w, http.StatusBadRequest, "unsupported_kind", "messages are available for claude sessions only")
 		return
 	}
