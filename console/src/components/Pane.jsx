@@ -10,6 +10,7 @@ import { useApp } from "../state.jsx";
 import { useSettings } from "../lib/settings.js";
 import { ordClass } from "../lib/panebadge.js";
 import { usePaneHover, hoverMatches } from "../lib/panehover.jsx";
+import { agentOf } from "../agents/registry.ts";
 
 // Drag payload MIME — identifies a pane-to-pane swap drag (vs any other drag).
 const DND = "application/x-af-pane";
@@ -74,7 +75,10 @@ export default function Pane({
   useEffect(() => {
     if (sessionMeta && sessionMeta.alive === false) setAttached(false);
   }, [sessionMeta?.alive]);
-  const canMirror = isTerm && !!pane.session && sessionMeta?.kind === "claude";
+  // The chat mirror is offered only for agents whose descriptor declares the `chat`
+  // capability (today: claude, the /messages endpoint is claude-only). Guard on a
+  // loaded sessionMeta so an unknown kind doesn't default-open the mirror.
+  const canMirror = isTerm && !!pane.session && !!sessionMeta && agentOf(sessionMeta.kind).caps.chat;
   const showMirror = canMirror && mirror;
   // ターミナル toggle shows the terminal AND ensures the session is attached (resuming a
   // stopped one). チャット toggle just shows the chat overlay.

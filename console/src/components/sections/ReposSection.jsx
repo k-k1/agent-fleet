@@ -5,6 +5,7 @@ import Section from "../Section.jsx";
 import Icon from "../Icon.jsx";
 import NewRepoModal from "../NewRepoModal.jsx";
 import { kindIcon, kindLabel } from "../../lib/sessionkind.js";
+import { agentOf, repoLaunchKinds } from "../../agents/registry.ts";
 
 const repoSafeSession = (name) =>
   name.replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 40) || "repo";
@@ -85,14 +86,9 @@ export default function ReposSection() {
   // shell is always available; an agent kind only appears once its connection is set
   // up (Claude/Codex signed in, opencode has at least one API key env). While conns
   // is unknown (null) we show all so a slow/failed probe never hides a valid option.
-  const ready = (k) => {
-    if (k === "shell" || !conns) return true;
-    if (k === "claude") return !!conns.claude?.connected;
-    if (k === "codex") return !!conns.codex?.connected;
-    if (k === "opencode") return !!(conns.opencode?.envs?.length > 0);
-    return true;
-  };
-  const launchKinds = ["claude", "opencode", "codex", "shell"].filter(ready);
+  // Availability lives on each agent descriptor (src/agents/registry).
+  const ready = (k) => !conns || agentOf(k).available({ conns });
+  const launchKinds = repoLaunchKinds.filter(ready);
 
   // Resolve which repo the currently-attached session works in, so we can show it
   // selected (highlighted) in place. Refetched when the attached session changes.
@@ -107,8 +103,9 @@ export default function ReposSection() {
         if (!alive) return;
         const s = (d.sessions || []).find((x) => x.name === session);
         // A shell session doesn't "own" a repo for highlighting purposes — only
-        // agent sessions (claude/opencode/codex) mark their working repo.
-        setActiveRepo(s && s.kind !== "shell" ? s.repo : null);
+        // agent sessions (claude/opencode/codex, i.e. those that run in a dir)
+        // mark their working repo.
+        setActiveRepo(s && agentOf(s.kind).caps.runsInDir ? s.repo : null);
       })
       .catch(() => alive && setActiveRepo(null));
     return () => {
@@ -164,9 +161,7 @@ export default function ReposSection() {
             // split=true (middle-click) opens the new session in a freshly split
             // pane instead of replacing the active pane's content.
             onLaunch={async (kind, split) => {
-              const suffix =
-                kind === "shell" ? "-sh" : kind === "opencode" ? "-oc" : kind === "codex" ? "-cx" : "";
-              const base = repoSafeSession(r.name) + suffix;
+              const base = repoSafeSession(r.name) + agentOf(kind).launchSuffix;
               let used = new Set();
               try {
                 const d = await api("api/sessions");
@@ -194,7 +189,7 @@ export default function ReposSection() {
 // the row stays compact: name + 起動 (where the branch chip used to sit). `active`
 // = open in the SCM pane; `selected` = the attached session's repo — both just
 // highlight the row in place (no reordering).
-function RepoRow({ r, kinds = ["claude", "opencode", "codex", "shell"], running = true, active, selected, onOpen, onLaunch }) {
+function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected, onOpen, onLaunch }) {
   const [showLaunch, setShowLaunch] = useState(false);
   const wrapRef = useRef(null);
 
