@@ -33,6 +33,17 @@ async function postJSON(path, method, body) {
   return true;
 }
 
+// Meta renders one labeled key/value row inside a list card. Empty values show "—".
+// `wide` spans the full grid width (for long values like a start URL).
+function Meta({ k, v, mono = true, wide = false }) {
+  return (
+    <div className={"ssm-meta-row" + (wide ? " wide" : "")}>
+      <span className="ssm-meta-k">{k}</span>
+      <span className={"ssm-meta-v" + (mono ? " mono" : "")}>{v || "—"}</span>
+    </div>
+  );
+}
+
 export default function SsmTab() {
   const [profiles, setProfiles] = useState(null);
   const [hosts, setHosts] = useState(null);
@@ -103,16 +114,18 @@ function ProfileSection({ profiles, reload }) {
       ) : (
         <ul className="ssm-list">
           {profiles.map((p) => (
-            <li key={p.id}>
-              <span className="ssm-alias">{p.label}</span>
-              <span className="muted">
-                {p.accountId ? `acct ${p.accountId}` : "acct —"}
-                {p.roleName ? ` · ${p.roleName}` : ""}
-                {p.region ? ` · ${p.region}` : ""}
-                {" · "}
-                {p.startUrl}
-              </span>
-              <button className="icon danger" title="削除" onClick={() => remove(p.id)}>✕</button>
+            <li key={p.id} className="ssm-item">
+              <div className="ssm-item-head">
+                <span className="ssm-alias">{p.label}</span>
+                <button className="icon danger" title="削除" onClick={() => remove(p.id)}>✕</button>
+              </div>
+              <div className="ssm-meta">
+                <Meta k="アカウント" v={p.accountId} />
+                <Meta k="ロール" v={p.roleName} />
+                <Meta k="既定リージョン" v={p.region} />
+                <Meta k="SSO リージョン" v={p.ssoRegion} />
+                <Meta k="start URL" v={p.startUrl} wide />
+              </div>
             </li>
           ))}
         </ul>
@@ -184,16 +197,17 @@ function HostSection({ hosts, profiles, reload }) {
       ) : (
         <ul className="ssm-list">
           {hosts.map((h) => (
-            <li key={h.id}>
-              <span className="ssm-alias">{h.alias}</span>
-              <span className="muted">
-                {h.instanceId}
-                {h.documentName ? ` · ${h.documentName}` : ""}
-                {h.region ? ` · ${h.region}` : ""}
-                {" · "}
-                {profileLabel(h.profileId)}
-              </span>
-              <button className="icon danger" title="削除" onClick={() => remove(h.id)}>✕</button>
+            <li key={h.id} className="ssm-item">
+              <div className="ssm-item-head">
+                <span className="ssm-alias">{h.alias}</span>
+                <button className="icon danger" title="削除" onClick={() => remove(h.id)}>✕</button>
+              </div>
+              <div className="ssm-meta">
+                <Meta k="インスタンス" v={h.instanceId} />
+                <Meta k="ドキュメント" v={h.documentName} />
+                <Meta k="リージョン" v={h.region} />
+                <Meta k="プロファイル" v={profileLabel(h.profileId)} mono={false} />
+              </div>
             </li>
           ))}
         </ul>

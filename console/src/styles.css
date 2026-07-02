@@ -3720,26 +3720,63 @@ button.mt-toolrun-head:hover {
 }
 .ssm-list {
   list-style: none;
-  margin: 6px 0;
+  margin: 8px 0 12px;
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 8px;
 }
-.ssm-list li {
+.ssm-item {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: var(--panel2);
+}
+.ssm-item-head {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 8px;
-  font-size: 12px;
 }
 .ssm-alias {
   font-weight: 600;
+  font-size: 13px;
 }
-.ssm-list .muted {
+.ssm-meta {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 3px 18px;
+  margin-top: 7px;
+}
+.ssm-meta-row {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  font-size: 12px;
+  min-width: 0;
+}
+.ssm-meta-row.wide {
+  grid-column: 1 / -1;
+}
+.ssm-meta-k {
+  flex: 0 0 92px;
+  color: var(--muted2);
+}
+.ssm-meta-v {
   flex: 1;
+  min-width: 0;
+  color: var(--fg);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.ssm-meta-v.mono {
+  font-family: var(--mono);
+}
+@media (max-width: 560px) {
+  .ssm-meta {
+    grid-template-columns: 1fr;
+  }
 }
 .ssm-form {
   margin-top: 8px;
