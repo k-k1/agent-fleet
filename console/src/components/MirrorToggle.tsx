@@ -12,7 +12,7 @@ import Icon from "./Icon.jsx";
 // styles.css. The title keeps the full word reachable as a tooltip.
 interface MirrorToggleProps {
   mirror: boolean;
-  onToggle: (toChat: boolean) => void;
+  onToggle?: (toChat: boolean) => void;
   running?: boolean;
 }
 
@@ -27,7 +27,7 @@ export default function MirrorToggle({ mirror, onToggle, running = true }: Mirro
         // mask would spin "再開中…" forever (attach is gated on running).
         title={running ? "ターミナル" : "ターミナル（ワークスペース停止中）"}
         disabled={!running}
-        onClick={() => onToggle(false)}
+        onClick={() => onToggle?.(false)}
       >
         <Icon name="terminal" />
         <span className="seg-label">ターミナル</span>
@@ -36,7 +36,7 @@ export default function MirrorToggle({ mirror, onToggle, running = true }: Mirro
         type="button"
         className={"seg-btn" + (mirror ? " active" : "")}
         title="チャット"
-        onClick={() => onToggle(true)}
+        onClick={() => onToggle?.(true)}
       >
         <Icon name="comment-discussion" />
         <span className="seg-label">チャット</span>
