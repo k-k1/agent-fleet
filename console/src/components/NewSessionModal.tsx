@@ -3,6 +3,7 @@ import { api, apiJSON, errText } from "../api.js";
 import { useApp } from "../state.jsx";
 import RepoPicker from "./RepoPicker.jsx";
 import Modal from "./Modal.jsx";
+import Icon from "./Icon.jsx";
 import { useToast } from "./ToastProvider.jsx";
 import SsmLoginModal from "./SsmLoginModal.jsx";
 import { readKindAvail, writeKindAvail } from "../lib/kindavail.js";
@@ -230,9 +231,10 @@ export default function NewSessionModal({ onClose, onCreated }: NewSessionModalP
                   <button
                     key={k}
                     type="button"
-                    className={"seg-btn" + (kind === k ? " active" : "")}
+                    className={"seg-btn kind-" + a.cssClass + (kind === k ? " active" : "")}
                     onClick={() => setKind(k)}
                   >
+                    <Icon name={a.icon} className="seg-ic" />
                     {a.label}
                     <span className="seg-sub">{a.launchHint}</span>
                   </button>
