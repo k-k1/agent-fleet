@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useApp } from "../../state.jsx";
 import { api, apiJSON, errText } from "../../api.js";
 import Section from "../Section.jsx";
@@ -196,11 +196,17 @@ export default function ReposSection() {
 // highlight the row in place (no reordering).
 function RepoRow({ r, kinds = ["claude", "opencode", "codex", "shell"], running = true, active, selected, onOpen, onLaunch }) {
   const [showLaunch, setShowLaunch] = useState(false);
+  const wrapRef = useRef(null);
 
-  // Close the launch dropdown on any outside click.
+  // Close the launch dropdown on any outside click. Use a containment check
+  // (not stopPropagation on the wrap): stopPropagation would swallow OTHER
+  // dropdowns' document-level close listeners, so opening a session ⋯ menu
+  // wouldn't close this one — both would stay open, both .pane-section would
+  // lift to z-index:10, and the later REPOS section would paint over the
+  // SESSIONS menu, blocking its 再開する item.
   useEffect(() => {
     if (!showLaunch) return;
-    const close = () => setShowLaunch(false);
+    const close = (e) => { if (!wrapRef.current?.contains(e.target)) setShowLaunch(false); };
     document.addEventListener("mousedown", close);
     return () => document.removeEventListener("mousedown", close);
   }, [showLaunch]);
@@ -223,7 +229,7 @@ function RepoRow({ r, kinds = ["claude", "opencode", "codex", "shell"], running 
           <Icon name="repo" className="repo-ic" />
           {r.name}
         </button>
-        <div className="launch-wrap" onMouseDown={(e) => e.stopPropagation()}>
+        <div className="launch-wrap" ref={wrapRef}>
           <button
             className="chip launch"
             title={running ? "このディレクトリでセッションを起動（複数可）" : "ワークスペース停止中"}

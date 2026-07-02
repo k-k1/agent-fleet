@@ -60,6 +60,7 @@ export default function FilesSection() {
   const [changes, setChanges] = useState(null); // changes-mode: aggregated git status
   const [dropTarget, setDropTarget] = useState(null); // dir path being hovered with a drag ("" = root)
   const [uploading, setUploading] = useState(false);
+  const opsRef = useRef(null); // ＋ menu wrap (outside-click test)
   const [opsOpen, setOpsOpen] = useState(false); // ＋ (new / upload) header dropdown
   const [menu, setMenu] = useState(null); // context menu: { x, y, row|null }
   const treeRef = useRef(null);
@@ -158,10 +159,13 @@ export default function FilesSection() {
     [running],
   );
 
-  // Close the ＋ header menu on any outside click (the wrap stops its own clicks).
+  // Close the ＋ header menu on any outside click. Containment check (not
+  // stopPropagation on the wrap): stopPropagation would swallow OTHER dropdowns'
+  // document-level close listeners, leaving multiple menus open at once and
+  // lifting several .pane-section into z-index:10, which stack-overlap.
   useEffect(() => {
     if (!opsOpen) return;
-    const close = () => setOpsOpen(false);
+    const close = (e) => { if (!opsRef.current?.contains(e.target)) setOpsOpen(false); };
     document.addEventListener("mousedown", close);
     return () => document.removeEventListener("mousedown", close);
   }, [opsOpen]);
@@ -518,7 +522,7 @@ export default function FilesSection() {
         <>
           {view === "tree" && (
             <>
-              <div className="launch-wrap files-ops" onMouseDown={(e) => e.stopPropagation()}>
+              <div className="launch-wrap files-ops" ref={opsRef}>
                 <button
                   className="ghost"
                   title={running ? "新規 / アップロード" : "ワークスペース停止中"}
