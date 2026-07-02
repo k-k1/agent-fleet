@@ -6,6 +6,7 @@ import Icon from "../Icon.jsx";
 import NewSessionModal from "../NewSessionModal.jsx";
 import SsmLoginModal from "../SsmLoginModal.jsx";
 import ArchivedModal from "../ArchivedModal.jsx";
+import { useConfirm } from "../ConfirmProvider.jsx";
 import { kindIcon, kindLabel, kindClass } from "../../lib/sessionkind.js";
 import { displayName, stateInfo } from "../../lib/sessionview.js";
 import { agentOf } from "../../agents/registry.ts";
@@ -33,6 +34,7 @@ const notify = (title: string, body: string) => {
 export default function SessionsSection() {
   const { sessions, bumpSessions, bumpRepos, bumpFiles, revealInFiles, showTerminal, showTerminalSplit, showChat, showChatSplit, session, newSessionTick, wsState, layout, setActivePane } = useApp();
   const running = wsState === "running"; // WS down → attach/resume/create are inert
+  const askConfirm = useConfirm();
   const [showModal, setShowModal] = useState(false);
   const { hover, setHover } = usePaneHover();
 
@@ -79,7 +81,17 @@ export default function SessionsSection() {
     const parts = [];
     if (keepable.length) parts.push(`${keepable.length} 件をアーカイブ`);
     if (ephemeral.length) parts.push(`shell/ssm ${ephemeral.length} 件を削除`);
-    if (!confirm(`停止中のセッションを整理します（${parts.join("・")}）。よろしいですか？`)) return;
+    if (
+      !(await askConfirm({
+        title: "停止中のセッションを整理",
+        body: `${parts.join("・")}します。`,
+        confirmLabel: "整理する",
+        // ephemeral (shell/ssm) are deleted outright → irreversible; agent sessions
+        // are only archived (restorable), so a keep-only clear isn't destructive.
+        danger: ephemeral.length > 0,
+      }))
+    )
+      return;
     await Promise.all([
       ...keepable.map((s) => raw(`api/sessions/${encodeURIComponent(s.name)}/archive`, { method: "POST" }).catch(() => {})),
       ...ephemeral.map((s) => raw(`api/sessions/${encodeURIComponent(s.name)}/stop`, { method: "POST" }).catch(() => {})),
@@ -92,6 +104,15 @@ export default function SessionsSection() {
   // hides it; ≠ recreate, which discards the conversation). The button counterpart
   // of quitting in the terminal. Frees a concurrency quota slot.
   const halt = async (name: string) => {
+    if (
+      !(await askConfirm({
+        title: "セッションを停止",
+        body: `"${name}" を停止します。会話は保持され、あとで再開できます。`,
+        confirmLabel: "停止する",
+        danger: false, // resumable — a caution, not a destructive action
+      }))
+    )
+      return;
     const res = await raw(`api/sessions/${encodeURIComponent(name)}/halt`, { method: "POST" });
     if (!res.ok) {
       alert("停止に失敗しました");
@@ -107,7 +128,21 @@ export default function SessionsSection() {
   // a genuine failure (e.g. the working dir is gone) is visible instead of being
   // masked as a generic message and leaving the row "stopped".
   const recreate = async (name: string) => {
-    if (!confirm(`セッション "${name}" の会話を破棄して新規に開始しますか？\n（元の会話は復元できません）`)) return;
+    if (
+      !(await askConfirm({
+        title: "会話を破棄して作り直す",
+        body: (
+          <>
+            "{name}" を新規に開始します。
+            <br />
+            <strong>現在の会話は復元できません。</strong>
+          </>
+        ),
+        confirmLabel: "破棄して作り直す",
+        danger: true,
+      }))
+    )
+      return;
     const res = await raw(`api/sessions/${encodeURIComponent(name)}/recreate`, { method: "POST" });
     if (!res.ok) {
       let msg = "作り直しに失敗しました";
