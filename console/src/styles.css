@@ -5210,6 +5210,15 @@ button.primary:hover:not(:disabled) {
     border: none;
     border-radius: 0;
   }
+  /* Only the large .modal shells go full-screen on a phone. A ConfirmDialog shares
+     the same .modal-backdrop, so the stretch above would blow its small card up to
+     full height — re-center the backdrop when it holds a .confirm so it stays a
+     compact card. */
+  .modal-backdrop:has(.confirm) {
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+  }
   /* Full-screen modal header sits at the very top edge: clear the status bar/notch
      and give the close button a finger-sized target so it's easy to tap. */
   .modal-head {
