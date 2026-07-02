@@ -14,9 +14,9 @@ export default function EnvTab() {
   const running = wsState === "running";
   const [d, setD] = useState(null);
   const [err, setErr] = useState("");
-  // allowUpdate: the operator gate for member CLI self-update, read from the active
-  // tenant's policy (GET /api/tenants). The toggle is only offered when allowed.
-  const [allowUpdate, setAllowUpdate] = useState(false);
+  // CP-owned per-workspace settings: the agent CLI self-update opt-in + its operator
+  // gate. DB-backed, so it loads/saves whether the workspace is running or stopped.
+  const [au, setAu] = useState(null); // { agentUpdate, allowAgentUpdate } | null
 
   // Cache the last good toolchains payload per tenant, so while the workspace is
   // stopped (Agent unreachable) we can still SHOW the form — disabled — from the
@@ -49,23 +49,22 @@ export default function EnvTab() {
   useEffect(load, [load]);
 
   useEffect(() => {
-    api("api/tenants")
-      .then((res) => {
-        const ts = (res && res.tenants) || [];
-        const sel = getTenant();
-        // Single-membership users have no explicit selection (auto-selected).
-        const t = ts.find((x) => x.slug === sel) || (ts.length === 1 ? ts[0] : null);
-        setAllowUpdate(!!(t && t.allow_agent_self_update));
-      })
-      .catch(() => setAllowUpdate(false));
+    api("api/env/ws-settings")
+      .then((res) => setAu(res && !res.error ? res : { agentUpdate: false, allowAgentUpdate: false }))
+      .catch(() => setAu({ agentUpdate: false, allowAgentUpdate: false }));
   }, []);
+
+  const setAgentUpdate = async (on) => {
+    const res = await apiJSON("api/env/ws-settings", "PUT", { agentUpdate: on });
+    if (res && !res.error) setAu(res);
+    else alert("保存に失敗しました");
+  };
 
   const update = async (patch) => {
     const next = {
       node: d.node || "",
       java: d.java || "",
       timezone: d.timezone || "",
-      agentUpdate: !!d.agentUpdate,
       ...patch,
     };
     const res = await apiJSON("api/env/toolchains", "PUT", next);
@@ -79,18 +78,19 @@ export default function EnvTab() {
   return (
     <div className="display-settings">
       {d ? (
-        <Toolchains d={d} update={update} allowUpdate={allowUpdate} running={running} />
+        <Toolchains d={d} update={update} running={running} />
       ) : err ? (
         <p className="muted pad">{err}</p>
       ) : (
         <p className="muted pad">読み込み中…</p>
       )}
+      {au && au.allowAgentUpdate && <AgentUpdateRow au={au} onChange={setAgentUpdate} />}
       <WorkspaceDangerZone />
     </div>
   );
 }
 
-function Toolchains({ d, update, allowUpdate, running }) {
+function Toolchains({ d, update, running }) {
   const nodeOpts = d.node_options || ["system"];
   const javaOpts = d.java_available || [];
   const tz = d.timezone || "Asia/Tokyo";
@@ -139,23 +139,26 @@ function Toolchains({ d, update, allowUpdate, running }) {
           </select>
         )}
       </Row>
-      {allowUpdate && (
-        <Row label="エージェント CLI の更新">
-          <label className="ds-check">
-            <input
-              type="checkbox"
-              checked={!!d.agentUpdate}
-              disabled={!running}
-              onChange={(e) => update({ agentUpdate: e.target.checked })}
-            />
-            <span>起動時に claude / opencode / codex を最新へ更新する</span>
-          </label>
-          <p className="muted ds-sub">
-            OFF（既定）はシステムが焼いたイメージ版で固定。ON にすると次の起動時に最新へ更新します（Stop → Start で反映／OFF に戻して再起動すればイメージ版へ戻ります）。
-          </p>
-        </Row>
-      )}
     </>
+  );
+}
+
+// AgentUpdateRow is the CLI self-update opt-in. It's CP-owned (per-workspace, stored
+// in the CP DB), so — unlike the toolchains above — it can be toggled even while the
+// workspace is STOPPED; the value is applied at the next container start. Shown only
+// when the operator allows it (tenant policy).
+function AgentUpdateRow({ au, onChange }) {
+  return (
+    <section className="ds-group">
+      <h4 className="ds-title">エージェント CLI の更新</h4>
+      <label className="ds-check">
+        <input type="checkbox" checked={!!au.agentUpdate} onChange={(e) => onChange(e.target.checked)} />
+        <span>起動時に claude / opencode / codex を最新へ更新する</span>
+      </label>
+      <p className="muted ds-sub">
+        OFF（既定）はシステムが焼いたイメージ版で固定。ON にすると次の起動時に最新へ更新します（Stop → Start で反映／OFF に戻して再起動すればイメージ版へ戻ります）。停止中でも変更できます。
+      </p>
+    </section>
   );
 }
 

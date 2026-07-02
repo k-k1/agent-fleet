@@ -555,10 +555,28 @@ func (m *manager) workspaceExtraEnv(ctx context.Context, ws Workspace) []string 
 	if err != nil {
 		return nil
 	}
-	if parseLimits(t.Limits).AllowAgentSelfUpdate {
-		return []string{"AF_AGENT_SELF_UPDATE_ALLOWED=1"}
+	allowUpd := parseLimits(t.Limits).AllowAgentSelfUpdate
+	var env []string
+	if allowUpd {
+		env = append(env, "AF_AGENT_SELF_UPDATE_ALLOWED=1")
 	}
-	return nil
+	// Per-workspace member settings (CP DB) → container env. Add new mappings here as
+	// settings grow; each is a DB-backed value editable while the container is stopped.
+	raw, _ := m.store.GetWorkspaceSettings(ctx, ws.ID)
+	st := parseWSSettings(raw)
+	if allowUpd && st.AgentUpdate {
+		env = append(env, "AF_AGENT_SELF_UPDATE=1")
+	}
+	return env
+}
+
+// evictMembershipCache drops one membership's memoized runtime so the next resolve
+// rebuilds it — used when a per-workspace setting changes so the new env reaches the
+// next container start.
+func (m *manager) evictMembershipCache(membershipID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.rts, membershipID)
 }
 
 // backfill records existing on-disk default-tenant users into the store on boot
