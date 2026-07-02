@@ -5151,6 +5151,32 @@ button.primary:hover:not(:disabled) {
 .seg.big .seg-btn.active .seg-sub {
   color: #06384a;
 }
+/* Agent kind icon in the New Session picker — colored per kind (same palette as the
+   Sessions/pane kind badge) so each agent reads by color+icon, not just its word.
+   Data-driven: the class comes from the agent registry's cssClass. */
+.seg.big .seg-btn .seg-ic {
+  font-size: 16px;
+}
+.seg.big .seg-btn.kind-claude .seg-ic {
+  color: #e0a45e;
+}
+.seg.big .seg-btn.kind-codex .seg-ic {
+  color: #4ec97a;
+}
+.seg.big .seg-btn.kind-opencode .seg-ic {
+  color: #b07cf2;
+}
+.seg.big .seg-btn.kind-shell .seg-ic {
+  color: #46c9d0;
+}
+.seg.big .seg-btn.kind-ssm .seg-ic {
+  color: #e8913a;
+}
+/* Selected button is accent-filled, so the icon flips to the on-accent color for
+   contrast (this rule comes last so it wins over the per-kind colors above). */
+.seg.big .seg-btn.active .seg-ic {
+  color: var(--on-accent);
+}
 
 /* repo picker spacing inside the modal */
 .session-modal .repopicker {
