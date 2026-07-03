@@ -434,6 +434,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [refreshWs, refreshOcweb, bumpSessions, bumpRepos, bumpFiles]);
 
   const stopWs = useCallback(async () => {
+    // Optimistic transition (mirrors startWs's "starting…") so the WsBar toggle goes
+    // inert (busy = state ends in "…") and the 4s auto-sync poll skips mid-stop —
+    // otherwise the button stays live during the multi-second docker stop and a
+    // second click re-issues the stop / a poll clobbers the state.
+    setWsState("stopping…");
     await api("api/workspace/stop", { method: "POST" });
     await refreshWs();
     setOcweb(null);

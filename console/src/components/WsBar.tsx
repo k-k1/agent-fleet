@@ -226,6 +226,8 @@ function wsLabel(s: string): string {
       return "停止";
     case "starting…":
       return "起動中…";
+    case "stopping…":
+      return "停止中…";
     case "recreating…":
       return "再作成中…";
     case "unknown":
