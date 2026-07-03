@@ -4840,6 +4840,44 @@ button.mt-toolrun-head:hover {
 .ssm-meta-row.wide {
   grid-column: 1 / -1;
 }
+/* Per-host terminal color picker (swatches of the vivid hue + a terminal preview). */
+.ssm-host-color {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+.ssm-swatches {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+.ssm-swatch {
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  cursor: pointer;
+  padding: 0;
+  font-size: 9px;
+  font-weight: 700;
+  color: rgba(0, 0, 0, 0.6);
+  line-height: 1;
+}
+.ssm-swatch.active {
+  outline: 2px solid var(--fg);
+  outline-offset: 1px;
+}
+.ssm-swatch-preview {
+  margin-left: 4px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  font-size: 11px;
+  color: #ddd;
+}
 .ssm-meta-k {
   flex: 0 0 92px;
   color: var(--muted2);
