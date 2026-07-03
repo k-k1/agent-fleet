@@ -816,10 +816,12 @@ button.wu-reload {
   align-items: center;
   gap: 6px;
   padding: 4px 2px;
-  border-bottom: 1px solid var(--border2);
 }
+/* No per-row divider lines within a list: rows are separated by whitespace and a
+   rounded hover/active pill (matching the agreed IA mock, and the already-
+   borderless Files tree). The section boundaries (.pane-section border) carry the
+   only horizontal rules, so hierarchy reads as "sections split, rows don't". */
 .list > li.muted {
-  border: none;
   padding: 6px 2px;
 }
 
