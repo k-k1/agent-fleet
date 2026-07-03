@@ -41,6 +41,8 @@
 - [ ] **機能インベントリ回帰:** §18.2 と現 UI を突き合わせ、消えた導線がないか確認。
 
 ## D. 設定 / 管理ダイアログの一貫化 ⏳ 着手中（方向性モック合意済み 2026-07-03）
+- [x] **タブ再編（対象＝ドメインで分割）:** 接続タブとエージェントタブを統合再編。エージェントタブ＝Claude/Codex/opencode を「接続＋挙動設定」1カードに、Git タブ＝GitHub/Bitbucket に分離。二重登場を解消。→ 合意モック [`console-agents-git-mock.html`](./console-agents-git-mock.html)。**実装済 `c3233d6`（Git 分離）+ `f3a307a`（エージェント融合・接続撤去）**。タブは エージェント/Git/環境/SSM/MCP/表示 の6枚（要ユーザー目視）。
+- [ ] **gitconfig（今後）:** Git タブに プロバイダ毎の commit identity（user.name / user.email）設定グループを追加。**新しい Agent エンドポイント（workspace/agent git identity + control-plane プロキシ）が必要**＝バックエンド変更を伴うため別途。GitTab.tsx に `TODO(gitconfig)` あり。
 - Settings 各タブ（Connections/Agents/Env/SSM/MCP/表示）の余白・ラベル・見出しの体裁統一。
 - [x] **接続タブ:** プロバイダを「バッジ＋名前＋状態ピル＋説明」のカードに。Codex は接続手段を推奨つき選択肢に＋デバイスコードを番号付き手順に。注記（ヘルプ文）は左罫線つきの定型ブロックで統一。→ 合意モック [`console-connections-mock.html`](./console-connections-mock.html)。**実装済 `c7ce7a0`**（バッジ色はセッション kind に合わせて codex 緑/opencode 紫。要ユーザー目視）。
 - **SSM タブ:** プロファイル/ホストの追加フォームを placeholder のみ→ラベル＋必須表示＋ヒント＋「必須/詳細(任意)」グループ分けに。プロファイル未登録時は無効欄でなく CTA バナー。→ 合意モック [`console-ssm-mock.html`](./console-ssm-mock.html)。
