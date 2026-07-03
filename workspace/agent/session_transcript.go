@@ -73,6 +73,11 @@ type chatTurn struct {
 	Compact bool `json:"compact,omitempty"`
 }
 
+// forkPreviewCursor is an out-of-range line cursor handed out while a fork previews its
+// source transcript, so the first poll that reads the fork's own (shorter) jsonl trips
+// the reset branch and swaps cleanly. Far above any real transcript length.
+const forkPreviewCursor = 1 << 30
+
 // handleSessionMessages (GET /sessions/{name}/messages?since=<cursor>) returns the
 // turns appended since the cursor, plus a new cursor and the live status. claude
 // only (its jsonl transcript). cursor is a line index into that transcript.
@@ -103,10 +108,28 @@ func handleSessionMessages(w http.ResponseWriter, r *http.Request) {
 	}
 	sid := sessionUUID(meta.Dir, name)
 	lines, jpath, jmatched := transcriptRead(sid)
-	// cursor is normally the new line count. Two edge cases refine it:
+	// A just-forked session's OWN jsonl isn't materialized until claude finishes copying
+	// the source conversation (buildSessionProgram runs --fork-session on first launch).
+	// Until then, show the source's history (identical up to the fork point) instead of an
+	// empty chat. Served as a reset with an out-of-range cursor, so the first poll that
+	// sees the fork's own jsonl trips the `since > len(lines)` reset below and swaps to it.
+	forkPreview := false
+	if meta.ForkFrom != "" && !jsonlHasConversation(lines) {
+		if srcLines, srcPath, srcMatched := transcriptRead(meta.ForkFrom); jsonlHasConversation(srcLines) {
+			lines, jpath, jmatched = srcLines, srcPath, srcMatched
+			forkPreview = true
+		}
+	}
+	// cursor is normally the new line count. Edge cases refine it:
 	reset := false
 	cursor := len(lines)
 	switch {
+	case forkPreview:
+		// Send the whole source preview each tick (content is stable); park the cursor
+		// past any real line count so the next non-preview poll resets onto the fork.
+		since = 0
+		reset = true
+		cursor = forkPreviewCursor
 	case len(lines) == 0 && alive && since > 0:
 		// A live session read as empty — almost always transient: a stub was briefly
 		// the newest file, or the log was mid-write during a workflow's heavy
