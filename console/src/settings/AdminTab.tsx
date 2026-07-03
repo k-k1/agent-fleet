@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { api, apiJSON, rawJSON, errText, rel } from "../api.js";
+import { useApp } from "../state.jsx";
+import { mobileMatches } from "../lib/device.js";
 import Icon from "../components/Icon.jsx";
 import ConfirmDialog from "../components/ConfirmDialog.jsx";
 import { useToast } from "../components/ToastProvider.jsx";
@@ -42,16 +44,74 @@ interface View {
 // the member's session list, served by the per-member admin endpoints.
 
 // GiB with adaptive precision (shared fmtGiB) plus AdminTab's "G" suffix.
+const ADMIN_MODES = ["manage", "sessions", "usage"]; // swipe order for the mode tabs
 const fmtG = (b: number) => fmtGiB(b) + "G";
 const fmtPct = (n: number | null | undefined) => (n == null ? "–" : Math.round(n) + "%");
 
 export default function AdminTab() {
+  const { adminDepthRef } = useApp();
   const [tenants, setTenants] = useState<Tenant[] | null>(null);
   const [forbidden, setForbidden] = useState(false);
   const [isSuper, setIsSuper] = useState(false); // super_admin: unlocks deployment-wide controls
   const [mode, setMode] = useState("manage"); // manage (tenant drilldown) | usage (showback)
   // view: {stage:'tenants'} | {stage:'tenant', slug} | {stage:'member', slug, member}
   const [view, setView] = useState<View>({ stage: "tenants" });
+
+  // Drill-down navigation is driven by browser history so back/forward (and the device
+  // back gesture) step through the levels. Each drill-in pushes an entry carrying the
+  // target view; a back pops it and this listener restores the parent view (state.tsx
+  // keeps the modal open while the entry is still modal:'admin'). depthOf feeds the
+  // shared adminDepthRef so the X/backdrop can pop all levels at once.
+  const depthOf = (v: View) => (v.stage === "member" ? 2 : v.stage === "tenant" ? 1 : 0);
+  useEffect(() => {
+    adminDepthRef.current = depthOf(view);
+  }, [adminDepthRef, view]);
+  useEffect(() => {
+    const onPop = (e: PopStateEvent) => {
+      if (e.state && e.state.modal === "admin") setView(e.state.adminView || { stage: "tenants" });
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
+  const drill = (next: View) => {
+    setView(next);
+    try {
+      history.pushState({ ...(history.state || {}), modal: "admin", adminView: next }, "");
+    } catch {}
+  };
+  // Mobile: a horizontal swipe anywhere in the (full-screen) admin modal switches the
+  // mode tabs (テナント管理 / セッション / 使用量). Window-level listeners are more
+  // reliable than element handlers over a scrolling body; the drawer-open swipe is
+  // suppressed while a modal is up, so there's no conflict.
+  useEffect(() => {
+    if (!mobileMatches()) return;
+    let sx = 0, sy = 0;
+    const start = (e: TouchEvent) => {
+      const t = e.touches[0];
+      if (t) {
+        sx = t.clientX;
+        sy = t.clientY;
+      }
+    };
+    const end = (e: TouchEvent) => {
+      const t = e.changedTouches[0];
+      if (!t) return;
+      const dx = t.clientX - sx;
+      const dy = t.clientY - sy;
+      if (Math.abs(dx) < 50 || Math.abs(dx) <= Math.abs(dy)) return; // horizontal only
+      setMode((m) => {
+        const i = ADMIN_MODES.indexOf(m);
+        const n = i + (dx < 0 ? 1 : -1);
+        return n >= 0 && n < ADMIN_MODES.length ? ADMIN_MODES[n] : m;
+      });
+    };
+    window.addEventListener("touchstart", start, { passive: true });
+    window.addEventListener("touchend", end, { passive: true });
+    return () => {
+      window.removeEventListener("touchstart", start);
+      window.removeEventListener("touchend", end);
+    };
+  }, []);
 
   const loadTenants = useCallback(async () => {
     try {
@@ -76,10 +136,7 @@ export default function AdminTab() {
   const tenant = view.slug ? tenants.find((t) => t.slug === view.slug) : null;
   const tenantName = tenant ? tenant.name : view.slug;
 
-  const goBack = () => {
-    if (view.stage === "member") setView({ stage: "tenant", slug: view.slug });
-    else if (view.stage === "tenant") setView({ stage: "tenants" });
-  };
+  const goBack = () => history.back(); // step up one drill level via history
 
   return (
     <div className="admin">
@@ -107,7 +164,13 @@ export default function AdminTab() {
           </button>
         )}
         <nav className="admin-crumbs">
-          <button className={"crumb" + (view.stage === "tenants" ? " here" : "")} onClick={() => setView({ stage: "tenants" })}>
+          <button
+            className={"crumb" + (view.stage === "tenants" ? " here" : "")}
+            onClick={() => {
+              const d = depthOf(view);
+              if (d > 0) history.go(-d);
+            }}
+          >
             <Icon name="organization" /> テナント
           </button>
           {view.slug && (
@@ -115,7 +178,9 @@ export default function AdminTab() {
               <Icon name="chevron-right" className="crumb-sep" />
               <button
                 className={"crumb" + (view.stage === "tenant" ? " here" : "")}
-                onClick={() => setView({ stage: "tenant", slug: view.slug })}
+                onClick={() => {
+                  if (view.stage === "member") history.back();
+                }}
               >
                 {tenantName}
               </button>
@@ -135,7 +200,7 @@ export default function AdminTab() {
           tenants={tenants}
           isSuper={isSuper}
           onReload={loadTenants}
-          onOpen={(slug) => setView({ stage: "tenant", slug })}
+          onOpen={(slug) => drill({ stage: "tenant", slug })}
         />
       )}
       {view.stage === "tenant" && (
@@ -144,7 +209,7 @@ export default function AdminTab() {
           tenant={tenant}
           isSuper={isSuper}
           onChanged={loadTenants}
-          onOpenMember={(member) => setView({ stage: "member", slug: view.slug, member })}
+          onOpenMember={(member) => drill({ stage: "member", slug: view.slug, member })}
         />
       )}
       {view.stage === "member" && (
@@ -153,7 +218,7 @@ export default function AdminTab() {
           member={view.member!}
           isSuper={isSuper}
           onChanged={loadTenants}
-          onBack={() => setView({ stage: "tenant", slug: view.slug })}
+          onBack={() => history.back()}
         />
       )}
       </>
@@ -203,7 +268,9 @@ function AllSessionsView({ tenants, isSuper }: { tenants: Tenant[]; isSuper: boo
     return () => clearInterval(timer.current);
   }, [poll]);
 
-  const all = rows || [];
+  // Deployment-wide overview: show RUNNING sessions only (stopped/resumable ones are
+  // noise here — the per-member detail still lists them). Member detail is unchanged.
+  const all = (rows || []).filter((s: any) => s.alive);
   const needle = q.trim().toLowerCase();
   const shown = needle
     ? all.filter((s: any) =>
@@ -211,7 +278,6 @@ function AllSessionsView({ tenants, isSuper }: { tenants: Tenant[]; isSuper: boo
           .some((v) => (v || "").toLowerCase().includes(needle)),
       )
     : all;
-  const aliveCount = all.filter((s: any) => s.alive).length;
 
   return (
     <div className="admin-stage all-sessions-view">
@@ -232,9 +298,7 @@ function AllSessionsView({ tenants, isSuper }: { tenants: Tenant[]; isSuper: boo
             検索
             <input type="text" value={q} onChange={(e) => setQ(e.target.value)} placeholder="ユーザー / ラベル / リポジトリ" />
           </label>
-          <span className="as-count muted">
-            {all.length} セッション・{aliveCount} 稼働中
-          </span>
+          <span className="as-count muted">{all.length} 稼働中</span>
         </div>
         {err && <p className="form-err">{err}</p>}
       </section>
@@ -243,27 +307,45 @@ function AllSessionsView({ tenants, isSuper }: { tenants: Tenant[]; isSuper: boo
         {rows === null ? (
           <p className="muted">読み込み中…</p>
         ) : shown.length === 0 ? (
-          <p className="muted">{all.length === 0 ? "セッションはありません。" : "一致するセッションがありません。"}</p>
+          <p className="muted">{all.length === 0 ? "稼働中のセッションはありません。" : "一致するセッションがありません。"}</p>
         ) : (
           <div className="all-sessions">
-            {shown.map((s: any) => {
-              const st = stateInfo(s);
-              return (
-                <div key={s.tenant + "|" + s.user_key + "|" + s.name} className="all-session">
-                  <span className={"kind-tag kind-" + kindClass(s.kind)}>
-                    <Icon name={kindIcon(s.kind)} /> {kindLabel(s.kind)}
-                  </span>
-                  <span className="asx-user mono" title={s.email || ""}>{s.user_key || "(不明)"}</span>
-                  {isSuper && !tenant && <span className="asx-tenant muted">{s.tenant}</span>}
-                  <span className="asx-name mono" title={s.dir || ""}>{s.label ? s.label.replace(/^\[AF\]\s*/, "") : s.name}</span>
-                  <span className="asx-repo muted">{s.repo || ""}</span>
-                  <span className={"session-state " + st.cls}>
-                    <Icon name={st.icon} spin={st.spin} /> {st.text}
-                  </span>
-                  <span className="asx-time muted">{s.started || ""}</span>
-                </div>
-              );
-            })}
+            {(() => {
+              // Group by tenant (a header per tenant), so the row drops its tenant column
+              // and stays narrow enough for a phone. Groups sorted by tenant name.
+              const by = new Map<string, any[]>();
+              for (const s of shown) {
+                const k = s.tenant || "";
+                (by.get(k) || by.set(k, []).get(k)!).push(s);
+              }
+              const tName = (slugv: string) => tenants.find((t) => t.slug === slugv)?.name || slugv || "(不明)";
+              return [...by.entries()]
+                .sort((a, b) => tName(a[0]).localeCompare(tName(b[0])))
+                .map(([tslug, list]) => (
+                  <div key={tslug || "_"} className="asx-group">
+                    <div className="asx-group-head">
+                      {tName(tslug)} <span className="muted">({list.length})</span>
+                    </div>
+                    {list.map((s: any) => {
+                      const st = stateInfo(s);
+                      return (
+                        <div key={s.tenant + "|" + s.user_key + "|" + s.name} className="adm-session">
+                          <span className={"kind-tag kind-" + kindClass(s.kind)}>
+                            <Icon name={kindIcon(s.kind)} /> {kindLabel(s.kind)}
+                          </span>
+                          <span className="asx-user mono" title={s.email || ""}>{s.user_key || "(不明)"}</span>
+                          <span className="as-name mono" title={s.dir || ""}>{s.label ? s.label.replace(/^\[AF\]\s*/, "") : s.name}</span>
+                          <span className="as-repo muted">{s.repo || ""}</span>
+                          <span className={"session-state " + st.cls}>
+                            <Icon name={st.icon} spin={st.spin} /> {st.text}
+                          </span>
+                          <span className="as-time muted">{s.started || ""}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ));
+            })()}
           </div>
         )}
       </section>
@@ -775,7 +857,10 @@ function MemberView({
   return (
     <div className="admin-stage member-detail">
       <header className="member-head">
-        <span className={"state-dot " + (running ? "on" : "off")} />
+        <span className={"state-dot " + (stats == null ? "" : running ? "on" : "off")} />
+        <span className={"state-word " + (stats == null ? "" : running ? "on" : "off")}>
+          {stats == null ? "確認中…" : running ? "稼働中" : "停止中"}
+        </span>
         <span className="mh-key mono">{key}</span>
         {member.super_admin && <Icon name="star-full" className="mr-star" title="super_admin（デプロイ全体）" />}
         <span className="mh-role">{role}{role === "tenant_admin" ? "（テナント管理者）" : ""}</span>
