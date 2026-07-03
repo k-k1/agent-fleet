@@ -87,6 +87,10 @@ func main() {
 	mux.HandleFunc("POST /repos/{name}/unstage", handleRepoUnstage)
 	mux.HandleFunc("POST /repos/{name}/discard", handleRepoDiscard)
 	mux.HandleFunc("POST /repos/{name}/commit", handleRepoCommit)
+	mux.HandleFunc("GET /repos/{name}/identity", handleRepoIdentityGet)
+	mux.HandleFunc("PUT /repos/{name}/identity", handleRepoIdentityPut)
+	mux.HandleFunc("GET /git/identity", handleGlobalIdentityGet)
+	mux.HandleFunc("PUT /git/identity", handleGlobalIdentityPut)
 	// File browser (docs/17 P3-5 段2 + FILES 改善): read tree/file, download raw,
 	// upload into a dir, git-changes filter + viewer line marks.
 	mux.HandleFunc("GET /fs/tree", handleFSTree)
@@ -126,6 +130,7 @@ func main() {
 	mux.HandleFunc("GET /connections/git/{host}/repos", handleListRemoteRepos)
 	mux.HandleFunc("GET /connections/git/{host}/branches", handleListRemoteBranches)
 	mux.HandleFunc("PUT /connections/git/{host}", handlePutGitConn)
+	mux.HandleFunc("PUT /connections/git/{host}/identity", handleGitProviderIdentityPut)
 	mux.HandleFunc("DELETE /connections/git/{host}", handleDeleteGitConn)
 	mux.HandleFunc("POST /connections/git/github/oauth/start", handleGithubOAuthStart)
 	mux.HandleFunc("POST /connections/git/github/oauth/poll", handleGithubOAuthPoll)

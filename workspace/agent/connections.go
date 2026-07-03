@@ -62,6 +62,9 @@ func bitbucketStatus(s *secretsData) map[string]any {
 		if e.Email != "" {
 			m["email"] = e.Email
 		}
+		id := s.GitIdentity["bitbucket.org"]
+		m["commitName"] = firstNonEmpty(id.Name, e.Login)
+		m["commitEmail"] = firstNonEmpty(id.Email, e.Email)
 		return m
 	}
 	if s.Bitbucket != nil {
@@ -78,6 +81,9 @@ func bitbucketStatus(s *secretsData) map[string]any {
 		if s.Bitbucket.Email != "" {
 			m["email"] = s.Bitbucket.Email
 		}
+		id := s.GitIdentity["bitbucket.org"]
+		m["commitName"] = firstNonEmpty(id.Name, s.Bitbucket.Account)
+		m["commitEmail"] = firstNonEmpty(id.Email, s.Bitbucket.Email)
 		return m
 	}
 	return map[string]any{"connected": false}
@@ -106,6 +112,9 @@ func gitConnStatus(s *secretsData, host string) map[string]any {
 	if e.Email != "" {
 		m["email"] = e.Email
 	}
+	id := s.GitIdentity[host]
+	m["commitName"] = firstNonEmpty(id.Name, e.Login)
+	m["commitEmail"] = firstNonEmpty(id.Email, e.Email)
 	return m
 }
 
@@ -158,13 +167,8 @@ func handlePutGitConn(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "store_failed", err.Error())
 		return
 	}
-	// Optional commit identity, so anything claude commits is attributed sanely.
-	if n := strings.TrimSpace(req.Name); n != "" {
-		_ = gitConfigGlobal("user.name", n)
-	}
-	if e := strings.TrimSpace(req.Email); e != "" {
-		_ = gitConfigGlobal("user.email", e)
-	}
+	// Commit identity is set separately (per provider) via /identity — not clobbered
+	// into the global config at connect time.
 	writeJSON(w, http.StatusOK, map[string]any{"connected": true, "host": host, "username": user})
 }
 

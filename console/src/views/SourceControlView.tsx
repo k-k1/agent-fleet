@@ -223,6 +223,7 @@ export default function SourceControlView({ repo, wrap }: { repo?: string; wrap?
               <input type="checkbox" checked={all} onChange={(e) => setAll(e.target.checked)} /> 追跡中を全て stage (-a)
             </label>
             <button onClick={commitOp}>Commit</button>
+            <RepoIdentity enc={enc} />
           </div>
 
           <div className="sub-head">履歴</div>
@@ -516,5 +517,72 @@ function FileDiff({ file }: { file: DiffFile }) {
         </pre>
       )}
     </section>
+  );
+}
+
+// RepoIdentity shows the repo's effective commit identity (who a commit here is
+// attributed to) and lets the user pin a per-repo override. The Agent writes it to the
+// repo's local .git/config, so it applies to terminal / claude / Console commits alike.
+function RepoIdentity({ enc }: { enc: string }) {
+  const toast = useToast();
+  const [info, setInfo] = useState<any>(null);
+  const [edit, setEdit] = useState(false);
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const load = useCallback(() => {
+    api(`api/repos/${enc}/identity`)
+      .then((d) => {
+        if (d && !d.error) setInfo(d);
+      })
+      .catch(() => {});
+  }, [enc]);
+  useEffect(() => {
+    load();
+  }, [load]);
+  if (!info) return null;
+  const eff = info.effective || {};
+  const srcLabel =
+    info.source === "manual" ? "このリポ上書き" : info.source === "provider" ? "プロバイダ既定" : "グローバル既定";
+  const openEdit = () => {
+    setName(info.override?.name || eff.name || "");
+    setEmail(info.override?.email || eff.email || "");
+    setEdit(true);
+  };
+  const put = async (n: string, e: string) => {
+    const res = await apiJSON(`api/repos/${enc}/identity`, "PUT", { name: n, email: e });
+    if (res && res.error) {
+      toast("保存に失敗: " + (res.error.message || res.error));
+      return;
+    }
+    setInfo(res);
+    setEdit(false);
+  };
+  return (
+    <div className="repo-identity">
+      {!edit ? (
+        <button type="button" className="ri-line" title="コミット者を変更（このリポの上書き）" onClick={openEdit}>
+          <Icon name="account" />
+          <span className="ri-who">
+            {eff.name || "(未設定)"}
+            {eff.email ? ` <${eff.email}>` : ""}
+          </span>
+          <span className="ri-src">{srcLabel}</span>
+        </button>
+      ) : (
+        <div className="ri-edit">
+          <input className="cinput" placeholder="name" value={name} onChange={(e) => setName(e.target.value)} />
+          <input className="cinput" placeholder="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+          <button onClick={() => put(name.trim(), email.trim())}>保存</button>
+          {info.source === "manual" && (
+            <button className="ghost" title="上書きを解除（プロバイダ既定に戻す）" onClick={() => put("", "")}>
+              解除
+            </button>
+          )}
+          <button className="ghost" title="閉じる" onClick={() => setEdit(false)}>
+            ×
+          </button>
+        </div>
+      )}
+    </div>
   );
 }
