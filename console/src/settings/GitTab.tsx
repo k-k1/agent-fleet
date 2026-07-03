@@ -154,12 +154,18 @@ function GithubRow({ st, reload }: RowProps) {
         </div>
       ) : (
         <>
-          <div className="p-desc">OAuth（デバイスフロー）または Personal Access Token で接続。</div>
+          <div className="p-desc">OAuth（デバイスフロー）か Personal Access Token で接続。</div>
           <div className="p-body">
-            <div className="flow">
-              <button onClick={startOAuth}>OAuth 接続</button>
-              <button className="ghost" onClick={() => setMode("token")}>
-                token
+            <div className="p-opts">
+              <button type="button" className="p-opt" onClick={startOAuth}>
+                <span className="p-opt-t">
+                  OAuth で接続 <span className="p-rec">推奨</span>
+                </span>
+                <span className="p-opt-s">ブラウザで承認するデバイスフロー。</span>
+              </button>
+              <button type="button" className="p-opt" onClick={() => setMode("token")}>
+                <span className="p-opt-t">アクセストークンで接続</span>
+                <span className="p-opt-s">Personal Access Token を貼り付け。</span>
               </button>
             </div>
           </div>
@@ -273,12 +279,18 @@ function BitbucketRow({ st, reload }: RowProps) {
         </div>
       ) : (
         <>
-          <div className="p-desc">OAuth（コードグラント）または メール＋アプリトークンで接続。</div>
+          <div className="p-desc">OAuth（コードグラント）か メール＋アプリトークンで接続。</div>
           <div className="p-body">
-            <div className="flow">
-              <button onClick={startOAuth}>OAuth 接続</button>
-              <button className="ghost" onClick={() => setMode("token")}>
-                token
+            <div className="p-opts">
+              <button type="button" className="p-opt" onClick={startOAuth}>
+                <span className="p-opt-t">
+                  OAuth で接続 <span className="p-rec">推奨</span>
+                </span>
+                <span className="p-opt-s">別タブで承認するコードグラント。</span>
+              </button>
+              <button type="button" className="p-opt" onClick={() => setMode("token")}>
+                <span className="p-opt-t">アプリトークンで接続</span>
+                <span className="p-opt-s">Atlassian メール＋API トークン。</span>
               </button>
             </div>
           </div>
