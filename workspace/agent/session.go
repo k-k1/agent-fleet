@@ -26,6 +26,7 @@ type Session struct {
 	Kind      string `json:"kind"`      // "claude" | "opencode" | "codex" | "shell"
 	Repo      string `json:"repo"`      // working dir basename (display)
 	Title     string `json:"title"`     // user-supplied display title (optional, any kind)
+	Color     string `json:"color"`     // terminal background hue (hex); SSM carries its host color
 	Label     string `json:"label"`     // claude --name display name (claude only)
 	Started   string `json:"started"`   // "01/02 15:04" local time, for the list
 	CreatedAt string `json:"createdAt"` // RFC3339
@@ -58,6 +59,7 @@ type sessionMeta struct {
 	Model     string `json:"model"`
 	Kind      string `json:"kind"`
 	Title     string `json:"title"`     // user-supplied display title (optional); "" = auto
+	Color     string `json:"color"`     // terminal background hue (hex); set at create (SSM host color)
 	Label     string `json:"label"`     // claude --name (display); derived from Title at create/recreate
 	Repo      string `json:"repo"`      // working dir basename
 	CreatedAt string `json:"createdAt"` // RFC3339, set at create
@@ -116,7 +118,7 @@ func wireSession(m sessionMeta, alive bool) Session {
 	li := agentOf(m.Kind).wireLive(m, alive)
 	return Session{
 		Name: m.Name, Tmux: tmuxName(m.Name), Dir: m.Dir, Kind: m.Kind,
-		Repo: m.Repo, Title: m.Title, Label: m.Label, Started: started, CreatedAt: m.CreatedAt,
+		Repo: m.Repo, Title: m.Title, Color: m.Color, Label: m.Label, Started: started, CreatedAt: m.CreatedAt,
 		RemoteUrl: li.remoteURL, State: li.state, Alive: alive, Resumable: li.resumable,
 		BackgroundBusy: li.backgroundBusy, Context: li.context,
 	}
@@ -423,6 +425,7 @@ type createReq struct {
 	// don't error. Title is the optional user-facing display name (→ claude --name).
 	Name  string `json:"name"`
 	Title string `json:"title"`
+	Color string `json:"color"` // terminal background hue (hex); SSM host color, else empty
 	Dir   string `json:"dir"`
 	Model string `json:"model"`
 	Kind  string `json:"kind"` // "claude" (default) | "opencode" | "codex" | "shell"
@@ -503,7 +506,7 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	meta := sessionMeta{
-		Name: name, Dir: req.Dir, Model: req.Model, Kind: kind, Title: title, Label: label,
+		Name: name, Dir: req.Dir, Model: req.Model, Kind: kind, Title: title, Color: req.Color, Label: label,
 		Repo: filepath.Base(req.Dir), CreatedAt: time.Now().Format(time.RFC3339), SSM: ssm,
 	}
 	if err := startSessionTmux(meta, req.SSMForceLogin); err != nil {
@@ -705,7 +708,7 @@ func handleRecreateSession(w http.ResponseWriter, r *http.Request) {
 	// "re-copy the fork source".
 	newMeta := sessionMeta{
 		Name: allocSessionName(m.Dir), Dir: m.Dir, Model: m.Model, Kind: m.Kind,
-		Title: m.Title, Repo: m.Repo, CreatedAt: time.Now().Format(time.RFC3339), SSM: m.SSM,
+		Title: m.Title, Color: m.Color, Repo: m.Repo, CreatedAt: time.Now().Format(time.RFC3339), SSM: m.SSM,
 	}
 	if agentOf(newMeta.Kind).caps().usesLabel {
 		newMeta.Label = sessionLabelFor(newMeta.Dir, newMeta.Title)

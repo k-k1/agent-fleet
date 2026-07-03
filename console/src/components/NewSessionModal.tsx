@@ -9,6 +9,8 @@ import SsmLoginModal from "./SsmLoginModal.jsx";
 import { readKindAvail, writeKindAvail } from "../lib/kindavail.js";
 import { deriveRepoName, sanitizeSeg, uniqueRepoName, repoNameRe } from "../lib/reponame.js";
 import { agentOf, availableKinds, newSessionKinds } from "../agents/registry.ts";
+import { useSettings } from "../lib/settings.js";
+import { hostColorBase } from "../lib/termcolor.js";
 import type { FormEvent } from "react";
 import type { SsmHost } from "../types/session.ts";
 import type { RepoSelection } from "./RepoPicker.jsx";
@@ -36,6 +38,7 @@ interface NewSessionModalProps {
 export default function NewSessionModal({ onClose, onCreated }: NewSessionModalProps) {
   const { openSettings } = useApp();
   const toast = useToast();
+  const settings = useSettings();
   // Optional user title → claude --name (web identification). The session's identity
   // is a unique slug the server auto-allocates; the client never picks a name.
   const [title, setTitle] = useState("");
@@ -165,6 +168,9 @@ export default function NewSessionModal({ onClose, onCreated }: NewSessionModalP
         repo_name: newCopy ? repoName.trim() : "",
         ssm_host_id: isSSM ? ssmHostId : "",
         ssm_force_login: isSSM ? ssmForce : false,
+        // SSM: the terminal background hue for this host (per-user setting, auto-derived
+        // when unset). Stored on the session so its terminal is tinted per host.
+        color: isSSM ? hostColorBase(settings.ssmHostColors?.[ssmHostId], ssmHostId) : "",
       });
       if (res && res.error) {
         toast("作成に失敗: " + errText(res.error));

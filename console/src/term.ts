@@ -424,6 +424,17 @@ export function fit(paneId: string) {
   fitInst(inst(paneId));
 }
 
+// setTermBackground tints a pane's terminal background (per session kind / SSM host).
+// Spreads the current theme so only the background changes; no-op before the term is
+// created.
+export function setTermBackground(paneId: string, bg: string) {
+  const it = inst(paneId);
+  if (!it || !it.term) return;
+  const cur = it.term.options.theme || {};
+  if (cur.background === bg) return;
+  it.term.options.theme = { ...cur, background: bg };
+}
+
 // focusTerm moves keyboard focus into a pane's terminal so the user can type right
 // after launching/attaching a session without clicking first. On touch devices this
 // is a no-op: auto-focusing xterm's textarea would pop the on-screen keyboard just

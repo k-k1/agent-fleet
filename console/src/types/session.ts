@@ -22,6 +22,7 @@ export interface Session {
   name: string; // auto-allocated unique slug ("s7") — the session's immutable identity
   kind: SessionKind;
   title?: string; // user-supplied display title (optional, any kind); "" = auto
+  color?: string; // terminal background hue (hex); SSM sessions carry their host color
   label?: string; // claude --name (with an "[AF] " tag); absent for shell
   repo?: string | null; // working-copy folder the (agent) session runs in
   path?: string; // absolute working dir

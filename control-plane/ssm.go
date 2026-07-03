@@ -337,6 +337,7 @@ func (c config) rewriteSSMCreate(ctx context.Context, res *resolved, r *http.Req
 	var peek struct {
 		Name          string `json:"name"`
 		Title         string `json:"title"`
+		Color         string `json:"color"`
 		Kind          string `json:"kind"`
 		SSMHostID     string `json:"ssm_host_id"`
 		SSMForceLogin bool   `json:"ssm_force_login"`
@@ -377,6 +378,7 @@ func (c config) rewriteSSMCreate(ctx context.Context, res *resolved, r *http.Req
 	out := map[string]any{
 		"name":            peek.Name,
 		"title":           peek.Title,
+		"color":           peek.Color,
 		"kind":            "ssm",
 		"ssm_profile":     ssmProfileName(p.Label),
 		"ssm_target":      h.InstanceID,

@@ -4,6 +4,8 @@ import { api, raw, rawJSON } from "../api.js";
 import Icon from "../components/Icon.jsx";
 import { useConfirm } from "../components/ConfirmProvider.jsx";
 import { useToast } from "../components/ToastProvider.jsx";
+import { useSettings, setSetting } from "../lib/settings.js";
+import { SSM_HOST_COLORS, hostColorBase, termBackground } from "../lib/termcolor.js";
 
 // SsmTab manages the member's own AWS SSM login config (docs/history/p3-ssm-session.md)
 // in two tiers so the form isn't cluttered:
@@ -290,6 +292,42 @@ function ProfileSection({
 
 // --- hosts (per-instance) -------------------------------------------------------
 
+// HostColorPicker chooses the terminal background hue for a host's sessions. The
+// choice is a per-user setting (synced), applied to a session's terminal when it is
+// created (new sessions to this host pick it up). Swatches show the vivid hue; the
+// terminal itself renders a subtle dark tint of it.
+function HostColorPicker({ hostId }: { hostId: string }) {
+  const settings = useSettings();
+  const cur = settings.ssmHostColors?.[hostId] || "auto";
+  const setColor = (id: string) =>
+    setSetting("ssmHostColors", { ...(settings.ssmHostColors || {}), [hostId]: id });
+  return (
+    <div className="ssm-host-color">
+      <span className="ssm-meta-k">端末の色</span>
+      <div className="ssm-swatches">
+        {SSM_HOST_COLORS.map((c) => {
+          const base = c.base || hostColorBase("auto", hostId); // vivid identity color
+          return (
+            <button
+              key={c.id}
+              type="button"
+              className={"ssm-swatch" + (cur === c.id ? " active" : "")}
+              title={c.id === "auto" ? "自動（ホスト名から決定）" : c.label}
+              style={{ background: base }}
+              onClick={() => setColor(c.id)}
+            >
+              {c.id === "auto" ? "A" : ""}
+            </button>
+          );
+        })}
+        <span className="ssm-swatch-preview" title="端末での見え方" style={{ background: termBackground("ssm", hostColorBase(cur, hostId)) }}>
+          端末
+        </span>
+      </div>
+    </div>
+  );
+}
+
 const emptyHost: Record<string, string> = { alias: "", profileId: "", instanceId: "", documentName: "", region: "" };
 
 function HostSection({
@@ -371,6 +409,7 @@ function HostSection({
                 <Meta k="リージョン" v={h.region} />
                 <Meta k="プロファイル" v={profileLabel(h.profileId)} mono={false} />
               </div>
+              <HostColorPicker hostId={h.id} />
             </li>
           ))}
         </ul>

@@ -116,6 +116,9 @@ export interface Settings {
   viewerColor: string;
   chatColor: string;
   mirrorSend: string;
+  // Per-SSM-host terminal color: host id → color id (see lib/termcolor SSM_HOST_COLORS).
+  // Applied to a session's terminal background when it's created (sent as its color).
+  ssmHostColors: Record<string, string>;
 }
 
 const DEFAULTS: Settings = {
@@ -138,6 +141,7 @@ const DEFAULTS: Settings = {
   // Markdown mirror composer: "mod-enter" = Ctrl/⌘+Enter submits, Enter inserts a
   // newline (phone-friendly default); "enter" = Enter submits, Shift+Enter newline.
   mirrorSend: "mod-enter",
+  ssmHostColors: {},
 };
 
 // Mirror composer submit-key options, shared by the settings UI.

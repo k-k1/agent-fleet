@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef } from "react";
-import { ensureTerm, fit, focusTerm, attach, detach, reconnect } from "../term.js";
+import { ensureTerm, fit, focusTerm, attach, detach, reconnect, setTermBackground } from "../term.js";
+import { termBackground } from "../lib/termcolor.js";
 import { rel } from "../api.js";
 import TermKeys from "../components/TermKeys.jsx";
 import Icon from "../components/Icon.jsx";
@@ -63,6 +64,13 @@ export default function TerminalView({
   useEffect(() => {
     ensureTerm(paneId, ref.current!);
   }, [paneId]);
+
+  // Tint the terminal background by the session's kind (and, for SSM, its stored host
+  // color) so which agent/host a pane is running is recognizable at a glance. Runs
+  // after ensureTerm; re-applies when the session (kind/color) changes.
+  useEffect(() => {
+    setTermBackground(paneId, termBackground(sessionMeta?.kind, sessionMeta?.color));
+  }, [paneId, sessionMeta?.kind, sessionMeta?.color]);
 
   // Sync the WebSocket to the descriptor. Attaching resets + reconnects, so this
   // only fires when the session value actually changes (React skips re-render on an
