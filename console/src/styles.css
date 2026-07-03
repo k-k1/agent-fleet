@@ -883,6 +883,20 @@ button.wu-reload {
   background: var(--active-bg);
   border-radius: 4px;
 }
+/* Unified "this is the open/active row" mark across the three left-pane lists: a
+   left accent bar on the tinted row (from the agreed IA mock), so a session, a
+   repo, and the open file all read the same. Sessions carry it on the inner button
+   (which paints the active tint over the ordinal gutter); repos and the open file
+   carry it on the row itself. */
+.repo-row.active {
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+/* Repos were the only list without a row hover — sessions (via .session-btn) and
+   Files (.fsrow) already highlight. Give repo rows the same subtle hover. */
+.repo-row:hover:not(.active) {
+  background: var(--btn);
+  border-radius: 4px;
+}
 .kind-tag {
   display: inline-flex;
   align-items: center;
@@ -1244,6 +1258,7 @@ button.wu-reload {
 }
 .session-row.active > .session-btn {
   background: var(--active-bg);
+  box-shadow: inset 2px 0 0 var(--accent);
 }
 /* WS stopped: sessions can't be attached/resumed — grey the row and make the
    attach target inert (the ⋯ menu stays usable for archive). */
@@ -1259,7 +1274,7 @@ button.wu-reload {
   flex-direction: column;
   align-items: stretch;
   gap: 5px;
-  padding: 7px 2px;
+  padding: 6px 2px; /* match the session button's vertical rhythm */
 }
 .repo-info {
   display: flex;
@@ -1485,6 +1500,11 @@ button.wu-reload {
 .fsrow .fs-file.active {
   color: var(--accent);
   font-weight: 600;
+}
+/* The currently-open file gets the same left accent bar as an active session /
+   repo, so "the open one" reads consistently across all three lists. */
+.fsrow:has(.fs-file.active) {
+  box-shadow: inset 2px 0 0 var(--accent);
 }
 /* drag-and-drop upload targets: highlight the hovered folder (or whole tree). */
 .fstree.drop-root {
