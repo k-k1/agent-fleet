@@ -3,7 +3,9 @@ import type { FormEvent } from "react";
 import { api, apiJSON, rawJSON, errText, rel } from "../api.js";
 import Icon from "../components/Icon.jsx";
 import ConfirmDialog from "../components/ConfirmDialog.jsx";
+import { useToast } from "../components/ToastProvider.jsx";
 import { kindLabel, kindClass, kindIcon } from "../lib/sessionkind.js";
+import { fmtGiB } from "../lib/bytes.js";
 import { stateInfo } from "../lib/sessionview.js";
 
 // Admin API shapes (only the fields the UI reads; server responses may carry more).
@@ -39,12 +41,8 @@ interface View {
 // back. The member stage surfaces live Workspace resources (mem / CPU / disk) and
 // the member's session list, served by the per-member admin endpoints.
 
-const GiB = 1073741824;
-// GiB with adaptive precision (matches WsBar): 2 decimals under 10, 1 above.
-const fmtG = (b: number) => {
-  const v = b / GiB;
-  return (v < 10 ? v.toFixed(2) : v.toFixed(1)) + "G";
-};
+// GiB with adaptive precision (shared fmtGiB) plus AdminTab's "G" suffix.
+const fmtG = (b: number) => fmtGiB(b) + "G";
 const fmtPct = (n: number | null | undefined) => (n == null ? "–" : Math.round(n) + "%");
 
 export default function AdminTab() {
@@ -470,9 +468,9 @@ function TenantsList({
 }
 
 function NewTenant({ onCreated, onCancel }: { onCreated: () => void; onCancel: () => void }) {
+  const toast = useToast();
   const [slug, setSlug] = useState("");
   const [name, setName] = useState("");
-  const [err, setErr] = useState("");
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     if (!slug.trim()) return;
@@ -481,7 +479,7 @@ function NewTenant({ onCreated, onCancel }: { onCreated: () => void; onCancel: (
       onCreated();
     } else {
       const er = await r.json().catch(() => ({}));
-      setErr("作成に失敗: " + (er.error?.message || r.status));
+      toast("作成に失敗: " + (er.error?.message || r.status));
     }
   };
   return (
@@ -490,7 +488,6 @@ function NewTenant({ onCreated, onCancel }: { onCreated: () => void; onCancel: (
       <input value={name} onChange={(e) => setName(e.target.value)} placeholder="表示名（任意）" />
       <button type="submit" className="primary">作成</button>
       <button type="button" className="ghost" onClick={onCancel}>キャンセル</button>
-      {err && <span className="form-err">{err}</span>}
     </form>
   );
 }
@@ -516,7 +513,7 @@ function TenantView({
   const [wsIdle, setWsIdle] = useState(tenant?.ws_idle_timeout || "");
   const [allowUpd, setAllowUpd] = useState(!!tenant?.allow_agent_self_update);
   const [saved, setSaved] = useState(false);
-  const [err, setErr] = useState("");
+  const toast = useToast();
   const [members, setMembers] = useState<Member[] | null>(null);
 
   useEffect(() => {
@@ -541,7 +538,6 @@ function TenantView({
   }, [loadMembers]);
 
   const saveLimits = async () => {
-    setErr("");
     const res = await apiJSON(`api/admin/tenants/${encodeURIComponent(slug)}/limits`, "PUT", {
       max_workspaces: +maxWs || 0,
       max_sessions: +maxSs || 0,
@@ -550,7 +546,7 @@ function TenantView({
       allow_agent_self_update: allowUpd,
     });
     if (res?.error) {
-      setErr(errText(res.error));
+      toast(errText(res.error));
       return;
     }
     setSaved(true);
@@ -598,7 +594,6 @@ function TenantView({
           <div className="form-row">
             <button onClick={saveLimits} className="primary">保存</button>
             {saved && <span className="saved-note"><Icon name="check" /> 保存しました</span>}
-            {err && <span className="form-err">{err}</span>}
           </div>
         </section>
       )}
@@ -633,10 +628,10 @@ function TenantView({
 }
 
 function AddMember({ slug, isSuper, onAdded }: { slug: string; isSuper: boolean; onAdded: () => void }) {
+  const toast = useToast();
   const [email, setEmail] = useState("");
   const [key, setKey] = useState("");
   const [role, setRole] = useState("member");
-  const [err, setErr] = useState("");
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     const r = await rawJSON("api/admin/memberships", "POST", {
@@ -648,11 +643,10 @@ function AddMember({ slug, isSuper, onAdded }: { slug: string; isSuper: boolean;
     if (r.ok) {
       setEmail("");
       setKey("");
-      setErr("");
       onAdded();
     } else {
       const er = await r.json().catch(() => ({}));
-      setErr("追加に失敗: " + (er.error?.message || r.status));
+      toast("追加に失敗: " + (er.error?.message || r.status));
     }
   };
   return (
@@ -669,7 +663,6 @@ function AddMember({ slug, isSuper, onAdded }: { slug: string; isSuper: boolean;
         )}
         <button type="submit" className="primary">追加</button>
       </div>
-      {err && <span className="form-err">{err}</span>}
     </form>
   );
 }

@@ -88,7 +88,8 @@ export interface AppState {
   setPaneWrap: (id: string, wrap: boolean | null) => void;
   // dialogs
   settingsOpen: boolean;
-  openSettings: () => void;
+  settingsSection: string;
+  openSettings: (section?: string) => void;
   closeSettings: () => void;
   adminOpen: boolean;
   openAdmin: () => void;

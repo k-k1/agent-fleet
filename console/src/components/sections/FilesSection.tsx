@@ -6,6 +6,10 @@ import { dirName } from "../../lib/filemeta.js";
 import Section from "../Section.jsx";
 import Icon from "../Icon.jsx";
 import FileIcon, { DirIcon } from "../FileIcon.jsx";
+import { useConfirm } from "../ConfirmProvider.jsx";
+import { useToast } from "../ToastProvider.jsx";
+import EmptyState from "../EmptyState.jsx";
+import { useDismiss } from "../../lib/useDismiss.js";
 
 // A server directory entry (api/fs/tree). Visible tree rows are flattened into Row.
 interface Entry {
@@ -64,6 +68,8 @@ const fsList = (path: string) =>
 // to parent, Enter opens a file (or toggles a folder).
 export default function FilesSection() {
   const { filePath, showFile, showFileSplit, filesKey, reveal, wsState } = useApp();
+  const askConfirm = useConfirm();
+  const toast = useToast();
   const running = wsState === "running"; // WS down → file mutations are inert
 
   // Middle-click opens a file in a freshly split pane (like the Sessions list).
@@ -141,11 +147,17 @@ export default function FilesSection() {
       try {
         let res: any = await uploadFiles(dir, files);
         if (res.status === 409 && res.conflicts && res.conflicts.length) {
-          if (window.confirm(`${res.conflicts.join(", ")} は既に存在します。上書きしますか？`)) {
+          const ok = await askConfirm({
+            title: "ファイルを上書き",
+            body: `${res.conflicts.join(", ")} は既に存在します。上書きしますか？`,
+            confirmLabel: "上書きする",
+            danger: true,
+          });
+          if (ok) {
             res = await uploadFiles(dir, files, { overwrite: true });
           }
         }
-        if (res.error) window.alert("アップロード失敗: " + (res.error.message || res.error));
+        if (res.error) toast("アップロード失敗: " + (res.error.message || res.error));
         await refreshDir(dir);
         setSelected(dir || (files[0] ? files[0].name : null));
       } finally {
@@ -153,7 +165,7 @@ export default function FilesSection() {
         setDropTarget(null);
       }
     },
-    [refreshDir],
+    [refreshDir, askConfirm, toast],
   );
 
   // Drop onto a dir row uploads into it; onto the empty tree uploads into root.
@@ -190,12 +202,7 @@ export default function FilesSection() {
   // stopPropagation on the wrap): stopPropagation would swallow OTHER dropdowns'
   // document-level close listeners, leaving multiple menus open at once and
   // lifting several .pane-section into z-index:10, which stack-overlap.
-  useEffect(() => {
-    if (!opsOpen) return;
-    const close = (e: MouseEvent) => { if (!opsRef.current?.contains(e.target as Node)) setOpsOpen(false); };
-    document.addEventListener("mousedown", close);
-    return () => document.removeEventListener("mousedown", close);
-  }, [opsOpen]);
+  useDismiss(opsRef, opsOpen, () => setOpsOpen(false));
 
   // --- file operations (new / rename / delete) ---
   const newFolder = useCallback(
@@ -204,7 +211,7 @@ export default function FilesSection() {
       if (!name || !name.trim()) return;
       const p = joinPath(parent, name.trim());
       const res: any = await fsMkdir(p);
-      if (res.error) return window.alert("作成失敗: " + (res.error.message || res.error));
+      if (res.error) return toast("作成失敗: " + (res.error.message || res.error));
       await refreshDir(parent);
       setSelected(p);
     },
@@ -216,7 +223,7 @@ export default function FilesSection() {
       if (!name || !name.trim()) return;
       const p = joinPath(parent, name.trim());
       const res: any = await fsNewFile(p);
-      if (res.error) return window.alert("作成失敗: " + (res.error.message || res.error));
+      if (res.error) return toast("作成失敗: " + (res.error.message || res.error));
       await refreshDir(parent);
       setSelected(p);
       showFile(p);
@@ -231,7 +238,7 @@ export default function FilesSection() {
       const parent = parentOf(row.path);
       const to = joinPath(parent, name.trim());
       const res: any = await fsRename(row.path, to);
-      if (res.error) return window.alert("変更失敗: " + (res.error.message || res.error));
+      if (res.error) return toast("変更失敗: " + (res.error.message || res.error));
       await refreshDir(parent);
       setSelected(to);
     },
@@ -239,13 +246,19 @@ export default function FilesSection() {
   );
   const deleteRow = useCallback(
     async (row: Row) => {
-      if (!window.confirm(`${row.path} を削除しますか？${row.type === "dir" ? "（中身ごと）" : ""}`)) return;
+      const ok = await askConfirm({
+        title: "削除",
+        body: `${row.path} を削除します。${row.type === "dir" ? "フォルダの中身ごと削除されます。" : ""}`,
+        confirmLabel: "削除する",
+        danger: true,
+      });
+      if (!ok) return;
       const res: any = await fsDelete(row.path);
-      if (res.error) return window.alert("削除失敗: " + (res.error.message || res.error));
+      if (res.error) return toast("削除失敗: " + (res.error.message || res.error));
       await refreshDir(parentOf(row.path));
       setSelected(parentOf(row.path) || null);
     },
-    [refreshDir],
+    [refreshDir, askConfirm, toast],
   );
 
   // Context menu: open at the cursor; close on outside click / Escape / scroll.
@@ -530,6 +543,7 @@ export default function FilesSection() {
         onClick={() => setViewPersist("tree")}
       >
         <Icon name="list-tree" />
+        <span className="lbl">ツリー</span>
       </button>
       <button
         type="button"
@@ -538,12 +552,14 @@ export default function FilesSection() {
         onClick={() => setViewPersist("changes")}
       >
         <Icon name="git-compare" />
+        <span className="lbl">変更</span>
       </button>
     </span>
   );
 
   return (
     <Section
+      id="files"
       title="Files"
       icon="files"
       actions={
@@ -603,8 +619,8 @@ export default function FilesSection() {
       />
       {view === "changes" ? (
         <ul className="fstree changeslist" role="list" aria-label="変更ファイル">
-          {changes === null && <li className="muted">…</li>}
-          {changes && changes.length === 0 && <li className="muted">変更なし</li>}
+          {changes === null && <EmptyState loading message="読み込み中" />}
+          {changes && changes.length === 0 && <EmptyState icon="check" message="変更はありません" />}
           {changes &&
             Object.entries(
               changes.reduce((acc: Record<string, FsChange[]>, c) => {
@@ -632,7 +648,7 @@ export default function FilesSection() {
                         {...onAuxOpen(c.path)}
                       >
                         <span className={"fs-file" + (isActive ? " active" : "")}>
-                          <span className={"chg-badge " + b.cls} title={b.label}>{b.ch}</span>
+                          <span className={"chg-badge " + b.cls}>{b.label}</span>
                           <span className="fs-ic"><FileIcon name={rel.split("/").pop() || ""} /></span>
                           {rel}
                         </span>
@@ -657,11 +673,11 @@ export default function FilesSection() {
           aria-label="ファイル"
         >
           {!running ? (
-            <li className="muted">ワークスペース停止中</li>
+            <EmptyState icon="debug-disconnect" message="ワークスペース停止中" />
           ) : root === null ? (
-            <li className="muted">…</li>
+            <EmptyState loading message="読み込み中" />
           ) : root.length === 0 ? (
-            <li className="muted">空（ここにファイルをドロップ）</li>
+            <EmptyState icon="new-file" message="ファイルがありません" hint="ここにドロップしてアップロード" />
           ) : null}
           {rows.map((r) => {
             const isOpen = r.type === "dir" && open.has(r.path);

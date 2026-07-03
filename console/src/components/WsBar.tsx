@@ -3,6 +3,10 @@ import { useApp } from "../state.jsx";
 import { api, previewURL, ocwebURL } from "../api.js";
 import Icon from "./Icon.jsx";
 import Sparkline from "./Sparkline.jsx";
+import { useConfirm } from "./ConfirmProvider.jsx";
+import { useIsMobile } from "../lib/device.js";
+import { useDismiss } from "../lib/useDismiss.js";
+import { fmtGiB as fg } from "../lib/bytes.js";
 
 const HIST_N = 60; // sparkline ring buffer: ~4 min at the 4s poll cadence
 
@@ -207,13 +211,6 @@ function whenText(iso: string) {
 // On desktop the resource chips / opencode web / port-preview sit inline at the
 // right; on a phone they'd wrap to a second line, so they fold into a single ⋯
 // overflow popover instead.
-// GiB with adaptive precision: 2 decimals under 10 (so 0.98 stays visible),
-// 1 above (so 26.9 stays compact).
-const fg = (b: number) => {
-  const v = b / 1073741824;
-  return v < 10 ? v.toFixed(2) : v.toFixed(1);
-};
-
 // Friendly label for the raw container state. The CP returns docker-derived states
 // (runtime.go state()): "running" | "stopped" | "none". Stop does `docker rm -f`,
 // so the *normal* stopped state is "none" (no container — data persists in the bind
@@ -229,6 +226,8 @@ function wsLabel(s: string): string {
       return "停止";
     case "starting…":
       return "起動中…";
+    case "stopping…":
+      return "停止中…";
     case "recreating…":
       return "再作成中…";
     case "unknown":
@@ -236,18 +235,6 @@ function wsLabel(s: string): string {
     default:
       return s; // "…" initial, or any future state
   }
-}
-
-// Matches the 760px breakpoint in styles.css (the phone layout).
-function useIsMobile() {
-  const [m, setM] = useState(() => typeof window !== "undefined" && window.matchMedia("(max-width: 760px)").matches);
-  useEffect(() => {
-    const mq = window.matchMedia("(max-width: 760px)");
-    const fn = () => setM(mq.matches);
-    mq.addEventListener("change", fn);
-    return () => mq.removeEventListener("change", fn);
-  }, []);
-  return m;
 }
 
 // One resource tile: label + trend sparkline + current value, tinted by level
@@ -281,6 +268,7 @@ function tile({
 
 export default function WsBar() {
   const { wsState, startWs, stopWs, ocweb, tenant, superAdmin, layout, resetToTerminal } = useApp();
+  const askConfirm = useConfirm();
   const { wsStats, wsHist, hostStats, hostHist } = useWsResourceChips(tenant, superAdmin);
   const { usage, refreshing, refresh } = useClaudeUsage(tenant);
   const isMobile = useIsMobile();
@@ -288,9 +276,11 @@ export default function WsBar() {
   const [pvOpen, setPvOpen] = useState(false); // desktop port-preview popover
   const [moreOpen, setMoreOpen] = useState(false); // mobile overflow popover
   const [usageOpen, setUsageOpen] = useState(false); // Claude usage detail dropdown
+  const [resOpen, setResOpen] = useState(false); // desktop resource-tiles popover
   const pvRef = useRef<HTMLDivElement>(null);
   const moreRef = useRef<HTMLDivElement>(null);
   const usageRef = useRef<HTMLDivElement>(null);
+  const resRef = useRef<HTMLDivElement>(null);
   const running = wsState === "running";
   const busy = wsState.endsWith("…"); // starting… / stopping… / recreating… — toggle inert
 
@@ -299,6 +289,24 @@ export default function WsBar() {
   const totalPanes = layout.cols.reduce((n, c) => n + c.panes.length, 0);
   const onlyPane = totalPanes === 1 ? layout.cols[0].panes[0] : null;
   const canCloseAll = !(onlyPane && onlyPane.kind === "terminal" && !onlyPane.session && !onlyPane.filePath && !onlyPane.scmRepo);
+
+  // Start is immediate; Stop is confirmed — it docker-removes the container, so
+  // running sessions drop to 停止 (resumable) and opencode web / preview disconnect.
+  // Reversible (Start recreates; data persists in the bind mount), so it's a caution,
+  // not a red destructive action.
+  const onToggle = async () => {
+    if (!running) {
+      startWs();
+      return;
+    }
+    const ok = await askConfirm({
+      title: "ワークスペースを停止",
+      body: "コンテナを停止します。実行中のセッションは停止（あとで再開可）になり、opencode web / プレビューは切断されます。ファイルは保持されます。",
+      confirmLabel: "停止する",
+      danger: false,
+    });
+    if (ok) stopWs();
+  };
 
   // Open a service the user started inside the container (e.g. a Spring Boot app
   // on :8080) in a new tab, proxied through the CP /preview/{port}.
@@ -310,28 +318,11 @@ export default function WsBar() {
     setMoreOpen(false);
   };
 
-  // Close the popovers on an outside click / Escape.
-  useEffect(() => {
-    if (!pvOpen && !moreOpen && !usageOpen) return;
-    const onDown = (e: MouseEvent) => {
-      if (pvRef.current && !pvRef.current.contains(e.target as Node)) setPvOpen(false);
-      if (moreRef.current && !moreRef.current.contains(e.target as Node)) setMoreOpen(false);
-      if (usageRef.current && !usageRef.current.contains(e.target as Node)) setUsageOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        setPvOpen(false);
-        setMoreOpen(false);
-        setUsageOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", onDown);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDown);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [pvOpen, moreOpen, usageOpen]);
+  // Close each popover on an outside click / Escape.
+  useDismiss(pvRef, pvOpen, () => setPvOpen(false));
+  useDismiss(moreRef, moreOpen, () => setMoreOpen(false));
+  useDismiss(usageRef, usageOpen, () => setUsageOpen(false));
+  useDismiss(resRef, resOpen, () => setResOpen(false));
 
   // --- pieces shared between the inline (desktop) and folded (mobile) layouts ---
   const lvl = (v: number | null, warn: number, crit: number) => (v == null ? 0 : v >= crit ? 2 : v >= warn ? 1 : 0);
@@ -395,6 +386,33 @@ export default function WsBar() {
     </>
   );
 
+  // Desktop: collapse the resource sparkline tiles behind one "リソース" chip so the
+  // bar isn't a wall of tiles. The chip shows a glanceable container summary
+  // (mem/cpu %) and opens a popover with the full trend tiles (incl. host for
+  // super_admin). On mobile the tiles already live in the ⋯ overflow, so this is
+  // desktop-only (graphs is reused there).
+  const resSummary = hasWs
+    ? `mem ${memRatio != null ? Math.round(memRatio * 100) : "–"}% · cpu ${
+        wsStats.cpu_pct != null ? Math.round(wsStats.cpu_pct) : "–"
+      }%`
+    : null;
+  const resourcesEl = graphs && (
+    <div className="ws-res" ref={resRef}>
+      <button
+        type="button"
+        className="ghost ws-res-btn"
+        title="リソース使用状況"
+        aria-expanded={resOpen}
+        onClick={() => setResOpen((o) => !o)}
+      >
+        <Icon name="pulse" />
+        <span className="ws-res-sum">{resSummary || "リソース"}</span>
+        <Icon name="chevron-down" />
+      </button>
+      {resOpen && <div className="ws-res-pop">{graphs}</div>}
+    </div>
+  );
+
   // Claude subscription usage: a COMPACT trigger (Claude glyph + the higher of the two
   // percentages, tinted by level) that opens a dropdown with both windows (5-hour /
   // weekly), each with a bar, its reset (relative + absolute date-time), and a reload
@@ -449,41 +467,54 @@ export default function WsBar() {
     </>
   );
 
-  const ocwebBtn = ocweb && ocweb.available && ocweb.enabled && (
-    <button
-      className="ghost"
-      disabled={!running || !ocweb.running}
-      title={ocweb.running ? "opencode web を新しいタブで開く" : "opencode web 起動中…"}
-      onClick={() => {
-        if (!ocweb.running) return;
-        window.open(ocwebURL(), "_blank", "noopener");
-        setMoreOpen(false);
-      }}
-    >
-      <Icon name="globe" /> opencode web ↗
-    </button>
+  // opencode web (a known service on a fixed port) and an arbitrary port share one
+  // "open a container service in a new tab" popover, so there's a single entry point
+  // instead of two 🌐 buttons. The known app sits above the free-form port input.
+  const ocwebRow = ocweb && ocweb.available && ocweb.enabled && (
+    <div className="pv-section">
+      <label className="pv-label">アプリ</label>
+      <button
+        className="ghost pv-app"
+        disabled={!running || !ocweb.running}
+        title={ocweb.running ? "opencode web を新しいタブで開く" : "opencode web 起動中…"}
+        onClick={() => {
+          if (!ocweb.running) return;
+          window.open(ocwebURL(), "_blank", "noopener");
+          setPvOpen(false);
+          setMoreOpen(false);
+        }}
+      >
+        <span>
+          <Icon name="globe" /> opencode web
+        </span>
+        {ocweb.running ? <span aria-hidden="true">↗</span> : <span className="muted">起動中…</span>}
+      </button>
+    </div>
   );
 
-  const previewForm = (
+  const previewPop = (
     <>
-      <label className="pv-label">ポートプレビュー</label>
-      <div className="pv-row">
-        <input
-          className="preview-port"
-          type="number"
-          min="1"
-          max="65535"
-          placeholder="port"
-          value={port}
-          onChange={(e) => setPort(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && openPreview()}
-          title="コンテナ内で起動したサービスのポート（例: 8080）"
-        />
-        <button onClick={openPreview} disabled={!port.trim()}>
-          開く
-        </button>
+      {ocwebRow}
+      <div className="pv-section">
+        <label className="pv-label">ポートを指定して開く</label>
+        <div className="pv-row">
+          <input
+            className="preview-port"
+            type="number"
+            min="1"
+            max="65535"
+            placeholder="port"
+            value={port}
+            onChange={(e) => setPort(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && openPreview()}
+            title="コンテナ内で起動したサービスのポート（例: 8080）"
+          />
+          <button onClick={openPreview} disabled={!port.trim()}>
+            開く
+          </button>
+        </div>
+        <div className="pv-hint">コンテナ内で起動したサービスのポート（例: 8080）を新しいタブで開きます。</div>
       </div>
-      <div className="pv-hint">コンテナ内で起動したサービスのポート（例: 8080）を新しいタブで開きます。</div>
     </>
   );
 
@@ -509,19 +540,21 @@ export default function WsBar() {
           refresh. Disabled mid-transition (starting…/stopping…). */}
       <button
         className={"ws-toggle " + (running ? "stop" : "start")}
-        onClick={running ? stopWs : startWs}
+        onClick={onToggle}
         disabled={busy}
         title={running ? "ワークスペースを停止" : "ワークスペースを起動"}
       >
-        {running ? "Stop" : "Start"}
+        <Icon name={running ? "primitive-square" : "play"} />
+        <span>{running ? "停止" : "起動"}</span>
       </button>
       <button
-        className="ghost"
+        className="ghost ws-closeall"
         title="全ペインを閉じる"
         disabled={!canCloseAll}
         onClick={resetToTerminal}
       >
         <Icon name="close-all" />
+        <span className="lbl">全て閉じる</span>
       </button>
 
       <span className="ws-spacer" />
@@ -538,25 +571,26 @@ export default function WsBar() {
           {moreOpen && (
             <div className="ws-more-pop">
               {statsBlock && <div className="ws-more-stats">{statsBlock}</div>}
-              {ocwebBtn}
-              {previewForm}
+              {previewPop}
             </div>
           )}
         </div>
       ) : (
         <>
-          {statsBlock}
-          {ocwebBtn}
+          {usageEl}
+          {resourcesEl && usageEl && <span className="ws-graph-sep" />}
+          {resourcesEl}
           <div className="ws-preview" ref={pvRef}>
             <button
               className="ghost ws-preview-btn"
               disabled={!running}
-              title="コンテナ内サービスをポート指定で開く"
+              title="opencode web / コンテナ内サービスを開く"
+              aria-expanded={pvOpen}
               onClick={() => setPvOpen((o) => !o)}
             >
-              <Icon name="globe" /> プレビュー
+              <Icon name="globe" /> プレビュー <Icon name="chevron-down" />
             </button>
-            {pvOpen && <div className="ws-preview-pop">{previewForm}</div>}
+            {pvOpen && <div className="ws-preview-pop">{previewPop}</div>}
           </div>
         </>
       )}

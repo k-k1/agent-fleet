@@ -3,6 +3,9 @@ import { useApp } from "../../state.jsx";
 import { api, apiJSON, errText } from "../../api.js";
 import Section from "../Section.jsx";
 import Icon from "../Icon.jsx";
+import { useToast } from "../ToastProvider.jsx";
+import EmptyState from "../EmptyState.jsx";
+import { useDismiss } from "../../lib/useDismiss.js";
 import NewRepoModal from "../NewRepoModal.jsx";
 import { kindIcon, kindLabel } from "../../lib/sessionkind.js";
 import { agentOf, repoLaunchKinds } from "../../agents/registry.ts";
@@ -45,6 +48,7 @@ const freeName = (base: string, used: Set<string>): string => {
 export default function ReposSection() {
   const { reposKey, connKey, bumpRepos, bumpSessions, bumpFiles, revealInFiles, showSCM, showSCMSplit, showTerminal, showTerminalSplit, scmRepo, mode, session, wsState } =
     useApp();
+  const toast = useToast();
   const running = wsState === "running"; // WS down → clone/open/launch are inert
   const [repos, setRepos] = useState<Repo[]>([]);
   const [conns, setConns] = useState<ConnectionsStatus | null>(null); // null = unknown (loading/failed) → show all
@@ -59,14 +63,14 @@ export default function ReposSection() {
     try {
       const res = await apiJSON("api/repos", "POST", { remote_url, branch, name });
       if (res && res.error) {
-        alert("clone に失敗: " + (res.error.message || res.error));
+        toast("clone に失敗: " + (res.error.message || res.error));
         return;
       }
       bumpRepos();
       if (res && res.name) revealInFiles("repos/" + res.name);
       else bumpFiles();
     } catch (e) {
-      alert("clone に失敗: " + e);
+      toast("clone に失敗: " + e);
     } finally {
       setCloning(null);
     }
@@ -127,20 +131,24 @@ export default function ReposSection() {
 
   return (
     <Section
+      id="repos"
       title="Repos"
       icon="repo"
+      count={repos.length}
       actions={
         <>
           <button
-            className="ghost"
+            className="ghost lblbtn"
             title={running ? "clone" : "clone（ワークスペース停止中）"}
             disabled={!!cloning || !running}
             onClick={() => setShowClone((s) => !s)}
           >
             <Icon name="add" />
+            <span className="lbl">クローン</span>
           </button>
-          <button className="ghost" title="更新" onClick={bumpRepos}>
+          <button className="ghost lblbtn" title="更新" onClick={bumpRepos}>
             <Icon name="refresh" />
+            <span className="lbl">更新</span>
           </button>
         </>
       }
@@ -152,7 +160,14 @@ export default function ReposSection() {
             <Icon name="loading" spin /> Cloning {cloning.name}…
           </li>
         )}
-        {repos.length === 0 && !cloning && <li className="muted">リポジトリなし</li>}
+        {repos.length === 0 && !cloning && (
+          <EmptyState
+            icon="repo"
+            message="リポジトリがありません"
+            hint="clone するとここに並びます"
+            action={running ? { label: "クローン", icon: "add", onClick: () => setShowClone(true) } : undefined}
+          />
+        )}
         {repos.map((r) => (
           <RepoRow
             key={r.name}
@@ -182,7 +197,7 @@ export default function ReposSection() {
               const name = freeName(base, used);
               const res = await apiJSON("api/sessions", "POST", { name, dir: r.path, kind });
               if (res && res.error) {
-                alert("起動に失敗: " + errText(res.error));
+                toast("起動に失敗: " + errText(res.error));
                 return;
               }
               bumpSessions();
@@ -221,19 +236,11 @@ function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected,
   // wouldn't close this one — both would stay open, both .pane-section would
   // lift to z-index:10, and the later REPOS section would paint over the
   // SESSIONS menu, blocking its 再開する item.
-  useEffect(() => {
-    if (!showLaunch) return;
-    const close = (e: MouseEvent) => { if (!wrapRef.current?.contains(e.target as Node)) setShowLaunch(false); };
-    document.addEventListener("mousedown", close);
-    return () => document.removeEventListener("mousedown", close);
-  }, [showLaunch]);
+  useDismiss(wrapRef, showLaunch, () => setShowLaunch(false));
 
   return (
     <li className={"repo-row" + (active || selected ? " active" : "")}>
       <div className="repo-info">
-        <span className={"dot " + (r.dirty ? "dirty" : "clean")} title={r.dirty ? "未コミット変更あり" : "clean"}>
-          ●
-        </span>
         <button
           className="link grow repo-name"
           title={running ? "開く（ファイル + ソース管理）: " + r.path + "（Ctrl/中クリックで新ペイン）" : "ワークスペース停止中"}
@@ -246,6 +253,25 @@ function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected,
           <Icon name="repo" className="repo-ic" />
           {r.name}
         </button>
+        {(r.dirty || ((r.ahead || r.behind) ?? 0) > 0) && (
+          <span className="repo-state">
+            {r.dirty && (
+              <span className="repo-state-chip dirty" title="未コミット変更あり">
+                <Icon name="circle-filled" /> 未コミット
+              </span>
+            )}
+            {((r.ahead || r.behind) ?? 0) > 0 && (
+              <span
+                className="repo-state-chip ab"
+                title={`リモートに対して 先行 ${r.ahead ?? 0} / 遅延 ${r.behind ?? 0}`}
+              >
+                {r.ahead ? `↑${r.ahead}` : ""}
+                {r.ahead && r.behind ? " " : ""}
+                {r.behind ? `↓${r.behind}` : ""}
+              </span>
+            )}
+          </span>
+        )}
         <div className="launch-wrap" ref={wrapRef}>
           <button
             className="chip launch"
@@ -280,12 +306,6 @@ function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected,
             </div>
           )}
         </div>
-        {((r.ahead || r.behind) ?? 0) > 0 && (
-          <span className="ab">
-            {r.ahead ? `↑${r.ahead}` : ""}
-            {r.behind ? `↓${r.behind}` : ""}
-          </span>
-        )}
       </div>
     </li>
   );

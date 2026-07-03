@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { useApp } from "../state.jsx";
 import { rel } from "../api.js";
-import { useSettings, setSetting, THEMES, SURFACE_COLORS, surfaceValue } from "../lib/settings.js";
+import { useSettings, setSetting, THEMES, SURFACE_TARGETS } from "../lib/settings.js";
 import Icon from "./Icon.jsx";
+import SwatchGrid from "./SwatchGrid.jsx";
+import { useDismiss } from "../lib/useDismiss.js";
 
 // Top bar: product name, tenant picker (hidden for single-membership users), and
 // an account menu folding in settings, admin (super_admin only) and sign-out
@@ -14,8 +16,10 @@ export default function TopBar() {
   const me = whoami?.email || whoami?.user || "";
   const canLogout = whoami?.auth_mode === "oauth"; // CP-native session we can clear
   const [menuOpen, setMenuOpen] = useState(false);
+  const [apprOpen, setApprOpen] = useState(false); // 外観 (theme + surface colors) popover
   const [fullscreen, setFullscreen] = useState(false);
   const acctRef = useRef<HTMLDivElement>(null);
+  const apprRef = useRef<HTMLDivElement>(null);
 
   // Global fullscreen toggle (whole app). Tracks the browser's fullscreen state so
   // the icon/label flips even when fullscreen is exited via Esc.
@@ -29,20 +33,12 @@ export default function TopBar() {
     else document.documentElement.requestFullscreen?.().catch(() => {});
   };
 
-  // Close the account menu on an outside click or Escape.
-  useEffect(() => {
-    if (!menuOpen) return;
-    const onDown = (e: MouseEvent) => {
-      if (acctRef.current && !acctRef.current.contains(e.target as Node)) setMenuOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setMenuOpen(false);
-    document.addEventListener("mousedown", onDown);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDown);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [menuOpen]);
+  // Close the account menu / 外観 popover on an outside click or Escape. The 外観
+  // popover is kept separate from the account menu so surface colors can be tuned in
+  // a light popover while the panes stay visible behind it (a full settings modal
+  // would hide the live preview).
+  useDismiss(acctRef, menuOpen, () => setMenuOpen(false));
+  useDismiss(apprRef, apprOpen, () => setApprOpen(false));
 
   const run = (fn: () => void) => {
     setMenuOpen(false);
@@ -65,6 +61,38 @@ export default function TopBar() {
         >
           <Icon name={fullscreen ? "screen-normal" : "screen-full"} />
         </button>
+        {/* 外観: a light popover so colors preview live on the panes behind it. */}
+        <div className="acct appr" ref={apprRef}>
+          <button
+            className="gear appr-btn"
+            title="外観（テーマ・配色）"
+            onClick={() => setApprOpen((o) => !o)}
+          >
+            <Icon name="paintcan" />
+          </button>
+          {apprOpen && (
+            <div className="acct-menu appr-menu" role="menu">
+              <div className="acct-email">外観</div>
+              <div className="acct-theme">
+                <div className="seg choice-seg acct-theme-seg">
+                  {THEMES.map((t) => (
+                    <button
+                      key={t.id}
+                      type="button"
+                      className={"seg-btn" + (s.theme === t.id ? " active" : "")}
+                      onClick={() => setSetting("theme", t.id)}
+                    >
+                      {t.label}
+                    </button>
+                  ))}
+                </div>
+                {SURFACE_TARGETS.map((t) => (
+                  <SwatchRow key={t.key} label={t.short} theme={s.theme} value={s[t.key]} onPick={(v) => setSetting(t.key, v)} />
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
         {showPicker && (
           <label className="tenant-pick">
             <span className="lbl">Tenant</span>
@@ -86,27 +114,7 @@ export default function TopBar() {
             {menuOpen && (
               <div className="acct-menu" role="menu">
                 <div className="acct-email" title={me}>{me}</div>
-                {/* Quick theme palette: tap to apply instantly (no need to open 設定). */}
-                <div className="acct-theme">
-                  <div className="seg choice-seg acct-theme-seg">
-                    {THEMES.map((t) => (
-                      <button
-                        key={t.id}
-                        type="button"
-                        className={"seg-btn" + (s.theme === t.id ? " active" : "")}
-                        onClick={() => setSetting("theme", t.id)}
-                      >
-                        {t.label}
-                      </button>
-                    ))}
-                  </div>
-                  <SwatchRow label="上部バー" theme={s.theme} value={s.topbarColor} onPick={(v) => setSetting("topbarColor", v)} />
-                  <SwatchRow label="左ペイン" theme={s.theme} value={s.leftpaneColor} onPick={(v) => setSetting("leftpaneColor", v)} />
-                  <SwatchRow label="ビュアー" theme={s.theme} value={s.viewerColor} onPick={(v) => setSetting("viewerColor", v)} />
-                  <SwatchRow label="チャット" theme={s.theme} value={s.chatColor} onPick={(v) => setSetting("chatColor", v)} />
-                </div>
-                <div className="acct-sep" />
-                <button className="acct-item" role="menuitem" onClick={() => run(openSettings)}>
+                <button className="acct-item" role="menuitem" onClick={() => run(() => openSettings())}>
                   <Icon name="gear" /> 設定
                 </button>
                 {(superAdmin || tenants?.some((t) => t.role === "tenant_admin")) && (
@@ -126,7 +134,7 @@ export default function TopBar() {
             )}
           </div>
         ) : (
-          <button className="gear" title="設定（接続 / Claude / 環境 / 表示）" onClick={openSettings}>
+          <button className="gear" title="設定（表示 / ワークスペース / エージェント / Git / AWS SSM / MCP）" onClick={() => openSettings()}>
             <Icon name="gear" /> 設定
           </button>
         )}
@@ -135,9 +143,8 @@ export default function TopBar() {
   );
 }
 
-// SwatchRow: surface-color picker (top bar / left pane). Each swatch previews the
-// color in the active theme; "default" shows a slashed neutral chip. Tapping
-// applies immediately and keeps the menu open. Mirrors DisplayTab's SwatchChoice.
+// SwatchRow: a labeled row wrapping the shared SwatchGrid (surface-color picker) for
+// the 外観 popover. Tapping applies immediately and keeps the popover open.
 interface SwatchRowProps {
   label: string;
   theme: string;
@@ -149,23 +156,7 @@ function SwatchRow({ label, theme, value, onPick }: SwatchRowProps) {
   return (
     <div className="acct-swatch-row">
       <span className="acct-swatch-lbl">{label}</span>
-      <div className="swatch-row">
-        {SURFACE_COLORS.map((c) => {
-          const col = surfaceValue(c.id, theme);
-          return (
-            <button
-              key={c.id}
-              type="button"
-              title={c.label}
-              className={"swatch" + (c.id === value ? " active" : "") + (col ? "" : " swatch-default")}
-              style={col ? { background: col } : undefined}
-              onClick={() => onPick(c.id)}
-            >
-              {c.id === value ? "✓" : ""}
-            </button>
-          );
-        })}
-      </div>
+      <SwatchGrid theme={theme} value={value} onChange={onPick} />
     </div>
   );
 }

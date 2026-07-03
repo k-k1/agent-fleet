@@ -1,0 +1,278 @@
+<!-- 設定 > SSM タブ 刷新提案モック（D フェーズ）。プロファイル/ホストの「追加フォーム」の Before/After。
+     単体で開ける静的 HTML。実プロダクトのダークパレット（#1e1e1e / accent #6cf）。 -->
+<title>SSM タブ 刷新提案 — 追加フォーム</title>
+<style>
+  :root{
+    --ground:#141414; --panel:#1b1b1b; --panel2:#202020; --bar:#111;
+    --border:#2e2e2e; --border2:#3a3a3a;
+    --fg:#dddddd; --muted:#8a8a8a; --faint:#6a6a6a;
+    --accent:#66ccff; --on-accent:#06222e;
+    --ok:#67c23a; --warn:#e6a23c; --del:#e06c75;
+    --sans:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",sans-serif;
+    --mono:ui-monospace,"SF Mono",Menlo,Consolas,"DejaVu Sans Mono",monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--ground);color:var(--fg);font-family:var(--sans);line-height:1.5;font-size:15px;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1120px;margin:0 auto;padding:48px 28px 96px}
+  .eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--accent);margin:0 0 10px}
+  h1{font-size:29px;line-height:1.15;margin:0 0 12px;text-wrap:balance;font-weight:650;letter-spacing:-.01em}
+  h2{font-size:19px;margin:0 0 4px;font-weight:620;letter-spacing:-.01em}
+  .lede{color:var(--muted);max-width:70ch;margin:0 0 8px}
+  section{margin-top:52px}
+  .shdr{display:flex;align-items:baseline;gap:12px;border-bottom:1px solid var(--border);padding-bottom:10px;margin-bottom:20px}
+  .shdr .n{font-family:var(--mono);font-size:12px;color:var(--faint)}
+  .note{color:var(--muted);font-size:13.5px;max-width:76ch}
+  .mono{font-family:var(--mono)} .dim{color:var(--faint)}
+  ul.diag{margin:0;padding-left:20px;color:var(--muted);font-size:13.5px;line-height:1.7;max-width:82ch}
+  ul.diag b{color:var(--fg);font-weight:600}
+
+  .ba{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media(max-width:860px){.ba{grid-template-columns:1fr}}
+  .card{border:1px solid var(--border);border-radius:10px;background:var(--panel);overflow:hidden}
+  .card .cap{display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid var(--border);
+    font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase}
+  .card.before .cap{color:var(--del)} .card.after .cap{color:var(--ok)}
+  .card .cap .tag{margin-left:auto;color:var(--faint);letter-spacing:.03em}
+  .card .in{padding:16px}
+  .caption{font-size:12.5px;color:var(--muted);margin:11px 2px 0}
+
+  .settings{background:var(--panel);border:1px solid var(--border2);border-radius:8px;padding:13px 14px}
+  .conn-cat{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:0 0 8px}
+  .btn{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 13px;border-radius:6px;border:1px solid var(--border2);
+    background:var(--panel2);color:var(--fg);font-size:12.5px;cursor:default;white-space:nowrap}
+  .btn.accent{background:var(--accent);color:var(--on-accent);border-color:transparent;font-weight:600}
+  .btn.ghost{background:transparent} .btn.sm{height:25px;padding:0 9px;font-size:11.5px}
+  .btn[disabled]{opacity:.45}
+  .ico{font-family:var(--mono);font-size:12px;opacity:.85}
+
+  /* BEFORE: placeholder-only grid */
+  .b-help{font-size:11px;color:var(--muted);margin:0 0 10px;max-width:70ch}
+  .b-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;align-items:center}
+  .b-in{height:30px;border:1px solid var(--border2);border-radius:6px;background:#141414;color:var(--faint);
+    display:flex;align-items:center;padding:0 10px;font-size:12px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+  .b-grid .btn{justify-self:start}
+
+  /* AFTER: labeled, grouped form */
+  .frm{display:flex;flex-direction:column;gap:13px}
+  .fgroup{border:1px solid var(--border2);border-radius:9px;background:var(--panel2);padding:13px}
+  .fgroup + .fgroup{margin-top:2px}
+  .fg-title{font-size:11px;font-family:var(--mono);letter-spacing:.05em;text-transform:uppercase;color:var(--muted);margin:0 0 11px;display:flex;align-items:center;gap:8px}
+  .fg-title .opt{color:var(--faint);text-transform:none;letter-spacing:0;font-family:var(--sans);font-size:11px}
+  .fgrid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  @media(max-width:560px){.fgrid{grid-template-columns:1fr}}
+  .fld{display:flex;flex-direction:column;gap:5px}
+  .fld.wide{grid-column:1/-1}
+  .fld label{font-size:11.5px;color:var(--fg);display:flex;align-items:center;gap:6px}
+  .fld label .req{color:var(--accent);font-family:var(--mono)}
+  .fld .in{height:32px;border:1px solid var(--border2);border-radius:6px;background:#141414;color:var(--muted);
+    display:flex;align-items:center;padding:0 11px;font-size:12.5px}
+  .fld .in.filled{color:var(--fg)}
+  .fld .in.sel{justify-content:space-between}
+  .fld .hint{font-size:11px;color:var(--faint);line-height:1.45}
+  .fld .hint code{font-family:var(--mono);color:var(--muted)}
+  .frm-foot{display:flex;align-items:center;gap:12px;margin-top:2px}
+  .frm-foot .req-note{font-size:11px;color:var(--faint)} .frm-foot .req-note b{color:var(--accent)}
+
+  /* dependency banner */
+  .dep{display:flex;align-items:center;gap:10px;border:1px solid #3a3320;background:#221d10;border-radius:8px;padding:10px 12px;margin-bottom:12px}
+  .dep .i{color:var(--warn);font-family:var(--mono)} .dep .t{flex:1;font-size:12.5px;color:var(--fg)}
+
+  /* existing item preview */
+  .ssm-item{border:1px solid var(--border2);border-radius:8px;background:var(--panel2);padding:10px 12px;margin-bottom:8px}
+  .ssm-item-head{display:flex;align-items:center;gap:8px;margin-bottom:7px}
+  .ssm-alias{font-weight:600;font-size:13px} .ssm-item-head .btn{margin-left:auto}
+  .ssm-meta{display:grid;grid-template-columns:1fr 1fr;gap:3px 14px}
+  .mrow{display:flex;gap:8px;font-size:11.5px} .mrow .k{color:var(--muted);min-width:78px} .mrow .v{color:var(--fg);font-family:var(--mono)}
+  .foot{margin-top:52px;border-top:1px solid var(--border);padding-top:18px;color:var(--faint);font-size:12.5px}
+</style>
+
+<div class="wrap">
+  <p class="eyebrow">Agent Fleet Console · 設定 &gt; SSM タブ 刷新提案（D フェーズ）</p>
+  <h1>「追加フォーム」を、無ラベルの詰め込みからガイド付きへ</h1>
+  <p class="lede">機能・API は不変。<strong>プロファイル／ホストの追加 IF</strong> を、placeholder だけの入力グリッドから、<strong>ラベル・必須表示・ヒント・グループ分け</strong>のあるフォームへ。AWS 秘密情報を保存しない設計もそのまま。</p>
+
+  <!-- diagnosis -->
+  <section>
+    <div class="shdr"><span class="n">診断</span><h2>いまの追加フォームの何がつらいか</h2></div>
+    <ul class="diag">
+      <li><b>ラベルが無い</b> — 6 個（プロファイル）/ 5 個（ホスト）の入力が <b>placeholder だけ</b>。1 文字打つと何の欄か消える。</li>
+      <li><b>必須と任意が混在</b> — 「（任意）」を placeholder に書くだけ。<b>何を埋めれば「追加」できるか</b>が押すまで分からない（ボタンが無言で無効なだけ）。</li>
+      <li><b>入力の意味・取得元が不明</b> — start URL の形式、SSO リージョンと既定リージョンの違い、instance-id やドキュメント名を<b>どこで確認するか</b>のヒントが無い。</li>
+      <li><b>プロファイル→ホストの依存が弱い</b> — ホストは先にプロファイルが要るのに、0 件のときだけ一言。関係が図として見えない。</li>
+      <li><b>2 フォームが素の grid で並ぶ</b> — 見出し・区切り・余白が弱く、どこからどこまでが 1 つの登録か掴みにくい。</li>
+    </ul>
+  </section>
+
+  <!-- PROFILE before/after -->
+  <section>
+    <div class="shdr"><span class="n">A</span><h2>プロファイル追加 — Before / After</h2></div>
+    <div class="ba">
+      <div class="card before">
+        <div class="cap">Before <span class="tag">placeholder 6 個の grid</span></div>
+        <div class="in">
+          <div class="settings">
+            <div class="conn-cat">プロファイル（共通設定）</div>
+            <p class="b-help">AWS アクセスポータルと、その中のアカウント／ロール。複数ホストで使い回します。</p>
+            <div class="b-grid">
+              <span class="b-in">ラベル (例 my-profile)</span>
+              <span class="b-in">start URL (https://xxx.awsapps.com/start)</span>
+              <span class="b-in">SSO リージョン (例 ap-northeast-1)</span>
+              <span class="b-in">既定リージョン（任意）</span>
+              <span class="b-in">アカウント ID（任意）</span>
+              <span class="b-in">ロール名（任意）</span>
+              <span class="btn" disabled>追加</span>
+            </div>
+          </div>
+          <p class="caption">どれが必須？ start URL の形式は？ — 手掛かりが placeholder のみ。埋めても「追加」が有効化する条件が見えない。</p>
+        </div>
+      </div>
+
+      <div class="card after">
+        <div class="cap">After <span class="tag">ラベル＋必須＋ヒント＋分割</span></div>
+        <div class="in">
+          <div class="settings">
+            <div class="conn-cat">プロファイル（共通設定）</div>
+            <div class="frm">
+              <div class="fgroup">
+                <div class="fg-title">必須</div>
+                <div class="fgrid">
+                  <div class="fld">
+                    <label>ラベル <span class="req">*</span></label>
+                    <div class="in">my-profile</div>
+                    <div class="hint">一覧・ホストの選択に出る表示名。</div>
+                  </div>
+                  <div class="fld">
+                    <label>SSO リージョン <span class="req">*</span></label>
+                    <div class="in">ap-northeast-1</div>
+                    <div class="hint">アクセスポータルのリージョン。</div>
+                  </div>
+                  <div class="fld wide">
+                    <label>start URL <span class="req">*</span></label>
+                    <div class="in">https://my-company.awsapps.com/start</div>
+                    <div class="hint">IAM Identity Center のアクセスポータル URL（<code>https://…awsapps.com/start</code>）。</div>
+                  </div>
+                </div>
+              </div>
+              <div class="fgroup">
+                <div class="fg-title">詳細 <span class="opt">— 任意（未入力ならログイン時に選択）</span></div>
+                <div class="fgrid">
+                  <div class="fld"><label>アカウント ID</label><div class="in">123456789012</div></div>
+                  <div class="fld"><label>ロール名</label><div class="in">AdministratorAccess</div></div>
+                  <div class="fld"><label>既定リージョン</label><div class="in">ap-northeast-1</div>
+                    <div class="hint">セッションを開くリージョン。</div></div>
+                </div>
+              </div>
+              <div class="frm-foot">
+                <span class="btn accent">プロファイルを追加</span>
+                <span class="req-note"><b>*</b> は必須</span>
+              </div>
+            </div>
+          </div>
+          <p class="caption">「必須」と「詳細（任意）」を分け、各欄にラベル＋例＋取得元のヒント。start URL は形式を明示。</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- HOST before/after -->
+  <section>
+    <div class="shdr"><span class="n">B</span><h2>ホスト追加 — Before / After（プロファイル依存）</h2></div>
+    <div class="ba">
+      <div class="card before">
+        <div class="cap">Before <span class="tag">grid＋依存は一言だけ</span></div>
+        <div class="in">
+          <div class="settings">
+            <div class="conn-cat">SSM ホスト（個別）</div>
+            <p class="b-help">ログイン先の別名 → インスタンス ID・run-as ドキュメント。認証はプロファイルを選ぶだけ。</p>
+            <div class="b-grid">
+              <span class="b-in">別名 (例 admin@web-01)</span>
+              <span class="b-in">インスタンス ID (i-...)</span>
+              <span class="b-in">プロファイルを選択 ▾</span>
+              <span class="b-in">ドキュメント名（任意）</span>
+              <span class="b-in">リージョン（任意）</span>
+              <span class="btn" disabled>追加</span>
+            </div>
+            <p class="b-help dim" style="margin-top:8px">（プロファイル 0 件のときだけ）先にプロファイルを 1 つ作成してください。</p>
+          </div>
+          <p class="caption">プロファイルが要ることが読み取りにくい。必須/任意・各値の取得元も不明。</p>
+        </div>
+      </div>
+
+      <div class="card after">
+        <div class="cap">After <span class="tag">依存を明示＋ガイド</span></div>
+        <div class="in">
+          <div class="settings">
+            <div class="conn-cat">SSM ホスト（個別）</div>
+            <div class="frm">
+              <div class="fgroup">
+                <div class="fg-title">必須</div>
+                <div class="fgrid">
+                  <div class="fld">
+                    <label>別名 <span class="req">*</span></label>
+                    <div class="in">admin@web-01</div>
+                    <div class="hint">起動メニューに出るログイン先の名前。</div>
+                  </div>
+                  <div class="fld">
+                    <label>インスタンス ID <span class="req">*</span></label>
+                    <div class="in">i-0123456789abcdef0</div>
+                    <div class="hint">EC2 コンソール / <code>aws ec2 describe-instances</code>。</div>
+                  </div>
+                  <div class="fld wide">
+                    <label>使用するプロファイル <span class="req">*</span></label>
+                    <div class="in sel filled">my-profile <span class="dim">▾</span></div>
+                    <div class="hint">この別名の認証に使う共通プロファイル。</div>
+                  </div>
+                </div>
+              </div>
+              <div class="fgroup">
+                <div class="fg-title">詳細 <span class="opt">— 任意</span></div>
+                <div class="fgrid">
+                  <div class="fld"><label>run-as ドキュメント</label><div class="in">SSM-SessionManagerRunShell</div>
+                    <div class="hint">既定でよければ空のまま。</div></div>
+                  <div class="fld"><label>リージョン</label><div class="in">プロファイル既定を使用</div>
+                    <div class="hint">上書きしたい時だけ。</div></div>
+                </div>
+              </div>
+              <div class="frm-foot">
+                <span class="btn accent">ホストを追加</span>
+                <span class="req-note"><b>*</b> は必須</span>
+              </div>
+            </div>
+          </div>
+          <p class="caption">「使用するプロファイル」を必須欄として前面に。各値の取得元（EC2 コンソール等）をヒントに。</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- no-profile dependency state -->
+    <p class="note" style="margin:22px 0 8px"><span class="mono dim">プロファイル未登録のとき</span> — 無効な入力欄ではなく、次の一手を促すバナーに。</p>
+    <div class="settings" style="max-width:600px">
+      <div class="conn-cat">SSM ホスト（個別）</div>
+      <div class="dep">
+        <span class="i">i</span>
+        <span class="t">ホストの登録には共通プロファイルが必要です。まず 1 つ作成してください。</span>
+        <span class="btn sm accent">プロファイルを追加</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- list item preview -->
+  <section>
+    <div class="shdr"><span class="n">C</span><h2>登録済みカード（After・参考）</h2></div>
+    <div class="settings" style="max-width:600px">
+      <div class="conn-cat">プロファイル（共通設定）</div>
+      <div class="ssm-item" style="margin:0">
+        <div class="ssm-item-head"><span class="ssm-alias">my-profile</span><span class="btn danger sm" style="border-color:#5a2a2e;color:var(--del);background:#25191b">削除</span></div>
+        <div class="ssm-meta">
+          <div class="mrow"><span class="k">アカウント</span><span class="v">123456789012</span></div>
+          <div class="mrow"><span class="k">ロール</span><span class="v">AdministratorAccess</span></div>
+          <div class="mrow"><span class="k">既定リージョン</span><span class="v">ap-northeast-1</span></div>
+          <div class="mrow"><span class="k">SSO リージョン</span><span class="v">ap-northeast-1</span></div>
+        </div>
+      </div>
+    </div>
+    <p class="caption">一覧カードは現状の構造（別名＋メタ＋削除）を維持し、削除ボタンは「✕」→ danger ラベルに揃える程度。</p>
+  </section>
+
+  <p class="foot">守る点：SSM 設定の API（<span class="mono">/api/ssm/profiles・/hosts</span>）とバリデーション条件、<b>AWS 秘密情報を保存しない</b>設計（<code>aws sso login</code> はセッション起動時にブラウザ認証）は不変。見た目/入力体験の提案です。</p>
+</div>

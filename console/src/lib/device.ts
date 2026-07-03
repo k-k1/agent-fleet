@@ -1,3 +1,24 @@
+import { useEffect, useState } from "react";
+
+// The phone breakpoint, matched to the 760px media query in styles.css. Centralized
+// so the value lives in one place instead of being re-typed at each matchMedia call.
+export const MOBILE_QUERY = "(max-width: 760px)";
+export const mobileMatches = (): boolean =>
+  typeof window !== "undefined" && window.matchMedia(MOBILE_QUERY).matches;
+
+// useIsMobile tracks the phone breakpoint reactively, re-rendering when the viewport
+// crosses it. Shared by WsBar (overflow popover) and PaneHost (split limit).
+export function useIsMobile(): boolean {
+  const [m, setM] = useState(mobileMatches);
+  useEffect(() => {
+    const mq = window.matchMedia(MOBILE_QUERY);
+    const fn = () => setM(mq.matches);
+    mq.addEventListener("change", fn);
+    return () => mq.removeEventListener("change", fn);
+  }, []);
+  return m;
+}
+
 // coarsePointer reports a touch-primary device (phone / tablet), where focusing an
 // input pops the on-screen keyboard. We use it to SUPPRESS auto-focus on view
 // switch / attach: switching ターミナル⇄チャット to read shouldn't summon the

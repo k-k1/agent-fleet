@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { api, apiJSON, raw, rel } from "../api.js";
+import { useConfirm } from "../components/ConfirmProvider.jsx";
+import { useToast } from "../components/ToastProvider.jsx";
 
 // TokensTab issues and revokes Personal Access Tokens for the MCP endpoint
 // (docs/decisions/0006, P3-6). A token carries the issuer's identity+membership;
@@ -18,6 +20,8 @@ interface PatToken {
 }
 
 export default function TokensTab() {
+  const askConfirm = useConfirm();
+  const toast = useToast();
   const [tokens, setTokens] = useState<PatToken[] | null>(null);
   const [ceiling, setCeiling] = useState("write");
   const [err, setErr] = useState("");
@@ -51,7 +55,7 @@ export default function TokensTab() {
     });
     setBusy(false);
     if (res && res.error) {
-      alert("発行に失敗: " + (res.error.message || ""));
+      toast("発行に失敗: " + (res.error.message || ""));
       return;
     }
     setIssued(res);
@@ -60,7 +64,13 @@ export default function TokensTab() {
   };
 
   const revoke = async (id: string) => {
-    if (!confirm("このトークンを失効しますか？ 使用中の接続は次回から 401 になります。")) return;
+    const ok = await askConfirm({
+      title: "トークンを失効",
+      body: "このトークンを失効します。使用中の接続は次回から 401 になります。",
+      confirmLabel: "失効する",
+      danger: true,
+    });
+    if (!ok) return;
     await raw(`api/pat/${encodeURIComponent(id)}`, { method: "DELETE" });
     load();
   };

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useApp } from "../state.jsx";
-import ConnectionsTab from "./ConnectionsTab.jsx";
+import GitTab from "./GitTab.jsx";
 import DisplayTab from "./DisplayTab.jsx";
 import AgentsTab from "./AgentsTab.jsx";
 import EnvTab from "./EnvTab.jsx";
@@ -13,16 +13,16 @@ import Modal from "../components/Modal.jsx";
 // AdminDialog, opened from its own top-bar button — so admin actions are clearly
 // distinct from personal settings.
 export default function SettingsDialog() {
-  const { closeSettings } = useApp();
-  const [section, setSection] = useState("connections");
+  const { closeSettings, settingsSection } = useApp();
+  const [section, setSection] = useState(settingsSection || "agents");
 
   const sections = [
-    ["connections", "接続"],
-    ["agents", "エージェント"],
-    ["env", "環境"],
-    ["ssm", "SSM"],
-    ["tokens", "MCP"],
     ["display", "表示"],
+    ["env", "ワークスペース"],
+    ["agents", "エージェント"],
+    ["git", "Git"],
+    ["ssm", "AWS SSM"],
+    ["tokens", "MCP"],
   ];
 
   return (
@@ -41,8 +41,8 @@ export default function SettingsDialog() {
           ))}
         </div>
         <div className="settings-content">
-          {section === "connections" && <ConnectionsTab />}
           {section === "agents" && <AgentsTab />}
+          {section === "git" && <GitTab />}
           {section === "env" && <EnvTab />}
           {section === "ssm" && <SsmTab />}
           {section === "tokens" && <TokensTab />}
