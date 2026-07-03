@@ -8,6 +8,7 @@
 - ブランチ `refactor/console-ux`（main より先行・push 済み、全コミット `typecheck`+`build` グリーン、コードレビュー指摘は対応済み）。
 - **完了:** 左レール操作のアイコン＋ラベル化 / Repos 行の状態チップ統一（`●`・`↑↓` 解消）/ 破壊操作の確認統一（native `confirm` 全廃・`ConfirmProvider`＋モバイル修正）/ 失敗表示のトースト化（native `alert` 全廃・エラーは sticky＋`role=alert`）/ New Session 種類の caps 駆動アイコン＋色 / 空・ローディングの `EmptyState` 統一 / 右ペイン状態表示統一（変更バッジのラベル化・SCM ahead/behind チップ）/ 外観編集を専用ポップオーバへ（ライブプレビュー維持）/ WsBar のリソース集約・close-all/Start-Stop のアイコン＋ラベル・停止確認 / DRY 整理（`useIsMobile`・`fmtGiB`・`SwatchGrid`・`useDismiss`）。
 - **新規共有部品:** `components/{ConfirmProvider,ToastProvider,EmptyState,SwatchGrid}.tsx`、`lib/{bytes.ts, device.ts(useIsMobile), useDismiss.ts}`、`openSettings(section?)`。
+- **追記（2026-07-03, `e20a070`〜`94034bc`）:** A 左ペイン IA・B 右ペイン周辺 UI・C のライトテーマ色を実装済（下記チェック参照、全て push・グリーン・**要ユーザー目視**）。残りは C のモバイル/a11y（要ブラウザ）と D/E/F。
 
 ## 進め方（全項目共通）
 - 小さくコミット → 各ステップ `npm run typecheck` + `npm run build` グリーン維持 → **ユーザーがブラウザで目視**（この環境は headless で画面が見えない）→ 区切りで `git push`。
@@ -15,39 +16,39 @@
 
 ---
 
-## A. 左ペイン IA（次にやる）
-まだ「整え（ラベル・チップ・空状態）」までで、**情報階層そのもの**は未着手。
-- セクションの並び・密度・区切りの再検討（Sessions / Repos / Files の階層と視認性）。
-- 各行レイアウトの一貫性（2 行構成・余白・アクティブ/ホバー表現）の総点検。
-- `LayoutMap`（ペイン・ミニマップ）の置き場と可読性（2 文字略号＋状態ドット）— 凡例やツールチップの要否。
-- 折りたたみ状態の永続化・セクション見出しの情報設計。
+## A. 左ペイン IA ✅ 完了（2026-07-03・要ユーザー目視）
+「整え」の先の**情報階層**まで着手。
+- [x] セクションの並び・密度・区切りの再検討 — 行間ディバイダ廃止・角丸 hover/active ピル化。並びは Sessions→Repos→Files のまま据置（`100fed9`）。
+- [x] 各行レイアウトの一貫性 — active/選択の左アクセントバー統一・Repos 行 hover 追加・余白統一（`d0742f0`）。
+- [x] `LayoutMap` の可読性 — セルの title/aria-label を「ペイン{n}: {名前} · {種類} · {状態}」に充実（凡例は不要と判断）（`04a3395`）。
+- [x] 折りたたみ状態の永続化・セクション見出しの情報設計 — `localStorage` 永続化＋件数バッジ＋`aria-expanded`（`e20a070`）。※副作用の横スクロール回帰を `5dd1cba` で修正。
 - 参照: `console-redesign.md` §18.4（推奨 IA たたき台）。
 
-## B. 右ペインの周辺 UI ポリッシュ（xterm 不可侵）
-- ペイン制御クラスタ（折返し/分割/閉じる/グリップ・順序チップ）の見せ方（過密回避しつつ意味付け）。
-- ペインヘッダの情報（kind バッジ＋ビュー名＋パンくず）の一貫化。
-- ターミナル/チャット（Mirror）ヘッダの ContextBar・再開/自動圧縮 UI のポリッシュ。
-- SCM 変更リストの per-file 文字（`M/A/U`）は git 慣習で据置判断済 — 必要なら再検討。
+## B. 右ペインの周辺 UI ポリッシュ（xterm 不可侵）✅ 完了（2026-07-03・要ユーザー目視）
+- [x] ペイン制御クラスタ — 分割/折返し/閉じるを hover/active で薄い背景にまとめ、閉じるをディバイダで区切り（`415fd00`）。
+- [x] ペインヘッダの見出し一貫化 — SCM の accent テキストを「accent アイコン＋fg 名」に、Doc/Diff アイコンも accent に統一（`34b575f`）。※「全ヘッダにビュー種別ピル」は冗長リスクで見送り（要相談）。
+- [x] ContextBar の自動圧縮間近の警告状態（80% warn / 93% danger）（`94034bc`）。再開/圧縮ストリップ（`.mirror-attention`/`.mirror-compacting`）は既存で十分と判断。
+- [x] SCM 変更リストの per-file 文字（`M/A/U`）は git 慣習で据置判断済。
 
-## C. 横断 QA（目視必須・見た目回帰の温床）
-- **ライトテーマ確認:** 新規要素の一部に**テーマ非依存のハードコード色**がある（要検証・必要なら light 上書き）:
-  - New Session 種類アイコン色 `styles.css` `.seg.big .seg-btn.kind-* .seg-ic`。
-  - Files 変更バッジ色 `.chg-badge.st-*`。
-  - トーストの severity 色・EmptyState・チップ類全般。
-- **モバイル/レスポンシブ確認:** 追加した各ポップオーバ（外観・WsBar リソース/usage/preview）、トースト、確認カード、`ws-closeall` ラベル非表示、左レール drawer。
-- **アクセシビリティ:** フォーカスリング/キーボード操作、`useDismiss` 化した各メニューの Escape 挙動、`aria` 属性（トースト `role=alert`/`status` は対応済）。
-- **機能インベントリ回帰:** §18.2 と現 UI を突き合わせ、消えた導線がないか確認。
+## C. 横断 QA（目視必須・見た目回帰の温床）— ライト色は完了、残りは要ブラウザ
+- [x] **ライトテーマのハードコード色:** light 上書きを追加。
+  - [x] New Session 種類アイコン色 `.seg.big .seg-btn.kind-*:not(.active) .seg-ic`（`ef3587b`）。
+  - [x] Files 変更バッジ色 `.chg-badge.st-*` → GitHub Light の濃い on-color（`ef3587b`）。
+  - [x] BG実行中チップ `.session-state.bg` の teal（`8e8c45b`）。トースト/EmptyState/`.pane-count` は既にテーマ変数で対応済＝変更不要と確認。
+- [ ] **モバイル/レスポンシブ確認:** 各ポップオーバ（外観・WsBar リソース/usage/preview）、トースト、確認カード、`ws-closeall` ラベル非表示、左レール drawer。※headless で目視不可＝**ユーザー確認待ち**。
+- [ ] **アクセシビリティ:** フォーカスリング/キーボード、`useDismiss` の Escape 挙動、`aria`。※**ユーザー確認待ち**。
+- [ ] **機能インベントリ回帰:** §18.2 と現 UI を突き合わせ、消えた導線がないか確認。
 
-## D. 設定 / 管理ダイアログの一貫化
+## D. 設定 / 管理ダイアログの一貫化 ⏳ 未着手（次にやる）
 - Settings 各タブ（Connections/Agents/Env/SSM/MCP/表示）の余白・ラベル・見出しの体裁統一。
 - `AdminDialog`（super_admin）は今回ほぼ未着手 — 新しい言語（ボタン/確認/トースト/チップ）に合わせる。
 - 破壊操作の確認は `useConfirm` に寄せ済（AdminTab は既存 `ConfirmDialog` 利用）。トーンの統一のみ。
 
-## E. オンボーディング / 初回起動
+## E. オンボーディング / 初回起動 ⏳ 未着手
 - `OnboardingCard` と初回フロー（接続・起動導線）を新しい空状態/CTA 言語に揃える。
 - `openSettings("connections"|"display"|…)` のタブ直開き導線を活用可。
 
-## F. 仕上げ
+## F. 仕上げ ⏳ 未着手
 - 最終 `typecheck`+`build`、通し目視。
 - `main` への PR 作成（本文にサマリ・スクショはユーザー取得）。必要なら `/code-review ultra`（クラウド多エージェント）で最終確認。
 - マージ後、旧 `.jsx` 前提の記述が残るドキュメントの追随。
@@ -55,8 +56,8 @@
 ---
 
 ## 優先度の目安
-1. **A 左ペイン IA**（次セッション）
-2. **C 横断 QA のうちライトテーマ＆モバイル**（見た目回帰を早めに潰す）
-3. **B 右ペイン周辺 UI**
-4. **D 設定/管理の一貫化**、**E オンボーディング**
+1. ~~**A 左ペイン IA**~~ ✅ 完了（要目視）
+2. **C 横断 QA** — ライト色 ✅ 完了 / モバイル・a11y はユーザー確認待ち
+3. ~~**B 右ペイン周辺 UI**~~ ✅ 完了（要目視）
+4. **D 設定/管理の一貫化**（← 次にやる）、**E オンボーディング**
 5. **F 仕上げ・PR**
