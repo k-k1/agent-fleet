@@ -6133,11 +6133,25 @@ button.primary:hover:not(:disabled) {
 /* ---- Layout mini-map: a schematic of the current split (columns × rows) ---- */
 .layoutmap {
   flex: none; /* pinned above .leftpane-scroll — never grows or scrolls away */
+  /* A bordered card with a caption, so the pane minimap reads as a labeled widget
+     rather than a loose strip of cells. */
+  margin: 8px 8px 6px;
+  padding: 7px 8px 8px;
+  border: 1px solid var(--border2);
+  border-radius: 7px;
+  background: var(--leftpane-bg);
+}
+.lm-cap {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--faint, var(--muted));
+  margin-bottom: 6px;
+}
+.lm-cols {
   display: flex;
   gap: 3px;
-  padding: 6px 8px 8px;
-  border-bottom: 1px solid var(--border2);
-  background: var(--leftpane-bg);
 }
 /* The scrolling region below the pinned pane map: holds the three sections. */
 .leftpane-scroll {
@@ -6205,6 +6219,19 @@ button.primary:hover:not(:disabled) {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* Kind-tinted abbreviation (cc/oc/cx/sh) so the cell reads its agent at a glance —
+   the ordinal square already carries the ordinal color. Non-session panes (file/scm/
+   diff) keep the muted default. Values mirror the .kind-tag palette (+ light). */
+.lm-kind.kc-claude { color: #e0a45e; }
+.lm-kind.kc-codex { color: #4ec97a; }
+.lm-kind.kc-opencode { color: #b07cf2; }
+.lm-kind.kc-shell { color: #46c9d0; }
+.lm-kind.kc-ssm { color: #e8913a; }
+[data-theme="light"] .lm-kind.kc-claude { color: #a85f1c; }
+[data-theme="light"] .lm-kind.kc-codex { color: #18854a; }
+[data-theme="light"] .lm-kind.kc-opencode { color: #6d2fce; }
+[data-theme="light"] .lm-kind.kc-shell { color: #15828a; }
+[data-theme="light"] .lm-kind.kc-ssm { color: #b5651d; }
 .lm-dot {
   flex: none;
   width: 7px;
