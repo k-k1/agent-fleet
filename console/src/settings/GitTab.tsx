@@ -3,6 +3,7 @@ import { api, apiJSON, raw } from "../api.js";
 import { useApp } from "../state.jsx";
 import Icon from "../components/Icon.jsx";
 import { useToast } from "../components/ToastProvider.jsx";
+import EmptyState from "../components/EmptyState.jsx";
 import { ProviderCard, StatusPill, DeviceSteps, DisconnectButton } from "./providerCard.jsx";
 
 interface RowProps {
@@ -18,7 +19,11 @@ interface RowProps {
 // here — each provider card will gain a settings group like the agent cards. It needs
 // a new Agent endpoint (workspace/agent git identity), so it lands once that exists.
 export default function GitTab() {
-  const { bumpConn } = useApp();
+  const { bumpConn, wsState, startWs } = useApp();
+  // git-hosting auth is agent-proxied (proxyAgentREST → 502 while stopped), so the
+  // tab needs a running workspace — same as the agent tab (SSM/MCP are CP-stored and
+  // don't).
+  const running = wsState === "running";
   const [conns, setConns] = useState<any>(null);
   const reload = useCallback(() => {
     api("api/connections")
@@ -26,8 +31,26 @@ export default function GitTab() {
       .catch(() => setConns({}));
     bumpConn();
   }, [bumpConn]);
-  useEffect(reload, [reload]);
+  useEffect(() => {
+    if (running) reload();
+  }, [running, reload]);
 
+  if (!running) {
+    return (
+      <EmptyState
+        as="div"
+        icon="debug-disconnect"
+        message="Git 接続はワークスペース内で実行されます"
+        hint="認証はコンテナ内の Agent を経由するため、ワークスペースの起動が必要です。"
+        action={{
+          label: wsState.endsWith("…") ? "起動中…" : "ワークスペースを起動",
+          icon: "play",
+          onClick: startWs,
+          disabled: wsState.endsWith("…"),
+        }}
+      />
+    );
+  }
   if (!conns) return <p className="muted pad">読み込み中…</p>;
   return (
     <div className="conns">
