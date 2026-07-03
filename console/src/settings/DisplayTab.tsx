@@ -8,11 +8,10 @@ import {
   chatFontStack,
   ICON_SETS,
   THEMES,
-  SURFACE_COLORS,
-  surfaceValue,
   MIRROR_SEND_MODES,
 } from "../lib/settings.js";
 import FileIcon from "../components/FileIcon.jsx";
+import SwatchGrid from "../components/SwatchGrid.jsx";
 
 // DisplayTab: font + file-viewer preferences (CodeLeaf-inspired), persisted via the
 // settings store. Every control is a horizontal selection (segmented buttons /
@@ -31,16 +30,16 @@ export default function DisplayTab() {
           />
         </Row>
         <Row label="上部バーの背景">
-          <SwatchChoice theme={s.theme} value={s.topbarColor} onChange={(v) => setSetting("topbarColor", v)} />
+          <SwatchGrid theme={s.theme} value={s.topbarColor} onChange={(v) => setSetting("topbarColor", v)} />
         </Row>
         <Row label="左ペインの背景">
-          <SwatchChoice theme={s.theme} value={s.leftpaneColor} onChange={(v) => setSetting("leftpaneColor", v)} />
+          <SwatchGrid theme={s.theme} value={s.leftpaneColor} onChange={(v) => setSetting("leftpaneColor", v)} />
         </Row>
         <Row label="ファイルビュアーの背景">
-          <SwatchChoice theme={s.theme} value={s.viewerColor} onChange={(v) => setSetting("viewerColor", v)} />
+          <SwatchGrid theme={s.theme} value={s.viewerColor} onChange={(v) => setSetting("viewerColor", v)} />
         </Row>
         <Row label="チャットの背景">
-          <SwatchChoice theme={s.theme} value={s.chatColor} onChange={(v) => setSetting("chatColor", v)} />
+          <SwatchGrid theme={s.theme} value={s.chatColor} onChange={(v) => setSetting("chatColor", v)} />
         </Row>
       </section>
 
@@ -203,30 +202,6 @@ function Choice({ value, options, onChange }: ChoiceProps) {
           {label as ReactNode}
         </button>
       ))}
-    </div>
-  );
-}
-
-// SwatchChoice picks a surface (top bar / left pane) color. Each swatch previews the
-// color as it'll look in the active theme; "デフォルト" shows a slashed neutral chip.
-function SwatchChoice({ theme, value, onChange }: { theme: string; value: string; onChange: (v: string) => void }) {
-  return (
-    <div className="swatch-row">
-      {SURFACE_COLORS.map((c) => {
-        const col = surfaceValue(c.id, theme);
-        return (
-          <button
-            key={c.id}
-            type="button"
-            title={c.label}
-            className={"swatch" + (c.id === value ? " active" : "") + (col ? "" : " swatch-default")}
-            style={col ? { background: col } : undefined}
-            onClick={() => onChange(c.id)}
-          >
-            {c.id === value ? "✓" : ""}
-          </button>
-        );
-      })}
     </div>
   );
 }

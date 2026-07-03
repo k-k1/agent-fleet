@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { useApp } from "../state.jsx";
 import { rel } from "../api.js";
-import { useSettings, setSetting, THEMES, SURFACE_COLORS, surfaceValue } from "../lib/settings.js";
+import { useSettings, setSetting, THEMES } from "../lib/settings.js";
 import Icon from "./Icon.jsx";
+import SwatchGrid from "./SwatchGrid.jsx";
 
 // Top bar: product name, tenant picker (hidden for single-membership users), and
 // an account menu folding in settings, admin (super_admin only) and sign-out
@@ -167,9 +168,8 @@ export default function TopBar() {
   );
 }
 
-// SwatchRow: surface-color picker (top bar / left pane). Each swatch previews the
-// color in the active theme; "default" shows a slashed neutral chip. Tapping
-// applies immediately and keeps the menu open. Mirrors DisplayTab's SwatchChoice.
+// SwatchRow: a labeled row wrapping the shared SwatchGrid (surface-color picker) for
+// the 外観 popover. Tapping applies immediately and keeps the popover open.
 interface SwatchRowProps {
   label: string;
   theme: string;
@@ -181,23 +181,7 @@ function SwatchRow({ label, theme, value, onPick }: SwatchRowProps) {
   return (
     <div className="acct-swatch-row">
       <span className="acct-swatch-lbl">{label}</span>
-      <div className="swatch-row">
-        {SURFACE_COLORS.map((c) => {
-          const col = surfaceValue(c.id, theme);
-          return (
-            <button
-              key={c.id}
-              type="button"
-              title={c.label}
-              className={"swatch" + (c.id === value ? " active" : "") + (col ? "" : " swatch-default")}
-              style={col ? { background: col } : undefined}
-              onClick={() => onPick(c.id)}
-            >
-              {c.id === value ? "✓" : ""}
-            </button>
-          );
-        })}
-      </div>
+      <SwatchGrid theme={theme} value={value} onChange={onPick} />
     </div>
   );
 }
