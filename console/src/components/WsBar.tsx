@@ -4,6 +4,8 @@ import { api, previewURL, ocwebURL } from "../api.js";
 import Icon from "./Icon.jsx";
 import Sparkline from "./Sparkline.jsx";
 import { useConfirm } from "./ConfirmProvider.jsx";
+import { useIsMobile } from "../lib/device.js";
+import { fmtGiB as fg } from "../lib/bytes.js";
 
 const HIST_N = 60; // sparkline ring buffer: ~4 min at the 4s poll cadence
 
@@ -208,13 +210,6 @@ function whenText(iso: string) {
 // On desktop the resource chips / opencode web / port-preview sit inline at the
 // right; on a phone they'd wrap to a second line, so they fold into a single ⋯
 // overflow popover instead.
-// GiB with adaptive precision: 2 decimals under 10 (so 0.98 stays visible),
-// 1 above (so 26.9 stays compact).
-const fg = (b: number) => {
-  const v = b / 1073741824;
-  return v < 10 ? v.toFixed(2) : v.toFixed(1);
-};
-
 // Friendly label for the raw container state. The CP returns docker-derived states
 // (runtime.go state()): "running" | "stopped" | "none". Stop does `docker rm -f`,
 // so the *normal* stopped state is "none" (no container — data persists in the bind
@@ -237,18 +232,6 @@ function wsLabel(s: string): string {
     default:
       return s; // "…" initial, or any future state
   }
-}
-
-// Matches the 760px breakpoint in styles.css (the phone layout).
-function useIsMobile() {
-  const [m, setM] = useState(() => typeof window !== "undefined" && window.matchMedia("(max-width: 760px)").matches);
-  useEffect(() => {
-    const mq = window.matchMedia("(max-width: 760px)");
-    const fn = () => setM(mq.matches);
-    mq.addEventListener("change", fn);
-    return () => mq.removeEventListener("change", fn);
-  }, []);
-  return m;
 }
 
 // One resource tile: label + trend sparkline + current value, tinted by level

@@ -4,6 +4,7 @@ import { api, apiJSON, rawJSON, errText, rel } from "../api.js";
 import Icon from "../components/Icon.jsx";
 import ConfirmDialog from "../components/ConfirmDialog.jsx";
 import { kindLabel, kindClass, kindIcon } from "../lib/sessionkind.js";
+import { fmtGiB } from "../lib/bytes.js";
 import { stateInfo } from "../lib/sessionview.js";
 
 // Admin API shapes (only the fields the UI reads; server responses may carry more).
@@ -39,12 +40,8 @@ interface View {
 // back. The member stage surfaces live Workspace resources (mem / CPU / disk) and
 // the member's session list, served by the per-member admin endpoints.
 
-const GiB = 1073741824;
-// GiB with adaptive precision (matches WsBar): 2 decimals under 10, 1 above.
-const fmtG = (b: number) => {
-  const v = b / GiB;
-  return (v < 10 ? v.toFixed(2) : v.toFixed(1)) + "G";
-};
+// GiB with adaptive precision (shared fmtGiB) plus AdminTab's "G" suffix.
+const fmtG = (b: number) => fmtGiB(b) + "G";
 const fmtPct = (n: number | null | undefined) => (n == null ? "–" : Math.round(n) + "%");
 
 export default function AdminTab() {

@@ -1,24 +1,12 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef } from "react";
 import type { CSSProperties, PointerEvent as RPointerEvent, ReactNode } from "react";
 import { useApp } from "../state.jsx";
 import { paneOrdinals } from "../lib/panebadge.js";
+import { useIsMobile } from "../lib/device.js";
 import Pane from "./Pane.jsx";
 import type { Column, Pane as PaneT } from "../types/layout.ts";
 
 const D = 6; // divider thickness in px
-
-// Tracks the mobile breakpoint (matches the 760px media query in styles.css). On a
-// phone the split is limited to a single column split top/bottom (max 2 panes).
-function useIsMobile() {
-  const [m, setM] = useState(() => typeof window !== "undefined" && window.matchMedia("(max-width: 760px)").matches);
-  useEffect(() => {
-    const mq = window.matchMedia("(max-width: 760px)");
-    const fn = () => setM(mq.matches);
-    mq.addEventListener("change", fn);
-    return () => mq.removeEventListener("change", fn);
-  }, []);
-  return m;
-}
 
 // PaneHost lays the main area out as up to 4 columns, each a stack of 1 or 2 panes.
 // All panes (and the dividers) are FLAT, position:absolute children of one stable
