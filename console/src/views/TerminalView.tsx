@@ -118,20 +118,21 @@ export default function TerminalView({
     <div className="termview">
       <header className="view-head">
         {session && sessionMeta ? (
-          <span className="pane-session">
+          // The slug (sessionMeta.name) is the internal id, not shown — the title is
+          // the meaningful name; the slug lives on the header tooltip for reference.
+          <span className="pane-session" title={"ID: " + sessionMeta.name}>
             <span className={"kind-tag kind-" + kindClass(sessionMeta.kind)}>
               <Icon name={kindIcon(sessionMeta.kind)} />
               <span className="kt-label kt-full">{kindLabel(sessionMeta.kind)}</span>
               <span className="kt-label kt-short">{kindShort(sessionMeta.kind)}</span>
             </span>
             <span className="session-display">{displayName(sessionMeta)}</span>
-            <span className="session-name">{sessionMeta.name}</span>
             <span className={"session-state " + st!.cls}>
               <Icon name={st!.icon} spin={st!.spin} /> {st!.text}
             </span>
           </span>
         ) : (
-          <span className="view-title">{session ? `session: ${session}` : "セッション未接続"}</span>
+          <span className="view-title">{session ? "セッション" : "セッション未接続"}</span>
         )}
         {canMirror && <MirrorToggle mirror={mirror} onToggle={onToggleMirror} running={running} />}
       </header>

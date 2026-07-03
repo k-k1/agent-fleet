@@ -3,7 +3,7 @@ import { useApp } from "../state.jsx";
 import { paneRows, ordClass, paneCount } from "../lib/panebadge.js";
 import { usePaneHover, hoverMatches } from "../lib/panehover.jsx";
 import { kindShort, kindLabel, kindClass } from "../lib/sessionkind.js";
-import { stateInfo } from "../lib/sessionview.js";
+import { displayName, stateInfo } from "../lib/sessionview.js";
 import type { Session } from "../types/session.ts";
 
 // Short label for a non-session pane (file / scm / doc / diff) shown in a map cell.
@@ -49,7 +49,7 @@ export default function LayoutMap() {
               ord +
               ": " +
               (s
-                ? `${s.name} · ${kindLabel(s.kind)}${st ? " · " + st.text : ""}`
+                ? `${displayName(s)} · ${kindLabel(s.kind)}${st ? " · " + st.text : ""}`
                 : p.kind === "terminal"
                   ? "セッション未接続"
                   : KIND_JA[p.kind] || p.kind);

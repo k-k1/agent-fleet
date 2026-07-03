@@ -22,9 +22,6 @@ interface Repo {
   behind?: number;
 }
 
-const repoSafeSession = (name: string) =>
-  name.replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 40) || "repo";
-
 // guessRepoName derives a display name from a clone URL (last path segment minus
 // .git) for the in-progress spinner row, before the server reports the real name.
 const guessRepoName = (u: string | null | undefined) => {
@@ -32,21 +29,11 @@ const guessRepoName = (u: string | null | undefined) => {
   return s.split(/[/:]/).pop() || "repo";
 };
 
-// freeName picks the first unused session name: base, base-2, base-3, … so the
-// same repo can spawn several sessions ("複製") without name collisions.
-const freeName = (base: string, used: Set<string>): string => {
-  if (!used.has(base)) return base;
-  for (let n = 2; ; n++) {
-    const c = `${base}-${n}`;
-    if (!used.has(c)) return c;
-  }
-};
-
 // Repos: working copies under ~/repos. Clone new ones (provider picker or URL),
 // switch branch, fetch, start a session in the repo, delete, or open Source
 // Control (→ main area). The dirty dot mirrors uncommitted changes.
 export default function ReposSection() {
-  const { reposKey, connKey, bumpRepos, bumpSessions, bumpFiles, revealInFiles, showSCM, showSCMSplit, showTerminal, showTerminalSplit, scmRepo, mode, session, wsState } =
+  const { reposKey, connKey, bumpRepos, bumpSessions, bumpFiles, revealInFiles, showSCM, showSCMSplit, showTerminal, showTerminalSplit, showChat, showChatSplit, scmRepo, mode, session, wsState } =
     useApp();
   const toast = useToast();
   const running = wsState === "running"; // WS down → clone/open/launch are inert
@@ -188,20 +175,19 @@ export default function ReposSection() {
             // split=true (middle-click) opens the new session in a freshly split
             // pane instead of replacing the active pane's content.
             onLaunch={async (kind: string, split: boolean) => {
-              const base = repoSafeSession(r.name) + agentOf(kind).launchSuffix;
-              let used = new Set<string>();
-              try {
-                const d = await api("api/sessions");
-                used = new Set((d.sessions || []).map((s: Session) => s.name));
-              } catch {}
-              const name = freeName(base, used);
-              const res = await apiJSON("api/sessions", "POST", { name, dir: r.path, kind });
+              // The server allocates the session's identity (slug); we only say where
+              // (dir) and what kind. Open the created session by its returned slug —
+              // claude → chat mirror (live, PTY attached in bg), other kinds → terminal.
+              const res = await apiJSON("api/sessions", "POST", { dir: r.path, kind });
               if (res && res.error) {
                 toast("起動に失敗: " + errText(res.error));
                 return;
               }
               bumpSessions();
-              (split ? showTerminalSplit : showTerminal)(name);
+              const chat = agentOf(kind).caps.chat;
+              (chat
+                ? split ? showChatSplit : showChat
+                : split ? showTerminalSplit : showTerminal)(res.name);
             }}
           />
         ))}

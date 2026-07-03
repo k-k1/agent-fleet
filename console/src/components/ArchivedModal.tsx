@@ -5,6 +5,7 @@ import Modal from "./Modal.jsx";
 import { useConfirm } from "./ConfirmProvider.jsx";
 import { useToast } from "./ToastProvider.jsx";
 import { kindIcon, kindLabel } from "../lib/sessionkind.js";
+import { displayName } from "../lib/sessionview.js";
 import type { Session } from "../types/session.ts";
 
 // ArchivedModal lists archived sessions (hidden from the active list but kept on
@@ -49,10 +50,10 @@ export default function ArchivedModal({ onClose, onRestored }: ArchivedModalProp
     }
   };
 
-  const del = async (name: string) => {
+  const del = async (name: string, display: string) => {
     const ok = await askConfirm({
       title: "アーカイブを完全に削除",
-      body: `"${name}" を一覧から完全に削除します。会話ログのファイルは残ります。`,
+      body: `「${display}」を一覧から完全に削除します。会話ログのファイルは残ります。`,
       confirmLabel: "削除する",
       danger: true,
     });
@@ -75,10 +76,10 @@ export default function ArchivedModal({ onClose, onRestored }: ArchivedModalProp
           <ul className="archived-list">
             {items.map((s) => (
               <li key={s.name} className="archived-row">
-                <div className="archived-info">
-                  <span className="archived-name">{s.label ? s.label.replace(/^\[AF\]\s*/, "") : s.repo || s.name}</span>
+                <div className="archived-info" title={"ID: " + s.name}>
+                  <span className="archived-name">{displayName(s)}</span>
                   <span className="archived-sub muted">
-                    <Icon name={kindIcon(s.kind)} /> {kindLabel(s.kind)} · {s.name}
+                    <Icon name={kindIcon(s.kind)} /> {kindLabel(s.kind)}
                     {s.started ? " · " + s.started : ""}
                     {s.resumable === false ? " · フォルダ無し" : ""}
                   </span>
@@ -87,7 +88,7 @@ export default function ArchivedModal({ onClose, onRestored }: ArchivedModalProp
                   <button disabled={busy} onClick={() => restore(s.name)}>
                     復帰
                   </button>
-                  <button className="ghost danger" disabled={busy} title="完全に削除" onClick={() => del(s.name)}>
+                  <button className="ghost danger" disabled={busy} title="完全に削除" onClick={() => del(s.name, displayName(s))}>
                     <Icon name="trash" />
                   </button>
                 </div>

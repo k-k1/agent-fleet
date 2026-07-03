@@ -30,7 +30,7 @@ const SOURCE_HELP = {
 
 interface NewSessionModalProps {
   onClose: () => void;
-  onCreated: (name: string, cloned: boolean, repo: string) => void;
+  onCreated: (name: string, cloned: boolean, repo: string, kind: string) => void;
 }
 
 export default function NewSessionModal({ onClose, onCreated }: NewSessionModalProps) {
@@ -180,8 +180,9 @@ export default function NewSessionModal({ onClose, onCreated }: NewSessionModalP
         return;
       }
       // Pass the cloned repo dir basename (server echoes it as `repo`) so the
-      // caller can refresh + reveal it in the Files tree once the clone lands.
-      onCreated(slug, cloning, cloning ? (res && res.repo) || "" : "");
+      // caller can refresh + reveal it in the Files tree once the clone lands. kind
+      // lets the caller open a claude session as chat (vs terminal for other kinds).
+      onCreated(slug, cloning, cloning ? (res && res.repo) || "" : "", kind);
     } finally {
       setBusy(false);
     }
@@ -191,7 +192,7 @@ export default function NewSessionModal({ onClose, onCreated }: NewSessionModalP
   // it attaches the terminal (onCreated) on ready, or closes on cancel.
   if (ssmLogin) {
     return (
-      <SsmLoginModal name={ssmLogin} onReady={(n) => onCreated(n, false, "")} onCancel={onClose} />
+      <SsmLoginModal name={ssmLogin} onReady={(n) => onCreated(n, false, "", kind)} onCancel={onClose} />
     );
   }
 
