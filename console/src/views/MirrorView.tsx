@@ -292,6 +292,16 @@ export default function MirrorView({
     atBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
   };
 
+  // Auto-grow the composer to fit its content (up to ~10 lines via the CSS max-height,
+  // then it scrolls). Runs on every draft change, including the per-session draft restored
+  // on mount. Reset to auto first so it can also shrink when text is deleted.
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = el.scrollHeight + "px";
+  }, [draft]);
+
   // Focus the composer when this pane becomes the active chat — but not on touch
   // devices, where auto-focus would pop the on-screen keyboard just from switching
   // to read the chat. There the user taps the composer to type. (The other focus
@@ -983,7 +993,7 @@ function Turn({
       </div>
       <div className="mirror-turn-body">
         {isUser ? (
-          <pre className="mirror-user-text">{turn.text}</pre>
+          <MarkdownView source={turn.text} breaks />
         ) : (
           foldParts(turn.parts).map((item) =>
             // Consecutive tool traces collapse into one foldable row (Edit/Write bursts

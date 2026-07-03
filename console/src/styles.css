@@ -2438,14 +2438,6 @@ body.row-resizing {
   opacity: 1;
   background: var(--hover-bg);
 }
-.mirror-user-text {
-  margin: 0;
-  white-space: pre-wrap;
-  word-break: break-word;
-  font-family: var(--chat-font, system-ui, sans-serif);
-  font-size: var(--chat-size, 14px);
-  line-height: 1.5;
-}
 /* Plan-mode banner + ExitPlanMode plan block. */
 .mirror-planmode {
   display: flex;
@@ -3042,10 +3034,11 @@ button.mt-toolrun-head:hover {
 .mq-submit {
   padding: 6px 14px;
 }
-.mirror-turn.assistant .markdown {
+.mirror-turn .markdown {
   /* MarkdownView is shared with the file viewer, which centers a max-width column
      (margin:0 auto). In the transcript that reads as "everything is indented", so
-     reset it to fill the width, left-aligned. Tighter leading than the file viewer. */
+     reset it to fill the width, left-aligned. Tighter leading than the file viewer.
+     Scoped to the whole turn so user prompts (also Markdown now) get the same reset. */
   padding: 0;
   max-width: none;
   margin: 0;
@@ -3057,17 +3050,17 @@ button.mt-toolrun-head:hover {
 .mirror-turn .markdown {
   font-family: var(--chat-font, system-ui, sans-serif);
 }
-/* Tighten the vertical rhythm inside a chat turn (the file viewer's 0.7em/1.4em
-   gaps are too airy for a conversation). */
+/* Vertical rhythm inside a chat turn: a touch tighter than the file viewer, but with
+   enough gap between blocks that paragraphs/lists read as distinct. */
 .mirror-turn .markdown p,
 .mirror-turn .markdown ul,
 .mirror-turn .markdown ol,
 .mirror-turn .markdown blockquote,
 .mirror-turn .markdown table {
-  margin: 0.4em 0;
+  margin: 0.7em 0;
 }
 .mirror-turn .markdown li {
-  margin: 0.15em 0;
+  margin: 0.25em 0;
 }
 .mirror-turn .markdown h1,
 .mirror-turn .markdown h2,
@@ -3105,9 +3098,13 @@ button.mt-toolrun-head:hover {
 }
 .mirror-input {
   flex: 1;
-  resize: vertical;
+  /* Height is driven by content (auto-grow in MirrorView); cap at ~10 lines, then scroll.
+     border-box so the JS-set height (from scrollHeight, which includes padding) matches. */
+  resize: none;
+  box-sizing: border-box;
   min-height: 38px;
-  max-height: 40vh;
+  max-height: calc(14em + 18px);
+  overflow-y: auto;
   padding: 8px 10px;
   border: 1px solid var(--border);
   border-radius: 8px;
