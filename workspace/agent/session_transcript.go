@@ -175,25 +175,29 @@ func collectTurns(lines [][]byte, since int) []chatTurn {
 // permission to resp. These aren't in the transcript yet (claude writes the tool_use
 // only after it's resolved), so they come from the status hook's captured payloads.
 func surfacePendingPayloads(resp map[string]any, sid, state string) {
-	if state == "permission" {
-		// A permission prompt takes priority while the session is blocked on allow/deny:
-		// surface only it, because answer keystrokes must reach the permission dialog, not
-		// a still-pending question underneath. The captured question/plan stays on disk and
-		// resurfaces once the prompt is resolved and state leaves "permission".
+	// A captured question/plan payload takes precedence over the "permission" state.
+	// AskUserQuestion / ExitPlanMode fire their OWN permission_prompt Notification
+	// (state→"permission") between the tool's PreToolUse and PostToolUse, but the
+	// terminal is showing that tool's selection / approval UI — NOT a generic tool
+	// permission dialog. Surfacing pendingPermission here would make the Console show a
+	// 許可/拒否 prompt whose keystrokes (Enter / Down Down Enter) mis-answer the question
+	// menu underneath, skipping it. So whenever a question/plan is captured, surface it
+	// and suppress the permission — the Console drives it with the correct keys. The
+	// payload is cleared by its own lifecycle (PostToolUse→working, idle) once resolved.
+	pq, hasQ := readPendingQuestion(sid)
+	pp, hasP := readPendingPlan(sid)
+	if state == "permission" && !hasQ && !hasP {
+		// A genuine tool-permission prompt (Edit/Bash) with no question/plan behind it:
+		// surface only it, because answer keystrokes must reach the permission dialog.
 		if pm, ok := readPendingPermission(sid); ok {
 			resp["pendingPermission"] = pm
 		}
 		return
 	}
-	// Surface a pending AskUserQuestion / ExitPlanMode by the captured payload's presence
-	// rather than the live status. A permission prompt for the tool overwrites the status
-	// to "permission"→"working" while the question/plan is still pending, so gating on
-	// state == "question"/"plan" would drop it after approval; the payload is cleared by
-	// its own lifecycle (PostToolUse→working, idle) once actually resolved.
-	if pq, ok := readPendingQuestion(sid); ok {
+	if hasQ {
 		resp["pendingQuestions"] = pq
 	}
-	if pp, ok := readPendingPlan(sid); ok {
+	if hasP {
 		resp["pendingPlan"] = pp
 	}
 }

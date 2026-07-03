@@ -143,6 +143,11 @@ export default function MirrorView({
   const tickRef = useRef<(() => void) | null>(null); // lets send() trigger an immediate refresh
   const bodyRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  // Was the user pinned to the bottom at their last scroll? Only then do we auto-follow
+  // new content; if they've scrolled up to read history we leave their position alone.
+  // Updated on scroll (not on append — appending grows scrollHeight without a scroll
+  // event), so it reflects the user's intent, not the just-added content.
+  const atBottomRef = useRef(true);
 
   // Reset accumulated turns when the session changes (cursor is a line index into
   // that session's jsonl, meaningless across sessions).
@@ -160,6 +165,7 @@ export default function MirrorView({
     setPendingPerm(null);
     setMode("");
     setHistIdx(null);
+    atBottomRef.current = true; // a freshly opened session starts pinned to the bottom
   }, [session]);
 
   // Persist the draft per session, and reload it when the session changes (so the old
@@ -253,11 +259,24 @@ export default function MirrorView({
     };
   }, [session]);
 
-  // Keep the conversation pinned to the latest turn / pending question / typing dots.
+  // Follow the latest turn / pending question / typing dots — but ONLY when the user is
+  // already at the bottom. The poll replaces `pending` with a fresh array every tick, so
+  // an unconditional scroll here yanked the user back down every 1.2–3s while they tried
+  // to read history (and on every appended turn). atBottomRef (set on scroll) gates it.
   useEffect(() => {
+    if (!atBottomRef.current) return;
     const el = bodyRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [turns, pending, pendingPlan, pendingPerm, status]);
+
+  // Track whether the user is at (within 80px of) the bottom. Content appends grow
+  // scrollHeight without firing a scroll event, so this only changes on real user
+  // scrolling — exactly the "did they scroll up to read?" signal the effect above needs.
+  const onBodyScroll = () => {
+    const el = bodyRef.current;
+    if (!el) return;
+    atBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+  };
 
   // Focus the composer when this pane becomes the active chat — but not on touch
   // devices, where auto-focus would pop the on-screen keyboard just from switching
@@ -493,7 +512,7 @@ export default function MirrorView({
         </div>
       )}
 
-      <div className="mirror-body" ref={bodyRef}>
+      <div className="mirror-body" ref={bodyRef} onScroll={onBodyScroll}>
         {!loaded ? (
           running ? (
             // First fetch in flight (opening a session, or switching ターミナル→チャット):
@@ -534,7 +553,11 @@ export default function MirrorView({
             </div>
           </div>
         )}
-        {pendingPerm && (
+        {pendingPerm && !pending && !pendingPlan && (
+          // Defense-in-depth: a question/plan always wins over a generic permission
+          // dialog (the server already suppresses the permission in that case). This
+          // guards against a poll race ever showing 許可/拒否 over an AskUserQuestion,
+          // whose buttons would send keystrokes that mis-answer the question underneath.
           <div className="mirror-turn assistant">
             <div className="mirror-turn-head">
               <span className="mt-who">Claude</span>
