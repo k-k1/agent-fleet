@@ -2972,13 +2972,31 @@ button.mt-toolrun-head:hover {
 .scmview > .view-head {
   padding-right: 112px;
 }
+/* Non-terminal pane headers lead with an accent icon + a foreground name, so a
+   Source Control / File / Doc / Diff pane all read the same way (the terminal keeps
+   its richer agent kind badge). The name itself is foreground — accent-colored
+   heading TEXT was the odd one out. */
 .view-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--fg);
+  font-weight: 600;
+}
+.view-title .codicon {
   color: var(--accent);
 }
 .view-title.mono {
   font-family: var(--mono);
   font-size: 12px;
+  font-weight: normal;
   color: var(--fg);
+}
+/* Match SCM's accent leading icon on the doc/diff headers (whose leading icon is a
+   plain codicon, unlike File's own colored type icon). */
+.docview .view-head .fi-name .codicon,
+.diffview .view-head .fi-name .codicon {
+  color: var(--accent);
 }
 /* terminal pane header rendered like a left-pane Sessions row: kind badge +
    display name + session id, with the status chip pushed to the right. */
