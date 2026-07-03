@@ -1,0 +1,194 @@
+<!-- 設定タブ再編（§D）：接続タブとエージェントタブを「対象（ドメイン）」で分ける案の視覚モック。
+     単体で開ける静的 HTML。実プロダクトのダークパレット（#1e1e1e / accent #6cf）。
+     案：タブを [エージェント][Git][環境][SSM][MCP][表示] にし、
+     Claude/Codex/opencode は「接続＋挙動設定」を1カードに統合、GitHub/Bitbucket は Git タブへ。
+     参照: console-redesign-backlog.md §D、console-connections-mock.html（カード言語）。 -->
+<title>設定タブ再編 — エージェント / Git</title>
+<style>
+  :root{
+    --ground:#141414; --panel:#1b1b1b; --panel2:#202020; --bar:#111;
+    --border:#2e2e2e; --border2:#3a3a3a;
+    --fg:#dddddd; --muted:#8a8a8a; --faint:#6a6a6a;
+    --accent:#66ccff; --on-accent:#06222e;
+    --ok:#67c23a; --warn:#e6a23c; --del:#e06c75;
+    --sans:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",sans-serif;
+    --mono:ui-monospace,"SF Mono",Menlo,Consolas,"DejaVu Sans Mono",monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--ground);color:var(--fg);font-family:var(--sans);line-height:1.5;font-size:15px;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1080px;margin:0 auto;padding:44px 24px 96px}
+  .eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--accent);margin:0 0 10px}
+  h1{font-size:28px;line-height:1.15;margin:0 0 12px;font-weight:650;letter-spacing:-.01em}
+  .lede{color:var(--muted);max-width:72ch;margin:0 0 8px}
+  section.doc{margin-top:48px}
+  .shdr{display:flex;align-items:baseline;gap:12px;border-bottom:1px solid var(--border);padding-bottom:10px;margin-bottom:20px}
+  .shdr .n{font-family:var(--mono);font-size:12px;color:var(--faint)}
+  .shdr h2{font-size:19px;margin:0;font-weight:620;letter-spacing:-.01em}
+  .note{color:var(--muted);font-size:13.5px;max-width:76ch;margin:0 0 16px}
+  ul.diag{margin:0;padding-left:20px;color:var(--muted);font-size:13.5px;line-height:1.7;max-width:80ch}
+  ul.diag b{color:var(--fg);font-weight:600}
+  .mono{font-family:var(--mono)} .dim{color:var(--faint)}
+
+  /* modal chrome */
+  .modal{max-width:660px;margin:0 auto;border:1px solid #3a3a3a;border-radius:12px;overflow:hidden;background:var(--panel);box-shadow:0 30px 80px -30px #000}
+  .modal-head{display:flex;align-items:center;gap:10px;padding:13px 16px;border-bottom:1px solid var(--border);background:var(--bar)}
+  .modal-head .t{font-weight:600;font-size:15px}.modal-head .x{margin-left:auto;color:var(--muted);font-family:var(--mono)}
+  .tabs{display:flex;gap:2px;padding:10px 12px 0;flex-wrap:wrap}
+  .tab{font-size:12.5px;padding:6px 12px;border-radius:7px 7px 0 0;color:var(--muted);border:1px solid transparent;border-bottom:none}
+  .tab.active{color:var(--fg);background:var(--panel2);border-color:var(--border)}
+  .content{padding:16px;background:var(--panel2);border-top:1px solid var(--border)}
+  .cat{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:14px 0 8px}
+  .cat:first-child{margin-top:0}
+  .topnote{color:var(--muted);font-size:12px;margin:0 0 12px}
+
+  /* provider card (from connections mock) */
+  .p-card{border:1px solid var(--border2);border-radius:10px;background:var(--panel);overflow:hidden;margin-bottom:8px}
+  .p-head{display:flex;align-items:center;gap:10px;padding:11px 13px}
+  .p-badge{width:26px;height:26px;border-radius:7px;flex:none;display:inline-flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:11px;font-weight:700;color:#0c0c0c}
+  .b-cc{background:#e0a45e}.b-cx{background:#4ec97a}.b-oc{background:#b07cf2}.b-gh{background:#c9d1d9}.b-bb{background:#4a90e2}
+  .p-name{font-weight:600;font-size:14px}
+  .p-status{margin-left:auto;display:inline-flex;align-items:center;gap:6px;font-size:11px;font-family:var(--mono);padding:2px 9px;border-radius:999px;border:1px solid var(--border2);color:var(--muted)}
+  .p-status.on{color:var(--ok);border-color:#2f5327;background:#152012}
+  .p-dot{width:7px;height:7px;border-radius:50%;background:var(--ok)}
+  .p-desc{padding:0 13px 11px;color:var(--muted);font-size:12.5px}
+  .p-who{padding:2px 13px 10px;display:flex;align-items:center;gap:10px}
+  .p-em{font-size:13px} .p-pl{font-size:11px;color:var(--muted);font-family:var(--mono)}
+  .btn{display:inline-flex;align-items:center;gap:6px;height:27px;padding:0 11px;border-radius:6px;border:1px solid var(--border2);background:var(--panel2);color:var(--fg);font-size:12.5px;white-space:nowrap}
+  .btn.accent{background:var(--accent);color:var(--on-accent);border-color:transparent;font-weight:600}
+  .btn.ghost{background:transparent}.btn.danger{border-color:#5a2a2e;color:var(--del);background:#25191b}
+  .btn.sm{height:24px;padding:0 9px;font-size:11.5px}
+  .p-who .btn{margin-left:auto}
+
+  /* NEW: per-agent settings group inside the card */
+  .p-settings{border-top:1px solid var(--border);background:#181818;padding:8px 13px 11px}
+  .ps-title{font-size:10.5px;font-family:var(--mono);letter-spacing:.05em;text-transform:uppercase;color:var(--faint);margin:4px 0 6px}
+  .ps-row{display:flex;align-items:center;gap:10px;min-height:30px}
+  .ps-label{flex:1;font-size:12.5px;color:var(--fg)}
+  .ps-label .sub{display:block;font-size:11px;color:var(--muted);font-weight:400}
+  .seg{display:inline-flex;border:1px solid var(--border2);border-radius:6px;overflow:hidden;flex:none}
+  .seg b{font-weight:normal;font-size:11.5px;padding:3px 10px;color:var(--muted)}
+  .seg b.on{background:var(--accent);color:var(--on-accent);font-weight:600}
+
+  /* connect options + hint (reused from connections mock, condensed) */
+  .p-body{padding:12px 13px;border-top:1px solid var(--border);background:#181818}
+  .opts{display:flex;gap:8px;flex-wrap:wrap}
+  .opt{flex:1;min-width:150px;border:1px solid var(--border2);border-radius:8px;padding:9px 11px;background:var(--panel2)}
+  .opt.on{border-color:var(--accent);background:#0f2028}
+  .opt .t{font-size:12.5px;font-weight:600;display:flex;align-items:center;gap:7px}
+  .opt .rec{font-size:9.5px;font-family:var(--mono);color:var(--ok);border:1px solid #2f5327;background:#152012;border-radius:999px;padding:0 6px}
+  .opt .s{font-size:11px;color:var(--muted);margin-top:3px}
+  .keys{list-style:none;margin:0 0 10px;padding:0;display:flex;flex-direction:column;gap:5px}
+  .keys li{display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:12px}
+  .keys .x{margin-left:auto;color:var(--del)}
+  .hint{display:flex;gap:8px;align-items:flex-start;font-size:12px;color:var(--muted);border-left:2px solid var(--border2);padding:2px 0 2px 10px}
+  .hint .i{color:var(--accent);font-family:var(--mono)}
+  a{color:var(--accent);text-decoration:none}
+
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start}
+  @media(max-width:720px){.two{grid-template-columns:1fr}}
+  .foot{margin-top:52px;color:var(--faint);font-size:12.5px;border-top:1px solid var(--border);padding-top:16px}
+</style>
+
+<div class="wrap">
+  <p class="eyebrow">Console UX 刷新 · §D 設定タブ再編</p>
+  <h1>接続とエージェントを「対象」で分ける</h1>
+  <p class="lede">Claude / Codex / opencode が<strong>接続タブと エージェントタブに二重登場</strong>していた問題を解消。
+    各エージェントの<strong>「接続＋挙動設定」を1カードに統合</strong>し、GitHub / Bitbucket は<strong>Git タブ</strong>に分離。
+    SSM / MCP と同じ「ドメインでタブ」の軸に揃える。機能・API・認証フローは不変。</p>
+
+  <section class="doc">
+    <div class="shdr"><span class="n">狙い</span><h2>何が良くなるか</h2></div>
+    <ul class="diag">
+      <li><b>二重登場の解消</b> — 「Claude を設定する」が 1 タブ・1 カードで完結（今は接続とエージェントを往復）。</li>
+      <li><b>ドメイン軸で一貫</b> — 既存の SSM / MCP と同じ「対象ごとにタブ」に。<span class="mono">接続 vs 挙動</span>という横断軸を廃す。</li>
+      <li><b>git を独立</b> — 挙動設定を持たない GitHub / Bitbucket は Git タブへ。エージェントカードに無関係な認証が混ざらない。</li>
+      <li><b>タブ数は 6 のまま</b> — <span class="mono">接続→Git</span>、エージェント認証はエージェントへ吸収。</li>
+    </ul>
+  </section>
+
+  <!-- エージェントタブ -->
+  <section class="doc">
+    <div class="shdr"><span class="n">A</span><h2>エージェントタブ（接続＋設定を統合）</h2></div>
+    <div class="modal">
+      <div class="modal-head"><span class="t">設定</span><span class="x">✕</span></div>
+      <div class="tabs">
+        <span class="tab active">エージェント</span><span class="tab">Git</span><span class="tab">環境</span>
+        <span class="tab">SSM</span><span class="tab">MCP</span><span class="tab">表示</span>
+      </div>
+      <div class="content">
+        <p class="topnote">挙動設定の変更は各エージェントの<b>新しいセッション</b>から反映されます。</p>
+
+        <!-- Claude: connected + settings -->
+        <div class="p-card">
+          <div class="p-head"><span class="p-badge b-cc">cc</span><span class="p-name">Claude</span>
+            <span class="p-status on"><span class="p-dot"></span>接続済み</span></div>
+          <div class="p-who"><span class="p-em">k1.kami@gmail.com</span><span class="p-pl">Max</span><span class="btn danger sm">切断</span></div>
+          <div class="p-settings">
+            <div class="ps-title">設定</div>
+            <div class="ps-row"><span class="ps-label">リモートコントロール</span><span class="seg"><b class="on">オン</b><b>オフ</b></span></div>
+            <div class="ps-row"><span class="ps-label">通知</span><span class="seg"><b class="on">オン</b><b>オフ</b></span></div>
+            <div class="ps-row"><span class="ps-label">RTK（トークン節約）</span><span class="seg"><b class="on">オン</b><b>オフ</b></span></div>
+          </div>
+        </div>
+
+        <!-- Codex: not connected → connect options; settings appear after connect -->
+        <div class="p-card">
+          <div class="p-head"><span class="p-badge b-cx">cx</span><span class="p-name">Codex</span><span class="p-status">未接続</span></div>
+          <div class="p-desc">ChatGPT サブスク（推奨）か OpenAI API キーで接続。接続すると RTK 設定が出ます。</div>
+          <div class="p-body">
+            <div class="opts">
+              <div class="opt on"><div class="t">ChatGPT サブスクで接続 <span class="rec">推奨</span></div><div class="s">Plus / Pro の枠を使用。</div></div>
+              <div class="opt"><div class="t">API キーで接続</div><div class="s">OpenAI API の従量課金。</div></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- opencode: connected (keys) + settings + add flow -->
+        <div class="p-card">
+          <div class="p-head"><span class="p-badge b-oc">oc</span><span class="p-name">opencode</span>
+            <span class="p-status on"><span class="p-dot"></span>2 キー</span></div>
+          <div class="p-desc">複数プロバイダの API キーを保存し、起動時に env 注入。</div>
+          <div class="p-settings">
+            <div class="ps-title">設定</div>
+            <div class="ps-row"><span class="ps-label">RTK（トークン節約）</span><span class="seg"><b class="on">オン</b><b>オフ</b></span></div>
+            <div class="ps-row"><span class="ps-label">Web UI<span class="sub">ブラウザ版 opencode を serve と同時に起動</span></span>
+              <span class="btn ghost sm">開く ↗</span><span class="seg"><b class="on">オン</b><b>オフ</b></span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <p class="note" style="margin-top:12px">接続済みエージェントは <b>アカウント行＋設定グループ</b>、未接続は <b>説明＋接続 UI</b>（接続後に設定が出現）。
+      設定は今の <span class="mono">AgentsTab</span> の項目（リモコン / 通知 / RTK / Web UI）をカード内に移すだけ。</p>
+  </section>
+
+  <!-- Git タブ -->
+  <section class="doc">
+    <div class="shdr"><span class="n">B</span><h2>Git タブ（旧「接続」の git 部分）</h2></div>
+    <div class="modal" style="max-width:600px">
+      <div class="modal-head"><span class="t">設定</span><span class="x">✕</span></div>
+      <div class="tabs">
+        <span class="tab">エージェント</span><span class="tab active">Git</span><span class="tab">環境</span>
+        <span class="tab">SSM</span><span class="tab">MCP</span><span class="tab">表示</span>
+      </div>
+      <div class="content">
+        <p class="topnote">リポジトリのクローン・fetch・push に使う git ホスティングの接続。</p>
+        <div class="p-card">
+          <div class="p-head"><span class="p-badge b-gh">gh</span><span class="p-name">GitHub</span>
+            <span class="p-status on"><span class="p-dot"></span>接続済み</span></div>
+          <div class="p-who"><span class="p-em">k-k1</span><span class="p-pl">OAuth</span><span class="btn danger sm">切断</span></div>
+        </div>
+        <div class="p-card" style="margin:0">
+          <div class="p-head"><span class="p-badge b-bb">bb</span><span class="p-name">Bitbucket</span><span class="p-status">未接続</span></div>
+          <div class="p-desc">OAuth（コードグラント）または メール＋アプリトークンで接続。</div>
+          <div class="p-body">
+            <div style="display:flex;gap:8px"><span class="btn">OAuth 接続</span><span class="btn ghost">token</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <p class="foot">守る点：認証フロー・各 API（<span class="mono">/api/connections/… · /api/claude/settings · /api/agents/rtk · opencode-web</span>）は不変。
+    タブの構成と各項目の置き場を変えるだけで、既存のカード言語（バッジ＋名前＋状態ピル）とトグルをそのまま流用。
+    実装は「Git タブ新設 → エージェントタブに設定を融合 → 旧接続タブ撤去」の順に小さくコミット、都度目視。</p>
+</div>
