@@ -668,14 +668,14 @@ export default function MirrorView({
     >
       <header className="view-head">
         {sessionMeta ? (
-          <span className="pane-session">
+          // Slug hidden (internal id) → title tooltip; the display title is the name.
+          <span className="pane-session" title={"ID: " + sessionMeta.name}>
             <span className={"kind-tag kind-" + kindClass(sessionMeta.kind)}>
               <Icon name={kindIcon(sessionMeta.kind)} />
               <span className="kt-label kt-full">{kindLabel(sessionMeta.kind)}</span>
               <span className="kt-label kt-short">{kindShort(sessionMeta.kind)}</span>
             </span>
             <span className="session-display">{displayName(sessionMeta)}</span>
-            <span className="session-name">{sessionMeta.name}</span>
             {chip && (
               <span className={"session-state " + chip.cls}>
                 <Icon name={chip.icon} spin={chip.spin} /> {chip.text}
@@ -683,7 +683,7 @@ export default function MirrorView({
             )}
           </span>
         ) : (
-          <span className="view-title">session: {session}</span>
+          <span className="view-title">セッション</span>
         )}
         {sessionMeta?.kind === "claude" && (
           <button

@@ -158,11 +158,11 @@ export default function SessionsSection() {
   // the meta, so the row stays listed and can be resumed later (≠ archive, which
   // hides it; ≠ recreate, which discards the conversation). The button counterpart
   // of quitting in the terminal. Frees a concurrency quota slot.
-  const halt = async (name: string) => {
+  const halt = async (name: string, display: string) => {
     if (
       !(await askConfirm({
         title: "セッションを停止",
-        body: `"${name}" を停止します。会話は保持され、あとで再開できます。`,
+        body: `「${display}」を停止します。会話は保持され、あとで再開できます。`,
         confirmLabel: "停止する",
         danger: false, // resumable — a caution, not a destructive action
       }))
@@ -177,24 +177,24 @@ export default function SessionsSection() {
     setTimeout(() => bumpSessions(), 1200);
   };
 
-  // Discard the conversation and start the same slot fresh, then re-attach the
-  // terminal so it resumes running (≠ resume of the old conversation). The Agent
-  // /recreate kills tmux, clears state, and relaunches; surface its real error so
-  // a genuine failure (e.g. the working dir is gone) is visible instead of being
-  // masked as a generic message and leaving the row "stopped".
-  const recreate = async (name: string) => {
+  // Discard the conversation and start the slot fresh. The Agent /recreate now mints a
+  // NEW session (fresh slug/sid, same title/dir/model) and pre-launches it live, so it
+  // returns the new (alive) session — we open THAT: chat for claude, terminal for other
+  // kinds. Surface a real error so a genuine failure (e.g. the working dir is gone) is
+  // visible instead of leaving the row untouched.
+  const recreate = async (name: string, display: string) => {
     if (
       !(await askConfirm({
-        title: "会話を破棄して作り直す",
+        title: "新しい会話で作り直す",
         body: (
           <>
-            "{name}" を新規に開始します。
+            「{display}」を新しいセッションで開始します。
             <br />
-            <strong>現在の会話は復元できません。</strong>
+            今の会話は<strong>アーカイブに退避</strong>し、あとで復帰できます。
           </>
         ),
-        confirmLabel: "破棄して作り直す",
-        danger: true,
+        confirmLabel: "作り直す",
+        danger: false, // non-destructive: the old conversation is archived, not deleted
       }))
     )
       return;
@@ -209,10 +209,11 @@ export default function SessionsSection() {
       bumpSessions();
       return;
     }
-    // Attaching is what launches the slot (handlePTY → ensureSessionTmux), so it
-    // resumes running. Re-poll shortly after so the row flips to 起動中 fast
-    // instead of lingering on 停止中 until the 4s poll.
-    showTerminal(name);
+    const created = await res.json().catch(() => null);
+    const newName = created?.name || name;
+    // Open the freshly created session: claude → chat mirror (live), other kinds →
+    // terminal. Re-poll shortly so the new row appears fast.
+    (created && agentOf(created.kind).caps.chat ? showChat : showTerminal)(newName);
     bumpSessions();
     setTimeout(() => bumpSessions(), 1200);
   };
@@ -239,8 +240,8 @@ export default function SessionsSection() {
       }
       const before = prev[s.name];
       if (before !== undefined && before !== s.state && s.name !== session) {
-        if (s.state === "idle" && before === "working") notify("回答が返ってきました", s.name);
-        else if (s.state === "question") notify("質問が来ています", s.name);
+        if (s.state === "idle" && before === "working") notify("回答が返ってきました", displayName(s));
+        else if (s.state === "question") notify("質問が来ています", displayName(s));
       }
       prev[s.name] = s.state;
     }
@@ -392,18 +393,27 @@ export default function SessionsSection() {
                   }
                   return;
                 }
-                if (e.ctrlKey || e.metaKey) showTerminalSplit(s.name);
-                else showTerminal(s.name);
+                // Alive: a chat-capable kind (claude) opens the chat mirror by default —
+                // the PTY still attaches in the background (CLI live), and the terminal
+                // stays reachable via the ターミナル/チャット toggle. Other kinds open the
+                // terminal directly.
+                const split = e.ctrlKey || e.metaKey;
+                const chat = agentOf(s.kind).caps.chat;
+                (chat
+                  ? split ? showChatSplit : showChat
+                  : split ? showTerminalSplit : showTerminal)(s.name);
               }}
               // Middle-click opens the session in a freshly split pane. Suppress the
               // mousedown default so the browser doesn't start autoscroll instead.
               onMouseDown={(e) => e.button === 1 && e.preventDefault()}
               onAuxClick={(e) => {
                 if (e.button !== 1) return;
-                // Middle-click: alive → terminal split; stopped claude → chat-history split.
+                // Middle-click opens in a fresh split: alive claude → chat mirror (PTY
+                // attached in bg), other alive kinds → terminal, stopped claude → chat
+                // history.
                 if (s.alive) {
                   e.preventDefault();
-                  showTerminalSplit(s.name);
+                  (agentOf(s.kind).caps.chat ? showChatSplit : showTerminalSplit)(s.name);
                 } else if (!dead && agentOf(s.kind).caps.transcript) {
                   e.preventDefault();
                   showChatSplit(s.name);
@@ -440,7 +450,12 @@ export default function SessionsSection() {
               </button>
               {menuFor === s.name && (
                 <div className="session-menu">
-                  {!s.alive && !dead && running && (
+                  {/* Resume: hidden for chat-capable kinds (claude) — their stopped row
+                      opens the chat history, which carries its own 再開して続ける button,
+                      so a separate "resume into terminal" item is redundant and off the
+                      chat-default pattern. Kept for kinds with no in-chat resume
+                      (opencode/codex/shell/ssm). */}
+                  {!s.alive && !dead && running && !agentOf(s.kind).caps.chat && (
                     <button
                       className="session-menu-item"
                       onClick={() => {
@@ -470,7 +485,7 @@ export default function SessionsSection() {
                       className="session-menu-item"
                       onClick={() => {
                         setMenuFor(null);
-                        halt(s.name);
+                        halt(s.name, displayName(s));
                       }}
                     >
                       停止する（あとで再開できる）
@@ -498,13 +513,13 @@ export default function SessionsSection() {
                   </button>
                   {!dead && (
                     <button
-                      className="session-menu-item danger"
+                      className="session-menu-item"
                       onClick={() => {
                         setMenuFor(null);
-                        recreate(s.name);
+                        recreate(s.name, displayName(s));
                       }}
                     >
-                      作り直す（会話を破棄）
+                      作り直す（今の会話はアーカイブへ）
                     </button>
                   )}
                 </div>
@@ -521,7 +536,7 @@ export default function SessionsSection() {
       {showModal && (
         <NewSessionModal
           onClose={() => setShowModal(false)}
-          onCreated={(name: string, cloned: boolean, repo: string) => {
+          onCreated={(name: string, cloned: boolean, repo: string, kind: string) => {
             bumpSessions();
             if (cloned) {
               bumpRepos();
@@ -530,7 +545,9 @@ export default function SessionsSection() {
               if (repo) revealInFiles("repos/" + repo);
               else bumpFiles();
             }
-            showTerminal(name);
+            // A freshly created claude session opens as chat (its tmux/CLI is already
+            // launched, so the mirror attaches live); other kinds open the terminal.
+            (agentOf(kind).caps.chat ? showChat : showTerminal)(name);
             setShowModal(false);
           }}
         />

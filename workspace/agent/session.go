@@ -672,10 +672,15 @@ func handleListArchived(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"sessions": sessions})
 }
 
-// handleRecreateSession discards the session's conversation and starts it fresh in
-// the same slot (name/dir/model). This is distinct from resume: the deterministic
-// sid is reused but its jsonl is deleted first, so claude opens a NEW conversation
-// (--session-id) instead of --resume. The display name/time are refreshed.
+// handleRecreateSession starts a fresh session in the slot while PRESERVING the old
+// one: the old session is archived (hidden from the active list but kept + restorable,
+// its jsonl intact), NOT discarded, and a new session (fresh slug/sid, same
+// title/dir/model/kind) is minted and pre-launched live. Allocating a new slug (hence
+// a new sid) rather than reusing the old id lets the fresh session survive detached
+// until the browser attaches (a reused id would exit first), so we pre-launch here
+// like create — which lets the Console open it straight into chat. Non-destructive:
+// the past conversation stays recoverable from the archive. Returns the new (alive)
+// session.
 func handleRecreateSession(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if !nameRe.MatchString(name) {
@@ -687,33 +692,34 @@ func handleRecreateSession(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
 		return
 	}
+	// Archive the old identity: kill its tmux, clear the live status cache, hide it from
+	// the active list. Keep the meta + jsonl (and any captured resume id) so it restores.
 	if tn := tmuxName(name); tmuxHasSession(tn) {
 		_ = exec.Command("tmux", "kill-session", "-t", exactT(tn)).Run()
 	}
-	// Throw away the past conversation and stale state so the same sid starts clean.
-	sid := sessionUUID(m.Dir, m.Name)
-	for _, p := range jsonlPaths(sid) {
-		_ = os.Remove(p)
-	}
-	removeSessionStatus(sid)
-	// opencode/codex: forget the captured session id so recreate starts a NEW
-	// conversation (plain launch) instead of resuming the old one. No-op for the
-	// agents that pin their own id (claude) or keep no resume state (shell/ssm).
-	agentOf(m.Kind).clearResume(sid)
-	m.CreatedAt = time.Now().Format(time.RFC3339)
-	if agentOf(m.Kind).caps().usesLabel {
-		m.Label = sessionLabelFor(m.Dir, m.Title)
-	}
-	m.StoppedAt = ""
+	removeSessionStatus(sessionUUID(m.Dir, m.Name))
+	m.Archived = true
 	writeSessionMeta(m)
-	// Do NOT pre-launch here. With a reused session id (same dir+name), a claude
-	// launched detached and left without a client for the ~100ms until the browser
-	// reconnects exits ([exited]) — whereas a fresh-id create survives the same gap.
-	// The terminal attach path (handlePTY → ensureSessionTmux → `tmux new-session
-	// -A`) launches AND attaches a client in the same request, which is the proven
-	// "再開" flow that stays alive. So we leave it stopped and let the Console's
-	// showTerminal(name) drive the (immediately-attached) relaunch.
-	writeJSON(w, http.StatusOK, wireSession(m, false))
+
+	// Fresh identity, same slot. No ForkFrom — recreate means "start empty", not
+	// "re-copy the fork source".
+	newMeta := sessionMeta{
+		Name: allocSessionName(m.Dir), Dir: m.Dir, Model: m.Model, Kind: m.Kind,
+		Title: m.Title, Repo: m.Repo, CreatedAt: time.Now().Format(time.RFC3339), SSM: m.SSM,
+	}
+	if agentOf(newMeta.Kind).caps().usesLabel {
+		newMeta.Label = sessionLabelFor(newMeta.Dir, newMeta.Title)
+	}
+	if err := startSessionTmux(newMeta, false); err != nil {
+		// Un-archive the old session so a launch failure doesn't silently drop it from
+		// the active list.
+		m.Archived = false
+		writeSessionMeta(m)
+		writeErr(w, http.StatusInternalServerError, "tmux_failed", err.Error())
+		return
+	}
+	writeSessionMeta(newMeta)
+	writeJSON(w, http.StatusOK, wireSession(newMeta, true))
 }
 
 // exactT returns a tmux target that matches NAME exactly. Without the leading '=',
