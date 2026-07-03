@@ -81,21 +81,28 @@ export default function Pane({
   // toggle) attaches, which relaunches the session. The terminal stays mounted once
   // attached so the PTY survives view switches.
   const [mirror, setMirror] = useState(pane.chat === true);
-  const [attached, setAttached] = useState(pane.chat !== true);
+  // Detached (read-only chat) is only meaningful for a STOPPED session — history you can
+  // read without silently resuming it. A session opened as chat that is ALREADY alive
+  // must start attached, else MirrorView shows 再開して続ける over a live, input-ready
+  // session (the reported bug). Attaching a live session just connects to its running
+  // PTY; it doesn't resume anything.
+  const [attached, setAttached] = useState(pane.chat !== true || sessionMeta?.alive === true);
   // Re-sync when the pane's session/chat descriptor changes (a new session opened in
   // this pane). Local toggles (setMirror/setAttached) don't touch these deps, so a
   // user's resume/switch within the same session persists.
   useEffect(() => {
     setMirror(pane.chat === true);
-    setAttached(pane.chat !== true);
+    setAttached(pane.chat !== true || sessionMeta?.alive === true);
   }, [pane.session, pane.chat]);
-  // Auto-resume is abolished: when the shown session goes stopped (a WS Stop→Start,
-  // or the user quit in the terminal), drop `attached` so nothing silently reconnects
-  // and resumes it. The terminal then shows a 再開 mask (TerminalView); resume is
-  // explicit. Only flips OFF on death — a user resume sets attached=true and, since
-  // alive stays false until the next poll, this effect won't undo it.
+  // Track the session's liveness: a live session is interactive, so attach (connecting to
+  // an already-running session doesn't resume it). A stopped one detaches to read-only
+  // history so nothing silently reconnects/resumes it (auto-resume is abolished); resume
+  // stays explicit via 再開して続ける. Downgrading-only used to leave a session opened as
+  // chat while alive stuck read-only. A user resume sets attached=true while alive is
+  // still false; this effect only runs on an alive CHANGE, so it won't undo that.
   useEffect(() => {
-    if (sessionMeta && sessionMeta.alive === false) setAttached(false);
+    if (sessionMeta?.alive === true) setAttached(true);
+    else if (sessionMeta?.alive === false) setAttached(false);
   }, [sessionMeta?.alive]);
   // The chat mirror is offered only for agents whose descriptor declares the `chat`
   // capability (today: claude, the /messages endpoint is claude-only). Guard on a

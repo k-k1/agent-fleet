@@ -73,6 +73,11 @@ type chatTurn struct {
 	Compact bool `json:"compact,omitempty"`
 }
 
+// forkPreviewCursor is an out-of-range line cursor handed out while a fork previews its
+// source transcript, so the first poll that reads the fork's own (shorter) jsonl trips
+// the reset branch and swaps cleanly. Far above any real transcript length.
+const forkPreviewCursor = 1 << 30
+
 // handleSessionMessages (GET /sessions/{name}/messages?since=<cursor>) returns the
 // turns appended since the cursor, plus a new cursor and the live status. claude
 // only (its jsonl transcript). cursor is a line index into that transcript.
@@ -103,23 +108,61 @@ func handleSessionMessages(w http.ResponseWriter, r *http.Request) {
 	}
 	sid := sessionUUID(meta.Dir, name)
 	lines, jpath, jmatched := transcriptRead(sid)
-	// cursor is normally the new line count. Two edge cases refine it:
+	// A just-forked session's OWN jsonl isn't materialized until claude finishes copying
+	// the source conversation (buildSessionProgram runs --fork-session on first launch).
+	// Until then, show the source's history (identical up to the fork point) instead of an
+	// empty chat. Served as a reset with an out-of-range cursor, so the first poll that
+	// sees the fork's own jsonl trips the `since > len(lines)` reset below and swaps to it.
+	forkPreview := false
+	if meta.ForkFrom != "" && !jsonlHasConversation(lines) {
+		if srcLines, srcPath, srcMatched := transcriptRead(meta.ForkFrom); jsonlHasConversation(srcLines) {
+			lines, jpath, jmatched = srcLines, srcPath, srcMatched
+			forkPreview = true
+		}
+	}
+	// Resolve which window [lo,hi) of lines to return and how the client treats it. cursor
+	// is normally the new line count; firstLine (>=0) marks a windowed read whose oldest
+	// line the client needs, to page further back. See docs/decisions/0009.
 	reset := false
 	cursor := len(lines)
+	lo, hi := since, len(lines)
+	firstLine := -1
 	switch {
+	case forkPreview:
+		// Send the whole source preview each tick (content is stable); park the cursor
+		// past any real line count so the next non-preview poll resets onto the fork.
+		lo, hi = 0, len(lines)
+		reset = true
+		cursor = forkPreviewCursor
 	case len(lines) == 0 && alive && since > 0:
 		// A live session read as empty — almost always transient: a stub was briefly
 		// the newest file, or the log was mid-write during a workflow's heavy
 		// concurrent writes. Do NOT blank the chat: hold the client's cursor and turns
 		// and send nothing this tick (it recovers on the next read).
+		lo, hi = len(lines), len(lines)
 		cursor = since
 	case since > len(lines):
 		// The live log is genuinely shorter than the cursor (compaction / a replaced
 		// file). Restart from the top and tell the client to reload from scratch.
-		since = 0
+		lo, hi = 0, len(lines)
 		reset = true
+	default:
+		// Windowed reads (P1): an initial tail window, or a backward page. With neither,
+		// this is a live increment (since>0) or a legacy full load (since=0) — both are
+		// [since, len), so old clients that send no window params are unchanged.
+		limit := clampWindowLimit(r.URL.Query().Get("limit"))
+		if bs := r.URL.Query().Get("before"); bs != "" {
+			if b, err := strconv.Atoi(bs); err == nil && b > 0 {
+				hi = min(b, len(lines))
+				lo = max(0, hi-limit)
+				firstLine = lo
+			}
+		} else if r.URL.Query().Get("tail") != "" && since == 0 {
+			lo = max(0, len(lines)-limit)
+			firstLine = lo
+		}
 	}
-	turns := collectTurns(lines, since)
+	turns := collectTurns(lines, lo, hi)
 	resp := map[string]any{
 		"name": name, "messages": turns, "cursor": cursor,
 		"status": state, "alive": alive, "reset": reset,
@@ -130,9 +173,19 @@ func handleSessionMessages(w http.ResponseWriter, r *http.Request) {
 		"jsonlPath": jpath, "jsonlLines": len(lines),
 		"jsonlMtime": jsonlMtime(jpath).Format(time.RFC3339), "jsonlMatches": len(jmatched),
 	}
+	if firstLine >= 0 {
+		// Windowed response: tell the client the oldest line it now holds and whether
+		// there's more history above it to page in (?before=<firstLine>).
+		resp["firstLine"] = firstLine
+		resp["hasMore"] = firstLine > 0
+	}
 	surfacePendingPayloads(resp, sid, state)
 	if md := latestMode(lines); md != "" {
 		resp["mode"] = md
+	}
+	// Current ToDo list (reconstructed from Task tool calls) so the chat can show progress.
+	if tasks := collectTasks(lines); len(tasks) > 0 {
+		resp["tasks"] = tasks
 	}
 	// Surface terminal-only states (startup resume menu / auto-compaction) the chat
 	// can't otherwise see, so the Console can prompt the user or show a 圧縮中 badge.
@@ -140,21 +193,40 @@ func handleSessionMessages(w http.ResponseWriter, r *http.Request) {
 		if ts := sessionTerminalState(name); ts != "" {
 			resp["terminalState"] = ts
 		}
+		// Idle by hook but a run_in_background task may still be running under the pane;
+		// surface it so the chat header shows "入力待ち · BG実行中". Only computed when not
+		// already working (the chip prefers 進行中 then), keeping the process scan off the
+		// hot path during active turns.
+		if state == "idle" || state == "" {
+			resp["backgroundBusy"] = sessionBackgroundBusy(name)
+		}
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// collectTurns builds the displayable turns from lines[since:]. A transcript
-// AskUserQuestion/ExitPlanMode is always already answered (claude writes the tool_use
-// only after the answer), so it resolves each one's chosen answer from its tool_result
-// for display (the currently-pending one is surfaced separately). The batch is capped
-// at 1 MiB of text so one response can't balloon the payload.
-func collectTurns(lines [][]byte, since int) []chatTurn {
-	answers := collectAnswers(lines)
+// collectTurns builds the displayable turns from lines[lo:hi] (a window into the
+// transcript — the whole file, a tail window, a backward page, or a live increment; see
+// docs/decisions/0009). A transcript AskUserQuestion/ExitPlanMode is always already
+// answered (claude writes the tool_use only after the answer), so it resolves each one's
+// chosen answer from its tool_result for display (the currently-pending one is surfaced
+// separately). Each turn keeps its ABSOLUTE line index as idx (stable across windows, so
+// React keys and ordering hold when pages are prepended). Capped at 1 MiB of newest text.
+func collectTurns(lines [][]byte, lo, hi int) []chatTurn {
+	if lo < 0 {
+		lo = 0
+	}
+	if hi > len(lines) {
+		hi = len(lines)
+	}
+	// Answers are resolved within the window: a question and its tool_result are adjacent
+	// (claude writes the tool_use only after the answer), so window-local is enough.
+	answers := collectAnswers(lines[lo:hi])
 	turns := []chatTurn{}
 	budget := 0
-	for i := since; i < len(lines); i++ {
-		t, ok := parseTurn(lines[i], i)
+	// Walk newest→oldest so the 1 MiB cap keeps the LATEST turns (the old oldest-first cap
+	// could drop the newest of a huge transcript); reverse to chronological before return.
+	for i := hi - 1; i >= lo; i-- {
+		t, ok := parseTurn(lines[i], i) // i is the absolute line index (stable across windows)
 		if !ok {
 			continue // tool results, summaries, bridge/meta bookkeeping
 		}
@@ -164,36 +236,58 @@ func collectTurns(lines [][]byte, since int) []chatTurn {
 			}
 		}
 		turns = append(turns, t)
-		if budget += len(t.Text); budget > 1<<20 { // cap a single response at 1 MiB
+		if budget += len(t.Text); budget > 1<<20 { // cap a single response at 1 MiB (newest kept)
 			break
 		}
 	}
+	for l, r := 0, len(turns)-1; l < r; l, r = l+1, r-1 {
+		turns[l], turns[r] = turns[r], turns[l]
+	}
 	return turns
+}
+
+// clampWindowLimit parses the window line-limit query param, with sane defaults/bounds.
+func clampWindowLimit(s string) int {
+	n, err := strconv.Atoi(s)
+	if err != nil || n <= 0 {
+		return 400
+	}
+	if n < 50 {
+		return 50
+	}
+	if n > 4000 {
+		return 4000
+	}
+	return n
 }
 
 // surfacePendingPayloads adds any currently-pending AskUserQuestion / ExitPlanMode /
 // permission to resp. These aren't in the transcript yet (claude writes the tool_use
 // only after it's resolved), so they come from the status hook's captured payloads.
 func surfacePendingPayloads(resp map[string]any, sid, state string) {
-	if state == "permission" {
-		// A permission prompt takes priority while the session is blocked on allow/deny:
-		// surface only it, because answer keystrokes must reach the permission dialog, not
-		// a still-pending question underneath. The captured question/plan stays on disk and
-		// resurfaces once the prompt is resolved and state leaves "permission".
+	// A captured question/plan payload takes precedence over the "permission" state.
+	// AskUserQuestion / ExitPlanMode fire their OWN permission_prompt Notification
+	// (state→"permission") between the tool's PreToolUse and PostToolUse, but the
+	// terminal is showing that tool's selection / approval UI — NOT a generic tool
+	// permission dialog. Surfacing pendingPermission here would make the Console show a
+	// 許可/拒否 prompt whose keystrokes (Enter / Down Down Enter) mis-answer the question
+	// menu underneath, skipping it. So whenever a question/plan is captured, surface it
+	// and suppress the permission — the Console drives it with the correct keys. The
+	// payload is cleared by its own lifecycle (PostToolUse→working, idle) once resolved.
+	pq, hasQ := readPendingQuestion(sid)
+	pp, hasP := readPendingPlan(sid)
+	if state == "permission" && !hasQ && !hasP {
+		// A genuine tool-permission prompt (Edit/Bash) with no question/plan behind it:
+		// surface only it, because answer keystrokes must reach the permission dialog.
 		if pm, ok := readPendingPermission(sid); ok {
 			resp["pendingPermission"] = pm
 		}
 		return
 	}
-	// Surface a pending AskUserQuestion / ExitPlanMode by the captured payload's presence
-	// rather than the live status. A permission prompt for the tool overwrites the status
-	// to "permission"→"working" while the question/plan is still pending, so gating on
-	// state == "question"/"plan" would drop it after approval; the payload is cleared by
-	// its own lifecycle (PostToolUse→working, idle) once actually resolved.
-	if pq, ok := readPendingQuestion(sid); ok {
+	if hasQ {
 		resp["pendingQuestions"] = pq
 	}
-	if pp, ok := readPendingPlan(sid); ok {
+	if hasP {
 		resp["pendingPlan"] = pp
 	}
 }
@@ -346,6 +440,136 @@ func collectAnswers(lines [][]byte) map[string]string {
 		}
 	}
 	return out
+}
+
+// A ToDo task reconstructed from the transcript's Task tool calls. Unlike TodoWrite
+// (which resends the whole list each time), TaskCreate/TaskUpdate are incremental.
+type taskItem struct {
+	ID      string `json:"id"`
+	Subject string `json:"subject"`
+	Active  string `json:"activeForm,omitempty"`
+	Status  string `json:"status"` // pending | in_progress | completed
+}
+
+// collectTasks reconstructs the current ToDo list from the transcript. TaskCreate adds
+// a task (single, or a batch via tasks[]) with a sequential id matching claude's
+// "Task #N" numbering; TaskUpdate merges status/subject/activeForm onto an existing id.
+// TaskStop (a background-agent stop, a hash id in a different space) and TaskList/TaskGet
+// (reads) don't change the list and are ignored. Returns tasks in creation order.
+func collectTasks(lines [][]byte) []taskItem {
+	order := []string{}
+	m := map[string]*taskItem{}
+	next := 1
+	for _, ln := range lines {
+		// Cheap prefilter so this stays a light full-scan (kept whole-transcript for an
+		// accurate ToDo list even when turns are windowed — see docs/decisions/0009).
+		if !bytesContains(ln, "TaskCreate") && !bytesContains(ln, "TaskUpdate") {
+			continue
+		}
+		var ev struct {
+			Type    string `json:"type"`
+			Message struct {
+				Content json.RawMessage `json:"content"`
+			} `json:"message"`
+		}
+		if json.Unmarshal(ln, &ev) != nil || ev.Type != "assistant" {
+			continue
+		}
+		if len(ev.Message.Content) == 0 || ev.Message.Content[0] != '[' {
+			continue
+		}
+		var blocks []struct {
+			Type  string          `json:"type"`
+			Name  string          `json:"name"`
+			Input json.RawMessage `json:"input"`
+		}
+		if json.Unmarshal(ev.Message.Content, &blocks) != nil {
+			continue
+		}
+		for _, b := range blocks {
+			if b.Type != "tool_use" {
+				continue
+			}
+			switch b.Name {
+			case "TaskCreate":
+				for _, tc := range parseTaskCreate(b.Input) {
+					id := strconv.Itoa(next)
+					next++
+					tc.ID = id
+					if tc.Status == "" {
+						tc.Status = "pending"
+					}
+					cp := tc
+					m[id] = &cp
+					order = append(order, id)
+				}
+			case "TaskUpdate":
+				applyTaskUpdate(m, b.Input)
+			}
+		}
+	}
+	out := make([]taskItem, 0, len(order))
+	for _, id := range order {
+		if it, ok := m[id]; ok {
+			out = append(out, *it)
+		}
+	}
+	return out
+}
+
+// parseTaskCreate returns the tasks one TaskCreate call adds — normally one (the subject
+// is on the input itself), or several when it carries a tasks[] batch.
+func parseTaskCreate(input json.RawMessage) []taskItem {
+	var in struct {
+		Subject    string `json:"subject"`
+		ActiveForm string `json:"activeForm"`
+		Tasks      []struct {
+			Subject    string `json:"subject"`
+			ActiveForm string `json:"activeForm"`
+		} `json:"tasks"`
+	}
+	if json.Unmarshal(input, &in) != nil {
+		return nil
+	}
+	if len(in.Tasks) > 0 {
+		out := make([]taskItem, 0, len(in.Tasks))
+		for _, t := range in.Tasks {
+			if t.Subject != "" {
+				out = append(out, taskItem{Subject: t.Subject, Active: t.ActiveForm})
+			}
+		}
+		return out
+	}
+	if in.Subject == "" {
+		return nil
+	}
+	return []taskItem{{Subject: in.Subject, Active: in.ActiveForm}}
+}
+
+// applyTaskUpdate merges a TaskUpdate's non-empty fields onto the referenced task.
+func applyTaskUpdate(m map[string]*taskItem, input json.RawMessage) {
+	var in struct {
+		TaskID     string `json:"taskId"`
+		Status     string `json:"status"`
+		Subject    string `json:"subject"`
+		ActiveForm string `json:"activeForm"`
+	}
+	if json.Unmarshal(input, &in) != nil || in.TaskID == "" {
+		return
+	}
+	it, ok := m[in.TaskID]
+	if !ok {
+		return
+	}
+	if in.Status != "" {
+		it.Status = in.Status
+	}
+	if in.Subject != "" {
+		it.Subject = in.Subject
+	}
+	if in.ActiveForm != "" {
+		it.Active = in.ActiveForm
+	}
 }
 
 // latestMode returns the session's current permission mode from the last "mode"

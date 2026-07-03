@@ -1,5 +1,6 @@
 import { fmtTok } from "../lib/fmttok.js";
 import Icon from "./Icon.jsx";
+import Sparkline from "./Sparkline.jsx";
 
 // contextWindow returns the model's context length. The current Claude family
 // (Opus 4.6/4.7/4.8, Sonnet 4.6, Fable/Mythos 5) is 1M-native — 1M is the default
@@ -17,13 +18,17 @@ interface ContextBarProps {
   create: number;
   fresh: number;
   model?: string;
+  // Optional per-turn spend series (chat only): renders a token-spend trend Sparkline on
+  // the same row, after the context gauge. Omitted by the terminal head, which has none.
+  spends?: number[];
+  maxSpend?: number;
 }
 
 // ContextBar is a /context-like fill gauge for the context window, segmented by how
 // the prompt tokens break down (cache read / cache creation / fresh input). Shared
 // by the chat (MirrorView) and terminal (TerminalView) heads so the current context
 // fill is always visible, whichever view a claude pane is showing.
-export default function ContextBar({ read, create, fresh, model }: ContextBarProps) {
+export default function ContextBar({ read, create, fresh, model, spends, maxSpend }: ContextBarProps) {
   const used = read + create + fresh;
   const window = contextWindow(model, used);
   const pct = Math.min(100, (used / window) * 100);
@@ -37,14 +42,30 @@ export default function ContextBar({ read, create, fresh, model }: ContextBarPro
     (level ? "\nまもなく自動圧縮される可能性があります" : "");
   return (
     <div className={"mirror-ctxbar" + (level ? " cb-" + level : "")} title={title}>
-      <div className="cb-track">
-        <div className="cb-seg cb-read" style={{ width: w(read) }} />
-        <div className="cb-seg cb-create" style={{ width: w(create) }} />
-        <div className="cb-seg cb-fresh" style={{ width: w(fresh) }} />
+      <div className="cb-ctx">
+        <span className="cb-ctx-label">コンテキスト</span>
+        <div className="cb-track">
+          <div className="cb-seg cb-read" style={{ width: w(read) }} />
+          <div className="cb-seg cb-create" style={{ width: w(create) }} />
+          <div className="cb-seg cb-fresh" style={{ width: w(fresh) }} />
+        </div>
+        <span className="cb-label">
+          {level && <Icon name="warning" />} {fmtTok(used)} / {fmtTok(window)}・{pct.toFixed(0)}%
+        </span>
       </div>
-      <span className="cb-label">
-        {level && <Icon name="warning" />} コンテキスト {fmtTok(used)} / {fmtTok(window)}・{pct.toFixed(0)}%
-      </span>
+      {spends && spends.length >= 2 && (
+        <>
+          <span className="cb-div" aria-hidden="true" />
+          <span
+            className="cb-trend"
+            title="ターン毎の新規消費トークン（未キャッシュ入力＋新規キャッシュ＋出力）の推移"
+          >
+            <span className="cb-trend-label">トークン消費推移</span>
+            <Sparkline data={spends} width={120} height={14} />
+            <span className="cb-trend-peak">最大 {fmtTok(maxSpend ?? 0)}</span>
+          </span>
+        </>
+      )}
     </div>
   );
 }
