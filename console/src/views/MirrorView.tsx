@@ -7,6 +7,7 @@ import Icon from "../components/Icon.jsx";
 import MarkdownView from "./MarkdownView.jsx";
 import MirrorToggle from "../components/MirrorToggle.jsx";
 import ContextBar from "../components/ContextBar.jsx";
+import Sparkline from "../components/Sparkline.jsx";
 import { useToast } from "../components/ToastProvider.jsx";
 import { fmtTok } from "../lib/fmttok.js";
 import { kindIcon, kindLabel, kindShort, kindClass } from "../lib/sessionkind.js";
@@ -448,6 +449,12 @@ export default function MirrorView({
   // claude and isn't in the transcript, but the cache breakdown is real usage data.
   const ctxUsage = latestContext(groups);
 
+  // Per-assistant-turn "spend" = newly-consumed tokens (uncached input + cache creation +
+  // output). Cache reads are reused context, not fresh spend, so they're excluded (the ↑
+  // number still carries total context). Drives the per-turn bar and the trend Sparkline.
+  const spends = groups.filter((g) => g.role !== "user").map(spendOf).filter((n) => n > 0);
+  const maxSpend = spends.length ? Math.max(...spends) : 0;
+
   // Status chip: prefer the live polled status, fall back to the session meta.
   const chip = status
     ? stateInfo({ kind: "claude", alive: status !== "stopped", state: status, backgroundBusy: bgBusy } as any)
@@ -499,6 +506,17 @@ export default function MirrorView({
       </header>
 
       {ctxUsage && <ContextBar {...ctxUsage} />}
+      {spends.length >= 2 && (
+        <div
+          className="mirror-trend"
+          title="ターン毎の新規消費トークン（未キャッシュ入力＋新規キャッシュ＋出力）の推移"
+        >
+          <Icon name="graph-line" />
+          <span className="mtr-label muted">消費推移</span>
+          <Sparkline data={spends} width={200} height={16} />
+          <span className="mtr-peak">最大 {fmtTok(maxSpend)}</span>
+        </div>
+      )}
       {tasks.length > 0 && <TaskChecklist tasks={tasks} />}
       {mode === "plan" && (
         <div className="mirror-planmode">
@@ -548,7 +566,7 @@ export default function MirrorView({
               : "まだ会話はありません。下の欄からプロンプトを送るか、ターミナルで対話すると、ここに ターンごとの Markdown で表示されます。"}
           </div>
         ) : (
-          renderGroups(groups, sendPrompt, openPlan, openDiff)
+          renderGroups(groups, sendPrompt, openPlan, openDiff, maxSpend)
         )}
         {pendingPlan && (
           <div className="mirror-turn assistant">
@@ -824,11 +842,17 @@ function latestContext(groups: Group[]) {
 // renderGroups lays the blocks out, inserting a context strip (branch · cwd) above a
 // block whenever either changes from the previously shown one — so a branch switch or
 // cd is marked once, not repeated on every turn. Empty context leaves the marker as-is.
+// spendOf is a turn's newly-consumed tokens (uncached input + cache creation + output).
+function spendOf(g: Group): number {
+  return g.inTok + g.cacheCreate + g.outTok;
+}
+
 function renderGroups(
   groups: Group[],
   onAnswer: (t: string) => void,
   onOpenPlan: (plan: string) => void,
   onOpenDiff: (p: Part) => void,
+  maxSpend: number,
 ) {
   const els = [];
   let prevCtx = "";
@@ -842,7 +866,14 @@ function renderGroups(
       g.compact ? (
         <CompactBlock key={g.idx} turn={g} />
       ) : (
-        <Turn key={g.idx} turn={g} onAnswer={onAnswer} onOpenPlan={onOpenPlan} onOpenDiff={onOpenDiff} />
+        <Turn
+          key={g.idx}
+          turn={g}
+          maxSpend={maxSpend}
+          onAnswer={onAnswer}
+          onOpenPlan={onOpenPlan}
+          onOpenDiff={onOpenDiff}
+        />
       ),
     );
   }
@@ -929,11 +960,13 @@ function ContextLine({ branch, cwd }: { branch?: string; cwd?: string }) {
 // token usage + copy). Subagent (sidechain) turns get a distinct label and tint.
 function Turn({
   turn,
+  maxSpend,
   onAnswer,
   onOpenPlan,
   onOpenDiff,
 }: {
   turn: Group;
+  maxSpend: number;
   onAnswer: (t: string) => void;
   onOpenPlan: (plan: string) => void;
   onOpenDiff: (p: Part) => void;
@@ -941,6 +974,7 @@ function Turn({
   const isUser = turn.role === "user";
   const who = isUser ? "あなた" : turn.sidechain ? "サブエージェント" : "Claude";
   const ctxTok = turn.inTok + turn.cacheRead + turn.cacheCreate;
+  const spend = spendOf(turn);
   return (
     <div className={"mirror-turn " + (isUser ? "user" : "assistant") + (turn.sidechain ? " sidechain" : "")}>
       <div className="mirror-turn-head">
@@ -982,9 +1016,31 @@ function Turn({
             ↑{fmtTok(ctxTok)} ↓{fmtTok(turn.outTok)}
           </span>
         )}
+        {!isUser && spend > 0 && maxSpend > 0 && (
+          <TurnSpendBar fresh={turn.inTok} create={turn.cacheCreate} out={turn.outTok} max={maxSpend} />
+        )}
         <CopyButton text={turn.text} />
       </div>
     </div>
+  );
+}
+
+// TurnSpendBar visualizes one turn's newly-consumed tokens as a stacked bar, scaled so
+// the heaviest turn in the conversation fills the track — the bar length shows the turn's
+// relative weight, the segments its input(uncached)/cache-creation/output split. Cache
+// reads (reused context) are excluded; the ↑ number beside it carries total context.
+function TurnSpendBar({ fresh, create, out, max }: { fresh: number; create: number; out: number; max: number }) {
+  const pct = (n: number) => (n / max) * 100 + "%";
+  const total = fresh + create + out;
+  const title =
+    `このターンの新規消費 ${total.toLocaleString()} トークン\n` +
+    `未キャッシュ入力 ${fresh.toLocaleString()} · 新規キャッシュ ${create.toLocaleString()} · 出力 ${out.toLocaleString()}`;
+  return (
+    <span className="mt-spend" title={title} aria-hidden="true">
+      <span className="ts-seg ts-fresh" style={{ width: pct(fresh) }} />
+      <span className="ts-seg ts-create" style={{ width: pct(create) }} />
+      <span className="ts-seg ts-out" style={{ width: pct(out) }} />
+    </span>
   );
 }
 
