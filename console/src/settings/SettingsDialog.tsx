@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { useApp } from "../state.jsx";
-import ConnectionsTab from "./ConnectionsTab.jsx";
 import GitTab from "./GitTab.jsx";
 import DisplayTab from "./DisplayTab.jsx";
 import AgentsTab from "./AgentsTab.jsx";
@@ -15,10 +14,9 @@ import Modal from "../components/Modal.jsx";
 // distinct from personal settings.
 export default function SettingsDialog() {
   const { closeSettings, settingsSection } = useApp();
-  const [section, setSection] = useState(settingsSection || "connections");
+  const [section, setSection] = useState(settingsSection || "agents");
 
   const sections = [
-    ["connections", "接続"],
     ["agents", "エージェント"],
     ["git", "Git"],
     ["env", "環境"],
@@ -43,7 +41,6 @@ export default function SettingsDialog() {
           ))}
         </div>
         <div className="settings-content">
-          {section === "connections" && <ConnectionsTab />}
           {section === "agents" && <AgentsTab />}
           {section === "git" && <GitTab />}
           {section === "env" && <EnvTab />}
