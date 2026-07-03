@@ -296,6 +296,7 @@ func ensureRepo(remoteURL, branch, name string) (string, error) {
 	if err := gitClone(dir, remoteURL, branch); err != nil {
 		return "", err
 	}
+	applyGitIdentity(dir) // bake the provider's commit identity into the fresh clone
 	return dir, nil
 }
 

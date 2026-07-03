@@ -254,6 +254,10 @@ func main() {
 	mux.HandleFunc("POST /api/repos/{name}/unstage", cfg.proxyAgentREST)
 	mux.HandleFunc("POST /api/repos/{name}/discard", cfg.proxyAgentREST)
 	mux.HandleFunc("POST /api/repos/{name}/commit", cfg.proxyAgentREST)
+	mux.HandleFunc("GET /api/repos/{name}/identity", cfg.proxyAgentREST)
+	mux.HandleFunc("PUT /api/repos/{name}/identity", cfg.proxyAgentREST)
+	mux.HandleFunc("GET /api/git/identity", cfg.proxyAgentREST)
+	mux.HandleFunc("PUT /api/git/identity", cfg.proxyAgentREST)
 	// File browser (docs/17 P3-5 段2) — proxied to the Agent.
 	mux.HandleFunc("GET /api/fs/tree", cfg.proxyAgentREST)
 	mux.HandleFunc("GET /api/fs/file", cfg.proxyAgentREST)
@@ -293,6 +297,7 @@ func main() {
 	mux.HandleFunc("GET /api/connections/git/{host}/repos", cfg.proxyAgentREST)
 	mux.HandleFunc("GET /api/connections/git/{host}/branches", cfg.proxyAgentREST)
 	mux.HandleFunc("PUT /api/connections/git/{host}", cfg.proxyAgentREST)
+	mux.HandleFunc("PUT /api/connections/git/{host}/identity", cfg.proxyAgentREST)
 	mux.HandleFunc("DELETE /api/connections/git/{host}", cfg.proxyAgentREST)
 	mux.HandleFunc("POST /api/connections/git/github/oauth/start", cfg.proxyAgentREST)
 	mux.HandleFunc("POST /api/connections/git/github/oauth/poll", cfg.proxyAgentREST)

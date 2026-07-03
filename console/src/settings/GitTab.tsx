@@ -53,7 +53,104 @@ export default function GitTab() {
       <div className="conn-cat">git ホスティング</div>
       <GithubRow st={conns.github} reload={reload} />
       <BitbucketRow st={conns.bitbucket} reload={reload} />
+      <GlobalIdentity />
     </div>
+  );
+}
+
+// IdentityFields edits the commit user.name / user.email a provider uses. The Agent
+// bakes it into each of that host's repo's local .git/config, so it applies to EVERY
+// commit path (terminal / claude / Console), and each repo can still override it.
+// Empty = use the connected account (auto-seeded).
+function IdentityFields({ host, name0, email0 }: { host: string; name0?: string; email0?: string }) {
+  const toast = useToast();
+  const [name, setName] = useState(name0 || "");
+  const [email, setEmail] = useState(email0 || "");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    setName(name0 || "");
+    setEmail(email0 || "");
+  }, [name0, email0]);
+  const save = async () => {
+    setBusy(true);
+    try {
+      const res = await apiJSON(`api/connections/git/${encodeURIComponent(host)}/identity`, "PUT", {
+        name: name.trim(),
+        email: email.trim(),
+      });
+      if (res && res.error) {
+        toast("保存に失敗: " + (res.error.message || res.error));
+        return;
+      }
+      toast("コミット identity を保存しました");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="git-identity">
+      <div className="gi-title">コミット identity（このプロバイダの既定）</div>
+      <div className="gi-row">
+        <input className="cinput" placeholder="name（例: 山田太郎）" value={name} onChange={(e) => setName(e.target.value)} />
+        <input className="cinput" placeholder="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+        <button disabled={busy} onClick={save}>
+          保存
+        </button>
+      </div>
+      <div className="field-help">
+        空欄なら接続アカウントを使用。端末 / claude のコミットにも適用され、リポジトリごとに上書きできます。
+      </div>
+    </div>
+  );
+}
+
+// GlobalIdentity edits the ~/.gitconfig default identity — used for repos that match no
+// connected provider (no remote / direct-dir sessions).
+function GlobalIdentity() {
+  const toast = useToast();
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    api("api/git/identity")
+      .then((d) => {
+        if (d && !d.error) {
+          setName(d.name || "");
+          setEmail(d.email || "");
+        }
+      })
+      .catch(() => {});
+  }, []);
+  const save = async () => {
+    setBusy(true);
+    try {
+      const res = await apiJSON("api/git/identity", "PUT", { name: name.trim(), email: email.trim() });
+      if (res && res.error) {
+        toast("保存に失敗: " + (res.error.message || res.error));
+        return;
+      }
+      toast("既定 identity を保存しました");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <>
+      <div className="conn-cat">既定のコミット identity（すべての git）</div>
+      <div className="git-identity solo">
+        <div className="gi-row">
+          <input className="cinput" placeholder="name" value={name} onChange={(e) => setName(e.target.value)} />
+          <input className="cinput" placeholder="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+          <button disabled={busy} onClick={save}>
+            保存
+          </button>
+        </div>
+        <div className="field-help">
+          どのプロバイダにも紐づかないリポジトリ（remote 無し等）で使う ~/.gitconfig の既定値。
+          解決順は「リポ上書き ＞ プロバイダ ＞ この既定」。
+        </div>
+      </div>
+    </>
   );
 }
 
@@ -124,13 +221,16 @@ function GithubRow({ st, reload }: RowProps) {
       status={<StatusPill on={st?.connected}>{st?.connected ? "接続済み" : "未接続"}</StatusPill>}
     >
       {st?.connected ? (
-        <div className="p-who">
-          <span className="p-em" title={st.email || st.username || ""}>
-            {st.username || "connected"}
-          </span>
-          {st.email && <span className="p-pl">{st.email}</span>}
-          <DisconnectButton onClick={disconnect} />
-        </div>
+        <>
+          <div className="p-who">
+            <span className="p-em" title={st.email || st.username || ""}>
+              {st.username || "connected"}
+            </span>
+            {st.email && <span className="p-pl">{st.email}</span>}
+            <DisconnectButton onClick={disconnect} />
+          </div>
+          <IdentityFields host="github.com" name0={st.commitName} email0={st.commitEmail} />
+        </>
       ) : mode === "oauth" && oauth ? (
         <div className="p-body">
           <DeviceSteps code={oauth.user_code} url={oauth.verification_uri} status={oauth.status} />
@@ -242,13 +342,16 @@ function BitbucketRow({ st, reload }: RowProps) {
       status={<StatusPill on={st?.connected}>{st?.connected ? "接続済み" : "未接続"}</StatusPill>}
     >
       {st?.connected ? (
-        <div className="p-who">
-          <span className="p-em" title={st.email || st.username || ""}>
-            {st.username || "connected"}
-          </span>
-          {st.email && <span className="p-pl">{st.email}</span>}
-          <DisconnectButton onClick={disconnect} />
-        </div>
+        <>
+          <div className="p-who">
+            <span className="p-em" title={st.email || st.username || ""}>
+              {st.username || "connected"}
+            </span>
+            {st.email && <span className="p-pl">{st.email}</span>}
+            <DisconnectButton onClick={disconnect} />
+          </div>
+          <IdentityFields host="bitbucket.org" name0={st.commitName} email0={st.commitEmail} />
+        </>
       ) : mode === "oauth" ? (
         <div className="p-body">
           <span className="p-waiting">

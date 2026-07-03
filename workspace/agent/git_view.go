@@ -294,6 +294,7 @@ func handleRepoCommit(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "bad_message", "commit message is required")
 		return
 	}
+	applyGitIdentity(dir) // self-heal: ensure the effective identity is in local config
 	args := []string{"-C", dir, "commit"}
 	if req.All {
 		args = append(args, "-a")

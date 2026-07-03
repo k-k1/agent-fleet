@@ -33,11 +33,20 @@ type gitEntry struct {
 	Email string `json:"email,omitempty"` // cached account email (resolved from the API)
 }
 
+// gitIdentity is a provider's explicit commit identity (user.name / user.email),
+// decoupled from the credential entry so it works for either connect method (token or
+// OAuth). Empty fields fall back to the resolved account (Login/Email).
+type gitIdentity struct {
+	Name  string `json:"name,omitempty"`
+	Email string `json:"email,omitempty"`
+}
+
 type secretsData struct {
-	Git       map[string]gitEntry `json:"git"`       // host -> https cred
-	Claude    string              `json:"claude"`    // CLAUDE_CODE_OAUTH_TOKEN
-	Bitbucket *bitbucketCreds     `json:"bitbucket"` // OAuth refresh creds (bitbucket.org)
-	Opencode  map[string]string   `json:"opencode"`  // provider env var name -> API key (injected for opencode sessions)
+	Git         map[string]gitEntry    `json:"git"`                   // host -> https cred
+	GitIdentity map[string]gitIdentity `json:"gitIdentity,omitempty"` // host -> explicit commit identity
+	Claude      string                 `json:"claude"`                // CLAUDE_CODE_OAUTH_TOKEN
+	Bitbucket   *bitbucketCreds        `json:"bitbucket"`             // OAuth refresh creds (bitbucket.org)
+	Opencode    map[string]string      `json:"opencode"`              // provider env var name -> API key (injected for opencode sessions)
 }
 
 // agentSecretKey returns the 32-byte per-user key from AF_SECRET_KEY (hex), or

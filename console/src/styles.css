@@ -4581,6 +4581,75 @@ button.mt-toolrun-head:hover {
 .p-who .conn-disconnect {
   margin-left: auto;
 }
+/* Per-provider (and global) commit identity editor inside a provider card. */
+.git-identity {
+  padding: 4px 13px 12px;
+  border-top: 1px solid var(--border);
+}
+.git-identity.solo {
+  border-top: none;
+  padding-top: 8px;
+}
+.gi-title {
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+.gi-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.gi-row .cinput {
+  flex: 1;
+  min-width: 120px;
+}
+/* Repo commit-identity line under the commit box (SourceControlView). */
+.repo-identity {
+  margin-top: 6px;
+  font-size: 11px;
+}
+.ri-line {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 2px 0;
+  text-align: left;
+}
+.ri-line:hover {
+  color: var(--fg);
+}
+.ri-who {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ri-src {
+  flex: none;
+  font-size: 10px;
+  color: var(--muted2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0 5px;
+}
+.ri-edit {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.ri-edit .cinput {
+  flex: 1;
+  min-width: 90px;
+}
 /* connect-method options (Codex): recommended vs alternative */
 .p-opts {
   display: flex;
