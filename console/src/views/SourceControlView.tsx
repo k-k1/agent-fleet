@@ -3,6 +3,9 @@ import { useApp } from "../state.jsx";
 import { api, apiJSON, raw, rawJSON } from "../api.js";
 import Icon from "../components/Icon.jsx";
 import BranchModal from "../components/BranchModal.jsx";
+import { useConfirm } from "../components/ConfirmProvider.jsx";
+import { useToast } from "../components/ToastProvider.jsx";
+import EmptyState from "../components/EmptyState.jsx";
 
 interface Change {
   path: string;
@@ -52,6 +55,8 @@ interface DiffRow {
 // rendered standalone).
 export default function SourceControlView({ repo, wrap }: { repo?: string; wrap?: boolean }) {
   const { scmRepo: ctxRepo, bumpRepos, bumpFiles, showTerminal } = useApp();
+  const askConfirm = useConfirm();
+  const toast = useToast();
   const scmRepo = repo !== undefined ? repo : ctxRepo;
   const enc = encodeURIComponent(scmRepo || "");
   const [status, setStatus] = useState<ScmStatus | null>(null);
@@ -112,6 +117,16 @@ export default function SourceControlView({ repo, wrap }: { repo?: string; wrap?
   };
 
   const op = async (name: string, paths: string[]) => {
+    // discard is irreversible (working-tree changes are lost) — confirm first.
+    if (name === "discard") {
+      const ok = await askConfirm({
+        title: "変更を破棄",
+        body: `${paths.join(", ")} の変更を破棄します。元に戻せません。`,
+        confirmLabel: "破棄する",
+        danger: true,
+      });
+      if (!ok) return;
+    }
     await apiJSON(`api/repos/${enc}/${name}`, "POST", { paths });
     refresh();
   };
@@ -124,7 +139,13 @@ export default function SourceControlView({ repo, wrap }: { repo?: string; wrap?
     bumpRepos();
   };
   const del = async () => {
-    if (!confirm(`ワーキングコピー "${scmRepo}" を削除しますか？（履歴・リモートはそのまま）`)) return;
+    const ok = await askConfirm({
+      title: "ワーキングコピーを削除",
+      body: `"${scmRepo}" のローカル作業コピーを削除します。履歴・リモートはそのまま残ります。`,
+      confirmLabel: "削除する",
+      danger: true,
+    });
+    if (!ok) return;
     await raw(`api/repos/${enc}`, { method: "DELETE" });
     bumpRepos();
     bumpFiles();
@@ -133,7 +154,7 @@ export default function SourceControlView({ repo, wrap }: { repo?: string; wrap?
 
   const commitOp = async () => {
     if (!msg.trim()) {
-      alert("コミットメッセージが必要です");
+      toast("コミットメッセージが必要です", { kind: "warn" });
       return;
     }
     const r = await rawJSON(`api/repos/${enc}/commit`, "POST", { message: msg.trim(), all });
@@ -143,7 +164,7 @@ export default function SourceControlView({ repo, wrap }: { repo?: string; wrap?
       bumpRepos();
     } else {
       const e = await r.json().catch(() => ({}));
-      alert("commit 失敗: " + (e.error?.message || r.status));
+      toast("commit 失敗: " + (e.error?.message || r.status));
     }
   };
 
@@ -155,8 +176,12 @@ export default function SourceControlView({ repo, wrap }: { repo?: string; wrap?
           <Icon name="git-branch" /> {status?.branch || "?"} <Icon name="chevron-down" />
         </button>
         {status && (status.ahead || status.behind) ? (
-          <span className="ab">
+          <span
+            className="repo-state-chip ab"
+            title={`リモートに対して 先行 ${status.ahead ?? 0} / 遅延 ${status.behind ?? 0}`}
+          >
             {status.ahead ? `↑${status.ahead}` : ""}
+            {status.ahead && status.behind ? " " : ""}
             {status.behind ? `↓${status.behind}` : ""}
           </span>
         ) : null}
@@ -175,7 +200,7 @@ export default function SourceControlView({ repo, wrap }: { repo?: string; wrap?
         <div className="scmleft">
           <div className="sub-head">変更</div>
           <ul className="changes">
-            {changes.length === 0 && <li className="muted">変更なし</li>}
+            {changes.length === 0 && <EmptyState icon="check" message="変更はありません" />}
             {changes.map((c) => (
               <ChangeRow
                 key={c.path + (c.untracked ? "?" : "")}
@@ -284,9 +309,7 @@ function ChangeRow({
           <button
             className="icon danger"
             title="変更を破棄"
-            onClick={() => {
-              if (confirm(`${c.path} の変更を破棄しますか？元に戻せません。`)) onOp("discard", [c.path]);
-            }}
+            onClick={() => onOp("discard", [c.path])}
           >
             <Icon name="discard" />
           </button>

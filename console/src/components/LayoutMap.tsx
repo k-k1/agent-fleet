@@ -2,12 +2,14 @@ import { useMemo } from "react";
 import { useApp } from "../state.jsx";
 import { paneRows, ordClass, paneCount } from "../lib/panebadge.js";
 import { usePaneHover, hoverMatches } from "../lib/panehover.jsx";
-import { kindShort } from "../lib/sessionkind.js";
+import { kindShort, kindLabel, kindClass } from "../lib/sessionkind.js";
 import { stateInfo } from "../lib/sessionview.js";
 import type { Session } from "../types/session.ts";
 
 // Short label for a non-session pane (file / scm / doc / diff) shown in a map cell.
 const KIND_ABBR: Record<string, string> = { file: "file", scm: "scm", doc: "doc", diff: "diff" };
+// Full Japanese name for a non-session pane, used in the cell tooltip / aria-label.
+const KIND_JA: Record<string, string> = { file: "ファイル", scm: "ソース管理", doc: "ドキュメント", diff: "差分" };
 
 // LayoutMap draws a schematic of the current split — columns side by side, each a
 // stack of its 1–2 panes — so "which session is in which pane" is one glance. Each
@@ -26,14 +28,31 @@ export default function LayoutMap() {
 
   return (
     <div className="layoutmap" role="group" aria-label="ペイン配置">
-      {layout.cols.map((col) => (
+      <div className="lm-cap">レイアウト</div>
+      <div className="lm-cols">
+        {layout.cols.map((col) => (
         <div className="lm-col" key={col.id}>
           {col.panes.map((p) => {
             const ord = ordOf.get(p.id) ?? 0;
             const s: Session | null = p.kind === "terminal" && p.session ? byName.get(p.session) ?? null : null;
             const st = s ? stateInfo(s) : null;
             const kindTxt = s ? kindShort(s.kind) : KIND_ABBR[p.kind] || "–";
+            // Ordinal keeps the ordinal color (cross-refs the pane corner + Sessions
+            // badge); the kind abbrev is tinted by kind so "what agent" reads too.
+            const kindCls = s ? " kc-" + kindClass(s.kind) : "";
             const on = hoverMatches(hover, p.id, p.session);
+            // Tooltip / aria: "ペイン1: {name} · {kind} · {state}" for a session,
+            // or the pane's Japanese view name — so the 2-char cell is legible on
+            // hover and to a screen reader without needing a separate legend.
+            const label =
+              "ペイン" +
+              ord +
+              ": " +
+              (s
+                ? `${s.name} · ${kindLabel(s.kind)}${st ? " · " + st.text : ""}`
+                : p.kind === "terminal"
+                  ? "セッション未接続"
+                  : KIND_JA[p.kind] || p.kind);
             return (
               <button
                 type="button"
@@ -41,19 +60,21 @@ export default function LayoutMap() {
                 className={
                   "lm-cell " + ordClass(ord) + (p.id === activePaneId ? " active" : "") + (on ? " hover" : "")
                 }
-                title={s ? s.name : p.kind === "terminal" ? "セッション未接続" : KIND_ABBR[p.kind] || p.kind}
+                title={label}
+                aria-label={label}
                 onClick={() => setActivePane(p.id)}
                 onMouseEnter={() => setHover({ session: p.session || null, paneId: p.id })}
                 onMouseLeave={() => setHover(null)}
               >
                 <span className="lm-ord">{ord}</span>
-                <span className="lm-kind">{kindTxt}</span>
+                <span className={"lm-kind" + kindCls}>{kindTxt}</span>
                 {st && <span className={"lm-dot " + st.cls} />}
               </button>
             );
           })}
         </div>
-      ))}
+        ))}
+      </div>
     </div>
   );
 }

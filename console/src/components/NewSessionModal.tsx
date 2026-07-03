@@ -3,6 +3,8 @@ import { api, apiJSON, errText } from "../api.js";
 import { useApp } from "../state.jsx";
 import RepoPicker from "./RepoPicker.jsx";
 import Modal from "./Modal.jsx";
+import Icon from "./Icon.jsx";
+import { useToast } from "./ToastProvider.jsx";
 import SsmLoginModal from "./SsmLoginModal.jsx";
 import { readKindAvail, writeKindAvail } from "../lib/kindavail.js";
 import { deriveRepoName, sanitizeSeg, uniqueRepoName, repoNameRe } from "../lib/reponame.js";
@@ -42,6 +44,7 @@ interface NewSessionModalProps {
 
 export default function NewSessionModal({ onClose, onCreated }: NewSessionModalProps) {
   const { openSettings } = useApp();
+  const toast = useToast();
   const [name, setName] = useState("");
   const [nameEdited, setNameEdited] = useState(false);
   const [kind, setKind] = useState("shell"); // shell is the default (left) kind
@@ -187,7 +190,7 @@ export default function NewSessionModal({ onClose, onCreated }: NewSessionModalP
         ssm_force_login: isSSM ? ssmForce : false,
       });
       if (res && res.error) {
-        alert("作成に失敗: " + errText(res.error));
+        toast("作成に失敗: " + errText(res.error));
         return;
       }
       // SSM: the session (tmux) is launched; hand off to SsmLoginModal to drive the SSO
@@ -228,9 +231,10 @@ export default function NewSessionModal({ onClose, onCreated }: NewSessionModalP
                   <button
                     key={k}
                     type="button"
-                    className={"seg-btn" + (kind === k ? " active" : "")}
+                    className={"seg-btn kind-" + a.cssClass + (kind === k ? " active" : "")}
                     onClick={() => setKind(k)}
                   >
+                    <Icon name={a.icon} className="seg-ic" />
                     {a.label}
                     <span className="seg-sub">{a.launchHint}</span>
                   </button>

@@ -60,25 +60,25 @@ export default function OnboardingCard() {
       done: running,
       label: "ワークスペースを起動",
       hint: "コンテナを起動して作業を開始します",
-      cta: running ? null : { text: "起動", on: startWs },
+      cta: running ? null : { text: "起動", icon: "play", on: startWs },
     },
     {
       done: gitOk,
       label: "git プロバイダを接続",
       hint: "GitHub / Bitbucket からリポジトリを clone できます",
-      cta: gitOk ? null : { text: "接続する", on: openSettings },
+      cta: gitOk ? null : { text: "接続する", icon: "plug", on: () => openSettings("git") },
     },
     {
       done: agentOk,
       label: "エージェントを接続",
       hint: "Claude / Codex / opencode にサインインします",
-      cta: agentOk ? null : { text: "接続する", on: openSettings },
+      cta: agentOk ? null : { text: "接続する", icon: "plug", on: () => openSettings("agents") },
     },
     {
       done: false,
       label: "最初のセッションを作成",
       hint: "shell や claude などを起動します",
-      cta: { text: "新規セッション", on: openNewSession },
+      cta: { text: "新規セッション", icon: "add", on: openNewSession },
     },
   ];
   const nextIdx = steps.findIndex((s) => !s.done); // the step to highlight
@@ -100,7 +100,7 @@ export default function OnboardingCard() {
               </span>
               {s.cta && (
                 <button className={"onboard-cta" + (i === nextIdx ? " primary" : "")} onClick={s.cta.on}>
-                  {s.cta.text}
+                  <Icon name={s.cta.icon} /> {s.cta.text}
                 </button>
               )}
             </li>

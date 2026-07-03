@@ -6,6 +6,10 @@ import Icon from "../Icon.jsx";
 import NewSessionModal from "../NewSessionModal.jsx";
 import SsmLoginModal from "../SsmLoginModal.jsx";
 import ArchivedModal from "../ArchivedModal.jsx";
+import { useConfirm } from "../ConfirmProvider.jsx";
+import { useToast } from "../ToastProvider.jsx";
+import EmptyState from "../EmptyState.jsx";
+import { useDismiss } from "../../lib/useDismiss.js";
 import { kindIcon, kindLabel, kindClass } from "../../lib/sessionkind.js";
 import { displayName, stateInfo } from "../../lib/sessionview.js";
 import { agentOf } from "../../agents/registry.ts";
@@ -33,6 +37,8 @@ const notify = (title: string, body: string) => {
 export default function SessionsSection() {
   const { sessions, bumpSessions, bumpRepos, bumpFiles, revealInFiles, showTerminal, showTerminalSplit, showChat, showChatSplit, session, newSessionTick, wsState, layout, setActivePane } = useApp();
   const running = wsState === "running"; // WS down → attach/resume/create are inert
+  const askConfirm = useConfirm();
+  const toast = useToast();
   const [showModal, setShowModal] = useState(false);
   const { hover, setHover } = usePaneHover();
 
@@ -62,7 +68,7 @@ export default function SessionsSection() {
   const archive = async (s: Session) => {
     const res = await raw(`api/sessions/${encodeURIComponent(s.name)}/archive`, { method: "POST" });
     if (!res.ok) {
-      alert("アーカイブに失敗しました");
+      toast("アーカイブに失敗しました");
       return;
     }
     bumpSessions();
@@ -79,7 +85,17 @@ export default function SessionsSection() {
     const parts = [];
     if (keepable.length) parts.push(`${keepable.length} 件をアーカイブ`);
     if (ephemeral.length) parts.push(`shell/ssm ${ephemeral.length} 件を削除`);
-    if (!confirm(`停止中のセッションを整理します（${parts.join("・")}）。よろしいですか？`)) return;
+    if (
+      !(await askConfirm({
+        title: "停止中のセッションを整理",
+        body: `${parts.join("・")}します。`,
+        confirmLabel: "整理する",
+        // ephemeral (shell/ssm) are deleted outright → irreversible; agent sessions
+        // are only archived (restorable), so a keep-only clear isn't destructive.
+        danger: ephemeral.length > 0,
+      }))
+    )
+      return;
     await Promise.all([
       ...keepable.map((s) => raw(`api/sessions/${encodeURIComponent(s.name)}/archive`, { method: "POST" }).catch(() => {})),
       ...ephemeral.map((s) => raw(`api/sessions/${encodeURIComponent(s.name)}/stop`, { method: "POST" }).catch(() => {})),
@@ -92,9 +108,18 @@ export default function SessionsSection() {
   // hides it; ≠ recreate, which discards the conversation). The button counterpart
   // of quitting in the terminal. Frees a concurrency quota slot.
   const halt = async (name: string) => {
+    if (
+      !(await askConfirm({
+        title: "セッションを停止",
+        body: `"${name}" を停止します。会話は保持され、あとで再開できます。`,
+        confirmLabel: "停止する",
+        danger: false, // resumable — a caution, not a destructive action
+      }))
+    )
+      return;
     const res = await raw(`api/sessions/${encodeURIComponent(name)}/halt`, { method: "POST" });
     if (!res.ok) {
-      alert("停止に失敗しました");
+      toast("停止に失敗しました");
       return;
     }
     bumpSessions();
@@ -107,7 +132,21 @@ export default function SessionsSection() {
   // a genuine failure (e.g. the working dir is gone) is visible instead of being
   // masked as a generic message and leaving the row "stopped".
   const recreate = async (name: string) => {
-    if (!confirm(`セッション "${name}" の会話を破棄して新規に開始しますか？\n（元の会話は復元できません）`)) return;
+    if (
+      !(await askConfirm({
+        title: "会話を破棄して作り直す",
+        body: (
+          <>
+            "{name}" を新規に開始します。
+            <br />
+            <strong>現在の会話は復元できません。</strong>
+          </>
+        ),
+        confirmLabel: "破棄して作り直す",
+        danger: true,
+      }))
+    )
+      return;
     const res = await raw(`api/sessions/${encodeURIComponent(name)}/recreate`, { method: "POST" });
     if (!res.ok) {
       let msg = "作り直しに失敗しました";
@@ -115,7 +154,7 @@ export default function SessionsSection() {
         const j = await res.json();
         if (j?.error?.message) msg += "：" + j.error.message;
       } catch {}
-      alert(msg);
+      toast(msg);
       bumpSessions();
       return;
     }
@@ -162,46 +201,53 @@ export default function SessionsSection() {
   // dropdowns' document-level close listeners, so opening a REPOS 起動 menu
   // wouldn't close this one — both would stay open, both .pane-section would
   // lift to z-index:10, and the later REPOS section would paint over this menu.
-  useEffect(() => {
-    if (!menuFor) return;
-    const close = (e: MouseEvent) => { if (!menuRef.current?.contains(e.target as Node)) setMenuFor(null); };
-    document.addEventListener("mousedown", close);
-    return () => document.removeEventListener("mousedown", close);
-  }, [menuFor]);
+  useDismiss(menuRef, !!menuFor, () => setMenuFor(null));
 
   // The attached session is shown selected (highlighted) in place — no reordering,
   // so the rows keep their backend order and don't jump around as state changes.
 
   return (
     <Section
+      id="sessions"
       title="Sessions"
       icon="terminal"
+      count={sessions.length}
       actions={
         <>
           <button
-            className="ghost"
+            className="ghost lblbtn"
             title="停止中をまとめてアーカイブ（shell/ssm は削除）"
             disabled={!sessions.some((s) => !s.alive)}
             onClick={clearStopped}
           >
             <Icon name="clear-all" />
+            <span className="lbl">整理</span>
           </button>
-          <button className="ghost" title="アーカイブを開く（復帰）" onClick={() => setShowArchived(true)}>
+          <button className="ghost lblbtn" title="アーカイブを開く（復帰）" onClick={() => setShowArchived(true)}>
             <Icon name="archive" />
+            <span className="lbl">アーカイブ</span>
           </button>
           <button
-            className="ghost"
+            className="ghost lblbtn"
             title={running ? "新規セッション" : "新規セッション（ワークスペース停止中）"}
             disabled={!running}
             onClick={() => setShowModal(true)}
           >
             <Icon name="add" />
+            <span className="lbl">新規</span>
           </button>
         </>
       }
     >
       <ul className="list">
-        {sessions.length === 0 && <li className="muted">セッションなし</li>}
+        {sessions.length === 0 && (
+          <EmptyState
+            icon="comment-discussion"
+            message="セッションがありません"
+            hint="エージェントを起動するとここに並びます"
+            action={running ? { label: "新規セッション", icon: "add", onClick: () => setShowModal(true) } : undefined}
+          />
+        )}
         {sessions.map((s) => {
           const dead = !s.alive && s.resumable === false; // dir gone → can't resume
           const selected = session === s.name; // active pane's session → highlighted in place

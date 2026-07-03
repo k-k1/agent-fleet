@@ -1,4 +1,5 @@
 import { fmtTok } from "../lib/fmttok.js";
+import Icon from "./Icon.jsx";
 
 // contextWindow returns the model's context length. The current Claude family
 // (Opus 4.6/4.7/4.8, Sonnet 4.6, Fable/Mythos 5) is 1M-native — 1M is the default
@@ -27,18 +28,22 @@ export default function ContextBar({ read, create, fresh, model }: ContextBarPro
   const window = contextWindow(model, used);
   const pct = Math.min(100, (used / window) * 100);
   const w = (n: number) => (n / window) * 100 + "%";
+  // As the window fills, claude auto-compacts near the top — surface that the strip
+  // is approaching that zone instead of a full bar looking the same as an empty one.
+  const level = pct >= 93 ? "full" : pct >= 80 ? "near" : "";
   const title =
     `文脈 ${used.toLocaleString()} / ${window.toLocaleString()} トークン (${pct.toFixed(0)}%)\n` +
-    `キャッシュ再利用 ${read.toLocaleString()} · 新規キャッシュ ${create.toLocaleString()} · 未キャッシュ ${fresh.toLocaleString()}`;
+    `キャッシュ再利用 ${read.toLocaleString()} · 新規キャッシュ ${create.toLocaleString()} · 未キャッシュ ${fresh.toLocaleString()}` +
+    (level ? "\nまもなく自動圧縮される可能性があります" : "");
   return (
-    <div className="mirror-ctxbar" title={title}>
+    <div className={"mirror-ctxbar" + (level ? " cb-" + level : "")} title={title}>
       <div className="cb-track">
         <div className="cb-seg cb-read" style={{ width: w(read) }} />
         <div className="cb-seg cb-create" style={{ width: w(create) }} />
         <div className="cb-seg cb-fresh" style={{ width: w(fresh) }} />
       </div>
-      <span className="cb-label muted">
-        コンテキスト {fmtTok(used)} / {fmtTok(window)}・{pct.toFixed(0)}%
+      <span className="cb-label">
+        {level && <Icon name="warning" />} コンテキスト {fmtTok(used)} / {fmtTok(window)}・{pct.toFixed(0)}%
       </span>
     </div>
   );

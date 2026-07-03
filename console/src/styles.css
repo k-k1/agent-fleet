@@ -364,8 +364,13 @@ textarea:focus {
 /* Single Start/Stop toggle: fixed width so it doesn't shift the bar as the label
    flips, color-coded by which action it offers (green = Start, amber = Stop). */
 .ws-toggle {
-  min-width: 64px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   font-variant-numeric: tabular-nums;
+}
+.ws-toggle .codicon {
+  font-size: 12px;
 }
 .ws-toggle.start:not(:disabled) {
   color: var(--ok);
@@ -559,6 +564,77 @@ button.wu-reload {
 
 /* port preview popover: one button on the bar, a small panel on click — so it
    never wraps to a second line on a phone. */
+/* Close-all: icon + label so the affordance reads; label hides on a phone to keep
+   the tight left cluster compact (the title still names it). */
+.ws-closeall {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+@media (max-width: 760px) {
+  .ws-closeall .lbl {
+    display: none;
+  }
+}
+
+/* Resource chip: a compact summary that opens the trend tiles in a popover, so the
+   bar isn't a row of sparklines. */
+.ws-res {
+  position: relative;
+}
+.ws-res-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.ws-res-btn .codicon {
+  font-size: 12px;
+}
+.ws-res-sum {
+  color: var(--muted);
+}
+.ws-res-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  min-width: 220px;
+  padding: 12px;
+  background: var(--panel2, var(--panel));
+  border: 1px solid var(--border2, var(--border));
+  border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+}
+/* Align the tiles as columns (label | trend | value) so the sparklines line up.
+   The old width:100% + space-between let each fixed-width sparkline float to a
+   different x depending on the label/value widths — visibly misaligned. */
+.ws-res-pop .ws-graph {
+  display: grid;
+  grid-template-columns: 34px 1fr auto;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  font-size: 11.5px;
+}
+.ws-res-pop .spark {
+  width: 100%; /* stretch the trend to fill its column (all rows same length) */
+}
+.ws-res-pop .ws-graph-v {
+  justify-self: end;
+}
+/* group divider becomes a horizontal rule inside the vertical popover */
+.ws-res-pop .ws-graph-sep {
+  width: auto;
+  height: 1px;
+  align-self: stretch;
+  margin: 1px 0;
+}
 .ws-preview {
   position: relative;
 }
@@ -597,6 +673,21 @@ button.wu-reload {
   font-size: 11px;
   color: var(--muted);
   line-height: 1.5;
+}
+/* The preview popover now holds two sections — a known app (opencode web) and the
+   free-form port — separated by a little space + a hairline. */
+.pv-section + .pv-section {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border2);
+}
+/* opencode web quick-open row: full-width, label left / ↗ right. */
+.pv-app {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
 }
 
 /* Mobile: resource chips + opencode web + port preview fold into one ⋯ popover. */
@@ -691,6 +782,17 @@ button.wu-reload {
   align-items: center;
   gap: 5px;
   padding: 2px;
+  /* Let the title area shrink (and the label ellipsis as a last resort) so the
+     header never overflows the fixed-width rail; the actions stay intact. */
+  min-width: 0;
+  flex: 0 1 auto;
+  overflow: hidden;
+}
+.pane-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
 }
 .pane-toggle .pane-ic {
   font-size: 13px;
@@ -707,9 +809,38 @@ button.wu-reload {
   width: 10px;
   color: var(--muted);
 }
+/* A muted tally beside the section title — a glance at how many rows a section
+   holds, and the only contents signal while it's collapsed. */
+.pane-count {
+  flex: none;
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--muted) 16%, transparent);
+  border-radius: 9px;
+  padding: 0 6px;
+  min-width: 18px;
+  text-align: center;
+}
 .pane-actions {
   display: flex;
   gap: 2px;
+  flex: none; /* keep the action buttons intact; the title shrinks instead */
+}
+/* Labeled section-header action: icon + short word, so the affordance reads
+   without hovering for its title. Kept compact to fit the 300px rail. */
+.pane-actions .lblbtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  padding: 2px 7px;
+  white-space: nowrap;
+}
+.pane-actions .lblbtn .codicon {
+  font-size: 12px;
 }
 .pane-body {
   padding: 4px 8px 10px;
@@ -725,11 +856,66 @@ button.wu-reload {
   align-items: center;
   gap: 6px;
   padding: 4px 2px;
-  border-bottom: 1px solid var(--border2);
 }
+/* No per-row divider lines within a list: rows are separated by whitespace and a
+   rounded hover/active pill (matching the agreed IA mock, and the already-
+   borderless Files tree). The section boundaries (.pane-section border) carry the
+   only horizontal rules, so hierarchy reads as "sections split, rows don't". */
 .list > li.muted {
-  border: none;
   padding: 6px 2px;
+}
+
+/* Shared empty / loading placeholder (Sessions / Repos / Files / Source Control).
+   Drops into a list as an <li> with no row border — a centered icon, a message with
+   an optional hint, and an optional call-to-action. */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  text-align: center;
+  padding: 20px 14px;
+  color: var(--muted);
+}
+/* Higher specificity than `.list > li` / `.changes > li` so those rows' border,
+   padding and centering don't override the placeholder inside a list. */
+.list > li.empty-state,
+.changes > li.empty-state {
+  border: none;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  padding: 20px 14px;
+}
+.empty-state .empty-ic {
+  font-size: 22px;
+  color: var(--faint, var(--muted));
+  opacity: 0.7;
+}
+.empty-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.empty-msg {
+  font-size: 13px;
+  color: var(--fg);
+}
+.empty-hint {
+  font-size: 11.5px;
+  color: var(--muted);
+  max-width: 30ch;
+}
+.empty-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 3px;
+  font-size: 12px;
+  padding: 4px 12px;
+}
+.empty-cta .codicon {
+  font-size: 13px;
 }
 
 /* The attached session and its repo are shown selected (highlighted) in place — no
@@ -737,6 +923,20 @@ button.wu-reload {
 .session-row.active,
 .repo-row.active {
   background: var(--active-bg);
+  border-radius: 4px;
+}
+/* Unified "this is the open/active row" mark across the three left-pane lists: a
+   left accent bar on the tinted row (from the agreed IA mock), so a session, a
+   repo, and the open file all read the same. Sessions carry it on the inner button
+   (which paints the active tint over the ordinal gutter); repos and the open file
+   carry it on the row itself. */
+.repo-row.active {
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+/* Repos were the only list without a row hover — sessions (via .session-btn) and
+   Files (.fsrow) already highlight. Give repo rows the same subtle hover. */
+.repo-row:hover:not(.active) {
+  background: var(--btn);
   border-radius: 4px;
 }
 .kind-tag {
@@ -1048,20 +1248,37 @@ button.wu-reload {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* Session status: a pill chip (icon + label) — colored text on a faint tint + a
+   border derived from the same color — so 入力待ち / 進行中 / 質問あり / 停止中 read as
+   distinct badges (the IA mock's run/idle/stop chips) instead of bare colored text.
+   color-mix keeps the tint/border theme-adaptive. Shared with the terminal header. */
 .session-state {
   margin-left: auto;
   flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
   font-size: 10px;
+  padding: 1px 7px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  white-space: nowrap;
 }
 .session-state.on {
   color: var(--ok);
+  background: color-mix(in srgb, var(--ok) 12%, transparent);
+  border-color: color-mix(in srgb, var(--ok) 38%, transparent);
 }
+/* Stopped: a quiet, un-tinted chip (the mock's faint "stop") — a halted session is
+   resumable, not an alert, so it shouldn't shout in warn orange like before. */
 .session-state.off {
-  color: var(--warn);
+  color: var(--muted);
+  border-color: var(--border2);
 }
 /* dir-gone, can't be resumed: muted + struck-through, click disabled */
 .session-state.dead {
   color: var(--muted);
+  border-color: var(--border2);
 }
 .session-row.dead .session-display {
   color: var(--muted);
@@ -1072,15 +1289,27 @@ button.wu-reload {
 }
 .session-state.working {
   color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
   animation: af-pulse 1.4s ease-in-out infinite;
 }
 /* idle by hook, but a run_in_background task is still running — a calmer teal than
    the accent "working", since the session isn't awaiting a reply from claude. */
 .session-state.bg {
   color: #17a2a2;
+  background: color-mix(in srgb, #17a2a2 12%, transparent);
+  border-color: color-mix(in srgb, #17a2a2 38%, transparent);
+}
+/* Light theme: the mid teal dips below AA as small text on white — darken it
+   (same value as the shell kind's light text). The map dot is a filled shape, not
+   text, so it keeps the brighter teal. */
+[data-theme="light"] .session-state.bg {
+  color: #15828a;
 }
 .session-state.question {
   color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 14%, transparent);
+  border-color: color-mix(in srgb, var(--warn) 40%, transparent);
   font-weight: 600;
 }
 @keyframes af-pulse {
@@ -1100,6 +1329,7 @@ button.wu-reload {
 }
 .session-row.active > .session-btn {
   background: var(--active-bg);
+  box-shadow: inset 2px 0 0 var(--accent);
 }
 /* WS stopped: sessions can't be attached/resumed — grey the row and make the
    attach target inert (the ⋯ menu stays usable for archive). */
@@ -1115,7 +1345,7 @@ button.wu-reload {
   flex-direction: column;
   align-items: stretch;
   gap: 5px;
-  padding: 7px 2px;
+  padding: 6px 2px; /* match the session button's vertical rhythm */
 }
 .repo-info {
   display: flex;
@@ -1129,14 +1359,31 @@ button.wu-reload {
   margin-right: 4px;
   font-style: normal;
 }
-.repo-row .dot {
-  font-size: 10px;
+/* Repo working-tree status — same "icon + colored label" language as the session
+   state chip (no bare ● / ↑↓ glyphs). Only shown when there's something to report;
+   a clean, in-sync repo carries no marker. */
+.repo-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  font-size: 10.5px;
 }
-.repo-row .dot.dirty {
+.repo-state-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  white-space: nowrap;
+}
+.repo-state-chip .codicon {
+  font-size: 8px;
+}
+.repo-state-chip.dirty {
   color: var(--warn);
 }
-.repo-row .dot.clean {
-  color: var(--ok);
+.repo-state-chip.ab {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
 }
 .repo-row .branch,
 .view-head .branch {
@@ -1325,6 +1572,11 @@ button.wu-reload {
   color: var(--accent);
   font-weight: 600;
 }
+/* The currently-open file gets the same left accent bar as an active session /
+   repo, so "the open one" reads consistently across all three lists. */
+.fsrow:has(.fs-file.active) {
+  box-shadow: inset 2px 0 0 var(--accent);
+}
 /* drag-and-drop upload targets: highlight the hovered folder (or whole tree). */
 .fstree.drop-root {
   outline: 2px dashed var(--accent);
@@ -1352,22 +1604,52 @@ button.wu-reload {
 .changeslist .chg-row {
   padding-left: 6px;
 }
+/* Change-status pill in the Files "変更" view — a short word (変更/追加/削除/未追跡/改名)
+   instead of a bare git letter, colored + outlined per status. */
 .chg-badge {
   display: inline-block;
-  width: 1.2em;
-  text-align: center;
-  margin-right: 4px;
-  font-weight: 700;
-  font-size: 11px;
+  flex: none;
+  margin-right: 6px;
+  font-weight: 600;
+  font-size: 10px;
+  line-height: 1.5;
+  padding: 0 6px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  white-space: nowrap;
 }
 .chg-badge.st-add {
   color: #2ea043;
+  border-color: rgba(46, 160, 67, 0.4);
+  background: rgba(46, 160, 67, 0.12);
 }
 .chg-badge.st-mod {
   color: #1f6feb;
+  border-color: rgba(31, 111, 235, 0.4);
+  background: rgba(31, 111, 235, 0.12);
 }
 .chg-badge.st-del {
   color: #f85149;
+  border-color: rgba(248, 81, 73, 0.4);
+  background: rgba(248, 81, 73, 0.12);
+}
+/* Light theme: the dark-tuned GitHub badge colors fall below AA as small bold text
+   on their pale fills — swap in GitHub Light's darker on-colors and a touch more
+   fill so 変更/追加/削除 stay legible on white. */
+[data-theme="light"] .chg-badge.st-add {
+  color: #1a7f37;
+  border-color: rgba(26, 127, 55, 0.4);
+  background: rgba(26, 127, 55, 0.1);
+}
+[data-theme="light"] .chg-badge.st-mod {
+  color: #0969da;
+  border-color: rgba(9, 105, 218, 0.4);
+  background: rgba(9, 105, 218, 0.1);
+}
+[data-theme="light"] .chg-badge.st-del {
+  color: #cf222e;
+  border-color: rgba(207, 34, 46, 0.4);
+  background: rgba(207, 34, 46, 0.1);
 }
 
 /* right-click context menu for file operations (positioned at the cursor). */
@@ -1577,6 +1859,18 @@ button.wu-reload {
   background: var(--active-bg);
   color: var(--fg);
 }
+/* Labeled tree/changes toggle: icon + short word so the two modes read without
+   hovering (the bare list-tree vs git-compare glyphs were the least legible). */
+.files-view .seg-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+.files-view .seg-btn .codicon {
+  font-size: 12px;
+}
 /* The ＋ (new / upload) menu sits near the right edge of the narrow pane — open it
    leftward so it doesn't overflow. */
 .files-ops .launch-menu {
@@ -1710,7 +2004,37 @@ button.wu-reload {
   right: 8px;
   z-index: 6;
   display: flex;
-  gap: 3px;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  /* Reads as loose floating icons at rest; on pane hover/active a faint backing +
+     border pulls the split/wrap/close actions into one recognizable cluster. */
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease;
+}
+.pane:hover > .pane-controls,
+.pane.active > .pane-controls {
+  background: color-mix(in srgb, var(--panel) 82%, transparent);
+  border-color: var(--border);
+}
+/* Close is the odd one out (it removes the pane, the splits/wrap reshape it), so
+   set it apart from the layout group with a hairline divider. Only when something
+   precedes it — a lone close button needs no separator. */
+.pane-controls .pane-close:not(:first-child) {
+  margin-left: 5px;
+  position: relative;
+}
+.pane-controls .pane-close:not(:first-child)::before {
+  content: "";
+  position: absolute;
+  left: -3px;
+  top: 3px;
+  bottom: 3px;
+  width: 1px;
+  background: var(--border);
 }
 .pane-btn {
   padding: 2px 5px;
@@ -1939,7 +2263,32 @@ body.row-resizing {
 }
 .cb-label {
   flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted);
   font-variant-numeric: tabular-nums;
+}
+.cb-label .codicon {
+  font-size: 12px;
+}
+/* Approaching the auto-compaction zone: warn, then danger near the very top. The
+   growing uncached (fresh) segment and the label carry the color; a faint ring on
+   the track makes the fill itself read as "getting full". */
+.cb-near .cb-fresh {
+  background: var(--warn);
+}
+.cb-near .cb-label {
+  color: var(--warn);
+}
+.cb-full .cb-fresh {
+  background: var(--del);
+}
+.cb-full .cb-label {
+  color: var(--del);
+}
+.cb-full .cb-track {
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--del) 55%, transparent);
 }
 /* Context strip: shown above a turn only when the git branch / working dir changes,
    marking the switch once instead of repeating it on every turn. */
@@ -2698,13 +3047,31 @@ button.mt-toolrun-head:hover {
 .scmview > .view-head {
   padding-right: 112px;
 }
+/* Non-terminal pane headers lead with an accent icon + a foreground name, so a
+   Source Control / File / Doc / Diff pane all read the same way (the terminal keeps
+   its richer agent kind badge). The name itself is foreground — accent-colored
+   heading TEXT was the odd one out. */
 .view-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--fg);
+  font-weight: 600;
+}
+.view-title .codicon {
   color: var(--accent);
 }
 .view-title.mono {
   font-family: var(--mono);
   font-size: 12px;
+  font-weight: normal;
   color: var(--fg);
+}
+/* Match SCM's accent leading icon on the doc/diff headers (whose leading icon is a
+   plain codicon, unlike File's own colored type icon). */
+.docview .view-head .fi-name .codicon,
+.diffview .view-head .fi-name .codicon {
+  color: var(--accent);
 }
 /* terminal pane header rendered like a left-pane Sessions row: kind badge +
    display name + session id, with the status chip pushed to the right. */
@@ -2844,7 +3211,8 @@ button.mt-toolrun-head:hover {
 }
 .onboard-step.next {
   border-color: var(--accent);
-  background: rgba(120, 170, 255, 0.1);
+  /* theme-derived accent tint (was a hardcoded blue that ignored the theme/accent) */
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
 .onboard-mark {
   flex-shrink: 0;
@@ -2877,12 +3245,15 @@ button.mt-toolrun-head:hover {
 }
 .onboard-cta {
   flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   padding: 6px 12px;
   min-height: 34px;
 }
 .onboard-cta.primary {
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent); /* was hardcoded #fff — use the accent's contrast token */
   border-color: var(--accent);
 }
 .onboard-foot {
@@ -3814,6 +4185,245 @@ button.mt-toolrun-head:hover {
 .conn-cat:first-child {
   margin-top: 0;
 }
+
+/* ── Connection provider cards (設定 > 接続). Each provider is a card: a colored
+   2-char badge + name + status pill, then a description and its connect/flow UI.
+   Unifies what was a flat .conn-row per provider. Mock: console-connections-mock.html.
+   Badge colors match the session kind badges (codex green / opencode purple) rather
+   than the mock's swap, so a provider reads the same color across the app. */
+.p-card {
+  border: 1px solid var(--border2);
+  border-radius: 10px;
+  background: var(--panel2, var(--panel));
+  overflow: hidden;
+  margin-bottom: 8px;
+}
+.p-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 13px;
+}
+.p-badge {
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  color: #0c0c0c;
+}
+.p-badge.pb-claude { background: #e0a45e; }
+.p-badge.pb-codex { background: #4ec97a; }
+.p-badge.pb-opencode { background: #b07cf2; }
+.p-badge.pb-github { background: #c9d1d9; }
+.p-badge.pb-bitbucket { background: #4a90e2; }
+.p-name {
+  font-weight: 600;
+  font-size: 14px;
+}
+.p-status {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-family: var(--mono);
+  padding: 2px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--border2);
+  color: var(--muted);
+  white-space: nowrap;
+}
+.p-status.on {
+  color: var(--ok);
+  border-color: color-mix(in srgb, var(--ok) 45%, transparent);
+  background: color-mix(in srgb, var(--ok) 12%, transparent);
+}
+.p-status .p-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ok);
+}
+.p-desc {
+  padding: 0 13px 11px;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+.p-body {
+  padding: 12px 13px;
+  border-top: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg) 40%, var(--panel2));
+}
+/* stack body children (hint / key list / flow / steps) with breathing room */
+.p-body > * + * {
+  margin-top: 10px;
+}
+.p-who {
+  padding: 2px 13px 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.p-who .p-em {
+  font-size: 13px;
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.p-who .p-pl {
+  font-size: 11px;
+  color: var(--muted);
+  font-family: var(--mono);
+  flex: none;
+}
+.p-who .conn-disconnect {
+  margin-left: auto;
+}
+/* connect-method options (Codex): recommended vs alternative */
+.p-opts {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.p-opt {
+  flex: 1;
+  min-width: 150px;
+  text-align: left;
+  border: 1px solid var(--border2);
+  border-radius: 8px;
+  padding: 9px 11px;
+  background: var(--panel2, var(--panel));
+  color: var(--fg);
+  cursor: pointer;
+}
+.p-opt:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+.p-opt-t {
+  font-size: 12.5px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.p-opt-s {
+  display: block;
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 3px;
+}
+.p-rec {
+  font-size: 9.5px;
+  font-family: var(--mono);
+  color: var(--ok);
+  border: 1px solid color-mix(in srgb, var(--ok) 45%, transparent);
+  background: color-mix(in srgb, var(--ok) 12%, transparent);
+  border-radius: 999px;
+  padding: 0 6px;
+  letter-spacing: 0.04em;
+}
+/* numbered device-flow steps (copy code → open link → wait for approval) */
+.p-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+}
+.p-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+}
+.p-step-k {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--panel2, var(--panel));
+  border: 1px solid var(--border2);
+  font-family: var(--mono);
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent);
+  margin-top: 1px;
+}
+.p-step-c {
+  flex: 1;
+  min-width: 0;
+}
+.p-step-lbl {
+  font-size: 12.5px;
+  margin-bottom: 5px;
+}
+.p-waiting {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--warn);
+  font-size: 12.5px;
+}
+/* unified hint block (replaces per-provider .field-help / inline notes) */
+.p-hint {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  font-size: 12px;
+  color: var(--muted);
+  border-left: 2px solid var(--border2);
+  padding: 2px 0 2px 10px;
+}
+.p-hint-i {
+  color: var(--accent);
+  font-family: var(--mono);
+  margin-top: 1px;
+}
+/* Per-agent settings group inside a provider card (エージェントタブ): the connection
+   card's behavior toggles (Remote Control / 通知 / RTK / Web UI), shown once the
+   agent is connected. */
+.p-settings {
+  border-top: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg) 40%, var(--panel2));
+  padding: 8px 13px 11px;
+}
+.ps-title {
+  font-size: 10.5px;
+  font-family: var(--mono);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--faint, var(--muted));
+  margin: 4px 0 6px;
+}
+.ps-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 30px;
+}
+.ps-label {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  color: var(--fg);
+}
+.ps-label .sub {
+  display: block;
+  font-size: 11px;
+  color: var(--muted);
+}
+.ps-note {
+  font-size: 11px;
+  color: var(--muted);
+  margin: 2px 0 6px;
+  line-height: 1.45;
+}
 .conn-row {
   display: flex;
   align-items: center;
@@ -3967,6 +4577,125 @@ button.mt-toolrun-head:hover {
 .ssm-form-grid .cinput {
   min-width: 0;
   width: 100%;
+}
+/* Labeled, grouped SSM add-form (mock: console-ssm-mock.html): each field carries a
+   label, a required * marker, and a hint; grouped into 必須 / 詳細(任意). */
+.ssm-frm {
+  display: flex;
+  flex-direction: column;
+  gap: 13px;
+  margin-top: 10px;
+}
+.ssm-fgroup {
+  border: 1px solid var(--border2);
+  border-radius: 9px;
+  background: var(--panel2);
+  padding: 13px;
+}
+.ssm-fg-title {
+  font-size: 11px;
+  font-family: var(--mono);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin: 0 0 11px;
+}
+.ssm-fg-title .opt {
+  color: var(--faint, var(--muted));
+  text-transform: none;
+  letter-spacing: 0;
+  font-family: var(--sans);
+  font-size: 11px;
+}
+.ssm-fgrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+@media (max-width: 560px) {
+  .ssm-fgrid {
+    grid-template-columns: 1fr;
+  }
+}
+.ssm-fld {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+.ssm-fld.wide {
+  grid-column: 1 / -1;
+}
+.ssm-fld label {
+  font-size: 11.5px;
+  color: var(--fg);
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.ssm-fld label .req {
+  color: var(--accent);
+  font-family: var(--mono);
+}
+.ssm-fld .cinput {
+  width: 100%;
+  min-width: 0;
+}
+.ssm-fld .hint {
+  font-size: 11px;
+  color: var(--faint, var(--muted));
+  line-height: 1.45;
+}
+.ssm-fld .hint code {
+  font-family: var(--mono);
+  color: var(--muted);
+}
+.ssm-frm-foot {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.ssm-frm-foot .req-note {
+  font-size: 11px;
+  color: var(--faint, var(--muted));
+}
+.ssm-frm-foot .req-note b {
+  color: var(--accent);
+  font-family: var(--mono);
+}
+/* dependency banner: host add needs a profile first — a CTA, not a disabled form. */
+.ssm-dep {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid color-mix(in srgb, var(--warn) 40%, var(--border2));
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-top: 10px;
+}
+.ssm-dep .i {
+  color: var(--warn);
+  flex: none;
+  display: inline-flex;
+}
+.ssm-dep .t {
+  flex: 1;
+  font-size: 12.5px;
+  color: var(--fg);
+}
+/* item delete: a labeled danger button instead of a bare ✕ */
+.ssm-del {
+  font-size: 11.5px;
+  padding: 2px 9px;
+}
+/* collapsed add affordance — the labeled add-form only expands on demand */
+.ssm-add-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+  font-size: 12.5px;
 }
 .ssm-check {
   display: flex;
@@ -4571,6 +5300,7 @@ button.mt-toolrun-head:hover {
   margin-top: 10px;
   font-size: 11px;
   line-height: 1.5;
+  color: var(--muted); /* match .field-help / .ds-hint (was inherited fg) */
 }
 
 /* Admin surface on a phone: full-bleed, single column, stacked forms, and a big
@@ -4877,7 +5607,9 @@ button.mt-toolrun-head:hover {
   gap: 6px;
   margin: 0 0 10px;
   font-size: 12px;
-  color: #f3b6b6;
+  /* Use the app's danger token (was a hardcoded pale pink that vanished on light
+     theme and didn't match the confirm/toast danger language). */
+  color: var(--del);
 }
 .danger-zone-row {
   display: flex;
@@ -4945,6 +5677,101 @@ button.mt-toolrun-head:hover {
   margin-top: 16px;
 }
 
+/* ---- toast notifications (non-blocking replacement for window.alert) ---- */
+.toast-stack {
+  position: fixed;
+  left: 50%;
+  bottom: 20px;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(460px, calc(100vw - 24px));
+  /* Above modals (z-index 50) so a failure raised from within a dialog is seen. */
+  z-index: 200;
+  pointer-events: none;
+}
+.toast {
+  pointer-events: auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--panel);
+  border: 1px solid var(--border2);
+  /* A left stripe carries the severity color so kind reads at a glance. */
+  border-left: 3px solid var(--muted);
+  box-shadow: 0 8px 26px rgba(0, 0, 0, 0.45);
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--fg);
+}
+.toast-ic {
+  font-size: 15px;
+  margin-top: 1px;
+  flex: none;
+}
+.toast-msg {
+  flex: 1;
+  min-width: 0;
+  word-break: break-word;
+}
+.toast-x {
+  flex: none;
+  background: none;
+  border: none;
+  color: var(--muted);
+  padding: 0 2px;
+  margin: -2px -4px 0 0;
+}
+.toast-x:hover:not(:disabled) {
+  background: none;
+  color: var(--fg);
+}
+.toast-error {
+  border-left-color: var(--del);
+}
+.toast-error .toast-ic {
+  color: var(--del);
+}
+.toast-warn {
+  border-left-color: var(--warn);
+}
+.toast-warn .toast-ic {
+  color: var(--warn);
+}
+.toast-success {
+  border-left-color: var(--ok);
+}
+.toast-success .toast-ic {
+  color: var(--ok);
+}
+.toast-info {
+  border-left-color: var(--accent);
+}
+.toast-info .toast-ic {
+  color: var(--accent);
+}
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.toast {
+  animation: toast-in 0.16s ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .toast {
+    animation: none;
+  }
+}
+
 /* ---- new session modal ---- */
 .session-modal {
   width: min(540px, 94vw);
@@ -4974,7 +5801,9 @@ button.mt-toolrun-head:hover {
 }
 .field-help {
   font-size: 11px;
-  color: var(--muted2);
+  /* One hint color across the settings tabs (was --muted2 here, --muted in
+     .ds-hint, inherited in .role-hint). */
+  color: var(--muted);
   margin-top: 6px;
 }
 .stack {
@@ -5013,6 +5842,51 @@ button.primary:hover:not(:disabled) {
 }
 .seg.big .seg-btn.active .seg-sub {
   color: #06384a;
+}
+/* Agent kind icon in the New Session picker — colored per kind (same palette as the
+   Sessions/pane kind badge) so each agent reads by color+icon, not just its word.
+   Data-driven: the class comes from the agent registry's cssClass. */
+.seg.big .seg-btn .seg-ic {
+  font-size: 16px;
+}
+.seg.big .seg-btn.kind-claude .seg-ic {
+  color: #e0a45e;
+}
+.seg.big .seg-btn.kind-codex .seg-ic {
+  color: #4ec97a;
+}
+.seg.big .seg-btn.kind-opencode .seg-ic {
+  color: #b07cf2;
+}
+.seg.big .seg-btn.kind-shell .seg-ic {
+  color: #46c9d0;
+}
+.seg.big .seg-btn.kind-ssm .seg-ic {
+  color: #e8913a;
+}
+/* Selected button is accent-filled, so the icon flips to the on-accent color for
+   contrast (this rule comes last so it wins over the per-kind colors above). */
+.seg.big .seg-btn.active .seg-ic {
+  color: var(--on-accent);
+}
+/* Light theme: the mid-tone kind colors wash out on white — reuse the darker text
+   the kind badge already uses for light. `:not(.active)` so the accent-filled
+   selected button still shows its white (--on-accent) icon (these overrides
+   outrank the .active rule by specificity, so they must exclude it themselves). */
+[data-theme="light"] .seg.big .seg-btn.kind-claude:not(.active) .seg-ic {
+  color: #a85f1c;
+}
+[data-theme="light"] .seg.big .seg-btn.kind-codex:not(.active) .seg-ic {
+  color: #18854a;
+}
+[data-theme="light"] .seg.big .seg-btn.kind-opencode:not(.active) .seg-ic {
+  color: #6d2fce;
+}
+[data-theme="light"] .seg.big .seg-btn.kind-shell:not(.active) .seg-ic {
+  color: #15828a;
+}
+[data-theme="light"] .seg.big .seg-btn.kind-ssm:not(.active) .seg-ic {
+  color: #b5651d;
 }
 
 /* repo picker spacing inside the modal */
@@ -5168,6 +6042,15 @@ button.primary:hover:not(:disabled) {
     border: none;
     border-radius: 0;
   }
+  /* Only the large .modal shells go full-screen on a phone. A ConfirmDialog shares
+     the same .modal-backdrop, so the stretch above would blow its small card up to
+     full height — re-center the backdrop when it holds a .confirm so it stays a
+     compact card. */
+  .modal-backdrop:has(.confirm) {
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+  }
   /* Full-screen modal header sits at the very top edge: clear the status bar/notch
      and give the close button a finger-sized target so it's easy to tap. */
   .modal-head {
@@ -5277,17 +6160,35 @@ button.primary:hover:not(:disabled) {
 /* ---- Layout mini-map: a schematic of the current split (columns × rows) ---- */
 .layoutmap {
   flex: none; /* pinned above .leftpane-scroll — never grows or scrolls away */
+  /* A bordered card with a caption, so the pane minimap reads as a labeled widget
+     rather than a loose strip of cells. */
+  margin: 8px 8px 6px;
+  padding: 7px 8px 8px;
+  border: 1px solid var(--border2);
+  border-radius: 7px;
+  background: var(--leftpane-bg);
+}
+.lm-cap {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--faint, var(--muted));
+  margin-bottom: 6px;
+}
+.lm-cols {
   display: flex;
   gap: 3px;
-  padding: 6px 8px 8px;
-  border-bottom: 1px solid var(--border2);
-  background: var(--leftpane-bg);
 }
 /* The scrolling region below the pinned pane map: holds the three sections. */
 .leftpane-scroll {
   flex: 1;
   min-height: 0;
-  overflow: auto;
+  /* The rail is a fixed-width nav — only ever scroll vertically. Never let a row or
+     header that's a hair too wide (e.g. a long name, or the section count badge)
+     introduce a horizontal scrollbar. */
+  overflow-y: auto;
+  overflow-x: hidden;
   display: flex;
   flex-direction: column;
 }
@@ -5345,6 +6246,19 @@ button.primary:hover:not(:disabled) {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* Kind-tinted abbreviation (cc/oc/cx/sh) so the cell reads its agent at a glance —
+   the ordinal square already carries the ordinal color. Non-session panes (file/scm/
+   diff) keep the muted default. Values mirror the .kind-tag palette (+ light). */
+.lm-kind.kc-claude { color: #e0a45e; }
+.lm-kind.kc-codex { color: #4ec97a; }
+.lm-kind.kc-opencode { color: #b07cf2; }
+.lm-kind.kc-shell { color: #46c9d0; }
+.lm-kind.kc-ssm { color: #e8913a; }
+[data-theme="light"] .lm-kind.kc-claude { color: #a85f1c; }
+[data-theme="light"] .lm-kind.kc-codex { color: #18854a; }
+[data-theme="light"] .lm-kind.kc-opencode { color: #6d2fce; }
+[data-theme="light"] .lm-kind.kc-shell { color: #15828a; }
+[data-theme="light"] .lm-kind.kc-ssm { color: #b5651d; }
 .lm-dot {
   flex: none;
   width: 7px;

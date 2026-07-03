@@ -3,6 +3,8 @@ import type { ReactNode } from "react";
 import { api, getTenant, setTenant as persistTenant } from "./api.js";
 import { keepOnly as termKeepOnly, reconnectSession as termReconnectSession } from "./term.js";
 import { hydrateUIPrefs } from "./lib/settings.js";
+import { MOBILE_QUERY, mobileMatches } from "./lib/device.js";
+import { useToast } from "./components/ToastProvider.jsx";
 import type { Layout, Pane, Column } from "./types/layout.ts";
 import type { Session } from "./types/session.ts";
 import type { AppState, Whoami, Tenant, Ocweb, PanePatch, Reveal } from "./types/app.ts";
@@ -48,6 +50,7 @@ const initialLayout: Layout = {
 };
 
 export function AppProvider({ children }: { children: ReactNode }) {
+  const toast = useToast();
   const [whoami, setWhoami] = useState<Whoami | null>(null); // { email, user, ... }
   const [tenants, setTenants] = useState<Tenant[]>([]); // [{ slug, name, role }]
   const [tenant, setTenantState] = useState(getTenant());
@@ -199,7 +202,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
       // A phone shows only the first column (others are hidden), so a new right column
       // would be invisible — grow the active column downward (top/bottom), max 2.
-      const mobile = typeof window !== "undefined" && window.matchMedia("(max-width: 760px)").matches;
+      const mobile = mobileMatches();
       if (mobile) {
         const col = cur.cols.find((c) => c.panes.some((p) => p.id === cur.activeId)) || cur.cols[0];
         if (col && col.panes.length < 2) splitCol(col);
@@ -252,6 +255,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsSection, setSettingsSection] = useState("agents"); // initial tab when opened
   const [adminOpen, setAdminOpen] = useState(false);
 
   // navOpen drives the mobile navigator drawer. On desktop the drawer styles are
@@ -274,7 +278,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // preventDefault) so terminal/list scrolling is unaffected — a vertical drag
   // (dy ≥ dx) is ignored.
   useEffect(() => {
-    const mq = window.matchMedia("(max-width: 760px)");
+    const mq = window.matchMedia(MOBILE_QUERY);
     const DIST = 50; // px of horizontal travel to trigger
     let sx = 0, sy = 0, mode: "open" | "close" | null = null;
     const onStart = (e: TouchEvent) => {
@@ -430,6 +434,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [refreshWs, refreshOcweb, bumpSessions, bumpRepos, bumpFiles]);
 
   const stopWs = useCallback(async () => {
+    // Optimistic transition (mirrors startWs's "starting…") so the WsBar toggle goes
+    // inert (busy = state ends in "…") and the 4s auto-sync poll skips mid-stop —
+    // otherwise the button stays live during the multi-second docker stop and a
+    // second click re-issues the stop / a poll clobbers the state.
+    setWsState("stopping…");
     await api("api/workspace/stop", { method: "POST" });
     await refreshWs();
     setOcweb(null);
@@ -529,7 +538,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     resetToTerminal();
     setWsState("recreating…");
     const res = await api("api/workspace/recreate", { method: "POST" });
-    if (res && res.error) alert("作り直しに失敗: " + (res.error.message || res.error));
+    if (res && res.error) toast("作り直しに失敗: " + (res.error.message || res.error));
     await refreshWs();
     bumpSessions();
     bumpRepos();
@@ -921,7 +930,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
     showDiff,
     setPaneWrap,
     settingsOpen,
-    openSettings: () => setSettingsOpen(true),
+    settingsSection,
+    openSettings: (section?: string) => {
+      // "connections" is a legacy alias for the merged エージェント tab (the old 接続
+      // tab was folded into it), so any caller asking for connections lands there.
+      setSettingsSection(section === "connections" ? "agents" : section || "agents");
+      setSettingsOpen(true);
+    },
     closeSettings: () => setSettingsOpen(false),
     adminOpen,
     openAdmin: () => setAdminOpen(true),

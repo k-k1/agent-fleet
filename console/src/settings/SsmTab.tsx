@@ -1,6 +1,9 @@
-import { useCallback, useEffect, useState } from "react";
-import type { ChangeEvent, ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { ChangeEvent, ReactNode, RefObject } from "react";
 import { api, raw, rawJSON } from "../api.js";
+import Icon from "../components/Icon.jsx";
+import { useConfirm } from "../components/ConfirmProvider.jsx";
+import { useToast } from "../components/ToastProvider.jsx";
 
 // SsmTab manages the member's own AWS SSM login config (docs/history/p3-ssm-session.md)
 // in two tiers so the form isn't cluttered:
@@ -14,17 +17,17 @@ import { api, raw, rawJSON } from "../api.js";
 
 // postJSON POSTs/PUTs and surfaces failures loudly (a stale CP without the routes
 // returns 404 non-JSON, which would otherwise be swallowed). Returns true on success.
-async function postJSON(path: string, method: string, body: unknown): Promise<boolean> {
+async function postJSON(path: string, method: string, body: unknown, toast: (msg: string) => void): Promise<boolean> {
   let res;
   try {
     res = await rawJSON(path, method, body);
   } catch (e: any) {
-    alert("通信に失敗しました: " + (e?.message || e));
+    toast("通信に失敗しました: " + (e?.message || e));
     return false;
   }
   if (!res.ok) {
     const j = await res.json().catch(() => null);
-    alert(
+    toast(
       "保存に失敗: HTTP " +
         res.status +
         (j?.error?.message ? " — " + j.error.message : res.status === 404 ? "（/api/ssm 未提供。CP の再起動が必要かもしれません）" : ""),
@@ -45,9 +48,56 @@ function Meta({ k, v, mono = true, wide = false }: { k: ReactNode; v?: ReactNode
   );
 }
 
+// FieldGroup / Field build the labeled add-form: a bordered group holding fields that
+// each carry a label, an optional required * marker, and a hint (取得元・形式). Required
+// vs optional is conveyed per-field (the * marker + hint), so one group suffices — no
+// separate 必須 / 詳細 boxes. `title` is optional (omitted for the single merged group).
+function FieldGroup({ title, optional, children }: { title?: ReactNode; optional?: ReactNode; children: ReactNode }) {
+  return (
+    <div className="ssm-fgroup">
+      {title && (
+        <div className="ssm-fg-title">
+          {title}
+          {optional && <span className="opt"> {optional}</span>}
+        </div>
+      )}
+      <div className="ssm-fgrid">{children}</div>
+    </div>
+  );
+}
+
+function Field({
+  label,
+  req,
+  hint,
+  wide,
+  children,
+}: {
+  label: ReactNode;
+  req?: boolean;
+  hint?: ReactNode;
+  wide?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <div className={"ssm-fld" + (wide ? " wide" : "")}>
+      <label>
+        {label}
+        {req && <span className="req">*</span>}
+      </label>
+      {children}
+      {hint && <div className="hint">{hint}</div>}
+    </div>
+  );
+}
+
 export default function SsmTab() {
   const [profiles, setProfiles] = useState<any[] | null>(null);
   const [hosts, setHosts] = useState<any[] | null>(null);
+  const profileLabelRef = useRef<HTMLInputElement>(null);
+  // The profile add-form open state is lifted here so the host form's
+  // "プロファイルを追加" CTA can expand it (and scroll to it) when none exists yet.
+  const [profileOpen, setProfileOpen] = useState(false);
 
   const reload = useCallback(() => {
     api("api/ssm/profiles").then((d) => setProfiles(Array.isArray(d) ? d : [])).catch(() => setProfiles([]));
@@ -55,14 +105,25 @@ export default function SsmTab() {
   }, []);
   useEffect(reload, [reload]);
 
+  const focusProfile = () => {
+    setProfileOpen(true);
+    requestAnimationFrame(() => profileLabelRef.current?.scrollIntoView({ block: "center" }));
+  };
+
   return (
     <div className="ssm-tab">
       <p className="field-help">
         自社 AWS の EC2 に SSM Session Manager でログインするための設定です。ここには <b>AWS の秘密情報は保存しません</b>
         （短命の資格情報はセッション起動時に <code>aws sso login</code> でブラウザ認証し、ワークスペース内にのみ保持されます）。
       </p>
-      <ProfileSection profiles={profiles} reload={reload} />
-      <HostSection hosts={hosts} profiles={profiles} reload={reload} />
+      <ProfileSection
+        profiles={profiles}
+        reload={reload}
+        labelRef={profileLabelRef}
+        open={profileOpen}
+        setOpen={setProfileOpen}
+      />
+      <HostSection hosts={hosts} profiles={profiles} reload={reload} onNeedProfile={focusProfile} />
     </div>
   );
 }
@@ -73,13 +134,28 @@ const emptyProfile: Record<string, string> = { label: "", startUrl: "", ssoRegio
 
 type FieldEvent = ChangeEvent<HTMLInputElement | HTMLSelectElement>;
 
-function ProfileSection({ profiles, reload }: { profiles: any[] | null; reload: () => void }) {
+function ProfileSection({
+  profiles,
+  reload,
+  labelRef,
+  open,
+  setOpen,
+}: {
+  profiles: any[] | null;
+  reload: () => void;
+  labelRef: RefObject<HTMLInputElement | null>;
+  open: boolean;
+  setOpen: (v: boolean) => void;
+}) {
+  const askConfirm = useConfirm();
+  const toast = useToast();
   const [f, setF] = useState<Record<string, string>>(emptyProfile);
   const [busy, setBusy] = useState(false);
   const set = (k: string) => (e: FieldEvent) => setF((p) => ({ ...p, [k]: e.target.value }));
+  const valid = f.label.trim() && /^https:\/\//.test(f.startUrl.trim()) && f.ssoRegion.trim();
 
   const add = async () => {
-    if (!f.label.trim() || !/^https:\/\//.test(f.startUrl.trim()) || !f.ssoRegion.trim()) return;
+    if (!valid) return;
     setBusy(true);
     try {
       const ok = await postJSON("api/ssm/profiles", "POST", {
@@ -89,16 +165,23 @@ function ProfileSection({ profiles, reload }: { profiles: any[] | null; reload: 
         accountId: f.accountId.trim(),
         roleName: f.roleName.trim(),
         region: f.region.trim(),
-      });
+      }, toast);
       if (!ok) return;
       setF(emptyProfile);
+      setOpen(false);
       reload();
     } finally {
       setBusy(false);
     }
   };
   const remove = async (id: string) => {
-    if (!confirm("このプロファイルを削除しますか？（参照中のホストはログインできなくなります）")) return;
+    const ok = await askConfirm({
+      title: "プロファイルを削除",
+      body: "このプロファイルを削除します。参照中のホストはログインできなくなります。",
+      confirmLabel: "削除する",
+      danger: true,
+    });
+    if (!ok) return;
     await raw(`api/ssm/profiles/${encodeURIComponent(id)}`, { method: "DELETE" });
     reload();
   };
@@ -120,7 +203,9 @@ function ProfileSection({ profiles, reload }: { profiles: any[] | null; reload: 
             <li key={p.id} className="ssm-item">
               <div className="ssm-item-head">
                 <span className="ssm-alias">{p.label}</span>
-                <button className="icon danger" title="削除" onClick={() => remove(p.id)}>✕</button>
+                <button className="ghost danger ssm-del" title="削除" onClick={() => remove(p.id)}>
+                  削除
+                </button>
               </div>
               <div className="ssm-meta">
                 <Meta k="アカウント" v={p.accountId} />
@@ -133,20 +218,72 @@ function ProfileSection({ profiles, reload }: { profiles: any[] | null; reload: 
           ))}
         </ul>
       )}
-      <div className="ssm-form-grid">
-        <input className="cinput" placeholder="ラベル (例 my-profile)" value={f.label} onChange={set("label")} />
-        <input className="cinput" placeholder="start URL (https://xxx.awsapps.com/start)" value={f.startUrl} onChange={set("startUrl")} />
-        <input className="cinput" placeholder="SSO リージョン (例 ap-northeast-1)" value={f.ssoRegion} onChange={set("ssoRegion")} />
-        <input className="cinput" placeholder="既定リージョン（任意）" value={f.region} onChange={set("region")} />
-        <input className="cinput" placeholder="アカウント ID（任意）" value={f.accountId} onChange={set("accountId")} />
-        <input className="cinput" placeholder="ロール名（任意）" value={f.roleName} onChange={set("roleName")} />
-        <button
-          disabled={busy || !f.label.trim() || !/^https:\/\//.test(f.startUrl.trim()) || !f.ssoRegion.trim()}
-          onClick={add}
-        >
-          追加
+      {open ? (
+        <div className="ssm-frm">
+          <FieldGroup>
+            <Field label="ラベル" req hint="一覧・ホストの選択に出る表示名。">
+              <input
+                ref={labelRef}
+                className="cinput"
+                placeholder="my-profile"
+                value={f.label}
+                onChange={set("label")}
+                autoFocus
+              />
+            </Field>
+            <Field label="SSO リージョン" req hint="アクセスポータルのリージョン。">
+              <input className="cinput" placeholder="ap-northeast-1" value={f.ssoRegion} onChange={set("ssoRegion")} />
+            </Field>
+            <Field
+              label="start URL"
+              req
+              wide
+              hint={
+                <>
+                  IAM Identity Center のアクセスポータル URL（<code>https://…awsapps.com/start</code>）。
+                </>
+              }
+            >
+              <input
+                className="cinput"
+                placeholder="https://my-company.awsapps.com/start"
+                value={f.startUrl}
+                onChange={set("startUrl")}
+              />
+            </Field>
+            <Field label="アカウント ID" hint="任意。未入力ならログイン時に選択。">
+              <input className="cinput" placeholder="123456789012" value={f.accountId} onChange={set("accountId")} />
+            </Field>
+            <Field label="ロール名" hint="任意。未入力ならログイン時に選択。">
+              <input className="cinput" placeholder="AdministratorAccess" value={f.roleName} onChange={set("roleName")} />
+            </Field>
+            <Field label="既定リージョン" hint="任意。セッションを開くリージョン。">
+              <input className="cinput" placeholder="ap-northeast-1" value={f.region} onChange={set("region")} />
+            </Field>
+          </FieldGroup>
+          <div className="ssm-frm-foot">
+            <button className="primary" disabled={busy || !valid} onClick={add}>
+              プロファイルを追加
+            </button>
+            <button
+              className="ghost"
+              onClick={() => {
+                setOpen(false);
+                setF(emptyProfile);
+              }}
+            >
+              キャンセル
+            </button>
+            <span className="req-note">
+              <b>*</b> は必須
+            </span>
+          </div>
+        </div>
+      ) : (
+        <button className="ghost ssm-add-toggle" onClick={() => setOpen(true)}>
+          <Icon name="add" /> プロファイルを追加
         </button>
-      </div>
+      )}
     </section>
   );
 }
@@ -155,15 +292,29 @@ function ProfileSection({ profiles, reload }: { profiles: any[] | null; reload: 
 
 const emptyHost: Record<string, string> = { alias: "", profileId: "", instanceId: "", documentName: "", region: "" };
 
-function HostSection({ hosts, profiles, reload }: { hosts: any[] | null; profiles: any[] | null; reload: () => void }) {
+function HostSection({
+  hosts,
+  profiles,
+  reload,
+  onNeedProfile,
+}: {
+  hosts: any[] | null;
+  profiles: any[] | null;
+  reload: () => void;
+  onNeedProfile: () => void;
+}) {
+  const askConfirm = useConfirm();
+  const toast = useToast();
   const [f, setF] = useState<Record<string, string>>(emptyHost);
   const [busy, setBusy] = useState(false);
+  const [open, setOpen] = useState(false);
   const set = (k: string) => (e: FieldEvent) => setF((p) => ({ ...p, [k]: e.target.value }));
   const profileLabel = (id: string) => (profiles || []).find((p) => p.id === id)?.label || "?";
   const noProfiles = profiles !== null && profiles.length === 0;
+  const valid = f.alias.trim() && f.instanceId.trim() && f.profileId;
 
   const add = async () => {
-    if (!f.alias.trim() || !f.instanceId.trim() || !f.profileId) return;
+    if (!valid) return;
     setBusy(true);
     try {
       const ok = await postJSON("api/ssm/hosts", "POST", {
@@ -172,16 +323,23 @@ function HostSection({ hosts, profiles, reload }: { hosts: any[] | null; profile
         instanceId: f.instanceId.trim(),
         documentName: f.documentName.trim(),
         region: f.region.trim(),
-      });
+      }, toast);
       if (!ok) return;
       setF(emptyHost);
+      setOpen(false);
       reload();
     } finally {
       setBusy(false);
     }
   };
   const remove = async (id: string) => {
-    if (!confirm("このホストを削除しますか？")) return;
+    const ok = await askConfirm({
+      title: "ホストを削除",
+      body: "このホストを削除します。",
+      confirmLabel: "削除する",
+      danger: true,
+    });
+    if (!ok) return;
     await raw(`api/ssm/hosts/${encodeURIComponent(id)}`, { method: "DELETE" });
     reload();
   };
@@ -203,7 +361,9 @@ function HostSection({ hosts, profiles, reload }: { hosts: any[] | null; profile
             <li key={h.id} className="ssm-item">
               <div className="ssm-item-head">
                 <span className="ssm-alias">{h.alias}</span>
-                <button className="icon danger" title="削除" onClick={() => remove(h.id)}>✕</button>
+                <button className="ghost danger ssm-del" title="削除" onClick={() => remove(h.id)}>
+                  削除
+                </button>
               </div>
               <div className="ssm-meta">
                 <Meta k="インスタンス" v={h.instanceId} />
@@ -216,23 +376,63 @@ function HostSection({ hosts, profiles, reload }: { hosts: any[] | null; profile
         </ul>
       )}
       {noProfiles ? (
-        <p className="muted">先にプロファイルを 1 つ作成してください。</p>
-      ) : (
-        <div className="ssm-form-grid">
-          <input className="cinput" placeholder="別名 (例 admin@web-01)" value={f.alias} onChange={set("alias")} />
-          <input className="cinput" placeholder="インスタンス ID (i-...)" value={f.instanceId} onChange={set("instanceId")} />
-          <input className="cinput" placeholder="run-as ドキュメント（任意）" value={f.documentName} onChange={set("documentName")} />
-          <input className="cinput" placeholder="リージョン上書き（任意）" value={f.region} onChange={set("region")} />
-          <select className="cinput" value={f.profileId} onChange={set("profileId")}>
-            <option value="">プロファイルを選択</option>
-            {(profiles || []).map((p) => (
-              <option key={p.id} value={p.id}>{p.label}</option>
-            ))}
-          </select>
-          <button disabled={busy || !f.alias.trim() || !f.instanceId.trim() || !f.profileId} onClick={add}>
-            追加
+        <div className="ssm-dep">
+          <span className="i">
+            <Icon name="info" />
+          </span>
+          <span className="t">ホストの登録には共通プロファイルが必要です。まず 1 つ作成してください。</span>
+          <button className="primary" onClick={onNeedProfile}>
+            プロファイルを追加
           </button>
         </div>
+      ) : open ? (
+        <div className="ssm-frm">
+          <FieldGroup>
+            <Field label="使用するプロファイル" req wide hint="このホストの認証に使う共通プロファイル。まず選びます。">
+              <select className="cinput" value={f.profileId} onChange={set("profileId")} autoFocus>
+                <option value="">プロファイルを選択</option>
+                {(profiles || []).map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.label}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="別名" req hint="起動メニューに出るログイン先の名前。">
+              <input className="cinput" placeholder="admin@web-01" value={f.alias} onChange={set("alias")} />
+            </Field>
+            <Field label="インスタンス ID" req hint={<>EC2 コンソール / <code>aws ec2 describe-instances</code>。</>}>
+              <input className="cinput" placeholder="i-0123456789abcdef0" value={f.instanceId} onChange={set("instanceId")} />
+            </Field>
+            <Field label="run-as ドキュメント" hint="任意。既定でよければ空のまま。">
+              <input className="cinput" placeholder="SSM-SessionManagerRunShell" value={f.documentName} onChange={set("documentName")} />
+            </Field>
+            <Field label="リージョン" hint="任意。プロファイル既定を上書きしたい時だけ。">
+              <input className="cinput" placeholder="プロファイル既定を使用" value={f.region} onChange={set("region")} />
+            </Field>
+          </FieldGroup>
+          <div className="ssm-frm-foot">
+            <button className="primary" disabled={busy || !valid} onClick={add}>
+              ホストを追加
+            </button>
+            <button
+              className="ghost"
+              onClick={() => {
+                setOpen(false);
+                setF(emptyHost);
+              }}
+            >
+              キャンセル
+            </button>
+            <span className="req-note">
+              <b>*</b> は必須
+            </span>
+          </div>
+        </div>
+      ) : (
+        <button className="ghost ssm-add-toggle" onClick={() => setOpen(true)}>
+          <Icon name="add" /> ホストを追加
+        </button>
       )}
     </section>
   );
