@@ -207,6 +207,20 @@
     border-bottom:1px solid var(--border);font-size:11.5px;color:var(--muted)}
   .mphead b{color:var(--fg);font-weight:600}
   .mpbody{flex:1;padding:10px 12px;font-family:var(--mono);font-size:11px;line-height:1.65;color:#bfc7cf}
+  /* LayoutMap at max (8 panes = 4 columns × top/bottom): compact cells */
+  .rm-grid.g4{grid-template-columns:repeat(4,1fr)}
+  .rm-cell.cmp{gap:4px;padding:0 6px;height:26px}
+  .rm-cell.cmp .rm-k{flex:none}
+  .rm-n.gray,.tn.gray{background:#3a3a3a;color:#cfcfcf}
+  .mapshow{display:flex;gap:24px;flex-wrap:wrap;align-items:flex-start;margin-top:16px}
+  .mapshow .rm-cap{margin-bottom:7px}
+  /* thumbnail of the matching 4×2 main split */
+  .thumbsplit{display:grid;grid-template-columns:repeat(4,48px);grid-template-rows:34px 34px;gap:1px;
+    background:var(--border);border:1px solid var(--border2);border-radius:6px;overflow:hidden}
+  .thumbsplit .tp{background:var(--ground);display:flex;align-items:center;justify-content:center;gap:3px;
+    font-family:var(--mono);font-size:9px;color:var(--muted)}
+  .thumbsplit .tn{font-size:8px;font-weight:700;width:13px;height:13px;border-radius:2px;
+    display:inline-flex;align-items:center;justify-content:center;color:#0c0c0c}
 </style>
 
 <div class="wrap">
@@ -305,6 +319,39 @@
       <span><span class="kind k-shell" style="width:20px;height:15px">sh</span> shell</span>
       <span><span class="kind k-ssm" style="width:20px;height:15px">aw</span> ssm</span>
       <span class="dim">— 色・アイコン・状態チップは registry.ts の caps から出す（新エージェントで自動追加）</span>
+    </div>
+
+    <p class="note" style="margin-top:26px"><strong>LayoutMap — 最大 8 ペイン時</strong>（4 列 ×（上下 2）＝最大構成）。レール幅では 2 文字略号＋順序色＋状態ドットのコンパクトセルに。左のマップと右のメイン分割は 1 対 1 対応。</p>
+    <div class="mapshow">
+      <div>
+        <div class="rm-cap">LayoutMap（8ペイン）</div>
+        <div class="railmap" style="width:238px;margin:0">
+          <div class="rm-grid g4">
+            <div class="rm-cell cmp sel" title="ペイン1: agent-fleet@claude · 端末 · 実行中"><span class="rm-n k-claude">1</span><span class="rm-k">cc</span><span class="rm-dot on"></span></div>
+            <div class="rm-cell cmp" title="ペイン3: agent-fleet@opencode · チャット · 待機"><span class="rm-n k-oc">3</span><span class="rm-k">oc</span><span class="rm-dot idle"></span></div>
+            <div class="rm-cell cmp" title="ペイン5: registry.ts · ファイル"><span class="rm-n gray">5</span><span class="rm-k">file</span></div>
+            <div class="rm-cell cmp" title="ペイン7: console-ux@claude · 端末 · 進行中"><span class="rm-n k-claude">7</span><span class="rm-k">cc</span><span class="rm-dot idle"></span></div>
+            <div class="rm-cell cmp" title="ペイン2: terminal · 端末 · 起動中"><span class="rm-n k-shell">2</span><span class="rm-k">sh</span><span class="rm-dot on"></span></div>
+            <div class="rm-cell cmp" title="ペイン4: console-ux@codex · 端末 · 停止中"><span class="rm-n k-codex">4</span><span class="rm-k">cx</span><span class="rm-dot off"></span></div>
+            <div class="rm-cell cmp" title="ペイン6: agent-fleet · ソース管理"><span class="rm-n gray">6</span><span class="rm-k">scm</span></div>
+            <div class="rm-cell cmp" title="ペイン8: registry.ts · 差分"><span class="rm-n gray">8</span><span class="rm-k">diff</span></div>
+          </div>
+        </div>
+      </div>
+      <div>
+        <div class="rm-cap">対応するメイン分割（4列 × 上下）</div>
+        <div class="thumbsplit">
+          <div class="tp"><span class="tn k-claude">1</span>cc</div>
+          <div class="tp"><span class="tn k-oc">3</span>oc</div>
+          <div class="tp"><span class="tn gray">5</span>file</div>
+          <div class="tp"><span class="tn k-claude">7</span>cc</div>
+          <div class="tp"><span class="tn k-shell">2</span>sh</div>
+          <div class="tp"><span class="tn k-codex">4</span>cx</div>
+          <div class="tp"><span class="tn gray">6</span>scm</div>
+          <div class="tp"><span class="tn gray">8</span>diff</div>
+        </div>
+        <div class="note" style="font-size:11.5px;margin-top:7px">列は左→右、各列は上→下で採番（1/2, 3/4, 5/6, 7/8）。</div>
+      </div>
     </div>
   </section>
 
