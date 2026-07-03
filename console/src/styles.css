@@ -1239,6 +1239,12 @@ button.wu-reload {
 .session-state.bg {
   color: #17a2a2;
 }
+/* Light theme: the mid teal dips below AA as small text on white — darken it
+   (same value as the shell kind's light text). The map dot is a filled shape, not
+   text, so it keeps the brighter teal. */
+[data-theme="light"] .session-state.bg {
+  color: #15828a;
+}
 .session-state.question {
   color: var(--warn);
   font-weight: 600;
