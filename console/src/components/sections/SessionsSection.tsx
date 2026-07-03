@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useApp } from "../../state.jsx";
 import { raw } from "../../api.js";
 import Section from "../Section.jsx";
@@ -26,6 +26,28 @@ const notify = (title: string, body: string) => {
   }
 };
 
+// Sessions are grouped by working directory. The header shows the dir's basename
+// (full path on hover); sessions with no dir fall under "その他".
+const groupLabel = (dir: string) => (dir ? dir.split("/").filter(Boolean).pop() || dir : "その他");
+
+// Collapsed groups persist in localStorage (keyed by dir) so a folded folder stays
+// folded across reloads.
+const COLLAPSE_KEY = "af-session-groups-collapsed";
+const readCollapsed = (): Set<string> => {
+  try {
+    return new Set(JSON.parse(localStorage.getItem(COLLAPSE_KEY) || "[]"));
+  } catch {
+    return new Set();
+  }
+};
+const writeCollapsed = (s: Set<string>) => {
+  try {
+    localStorage.setItem(COLLAPSE_KEY, JSON.stringify([...s]));
+  } catch {
+    /* storage unavailable — just skip the cache */
+  }
+};
+
 // Sessions: claude/shell sessions as two-line rows —
 //   {claude --name}                 (line 1)
 //     badge  セッション名  状態      (line 2)
@@ -50,6 +72,35 @@ export default function SessionsSection() {
     () => (multi ? sessionPanes(layout) : new Map<string, { ordinal: number; id: string }[]>()),
     [multi, layout],
   );
+
+  // Group sessions by working dir. Groups are ordered by their newest session and rows
+  // within a group by createdAt desc — both stable (createdAt doesn't change), so rows
+  // never jump around as live state (working/idle) updates.
+  const groups = useMemo(() => {
+    const by = new Map<string, Session[]>();
+    for (const s of sessions) {
+      const key = s.dir || "";
+      const list = by.get(key);
+      if (list) list.push(s);
+      else by.set(key, [s]);
+    }
+    const arr = [...by.entries()].map(([dir, list]) => {
+      list.sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
+      return { dir, list, newest: list[0]?.createdAt || "" };
+    });
+    arr.sort((a, b) => b.newest.localeCompare(a.newest));
+    return arr;
+  }, [sessions]);
+
+  const [collapsed, setCollapsed] = useState<Set<string>>(readCollapsed);
+  const toggleGroup = (dir: string) =>
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(dir)) next.delete(dir);
+      else next.add(dir);
+      writeCollapsed(next);
+      return next;
+    });
 
   // Open the New Session dialog when something elsewhere requests it (the onboarding
   // card). Skip the initial 0 so it doesn't pop on load.
@@ -248,7 +299,25 @@ export default function SessionsSection() {
             action={running ? { label: "新規セッション", icon: "add", onClick: () => setShowModal(true) } : undefined}
           />
         )}
-        {sessions.map((s) => {
+        {groups.map((g) => {
+          const isCollapsed = collapsed.has(g.dir);
+          return (
+            <Fragment key={g.dir || "__nodir"}>
+              <li className="session-group">
+                <button
+                  type="button"
+                  className={"session-group-btn" + (isCollapsed ? " collapsed" : "")}
+                  onClick={() => toggleGroup(g.dir)}
+                  title={g.dir || "作業ディレクトリなし"}
+                >
+                  <Icon name={isCollapsed ? "chevron-right" : "chevron-down"} className="session-group-chevron" />
+                  <Icon name="folder" className="session-group-folder" />
+                  <span className="session-group-name">{groupLabel(g.dir)}</span>
+                  <span className="session-group-count">{g.list.length}</span>
+                </button>
+              </li>
+              {!isCollapsed &&
+                g.list.map((s) => {
           const dead = !s.alive && s.resumable === false; // dir gone → can't resume
           const selected = session === s.name; // active pane's session → highlighted in place
           const opens = openBy.get(s.name) || []; // panes this session is shown in
@@ -296,7 +365,7 @@ export default function SessionsSection() {
             <button
               className="session-btn"
               title={
-                dead
+                (dead
                   ? "作業フォルダが存在しないため再開できません"
                   : !s.alive
                     ? agentOf(s.kind).caps.transcript
@@ -304,7 +373,7 @@ export default function SessionsSection() {
                       : "停止中（⋯メニューから再開）"
                     : s.dir
                       ? s.dir + "（Ctrl/中クリックで新ペインに開く）"
-                      : "Ctrl/中クリックで新ペインに開く"
+                      : "Ctrl/中クリックで新ペインに開く") + `\nID: ${s.name}`
               }
               // aria-disabled (not the disabled attribute): a truly disabled button
               // fires no events at all, so right-clicking a stopped session would
@@ -344,11 +413,13 @@ export default function SessionsSection() {
               <span className="session-l1">
                 <span className="session-display">{displayName(s)}</span>
               </span>
+              {/* The slug (s.name) is the session's internal identity, not shown here
+                  — the title (line 1) is the meaningful name. It's kept on the row's
+                  tooltip (title attr, below) for support/debugging reference. */}
               <span className="session-l2">
                 <span className={"kind-tag kind-" + kindClass(s.kind)}>
                   <Icon name={kindIcon(s.kind)} /> {kindLabel(s.kind)}
                 </span>
-                <span className="session-name">{s.name}</span>
                 {(() => {
                   const st = stateInfo(s);
                   return (
@@ -440,6 +511,9 @@ export default function SessionsSection() {
               )}
             </div>
           </li>
+          );
+                })}
+            </Fragment>
           );
         })}
       </ul>

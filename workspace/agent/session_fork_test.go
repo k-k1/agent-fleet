@@ -6,6 +6,17 @@ import (
 	"testing"
 )
 
+// forkTitle derives a fork's title from the source: its own title, else the stripped
+// label, always suffixed " (fork)".
+func TestForkTitle(t *testing.T) {
+	if got := forkTitle(sessionMeta{Title: "my work"}); got != "my work (fork)" {
+		t.Fatalf("forkTitle(title) = %q; want %q", got, "my work (fork)")
+	}
+	if got := forkTitle(sessionMeta{Label: "[AF] agent-fleet @0703-1430"}); got != "agent-fleet @0703-1430 (fork)" {
+		t.Fatalf("forkTitle(label) = %q; want %q", got, "agent-fleet @0703-1430 (fork)")
+	}
+}
+
 // buildSessionProgram must emit the official fork command on a fork's FIRST launch
 // (no own jsonl yet): claude resumes the SOURCE sid, --fork-session branches it,
 // and --session-id pins the new id to OUR deterministic sid (verified: --session-id
@@ -23,19 +34,5 @@ func TestBuildSessionProgramFork(t *testing.T) {
 	plain := buildSessionProgram("22222222-2222-4222-8222-222222222new", "", "", "")
 	if !strings.Contains(plain, "--session-id 22222222-2222-4222-8222-222222222new") || strings.Contains(plain, "--fork-session") {
 		t.Fatalf("new-session program = %q, want --session-id and no --fork-session", plain)
-	}
-}
-
-// deriveForkName appends -fork (then -fork2..) and truncates the base so the whole
-// name stays within the 40-char / [A-Za-z0-9_-] limit.
-func TestDeriveForkName(t *testing.T) {
-	n, ok := deriveForkName("slot01")
-	if !ok || n != "slot01-fork" {
-		t.Fatalf("deriveForkName(slot01) = %q,%v; want slot01-fork,true", n, ok)
-	}
-	long := strings.Repeat("a", 40) // already at the cap
-	n2, ok := deriveForkName(long)
-	if !ok || len(n2) > 40 || !strings.HasSuffix(n2, "-fork") || !nameRe.MatchString(n2) {
-		t.Fatalf("deriveForkName(40 a's) = %q (len %d),%v; want a valid ≤40 name ending -fork", n2, len(n2), ok)
 	}
 }

@@ -10,25 +10,16 @@ import { readKindAvail, writeKindAvail } from "../lib/kindavail.js";
 import { deriveRepoName, sanitizeSeg, uniqueRepoName, repoNameRe } from "../lib/reponame.js";
 import { agentOf, availableKinds, newSessionKinds } from "../agents/registry.ts";
 import type { FormEvent } from "react";
-import type { Session, SsmHost } from "../types/session.ts";
+import type { SsmHost } from "../types/session.ts";
 import type { RepoSelection } from "./RepoPicker.jsx";
 
 // NewSessionModal: a clear, roomy dialog for creating a session.
 // shell is the left / default kind — a one-click shell needs no repo, no dir, and
 // an auto-filled name. claude additionally offers a model and a repo source
 // (provider picker / clone URL / none).
+// lastSeg is the final path/name segment, used only to preview a placeholder title.
 const lastSeg = (full: string) =>
   (full.split("/").pop() || "").replace(/[^A-Za-z0-9._-]/g, "-").slice(0, 40);
-
-// uniqueName returns base, or base-2 / base-3 … when already taken.
-const uniqueName = (base: string, taken: Set<string>) => {
-  if (!taken.has(base)) return base;
-  for (let i = 2; i < 1000; i++) {
-    const n = `${base}-${i}`;
-    if (!taken.has(n)) return n;
-  }
-  return base;
-};
 
 
 const SOURCE_HELP = {
@@ -45,8 +36,9 @@ interface NewSessionModalProps {
 export default function NewSessionModal({ onClose, onCreated }: NewSessionModalProps) {
   const { openSettings } = useApp();
   const toast = useToast();
-  const [name, setName] = useState("");
-  const [nameEdited, setNameEdited] = useState(false);
+  // Optional user title → claude --name (web identification). The session's identity
+  // is a unique slug the server auto-allocates; the client never picks a name.
+  const [title, setTitle] = useState("");
   const [kind, setKind] = useState("shell"); // shell is the default (left) kind
   const [ssmHosts, setSsmHosts] = useState<SsmHost[] | null>(null); // registered SSM host bookmarks
   const [ssmHostId, setSsmHostId] = useState("");
@@ -65,23 +57,11 @@ export default function NewSessionModal({ onClose, onCreated }: NewSessionModalP
   const [url, setUrl] = useState("");
   const [branch, setBranch] = useState("");
   const [dir, setDir] = useState("");
-  const [taken, setTaken] = useState<Set<string>>(new Set());
   const [repos, setRepos] = useState<{ name: string; branch?: string }[]>([]); // existing working copies
   const [copyMode, setCopyMode] = useState<"reuse" | "new">("new"); // when a copy exists
   const [repoName, setRepoName] = useState(""); // target folder for a separate copy
   const [repoNameEdited, setRepoNameEdited] = useState(false);
   const [busy, setBusy] = useState(false);
-
-  // Existing session names, for auto-naming uniqueness.
-  useEffect(() => {
-    let alive = true;
-    api("api/sessions")
-      .then((d) => alive && setTaken(new Set((d.sessions || []).map((s: Session) => s.name))))
-      .catch(() => {});
-    return () => {
-      alive = false;
-    };
-  }, []);
 
   // Existing working copies, to detect "this repo is already cloned" and offer a
   // separate working copy for a different branch.
@@ -129,12 +109,9 @@ export default function NewSessionModal({ onClose, onCreated }: NewSessionModalP
 
   const ssmHost = (ssmHosts || []).find((h) => h.id === ssmHostId) || null;
 
-  // Auto-fill the name (until the user types their own). An agent with a chosen repo
-  // names after the repo; an SSM session after its host alias; else the kind word.
-  const base = isAgent && sel ? lastSeg(sel.fullName) : isSSM && ssmHost ? lastSeg(ssmHost.alias) : kind;
-  useEffect(() => {
-    if (!nameEdited) setName(uniqueName(base, taken));
-  }, [base, taken, nameEdited]);
+  // Placeholder preview of the auto title used when the user leaves the field blank:
+  // the repo name for an agent, the host alias for SSM, else the kind word.
+  const titlePlaceholder = isAgent && sel ? lastSeg(sel.fullName) : isSSM && ssmHost ? lastSeg(ssmHost.alias) : kind;
 
   const onPick = (s: RepoSelection | null) => setSel(s);
 
@@ -171,7 +148,7 @@ export default function NewSessionModal({ onClose, onCreated }: NewSessionModalP
   // shell never needs a repo; an agent's repo is optional (none is allowed).
   const sourceOk = !isAgent || source === "none" || !!cloneUrl;
   const ssmOk = !isSSM || !!ssmHostId;
-  const canSubmit = !!name.trim() && sourceOk && repoNameOk && ssmOk && !busy;
+  const canSubmit = sourceOk && repoNameOk && ssmOk && !busy;
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -179,7 +156,7 @@ export default function NewSessionModal({ onClose, onCreated }: NewSessionModalP
     setBusy(true);
     try {
       const res = await apiJSON("api/sessions", "POST", {
-        name: name.trim(),
+        title: title.trim(), // optional; server auto-allocates the identity slug
         kind,
         model: hasModel ? model : "",
         dir: isAgent && source === "none" ? dir.trim() : "",
@@ -193,15 +170,18 @@ export default function NewSessionModal({ onClose, onCreated }: NewSessionModalP
         toast("作成に失敗: " + errText(res.error));
         return;
       }
+      // The server assigns the identity slug; use the returned session's name (the
+      // client no longer knows it) for every downstream reference.
+      const slug = (res && res.name) || "";
       // SSM: the session (tmux) is launched; hand off to SsmLoginModal to drive the SSO
       // handshake and attach the terminal only once ready (see early return below).
       if (isSSM) {
-        setSsmLogin(name.trim());
+        setSsmLogin(slug);
         return;
       }
       // Pass the cloned repo dir basename (server echoes it as `repo`) so the
       // caller can refresh + reveal it in the Files tree once the clone lands.
-      onCreated(name.trim(), cloning, cloning ? (res && res.repo) || "" : "");
+      onCreated(slug, cloning, cloning ? (res && res.repo) || "" : "");
     } finally {
       setBusy(false);
     }
@@ -419,19 +399,19 @@ export default function NewSessionModal({ onClose, onCreated }: NewSessionModalP
             </div>
           )}
 
-          {/* 名前 */}
+          {/* タイトル（任意） */}
           <div className="field">
-            <div className="field-label">セッション名</div>
+            <div className="field-label">タイトル（任意）</div>
             <input
               className="name-input"
-              value={name}
-              onChange={(e) => {
-                setName(e.target.value);
-                setNameEdited(true);
-              }}
-              placeholder="例: my-app（英数・_・- ）"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder={titlePlaceholder}
             />
-            <div className="field-help">一覧に表示される識別名。自動入力済み（編集可）。</div>
+            <div className="field-help">
+              一覧と Claude on the web で識別する名前。空なら自動（
+              <code>{titlePlaceholder}</code> など）。
+            </div>
           </div>
         </div>
 

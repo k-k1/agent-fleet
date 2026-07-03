@@ -25,6 +25,7 @@ type Session struct {
 	Dir       string `json:"dir"`
 	Kind      string `json:"kind"`      // "claude" | "opencode" | "codex" | "shell"
 	Repo      string `json:"repo"`      // working dir basename (display)
+	Title     string `json:"title"`     // user-supplied display title (optional, any kind)
 	Label     string `json:"label"`     // claude --name display name (claude only)
 	Started   string `json:"started"`   // "01/02 15:04" local time, for the list
 	CreatedAt string `json:"createdAt"` // RFC3339
@@ -56,7 +57,8 @@ type sessionMeta struct {
 	Dir       string `json:"dir"`
 	Model     string `json:"model"`
 	Kind      string `json:"kind"`
-	Label     string `json:"label"`     // claude --name (display); set once at create
+	Title     string `json:"title"`     // user-supplied display title (optional); "" = auto
+	Label     string `json:"label"`     // claude --name (display); derived from Title at create/recreate
 	Repo      string `json:"repo"`      // working dir basename
 	CreatedAt string `json:"createdAt"` // RFC3339, set at create
 	StoppedAt string `json:"stoppedAt"` // RFC3339, set lazily when first seen exited; "" while live
@@ -114,7 +116,7 @@ func wireSession(m sessionMeta, alive bool) Session {
 	li := agentOf(m.Kind).wireLive(m, alive)
 	return Session{
 		Name: m.Name, Tmux: tmuxName(m.Name), Dir: m.Dir, Kind: m.Kind,
-		Repo: m.Repo, Label: m.Label, Started: started, CreatedAt: m.CreatedAt,
+		Repo: m.Repo, Title: m.Title, Label: m.Label, Started: started, CreatedAt: m.CreatedAt,
 		RemoteUrl: li.remoteURL, State: li.state, Alive: alive, Resumable: li.resumable,
 		BackgroundBusy: li.backgroundBusy, Context: li.context,
 	}
@@ -416,7 +418,11 @@ func paneKind(name string) string {
 }
 
 type createReq struct {
+	// Name is IGNORED: the server auto-allocates a unique slug as the session's
+	// identity. Kept in the wire struct only so older clients that still send it
+	// don't error. Title is the optional user-facing display name (→ claude --name).
 	Name  string `json:"name"`
+	Title string `json:"title"`
 	Dir   string `json:"dir"`
 	Model string `json:"model"`
 	Kind  string `json:"kind"` // "claude" (default) | "opencode" | "codex" | "shell"
@@ -449,8 +455,9 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
 		return
 	}
-	if !nameRe.MatchString(req.Name) {
-		writeErr(w, http.StatusBadRequest, "bad_name", "name must match [A-Za-z0-9_-]{1,40}")
+	title, ok := cleanTitle(req.Title)
+	if !ok {
+		writeErr(w, http.StatusBadRequest, "bad_title", "title is too long (max 80) or contains control characters")
 		return
 	}
 	// Clone-then-start: ensure the repo exists and use it as the working dir.
@@ -470,18 +477,15 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tn := tmuxName(req.Name)
-	// Block only on a live session; a recorded-but-exited one is overwritten so the
-	// user can recreate a session they previously quit.
-	if tmuxHasSession(tn) {
-		writeErr(w, http.StatusConflict, "exists", "session already running: "+req.Name)
-		return
-	}
+	// Identity is a freshly allocated random slug — NOT the client's name. It (and the
+	// sid it derives) can't collide with an archived/pruned session's jsonl, so a new
+	// session never accidentally --resumes a past conversation.
+	name := allocSessionName(req.Dir)
 
 	kind := normalizeKind(req.Kind)
 	label := ""
 	if agentOf(kind).caps().usesLabel {
-		label = sessionLabel(req.Dir)
+		label = sessionLabelFor(req.Dir, title)
 	}
 	var ssm *ssmMeta
 	if kind == kindSSM {
@@ -499,7 +503,7 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	meta := sessionMeta{
-		Name: req.Name, Dir: req.Dir, Model: req.Model, Kind: kind, Label: label,
+		Name: name, Dir: req.Dir, Model: req.Model, Kind: kind, Title: title, Label: label,
 		Repo: filepath.Base(req.Dir), CreatedAt: time.Now().Format(time.RFC3339), SSM: ssm,
 	}
 	if err := startSessionTmux(meta, req.SSMForceLogin); err != nil {
@@ -537,14 +541,11 @@ func handleForkSession(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "not_resumable", "分岐できる会話がまだありません")
 		return
 	}
-	forkName, ok := deriveForkName(name)
-	if !ok {
-		writeErr(w, http.StatusConflict, "fork_name", "分岐名を作成できませんでした")
-		return
-	}
+	forkName := allocSessionName(src.Dir)
+	title, _ := cleanTitle(forkTitle(src))
 	meta := sessionMeta{
-		Name: forkName, Dir: src.Dir, Model: src.Model, Kind: kindClaude,
-		Label: sessionLabel(src.Dir), Repo: filepath.Base(src.Dir),
+		Name: forkName, Dir: src.Dir, Model: src.Model, Kind: kindClaude, Title: title,
+		Label: sessionLabelFor(src.Dir, title), Repo: filepath.Base(src.Dir),
 		CreatedAt: time.Now().Format(time.RFC3339), ForkFrom: srcSid,
 	}
 	if err := startSessionTmux(meta, false); err != nil {
@@ -553,34 +554,6 @@ func handleForkSession(w http.ResponseWriter, r *http.Request) {
 	}
 	writeSessionMeta(meta)
 	writeJSON(w, http.StatusCreated, wireSession(meta, true))
-}
-
-// deriveForkName builds a unique, valid ([A-Za-z0-9_-]{1,40}) name for a fork of
-// base: base+"-fork", then "-fork2".."-fork9", truncating base so the whole stays
-// within 40 chars. Returns ok=false if every candidate is taken.
-func deriveForkName(base string) (string, bool) {
-	for i := 1; i <= 9; i++ {
-		suffix := "-fork"
-		if i > 1 {
-			suffix = fmt.Sprintf("-fork%d", i)
-		}
-		b := base
-		if len(b)+len(suffix) > 40 {
-			b = b[:40-len(suffix)]
-		}
-		cand := b + suffix
-		if !nameRe.MatchString(cand) {
-			continue
-		}
-		if _, exists := readSessionMeta(cand); exists {
-			continue
-		}
-		if tmuxHasSession(tmuxName(cand)) {
-			continue
-		}
-		return cand, true
-	}
-	return "", false
 }
 
 // handleStopSession kills the tmux session and forgets its meta so it stops
@@ -729,7 +702,7 @@ func handleRecreateSession(w http.ResponseWriter, r *http.Request) {
 	agentOf(m.Kind).clearResume(sid)
 	m.CreatedAt = time.Now().Format(time.RFC3339)
 	if agentOf(m.Kind).caps().usesLabel {
-		m.Label = sessionLabel(m.Dir)
+		m.Label = sessionLabelFor(m.Dir, m.Title)
 	}
 	m.StoppedAt = ""
 	writeSessionMeta(m)
@@ -901,12 +874,45 @@ func tomlString(s string) string {
 	return `"` + r.Replace(s) + `"`
 }
 
-// sessionLabel builds the claude --name for a session: "[AF] {repo} @MMDD-HHMM"
-// where {repo} is the working dir's basename and the time is the workspace's local
-// time (the entrypoint exports TZ from the per-user timezone setting, default JST).
-// Computed once at create and stored in the meta so relaunch keeps the same name.
-func sessionLabel(dir string) string {
+// sessionLabelFor builds the claude --name for a session. When the user supplied a
+// title it's "[AF] {title}"; otherwise it falls back to the auto default
+// "[AF] {repo} @MMDD-HHMM" where {repo} is the working dir's basename and the time is
+// the workspace's local time (the entrypoint exports TZ from the per-user timezone
+// setting, default JST). The "[AF] " tag identifies Agent-Fleet-launched sessions in
+// the claude.ai Remote Control picker. Computed at create/recreate and stored in the
+// meta so relaunch keeps the same name.
+func sessionLabelFor(dir, title string) string {
+	if title != "" {
+		return "[AF] " + title
+	}
 	return fmt.Sprintf("[AF] %s @%s", filepath.Base(dir), time.Now().Format("0102-1504"))
+}
+
+// cleanTitle trims and validates a user-supplied display title. It rejects control
+// characters (which would corrupt the tmux title / claude --name) and caps the length.
+// An empty title is valid (the session uses the auto default label). Returns ok=false
+// only for an over-long or control-laden title.
+func cleanTitle(s string) (string, bool) {
+	s = strings.TrimSpace(s)
+	if len([]rune(s)) > 80 {
+		return "", false
+	}
+	for _, r := range s {
+		if r < 0x20 || r == 0x7f {
+			return "", false
+		}
+	}
+	return s, true
+}
+
+// forkTitle derives a fork's display title from its source: the source's own title
+// when set, else its stripped label (the auto "{repo} @time"), suffixed " (fork)".
+func forkTitle(src sessionMeta) string {
+	base := src.Title
+	if base == "" {
+		base = strings.TrimPrefix(src.Label, "[AF] ")
+	}
+	return strings.TrimSpace(base + " (fork)")
 }
 
 // jsonlPaths returns the conversation log file(s) for sid. claude stores them
