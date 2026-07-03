@@ -1564,6 +1564,24 @@ button.wu-reload {
   border-color: rgba(248, 81, 73, 0.4);
   background: rgba(248, 81, 73, 0.12);
 }
+/* Light theme: the dark-tuned GitHub badge colors fall below AA as small bold text
+   on their pale fills — swap in GitHub Light's darker on-colors and a touch more
+   fill so 変更/追加/削除 stay legible on white. */
+[data-theme="light"] .chg-badge.st-add {
+  color: #1a7f37;
+  border-color: rgba(26, 127, 55, 0.4);
+  background: rgba(26, 127, 55, 0.1);
+}
+[data-theme="light"] .chg-badge.st-mod {
+  color: #0969da;
+  border-color: rgba(9, 105, 218, 0.4);
+  background: rgba(9, 105, 218, 0.1);
+}
+[data-theme="light"] .chg-badge.st-del {
+  color: #cf222e;
+  border-color: rgba(207, 34, 46, 0.4);
+  background: rgba(207, 34, 46, 0.1);
+}
 
 /* right-click context menu for file operations (positioned at the cursor). */
 .ctxmenu {
@@ -5341,6 +5359,25 @@ button.primary:hover:not(:disabled) {
    contrast (this rule comes last so it wins over the per-kind colors above). */
 .seg.big .seg-btn.active .seg-ic {
   color: var(--on-accent);
+}
+/* Light theme: the mid-tone kind colors wash out on white — reuse the darker text
+   the kind badge already uses for light. `:not(.active)` so the accent-filled
+   selected button still shows its white (--on-accent) icon (these overrides
+   outrank the .active rule by specificity, so they must exclude it themselves). */
+[data-theme="light"] .seg.big .seg-btn.kind-claude:not(.active) .seg-ic {
+  color: #a85f1c;
+}
+[data-theme="light"] .seg.big .seg-btn.kind-codex:not(.active) .seg-ic {
+  color: #18854a;
+}
+[data-theme="light"] .seg.big .seg-btn.kind-opencode:not(.active) .seg-ic {
+  color: #6d2fce;
+}
+[data-theme="light"] .seg.big .seg-btn.kind-shell:not(.active) .seg-ic {
+  color: #15828a;
+}
+[data-theme="light"] .seg.big .seg-btn.kind-ssm:not(.active) .seg-ic {
+  color: #b5651d;
 }
 
 /* repo picker spacing inside the modal */
