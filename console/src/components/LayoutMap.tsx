@@ -2,7 +2,7 @@ import { useMemo } from "react";
 import { useApp } from "../state.jsx";
 import { paneRows, ordClass, paneCount } from "../lib/panebadge.js";
 import { usePaneHover, hoverMatches } from "../lib/panehover.jsx";
-import { kindShort, kindLabel } from "../lib/sessionkind.js";
+import { kindShort, kindLabel, kindClass } from "../lib/sessionkind.js";
 import { stateInfo } from "../lib/sessionview.js";
 import type { Session } from "../types/session.ts";
 
@@ -28,13 +28,18 @@ export default function LayoutMap() {
 
   return (
     <div className="layoutmap" role="group" aria-label="ペイン配置">
-      {layout.cols.map((col) => (
+      <div className="lm-cap">レイアウト</div>
+      <div className="lm-cols">
+        {layout.cols.map((col) => (
         <div className="lm-col" key={col.id}>
           {col.panes.map((p) => {
             const ord = ordOf.get(p.id) ?? 0;
             const s: Session | null = p.kind === "terminal" && p.session ? byName.get(p.session) ?? null : null;
             const st = s ? stateInfo(s) : null;
             const kindTxt = s ? kindShort(s.kind) : KIND_ABBR[p.kind] || "–";
+            // Ordinal keeps the ordinal color (cross-refs the pane corner + Sessions
+            // badge); the kind abbrev is tinted by kind so "what agent" reads too.
+            const kindCls = s ? " kc-" + kindClass(s.kind) : "";
             const on = hoverMatches(hover, p.id, p.session);
             // Tooltip / aria: "ペイン1: {name} · {kind} · {state}" for a session,
             // or the pane's Japanese view name — so the 2-char cell is legible on
@@ -62,13 +67,14 @@ export default function LayoutMap() {
                 onMouseLeave={() => setHover(null)}
               >
                 <span className="lm-ord">{ord}</span>
-                <span className="lm-kind">{kindTxt}</span>
+                <span className={"lm-kind" + kindCls}>{kindTxt}</span>
                 {st && <span className={"lm-dot " + st.cls} />}
               </button>
             );
           })}
         </div>
-      ))}
+        ))}
+      </div>
     </div>
   );
 }
