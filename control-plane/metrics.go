@@ -86,12 +86,20 @@ var (
 	cpuPrev = map[string]cpuSample{}
 )
 
+// dockerContainerID returns the id of a RUNNING container, else "". docker inspect
+// resolves a stopped/exited container too, so we must gate on .State.Running —
+// otherwise containerStats reports a stopped workspace as running (a wrong 稼働中 dot,
+// hidden 停止中 notice, and an enabled 強制停止 button).
 func dockerContainerID(ctx context.Context, name string) string {
-	out, err := exec.CommandContext(ctx, "docker", "inspect", "-f", "{{.Id}}", name).Output()
+	out, err := exec.CommandContext(ctx, "docker", "inspect", "-f", "{{.State.Running}} {{.Id}}", name).Output()
 	if err != nil {
 		return ""
 	}
-	return strings.TrimSpace(string(out))
+	f := strings.Fields(string(out))
+	if len(f) < 2 || f[0] != "true" {
+		return ""
+	}
+	return f[1]
 }
 
 // cgroupScope is the host cgroup v2 path for a docker container under the systemd
