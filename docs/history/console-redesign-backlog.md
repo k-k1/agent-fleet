@@ -42,7 +42,7 @@
 
 ## D. 設定 / 管理ダイアログの一貫化 ⏳ 着手中（方向性モック合意済み 2026-07-03）
 - Settings 各タブ（Connections/Agents/Env/SSM/MCP/表示）の余白・ラベル・見出しの体裁統一。
-- **接続タブ:** プロバイダを「バッジ＋名前＋状態ピル＋説明」のカードに。Codex は接続手段を推奨つき選択肢に＋デバイスコードを番号付き手順に。注記（ヘルプ文）は左罫線つきの定型ブロックで統一。→ 合意モック [`console-connections-mock.html`](./console-connections-mock.html)。
+- [x] **接続タブ:** プロバイダを「バッジ＋名前＋状態ピル＋説明」のカードに。Codex は接続手段を推奨つき選択肢に＋デバイスコードを番号付き手順に。注記（ヘルプ文）は左罫線つきの定型ブロックで統一。→ 合意モック [`console-connections-mock.html`](./console-connections-mock.html)。**実装済 `c7ce7a0`**（バッジ色はセッション kind に合わせて codex 緑/opencode 紫。要ユーザー目視）。
 - **SSM タブ:** プロファイル/ホストの追加フォームを placeholder のみ→ラベル＋必須表示＋ヒント＋「必須/詳細(任意)」グループ分けに。プロファイル未登録時は無効欄でなく CTA バナー。→ 合意モック [`console-ssm-mock.html`](./console-ssm-mock.html)。
 - `AdminDialog`（super_admin）は今回ほぼ未着手 — 新しい言語（ボタン/確認/トースト/チップ）に合わせる。
 - 破壊操作の確認は `useConfirm` に寄せ済（AdminTab は既存 `ConfirmDialog` 利用）。トーンの統一のみ。
