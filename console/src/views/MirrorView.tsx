@@ -26,6 +26,13 @@ interface Question {
   multiSelect?: boolean;
   options?: QuestionOption[];
 }
+// One ToDo task, reconstructed server-side from the transcript's Task tool calls.
+interface TaskItem {
+  id: string;
+  subject: string;
+  activeForm?: string;
+  status: string; // "pending" | "in_progress" | "completed"
+}
 // One ordered part of a turn (Markdown text, a tool trace, a question, or a plan).
 interface Part {
   kind: string;
@@ -126,6 +133,7 @@ export default function MirrorView({
   const [termState, setTermState] = useState(""); // terminal-only state: "resume" | "compacting" | ""
   const [status, setStatus] = useState("");
   const [bgBusy, setBgBusy] = useState(false); // idle but a run_in_background task lingers
+  const [tasks, setTasks] = useState<TaskItem[]>([]); // current ToDo list (Task tool calls)
   const [alive, setAlive] = useState(!!sessionMeta?.alive); // live session ⇒ composer usable
   const [pending, setPending] = useState<Question[] | null>(null); // currently-awaiting AskUserQuestion
   const [pendingPlan, setPendingPlan] = useState<string | null>(null); // ExitPlanMode plan awaiting approval
@@ -161,6 +169,7 @@ export default function MirrorView({
     setTermState("");
     setStatus("");
     setBgBusy(false);
+    setTasks([]);
     setAlive(!!sessionMeta?.alive);
     setPending(null);
     setPendingPlan(null);
@@ -237,6 +246,7 @@ export default function MirrorView({
           // moment a background resume brings the session up.
           setAlive(!!d.alive);
           setBgBusy(!!d.backgroundBusy);
+          setTasks(Array.isArray(d.tasks) ? d.tasks : []);
           setPending(Array.isArray(d.pendingQuestions) ? d.pendingQuestions : null);
           setPendingPlan(typeof d.pendingPlan === "string" && d.pendingPlan ? d.pendingPlan : null);
           setPendingPerm(typeof d.pendingPermission === "string" && d.pendingPermission ? d.pendingPermission : null);
@@ -489,6 +499,7 @@ export default function MirrorView({
       </header>
 
       {ctxUsage && <ContextBar {...ctxUsage} />}
+      {tasks.length > 0 && <TaskChecklist tasks={tasks} />}
       {mode === "plan" && (
         <div className="mirror-planmode">
           <Icon name="debug-pause" /> 計画モード — 承認するまで実装しません
@@ -836,6 +847,49 @@ function renderGroups(
     );
   }
   return els;
+}
+
+// taskIcon maps a ToDo status to its codicon glyph (in_progress spins via the caller).
+function taskIcon(status: string): string {
+  if (status === "completed") return "check";
+  if (status === "in_progress") return "loading";
+  return "circle-large-outline";
+}
+
+// TaskChecklist renders the current ToDo list (reconstructed from Task tool calls) as a
+// collapsed disclosure: a done/total count, the active task on the summary, and the full
+// list on expand. Open while work remains; collapses once everything is completed.
+function TaskChecklist({ tasks }: { tasks: TaskItem[] }) {
+  const done = tasks.filter((t) => t.status === "completed").length;
+  const total = tasks.length;
+  const active = tasks.find((t) => t.status === "in_progress");
+  const [open, setOpen] = useState(done < total);
+  return (
+    <details
+      className="mirror-tasks"
+      open={open}
+      onToggle={(e) => setOpen((e.currentTarget as HTMLDetailsElement).open)}
+    >
+      <summary className="mirror-tasks-head">
+        <Icon name="checklist" />
+        <span className="mtk-title">ToDo</span>
+        <span className="mtk-count muted">
+          {done}/{total}
+        </span>
+        {active && <span className="mtk-active muted">{active.activeForm || active.subject}</span>}
+      </summary>
+      <ol className="mirror-tasks-list">
+        {tasks.map((t) => (
+          <li key={t.id} className={"mtk-item mtk-" + t.status}>
+            <Icon name={taskIcon(t.status)} spin={t.status === "in_progress"} className="mtk-mark" />
+            <span className="mtk-text">
+              {t.status === "in_progress" && t.activeForm ? t.activeForm : t.subject}
+            </span>
+          </li>
+        ))}
+      </ol>
+    </details>
+  );
 }
 
 // CompactBlock renders claude's auto-compaction summary as a collapsed disclosure —
