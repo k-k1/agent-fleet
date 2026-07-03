@@ -575,9 +575,9 @@ export default function WsBar() {
         </div>
       ) : (
         <>
-          {resourcesEl}
-          {resourcesEl && usageEl && <span className="ws-graph-sep" />}
           {usageEl}
+          {resourcesEl && usageEl && <span className="ws-graph-sep" />}
+          {resourcesEl}
           <div className="ws-preview" ref={pvRef}>
             <button
               className="ghost ws-preview-btn"
