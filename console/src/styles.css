@@ -2290,30 +2290,33 @@ body.row-resizing {
 .cb-full .cb-track {
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--del) 55%, transparent);
 }
-/* Token-spend trend: a Sparkline of each turn's newly-consumed tokens across the whole
-   conversation, so heavy turns stand out. Sits just under the context bar. */
-.mirror-trend {
-  display: flex;
+/* Token-spend trend, merged onto the context row (chat only): a divider, then a
+   Sparkline of each turn's newly-consumed tokens so heavy turns stand out. */
+.cb-div {
+  flex: none;
+  align-self: stretch;
+  width: 1px;
+  margin: 1px 0;
+  background: var(--border);
+}
+.cb-trend {
+  flex: 1;
+  display: inline-flex;
   align-items: center;
   gap: 8px;
-  padding: 3px 16px 4px;
-  border-bottom: 1px solid var(--border);
-  font-size: 11px;
+  min-width: 90px;
   color: var(--chat-accent);
 }
-.mirror-trend > .codicon {
+.cb-trend-label {
   flex: none;
-  font-size: 12px;
+  color: var(--muted);
 }
-.mirror-trend .mtr-label {
-  flex: none;
-}
-.mirror-trend .spark {
+.cb-trend .spark {
   flex: 1;
   width: 100%;
-  height: 16px;
+  height: 14px;
 }
-.mirror-trend .mtr-peak {
+.cb-trend-peak {
   flex: none;
   color: var(--muted);
   font-variant-numeric: tabular-nums;

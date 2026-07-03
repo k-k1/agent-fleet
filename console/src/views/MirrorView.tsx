@@ -7,7 +7,6 @@ import Icon from "../components/Icon.jsx";
 import MarkdownView from "./MarkdownView.jsx";
 import MirrorToggle from "../components/MirrorToggle.jsx";
 import ContextBar from "../components/ContextBar.jsx";
-import Sparkline from "../components/Sparkline.jsx";
 import { useToast } from "../components/ToastProvider.jsx";
 import { fmtTok } from "../lib/fmttok.js";
 import { kindIcon, kindLabel, kindShort, kindClass } from "../lib/sessionkind.js";
@@ -515,18 +514,7 @@ export default function MirrorView({
         <MirrorToggle mirror={!!mirror} onToggle={onToggleMirror} running={running} />
       </header>
 
-      {ctxUsage && <ContextBar {...ctxUsage} />}
-      {spends.length >= 2 && (
-        <div
-          className="mirror-trend"
-          title="ターン毎の新規消費トークン（未キャッシュ入力＋新規キャッシュ＋出力）の推移"
-        >
-          <Icon name="graph-line" />
-          <span className="mtr-label muted">消費推移</span>
-          <Sparkline data={spends} width={200} height={16} />
-          <span className="mtr-peak">最大 {fmtTok(maxSpend)}</span>
-        </div>
-      )}
+      {ctxUsage && <ContextBar {...ctxUsage} spends={spends} maxSpend={maxSpend} />}
       {tasks.length > 0 && <TaskChecklist tasks={tasks} />}
       {mode === "plan" && (
         <div className="mirror-planmode">
