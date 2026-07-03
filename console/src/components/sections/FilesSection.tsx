@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent as RMouseEvent, DragEvent as RDragEvent, KeyboardEvent as RKeyboardEvent } from "react";
 import { useApp } from "../../state.jsx";
 import { api, uploadFiles, downloadURL, fsMkdir, fsNewFile, fsRename, fsDelete } from "../../api.js";
@@ -62,6 +62,20 @@ const soleChildDir = (entries: Entry[] | undefined): Entry | null =>
 const fsList = (path: string) =>
   api(`api/fs/tree?path=${encodeURIComponent(path)}`).catch(() => ({ entries: [] }));
 
+// placeFixed positions a position:fixed popover at the desired (left, top) but keeps
+// it fully on-screen: it slides the menu left/up when it would run past the right/
+// bottom edge, and never lets it go past the left/top edge. Used for both the ＋
+// dropdown and the right-click context menu so neither spills off a phone screen.
+function placeFixed(el: HTMLElement, left: number, top: number) {
+  const pad = 8;
+  const w = el.offsetWidth;
+  const h = el.offsetHeight;
+  const l = Math.max(pad, Math.min(left, window.innerWidth - w - pad));
+  const t = Math.max(pad, Math.min(top, window.innerHeight - h - pad));
+  el.style.left = l + "px";
+  el.style.top = t + "px";
+}
+
 // Files: a lazily-expanded, read-only tree of the workspace home (denylist applied
 // on the Agent). The tree is centrally managed (flattened visible rows + an open
 // set) so it's keyboard-navigable: ↑/↓ move, → expand / into child, ← collapse /
@@ -93,9 +107,11 @@ export default function FilesSection() {
   const [changes, setChanges] = useState<FsChange[] | null>(null); // changes-mode: aggregated git status
   const [dropTarget, setDropTarget] = useState<string | null>(null); // dir path being hovered with a drag ("" = root)
   const [uploading, setUploading] = useState(false);
-  const opsRef = useRef<HTMLDivElement>(null); // ＋ menu wrap (outside-click test)
+  const opsRef = useRef<HTMLDivElement>(null); // ＋ menu wrap (outside-click test + anchor)
+  const opsMenuRef = useRef<HTMLDivElement>(null); // ＋ dropdown (clamped into the viewport)
   const [opsOpen, setOpsOpen] = useState(false); // ＋ (new / upload) header dropdown
   const [menu, setMenu] = useState<Menu | null>(null); // context menu: { x, y, row|null }
+  const ctxRef = useRef<HTMLUListElement>(null); // context menu (clamped into the viewport)
   const treeRef = useRef<HTMLUListElement>(null);
   const selRef = useRef<HTMLLIElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -285,6 +301,24 @@ export default function FilesSection() {
     setMenu(null);
     fn();
   };
+  // Keep the context menu on-screen: it opens at the raw cursor point, which can be
+  // near a right/bottom/left edge on a phone. useLayoutEffect runs before paint so
+  // there's no visible jump from the initial cursor position.
+  useLayoutEffect(() => {
+    if (menu && ctxRef.current) placeFixed(ctxRef.current, menu.x, menu.y);
+  }, [menu]);
+  // The ＋ dropdown: promote to a viewport-clamped fixed menu below its button so it
+  // can't be clipped by the pane's overflow or spill off a narrow screen (the button
+  // sits mid-header, so the CSS right:0 anchoring opened it off the left edge).
+  useLayoutEffect(() => {
+    const el = opsMenuRef.current;
+    const anchor = opsRef.current;
+    if (!opsOpen || !el || !anchor) return;
+    el.style.position = "fixed";
+    el.style.right = "auto";
+    const a = anchor.getBoundingClientRect();
+    placeFixed(el, a.right - el.offsetWidth, a.bottom + 4);
+  }, [opsOpen]);
 
   // Reload: on manual ⟳, and on filesKey bumps (clone / workspace stop·start).
   // PRESERVES the expanded folders (and selection): it refetches root and every
@@ -576,7 +610,7 @@ export default function FilesSection() {
                   <Icon name="add" />
                 </button>
                 {opsOpen && (
-                  <div className="launch-menu">
+                  <div className="launch-menu" ref={opsMenuRef}>
                     {/* The target folder once, as a header, instead of repeating it
                         on every item. */}
                     <div className="menu-head" title={uploadDir || "home"}>
@@ -719,7 +753,7 @@ export default function FilesSection() {
         </ul>
       )}
       {menu && (
-        <ul className="ctxmenu" style={{ left: menu.x, top: menu.y }} role="menu" onMouseDown={(e) => e.stopPropagation()}>
+        <ul className="ctxmenu" ref={ctxRef} style={{ left: menu.x, top: menu.y }} role="menu" onMouseDown={(e) => e.stopPropagation()}>
           <li onClick={() => runMenu(() => newFile(menuDir))}>新規ファイル</li>
           <li onClick={() => runMenu(() => newFolder(menuDir))}>新規フォルダ</li>
           {menu.row && menu.row.type === "file" && (
