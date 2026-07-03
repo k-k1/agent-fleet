@@ -380,6 +380,13 @@ function CodexCard({
       ) : mode === "device" && dev ? (
         <div className="p-body">
           <DeviceSteps code={dev.user_code} url={dev.url} status={dev.status} />
+          <Hint>
+            承認しても進まない場合は、ChatGPT の{" "}
+            <a href="https://chatgpt.com/#settings/Security" target="_blank" rel="noopener" className="flow-link">
+              設定 &gt; セキュリティ
+            </a>{" "}
+            で「Codex に対してデバイスコード認証を有効にする」がオンか確認してください。
+          </Hint>
         </div>
       ) : mode === "key" ? (
         <div className="p-body">
@@ -418,6 +425,13 @@ function CodexCard({
                 <span className="p-opt-s">OpenAI API の従量課金（sk-…）。</span>
               </button>
             </div>
+            <Hint>
+              ChatGPT サブスクで接続するには、先に ChatGPT の{" "}
+              <a href="https://chatgpt.com/#settings/Security" target="_blank" rel="noopener" className="flow-link">
+                設定 &gt; セキュリティ
+              </a>{" "}
+              で「Codex に対してデバイスコード認証を有効にする」をオンにしてください。
+            </Hint>
           </div>
         </>
       )}
