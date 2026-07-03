@@ -94,6 +94,9 @@ export interface AppState {
   adminOpen: boolean;
   openAdmin: () => void;
   closeAdmin: () => void;
+  // AdminTab keeps its current drill-down depth here (0=tenants,1=tenant,2=member) so
+  // the X/backdrop close can pop all its history entries at once.
+  adminDepthRef: { current: number };
   // mobile nav drawer
   navOpen: boolean;
   toggleNav: () => void;

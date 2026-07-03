@@ -5450,9 +5450,9 @@ button.mt-toolrun-head:hover {
   border-bottom: none;
 }
 .asx-user {
-  flex: 0 0 auto;
-  min-width: 130px;
-  max-width: 190px;
+  flex: 0 1 auto;
+  min-width: 90px;
+  max-width: 170px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -5533,6 +5533,18 @@ button.mt-toolrun-head:hover {
 }
 .state-dot.off {
   background: var(--muted2);
+}
+/* Text label beside a state dot (admin member header) so 稼働中/停止中 is unambiguous. */
+.state-word {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.state-word.on {
+  color: var(--ok);
+}
+.state-word.off {
+  color: var(--muted2);
 }
 .mr-key {
   font-size: 13px;
@@ -5651,10 +5663,24 @@ button.mt-toolrun-head:hover {
 .adm-session {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 6px 10px;
   padding: 6px 4px;
   border-bottom: 1px solid var(--border2);
   font-size: 12px;
+  flex-wrap: wrap; /* narrow (phone) screens wrap the columns instead of overflowing */
+}
+/* Tenant group header in the deployment-wide session overview. */
+.asx-group + .asx-group {
+  margin-top: 10px;
+}
+.asx-group-head {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--muted);
+  padding: 4px 2px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 2px;
 }
 .as-name {
   flex-shrink: 0;
@@ -5807,6 +5833,22 @@ button.mt-toolrun-head:hover {
   flex: 0 0 auto;
   padding: 6px 20px;
   font-size: 12px;
+}
+/* Mobile: the 6 tabs overflow a phone width — scroll the bar horizontally instead of
+   clipping the right edge (the buttons keep their width; swipe / tap scrolls the
+   active one into view). */
+@media (max-width: 760px) {
+  .settings-seg {
+    display: flex;
+    width: 100%;
+    align-self: stretch;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+  }
+  .settings-seg::-webkit-scrollbar {
+    display: none;
+  }
 }
 .settings-content {
   flex: 1;

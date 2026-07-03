@@ -246,6 +246,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const l = e.state && e.state.__af && e.state.layout ? e.state.layout : initialLayout;
       setLayout(l);
       setNavOpen(!!(e.state && e.state.drawer));
+      // Browser back closes the settings / admin modals. Admin pushes an entry per
+      // drill level (with adminView in the state), so a back lands on the parent level
+      // (AdminTab's own popstate listener restores its view) and only the pre-admin
+      // entry (no modal) actually closes it.
+      setSettingsOpen(!!(e.state && e.state.modal === "settings"));
+      setAdminOpen(!!(e.state && e.state.modal === "admin"));
     };
     window.addEventListener("popstate", onPop);
     try {
@@ -257,6 +263,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState("agents"); // initial tab when opened
   const [adminOpen, setAdminOpen] = useState(false);
+  // Live mirrors + the admin drill-down back handler, consulted by the popstate and
+  // swipe handlers (which capture their closures once).
+  const settingsOpenRef = useRef(settingsOpen);
+  settingsOpenRef.current = settingsOpen;
+  const adminOpenRef = useRef(adminOpen);
+  adminOpenRef.current = adminOpen;
+  // adminDepth = drill-down depth (0=tenants, 1=tenant, 2=member). AdminTab pushes a
+  // history entry per level, so a browser "back" pops one level and only closes at the
+  // top; the X/backdrop pops all levels at once.
+  const adminDepthRef = useRef(0);
 
   // navOpen drives the mobile navigator drawer. On desktop the drawer styles are
   // inert (the left pane is always visible), so this flag is a no-op there; under
@@ -284,7 +300,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const onStart = (e: TouchEvent) => {
       const t = e.touches[0];
       mode = null;
-      if (t && mq.matches) {
+      // While a modal is up, don't let an edge swipe open the drawer behind it (the
+      // settings modal also uses horizontal swipes for its own tabs).
+      if (t && mq.matches && !settingsOpenRef.current && !adminOpenRef.current) {
         if (navOpenRef.current) mode = "close";
         else if (t.clientX < Math.min(window.innerWidth * 0.33, 160)) mode = "open";
       }
@@ -936,11 +954,26 @@ export function AppProvider({ children }: { children: ReactNode }) {
       // tab was folded into it), so any caller asking for connections lands there.
       setSettingsSection(section === "connections" ? "agents" : section || "agents");
       setSettingsOpen(true);
+      // Push a history entry so the device/browser back button closes the modal.
+      try { history.pushState({ __af: true, layout: layoutRef.current, modal: "settings" }, ""); } catch {}
     },
-    closeSettings: () => setSettingsOpen(false),
+    closeSettings: () => {
+      if (typeof history !== "undefined" && history.state && history.state.modal === "settings") history.back();
+      else setSettingsOpen(false);
+    },
     adminOpen,
-    openAdmin: () => setAdminOpen(true),
-    closeAdmin: () => setAdminOpen(false),
+    openAdmin: () => {
+      setAdminOpen(true);
+      try { history.pushState({ __af: true, layout: layoutRef.current, modal: "admin" }, ""); } catch {}
+    },
+    adminDepthRef,
+    closeAdmin: () => {
+      // Full close (X / backdrop): pop ALL admin entries (base + each drill level) so
+      // one action closes the modal from any depth and a later back can't re-open it.
+      if (typeof history !== "undefined" && history.state && history.state.modal === "admin") {
+        history.go(-(adminDepthRef.current + 1));
+      } else setAdminOpen(false);
+    },
     navOpen,
     toggleNav,
     closeNav,
