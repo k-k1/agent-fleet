@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { CSSProperties, KeyboardEvent as RKeyboardEvent, ClipboardEvent as RClipboardEvent } from "react";
 import { api, apiJSON, raw, errText, pasteImage } from "../api.js";
 import { useSettings, chatFontStack } from "../lib/settings.js";
@@ -14,6 +14,10 @@ import { displayName, stateInfo } from "../lib/sessionview.js";
 import { coarsePointer } from "../lib/device.js";
 
 const q = encodeURIComponent;
+
+// Transcript window size (jsonl lines) for the initial tail load and each backward page.
+// The server clamps it; matches docs/decisions/0009 (P2).
+const WINDOW = 400;
 
 // Appended to a prompt when the user pastes image(s): claude has no native image input
 // over tmux, so we point it at the saved absolute paths and let its Read tool open them.
@@ -173,6 +177,15 @@ export default function MirrorView({
   const [lightbox, setLightbox] = useState<string | null>(null); // enlarged image (blob URL) or null
   const [histIdx, setHistIdx] = useState<number | null>(null); // position in composer history, or null
   const cursorRef = useRef(0);
+  // Backward paging (P2): firstLineRef = oldest jsonl line currently held; hasMore = there
+  // is older history above it to page in. loadingOlderRef guards against overlapping loads;
+  // prependAdjustRef carries the pre-prepend scrollHeight so we can pin the viewport.
+  const firstLineRef = useRef(0);
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const loadingOlderRef = useRef(false);
+  const prependAdjustRef = useRef<number | null>(null);
+  const topSentinelRef = useRef<HTMLDivElement>(null);
   const diagRef = useRef(""); // last transcript-diagnostic signature (warn once per change)
   const statusRef = useRef("");
   const tickRef = useRef<(() => void) | null>(null); // lets send() trigger an immediate refresh
@@ -188,6 +201,11 @@ export default function MirrorView({
   // that session's jsonl, meaningless across sessions).
   useEffect(() => {
     cursorRef.current = 0;
+    firstLineRef.current = 0;
+    loadingOlderRef.current = false;
+    prependAdjustRef.current = null;
+    setHasMore(false);
+    setLoadingOlder(false);
     diagRef.current = "";
     statusRef.current = "";
     setTurns([]);
@@ -239,7 +257,14 @@ export default function MirrorView({
     let timer: ReturnType<typeof setTimeout> | null = null;
     const tick = async () => {
       try {
-        const d = await api(`api/sessions/${q(session)}/messages?since=${cursorRef.current}`);
+        // First poll: fetch only the TAIL window (fast on huge transcripts); the server
+        // returns firstLine/hasMore so we can page older history in on scroll. Subsequent
+        // polls are plain since=<cursor> increments (unchanged).
+        const first = cursorRef.current === 0;
+        const url = first
+          ? `api/sessions/${q(session)}/messages?since=0&tail=1&limit=${WINDOW}`
+          : `api/sessions/${q(session)}/messages?since=${cursorRef.current}`;
+        const d = await api(url);
         if (!alive) return;
         if (d && !d.error) {
           if (typeof d.cursor === "number") cursorRef.current = d.cursor;
@@ -248,8 +273,15 @@ export default function MirrorView({
           // re-sent from the top — replace, don't append. Otherwise append new turns.
           if (d.reset) {
             setTurns(Array.isArray(d.messages) ? d.messages : []);
+            firstLineRef.current = 0; // reset re-sends from the top: nothing older to page
+            setHasMore(false);
           } else if (Array.isArray(d.messages) && d.messages.length) {
             setTurns((t) => [...t, ...d.messages]);
+          }
+          // Windowed (initial tail) response carries the oldest line we now hold.
+          if (typeof d.firstLine === "number") {
+            firstLineRef.current = d.firstLine;
+            setHasMore(!!d.hasMore);
           }
           // Diagnostic: surface the anomalies behind "sent but nothing shows" — no
           // jsonl found, multiple <sid>.jsonl siblings (a stub may shadow the real
@@ -322,6 +354,60 @@ export default function MirrorView({
     if (!el) return;
     atBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
   };
+
+  // Page older history in (P2): fetch the window before the oldest line we hold and
+  // prepend it. Guard via refs so overlapping triggers (button + observer) can't double it.
+  const loadOlder = async () => {
+    if (loadingOlderRef.current || firstLineRef.current <= 0) return;
+    loadingOlderRef.current = true;
+    setLoadingOlder(true);
+    try {
+      const before = firstLineRef.current;
+      const d = await api(`api/sessions/${q(session)}/messages?before=${before}&limit=${WINDOW}`);
+      if (d && !d.error && Array.isArray(d.messages)) {
+        if (d.messages.length) {
+          const el = bodyRef.current;
+          prependAdjustRef.current = el ? el.scrollHeight : null; // pin the viewport across the prepend
+          const older = d.messages;
+          setTurns((t) => [...older, ...t]);
+        }
+        if (typeof d.firstLine === "number") firstLineRef.current = d.firstLine;
+        setHasMore(!!d.hasMore);
+      }
+    } catch {
+      /* transient — the user can trigger again */
+    } finally {
+      loadingOlderRef.current = false;
+      setLoadingOlder(false);
+    }
+  };
+
+  // After an older page is prepended, restore the viewport: scrollTop grows by exactly the
+  // height added on top, so the user stays on the same content instead of jumping up.
+  useLayoutEffect(() => {
+    const el = bodyRef.current;
+    if (el && prependAdjustRef.current != null) {
+      el.scrollTop += el.scrollHeight - prependAdjustRef.current;
+      prependAdjustRef.current = null;
+    }
+  }, [turns]);
+
+  // Auto-load older history when the top sentinel scrolls into view (prefetch a little
+  // early via rootMargin). Only active while there's more above.
+  useEffect(() => {
+    const el = topSentinelRef.current;
+    const root = bodyRef.current;
+    if (!el || !root || !hasMore) return;
+    const ob = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) loadOlder();
+      },
+      { root, rootMargin: "240px 0px 0px 0px" },
+    );
+    ob.observe(el);
+    return () => ob.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasMore, session]);
 
   // Auto-grow the composer to fit its content (up to ~10 lines via the CSS max-height,
   // then it scrolls). Runs on every draft change, including the per-session draft restored
@@ -631,6 +717,26 @@ export default function MirrorView({
       )}
 
       <div className="mirror-body" ref={bodyRef} onScroll={onBodyScroll}>
+        {loaded && hasMore && (
+          <div className="mirror-loadmore" ref={topSentinelRef}>
+            <button
+              type="button"
+              className="ghost mirror-loadmore-btn"
+              disabled={loadingOlder}
+              onClick={loadOlder}
+            >
+              {loadingOlder ? (
+                <>
+                  <Icon name="loading" spin /> 読み込み中…
+                </>
+              ) : (
+                <>
+                  <Icon name="chevron-up" /> 以前の会話を読み込む
+                </>
+              )}
+            </button>
+          </div>
+        )}
         {!loaded ? (
           running ? (
             // First fetch in flight (opening a session, or switching ターミナル→チャット):

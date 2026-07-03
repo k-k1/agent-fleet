@@ -2229,6 +2229,20 @@ body.row-resizing {
   justify-content: center;
   gap: 8px;
 }
+/* "Load older" affordance at the top of the transcript (backward paging, P2). */
+.mirror-loadmore {
+  display: flex;
+  justify-content: center;
+  padding: 8px 0 6px;
+}
+.mirror-loadmore-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  padding: 4px 14px;
+  border-radius: 999px;
+}
 /* /context-like fill gauge under the header: a segmented bar (cache read / cache
    creation / fresh input) sized against the context window. */
 .mirror-ctxbar {
