@@ -3853,7 +3853,10 @@ button.mt-toolrun-head:hover {
   background: var(--panel2);
   border: 1px solid var(--border2);
   border-radius: 4px;
-  padding: 0.1em 0.4em;
+  /* Snug horizontal padding + a little outer margin so adjacent inline codes separated
+     by a slash — `Service`/`ServiceSummary` — don't crowd the slash. */
+  padding: 0.1em 0.25em;
+  margin: 0 0.18em;
 }
 .markdown pre {
   background: var(--panel2);
@@ -3901,6 +3904,7 @@ button.mt-toolrun-head:hover {
   background: none;
   border: none;
   padding: 0;
+  margin: 0;
   font-size: 12px;
   line-height: 1.55;
 }
