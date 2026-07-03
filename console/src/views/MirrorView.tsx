@@ -125,6 +125,7 @@ export default function MirrorView({
   const [loaded, setLoaded] = useState(false); // false until the first transcript fetch returns
   const [termState, setTermState] = useState(""); // terminal-only state: "resume" | "compacting" | ""
   const [status, setStatus] = useState("");
+  const [bgBusy, setBgBusy] = useState(false); // idle but a run_in_background task lingers
   const [alive, setAlive] = useState(!!sessionMeta?.alive); // live session ⇒ composer usable
   const [pending, setPending] = useState<Question[] | null>(null); // currently-awaiting AskUserQuestion
   const [pendingPlan, setPendingPlan] = useState<string | null>(null); // ExitPlanMode plan awaiting approval
@@ -159,6 +160,7 @@ export default function MirrorView({
     setLoaded(false);
     setTermState("");
     setStatus("");
+    setBgBusy(false);
     setAlive(!!sessionMeta?.alive);
     setPending(null);
     setPendingPlan(null);
@@ -234,6 +236,7 @@ export default function MirrorView({
           // Track liveness so a read-only (history) view can enable its composer the
           // moment a background resume brings the session up.
           setAlive(!!d.alive);
+          setBgBusy(!!d.backgroundBusy);
           setPending(Array.isArray(d.pendingQuestions) ? d.pendingQuestions : null);
           setPendingPlan(typeof d.pendingPlan === "string" && d.pendingPlan ? d.pendingPlan : null);
           setPendingPerm(typeof d.pendingPermission === "string" && d.pendingPermission ? d.pendingPermission : null);
@@ -437,7 +440,7 @@ export default function MirrorView({
 
   // Status chip: prefer the live polled status, fall back to the session meta.
   const chip = status
-    ? stateInfo({ kind: "claude", alive: status !== "stopped", state: status } as any)
+    ? stateInfo({ kind: "claude", alive: status !== "stopped", state: status, backgroundBusy: bgBusy } as any)
     : sessionMeta
       ? stateInfo(sessionMeta)
       : null;
