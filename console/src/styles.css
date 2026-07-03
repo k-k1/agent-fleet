@@ -2461,6 +2461,77 @@ body.row-resizing {
 .mirror-compact-body {
   padding: 8px 12px;
 }
+/* ToDo list (reconstructed from Task tool calls): a collapsed disclosure with a
+   done/total count. Completed items dim + strike; the in-progress one is emphasized. */
+.mirror-tasks {
+  margin: 6px 16px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bar);
+}
+.mirror-tasks-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--muted);
+  list-style: none;
+}
+.mirror-tasks-head::-webkit-details-marker {
+  display: none;
+}
+.mirror-tasks-head .mtk-title {
+  color: var(--fg);
+  font-weight: 600;
+}
+.mirror-tasks-head .mtk-active {
+  margin-left: auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mirror-tasks[open] .mirror-tasks-head {
+  border-bottom: 1px solid var(--border);
+}
+.mirror-tasks-list {
+  margin: 0;
+  padding: 6px 12px;
+  list-style: none;
+}
+.mtk-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 3px 0;
+  font-size: 12px;
+  color: var(--fg);
+}
+.mtk-item .mtk-mark {
+  flex: none;
+  position: relative;
+  top: 1px;
+}
+.mtk-completed {
+  color: var(--muted);
+}
+.mtk-completed .mtk-text {
+  text-decoration: line-through;
+}
+.mtk-completed .mtk-mark {
+  color: var(--ok, #4ea672);
+}
+.mtk-in_progress {
+  font-weight: 600;
+}
+.mtk-in_progress .mtk-mark {
+  color: var(--chat-accent);
+}
+.mtk-pending .mtk-mark {
+  color: var(--muted);
+}
 /* Auto-compaction in progress: an informational spinner strip. */
 .mirror-compacting {
   display: flex;

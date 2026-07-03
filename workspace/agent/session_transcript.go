@@ -134,6 +134,10 @@ func handleSessionMessages(w http.ResponseWriter, r *http.Request) {
 	if md := latestMode(lines); md != "" {
 		resp["mode"] = md
 	}
+	// Current ToDo list (reconstructed from Task tool calls) so the chat can show progress.
+	if tasks := collectTasks(lines); len(tasks) > 0 {
+		resp["tasks"] = tasks
+	}
 	// Surface terminal-only states (startup resume menu / auto-compaction) the chat
 	// can't otherwise see, so the Console can prompt the user or show a 圧縮中 badge.
 	if alive {
@@ -357,6 +361,131 @@ func collectAnswers(lines [][]byte) map[string]string {
 		}
 	}
 	return out
+}
+
+// A ToDo task reconstructed from the transcript's Task tool calls. Unlike TodoWrite
+// (which resends the whole list each time), TaskCreate/TaskUpdate are incremental.
+type taskItem struct {
+	ID      string `json:"id"`
+	Subject string `json:"subject"`
+	Active  string `json:"activeForm,omitempty"`
+	Status  string `json:"status"` // pending | in_progress | completed
+}
+
+// collectTasks reconstructs the current ToDo list from the transcript. TaskCreate adds
+// a task (single, or a batch via tasks[]) with a sequential id matching claude's
+// "Task #N" numbering; TaskUpdate merges status/subject/activeForm onto an existing id.
+// TaskStop (a background-agent stop, a hash id in a different space) and TaskList/TaskGet
+// (reads) don't change the list and are ignored. Returns tasks in creation order.
+func collectTasks(lines [][]byte) []taskItem {
+	order := []string{}
+	m := map[string]*taskItem{}
+	next := 1
+	for _, ln := range lines {
+		var ev struct {
+			Type    string `json:"type"`
+			Message struct {
+				Content json.RawMessage `json:"content"`
+			} `json:"message"`
+		}
+		if json.Unmarshal(ln, &ev) != nil || ev.Type != "assistant" {
+			continue
+		}
+		if len(ev.Message.Content) == 0 || ev.Message.Content[0] != '[' {
+			continue
+		}
+		var blocks []struct {
+			Type  string          `json:"type"`
+			Name  string          `json:"name"`
+			Input json.RawMessage `json:"input"`
+		}
+		if json.Unmarshal(ev.Message.Content, &blocks) != nil {
+			continue
+		}
+		for _, b := range blocks {
+			if b.Type != "tool_use" {
+				continue
+			}
+			switch b.Name {
+			case "TaskCreate":
+				for _, tc := range parseTaskCreate(b.Input) {
+					id := strconv.Itoa(next)
+					next++
+					tc.ID = id
+					if tc.Status == "" {
+						tc.Status = "pending"
+					}
+					cp := tc
+					m[id] = &cp
+					order = append(order, id)
+				}
+			case "TaskUpdate":
+				applyTaskUpdate(m, b.Input)
+			}
+		}
+	}
+	out := make([]taskItem, 0, len(order))
+	for _, id := range order {
+		if it, ok := m[id]; ok {
+			out = append(out, *it)
+		}
+	}
+	return out
+}
+
+// parseTaskCreate returns the tasks one TaskCreate call adds — normally one (the subject
+// is on the input itself), or several when it carries a tasks[] batch.
+func parseTaskCreate(input json.RawMessage) []taskItem {
+	var in struct {
+		Subject    string `json:"subject"`
+		ActiveForm string `json:"activeForm"`
+		Tasks      []struct {
+			Subject    string `json:"subject"`
+			ActiveForm string `json:"activeForm"`
+		} `json:"tasks"`
+	}
+	if json.Unmarshal(input, &in) != nil {
+		return nil
+	}
+	if len(in.Tasks) > 0 {
+		out := make([]taskItem, 0, len(in.Tasks))
+		for _, t := range in.Tasks {
+			if t.Subject != "" {
+				out = append(out, taskItem{Subject: t.Subject, Active: t.ActiveForm})
+			}
+		}
+		return out
+	}
+	if in.Subject == "" {
+		return nil
+	}
+	return []taskItem{{Subject: in.Subject, Active: in.ActiveForm}}
+}
+
+// applyTaskUpdate merges a TaskUpdate's non-empty fields onto the referenced task.
+func applyTaskUpdate(m map[string]*taskItem, input json.RawMessage) {
+	var in struct {
+		TaskID     string `json:"taskId"`
+		Status     string `json:"status"`
+		Subject    string `json:"subject"`
+		ActiveForm string `json:"activeForm"`
+	}
+	if json.Unmarshal(input, &in) != nil || in.TaskID == "" {
+		return
+	}
+	it, ok := m[in.TaskID]
+	if !ok {
+		return
+	}
+	if in.Status != "" {
+		it.Status = in.Status
+	}
+	if in.Subject != "" {
+		it.Subject = in.Subject
+	}
+	if in.ActiveForm != "" {
+		it.Active = in.ActiveForm
+	}
 }
 
 // latestMode returns the session's current permission mode from the last "mode"
