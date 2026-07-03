@@ -1,0 +1,259 @@
+<!-- 設定/管理ダイアログ 一貫化（§D）の視覚案モック。単体で開ける静的 HTML。
+     実プロダクトのダークパレット（#1e1e1e / accent #6cf）で、全タブを共通の
+     「セクション見出し＋行＋補助テキスト＋カード＋危険ゾーン」パターンに寄せる案を示す。
+     参照: docs/history/console-redesign-backlog.md §D、実装の理想形は settings/DisplayTab.tsx。 -->
+<title>Console 設定ダイアログ 一貫化案</title>
+<style>
+  :root{
+    --ground:#141414; --panel:#1b1b1b; --panel2:#202020; --bar:#111;
+    --border:#2e2e2e; --border2:#242424;
+    --fg:#dddddd; --muted:#8a8a8a; --faint:#6a6a6a;
+    --accent:#66ccff; --on-accent:#06222e;
+    --ok:#67c23a; --warn:#e6a23c; --del:#e06c75;
+    --sans:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",sans-serif;
+    --mono:ui-monospace,"SF Mono",Menlo,Consolas,"DejaVu Sans Mono",monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--ground);color:var(--fg);font-family:var(--sans);line-height:1.5;
+    font-size:15px;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1080px;margin:0 auto;padding:44px 24px 96px}
+  .eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:.16em;text-transform:uppercase;
+    color:var(--accent);margin:0 0 10px}
+  h1{font-size:28px;line-height:1.15;margin:0 0 12px;font-weight:650;letter-spacing:-.01em}
+  .lede{color:var(--muted);max-width:70ch;margin:0 0 8px}
+  section.doc{margin-top:52px}
+  .shdr{display:flex;align-items:baseline;gap:12px;border-bottom:1px solid var(--border);
+    padding-bottom:10px;margin-bottom:22px}
+  .shdr .n{font-family:var(--mono);font-size:12px;color:var(--faint)}
+  .shdr h2{font-size:19px;margin:0;font-weight:620;letter-spacing:-.01em}
+  .note{color:var(--muted);font-size:13.5px;max-width:74ch;margin:0 0 18px}
+
+  /* ---------- rules / tokens legend ---------- */
+  .rules{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:14px}
+  .rule{border:1px solid var(--border);border-radius:9px;background:var(--panel);padding:14px 16px}
+  .rule h3{margin:0 0 6px;font-size:13px;letter-spacing:.02em}
+  .rule p{margin:0;color:var(--muted);font-size:12.5px}
+  .rule code{font-family:var(--mono);font-size:11.5px;color:var(--accent);background:#0f2028;
+    padding:1px 5px;border-radius:4px}
+
+  /* ---------- settings modal chrome ---------- */
+  .modal{max-width:720px;margin:0 auto;border:1px solid #3a3a3a;border-radius:12px;overflow:hidden;
+    background:var(--panel);box-shadow:0 30px 80px -30px #000}
+  .modal-head{display:flex;align-items:center;gap:10px;padding:14px 18px;border-bottom:1px solid var(--border);
+    background:var(--bar)}
+  .modal-head .t{font-weight:600;font-size:15px}
+  .modal-head .x{margin-left:auto;color:var(--muted);font-family:var(--mono);cursor:default}
+  .tabs{display:flex;gap:2px;padding:10px 14px 0;flex-wrap:wrap}
+  .tab{font-size:12.5px;padding:6px 12px;border-radius:7px 7px 0 0;color:var(--muted);
+    border:1px solid transparent;border-bottom:none;cursor:default}
+  .tab.active{color:var(--fg);background:var(--panel2);border-color:var(--border)}
+  .content{padding:20px 20px 22px;background:var(--panel2);border-top:1px solid var(--border);
+    max-height:none}
+
+  /* ---------- THE UNIFIED PATTERN ---------- */
+  .set-group{margin:0 0 26px}
+  .set-group:last-child{margin-bottom:0}
+  /* section header: uppercase, muted, hairline divider (from DisplayTab .ds-title) */
+  .set-title{margin:0 0 12px;font-size:12px;text-transform:uppercase;letter-spacing:.06em;
+    color:var(--muted);border-bottom:1px solid var(--border);padding-bottom:6px;font-weight:600}
+  /* a settings row: fixed-width label on the left, control on the right */
+  .set-row{display:flex;align-items:center;gap:14px;padding:5px 0;min-height:30px}
+  .set-label{flex:0 0 148px;font-size:13px;color:var(--fg)}
+  .set-hint{font-size:11px;color:var(--muted);margin:4px 0 0 162px;line-height:1.45}
+  .set-hint.full{margin-left:0}
+
+  /* controls (schematic) */
+  .seg{display:inline-flex;border:1px solid var(--border);border-radius:7px;overflow:hidden;background:var(--panel)}
+  .seg b{font-weight:normal;font-size:12.5px;padding:4px 11px;color:var(--muted);cursor:default}
+  .seg b.on{background:var(--accent);color:var(--on-accent);font-weight:600}
+  .chips{display:flex;gap:6px;flex-wrap:wrap}
+  .chip{font-size:12px;padding:3px 10px;border-radius:6px;border:1px solid var(--border);color:var(--muted);background:var(--panel)}
+  .chip.on{border-color:var(--accent);color:var(--accent);background:#0f2028}
+  .step{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--border);border-radius:7px;
+    padding:2px 4px;background:var(--panel)}
+  .step b{width:22px;text-align:center;color:var(--muted);cursor:default}
+  .step .v{font-family:var(--mono);font-size:12px;min-width:34px;text-align:center}
+  .inp{border:1px solid var(--border);border-radius:6px;background:var(--panel);padding:5px 9px;
+    font-family:var(--mono);font-size:12px;color:var(--fg);min-width:220px}
+
+  /* item card (connections / SSM / MCP lists) — one consistent head */
+  .set-card{border:1px solid var(--border);border-radius:9px;background:var(--panel);padding:12px 14px;margin:0 0 10px}
+  .set-card-head{display:flex;align-items:center;gap:9px}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--faint);flex:none}
+  .dot.on{background:var(--ok);box-shadow:0 0 0 3px #67c23a22}
+  .cname{font-weight:600;font-size:13.5px}
+  .cdesc{color:var(--muted);font-size:12px}
+  .set-card-head .act{margin-left:auto}
+  .btn{font-size:12.5px;padding:5px 12px;border-radius:7px;border:1px solid var(--border2);
+    background:var(--panel2);color:var(--fg);cursor:default}
+  .btn.accent{background:var(--accent);color:var(--on-accent);border-color:transparent;font-weight:600}
+  .btn.danger{color:var(--del);border-color:#5a2a2e;background:#25191b}
+
+  /* danger zone */
+  .danger{margin-top:28px;padding-top:14px;border-top:1px solid var(--border)}
+  .danger-title{display:flex;align-items:center;gap:6px;margin:0 0 10px;font-size:12px;
+    color:var(--del);text-transform:uppercase;letter-spacing:.06em;font-weight:600}
+  .danger-row{display:flex;align-items:center;justify-content:space-between;gap:12px}
+  .danger-row .txt{display:flex;flex-direction:column;gap:2px;font-size:12.5px}
+  .danger-row .muted{color:var(--muted)}
+
+  /* before / after */
+  .ba{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:6px}
+  @media(max-width:720px){.ba{grid-template-columns:1fr}.set-label{flex-basis:110px}.set-hint{margin-left:0}}
+  .card{border:1px solid var(--border);border-radius:9px;background:var(--panel);overflow:hidden}
+  .card .cap{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--border);
+    font-family:var(--mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase}
+  .card.before .cap{color:var(--del)} .card.after .cap{color:var(--ok)}
+  .card .in{padding:14px}
+  .tag{margin-left:auto;color:var(--faint);letter-spacing:.03em}
+  .mut{color:var(--muted)}
+  /* misc old bits shown in "before" */
+  .old-pink{color:#f3b6b6;font-size:12px}
+  .old-head{display:flex;align-items:center;gap:7px;font-size:13.5px}
+  .old-sub{font-size:11px;color:#9aa0aa}
+  ul.flat{list-style:none;margin:8px 0 0;padding:0;display:flex;flex-direction:column;gap:6px}
+  ul.flat li{display:flex;align-items:center;gap:8px;font-family:var(--mono);font-size:12px}
+  ul.flat code{color:var(--fg)}
+  .foot{margin-top:56px;color:var(--faint);font-size:12.5px;border-top:1px solid var(--border);padding-top:16px}
+</style>
+
+<div class="wrap">
+  <p class="eyebrow">Console UX 刷新 · §D 設定/管理の一貫化</p>
+  <h1>設定ダイアログを 1 つのパターンに揃える</h1>
+  <p class="lede">現状は <code>表示</code>/<code>環境</code> だけが「セクション見出し＋行」の整った形で、
+    <code>接続</code>・<code>SSM</code>・<code>MCP</code>・<code>エージェント</code> は各自の見出し（<code>conn-head</code> /
+    <code>ssm-section</code> / <code>pat-*-head</code>）でバラついている。理想形 <code>DisplayTab</code> の
+    <code>ds-group</code>/<code>ds-title</code> を全タブの共通パターンに昇格させる案。</p>
+
+  <!-- ============ 1. 統一ルール ============ -->
+  <section class="doc">
+    <div class="shdr"><span class="n">01</span><h2>統一ルール（共通トークン）</h2></div>
+    <p class="note">どのタブも次の 5 要素だけで組む。個別クラス（conn-head/ssm-section/pat-*-head/cname 見出し）は廃し、
+      共通クラスに寄せる。色はテーマ変数（ハードコード禁止）。</p>
+    <div class="rules">
+      <div class="rule"><h3>セクション見出し</h3><p><code>.set-title</code> 大文字・muted・下線ヘアライン。
+        1グループ = <code>.set-group</code>。</p></div>
+      <div class="rule"><h3>設定行</h3><p><code>.set-row</code> 左に固定幅ラベル <code>.set-label</code>（148px）、
+        右にコントロール。縦位置を揃える。</p></div>
+      <div class="rule"><h3>補助テキスト</h3><p><code>.set-hint</code> 11px・<code>--muted</code> に統一。
+        （旧 field-help=muted2 / role-hint=継承 を解消）。</p></div>
+      <div class="rule"><h3>項目カード</h3><p>接続/SSM/MCP のリストは <code>.set-card</code> ＋
+        共通 <code>.set-card-head</code>（状態ドット＋名前＋説明＋操作）。</p></div>
+      <div class="rule"><h3>危険ゾーン</h3><p><code>.danger-title</code> は <code>--del</code>（旧ハードコード
+        <code>#f3b6b6</code> を廃止。ライトでも見える）。</p></div>
+    </div>
+  </section>
+
+  <!-- ============ 2. 統一後の設定ダイアログ ============ -->
+  <section class="doc">
+    <div class="shdr"><span class="n">02</span><h2>統一後（例: 表示タブ）</h2></div>
+    <p class="note">理想形の <code>表示</code> はほぼこのまま。全タブがこの骨格（見出し＋行＋補助）で揃う。</p>
+    <div class="modal">
+      <div class="modal-head"><span class="t">設定</span><span class="x">✕</span></div>
+      <div class="tabs">
+        <span class="tab">接続</span><span class="tab">エージェント</span><span class="tab">環境</span>
+        <span class="tab">SSM</span><span class="tab">MCP</span><span class="tab active">表示</span>
+      </div>
+      <div class="content">
+        <div class="set-group">
+          <h4 class="set-title">カラーテーマ</h4>
+          <div class="set-row"><span class="set-label">テーマ</span>
+            <span class="seg"><b class="on">ダーク</b><b>ライト</b></span></div>
+          <div class="set-row"><span class="set-label">上部バーの背景</span>
+            <span class="chips"><span class="chip on">既定</span><span class="chip">紺</span><span class="chip">緑</span><span class="chip">灰</span></span></div>
+          <div class="set-row"><span class="set-label">左ペインの背景</span>
+            <span class="chips"><span class="chip on">既定</span><span class="chip">紺</span><span class="chip">緑</span><span class="chip">灰</span></span></div>
+        </div>
+        <div class="set-group">
+          <h4 class="set-title">ターミナル</h4>
+          <div class="set-row"><span class="set-label">フォント</span>
+            <span class="chips"><span class="chip on">JetBrains</span><span class="chip">Menlo</span><span class="chip">Fira</span></span></div>
+          <div class="set-row"><span class="set-label">文字サイズ</span>
+            <span class="step"><b>−</b><span class="v">13px</span><b>＋</b></span></div>
+        </div>
+        <div class="set-group">
+          <h4 class="set-title">チャット（Markdownビュー）</h4>
+          <div class="set-row"><span class="set-label">送信キー</span>
+            <span class="seg"><b class="on">Enter</b><b>Ctrl+Enter</b></span></div>
+          <p class="set-hint full">Enter で送信、Shift+Enter で改行。</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 3. Before / After: 接続タブ ============ -->
+  <section class="doc">
+    <div class="shdr"><span class="n">03</span><h2>接続タブ — 現状 → 統一案</h2></div>
+    <p class="note">接続は独自の <code>conn-head</code>（ドット＋名前＋説明が地の文）で、セクション見出しが無い。
+      共通の <code>.set-title</code>＋項目カードに寄せると、他タブと同じ読み口になる。</p>
+    <div class="ba">
+      <div class="card before">
+        <div class="cap">現状 <span class="tag">conn-head / conn-block</span></div>
+        <div class="in">
+          <div class="old-head"><span class="dot on"></span><span class="cname">opencode</span>
+            <span class="old-sub">プロバイダ API キー（起動時に env 注入）</span></div>
+          <ul class="flat">
+            <li><code>ZAI_API_KEY</code><span class="mut">✕</span></li>
+          </ul>
+          <div class="mut" style="font-size:11px;margin-top:8px">見出しが無く、名前と説明が同じ行に混在。他タブと不揃い。</div>
+        </div>
+      </div>
+      <div class="card after">
+        <div class="cap">統一案 <span class="tag">set-title + set-card</span></div>
+        <div class="in">
+          <h4 class="set-title" style="margin-bottom:10px">プロバイダ接続</h4>
+          <div class="set-card">
+            <div class="set-card-head">
+              <span class="dot on"></span><span class="cname">opencode</span>
+              <span class="cdesc">API キー（起動時に env 注入）</span>
+              <span class="act"><span class="btn">キーを追加</span></span>
+            </div>
+            <ul class="flat"><li><code>ZAI_API_KEY</code><span class="btn danger" style="padding:1px 7px">削除</span></li></ul>
+          </div>
+          <div class="set-card">
+            <div class="set-card-head">
+              <span class="dot"></span><span class="cname">Claude</span>
+              <span class="cdesc">サブスク / API 認証</span>
+              <span class="act"><span class="btn accent">接続</span></span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 4. Before / After: 危険ゾーン & 補助テキスト ============ -->
+  <section class="doc">
+    <div class="shdr"><span class="n">04</span><h2>危険ゾーン・補助テキストの色</h2></div>
+    <div class="ba">
+      <div class="card before">
+        <div class="cap">現状</div>
+        <div class="in">
+          <div class="old-pink">⚠ 危険な操作</div>
+          <div class="mut" style="font-size:11.5px;margin-top:8px">見出し色がハードコード <code style="color:#f3b6b6">#f3b6b6</code>
+            → ライトテーマで消える。補助テキストは field-help=muted2 / role-hint=継承 でバラバラ。</div>
+        </div>
+      </div>
+      <div class="card after">
+        <div class="cap">統一案</div>
+        <div class="in">
+          <div class="danger" style="margin-top:0;border-top:none;padding-top:0">
+            <div class="danger-title">⚠ 危険な操作</div>
+            <div class="danger-row">
+              <div class="txt"><strong>Workspace を作り直す</strong>
+                <span class="muted">コンテナを破棄し最新イメージで再生成（セッション・clone は失われます）。</span></div>
+              <span class="btn danger">作り直す</span>
+            </div>
+          </div>
+          <div class="mut" style="font-size:11.5px;margin-top:12px">見出しは <code>--del</code>、補助は全て <code>--muted</code> に統一。</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div class="foot">
+    進め方: この骨格に合意後、<b>1 タブずつ</b> DisplayTab パターンへ寄せる（接続 → SSM → MCP → エージェント → 管理ダイアログ）。
+    各タブは小さくコミットし、ユーザーがブラウザで目視。既に <code>475d38b</code> で危険色/補助色は先行統一済み。
+    参照: <code>DisplayTab.tsx</code>（理想形）、<code>console-redesign-backlog.md</code> §D。
+  </div>
+</div>
