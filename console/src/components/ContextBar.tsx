@@ -42,14 +42,17 @@ export default function ContextBar({ read, create, fresh, model, spends, maxSpen
     (level ? "\nまもなく自動圧縮される可能性があります" : "");
   return (
     <div className={"mirror-ctxbar" + (level ? " cb-" + level : "")} title={title}>
-      <div className="cb-track">
-        <div className="cb-seg cb-read" style={{ width: w(read) }} />
-        <div className="cb-seg cb-create" style={{ width: w(create) }} />
-        <div className="cb-seg cb-fresh" style={{ width: w(fresh) }} />
+      <div className="cb-ctx">
+        <span className="cb-ctx-label">コンテキスト</span>
+        <div className="cb-track">
+          <div className="cb-seg cb-read" style={{ width: w(read) }} />
+          <div className="cb-seg cb-create" style={{ width: w(create) }} />
+          <div className="cb-seg cb-fresh" style={{ width: w(fresh) }} />
+        </div>
+        <span className="cb-label">
+          {level && <Icon name="warning" />} {fmtTok(used)} / {fmtTok(window)}・{pct.toFixed(0)}%
+        </span>
       </div>
-      <span className="cb-label">
-        {level && <Icon name="warning" />} コンテキスト {fmtTok(used)} / {fmtTok(window)}・{pct.toFixed(0)}%
-      </span>
       {spends && spends.length >= 2 && (
         <>
           <span className="cb-div" aria-hidden="true" />
@@ -57,7 +60,7 @@ export default function ContextBar({ read, create, fresh, model, spends, maxSpen
             className="cb-trend"
             title="ターン毎の新規消費トークン（未キャッシュ入力＋新規キャッシュ＋出力）の推移"
           >
-            <span className="cb-trend-label">消費推移</span>
+            <span className="cb-trend-label">トークン消費推移</span>
             <Sparkline data={spends} width={120} height={14} />
             <span className="cb-trend-peak">最大 {fmtTok(maxSpend ?? 0)}</span>
           </span>

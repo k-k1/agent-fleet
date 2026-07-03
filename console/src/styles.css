@@ -2254,9 +2254,22 @@ body.row-resizing {
   background: var(--bar);
   font-size: 11.5px;
 }
+/* Context half (left): "コンテキスト" label · bar · figure — a 50% flex column that
+   splits the row evenly with the token-spend trend on the right. */
+.cb-ctx {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.cb-ctx-label {
+  flex: none;
+  color: var(--muted);
+}
 .cb-track {
   flex: 1;
-  min-width: 60px;
+  min-width: 40px;
   display: flex;
   height: 6px;
   border-radius: 3px;
@@ -2314,11 +2327,11 @@ body.row-resizing {
   background: var(--border);
 }
 .cb-trend {
-  flex: 1;
+  flex: 1 1 0; /* even 50/50 with .cb-ctx */
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  min-width: 90px;
+  min-width: 0;
   color: var(--chat-accent);
 }
 .cb-trend-label {
