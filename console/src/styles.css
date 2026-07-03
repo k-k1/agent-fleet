@@ -2213,7 +2213,32 @@ body.row-resizing {
 }
 .cb-label {
   flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted);
   font-variant-numeric: tabular-nums;
+}
+.cb-label .codicon {
+  font-size: 12px;
+}
+/* Approaching the auto-compaction zone: warn, then danger near the very top. The
+   growing uncached (fresh) segment and the label carry the color; a faint ring on
+   the track makes the fill itself read as "getting full". */
+.cb-near .cb-fresh {
+  background: var(--warn);
+}
+.cb-near .cb-label {
+  color: var(--warn);
+}
+.cb-full .cb-fresh {
+  background: var(--del);
+}
+.cb-full .cb-label {
+  color: var(--del);
+}
+.cb-full .cb-track {
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--del) 55%, transparent);
 }
 /* Context strip: shown above a turn only when the git branch / working dir changes,
    marking the switch once instead of repeating it on every turn. */
