@@ -135,7 +135,7 @@ export default function TopBar() {
             )}
           </div>
         ) : (
-          <button className="gear" title="設定（エージェント / Git / 環境 / 表示）" onClick={() => openSettings()}>
+          <button className="gear" title="設定（表示 / ワークスペース / エージェント / Git / AWS SSM / MCP）" onClick={() => openSettings()}>
             <Icon name="gear" /> 設定
           </button>
         )}
