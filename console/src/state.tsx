@@ -255,7 +255,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settingsSection, setSettingsSection] = useState("connections"); // initial tab when opened
+  const [settingsSection, setSettingsSection] = useState("agents"); // initial tab when opened
   const [adminOpen, setAdminOpen] = useState(false);
 
   // navOpen drives the mobile navigator drawer. On desktop the drawer styles are
@@ -927,7 +927,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     settingsOpen,
     settingsSection,
     openSettings: (section?: string) => {
-      setSettingsSection(section || "connections");
+      // "connections" is a legacy alias for the merged エージェント tab (the old 接続
+      // tab was folded into it), so any caller asking for connections lands there.
+      setSettingsSection(section === "connections" ? "agents" : section || "agents");
       setSettingsOpen(true);
     },
     closeSettings: () => setSettingsOpen(false),

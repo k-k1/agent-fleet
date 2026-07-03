@@ -66,13 +66,13 @@ export default function OnboardingCard() {
       done: gitOk,
       label: "git プロバイダを接続",
       hint: "GitHub / Bitbucket からリポジトリを clone できます",
-      cta: gitOk ? null : { text: "接続する", on: () => openSettings() },
+      cta: gitOk ? null : { text: "接続する", on: () => openSettings("git") },
     },
     {
       done: agentOk,
       label: "エージェントを接続",
       hint: "Claude / Codex / opencode にサインインします",
-      cta: agentOk ? null : { text: "接続する", on: () => openSettings() },
+      cta: agentOk ? null : { text: "接続する", on: () => openSettings("agents") },
     },
     {
       done: false,
