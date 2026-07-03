@@ -40,7 +40,7 @@ export default function Section({ id, title, icon, count, actions, defaultOpen =
         <button className="pane-toggle" onClick={toggle} aria-expanded={open}>
           <span className="caret">{open ? "▾" : "▸"}</span>
           {icon && <Icon name={icon} className="pane-ic" />}
-          {title}
+          <span className="pane-title">{title}</span>
           {count != null && count > 0 && <span className="pane-count">{count}</span>}
         </button>
         <span className="pane-actions">{actions}</span>

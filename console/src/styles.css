@@ -755,6 +755,17 @@ button.wu-reload {
   align-items: center;
   gap: 5px;
   padding: 2px;
+  /* Let the title area shrink (and the label ellipsis as a last resort) so the
+     header never overflows the fixed-width rail; the actions stay intact. */
+  min-width: 0;
+  flex: 0 1 auto;
+  overflow: hidden;
+}
+.pane-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
 }
 .pane-toggle .pane-ic {
   font-size: 13px;
@@ -774,6 +785,7 @@ button.wu-reload {
 /* A muted tally beside the section title — a glance at how many rows a section
    holds, and the only contents signal while it's collapsed. */
 .pane-count {
+  flex: none;
   font-size: 11px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
@@ -788,6 +800,7 @@ button.wu-reload {
 .pane-actions {
   display: flex;
   gap: 2px;
+  flex: none; /* keep the action buttons intact; the title shrinks instead */
 }
 /* Labeled section-header action: icon + short word, so the affordance reads
    without hovering for its title. Kept compact to fit the 300px rail. */
@@ -5667,7 +5680,11 @@ button.primary:hover:not(:disabled) {
 .leftpane-scroll {
   flex: 1;
   min-height: 0;
-  overflow: auto;
+  /* The rail is a fixed-width nav — only ever scroll vertically. Never let a row or
+     header that's a hair too wide (e.g. a long name, or the section count badge)
+     introduce a horizontal scrollbar. */
+  overflow-y: auto;
+  overflow-x: hidden;
   display: flex;
   flex-direction: column;
 }
