@@ -1,0 +1,498 @@
+<!-- Console IA 刷新提案モック（refactor/console-ux 着手時にユーザー合意を取った視覚案）。
+     単体で開ける静的 HTML。実プロダクトのダークパレット（#1e1e1e / accent #6cf）で
+     「刷新後シェル」「右ペイン/ビュー」「要点の Before/After」「進め方」を1枚に。 -->
+<title>Console IA 刷新提案</title>
+<style>
+  :root{
+    --ground:#141414; --panel:#1b1b1b; --panel2:#202020; --bar:#111;
+    --border:#2e2e2e; --border2:#3a3a3a;
+    --fg:#dddddd; --muted:#8a8a8a; --faint:#6a6a6a;
+    --accent:#66ccff; --on-accent:#06222e;
+    --ok:#67c23a; --warn:#e6a23c; --del:#e06c75;
+    --sans:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",sans-serif;
+    --mono:ui-monospace,"SF Mono",Menlo,Consolas,"DejaVu Sans Mono",monospace;
+    --kc-claude:#66ccff; --kc-codex:#a875f5; --kc-oc:#2fb872; --kc-shell:#e6a23c; --kc-ssm:#e0964a;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--ground);color:var(--fg);font-family:var(--sans);line-height:1.5;
+    font-size:15px;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1120px;margin:0 auto;padding:48px 28px 96px}
+  .eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:.16em;text-transform:uppercase;
+    color:var(--accent);margin:0 0 10px}
+  h1{font-size:30px;line-height:1.15;margin:0 0 12px;text-wrap:balance;font-weight:650;letter-spacing:-.01em}
+  h2{font-size:19px;margin:0 0 4px;font-weight:620;letter-spacing:-.01em}
+  .lede{color:var(--muted);max-width:66ch;margin:0 0 8px}
+  section{margin-top:56px}
+  .shdr{display:flex;align-items:baseline;gap:12px;border-bottom:1px solid var(--border);
+    padding-bottom:10px;margin-bottom:22px}
+  .shdr .n{font-family:var(--mono);font-size:12px;color:var(--faint)}
+  .note{color:var(--muted);font-size:13.5px;max-width:70ch}
+
+  /* ---- schematic console chrome ---- */
+  .app{border:1px solid var(--border2);border-radius:10px;overflow:hidden;
+    box-shadow:0 24px 60px -30px #000;background:var(--ground)}
+  .topbar{display:flex;align-items:center;gap:10px;background:var(--bar);
+    border-bottom:1px solid var(--border);padding:0 12px;height:44px;font-size:13px}
+  .brand{font-weight:600;letter-spacing:-.01em}
+  .brand .dot{color:var(--accent)}
+  .spacer{flex:1}
+  .pill{display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 10px;border-radius:6px;
+    border:1px solid var(--border2);background:var(--panel2);color:var(--fg);font-size:12.5px;white-space:nowrap}
+  .pill .i{font-family:var(--mono);opacity:.8}
+  .pill.ghost{background:transparent}
+  .wsbar{display:flex;align-items:center;gap:10px;background:var(--panel);
+    border-bottom:1px solid var(--border);padding:0 12px;height:40px;font-size:12.5px}
+  .state{display:inline-flex;align-items:center;gap:7px}
+  .led{width:8px;height:8px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 3px #67c23a22}
+  .led.off{background:var(--faint);box-shadow:none}
+  .btn{display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 10px;border-radius:6px;
+    border:1px solid var(--border2);background:var(--panel2);color:var(--fg);font-size:12.5px;cursor:default}
+  .btn.accent{background:var(--accent);color:var(--on-accent);border-color:transparent;font-weight:600}
+  .btn.sm{height:23px;padding:0 8px;font-size:11.5px}
+  .btn.danger{border-color:#5a2a2e;color:var(--del);background:#25191b}
+  .ico{font-family:var(--mono);font-size:12px;width:14px;text-align:center;opacity:.85}
+
+  .body{display:grid;grid-template-columns:264px 1fr;min-height:360px}
+  .left{background:var(--panel);border-right:1px solid var(--border);padding:10px 0;display:flex;flex-direction:column;gap:2px}
+  .sec{padding:0 10px}
+  .sechead{display:flex;align-items:center;gap:8px;height:30px;color:var(--muted);
+    font-family:var(--mono);font-size:11px;letter-spacing:.09em;text-transform:uppercase}
+  .sechead .t{flex:1;color:var(--fg);letter-spacing:.06em}
+  .sechead .act{display:inline-flex;align-items:center;gap:4px;padding:2px 7px;border-radius:5px;
+    border:1px solid var(--border2);background:var(--panel2);color:var(--muted);
+    font-size:10.5px;letter-spacing:.02em;text-transform:none}
+  .row{display:flex;align-items:center;gap:9px;height:34px;padding:0 8px;border-radius:6px;font-size:13px}
+  .row.active{background:#20303a;box-shadow:inset 2px 0 0 var(--accent)}
+  .row:hover{background:#1b2730}
+  .kind{font-family:var(--mono);font-size:10px;font-weight:600;width:22px;height:18px;border-radius:4px;
+    display:inline-flex;align-items:center;justify-content:center;color:#0c0c0c}
+  .k-claude{background:var(--kc-claude)} .k-codex{background:var(--kc-codex)}
+  .k-oc{background:var(--kc-oc)} .k-shell{background:var(--kc-shell)} .k-ssm{background:var(--kc-ssm)}
+  .rlabel{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .chip{font-size:10.5px;font-family:var(--mono);padding:1px 7px;border-radius:999px;border:1px solid var(--border2);color:var(--muted)}
+  .chip.run{color:var(--ok);border-color:#2f5327;background:#152012}
+  .chip.idle{color:var(--accent);border-color:#264653;background:#0f2028}
+  .chip.stop{color:var(--faint)}
+  .rmore{color:var(--faint);font-family:var(--mono);padding:2px 5px;border-radius:5px}
+  .main{position:relative;background:var(--ground);display:grid;place-items:center;color:var(--faint)}
+  .term{position:absolute;inset:0;padding:14px 16px;font-family:var(--mono);font-size:12px;color:#bfc7cf;line-height:1.7}
+  .term .p{color:var(--kc-oc)} .term .c{color:var(--muted)}
+
+  /* ---- before / after ---- */
+  .ba{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media(max-width:760px){.ba{grid-template-columns:1fr}.body{grid-template-columns:1fr}.left{display:none}}
+  .card{border:1px solid var(--border);border-radius:9px;background:var(--panel);overflow:hidden}
+  .card .cap{display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid var(--border);
+    font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase}
+  .card.before .cap{color:var(--del)} .card.after .cap{color:var(--ok)}
+  .card .cap .tag{margin-left:auto;color:var(--faint);letter-spacing:.04em}
+  .card .in{padding:16px}
+  .demorow{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .cryptic{font-family:var(--mono);color:var(--muted);font-size:15px;letter-spacing:.12em}
+  .dim{color:var(--faint)} .mono{font-family:var(--mono)}
+  .kbadge-old{font-family:var(--mono);font-size:12px;color:var(--muted);border:1px dashed var(--border2);
+    padding:2px 6px;border-radius:4px}
+
+  /* confirm dialog demo */
+  .dlg{border:1px solid var(--border2);border-radius:10px;background:var(--panel2);max-width:340px;overflow:hidden}
+  .dlg .dh{display:flex;align-items:center;gap:9px;padding:13px 15px 4px;font-weight:600}
+  .dlg .dh .warnico{color:var(--del)}
+  .dlg .dbody{padding:2px 15px 14px;color:var(--muted);font-size:13px}
+  .dlg ul{margin:8px 0 0;padding-left:18px;font-size:12.5px}
+  .dlg .df{display:flex;justify-content:flex-end;gap:8px;padding:12px 15px;background:#191919;border-top:1px solid var(--border)}
+  .native{font-family:var(--mono);font-size:12px;color:var(--muted);background:#0c0c0c;border:1px solid var(--border2);
+    border-radius:6px;padding:10px 12px}
+
+  /* form demo */
+  .form{display:flex;flex-direction:column;gap:12px}
+  .field{display:flex;flex-direction:column;gap:5px}
+  .field label{font-size:11px;font-family:var(--mono);letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+  .field .inp{height:32px;border:1px solid var(--border2);border-radius:6px;background:#141414;
+    display:flex;align-items:center;padding:0 10px;color:var(--fg);font-size:13px}
+  .seg{display:flex;gap:6px}
+  .seg .s{flex:1;border:1px solid var(--border2);border-radius:6px;padding:8px;display:flex;flex-direction:column;
+    align-items:center;gap:4px;font-size:11px;color:var(--muted)}
+  .seg .s.on{border-color:var(--accent);background:#0f2028;color:var(--fg)}
+  .seg .s .kind{width:26px;height:20px}
+  .cramped{font-family:var(--mono);font-size:12px;color:var(--muted);background:#0c0c0c;border:1px solid var(--border2);
+    border-radius:6px;padding:8px 10px;white-space:nowrap;overflow-x:auto}
+
+  /* empty state demo */
+  .empty{display:flex;flex-direction:column;align-items:center;gap:8px;padding:22px;text-align:center;color:var(--muted)}
+  .empty .big{font-family:var(--mono);font-size:20px;color:var(--faint)}
+  .empty .cta{margin-top:4px}
+
+  /* phase list */
+  .phases{display:grid;grid-template-columns:repeat(2,1fr);gap:14px;margin-top:8px}
+  @media(max-width:760px){.phases{grid-template-columns:1fr}}
+  .phase{border:1px solid var(--border);border-radius:9px;padding:15px 16px;background:var(--panel)}
+  .phase h3{margin:0 0 8px;font-size:14px;font-family:var(--mono);letter-spacing:.02em;display:flex;gap:8px;align-items:center}
+  .phase h3 .pn{color:var(--accent)}
+  .phase ul{margin:0;padding-left:17px;color:var(--muted);font-size:13px;line-height:1.6}
+  .legend{display:flex;gap:14px;flex-wrap:wrap;margin-top:14px;font-size:12px;color:var(--muted)}
+  .legend span{display:inline-flex;align-items:center;gap:6px}
+  .foot{margin-top:56px;border-top:1px solid var(--border);padding-top:18px;color:var(--faint);font-size:12.5px}
+
+  /* ---- right pane / views ---- */
+  .panewrap{border:1px solid var(--border2);border-radius:10px;overflow:hidden;background:var(--ground)}
+  .panegrid{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--border);min-height:300px}
+  .pcol{display:grid;gap:1px;background:var(--border)}
+  .pcol.split{grid-template-rows:1fr 1fr}
+  .pane{background:var(--ground);display:flex;flex-direction:column;min-width:0}
+  .pane-head{display:flex;align-items:center;gap:8px;height:30px;padding:0 8px;background:var(--panel);
+    border-bottom:1px solid var(--border);font-size:12px}
+  .pane-ord{font-family:var(--mono);font-size:10px;font-weight:700;width:18px;height:18px;border-radius:4px;
+    display:inline-flex;align-items:center;justify-content:center;color:#0c0c0c}
+  .pane-title{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted)}
+  .pane-title b{color:var(--fg);font-weight:600}
+  .pctrl{display:inline-flex;gap:2px}
+  .pctrl .b{font-family:var(--mono);font-size:11px;color:var(--faint);width:20px;height:20px;border-radius:4px;
+    display:inline-flex;align-items:center;justify-content:center;border:1px solid transparent}
+  .pctrl .b:hover{border-color:var(--border2);color:var(--muted);background:var(--panel2)}
+  .pcontent{flex:1;padding:10px 12px;font-family:var(--mono);font-size:11.5px;line-height:1.65;color:#bfc7cf;overflow:hidden}
+  .ctxbar{display:flex;align-items:center;gap:8px;padding:5px 10px;background:var(--panel);border-bottom:1px solid var(--border)}
+  .ctxtrack{flex:1;height:6px;border-radius:3px;background:#0c0c0c;overflow:hidden;display:flex}
+  .ctxtrack i{height:100%} .cs-read{background:#2f6b8a;width:44%} .cs-create{background:#3f8fb8;width:10%} .cs-fresh{background:#66ccff;width:12%}
+  .ctxlabel{font-family:var(--mono);font-size:10.5px;color:var(--muted);white-space:nowrap}
+  /* mini layout map */
+  .lmap{display:inline-grid;grid-template-columns:repeat(2,14px);gap:2px;margin-right:2px}
+  .lmap i{width:14px;height:11px;border-radius:2px;background:var(--panel2);border:1px solid var(--border2);
+    font-family:var(--mono);font-size:7px;display:flex;align-items:center;justify-content:center;color:var(--faint)}
+  .lmap i.on{border-color:var(--accent)}
+  /* chat mirror */
+  .chat{display:flex;flex-direction:column}
+  .chatbody{flex:1;padding:12px;display:flex;flex-direction:column;gap:10px;font-family:var(--sans);font-size:12.5px}
+  .msg{max-width:82%} .msg .who{font-family:var(--mono);font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--faint);margin-bottom:3px}
+  .msg.u{align-self:flex-end;text-align:right} .msg.u .bub{background:#0f2028;border:1px solid #264653}
+  .msg .bub{background:var(--panel2);border:1px solid var(--border);border-radius:9px;padding:8px 11px;color:var(--fg);display:inline-block;text-align:left}
+  .notice{margin:2px 12px 0;padding:7px 10px;border:1px solid #3a3320;background:#221d10;border-radius:7px;
+    color:var(--warn);font-size:11.5px;display:flex;align-items:center;gap:7px}
+  .notice .b{margin-left:auto}
+  .composer{display:flex;gap:8px;padding:9px 10px;border-top:1px solid var(--border);background:var(--panel)}
+  .composer .ta{flex:1;height:30px;border:1px solid var(--border2);border-radius:6px;background:#141414;color:var(--muted);
+    display:flex;align-items:center;padding:0 10px;font-size:12px}
+  /* diff */
+  .dl{white-space:pre;padding:0 8px} .dl.add{background:#0f2a17;color:#aff5b4} .dl.del{background:#2a1416;color:#ffb3ba}
+  .dl .g{color:var(--faint);display:inline-block;width:26px}
+  .scm-actions{display:flex;gap:6px;margin-top:8px;font-family:var(--sans)}
+  /* files section */
+  .ftoggle{display:flex;margin:2px 0 6px;border:1px solid var(--border2);border-radius:6px;overflow:hidden;
+    font-size:11px;font-family:var(--mono)}
+  .ftoggle .t{flex:1;text-align:center;padding:5px;color:var(--muted);letter-spacing:.04em;display:flex;align-items:center;justify-content:center;gap:5px}
+  .ftoggle .t.on{background:var(--panel2);color:var(--fg)}
+  .frow{display:flex;align-items:center;gap:7px;height:26px;padding:0 6px;border-radius:5px;font-size:12.5px}
+  .frow:hover{background:#1b2730}
+  .fchev{width:10px;color:var(--faint);font-size:9px;text-align:center}
+  .ficon{font-family:var(--mono);font-size:11px;color:var(--muted);width:13px;text-align:center}
+  .fname{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .gbadge{margin-left:auto;font-size:9.5px;font-family:var(--mono);padding:1px 7px;border-radius:999px}
+  .g-m{color:var(--warn);border:1px solid #5a4a24;background:#221d10}
+  .g-a{color:var(--ok);border:1px solid #2f5327;background:#152012}
+  .g-d{color:var(--del);border:1px solid #5a2a2e;background:#25191b}
+</style>
+
+<div class="wrap">
+  <p class="eyebrow">Agent Fleet Console · 全面 IA 刷新提案</p>
+  <h1>暗号アイコンの羅列から、caps 駆動の情報設計へ</h1>
+  <p class="lede">機能は 1 つも消さず、見た目・操作・情報階層だけを整えます。既存のテーマ機構（THEMES / SURFACE_COLORS）と
+  端末描画スタック（xterm）はそのまま。下のモックは実プロダクトのパレット（<span class="mono">#1e1e1e / accent #6cf</span>）で描いた「方向性」の提案です。</p>
+
+  <!-- ============ NEW SHELL ============ -->
+  <section>
+    <div class="shdr"><span class="n">A</span><h2>刷新後シェル（スケッチ）</h2></div>
+    <p class="note">TopBar＝アイデンティティ／テナント／アカウントに限定。WsBar＝ワークスペース状態＋要点だけ（リソースの4連タイルは1つの「リソース」ポップオーバへ集約）。左レールはセクション操作をアイコン＋ラベル化し、行の状態チップを caps で統一。</p>
+    <div class="app" style="margin-top:16px">
+      <div class="topbar">
+        <span class="ico">☰</span>
+        <span class="brand">Agent Fleet <span class="dot">Console</span></span>
+        <span class="spacer"></span>
+        <span class="pill ghost"><span class="i">⤢</span></span>
+        <span class="pill"><span class="i">◱</span> tenant: acme</span>
+        <span class="pill"><span class="i">◐</span> k1.kami@gmail.com <span class="dim">▾</span></span>
+      </div>
+      <div class="wsbar">
+        <span class="state"><span class="led"></span> Workspace <span class="dim">稼働中</span></span>
+        <button class="btn sm danger"><span class="ico">■</span> 停止</button>
+        <span class="spacer"></span>
+        <span class="pill"><span class="i">▤</span> リソース <span class="dim">mem 41% · cpu 12%</span></span>
+        <span class="pill"><span class="i">✦</span> 使用量 55% / 7%</span>
+        <span class="pill"><span class="i">◨</span> プレビュー</span>
+      </div>
+      <div class="body">
+        <div class="left">
+          <div class="sec">
+            <div class="sechead"><span class="t">Sessions</span>
+              <span class="act"><span class="ico">＋</span>新規</span>
+              <span class="act"><span class="ico">▤</span>整理</span>
+            </div>
+            <div class="row active"><span class="kind k-claude">cc</span><span class="rlabel">agent-fleet@claude</span><span class="chip run">実行中</span><span class="rmore">⋯</span></div>
+            <div class="row"><span class="kind k-oc">oc</span><span class="rlabel">agent-fleet@opencode</span><span class="chip idle">待機</span><span class="rmore">⋯</span></div>
+            <div class="row"><span class="kind k-codex">cx</span><span class="rlabel">console-ux@codex</span><span class="chip stop">停止</span><span class="rmore">⋯</span></div>
+            <div class="row"><span class="kind k-shell">sh</span><span class="rlabel">terminal</span><span class="chip run">起動中</span><span class="rmore">⋯</span></div>
+          </div>
+          <div class="sec" style="margin-top:8px">
+            <div class="sechead"><span class="t">Repos</span>
+              <span class="act"><span class="ico">＋</span>クローン</span>
+              <span class="act"><span class="ico">↻</span>更新</span>
+            </div>
+            <div class="row"><span class="kind k-claude" style="background:#333;color:#bbb">git</span><span class="rlabel">agent-fleet</span><span class="chip" style="color:var(--warn);border-color:#5a4a24">未コミット</span><span class="rmore">⋯</span></div>
+          </div>
+          <div class="sec" style="margin-top:8px">
+            <div class="sechead"><span class="t">Files</span>
+              <span class="act"><span class="ico">⤒</span>アップ</span>
+              <span class="act"><span class="ico">↻</span>更新</span>
+            </div>
+            <div class="ftoggle"><span class="t"><span class="ico">▤</span>ツリー</span><span class="t on"><span class="ico">⎇</span>変更 3</span></div>
+            <div class="frow"><span class="fchev">▾</span><span class="ficon">▢</span><span class="fname">console / src</span></div>
+            <div class="frow" style="padding-left:16px"><span class="ficon">TS</span><span class="fname">registry.ts</span><span class="gbadge g-m">変更</span></div>
+            <div class="frow" style="padding-left:16px"><span class="ficon">◆</span><span class="fname">styles.css</span><span class="gbadge g-m">変更</span></div>
+            <div class="frow" style="padding-left:16px"><span class="ficon">TS</span><span class="fname">EmptyState.tsx</span><span class="gbadge g-a">新規</span></div>
+          </div>
+        </div>
+        <div class="main">
+          <div class="term">
+            <div><span class="p">dev@ws</span>:<span style="color:#6cf">~/repos/agent-fleet</span>$ ./deploy/local/run-dev.sh</div>
+            <div class="c"># CP :8099 · no-store 配信でリロード即反映</div>
+            <div><span class="p">vite</span> build --watch <span class="c">✓ built in 17.5s</span></div>
+            <div><span style="color:#67c23a">▹</span> ready — ブラウザで目視確認できます</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="legend">
+      <span><span class="kind k-claude" style="width:20px;height:15px">cc</span> claude</span>
+      <span><span class="kind k-codex" style="width:20px;height:15px">cx</span> codex</span>
+      <span><span class="kind k-oc" style="width:20px;height:15px">oc</span> opencode</span>
+      <span><span class="kind k-shell" style="width:20px;height:15px">sh</span> shell</span>
+      <span><span class="kind k-ssm" style="width:20px;height:15px">aw</span> ssm</span>
+      <span class="dim">— 色・アイコン・状態チップは registry.ts の caps から出す（新エージェントで自動追加）</span>
+    </div>
+  </section>
+
+  <!-- ============ RIGHT PANE / VIEWS ============ -->
+  <section>
+    <div class="shdr"><span class="n">A2</span><h2>右ペイン / ビュー（サンプル）</h2></div>
+    <p class="note"><strong>xterm 内部・pane↔term 再構成は不変。</strong>刷新するのは "周辺 UI" — ペインヘッダ（順序チップ＋kind バッジ＋ビュー名）、制御クラスタ（折返し / 分割 / 閉じる）、LayoutMap、ContextBar、chat の枠付け。中身（端末文字・diff 配色）はそのまま。</p>
+
+    <!-- multi-pane split -->
+    <p class="note" style="margin:16px 0 8px"><span class="mono dim">① 複数ペイン分割</span> — 左列を上下分割した3ペイン。各ヘッダに順序色チップ＋kind＋ビュー名、右にラベル化した制御。</p>
+    <div class="panewrap">
+      <div class="panegrid">
+        <div class="pcol split">
+          <div class="pane">
+            <div class="pane-head">
+              <span class="pane-ord k-claude">1</span>
+              <span class="pane-title"><b>agent-fleet@claude</b> · 端末</span>
+              <span class="pctrl"><span class="b" title="行を折り返す">↩</span><span class="b" title="右に分割">▤</span><span class="b" title="上下に分割">▥</span><span class="b" title="閉じる">✕</span></span>
+            </div>
+            <div class="ctxbar"><div class="ctxtrack"><i class="cs-read"></i><i class="cs-create"></i><i class="cs-fresh"></i></div><span class="ctxlabel">コンテキスト 662K / 1M · 66%</span></div>
+            <div class="pcontent"><span class="p" style="color:#67c23a">claude</span> &gt; ファイルを編集しました<br><span style="color:#8a8a8a"># 端末描画は xterm のまま</span></div>
+          </div>
+          <div class="pane">
+            <div class="pane-head">
+              <span class="pane-ord k-shell">2</span>
+              <span class="pane-title"><b>terminal</b> · 端末</span>
+              <span class="pctrl"><span class="b">↩</span><span class="b">▤</span><span class="b">▥</span><span class="b">✕</span></span>
+            </div>
+            <div class="pcontent"><span style="color:#67c23a">dev@ws</span>:<span style="color:#6cf">~/repos/agent-fleet</span>$ npm run typecheck<br><span style="color:#8a8a8a">✓ no errors</span></div>
+          </div>
+        </div>
+        <div class="pane">
+          <div class="pane-head">
+            <span class="pane-ord k-oc">3</span>
+            <span class="pane-title"><b>agent-fleet@opencode</b> · チャット</span>
+            <span class="lmap" title="レイアウトマップ"><i>1</i><i class="on">3</i><i>2</i><i></i></span>
+            <span class="pctrl"><span class="b">▥</span><span class="b">✕</span></span>
+          </div>
+          <div class="pcontent" style="padding:0" >
+            <div class="chat" style="height:100%">
+              <div class="chatbody">
+                <div class="msg u"><div class="who">you</div><div class="bub">この関数を分割して</div></div>
+                <div class="msg"><div class="who">opencode</div><div class="bub">3つに分けました。差分を確認してください。</div></div>
+              </div>
+              <div class="composer"><span class="ta">メッセージを入力…</span><button class="btn sm accent">送信</button></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="ba" style="margin-top:22px">
+      <!-- chat mirror with resume notice -->
+      <div class="card">
+        <div class="cap" style="color:var(--accent)">② チャット（Mirror）<span class="tag">再開/自動圧縮の検知を上部に</span></div>
+        <div class="in" style="padding:0">
+          <div class="chat">
+            <div class="ctxbar"><div class="ctxtrack"><i class="cs-read"></i><i class="cs-create"></i><i class="cs-fresh"></i></div><span class="ctxlabel">コンテキスト 662K / 1M · 66%</span></div>
+            <div class="notice"><span class="ico">↻</span> 自動圧縮が発生しました — 要約から再開できます <button class="b btn sm">再開メニュー</button></div>
+            <div class="chatbody">
+              <div class="msg u"><div class="who">you</div><div class="bub">レビュー指摘を反映して</div></div>
+              <div class="msg"><div class="who">claude</div><div class="bub">長い関数を分割し、エラーログを追加しました。</div></div>
+            </div>
+            <div class="composer"><span class="ta">メッセージを入力…</span><button class="btn sm">分岐</button><button class="btn sm accent">送信</button></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- file viewer -->
+      <div class="card">
+        <div class="cap" style="color:var(--accent)">③ ファイルビュア<span class="tag">パンくず＋kind非依存</span></div>
+        <div class="in" style="padding:0">
+          <div class="pane">
+            <div class="pane-head">
+              <span class="pane-ord" style="background:#333;color:#bbb">4</span>
+              <span class="pane-title">agent-fleet / console / src / <b>registry.ts</b></span>
+              <span class="pctrl"><span class="b" title="折り返す">↩</span><span class="b" title="閉じる">✕</span></span>
+            </div>
+            <div class="pcontent"><span style="color:#8a8a8a"> 79</span> <span style="color:#ff7b72">export const</span> <span style="color:#d2a8ff">AGENTS</span> = {<br><span style="color:#8a8a8a"> 80</span>   claude: {<br><span style="color:#8a8a8a"> 81</span>     icon: <span style="color:#a5d6ff">"sparkle"</span>,<br><span style="color:#8a8a8a"> 82</span>     caps: caps({ chat: <span style="color:#79c0ff">true</span> }),</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- diff / source control -->
+    <p class="note" style="margin:22px 0 8px"><span class="mono dim">④ diff / ソース管理</span> — stage / unstage / discard をアイコンのみ→ラベル化。破棄は danger＋確認統一。</p>
+    <div class="panewrap">
+      <div class="pane">
+        <div class="pane-head">
+          <span class="pane-ord" style="background:#333;color:#bbb">◧</span>
+          <span class="pane-title"><b>registry.ts</b> · 差分 <span class="dim">↑2 ↓0</span></span>
+          <span class="pctrl"><span class="b" title="閉じる">✕</span></span>
+        </div>
+        <div class="pcontent" style="line-height:1.7">
+          <div class="dl"><span class="g">78</span>   claude: {</div>
+          <div class="dl del"><span class="g">-79</span>     icon: "star",</div>
+          <div class="dl add"><span class="g">+79</span>     icon: "sparkle",</div>
+          <div class="dl"><span class="g">80</span>     caps: caps({ chat: true }),</div>
+          <div class="scm-actions">
+            <button class="btn sm"><span class="ico">＋</span> ステージ</button>
+            <button class="btn sm"><span class="ico">−</span> 取り消し</button>
+            <button class="btn sm danger"><span class="ico">⌫</span> 変更を破棄</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ BEFORE / AFTER ============ -->
+  <section>
+    <div class="shdr"><span class="n">B</span><h2>要点の Before / After</h2></div>
+
+    <!-- 1 icons -->
+    <p class="note" style="margin-bottom:10px"><strong>1 · セクション操作：暗号アイコン → アイコン＋ラベル</strong></p>
+    <div class="ba">
+      <div class="card before">
+        <div class="cap">Before <span class="tag">title 頼み・意味不明</span></div>
+        <div class="in"><div class="demorow">
+          <span class="cryptic">⊟</span><span class="cryptic">▤</span><span class="cryptic">＋</span>
+          <span class="dim">/</span>
+          <span class="cryptic">▸ ▾</span><span class="cryptic">●</span><span class="cryptic">↑2 ↓1</span>
+          <span class="dim">/</span>
+          <span class="kbadge-old">cc</span><span class="kbadge-old">U</span><span class="kbadge-old">M</span>
+        </div>
+        <p class="note" style="margin-top:12px">アイコンのみ。ホバーの <span class="mono">title</span> でしか意味が分からない。</p></div>
+      </div>
+      <div class="card after">
+        <div class="cap">After <span class="tag">アイコン＋ラベル</span></div>
+        <div class="in"><div class="demorow">
+          <span class="btn sm"><span class="ico">＋</span>新規</span>
+          <span class="btn sm"><span class="ico">▤</span>整理</span>
+          <span class="btn sm"><span class="ico">↻</span>更新</span>
+          <span class="dim">/</span>
+          <span class="chip run">実行中</span><span class="chip idle">待機</span>
+          <span class="chip" style="color:var(--warn);border-color:#5a4a24">未コミット ↑2 ↓1</span>
+        </div>
+        <p class="note" style="margin-top:12px">操作は言葉で、状態はラベル付きチップで。密度は保ったまま可読に。</p></div>
+      </div>
+    </div>
+
+    <!-- 2 destructive -->
+    <p class="note" style="margin:26px 0 10px"><strong>2 · 破壊操作：素の confirm/alert → ConfirmDialog ＋ danger 色（横断統一）</strong></p>
+    <div class="ba">
+      <div class="card before">
+        <div class="cap">Before <span class="tag">window.confirm / 確認なし</span></div>
+        <div class="in">
+          <div class="native">▲ このページの内容<br>セッション "agent-fleet@claude" の会話を破棄して新規に開始しますか？<br><span class="dim">［ キャンセル ］ ［ OK ］</span></div>
+          <p class="note" style="margin-top:12px">recreate / discard / delete はブラウザ標準ダイアログ。archive / halt は<strong>確認すら無し</strong>。severity が同じ操作でも扱いがバラバラ。</p>
+        </div>
+      </div>
+      <div class="card after">
+        <div class="cap">After <span class="tag">統一ダイアログ</span></div>
+        <div class="in">
+          <div class="dlg">
+            <div class="dh"><span class="warnico">⚠</span> 会話を破棄して再作成</div>
+            <div class="dbody">"agent-fleet@claude" を新規に開始します。
+              <ul><li>現在の会話は<strong>復元できません</strong></li><li>ワーキングコピーは保持されます</li></ul>
+            </div>
+            <div class="df"><button class="btn sm">キャンセル</button><button class="btn sm danger">破棄して再作成</button></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 3 form + 4 empty -->
+    <div class="ba" style="margin-top:26px">
+      <div class="card after">
+        <div class="cap" style="color:var(--accent)">3 · フォーム整形 <span class="tag">縦積み・ラベル付き</span></div>
+        <div class="in">
+          <div class="cramped">Before: [shell][claude][oc][cx][ssm]  name:_____ model:▾ dir:▾  [起動]</div>
+          <div class="form" style="margin-top:14px">
+            <div class="field"><label>エージェント</label>
+              <div class="seg">
+                <div class="s on"><span class="kind k-claude">cc</span>claude</div>
+                <div class="s"><span class="kind k-oc">oc</span>opencode</div>
+                <div class="s"><span class="kind k-shell">sh</span>shell</div>
+              </div>
+            </div>
+            <div class="field"><label>モデル <span class="dim mono">caps.model</span></label><div class="inp">claude-opus-4-8 ▾</div></div>
+            <div class="field"><label>作業ディレクトリ <span class="dim mono">caps.runsInDir</span></label><div class="inp">repo: agent-fleet ▾</div></div>
+            <button class="btn accent" style="align-self:flex-start"><span class="ico">▹</span> 起動</button>
+          </div>
+        </div>
+      </div>
+      <div class="card after">
+        <div class="cap" style="color:var(--accent)">4 · 空 / エラー / ローディング統一 <span class="tag">alert 依存を解消</span></div>
+        <div class="in">
+          <div class="empty">
+            <span class="big">◔</span>
+            <div>まだセッションがありません</div>
+            <div class="note" style="max-width:34ch">エージェントを起動すると、ここに一覧が並びます。</div>
+            <button class="btn accent cta sm"><span class="ico">＋</span> セッションを起動</button>
+          </div>
+          <p class="note" style="margin-top:6px">失敗は <span class="mono">alert()</span> ではなくインラインの通知（トースト/行内）へ。ローディングは統一スピナー、空はコピー＋CTA を一貫させる。</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ PLAN ============ -->
+  <section>
+    <div class="shdr"><span class="n">C</span><h2>進め方（小さく・都度目視）</h2></div>
+    <p class="note">全面 IA だが、後退を避けるため <strong>共有プリミティブ → 左レール → バー → フォーム → 状態</strong> の順で小さくコミット。各ステップ後 <span class="mono">typecheck</span>＋<span class="mono">build</span> グリーン、あなたがブラウザ目視 → OK ならコミット。</p>
+    <div class="phases">
+      <div class="phase"><h3><span class="pn">P0</span> 共有プリミティブ</h3><ul>
+        <li>ConfirmDialog を全体で使える形に（danger ボタン統一）</li>
+        <li>トースト / インラインエラー（alert 置換）</li>
+        <li>Spinner・EmptyState・IconButton(label) を1本化</li>
+      </ul></div>
+      <div class="phase"><h3><span class="pn">P1</span> 左レール IA</h3><ul>
+        <li>セクションヘッダをアイコン＋ラベルに</li>
+        <li>Sessions/Repos/Files の行レイアウト統一（caps 駆動の状態チップ／バッジ／色）</li>
+        <li>⋯ メニューをラベル付き・破壊操作は danger</li>
+      </ul></div>
+      <div class="phase"><h3><span class="pn">P2</span> TopBar / WsBar</h3><ul>
+        <li>テーマ編集器をアカウントメニューから設定へ移設</li>
+        <li>WsBar のリソース4タイルを「リソース」ポップオーバへ集約</li>
+        <li>usage / preview の情報階層を整理（過密解消）</li>
+      </ul></div>
+      <div class="phase"><h3><span class="pn">P3</span> フォーム & 状態</h3><ul>
+        <li>NewSession / NewRepo を縦積み・ラベル付き・余白調整</li>
+        <li>空 / ローディング / エラーの一貫化を全画面へ展開</li>
+        <li>最終 typecheck＋build、push</li>
+      </ul></div>
+    </div>
+  </section>
+
+  <p class="foot">守るハード制約：no-store 配信（vite build --watch 維持）／ base-path 相対 URL ／ X-AF-Tenant ヘッダ ／ xterm は React 外。
+  機能インベントリ（console-redesign.md §18.2）は全維持。これは方向性の提案で、実装は上の順で小さく進めます。</p>
+</div>
