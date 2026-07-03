@@ -1954,7 +1954,37 @@ button.wu-reload {
   right: 8px;
   z-index: 6;
   display: flex;
-  gap: 3px;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  /* Reads as loose floating icons at rest; on pane hover/active a faint backing +
+     border pulls the split/wrap/close actions into one recognizable cluster. */
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease;
+}
+.pane:hover > .pane-controls,
+.pane.active > .pane-controls {
+  background: color-mix(in srgb, var(--panel) 82%, transparent);
+  border-color: var(--border);
+}
+/* Close is the odd one out (it removes the pane, the splits/wrap reshape it), so
+   set it apart from the layout group with a hairline divider. Only when something
+   precedes it — a lone close button needs no separator. */
+.pane-controls .pane-close:not(:first-child) {
+  margin-left: 5px;
+  position: relative;
+}
+.pane-controls .pane-close:not(:first-child)::before {
+  content: "";
+  position: absolute;
+  left: -3px;
+  top: 3px;
+  bottom: 3px;
+  width: 1px;
+  background: var(--border);
 }
 .pane-btn {
   padding: 2px 5px;

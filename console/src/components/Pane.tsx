@@ -221,7 +221,7 @@ export default function Pane({
         {canClose && (
           <button
             type="button"
-            className="ghost pane-btn"
+            className="ghost pane-btn pane-close"
             title="このペインを閉じる"
             onClick={() => onClose(pane.id)}
           >
