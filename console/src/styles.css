@@ -998,9 +998,9 @@ button.wu-reload {
   border-color: rgba(70, 201, 208, 0.45);
 }
 .kind-tag.kind-ssm {
-  color: #e8913a;
-  background: rgba(232, 145, 58, 0.14);
-  border-color: rgba(232, 145, 58, 0.45);
+  color: #6d8bf5;
+  background: rgba(109, 139, 245, 0.14);
+  border-color: rgba(109, 139, 245, 0.45);
 }
 /* Light theme: the medium kind colors wash out on a near-white tint, so use
    darker text + a slightly stronger fill/border for legibility. */
@@ -1025,9 +1025,9 @@ button.wu-reload {
   border-color: rgba(70, 201, 208, 0.55);
 }
 [data-theme="light"] .kind-tag.kind-ssm {
-  color: #b5651d;
-  background: rgba(232, 145, 58, 0.2);
-  border-color: rgba(232, 145, 58, 0.55);
+  color: #3140b8;
+  background: rgba(109, 139, 245, 0.2);
+  border-color: rgba(109, 139, 245, 0.55);
 }
 .sub {
   color: var(--muted2);
@@ -6157,7 +6157,7 @@ button.primary:hover:not(:disabled) {
   color: #46c9d0;
 }
 .seg.big .seg-btn.kind-ssm .seg-ic {
-  color: #e8913a;
+  color: #6d8bf5;
 }
 /* Selected button is accent-filled, so the icon flips to the on-accent color for
    contrast (this rule comes last so it wins over the per-kind colors above). */
@@ -6181,7 +6181,7 @@ button.primary:hover:not(:disabled) {
   color: #15828a;
 }
 [data-theme="light"] .seg.big .seg-btn.kind-ssm:not(.active) .seg-ic {
-  color: #b5651d;
+  color: #3140b8;
 }
 
 /* repo picker spacing inside the modal */
@@ -6560,12 +6560,12 @@ button.primary:hover:not(:disabled) {
 .lm-kind.kc-codex { color: #4ec97a; }
 .lm-kind.kc-opencode { color: #b07cf2; }
 .lm-kind.kc-shell { color: #46c9d0; }
-.lm-kind.kc-ssm { color: #e8913a; }
+.lm-kind.kc-ssm { color: #6d8bf5; }
 [data-theme="light"] .lm-kind.kc-claude { color: #a85f1c; }
 [data-theme="light"] .lm-kind.kc-codex { color: #18854a; }
 [data-theme="light"] .lm-kind.kc-opencode { color: #6d2fce; }
 [data-theme="light"] .lm-kind.kc-shell { color: #15828a; }
-[data-theme="light"] .lm-kind.kc-ssm { color: #b5651d; }
+[data-theme="light"] .lm-kind.kc-ssm { color: #3140b8; }
 .lm-dot {
   flex: none;
   width: 7px;

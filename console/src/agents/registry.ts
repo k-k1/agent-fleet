@@ -145,7 +145,9 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     cssClass: "ssm",
     launchHint: "AWS EC2 に SSM ログイン",
     launchSuffix: "",
-    caps: caps({ ephemeral: true }),
+    // Like shell: a plain login shell with no working/idle model, so its liveness is a
+    // fixed 起動中 chip (not 入力待ち) and it raises no answer/question notifications.
+    caps: caps({ ephemeral: true, fixedAliveChip: true }),
     available: (c) => (c.ssmHostCount ?? 0) > 0,
   },
 };
