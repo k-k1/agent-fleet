@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from "react";
-import type { CSSProperties, KeyboardEvent as RKeyboardEvent } from "react";
-import { api, apiJSON, raw, errText } from "../api.js";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import type { CSSProperties, KeyboardEvent as RKeyboardEvent, ClipboardEvent as RClipboardEvent } from "react";
+import { api, apiJSON, raw, errText, pasteImage } from "../api.js";
 import { useSettings, chatFontStack } from "../lib/settings.js";
 import { useApp } from "../state.jsx";
 import Icon from "../components/Icon.jsx";
@@ -15,6 +15,31 @@ import { coarsePointer } from "../lib/device.js";
 
 const q = encodeURIComponent;
 
+// Transcript window size (jsonl lines) for the initial tail load and each backward page.
+// The server clamps it; matches docs/decisions/0009 (P2).
+const WINDOW = 400;
+
+// Appended to a prompt when the user pastes image(s): claude has no native image input
+// over tmux, so we point it at the saved absolute paths and let its Read tool open them.
+// Kept on ONE line (space-joined paths, no newline) so send-keys can't submit it early.
+const IMG_PROMPT = "次の画像を Read ツールで開いて確認してください:";
+// Matches our pasted-image paths (…/pasted/<sid>/paste-<n>.<ext>), capturing the basename.
+const PASTE_PATH_RE = /\S*\/pasted\/[^\s/]+\/(paste-\d+\.(?:png|jpe?g|gif|webp))/g;
+
+// splitPastedImages pulls the pasted-image basenames out of a user turn's text and returns
+// the text with the appended image instruction removed (so the bubble shows the user's
+// words + thumbnails, not the machine-facing paths).
+function splitPastedImages(text: string): { text: string; images: string[] } {
+  const images: string[] = [];
+  PASTE_PATH_RE.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = PASTE_PATH_RE.exec(text))) images.push(m[1]);
+  if (!images.length) return { text, images };
+  const idx = text.indexOf(IMG_PROMPT);
+  const cleaned = (idx >= 0 ? text.slice(0, idx) : text.replace(PASTE_PATH_RE, "")).trim();
+  return { text: cleaned, images };
+}
+
 // One option in an AskUserQuestion, and one such question.
 interface QuestionOption {
   label: string;
@@ -25,6 +50,13 @@ interface Question {
   question?: string;
   multiSelect?: boolean;
   options?: QuestionOption[];
+}
+// One ToDo task, reconstructed server-side from the transcript's Task tool calls.
+interface TaskItem {
+  id: string;
+  subject: string;
+  activeForm?: string;
+  status: string; // "pending" | "in_progress" | "completed"
 }
 // One ordered part of a turn (Markdown text, a tool trace, a question, or a plan).
 interface Part {
@@ -125,6 +157,8 @@ export default function MirrorView({
   const [loaded, setLoaded] = useState(false); // false until the first transcript fetch returns
   const [termState, setTermState] = useState(""); // terminal-only state: "resume" | "compacting" | ""
   const [status, setStatus] = useState("");
+  const [bgBusy, setBgBusy] = useState(false); // idle but a run_in_background task lingers
+  const [tasks, setTasks] = useState<TaskItem[]>([]); // current ToDo list (Task tool calls)
   const [alive, setAlive] = useState(!!sessionMeta?.alive); // live session ⇒ composer usable
   const [pending, setPending] = useState<Question[] | null>(null); // currently-awaiting AskUserQuestion
   const [pendingPlan, setPendingPlan] = useState<string | null>(null); // ExitPlanMode plan awaiting approval
@@ -136,30 +170,63 @@ export default function MirrorView({
   const [draft, setDraft] = useState(() => readDraft(draftKey));
   const draftKeyRef = useRef<string | null>(draftKey);
   const [sending, setSending] = useState(false);
+  // Pasted images awaiting send: {path} is the session-saved absolute path (referenced in
+  // the prompt), {url} an object URL for the local chip preview, {name} the basename.
+  const [attachments, setAttachments] = useState<{ path: string; name: string; url: string }[]>([]);
+  const [pasting, setPasting] = useState(false); // an image upload is in flight
+  const [lightbox, setLightbox] = useState<string | null>(null); // enlarged image (blob URL) or null
   const [histIdx, setHistIdx] = useState<number | null>(null); // position in composer history, or null
   const cursorRef = useRef(0);
+  // Backward paging (P2): firstLineRef = oldest jsonl line currently held; hasMore = there
+  // is older history above it to page in. loadingOlderRef guards against overlapping loads;
+  // prependAdjustRef carries the pre-prepend scrollHeight so we can pin the viewport.
+  const firstLineRef = useRef(0);
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const loadingOlderRef = useRef(false);
+  const prependAdjustRef = useRef<number | null>(null);
+  const topSentinelRef = useRef<HTMLDivElement>(null);
   const diagRef = useRef(""); // last transcript-diagnostic signature (warn once per change)
   const statusRef = useRef("");
   const tickRef = useRef<(() => void) | null>(null); // lets send() trigger an immediate refresh
   const bodyRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  // Was the user pinned to the bottom at their last scroll? Only then do we auto-follow
+  // new content; if they've scrolled up to read history we leave their position alone.
+  // Updated on scroll (not on append — appending grows scrollHeight without a scroll
+  // event), so it reflects the user's intent, not the just-added content.
+  const atBottomRef = useRef(true);
 
   // Reset accumulated turns when the session changes (cursor is a line index into
   // that session's jsonl, meaningless across sessions).
   useEffect(() => {
     cursorRef.current = 0;
+    firstLineRef.current = 0;
+    loadingOlderRef.current = false;
+    prependAdjustRef.current = null;
+    setHasMore(false);
+    setLoadingOlder(false);
     diagRef.current = "";
     statusRef.current = "";
     setTurns([]);
     setLoaded(false);
     setTermState("");
     setStatus("");
+    setBgBusy(false);
+    setTasks([]);
     setAlive(!!sessionMeta?.alive);
     setPending(null);
     setPendingPlan(null);
     setPendingPerm(null);
     setMode("");
     setHistIdx(null);
+    setPasting(false);
+    setLightbox(null);
+    setAttachments((prev) => {
+      prev.forEach((a) => URL.revokeObjectURL(a.url)); // don't leak the old session's previews
+      return [];
+    });
+    atBottomRef.current = true; // a freshly opened session starts pinned to the bottom
   }, [session]);
 
   // Persist the draft per session, and reload it when the session changes (so the old
@@ -190,7 +257,14 @@ export default function MirrorView({
     let timer: ReturnType<typeof setTimeout> | null = null;
     const tick = async () => {
       try {
-        const d = await api(`api/sessions/${q(session)}/messages?since=${cursorRef.current}`);
+        // First poll: fetch only the TAIL window (fast on huge transcripts); the server
+        // returns firstLine/hasMore so we can page older history in on scroll. Subsequent
+        // polls are plain since=<cursor> increments (unchanged).
+        const first = cursorRef.current === 0;
+        const url = first
+          ? `api/sessions/${q(session)}/messages?since=0&tail=1&limit=${WINDOW}`
+          : `api/sessions/${q(session)}/messages?since=${cursorRef.current}`;
+        const d = await api(url);
         if (!alive) return;
         if (d && !d.error) {
           if (typeof d.cursor === "number") cursorRef.current = d.cursor;
@@ -199,8 +273,15 @@ export default function MirrorView({
           // re-sent from the top — replace, don't append. Otherwise append new turns.
           if (d.reset) {
             setTurns(Array.isArray(d.messages) ? d.messages : []);
+            firstLineRef.current = 0; // reset re-sends from the top: nothing older to page
+            setHasMore(false);
           } else if (Array.isArray(d.messages) && d.messages.length) {
             setTurns((t) => [...t, ...d.messages]);
+          }
+          // Windowed (initial tail) response carries the oldest line we now hold.
+          if (typeof d.firstLine === "number") {
+            firstLineRef.current = d.firstLine;
+            setHasMore(!!d.hasMore);
           }
           // Diagnostic: surface the anomalies behind "sent but nothing shows" — no
           // jsonl found, multiple <sid>.jsonl siblings (a stub may shadow the real
@@ -228,6 +309,8 @@ export default function MirrorView({
           // Track liveness so a read-only (history) view can enable its composer the
           // moment a background resume brings the session up.
           setAlive(!!d.alive);
+          setBgBusy(!!d.backgroundBusy);
+          setTasks(Array.isArray(d.tasks) ? d.tasks : []);
           setPending(Array.isArray(d.pendingQuestions) ? d.pendingQuestions : null);
           setPendingPlan(typeof d.pendingPlan === "string" && d.pendingPlan ? d.pendingPlan : null);
           setPendingPerm(typeof d.pendingPermission === "string" && d.pendingPermission ? d.pendingPermission : null);
@@ -253,11 +336,104 @@ export default function MirrorView({
     };
   }, [session]);
 
-  // Keep the conversation pinned to the latest turn / pending question / typing dots.
+  // Follow the latest turn / pending question / typing dots — but ONLY when the user is
+  // already at the bottom. The poll replaces `pending` with a fresh array every tick, so
+  // an unconditional scroll here yanked the user back down every 1.2–3s while they tried
+  // to read history (and on every appended turn). atBottomRef (set on scroll) gates it.
   useEffect(() => {
+    if (!atBottomRef.current) return;
     const el = bodyRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [turns, pending, pendingPlan, pendingPerm, status]);
+
+  // Keep the latest message in view when the body's OWN height changes — the ToDo /
+  // 消費推移 / コンテキスト panels opening above it, the composer auto-growing, or a
+  // pane/window resize all shrink the scroll area and would otherwise clip the bottom
+  // (reads as the chat scrolling away). Re-pin only if the user was already at the bottom;
+  // reading mid-history is left alone. (Content-driven growth is handled by the effect
+  // above — adding turns changes scrollHeight, not the body's box, so it won't fire here.)
+  useEffect(() => {
+    const el = bodyRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => {
+      if (atBottomRef.current) el.scrollTop = el.scrollHeight;
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  // Track whether the user is at (within 80px of) the bottom. Content appends grow
+  // scrollHeight without firing a scroll event, so this only changes on real user
+  // scrolling — exactly the "did they scroll up to read?" signal the effect above needs.
+  const onBodyScroll = () => {
+    const el = bodyRef.current;
+    if (!el) return;
+    atBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+  };
+
+  // Page older history in (P2): fetch the window before the oldest line we hold and
+  // prepend it. Guard via refs so overlapping triggers (button + observer) can't double it.
+  const loadOlder = async () => {
+    if (loadingOlderRef.current || firstLineRef.current <= 0) return;
+    loadingOlderRef.current = true;
+    setLoadingOlder(true);
+    try {
+      const before = firstLineRef.current;
+      const d = await api(`api/sessions/${q(session)}/messages?before=${before}&limit=${WINDOW}`);
+      if (d && !d.error && Array.isArray(d.messages)) {
+        if (d.messages.length) {
+          const el = bodyRef.current;
+          prependAdjustRef.current = el ? el.scrollHeight : null; // pin the viewport across the prepend
+          const older = d.messages;
+          setTurns((t) => [...older, ...t]);
+        }
+        if (typeof d.firstLine === "number") firstLineRef.current = d.firstLine;
+        setHasMore(!!d.hasMore);
+      }
+    } catch {
+      /* transient — the user can trigger again */
+    } finally {
+      loadingOlderRef.current = false;
+      setLoadingOlder(false);
+    }
+  };
+
+  // After an older page is prepended, restore the viewport: scrollTop grows by exactly the
+  // height added on top, so the user stays on the same content instead of jumping up.
+  useLayoutEffect(() => {
+    const el = bodyRef.current;
+    if (el && prependAdjustRef.current != null) {
+      el.scrollTop += el.scrollHeight - prependAdjustRef.current;
+      prependAdjustRef.current = null;
+    }
+  }, [turns]);
+
+  // Auto-load older history when the top sentinel scrolls into view (prefetch a little
+  // early via rootMargin). Only active while there's more above.
+  useEffect(() => {
+    const el = topSentinelRef.current;
+    const root = bodyRef.current;
+    if (!el || !root || !hasMore) return;
+    const ob = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) loadOlder();
+      },
+      { root, rootMargin: "240px 0px 0px 0px" },
+    );
+    ob.observe(el);
+    return () => ob.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasMore, session]);
+
+  // Auto-grow the composer to fit its content (up to ~10 lines via the CSS max-height,
+  // then it scrolls). Runs on every draft change, including the per-session draft restored
+  // on mount. Reset to auto first so it can also shrink when text is deleted.
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = el.scrollHeight + "px";
+  }, [draft]);
 
   // Focus the composer when this pane becomes the active chat — but not on touch
   // devices, where auto-focus would pop the on-screen keyboard just from switching
@@ -307,12 +483,68 @@ export default function MirrorView({
   };
 
 
+  // Paste image(s) from the clipboard into the composer: upload each to the session and
+  // hold it as an attachment chip. Non-image pastes fall through to the default (text).
+  const onPaste = async (e: RClipboardEvent<HTMLTextAreaElement>) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    const files: File[] = [];
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i];
+      if (it.kind === "file" && it.type.startsWith("image/")) {
+        const f = it.getAsFile();
+        if (f) files.push(f);
+      }
+    }
+    if (!files.length) return; // ordinary text paste — let it happen
+    e.preventDefault();
+    setPasting(true);
+    for (const f of files) {
+      try {
+        const res = await pasteImage(session, f);
+        if (res.status < 300 && res.path && res.name) {
+          const path = res.path;
+          const nm = res.name;
+          const url = URL.createObjectURL(f);
+          setAttachments((a) => [...a, { path, name: nm, url }]);
+        } else {
+          toast(res.error ? errText(res.error) : "画像の貼り付けに失敗しました");
+        }
+      } catch {
+        toast("画像の貼り付けに失敗しました（通信エラー）");
+      }
+    }
+    setPasting(false);
+    inputRef.current?.focus();
+  };
+
+  const removeAttachment = (i: number) => {
+    setAttachments((a) => {
+      if (a[i]) URL.revokeObjectURL(a[i].url);
+      return a.filter((_, idx) => idx !== i);
+    });
+  };
+  const clearAttachments = () => {
+    setAttachments((a) => {
+      a.forEach((x) => URL.revokeObjectURL(x.url));
+      return [];
+    });
+  };
+
   const send = async () => {
     const text = draft.trim();
-    if (!text) return;
+    if (!text && !attachments.length) return;
+    const paths = attachments.map((a) => a.path);
+    let prompt = text;
+    if (paths.length) {
+      // One line, space-joined (no newline) so send-keys can't submit before the paths.
+      const instr = IMG_PROMPT + " " + paths.join(" ");
+      prompt = text ? text + " " + instr : instr;
+    }
     setHistIdx(null);
     setDraft("");
-    await sendPrompt(text);
+    clearAttachments();
+    await sendPrompt(prompt);
     inputRef.current?.focus();
   };
 
@@ -416,9 +648,15 @@ export default function MirrorView({
   // claude and isn't in the transcript, but the cache breakdown is real usage data.
   const ctxUsage = latestContext(groups);
 
+  // Per-assistant-turn "spend" = newly-consumed tokens (uncached input + cache creation +
+  // output). Cache reads are reused context, not fresh spend, so they're excluded (the ↑
+  // number still carries total context). Drives the per-turn bar and the trend Sparkline.
+  const spends = groups.filter((g) => g.role !== "user").map(spendOf).filter((n) => n > 0);
+  const maxSpend = spends.length ? Math.max(...spends) : 0;
+
   // Status chip: prefer the live polled status, fall back to the session meta.
   const chip = status
-    ? stateInfo({ kind: "claude", alive: status !== "stopped", state: status } as any)
+    ? stateInfo({ kind: "claude", alive: status !== "stopped", state: status, backgroundBusy: bgBusy } as any)
     : sessionMeta
       ? stateInfo(sessionMeta)
       : null;
@@ -466,7 +704,8 @@ export default function MirrorView({
         <MirrorToggle mirror={!!mirror} onToggle={onToggleMirror} running={running} />
       </header>
 
-      {ctxUsage && <ContextBar {...ctxUsage} />}
+      {ctxUsage && <ContextBar {...ctxUsage} spends={spends} maxSpend={maxSpend} />}
+      {tasks.length > 0 && <TaskChecklist tasks={tasks} />}
       {mode === "plan" && (
         <div className="mirror-planmode">
           <Icon name="debug-pause" /> 計画モード — 承認するまで実装しません
@@ -493,7 +732,27 @@ export default function MirrorView({
         </div>
       )}
 
-      <div className="mirror-body" ref={bodyRef}>
+      <div className="mirror-body" ref={bodyRef} onScroll={onBodyScroll}>
+        {loaded && hasMore && (
+          <div className="mirror-loadmore" ref={topSentinelRef}>
+            <button
+              type="button"
+              className="ghost mirror-loadmore-btn"
+              disabled={loadingOlder}
+              onClick={loadOlder}
+            >
+              {loadingOlder ? (
+                <>
+                  <Icon name="loading" spin /> 読み込み中…
+                </>
+              ) : (
+                <>
+                  <Icon name="chevron-up" /> 以前の会話を読み込む
+                </>
+              )}
+            </button>
+          </div>
+        )}
         {!loaded ? (
           running ? (
             // First fetch in flight (opening a session, or switching ターミナル→チャット):
@@ -515,7 +774,7 @@ export default function MirrorView({
               : "まだ会話はありません。下の欄からプロンプトを送るか、ターミナルで対話すると、ここに ターンごとの Markdown で表示されます。"}
           </div>
         ) : (
-          renderGroups(groups, sendPrompt, openPlan, openDiff)
+          renderGroups(groups, sendPrompt, openPlan, openDiff, maxSpend, session, setLightbox)
         )}
         {pendingPlan && (
           <div className="mirror-turn assistant">
@@ -534,7 +793,11 @@ export default function MirrorView({
             </div>
           </div>
         )}
-        {pendingPerm && (
+        {pendingPerm && !pending && !pendingPlan && (
+          // Defense-in-depth: a question/plan always wins over a generic permission
+          // dialog (the server already suppresses the permission in that case). This
+          // guards against a poll race ever showing 許可/拒否 over an AskUserQuestion,
+          // whose buttons would send keystrokes that mis-answer the question underneath.
           <div className="mirror-turn assistant">
             <div className="mirror-turn-head">
               <span className="mt-who">Claude</span>
@@ -643,6 +906,23 @@ export default function MirrorView({
         </div>
       ) : (
         <div className="mirror-compose">
+          {(attachments.length > 0 || pasting) && (
+            <div className="mirror-attach">
+              {attachments.map((a, i) => (
+                <div className="ma-chip" key={a.path}>
+                  <img className="ma-thumb" src={a.url} alt="" />
+                  <button type="button" className="ma-del" title="削除" onClick={() => removeAttachment(i)}>
+                    <Icon name="close" />
+                  </button>
+                </div>
+              ))}
+              {pasting && (
+                <span className="ma-loading">
+                  <Icon name="loading" spin /> アップロード中…
+                </span>
+              )}
+            </div>
+          )}
           {/* History nav for phones (no arrow keys); hidden on wider screens via CSS. */}
           <div className="mirror-hist">
             <button
@@ -679,16 +959,22 @@ export default function MirrorView({
               setHistIdx(null); // typing leaves history-recall mode
             }}
             onKeyDown={onKeyDown}
+            onPaste={onPaste}
           />
           <button
             type="button"
             className="btn primary mirror-send"
-            disabled={!draft.trim() || sending}
+            disabled={(!draft.trim() && !attachments.length) || sending}
             onClick={send}
             title="送信"
           >
             <Icon name="send" />
           </button>
+        </div>
+      )}
+      {lightbox && (
+        <div className="mirror-lightbox" onClick={() => setLightbox(null)} role="presentation">
+          <img src={lightbox} alt="貼り付け画像（拡大）" />
         </div>
       )}
     </div>
@@ -787,11 +1073,19 @@ function latestContext(groups: Group[]) {
 // renderGroups lays the blocks out, inserting a context strip (branch · cwd) above a
 // block whenever either changes from the previously shown one — so a branch switch or
 // cd is marked once, not repeated on every turn. Empty context leaves the marker as-is.
+// spendOf is a turn's newly-consumed tokens (uncached input + cache creation + output).
+function spendOf(g: Group): number {
+  return g.inTok + g.cacheCreate + g.outTok;
+}
+
 function renderGroups(
   groups: Group[],
   onAnswer: (t: string) => void,
   onOpenPlan: (plan: string) => void,
   onOpenDiff: (p: Part) => void,
+  maxSpend: number,
+  session: string,
+  onOpenImage: (url: string) => void,
 ) {
   const els = [];
   let prevCtx = "";
@@ -805,11 +1099,63 @@ function renderGroups(
       g.compact ? (
         <CompactBlock key={g.idx} turn={g} />
       ) : (
-        <Turn key={g.idx} turn={g} onAnswer={onAnswer} onOpenPlan={onOpenPlan} onOpenDiff={onOpenDiff} />
+        <Turn
+          key={g.idx}
+          turn={g}
+          maxSpend={maxSpend}
+          session={session}
+          onOpenImage={onOpenImage}
+          onAnswer={onAnswer}
+          onOpenPlan={onOpenPlan}
+          onOpenDiff={onOpenDiff}
+        />
       ),
     );
   }
   return els;
+}
+
+// taskIcon maps a ToDo status to its codicon glyph (in_progress spins via the caller).
+function taskIcon(status: string): string {
+  if (status === "completed") return "check";
+  if (status === "in_progress") return "loading";
+  return "circle-large-outline";
+}
+
+// TaskChecklist renders the current ToDo list (reconstructed from Task tool calls) as a
+// collapsed disclosure: a done/total count, the active task on the summary, and the full
+// list on expand. Open while work remains; collapses once everything is completed.
+function TaskChecklist({ tasks }: { tasks: TaskItem[] }) {
+  const done = tasks.filter((t) => t.status === "completed").length;
+  const total = tasks.length;
+  const active = tasks.find((t) => t.status === "in_progress");
+  const [open, setOpen] = useState(done < total);
+  return (
+    <details
+      className="mirror-tasks"
+      open={open}
+      onToggle={(e) => setOpen((e.currentTarget as HTMLDetailsElement).open)}
+    >
+      <summary className="mirror-tasks-head">
+        <Icon name="checklist" />
+        <span className="mtk-title">ToDo</span>
+        <span className="mtk-count muted">
+          {done}/{total}
+        </span>
+        {active && <span className="mtk-active muted">{active.activeForm || active.subject}</span>}
+      </summary>
+      <ol className="mirror-tasks-list">
+        {tasks.map((t) => (
+          <li key={t.id} className={"mtk-item mtk-" + t.status}>
+            <Icon name={taskIcon(t.status)} spin={t.status === "in_progress"} className="mtk-mark" />
+            <span className="mtk-text">
+              {t.status === "in_progress" && t.activeForm ? t.activeForm : t.subject}
+            </span>
+          </li>
+        ))}
+      </ol>
+    </details>
+  );
 }
 
 // CompactBlock renders claude's auto-compaction summary as a collapsed disclosure —
@@ -849,11 +1195,17 @@ function ContextLine({ branch, cwd }: { branch?: string; cwd?: string }) {
 // token usage + copy). Subagent (sidechain) turns get a distinct label and tint.
 function Turn({
   turn,
+  maxSpend,
+  session,
+  onOpenImage,
   onAnswer,
   onOpenPlan,
   onOpenDiff,
 }: {
   turn: Group;
+  maxSpend: number;
+  session: string;
+  onOpenImage: (url: string) => void;
   onAnswer: (t: string) => void;
   onOpenPlan: (plan: string) => void;
   onOpenDiff: (p: Part) => void;
@@ -861,6 +1213,7 @@ function Turn({
   const isUser = turn.role === "user";
   const who = isUser ? "あなた" : turn.sidechain ? "サブエージェント" : "Claude";
   const ctxTok = turn.inTok + turn.cacheRead + turn.cacheCreate;
+  const spend = spendOf(turn);
   return (
     <div className={"mirror-turn " + (isUser ? "user" : "assistant") + (turn.sidechain ? " sidechain" : "")}>
       <div className="mirror-turn-head">
@@ -869,7 +1222,23 @@ function Turn({
       </div>
       <div className="mirror-turn-body">
         {isUser ? (
-          <pre className="mirror-user-text">{turn.text}</pre>
+          (() => {
+            // Split off any pasted-image references so the bubble shows the user's words
+            // plus clickable thumbnails, not the machine-facing paths.
+            const { text, images } = splitPastedImages(turn.text || "");
+            return (
+              <>
+                {text && <MarkdownView source={text} breaks />}
+                {images.length > 0 && (
+                  <div className="mt-imgs">
+                    {images.map((nm) => (
+                      <PastedThumb key={nm} session={session} name={nm} onOpen={onOpenImage} />
+                    ))}
+                  </div>
+                )}
+              </>
+            );
+          })()
         ) : (
           foldParts(turn.parts).map((item) =>
             // Consecutive tool traces collapse into one foldable row (Edit/Write bursts
@@ -902,9 +1271,80 @@ function Turn({
             ↑{fmtTok(ctxTok)} ↓{fmtTok(turn.outTok)}
           </span>
         )}
+        {!isUser && spend > 0 && maxSpend > 0 && (
+          <TurnSpendBar fresh={turn.inTok} create={turn.cacheCreate} out={turn.outTok} max={maxSpend} />
+        )}
         <CopyButton text={turn.text} />
       </div>
     </div>
+  );
+}
+
+// TurnSpendBar visualizes one turn's newly-consumed tokens as a stacked bar, scaled so
+// the heaviest turn in the conversation fills the track — the bar length shows the turn's
+// relative weight, the segments its input(uncached)/cache-creation/output split. Cache
+// reads (reused context) are excluded; the ↑ number beside it carries total context.
+function TurnSpendBar({ fresh, create, out, max }: { fresh: number; create: number; out: number; max: number }) {
+  const pct = (n: number) => (n / max) * 100 + "%";
+  const total = fresh + create + out;
+  const title =
+    `このターンの新規消費 ${total.toLocaleString()} トークン\n` +
+    `未キャッシュ入力 ${fresh.toLocaleString()} · 新規キャッシュ ${create.toLocaleString()} · 出力 ${out.toLocaleString()}`;
+  return (
+    <span className="mt-spend" title={title} aria-hidden="true">
+      <span className="ts-seg ts-fresh" style={{ width: pct(fresh) }} />
+      <span className="ts-seg ts-create" style={{ width: pct(create) }} />
+      <span className="ts-seg ts-out" style={{ width: pct(out) }} />
+    </span>
+  );
+}
+
+// PastedThumb shows a small preview of a pasted image referenced in a turn. It fetches
+// the bytes through the authenticated API wrapper (an <img src> can't carry the tenant
+// header) into an object URL, and hands that same URL to the lightbox on click.
+function PastedThumb({ session, name, onOpen }: { session: string; name: string; onOpen: (url: string) => void }) {
+  const [url, setUrl] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    let obj = "";
+    raw(`api/sessions/${q(session)}/pasted/${encodeURIComponent(name)}`)
+      .then((r) => (r.ok ? r.blob() : null))
+      .then((b) => {
+        if (!alive) return;
+        if (!b) {
+          setFailed(true);
+          return;
+        }
+        obj = URL.createObjectURL(b);
+        setUrl(obj);
+      })
+      .catch(() => {
+        if (alive) setFailed(true);
+      });
+    return () => {
+      alive = false;
+      if (obj) URL.revokeObjectURL(obj);
+    };
+  }, [session, name]);
+  if (failed) {
+    return (
+      <span className="mt-img mt-img-loading" title="プレビューを取得できませんでした">
+        <Icon name="file-media" />
+      </span>
+    );
+  }
+  if (!url) {
+    return (
+      <span className="mt-img mt-img-loading">
+        <Icon name="loading" spin />
+      </span>
+    );
+  }
+  return (
+    <button type="button" className="mt-img" title="クリックで拡大" onClick={() => onOpen(url)}>
+      <img src={url} alt="貼り付け画像" />
+    </button>
   );
 }
 

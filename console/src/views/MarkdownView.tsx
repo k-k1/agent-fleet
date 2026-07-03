@@ -13,10 +13,11 @@ let mermaidSeq = 0;
 interface MarkdownViewProps {
   source?: string;
   basePath?: string;
+  breaks?: boolean; // treat a single newline as <br> (chat prompts keep their line breaks)
   onOpenFile?: (path: string) => void;
 }
 
-export default function MarkdownView({ source, basePath = "", onOpenFile }: MarkdownViewProps) {
+export default function MarkdownView({ source, basePath = "", breaks = false, onOpenFile }: MarkdownViewProps) {
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -24,7 +25,7 @@ export default function MarkdownView({ source, basePath = "", onOpenFile }: Mark
     if (!el) return;
     let alive = true;
 
-    const rawHtml = marked.parse(source ?? "", { gfm: true, breaks: false }) as string;
+    const rawHtml = marked.parse(source ?? "", { gfm: true, breaks }) as string;
     el.innerHTML = DOMPurify.sanitize(rawHtml);
 
     // Give headings slug ids so in-page #anchors can resolve.
@@ -70,7 +71,7 @@ export default function MarkdownView({ source, basePath = "", onOpenFile }: Mark
     return () => {
       alive = false;
     };
-  }, [source, basePath, onOpenFile]);
+  }, [source, basePath, breaks, onOpenFile]);
 
   return <div className="markdown" ref={ref} />;
 }
