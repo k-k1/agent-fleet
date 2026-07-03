@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useApp } from "../state.jsx";
 import ConnectionsTab from "./ConnectionsTab.jsx";
+import GitTab from "./GitTab.jsx";
 import DisplayTab from "./DisplayTab.jsx";
 import AgentsTab from "./AgentsTab.jsx";
 import EnvTab from "./EnvTab.jsx";
@@ -19,6 +20,7 @@ export default function SettingsDialog() {
   const sections = [
     ["connections", "接続"],
     ["agents", "エージェント"],
+    ["git", "Git"],
     ["env", "環境"],
     ["ssm", "SSM"],
     ["tokens", "MCP"],
@@ -43,6 +45,7 @@ export default function SettingsDialog() {
         <div className="settings-content">
           {section === "connections" && <ConnectionsTab />}
           {section === "agents" && <AgentsTab />}
+          {section === "git" && <GitTab />}
           {section === "env" && <EnvTab />}
           {section === "ssm" && <SsmTab />}
           {section === "tokens" && <TokensTab />}
