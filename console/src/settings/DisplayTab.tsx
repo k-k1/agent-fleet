@@ -8,10 +8,13 @@ import {
   chatFontStack,
   ICON_SETS,
   THEMES,
+  SURFACE_TARGETS,
   MIRROR_SEND_MODES,
 } from "../lib/settings.js";
 import FileIcon from "../components/FileIcon.jsx";
 import SwatchGrid from "../components/SwatchGrid.jsx";
+import { Choice, OnOff } from "./controls.jsx";
+import type { ChoiceProps } from "./controls.jsx";
 
 // DisplayTab: font + file-viewer preferences (CodeLeaf-inspired), persisted via the
 // settings store. Every control is a horizontal selection (segmented buttons /
@@ -29,18 +32,11 @@ export default function DisplayTab() {
             onChange={(v) => setSetting("theme", v)}
           />
         </Row>
-        <Row label="上部バーの背景">
-          <SwatchGrid theme={s.theme} value={s.topbarColor} onChange={(v) => setSetting("topbarColor", v)} />
-        </Row>
-        <Row label="左ペインの背景">
-          <SwatchGrid theme={s.theme} value={s.leftpaneColor} onChange={(v) => setSetting("leftpaneColor", v)} />
-        </Row>
-        <Row label="ファイルビュアーの背景">
-          <SwatchGrid theme={s.theme} value={s.viewerColor} onChange={(v) => setSetting("viewerColor", v)} />
-        </Row>
-        <Row label="チャットの背景">
-          <SwatchGrid theme={s.theme} value={s.chatColor} onChange={(v) => setSetting("chatColor", v)} />
-        </Row>
+        {SURFACE_TARGETS.map((t) => (
+          <Row key={t.key} label={t.long}>
+            <SwatchGrid theme={s.theme} value={s[t.key]} onChange={(v) => setSetting(t.key, v)} />
+          </Row>
+        ))}
       </section>
 
       <section className="ds-group">
@@ -163,12 +159,6 @@ function FontSelect({
   );
 }
 
-interface ChoiceProps {
-  value: unknown;
-  options: unknown[][];
-  onChange: (v: any) => void;
-}
-
 // ChipChoice lays the options out as wrapping chips (same as FontSelect) so a long
 // list doesn't overflow off-screen on a phone, unlike the single-row segmented Choice.
 function ChipChoice({ value, options, onChange }: ChoiceProps) {
@@ -185,34 +175,6 @@ function ChipChoice({ value, options, onChange }: ChoiceProps) {
         </button>
       ))}
     </div>
-  );
-}
-
-// Choice is a small horizontal segmented control.
-function Choice({ value, options, onChange }: ChoiceProps) {
-  return (
-    <div className="seg choice-seg">
-      {options.map(([v, label]) => (
-        <button
-          key={String(v)}
-          type="button"
-          className={"seg-btn" + (v === value ? " active" : "")}
-          onClick={() => onChange(v)}
-        >
-          {label as ReactNode}
-        </button>
-      ))}
-    </div>
-  );
-}
-
-function OnOff({ value, onChange }: { value: boolean; onChange: (v: boolean) => void }) {
-  return (
-    <Choice
-      value={!!value}
-      options={[[true, "オン"], [false, "オフ"]]}
-      onChange={onChange}
-    />
   );
 }
 

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useApp } from "../state.jsx";
 import { rel } from "../api.js";
-import { useSettings, setSetting, THEMES } from "../lib/settings.js";
+import { useSettings, setSetting, THEMES, SURFACE_TARGETS } from "../lib/settings.js";
 import Icon from "./Icon.jsx";
 import SwatchGrid from "./SwatchGrid.jsx";
 import { useDismiss } from "../lib/useDismiss.js";
@@ -86,10 +86,9 @@ export default function TopBar() {
                     </button>
                   ))}
                 </div>
-                <SwatchRow label="上部バー" theme={s.theme} value={s.topbarColor} onPick={(v) => setSetting("topbarColor", v)} />
-                <SwatchRow label="左ペイン" theme={s.theme} value={s.leftpaneColor} onPick={(v) => setSetting("leftpaneColor", v)} />
-                <SwatchRow label="ビュアー" theme={s.theme} value={s.viewerColor} onPick={(v) => setSetting("viewerColor", v)} />
-                <SwatchRow label="チャット" theme={s.theme} value={s.chatColor} onPick={(v) => setSetting("chatColor", v)} />
+                {SURFACE_TARGETS.map((t) => (
+                  <SwatchRow key={t.key} label={t.short} theme={s.theme} value={s[t.key]} onPick={(v) => setSetting(t.key, v)} />
+                ))}
               </div>
             </div>
           )}
