@@ -6232,6 +6232,18 @@ button.primary:hover:not(:disabled) {
   .whoami {
     max-width: 96px;
   }
+  /* 外観 popover: the paint button sits mid-bar, so the default right:0 anchoring
+     (relative to the button) pushes its fixed 232px menu off-screen on a phone. Pin
+     it to the viewport top-right and clamp its width/height instead. */
+  .appr-menu {
+    position: fixed;
+    top: 48px;
+    right: 8px;
+    left: auto;
+    max-width: calc(100vw - 16px);
+    max-height: calc(100vh - 60px);
+    overflow-y: auto;
+  }
 
   /* Narrow screen: the pane head's text controls collapse to icon-only. This is
      the viewport-width companion to the @container paneview rule (which handles a
