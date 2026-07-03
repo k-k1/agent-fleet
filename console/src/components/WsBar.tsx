@@ -3,6 +3,7 @@ import { useApp } from "../state.jsx";
 import { api, previewURL, ocwebURL } from "../api.js";
 import Icon from "./Icon.jsx";
 import Sparkline from "./Sparkline.jsx";
+import { useConfirm } from "./ConfirmProvider.jsx";
 
 const HIST_N = 60; // sparkline ring buffer: ~4 min at the 4s poll cadence
 
@@ -281,6 +282,7 @@ function tile({
 
 export default function WsBar() {
   const { wsState, startWs, stopWs, ocweb, tenant, superAdmin, layout, resetToTerminal } = useApp();
+  const askConfirm = useConfirm();
   const { wsStats, wsHist, hostStats, hostHist } = useWsResourceChips(tenant, superAdmin);
   const { usage, refreshing, refresh } = useClaudeUsage(tenant);
   const isMobile = useIsMobile();
@@ -301,6 +303,24 @@ export default function WsBar() {
   const totalPanes = layout.cols.reduce((n, c) => n + c.panes.length, 0);
   const onlyPane = totalPanes === 1 ? layout.cols[0].panes[0] : null;
   const canCloseAll = !(onlyPane && onlyPane.kind === "terminal" && !onlyPane.session && !onlyPane.filePath && !onlyPane.scmRepo);
+
+  // Start is immediate; Stop is confirmed — it docker-removes the container, so
+  // running sessions drop to 停止 (resumable) and opencode web / preview disconnect.
+  // Reversible (Start recreates; data persists in the bind mount), so it's a caution,
+  // not a red destructive action.
+  const onToggle = async () => {
+    if (!running) {
+      startWs();
+      return;
+    }
+    const ok = await askConfirm({
+      title: "ワークスペースを停止",
+      body: "コンテナを停止します。実行中のセッションは停止（あとで再開可）になり、opencode web / プレビューは切断されます。ファイルは保持されます。",
+      confirmLabel: "停止する",
+      danger: false,
+    });
+    if (ok) stopWs();
+  };
 
   // Open a service the user started inside the container (e.g. a Spring Boot app
   // on :8080) in a new tab, proxied through the CP /preview/{port}.
@@ -540,11 +560,12 @@ export default function WsBar() {
           refresh. Disabled mid-transition (starting…/stopping…). */}
       <button
         className={"ws-toggle " + (running ? "stop" : "start")}
-        onClick={running ? stopWs : startWs}
+        onClick={onToggle}
         disabled={busy}
         title={running ? "ワークスペースを停止" : "ワークスペースを起動"}
       >
-        {running ? "Stop" : "Start"}
+        <Icon name={running ? "primitive-square" : "play"} />
+        <span>{running ? "停止" : "起動"}</span>
       </button>
       <button
         className="ghost ws-closeall"
