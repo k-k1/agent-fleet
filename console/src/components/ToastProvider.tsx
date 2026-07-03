@@ -52,8 +52,10 @@ export default function ToastProvider({ children }: { children: ReactNode }) {
       const kind = opts?.kind ?? "error";
       const id = ++seq.current;
       setItems((xs) => [...xs, { id, message, kind }]);
-      // Errors linger a little longer since they carry something to read/act on.
-      const duration = opts?.duration ?? (kind === "error" ? 6000 : 4000);
+      // Errors are sticky (manual close) so a failure can't be missed the way the
+      // blocking window.alert() couldn't — non-errors auto-dismiss. Callers can
+      // still override with an explicit duration.
+      const duration = opts?.duration ?? (kind === "error" ? 0 : 4000);
       if (duration > 0) setTimeout(() => remove(id), duration);
     },
     [remove],
@@ -63,9 +65,16 @@ export default function ToastProvider({ children }: { children: ReactNode }) {
     <ToastCtx.Provider value={toast}>
       {children}
       {items.length > 0 && (
-        <div className="toast-stack" role="status" aria-live="polite">
+        <div className="toast-stack">
           {items.map((t) => (
-            <div key={t.id} className={"toast toast-" + t.kind}>
+            <div
+              key={t.id}
+              className={"toast toast-" + t.kind}
+              // Errors are announced assertively (they were blocking alert()s);
+              // other toasts are polite so they don't interrupt.
+              role={t.kind === "error" ? "alert" : "status"}
+              aria-live={t.kind === "error" ? "assertive" : "polite"}
+            >
               <Icon name={ICONS[t.kind]} className="toast-ic" />
               <span className="toast-msg">{t.message}</span>
               <button type="button" className="toast-x" title="閉じる" onClick={() => remove(t.id)}>
