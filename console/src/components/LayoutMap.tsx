@@ -25,6 +25,9 @@ export default function LayoutMap() {
   if (paneCount(layout) <= 1) return null;
 
   const ordOf = new Map(rows.map((r) => [r.id, r.ordinal] as const));
+  // Cells get narrow once there are 3+ columns, so abbreviate the kind then (cc/cx/…);
+  // with 1–2 columns there's room for the full word (claude/shell/…).
+  const shortKind = layout.cols.length >= 3;
 
   return (
     <div className="layoutmap" role="group" aria-label="ペイン配置">
@@ -36,7 +39,13 @@ export default function LayoutMap() {
             const ord = ordOf.get(p.id) ?? 0;
             const s: Session | null = p.kind === "terminal" && p.session ? byName.get(p.session) ?? null : null;
             const st = s ? stateInfo(s) : null;
-            const kindTxt = s ? kindShort(s.kind) : KIND_ABBR[p.kind] || "–";
+            const kindTxt = s
+              ? shortKind
+                ? kindShort(s.kind)
+                : kindLabel(s.kind)
+              : shortKind
+                ? KIND_ABBR[p.kind] || "–"
+                : KIND_JA[p.kind] || p.kind;
             // Ordinal keeps the ordinal color (cross-refs the pane corner + Sessions
             // badge); the kind abbrev is tinted by kind so "what agent" reads too.
             const kindCls = s ? " kc-" + kindClass(s.kind) : "";
