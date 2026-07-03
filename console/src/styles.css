@@ -1221,20 +1221,37 @@ button.wu-reload {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* Session status: a pill chip (icon + label) — colored text on a faint tint + a
+   border derived from the same color — so 入力待ち / 進行中 / 質問あり / 停止中 read as
+   distinct badges (the IA mock's run/idle/stop chips) instead of bare colored text.
+   color-mix keeps the tint/border theme-adaptive. Shared with the terminal header. */
 .session-state {
   margin-left: auto;
   flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
   font-size: 10px;
+  padding: 1px 7px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  white-space: nowrap;
 }
 .session-state.on {
   color: var(--ok);
+  background: color-mix(in srgb, var(--ok) 12%, transparent);
+  border-color: color-mix(in srgb, var(--ok) 38%, transparent);
 }
+/* Stopped: a quiet, un-tinted chip (the mock's faint "stop") — a halted session is
+   resumable, not an alert, so it shouldn't shout in warn orange like before. */
 .session-state.off {
-  color: var(--warn);
+  color: var(--muted);
+  border-color: var(--border2);
 }
 /* dir-gone, can't be resumed: muted + struck-through, click disabled */
 .session-state.dead {
   color: var(--muted);
+  border-color: var(--border2);
 }
 .session-row.dead .session-display {
   color: var(--muted);
@@ -1245,12 +1262,16 @@ button.wu-reload {
 }
 .session-state.working {
   color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
   animation: af-pulse 1.4s ease-in-out infinite;
 }
 /* idle by hook, but a run_in_background task is still running — a calmer teal than
    the accent "working", since the session isn't awaiting a reply from claude. */
 .session-state.bg {
   color: #17a2a2;
+  background: color-mix(in srgb, #17a2a2 12%, transparent);
+  border-color: color-mix(in srgb, #17a2a2 38%, transparent);
 }
 /* Light theme: the mid teal dips below AA as small text on white — darken it
    (same value as the shell kind's light text). The map dot is a filled shape, not
@@ -1260,6 +1281,8 @@ button.wu-reload {
 }
 .session-state.question {
   color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 14%, transparent);
+  border-color: color-mix(in srgb, var(--warn) 40%, transparent);
   font-weight: 600;
 }
 @keyframes af-pulse {
