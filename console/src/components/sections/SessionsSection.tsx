@@ -9,6 +9,7 @@ import ArchivedModal from "../ArchivedModal.jsx";
 import { useConfirm } from "../ConfirmProvider.jsx";
 import { useToast } from "../ToastProvider.jsx";
 import EmptyState from "../EmptyState.jsx";
+import { useDismiss } from "../../lib/useDismiss.js";
 import { kindIcon, kindLabel, kindClass } from "../../lib/sessionkind.js";
 import { displayName, stateInfo } from "../../lib/sessionview.js";
 import { agentOf } from "../../agents/registry.ts";
@@ -200,12 +201,7 @@ export default function SessionsSection() {
   // dropdowns' document-level close listeners, so opening a REPOS 起動 menu
   // wouldn't close this one — both would stay open, both .pane-section would
   // lift to z-index:10, and the later REPOS section would paint over this menu.
-  useEffect(() => {
-    if (!menuFor) return;
-    const close = (e: MouseEvent) => { if (!menuRef.current?.contains(e.target as Node)) setMenuFor(null); };
-    document.addEventListener("mousedown", close);
-    return () => document.removeEventListener("mousedown", close);
-  }, [menuFor]);
+  useDismiss(menuRef, !!menuFor, () => setMenuFor(null));
 
   // The attached session is shown selected (highlighted) in place — no reordering,
   // so the rows keep their backend order and don't jump around as state changes.

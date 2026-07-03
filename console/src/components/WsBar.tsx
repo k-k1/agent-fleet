@@ -5,6 +5,7 @@ import Icon from "./Icon.jsx";
 import Sparkline from "./Sparkline.jsx";
 import { useConfirm } from "./ConfirmProvider.jsx";
 import { useIsMobile } from "../lib/device.js";
+import { useDismiss } from "../lib/useDismiss.js";
 import { fmtGiB as fg } from "../lib/bytes.js";
 
 const HIST_N = 60; // sparkline ring buffer: ~4 min at the 4s poll cadence
@@ -315,30 +316,11 @@ export default function WsBar() {
     setMoreOpen(false);
   };
 
-  // Close the popovers on an outside click / Escape.
-  useEffect(() => {
-    if (!pvOpen && !moreOpen && !usageOpen && !resOpen) return;
-    const onDown = (e: MouseEvent) => {
-      if (pvRef.current && !pvRef.current.contains(e.target as Node)) setPvOpen(false);
-      if (moreRef.current && !moreRef.current.contains(e.target as Node)) setMoreOpen(false);
-      if (usageRef.current && !usageRef.current.contains(e.target as Node)) setUsageOpen(false);
-      if (resRef.current && !resRef.current.contains(e.target as Node)) setResOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        setPvOpen(false);
-        setMoreOpen(false);
-        setUsageOpen(false);
-        setResOpen(false);
-      }
-    };
-    document.addEventListener("mousedown", onDown);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDown);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [pvOpen, moreOpen, usageOpen, resOpen]);
+  // Close each popover on an outside click / Escape.
+  useDismiss(pvRef, pvOpen, () => setPvOpen(false));
+  useDismiss(moreRef, moreOpen, () => setMoreOpen(false));
+  useDismiss(usageRef, usageOpen, () => setUsageOpen(false));
+  useDismiss(resRef, resOpen, () => setResOpen(false));
 
   // --- pieces shared between the inline (desktop) and folded (mobile) layouts ---
   const lvl = (v: number | null, warn: number, crit: number) => (v == null ? 0 : v >= crit ? 2 : v >= warn ? 1 : 0);
