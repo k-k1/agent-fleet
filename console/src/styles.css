@@ -3184,7 +3184,8 @@ button.mt-toolrun-head:hover {
 }
 .onboard-step.next {
   border-color: var(--accent);
-  background: rgba(120, 170, 255, 0.1);
+  /* theme-derived accent tint (was a hardcoded blue that ignored the theme/accent) */
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
 .onboard-mark {
   flex-shrink: 0;
@@ -3217,12 +3218,15 @@ button.mt-toolrun-head:hover {
 }
 .onboard-cta {
   flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   padding: 6px 12px;
   min-height: 34px;
 }
 .onboard-cta.primary {
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent); /* was hardcoded #fff — use the accent's contrast token */
   border-color: var(--accent);
 }
 .onboard-foot {
