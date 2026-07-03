@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { api, getTenant, setTenant as persistTenant } from "./api.js";
 import { keepOnly as termKeepOnly, reconnectSession as termReconnectSession } from "./term.js";
 import { hydrateUIPrefs } from "./lib/settings.js";
+import { MOBILE_QUERY, mobileMatches } from "./lib/device.js";
 import { useToast } from "./components/ToastProvider.jsx";
 import type { Layout, Pane, Column } from "./types/layout.ts";
 import type { Session } from "./types/session.ts";
@@ -201,7 +202,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
       // A phone shows only the first column (others are hidden), so a new right column
       // would be invisible — grow the active column downward (top/bottom), max 2.
-      const mobile = typeof window !== "undefined" && window.matchMedia("(max-width: 760px)").matches;
+      const mobile = mobileMatches();
       if (mobile) {
         const col = cur.cols.find((c) => c.panes.some((p) => p.id === cur.activeId)) || cur.cols[0];
         if (col && col.panes.length < 2) splitCol(col);
@@ -277,7 +278,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // preventDefault) so terminal/list scrolling is unaffected — a vertical drag
   // (dy ≥ dx) is ignored.
   useEffect(() => {
-    const mq = window.matchMedia("(max-width: 760px)");
+    const mq = window.matchMedia(MOBILE_QUERY);
     const DIST = 50; // px of horizontal travel to trigger
     let sx = 0, sy = 0, mode: "open" | "close" | null = null;
     const onStart = (e: TouchEvent) => {
