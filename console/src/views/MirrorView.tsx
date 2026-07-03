@@ -346,6 +346,22 @@ export default function MirrorView({
     if (el) el.scrollTop = el.scrollHeight;
   }, [turns, pending, pendingPlan, pendingPerm, status]);
 
+  // Keep the latest message in view when the body's OWN height changes — the ToDo /
+  // 消費推移 / コンテキスト panels opening above it, the composer auto-growing, or a
+  // pane/window resize all shrink the scroll area and would otherwise clip the bottom
+  // (reads as the chat scrolling away). Re-pin only if the user was already at the bottom;
+  // reading mid-history is left alone. (Content-driven growth is handled by the effect
+  // above — adding turns changes scrollHeight, not the body's box, so it won't fire here.)
+  useEffect(() => {
+    const el = bodyRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => {
+      if (atBottomRef.current) el.scrollTop = el.scrollHeight;
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
   // Track whether the user is at (within 80px of) the bottom. Content appends grow
   // scrollHeight without firing a scroll event, so this only changes on real user
   // scrolling — exactly the "did they scroll up to read?" signal the effect above needs.
