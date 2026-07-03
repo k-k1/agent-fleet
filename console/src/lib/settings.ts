@@ -48,6 +48,16 @@ export const SURFACE_COLORS = [
   { id: "warm", label: "ウォーム", dark: "#2a1f17", light: "#f6e8da", accent: "#e0964a" },
 ];
 
+// The four themeable surfaces (settings key + labels). Shared by DisplayTab and the
+// TopBar 外観 popover so "which surfaces are colorable" is defined once — `short` for
+// the compact popover rows, `long` for the settings-tab rows.
+export const SURFACE_TARGETS: { key: "topbarColor" | "leftpaneColor" | "viewerColor" | "chatColor"; short: string; long: string }[] = [
+  { key: "topbarColor", short: "上部バー", long: "上部バーの背景" },
+  { key: "leftpaneColor", short: "左ペイン", long: "左ペインの背景" },
+  { key: "viewerColor", short: "ビュアー", long: "ファイルビュアーの背景" },
+  { key: "chatColor", short: "チャット", long: "チャットの背景" },
+];
+
 // Resolve a surface color id to its value for the active theme (null = no override).
 export function surfaceValue(id: string, theme: string): string | null {
   const c = SURFACE_COLORS.find((x) => x.id === id);

@@ -1,9 +1,12 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useToast } from "../components/ToastProvider.jsx";
 import type { ReactNode } from "react";
 import { api, apiJSON, raw, ocwebURL } from "../api.js";
 import { useApp } from "../state.jsx";
 import EmptyState from "../components/EmptyState.jsx";
+import { OnOff } from "./controls.jsx";
+import { useConnections } from "./useConnections.js";
+import { usePolling } from "./usePolling.js";
 import { ProviderCard, StatusPill, Hint, DeviceSteps, DisconnectButton } from "./providerCard.jsx";
 
 // AgentsTab is the per-agent home: for Claude / Codex / opencode it combines the
@@ -16,27 +19,20 @@ export default function AgentsTab() {
   const toast = useToast();
   // opencode web state is shared with the WS bar via the app context, so toggling
   // here updates the bar's "open" entry immediately (and vice-versa).
-  const { bumpConn, ocweb, setOcweb, refreshOcweb, wsState, startWs } = useApp();
+  const { ocweb, setOcweb, refreshOcweb, wsState, startWs } = useApp();
   // Connection auth AND behavior settings both go through the in-container Agent
   // (proxyAgentREST → 502 when the workspace is stopped), so the whole tab requires
   // a running workspace — there's no CP-side DB to edit against while stopped.
   const running = wsState === "running";
-  const [conns, setConns] = useState<any>(null); // api/connections (null = loading)
+  // Shared connection loader (also used by GitTab); reload() refetches + bumps global
+  // listeners on connect/disconnect.
+  const { conns, reload } = useConnections();
   // Behavior settings, loaded independently so a missing/old endpoint degrades in
   // place (hides that card's toggles) instead of blanking the connect UI. claude:
   // null = loading/unavailable, object = ready. agents: null = loading, false =
   // endpoint missing (older image), object = ready.
   const [claude, setClaude] = useState<any>(null);
   const [agents, setAgents] = useState<any>(null);
-
-  // Connect/disconnect refreshes the connection state (+ global listeners). Behavior
-  // settings don't change on connect, so they load once — no flash on reconnect.
-  const reload = useCallback(() => {
-    api("api/connections")
-      .then(setConns)
-      .catch(() => setConns({}));
-    bumpConn();
-  }, [bumpConn]);
 
   const loadSettings = useCallback(() => {
     api("api/claude/settings")
@@ -56,30 +52,20 @@ export default function AgentsTab() {
     loadSettings();
   }, [running, reload, loadSettings]);
 
-  const updateClaude = async (patch: unknown) => {
-    const d = await apiJSON("api/claude/settings", "PUT", patch);
-    if (d && d.error) {
-      toast("保存に失敗: " + (d.error.message || ""));
-      return;
-    }
-    setClaude(d);
-  };
-  const updateAgents = async (patch: unknown) => {
-    const d = await apiJSON("api/agents/rtk", "PUT", patch);
-    if (d && d.error) {
-      toast("保存に失敗: " + (d.error.message || ""));
-      return;
-    }
-    setAgents(d);
-  };
-  const updateOcweb = async (patch: unknown) => {
-    const d = await apiJSON("api/agents/opencode-web", "PUT", patch);
-    if (d && d.error) {
-      toast("保存に失敗: " + (d.error.message || ""));
-      return;
-    }
-    setOcweb(d);
-  };
+  // One save handler per settings endpoint — identical error contract, differing
+  // only in path + setter.
+  const mkUpdate =
+    (path: string, setState: (d: any) => void) => async (patch: unknown) => {
+      const d = await apiJSON(path, "PUT", patch);
+      if (d && d.error) {
+        toast("保存に失敗: " + (d.error.message || ""));
+        return;
+      }
+      setState(d);
+    };
+  const updateClaude = mkUpdate("api/claude/settings", setClaude);
+  const updateAgents = mkUpdate("api/agents/rtk", setAgents);
+  const updateOcweb = mkUpdate("api/agents/opencode-web", setOcweb);
 
   if (!running) {
     return (
@@ -136,24 +122,25 @@ function SettingRow({ label, sub, children }: { label: ReactNode; sub?: ReactNod
   );
 }
 
-function OnOff({ value, onChange }: { value?: boolean; onChange: (v: boolean) => void }) {
-  const opts: [boolean, string][] = [
-    [true, "オン"],
-    [false, "オフ"],
-  ];
+// RtkRow: the shared "RTK（トークン節約）" settings row — a toggle when the workspace
+// has rtk, else an "unavailable" note. Used by all three agent cards.
+function RtkRow({
+  available,
+  value,
+  onChange,
+}: {
+  available?: boolean;
+  value?: boolean;
+  onChange: (v: boolean) => void;
+}) {
   return (
-    <div className="seg choice-seg">
-      {opts.map(([v, label]) => (
-        <button
-          key={String(v)}
-          type="button"
-          className={"seg-btn" + (!!value === v ? " active" : "")}
-          onClick={() => onChange(v)}
-        >
-          {label}
-        </button>
-      ))}
-    </div>
+    <SettingRow label="RTK（トークン節約）">
+      {available ? (
+        <OnOff value={value} onChange={onChange} />
+      ) : (
+        <span className="muted">この workspace に rtk がありません</span>
+      )}
+    </SettingRow>
   );
 }
 
@@ -276,13 +263,11 @@ function ClaudeCard({
               onChange={(v) => updateClaude({ agentPushNotifEnabled: v })}
             />
           </SettingRow>
-          <SettingRow label="RTK（トークン節約）">
-            {claude.rtk_available ? (
-              <OnOff value={claude.rtk_enabled} onChange={(v) => updateClaude({ rtk: v })} />
-            ) : (
-              <span className="muted">この workspace に rtk がありません</span>
-            )}
-          </SettingRow>
+          <RtkRow
+            available={claude.rtk_available}
+            value={claude.rtk_enabled}
+            onChange={(v) => updateClaude({ rtk: v })}
+          />
         </div>
       )}
     </ProviderCard>
@@ -304,14 +289,11 @@ function CodexCard({
   updateAgents: (patch: unknown) => void;
 }) {
   const toast = useToast();
+  const poll = usePolling();
   const [mode, setMode] = useState("idle"); // idle | device | key
   const [dev, setDev] = useState<any>(null); // { user_code, url, flow_id, status }
   const [key, setKey] = useState("");
   const [busy, setBusy] = useState(false);
-  const alive = useRef(true);
-  useEffect(() => () => {
-    alive.current = false;
-  }, []);
 
   const startDevice = async () => {
     setBusy(true);
@@ -323,27 +305,25 @@ function CodexCard({
       }
       setMode("device");
       setDev({ user_code: res.user_code, url: res.url, flow_id: res.flow_id, status: "承認待ち…" });
-      const deadline = Date.now() + 15 * 60 * 1000;
-      const tick = async () => {
-        if (!alive.current) return;
-        if (Date.now() > deadline) {
-          setDev((d: any) => ({ ...d, status: "期限切れ。やり直してください" }));
-          return;
-        }
-        let p;
-        try {
-          p = await apiJSON("api/connections/codex/device/poll", "POST", { flow_id: res.flow_id });
-        } catch {
-          p = null;
-        }
-        if (p && p.connected) {
-          setMode("idle");
-          reload();
-          return;
-        }
-        setTimeout(tick, 2500);
-      };
-      setTimeout(tick, 3000);
+      poll({
+        deadlineMs: 15 * 60 * 1000,
+        firstDelayMs: 3000,
+        onExpire: () => setDev((d: any) => ({ ...d, status: "期限切れ。やり直してください" })),
+        step: async () => {
+          let p;
+          try {
+            p = await apiJSON("api/connections/codex/device/poll", "POST", { flow_id: res.flow_id });
+          } catch {
+            p = null;
+          }
+          if (p && p.connected) {
+            setMode("idle");
+            reload();
+            return { stop: true };
+          }
+          return { stop: false, nextMs: 2500 };
+        },
+      });
     } finally {
       setBusy(false);
     }
@@ -447,13 +427,11 @@ function CodexCard({
       {rtkReady && (
         <div className="p-settings">
           <div className="ps-title">設定</div>
-          <SettingRow label="RTK（トークン節約）">
-            {agents.rtk_available ? (
-              <OnOff value={agents.codex_rtk} onChange={(v) => updateAgents({ codex_rtk: v })} />
-            ) : (
-              <span className="muted">この workspace に rtk がありません</span>
-            )}
-          </SettingRow>
+          <RtkRow
+            available={agents.rtk_available}
+            value={agents.codex_rtk}
+            onChange={(v) => updateAgents({ codex_rtk: v })}
+          />
           <p className="ps-note">
             codex はコマンド書換フックを持たないため指示ベース（ベストエフォート）。AGENTS.md で rtk 利用を促すだけで、強制ではありません。
           </p>
@@ -579,13 +557,11 @@ function OpencodeCard({
       {rtkReady && (
         <div className="p-settings">
           <div className="ps-title">設定</div>
-          <SettingRow label="RTK（トークン節約）">
-            {agents.rtk_available ? (
-              <OnOff value={agents.opencode_rtk} onChange={(v) => updateAgents({ opencode_rtk: v })} />
-            ) : (
-              <span className="muted">この workspace に rtk がありません</span>
-            )}
-          </SettingRow>
+          <RtkRow
+            available={agents.rtk_available}
+            value={agents.opencode_rtk}
+            onChange={(v) => updateAgents({ opencode_rtk: v })}
+          />
           {ocweb && ocweb.available && (
             <SettingRow label="Web UI" sub="ブラウザ版 opencode を serve と同時に起動。全セッションを Web UI で扱えます。">
               {ocweb.enabled &&

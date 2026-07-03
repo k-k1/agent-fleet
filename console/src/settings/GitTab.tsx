@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { api, apiJSON, raw } from "../api.js";
+import { usePolling } from "./usePolling.js";
 import { useApp } from "../state.jsx";
 import Icon from "../components/Icon.jsx";
 import { useToast } from "../components/ToastProvider.jsx";
 import EmptyState from "../components/EmptyState.jsx";
+import { useConnections } from "./useConnections.js";
 import { ProviderCard, StatusPill, DeviceSteps, DisconnectButton } from "./providerCard.jsx";
 
 interface RowProps {
@@ -19,18 +21,12 @@ interface RowProps {
 // here — each provider card will gain a settings group like the agent cards. It needs
 // a new Agent endpoint (workspace/agent git identity), so it lands once that exists.
 export default function GitTab() {
-  const { bumpConn, wsState, startWs } = useApp();
+  const { wsState, startWs } = useApp();
   // git-hosting auth is agent-proxied (proxyAgentREST → 502 while stopped), so the
   // tab needs a running workspace — same as the agent tab (SSM/MCP are CP-stored and
   // don't).
   const running = wsState === "running";
-  const [conns, setConns] = useState<any>(null);
-  const reload = useCallback(() => {
-    api("api/connections")
-      .then(setConns)
-      .catch(() => setConns({}));
-    bumpConn();
-  }, [bumpConn]);
+  const { conns, reload } = useConnections();
   useEffect(() => {
     if (running) reload();
   }, [running, reload]);
@@ -63,13 +59,10 @@ export default function GitTab() {
 
 function GithubRow({ st, reload }: RowProps) {
   const toast = useToast();
+  const poll = usePolling();
   const [mode, setMode] = useState("idle"); // idle | oauth | token
   const [oauth, setOauth] = useState<any>(null); // { user_code, verification_uri, status }
   const [token, setToken] = useState("");
-  const alive = useRef(true);
-  useEffect(() => () => {
-    alive.current = false;
-  }, []);
 
   const startOAuth = async () => {
     const res = await api("api/connections/git/github/oauth/start", { method: "POST" });
@@ -81,33 +74,31 @@ function GithubRow({ st, reload }: RowProps) {
     }
     setMode("oauth");
     setOauth({ user_code: res.user_code, verification_uri: res.verification_uri, status: "承認待ち…" });
-    const deadline = Date.now() + (res.expires_in || 900) * 1000;
     let iv = (res.interval || 5) * 1000;
-    const tick = async () => {
-      if (!alive.current) return;
-      if (Date.now() > deadline) {
-        setOauth((o: any) => ({ ...o, status: "期限切れ。やり直してください" }));
-        return;
-      }
-      let p;
-      try {
-        p = await apiJSON("api/connections/git/github/oauth/poll", "POST", { flow_id: res.flow_id });
-      } catch {
-        p = null;
-      }
-      if (p && p.connected) {
-        setMode("idle");
-        reload();
-        return;
-      }
-      if (p && p.error) {
-        setOauth((o: any) => ({ ...o, status: "失敗: " + (p.error.message || p.error.code || "") }));
-        return;
-      }
-      if (p && p.interval) iv = p.interval * 1000;
-      setTimeout(tick, iv);
-    };
-    setTimeout(tick, iv);
+    poll({
+      deadlineMs: (res.expires_in || 900) * 1000,
+      firstDelayMs: iv,
+      onExpire: () => setOauth((o: any) => ({ ...o, status: "期限切れ。やり直してください" })),
+      step: async () => {
+        let p;
+        try {
+          p = await apiJSON("api/connections/git/github/oauth/poll", "POST", { flow_id: res.flow_id });
+        } catch {
+          p = null;
+        }
+        if (p && p.connected) {
+          setMode("idle");
+          reload();
+          return { stop: true };
+        }
+        if (p && p.error) {
+          setOauth((o: any) => ({ ...o, status: "失敗: " + (p.error.message || p.error.code || "") }));
+          return { stop: true };
+        }
+        if (p && p.interval) iv = p.interval * 1000;
+        return { stop: false, nextMs: iv };
+      },
+    });
   };
 
   const saveToken = async () => {
@@ -180,14 +171,11 @@ function GithubRow({ st, reload }: RowProps) {
 
 function BitbucketRow({ st, reload }: RowProps) {
   const toast = useToast();
+  const poll = usePolling();
   const [mode, setMode] = useState("idle"); // idle | oauth | token
   const [status, setStatus] = useState("");
   const [username, setUsername] = useState("");
   const [token, setToken] = useState("");
-  const alive = useRef(true);
-  useEffect(() => () => {
-    alive.current = false;
-  }, []);
 
   const startOAuth = async () => {
     const res = await api("api/connections/git/bitbucket/oauth/start");
@@ -200,27 +188,25 @@ function BitbucketRow({ st, reload }: RowProps) {
     window.open(res.authorize_url, "_blank", "noopener");
     setMode("oauth");
     setStatus("別タブで承認してください…");
-    const deadline = Date.now() + 5 * 60 * 1000;
-    const tick = async () => {
-      if (!alive.current) return;
-      if (Date.now() > deadline) {
-        setStatus("タイムアウト。やり直してください");
-        return;
-      }
-      let d;
-      try {
-        d = await api("api/connections");
-      } catch {
-        d = null;
-      }
-      if (d && d.bitbucket && d.bitbucket.connected) {
-        setMode("idle");
-        reload();
-        return;
-      }
-      setTimeout(tick, 2000);
-    };
-    setTimeout(tick, 2500);
+    poll({
+      deadlineMs: 5 * 60 * 1000,
+      firstDelayMs: 2500,
+      onExpire: () => setStatus("タイムアウト。やり直してください"),
+      step: async () => {
+        let d;
+        try {
+          d = await api("api/connections");
+        } catch {
+          d = null;
+        }
+        if (d && d.bitbucket && d.bitbucket.connected) {
+          setMode("idle");
+          reload();
+          return { stop: true };
+        }
+        return { stop: false, nextMs: 2000 };
+      },
+    });
   };
 
   const saveToken = async () => {
