@@ -43,6 +43,101 @@ function DisconnectButton({ onClick }: { onClick: () => void }) {
   );
 }
 
+// Colored 2-char badge per provider, matching the session kind badge colors so a
+// provider reads the same color wherever it appears.
+const BADGE_SHORT: Record<string, string> = {
+  claude: "cc",
+  codex: "cx",
+  opencode: "oc",
+  github: "gh",
+  bitbucket: "bb",
+};
+
+// ProviderCard is the shared shell: a colored badge + name + status pill, then the
+// provider's own description / connect / flow UI as children. Replaces the old flat
+// .conn-row so every provider reads the same way (mock: console-connections-mock.html).
+function ProviderCard({
+  id,
+  name,
+  status,
+  children,
+}: {
+  id: string;
+  name: string;
+  status: ReactNode;
+  children?: ReactNode;
+}) {
+  return (
+    <div className="p-card">
+      <div className="p-head">
+        <span className={"p-badge pb-" + id}>{BADGE_SHORT[id]}</span>
+        <span className="p-name">{name}</span>
+        {status}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+// Status pill: connected (green + dot + label) or a muted state (未接続 / a count).
+function StatusPill({ on, children }: { on?: boolean; children: ReactNode }) {
+  return (
+    <span className={"p-status" + (on ? " on" : "")}>
+      {on && <span className="p-dot" />}
+      {children}
+    </span>
+  );
+}
+
+// Unified hint block (left-bordered, "i" marker) — replaces the ad-hoc .field-help /
+// inline notes that each provider used differently.
+function Hint({ children }: { children: ReactNode }) {
+  return (
+    <div className="p-hint">
+      <span className="p-hint-i">i</span>
+      <span>{children}</span>
+    </div>
+  );
+}
+
+// DeviceSteps renders a device-code flow (Codex / GitHub OAuth) as numbered steps —
+// ①copy the code ②open the link ③wait for approval — instead of a single wrapping
+// row, so the order is legible.
+function DeviceSteps({ code, url, status }: { code?: string; url: string; status: string }) {
+  let n = 0;
+  return (
+    <div className="p-steps">
+      {code && (
+        <div className="p-step">
+          <span className="p-step-k">{++n}</span>
+          <div className="p-step-c">
+            <div className="p-step-lbl">コードをコピー</div>
+            <CopyCode>{code}</CopyCode>
+          </div>
+        </div>
+      )}
+      <div className="p-step">
+        <span className="p-step-k">{++n}</span>
+        <div className="p-step-c">
+          <div className="p-step-lbl">リンクを開いて貼り付け</div>
+          <a href={url} target="_blank" rel="noopener" className="flow-link">
+            {url} を開く ↗
+          </a>
+        </div>
+      </div>
+      <div className="p-step">
+        <span className="p-step-k">{++n}</span>
+        <div className="p-step-c">
+          <div className="p-step-lbl">承認を待つ</div>
+          <span className="p-waiting">
+            <Icon name="loading" spin /> {status}
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ConnectionsTab drives the per-user provider auth flows entirely in the WebUI:
 // Claude (start → approve → paste code → complete), GitHub (OAuth device flow or
 // PAT paste), Bitbucket (OAuth code grant or email+token). Secrets are stored in
@@ -148,49 +243,64 @@ function CodexRow({ st, reload }: RowProps) {
   };
 
   return (
-    <div className="conn-row">
-      <Dot on={st?.connected} />
-      <span className="cname">Codex</span>
+    <ProviderCard
+      id="codex"
+      name="Codex"
+      status={<StatusPill on={st?.connected}>{st?.connected ? "接続済み" : "未接続"}</StatusPill>}
+    >
       {st?.connected ? (
-        <>
-          <span className="cwho" title={st.email || ""}>
+        <div className="p-who">
+          <span className="p-em" title={st.email || ""}>
             {st.email || (st.method === "apikey" ? "API キー" : "ChatGPT")}
-            {st.plan ? ` · ${st.plan}` : ""}
           </span>
+          {st.plan && <span className="p-pl">{st.plan}</span>}
           <DisconnectButton onClick={disconnect} />
-        </>
+        </div>
       ) : mode === "device" && dev ? (
-        <div className="flow">
-          {dev.user_code && <CopyCode>{dev.user_code}</CopyCode>}
-          <a href={dev.url} target="_blank" rel="noopener" className="flow-link">
-            → {dev.url} でコード入力
-          </a>
-          <span className="muted">{dev.status}</span>
+        <div className="p-body">
+          <DeviceSteps code={dev.user_code} url={dev.url} status={dev.status} />
         </div>
       ) : mode === "key" ? (
-        <div className="flow">
-          <input
-            className="cinput"
-            type="password"
-            placeholder="OpenAI API キー (sk-…)"
-            value={key}
-            onChange={(e) => setKey(e.target.value)}
-          />
-          <button disabled={busy || !key.trim()} onClick={saveKey}>
-            接続
-          </button>
+        <div className="p-body">
+          <div className="flow">
+            <input
+              className="cinput"
+              type="password"
+              placeholder="OpenAI API キー (sk-…)"
+              value={key}
+              onChange={(e) => setKey(e.target.value)}
+              autoFocus
+            />
+            <button disabled={busy || !key.trim()} onClick={saveKey}>
+              接続
+            </button>
+            <button className="ghost" onClick={() => setMode("idle")}>
+              戻る
+            </button>
+          </div>
         </div>
       ) : (
         <>
-          <button disabled={busy} onClick={startDevice}>
-            ChatGPT で接続
-          </button>
-          <button className="ghost" onClick={() => setMode("key")}>
-            API キー
-          </button>
+          <div className="p-desc">
+            Codex CLI をこのワークスペースで使えるようにします。ChatGPT サブスク（推奨）か OpenAI API キーで接続。
+          </div>
+          <div className="p-body">
+            <div className="p-opts">
+              <button type="button" className="p-opt" disabled={busy} onClick={startDevice}>
+                <span className="p-opt-t">
+                  ChatGPT サブスクで接続 <span className="p-rec">推奨</span>
+                </span>
+                <span className="p-opt-s">Plus / Pro の枠を使用。追加課金なし。</span>
+              </button>
+              <button type="button" className="p-opt" onClick={() => setMode("key")}>
+                <span className="p-opt-t">API キーで接続</span>
+                <span className="p-opt-s">OpenAI API の従量課金（sk-…）。</span>
+              </button>
+            </div>
+          </div>
         </>
       )}
-    </div>
+    </ProviderCard>
   );
 }
 
@@ -242,65 +352,63 @@ function OpencodeRow({ st, reload }: RowProps) {
   };
 
   return (
-    <div className="conn-row conn-block">
-      <div className="conn-head">
-        <Dot on={envs.length > 0} />
-        <span className="cname">opencode</span>
-        <span className="muted">プロバイダ API キー（起動時に env 注入）</span>
-      </div>
-      {preset === "go" && (
-        <div className="field-help">
-          <a href="https://opencode.ai/auth" target="_blank" rel="noopener" className="flow-link">
-            → opencode.ai/auth
-          </a>{" "}
-          でサインイン → 課金設定 → API キーを発行し、下に貼り付けてください（同じキーで Zen も利用可）。
-        </div>
-      )}
-      {envs.length > 0 && (
-        <ul className="oc-keys">
-          {envs.map((e: string) => (
-            <li key={e}>
-              <code>{e}</code>
-              <button className="icon danger" title="削除" onClick={() => remove(e)}>
-                ✕
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-      <div className="flow">
-        <select className="cinput" value={preset} onChange={(e) => setPreset(e.target.value)}>
-          {OC_PRESETS.map(([v, label]) => (
-            <option key={v} value={v}>
-              {label}
-            </option>
-          ))}
-        </select>
-        {preset === "custom" && (
+    <ProviderCard
+      id="opencode"
+      name="opencode"
+      status={<StatusPill on={envs.length > 0}>{envs.length > 0 ? `${envs.length} キー` : "未接続"}</StatusPill>}
+    >
+      <div className="p-desc">複数プロバイダの API キーを保存し、opencode 起動時に env として注入します。</div>
+      <div className="p-body">
+        {preset === "go" && (
+          <Hint>
+            <a href="https://opencode.ai/auth" target="_blank" rel="noopener" className="flow-link">
+              opencode.ai/auth
+            </a>{" "}
+            でサインイン → 課金設定 → API キーを発行して貼り付け（同じキーで Zen も利用可）。
+          </Hint>
+        )}
+        {envs.length > 0 && (
+          <ul className="oc-keys">
+            {envs.map((e: string) => (
+              <li key={e}>
+                <code>{e}</code>
+                <button className="icon danger" title="削除" onClick={() => remove(e)}>
+                  ✕
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+        <div className="flow">
+          <select className="cinput" value={preset} onChange={(e) => setPreset(e.target.value)}>
+            {OC_PRESETS.map(([v, label]) => (
+              <option key={v} value={v}>
+                {label}
+              </option>
+            ))}
+          </select>
+          {preset === "custom" && (
+            <input
+              className="cinput"
+              placeholder="ENV 名 (例 GROQ_API_KEY)"
+              value={customEnv}
+              onChange={(e) => setCustomEnv(e.target.value)}
+            />
+          )}
           <input
             className="cinput"
-            placeholder="ENV 名 (例 GROQ_API_KEY)"
-            value={customEnv}
-            onChange={(e) => setCustomEnv(e.target.value)}
+            type="password"
+            placeholder={envName ? envName + " の値" : "API キー"}
+            value={key}
+            onChange={(e) => setKey(e.target.value)}
           />
-        )}
-        <input
-          className="cinput"
-          type="password"
-          placeholder={envName ? envName + " の値" : "API キー"}
-          value={key}
-          onChange={(e) => setKey(e.target.value)}
-        />
-        <button disabled={busy || !envName || !key.trim()} onClick={add}>
-          接続
-        </button>
+          <button disabled={busy || !envName || !key.trim()} onClick={add}>
+            接続
+          </button>
+        </div>
       </div>
-    </div>
+    </ProviderCard>
   );
-}
-
-function Dot({ on }: { on?: boolean }) {
-  return <span className={"cdot " + (on ? "ok" : "off")}>●</span>;
 }
 
 function ClaudeRow({ st, reload }: RowProps) {
@@ -350,39 +458,55 @@ function ClaudeRow({ st, reload }: RowProps) {
   };
 
   return (
-    <div className="conn-row">
-      <Dot on={st?.connected} />
-      <span className="cname">Claude</span>
+    <ProviderCard
+      id="claude"
+      name="Claude"
+      status={<StatusPill on={st?.connected}>{st?.connected ? "接続済み" : "未接続"}</StatusPill>}
+    >
       {st?.connected ? (
-        <>
-          <span className="cwho" title={st.email || "connected"}>
+        <div className="p-who">
+          <span className="p-em" title={st.email || "connected"}>
             {st.email || "connected"}
-            {st.plan ? ` · ${st.plan}` : ""}
           </span>
+          {st.plan && <span className="p-pl">{st.plan}</span>}
           <DisconnectButton onClick={disconnect} />
-        </>
-      ) : flow ? (
-        <div className="flow">
-          <a href={flow.url} target="_blank" rel="noopener" className="flow-link">
-            別タブが開かない場合はこちらでサインイン ↗
-          </a>
-          <input
-            className="cinput"
-            placeholder="コードを貼付"
-            value={code}
-            onChange={(e) => setCode(e.target.value)}
-            autoFocus
-          />
-          <button disabled={busy} onClick={complete}>
-            完了
-          </button>
         </div>
+      ) : flow ? (
+        <>
+          <div className="p-desc">Claude Code の OAuth 接続。サインインは新しいタブで開きます。</div>
+          <div className="p-body">
+            <Hint>
+              タブが自動で開かない場合は{" "}
+              <a href={flow.url} target="_blank" rel="noopener" className="flow-link">
+                サインインリンク ↗
+              </a>{" "}
+              から。承認後にコードを貼り付けます。
+            </Hint>
+            <div className="flow">
+              <input
+                className="cinput"
+                placeholder="コードを貼付"
+                value={code}
+                onChange={(e) => setCode(e.target.value)}
+                autoFocus
+              />
+              <button disabled={busy} onClick={complete}>
+                完了
+              </button>
+            </div>
+          </div>
+        </>
       ) : (
-        <button disabled={busy} onClick={start}>
-          OAuth 接続
-        </button>
+        <>
+          <div className="p-desc">Claude Code の OAuth 接続。承認後にコードを貼り付けて完了します。</div>
+          <div className="p-body">
+            <button disabled={busy} onClick={start}>
+              OAuth 接続
+            </button>
+          </div>
+        </>
       )}
-    </div>
+    </ProviderCard>
   );
 }
 
@@ -452,45 +576,54 @@ function GithubRow({ st, reload }: RowProps) {
   };
 
   return (
-    <div className="conn-row">
-      <Dot on={st?.connected} />
-      <span className="cname">GitHub</span>
+    <ProviderCard
+      id="github"
+      name="GitHub"
+      status={<StatusPill on={st?.connected}>{st?.connected ? "接続済み" : "未接続"}</StatusPill>}
+    >
       {st?.connected ? (
-        <>
-          <span className="cwho" title={st.email || st.username || ""}>
+        <div className="p-who">
+          <span className="p-em" title={st.email || st.username || ""}>
             {st.username || "connected"}
-            {st.email ? ` · ${st.email}` : ""}
           </span>
+          {st.email && <span className="p-pl">{st.email}</span>}
           <DisconnectButton onClick={disconnect} />
-        </>
+        </div>
       ) : mode === "oauth" && oauth ? (
-        <div className="flow">
-          <CopyCode>{oauth.user_code}</CopyCode>
-          <a href={oauth.verification_uri} target="_blank" rel="noopener" className="flow-link">
-            → {oauth.verification_uri} で入力
-          </a>
-          <span className="muted">{oauth.status}</span>
+        <div className="p-body">
+          <DeviceSteps code={oauth.user_code} url={oauth.verification_uri} status={oauth.status} />
         </div>
       ) : mode === "token" ? (
-        <div className="flow">
-          <input
-            className="cinput"
-            type="password"
-            placeholder="Personal Access Token"
-            value={token}
-            onChange={(e) => setToken(e.target.value)}
-          />
-          <button onClick={saveToken}>接続</button>
+        <div className="p-body">
+          <div className="flow">
+            <input
+              className="cinput"
+              type="password"
+              placeholder="Personal Access Token"
+              value={token}
+              onChange={(e) => setToken(e.target.value)}
+              autoFocus
+            />
+            <button onClick={saveToken}>接続</button>
+            <button className="ghost" onClick={() => setMode("idle")}>
+              戻る
+            </button>
+          </div>
         </div>
       ) : (
         <>
-          <button onClick={startOAuth}>OAuth 接続</button>
-          <button className="ghost" onClick={() => setMode("token")}>
-            token
-          </button>
+          <div className="p-desc">OAuth（デバイスフロー）または Personal Access Token で接続。</div>
+          <div className="p-body">
+            <div className="flow">
+              <button onClick={startOAuth}>OAuth 接続</button>
+              <button className="ghost" onClick={() => setMode("token")}>
+                token
+              </button>
+            </div>
+          </div>
         </>
       )}
-    </div>
+    </ProviderCard>
   );
 }
 
@@ -560,39 +693,60 @@ function BitbucketRow({ st, reload }: RowProps) {
   };
 
   return (
-    <div className="conn-row">
-      <Dot on={st?.connected} />
-      <span className="cname">Bitbucket</span>
+    <ProviderCard
+      id="bitbucket"
+      name="Bitbucket"
+      status={<StatusPill on={st?.connected}>{st?.connected ? "接続済み" : "未接続"}</StatusPill>}
+    >
       {st?.connected ? (
-        <>
-          <span className="cwho" title={st.email || st.username || ""}>
+        <div className="p-who">
+          <span className="p-em" title={st.email || st.username || ""}>
             {st.username || "connected"}
-            {st.email ? ` · ${st.email}` : ""}
           </span>
+          {st.email && <span className="p-pl">{st.email}</span>}
           <DisconnectButton onClick={disconnect} />
-        </>
+        </div>
       ) : mode === "oauth" ? (
-        <span className="muted">{status}</span>
+        <div className="p-body">
+          <span className="p-waiting">
+            <Icon name="loading" spin /> {status}
+          </span>
+        </div>
       ) : mode === "token" ? (
-        <div className="flow">
-          <input className="cinput" placeholder="Atlassian email" value={username} onChange={(e) => setUsername(e.target.value)} />
-          <input
-            className="cinput"
-            type="password"
-            placeholder="API token"
-            value={token}
-            onChange={(e) => setToken(e.target.value)}
-          />
-          <button onClick={saveToken}>接続</button>
+        <div className="p-body">
+          <div className="flow">
+            <input
+              className="cinput"
+              placeholder="Atlassian email"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+            />
+            <input
+              className="cinput"
+              type="password"
+              placeholder="API token"
+              value={token}
+              onChange={(e) => setToken(e.target.value)}
+            />
+            <button onClick={saveToken}>接続</button>
+            <button className="ghost" onClick={() => setMode("idle")}>
+              戻る
+            </button>
+          </div>
         </div>
       ) : (
         <>
-          <button onClick={startOAuth}>OAuth 接続</button>
-          <button className="ghost" onClick={() => setMode("token")}>
-            token
-          </button>
+          <div className="p-desc">OAuth（コードグラント）または メール＋アプリトークンで接続。</div>
+          <div className="p-body">
+            <div className="flow">
+              <button onClick={startOAuth}>OAuth 接続</button>
+              <button className="ghost" onClick={() => setMode("token")}>
+                token
+              </button>
+            </div>
+          </div>
         </>
       )}
-    </div>
+    </ProviderCard>
   );
 }
