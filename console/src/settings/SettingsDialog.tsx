@@ -17,12 +17,12 @@ export default function SettingsDialog() {
   const [section, setSection] = useState(settingsSection || "agents");
 
   const sections = [
+    ["display", "表示"],
+    ["env", "ワークスペース"],
     ["agents", "エージェント"],
     ["git", "Git"],
-    ["env", "環境"],
-    ["ssm", "SSM"],
+    ["ssm", "AWS SSM"],
     ["tokens", "MCP"],
-    ["display", "表示"],
   ];
 
   return (
