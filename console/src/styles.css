@@ -611,10 +611,22 @@ button.wu-reload {
   border-radius: 10px;
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
 }
+/* Align the tiles as columns (label | trend | value) so the sparklines line up.
+   The old width:100% + space-between let each fixed-width sparkline float to a
+   different x depending on the label/value widths — visibly misaligned. */
 .ws-res-pop .ws-graph {
+  display: grid;
+  grid-template-columns: 34px 1fr auto;
+  align-items: center;
+  gap: 10px;
   width: 100%;
-  justify-content: space-between;
   font-size: 11.5px;
+}
+.ws-res-pop .spark {
+  width: 100%; /* stretch the trend to fill its column (all rows same length) */
+}
+.ws-res-pop .ws-graph-v {
+  justify-self: end;
 }
 /* group divider becomes a horizontal rule inside the vertical popover */
 .ws-res-pop .ws-graph-sep {
