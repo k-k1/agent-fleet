@@ -48,16 +48,19 @@ function Meta({ k, v, mono = true, wide = false }: { k: ReactNode; v?: ReactNode
   );
 }
 
-// FieldGroup / Field build the labeled add-form: a bordered group with an uppercase
-// title (必須 / 詳細), holding fields that each carry a label, an optional required *
-// marker, and a hint (取得元・形式). Replaces the placeholder-only input grid.
-function FieldGroup({ title, optional, children }: { title: ReactNode; optional?: ReactNode; children: ReactNode }) {
+// FieldGroup / Field build the labeled add-form: a bordered group holding fields that
+// each carry a label, an optional required * marker, and a hint (取得元・形式). Required
+// vs optional is conveyed per-field (the * marker + hint), so one group suffices — no
+// separate 必須 / 詳細 boxes. `title` is optional (omitted for the single merged group).
+function FieldGroup({ title, optional, children }: { title?: ReactNode; optional?: ReactNode; children: ReactNode }) {
   return (
     <div className="ssm-fgroup">
-      <div className="ssm-fg-title">
-        {title}
-        {optional && <span className="opt"> {optional}</span>}
-      </div>
+      {title && (
+        <div className="ssm-fg-title">
+          {title}
+          {optional && <span className="opt"> {optional}</span>}
+        </div>
+      )}
       <div className="ssm-fgrid">{children}</div>
     </div>
   );
@@ -217,7 +220,7 @@ function ProfileSection({
       )}
       {open ? (
         <div className="ssm-frm">
-          <FieldGroup title="必須">
+          <FieldGroup>
             <Field label="ラベル" req hint="一覧・ホストの選択に出る表示名。">
               <input
                 ref={labelRef}
@@ -248,15 +251,13 @@ function ProfileSection({
                 onChange={set("startUrl")}
               />
             </Field>
-          </FieldGroup>
-          <FieldGroup title="詳細" optional="— 任意（未入力ならログイン時に選択）">
-            <Field label="アカウント ID">
+            <Field label="アカウント ID" hint="任意。未入力ならログイン時に選択。">
               <input className="cinput" placeholder="123456789012" value={f.accountId} onChange={set("accountId")} />
             </Field>
-            <Field label="ロール名">
+            <Field label="ロール名" hint="任意。未入力ならログイン時に選択。">
               <input className="cinput" placeholder="AdministratorAccess" value={f.roleName} onChange={set("roleName")} />
             </Field>
-            <Field label="既定リージョン" hint="セッションを開くリージョン。">
+            <Field label="既定リージョン" hint="任意。セッションを開くリージョン。">
               <input className="cinput" placeholder="ap-northeast-1" value={f.region} onChange={set("region")} />
             </Field>
           </FieldGroup>
@@ -386,15 +387,9 @@ function HostSection({
         </div>
       ) : open ? (
         <div className="ssm-frm">
-          <FieldGroup title="必須">
-            <Field label="別名" req hint="起動メニューに出るログイン先の名前。">
-              <input className="cinput" placeholder="admin@web-01" value={f.alias} onChange={set("alias")} autoFocus />
-            </Field>
-            <Field label="インスタンス ID" req hint={<>EC2 コンソール / <code>aws ec2 describe-instances</code>。</>}>
-              <input className="cinput" placeholder="i-0123456789abcdef0" value={f.instanceId} onChange={set("instanceId")} />
-            </Field>
-            <Field label="使用するプロファイル" req wide hint="この別名の認証に使う共通プロファイル。">
-              <select className="cinput" value={f.profileId} onChange={set("profileId")}>
+          <FieldGroup>
+            <Field label="使用するプロファイル" req wide hint="このホストの認証に使う共通プロファイル。まず選びます。">
+              <select className="cinput" value={f.profileId} onChange={set("profileId")} autoFocus>
                 <option value="">プロファイルを選択</option>
                 {(profiles || []).map((p) => (
                   <option key={p.id} value={p.id}>
@@ -403,12 +398,16 @@ function HostSection({
                 ))}
               </select>
             </Field>
-          </FieldGroup>
-          <FieldGroup title="詳細" optional="— 任意">
-            <Field label="run-as ドキュメント" hint="既定でよければ空のまま。">
+            <Field label="別名" req hint="起動メニューに出るログイン先の名前。">
+              <input className="cinput" placeholder="admin@web-01" value={f.alias} onChange={set("alias")} />
+            </Field>
+            <Field label="インスタンス ID" req hint={<>EC2 コンソール / <code>aws ec2 describe-instances</code>。</>}>
+              <input className="cinput" placeholder="i-0123456789abcdef0" value={f.instanceId} onChange={set("instanceId")} />
+            </Field>
+            <Field label="run-as ドキュメント" hint="任意。既定でよければ空のまま。">
               <input className="cinput" placeholder="SSM-SessionManagerRunShell" value={f.documentName} onChange={set("documentName")} />
             </Field>
-            <Field label="リージョン" hint="プロファイル既定を上書きしたい時だけ。">
+            <Field label="リージョン" hint="任意。プロファイル既定を上書きしたい時だけ。">
               <input className="cinput" placeholder="プロファイル既定を使用" value={f.region} onChange={set("region")} />
             </Field>
           </FieldGroup>
