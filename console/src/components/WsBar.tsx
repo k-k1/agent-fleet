@@ -465,41 +465,54 @@ export default function WsBar() {
     </>
   );
 
-  const ocwebBtn = ocweb && ocweb.available && ocweb.enabled && (
-    <button
-      className="ghost"
-      disabled={!running || !ocweb.running}
-      title={ocweb.running ? "opencode web を新しいタブで開く" : "opencode web 起動中…"}
-      onClick={() => {
-        if (!ocweb.running) return;
-        window.open(ocwebURL(), "_blank", "noopener");
-        setMoreOpen(false);
-      }}
-    >
-      <Icon name="globe" /> opencode web ↗
-    </button>
+  // opencode web (a known service on a fixed port) and an arbitrary port share one
+  // "open a container service in a new tab" popover, so there's a single entry point
+  // instead of two 🌐 buttons. The known app sits above the free-form port input.
+  const ocwebRow = ocweb && ocweb.available && ocweb.enabled && (
+    <div className="pv-section">
+      <label className="pv-label">アプリ</label>
+      <button
+        className="ghost pv-app"
+        disabled={!running || !ocweb.running}
+        title={ocweb.running ? "opencode web を新しいタブで開く" : "opencode web 起動中…"}
+        onClick={() => {
+          if (!ocweb.running) return;
+          window.open(ocwebURL(), "_blank", "noopener");
+          setPvOpen(false);
+          setMoreOpen(false);
+        }}
+      >
+        <span>
+          <Icon name="globe" /> opencode web
+        </span>
+        {ocweb.running ? <span aria-hidden="true">↗</span> : <span className="muted">起動中…</span>}
+      </button>
+    </div>
   );
 
-  const previewForm = (
+  const previewPop = (
     <>
-      <label className="pv-label">ポートプレビュー</label>
-      <div className="pv-row">
-        <input
-          className="preview-port"
-          type="number"
-          min="1"
-          max="65535"
-          placeholder="port"
-          value={port}
-          onChange={(e) => setPort(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && openPreview()}
-          title="コンテナ内で起動したサービスのポート（例: 8080）"
-        />
-        <button onClick={openPreview} disabled={!port.trim()}>
-          開く
-        </button>
+      {ocwebRow}
+      <div className="pv-section">
+        <label className="pv-label">ポートを指定して開く</label>
+        <div className="pv-row">
+          <input
+            className="preview-port"
+            type="number"
+            min="1"
+            max="65535"
+            placeholder="port"
+            value={port}
+            onChange={(e) => setPort(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && openPreview()}
+            title="コンテナ内で起動したサービスのポート（例: 8080）"
+          />
+          <button onClick={openPreview} disabled={!port.trim()}>
+            開く
+          </button>
+        </div>
+        <div className="pv-hint">コンテナ内で起動したサービスのポート（例: 8080）を新しいタブで開きます。</div>
       </div>
-      <div className="pv-hint">コンテナ内で起動したサービスのポート（例: 8080）を新しいタブで開きます。</div>
     </>
   );
 
@@ -556,8 +569,7 @@ export default function WsBar() {
           {moreOpen && (
             <div className="ws-more-pop">
               {statsBlock && <div className="ws-more-stats">{statsBlock}</div>}
-              {ocwebBtn}
-              {previewForm}
+              {previewPop}
             </div>
           )}
         </div>
@@ -566,17 +578,17 @@ export default function WsBar() {
           {resourcesEl}
           {resourcesEl && usageEl && <span className="ws-graph-sep" />}
           {usageEl}
-          {ocwebBtn}
           <div className="ws-preview" ref={pvRef}>
             <button
               className="ghost ws-preview-btn"
               disabled={!running}
-              title="コンテナ内サービスをポート指定で開く"
+              title="opencode web / コンテナ内サービスを開く"
+              aria-expanded={pvOpen}
               onClick={() => setPvOpen((o) => !o)}
             >
-              <Icon name="globe" /> プレビュー
+              <Icon name="globe" /> プレビュー <Icon name="chevron-down" />
             </button>
-            {pvOpen && <div className="ws-preview-pop">{previewForm}</div>}
+            {pvOpen && <div className="ws-preview-pop">{previewPop}</div>}
           </div>
         </>
       )}
