@@ -120,14 +120,18 @@ func handleSessionMessages(w http.ResponseWriter, r *http.Request) {
 			forkPreview = true
 		}
 	}
-	// cursor is normally the new line count. Edge cases refine it:
+	// Resolve which window [lo,hi) of lines to return and how the client treats it. cursor
+	// is normally the new line count; firstLine (>=0) marks a windowed read whose oldest
+	// line the client needs, to page further back. See docs/decisions/0009.
 	reset := false
 	cursor := len(lines)
+	lo, hi := since, len(lines)
+	firstLine := -1
 	switch {
 	case forkPreview:
 		// Send the whole source preview each tick (content is stable); park the cursor
 		// past any real line count so the next non-preview poll resets onto the fork.
-		since = 0
+		lo, hi = 0, len(lines)
 		reset = true
 		cursor = forkPreviewCursor
 	case len(lines) == 0 && alive && since > 0:
@@ -135,14 +139,30 @@ func handleSessionMessages(w http.ResponseWriter, r *http.Request) {
 		// the newest file, or the log was mid-write during a workflow's heavy
 		// concurrent writes. Do NOT blank the chat: hold the client's cursor and turns
 		// and send nothing this tick (it recovers on the next read).
+		lo, hi = len(lines), len(lines)
 		cursor = since
 	case since > len(lines):
 		// The live log is genuinely shorter than the cursor (compaction / a replaced
 		// file). Restart from the top and tell the client to reload from scratch.
-		since = 0
+		lo, hi = 0, len(lines)
 		reset = true
+	default:
+		// Windowed reads (P1): an initial tail window, or a backward page. With neither,
+		// this is a live increment (since>0) or a legacy full load (since=0) — both are
+		// [since, len), so old clients that send no window params are unchanged.
+		limit := clampWindowLimit(r.URL.Query().Get("limit"))
+		if bs := r.URL.Query().Get("before"); bs != "" {
+			if b, err := strconv.Atoi(bs); err == nil && b > 0 {
+				hi = min(b, len(lines))
+				lo = max(0, hi-limit)
+				firstLine = lo
+			}
+		} else if r.URL.Query().Get("tail") != "" && since == 0 {
+			lo = max(0, len(lines)-limit)
+			firstLine = lo
+		}
 	}
-	turns := collectTurns(lines, since)
+	turns := collectTurns(lines, lo, hi)
 	resp := map[string]any{
 		"name": name, "messages": turns, "cursor": cursor,
 		"status": state, "alive": alive, "reset": reset,
@@ -152,6 +172,12 @@ func handleSessionMessages(w http.ResponseWriter, r *http.Request) {
 		// message merely queued in the TUI (uncommitted).
 		"jsonlPath": jpath, "jsonlLines": len(lines),
 		"jsonlMtime": jsonlMtime(jpath).Format(time.RFC3339), "jsonlMatches": len(jmatched),
+	}
+	if firstLine >= 0 {
+		// Windowed response: tell the client the oldest line it now holds and whether
+		// there's more history above it to page in (?before=<firstLine>).
+		resp["firstLine"] = firstLine
+		resp["hasMore"] = firstLine > 0
 	}
 	surfacePendingPayloads(resp, sid, state)
 	if md := latestMode(lines); md != "" {
@@ -178,17 +204,29 @@ func handleSessionMessages(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// collectTurns builds the displayable turns from lines[since:]. A transcript
-// AskUserQuestion/ExitPlanMode is always already answered (claude writes the tool_use
-// only after the answer), so it resolves each one's chosen answer from its tool_result
-// for display (the currently-pending one is surfaced separately). The batch is capped
-// at 1 MiB of text so one response can't balloon the payload.
-func collectTurns(lines [][]byte, since int) []chatTurn {
-	answers := collectAnswers(lines)
+// collectTurns builds the displayable turns from lines[lo:hi] (a window into the
+// transcript — the whole file, a tail window, a backward page, or a live increment; see
+// docs/decisions/0009). A transcript AskUserQuestion/ExitPlanMode is always already
+// answered (claude writes the tool_use only after the answer), so it resolves each one's
+// chosen answer from its tool_result for display (the currently-pending one is surfaced
+// separately). Each turn keeps its ABSOLUTE line index as idx (stable across windows, so
+// React keys and ordering hold when pages are prepended). Capped at 1 MiB of newest text.
+func collectTurns(lines [][]byte, lo, hi int) []chatTurn {
+	if lo < 0 {
+		lo = 0
+	}
+	if hi > len(lines) {
+		hi = len(lines)
+	}
+	// Answers are resolved within the window: a question and its tool_result are adjacent
+	// (claude writes the tool_use only after the answer), so window-local is enough.
+	answers := collectAnswers(lines[lo:hi])
 	turns := []chatTurn{}
 	budget := 0
-	for i := since; i < len(lines); i++ {
-		t, ok := parseTurn(lines[i], i)
+	// Walk newest→oldest so the 1 MiB cap keeps the LATEST turns (the old oldest-first cap
+	// could drop the newest of a huge transcript); reverse to chronological before return.
+	for i := hi - 1; i >= lo; i-- {
+		t, ok := parseTurn(lines[i], i) // i is the absolute line index (stable across windows)
 		if !ok {
 			continue // tool results, summaries, bridge/meta bookkeeping
 		}
@@ -198,11 +236,29 @@ func collectTurns(lines [][]byte, since int) []chatTurn {
 			}
 		}
 		turns = append(turns, t)
-		if budget += len(t.Text); budget > 1<<20 { // cap a single response at 1 MiB
+		if budget += len(t.Text); budget > 1<<20 { // cap a single response at 1 MiB (newest kept)
 			break
 		}
 	}
+	for l, r := 0, len(turns)-1; l < r; l, r = l+1, r-1 {
+		turns[l], turns[r] = turns[r], turns[l]
+	}
 	return turns
+}
+
+// clampWindowLimit parses the window line-limit query param, with sane defaults/bounds.
+func clampWindowLimit(s string) int {
+	n, err := strconv.Atoi(s)
+	if err != nil || n <= 0 {
+		return 400
+	}
+	if n < 50 {
+		return 50
+	}
+	if n > 4000 {
+		return 4000
+	}
+	return n
 }
 
 // surfacePendingPayloads adds any currently-pending AskUserQuestion / ExitPlanMode /
@@ -405,6 +461,11 @@ func collectTasks(lines [][]byte) []taskItem {
 	m := map[string]*taskItem{}
 	next := 1
 	for _, ln := range lines {
+		// Cheap prefilter so this stays a light full-scan (kept whole-transcript for an
+		// accurate ToDo list even when turns are windowed — see docs/decisions/0009).
+		if !bytesContains(ln, "TaskCreate") && !bytesContains(ln, "TaskUpdate") {
+			continue
+		}
 		var ev struct {
 			Type    string `json:"type"`
 			Message struct {
