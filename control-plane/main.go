@@ -214,6 +214,8 @@ func main() {
 	// Programmatic drive I/O (docs/0006 P3-6 E) — proxied to the Agent. Also used
 	// by the MCP tools, which call the Agent directly via the resolved runtime.
 	mux.HandleFunc("POST /api/sessions/{name}/input", cfg.proxyAgentREST)
+	mux.HandleFunc("POST /api/sessions/{name}/paste-image", cfg.proxyAgentREST)
+	mux.HandleFunc("GET /api/sessions/{name}/pasted/{file}", cfg.proxyAgentREST)
 	mux.HandleFunc("GET /api/sessions/{name}/status", cfg.proxyAgentREST)
 	mux.HandleFunc("GET /api/sessions/{name}/output", cfg.proxyAgentREST)
 	// SSM login status polled by the New Session modal (docs/history/p3-ssm-session.md)

@@ -142,6 +142,26 @@ export function uploadFiles(
   );
 }
 
+// Upload one pasted image to a session (multipart, field "file"). Returns the saved
+// absolute path + basename so the composer can reference it in the prompt (claude reads
+// it with the Read tool) and preview it via GET api/sessions/{name}/pasted/{name}.
+export function pasteImage(
+  session: string,
+  file: File,
+): Promise<{ status: number; path?: string; name?: string; error?: unknown }> {
+  const fd = new FormData();
+  fd.append("file", file, file.name || "pasted.png");
+  return fetch(rel(`api/sessions/${encodeURIComponent(session)}/paste-image`), {
+    method: "POST",
+    body: fd,
+  }).then((r) =>
+    r
+      .json()
+      .then((j) => ({ status: r.status, ...j }))
+      .catch(() => ({ status: r.status })),
+  );
+}
+
 // File-management ops (create / rename / delete). Each returns {status, …json}
 // so callers can branch on 409 (exists) etc. The fetch wrapper adds X-AF-Tenant.
 const fsWrite = (path: string, opts: RequestInit): Promise<FsResult> =>

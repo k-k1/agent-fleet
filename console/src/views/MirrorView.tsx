@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import type { CSSProperties, KeyboardEvent as RKeyboardEvent } from "react";
-import { api, apiJSON, raw, errText } from "../api.js";
+import type { CSSProperties, KeyboardEvent as RKeyboardEvent, ClipboardEvent as RClipboardEvent } from "react";
+import { api, apiJSON, raw, errText, pasteImage } from "../api.js";
 import { useSettings, chatFontStack } from "../lib/settings.js";
 import { useApp } from "../state.jsx";
 import Icon from "../components/Icon.jsx";
@@ -14,6 +14,27 @@ import { displayName, stateInfo } from "../lib/sessionview.js";
 import { coarsePointer } from "../lib/device.js";
 
 const q = encodeURIComponent;
+
+// Appended to a prompt when the user pastes image(s): claude has no native image input
+// over tmux, so we point it at the saved absolute paths and let its Read tool open them.
+// Kept on ONE line (space-joined paths, no newline) so send-keys can't submit it early.
+const IMG_PROMPT = "次の画像を Read ツールで開いて確認してください:";
+// Matches our pasted-image paths (…/pasted/<sid>/paste-<n>.<ext>), capturing the basename.
+const PASTE_PATH_RE = /\S*\/pasted\/[^\s/]+\/(paste-\d+\.(?:png|jpe?g|gif|webp))/g;
+
+// splitPastedImages pulls the pasted-image basenames out of a user turn's text and returns
+// the text with the appended image instruction removed (so the bubble shows the user's
+// words + thumbnails, not the machine-facing paths).
+function splitPastedImages(text: string): { text: string; images: string[] } {
+  const images: string[] = [];
+  PASTE_PATH_RE.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = PASTE_PATH_RE.exec(text))) images.push(m[1]);
+  if (!images.length) return { text, images };
+  const idx = text.indexOf(IMG_PROMPT);
+  const cleaned = (idx >= 0 ? text.slice(0, idx) : text.replace(PASTE_PATH_RE, "")).trim();
+  return { text: cleaned, images };
+}
 
 // One option in an AskUserQuestion, and one such question.
 interface QuestionOption {
@@ -145,6 +166,11 @@ export default function MirrorView({
   const [draft, setDraft] = useState(() => readDraft(draftKey));
   const draftKeyRef = useRef<string | null>(draftKey);
   const [sending, setSending] = useState(false);
+  // Pasted images awaiting send: {path} is the session-saved absolute path (referenced in
+  // the prompt), {url} an object URL for the local chip preview, {name} the basename.
+  const [attachments, setAttachments] = useState<{ path: string; name: string; url: string }[]>([]);
+  const [pasting, setPasting] = useState(false); // an image upload is in flight
+  const [lightbox, setLightbox] = useState<string | null>(null); // enlarged image (blob URL) or null
   const [histIdx, setHistIdx] = useState<number | null>(null); // position in composer history, or null
   const cursorRef = useRef(0);
   const diagRef = useRef(""); // last transcript-diagnostic signature (warn once per change)
@@ -176,6 +202,12 @@ export default function MirrorView({
     setPendingPerm(null);
     setMode("");
     setHistIdx(null);
+    setPasting(false);
+    setLightbox(null);
+    setAttachments((prev) => {
+      prev.forEach((a) => URL.revokeObjectURL(a.url)); // don't leak the old session's previews
+      return [];
+    });
     atBottomRef.current = true; // a freshly opened session starts pinned to the bottom
   }, [session]);
 
@@ -349,12 +381,68 @@ export default function MirrorView({
   };
 
 
+  // Paste image(s) from the clipboard into the composer: upload each to the session and
+  // hold it as an attachment chip. Non-image pastes fall through to the default (text).
+  const onPaste = async (e: RClipboardEvent<HTMLTextAreaElement>) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    const files: File[] = [];
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i];
+      if (it.kind === "file" && it.type.startsWith("image/")) {
+        const f = it.getAsFile();
+        if (f) files.push(f);
+      }
+    }
+    if (!files.length) return; // ordinary text paste — let it happen
+    e.preventDefault();
+    setPasting(true);
+    for (const f of files) {
+      try {
+        const res = await pasteImage(session, f);
+        if (res.status < 300 && res.path && res.name) {
+          const path = res.path;
+          const nm = res.name;
+          const url = URL.createObjectURL(f);
+          setAttachments((a) => [...a, { path, name: nm, url }]);
+        } else {
+          toast(res.error ? errText(res.error) : "画像の貼り付けに失敗しました");
+        }
+      } catch {
+        toast("画像の貼り付けに失敗しました（通信エラー）");
+      }
+    }
+    setPasting(false);
+    inputRef.current?.focus();
+  };
+
+  const removeAttachment = (i: number) => {
+    setAttachments((a) => {
+      if (a[i]) URL.revokeObjectURL(a[i].url);
+      return a.filter((_, idx) => idx !== i);
+    });
+  };
+  const clearAttachments = () => {
+    setAttachments((a) => {
+      a.forEach((x) => URL.revokeObjectURL(x.url));
+      return [];
+    });
+  };
+
   const send = async () => {
     const text = draft.trim();
-    if (!text) return;
+    if (!text && !attachments.length) return;
+    const paths = attachments.map((a) => a.path);
+    let prompt = text;
+    if (paths.length) {
+      // One line, space-joined (no newline) so send-keys can't submit before the paths.
+      const instr = IMG_PROMPT + " " + paths.join(" ");
+      prompt = text ? text + " " + instr : instr;
+    }
     setHistIdx(null);
     setDraft("");
-    await sendPrompt(text);
+    clearAttachments();
+    await sendPrompt(prompt);
     inputRef.current?.focus();
   };
 
@@ -564,7 +652,7 @@ export default function MirrorView({
               : "まだ会話はありません。下の欄からプロンプトを送るか、ターミナルで対話すると、ここに ターンごとの Markdown で表示されます。"}
           </div>
         ) : (
-          renderGroups(groups, sendPrompt, openPlan, openDiff, maxSpend)
+          renderGroups(groups, sendPrompt, openPlan, openDiff, maxSpend, session, setLightbox)
         )}
         {pendingPlan && (
           <div className="mirror-turn assistant">
@@ -696,6 +784,23 @@ export default function MirrorView({
         </div>
       ) : (
         <div className="mirror-compose">
+          {(attachments.length > 0 || pasting) && (
+            <div className="mirror-attach">
+              {attachments.map((a, i) => (
+                <div className="ma-chip" key={a.path}>
+                  <img className="ma-thumb" src={a.url} alt="" />
+                  <button type="button" className="ma-del" title="削除" onClick={() => removeAttachment(i)}>
+                    <Icon name="close" />
+                  </button>
+                </div>
+              ))}
+              {pasting && (
+                <span className="ma-loading">
+                  <Icon name="loading" spin /> アップロード中…
+                </span>
+              )}
+            </div>
+          )}
           {/* History nav for phones (no arrow keys); hidden on wider screens via CSS. */}
           <div className="mirror-hist">
             <button
@@ -732,16 +837,22 @@ export default function MirrorView({
               setHistIdx(null); // typing leaves history-recall mode
             }}
             onKeyDown={onKeyDown}
+            onPaste={onPaste}
           />
           <button
             type="button"
             className="btn primary mirror-send"
-            disabled={!draft.trim() || sending}
+            disabled={(!draft.trim() && !attachments.length) || sending}
             onClick={send}
             title="送信"
           >
             <Icon name="send" />
           </button>
+        </div>
+      )}
+      {lightbox && (
+        <div className="mirror-lightbox" onClick={() => setLightbox(null)} role="presentation">
+          <img src={lightbox} alt="貼り付け画像（拡大）" />
         </div>
       )}
     </div>
@@ -851,6 +962,8 @@ function renderGroups(
   onOpenPlan: (plan: string) => void,
   onOpenDiff: (p: Part) => void,
   maxSpend: number,
+  session: string,
+  onOpenImage: (url: string) => void,
 ) {
   const els = [];
   let prevCtx = "";
@@ -868,6 +981,8 @@ function renderGroups(
           key={g.idx}
           turn={g}
           maxSpend={maxSpend}
+          session={session}
+          onOpenImage={onOpenImage}
           onAnswer={onAnswer}
           onOpenPlan={onOpenPlan}
           onOpenDiff={onOpenDiff}
@@ -959,12 +1074,16 @@ function ContextLine({ branch, cwd }: { branch?: string; cwd?: string }) {
 function Turn({
   turn,
   maxSpend,
+  session,
+  onOpenImage,
   onAnswer,
   onOpenPlan,
   onOpenDiff,
 }: {
   turn: Group;
   maxSpend: number;
+  session: string;
+  onOpenImage: (url: string) => void;
   onAnswer: (t: string) => void;
   onOpenPlan: (plan: string) => void;
   onOpenDiff: (p: Part) => void;
@@ -981,7 +1100,23 @@ function Turn({
       </div>
       <div className="mirror-turn-body">
         {isUser ? (
-          <MarkdownView source={turn.text} breaks />
+          (() => {
+            // Split off any pasted-image references so the bubble shows the user's words
+            // plus clickable thumbnails, not the machine-facing paths.
+            const { text, images } = splitPastedImages(turn.text || "");
+            return (
+              <>
+                {text && <MarkdownView source={text} breaks />}
+                {images.length > 0 && (
+                  <div className="mt-imgs">
+                    {images.map((nm) => (
+                      <PastedThumb key={nm} session={session} name={nm} onOpen={onOpenImage} />
+                    ))}
+                  </div>
+                )}
+              </>
+            );
+          })()
         ) : (
           foldParts(turn.parts).map((item) =>
             // Consecutive tool traces collapse into one foldable row (Edit/Write bursts
@@ -1039,6 +1174,55 @@ function TurnSpendBar({ fresh, create, out, max }: { fresh: number; create: numb
       <span className="ts-seg ts-create" style={{ width: pct(create) }} />
       <span className="ts-seg ts-out" style={{ width: pct(out) }} />
     </span>
+  );
+}
+
+// PastedThumb shows a small preview of a pasted image referenced in a turn. It fetches
+// the bytes through the authenticated API wrapper (an <img src> can't carry the tenant
+// header) into an object URL, and hands that same URL to the lightbox on click.
+function PastedThumb({ session, name, onOpen }: { session: string; name: string; onOpen: (url: string) => void }) {
+  const [url, setUrl] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    let obj = "";
+    raw(`api/sessions/${q(session)}/pasted/${encodeURIComponent(name)}`)
+      .then((r) => (r.ok ? r.blob() : null))
+      .then((b) => {
+        if (!alive) return;
+        if (!b) {
+          setFailed(true);
+          return;
+        }
+        obj = URL.createObjectURL(b);
+        setUrl(obj);
+      })
+      .catch(() => {
+        if (alive) setFailed(true);
+      });
+    return () => {
+      alive = false;
+      if (obj) URL.revokeObjectURL(obj);
+    };
+  }, [session, name]);
+  if (failed) {
+    return (
+      <span className="mt-img mt-img-loading" title="プレビューを取得できませんでした">
+        <Icon name="file-media" />
+      </span>
+    );
+  }
+  if (!url) {
+    return (
+      <span className="mt-img mt-img-loading">
+        <Icon name="loading" spin />
+      </span>
+    );
+  }
+  return (
+    <button type="button" className="mt-img" title="クリックで拡大" onClick={() => onOpen(url)}>
+      <img src={url} alt="貼り付け画像" />
+    </button>
   );
 }
 
