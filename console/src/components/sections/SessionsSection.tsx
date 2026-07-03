@@ -208,8 +208,10 @@ export default function SessionsSection() {
 
   return (
     <Section
+      id="sessions"
       title="Sessions"
       icon="terminal"
+      count={sessions.length}
       actions={
         <>
           <button

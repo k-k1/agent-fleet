@@ -559,6 +559,7 @@ export default function FilesSection() {
 
   return (
     <Section
+      id="files"
       title="Files"
       icon="files"
       actions={
