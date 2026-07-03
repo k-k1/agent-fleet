@@ -662,6 +662,21 @@ button.wu-reload {
   color: var(--muted);
   line-height: 1.5;
 }
+/* The preview popover now holds two sections — a known app (opencode web) and the
+   free-form port — separated by a little space + a hairline. */
+.pv-section + .pv-section {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border2);
+}
+/* opencode web quick-open row: full-width, label left / ↗ right. */
+.pv-app {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+}
 
 /* Mobile: resource chips + opencode web + port preview fold into one ⋯ popover. */
 .ws-more {
