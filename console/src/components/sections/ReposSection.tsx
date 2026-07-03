@@ -5,6 +5,7 @@ import Section from "../Section.jsx";
 import Icon from "../Icon.jsx";
 import { useToast } from "../ToastProvider.jsx";
 import EmptyState from "../EmptyState.jsx";
+import { useDismiss } from "../../lib/useDismiss.js";
 import NewRepoModal from "../NewRepoModal.jsx";
 import { kindIcon, kindLabel } from "../../lib/sessionkind.js";
 import { agentOf, repoLaunchKinds } from "../../agents/registry.ts";
@@ -233,12 +234,7 @@ function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected,
   // wouldn't close this one — both would stay open, both .pane-section would
   // lift to z-index:10, and the later REPOS section would paint over the
   // SESSIONS menu, blocking its 再開する item.
-  useEffect(() => {
-    if (!showLaunch) return;
-    const close = (e: MouseEvent) => { if (!wrapRef.current?.contains(e.target as Node)) setShowLaunch(false); };
-    document.addEventListener("mousedown", close);
-    return () => document.removeEventListener("mousedown", close);
-  }, [showLaunch]);
+  useDismiss(wrapRef, showLaunch, () => setShowLaunch(false));
 
   return (
     <li className={"repo-row" + (active || selected ? " active" : "")}>

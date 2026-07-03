@@ -9,6 +9,7 @@ import FileIcon, { DirIcon } from "../FileIcon.jsx";
 import { useConfirm } from "../ConfirmProvider.jsx";
 import { useToast } from "../ToastProvider.jsx";
 import EmptyState from "../EmptyState.jsx";
+import { useDismiss } from "../../lib/useDismiss.js";
 
 // A server directory entry (api/fs/tree). Visible tree rows are flattened into Row.
 interface Entry {
@@ -201,12 +202,7 @@ export default function FilesSection() {
   // stopPropagation on the wrap): stopPropagation would swallow OTHER dropdowns'
   // document-level close listeners, leaving multiple menus open at once and
   // lifting several .pane-section into z-index:10, which stack-overlap.
-  useEffect(() => {
-    if (!opsOpen) return;
-    const close = (e: MouseEvent) => { if (!opsRef.current?.contains(e.target as Node)) setOpsOpen(false); };
-    document.addEventListener("mousedown", close);
-    return () => document.removeEventListener("mousedown", close);
-  }, [opsOpen]);
+  useDismiss(opsRef, opsOpen, () => setOpsOpen(false));
 
   // --- file operations (new / rename / delete) ---
   const newFolder = useCallback(

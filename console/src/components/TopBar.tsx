@@ -4,6 +4,7 @@ import { rel } from "../api.js";
 import { useSettings, setSetting, THEMES } from "../lib/settings.js";
 import Icon from "./Icon.jsx";
 import SwatchGrid from "./SwatchGrid.jsx";
+import { useDismiss } from "../lib/useDismiss.js";
 
 // Top bar: product name, tenant picker (hidden for single-membership users), and
 // an account menu folding in settings, admin (super_admin only) and sign-out
@@ -32,37 +33,12 @@ export default function TopBar() {
     else document.documentElement.requestFullscreen?.().catch(() => {});
   };
 
-  // Close the account menu on an outside click or Escape.
-  useEffect(() => {
-    if (!menuOpen) return;
-    const onDown = (e: MouseEvent) => {
-      if (acctRef.current && !acctRef.current.contains(e.target as Node)) setMenuOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setMenuOpen(false);
-    document.addEventListener("mousedown", onDown);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDown);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [menuOpen]);
-
-  // Close the 外観 popover on an outside click or Escape. Kept separate from the
-  // account menu so surface colors can be tuned in a light popover while the panes
-  // stay visible behind it (a full settings modal would hide the live preview).
-  useEffect(() => {
-    if (!apprOpen) return;
-    const onDown = (e: MouseEvent) => {
-      if (apprRef.current && !apprRef.current.contains(e.target as Node)) setApprOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setApprOpen(false);
-    document.addEventListener("mousedown", onDown);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDown);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [apprOpen]);
+  // Close the account menu / 外観 popover on an outside click or Escape. The 外観
+  // popover is kept separate from the account menu so surface colors can be tuned in
+  // a light popover while the panes stay visible behind it (a full settings modal
+  // would hide the live preview).
+  useDismiss(acctRef, menuOpen, () => setMenuOpen(false));
+  useDismiss(apprRef, apprOpen, () => setApprOpen(false));
 
   const run = (fn: () => void) => {
     setMenuOpen(false);
