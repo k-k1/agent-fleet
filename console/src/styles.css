@@ -771,6 +771,20 @@ button.wu-reload {
   width: 10px;
   color: var(--muted);
 }
+/* A muted tally beside the section title — a glance at how many rows a section
+   holds, and the only contents signal while it's collapsed. */
+.pane-count {
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--muted) 16%, transparent);
+  border-radius: 9px;
+  padding: 0 6px;
+  min-width: 18px;
+  text-align: center;
+}
 .pane-actions {
   display: flex;
   gap: 2px;

@@ -131,8 +131,10 @@ export default function ReposSection() {
 
   return (
     <Section
+      id="repos"
       title="Repos"
       icon="repo"
+      count={repos.length}
       actions={
         <>
           <button
