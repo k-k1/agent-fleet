@@ -3,6 +3,7 @@ import { useToast } from "../components/ToastProvider.jsx";
 import type { ReactNode } from "react";
 import { api, apiJSON, raw, ocwebURL } from "../api.js";
 import { useApp } from "../state.jsx";
+import EmptyState from "../components/EmptyState.jsx";
 import { ProviderCard, StatusPill, Hint, DeviceSteps, DisconnectButton } from "./providerCard.jsx";
 
 // AgentsTab is the per-agent home: for Claude / Codex / opencode it combines the
@@ -15,7 +16,11 @@ export default function AgentsTab() {
   const toast = useToast();
   // opencode web state is shared with the WS bar via the app context, so toggling
   // here updates the bar's "open" entry immediately (and vice-versa).
-  const { bumpConn, ocweb, setOcweb, refreshOcweb } = useApp();
+  const { bumpConn, ocweb, setOcweb, refreshOcweb, wsState, startWs } = useApp();
+  // Connection auth AND behavior settings both go through the in-container Agent
+  // (proxyAgentREST → 502 when the workspace is stopped), so the whole tab requires
+  // a running workspace — there's no CP-side DB to edit against while stopped.
+  const running = wsState === "running";
   const [conns, setConns] = useState<any>(null); // api/connections (null = loading)
   // Behavior settings, loaded independently so a missing/old endpoint degrades in
   // place (hides that card's toggles) instead of blanking the connect UI. claude:
@@ -43,10 +48,13 @@ export default function AgentsTab() {
     refreshOcweb();
   }, [refreshOcweb]);
 
+  // (Re)load when the workspace is running — including when it transitions
+  // stopped→running while this dialog is open, so settings appear without a reopen.
   useEffect(() => {
+    if (!running) return;
     reload();
     loadSettings();
-  }, [reload, loadSettings]);
+  }, [running, reload, loadSettings]);
 
   const updateClaude = async (patch: unknown) => {
     const d = await apiJSON("api/claude/settings", "PUT", patch);
@@ -73,6 +81,22 @@ export default function AgentsTab() {
     setOcweb(d);
   };
 
+  if (!running) {
+    return (
+      <EmptyState
+        as="div"
+        icon="debug-disconnect"
+        message="設定はワークスペース内で実行されます"
+        hint="接続とエージェント設定はコンテナ内の Agent / CLI を経由するため、ワークスペースの起動が必要です。"
+        action={{
+          label: wsState.endsWith("…") ? "起動中…" : "ワークスペースを起動",
+          icon: "play",
+          onClick: startWs,
+          disabled: wsState.endsWith("…"),
+        }}
+      />
+    );
+  }
   if (!conns) return <p className="muted pad">読み込み中…</p>;
 
   return (
@@ -193,39 +217,13 @@ function ClaudeCard({
       status={<StatusPill on={st?.connected}>{st?.connected ? "接続済み" : "未接続"}</StatusPill>}
     >
       {st?.connected ? (
-        <>
-          <div className="p-who">
-            <span className="p-em" title={st.email || "connected"}>
-              {st.email || "connected"}
-            </span>
-            {st.plan && <span className="p-pl">{st.plan}</span>}
-            <DisconnectButton onClick={disconnect} />
-          </div>
-          {claude && (
-            <div className="p-settings">
-              <div className="ps-title">設定</div>
-              <SettingRow label="リモートコントロール">
-                <OnOff
-                  value={claude.remoteControlAtStartup}
-                  onChange={(v) => updateClaude({ remoteControlAtStartup: v })}
-                />
-              </SettingRow>
-              <SettingRow label="通知">
-                <OnOff
-                  value={claude.agentPushNotifEnabled}
-                  onChange={(v) => updateClaude({ agentPushNotifEnabled: v })}
-                />
-              </SettingRow>
-              <SettingRow label="RTK（トークン節約）">
-                {claude.rtk_available ? (
-                  <OnOff value={claude.rtk_enabled} onChange={(v) => updateClaude({ rtk: v })} />
-                ) : (
-                  <span className="muted">この workspace に rtk がありません</span>
-                )}
-              </SettingRow>
-            </div>
-          )}
-        </>
+        <div className="p-who">
+          <span className="p-em" title={st.email || "connected"}>
+            {st.email || "connected"}
+          </span>
+          {st.plan && <span className="p-pl">{st.plan}</span>}
+          <DisconnectButton onClick={disconnect} />
+        </div>
       ) : flow ? (
         <>
           <div className="p-desc">Claude Code の OAuth 接続。サインインは新しいタブで開きます。</div>
@@ -261,12 +259,39 @@ function ClaudeCard({
           </div>
         </>
       )}
+      {/* Behavior settings are a workspace-level file (independent of Claude auth),
+          so they show whenever loaded — you can pre-set them before connecting. */}
+      {claude && (
+        <div className="p-settings">
+          <div className="ps-title">設定</div>
+          <SettingRow label="リモートコントロール">
+            <OnOff
+              value={claude.remoteControlAtStartup}
+              onChange={(v) => updateClaude({ remoteControlAtStartup: v })}
+            />
+          </SettingRow>
+          <SettingRow label="通知">
+            <OnOff
+              value={claude.agentPushNotifEnabled}
+              onChange={(v) => updateClaude({ agentPushNotifEnabled: v })}
+            />
+          </SettingRow>
+          <SettingRow label="RTK（トークン節約）">
+            {claude.rtk_available ? (
+              <OnOff value={claude.rtk_enabled} onChange={(v) => updateClaude({ rtk: v })} />
+            ) : (
+              <span className="muted">この workspace に rtk がありません</span>
+            )}
+          </SettingRow>
+        </div>
+      )}
     </ProviderCard>
   );
 }
 
-// Codex: ChatGPT subscription (device code) or API key, plus the RTK toggle once
-// connected. codex has no command-rewrite hook so RTK there is instruction-based.
+// Codex: ChatGPT subscription (device code) or API key, plus the RTK toggle
+// (workspace-level; shown whenever settings load). codex has no command-rewrite
+// hook so RTK there is instruction-based.
 function CodexCard({
   st,
   reload,
@@ -353,30 +378,13 @@ function CodexCard({
       status={<StatusPill on={st?.connected}>{st?.connected ? "接続済み" : "未接続"}</StatusPill>}
     >
       {st?.connected ? (
-        <>
-          <div className="p-who">
-            <span className="p-em" title={st.email || ""}>
-              {st.email || (st.method === "apikey" ? "API キー" : "ChatGPT")}
-            </span>
-            {st.plan && <span className="p-pl">{st.plan}</span>}
-            <DisconnectButton onClick={disconnect} />
-          </div>
-          {rtkReady && (
-            <div className="p-settings">
-              <div className="ps-title">設定</div>
-              <SettingRow label="RTK（トークン節約）">
-                {agents.rtk_available ? (
-                  <OnOff value={agents.codex_rtk} onChange={(v) => updateAgents({ codex_rtk: v })} />
-                ) : (
-                  <span className="muted">この workspace に rtk がありません</span>
-                )}
-              </SettingRow>
-              <p className="ps-note">
-                codex はコマンド書換フックを持たないため指示ベース（ベストエフォート）。AGENTS.md で rtk 利用を促すだけで、強制ではありません。
-              </p>
-            </div>
-          )}
-        </>
+        <div className="p-who">
+          <span className="p-em" title={st.email || ""}>
+            {st.email || (st.method === "apikey" ? "API キー" : "ChatGPT")}
+          </span>
+          {st.plan && <span className="p-pl">{st.plan}</span>}
+          <DisconnectButton onClick={disconnect} />
+        </div>
       ) : mode === "device" && dev ? (
         <div className="p-body">
           <DeviceSteps code={dev.user_code} url={dev.url} status={dev.status} />
@@ -410,7 +418,7 @@ function CodexCard({
       ) : (
         <>
           <div className="p-desc">
-            ChatGPT サブスク（推奨）か OpenAI API キーで接続。接続すると RTK 設定が出ます。
+            ChatGPT サブスク（推奨）か OpenAI API キーで接続。
           </div>
           <div className="p-body">
             <div className="p-opts">
@@ -434,6 +442,22 @@ function CodexCard({
             </Hint>
           </div>
         </>
+      )}
+      {/* RTK is a workspace-level flag (independent of Codex auth) — pre-settable. */}
+      {rtkReady && (
+        <div className="p-settings">
+          <div className="ps-title">設定</div>
+          <SettingRow label="RTK（トークン節約）">
+            {agents.rtk_available ? (
+              <OnOff value={agents.codex_rtk} onChange={(v) => updateAgents({ codex_rtk: v })} />
+            ) : (
+              <span className="muted">この workspace に rtk がありません</span>
+            )}
+          </SettingRow>
+          <p className="ps-note">
+            codex はコマンド書換フックを持たないため指示ベース（ベストエフォート）。AGENTS.md で rtk 利用を促すだけで、強制ではありません。
+          </p>
+        </div>
       )}
     </ProviderCard>
   );
