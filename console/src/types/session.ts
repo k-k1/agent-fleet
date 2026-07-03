@@ -19,8 +19,9 @@ export type SessionState = "" | "working" | "idle" | "question" | "plan" | "perm
 // A session as returned by GET /api/sessions and used across the left pane, the
 // terminal header, and the chat mirror. Optional fields may be absent per kind.
 export interface Session {
-  name: string;
+  name: string; // auto-allocated unique slug ("s7") — the session's immutable identity
   kind: SessionKind;
+  title?: string; // user-supplied display title (optional, any kind); "" = auto
   label?: string; // claude --name (with an "[AF] " tag); absent for shell
   repo?: string | null; // working-copy folder the (agent) session runs in
   path?: string; // absolute working dir

@@ -16,10 +16,11 @@ export const stamp = (iso: string | undefined): string => {
   return `${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`;
 };
 
-// displayName: a claude session's --name (minus the "[AF] " tag); shell sessions
-// (no --name) use "{repo} @MMDD-HHMM". The kind is shown by the badge, so no
-// [AF]/[SH] prefix is needed. namedByLabel is false only for shell.
+// displayName: the user-supplied title when set (any kind); else a claude session's
+// --name minus the "[AF] " tag; else "{repo} @MMDD-HHMM". The kind is shown by the
+// badge, so no [AF]/[SH] prefix is needed. namedByLabel is false only for shell.
 export const displayName = (s: Session): string => {
+  if (s.title) return s.title;
   if (agentOf(s.kind).caps.namedByLabel && s.label) return s.label.replace(/^\[AF\]\s*/, "");
   return `${s.repo || s.name} @${stamp(s.createdAt)}`;
 };

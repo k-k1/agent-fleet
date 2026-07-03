@@ -1,0 +1,49 @@
+package main
+
+import "testing"
+
+// randSlug returns a valid, "s"-prefixed, fixed-length slug and doesn't repeat across
+// a batch of draws (random, so collisions are astronomically unlikely).
+func TestRandSlugFormat(t *testing.T) {
+	seen := map[string]bool{}
+	for i := 0; i < 200; i++ {
+		s := randSlug()
+		if len(s) != slugLen || s[0] != 's' {
+			t.Fatalf("randSlug() = %q; want %d chars starting with 's'", s, slugLen)
+		}
+		if !nameRe.MatchString(s) {
+			t.Fatalf("randSlug() = %q; does not match nameRe", s)
+		}
+		if seen[s] {
+			t.Fatalf("randSlug() repeated %q within 200 draws", s)
+		}
+		seen[s] = true
+	}
+}
+
+// allocSessionName returns a slug that is not already claimed by a meta and (given a
+// dir with no conversation on disk) passes the jsonl guard.
+func TestAllocSessionNameUnused(t *testing.T) {
+	t.Setenv("AF_SESSIONS_DIR", t.TempDir())
+	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir()) // empty → sessionJSONLExists is false
+
+	s := allocSessionName(t.TempDir())
+	if !nameRe.MatchString(s) {
+		t.Fatalf("allocSessionName = %q; invalid slug", s)
+	}
+	if _, ok := readSessionMeta(s); ok {
+		t.Fatalf("allocSessionName returned an already-taken slug %q", s)
+	}
+}
+
+// slugTaken reflects an existing meta.
+func TestSlugTaken(t *testing.T) {
+	t.Setenv("AF_SESSIONS_DIR", t.TempDir())
+	writeSessionMeta(sessionMeta{Name: "staken1"})
+	if !slugTaken("staken1") {
+		t.Fatalf("slugTaken(existing meta) = false; want true")
+	}
+	if slugTaken("sfree99") {
+		t.Fatalf("slugTaken(unused) = true; want false")
+	}
+}
