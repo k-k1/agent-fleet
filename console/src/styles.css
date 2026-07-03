@@ -4911,6 +4911,7 @@ button.mt-toolrun-head:hover {
   margin-top: 10px;
   font-size: 11px;
   line-height: 1.5;
+  color: var(--muted); /* match .field-help / .ds-hint (was inherited fg) */
 }
 
 /* Admin surface on a phone: full-bleed, single column, stacked forms, and a big
@@ -5217,7 +5218,9 @@ button.mt-toolrun-head:hover {
   gap: 6px;
   margin: 0 0 10px;
   font-size: 12px;
-  color: #f3b6b6;
+  /* Use the app's danger token (was a hardcoded pale pink that vanished on light
+     theme and didn't match the confirm/toast danger language). */
+  color: var(--del);
 }
 .danger-zone-row {
   display: flex;
@@ -5409,7 +5412,9 @@ button.mt-toolrun-head:hover {
 }
 .field-help {
   font-size: 11px;
-  color: var(--muted2);
+  /* One hint color across the settings tabs (was --muted2 here, --muted in
+     .ds-hint, inherited in .role-hint). */
+  color: var(--muted);
   margin-top: 6px;
 }
 .stack {
