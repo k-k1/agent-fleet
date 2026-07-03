@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import ConfirmDialog from "./ConfirmDialog.jsx";
 
@@ -39,11 +39,22 @@ export default function ConfirmProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
-  const finish = (v: boolean) => {
+  const finish = useCallback((v: boolean) => {
     resolver.current?.(v);
     resolver.current = null;
     setReq(null);
-  };
+  }, []);
+
+  // Escape cancels the confirmation, matching the native window.confirm() this
+  // replaced (backdrop-click already cancels; Escape was the missing half).
+  useEffect(() => {
+    if (!req) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") finish(false);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [req, finish]);
 
   return (
     <ConfirmCtx.Provider value={askConfirm}>
