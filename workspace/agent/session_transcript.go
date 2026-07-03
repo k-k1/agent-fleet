@@ -140,6 +140,13 @@ func handleSessionMessages(w http.ResponseWriter, r *http.Request) {
 		if ts := sessionTerminalState(name); ts != "" {
 			resp["terminalState"] = ts
 		}
+		// Idle by hook but a run_in_background task may still be running under the pane;
+		// surface it so the chat header shows "入力待ち · BG実行中". Only computed when not
+		// already working (the chip prefers 進行中 then), keeping the process scan off the
+		// hot path during active turns.
+		if state == "idle" || state == "" {
+			resp["backgroundBusy"] = sessionBackgroundBusy(name)
+		}
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
