@@ -57,7 +57,7 @@ const writeCollapsed = (s: Set<string>) => {
 // window (agent-side TTL). The ⋯ menu holds destructive actions (作り直す). The
 // list polls so state updates on its own.
 export default function SessionsSection() {
-  const { sessions, bumpSessions, bumpRepos, bumpFiles, revealInFiles, showTerminal, showTerminalSplit, showChat, showChatSplit, session, newSessionTick, wsState, layout, setActivePane } = useApp();
+  const { sessions, bumpSessions, bumpRepos, bumpFiles, revealInFiles, showTerminal, showTerminalSplit, showChat, showChatSplit, closeNav, session, newSessionTick, wsState, layout, setActivePane } = useApp();
   const running = wsState === "running"; // WS down → attach/resume/create are inert
   const askConfirm = useConfirm();
   const toast = useToast();
@@ -123,6 +123,7 @@ export default function SessionsSection() {
       return;
     }
     bumpSessions();
+    closeNav(); // mobile: acting from the left-pane menu closes the drawer (no-op on desktop)
   };
 
   // Clear all stopped sessions: agent sessions (claude/opencode/codex) are archived
@@ -152,6 +153,7 @@ export default function SessionsSection() {
       ...ephemeral.map((s) => raw(`api/sessions/${encodeURIComponent(s.name)}/stop`, { method: "POST" }).catch(() => {})),
     ]);
     bumpSessions();
+    closeNav(); // mobile: close the drawer after acting from the left-pane menu
   };
 
   // Halt a running session into 停止中 (resumable): kills the live tmux but keeps
@@ -175,6 +177,7 @@ export default function SessionsSection() {
     }
     bumpSessions();
     setTimeout(() => bumpSessions(), 1200);
+    closeNav(); // mobile: close the drawer after acting from the left-pane menu
   };
 
   // Discard the conversation and start the slot fresh. The Agent /recreate now mints a
@@ -497,6 +500,7 @@ export default function SessionsSection() {
                       onClick={() => {
                         setMenuFor(null);
                         window.open(s.remoteUrl, "_blank", "noopener");
+                        closeNav(); // mobile: close the drawer after acting from the menu
                       }}
                     >
                       リモートセッションを開く ↗
