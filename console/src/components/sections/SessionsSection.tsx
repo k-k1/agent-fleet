@@ -226,6 +226,25 @@ export default function SessionsSection() {
     setTimeout(() => bumpSessions(), 1200);
   };
 
+  // Fork (分岐): branch this claude conversation into a NEW session that inherits the
+  // history so far but then diverges — the source is left untouched (≠ recreate, which
+  // starts empty and archives the old). The Agent runs `claude --resume <sid>
+  // --fork-session`; on success we open the fork as chat in a fresh split so the source
+  // (if visible) stays. Backend gates on a resumable conversation and returns a message
+  // if there's nothing to fork yet.
+  const fork = async (name: string) => {
+    const res = await raw(`api/sessions/${encodeURIComponent(name)}/fork`, { method: "POST" });
+    const j = await res.json().catch(() => ({} as any));
+    if (!res.ok || !j.name) {
+      toast(j?.error?.message || j?.error || "分岐に失敗しました");
+      return;
+    }
+    bumpSessions();
+    showChatSplit(j.name);
+    setTimeout(() => bumpSessions(), 1200);
+    closeNav(); // mobile: close the drawer after acting from the menu
+  };
+
   // Ask once for notification permission (best-effort; badges work regardless).
   useEffect(() => {
     if ("Notification" in window && Notification.permission === "default") {
@@ -509,6 +528,20 @@ export default function SessionsSection() {
                       }}
                     >
                       リモートセッションを開く ↗
+                    </button>
+                  )}
+                  {/* Fork: branch a claude conversation into a new session (source kept).
+                      Needs the workspace up (it launches the fork) and a resumable
+                      conversation — offered for claude (caps.fork), alive or stopped. */}
+                  {agentOf(s.kind).caps.fork && !dead && running && (
+                    <button
+                      className="session-menu-item"
+                      onClick={() => {
+                        setMenuFor(null);
+                        fork(s.name);
+                      }}
+                    >
+                      分岐（会話を引き継いで新規）
                     </button>
                   )}
                   <button
