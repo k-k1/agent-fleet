@@ -99,6 +99,10 @@ type transcriptData struct {
 	turns []chatTurn
 	path  string
 	tasks []taskItem
+	// mode is the agent's current permission/collaboration mode, normalized to "plan"
+	// (plan mode) or "normal", so the Console can show the plan indicator and drive the
+	// plan-mode toggle. "" when unknown.
+	mode string
 	// pending is the question the agent is currently awaiting an answer to (codex
 	// request_user_input / opencode question tool), or nil. Surfaced like claude's
 	// pendingQuestions so the Console can render it interactively.

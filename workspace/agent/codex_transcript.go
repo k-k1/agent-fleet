@@ -74,17 +74,17 @@ var codexWrapperTags = []string{
 // line; token_count events attach usage to the preceding assistant turn so the chat's
 // context gauge works the same as claude's.
 func codexParseRollout(lines [][]byte) ([]chatTurn, []taskItem) {
-	turns, tasks, _ := codexParseRolloutFull(lines)
+	turns, tasks, _, _ := codexParseRolloutFull(lines)
 	return turns, tasks
 }
 
 // codexParseRolloutFull is codexParseRollout plus the currently-pending question
 // (request_user_input awaiting an answer), split out so readCodexTranscript can surface
 // it while the two-value form stays convenient for tests.
-func codexParseRolloutFull(lines [][]byte) ([]chatTurn, []taskItem, []chatQuestion) {
+func codexParseRolloutFull(lines [][]byte) ([]chatTurn, []taskItem, []chatQuestion, string) {
 	var turns []chatTurn
 	var tasks []taskItem
-	var cwd, branch, model, effort string
+	var cwd, branch, model, effort, mode string
 	lastAssistant := -1           // index of the most recent assistant turn (for usage)
 	callTurn := map[string]int{}  // function_call call_id -> its tool/question turn index
 	answered := map[string]bool{} // call_ids whose function_call_output arrived
@@ -107,6 +107,10 @@ func codexParseRolloutFull(lines [][]byte) ([]chatTurn, []taskItem, []chatQuesti
 			if m, e := codexTurnModel(ev.Payload); m != "" {
 				model = m
 				effort = e
+			}
+			// collaboration_mode.mode is "default" | "plan"; normalize to normal/plan.
+			if cm := codexTurnMode(ev.Payload); cm != "" {
+				mode = cm
 			}
 		case "response_item":
 			t, callID, ok := codexParseResponseItem(ev.Payload, ev.Timestamp, i, cwd, branch)
@@ -169,7 +173,24 @@ func codexParseRolloutFull(lines [][]byte) ([]chatTurn, []taskItem, []chatQuesti
 		}
 		break
 	}
-	return turns, tasks, pending
+	return turns, tasks, pending, mode
+}
+
+// codexTurnMode reads the collaboration mode from a turn_context payload and normalizes
+// it: "plan" → "plan", anything else (default) → "normal". "" when absent.
+func codexTurnMode(payload json.RawMessage) string {
+	var p struct {
+		CollaborationMode struct {
+			Mode string `json:"mode"`
+		} `json:"collaboration_mode"`
+	}
+	if json.Unmarshal(payload, &p) != nil || p.CollaborationMode.Mode == "" {
+		return ""
+	}
+	if p.CollaborationMode.Mode == "plan" {
+		return "plan"
+	}
+	return "normal"
 }
 
 // codexQuestions parses request_user_input's arguments into chatQuestions. codex's
@@ -526,6 +547,6 @@ func readCodexTranscript(m sessionMeta) (transcriptData, bool) {
 			lines = append(lines, []byte(ln))
 		}
 	}
-	turns, tasks, pending := codexParseRolloutFull(lines)
-	return transcriptData{turns: turns, path: path, tasks: tasks, pending: pending}, true
+	turns, tasks, pending, mode := codexParseRolloutFull(lines)
+	return transcriptData{turns: turns, path: path, tasks: tasks, pending: pending, mode: mode}, true
 }

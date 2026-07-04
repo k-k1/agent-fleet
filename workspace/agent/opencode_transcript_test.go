@@ -144,6 +144,19 @@ func TestOpencodeQuestions(t *testing.T) {
 	}
 }
 
+func TestOpencodeMode(t *testing.T) {
+	db := newOpencodeTestDB(t)
+	// Newest message's agent decides the mode: "plan" → plan, else normal.
+	insMsg(t, db, "b1", "ses_b", 1, `{"role":"assistant","agent":"build"}`)
+	if got := opencodeMode(db, "ses_b"); got != "normal" {
+		t.Fatalf("build agent -> %q, want normal", got)
+	}
+	insMsg(t, db, "p1", "ses_p", 1, `{"role":"assistant","agent":"plan"}`)
+	if got := opencodeMode(db, "ses_p"); got != "plan" {
+		t.Fatalf("plan agent -> %q, want plan", got)
+	}
+}
+
 func TestOpencodeTasks(t *testing.T) {
 	db := newOpencodeTestDB(t)
 	ses := "ses_t"

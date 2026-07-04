@@ -882,18 +882,6 @@ export default function MirrorView({
               <i />
               <i />
             </span>
-            {/* Interrupt a running (or runaway) turn without leaving chat: Escape stops
-                the current generation in every agent's TUI (claude/codex/opencode) and
-                returns to the composer. Useful when an autonomous task locks input. */}
-            <button
-              type="button"
-              className="ghost mirror-stop"
-              disabled={sending}
-              title="実行を停止（Esc）"
-              onClick={() => sendKeys(["Escape"])}
-            >
-              <Icon name="debug-stop" /> 停止
-            </button>
           </div>
         )}
       </div>
@@ -934,6 +922,36 @@ export default function MirrorView({
         </div>
       ) : (
         <div className="mirror-compose">
+          {(agent.caps.planMode || status === "working") && (
+            <div className="mirror-toolbar">
+              {agent.caps.planMode && agent.planCycleKey && (
+                // Toggle plan mode by sending the agent's mode-cycle key (Shift+Tab for
+                // claude/codex, Tab for opencode). The poll reflects the resulting mode; on
+                // a 3-mode TUI (claude) it may take a second press to land on plan.
+                <button
+                  type="button"
+                  className={"seg-btn mirror-mode" + (mode === "plan" ? " on" : "")}
+                  disabled={sending}
+                  title="計画モードを切り替え（承認するまで実装しない）"
+                  onClick={() => sendKeys([agent.planCycleKey])}
+                >
+                  <Icon name="debug-pause" /> 計画モード{mode === "plan" ? " ON" : ""}
+                </button>
+              )}
+              <span className="mirror-toolbar-sp" />
+              {status === "working" && (
+                <button
+                  type="button"
+                  className="ghost mirror-stop"
+                  disabled={sending}
+                  title="実行を停止（Esc）"
+                  onClick={() => sendKeys(["Escape"])}
+                >
+                  <Icon name="debug-stop" /> 停止
+                </button>
+              )}
+            </div>
+          )}
           {(attachments.length > 0 || pasting) && (
             <div className="mirror-attach">
               {attachments.map((a, i) => (

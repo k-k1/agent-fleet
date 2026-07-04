@@ -106,7 +106,7 @@ func TestCodexQuestion(t *testing.T) {
 		[]byte(`{"type":"response_item","payload":{"type":"function_call_output","call_id":"q1","output":"B"}}`),
 		[]byte(`{"type":"response_item","payload":{"type":"function_call","name":"request_user_input","call_id":"q2","arguments":"{\"questions\":[{\"question\":\"next?\",\"options\":[{\"label\":\"X\"}]}]}"}}`),
 	}
-	turns, _, pending := codexParseRolloutFull(answered)
+	turns, _, pending, _ := codexParseRolloutFull(answered)
 
 	// The answered question renders as a question part with its answer.
 	var q *chatPart
@@ -121,6 +121,23 @@ func TestCodexQuestion(t *testing.T) {
 	// The unanswered request_user_input is the pending question.
 	if len(pending) != 1 || pending[0].Question != "next?" {
 		t.Fatalf("pending = %+v, want the 'next?' question", pending)
+	}
+}
+
+func TestCodexMode(t *testing.T) {
+	plan := [][]byte{
+		[]byte(`{"type":"turn_context","payload":{"model":"gpt-5.5","collaboration_mode":{"mode":"plan"}}}`),
+		[]byte(`{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]}}`),
+	}
+	if _, _, _, mode := codexParseRolloutFull(plan); mode != "plan" {
+		t.Fatalf("plan mode = %q, want plan", mode)
+	}
+	def := [][]byte{
+		[]byte(`{"type":"turn_context","payload":{"model":"gpt-5.5","collaboration_mode":{"mode":"default"}}}`),
+		[]byte(`{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]}}`),
+	}
+	if _, _, _, mode := codexParseRolloutFull(def); mode != "normal" {
+		t.Fatalf("default mode = %q, want normal", mode)
 	}
 }
 
