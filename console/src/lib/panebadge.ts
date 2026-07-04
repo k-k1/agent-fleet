@@ -63,6 +63,23 @@ export function sessionPanes(
   return m;
 }
 
+// repoPanes maps a repo name → the panes currently showing it (its commit graph,
+// changes, or a commit detail), as [{ ordinal, id }] in visual order — the same
+// ordinal-badge treatment sessions get, so a repo open in a split pane is identifiable.
+export function repoPanes(
+  layout: Layout | null | undefined,
+): Map<string, { ordinal: number; id: string }[]> {
+  const m = new Map<string, { ordinal: number; id: string }[]>();
+  for (const r of paneRows(layout)) {
+    const p = r.pane;
+    if ((p.kind !== "scm" && p.kind !== "changes" && p.kind !== "commit") || !p.scmRepo) continue;
+    const arr = m.get(p.scmRepo) || [];
+    arr.push({ ordinal: r.ordinal, id: r.id });
+    m.set(p.scmRepo, arr);
+  }
+  return m;
+}
+
 // paneCount totals the panes in a layout (1 means a single, unsplit pane — no
 // ordinals/map are shown in that case, since there's nothing to disambiguate).
 export function paneCount(layout: Layout | null | undefined): number {

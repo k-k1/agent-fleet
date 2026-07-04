@@ -1418,6 +1418,17 @@ button.wu-reload {
   gap: 5px;
   padding: 6px 2px; /* match the session button's vertical rhythm */
 }
+/* The whole repo card (name row + meta line) opens Source Control on click; the 起動
+   dropdown inside stops propagation to stay independent. */
+.repo-card {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  cursor: pointer;
+}
+.repo-card.disabled {
+  cursor: default;
+}
 .repo-info {
   display: flex;
   align-items: center;
