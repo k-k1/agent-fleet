@@ -7323,3 +7323,128 @@ button.primary:hover:not(:disabled) {
   background: var(--muted);
   opacity: 0.5;
 }
+
+/* --- Assistant chat (docs/19) ------------------------------------------------ */
+/* A non-terminal chat pane: header + scrolling transcript + bottom composer. */
+.chatview {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--bg);
+}
+.chat-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.chat-msg {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.chat-role {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.chat-msg.role-user .chat-role {
+  color: var(--accent);
+}
+.chat-body {
+  border-radius: 8px;
+  padding: 8px 11px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  max-width: 62ch;
+}
+.chat-msg.role-user .chat-body {
+  background: color-mix(in srgb, var(--accent) 12%, var(--panel));
+  align-self: flex-start;
+}
+.chat-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.chat-thinking {
+  color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.chat-empty,
+.chat-error {
+  color: var(--muted);
+  font-size: 13px;
+  padding: 8px 4px;
+}
+.chat-error {
+  color: var(--del);
+}
+.chat-composer {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+  padding: 10px 12px;
+  border-top: 1px solid var(--border);
+}
+.chat-input {
+  flex: 1 1 auto;
+  resize: vertical;
+  min-height: 38px;
+  max-height: 40vh;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--btn-border);
+  background: var(--panel);
+  color: var(--fg);
+  font: inherit;
+}
+.chat-send {
+  flex: 0 0 auto;
+  align-self: stretch;
+}
+/* Left-rail conversation rows */
+.chat-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.chat-open {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: 0;
+  color: inherit;
+  text-align: left;
+  padding: 5px 6px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.chat-open:hover {
+  background: var(--hover-bg);
+}
+.chat-open-title {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-open-meta {
+  flex: 0 0 auto;
+  font-size: 11px;
+}
+.chat-row .chat-del {
+  opacity: 0;
+}
+.chat-row:hover .chat-del {
+  opacity: 1;
+}

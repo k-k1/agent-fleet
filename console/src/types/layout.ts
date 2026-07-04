@@ -9,7 +9,7 @@
 // Which view a pane renders. The *Path/Repo/doc/diff fields are its per-kind payload.
 // scm = the repo's commit-graph; changes = its working-tree changes + commit box;
 // commit = one commit's detail/diff (scmRepo + commitSha).
-export type PaneKind = "terminal" | "file" | "scm" | "changes" | "commit" | "doc" | "diff";
+export type PaneKind = "terminal" | "file" | "scm" | "changes" | "commit" | "doc" | "diff" | "chat";
 
 // A single pane descriptor. An empty terminal pane (session null) shows
 // "セッション未接続".
@@ -25,6 +25,7 @@ export interface Pane {
   docContent: string | null; // ad-hoc doc view markdown/text
   diffTool: string | null; // diff view: originating tool label
   diffEdits: unknown; // diff view: edit payload (shape owned by DiffView)
+  conversationId: string | null; // chat view: assistant-chat conversation id (docs/19)
   wrap: boolean | null; // per-pane soft-wrap override (null = follow global setting)
 }
 

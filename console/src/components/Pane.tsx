@@ -7,6 +7,7 @@ import FileView from "../views/FileView.jsx";
 import MirrorView from "../views/MirrorView.jsx";
 import DocView from "../views/DocView.jsx";
 import DiffView from "../views/DiffView.jsx";
+import ChatView from "../views/ChatView.jsx";
 import Icon from "./Icon.jsx";
 import { useApp } from "../state.jsx";
 import { api } from "../api.js";
@@ -278,6 +279,7 @@ export default function Pane({
       {pane.kind === "commit" && (
         <CommitDetailView repo={pane.scmRepo ?? undefined} sha={pane.commitSha ?? undefined} wrap={wrapOn} />
       )}
+      {pane.kind === "chat" && <ChatView conversationId={pane.conversationId} />}
       {pane.kind === "file" && <FileView filePath={pane.filePath} wrap={wrapOn} />}
       {pane.kind === "doc" && <DocView title={pane.docTitle ?? undefined} content={pane.docContent ?? undefined} />}
       {pane.kind === "diff" && (

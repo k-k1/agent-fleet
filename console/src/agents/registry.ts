@@ -18,6 +18,7 @@ import { SESSION_KINDS } from "../types/session.ts";
 // has the matching cap, so a new agent lights up the right controls by data alone.
 export interface AgentCaps {
   chat: boolean; // shows the chat mirror (GET /messages, POST /input)
+  headlessChat: boolean; // can back an assistant-chat conversation via a headless CLI (docs/19)
   transcript: boolean; // stopped session opens a read-only chat history
   model: boolean; // offers a model selector at launch
   fork: boolean; // supports fork-session from the chat (claude --fork-session)
@@ -77,6 +78,7 @@ export interface AgentDescriptor {
 function caps(overrides: Partial<AgentCaps>): AgentCaps {
   return {
     chat: false,
+    headlessChat: false,
     transcript: false,
     model: false,
     fork: false,
@@ -107,6 +109,7 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     defaultModeLabel: "Bypass",
     caps: caps({
       chat: true,
+      headlessChat: true, // Phase A: claude -p backs assistant chat (docs/19)
       transcript: true,
       model: true,
       fork: true,

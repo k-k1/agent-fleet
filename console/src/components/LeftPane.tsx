@@ -1,5 +1,6 @@
 import LayoutMap from "./LayoutMap.jsx";
 import SessionsSection from "./sections/SessionsSection.jsx";
+import AssistantSection from "./sections/AssistantSection.jsx";
 import ReposSection from "./sections/ReposSection.jsx";
 import FilesSection from "./sections/FilesSection.jsx";
 
@@ -16,6 +17,7 @@ export default function LeftPane() {
       <LayoutMap />
       <div className="leftpane-scroll">
         <SessionsSection />
+        <AssistantSection />
         <ReposSection />
         <FilesSection />
       </div>
