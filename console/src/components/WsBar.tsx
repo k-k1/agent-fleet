@@ -126,25 +126,27 @@ function useWsResourceChips(tenant: string | null, superAdmin: boolean) {
   return { wsStats, wsHist, hostStats, hostHist };
 }
 
-// useClaudeUsage surfaces the Claude subscription usage (5-hour + weekly). The real
-// (unofficial, rate-limited) endpoint is hit only on the Agent's first request and on
-// an explicit user refresh — never on a background timer. The Console just reads the
-// Agent's CACHED value: once on mount, and a slow 5-min re-read (which the Agent
-// serves from cache, so it does NOT call the endpoint) to recover the chip if the
-// workspace started after mount / stay in sync across tabs. refresh() asks the Agent
-// to fetch the latest (?refresh=1). Kept in WsBar so it doesn't re-render the app.
-function useClaudeUsage(tenant: string | null) {
+// useUsage surfaces one agent's subscription usage (5-hour + weekly) from `endpoint`
+// (api/claude/usage or api/codex/usage). The Console reads the Agent's value once on
+// mount, on a slow 5-min re-read (to recover the chip if the workspace started after
+// mount / stay in sync across tabs), and on an explicit refresh() (?refresh=1) — never
+// on a fast background timer (the claude endpoint is unofficial/rate-limited; codex is
+// a local rollout read). Kept in WsBar so it doesn't re-render the app.
+function useUsage(tenant: string | null, endpoint: string) {
   const [usage, setUsage] = useState<any>(null);
   const [refreshing, setRefreshing] = useState(false);
-  const load = useCallback((force: boolean) => {
-    if (document.hidden && !force) return;
-    if (force) setRefreshing(true);
-    api("api/claude/usage" + (force ? "?refresh=1" : ""))
-      // Keep the last value on a transient error (don't blank); only replace on ok.
-      .then((d) => setUsage(d && d.ok ? d : force ? null : (u: any) => u))
-      .catch(() => {})
-      .finally(() => force && setRefreshing(false));
-  }, []);
+  const load = useCallback(
+    (force: boolean) => {
+      if (document.hidden && !force) return;
+      if (force) setRefreshing(true);
+      api(endpoint + (force ? "?refresh=1" : ""))
+        // Keep the last value on a transient error (don't blank); only replace on ok.
+        .then((d) => setUsage(d && d.ok ? d : force ? null : (u: any) => u))
+        .catch(() => {})
+        .finally(() => force && setRefreshing(false));
+    },
+    [endpoint],
+  );
   useEffect(() => {
     setUsage(null);
     load(false);
@@ -203,6 +205,91 @@ function whenText(iso: string) {
   if (isNaN(d.getTime())) return "";
   const p = (n: number) => String(n).padStart(2, "0");
   return `${d.getMonth() + 1}/${d.getDate()} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+// A usage source = one agent's subscription-limit chip (Claude / Codex). Both endpoints
+// return the same {ok, fiveHour, sevenDay, ageSec} shape (codex reads its rate_limits
+// straight from the rollout — no network), so one chip component renders either.
+interface UsageSource {
+  endpoint: string;
+  icon: string; // codicon glyph
+  cls: string; // kind color class (kind-claude / kind-codex)
+  title: string; // chip hover title
+  popTitle: string; // dropdown heading
+  fiveLabel: string; // 5-hour window label
+  weekLabel: string; // weekly window label
+}
+
+const USAGE_SOURCES: UsageSource[] = [
+  {
+    endpoint: "api/claude/usage",
+    icon: "sparkle",
+    cls: "kind-claude",
+    title: "Claude 使用状況（5時間 / 週次）",
+    popTitle: "Claude 使用状況",
+    fiveLabel: "5時間制限",
+    weekLabel: "週次・全モデル",
+  },
+  {
+    endpoint: "api/codex/usage",
+    icon: "rocket",
+    cls: "kind-codex",
+    title: "Codex 使用状況（5時間 / 週次）",
+    popTitle: "Codex 使用状況",
+    fiveLabel: "5時間",
+    weekLabel: "週次",
+  },
+];
+
+// UsageChip: a compact per-agent limit chip (glyph + the two window percentages) that
+// opens a dropdown with each window's bar + reset + a reload. Renders null until the
+// agent's endpoint answers with data, so it self-hides for agents the user doesn't use.
+function UsageChip({ src, tenant }: { src: UsageSource; tenant: string | null }) {
+  const { usage, refreshing, refresh } = useUsage(tenant, src.endpoint);
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useDismiss(ref, open, () => setOpen(false));
+
+  const win = (w: { pct: number; resetsAt: string }) => ({
+    pct: Math.round(w.pct),
+    until: untilText(w.resetsAt),
+    when: whenText(w.resetsAt),
+  });
+  const uh = usage && usage.fiveHour && win(usage.fiveHour);
+  const uw = usage && usage.sevenDay && win(usage.sevenDay);
+  if (!uh && !uw) return null; // no reading yet → hide the chip entirely
+  const label = [uh && `${uh.pct}%`, uw && `${uw.pct}%`].filter(Boolean).join(" / ");
+
+  return (
+    <div className="ws-usage-wrap" ref={ref}>
+      {/* Same badge look as the Sessions-list kind badge: reuse kind-tag + the kind
+          color, then reset the button chrome (ws-usage-btn). */}
+      <button
+        type="button"
+        className={"kind-tag " + src.cls + " ws-usage-btn"}
+        title={src.title}
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+      >
+        <Icon name={src.icon} />
+        <span className="ws-usage-nums">{label}</span>
+        <Icon name="chevron-down" />
+      </button>
+      {open && (
+        <div className="ws-usage-pop">
+          <div className="wu-title">{src.popTitle}</div>
+          {uh && <UsageRow label={src.fiveLabel} w={uh} />}
+          {uw && <UsageRow label={src.weekLabel} w={uw} />}
+          <div className="wu-foot">
+            <span className="wu-ago muted">取得 {agoText(usage.ageSec)}</span>
+            <button type="button" className="ghost wu-reload" onClick={refresh} disabled={refreshing}>
+              <Icon name="refresh" spin={refreshing} /> 更新
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 // WS bar: the (single) workspace's state plus Start / Stop. The backend models one
@@ -271,16 +358,13 @@ export default function WsBar() {
     useApp();
   const askConfirm = useConfirm();
   const { wsStats, wsHist, hostStats, hostHist } = useWsResourceChips(tenant, superAdmin);
-  const { usage, refreshing, refresh } = useClaudeUsage(tenant);
   const isMobile = useIsMobile();
   const [port, setPort] = useState("");
   const [pvOpen, setPvOpen] = useState(false); // desktop port-preview popover
   const [moreOpen, setMoreOpen] = useState(false); // mobile overflow popover
-  const [usageOpen, setUsageOpen] = useState(false); // Claude usage detail dropdown
   const [resOpen, setResOpen] = useState(false); // desktop resource-tiles popover
   const pvRef = useRef<HTMLDivElement>(null);
   const moreRef = useRef<HTMLDivElement>(null);
-  const usageRef = useRef<HTMLDivElement>(null);
   const resRef = useRef<HTMLDivElement>(null);
   const running = wsState === "running";
   const busy = wsState.endsWith("…"); // starting… / stopping… / recreating… — toggle inert
@@ -329,7 +413,6 @@ export default function WsBar() {
   // Close each popover on an outside click / Escape.
   useDismiss(pvRef, pvOpen, () => setPvOpen(false));
   useDismiss(moreRef, moreOpen, () => setMoreOpen(false));
-  useDismiss(usageRef, usageOpen, () => setUsageOpen(false));
   useDismiss(resRef, resOpen, () => setResOpen(false));
 
   // --- pieces shared between the inline (desktop) and folded (mobile) layouts ---
@@ -421,57 +504,15 @@ export default function WsBar() {
     </div>
   );
 
-  // Claude subscription usage: a COMPACT trigger (Claude glyph + the higher of the two
-  // percentages, tinted by level) that opens a dropdown with both windows (5-hour /
-  // weekly), each with a bar, its reset (relative + absolute date-time), and a reload
-  // button. Unofficial/best-effort — absent (null) when the endpoint didn't answer, so
-  // nothing shows.
-  const usageWin = (w: { pct: number; resetsAt: string }) => ({
-    pct: Math.round(w.pct),
-    until: untilText(w.resetsAt),
-    when: whenText(w.resetsAt),
-  });
-  const uh = usage && usage.fiveHour && usageWin(usage.fiveHour);
-  const uw = usage && usage.sevenDay && usageWin(usage.sevenDay);
-  // Compact trigger shows BOTH windows as "5時間 / 週次" (e.g. "55% / 7%"); when only one
-  // window answered, show just that one.
-  const usageLabel = [uh && `${uh.pct}%`, uw && `${uw.pct}%`].filter(Boolean).join(" / ");
-  const usageEl = (uh || uw) && (
-    <div className="ws-usage-wrap" ref={usageRef}>
-      {/* Same badge look as the Sessions-list Claude kind badge (kind-tag kind-claude):
-          reuse those classes for the frame + color, then reset the button chrome. */}
-      <button
-        type="button"
-        className="kind-tag kind-claude ws-usage-btn"
-        title="Claude 使用状況（5時間 / 週次）"
-        aria-expanded={usageOpen}
-        onClick={() => setUsageOpen((o) => !o)}
-      >
-        <Icon name="sparkle" />
-        <span className="ws-usage-nums">{usageLabel}</span>
-        <Icon name="chevron-down" />
-      </button>
-      {usageOpen && (
-        <div className="ws-usage-pop">
-          <div className="wu-title">Claude 使用状況</div>
-          {uh && <UsageRow label="5時間制限" w={uh} />}
-          {uw && <UsageRow label="週次・全モデル" w={uw} />}
-          <div className="wu-foot">
-            <span className="wu-ago muted">取得 {agoText(usage.ageSec)}</span>
-            <button type="button" className="ghost wu-reload" onClick={refresh} disabled={refreshing}>
-              <Icon name="refresh" spin={refreshing} /> 更新
-            </button>
-          </div>
-        </div>
-      )}
-    </div>
-  );
+  // Subscription-usage chips, one per agent that exposes limits (Claude, Codex). Each
+  // self-hides until its endpoint answers, so a claude-only user sees one chip, a user
+  // of both sees two. The 8px bar gap spaces them (no manual dividers needed).
+  const usageChips = USAGE_SOURCES.map((s) => <UsageChip key={s.endpoint} src={s} tenant={tenant} />);
 
-  const statsBlock = (graphs || usageEl) && (
+  const statsBlock = (
     <>
       {graphs}
-      {graphs && usageEl && <span className="ws-graph-sep" />}
-      {usageEl}
+      {usageChips}
     </>
   );
 
@@ -615,8 +656,7 @@ export default function WsBar() {
         </div>
       ) : (
         <>
-          {usageEl}
-          {resourcesEl && usageEl && <span className="ws-graph-sep" />}
+          {usageChips}
           {resourcesEl}
           <div className="ws-preview" ref={pvRef}>
             <button
