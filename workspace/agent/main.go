@@ -66,6 +66,14 @@ func main() {
 	mux.HandleFunc("GET /sessions/{name}/messages", handleSessionMessages)
 	mux.HandleFunc("GET /ws/pty", handlePTY)
 
+	// Assistant chat — headless-CLI LLM chat/translation, separate from tmux
+	// sessions (docs/19). Non-streaming; the CP proxies these verbatim.
+	mux.HandleFunc("GET /chat/conversations", handleChatList)
+	mux.HandleFunc("POST /chat/conversations", handleChatCreate)
+	mux.HandleFunc("GET /chat/conversations/{id}", handleChatGet)
+	mux.HandleFunc("DELETE /chat/conversations/{id}", handleChatDelete)
+	mux.HandleFunc("POST /chat/conversations/{id}/messages", handleChatSend)
+
 	// Preview — reverse-proxy to a service the user started inside the container
 	// (Spring Boot, dev server, ...). Reached only via the CP's /preview/{port}.
 	mux.HandleFunc("/proxy/{port}/{rest...}", handlePreview)
