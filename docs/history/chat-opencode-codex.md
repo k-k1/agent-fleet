@@ -190,9 +190,9 @@ Console のみ（`MirrorView` typing 行＋`.mirror-stop`）。
 - **現在モードはペインから取得（`paneMode`）**: モード切替キーでは新モードが transcript に記録されない（ターン実行時
   のみ）ため、DB/rollout 由来だと切替が反映されず、ターミナル側の切替は特に「逆」に見えた。TUI が常時表示する現在
   モードを pane から拾う（全エージェント統一）: claude=ステータス行 `plan mode on (shift+tab to cycle)`、
-  opencode=`Plan/Build auto ·`、codex=**常時表示のフッタ `<model> <effort> · <cwd>`**（Default=effort "default"→normal、
-  Plan=非default）を主とし `… for Plan/Default mode.` の最新行を補助（scrollback 履歴行だけだと plan 離脱が未ログ／
-  スクロール消失で誤検出したため）。transcript/jsonl mode にフォールバック。
+  opencode=`Plan/Build auto ·`、codex=**フッタの明示ラベル `Plan mode (shift+tab to cycle)`**（Plan 時のみ表示。Default は
+  ラベル無し＝`<model> <effort> · <cwd>` のみ）。履歴行 `… for Plan mode.` は `Plan mode (` を含まず誤爆しない。フッタ
+  非表示（起動直後）は "" ＝transcript/jsonl mode にフォールバック（codex は Default 起動ゆえ normal で正しい）。
   claude の jsonl mode は「プロンプト毎スナップショット」寄りで bare 切替を即反映しないため pane を優先。これで
   **チャット/ターミナルどちらの切替も反映**。Console は楽観更新＋serverModeRef で即時フィードバック。
 - **codex 進行中固定の修正**: モード切替キー（BTab）で `markSessionWorking` され、ターンでない＝Stop フックが
