@@ -73,6 +73,7 @@ func main() {
 	mux.HandleFunc("GET /chat/conversations/{id}", handleChatGet)
 	mux.HandleFunc("DELETE /chat/conversations/{id}", handleChatDelete)
 	mux.HandleFunc("POST /chat/conversations/{id}/messages", handleChatSend)
+	mux.HandleFunc("POST /chat/conversations/{id}/stream", handleChatStream) // SSE (Phase B)
 
 	// Preview — reverse-proxy to a service the user started inside the container
 	// (Spring Boot, dev server, ...). Reached only via the CP's /preview/{port}.

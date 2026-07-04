@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
 import MarkdownView from "./MarkdownView.jsx";
 import Icon from "../components/Icon.jsx";
-import { chatGet, chatSend, errText } from "../api.js";
+import { chatGet, chatStream } from "../api.js";
 import { agentOf } from "../agents/registry.ts";
 import { kindClass } from "../lib/sessionkind.js";
 import type { Conversation, ChatMessage } from "../types/chat.ts";
@@ -19,6 +19,7 @@ export default function ChatView({ conversationId }: ChatViewProps) {
   const [conv, setConv] = useState<Conversation | null>(null);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
+  const [streamText, setStreamText] = useState(""); // live-accumulating assistant reply
   const [error, setError] = useState("");
   const [loadError, setLoadError] = useState("");
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -48,26 +49,27 @@ export default function ChatView({ conversationId }: ChatViewProps) {
   useEffect(() => {
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [conv?.messages.length, sending]);
+  }, [conv?.messages.length, sending, streamText]);
 
   const send = async () => {
     const text = input.trim();
     if (!text || sending || !conv) return;
     setError("");
     setSending(true);
-    // Optimistically show the user's turn; the server echoes the full conversation.
+    setStreamText("");
+    // Optimistically show the user's turn; the server echoes the full conversation on done.
     const userMsg: ChatMessage = { role: "user", content: text, ts: Date.now() };
     setConv((c) => (c ? { ...c, messages: [...c.messages, userMsg] } : c));
     setInput("");
-    try {
-      const res = await chatSend(conv.id, text);
-      if (res.conversation) setConv(res.conversation);
-      else setError(errText(res.error) || "応答の取得に失敗しました");
-    } catch {
-      setError("送信に失敗しました");
-    } finally {
-      setSending(false);
-    }
+    await chatStream(conv.id, text, {
+      onDelta: (t) => setStreamText((s) => s + t),
+      onError: (m) => setError(m),
+      onDone: (updated) => {
+        if (updated) setConv(updated);
+      },
+    });
+    setStreamText("");
+    setSending(false);
   };
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -117,9 +119,13 @@ export default function ChatView({ conversationId }: ChatViewProps) {
           <div className="chat-msg role-assistant">
             <div className="chat-role">{agent?.assistantName || "アシスタント"}</div>
             <div className="chat-body">
-              <span className="chat-thinking">
-                <Icon name="loading" spin /> 考え中…
-              </span>
+              {streamText ? (
+                <div className="chat-text chat-streaming">{streamText}</div>
+              ) : (
+                <span className="chat-thinking">
+                  <Icon name="loading" spin /> 考え中…
+                </span>
+              )}
             </div>
           </div>
         )}
