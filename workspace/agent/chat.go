@@ -52,9 +52,51 @@ type chatConversation struct {
 	ClaudeSessionID string `json:"claude_session_id,omitempty"`
 	CodexSessionID  string `json:"codex_session_id,omitempty"`
 	// AFTools attaches the local Agent Fleet MCP tools (read-only) to this chat's
-	// claude so it can inspect the user's workspace (docs/19 Q1). Default on for
-	// claude; a later persona/toggle (Q2) governs it.
+	// claude so it can inspect the user's workspace (docs/19 Q1). Legacy field kept for
+	// conversations created before assistants (Q2); new conversations drive tools via the
+	// snapshot Tools grant below and afToolsEnabled() reconciles the two.
 	AFTools bool `json:"af_tools,omitempty"`
+	// Assistant snapshot (docs/19 Q2): the conversation copies its assistant's settings at
+	// creation, so later edits to the assistant don't rewrite existing threads. AssistantID
+	// is kept for display/reference; Persona/Tools/Knowledge drive the provider.
+	AssistantID string   `json:"assistant_id,omitempty"`
+	Persona     string   `json:"persona,omitempty"`   // --append-system-prompt (falls back to chatPersona)
+	Tools       string   `json:"tools,omitempty"`     // "none" | "af_read"
+	Knowledge   []string `json:"knowledge,omitempty"` // dirs passed to --add-dir
+}
+
+// afToolsEnabled reports whether the read-only fleet MCP tools attach to this chat.
+// New conversations set Tools; pre-assistant conversations only have AFTools.
+func (c *chatConversation) afToolsEnabled() bool {
+	if c.Tools != "" {
+		return c.Tools == toolsAFRead
+	}
+	return c.AFTools
+}
+
+// personaOf is the system prompt for this conversation: the assistant snapshot's persona,
+// or the generic chat persona for legacy/unset conversations.
+func (c *chatConversation) personaOf() string {
+	if strings.TrimSpace(c.Persona) != "" {
+		return c.Persona
+	}
+	return chatPersona
+}
+
+// knowledgeArgs returns --add-dir flags for each knowledge dir that currently exists.
+// Builtin knowledge is re-materialized first so a container rebuild self-heals.
+func (c *chatConversation) knowledgeArgs() []string {
+	if len(c.Knowledge) == 0 {
+		return nil
+	}
+	_ = ensureBuiltinKnowledge()
+	var args []string
+	for _, d := range c.Knowledge {
+		if fi, err := os.Stat(d); err == nil && fi.IsDir() {
+			args = append(args, "--add-dir", d)
+		}
+	}
+	return args
 }
 
 // chatMeta is the light shape returned by the list endpoint (no message bodies).
@@ -128,6 +170,7 @@ func chatClaudeDir() string {
 //     holding the rotated token, diverging from shared. reconcileChatCreds copies the
 //     newer token back to shared and relinks; callers run it both before AND right
 //     after each claude exec, so the shared login is refreshed within one turn.
+//
 // A file bind-mount would NOT help (atomic-rename of the source makes the mount stale,
 // and rename onto a mountpoint EBUSYs) — the symlink + copy-back is the robust choice.
 func ensureChatClaudeConfig() (string, error) {
@@ -323,7 +366,7 @@ type claudeResult struct {
 
 func (claudeChat) send(ctx context.Context, c *chatConversation, prompt string) (string, error) {
 	args := []string{"-p", "--output-format", "json", "--dangerously-skip-permissions",
-		"--append-system-prompt", chatPersona}
+		"--append-system-prompt", c.personaOf()}
 	if c.Model != "" {
 		args = append(args, "--model", c.Model)
 	}
@@ -333,7 +376,8 @@ func (claudeChat) send(ctx context.Context, c *chatConversation, prompt string) 
 		c.ClaudeSessionID = randUUID()
 		args = append(args, "--session-id", c.ClaudeSessionID)
 	}
-	if c.AFTools {
+	args = append(args, c.knowledgeArgs()...)
+	if c.afToolsEnabled() {
 		args = append(args, chatMCPArgs()...)
 	}
 	cmd := chatClaudeCmd(ctx, args...)
@@ -390,7 +434,7 @@ func (claudeChat) sendStream(ctx context.Context, c *chatConversation, prompt st
 	// stream-json requires --verbose with -p; --include-partial-messages adds the
 	// per-token text_delta events we forward for live display.
 	args := []string{"-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
-		"--dangerously-skip-permissions", "--append-system-prompt", chatPersona}
+		"--dangerously-skip-permissions", "--append-system-prompt", c.personaOf()}
 	if c.Model != "" {
 		args = append(args, "--model", c.Model)
 	}
@@ -400,7 +444,8 @@ func (claudeChat) sendStream(ctx context.Context, c *chatConversation, prompt st
 		c.ClaudeSessionID = randUUID()
 		args = append(args, "--session-id", c.ClaudeSessionID)
 	}
-	if c.AFTools {
+	args = append(args, c.knowledgeArgs()...)
+	if c.afToolsEnabled() {
 		args = append(args, chatMCPArgs()...)
 	}
 	cmd := chatClaudeCmd(ctx, args...)
@@ -505,9 +550,10 @@ func handleChatList(w http.ResponseWriter, r *http.Request) {
 }
 
 type chatCreateReq struct {
-	Agent string `json:"agent"`
-	Title string `json:"title"`
-	Model string `json:"model"`
+	AssistantID string `json:"assistant_id"` // preferred: snapshot this assistant's settings
+	Agent       string `json:"agent"`        // legacy fallback when no assistant_id
+	Title       string `json:"title"`
+	Model       string `json:"model"` // legacy override (ignored when assistant_id is set)
 }
 
 func handleChatCreate(w http.ResponseWriter, r *http.Request) {
@@ -516,20 +562,45 @@ func handleChatCreate(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "bad_request", "invalid body")
 		return
 	}
-	if _, ok := chatProviders[req.Agent]; !ok {
-		writeErr(w, http.StatusBadRequest, "bad_agent", "未対応のエージェントです")
-		return
-	}
 	title := strings.TrimSpace(req.Title)
 	if title == "" {
 		title = "新しいチャット"
 	}
 	now := nowMs()
 	c := &chatConversation{
-		ID: randUUID(), Agent: req.Agent, Title: title, Model: strings.TrimSpace(req.Model),
-		CreatedAt: now, UpdatedAt: now, Messages: []chatMessage{},
-		AFTools: req.Agent == kindClaude, // read-only fleet tools (only claude backs them today)
+		ID: randUUID(), Title: title, CreatedAt: now, UpdatedAt: now, Messages: []chatMessage{},
 	}
+
+	if req.AssistantID != "" {
+		// Snapshot the assistant's settings onto the conversation (docs/19 Q2): later edits
+		// to the assistant leave existing threads untouched.
+		a, err := getAssistant(req.AssistantID)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "bad_assistant", "アシスタントが見つかりません")
+			return
+		}
+		c.AssistantID = a.ID
+		c.Agent = a.Agent
+		c.Model = a.Model
+		c.Persona = a.Persona
+		c.Tools = a.Tools
+		c.Knowledge = a.Knowledge
+	} else {
+		// Legacy path: plain agent + optional model, generic persona, read-only fleet tools
+		// for claude (mirrors the pre-assistant default).
+		if _, ok := chatProviders[req.Agent]; !ok {
+			writeErr(w, http.StatusBadRequest, "bad_agent", "未対応のエージェントです")
+			return
+		}
+		c.Agent = req.Agent
+		c.Model = strings.TrimSpace(req.Model)
+		if req.Agent == kindClaude {
+			c.Tools = toolsAFRead
+		} else {
+			c.Tools = toolsNone
+		}
+	}
+
 	if err := saveConv(c); err != nil {
 		writeErr(w, http.StatusInternalServerError, "chat_save", err.Error())
 		return

@@ -234,6 +234,13 @@ func main() {
 	mux.HandleFunc("POST /api/chat/conversations/{id}/messages", cfg.proxyAgentREST)
 	mux.HandleFunc("POST /api/chat/conversations/{id}/stream", cfg.proxyAgentStream) // SSE (Phase B)
 
+	// Assistant templates (docs/19 Q2) — configurable chat personas, proxied verbatim.
+	mux.HandleFunc("GET /api/assistants", cfg.proxyAgentREST)
+	mux.HandleFunc("POST /api/assistants", cfg.proxyAgentREST)
+	mux.HandleFunc("GET /api/assistants/{id}", cfg.proxyAgentREST)
+	mux.HandleFunc("PUT /api/assistants/{id}", cfg.proxyAgentREST)
+	mux.HandleFunc("DELETE /api/assistants/{id}", cfg.proxyAgentREST)
+
 	// SSM login config (docs/history/p3-ssm-session.md) — per-member profiles (common
 	// auth bundle) + host bookmarks (per-instance). No AWS secrets; the aws CLI in the
 	// workspace authenticates via SSO.

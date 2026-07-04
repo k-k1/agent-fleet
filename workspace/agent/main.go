@@ -81,6 +81,14 @@ func main() {
 	mux.HandleFunc("POST /chat/conversations/{id}/messages", handleChatSend)
 	mux.HandleFunc("POST /chat/conversations/{id}/stream", handleChatStream) // SSE (Phase B)
 
+	// Assistant templates — configurable chat personas (docs/19 Q2). Builtins are
+	// code-injected; user-defined ones are stored under ~/.config/agent-fleet/assistants.
+	mux.HandleFunc("GET /assistants", handleAssistantsList)
+	mux.HandleFunc("POST /assistants", handleAssistantCreate)
+	mux.HandleFunc("GET /assistants/{id}", handleAssistantGet)
+	mux.HandleFunc("PUT /assistants/{id}", handleAssistantUpdate)
+	mux.HandleFunc("DELETE /assistants/{id}", handleAssistantDelete)
+
 	// Preview — reverse-proxy to a service the user started inside the container
 	// (Spring Boot, dev server, ...). Reached only via the CP's /preview/{port}.
 	mux.HandleFunc("/proxy/{port}/{rest...}", handlePreview)
