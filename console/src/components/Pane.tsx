@@ -139,8 +139,7 @@ export default function Pane({
   const { setPaneWrap } = useApp();
   const settings = useSettings();
   const wrapOn = pane.wrap ?? settings.wrap;
-  const canWrap =
-    pane.kind === "file" || pane.kind === "scm" || pane.kind === "changes" || pane.kind === "commit" || pane.kind === "diff";
+  const canWrap = pane.kind === "file" || pane.kind === "diff";
 
   const onDragStart = (e: RDragEvent) => {
     e.dataTransfer.setData(DND, pane.id);

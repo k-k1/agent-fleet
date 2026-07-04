@@ -33,11 +33,13 @@ export default function CommitGraph({
   current,
   selectedSha,
   onSelect,
+  onContext,
 }: {
   commits: GraphCommit[];
   current?: string;
   selectedSha?: string;
   onSelect: (sha: string) => void;
+  onContext?: (sha: string, x: number, y: number) => void;
 }) {
   const rows = useMemo(() => layoutGraph(commits), [commits]);
   const lanes = laneCount(rows);
@@ -52,6 +54,7 @@ export default function CommitGraph({
           current={current}
           selected={row.commit.sha === selectedSha}
           onSelect={onSelect}
+          onContext={onContext}
         />
       ))}
     </ul>
@@ -64,12 +67,14 @@ function CommitRow({
   current,
   selected,
   onSelect,
+  onContext,
 }: {
   row: GraphRow;
   graphW: number;
   current?: string;
   selected: boolean;
   onSelect: (sha: string) => void;
+  onContext?: (sha: string, x: number, y: number) => void;
 }) {
   const { commit, nodeLane, lanesAbove, lanesBelow } = row;
   const laneX = (i: number) => LANE_W / 2 + i * LANE_W;
@@ -106,6 +111,14 @@ function CommitRow({
     <li
       className={"cgraph-row" + (selected ? " active" : "") + (commit.inBranch ? "" : " dim")}
       onClick={() => onSelect(commit.sha)}
+      onContextMenu={
+        onContext
+          ? (e) => {
+              e.preventDefault();
+              onContext(commit.sha, e.clientX, e.clientY);
+            }
+          : undefined
+      }
       title={commit.subject}
     >
       <svg className="cgraph-svg" width={graphW} height={ROW_H} style={{ flex: `0 0 ${graphW}px` }} aria-hidden="true">
