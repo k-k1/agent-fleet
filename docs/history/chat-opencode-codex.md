@@ -205,7 +205,9 @@ Console のみ（`MirrorView` typing 行＋`.mirror-stop`）。
 **capture-pane は `=` の exact-target 構文を受け付けず**（`can't find pane: =name`）、常に空を返していた
 （send-keys/list-panes は `=` 可）。結果、pane からのモード検出が全エージェントで無効化され、モードが常に未報告
 ＝計画モードボタンが正しく反映しなかった。修正: `sessionPaneID(tn)` で active pane id を解決してから
-`capture-pane -t <pane_id>` する共通ヘルパ `capturePane` を導入。
+`capture-pane -t <pane_id>` する共通ヘルパ `capturePane` を導入。さらに、判定は**ペイン末尾数行(status 行領域)に限定**
+(`paneTail`)：claude は本文中の "plan mode" にも一致して誤ONしていたため、末尾3行の "plan mode on" のみを見る
+(opencode は status 行が下から数行上ゆえ末尾8行)。
 
 ## 22.14 履歴閲覧での勝手な起動を防止（端末アタッチを接続専用に）
 

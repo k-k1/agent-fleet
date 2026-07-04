@@ -36,10 +36,25 @@ func capturePane(tn string) string {
 	return string(out)
 }
 
+// paneTail returns the last n non-empty lines of s (the TUI's status/composer footer
+// region), so mode detection matches the STATUS LINE — not conversation text that merely
+// mentions "plan mode" (which false-positived claude's indicator).
+func paneTail(s string, n int) string {
+	lines := strings.Split(s, "\n")
+	var out []string
+	for i := len(lines) - 1; i >= 0 && len(out) < n; i-- {
+		if strings.TrimSpace(lines[i]) != "" {
+			out = append(out, lines[i])
+		}
+	}
+	return strings.Join(out, "\n")
+}
+
 // paneMode reads the session's CURRENT permission/collaboration mode straight from the
 // terminal (what the TUI displays), so it reflects toggles made in the terminal too —
 // not just via the chat. Returns "plan" | "normal" | "" (unknown → caller falls back to
-// the transcript's per-turn mode).
+// the transcript's per-turn mode). Matching is confined to the pane's tail (the status
+// line region) so conversation content can't spoof it.
 func paneMode(kind, tn string) string {
 	s := capturePane(tn)
 	if s == "" {
@@ -47,16 +62,19 @@ func paneMode(kind, tn string) string {
 	}
 	switch kind {
 	case kindClaude:
-		// claude's status line shows the active mode: "⏸ plan mode on (shift+tab to
-		// cycle)" vs "⏵⏵ bypass permissions on …" / "accept edits on …".
-		if strings.Contains(s, "plan mode") {
+		// claude's status line (last line) shows the active mode: "⏸ plan mode on
+		// (shift+tab to cycle)" vs "⏵⏵ bypass permissions on …" / "accept edits on …".
+		t := paneTail(s, 3)
+		if strings.Contains(t, "plan mode on") {
 			return "plan"
 		}
-		if strings.Contains(s, "shift+tab to cycle") {
+		if strings.Contains(t, "shift+tab to cycle") {
 			return "normal"
 		}
 	case kindOpencode:
-		if m := opencodeStatusAgentRe.FindStringSubmatch(s); m != nil {
+		// The composer status line sits a few lines above the very bottom (above the
+		// border + token/commands footer).
+		if m := opencodeStatusAgentRe.FindStringSubmatch(paneTail(s, 8)); m != nil {
 			if strings.EqualFold(m[1], "plan") {
 				return "plan"
 			}
@@ -64,15 +82,14 @@ func paneMode(kind, tn string) string {
 		}
 	case kindCodex:
 		// codex's composer footer shows "Plan mode (shift+tab to cycle)" ONLY while in plan
-		// mode; Default mode shows just "<model> <effort> · <cwd>" (no mode label). Match
-		// "Plan mode (" — the history lines ("… for Plan mode.") end in a period, not a
-		// paren, so they don't spoof it.
-		if strings.Contains(s, "Plan mode (") {
+		// mode; Default mode shows just "<model> <effort> · <cwd>" (no mode label).
+		t := paneTail(s, 3)
+		if strings.Contains(t, "Plan mode (") {
 			return "plan"
 		}
 		// Composer footer present (model · cwd) and no plan label → Default mode; else the
 		// composer isn't visible yet (startup) → unknown, fall back to the transcript mode.
-		if codexFooterEffortRe.MatchString(s) {
+		if codexFooterEffortRe.MatchString(t) {
 			return "normal"
 		}
 	}
