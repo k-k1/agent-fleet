@@ -2456,6 +2456,18 @@ body.row-resizing {
   opacity: 0.5;
   font-variant-numeric: tabular-nums;
 }
+/* Reasoning effort/variant chip (codex reasoning_effort / opencode variant), shown
+   right after the model. A faint pill so it reads as secondary metadata. */
+.mt-effort {
+  margin-left: 6px;
+  padding: 0 5px;
+  font-size: 10px;
+  line-height: 1.5;
+  border-radius: 4px;
+  background: var(--surface-2, rgba(127, 127, 127, 0.16));
+  opacity: 0.7;
+  text-transform: lowercase;
+}
 /* The response body is indented a touch past the flush-left speaker label. */
 .mirror-turn-body {
   padding-left: 15px;

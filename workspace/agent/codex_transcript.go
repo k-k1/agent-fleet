@@ -74,7 +74,7 @@ var codexWrapperTags = []string{
 // context gauge works the same as claude's.
 func codexParseRollout(lines [][]byte) []chatTurn {
 	var turns []chatTurn
-	var cwd, branch, model string
+	var cwd, branch, model, effort string
 	lastAssistant := -1 // index into turns of the most recent assistant turn (for usage)
 	for i, ln := range lines {
 		var ev struct {
@@ -89,9 +89,11 @@ func codexParseRollout(lines [][]byte) []chatTurn {
 		case "session_meta":
 			cwd, branch = codexMetaContext(ev.Payload)
 		case "turn_context":
-			// Precedes each turn; carries the model in effect (e.g. "gpt-5.5").
-			if m := codexTurnModel(ev.Payload); m != "" {
+			// Precedes each turn; carries the model (e.g. "gpt-5.5") and reasoning effort
+			// in effect. effort is often null (default) — kept only when codex records one.
+			if m, e := codexTurnModel(ev.Payload); m != "" {
 				model = m
+				effort = e
 			}
 		case "response_item":
 			t, ok := codexParseResponseItem(ev.Payload, ev.Timestamp, i, cwd, branch)
@@ -100,6 +102,7 @@ func codexParseRollout(lines [][]byte) []chatTurn {
 			}
 			if t.Role == "assistant" {
 				t.Model = model
+				t.Effort = effort
 			}
 			turns = append(turns, t)
 			if t.Role == "assistant" {
@@ -130,15 +133,28 @@ func codexMetaContext(payload json.RawMessage) (cwd, branch string) {
 	return m.Cwd, m.Git.Branch
 }
 
-// codexTurnModel pulls the model name from a turn_context payload.
-func codexTurnModel(payload json.RawMessage) string {
+// codexTurnModel pulls the model name and reasoning effort from a turn_context payload.
+// effort lives under collaboration_mode.settings.reasoning_effort (or a top-level
+// reasoning_effort); it is commonly null (the model default), in which case "" is
+// returned and no effort is shown.
+func codexTurnModel(payload json.RawMessage) (model, effort string) {
 	var m struct {
-		Model string `json:"model"`
+		Model             string `json:"model"`
+		ReasoningEffort   string `json:"reasoning_effort"`
+		CollaborationMode struct {
+			Settings struct {
+				ReasoningEffort string `json:"reasoning_effort"`
+			} `json:"settings"`
+		} `json:"collaboration_mode"`
 	}
 	if json.Unmarshal(payload, &m) != nil {
-		return ""
+		return "", ""
 	}
-	return m.Model
+	effort = m.ReasoningEffort
+	if effort == "" {
+		effort = m.CollaborationMode.Settings.ReasoningEffort
+	}
+	return m.Model, effort
 }
 
 // codexParseResponseItem turns one response_item payload into a chatTurn. Returns

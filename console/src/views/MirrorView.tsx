@@ -81,6 +81,7 @@ interface Turn {
   sidechain?: boolean;
   compact?: boolean;
   model?: string;
+  effort?: string;
   branch?: string;
   cwd?: string;
   inTok?: number;
@@ -95,6 +96,7 @@ interface Group {
   parts: Part[];
   text: string;
   model: string;
+  effort: string;
   branch: string;
   cwd: string;
   inTok: number;
@@ -1038,6 +1040,7 @@ function groupTurns(turns: Turn[]): Group[] {
       last.parts.push(...parts);
       if (t.text) last.text += (last.text ? "\n\n" : "") + t.text;
       if (!last.model && t.model) last.model = t.model;
+      if (!last.effort && t.effort) last.effort = t.effort;
       last.outTok += t.outTok || 0;
       if (t.inTok || t.cacheRead || t.cacheCreate) {
         last.inTok = t.inTok || 0;
@@ -1052,6 +1055,7 @@ function groupTurns(turns: Turn[]): Group[] {
         parts: [...parts],
         text: t.text || "",
         model: t.model || "",
+        effort: t.effort || "",
         branch: t.branch || "",
         cwd: t.cwd || "",
         inTok: t.inTok || 0,
@@ -1233,6 +1237,11 @@ function Turn({
       <div className="mirror-turn-head">
         <span className="mt-who">{who}</span>
         {!isUser && turn.model && <span className="mt-model">{prettyModel(turn.model)}</span>}
+        {!isUser && turn.effort && (
+          <span className="mt-effort" title="推論の努力度（codex reasoning_effort / opencode variant）">
+            {turn.effort}
+          </span>
+        )}
       </div>
       <div className="mirror-turn-body">
         {isUser ? (

@@ -52,7 +52,7 @@ func TestOpencodeReadSession(t *testing.T) {
 	insPart(t, db, "p1", "m1", ses, 1, `{"type":"text","text":"hello opencode"}`)
 
 	// m2: assistant with framing (dropped), a tool trace, and final text.
-	insMsg(t, db, "m2", ses, 2000, `{"role":"assistant","modelID":"deepseek-v4-pro","tokens":{"input":100,"output":20,"cache":{"read":80,"write":5}},"time":{"created":2000}}`)
+	insMsg(t, db, "m2", ses, 2000, `{"role":"assistant","modelID":"deepseek-v4-pro","variant":"max","tokens":{"input":100,"output":20,"cache":{"read":80,"write":5}},"time":{"created":2000}}`)
 	insPart(t, db, "p2a", "m2", ses, 1, `{"type":"step-start"}`)
 	insPart(t, db, "p2b", "m2", ses, 2, `{"type":"reasoning","text":"thinking..."}`)
 	insPart(t, db, "p2c", "m2", ses, 3, `{"type":"tool","tool":"bash","state":{"input":{"command":"ls -la"}}}`)
@@ -81,6 +81,9 @@ func TestOpencodeReadSession(t *testing.T) {
 	a := turns[1]
 	if a.Role != "assistant" || a.Model != "deepseek-v4-pro" {
 		t.Fatalf("turn1 role/model = %q/%q", a.Role, a.Model)
+	}
+	if a.Effort != "max" {
+		t.Fatalf("turn1 effort = %q, want max (variant)", a.Effort)
 	}
 	if a.InTok != 100 || a.OutTok != 20 || a.CacheRead != 80 || a.CacheCreate != 5 {
 		t.Fatalf("turn1 usage = %d/%d/%d/%d, want 100/20/80/5", a.InTok, a.OutTok, a.CacheRead, a.CacheCreate)
