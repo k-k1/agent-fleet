@@ -164,8 +164,12 @@ Console のみ（`MirrorView` typing 行＋`.mirror-stop`）。
 実機検証で判明した opencode 固有の詰まりを修正:
 - **external_directory 停止**: `--auto` は read/glob 等を自動承認するが external_directory（プロジェクト外 ~/repos
   アクセス）は "ask" のまま止まる。entrypoint が `opencode.jsonc` の `permission` を全 allow に seed（既存キー保持）。
-- **アクティブセッション追従**: opencode が実行中に別セッションを作ると、プラグインが session.created 時しか sid を
-  記録せずチャットが古いセッションを読む。プラグインを session.idle / message.* の sessionID で毎回更新に。
+- **プラグイン非依存のセッション/状態解決**: opencode の status プラグインは 1.17.x で発火が不安定（idle を報告せず
+  status が working 固定・別セッション作成時に sid 未更新で反映されない）。プラグイン依存をやめ、**store から直接解決**:
+  `opencodeActiveSession`＝そのディレクトリの最新ルートセッション（`session.directory`＋`parent_id IS NULL`、最新
+  メッセージ順）、`opencodeLiveState`＝そのセッションの最新メッセージが完了 assistant なら idle 否なら working。
+  READ/status/launch resume すべてこれを使用（プラグインは status のフォールバックに残置）。制約: 同一 dir 複数
+  スロットは同一セッションに解決（既存の multi-slot-same-dir 制約）。
 - **中断ターンの再実行防止**: opencode は last turn が未完了（interrupted）のセッションを `--session` で resume すると
   その作業を再開する。`opencodeSessionResumable`（last message の time.completed を確認）で未完了なら resume せず
   新規起動（`buildLaunch` が resume id を破棄）。中断＝放棄意図ゆえ妥当。

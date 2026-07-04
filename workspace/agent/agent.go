@@ -162,6 +162,13 @@ func driveState(m sessionMeta, alive, heal bool) string {
 	if !alive {
 		return "stopped"
 	}
+	// opencode: derive state from its own store (the status plugin is unreliable) so the
+	// chat chip doesn't stick on 進行中 after a turn the plugin never reported idle for.
+	if m.Kind == kindOpencode {
+		if st := opencodeLiveState(m); st != "" {
+			return st
+		}
+	}
 	sid := sessionUUID(m.Dir, m.Name)
 	state := liveStateFromStatus(sid)
 	if heal && state != "idle" && sessionAtIdlePrompt(m.Name) {
@@ -319,22 +326,40 @@ func (opencodeAgent) buildLaunch(m sessionMeta, _ launchOpts) (launchPlan, error
 	// session environment and does NOT reach the pane's process).
 	ocSid := sessionUUID(m.Dir, m.Name)
 	envs := append([]string{"AF_SESSION_SID=" + ocSid}, opencodeEnv()...)
-	// Resume this slot's captured session — UNLESS its last turn was interrupted
-	// (incomplete). opencode continues an incomplete turn on resume, re-running the
-	// pending work (e.g. an Explore subagent the user stopped); starting fresh instead
-	// avoids that. The interrupted conversation stays in opencode's store (just not
-	// auto-resumed). clearResume forgets the captured id so a later recreate stays fresh.
-	resume := opencodeSids.read(ocSid)
+	// Resume the slot's current opencode conversation, resolved from the store itself
+	// (plugin-independent — see opencodeActiveSession), UNLESS its last turn was
+	// interrupted (incomplete). opencode continues an incomplete turn on resume, re-running
+	// the pending work (e.g. an Explore subagent the user stopped); starting fresh avoids
+	// that. The interrupted conversation stays in the store, just not auto-resumed.
+	resume := ""
+	if db, ok := opencodeOpenRO(); ok {
+		resume = opencodeActiveSession(db, m)
+		db.Close()
+	}
+	if resume == "" {
+		resume = opencodeSids.read(ocSid) // fallback when the store can't be read
+	}
 	if resume != "" && !opencodeSessionResumable(resume) {
-		opencodeSids.remove(ocSid)
 		resume = ""
 	}
 	return launchPlan{program: buildOpencodeProgram(m.Model, envs, resume), cwd: m.Dir}, nil
 }
 
 func (opencodeAgent) wireLive(m sessionMeta, alive bool) liveInfo {
-	// State comes from the bundled opencode plugin's status file keyed by our sid.
-	return statusOnlyLive(m, alive)
+	// State is derived from opencode's own store (opencodeLiveState) — robust against the
+	// status plugin not firing — falling back to the plugin status file when the db can't
+	// be read. resumable unless the working dir is gone.
+	li := liveInfo{resumable: true}
+	if alive {
+		if st := opencodeLiveState(m); st != "" {
+			li.state = st
+		} else {
+			li.state = liveStateFromStatus(sessionUUID(m.Dir, m.Name))
+		}
+	} else if !dirExists(m.Dir) {
+		li.resumable = false
+	}
+	return li
 }
 
 func (opencodeAgent) clearResume(sid string) { opencodeSids.remove(sid) }
