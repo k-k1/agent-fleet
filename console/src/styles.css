@@ -1430,15 +1430,21 @@ button.wu-reload {
   margin-right: 4px;
   font-style: normal;
 }
-/* Current branch, a subdued line under the repo name (indented to sit under the
-   name text, past the repo icon). */
-.repo-branch {
+/* Meta line under the repo name (indented to sit under the name text, past the repo
+   icon): current branch on the left, git provider pushed to the right. */
+.repo-meta {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 8px;
   padding-left: 22px;
   font-size: 11px;
   color: var(--muted);
+  min-width: 0;
+}
+.repo-branch {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   min-width: 0;
 }
 .repo-branch-ic {
@@ -1449,6 +1455,28 @@ button.wu-reload {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* Git provider badge — identifies which host the repo's origin is on. */
+.repo-provider {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto; /* push to the right edge of the meta line */
+  flex: none;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.repo-provider-ic {
+  font-size: 12px;
+  flex: none;
+}
+.repo-provider.prov-bitbucket {
+  color: #4c8cff;
+}
+.repo-provider.prov-gitlab {
+  color: #e2683c;
 }
 /* Repo working-tree status — same "icon + colored label" language as the session
    state chip (no bare ● / ↑↓ glyphs). Only shown when there's something to report;

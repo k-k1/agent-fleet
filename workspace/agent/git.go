@@ -45,12 +45,43 @@ func isGitRepo(dir string) bool {
 
 // Repo is the list-view representation of a working copy.
 type Repo struct {
-	Name   string `json:"name"`
-	Path   string `json:"path"`
-	Branch string `json:"branch"`
-	Dirty  bool   `json:"dirty"`
-	Ahead  int    `json:"ahead"`
-	Behind int    `json:"behind"`
+	Name     string `json:"name"`
+	Path     string `json:"path"`
+	Branch   string `json:"branch"`
+	Dirty    bool   `json:"dirty"`
+	Ahead    int    `json:"ahead"`
+	Behind   int    `json:"behind"`
+	Provider string `json:"provider,omitempty"` // origin host slug: github/bitbucket/gitlab, or the bare host
+	Remote   string `json:"remote,omitempty"`   // origin host (for a tooltip); no path/token
+}
+
+// gitProviderHost derives (provider slug, host) from an origin remote URL. Known SaaS
+// hosts collapse to a short slug the Console can badge/icon; anything else returns the
+// bare host as the slug so self-hosted remotes still identify. ("", "") when no host.
+func gitProviderHost(remote string) (string, string) {
+	u := sshToHTTPS(strings.TrimSpace(remote))
+	u = strings.TrimPrefix(strings.TrimPrefix(u, "https://"), "http://")
+	if i := strings.IndexAny(u, "/@"); i >= 0 && strings.ContainsRune(u[:i+1], '@') {
+		u = u[strings.IndexByte(u, '@')+1:] // strip any leftover userinfo
+	}
+	host := u
+	if i := strings.IndexAny(host, "/:"); i >= 0 {
+		host = host[:i]
+	}
+	host = strings.ToLower(strings.TrimSpace(host))
+	if host == "" {
+		return "", ""
+	}
+	switch {
+	case strings.Contains(host, "github."):
+		return "github", host
+	case strings.Contains(host, "bitbucket."):
+		return "bitbucket", host
+	case strings.Contains(host, "gitlab."):
+		return "gitlab", host
+	default:
+		return host, host
+	}
 }
 
 // RepoStatus mirrors docs/06 §6.4's status response shape.
@@ -124,9 +155,14 @@ func handleListRepos(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		st, _ := gitStatus(dir)
+		var provider, host string
+		if origin, ok := gitOriginURL(dir); ok {
+			provider, host = gitProviderHost(origin)
+		}
 		repos = append(repos, Repo{
 			Name: e.Name(), Path: dir, Branch: st.Branch,
 			Dirty: st.Dirty, Ahead: st.Ahead, Behind: st.Behind,
+			Provider: provider, Remote: host,
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"repos": repos})

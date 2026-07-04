@@ -20,7 +20,19 @@ interface Repo {
   dirty?: boolean;
   ahead?: number;
   behind?: number;
+  provider?: string; // origin host slug: github/bitbucket/gitlab, or a bare host
+  remote?: string; // origin host (tooltip)
 }
+
+// Provider display: known SaaS hosts get a friendly label (+ icon where a codicon
+// exists); an unknown host slug shows as-is so self-hosted remotes still identify.
+const PROVIDER_LABEL: Record<string, string> = {
+  github: "GitHub",
+  bitbucket: "Bitbucket",
+  gitlab: "GitLab",
+};
+const providerLabel = (p: string) => PROVIDER_LABEL[p] || p;
+const providerIcon = (p: string): string | null => (p === "github" ? "github" : null);
 
 // guessRepoName derives a display name from a clone URL (last path segment minus
 // .git) for the in-progress spinner row, before the server reports the real name.
@@ -293,11 +305,26 @@ function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected,
           )}
         </div>
       </div>
-      {/* Current branch, on its own line under the repo name. */}
-      {r.branch && (
-        <div className="repo-branch" title={"現在のブランチ: " + r.branch}>
-          <Icon name="git-branch" className="repo-branch-ic" />
-          <span className="repo-branch-name">{r.branch}</span>
+      {/* Meta line under the name: current branch (left) + git provider (right). */}
+      {(r.branch || r.provider) && (
+        <div className="repo-meta">
+          {r.branch && (
+            <span className="repo-branch" title={"現在のブランチ: " + r.branch}>
+              <Icon name="git-branch" className="repo-branch-ic" />
+              <span className="repo-branch-name">{r.branch}</span>
+            </span>
+          )}
+          {r.provider && (
+            <span
+              className={"repo-provider prov-" + r.provider}
+              title={"リモート: " + (r.remote || r.provider)}
+            >
+              {providerIcon(r.provider) && (
+                <Icon name={providerIcon(r.provider) as string} className="repo-provider-ic" />
+              )}
+              {providerLabel(r.provider)}
+            </span>
+          )}
         </div>
       )}
     </li>
