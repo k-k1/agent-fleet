@@ -225,6 +225,14 @@ func main() {
 	// Structured transcript for the Console chat view (case-A).
 	mux.HandleFunc("GET /api/sessions/{name}/messages", cfg.proxyAgentREST)
 
+	// Assistant chat (docs/19) — headless-CLI LLM chat/translation, proxied to the
+	// Agent verbatim (kind-agnostic; non-streaming, so the plain REST proxy suffices).
+	mux.HandleFunc("GET /api/chat/conversations", cfg.proxyAgentREST)
+	mux.HandleFunc("POST /api/chat/conversations", cfg.proxyAgentREST)
+	mux.HandleFunc("GET /api/chat/conversations/{id}", cfg.proxyAgentREST)
+	mux.HandleFunc("DELETE /api/chat/conversations/{id}", cfg.proxyAgentREST)
+	mux.HandleFunc("POST /api/chat/conversations/{id}/messages", cfg.proxyAgentREST)
+
 	// SSM login config (docs/history/p3-ssm-session.md) — per-member profiles (common
 	// auth bundle) + host bookmarks (per-instance). No AWS secrets; the aws CLI in the
 	// workspace authenticates via SSO.
