@@ -1430,6 +1430,26 @@ button.wu-reload {
   margin-right: 4px;
   font-style: normal;
 }
+/* Current branch, a subdued line under the repo name (indented to sit under the
+   name text, past the repo icon). */
+.repo-branch {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding-left: 22px;
+  font-size: 11px;
+  color: var(--muted);
+  min-width: 0;
+}
+.repo-branch-ic {
+  font-size: 12px;
+  flex: none;
+}
+.repo-branch-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 /* Repo working-tree status — same "icon + colored label" language as the session
    state chip (no bare ● / ↑↓ glyphs). Only shown when there's something to report;
    a clean, in-sync repo carries no marker. */

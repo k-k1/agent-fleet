@@ -293,6 +293,13 @@ function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected,
           )}
         </div>
       </div>
+      {/* Current branch, on its own line under the repo name. */}
+      {r.branch && (
+        <div className="repo-branch" title={"現在のブランチ: " + r.branch}>
+          <Icon name="git-branch" className="repo-branch-ic" />
+          <span className="repo-branch-name">{r.branch}</span>
+        </div>
+      )}
     </li>
   );
 }
