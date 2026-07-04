@@ -17,11 +17,12 @@ import { SESSION_KINDS } from "../types/session.ts";
 // Capability flags. The UI shows an affordance iff the attached session's agent
 // has the matching cap, so a new agent lights up the right controls by data alone.
 export interface AgentCaps {
-  chat: boolean; // shows the claude chat mirror (GET /messages, POST /input)
+  chat: boolean; // shows the chat mirror (GET /messages, POST /input)
   transcript: boolean; // stopped session opens a read-only chat history
   model: boolean; // offers a model selector at launch
-  fork: boolean; // supports fork-session from the chat
+  fork: boolean; // supports fork-session from the chat (claude --fork-session)
   contextBar: boolean; // shows the context-window token gauge
+  imagePaste: boolean; // chat composer accepts pasted images (claude Read-tool flow)
   ephemeral: boolean; // archiving deletes it (no keep) — shell / ssm
   runsInDir: boolean; // launches in a working dir (clone / dir source) — the agents
   launchableFromRepo: boolean; // offered in a repo row's 起動 menu (ssm is not)
@@ -48,6 +49,7 @@ export interface AgentDescriptor {
   // presentation
   icon: string; // codicon name
   label: string; // display word
+  assistantName: string; // how the agent signs its chat turns ("Claude" / "Codex" / …)
   short: string; // 2-char abbrev for tight headers (cc/cx/oc/sh/aw)
   cssClass: string; // .kind-<slug> color class slug
   // New Session dialog
@@ -67,6 +69,7 @@ function caps(overrides: Partial<AgentCaps>): AgentCaps {
     model: false,
     fork: false,
     contextBar: false,
+    imagePaste: false,
     ephemeral: false,
     runsInDir: false,
     launchableFromRepo: false,
@@ -81,6 +84,7 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     id: "claude",
     icon: "sparkle",
     label: "claude",
+    assistantName: "Claude",
     short: "cc",
     cssClass: "claude",
     launchHint: "Claude Code を起動",
@@ -91,6 +95,7 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
       model: true,
       fork: true,
       contextBar: true,
+      imagePaste: true,
       runsInDir: true,
       launchableFromRepo: true,
     }),
@@ -100,17 +105,29 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     id: "codex",
     icon: "rocket",
     label: "codex",
+    assistantName: "Codex",
     short: "cx",
     cssClass: "codex",
     launchHint: "Codex CLI を起動",
     launchSuffix: "-cx",
-    caps: caps({ runsInDir: true, launchableFromRepo: true }),
+    // Chat mirror lit up (段1): turns come from codex's rollout JSONL, normalized by the
+    // Agent's transcript() and windowed by the generic /messages handler. No fork (codex
+    // has no --session-id pin) and no inline questions/plan/permission (those are claude
+    // hook payloads); the context gauge works — codex logs token counts too.
+    caps: caps({
+      chat: true,
+      transcript: true,
+      contextBar: true,
+      runsInDir: true,
+      launchableFromRepo: true,
+    }),
     available: (c) => !!c.conns?.codex?.connected,
   },
   opencode: {
     id: "opencode",
     icon: "hubot",
     label: "opencode",
+    assistantName: "opencode",
     short: "oc",
     cssClass: "opencode",
     launchHint: "opencode を起動",
@@ -125,6 +142,7 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     id: "shell",
     icon: "terminal",
     label: "shell",
+    assistantName: "shell",
     short: "sh",
     cssClass: "shell",
     launchHint: "通常のシェル (bash)",
@@ -141,6 +159,7 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     id: "ssm",
     icon: "cloud",
     label: "ssm",
+    assistantName: "ssm",
     short: "aw",
     cssClass: "ssm",
     launchHint: "AWS EC2 に SSM ログイン",
