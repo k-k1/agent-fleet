@@ -181,9 +181,10 @@ Console のみ（`MirrorView` typing 行＋`.mirror-stop`）。
 チャットのコンポーザに **計画モード切替** と **停止** を追加。
 - **現在モード**: `transcriptData.mode`（"plan"|"normal"）を各アダプタが surface。claude=jsonl mode イベント（既存）、
   codex=`turn_context.collaboration_mode.mode`、opencode=最新メッセージの `agent`（build/plan）。
-- **切替**: 各 TUI のモードサイクルキーを送る。claude/codex=Shift+Tab（`BTab`）、opencode=Tab（agent_cycle）。
-  `allowedKey` に `BTab` を追加。registry に `planMode` cap＋`planCycleKey`。3モードの claude は1回で plan に届かない
-  ことがある（ポーリングで結果反映＝もう一度押せば届く）。
+- **切替**: **オンは `/plan` コマンドで確定的に**（claude/codex とも `/plan`＝"Enable/switch to Plan mode"、`planEnterCmd`）。
+  オフ（およびコマンドの無い opencode）はモードサイクルキー: claude/codex=Shift+Tab（`BTab`）、opencode=Tab（agent_cycle）。
+  `allowedKey` に `BTab` 追加。registry に `planMode` cap＋`planCycleKey`＋`planEnterCmd`。`/plan` はターンでないため
+  Agent はスラッシュコマンド（`slashCmdRe`）を `markSessionWorking` しない（codex の進行中固定を防ぐ）。
 - **停止**: 作業中に Escape を送る（[[22.11]] のサブエージェントビュー対応込み）。ツールバーに常設（旧・入力中行の
   停止は撤去）。
 - **現在モードはペインから取得（`paneMode`）**: モード切替キーでは新モードが transcript に記録されない（ターン実行時
