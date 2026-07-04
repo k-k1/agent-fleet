@@ -7167,8 +7167,10 @@ button.primary:hover:not(:disabled) {
   display: flex;
   align-items: center;
   gap: 2px;
-  min-width: 18px;
-  padding-left: 2px;
+  /* Top-right of the row (aligned with line 1), matching the REPOS list — not a
+     left gutter. Sits just left of the ⋯ menu. */
+  align-self: flex-start;
+  margin-top: 5px;
 }
 .session-ord {
   width: 16px;
