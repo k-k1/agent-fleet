@@ -20,18 +20,33 @@ var opencodeStatusAgentRe = regexp.MustCompile(`([A-Za-z][\w-]*) +auto +·`)
 // "<model> <effort> · <cwd>" (the word right before " · " then the cwd path).
 var codexFooterEffortRe = regexp.MustCompile(`([a-z]+) +· +[~/]`)
 
+// capturePane returns the session's visible pane text, targeting the active pane by its
+// id. NOTE: capture-pane does NOT accept the "=<session>" exact-target syntax that
+// send-keys/list-panes take ("can't find pane: =name") — that silently returned empty and
+// broke all pane scraping — so we resolve the pane id via sessionPaneID first.
+func capturePane(tn string) string {
+	pane := sessionPaneID(tn)
+	if pane == "" {
+		return ""
+	}
+	out, err := exec.Command("tmux", "capture-pane", "-p", "-t", pane).Output()
+	if err != nil {
+		return ""
+	}
+	return string(out)
+}
+
 // paneMode reads the session's CURRENT permission/collaboration mode straight from the
 // terminal (what the TUI displays), so it reflects toggles made in the terminal too —
 // not just via the chat. Returns "plan" | "normal" | "" (unknown → caller falls back to
 // the transcript's per-turn mode).
 func paneMode(kind, tn string) string {
+	s := capturePane(tn)
+	if s == "" {
+		return ""
+	}
 	switch kind {
 	case kindClaude:
-		out, err := exec.Command("tmux", "capture-pane", "-p", "-t", exactT(tn)).Output()
-		if err != nil {
-			return ""
-		}
-		s := string(out)
 		// claude's status line shows the active mode: "⏸ plan mode on (shift+tab to
 		// cycle)" vs "⏵⏵ bypass permissions on …" / "accept edits on …".
 		if strings.Contains(s, "plan mode") {
@@ -40,26 +55,14 @@ func paneMode(kind, tn string) string {
 		if strings.Contains(s, "shift+tab to cycle") {
 			return "normal"
 		}
-		return ""
 	case kindOpencode:
-		out, err := exec.Command("tmux", "capture-pane", "-p", "-t", exactT(tn)).Output()
-		if err != nil {
-			return ""
+		if m := opencodeStatusAgentRe.FindStringSubmatch(s); m != nil {
+			if strings.EqualFold(m[1], "plan") {
+				return "plan"
+			}
+			return "normal"
 		}
-		m := opencodeStatusAgentRe.FindStringSubmatch(string(out))
-		if m == nil {
-			return ""
-		}
-		if strings.EqualFold(m[1], "plan") {
-			return "plan"
-		}
-		return "normal"
 	case kindCodex:
-		out, err := exec.Command("tmux", "capture-pane", "-p", "-t", exactT(tn)).Output()
-		if err != nil {
-			return ""
-		}
-		s := string(out)
 		// codex's composer footer shows "Plan mode (shift+tab to cycle)" ONLY while in plan
 		// mode; Default mode shows just "<model> <effort> · <cwd>" (no mode label). Match
 		// "Plan mode (" — the history lines ("… for Plan mode.") end in a period, not a
@@ -72,7 +75,6 @@ func paneMode(kind, tn string) string {
 		if codexFooterEffortRe.MatchString(s) {
 			return "normal"
 		}
-		return ""
 	}
 	return ""
 }
@@ -209,11 +211,7 @@ func inputSubmitDelay(name string) time.Duration {
 // In that view Escape only navigates, so the stop button must step out (Up) first.
 // Best-effort: a capture failure returns false (treat as the normal view → plain Escape).
 func opencodeInSubagentView(tn string) bool {
-	out, err := exec.Command("tmux", "capture-pane", "-p", "-t", exactT(tn)).Output()
-	if err != nil {
-		return false
-	}
-	s := string(out)
+	s := capturePane(tn)
 	return strings.Contains(s, "Parent") && strings.Contains(s, "Next")
 }
 
