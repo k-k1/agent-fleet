@@ -1,0 +1,209 @@
+package main
+
+// Local stdio MCP server (docs/19 Q1). Spawned by the assistant chat's
+// `claude -p --mcp-config` as `workspace-agent mcp-stdio`, it exposes READ-ONLY
+// "Agent Fleet" tools over newline-delimited JSON-RPC 2.0 on stdio. Each tool calls
+// the local Agent's REST (127.0.0.1:<AGENT_ADDR>, AGENT_TOKEN) so the assistant can
+// inspect the user's OWN workspace with no PAT and no network egress — unlike the CP
+// /mcp server (PAT + public-URL hairpin), which stays for external/admin use.
+//
+// Write tools (send_to_session, …) are intentionally NOT exposed yet; enabling them
+// is a later, user-opt-in step (docs/19 Q1).
+
+import (
+	"bufio"
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"net/url"
+	"os"
+	"time"
+)
+
+const mcpStdioProtocol = "2025-06-18"
+
+// runMCPStdio is the `workspace-agent mcp-stdio` subcommand: a blocking stdio loop.
+func runMCPStdio(_ []string) {
+	r := bufio.NewReaderSize(os.Stdin, 1<<20)
+	w := bufio.NewWriter(os.Stdout)
+	for {
+		line, err := r.ReadBytes('\n')
+		if len(bytes.TrimSpace(line)) > 0 {
+			if resp := dispatchMCPStdio(line); resp != nil {
+				_, _ = w.Write(resp)
+				_ = w.WriteByte('\n')
+				_ = w.Flush()
+			}
+		}
+		if err != nil {
+			return // stdin closed (claude shut the server down)
+		}
+	}
+}
+
+type mcpReq struct {
+	JSONRPC string          `json:"jsonrpc"`
+	ID      json.RawMessage `json:"id"` // number|string for requests; absent/null for notifications
+	Method  string          `json:"method"`
+	Params  json.RawMessage `json:"params"`
+}
+
+func mcpResult(id json.RawMessage, result any) []byte {
+	b, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": id, "result": result})
+	return b
+}
+
+func mcpError(id json.RawMessage, code int, msg string) []byte {
+	b, _ := json.Marshal(map[string]any{
+		"jsonrpc": "2.0", "id": id,
+		"error": map[string]any{"code": code, "message": msg},
+	})
+	return b
+}
+
+func dispatchMCPStdio(line []byte) []byte {
+	var req mcpReq
+	if err := json.Unmarshal(line, &req); err != nil {
+		return nil
+	}
+	isNotif := len(bytes.TrimSpace(req.ID)) == 0 || string(bytes.TrimSpace(req.ID)) == "null"
+	switch req.Method {
+	case "initialize":
+		return mcpResult(req.ID, map[string]any{
+			"protocolVersion": mcpStdioProtocol,
+			"capabilities":    map[string]any{"tools": map[string]any{}},
+			"serverInfo":      map[string]any{"name": "agent-fleet-local", "version": "q1"},
+		})
+	case "notifications/initialized", "notifications/cancelled":
+		return nil
+	case "ping":
+		if isNotif {
+			return nil
+		}
+		return mcpResult(req.ID, map[string]any{})
+	case "tools/list":
+		return mcpResult(req.ID, map[string]any{"tools": mcpStdioTools})
+	case "tools/call":
+		return mcpStdioCall(req)
+	default:
+		if isNotif {
+			return nil
+		}
+		return mcpError(req.ID, -32601, "method not found: "+req.Method)
+	}
+}
+
+// mcpStdioTools — read-only Agent Fleet tools (names are prefixed mcp__af__<name> by
+// claude). Descriptions are prescriptive about WHEN to call (better trigger rate).
+var mcpStdioTools = []map[string]any{
+	{
+		"name":        "list_my_sessions",
+		"description": "利用者自身のワークスペースで稼働中のセッション一覧（名前・種別・状態・作業ディレクトリ）を返す。「今どのセッションが動いている?」等に答える時に呼ぶ。",
+		"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}},
+	},
+	{
+		"name":        "get_session_status",
+		"description": "指定セッションのライブ状態（working/idle/入力待ち等）を返す。特定セッションが動作中か聞かれた時に呼ぶ。",
+		"inputSchema": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"name": map[string]any{"type": "string", "description": "セッション名（例: s7）"},
+			},
+			"required": []string{"name"},
+		},
+	},
+	{
+		"name":        "get_session_output",
+		"description": "指定セッションの端末出力（任意で since バイトオフセット以降のみ）を返す。あるセッションの最近の出力/結果を要約・確認する時に呼ぶ。",
+		"inputSchema": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"name":  map[string]any{"type": "string", "description": "セッション名"},
+				"since": map[string]any{"type": "integer", "description": "この出力オフセット以降のみ取得（任意）"},
+			},
+			"required": []string{"name"},
+		},
+	},
+}
+
+func mcpStdioCall(req mcpReq) []byte {
+	var p struct {
+		Name string          `json:"name"`
+		Args json.RawMessage `json:"arguments"`
+	}
+	_ = json.Unmarshal(req.Params, &p)
+	var a struct {
+		Name  string `json:"name"`
+		Since int64  `json:"since"`
+	}
+	_ = json.Unmarshal(p.Args, &a)
+
+	var path string
+	switch p.Name {
+	case "list_my_sessions":
+		path = "/sessions"
+	case "get_session_status":
+		if a.Name == "" {
+			return mcpToolErr(req.ID, "name（セッション名）が必要です")
+		}
+		path = "/sessions/" + url.PathEscape(a.Name) + "/status"
+	case "get_session_output":
+		if a.Name == "" {
+			return mcpToolErr(req.ID, "name（セッション名）が必要です")
+		}
+		path = "/sessions/" + url.PathEscape(a.Name) + "/output"
+		if a.Since > 0 {
+			path += fmt.Sprintf("?since=%d", a.Since)
+		}
+	default:
+		return mcpError(req.ID, -32602, "unknown tool: "+p.Name)
+	}
+
+	body, err := agentGET(path)
+	if err != nil {
+		return mcpToolErr(req.ID, "Agent への問い合わせに失敗しました: "+err.Error())
+	}
+	return mcpResult(req.ID, map[string]any{
+		"content": []any{map[string]any{"type": "text", "text": body}},
+	})
+}
+
+// mcpToolErr returns a tools/call RESULT with isError=true — an in-band error the
+// model reads and can react to — rather than a JSON-RPC protocol error.
+func mcpToolErr(id json.RawMessage, msg string) []byte {
+	return mcpResult(id, map[string]any{
+		"content": []any{map[string]any{"type": "text", "text": msg}},
+		"isError": true,
+	})
+}
+
+// agentGET calls the local Agent REST with the shared AGENT_TOKEN.
+func agentGET(path string) (string, error) {
+	req, err := http.NewRequest(http.MethodGet, agentBaseURL()+path, nil)
+	if err != nil {
+		return "", err
+	}
+	if tok := os.Getenv("AGENT_TOKEN"); tok != "" {
+		req.Header.Set("Authorization", "Bearer "+tok)
+	}
+	resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	return string(b), nil
+}
+
+// agentBaseURL derives the loopback URL of the in-container Agent from AGENT_ADDR.
+func agentBaseURL() string {
+	addr := envOr("AGENT_ADDR", ":7700")
+	_, port, err := net.SplitHostPort(addr)
+	if err != nil || port == "" {
+		port = "7700"
+	}
+	return "http://127.0.0.1:" + port
+}
