@@ -83,6 +83,44 @@ Agent: chat.go = 会話ストア(home 内 JSON) + ChatProvider 抽象
 - **Phase C**: 用途アクション（Files/DocView から「翻訳」）、プロンプトテンプレ。
 - **Phase D**: （任意）API キー方式プロバイダ（生 Anthropic/OpenAI API、従量課金）を抽象越しに追加。
 
+## Agent Fleet アシスタント拡張（検討・決定）
+
+Phase C の前に、アシスタントを「Agent Fleet の操作・使い方案内」に踏み込ませる方向を検討し、以下を決定。
+
+### 前提（現物確認）
+- **AF MCP サーバ** = CP `control-plane/mcp.go`、パス `/mcp`、`AF_MCP_ENABLED=true` で有効化（既定 OFF）、
+  Streamable-HTTP、**PAT(Bearer) 認証・テナントはトークン固定**。member ツール
+  (`list_my_sessions`/`get_session_status`/`get_session_output`/`send_to_session`) は内部で Agent REST を叩く。
+- **コンテナ→CP の直接到達は不可**（専用 docker ブリッジ網 / CP はホスト 127.0.0.1:8099 専用、URL 未注入）。
+  唯一の経路は `<PUBLIC_BASE_URL>/mcp` へのヘアピン egress。Agent(localhost:7700) は REST のみで MCP なし。
+- `CLAUDE_CONFIG_DIR=/var/lib/af/claude`（専用マウント）を全セッションで共有。チャットの `claude -p` も継承。
+
+### Q3: セッションと .claude を分ける → **専用 config-dir（実装済）**
+共有のままだと (1) セッション状態フック汚染 (2) MCP 設定の対話セッションへの漏れ (3) 会話 jsonl の混在。
+→ チャット専用 `CLAUDE_CONFIG_DIR`（`~/.config/agent-fleet/chat-claude`、`AF_CHAT_CLAUDE_DIR` で上書き可）を
+`cmd.Env` で与え、**`.credentials.json` のみ共有 dir へシンボリックリンク**（サブスク認証は共有＝再ログイン不要）。
+`chat.go` の `ensureChatClaudeConfig`/`reconcileChatCreds`/`envWith`/`chatClaudeCmd`。
+creds は単一共有が必須（OAuth refresh はリフレッシュトークンをローテート＝単回使用。二重コピーは片方が失効）。
+rename 置換でリンクが実ファイル化したら次回実行時に「新しい方を shared へ戻して再リンク」で自己修復。
+**要実機検証**: claude の creds 書き込みが in-place か rename か（rename 多発なら runtime.go でファイル bind-mount に格上げ）。
+
+### Q1: ws から AF 操作 → **コンテナ内ローカル stdio MCP（当面リードオンリー）**
+CP `/mcp` はヘアピン＋PAT 発行が要り筋が悪い（外部/管理者/横断向けに温存）。自ワークスペース操作は
+**`workspace-agent mcp-stdio` サブコマンド**（`mcp.go` の member ツールを localhost:7700 の Agent REST＋
+`AGENT_TOKEN` で公開する stdio MCP）を追加し、チャットの `claude -p` に
+`--mcp-config '{"mcpServers":{"af":{"command":"workspace-agent","args":["mcp-stdio"]}}}' --strict-mcp-config
+--allowedTools "mcp__af__*"` で接続。PAT 不要・egress 不要・設定漏れなし・身元＝自コンテナ。
+**当面リードオンリー**（list/status/output）。`send_to_session` 等の**書き込みは既定オフ、ユーザーが明示的に有効化**
+（Console のトグル等）してから許可。
+
+### Q2: 使い方への回答 → **利用者向けガイド + 専用ペルソナ**
+内部設計書（docs/、インフラ/セキュリティ詳細含む）は**出さない**。利用者向けに要約した USAGE/FAQ を用意し
+`--add-dir` で読ませる。**「Agent Fleet アシスタント」を専用チャット種別/ペルソナ**として作り
+（`--append-system-prompt` でガイド参照＋基本操作概略）、AssistantSection にプリセット化。ライブ状態/操作は Q1 の MCP。
+
+### 実装順
+Q3（済）→ Q1（mcp-stdio, read-only）→ Q2（USAGE + 専用ペルソナ）→ Phase C。
+
 ## 制約（Console 側、docs/18 と同じ）
 
 no-store 配信 / URL は `document.baseURI` 相対 / `X-AF-Tenant` 注入 / xterm 内部は不可侵。
