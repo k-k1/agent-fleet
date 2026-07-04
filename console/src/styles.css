@@ -975,6 +975,17 @@ button.wu-reload {
     display: inline;
   }
 }
+/* The chat head is busier than the terminal's (kind + name + state chip + 分岐 +
+   ターミナル⇄チャット toggle), so its kind badge collapses to the 2-char short form at a
+   wider pane — the full word otherwise squeezes the session name to "nov…". */
+@container paneview (max-width: 460px) {
+  .mirrorview .view-head .kind-tag .kt-full {
+    display: none;
+  }
+  .mirrorview .view-head .kind-tag .kt-short {
+    display: inline;
+  }
+}
 /* Per-kind colors so claude / codex / opencode / shell are distinguishable
    at a glance (icon alone wasn't enough). */
 .kind-tag.kind-claude {
