@@ -56,6 +56,59 @@ func (c config) proxyAgentREST(w http.ResponseWriter, r *http.Request) {
 	_, _ = io.Copy(w, resp.Body)
 }
 
+// proxyAgentStream is proxyAgentREST for a streaming (SSE) endpoint: it forwards to
+// the Agent and copies the response back FLUSHING after each chunk, so token deltas
+// reach the browser as they arrive instead of buffering in net/http's ~4KB writer.
+func (c config) proxyAgentStream(w http.ResponseWriter, r *http.Request) {
+	res, ok := c.resolvedFor(w, r)
+	if !ok {
+		return
+	}
+	rt := res.rt
+	c.mgr.conns.touch(res.ws.ID) // a chat turn is real activity (POST)
+	target := rt.Endpoint() + strings.TrimPrefix(r.URL.Path, "/api")
+	if r.URL.RawQuery != "" {
+		target += "?" + r.URL.RawQuery
+	}
+	req, err := http.NewRequestWithContext(r.Context(), r.Method, target, r.Body)
+	if err != nil {
+		http.Error(w, "bad proxy request", http.StatusBadGateway)
+		return
+	}
+	req.Header = r.Header.Clone()
+	if rt.Token() != "" {
+		req.Header.Set("Authorization", "Bearer "+rt.Token())
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		http.Error(w, "workspace agent unreachable (is the workspace running?)", http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+	for k, vals := range resp.Header {
+		for _, v := range vals {
+			w.Header().Add(k, v)
+		}
+	}
+	w.WriteHeader(resp.StatusCode)
+	flusher, _ := w.(http.Flusher)
+	buf := make([]byte, 4096)
+	for {
+		n, rerr := resp.Body.Read(buf)
+		if n > 0 {
+			if _, werr := w.Write(buf[:n]); werr != nil {
+				return // client gone
+			}
+			if flusher != nil {
+				flusher.Flush()
+			}
+		}
+		if rerr != nil {
+			return
+		}
+	}
+}
+
 var upgrader = websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
 
 // proxyTerminal bridges the browser terminal WS to the Agent's /ws/pty,

@@ -76,7 +76,10 @@ Agent: chat.go = 会話ストア(home 内 JSON) + ChatProvider 抽象
 - **Phase A**: claude プロバイダで縦切り1本（非ストリーム）。会話ストア + `chat.go` + エンドポイント +
   CP ルート + `PaneKind "chat"` + 最小 `ChatView` + 左レール + `headlessChat` cap（claude のみ）。
 - **Phase A.2**: codex プロバイダ実機検証 → cap に codex 追加。
-- **Phase B**: トークンストリーミング（`claude -p --output-format stream-json`）+ CP の SSE/WS 中継。
+- **Phase B（実装済）**: トークンストリーミング。Agent `handleChatStream`（`claude -p --output-format stream-json
+  --verbose --include-partial-messages` の JSONL を parse、`content_block_delta`/`text_delta` を SSE 配信）、
+  CP `proxyAgentStream`（チャンク毎に Flush）、Console `chatStream`（fetch ストリーム読取り）+ ChatView 逐次表示。
+  会話継続は非ストリームと同じ session_id 保持。ストリーミング非対応プロバイダは send() へフォールバック。
 - **Phase C**: 用途アクション（Files/DocView から「翻訳」）、プロンプトテンプレ。
 - **Phase D**: （任意）API キー方式プロバイダ（生 Anthropic/OpenAI API、従量課金）を抽象越しに追加。
 

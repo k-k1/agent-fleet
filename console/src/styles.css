@@ -7448,3 +7448,16 @@ button.primary:hover:not(:disabled) {
 .chat-row:hover .chat-del {
   opacity: 1;
 }
+
+/* Streaming assistant reply: a soft blinking caret while tokens arrive (Phase B). */
+.chat-streaming::after {
+  content: "▍";
+  margin-left: 1px;
+  color: var(--muted);
+  animation: chat-caret 1s steps(1) infinite;
+}
+@keyframes chat-caret {
+  50% {
+    opacity: 0;
+  }
+}

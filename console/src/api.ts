@@ -199,6 +199,75 @@ export const chatSend = (
 ): Promise<{ conversation?: Conversation; error?: ApiError }> =>
   apiJSON(`api/chat/conversations/${encodeURIComponent(id)}/messages`, "POST", { content });
 
+// Streaming send (Phase B): POST the message and read a Server-Sent Events stream
+// of token deltas. Frames are `data: {json}` separated by blank lines; json is one
+// of {delta}, {error}, or {done, conversation}. onDelta fires per chunk; onDone with
+// the final saved conversation; onError with a message. Resolves when the stream ends.
+export interface ChatStreamHandlers {
+  onDelta?: (text: string) => void;
+  onDone?: (conv: Conversation | undefined) => void;
+  onError?: (msg: string) => void;
+}
+export async function chatStream(
+  id: string,
+  content: string,
+  h: ChatStreamHandlers,
+  signal?: AbortSignal,
+): Promise<void> {
+  let res: Response;
+  try {
+    res = await fetch(rel(`api/chat/conversations/${encodeURIComponent(id)}/stream`), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content }),
+      signal,
+    });
+  } catch {
+    h.onError?.("送信に失敗しました");
+    return;
+  }
+  if (!res.ok || !res.body) {
+    let msg = "送信に失敗しました";
+    try {
+      const j = await res.json();
+      msg = errText(j?.error) || msg;
+    } catch {
+      /* non-JSON error body */
+    }
+    h.onError?.(msg);
+    return;
+  }
+  const reader = res.body.getReader();
+  const dec = new TextDecoder();
+  let buf = "";
+  const drain = () => {
+    let idx: number;
+    while ((idx = buf.indexOf("\n\n")) >= 0) {
+      const frame = buf.slice(0, idx);
+      buf = buf.slice(idx + 2);
+      const line = frame.startsWith("data:") ? frame.slice(5).trim() : frame.trim();
+      if (!line) continue;
+      let obj: { delta?: string; error?: unknown; done?: boolean; conversation?: Conversation };
+      try {
+        obj = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      if (typeof obj.delta === "string") h.onDelta?.(obj.delta);
+      else if (obj.error != null) h.onError?.(errText(obj.error as ApiError) || String(obj.error));
+      else if (obj.done) h.onDone?.(obj.conversation);
+    }
+  };
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    drain();
+  }
+  buf += dec.decode();
+  drain();
+}
+
 // Build the terminal WebSocket URL for a session under the current mount, with
 // the tenant carried as a query param (headers aren't available on WS).
 export function wsURL(session: string): URL {

@@ -13,6 +13,8 @@ package main
 // the agent kind only selects the backend + presentation.
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -71,7 +73,16 @@ const chatPersona = "あなたは Agent Fleet 利用者の作業を補助する�
 // chatTimeout bounds a single CLI turn so a hung process can't wedge the request.
 const chatTimeout = 240 * time.Second
 
-var chatMu sync.Mutex // serializes load-modify-save on the send path
+// Per-conversation lock so concurrent turns to the SAME conversation serialize
+// (load-modify-save), while different conversations proceed in parallel.
+var convLocks sync.Map // id -> *sync.Mutex
+
+func lockConv(id string) func() {
+	m, _ := convLocks.LoadOrStore(id, &sync.Mutex{})
+	mu := m.(*sync.Mutex)
+	mu.Lock()
+	return mu.Unlock
+}
 
 // --- store ---
 
@@ -223,6 +234,112 @@ func (claudeChat) send(ctx context.Context, c *chatConversation, prompt string) 
 	return strings.TrimRight(r.Result, "\n"), nil
 }
 
+// streamingProvider is the optional token-streaming variant of chatProvider. emit
+// is called with each incremental text delta; the returned string is the full reply.
+// A provider that doesn't implement it falls back to send() (one emit of the whole
+// result) in handleChatStream, so every agent works through the stream endpoint.
+type streamingProvider interface {
+	sendStream(ctx context.Context, c *chatConversation, prompt string, emit func(delta string)) (string, error)
+}
+
+// streamLine is one JSONL event from `claude --output-format stream-json`. We read
+// the incremental text_delta events (with --include-partial-messages) for live
+// display, capture the session id for resume, and take the final `result` as the
+// authoritative reply text.
+type streamLine struct {
+	Type      string `json:"type"`
+	SessionID string `json:"session_id"`
+	Result    string `json:"result"`
+	IsError   bool   `json:"is_error"`
+	Event     struct {
+		Type  string `json:"type"`
+		Delta struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		} `json:"delta"`
+	} `json:"event"`
+}
+
+func (claudeChat) sendStream(ctx context.Context, c *chatConversation, prompt string, emit func(string)) (string, error) {
+	// stream-json requires --verbose with -p; --include-partial-messages adds the
+	// per-token text_delta events we forward for live display.
+	args := []string{"-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
+		"--dangerously-skip-permissions", "--append-system-prompt", chatPersona}
+	if c.Model != "" {
+		args = append(args, "--model", c.Model)
+	}
+	if c.ClaudeSessionID != "" {
+		args = append(args, "--resume", c.ClaudeSessionID)
+	} else {
+		c.ClaudeSessionID = randUUID()
+		args = append(args, "--session-id", c.ClaudeSessionID)
+	}
+	cmd := exec.CommandContext(ctx, "claude", args...)
+	cmd.Dir = chatWorkdir()
+	cmd.Stdin = strings.NewReader(prompt)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return "", fmt.Errorf("claude 起動に失敗しました: %v", err)
+	}
+	if err := cmd.Start(); err != nil {
+		return "", fmt.Errorf("claude 起動に失敗しました: %v", err)
+	}
+
+	var acc strings.Builder // accumulated deltas (fallback if result is empty)
+	var result string       // authoritative final text from the result event
+	var resultErr bool
+	reader := bufio.NewReaderSize(stdout, 1<<20)
+	for {
+		line, rerr := reader.ReadBytes('\n')
+		if len(bytes.TrimSpace(line)) > 0 {
+			var sl streamLine
+			if json.Unmarshal(line, &sl) == nil {
+				if sl.SessionID != "" {
+					c.ClaudeSessionID = sl.SessionID
+				}
+				switch sl.Type {
+				case "stream_event":
+					if sl.Event.Type == "content_block_delta" &&
+						sl.Event.Delta.Type == "text_delta" && sl.Event.Delta.Text != "" {
+						acc.WriteString(sl.Event.Delta.Text)
+						emit(sl.Event.Delta.Text)
+					}
+				case "result":
+					result = sl.Result
+					resultErr = sl.IsError
+				}
+			}
+		}
+		if rerr != nil {
+			break // EOF or read error — the process is done streaming
+		}
+	}
+	if err := cmd.Wait(); err != nil {
+		return "", fmt.Errorf("claude 実行に失敗しました: %s", stderrOr(err, &stderr))
+	}
+	if resultErr {
+		return "", fmt.Errorf("claude がエラーを返しました: %s", result)
+	}
+	final := result
+	if final == "" {
+		final = acc.String()
+	}
+	return strings.TrimRight(final, "\n"), nil
+}
+
+// stderrOr renders an exec error, preferring captured stderr.
+func stderrOr(err error, stderr *bytes.Buffer) string {
+	if s := strings.TrimSpace(stderr.String()); s != "" {
+		if len(s) > 500 {
+			s = s[:500] + "…"
+		}
+		return s
+	}
+	return err.Error()
+}
+
 // codexChat is a documented seam. The provider dispatch is real (two entries), but
 // codex's `--json` event schema and resume-id capture need live verification, so
 // it is not yet exposed in the New-Chat picker (registry cap headlessChat is
@@ -329,8 +446,8 @@ func handleChatSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	chatMu.Lock()
-	defer chatMu.Unlock()
+	unlock := lockConv(id)
+	defer unlock()
 
 	c, err := loadConv(id)
 	if err != nil {
@@ -364,4 +481,80 @@ func handleChatSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"message": assistant, "conversation": c})
+}
+
+// handleChatStream is the streaming (Phase B) form of send: it runs the provider
+// with token streaming and forwards deltas as Server-Sent Events. Frames:
+//
+//	data: {"delta":"<text>"}                      — an incremental chunk
+//	data: {"error":"<msg>"}                       — provider/exec failure
+//	data: {"done":true,"message":…,"conversation":…} — final turn saved
+//
+// Providers without a streaming variant fall back to a single delta (the full reply).
+func handleChatStream(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var req chatSendReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "bad_request", "invalid body")
+		return
+	}
+	content := strings.TrimSpace(req.Content)
+	if content == "" {
+		writeErr(w, http.StatusBadRequest, "empty", "メッセージが空です")
+		return
+	}
+
+	unlock := lockConv(id)
+	defer unlock()
+
+	c, err := loadConv(id)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "not_found", "会話が見つかりません")
+		return
+	}
+	prov, ok := chatProviders[c.Agent]
+	if !ok {
+		writeErr(w, http.StatusBadRequest, "bad_agent", "未対応のエージェントです")
+		return
+	}
+
+	c.Messages = append(c.Messages, chatMessage{Role: "user", Content: content, TS: nowMs()})
+
+	// From here the response is an SSE stream; per-frame errors ride the stream body.
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("X-Accel-Buffering", "no") // hint any intermediary not to buffer
+	flusher, _ := w.(http.Flusher)
+	emit := func(obj any) {
+		b, _ := json.Marshal(obj)
+		_, _ = fmt.Fprintf(w, "data: %s\n\n", b)
+		if flusher != nil {
+			flusher.Flush()
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), chatTimeout)
+	defer cancel()
+
+	var reply string
+	if sp, ok := prov.(streamingProvider); ok {
+		reply, err = sp.sendStream(ctx, c, content, func(d string) { emit(map[string]string{"delta": d}) })
+	} else {
+		reply, err = prov.send(ctx, c, content)
+		if err == nil {
+			emit(map[string]string{"delta": reply})
+		}
+	}
+	if err != nil {
+		c.UpdatedAt = nowMs()
+		_ = saveConv(c) // persist the user turn + resume handle so a retry continues
+		emit(map[string]any{"error": err.Error()})
+		return
+	}
+
+	assistant := chatMessage{Role: "assistant", Content: reply, TS: nowMs()}
+	c.Messages = append(c.Messages, assistant)
+	c.UpdatedAt = nowMs()
+	_ = saveConv(c)
+	emit(map[string]any{"done": true, "message": assistant, "conversation": c})
 }

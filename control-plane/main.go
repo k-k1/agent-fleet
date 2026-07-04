@@ -232,6 +232,7 @@ func main() {
 	mux.HandleFunc("GET /api/chat/conversations/{id}", cfg.proxyAgentREST)
 	mux.HandleFunc("DELETE /api/chat/conversations/{id}", cfg.proxyAgentREST)
 	mux.HandleFunc("POST /api/chat/conversations/{id}/messages", cfg.proxyAgentREST)
+	mux.HandleFunc("POST /api/chat/conversations/{id}/stream", cfg.proxyAgentStream) // SSE (Phase B)
 
 	// SSM login config (docs/history/p3-ssm-session.md) — per-member profiles (common
 	// auth bundle) + host bookmarks (per-instance). No AWS secrets; the aws CLI in the
