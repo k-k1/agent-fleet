@@ -100,9 +100,13 @@ Phase C の前に、アシスタントを「Agent Fleet の操作・使い方案
 → チャット専用 `CLAUDE_CONFIG_DIR`（`~/.config/agent-fleet/chat-claude`、`AF_CHAT_CLAUDE_DIR` で上書き可）を
 `cmd.Env` で与え、**`.credentials.json` のみ共有 dir へシンボリックリンク**（サブスク認証は共有＝再ログイン不要）。
 `chat.go` の `ensureChatClaudeConfig`/`reconcileChatCreds`/`envWith`/`chatClaudeCmd`。
-creds は単一共有が必須（OAuth refresh はリフレッシュトークンをローテート＝単回使用。二重コピーは片方が失効）。
-rename 置換でリンクが実ファイル化したら次回実行時に「新しい方を shared へ戻して再リンク」で自己修復。
-**要実機検証**: claude の creds 書き込みが in-place か rename か（rename 多発なら runtime.go でファイル bind-mount に格上げ）。
+creds は単一共有が必須（OAuth refresh はリフレッシュトークンをローテートするため、二重コピーは片方が失効）。
+**strace で実測確定**: claude は JSON 状態（creds 含む）を **tmp＋rename 置換（アトミック）** で書く
+（`.claude.json.tmp.* → rename(.claude.json)`、inode が変わる）。帰結:
+- 対話セッション/Agent 再認証 = **共有ファイル**を rename → symlink はパス解決なので追従（最新を取得）、対処不要。
+- チャット自身の refresh = **リンクのパス**を rename → symlink が実ファイル化して共有と乖離。
+  → `reconcileChatCreds` が「新しいトークンを shared へ戻して再リンク」。実行**前後**両方で走らせ、1ターン以内に共有へ反映。
+- ファイル bind-mount は不可（source の rename でマウントが陳腐化、マウント点への rename は EBUSY）→ **symlink＋copy-back が最適解**。
 
 ### Q1: ws から AF 操作 → **コンテナ内ローカル stdio MCP（当面リードオンリー）**
 CP `/mcp` はヘアピン＋PAT 発行が要り筋が悪い（外部/管理者/横断向けに温存）。自ワークスペース操作は
