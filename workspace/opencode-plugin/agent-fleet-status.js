@@ -55,11 +55,24 @@ export const AgentFleetStatus = async ({ $ }) => {
       /* ignore */
     }
   };
+  // Extract the opencode session id from whichever event carries one, so the recorded
+  // slot→session mapping always tracks the CURRENTLY-ACTIVE session — not just the first
+  // one created. opencode can start a new session mid-run (e.g. after an interrupt); if
+  // we only captured session.created we'd keep resuming/reading the stale session and the
+  // chat would show nothing new. session.idle / message.* both carry the live session id.
+  const sidOf = (t, props) => {
+    if (!props) return null;
+    if (props.sessionID) return props.sessionID; // session.*, message.removed, part.*
+    if (props.info && props.info.sessionID) return props.info.sessionID; // message.updated
+    if (props.part && props.part.sessionID) return props.part.sessionID; // message.part.updated
+    return null;
+  };
   return {
     event: async ({ event }) => {
       const t = event && event.type;
       if (!t) return;
-      if (t === "session.created") recordOcid(event.properties && event.properties.sessionID);
+      const ocid = sidOf(t, event.properties);
+      if (ocid) recordOcid(ocid); // keep the slot pinned to the live session
       if (t === "session.idle") {
         idleAt = Date.now();
         set("idle");
