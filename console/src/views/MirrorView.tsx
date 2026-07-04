@@ -984,7 +984,7 @@ export default function MirrorView({
                 else postKeys([agent.planCycleKey]);
               }}
             >
-              <Icon name="debug-pause" /> {mode || "…"}
+              {mode || "…"}
             </button>
           )}
           {/* History nav for phones (no arrow keys); hidden on wider screens via CSS. */}
