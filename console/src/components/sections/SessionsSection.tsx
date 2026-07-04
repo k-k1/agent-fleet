@@ -57,7 +57,7 @@ const writeCollapsed = (s: Set<string>) => {
 // window (agent-side TTL). The ⋯ menu holds destructive actions (作り直す). The
 // list polls so state updates on its own.
 export default function SessionsSection() {
-  const { sessions, bumpSessions, bumpRepos, bumpFiles, revealInFiles, showTerminal, showTerminalSplit, showChat, showChatSplit, closeNav, session, newSessionTick, wsState, layout, setActivePane } = useApp();
+  const { sessions, bumpSessions, bumpRepos, bumpFiles, revealInFiles, showTerminal, showTerminalSplit, showChat, showChatSplit, closeSessionPanes, closeNav, session, newSessionTick, wsState, layout, setActivePane } = useApp();
   const running = wsState === "running"; // WS down → attach/resume/create are inert
   const askConfirm = useConfirm();
   const toast = useToast();
@@ -122,6 +122,7 @@ export default function SessionsSection() {
       toast("アーカイブに失敗しました");
       return;
     }
+    closeSessionPanes(s.name); // it's leaving the list — close any pane still showing it
     bumpSessions();
     closeNav(); // mobile: acting from the left-pane menu closes the drawer (no-op on desktop)
   };
@@ -152,6 +153,7 @@ export default function SessionsSection() {
       ...keepable.map((s) => raw(`api/sessions/${encodeURIComponent(s.name)}/archive`, { method: "POST" }).catch(() => {})),
       ...ephemeral.map((s) => raw(`api/sessions/${encodeURIComponent(s.name)}/stop`, { method: "POST" }).catch(() => {})),
     ]);
+    for (const s of stopped) closeSessionPanes(s.name); // all cleared rows leave the list
     bumpSessions();
     closeNav(); // mobile: close the drawer after acting from the left-pane menu
   };
@@ -214,6 +216,9 @@ export default function SessionsSection() {
     }
     const created = await res.json().catch(() => null);
     const newName = created?.name || name;
+    // The old session was archived (退避) — close any pane still showing it before we
+    // open the replacement, so a stale archived session doesn't linger in a split.
+    if (newName !== name) closeSessionPanes(name);
     // Open the freshly created session: claude → chat mirror (live), other kinds →
     // terminal. Re-poll shortly so the new row appears fast.
     (created && agentOf(created.kind).caps.chat ? showChat : showTerminal)(newName);
