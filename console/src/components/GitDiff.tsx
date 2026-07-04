@@ -1,5 +1,12 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Icon from "./Icon.jsx";
+
+// A fold broadcast: bump `n` (a nonce) to force every FileDiff block to `open`. Lets a
+// parent add 全て開く / 全て閉じる controls without lifting each file's fold state.
+export interface FoldSignal {
+  n: number;
+  open: boolean;
+}
 
 // Shared git-diff rendering, split out of SourceControlView so the changes pane and the
 // commit-detail pane render diffs identically. A unified diff is broken into per-file
@@ -136,11 +143,13 @@ export function Diff({
   embedded,
   truncated,
   wrap,
+  fold,
 }: {
   text?: string;
   embedded?: boolean;
   truncated?: boolean;
   wrap?: boolean;
+  fold?: FoldSignal;
 }) {
   // Real diffs carry an @@ hunk or a `diff --git` header; anything else (placeholder
   // "(差分なし)", error strings, empty) is shown as a plain message, not parsed.
@@ -152,7 +161,7 @@ export function Diff({
   return (
     <div className={"diff-files" + (wrap ? " wrap" : "")}>
       {files.map((f, i) => (
-        <FileDiff key={(f.path || "") + i} file={f} />
+        <FileDiff key={(f.path || "") + i} file={f} fold={fold} />
       ))}
       {truncated && <div className="diff-trunc">…（差分が大きいため省略）</div>}
     </div>
@@ -160,9 +169,13 @@ export function Diff({
 }
 
 // FileDiff: one foldable file block — a sticky header (chevron + path + ±counts)
-// over a line-numbered patch body. Defaults open; click the header to collapse.
-function FileDiff({ file }: { file: DiffFile }) {
+// over a line-numbered patch body. Defaults open; click the header to collapse. A
+// `fold` broadcast (from 全て開く / 全て閉じる) forces open/closed when its nonce changes.
+function FileDiff({ file, fold }: { file: DiffFile; fold?: FoldSignal }) {
   const [open, setOpen] = useState(true);
+  useEffect(() => {
+    if (fold) setOpen(fold.open);
+  }, [fold?.n]); // eslint-disable-line react-hooks/exhaustive-deps
   const rows = useMemo(() => diffRows(file.lines), [file.lines]);
   const adds = rows.reduce((n, r) => n + (r.type === "add" ? 1 : 0), 0);
   const dels = rows.reduce((n, r) => n + (r.type === "del" ? 1 : 0), 0);
@@ -193,7 +206,7 @@ function FileDiff({ file }: { file: DiffFile }) {
 
 // CommitDetail renders one commit (codeleaf style): header (subject/body/meta), then
 // the full colored patch (the diff below already lists every file).
-export function CommitDetail({ commit, wrap }: { commit: CommitData | null; wrap?: boolean }) {
+export function CommitDetail({ commit, wrap, fold }: { commit: CommitData | null; wrap?: boolean; fold?: FoldSignal }) {
   const [bodyOpen, setBodyOpen] = useState(false);
   if (!commit) return <pre className="diff muted">読み込み中…</pre>;
   if (commit.error) return <pre className="diff muted">(コミット取得失敗)</pre>;
@@ -216,7 +229,7 @@ export function CommitDetail({ commit, wrap }: { commit: CommitData | null; wrap
           </button>
         )}
       </div>
-      <Diff text={commit.diff} embedded truncated={commit.truncated} wrap={wrap} />
+      <Diff text={commit.diff} embedded truncated={commit.truncated} wrap={wrap} fold={fold} />
     </div>
   );
 }

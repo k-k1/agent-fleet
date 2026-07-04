@@ -11,6 +11,7 @@ import NewRepoModal from "../NewRepoModal.jsx";
 import BranchModal from "../BranchModal.jsx";
 import { kindIcon, kindLabel } from "../../lib/sessionkind.js";
 import { agentOf, repoLaunchKinds } from "../../agents/registry.ts";
+import { repoPanes, ordClass, paneCount } from "../../lib/panebadge.js";
 import type { MouseEvent as RMouseEvent } from "react";
 import type { ConnectionsStatus, Session } from "../../types/session.ts";
 
@@ -47,8 +48,11 @@ const guessRepoName = (u: string | null | undefined) => {
 // switch branch, fetch, start a session in the repo, delete, or open Source
 // Control (→ main area). The dirty dot mirrors uncommitted changes.
 export default function ReposSection() {
-  const { reposKey, connKey, bumpRepos, bumpSessions, bumpFiles, revealInFiles, showSCM, showSCMSplit, showChanges, showTerminal, showTerminalSplit, showChat, showChatSplit, scmRepo, mode, session, wsState } =
+  const { reposKey, connKey, bumpRepos, bumpSessions, bumpFiles, revealInFiles, showSCM, showSCMSplit, showChanges, showTerminal, showTerminalSplit, showChat, showChatSplit, scmRepo, mode, session, wsState, layout, setActivePane } =
     useApp();
+  // repo name → panes showing it (ordinal badges), like the Sessions list; only when split.
+  const multiPane = paneCount(layout) > 1;
+  const rPanes = multiPane ? repoPanes(layout) : null;
   const toast = useToast();
   const running = wsState === "running"; // WS down → clone/open/launch are inert
   const [repos, setRepos] = useState<Repo[]>([]);
@@ -176,6 +180,8 @@ export default function ReposSection() {
             kinds={launchKinds}
             running={running}
             active={(mode === "scm" || mode === "changes" || mode === "commit") && scmRepo === r.name}
+            opens={rPanes?.get(r.name)}
+            onFocusPane={setActivePane}
             selected={r.name === activeRepo}
             // One click on the repo opens the Source Control workbench in the main
             // pane (Ctrl/Cmd/middle-click → freshly split pane). Revealing the folder
@@ -246,9 +252,11 @@ interface RepoRowProps {
   onFF?: () => void;
   onLaunch: (kind: string, split: boolean) => void;
   onBranchChanged?: () => void;
+  opens?: { ordinal: number; id: string }[];
+  onFocusPane?: (id: string) => void;
 }
 
-function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected, onOpen, onOpenFolder, onOpenChanges, onFF, onLaunch, onBranchChanged }: RepoRowProps) {
+function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected, onOpen, onOpenFolder, onOpenChanges, onFF, onLaunch, onBranchChanged, opens, onFocusPane }: RepoRowProps) {
   const [showLaunch, setShowLaunch] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null); // right-click context menu
@@ -290,19 +298,20 @@ function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected,
         setMenu({ x: e.clientX, y: e.clientY });
       }}
     >
-      <div className="repo-info">
-        <button
-          className="link grow repo-name"
-          title={running ? "ソース管理を開く: " + r.path + "（Ctrl/中クリックで新ペイン）" : "ワークスペース停止中"}
-          disabled={!running}
-          onClick={onOpen}
-          // Middle-click opens Source Control in a split pane (same as Ctrl+click).
-          onMouseDown={(e) => e.button === 1 && e.preventDefault()}
-          onAuxClick={(e) => e.button === 1 && onOpen(e)}
-        >
-          <Icon name="repo" className="repo-ic" />
-          {r.name}
-        </button>
+      <div
+        className={"repo-card" + (running ? "" : " disabled")}
+        title={running ? "ソース管理を開く: " + r.path + "（Ctrl/中クリックで新ペイン）" : "ワークスペース停止中"}
+        // The whole card opens Source Control (plain → active pane, Ctrl/middle → split);
+        // the 起動 dropdown stops propagation so it stays independent.
+        onClick={(e) => running && onOpen(e)}
+        onMouseDown={(e) => e.button === 1 && e.preventDefault()}
+        onAuxClick={(e) => e.button === 1 && running && onOpen(e)}
+      >
+        <div className="repo-info">
+          <span className="grow repo-name">
+            <Icon name="repo" className="repo-ic" />
+            {r.name}
+          </span>
         {(r.dirty || ((r.ahead || r.behind) ?? 0) > 0) && (
           <span className="repo-state">
             {r.dirty && (
@@ -322,7 +331,22 @@ function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected,
             )}
           </span>
         )}
-        <div className="launch-wrap" ref={wrapRef}>
+        {opens && opens.length > 0 && (
+          <span className="session-ords repo-ords">
+            {opens.map((o) => (
+              <button
+                key={o.id}
+                type="button"
+                className={"session-ord " + ordClass(o.ordinal)}
+                title={`ペイン${o.ordinal}にフォーカス`}
+                onClick={(e) => { e.stopPropagation(); onFocusPane?.(o.id); }}
+              >
+                {o.ordinal}
+              </button>
+            ))}
+          </span>
+        )}
+        <div className="launch-wrap" ref={wrapRef} onClick={(e) => e.stopPropagation()}>
           <button
             className="chip launch"
             title={running ? "このディレクトリでセッションを起動（複数可）" : "ワークスペース停止中"}
@@ -379,6 +403,7 @@ function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected,
           )}
         </div>
       )}
+      </div>
 
       {menu && (
         <ul

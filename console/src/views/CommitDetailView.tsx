@@ -3,7 +3,7 @@ import { useApp } from "../state.jsx";
 import { api } from "../api.js";
 import Icon from "../components/Icon.jsx";
 import { CommitDetail } from "../components/GitDiff.jsx";
-import type { CommitData } from "../components/GitDiff.jsx";
+import type { CommitData, FoldSignal } from "../components/GitDiff.jsx";
 import EmptyState from "../components/EmptyState.jsx";
 
 // CommitDetailView is one commit's detail/diff in its own pane, opened by clicking a
@@ -25,6 +25,8 @@ export default function CommitDetailView({
   const [commit, setCommit] = useState<CommitData | null>(null);
   const [localWrap, setLocalWrap] = useState<boolean | null>(null); // per-view soft-wrap override
   const effWrap = localWrap ?? !!wrap;
+  const [fold, setFold] = useState<FoldSignal | undefined>(undefined); // 全て開く/閉じる broadcast
+  const foldAll = (open: boolean) => setFold((f) => ({ n: (f?.n ?? 0) + 1, open }));
 
   useEffect(() => {
     if (!scmRepo || !target) {
@@ -57,6 +59,12 @@ export default function CommitDetailView({
           <Icon name="git-commit" /> {scmRepo} · {(target || "").slice(0, 10)}
         </span>
         <span className="spacer" />
+        <button className="ghost scm-act" title="全ての diff を開く" onClick={() => foldAll(true)}>
+          <Icon name="expand-all" /> <span className="lbl">全て開く</span>
+        </button>
+        <button className="ghost scm-act" title="全ての diff を閉じる" onClick={() => foldAll(false)}>
+          <Icon name="collapse-all" /> <span className="lbl">全て閉じる</span>
+        </button>
         <button
           className={"ghost scm-act" + (effWrap ? " on" : "")}
           title="行を折り返す"
@@ -67,7 +75,7 @@ export default function CommitDetailView({
         </button>
       </header>
       <div className="commit-view-body">
-        <CommitDetail commit={commit} wrap={effWrap} />
+        <CommitDetail commit={commit} wrap={effWrap} fold={fold} />
       </div>
     </div>
   );
