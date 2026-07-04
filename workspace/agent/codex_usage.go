@@ -109,8 +109,9 @@ func codexUsageFromRolloutBytes(b []byte) (codexUsage, bool) {
 // usageWindow shape. ok is false for payloads without a rate_limits block.
 func codexRateLimits(payload json.RawMessage) (codexUsage, bool) {
 	type win struct {
-		UsedPercent float64 `json:"used_percent"`
-		ResetsAt    int64   `json:"resets_at"` // unix epoch seconds
+		UsedPercent   float64 `json:"used_percent"`
+		WindowMinutes int     `json:"window_minutes"`
+		ResetsAt      int64   `json:"resets_at"` // unix epoch seconds
 	}
 	var p struct {
 		Type       string `json:"type"`
@@ -129,15 +130,35 @@ func codexRateLimits(payload json.RawMessage) (codexUsage, bool) {
 		return codexUsage{}, false
 	}
 	u := codexUsage{OK: true, PlanType: rl.PlanType, AgeSec: -1}
+	now := time.Now().UTC()
 	toWin := func(x *win) *usageWindow {
 		if x == nil {
 			return nil
 		}
-		return &usageWindow{Pct: x.UsedPercent, ResetsAt: time.Unix(x.ResetsAt, 0).UTC().Format(time.RFC3339)}
+		return codexAdjustWindow(x.UsedPercent, x.WindowMinutes, x.ResetsAt, now)
 	}
 	u.FiveHour = toWin(rl.Primary)
 	u.SevenDay = toWin(rl.Secondary)
 	return u, true
+}
+
+// codexAdjustWindow maps one recorded rate-limit window onto a usageWindow, correcting
+// for staleness. A codex reading is a snapshot from the last turn; if its window has
+// since reset (resetEpoch is at/before now), the recorded % no longer applies — usage
+// is back to 0 — so we zero it and roll the reset forward by whole windows to the next
+// sensible boundary. A window still in the future passes through unchanged.
+func codexAdjustWindow(pct float64, windowMin int, resetEpoch int64, now time.Time) *usageWindow {
+	reset := time.Unix(resetEpoch, 0).UTC()
+	if !reset.After(now) {
+		pct = 0
+		if windowMin > 0 {
+			step := time.Duration(windowMin) * time.Minute
+			for !reset.After(now) {
+				reset = reset.Add(step)
+			}
+		}
+	}
+	return &usageWindow{Pct: pct, ResetsAt: reset.Format(time.RFC3339)}
 }
 
 // ageSecFrom returns whole seconds since an RFC3339 instant, or -1 if unparseable.
