@@ -33,7 +33,7 @@ export const useApp = (): AppState => useContext(AppContext) as AppState;
 // A pane descriptor. kind drives which view renders; the *Path/Repo/session fields
 // are the per-kind payload. Empty terminal pane = "セッション未接続".
 function blankPane(id: string, patch?: PanePatch): Pane {
-  return { id, kind: "terminal", session: null, chat: false, filePath: null, scmRepo: null, commitSha: null, docTitle: null, docContent: null, diffTool: null, diffEdits: null, wrap: null, ...patch };
+  return { id, kind: "terminal", session: null, chat: false, filePath: null, scmRepo: null, commitSha: null, docTitle: null, docContent: null, diffTool: null, diffEdits: null, conversationId: null, wrap: null, ...patch };
 }
 
 const equalRatios = (n: number): number[] => Array(n).fill(1 / n);
@@ -722,6 +722,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
     },
     [openInNewPane],
   );
+  // openChat opens an assistant-chat conversation (docs/19) in the active pane — a
+  // non-terminal chat surface keyed by conversation id, backed by a headless CLI.
+  const openChat = useCallback(
+    (conversationId: string) => {
+      if (navOpenRef.current) pushDrawerEntry();
+      openActive({ kind: "chat", conversationId });
+    },
+    [openActive, pushDrawerEntry],
+  );
 
   // ---- pane layout controls ----
   // splitRight appends a new full-height column (up to MAX_COLS) holding a fresh
@@ -1037,6 +1046,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     showFileSplit,
     showDoc,
     showDiff,
+    openChat,
     setPaneWrap,
     settingsOpen,
     settingsSection,

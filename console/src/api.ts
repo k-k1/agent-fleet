@@ -178,6 +178,27 @@ export const fsRename = (from: string, to: string) =>
   fsWrite(`api/fs/rename?from=${q(from)}&to=${q(to)}`, { method: "POST" });
 export const fsDelete = (path: string) => fsWrite(`api/fs/delete?path=${q(path)}`, { method: "DELETE" });
 
+// --- assistant chat (docs/19) ---
+// Headless-CLI LLM chat/translation. Thin wrappers over the /api/chat/* endpoints;
+// callers own the response shape (Conversation / ConversationMeta in types/chat).
+import type { Conversation, ConversationMeta } from "./types/chat.ts";
+import type { SessionKind } from "./types/session.ts";
+
+export const chatList = (): Promise<{ conversations: ConversationMeta[] }> =>
+  api("api/chat/conversations");
+export const chatCreate = (agent: SessionKind, title?: string, model?: string): Promise<Conversation> =>
+  apiJSON("api/chat/conversations", "POST", { agent, title, model });
+export const chatGet = (id: string): Promise<Conversation> =>
+  api(`api/chat/conversations/${encodeURIComponent(id)}`);
+export const chatDelete = (id: string): Promise<Response> =>
+  raw(`api/chat/conversations/${encodeURIComponent(id)}`, { method: "DELETE" });
+// Send returns the assistant message + the updated conversation, or {error} on failure.
+export const chatSend = (
+  id: string,
+  content: string,
+): Promise<{ conversation?: Conversation; error?: ApiError }> =>
+  apiJSON(`api/chat/conversations/${encodeURIComponent(id)}/messages`, "POST", { content });
+
 // Build the terminal WebSocket URL for a session under the current mount, with
 // the tenant carried as a query param (headers aren't available on WS).
 export function wsURL(session: string): URL {

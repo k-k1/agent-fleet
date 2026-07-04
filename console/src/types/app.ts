@@ -91,6 +91,7 @@ export interface AppState {
   showFileSplit: (path: string) => void;
   showDoc: (title: string, content: string) => void;
   showDiff: (title: string, edits: unknown, tool: string) => void;
+  openChat: (conversationId: string) => void;
   setPaneWrap: (id: string, wrap: boolean | null) => void;
   // dialogs
   settingsOpen: boolean;
