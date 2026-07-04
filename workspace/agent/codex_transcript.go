@@ -60,6 +60,11 @@ var codexWrapperTags = []string{
 	"<permissions instructions>",
 	"<collaboration_mode>",
 	"<skills_instructions>",
+	// codex injects each AGENTS.md (our workspace-notes.md, plus project AGENTS.md) as a
+	// user message headed "# AGENTS.md instructions" and wrapped in <INSTRUCTIONS>…; both
+	// are injected context, not a human prompt.
+	"# AGENTS.md instructions",
+	"<INSTRUCTIONS>",
 }
 
 // codexParseRollout normalizes a codex rollout's lines into ordered chatTurns. Each

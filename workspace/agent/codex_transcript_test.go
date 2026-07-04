@@ -64,6 +64,8 @@ func TestCodexIsWrapper(t *testing.T) {
 		{"<environment_context>x", true},
 		{"<user_instructions>do", true},
 		{"  <skills_instructions>...", true},
+		{"# AGENTS.md instructions\n\n<INSTRUCTIONS>\n# Workspace Guide", true},
+		{"<INSTRUCTIONS>foo", true},
 		{"hello codex", false},
 		{"please read <environment_context>", false}, // tag not at start = a real prompt
 	}
