@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -29,15 +30,15 @@ import (
 // readOpencodeTranscript reads an opencode session's normalized chat turns plus the db
 // path (for diagnostics). ok is always true; an absent session id / db (no conversation
 // yet) yields nil turns, shown as an empty chat.
-func readOpencodeTranscript(m sessionMeta) (turns []chatTurn, path string, ok bool) {
+func readOpencodeTranscript(m sessionMeta) (transcriptData, bool) {
 	slot := sessionUUID(m.Dir, m.Name)
 	ses := opencodeSids.read(slot)
 	if ses == "" {
-		return nil, "", true
+		return transcriptData{}, true
 	}
-	path = filepath.Join(homeDir(), ".local", "share", "opencode", "opencode.db")
+	path := filepath.Join(homeDir(), ".local", "share", "opencode", "opencode.db")
 	if _, err := os.Stat(path); err != nil {
-		return nil, "", true
+		return transcriptData{}, true
 	}
 	// Read-only with a short busy timeout so a concurrent opencode write can't wedge the
 	// poll. WAL is auto-detected from the db file (the Agent runs as the same user as
@@ -46,10 +47,39 @@ func readOpencodeTranscript(m sessionMeta) (turns []chatTurn, path string, ok bo
 	dsn := "file:" + path + "?mode=ro&_pragma=busy_timeout(3000)"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
-		return nil, path, true
+		return transcriptData{path: path}, true
 	}
 	defer db.Close()
-	return opencodeReadSession(db, ses), path, true
+	return transcriptData{
+		turns: opencodeReadSession(db, ses),
+		path:  path,
+		tasks: opencodeTasks(db, ses),
+	}, true
+}
+
+// opencodeTasks reads this session's ToDo list from opencode's `todo` table (direct
+// columns: content/status/priority/position) so the chat shows the same checklist claude
+// gets. Returns nil when the table is empty for the session.
+func opencodeTasks(db *sql.DB, ses string) []taskItem {
+	rows, err := db.Query(`SELECT content, status FROM todo WHERE session_id = ? ORDER BY position`, ses)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var out []taskItem
+	i := 0
+	for rows.Next() {
+		var content, status string
+		if rows.Scan(&content, &status) != nil {
+			continue
+		}
+		i++
+		if status == "" {
+			status = "pending"
+		}
+		out = append(out, taskItem{ID: strconv.Itoa(i), Subject: content, Status: status})
+	}
+	return out
 }
 
 // opencodeReadSession loads one session's messages (ordered) and their parts, building a
@@ -154,7 +184,8 @@ func opencodeParts(db *sql.DB, msgID string) ([]chatPart, string) {
 			Text  string `json:"text"`
 			Tool  string `json:"tool"`
 			State struct {
-				Input json.RawMessage `json:"input"`
+				Input  json.RawMessage `json:"input"`
+				Output string          `json:"output"`
 			} `json:"state"`
 			Files []string `json:"files"`
 		}
@@ -171,18 +202,28 @@ func opencodeParts(db *sql.DB, msgID string) ([]chatPart, string) {
 				sb.WriteString("\n")
 			}
 			sb.WriteString(p.Text)
+		case "reasoning":
+			// opencode's chain-of-thought — a collapsible thinking block (like claude's).
+			if strings.TrimSpace(p.Text) != "" {
+				parts = append(parts, chatPart{Kind: "thinking", Text: p.Text})
+			}
 		case "tool":
 			name := p.Tool
 			if name == "" {
 				name = "tool"
 			}
-			parts = append(parts, chatPart{Kind: "tool", Tool: name, Info: opencodeToolInfo(p.State.Input)})
+			part := chatPart{Kind: "tool", Tool: name, Info: opencodeToolInfo(p.State.Input), Output: capOutput(p.State.Output)}
+			// Edit-family tools carry before/after so the trace opens as a diff pane.
+			if f, es := opencodeToolEdits(name, p.State.Input); len(es) > 0 {
+				part.File, part.Edits = f, es
+			}
+			parts = append(parts, part)
 		case "patch":
 			// A committed edit; opencode records only the file list + hash, so it's a
 			// trace (no before/after to open as a diff).
 			parts = append(parts, chatPart{Kind: "tool", Tool: "patch", Info: codexClip(strings.Join(p.Files, ", "))})
 		}
-		// reasoning / step-start / step-finish are framing — dropped.
+		// step-start / step-finish are framing — dropped.
 	}
 	return parts, strings.TrimSpace(sb.String())
 }
@@ -203,4 +244,35 @@ func opencodeToolInfo(input json.RawMessage) string {
 		}
 	}
 	return ""
+}
+
+// opencodeToolEdits extracts before/after content for opencode's edit-family tools so
+// the Console can open a diff pane: `write` is all-added (Old=""), `edit` carries the
+// old/new strings. Other tools return nil (they stay a plain trace).
+func opencodeToolEdits(name string, input json.RawMessage) (string, []chatEdit) {
+	if len(input) == 0 {
+		return "", nil
+	}
+	switch name {
+	case "write":
+		var in struct {
+			FilePath string `json:"filePath"`
+			Content  string `json:"content"`
+		}
+		if json.Unmarshal(input, &in) != nil || in.FilePath == "" {
+			return "", nil
+		}
+		return in.FilePath, []chatEdit{{Old: "", New: capEdit(in.Content)}}
+	case "edit":
+		var in struct {
+			FilePath  string `json:"filePath"`
+			OldString string `json:"oldString"`
+			NewString string `json:"newString"`
+		}
+		if json.Unmarshal(input, &in) != nil || in.FilePath == "" {
+			return "", nil
+		}
+		return in.FilePath, []chatEdit{{Old: capEdit(in.OldString), New: capEdit(in.NewString)}}
+	}
+	return "", nil
 }

@@ -65,6 +65,7 @@ interface Part {
   text?: string;
   tool?: string;
   info?: string;
+  output?: string;
   file?: string;
   edits?: any[];
   questions?: Question[];
@@ -82,6 +83,7 @@ interface Turn {
   compact?: boolean;
   model?: string;
   effort?: string;
+  ctxWindow?: number;
   branch?: string;
   cwd?: string;
   inTok?: number;
@@ -97,6 +99,7 @@ interface Group {
   text: string;
   model: string;
   effort: string;
+  ctxWindow: number;
   branch: string;
   cwd: string;
   inTok: number;
@@ -1041,6 +1044,7 @@ function groupTurns(turns: Turn[]): Group[] {
       if (t.text) last.text += (last.text ? "\n\n" : "") + t.text;
       if (!last.model && t.model) last.model = t.model;
       if (!last.effort && t.effort) last.effort = t.effort;
+      if (t.ctxWindow) last.ctxWindow = t.ctxWindow;
       last.outTok += t.outTok || 0;
       if (t.inTok || t.cacheRead || t.cacheCreate) {
         last.inTok = t.inTok || 0;
@@ -1056,6 +1060,7 @@ function groupTurns(turns: Turn[]): Group[] {
         text: t.text || "",
         model: t.model || "",
         effort: t.effort || "",
+        ctxWindow: t.ctxWindow || 0,
         branch: t.branch || "",
         cwd: t.cwd || "",
         inTok: t.inTok || 0,
@@ -1078,7 +1083,7 @@ function latestContext(groups: Group[]) {
     const g = groups[i];
     if (g.role === "user") continue;
     if (g.inTok + g.cacheRead + g.cacheCreate > 0) {
-      return { read: g.cacheRead, create: g.cacheCreate, fresh: g.inTok, model: g.model };
+      return { read: g.cacheRead, create: g.cacheCreate, fresh: g.inTok, model: g.model, window: g.ctxWindow };
     }
   }
   return null;
@@ -1192,6 +1197,24 @@ function CompactBlock({ turn }: { turn: Group }) {
   );
 }
 
+// ThinkingBlock renders an agent's chain-of-thought (codex/opencode reasoning) as a
+// collapsed disclosure — "思考" — so it's available without crowding the answer. Closed
+// by default (native <details>); expand to read the reasoning.
+function ThinkingBlock({ text }: { text?: string }) {
+  if (!text) return null;
+  return (
+    <details className="mirror-thinking">
+      <summary className="mirror-thinking-head">
+        <Icon name="lightbulb" />
+        <span className="mth-title">思考</span>
+      </summary>
+      <div className="mirror-thinking-body">
+        <MarkdownView source={text} />
+      </div>
+    </details>
+  );
+}
+
 // ContextLine marks the git branch / working dir in effect from here on.
 function ContextLine({ branch, cwd }: { branch?: string; cwd?: string }) {
   return (
@@ -1281,6 +1304,10 @@ function Turn({
                 outcome={item.p.answer}
                 onOpen={() => onOpenPlan && onOpenPlan(item.p.plan || "")}
               />
+            ) : item.p.kind === "thinking" ? (
+              // The agent's chain-of-thought (codex reasoning / opencode reasoning),
+              // collapsed by default so it doesn't crowd the answer.
+              <ThinkingBlock key={item.i} text={item.p.text} />
             ) : (
               <MarkdownView key={item.i} source={item.p.text} />
             ),
@@ -1394,8 +1421,11 @@ function foldParts(parts: Part[]): FoldItem[] {
 }
 
 // ToolTrace renders one faint tool line. Edit-family tools carry their before/after,
-// so they render as a button that opens a diff pane; the rest are a static trace.
+// so they render as a button that opens a diff pane; a tool that carries its output
+// (codex/opencode) becomes a click-to-expand row showing the result; the rest are a
+// static trace.
 function ToolTrace({ p, onOpenDiff }: { p: Part; onOpenDiff?: (p: Part) => void }) {
+  const [open, setOpen] = useState(false);
   if (p.edits && p.edits.length) {
     return (
       <button
@@ -1408,6 +1438,24 @@ function ToolTrace({ p, onOpenDiff }: { p: Part; onOpenDiff?: (p: Part) => void 
         <span className="mt-tool-name">{p.tool}</span>
         {p.info && <span className="mt-tool-info">{p.info}</span>}
       </button>
+    );
+  }
+  if (p.output) {
+    return (
+      <div className={"mt-tool-out" + (open ? " open" : "")}>
+        <button
+          type="button"
+          className="mt-tool mt-tool-outhead"
+          onClick={() => setOpen((o) => !o)}
+          aria-expanded={open}
+          title={open ? "出力をたたむ" : "出力を表示"}
+        >
+          <Icon name={open ? "chevron-down" : "chevron-right"} />
+          <span className="mt-tool-name">{p.tool}</span>
+          {p.info && <span className="mt-tool-info">{p.info}</span>}
+        </button>
+        {open && <pre className="mt-tool-output">{p.output}</pre>}
+      </div>
     );
   }
   return (

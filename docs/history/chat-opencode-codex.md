@@ -115,5 +115,28 @@ terminalState はサーバが claude にしか送らないので自然に非表�
 - **反映**: Agent 変更ゆえ Workspace イメージ再ビルド＋コンテナ recreate、CP/Console 再起動が要る。
 - **codex トークンの遅延**: 最終 assistant ターンの token_count は同ターンでは再送されない（カーソルは append のみ）ため、
   そのターンのコンテキストバーは次ターンまで欠けうる。軽微。
-- **後続**: ToDo/質問/許可の codex/opencode 側汎化（opencode は `todo`/`permission` 表あり）、diff ペインのツール名マップ拡張、
-  opencode の SQLite スキーマのバージョン揺れ監視（modernc/sqlite・read-only・WAL）。
+## 22.8 拡張（reasoning / 実窓 / ツール出力・差分 / ToDo）
+
+段1・段2 の後、codex/opencode チャットを claude と対称化する 4 拡張を追加。共通の chatTurn/chatPart を拡張し、
+汎用パスに相乗り（Console はデータのあるターンだけ描画）。
+
+1. **思考(reasoning)ブロック** — chatPart に `thinking` kind を追加。codex=`reasoning` response_item の summary_text、
+   opencode=`reasoning` part の text。Console は `ThinkingBlock`（折りたたみ「思考」）。
+2. **実コンテキスト窓** — chatTurn に `CtxWindow`。codex の token_count `model_context_window`(258400)を assistant
+   ターンへ。`ContextBar` は明示 window を優先し、モデル名推測(200k 固定)のズレを解消。opencode は窓を記録せず推測継続。
+3. **ツール出力・差分** — chatPart に `Output`。codex=`function_call_output` を call_id で紐付け、opencode=tool part の
+   `state.output`。Console は出力を折りたたみ表示。差分は opencode `write`/`edit` の filePath+content/old/new を
+   File+Edits に載せ、既存の差分ペインで開く（codex apply_patch のパース差分は後続、当面は出力表示）。
+4. **ToDo** — `transcript()` の戻りを `transcriptData{turns,path,tasks}` に拡張し tasks を汎用パスから返す。
+   opencode=`todo` 表(session_id/content/status/position)、codex=`update_plan` function_call(plan[] を全再送=最新採用)。
+   Console 既存の `TaskChecklist`(resp.tasks)がそのまま描画。
+
+検証: opencode は実 WAL DB で reasoning/tool 出力/write 差分を確認、todo は合成 SQLite の単体テスト（実 DB は行なし）。
+**codex の reasoning/function_call/update_plan は運用データがトリビアルなセッションのみで実在せず、仕様ベース実装＋
+合成テストで担保**。実 codex コーディングセッションでの目視は後続。Go 41 tests/vet、Console tsc 通過。
+
+## 22.9 残り / 既知の限界
+
+- **codex 実データ検証**: reasoning/function_call 出力/update_plan は実 codex セッションで未目視（22.8）。
+- **後続**: 質問/許可インライン（opencode `permission` 表・codex request_user_input）、codex apply_patch の差分パース、
+  opencode コスト($)表示、codex レート制限、opencode の SQLite スキーマのバージョン揺れ監視（modernc/sqlite・ro・WAL）。

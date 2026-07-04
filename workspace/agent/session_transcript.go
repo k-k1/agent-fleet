@@ -18,10 +18,11 @@ import (
 // chatPart is one ordered piece of a turn: rendered text, a faint tool trace, an
 // AskUserQuestion the user can answer inline, or an ExitPlanMode plan.
 type chatPart struct {
-	Kind      string         `json:"kind"`                // "text" | "tool" | "question" | "plan"
-	Text      string         `json:"text,omitempty"`      // kind=text: Markdown
+	Kind      string         `json:"kind"`                // "text" | "thinking" | "tool" | "question" | "plan"
+	Text      string         `json:"text,omitempty"`      // kind=text/thinking: Markdown
 	Tool      string         `json:"tool,omitempty"`      // kind=tool/question/plan: tool name
 	Info      string         `json:"info,omitempty"`      // kind=tool: short arg summary
+	Output    string         `json:"output,omitempty"`    // kind=tool: the tool's output/result (codex/opencode), truncated
 	Questions []chatQuestion `json:"questions,omitempty"` // kind=question: AskUserQuestion
 	Answer    string         `json:"answer,omitempty"`    // kind=question: the chosen answer text
 	Plan      string         `json:"plan,omitempty"`      // kind=plan: ExitPlanMode plan Markdown
@@ -57,6 +58,7 @@ type chatTurn struct {
 	Text      string     `json:"text"`                // concatenated text only (for copy / fallback)
 	Model     string     `json:"model,omitempty"`     // assistant only: the model that answered
 	Effort    string     `json:"effort,omitempty"`    // assistant only: reasoning effort/variant (codex reasoning_effort, opencode variant); "" when the agent records none (claude)
+	CtxWindow int        `json:"ctxWindow,omitempty"` // assistant only: the model's real context-window size when the agent records it (codex model_context_window); 0 = let the Console guess from the model name
 	Sidechain bool       `json:"sidechain,omitempty"` // true = a subagent (Task) sidechain turn
 	Branch    string     `json:"branch,omitempty"`    // git branch at the time of the turn
 	Cwd       string     `json:"cwd,omitempty"`       // working dir at the time of the turn
@@ -221,7 +223,8 @@ func handleSessionMessages(w http.ResponseWriter, r *http.Request) {
 // unchanged. The cursor here is a TURN count (not a jsonl line count), but the client
 // treats it opaquely (reset / firstLine / hasMore drive it), so the two are compatible.
 func handleGenericMessages(w http.ResponseWriter, r *http.Request, meta sessionMeta, alive bool, state string) {
-	all, path, _ := agentOf(meta.Kind).transcript(meta)
+	td, _ := agentOf(meta.Kind).transcript(meta)
+	all, path := td.turns, td.path
 	total := len(all)
 
 	since := 0
@@ -278,6 +281,11 @@ func handleGenericMessages(w http.ResponseWriter, r *http.Request, meta sessionM
 	if firstLine >= 0 {
 		resp["firstLine"] = firstLine
 		resp["hasMore"] = firstLine > 0
+	}
+	// Current ToDo list (opencode todo table / codex update_plan), so the chat shows the
+	// same progress checklist claude gets. Whole-transcript (not windowed), like claude's.
+	if len(td.tasks) > 0 {
+		resp["tasks"] = td.tasks
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
