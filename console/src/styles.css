@@ -2815,34 +2815,38 @@ body.row-resizing {
   font-weight: 600;
   font-size: 12px;
 }
-/* Composer toolbar: plan-mode toggle on the left, stop on the right. Full-width row
-   (flex 0 0 100%) so it sits ABOVE the input row inside the wrapping mirror-compose flex,
-   rather than being squeezed into a narrow column beside the textarea. */
-.mirror-toolbar {
-  flex: 0 0 100%;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 0 2px 2px;
-}
-.mirror-toolbar-sp {
-  flex: 1;
-}
+/* Mode chip: a compact pill inline at the left of the input row, showing the live mode
+   name (Plan / Bypass / Default / Build). Full input height so it flanks the textarea like
+   the send button on the right; bottom-aligns with the growing textarea via the compose
+   row's align-items:flex-end. Accent when in Plan. */
 .mirror-mode {
-  font-size: 12px;
-  padding: 2px 10px;
+  flex: none;
+  height: 38px;
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  white-space: nowrap; /* keep 計画モード on one line */
-  flex: none;
+  padding: 0 10px;
+  font-size: 12px;
+  white-space: nowrap;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--btn, var(--bg));
+  color: var(--muted);
+  cursor: pointer;
+}
+.mirror-mode:disabled {
+  opacity: 0.6;
+  cursor: default;
 }
 .mirror-mode.on {
   background: var(--accent, #6a7fdb);
-  color: #fff;
   border-color: transparent;
+  color: #fff;
 }
+/* Stop lives in the typing-indicator row now (only while working) — push it to the far
+   right of that row. */
 .mirror-stop {
+  margin-left: auto;
   font-size: 12px;
   padding: 2px 10px;
   color: var(--danger, #d9534f);
