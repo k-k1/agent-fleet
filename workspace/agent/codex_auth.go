@@ -231,3 +231,37 @@ func handleCodexDisconnect(w http.ResponseWriter, r *http.Request) {
 	_ = exec.Command("codex", "logout").Run()
 	writeJSON(w, http.StatusOK, map[string]any{"disconnected": "codex"})
 }
+
+// ensureCodexFolderTrusted pre-accepts codex's per-directory trust gate ("Do you trust
+// the contents of this directory?") for dir, the way claude's ensureFolderTrusted does
+// for its own dialog. codex records trust in ~/.codex/config.toml as a
+// [projects."<dir>"] section with trust_level = "trusted" (what it writes when the user
+// clicks Yes); a freshly cloned repo has no such entry and stalls at the prompt on
+// launch. The bypass flags on the launch command cover approvals/sandbox/hook-trust,
+// NOT this project trust, so we seed the entry here. Best-effort and idempotent: appends
+// the section only when absent, leaving any existing config untouched.
+func ensureCodexFolderTrusted(dir string) {
+	if dir == "" {
+		return
+	}
+	p := filepath.Join(homeDir(), ".codex", "config.toml")
+	b, _ := os.ReadFile(p)
+	// tomlString quotes+escapes the path as a TOML key, matching codex's own format.
+	header := "[projects." + tomlString(dir) + "]"
+	if strings.Contains(string(b), header) {
+		return // already recorded — don't duplicate the section
+	}
+	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+		return
+	}
+	var sb strings.Builder
+	sb.Write(b)
+	if len(b) > 0 && !strings.HasSuffix(string(b), "\n") {
+		sb.WriteString("\n")
+	}
+	sb.WriteString("\n" + header + "\ntrust_level = \"trusted\"\n")
+	tmp := p + ".af-tmp"
+	if os.WriteFile(tmp, []byte(sb.String()), 0o600) == nil {
+		_ = os.Rename(tmp, p)
+	}
+}
