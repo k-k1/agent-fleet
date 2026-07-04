@@ -113,13 +113,19 @@ func chatClaudeDir() string {
 // ensureChatClaudeConfig prepares chatClaudeDir and shares the subscription login by
 // symlinking its .credentials.json to the interactive sessions' shared config, then
 // returns the dir. Credentials must be a SINGLE shared file: OAuth refresh rotates
-// the refresh token (single-use), so two independent copies would race and one side
-// would lose auth. The symlink keeps reads and in-place refresh writes on the shared
-// inode. If claude ever atomic-renames the creds (replacing the symlink with a real
-// file), reconcileChatCreds self-heals on the next run by copying the newer token
-// back to shared and relinking. (Whether claude writes in-place vs rename is the one
-// thing to confirm on a live RDRAND host; if it renames often, move creds to a
-// runtime.go file bind-mount instead — see docs/19.)
+// the refresh token, so two independent copies would race and one side would lose
+// auth.
+//
+// claude writes its JSON state (incl. creds) via tmp-file + rename (verified with
+// strace: `.claude.json.tmp.* → rename(.claude.json)`). That means:
+//   - an interactive session / agent re-auth renames the SHARED file → our symlink is
+//     path-based, so it transparently follows to the fresh file. No action needed.
+//   - the chat's OWN refresh renames the LINK path → the symlink becomes a real file
+//     holding the rotated token, diverging from shared. reconcileChatCreds copies the
+//     newer token back to shared and relinks; callers run it both before AND right
+//     after each claude exec, so the shared login is refreshed within one turn.
+// A file bind-mount would NOT help (atomic-rename of the source makes the mount stale,
+// and rename onto a mountpoint EBUSYs) — the symlink + copy-back is the robust choice.
 func ensureChatClaudeConfig() (string, error) {
 	dir := chatClaudeDir()
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -316,6 +322,11 @@ func (claudeChat) send(ctx context.Context, c *chatConversation, prompt string) 
 		args = append(args, "--session-id", c.ClaudeSessionID)
 	}
 	cmd := chatClaudeCmd(ctx, args...)
+	// claude writes .credentials.json via tmp+rename (verified with strace): a refresh
+	// during this run replaces the symlink with a real file. Re-run the reconcile after
+	// the process exits to copy the rotated token back to shared and relink immediately,
+	// so the shared login (used by the interactive sessions) never goes stale.
+	defer func() { _, _ = ensureChatClaudeConfig() }()
 	cmd.Stdin = strings.NewReader(prompt)
 	out, err := cmd.Output()
 	if err != nil {
@@ -375,6 +386,7 @@ func (claudeChat) sendStream(ctx context.Context, c *chatConversation, prompt st
 		args = append(args, "--session-id", c.ClaudeSessionID)
 	}
 	cmd := chatClaudeCmd(ctx, args...)
+	defer func() { _, _ = ensureChatClaudeConfig() }() // copy any refreshed token back to shared (see send)
 	cmd.Stdin = strings.NewReader(prompt)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
