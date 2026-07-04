@@ -51,6 +51,10 @@ type chatConversation struct {
 	// conversation (context + caching) instead of re-feeding the whole history.
 	ClaudeSessionID string `json:"claude_session_id,omitempty"`
 	CodexSessionID  string `json:"codex_session_id,omitempty"`
+	// AFTools attaches the local Agent Fleet MCP tools (read-only) to this chat's
+	// claude so it can inspect the user's workspace (docs/19 Q1). Default on for
+	// claude; a later persona/toggle (Q2) governs it.
+	AFTools bool `json:"af_tools,omitempty"`
 }
 
 // chatMeta is the light shape returned by the list endpoint (no message bodies).
@@ -193,6 +197,14 @@ func envWith(over ...string) []string {
 	return out
 }
 
+// chatMCPArgs attaches the local Agent Fleet stdio MCP server (this same binary's
+// `mcp-stdio` subcommand) to a chat's claude, scoped strictly to it (no global/project
+// MCP config leaks in, and it doesn't leak out to the interactive sessions). docs/19 Q1.
+func chatMCPArgs() []string {
+	cfg := fmt.Sprintf(`{"mcpServers":{"af":{"command":%q,"args":["mcp-stdio"]}}}`, agentExe())
+	return []string{"--mcp-config", cfg, "--strict-mcp-config"}
+}
+
 // chatClaudeCmd builds a claude exec configured for the chat: run in chatWorkdir with
 // the chat-only CLAUDE_CONFIG_DIR (shared creds). Falls back to the inherited env if
 // the config dir can't be prepared.
@@ -321,6 +333,9 @@ func (claudeChat) send(ctx context.Context, c *chatConversation, prompt string) 
 		c.ClaudeSessionID = randUUID()
 		args = append(args, "--session-id", c.ClaudeSessionID)
 	}
+	if c.AFTools {
+		args = append(args, chatMCPArgs()...)
+	}
 	cmd := chatClaudeCmd(ctx, args...)
 	// claude writes .credentials.json via tmp+rename (verified with strace): a refresh
 	// during this run replaces the symlink with a real file. Re-run the reconcile after
@@ -384,6 +399,9 @@ func (claudeChat) sendStream(ctx context.Context, c *chatConversation, prompt st
 	} else {
 		c.ClaudeSessionID = randUUID()
 		args = append(args, "--session-id", c.ClaudeSessionID)
+	}
+	if c.AFTools {
+		args = append(args, chatMCPArgs()...)
 	}
 	cmd := chatClaudeCmd(ctx, args...)
 	defer func() { _, _ = ensureChatClaudeConfig() }() // copy any refreshed token back to shared (see send)
@@ -510,6 +528,7 @@ func handleChatCreate(w http.ResponseWriter, r *http.Request) {
 	c := &chatConversation{
 		ID: randUUID(), Agent: req.Agent, Title: title, Model: strings.TrimSpace(req.Model),
 		CreatedAt: now, UpdatedAt: now, Messages: []chatMessage{},
+		AFTools: req.Agent == kindClaude, // read-only fleet tools (only claude backs them today)
 	}
 	if err := saveConv(c); err != nil {
 		writeErr(w, http.StatusInternalServerError, "chat_save", err.Error())

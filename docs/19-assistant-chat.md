@@ -108,14 +108,16 @@ creds は単一共有が必須（OAuth refresh はリフレッシュトークン
   → `reconcileChatCreds` が「新しいトークンを shared へ戻して再リンク」。実行**前後**両方で走らせ、1ターン以内に共有へ反映。
 - ファイル bind-mount は不可（source の rename でマウントが陳腐化、マウント点への rename は EBUSY）→ **symlink＋copy-back が最適解**。
 
-### Q1: ws から AF 操作 → **コンテナ内ローカル stdio MCP（当面リードオンリー）**
+### Q1: ws から AF 操作 → **コンテナ内ローカル stdio MCP（実装済・リードオンリー）**
 CP `/mcp` はヘアピン＋PAT 発行が要り筋が悪い（外部/管理者/横断向けに温存）。自ワークスペース操作は
-**`workspace-agent mcp-stdio` サブコマンド**（`mcp.go` の member ツールを localhost:7700 の Agent REST＋
-`AGENT_TOKEN` で公開する stdio MCP）を追加し、チャットの `claude -p` に
-`--mcp-config '{"mcpServers":{"af":{"command":"workspace-agent","args":["mcp-stdio"]}}}' --strict-mcp-config
---allowedTools "mcp__af__*"` で接続。PAT 不要・egress 不要・設定漏れなし・身元＝自コンテナ。
-**当面リードオンリー**（list/status/output）。`send_to_session` 等の**書き込みは既定オフ、ユーザーが明示的に有効化**
-（Console のトグル等）してから許可。
+**`workspace-agent mcp-stdio` サブコマンド**（`mcp_stdio.go`：newline-delimited JSON-RPC 2.0 over stdio。
+読み取りツール `list_my_sessions`/`get_session_status`/`get_session_output` が **localhost:7700 の Agent REST＋
+`AGENT_TOKEN`** を叩く。`initialize`/`tools/list`/`tools/call`/`ping` 対応、tools/call の失敗は in-band `isError`）。
+`main.go` に `mcp-stdio` サブコマンド登録。`chat.go` の `chatMCPArgs()` がチャットの `claude -p` に
+`--mcp-config '{"mcpServers":{"af":{"command":"<agentExe>","args":["mcp-stdio"]}}}' --strict-mcp-config` を付与。
+PAT 不要・egress 不要・設定漏れなし・身元＝自コンテナ。会話フラグ `AFTools`（claude は既定 on）でゲート。
+protocol はスタンドアロン検証済（実 Agent 越しのツール実行はコンテナ内で要目視）。
+**リードオンリー（書き込みツール未公開）**。`send_to_session` 等は**後で公開＋ユーザーが明示有効化**（Q2 のペルソナ/トグル）。
 
 ### Q2: 使い方への回答 → **利用者向けガイド + 専用ペルソナ**
 内部設計書（docs/、インフラ/セキュリティ詳細含む）は**出さない**。利用者向けに要約した USAGE/FAQ を用意し
