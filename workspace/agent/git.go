@@ -482,21 +482,56 @@ func handleRepoCheckout(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
 		return
 	}
-	ref := strings.TrimSpace(req.Branch)
-	if ref == "" {
-		ref = strings.TrimSpace(req.Ref)
-	}
-	if ref == "" || strings.HasPrefix(ref, "-") {
-		writeErr(w, http.StatusBadRequest, "bad_ref", "branch/ref is required and must not start with '-'")
-		return
-	}
-	args := []string{"-C", dir, "checkout"}
+	var args []string
 	if req.Create {
-		args = append(args, "-b")
+		// Create a branch: `checkout -b <name> [<start-point>]`. Branch is the new name;
+		// Ref (optional) is a start point (e.g. a commit sha) — "new branch at this commit".
+		name := strings.TrimSpace(req.Branch)
+		if name == "" || strings.HasPrefix(name, "-") {
+			writeErr(w, http.StatusBadRequest, "bad_ref", "branch name is required and must not start with '-'")
+			return
+		}
+		args = []string{"-C", dir, "checkout", "-b", name}
+		if start := strings.TrimSpace(req.Ref); start != "" {
+			if strings.HasPrefix(start, "-") {
+				writeErr(w, http.StatusBadRequest, "bad_ref", "start ref must not start with '-'")
+				return
+			}
+			args = append(args, start)
+		}
+	} else {
+		ref := strings.TrimSpace(req.Branch)
+		if ref == "" {
+			ref = strings.TrimSpace(req.Ref)
+		}
+		if ref == "" || strings.HasPrefix(ref, "-") {
+			writeErr(w, http.StatusBadRequest, "bad_ref", "branch/ref is required and must not start with '-'")
+			return
+		}
+		args = []string{"-C", dir, "checkout", ref}
 	}
-	args = append(args, ref)
 	if out, err := exec.Command("git", args...).CombinedOutput(); err != nil {
 		writeErr(w, http.StatusBadGateway, "checkout_failed", fmt.Sprintf("%v: %s", err, strings.TrimSpace(string(out))))
+		return
+	}
+	gitSubmodulesUpdate(dir)
+	st, _ := gitStatus(dir)
+	writeJSON(w, http.StatusOK, st)
+}
+
+// handleRepoFF fast-forwards the current branch to its upstream (git pull --ff-only):
+// fetches the tracked remote branch and advances the local branch only if it's a strict
+// fast-forward (no merge commit). Fails cleanly when there's no upstream or the branch
+// has diverged.
+func handleRepoFF(w http.ResponseWriter, r *http.Request) {
+	dir, ok := repoDirFromPath(w, r)
+	if !ok {
+		return
+	}
+	cmd := exec.Command("git", "-C", dir, "pull", "--ff-only")
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		writeErr(w, http.StatusBadGateway, "ff_failed", strings.TrimSpace(string(out)))
 		return
 	}
 	gitSubmodulesUpdate(dir)

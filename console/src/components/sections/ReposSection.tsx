@@ -175,7 +175,7 @@ export default function ReposSection() {
             r={r}
             kinds={launchKinds}
             running={running}
-            active={mode === "scm" && scmRepo === r.name}
+            active={(mode === "scm" || mode === "changes" || mode === "commit") && scmRepo === r.name}
             selected={r.name === activeRepo}
             // One click on the repo opens the Source Control workbench in the main
             // pane (Ctrl/Cmd/middle-click → freshly split pane). Revealing the folder
