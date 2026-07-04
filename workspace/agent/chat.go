@@ -98,6 +98,107 @@ func chatWorkdir() string {
 	return d
 }
 
+// chatClaudeDir is the chat-only CLAUDE_CONFIG_DIR (docs/19 Q3): an isolated
+// settings/trust/transcript tree so the headless chat's `claude -p` does NOT inherit
+// the interactive tmux sessions' status hooks, does not clutter their projects/
+// transcript tree, and can carry its own MCP config — while sharing ONLY the
+// subscription credentials with them (see ensureChatClaudeConfig).
+func chatClaudeDir() string {
+	if v := os.Getenv("AF_CHAT_CLAUDE_DIR"); v != "" {
+		return v
+	}
+	return filepath.Join(homeDir(), ".config", "agent-fleet", "chat-claude")
+}
+
+// ensureChatClaudeConfig prepares chatClaudeDir and shares the subscription login by
+// symlinking its .credentials.json to the interactive sessions' shared config, then
+// returns the dir. Credentials must be a SINGLE shared file: OAuth refresh rotates
+// the refresh token (single-use), so two independent copies would race and one side
+// would lose auth. The symlink keeps reads and in-place refresh writes on the shared
+// inode. If claude ever atomic-renames the creds (replacing the symlink with a real
+// file), reconcileChatCreds self-heals on the next run by copying the newer token
+// back to shared and relinking. (Whether claude writes in-place vs rename is the one
+// thing to confirm on a live RDRAND host; if it renames often, move creds to a
+// runtime.go file bind-mount instead — see docs/19.)
+func ensureChatClaudeConfig() (string, error) {
+	dir := chatClaudeDir()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	shared := filepath.Join(claudeConfigDir(), ".credentials.json")
+	reconcileChatCreds(shared, filepath.Join(dir, ".credentials.json"))
+	// Seed onboarding/theme/trust once from the shared config so a headless run in a
+	// fresh dir doesn't stall on first-run prompts; it diverges independently after.
+	seed := filepath.Join(dir, ".claude.json")
+	if _, err := os.Stat(seed); os.IsNotExist(err) {
+		if b, rerr := os.ReadFile(filepath.Join(claudeConfigDir(), ".claude.json")); rerr == nil {
+			_ = os.WriteFile(seed, b, 0o600)
+		}
+	}
+	return dir, nil
+}
+
+// reconcileChatCreds ensures link is a symlink to shared, self-healing the case where
+// a prior atomic-rename replaced the symlink with a real file (newer token wins → copy
+// back to shared, then relink). Only links when shared exists (user authenticated).
+func reconcileChatCreds(shared, link string) {
+	if target, err := os.Readlink(link); err == nil && target == shared {
+		return // already the right symlink
+	}
+	if fi, err := os.Lstat(link); err == nil {
+		if fi.Mode()&os.ModeSymlink == 0 { // a real file replaced the link
+			li, _ := os.Stat(link)
+			si, _ := os.Stat(shared)
+			if li != nil && (si == nil || li.ModTime().After(si.ModTime())) {
+				if b, rerr := os.ReadFile(link); rerr == nil {
+					_ = os.MkdirAll(filepath.Dir(shared), 0o700)
+					_ = os.WriteFile(shared, b, 0o600)
+				}
+			}
+		}
+		_ = os.Remove(link)
+	}
+	if _, err := os.Stat(shared); err == nil {
+		_ = os.Symlink(shared, link)
+	}
+}
+
+// envWith returns os.Environ() with the given KEY=VAL entries overriding any existing
+// occurrence (Go's exec doesn't dedupe env, so we replace rather than append).
+func envWith(over ...string) []string {
+	set := map[string]string{}
+	for _, e := range over {
+		if i := strings.IndexByte(e, '='); i > 0 {
+			set[e[:i]] = e[i+1:]
+		}
+	}
+	out := make([]string, 0, len(os.Environ())+len(set))
+	for _, e := range os.Environ() {
+		if i := strings.IndexByte(e, '='); i > 0 {
+			if _, ok := set[e[:i]]; ok {
+				continue
+			}
+		}
+		out = append(out, e)
+	}
+	for k, v := range set {
+		out = append(out, k+"="+v)
+	}
+	return out
+}
+
+// chatClaudeCmd builds a claude exec configured for the chat: run in chatWorkdir with
+// the chat-only CLAUDE_CONFIG_DIR (shared creds). Falls back to the inherited env if
+// the config dir can't be prepared.
+func chatClaudeCmd(ctx context.Context, args ...string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, "claude", args...)
+	cmd.Dir = chatWorkdir()
+	if ccd, err := ensureChatClaudeConfig(); err == nil {
+		cmd.Env = envWith("CLAUDE_CONFIG_DIR=" + ccd)
+	}
+	return cmd
+}
+
 // validConvID guards path traversal: IDs are our own randUUID() output.
 func validConvID(id string) bool {
 	if len(id) != 36 {
@@ -214,8 +315,7 @@ func (claudeChat) send(ctx context.Context, c *chatConversation, prompt string) 
 		c.ClaudeSessionID = randUUID()
 		args = append(args, "--session-id", c.ClaudeSessionID)
 	}
-	cmd := exec.CommandContext(ctx, "claude", args...)
-	cmd.Dir = chatWorkdir()
+	cmd := chatClaudeCmd(ctx, args...)
 	cmd.Stdin = strings.NewReader(prompt)
 	out, err := cmd.Output()
 	if err != nil {
@@ -274,8 +374,7 @@ func (claudeChat) sendStream(ctx context.Context, c *chatConversation, prompt st
 		c.ClaudeSessionID = randUUID()
 		args = append(args, "--session-id", c.ClaudeSessionID)
 	}
-	cmd := exec.CommandContext(ctx, "claude", args...)
-	cmd.Dir = chatWorkdir()
+	cmd := chatClaudeCmd(ctx, args...)
 	cmd.Stdin = strings.NewReader(prompt)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
