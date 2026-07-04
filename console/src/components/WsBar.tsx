@@ -581,6 +581,21 @@ export default function WsBar() {
   return (
     <div className="wsbar">
       <span className="ws-label">Workspace</span>
+      {/* Power toggle: a single icon-only ⏻ to the LEFT of the state chip — the chip
+          says 稼働中/停止, this starts or stops accordingly (no separate labeled
+          button). The bar auto-syncs wsState from the 4s stats poll (state.jsx), so an
+          externally-changed workspace (admin stop / OOM) reflects without a manual
+          refresh. Disabled mid-transition (starting…/stopping…), where it shows a
+          spinner instead of the glyph. */}
+      <button
+        className={"ws-power " + (running ? "on" : "off")}
+        onClick={onToggle}
+        disabled={busy}
+        title={running ? "ワークスペースを停止" : "ワークスペースを起動"}
+        aria-label={running ? "ワークスペースを停止" : "ワークスペースを起動"}
+      >
+        {busy ? <Icon name="loading" spin /> : <span className="ws-power-glyph" aria-hidden="true">⏻</span>}
+      </button>
       <span className={"ws-dot " + (running ? "on" : "off")}>●</span>
       <span
         className="ws-state"
@@ -594,21 +609,6 @@ export default function WsBar() {
       >
         {wsLabel(wsState)}
       </span>
-      {/* Power toggle: a single icon-only ⏻ glued to the state chip — the chip says
-          稼働中/停止, this starts or stops accordingly (no separate labeled button).
-          The bar auto-syncs wsState from the 4s stats poll (state.jsx), so an
-          externally-changed workspace (admin stop / OOM) reflects without a manual
-          refresh. Disabled mid-transition (starting…/stopping…), where it shows a
-          spinner instead of the glyph. */}
-      <button
-        className={"ws-power " + (running ? "on" : "off")}
-        onClick={onToggle}
-        disabled={busy}
-        title={running ? "ワークスペースを停止" : "ワークスペースを起動"}
-        aria-label={running ? "ワークスペースを停止" : "ワークスペースを起動"}
-      >
-        {busy ? <Icon name="loading" spin /> : <span className="ws-power-glyph" aria-hidden="true">⏻</span>}
-      </button>
       {/* Second entry point to the New Session dialog (the Sessions-list ＋新規 stays as
           is): handy when the left pane is scrolled / collapsed. Opens the same global
           dialog via openNewSession; disabled while the workspace is stopped. */}
