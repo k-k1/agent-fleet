@@ -594,7 +594,28 @@ export default function WsBar() {
         title={running ? "ワークスペースを停止" : "ワークスペースを起動"}
         aria-label={running ? "ワークスペースを停止" : "ワークスペースを起動"}
       >
-        {busy ? <Icon name="loading" spin /> : <span className="ws-power-glyph" aria-hidden="true">⏻</span>}
+        {busy ? (
+          <Icon name="loading" spin />
+        ) : (
+          // Inline SVG power symbol — the Unicode ⏻ (U+23FB) is missing from many
+          // mobile system fonts (renders blank on phones), so draw it instead. Inherits
+          // currentColor, so the state/hover color classes still apply.
+          <svg
+            className="ws-power-glyph"
+            viewBox="0 0 24 24"
+            width="15"
+            height="15"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M12 3.5v8" />
+            <path d="M7.3 6.7a7 7 0 1 0 9.4 0" />
+          </svg>
+        )}
       </button>
       <span className={"ws-dot " + (running ? "on" : "off")}>●</span>
       <span
