@@ -8,6 +8,12 @@ import type { MouseEvent as RMouseEvent, TouchEvent as RTouchEvent } from "react
 // VSCode-style change bar in the gutter when the file is git-modified.
 const SCALE = 0.16; // minimap size relative to the real code
 
+// Above this many lines the minimap is suppressed: it mirrors the ENTIRE highlighted
+// DOM a second time, so a huge file would double an already-large node count (heavy to
+// mount and to repaint while scrolling) for a mirror that's illegible at 0.16 scale
+// anyway. The code area still scrolls normally without it.
+const MINIMAP_MAX_LINES = 10000;
+
 // Per-line change marks for the gutter change bar.
 export interface LineMarks {
   added?: number[];
@@ -24,63 +30,107 @@ interface CodeViewProps {
   marks?: LineMarks | null;
 }
 
-interface Viewport {
-  visible: boolean;
-  top: number;
-  height: number;
-  offset: number;
-}
-
 export default function CodeView({ html, lines, lineNumbers, wrap, minimap, marks }: CodeViewProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const miniInnerRef = useRef<HTMLDivElement>(null);
-  const [vp, setVp] = useState<Viewport>({ visible: false, top: 0, height: 0, offset: 0 });
+  const viewportRef = useRef<HTMLDivElement>(null);
+  const [vpVisible, setVpVisible] = useState(false); // toggles rarely — NOT per scroll
 
-  const sync = useCallback(() => {
+  // Big files: don't render the second (mirrored) DOM at all.
+  const showMini = !!minimap && lines <= MINIMAP_MAX_LINES;
+
+  // Cached geometry, updated only when the layout can actually change (content / wrap /
+  // gutter / resize) — never on scroll. Keeping the scroll hot path free of layout
+  // reads (offsetHeight) is what stops the scroll-time layout thrash that made big
+  // files janky. offsetRef mirrors the current translate so the click/drag handlers can
+  // map a cursor Y back to a scroll position without reading React state.
+  const mirrorH = useRef(0); // mirror's natural (pre-scale) height in px
+  const offsetRef = useRef(0);
+  const rafRef = useRef(0);
+
+  const measure = useCallback(() => {
+    mirrorH.current = miniInnerRef.current ? miniInnerRef.current.offsetHeight : 0;
+  }, []);
+
+  // Position the mirror + viewport box for the current scrollTop, writing styles
+  // imperatively (no setState) so a scroll doesn't re-render React. Runs inside a rAF,
+  // at most once per frame. Uses the cached mirror height, so there's no forced reflow.
+  const apply = useCallback(() => {
     const sc = scrollRef.current;
     const inner = miniInnerRef.current;
     if (!sc || !inner) return;
     const contentH = sc.scrollHeight;
     const paneViewH = sc.clientHeight;
-    const miniPaneH = sc.clientHeight; // minimap pane spans the code area height
     if (contentH <= paneViewH + 1) {
-      setVp((v) => (v.visible ? { ...v, visible: false } : v));
+      setVpVisible((v) => (v ? false : v));
+      offsetRef.current = 0;
+      inner.style.transform = `translateY(0px) scale(${SCALE})`;
       return;
     }
-    const visualH = inner.offsetHeight * SCALE; // scaled mirror height
+    setVpVisible((v) => (v ? v : true));
+    const visualH = mirrorH.current * SCALE; // scaled mirror height
     const ratio = visualH / contentH;
     const vpH = paneViewH * ratio;
     let offset = 0;
-    if (visualH > miniPaneH) {
-      offset = (sc.scrollTop / (contentH - paneViewH)) * (visualH - miniPaneH);
+    if (visualH > paneViewH) offset = (sc.scrollTop / (contentH - paneViewH)) * (visualH - paneViewH);
+    offsetRef.current = offset;
+    inner.style.transform = `translateY(${-offset}px) scale(${SCALE})`;
+    const box = viewportRef.current;
+    if (box) {
+      box.style.top = sc.scrollTop * ratio - offset + "px";
+      box.style.height = vpH + "px";
     }
-    setVp({ visible: true, top: sc.scrollTop * ratio - offset, height: vpH, offset });
   }, []);
 
+  // Coalesce scroll/resize bursts into one update per animation frame.
+  const schedule = useCallback(() => {
+    if (rafRef.current) return;
+    rafRef.current = requestAnimationFrame(() => {
+      rafRef.current = 0;
+      apply();
+    });
+  }, [apply]);
+
   useLayoutEffect(() => {
-    sync();
-  }, [html, lineNumbers, wrap, minimap, sync]);
+    if (!showMini) return;
+    measure();
+    apply();
+  }, [html, lineNumbers, wrap, showMini, measure, apply]);
+
+  // The viewport box is mounted only once vpVisible flips true, so the apply() that
+  // flipped it couldn't position it yet (its ref wasn't attached). Re-apply once it's
+  // in the DOM so it lands in the right place without waiting for the next scroll.
+  useLayoutEffect(() => {
+    if (vpVisible) apply();
+  }, [vpVisible, apply]);
 
   useEffect(() => {
     const sc = scrollRef.current;
-    if (!sc) return;
-    const h = () => sync();
-    sc.addEventListener("scroll", h, { passive: true });
-    window.addEventListener("resize", h);
-    return () => {
-      sc.removeEventListener("scroll", h);
-      window.removeEventListener("resize", h);
+    if (!sc || !showMini) return;
+    const onScroll = () => schedule();
+    const onResize = () => {
+      measure();
+      schedule();
     };
-  }, [sync]);
+    sc.addEventListener("scroll", onScroll, { passive: true });
+    window.addEventListener("resize", onResize);
+    return () => {
+      sc.removeEventListener("scroll", onScroll);
+      window.removeEventListener("resize", onResize);
+      if (rafRef.current) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = 0;
+      }
+    };
+  }, [schedule, measure, showMini]);
 
   // Map a Y within the minimap pane to a scroll position (centred on the cursor).
   const scrollToMini = (clientY: number, paneEl: HTMLElement) => {
     const sc = scrollRef.current;
-    const inner = miniInnerRef.current;
-    if (!sc || !inner) return;
+    if (!sc) return;
     const rect = paneEl.getBoundingClientRect();
     const yInPane = clientY - rect.top;
-    const visualPos = yInPane + vp.offset; // position within the scaled mirror
+    const visualPos = yInPane + offsetRef.current; // position within the scaled mirror
     const main = visualPos / SCALE; // back to real code coordinates
     sc.scrollTop = main - sc.clientHeight / 2;
   };
@@ -144,19 +194,14 @@ export default function CodeView({ html, lines, lineNumbers, wrap, minimap, mark
           <code className="hljs" dangerouslySetInnerHTML={{ __html: html }} />
         </pre>
       </div>
-      {minimap && (
-        <div
-          className="minimap"
-          onMouseDown={onMiniDown}
-          onTouchStart={onMiniTouch}
-          onTouchMove={onMiniTouch}
-        >
-          <div className="minimap-inner" ref={miniInnerRef} style={{ transform: `translateY(${-vp.offset}px) scale(${SCALE})` }}>
+      {showMini && (
+        <div className="minimap" onMouseDown={onMiniDown} onTouchStart={onMiniTouch} onTouchMove={onMiniTouch}>
+          <div className="minimap-inner" ref={miniInnerRef} style={{ transform: `scale(${SCALE})` }}>
             <pre className="code">
               <code className="hljs" dangerouslySetInnerHTML={{ __html: html }} />
             </pre>
           </div>
-          {vp.visible && <div className="minimap-viewport" style={{ top: vp.top, height: vp.height }} />}
+          {vpVisible && <div className="minimap-viewport" ref={viewportRef} />}
         </div>
       )}
     </div>
