@@ -191,17 +191,17 @@ func handleSessionMessages(w http.ResponseWriter, r *http.Request) {
 		resp["hasMore"] = firstLine > 0
 	}
 	surfacePendingPayloads(resp, sid, state)
-	// Current mode: prefer what claude's status line shows (reflects a terminal-side
-	// Shift+Tab too, and confirms a chat toggle on the next poll), falling back to the
-	// jsonl mode (a per-prompt snapshot).
-	mode := latestMode(lines)
+	// Current mode, only while alive (a stopped session isn't in any mode): prefer what
+	// claude's status line shows (reflects a terminal-side Shift+Tab too), falling back to
+	// the jsonl mode (a per-prompt snapshot) when the pane isn't readable.
 	if alive {
-		if pm := paneMode(kindClaude, tmuxName(name)); pm != "" {
-			mode = pm
+		mode := paneMode(kindClaude, tmuxName(name))
+		if mode == "" {
+			mode = latestMode(lines)
 		}
-	}
-	if mode != "" {
-		resp["mode"] = mode
+		if mode != "" {
+			resp["mode"] = mode
+		}
 	}
 	// Current ToDo list (reconstructed from Task tool calls) so the chat can show progress.
 	if tasks := collectTasks(lines); len(tasks) > 0 {
@@ -303,16 +303,14 @@ func handleGenericMessages(w http.ResponseWriter, r *http.Request, meta sessionM
 		resp["pendingQuestions"] = td.pending
 	}
 	// Current mode (plan / normal) so the Console shows the plan indicator and toggle.
-	// Prefer the terminal's displayed mode (reflects toggles made in the terminal too),
-	// falling back to the transcript's per-turn mode.
-	mode := td.mode
+	// Read it ONLY from the live terminal — a stopped session isn't "in plan mode", and
+	// the rollout's per-turn mode is a stale snapshot (the last turn's), which made a
+	// stopped codex show 計画モードON. When not alive, or the composer isn't drawn yet,
+	// report no mode (the Console shows the default, normal).
 	if alive {
 		if pm := paneMode(meta.Kind, tmuxName(meta.Name)); pm != "" {
-			mode = pm
+			resp["mode"] = pm
 		}
-	}
-	if mode != "" {
-		resp["mode"] = mode
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
