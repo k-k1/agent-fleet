@@ -11,7 +11,7 @@ func codexRolloutLines() [][]byte {
 		[]byte(`{"timestamp":"2026-06-29T00:00:00Z","type":"session_meta","payload":{"cwd":"/home/dev/repos/x","git":{"branch":"main"}}}`),
 		[]byte(`{"type":"response_item","payload":{"type":"message","role":"developer","content":[{"type":"input_text","text":"<permissions instructions>..."}]}}`),
 		[]byte(`{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<environment_context>cwd=/x</environment_context>"}]}}`),
-		[]byte(`{"type":"turn_context","payload":{"model":"gpt-5.5","cwd":"/home/dev/repos/x"}}`),
+		[]byte(`{"type":"turn_context","payload":{"model":"gpt-5.5","cwd":"/home/dev/repos/x","collaboration_mode":{"settings":{"reasoning_effort":"high"}}}}`),
 		[]byte(`{"timestamp":"2026-06-29T00:00:01Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"hello codex"}]}}`),
 		[]byte(`{"timestamp":"2026-06-29T00:00:02Z","type":"response_item","payload":{"type":"function_call","name":"shell","arguments":"{\"command\":[\"ls\",\"-la\"]}"}}`),
 		[]byte(`{"timestamp":"2026-06-29T00:00:03Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"hi there"}]}}`),
@@ -49,9 +49,12 @@ func TestCodexParseRollout(t *testing.T) {
 	if turns[2].Role != "assistant" || turns[2].Text != "hi there" {
 		t.Fatalf("turn2 = %+v, want assistant 'hi there'", turns[2])
 	}
-	// Model from turn_context is attached to assistant turns.
+	// Model + reasoning effort from turn_context are attached to assistant turns.
 	if turns[2].Model != "gpt-5.5" {
 		t.Fatalf("turn2 model = %q, want gpt-5.5", turns[2].Model)
+	}
+	if turns[2].Effort != "high" {
+		t.Fatalf("turn2 effort = %q, want high", turns[2].Effort)
 	}
 	// token_count attaches to the most recent assistant turn (the final answer): fresh =
 	// input - cached.

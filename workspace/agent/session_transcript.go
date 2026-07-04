@@ -56,6 +56,7 @@ type chatTurn struct {
 	Parts     []chatPart `json:"parts"`               // ordered text/tool pieces
 	Text      string     `json:"text"`                // concatenated text only (for copy / fallback)
 	Model     string     `json:"model,omitempty"`     // assistant only: the model that answered
+	Effort    string     `json:"effort,omitempty"`    // assistant only: reasoning effort/variant (codex reasoning_effort, opencode variant); "" when the agent records none (claude)
 	Sidechain bool       `json:"sidechain,omitempty"` // true = a subagent (Task) sidechain turn
 	Branch    string     `json:"branch,omitempty"`    // git branch at the time of the turn
 	Cwd       string     `json:"cwd,omitempty"`       // working dir at the time of the turn

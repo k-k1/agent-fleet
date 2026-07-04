@@ -90,6 +90,7 @@ func opencodeParseMessage(db *sql.DB, msgID string, data []byte, idx int) (chatT
 	var md struct {
 		Role    string `json:"role"`
 		ModelID string `json:"modelID"`
+		Variant string `json:"variant"` // opencode's reasoning effort/variant (e.g. "max")
 		Tokens  struct {
 			Input  int `json:"input"`
 			Output int `json:"output"`
@@ -125,6 +126,7 @@ func opencodeParseMessage(db *sql.DB, msgID string, data []byte, idx int) (chatT
 	}
 	if md.Role == "assistant" {
 		t.Model = md.ModelID
+		t.Effort = md.Variant
 		t.InTok, t.OutTok = md.Tokens.Input, md.Tokens.Output
 		t.CacheRead, t.CacheCreate = md.Tokens.Cache.Read, md.Tokens.Cache.Write
 	}
