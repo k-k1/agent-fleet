@@ -3,11 +3,13 @@ import { useApp } from "../state.jsx";
 import { api, apiJSON } from "../api.js";
 import Icon from "../components/Icon.jsx";
 import BranchModal from "../components/BranchModal.jsx";
+import Modal from "../components/Modal.jsx";
 import CommitGraph from "../components/CommitGraph.jsx";
 import { useConfirm } from "../components/ConfirmProvider.jsx";
 import { useToast } from "../components/ToastProvider.jsx";
 import { placeFixed } from "../lib/placeFixed.js";
 import EmptyState from "../components/EmptyState.jsx";
+import type { FormEvent } from "react";
 import type { GraphCommit } from "../lib/gitgraph.js";
 
 interface ScmStatus {
@@ -34,6 +36,8 @@ export default function SourceControlView({ repo }: { repo?: string; wrap?: bool
   const [showBranch, setShowBranch] = useState(false);
   const [menu, setMenu] = useState<{ sha: string; x: number; y: number } | null>(null); // commit right-click
   const menuRef = useRef<HTMLUListElement>(null);
+  const [nbAt, setNbAt] = useState<string | null>(null); // "new branch from this commit" sha
+  const [nbName, setNbName] = useState("");
 
   // Commit context menu: clamp on-screen, close on outside click / Esc.
   useLayoutEffect(() => {
@@ -85,6 +89,34 @@ export default function SourceControlView({ repo }: { repo?: string; wrap?: bool
     bumpRepos();
   };
 
+  // Fast-forward the current branch to its upstream (git pull --ff-only).
+  const doFF = async () => {
+    const res = await apiJSON(`api/repos/${enc}/ff`, "POST", {});
+    if (res && res.error) {
+      toast("ff 失敗: " + (res.error.message || res.error));
+      return;
+    }
+    refresh();
+    bumpRepos();
+  };
+
+  // Create a new branch from a specific commit (right-click → このコミットから新規ブランチ).
+  const createBranchAt = async (e: FormEvent) => {
+    e.preventDefault();
+    const name = nbName.trim();
+    const sha = nbAt;
+    if (!name || !sha) return;
+    const res = await apiJSON(`api/repos/${enc}/checkout`, "POST", { branch: name, ref: sha, create: true });
+    if (res && res.error) {
+      toast("ブランチ作成に失敗: " + (res.error.message || res.error));
+      return;
+    }
+    setNbAt(null);
+    refresh();
+    bumpRepos();
+    bumpFiles();
+  };
+
   // Checkout a commit (right-click → co). Lands on a detached HEAD at that commit.
   const checkoutCommit = async (sha: string) => {
     setMenu(null);
@@ -129,6 +161,9 @@ export default function SourceControlView({ repo }: { repo?: string; wrap?: bool
         <button className="ghost scm-act" title="git fetch --prune" onClick={fetchRepo}>
           <Icon name="cloud-download" /> <span className="lbl">fetch</span>
         </button>
+        <button className="ghost scm-act" title="現在のブランチを upstream に fast-forward（pull --ff-only）" onClick={doFF}>
+          <Icon name="arrow-up" /> <span className="lbl">ff</span>
+        </button>
         <button className="ghost scm-act" title="更新" onClick={refresh}>
           <Icon name="refresh" /> <span className="lbl">更新</span>
         </button>
@@ -162,7 +197,34 @@ export default function SourceControlView({ repo }: { repo?: string; wrap?: bool
           <li onClick={() => checkoutCommit(menu.sha)}>
             <Icon name="git-branch" /> チェックアウト（co）
           </li>
+          <li onClick={() => { const s = menu.sha; setMenu(null); setNbName(""); setNbAt(s); }}>
+            <Icon name="git-branch" /> このコミットから新規ブランチ…
+          </li>
         </ul>
+      )}
+      {nbAt && (
+        <Modal
+          title={`新規ブランチ — ${nbAt.slice(0, 10)} から`}
+          onClose={() => setNbAt(null)}
+          className="branch-modal"
+          as="form"
+          onSubmit={createBranchAt}
+        >
+          <div className="modal-body">
+            <label className="pick-field">
+              <span>ブランチ名</span>
+              <input autoFocus value={nbName} onChange={(e) => setNbName(e.target.value)} placeholder="feature/…" />
+            </label>
+          </div>
+          <footer className="modal-foot">
+            <button type="button" className="ghost" onClick={() => setNbAt(null)}>
+              キャンセル
+            </button>
+            <button type="submit" className="primary" disabled={!nbName.trim()}>
+              作成して切替
+            </button>
+          </footer>
+        </Modal>
       )}
       {showBranch && (
         <BranchModal

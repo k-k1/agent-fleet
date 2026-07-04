@@ -78,6 +78,7 @@ func main() {
 	mux.HandleFunc("GET /repos/{name}/branches", handleRepoBranches)
 	mux.HandleFunc("POST /repos/{name}/checkout", handleRepoCheckout)
 	mux.HandleFunc("POST /repos/{name}/fetch", handleRepoFetch)
+	mux.HandleFunc("POST /repos/{name}/ff", handleRepoFF)
 	// Source-control view + light edits (docs/17 P3-5).
 	mux.HandleFunc("GET /repos/{name}/changes", handleRepoChanges)
 	mux.HandleFunc("GET /repos/{name}/diff", handleRepoDiff)
