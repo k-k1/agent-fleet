@@ -467,6 +467,18 @@ export default function MirrorView({
     }
   };
 
+  // Low-level: send named keys with NO "working" status and NO quick re-poll — used by
+  // the plan-mode toggle, which isn't a turn. (The quick re-poll of sendKeys/sendPrompt
+  // would fire before the mode actually changed and momentarily revert the optimistic
+  // indicator; the regular poll picks up the real mode via paneMode.)
+  const postKeys = async (keys: string[]) => {
+    try {
+      await apiJSON(`api/sessions/${q(session)}/input`, "POST", { keys });
+    } catch {
+      /* next poll reconciles */
+    }
+  };
+
   // sendPrompt submits one prompt (the composer, or a single-select answer).
   const sendPrompt = async (text: string) => {
     const t = (text || "").trim();
@@ -940,10 +952,13 @@ export default function MirrorView({
                     // Optimistically flip the indicator (codex/opencode don't report the
                     // new mode until a turn runs); the poll reconciles on the next change.
                     setMode(toPlan ? "plan" : "normal");
+                    // Low-level sends (no working status / no quick re-poll) so the
+                    // optimistic indicator holds until the regular poll reads the real
+                    // mode from the terminal — otherwise a premature poll reverts it.
                     if (toPlan && agent.planEnterCmd) {
-                      sendPrompt(agent.planEnterCmd); // deterministic enter (claude /plan)
+                      postInput(agent.planEnterCmd); // deterministic enter (claude/codex /plan)
                     } else {
-                      sendKeys([agent.planCycleKey]); // cycle: codex/opencode toggle, claude exit
+                      postKeys([agent.planCycleKey]); // cycle: codex/opencode toggle, claude exit
                     }
                   }}
                 >
