@@ -21,6 +21,15 @@ export default function MirrorToggle({ mirror, onToggle, running = true }: Mirro
     <span className="seg sm md-toggle mirror-toggle">
       <button
         type="button"
+        className={"seg-btn" + (mirror ? " active" : "")}
+        title="チャット"
+        onClick={() => onToggle?.(true)}
+      >
+        <Icon name="comment-discussion" />
+        <span className="seg-label">チャット</span>
+      </button>
+      <button
+        type="button"
         className={"seg-btn" + (!mirror ? " active" : "")}
         // Switching to the terminal attaches (resumes) the session, which needs the
         // workspace running. While it's stopped, disable it — otherwise the resume
@@ -31,15 +40,6 @@ export default function MirrorToggle({ mirror, onToggle, running = true }: Mirro
       >
         <Icon name="terminal" />
         <span className="seg-label">ターミナル</span>
-      </button>
-      <button
-        type="button"
-        className={"seg-btn" + (mirror ? " active" : "")}
-        title="チャット"
-        onClick={() => onToggle?.(true)}
-      >
-        <Icon name="comment-discussion" />
-        <span className="seg-label">チャット</span>
       </button>
     </span>
   );

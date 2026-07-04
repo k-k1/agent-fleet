@@ -967,22 +967,15 @@ button.wu-reload {
 .termview {
   container: paneview / inline-size;
 }
-@container paneview (max-width: 360px) {
+/* Collapse the kind badge to its 2-char short form when the pane header gets narrow —
+   the full word otherwise squeezes the session name to "nov…". Both the terminal and
+   chat heads carry the kind + name + state chip + ターミナル⇄チャット toggle, so they use
+   the same threshold. */
+@container paneview (max-width: 460px) {
   .view-head .kind-tag .kt-full {
     display: none;
   }
   .view-head .kind-tag .kt-short {
-    display: inline;
-  }
-}
-/* The chat head is busier than the terminal's (kind + name + state chip + 分岐 +
-   ターミナル⇄チャット toggle), so its kind badge collapses to the 2-char short form at a
-   wider pane — the full word otherwise squeezes the session name to "nov…". */
-@container paneview (max-width: 460px) {
-  .mirrorview .view-head .kind-tag .kt-full {
-    display: none;
-  }
-  .mirrorview .view-head .kind-tag .kt-short {
     display: inline;
   }
 }
