@@ -64,6 +64,10 @@ export interface AgentDescriptor {
   // prompt when turning plan on — more reliable than cycling a 3-mode TUI. "" = use the
   // cycle key. Exiting plan still uses planCycleKey.
   planEnterCmd: string;
+  // the agent's non-plan mode name, shown optimistically in the mode chip when leaving
+  // plan (the real label follows from the next poll). claude "Bypass", codex "Default",
+  // opencode "Build". "" for agents without a mode chip.
+  defaultModeLabel: string;
   caps: AgentCaps;
   // whether this kind is currently launchable given connections / SSM hosts
   available(ctx: AvailCtx): boolean;
@@ -100,6 +104,7 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     launchSuffix: "",
     planCycleKey: "BTab", // Shift+Tab cycles normal / auto-accept / plan (used to exit)
     planEnterCmd: "/plan", // claude has a direct command to enter plan mode
+    defaultModeLabel: "Bypass",
     caps: caps({
       chat: true,
       transcript: true,
@@ -124,6 +129,7 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     launchSuffix: "-cx",
     planCycleKey: "BTab", // Shift+Tab cycles the collaboration mode (used to exit plan)
     planEnterCmd: "/plan", // codex also has /plan ("switch to Plan mode")
+    defaultModeLabel: "Default",
     // Chat mirror lit up (段1): turns come from codex's rollout JSONL, normalized by the
     // Agent's transcript() and windowed by the generic /messages handler. No fork (codex
     // has no --session-id pin); the context gauge works — codex logs token counts too.
@@ -149,6 +155,7 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     launchSuffix: "-oc",
     planCycleKey: "Tab", // Tab cycles the agent (build / plan)
     planEnterCmd: "",
+    defaultModeLabel: "Build",
     // Chat mirror lit up (段2): turns come from opencode's SQLite store (message+part),
     // normalized by the Agent's transcript() and windowed by the generic /messages
     // handler. Context gauge works (per-message tokens); plan mode + inline question tool.
@@ -176,6 +183,7 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     launchSuffix: "-sh",
     planCycleKey: "",
     planEnterCmd: "",
+    defaultModeLabel: "",
     caps: caps({
       ephemeral: true,
       launchableFromRepo: true,
@@ -195,6 +203,7 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     launchSuffix: "",
     planCycleKey: "",
     planEnterCmd: "",
+    defaultModeLabel: "",
     // Like shell: a plain login shell with no working/idle model, so its liveness is a
     // fixed 起動中 chip (not 入力待ち) and it raises no answer/question notifications.
     caps: caps({ ephemeral: true, fixedAliveChip: true }),

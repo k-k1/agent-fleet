@@ -51,10 +51,12 @@ func paneTail(s string, n int) string {
 }
 
 // paneMode reads the session's CURRENT permission/collaboration mode straight from the
-// terminal (what the TUI displays), so it reflects toggles made in the terminal too —
-// not just via the chat. Returns "plan" | "normal" | "" (unknown → caller falls back to
-// the transcript's per-turn mode). Matching is confined to the pane's tail (the status
-// line region) so conversation content can't spoof it.
+// terminal (what the TUI displays), so it reflects toggles made in the terminal too — not
+// just via the chat. Returns the DISPLAY label the Console shows in the composer's mode
+// chip: "Plan" (plan mode, the special one) or the agent's non-plan mode name — claude
+// "Bypass"/"Accept Edits", codex "Default", opencode "Build" (or another agent's name).
+// "" = unknown (composer not drawn / stopped) → the Console shows no mode. Matching is
+// confined to the pane's tail (status line region) so conversation content can't spoof it.
 func paneMode(kind, tn string) string {
 	s := capturePane(tn)
 	if s == "" {
@@ -66,34 +68,45 @@ func paneMode(kind, tn string) string {
 		// (shift+tab to cycle)" vs "⏵⏵ bypass permissions on …" / "accept edits on …".
 		t := paneTail(s, 3)
 		if strings.Contains(t, "plan mode on") {
-			return "plan"
+			return "Plan"
+		}
+		if strings.Contains(t, "accept edits on") {
+			return "Accept Edits"
+		}
+		if strings.Contains(t, "bypass permissions on") {
+			return "Bypass"
 		}
 		if strings.Contains(t, "shift+tab to cycle") {
-			return "normal"
+			return "Default"
 		}
 	case kindOpencode:
-		// The composer status line sits a few lines above the very bottom (above the
-		// border + token/commands footer).
+		// The composer status line ("<Agent> auto · …") sits a few lines above the very
+		// bottom (above the border + token/commands footer). The agent name IS the mode.
 		if m := opencodeStatusAgentRe.FindStringSubmatch(paneTail(s, 8)); m != nil {
-			if strings.EqualFold(m[1], "plan") {
-				return "plan"
-			}
-			return "normal"
+			return titleFirst(m[1]) // "Plan" / "Build" / …
 		}
 	case kindCodex:
 		// codex's composer footer shows "Plan mode (shift+tab to cycle)" ONLY while in plan
 		// mode; Default mode shows just "<model> <effort> · <cwd>" (no mode label).
 		t := paneTail(s, 3)
 		if strings.Contains(t, "Plan mode (") {
-			return "plan"
+			return "Plan"
 		}
 		// Composer footer present (model · cwd) and no plan label → Default mode; else the
 		// composer isn't visible yet (startup) → unknown, fall back to the transcript mode.
 		if codexFooterEffortRe.MatchString(t) {
-			return "normal"
+			return "Default"
 		}
 	}
 	return ""
+}
+
+// titleFirst upper-cases the first rune ("plan" → "Plan", "build" → "Build").
+func titleFirst(s string) string {
+	if s == "" {
+		return s
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
 }
 
 // Programmatic session I/O for the MCP drive tools (docs/decisions/0006, P3-6 E).

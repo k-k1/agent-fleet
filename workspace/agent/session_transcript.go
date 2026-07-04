@@ -191,16 +191,12 @@ func handleSessionMessages(w http.ResponseWriter, r *http.Request) {
 		resp["hasMore"] = firstLine > 0
 	}
 	surfacePendingPayloads(resp, sid, state)
-	// Current mode, only while alive (a stopped session isn't in any mode): prefer what
-	// claude's status line shows (reflects a terminal-side Shift+Tab too), falling back to
-	// the jsonl mode (a per-prompt snapshot) when the pane isn't readable.
+	// Current mode label (Plan / Bypass / Default / …), only while alive — read from the
+	// status line so it reflects a terminal-side Shift+Tab too. The jsonl mode is a stale
+	// per-prompt snapshot with a different vocabulary, so it's not used as a fallback.
 	if alive {
-		mode := paneMode(kindClaude, tmuxName(name))
-		if mode == "" {
-			mode = latestMode(lines)
-		}
-		if mode != "" {
-			resp["mode"] = mode
+		if m := paneMode(kindClaude, tmuxName(name)); m != "" {
+			resp["mode"] = m
 		}
 	}
 	// Current ToDo list (reconstructed from Task tool calls) so the chat can show progress.

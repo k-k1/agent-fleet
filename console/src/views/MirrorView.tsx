@@ -735,9 +735,9 @@ export default function MirrorView({
 
       {ctxUsage && <ContextBar {...ctxUsage} spends={spends} maxSpend={maxSpend} />}
       {tasks.length > 0 && <TaskChecklist tasks={tasks} />}
-      {mode === "plan" && (
+      {mode === "Plan" && (
         <div className="mirror-planmode">
-          <Icon name="debug-pause" /> 計画モード — 承認するまで実装しません
+          <Icon name="debug-pause" /> Plan モード — 承認するまで実装しません
         </div>
       )}
       {termState === "resume" && (
@@ -896,6 +896,17 @@ export default function MirrorView({
               <i />
               <i />
             </span>
+            {/* Stop the running turn (Escape) — lives with the typing indicator so it only
+                shows while working, and never shifts the composer. */}
+            <button
+              type="button"
+              className="ghost mirror-stop"
+              disabled={sending}
+              title="実行を停止（Esc）"
+              onClick={() => sendKeys(["Escape"])}
+            >
+              <Icon name="debug-stop" /> 停止
+            </button>
           </div>
         )}
       </div>
@@ -936,49 +947,6 @@ export default function MirrorView({
         </div>
       ) : (
         <div className="mirror-compose">
-          {(agent.caps.planMode || status === "working") && (
-            <div className="mirror-toolbar">
-              {agent.caps.planMode && agent.planCycleKey && (
-                // Toggle plan mode by sending the agent's mode-cycle key (Shift+Tab for
-                // claude/codex, Tab for opencode). The poll reflects the resulting mode; on
-                // a 3-mode TUI (claude) it may take a second press to land on plan.
-                <button
-                  type="button"
-                  className={"seg-btn mirror-mode" + (mode === "plan" ? " on" : "")}
-                  disabled={sending}
-                  title="計画モードを切り替え（承認するまで実装しない）"
-                  onClick={() => {
-                    const toPlan = mode !== "plan";
-                    // Optimistically flip the indicator (codex/opencode don't report the
-                    // new mode until a turn runs); the poll reconciles on the next change.
-                    setMode(toPlan ? "plan" : "normal");
-                    // Low-level sends (no working status / no quick re-poll) so the
-                    // optimistic indicator holds until the regular poll reads the real
-                    // mode from the terminal — otherwise a premature poll reverts it.
-                    if (toPlan && agent.planEnterCmd) {
-                      postInput(agent.planEnterCmd); // deterministic enter (claude/codex /plan)
-                    } else {
-                      postKeys([agent.planCycleKey]); // cycle: codex/opencode toggle, claude exit
-                    }
-                  }}
-                >
-                  <Icon name="debug-pause" /> 計画モード{mode === "plan" ? " ON" : ""}
-                </button>
-              )}
-              <span className="mirror-toolbar-sp" />
-              {status === "working" && (
-                <button
-                  type="button"
-                  className="ghost mirror-stop"
-                  disabled={sending}
-                  title="実行を停止（Esc）"
-                  onClick={() => sendKeys(["Escape"])}
-                >
-                  <Icon name="debug-stop" /> 停止
-                </button>
-              )}
-            </div>
-          )}
           {(attachments.length > 0 || pasting) && (
             <div className="mirror-attach">
               {attachments.map((a, i) => (
@@ -995,6 +963,29 @@ export default function MirrorView({
                 </span>
               )}
             </div>
+          )}
+          {/* Mode chip: shows the live mode NAME (Plan / Bypass / Default / Build) and
+              toggles plan on click. Bottom-aligned so it stays put as the textarea grows;
+              "…" until the first poll resolves the mode (keeps the row from jumping). */}
+          {agent.caps.planMode && agent.planCycleKey && (
+            <button
+              type="button"
+              className={"mirror-mode" + (mode === "Plan" ? " on" : "")}
+              disabled={sending}
+              title="モードを切り替え（Plan ⇄ 実装）"
+              onClick={() => {
+                const toPlan = mode !== "Plan";
+                // Optimistic label (codex/opencode only report the new mode after a turn);
+                // the poll reconciles from the terminal via paneMode.
+                setMode(toPlan ? "Plan" : agent.defaultModeLabel);
+                // Low-level sends (no working status / no quick re-poll) so the optimistic
+                // label holds until the regular poll reads the real mode.
+                if (toPlan && agent.planEnterCmd) postInput(agent.planEnterCmd);
+                else postKeys([agent.planCycleKey]);
+              }}
+            >
+              <Icon name="debug-pause" /> {mode || "…"}
+            </button>
           )}
           {/* History nav for phones (no arrow keys); hidden on wider screens via CSS. */}
           <div className="mirror-hist">
