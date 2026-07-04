@@ -119,13 +119,31 @@ PAT 不要・egress 不要・設定漏れなし・身元＝自コンテナ。会
 protocol はスタンドアロン検証済（実 Agent 越しのツール実行はコンテナ内で要目視）。
 **リードオンリー（書き込みツール未公開）**。`send_to_session` 等は**後で公開＋ユーザーが明示有効化**（Q2 のペルソナ/トグル）。
 
-### Q2: 使い方への回答 → **利用者向けガイド + 専用ペルソナ**
-内部設計書（docs/、インフラ/セキュリティ詳細含む）は**出さない**。利用者向けに要約した USAGE/FAQ を用意し
-`--add-dir` で読ませる。**「Agent Fleet アシスタント」を専用チャット種別/ペルソナ**として作り
-（`--append-system-prompt` でガイド参照＋基本操作概略）、AssistantSection にプリセット化。ライブ状態/操作は Q1 の MCP。
+### 保守メモ: 2つの MCP 面は別実装（自動同期しない）
+CP `mcp.go`（外部/PAT/admin・別モジュール）と Agent `mcp_stdio.go`（ws内/read-only member）は独立。
+ツール追加は載せたい面を手で追記（両方に出すなら2箇所）。数が増えて面倒なら
+「name/description/schema→REST パス対応表」を共有パッケージ/JSON カタログに1本化して両面が読む形へ。
+当面は意図的に別スコープ（read-only vs admin）として二重管理を許容。
+
+### Q2 → 「アシスタント・テンプレート」機能（常設 AF + ユーザー定義、方針決定・未実装）
+単一ペルソナでなく、**アシスタントを設定可能なエンティティ**にする（カスタム GPT 的）:
+- **Assistant** = {id, name, icon?, builtin, agent(claude/codex), model?, persona(system prompt),
+  tools(af_read / af_write / none), knowledge?(USAGE 等 doc を --add-dir で読ませる)}。
+- **常設ビルトイン**: 「Agent Fleet アシスタント」(削除不可、persona=使い方案内, tools=af_read,
+  knowledge=利用者向け USAGE)。汎用/翻訳ビルトインも可。
+- **ユーザー定義**: 名前＋persona＋model＋ツール許可を作成/編集（`~/.config/agent-fleet/assistants/<id>.json`、
+  ビルトインはコードで注入してマージ）。**書き込みツール(af_write=send_to_session 等)は各アシスタントで
+  ユーザーが明示 opt-in** した時だけ `mcp_stdio` に公開/`--allowedTools` 許可。
+- **会話**は `assistant_id` を持ち、作成時にアシスタントの agent/model/persona/tools を継承。
+  `chat.go` provider が persona→`--append-system-prompt`、model→`--model`、knowledge→`--add-dir`、
+  tools→`AFTools`＋（将来）書き込みツール公開を出し分け。
+- **Console**: AssistantSection を「アシスタント（常設 AF ＋ ユーザー定義）＋各会話」に再構成、
+  「＋新規チャット（アシスタント選択）」、アシスタントの作成/編集 UI（名前/persona/model/ツール許可）。
+- 利用者向け USAGE/FAQ は別途用意（内部 docs/ は出さない）。
 
 ### 実装順
-Q3（済）→ Q1（mcp-stdio, read-only）→ Q2（USAGE + 専用ペルソナ）→ Phase C。
+Q3（済）→ Q1（mcp-stdio, read-only, 済）→ **Q2=アシスタント・テンプレート**（データモデル拡張 + Console UI）
+→ 書き込みツール opt-in → Phase C（Files/DocView から翻訳）。
 
 ## 制約（Console 側、docs/18 と同じ）
 
