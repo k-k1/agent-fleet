@@ -192,7 +192,8 @@ Console のみ（`MirrorView` typing 行＋`.mirror-stop`）。
   モードを pane から拾う（全エージェント統一）: claude=ステータス行 `plan mode on (shift+tab to cycle)`、
   opencode=`Plan/Build auto ·`、codex=**フッタの明示ラベル `Plan mode (shift+tab to cycle)`**（Plan 時のみ表示。Default は
   ラベル無し＝`<model> <effort> · <cwd>` のみ）。履歴行 `… for Plan mode.` は `Plan mode (` を含まず誤爆しない。フッタ
-  非表示（起動直後）は "" ＝transcript/jsonl mode にフォールバック（codex は Default 起動ゆえ normal で正しい）。
+  非表示（起動直後）／**非alive（停止中）は mode を報告しない**（rollout/jsonl の per-turn snapshot は stale で、停止中の
+  codex が "計画モードON" になっていた）。Console は未報告時 OFF 表示（codex/opencode は Default 起動ゆえ正しい）。
   claude の jsonl mode は「プロンプト毎スナップショット」寄りで bare 切替を即反映しないため pane を優先。これで
   **チャット/ターミナルどちらの切替も反映**。Console は楽観更新＋serverModeRef で即時フィードバック。
 - **codex 進行中固定の修正**: モード切替キー（BTab）で `markSessionWorking` され、ターンでない＝Stop フックが
