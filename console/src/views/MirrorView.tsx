@@ -10,6 +10,7 @@ import ContextBar from "../components/ContextBar.jsx";
 import { useToast } from "../components/ToastProvider.jsx";
 import { fmtTok } from "../lib/fmttok.js";
 import { kindIcon, kindLabel, kindShort, kindClass } from "../lib/sessionkind.js";
+import { agentOf } from "../agents/registry.ts";
 import { displayName, stateInfo } from "../lib/sessionview.js";
 import { coarsePointer } from "../lib/device.js";
 
@@ -146,6 +147,12 @@ export default function MirrorView({
   onResume?: () => void;
 }) {
   const settings = useSettings();
+  // Per-agent descriptor: how this session's assistant signs its turns, and which
+  // chat affordances (image paste, …) it supports. Defaults to claude for a not-yet
+  // loaded meta. codex/opencode reuse the same chat; only these bits differ.
+  const agent = agentOf(sessionMeta?.kind);
+  const agentName = agent.assistantName;
+  const canPasteImage = agent.caps.imagePaste;
   const { showDoc, showDiff, showTerminalSplit, bumpSessions, wsState } = useApp();
   const toast = useToast();
   const running = wsState === "running"; // WS down → resume is inert, mirror the terminal 再開
@@ -486,6 +493,9 @@ export default function MirrorView({
   // Paste image(s) from the clipboard into the composer: upload each to the session and
   // hold it as an attachment chip. Non-image pastes fall through to the default (text).
   const onPaste = async (e: RClipboardEvent<HTMLTextAreaElement>) => {
+    // Image paste rides claude's Read-tool flow (saved path referenced in the prompt);
+    // agents without that cap let the paste fall through as ordinary text.
+    if (!canPasteImage) return;
     const items = e.clipboardData?.items;
     if (!items) return;
     const files: File[] = [];
@@ -774,7 +784,7 @@ export default function MirrorView({
               : "まだ会話はありません。下の欄からプロンプトを送るか、ターミナルで対話すると、ここに ターンごとの Markdown で表示されます。"}
           </div>
         ) : (
-          renderGroups(groups, sendPrompt, openPlan, openDiff, maxSpend, session, setLightbox)
+          renderGroups(groups, sendPrompt, openPlan, openDiff, maxSpend, session, setLightbox, agentName)
         )}
         {pendingPlan && (
           <div className="mirror-turn assistant">
@@ -859,8 +869,8 @@ export default function MirrorView({
           </div>
         )}
         {status === "working" && !pending && (
-          <div className="mirror-typing" aria-label="Claude が入力中">
-            <span className="mt-who">Claude</span>
+          <div className="mirror-typing" aria-label={agentName + " が入力中"}>
+            <span className="mt-who">{agentName}</span>
             <span className="typing-dots">
               <i />
               <i />
@@ -1086,6 +1096,7 @@ function renderGroups(
   maxSpend: number,
   session: string,
   onOpenImage: (url: string) => void,
+  agentName: string,
 ) {
   const els = [];
   let prevCtx = "";
@@ -1108,6 +1119,7 @@ function renderGroups(
           onAnswer={onAnswer}
           onOpenPlan={onOpenPlan}
           onOpenDiff={onOpenDiff}
+          agentName={agentName}
         />
       ),
     );
@@ -1201,6 +1213,7 @@ function Turn({
   onAnswer,
   onOpenPlan,
   onOpenDiff,
+  agentName,
 }: {
   turn: Group;
   maxSpend: number;
@@ -1209,9 +1222,10 @@ function Turn({
   onAnswer: (t: string) => void;
   onOpenPlan: (plan: string) => void;
   onOpenDiff: (p: Part) => void;
+  agentName: string;
 }) {
   const isUser = turn.role === "user";
-  const who = isUser ? "あなた" : turn.sidechain ? "サブエージェント" : "Claude";
+  const who = isUser ? "あなた" : turn.sidechain ? "サブエージェント" : agentName;
   const ctxTok = turn.inTok + turn.cacheRead + turn.cacheCreate;
   const spend = spendOf(turn);
   return (

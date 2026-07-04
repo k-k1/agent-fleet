@@ -83,6 +83,21 @@ type Agent interface {
 	// conversation. No-op for agents that pin their own session id (claude) or keep
 	// no resume state (shell/ssm).
 	clearResume(sid string)
+	// transcript returns the session's full chronological chat turns (normalized to the
+	// common chatTurn model) plus a source path for diagnostics, for agents whose native
+	// store isn't claude's <sid>.jsonl (codex rollout, opencode SQLite). ok=false means
+	// the agent has no generic transcript source — claude uses its own jsonl path in
+	// handleSessionMessages instead. The generic /messages handler windows these turns.
+	transcript(m sessionMeta) (turns []chatTurn, path string, ok bool)
+}
+
+// noGenericTranscript is the transcript() default for agents that either have no
+// readable transcript (shell/ssm/opencode-until-段2) or use their own path (claude).
+// Embedding it keeps the interface satisfied without a per-agent stub.
+type noGenericTranscript struct{}
+
+func (noGenericTranscript) transcript(sessionMeta) ([]chatTurn, string, bool) {
+	return nil, "", false
 }
 
 // agents is the kind → Agent registry. agentOf falls back to claude for an unknown
@@ -197,7 +212,7 @@ var (
 
 // --- claude --------------------------------------------------------------------
 
-type claudeAgent struct{}
+type claudeAgent struct{ noGenericTranscript }
 
 func (claudeAgent) kind() string { return kindClaude }
 
@@ -264,7 +279,7 @@ func (claudeAgent) clearResume(string) {}
 
 // --- opencode ------------------------------------------------------------------
 
-type opencodeAgent struct{}
+type opencodeAgent struct{ noGenericTranscript }
 
 func (opencodeAgent) kind() string    { return kindOpencode }
 func (opencodeAgent) caps() agentCaps { return agentCaps{} }
@@ -296,8 +311,16 @@ func (opencodeAgent) clearResume(sid string) { opencodeSids.remove(sid) }
 
 type codexAgent struct{}
 
-func (codexAgent) kind() string    { return kindCodex }
-func (codexAgent) caps() agentCaps { return agentCaps{} }
+func (codexAgent) kind() string { return kindCodex }
+
+// canTranscript lights up the Console chat mirror for codex; its turns come from the
+// rollout JSONL via transcript() (readCodexTranscript), windowed by the generic
+// /messages handler. No fork/label (codex has no --session-id pin nor --name).
+func (codexAgent) caps() agentCaps { return agentCaps{canTranscript: true} }
+
+func (codexAgent) transcript(m sessionMeta) ([]chatTurn, string, bool) {
+	return readCodexTranscript(m)
+}
 
 func (codexAgent) buildLaunch(m sessionMeta, _ launchOpts) (launchPlan, error) {
 	// codex resumes (or starts) in its real project dir; refuse if it's gone.
@@ -321,7 +344,7 @@ func (codexAgent) clearResume(sid string) { codexSids.remove(sid) }
 
 // --- shell ---------------------------------------------------------------------
 
-type shellAgent struct{}
+type shellAgent struct{ noGenericTranscript }
 
 func (shellAgent) kind() string    { return kindShell }
 func (shellAgent) caps() agentCaps { return agentCaps{} }
@@ -343,7 +366,7 @@ func (shellAgent) clearResume(string) {}
 
 // --- ssm -----------------------------------------------------------------------
 
-type ssmAgent struct{}
+type ssmAgent struct{ noGenericTranscript }
 
 func (ssmAgent) kind() string    { return kindSSM }
 func (ssmAgent) caps() agentCaps { return agentCaps{} }

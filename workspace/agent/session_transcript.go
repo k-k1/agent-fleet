@@ -97,7 +97,15 @@ func handleSessionMessages(w http.ResponseWriter, r *http.Request) {
 	// the ready prompt (rejected permission, abandoned question, killed+resumed).
 	state := driveState(meta, alive, true)
 	if !agentOf(meta.Kind).caps().canTranscript {
-		writeErr(w, http.StatusBadRequest, "unsupported_kind", "messages are available for claude sessions only")
+		writeErr(w, http.StatusBadRequest, "unsupported_kind", "messages are available for transcript-capable sessions only")
+		return
+	}
+	// Non-claude transcript agents (codex now, opencode later) don't have claude's
+	// <sid>.jsonl; they normalize their native store into chatTurns via transcript(),
+	// and the generic windower pages over those. claude keeps its own line-cursor path
+	// below (battle-tested reset/stub/compaction handling — left untouched).
+	if meta.Kind != kindClaude {
+		handleGenericMessages(w, r, meta, alive, state)
 		return
 	}
 	since := 0
@@ -202,6 +210,90 @@ func handleSessionMessages(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// handleGenericMessages serves /messages for a non-claude transcript agent (codex,
+// and later opencode). The agent hands back the whole conversation as normalized
+// chatTurns (chronological, each carrying its absolute index); this windows them with
+// the SAME semantics claude's line path uses — an initial tail window, backward
+// ?before paging, and live since=<cursor> increments — so the Console chat is
+// unchanged. The cursor here is a TURN count (not a jsonl line count), but the client
+// treats it opaquely (reset / firstLine / hasMore drive it), so the two are compatible.
+func handleGenericMessages(w http.ResponseWriter, r *http.Request, meta sessionMeta, alive bool, state string) {
+	all, path, _ := agentOf(meta.Kind).transcript(meta)
+	total := len(all)
+
+	since := 0
+	if v := r.URL.Query().Get("since"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			since = n
+		}
+	}
+
+	reset := false
+	cursor := total
+	lo, hi := since, total
+	firstLine := -1
+	switch {
+	case total == 0 && alive && since > 0:
+		// Live but momentarily read empty (store mid-write / not yet materialized): hold
+		// the client's cursor and turns rather than blanking the chat.
+		lo, hi = 0, 0
+		cursor = since
+	case since > total:
+		// The transcript shrank below the cursor (a resumed/replaced session): restart
+		// from the top and tell the client to reload.
+		lo, hi = 0, total
+		reset = true
+	default:
+		limit := clampWindowLimit(r.URL.Query().Get("limit"))
+		if bs := r.URL.Query().Get("before"); bs != "" {
+			if b, err := strconv.Atoi(bs); err == nil && b > 0 {
+				hi = min(b, total)
+				lo = max(0, hi-limit)
+				firstLine = lo
+			}
+		} else if r.URL.Query().Get("tail") != "" && since == 0 {
+			lo = max(0, total-limit)
+			firstLine = lo
+		}
+	}
+	if lo < 0 {
+		lo = 0
+	}
+	if hi > total {
+		hi = total
+	}
+	turns := []chatTurn{}
+	if lo < hi {
+		turns = capTurnsNewest(all[lo:hi])
+	}
+	resp := map[string]any{
+		"name": meta.Name, "messages": turns, "cursor": cursor,
+		"status": state, "alive": alive, "reset": reset,
+		"jsonlPath": path, "jsonlLines": total,
+		"jsonlMtime": jsonlMtime(path).Format(time.RFC3339), "jsonlMatches": 1,
+	}
+	if firstLine >= 0 {
+		resp["firstLine"] = firstLine
+		resp["hasMore"] = firstLine > 0
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// capTurnsNewest bounds a returned window to ~1 MiB of text, keeping the NEWEST turns
+// (walk from the end, keep until the budget is spent). Mirrors collectTurns' cap so a
+// huge single response can't bloat the payload.
+func capTurnsNewest(turns []chatTurn) []chatTurn {
+	budget := 0
+	start := 0
+	for i := len(turns) - 1; i >= 0; i-- {
+		if budget += len(turns[i].Text); budget > 1<<20 {
+			start = i
+			break
+		}
+	}
+	return turns[start:]
 }
 
 // collectTurns builds the displayable turns from lines[lo:hi] (a window into the
