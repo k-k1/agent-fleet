@@ -55,32 +55,24 @@ func paneMode(kind, tn string) string {
 		}
 		return "normal"
 	case kindCodex:
-		out, err := exec.Command("tmux", "capture-pane", "-p", "-S", "-200", "-t", exactT(tn)).Output()
+		out, err := exec.Command("tmux", "capture-pane", "-p", "-t", exactT(tn)).Output()
 		if err != nil {
 			return ""
 		}
 		s := string(out)
-		// Primary signal: the always-visible composer footer "<model> <effort> · <cwd>".
-		// Default mode uses the "default" effort; Plan mode switches to a non-default one
-		// (e.g. medium). A "default" effort footer is therefore definitively Default mode —
-		// this is what the stale scrollback line could get wrong. Take the LAST match (the
-		// footer is at the bottom) so conversation text can't spoof it.
-		if ms := codexFooterEffortRe.FindAllStringSubmatch(s, -1); len(ms) > 0 {
-			if ms[len(ms)-1][1] == "default" {
-				return "normal"
-			}
-		}
-		// Non-default effort (or no footer match): confirm with the latest mode-change line
-		// codex logs ("Model changed to … for Plan mode." / "… for Default mode.").
-		pi := strings.LastIndex(s, "for Plan mode")
-		di := strings.LastIndex(s, "for Default mode")
-		if pi < 0 && di < 0 {
-			return "" // unknown — caller falls back to the transcript's per-turn mode
-		}
-		if pi > di {
+		// codex's composer footer shows "Plan mode (shift+tab to cycle)" ONLY while in plan
+		// mode; Default mode shows just "<model> <effort> · <cwd>" (no mode label). Match
+		// "Plan mode (" — the history lines ("… for Plan mode.") end in a period, not a
+		// paren, so they don't spoof it.
+		if strings.Contains(s, "Plan mode (") {
 			return "plan"
 		}
-		return "normal"
+		// Composer footer present (model · cwd) and no plan label → Default mode; else the
+		// composer isn't visible yet (startup) → unknown, fall back to the transcript mode.
+		if codexFooterEffortRe.MatchString(s) {
+			return "normal"
+		}
+		return ""
 	}
 	return ""
 }
