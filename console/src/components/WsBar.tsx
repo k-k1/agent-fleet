@@ -267,7 +267,8 @@ function tile({
 }
 
 export default function WsBar() {
-  const { wsState, startWs, stopWs, ocweb, tenant, superAdmin, layout, resetToTerminal } = useApp();
+  const { wsState, startWs, stopWs, ocweb, tenant, superAdmin, layout, resetToTerminal, splitRight, splitDown, activePaneId } =
+    useApp();
   const askConfirm = useConfirm();
   const { wsStats, wsHist, hostStats, hostHist } = useWsResourceChips(tenant, superAdmin);
   const { usage, refreshing, refresh } = useClaudeUsage(tenant);
@@ -289,6 +290,13 @@ export default function WsBar() {
   const totalPanes = layout.cols.reduce((n, c) => n + c.panes.length, 0);
   const onlyPane = totalPanes === 1 ? layout.cols[0].panes[0] : null;
   const canCloseAll = !(onlyPane && onlyPane.kind === "terminal" && !onlyPane.session && !onlyPane.filePath && !onlyPane.scmRepo);
+
+  // Split (moved here from the per-pane header): 右に分割 appends a column (global);
+  // 上下に分割 splits the ACTIVE pane's column into rows. Same limits as before — up to
+  // 4 columns (desktop only), each column up to 2 panes. Mobile: one top/bottom split.
+  const activeCol = layout.cols.find((c) => c.panes.some((p) => p.id === activePaneId));
+  const canSplitRight = !isMobile && layout.cols.length < 4;
+  const canSplitDown = isMobile ? totalPanes < 2 : (activeCol ? activeCol.panes.length : totalPanes) < 2;
 
   // Start is immediate; Stop is confirmed — it docker-removes the container, so
   // running sessions drop to 停止 (resumable) and opencode web / preview disconnect.
@@ -547,6 +555,20 @@ export default function WsBar() {
         <Icon name={running ? "primitive-square" : "play"} />
         <span>{running ? "停止" : "起動"}</span>
       </button>
+      {canSplitRight && (
+        <button className="ghost ws-split" title="右に分割" onClick={splitRight}>
+          <Icon name="split-horizontal" />
+        </button>
+      )}
+      {canSplitDown && (
+        <button
+          className="ghost ws-split"
+          title="上下に分割（アクティブなペイン）"
+          onClick={() => activePaneId && splitDown(activePaneId)}
+        >
+          <Icon name="split-vertical" />
+        </button>
+      )}
       <button
         className="ghost ws-closeall"
         title="全ペインを閉じる"

@@ -571,6 +571,11 @@ button.wu-reload {
   align-items: center;
   gap: 5px;
 }
+/* Split buttons moved here from the pane header — icon-only, so tighter than the
+   labeled bar buttons (3px 12px). */
+.ws-split {
+  padding: 3px 8px;
+}
 @media (max-width: 760px) {
   .ws-closeall .lbl {
     display: none;

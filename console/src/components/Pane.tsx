@@ -26,8 +26,6 @@ interface PaneProps {
   canClose?: boolean;
   canDrag?: boolean;
   onActivate: (id: string) => void;
-  onSplitRight: () => void;
-  onSplitDown: (id: string) => void;
   onClose: (id: string) => void;
   onSwap: (aId: string, bId: string) => void;
   onDropSplit: (srcId: string, refId: string, dir: "right" | "down") => void;
@@ -54,8 +52,6 @@ export default function Pane({
   canClose,
   canDrag,
   onActivate,
-  onSplitRight,
-  onSplitDown,
   onClose,
   onSwap,
   onDropSplit,
@@ -224,21 +220,10 @@ export default function Pane({
             <Icon name="word-wrap" />
           </button>
         )}
-        {canSplitRight && (
-          <button type="button" className="ghost pane-btn" title="右に分割" onClick={onSplitRight}>
-            <Icon name="split-horizontal" />
-          </button>
-        )}
-        {canSplitDown && (
-          <button
-            type="button"
-            className="ghost pane-btn"
-            title="上下に分割"
-            onClick={() => onSplitDown(pane.id)}
-          >
-            <Icon name="split-vertical" />
-          </button>
-        )}
+        {/* Split (右に分割 / 上下に分割) moved to the WS bar (acts on the active pane),
+            freeing space in this cramped per-pane header. Drag-to-split still uses
+            canSplitRight/canSplitDown below. Per-pane × (close) stays — it's inherently
+            per-pane (the WS bar has the global 全て閉じる). */}
         {canClose && (
           <button
             type="button"
