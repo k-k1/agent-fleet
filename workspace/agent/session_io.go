@@ -19,10 +19,24 @@ var opencodeStatusAgentRe = regexp.MustCompile(`([A-Za-z][\w-]*) +auto +·`)
 // paneMode reads the session's CURRENT permission/collaboration mode straight from the
 // terminal (what the TUI displays), so it reflects toggles made in the terminal too —
 // not just via the chat. Returns "plan" | "normal" | "" (unknown → caller falls back to
-// the transcript's per-turn mode). claude has its own jsonl mode source and isn't handled
-// here.
+// the transcript's per-turn mode).
 func paneMode(kind, tn string) string {
 	switch kind {
+	case kindClaude:
+		out, err := exec.Command("tmux", "capture-pane", "-p", "-t", exactT(tn)).Output()
+		if err != nil {
+			return ""
+		}
+		s := string(out)
+		// claude's status line shows the active mode: "⏸ plan mode on (shift+tab to
+		// cycle)" vs "⏵⏵ bypass permissions on …" / "accept edits on …".
+		if strings.Contains(s, "plan mode") {
+			return "plan"
+		}
+		if strings.Contains(s, "shift+tab to cycle") {
+			return "normal"
+		}
+		return ""
 	case kindOpencode:
 		out, err := exec.Command("tmux", "capture-pane", "-p", "-t", exactT(tn)).Output()
 		if err != nil {

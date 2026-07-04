@@ -188,9 +188,10 @@ Console のみ（`MirrorView` typing 行＋`.mirror-stop`）。
   停止は撤去）。
 - **現在モードはペインから取得（`paneMode`）**: モード切替キーでは新モードが transcript に記録されない（ターン実行時
   のみ）ため、DB/rollout 由来だと切替が反映されず、ターミナル側の切替は特に「逆」に見えた。TUI が常時表示する現在
-  モードを pane から拾う: opencode=ステータス行 `Plan/Build auto ·`、codex=`… for Plan/Default mode.` の最新行。
-  transcript mode にフォールバック。これで**チャット/ターミナルどちらの切替も反映**。Console は楽観更新＋
-  serverModeRef で即時フィードバック。
+  モードを pane から拾う（全エージェント統一）: claude=ステータス行 `plan mode on (shift+tab to cycle)`、
+  opencode=`Plan/Build auto ·`、codex=`… for Plan/Default mode.` の最新行。transcript/jsonl mode にフォールバック。
+  claude の jsonl mode は「プロンプト毎スナップショット」寄りで bare 切替を即反映しないため pane を優先。これで
+  **チャット/ターミナルどちらの切替も反映**。Console は楽観更新＋serverModeRef で即時フィードバック。
 - **codex 進行中固定の修正**: モード切替キー（BTab）で `markSessionWorking` され、ターンでない＝Stop フックが
   発火せず working のまま残っていた。keys に Enter を含む（＝回答送信）ときだけ working にする。
 

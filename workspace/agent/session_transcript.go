@@ -191,8 +191,17 @@ func handleSessionMessages(w http.ResponseWriter, r *http.Request) {
 		resp["hasMore"] = firstLine > 0
 	}
 	surfacePendingPayloads(resp, sid, state)
-	if md := latestMode(lines); md != "" {
-		resp["mode"] = md
+	// Current mode: prefer what claude's status line shows (reflects a terminal-side
+	// Shift+Tab too, and confirms a chat toggle on the next poll), falling back to the
+	// jsonl mode (a per-prompt snapshot).
+	mode := latestMode(lines)
+	if alive {
+		if pm := paneMode(kindClaude, tmuxName(name)); pm != "" {
+			mode = pm
+		}
+	}
+	if mode != "" {
+		resp["mode"] = mode
 	}
 	// Current ToDo list (reconstructed from Task tool calls) so the chat can show progress.
 	if tasks := collectTasks(lines); len(tasks) > 0 {
