@@ -279,10 +279,18 @@ func (claudeAgent) clearResume(string) {}
 
 // --- opencode ------------------------------------------------------------------
 
-type opencodeAgent struct{ noGenericTranscript }
+type opencodeAgent struct{}
 
-func (opencodeAgent) kind() string    { return kindOpencode }
-func (opencodeAgent) caps() agentCaps { return agentCaps{} }
+func (opencodeAgent) kind() string { return kindOpencode }
+
+// canTranscript lights up the Console chat mirror for opencode; its turns come from the
+// SQLite store via transcript() (readOpencodeTranscript), windowed by the generic
+// /messages handler. No fork/label/inline-questions (those are claude-specific).
+func (opencodeAgent) caps() agentCaps { return agentCaps{canTranscript: true} }
+
+func (opencodeAgent) transcript(m sessionMeta) ([]chatTurn, string, bool) {
+	return readOpencodeTranscript(m)
+}
 
 func (opencodeAgent) buildLaunch(m sessionMeta, _ launchOpts) (launchPlan, error) {
 	// opencode resumes (or starts) in its real project dir; refuse if it's gone.

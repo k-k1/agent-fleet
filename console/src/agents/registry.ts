@@ -132,7 +132,16 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     cssClass: "opencode",
     launchHint: "opencode を起動",
     launchSuffix: "-oc",
-    caps: caps({ runsInDir: true, launchableFromRepo: true }),
+    // Chat mirror lit up (段2): turns come from opencode's SQLite store (message+part),
+    // normalized by the Agent's transcript() and windowed by the generic /messages
+    // handler. Context gauge works (per-message tokens); no fork/inline-questions.
+    caps: caps({
+      chat: true,
+      transcript: true,
+      contextBar: true,
+      runsInDir: true,
+      launchableFromRepo: true,
+    }),
     // opencode is ready once it has at least one provider API key env (or the
     // connection reports connected). Unifies the two prior call-site checks.
     available: (c) =>
