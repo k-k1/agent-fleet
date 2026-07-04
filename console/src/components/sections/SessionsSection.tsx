@@ -366,30 +366,6 @@ export default function SessionsSection() {
               setMenuFor(s.name);
             }}
           >
-            {/* Ordinal gutter: color-matched pane numbers for a session shown in one
-                or more panes; click focuses that pane. Present on every row while
-                split (empty when the session isn't open) so row text stays aligned;
-                absent entirely with a single pane. */}
-            {multi && (
-            <div className="session-ords">
-              {opens.map((o) => (
-                <button
-                  key={o.id}
-                  type="button"
-                  className={"session-ord " + ordClass(o.ordinal)}
-                  title={`ペイン${o.ordinal}にフォーカス`}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setActivePane(o.id);
-                  }}
-                  onMouseEnter={() => setHover({ session: s.name, paneId: o.id })}
-                  onMouseLeave={() => setHover(null)}
-                >
-                  {o.ordinal}
-                </button>
-              ))}
-            </div>
-            )}
             <button
               className="session-btn"
               title={
@@ -467,6 +443,30 @@ export default function SessionsSection() {
                 })()}
               </span>
             </button>
+            {/* Ordinal badges: color-matched pane numbers for a session shown in one
+                or more panes; click focuses that pane. Aligned to the top-right (like
+                the REPOS list) rather than a left gutter. Only present while split and
+                the session is actually open. */}
+            {multi && opens.length > 0 && (
+              <div className="session-ords">
+                {opens.map((o) => (
+                  <button
+                    key={o.id}
+                    type="button"
+                    className={"session-ord " + ordClass(o.ordinal)}
+                    title={`ペイン${o.ordinal}にフォーカス`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setActivePane(o.id);
+                    }}
+                    onMouseEnter={() => setHover({ session: s.name, paneId: o.id })}
+                    onMouseLeave={() => setHover(null)}
+                  >
+                    {o.ordinal}
+                  </button>
+                ))}
+              </div>
+            )}
             <div className="session-menu-wrap" ref={menuFor === s.name ? menuRef : undefined}>
               <button
                 className="session-menu-btn"
