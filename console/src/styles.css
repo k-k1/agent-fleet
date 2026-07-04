@@ -1527,6 +1527,29 @@ button.wu-reload {
   width: min(560px, 92vw);
   max-height: 80vh;
 }
+/* New-branch row at the top of the branch modal (create off current HEAD). */
+.branch-new {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border2, var(--border));
+}
+.branch-new-input {
+  flex: 1;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 6px 8px;
+  background: var(--bg);
+  border: 1px solid var(--btn-border);
+  border-radius: 4px;
+  color: var(--fg);
+  font-size: 13px;
+}
+.branch-new button {
+  flex: none;
+  white-space: nowrap;
+}
 .branch-filter {
   width: 100%;
   box-sizing: border-box;
@@ -1802,6 +1825,19 @@ button.wu-reload {
   color: inherit;
   text-decoration: none;
   display: block;
+}
+.ctxmenu li .codicon {
+  margin-right: 7px;
+}
+/* Menu divider (non-interactive). */
+.ctxmenu li.ctx-sep,
+.ctxmenu li.ctx-sep:hover {
+  height: 1px;
+  padding: 0;
+  margin: 4px 6px;
+  background: var(--border2, var(--border));
+  cursor: default;
+  pointer-events: none;
 }
 
 /* file-type icons: colorful brand SVGs (VS Code icons set) + monochrome codicon */

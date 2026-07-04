@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useApp } from "../../state.jsx";
 import { api, apiJSON, errText } from "../../api.js";
 import Section from "../Section.jsx";
@@ -6,7 +6,9 @@ import Icon from "../Icon.jsx";
 import { useToast } from "../ToastProvider.jsx";
 import EmptyState from "../EmptyState.jsx";
 import { useDismiss } from "../../lib/useDismiss.js";
+import { placeFixed } from "../../lib/placeFixed.js";
 import NewRepoModal from "../NewRepoModal.jsx";
+import BranchModal from "../BranchModal.jsx";
 import { kindIcon, kindLabel } from "../../lib/sessionkind.js";
 import { agentOf, repoLaunchKinds } from "../../agents/registry.ts";
 import type { MouseEvent as RMouseEvent } from "react";
@@ -201,6 +203,12 @@ export default function ReposSection() {
                 ? split ? showChatSplit : showChat
                 : split ? showTerminalSplit : showTerminal)(res.name);
             }}
+            // A checkout / new branch changed HEAD and the working tree — refresh the
+            // repo row (branch label) and the Files tree.
+            onBranchChanged={() => {
+              bumpRepos();
+              bumpFiles();
+            }}
           />
         ))}
       </ul>
@@ -220,13 +228,35 @@ interface RepoRowProps {
   running?: boolean;
   active?: boolean;
   selected?: boolean;
-  onOpen: (e: RMouseEvent) => void;
+  onOpen: (e?: RMouseEvent) => void;
   onLaunch: (kind: string, split: boolean) => void;
+  onBranchChanged?: () => void;
 }
 
-function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected, onOpen, onLaunch }: RepoRowProps) {
+function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected, onOpen, onLaunch, onBranchChanged }: RepoRowProps) {
   const [showLaunch, setShowLaunch] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null); // right-click context menu
+  const [branchOpen, setBranchOpen] = useState(false); // branch switch / create modal
+  const menuRef = useRef<HTMLUListElement>(null);
+
+  // Context menu: open at the cursor, clamp on-screen, close on outside click / Esc.
+  useLayoutEffect(() => {
+    if (menu && menuRef.current) placeFixed(menuRef.current, menu.x, menu.y);
+  }, [menu]);
+  useEffect(() => {
+    if (!menu) return;
+    const close = () => setMenu(null);
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && close();
+    document.addEventListener("mousedown", close);
+    document.addEventListener("keydown", onKey);
+    window.addEventListener("blur", close);
+    return () => {
+      document.removeEventListener("mousedown", close);
+      document.removeEventListener("keydown", onKey);
+      window.removeEventListener("blur", close);
+    };
+  }, [menu]);
 
   // Close the launch dropdown on any outside click. Use a containment check
   // (not stopPropagation on the wrap): stopPropagation would swallow OTHER
@@ -237,7 +267,14 @@ function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected,
   useDismiss(wrapRef, showLaunch, () => setShowLaunch(false));
 
   return (
-    <li className={"repo-row" + (active || selected ? " active" : "")}>
+    <li
+      className={"repo-row" + (active || selected ? " active" : "")}
+      onContextMenu={(e) => {
+        if (!running) return; // WS down → actions are inert; don't offer the menu
+        e.preventDefault();
+        setMenu({ x: e.clientX, y: e.clientY });
+      }}
+    >
       <div className="repo-info">
         <button
           className="link grow repo-name"
@@ -326,6 +363,34 @@ function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected,
             </span>
           )}
         </div>
+      )}
+
+      {menu && (
+        <ul
+          className="ctxmenu"
+          ref={menuRef}
+          style={{ left: menu.x, top: menu.y }}
+          role="menu"
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          <li onClick={() => { setMenu(null); onOpen(); }}>開く（ファイル + ソース管理）</li>
+          <li onClick={() => { setMenu(null); setBranchOpen(true); }}>
+            <Icon name="git-branch" /> ブランチ切替 / 新規…
+          </li>
+          <li className="ctx-sep" role="separator" />
+          {kinds.map((k) => (
+            <li key={k} onClick={() => { setMenu(null); onLaunch(k, false); }}>
+              <Icon name={kindIcon(k)} /> {kindLabel(k)} を起動
+            </li>
+          ))}
+        </ul>
+      )}
+      {branchOpen && (
+        <BranchModal
+          repoName={r.name}
+          onClose={() => setBranchOpen(false)}
+          onChecked={() => { setBranchOpen(false); onBranchChanged?.(); }}
+        />
       )}
     </li>
   );

@@ -4,6 +4,7 @@ import BranchList from "./BranchList.jsx";
 import type { Branch } from "./BranchList.jsx";
 import Modal from "./Modal.jsx";
 import { useToast } from "./ToastProvider.jsx";
+import type { FormEvent } from "react";
 
 // BranchModal: switch a repo's branch. Lists branches newest-commit-first with a
 // filter (via BranchList); clicking one checks it out (a remote-only name DWIMs into
@@ -20,6 +21,7 @@ export default function BranchModal({ repoName, onClose, onChecked }: BranchModa
   const [current, setCurrent] = useState("");
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState("");
+  const [newName, setNewName] = useState(""); // new-branch input
 
   useEffect(() => {
     let alive = true;
@@ -44,17 +46,19 @@ export default function BranchModal({ repoName, onClose, onChecked }: BranchModa
     };
   }, [repoName]);
 
-  const checkout = async (name: string) => {
+  // Checkout an existing branch (create=false) or create a new one off the current
+  // HEAD (create=true). Shared error/busy handling; onChecked refreshes on success.
+  const doCheckout = async (name: string, create: boolean) => {
     if (busy) return;
     setBusy(name);
     try {
       const res = await apiJSON(
         `api/repos/${encodeURIComponent(repoName)}/checkout`,
         "POST",
-        { branch: name },
+        create ? { branch: name, create: true } : { branch: name },
       );
       if (res && res.error) {
-        toast("ブランチ切替に失敗: " + (res.error.message || res.error));
+        toast((create ? "ブランチ作成に失敗: " : "ブランチ切替に失敗: ") + (res.error.message || res.error));
         return;
       }
       onChecked();
@@ -63,13 +67,38 @@ export default function BranchModal({ repoName, onClose, onChecked }: BranchModa
     }
   };
 
+  const createBranch = (e: FormEvent) => {
+    e.preventDefault();
+    const name = newName.trim();
+    if (name && !busy) doCheckout(name, true);
+  };
+
   return (
     <Modal title={`ブランチ切替 — ${repoName}`} onClose={onClose} className="branch-modal" lockClose={!!busy}>
       <div className="modal-body">
+        {/* New branch off the current HEAD. */}
+        <form className="branch-new" onSubmit={createBranch}>
+          <input
+            className="branch-new-input"
+            placeholder="新規ブランチ名（現在の HEAD から作成）"
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+          />
+          <button type="submit" className="primary" disabled={!newName.trim() || !!busy}>
+            作成して切替
+          </button>
+        </form>
         {err ? (
           <p className="muted pad">{err}</p>
         ) : (
-          <BranchList branches={branches} selected={current} onPick={checkout} busy={busy} disableActive autoFocus />
+          <BranchList
+            branches={branches}
+            selected={current}
+            onPick={(name) => doCheckout(name, false)}
+            busy={busy}
+            disableActive
+            autoFocus
+          />
         )}
       </div>
     </Modal>
