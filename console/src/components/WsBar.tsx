@@ -267,7 +267,7 @@ function tile({
 }
 
 export default function WsBar() {
-  const { wsState, startWs, stopWs, ocweb, tenant, superAdmin, layout, resetToTerminal, splitRight, splitDown, activePaneId } =
+  const { wsState, startWs, stopWs, ocweb, tenant, superAdmin, layout, resetToTerminal, splitRight, splitDown, activePaneId, openNewSession } =
     useApp();
   const askConfirm = useConfirm();
   const { wsStats, wsHist, hostStats, hostHist } = useWsResourceChips(tenant, superAdmin);
@@ -554,6 +554,18 @@ export default function WsBar() {
       >
         <Icon name={running ? "primitive-square" : "play"} />
         <span>{running ? "停止" : "起動"}</span>
+      </button>
+      {/* Second entry point to the New Session dialog (the Sessions-list ＋新規 stays as
+          is): handy when the left pane is scrolled / collapsed. Opens the same global
+          dialog via openNewSession; disabled while the workspace is stopped. */}
+      <button
+        className="ghost ws-split ws-newsession"
+        title={running ? "新規セッション" : "新規セッション（ワークスペース停止中）"}
+        disabled={!running}
+        onClick={openNewSession}
+      >
+        <Icon name="add" />
+        <span className="lbl">新規</span>
       </button>
       <button
         className="ghost ws-split"

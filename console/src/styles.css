@@ -579,6 +579,11 @@ button.wu-reload {
   gap: 5px;
   padding: 3px 10px;
 }
+/* New Session shortcut on the bar: an accent-tinted icon so it reads as a create
+   action distinct from the split buttons it sits beside. */
+.ws-newsession:not(:disabled) {
+  color: var(--accent, #6a7fdb);
+}
 @media (max-width: 760px) {
   .ws-split .lbl {
     display: none;
