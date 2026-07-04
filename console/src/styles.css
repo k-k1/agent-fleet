@@ -2798,6 +2798,13 @@ body.row-resizing {
   font-weight: 600;
   font-size: 12px;
 }
+/* Stop button sits at the far right of the typing row while the agent works. */
+.mirror-stop {
+  margin-left: auto;
+  font-size: 12px;
+  padding: 2px 10px;
+  color: var(--danger, #d9534f);
+}
 .typing-dots {
   display: inline-flex;
   align-items: center;

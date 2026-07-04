@@ -882,6 +882,18 @@ export default function MirrorView({
               <i />
               <i />
             </span>
+            {/* Interrupt a running (or runaway) turn without leaving chat: Escape stops
+                the current generation in every agent's TUI (claude/codex/opencode) and
+                returns to the composer. Useful when an autonomous task locks input. */}
+            <button
+              type="button"
+              className="ghost mirror-stop"
+              disabled={sending}
+              title="実行を停止（Esc）"
+              onClick={() => sendKeys(["Escape"])}
+            >
+              <Icon name="debug-stop" /> 停止
+            </button>
           </div>
         )}
       </div>
