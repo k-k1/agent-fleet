@@ -119,6 +119,39 @@ if [ -d "$OC_PLUG_SRC" ]; then
     && echo "[entrypoint] seeded opencode status plugin" \
     || echo "[entrypoint] WARN: failed to seed opencode plugin"
 fi
+
+# opencode permission config: run fully unattended like claude/codex (the container IS
+# the sandbox). The `--auto` launch flag auto-approves most permissions, but NOT
+# `external_directory` (access outside the project dir, e.g. ~/repos siblings) — that
+# stays "ask" and stalls the TUI on a prompt the Console user can't answer. Set every
+# permission to "allow" in ~/.config/opencode/opencode.jsonc, preserving any other keys.
+# Best-effort: skips if the file isn't plain JSON (e.g. the user added comments).
+OC_CFG="$HOME/.config/opencode/opencode.jsonc"
+mkdir -p "$HOME/.config/opencode"
+python3 - "$OC_CFG" <<'PY' && echo "[entrypoint] set opencode permission=allow" || echo "[entrypoint] WARN: skipped opencode permission config"
+import json, os, sys
+p = sys.argv[1]
+cfg = {}
+if os.path.exists(p):
+    try:
+        with open(p) as f:
+            cfg = json.load(f)
+    except Exception:
+        sys.exit(1)  # not plain JSON (comments?) — don't clobber
+if not isinstance(cfg, dict):
+    sys.exit(1)
+cfg.setdefault("$schema", "https://opencode.ai/config.json")
+perm = cfg.get("permission")
+if not isinstance(perm, dict):
+    perm = {}
+for k in ("edit", "bash", "webfetch", "doom_loop", "external_directory"):
+    perm[k] = "allow"
+cfg["permission"] = perm
+tmp = p + ".af-tmp"
+with open(tmp, "w") as f:
+    json.dump(cfg, f, indent=2)
+os.replace(tmp, p)
+PY
 # The opencode rtk plugin (rtk.ts) and codex's AGENTS.md rtk block are applied by
 # the agent (reconcileAgentRTK in agent_rtk.go) from the durable ~/.config/agent-
 # fleet/rtk.json toggle — NOT seeded here — so the Console on/off choice survives
