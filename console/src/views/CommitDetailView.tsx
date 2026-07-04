@@ -9,8 +9,18 @@ import EmptyState from "../components/EmptyState.jsx";
 // CommitDetailView is one commit's detail/diff in its own pane, opened by clicking a
 // commit in the graph. Fetches GET /repos/{name}/show?sha= and renders the shared
 // CommitDetail (header + colored patch).
-export default function CommitDetailView({ repo, sha, wrap }: { repo?: string; sha?: string; wrap?: boolean }) {
-  const { scmRepo: ctxRepo, commitSha: ctxSha } = useApp();
+export default function CommitDetailView({
+  repo,
+  sha,
+  paneId,
+  wrap,
+}: {
+  repo?: string;
+  sha?: string;
+  paneId?: string;
+  wrap?: boolean;
+}) {
+  const { scmRepo: ctxRepo, commitSha: ctxSha, closePane } = useApp();
   const scmRepo = repo !== undefined ? repo : ctxRepo;
   const target = sha !== undefined ? sha : ctxSha || undefined;
   const enc = encodeURIComponent(scmRepo || "");
@@ -44,6 +54,14 @@ export default function CommitDetailView({ repo, sha, wrap }: { repo?: string; s
     <div className="scmview commit-view">
       <header className="view-head">
         <span className="view-title"><Icon name="git-commit" /> {(target || "").slice(0, 10)}</span>
+        <span className="spacer" />
+        <button
+          className="ghost scm-act"
+          title="diff を閉じる"
+          onClick={() => paneId && closePane(paneId)}
+        >
+          <Icon name="close" /> <span className="lbl">閉じる</span>
+        </button>
       </header>
       <div className="commit-view-body">
         <CommitDetail commit={commit} wrap={wrap} />

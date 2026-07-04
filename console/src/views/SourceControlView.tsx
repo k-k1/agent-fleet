@@ -123,14 +123,14 @@ export default function SourceControlView({ repo }: { repo?: string; wrap?: bool
           </span>
         ) : null}
         <span className="spacer" />
-        <button className="ghost" title="変更をコミット（別ペイン）" onClick={() => scmRepo && showChanges(scmRepo)}>
-          <Icon name="git-commit" /> 変更
+        <button className="ghost scm-act" title="変更をコミット（別ペイン）" onClick={() => scmRepo && showChanges(scmRepo)}>
+          <Icon name="git-commit" /> <span className="lbl">変更</span>
         </button>
-        <button className="ghost" title="git fetch --prune" onClick={fetchRepo}>
-          <Icon name="cloud-download" /> fetch
+        <button className="ghost scm-act" title="git fetch --prune" onClick={fetchRepo}>
+          <Icon name="cloud-download" /> <span className="lbl">fetch</span>
         </button>
-        <button className="ghost" title="更新" onClick={refresh}>
-          <Icon name="refresh" />
+        <button className="ghost scm-act" title="更新" onClick={refresh}>
+          <Icon name="refresh" /> <span className="lbl">更新</span>
         </button>
       </header>
       <div className="cgraph-body">

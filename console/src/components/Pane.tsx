@@ -276,7 +276,7 @@ export default function Pane({
       {pane.kind === "scm" && <SourceControlView repo={pane.scmRepo ?? undefined} wrap={wrapOn} />}
       {pane.kind === "changes" && <ChangesView repo={pane.scmRepo ?? undefined} wrap={wrapOn} />}
       {pane.kind === "commit" && (
-        <CommitDetailView repo={pane.scmRepo ?? undefined} sha={pane.commitSha ?? undefined} wrap={wrapOn} />
+        <CommitDetailView repo={pane.scmRepo ?? undefined} sha={pane.commitSha ?? undefined} paneId={pane.id} wrap={wrapOn} />
       )}
       {pane.kind === "file" && <FileView filePath={pane.filePath} wrap={wrapOn} />}
       {pane.kind === "doc" && <DocView title={pane.docTitle ?? undefined} content={pane.docContent ?? undefined} />}
