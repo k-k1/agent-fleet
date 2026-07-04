@@ -969,29 +969,6 @@ export default function MirrorView({
               )}
             </div>
           )}
-          {/* Mode chip: shows the live mode NAME (Plan / Bypass / Default / Build) and
-              toggles plan on click. Bottom-aligned so it stays put as the textarea grows;
-              "…" until the first poll resolves the mode (keeps the row from jumping). */}
-          {agent.caps.planMode && agent.planCycleKey && (
-            <button
-              type="button"
-              className={"mirror-mode" + (isPlan ? " on" : "")}
-              disabled={sending}
-              title="モードを切り替え（Plan ⇄ 実装）"
-              onClick={() => {
-                const toPlan = !isPlan;
-                // Optimistic label (codex/opencode only report the new mode after a turn);
-                // the poll reconciles from the terminal via paneMode.
-                setMode(toPlan ? "Plan" : agent.defaultModeLabel);
-                // Low-level sends (no working status / no quick re-poll) so the optimistic
-                // label holds until the regular poll reads the real mode.
-                if (toPlan && agent.planEnterCmd) postInput(agent.planEnterCmd);
-                else postKeys([agent.planCycleKey]);
-              }}
-            >
-              {mode || "…"}
-            </button>
-          )}
           {/* History nav for phones (no arrow keys); hidden on wider screens via CSS. */}
           <div className="mirror-hist">
             <button
@@ -1030,15 +1007,40 @@ export default function MirrorView({
             onKeyDown={onKeyDown}
             onPaste={onPaste}
           />
-          <button
-            type="button"
-            className="btn primary mirror-send"
-            disabled={(!draft.trim() && !attachments.length) || sending}
-            onClick={send}
-            title="送信"
-          >
-            <Icon name="send" />
-          </button>
+          {/* Right column: a small mode chip stacked over the send button. The chip is a
+              rarely-used control, so it rides above send (compact, not competing with the
+              textarea) and only appears for agents with a plan toggle. */}
+          <div className="mirror-send-col">
+            {agent.caps.planMode && agent.planCycleKey && (
+              <button
+                type="button"
+                className={"mirror-mode" + (isPlan ? " on" : "")}
+                disabled={sending}
+                title="モードを切り替え（Plan ⇄ 実装）"
+                onClick={() => {
+                  const toPlan = !isPlan;
+                  // Optimistic label (codex/opencode only report the new mode after a turn);
+                  // the poll reconciles from the terminal via paneMode.
+                  setMode(toPlan ? "Plan" : agent.defaultModeLabel);
+                  // Low-level sends (no working status / no quick re-poll) so the optimistic
+                  // label holds until the regular poll reads the real mode.
+                  if (toPlan && agent.planEnterCmd) postInput(agent.planEnterCmd);
+                  else postKeys([agent.planCycleKey]);
+                }}
+              >
+                {mode || "…"}
+              </button>
+            )}
+            <button
+              type="button"
+              className="btn primary mirror-send"
+              disabled={(!draft.trim() && !attachments.length) || sending}
+              onClick={send}
+              title="送信"
+            >
+              <Icon name="send" />
+            </button>
+          </div>
         </div>
       )}
       {lightbox && (

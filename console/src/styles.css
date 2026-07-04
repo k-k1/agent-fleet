@@ -2819,17 +2819,21 @@ body.row-resizing {
    name (Plan / Bypass / Default / Build). Full input height so it flanks the textarea like
    the send button on the right; bottom-aligns with the growing textarea via the compose
    row's align-items:flex-end. Accent when in Plan. */
+/* Mode chip — a small, rarely-used pill stacked above the send button (see
+   .mirror-send-col). Compact so it doesn't compete with the composer. */
 .mirror-mode {
   flex: none;
-  height: 38px;
+  height: 15px;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 0 10px;
-  font-size: 12px;
+  justify-content: center;
+  padding: 0 6px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
   white-space: nowrap;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 5px;
   background: var(--btn, var(--bg));
   color: var(--muted);
   cursor: pointer;
@@ -3408,9 +3412,19 @@ button.mt-toolrun-head:hover {
   outline: none;
   border-color: var(--chat-accent);
 }
+/* Right column: mode chip (15) + gap (2) + send (21) = 38px, matching the 1-line
+   textarea min-height so a single-line composer stays flush. Bottom-aligned by the
+   parent's align-items:flex-end, so it holds its place as the textarea grows. */
+.mirror-send-col {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch; /* chip + send share one width → read as a unit */
+  gap: 2px;
+}
 .mirror-send {
   flex: none;
-  height: 38px;
+  height: 21px;
   padding: 0 12px;
 }
 /* Composer history buttons: only on phones (no arrow keys). Hidden elsewhere. */
