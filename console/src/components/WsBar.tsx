@@ -218,6 +218,11 @@ interface UsageSource {
   popTitle: string; // dropdown heading
   fiveLabel: string; // 5-hour window label
   weekLabel: string; // weekly window label
+  // live = the endpoint queries the current usage (claude), so a 更新 button makes
+  // sense. When false (codex), the reading is a snapshot from the last turn — no
+  // manual refresh; a note explains it instead.
+  live: boolean;
+  note?: string;
 }
 
 const USAGE_SOURCES: UsageSource[] = [
@@ -229,6 +234,7 @@ const USAGE_SOURCES: UsageSource[] = [
     popTitle: "Claude 使用状況",
     fiveLabel: "5時間制限",
     weekLabel: "週次・全モデル",
+    live: true,
   },
   {
     endpoint: "api/codex/usage",
@@ -238,6 +244,8 @@ const USAGE_SOURCES: UsageSource[] = [
     popTitle: "Codex 使用状況",
     fiveLabel: "5時間",
     weekLabel: "週次",
+    live: false,
+    note: "codex が記録した最後の値です（この時点のスナップショット）。次に codex を実行すると更新されます。",
   },
 ];
 
@@ -282,10 +290,13 @@ function UsageChip({ src, tenant }: { src: UsageSource; tenant: string | null })
           {uw && <UsageRow label={src.weekLabel} w={uw} />}
           <div className="wu-foot">
             <span className="wu-ago muted">取得 {agoText(usage.ageSec)}</span>
-            <button type="button" className="ghost wu-reload" onClick={refresh} disabled={refreshing}>
-              <Icon name="refresh" spin={refreshing} /> 更新
-            </button>
+            {src.live && (
+              <button type="button" className="ghost wu-reload" onClick={refresh} disabled={refreshing}>
+                <Icon name="refresh" spin={refreshing} /> 更新
+              </button>
+            )}
           </div>
+          {!src.live && src.note && <div className="wu-note muted">{src.note}</div>}
         </div>
       )}
     </div>
