@@ -15,7 +15,7 @@ const D = 6; // divider thickness in px
 // keeps the same keyed DOM node (no remount), and term.js never re-opens / re-parents
 // the xterm (which left the moved terminal blank). Moves become a pure resize.
 export default function PaneHost() {
-  const { layout, activePaneId, setActivePane, splitRight, splitDown, closePane, setColRatios, setRowRatio, swapPanes, dropSplit, sessions } =
+  const { layout, activePaneId, setActivePane, closePane, setColRatios, setRowRatio, swapPanes, dropSplit, sessions } =
     useApp();
   const hostRef = useRef<HTMLDivElement>(null);
   const isMobile = useIsMobile();
@@ -110,8 +110,6 @@ export default function PaneHost() {
       canClose={total > 1 || !isBlankSingle(pane)}
       canDrag={total > 1}
       onActivate={setActivePane}
-      onSplitRight={splitRight}
-      onSplitDown={splitDown}
       onClose={closePane}
       onSwap={swapPanes}
       onDropSplit={dropSplit}
