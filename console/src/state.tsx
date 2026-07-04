@@ -33,7 +33,7 @@ export const useApp = (): AppState => useContext(AppContext) as AppState;
 // A pane descriptor. kind drives which view renders; the *Path/Repo/session fields
 // are the per-kind payload. Empty terminal pane = "セッション未接続".
 function blankPane(id: string, patch?: PanePatch): Pane {
-  return { id, kind: "terminal", session: null, chat: false, filePath: null, scmRepo: null, docTitle: null, docContent: null, diffTool: null, diffEdits: null, wrap: null, ...patch };
+  return { id, kind: "terminal", session: null, chat: false, filePath: null, scmRepo: null, commitSha: null, docTitle: null, docContent: null, diffTool: null, diffEdits: null, wrap: null, ...patch };
 }
 
 const equalRatios = (n: number): number[] => Array(n).fill(1 / n);
@@ -139,6 +139,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (patch.kind === "terminal") return patch.session !== undefined && pane.session === patch.session;
     if (patch.kind === "file") return pane.filePath === patch.filePath;
     if (patch.kind === "scm") return pane.scmRepo === patch.scmRepo;
+    if (patch.kind === "changes") return pane.scmRepo === patch.scmRepo;
+    if (patch.kind === "commit") return pane.scmRepo === patch.scmRepo && pane.commitSha === patch.commitSha;
     if (patch.kind === "doc") return pane.docTitle === patch.docTitle;
     if (patch.kind === "diff") return pane.docTitle === patch.docTitle && pane.diffEdits === patch.diffEdits;
     return false;
@@ -632,6 +634,44 @@ export function AppProvider({ children }: { children: ReactNode }) {
     },
     [openInNewPane],
   );
+  // showChanges opens a repo's working-tree changes + commit box (split out from the
+  // graph SCM view) in the active pane; the split form opens it in a fresh pane.
+  const showChanges = useCallback(
+    (repo: string) => {
+      if (navOpenRef.current) pushDrawerEntry();
+      openActive({ kind: "changes", scmRepo: repo });
+      setNavOpen(false);
+    },
+    [openActive, pushDrawerEntry],
+  );
+  const showChangesSplit = useCallback(
+    (repo: string) => {
+      openInNewPane({ kind: "changes", scmRepo: repo });
+      setNavOpen(false);
+    },
+    [openInNewPane],
+  );
+  // showCommit opens one commit's detail/diff in its OWN pane (split out from the
+  // graph). Clicking commits in the graph reuses a single commit pane if one is open
+  // (updates its sha) instead of spawning a new pane per click; else it splits one.
+  const showCommit = useCallback(
+    (repo: string, sha: string) => {
+      const cur = layoutRef.current;
+      const existing = cur.cols.flatMap((c) => c.panes).find((p) => p.kind === "commit");
+      if (existing) {
+        const cols = cur.cols.map((c) => ({
+          ...c,
+          panes: c.panes.map((p) =>
+            p.id === existing.id ? { ...p, kind: "commit" as const, scmRepo: repo, commitSha: sha } : p,
+          ),
+        }));
+        commit({ ...cur, cols, activeId: existing.id });
+        return;
+      }
+      openInNewPane({ kind: "commit", scmRepo: repo, commitSha: sha });
+    },
+    [commit, openInNewPane],
+  );
   const showFile = useCallback(
     (path: string) => {
       if (navOpenRef.current) pushDrawerEntry();
@@ -921,6 +961,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     // active-pane projection (back-compat)
     mode: activePane.kind,
     scmRepo: activePane.scmRepo,
+    commitSha: activePane.commitSha,
     filePath: activePane.filePath,
     session: activePane.session,
     // pane layout
@@ -942,6 +983,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     openInNewPane,
     showSCM,
     showSCMSplit,
+    showChanges,
+    showChangesSplit,
+    showCommit,
     showFile,
     showFileSplit,
     showDoc,

@@ -4465,6 +4465,117 @@ button.mt-toolrun-head:hover {
 .log-row.active {
   background: var(--active-bg);
 }
+/* ChangesView right (diff) pane. */
+.scmright {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+}
+
+/* --- Commit graph (SourceControlView, codeleaf lane layout) --- */
+.cgraph-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+.cgraph {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.cgraph-row {
+  display: flex;
+  align-items: stretch;
+  height: 48px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--border2, var(--border));
+}
+.cgraph-row:hover {
+  background: var(--hover-bg, var(--btn));
+}
+.cgraph-row.active {
+  background: var(--active-bg);
+}
+.cgraph-row.dim {
+  opacity: 0.5;
+}
+.cgraph-svg {
+  display: block;
+  flex: none;
+}
+.cgraph-msg {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  padding: 0 8px;
+}
+.cgraph-line1 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.cgraph-subj {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+.cgraph-line2 {
+  font-size: 11px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cgraph-line2 code {
+  color: #c9a;
+}
+.cgraph-ref {
+  flex: none;
+  font-family: var(--mono);
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--btn);
+  border: 1px solid var(--btn-border);
+  color: var(--fg);
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cgraph-ref.ref-head.current {
+  background: var(--accent, #6a7fdb);
+  border-color: transparent;
+  color: #fff;
+  font-weight: 600;
+}
+.cgraph-ref.ref-tag {
+  color: #d6a13a;
+  border-color: #d6a13a66;
+}
+.cgraph-ref.ref-remote {
+  color: var(--muted);
+}
+
+/* --- CommitDetailView pane --- */
+.commit-view-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 10px 12px;
+}
+.cd-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
 /* per-file foldable diff (codeleaf-style) with old/new line-number gutters */
 .diff-files {
   flex: 1;

@@ -7,7 +7,9 @@
 // them distinct: PaneKind here, SessionKind in types/session.
 
 // Which view a pane renders. The *Path/Repo/doc/diff fields are its per-kind payload.
-export type PaneKind = "terminal" | "file" | "scm" | "doc" | "diff";
+// scm = the repo's commit-graph; changes = its working-tree changes + commit box;
+// commit = one commit's detail/diff (scmRepo + commitSha).
+export type PaneKind = "terminal" | "file" | "scm" | "changes" | "commit" | "doc" | "diff";
 
 // A single pane descriptor. An empty terminal pane (session null) shows
 // "セッション未接続".
@@ -17,7 +19,8 @@ export interface Pane {
   session: string | null; // session name attached to a terminal pane
   chat: boolean; // terminal pane showing the claude chat mirror instead of the PTY
   filePath: string | null; // file view target (home-relative)
-  scmRepo: string | null; // source-control view target repo
+  scmRepo: string | null; // source-control view target repo (scm / changes / commit)
+  commitSha: string | null; // commit-detail view target sha (commit kind)
   docTitle: string | null; // ad-hoc doc view title
   docContent: string | null; // ad-hoc doc view markdown/text
   diffTool: string | null; // diff view: originating tool label

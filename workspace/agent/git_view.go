@@ -155,6 +155,101 @@ func handleRepoLog(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"commits": commits})
 }
 
+// graphRef is one ref badge on a commit: a display name + its kind (head/remote/tag).
+type graphRef struct {
+	Name string `json:"name"`
+	Type string `json:"type"` // head | remote | tag
+}
+
+// graphCommit is one node in the commit-graph DAG: its sha + parents (for lane layout),
+// the usual metadata, decorating refs, and whether it is reachable from HEAD (commits
+// that aren't get dimmed / drawn hollow, codeleaf-style).
+type graphCommit struct {
+	Sha      string     `json:"sha"`
+	Short    string     `json:"short"`
+	Parents  []string   `json:"parents"`
+	Author   string     `json:"author"`
+	Date     string     `json:"date"`
+	Subject  string     `json:"subject"`
+	Refs     []graphRef `json:"refs"`
+	InBranch bool       `json:"inBranch"`
+}
+
+// parseDecorate turns git's `%D` decoration ("HEAD -> main, origin/main, tag: v1") into
+// structured refs, and returns the current branch name (from "HEAD -> X"), if any.
+func parseDecorate(d string) ([]graphRef, string) {
+	refs := []graphRef{}
+	current := ""
+	for _, tok := range strings.Split(d, ", ") {
+		tok = strings.TrimSpace(tok)
+		switch {
+		case tok == "" || tok == "HEAD" || strings.HasSuffix(tok, "/HEAD"):
+			// bare HEAD (detached) or a remote's symbolic HEAD (origin/HEAD) — noise
+		case strings.HasPrefix(tok, "HEAD -> "):
+			name := strings.TrimPrefix(tok, "HEAD -> ")
+			current = name
+			refs = append(refs, graphRef{Name: name, Type: "head"})
+		case strings.HasPrefix(tok, "tag: "):
+			refs = append(refs, graphRef{Name: strings.TrimPrefix(tok, "tag: "), Type: "tag"})
+		case strings.Contains(tok, "/"):
+			refs = append(refs, graphRef{Name: tok, Type: "remote"})
+		default:
+			refs = append(refs, graphRef{Name: tok, Type: "head"})
+		}
+	}
+	return refs, current
+}
+
+// handleRepoGraph returns the commit-graph DAG for the codeleaf-style lane view: all
+// refs as roots, topo + date ordered, newest-first, each with parents + decorating
+// refs, plus reachability-from-HEAD so the Console can dim off-branch commits.
+func handleRepoGraph(w http.ResponseWriter, r *http.Request) {
+	dir, ok := repoDirFromPath(w, r)
+	if !ok {
+		return
+	}
+	limit := 300
+	if n, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && n > 0 && n <= 1000 {
+		limit = n
+	}
+	// %H sha, %h short, %P parents(sp), %an author, %cI committer-ISO, %s subject, %D decoration.
+	out, err := exec.Command("git", "-C", dir, "log", "--all", "--topo-order", "--date-order",
+		"--max-count="+strconv.Itoa(limit),
+		"--pretty=format:%H%x1f%h%x1f%P%x1f%an%x1f%cI%x1f%s%x1f%D").Output()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "git_failed", err.Error())
+		return
+	}
+	// Reachable-from-HEAD set → inBranch. Empty (detached / no HEAD) ⇒ dim nothing.
+	reachable := map[string]bool{}
+	if rl, err := exec.Command("git", "-C", dir, "rev-list", "HEAD").Output(); err == nil {
+		for _, s := range strings.Fields(string(rl)) {
+			reachable[s] = true
+		}
+	}
+	commits := []graphCommit{}
+	current := ""
+	for _, line := range strings.Split(string(out), "\n") {
+		p := strings.Split(line, "\x1f")
+		if len(p) != 7 {
+			continue
+		}
+		parents := []string{}
+		if s := strings.TrimSpace(p[2]); s != "" {
+			parents = strings.Fields(s)
+		}
+		refs, cur := parseDecorate(p[6])
+		if cur != "" {
+			current = cur
+		}
+		commits = append(commits, graphCommit{
+			Sha: p[0], Short: p[1], Parents: parents, Author: p[3], Date: p[4], Subject: p[5],
+			Refs: refs, InBranch: len(reachable) == 0 || reachable[p[0]],
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"commits": commits, "current": current})
+}
+
 // shaRe guards the ?sha= param: hex only (full or abbreviated), so it can't be an
 // option flag or a revision range that reaches outside the single commit.
 var shaRe = regexp.MustCompile(`^[0-9a-fA-F]{4,64}$`)
