@@ -3412,9 +3412,9 @@ button.mt-toolrun-head:hover {
   outline: none;
   border-color: var(--chat-accent);
 }
-/* Right column: mode chip (15) + gap (2) + send (21) = 38px, matching the 1-line
-   textarea min-height so a single-line composer stays flush. Bottom-aligned by the
-   parent's align-items:flex-end, so it holds its place as the textarea grows. */
+/* Right column: mode chip (15) + gap (2) + send (26). Bottom-aligned by the parent's
+   align-items:flex-end, so the send button sits flush with the textarea bottom and the
+   chip rides just above; the column holds its place as the textarea grows. */
 .mirror-send-col {
   flex: none;
   display: flex;
@@ -3424,8 +3424,8 @@ button.mt-toolrun-head:hover {
 }
 .mirror-send {
   flex: none;
-  height: 21px;
-  padding: 0 12px;
+  height: 26px;
+  padding: 0 14px;
 }
 /* Composer history buttons: only on phones (no arrow keys). Hidden elsewhere. */
 .mirror-hist {
