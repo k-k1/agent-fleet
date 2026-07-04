@@ -99,6 +99,10 @@ type transcriptData struct {
 	turns []chatTurn
 	path  string
 	tasks []taskItem
+	// pending is the question the agent is currently awaiting an answer to (codex
+	// request_user_input / opencode question tool), or nil. Surfaced like claude's
+	// pendingQuestions so the Console can render it interactively.
+	pending []chatQuestion
 }
 
 // noGenericTranscript is the transcript() default for agents that either have no

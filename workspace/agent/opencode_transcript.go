@@ -51,10 +51,71 @@ func readOpencodeTranscript(m sessionMeta) (transcriptData, bool) {
 	}
 	defer db.Close()
 	return transcriptData{
-		turns: opencodeReadSession(db, ses),
-		path:  path,
-		tasks: opencodeTasks(db, ses),
+		turns:   opencodeReadSession(db, ses),
+		path:    path,
+		tasks:   opencodeTasks(db, ses),
+		pending: opencodePending(db, ses),
 	}, true
+}
+
+// opencodePending returns the questions of a currently-running `question` tool part in
+// this session (opencode is awaiting the user's answer), or nil. Same shape as claude's
+// AskUserQuestion so the Console renders it interactively.
+func opencodePending(db *sql.DB, ses string) []chatQuestion {
+	rows, err := db.Query(
+		`SELECT data FROM part WHERE session_id = ? AND json_extract(data,'$.tool') = 'question' AND json_extract(data,'$.state.status') = 'running' ORDER BY time_created DESC LIMIT 1`,
+		ses,
+	)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		return nil
+	}
+	var pd []byte
+	if rows.Scan(&pd) != nil {
+		return nil
+	}
+	var p struct {
+		State struct {
+			Input json.RawMessage `json:"input"`
+		} `json:"state"`
+	}
+	if json.Unmarshal(pd, &p) != nil {
+		return nil
+	}
+	return opencodeQuestions(p.State.Input)
+}
+
+// opencodeQuestions parses a question tool's state.input into chatQuestions (identical
+// schema to claude's AskUserQuestion: questions[]{question,header,multiSelect,options}).
+func opencodeQuestions(input json.RawMessage) []chatQuestion {
+	if len(input) == 0 {
+		return nil
+	}
+	var in struct {
+		Questions []chatQuestion `json:"questions"`
+	}
+	if json.Unmarshal(input, &in) != nil {
+		return nil
+	}
+	return in.Questions
+}
+
+// opencodeAnswer pulls the chosen answer text out of a completed question tool's output
+// ("User has answered your questions: \"Q\"=\"A\". …") for the answered block's display.
+func opencodeAnswer(output string) string {
+	// Take the text inside the first ="…" pair (the selected label).
+	i := strings.Index(output, `="`)
+	if i < 0 {
+		return ""
+	}
+	rest := output[i+2:]
+	if j := strings.IndexByte(rest, '"'); j >= 0 {
+		return rest[:j]
+	}
+	return ""
 }
 
 // opencodeTasks reads this session's ToDo list from opencode's `todo` table (direct
@@ -184,6 +245,7 @@ func opencodeParts(db *sql.DB, msgID string) ([]chatPart, string) {
 			Text  string `json:"text"`
 			Tool  string `json:"tool"`
 			State struct {
+				Status string          `json:"status"`
 				Input  json.RawMessage `json:"input"`
 				Output string          `json:"output"`
 			} `json:"state"`
@@ -211,6 +273,17 @@ func opencodeParts(db *sql.DB, msgID string) ([]chatPart, string) {
 			name := p.Tool
 			if name == "" {
 				name = "tool"
+			}
+			// opencode's `question` tool is claude's AskUserQuestion: a completed one shows
+			// as an answered question block; a running one is surfaced as the pending
+			// question (opencodePending), so it's skipped here.
+			if name == "question" {
+				if p.State.Status == "completed" {
+					if qs := opencodeQuestions(p.State.Input); len(qs) > 0 {
+						parts = append(parts, chatPart{Kind: "question", Tool: "question", Questions: qs, Answer: opencodeAnswer(p.State.Output)})
+					}
+				}
+				continue
 			}
 			part := chatPart{Kind: "tool", Tool: name, Info: opencodeToolInfo(p.State.Input), Output: capOutput(p.State.Output)}
 			// Edit-family tools carry before/after so the trace opens as a diff pane.

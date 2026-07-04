@@ -98,6 +98,32 @@ func TestCodexReasoningPlanOutput(t *testing.T) {
 	}
 }
 
+func TestCodexQuestion(t *testing.T) {
+	// An answered request_user_input, then a pending one (no output yet).
+	answered := [][]byte{
+		[]byte(`{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"go"}]}}`),
+		[]byte(`{"type":"response_item","payload":{"type":"function_call","name":"request_user_input","call_id":"q1","arguments":"{\"questions\":[{\"header\":\"H\",\"question\":\"pick?\",\"options\":[{\"label\":\"A\"},{\"label\":\"B\"}]}]}"}}`),
+		[]byte(`{"type":"response_item","payload":{"type":"function_call_output","call_id":"q1","output":"B"}}`),
+		[]byte(`{"type":"response_item","payload":{"type":"function_call","name":"request_user_input","call_id":"q2","arguments":"{\"questions\":[{\"question\":\"next?\",\"options\":[{\"label\":\"X\"}]}]}"}}`),
+	}
+	turns, _, pending := codexParseRolloutFull(answered)
+
+	// The answered question renders as a question part with its answer.
+	var q *chatPart
+	for i := range turns {
+		if len(turns[i].Parts) > 0 && turns[i].Parts[0].Kind == "question" && turns[i].Parts[0].Questions[0].Question == "pick?" {
+			q = &turns[i].Parts[0]
+		}
+	}
+	if q == nil || q.Answer != "B" {
+		t.Fatalf("answered question not found or wrong answer: %+v", q)
+	}
+	// The unanswered request_user_input is the pending question.
+	if len(pending) != 1 || pending[0].Question != "next?" {
+		t.Fatalf("pending = %+v, want the 'next?' question", pending)
+	}
+}
+
 func TestCodexIsWrapper(t *testing.T) {
 	cases := []struct {
 		text string

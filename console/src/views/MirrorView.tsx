@@ -859,7 +859,7 @@ export default function MirrorView({
         {pending && pending.length > 0 && (
           <div className="mirror-turn assistant">
             <div className="mirror-turn-head">
-              <span className="mt-who">Claude</span>
+              <span className="mt-who">{agentName}</span>
               <span className="mt-model muted">質問中</span>
             </div>
             <div className="mirror-turn-body">
@@ -869,6 +869,7 @@ export default function MirrorView({
                 sending={sending}
                 onSendOne={sendPrompt}
                 onSubmitKeys={sendKeys}
+                answerMode={sessionMeta?.kind === "claude" ? "claude" : "menu"}
               />
             </div>
           </div>
@@ -1519,15 +1520,25 @@ function PendingQuestions({
   onSendOne,
   onSubmitKeys,
   sending,
+  answerMode = "claude",
 }: {
   questions: Question[];
   onSendOne: (label: string) => void;
   onSubmitKeys: (keys: string[]) => void;
   sending: boolean;
+  // "claude": AskUserQuestion's tabbed modal (free-text single / Down-Enter-Right multi).
+  // "menu": codex/opencode ask via a simple option menu — a single-select question is
+  // answered by moving Down to the option index and pressing Enter. Multi-select /
+  // multi-question menus aren't driven from chat (answered in the terminal).
+  answerMode?: "claude" | "menu";
 }) {
   const qs = questions || [];
   const [sel, setSel] = useState<string[][]>(() => qs.map(() => []));
   const single = qs.length === 1 && !qs[0]?.multiSelect;
+  const menu = answerMode === "menu";
+  // In menu mode we can only drive a single-select single question; anything else is
+  // shown read-only with a hint to answer in the terminal.
+  const menuDrivable = menu && single;
 
   const toggle = (qi: number, label: string, multi?: boolean) => {
     setSel((prev) => {
@@ -1595,13 +1606,19 @@ function PendingQuestions({
           <div className="mq-options">
             {(qn.options || []).map((o, oi) => {
               const checked = (sel[qi] || []).includes(o.label);
+              // menu single-select: move Down to this option's index, then Enter.
+              const pick = menuDrivable
+                ? () => onSubmitKeys([...Array(oi).fill("Down"), "Enter"])
+                : single
+                  ? () => onSendOne(o.label)
+                  : () => toggle(qi, o.label, qn.multiSelect);
               return (
                 <button
                   type="button"
                   className={"mq-opt" + (checked ? " checked" : "")}
                   key={oi}
-                  disabled={sending}
-                  onClick={() => (single ? onSendOne(o.label) : toggle(qi, o.label, qn.multiSelect))}
+                  disabled={sending || (menu && !menuDrivable)}
+                  onClick={pick}
                   title={o.description || o.label}
                 >
                   {!single && (
@@ -1617,7 +1634,7 @@ function PendingQuestions({
           </div>
         </div>
       ))}
-      {!single && (
+      {!single && !menu && (
         <div className="mq-submit-row">
           <button
             type="button"
@@ -1627,6 +1644,12 @@ function PendingQuestions({
           >
             回答を送信
           </button>
+        </div>
+      )}
+      {menu && !menuDrivable && (
+        // A multi-select / multi-question menu we can't reliably drive from chat.
+        <div className="mq-submit-row muted mq-terminal-hint">
+          この形式の質問はターミナルで回答してください
         </div>
       )}
     </div>
