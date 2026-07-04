@@ -11,6 +11,7 @@ func codexRolloutLines() [][]byte {
 		[]byte(`{"timestamp":"2026-06-29T00:00:00Z","type":"session_meta","payload":{"cwd":"/home/dev/repos/x","git":{"branch":"main"}}}`),
 		[]byte(`{"type":"response_item","payload":{"type":"message","role":"developer","content":[{"type":"input_text","text":"<permissions instructions>..."}]}}`),
 		[]byte(`{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<environment_context>cwd=/x</environment_context>"}]}}`),
+		[]byte(`{"type":"turn_context","payload":{"model":"gpt-5.5","cwd":"/home/dev/repos/x"}}`),
 		[]byte(`{"timestamp":"2026-06-29T00:00:01Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"hello codex"}]}}`),
 		[]byte(`{"timestamp":"2026-06-29T00:00:02Z","type":"response_item","payload":{"type":"function_call","name":"shell","arguments":"{\"command\":[\"ls\",\"-la\"]}"}}`),
 		[]byte(`{"timestamp":"2026-06-29T00:00:03Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"hi there"}]}}`),
@@ -31,9 +32,9 @@ func TestCodexParseRollout(t *testing.T) {
 	if turns[0].Cwd != "/home/dev/repos/x" || turns[0].Branch != "main" {
 		t.Fatalf("turn0 context = cwd %q branch %q, want session_meta values", turns[0].Cwd, turns[0].Branch)
 	}
-	// Absolute line index preserved (the user prompt is line 3).
-	if turns[0].Idx != 3 {
-		t.Fatalf("turn0 idx = %d, want 3 (absolute line index)", turns[0].Idx)
+	// Absolute line index preserved (the user prompt is line 4).
+	if turns[0].Idx != 4 {
+		t.Fatalf("turn0 idx = %d, want 4 (absolute line index)", turns[0].Idx)
 	}
 
 	// The tool call (function_call) is a faint assistant-side trace, emitted before the
@@ -47,6 +48,10 @@ func TestCodexParseRollout(t *testing.T) {
 
 	if turns[2].Role != "assistant" || turns[2].Text != "hi there" {
 		t.Fatalf("turn2 = %+v, want assistant 'hi there'", turns[2])
+	}
+	// Model from turn_context is attached to assistant turns.
+	if turns[2].Model != "gpt-5.5" {
+		t.Fatalf("turn2 model = %q, want gpt-5.5", turns[2].Model)
 	}
 	// token_count attaches to the most recent assistant turn (the final answer): fresh =
 	// input - cached.

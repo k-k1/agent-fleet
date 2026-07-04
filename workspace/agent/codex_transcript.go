@@ -74,7 +74,7 @@ var codexWrapperTags = []string{
 // context gauge works the same as claude's.
 func codexParseRollout(lines [][]byte) []chatTurn {
 	var turns []chatTurn
-	var cwd, branch string
+	var cwd, branch, model string
 	lastAssistant := -1 // index into turns of the most recent assistant turn (for usage)
 	for i, ln := range lines {
 		var ev struct {
@@ -88,10 +88,18 @@ func codexParseRollout(lines [][]byte) []chatTurn {
 		switch ev.Type {
 		case "session_meta":
 			cwd, branch = codexMetaContext(ev.Payload)
+		case "turn_context":
+			// Precedes each turn; carries the model in effect (e.g. "gpt-5.5").
+			if m := codexTurnModel(ev.Payload); m != "" {
+				model = m
+			}
 		case "response_item":
 			t, ok := codexParseResponseItem(ev.Payload, ev.Timestamp, i, cwd, branch)
 			if !ok {
 				continue
+			}
+			if t.Role == "assistant" {
+				t.Model = model
 			}
 			turns = append(turns, t)
 			if t.Role == "assistant" {
@@ -120,6 +128,17 @@ func codexMetaContext(payload json.RawMessage) (cwd, branch string) {
 		return "", ""
 	}
 	return m.Cwd, m.Git.Branch
+}
+
+// codexTurnModel pulls the model name from a turn_context payload.
+func codexTurnModel(payload json.RawMessage) string {
+	var m struct {
+		Model string `json:"model"`
+	}
+	if json.Unmarshal(payload, &m) != nil {
+		return ""
+	}
+	return m.Model
 }
 
 // codexParseResponseItem turns one response_item payload into a chatTurn. Returns
