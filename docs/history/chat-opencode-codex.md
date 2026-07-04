@@ -207,7 +207,15 @@ Console のみ（`MirrorView` typing 行＋`.mirror-stop`）。
 ＝計画モードボタンが正しく反映しなかった。修正: `sessionPaneID(tn)` で active pane id を解決してから
 `capture-pane -t <pane_id>` する共通ヘルパ `capturePane` を導入。
 
-## 22.14 残り / 既知の限界
+## 22.14 履歴閲覧での勝手な起動を防止（端末アタッチを接続専用に）
+
+**根因**: `handlePTY`（端末WS）が `ensureSessionTmux`＋`new-session -A` で、停止中セッションにアタッチしただけで
+起動していた。WS Start 直後はセッション一覧の `alive` が stale(true)になりやすく、`Pane` が attach→自動起動していた。
+**対処**: 端末アタッチを**接続専用**に（生存中のみ attach、停止中は 409、`ensureSessionTmux` 撤去）。再開は明示的に
+`POST /sessions/{name}/start`（Console の 再開して続ける／ターミナル切替が `resumeIfStopped` で呼ぶ）。SsmLoginModal
+の既存 resume パターンと同じ。これで一覧クリックや stale alive で勝手に起動しなくなり、設計意図(auto-resume 廃止)と一致。
+
+## 22.15 残り / 既知の限界
 
 - **codex 実データ検証**: reasoning/function_call 出力/update_plan/request_user_input・menu 応答は実 codex セッションで未目視。
 - **後続**: codex apply_patch の差分パース、opencode コスト($)表示、codex レート制限、複数選択/複数問メニューの駆動、
