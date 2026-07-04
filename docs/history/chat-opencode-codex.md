@@ -152,7 +152,14 @@ Console の `PendingQuestions` に `answerMode` を追加: claude=従来（タ�
 検証: opencode は実 WAL DB の question ツール（running/completed）で確認、codex は合成テスト（実データなし）。
 Go 44 tests/vet、Console tsc 通過。**codex request_user_input と menu 応答の実 TUI 駆動は実セッションで要目視**。
 
-## 22.10 残り / 既知の限界
+## 22.10 停止ボタン（作業中の中断）
+
+bypass（claude/codex/opencode とも全自動）だと、opencode が権限プロンプトの停止点を失い長い自律タスク（Explore サブ
+エージェント等）に入って**作業中は入力を受け付けない**ことがある（実機で確認）。チャットの「入力中」行に**停止ボタン**を
+追加し、押下で `Escape`（全エージェントの TUI 共通の中断キー）を send-keys → 現在の生成を止めてコンポーザに復帰できる。
+Console のみ（`MirrorView` typing 行＋`.mirror-stop`）。
+
+## 22.11 残り / 既知の限界
 
 - **codex 実データ検証**: reasoning/function_call 出力/update_plan/request_user_input・menu 応答は実 codex セッションで未目視。
 - **後続**: codex apply_patch の差分パース、opencode コスト($)表示、codex レート制限、複数選択/複数問メニューの駆動、
