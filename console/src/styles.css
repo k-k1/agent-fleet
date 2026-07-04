@@ -2854,6 +2854,58 @@ body.row-resizing {
   text-overflow: ellipsis;
   min-width: 0;
 }
+/* A tool trace that carries its output (codex/opencode): the head is a click-to-expand
+   button; the body is a scrollable monospace block. */
+button.mt-tool-outhead {
+  width: 100%;
+  padding: 2px 6px;
+  background: none;
+  border: 0;
+  text-align: left;
+  cursor: pointer;
+}
+.mt-tool-output {
+  margin: 2px 0 4px 18px;
+  padding: 6px 8px;
+  max-height: 260px;
+  overflow: auto;
+  font-family: var(--viewer-font, var(--mono));
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: var(--surface-2, rgba(127, 127, 127, 0.1));
+  border-radius: 4px;
+  opacity: 0.85;
+}
+/* Chain-of-thought disclosure (codex/opencode reasoning), styled like the compaction
+   summary: a faint collapsed row that expands to the reasoning Markdown. */
+.mirror-thinking {
+  margin: 2px 0;
+  font-size: 0.95em;
+}
+.mirror-thinking-head {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 4px;
+  cursor: pointer;
+  opacity: 0.6;
+  list-style: none;
+}
+.mirror-thinking-head::-webkit-details-marker {
+  display: none;
+}
+.mirror-thinking[open] .mirror-thinking-head {
+  opacity: 0.8;
+}
+.mth-title {
+  font-size: 12px;
+}
+.mirror-thinking-body {
+  padding: 2px 8px 4px 20px;
+  opacity: 0.8;
+}
 /* Edit-family traces are clickable — they open a diff pane. Reset the button and
    lift the opacity so they read as interactive, not just a faint trace. */
 button.mt-tool-diff {

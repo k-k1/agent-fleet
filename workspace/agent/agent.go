@@ -84,20 +84,30 @@ type Agent interface {
 	// no resume state (shell/ssm).
 	clearResume(sid string)
 	// transcript returns the session's full chronological chat turns (normalized to the
-	// common chatTurn model) plus a source path for diagnostics, for agents whose native
-	// store isn't claude's <sid>.jsonl (codex rollout, opencode SQLite). ok=false means
-	// the agent has no generic transcript source — claude uses its own jsonl path in
-	// handleSessionMessages instead. The generic /messages handler windows these turns.
-	transcript(m sessionMeta) (turns []chatTurn, path string, ok bool)
+	// common chatTurn model) plus diagnostics and the reconstructed ToDo list, for agents
+	// whose native store isn't claude's <sid>.jsonl (codex rollout, opencode SQLite).
+	// ok=false means the agent has no generic transcript source — claude uses its own
+	// jsonl path in handleSessionMessages instead. The generic /messages handler windows
+	// the turns and surfaces the tasks.
+	transcript(m sessionMeta) (transcriptData, bool)
+}
+
+// transcriptData is what a non-claude agent's transcript() yields: the full
+// chronological turns, the source path (diagnostics), and the current ToDo list
+// (reconstructed from the agent's plan/todo state; nil when none).
+type transcriptData struct {
+	turns []chatTurn
+	path  string
+	tasks []taskItem
 }
 
 // noGenericTranscript is the transcript() default for agents that either have no
-// readable transcript (shell/ssm/opencode-until-段2) or use their own path (claude).
-// Embedding it keeps the interface satisfied without a per-agent stub.
+// readable transcript (shell/ssm) or use their own path (claude). Embedding it keeps
+// the interface satisfied without a per-agent stub.
 type noGenericTranscript struct{}
 
-func (noGenericTranscript) transcript(sessionMeta) ([]chatTurn, string, bool) {
-	return nil, "", false
+func (noGenericTranscript) transcript(sessionMeta) (transcriptData, bool) {
+	return transcriptData{}, false
 }
 
 // agents is the kind → Agent registry. agentOf falls back to claude for an unknown
@@ -288,7 +298,7 @@ func (opencodeAgent) kind() string { return kindOpencode }
 // /messages handler. No fork/label/inline-questions (those are claude-specific).
 func (opencodeAgent) caps() agentCaps { return agentCaps{canTranscript: true} }
 
-func (opencodeAgent) transcript(m sessionMeta) ([]chatTurn, string, bool) {
+func (opencodeAgent) transcript(m sessionMeta) (transcriptData, bool) {
 	return readOpencodeTranscript(m)
 }
 
@@ -326,7 +336,7 @@ func (codexAgent) kind() string { return kindCodex }
 // /messages handler. No fork/label (codex has no --session-id pin nor --name).
 func (codexAgent) caps() agentCaps { return agentCaps{canTranscript: true} }
 
-func (codexAgent) transcript(m sessionMeta) ([]chatTurn, string, bool) {
+func (codexAgent) transcript(m sessionMeta) (transcriptData, bool) {
 	return readCodexTranscript(m)
 }
 

@@ -15,12 +15,12 @@ func codexRolloutLines() [][]byte {
 		[]byte(`{"timestamp":"2026-06-29T00:00:01Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"hello codex"}]}}`),
 		[]byte(`{"timestamp":"2026-06-29T00:00:02Z","type":"response_item","payload":{"type":"function_call","name":"shell","arguments":"{\"command\":[\"ls\",\"-la\"]}"}}`),
 		[]byte(`{"timestamp":"2026-06-29T00:00:03Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"hi there"}]}}`),
-		[]byte(`{"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":1000,"cached_input_tokens":800,"output_tokens":42}}}}`),
+		[]byte(`{"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":1000,"cached_input_tokens":800,"output_tokens":42},"model_context_window":258400}}}`),
 	}
 }
 
 func TestCodexParseRollout(t *testing.T) {
-	turns := codexParseRollout(codexRolloutLines())
+	turns, _ := codexParseRollout(codexRolloutLines())
 	// developer + wrapper user are dropped; user prompt, assistant, function_call remain.
 	if len(turns) != 3 {
 		t.Fatalf("want 3 turns, got %d: %+v", len(turns), turns)
@@ -62,6 +62,40 @@ func TestCodexParseRollout(t *testing.T) {
 		t.Fatalf("turn2 usage = in %d out %d read %d, want 200/42/800",
 			turns[2].InTok, turns[2].OutTok, turns[2].CacheRead)
 	}
+	// Real context-window size from token_count feeds the accurate gauge.
+	if turns[2].CtxWindow != 258400 {
+		t.Fatalf("turn2 ctxWindow = %d, want 258400", turns[2].CtxWindow)
+	}
+}
+
+func TestCodexReasoningPlanOutput(t *testing.T) {
+	lines := [][]byte{
+		[]byte(`{"type":"session_meta","payload":{"cwd":"/x"}}`),
+		[]byte(`{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"go"}]}}`),
+		[]byte(`{"type":"response_item","payload":{"type":"reasoning","summary":[{"type":"summary_text","text":"let me think"}]}}`),
+		[]byte(`{"type":"response_item","payload":{"type":"function_call","name":"shell","call_id":"c1","arguments":"{\"command\":\"ls\"}"}}`),
+		[]byte(`{"type":"response_item","payload":{"type":"function_call_output","call_id":"c1","output":"file1\nfile2"}}`),
+		[]byte(`{"type":"response_item","payload":{"type":"function_call","name":"update_plan","arguments":"{\"plan\":[{\"step\":\"read\",\"status\":\"completed\"},{\"step\":\"write\",\"status\":\"in_progress\"}]}"}}`),
+		[]byte(`{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}}`),
+	}
+	turns, tasks := codexParseRollout(lines)
+
+	// Turns: user, thinking, tool(shell), assistant. update_plan is NOT a turn.
+	if len(turns) != 4 {
+		t.Fatalf("want 4 turns, got %d: %+v", len(turns), turns)
+	}
+	if turns[1].Parts[0].Kind != "thinking" || turns[1].Parts[0].Text != "let me think" {
+		t.Fatalf("turn1 = %+v, want thinking 'let me think'", turns[1].Parts[0])
+	}
+	if turns[2].Parts[0].Kind != "tool" || turns[2].Parts[0].Output != "file1\nfile2" {
+		t.Fatalf("turn2 = %+v, want tool with output attached", turns[2].Parts[0])
+	}
+
+	// update_plan reconstructs the ToDo list.
+	if len(tasks) != 2 || tasks[0].Subject != "read" || tasks[0].Status != "completed" ||
+		tasks[1].Subject != "write" || tasks[1].Status != "in_progress" {
+		t.Fatalf("tasks = %+v, want [read/completed, write/in_progress]", tasks)
+	}
 }
 
 func TestCodexIsWrapper(t *testing.T) {
@@ -85,7 +119,7 @@ func TestCodexIsWrapper(t *testing.T) {
 }
 
 func TestCodexParseRolloutEmpty(t *testing.T) {
-	if turns := codexParseRollout(nil); len(turns) != 0 {
+	if turns, _ := codexParseRollout(nil); len(turns) != 0 {
 		t.Fatalf("empty rollout -> %d turns, want 0", len(turns))
 	}
 	// A rollout with only bookkeeping/system lines yields no displayable turns.
@@ -94,7 +128,7 @@ func TestCodexParseRolloutEmpty(t *testing.T) {
 		[]byte(`{"type":"response_item","payload":{"type":"message","role":"developer","content":[{"type":"input_text","text":"sys"}]}}`),
 		[]byte(`{"type":"event_msg","payload":{"type":"task_started"}}`),
 	}
-	if turns := codexParseRollout(only); len(turns) != 0 {
+	if turns, _ := codexParseRollout(only); len(turns) != 0 {
 		t.Fatalf("system-only rollout -> %d turns, want 0", len(turns))
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -72,10 +73,12 @@ var codexWrapperTags = []string{
 // generic windower pages over). session_meta seeds the cwd/branch shown as a context
 // line; token_count events attach usage to the preceding assistant turn so the chat's
 // context gauge works the same as claude's.
-func codexParseRollout(lines [][]byte) []chatTurn {
+func codexParseRollout(lines [][]byte) ([]chatTurn, []taskItem) {
 	var turns []chatTurn
+	var tasks []taskItem
 	var cwd, branch, model, effort string
-	lastAssistant := -1 // index into turns of the most recent assistant turn (for usage)
+	lastAssistant := -1          // index of the most recent assistant turn (for usage)
+	callTurn := map[string]int{} // function_call call_id -> its tool turn index (for output)
 	for i, ln := range lines {
 		var ev struct {
 			Type      string          `json:"type"`
@@ -96,27 +99,43 @@ func codexParseRollout(lines [][]byte) []chatTurn {
 				effort = e
 			}
 		case "response_item":
-			t, ok := codexParseResponseItem(ev.Payload, ev.Timestamp, i, cwd, branch)
-			if !ok {
+			t, callID, ok := codexParseResponseItem(ev.Payload, ev.Timestamp, i, cwd, branch)
+			if ok {
+				if t.Role == "assistant" {
+					t.Model = model
+					t.Effort = effort
+				}
+				turns = append(turns, t)
+				if t.Role == "assistant" {
+					lastAssistant = len(turns) - 1
+				}
+				if callID != "" {
+					callTurn[callID] = len(turns) - 1
+				}
 				continue
 			}
-			if t.Role == "assistant" {
-				t.Model = model
-				t.Effort = effort
+			// Not a displayable turn on its own: a plan update (feeds the ToDo list) or a
+			// tool output (attached to its call's trace).
+			if pt := codexParsePlan(ev.Payload); pt != nil {
+				tasks = pt // update_plan resends the whole list
 			}
-			turns = append(turns, t)
-			if t.Role == "assistant" {
-				lastAssistant = len(turns) - 1
+			if id, out := codexParseCallOutput(ev.Payload); id != "" && out != "" {
+				if ti, okk := callTurn[id]; okk && len(turns[ti].Parts) > 0 {
+					turns[ti].Parts[0].Output = out
+				}
 			}
 		case "event_msg":
-			if in, out, read, ok := codexTokenUsage(ev.Payload); ok && lastAssistant >= 0 {
+			if in, out, read, win, ok := codexTokenUsage(ev.Payload); ok && lastAssistant >= 0 {
 				turns[lastAssistant].InTok = in
 				turns[lastAssistant].OutTok = out
 				turns[lastAssistant].CacheRead = read
+				if win > 0 {
+					turns[lastAssistant].CtxWindow = win
+				}
 			}
 		}
 	}
-	return turns
+	return turns, tasks
 }
 
 // codexMetaContext pulls the working dir and git branch from a session_meta payload.
@@ -157,26 +176,28 @@ func codexTurnModel(payload json.RawMessage) (model, effort string) {
 	return m.Model, effort
 }
 
-// codexParseResponseItem turns one response_item payload into a chatTurn. Returns
-// ok=false for anything non-displayable (developer/system messages, tool outputs,
-// reasoning, or a user turn that is only injected context).
-func codexParseResponseItem(payload json.RawMessage, ts string, idx int, cwd, branch string) (chatTurn, bool) {
+// codexParseResponseItem turns one response_item payload into a chatTurn, returning the
+// function_call's call_id (when it is one) so its later output can be attached. ok is
+// false for non-displayable items (developer/system messages, tool outputs, an
+// injected-context user turn); those are handled by the caller (plan / call output).
+func codexParseResponseItem(payload json.RawMessage, ts string, idx int, cwd, branch string) (chatTurn, string, bool) {
 	var p struct {
 		Type    string `json:"type"`
 		Role    string `json:"role"`
 		Name    string `json:"name"`
+		CallID  string `json:"call_id"`
 		Content []struct {
 			Type string `json:"type"`
 			Text string `json:"text"`
 		} `json:"content"`
 	}
 	if json.Unmarshal(payload, &p) != nil {
-		return chatTurn{}, false
+		return chatTurn{}, "", false
 	}
 	switch p.Type {
 	case "message":
 		if p.Role != "user" && p.Role != "assistant" {
-			return chatTurn{}, false // developer/system instructions — noise
+			return chatTurn{}, "", false // developer/system instructions — noise
 		}
 		var sb strings.Builder
 		for _, c := range p.Content {
@@ -188,18 +209,32 @@ func codexParseResponseItem(payload json.RawMessage, ts string, idx int, cwd, br
 		}
 		text := strings.TrimSpace(sb.String())
 		if text == "" {
-			return chatTurn{}, false
+			return chatTurn{}, "", false
 		}
 		if p.Role == "user" && codexIsWrapper(text) {
-			return chatTurn{}, false // an injected-context user turn, not a prompt
+			return chatTurn{}, "", false // an injected-context user turn, not a prompt
 		}
 		return chatTurn{
 			Role: p.Role, Parts: []chatPart{{Kind: "text", Text: text}}, Text: text,
 			Idx: idx, TS: ts, Cwd: cwd, Branch: branch,
-		}, true
+		}, "", true
+	case "reasoning":
+		// codex's chain-of-thought summary — shown as a collapsible thinking block (like
+		// claude's thinking). Encrypted-only reasoning (no summary text) is skipped.
+		if txt := codexReasoningText(payload); txt != "" {
+			return chatTurn{
+				Role: "assistant", Parts: []chatPart{{Kind: "thinking", Text: txt}}, Text: "",
+				Idx: idx, TS: ts, Cwd: cwd, Branch: branch,
+			}, "", true
+		}
+		return chatTurn{}, "", false
 	case "function_call":
-		// A tool call: a faint trace on the assistant side (the Console merges it into
-		// the adjacent assistant block). function_call_output/reasoning are dropped.
+		// A tool call: a faint trace on the assistant side (the Console merges it into the
+		// adjacent assistant block); its output is attached when the matching
+		// function_call_output arrives. update_plan is not a trace — it feeds the ToDo list.
+		if p.Name == "update_plan" {
+			return chatTurn{}, "", false
+		}
 		name := p.Name
 		if name == "" {
 			name = "tool"
@@ -207,9 +242,121 @@ func codexParseResponseItem(payload json.RawMessage, ts string, idx int, cwd, br
 		return chatTurn{
 			Role: "assistant", Parts: []chatPart{{Kind: "tool", Tool: name, Info: codexToolInfo(payload)}},
 			Idx: idx, TS: ts, Cwd: cwd, Branch: branch,
-		}, true
+		}, p.CallID, true
 	}
-	return chatTurn{}, false
+	return chatTurn{}, "", false
+}
+
+// codexReasoningText extracts the human-readable reasoning from a reasoning payload:
+// the summary_text blocks (codex's shown chain-of-thought), falling back to content
+// text. Returns "" when the reasoning is encrypted-only.
+func codexReasoningText(payload json.RawMessage) string {
+	var p struct {
+		Summary []struct {
+			Text string `json:"text"`
+		} `json:"summary"`
+		Content []struct {
+			Text string `json:"text"`
+		} `json:"content"`
+	}
+	if json.Unmarshal(payload, &p) != nil {
+		return ""
+	}
+	var sb strings.Builder
+	for _, s := range p.Summary {
+		if s.Text != "" {
+			if sb.Len() > 0 {
+				sb.WriteString("\n\n")
+			}
+			sb.WriteString(s.Text)
+		}
+	}
+	if sb.Len() == 0 {
+		for _, c := range p.Content {
+			if c.Text != "" {
+				if sb.Len() > 0 {
+					sb.WriteString("\n\n")
+				}
+				sb.WriteString(c.Text)
+			}
+		}
+	}
+	return strings.TrimSpace(sb.String())
+}
+
+// codexParseCallOutput returns a function_call_output's call_id and its (truncated)
+// output text, or "","" for other payloads. The output is codex's tool result; the JSON
+// shape varies (string, or {output:...}) so we best-effort stringify.
+func codexParseCallOutput(payload json.RawMessage) (callID, output string) {
+	var p struct {
+		Type   string          `json:"type"`
+		CallID string          `json:"call_id"`
+		Output json.RawMessage `json:"output"`
+	}
+	if json.Unmarshal(payload, &p) != nil || p.Type != "function_call_output" {
+		return "", ""
+	}
+	out := ""
+	if len(p.Output) > 0 {
+		if p.Output[0] == '"' {
+			_ = json.Unmarshal(p.Output, &out)
+		} else {
+			// {output:"...", ...} or a structured result — pull a text field if present.
+			var m map[string]any
+			if json.Unmarshal(p.Output, &m) == nil {
+				if s, ok := m["output"].(string); ok {
+					out = s
+				} else if s, ok := m["content"].(string); ok {
+					out = s
+				}
+			}
+			if out == "" {
+				out = string(p.Output)
+			}
+		}
+	}
+	return p.CallID, capOutput(out)
+}
+
+// codexParsePlan turns an update_plan function_call into the current ToDo list. codex
+// resends the whole plan each call (like claude's TodoWrite), so the latest wins.
+// Returns nil for non-update_plan payloads.
+func codexParsePlan(payload json.RawMessage) []taskItem {
+	var p struct {
+		Type string `json:"type"`
+		Name string `json:"name"`
+		Args string `json:"arguments"`
+	}
+	if json.Unmarshal(payload, &p) != nil || p.Type != "function_call" || p.Name != "update_plan" {
+		return nil
+	}
+	var in struct {
+		Plan []struct {
+			Step   string `json:"step"`
+			Status string `json:"status"`
+		} `json:"plan"`
+	}
+	if json.Unmarshal([]byte(p.Args), &in) != nil || len(in.Plan) == 0 {
+		return nil
+	}
+	out := make([]taskItem, 0, len(in.Plan))
+	for i, s := range in.Plan {
+		st := s.Status
+		if st == "" {
+			st = "pending"
+		}
+		out = append(out, taskItem{ID: strconv.Itoa(i + 1), Subject: s.Step, Status: st})
+	}
+	return out
+}
+
+// capOutput bounds a tool output so a huge result can't bloat the chat payload.
+func capOutput(s string) string {
+	s = strings.TrimSpace(s)
+	if r := []rune(s); len(r) > 4000 {
+		return string(r[:4000]) + "\n…（省略）"
+	}
+	return s
 }
 
 // codexIsWrapper reports whether a codex user message is entirely an injected-context
@@ -269,7 +416,7 @@ func codexClip(s string) string {
 // codexTokenUsage extracts the fresh-input / output / cached-read token counts from a
 // token_count event_msg, mapped onto claude's usage semantics (fresh input excludes
 // the cached read, which is surfaced separately). ok is false for other event_msgs.
-func codexTokenUsage(payload json.RawMessage) (in, out, read int, ok bool) {
+func codexTokenUsage(payload json.RawMessage) (in, out, read, window int, ok bool) {
 	var p struct {
 		Type string `json:"type"`
 		Info struct {
@@ -278,31 +425,32 @@ func codexTokenUsage(payload json.RawMessage) (in, out, read int, ok bool) {
 				CachedInput  int `json:"cached_input_tokens"`
 				OutputTokens int `json:"output_tokens"`
 			} `json:"last_token_usage"`
+			ModelContextWindow int `json:"model_context_window"`
 		} `json:"info"`
 	}
 	if json.Unmarshal(payload, &p) != nil || p.Type != "token_count" {
-		return 0, 0, 0, false
+		return 0, 0, 0, 0, false
 	}
 	fresh := p.Info.Last.InputTokens - p.Info.Last.CachedInput
 	if fresh < 0 {
 		fresh = 0
 	}
-	return fresh, p.Info.Last.OutputTokens, p.Info.Last.CachedInput, true
+	return fresh, p.Info.Last.OutputTokens, p.Info.Last.CachedInput, p.Info.ModelContextWindow, true
 }
 
 // readCodexTranscript reads a codex session's normalized chat turns plus the rollout
 // path (for diagnostics). ok is always true (codex supports generic transcript); an
 // absent rollout (no conversation yet) yields nil turns, which the chat shows as empty.
-func readCodexTranscript(m sessionMeta) (turns []chatTurn, path string, ok bool) {
+func readCodexTranscript(m sessionMeta) (transcriptData, bool) {
 	slot := sessionUUID(m.Dir, m.Name)
 	cxid := codexSids.read(slot)
-	path = codexRolloutPath(cxid)
+	path := codexRolloutPath(cxid)
 	if path == "" {
-		return nil, "", true
+		return transcriptData{}, true
 	}
 	b, err := os.ReadFile(path)
 	if err != nil {
-		return nil, path, true
+		return transcriptData{path: path}, true
 	}
 	var lines [][]byte
 	for _, ln := range strings.Split(string(b), "\n") {
@@ -310,5 +458,6 @@ func readCodexTranscript(m sessionMeta) (turns []chatTurn, path string, ok bool)
 			lines = append(lines, []byte(ln))
 		}
 	}
-	return codexParseRollout(lines), path, true
+	turns, tasks := codexParseRollout(lines)
+	return transcriptData{turns: turns, path: path, tasks: tasks}, true
 }

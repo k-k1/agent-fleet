@@ -18,6 +18,9 @@ interface ContextBarProps {
   create: number;
   fresh: number;
   model?: string;
+  // Explicit context-window size when the agent records it (codex model_context_window);
+  // overrides the model-name guess so the gauge % is exact.
+  window?: number;
   // Optional per-turn spend series (chat only): renders a token-spend trend Sparkline on
   // the same row, after the context gauge. Omitted by the terminal head, which has none.
   spends?: number[];
@@ -28,9 +31,10 @@ interface ContextBarProps {
 // the prompt tokens break down (cache read / cache creation / fresh input). Shared
 // by the chat (MirrorView) and terminal (TerminalView) heads so the current context
 // fill is always visible, whichever view a claude pane is showing.
-export default function ContextBar({ read, create, fresh, model, spends, maxSpend }: ContextBarProps) {
+export default function ContextBar({ read, create, fresh, model, window: windowOverride, spends, maxSpend }: ContextBarProps) {
   const used = read + create + fresh;
-  const window = contextWindow(model, used);
+  // Prefer the agent-reported window (exact); fall back to the model-name guess.
+  const window = windowOverride && windowOverride > 0 ? windowOverride : contextWindow(model, used);
   const pct = Math.min(100, (used / window) * 100);
   const w = (n: number) => (n / window) * 100 + "%";
   // As the window fills, claude auto-compacts near the top — surface that the strip
