@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useApp } from "../state.jsx";
-import { api, apiJSON, rawJSON } from "../api.js";
+import { api, apiJSON, raw, rawJSON } from "../api.js";
 import Icon from "../components/Icon.jsx";
 import { Diff } from "../components/GitDiff.jsx";
 import { useConfirm } from "../components/ConfirmProvider.jsx";
@@ -19,7 +19,7 @@ interface Change {
 // Left: changed files (stage / unstage / discard) + a commit box + the repo identity.
 // Right: the selected file's diff.
 export default function ChangesView({ repo, wrap }: { repo?: string; wrap?: boolean }) {
-  const { scmRepo: ctxRepo, bumpRepos, bumpFiles } = useApp();
+  const { scmRepo: ctxRepo, bumpRepos, bumpFiles, showTerminal } = useApp();
   const askConfirm = useConfirm();
   const toast = useToast();
   const scmRepo = repo !== undefined ? repo : ctxRepo;
@@ -70,6 +70,22 @@ export default function ChangesView({ repo, wrap }: { repo?: string; wrap?: bool
     bumpFiles();
   };
 
+  // Delete the working copy (moved here from the graph header). Reversible — history /
+  // remote stay; Repos re-clone recreates it. Leaves this view for the terminal.
+  const del = async () => {
+    const ok = await askConfirm({
+      title: "ワーキングコピーを削除",
+      body: `"${scmRepo}" のローカル作業コピーを削除します。履歴・リモートはそのまま残ります。`,
+      confirmLabel: "削除する",
+      danger: true,
+    });
+    if (!ok) return;
+    await raw(`api/repos/${enc}`, { method: "DELETE" });
+    bumpRepos();
+    bumpFiles();
+    showTerminal();
+  };
+
   const commitOp = async () => {
     if (!msg.trim()) {
       toast("コミットメッセージが必要です", { kind: "warn" });
@@ -93,6 +109,9 @@ export default function ChangesView({ repo, wrap }: { repo?: string; wrap?: bool
         <span className="spacer" />
         <button className="ghost" title="更新" onClick={refresh}>
           <Icon name="refresh" />
+        </button>
+        <button className="ghost danger" title="ワーキングコピーを削除" onClick={del}>
+          <Icon name="trash" />
         </button>
       </header>
       <div className="scmbody">
