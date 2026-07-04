@@ -26,13 +26,12 @@ const lastSeg = (full: string) =>
 
 
 const SOURCE_HELP = {
-  existing: "既に clone 済みの作業コピーを選んで、その中で起動します（clone しません）。",
+  dir: "既存のフォルダを選んで起動します（clone しません）。リポジトリはブランチ付きで一覧、ホームのまま(~)でも起動できます。",
   picker: "接続済みの GitHub / Bitbucket からリポジトリとブランチを選んで clone します。",
   url: "clone URL を手入力します（接続していないリポジトリ向け）。",
-  none: "リポジトリを clone せず、ホーム(~) でそのまま起動します。",
 };
 
-type Source = "existing" | "picker" | "url" | "none";
+type Source = "dir" | "picker" | "url";
 
 interface NewSessionModalProps {
   onClose: () => void;
@@ -59,15 +58,14 @@ export default function NewSessionModal({ onClose, onCreated }: NewSessionModalP
   const [avail, setAvail] = useState(readKindAvail); // { claude, codex, opencode, ssm }
   const [loaded, setLoaded] = useState(false);
   const [model, setModel] = useState(""); // "" = claude default
-  const [source, setSource] = useState<Source>("picker");
+  const [source, setSource] = useState<Source>("dir");
   const [sourceTouched, setSourceTouched] = useState(false); // user picked a source → stop auto-defaulting
   const [sel, setSel] = useState<RepoSelection | null>(null); // picker: { cloneUrl, fullName, branch }
   const [url, setUrl] = useState("");
   const [branch, setBranch] = useState("");
-  const [dir, setDir] = useState("");
+  const [dir, setDir] = useState(""); // source=dir: home-relative launch dir ("" = home)
   const [repos, setRepos] = useState<{ name: string; path?: string; branch?: string }[]>([]); // existing working copies
   const [reposLoaded, setReposLoaded] = useState(false);
-  const [existingRepo, setExistingRepo] = useState(""); // source=existing: chosen working-copy name
   const [copyMode, setCopyMode] = useState<"reuse" | "new">("new"); // when a copy exists
   const [repoName, setRepoName] = useState(""); // target folder for a separate copy
   const [repoNameEdited, setRepoNameEdited] = useState(false);
@@ -89,18 +87,14 @@ export default function NewSessionModal({ onClose, onCreated }: NewSessionModalP
     };
   }, []);
 
-  // Default the repo source once we know whether any working copies exist: prefer
-  // "既存から" when there are cloned repos (the common case — reuse what's here),
-  // else fall back to the provider picker. Stops once the user picks a source.
+  // Default the repo source once we know whether any working copies exist: browse
+  // existing folders ("場所を選ぶ", which lists repos) when there are cloned repos —
+  // the common case is reusing what's here; else point at the provider picker to
+  // clone. Stops once the user picks a source.
   useEffect(() => {
     if (!reposLoaded || sourceTouched) return;
-    setSource(repos.length ? "existing" : "picker");
+    setSource(repos.length ? "dir" : "picker");
   }, [reposLoaded, repos, sourceTouched]);
-
-  // Auto-select the first working copy when entering the "既存" flow with none chosen.
-  useEffect(() => {
-    if (repos.length && !existingRepo) setExistingRepo(repos[0].name);
-  }, [repos, existingRepo]);
 
   const chooseSource = (v: Source) => {
     setSourceTouched(true);
@@ -141,16 +135,12 @@ export default function NewSessionModal({ onClose, onCreated }: NewSessionModalP
 
   const ssmHost = (ssmHosts || []).find((h) => h.id === ssmHostId) || null;
 
-  // The chosen existing working copy (source=existing) and its absolute path (sent as
-  // `dir` so the session launches inside it — same contract as the Repos-list 起動).
-  const existing0 = source === "existing" ? repos.find((r) => r.name === existingRepo) || null : null;
-  const existingPath = existing0?.path || "";
-
   // Placeholder preview of the auto title used when the user leaves the field blank:
-  // the repo name for an agent, the host alias for SSM, else the kind word.
+  // the picked dir's last segment (repo/folder) for source=dir, the repo name for a
+  // clone, the host alias for SSM, else the kind word.
   const titlePlaceholder =
-    isAgent && source === "existing" && existingRepo
-      ? lastSeg(existingRepo)
+    isAgent && source === "dir" && dir
+      ? lastSeg(dir)
       : isAgent && sel
         ? lastSeg(sel.fullName)
         : isSSM && ssmHost
@@ -161,7 +151,7 @@ export default function NewSessionModal({ onClose, onCreated }: NewSessionModalP
 
   const cloneUrl = !isAgent ? "" : source === "picker" ? sel?.cloneUrl : source === "url" ? url.trim() : "";
   const cloneBranch = source === "picker" ? sel?.branch || "" : branch.trim();
-  const cloning = isAgent && source !== "none" && !!cloneUrl;
+  const cloning = isAgent && source !== "dir" && !!cloneUrl;
 
   // Detect an existing working copy at the default (derived) folder name.
   const derivedRepo = cloning ? deriveRepoName(cloneUrl) : "";
@@ -189,10 +179,9 @@ export default function NewSessionModal({ onClose, onCreated }: NewSessionModalP
   const newCopy = cloning && !!existing && copyMode === "new";
   const repoNameOk = !newCopy || (repoNameRe.test(repoName.trim()) && !repoNames.has(repoName.trim()));
 
-  // shell never needs a repo; an agent's repo is optional (none is allowed). For the
-  // existing-copy flow, a working copy must be chosen; for clone flows, a URL.
-  const sourceOk =
-    !isAgent || source === "none" || (source === "existing" ? !!existingPath : !!cloneUrl);
+  // shell never needs a repo; an agent's repo is optional. The "場所を選ぶ" flow is
+  // always valid (empty dir = home); clone flows need a URL.
+  const sourceOk = !isAgent || source === "dir" || !!cloneUrl;
   const ssmOk = !isSSM || !!ssmHostId;
   const canSubmit = sourceOk && repoNameOk && ssmOk && !busy;
 
@@ -205,15 +194,10 @@ export default function NewSessionModal({ onClose, onCreated }: NewSessionModalP
         title: title.trim(), // optional; server auto-allocates the identity slug
         kind,
         model: hasModel ? model : "",
-        // Working dir: an existing copy's path, an explicit dir for リポなし, else empty
-        // (clone flows derive it server-side from remote_url/repo_name).
-        dir: isAgent
-          ? source === "existing"
-            ? existingPath
-            : source === "none"
-              ? dir.trim()
-              : ""
-          : "",
+        // Working dir: the picked home-relative folder for source=dir (empty = home;
+        // server resolves it against home). Clone flows leave it empty and derive the
+        // dir server-side from remote_url/repo_name.
+        dir: isAgent && source === "dir" ? dir.trim() : "",
         remote_url: cloning ? cloneUrl : "",
         branch: cloning ? cloneBranch : "",
         repo_name: newCopy ? repoName.trim() : "",
@@ -321,10 +305,9 @@ export default function NewSessionModal({ onClose, onCreated }: NewSessionModalP
                 <div className="field-label">リポジトリ</div>
                 <div className="seg">
                   {([
-                    ["existing", "既存から"],
+                    ["dir", "場所を選ぶ"],
                     ["picker", "接続から clone"],
                     ["url", "URL から clone"],
-                    ["none", "リポなし"],
                   ] as const).map(([v, label]) => (
                     <button
                       key={v}
@@ -338,28 +321,7 @@ export default function NewSessionModal({ onClose, onCreated }: NewSessionModalP
                 </div>
                 <div className="field-help">{SOURCE_HELP[source]}</div>
 
-                {source === "existing" &&
-                  (reposLoaded && repos.length === 0 ? (
-                    <div className="field-help">
-                      作業コピーがありません。「接続から clone」「URL から clone」で用意してください。
-                    </div>
-                  ) : (
-                    <label className="pick-field">
-                      <span>作業コピー</span>
-                      <select
-                        className="cinput"
-                        value={existingRepo}
-                        onChange={(e) => setExistingRepo(e.target.value)}
-                      >
-                        {repos.map((r) => (
-                          <option key={r.name} value={r.name}>
-                            {r.name}
-                            {r.branch ? ` (${r.branch})` : ""}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  ))}
+                {source === "dir" && <DirPicker value={dir} onChange={setDir} repos={repos} />}
                 {source === "picker" && <RepoPicker onChange={onPick} />}
                 {source === "url" && (
                   <div className="stack">
@@ -373,7 +335,6 @@ export default function NewSessionModal({ onClose, onCreated }: NewSessionModalP
                     </label>
                   </div>
                 )}
-                {source === "none" && <DirPicker value={dir} onChange={setDir} />}
               </div>
 
               {/* 既存の作業コピーがある場合：checkout で共用するか、別フォルダへ並行 clone するか */}

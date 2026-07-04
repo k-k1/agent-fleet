@@ -6324,6 +6324,31 @@ button.mt-toolrun-head:hover {
   flex: none;
   opacity: 0.5;
 }
+/* Group heading (リポジトリ / フォルダ) inside the picker list. */
+.dirpick-head {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+  padding: 6px 8px 2px;
+}
+.dirpick-head:first-child {
+  padding-top: 2px;
+}
+/* Branch chip on a folder that is a git working copy. */
+.dirpick-branch {
+  flex: none;
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--btn);
+  color: var(--muted);
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .dirpick-empty {
   display: flex;
   align-items: center;
