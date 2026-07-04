@@ -55,20 +55,28 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(body.Keys) > 0 {
+		keys := body.Keys
+		// opencode quirk: a plain Escape (the chat 停止 button) interrupts from the main
+		// view, but while opencode's SUBAGENT DETAIL view is up Escape only navigates it —
+		// you must step out to the parent (Up) first. Detect that view by its nav footer
+		// and prepend Up so the stop button works regardless of which view is showing.
+		if len(keys) == 1 && keys[0] == "Escape" && opencodeInSubagentView(tn) {
+			keys = []string{"Up", "Escape"}
+		}
 		// Named-key navigation. Send one at a time with a small gap so the TUI can
 		// re-render between keys (e.g. after Enter advances to the next question page).
-		for _, k := range body.Keys {
+		for _, k := range keys {
 			if !allowedKey(k) {
 				writeErr(w, http.StatusBadRequest, "bad_key", "unsupported key: "+k)
 				return
 			}
 		}
-		for i, k := range body.Keys {
+		for i, k := range keys {
 			if out, err := exec.Command("tmux", "send-keys", "-t", pane, k).CombinedOutput(); err != nil {
 				writeErr(w, http.StatusInternalServerError, "tmux_failed", string(out))
 				return
 			}
-			if i < len(body.Keys)-1 {
+			if i < len(keys)-1 {
 				time.Sleep(90 * time.Millisecond)
 			}
 		}
@@ -110,6 +118,19 @@ func inputSubmitDelay(name string) time.Duration {
 		}
 	}
 	return time.Duration(ms) * time.Millisecond
+}
+
+// opencodeInSubagentView reports whether the pane is currently showing opencode's
+// subagent DETAIL view, identified by its navigation footer ("Parent … Prev … Next").
+// In that view Escape only navigates, so the stop button must step out (Up) first.
+// Best-effort: a capture failure returns false (treat as the normal view → plain Escape).
+func opencodeInSubagentView(tn string) bool {
+	out, err := exec.Command("tmux", "capture-pane", "-p", "-t", exactT(tn)).Output()
+	if err != nil {
+		return false
+	}
+	s := string(out)
+	return strings.Contains(s, "Parent") && strings.Contains(s, "Next")
 }
 
 // markSessionWorking optimistically marks the session working so a poll immediately

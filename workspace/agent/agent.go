@@ -319,7 +319,17 @@ func (opencodeAgent) buildLaunch(m sessionMeta, _ launchOpts) (launchPlan, error
 	// session environment and does NOT reach the pane's process).
 	ocSid := sessionUUID(m.Dir, m.Name)
 	envs := append([]string{"AF_SESSION_SID=" + ocSid}, opencodeEnv()...)
-	return launchPlan{program: buildOpencodeProgram(m.Model, envs, opencodeSids.read(ocSid)), cwd: m.Dir}, nil
+	// Resume this slot's captured session — UNLESS its last turn was interrupted
+	// (incomplete). opencode continues an incomplete turn on resume, re-running the
+	// pending work (e.g. an Explore subagent the user stopped); starting fresh instead
+	// avoids that. The interrupted conversation stays in opencode's store (just not
+	// auto-resumed). clearResume forgets the captured id so a later recreate stays fresh.
+	resume := opencodeSids.read(ocSid)
+	if resume != "" && !opencodeSessionResumable(resume) {
+		opencodeSids.remove(ocSid)
+		resume = ""
+	}
+	return launchPlan{program: buildOpencodeProgram(m.Model, envs, resume), cwd: m.Dir}, nil
 }
 
 func (opencodeAgent) wireLive(m sessionMeta, alive bool) liveInfo {

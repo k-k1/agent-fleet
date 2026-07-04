@@ -143,6 +143,51 @@ func opencodeTasks(db *sql.DB, ses string) []taskItem {
 	return out
 }
 
+// opencodeSessionResumable reports whether resuming this session with `opencode
+// --session <id>` is safe — i.e. its last turn is COMPLETE. opencode continues an
+// incomplete/interrupted assistant turn on resume (re-running the pending work, e.g. an
+// interrupted Explore subagent), which is never what the user wants after a Stop→Start.
+// A message is complete when its data.time.completed is set (opencode leaves it null
+// while a turn is in flight / was interrupted). No captured session, no db, or an empty
+// session all count as resumable (nothing to re-run). Best-effort: on any read error we
+// default to true so a transient hiccup doesn't needlessly drop the conversation.
+func opencodeSessionResumable(ses string) bool {
+	if ses == "" {
+		return true
+	}
+	path := filepath.Join(homeDir(), ".local", "share", "opencode", "opencode.db")
+	if _, err := os.Stat(path); err != nil {
+		return true
+	}
+	db, err := sql.Open("sqlite", "file:"+path+"?mode=ro&_pragma=busy_timeout(3000)")
+	if err != nil {
+		return true
+	}
+	defer db.Close()
+	// Newest message for the session; is it a completed assistant turn?
+	row := db.QueryRow(`SELECT data FROM message WHERE session_id = ? ORDER BY time_created DESC LIMIT 1`, ses)
+	var data []byte
+	if err := row.Scan(&data); err != nil {
+		return true // no messages (fresh) or read error — nothing to re-run
+	}
+	var md struct {
+		Role string `json:"role"`
+		Time struct {
+			Completed int64 `json:"completed"`
+		} `json:"time"`
+	}
+	if json.Unmarshal(data, &md) != nil {
+		return true
+	}
+	// A user message as the last row means the assistant never replied (interrupted
+	// before responding); an assistant message with no completed time was interrupted
+	// mid-turn. Either way, resuming would continue it — so it's not resumable.
+	if md.Role == "assistant" && md.Time.Completed > 0 {
+		return true
+	}
+	return false
+}
+
 // opencodeReadSession loads one session's messages (ordered) and their parts, building a
 // chatTurn per displayable message. A message with no displayable part (a pure
 // reasoning/step frame) is dropped. Best-effort: a query error yields the turns gathered
