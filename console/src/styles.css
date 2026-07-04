@@ -2798,12 +2798,15 @@ body.row-resizing {
   font-weight: 600;
   font-size: 12px;
 }
-/* Composer toolbar: plan-mode toggle on the left, stop on the right. */
+/* Composer toolbar: plan-mode toggle on the left, stop on the right. Full-width row
+   (flex 0 0 100%) so it sits ABOVE the input row inside the wrapping mirror-compose flex,
+   rather than being squeezed into a narrow column beside the textarea. */
 .mirror-toolbar {
+  flex: 0 0 100%;
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 0 2px 6px;
+  padding: 0 2px 2px;
 }
 .mirror-toolbar-sp {
   flex: 1;
@@ -2814,6 +2817,8 @@ body.row-resizing {
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  white-space: nowrap; /* keep 計画モード on one line */
+  flex: none;
 }
 .mirror-mode.on {
   background: var(--accent, #6a7fdb);

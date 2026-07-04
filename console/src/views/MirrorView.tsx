@@ -176,6 +176,11 @@ export default function MirrorView({
   const [pendingPlan, setPendingPlan] = useState<string | null>(null); // ExitPlanMode plan awaiting approval
   const [pendingPerm, setPendingPerm] = useState<string | null>(null); // tool-permission prompt awaiting allow/deny
   const [mode, setMode] = useState(""); // session permission mode ("plan" | …)
+  // Last mode the SERVER reported. codex/opencode only write their mode when a turn runs
+  // (not on the Shift+Tab / Tab keypress), so after a toggle the poll keeps returning the
+  // stale mode for a while. We apply the server's value only when it actually CHANGES, so
+  // an optimistic toggle (set on click) isn't immediately reverted by a stale poll.
+  const serverModeRef = useRef("");
   // Composer draft, persisted per session so switching ターミナル⇄チャット (which
   // unmounts this view) — or a reload — keeps what you were typing. Key by session.
   const draftKey = session ? "af.mirror-draft." + session : null;
@@ -231,6 +236,7 @@ export default function MirrorView({
     setPendingPlan(null);
     setPendingPerm(null);
     setMode("");
+    serverModeRef.current = "";
     setHistIdx(null);
     setPasting(false);
     setLightbox(null);
@@ -326,7 +332,13 @@ export default function MirrorView({
           setPending(Array.isArray(d.pendingQuestions) ? d.pendingQuestions : null);
           setPendingPlan(typeof d.pendingPlan === "string" && d.pendingPlan ? d.pendingPlan : null);
           setPendingPerm(typeof d.pendingPermission === "string" && d.pendingPermission ? d.pendingPermission : null);
-          setMode(typeof d.mode === "string" ? d.mode : "");
+          {
+            const sm = typeof d.mode === "string" ? d.mode : "";
+            if (sm !== serverModeRef.current) {
+              serverModeRef.current = sm;
+              setMode(sm); // real change (a turn ran, or claude's live mode event) — apply
+            }
+          }
           setTermState(typeof d.terminalState === "string" ? d.terminalState : "");
           setLoaded(true); // first (and every) successful fetch: drop the loading spinner
         }
@@ -933,7 +945,12 @@ export default function MirrorView({
                   className={"seg-btn mirror-mode" + (mode === "plan" ? " on" : "")}
                   disabled={sending}
                   title="計画モードを切り替え（承認するまで実装しない）"
-                  onClick={() => sendKeys([agent.planCycleKey])}
+                  onClick={() => {
+                    // Optimistically flip the indicator (codex/opencode don't report the
+                    // new mode until a turn runs); the poll reconciles on the next change.
+                    setMode(mode === "plan" ? "normal" : "plan");
+                    sendKeys([agent.planCycleKey]);
+                  }}
                 >
                   <Icon name="debug-pause" /> 計画モード{mode === "plan" ? " ON" : ""}
                 </button>
