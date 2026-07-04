@@ -3424,8 +3424,8 @@ button.mt-toolrun-head:hover {
 }
 .mirror-send {
   flex: none;
-  height: 26px;
-  padding: 0 14px;
+  height: 31px;
+  padding: 0 16px;
 }
 /* Composer history buttons: only on phones (no arrow keys). Hidden elsewhere. */
 .mirror-hist {
