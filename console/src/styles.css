@@ -571,10 +571,18 @@ button.wu-reload {
   align-items: center;
   gap: 5px;
 }
-/* Split buttons moved here from the pane header — icon-only, so tighter than the
-   labeled bar buttons (3px 12px). */
+/* Split buttons moved here from the pane header — icon + label, label folds away on a
+   narrow bar (like 全て閉じる). Disabled (not hidden) when the split isn't possible. */
 .ws-split {
-  padding: 3px 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+}
+@media (max-width: 760px) {
+  .ws-split .lbl {
+    display: none;
+  }
 }
 @media (max-width: 760px) {
   .ws-closeall .lbl {
@@ -3429,12 +3437,19 @@ button.mt-toolrun-head:hover {
   display: flex;
   align-items: center;
   gap: 10px;
-  /* right padding reserves room for the pane control cluster (split-right /
-     split-down / close) overlaid at the top-right; left padding reserves room
-     for the drag grip overlaid at the top-left, just left of the badge. */
-  padding: 6px 84px 6px 34px;
+  /* right padding reserves room for the pane control cluster overlaid at the top-right;
+     left padding reserves room for the drag grip overlaid at the top-left, just left of
+     the badge. Split moved to the WS bar, so the cluster is now just wrap+close (file/scm)
+     or close alone (terminal/chat, tightened below). */
+  padding: 6px 56px 6px 34px;
   background: var(--bar);
   border-bottom: 1px solid var(--border);
+}
+/* Terminal/chat panes have no wrap button — their control cluster is just the × — so the
+   head needs less right padding, pulling the チャット/ターミナル toggle closer to the ×. */
+.termview .view-head,
+.mirrorview .view-head {
+  padding-right: 40px;
 }
 /* file / scm / diff panes add a wrap toggle to the control cluster, so their headers
    need extra right room or the cluster overlaps the header's own right-edge buttons

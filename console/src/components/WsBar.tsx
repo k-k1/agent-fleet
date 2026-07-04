@@ -555,20 +555,24 @@ export default function WsBar() {
         <Icon name={running ? "primitive-square" : "play"} />
         <span>{running ? "停止" : "起動"}</span>
       </button>
-      {canSplitRight && (
-        <button className="ghost ws-split" title="右に分割" onClick={splitRight}>
-          <Icon name="split-horizontal" />
-        </button>
-      )}
-      {canSplitDown && (
-        <button
-          className="ghost ws-split"
-          title="上下に分割（アクティブなペイン）"
-          onClick={() => activePaneId && splitDown(activePaneId)}
-        >
-          <Icon name="split-vertical" />
-        </button>
-      )}
+      <button
+        className="ghost ws-split"
+        title="右に分割"
+        disabled={!canSplitRight}
+        onClick={splitRight}
+      >
+        <Icon name="split-horizontal" />
+        <span className="lbl">右に分割</span>
+      </button>
+      <button
+        className="ghost ws-split"
+        title="上下に分割（アクティブなペイン）"
+        disabled={!canSplitDown}
+        onClick={() => activePaneId && splitDown(activePaneId)}
+      >
+        <Icon name="split-vertical" />
+        <span className="lbl">下に分割</span>
+      </button>
       <button
         className="ghost ws-closeall"
         title="全ペインを閉じる"
