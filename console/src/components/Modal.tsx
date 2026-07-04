@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import type { ReactNode, MouseEvent, FormEvent } from "react";
 import Icon from "./Icon.jsx";
 
@@ -25,6 +26,20 @@ export default function Modal({
   lockClose = false,
   children,
 }: ModalProps) {
+  // Esc closes the dialog (unless an operation is in flight). Registered at the
+  // document so it works regardless of where focus sits inside the panel.
+  useEffect(() => {
+    if (!onClose || lockClose) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        onClose();
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose, lockClose]);
+
   const Panel = as;
   const panelProps: Record<string, unknown> = {
     className: ("modal " + className).trim(),
