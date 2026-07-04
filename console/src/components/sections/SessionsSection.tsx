@@ -73,9 +73,10 @@ export default function SessionsSection() {
     [multi, layout],
   );
 
-  // Group sessions by working dir. Groups are ordered by their newest session and rows
-  // within a group by createdAt desc — both stable (createdAt doesn't change), so rows
-  // never jump around as live state (working/idle) updates.
+  // Group sessions by working dir. Groups are ordered by folder name ASCENDING (fixed),
+  // and rows within a group by createdAt desc. Both are stable — the group order no
+  // longer depends on the newest session's timestamp, so creating/removing a session
+  // never reshuffles the groups; rows stay put too (createdAt doesn't change).
   const groups = useMemo(() => {
     const by = new Map<string, Session[]>();
     for (const s of sessions) {
@@ -86,9 +87,14 @@ export default function SessionsSection() {
     }
     const arr = [...by.entries()].map(([dir, list]) => {
       list.sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
-      return { dir, list, newest: list[0]?.createdAt || "" };
+      return { dir, list };
     });
-    arr.sort((a, b) => b.newest.localeCompare(a.newest));
+    arr.sort((a, b) => {
+      // Empty dir ("その他") always sinks to the bottom; the rest sort ascending by the
+      // displayed folder name (basename), tie-broken by full path for determinism.
+      if (!a.dir !== !b.dir) return a.dir ? -1 : 1;
+      return groupLabel(a.dir).localeCompare(groupLabel(b.dir)) || a.dir.localeCompare(b.dir);
+    });
     return arr;
   }, [sessions]);
 
