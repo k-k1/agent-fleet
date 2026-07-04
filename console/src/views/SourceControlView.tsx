@@ -202,7 +202,7 @@ export default function SourceControlView({ repo }: { repo?: string; wrap?: bool
           <Icon name="cloud-download" /> <span className="lbl">fetch</span>
         </button>
         <button className="ghost scm-act" title="現在のブランチを upstream に fast-forward（pull --ff-only）" onClick={doFF}>
-          <Icon name="arrow-down" /> <span className="lbl">ff</span>
+          <Icon name="arrow-down" /> <span className="lbl">Fast-Forward</span>
         </button>
         <button className="ghost scm-act" title="更新" onClick={refresh}>
           <Icon name="refresh" /> <span className="lbl">更新</span>
