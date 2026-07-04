@@ -2798,9 +2798,29 @@ body.row-resizing {
   font-weight: 600;
   font-size: 12px;
 }
-/* Stop button sits at the far right of the typing row while the agent works. */
+/* Composer toolbar: plan-mode toggle on the left, stop on the right. */
+.mirror-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 2px 6px;
+}
+.mirror-toolbar-sp {
+  flex: 1;
+}
+.mirror-mode {
+  font-size: 12px;
+  padding: 2px 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.mirror-mode.on {
+  background: var(--accent, #6a7fdb);
+  color: #fff;
+  border-color: transparent;
+}
 .mirror-stop {
-  margin-left: auto;
   font-size: 12px;
   padding: 2px 10px;
   color: var(--danger, #d9534f);

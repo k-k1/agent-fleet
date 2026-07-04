@@ -176,7 +176,18 @@ Console のみ（`MirrorView` typing 行＋`.mirror-stop`）。
 - **停止ボタン**: opencode のサブエージェント詳細ビューでは Escape が中断でなくナビになる。Agent が pane を capture し
   そのビュー（"Parent"/"Next" フッタ）を検出したら Escape の前に Up を送る（`opencodeInSubagentView`）。
 
-## 22.12 残り / 既知の限界
+## 22.12 計画モード切替・停止（チャットのツールバー）
+
+チャットのコンポーザに **計画モード切替** と **停止** を追加。
+- **現在モード**: `transcriptData.mode`（"plan"|"normal"）を各アダプタが surface。claude=jsonl mode イベント（既存）、
+  codex=`turn_context.collaboration_mode.mode`、opencode=最新メッセージの `agent`（build/plan）。
+- **切替**: 各 TUI のモードサイクルキーを送る。claude/codex=Shift+Tab（`BTab`）、opencode=Tab（agent_cycle）。
+  `allowedKey` に `BTab` を追加。registry に `planMode` cap＋`planCycleKey`。3モードの claude は1回で plan に届かない
+  ことがある（ポーリングで結果反映＝もう一度押せば届く）。
+- **停止**: 作業中に Escape を送る（[[22.11]] のサブエージェントビュー対応込み）。ツールバーに常設（旧・入力中行の
+  停止は撤去）。
+
+## 22.13 残り / 既知の限界
 
 - **codex 実データ検証**: reasoning/function_call 出力/update_plan/request_user_input・menu 応答は実 codex セッションで未目視。
 - **後続**: codex apply_patch の差分パース、opencode コスト($)表示、codex レート制限、複数選択/複数問メニューの駆動、

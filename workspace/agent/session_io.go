@@ -147,7 +147,7 @@ func markSessionWorking(name string) {
 // (the AskUserQuestion modal): navigation + confirm, nothing that could run a command.
 func allowedKey(k string) bool {
 	switch k {
-	case "Up", "Down", "Left", "Right", "Enter", "Space", "Escape", "Tab", "BSpace", "Home", "End":
+	case "Up", "Down", "Left", "Right", "Enter", "Space", "Escape", "Tab", "BTab", "BSpace", "Home", "End":
 		return true
 	}
 	return false

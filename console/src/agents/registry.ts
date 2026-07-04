@@ -23,6 +23,7 @@ export interface AgentCaps {
   fork: boolean; // supports fork-session from the chat (claude --fork-session)
   contextBar: boolean; // shows the context-window token gauge
   imagePaste: boolean; // chat composer accepts pasted images (claude Read-tool flow)
+  planMode: boolean; // chat offers a plan-mode toggle (drives the TUI's mode-cycle key)
   ephemeral: boolean; // archiving deletes it (no keep) — shell / ssm
   runsInDir: boolean; // launches in a working dir (clone / dir source) — the agents
   launchableFromRepo: boolean; // offered in a repo row's 起動 menu (ssm is not)
@@ -56,6 +57,9 @@ export interface AgentDescriptor {
   launchHint: string; // the seg-button sub-label
   // repo-launch session-name suffix (so a repo's shell/oc/cx sessions stay distinct)
   launchSuffix: string;
+  // the TUI key that cycles permission/collaboration mode (Shift+Tab for claude/codex,
+  // Tab for opencode's agent cycle), sent by the chat's plan-mode toggle. "" when none.
+  planCycleKey: string;
   caps: AgentCaps;
   // whether this kind is currently launchable given connections / SSM hosts
   available(ctx: AvailCtx): boolean;
@@ -70,6 +74,7 @@ function caps(overrides: Partial<AgentCaps>): AgentCaps {
     fork: false,
     contextBar: false,
     imagePaste: false,
+    planMode: false,
     ephemeral: false,
     runsInDir: false,
     launchableFromRepo: false,
@@ -89,6 +94,7 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     cssClass: "claude",
     launchHint: "Claude Code を起動",
     launchSuffix: "",
+    planCycleKey: "BTab", // Shift+Tab cycles normal / auto-accept / plan
     caps: caps({
       chat: true,
       transcript: true,
@@ -96,6 +102,7 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
       fork: true,
       contextBar: true,
       imagePaste: true,
+      planMode: true,
       runsInDir: true,
       launchableFromRepo: true,
     }),
@@ -110,14 +117,16 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     cssClass: "codex",
     launchHint: "Codex CLI を起動",
     launchSuffix: "-cx",
+    planCycleKey: "BTab", // Shift+Tab cycles the collaboration mode (default / plan)
     // Chat mirror lit up (段1): turns come from codex's rollout JSONL, normalized by the
     // Agent's transcript() and windowed by the generic /messages handler. No fork (codex
-    // has no --session-id pin) and no inline questions/plan/permission (those are claude
-    // hook payloads); the context gauge works — codex logs token counts too.
+    // has no --session-id pin); the context gauge works — codex logs token counts too.
+    // Plan mode + inline request_user_input questions are supported.
     caps: caps({
       chat: true,
       transcript: true,
       contextBar: true,
+      planMode: true,
       runsInDir: true,
       launchableFromRepo: true,
     }),
@@ -132,13 +141,15 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     cssClass: "opencode",
     launchHint: "opencode を起動",
     launchSuffix: "-oc",
+    planCycleKey: "Tab", // Tab cycles the agent (build / plan)
     // Chat mirror lit up (段2): turns come from opencode's SQLite store (message+part),
     // normalized by the Agent's transcript() and windowed by the generic /messages
-    // handler. Context gauge works (per-message tokens); no fork/inline-questions.
+    // handler. Context gauge works (per-message tokens); plan mode + inline question tool.
     caps: caps({
       chat: true,
       transcript: true,
       contextBar: true,
+      planMode: true,
       runsInDir: true,
       launchableFromRepo: true,
     }),
@@ -156,6 +167,7 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     cssClass: "shell",
     launchHint: "通常のシェル (bash)",
     launchSuffix: "-sh",
+    planCycleKey: "",
     caps: caps({
       ephemeral: true,
       launchableFromRepo: true,
@@ -173,6 +185,7 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     cssClass: "ssm",
     launchHint: "AWS EC2 に SSM ログイン",
     launchSuffix: "",
+    planCycleKey: "",
     // Like shell: a plain login shell with no working/idle model, so its liveness is a
     // fixed 起動中 chip (not 入力待ち) and it raises no answer/question notifications.
     caps: caps({ ephemeral: true, fixedAliveChip: true }),

@@ -293,6 +293,10 @@ func handleGenericMessages(w http.ResponseWriter, r *http.Request, meta sessionM
 	if alive && len(td.pending) > 0 {
 		resp["pendingQuestions"] = td.pending
 	}
+	// Current mode (plan / normal) so the Console shows the plan indicator and toggle.
+	if td.mode != "" {
+		resp["mode"] = td.mode
+	}
 	writeJSON(w, http.StatusOK, resp)
 }
 

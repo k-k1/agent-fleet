@@ -119,7 +119,36 @@ func readOpencodeTranscript(m sessionMeta) (transcriptData, bool) {
 		path:    path,
 		tasks:   opencodeTasks(db, ses),
 		pending: opencodePending(db, ses),
+		mode:    opencodeMode(db, ses),
 	}, true
+}
+
+// opencodeMode reports the session's current agent/mode normalized to "plan" | "normal".
+// opencode's "plan" agent is its plan mode; anything else (build, …) is normal. Read from
+// the newest message's agent field (falling back to mode).
+func opencodeMode(db *sql.DB, ses string) string {
+	var data []byte
+	if db.QueryRow(`SELECT data FROM message WHERE session_id = ? ORDER BY time_created DESC LIMIT 1`, ses).Scan(&data) != nil {
+		return ""
+	}
+	var md struct {
+		Agent string `json:"agent"`
+		Mode  string `json:"mode"`
+	}
+	if json.Unmarshal(data, &md) != nil {
+		return ""
+	}
+	v := md.Agent
+	if v == "" {
+		v = md.Mode
+	}
+	if v == "plan" {
+		return "plan"
+	}
+	if v == "" {
+		return ""
+	}
+	return "normal"
 }
 
 // opencodePending returns the questions of a currently-running `question` tool part in
