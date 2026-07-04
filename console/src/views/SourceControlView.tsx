@@ -34,7 +34,7 @@ export default function SourceControlView({ repo }: { repo?: string; wrap?: bool
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState("");
   const [showBranch, setShowBranch] = useState(false);
-  const [menu, setMenu] = useState<{ sha: string; x: number; y: number } | null>(null); // commit right-click
+  const [menu, setMenu] = useState<{ commit: GraphCommit; x: number; y: number } | null>(null); // commit right-click
   const menuRef = useRef<HTMLUListElement>(null);
   const [nbAt, setNbAt] = useState<string | null>(null); // "new branch from this commit" sha
   const [nbName, setNbName] = useState("");
@@ -117,7 +117,20 @@ export default function SourceControlView({ repo }: { repo?: string; wrap?: bool
     bumpFiles();
   };
 
-  // Checkout a commit (right-click → co). Lands on a detached HEAD at that commit.
+  // Switch to a branch (a commit that has a local branch ref). Lands ON the branch.
+  const switchBranch = async (name: string) => {
+    setMenu(null);
+    const res = await apiJSON(`api/repos/${enc}/checkout`, "POST", { branch: name });
+    if (res && res.error) {
+      toast("ブランチ切替に失敗: " + (res.error.message || res.error));
+      return;
+    }
+    refresh();
+    bumpRepos();
+    bumpFiles();
+  };
+
+  // Detached checkout of a commit that has NO branch (right-click → チェックアウト).
   const checkoutCommit = async (sha: string) => {
     setMenu(null);
     const ok = await askConfirm({
@@ -162,7 +175,7 @@ export default function SourceControlView({ repo }: { repo?: string; wrap?: bool
           <Icon name="cloud-download" /> <span className="lbl">fetch</span>
         </button>
         <button className="ghost scm-act" title="現在のブランチを upstream に fast-forward（pull --ff-only）" onClick={doFF}>
-          <Icon name="arrow-up" /> <span className="lbl">ff</span>
+          <Icon name="arrow-down" /> <span className="lbl">ff</span>
         </button>
         <button className="ghost scm-act" title="更新" onClick={refresh}>
           <Icon name="refresh" /> <span className="lbl">更新</span>
@@ -179,7 +192,7 @@ export default function SourceControlView({ repo }: { repo?: string; wrap?: bool
             current={current}
             selectedSha={selected}
             onSelect={onSelect}
-            onContext={(sha, x, y) => setMenu({ sha, x, y })}
+            onContext={(commit, x, y) => setMenu({ commit, x, y })}
           />
         )}
       </div>
@@ -191,13 +204,25 @@ export default function SourceControlView({ repo }: { repo?: string; wrap?: bool
           role="menu"
           onMouseDown={(e) => e.stopPropagation()}
         >
-          <li onClick={() => { setMenu(null); showCommit(scmRepo || "", menu.sha); }}>
+          <li onClick={() => { const s = menu.commit.sha; setMenu(null); showCommit(scmRepo || "", s); }}>
             <Icon name="git-commit" /> 詳細を表示
           </li>
-          <li onClick={() => checkoutCommit(menu.sha)}>
-            <Icon name="git-branch" /> チェックアウト（co）
-          </li>
-          <li onClick={() => { const s = menu.sha; setMenu(null); setNbName(""); setNbAt(s); }}>
+          {/* A commit with local branch(es) → switch to the branch; otherwise a detached
+              checkout of the commit itself. */}
+          {menu.commit.refs.filter((rf) => rf.type === "head").length > 0 ? (
+            menu.commit.refs
+              .filter((rf) => rf.type === "head")
+              .map((rf) => (
+                <li key={rf.name} onClick={() => switchBranch(rf.name)}>
+                  <Icon name="git-branch" /> ブランチ切替: {rf.name}
+                </li>
+              ))
+          ) : (
+            <li onClick={() => checkoutCommit(menu.commit.sha)}>
+              <Icon name="git-branch" /> チェックアウト（detached HEAD）
+            </li>
+          )}
+          <li onClick={() => { const s = menu.commit.sha; setMenu(null); setNbName(""); setNbAt(s); }}>
             <Icon name="git-branch" /> このコミットから新規ブランチ…
           </li>
         </ul>

@@ -39,7 +39,7 @@ export default function CommitGraph({
   current?: string;
   selectedSha?: string;
   onSelect: (sha: string) => void;
-  onContext?: (sha: string, x: number, y: number) => void;
+  onContext?: (commit: GraphCommit, x: number, y: number) => void;
 }) {
   const rows = useMemo(() => layoutGraph(commits), [commits]);
   const lanes = laneCount(rows);
@@ -74,7 +74,7 @@ function CommitRow({
   current?: string;
   selected: boolean;
   onSelect: (sha: string) => void;
-  onContext?: (sha: string, x: number, y: number) => void;
+  onContext?: (commit: GraphCommit, x: number, y: number) => void;
 }) {
   const { commit, nodeLane, lanesAbove, lanesBelow } = row;
   const laneX = (i: number) => LANE_W / 2 + i * LANE_W;
@@ -115,7 +115,7 @@ function CommitRow({
         onContext
           ? (e) => {
               e.preventDefault();
-              onContext(commit.sha, e.clientX, e.clientY);
+              onContext(commit, e.clientX, e.clientY);
             }
           : undefined
       }
