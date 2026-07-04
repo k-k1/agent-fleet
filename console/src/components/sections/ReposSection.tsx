@@ -177,15 +177,15 @@ export default function ReposSection() {
             running={running}
             active={mode === "scm" && scmRepo === r.name}
             selected={r.name === activeRepo}
-            // One click on the repo: reveal it in the Files tree AND open the
-            // (renewed) Source Control workbench in the main pane. The separate
-            // "変更" chip is gone — the repo row itself is the entry point.
-            // Ctrl/Cmd/middle-click opens Source Control in a freshly split pane.
+            // One click on the repo opens the Source Control workbench in the main
+            // pane (Ctrl/Cmd/middle-click → freshly split pane). Revealing the folder
+            // in the Files tree is a separate, opt-in right-click action (onOpenFolder).
             onOpen={(e) => {
-              revealInFiles("repos/" + r.name);
               if (e && (e.ctrlKey || e.metaKey || e.button === 1)) showSCMSplit(r.name);
               else showSCM(r.name);
             }}
+            // Right-click → フォルダを開く: expand + select the repo in the Files tree.
+            onOpenFolder={() => revealInFiles("repos/" + r.name)}
             // split=true (middle-click) opens the new session in a freshly split
             // pane instead of replacing the active pane's content.
             onLaunch={async (kind: string, split: boolean) => {
@@ -229,11 +229,12 @@ interface RepoRowProps {
   active?: boolean;
   selected?: boolean;
   onOpen: (e?: RMouseEvent) => void;
+  onOpenFolder?: () => void;
   onLaunch: (kind: string, split: boolean) => void;
   onBranchChanged?: () => void;
 }
 
-function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected, onOpen, onLaunch, onBranchChanged }: RepoRowProps) {
+function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected, onOpen, onOpenFolder, onLaunch, onBranchChanged }: RepoRowProps) {
   const [showLaunch, setShowLaunch] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null); // right-click context menu
@@ -278,7 +279,7 @@ function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected,
       <div className="repo-info">
         <button
           className="link grow repo-name"
-          title={running ? "開く（ファイル + ソース管理）: " + r.path + "（Ctrl/中クリックで新ペイン）" : "ワークスペース停止中"}
+          title={running ? "ソース管理を開く: " + r.path + "（Ctrl/中クリックで新ペイン）" : "ワークスペース停止中"}
           disabled={!running}
           onClick={onOpen}
           // Middle-click opens Source Control in a split pane (same as Ctrl+click).
@@ -373,7 +374,14 @@ function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected,
           role="menu"
           onMouseDown={(e) => e.stopPropagation()}
         >
-          <li onClick={() => { setMenu(null); onOpen(); }}>開く（ファイル + ソース管理）</li>
+          <li onClick={() => { setMenu(null); onOpen(); }}>
+            <Icon name="source-control" /> ソース管理を開く
+          </li>
+          {onOpenFolder && (
+            <li onClick={() => { setMenu(null); onOpenFolder(); }}>
+              <Icon name="folder-opened" /> フォルダを開く
+            </li>
+          )}
           <li onClick={() => { setMenu(null); setBranchOpen(true); }}>
             <Icon name="git-branch" /> ブランチ切替 / 新規…
           </li>
