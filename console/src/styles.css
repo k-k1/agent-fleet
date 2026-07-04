@@ -3586,8 +3586,10 @@ button.mt-toolrun-head:hover {
 .scmview > .view-head {
   padding-right: 40px;
 }
-/* Graph-header actions collapse to icon-only on a phone (label folds away). */
-@media (max-width: 760px) {
+/* SCM header actions collapse to icon-only when the PANE is narrow (like the chat
+   head), via the paneview container — so a slim split in a wide window folds too, not
+   just a phone. Titles keep the words reachable as tooltips. */
+@container paneview (max-width: 640px) {
   .scm-act .lbl {
     display: none;
   }
