@@ -168,9 +168,18 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "tmux_failed", string(out))
 		return
 	}
-	markSessionWorking(name)
+	// A slash command (/plan, /model, …) isn't a turn — don't optimistically mark the
+	// session working, or codex sticks on 進行中 (no Stop hook fires to clear it). Real
+	// prompts still mark working so the chip reacts before the agent's own hook.
+	if !slashCmdRe.MatchString(strings.TrimSpace(body.Prompt)) {
+		markSessionWorking(name)
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"sent": name})
 }
+
+// slashCmdRe matches a single-token slash command like "/plan" or "/model foo" (but not a
+// path such as /home/dev/x, which has a second slash).
+var slashCmdRe = regexp.MustCompile(`^/[A-Za-z][\w-]*(\s|$)`)
 
 // inputSubmitDelay is how long to wait between typing a prompt and sending Enter, per
 // kind. codex/opencode need a beat so their input widget doesn't drop the Enter mid-

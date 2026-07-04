@@ -946,10 +946,15 @@ export default function MirrorView({
                   disabled={sending}
                   title="計画モードを切り替え（承認するまで実装しない）"
                   onClick={() => {
+                    const toPlan = mode !== "plan";
                     // Optimistically flip the indicator (codex/opencode don't report the
                     // new mode until a turn runs); the poll reconciles on the next change.
-                    setMode(mode === "plan" ? "normal" : "plan");
-                    sendKeys([agent.planCycleKey]);
+                    setMode(toPlan ? "plan" : "normal");
+                    if (toPlan && agent.planEnterCmd) {
+                      sendPrompt(agent.planEnterCmd); // deterministic enter (claude /plan)
+                    } else {
+                      sendKeys([agent.planCycleKey]); // cycle: codex/opencode toggle, claude exit
+                    }
                   }}
                 >
                   <Icon name="debug-pause" /> 計画モード{mode === "plan" ? " ON" : ""}
