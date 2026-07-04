@@ -39,13 +39,18 @@ export default function LayoutMap() {
             const ord = ordOf.get(p.id) ?? 0;
             const s: Session | null = p.kind === "terminal" && p.session ? byName.get(p.session) ?? null : null;
             const st = s ? stateInfo(s) : null;
+            // A terminal pane with no session attached is an empty slot — label it
+            // "empty" (not "terminal"), since nothing is running there yet.
+            const empty = p.kind === "terminal" && !p.session;
             const kindTxt = s
               ? shortKind
                 ? kindShort(s.kind)
                 : kindLabel(s.kind)
-              : shortKind
-                ? KIND_ABBR[p.kind] || "–"
-                : KIND_JA[p.kind] || p.kind;
+              : empty
+                ? "empty"
+                : shortKind
+                  ? KIND_ABBR[p.kind] || "–"
+                  : KIND_JA[p.kind] || p.kind;
             // Ordinal keeps the ordinal color (cross-refs the pane corner + Sessions
             // badge); the kind abbrev is tinted by kind so "what agent" reads too.
             const kindCls = s ? " kc-" + kindClass(s.kind) : "";
