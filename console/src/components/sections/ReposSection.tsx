@@ -406,7 +406,7 @@ function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected,
           </li>
           {onFF && (
             <li onClick={() => { setMenu(null); onFF(); }}>
-              <Icon name="arrow-down" /> fast-forward（ff）
+              <Icon name="arrow-down" /> Fast-Forward
             </li>
           )}
           <li className="ctx-sep" role="separator" />
