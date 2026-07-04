@@ -114,6 +114,35 @@ func TestOpencodeReadSession(t *testing.T) {
 	}
 }
 
+func TestOpencodeQuestions(t *testing.T) {
+	db := newOpencodeTestDB(t)
+	ses := "ses_q"
+	// A message with a completed question (shown as an answered block) and a running one
+	// (surfaced as the pending question).
+	insMsg(t, db, "mq", ses, 1000, `{"role":"assistant","modelID":"m"}`)
+	insPart(t, db, "pqa", "mq", ses, 1, `{"type":"tool","tool":"question","state":{"status":"completed","input":{"questions":[{"header":"H","question":"pick?","options":[{"label":"A"},{"label":"B"}]}]},"output":"User has answered your questions: \"pick?\"=\"B\". You may continue."}}`)
+	insPart(t, db, "pqb", "mq", ses, 2, `{"type":"tool","tool":"question","state":{"status":"running","input":{"questions":[{"header":"H2","question":"next?","options":[{"label":"X"},{"label":"Y"}]}]}}}`)
+
+	turns := opencodeReadSession(db, ses)
+	if len(turns) != 1 {
+		t.Fatalf("want 1 turn, got %d", len(turns))
+	}
+	// Only the completed question renders as a part (the running one is pending, skipped).
+	if len(turns[0].Parts) != 1 || turns[0].Parts[0].Kind != "question" {
+		t.Fatalf("parts = %+v, want a single answered question part", turns[0].Parts)
+	}
+	q := turns[0].Parts[0]
+	if len(q.Questions) != 1 || q.Questions[0].Question != "pick?" || q.Answer != "B" {
+		t.Fatalf("question part = %+v, want pick?/answer B", q)
+	}
+
+	// opencodePending returns the running question.
+	pending := opencodePending(db, ses)
+	if len(pending) != 1 || pending[0].Question != "next?" || len(pending[0].Options) != 2 {
+		t.Fatalf("pending = %+v, want the running 'next?' question", pending)
+	}
+}
+
 func TestOpencodeTasks(t *testing.T) {
 	db := newOpencodeTestDB(t)
 	ses := "ses_t"

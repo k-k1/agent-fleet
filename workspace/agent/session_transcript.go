@@ -287,6 +287,12 @@ func handleGenericMessages(w http.ResponseWriter, r *http.Request, meta sessionM
 	if len(td.tasks) > 0 {
 		resp["tasks"] = td.tasks
 	}
+	// A currently-awaiting agent question (codex request_user_input / opencode question
+	// tool), surfaced interactively like claude's AskUserQuestion — only while the session
+	// is live (a stopped session can't be answered).
+	if alive && len(td.pending) > 0 {
+		resp["pendingQuestions"] = td.pending
+	}
 	writeJSON(w, http.StatusOK, resp)
 }
 

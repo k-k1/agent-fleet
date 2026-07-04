@@ -135,8 +135,25 @@ terminalState はサーバが claude にしか送らないので自然に非表�
 **codex の reasoning/function_call/update_plan は運用データがトリビアルなセッションのみで実在せず、仕様ベース実装＋
 合成テストで担保**。実 codex コーディングセッションでの目視は後続。Go 41 tests/vet、Console tsc 通過。
 
-## 22.9 残り / 既知の限界
+## 22.9 エージェント発の質問インライン（承認は bypass）
 
-- **codex 実データ検証**: reasoning/function_call 出力/update_plan は実 codex セッションで未目視（22.8）。
-- **後続**: 質問/許可インライン（opencode `permission` 表・codex request_user_input）、codex apply_patch の差分パース、
-  opencode コスト($)表示、codex レート制限、opencode の SQLite スキーマのバージョン揺れ監視（modernc/sqlite・ro・WAL）。
+**承認ダイアログは対応せず bypass に統一**（3エージェントとも既定 bypass: claude `--dangerously-skip-permissions`・codex
+`--dangerously-bypass-…`・opencode `--auto`）。per-user コンテナ自体が境界ゆえ、1操作ごとの承認は摩擦のみで実益薄。
+
+一方 **bypass では消えない「エージェント発の質問」**（権限でなく明示的にユーザーへ問う操作）を claude と揃えてインライン化:
+- **opencode**: `question` ツール（**claude AskUserQuestion と同一スキーマ**: questions[]/options[]、status=running/
+  completed、completed 時 output に回答）。completed→回答済み QuestionBlock、running→pending として surface。
+- **codex**: `request_user_input`（call_id で回答紐付け・未回答を pending。未回答分はトランスクリプトから除外し二重表示回避）。
+
+transcriptData に `pending []chatQuestion` を追加し `handleGenericMessages` が alive 時に `pendingQuestions` として返す。
+Console の `PendingQuestions` に `answerMode` を追加: claude=従来（タブ modal）、**menu**（codex/opencode）=単一選択を
+`Down×index + Enter` で駆動（複数選択/複数問はターミナル誘導）。
+
+検証: opencode は実 WAL DB の question ツール（running/completed）で確認、codex は合成テスト（実データなし）。
+Go 44 tests/vet、Console tsc 通過。**codex request_user_input と menu 応答の実 TUI 駆動は実セッションで要目視**。
+
+## 22.10 残り / 既知の限界
+
+- **codex 実データ検証**: reasoning/function_call 出力/update_plan/request_user_input・menu 応答は実 codex セッションで未目視。
+- **後続**: codex apply_patch の差分パース、opencode コスト($)表示、codex レート制限、複数選択/複数問メニューの駆動、
+  opencode の SQLite スキーマのバージョン揺れ監視（modernc/sqlite・ro・WAL）。
