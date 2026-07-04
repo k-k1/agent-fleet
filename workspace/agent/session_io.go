@@ -86,16 +86,18 @@ func paneMode(kind, tn string) string {
 			return titleFirst(m[1]) // "Plan" / "Build" / …
 		}
 	case kindCodex:
-		// codex's composer footer shows "Plan mode (shift+tab to cycle)" ONLY while in plan
-		// mode; Default mode shows just "<model> <effort> · <cwd>" (no mode label).
-		t := paneTail(s, 3)
-		if strings.Contains(t, "Plan mode (") {
-			return "Plan"
-		}
-		// Composer footer present (model · cwd) and no plan label → Default mode; else the
-		// composer isn't visible yet (startup) → unknown, fall back to the transcript mode.
-		if codexFooterEffortRe.MatchString(t) {
-			return "Default"
+		// codex's composer footer is "<model> <effort> · <cwd>  Plan mode [(shift+tab to
+		// cycle)]" — "Plan mode" appears ONLY in plan mode (Default shows no label). The
+		// "(shift+tab to cycle)" suffix is truncated on a narrow pane, so DON'T require it.
+		// Check the FOOTER line itself (identified by the effort regex) so the history line
+		// "… for Plan mode." can't spoof the detection. No footer line → composer not drawn.
+		for _, line := range strings.Split(paneTail(s, 3), "\n") {
+			if codexFooterEffortRe.MatchString(line) {
+				if strings.Contains(line, "Plan mode") {
+					return "Plan"
+				}
+				return "Default"
+			}
 		}
 	}
 	return ""
