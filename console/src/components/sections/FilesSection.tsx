@@ -3,6 +3,7 @@ import type { MouseEvent as RMouseEvent, DragEvent as RDragEvent, KeyboardEvent 
 import { useApp } from "../../state.jsx";
 import { api, uploadFiles, downloadURL, fsMkdir, fsNewFile, fsRename, fsDelete } from "../../api.js";
 import { dirName } from "../../lib/filemeta.js";
+import { placeFixed } from "../../lib/placeFixed.js";
 import Section from "../Section.jsx";
 import Icon from "../Icon.jsx";
 import FileIcon, { DirIcon } from "../FileIcon.jsx";
@@ -61,20 +62,6 @@ const soleChildDir = (entries: Entry[] | undefined): Entry | null =>
 
 const fsList = (path: string) =>
   api(`api/fs/tree?path=${encodeURIComponent(path)}`).catch(() => ({ entries: [] }));
-
-// placeFixed positions a position:fixed popover at the desired (left, top) but keeps
-// it fully on-screen: it slides the menu left/up when it would run past the right/
-// bottom edge, and never lets it go past the left/top edge. Used for both the ＋
-// dropdown and the right-click context menu so neither spills off a phone screen.
-function placeFixed(el: HTMLElement, left: number, top: number) {
-  const pad = 8;
-  const w = el.offsetWidth;
-  const h = el.offsetHeight;
-  const l = Math.max(pad, Math.min(left, window.innerWidth - w - pad));
-  const t = Math.max(pad, Math.min(top, window.innerHeight - h - pad));
-  el.style.left = l + "px";
-  el.style.top = t + "px";
-}
 
 // Files: a lazily-expanded, read-only tree of the workspace home (denylist applied
 // on the Agent). The tree is centrally managed (flattened visible rows + an open
