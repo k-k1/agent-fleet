@@ -3576,12 +3576,21 @@ button.mt-toolrun-head:hover {
 .mirrorview .view-head {
   padding-right: 40px;
 }
-/* file / scm / diff panes add a wrap toggle to the control cluster, so their headers
-   need extra right room or the cluster overlaps the header's own right-edge buttons
-   (e.g. the SCM "削除" trash button). */
-.fileview > .view-head,
-.scmview > .view-head {
+/* file panes add a wrap toggle to the control cluster, so their header needs extra
+   right room or the cluster overlaps the header's own right-edge buttons. */
+.fileview > .view-head {
   padding-right: 112px;
+}
+/* scm / changes / commit panes have no wrap toggle now (the cluster is just ×), so
+   their header only needs to clear the close button — right-align the actions there. */
+.scmview > .view-head {
+  padding-right: 40px;
+}
+/* Graph-header actions collapse to icon-only on a phone (label folds away). */
+@media (max-width: 760px) {
+  .scm-act .lbl {
+    display: none;
+  }
 }
 /* Non-terminal pane headers lead with an accent icon + a foreground name, so a
    Source Control / File / Doc / Diff pane all read the same way (the terminal keeps
