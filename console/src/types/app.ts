@@ -85,6 +85,7 @@ export interface AppState {
   showChanges: (repo: string) => void;
   showChangesSplit: (repo: string) => void;
   showCommit: (repo: string, sha: string) => void;
+  showCommitSplit: (repo: string, sha: string) => void;
   showFile: (path: string) => void;
   showFileSplit: (path: string) => void;
   showDoc: (title: string, content: string) => void;

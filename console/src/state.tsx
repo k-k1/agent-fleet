@@ -672,6 +672,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
     },
     [commit, openInNewPane],
   );
+  // showCommitSplit always opens the commit's detail in a fresh pane (Ctrl/middle-click
+  // a commit in the graph), instead of reusing the existing commit pane.
+  const showCommitSplit = useCallback(
+    (repo: string, sha: string) => {
+      openInNewPane({ kind: "commit", scmRepo: repo, commitSha: sha });
+    },
+    [openInNewPane],
+  );
   const showFile = useCallback(
     (path: string) => {
       if (navOpenRef.current) pushDrawerEntry();
@@ -986,6 +994,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     showChanges,
     showChangesSplit,
     showCommit,
+    showCommitSplit,
     showFile,
     showFileSplit,
     showDoc,
