@@ -2847,6 +2847,18 @@ body.row-resizing {
   border-color: transparent;
   color: #fff;
 }
+/* Keep the chip legible on hover: the global button:hover swaps in a light --btn-h,
+   which would leave white .on text unreadable. Pin an accent-tinted hover for each state. */
+.mirror-mode:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent, #6a7fdb) 14%, var(--btn, var(--bg)));
+  border-color: var(--accent, #6a7fdb);
+  color: var(--fg);
+}
+.mirror-mode.on:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent, #6a7fdb) 82%, #000);
+  border-color: transparent;
+  color: #fff;
+}
 /* Stop lives in the typing-indicator row now (only while working) — push it to the far
    right of that row. */
 .mirror-stop {
