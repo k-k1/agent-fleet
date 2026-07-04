@@ -125,7 +125,7 @@ CP `mcp.go`（外部/PAT/admin・別モジュール）と Agent `mcp_stdio.go`�
 「name/description/schema→REST パス対応表」を共有パッケージ/JSON カタログに1本化して両面が読む形へ。
 当面は意図的に別スコープ（read-only vs admin）として二重管理を許容。
 
-### Q2 → 「アシスタント・テンプレート」機能（常設 AF + ユーザー定義、方針決定・未実装）
+### Q2 → 「アシスタント・テンプレート」機能（常設 AF + ユーザー定義、**実装済**）
 単一ペルソナでなく、**アシスタントを設定可能なエンティティ**にする（カスタム GPT 的）:
 - **Assistant** = {id, name, icon?, builtin, agent(claude/codex), model?, persona(system prompt),
   tools(af_read / af_write / none), knowledge?(USAGE 等 doc を --add-dir で読ませる)}。
@@ -141,8 +141,26 @@ CP `mcp.go`（外部/PAT/admin・別モジュール）と Agent `mcp_stdio.go`�
   「＋新規チャット（アシスタント選択）」、アシスタントの作成/編集 UI（名前/persona/model/ツール許可）。
 - 利用者向け USAGE/FAQ は別途用意（内部 docs/ は出さない）。
 
+**実装メモ（確定事項）**:
+- **継承＝作成時スナップショット**（ユーザー確定）: 会話は作成時にアシスタントの
+  agent/model/persona/tools/knowledge を自レコードへコピー。以後アシスタントを編集しても
+  既存会話は不変（新規会話のみ反映）＝アシスタント削除で会話が孤立しない。
+- **tools は当面 none / af_read の2値**（ユーザー確定）: af_write（send_to_session 等）は
+  次ステップ（mcp_stdio へ書き込みツール追加＋`--allowedTools` ゲート）で解禁。UI に非機能トグルを出さない。
+- backend `workspace/agent/assistants.go`: `assistant` 型＋ビルトイン3種（コード注入）＝
+  ①Agent Fleet アシスタント(削除/編集不可・af_read・USAGE知識を `//go:embed` → `~/.config/agent-fleet/knowledge/af` に materialize＝冪等/再作成自己修復・`--add-dir`)②汎用③翻訳。
+  ユーザー定義は `~/.config/agent-fleet/assistants/<id>.json`（full CRUD、builtin id は shadow 不可）。
+  `/assistants` 5ハンドラ（builtin は編集/削除 403）。CP は `/api/assistants*` を verbatim プロキシ。
+- `chat.go`: `chatConversation` に `assistant_id/persona/tools/knowledge` スナップショット。
+  provider は `personaOf()`→`--append-system-prompt`、`knowledgeArgs()`→`--add-dir`、
+  `afToolsEnabled()`→MCP。旧 `af_tools` は `afToolsEnabled` で後方互換。`chatMeta` に `assistant_id`。
+- Console: `AssistantSection` を「アシスタント（常設＋ユーザー定義）＋会話」に再構成、
+  `AssistantModal`（作成/編集）、`chatCreate(assistant_id)`。エージェント選択は `headlessChat` cap 駆動。
+- **未実施**: 実機（ブラウザ）目視＝アシスタント作成/選択→新規チャット→ persona/knowledge/tools が
+  効くか、ビルトイン AF が USAGE 知識で使い方に答えるか、read-only ツールが実 Agent 越しに動くか。
+
 ### 実装順
-Q3（済）→ Q1（mcp-stdio, read-only, 済）→ **Q2=アシスタント・テンプレート**（データモデル拡張 + Console UI）
+Q3（済）→ Q1（mcp-stdio, read-only, 済）→ **Q2＝アシスタント・テンプレート（済）**
 → 書き込みツール opt-in → Phase C（Files/DocView から翻訳）。
 
 ## 制約（Console 側、docs/18 と同じ）
