@@ -81,12 +81,35 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "tmux_failed", string(out))
 		return
 	}
+	// Pause before Enter so the TUI finishes ingesting the pasted text first. codex's
+	// (and opencode's) input widget can drop an Enter that arrives while it's still
+	// consuming the paste — the symptom being a prompt that sits in the composer until
+	// the user presses Enter again in the terminal. claude tolerates back-to-back, but a
+	// short beat is harmless there too.
+	time.Sleep(inputSubmitDelay(name))
 	if out, err := exec.Command("tmux", "send-keys", "-t", pane, "Enter").CombinedOutput(); err != nil {
 		writeErr(w, http.StatusInternalServerError, "tmux_failed", string(out))
 		return
 	}
 	markSessionWorking(name)
 	writeJSON(w, http.StatusOK, map[string]any{"sent": name})
+}
+
+// inputSubmitDelay is how long to wait between typing a prompt and sending Enter, per
+// kind. codex/opencode need a beat so their input widget doesn't drop the Enter mid-
+// paste (a prompt left un-submitted in the composer); claude submits reliably back-to-
+// back so it gets a token pause. Tunable via AGENT_INPUT_SUBMIT_DELAY_MS.
+func inputSubmitDelay(name string) time.Duration {
+	ms := 200
+	if meta, ok := readSessionMeta(name); ok && meta.Kind == kindClaude {
+		ms = 20
+	}
+	if v := os.Getenv("AGENT_INPUT_SUBMIT_DELAY_MS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 && n <= 5000 {
+			ms = n
+		}
+	}
+	return time.Duration(ms) * time.Millisecond
 }
 
 // markSessionWorking optimistically marks the session working so a poll immediately
