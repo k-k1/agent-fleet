@@ -16,6 +16,10 @@ import (
 // ("Plan auto · <model> …" / "Build auto · …"), the ground-truth mode the TUI shows.
 var opencodeStatusAgentRe = regexp.MustCompile(`([A-Za-z][\w-]*) +auto +·`)
 
+// codexFooterEffortRe pulls the reasoning effort from codex's composer footer
+// "<model> <effort> · <cwd>" (the word right before " · " then the cwd path).
+var codexFooterEffortRe = regexp.MustCompile(`([a-z]+) +· +[~/]`)
+
 // paneMode reads the session's CURRENT permission/collaboration mode straight from the
 // terminal (what the TUI displays), so it reflects toggles made in the terminal too —
 // not just via the chat. Returns "plan" | "normal" | "" (unknown → caller falls back to
@@ -51,17 +55,27 @@ func paneMode(kind, tn string) string {
 		}
 		return "normal"
 	case kindCodex:
-		// codex logs "Model changed to … for Plan mode." / "… for Default mode." on each
-		// toggle; the latest visible one is the current mode. Scan recent scrollback.
 		out, err := exec.Command("tmux", "capture-pane", "-p", "-S", "-200", "-t", exactT(tn)).Output()
 		if err != nil {
 			return ""
 		}
 		s := string(out)
+		// Primary signal: the always-visible composer footer "<model> <effort> · <cwd>".
+		// Default mode uses the "default" effort; Plan mode switches to a non-default one
+		// (e.g. medium). A "default" effort footer is therefore definitively Default mode —
+		// this is what the stale scrollback line could get wrong. Take the LAST match (the
+		// footer is at the bottom) so conversation text can't spoof it.
+		if ms := codexFooterEffortRe.FindAllStringSubmatch(s, -1); len(ms) > 0 {
+			if ms[len(ms)-1][1] == "default" {
+				return "normal"
+			}
+		}
+		// Non-default effort (or no footer match): confirm with the latest mode-change line
+		// codex logs ("Model changed to … for Plan mode." / "… for Default mode.").
 		pi := strings.LastIndex(s, "for Plan mode")
 		di := strings.LastIndex(s, "for Default mode")
 		if pi < 0 && di < 0 {
-			return ""
+			return "" // unknown — caller falls back to the transcript's per-turn mode
 		}
 		if pi > di {
 			return "plan"
