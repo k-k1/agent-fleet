@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -161,6 +162,54 @@ func TestOpencodeTasks(t *testing.T) {
 	if len(tasks) != 2 || tasks[0].Subject != "first" || tasks[0].Status != "completed" ||
 		tasks[1].Subject != "second" || tasks[1].Status != "pending" {
 		t.Fatalf("tasks = %+v, want [first/completed, second/pending] in position order", tasks)
+	}
+}
+
+func TestOpencodeSessionResumable(t *testing.T) {
+	// opencodeSessionResumable opens the db at $HOME/.local/share/opencode/opencode.db;
+	// build one there so the real path resolves.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dbDir := filepath.Join(home, ".local", "share", "opencode")
+	if err := os.MkdirAll(dbDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(dbDir, "opencode.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT)`); err != nil {
+		t.Fatal(err)
+	}
+	ins := func(id, ses string, tc int, data string) {
+		if _, err := db.Exec(`INSERT INTO message(id,session_id,time_created,time_updated,data) VALUES(?,?,?,?,?)`, id, ses, tc, tc, data); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// done: last turn is a completed assistant message.
+	ins("d1", "ses_done", 1, `{"role":"user"}`)
+	ins("d2", "ses_done", 2, `{"role":"assistant","time":{"completed":123}}`)
+	// interrupted: last assistant message has no completed time.
+	ins("i1", "ses_int", 1, `{"role":"user"}`)
+	ins("i2", "ses_int", 2, `{"role":"assistant","time":{}}`)
+	// pending: last row is a user message (assistant never replied).
+	ins("p1", "ses_pend", 1, `{"role":"user"}`)
+	db.Close()
+
+	cases := []struct {
+		ses  string
+		want bool
+	}{
+		{"", true},           // no captured session
+		{"ses_none", true},   // unknown session — nothing to re-run
+		{"ses_done", true},   // completed last turn — safe to resume
+		{"ses_int", false},   // interrupted mid-turn — would re-run
+		{"ses_pend", false},  // user message unanswered — would generate
+	}
+	for _, c := range cases {
+		if got := opencodeSessionResumable(c.ses); got != c.want {
+			t.Errorf("opencodeSessionResumable(%q) = %v, want %v", c.ses, got, c.want)
+		}
 	}
 }
 

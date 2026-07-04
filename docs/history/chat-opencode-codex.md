@@ -159,7 +159,20 @@ bypass（claude/codex/opencode とも全自動）だと、opencode が権限プ�
 追加し、押下で `Escape`（全エージェントの TUI 共通の中断キー）を send-keys → 現在の生成を止めてコンポーザに復帰できる。
 Console のみ（`MirrorView` typing 行＋`.mirror-stop`）。
 
-## 22.11 残り / 既知の限界
+## 22.11 opencode 無人化・resume・停止の実機修正
+
+実機検証で判明した opencode 固有の詰まりを修正:
+- **external_directory 停止**: `--auto` は read/glob 等を自動承認するが external_directory（プロジェクト外 ~/repos
+  アクセス）は "ask" のまま止まる。entrypoint が `opencode.jsonc` の `permission` を全 allow に seed（既存キー保持）。
+- **アクティブセッション追従**: opencode が実行中に別セッションを作ると、プラグインが session.created 時しか sid を
+  記録せずチャットが古いセッションを読む。プラグインを session.idle / message.* の sessionID で毎回更新に。
+- **中断ターンの再実行防止**: opencode は last turn が未完了（interrupted）のセッションを `--session` で resume すると
+  その作業を再開する。`opencodeSessionResumable`（last message の time.completed を確認）で未完了なら resume せず
+  新規起動（`buildLaunch` が resume id を破棄）。中断＝放棄意図ゆえ妥当。
+- **停止ボタン**: opencode のサブエージェント詳細ビューでは Escape が中断でなくナビになる。Agent が pane を capture し
+  そのビュー（"Parent"/"Next" フッタ）を検出したら Escape の前に Up を送る（`opencodeInSubagentView`）。
+
+## 22.12 残り / 既知の限界
 
 - **codex 実データ検証**: reasoning/function_call 出力/update_plan/request_user_input・menu 応答は実 codex セッションで未目視。
 - **後続**: codex apply_patch の差分パース、opencode コスト($)表示、codex レート制限、複数選択/複数問メニューの駆動、
