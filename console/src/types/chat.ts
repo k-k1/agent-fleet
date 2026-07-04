@@ -14,6 +14,7 @@ export interface ChatMessage {
 export interface ConversationMeta {
   id: string;
   agent: SessionKind;
+  assistant_id?: string; // which assistant backs this thread (Q2)
   title: string;
   model?: string;
   created_at: number;

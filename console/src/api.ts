@@ -182,12 +182,14 @@ export const fsDelete = (path: string) => fsWrite(`api/fs/delete?path=${q(path)}
 // Headless-CLI LLM chat/translation. Thin wrappers over the /api/chat/* endpoints;
 // callers own the response shape (Conversation / ConversationMeta in types/chat).
 import type { Conversation, ConversationMeta } from "./types/chat.ts";
-import type { SessionKind } from "./types/session.ts";
+import type { Assistant, AssistantInput } from "./types/assistant.ts";
 
 export const chatList = (): Promise<{ conversations: ConversationMeta[] }> =>
   api("api/chat/conversations");
-export const chatCreate = (agent: SessionKind, title?: string, model?: string): Promise<Conversation> =>
-  apiJSON("api/chat/conversations", "POST", { agent, title, model });
+// Create a conversation from an assistant template (docs/19 Q2): the Agent snapshots
+// the assistant's agent/model/persona/tools/knowledge onto the new thread.
+export const chatCreate = (assistantId: string, title?: string): Promise<Conversation> =>
+  apiJSON("api/chat/conversations", "POST", { assistant_id: assistantId, title });
 export const chatGet = (id: string): Promise<Conversation> =>
   api(`api/chat/conversations/${encodeURIComponent(id)}`);
 export const chatDelete = (id: string): Promise<Response> =>
@@ -267,6 +269,18 @@ export async function chatStream(
   buf += dec.decode();
   drain();
 }
+
+// --- assistant templates (docs/19 Q2) ---
+// Configurable chat personas. Builtins are code-injected on the Agent (not editable);
+// user-defined ones support create/update/delete.
+export const assistantList = (): Promise<{ assistants: Assistant[] }> =>
+  api("api/assistants");
+export const assistantCreate = (input: AssistantInput): Promise<Assistant> =>
+  apiJSON("api/assistants", "POST", input);
+export const assistantUpdate = (id: string, input: AssistantInput): Promise<Assistant> =>
+  apiJSON(`api/assistants/${encodeURIComponent(id)}`, "PUT", input);
+export const assistantDelete = (id: string): Promise<Response> =>
+  raw(`api/assistants/${encodeURIComponent(id)}`, { method: "DELETE" });
 
 // Build the terminal WebSocket URL for a session under the current mount, with
 // the tenant carried as a query param (headers aren't available on WS).

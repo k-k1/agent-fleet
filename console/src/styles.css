@@ -7449,6 +7449,45 @@ button.primary:hover:not(:disabled) {
   opacity: 1;
 }
 
+/* Assistant templates (Q2): group labels + rows in the left rail. */
+.assistant-group-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 6px 6px 2px;
+}
+.assistant-group-label:not(:first-child) {
+  margin-top: 6px;
+  border-top: 1px solid var(--border);
+}
+.assistant-ic {
+  flex: 0 0 auto;
+  opacity: 0.85;
+}
+.assistant-badge {
+  flex: 0 0 auto;
+  font-size: 10px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0 4px;
+}
+/* Icon picker in the assistant create/edit modal. */
+.assistant-icon-pick {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.assistant-icon-opt.active {
+  background: var(--accent-soft, var(--hover-bg));
+  outline: 1px solid var(--accent, var(--border));
+}
+.assistant-persona,
+.assistant-knowledge {
+  width: 100%;
+  resize: vertical;
+  font: inherit;
+}
+
 /* Streaming assistant reply: a soft blinking caret while tokens arrive (Phase B). */
 .chat-streaming::after {
   content: "▍";
