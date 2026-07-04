@@ -594,18 +594,20 @@ export default function WsBar() {
       >
         {wsLabel(wsState)}
       </span>
-      {/* One toggle instead of separate Start/Stop: label + action follow the state.
+      {/* Power toggle: a single icon-only ⏻ glued to the state chip — the chip says
+          稼働中/停止, this starts or stops accordingly (no separate labeled button).
           The bar auto-syncs wsState from the 4s stats poll (state.jsx), so an
           externally-changed workspace (admin stop / OOM) reflects without a manual
-          refresh. Disabled mid-transition (starting…/stopping…). */}
+          refresh. Disabled mid-transition (starting…/stopping…), where it shows a
+          spinner instead of the glyph. */}
       <button
-        className={"ws-toggle " + (running ? "stop" : "start")}
+        className={"ws-power " + (running ? "on" : "off")}
         onClick={onToggle}
         disabled={busy}
         title={running ? "ワークスペースを停止" : "ワークスペースを起動"}
+        aria-label={running ? "ワークスペースを停止" : "ワークスペースを起動"}
       >
-        <Icon name={running ? "primitive-square" : "play"} />
-        <span>{running ? "停止" : "起動"}</span>
+        {busy ? <Icon name="loading" spin /> : <span className="ws-power-glyph" aria-hidden="true">⏻</span>}
       </button>
       {/* Second entry point to the New Session dialog (the Sessions-list ＋新規 stays as
           is): handy when the left pane is scrolled / collapsed. Opens the same global

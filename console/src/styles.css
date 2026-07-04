@@ -361,24 +361,39 @@ textarea:focus {
 .wsbar button {
   padding: 3px 12px;
 }
-/* Single Start/Stop toggle: fixed width so it doesn't shift the bar as the label
-   flips, color-coded by which action it offers (green = Start, amber = Stop). */
-.ws-toggle {
+/* Power toggle glued to the state chip: an icon-only ⏻ that starts/stops the
+   workspace (no label — the adjacent 稼働中/停止 chip states which it is). Tinted by
+   state (green = powered on / running, muted = off), and on hover flips to the
+   intent color of the action it will perform (amber = will stop, green = will
+   start). */
+.ws-power {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  font-variant-numeric: tabular-nums;
+  justify-content: center;
+  padding: 3px 9px;
+  line-height: 1;
 }
-.ws-toggle .codicon {
-  font-size: 12px;
+.ws-power-glyph {
+  font-size: 15px;
+  line-height: 1;
 }
-.ws-toggle.start:not(:disabled) {
+.ws-power .codicon {
+  font-size: 13px;
+}
+.ws-power.on:not(:disabled) {
   color: var(--ok);
   border-color: var(--ok);
 }
-.ws-toggle.stop:not(:disabled) {
+.ws-power.off:not(:disabled) {
+  color: var(--muted2);
+}
+.ws-power.on:not(:disabled):hover {
   color: var(--warn);
   border-color: var(--warn);
+}
+.ws-power.off:not(:disabled):hover {
+  color: var(--ok);
+  border-color: var(--ok);
 }
 .ws-spacer {
   flex: 1;
@@ -3816,6 +3831,10 @@ button.mt-toolrun-head:hover {
   gap: 5px;
   padding: 6px 12px;
   min-height: 34px;
+}
+.onboard-cta-glyph {
+  font-size: 15px;
+  line-height: 1;
 }
 .onboard-cta.primary {
   background: var(--accent);

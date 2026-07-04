@@ -60,7 +60,8 @@ export default function OnboardingCard() {
       done: running,
       label: "ワークスペースを起動",
       hint: "コンテナを起動して作業を開始します",
-      cta: running ? null : { text: "起動", icon: "play", on: startWs },
+      // Power glyph (⏻) to match the WS バー's start/stop toggle — same metaphor.
+      cta: running ? null : { text: "起動", glyph: "⏻", on: startWs },
     },
     {
       done: gitOk,
@@ -98,11 +99,22 @@ export default function OnboardingCard() {
                 <span className="onboard-label">{s.label}</span>
                 <span className="onboard-hint">{s.hint}</span>
               </span>
-              {s.cta && (
-                <button className={"onboard-cta" + (i === nextIdx ? " primary" : "")} onClick={s.cta.on}>
-                  <Icon name={s.cta.icon} /> {s.cta.text}
-                </button>
-              )}
+              {s.cta &&
+                (() => {
+                  const cta = s.cta as { text: string; on: () => void; icon?: string; glyph?: string };
+                  return (
+                    <button className={"onboard-cta" + (i === nextIdx ? " primary" : "")} onClick={cta.on}>
+                      {cta.glyph ? (
+                        <span className="onboard-cta-glyph" aria-hidden="true">
+                          {cta.glyph}
+                        </span>
+                      ) : (
+                        <Icon name={cta.icon!} />
+                      )}{" "}
+                      {cta.text}
+                    </button>
+                  );
+                })()}
             </li>
           ))}
         </ol>
