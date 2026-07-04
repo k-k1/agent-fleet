@@ -39,11 +39,15 @@ func handlePTY(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "invalid session name", http.StatusBadRequest)
 			return
 		}
-		// If the session exited (e.g. the user quit claude), recreate it from its
-		// recorded meta first so claude --resume relaunches in the same session id —
-		// otherwise the bare new-session -A below would spawn a default shell.
-		ensureSessionTmux(session, false)
-		// new-session -A: attach if exists, else create — robust against races.
+		// Connect-only: attach to a RUNNING session, never start a stopped one. Merely
+		// opening a session's chat/terminal (or a stale "alive" right after a Workspace
+		// Start) used to auto-relaunch it via ensureSessionTmux; resuming is now explicit
+		// (POST /sessions/{name}/start, driven by 再開して続ける / the ターミナル toggle).
+		if !tmuxHasSession(tmuxName(session)) {
+			http.Error(w, "session not running", http.StatusConflict)
+			return
+		}
+		// new-session -A attaches (the session exists per the check above).
 		cmd = exec.Command("tmux", "new-session", "-A", "-s", tmuxName(session))
 	} else {
 		cmd = exec.Command(envOr("AGENT_SHELL", "bash"), "-l")

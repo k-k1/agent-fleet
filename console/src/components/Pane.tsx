@@ -7,6 +7,7 @@ import DocView from "../views/DocView.jsx";
 import DiffView from "../views/DiffView.jsx";
 import Icon from "./Icon.jsx";
 import { useApp } from "../state.jsx";
+import { api } from "../api.js";
 import { useSettings } from "../lib/settings.js";
 import { ordClass } from "../lib/panebadge.js";
 import { usePaneHover, hoverMatches } from "../lib/panehover.jsx";
@@ -109,18 +110,31 @@ export default function Pane({
   // loaded sessionMeta so an unknown kind doesn't default-open the mirror.
   const canMirror = isTerm && !!pane.session && !!sessionMeta && agentOf(sessionMeta.kind).caps.chat;
   const showMirror = canMirror && mirror;
-  // ターミナル toggle shows the terminal AND ensures the session is attached (resuming a
-  // stopped one). チャット toggle just shows the chat overlay.
+  // Resume a stopped session EXPLICITLY: the terminal WS is now connect-only (it no
+  // longer auto-starts a session on attach), so a stopped session must be relaunched via
+  // POST /start before attaching. An already-alive session just attaches (no start).
+  const resumeIfStopped = async () => {
+    if (sessionMeta?.alive !== true && pane.session) {
+      try {
+        await api(`api/sessions/${encodeURIComponent(pane.session)}/start`, { method: "POST" });
+      } catch {
+        /* attach still tries; a failure surfaces as [disconnected] */
+      }
+    }
+    setAttached(true);
+  };
+  // ターミナル toggle shows the terminal AND resumes a stopped session. チャット toggle
+  // just shows the chat overlay (read-only for a stopped session).
   const onToggleMirror = (toChat: boolean) => {
     if (toChat) setMirror(true);
     else {
       setMirror(false);
-      setAttached(true);
+      void resumeIfStopped();
     }
   };
-  // 再開して続ける: attach in the background (resume) while keeping the chat open; the
-  // composer enables once the session is live (MirrorView watches its alive status).
-  const onResume = () => setAttached(true);
+  // 再開して続ける: resume (start if needed) in the background while keeping the chat
+  // open; the composer enables once the session is live (MirrorView watches alive).
+  const onResume = () => void resumeIfStopped();
 
   // Per-pane line-wrap: a file pane can toggle wrapping independently of the global
   // setting (null = inherit the setting). The toggle sits in the pane-control cluster.
