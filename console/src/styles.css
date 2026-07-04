@@ -1290,6 +1290,52 @@ button.wu-reload {
   gap: 6px;
   flex: none;
 }
+/* Toolbar above the archived list: incremental search (grows) + a bulk-prune button. */
+.archived-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.archived-search {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel2);
+  color: var(--muted);
+}
+.archived-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  padding: 2px 0;
+  font-size: 13px;
+}
+.archived-search input:focus {
+  outline: none;
+}
+.archived-prune {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+/* A group = a folder header (reusing .session-group-btn) over its archived rows,
+   which are indented a touch so the grouping reads. */
+.archived-group-wrap {
+  list-style: none;
+}
+.archived-group-wrap .archived-row {
+  padding-left: 12px;
+}
 
 .session-btn:hover {
   background: var(--btn);
