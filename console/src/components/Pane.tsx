@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import TerminalView from "../views/TerminalView.jsx";
 import SourceControlView from "../views/SourceControlView.jsx";
+import ChangesView from "../views/ChangesView.jsx";
+import CommitDetailView from "../views/CommitDetailView.jsx";
 import FileView from "../views/FileView.jsx";
 import MirrorView from "../views/MirrorView.jsx";
 import DocView from "../views/DocView.jsx";
@@ -137,7 +139,8 @@ export default function Pane({
   const { setPaneWrap } = useApp();
   const settings = useSettings();
   const wrapOn = pane.wrap ?? settings.wrap;
-  const canWrap = pane.kind === "file" || pane.kind === "scm" || pane.kind === "diff";
+  const canWrap =
+    pane.kind === "file" || pane.kind === "scm" || pane.kind === "changes" || pane.kind === "commit" || pane.kind === "diff";
 
   const onDragStart = (e: RDragEvent) => {
     e.dataTransfer.setData(DND, pane.id);
@@ -272,6 +275,10 @@ export default function Pane({
         />
       )}
       {pane.kind === "scm" && <SourceControlView repo={pane.scmRepo ?? undefined} wrap={wrapOn} />}
+      {pane.kind === "changes" && <ChangesView repo={pane.scmRepo ?? undefined} wrap={wrapOn} />}
+      {pane.kind === "commit" && (
+        <CommitDetailView repo={pane.scmRepo ?? undefined} sha={pane.commitSha ?? undefined} wrap={wrapOn} />
+      )}
       {pane.kind === "file" && <FileView filePath={pane.filePath} wrap={wrapOn} />}
       {pane.kind === "doc" && <DocView title={pane.docTitle ?? undefined} content={pane.docContent ?? undefined} />}
       {pane.kind === "diff" && (

@@ -47,7 +47,7 @@ const guessRepoName = (u: string | null | undefined) => {
 // switch branch, fetch, start a session in the repo, delete, or open Source
 // Control (→ main area). The dirty dot mirrors uncommitted changes.
 export default function ReposSection() {
-  const { reposKey, connKey, bumpRepos, bumpSessions, bumpFiles, revealInFiles, showSCM, showSCMSplit, showTerminal, showTerminalSplit, showChat, showChatSplit, scmRepo, mode, session, wsState } =
+  const { reposKey, connKey, bumpRepos, bumpSessions, bumpFiles, revealInFiles, showSCM, showSCMSplit, showChanges, showTerminal, showTerminalSplit, showChat, showChatSplit, scmRepo, mode, session, wsState } =
     useApp();
   const toast = useToast();
   const running = wsState === "running"; // WS down → clone/open/launch are inert
@@ -186,6 +186,8 @@ export default function ReposSection() {
             }}
             // Right-click → フォルダを開く: expand + select the repo in the Files tree.
             onOpenFolder={() => revealInFiles("repos/" + r.name)}
+            // Right-click → 変更をコミット: open the changes/commit pane for this repo.
+            onOpenChanges={() => showChanges(r.name)}
             // split=true (middle-click) opens the new session in a freshly split
             // pane instead of replacing the active pane's content.
             onLaunch={async (kind: string, split: boolean) => {
@@ -230,11 +232,12 @@ interface RepoRowProps {
   selected?: boolean;
   onOpen: (e?: RMouseEvent) => void;
   onOpenFolder?: () => void;
+  onOpenChanges?: () => void;
   onLaunch: (kind: string, split: boolean) => void;
   onBranchChanged?: () => void;
 }
 
-function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected, onOpen, onOpenFolder, onLaunch, onBranchChanged }: RepoRowProps) {
+function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected, onOpen, onOpenFolder, onOpenChanges, onLaunch, onBranchChanged }: RepoRowProps) {
   const [showLaunch, setShowLaunch] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null); // right-click context menu
@@ -380,6 +383,11 @@ function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected,
           {onOpenFolder && (
             <li onClick={() => { setMenu(null); onOpenFolder(); }}>
               <Icon name="folder-opened" /> フォルダを開く
+            </li>
+          )}
+          {onOpenChanges && (
+            <li onClick={() => { setMenu(null); onOpenChanges(); }}>
+              <Icon name="git-commit" /> 変更をコミット
             </li>
           )}
           <li onClick={() => { setMenu(null); setBranchOpen(true); }}>

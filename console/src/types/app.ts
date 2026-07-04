@@ -60,6 +60,7 @@ export interface AppState {
   // active-pane projection (back-compat for not-yet-pane-aware components)
   mode: PaneKind;
   scmRepo: string | null;
+  commitSha: string | null;
   filePath: string | null;
   session: string | null;
   // pane layout
@@ -81,6 +82,9 @@ export interface AppState {
   openInNewPane: (patch: PanePatch) => void;
   showSCM: (repo: string) => void;
   showSCMSplit: (repo: string) => void;
+  showChanges: (repo: string) => void;
+  showChangesSplit: (repo: string) => void;
+  showCommit: (repo: string, sha: string) => void;
   showFile: (path: string) => void;
   showFileSplit: (path: string) => void;
   showDoc: (title: string, content: string) => void;
