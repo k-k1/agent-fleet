@@ -327,6 +327,9 @@ func (codexAgent) buildLaunch(m sessionMeta, _ launchOpts) (launchPlan, error) {
 	if !dirExists(m.Dir) {
 		return launchPlan{}, dirGoneErr(m.Dir)
 	}
+	// Pre-accept codex's per-dir trust gate so a freshly cloned repo doesn't stall at
+	// the "Do you trust this directory?" prompt (the bypass flags don't cover it).
+	ensureCodexFolderTrusted(m.Dir)
 	// Auth is codex's own ~/.codex/auth.json (codex login, written via the Connections
 	// flow), so no token is injected. State + per-slot resume are wired purely through
 	// codex hooks injected on the command line (-c), keyed by our deterministic slot
