@@ -816,6 +816,12 @@ func buildOpencodeProgram(model string, envs []string, ocid string) string {
 		prefix += kv[:i] + "=" + shellQuote(kv[i+1:]) + " "
 	}
 	parts := []string{"opencode"}
+	// Run unattended like claude (--dangerously-skip-permissions) and codex
+	// (--dangerously-bypass-…): the container IS the sandbox, so auto-approve every
+	// permission prompt (external-dir access, edits, bash) instead of stalling the TUI on
+	// an approval the Console user can't answer from chat. --auto approves anything not
+	// explicitly denied. Overridable via AGENT_OPENCODE_FLAGS (set to alternate flags).
+	parts = append(parts, envOr("AGENT_OPENCODE_FLAGS", "--auto"))
 	// Per-slot session: when we've captured this slot's opencode session id (the
 	// plugin records it on session.created, keyed by AF_SESSION_SID), resume exactly
 	// THAT session. Otherwise launch plain opencode — the TUI creates a fresh session
