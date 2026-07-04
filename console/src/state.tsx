@@ -193,6 +193,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const openInNewPane = useCallback(
     (patch: PanePatch) => {
       const cur = layoutRef.current;
+      // Already shown somewhere? A Ctrl/middle-click "open in a split" on a target
+      // that's already visible (a session, file, repo/scm/changes/commit…) shouldn't
+      // duplicate it — just focus the pane that has it. Uses the same identity test
+      // as openActive's swap-dedup.
+      const dup = cur.cols.flatMap((c) => c.panes).find((p) => shows(p, patch));
+      if (dup) {
+        if (dup.id !== cur.activeId) commit({ ...cur, activeId: dup.id }, false);
+        return;
+      }
       const fresh = (id: string) => ({ ...blankPane(id), ...patch });
       const splitCol = (col: Column) => {
         const id = newPaneId();
