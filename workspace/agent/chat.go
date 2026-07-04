@@ -103,6 +103,7 @@ func (c *chatConversation) knowledgeArgs() []string {
 type chatMeta struct {
 	ID           string `json:"id"`
 	Agent        string `json:"agent"`
+	AssistantID  string `json:"assistant_id,omitempty"` // which assistant backs this thread (Q2)
 	Title        string `json:"title"`
 	Model        string `json:"model,omitempty"`
 	CreatedAt    int64  `json:"created_at"`
@@ -319,7 +320,7 @@ func listConvs() ([]chatMeta, error) {
 			continue // skip unreadable entries rather than failing the whole list
 		}
 		out = append(out, chatMeta{
-			ID: c.ID, Agent: c.Agent, Title: c.Title, Model: c.Model,
+			ID: c.ID, Agent: c.Agent, AssistantID: c.AssistantID, Title: c.Title, Model: c.Model,
 			CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt, MessageCount: len(c.Messages),
 		})
 	}
