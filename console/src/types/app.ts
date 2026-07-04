@@ -69,6 +69,7 @@ export interface AppState {
   splitRight: () => void;
   splitDown: (paneId: string) => void;
   closePane: (paneId: string) => void;
+  closeSessionPanes: (name: string) => void;
   resetToTerminal: () => void;
   setActivePane: (id: string) => void;
   setColRatios: (ratios: number[]) => void;

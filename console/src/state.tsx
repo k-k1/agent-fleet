@@ -768,6 +768,34 @@ export function AppProvider({ children }: { children: ReactNode }) {
     [commit, resetToTerminal],
   );
 
+  // closeSessionPanes closes every pane currently attached to a session (by name) —
+  // used when a session leaves the list (archive / clear / recreate): its panes would
+  // otherwise linger showing a now-gone session. Same collapse rules as closePane, but
+  // it can drop several panes at once, so it does them in a single commit. No-op when
+  // the session isn't shown anywhere.
+  const closeSessionPanes = useCallback(
+    (name: string) => {
+      const cur = layoutRef.current;
+      const hit = (p: Pane) => p.kind === "terminal" && p.session === name;
+      if (!cur.cols.some((c) => c.panes.some(hit))) return;
+      const cols = cur.cols
+        .map((c) => {
+          const panes = c.panes.filter((p) => !hit(p));
+          return panes.length === c.panes.length ? c : { ...c, rowRatio: 0.5, panes };
+        })
+        .filter((c) => c.panes.length > 0);
+      const remaining = cols.flatMap((c) => c.panes);
+      if (remaining.length === 0) {
+        resetToTerminal(); // closed the last pane → reset to one blank terminal
+        return;
+      }
+      const activeId = remaining.some((p) => p.id === cur.activeId) ? cur.activeId : remaining[0].id;
+      const colRatios = cols.length === cur.cols.length ? cur.colRatios : equalRatios(cols.length);
+      commit({ ...cur, cols, colRatios, activeId });
+    },
+    [commit, resetToTerminal],
+  );
+
   const setActivePane = useCallback(
     (id: string) => {
       const cur = layoutRef.current;
@@ -978,6 +1006,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     splitRight,
     splitDown,
     closePane,
+    closeSessionPanes,
     resetToTerminal,
     setActivePane,
     setColRatios,
