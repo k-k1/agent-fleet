@@ -274,6 +274,7 @@ func main() {
 	mux.HandleFunc("GET /api/claude/settings", cfg.proxyAgentREST)
 	mux.HandleFunc("PUT /api/claude/settings", cfg.proxyAgentREST)
 	mux.HandleFunc("GET /api/claude/usage", cfg.proxyAgentREST)
+	mux.HandleFunc("GET /api/codex/usage", cfg.proxyAgentREST)
 	// codex / opencode rtk toggle — proxied to the Agent.
 	mux.HandleFunc("GET /api/agents/rtk", cfg.proxyAgentREST)
 	mux.HandleFunc("PUT /api/agents/rtk", cfg.proxyAgentREST)

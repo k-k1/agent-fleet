@@ -109,6 +109,7 @@ func main() {
 	mux.HandleFunc("PUT /claude/settings", handleClaudeSettingsPut)
 	// Claude subscription usage (5-hour + weekly bars) for the WsBar chip.
 	mux.HandleFunc("GET /claude/usage", handleClaudeUsage)
+	mux.HandleFunc("GET /codex/usage", handleCodexUsage)
 	// codex / opencode rtk toggle (durable pref → on-disk artifacts) — Console.
 	mux.HandleFunc("GET /agents/rtk", handleAgentRTKGet)
 	mux.HandleFunc("PUT /agents/rtk", handleAgentRTKPut)
