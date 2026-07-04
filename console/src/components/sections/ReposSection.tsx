@@ -188,6 +188,16 @@ export default function ReposSection() {
             onOpenFolder={() => revealInFiles("repos/" + r.name)}
             // Right-click → 変更をコミット: open the changes/commit pane for this repo.
             onOpenChanges={() => showChanges(r.name)}
+            // Right-click → fast-forward: advance the current branch to its upstream.
+            onFF={async () => {
+              const res = await apiJSON(`api/repos/${encodeURIComponent(r.name)}/ff`, "POST", {});
+              if (res && res.error) {
+                toast("ff 失敗: " + errText(res.error));
+                return;
+              }
+              bumpRepos();
+              toast(`${r.name}: fast-forward しました`);
+            }}
             // split=true (middle-click) opens the new session in a freshly split
             // pane instead of replacing the active pane's content.
             onLaunch={async (kind: string, split: boolean) => {
@@ -233,11 +243,12 @@ interface RepoRowProps {
   onOpen: (e?: RMouseEvent) => void;
   onOpenFolder?: () => void;
   onOpenChanges?: () => void;
+  onFF?: () => void;
   onLaunch: (kind: string, split: boolean) => void;
   onBranchChanged?: () => void;
 }
 
-function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected, onOpen, onOpenFolder, onOpenChanges, onLaunch, onBranchChanged }: RepoRowProps) {
+function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected, onOpen, onOpenFolder, onOpenChanges, onFF, onLaunch, onBranchChanged }: RepoRowProps) {
   const [showLaunch, setShowLaunch] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null); // right-click context menu
@@ -391,8 +402,13 @@ function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected,
             </li>
           )}
           <li onClick={() => { setMenu(null); setBranchOpen(true); }}>
-            <Icon name="git-branch" /> ブランチ切替 / 新規…
+            <Icon name="git-branch" /> ブランチ切替
           </li>
+          {onFF && (
+            <li onClick={() => { setMenu(null); onFF(); }}>
+              <Icon name="arrow-down" /> fast-forward（ff）
+            </li>
+          )}
           <li className="ctx-sep" role="separator" />
           {kinds.map((k) => (
             <li key={k} onClick={() => { setMenu(null); onLaunch(k, false); }}>
