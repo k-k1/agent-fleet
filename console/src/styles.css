@@ -6245,6 +6245,102 @@ button.mt-toolrun-head:hover {
   font-size: 12px;
 }
 
+/* Directory picker (New Session · リポなし): breadcrumb + a scrollable list of
+   subfolders; the browsed path is the launch dir. Replaces a confusing free-text
+   path field. */
+.dirpick {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px;
+  background: var(--bg);
+}
+.dirpick-crumbs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 1px;
+  font-size: 12px;
+}
+.dirpick-seg {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+}
+.dirpick-slash {
+  color: var(--muted);
+}
+.dirpick-crumb {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 6px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--fg);
+  cursor: pointer;
+}
+.dirpick-crumb:hover {
+  background: var(--btn);
+}
+.dirpick-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  max-height: 190px;
+  overflow-y: auto;
+}
+.dirpick-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  padding: 6px 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.dirpick-row:hover {
+  background: var(--btn);
+}
+.dirpick-ic {
+  color: var(--accent, #6a7fdb);
+  flex: none;
+}
+.dirpick-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dirpick-go {
+  flex: none;
+  opacity: 0.5;
+}
+.dirpick-empty {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 8px;
+  font-size: 12px;
+}
+.dirpick-cur {
+  font-size: 11px;
+  color: var(--muted);
+  border-top: 1px solid var(--border);
+  padding-top: 6px;
+}
+.dirpick-cur code {
+  color: var(--fg);
+}
+
 /* confirm dialog */
 .confirm {
   width: min(420px, 92vw);

@@ -473,7 +473,11 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		req.Dir = dir
 	}
 	if req.Dir == "" {
-		req.Dir = os.Getenv("HOME")
+		req.Dir = homeDir()
+	} else if !filepath.IsAbs(req.Dir) {
+		// A relative dir (e.g. "projects/x" from the New Session directory picker) is
+		// resolved against home, mirroring the fs/tree browser's home-relative paths.
+		req.Dir = filepath.Join(homeDir(), req.Dir)
 	}
 	if fi, err := os.Stat(req.Dir); err != nil || !fi.IsDir() {
 		writeErr(w, http.StatusBadRequest, "bad_dir", "dir does not exist: "+req.Dir)

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api, apiJSON, errText } from "../api.js";
 import { useApp } from "../state.jsx";
 import RepoPicker from "./RepoPicker.jsx";
+import DirPicker from "./DirPicker.jsx";
 import Modal from "./Modal.jsx";
 import Icon from "./Icon.jsx";
 import { useToast } from "./ToastProvider.jsx";
@@ -372,12 +373,7 @@ export default function NewSessionModal({ onClose, onCreated }: NewSessionModalP
                     </label>
                   </div>
                 )}
-                {source === "none" && (
-                  <label className="pick-field">
-                    <span>ディレクトリ</span>
-                    <input value={dir} onChange={(e) => setDir(e.target.value)} placeholder="既定 ~（ホーム）" />
-                  </label>
-                )}
+                {source === "none" && <DirPicker value={dir} onChange={setDir} />}
               </div>
 
               {/* 既存の作業コピーがある場合：checkout で共用するか、別フォルダへ並行 clone するか */}
