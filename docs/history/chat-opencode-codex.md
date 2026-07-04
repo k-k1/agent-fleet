@@ -199,7 +199,15 @@ Console のみ（`MirrorView` typing 行＋`.mirror-stop`）。
 - **codex 進行中固定の修正**: モード切替キー（BTab）で `markSessionWorking` され、ターンでない＝Stop フックが
   発火せず working のまま残っていた。keys に Enter を含む（＝回答送信）ときだけ working にする。
 
-## 22.13 残り / 既知の限界
+## 22.13 pane キャプチャの target バグ（paneMode が常に空だった）
+
+**根因**: `paneMode`/`opencodeInSubagentView` が `capture-pane -t exactT(tn)`（`=<session>`）を使っていたが、
+**capture-pane は `=` の exact-target 構文を受け付けず**（`can't find pane: =name`）、常に空を返していた
+（send-keys/list-panes は `=` 可）。結果、pane からのモード検出が全エージェントで無効化され、モードが常に未報告
+＝計画モードボタンが正しく反映しなかった。修正: `sessionPaneID(tn)` で active pane id を解決してから
+`capture-pane -t <pane_id>` する共通ヘルパ `capturePane` を導入。
+
+## 22.14 残り / 既知の限界
 
 - **codex 実データ検証**: reasoning/function_call 出力/update_plan/request_user_input・menu 応答は実 codex セッションで未目視。
 - **後続**: codex apply_patch の差分パース、opencode コスト($)表示、codex レート制限、複数選択/複数問メニューの駆動、
