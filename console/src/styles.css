@@ -525,6 +525,12 @@ button.wu-reload {
   gap: 4px;
   font-size: 12px;
 }
+/* Snapshot note (codex): explains the reading isn't live, in place of a 更新 button. */
+.wu-note {
+  margin-top: 8px;
+  font-size: 11px;
+  line-height: 1.5;
+}
 .spark {
   display: block;
 }
