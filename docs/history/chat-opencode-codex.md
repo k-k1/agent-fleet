@@ -1,7 +1,7 @@
 # 22. チャット（MirrorView）を codex / opencode へ汎化
 
 > 🗄 **設計＋実装記録**。claude 専用だったチャット（MirrorView）を、極力共通化したまま codex と opencode へ広げる。
-> 段1（codex）実装済み。段2（opencode）は設計確定・未実装。
+> 段1（codex）・段2（opencode）ともに実装済み。
 
 ## 22.1 ゴールと発見
 
@@ -46,9 +46,13 @@ codex の session_id は既に捕捉済み（`codexSids`、status フックの s
   text/reasoning は `.text`。tool はツール呼び出し情報、patch は差分。step-* は骨組みで破棄。
 - 補助: `todo`（ToDo）、`permission`（承認）テーブルも存在＝将来 ToDo/許可の汎化余地。
 
-段2は message を `session_id` で time_created 順に読み、part を message_id で結合して正規化する。Go は純 Go の
-modernc/sqlite（CP で既採用）を read-only + WAL で使う。**単一 jsonl が無い**ため行カーソルは使えず、ターン単位カーソル
-（下記 22.3 の汎用パス）に乗せる。トークンは message.tokens からコンテキストバーへ。
+段2は message を `session_id` で time_created 順に読み、part を message_id で結合して正規化する（`opencode_transcript.go`
+の `readOpencodeTranscript`/`opencodeReadSession`）。Go は純 Go の modernc/sqlite（CP で既採用、Agent モジュールへ追加）を
+**read-only**（`?mode=ro&_pragma=busy_timeout(3000)`、journal_mode は書込ゆえ設定しない）で開く。Agent は opencode と同一
+uid ゆえ WAL の `-wal`/`-shm` を読め、WAL は db ファイルから自動検出される。**単一 jsonl が無い**ため行カーソルは使えず、
+message 序数を Idx にしてターン単位カーソル（22.3 の汎用パス）に乗せる。part 種別: text→本文、tool→痕跡（`state.input`
+の command/path 等を Info に）、patch→ファイル列の痕跡、reasoning/step-*→破棄。トークン（message.tokens.input/output/
+cache）とモデル（modelID）はコンテキストバー/ヘッダへ。実 WAL DB（運用者の opencode.db、19 ターン）で read-only 読取を実機確認。
 
 ## 22.3 汎化アーキテクチャ（実装＝段1）
 
@@ -96,19 +100,20 @@ terminalState はサーバが claude にしか送らないので自然に非表�
 - Console `vite build`+`tsc --noEmit` 通過。
 - 実会話 E2E は Agent イメージ再ビルド＋コンテナ recreate が要るため反映後に実ブラウザで確認（合成テストで担保）。
 
-## 22.6 触れたファイル（段1）
+## 22.6 触れたファイル
 
-- Agent: `workspace/agent/codex_transcript.go`（新規）、`workspace/agent/codex_transcript_test.go`（新規）、
-  `workspace/agent/agent.go`（`transcript` seam＋`noGenericTranscript`＋codex caps/実装）、
-  `workspace/agent/session_transcript.go`（分岐＋`handleGenericMessages`＋`capTurnsNewest`）。
-- Console: `console/src/agents/registry.ts`（codex 点灯＋`imagePaste`/`assistantName`）、
-  `console/src/views/MirrorView.tsx`（`agentOf` 解決・署名汎化・画像貼付ゲート）。
+- Agent（段1 codex）: `workspace/agent/codex_transcript.go`＋`_test`（新規）、`workspace/agent/agent.go`（`transcript`
+  seam＋`noGenericTranscript`＋codex caps/実装）、`workspace/agent/session_transcript.go`（分岐＋`handleGenericMessages`
+  ＋`capTurnsNewest`）、`workspace/agent/codex_auth.go`＋`codex_trust_test.go`（`ensureCodexFolderTrusted`）。
+- Agent（段2 opencode）: `workspace/agent/opencode_transcript.go`＋`_test`（新規、modernc/sqlite read-only）、
+  `workspace/agent/agent.go`（opencode caps/実装）、`workspace/agent/go.mod`（modernc/sqlite 追加）。
+- Console: `console/src/agents/registry.ts`（codex/opencode 点灯＋`imagePaste`/`assistantName`）、
+  `console/src/views/MirrorView.tsx`（`agentOf` 解決・署名汎化・画像貼付ゲート・モデル名）。
 
 ## 22.7 残り / 既知の限界
 
 - **反映**: Agent 変更ゆえ Workspace イメージ再ビルド＋コンテナ recreate、CP/Console 再起動が要る。
 - **codex トークンの遅延**: 最終 assistant ターンの token_count は同ターンでは再送されない（カーソルは append のみ）ため、
   そのターンのコンテキストバーは次ターンまで欠けうる。軽微。
-- **段2（opencode）**: 22.2 の SQLite スキーマに沿って `readOpencodeTranscript` を実装し `handleGenericMessages` へ相乗り。
-  形式のバージョン揺れに注意（modernc/sqlite・read-only・WAL）。
-- **後続**: ToDo/質問/許可の codex/opencode 側汎化、diff ペインのツール名マップ拡張。
+- **後続**: ToDo/質問/許可の codex/opencode 側汎化（opencode は `todo`/`permission` 表あり）、diff ペインのツール名マップ拡張、
+  opencode の SQLite スキーマのバージョン揺れ監視（modernc/sqlite・read-only・WAL）。
