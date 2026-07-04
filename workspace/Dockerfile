@@ -29,7 +29,7 @@ RUN bun install --frozen-lockfile && bun run build
 # --- runtime ---
 FROM node:22-bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      git git-lfs tmux vim openssh-client ca-certificates gnupg curl wget less procps htop tzdata \
+      git git-lfs tmux vim openssh-client ca-certificates gnupg curl wget less procps htop strace tzdata \
       ripgrep fd-find bat jq unzip zip \
       build-essential pkg-config \
       python3 python3-pip python3-venv python3-dev python-is-python3 \
