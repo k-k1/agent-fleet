@@ -186,6 +186,13 @@ Console のみ（`MirrorView` typing 行＋`.mirror-stop`）。
   ことがある（ポーリングで結果反映＝もう一度押せば届く）。
 - **停止**: 作業中に Escape を送る（[[22.11]] のサブエージェントビュー対応込み）。ツールバーに常設（旧・入力中行の
   停止は撤去）。
+- **現在モードはペインから取得（`paneMode`）**: モード切替キーでは新モードが transcript に記録されない（ターン実行時
+  のみ）ため、DB/rollout 由来だと切替が反映されず、ターミナル側の切替は特に「逆」に見えた。TUI が常時表示する現在
+  モードを pane から拾う: opencode=ステータス行 `Plan/Build auto ·`、codex=`… for Plan/Default mode.` の最新行。
+  transcript mode にフォールバック。これで**チャット/ターミナルどちらの切替も反映**。Console は楽観更新＋
+  serverModeRef で即時フィードバック。
+- **codex 進行中固定の修正**: モード切替キー（BTab）で `markSessionWorking` され、ターンでない＝Stop フックが
+  発火せず working のまま残っていた。keys に Enter を含む（＝回答送信）ときだけ working にする。
 
 ## 22.13 残り / 既知の限界
 
