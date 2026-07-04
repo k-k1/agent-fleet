@@ -27,29 +27,93 @@ import (
 //     text/reasoning: {text}          tool: {tool, state:{input:{command|file_path|…}}}
 //     patch: {files:[...]}            step-*: framing, dropped
 
-// readOpencodeTranscript reads an opencode session's normalized chat turns plus the db
-// path (for diagnostics). ok is always true; an absent session id / db (no conversation
-// yet) yields nil turns, shown as an empty chat.
-func readOpencodeTranscript(m sessionMeta) (transcriptData, bool) {
-	slot := sessionUUID(m.Dir, m.Name)
-	ses := opencodeSids.read(slot)
-	if ses == "" {
-		return transcriptData{}, true
+// opencodeDBPath is the shared SQLite store both the TUI slot and `opencode serve` write.
+func opencodeDBPath() string {
+	return filepath.Join(homeDir(), ".local", "share", "opencode", "opencode.db")
+}
+
+// opencodeOpenRO opens the store read-only (WAL auto-detected; busy_timeout so a
+// concurrent opencode write can't wedge us). ok=false when the db is absent/unopenable.
+func opencodeOpenRO() (*sql.DB, bool) {
+	p := opencodeDBPath()
+	if _, err := os.Stat(p); err != nil {
+		return nil, false
 	}
-	path := filepath.Join(homeDir(), ".local", "share", "opencode", "opencode.db")
-	if _, err := os.Stat(path); err != nil {
-		return transcriptData{}, true
-	}
-	// Read-only with a short busy timeout so a concurrent opencode write can't wedge the
-	// poll. WAL is auto-detected from the db file (the Agent runs as the same user as
-	// opencode, so the -wal/-shm are readable); we do NOT set journal_mode here — that
-	// would be a write and fail on a mode=ro handle.
-	dsn := "file:" + path + "?mode=ro&_pragma=busy_timeout(3000)"
-	db, err := sql.Open("sqlite", dsn)
+	db, err := sql.Open("sqlite", "file:"+p+"?mode=ro&_pragma=busy_timeout(3000)")
 	if err != nil {
-		return transcriptData{path: path}, true
+		return nil, false
+	}
+	return db, true
+}
+
+// opencodeActiveSession resolves the slot's CURRENT opencode conversation from the store
+// itself — the newest ROOT session (parent_id null, i.e. not a subagent child) in the
+// slot's working dir, by most-recent message. This is plugin-independent: opencode can
+// create/switch sessions at runtime, and its status plugin may not be firing, so we don't
+// trust the captured sid alone — we read what opencode is actually using. Falls back to
+// the captured sid only when the query can't run. (Caveat: two opencode slots in the SAME
+// dir resolve to the same session — the pre-existing multi-slot-same-dir limitation.)
+func opencodeActiveSession(db *sql.DB, m sessionMeta) string {
+	var id string
+	_ = db.QueryRow(
+		`SELECT s.id FROM session s JOIN message msg ON msg.session_id = s.id
+		 WHERE s.directory = ? AND (s.parent_id IS NULL OR s.parent_id = '')
+		 GROUP BY s.id ORDER BY MAX(msg.time_created) DESC LIMIT 1`, m.Dir,
+	).Scan(&id)
+	if id == "" {
+		return opencodeSids.read(sessionUUID(m.Dir, m.Name))
+	}
+	return id
+}
+
+// opencodeLiveState derives opencode's working/idle state from the store (robust — the
+// status plugin's events are unreliable): a turn is in flight when the active session's
+// newest message isn't a completed assistant reply. Returns "" when the db can't be read
+// (caller falls back to the plugin status store).
+func opencodeLiveState(m sessionMeta) string {
+	db, ok := opencodeOpenRO()
+	if !ok {
+		return ""
 	}
 	defer db.Close()
+	ses := opencodeActiveSession(db, m)
+	if ses == "" {
+		return "idle" // no conversation yet — sitting at the composer
+	}
+	var data []byte
+	err := db.QueryRow(`SELECT data FROM message WHERE session_id = ? ORDER BY time_created DESC LIMIT 1`, ses).Scan(&data)
+	if err != nil {
+		return "idle"
+	}
+	var md struct {
+		Role string `json:"role"`
+		Time struct {
+			Completed int64 `json:"completed"`
+		} `json:"time"`
+	}
+	if json.Unmarshal(data, &md) != nil {
+		return "idle"
+	}
+	if md.Role == "assistant" && md.Time.Completed > 0 {
+		return "idle"
+	}
+	return "working" // an in-flight assistant turn, or a user message awaiting a reply
+}
+
+// readOpencodeTranscript reads the slot's current opencode conversation as normalized
+// chat turns plus the db path (diagnostics). ok is always true; no conversation yet
+// yields nil turns (an empty chat).
+func readOpencodeTranscript(m sessionMeta) (transcriptData, bool) {
+	db, ok := opencodeOpenRO()
+	if !ok {
+		return transcriptData{}, true
+	}
+	defer db.Close()
+	path := opencodeDBPath()
+	ses := opencodeActiveSession(db, m)
+	if ses == "" {
+		return transcriptData{path: path}, true
+	}
 	return transcriptData{
 		turns:   opencodeReadSession(db, ses),
 		path:    path,
@@ -155,12 +219,8 @@ func opencodeSessionResumable(ses string) bool {
 	if ses == "" {
 		return true
 	}
-	path := filepath.Join(homeDir(), ".local", "share", "opencode", "opencode.db")
-	if _, err := os.Stat(path); err != nil {
-		return true
-	}
-	db, err := sql.Open("sqlite", "file:"+path+"?mode=ro&_pragma=busy_timeout(3000)")
-	if err != nil {
+	db, ok := opencodeOpenRO()
+	if !ok {
 		return true
 	}
 	defer db.Close()
