@@ -683,6 +683,11 @@ export default function MirrorView({
   const spends = groups.filter((g) => g.role !== "user").map(spendOf).filter((n) => n > 0);
   const maxSpend = spends.length ? Math.max(...spends) : 0;
 
+  // Whether the session is in Plan mode. Case-insensitive so it holds against either the
+  // labeled agent ("Plan") or an older one ("plan") — so the toggle direction (enter vs
+  // exit) stays correct even before the Workspace picks up the new Agent image.
+  const isPlan = mode.toLowerCase() === "plan";
+
   // Status chip: prefer the live polled status, fall back to the session meta.
   const chip = status
     ? stateInfo({ kind: "claude", alive: status !== "stopped", state: status, backgroundBusy: bgBusy } as any)
@@ -735,7 +740,7 @@ export default function MirrorView({
 
       {ctxUsage && <ContextBar {...ctxUsage} spends={spends} maxSpend={maxSpend} />}
       {tasks.length > 0 && <TaskChecklist tasks={tasks} />}
-      {mode === "Plan" && (
+      {isPlan && (
         <div className="mirror-planmode">
           <Icon name="debug-pause" /> Plan モード — 承認するまで実装しません
         </div>
@@ -970,11 +975,11 @@ export default function MirrorView({
           {agent.caps.planMode && agent.planCycleKey && (
             <button
               type="button"
-              className={"mirror-mode" + (mode === "Plan" ? " on" : "")}
+              className={"mirror-mode" + (isPlan ? " on" : "")}
               disabled={sending}
               title="モードを切り替え（Plan ⇄ 実装）"
               onClick={() => {
-                const toPlan = mode !== "Plan";
+                const toPlan = !isPlan;
                 // Optimistic label (codex/opencode only report the new mode after a turn);
                 // the poll reconciles from the terminal via paneMode.
                 setMode(toPlan ? "Plan" : agent.defaultModeLabel);
