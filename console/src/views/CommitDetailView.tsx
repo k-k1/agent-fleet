@@ -12,19 +12,19 @@ import EmptyState from "../components/EmptyState.jsx";
 export default function CommitDetailView({
   repo,
   sha,
-  paneId,
   wrap,
 }: {
   repo?: string;
   sha?: string;
-  paneId?: string;
   wrap?: boolean;
 }) {
-  const { scmRepo: ctxRepo, commitSha: ctxSha, closePane } = useApp();
+  const { scmRepo: ctxRepo, commitSha: ctxSha } = useApp();
   const scmRepo = repo !== undefined ? repo : ctxRepo;
   const target = sha !== undefined ? sha : ctxSha || undefined;
   const enc = encodeURIComponent(scmRepo || "");
   const [commit, setCommit] = useState<CommitData | null>(null);
+  const [localWrap, setLocalWrap] = useState<boolean | null>(null); // per-view soft-wrap override
+  const effWrap = localWrap ?? !!wrap;
 
   useEffect(() => {
     if (!scmRepo || !target) {
@@ -53,18 +53,21 @@ export default function CommitDetailView({
   return (
     <div className="scmview commit-view">
       <header className="view-head">
-        <span className="view-title"><Icon name="git-commit" /> {(target || "").slice(0, 10)}</span>
+        <span className="view-title" title={scmRepo || ""}>
+          <Icon name="git-commit" /> {scmRepo} · {(target || "").slice(0, 10)}
+        </span>
         <span className="spacer" />
         <button
-          className="ghost scm-act"
-          title="diff を閉じる"
-          onClick={() => paneId && closePane(paneId)}
+          className={"ghost scm-act" + (effWrap ? " on" : "")}
+          title="行を折り返す"
+          aria-pressed={effWrap}
+          onClick={() => setLocalWrap(!effWrap)}
         >
-          <Icon name="close" /> <span className="lbl">閉じる</span>
+          <Icon name="word-wrap" /> <span className="lbl">折り返し</span>
         </button>
       </header>
       <div className="commit-view-body">
-        <CommitDetail commit={commit} wrap={wrap} />
+        <CommitDetail commit={commit} wrap={effWrap} />
       </div>
     </div>
   );

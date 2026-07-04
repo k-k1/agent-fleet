@@ -33,12 +33,14 @@ export default function CommitGraph({
   current,
   selectedSha,
   onSelect,
+  onOpen,
   onContext,
 }: {
   commits: GraphCommit[];
   current?: string;
   selectedSha?: string;
-  onSelect: (sha: string) => void;
+  onSelect: (sha: string) => void; // plain click / keyboard select
+  onOpen?: (sha: string, newPane: boolean) => void; // Ctrl/⌘/middle-click → open in a pane
   onContext?: (commit: GraphCommit, x: number, y: number) => void;
 }) {
   const rows = useMemo(() => layoutGraph(commits), [commits]);
@@ -54,6 +56,7 @@ export default function CommitGraph({
           current={current}
           selected={row.commit.sha === selectedSha}
           onSelect={onSelect}
+          onOpen={onOpen}
           onContext={onContext}
         />
       ))}
@@ -67,6 +70,7 @@ function CommitRow({
   current,
   selected,
   onSelect,
+  onOpen,
   onContext,
 }: {
   row: GraphRow;
@@ -74,6 +78,7 @@ function CommitRow({
   current?: string;
   selected: boolean;
   onSelect: (sha: string) => void;
+  onOpen?: (sha: string, newPane: boolean) => void;
   onContext?: (commit: GraphCommit, x: number, y: number) => void;
 }) {
   const { commit, nodeLane, lanesAbove, lanesBelow } = row;
@@ -110,7 +115,16 @@ function CommitRow({
   return (
     <li
       className={"cgraph-row" + (selected ? " active" : "") + (commit.inBranch ? "" : " dim")}
-      onClick={() => onSelect(commit.sha)}
+      // Plain click selects; Ctrl/⌘-click opens the detail in a new pane.
+      onClick={(e) => (e.ctrlKey || e.metaKey ? onOpen?.(commit.sha, true) : onSelect(commit.sha))}
+      // Middle-click also opens in a new pane (suppress the autoscroll on mousedown).
+      onMouseDown={(e) => e.button === 1 && e.preventDefault()}
+      onAuxClick={(e) => {
+        if (e.button === 1) {
+          e.preventDefault();
+          onOpen?.(commit.sha, true);
+        }
+      }}
       onContextMenu={
         onContext
           ? (e) => {

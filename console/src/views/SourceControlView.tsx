@@ -9,7 +9,7 @@ import { useConfirm } from "../components/ConfirmProvider.jsx";
 import { useToast } from "../components/ToastProvider.jsx";
 import { placeFixed } from "../lib/placeFixed.js";
 import EmptyState from "../components/EmptyState.jsx";
-import type { FormEvent } from "react";
+import type { FormEvent, KeyboardEvent as RKeyboardEvent } from "react";
 import type { GraphCommit } from "../lib/gitgraph.js";
 
 interface ScmStatus {
@@ -23,7 +23,7 @@ interface ScmStatus {
 // per-commit detail/diff are split out into their own panes (変更 / commit): clicking a
 // commit opens its detail beside the graph; the 変更 button opens the changes pane.
 export default function SourceControlView({ repo }: { repo?: string; wrap?: boolean }) {
-  const { scmRepo: ctxRepo, bumpRepos, bumpFiles, showChanges, showCommit } = useApp();
+  const { scmRepo: ctxRepo, bumpRepos, bumpFiles, showChanges, showCommit, showCommitSplit } = useApp();
   const askConfirm = useConfirm();
   const toast = useToast();
   const scmRepo = repo !== undefined ? repo : ctxRepo;
@@ -78,10 +78,37 @@ export default function SourceControlView({ repo }: { repo?: string; wrap?: bool
     refresh();
   }, [refresh]);
 
-  const onSelect = (sha: string) => {
+  const bodyRef = useRef<HTMLDivElement>(null);
+
+  // Plain click / keyboard just selects (highlights) the commit — no pane opens.
+  const onSelect = (sha: string) => setSelected(sha);
+  // Ctrl/⌘/middle-click opens the detail: newPane → a fresh pane, else the (reused) one.
+  const onOpen = (sha: string, newPane: boolean) => {
     setSelected(sha);
-    if (scmRepo) showCommit(scmRepo, sha);
+    if (!scmRepo) return;
+    if (newPane) showCommitSplit(scmRepo, sha);
+    else showCommit(scmRepo, sha);
   };
+
+  // ↑/↓ move the selection through commits; Enter opens the selected commit's detail.
+  const onKey = (e: RKeyboardEvent) => {
+    if (!commits.length) return;
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      const idx = commits.findIndex((c) => c.sha === selected);
+      const next =
+        idx < 0 ? 0 : Math.min(commits.length - 1, Math.max(0, idx + (e.key === "ArrowDown" ? 1 : -1)));
+      setSelected(commits[next].sha);
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      if (selected && scmRepo) showCommit(scmRepo, selected);
+    }
+  };
+
+  // Keep the selected row in view during keyboard navigation.
+  useEffect(() => {
+    if (selected) bodyRef.current?.querySelector(".cgraph-row.active")?.scrollIntoView({ block: "nearest" });
+  }, [selected]);
 
   const fetchRepo = async () => {
     await apiJSON(`api/repos/${enc}/fetch`, "POST", { prune: true });
@@ -181,7 +208,7 @@ export default function SourceControlView({ repo }: { repo?: string; wrap?: bool
           <Icon name="refresh" /> <span className="lbl">更新</span>
         </button>
       </header>
-      <div className="cgraph-body">
+      <div className="cgraph-body" ref={bodyRef} tabIndex={0} onKeyDown={onKey}>
         {loading && commits.length === 0 ? (
           <EmptyState icon="loading" message="読み込み中…" />
         ) : commits.length === 0 ? (
@@ -192,6 +219,7 @@ export default function SourceControlView({ repo }: { repo?: string; wrap?: bool
             current={current}
             selectedSha={selected}
             onSelect={onSelect}
+            onOpen={onOpen}
             onContext={(commit, x, y) => setMenu({ commit, x, y })}
           />
         )}

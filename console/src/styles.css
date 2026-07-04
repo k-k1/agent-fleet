@@ -3592,6 +3592,14 @@ button.mt-toolrun-head:hover {
     display: none;
   }
 }
+/* Active state for a toggle header action (e.g. commit-detail wrap). */
+.scm-act.on {
+  color: var(--accent, #6a7fdb);
+}
+/* The commit graph body is keyboard-focusable (↑/↓ navigation) — no focus ring. */
+.cgraph-body:focus {
+  outline: none;
+}
 /* Non-terminal pane headers lead with an accent icon + a foreground name, so a
    Source Control / File / Doc / Diff pane all read the same way (the terminal keeps
    its richer agent kind badge). The name itself is foreground — accent-colored
