@@ -5,11 +5,57 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 )
+
+// opencodeStatusAgentRe pulls the current agent from opencode's composer status line
+// ("Plan auto · <model> …" / "Build auto · …"), the ground-truth mode the TUI shows.
+var opencodeStatusAgentRe = regexp.MustCompile(`([A-Za-z][\w-]*) +auto +·`)
+
+// paneMode reads the session's CURRENT permission/collaboration mode straight from the
+// terminal (what the TUI displays), so it reflects toggles made in the terminal too —
+// not just via the chat. Returns "plan" | "normal" | "" (unknown → caller falls back to
+// the transcript's per-turn mode). claude has its own jsonl mode source and isn't handled
+// here.
+func paneMode(kind, tn string) string {
+	switch kind {
+	case kindOpencode:
+		out, err := exec.Command("tmux", "capture-pane", "-p", "-t", exactT(tn)).Output()
+		if err != nil {
+			return ""
+		}
+		m := opencodeStatusAgentRe.FindStringSubmatch(string(out))
+		if m == nil {
+			return ""
+		}
+		if strings.EqualFold(m[1], "plan") {
+			return "plan"
+		}
+		return "normal"
+	case kindCodex:
+		// codex logs "Model changed to … for Plan mode." / "… for Default mode." on each
+		// toggle; the latest visible one is the current mode. Scan recent scrollback.
+		out, err := exec.Command("tmux", "capture-pane", "-p", "-S", "-200", "-t", exactT(tn)).Output()
+		if err != nil {
+			return ""
+		}
+		s := string(out)
+		pi := strings.LastIndex(s, "for Plan mode")
+		di := strings.LastIndex(s, "for Default mode")
+		if pi < 0 && di < 0 {
+			return ""
+		}
+		if pi > di {
+			return "plan"
+		}
+		return "normal"
+	}
+	return ""
+}
 
 // Programmatic session I/O for the MCP drive tools (docs/decisions/0006, P3-6 E).
 // A user's own Claude (via the CP /mcp endpoint) drives the claude sessions in
@@ -80,7 +126,16 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 				time.Sleep(90 * time.Millisecond)
 			}
 		}
-		markSessionWorking(name)
+		// Only a submit (a key sequence containing Enter — answering a question) starts a
+		// turn; pure navigation / mode-cycle (BTab, Tab) / stop (Escape) must NOT mark the
+		// session working, or codex sticks on 進行中 after a plan-mode toggle (no Stop hook
+		// fires to clear it).
+		for _, k := range keys {
+			if k == "Enter" {
+				markSessionWorking(name)
+				break
+			}
+		}
 		writeJSON(w, http.StatusOK, map[string]any{"sent": name})
 		return
 	}

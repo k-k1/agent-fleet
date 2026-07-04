@@ -294,8 +294,16 @@ func handleGenericMessages(w http.ResponseWriter, r *http.Request, meta sessionM
 		resp["pendingQuestions"] = td.pending
 	}
 	// Current mode (plan / normal) so the Console shows the plan indicator and toggle.
-	if td.mode != "" {
-		resp["mode"] = td.mode
+	// Prefer the terminal's displayed mode (reflects toggles made in the terminal too),
+	// falling back to the transcript's per-turn mode.
+	mode := td.mode
+	if alive {
+		if pm := paneMode(meta.Kind, tmuxName(meta.Name)); pm != "" {
+			mode = pm
+		}
+	}
+	if mode != "" {
+		resp["mode"] = mode
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
