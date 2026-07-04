@@ -114,6 +114,10 @@ export default function FilesSection() {
   const ctxRef = useRef<HTMLUListElement>(null); // context menu (clamped into the viewport)
   const treeRef = useRef<HTMLUListElement>(null);
   const selRef = useRef<HTMLLIElement>(null);
+  // Set when a selection change is an AUTO one (the first row picked on load), so the
+  // "keep selected visible" scroll below skips it — otherwise a WS Start / files refresh
+  // would yank the whole left nav to the top file. User-driven selection still scrolls.
+  const skipScrollRef = useRef(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   // Mirror `open` into a ref so the reload effect can refetch the expanded dirs
   // without taking `open` as a dependency (which would refetch on every toggle).
@@ -340,7 +344,11 @@ export default function FilesSection() {
       }
       if (!alive) return;
       setCache(fresh);
-      setSelected((s) => s || (rootEntries[0] ? rootEntries[0].name : null));
+      setSelected((s) => {
+        if (s) return s; // keep the user's selection across a refresh
+        skipScrollRef.current = true; // first-row auto-pick: don't scroll the nav
+        return rootEntries[0] ? rootEntries[0].name : null;
+      });
     })();
     return () => {
       alive = false;
@@ -489,8 +497,13 @@ export default function FilesSection() {
     [open, collapse, expand, showFile],
   );
 
-  // keep the selected row visible
+  // keep the selected row visible — but not for an auto-selection on load (skipScrollRef),
+  // which would scroll the left nav to the top file on every WS Start / files refresh.
   useEffect(() => {
+    if (skipScrollRef.current) {
+      skipScrollRef.current = false;
+      return;
+    }
     selRef.current?.scrollIntoView({ block: "nearest" });
   }, [selected]);
 
