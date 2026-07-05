@@ -3401,6 +3401,25 @@ button.mt-toolrun-head:hover {
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
+/* Per-question "Type something" free-text answer (multi-question / multi-select cards). */
+.mq-freetext {
+  margin-top: 6px;
+  width: 100%;
+  padding: 6px 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+}
+.mq-freetext:focus {
+  outline: none;
+  border-color: var(--chat-accent);
+}
+.mq-freetext:disabled {
+  opacity: 0.55;
+}
 .mq-submit-row {
   display: flex;
   justify-content: flex-end;
