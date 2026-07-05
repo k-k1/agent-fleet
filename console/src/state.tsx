@@ -66,6 +66,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const [wsState, setWsState] = useState("…");
   const [chatListKey, setChatListKey] = useState(0); // bump → AssistantSection refreshes its list
+  // Conversation id → true while a turn is streaming, so the rail + view can show a
+  // 進行中/待機中 chip (published by ChatView, read by AssistantSection).
+  const [chatBusy, setChatBusyState] = useState<Record<string, boolean>>({});
+  const markChatBusy = useCallback((id: string, busy: boolean) => {
+    setChatBusyState((m) => {
+      if (busy) return m[id] ? m : { ...m, [id]: true };
+      if (!m[id]) return m;
+      const n = { ...m };
+      delete n[id];
+      return n;
+    });
+  }, []);
 
   // opencode web (per-workspace pk-webui) status: {available,enabled,running,port}
   // or null when unavailable/unreachable. Shared so the WS bar surfaces an "open"
@@ -1114,6 +1126,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     promoteDraft,
     chatListKey,
     bumpChatList,
+    chatBusy,
+    markChatBusy,
     setPaneWrap,
     settingsOpen,
     settingsSection,

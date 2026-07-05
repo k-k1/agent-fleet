@@ -7627,6 +7627,14 @@ button.primary:hover:not(:disabled) {
   flex: 0 0 auto;
   align-self: stretch;
 }
+/* Stop button (while a turn streams): same shape as send, danger-tinted. */
+.chat-stop {
+  color: var(--danger, #e05a5a);
+}
+/* Conversation-row status chip: compact, sits after the count (not far-right auto). */
+.chat-open .session-state {
+  margin-left: 4px;
+}
 /* Left-rail conversation rows */
 .chat-row {
   display: flex;

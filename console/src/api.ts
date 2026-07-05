@@ -243,6 +243,7 @@ export async function chatStream(
       signal,
     });
   } catch {
+    if (signal?.aborted) return; // user stopped the turn — not an error
     h.onError?.("送信に失敗しました");
     return;
   }
@@ -278,14 +279,19 @@ export async function chatStream(
       else if (obj.done) h.onDone?.(obj.conversation);
     }
   };
-  for (;;) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buf += dec.decode(value, { stream: true });
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      drain();
+    }
+    buf += dec.decode();
     drain();
+  } catch {
+    if (signal?.aborted) return; // user stopped mid-stream — silent, keep the partial
+    // otherwise the connection dropped; leave it (onDone just won't fire)
   }
-  buf += dec.decode();
-  drain();
 }
 
 // --- assistant templates (docs/19 Q2) ---
