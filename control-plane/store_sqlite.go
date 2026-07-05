@@ -654,6 +654,48 @@ func (s *sqliteStore) ListAuditByTenant(ctx context.Context, tenantID string, li
 	return out, rows.Err()
 }
 
+// RecordEgress accumulates egress hits into the (day, host, allowed) bucket
+// (docs/20 M2). Upsert += so repeated batches add up.
+func (s *sqliteStore) RecordEgress(ctx context.Context, day, host string, allowed bool, count int) error {
+	a := 0
+	if allowed {
+		a = 1
+	}
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO egress_daily(day, host, allowed, count)
+		 VALUES(?, ?, ?, ?)
+		 ON CONFLICT(day, host, allowed) DO UPDATE SET count = count + excluded.count`,
+		day, host, a, count)
+	return err
+}
+
+// ListEgress returns the busiest destination hosts on/after sinceDay, each with its
+// would-allow / would-block totals, most-hit first (docs/20 M2).
+func (s *sqliteStore) ListEgress(ctx context.Context, sinceDay string, limit int) ([]EgressStat, error) {
+	if limit <= 0 {
+		limit = 200
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT host,
+		        SUM(CASE WHEN allowed=1 THEN count ELSE 0 END) AS allowed,
+		        SUM(CASE WHEN allowed=0 THEN count ELSE 0 END) AS blocked
+		 FROM egress_daily WHERE day >= ?
+		 GROUP BY host ORDER BY (allowed+blocked) DESC, host ASC LIMIT ?`, sinceDay, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []EgressStat
+	for rows.Next() {
+		var e EgressStat
+		if err := rows.Scan(&e.Host, &e.Allowed, &e.Blocked); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
 // AddUsage accumulates workspace running-seconds into the (membership, day)
 // showback bucket (docs/roadmap.md P3-9). Upsert += so repeated samples add up.
 func (s *sqliteStore) AddUsage(ctx context.Context, membershipID, tenantID, day string, secs int) error {

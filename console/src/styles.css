@@ -6288,6 +6288,31 @@ button.mt-toolrun-head:hover {
   border-color: #8a2b28;
 }
 
+/* Egress observation rows (docs/20 M2): destination host + would-allow/would-block. */
+.adm-egress-row {
+  display: flex;
+  align-items: center;
+  gap: 6px 12px;
+  padding: 6px 4px;
+  border-bottom: 1px solid var(--border2);
+  font-size: 12px;
+  flex-wrap: wrap;
+}
+.adm-egress-row .as-name {
+  flex: 1;
+  max-width: none;
+}
+.egress-allow {
+  flex-shrink: 0;
+  color: #3fb950;
+  font-variant-numeric: tabular-nums;
+}
+.egress-block {
+  flex-shrink: 0;
+  color: #f85149;
+  font-variant-numeric: tabular-nums;
+}
+
 /* member actions */
 .member-actions {
   display: flex;

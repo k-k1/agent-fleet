@@ -63,6 +63,13 @@ type AuditLog struct {
 	ID, TenantID, ActorKind, ActorID, Action, Target, Detail, At string
 }
 
+// EgressStat is one destination host with its would-allow / would-block hit counts
+// aggregated over the queried window (docs/20 M2, log-only egress proxy).
+type EgressStat struct {
+	Host             string
+	Allowed, Blocked int
+}
+
 // UsageRow is one (membership, day) showback bucket enriched with human labels
 // for reporting (docs/roadmap.md P3-9). RunningSecs is accumulated workspace
 // occupancy in seconds. A member with no membership record still surfaces (its
@@ -167,6 +174,12 @@ type Store interface {
 	// to a tenant, or — when tenantID=="" — deployment-wide (super_admin).
 	InsertAudit(ctx context.Context, a AuditLog) error
 	ListAuditByTenant(ctx context.Context, tenantID string, limit int) ([]AuditLog, error)
+
+	// Egress observation aggregation (docs/20 M2, log-only proxy). RecordEgress adds
+	// hits into the (day, host, allowed) bucket; ListEgress returns the busiest hosts
+	// on/after sinceDay (YYYY-MM-DD) with their would-allow / would-block split.
+	RecordEgress(ctx context.Context, day, host string, allowed bool, count int) error
+	ListEgress(ctx context.Context, sinceDay string, limit int) ([]EgressStat, error)
 
 	// Showback usage (docs/roadmap.md P3-9). AddUsage accumulates workspace
 	// running-seconds into the (membership, day) bucket; ListUsage returns the

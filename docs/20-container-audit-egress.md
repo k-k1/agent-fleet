@@ -5,7 +5,14 @@ status: **検討＋M1 実装済**。roadmap の **P3-9 残項目**（「監査�
 
 **実装状況（このブランチ `design/container-audit-egress`）**:
 - **M1 監査・第1段 = 実装済**。write=CP proxy フック（`control-plane/proxy.go` `auditActionTarget` → `InsertAudit`、actor_kind=user、tenant/identity は resolved から）。対象= `fs.upload/mkdir/newfile/rename/delete`・`repo.clone/delete`・`git.commit/discard/checkout/fetch/ff`・`session.create/fork/stop`（成功時のみ、target は URL のみ・body 非読取）。read=`GET /api/admin/audit`（`control-plane/audit.go`、`adminTenantScope` で super_admin=全社/tenant_admin=`?tenant=`、tenant slug + actor email 付与、`ListAuditByTenant` は tenantID="" で全社）。UI=Console admin「監査」タブ（`AdminTab.tsx` `AuditView`）。テスト=`control-plane/audit_test.go`。
-- M2 以降（egress・運用ループ・claude hook・aws・設定化）は未着手。
+- **M2 egress・第1段（log-only）＝実装済（コンテナ配線は既定 OFF）**。
+  - **allowlist ポリシー** `control-plane/egress_policy.go`（exact＋suffix `.example.com`、既定 = Anthropic/git/レジストリ、`AF_EGRESS_ALLOWLIST` で追記）。
+  - **forward proxy** = CP バイナリのサブコマンド `control-plane egress-proxy`（`egress_proxy.go`、CONNECT トンネル＋HTTP 転送、**log-only 既定で遮断しない**、`AF_EGRESS_ENFORCE=1` で遮断、宛先を分類しバッチで CP へ送信）。
+  - **取り込み/集計/監査** `control-plane/egress.go`：`POST /internal/egress`（`AF_EGRESS_TOKEN` bearer、authGate 除外）→ `egress_daily`（migration 0012）に集計、**would-block を audit_log（action=egress.observe）へ日次 dedup で記録**。`GET /api/admin/egress`（super_admin、host 別 allow/block）。
+  - **runtime 配線（既定 OFF）**：`AF_EGRESS_PROXY_ADDR` 設定時のみ main.go が workspace コンテナへ `http_proxy/https_proxy/no_proxy` を注入（runtime.go 無改修）。未設定＝挙動不変。
+  - UI=admin「通信」タブ（`AdminTab.tsx` `EgressView`）。テスト=`control-plane/egress_test.go`（policy／batcher／store／取り込みハンドラ e2e）。proxy の実転送はローカルでスモーク確認済。
+  - **限界（M2）**：属性はデプロイ全体（テナント/ワークスペース単位でない）。env は untrusted が消せるため log-only は観測目的。**enforce・per-tenant 属性・`--internal` 強制・実 HTTPS 宛先での live 検証は M2-enforce/後続**。
+- M3 以降（運用ループ＝policy store／エージェント壁打ち、claude hook、aws Network Firewall、設定化）は未着手。
 
 関連: [reference/security.md](reference/security.md)（脅威モデル §4.3/§4.6/§4.7）、[roadmap.md](roadmap.md) P3-9（`egress 統制` L318 / `監査` L232）、
 [decisions/0006-mcp-unified.md](decisions/0006-mcp-unified.md)（audit_log の由来・MCP 管理面）、[19-assistant-chat.md](19-assistant-chat.md)（エージェント壁打ちの土台）、[decisions/0009-transcript-paging.md](decisions/0009-transcript-paging.md)（transcript）。
