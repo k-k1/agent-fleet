@@ -175,25 +175,36 @@ type graphCommit struct {
 	InBranch bool       `json:"inBranch"`
 }
 
-// parseDecorate turns git's `%D` decoration ("HEAD -> main, origin/main, tag: v1") into
-// structured refs, and returns the current branch name (from "HEAD -> X"), if any.
+// parseDecorate turns git's `%D` decoration into structured refs and returns the
+// current branch name (from "HEAD -> …"), if any. It expects the FULL refname form
+// (--decorate=full): "HEAD -> refs/heads/main, refs/remotes/origin/main, refs/tags/v1".
+// Full names are used because the short form is ambiguous for slash-containing branch
+// names (local "feat/x" vs remote "origin/feat/x"). A short-form fallback is kept so a
+// stray short decoration still classifies sanely.
 func parseDecorate(d string) ([]graphRef, string) {
 	refs := []graphRef{}
 	current := ""
 	for _, tok := range strings.Split(d, ", ") {
 		tok = strings.TrimSpace(tok)
+		// "HEAD -> <ref>" marks the current branch; strip the arrow and classify <ref>.
+		if rest, ok := strings.CutPrefix(tok, "HEAD -> "); ok {
+			current = strings.TrimPrefix(strings.TrimPrefix(rest, "refs/heads/"), "heads/")
+			tok = rest
+		}
 		switch {
 		case tok == "" || tok == "HEAD" || strings.HasSuffix(tok, "/HEAD"):
-			// bare HEAD (detached) or a remote's symbolic HEAD (origin/HEAD) — noise
-		case strings.HasPrefix(tok, "HEAD -> "):
-			name := strings.TrimPrefix(tok, "HEAD -> ")
-			current = name
-			refs = append(refs, graphRef{Name: name, Type: "head"})
-		case strings.HasPrefix(tok, "tag: "):
+			// bare HEAD (detached) or a remote's symbolic HEAD (refs/remotes/origin/HEAD) — noise
+		case strings.HasPrefix(tok, "refs/tags/"):
+			refs = append(refs, graphRef{Name: strings.TrimPrefix(tok, "refs/tags/"), Type: "tag"})
+		case strings.HasPrefix(tok, "tag: "): // short-form fallback
 			refs = append(refs, graphRef{Name: strings.TrimPrefix(tok, "tag: "), Type: "tag"})
-		case strings.Contains(tok, "/"):
+		case strings.HasPrefix(tok, "refs/remotes/"):
+			refs = append(refs, graphRef{Name: strings.TrimPrefix(tok, "refs/remotes/"), Type: "remote"})
+		case strings.HasPrefix(tok, "refs/heads/"):
+			refs = append(refs, graphRef{Name: strings.TrimPrefix(tok, "refs/heads/"), Type: "head"})
+		case strings.Contains(tok, "/"): // short-form fallback: assume a remote-tracking ref
 			refs = append(refs, graphRef{Name: tok, Type: "remote"})
-		default:
+		default: // short-form fallback: a plain name is a local branch
 			refs = append(refs, graphRef{Name: tok, Type: "head"})
 		}
 	}
@@ -213,8 +224,12 @@ func handleRepoGraph(w http.ResponseWriter, r *http.Request) {
 		limit = n
 	}
 	// %H sha, %h short, %P parents(sp), %an author, %cI committer-ISO, %s subject, %D decoration.
+	// --decorate=full so %D emits full refnames (refs/heads/…, refs/remotes/…,
+	// refs/tags/…). The short form is ambiguous for slash-containing branch names — a
+	// local "feat/x" and a remote "origin/feat/x" both just look like "a/b" — which made
+	// parseDecorate misclassify local branches as remotes (no branch-checkout offered).
 	out, err := exec.Command("git", "-C", dir, "log", "--all", "--topo-order", "--date-order",
-		"--max-count="+strconv.Itoa(limit),
+		"--decorate=full", "--max-count="+strconv.Itoa(limit),
 		"--pretty=format:%H%x1f%h%x1f%P%x1f%an%x1f%cI%x1f%s%x1f%D").Output()
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "git_failed", err.Error())
