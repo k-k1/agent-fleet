@@ -87,13 +87,22 @@ func (c *chatConversation) afToolsEnabled() bool {
 // chat — only when the assistant granted af_write (docs/19 Q2 opt-in).
 func (c *chatConversation) afWriteEnabled() bool { return c.Tools == toolsAFWrite }
 
-// personaOf is the system prompt for this conversation: the assistant snapshot's persona,
-// or the generic chat persona for legacy/unset conversations.
+// chatOutputRule is appended to every chat's system prompt. The file/shell tools are hard-
+// disallowed (chatToolLimits), so a write attempt just fails — this steers the model away
+// from even trying (it otherwise tends to "save the result to a file" at the end of a big
+// task, then fail) and to always return the full result as chat text.
+const chatOutputRule = "【出力ルール（厳守）】ファイルの作成・編集・保存やコマンド実行はできません（ツールは無効化されています）。" +
+	"翻訳・要約・回答などの成果物は、長い場合でも省略・分割保存をせず、必ずこの返信の本文にテキストとして全文出力してください。" +
+	"ファイルへ保存しようとしないでください。"
+
+// personaOf is the system prompt for this conversation: the assistant snapshot's persona
+// (or the generic chat persona), always followed by the global output rule.
 func (c *chatConversation) personaOf() string {
+	base := chatPersona
 	if strings.TrimSpace(c.Persona) != "" {
-		return c.Persona
+		base = c.Persona
 	}
-	return chatPersona
+	return base + "\n\n" + chatOutputRule
 }
 
 // knowledgeArgs returns --add-dir flags for each knowledge dir that currently exists.
