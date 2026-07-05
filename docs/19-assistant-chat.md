@@ -65,6 +65,7 @@ Agent: chat.go = 会話ストア(home 内 JSON) + ChatProvider 抽象
 - `GET  /chat/conversations`            会話一覧（メタのみ）
 - `POST /chat/conversations`            作成 `{agent, title?, model?}`
 - `GET  /chat/conversations/{id}`       会話全文
+- `PATCH /chat/conversations/{id}`      表示名変更 `{title}`（一覧のタイトルを後から編集）
 - `POST /chat/conversations/{id}/messages`  送信 `{content}` → user 追記 → プロバイダ実行 → assistant 追記
 - `DELETE /chat/conversations/{id}`     削除
 

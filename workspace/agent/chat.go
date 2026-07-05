@@ -734,6 +734,40 @@ func handleChatGet(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, c)
 }
 
+type chatRenameReq struct {
+	Title string `json:"title"`
+}
+
+// handleChatRename changes a conversation's display title (docs/19): the auto-title from
+// the first message is often not what the user wants once the thread has a topic.
+func handleChatRename(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var req chatRenameReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "bad_request", "invalid body")
+		return
+	}
+	title := strings.TrimSpace(req.Title)
+	if title == "" {
+		writeErr(w, http.StatusBadRequest, "empty", "表示名が空です")
+		return
+	}
+	unlock := lockConv(id) // serialize with an in-flight turn's load-modify-save
+	defer unlock()
+	c, err := loadConv(id)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "not_found", "会話が見つかりません")
+		return
+	}
+	c.Title = title
+	c.UpdatedAt = nowMs()
+	if err := saveConv(c); err != nil {
+		writeErr(w, http.StatusInternalServerError, "chat_save", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, c)
+}
+
 func handleChatDelete(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if !validConvID(id) {
