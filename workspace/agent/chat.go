@@ -61,18 +61,27 @@ type chatConversation struct {
 	// is kept for display/reference; Persona/Tools/Knowledge drive the provider.
 	AssistantID string   `json:"assistant_id,omitempty"`
 	Persona     string   `json:"persona,omitempty"`   // --append-system-prompt (falls back to chatPersona)
-	Tools       string   `json:"tools,omitempty"`     // "none" | "af_read"
+	Tools       string   `json:"tools,omitempty"`     // "none" | "af_read" | "af_write"
 	Knowledge   []string `json:"knowledge,omitempty"` // dirs passed to --add-dir
 }
 
-// afToolsEnabled reports whether the read-only fleet MCP tools attach to this chat.
-// New conversations set Tools; pre-assistant conversations only have AFTools.
+// afToolsEnabled reports whether the fleet MCP tools attach to this chat at all (read
+// or write grant). New conversations set Tools; pre-assistant conversations only have
+// AFTools.
 func (c *chatConversation) afToolsEnabled() bool {
-	if c.Tools != "" {
-		return c.Tools == toolsAFRead
+	switch c.Tools {
+	case toolsAFRead, toolsAFWrite:
+		return true
+	case toolsNone:
+		return false
+	default: // legacy conversations created before assistants had no Tools field
+		return c.AFTools
 	}
-	return c.AFTools
 }
+
+// afWriteEnabled reports whether the write tools (send_to_session …) are exposed to this
+// chat — only when the assistant granted af_write (docs/19 Q2 opt-in).
+func (c *chatConversation) afWriteEnabled() bool { return c.Tools == toolsAFWrite }
 
 // personaOf is the system prompt for this conversation: the assistant snapshot's persona,
 // or the generic chat persona for legacy/unset conversations.
@@ -244,8 +253,14 @@ func envWith(over ...string) []string {
 // chatMCPArgs attaches the local Agent Fleet stdio MCP server (this same binary's
 // `mcp-stdio` subcommand) to a chat's claude, scoped strictly to it (no global/project
 // MCP config leaks in, and it doesn't leak out to the interactive sessions). docs/19 Q1.
-func chatMCPArgs() []string {
-	cfg := fmt.Sprintf(`{"mcpServers":{"af":{"command":%q,"args":["mcp-stdio"]}}}`, agentExe())
+func chatMCPArgs(write bool) []string {
+	serverArgs := `"mcp-stdio"`
+	if write {
+		// Advertise the write tools too (docs/19 Q2). The advertised set is the gate:
+		// an af_read chat's server never lists send_to_session, so the model can't call it.
+		serverArgs = `"mcp-stdio","--write"`
+	}
+	cfg := fmt.Sprintf(`{"mcpServers":{"af":{"command":%q,"args":[%s]}}}`, agentExe(), serverArgs)
 	return []string{"--mcp-config", cfg, "--strict-mcp-config"}
 }
 
@@ -379,7 +394,7 @@ func (claudeChat) send(ctx context.Context, c *chatConversation, prompt string) 
 	}
 	args = append(args, c.knowledgeArgs()...)
 	if c.afToolsEnabled() {
-		args = append(args, chatMCPArgs()...)
+		args = append(args, chatMCPArgs(c.afWriteEnabled())...)
 	}
 	cmd := chatClaudeCmd(ctx, args...)
 	// claude writes .credentials.json via tmp+rename (verified with strace): a refresh
@@ -447,7 +462,7 @@ func (claudeChat) sendStream(ctx context.Context, c *chatConversation, prompt st
 	}
 	args = append(args, c.knowledgeArgs()...)
 	if c.afToolsEnabled() {
-		args = append(args, chatMCPArgs()...)
+		args = append(args, chatMCPArgs(c.afWriteEnabled())...)
 	}
 	cmd := chatClaudeCmd(ctx, args...)
 	defer func() { _, _ = ensureChatClaudeConfig() }() // copy any refreshed token back to shared (see send)

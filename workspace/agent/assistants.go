@@ -26,13 +26,17 @@ import (
 )
 
 // Tool grants an assistant can hold. af_read attaches the local read-only stdio MCP
-// (docs/19 Q1); af_write is reserved for the later opt-in step and not accepted yet.
+// (docs/19 Q1); af_write additionally exposes the write tools (send_to_session …) by
+// starting that MCP server with --write (docs/19 Q2 opt-in).
 const (
-	toolsNone   = "none"
-	toolsAFRead = "af_read"
+	toolsNone    = "none"
+	toolsAFRead  = "af_read"
+	toolsAFWrite = "af_write"
 )
 
-func validToolGrant(t string) bool { return t == toolsNone || t == toolsAFRead }
+func validToolGrant(t string) bool {
+	return t == toolsNone || t == toolsAFRead || t == toolsAFWrite
+}
 
 // assistant is a chat persona template (builtin or user-defined).
 type assistant struct {
