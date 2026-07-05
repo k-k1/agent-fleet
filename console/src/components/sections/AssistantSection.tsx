@@ -27,7 +27,7 @@ import type { Assistant, AssistantInput } from "../../types/assistant.ts";
 // thing that grows and that the user returns to). Picking an assistant opens a draft —
 // nothing is persisted until the first message is sent.
 export default function AssistantSection() {
-  const { openChat, openAssistantDraft, openInNewPane, chatListKey, layout, setActivePane } = useApp();
+  const { openChat, openAssistantDraft, openInNewPane, chatListKey, layout, setActivePane, chatBusy } = useApp();
   // conversation id → panes showing it (ordinal badges), like the Sessions/Repos lists;
   // only when split (nothing to disambiguate with a single pane).
   const multiPane = paneCount(layout) > 1;
@@ -275,6 +275,15 @@ export default function AssistantSection() {
                     <Icon name={a?.icon || "comment"} className="assistant-ic" />
                     <span className="chat-open-title">{c.title}</span>
                     {c.message_count > 0 && <span className="chat-open-meta muted">{c.message_count}</span>}
+                    {chatBusy[c.id] ? (
+                      <span className="session-state working">
+                        <Icon name="loading" spin /> 進行中
+                      </span>
+                    ) : (
+                      <span className="session-state on">
+                        <Icon name="check" /> 待機中
+                      </span>
+                    )}
                   </button>
                   {cPanes?.get(c.id)?.length ? (
                     <span className="session-ords">

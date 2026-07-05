@@ -96,6 +96,8 @@ export interface AppState {
   promoteDraft: (paneId: string, conversationId: string) => void;
   chatListKey: number;
   bumpChatList: () => void;
+  chatBusy: Record<string, boolean>;
+  markChatBusy: (id: string, busy: boolean) => void;
   setPaneWrap: (id: string, wrap: boolean | null) => void;
   // dialogs
   settingsOpen: boolean;

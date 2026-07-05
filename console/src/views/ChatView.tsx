@@ -27,7 +27,7 @@ interface ChatViewProps {
 }
 
 export default function ChatView({ conversationId, draftAssistantId, paneId, active }: ChatViewProps) {
-  const { promoteDraft, bumpChatList } = useApp();
+  const { promoteDraft, bumpChatList, markChatBusy } = useApp();
   const [conv, setConv] = useState<Conversation | null>(null);
   const [draftAsst, setDraftAsst] = useState<Assistant | null>(null); // greeting source in draft mode
   const [input, setInput] = useState("");
@@ -38,6 +38,7 @@ export default function ChatView({ conversationId, draftAssistantId, paneId, act
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const convRef = useRef<Conversation | null>(null); // mirror of conv, to guard reloads
+  const abortRef = useRef<AbortController | null>(null); // aborts the in-flight streaming turn
   const applyConv = (c: Conversation | null) => {
     convRef.current = c;
     setConv(c);
@@ -131,17 +132,31 @@ export default function ChatView({ conversationId, draftAssistantId, paneId, act
     const userMsg: ChatMessage = { role: "user", content: text, ts: Date.now() };
     setConv((c) => (c ? { ...c, messages: [...c.messages, userMsg] } : c));
     setInput("");
-    await chatStream(target.id, text, {
-      onDelta: (t) => setStreamText((s) => s + t),
-      onError: (m) => setError(m),
-      onDone: (updated) => {
-        if (updated) applyConv(updated);
+    const ac = new AbortController();
+    abortRef.current = ac;
+    markChatBusy(target.id, true); // publish 進行中 to the rail
+    await chatStream(
+      target.id,
+      text,
+      {
+        onDelta: (t) => setStreamText((s) => s + t),
+        onError: (m) => setError(m),
+        onDone: (updated) => {
+          if (updated) applyConv(updated);
+        },
       },
-    });
+      ac.signal,
+    );
+    abortRef.current = null;
+    markChatBusy(target.id, false);
     setStreamText("");
     setSending(false);
     bumpChatList(); // a new/updated thread should surface in the rail list
   };
+
+  // Stop the in-flight turn: aborting the fetch cancels the request context up the chain
+  // (CP → Agent), which kills the headless `claude` process (docs/19).
+  const stop = () => abortRef.current?.abort();
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -156,6 +171,10 @@ export default function ChatView({ conversationId, draftAssistantId, paneId, act
   const title = conv?.title || draftAsst?.name || "チャット";
   const isDraft = !conversationId && !!draftAssistantId;
   const empty = (!conv || conv.messages.length === 0) && !loadError;
+  // Status chip like the Sessions list / MirrorView header: 進行中 while streaming, else 待機中.
+  const stateChip = sending
+    ? { cls: "working", icon: "loading", spin: true, text: "進行中" }
+    : { cls: "on", icon: "check", text: "待機中" };
 
   return (
     <div className="chatview">
@@ -164,6 +183,11 @@ export default function ChatView({ conversationId, draftAssistantId, paneId, act
           <Icon name={draftAsst?.icon || "comment-discussion"} /> {title}
         </span>
         {agent && <span className={"kind-tag kind-" + kindClass(agentKind!)}>{agent.assistantName}</span>}
+        {(conv || sending) && (
+          <span className={"session-state " + stateChip.cls}>
+            <Icon name={stateChip.icon} spin={stateChip.spin} /> {stateChip.text}
+          </span>
+        )}
       </header>
       <div className="chat-scroll" ref={scrollRef}>
         {loadError && (
@@ -239,15 +263,21 @@ export default function ChatView({ conversationId, draftAssistantId, paneId, act
           onKeyDown={onKeyDown}
           rows={2}
         />
-        <button
-          type="button"
-          className="btn chat-send"
-          disabled={(!conv && !isDraft) || sending || !input.trim()}
-          onClick={() => void send()}
-          title="送信"
-        >
-          <Icon name="send" />
-        </button>
+        {sending ? (
+          <button type="button" className="btn chat-send chat-stop" onClick={stop} title="停止">
+            <Icon name="debug-stop" />
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="btn chat-send"
+            disabled={(!conv && !isDraft) || !input.trim()}
+            onClick={() => void send()}
+            title="送信"
+          >
+            <Icon name="send" />
+          </button>
+        )}
       </div>
     </div>
   );
