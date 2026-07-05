@@ -145,6 +145,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (patch.kind === "commit") return pane.scmRepo === patch.scmRepo && pane.commitSha === patch.commitSha;
     if (patch.kind === "doc") return pane.docTitle === patch.docTitle;
     if (patch.kind === "diff") return pane.docTitle === patch.docTitle && pane.diffEdits === patch.diffEdits;
+    if (patch.kind === "chat") {
+      // A conversation is identified by its id; a not-yet-created draft by its assistant.
+      // Lets ctrl/middle-click "open in a split" focus an existing chat/draft instead of
+      // duplicating it (docs/19).
+      if (patch.conversationId) return pane.conversationId === patch.conversationId;
+      if (patch.draftAssistantId) return pane.draftAssistantId === patch.draftAssistantId;
+      return false;
+    }
     return false;
   };
 
