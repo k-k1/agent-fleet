@@ -44,7 +44,7 @@ interface View {
 // the member's session list, served by the per-member admin endpoints.
 
 // GiB with adaptive precision (shared fmtGiB) plus AdminTab's "G" suffix.
-const ADMIN_MODES = ["manage", "sessions", "usage", "audit"]; // swipe order for the mode tabs
+const ADMIN_MODES = ["manage", "sessions", "usage", "audit", "egress"]; // swipe order for the mode tabs
 const fmtG = (b: number) => fmtGiB(b) + "G";
 const fmtPct = (n: number | null | undefined) => (n == null ? "–" : Math.round(n) + "%");
 
@@ -153,11 +153,15 @@ export default function AdminTab() {
         <button type="button" className={"seg-btn" + (mode === "audit" ? " active" : "")} onClick={() => setMode("audit")}>
           <Icon name="history" /> 監査
         </button>
+        <button type="button" className={"seg-btn" + (mode === "egress" ? " active" : "")} onClick={() => setMode("egress")}>
+          <Icon name="globe" /> 通信
+        </button>
       </div>
 
       {mode === "sessions" && <AllSessionsView tenants={tenants} isSuper={isSuper} />}
       {mode === "usage" && <UsageView tenants={tenants} isSuper={isSuper} />}
       {mode === "audit" && <AuditView tenants={tenants} isSuper={isSuper} />}
+      {mode === "egress" && <EgressView />}
 
       {mode === "manage" && (
       <>
@@ -447,6 +451,79 @@ function AuditView({ tenants, isSuper }: { tenants: Tenant[]; isSuper: boolean }
                 <span className="asx-user mono" title={a.actor_id}>{a.actor_email || a.actor_kind}</span>
                 <span className="as-name mono" title={a.target}>{a.target}</span>
                 {isSuper && <span className="as-repo muted">{a.tenant}</span>}
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+// --- Egress observations (docs/20 M2) ---------------------------------------
+// Deployment-wide destination stats from the log-only forward proxy: each host with
+// its would-allow / would-block hit counts. Reads GET /api/admin/egress (super_admin
+// only). "blocked" is a would-block — M2 is log-only and enforces nothing yet.
+
+function EgressView() {
+  const [rows, setRows] = useState<any[] | null>(null);
+  const [err, setErr] = useState("");
+  const [logOnly, setLogOnly] = useState(true);
+  const [days, setDays] = useState(7);
+
+  const load = useCallback(async () => {
+    setRows(null);
+    setErr("");
+    try {
+      const d = await api("api/admin/egress?days=" + days);
+      if (d?.error) {
+        setErr(errText(d.error));
+        setRows([]);
+        return;
+      }
+      setRows(d.egress || []);
+      setLogOnly(!!d.log_only);
+    } catch {
+      setErr("読み込めません");
+      setRows([]);
+    }
+  }, [days]);
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  return (
+    <div className="admin-stage egress-view">
+      <section className="admin-panel">
+        <div className="usage-toolbar">
+          <label>
+            期間
+            <select value={days} onChange={(e) => setDays(Number(e.target.value))}>
+              <option value={1}>1日</option>
+              <option value={7}>7日</option>
+              <option value={30}>30日</option>
+            </select>
+          </label>
+          <button type="button" className="ghost" title="更新" onClick={load}>
+            <Icon name="refresh" />
+          </button>
+          {logOnly && <span className="as-count muted">log-only（遮断はしていません）</span>}
+        </div>
+        {err && <p className="form-err">{err}</p>}
+      </section>
+
+      <section className="admin-panel">
+        {rows === null ? (
+          <p className="muted">読み込み中…</p>
+        ) : rows.length === 0 ? (
+          <p className="muted">記録がありません（egress プロキシ未設定か、対象期間に通信なし）。</p>
+        ) : (
+          <div className="adm-egress">
+            {rows.map((e: any) => (
+              <div key={e.host} className="adm-egress-row">
+                <span className="as-name mono" title={e.host}>{e.host}</span>
+                <span className="egress-allow">{e.allowed} 許可</span>
+                {e.blocked > 0 && <span className="egress-block">{e.blocked} 遮断候補</span>}
               </div>
             ))}
           </div>

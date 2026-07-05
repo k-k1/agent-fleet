@@ -35,9 +35,21 @@ type config struct {
 	allowDomains       map[string]bool // allowed email domains (lowercased, no leading @)
 	allowEmailsFile    string          // emails.txt-style allowlist, read live per callback
 	autostart          bool            // P3-9: on-demand start of a stopped workspace on intentful access
+	// Egress observation (docs/20 M2, log-only). egressToken authenticates the
+	// forward proxy's POST /internal/egress; egressDedup collapses would-block audit
+	// rows to one per (day, host). Both empty/nil unless egress is configured.
+	egressToken string
+	egressDedup *egressAuditDedup
 }
 
 func main() {
+	// Subcommand: `control-plane egress-proxy` runs the log-only forward proxy
+	// (docs/20 M2) instead of the CP server, reusing this same image/binary.
+	if len(os.Args) > 1 && os.Args[1] == "egress-proxy" {
+		runEgressProxy()
+		return
+	}
+
 	portBase, _ := strconv.Atoi(envOr("WS_AGENT_PORT", "7700"))
 	mgr := &manager{
 		rts:         map[string]cachedRT{},
@@ -96,6 +108,19 @@ func main() {
 		log.Printf("backfill warning: %v", err)
 	}
 
+	// docs/20 M2 (egress, log-only): when a forward-proxy address is configured, route
+	// every workspace container's HTTP(S) egress through it by injecting proxy env.
+	// DEFAULT OFF — nothing changes unless AF_EGRESS_PROXY_ADDR is set. Must run BEFORE
+	// the runtime factory below, which snapshots mgr.extraEnv by value. Attribution is
+	// coarse in this first cut (shared env, no per-workspace identity; docs/20 §D.3).
+	if addr := os.Getenv("AF_EGRESS_PROXY_ADDR"); addr != "" {
+		pu := "http://" + addr
+		mgr.extraEnv = append(mgr.extraEnv,
+			"http_proxy="+pu, "https_proxy="+pu, "HTTP_PROXY="+pu, "HTTPS_PROXY="+pu,
+			"no_proxy=localhost,127.0.0.1,::1", "NO_PROXY=localhost,127.0.0.1,::1")
+		log.Printf("egress: routing workspace egress through proxy %s (log-only)", addr)
+	}
+
 	// Runtime port adapter (docs/09, P3-7): pick the deployment profile. Default
 	// "local" (Docker Engine / compose, the on-prem target); "ecs" selects the AWS
 	// adapter. Built here — after extraEnv/store/defaultTenantID are finalized —
@@ -127,6 +152,9 @@ func main() {
 		// P3-9 auto-start (scale-to-zero counterpart): default on; AF_AUTOSTART=0
 		// disables it so a stopped workspace only starts on an explicit start click.
 		autostart: envBool("AF_AUTOSTART", true),
+		// docs/20 M2 egress ingestion auth + audit dedup (empty token => endpoint 401s).
+		egressToken: os.Getenv("AF_EGRESS_TOKEN"),
+		egressDedup: &egressAuditDedup{},
 	}
 
 	// P3-9 idle-stop (docs/19): a background reaper halts idle claude sessions
@@ -181,6 +209,8 @@ func main() {
 	mux.HandleFunc("GET /api/admin/usage", cfg.handleAdminUsage)                       // showback: occupancy per tenant/member (json|csv)
 	mux.HandleFunc("GET /api/admin/sessions", cfg.handleAdminAllSessions)              // deployment-wide session overview (super_admin / tenant_admin)
 	mux.HandleFunc("GET /api/admin/audit", cfg.handleAdminAudit)                       // audit log ledger (super_admin / tenant_admin, docs/20 M1)
+	mux.HandleFunc("GET /api/admin/egress", cfg.handleAdminEgress)                     // egress observation stats (super_admin, docs/20 M2)
+	mux.HandleFunc("POST /internal/egress", cfg.handleEgressIngest)                    // egress proxy -> CP ingestion (AF_EGRESS_TOKEN, docs/20 M2)
 
 	// Personal Access Tokens (Console-issued) for the MCP endpoint (docs/0006).
 	mux.HandleFunc("GET /api/pat", cfg.handlePATList)

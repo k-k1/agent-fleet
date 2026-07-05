@@ -306,6 +306,8 @@ func isAuthExempt(p string) bool {
 		return true
 	case p == "/mcp" || strings.HasPrefix(p, "/mcp/"):
 		return true
+	case strings.HasPrefix(p, "/internal/"):
+		return true // deployment-internal (e.g. egress ingestion); Bearer-token auth
 	case strings.HasPrefix(p, "/brand/"):
 		return true
 	case p == "/agent-fleet" || strings.HasPrefix(p, "/agent-fleet/"):
