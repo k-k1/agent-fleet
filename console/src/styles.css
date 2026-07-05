@@ -102,6 +102,11 @@ body,
 #root {
   height: 100%;
   margin: 0;
+  /* Suppress the mobile browser's pull-to-refresh (swipe-down at the top reloads the
+     page). `contain` stops overscroll from chaining up to the viewport, which is what
+     triggers the reload — while leaving horizontal back/forward swipe gestures alone
+     (unlike `none`). The app-shell scrolls in inner containers, not the document. */
+  overscroll-behavior-y: contain;
 }
 body {
   font: 14px/1.5 system-ui, sans-serif;
