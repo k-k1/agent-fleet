@@ -90,6 +90,7 @@ export default function FilesSection() {
   const [open, setOpen] = useState<Set<string>>(() => new Set()); // expanded dir paths
   const [cache, setCache] = useState<Record<string, Entry[]>>({}); // dir path -> entries
   const [selected, setSelected] = useState<string | null>(null); // path
+  const [browseRoot, setBrowseRoot] = useState(""); // absolute browse root (home), for "絶対パスをコピー"
   const [reloadKey, setReloadKey] = useState(0);
   const [view, setView] = useState(() => localStorage.getItem("af-files-view") || "tree"); // tree | changes
   const [changes, setChanges] = useState<FsChange[] | null>(null); // changes-mode: aggregated git status
@@ -307,6 +308,23 @@ export default function FilesSection() {
     fn();
   };
 
+  // Copy text to the clipboard with a toast; label names what was copied. Used by the
+  // context-menu "名前をコピー / パスをコピー" items. navigator.clipboard needs a secure
+  // context — fall back to a toast so a click never silently no-ops.
+  const copyText = useCallback(
+    (text: string, label: string) => {
+      if (navigator.clipboard?.writeText) {
+        navigator.clipboard.writeText(text).then(
+          () => toast(`${label}をコピーしました`),
+          () => toast("コピーに失敗しました"),
+        );
+      } else {
+        toast("コピーに失敗しました");
+      }
+    },
+    [toast],
+  );
+
   // Assistant submenu (docs/19 Phase C): fetch the assistant list once so a right-click
   // can hand the file/dir to an assistant. Failure just leaves the submenu empty.
   useEffect(() => {
@@ -363,6 +381,7 @@ export default function FilesSection() {
       if (!alive) return;
       const rootEntries = r.entries || [];
       setRoot(rootEntries);
+      if (r.root) setBrowseRoot(r.root);
       // Refetch each open dir so the refresh reflects server state while keeping
       // it expanded. A dir that vanished returns no entries and just won't render.
       const fresh: Record<string, Entry[]> = {};
@@ -860,6 +879,25 @@ export default function FilesSection() {
                   ))}
                 </ul>
               )}
+            </li>
+          )}
+          {menu.row && (
+            <li onClick={() => runMenu(() => copyText(menu.row!.path.split("/").pop() || "", "名前"))}>
+              名前をコピー
+            </li>
+          )}
+          {menu.row && (
+            <li onClick={() => runMenu(() => copyText(menu.row!.path, "相対パス"))}>
+              相対パスをコピー
+            </li>
+          )}
+          {menu.row && (
+            <li
+              onClick={() =>
+                runMenu(() => copyText(browseRoot ? browseRoot + "/" + menu.row!.path : menu.row!.path, "絶対パス"))
+              }
+            >
+              絶対パスをコピー
             </li>
           )}
           {menu.row && menu.row.type === "file" && (

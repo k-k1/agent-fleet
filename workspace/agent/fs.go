@@ -109,7 +109,9 @@ func handleFSTree(w http.ResponseWriter, r *http.Request) {
 		}
 		return out[i].Name < out[j].Name
 	})
-	writeJSON(w, http.StatusOK, map[string]any{"path": rel, "entries": out})
+	// root: the absolute browse root, so the Console can build an absolute path for a
+	// row ("パスをコピー"). It's the same for every entry, so it rides on the response.
+	writeJSON(w, http.StatusOK, map[string]any{"path": rel, "entries": out, "root": browseRoot()})
 }
 
 func handleFSFile(w http.ResponseWriter, r *http.Request) {
