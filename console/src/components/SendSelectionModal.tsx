@@ -4,8 +4,10 @@ import Modal from "./Modal.jsx";
 import { useApp } from "../state.jsx";
 import { useToast } from "./ToastProvider.jsx";
 import { apiJSON, chatCreate, assistantList, errText } from "../api.js";
-import { displayName } from "../lib/sessionview.js";
+import { displayName, stateInfo } from "../lib/sessionview.js";
+import { agentOf } from "../agents/registry.ts";
 import { baseName, langFor } from "../lib/filemeta.js";
+import type { Session } from "../types/session.ts";
 import type { Assistant } from "../types/assistant.ts";
 
 // SendSelectionModal quotes a selected range of a code/source file and sends it — with
@@ -34,14 +36,28 @@ export default function SendSelectionModal({ filePath, quote, startLine, endLine
       .catch(() => {});
   }, []);
 
-  // Default target: a running session if any, else the first assistant.
+  // The repo the file lives in (repos/<repo>/…), used to prefer a session in it.
+  const fileRepo = filePath.startsWith("repos/") ? filePath.split("/")[1] : null;
+  // "入力待ち": an alive coding-agent session that's idle (not working/question/…) — the
+  // best target since it picks the instruction up immediately (see sessionview stateInfo).
+  const isWaiting = (s: Session) =>
+    !!s.alive && agentOf(s.kind).caps.chat && (!s.state || s.state === "idle");
+  // Rank alive sessions: same repo first, then 入力待ち. Used for both the default
+  // selection and the option order.
+  const rank = (s: Session) => (fileRepo && s.repo === fileRepo ? 2 : 0) + (isWaiting(s) ? 1 : 0);
+  const sortedSessions = useMemo(
+    () => sessions.slice().sort((a, b) => rank(b) - rank(a)),
+    [sessions, fileRepo],
+  );
+
+  // Default target: the highest-ranked alive session (same-repo / 入力待ち優先), else the
+  // first session, else the first assistant.
   useEffect(() => {
     if (target) return;
-    const live = sessions.find((s) => s.alive);
-    if (live) setTarget(`session:${live.name}`);
-    else if (sessions[0]) setTarget(`session:${sessions[0].name}`);
+    const best = sortedSessions.find((s) => s.alive) || sortedSessions[0];
+    if (best) setTarget(`session:${best.name}`);
     else if (assistants[0]) setTarget(`assistant:${assistants[0].id}`);
-  }, [sessions, assistants, target]);
+  }, [sortedSessions, assistants, target]);
 
   const loc = startLine === endLine ? `L${startLine}` : `L${startLine}–L${endLine}`;
   const composed = useMemo(() => {
@@ -91,11 +107,12 @@ export default function SendSelectionModal({ filePath, quote, startLine, endLine
           <div className="field-label">送信先</div>
           <label className="pick-field">
             <select value={target} onChange={(e) => setTarget(e.target.value)}>
-              {sessions.length > 0 && (
+              {sortedSessions.length > 0 && (
                 <optgroup label="セッション（直接送信）">
-                  {sessions.map((s) => (
+                  {sortedSessions.map((s) => (
                     <option key={s.name} value={`session:${s.name}`}>
-                      {displayName(s)}（{s.name}{s.alive ? "" : "・停止中"}）
+                      {displayName(s)}（{s.name}・{stateInfo(s).text}
+                      {fileRepo && s.repo === fileRepo ? "・同レポ" : ""}）
                     </option>
                   ))}
                 </optgroup>
@@ -125,8 +142,15 @@ export default function SendSelectionModal({ filePath, quote, startLine, endLine
               className="assistant-persona"
               value={comment}
               onChange={(e) => setComment(e.target.value)}
+              onKeyDown={(e) => {
+                // Ctrl/⌘+Enter submits (Enter alone keeps making newlines in the comment).
+                if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+                  e.preventDefault();
+                  e.currentTarget.form?.requestSubmit();
+                }
+              }}
               rows={3}
-              placeholder="例: この場面、テンポを上げて。/ この関数の境界条件を直して。"
+              placeholder="例: この場面、テンポを上げて。/ この関数の境界条件を直して。（Ctrl+Enter で送信）"
               autoFocus
             />
           </label>
