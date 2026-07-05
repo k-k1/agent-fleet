@@ -130,8 +130,10 @@ CP `mcp.go`（外部/PAT/admin・別モジュール）と Agent `mcp_stdio.go`�
 単一ペルソナでなく、**アシスタントを設定可能なエンティティ**にする（カスタム GPT 的）:
 - **Assistant** = {id, name, icon?, builtin, agent(claude/codex), model?, persona(system prompt),
   tools(af_read / af_write / none), knowledge?(USAGE 等 doc を --add-dir で読ませる)}。
-- **常設ビルトイン**: 「Agent Fleet アシスタント」(削除不可、persona=使い方案内, tools=af_read,
-  knowledge=利用者向け USAGE)。汎用/翻訳ビルトインも可。
+- **常設ビルトイン**（5種）: ①「Agent Fleet アシスタント」(af_read, 案内役・観測役, USAGE知識)
+  ②「フリート・オペレーター」(af_write, 司令塔＝セッションに send_to_session で指示を出す実行役)
+  ③「整合性チェッカー」(tools=none, 添付対象の食い違い/乖離/表記ゆれ/設定矛盾を列挙、dev/docs/小説横断)
+  ④「汎用」⑤「翻訳」。①と②の差は read/write のみ＝既定を書き込み化せず分離（af_write は明示 opt-in 原則）。
 - **ユーザー定義**: 名前＋persona＋model＋ツール許可を作成/編集（`~/.config/agent-fleet/assistants/<id>.json`、
   ビルトインはコードで注入してマージ）。**書き込みツール(af_write=send_to_session 等)は各アシスタントで
   ユーザーが明示 opt-in** した時だけ `mcp_stdio` に公開/`--allowedTools` 許可。
