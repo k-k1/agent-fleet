@@ -6249,6 +6249,45 @@ button.mt-toolrun-head:hover {
   font-size: 11px;
 }
 
+/* Audit log rows (docs/20 M1): one change operation per line, action badge colored
+   by category (fs / git / session / egress). */
+.adm-audit-row {
+  display: flex;
+  align-items: center;
+  gap: 6px 10px;
+  padding: 6px 4px;
+  border-bottom: 1px solid var(--border2);
+  font-size: 12px;
+  flex-wrap: wrap;
+}
+.audit-action {
+  flex-shrink: 0;
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--border2);
+  color: var(--muted);
+  white-space: nowrap;
+}
+.audit-action.cat-fs {
+  color: #4a9eff;
+  border-color: #2b5c8a;
+}
+.audit-action.cat-git,
+.audit-action.cat-repo {
+  color: #d08a2e;
+  border-color: #7a5320;
+}
+.audit-action.cat-session {
+  color: #3fb950;
+  border-color: #256a30;
+}
+.audit-action.cat-egress {
+  color: #f85149;
+  border-color: #8a2b28;
+}
+
 /* member actions */
 .member-actions {
   display: flex;

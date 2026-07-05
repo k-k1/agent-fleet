@@ -162,8 +162,9 @@ type Store interface {
 	RevokePAT(ctx context.Context, id, identityID string) error
 	TouchPAT(ctx context.Context, id string) error
 
-	// Audit log (docs/decisions/0006, P3-6). InsertAudit records one action;
-	// ListAuditByTenant serves the most recent entries (newest first) for a tenant.
+	// Audit log (docs/decisions/0006, P3-6; docs/20 M1). InsertAudit records one
+	// action; ListAuditByTenant serves the most recent entries (newest first) scoped
+	// to a tenant, or — when tenantID=="" — deployment-wide (super_admin).
 	InsertAudit(ctx context.Context, a AuditLog) error
 	ListAuditByTenant(ctx context.Context, tenantID string, limit int) ([]AuditLog, error)
 

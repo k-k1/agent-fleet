@@ -1,7 +1,11 @@
 # 20. コンテナ内操作の監査ログ & 外部通信制御（egress 統制）— 設計検討
 
-status: **検討（未決定・未実装）**。roadmap の **P3-9 残項目**（「監査」「egress 統制」）の設計を詰めるためのドキュメント。
-実装に入る前の意思決定材料。確定した契約は `reference/`、採否記録は `decisions/` へ落とす。
+status: **検討＋M1 実装済**。roadmap の **P3-9 残項目**（「監査」「egress 統制」）の設計。M2 以降は未着手。
+確定した契約は `reference/`、採否記録は `decisions/` へ落とす。
+
+**実装状況（このブランチ `design/container-audit-egress`）**:
+- **M1 監査・第1段 = 実装済**。write=CP proxy フック（`control-plane/proxy.go` `auditActionTarget` → `InsertAudit`、actor_kind=user、tenant/identity は resolved から）。対象= `fs.upload/mkdir/newfile/rename/delete`・`repo.clone/delete`・`git.commit/discard/checkout/fetch/ff`・`session.create/fork/stop`（成功時のみ、target は URL のみ・body 非読取）。read=`GET /api/admin/audit`（`control-plane/audit.go`、`adminTenantScope` で super_admin=全社/tenant_admin=`?tenant=`、tenant slug + actor email 付与、`ListAuditByTenant` は tenantID="" で全社）。UI=Console admin「監査」タブ（`AdminTab.tsx` `AuditView`）。テスト=`control-plane/audit_test.go`。
+- M2 以降（egress・運用ループ・claude hook・aws・設定化）は未着手。
 
 関連: [reference/security.md](reference/security.md)（脅威モデル §4.3/§4.6/§4.7）、[roadmap.md](roadmap.md) P3-9（`egress 統制` L318 / `監査` L232）、
 [decisions/0006-mcp-unified.md](decisions/0006-mcp-unified.md)（audit_log の由来・MCP 管理面）、[19-assistant-chat.md](19-assistant-chat.md)（エージェント壁打ちの土台）、[decisions/0009-transcript-paging.md](decisions/0009-transcript-paging.md)（transcript）。

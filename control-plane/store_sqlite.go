@@ -627,9 +627,17 @@ func (s *sqliteStore) ListAuditByTenant(ctx context.Context, tenantID string, li
 	if limit <= 0 {
 		limit = 100
 	}
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, tenant_id, actor_kind, actor_id, action, target, detail, at
-		 FROM audit_log WHERE tenant_id=? ORDER BY at DESC, id DESC LIMIT ?`, tenantID, limit)
+	// tenantID=="" spans every tenant (super_admin, deployment-wide view); a set
+	// tenantID scopes to that tenant only.
+	q := `SELECT id, tenant_id, actor_kind, actor_id, action, target, detail, at FROM audit_log`
+	args := []any{}
+	if tenantID != "" {
+		q += ` WHERE tenant_id=?`
+		args = append(args, tenantID)
+	}
+	q += ` ORDER BY at DESC, id DESC LIMIT ?`
+	args = append(args, limit)
+	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}
