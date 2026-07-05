@@ -790,7 +790,8 @@ button.wu-reload {
    flex item. While a menu is open, lift the whole section into its own stacking
    context above the following ones so the dropdown shows over them. */
 .pane-section:has(.launch-menu),
-.pane-section:has(.session-menu) {
+.pane-section:has(.session-menu),
+.pane-section:has(.assistant-picker) {
   position: relative;
   z-index: 10;
 }
