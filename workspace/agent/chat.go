@@ -277,7 +277,8 @@ func envWith(over ...string) []string {
 // approval prompts, not deny rules). Read/Glob/Grep/WebFetch and the MCP af tools remain.
 func chatToolLimits() []string {
 	return []string{"--disallowedTools",
-		"Agent", "Task", "Workflow", "Bash", "Edit", "Write", "NotebookEdit"}
+		"Agent", "Task", "Workflow",
+		"Bash", "Edit", "Write", "MultiEdit", "NotebookEdit"}
 }
 
 // chatMCPArgs attaches the local Agent Fleet stdio MCP server (this same binary's
