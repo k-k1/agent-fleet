@@ -3415,6 +3415,9 @@ button.mt-toolrun-head:hover {
 .mq-answer {
   margin-top: 6px;
   font-size: 12px;
+  /* Free-text answers can be multi-line — keep the line breaks the user typed. */
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 .mq-page {
   font-size: 11px;
@@ -3467,6 +3470,8 @@ button.mt-toolrun-head:hover {
   color: var(--fg);
   font: inherit;
   font-size: 12px;
+  resize: vertical;
+  line-height: 1.4;
 }
 .mq-freetext:focus {
   outline: none;
@@ -4051,7 +4056,8 @@ button.mt-toolrun-head:hover {
 }
 .codeview {
   flex: 1;
-  display: flex;
+  min-width: 0;
+  display: block;
   overflow: auto;
   background: transparent; /* inherit the .fileview tint (--viewer-bg) */
 }
@@ -4104,65 +4110,76 @@ button.mt-toolrun-head:hover {
   border-bottom: 1px solid rgba(150, 185, 215, 0.35);
   pointer-events: none;
 }
-/* sticky gutter container: optional change bar + line numbers, pinned together
-   while the code scrolls horizontally. */
-.codeview .gutterwrap {
-  position: sticky;
-  left: 0;
-  display: flex;
-  align-items: stretch;
-  background: var(--panel2);
-  border-right: 1px solid var(--border2);
-  user-select: none;
-}
-.codeview .gutter {
-  margin: 0;
-  padding: 8px 8px 8px 10px;
-  text-align: right;
-  color: #5a5a5a;
-  white-space: pre;
-  font-family: var(--viewer-font, var(--mono));
-  font-size: var(--viewer-size, 12px);
-  line-height: 1.55;
-}
-/* change bar: one block per line, same metrics as the gutter so cells align. */
-.codeview .changebar {
-  margin: 0;
-  padding: 8px 0 8px 0;
-  font-size: var(--viewer-size, 12px);
-  line-height: 1.55;
-  width: 3px;
-}
-.codeview .changebar .cb {
-  display: block;
-  height: 1.55em;
-}
-.codeview .changebar .cb-add {
-  background: #2ea043;
-}
-.codeview .changebar .cb-mod {
-  background: #1f6feb;
-}
-/* a deletion between lines: a small wedge at the top edge of the line. */
-.codeview .changebar .cb-del {
-  box-shadow: 0 -2px 0 -0.5px #f85149;
-}
-.codeview .code {
-  margin: 0;
-  padding: 8px 14px;
-  white-space: pre;
+/* One CSS-grid row per logical line: [line-number gutter | code]. Because both cells
+   share a row, a soft-wrapped code cell grows the row and its line number (top-aligned
+   in the sticky first column) grows with it — fixing the gutter drift that happened when
+   wrap made a code line taller than its fixed-height number. */
+.codegrid {
+  display: grid;
+  grid-template-columns: auto max-content; /* code column sizes to the widest line */
+  align-content: start;
+  padding: 8px 0;
   font-family: var(--viewer-font, var(--mono));
   font-size: var(--viewer-size, 12px);
   line-height: 1.55;
   tab-size: var(--viewer-tab, 4);
 }
-.codeview.wrap .code {
+.codegrid.no-gutter {
+  grid-template-columns: max-content;
+}
+/* wrap on: the code column fills the remaining width and soft-wraps instead of
+   scrolling horizontally. */
+.codeview.wrap .codegrid {
+  grid-template-columns: auto minmax(0, 1fr);
+}
+.codeview.wrap .codegrid.no-gutter {
+  grid-template-columns: minmax(0, 1fr);
+}
+/* a row is display:contents so its two children land directly in the grid tracks. */
+.codegrid .cl-row {
+  display: contents;
+}
+/* line-number cell: sticky so it stays pinned while the code scrolls horizontally. */
+.codegrid .cl-gutter {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  text-align: right;
+  color: #5a5a5a;
+  background: var(--panel2);
+  border-right: 1px solid var(--border2);
+  padding: 0 8px 0 10px;
+  min-height: 1.55em;
+  white-space: pre;
+  user-select: none;
+}
+.codegrid .cl-code {
+  padding: 0 14px;
+  min-height: 1.55em; /* keep blank lines one row tall so numbers stay aligned */
+  white-space: pre;
+  color: var(--hl-fg);
+  background: transparent;
+}
+.codeview.wrap .codegrid .cl-code {
   white-space: pre-wrap;
   word-break: break-word;
 }
-.codeview .code .hljs {
-  background: transparent;
-  padding: 0;
+/* change bar folded into the gutter cell's left edge (aligns in wrap mode too). */
+.codegrid .cl-gutter.cb-add {
+  box-shadow: inset 3px 0 0 #2ea043;
+}
+.codegrid .cl-gutter.cb-mod {
+  box-shadow: inset 3px 0 0 #1f6feb;
+}
+/* a deletion between lines: a small wedge at the top edge of the line. */
+.codegrid .cl-gutter.cb-del {
+  box-shadow: inset 0 2px 0 -0.5px #f85149;
+}
+.codegrid .cl-gutter.cb-add.cb-del {
+  box-shadow: inset 3px 0 0 #2ea043, inset 0 2px 0 -0.5px #f85149;
+}
+.codegrid .cl-gutter.cb-mod.cb-del {
+  box-shadow: inset 3px 0 0 #1f6feb, inset 0 2px 0 -0.5px #f85149;
 }
 
 /* highlight.js token colors — themed via --hl-* (see :root). Mirrors the GitHub

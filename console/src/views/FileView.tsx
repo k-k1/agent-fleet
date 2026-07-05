@@ -17,22 +17,34 @@ import ImageView from "./ImageView.jsx";
 import SendSelectionModal from "../components/SendSelectionModal.jsx";
 
 // lineRangeOfSelection derives the 1-based line range + text of the current selection
-// within a code element, by measuring how many newlines precede the selection start.
-// Wrap- and highlight-agnostic (it counts text, not DOM lines). Returns null if the
-// selection is empty or not inside codeEl.
-function lineRangeOfSelection(codeEl: Element): { quote: string; startLine: number; endLine: number } | null {
+// within the code grid. Each code cell carries data-ln (its 1-based logical line), so
+// the selection's endpoints map to line numbers by walking up to their cell — wrap- and
+// highlight-agnostic (it reads data-ln, not DOM text lines). Returns null if the
+// selection is empty or not inside root.
+function lineRangeOfSelection(root: Element): { quote: string; startLine: number; endLine: number } | null {
   const sel = window.getSelection();
   if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return null;
   const range = sel.getRangeAt(0);
-  if (!codeEl.contains(range.startContainer) || !codeEl.contains(range.endContainer)) return null;
+  if (!root.contains(range.startContainer) || !root.contains(range.endContainer)) return null;
   const quote = range.toString();
   if (!quote.trim()) return null;
-  const pre = document.createRange();
-  pre.selectNodeContents(codeEl);
-  pre.setEnd(range.startContainer, range.startOffset);
-  const startLine = pre.toString().split("\n").length;
-  const endLine = startLine + Math.max(0, quote.split("\n").length - 1);
-  return { quote, startLine, endLine };
+  let a = lineNoOf(range.startContainer, root);
+  let b = lineNoOf(range.endContainer, root);
+  a = a ?? b;
+  b = b ?? a;
+  if (a == null || b == null) return null;
+  return { quote, startLine: Math.min(a, b), endLine: Math.max(a, b) };
+}
+
+// Walk up from a selection endpoint to the nearest code cell and read its 1-based line
+// number (data-ln). Returns null if the node isn't inside a code cell.
+function lineNoOf(node: Node, root: Element): number | null {
+  let el: HTMLElement | null = node.nodeType === Node.TEXT_NODE ? node.parentElement : (node as HTMLElement);
+  while (el && el !== root) {
+    if (el.dataset && el.dataset.ln) return parseInt(el.dataset.ln, 10);
+    el = el.parentElement;
+  }
+  return null;
 }
 
 // FileView shows a single file (read-only) with CodeLeaf-style affordances: an info
@@ -130,7 +142,7 @@ export default function FileView({ filePath: filePathProp, wrap }: FileViewProps
   // the selection. Scoped to CodeView because it queries that view's <code> element
   // (absent in md-preview / slides / image), so it stays inert elsewhere.
   const captureSelection = () => {
-    const codeEl = bodyRef.current?.querySelector(".codeview pre.code code.hljs");
+    const codeEl = bodyRef.current?.querySelector(".codeview .codegrid");
     if (!codeEl) return;
     const r = lineRangeOfSelection(codeEl);
     if (!r) {

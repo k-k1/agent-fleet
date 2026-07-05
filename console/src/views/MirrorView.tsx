@@ -1744,10 +1744,10 @@ function PendingQuestions({
             })}
           </div>
           {!single && !menu && (
-            <input
-              type="text"
+            <textarea
               className="mq-freetext"
-              placeholder="または自由入力（Type something）"
+              rows={2}
+              placeholder="または自由入力（Type something / 改行可）"
               value={freeText[qi] || ""}
               disabled={sending}
               onChange={(e) => setFree(qi, e.target.value)}
@@ -1789,17 +1789,28 @@ function QuestionBlock({
   answer?: string;
 }) {
   const norm = (answer || "").trim();
+  // AskUserQuestion's tool_result reads:
+  //   Your questions have been answered: "<q1>"="<a1>", "<q2>"="<a2>". …
+  // Pull the per-question answers so each card shows its OWN reply — a free-text
+  // "Type something" answer then lands under the right question instead of dumping the
+  // whole raw string. Falls back to the raw text if the format ever changes.
+  const pairs = [...norm.matchAll(/"[^"]*"\s*=\s*"([^"]*)"/g)].map((m) => m[1].trim());
+  const answerAt = (qi: number) => (pairs.length ? pairs[qi] || "" : norm);
+  // Which options an answer picked: match each label present as a token, falling back to
+  // containment. The answer may list several labels ("AWS, セルフホスト").
+  const chosenFor = (a: string, opts: QuestionOption[]) => {
+    if (!answered || !a) return new Set<QuestionOption>();
+    const tokens = a.split(/[,、\/\s]+/).map((s) => s.trim()).filter(Boolean);
+    let chosen = opts.filter((o) => tokens.includes(o.label));
+    if (!chosen.length) chosen = opts.filter((o) => a.includes(o.label));
+    return new Set(chosen);
+  };
   return (
     <div className={"mt-question" + (answered ? " answered" : "")}>
       {(questions || []).map((qn, qi) => {
         const opts = qn.options || [];
-        // Which options the answer picked. The answer is a free-text reply that may
-        // list several labels ("AWS, セルフホスト"), so match every label present as a
-        // token; fall back to containment when no token matches exactly.
-        const tokens = norm ? norm.split(/[,、\/\s]+/).map((s) => s.trim()).filter(Boolean) : [];
-        let chosen = answered ? opts.filter((o) => tokens.includes(o.label)) : [];
-        if (answered && !chosen.length && norm) chosen = opts.filter((o) => norm.includes(o.label));
-        const chosenSet = new Set(chosen);
+        const a = answerAt(qi);
+        const chosenSet = chosenFor(a, opts);
         return (
           <div className="mq" key={qi}>
             <div className="mq-head">
@@ -1829,7 +1840,7 @@ function QuestionBlock({
                 );
               })}
             </div>
-            {answered && norm && !chosenSet.size && <div className="mq-answer muted">回答: {norm}</div>}
+            {answered && a && !chosenSet.size && <div className="mq-answer muted">回答: {a}</div>}
           </div>
         );
       })}
