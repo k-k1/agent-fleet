@@ -2598,6 +2598,19 @@ body.row-resizing {
   flex: none;
   color: var(--muted);
 }
+/* Context-bar labels shorten (コンテキスト→ctx, トークン消費推移→token) when the pane
+   is narrow, via the paneview inline-size container (.mirrorview / .termview). */
+.cb-lbl-short {
+  display: none;
+}
+@container paneview (max-width: 560px) {
+  .cb-lbl-full {
+    display: none;
+  }
+  .cb-lbl-short {
+    display: inline;
+  }
+}
 .cb-track {
   flex: 1;
   min-width: 40px;
