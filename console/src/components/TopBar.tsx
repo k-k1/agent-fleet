@@ -3,7 +3,6 @@ import { useApp } from "../state.jsx";
 import { rel } from "../api.js";
 import { useSettings, setSetting, THEMES, SURFACE_TARGETS } from "../lib/settings.js";
 import { useIsMobile } from "../lib/device.js";
-import { useToast } from "./ToastProvider.jsx";
 import Icon from "./Icon.jsx";
 import SwatchGrid from "./SwatchGrid.jsx";
 import { useDismiss } from "../lib/useDismiss.js";
@@ -13,10 +12,9 @@ import { useDismiss } from "../lib/useDismiss.js";
 // (oauth mode). The menu shows whenever an identity resolved; otherwise a bare
 // settings button keeps settings reachable.
 export default function TopBar() {
-  const { whoami, tenants, tenant, showPicker, selectTenant, openSettings, openAdmin, superAdmin, toggleNav, leftMode, toggleLeft, toggleLeftMode } = useApp();
+  const { whoami, tenants, tenant, showPicker, selectTenant, openSettings, openAdmin, superAdmin, toggleNav, toggleLeft, toggleLeftMode } = useApp();
   const s = useSettings();
   const isMobile = useIsMobile();
-  const toast = useToast();
   // Hamburger: single-click toggles the left pane open/closed; double-click toggles
   // its desktop display mode (Push ⇄ overlay). We debounce the single action so a
   // double-click doesn't also fire it. Mobile keeps the immediate drawer toggle.
@@ -30,7 +28,6 @@ export default function TopBar() {
       clearTimeout(clickTimer.current);
       clickTimer.current = null;
       toggleLeftMode();
-      toast(leftMode === "push" ? "左パネル: オーバーレイ表示" : "左パネル: Push（ドック）表示");
       return;
     }
     clickTimer.current = window.setTimeout(() => {
@@ -72,15 +69,17 @@ export default function TopBar() {
 
   return (
     <header className="topbar">
-      <button
-        className="nav-toggle"
-        title="左パネル: クリックで開閉 / ダブルクリックで表示切替（Push⇄オーバーレイ）"
-        onClick={onHamburger}
-      >
-        <Icon name="menu" />
-      </button>
-      <div className="brand">
-        Agent Fleet <span className="brand-sub">Console</span>
+      <div className="topbar-left">
+        <button
+          className="nav-toggle"
+          title="左パネル: クリックで開閉 / ダブルクリックで表示切替（Push⇄オーバーレイ）"
+          onClick={onHamburger}
+        >
+          <Icon name="menu" />
+        </button>
+        <div className="brand">
+          Agent Fleet <span className="brand-sub">Console</span>
+        </div>
       </div>
       <div className="topbar-right">
         <button

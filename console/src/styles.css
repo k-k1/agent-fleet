@@ -211,6 +211,13 @@ textarea:focus {
   background: var(--topbar-bg);
   border-bottom: 1px solid var(--border);
 }
+/* Left group: hamburger + brand, kept together at the start of the bar (so adding the
+   hamburger doesn't turn space-between into a 3-item layout that centers the brand). */
+.topbar-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
 .brand {
   font-size: 15px;
   font-weight: 600;
