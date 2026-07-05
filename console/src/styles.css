@@ -6287,6 +6287,10 @@ button.mt-toolrun-head:hover {
   color: #f85149;
   border-color: #8a2b28;
 }
+.audit-action.cat-claude {
+  color: #bc8cff;
+  border-color: #5a3a8a;
+}
 
 /* Egress observation rows (docs/20 M2): destination host + would-allow/would-block. */
 .adm-egress-row {

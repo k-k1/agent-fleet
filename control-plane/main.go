@@ -176,6 +176,15 @@ func main() {
 		go newUsageSampler(mgr, iv).run(context.Background())
 	}
 
+	// docs/20 M5 (claude self-op audit, A-第2段): a sweeper that pulls each running
+	// claude session's transcript and records Write/Edit/Bash into the audit ledger
+	// (actor_kind=claude). OFF by default (AF_CLAUDE_AUDIT_INTERVAL=0) — it polls every
+	// session, so it's opt-in; enable per deployment once validated.
+	if iv := parseDurationOr(os.Getenv("AF_CLAUDE_AUDIT_INTERVAL"), 0); iv > 0 {
+		go newClaudeAuditor(mgr, iv).run(context.Background())
+		log.Printf("claude-audit: sweeping transcripts every %s", iv)
+	}
+
 	mux := http.NewServeMux()
 
 	// Health + CP-native Google OAuth (AUTH=oauth). The login page, OAuth
