@@ -63,10 +63,10 @@ export default function ReposSection() {
 
   // Run a clone in the background: the modal closed already, so progress shows as a
   // spinner row here until the server finishes, then the repo appears + is revealed.
-  const doClone = async ({ remote_url, branch, name }: { remote_url: string; branch: string; name: string }) => {
+  const doClone = async ({ remote_url, branch, name, new_branch }: { remote_url: string; branch: string; name: string; new_branch?: string }) => {
     setCloning({ name: name || guessRepoName(remote_url) });
     try {
-      const res = await apiJSON("api/repos", "POST", { remote_url, branch, name });
+      const res = await apiJSON("api/repos", "POST", { remote_url, branch, name, new_branch: new_branch || "" });
       if (res && res.error) {
         toast("clone に失敗: " + (res.error.message || res.error));
         return;

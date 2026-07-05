@@ -172,6 +172,9 @@ type cloneReq struct {
 	RemoteURL string `json:"remote_url"`
 	Branch    string `json:"branch"`
 	Name      string `json:"name"`
+	// NewBranch, when set, is a branch to CREATE off Branch (the base) right after the
+	// clone and switch to — "clone at base, fork a fresh branch". Empty = no new branch.
+	NewBranch string `json:"new_branch"`
 }
 
 // deriveRepoName turns a clone URL into a folder name: last path segment minus
@@ -184,10 +187,27 @@ func deriveRepoName(remote string) string {
 	return s
 }
 
-// gitClone clones remoteURL into dir (optionally at branch). GIT_TERMINAL_PROMPT=0
-// fails fast instead of blocking on an interactive credential/host-key prompt.
-// A failed clone leaves no half-written directory behind.
-func gitClone(dir, remoteURL, branch string) error {
+// sanitizeSeg makes a branch name usable as part of a folder name (repoNameRe
+// charset). Mirrors the console's sanitizeSeg (console/src/lib/reponame.ts).
+func sanitizeSeg(s string) string {
+	s = sanitizeSegRe.ReplaceAllString(s, "-")
+	s = strings.TrimLeft(s, "-")
+	if len(s) > 59 {
+		s = s[:59]
+	}
+	if s == "" {
+		return "branch"
+	}
+	return s
+}
+
+var sanitizeSegRe = regexp.MustCompile(`[^A-Za-z0-9._-]`)
+
+// gitClone clones remoteURL into dir (optionally at branch). When newBranch is set,
+// it is created off the just-cloned base branch and switched to (git checkout -b).
+// GIT_TERMINAL_PROMPT=0 fails fast instead of blocking on an interactive
+// credential/host-key prompt. A failed clone leaves no half-written directory behind.
+func gitClone(dir, remoteURL, branch, newBranch string) error {
 	if err := os.MkdirAll(reposRoot(), 0o755); err != nil {
 		return err
 	}
@@ -206,8 +226,40 @@ func gitClone(dir, remoteURL, branch string) error {
 		_ = os.RemoveAll(dir)
 		return fmt.Errorf("%v: %s", err, strings.TrimSpace(string(out)))
 	}
+	// Fork a fresh branch off the base and switch to it, before submodules (a new
+	// branch at the same commit shares the base's submodule pins).
+	if nb := strings.TrimSpace(newBranch); nb != "" {
+		if err := gitCheckoutNewBranch(dir, nb); err != nil {
+			_ = os.RemoveAll(dir)
+			return err
+		}
+	}
 	gitSubmodulesUpdate(dir)
 	return nil
+}
+
+// gitCheckoutNewBranch creates newBranch at the current HEAD (the just-cloned or
+// checked-out base branch) and switches to it. A pre-existing branch of that name
+// (e.g. a reused working copy) is switched to instead of erroring.
+func gitCheckoutNewBranch(dir, newBranch string) error {
+	b := strings.TrimSpace(newBranch)
+	if b == "" || strings.HasPrefix(b, "-") {
+		return fmt.Errorf("new branch name is required and must not start with '-'")
+	}
+	args := []string{"-C", dir, "checkout"}
+	if !branchExists(dir, b) {
+		args = append(args, "-b") // create it; else fall through to a plain switch
+	}
+	args = append(args, b)
+	if out, err := exec.Command("git", args...).CombinedOutput(); err != nil {
+		return fmt.Errorf("create branch %s: %v: %s", b, err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// branchExists reports whether dir already has a local branch named branch.
+func branchExists(dir, branch string) bool {
+	return exec.Command("git", "-C", dir, "rev-parse", "--verify", "--quiet", "refs/heads/"+branch).Run() == nil
 }
 
 // gitSubmodulesUpdate fetches/updates submodules of a working copy (after a clone,
@@ -301,7 +353,11 @@ func normalizeRemote(u string) string {
 // ~/repos/<repo> clones. An existing copy is reused (checked out to branch when
 // one is given) only when it is the SAME remote; otherwise it is cloned at
 // branch. This is the "clone-then-start" path for session.create.
-func ensureRepo(remoteURL, branch, name string) (string, error) {
+//
+// newBranch, when set, is created off branch (the base) and switched to — a fresh
+// working branch to start the session on. On a reused copy it forks from the base
+// only when it does not already exist (otherwise it is simply switched to).
+func ensureRepo(remoteURL, branch, newBranch, name string) (string, error) {
 	remoteURL = strings.TrimSpace(remoteURL)
 	if remoteURL == "" || strings.HasPrefix(remoteURL, "-") {
 		return "", fmt.Errorf("remote_url is required and must not start with '-'")
@@ -321,15 +377,24 @@ func ensureRepo(remoteURL, branch, name string) (string, error) {
 		if origin, ok := gitOriginURL(dir); ok && normalizeRemote(origin) != normalizeRemote(remoteURL) {
 			return "", fmt.Errorf("repo %q already exists for a different remote (%s); choose a different name", name, origin)
 		}
-		if b := strings.TrimSpace(branch); b != "" && !strings.HasPrefix(b, "-") {
+		nb := strings.TrimSpace(newBranch)
+		// Move onto the base branch when we're about to fork a new branch from it (skip
+		// if the new branch already exists — then we just switch to it below), or when a
+		// plain base checkout was requested and no new branch is wanted.
+		if b := strings.TrimSpace(branch); b != "" && !strings.HasPrefix(b, "-") && (nb == "" || !branchExists(dir, nb)) {
 			if out, err := exec.Command("git", "-C", dir, "checkout", b).CombinedOutput(); err != nil {
 				return "", fmt.Errorf("checkout %s: %v: %s", b, err, strings.TrimSpace(string(out)))
+			}
+		}
+		if nb != "" {
+			if err := gitCheckoutNewBranch(dir, nb); err != nil {
+				return "", err
 			}
 		}
 		gitSubmodulesUpdate(dir)
 		return dir, nil
 	}
-	if err := gitClone(dir, remoteURL, branch); err != nil {
+	if err := gitClone(dir, remoteURL, branch, newBranch); err != nil {
 		return "", err
 	}
 	applyGitIdentity(dir) // bake the provider's commit identity into the fresh clone
@@ -350,6 +415,11 @@ func handleCloneRepo(w http.ResponseWriter, r *http.Request) {
 	name := strings.TrimSpace(req.Name)
 	if name == "" {
 		name = deriveRepoName(req.RemoteURL)
+		// When forking a new branch, default the folder to <repo>-<newbranch> so it lands
+		// beside (not on top of) the base clone. Clients usually send an explicit name.
+		if nb := strings.TrimSpace(req.NewBranch); nb != "" {
+			name += "-" + sanitizeSeg(nb)
+		}
 	}
 	dir, ok := resolveRepoDir(name)
 	if !ok {
@@ -360,7 +430,7 @@ func handleCloneRepo(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusConflict, "exists", "repo already exists: "+name)
 		return
 	}
-	if err := gitClone(dir, req.RemoteURL, req.Branch); err != nil {
+	if err := gitClone(dir, req.RemoteURL, req.Branch, req.NewBranch); err != nil {
 		writeErr(w, http.StatusBadGateway, "clone_failed", err.Error())
 		return
 	}
