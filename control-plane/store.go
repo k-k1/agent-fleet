@@ -70,6 +70,13 @@ type EgressStat struct {
 	Allowed, Blocked int
 }
 
+// AllowlistEntry is one versioned egress allowlist rule (docs/20 M3). TenantID is a
+// tenant id, or "" for a deployment-global rule. State ∈ active | proposed | retired
+// (proposed rules come from the M4 agent and need admin approval to go active).
+type AllowlistEntry struct {
+	ID, TenantID, Entry, State, Reason, AddedBy, AddedAt string
+}
+
 // UsageRow is one (membership, day) showback bucket enriched with human labels
 // for reporting (docs/roadmap.md P3-9). RunningSecs is accumulated workspace
 // occupancy in seconds. A member with no membership record still surfaces (its
@@ -180,6 +187,20 @@ type Store interface {
 	// on/after sinceDay (YYYY-MM-DD) with their would-allow / would-block split.
 	RecordEgress(ctx context.Context, day, host string, allowed bool, count int) error
 	ListEgress(ctx context.Context, sinceDay string, limit int) ([]EgressStat, error)
+
+	// Egress allowlist (docs/20 M3). ListAllowlist returns entries with the given
+	// state ("" = any); AddAllowlist inserts one; SetAllowlistState transitions a row
+	// (approve a proposed entry to active, or retire one); EffectiveAllowlist returns
+	// the active entry strings the proxy enforces.
+	ListAllowlist(ctx context.Context, state string, limit int) ([]AllowlistEntry, error)
+	AddAllowlist(ctx context.Context, e AllowlistEntry) error
+	SetAllowlistState(ctx context.Context, id, state string) error
+	EffectiveAllowlist(ctx context.Context) ([]string, error)
+
+	// Deployment settings (docs/20 M3): small kv for deployment-wide toggles such as
+	// the egress mode. GetSetting returns "" when unset.
+	GetSetting(ctx context.Context, key string) (string, error)
+	SetSetting(ctx context.Context, key, value string) error
 
 	// Showback usage (docs/roadmap.md P3-9). AddUsage accumulates workspace
 	// running-seconds into the (membership, day) bucket; ListUsage returns the

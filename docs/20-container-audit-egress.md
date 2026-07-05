@@ -12,7 +12,13 @@ status: **検討＋M1 実装済**。roadmap の **P3-9 残項目**（「監査�
   - **runtime 配線（既定 OFF）**：`AF_EGRESS_PROXY_ADDR` 設定時のみ main.go が workspace コンテナへ `http_proxy/https_proxy/no_proxy` を注入（runtime.go 無改修）。未設定＝挙動不変。
   - UI=admin「通信」タブ（`AdminTab.tsx` `EgressView`）。テスト=`control-plane/egress_test.go`（policy／batcher／store／取り込みハンドラ e2e）。proxy の実転送はローカルでスモーク確認済。
   - **限界（M2）**：属性はデプロイ全体（テナント/ワークスペース単位でない）。env は untrusted が消せるため log-only は観測目的。**enforce・per-tenant 属性・`--internal` 強制・実 HTTPS 宛先での live 検証は M2-enforce/後続**。
-- M3 以降（運用ループ＝policy store／エージェント壁打ち、claude hook、aws Network Firewall、設定化）は未着手。
+- **M3 運用基盤（allowlist policy store＋mode 切替）＝実装済**（ブランチ `feat/egress-ops-agent`）。
+  - **版管理 allowlist**（migration 0013 `egress_allowlist`：global/tenant scope・state=active|proposed|retired・reason/added_by/added_at、`deployment_setting` kv）。store に `ListAllowlist/AddAllowlist/SetAllowlistState/EffectiveAllowlist/GetSetting/SetSetting`。
+  - **proxy への動的配信**：`GET /internal/egress/policy`（token）＝製品既定 ∪ DB active ＋ enforce mode。proxy は `AF_EGRESS_POLICY_URL` を 30s ポーリングして allowlist/mode を無停止反映（`atomic.Pointer`）。
+  - **admin CRUD＋監査**：`GET/POST /api/admin/egress/allowlist`、`POST /api/admin/egress/allowlist/{id}/state`（承認/却下/取消）、`GET|PUT /api/admin/egress/mode`（log-only↔enforce）。すべて super_admin、変更は audit_log（`egress.allow.add`/`egress.allow.<state>`/`egress.mode`）へ。
+  - UI=admin「通信」タブを拡張（mode トグル・提案中の承認/却下・許可エントリ追加/取消・観測宛先）。テスト=`egress_test.go`（allowlist store／effective policy／policy endpoint）。
+  - 注：enforce 属性は依然デプロイ全体（per-tenant attribution は後続）。
+- M4 以降（エージェント壁打ち＝MCP read+propose、claude hook、aws Network Firewall、設定化）は未着手。
 
 関連: [reference/security.md](reference/security.md)（脅威モデル §4.3/§4.6/§4.7）、[roadmap.md](roadmap.md) P3-9（`egress 統制` L318 / `監査` L232）、
 [decisions/0006-mcp-unified.md](decisions/0006-mcp-unified.md)（audit_log の由来・MCP 管理面）、[19-assistant-chat.md](19-assistant-chat.md)（エージェント壁打ちの土台）、[decisions/0009-transcript-paging.md](decisions/0009-transcript-paging.md)（transcript）。

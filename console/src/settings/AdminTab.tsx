@@ -460,42 +460,171 @@ function AuditView({ tenants, isSuper }: { tenants: Tenant[]; isSuper: boolean }
   );
 }
 
-// --- Egress observations (docs/20 M2) ---------------------------------------
-// Deployment-wide destination stats from the log-only forward proxy: each host with
-// its would-allow / would-block hit counts. Reads GET /api/admin/egress (super_admin
-// only). "blocked" is a would-block — M2 is log-only and enforces nothing yet.
+// --- Egress: allowlist + mode + observations (docs/20 M2/M3) -----------------
+// Deployment-wide egress control (super_admin). Manages the versioned allowlist
+// (approve agent-proposed entries, add/retire), toggles log-only vs enforce, and
+// shows destination stats from the forward proxy (would-allow / would-block).
 
 function EgressView() {
-  const [rows, setRows] = useState<any[] | null>(null);
+  const [data, setData] = useState<any | null>(null); // { egress, mode, enforce }
+  const [list, setList] = useState<any[] | null>(null); // allowlist entries
   const [err, setErr] = useState("");
-  const [logOnly, setLogOnly] = useState(true);
   const [days, setDays] = useState(7);
+  const [entry, setEntry] = useState("");
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
-    setRows(null);
     setErr("");
     try {
-      const d = await api("api/admin/egress?days=" + days);
+      const [d, al] = await Promise.all([
+        api("api/admin/egress?days=" + days),
+        api("api/admin/egress/allowlist"),
+      ]);
       if (d?.error) {
         setErr(errText(d.error));
-        setRows([]);
         return;
       }
-      setRows(d.egress || []);
-      setLogOnly(!!d.log_only);
+      setData(d);
+      setList(al?.allowlist || []);
     } catch {
       setErr("読み込めません");
-      setRows([]);
     }
   }, [days]);
   useEffect(() => {
     load();
   }, [load]);
 
+  const setMode = async (enforce: boolean) => {
+    setBusy(true);
+    try {
+      await apiJSON("api/admin/egress/mode", "PUT", { enforce });
+      await load();
+    } finally {
+      setBusy(false);
+    }
+  };
+  const addEntry = async (e: FormEvent) => {
+    e.preventDefault();
+    const v = entry.trim();
+    if (!v) return;
+    setBusy(true);
+    try {
+      await apiJSON("api/admin/egress/allowlist", "POST", { entry: v, reason });
+      setEntry("");
+      setReason("");
+      await load();
+    } finally {
+      setBusy(false);
+    }
+  };
+  const setState = async (id: string, state: string) => {
+    setBusy(true);
+    try {
+      await apiJSON("api/admin/egress/allowlist/" + encodeURIComponent(id) + "/state", "POST", { state });
+      await load();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const enforce = !!data?.enforce;
+  const proposed = (list || []).filter((e: any) => e.state === "proposed");
+  const active = (list || []).filter((e: any) => e.state === "active");
+  const stats = data?.egress || [];
+
   return (
     <div className="admin-stage egress-view">
+      {/* mode toggle */}
       <section className="admin-panel">
         <div className="usage-toolbar">
+          <span>モード</span>
+          <span className="seg sm">
+            <button
+              type="button"
+              className={"seg-btn" + (!enforce ? " active" : "")}
+              disabled={busy}
+              onClick={() => setMode(false)}
+            >
+              log-only
+            </button>
+            <button
+              type="button"
+              className={"seg-btn" + (enforce ? " active" : "")}
+              disabled={busy}
+              onClick={() => setMode(true)}
+            >
+              enforce
+            </button>
+          </span>
+          <button type="button" className="ghost" title="更新" onClick={load}>
+            <Icon name="refresh" />
+          </button>
+        </div>
+        {enforce ? (
+          <p className="form-err">enforce: 許可リスト外の通信を遮断します。先に log-only で実態を確認してから切替えてください。</p>
+        ) : (
+          <p className="muted">log-only: 観測のみで遮断しません。許可リストを固めてから enforce へ。</p>
+        )}
+        {err && <p className="form-err">{err}</p>}
+      </section>
+
+      {/* agent-proposed entries awaiting approval (docs/20 M4) */}
+      {proposed.length > 0 && (
+        <section className="admin-panel">
+          <h4 className="egress-h">提案中（要承認）</h4>
+          {proposed.map((e: any) => (
+            <div key={e.id} className="adm-allow-row">
+              <span className="as-name mono" title={e.entry}>{e.entry}</span>
+              <span className="as-repo muted" title={e.reason}>{e.reason}</span>
+              <span className="muted" title={e.added_by}>{e.added_by}</span>
+              <span className="allow-acts">
+                <button type="button" className="btn xs" disabled={busy} onClick={() => setState(e.id, "active")}>承認</button>
+                <button type="button" className="ghost xs" disabled={busy} onClick={() => setState(e.id, "retired")}>却下</button>
+              </span>
+            </div>
+          ))}
+        </section>
+      )}
+
+      {/* active allowlist + add */}
+      <section className="admin-panel">
+        <h4 className="egress-h">許可リスト（追加分）</h4>
+        <form className="egress-add" onSubmit={addEntry}>
+          <input
+            type="text"
+            value={entry}
+            onChange={(e) => setEntry(e.target.value)}
+            placeholder="host か .suffix.example.com"
+          />
+          <input
+            type="text"
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            placeholder="理由（任意）"
+          />
+          <button type="submit" className="btn" disabled={busy || !entry.trim()}>追加</button>
+        </form>
+        {active.length === 0 ? (
+          <p className="muted">追加の許可エントリはありません（製品既定の許可のみ有効）。</p>
+        ) : (
+          active.map((e: any) => (
+            <div key={e.id} className="adm-allow-row">
+              <span className="as-name mono" title={e.entry}>{e.entry}</span>
+              <span className="as-repo muted" title={e.reason}>{e.reason}</span>
+              <span className="muted" title={e.added_by}>{e.added_by}</span>
+              <span className="allow-acts">
+                <button type="button" className="ghost xs" disabled={busy} onClick={() => setState(e.id, "retired")}>取消</button>
+              </span>
+            </div>
+          ))
+        )}
+      </section>
+
+      {/* observed destinations */}
+      <section className="admin-panel">
+        <div className="usage-toolbar">
+          <h4 className="egress-h">観測された宛先</h4>
           <label>
             期間
             <select value={days} onChange={(e) => setDays(Number(e.target.value))}>
@@ -504,26 +633,18 @@ function EgressView() {
               <option value={30}>30日</option>
             </select>
           </label>
-          <button type="button" className="ghost" title="更新" onClick={load}>
-            <Icon name="refresh" />
-          </button>
-          {logOnly && <span className="as-count muted">log-only（遮断はしていません）</span>}
         </div>
-        {err && <p className="form-err">{err}</p>}
-      </section>
-
-      <section className="admin-panel">
-        {rows === null ? (
+        {data === null ? (
           <p className="muted">読み込み中…</p>
-        ) : rows.length === 0 ? (
+        ) : stats.length === 0 ? (
           <p className="muted">記録がありません（egress プロキシ未設定か、対象期間に通信なし）。</p>
         ) : (
           <div className="adm-egress">
-            {rows.map((e: any) => (
+            {stats.map((e: any) => (
               <div key={e.host} className="adm-egress-row">
                 <span className="as-name mono" title={e.host}>{e.host}</span>
                 <span className="egress-allow">{e.allowed} 許可</span>
-                {e.blocked > 0 && <span className="egress-block">{e.blocked} 遮断候補</span>}
+                {e.blocked > 0 && <span className="egress-block">{e.blocked} {enforce ? "遮断" : "遮断候補"}</span>}
               </div>
             ))}
           </div>
