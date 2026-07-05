@@ -187,9 +187,24 @@ import type { Assistant, AssistantInput } from "./types/assistant.ts";
 export const chatList = (): Promise<{ conversations: ConversationMeta[] }> =>
   api("api/chat/conversations");
 // Create a conversation from an assistant template (docs/19 Q2): the Agent snapshots
-// the assistant's agent/model/persona/tools/knowledge onto the new thread.
-export const chatCreate = (assistantId: string, title?: string): Promise<Conversation> =>
-  apiJSON("api/chat/conversations", "POST", { assistant_id: assistantId, title });
+// the assistant's agent/model/persona/tools/knowledge onto the new thread. Optionally
+// attach a file/dir (docs/19 Phase C): its dir is added to knowledge and the response
+// carries a `seed` prompt (composed with the absolute path) to prefill the composer.
+export interface ChatCreateOpts {
+  attachPath?: string; // browse-root-relative file/dir to hand to the assistant
+  seedVerb?: "translate" | "summarize" | ""; // shapes the seed prompt
+}
+export const chatCreate = (
+  assistantId: string,
+  title?: string,
+  opts?: ChatCreateOpts,
+): Promise<Conversation> =>
+  apiJSON("api/chat/conversations", "POST", {
+    assistant_id: assistantId,
+    title,
+    attach_path: opts?.attachPath,
+    seed_verb: opts?.seedVerb,
+  });
 export const chatGet = (id: string): Promise<Conversation> =>
   api(`api/chat/conversations/${encodeURIComponent(id)}`);
 export const chatDelete = (id: string): Promise<Response> =>

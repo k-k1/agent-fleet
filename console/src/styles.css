@@ -1912,6 +1912,59 @@ button.wu-reload {
   pointer-events: none;
 }
 
+/* "アシスタントで開く" accordion submenu (docs/19 Phase C): click the head to expand an
+   inline, indented list — a flyout would break on touch, where there's no hover. */
+.ctxmenu li.ctx-sub {
+  padding: 0;
+  cursor: default;
+}
+.ctxmenu li.ctx-sub:hover {
+  background: transparent;
+}
+.ctx-sub-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.ctx-sub-head:hover {
+  background: var(--hover-bg, var(--btn));
+}
+.ctx-sub-arrow {
+  opacity: 0.6;
+  font-size: 11px;
+}
+.ctx-submenu {
+  list-style: none;
+  margin: 2px 0 2px 8px;
+  padding: 0 0 0 6px;
+  max-height: 40vh;
+  overflow-y: auto;
+  border-left: 1px solid var(--border2, var(--border));
+}
+.ctx-submenu li {
+  padding: 6px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--fg);
+  white-space: nowrap;
+}
+.ctx-submenu li:hover {
+  background: var(--hover-bg, var(--btn));
+}
+.ctx-submenu li.ctx-sep,
+.ctx-submenu li.ctx-sep:hover {
+  height: 1px;
+  padding: 0;
+  margin: 4px 6px;
+  background: var(--border2, var(--border));
+  cursor: default;
+  pointer-events: none;
+}
+
 /* file-type icons: colorful brand SVGs (VS Code icons set) + monochrome codicon */
 .fsrow .fs-chev {
   display: inline-block;

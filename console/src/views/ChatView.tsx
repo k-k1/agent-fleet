@@ -3,6 +3,7 @@ import type { KeyboardEvent } from "react";
 import MarkdownView from "./MarkdownView.jsx";
 import Icon from "../components/Icon.jsx";
 import { chatGet, chatStream } from "../api.js";
+import { takeChatSeed } from "../lib/chatSeed.js";
 import { agentOf } from "../agents/registry.ts";
 import { kindClass } from "../lib/sessionkind.js";
 import type { Conversation, ChatMessage } from "../types/chat.ts";
@@ -31,6 +32,9 @@ export default function ChatView({ conversationId }: ChatViewProps) {
     setError("");
     setLoadError("");
     if (!conversationId) return;
+    // One-shot composer prefill when opened via a Files right-click (docs/19 Phase C).
+    const seed = takeChatSeed(conversationId);
+    setInput(seed ?? "");
     chatGet(conversationId)
       .then((c) => {
         if (cancelled) return;

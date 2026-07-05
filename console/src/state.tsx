@@ -4,6 +4,7 @@ import { api, getTenant, setTenant as persistTenant } from "./api.js";
 import { keepOnly as termKeepOnly, reconnectSession as termReconnectSession } from "./term.js";
 import { hydrateUIPrefs } from "./lib/settings.js";
 import { MOBILE_QUERY, mobileMatches } from "./lib/device.js";
+import { setChatSeed } from "./lib/chatSeed.js";
 import { useToast } from "./components/ToastProvider.jsx";
 import type { Layout, Pane, Column } from "./types/layout.ts";
 import type { Session } from "./types/session.ts";
@@ -725,7 +726,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // openChat opens an assistant-chat conversation (docs/19) in the active pane — a
   // non-terminal chat surface keyed by conversation id, backed by a headless CLI.
   const openChat = useCallback(
-    (conversationId: string) => {
+    (conversationId: string, seed?: string) => {
+      if (seed) setChatSeed(conversationId, seed); // one-shot composer prefill (Phase C)
       if (navOpenRef.current) pushDrawerEntry();
       openActive({ kind: "chat", conversationId });
     },
