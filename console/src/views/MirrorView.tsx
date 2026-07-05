@@ -289,7 +289,18 @@ export default function MirrorView({
             firstLineRef.current = 0; // reset re-sends from the top: nothing older to page
             setHasMore(false);
           } else if (Array.isArray(d.messages) && d.messages.length) {
-            setTurns((t) => [...t, ...d.messages]);
+            // Idempotent append: keep only turns past the newest `idx` (jsonl line) we
+            // already hold. A quick re-poll (after sending) racing the in-flight poll can
+            // read the same cursor, so the server re-sends the same lines to both — this
+            // drops the overlap instead of duplicating turns in the view.
+            setTurns((t) => {
+              let lastIdx = -1;
+              for (let i = t.length - 1; i >= 0; i--) {
+                if (t[i].idx !== undefined) { lastIdx = t[i].idx as number; break; }
+              }
+              const fresh = (d.messages as Turn[]).filter((m) => m.idx === undefined || m.idx > lastIdx);
+              return fresh.length ? [...t, ...fresh] : t;
+            });
           }
           // Windowed (initial tail) response carries the oldest line we now hold.
           if (typeof d.firstLine === "number") {
