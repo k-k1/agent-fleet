@@ -37,6 +37,10 @@ function blankPane(id: string, patch?: PanePatch): Pane {
   return { id, kind: "terminal", session: null, chat: false, filePath: null, scmRepo: null, commitSha: null, docTitle: null, docContent: null, diffTool: null, diffEdits: null, conversationId: null, draftAssistantId: null, wrap: null, ...patch };
 }
 
+// An empty terminal pane — no session, no file, no SCM target. Closing a pane's content
+// blanks it to this; closing an already-blank pane is what actually removes it.
+const isBlankPane = (p: Pane): boolean => p.kind === "terminal" && !p.session && !p.filePath && !p.scmRepo;
+
 const equalRatios = (n: number): number[] => Array(n).fill(1 / n);
 const MAX_COLS = 4;
 
@@ -803,12 +807,30 @@ export function AppProvider({ children }: { children: ReactNode }) {
     [commit],
   );
 
-  // closePane removes a pane. A column losing one of its two rows collapses to a
-  // single row; an emptied column is dropped and widths re-equalize. The surviving
-  // (or first) pane becomes active. The reconciler disposes the closed terminal.
+  // closePane closes a pane in TWO steps so a split never collapses on the first close:
+  //  1. A pane still holding something (a session / chat / file / SCM) is cleared back
+  //     to an empty terminal IN PLACE — same pane id, split layout untouched.
+  //  2. An already-empty terminal pane is actually REMOVED: its column loses a row
+  //     (collapses to a single row), an emptied column is dropped and widths
+  //     re-equalize, and the reconciler disposes the closed terminal.
+  // So closing the content of a split pane leaves an empty pane behind; closing that
+  // empty pane again is what un-splits. The very last pane can't be removed (the layout
+  // needs ≥1), so it just stays as the base empty terminal.
   const closePane = useCallback(
     (paneId: string) => {
       const cur = layoutRef.current;
+      const target = cur.cols.flatMap((c) => c.panes).find((p) => p.id === paneId);
+      if (!target) return;
+      // Step 1: content pane → clear to an empty terminal, keeping the pane (and split).
+      if (!isBlankPane(target)) {
+        const cols = cur.cols.map((c) => ({
+          ...c,
+          panes: c.panes.map((p) => (p.id === paneId ? blankPane(paneId) : p)),
+        }));
+        commit({ ...cur, cols, activeId: paneId });
+        return;
+      }
+      // Step 2: already-empty pane → remove it (collapse the split).
       const cols = cur.cols
         .map((c) => {
           const panes = c.panes.filter((p) => p.id !== paneId);
@@ -817,10 +839,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         .filter((c) => c.panes.length > 0);
       const remaining = cols.flatMap((c) => c.panes);
       if (remaining.length === 0) {
-        // Closing the only pane: the layout always needs ≥1 pane, so reset it to a
-        // fresh blank terminal instead of removing it — i.e. "close" clears whatever
-        // it held (session / file / SCM) back to an empty terminal.
-        resetToTerminal();
+        resetToTerminal(); // removed the last pane → reset to one blank terminal
         return;
       }
       const activeId = remaining.some((p) => p.id === cur.activeId) ? cur.activeId : remaining[0].id;

@@ -528,6 +528,18 @@ export function detach(paneId: string) {
   setSession(it, null);
 }
 
+// clearTerm wipes a pane's scrollback + screen without tearing the xterm down. Used
+// when a pane goes empty (its session/chat/file was closed but the pane — and its
+// xterm — is kept as an empty terminal): the reused instance would otherwise still show
+// the old session's output. Detach nulls the socket but deliberately preserves the
+// buffer (a stopped session stays readable), so the wipe is a separate, explicit step.
+export function clearTerm(paneId: string) {
+  const it = inst(paneId);
+  try {
+    it && it.term && it.term.reset();
+  } catch {}
+}
+
 // disposeTerm tears a pane's terminal down entirely: closes the socket, disposes the
 // xterm instance and its ResizeObserver, and forgets the pane. Called when a split
 // pane is closed / replaced by a non-terminal view / wiped on tenant switch.
