@@ -5,6 +5,7 @@ import { useApp } from "../state.jsx";
 import { useToast } from "./ToastProvider.jsx";
 import { apiJSON, chatCreate, assistantList, errText } from "../api.js";
 import { displayName, stateInfo } from "../lib/sessionview.js";
+import { sessionPanes, ordClass } from "../lib/panebadge.js";
 import { agentOf } from "../agents/registry.ts";
 import { baseName, langFor } from "../lib/filemeta.js";
 import type { Session } from "../types/session.ts";
@@ -27,7 +28,7 @@ interface SendSelectionModalProps {
 }
 
 export default function SendSelectionModal({ filePath, quote, startLine, endLine, onClose }: SendSelectionModalProps) {
-  const { sessions, openChat } = useApp();
+  const { sessions, openChat, layout } = useApp();
   const toast = useToast();
   const [assistants, setAssistants] = useState<Assistant[]>([]);
   const [comment, setComment] = useState("");
@@ -106,7 +107,21 @@ export default function SendSelectionModal({ filePath, quote, startLine, endLine
           return;
         }
         localStorage.setItem(LAST_SESSION_KEY, name); // remember for next time
-        toast(`${name} に送信しました`, { kind: "success" });
+        // Toast with the session's display name, plus color-matched pane-number badges if
+        // it's open in the main-area panes (same ordinals as the Sessions list).
+        const sent = sessions.find((x) => x.name === name);
+        const opens = sessionPanes(layout).get(name) || [];
+        toast(
+          <span className="toast-sent">
+            {opens.map((o) => (
+              <span key={o.id} className={"toast-ord " + ordClass(o.ordinal)}>
+                {o.ordinal}
+              </span>
+            ))}
+            {(sent ? displayName(sent) : name) + " に送信しました"}
+          </span>,
+          { kind: "success" },
+        );
         onClose();
       }
     } catch {
