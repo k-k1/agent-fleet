@@ -3467,6 +3467,8 @@ button.mt-toolrun-head:hover {
   color: var(--fg);
   font: inherit;
   font-size: 12px;
+  resize: vertical;
+  line-height: 1.4;
 }
 .mq-freetext:focus {
   outline: none;
