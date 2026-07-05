@@ -562,7 +562,14 @@ export default function MirrorView({
     });
   };
 
+  // A multi-question or multi-select AskUserQuestion can't be answered by free text:
+  // the modal takes a typed answer as an immediate whole-tool submit, mis-selecting the
+  // first option and dropping the rest. Lock the composer for those and steer the user to
+  // the option cards (a single-select single question still accepts free text).
+  const auqLocksComposer = !!pending && (pending.length > 1 || pending.some((q) => q?.multiSelect));
+
   const send = async () => {
+    if (auqLocksComposer) return;
     const text = draft.trim();
     if (!text && !attachments.length) return;
     const paths = attachments.map((a) => a.path);
@@ -998,10 +1005,13 @@ export default function MirrorView({
             className="mirror-input"
             rows={2}
             placeholder={
-              modSend
-                ? "プロンプトを入力（Ctrl+Enter で送信 / Enter で改行）"
-                : "プロンプトを入力（Enter で送信 / Shift+Enter で改行）"
+              auqLocksComposer
+                ? "複数質問は上のカードから回答してください（自由入力は無効）"
+                : modSend
+                  ? "プロンプトを入力（Ctrl+Enter で送信 / Enter で改行）"
+                  : "プロンプトを入力（Enter で送信 / Shift+Enter で改行）"
             }
+            disabled={auqLocksComposer}
             value={draft}
             onChange={(e) => {
               setDraft(e.target.value);
@@ -1037,7 +1047,7 @@ export default function MirrorView({
             <button
               type="button"
               className="btn primary mirror-send"
-              disabled={(!draft.trim() && !attachments.length) || sending}
+              disabled={(!draft.trim() && !attachments.length) || sending || auqLocksComposer}
               onClick={send}
               title="送信"
             >
