@@ -152,8 +152,10 @@ var mcpStdioTools = []map[string]any{
 	},
 }
 
-// mcpStdioWriteTools — Agent Fleet write tools, advertised only under --write (docs/19
-// Q2 af_write opt-in). Mirrors the CP mcp.go member write tool (send_to_session).
+// mcpStdioWriteTools — Agent Fleet write/orchestrate tools, advertised only under --write
+// (docs/19 af_write opt-in): drive tmux sessions (send_to_session) AND consult other
+// assistants (list_assistants / ask_assistant). Consults are advisory-only by construction
+// (the sub-turn runs with no tools), so they can't loop or escalate.
 var mcpStdioWriteTools = []map[string]any{
 	{
 		"name":        "send_to_session",
@@ -167,6 +169,23 @@ var mcpStdioWriteTools = []map[string]any{
 			"required": []string{"name", "prompt"},
 		},
 	},
+	{
+		"name":        "list_assistants",
+		"description": "利用可能なアシスタント（常設ビルトイン＋ユーザー定義）の一覧を返す。ask_assistant で誰に相談するか選ぶ前に呼ぶ。",
+		"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}},
+	},
+	{
+		"name":        "ask_assistant",
+		"description": "別の専門アシスタントに助言を求める。相手は読み取り専用で1ターンだけ走り、助言テキストのみ返す（副作用なし・こちらの作業は代行しない）。例：整合性チェッカーに差分/原稿を見てもらう、用語集アシスタントに用語を確認する。まず list_assistants で相手を選ぶこと。",
+		"inputSchema": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"assistant": map[string]any{"type": "string", "description": "相談相手のアシスタント名または id"},
+				"prompt":    map[string]any{"type": "string", "description": "相手に尋ねる内容（必要な文脈も含める）"},
+			},
+			"required": []string{"assistant", "prompt"},
+		},
+	},
 }
 
 func mcpStdioCall(req mcpReq) []byte {
@@ -176,14 +195,16 @@ func mcpStdioCall(req mcpReq) []byte {
 	}
 	_ = json.Unmarshal(req.Params, &p)
 	var a struct {
-		Name   string `json:"name"`
-		Since  int64  `json:"since"`
-		Prompt string `json:"prompt"`
+		Name      string `json:"name"`
+		Since     int64  `json:"since"`
+		Prompt    string `json:"prompt"`
+		Assistant string `json:"assistant"`
 	}
 	_ = json.Unmarshal(p.Args, &a)
 
-	// Write tool: send_to_session — only when this server was started with --write.
-	if p.Name == "send_to_session" {
+	// Write/orchestrate tools — only when this server was started with --write.
+	switch p.Name {
+	case "send_to_session":
 		if !mcpWriteEnabled {
 			return mcpToolErr(req.ID, "このアシスタントは書き込みツールを許可されていません")
 		}
@@ -198,9 +219,29 @@ func mcpStdioCall(req mcpReq) []byte {
 		if err != nil {
 			return mcpToolErr(req.ID, "Agent への送信に失敗しました: "+err.Error())
 		}
-		return mcpResult(req.ID, map[string]any{
-			"content": []any{map[string]any{"type": "text", "text": out}},
-		})
+		return mcpTextResult(req.ID, out)
+	case "list_assistants":
+		if !mcpWriteEnabled {
+			return mcpToolErr(req.ID, "このアシスタントは他アシスタントへの相談を許可されていません")
+		}
+		out, err := agentGET("/assistants")
+		if err != nil {
+			return mcpToolErr(req.ID, "アシスタント一覧の取得に失敗しました: "+err.Error())
+		}
+		return mcpTextResult(req.ID, out)
+	case "ask_assistant":
+		if !mcpWriteEnabled {
+			return mcpToolErr(req.ID, "このアシスタントは他アシスタントへの相談を許可されていません")
+		}
+		if a.Assistant == "" || a.Prompt == "" {
+			return mcpToolErr(req.ID, "assistant（相手）と prompt（相談内容）が必要です")
+		}
+		reqBody, _ := json.Marshal(map[string]string{"assistant": a.Assistant, "prompt": a.Prompt})
+		out, err := agentPOST("/chat/ask", reqBody)
+		if err != nil {
+			return mcpToolErr(req.ID, "相談の実行に失敗しました: "+err.Error())
+		}
+		return mcpTextResult(req.ID, out)
 	}
 
 	var path string
@@ -230,6 +271,13 @@ func mcpStdioCall(req mcpReq) []byte {
 	}
 	return mcpResult(req.ID, map[string]any{
 		"content": []any{map[string]any{"type": "text", "text": body}},
+	})
+}
+
+// mcpTextResult returns a tools/call RESULT carrying a single text content block.
+func mcpTextResult(id json.RawMessage, text string) []byte {
+	return mcpResult(id, map[string]any{
+		"content": []any{map[string]any{"type": "text", "text": text}},
 	})
 }
 

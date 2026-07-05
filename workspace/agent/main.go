@@ -80,6 +80,9 @@ func main() {
 	mux.HandleFunc("DELETE /chat/conversations/{id}", handleChatDelete)
 	mux.HandleFunc("POST /chat/conversations/{id}/messages", handleChatSend)
 	mux.HandleFunc("POST /chat/conversations/{id}/stream", handleChatStream) // SSE (Phase B)
+	// Assistant-to-assistant consult (docs/19): af_write orchestrators' ask_assistant tool
+	// hits this via the local stdio MCP. Internal (Agent REST) only — not proxied by the CP.
+	mux.HandleFunc("POST /chat/ask", handleChatAsk)
 
 	// Assistant templates — configurable chat personas (docs/19 Q2). Builtins are
 	// code-injected; user-defined ones are stored under ~/.config/agent-fleet/assistants.
