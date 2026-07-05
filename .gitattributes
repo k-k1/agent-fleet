@@ -1,0 +1,16 @@
+# Force text handling + text diffs for source files. Some legitimately contain a NUL
+# byte (e.g. MirrorView uses "\0" as an unambiguous branch/cwd join separator), which
+# makes git auto-detect the file as binary — hiding line diffs/blame and reporting
+# commits as "Bin … bytes / 0 insertions". `text` normalizes EOLs; `diff` forces git to
+# diff them as text despite the NUL.
+*.ts   text diff
+*.tsx  text diff
+*.js   text diff
+*.jsx  text diff
+*.go   text diff
+*.css  text diff
+*.html text diff
+*.json text diff
+*.md   text diff
+*.yml  text diff
+*.yaml text diff
