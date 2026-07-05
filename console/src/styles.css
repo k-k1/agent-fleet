@@ -1813,6 +1813,35 @@ button.wu-reload {
 .fsrow:has(.fs-file.active) {
   box-shadow: inset 2px 0 0 var(--accent);
 }
+
+/* ---- sticky scroll (VS Code-style pinned ancestor folders) ----
+   The overlay is absolutely placed at the current viewport top (JS sets `top`), over
+   the scrolled content, so the ancestor path of the topmost row stays visible. The
+   sticky rows are <div>s (outside the <ul>), so they need the row typography the
+   `.fstree li.fsrow` rule gives real rows. */
+.fstree-wrap {
+  position: relative;
+}
+.fstree-sticky {
+  position: absolute;
+  left: 0;
+  right: 0;
+  z-index: 5;
+  background: var(--leftpane-bg);
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.25);
+}
+.fs-sticky-row {
+  white-space: nowrap;
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 1px 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  background: var(--leftpane-bg);
+}
+.fs-sticky-row:hover {
+  background: var(--btn);
+}
 /* drag-and-drop upload targets: highlight the hovered folder (or whole tree). */
 .fstree.drop-root {
   outline: 2px dashed var(--accent);
