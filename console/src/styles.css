@@ -1581,18 +1581,31 @@ button.wu-reload {
   font-variant-numeric: tabular-nums;
 }
 .repo-row .branch,
+/* The SCM header is one flat toolbar: the branch button shares the action icons'
+   borderless treatment (transparent until hover) so they read as a single set,
+   instead of a boxed branch next to faded ghost icons. */
 .view-head .branch {
   max-width: 140px;
   font-size: 11px;
-  padding: 1px 6px;
-  background: var(--btn);
-  border: 1px solid var(--btn-border);
+  padding: 2px 6px;
+  background: transparent;
+  border: 1px solid transparent;
   border-radius: 4px;
   color: var(--fg);
   cursor: pointer;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.view-head .branch:hover {
+  background: var(--btn);
+  border-color: var(--btn-border);
+}
+/* Match the icons' prominence to the branch button (foreground, not muted) so the
+   whole toolbar is uniform. */
+.view-head .scm-act,
+.view-head .scm-more-btn {
+  color: var(--fg);
 }
 .repo-row .branch:hover {
   border-color: var(--accent);
@@ -3739,12 +3752,29 @@ button.mt-toolrun-head:hover {
 .scmview > .view-head {
   padding-right: 40px;
 }
-/* SCM header actions collapse to icon-only when the PANE is narrow (like the chat
-   head), via the paneview container — so a slim split in a wide window folds too, not
-   just a phone. Titles keep the words reachable as tooltips. */
+/* SCM header actions progressively collapse as the PANE narrows (via the paneview
+   container, so a slim split in a wide window folds too, not just a phone):
+   ≤640px → icon-only (labels become tooltips); ≤460px → the whole action row folds
+   into a single ⋯ overflow menu. The inline row (.scm-acts) is display:contents so its
+   buttons sit in the header flow with the header's own gap; .scm-more is the ⋯ menu,
+   hidden until the narrow breakpoint. */
+.scm-acts {
+  display: contents;
+}
+.scm-more {
+  display: none;
+}
 @container paneview (max-width: 640px) {
   .scm-act .lbl {
     display: none;
+  }
+}
+@container paneview (max-width: 460px) {
+  .scm-acts {
+    display: none;
+  }
+  .scm-more {
+    display: inline-flex;
   }
 }
 /* Active state for a toggle header action (e.g. commit-detail wrap). */
