@@ -191,7 +191,9 @@ textarea:focus {
 
 /* ---- frame ---- */
 .app {
-  height: 100%;
+  /* --app-h is set by viewport.ts only on iOS-style keyboards (visual viewport shrinks
+     but the layout viewport doesn't); everywhere else it's unset and this is 100%. */
+  height: var(--app-h, 100%);
   display: flex;
   flex-direction: column;
 }
@@ -7052,6 +7054,16 @@ button.primary:hover:not(:disabled) {
   /* tighter control reserve on a phone (no split-right button = 3 controls max) */
   .view-head {
     padding-right: 84px;
+  }
+
+  /* Phone: there's no hover, so the option's title= tooltip is unreachable and a
+     two-line clamp hides the rest of the description with no way to reveal it. The
+     options grid is a single full-width column here, so just show descriptions in
+     full instead of clamping. */
+  .mq-opt-desc {
+    display: block;
+    -webkit-line-clamp: unset;
+    overflow: visible;
   }
 
   /* roomier tap targets in the navigator lists */
