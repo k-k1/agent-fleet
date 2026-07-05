@@ -335,7 +335,10 @@ export default function FilesSection() {
   // near a right/bottom/left edge on a phone. useLayoutEffect runs before paint so
   // there's no visible jump from the initial cursor position.
   useLayoutEffect(() => {
-    if (menu && ctxRef.current) placeFixed(ctxRef.current, menu.x, menu.y);
+    if (menu && ctxRef.current)
+      // Clamp within the left rail's scroll container so the menu stops short of its
+      // vertical scrollbar instead of painting over it.
+      placeFixed(ctxRef.current, menu.x, menu.y, ctxRef.current.closest<HTMLElement>(".leftpane-scroll"));
   }, [menu]);
   // The ＋ dropdown: promote to a viewport-clamped fixed menu below its button so it
   // can't be clipped by the pane's overflow or spill off a narrow screen (the button
