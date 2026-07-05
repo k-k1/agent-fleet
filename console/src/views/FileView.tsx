@@ -142,6 +142,10 @@ export default function FileView({ filePath: filePathProp, wrap }: FileViewProps
   // the selection. Scoped to CodeView because it queries that view's <code> element
   // (absent in md-preview / slides / image), so it stays inert elsewhere.
   const captureSelection = () => {
+    // While the send modal is open, ignore mouseups — React portals bubble events through
+    // the React tree, so a click inside the (body-portaled) modal reaches this handler and
+    // would clear `sel` (the modal is gated on it), closing the modal on the first click.
+    if (sendOpen) return;
     const codeEl = bodyRef.current?.querySelector(".codeview .codegrid");
     if (!codeEl) return;
     const r = lineRangeOfSelection(codeEl);
