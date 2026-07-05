@@ -10,6 +10,10 @@ import { baseName, langFor } from "../lib/filemeta.js";
 import type { Session } from "../types/session.ts";
 import type { Assistant } from "../types/assistant.ts";
 
+// Remember the session the user last sent to, so it's re-selected next time (if still
+// 入力待ち). A single key across files — "the session I'm feeding excerpts to".
+const LAST_SESSION_KEY = "af.sendsel.lastSession";
+
 // SendSelectionModal quotes a selected range of a code/source file and sends it — with
 // the file path, line range, and a comment — either directly to a running session (the
 // coding agent that will act on it) or to an assistant chat (docs/19 "引用してセッションへ").
@@ -50,14 +54,25 @@ export default function SendSelectionModal({ filePath, quote, startLine, endLine
     [sessions, fileRepo],
   );
 
-  // Default target: the highest-ranked alive session (same-repo / 入力待ち優先), else the
-  // first session, else the first assistant.
+  // Default target: the last session sent to if it's still 入力待ち; else the highest-ranked
+  // alive session (same-repo / 入力待ち優先); else the first session, else the first assistant.
   useEffect(() => {
     if (target) return;
+    const last = localStorage.getItem(LAST_SESSION_KEY);
+    const lastS = last ? sessions.find((s) => s.name === last) : undefined;
+    if (lastS && isWaiting(lastS)) {
+      setTarget(`session:${lastS.name}`);
+      return;
+    }
     const best = sortedSessions.find((s) => s.alive) || sortedSessions[0];
     if (best) setTarget(`session:${best.name}`);
     else if (assistants[0]) setTarget(`assistant:${assistants[0].id}`);
-  }, [sortedSessions, assistants, target]);
+  }, [sortedSessions, sessions, assistants, target]);
+
+  // The currently-selected session (if the target is a session), for the stopped guard.
+  const selectedSession =
+    target.startsWith("session:") ? sessions.find((s) => s.name === target.slice("session:".length)) : undefined;
+  const sessionStopped = !!selectedSession && !selectedSession.alive;
 
   const loc = startLine === endLine ? `L${startLine}` : `L${startLine}–L${endLine}`;
   const composed = useMemo(() => {
@@ -70,7 +85,7 @@ export default function SendSelectionModal({ filePath, quote, startLine, endLine
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
-    if (!target || busy) return;
+    if (!target || busy || sessionStopped) return; // can't send to a stopped session
     setBusy(true);
     try {
       if (isAssistant) {
@@ -90,6 +105,7 @@ export default function SendSelectionModal({ filePath, quote, startLine, endLine
           toast(errText(res.error) || `${name} への送信に失敗しました`);
           return;
         }
+        localStorage.setItem(LAST_SESSION_KEY, name); // remember for next time
         toast(`${name} に送信しました`, { kind: "success" });
         onClose();
       }
@@ -106,7 +122,14 @@ export default function SendSelectionModal({ filePath, quote, startLine, endLine
         <div className="field">
           <div className="field-label">送信先</div>
           <label className="pick-field">
-            <select value={target} onChange={(e) => setTarget(e.target.value)}>
+            <select
+              value={target}
+              onChange={(e) => {
+                setTarget(e.target.value);
+                if (e.target.value.startsWith("session:"))
+                  localStorage.setItem(LAST_SESSION_KEY, e.target.value.slice("session:".length));
+              }}
+            >
               {sortedSessions.length > 0 && (
                 <optgroup label="セッション（直接送信）">
                   {sortedSessions.map((s) => (
@@ -128,10 +151,12 @@ export default function SendSelectionModal({ filePath, quote, startLine, endLine
               )}
             </select>
           </label>
-          <div className="field-help">
-            {isAssistant
-              ? "このアシスタントとのチャットを開き、引用を下書きします（送信は会話側で）。"
-              : "選択したセッションに引用＋コメントを直接送信します。"}
+          <div className={"field-help" + (sessionStopped ? " field-warn" : "")}>
+            {sessionStopped
+              ? "⚠ このセッションは停止中です。送信できません（先に起動するか、別の送信先を選んでください）。"
+              : isAssistant
+                ? "このアシスタントとのチャットを開き、引用を下書きします（送信は会話側で）。"
+                : "選択したセッションに引用＋コメントを直接送信します。"}
           </div>
         </div>
 
@@ -166,7 +191,7 @@ export default function SendSelectionModal({ filePath, quote, startLine, endLine
         <button type="button" className="ghost" onClick={onClose}>
           キャンセル
         </button>
-        <button type="submit" className="primary" disabled={!target || busy}>
+        <button type="submit" className="primary" disabled={!target || busy || sessionStopped}>
           {isAssistant ? "アシスタントで開く" : "セッションに送信"}
         </button>
       </footer>

@@ -7643,6 +7643,10 @@ button.primary:hover:not(:disabled) {
 .sel-send-pill:hover {
   background: var(--hover-bg, var(--btn));
 }
+/* Warning variant of a field-help line (e.g. a stopped send target). */
+.field-help.field-warn {
+  color: var(--warn, #e0a030);
+}
 /* Composed-message preview in the send modal. */
 .send-preview {
   max-height: 30vh;
