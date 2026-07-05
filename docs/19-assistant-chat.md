@@ -80,7 +80,8 @@ Agent: chat.go = 会話ストア(home 内 JSON) + ChatProvider 抽象
   --verbose --include-partial-messages` の JSONL を parse、`content_block_delta`/`text_delta` を SSE 配信）、
   CP `proxyAgentStream`（チャンク毎に Flush）、Console `chatStream`（fetch ストリーム読取り）+ ChatView 逐次表示。
   会話継続は非ストリームと同じ session_id 保持。ストリーミング非対応プロバイダは send() へフォールバック。
-- **Phase C**: 用途アクション（Files/DocView から「翻訳」）、プロンプトテンプレ。
+- **Phase C（Files 右クリック連携＝実装済）**: Files のファイル/ディレクトリ右クリックに
+  「アシスタントで開く ▸」を追加（詳細は下記）。**残**: FileView/DocView ヘッダにも同じ導線のボタン。
 - **Phase D**: （任意）API キー方式プロバイダ（生 Anthropic/OpenAI API、従量課金）を抽象越しに追加。
 
 ## Agent Fleet アシスタント拡張（検討・決定）
@@ -173,9 +174,29 @@ af_read の会話には書き込みツールが**そもそも見えない**こ�
 - **スタンドアロン検証済**: `--write` 無=tools/list に send_to_session 出ない/呼ぶと isError、
   `--write` 有=出る/prompt 未指定で検証エラー。**実 Agent 越しの送信はコンテナ内で要目視**。
 
+### Phase C: Files 右クリック → アシスタント連携（**実装済**）
+ファイル/ディレクトリの右クリックから、その対象をアシスタントに渡して新規チャットを開く。
+UX の確定事項（ユーザー確定 2 点）:
+- **出し分け＝常に1行のサブメニュー「アシスタントで開く ▸」＋対象で中身を出し分け**。dir は常に対象、
+  テキストファイルは対象、**バイナリ/画像は項目ごと非表示**（`isProbablyBinary`＋`imageFormat` で判定、
+  拡張子デノリスト＝未知拡張子は text 扱いの寛容判定）。クラッタ最小・筋肉記憶が安定。
+- **中身＝タスク動詞（翻訳/要約）＋アシスタント一覧、送信はプリフィルのみ（自動送信しない）**。
+  誤クリックでターンを消費せず、中身を見て編集できる。
+実装:
+- backend `chat.go`: `chatCreate` に `attach_path`（browse-root 相対）＋`seed_verb` を追加。
+  `safeBrowsePath` で解決＋denylist、対象の**dir を knowledge に追記**（file はその親 dir）、
+  seed プロンプトを**絶対パス入りでサーバ側composed**（`seedFor`）。返り値に transient `seed`
+  （保存後にセット＝永続化されない）。knowledge スナップショットに ad-hoc dir が乗る＝`--add-dir` で読める。
+- frontend: `lib/chatSeed.ts`（会話id→seed のワンショット受け渡し）、`openChat(id, seed?)` が stash、
+  `ChatView` が load 時に `takeChatSeed` して composer にプリフィル。`FilesSection` の ctxmenu に
+  アコーディオン式サブメニュー（flyout はタッチで壊れるので click 展開）。動詞 翻訳→translate/要約→general
+  ビルトインに割当、一覧は全アシスタント。`chatCreate(assistantId, title, {attachPath, seedVerb})`。
+- **未実施の目視**: 右クリック→アシスタント選択で、attach した file/dir を実際に Read して
+  翻訳/要約/回答できるか（--add-dir 経由の絶対パス Read が効くか）。
+
 ### 実装順
 Q3（済）→ Q1（mcp-stdio, read-only, 済）→ **Q2＝アシスタント・テンプレート（済）**
-→ **書き込みツール opt-in（済）** → Phase C（Files/DocView から翻訳）。
+→ **書き込みツール opt-in（済）** → **Phase C＝Files 右クリック連携（済、DocView/FileView ボタンは残）**。
 
 ## 制約（Console 側、docs/18 と同じ）
 

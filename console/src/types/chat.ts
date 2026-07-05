@@ -26,9 +26,13 @@ export interface ConversationMeta {
 export interface Conversation {
   id: string;
   agent: SessionKind;
+  assistant_id?: string;
   title: string;
   model?: string;
   created_at: number;
   updated_at: number;
   messages: ChatMessage[];
+  // Transient first-turn prompt returned only by create when a file/dir was attached
+  // (docs/19 Phase C). The Console prefills the composer with it; it is never persisted.
+  seed?: string;
 }

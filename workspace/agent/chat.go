@@ -63,6 +63,10 @@ type chatConversation struct {
 	Persona     string   `json:"persona,omitempty"`   // --append-system-prompt (falls back to chatPersona)
 	Tools       string   `json:"tools,omitempty"`     // "none" | "af_read" | "af_write"
 	Knowledge   []string `json:"knowledge,omitempty"` // dirs passed to --add-dir
+	// Seed is a transient first-turn prompt returned by create (Files attach, docs/19
+	// Phase C) for the Console to prefill the composer. It is set AFTER saveConv, so it is
+	// never persisted — the composer owns it thereafter.
+	Seed string `json:"seed,omitempty"`
 }
 
 // afToolsEnabled reports whether the fleet MCP tools attach to this chat at all (read
@@ -570,6 +574,37 @@ type chatCreateReq struct {
 	Agent       string `json:"agent"`        // legacy fallback when no assistant_id
 	Title       string `json:"title"`
 	Model       string `json:"model"` // legacy override (ignored when assistant_id is set)
+	// Ad-hoc attach (docs/19 Phase C): a Files right-click can hand a file/dir to the new
+	// chat. AttachPath is browse-root-relative (resolved + denylisted via safeBrowsePath);
+	// its dir is added to the conversation's knowledge so the assistant can read it, and a
+	// seed prompt (below) is composed server-side with the absolute path.
+	AttachPath string `json:"attach_path"`
+	SeedVerb   string `json:"seed_verb"` // "translate" | "summarize" | "" (open-ended ask)
+}
+
+// seedFor composes the first-turn prompt for an attached file/dir. The absolute path is
+// used verbatim so the assistant's Read (scoped by --add-dir) resolves it directly.
+func seedFor(verb, abs string, isDir bool) string {
+	switch verb {
+	case "translate":
+		return "次のファイルを翻訳してください：\n" + abs
+	case "summarize":
+		return "次のファイルを要約してください：\n" + abs
+	default:
+		if isDir {
+			return "次のディレクトリについて教えてください：\n" + abs
+		}
+		return "次のファイルについて教えてください：\n" + abs
+	}
+}
+
+func appendUniqueStr(ss []string, v string) []string {
+	for _, s := range ss {
+		if s == v {
+			return ss
+		}
+	}
+	return append(ss, v)
 }
 
 func handleChatCreate(w http.ResponseWriter, r *http.Request) {
@@ -617,10 +652,27 @@ func handleChatCreate(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Ad-hoc attach from a Files right-click (docs/19 Phase C): resolve the target safely,
+	// add its dir to knowledge so the assistant can read it, and compose the seed prompt.
+	var seed string
+	if req.AttachPath != "" {
+		if full, _, ok := safeBrowsePath(req.AttachPath); ok {
+			if fi, err := os.Stat(full); err == nil {
+				dir := full
+				if !fi.IsDir() {
+					dir = filepath.Dir(full)
+				}
+				c.Knowledge = appendUniqueStr(c.Knowledge, dir)
+				seed = seedFor(req.SeedVerb, full, fi.IsDir())
+			}
+		}
+	}
+
 	if err := saveConv(c); err != nil {
 		writeErr(w, http.StatusInternalServerError, "chat_save", err.Error())
 		return
 	}
+	c.Seed = seed // transient: set after save so it's returned once but never persisted
 	writeJSON(w, http.StatusOK, c)
 }
 

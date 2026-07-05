@@ -136,6 +136,28 @@ export function humanSize(bytes: number | null | undefined): string {
   return `${n.toFixed(n < 10 ? 1 : 0)} ${u[i]}`;
 }
 
+// Extensions that are almost certainly non-text, used to hide actions that only make
+// sense on readable files (e.g. handing a file to an assistant — docs/19 Phase C). This
+// is a denylist: unknown extensions (LICENSE, Dockerfile, .env, source files…) are
+// treated as text-eligible on purpose, so the check is generous rather than strict.
+const BINARY_EXT = new Set([
+  "pdf", "zip", "gz", "tgz", "bz2", "xz", "7z", "rar", "tar", "jar", "war",
+  "exe", "dll", "so", "dylib", "bin", "o", "a", "class", "wasm", "node",
+  "png", "jpg", "jpeg", "gif", "bmp", "ico", "webp", "tif", "tiff", "svg", "avif", "heic",
+  "mp3", "wav", "flac", "ogg", "m4a", "aac", "mp4", "mov", "avi", "mkv", "webm",
+  "woff", "woff2", "ttf", "otf", "eot",
+  "sqlite", "db", "dat", "pyc", "pdb", "lock",
+]);
+
+// isProbablyBinary reports whether a filename looks like a non-text asset (by extension
+// only). Errs toward false (text) for unknown extensions.
+export function isProbablyBinary(path: string): boolean {
+  const name = path.toLowerCase();
+  const base = name.includes("/") ? name.slice(name.lastIndexOf("/") + 1) : name;
+  const ext = base.includes(".") ? base.split(".").pop() ?? "" : "";
+  return !!ext && BINARY_EXT.has(ext);
+}
+
 export function countLines(text: string | null | undefined): number {
   if (!text) return 0;
   let n = 1;

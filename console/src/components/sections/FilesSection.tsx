@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent as RMouseEvent, DragEvent as RDragEvent, KeyboardEvent as RKeyboardEvent } from "react";
 import { useApp } from "../../state.jsx";
-import { api, uploadFiles, downloadURL, fsMkdir, fsNewFile, fsRename, fsDelete } from "../../api.js";
-import { dirName } from "../../lib/filemeta.js";
+import { api, uploadFiles, downloadURL, fsMkdir, fsNewFile, fsRename, fsDelete, assistantList, chatCreate } from "../../api.js";
+import { dirName, imageFormat, isProbablyBinary } from "../../lib/filemeta.js";
+import type { Assistant } from "../../types/assistant.ts";
 import { placeFixed } from "../../lib/placeFixed.js";
 import Section from "../Section.jsx";
 import Icon from "../Icon.jsx";
@@ -68,7 +69,7 @@ const fsList = (path: string) =>
 // set) so it's keyboard-navigable: ↑/↓ move, → expand / into child, ← collapse /
 // to parent, Enter opens a file (or toggles a folder).
 export default function FilesSection() {
-  const { filePath, showFile, showFileSplit, filesKey, reveal, wsState } = useApp();
+  const { filePath, showFile, showFileSplit, filesKey, reveal, wsState, openChat } = useApp();
   const askConfirm = useConfirm();
   const toast = useToast();
   const running = wsState === "running"; // WS down → file mutations are inert
@@ -98,6 +99,8 @@ export default function FilesSection() {
   const opsMenuRef = useRef<HTMLDivElement>(null); // ＋ dropdown (clamped into the viewport)
   const [opsOpen, setOpsOpen] = useState(false); // ＋ (new / upload) header dropdown
   const [menu, setMenu] = useState<Menu | null>(null); // context menu: { x, y, row|null }
+  const [subOpen, setSubOpen] = useState(false); // "アシスタントで開く" submenu expanded (docs/19 Phase C)
+  const [assistants, setAssistants] = useState<Assistant[]>([]); // for the assistant submenu
   const ctxRef = useRef<HTMLUListElement>(null); // context menu (clamped into the viewport)
   const treeRef = useRef<HTMLUListElement>(null);
   const selRef = useRef<HTMLLIElement>(null);
@@ -272,6 +275,7 @@ export default function FilesSection() {
   const openMenu = useCallback((e: RMouseEvent, row: Row | null) => {
     e.preventDefault();
     e.stopPropagation();
+    setSubOpen(false); // each open starts with the assistant submenu collapsed
     setMenu({ x: e.clientX, y: e.clientY, row });
   }, []);
   useEffect(() => {
@@ -292,6 +296,31 @@ export default function FilesSection() {
     setMenu(null);
     fn();
   };
+
+  // Assistant submenu (docs/19 Phase C): fetch the assistant list once so a right-click
+  // can hand the file/dir to an assistant. Failure just leaves the submenu empty.
+  useEffect(() => {
+    assistantList()
+      .then((r) => setAssistants(r.assistants || []))
+      .catch(() => {});
+  }, []);
+  // A row is eligible for "アシスタントで開く" if it's a directory, or a file that isn't a
+  // binary/image asset (translate/summarize/ask only make sense on readable content).
+  const menuAssistable = (row: Row) =>
+    row.type === "dir" || (!isProbablyBinary(row.name) && !imageFormat(row.name));
+  // Create a chat from the assistant, attaching the row's file/dir, then open it with the
+  // server-composed seed prefilled in the composer (never auto-sent).
+  const openWithAssistant = async (a: Assistant, row: Row, verb: "translate" | "summarize" | "") => {
+    try {
+      const c = await chatCreate(a.id, row.name, { attachPath: row.path, seedVerb: verb });
+      if (c && c.id) openChat(c.id, c.seed);
+      else toast("チャットの作成に失敗しました");
+    } catch {
+      toast("チャットの作成に失敗しました");
+    }
+  };
+  const translateAsst = assistants.find((a) => a.id === "translate");
+  const summarizeAsst = assistants.find((a) => a.id === "general");
   // Keep the context menu on-screen: it opens at the raw cursor point, which can be
   // near a right/bottom/left edge on a phone. useLayoutEffect runs before paint so
   // there's no visible jump from the initial cursor position.
@@ -756,6 +785,32 @@ export default function FilesSection() {
         <ul className="ctxmenu" ref={ctxRef} style={{ left: menu.x, top: menu.y }} role="menu" onMouseDown={(e) => e.stopPropagation()}>
           <li onClick={() => runMenu(() => newFile(menuDir))}>新規ファイル</li>
           <li onClick={() => runMenu(() => newFolder(menuDir))}>新規フォルダ</li>
+          {menu.row && menuAssistable(menu.row) && assistants.length > 0 && (
+            <li className={"ctx-sub" + (subOpen ? " open" : "")}>
+              <span className="ctx-sub-head" onClick={(e) => { e.stopPropagation(); setSubOpen((o) => !o); }}>
+                アシスタントで開く
+                <span className="ctx-sub-arrow">{subOpen ? "▾" : "▸"}</span>
+              </span>
+              {subOpen && (
+                <ul className="ctx-submenu">
+                  {menu.row.type === "file" && translateAsst && (
+                    <li onClick={() => runMenu(() => openWithAssistant(translateAsst, menu.row!, "translate"))}>翻訳</li>
+                  )}
+                  {menu.row.type === "file" && summarizeAsst && (
+                    <li onClick={() => runMenu(() => openWithAssistant(summarizeAsst, menu.row!, "summarize"))}>要約</li>
+                  )}
+                  {menu.row.type === "file" && (translateAsst || summarizeAsst) && (
+                    <li className="ctx-sep" aria-hidden="true" />
+                  )}
+                  {assistants.map((a) => (
+                    <li key={a.id} onClick={() => runMenu(() => openWithAssistant(a, menu.row!, ""))}>
+                      {a.name}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </li>
+          )}
           {menu.row && menu.row.type === "file" && (
             <li>
               <a className="ctx-a" href={downloadURL(menu.row.path)} download onClick={() => setMenu(null)}>
