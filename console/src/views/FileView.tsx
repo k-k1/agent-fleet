@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import hljs from "highlight.js/lib/common";
 // Syntax theme is defined in styles.css via CSS variables so it follows the app
@@ -13,6 +13,26 @@ import MarkdownView from "./MarkdownView.jsx";
 import MarpView from "./MarpView.jsx";
 import CodeView from "./CodeView.jsx";
 import ImageView from "./ImageView.jsx";
+import SendSelectionModal from "../components/SendSelectionModal.jsx";
+
+// lineRangeOfSelection derives the 1-based line range + text of the current selection
+// within a code element, by measuring how many newlines precede the selection start.
+// Wrap- and highlight-agnostic (it counts text, not DOM lines). Returns null if the
+// selection is empty or not inside codeEl.
+function lineRangeOfSelection(codeEl: Element): { quote: string; startLine: number; endLine: number } | null {
+  const sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return null;
+  const range = sel.getRangeAt(0);
+  if (!codeEl.contains(range.startContainer) || !codeEl.contains(range.endContainer)) return null;
+  const quote = range.toString();
+  if (!quote.trim()) return null;
+  const pre = document.createRange();
+  pre.selectNodeContents(codeEl);
+  pre.setEnd(range.startContainer, range.startOffset);
+  const startLine = pre.toString().split("\n").length;
+  const endLine = startLine + Math.max(0, quote.split("\n").length - 1);
+  return { quote, startLine, endLine };
+}
 
 // FileView shows a single file (read-only) with CodeLeaf-style affordances: an info
 // bar (name / language / size / line count / truncation) and syntax-highlighted
@@ -38,6 +58,10 @@ export default function FileView({ filePath: filePathProp, wrap }: FileViewProps
   const [imgMode, setImgMode] = useState<"preview" | "source">("preview");
   const [imgDims, setImgDims] = useState<{ w: number; h: number } | null>(null); // reported by ImageView
   const [marks, setMarks] = useState<any>(null); // git change marks for the gutter (repos/* only)
+  // Quote-to-session/assistant (a selection in the code/source view → send excerpt).
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const [sel, setSel] = useState<{ quote: string; startLine: number; endLine: number; x: number; y: number } | null>(null);
+  const [sendOpen, setSendOpen] = useState(false);
 
   const imgFmt = imageFormat(filePath); // "" unless filePath is a previewable image
   const isImage = !!imgFmt;
@@ -101,6 +125,21 @@ export default function FileView({ filePath: filePathProp, wrap }: FileViewProps
     return escapeHtml(data.content);
   }, [isText, data, filePath]);
 
+  // After a mouse selection in the code/source view, surface a floating "送る" pill by
+  // the selection. Scoped to CodeView because it queries that view's <code> element
+  // (absent in md-preview / slides / image), so it stays inert elsewhere.
+  const captureSelection = () => {
+    const codeEl = bodyRef.current?.querySelector(".codeview pre.code code.hljs");
+    if (!codeEl) return;
+    const r = lineRangeOfSelection(codeEl);
+    if (!r) {
+      setSel(null);
+      return;
+    }
+    const rect = window.getSelection()!.getRangeAt(0).getBoundingClientRect();
+    setSel({ ...r, x: Math.round(rect.left), y: Math.round(rect.top - 34) });
+  };
+
   if (!filePath) return <div className="fileview" />;
 
   const viewerStyle = {
@@ -110,7 +149,7 @@ export default function FileView({ filePath: filePathProp, wrap }: FileViewProps
   } as CSSProperties;
 
   return (
-    <div className="fileview" style={viewerStyle}>
+    <div className="fileview" style={viewerStyle} ref={bodyRef} onMouseUp={captureSelection}>
       <header className="view-head fileinfo">
         <span className="fi-name mono"><FileIcon name={baseName(filePath)} /> {baseName(filePath)}</span>
         {isImage ? (
@@ -209,6 +248,30 @@ export default function FileView({ filePath: filePathProp, wrap }: FileViewProps
           wrap={wrapOn}
           minimap={settings.minimap}
           marks={marks}
+        />
+      )}
+
+      {sel && !sendOpen && (
+        <button
+          type="button"
+          className="sel-send-pill"
+          style={{ left: sel.x, top: Math.max(4, sel.y) }}
+          onMouseDown={(e) => e.preventDefault()} // keep the text selection alive through the click
+          onClick={() => setSendOpen(true)}
+        >
+          <Icon name="comment-discussion" /> 送る
+        </button>
+      )}
+      {sendOpen && sel && (
+        <SendSelectionModal
+          filePath={filePath}
+          quote={sel.quote}
+          startLine={sel.startLine}
+          endLine={sel.endLine}
+          onClose={() => {
+            setSendOpen(false);
+            setSel(null);
+          }}
         />
       )}
     </div>
