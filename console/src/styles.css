@@ -3672,7 +3672,7 @@ button.mt-toolrun-head:hover {
   outline: none;
   border-color: var(--chat-accent);
 }
-/* Right column: mode chip (15) + gap (2) + send (26). Bottom-aligned by the parent's
+/* Right column: mode chip (15) + gap (6) + send (26). Bottom-aligned by the parent's
    align-items:flex-end, so the send button sits flush with the textarea bottom and the
    chip rides just above; the column holds its place as the textarea grows. */
 .mirror-send-col {
@@ -3680,7 +3680,7 @@ button.mt-toolrun-head:hover {
   display: flex;
   flex-direction: column;
   align-items: stretch; /* chip + send share one width → read as a unit */
-  gap: 2px;
+  gap: 6px;
 }
 .mirror-send {
   flex: none;
