@@ -21,6 +21,44 @@ export interface LineMarks {
   deleted?: number[];
 }
 
+// highlight.js emits one HTML string with `\n` between logical lines and (possibly
+// multi-line) <span> tokens. To render one grid row per logical line — so line numbers
+// stay aligned even when a line soft-wraps — split that string at each newline, closing
+// any open <span>s at the break and reopening them on the next line. Returns one HTML
+// fragment per logical line.
+function splitHighlightedLines(html: string): string[] {
+  const lines: string[] = [];
+  const open: string[] = []; // stack of currently-open <span ...> opening tags
+  let cur = "";
+  let i = 0;
+  while (i < html.length) {
+    const ch = html[i];
+    if (ch === "<") {
+      const end = html.indexOf(">", i);
+      if (end === -1) {
+        cur += html.slice(i);
+        break;
+      }
+      const tag = html.slice(i, end + 1);
+      if (tag[1] === "/") open.pop();
+      else open.push(tag); // hljs never self-closes spans
+      cur += tag;
+      i = end + 1;
+    } else if (ch === "\n") {
+      for (let k = 0; k < open.length; k++) cur += "</span>";
+      lines.push(cur);
+      cur = open.join(""); // reopen the same spans on the next line
+      i++;
+    } else {
+      cur += ch;
+      i++;
+    }
+  }
+  for (let k = 0; k < open.length; k++) cur += "</span>";
+  lines.push(cur);
+  return lines;
+}
+
 interface CodeViewProps {
   html: string;
   lines: number;
@@ -154,45 +192,46 @@ export default function CodeView({ html, lines, lineNumbers, wrap, minimap, mark
     if (t) scrollToMini(t.clientY, e.currentTarget as HTMLElement);
   };
 
-  // Per-line change classes. The bar can't align with wrapped lines (their
-  // heights vary), so it's only drawn when wrap is off.
+  // Per-line change classes for the gutter change bar. Now that each logical line is
+  // its own grid row, the bar aligns with soft-wrapped lines too, so it no longer has
+  // to be suppressed when wrap is on.
   const changes = useMemo(() => {
-    if (!marks || wrap) return null;
+    if (!marks) return null;
     const cls: Record<number, string> = {};
     for (const n of marks.added || []) cls[n] = "cb-add";
     for (const n of marks.modified || []) cls[n] = "cb-mod";
     const del = new Set(marks.deleted || []);
     if (!Object.keys(cls).length && !del.size) return null;
     return { cls, del };
-  }, [marks, wrap]);
+  }, [marks]);
 
   const showGutter = lineNumbers || changes;
   const n = Math.max(lines, 1);
+  const lineHtmls = useMemo(() => splitHighlightedLines(html), [html]);
 
   return (
     <div className="codeview-wrap">
       <div className={"codeview" + (wrap ? " wrap" : "")} ref={scrollRef}>
-        {showGutter && (
-          <div className="gutterwrap">
-            {changes && (
-              <pre className="changebar" aria-hidden="true">
-                {Array.from({ length: n }, (_, i) => {
-                  const ln = i + 1;
-                  const c = changes.cls[ln] || "";
-                  return <span key={ln} className={"cb " + c + (changes.del.has(ln) ? " cb-del" : "")} />;
-                })}
-              </pre>
-            )}
-            {lineNumbers && (
-              <pre className="gutter" aria-hidden="true">
-                {Array.from({ length: n }, (_, i) => i + 1).join("\n")}
-              </pre>
-            )}
-          </div>
-        )}
-        <pre className="code">
-          <code className="hljs" dangerouslySetInnerHTML={{ __html: html }} />
-        </pre>
+        <div className={"codegrid" + (showGutter ? "" : " no-gutter")}>
+          {Array.from({ length: n }, (_, i) => {
+            const ln = i + 1;
+            let gutCls = "";
+            if (changes) {
+              if (changes.cls[ln]) gutCls += " " + changes.cls[ln];
+              if (changes.del.has(ln)) gutCls += " cb-del";
+            }
+            return (
+              <div className="cl-row" key={i}>
+                {showGutter && (
+                  <div className={"cl-gutter" + gutCls} aria-hidden="true">
+                    {lineNumbers ? ln : ""}
+                  </div>
+                )}
+                <div className="cl-code hljs" data-ln={ln} dangerouslySetInnerHTML={{ __html: lineHtmls[i] ?? "" }} />
+              </div>
+            );
+          })}
+        </div>
       </div>
       {showMini && (
         <div className="minimap" onMouseDown={onMiniDown} onTouchStart={onMiniTouch} onTouchMove={onMiniTouch}>
