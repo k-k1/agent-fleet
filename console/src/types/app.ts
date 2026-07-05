@@ -80,7 +80,7 @@ export interface AppState {
   showTerminalSplit: (sess: string) => void;
   showChat: (sess: string) => void;
   showChatSplit: (sess: string) => void;
-  openInNewPane: (patch: PanePatch) => void;
+  openInNewPane: (patch: PanePatch, force?: boolean) => void;
   showSCM: (repo: string) => void;
   showSCMSplit: (repo: string) => void;
   showChanges: (repo: string) => void;
