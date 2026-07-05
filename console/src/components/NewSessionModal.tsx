@@ -63,6 +63,7 @@ export default function NewSessionModal({ onClose, onCreated }: NewSessionModalP
   const [sel, setSel] = useState<RepoSelection | null>(null); // picker: { cloneUrl, fullName, branch }
   const [url, setUrl] = useState("");
   const [branch, setBranch] = useState("");
+  const [newBranch, setNewBranch] = useState(""); // optional: fork a fresh branch off the base
   const [dir, setDir] = useState(""); // source=dir: home-relative launch dir ("" = home)
   const [repos, setRepos] = useState<{ name: string; path?: string; branch?: string }[]>([]); // existing working copies
   const [reposLoaded, setReposLoaded] = useState(false);
@@ -150,15 +151,18 @@ export default function NewSessionModal({ onClose, onCreated }: NewSessionModalP
   const onPick = (s: RepoSelection | null) => setSel(s);
 
   const cloneUrl = !isAgent ? "" : source === "picker" ? sel?.cloneUrl : source === "url" ? url.trim() : "";
-  const cloneBranch = source === "picker" ? sel?.branch || "" : branch.trim();
+  const cloneBranch = source === "picker" ? sel?.branch || "" : branch.trim(); // base branch
   const cloning = isAgent && source !== "dir" && !!cloneUrl;
+  const cloneNewBranch = cloning ? newBranch.trim() : ""; // fork this branch off the base
+  // The branch the session ends up on — the new branch when forking, else the base.
+  const targetBranch = cloneNewBranch || cloneBranch;
 
   // Detect an existing working copy at the default (derived) folder name.
   const derivedRepo = cloning ? deriveRepoName(cloneUrl) : "";
   const existing = (cloning && repos.find((r) => r.name === derivedRepo)) || null;
   const repoNames = new Set(repos.map((r) => r.name));
   const suggestedRepoName = derivedRepo
-    ? uniqueRepoName(`${derivedRepo}-${sanitizeSeg(cloneBranch)}`, repoNames)
+    ? uniqueRepoName(`${derivedRepo}-${sanitizeSeg(targetBranch)}`, repoNames)
     : "";
 
   // Default the mode when a copy is found: reuse it when the wanted branch is
@@ -173,10 +177,11 @@ export default function NewSessionModal({ onClose, onCreated }: NewSessionModalP
     if (!repoNameEdited) setRepoName(suggestedRepoName);
   }, [suggestedRepoName, repoNameEdited]);
 
-  // A separate copy is used when cloning a repo that already exists and the user
-  // chose "new"; that target folder name is sent as repo_name (else the server
-  // derives/reuses the legacy name).
-  const newCopy = cloning && !!existing && copyMode === "new";
+  // A separate copy (its own folder) is used when forking a new branch — folder
+  // <repo>-<newbranch> — or when the repo already exists and the user chose "new".
+  // That target folder name is sent as repo_name (else the server derives/reuses the
+  // legacy name).
+  const newCopy = cloning && (!!cloneNewBranch || (!!existing && copyMode === "new"));
   const repoNameOk = !newCopy || (repoNameRe.test(repoName.trim()) && !repoNames.has(repoName.trim()));
 
   // shell never needs a repo; an agent's repo is optional. The "場所を選ぶ" flow is
@@ -200,6 +205,7 @@ export default function NewSessionModal({ onClose, onCreated }: NewSessionModalP
         dir: isAgent && source === "dir" ? dir.trim() : "",
         remote_url: cloning ? cloneUrl : "",
         branch: cloning ? cloneBranch : "",
+        new_branch: cloning ? cloneNewBranch : "",
         repo_name: newCopy ? repoName.trim() : "",
         ssm_host_id: isSSM ? ssmHostId : "",
         ssm_force_login: isSSM ? ssmForce : false,
@@ -337,8 +343,45 @@ export default function NewSessionModal({ onClose, onCreated }: NewSessionModalP
                 )}
               </div>
 
-              {/* 既存の作業コピーがある場合：checkout で共用するか、別フォルダへ並行 clone するか */}
-              {cloning && existing && (
+              {/* 新規ブランチ（任意）：指定ブランチを基点に新しいブランチを作成して切り替える */}
+              {cloning && (
+                <div className="field">
+                  <div className="field-label">新規ブランチ（任意）</div>
+                  <label className="pick-field">
+                    <span>ブランチ名</span>
+                    <input
+                      value={newBranch}
+                      onChange={(e) => setNewBranch(e.target.value)}
+                      placeholder={`${cloneBranch || "既定ブランチ"} から作成`}
+                    />
+                  </label>
+                  <div className="field-help">
+                    指定すると <code>{cloneBranch || "既定ブランチ"}</code> を基点に新しいブランチを作成して切り替えます。空なら基点ブランチのまま。
+                  </div>
+                  {cloneNewBranch && (
+                    <label className="pick-field">
+                      <span>フォルダ名</span>
+                      <input
+                        value={repoName}
+                        onChange={(e) => {
+                          setRepoName(e.target.value);
+                          setRepoNameEdited(true);
+                        }}
+                        placeholder={suggestedRepoName}
+                      />
+                      <span className="field-help">
+                        {repoNameOk
+                          ? <>作業コピーは <code>{repoName || suggestedRepoName}</code> に clone します。</>
+                          : "英数字始まりの一意な名前にしてください（既存の作業コピーと重複不可）。"}
+                      </span>
+                    </label>
+                  )}
+                </div>
+              )}
+
+              {/* 既存の作業コピーがある場合：checkout で共用するか、別フォルダへ並行 clone するか
+                  （新規ブランチを作る場合は常に別フォルダなのでこの選択は出さない） */}
+              {cloning && existing && !cloneNewBranch && (
                 <div className="field">
                   <div className="field-label">作業コピー</div>
                   <div className="field-help">

@@ -323,6 +323,39 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const closeNav = useCallback(() => setNavOpen(false), []);
   const toggleNav = useCallback(() => setNavOpen((o) => !o), []);
 
+  // Desktop left-pane collapse (separate from the mobile navOpen drawer so it doesn't
+  // touch the history/back-button + swipe wiring). leftOpen = the pane is shown;
+  // leftMode = how it shows when open: "push" docks it (main reflows) or "overlay"
+  // floats it above main (no reflow) like the mobile drawer. Both persist so the
+  // choice survives a reload. Single-click the hamburger toggles open/closed;
+  // double-click toggles the mode (see TopBar).
+  const [leftOpen, setLeftOpen] = useState<boolean>(() => localStorage.getItem("af-left-open") !== "0");
+  const [leftMode, setLeftMode] = useState<string>(() =>
+    localStorage.getItem("af-left-mode") === "overlay" ? "overlay" : "push",
+  );
+  const toggleLeft = useCallback(
+    () =>
+      setLeftOpen((o) => {
+        const n = !o;
+        localStorage.setItem("af-left-open", n ? "1" : "0");
+        return n;
+      }),
+    [],
+  );
+  const closeLeft = useCallback(() => {
+    setLeftOpen(false);
+    localStorage.setItem("af-left-open", "0");
+  }, []);
+  const toggleLeftMode = useCallback(
+    () =>
+      setLeftMode((m) => {
+        const n = m === "push" ? "overlay" : "push";
+        localStorage.setItem("af-left-mode", n);
+        return n;
+      }),
+    [],
+  );
+
   // Mobile: swipe right to open the navigator drawer (same as the hamburger), swipe
   // left to close it while open. Only under the 760px breakpoint (where the drawer
   // is a slide-in). "open" arms when the touch starts in the left region with the
@@ -1159,6 +1192,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     navOpen,
     toggleNav,
     closeNav,
+    leftOpen,
+    leftMode,
+    toggleLeft,
+    closeLeft,
+    toggleLeftMode,
     sessions,
     sessionsKey,
     reposKey,

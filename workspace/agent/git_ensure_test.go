@@ -60,7 +60,7 @@ func TestEnsureRepoSideBySideBranches(t *testing.T) {
 	remote := "file://" + src
 
 	// Default branch into the legacy bare-name folder.
-	dirMain, err := ensureRepo(remote, "main", "")
+	dirMain, err := ensureRepo(remote, "main", "", "")
 	if err != nil {
 		t.Fatalf("ensureRepo main: %v", err)
 	}
@@ -69,7 +69,7 @@ func TestEnsureRepoSideBySideBranches(t *testing.T) {
 	}
 
 	// Same repo, different branch, explicit distinct name => a separate clone.
-	dirFeat, err := ensureRepo(remote, "feature", "app-feature")
+	dirFeat, err := ensureRepo(remote, "feature", "", "app-feature")
 	if err != nil {
 		t.Fatalf("ensureRepo feature: %v", err)
 	}
@@ -87,6 +87,43 @@ func TestEnsureRepoSideBySideBranches(t *testing.T) {
 	}
 }
 
+func TestEnsureRepoNewBranch(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	src := filepath.Join(t.TempDir(), "app")
+	gitInit(t, src)
+	remote := "file://" + src
+
+	// Clone at base "main" and fork a fresh branch, into its own folder.
+	dir, err := ensureRepo(remote, "main", "feat/x", "app-feat-x")
+	if err != nil {
+		t.Fatalf("ensureRepo new branch: %v", err)
+	}
+	if want := filepath.Join(home, "repos", "app-feat-x"); dir != want {
+		t.Fatalf("dir = %q, want %q", dir, want)
+	}
+	if br, _ := gitStatus(dir); br.Branch != "feat/x" {
+		t.Fatalf("branch = %q, want feat/x", br.Branch)
+	}
+
+	// Reusing the same folder + new branch simply switches back to it (no error even
+	// though the branch already exists).
+	dir2, err := ensureRepo(remote, "main", "feat/x", "app-feat-x")
+	if err != nil {
+		t.Fatalf("ensureRepo reuse new branch: %v", err)
+	}
+	if dir2 != dir {
+		t.Fatalf("reuse dir = %q, want %q", dir2, dir)
+	}
+	if br, _ := gitStatus(dir2); br.Branch != "feat/x" {
+		t.Fatalf("reuse branch = %q, want feat/x", br.Branch)
+	}
+}
+
 func TestEnsureRepoOriginMismatch(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
@@ -100,15 +137,15 @@ func TestEnsureRepoOriginMismatch(t *testing.T) {
 	gitInit(t, srcA)
 	gitInit(t, srcB)
 
-	if _, err := ensureRepo("file://"+srcA, "main", ""); err != nil {
+	if _, err := ensureRepo("file://"+srcA, "main", "", ""); err != nil {
 		t.Fatalf("ensureRepo A: %v", err)
 	}
 	// Same derived name "app", different remote => must refuse, not silently reuse.
-	if _, err := ensureRepo("file://"+srcB, "main", ""); err == nil {
+	if _, err := ensureRepo("file://"+srcB, "main", "", ""); err == nil {
 		t.Fatalf("ensureRepo B: expected origin-mismatch error, got nil (silent reuse)")
 	}
 	// With a distinct name it succeeds as an independent clone.
-	if _, err := ensureRepo("file://"+srcB, "main", "app-bob"); err != nil {
+	if _, err := ensureRepo("file://"+srcB, "main", "", "app-bob"); err != nil {
 		t.Fatalf("ensureRepo B with distinct name: %v", err)
 	}
 }

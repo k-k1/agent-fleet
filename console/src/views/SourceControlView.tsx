@@ -7,6 +7,7 @@ import Modal from "../components/Modal.jsx";
 import CommitGraph from "../components/CommitGraph.jsx";
 import { useConfirm } from "../components/ConfirmProvider.jsx";
 import { useToast } from "../components/ToastProvider.jsx";
+import { useDismiss } from "../lib/useDismiss.js";
 import { placeFixed } from "../lib/placeFixed.js";
 import EmptyState from "../components/EmptyState.jsx";
 import type { FormEvent, KeyboardEvent as RKeyboardEvent } from "react";
@@ -38,6 +39,9 @@ export default function SourceControlView({ repo }: { repo?: string; wrap?: bool
   const menuRef = useRef<HTMLUListElement>(null);
   const [nbAt, setNbAt] = useState<string | null>(null); // "new branch from this commit" sha
   const [nbName, setNbName] = useState("");
+  const [moreOpen, setMoreOpen] = useState(false); // narrow-pane overflow (⋯) menu
+  const moreRef = useRef<HTMLDivElement>(null);
+  useDismiss(moreRef, moreOpen, () => setMoreOpen(false));
 
   // Commit context menu: clamp on-screen, close on outside click / Esc.
   useLayoutEffect(() => {
@@ -177,6 +181,14 @@ export default function SourceControlView({ repo }: { repo?: string; wrap?: bool
     bumpFiles();
   };
 
+  // Header actions, shared by the inline row and the ⋯ overflow menu.
+  const scmActions = [
+    { key: "changes", icon: "git-commit", label: "変更", title: "変更をコミット（別ペイン）", onClick: () => scmRepo && showChanges(scmRepo) },
+    { key: "fetch", icon: "cloud-download", label: "fetch", title: "git fetch --prune", onClick: fetchRepo },
+    { key: "ff", icon: "arrow-down", label: "Fast-Forward", title: "現在のブランチを upstream に fast-forward（pull --ff-only）", onClick: doFF },
+    { key: "refresh", icon: "refresh", label: "更新", title: "更新", onClick: refresh },
+  ];
+
   return (
     <div className="scmview">
       <header className="view-head">
@@ -195,18 +207,35 @@ export default function SourceControlView({ repo }: { repo?: string; wrap?: bool
           </span>
         ) : null}
         <span className="spacer" />
-        <button className="ghost scm-act" title="変更をコミット（別ペイン）" onClick={() => scmRepo && showChanges(scmRepo)}>
-          <Icon name="git-commit" /> <span className="lbl">変更</span>
-        </button>
-        <button className="ghost scm-act" title="git fetch --prune" onClick={fetchRepo}>
-          <Icon name="cloud-download" /> <span className="lbl">fetch</span>
-        </button>
-        <button className="ghost scm-act" title="現在のブランチを upstream に fast-forward（pull --ff-only）" onClick={doFF}>
-          <Icon name="arrow-down" /> <span className="lbl">Fast-Forward</span>
-        </button>
-        <button className="ghost scm-act" title="更新" onClick={refresh}>
-          <Icon name="refresh" /> <span className="lbl">更新</span>
-        </button>
+        {/* One action set, rendered two ways: an inline icon row when the pane is wide
+            enough, and a ⋯ overflow menu when it's narrow (CSS container query toggles
+            which is shown — see .scm-acts / .scm-more in styles.css). */}
+        <div className="scm-acts">
+          {scmActions.map((a) => (
+            <button key={a.key} className="ghost scm-act" title={a.title} onClick={a.onClick}>
+              <Icon name={a.icon} /> <span className="lbl">{a.label}</span>
+            </button>
+          ))}
+        </div>
+        <div className="launch-wrap scm-more" ref={moreRef}>
+          <button
+            className="ghost scm-more-btn"
+            title="操作"
+            aria-expanded={moreOpen}
+            onClick={() => setMoreOpen((o) => !o)}
+          >
+            <Icon name="ellipsis" />
+          </button>
+          {moreOpen && (
+            <div className="launch-menu">
+              {scmActions.map((a) => (
+                <button key={a.key} onClick={() => { setMoreOpen(false); a.onClick(); }}>
+                  <Icon name={a.icon} /> {a.label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
       </header>
       <div className="cgraph-body" ref={bodyRef} tabIndex={0} onKeyDown={onKey}>
         {loading && commits.length === 0 ? (

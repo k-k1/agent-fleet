@@ -19,6 +19,7 @@ interface CloneRequest {
   remote_url: string;
   branch: string;
   name: string;
+  new_branch: string;
 }
 
 interface NewRepoModalProps {
@@ -32,32 +33,41 @@ export default function NewRepoModal({ onClose, onClone, repos = [] }: NewRepoMo
   const [sel, setSel] = useState<RepoSelection | null>(null); // picker: { cloneUrl, branch }
   const [url, setUrl] = useState("");
   const [branch, setBranch] = useState("");
-  const [name, setName] = useState(""); // target folder (auto-filled on collision)
+  const [newBranch, setNewBranch] = useState(""); // optional: fork a fresh branch off the base
+  const [name, setName] = useState(""); // target folder (auto-filled on collision / new branch)
   const [nameEdited, setNameEdited] = useState(false);
 
   const cloneUrl = source === "picker" ? sel?.cloneUrl : url.trim();
-  const cloneBranch = source === "picker" ? sel?.branch || "" : branch.trim();
+  const cloneBranch = source === "picker" ? sel?.branch || "" : branch.trim(); // base branch
+  const cloneNewBranch = cloneUrl ? newBranch.trim() : ""; // fork this branch off the base
+  const targetBranch = cloneNewBranch || cloneBranch; // branch the clone ends up on
 
-  // A working copy at the derived folder name already exists => the clone needs a
-  // distinct folder, so offer a name (defaulting to "<repo>-<branch>").
+  // The clone needs its own folder when forking a new branch (always) or when a
+  // working copy already exists at the derived name. Default it to "<repo>-<branch>".
   const derivedRepo = cloneUrl ? deriveRepoName(cloneUrl) : "";
   const repoNames = new Set(repos.map((r) => r.name));
   const collision = !!derivedRepo && repoNames.has(derivedRepo);
+  const wantName = !!cloneNewBranch || collision; // send an explicit folder name
   const suggestedName = derivedRepo
-    ? uniqueRepoName(`${derivedRepo}-${sanitizeSeg(cloneBranch)}`, repoNames)
+    ? uniqueRepoName(`${derivedRepo}-${sanitizeSeg(targetBranch)}`, repoNames)
     : "";
 
   useEffect(() => {
     if (!nameEdited) setName(suggestedName);
   }, [suggestedName, nameEdited]);
 
-  const nameOk = !collision || (repoNameRe.test(name.trim()) && !repoNames.has(name.trim()));
+  const nameOk = !wantName || (repoNameRe.test(name.trim()) && !repoNames.has(name.trim()));
   const canSubmit = !!cloneUrl && nameOk;
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
     if (!canSubmit) return;
-    onClone({ remote_url: cloneUrl || "", branch: cloneBranch, name: collision ? name.trim() : "" });
+    onClone({
+      remote_url: cloneUrl || "",
+      branch: cloneBranch,
+      new_branch: cloneNewBranch,
+      name: wantName ? name.trim() : "",
+    });
     onClose?.();
   };
 
@@ -99,12 +109,32 @@ export default function NewRepoModal({ onClose, onClone, repos = [] }: NewRepoMo
             )}
           </div>
 
-          {/* 同名の作業コピーが既にある場合のみフォルダ名を尋ねる（別ブランチを並行 clone） */}
-          {collision && (
+          {/* 新規ブランチ（任意）：指定ブランチを基点に新しいブランチを作成して clone */}
+          {!!cloneUrl && (
+            <div className="field">
+              <div className="field-label">新規ブランチ（任意）</div>
+              <label className="pick-field">
+                <span>ブランチ名</span>
+                <input
+                  value={newBranch}
+                  onChange={(e) => setNewBranch(e.target.value)}
+                  placeholder={`${cloneBranch || "既定ブランチ"} から作成`}
+                />
+              </label>
+              <div className="field-help">
+                指定すると <code>{cloneBranch || "既定ブランチ"}</code> を基点に新しいブランチを作成して切り替えます。空なら基点ブランチのまま。
+              </div>
+            </div>
+          )}
+
+          {/* フォルダ名：新規ブランチを作る／同名の作業コピーが既にある場合に分ける */}
+          {wantName && (
             <div className="field">
               <div className="field-label">フォルダ名</div>
               <div className="field-help">
-                作業コピー「{derivedRepo}」は既にあります。別の作業コピーとして clone するためフォルダ名を分けます。
+                {cloneNewBranch
+                  ? <>新規ブランチ <code>{cloneNewBranch}</code> の作業コピーを別フォルダへ clone します。</>
+                  : <>作業コピー「{derivedRepo}」は既にあります。別の作業コピーとして clone するためフォルダ名を分けます。</>}
               </div>
               <label className="pick-field">
                 <span>フォルダ名</span>

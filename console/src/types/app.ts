@@ -114,6 +114,12 @@ export interface AppState {
   navOpen: boolean;
   toggleNav: () => void;
   closeNav: () => void;
+  // desktop left-pane collapse: leftOpen = shown; leftMode = "push" | "overlay"
+  leftOpen: boolean;
+  leftMode: string;
+  toggleLeft: () => void;
+  closeLeft: () => void;
+  toggleLeftMode: () => void;
   // shared data + refresh signals
   sessions: Session[];
   sessionsKey: number;
