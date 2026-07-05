@@ -115,6 +115,16 @@ export default function FilesSection() {
   useEffect(() => {
     openRef.current = open;
   }, [open]);
+  // Mirror selected + cache into refs so the "follow the active file" effect can read the
+  // current values without re-running on every selection change or cache write.
+  const selectedRef = useRef(selected);
+  useEffect(() => {
+    selectedRef.current = selected;
+  }, [selected]);
+  const cacheRef = useRef(cache);
+  useEffect(() => {
+    cacheRef.current = cache;
+  }, [cache]);
 
   const setViewPersist = useCallback((v: string) => {
     setView(v);
@@ -406,6 +416,44 @@ export default function FilesSection() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reveal && reveal.n]);
+
+  // Follow the active file: when the focused pane shows a file (context `filePath`), move
+  // the tree cursor onto it — expanding its ancestor folders so it's visible; the
+  // selected-scroll effect then brings it into view. Cached fetches keep pane switching
+  // from spamming the server. Skips when the active pane isn't a file (filePath empty) or
+  // the cursor is already there (e.g. the file was just opened from the tree).
+  useEffect(() => {
+    if (!filePath || filePath === selectedRef.current) return;
+    let alive = true;
+    (async () => {
+      const segs = filePath.split("/").filter(Boolean);
+      const toOpen: string[] = [];
+      let cur = "";
+      for (let i = 0; i < segs.length - 1; i++) {
+        cur = cur ? cur + "/" + segs[i] : segs[i];
+        const dir = cur; // capture per-iteration for the async setCache below
+        if (!cacheRef.current[dir]) {
+          const d = await fsList(dir);
+          if (!alive) return;
+          const entries = d.entries || [];
+          setCache((c) => (c[dir] ? c : { ...c, [dir]: entries }));
+        }
+        toOpen.push(dir);
+      }
+      if (!alive) return;
+      if (toOpen.length)
+        setOpen((s) => {
+          const n = new Set(s);
+          toOpen.forEach((p) => n.add(p));
+          return n;
+        });
+      setSelected(filePath);
+    })();
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filePath]);
 
   // Flatten the open tree into the list of visible rows. Single-child directory
   // chains are compacted into one row: name = "a/b/c", path = deepest segment,
