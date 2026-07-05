@@ -105,6 +105,11 @@ export default function FilesSection() {
   const ctxRef = useRef<HTMLUListElement>(null); // context menu (clamped into the viewport)
   const treeRef = useRef<HTMLUListElement>(null);
   const selRef = useRef<HTMLLIElement>(null);
+  // VS Code-style "sticky scroll": the ancestor folders of the topmost visible row,
+  // pinned at the top of the tree as you scroll so the current path stays in view.
+  const wrapRef = useRef<HTMLDivElement>(null); // positioning context for the sticky overlay
+  const scrollRef = useRef<HTMLElement | null>(null); // the .leftpane-scroll scroller (found lazily)
+  const [sticky, setSticky] = useState<{ rows: Row[]; top: number }>({ rows: [], top: 0 });
   // Set when a selection change is an AUTO one (the first row picked on load), so the
   // "keep selected visible" scroll below skips it — otherwise a WS Start / files refresh
   // would yank the whole left nav to the top file. User-driven selection still scrolls.
@@ -593,6 +598,78 @@ export default function FilesSection() {
     selRef.current?.scrollIntoView({ block: "nearest" });
   }, [selected]);
 
+  // Sticky scroll: recompute the pinned ancestor chain from the current scroll offset.
+  // `over` is how far the tree's top has scrolled above the scroller's viewport top; the
+  // row sitting at that top edge is rows[idx], whose ancestor folders we pin. The overlay
+  // is absolutely placed `over` px down from the wrap top, i.e. at the viewport top.
+  const MAX_STICKY = 5; // cap so the pinned stack never eats the (short) pane
+  const recomputeSticky = useCallback(() => {
+    const wrap = wrapRef.current;
+    const tree = treeRef.current;
+    if (!wrap || !tree) return;
+    if (!scrollRef.current || !scrollRef.current.isConnected)
+      scrollRef.current = tree.closest<HTMLElement>(".leftpane-scroll");
+    const scroller = scrollRef.current;
+    if (!scroller || !rows.length) {
+      setSticky((s) => (s.rows.length ? { rows: [], top: 0 } : s));
+      return;
+    }
+    const over = scroller.getBoundingClientRect().top - wrap.getBoundingClientRect().top;
+    const first = tree.querySelector<HTMLElement>("li.fsrow");
+    const rowH = (first && first.offsetHeight) || 22;
+    if (over <= 1) {
+      setSticky((s) => (s.rows.length ? { rows: [], top: 0 } : s));
+      return;
+    }
+    const idx = Math.min(rows.length - 1, Math.floor(over / rowH));
+    // Ancestor folders of rows[idx]: nearest preceding row at each shallower depth.
+    const anc: Row[] = [];
+    let need = rows[idx].depth - 1;
+    for (let j = idx - 1; j >= 0 && need >= 0; j--) {
+      if (rows[j].depth === need) {
+        anc.unshift(rows[j]);
+        need--;
+      }
+    }
+    const capped = anc.length > MAX_STICKY ? anc.slice(anc.length - MAX_STICKY) : anc;
+    setSticky({ rows: capped, top: over });
+  }, [rows]);
+
+  // Recompute on scroll (rAF-throttled), on resize, and whenever the visible rows change.
+  useEffect(() => {
+    if (view !== "tree") {
+      setSticky({ rows: [], top: 0 });
+      return;
+    }
+    const tree = treeRef.current;
+    const scroller = tree?.closest<HTMLElement>(".leftpane-scroll");
+    scrollRef.current = scroller || null;
+    let raf = 0;
+    const onScroll = () => {
+      if (raf) return;
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        recomputeSticky();
+      });
+    };
+    scroller?.addEventListener("scroll", onScroll, { passive: true });
+    window.addEventListener("resize", onScroll);
+    recomputeSticky();
+    return () => {
+      if (raf) cancelAnimationFrame(raf);
+      scroller?.removeEventListener("scroll", onScroll);
+      window.removeEventListener("resize", onScroll);
+    };
+  }, [recomputeSticky, view]);
+
+  // Click a pinned ancestor → select it and scroll the real row to the top.
+  const jumpToRow = useCallback((path: string) => {
+    setSelected(path);
+    const tree = treeRef.current;
+    const li = tree?.querySelector<HTMLElement>(`li[data-path="${CSS.escape(path)}"]`);
+    li?.scrollIntoView({ block: "start" });
+  }, []);
+
   const onKeyDown = (e: RKeyboardEvent) => {
     if (!rows.length) return;
     let idx = rows.findIndex((r) => r.path === selected);
@@ -793,6 +870,26 @@ export default function FilesSection() {
             ))}
         </ul>
       ) : (
+        <div className="fstree-wrap" ref={wrapRef}>
+        {sticky.rows.length > 0 && (
+          <div className="fstree-sticky" style={{ top: sticky.top }} aria-hidden="true">
+            {sticky.rows.map((r) => (
+              <div
+                key={r.path}
+                className="fsrow fs-sticky-row"
+                style={{ paddingLeft: 4 + r.depth * 14 }}
+                title={r.path}
+                onClick={() => jumpToRow(r.path)}
+              >
+                <span className="fs-dir">
+                  <span className="fs-chev">▾</span>
+                  <span className="fs-ic"><DirIcon open /></span>
+                  {r.name}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
         <ul
           className={"fstree" + (dropTarget === "" ? " drop-root" : "")}
           tabIndex={0}
@@ -820,6 +917,7 @@ export default function FilesSection() {
             return (
               <li
                 key={r.path}
+                data-path={r.path}
                 ref={isSel ? selRef : null}
                 className={
                   "fsrow" + (isSel ? " selected" : "") + (isDir && dropTarget === r.path ? " drop-hover" : "")
@@ -850,6 +948,7 @@ export default function FilesSection() {
             );
           })}
         </ul>
+        </div>
       )}
       {menu && (
         <ul className="ctxmenu" ref={ctxRef} style={{ left: menu.x, top: menu.y }} role="menu" onMouseDown={(e) => e.stopPropagation()}>
