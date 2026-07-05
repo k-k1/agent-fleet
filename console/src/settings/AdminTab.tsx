@@ -44,7 +44,7 @@ interface View {
 // the member's session list, served by the per-member admin endpoints.
 
 // GiB with adaptive precision (shared fmtGiB) plus AdminTab's "G" suffix.
-const ADMIN_MODES = ["manage", "sessions", "usage"]; // swipe order for the mode tabs
+const ADMIN_MODES = ["manage", "sessions", "usage", "audit"]; // swipe order for the mode tabs
 const fmtG = (b: number) => fmtGiB(b) + "G";
 const fmtPct = (n: number | null | undefined) => (n == null ? "–" : Math.round(n) + "%");
 
@@ -150,10 +150,14 @@ export default function AdminTab() {
         <button type="button" className={"seg-btn" + (mode === "usage" ? " active" : "")} onClick={() => setMode("usage")}>
           <Icon name="graph" /> 使用量
         </button>
+        <button type="button" className={"seg-btn" + (mode === "audit" ? " active" : "")} onClick={() => setMode("audit")}>
+          <Icon name="history" /> 監査
+        </button>
       </div>
 
       {mode === "sessions" && <AllSessionsView tenants={tenants} isSuper={isSuper} />}
       {mode === "usage" && <UsageView tenants={tenants} isSuper={isSuper} />}
+      {mode === "audit" && <AuditView tenants={tenants} isSuper={isSuper} />}
 
       {mode === "manage" && (
       <>
@@ -346,6 +350,105 @@ function AllSessionsView({ tenants, isSuper }: { tenants: Tenant[]; isSuper: boo
                   </div>
                 ));
             })()}
+          </div>
+        )}
+      </section>
+    </div>
+  );
+}
+
+// --- Audit log (docs/20 M1) -------------------------------------------------
+// The change-operation ledger: file / git / session mutations recorded by the CP
+// proxy (actor = the member behind the resolved request). Reads GET /api/admin/audit
+// (super_admin: whole deployment, optionally filtered by ?tenant=; tenant_admin:
+// their tenant). Historical, so it's fetched on demand + manual refresh, not polled.
+
+const auditCat = (action: string) => action.split(".")[0]; // fs | git | repo | session | egress
+const fmtAt = (iso: string) => {
+  if (!iso) return "";
+  const d = new Date(iso);
+  return isNaN(d.getTime()) ? iso : d.toLocaleString();
+};
+
+function AuditView({ tenants, isSuper }: { tenants: Tenant[]; isSuper: boolean }) {
+  const [tenant, setTenant] = useState(isSuper ? "" : tenants[0]?.slug || "");
+  const [q, setQ] = useState("");
+  const [rows, setRows] = useState<any[] | null>(null);
+  const [err, setErr] = useState("");
+
+  const load = useCallback(async () => {
+    setRows(null);
+    setErr("");
+    try {
+      const d = await api("api/admin/audit" + (tenant ? "?tenant=" + encodeURIComponent(tenant) : ""));
+      if (d?.error) {
+        setErr(errText(d.error));
+        setRows([]);
+        return;
+      }
+      setRows(d.audit || []);
+    } catch {
+      setErr("読み込めません");
+      setRows([]);
+    }
+  }, [tenant]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const needle = q.trim().toLowerCase();
+  const shown = needle
+    ? (rows || []).filter((a: any) =>
+        [a.action, a.target, a.actor_email, a.actor_id, a.tenant].some((v) =>
+          (v || "").toLowerCase().includes(needle),
+        ),
+      )
+    : rows || [];
+
+  return (
+    <div className="admin-stage audit-view">
+      <section className="admin-panel">
+        <div className="usage-toolbar">
+          {isSuper && (
+            <label>
+              テナント
+              <select value={tenant} onChange={(e) => setTenant(e.target.value)}>
+                <option value="">全テナント</option>
+                {tenants.map((t) => (
+                  <option key={t.slug} value={t.slug}>{t.name}</option>
+                ))}
+              </select>
+            </label>
+          )}
+          <label className="as-search">
+            検索
+            <input type="text" value={q} onChange={(e) => setQ(e.target.value)} placeholder="操作 / 対象 / ユーザー" />
+          </label>
+          <button type="button" className="ghost" title="更新" onClick={load}>
+            <Icon name="refresh" />
+          </button>
+          <span className="as-count muted">{(rows || []).length} 件</span>
+        </div>
+        {err && <p className="form-err">{err}</p>}
+      </section>
+
+      <section className="admin-panel">
+        {rows === null ? (
+          <p className="muted">読み込み中…</p>
+        ) : shown.length === 0 ? (
+          <p className="muted">{(rows || []).length === 0 ? "監査ログはまだありません。" : "一致するログがありません。"}</p>
+        ) : (
+          <div className="adm-audit">
+            {shown.map((a: any) => (
+              <div key={a.id} className="adm-audit-row">
+                <span className="as-time muted">{fmtAt(a.at)}</span>
+                <span className={"audit-action cat-" + auditCat(a.action)}>{a.action}</span>
+                <span className="asx-user mono" title={a.actor_id}>{a.actor_email || a.actor_kind}</span>
+                <span className="as-name mono" title={a.target}>{a.target}</span>
+                {isSuper && <span className="as-repo muted">{a.tenant}</span>}
+              </div>
+            ))}
           </div>
         )}
       </section>

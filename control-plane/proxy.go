@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"net/url"
@@ -9,6 +10,55 @@ import (
 
 	"github.com/gorilla/websocket"
 )
+
+// auditActionTarget classifies a proxied request as an auditable CHANGE operation
+// (M1 audit, docs/20 §A / §E.1: file, git, session mutations). Read-only and other
+// non-mutating calls return ok=false. Target is taken from the URL only (path value
+// or query), never the request body — so no secrets are read (docs §A.6).
+func auditActionTarget(r *http.Request) (action, target string, ok bool) {
+	p := r.URL.Path
+	q := r.URL.Query()
+	name := r.PathValue("name") // repo / session name for {name} routes ("" otherwise)
+	switch r.Method {
+	case http.MethodPost:
+		switch {
+		case p == "/api/fs/upload":
+			return "fs.upload", q.Get("path"), true
+		case p == "/api/fs/mkdir":
+			return "fs.mkdir", q.Get("path"), true
+		case p == "/api/fs/newfile":
+			return "fs.newfile", q.Get("path"), true
+		case p == "/api/fs/rename":
+			return "fs.rename", q.Get("from") + " → " + q.Get("to"), true
+		case p == "/api/repos":
+			return "repo.clone", "", true
+		case name != "" && strings.HasSuffix(p, "/commit"):
+			return "git.commit", name, true
+		case name != "" && strings.HasSuffix(p, "/discard"):
+			return "git.discard", name, true
+		case name != "" && strings.HasSuffix(p, "/checkout"):
+			return "git.checkout", name, true
+		case name != "" && strings.HasSuffix(p, "/fetch"):
+			return "git.fetch", name, true
+		case name != "" && strings.HasSuffix(p, "/ff"):
+			return "git.ff", name, true
+		case p == "/api/sessions":
+			return "session.create", "", true
+		case name != "" && strings.HasSuffix(p, "/fork"):
+			return "session.fork", name, true
+		case name != "" && strings.HasSuffix(p, "/stop"):
+			return "session.stop", name, true
+		}
+	case http.MethodDelete:
+		switch {
+		case p == "/api/fs/delete":
+			return "fs.delete", q.Get("path"), true
+		case name != "" && p == "/api/repos/"+name:
+			return "repo.delete", name, true
+		}
+	}
+	return "", "", false
+}
 
 // proxyAgentREST forwards /api/sessions* to the Workspace Agent's /sessions*.
 // The Control Plane never talks to tmux directly; it delegates to the Agent.
@@ -46,6 +96,16 @@ func (c config) proxyAgentREST(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer resp.Body.Close()
+
+	// M1 audit (docs/20): record a successful change operation. actor/tenant come from
+	// the resolved request; best-effort with a detached context so a client disconnect
+	// during the body copy below can't cancel the write.
+	if action, target, ok := auditActionTarget(r); ok && resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		_ = c.mgr.store.InsertAudit(context.Background(), AuditLog{
+			ID: newID(), TenantID: res.ws.TenantID, ActorKind: "user", ActorID: res.ident.ID,
+			Action: action, Target: target, At: nowTS(),
+		})
+	}
 
 	for k, vals := range resp.Header {
 		for _, v := range vals {
