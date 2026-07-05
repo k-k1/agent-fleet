@@ -265,7 +265,11 @@ function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected,
 
   // Context menu: open at the cursor, clamp on-screen, close on outside click / Esc.
   useLayoutEffect(() => {
-    if (menu && menuRef.current) placeFixed(menuRef.current, menu.x, menu.y);
+    if (menu && menuRef.current)
+      // Clamp within the left rail's scroll container so the menu stops short of its
+      // vertical scrollbar instead of painting over it (the menu is far narrower than
+      // the viewport, so a viewport-only clamp never kicks in).
+      placeFixed(menuRef.current, menu.x, menu.y, menuRef.current.closest<HTMLElement>(".leftpane-scroll"));
   }, [menu]);
   useEffect(() => {
     if (!menu) return;
