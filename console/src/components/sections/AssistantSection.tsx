@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import type { MouseEvent as RMouseEvent } from "react";
 import Section from "../Section.jsx";
 import Icon from "../Icon.jsx";
 import AssistantModal from "../AssistantModal.jsx";
@@ -25,7 +26,7 @@ import type { Assistant, AssistantInput } from "../../types/assistant.ts";
 // thing that grows and that the user returns to). Picking an assistant opens a draft —
 // nothing is persisted until the first message is sent.
 export default function AssistantSection() {
-  const { openChat, openAssistantDraft, chatListKey } = useApp();
+  const { openChat, openAssistantDraft, openInNewPane, chatListKey } = useApp();
   const toast = useToast();
   const [convs, setConvs] = useState<ConversationMeta[]>([]);
   const [assistants, setAssistants] = useState<Assistant[]>([]);
@@ -36,6 +37,13 @@ export default function AssistantSection() {
   const [pickerOpen, setPickerOpen] = useState(false); // ＋新規 assistant picker popover
   const pickerRef = useRef<HTMLDivElement>(null); // popover wrap (outside-click test + anchor)
   const pickerMenuRef = useRef<HTMLDivElement>(null); // popover (clamped into the viewport)
+  const [menu, setMenu] = useState<{ x: number; y: number; a: Assistant } | null>(null); // assistant right-click menu
+  const menuRef = useRef<HTMLUListElement>(null);
+
+  // A chat-pane patch for an assistant draft / an existing conversation. openInNewPane
+  // dedups via shows(), so ctrl/middle-click focuses an already-open one (重複回避).
+  const draftPatch = (a: Assistant) => ({ kind: "chat" as const, conversationId: null, draftAssistantId: a.id });
+  const convPatch = (id: string) => ({ kind: "chat" as const, conversationId: id, draftAssistantId: null });
 
   const refresh = useCallback(() => {
     chatList()
@@ -61,6 +69,34 @@ export default function AssistantSection() {
     const a = anchor.getBoundingClientRect();
     placeFixed(el, a.right - el.offsetWidth, a.bottom + 4);
   }, [pickerOpen]);
+
+  // Assistant right-click menu: open at the cursor; close on outside click / Esc / scroll.
+  const openMenu = (e: RMouseEvent, a: Assistant) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setPickerOpen(false); // don't stack the menu over the popover
+    setMenu({ x: e.clientX, y: e.clientY, a });
+  };
+  useEffect(() => {
+    if (!menu) return;
+    const close = () => setMenu(null);
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && close();
+    document.addEventListener("mousedown", close);
+    document.addEventListener("keydown", onKey);
+    window.addEventListener("blur", close);
+    return () => {
+      document.removeEventListener("mousedown", close);
+      document.removeEventListener("keydown", onKey);
+      window.removeEventListener("blur", close);
+    };
+  }, [menu]);
+  useLayoutEffect(() => {
+    if (menu && menuRef.current) placeFixed(menuRef.current, menu.x, menu.y);
+  }, [menu]);
+  const runMenu = (fn: () => void) => {
+    setMenu(null);
+    fn();
+  };
 
   // Only started threads are listed — a draft (assistant opened but not yet messaged) is
   // never persisted, and an abandoned empty thread shouldn't clutter the list (docs/19).
@@ -143,10 +179,19 @@ export default function AssistantSection() {
                 type="button"
                 className="assistant-picker-open"
                 title={a.description || a.name}
-                onClick={() => {
+                onClick={(e) => {
                   setPickerOpen(false);
-                  startChat(a);
+                  if (e.ctrlKey || e.metaKey) openInNewPane(draftPatch(a));
+                  else startChat(a);
                 }}
+                onMouseDown={(e) => e.button === 1 && e.preventDefault()}
+                onAuxClick={(e) => {
+                  if (e.button === 1) {
+                    setPickerOpen(false);
+                    openInNewPane(draftPatch(a));
+                  }
+                }}
+                onContextMenu={(e) => openMenu(e, a)}
               >
                 <Icon name={a.icon || "comment-discussion"} className="assistant-ic" />
                 <span className="chat-open-title">{a.name}</span>
@@ -214,7 +259,14 @@ export default function AssistantSection() {
               const a = c.assistant_id ? byId[c.assistant_id] : undefined;
               return (
                 <li key={c.id} className="chat-row">
-                  <button type="button" className="chat-open" onClick={() => openChat(c.id)} title={c.title}>
+                  <button
+                    type="button"
+                    className="chat-open"
+                    title={c.title}
+                    onClick={(e) => (e.ctrlKey || e.metaKey ? openInNewPane(convPatch(c.id)) : openChat(c.id))}
+                    onMouseDown={(e) => e.button === 1 && e.preventDefault()}
+                    onAuxClick={(e) => e.button === 1 && openInNewPane(convPatch(c.id))}
+                  >
                     <Icon name={a?.icon || "comment"} className="assistant-ic" />
                     <span className="chat-open-title">{c.title}</span>
                     {c.message_count > 0 && <span className="chat-open-meta muted">{c.message_count}</span>}
@@ -238,6 +290,27 @@ export default function AssistantSection() {
                 </li>
               );
             })}
+          </ul>
+        )}
+        {menu && (
+          <ul
+            className="ctxmenu"
+            ref={menuRef}
+            style={{ left: menu.x, top: menu.y }}
+            role="menu"
+            onMouseDown={(e) => e.stopPropagation()}
+          >
+            <li onClick={() => runMenu(() => startChat(menu.a))}>新規チャット</li>
+            <li onClick={() => runMenu(() => openInNewPane(draftPatch(menu.a)))}>新しいペインで開く</li>
+            {!menu.a.builtin && (
+              <>
+                <li className="ctx-sep" aria-hidden="true" />
+                <li onClick={() => runMenu(() => setEditing(menu.a))}>編集</li>
+                <li className="danger" onClick={() => runMenu(() => setDeleting(menu.a))}>
+                  削除
+                </li>
+              </>
+            )}
           </ul>
         )}
       </Section>

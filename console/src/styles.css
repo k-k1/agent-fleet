@@ -791,7 +791,8 @@ button.wu-reload {
    context above the following ones so the dropdown shows over them. */
 .pane-section:has(.launch-menu),
 .pane-section:has(.session-menu),
-.pane-section:has(.assistant-picker) {
+.pane-section:has(.assistant-picker),
+.pane-section:has(.ctxmenu) {
   position: relative;
   z-index: 10;
 }
