@@ -4464,6 +4464,55 @@ button.mt-toolrun-head:hover {
   min-height: 0; /* shrink to the flex track so overflow:auto actually scrolls */
   overflow: auto;
   background: transparent; /* inherit the .fileview tint (--viewer-bg) */
+  position: relative; /* containing block for the sticky-heading overlay */
+}
+/* ---- sticky headings (VS Code-style heading breadcrumb) ----
+   Absolutely-positioned overlay (JS pins `top` to the viewport top) centered over the
+   markdown column, showing the # > ## > ### path of the current scroll position. */
+.md-sticky {
+  position: absolute;
+  left: 0;
+  right: 0;
+  margin: 0 auto;
+  max-width: 860px;
+  padding: 0 28px;
+  box-sizing: border-box;
+  z-index: 4;
+  pointer-events: none; /* transparent to clicks; rows re-enable below */
+}
+.md-sticky-row {
+  pointer-events: auto;
+  cursor: pointer;
+  background: var(--viewer-bg, var(--bg));
+  border-bottom: 1px solid var(--border2, var(--border));
+  padding: 4px 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--fg);
+}
+.md-sticky-row:last-child {
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+.md-sticky-row:hover {
+  color: var(--accent);
+}
+.md-sticky-h1 {
+  font-size: 1.15em;
+}
+.md-sticky-h2 {
+  font-size: 1.05em;
+  padding-left: 16px;
+}
+.md-sticky-h3 {
+  padding-left: 30px;
+}
+.md-sticky-h4,
+.md-sticky-h5,
+.md-sticky-h6 {
+  padding-left: 44px;
 }
 .markdown {
   max-width: 860px;
