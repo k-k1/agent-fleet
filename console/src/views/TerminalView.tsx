@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef } from "react";
-import { ensureTerm, fit, focusTerm, attach, detach, reconnect, setTermBackground } from "../term.js";
+import { ensureTerm, fit, focusTerm, attach, detach, reconnect, setTermBackground, clearTerm } from "../term.js";
 import { termBackground } from "../lib/termcolor.js";
 import { rel } from "../api.js";
 import TermKeys from "../components/TermKeys.jsx";
@@ -85,7 +85,14 @@ export default function TerminalView({
     // socket = no resume), and detach clears the inst's session so the global
     // focus-reconnect can't revive it either.
     if (session && attached && running) attach(paneId, session);
-    else detach(paneId);
+    else {
+      detach(paneId);
+      // A session-less pane is an empty terminal: wipe any scrollback left over from a
+      // session this reused xterm previously showed (e.g. a split pane whose session /
+      // chat was closed in place). A stopped session keeps its `session` set, so its
+      // read-only history isn't cleared here.
+      if (!session) clearTerm(paneId);
+    }
   }, [paneId, session, attached, running]);
 
   // While a session is attached, guard against accidentally closing/reloading the
