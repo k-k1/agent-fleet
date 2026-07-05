@@ -13,7 +13,7 @@ interface DocViewProps {
 }
 
 export default function DocView({ title, content }: DocViewProps) {
-  const { showFile } = useApp();
+  const { showFile, revealInFiles } = useApp();
   const settings = useSettings();
   const viewerStyle = {
     "--viewer-font": fontStack(settings.viewerFont),
@@ -28,7 +28,7 @@ export default function DocView({ title, content }: DocViewProps) {
         <span className="fi-tag">Markdown</span>
       </header>
       <div className="md-scroll">
-        <MarkdownView source={content || ""} onOpenFile={showFile} />
+        <MarkdownView source={content || ""} onOpenFile={showFile} onOpenDir={revealInFiles} />
       </div>
     </div>
   );

@@ -2,7 +2,8 @@ import { useEffect, useRef } from "react";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
 import hljs from "highlight.js/lib/common";
-import { dirName, joinPath, isExternalUrl, slug } from "../lib/filemeta.js";
+import { dirName, baseName, joinPath, isExternalUrl, slug } from "../lib/filemeta.js";
+import { api, downloadURL } from "../api.js";
 
 // MarkdownView renders Markdown to sanitized HTML, highlights fenced code blocks,
 // turns ```mermaid blocks into rendered diagrams (lazy-loaded), and wires links:
@@ -15,9 +16,10 @@ interface MarkdownViewProps {
   basePath?: string;
   breaks?: boolean; // treat a single newline as <br> (chat prompts keep their line breaks)
   onOpenFile?: (path: string) => void;
+  onOpenDir?: (path: string) => void; // a relative link to a directory → reveal in FILES
 }
 
-export default function MarkdownView({ source, basePath = "", breaks = false, onOpenFile }: MarkdownViewProps) {
+export default function MarkdownView({ source, basePath = "", breaks = false, onOpenFile, onOpenDir }: MarkdownViewProps) {
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -28,12 +30,15 @@ export default function MarkdownView({ source, basePath = "", breaks = false, on
     const rawHtml = marked.parse(source ?? "", { gfm: true, breaks }) as string;
     el.innerHTML = DOMPurify.sanitize(rawHtml);
 
+    renderEmoji(el); // :shortcode: → emoji (skips code / pre)
+
     // Give headings slug ids so in-page #anchors can resolve.
     el.querySelectorAll("h1,h2,h3,h4,h5,h6").forEach((h) => {
       if (!h.id) h.id = slug(h.textContent || "");
     });
 
-    wireLinks(el, basePath, onOpenFile);
+    wireLinks(el, basePath, onOpenFile, onOpenDir);
+    wireImages(el, basePath);
 
     // VS Code-style sticky headings: when this markdown is inside a scroll container
     // (.md-scroll — the Doc / File viewers, not chat bubbles), pin the heading path of
@@ -83,6 +88,48 @@ export default function MarkdownView({ source, basePath = "", breaks = false, on
   }, [source, basePath, breaks, onOpenFile]);
 
   return <div className="markdown" ref={ref} />;
+}
+
+// Common GitHub-style emoji shortcodes (:tada: → 🎉). A curated subset covering what
+// shows up in dev docs — unknown codes are left as literal text (no regression). Mirrors
+// CodeLeaf's EmojiParser intent without pulling in a full ~1800-entry emoji table.
+const EMOJI: Record<string, string> = {
+  smile: "😄", smiley: "😃", grin: "😁", laughing: "😆", wink: "😉", blush: "😊",
+  joy: "😂", sweat_smile: "😅", thinking: "🤔", eyes: "👀", tada: "🎉", rocket: "🚀",
+  fire: "🔥", sparkles: "✨", star: "⭐", star2: "🌟", zap: "⚡", boom: "💥",
+  bulb: "💡", warning: "⚠️", white_check_mark: "✅", heavy_check_mark: "✔️",
+  x: "❌", negative_squared_cross_mark: "❎", question: "❓", exclamation: "❗",
+  bangbang: "‼️", "100": "💯", bug: "🐛", memo: "📝", pencil: "✏️", pencil2: "✏️",
+  books: "📚", book: "📖", clipboard: "📋", package: "📦", gear: "⚙️", wrench: "🔧",
+  hammer: "🔨", lock: "🔒", unlock: "🔓", key: "🔑", mag: "🔍", link: "🔗",
+  pushpin: "📌", label: "🏷️", dart: "🎯", trophy: "🏆", rotating_light: "🚨",
+  construction: "🚧", no_entry: "⛔", no_entry_sign: "🚫", recycle: "♻️",
+  checkered_flag: "🏁", bell: "🔔", email: "📧", "e-mail": "📧",
+  speech_balloon: "💬", robot: "🤖", computer: "💻", floppy_disk: "💾",
+  hourglass: "⏳", calendar: "📅", clock: "🕐", heart: "❤️", broken_heart: "💔",
+  "+1": "👍", thumbsup: "👍", "-1": "👎", thumbsdown: "👎", ok_hand: "👌",
+  raised_hands: "🙌", clap: "👏", pray: "🙏", point_right: "👉", point_left: "👈",
+  wave: "👋", muscle: "💪", ghost: "👻", thread: "🧵",
+  arrow_right: "➡️", arrow_left: "⬅️", arrow_up: "⬆️", arrow_down: "⬇️",
+};
+const EMOJI_RE = /:([a-z0-9_+-]+):/gi;
+
+// renderEmoji replaces :shortcode: in text nodes (skipping code / pre) with the emoji.
+function renderEmoji(root: HTMLElement) {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode(n) {
+      if (!n.nodeValue || n.nodeValue.indexOf(":") < 0) return NodeFilter.FILTER_REJECT;
+      return (n.parentElement?.closest("code,pre"))
+        ? NodeFilter.FILTER_REJECT
+        : NodeFilter.FILTER_ACCEPT;
+    },
+  });
+  const targets: Text[] = [];
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) targets.push(n as Text);
+  for (const t of targets) {
+    const next = t.nodeValue!.replace(EMOJI_RE, (whole, code: string) => EMOJI[code.toLowerCase()] ?? whole);
+    if (next !== t.nodeValue) t.nodeValue = next;
+  }
 }
 
 // setupStickyHeadings pins the heading breadcrumb (# > ## > ###) of the current scroll
@@ -191,14 +238,64 @@ function addCopyButton(code: HTMLElement) {
   wrap.appendChild(btn);
 }
 
-// wireLinks classifies and rewires every <a> in the rendered markdown.
-function wireLinks(el: HTMLElement, basePath: string, onOpenFile?: (path: string) => void) {
-  // Repo-absolute (/foo) links resolve from the repo root; everything else from
-  // the markdown file's own directory.
+// resolveRelPath turns a repo-relative Markdown href/src into a home-relative fs path.
+// marked percent-encodes non-ASCII (日本語 → %E6…), so decode first or the path won't
+// resolve; a literal-% name that isn't valid encoding falls back to the raw string.
+// A leading "/" resolves from the repo root, everything else from the file's own dir.
+function resolveRelPath(ref: string, basePath: string): string {
   const m = basePath.match(/^(repos\/[^/]+)\//);
   const repoRoot = m ? m[1] : dirName(basePath);
   const fileDir = dirName(basePath);
+  let p = ref.split("#")[0].split("?")[0];
+  if (!p) return "";
+  try {
+    p = decodeURIComponent(p);
+  } catch {}
+  const base = p.startsWith("/") ? repoRoot : fileDir;
+  return joinPath(base, p.replace(/^\/+/, ""));
+}
 
+// wireImages rewrites relative <img src> to the file-download endpoint so repo-local
+// images (including Japanese filenames) actually load; browser-relative srcs would
+// otherwise 404 against the console origin. Scheme / protocol-relative / data: URLs
+// are left as-is.
+function wireImages(el: HTMLElement, basePath: string) {
+  el.querySelectorAll<HTMLImageElement>("img[src]").forEach((img) => {
+    const src = img.getAttribute("src") || "";
+    if (!src || src.startsWith("#") || isExternalUrl(src)) return;
+    const target = resolveRelPath(src, basePath);
+    if (target) img.setAttribute("src", downloadURL(target));
+  });
+}
+
+// openRepoTarget resolves a repo-internal path to a file (open in viewer) or directory
+// (reveal in FILES), or silently ignores it when it doesn't exist — mirroring CodeLeaf's
+// RepoLinkResolver. One listing of the parent tells file vs dir vs missing in a single
+// request (missing entries include denylisted paths, which we also ignore).
+async function openRepoTarget(
+  target: string,
+  onOpenFile?: (p: string) => void,
+  onOpenDir?: (p: string) => void,
+) {
+  let d: { entries?: { name: string; type: string }[] } | null = null;
+  try {
+    d = await api(`api/fs/tree?path=${encodeURIComponent(dirName(target))}`);
+  } catch {
+    return;
+  }
+  const entry = (d?.entries || []).find((e) => e.name === baseName(target));
+  if (!entry) return; // nonexistent / denylisted → ignore (no error toast)
+  if (entry.type === "dir") onOpenDir?.(target);
+  else onOpenFile?.(target);
+}
+
+// wireLinks classifies and rewires every <a> in the rendered markdown.
+function wireLinks(
+  el: HTMLElement,
+  basePath: string,
+  onOpenFile?: (path: string) => void,
+  onOpenDir?: (path: string) => void,
+) {
   el.querySelectorAll<HTMLAnchorElement>("a[href]").forEach((a) => {
     const href = a.getAttribute("href") || "";
 
@@ -223,16 +320,13 @@ function wireLinks(el: HTMLElement, basePath: string, onOpenFile?: (path: string
       return;
     }
 
-    // Repo-internal relative link → open that file in the viewer.
+    // Repo-internal relative link → open a file in the viewer or reveal a directory in
+    // FILES (path decoded + resolved by the shared helper, so Japanese names work).
     a.classList.add("repo-link");
     a.addEventListener("click", (e) => {
       e.preventDefault();
-      if (!onOpenFile) return;
-      const p = href.split("#")[0].split("?")[0];
-      if (!p) return;
-      const base = p.startsWith("/") ? repoRoot : fileDir;
-      const target = joinPath(base, p.replace(/^\/+/, ""));
-      if (target) onOpenFile(target);
+      const target = resolveRelPath(href, basePath);
+      if (target) openRepoTarget(target, onOpenFile, onOpenDir);
     });
   });
 }
