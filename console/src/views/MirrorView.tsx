@@ -510,6 +510,23 @@ export default function MirrorView({
     setTimeout(() => tickRef.current?.(), 400);
   };
 
+  // sendSeq drives the modal with an ORDERED mix of named keys and literal text — the
+  // path for answering a question via its "Type something" free-text row (move down to
+  // it, type, Enter). Built by PendingQuestions.submit for multi-question / multi-select
+  // forms where free text and option navigation are interleaved.
+  const sendSeq = async (seq: Array<{ k?: string; t?: string }>) => {
+    if (!seq || !seq.length || sending) return;
+    setSending(true);
+    statusRef.current = "working";
+    setStatus("working");
+    try {
+      await apiJSON(`api/sessions/${q(session)}/input`, "POST", { seq });
+    } catch {
+      /* next poll reconciles */
+    }
+    setSending(false);
+    setTimeout(() => tickRef.current?.(), 400);
+  };
 
   // Paste image(s) from the clipboard into the composer: upload each to the session and
   // hold it as an attachment chip. Non-image pastes fall through to the default (text).
@@ -898,6 +915,7 @@ export default function MirrorView({
                 sending={sending}
                 onSendOne={sendPrompt}
                 onSubmitKeys={sendKeys}
+                onSubmitSeq={sendSeq}
                 answerMode={sessionMeta?.kind === "claude" ? "claude" : "menu"}
               />
             </div>
@@ -1587,12 +1605,14 @@ function PendingQuestions({
   questions,
   onSendOne,
   onSubmitKeys,
+  onSubmitSeq,
   sending,
   answerMode = "claude",
 }: {
   questions: Question[];
   onSendOne: (label: string) => void;
   onSubmitKeys: (keys: string[]) => void;
+  onSubmitSeq: (seq: Array<{ k?: string; t?: string }>) => void;
   sending: boolean;
   // "claude": AskUserQuestion's tabbed modal (free-text single / Down-Enter-Right multi).
   // "menu": codex/opencode ask via a simple option menu — a single-select question is
@@ -1602,13 +1622,20 @@ function PendingQuestions({
 }) {
   const qs = questions || [];
   const [sel, setSel] = useState<string[][]>(() => qs.map(() => []));
+  // Per-question free-text ("Type something"). Filled → that question is answered by
+  // free text instead of an option (mutually exclusive with a selection, below).
+  const [freeText, setFreeText] = useState<string[]>(() => qs.map(() => ""));
   const single = qs.length === 1 && !qs[0]?.multiSelect;
   const menu = answerMode === "menu";
   // In menu mode we can only drive a single-select single question; anything else is
   // shown read-only with a hint to answer in the terminal.
   const menuDrivable = menu && single;
 
+  const clearFree = (qi: number) =>
+    setFreeText((prev) => (prev[qi] ? prev.map((v, i) => (i === qi ? "" : v)) : prev));
+
   const toggle = (qi: number, label: string, multi?: boolean) => {
+    clearFree(qi); // picking an option drops any free text for this question
     setSel((prev) => {
       const next = prev.map((a) => a.slice());
       const cur = next[qi] || [];
@@ -1618,8 +1645,15 @@ function PendingQuestions({
     });
   };
 
-  // Every single-select question needs a pick before we can drive the modal.
-  const canSubmit = qs.every((q, qi) => q.multiSelect || (sel[qi] || []).length > 0);
+  const setFree = (qi: number, v: string) => {
+    setFreeText((prev) => prev.map((x, i) => (i === qi ? v : x)));
+    if (v) setSel((prev) => ((prev[qi] || []).length ? prev.map((a, i) => (i === qi ? [] : a)) : prev));
+  };
+
+  // A question is answered by a selection OR free text (multi-select may be left empty).
+  const canSubmit = qs.every(
+    (q, qi) => (freeText[qi] || "").trim() !== "" || q.multiSelect || (sel[qi] || []).length > 0,
+  );
 
   // Drive the modal with named keys, matching the real AskUserQuestion behavior
   // (verified against the terminal). Each question page starts with the cursor at the
@@ -1631,9 +1665,18 @@ function PendingQuestions({
   // After all questions we land on the Submit tab (Review page); a final Enter
   // activates "Submit answers".
   const submit = () => {
-    const keys: string[] = [];
+    const seq: Array<{ k?: string; t?: string }> = [];
     qs.forEach((q, qi) => {
       const opts = q.options || [];
+      const ft = (freeText[qi] || "").trim();
+      if (ft) {
+        // Free text: the "Type something" row sits just after the options — move down to
+        // it (no Enter needed to focus it), type, then Enter confirms + advances.
+        for (let k = 0; k < opts.length; k++) seq.push({ k: "Down" });
+        seq.push({ t: ft });
+        seq.push({ k: "Enter" });
+        return;
+      }
       const idx = (sel[qi] || [])
         .map((l) => opts.findIndex((o) => o.label === l))
         .filter((i) => i >= 0)
@@ -1641,19 +1684,19 @@ function PendingQuestions({
       if (q.multiSelect) {
         let cur = 0;
         for (const ci of idx) {
-          for (let k = 0; k < ci - cur; k++) keys.push("Down");
-          keys.push("Enter"); // toggle in place
+          for (let k = 0; k < ci - cur; k++) seq.push({ k: "Down" });
+          seq.push({ k: "Enter" }); // toggle in place
           cur = ci;
         }
-        keys.push("Right"); // advance to the next question / Submit tab
+        seq.push({ k: "Right" }); // advance to the next question / Submit tab
       } else {
         const ci = idx[0] ?? 0;
-        for (let k = 0; k < ci; k++) keys.push("Down");
-        keys.push("Enter"); // select + auto-advance to the next tab
+        for (let k = 0; k < ci; k++) seq.push({ k: "Down" });
+        seq.push({ k: "Enter" }); // select + auto-advance to the next tab
       }
     });
-    keys.push("Enter"); // Review page: "Submit answers"
-    onSubmitKeys(keys);
+    seq.push({ k: "Enter" }); // Review page: "Submit answers"
+    onSubmitSeq(seq);
   };
 
   return (
@@ -1700,6 +1743,16 @@ function PendingQuestions({
               );
             })}
           </div>
+          {!single && !menu && (
+            <input
+              type="text"
+              className="mq-freetext"
+              placeholder="または自由入力（Type something）"
+              value={freeText[qi] || ""}
+              disabled={sending}
+              onChange={(e) => setFree(qi, e.target.value)}
+            />
+          )}
         </div>
       ))}
       {!single && !menu && (
