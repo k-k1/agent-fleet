@@ -63,12 +63,10 @@ func runSessionStatusHook(args []string) {
 	if sid == "" {
 		return
 	}
-	// message: the MessageDisplay hook fires as the assistant's text streams. We
-	// accumulate the chunks so a pending AskUserQuestion can show the prose that
-	// preceded it — which isn't in the transcript until the question is answered.
-	// PROTOTYPE: whether MessageDisplay fires BEFORE the AskUserQuestion PreToolUse (so
-	// the buffer is populated at question time) is being verified empirically. Never
-	// touches the session status.
+	// message: the MessageDisplay hook fires as the assistant's text streams (before
+	// the turn's tool_use — verified: the prose reaches the pending card). We accumulate
+	// the chunks so a pending AskUserQuestion can show the prose that preceded it, which
+	// isn't in the transcript until the question is answered. Never touches the status.
 	if state == "message" {
 		appendPendingText(sid, h.delta)
 		return
@@ -289,12 +287,19 @@ func pendingTextPath(sid string) string {
 	return filepath.Join(pendingTextDir(), sid+".txt")
 }
 
+// pendingTextCap bounds the buffer: the prose before a question is small, so a runaway
+// stream shouldn't grow an unbounded file (it's reset every turn regardless).
+const pendingTextCap = 16 << 10
+
 func appendPendingText(sid, delta string) {
 	if delta == "" {
 		return
 	}
 	if err := os.MkdirAll(pendingTextDir(), 0o700); err != nil {
 		return
+	}
+	if fi, err := os.Stat(pendingTextPath(sid)); err == nil && fi.Size() >= pendingTextCap {
+		return // already at the cap; drop further chunks
 	}
 	f, err := os.OpenFile(pendingTextPath(sid), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
@@ -417,10 +422,9 @@ func ensureStatusHooks() {
 	hooks := hooksMap(m)
 	changed := false
 
-	// Simple (matcher-less) events. MessageDisplay fires as the assistant's text streams;
-	// we buffer it (state "message" never changes status) so a pending AskUserQuestion
-	// can surface the prose that preceded it. PROTOTYPE — verifying it fires before the
-	// question's PreToolUse.
+	// Simple (matcher-less) events. MessageDisplay fires as the assistant's text streams
+	// (before the turn's tool_use); we buffer it (state "message" never changes status)
+	// so a pending AskUserQuestion can surface the prose that preceded it.
 	for event, state := range map[string]string{"UserPromptSubmit": "working", "Stop": "idle", "MessageDisplay": "message"} {
 		if b, _ := json.Marshal(hooks[event]); !strings.Contains(string(b), "session-status") {
 			hooks[event] = []any{map[string]any{
