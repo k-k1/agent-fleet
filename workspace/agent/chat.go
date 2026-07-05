@@ -268,6 +268,18 @@ func envWith(over ...string) []string {
 	return out
 }
 
+// chatToolLimits blocks tools the assistant chat must never use. The critical one is the
+// subagent/orchestration set (Agent — the current name, Task — the legacy alias, Workflow):
+// a large translation once fanned OUT into many parallel subagents and OOM-killed the
+// shared, memory-constrained host (see host-oom-fleet-risk). Bash/Edit/Write/NotebookEdit
+// are also blocked — the chat persona forbids file/command work anyway. --disallowedTools
+// is enforced by Claude Code even under --dangerously-skip-permissions (that flag only skips
+// approval prompts, not deny rules). Read/Glob/Grep/WebFetch and the MCP af tools remain.
+func chatToolLimits() []string {
+	return []string{"--disallowedTools",
+		"Agent", "Task", "Workflow", "Bash", "Edit", "Write", "NotebookEdit"}
+}
+
 // chatMCPArgs attaches the local Agent Fleet stdio MCP server (this same binary's
 // `mcp-stdio` subcommand) to a chat's claude, scoped strictly to it (no global/project
 // MCP config leaks in, and it doesn't leak out to the interactive sessions). docs/19 Q1.
@@ -402,6 +414,7 @@ func (claudeChat) send(ctx context.Context, c *chatConversation, prompt string) 
 	args := []string{"-p", "--output-format", "json", "--dangerously-skip-permissions",
 		"--append-system-prompt", c.personaOf()}
 	args = append(args, "--model", chatModel(c))
+	args = append(args, chatToolLimits()...) // no subagents (OOM) / no file+shell tools
 	if c.ClaudeSessionID != "" {
 		args = append(args, "--resume", c.ClaudeSessionID)
 	} else {
@@ -468,6 +481,7 @@ func (claudeChat) sendStream(ctx context.Context, c *chatConversation, prompt st
 	args := []string{"-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
 		"--dangerously-skip-permissions", "--append-system-prompt", c.personaOf()}
 	args = append(args, "--model", chatModel(c))
+	args = append(args, chatToolLimits()...) // no subagents (OOM) / no file+shell tools
 	if c.ClaudeSessionID != "" {
 		args = append(args, "--resume", c.ClaudeSessionID)
 	} else {
