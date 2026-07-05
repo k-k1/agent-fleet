@@ -126,19 +126,27 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
 		return
 	}
-	// Body is either {prompt} (type text + Enter) or {keys:[...]} (send named keys —
-	// used to drive the AskUserQuestion modal: Down/Space/Enter navigation, which
-	// free text can't do because a typed answer submits the whole tool at once).
+	// Body is one of:
+	//   {prompt}      type text + Enter (the composer / a single-select answer).
+	//   {keys:[...]}  send named keys — drive the AskUserQuestion modal by navigation
+	//                 (Down/Space/Enter/Right).
+	//   {seq:[...]}   an ORDERED mix of named keys and literal text ({k}|{t}) — answer a
+	//                 question via its "Type something" free-text row: move down to it,
+	//                 type, Enter. This is what plain {keys} can't do.
 	var body struct {
 		Prompt string   `json:"prompt"`
 		Keys   []string `json:"keys"`
+		Seq    []struct {
+			K string `json:"k"` // a whitelisted named key
+			T string `json:"t"` // literal text (send-keys -l)
+		} `json:"seq"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&body); err != nil {
 		writeErr(w, http.StatusBadRequest, "bad_body", "invalid JSON body")
 		return
 	}
-	if len(body.Keys) == 0 && strings.TrimSpace(body.Prompt) == "" {
-		writeErr(w, http.StatusBadRequest, "empty_prompt", "prompt or keys is required")
+	if len(body.Keys) == 0 && len(body.Seq) == 0 && strings.TrimSpace(body.Prompt) == "" {
+		writeErr(w, http.StatusBadRequest, "empty_prompt", "prompt, keys or seq is required")
 		return
 	}
 	tn := tmuxName(name)
@@ -189,6 +197,45 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 				markSessionWorking(name)
 				break
 			}
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"sent": name})
+		return
+	}
+	if len(body.Seq) > 0 {
+		// Validate up-front so a bad step doesn't half-drive the modal: each step is
+		// either a whitelisted named key or literal text.
+		for _, s := range body.Seq {
+			if s.K != "" && !allowedKey(s.K) {
+				writeErr(w, http.StatusBadRequest, "bad_key", "unsupported key: "+s.K)
+				return
+			}
+			if s.K == "" && s.T == "" {
+				writeErr(w, http.StatusBadRequest, "bad_seq", "each seq step needs k or t")
+				return
+			}
+		}
+		working := false
+		for i, s := range body.Seq {
+			var cmd *exec.Cmd
+			if s.K != "" {
+				cmd = exec.Command("tmux", "send-keys", "-t", pane, s.K)
+				if s.K == "Enter" {
+					working = true // a submit (answering the question) starts a turn
+				}
+			} else {
+				// -l: literal, so the answer text is typed verbatim (no key-name interp).
+				cmd = exec.Command("tmux", "send-keys", "-t", pane, "-l", s.T)
+			}
+			if out, err := cmd.CombinedOutput(); err != nil {
+				writeErr(w, http.StatusInternalServerError, "tmux_failed", string(out))
+				return
+			}
+			if i < len(body.Seq)-1 {
+				time.Sleep(90 * time.Millisecond) // let the TUI re-render between steps
+			}
+		}
+		if working {
+			markSessionWorking(name)
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"sent": name})
 		return
