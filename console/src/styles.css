@@ -7129,14 +7129,68 @@ button.primary:hover:not(:disabled) {
 }
 
 /* ---- mobile (≤760px) ---------------------------------------------------------
-   Desktop is untouched: the three elements below exist only for the phone layout
-   and stay hidden until the breakpoint. On small screens the fixed 300px left
-   pane becomes an off-canvas drawer, the main area goes full-width, dialogs go
-   full-screen, and the terminal gains a tap-able control-key strip. */
-.nav-toggle,
+   The backdrop + termkeys exist only for the phone layout and stay hidden until the
+   breakpoint. On small screens the fixed 300px left pane becomes an off-canvas
+   drawer, the main area goes full-width, dialogs go full-screen, and the terminal
+   gains a tap-able control-key strip. The hamburger, by contrast, is shown on
+   desktop too (it collapses / overlays the left pane — see the min-width block). */
 .nav-backdrop,
 .termkeys {
   display: none;
+}
+/* Hamburger: visible at all widths. On desktop it toggles the left-pane collapse
+   (single-click) and Push⇄overlay mode (double-click); on mobile the drawer. */
+.nav-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: var(--fg);
+  font-size: 20px;
+  padding: 4px 6px;
+  cursor: pointer;
+}
+
+/* ---- desktop (≥761px) left-pane collapse / overlay ---------------------------
+   The pane docks at 300px by default (Push, main reflows). Collapsed → width 0 and
+   main takes the freed space. In overlay mode the pane is taken out of flow and
+   floats above main (no reflow) with a dismiss backdrop, like the mobile drawer. */
+@media (min-width: 761px) {
+  .leftpane {
+    transition: width 0.18s ease;
+  }
+  /* Push collapse: hide the docked column, main reflows to full width. */
+  .body.left-collapsed:not(.left-overlay) .leftpane {
+    width: 0;
+    border-right: none;
+  }
+  /* Overlay mode: float the pane above main (absolute → out of flow, so main is
+     already full width) and slide it off-screen when collapsed. */
+  .body.left-overlay {
+    position: relative;
+  }
+  .body.left-overlay .leftpane {
+    position: absolute;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    z-index: 60;
+    box-shadow: 2px 0 14px rgba(0, 0, 0, 0.35);
+    transition: transform 0.2s ease;
+  }
+  .body.left-overlay.left-collapsed .leftpane {
+    transform: translateX(-100%);
+    box-shadow: none;
+  }
+  /* Backdrop only in overlay mode while the pane is open (clicking it collapses). */
+  .body.left-overlay:not(.left-collapsed) .nav-backdrop {
+    display: block;
+    position: absolute;
+    inset: 0;
+    z-index: 55;
+    background: rgba(0, 0, 0, 0.35);
+  }
 }
 
 @media (max-width: 760px) {

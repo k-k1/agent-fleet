@@ -12,16 +12,22 @@ import ConfirmProvider from "./components/ConfirmProvider.jsx";
 // Files), and the main detail area. The main area is a PaneHost of one or two panes
 // (split), each independently showing a terminal / source-control / file view.
 export default function App() {
-  const { settingsOpen, adminOpen, navOpen, closeNav } = useApp();
+  const { settingsOpen, adminOpen, navOpen, closeNav, leftOpen, leftMode, closeLeft } = useApp();
+  const bodyClass =
+    "body" +
+    (navOpen ? " nav-open" : "") +
+    (leftOpen ? "" : " left-collapsed") +
+    (leftMode === "overlay" ? " left-overlay" : "");
   return (
     <ConfirmProvider>
       <div className="app">
         <TopBar />
         <WsBar />
-        <div className={"body" + (navOpen ? " nav-open" : "")}>
+        <div className={bodyClass}>
           <LeftPane />
-          {/* Mobile-only: dims the main area and dismisses the navigator drawer. */}
-          <div className="nav-backdrop" onClick={closeNav} />
+          {/* Dims the main area and dismisses the pane: the mobile drawer, and the
+              desktop overlay-mode left pane. */}
+          <div className="nav-backdrop" onClick={() => { closeNav(); closeLeft(); }} />
           <main className="main">
             <PaneHost />
           </main>
