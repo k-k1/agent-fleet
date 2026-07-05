@@ -176,6 +176,20 @@ af_read の会話には書き込みツールが**そもそも見えない**こ�
 - **スタンドアロン検証済**: `--write` 無=tools/list に send_to_session 出ない/呼ぶと isError、
   `--write` 有=出る/prompt 未指定で検証エラー。**実 Agent 越しの送信はコンテナ内で要目視**。
 
+### アシスタント間連携 ask_assistant（**実装済**）
+各アシスタントから他の専門アシスタントに相談できる「アシスタント＝道具」プリミティブ。
+用語を割る: **指示出し（実行）＝ワーカー＝tmux セッション（send_to_session）**、
+**連携（相談）＝他の専門アシスタントに照会**。確定2点（ユーザー確定）＝①相談(助言)のみ・副作用なし
+②af_write に含める（＝af_write は「ワークスペースを動かす権限＝セッションへ指示＋他アシスタントに相談」）。
+- **安全性は構造で担保**: 相手ターンを**強制 tools=none** で走らせる→MCP が付かない→相手は
+  ask_assistant を持てない→**1ホップで必ず停止・書き込み不可**（深さカウンタ不要で再帰/権限昇格なし）。
+  不変条件＝「相談は助言を返すだけ・実行するのは呼び出し元だけ」。
+- backend: `chat.go` `handleChatAsk`（`POST /chat/ask`、**内部専用＝CP 非公開**、mcp_stdio→localhost）。
+  `resolveAssistant`(id/名前)→persona/model/knowledge を載せた ephemeral(非永続)会話を tools=none で
+  1ショット `claudeChat.send`→reply 返す。`mcp_stdio.go` の write ツールに `list_assistants`
+  (GET /assistants)＋`ask_assistant`(POST /chat/ask)追加（--write 時のみ）。operator persona に相談手順を追記。
+- スタンドアロン検証済（--write 有で計6ツール／無で相談ツール非表示・呼ぶと isError）。
+
 ### Phase C: Files 右クリック → アシスタント連携（**実装済**）
 ファイル/ディレクトリの右クリックから、その対象をアシスタントに渡して新規チャットを開く。
 UX の確定事項（ユーザー確定 2 点）:
