@@ -3,7 +3,7 @@ import type { FormEvent } from "react";
 import Modal from "./Modal.jsx";
 import { useApp } from "../state.jsx";
 import { useToast } from "./ToastProvider.jsx";
-import { apiJSON, chatCreate, assistantList } from "../api.js";
+import { apiJSON, chatCreate, assistantList, errText } from "../api.js";
 import { displayName } from "../lib/sessionview.js";
 import { baseName, langFor } from "../lib/filemeta.js";
 import type { Assistant } from "../types/assistant.ts";
@@ -68,8 +68,13 @@ export default function SendSelectionModal({ filePath, quote, startLine, endLine
         } else toast("チャットの作成に失敗しました");
       } else {
         const name = target.slice("session:".length);
-        await apiJSON(`api/sessions/${encodeURIComponent(name)}/input`, "POST", { prompt: composed });
-        toast(`${name} に送信しました`);
+        // apiJSON resolves (doesn't throw) on a non-2xx error body, so check res.error.
+        const res = await apiJSON(`api/sessions/${encodeURIComponent(name)}/input`, "POST", { prompt: composed });
+        if (res && res.error) {
+          toast(errText(res.error) || `${name} への送信に失敗しました`);
+          return;
+        }
+        toast(`${name} に送信しました`, { kind: "success" });
         onClose();
       }
     } catch {
