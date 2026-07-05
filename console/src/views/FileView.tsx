@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import type { CSSProperties } from "react";
 import hljs from "highlight.js/lib/common";
 // Syntax theme is defined in styles.css via CSS variables so it follows the app
@@ -251,29 +252,38 @@ export default function FileView({ filePath: filePathProp, wrap }: FileViewProps
         />
       )}
 
-      {sel && !sendOpen && (
-        <button
-          type="button"
-          className="sel-send-pill"
-          style={{ left: sel.x, top: Math.max(4, sel.y) }}
-          onMouseDown={(e) => e.preventDefault()} // keep the text selection alive through the click
-          onClick={() => setSendOpen(true)}
-        >
-          <Icon name="comment-discussion" /> 送る
-        </button>
-      )}
-      {sendOpen && sel && (
-        <SendSelectionModal
-          filePath={filePath}
-          quote={sel.quote}
-          startLine={sel.startLine}
-          endLine={sel.endLine}
-          onClose={() => {
-            setSendOpen(false);
-            setSel(null);
-          }}
-        />
-      )}
+      {/* Portal to <body>: .fileview is a CSS container (container-type), which makes it
+          the containing block for position:fixed descendants — a pill/modal rendered
+          inside would be positioned relative to the pane, not the viewport. */}
+      {sel &&
+        !sendOpen &&
+        createPortal(
+          <button
+            type="button"
+            className="sel-send-pill"
+            style={{ left: sel.x, top: Math.max(4, sel.y) }}
+            onMouseDown={(e) => e.preventDefault()} // keep the text selection alive through the click
+            onClick={() => setSendOpen(true)}
+          >
+            <Icon name="comment-discussion" /> 送る
+          </button>,
+          document.body,
+        )}
+      {sendOpen &&
+        sel &&
+        createPortal(
+          <SendSelectionModal
+            filePath={filePath}
+            quote={sel.quote}
+            startLine={sel.startLine}
+            endLine={sel.endLine}
+            onClose={() => {
+              setSendOpen(false);
+              setSel(null);
+            }}
+          />,
+          document.body,
+        )}
     </div>
   );
 }
