@@ -6,8 +6,9 @@
 import type { SessionKind } from "./session.ts";
 
 // Tool grant an assistant holds. "af_read" attaches the read-only fleet MCP tools
-// (docs/19 Q1). Write tools (af_write) land with a later opt-in step — not offered yet.
-export type ToolGrant = "none" | "af_read";
+// (docs/19 Q1); "af_write" additionally exposes the write tools (send_to_session …),
+// an explicit per-assistant opt-in (docs/19 Q2).
+export type ToolGrant = "none" | "af_read" | "af_write";
 
 export interface Assistant {
   id: string;

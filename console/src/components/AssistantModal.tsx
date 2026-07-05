@@ -26,6 +26,11 @@ const TOOLS: { value: ToolGrant; label: string; help: string }[] = [
     label: "AF 読み取り",
     help: "自分のワークスペースのセッション一覧・状態・出力を読み取れます（書き込みは不可）。",
   },
+  {
+    value: "af_write",
+    label: "AF 書き込み",
+    help: "読み取りに加え、セッションへプロンプトを送信できます（作業の代行）。信頼できる用途にのみ許可してください。",
+  },
 ];
 
 interface AssistantModalProps {

@@ -7,8 +7,11 @@ package main
 // inspect the user's OWN workspace with no PAT and no network egress — unlike the CP
 // /mcp server (PAT + public-URL hairpin), which stays for external/admin use.
 //
-// Write tools (send_to_session, …) are intentionally NOT exposed yet; enabling them
-// is a later, user-opt-in step (docs/19 Q1).
+// Write tools (send_to_session, …) are exposed ONLY when the server is started with
+// --write, which chat.go passes exclusively for conversations whose assistant granted
+// af_write (docs/19 Q2). An af_read conversation's server never advertises or accepts a
+// write tool — the gate is the advertised tool set, not just a permission prompt (the
+// chat runs claude with --dangerously-skip-permissions, so a prompt would not gate).
 
 import (
 	"bufio"
@@ -25,8 +28,19 @@ import (
 
 const mcpStdioProtocol = "2025-06-18"
 
+// mcpWriteEnabled gates the write tools. Set once from the `--write` arg before the
+// stdio loop starts; a global is safe because each spawn is a fresh short-lived process
+// serving exactly one chat conversation.
+var mcpWriteEnabled bool
+
 // runMCPStdio is the `workspace-agent mcp-stdio` subcommand: a blocking stdio loop.
-func runMCPStdio(_ []string) {
+// Pass --write to additionally expose the write tools (docs/19 Q2 af_write opt-in).
+func runMCPStdio(args []string) {
+	for _, a := range args {
+		if a == "--write" {
+			mcpWriteEnabled = true
+		}
+	}
 	r := bufio.NewReaderSize(os.Stdin, 1<<20)
 	w := bufio.NewWriter(os.Stdout)
 	for {
@@ -85,7 +99,7 @@ func dispatchMCPStdio(line []byte) []byte {
 		}
 		return mcpResult(req.ID, map[string]any{})
 	case "tools/list":
-		return mcpResult(req.ID, map[string]any{"tools": mcpStdioTools})
+		return mcpResult(req.ID, map[string]any{"tools": mcpStdioToolList()})
 	case "tools/call":
 		return mcpStdioCall(req)
 	default:
@@ -94,6 +108,15 @@ func dispatchMCPStdio(line []byte) []byte {
 		}
 		return mcpError(req.ID, -32601, "method not found: "+req.Method)
 	}
+}
+
+// mcpStdioToolList is the advertised tool set: the read-only tools always, plus the
+// write tools when the server was started with --write (docs/19 Q2 af_write opt-in).
+func mcpStdioToolList() []map[string]any {
+	if mcpWriteEnabled {
+		return append(append([]map[string]any{}, mcpStdioTools...), mcpStdioWriteTools...)
+	}
+	return mcpStdioTools
 }
 
 // mcpStdioTools — read-only Agent Fleet tools (names are prefixed mcp__af__<name> by
@@ -129,6 +152,23 @@ var mcpStdioTools = []map[string]any{
 	},
 }
 
+// mcpStdioWriteTools — Agent Fleet write tools, advertised only under --write (docs/19
+// Q2 af_write opt-in). Mirrors the CP mcp.go member write tool (send_to_session).
+var mcpStdioWriteTools = []map[string]any{
+	{
+		"name":        "send_to_session",
+		"description": "指定セッションにプロンプト（テキスト）を送信して実行させる（末尾に Enter）。すぐ返るので、応答は get_session_status で稼働確認後 get_session_output で取得する。利用者が「s7 に○○を伝えて/やらせて」等の作業依頼をした時に呼ぶ。",
+		"inputSchema": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"name":   map[string]any{"type": "string", "description": "送信先セッション名（例: s7）"},
+				"prompt": map[string]any{"type": "string", "description": "送信するプロンプト本文"},
+			},
+			"required": []string{"name", "prompt"},
+		},
+	},
+}
+
 func mcpStdioCall(req mcpReq) []byte {
 	var p struct {
 		Name string          `json:"name"`
@@ -136,10 +176,32 @@ func mcpStdioCall(req mcpReq) []byte {
 	}
 	_ = json.Unmarshal(req.Params, &p)
 	var a struct {
-		Name  string `json:"name"`
-		Since int64  `json:"since"`
+		Name   string `json:"name"`
+		Since  int64  `json:"since"`
+		Prompt string `json:"prompt"`
 	}
 	_ = json.Unmarshal(p.Args, &a)
+
+	// Write tool: send_to_session — only when this server was started with --write.
+	if p.Name == "send_to_session" {
+		if !mcpWriteEnabled {
+			return mcpToolErr(req.ID, "このアシスタントは書き込みツールを許可されていません")
+		}
+		if a.Name == "" {
+			return mcpToolErr(req.ID, "name（セッション名）が必要です")
+		}
+		if a.Prompt == "" {
+			return mcpToolErr(req.ID, "prompt（送信本文）が必要です")
+		}
+		reqBody, _ := json.Marshal(map[string]string{"prompt": a.Prompt})
+		out, err := agentPOST("/sessions/"+url.PathEscape(a.Name)+"/input", reqBody)
+		if err != nil {
+			return mcpToolErr(req.ID, "Agent への送信に失敗しました: "+err.Error())
+		}
+		return mcpResult(req.ID, map[string]any{
+			"content": []any{map[string]any{"type": "text", "text": out}},
+		})
+	}
 
 	var path string
 	switch p.Name {
@@ -181,10 +243,24 @@ func mcpToolErr(id json.RawMessage, msg string) []byte {
 }
 
 // agentGET calls the local Agent REST with the shared AGENT_TOKEN.
-func agentGET(path string) (string, error) {
-	req, err := http.NewRequest(http.MethodGet, agentBaseURL()+path, nil)
+func agentGET(path string) (string, error) { return agentDo(http.MethodGet, path, nil) }
+
+// agentPOST calls the local Agent REST with a JSON body and the shared AGENT_TOKEN.
+func agentPOST(path string, body []byte) (string, error) {
+	return agentDo(http.MethodPost, path, body)
+}
+
+func agentDo(method, path string, body []byte) (string, error) {
+	var rdr io.Reader
+	if body != nil {
+		rdr = bytes.NewReader(body)
+	}
+	req, err := http.NewRequest(method, agentBaseURL()+path, rdr)
 	if err != nil {
 		return "", err
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
 	}
 	if tok := os.Getenv("AGENT_TOKEN"); tok != "" {
 		req.Header.Set("Authorization", "Bearer "+tok)

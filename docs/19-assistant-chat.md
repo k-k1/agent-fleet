@@ -145,8 +145,7 @@ CP `mcp.go`（外部/PAT/admin・別モジュール）と Agent `mcp_stdio.go`�
 - **継承＝作成時スナップショット**（ユーザー確定）: 会話は作成時にアシスタントの
   agent/model/persona/tools/knowledge を自レコードへコピー。以後アシスタントを編集しても
   既存会話は不変（新規会話のみ反映）＝アシスタント削除で会話が孤立しない。
-- **tools は当面 none / af_read の2値**（ユーザー確定）: af_write（send_to_session 等）は
-  次ステップ（mcp_stdio へ書き込みツール追加＋`--allowedTools` ゲート）で解禁。UI に非機能トグルを出さない。
+- **tools は none / af_read / af_write の3値**（af_write は下記「書き込みツール opt-in」で実装済）。
 - backend `workspace/agent/assistants.go`: `assistant` 型＋ビルトイン3種（コード注入）＝
   ①Agent Fleet アシスタント(削除/編集不可・af_read・USAGE知識を `//go:embed` → `~/.config/agent-fleet/knowledge/af` に materialize＝冪等/再作成自己修復・`--add-dir`)②汎用③翻訳。
   ユーザー定義は `~/.config/agent-fleet/assistants/<id>.json`（full CRUD、builtin id は shadow 不可）。
@@ -159,9 +158,24 @@ CP `mcp.go`（外部/PAT/admin・別モジュール）と Agent `mcp_stdio.go`�
 - **未実施**: 実機（ブラウザ）目視＝アシスタント作成/選択→新規チャット→ persona/knowledge/tools が
   効くか、ビルトイン AF が USAGE 知識で使い方に答えるか、read-only ツールが実 Agent 越しに動くか。
 
+### 書き込みツール opt-in（**実装済**、docs/19 Q2 の続き）
+af_read の会話には書き込みツールが**そもそも見えない**ことを保証する（権限プロンプト頼みにしない）
+=「広告するツール集合」をゲートにする設計:
+- `mcp_stdio.go`: `runMCPStdio(args)` が `--write` を解釈し `mcpWriteEnabled` を立てる。
+  `mcpStdioToolList()` は read ツール＋（write時のみ）`send_to_session` を返す。`mcpStdioCall` は
+  `send_to_session` を write 有効時のみ受理（無効時は in-band `isError`）、`agentPOST` で
+  `POST /sessions/<name>/input {prompt}`（＝末尾 Enter）を叩く。CP `mcp.go` の member write と等価。
+- `chat.go`: `afWriteEnabled()`＝`Tools==af_write`。`chatMCPArgs(write bool)` が write 時に
+  MCP サーバ args を `["mcp-stdio","--write"]` にする。`--dangerously-skip-permissions` 下では
+  `--allowedTools` は権限的に無意味なので採用せず、**広告ゲート1本**に集約。
+- `assistants.go`: `toolsAFWrite` 追加、`validToolGrant` が3値許可。Console `AssistantModal` に
+  「AF 書き込み」選択肢（信頼用途のみ許可の注意書き）。
+- **スタンドアロン検証済**: `--write` 無=tools/list に send_to_session 出ない/呼ぶと isError、
+  `--write` 有=出る/prompt 未指定で検証エラー。**実 Agent 越しの送信はコンテナ内で要目視**。
+
 ### 実装順
 Q3（済）→ Q1（mcp-stdio, read-only, 済）→ **Q2＝アシスタント・テンプレート（済）**
-→ 書き込みツール opt-in → Phase C（Files/DocView から翻訳）。
+→ **書き込みツール opt-in（済）** → Phase C（Files/DocView から翻訳）。
 
 ## 制約（Console 側、docs/18 と同じ）
 
