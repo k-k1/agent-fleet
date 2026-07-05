@@ -173,6 +173,7 @@ export default function MirrorView({
   const [tasks, setTasks] = useState<TaskItem[]>([]); // current ToDo list (Task tool calls)
   const [alive, setAlive] = useState(!!sessionMeta?.alive); // live session ⇒ composer usable
   const [pending, setPending] = useState<Question[] | null>(null); // currently-awaiting AskUserQuestion
+  const [pendingText, setPendingText] = useState<string>(""); // prose streamed just before the pending question
   const [pendingPlan, setPendingPlan] = useState<string | null>(null); // ExitPlanMode plan awaiting approval
   const [pendingPerm, setPendingPerm] = useState<string | null>(null); // tool-permission prompt awaiting allow/deny
   const [mode, setMode] = useState(""); // session permission mode ("plan" | …)
@@ -324,6 +325,7 @@ export default function MirrorView({
           setBgBusy(!!d.backgroundBusy);
           setTasks(Array.isArray(d.tasks) ? d.tasks : []);
           setPending(Array.isArray(d.pendingQuestions) ? d.pendingQuestions : null);
+          setPendingText(typeof d.pendingText === "string" ? d.pendingText : "");
           setPendingPlan(typeof d.pendingPlan === "string" && d.pendingPlan ? d.pendingPlan : null);
           setPendingPerm(typeof d.pendingPermission === "string" && d.pendingPermission ? d.pendingPermission : null);
           // Mode comes from the terminal (paneMode) in real time, so trust every poll —
@@ -882,6 +884,7 @@ export default function MirrorView({
               <span className="mt-model muted">質問中</span>
             </div>
             <div className="mirror-turn-body">
+              {pendingText && <MarkdownView source={pendingText} />}
               <PendingQuestions
                 key={"pq-" + (pending[0]?.question || "")}
                 questions={pending}
