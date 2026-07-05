@@ -1,0 +1,171 @@
+# 20. コンテナ内操作の監査ログ & 外部通信制御（egress 統制）— 設計検討
+
+status: **検討（未決定・未実装）**。roadmap の **P3-9 残項目**（「監査」「egress 統制」）の設計を詰めるためのドキュメント。
+実装に入る前の意思決定材料。確定した契約は `reference/`、採否記録は `decisions/` へ落とす。
+
+関連: [reference/security.md](reference/security.md)（脅威モデル §4.3/§4.6/§4.7）、[roadmap.md](roadmap.md) P3-9（`egress 統制` L318 / `監査` L232）、
+[decisions/0006-mcp-unified.md](decisions/0006-mcp-unified.md)（audit_log の由来）、[decisions/0009-transcript-paging.md](decisions/0009-transcript-paging.md)（transcript）。
+
+---
+
+## 0. 背景と位置づけ
+
+- **脅威モデル**（security.md §4.1-4.3）: Workspace コンテナ内は untrusted（claude が任意コード実行、`--dangerously-skip-permissions` 運用）。主要な隔離境界は「コンテナ内 → Control Plane/基盤」。守るのは他ユーザーのデータ・基盤・シークレット・**情報持ち出し**。
+- security.md はこの2テーマの**方針だけ**を既に書いている（§4.3「Egress は Bitbucket/Anthropic/claude.ai に限定＝許可リスト型」、§4.6「AuditLog にユーザー操作を記録」「不正 egress 試行をアラート」）。**実装は両方ゼロ**。本書はその方針を具体化する。
+- **提供モデル**: OSS コア＋各社セルフホスト、ports&adapters（`local`=Docker / `aws`=ECS）。両アダプタで成立させる必要がある。roadmap の「Network 港に Placement」に egress policy を載せる余地がある。
+- **前提の限界（明記して割り切る）**: CP は `docker.sock`（ホスト root 相当）を保持する（security.md §4.7 #5）。本書の統制はいずれも「**コンテナ内の untrusted コードに対する**」防御であり、CP/ホスト自体が侵害された場合は迂回されうる。CP/ホスト侵害への対処（rootless Docker / socket-proxy / CP 最小権限）は別ワークで、本書の射程外。
+
+---
+
+## Part A. コンテナ内操作の監査ログ
+
+### A.1 目的 / 非目的
+
+- **目的**: 「誰が（identity / membership / tenant）・いつ・何を（操作）・どこに（target）」を追える台帳。インシデント調査、コンプラ、情報持ち出しの事後追跡の基盤。
+- **対象操作**:
+  1. 人間が Console / MCP 経由でコンテナ内に対して行う操作（ファイル・git・セッション）。
+  2. **claude 自身**の破壊的／外部影響を持つ操作（Write/Edit/Bash）。
+- **非目的（少なくとも初期）**: 全ファイル**読み取り**の逐一記録（ノイズ過多）、ターミナル生ストリームの全文保存（別方針・秘密混入リスク、security.md §4.4 は「保存可否は方針決定」と未決）。
+
+### A.2 現状（調査結果）
+
+- `audit_log` テーブルは存在（`control-plane/migrations/0007_audit.sql:7-17`）。列: `id / tenant_id / actor_kind(user|admin|mcp|system) / actor_id / action / target / detail / at`。SQLite が唯一のアダプタ（`store_sqlite.go:618-647`）。
+- **write は4アクションのみ**: MCP admin write 3種（`mcp.go:644/667/679` = stop_workspace / stop_session / set_user_quota、helper `mcpAudit` 経由）＋ SSM start（`ssm.go:399-403`, actor_kind=user）。
+- **read は呼び出し元ゼロ**（`ListAuditByTenant` は定義のみ、admin ルート・`tail_audit` とも未実装）。＝いま audit_log は「書くだけ・誰も読まない」。
+- **コンテナ内 fs/git/session 操作は無記録**。経路は Console → CP `/api/*` → `proxyAgentREST`（`proxy.go:14`）→ Agent。proxy は body を読まず `io.Copy` で素通し（`proxy.go:34,54`）。非GETで activity を `conns.touch` するのみ。
+  - 操作の実体は Agent 側: ファイル `workspace/agent/fs.go`（upload/delete=`os.RemoveAll`/rename/mkdir/newfile）、git `git_view.go`（stage/unstage/discard/commit）+ `git.go`（clone/delete/checkout/fetch/ff）、セッション `session.go`（create/input/halt/stop、kind=claude|shell|codex|opencode）。
+- **CP proxy に actor/tenant が揃う**: proxy は `resolvedFor`（`runtime.go:296-312`）を既に呼び、`resolved{ rt, ws, ident, mv }`（`manager.go:201-206`）で **identity・membership・tenant が全部取れる**。`ssm.go:399` が正にこの前例。→ **最有力の観測点**。
+- **Agent はテナント/ユーザを知らない**（CP 共有 Bearer のみ、`main.go:189-206`）。Agent の `logRequests`（`main.go:231-237`）は非構造化テキスト、永続化・紐付けなし。
+- **claude 自身の操作の可観測性**:
+  - jsonl transcript（`CLAUDE_CONFIG_DIR/projects/*/<sid>.jsonl`, `session_io.go:439-456`）。ただし**表示用途**で、fork・複数 jsonl・stub 混在があり監査ソースとしては脆い。
+  - **PreToolUse hook**（`session_status.go`, matcher `Write|Edit|MultiEdit|NotebookEdit|Bash` = `permToolMatcher:411`）が構造化イベントの**唯一の差込口**。現状は permission 表示用に直近ツールを一時記録するだけで、**台帳化していない**。
+
+### A.3 観測レイヤの選択
+
+| 観測点 | actor/tenant | 操作の意味 | claude 自身 | Agent 改修 | local/aws | 評価 |
+|--------|-------------|-----------|-------------|-----------|-----------|------|
+| **CP proxy 層**（`proxyAgentREST`）| ◎ `resolved` で完備 | △ path から逆引き（`DELETE /api/fs/delete?path=…`→「削除」）| ✗ 見えない | 不要 | ◎ CP 共通 | **第1段に推奨** |
+| Agent ハンドラ層 | ✗ tenant 不明 | ◎ 最正確 | ✗ | 要（CP へ送る新経路）| 〇 | 補助どまり |
+| **claude PreToolUse hook** | △ Agent→CP 集約が要 | ◎ tool_use 粒度 | ◎ 唯一の道 | 要（受け口）| 〇 | **第2段に推奨** |
+
+推奨 = **第1段: CP proxy 層（人間の変更操作）** → **第2段: claude hook（エージェント自身の Write/Edit/Bash）**。`actor_kind` に `claude` を追加する（DB は自由文字列ゆえスキーマ制約変更は不要）。
+
+### A.4 データモデル（既存 audit_log を流用）
+
+- 列はそのまま流用。`actor_kind` に `claude` を追加（想定値 user|admin|mcp|system|**claude**）。
+- **action 語彙（案）**: `fs.upload / fs.delete / fs.rename / fs.mkdir / fs.newfile`、`git.commit / git.discard / git.checkout / git.fetch / git.ff`、`repo.clone / repo.delete`、`session.create / session.stop`、`claude.edit / claude.write / claude.bash`、`egress.deny`（Part C）。
+- **target**: 対象パス、リポジトリ、コミット SHA、egress の FQDN 等。
+- **detail**: 補足（commit メッセージ先頭、削除対象件数など）。**秘密は入れない**（security.md §4.4「ログに秘密を出さない」— cred/トークン/差分本文は記録しない）。
+- **粒度**: 読み取り（fs.tree/file/download）は既定オフ（オプトイン）。書き込み・破壊・外部影響を既定オン。
+- **書き込み**: 既存 `mcpAudit` と同様のベストエフォート非同期 insert。SQLite WAL、将来 Postgres。
+- **リテンション**: 行数/日数上限＋パージ。P3-10 パッケージングで各社が設定。
+
+### A.5 読み取り面（書き込みと同時に新設が必要）
+
+- `GET /api/admin/audit`（tenant scope、RBAC=super_admin / tenant_admin）。`ListAuditByTenant` を配線し、フィルタ（actor_kind / action / 期間 / target）。
+- MCP `tail_audit`（migration コメントの既定予定・dangerous 段の土台）。
+- Console admin タブに監査ビュー。
+- security.md §4.6「不正 egress 試行・権限エラーをアラート」は Part C と連携。
+
+### A.6 段階
+
+- **A-第1段**: CP proxy 監査（人間の fs/git/session 変更操作）＋ 読み取り API ＋ admin 最小ビュー。**低リスク・高価値**（既存 audit_log 流用・Agent 無改修）。
+- **A-第2段**: claude PreToolUse hook 監査（actor_kind=claude, Write/Edit/Bash）。
+- **A-第3段**: アラート連携（egress deny・権限エラー）、エクスポート/リテンション、Postgres。
+
+---
+
+## Part B. 外部通信制御（egress 統制）
+
+### B.1 目的
+
+- **情報持ち出し統制**: untrusted な claude/コードが任意の外部宛先へデータを送れる現状を、許可リスト型（既定拒否）に絞る。
+- security.md §4.3・roadmap P3-9（L318: github/bitbucket/anthropic/claude.ai の allowlist）の具体化。
+
+### B.2 現状（調査結果）
+
+- **egress 制御ゼロ**。per-user bridge の NAT で全開。`ensureNetwork`（`runtime.go:212-223`）は `docker network create` を**オプションなし**（`--internal` 無し）で作る。`docker run`（`runtime.go:171-204`）に `--dns` / `--cap-*` / proxy env は無い。リポ全体 grep でも egress 系ヒットゼロ。
+- A1 は**コンテナ間分離のみ**（HANDOFF §6.7「egress は NAT で維持」、検証項目に「github:443 OK」）。
+- **依存する外部宛先**（allowlist に含める必要）: Anthropic API / claude.ai、`claude.ai/install.sh`（`entrypoint.sh:61`）、nvm（githubusercontent, `:241`）、git（GitHub/Bitbucket, `connections.go`）、パッケージ（npm/pip/apt/go/awscli/session-manager, `Dockerfile`）。
+- AWS 側 `runtime_ecs.go` は `securityGroup`/`subnets` フィールドがあるが **Start/Stop 未実装**（`errECSUnimplemented`）。SG は egress **許可**前提。aws.md §3.3 は「NAT+制限 or VPC エンドポイント」を**方針のみ**。
+
+### B.3 難所
+
+- **HTTPS の宛先は CDN で IP 変動** → IP allowlist は維持不能。FQDN ベース（SNI / HTTP CONNECT / DNS）が要る。
+- Anthropic・claude.ai・GitHub は広域 CDN → FQDN でないと壊れる。
+- **パッケージレジストリを許すと実質広い穴**（typosquat 経由の持ち出しも）。開発体験とのトレードオフで**方針判断が要る**。
+- **untrusted コンテナ内に強制を置けない**: コンテナ内 iptables は `NET_ADMIN` 付与が要り、claude 自身が消せる → 本末転倒。強制は**コンテナ外のネットワーク層**に置く。
+- CP/ホスト侵害には無力（§0 の前提）。
+
+### B.4 方式の選択肢
+
+| 方式 | 実装点 | 粒度 | 迂回耐性 | local/aws | 評価 |
+|------|--------|------|----------|-----------|------|
+| **forward proxy（allowlist）** | egress-proxy コンテナ ＋ workspace に proxy env | FQDN（CONNECT/SNI）| 中（env 消し→下記で封じ）| ◎ 共通 | **本命** |
+| DNS フィルタ | per-user net の `--dns` を内部 resolver へ | ドメイン | 低（IP直打ち/DoH）| 〇 | 補助 |
+| コンテナ内 iptables | entrypoint | L3/L4 | ✗（NET_ADMIN を untrusted に）| ✗ | 却下 |
+| AWS ネットワーク統制 | Network Firewall / DNS Firewall / SG / VPCe | FQDN | ◎（コンテナ外強制）| aws のみ | aws の本命 |
+
+**推奨アーキテクチャ**:
+
+- **local（Docker, 既定）**:
+  1. per-user network を `--internal` 化（外部直行を遮断）。
+  2. **共有 egress-proxy コンテナ**（FQDN allowlist、CONNECT ログ）を「外に出られる」ネットワークに置き、両ネットワークに接続。
+  3. workspace に `http_proxy/https_proxy/no_proxy` env を注入（`runtime.go` の `docker run` に追加、entrypoint で子プロセスへ継承）。
+  4. **非 proxy 直行は `--internal` で物理的に遮断**（env を消せる untrusted 対策の本命は proxy env でなくネットワーク層）。
+  5. proxy が allowlist 外の CONNECT を deny＋ログ（→ Part C で監査/アラート）。**TLS は復号しない**（SNI/host だけ照合、中身は見ない＝プライバシー維持）。
+  - allowlist は設定ファイル（P3-10 で各社編集）。
+- **aws**: **Network Firewall（FQDN allowlist, TLS SNI）** or Route53 Resolver **DNS Firewall** ＋ egress-only 経路（SG/サブネット/VPC エンドポイント）。`runtime_ecs.go` の実装と同時に設計。
+- **抽象**: roadmap「Network 港に Placement」に egress policy を載せ、アダプタが local=proxy 網 / aws=firewall を選ぶ。
+- **Anthropic 依存の特別扱い**: claude が動かないと製品が無意味 → Anthropic/claude.ai は allowlist 恒久。
+
+### B.5 allowlist 初期セット（実測で確定要）
+
+- **anthropic**: `api.anthropic.com` / `claude.ai` / install.sh の配信元 /（claude が使う統計・エラー送信先があれば）。
+- **git**: `github.com` / `*.githubusercontent.com` / `bitbucket.org` / `*.atlassian.com`。
+- **パッケージ**（方針判断）: `registry.npmjs.org` / `pypi.org` / `files.pythonhosted.org` / apt ミラー / `proxy.golang.org` / awscli。**広いので各社ポリシーで絞る/緩める**。
+- **DNS** リゾルバ。
+
+### B.6 段階
+
+- **B-第1段（local）**: egress-proxy ＋ `--internal` ＋ allowlist ＋ deny ログ。**まず log-only（全許可・観測のみ）で導入**し、allowlist を実測で固めてから enforce へ切替（claude/ツールを壊さない段階 enforcement）。
+- **B-第2段**: enforce 化 ＋ Console/設定で allowlist 編集 ＋ deny アラート。
+- **B-第3段（aws）**: Network Firewall / DNS Firewall で同等を ECS アダプタに。
+
+---
+
+## Part C. 2テーマの接点
+
+- **egress deny → 監査へ**: proxy/firewall の deny を `audit_log`（`action=egress.deny`, `target=<fqdn>`, `actor_kind=user|claude`）へ流し、admin 監査ビューで「情報持ち出し試行」を一望。security.md §4.6「不正 egress 試行をアラート」を満たす。
+- **共通の設定面（P3-10 パッケージング）**: 監査リテンション・記録範囲・egress allowlist を各社が設定。
+
+---
+
+## D. 意思決定
+
+### D.1 決定済み（2026-07-05）
+
+1. **監査の記録範囲＝変更・破壊操作のみ**（初期）。fs upload/delete/rename/mkdir/newfile・git commit/discard/checkout/fetch/ff・repo clone/delete・session create/stop を対象とする。
+   **読み取り（fs.file/download）は対象外**（既定オフ）。**ターミナル生ストリームは保存しない**（秘密混入リスク・security.md §4.4）。
+2. **claude 自身の操作監査は第2段送り**（A-第2段）。第1段は人間の変更操作に絞る。
+3. **egress の allowlist にパッケージレジストリを含める**（npm/pip/apt/go/awscli 等）。**まず log-only で導入し、実測で allowlist を固めてから enforce** へ切替（B-第1段）。allowlist は各社/テナントで編集可能にする（P3-10）。
+
+### D.2 未決（後続で判断）
+
+4. enforcement の到達点: 「コンテナ内 untrusted に効けば十分」で割り切るか（§0 の前提を採用）。CP/ホスト侵害まで視野に入れるなら rootless docker/socket-proxy の別ワークが要る。
+5. **per-tenant 差**: allowlist / 監査ポリシーをテナント別に変えるか（`Tenant.isolation`/`limits` に載せる）。
+6. **プライバシー/従業員監視の色**: 記録範囲を各社ポリシーで設定可能にする（P3-10）。労務・法務観点の確認。
+
+---
+
+## E. 推奨ロードマップ（最小から）
+
+| マイルストーン | 内容 | 価値/リスク |
+|----------------|------|-------------|
+| **M1** | 監査 A-第1段（CP proxy で人間の変更操作）＋ 読み取り API ＋ admin 最小ビュー | 高価値・低リスク（audit_log 流用・Agent 無改修）|
+| **M2** | egress B-第1段（local proxy, log-only→enforce）＋ deny を監査へ | 中リスク（allowlist 実測が要）|
+| **M3** | 監査 A-第2段（claude hook）＋ egress deny アラート | claude 自身の可観測性 |
+| **M4** | aws アダプタ（Network Firewall/DNS Firewall）を ECS 実装と同時 | P3-7 と共通化 |
+| **M5** | P3-10 で設定化（allowlist / リテンション / 記録範囲） | 各社セルフホスト成立条件 |
+
+M1 が独立して価値を出せて最も低リスク（既存基盤の流用・Agent 無改修）。ここから着手を推奨。
