@@ -63,6 +63,16 @@ func runSessionStatusHook(args []string) {
 	if sid == "" {
 		return
 	}
+	// message: the MessageDisplay hook fires as the assistant's text streams. We
+	// accumulate the chunks so a pending AskUserQuestion can show the prose that
+	// preceded it — which isn't in the transcript until the question is answered.
+	// PROTOTYPE: whether MessageDisplay fires BEFORE the AskUserQuestion PreToolUse (so
+	// the buffer is populated at question time) is being verified empirically. Never
+	// touches the session status.
+	if state == "message" {
+		appendPendingText(sid, h.delta)
+		return
+	}
 	// permtool: a PreToolUse hook for edit/command tools that just records what is
 	// about to run (for the permission block's detail) — it fires in EVERY mode, so
 	// it must not change the session status.
@@ -107,6 +117,7 @@ type hookInput struct {
 	message    string
 	ntype      string
 	toolDetail string
+	delta      string // MessageDisplay: a streaming chunk of the assistant's text
 }
 
 func decodeHookStdin() hookInput {
@@ -114,6 +125,7 @@ func decodeHookStdin() hookInput {
 		SessionID        string `json:"session_id"`
 		Message          string `json:"message"`           // Notification
 		NotificationType string `json:"notification_type"` // Notification
+		Delta            string `json:"delta"`             // MessageDisplay (streaming text chunk)
 		ToolName         string `json:"tool_name"`         // PreToolUse
 		ToolInput        struct {
 			Questions    json.RawMessage `json:"questions"` // AskUserQuestion
@@ -131,6 +143,7 @@ func decodeHookStdin() hookInput {
 		plan:       in.ToolInput.Plan,
 		message:    in.Message,
 		ntype:      in.NotificationType,
+		delta:      in.Delta,
 		toolDetail: permToolDetail(in.ToolName, in.ToolInput.FilePath, in.ToolInput.NotebookPath, in.ToolInput.Path, in.ToolInput.Command),
 	}
 }
@@ -181,6 +194,13 @@ func applyPendingPayloads(sid, state string, h hookInput) {
 		writePendingPermission(sid, message)
 	} else {
 		removePendingPermission(sid)
+	}
+	// The MessageDisplay text buffer belongs to the in-flight turn: reset it at turn
+	// start (UserPromptSubmit→working) and drop it once the turn moves past the question
+	// (answered→working, Stop→idle). Kept during "question"/"permission" so a pending
+	// question can still surface the prose that preceded it.
+	if state == "working" || state == "idle" {
+		removePendingText(sid)
 	}
 }
 
@@ -256,6 +276,43 @@ func readPendingQuestion(sid string) (json.RawMessage, bool) {
 }
 
 func removePendingQuestion(sid string) { _ = os.Remove(pendingQuestionPath(sid)) }
+
+// pending-text: the assistant's streaming text for the in-flight turn, accumulated from
+// the MessageDisplay hook. Kept only long enough for a pending AskUserQuestion to show
+// the prose that preceded it (the turn's text lands in the transcript only after the
+// question is answered). Reset each turn — see applyPendingPayloads.
+func pendingTextDir() string {
+	return filepath.Join(homeDir(), ".config", "agent-fleet", "pending-text")
+}
+
+func pendingTextPath(sid string) string {
+	return filepath.Join(pendingTextDir(), sid+".txt")
+}
+
+func appendPendingText(sid, delta string) {
+	if delta == "" {
+		return
+	}
+	if err := os.MkdirAll(pendingTextDir(), 0o700); err != nil {
+		return
+	}
+	f, err := os.OpenFile(pendingTextPath(sid), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	_, _ = f.WriteString(delta)
+}
+
+func readPendingText(sid string) (string, bool) {
+	b, err := os.ReadFile(pendingTextPath(sid))
+	if err != nil || len(b) == 0 {
+		return "", false
+	}
+	return string(b), true
+}
+
+func removePendingText(sid string) { _ = os.Remove(pendingTextPath(sid)) }
 
 // A pending ExitPlanMode plan (the tool_input.plan markdown), kept only while the
 // session waits for plan approval so the Console can show it / open it in a pane.
@@ -360,8 +417,11 @@ func ensureStatusHooks() {
 	hooks := hooksMap(m)
 	changed := false
 
-	// Simple (matcher-less) events.
-	for event, state := range map[string]string{"UserPromptSubmit": "working", "Stop": "idle"} {
+	// Simple (matcher-less) events. MessageDisplay fires as the assistant's text streams;
+	// we buffer it (state "message" never changes status) so a pending AskUserQuestion
+	// can surface the prose that preceded it. PROTOTYPE — verifying it fires before the
+	// question's PreToolUse.
+	for event, state := range map[string]string{"UserPromptSubmit": "working", "Stop": "idle", "MessageDisplay": "message"} {
 		if b, _ := json.Marshal(hooks[event]); !strings.Contains(string(b), "session-status") {
 			hooks[event] = []any{map[string]any{
 				"hooks": []any{map[string]any{"type": "command", "command": statusHookCmd(state)}},
