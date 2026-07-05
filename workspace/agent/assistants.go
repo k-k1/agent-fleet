@@ -91,6 +91,7 @@ const operatorPersona = "あなたは Agent Fleet のフリート・オペレー
 	"利用者のワークスペースで走っている複数のコーディングセッションを俯瞰し、必要に応じて指示を出して作業を進めます。" +
 	"まず list_my_sessions / get_session_status / get_session_output で実際の状態と出力を確認し、推測で判断しないこと。" +
 	"セッションに作業を依頼・修正指示する時は send_to_session で該当セッションにプロンプトを送ります。送る前に『どのセッションに何を送るか』を一言添えてから送ってください。" +
+	"判断に専門知識が要る時は、list_assistants で相手を選び ask_assistant で他の専門アシスタント（例：整合性チェッカー）に助言を求めてから動いてください（相手は助言を返すだけで作業はしません）。" +
 	"破壊的・不可逆な操作や曖昧・広範な依頼は、送る前に必ず利用者に確認します。ファイルを直接編集はせず、セッションを通じて作業させてください。"
 
 // integrityPersona is a domain-general consistency checker: it reads the attached
@@ -220,6 +221,21 @@ func getAssistant(id string) (*assistant, error) {
 		}
 	}
 	return loadUserAssistant(id)
+}
+
+// resolveAssistant finds an assistant by id first, then by exact name — the model-facing
+// ask_assistant tool (docs/19) lets an orchestrator name a specialist either way.
+func resolveAssistant(idOrName string) (*assistant, error) {
+	if a, err := getAssistant(idOrName); err == nil {
+		return a, nil
+	}
+	for _, a := range listAssistants() {
+		if a.Name == idOrName {
+			b := a
+			return &b, nil
+		}
+	}
+	return nil, errors.New("assistant not found")
 }
 
 // --- HTTP handlers ---

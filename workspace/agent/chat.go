@@ -676,6 +676,55 @@ func handleChatCreate(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, c)
 }
 
+// chatAskReq is the assistant-to-assistant consult (docs/19): an af_write orchestrator's
+// ask_assistant tool posts here to get a specialist's advice.
+type chatAskReq struct {
+	Assistant string `json:"assistant"` // id or exact name of the assistant to consult
+	Prompt    string `json:"prompt"`
+}
+
+// handleChatAsk runs ONE advisory turn with the named assistant and returns its reply
+// text. The consult is stateless and forced tools=none: with no tool grant the sub-turn
+// attaches no MCP, so it cannot write to sessions and cannot itself call ask_assistant —
+// recursion and privilege-escalation are ruled out by construction (single hop, advice
+// only). Reached only via the local Agent REST (mcp_stdio → localhost); not CP-exposed.
+func handleChatAsk(w http.ResponseWriter, r *http.Request) {
+	var req chatAskReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "bad_request", "invalid body")
+		return
+	}
+	prompt := strings.TrimSpace(req.Prompt)
+	if prompt == "" {
+		writeErr(w, http.StatusBadRequest, "empty", "prompt が空です")
+		return
+	}
+	a, err := resolveAssistant(strings.TrimSpace(req.Assistant))
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "not_found", "アシスタントが見つかりません")
+		return
+	}
+	// Ephemeral, non-persisted conversation carrying the assistant's persona/model/knowledge
+	// but NO tools (advisory only).
+	c := &chatConversation{
+		ID: randUUID(), Agent: a.Agent, Model: a.Model,
+		Persona: a.Persona, Tools: toolsNone, Knowledge: a.Knowledge,
+	}
+	prov, ok := chatProviders[c.Agent]
+	if !ok {
+		writeErr(w, http.StatusBadRequest, "bad_agent", "未対応のエージェントです")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), chatTimeout)
+	defer cancel()
+	reply, err := prov.send(ctx, c, prompt)
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, "provider", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"assistant": a.Name, "reply": reply})
+}
+
 func handleChatGet(w http.ResponseWriter, r *http.Request) {
 	c, err := loadConv(r.PathValue("id"))
 	if err != nil {
