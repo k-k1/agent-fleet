@@ -4123,6 +4123,10 @@ button.mt-toolrun-head:hover {
   font-size: var(--viewer-size, 12px);
   line-height: 1.55;
   tab-size: var(--viewer-tab, 4);
+  /* read-only caret browsing: contentEditable gives a real caret for keyboard reading
+     (arrows / Home-End / Shift-select); no focus ring — the blinking caret marks focus. */
+  outline: none;
+  caret-color: var(--hl-fg);
 }
 .codegrid.no-gutter {
   grid-template-columns: max-content;

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { MouseEvent as RMouseEvent, TouchEvent as RTouchEvent } from "react";
+import type { MouseEvent as RMouseEvent, TouchEvent as RTouchEvent, SyntheticEvent } from "react";
 
 // CodeView renders highlighted code with an optional line-number gutter and a
 // VSCode-style minimap on the right edge: a scaled-down mirror of the file with a
@@ -209,10 +209,31 @@ export default function CodeView({ html, lines, lineNumbers, wrap, minimap, mark
   const n = Math.max(lines, 1);
   const lineHtmls = useMemo(() => splitHighlightedLines(html), [html]);
 
+  // The code area is contentEditable so it gets a real, keyboard-movable caret (arrow
+  // keys, Home/End, Shift-select, Ctrl+A, copy) for reading — but it must stay strictly
+  // read-only, so every mutation path is blocked: beforeinput covers typing/delete/IME,
+  // and paste/cut/drop are cancelled explicitly. Caret movement, selection and copy don't
+  // fire these, so they pass through. The line-number gutter is a contentEditable=false
+  // island so the caret never lands on a number.
+  const preventEdit = useCallback((e: SyntheticEvent) => e.preventDefault(), []);
+
   return (
     <div className="codeview-wrap">
       <div className={"codeview" + (wrap ? " wrap" : "")} ref={scrollRef}>
-        <div className={"codegrid" + (showGutter ? "" : " no-gutter")}>
+        <div
+          className={"codegrid" + (showGutter ? "" : " no-gutter")}
+          contentEditable
+          suppressContentEditableWarning
+          spellCheck={false}
+          tabIndex={0}
+          role="textbox"
+          aria-readonly="true"
+          aria-multiline="true"
+          onBeforeInput={preventEdit}
+          onPaste={preventEdit}
+          onCut={preventEdit}
+          onDrop={preventEdit}
+        >
           {Array.from({ length: n }, (_, i) => {
             const ln = i + 1;
             let gutCls = "";
@@ -223,7 +244,7 @@ export default function CodeView({ html, lines, lineNumbers, wrap, minimap, mark
             return (
               <div className="cl-row" key={i}>
                 {showGutter && (
-                  <div className={"cl-gutter" + gutCls} aria-hidden="true">
+                  <div className={"cl-gutter" + gutCls} contentEditable={false} aria-hidden="true">
                     {lineNumbers ? ln : ""}
                   </div>
                 )}

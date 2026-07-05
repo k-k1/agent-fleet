@@ -166,7 +166,7 @@ export default function FileView({ filePath: filePathProp, wrap }: FileViewProps
   } as CSSProperties;
 
   return (
-    <div className="fileview" style={viewerStyle} ref={bodyRef} onMouseUp={captureSelection}>
+    <div className="fileview" style={viewerStyle} ref={bodyRef} onMouseUp={captureSelection} onKeyUp={captureSelection}>
       <header className="view-head fileinfo">
         <span className="fi-name mono"><FileIcon name={baseName(filePath)} /> {baseName(filePath)}</span>
         {isImage ? (
