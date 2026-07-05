@@ -41,6 +41,7 @@ interface AssistantModalProps {
 
 export default function AssistantModal({ initial, onClose, onSave }: AssistantModalProps) {
   const [name, setName] = useState(initial?.name ?? "");
+  const [description, setDescription] = useState(initial?.description ?? "");
   const [icon, setIcon] = useState(initial?.icon ?? ICONS[0]);
   const [agent, setAgent] = useState<SessionKind>(initial?.agent ?? chatKinds[0] ?? "claude");
   const [model, setModel] = useState(initial?.model ?? "");
@@ -58,6 +59,7 @@ export default function AssistantModal({ initial, onClose, onSave }: AssistantMo
     try {
       await onSave({
         name: name.trim(),
+        description: description.trim(),
         icon,
         agent,
         model: model.trim(),
@@ -88,6 +90,20 @@ export default function AssistantModal({ initial, onClose, onSave }: AssistantMo
           <div className="field-label">名前</div>
           <label className="pick-field">
             <input value={name} onChange={(e) => setName(e.target.value)} placeholder="例: リリースノート翻訳" autoFocus />
+          </label>
+        </div>
+
+        <div className="field">
+          <div className="field-label">説明（会話開始時の挨拶）</div>
+          <div className="field-help">会話を始める前に表示される自己紹介です。何ができるかを一言で。</div>
+          <label className="pick-field">
+            <textarea
+              className="assistant-persona"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              rows={2}
+              placeholder="例: 文章を渡してください。日本語↔英語を翻訳します。"
+            />
           </label>
         </div>
 

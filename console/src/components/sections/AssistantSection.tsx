@@ -7,7 +7,6 @@ import { useApp } from "../../state.jsx";
 import { useToast } from "../ToastProvider.jsx";
 import {
   chatList,
-  chatCreate,
   chatDelete,
   assistantList,
   assistantCreate,
@@ -23,7 +22,7 @@ import type { Assistant, AssistantInput } from "../../types/assistant.ts";
 // GPT-style templates — a new chat snapshots the assistant's persona/model/tools/
 // knowledge, so later edits don't rewrite existing threads.
 export default function AssistantSection() {
-  const { openChat } = useApp();
+  const { openChat, openAssistantDraft, chatListKey } = useApp();
   const toast = useToast();
   const [convs, setConvs] = useState<ConversationMeta[]>([]);
   const [assistants, setAssistants] = useState<Assistant[]>([]);
@@ -42,7 +41,11 @@ export default function AssistantSection() {
   }, []);
   useEffect(() => {
     refresh();
-  }, [refresh]);
+  }, [refresh, chatListKey]); // chatListKey bumps when a draft becomes a real thread
+
+  // Only started threads are listed — a draft (assistant opened but not yet messaged) is
+  // never persisted, and an abandoned empty thread shouldn't clutter the list (docs/19).
+  const startedConvs = useMemo(() => convs.filter((c) => c.message_count > 0), [convs]);
 
   const byId = useMemo(() => {
     const m: Record<string, Assistant> = {};
@@ -50,17 +53,9 @@ export default function AssistantSection() {
     return m;
   }, [assistants]);
 
-  const startChat = async (a: Assistant) => {
-    try {
-      const c = await chatCreate(a.id, a.name);
-      if (c && c.id) {
-        refresh();
-        openChat(c.id);
-      } else toast("チャットの作成に失敗しました");
-    } catch {
-      toast("チャットの作成に失敗しました");
-    }
-  };
+  // Open a DRAFT for this assistant — nothing is persisted until the first message is
+  // sent (docs/19). ChatView shows the assistant's greeting until then.
+  const startChat = (a: Assistant) => openAssistantDraft(a.id);
 
   const saveAssistant = async (input: AssistantInput) => {
     try {
@@ -107,7 +102,7 @@ export default function AssistantSection() {
         id="assistant"
         icon="comment-discussion"
         title="アシスタント"
-        count={convs.length}
+        count={startedConvs.length}
         actions={actions}
       >
         <div className="assistant-group-label muted">アシスタント</div>
@@ -149,11 +144,11 @@ export default function AssistantSection() {
         </ul>
 
         <div className="assistant-group-label muted">会話</div>
-        {convs.length === 0 ? (
+        {startedConvs.length === 0 ? (
           <div className="section-empty muted">チャットはまだありません。アシスタントを選んで開始できます。</div>
         ) : (
           <ul className="list">
-            {convs.map((c) => {
+            {startedConvs.map((c) => {
               const a = c.assistant_id ? byId[c.assistant_id] : undefined;
               return (
                 <li key={c.id} className="chat-row">

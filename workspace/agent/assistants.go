@@ -40,17 +40,20 @@ func validToolGrant(t string) bool {
 
 // assistant is a chat persona template (builtin or user-defined).
 type assistant struct {
-	ID        string   `json:"id"`
-	Name      string   `json:"name"`
-	Icon      string   `json:"icon,omitempty"`    // codicon name for the Console rail
-	Builtin   bool     `json:"builtin"`           // code-injected; not editable/deletable
-	Agent     string   `json:"agent"`             // "claude" | "codex" — selects the provider
-	Model     string   `json:"model,omitempty"`   // CLI --model override
-	Persona   string   `json:"persona,omitempty"` // system prompt (--append-system-prompt)
-	Tools     string   `json:"tools"`             // "none" | "af_read"
-	Knowledge []string `json:"knowledge,omitempty"`
-	CreatedAt int64    `json:"created_at,omitempty"`
-	UpdatedAt int64    `json:"updated_at,omitempty"`
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Icon string `json:"icon,omitempty"` // codicon name for the Console rail
+	// Description is a short user-facing self-intro shown when a chat is opened but not
+	// yet started (the greeting card) — distinct from Persona (the model's instructions).
+	Description string   `json:"description,omitempty"`
+	Builtin     bool     `json:"builtin"`           // code-injected; not editable/deletable
+	Agent       string   `json:"agent"`             // "claude" | "codex" — selects the provider
+	Model       string   `json:"model,omitempty"`   // CLI --model override
+	Persona     string   `json:"persona,omitempty"` // system prompt (--append-system-prompt)
+	Tools       string   `json:"tools"`             // "none" | "af_read" | "af_write"
+	Knowledge   []string `json:"knowledge,omitempty"`
+	CreatedAt   int64    `json:"created_at,omitempty"`
+	UpdatedAt   int64    `json:"updated_at,omitempty"`
 }
 
 // --- builtin knowledge (embedded, materialized to a runtime dir) ---
@@ -118,25 +121,30 @@ func builtinAssistants() []assistant {
 	return []assistant{
 		{
 			ID: afAssistantID, Name: "Agent Fleet アシスタント", Icon: "rocket",
-			Builtin: true, Agent: kindClaude, Persona: afAssistantPersona,
+			Description: "こんにちは。Agent Fleet の使い方を案内します。操作手順や、今のワークスペースの状態（動いているセッションなど）を実際に確認しながらお答えします。",
+			Builtin:     true, Agent: kindClaude, Persona: afAssistantPersona,
 			Tools: toolsAFRead, Knowledge: []string{know},
 		},
 		{
 			ID: "operator", Name: "フリート・オペレーター", Icon: "broadcast",
-			Builtin: true, Agent: kindClaude, Persona: operatorPersona,
+			Description: "フリートの司令塔です。走っているセッションを俯瞰し、必要ならセッションに指示を出して作業を進めます。専門的な判断は他のアシスタントにも相談します。実行前に内容を確認します。",
+			Builtin:     true, Agent: kindClaude, Persona: operatorPersona,
 			Tools: toolsAFWrite, Knowledge: []string{know},
 		},
 		{
 			ID: "integrity", Name: "整合性チェッカー", Icon: "checklist",
-			Builtin: true, Agent: kindClaude, Persona: integrityPersona, Tools: toolsNone,
+			Description: "整合性チェッカーです。ファイルやディレクトリを渡してください。ドキュメントと実装の食い違い、用語・表記のゆれ、（物語なら）設定の矛盾や伏線の抜けを洗い出します。",
+			Builtin:     true, Agent: kindClaude, Persona: integrityPersona, Tools: toolsNone,
 		},
 		{
 			ID: "general", Name: "汎用アシスタント", Icon: "comment-discussion",
-			Builtin: true, Agent: kindClaude, Persona: chatPersona, Tools: toolsNone,
+			Description: "汎用アシスタントです。翻訳・要約・質問への回答など、幅広くお手伝いします。何でも聞いてください。",
+			Builtin:     true, Agent: kindClaude, Persona: chatPersona, Tools: toolsNone,
 		},
 		{
 			ID: "translate", Name: "翻訳アシスタント", Icon: "globe",
-			Builtin: true, Agent: kindClaude, Persona: translatePersona, Tools: toolsNone,
+			Description: "翻訳アシスタントです。文章を渡してください。日本語↔英語を自動判定して翻訳します（訳文だけを返します）。",
+			Builtin:     true, Agent: kindClaude, Persona: translatePersona, Tools: toolsNone,
 		},
 	}
 }
@@ -255,13 +263,14 @@ func handleAssistantGet(w http.ResponseWriter, r *http.Request) {
 
 // assistantInput is the create/update body (only user-editable fields).
 type assistantInput struct {
-	Name      string   `json:"name"`
-	Icon      string   `json:"icon"`
-	Agent     string   `json:"agent"`
-	Model     string   `json:"model"`
-	Persona   string   `json:"persona"`
-	Tools     string   `json:"tools"`
-	Knowledge []string `json:"knowledge"`
+	Name        string   `json:"name"`
+	Icon        string   `json:"icon"`
+	Description string   `json:"description"`
+	Agent       string   `json:"agent"`
+	Model       string   `json:"model"`
+	Persona     string   `json:"persona"`
+	Tools       string   `json:"tools"`
+	Knowledge   []string `json:"knowledge"`
 }
 
 // applyInput validates the input and folds it onto a (new or existing) assistant.
@@ -282,6 +291,7 @@ func applyInput(a *assistant, in assistantInput) error {
 	}
 	a.Name = name
 	a.Icon = strings.TrimSpace(in.Icon)
+	a.Description = strings.TrimSpace(in.Description)
 	a.Agent = in.Agent
 	a.Model = strings.TrimSpace(in.Model)
 	a.Persona = strings.TrimSpace(in.Persona)

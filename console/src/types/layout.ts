@@ -26,6 +26,7 @@ export interface Pane {
   diffTool: string | null; // diff view: originating tool label
   diffEdits: unknown; // diff view: edit payload (shape owned by DiffView)
   conversationId: string | null; // chat view: assistant-chat conversation id (docs/19)
+  draftAssistantId: string | null; // chat view: a not-yet-created draft for this assistant (docs/19)
   wrap: boolean | null; // per-pane soft-wrap override (null = follow global setting)
 }
 

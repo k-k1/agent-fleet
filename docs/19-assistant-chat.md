@@ -144,6 +144,18 @@ CP `mcp.go`（外部/PAT/admin・別モジュール）と Agent `mcp_stdio.go`�
   「＋新規チャット（アシスタント選択）」、アシスタントの作成/編集 UI（名前/persona/model/ツール許可）。
 - 利用者向け USAGE/FAQ は別途用意（内部 docs/ は出さない）。
 
+**会話開始 UX（実装済）**:
+- **description（自己紹介）**: assistant に user-facing な `description` を追加（persona＝モデル指示とは別）。
+  builtin 5種に一人称の挨拶文を用意。作成/編集 UI にも「説明（会話開始時の挨拶）」欄。
+- **挨拶カード**: 会話が未開始（draft or messages 空）の間、ChatView が assistant の description を
+  挨拶カードとして表示（**静的**＝ライブのモデル turn を消費しない。req: 会話開始時に説明表示／自己紹介）。
+- **draft モード（未開始は保存しない）**: 左レールでアシスタントを選ぶと **conversation を作らず** draft ペイン
+  （Pane.draftAssistantId、conversationId=null）を開く。**最初のメッセージ送信時に初めて `chatCreate`**→
+  `promoteDraft(paneId, id)` でペインを実会話に昇格→stream。load 効果は convRef ガードで昇格時の再読込
+  （＝streaming 中断）を回避。会話一覧は message_count>0 のみ表示（Files 右クリックの即時作成が放置された
+  空会話も一覧に出さない）。`chatListKey`/`bumpChatList` で draft→実会話化を左レールに反映。
+  Files 右クリック連携は従来どおり即時作成（seed 前提のため）。
+
 **実装メモ（確定事項）**:
 - **継承＝作成時スナップショット**（ユーザー確定）: 会話は作成時にアシスタントの
   agent/model/persona/tools/knowledge を自レコードへコピー。以後アシスタントを編集しても

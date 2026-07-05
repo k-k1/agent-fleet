@@ -34,7 +34,7 @@ export const useApp = (): AppState => useContext(AppContext) as AppState;
 // A pane descriptor. kind drives which view renders; the *Path/Repo/session fields
 // are the per-kind payload. Empty terminal pane = "セッション未接続".
 function blankPane(id: string, patch?: PanePatch): Pane {
-  return { id, kind: "terminal", session: null, chat: false, filePath: null, scmRepo: null, commitSha: null, docTitle: null, docContent: null, diffTool: null, diffEdits: null, conversationId: null, wrap: null, ...patch };
+  return { id, kind: "terminal", session: null, chat: false, filePath: null, scmRepo: null, commitSha: null, docTitle: null, docContent: null, diffTool: null, diffEdits: null, conversationId: null, draftAssistantId: null, wrap: null, ...patch };
 }
 
 const equalRatios = (n: number): number[] => Array(n).fill(1 / n);
@@ -61,6 +61,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [superAdmin, setSuperAdmin] = useState(false);
 
   const [wsState, setWsState] = useState("…");
+  const [chatListKey, setChatListKey] = useState(0); // bump → AssistantSection refreshes its list
 
   // opencode web (per-workspace pk-webui) status: {available,enabled,running,port}
   // or null when unavailable/unreachable. Shared so the WS bar surfaces an "open"
@@ -729,10 +730,41 @@ export function AppProvider({ children }: { children: ReactNode }) {
     (conversationId: string, seed?: string) => {
       if (seed) setChatSeed(conversationId, seed); // one-shot composer prefill (Phase C)
       if (navOpenRef.current) pushDrawerEntry();
-      openActive({ kind: "chat", conversationId });
+      openActive({ kind: "chat", conversationId, draftAssistantId: null });
     },
     [openActive, pushDrawerEntry],
   );
+
+  // openAssistantDraft opens a NOT-yet-created chat for an assistant (docs/19): the
+  // conversation is persisted only when the user sends the first message, so browsing an
+  // assistant leaves nothing in the list. ChatView shows the assistant's greeting until then.
+  const openAssistantDraft = useCallback(
+    (assistantId: string) => {
+      if (navOpenRef.current) pushDrawerEntry();
+      openActive({ kind: "chat", conversationId: null, draftAssistantId: assistantId });
+    },
+    [openActive, pushDrawerEntry],
+  );
+
+  // promoteDraft binds a real conversation id onto a pane once its draft's first message
+  // created the conversation (by pane id, not "active", so a background pane is safe).
+  const promoteDraft = useCallback(
+    (paneId: string, conversationId: string) => {
+      const cur = layoutRef.current;
+      const cols = cur.cols.map((c) => ({
+        ...c,
+        panes: c.panes.map((p) =>
+          p.id === paneId ? { ...p, conversationId, draftAssistantId: null } : p,
+        ),
+      }));
+      commit({ ...cur, cols }, false);
+    },
+    [commit],
+  );
+
+  // chatListKey bumps whenever a conversation is created/changed so the AssistantSection
+  // list refreshes (a draft becoming real happens inside ChatView, out of the section).
+  const bumpChatList = useCallback(() => setChatListKey((k) => k + 1), []);
 
   // ---- pane layout controls ----
   // splitRight appends a new full-height column (up to MAX_COLS) holding a fresh
@@ -1049,6 +1081,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
     showDoc,
     showDiff,
     openChat,
+    openAssistantDraft,
+    promoteDraft,
+    chatListKey,
+    bumpChatList,
     setPaneWrap,
     settingsOpen,
     settingsSection,

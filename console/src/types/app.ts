@@ -92,6 +92,10 @@ export interface AppState {
   showDoc: (title: string, content: string) => void;
   showDiff: (title: string, edits: unknown, tool: string) => void;
   openChat: (conversationId: string, seed?: string) => void;
+  openAssistantDraft: (assistantId: string) => void;
+  promoteDraft: (paneId: string, conversationId: string) => void;
+  chatListKey: number;
+  bumpChatList: () => void;
   setPaneWrap: (id: string, wrap: boolean | null) => void;
   // dialogs
   settingsOpen: boolean;
