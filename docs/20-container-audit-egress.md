@@ -4,7 +4,7 @@ status: **検討（未決定・未実装）**。roadmap の **P3-9 残項目**�
 実装に入る前の意思決定材料。確定した契約は `reference/`、採否記録は `decisions/` へ落とす。
 
 関連: [reference/security.md](reference/security.md)（脅威モデル §4.3/§4.6/§4.7）、[roadmap.md](roadmap.md) P3-9（`egress 統制` L318 / `監査` L232）、
-[decisions/0006-mcp-unified.md](decisions/0006-mcp-unified.md)（audit_log の由来）、[decisions/0009-transcript-paging.md](decisions/0009-transcript-paging.md)（transcript）。
+[decisions/0006-mcp-unified.md](decisions/0006-mcp-unified.md)（audit_log の由来・MCP 管理面）、[19-assistant-chat.md](19-assistant-chat.md)（エージェント壁打ちの土台）、[decisions/0009-transcript-paging.md](decisions/0009-transcript-paging.md)（transcript）。
 
 ---
 
@@ -141,31 +141,71 @@ status: **検討（未決定・未実装）**。roadmap の **P3-9 残項目**�
 
 ---
 
-## D. 意思決定
+## Part D. 運用モデルとエージェント壁打ちによる allowlist 改善ループ
 
-### D.1 決定済み（2026-07-05）
+監査・egress は「入れて終わり」ではなく、**allowlist を継続的に見直し改善する運用**が本体になる。ここをエージェント（AI）との壁打ちで回せるようにする。土台は既存の [decisions/0006-mcp-unified.md](decisions/0006-mcp-unified.md)（MCP 管理面）と [19-assistant-chat.md](19-assistant-chat.md)（アシスタントチャット）。
+
+### D.1 運用モデル（誰が・何を・どのライフサイクル）
+
+- **運用ロール**: `super_admin`（全社）/ `tenant_admin`（自テナント）が egress policy と監査を運用（roadmap の RBAC を流用）。
+- **allowlist のライフサイクル**: `log-only（観測）` → `curate（候補精査）` → `enforce（既定拒否）` → `継続レビュー（drift 対応）`。テナント単位で段階を持てるようにする（あるテナントは enforce、別は log-only）。
+- **policy の置き場**: DB の**版管理レコード**（`entry / scope(global|tenant) / reason / added_by / added_at / state(active|proposed|retired)`）。**allowlist 変更そのものを `audit_log` に残す**（メタ監査）。ロールバック可能。
+- policy は Runtime/Network 港（roadmap「Network 港に Placement」）が読み、local=proxy 設定 / aws=firewall ルールへ反映。
+
+### D.2 判断材料（egress イベントの集計）
+
+- proxy/firewall の allow/deny を集約: `fqdn / count / first_seen / last_seen / actor_kind(user|claude) / session / tenant / (可能なら bytes)`。**deny は `audit_log`（action=egress.deny）**、allow は量が多いので**集計テーブル**（生全許可は保存しない）。
+- **候補抽出**: log-only 期間の宛先を FQDN で集計 → 既知カテゴリ（レジストリ/ git / Anthropic）を自動分類し、**未知だけをレビュー対象に残す**。
+
+### D.3 エージェント壁打ち（AI 支援のリスク判定）
+
+- **原則: エージェントは助言のみ・人間が承認**（agent proposes, human disposes）。**自動適用しない**。
+- **ホスト**: 既存 MCP（admin）＋アシスタントチャットに、次のツールを足す。
+  - read: `list_egress_events` / `get_egress_stats` / `tail_audit` / `get_allowlist`
+  - propose: `propose_allowlist_change`（**ドラフト作成のみ**、`state=proposed` で保存）。**apply は人間 or 別の confirm 付き操作**に分離。
+- **壁打ちの流れ**: オペレータが「この期間の未知宛先をレビューして」→ エージェントが集計を読み、各 FQDN に**リスク所見**を付けて `allowlist 追加 / 据置 / 要調査` を提案 → オペレータが承認して policy 反映（変更は監査へ）。
+- **エージェントに与えるリスク評価軸**: 宛先の種類（レジストリ/CDN/git/未知）、**呼び出し主体（human の明示操作か claude の自律動作か）**、頻度・時間帯、**送信バイト量（持ち出し兆候）**、ドメインの新しさ/レピュテーション、既知 allowlist との近さ（**typosquat 疑い**）。
+- **セキュリティ上の要注意（prompt injection）**: レビュー対象のログ内容（FQDN・パス・コミットメッセージ）は **untrusted コンテナ由来**。エージェントを騙して「これを whitelist しろ」と誘導する注入がありうる。→ **ログはデータとして扱い指示として解釈しない**、最終変更は人間承認、エージェントの出力・提案も `audit_log` に残す、エージェント権限は read + propose(draft) までで **apply を分離**。これは §0 の「コンテナ内 untrusted」前提の直接の帰結。
+
+### D.4 改善ループ（PDCA）
+
+- **Plan**: allowlist ドラフト（log-only 観測＋エージェント助言）。
+- **Do**: enforce（テナント/段階的に）。
+- **Check**: deny/allow 監査、壊れたツール・claude の失敗（正当な宛先の誤 deny）を検知。
+- **Act**: allowlist 見直し（エージェント壁打ち）→ 反映（監査記録）→ 必要ならロールバック。
+- **定例化**: 週次 digest（未知宛先・deny 急増・新依存）をエージェントが要約 → レビュー。enforce 後の deny 急増はアラート（security.md §4.6）。
+
+---
+
+## E. 意思決定
+
+### E.1 決定済み（2026-07-05）
 
 1. **監査の記録範囲＝変更・破壊操作のみ**（初期）。fs upload/delete/rename/mkdir/newfile・git commit/discard/checkout/fetch/ff・repo clone/delete・session create/stop を対象とする。
    **読み取り（fs.file/download）は対象外**（既定オフ）。**ターミナル生ストリームは保存しない**（秘密混入リスク・security.md §4.4）。
 2. **claude 自身の操作監査は第2段送り**（A-第2段）。第1段は人間の変更操作に絞る。
 3. **egress の allowlist にパッケージレジストリを含める**（npm/pip/apt/go/awscli 等）。**まず log-only で導入し、実測で allowlist を固めてから enforce** へ切替（B-第1段）。allowlist は各社/テナントで編集可能にする（P3-10）。
+4. **allowlist の見直しはエージェント壁打ちで回す**（Part D）。**エージェントは助言のみ・人間が承認**（自動適用しない）。allowlist は版管理し変更を監査に残す。
 
-### D.2 未決（後続で判断）
+### E.2 未決（後続で判断）
 
-4. enforcement の到達点: 「コンテナ内 untrusted に効けば十分」で割り切るか（§0 の前提を採用）。CP/ホスト侵害まで視野に入れるなら rootless docker/socket-proxy の別ワークが要る。
-5. **per-tenant 差**: allowlist / 監査ポリシーをテナント別に変えるか（`Tenant.isolation`/`limits` に載せる）。
-6. **プライバシー/従業員監視の色**: 記録範囲を各社ポリシーで設定可能にする（P3-10）。労務・法務観点の確認。
+5. enforcement の到達点: 「コンテナ内 untrusted に効けば十分」で割り切るか（§0 の前提を採用）。CP/ホスト侵害まで視野に入れるなら rootless docker/socket-proxy の別ワークが要る。
+6. **per-tenant 差**: allowlist / 監査ポリシーをテナント別に変えるか（`Tenant.isolation`/`limits` に載せる）。段階（log-only/enforce）もテナント別に持つか。
+7. **既知カテゴリの半自動化**: レジストリ等「既知 good」への追加はエージェント提案を軽い confirm で反映するなど、承認の粒度をどこまで緩めるか（既定は全件人間承認）。
+8. **プライバシー/従業員監視の色**: 記録範囲を各社ポリシーで設定可能にする（P3-10）。労務・法務観点の確認。
 
 ---
 
-## E. 推奨ロードマップ（最小から）
+## F. 推奨ロードマップ（最小から）
 
 | マイルストーン | 内容 | 価値/リスク |
 |----------------|------|-------------|
 | **M1** | 監査 A-第1段（CP proxy で人間の変更操作）＋ 読み取り API ＋ admin 最小ビュー | 高価値・低リスク（audit_log 流用・Agent 無改修）|
-| **M2** | egress B-第1段（local proxy, log-only→enforce）＋ deny を監査へ | 中リスク（allowlist 実測が要）|
-| **M3** | 監査 A-第2段（claude hook）＋ egress deny アラート | claude 自身の可観測性 |
-| **M4** | aws アダプタ（Network Firewall/DNS Firewall）を ECS 実装と同時 | P3-7 と共通化 |
-| **M5** | P3-10 で設定化（allowlist / リテンション / 記録範囲） | 各社セルフホスト成立条件 |
+| **M2** | egress B-第1段（local proxy, log-only）＋ allow/deny イベント集計 ＋ deny を監査へ | 中リスク（allowlist 実測が要）|
+| **M3** | 運用基盤: allowlist policy store（版管理・per-tenant・段階）＋ admin レビュー UI ＋ enforce 切替 | 運用ループの器 |
+| **M4** | エージェント壁打ち: MCP read+propose ツール（`list_egress_events`/`get_egress_stats`/`propose_allowlist_change`）＋ アシスタント連携（助言→人間承認）| リスク判定の壁打ち |
+| **M5** | 監査 A-第2段（claude hook）＋ egress deny アラート＋週次 digest | claude 自身の可観測性・定例運用 |
+| **M6** | aws アダプタ（Network Firewall/DNS Firewall）を ECS 実装と同時 | P3-7 と共通化 |
+| **M7** | P3-10 で設定化（allowlist / リテンション / 記録範囲 / 承認粒度） | 各社セルフホスト成立条件 |
 
-M1 が独立して価値を出せて最も低リスク（既存基盤の流用・Agent 無改修）。ここから着手を推奨。
+M1 が独立して価値を出せて最も低リスク（既存基盤の流用・Agent 無改修）。ここから着手を推奨。M2→M3→M4 で「観測 → 器 → 壁打ち」の運用ループが揃う。
