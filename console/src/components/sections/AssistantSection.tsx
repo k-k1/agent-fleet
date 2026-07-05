@@ -301,7 +301,7 @@ export default function AssistantSection() {
             onMouseDown={(e) => e.stopPropagation()}
           >
             <li onClick={() => runMenu(() => startChat(menu.a))}>新規チャット</li>
-            <li onClick={() => runMenu(() => openInNewPane(draftPatch(menu.a)))}>新しいペインで開く</li>
+            <li onClick={() => runMenu(() => openInNewPane(draftPatch(menu.a), true))}>新しいペインで開く</li>
             {!menu.a.builtin && (
               <>
                 <li className="ctx-sep" aria-hidden="true" />

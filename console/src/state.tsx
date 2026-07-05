@@ -201,16 +201,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // Once all 8 slots are used it overwrites the LAST pane (bottom of the rightmost
   // column) so a further open still lands somewhere instead of being capped.
   const openInNewPane = useCallback(
-    (patch: PanePatch) => {
+    (patch: PanePatch, force = false) => {
       const cur = layoutRef.current;
       // Already shown somewhere? A Ctrl/middle-click "open in a split" on a target
       // that's already visible (a session, file, repo/scm/changes/commit…) shouldn't
       // duplicate it — just focus the pane that has it. Uses the same identity test
-      // as openActive's swap-dedup.
-      const dup = cur.cols.flatMap((c) => c.panes).find((p) => shows(p, patch));
-      if (dup) {
-        if (dup.id !== cur.activeId) commit({ ...cur, activeId: dup.id }, false);
-        return;
+      // as openActive's swap-dedup. `force` skips this for an explicit "新しいペインで開く".
+      if (!force) {
+        const dup = cur.cols.flatMap((c) => c.panes).find((p) => shows(p, patch));
+        if (dup) {
+          if (dup.id !== cur.activeId) commit({ ...cur, activeId: dup.id }, false);
+          return;
+        }
       }
       const fresh = (id: string) => ({ ...blankPane(id), ...patch });
       const splitCol = (col: Column) => {
