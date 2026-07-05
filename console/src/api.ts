@@ -207,6 +207,9 @@ export const chatCreate = (
   });
 export const chatGet = (id: string): Promise<Conversation> =>
   api(`api/chat/conversations/${encodeURIComponent(id)}`);
+// Rename a conversation's display title (docs/19).
+export const chatRename = (id: string, title: string): Promise<Conversation> =>
+  apiJSON(`api/chat/conversations/${encodeURIComponent(id)}`, "PATCH", { title });
 export const chatDelete = (id: string): Promise<Response> =>
   raw(`api/chat/conversations/${encodeURIComponent(id)}`, { method: "DELETE" });
 // Send returns the assistant message + the updated conversation, or {error} on failure.

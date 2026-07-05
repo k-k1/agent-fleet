@@ -10,6 +10,7 @@ import { placeFixed } from "../../lib/placeFixed.js";
 import {
   chatList,
   chatDelete,
+  chatRename,
   assistantList,
   assistantCreate,
   assistantUpdate,
@@ -108,6 +109,21 @@ export default function AssistantSection() {
     }
   };
 
+  // Rename a conversation's list title — the auto-title from the first message often
+  // isn't what the user wants once the thread has a topic (docs/19).
+  const renameConv = async (c: ConversationMeta) => {
+    const name = window.prompt("表示名を変更", c.title);
+    if (name == null) return; // cancelled
+    const t = name.trim();
+    if (!t || t === c.title) return;
+    try {
+      await chatRename(c.id, t);
+      refresh();
+    } catch {
+      toast("名前の変更に失敗しました");
+    }
+  };
+
   const actions = (
     <div className="assistant-picker-wrap" ref={pickerRef}>
       <button
@@ -202,6 +218,14 @@ export default function AssistantSection() {
                     <Icon name={a?.icon || "comment"} className="assistant-ic" />
                     <span className="chat-open-title">{c.title}</span>
                     {c.message_count > 0 && <span className="chat-open-meta muted">{c.message_count}</span>}
+                  </button>
+                  <button
+                    type="button"
+                    className="ghost pane-btn chat-del"
+                    title="表示名を変更"
+                    onClick={() => void renameConv(c)}
+                  >
+                    <Icon name="edit" />
                   </button>
                   <button
                     type="button"

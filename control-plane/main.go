@@ -230,6 +230,7 @@ func main() {
 	mux.HandleFunc("GET /api/chat/conversations", cfg.proxyAgentREST)
 	mux.HandleFunc("POST /api/chat/conversations", cfg.proxyAgentREST)
 	mux.HandleFunc("GET /api/chat/conversations/{id}", cfg.proxyAgentREST)
+	mux.HandleFunc("PATCH /api/chat/conversations/{id}", cfg.proxyAgentREST)
 	mux.HandleFunc("DELETE /api/chat/conversations/{id}", cfg.proxyAgentREST)
 	mux.HandleFunc("POST /api/chat/conversations/{id}/messages", cfg.proxyAgentREST)
 	mux.HandleFunc("POST /api/chat/conversations/{id}/stream", cfg.proxyAgentStream) // SSE (Phase B)

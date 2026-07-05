@@ -77,6 +77,7 @@ func main() {
 	mux.HandleFunc("GET /chat/conversations", handleChatList)
 	mux.HandleFunc("POST /chat/conversations", handleChatCreate)
 	mux.HandleFunc("GET /chat/conversations/{id}", handleChatGet)
+	mux.HandleFunc("PATCH /chat/conversations/{id}", handleChatRename)
 	mux.HandleFunc("DELETE /chat/conversations/{id}", handleChatDelete)
 	mux.HandleFunc("POST /chat/conversations/{id}/messages", handleChatSend)
 	mux.HandleFunc("POST /chat/conversations/{id}/stream", handleChatStream) // SSE (Phase B)
