@@ -10,6 +10,7 @@ import Icon from "../Icon.jsx";
 import FileIcon, { DirIcon } from "../FileIcon.jsx";
 import { useConfirm } from "../ConfirmProvider.jsx";
 import { useToast } from "../ToastProvider.jsx";
+import SendSelectionModal from "../SendSelectionModal.jsx";
 import EmptyState from "../EmptyState.jsx";
 import { useDismiss } from "../../lib/useDismiss.js";
 
@@ -101,6 +102,7 @@ export default function FilesSection() {
   const [menu, setMenu] = useState<Menu | null>(null); // context menu: { x, y, row|null }
   const [subOpen, setSubOpen] = useState(false); // "アシスタントで開く" submenu expanded (docs/19 Phase C)
   const [assistants, setAssistants] = useState<Assistant[]>([]); // for the assistant submenu
+  const [sendFile, setSendFile] = useState<string | null>(null); // file → "セッションに送る" modal target
   const ctxRef = useRef<HTMLUListElement>(null); // context menu (clamped into the viewport)
   const treeRef = useRef<HTMLUListElement>(null);
   const selRef = useRef<HTMLLIElement>(null);
@@ -863,6 +865,9 @@ export default function FilesSection() {
             </li>
           )}
           {menu.row && menu.row.type === "file" && (
+            <li onClick={() => runMenu(() => setSendFile(menu.row!.path))}>セッションに送る…</li>
+          )}
+          {menu.row && menu.row.type === "file" && (
             <li>
               <a className="ctx-a" href={downloadURL(menu.row.path)} download onClick={() => setMenu(null)}>
                 ダウンロード
@@ -877,6 +882,7 @@ export default function FilesSection() {
           )}
         </ul>
       )}
+      {sendFile && <SendSelectionModal filePath={sendFile} onClose={() => setSendFile(null)} />}
     </Section>
   );
 }
