@@ -14,6 +14,7 @@ export interface Assistant {
   id: string;
   name: string;
   icon?: string; // codicon name
+  description?: string; // user-facing self-intro (greeting card), distinct from persona
   builtin: boolean;
   agent: SessionKind; // "claude" | "codex"
   model?: string;
@@ -28,6 +29,7 @@ export interface Assistant {
 export interface AssistantInput {
   name: string;
   icon?: string;
+  description?: string;
   agent: SessionKind;
   model?: string;
   persona?: string;

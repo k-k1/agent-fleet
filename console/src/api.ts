@@ -290,6 +290,8 @@ export async function chatStream(
 // user-defined ones support create/update/delete.
 export const assistantList = (): Promise<{ assistants: Assistant[] }> =>
   api("api/assistants");
+export const assistantGet = (id: string): Promise<Assistant> =>
+  api(`api/assistants/${encodeURIComponent(id)}`);
 export const assistantCreate = (input: AssistantInput): Promise<Assistant> =>
   apiJSON("api/assistants", "POST", input);
 export const assistantUpdate = (id: string, input: AssistantInput): Promise<Assistant> =>

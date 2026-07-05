@@ -7541,6 +7541,33 @@ button.primary:hover:not(:disabled) {
   font: inherit;
 }
 
+/* Greeting card: the assistant introduces itself before the chat has started (docs/19). */
+.chat-greeting {
+  margin: 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel2, var(--panel));
+}
+.chat-greeting-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.chat-greeting-ic {
+  font-size: 18px;
+  opacity: 0.9;
+}
+.chat-greeting-name {
+  font-weight: 600;
+}
+.chat-greeting-body {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
 /* Streaming assistant reply: a soft blinking caret while tokens arrive (Phase B). */
 .chat-streaming::after {
   content: "▍";
