@@ -7224,6 +7224,12 @@ button.primary:hover:not(:disabled) {
 }
 
 @media (max-width: 760px) {
+  /* The drawer + its backdrop are confined to .body (below the top bar + WS bar) so
+     those stay visible and tappable while the navigator is open — anchor absolutely
+     to a positioned .body instead of covering the whole viewport. */
+  .body {
+    position: relative;
+  }
   /* narrower minimap on a phone (saves horizontal room; swipe to scroll). */
   .minimap {
     width: 48px;
@@ -7301,17 +7307,15 @@ button.primary:hover:not(:disabled) {
     padding: 6px 12px;
   }
 
-  /* navigator → off-canvas drawer. Pad the top (plus the notch's safe area) so the
-     first section header (SESSIONS) sits a little lower and reads clearly instead
-     of jamming against the status bar. */
+  /* navigator → off-canvas drawer, anchored to .body so it slides in BELOW the top
+     bar + WS bar (which stay visible), not over them. */
   .leftpane {
-    position: fixed;
+    position: absolute;
     z-index: 60;
     top: 0;
     left: 0;
     bottom: 0;
     width: min(86vw, 320px);
-    padding-top: calc(14px + env(safe-area-inset-top));
     transform: translateX(-100%);
     transition: transform 0.2s ease;
     box-shadow: 2px 0 14px rgba(0, 0, 0, 0.45);
@@ -7321,7 +7325,7 @@ button.primary:hover:not(:disabled) {
   }
   .nav-backdrop {
     display: block;
-    position: fixed;
+    position: absolute;
     inset: 0;
     z-index: 55;
     background: rgba(0, 0, 0, 0.5);
