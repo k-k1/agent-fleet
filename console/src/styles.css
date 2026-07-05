@@ -3415,6 +3415,9 @@ button.mt-toolrun-head:hover {
 .mq-answer {
   margin-top: 6px;
   font-size: 12px;
+  /* Free-text answers can be multi-line — keep the line breaks the user typed. */
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 .mq-page {
   font-size: 11px;
