@@ -471,6 +471,18 @@ export default function MirrorView({
     if (active && !coarsePointer()) inputRef.current?.focus();
   }, [active]);
 
+  // After the user hits 再開して続ける, focus the composer the moment it becomes usable
+  // (readOnly clears + the session goes alive + no resume menu in the terminal), so they
+  // can type straight away. Flag is set on the resume click so this fires only for a
+  // user-initiated resume, not a background one.
+  const wantResumeFocusRef = useRef(false);
+  useEffect(() => {
+    if (wantResumeFocusRef.current && !readOnly && alive && termState !== "resume") {
+      wantResumeFocusRef.current = false;
+      inputRef.current?.focus();
+    }
+  }, [readOnly, alive, termState]);
+
   // Low-level: type one prompt into the session (tmux send-keys). No state/guard.
   const postInput = async (text: string) => {
     try {
@@ -965,7 +977,10 @@ export default function MirrorView({
             className="btn primary mirror-resume"
             disabled={!running}
             title={running ? "このセッションを再開" : "ワークスペース停止中"}
-            onClick={() => onResume && onResume()}
+            onClick={() => {
+              wantResumeFocusRef.current = true;
+              onResume?.();
+            }}
           >
             <Icon name="play" /> 再開して続ける
           </button>
