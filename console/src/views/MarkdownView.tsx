@@ -35,6 +35,14 @@ export default function MarkdownView({ source, basePath = "", breaks = false, on
 
     wireLinks(el, basePath, onOpenFile);
 
+    // VS Code-style sticky headings: when this markdown is inside a scroll container
+    // (.md-scroll — the Doc / File viewers, not chat bubbles), pin the heading path of
+    // the current scroll position at the top. Purely imperative since the body is
+    // rendered as innerHTML. Cleaned up when the effect re-runs / unmounts.
+    let stickyCleanup = () => {};
+    const scroller = el.closest<HTMLElement>(".md-scroll");
+    if (scroller) stickyCleanup = setupStickyHeadings(el, scroller);
+
     // Syntax-highlight every fenced code block except mermaid (handled below), and
     // give each one a copy button (bottom-right) that copies just that block.
     el.querySelectorAll<HTMLElement>("pre > code").forEach((code) => {
@@ -70,10 +78,82 @@ export default function MarkdownView({ source, basePath = "", breaks = false, on
 
     return () => {
       alive = false;
+      stickyCleanup();
     };
   }, [source, basePath, breaks, onOpenFile]);
 
   return <div className="markdown" ref={ref} />;
+}
+
+// setupStickyHeadings pins the heading breadcrumb (# > ## > ###) of the current scroll
+// position to the top of the scroller, VS Code-style. An absolutely-positioned overlay
+// appended to the scroller is repositioned to the viewport top on scroll and its rows
+// rebuilt to the active heading chain. Returns a cleanup that removes it. Heading tops
+// are measured live (getBoundingClientRect) so async layout shifts — mermaid diagrams,
+// images — self-correct on the next scroll frame.
+const MAX_STICKY_HEADS = 4; // keep the nearest N so a deep doc doesn't bury the content
+
+function setupStickyHeadings(md: HTMLElement, scroller: HTMLElement): () => void {
+  const heads = [...md.querySelectorAll<HTMLElement>("h1,h2,h3,h4,h5,h6")].map((h) => ({
+    el: h,
+    level: Number(h.tagName[1]),
+    text: h.textContent || "",
+  }));
+  if (!heads.length) return () => {};
+
+  const bar = document.createElement("div");
+  bar.className = "md-sticky";
+  bar.setAttribute("aria-hidden", "true");
+  scroller.appendChild(bar);
+
+  const build = () => {
+    const st = scroller.scrollTop;
+    const base = scroller.getBoundingClientRect().top - st; // content-space origin
+    // The active chain: for every heading at/above the viewport top, keep a stack where
+    // a heading pops any siblings/deeper of >= its level, so the stack is its ancestry.
+    const stack: { el: HTMLElement; level: number; text: string }[] = [];
+    for (const h of heads) {
+      const top = h.el.getBoundingClientRect().top - base;
+      if (top > st + 4) break; // headings are in document order → the rest are below
+      while (stack.length && stack[stack.length - 1].level >= h.level) stack.pop();
+      stack.push(h);
+    }
+    const shown = stack.length > MAX_STICKY_HEADS ? stack.slice(stack.length - MAX_STICKY_HEADS) : stack;
+    if (!shown.length) {
+      bar.style.display = "none";
+      return;
+    }
+    bar.style.display = "";
+    bar.style.top = st + "px";
+    bar.textContent = "";
+    for (const h of shown) {
+      const row = document.createElement("div");
+      row.className = "md-sticky-row md-sticky-h" + h.level;
+      row.textContent = h.text;
+      row.title = h.text;
+      row.addEventListener("click", () => h.el.scrollIntoView({ block: "start" }));
+      bar.appendChild(row);
+    }
+  };
+
+  let raf = 0;
+  const onScroll = () => {
+    if (raf) return;
+    raf = requestAnimationFrame(() => {
+      raf = 0;
+      build();
+    });
+  };
+  scroller.addEventListener("scroll", onScroll, { passive: true });
+  window.addEventListener("resize", onScroll);
+  build();
+
+  return () => {
+    if (raf) cancelAnimationFrame(raf);
+    scroller.removeEventListener("scroll", onScroll);
+    window.removeEventListener("resize", onScroll);
+    bar.remove();
+  };
 }
 
 // addCopyButton pins a copy control at the bottom-right of a fenced code block that
