@@ -11,6 +11,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -25,14 +26,23 @@ import (
 // AF_EGRESS_TOKEN (bearer for ingest), AF_EGRESS_ALLOWLIST (file, one host per line,
 // "#" comments; appended to the built-in default), AF_EGRESS_ENFORCE ("1" to block).
 
-type egressProxy struct {
+// proxyPolicy is the atomically-swappable decision state: the compiled allowlist and
+// whether to actually block. Held in an atomic.Pointer so a live policy refresh
+// (docs/20 M3) never races the request path.
+type proxyPolicy struct {
 	policy  *egressPolicy
 	enforce bool
-	batch   *egressBatcher
+}
+
+type egressProxy struct {
+	cur   atomic.Pointer[proxyPolicy]
+	batch *egressBatcher
 }
 
 func runEgressProxy() {
 	listen := envOr("AF_EGRESS_LISTEN", ":3128")
+	// Static seed: built-in defaults + optional file + AF_EGRESS_ENFORCE. When a CP
+	// policy URL is configured it overrides this on first poll (docs/20 M3).
 	entries := append([]string(nil), defaultEgressAllowlist...)
 	if f := os.Getenv("AF_EGRESS_ALLOWLIST"); f != "" {
 		if b, err := os.ReadFile(f); err == nil {
@@ -41,18 +51,63 @@ func runEgressProxy() {
 			log.Printf("egress-proxy: allowlist %s: %v (using default only)", f, err)
 		}
 	}
-	p := &egressProxy{
-		policy:  newEgressPolicy(entries),
-		enforce: os.Getenv("AF_EGRESS_ENFORCE") == "1",
-		batch:   newEgressBatcher(os.Getenv("AF_EGRESS_INGEST_URL"), os.Getenv("AF_EGRESS_TOKEN")),
-	}
+	p := &egressProxy{batch: newEgressBatcher(os.Getenv("AF_EGRESS_INGEST_URL"), os.Getenv("AF_EGRESS_TOKEN"))}
+	p.cur.Store(&proxyPolicy{policy: newEgressPolicy(entries), enforce: os.Getenv("AF_EGRESS_ENFORCE") == "1"})
 	go p.batch.run(context.Background())
-	mode := "log-only"
-	if p.enforce {
-		mode = "ENFORCE"
+	if u := os.Getenv("AF_EGRESS_POLICY_URL"); u != "" {
+		go p.pollPolicy(context.Background(), u, os.Getenv("AF_EGRESS_TOKEN"))
 	}
-	log.Printf("egress-proxy on %s (%s)", listen, mode)
+	log.Printf("egress-proxy on %s (%s)", listen, p.modeLabel())
 	log.Fatal((&http.Server{Addr: listen, Handler: http.HandlerFunc(p.handle)}).ListenAndServe())
+}
+
+func (p *egressProxy) modeLabel() string {
+	if p.cur.Load().enforce {
+		return "ENFORCE"
+	}
+	return "log-only"
+}
+
+// pollPolicy refreshes the allowlist + mode from the CP so admin edits (docs/20 M3)
+// take effect without restarting the proxy. On any error the last-good policy stays.
+func (p *egressProxy) pollPolicy(ctx context.Context, url, token string) {
+	fetch := func() {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if err != nil {
+			return
+		}
+		if token != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			log.Printf("egress-proxy: policy fetch failed: %v", err)
+			return
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			return
+		}
+		var b struct {
+			Allowlist []string `json:"allowlist"`
+			Enforce   bool     `json:"enforce"`
+		}
+		if json.NewDecoder(resp.Body).Decode(&b) != nil {
+			return
+		}
+		p.cur.Store(&proxyPolicy{policy: newEgressPolicy(b.Allowlist), enforce: b.Enforce})
+	}
+	fetch()
+	t := time.NewTicker(30 * time.Second)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			fetch()
+		}
+	}
 }
 
 func (p *egressProxy) handle(w http.ResponseWriter, r *http.Request) {
@@ -74,9 +129,10 @@ func hostOnly(hostport string) string {
 // decide records the observation and reports whether to proceed. Log-only always
 // proceeds (even for a would-block); enforce blocks a host that's not allowed.
 func (p *egressProxy) decide(host string) bool {
-	allowed := p.policy.allows(host)
+	pol := p.cur.Load()
+	allowed := pol.policy.allows(host)
 	p.batch.add(host, allowed)
-	return allowed || !p.enforce
+	return allowed || !pol.enforce
 }
 
 // handleConnect tunnels an HTTPS CONNECT after the allow/log decision.

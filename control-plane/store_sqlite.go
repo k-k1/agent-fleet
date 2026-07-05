@@ -696,6 +696,82 @@ func (s *sqliteStore) ListEgress(ctx context.Context, sinceDay string, limit int
 	return out, rows.Err()
 }
 
+// --- egress allowlist + deployment settings (docs/20 M3) --------------------
+
+func (s *sqliteStore) ListAllowlist(ctx context.Context, state string, limit int) ([]AllowlistEntry, error) {
+	if limit <= 0 {
+		limit = 500
+	}
+	q := `SELECT id, tenant_id, entry, state, reason, added_by, added_at FROM egress_allowlist`
+	args := []any{}
+	if state != "" {
+		q += ` WHERE state=?`
+		args = append(args, state)
+	}
+	q += ` ORDER BY added_at DESC, id DESC LIMIT ?`
+	args = append(args, limit)
+	rows, err := s.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []AllowlistEntry
+	for rows.Next() {
+		var e AllowlistEntry
+		if err := rows.Scan(&e.ID, &e.TenantID, &e.Entry, &e.State, &e.Reason, &e.AddedBy, &e.AddedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+func (s *sqliteStore) AddAllowlist(ctx context.Context, e AllowlistEntry) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO egress_allowlist(id, tenant_id, entry, state, reason, added_by, added_at)
+		 VALUES(?, ?, ?, ?, ?, ?, ?)`,
+		e.ID, e.TenantID, e.Entry, e.State, e.Reason, e.AddedBy, e.AddedAt)
+	return err
+}
+
+func (s *sqliteStore) SetAllowlistState(ctx context.Context, id, state string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE egress_allowlist SET state=? WHERE id=?`, state, id)
+	return err
+}
+
+func (s *sqliteStore) EffectiveAllowlist(ctx context.Context) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT entry FROM egress_allowlist WHERE state='active'`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var e string
+		if err := rows.Scan(&e); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+func (s *sqliteStore) GetSetting(ctx context.Context, key string) (string, error) {
+	var v string
+	err := s.db.QueryRowContext(ctx, `SELECT value FROM deployment_setting WHERE key=?`, key).Scan(&v)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return v, err
+}
+
+func (s *sqliteStore) SetSetting(ctx context.Context, key, value string) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO deployment_setting(key, value) VALUES(?, ?)
+		 ON CONFLICT(key) DO UPDATE SET value = excluded.value`, key, value)
+	return err
+}
+
 // AddUsage accumulates workspace running-seconds into the (membership, day)
 // showback bucket (docs/roadmap.md P3-9). Upsert += so repeated samples add up.
 func (s *sqliteStore) AddUsage(ctx context.Context, membershipID, tenantID, day string, secs int) error {

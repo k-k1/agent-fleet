@@ -158,3 +158,111 @@ func TestEgressIngestHandler(t *testing.T) {
 		t.Fatalf("want 1 deduped egress.observe for paste.ee, got %d", n)
 	}
 }
+
+func TestAllowlistStore(t *testing.T) {
+	ctx := context.Background()
+	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer st.Close()
+	if err := st.migrate(ctx); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	add := func(entry, state string) string {
+		id := newID()
+		if err := st.AddAllowlist(ctx, AllowlistEntry{
+			ID: id, Entry: entry, State: state, AddedBy: "op@x", AddedAt: nowTS(),
+		}); err != nil {
+			t.Fatalf("add: %v", err)
+		}
+		return id
+	}
+	add("registry.internal", "active")
+	pid := add("proposed.host", "proposed")
+
+	// EffectiveAllowlist returns only active entries.
+	eff, _ := st.EffectiveAllowlist(ctx)
+	if len(eff) != 1 || eff[0] != "registry.internal" {
+		t.Fatalf("effective: %+v", eff)
+	}
+	// Approve the proposed one -> now effective.
+	if err := st.SetAllowlistState(ctx, pid, "active"); err != nil {
+		t.Fatalf("setstate: %v", err)
+	}
+	eff2, _ := st.EffectiveAllowlist(ctx)
+	if len(eff2) != 2 {
+		t.Fatalf("effective after approve: %+v", eff2)
+	}
+	// List filtered by state.
+	prop, _ := st.ListAllowlist(ctx, "proposed", 100)
+	if len(prop) != 0 {
+		t.Fatalf("no proposed should remain, got %d", len(prop))
+	}
+
+	// Settings kv.
+	if v, _ := st.GetSetting(ctx, "egress_mode"); v != "" {
+		t.Fatalf("unset should be empty, got %q", v)
+	}
+	if err := st.SetSetting(ctx, "egress_mode", "enforce"); err != nil {
+		t.Fatalf("setsetting: %v", err)
+	}
+	if v, _ := st.GetSetting(ctx, "egress_mode"); v != "enforce" {
+		t.Fatalf("get after set: %q", v)
+	}
+	if err := st.SetSetting(ctx, "egress_mode", "log-only"); err != nil { // upsert
+		t.Fatalf("upsert: %v", err)
+	}
+	if v, _ := st.GetSetting(ctx, "egress_mode"); v != "log-only" {
+		t.Fatalf("upsert value: %q", v)
+	}
+}
+
+func TestEffectivePolicyEndpoint(t *testing.T) {
+	ctx := context.Background()
+	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer st.Close()
+	if err := st.migrate(ctx); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	_ = st.AddAllowlist(ctx, AllowlistEntry{ID: newID(), Entry: "extra.internal", State: "active", AddedAt: nowTS()})
+	_ = st.SetSetting(ctx, "egress_mode", "enforce")
+	cfg := config{mgr: &manager{store: st}, egressToken: "tok"}
+
+	entries, enforce := cfg.effectivePolicy(ctx)
+	if !enforce {
+		t.Fatalf("enforce should be true")
+	}
+	seen := false
+	for _, e := range entries {
+		if e == "extra.internal" {
+			seen = true
+		}
+	}
+	if !seen {
+		t.Fatalf("effective policy missing db entry: %+v", entries)
+	}
+	if len(entries) <= len(defaultEgressAllowlist) {
+		t.Fatalf("effective should include defaults + db entry")
+	}
+
+	// The proxy-facing endpoint requires the token.
+	w0 := httptest.NewRecorder()
+	cfg.handleEgressPolicy(w0, httptest.NewRequest("GET", "/internal/egress/policy", nil))
+	if w0.Code != 401 {
+		t.Fatalf("no token: want 401 got %d", w0.Code)
+	}
+	r := httptest.NewRequest("GET", "/internal/egress/policy", nil)
+	r.Header.Set("Authorization", "Bearer tok")
+	w := httptest.NewRecorder()
+	cfg.handleEgressPolicy(w, r)
+	if w.Code != 200 {
+		t.Fatalf("with token: want 200 got %d", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "extra.internal") || !strings.Contains(w.Body.String(), `"enforce":true`) {
+		t.Fatalf("policy body: %s", w.Body.String())
+	}
+}

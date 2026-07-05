@@ -6312,6 +6312,49 @@ button.mt-toolrun-head:hover {
   color: #f85149;
   font-variant-numeric: tabular-nums;
 }
+/* egress allowlist management (docs/20 M3) */
+.egress-h {
+  margin: 0 0 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.egress-add {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+.egress-add input {
+  flex: 1;
+  min-width: 120px;
+}
+.adm-allow-row {
+  display: flex;
+  align-items: center;
+  gap: 6px 10px;
+  padding: 6px 4px;
+  border-bottom: 1px solid var(--border2);
+  font-size: 12px;
+  flex-wrap: wrap;
+}
+.adm-allow-row .as-name {
+  flex-shrink: 0;
+  max-width: none;
+}
+.adm-allow-row .as-repo {
+  flex: 1;
+}
+.allow-acts {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.btn.xs,
+.ghost.xs {
+  font-size: 11px;
+  padding: 2px 8px;
+}
 
 /* member actions */
 .member-actions {
