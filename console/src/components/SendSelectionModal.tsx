@@ -12,18 +12,22 @@ import type { Session } from "../types/session.ts";
 import type { Assistant } from "../types/assistant.ts";
 
 // Remember the session the user last sent to, so it's re-selected next time (if still
-// 入力待ち). A single key across files — "the session I'm feeding excerpts to".
+// 入力待ち). A single key — "the session I'm feeding excerpts/files to".
 const LAST_SESSION_KEY = "af.sendsel.lastSession";
 
-// SendSelectionModal quotes a selected range of a code/source file and sends it — with
-// the file path, line range, and a comment — either directly to a running session (the
-// coding agent that will act on it) or to an assistant chat (docs/19 "引用してセッションへ").
-// Session = a direct send_to_session; assistant = open a chat prefilled with the quote.
+// SendSelectionModal sends a file — with a comment — to a running session (the coding
+// agent that acts on it) or an assistant chat. Two modes:
+//   - QUOTE mode (quote/startLine/endLine given): a selected range is quoted inline (a
+//     Files/CodeView selection → session/assistant, docs/19 Phase C).
+//   - FILE mode (no quote): the WHOLE file is handed by PATH reference to a SESSION — for
+//     work that produces a file (e.g. "translate this manual and save it"), which the
+//     chat assistant can't do (it's chat-only, no file writes). Assistants are hidden here
+//     since attaching a file to a chat is the Files "アシスタントで開く" flow.
 interface SendSelectionModalProps {
   filePath: string;
-  quote: string;
-  startLine: number;
-  endLine: number;
+  quote?: string;
+  startLine?: number;
+  endLine?: number;
   onClose: () => void;
 }
 
@@ -35,11 +39,14 @@ export default function SendSelectionModal({ filePath, quote, startLine, endLine
   const [target, setTarget] = useState(""); // "session:<name>" | "assistant:<id>"
   const [busy, setBusy] = useState(false);
 
+  const fileMode = quote == null; // whole file (session-only) vs an inline quote
+
   useEffect(() => {
+    if (fileMode) return; // no assistant targets in file mode
     assistantList()
       .then((r) => setAssistants(r.assistants || []))
       .catch(() => {});
-  }, []);
+  }, [fileMode]);
 
   // The repo the file lives in (repos/<repo>/…), used to prefer a session in it.
   const fileRepo = filePath.startsWith("repos/") ? filePath.split("/")[1] : null;
@@ -56,7 +63,7 @@ export default function SendSelectionModal({ filePath, quote, startLine, endLine
   );
 
   // Default target: the last session sent to if it's still 入力待ち; else the highest-ranked
-  // alive session (same-repo / 入力待ち優先); else the first session, else the first assistant.
+  // alive session (same-repo / 入力待ち優先); else the first session, else (quote mode) an assistant.
   useEffect(() => {
     if (target) return;
     const last = localStorage.getItem(LAST_SESSION_KEY);
@@ -67,20 +74,27 @@ export default function SendSelectionModal({ filePath, quote, startLine, endLine
     }
     const best = sortedSessions.find((s) => s.alive) || sortedSessions[0];
     if (best) setTarget(`session:${best.name}`);
-    else if (assistants[0]) setTarget(`assistant:${assistants[0].id}`);
-  }, [sortedSessions, sessions, assistants, target]);
+    else if (!fileMode && assistants[0]) setTarget(`assistant:${assistants[0].id}`);
+  }, [sortedSessions, sessions, assistants, target, fileMode]);
 
   // The currently-selected session (if the target is a session), for the stopped guard.
   const selectedSession =
     target.startsWith("session:") ? sessions.find((s) => s.name === target.slice("session:".length)) : undefined;
   const sessionStopped = !!selectedSession && !selectedSession.alive;
 
-  const loc = startLine === endLine ? `L${startLine}` : `L${startLine}–L${endLine}`;
+  // File-mode references the file by an absolute-ish path (browse root is home) so a
+  // session resolves it regardless of its own working directory.
+  const pathRef = "~/" + filePath;
+  const loc = fileMode ? baseName(filePath) : startLine === endLine ? `L${startLine}` : `L${startLine}–L${endLine}`;
   const composed = useMemo(() => {
+    if (fileMode) {
+      const c = comment.trim();
+      return (c ? c + "\n\n" : "") + `対象ファイル: ${pathRef}`;
+    }
     const fence = "```";
     const body = `ファイル \`${filePath}\` の ${loc}:\n\n${fence}${langFor(filePath)}\n${quote}\n${fence}`;
     return comment.trim() ? `${body}\n\n${comment.trim()}` : body;
-  }, [filePath, loc, quote, comment]);
+  }, [fileMode, pathRef, filePath, loc, quote, comment]);
 
   const isAssistant = target.startsWith("assistant:");
 
@@ -131,47 +145,64 @@ export default function SendSelectionModal({ filePath, quote, startLine, endLine
     }
   };
 
+  const noTarget = sortedSessions.length === 0 && (fileMode || assistants.length === 0);
+
   return (
-    <Modal title="選択範囲をセッション/アシスタントに送る" onClose={onClose} className="session-modal" as="form" onSubmit={submit} lockClose={busy}>
+    <Modal
+      title={fileMode ? "ファイルをセッションに送る" : "選択範囲をセッション/アシスタントに送る"}
+      onClose={onClose}
+      className="session-modal"
+      as="form"
+      onSubmit={submit}
+      lockClose={busy}
+    >
       <div className="modal-body">
         <div className="field">
           <div className="field-label">送信先</div>
-          <label className="pick-field">
-            <select
-              value={target}
-              onChange={(e) => {
-                setTarget(e.target.value);
-                if (e.target.value.startsWith("session:"))
-                  localStorage.setItem(LAST_SESSION_KEY, e.target.value.slice("session:".length));
-              }}
-            >
-              {sortedSessions.length > 0 && (
-                <optgroup label="セッション（直接送信）">
-                  {sortedSessions.map((s) => (
-                    <option key={s.name} value={`session:${s.name}`}>
-                      {displayName(s)}（{s.name}・{stateInfo(s).text}
-                      {fileRepo && s.repo === fileRepo ? "・同レポ" : ""}）
-                    </option>
-                  ))}
-                </optgroup>
-              )}
-              {assistants.length > 0 && (
-                <optgroup label="アシスタント（チャットで開く）">
-                  {assistants.map((a) => (
-                    <option key={a.id} value={`assistant:${a.id}`}>
-                      {a.name}
-                    </option>
-                  ))}
-                </optgroup>
-              )}
-            </select>
-          </label>
+          {noTarget ? (
+            <div className="field-help field-warn">
+              ⚠ 稼働中のセッションがありません。セッションを起動してから送ってください。
+            </div>
+          ) : (
+            <label className="pick-field">
+              <select
+                value={target}
+                onChange={(e) => {
+                  setTarget(e.target.value);
+                  if (e.target.value.startsWith("session:"))
+                    localStorage.setItem(LAST_SESSION_KEY, e.target.value.slice("session:".length));
+                }}
+              >
+                {sortedSessions.length > 0 && (
+                  <optgroup label="セッション（直接送信）">
+                    {sortedSessions.map((s) => (
+                      <option key={s.name} value={`session:${s.name}`}>
+                        {displayName(s)}（{s.name}・{stateInfo(s).text}
+                        {fileRepo && s.repo === fileRepo ? "・同レポ" : ""}）
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
+                {!fileMode && assistants.length > 0 && (
+                  <optgroup label="アシスタント（チャットで開く）">
+                    {assistants.map((a) => (
+                      <option key={a.id} value={`assistant:${a.id}`}>
+                        {a.name}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
+              </select>
+            </label>
+          )}
           <div className={"field-help" + (sessionStopped ? " field-warn" : "")}>
             {sessionStopped
               ? "⚠ このセッションは停止中です。送信できません（先に起動するか、別の送信先を選んでください）。"
-              : isAssistant
-                ? "このアシスタントとのチャットを開き、引用を下書きします（送信は会話側で）。"
-                : "選択したセッションに引用＋コメントを直接送信します。"}
+              : fileMode
+                ? "ファイルはパスで渡します（セッションが自分で読み取り・書き込みします）。大きなファイルの翻訳など、ファイル出力を伴う作業向けです。"
+                : isAssistant
+                  ? "このアシスタントとのチャットを開き、引用を下書きします（送信は会話側で）。"
+                  : "選択したセッションに引用＋コメントを直接送信します。"}
           </div>
         </div>
 
@@ -190,7 +221,11 @@ export default function SendSelectionModal({ filePath, quote, startLine, endLine
                 }
               }}
               rows={3}
-              placeholder="例: この場面、テンポを上げて。/ この関数の境界条件を直して。（Ctrl+Enter で送信）"
+              placeholder={
+                fileMode
+                  ? "例: 日本語に翻訳して <名前>.ja.md に保存して。長いので分割しながら進めて。（Ctrl+Enter で送信）"
+                  : "例: この場面、テンポを上げて。/ この関数の境界条件を直して。（Ctrl+Enter で送信）"
+              }
               autoFocus
             />
           </label>
