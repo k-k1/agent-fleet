@@ -59,7 +59,7 @@ interface FileViewProps {
 }
 
 export default function FileView({ filePath: filePathProp, wrap }: FileViewProps) {
-  const { filePath: ctxFilePath, showFile } = useApp();
+  const { filePath: ctxFilePath, showFile, revealInFiles } = useApp();
   const filePath: string = (filePathProp !== undefined ? filePathProp : ctxFilePath) || "";
   const settings = useSettings();
   // wrap is a per-pane override (from the pane's toolbar toggle); fall back to the
@@ -255,7 +255,7 @@ export default function FileView({ filePath: filePathProp, wrap }: FileViewProps
         <MarpView source={data.content} />
       ) : showPreview ? (
         <div className="md-scroll">
-          <MarkdownView source={data.content} basePath={filePath} onOpenFile={showFile} />
+          <MarkdownView source={data.content} basePath={filePath} onOpenFile={showFile} onOpenDir={revealInFiles} />
         </div>
       ) : (
         <CodeView
