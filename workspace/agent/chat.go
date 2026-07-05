@@ -130,6 +130,20 @@ const chatPersona = "あなたは Agent Fleet 利用者の作業を補助する�
 	"Markdown 文書の翻訳や要約、質問への回答など、頼まれた作業に簡潔に応じてください。" +
 	"特に指示がない限り、ファイルの作成・編集やコマンド実行はせず、チャットで直接回答してください。"
 
+// defaultChatModel is the model the assistant chat's claude runs on when the assistant
+// (or conversation) doesn't pin one — Sonnet keeps assistant chats fast/cheap. Override
+// deployment-wide with AF_CHAT_MODEL. An explicit per-assistant model still wins.
+const defaultChatModel = "claude-sonnet-5"
+
+// chatModel resolves the --model for a conversation: its own model if set, else the
+// deployment default (AF_CHAT_MODEL or defaultChatModel).
+func chatModel(c *chatConversation) string {
+	if c.Model != "" {
+		return c.Model
+	}
+	return envOr("AF_CHAT_MODEL", defaultChatModel)
+}
+
 // chatTimeout bounds a single CLI turn so a hung process can't wedge the request.
 const chatTimeout = 240 * time.Second
 
@@ -387,9 +401,7 @@ type claudeResult struct {
 func (claudeChat) send(ctx context.Context, c *chatConversation, prompt string) (string, error) {
 	args := []string{"-p", "--output-format", "json", "--dangerously-skip-permissions",
 		"--append-system-prompt", c.personaOf()}
-	if c.Model != "" {
-		args = append(args, "--model", c.Model)
-	}
+	args = append(args, "--model", chatModel(c))
 	if c.ClaudeSessionID != "" {
 		args = append(args, "--resume", c.ClaudeSessionID)
 	} else {
@@ -455,9 +467,7 @@ func (claudeChat) sendStream(ctx context.Context, c *chatConversation, prompt st
 	// per-token text_delta events we forward for live display.
 	args := []string{"-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
 		"--dangerously-skip-permissions", "--append-system-prompt", c.personaOf()}
-	if c.Model != "" {
-		args = append(args, "--model", c.Model)
-	}
+	args = append(args, "--model", chatModel(c))
 	if c.ClaudeSessionID != "" {
 		args = append(args, "--resume", c.ClaudeSessionID)
 	} else {
