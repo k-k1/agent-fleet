@@ -191,7 +191,9 @@ textarea:focus {
 
 /* ---- frame ---- */
 .app {
-  height: 100%;
+  /* --app-h is set by viewport.ts only on iOS-style keyboards (visual viewport shrinks
+     but the layout viewport doesn't); everywhere else it's unset and this is 100%. */
+  height: var(--app-h, 100%);
   display: flex;
   flex-direction: column;
 }
@@ -3453,6 +3455,25 @@ button.mt-toolrun-head:hover {
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+}
+/* Per-question "Type something" free-text answer (multi-question / multi-select cards). */
+.mq-freetext {
+  margin-top: 6px;
+  width: 100%;
+  padding: 6px 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+}
+.mq-freetext:focus {
+  outline: none;
+  border-color: var(--chat-accent);
+}
+.mq-freetext:disabled {
+  opacity: 0.55;
 }
 .mq-submit-row {
   display: flex;
@@ -7107,6 +7128,16 @@ button.primary:hover:not(:disabled) {
   /* tighter control reserve on a phone (no split-right button = 3 controls max) */
   .view-head {
     padding-right: 84px;
+  }
+
+  /* Phone: there's no hover, so the option's title= tooltip is unreachable and a
+     two-line clamp hides the rest of the description with no way to reveal it. The
+     options grid is a single full-width column here, so just show descriptions in
+     full instead of clamping. */
+  .mq-opt-desc {
+    display: block;
+    -webkit-line-clamp: unset;
+    overflow: visible;
   }
 
   /* roomier tap targets in the navigator lists */

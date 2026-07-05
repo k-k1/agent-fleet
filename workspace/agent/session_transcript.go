@@ -408,6 +408,14 @@ func surfacePendingPayloads(resp map[string]any, sid, state string) {
 	}
 	if hasQ {
 		resp["pendingQuestions"] = pq
+		// The prose the assistant streamed just before the question (accumulated by the
+		// MessageDisplay hook). Absent if MessageDisplay hasn't populated it by question
+		// time — the pending card then renders without preceding context, as before.
+		if txt, ok := readPendingText(sid); ok {
+			if txt = strings.TrimSpace(txt); txt != "" {
+				resp["pendingText"] = txt
+			}
+		}
 	}
 	if hasP {
 		resp["pendingPlan"] = pp

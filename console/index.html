@@ -12,7 +12,12 @@
         }
       })();
     </script>
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- interactive-widget=resizes-content: when the mobile soft keyboard (GBoard)
+         opens, shrink the LAYOUT viewport (not just the visual one) so the height:100%
+         flex frame recomputes — keeping the top bar / WS bar / chat header pinned and
+         letting only the chat body scroll, instead of the browser panning the whole
+         page up and pushing those bars off-screen. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-content" />
     <title>Agent Fleet — Console</title>
     <link
       rel="preconnect"
