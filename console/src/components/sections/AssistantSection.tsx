@@ -1,10 +1,12 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import Section from "../Section.jsx";
 import Icon from "../Icon.jsx";
 import AssistantModal from "../AssistantModal.jsx";
 import ConfirmDialog from "../ConfirmDialog.jsx";
 import { useApp } from "../../state.jsx";
 import { useToast } from "../ToastProvider.jsx";
+import { useDismiss } from "../../lib/useDismiss.js";
+import { placeFixed } from "../../lib/placeFixed.js";
 import {
   chatList,
   chatDelete,
@@ -16,11 +18,11 @@ import {
 import type { ConversationMeta } from "../../types/chat.ts";
 import type { Assistant, AssistantInput } from "../../types/assistant.ts";
 
-// AssistantSection is the left-rail home for headless-CLI chat (docs/19 Q2). It shows
-// two groups: the configurable ASSISTANTS (builtin + user-defined; clicking one starts
-// a new chat from that template) and the existing CONVERSATIONS. Assistants are custom-
-// GPT-style templates — a new chat snapshots the assistant's persona/model/tools/
-// knowledge, so later edits don't rewrite existing threads.
+// AssistantSection is the left-rail home for headless-CLI chat (docs/19). To keep the
+// rail short, the ASSISTANTS (templates) live behind a "＋新規" picker popover rather
+// than a permanent list; the section body shows only the CONVERSATION history (the
+// thing that grows and that the user returns to). Picking an assistant opens a draft —
+// nothing is persisted until the first message is sent.
 export default function AssistantSection() {
   const { openChat, openAssistantDraft, chatListKey } = useApp();
   const toast = useToast();
@@ -30,6 +32,9 @@ export default function AssistantSection() {
   const [creating, setCreating] = useState(false); // create modal open
   const [deleting, setDeleting] = useState<Assistant | null>(null); // pending delete confirm
   const [delBusy, setDelBusy] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false); // ＋新規 assistant picker popover
+  const pickerRef = useRef<HTMLDivElement>(null); // popover wrap (outside-click test + anchor)
+  const pickerMenuRef = useRef<HTMLDivElement>(null); // popover (clamped into the viewport)
 
   const refresh = useCallback(() => {
     chatList()
@@ -42,6 +47,19 @@ export default function AssistantSection() {
   useEffect(() => {
     refresh();
   }, [refresh, chatListKey]); // chatListKey bumps when a draft becomes a real thread
+
+  useDismiss(pickerRef, pickerOpen, () => setPickerOpen(false));
+  // Anchor the popover below the ＋ button as a viewport-clamped fixed menu so the pane's
+  // overflow can't clip it (mirrors the Files ＋ dropdown).
+  useLayoutEffect(() => {
+    const el = pickerMenuRef.current;
+    const anchor = pickerRef.current;
+    if (!pickerOpen || !el || !anchor) return;
+    el.style.position = "fixed";
+    el.style.right = "auto";
+    const a = anchor.getBoundingClientRect();
+    placeFixed(el, a.right - el.offsetWidth, a.bottom + 4);
+  }, [pickerOpen]);
 
   // Only started threads are listed — a draft (assistant opened but not yet messaged) is
   // never persisted, and an abandoned empty thread shouldn't clutter the list (docs/19).
@@ -91,9 +109,76 @@ export default function AssistantSection() {
   };
 
   const actions = (
-    <button type="button" className="ghost pane-btn" title="アシスタントを作成" onClick={() => setCreating(true)}>
-      <Icon name="add" />
-    </button>
+    <div className="assistant-picker-wrap" ref={pickerRef}>
+      <button
+        type="button"
+        className="ghost pane-btn"
+        title="新規チャット"
+        onClick={() => setPickerOpen((o) => !o)}
+      >
+        <Icon name="add" />
+      </button>
+      {pickerOpen && (
+        <div className="ctxmenu assistant-picker" ref={pickerMenuRef} role="menu">
+          <div className="assistant-picker-label muted">新規チャット</div>
+          {assistants.map((a) => (
+            <div key={a.id} className="assistant-picker-row">
+              <button
+                type="button"
+                className="assistant-picker-open"
+                title={a.description || a.name}
+                onClick={() => {
+                  setPickerOpen(false);
+                  startChat(a);
+                }}
+              >
+                <Icon name={a.icon || "comment-discussion"} className="assistant-ic" />
+                <span className="chat-open-title">{a.name}</span>
+                {a.builtin && <span className="assistant-badge muted">常設</span>}
+              </button>
+              {!a.builtin && (
+                <>
+                  <button
+                    type="button"
+                    className="ghost pane-btn"
+                    title="編集"
+                    onClick={() => {
+                      setPickerOpen(false);
+                      setEditing(a);
+                    }}
+                  >
+                    <Icon name="edit" />
+                  </button>
+                  <button
+                    type="button"
+                    className="ghost pane-btn"
+                    title="削除"
+                    onClick={() => {
+                      setPickerOpen(false);
+                      setDeleting(a);
+                    }}
+                  >
+                    <Icon name="trash" />
+                  </button>
+                </>
+              )}
+            </div>
+          ))}
+          <div className="ctx-sep" aria-hidden="true" />
+          <button
+            type="button"
+            className="assistant-picker-open"
+            onClick={() => {
+              setPickerOpen(false);
+              setCreating(true);
+            }}
+          >
+            <Icon name="add" className="assistant-ic" />
+            <span className="chat-open-title">アシスタントを作成</span>
+          </button>
+        </div>
+      )}
+    </div>
   );
 
   return (
@@ -105,47 +190,8 @@ export default function AssistantSection() {
         count={startedConvs.length}
         actions={actions}
       >
-        <div className="assistant-group-label muted">アシスタント</div>
-        <ul className="list">
-          {assistants.map((a) => (
-            <li key={a.id} className="chat-row">
-              <button
-                type="button"
-                className="chat-open"
-                onClick={() => void startChat(a)}
-                title={a.name + " で新規チャット"}
-              >
-                <Icon name={a.icon || "comment-discussion"} className="assistant-ic" />
-                <span className="chat-open-title">{a.name}</span>
-                {a.builtin && <span className="assistant-badge muted">常設</span>}
-              </button>
-              {!a.builtin && (
-                <>
-                  <button
-                    type="button"
-                    className="ghost pane-btn chat-del"
-                    title="編集"
-                    onClick={() => setEditing(a)}
-                  >
-                    <Icon name="edit" />
-                  </button>
-                  <button
-                    type="button"
-                    className="ghost pane-btn chat-del"
-                    title="削除"
-                    onClick={() => setDeleting(a)}
-                  >
-                    <Icon name="trash" />
-                  </button>
-                </>
-              )}
-            </li>
-          ))}
-        </ul>
-
-        <div className="assistant-group-label muted">会話</div>
         {startedConvs.length === 0 ? (
-          <div className="section-empty muted">チャットはまだありません。アシスタントを選んで開始できます。</div>
+          <div className="section-empty muted">チャットはまだありません。＋新規 から開始できます。</div>
         ) : (
           <ul className="list">
             {startedConvs.map((c) => {

@@ -155,6 +155,12 @@ CP `mcp.go`（外部/PAT/admin・別モジュール）と Agent `mcp_stdio.go`�
   （＝streaming 中断）を回避。会話一覧は message_count>0 のみ表示（Files 右クリックの即時作成が放置された
   空会話も一覧に出さない）。`chatListKey`/`bumpChatList` で draft→実会話化を左レールに反映。
   Files 右クリック連携は従来どおり即時作成（seed 前提のため）。
+- **composer フォーカス**: ChatView は pane が active になったら composer に自動フォーカス（会話/draft を
+  開いた時・対象切替時）。ただし `coarsePointer()`（タッチ端末）では自動フォーカスしない＝スマホで
+  開いただけでキーボードが出るのを防ぐ（MirrorView と同じ方針。Pane が `active` を渡す）。
+- **左レールの縦幅対策**: アシスタント一覧を常設リストから **「＋新規」ピッカー・ポップオーバー**へ移動
+  （`useDismiss`＋`placeFixed` でアンカー）。セクション本体は**会話履歴のみ**＝一覧が縦幅を恒常的に食わない。
+  作成/編集/削除もピッカー内。
 
 **実装メモ（確定事項）**:
 - **継承＝作成時スナップショット**（ユーザー確定）: 会話は作成時にアシスタントの

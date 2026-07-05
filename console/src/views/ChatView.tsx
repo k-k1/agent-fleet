@@ -5,6 +5,7 @@ import Icon from "../components/Icon.jsx";
 import { useApp } from "../state.jsx";
 import { chatGet, chatStream, chatCreate, assistantGet } from "../api.js";
 import { takeChatSeed } from "../lib/chatSeed.js";
+import { coarsePointer } from "../lib/device.js";
 import { agentOf } from "../agents/registry.ts";
 import { kindClass } from "../lib/sessionkind.js";
 import type { Conversation, ChatMessage } from "../types/chat.ts";
@@ -22,9 +23,10 @@ interface ChatViewProps {
   conversationId: string | null;
   draftAssistantId?: string | null;
   paneId: string;
+  active?: boolean;
 }
 
-export default function ChatView({ conversationId, draftAssistantId, paneId }: ChatViewProps) {
+export default function ChatView({ conversationId, draftAssistantId, paneId, active }: ChatViewProps) {
   const { promoteDraft, bumpChatList } = useApp();
   const [conv, setConv] = useState<Conversation | null>(null);
   const [draftAsst, setDraftAsst] = useState<Assistant | null>(null); // greeting source in draft mode
@@ -34,6 +36,7 @@ export default function ChatView({ conversationId, draftAssistantId, paneId }: C
   const [error, setError] = useState("");
   const [loadError, setLoadError] = useState("");
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const convRef = useRef<Conversation | null>(null); // mirror of conv, to guard reloads
   const applyConv = (c: Conversation | null) => {
     convRef.current = c;
@@ -84,6 +87,13 @@ export default function ChatView({ conversationId, draftAssistantId, paneId }: C
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [conv?.messages.length, sending, streamText]);
+
+  // Focus the composer when this pane becomes the active chat (opening a conversation or
+  // an assistant draft) — but NOT on touch devices, where auto-focus would pop the
+  // on-screen keyboard just from opening the chat to read it (mirrors MirrorView).
+  useEffect(() => {
+    if (active && !coarsePointer() && (conversationId || draftAssistantId)) inputRef.current?.focus();
+  }, [active, conversationId, draftAssistantId]);
 
   const send = async () => {
     const text = input.trim();
@@ -218,6 +228,7 @@ export default function ChatView({ conversationId, draftAssistantId, paneId }: C
       )}
       <div className="chat-composer">
         <textarea
+          ref={inputRef}
           className="chat-input"
           value={input}
           placeholder={

@@ -284,6 +284,7 @@ export default function Pane({
           conversationId={pane.conversationId}
           draftAssistantId={pane.draftAssistantId}
           paneId={pane.id}
+          active={single || active}
         />
       )}
       {pane.kind === "file" && <FileView filePath={pane.filePath} wrap={wrapOn} />}
