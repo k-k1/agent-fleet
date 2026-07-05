@@ -168,8 +168,15 @@ export default function CodeView({ html, lines, lineNumbers, wrap, minimap, mark
     if (!sc) return;
     const rect = paneEl.getBoundingClientRect();
     const yInPane = clientY - rect.top;
-    const visualPos = yInPane + offsetRef.current; // position within the scaled mirror
-    const main = visualPos / SCALE; // back to real code coordinates
+    const visualPos = yInPane + offsetRef.current; // position within the scaled mirror (0..visualH)
+    // Map the scaled-mirror position back to REAL content coordinates using the same
+    // visualH/contentH ratio the viewport box uses in apply(). With wrap on, the mirror
+    // (unwrapped) is shorter than the wrapped content, so the old `/SCALE` (mirror-natural
+    // height) undershot and the drag lagged; this ratio stays consistent with the box and
+    // reduces to `/SCALE` when unwrapped (contentH == mirror's natural height).
+    const visualH = mirrorH.current * SCALE;
+    const contentH = sc.scrollHeight;
+    const main = visualH > 0 ? (visualPos / visualH) * contentH : visualPos / SCALE;
     sc.scrollTop = main - sc.clientHeight / 2;
   };
 
