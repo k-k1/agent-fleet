@@ -436,6 +436,9 @@ type createReq struct {
 	RemoteURL string `json:"remote_url"`
 	Branch    string `json:"branch"`
 	RepoName  string `json:"repo_name"`
+	// NewBranch, when set, is created off Branch (the base) right after the clone and
+	// switched to, so the session starts on a fresh branch. Empty => no new branch.
+	NewBranch string `json:"new_branch"`
 	// SSM (kind=ssm) coordinates, resolved and forwarded by the Control Plane from a
 	// host bookmark (control-plane/ssm.go). No secrets — SSO login happens in-pane.
 	SSMProfile   string `json:"ssm_profile"`
@@ -465,7 +468,7 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	}
 	// Clone-then-start: ensure the repo exists and use it as the working dir.
 	if strings.TrimSpace(req.RemoteURL) != "" {
-		dir, err := ensureRepo(req.RemoteURL, req.Branch, req.RepoName)
+		dir, err := ensureRepo(req.RemoteURL, req.Branch, req.NewBranch, req.RepoName)
 		if err != nil {
 			writeErr(w, http.StatusBadGateway, "clone_failed", err.Error())
 			return
