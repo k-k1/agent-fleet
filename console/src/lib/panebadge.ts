@@ -80,6 +80,23 @@ export function repoPanes(
   return m;
 }
 
+// chatPanes maps an assistant-chat conversation id → the panes currently showing it,
+// as [{ ordinal, id }] in visual order — the same ordinal-badge treatment sessions/repos
+// get, so a conversation open in a split pane is identifiable from the rail (docs/19).
+export function chatPanes(
+  layout: Layout | null | undefined,
+): Map<string, { ordinal: number; id: string }[]> {
+  const m = new Map<string, { ordinal: number; id: string }[]>();
+  for (const r of paneRows(layout)) {
+    const p = r.pane;
+    if (p.kind !== "chat" || !p.conversationId) continue;
+    const arr = m.get(p.conversationId) || [];
+    arr.push({ ordinal: r.ordinal, id: r.id });
+    m.set(p.conversationId, arr);
+  }
+  return m;
+}
+
 // paneCount totals the panes in a layout (1 means a single, unsplit pane — no
 // ordinals/map are shown in that case, since there's nothing to disambiguate).
 export function paneCount(layout: Layout | null | undefined): number {

@@ -8,6 +8,7 @@ import { useApp } from "../../state.jsx";
 import { useToast } from "../ToastProvider.jsx";
 import { useDismiss } from "../../lib/useDismiss.js";
 import { placeFixed } from "../../lib/placeFixed.js";
+import { chatPanes, ordClass, paneCount } from "../../lib/panebadge.js";
 import {
   chatList,
   chatDelete,
@@ -26,7 +27,11 @@ import type { Assistant, AssistantInput } from "../../types/assistant.ts";
 // thing that grows and that the user returns to). Picking an assistant opens a draft —
 // nothing is persisted until the first message is sent.
 export default function AssistantSection() {
-  const { openChat, openAssistantDraft, openInNewPane, chatListKey } = useApp();
+  const { openChat, openAssistantDraft, openInNewPane, chatListKey, layout, setActivePane } = useApp();
+  // conversation id → panes showing it (ordinal badges), like the Sessions/Repos lists;
+  // only when split (nothing to disambiguate with a single pane).
+  const multiPane = paneCount(layout) > 1;
+  const cPanes = multiPane ? chatPanes(layout) : null;
   const toast = useToast();
   const [convs, setConvs] = useState<ConversationMeta[]>([]);
   const [assistants, setAssistants] = useState<Assistant[]>([]);
@@ -271,6 +276,24 @@ export default function AssistantSection() {
                     <span className="chat-open-title">{c.title}</span>
                     {c.message_count > 0 && <span className="chat-open-meta muted">{c.message_count}</span>}
                   </button>
+                  {cPanes?.get(c.id)?.length ? (
+                    <span className="session-ords">
+                      {cPanes.get(c.id)!.map((o) => (
+                        <button
+                          key={o.id}
+                          type="button"
+                          className={"session-ord " + ordClass(o.ordinal)}
+                          title={`ペイン${o.ordinal}にフォーカス`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setActivePane(o.id);
+                          }}
+                        >
+                          {o.ordinal}
+                        </button>
+                      ))}
+                    </span>
+                  ) : null}
                   <button
                     type="button"
                     className="ghost pane-btn chat-del"
