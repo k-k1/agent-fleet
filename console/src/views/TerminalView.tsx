@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef } from "react";
-import { ensureTerm, fit, focusTerm, attach, detach, reconnect, setTermBackground, clearTerm } from "../term.js";
+import { ensureTerm, fit, focusTerm, attach, detach, reconnect, ensureAttached, setTermBackground, clearTerm } from "../term.js";
 import { termBackground } from "../lib/termcolor.js";
 import { rel } from "../api.js";
 import TermKeys from "../components/TermKeys.jsx";
@@ -118,6 +118,22 @@ export default function TerminalView({
       if (attached && running) reconnect(paneId);
     }
   }, [active, paneId, attached, running]);
+
+  // Reveal fit: when this terminal becomes VISIBLE — toggled back from the chat mirror,
+  // or a split pane un-hidden — re-fit AFTER the browser lays the container out. While
+  // it's hidden behind the mirror the container is 0×0, so the PTY can be sized to a
+  // degenerate/stale grid; a synchronous fit in the same commit that un-hides the box
+  // still measures 0, so the terminal shows blank until a reload. requestAnimationFrame
+  // defers the fit past layout so it measures the real size and resizes the PTY (which
+  // makes the TUI redraw). Keyed on visibility, so it also covers a non-active split
+  // pane that the focus-gated fit above skips. Only fits/recovers — never re-attaches
+  // an open socket, so scrollback survives the toggle.
+  const shown = !(canMirror && mirror);
+  useEffect(() => {
+    if (!shown || !session || !attached || !running) return;
+    const raf = requestAnimationFrame(() => ensureAttached(paneId, session));
+    return () => cancelAnimationFrame(raf);
+  }, [shown, paneId, session, attached, running]);
 
   // Header mirrors the left-pane Sessions row: kind badge + display name + the
   // session id + a status chip. Falls back to bare text before the session's
