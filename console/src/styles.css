@@ -2899,9 +2899,9 @@ body.row-resizing {
 .mirror-title-suggest .mts-text {
   flex: 1;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  /* Wrap the candidate rather than ellipsis-truncating it — the user must be able to
+     read the whole proposed title before pressing 承認. */
+  overflow-wrap: anywhere;
 }
 .mirror-title-suggest .mts-btn {
   flex: none;

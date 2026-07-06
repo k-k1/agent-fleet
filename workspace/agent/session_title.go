@@ -122,9 +122,13 @@ func generateSessionTitle(name string, turns []chatTurn) {
 }
 
 // titleSuggestPersona keeps the headless call laser-focused: no preamble, no
-// quoting, a single short Japanese line.
-const titleSuggestPersona = "あなたは会話の内容から、チャット一覧に表示する短いタイトルを作る専用のアシスタントです。" +
-	"説明・前置き・引用符・箇条書きは一切付けず、日本語で40文字以内の短いタイトルを1行だけ出力してください。"
+// quoting, a single short Japanese line. Third-person topic label, not a sentence:
+// the model is prone to echoing the assistant's own reasoning ("〜が良さそう") if not
+// pinned to "what is this session ABOUT" as a noun phrase.
+const titleSuggestPersona = "あなたはセッションの会話ログを読み、セッション一覧に表示する短い件名を付ける専用ツールです。" +
+	"会話で扱っている作業やトピックを、第三者が見て『何についてのセッションか』が分かる名詞句で表してください。" +
+	"日本語18文字以内、1行のみ。文章にしない・語尾（〜する/〜したい/〜です/〜が良い 等）を付けない・" +
+	"説明・前置き・引用符・記号・箇条書きは一切付けない。"
 
 // titleModel: a cheap/fast model is enough for a short label; override deployment-
 // wide with AF_TITLE_MODEL.
@@ -154,6 +158,12 @@ func runTitleSuggestLLM(ctx context.Context, turns []chatTurn) (string, error) {
 // bloating a one-shot call with a growing transcript.
 func titleSuggestPrompt(turns []chatTurn) string {
 	var b strings.Builder
+	// Few-shot anchors the output as a noun-phrase topic label rather than a sentence
+	// or the assistant's own reasoning.
+	b.WriteString("会話ログから件名を1つ出力してください。\n")
+	b.WriteString("良い例: セッションタイトルの自動提案 / ログイン画面のバグ修正 / 請求APIのリファクタ\n")
+	b.WriteString("悪い例（文章・語尾つき・視点が話者）: 短く確認するのが良さそう / メニュー変更を行いたい\n\n")
+	b.WriteString("--- 会話ログ ---\n")
 	n := 0
 	for _, t := range turns {
 		if t.Sidechain || t.Compact || t.Text == "" {
@@ -180,8 +190,10 @@ func cleanSuggestedTitle(s string) string {
 	if !ok || title == "" {
 		return ""
 	}
-	if r := []rune(title); len(r) > 40 {
-		title = string(r[:40])
+	// Hard cap well under the session-list label width so the applied title stays
+	// readable (not truncated) in the left pane; the prompt targets ~18.
+	if r := []rune(title); len(r) > 24 {
+		title = string(r[:24])
 	}
 	return title
 }
