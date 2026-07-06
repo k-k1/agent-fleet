@@ -142,10 +142,21 @@
 
 ## 9. フェーズ
 
-- **P1（MVP）**: `git_http.go` + `internal_git.go` + token 注入 + 作成/一覧 API + provider タブ。
+- **P1（MVP・実装済み）**: `git_http.go` + `internal_git.go` + token 注入 + 作成/一覧/削除 API + provider タブ。
   → 内部リポを clone/push でき、閲覧は既存 SCM。A/B/C を満たす。
-- **P2**: 削除/リネーム、クォータ、`git gc` cron、監査ログ、空リポ/既定ブランチ UX、
-  （任意）clone なしのツリー閲覧（bare から read-only 提供）。
+- **P2（実装済み）**: 以下を追加。
+  - **リネーム**: `POST /api/internal-git/repos/{name}/rename {new_name}`（bare 移動＋台帳更新、
+    既存 clone は origin URL の更新が必要）。
+  - **クォータ**: `tenantLimits.max_git_repos`（0=無制限）を作成時に強制（`enforceGitRepoQuota` →
+    超過は 409 `quota_exceeded`）。admin limits API / AdminTab に露出。
+  - **`git gc` cron**: `git_gc.go`（全 bare を `git gc --auto` で逐次 repack。`AF_GIT_GC_INTERVAL`
+    既定 24h、0 で無効。メモリ配慮で逐次・`--auto`）。
+  - **監査ログ**: 作成/削除/リネームを既存 audit 台帳へ（`internal_git.repo.create|delete|rename`、
+    `auditGit`）。admin 監査ビューに出る。
+  - **空リポ/既定ブランチ UX**: 新規作成した空リポ（コミット無し＝ブランチ無し）でも RepoPicker が
+    `default_branch` をプレースホルダとして選択・clone 可能に。
+- **見送り（将来）**: clone なしのツリー閲覧（bare から read-only 提供）は規模が大きく別フェーズ。
+  PR/レビュー/CI が要れば ② へ載せ替え。
 - **将来（②）**: PR/レビュー/CI が要るなら Gitea/Forgejo を内包して載せ替え。
 
 ## 10. 確定事項（P1 実装で確定）

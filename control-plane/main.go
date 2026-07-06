@@ -192,6 +192,13 @@ func main() {
 		log.Printf("claude-audit: sweeping transcripts every %s", iv)
 	}
 
+	// Internal git maintenance (P2): repack bare repos so pushes don't leave loose
+	// objects unbounded. `git gc --auto`, sequential — cheap on the shared host.
+	// Default 24h; AF_GIT_GC_INTERVAL=0 disables it.
+	if iv := parseDurationOr(os.Getenv("AF_GIT_GC_INTERVAL"), 24*time.Hour); iv > 0 {
+		go newGitGC(mgr.dataRoot, iv).run(context.Background())
+	}
+
 	mux := http.NewServeMux()
 
 	// Health + CP-native Google OAuth (AUTH=oauth). The login page, OAuth
@@ -405,6 +412,7 @@ func main() {
 	mux.HandleFunc("GET /api/internal-git/repos", cfg.handleInternalGitReposList)
 	mux.HandleFunc("POST /api/internal-git/repos", cfg.handleInternalGitRepoCreate)
 	mux.HandleFunc("DELETE /api/internal-git/repos/{name}", cfg.handleInternalGitRepoDelete)
+	mux.HandleFunc("POST /api/internal-git/repos/{name}/rename", cfg.handleInternalGitRepoRename)
 	mux.HandleFunc("GET /api/internal-git/repos/{name}/branches", cfg.handleInternalGitBranches)
 	// Smart-HTTP git face (clone/fetch/push). Self-authenticating via a Basic git
 	// token (session-exempt, like /mcp); handles every method.

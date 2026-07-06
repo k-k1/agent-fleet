@@ -1,11 +1,13 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -55,7 +57,7 @@ func (c config) handleInternalGitReposList(w http.ResponseWriter, r *http.Reques
 // repo on disk and its ledger row, then returns the clone URL. Idempotent-ish:
 // a duplicate name is a 409.
 func (c config) handleInternalGitRepoCreate(w http.ResponseWriter, r *http.Request) {
-	_, mv, ok := c.membershipFor(w, r)
+	ident, mv, ok := c.membershipFor(w, r)
 	if !ok {
 		return
 	}
@@ -76,6 +78,11 @@ func (c config) handleInternalGitRepoCreate(w http.ResponseWriter, r *http.Reque
 	branch := strings.TrimSpace(body.DefaultBranch)
 	if branch == "" {
 		branch = "main"
+	}
+	// Quota (P2): cap internal repos per tenant when the tenant sets max_git_repos.
+	if aerr := c.enforceGitRepoQuota(r.Context(), mv.TenantID); aerr != nil {
+		writeAPIErr(w, aerr)
+		return
 	}
 	if _, exists, err := c.mgr.store.GetGitRepo(r.Context(), mv.TenantID, name); err != nil {
 		writeAPIErr(w, internalErr(err))
@@ -109,13 +116,45 @@ func (c config) handleInternalGitRepoCreate(w http.ResponseWriter, r *http.Reque
 		writeAPIErr(w, internalErr(err))
 		return
 	}
+	c.auditGit(r.Context(), mv.TenantID, ident.ID, "internal_git.repo.create", name, "branch="+branch)
 	writeJSON(w, http.StatusOK, c.gitRepoDTO(mv.TenantSlug, g))
+}
+
+// enforceGitRepoQuota returns a 409 apiError when the tenant is at or over its
+// max_git_repos cap (0 = unlimited). Nil when creation is allowed.
+func (c config) enforceGitRepoQuota(ctx context.Context, tenantID string) *apiError {
+	t, err := c.mgr.store.GetTenant(ctx, tenantID)
+	if err != nil {
+		return internalErr(err)
+	}
+	max := parseLimits(t.Limits).MaxGitRepos
+	if max <= 0 {
+		return nil
+	}
+	n, err := c.mgr.store.CountGitReposByTenant(ctx, tenantID)
+	if err != nil {
+		return internalErr(err)
+	}
+	if n >= max {
+		return &apiError{http.StatusConflict, "quota_exceeded",
+			"internal repo limit reached for this tenant (max " + strconv.Itoa(max) + ")"}
+	}
+	return nil
+}
+
+// auditGit records an internal-git mutation in the audit ledger. Best-effort:
+// a logging failure never blocks the operation.
+func (c config) auditGit(ctx context.Context, tenantID, actorID, action, target, detail string) {
+	_ = c.mgr.store.InsertAudit(ctx, AuditLog{
+		ID: newID(), TenantID: tenantID, ActorKind: "user", ActorID: actorID,
+		Action: action, Target: target, Detail: detail, At: nowTS(),
+	})
 }
 
 // handleInternalGitRepoDelete (DELETE /api/internal-git/repos/{name}) removes the
 // ledger row and the bare. Tenant-scoped: only repos owned by the caller's tenant.
 func (c config) handleInternalGitRepoDelete(w http.ResponseWriter, r *http.Request) {
-	_, mv, ok := c.membershipFor(w, r)
+	ident, mv, ok := c.membershipFor(w, r)
 	if !ok {
 		return
 	}
@@ -136,7 +175,67 @@ func (c config) handleInternalGitRepoDelete(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	_ = os.RemoveAll(filepath.Join(c.mgr.dataRoot, "git", mv.TenantSlug, name+".git"))
+	c.auditGit(r.Context(), mv.TenantID, ident.ID, "internal_git.repo.delete", name, "")
 	writeJSON(w, http.StatusOK, map[string]any{"deleted": name})
+}
+
+// handleInternalGitRepoRename (POST /api/internal-git/repos/{name}/rename {new_name})
+// renames a repo: the ledger row and the on-disk bare move together. Existing clones
+// keep their old origin URL and must update the remote to the new clone_url.
+func (c config) handleInternalGitRepoRename(w http.ResponseWriter, r *http.Request) {
+	ident, mv, ok := c.membershipFor(w, r)
+	if !ok {
+		return
+	}
+	oldName := r.PathValue("name")
+	if !validRepoName(oldName) {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_name", "invalid repo name"})
+		return
+	}
+	var body struct {
+		NewName string `json:"new_name"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	newName := sanitizeUser(body.NewName)
+	if !validRepoName(newName) {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_name", "new name must be 1-64 chars: letters, digits, . _ -"})
+		return
+	}
+	if newName == oldName {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "same_name", "new name is identical"})
+		return
+	}
+	g, exists, err := c.mgr.store.GetGitRepo(r.Context(), mv.TenantID, oldName)
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	if !exists {
+		writeAPIErr(w, &apiError{http.StatusNotFound, "not_found", "no such repo"})
+		return
+	}
+	if _, taken, err := c.mgr.store.GetGitRepo(r.Context(), mv.TenantID, newName); err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	} else if taken {
+		writeAPIErr(w, &apiError{http.StatusConflict, "exists", "a repo with the new name already exists"})
+		return
+	}
+
+	oldDir := filepath.Join(c.mgr.dataRoot, "git", mv.TenantSlug, oldName+".git")
+	newDir := filepath.Join(c.mgr.dataRoot, "git", mv.TenantSlug, newName+".git")
+	if err := os.Rename(oldDir, newDir); err != nil {
+		writeAPIErr(w, &apiError{http.StatusInternalServerError, "rename_failed", err.Error()})
+		return
+	}
+	if err := c.mgr.store.RenameGitRepo(r.Context(), mv.TenantID, oldName, newName); err != nil {
+		_ = os.Rename(newDir, oldDir) // roll back the move so disk and ledger stay consistent
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	c.auditGit(r.Context(), mv.TenantID, ident.ID, "internal_git.repo.rename", oldName, "to="+newName)
+	g.Name = newName
+	writeJSON(w, http.StatusOK, c.gitRepoDTO(mv.TenantSlug, g))
 }
 
 // handleInternalGitBranches (GET /api/internal-git/repos/{name}/branches) reads

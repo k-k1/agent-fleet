@@ -675,6 +675,21 @@ func (s *sqliteStore) GetGitRepo(ctx context.Context, tenantID, name string) (Gi
 	return g, true, nil
 }
 
+func (s *sqliteStore) CountGitReposByTenant(ctx context.Context, tenantID string) (int, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM git_repo WHERE tenant_id=?`, tenantID).Scan(&n)
+	return n, err
+}
+
+// RenameGitRepo renames one repo within a tenant. The (tenant_id, name) UNIQUE
+// constraint makes a collision with an existing name an error (surfaced as a 409
+// by the caller after a pre-check).
+func (s *sqliteStore) RenameGitRepo(ctx context.Context, tenantID, oldName, newName string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE git_repo SET name=? WHERE tenant_id=? AND name=?`, newName, tenantID, oldName)
+	return err
+}
+
 func (s *sqliteStore) DeleteGitRepo(ctx context.Context, tenantID, name string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM git_repo WHERE tenant_id=? AND name=?`, tenantID, name)
 	return err

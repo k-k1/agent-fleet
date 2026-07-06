@@ -119,6 +119,19 @@ function InternalRepos() {
     load();
   };
 
+  const rename = async (oldName: string, newName: string) => {
+    const res = await apiJSON(`api/internal-git/repos/${encodeURIComponent(oldName)}/rename`, "POST", {
+      new_name: newName,
+    });
+    if (res && res.error) {
+      toast("リネームに失敗: " + (res.error.message || res.error.code || ""));
+      return false;
+    }
+    toast(`「${oldName}」→「${res.name}」にリネームしました`);
+    load();
+    return true;
+  };
+
   const copyUrl = (url: string) => {
     navigator.clipboard?.writeText(url).then(
       () => toast("clone URL をコピーしました"),
@@ -158,27 +171,13 @@ function InternalRepos() {
           ) : (
             <ul className="internal-repo-list">
               {repos.map((r) => (
-                <li key={r.name} className="internal-repo">
-                  <span className="ir-name" title={r.name}>
-                    {r.name}
-                  </span>
-                  <button
-                    type="button"
-                    className="ir-url"
-                    title="clone URL をコピー"
-                    onClick={() => copyUrl(r.clone_url)}
-                  >
-                    <code>{r.clone_url}</code>
-                  </button>
-                  <button
-                    type="button"
-                    className="ghost danger conn-disconnect"
-                    title="削除"
-                    onClick={() => remove(r.name)}
-                  >
-                    削除
-                  </button>
-                </li>
+                <InternalRepoRow
+                  key={r.name}
+                  repo={r}
+                  onCopy={() => copyUrl(r.clone_url)}
+                  onRename={rename}
+                  onRemove={() => remove(r.name)}
+                />
               ))}
             </ul>
           )}
@@ -281,6 +280,88 @@ function GlobalIdentity() {
         </div>
       </div>
     </>
+  );
+}
+
+// InternalRepoRow is one repo in the internal list: name (editable via リネーム),
+// its clone URL (click to copy), and 削除. Rename edit-state is per-row.
+function InternalRepoRow({
+  repo,
+  onCopy,
+  onRename,
+  onRemove,
+}: {
+  repo: InternalRepo;
+  onCopy: () => void;
+  onRename: (oldName: string, newName: string) => Promise<boolean>;
+  onRemove: () => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(repo.name);
+  const [busy, setBusy] = useState(false);
+
+  const commit = async () => {
+    const n = draft.trim();
+    if (!n || n === repo.name) {
+      setEditing(false);
+      setDraft(repo.name);
+      return;
+    }
+    setBusy(true);
+    const ok = await onRename(repo.name, n);
+    setBusy(false);
+    if (ok) setEditing(false);
+  };
+
+  if (editing) {
+    return (
+      <li className="internal-repo">
+        <input
+          className="cinput ir-rename"
+          value={draft}
+          autoFocus
+          disabled={busy}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") commit();
+            if (e.key === "Escape") {
+              setEditing(false);
+              setDraft(repo.name);
+            }
+          }}
+        />
+        <button type="button" disabled={busy} onClick={commit}>
+          保存
+        </button>
+        <button
+          type="button"
+          className="ghost"
+          disabled={busy}
+          onClick={() => {
+            setEditing(false);
+            setDraft(repo.name);
+          }}
+        >
+          取消
+        </button>
+      </li>
+    );
+  }
+  return (
+    <li className="internal-repo">
+      <span className="ir-name" title={repo.name}>
+        {repo.name}
+      </span>
+      <button type="button" className="ir-url" title="clone URL をコピー" onClick={onCopy}>
+        <code>{repo.clone_url}</code>
+      </button>
+      <button type="button" className="ghost" title="リネーム" onClick={() => setEditing(true)}>
+        リネーム
+      </button>
+      <button type="button" className="ghost danger conn-disconnect" title="削除" onClick={onRemove}>
+        削除
+      </button>
+    </li>
   );
 }
 
