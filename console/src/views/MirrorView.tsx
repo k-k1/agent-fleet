@@ -23,7 +23,11 @@ const WINDOW = 400;
 // Appended to a prompt when the user pastes image(s): claude has no native image input
 // over tmux, so we point it at the saved absolute paths and let its Read tool open them.
 // Kept on ONE line (space-joined paths, no newline) so send-keys can't submit it early.
-const IMG_PROMPT = "次の画像を Read ツールで開いて確認してください:";
+// English (not Japanese) — this is a machine-facing instruction to the CLI agent, hidden
+// from the chat bubble by splitPastedImages, and English tokenizes cheaper.
+const IMG_PROMPT = "Open the following image(s) with the Read tool:";
+// Prior wording, still stripped from older turns so their bubbles stay clean.
+const IMG_PROMPT_LEGACY = "次の画像を Read ツールで開いて確認してください:";
 // Matches our pasted-image paths (…/pasted/<sid>/paste-<n>.<ext>), capturing the basename.
 const PASTE_PATH_RE = /\S*\/pasted\/[^\s/]+\/(paste-\d+\.(?:png|jpe?g|gif|webp))/g;
 
@@ -36,7 +40,10 @@ function splitPastedImages(text: string): { text: string; images: string[] } {
   let m: RegExpExecArray | null;
   while ((m = PASTE_PATH_RE.exec(text))) images.push(m[1]);
   if (!images.length) return { text, images };
-  const idx = text.indexOf(IMG_PROMPT);
+  // Trim the instruction (current or legacy wording) plus the trailing paths so the
+  // bubble shows only the user's words. Fall back to stripping the paths alone.
+  let idx = text.indexOf(IMG_PROMPT);
+  if (idx < 0) idx = text.indexOf(IMG_PROMPT_LEGACY);
   const cleaned = (idx >= 0 ? text.slice(0, idx) : text.replace(PASTE_PATH_RE, "")).trim();
   return { text: cleaned, images };
 }
