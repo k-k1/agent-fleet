@@ -6,6 +6,7 @@ import Icon from "../Icon.jsx";
 import NewSessionModal from "../NewSessionModal.jsx";
 import SsmLoginModal from "../SsmLoginModal.jsx";
 import ArchivedModal from "../ArchivedModal.jsx";
+import SessionTitleModal from "../SessionTitleModal.jsx";
 import { useConfirm } from "../ConfirmProvider.jsx";
 import { useToast } from "../ToastProvider.jsx";
 import EmptyState from "../EmptyState.jsx";
@@ -115,6 +116,7 @@ export default function SessionsSection() {
   }, [newSessionTick]);
   const [showArchived, setShowArchived] = useState(false);
   const [resumeSsm, setResumeSsm] = useState<{ name: string; force: boolean } | null>(null); // SSM resume via login modal
+  const [renaming, setRenaming] = useState<Session | null>(null); // session whose title-edit modal is open
   const menuRef = useRef<HTMLDivElement>(null); // wrap of the currently-open ⋯ menu (outside-click test)
   const [menuFor, setMenuFor] = useState<string | null>(null); // session name whose ⋯ menu is open
   const prevStates = useRef<Record<string, string | undefined>>({}); // name → last seen claude state
@@ -560,6 +562,15 @@ export default function SessionsSection() {
                       リモートセッションを開く ↗
                     </button>
                   )}
+                  <button
+                    className="session-menu-item"
+                    onClick={() => {
+                      setMenuFor(null);
+                      setRenaming(s);
+                    }}
+                  >
+                    タイトルを変更
+                  </button>
                   {/* Fork: branch a claude conversation into a new session (source kept).
                       Needs the workspace up (it launches the fork) and a resumable
                       conversation — offered for claude (caps.fork), alive or stopped. */}
@@ -661,6 +672,15 @@ export default function SessionsSection() {
         <ArchivedModal
           onClose={() => setShowArchived(false)}
           onRestored={() => bumpSessions()}
+        />
+      )}
+
+      {renaming && (
+        <SessionTitleModal
+          name={renaming.name}
+          title={renaming.title || ""}
+          onClose={() => setRenaming(null)}
+          onSaved={() => bumpSessions()}
         />
       )}
     </Section>
