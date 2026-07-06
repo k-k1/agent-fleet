@@ -332,14 +332,20 @@ export default function AssistantSection() {
             role="menu"
             onMouseDown={(e) => e.stopPropagation()}
           >
-            <li onClick={() => runMenu(() => startChat(menu.a))}>新規チャット</li>
-            <li onClick={() => runMenu(() => openInNewPane(draftPatch(menu.a), true))}>新しいペインで開く</li>
+            <li onClick={() => runMenu(() => startChat(menu.a))}>
+              <Icon name="comment" /> 新規チャット
+            </li>
+            <li onClick={() => runMenu(() => openInNewPane(draftPatch(menu.a), true))}>
+              <Icon name="split-horizontal" /> 新しいペインで開く
+            </li>
             {!menu.a.builtin && (
               <>
                 <li className="ctx-sep" aria-hidden="true" />
-                <li onClick={() => runMenu(() => setEditing(menu.a))}>編集</li>
+                <li onClick={() => runMenu(() => setEditing(menu.a))}>
+                  <Icon name="edit" /> 編集
+                </li>
                 <li className="danger" onClick={() => runMenu(() => setDeleting(menu.a))}>
-                  削除
+                  <Icon name="trash" /> 削除
                 </li>
               </>
             )}

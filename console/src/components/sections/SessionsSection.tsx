@@ -525,7 +525,7 @@ export default function SessionsSection() {
                         else showTerminal(s.name);
                       }}
                     >
-                      再開する
+                      <Icon name="play" /> 再開する
                     </button>
                   )}
                   {!s.alive && !dead && running && s.kind === "ssm" && (
@@ -536,7 +536,7 @@ export default function SessionsSection() {
                         setResumeSsm({ name: s.name, force: true });
                       }}
                     >
-                      再ログインして再開
+                      <Icon name="key" /> 再ログインして再開
                     </button>
                   )}
                   {s.alive && (
@@ -547,7 +547,7 @@ export default function SessionsSection() {
                         halt(s.name, displayName(s));
                       }}
                     >
-                      停止する（あとで再開できる）
+                      <Icon name="debug-stop" /> 停止する（あとで再開できる）
                     </button>
                   )}
                   {s.remoteUrl && (
@@ -559,7 +559,7 @@ export default function SessionsSection() {
                         closeNav(); // mobile: close the drawer after acting from the menu
                       }}
                     >
-                      リモートセッションを開く ↗
+                      <Icon name="link-external" /> リモートセッションを開く
                     </button>
                   )}
                   <button
@@ -569,7 +569,7 @@ export default function SessionsSection() {
                       setRenaming(s);
                     }}
                   >
-                    タイトルを変更
+                    <Icon name="edit" /> タイトルを変更
                   </button>
                   {/* Fork: branch a claude conversation into a new session (source kept).
                       Needs the workspace up (it launches the fork) and a resumable
@@ -582,7 +582,7 @@ export default function SessionsSection() {
                         fork(s.name);
                       }}
                     >
-                      分岐（会話を引き継いで新規）
+                      <Icon name="git-branch" /> 分岐（会話を引き継いで新規）
                     </button>
                   )}
                   {/* shell/ssm carry no conversation worth keeping → delete outright
@@ -595,7 +595,7 @@ export default function SessionsSection() {
                         deleteSession(s);
                       }}
                     >
-                      削除する
+                      <Icon name="trash" /> 削除する
                     </button>
                   ) : (
                     <button
@@ -605,7 +605,7 @@ export default function SessionsSection() {
                         archive(s);
                       }}
                     >
-                      アーカイブする（一覧から消す）
+                      <Icon name="archive" /> アーカイブする（一覧から消す）
                     </button>
                   )}
                   {!dead && (
@@ -616,7 +616,7 @@ export default function SessionsSection() {
                         recreate(s.name, displayName(s));
                       }}
                     >
-                      作り直す（今の会話はアーカイブへ）
+                      <Icon name="refresh" /> 作り直す（今の会話はアーカイブへ）
                     </button>
                   )}
                 </div>

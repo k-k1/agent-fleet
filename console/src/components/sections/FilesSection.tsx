@@ -960,12 +960,18 @@ export default function FilesSection() {
       )}
       {menu && (
         <ul className="ctxmenu" ref={ctxRef} style={{ left: menu.x, top: menu.y }} role="menu" onMouseDown={(e) => e.stopPropagation()}>
-          <li onClick={() => runMenu(() => newFile(menuDir))}>新規ファイル</li>
-          <li onClick={() => runMenu(() => newFolder(menuDir))}>新規フォルダ</li>
+          <li onClick={() => runMenu(() => newFile(menuDir))}>
+            <Icon name="new-file" /> 新規ファイル
+          </li>
+          <li onClick={() => runMenu(() => newFolder(menuDir))}>
+            <Icon name="new-folder" /> 新規フォルダ
+          </li>
           {menu.row && menuAssistable(menu.row) && assistants.length > 0 && (
             <li className={"ctx-sub" + (subOpen ? " open" : "")}>
               <span className="ctx-sub-head" onClick={(e) => { e.stopPropagation(); setSubOpen((o) => !o); }}>
-                アシスタントで開く
+                <span className="ctx-sub-label">
+                  <Icon name="sparkle" /> アシスタントで開く
+                </span>
                 <span className="ctx-sub-arrow">{subOpen ? "▾" : "▸"}</span>
               </span>
               {subOpen && (
@@ -990,12 +996,12 @@ export default function FilesSection() {
           )}
           {menu.row && (
             <li onClick={() => runMenu(() => copyText(menu.row!.path.split("/").pop() || "", "名前"))}>
-              名前をコピー
+              <Icon name="copy" /> 名前をコピー
             </li>
           )}
           {menu.row && (
             <li onClick={() => runMenu(() => copyText(menu.row!.path, "相対パス"))}>
-              相対パスをコピー
+              <Icon name="copy" /> 相対パスをコピー
             </li>
           )}
           {menu.row && (
@@ -1004,23 +1010,29 @@ export default function FilesSection() {
                 runMenu(() => copyText(browseRoot ? browseRoot + "/" + menu.row!.path : menu.row!.path, "絶対パス"))
               }
             >
-              絶対パスをコピー
+              <Icon name="copy" /> 絶対パスをコピー
             </li>
           )}
           {menu.row && menu.row.type === "file" && (
-            <li onClick={() => runMenu(() => setSendFile(menu.row!.path))}>セッションに送る…</li>
+            <li onClick={() => runMenu(() => setSendFile(menu.row!.path))}>
+              <Icon name="send" /> セッションに送る…
+            </li>
           )}
           {menu.row && menu.row.type === "file" && (
             <li>
               <a className="ctx-a" href={downloadURL(menu.row.path)} download onClick={() => setMenu(null)}>
-                ダウンロード
+                <Icon name="cloud-download" /> ダウンロード
               </a>
             </li>
           )}
-          {menu.row && <li onClick={() => runMenu(() => renameRow(menu.row!))}>名前を変更</li>}
+          {menu.row && (
+            <li onClick={() => runMenu(() => renameRow(menu.row!))}>
+              <Icon name="edit" /> 名前を変更
+            </li>
+          )}
           {menu.row && (
             <li className="danger" onClick={() => runMenu(() => deleteRow(menu.row!))}>
-              削除
+              <Icon name="trash" /> 削除
             </li>
           )}
         </ul>
