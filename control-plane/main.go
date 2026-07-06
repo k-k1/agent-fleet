@@ -280,6 +280,8 @@ func main() {
 	mux.HandleFunc("DELETE /api/chat/conversations/{id}", cfg.proxyAgentREST)
 	mux.HandleFunc("POST /api/chat/conversations/{id}/messages", cfg.proxyAgentREST)
 	mux.HandleFunc("POST /api/chat/conversations/{id}/stream", cfg.proxyAgentStream) // SSE (Phase B)
+	mux.HandleFunc("POST /api/chat/conversations/{id}/paste-image", cfg.proxyAgentREST)
+	mux.HandleFunc("GET /api/chat/conversations/{id}/pasted/{file}", cfg.proxyAgentREST)
 
 	// Assistant templates (docs/19 Q2) — configurable chat personas, proxied verbatim.
 	mux.HandleFunc("GET /api/assistants", cfg.proxyAgentREST)

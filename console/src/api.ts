@@ -162,6 +162,26 @@ export function pasteImage(
   );
 }
 
+// Upload one pasted image to an assistant chat (multipart, field "file"). Mirrors
+// pasteImage but keyed by conversation id: the chat's claude opens the returned absolute
+// path with its Read tool. Preview via GET api/chat/conversations/{id}/pasted/{name}.
+export function chatPasteImage(
+  convId: string,
+  file: File,
+): Promise<{ status: number; path?: string; name?: string; error?: unknown }> {
+  const fd = new FormData();
+  fd.append("file", file, file.name || "pasted.png");
+  return fetch(rel(`api/chat/conversations/${encodeURIComponent(convId)}/paste-image`), {
+    method: "POST",
+    body: fd,
+  }).then((r) =>
+    r
+      .json()
+      .then((j) => ({ status: r.status, ...j }))
+      .catch(() => ({ status: r.status })),
+  );
+}
+
 // File-management ops (create / rename / delete). Each returns {status, …json}
 // so callers can branch on 409 (exists) etc. The fetch wrapper adds X-AF-Tenant.
 const fsWrite = (path: string, opts: RequestInit): Promise<FsResult> =>

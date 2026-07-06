@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { CSSProperties, KeyboardEvent as RKeyboardEvent, ClipboardEvent as RClipboardEvent } from "react";
 import { api, apiJSON, raw, errText, pasteImage } from "../api.js";
+import { splitPastedImages, buildImagePrompt } from "../lib/pastedImages.js";
 import { useSettings, chatFontStack } from "../lib/settings.js";
 import { useApp } from "../state.jsx";
 import Icon from "../components/Icon.jsx";
@@ -19,34 +20,6 @@ const q = encodeURIComponent;
 // Transcript window size (jsonl lines) for the initial tail load and each backward page.
 // The server clamps it; matches docs/decisions/0009 (P2).
 const WINDOW = 400;
-
-// Appended to a prompt when the user pastes image(s): claude has no native image input
-// over tmux, so we point it at the saved absolute paths and let its Read tool open them.
-// Kept on ONE line (space-joined paths, no newline) so send-keys can't submit it early.
-// English (not Japanese) — this is a machine-facing instruction to the CLI agent, hidden
-// from the chat bubble by splitPastedImages, and English tokenizes cheaper.
-const IMG_PROMPT = "Open the following image(s) with the Read tool:";
-// Prior wording, still stripped from older turns so their bubbles stay clean.
-const IMG_PROMPT_LEGACY = "次の画像を Read ツールで開いて確認してください:";
-// Matches our pasted-image paths (…/pasted/<sid>/paste-<n>.<ext>), capturing the basename.
-const PASTE_PATH_RE = /\S*\/pasted\/[^\s/]+\/(paste-\d+\.(?:png|jpe?g|gif|webp))/g;
-
-// splitPastedImages pulls the pasted-image basenames out of a user turn's text and returns
-// the text with the appended image instruction removed (so the bubble shows the user's
-// words + thumbnails, not the machine-facing paths).
-function splitPastedImages(text: string): { text: string; images: string[] } {
-  const images: string[] = [];
-  PASTE_PATH_RE.lastIndex = 0;
-  let m: RegExpExecArray | null;
-  while ((m = PASTE_PATH_RE.exec(text))) images.push(m[1]);
-  if (!images.length) return { text, images };
-  // Trim the instruction (current or legacy wording) plus the trailing paths so the
-  // bubble shows only the user's words. Fall back to stripping the paths alone.
-  let idx = text.indexOf(IMG_PROMPT);
-  if (idx < 0) idx = text.indexOf(IMG_PROMPT_LEGACY);
-  const cleaned = (idx >= 0 ? text.slice(0, idx) : text.replace(PASTE_PATH_RE, "")).trim();
-  return { text: cleaned, images };
-}
 
 // One option in an AskUserQuestion, and one such question.
 interface QuestionOption {
@@ -620,12 +593,7 @@ export default function MirrorView({
     const text = draft.trim();
     if (!text && !attachments.length) return;
     const paths = attachments.map((a) => a.path);
-    let prompt = text;
-    if (paths.length) {
-      // One line, space-joined (no newline) so send-keys can't submit before the paths.
-      const instr = IMG_PROMPT + " " + paths.join(" ");
-      prompt = text ? text + " " + instr : instr;
-    }
+    const prompt = buildImagePrompt(text, paths);
     setHistIdx(null);
     setDraft("");
     clearAttachments();

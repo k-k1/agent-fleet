@@ -62,20 +62,10 @@ func imageMime(ext string) string {
 	return "application/octet-stream"
 }
 
-// handlePasteImage saves one pasted image (multipart, field "file") under the session's
-// pasted dir and returns {path, name}. The path is absolute so the prompt can reference
-// it and claude's Read tool can open it regardless of cwd.
-func handlePasteImage(w http.ResponseWriter, r *http.Request) {
-	name := r.PathValue("name")
-	meta, ok := readSessionMeta(name)
-	if !ok {
-		writeErr(w, http.StatusNotFound, "no_session", "session not found: "+name)
-		return
-	}
-	if !agentOf(meta.Kind).caps().canTranscript {
-		writeErr(w, http.StatusBadRequest, "not_claude", "画像を渡せるのは claude セッションのみです")
-		return
-	}
+// savePastedImageTo reads the "file" multipart part and stores it under dir, writing the
+// {path, name} response (201) or an error. Shared by the session and chat paste endpoints
+// — only the target dir (and the caller's own validation) differ.
+func savePastedImageTo(w http.ResponseWriter, r *http.Request, dir string) {
 	mr, err := r.MultipartReader()
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "bad_form", "expected multipart/form-data")
@@ -99,8 +89,6 @@ func handlePasteImage(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusUnsupportedMediaType, "not_image", "画像ファイルのみ対応しています")
 			return
 		}
-		sid := sessionUUID(meta.Dir, name)
-		dir := pastedDir(sid)
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			writeErr(w, http.StatusInternalServerError, "mkdir_failed", err.Error())
 			return
@@ -134,16 +122,9 @@ func handlePasteImage(w http.ResponseWriter, r *http.Request) {
 	writeErr(w, http.StatusBadRequest, "no_file", "no file part")
 }
 
-// handlePastedImage serves a previously-pasted image by basename (GET), for the Console's
-// in-chat thumbnail / preview. The name is reduced to its base and must be a known image.
-func handlePastedImage(w http.ResponseWriter, r *http.Request) {
-	name := r.PathValue("name")
-	file := r.PathValue("file")
-	meta, ok := readSessionMeta(name)
-	if !ok {
-		writeErr(w, http.StatusNotFound, "no_session", "session not found: "+name)
-		return
-	}
+// servePastedImageFrom serves a stored image by basename (GET) from dir, for the Console's
+// thumbnail / preview. The name is reduced to its base and must be a known image type.
+func servePastedImageFrom(w http.ResponseWriter, dir, file string) {
 	base := filepath.Base(file)
 	if base != file || base == "." || base == ".." {
 		writeErr(w, http.StatusBadRequest, "bad_name", "invalid file")
@@ -154,8 +135,7 @@ func handlePastedImage(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "not_image", "not an image")
 		return
 	}
-	sid := sessionUUID(meta.Dir, name)
-	b, err := os.ReadFile(filepath.Join(pastedDir(sid), base))
+	b, err := os.ReadFile(filepath.Join(dir, base))
 	if err != nil {
 		writeErr(w, http.StatusNotFound, "not_found", "no such image")
 		return
@@ -164,4 +144,63 @@ func handlePastedImage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "private, max-age=3600")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(b)
+}
+
+// handlePasteImage saves one pasted image (multipart, field "file") under the session's
+// pasted dir and returns {path, name}. The path is absolute so the prompt can reference
+// it and claude's Read tool can open it regardless of cwd.
+func handlePasteImage(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	meta, ok := readSessionMeta(name)
+	if !ok {
+		writeErr(w, http.StatusNotFound, "no_session", "session not found: "+name)
+		return
+	}
+	if !agentOf(meta.Kind).caps().canTranscript {
+		writeErr(w, http.StatusBadRequest, "not_claude", "画像を渡せるのは claude セッションのみです")
+		return
+	}
+	savePastedImageTo(w, r, pastedDir(sessionUUID(meta.Dir, name)))
+}
+
+// handlePastedImage serves a previously-pasted session image by basename (GET).
+func handlePastedImage(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	meta, ok := readSessionMeta(name)
+	if !ok {
+		writeErr(w, http.StatusNotFound, "no_session", "session not found: "+name)
+		return
+	}
+	servePastedImageFrom(w, pastedDir(sessionUUID(meta.Dir, name)), r.PathValue("file"))
+}
+
+// chatPastedDir is where an assistant chat's pasted images live — keyed by conversation
+// id (namespaced so it can't collide with a tmux session's sid).
+func chatPastedDir(convID string) string { return pastedDir("chat-" + convID) }
+
+// handleChatPasteImage saves a pasted image for an assistant chat (docs/19). Same flow as
+// the session endpoint: the chat's claude (`-p`, Read tool) opens the returned absolute
+// path. claude-agent chats only — codex has no image-read path here.
+func handleChatPasteImage(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	c, err := loadConv(id)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "no_conversation", "conversation not found: "+id)
+		return
+	}
+	if c.Agent != kindClaude {
+		writeErr(w, http.StatusBadRequest, "not_claude", "画像を渡せるのは claude のアシスタントのみです")
+		return
+	}
+	savePastedImageTo(w, r, chatPastedDir(id))
+}
+
+// handleChatPastedImage serves a previously-pasted chat image by basename (GET).
+func handleChatPastedImage(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if !validConvID(id) {
+		writeErr(w, http.StatusBadRequest, "bad_id", "invalid conversation id")
+		return
+	}
+	servePastedImageFrom(w, chatPastedDir(id), r.PathValue("file"))
 }

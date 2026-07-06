@@ -81,6 +81,8 @@ func main() {
 	mux.HandleFunc("DELETE /chat/conversations/{id}", handleChatDelete)
 	mux.HandleFunc("POST /chat/conversations/{id}/messages", handleChatSend)
 	mux.HandleFunc("POST /chat/conversations/{id}/stream", handleChatStream) // SSE (Phase B)
+	mux.HandleFunc("POST /chat/conversations/{id}/paste-image", handleChatPasteImage)
+	mux.HandleFunc("GET /chat/conversations/{id}/pasted/{file}", handleChatPastedImage)
 	// Assistant-to-assistant consult (docs/19): af_write orchestrators' ask_assistant tool
 	// hits this via the local stdio MCP. Internal (Agent REST) only — not proxied by the CP.
 	mux.HandleFunc("POST /chat/ask", handleChatAsk)
