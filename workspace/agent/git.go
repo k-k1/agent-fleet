@@ -257,6 +257,22 @@ func gitCheckoutNewBranch(dir, newBranch string) error {
 	return nil
 }
 
+// gitCurrentBranch returns dir's checked-out branch name, "(detached)" on a
+// detached HEAD, or "" when dir isn't a resolvable git working tree. Cheaper than
+// gitStatus (a single rev-parse, no porcelain parse) — used to stamp a session's
+// start branch at create and to detect later drift on the session list.
+func gitCurrentBranch(dir string) string {
+	out, err := exec.Command("git", "-C", dir, "rev-parse", "--abbrev-ref", "HEAD").Output()
+	if err != nil {
+		return ""
+	}
+	b := strings.TrimSpace(string(out))
+	if b == "HEAD" {
+		return "(detached)"
+	}
+	return b
+}
+
 // branchExists reports whether dir already has a local branch named branch.
 func branchExists(dir, branch string) bool {
 	return exec.Command("git", "-C", dir, "rev-parse", "--verify", "--quiet", "refs/heads/"+branch).Run() == nil

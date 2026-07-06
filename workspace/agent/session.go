@@ -42,6 +42,14 @@ type Session struct {
 	// claude only, nil when none recorded yet. Drives the Console's ContextBar in
 	// both the terminal and chat heads without a separate transcript poll.
 	Context *contextUsage `json:"context,omitempty"`
+	// Branch is the session's start branch (sessionMeta.Branch). CurrentBranch is the
+	// working copy's branch right now; it is set ONLY when it differs from Branch, at
+	// which point BranchDrift is true — the working tree was switched under the session
+	// (a checkout that bypassed the guard). The Console badges the row so the mishap is
+	// visible even though it can't be prevented at the git layer.
+	Branch        string `json:"branch,omitempty"`
+	CurrentBranch string `json:"currentBranch,omitempty"`
+	BranchDrift   bool   `json:"branchDrift,omitempty"`
 }
 
 func tmuxName(name string) string { return tmuxPrefix + name }
@@ -71,6 +79,13 @@ type sessionMeta struct {
 	Color                   string `json:"color"`     // terminal background hue (hex); set at create (SSM host color)
 	Label                   string `json:"label"`     // claude --name (display); derived from Title at create/recreate
 	Repo                    string `json:"repo"`      // working dir basename
+	// Branch is the git branch the working copy (Dir) was on when this session was
+	// created/recreated. Compared against Dir's current branch on each list to flag
+	// drift — a `git checkout` that slipped past the checkout guard (agent/manual
+	// shell inside the session). "" when Dir isn't a git working tree, or for
+	// pre-existing sessions minted before this field. Never rewritten after create,
+	// so the drift comparison stays meaningful.
+	Branch                  string `json:"branch,omitempty"`
 	CreatedAt               string `json:"createdAt"` // RFC3339, set at create
 	StoppedAt               string `json:"stoppedAt"` // RFC3339, set lazily when first seen exited; "" while live
 	Archived                bool   `json:"archived"`  // true = hidden from the active list, restorable (jsonl kept)
@@ -152,7 +167,7 @@ func wireSession(m sessionMeta, alive bool) Session {
 	return Session{
 		Name: m.Name, Tmux: tmuxName(m.Name), Dir: m.Dir, Kind: m.Kind,
 		Repo: m.Repo, Title: m.Title, Display: sessionDisplay(m), Color: m.Color, Label: m.Label,
-		Started: started, CreatedAt: m.CreatedAt,
+		Started: started, CreatedAt: m.CreatedAt, Branch: m.Branch,
 		RemoteUrl: li.remoteURL, State: li.state, Alive: alive, Resumable: li.resumable,
 		BackgroundBusy: li.backgroundBusy, Context: li.context,
 	}
@@ -410,6 +425,30 @@ func sessionsInDir(metas []sessionMeta, live map[string]bool, dir string) []stri
 	return names
 }
 
+// annotateBranchDrift fills BranchDrift/CurrentBranch for any session whose working
+// copy has been switched off the branch it started on. curBranch resolves a dir's
+// current branch and is cached per dir, so N sessions sharing one working copy cost a
+// single git call. Sessions with no recorded start branch (pre-existing, or a non-git
+// dir) are left untouched. Split from the git/tmux plumbing so it is unit-testable.
+func annotateBranchDrift(sessions []Session, curBranch func(string) string) {
+	cache := map[string]string{}
+	for i := range sessions {
+		s := &sessions[i]
+		if s.Branch == "" {
+			continue
+		}
+		cur, ok := cache[s.Dir]
+		if !ok {
+			cur = curBranch(s.Dir)
+			cache[s.Dir] = cur
+		}
+		if cur != "" && cur != s.Branch {
+			s.BranchDrift = true
+			s.CurrentBranch = cur
+		}
+	}
+}
+
 // handleListSessions returns the live claude_* tmux sessions.
 // We query names and each session's cwd separately rather than packing both
 // into one -F line: a tab/control-char delimiter is mangled by some tmux
@@ -464,6 +503,9 @@ func handleListSessions(w http.ResponseWriter, r *http.Request) {
 			Alive: true, Resumable: true,
 		})
 	}
+	// Flag any session whose working copy was checked out to a different branch than
+	// it started on (a checkout that bypassed the guard). One git call per unique dir.
+	annotateBranchDrift(sessions, gitCurrentBranch)
 	// Stable order: newest first by creation time.
 	sort.Slice(sessions, func(i, j int) bool { return sessions[i].CreatedAt > sessions[j].CreatedAt })
 	writeJSON(w, http.StatusOK, map[string]any{"sessions": sessions})
@@ -589,7 +631,8 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	}
 	meta := sessionMeta{
 		Name: name, Dir: req.Dir, Model: req.Model, Kind: kind, Title: title, Color: req.Color, Label: label,
-		Repo: filepath.Base(req.Dir), CreatedAt: time.Now().Format(time.RFC3339), SSM: ssm,
+		Repo: filepath.Base(req.Dir), Branch: gitCurrentBranch(req.Dir),
+		CreatedAt: time.Now().Format(time.RFC3339), SSM: ssm,
 	}
 	if err := startSessionTmux(meta, req.SSMForceLogin); err != nil {
 		writeErr(w, http.StatusInternalServerError, "tmux_failed", err.Error())
@@ -631,6 +674,7 @@ func handleForkSession(w http.ResponseWriter, r *http.Request) {
 	meta := sessionMeta{
 		Name: forkName, Dir: src.Dir, Model: src.Model, Kind: kindClaude, Title: title,
 		Label: sessionLabelFor(src.Dir, title), Repo: filepath.Base(src.Dir),
+		Branch:    gitCurrentBranch(src.Dir),
 		CreatedAt: time.Now().Format(time.RFC3339), ForkFrom: srcSid,
 	}
 	if err := startSessionTmux(meta, false); err != nil {
@@ -794,7 +838,8 @@ func handleRecreateSession(w http.ResponseWriter, r *http.Request) {
 	// "re-copy the fork source".
 	newMeta := sessionMeta{
 		Name: allocSessionName(m.Dir), Dir: m.Dir, Model: m.Model, Kind: m.Kind,
-		Title: m.Title, Color: m.Color, Repo: m.Repo, CreatedAt: time.Now().Format(time.RFC3339), SSM: m.SSM,
+		Title: m.Title, Color: m.Color, Repo: m.Repo, Branch: gitCurrentBranch(m.Dir),
+		CreatedAt: time.Now().Format(time.RFC3339), SSM: m.SSM,
 	}
 	if agentOf(newMeta.Kind).caps().usesLabel {
 		newMeta.Label = sessionLabelFor(newMeta.Dir, newMeta.Title)
