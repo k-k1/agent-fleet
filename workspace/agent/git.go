@@ -552,6 +552,17 @@ func handleRepoCheckout(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
 		return
 	}
+	// A working copy with running sessions is pinned to its branch: switching it
+	// out from under live agents corrupts them (see liveSessionsInDir). Refuse and
+	// steer the user to open the branch as its own working copy instead. This blocks
+	// the Console footgun; agent/manual `git checkout` inside a session still bypasses
+	// it (no pre-checkout hook exists) and is caught by branch-drift detection.
+	if running := liveSessionsInDir(dir); len(running) > 0 {
+		writeErr(w, http.StatusConflict, "sessions_running",
+			fmt.Sprintf("%d session(s) are running in this working copy (%s); switching branches here would corrupt them. Open the branch as a new working copy instead.",
+				len(running), strings.Join(running, ", ")))
+		return
+	}
 	var args []string
 	if req.Create {
 		// Create a branch: `checkout -b <name> [<start-point>]`. Branch is the new name;

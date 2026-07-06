@@ -360,6 +360,56 @@ func ensureSessionTmux(name string, ssmForce bool) bool {
 	return true
 }
 
+// liveSessionNames returns the set of currently-running claude_* tmux session
+// slugs. A missing tmux server / no sessions yields an error, which we treat as
+// "none live". Shared by the session list and the branch-switch guard so both
+// agree on what "running" means.
+func liveSessionNames() map[string]bool {
+	live := map[string]bool{}
+	out, err := exec.Command("tmux", "list-sessions", "-F", "#{session_name}").Output()
+	if err != nil {
+		return live
+	}
+	for _, tn := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if tn == "" || !strings.HasPrefix(tn, tmuxPrefix) {
+			continue
+		}
+		live[strings.TrimPrefix(tn, tmuxPrefix)] = true
+	}
+	return live
+}
+
+// liveSessionsInDir returns the display names of running sessions whose cwd is at
+// or under dir. Switching branches in dir would swap the working tree beneath
+// these processes mid-flight (vanished/rewritten files, stale diffs, edits landing
+// on the wrong branch) — the "大惨事" this guards against — so callers refuse the
+// operation while this is non-empty. Only LIVE sessions count: a stopped session
+// has no process to corrupt (branch drift for those is handled elsewhere). Archived
+// sessions are ignored. A subdir cwd still counts because checkout rewrites the
+// whole working tree, not just the repo root.
+func liveSessionsInDir(dir string) []string {
+	return sessionsInDir(listSessionMetas(), liveSessionNames(), dir)
+}
+
+// sessionsInDir is the pure core of liveSessionsInDir (tmux/fs kept out so it is
+// testable): from metas + the live set, the display names of running, non-archived
+// sessions whose cwd equals dir or sits strictly beneath it. The trailing
+// PathSeparator on the prefix test is load-bearing — it keeps "/r/foo" from matching
+// a sibling "/r/foobar".
+func sessionsInDir(metas []sessionMeta, live map[string]bool, dir string) []string {
+	var names []string
+	for _, m := range metas {
+		if m.Archived || !live[m.Name] {
+			continue
+		}
+		if m.Dir == dir || strings.HasPrefix(m.Dir, dir+string(os.PathSeparator)) {
+			names = append(names, sessionDisplay(m))
+		}
+	}
+	sort.Strings(names)
+	return names
+}
+
 // handleListSessions returns the live claude_* tmux sessions.
 // We query names and each session's cwd separately rather than packing both
 // into one -F line: a tab/control-char delimiter is mangled by some tmux
@@ -370,16 +420,7 @@ func handleListSessions(w http.ResponseWriter, r *http.Request) {
 		metas[m.Name] = m
 	}
 
-	live := map[string]bool{}
-	out, err := exec.Command("tmux", "list-sessions", "-F", "#{session_name}").Output()
-	if err == nil { // no server / no sessions => err; treat as empty
-		for _, tn := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-			if tn == "" || !strings.HasPrefix(tn, tmuxPrefix) {
-				continue
-			}
-			live[strings.TrimPrefix(tn, tmuxPrefix)] = true
-		}
-	}
+	live := liveSessionNames()
 
 	now := time.Now()
 	ttl := stoppedTTL()
