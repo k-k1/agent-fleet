@@ -5193,7 +5193,11 @@ button.mt-toolrun-head:hover {
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 50;
+  /* Above the off-canvas drawer / overlay left pane (z-index 60) and the mirror
+     lightbox (60). A ConfirmDialog is mounted at the app root by ConfirmProvider, so
+     when it's raised from a left-pane action (e.g. SESSIONS「整理」) while the mobile
+     drawer is open, it must stack over the drawer instead of hiding behind it. */
+  z-index: 70;
 }
 .modal {
   width: min(820px, 92vw);
