@@ -601,9 +601,11 @@ export default function FilesSection() {
   }, [selected]);
 
   // Sticky scroll: recompute the pinned ancestor chain from the current scroll offset.
-  // `over` is how far the tree's top has scrolled above the scroller's viewport top; the
-  // row sitting at that top edge is rows[idx], whose ancestor folders we pin. The overlay
-  // is absolutely placed `over` px down from the wrap top, i.e. at the viewport top.
+  // `over` is how far the tree's top has scrolled above the FILES bar's bottom edge; the
+  // row sitting at that edge is rows[idx], whose ancestor folders we pin. The overlay is
+  // absolutely placed `over` px down from the wrap top — i.e. just under the FILES bar,
+  // not over it. (The FILES .pane-head is sticky at the scroller top; measuring from its
+  // bottom, rather than the scroller top, keeps the folder sticky below the bar.)
   const MAX_STICKY = 5; // cap so the pinned stack never eats the (short) pane
   const recomputeSticky = useCallback(() => {
     const wrap = wrapRef.current;
@@ -616,7 +618,11 @@ export default function FilesSection() {
       setSticky((s) => (s.rows.length ? { rows: [], top: 0 } : s));
       return;
     }
-    const over = scroller.getBoundingClientRect().top - wrap.getBoundingClientRect().top;
+    // Anchor at the FILES bar's bottom (the sticky .pane-head) so the folder sticky sits
+    // under it; fall back to the scroller top if the header can't be found.
+    const head = wrap.closest(".pane-section")?.querySelector<HTMLElement>(".pane-head");
+    const anchorTop = head ? head.getBoundingClientRect().bottom : scroller.getBoundingClientRect().top;
+    const over = anchorTop - wrap.getBoundingClientRect().top;
     const first = tree.querySelector<HTMLElement>("li.fsrow");
     const rowH = (first && first.offsetHeight) || 22;
     if (over <= 1) {
