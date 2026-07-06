@@ -957,10 +957,12 @@ export default function MirrorView({
                 sending={sending}
                 onOpen={() => openPlan(pendingPlan)}
                 onApprove={() => sendKeys(["Enter"])}
-                // 却下 = pick "No, keep planning" (the 3rd option, as in the permission
-                // dialog's 拒否). claude returns to plan mode and the composer unlocks so
-                // the user can type refinement feedback.
-                onReject={() => sendKeys(["Down", "Down", "Enter"])}
+                // 却下 = pick "Tell Claude what to change" — the 4th ExitPlanMode option
+                // (1 Yes-bypass / 2 Yes-manual / 3 No-refine-on-web / 4 tell-what-to-change).
+                // NOT option 3, which routes to Ultraplan on the web. Selecting 4 keeps
+                // refining in-session; pendingPlan then clears and the composer unlocks so
+                // the user can type feedback. (Option order is claude-version dependent.)
+                onReject={() => sendKeys(["Down", "Down", "Down", "Enter"])}
               />
             </div>
           </div>
