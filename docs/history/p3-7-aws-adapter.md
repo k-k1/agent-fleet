@@ -60,7 +60,9 @@
 - ▶ **段2 — ecsRuntime 本実装 + EFS Volume**（要 AWS）: AWS SDK for Go v2 で ECS Service/TaskDef を駆動。EFS AP を
   per-membership で払い出し task に mount。`Endpoint` を Service Connect で解決。secretKey/token を task env 注入。
 - ▶ **段3 — MetadataStore(RDS) / KeyCustodian(KMS)**（要 AWS）: `Store` の Postgres アダプタ、`KeyCustodian` の KMS 実装。
-- ▶ **段4 — IaC + Ingress/Auth**（要 AWS）: Terraform で VPC/ECS/EFS/RDS/ALB(ACM,OIDC)/ECR/SG/roles。`deploy/aws/ecs/`。
+- ▶ **段4 — IaC + Ingress/Auth**（要 AWS）: **CloudFormation** で VPC/ECS/EFS/RDS/ALB(ACM,OIDC)/ECR/SG/roles。`deploy/aws/ecs/`。
+  ツールは CFN に寄せる（`deploy/aws/ec2-single/cfn.yaml` の前例と一貫、配布時の顧客 footprint 最小＝creds+`aws cloudformation deploy` のみ）。CFN は
+  **static substrate のみ**を作り、per-workspace リソース（Service/TaskDef/EFS AP/SSM param）は CP が実行時に動的払い出しする（[§20b.7.1](#20b71-凍結した不変条件)）。
 - ▶ **段5 — E2E 検証ゲート**（要 AWS）: 実 apply → login → tenant → workspace(Start=desired 1) → session → Stop(desired 0)→resume 通過。
 
 ## 20b.5 CP↔Agent 到達（要点）
@@ -258,7 +260,7 @@ local の 2 マウント（`home` + `claude-config`、runtime.go:179-181）を E
 
 - **MetadataStore(RDS/Postgres)** = 段3a（AWS 非依存で先取り検証可能。Docker の Postgres で完結）。
 - **KeyCustodian(KMS)** = 段3b（`KeyCustodian{Wrap,Unwrap}` IF は確定済、custodian.go:17）。
-- **IaC(Terraform)** = 段4（VPC/ECS/EFS/RDS/ALB(ACM,OIDC)/ECR/SG/roles/SC namespace、`deploy/aws/ecs/`）。
+- **IaC(CloudFormation)** = 段4（VPC/ECS/EFS/RDS/ALB(ACM,OIDC)/ECR/SG/roles/SC namespace、`deploy/aws/ecs/`。static substrate のみ）。
 - **Egress 統制** = SG egress + NAT（+任意 proxy）。設計は別途（docs/20 系）。段2 の runtime には出さない。
 
 [host-oom-fleet-risk]: の注意は memory 参照。
