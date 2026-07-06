@@ -131,6 +131,10 @@ Resources:
         Fn::ImportValue: !Sub "${PlatformStackName}-ExecRoleArn"
       TaskRoleArn:
         Fn::ImportValue: !Sub "${PlatformStackName}-CpTaskRoleArn"
+      # Ephemeral scratch volume so WS_DATA exists and is writable (SQLite does not
+      # create the DB's parent dir; compose relied on the bind-mount pre-existing).
+      Volumes:
+        - Name: cpdata
       ContainerDefinitions:
         - Name: cp
           Essential: true
@@ -145,7 +149,7 @@ Resources:
             # non-loopback (the CpSg restricts 8099 ingress to the ALB SG — the
             # network isolation the compose loopback bind gives on a single box).
             - { Name: CP_ADDR, Value: !Sub "0.0.0.0:${CpPort}" }
-            - { Name: WS_DATA, Value: /tmp/af-data }   # EPHEMERAL SQLite (milestone only)
+            - { Name: WS_DATA, Value: /var/lib/af/data }   # EPHEMERAL SQLite on the cpdata scratch volume (milestone only)
             - { Name: AUTH, Value: oauth }
             - { Name: PUBLIC_BASE_URL, Value: !Sub "https://${Fqdn}" }
             - { Name: PUBLIC_DOMAIN, Value: !Ref Fqdn }
@@ -157,6 +161,8 @@ Resources:
             - { Name: AF_RUNTIME, Value: ecs }
             - { Name: AF_ECS_REGION, Value: !Ref "AWS::Region" }
             - { Name: AF_ECS_CLUSTER, Value: !ImportValue { "Fn::Sub": "${PlatformStackName}-ClusterName" } }
+          MountPoints:
+            - { SourceVolume: cpdata, ContainerPath: /var/lib/af/data }
           Secrets:
             - Name: GOOGLE_OAUTH_CLIENT_SECRET
               ValueFrom: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${SsmPrefix}/google-client-secret"
