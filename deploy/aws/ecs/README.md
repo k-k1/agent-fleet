@@ -32,13 +32,29 @@ platform changes:
 |------|--------|----------|
 | `cfn/00-network.yaml` | **proven** (deploy→verify→teardown in sandbox) | VPC, 2×AZ public+private subnets, IGW, NAT, base SGs (`alb`/`cp`/`ws`) |
 | `cfn/10-data.yaml` | **proven** (EFS 2 mount targets available, RDS pg18 available/private/encrypted) | EFS filesystem + mount targets, RDS(Postgres, single-AZ t4g.micro, RDS-managed master secret) |
-| `cfn/20-platform.yaml` | TODO | ECR (cp+workspace), ECS cluster, Service Connect namespace, IAM roles (`cp-task`/`ws-exec`/`ws-task`), ALB+ACM+OIDC listener, CP/Console ECS service |
+| `cfn/20-platform.yaml` | **proven** (ECR×2, cluster ACTIVE w/ SC default, 3 IAM roles) | ECR (cp+workspace), ECS cluster, Service Connect namespace (`af.internal`), IAM roles (`cp-task`/`exec`/`ws-task`) |
+| `cfn/30-ingress.yaml` | TODO | ALB+ACM+OIDC listener, CP/Console ECS service (needs a domain + Google OAuth client; ECR images pushed first) |
 
-> The `20` template is intentionally deferred: it carries the most
-> AWS-specific risk (Service Connect wiring, ALB OIDC, IAM scoping) and should be
-> authored against `aws cloudformation validate-template` in the sandbox, not
-> written blind. `00`/`10` are proven end-to-end (deploy→verify→`delete-stack`,
-> no orphans); `10` imports `00`'s exports (`aws cloudformation deploy` 00 then 10).
+> `30-ingress` is intentionally deferred: it carries the most AWS-specific risk
+> (ALB OIDC, ACM, the CP service wiring) and needs a real domain. `00`/`10`/`20`
+> are proven end-to-end (deploy→verify→`delete-stack`, no orphans); each imports
+> the earlier stacks' exports, so deploy in order `00 → 10 → 20`.
+
+### Prerequisites (once per account)
+
+- **ECS service-linked role.** A fresh account has no `AWSServiceRoleFor ECS`, and
+  creating a cluster with a Service Connect default namespace fails with
+  *"ECS Service Linked Role is not ready"*. Create it once (idempotent — ignore the
+  "has been taken" error on re-run):
+  ```bash
+  aws iam create-service-linked-role --aws-service-name ecs.amazonaws.com || true
+  ```
+- **`20-platform` needs `--capabilities CAPABILITY_NAMED_IAM`** (it creates named IAM roles):
+  ```bash
+  aws cloudformation deploy --stack-name af-ecs-platform \
+    --template-file cfn/20-platform.yaml --capabilities CAPABILITY_NAMED_IAM \
+    --profile af-sandbox --region ap-northeast-1
+  ```
 
 ## Prove-out sequence
 
@@ -48,11 +64,13 @@ RDS) lives in AWS, so this host's build/OOM limits don't gate it.
 
 - **S0** — `aws sts get-caller-identity` in the sandbox; pick a region.
 - **S1** — deploy `00-network.yaml`; confirm the deploy → `delete-stack` loop and
-  the standing cost (NAT is the main one, see below).
-- **S2** — deploy ECR (part of `20`), then push the CP + Workspace images
-  (§ECR push below). ECS can't pull until they're in ECR.
-- **S3** — deploy `10-data.yaml` + `20-platform.yaml`; the CP/Console service boots,
-  ALB OIDC login works, RDS reachable.
+  the standing cost (NAT is the main one, see below). **proven.**
+- **S1.5** — deploy `10-data.yaml` (EFS+RDS) and `20-platform.yaml` (ECR/cluster/SC
+  namespace/IAM); confirm and tear down. **proven.**
+- **S2** — with ECR up (from `20`), push the CP + Workspace images (§ECR push below).
+  ECS can't pull until they're in ECR.
+- **S3** — deploy `30-ingress.yaml`; the CP/Console service boots, ALB OIDC login
+  works, RDS reachable.
 - **S4** — with `runtime_ecs.go` (段2) implemented, the CP **dynamically provisions a
   workspace** (exercises the real adapter) → the E2E gate below.
 
