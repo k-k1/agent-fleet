@@ -270,6 +270,9 @@ func main() {
 	mux.HandleFunc("POST /api/sessions/{name}/start", cfg.handleSessionStart)
 	// Structured transcript for the Console chat view (case-A).
 	mux.HandleFunc("GET /api/sessions/{name}/messages", cfg.proxyAgentREST)
+	// Auto session-title suggestion accept/dismiss (session_title.go, Agent-side).
+	mux.HandleFunc("POST /api/sessions/{name}/title/accept", cfg.proxyAgentREST)
+	mux.HandleFunc("POST /api/sessions/{name}/title/dismiss", cfg.proxyAgentREST)
 
 	// Assistant chat (docs/19) — headless-CLI LLM chat/translation, proxied to the
 	// Agent verbatim (kind-agnostic; non-streaming, so the plain REST proxy suffices).

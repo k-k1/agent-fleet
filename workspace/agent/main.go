@@ -70,6 +70,10 @@ func main() {
 	mux.HandleFunc("POST /sessions/{name}/start", handleStartSession)
 	// Structured transcript (role + text + timestamp) for the Console chat view.
 	mux.HandleFunc("GET /sessions/{name}/messages", handleSessionMessages)
+	// Auto session-title suggestion (session_title.go): accept promotes it to Title,
+	// dismiss discards it — either way it's never offered again for this session.
+	mux.HandleFunc("POST /sessions/{name}/title/accept", handleAcceptSuggestedTitle)
+	mux.HandleFunc("POST /sessions/{name}/title/dismiss", handleDismissSuggestedTitle)
 	mux.HandleFunc("GET /ws/pty", handlePTY)
 
 	// Assistant chat — headless-CLI LLM chat/translation, separate from tmux

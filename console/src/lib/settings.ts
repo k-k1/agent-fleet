@@ -119,6 +119,9 @@ export interface Settings {
   // Default claude model for new sessions (launch dialog + repo 起動). "" = let claude
   // pick its own default (which varies between releases); a concrete alias pins it.
   defaultModel: string;
+  // Global ON/OFF for the auto session-title-suggestion feature (DisplayTab セッション).
+  // Default true so existing users get it without an explicit opt-in.
+  autoTitleSuggest: boolean;
   // Per-SSM-host terminal color: host id → color id (see lib/termcolor SSM_HOST_COLORS).
   // Applied to a session's terminal background when it's created (sent as its color).
   ssmHostColors: Record<string, string>;
@@ -145,6 +148,7 @@ const DEFAULTS: Settings = {
   // newline (phone-friendly default); "enter" = Enter submits, Shift+Enter newline.
   mirrorSend: "mod-enter",
   defaultModel: "sonnet", // stable default (avoids claude's release-varying pick); "" = claude's own
+  autoTitleSuggest: true,
   ssmHostColors: {},
 };
 

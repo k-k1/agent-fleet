@@ -174,6 +174,15 @@ func handleSessionMessages(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	turns := collectTurns(lines, lo, hi)
+	mt := jsonlMtime(jpath) // hoisted: also feeds the title-suggestion idle check below
+	if autoTitleSuggestEnabled() && meta.Title == "" && meta.SuggestedTitle == "" &&
+		!meta.SuggestedTitleDismissed && titleGenReady(name) {
+		// Full-transcript parse — expensive, so only reached once the cheap field/backoff
+		// checks above pass. Once Title/SuggestedTitle/Dismissed settle, this line never
+		// runs again for this session (see docs/decisions/0009 on why the windowed
+		// `turns` above can't be reused here: it's an incremental slice after the first poll).
+		maybeSuggestTitle(name, collectTurns(lines, 0, len(lines)), time.Since(mt))
+	}
 	resp := map[string]any{
 		"name": name, "messages": turns, "cursor": cursor,
 		"status": state, "alive": alive, "reset": reset,
@@ -182,7 +191,10 @@ func handleSessionMessages(w http.ResponseWriter, r *http.Request) {
 		// Lets us confirm from real data whether the file is found and growing, vs a
 		// message merely queued in the TUI (uncommitted).
 		"jsonlPath": jpath, "jsonlLines": len(lines),
-		"jsonlMtime": jsonlMtime(jpath).Format(time.RFC3339), "jsonlMatches": len(jmatched),
+		"jsonlMtime": mt.Format(time.RFC3339), "jsonlMatches": len(jmatched),
+	}
+	if meta.SuggestedTitle != "" && !meta.SuggestedTitleDismissed {
+		resp["suggestedTitle"] = meta.SuggestedTitle
 	}
 	if firstLine >= 0 {
 		// Windowed response: tell the client the oldest line it now holds and whether
@@ -231,6 +243,12 @@ func handleGenericMessages(w http.ResponseWriter, r *http.Request, meta sessionM
 	td, _ := agentOf(meta.Kind).transcript(meta)
 	all, path := td.turns, td.path
 	total := len(all)
+	if autoTitleSuggestEnabled() && meta.Title == "" && meta.SuggestedTitle == "" &&
+		!meta.SuggestedTitleDismissed && titleGenReady(meta.Name) {
+		// `all` is already the full parse here (unlike claude's windowed path above), so
+		// this is free — no extra transcript read.
+		maybeSuggestTitle(meta.Name, all, time.Since(jsonlMtime(path)))
+	}
 
 	since := 0
 	if v := r.URL.Query().Get("since"); v != "" {
@@ -282,6 +300,9 @@ func handleGenericMessages(w http.ResponseWriter, r *http.Request, meta sessionM
 		"status": state, "alive": alive, "reset": reset,
 		"jsonlPath": path, "jsonlLines": total,
 		"jsonlMtime": jsonlMtime(path).Format(time.RFC3339), "jsonlMatches": 1,
+	}
+	if meta.SuggestedTitle != "" && !meta.SuggestedTitleDismissed {
+		resp["suggestedTitle"] = meta.SuggestedTitle
 	}
 	if firstLine >= 0 {
 		resp["firstLine"] = firstLine

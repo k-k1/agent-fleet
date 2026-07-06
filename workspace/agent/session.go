@@ -55,17 +55,25 @@ func tmuxName(name string) string { return tmuxPrefix + name }
 // persisted). The dir is denylisted in the file browser. "作り直す"(recreate)
 // wipes home, intentionally clearing sessions too.
 type sessionMeta struct {
-	Name      string `json:"name"`
-	Dir       string `json:"dir"`
-	Model     string `json:"model"`
-	Kind      string `json:"kind"`
-	Title     string `json:"title"`     // user-supplied display title (optional); "" = auto
-	Color     string `json:"color"`     // terminal background hue (hex); set at create (SSM host color)
-	Label     string `json:"label"`     // claude --name (display); derived from Title at create/recreate
-	Repo      string `json:"repo"`      // working dir basename
-	CreatedAt string `json:"createdAt"` // RFC3339, set at create
-	StoppedAt string `json:"stoppedAt"` // RFC3339, set lazily when first seen exited; "" while live
-	Archived  bool   `json:"archived"`  // true = hidden from the active list, restorable (jsonl kept)
+	Name  string `json:"name"`
+	Dir   string `json:"dir"`
+	Model string `json:"model"`
+	Kind  string `json:"kind"`
+	Title string `json:"title"` // user-supplied display title (optional); "" = auto
+	// SuggestedTitle is a headless-LLM-generated candidate the Console offers via a
+	// dismissible banner once the session has had a couple of exchanges and has no
+	// user title yet. "" = none pending (not generated yet, already accepted into
+	// Title, or dismissed).
+	SuggestedTitle string `json:"suggestedTitle,omitempty"`
+	// SuggestedTitleDismissed latches true once the user accepts OR dismisses a
+	// suggestion, so a session is offered one at most once (v1: no re-suggestion loop).
+	SuggestedTitleDismissed bool   `json:"suggestedTitleDismissed,omitempty"`
+	Color                   string `json:"color"`     // terminal background hue (hex); set at create (SSM host color)
+	Label                   string `json:"label"`     // claude --name (display); derived from Title at create/recreate
+	Repo                    string `json:"repo"`      // working dir basename
+	CreatedAt               string `json:"createdAt"` // RFC3339, set at create
+	StoppedAt               string `json:"stoppedAt"` // RFC3339, set lazily when first seen exited; "" while live
+	Archived                bool   `json:"archived"`  // true = hidden from the active list, restorable (jsonl kept)
 	// ForkFrom is the SOURCE session's sid this session was forked from (claude
 	// only). It only affects the FIRST launch: buildSessionProgram then runs
 	// `claude --resume <ForkFrom> --fork-session --session-id <ownsid>`, which copies
