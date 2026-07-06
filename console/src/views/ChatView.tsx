@@ -6,6 +6,7 @@ import { useApp } from "../state.jsx";
 import { chatGet, chatStream, chatCreate, assistantGet } from "../api.js";
 import { takeChatSeed } from "../lib/chatSeed.js";
 import { coarsePointer } from "../lib/device.js";
+import { useSettings } from "../lib/settings.js";
 import { agentOf } from "../agents/registry.ts";
 import { kindClass } from "../lib/sessionkind.js";
 import type { Conversation, ChatMessage } from "../types/chat.ts";
@@ -28,6 +29,11 @@ interface ChatViewProps {
 
 export default function ChatView({ conversationId, draftAssistantId, paneId, active }: ChatViewProps) {
   const { promoteDraft, bumpChatList, markChatBusy } = useApp();
+  const settings = useSettings();
+  // Send key follows the user's global preference (shared with the Markdown mirror
+  // composer): "mod-enter" = Ctrl/⌘+Enter submits, plain Enter newlines (phone-safe);
+  // "enter" = Enter submits, Shift+Enter newlines.
+  const modSend = settings.mirrorSend !== "enter";
   const [conv, setConv] = useState<Conversation | null>(null);
   const [draftAsst, setDraftAsst] = useState<Assistant | null>(null); // greeting source in draft mode
   const [input, setInput] = useState("");
@@ -159,7 +165,12 @@ export default function ChatView({ conversationId, draftAssistantId, paneId, act
   const stop = () => abortRef.current?.abort();
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && !e.shiftKey) {
+    // Don't intercept Enter while an IME candidate window is open (JP/CJK input).
+    if (e.key !== "Enter" || e.nativeEvent.isComposing) return;
+    const mod = e.ctrlKey || e.metaKey;
+    if (modSend ? mod : !e.shiftKey && !mod) {
+      // modSend: Ctrl/⌘+Enter submits (plain Enter newlines).
+      // else:    Enter submits (Shift+Enter newlines).
       e.preventDefault();
       void send();
     }
@@ -256,7 +267,11 @@ export default function ChatView({ conversationId, draftAssistantId, paneId, act
           className="chat-input"
           value={input}
           placeholder={
-            conv || isDraft ? "メッセージを入力（Enter で送信 / Shift+Enter で改行）" : "読み込み中…"
+            conv || isDraft
+              ? modSend
+                ? "メッセージを入力（Ctrl+Enter で送信 / Enter で改行）"
+                : "メッセージを入力（Enter で送信 / Shift+Enter で改行）"
+              : "読み込み中…"
           }
           disabled={(!conv && !isDraft) || sending}
           onChange={(e) => setInput(e.target.value)}
