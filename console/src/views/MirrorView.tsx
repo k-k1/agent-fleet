@@ -680,7 +680,7 @@ export default function MirrorView({
       setForking(false);
     }
   };
-  // Auto-suggested title (session_title.go): 承認 promotes it to the session's real
+  // Auto-suggested title (session_title.go): 採用 promotes it to the session's real
   // title (bumpSessions so the left-pane label updates without waiting for its own
   // poll); 却下 discards it. Either way the server never offers one again.
   const acceptTitle = async () => {
@@ -928,7 +928,7 @@ export default function MirrorView({
             タイトル案: <strong>{suggestedTitle}</strong>
           </span>
           <button type="button" className="btn primary mts-btn" disabled={titleActing} onClick={acceptTitle}>
-            <Icon name={titleActing ? "loading" : "check"} spin={titleActing} /> 承認
+            <Icon name={titleActing ? "loading" : "check"} spin={titleActing} /> 採用
           </button>
           <button
             type="button"

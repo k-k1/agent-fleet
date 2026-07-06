@@ -129,6 +129,7 @@ func generateSessionTitle(name string, turns []chatTurn) {
 // pinned to "what is this session ABOUT" as a noun phrase.
 const titleSuggestPersona = "あなたはセッションの会話ログを読み、セッション一覧に表示する短い件名を付ける専用ツールです。" +
 	"会話で扱っている作業やトピックを、第三者が見て『何についてのセッションか』が分かる名詞句で表してください。" +
+	"会話が複数のテーマにまたがる場合は直近で扱っている内容を優先します。" +
 	"日本語18文字以内、1行のみ。文章にしない・語尾（〜する/〜したい/〜です/〜が良い 等）を付けない・" +
 	"説明・前置き・引用符・記号・箇条書きは一切付けない。"
 
@@ -155,25 +156,58 @@ func runTitleSuggestLLM(ctx context.Context, turns []chatTurn) (string, error) {
 	return cleanSuggestedTitle(r.Result), nil
 }
 
-// titleSuggestPrompt feeds only the first couple of real exchanges' text (skipping
-// sidechain/compaction/tool-only turns) — enough context for a topic without
-// bloating a one-shot call with a growing transcript.
+const (
+	// titleHeadTurns/titleTailTurns: feed the opening (original intent) plus a larger
+	// recent window (current topic) rather than only the first few turns — a long
+	// session that drifted off its opening subject was otherwise stuck suggesting that
+	// stale opening topic on every regenerate.
+	titleHeadTurns = 2
+	titleTailTurns = 6
+	// titlePerTurnRunes caps each turn's text so one giant paste can't blow up the
+	// one-shot prompt (and its cost).
+	titlePerTurnRunes = 400
+)
+
+// titleSuggestPrompt feeds the opening and the most recent real exchanges (skipping
+// sidechain/compaction/tool-only turns), weighting the recent topic — so the title
+// tracks where the conversation is now, not just where it started.
 func titleSuggestPrompt(turns []chatTurn) string {
+	real := make([]chatTurn, 0, len(turns))
+	for _, t := range turns {
+		if t.Sidechain || t.Compact || t.Text == "" {
+			continue
+		}
+		real = append(real, t)
+	}
+
 	var b strings.Builder
 	// Few-shot anchors the output as a noun-phrase topic label rather than a sentence
 	// or the assistant's own reasoning.
 	b.WriteString("会話ログから件名を1つ出力してください。\n")
 	b.WriteString("良い例: セッションタイトルの自動提案 / ログイン画面のバグ修正 / 請求APIのリファクタ\n")
-	b.WriteString("悪い例（文章・語尾つき・視点が話者）: 短く確認するのが良さそう / メニュー変更を行いたい\n\n")
+	b.WriteString("悪い例（文章・語尾つき・視点が話者）: 短く確認するのが良さそう / メニュー変更を行いたい\n")
+	b.WriteString("会話の途中でテーマが変わっている場合は、直近で話している内容を優先してください。\n\n")
 	b.WriteString("--- 会話ログ ---\n")
-	n := 0
-	for _, t := range turns {
-		if t.Sidechain || t.Compact || t.Text == "" {
-			continue
+
+	writeTurn := func(t chatTurn) {
+		text := t.Text
+		if r := []rune(text); len(r) > titlePerTurnRunes {
+			text = string(r[:titlePerTurnRunes]) + "…"
 		}
-		fmt.Fprintf(&b, "%s: %s\n", t.Role, t.Text)
-		if n++; n >= 4 {
-			break
+		fmt.Fprintf(&b, "%s: %s\n", t.Role, text)
+	}
+
+	if len(real) <= titleHeadTurns+titleTailTurns {
+		for _, t := range real {
+			writeTurn(t)
+		}
+	} else {
+		for _, t := range real[:titleHeadTurns] {
+			writeTurn(t)
+		}
+		b.WriteString("…（中略）…\n")
+		for _, t := range real[len(real)-titleTailTurns:] {
+			writeTurn(t)
 		}
 	}
 	return b.String()
