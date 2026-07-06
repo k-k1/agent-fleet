@@ -528,9 +528,13 @@ export default function MirrorView({
   };
 
   // sendPrompt submits one prompt (the composer, or a single-select answer).
-  const sendPrompt = async (text: string) => {
-    const t = (text || "").trim();
-    if (!t || sending) return;
+  // keepEnds preserves the text verbatim (used by the launch seed, where a trailing
+  // newline the user composed must be sent too). The composer passes already-trimmed
+  // text, so its behavior is unchanged. The empty-guard still trims so whitespace-only
+  // never sends.
+  const sendPrompt = async (text: string, keepEnds = false) => {
+    const t = keepEnds ? text || "" : (text || "").trim();
+    if (!t.trim() || sending) return;
     setSending(true);
     statusRef.current = "working";
     setStatus("working");
@@ -560,7 +564,7 @@ export default function MirrorView({
     const seed = takeLaunchSeed(session);
     if (!seed) return;
     seededRef.current = true;
-    sendPrompt(seed);
+    sendPrompt(seed, true); // verbatim: keep the composed trailing newline
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [alive, termState, session, readOnly]);
 

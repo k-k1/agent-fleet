@@ -53,7 +53,11 @@ export default function Modal({
   // NOT apply it (leaving the panel operable mid-op), so pass `true`.
   if (lockClose) panelProps.inert = true;
   return (
-    <div className="modal-backdrop" onClick={lockClose ? undefined : onClose}>
+    // Stop contextmenu from bubbling past the backdrop: a modal may be rendered inside
+    // an element with its own onContextMenu (e.g. a repo row's right-click menu), and a
+    // long-press / right-click inside the dialog (notably a textarea on mobile) must not
+    // trigger that underlying menu. Not prevented — the field's native menu still works.
+    <div className="modal-backdrop" onClick={lockClose ? undefined : onClose} onContextMenu={(e) => e.stopPropagation()}>
       <Panel {...panelProps}>
         <header className="modal-head">
           <h3 className="modal-title">{title}</h3>
