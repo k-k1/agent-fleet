@@ -431,6 +431,7 @@ type sessionWire struct {
 	Kind      string `json:"kind"`
 	Dir       string `json:"dir"`
 	Repo      string `json:"repo"`
+	Display   string `json:"display"` // human-readable name from the Agent (title → label → repo@time)
 	Label     string `json:"label"`
 	Started   string `json:"started"`
 	CreatedAt string `json:"createdAt"`

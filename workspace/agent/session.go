@@ -26,6 +26,7 @@ type Session struct {
 	Kind      string `json:"kind"`      // "claude" | "opencode" | "codex" | "shell"
 	Repo      string `json:"repo"`      // working dir basename (display)
 	Title     string `json:"title"`     // user-supplied display title (optional, any kind)
+	Display   string `json:"display"`   // human-readable name (title → claude label → repo@time); never the slug alone
 	Color     string `json:"color"`     // terminal background hue (hex); SSM carries its host color
 	Label     string `json:"label"`     // claude --name display name (claude only)
 	Started   string `json:"started"`   // "01/02 15:04" local time, for the list
@@ -105,6 +106,30 @@ func stoppedTTL() time.Duration {
 	return 7 * 24 * time.Hour
 }
 
+// sessionDisplay derives a human-readable session name, mirroring the Console's
+// displayName (lib/sessionview.ts): the user title if set; else a claude session's
+// --name label (minus the "[AF] " tag); else "{repo}@MMDD-HHMM". The random slug
+// (Name) is never surfaced alone — it's an opaque id users don't recognize, so callers
+// (e.g. the Fleet Operator) should report Display, not Name.
+func sessionDisplay(m sessionMeta) string {
+	if m.Title != "" {
+		return m.Title
+	}
+	if m.Label != "" {
+		return strings.TrimLeft(strings.TrimPrefix(m.Label, "[AF]"), " ")
+	}
+	base := m.Repo
+	if base == "" {
+		base = m.Name
+	}
+	if m.CreatedAt != "" {
+		if t, err := time.Parse(time.RFC3339, m.CreatedAt); err == nil {
+			return base + " @" + t.Local().Format("0102-1504")
+		}
+	}
+	return base
+}
+
 // wireSession builds the API representation from a meta and liveness.
 func wireSession(m sessionMeta, alive bool) Session {
 	started := ""
@@ -118,7 +143,8 @@ func wireSession(m sessionMeta, alive bool) Session {
 	li := agentOf(m.Kind).wireLive(m, alive)
 	return Session{
 		Name: m.Name, Tmux: tmuxName(m.Name), Dir: m.Dir, Kind: m.Kind,
-		Repo: m.Repo, Title: m.Title, Color: m.Color, Label: m.Label, Started: started, CreatedAt: m.CreatedAt,
+		Repo: m.Repo, Title: m.Title, Display: sessionDisplay(m), Color: m.Color, Label: m.Label,
+		Started: started, CreatedAt: m.CreatedAt,
 		RemoteUrl: li.remoteURL, State: li.state, Alive: alive, Resumable: li.resumable,
 		BackgroundBusy: li.backgroundBusy, Context: li.context,
 	}
