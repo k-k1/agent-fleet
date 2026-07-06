@@ -93,10 +93,10 @@ ECS には publish host:port が無い。Runtime `Endpoint()` が差を吸収す
    **スキーマ変更ゼロ**（[§20b.7.12](#20b712-スキーマ契約への影響凍結の結論)）。ARN 保管が要る規模になったら
    `ecs_workspace(workspace_id, …)` キャッシュ表が逃げ道だが、段2 では持ち込まない。
 2. **Agent 無改修**。CP が `AGENT_TOKEN` / `AF_SECRET_KEY` を task に届ける契約は local と同一
-   （local=`-e`、ECS=Secrets Manager `valueFrom`）。Agent から見た env は両者同じ。
+   （local=`-e`、ECS=SSM Parameter Store SecureString `valueFrom`）。Agent から見た env は両者同じ。
 3. **既定 local を一切壊さない**。`AF_RUNTIME` 未設定/`local` は AWS SDK 経路に一切入らない。
    ECS 経路は `AF_RUNTIME=ecs` の明示 opt-in でのみ到達する。
-4. **secretKey/token は plaintext task env に置かない**（[§20b.7.5](#20b75-シークレット注入secrets-manager-valuefrom)）。
+4. **secretKey/token は plaintext task env に置かない**（SSM SecureString `valueFrom`、[§20b.7.5](#20b75-シークレット注入ssm-parameter-store-securestring-valuefrom)）。
 
 ### 20b.7.2 タスクライフサイクル — ECS Service（desiredCount 0/1）
 
@@ -137,20 +137,26 @@ local の 2 マウント（`home` + `claude-config`、runtime.go:179-181）を E
 - POSIX uid/gid は AP に固定（container の `dev` uid に一致）。root path は AP の `RootDirectory.Path`。
 - EFS ファイルシステム自体は IaC 作成（`AF_ECS_EFS_ID`）。AP のみ CP が動的に払い出す。
 
-### 20b.7.5 シークレット注入 — Secrets Manager `valueFrom`
+### 20b.7.5 シークレット注入 — SSM Parameter Store SecureString `valueFrom`
 
-**★ 唯一のセキュリティ姿勢判断（要ラティファイ）**。
+**★ セキュリティ姿勢判断＝ラティファイ済（B2 採用）**。
 
-- **凍結案 = Secrets Manager 経由**。CP は Start 直前に per-workspace secret（名前は決定的、
+- **凍結 = SSM Parameter Store SecureString 経由**。CP は Start 直前に per-workspace パラメータ（名前は決定的、
   [§20b.7.7](#20b77-命名規約)）へ `AGENT_TOKEN` と**アンラップ済み DEK**（`resolveDEK` の戻り、manager.go:286）を
-  PutSecretValue し、TaskDefinition は `secrets: [{name, valueFrom: <arn>}]` で参照する。execRole が
-  `secretsmanager:GetSecretValue`。**plaintext task env には置かない**。
-- **不採用 = plaintext task env**。local の `-e AF_SECRET_KEY=` は host root（`docker inspect`）だけが読める＝
+  `PutParameter`(Type=SecureString) し、TaskDefinition は `secrets: [{name, valueFrom: <param-arn>}]` で
+  参照する。execRole が `ssm:GetParameters`。**plaintext task env には置かない**。`AGENT_TOKEN` も同経路で
+  扱い、分岐を作らない。
+- **不採用① = plaintext task env**。local の `-e AF_SECRET_KEY=` は host root（`docker inspect`）だけが読める＝
   CP プロセスと同じ信頼境界。しかし ECS の plaintext env は `ecs:DescribeTaskDefinition` を持つ
-  **アカウント内の広い主体**が読める＝境界が広がり、P3-3 封筒暗号の per-tenant crypto-shred を骨抜きにする。
-- 副作用: unwrap 済み DEK が SM に at-rest で載る（SM の KMS で暗号化）。封筒の「外」に平文 DEK の写しが
-  出る点は許容する（SM = AWS ネイティブ custodian、境界は task に閉じる）。真の per-tenant 失効は段3b KMS
-  custodian が担う。
+  **アカウント内の広い主体**（および `RegisterTaskDefinition` の CloudTrail イベント）から読める＝境界が広がり、
+  P3-3 封筒暗号の per-tenant crypto-shred を骨抜きにする。CloudTrail 漏洩は消せない。
+- **不採用② = Secrets Manager**。セキュリティは SSM SecureString と同格（IAM scope で読者限定・TaskDef は ARN
+  のみ・CloudTrail に値出ず・KMS at-rest）だが、$0.40/secret/月 ×（2×workspace 数）の固定費が付く。今回は
+  rotation/cross-account が不要ゆえ、**Standard パラメータで実質無料**の SSM SecureString を既定にする。
+  SM が要る社（集中ローテ等）は同 `valueFrom` 機構で差し替え可＝任意。
+- 副作用: unwrap 済み DEK が SSM に at-rest で載る（AWS 管理鍵 `aws/ssm` で KMS 暗号化）。封筒の「外」に
+  平文 DEK の写しが出る点は許容する（SSM = tight IAM の正規シークレットストア、境界は task に閉じる）。真の
+  per-tenant 失効は段3b KMS custodian が担う。
 
 ### 20b.7.6 TaskDefinition の中身
 
@@ -162,7 +168,7 @@ local の 2 マウント（`home` + `claude-config`、runtime.go:179-181）を E
   - `portMappings: [{containerPort:7700, name:agent}]`（SC の port name）。
   - `environment`（**非機微のみ**）: `CLAUDE_CONFIG_DIR=/var/lib/af/claude`、`AGENT_SESSION_CMD`、
     `workspaceExtraEnv`（manager.go:574、例 `AF_AGENT_SELF_UPDATE_ALLOWED=1`）の非機微分。
-  - `secrets`（機微）: `AGENT_TOKEN`、`AF_SECRET_KEY`（[§20b.7.5](#20b75-シークレット注入secrets-manager-valuefrom)）。
+  - `secrets`（機微）: `AGENT_TOKEN`、`AF_SECRET_KEY`（SSM SecureString `valueFrom`、[§20b.7.5](#20b75-シークレット注入ssm-parameter-store-securestring-valuefrom)）。
   - `mountPoints`: EFS AP 2 本（[§20b.7.4](#20b74-永続ストレージ-efs-アクセスポイント-2-本cp-動的払い出し)）。
   - `logConfiguration: awslogs`（`AF_ECS_LOG_GROUP`）。
 - TaskDef family = `ContainerName`。env に per-workspace 値（secret は ARN 参照ゆえ family は image 変更時のみ
@@ -175,7 +181,7 @@ local の 2 マウント（`home` + `claude-config`、runtime.go:179-181）を E
 | ECS Service | `ws.ContainerName`（例 `af-ws-<slug>-<key>`）| local のコンテナ名を流用（[§20b.3](#20b3-runtime-港の契約ecsruntime-が満たすべき対応)）|
 | TaskDef family | `ws.ContainerName` | image 変更時のみ新 revision |
 | EFS AP | tag `af-membership=<MembershipID>` + `af-role=home\|claude` | tag 引きで冪等 |
-| Secret | `af-ws/<ContainerName>/agent-token`・`.../secret-key` | prefix `af-ws/` で IAM scope |
+| SSM param | `/af-ws/<ContainerName>/agent-token`・`.../secret-key`（SecureString）| prefix `/af-ws/` で IAM scope |
 | SC client alias | `ws.ContainerName` | `Endpoint()` が組む |
 
 ### 20b.7.8 State / Start 待ち / タイムアウト
@@ -196,18 +202,19 @@ local の 2 マウント（`home` + `claude-config`、runtime.go:179-181）を E
 - **CP task role**: `ecs:CreateService/UpdateService/DescribeServices/RegisterTaskDefinition/`
   `DescribeTaskDefinition/DescribeTasks/ListTasks`、`elasticfilesystem:CreateAccessPoint/`
   `DescribeAccessPoints/TagResource`（+ workspace 削除時 `DeleteAccessPoint`）、
-  `secretsmanager:CreateSecret/PutSecretValue/DescribeSecret`（+ `DeleteSecret`）を **resource ARN を
-  `af-ws*` に scope**、`iam:PassRole`（task/exec role へ）。
+  `ssm:PutParameter/GetParameters/DescribeParameters`（+ `DeleteParameter`）を **resource ARN を
+  `/af-ws/*` に scope**、`iam:PassRole`（task/exec role へ）。SecureString の暗号化は AWS 管理鍵
+  `aws/ssm` ゆえ CP 側の KMS 権限は不要（CMK に替える場合のみ `kms:Encrypt` を足す）。
 - **Workspace execRole**（ECS agent が使う）: `ecr:GetAuthorizationToken/BatchGetImage/`
-  `GetDownloadUrlForLayer`、`logs:CreateLogStream/PutLogEvents`、`secretsmanager:GetSecretValue`
-  （`af-ws/*` scope）。
+  `GetDownloadUrlForLayer`、`logs:CreateLogStream/PutLogEvents`、`ssm:GetParameters`
+  （`/af-ws/*` scope。SecureString 復号は `aws/ssm` 管理鍵ゆえ追加 KMS 権限不要）。
 - **Workspace taskRole**（Agent 実行時）: **原則ゼロ**。Agent は AWS API を叩かない。IMDS ブロック
   （`AWS_EC2_METADATA_DISABLED` 相当 or hop 制限）。egress は SG で git/Anthropic に限定
   （[§20b.7.15](#20b715-スコープ外)）。
 
 ### 20b.7.10 AWS SDK フットプリント
 
-- 追加依存 = `aws-sdk-go-v2`（`config` + `service/ecs` + `service/efs` + `service/secretsmanager`）。
+- 追加依存 = `aws-sdk-go-v2`（`config` + `service/ecs` + `service/efs` + `service/ssm`）。
 - 既定 local バイナリにも常時コンパイルされる（factory switch のため skeleton が既にコンパイル対象）。
   バイナリ増 ~15-25MB。実行時経路には入らないので挙動影響なし。
 - 逃げ道: サイズを嫌うなら `//go:build aws` タグで ECS 実装 + stub を分ける手はある。ただし段2 では
@@ -231,10 +238,10 @@ local の 2 マウント（`home` + `claude-config`、runtime.go:179-181）を E
 ### 20b.7.13 段2 で埋める場所
 
 - `control-plane/runtime_ecs.go` — `Start`/`Stop`/`State`/`Endpoint` を SDK 実装。EFS AP create-or-get、
-  TaskDef register-or-get、Service create-or-update、SM put、waiter。
+  TaskDef register-or-get、Service create-or-update、SSM PutParameter、waiter。
 - `control-plane/ecsConfig` 拡張 — SC namespace ARN、start timeout、task cpu/mem、AP uid/gid。
 - `control-plane/go.mod` — aws-sdk-go-v2 modules。
-- `control-plane/runtime_ecs_test.go`（新規）— ECS/EFS/SM の各 API を fake client 化し、Start/Stop/State の
+- `control-plane/runtime_ecs_test.go`（新規）— ECS/EFS/SSM の各 API を fake client 化し、Start/Stop/State の
   分岐（create-or-get の冪等・待ち・desired 遷移）を AWS 非依存で lock。
 
 ### 20b.7.14 検証ゲート（段5 E2E、要 AWS）
