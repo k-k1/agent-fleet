@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"sync"
 
 	"github.com/creack/pty"
 	"github.com/gorilla/websocket"
@@ -19,13 +20,18 @@ var upgrader = websocket.Upgrader{
 }
 
 // ctrlMsg is the client->server text protocol. Server->client is raw binary
-// (PTY bytes) to avoid UTF-8 framing issues on terminal output.
+// (PTY bytes) to avoid UTF-8 framing issues on terminal output — except pongMsg, the
+// one server->client text frame, sent in reply to a "ping" heartbeat.
 type ctrlMsg struct {
-	Type string `json:"type"`           // "input" | "resize"
+	Type string `json:"type"`           // "input" | "resize" | "ping"
 	Data string `json:"data,omitempty"` // for input
 	Cols uint16 `json:"cols,omitempty"` // for resize
 	Rows uint16 `json:"rows,omitempty"`
 }
+
+// pongMsg is the heartbeat reply. A text frame so the client's onmessage can tell it
+// apart from binary PTY output and consume it without writing to the terminal grid.
+var pongMsg = []byte(`{"type":"pong"}`)
 
 // handlePTY bridges a browser terminal to a PTY. With ?session=<name> it
 // attaches the matching tmux session; otherwise it opens a login shell
@@ -69,13 +75,22 @@ func handlePTY(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
+	// The PTY-output goroutine and the ping responder below both write to conn, so
+	// guard every write — gorilla forbids concurrent WriteMessage on one connection.
+	var writeMu sync.Mutex
+	writeMsg := func(mt int, data []byte) error {
+		writeMu.Lock()
+		defer writeMu.Unlock()
+		return conn.WriteMessage(mt, data)
+	}
+
 	// PTY -> WS (binary). Closing ptmx on command exit ends this goroutine.
 	go func() {
 		buf := make([]byte, 32*1024)
 		for {
 			n, err := ptmx.Read(buf)
 			if n > 0 {
-				if werr := conn.WriteMessage(websocket.BinaryMessage, buf[:n]); werr != nil {
+				if werr := writeMsg(websocket.BinaryMessage, buf[:n]); werr != nil {
 					return
 				}
 			}
@@ -83,7 +98,7 @@ func handlePTY(w http.ResponseWriter, r *http.Request) {
 				if err != io.EOF {
 					log.Printf("pty read: %v", err)
 				}
-				conn.WriteMessage(websocket.CloseMessage,
+				writeMsg(websocket.CloseMessage,
 					websocket.FormatCloseMessage(websocket.CloseNormalClosure, "pty closed"))
 				return
 			}
@@ -107,6 +122,11 @@ func handlePTY(w http.ResponseWriter, r *http.Request) {
 				_, _ = ptmx.Write([]byte(m.Data))
 			case "resize":
 				_ = pty.Setsize(ptmx, &pty.Winsize{Rows: m.Rows, Cols: m.Cols})
+			case "ping":
+				// App-level heartbeat: echo a pong so the client can tell this socket is
+				// alive end-to-end (the CP proxy relays data frames but swallows protocol
+				// ping/pong). A missed pong is how the client detects a dead connection.
+				_ = writeMsg(websocket.TextMessage, pongMsg)
 			}
 		case websocket.BinaryMessage:
 			_, _ = ptmx.Write(data) // tolerate raw-byte clients too
