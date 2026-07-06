@@ -4202,6 +4202,12 @@ button.mt-toolrun-head:hover {
   display: grid;
   grid-template-columns: auto max-content; /* code column sizes to the widest line */
   align-content: start;
+  /* Pack tracks at the left. Without this the grid's default (justify-content: stretch)
+     hands leftover width — when the pane is wider than the code — to the `auto` gutter
+     track, so the line-number column balloons and a big band opens to the left of the
+     numbers. `start` leaves that slack unused on the right instead. (Wrap mode uses an
+     `fr` code column, which absorbs the slack regardless, so it was never affected.) */
+  justify-content: start;
   padding: 8px 0;
   font-family: var(--viewer-font, var(--mono));
   font-size: var(--viewer-size, 12px);
