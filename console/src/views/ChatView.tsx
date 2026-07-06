@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState } from "react";
-import type { KeyboardEvent } from "react";
+import type { KeyboardEvent, ClipboardEvent } from "react";
 import MarkdownView from "./MarkdownView.jsx";
 import Icon from "../components/Icon.jsx";
 import { useApp } from "../state.jsx";
-import { chatGet, chatStream, chatCreate, assistantGet } from "../api.js";
+import { chatGet, chatStream, chatCreate, assistantGet, chatPasteImage, errText, raw } from "../api.js";
 import { takeChatSeed } from "../lib/chatSeed.js";
 import { coarsePointer } from "../lib/device.js";
 import { useSettings } from "../lib/settings.js";
+import { useToast } from "../components/ToastProvider.jsx";
+import { splitPastedImages, buildImagePrompt } from "../lib/pastedImages.js";
 import { agentOf } from "../agents/registry.ts";
 import { kindClass } from "../lib/sessionkind.js";
 import type { Conversation, ChatMessage } from "../types/chat.ts";
@@ -30,6 +32,7 @@ interface ChatViewProps {
 export default function ChatView({ conversationId, draftAssistantId, paneId, active }: ChatViewProps) {
   const { promoteDraft, bumpChatList, markChatBusy } = useApp();
   const settings = useSettings();
+  const toast = useToast();
   // Send key follows the user's global preference (shared with the Markdown mirror
   // composer): "mod-enter" = Ctrl/⌘+Enter submits, plain Enter newlines (phone-safe);
   // "enter" = Enter submits, Shift+Enter newlines.
@@ -37,6 +40,8 @@ export default function ChatView({ conversationId, draftAssistantId, paneId, act
   const [conv, setConv] = useState<Conversation | null>(null);
   const [draftAsst, setDraftAsst] = useState<Assistant | null>(null); // greeting source in draft mode
   const [input, setInput] = useState("");
+  const [attachments, setAttachments] = useState<{ path: string; name: string; url: string }[]>([]);
+  const [pasting, setPasting] = useState(false); // an image upload is in flight
   const [sending, setSending] = useState(false);
   const [streamText, setStreamText] = useState(""); // live-accumulating assistant reply
   const [error, setError] = useState("");
@@ -102,48 +107,126 @@ export default function ChatView({ conversationId, draftAssistantId, paneId, act
     if (active && !coarsePointer() && (conversationId || draftAssistantId)) inputRef.current?.focus();
   }, [active, conversationId, draftAssistantId]);
 
+  // Image attach rides claude's Read-tool flow (saved path referenced in the prompt),
+  // so it's offered only for claude-agent chats (codex has no image-read path here).
+  const canAttach = (conv?.agent || draftAsst?.agent) === "claude";
+
+  // Ensure a real conversation exists (approach A): a draft is created + promoted before
+  // the first upload or send, so image attachments have a conversation id to post to.
+  const ensureConv = async (): Promise<Conversation | null> => {
+    if (convRef.current) return convRef.current;
+    if (!draftAssistantId) return null;
+    const title = input.trim().slice(0, 40) || "新しいチャット";
+    const created = await chatCreate(draftAssistantId, title);
+    if (!created || !created.id) return null;
+    applyConv(created);
+    promoteDraft(paneId, created.id);
+    setDraftAsst(null);
+    return created;
+  };
+
+  const removeAttachment = (i: number) => {
+    setAttachments((a) => {
+      if (a[i]) URL.revokeObjectURL(a[i].url);
+      return a.filter((_, idx) => idx !== i);
+    });
+  };
+  const clearAttachments = () => {
+    setAttachments((a) => {
+      a.forEach((x) => URL.revokeObjectURL(x.url));
+      return [];
+    });
+  };
+
+  // Paste image(s) from the clipboard into the composer: upload each to this chat and
+  // hold it as an attachment chip. Non-image pastes fall through as ordinary text.
+  const onPaste = async (e: ClipboardEvent<HTMLTextAreaElement>) => {
+    if (!canAttach) return;
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    const files: File[] = [];
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i];
+      if (it.kind === "file" && it.type.startsWith("image/")) {
+        const f = it.getAsFile();
+        if (f) files.push(f);
+      }
+    }
+    if (!files.length) return; // ordinary text paste — let it happen
+    e.preventDefault();
+    setPasting(true);
+    // Approach A: a draft needs a real conversation id before we can upload.
+    let target: Conversation | null = convRef.current;
+    if (!target) {
+      try {
+        target = await ensureConv();
+      } catch {
+        target = null;
+      }
+    }
+    if (!target) {
+      setPasting(false);
+      toast("会話の作成に失敗しました");
+      return;
+    }
+    for (const f of files) {
+      try {
+        const res = await chatPasteImage(target.id, f);
+        if (res.status < 300 && res.path && res.name) {
+          const path = res.path;
+          const nm = res.name;
+          const url = URL.createObjectURL(f);
+          setAttachments((a) => [...a, { path, name: nm, url }]);
+        } else {
+          toast(res.error ? errText(res.error) : "画像の貼り付けに失敗しました");
+        }
+      } catch {
+        toast("画像の貼り付けに失敗しました（通信エラー）");
+      }
+    }
+    setPasting(false);
+    inputRef.current?.focus();
+  };
+
   const send = async () => {
+    if (sending) return;
     const text = input.trim();
-    if (!text || sending) return;
+    const paths = attachments.map((a) => a.path);
+    if (!text && !paths.length) return;
     setError("");
     setSending(true);
     setStreamText("");
 
-    // Draft: create the conversation on the first message, then promote this pane to it.
-    let target = conv;
+    // Draft: create + promote the conversation before the first turn (approach A).
+    let target: Conversation | null = conv;
     if (!target) {
-      if (!draftAssistantId) {
-        setSending(false);
-        return;
-      }
       try {
-        const created = await chatCreate(draftAssistantId, text.slice(0, 40));
-        if (!created || !created.id) {
-          setError("会話の作成に失敗しました");
-          setSending(false);
-          return;
-        }
-        target = created;
-        applyConv(created);
-        promoteDraft(paneId, created.id);
-        setDraftAsst(null);
+        target = await ensureConv();
       } catch {
+        target = null;
+      }
+      if (!target) {
         setError("会話の作成に失敗しました");
         setSending(false);
         return;
       }
     }
 
-    // Optimistically show the user's turn; the server echoes the full conversation on done.
-    const userMsg: ChatMessage = { role: "user", content: text, ts: Date.now() };
+    // Append the machine-facing image instruction + paths for claude's Read tool. The
+    // bubble strips it back out (splitPastedImages) and shows thumbnails instead.
+    const prompt = buildImagePrompt(text, paths);
+    // Optimistically show the user's turn (full prompt so pasted-image thumbnails render
+    // immediately); the server echoes the full conversation on done.
+    const userMsg: ChatMessage = { role: "user", content: prompt, ts: Date.now() };
     setConv((c) => (c ? { ...c, messages: [...c.messages, userMsg] } : c));
     setInput("");
+    clearAttachments();
     const ac = new AbortController();
     abortRef.current = ac;
     markChatBusy(target.id, true); // publish 進行中 to the rail
     await chatStream(
       target.id,
-      text,
+      prompt,
       {
         onDelta: (t) => setStreamText((s) => s + t),
         onError: (m) => setError(m),
@@ -236,7 +319,23 @@ export default function ChatView({ conversationId, draftAssistantId, paneId, act
               {m.role === "assistant" ? (
                 <MarkdownView source={m.content} breaks />
               ) : (
-                <div className="chat-text">{m.content}</div>
+                (() => {
+                  // Split off any pasted-image references so the bubble shows the user's
+                  // words + clickable thumbnails, not the machine-facing paths.
+                  const { text, images } = splitPastedImages(m.content);
+                  return (
+                    <>
+                      {text && <div className="chat-text">{text}</div>}
+                      {images.length > 0 && conv && (
+                        <div className="chat-imgs">
+                          {images.map((nm) => (
+                            <ChatPastedThumb key={nm} convId={conv.id} name={nm} />
+                          ))}
+                        </div>
+                      )}
+                    </>
+                  );
+                })()
               )}
             </div>
           </div>
@@ -262,38 +361,111 @@ export default function ChatView({ conversationId, draftAssistantId, paneId, act
         </div>
       )}
       <div className="chat-composer">
-        <textarea
-          ref={inputRef}
-          className="chat-input"
-          value={input}
-          placeholder={
-            conv || isDraft
-              ? modSend
-                ? "メッセージを入力（Ctrl+Enter で送信 / Enter で改行）"
-                : "メッセージを入力（Enter で送信 / Shift+Enter で改行）"
-              : "読み込み中…"
-          }
-          disabled={(!conv && !isDraft) || sending}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={onKeyDown}
-          rows={2}
-        />
-        {sending ? (
-          <button type="button" className="btn chat-send chat-stop" onClick={stop} title="停止">
-            <Icon name="debug-stop" />
-          </button>
-        ) : (
-          <button
-            type="button"
-            className="btn chat-send"
-            disabled={(!conv && !isDraft) || !input.trim()}
-            onClick={() => void send()}
-            title="送信"
-          >
-            <Icon name="send" />
-          </button>
+        {(attachments.length > 0 || pasting) && (
+          <div className="chat-attach">
+            {attachments.map((a, i) => (
+              <div className="ca-chip" key={a.path}>
+                <img className="ca-thumb" src={a.url} alt="" />
+                <button type="button" className="ca-del" title="削除" onClick={() => removeAttachment(i)}>
+                  <Icon name="close" />
+                </button>
+              </div>
+            ))}
+            {pasting && (
+              <span className="ca-loading">
+                <Icon name="loading" spin /> アップロード中…
+              </span>
+            )}
+          </div>
         )}
+        <div className="chat-composer-row">
+          <textarea
+            ref={inputRef}
+            className="chat-input"
+            value={input}
+            placeholder={
+              conv || isDraft
+                ? canAttach
+                  ? modSend
+                    ? "メッセージを入力（Ctrl+Enter で送信 / Enter で改行 / 画像は貼り付け）"
+                    : "メッセージを入力（Enter で送信 / Shift+Enter で改行 / 画像は貼り付け）"
+                  : modSend
+                    ? "メッセージを入力（Ctrl+Enter で送信 / Enter で改行）"
+                    : "メッセージを入力（Enter で送信 / Shift+Enter で改行）"
+                : "読み込み中…"
+            }
+            disabled={(!conv && !isDraft) || sending}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={onKeyDown}
+            onPaste={onPaste}
+            rows={2}
+          />
+          {sending ? (
+            <button type="button" className="btn chat-send chat-stop" onClick={stop} title="停止">
+              <Icon name="debug-stop" />
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="btn chat-send"
+              disabled={(!conv && !isDraft) || (!input.trim() && !attachments.length)}
+              onClick={() => void send()}
+              title="送信"
+            >
+              <Icon name="send" />
+            </button>
+          )}
+        </div>
       </div>
     </div>
+  );
+}
+
+// ChatPastedThumb previews a pasted image referenced in a chat turn. It fetches the bytes
+// through the authenticated API wrapper (an <img src> can't carry the tenant header) into
+// an object URL; clicking opens the full image in a new tab.
+function ChatPastedThumb({ convId, name }: { convId: string; name: string }) {
+  const [url, setUrl] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    let obj = "";
+    raw(`api/chat/conversations/${encodeURIComponent(convId)}/pasted/${encodeURIComponent(name)}`)
+      .then((r) => (r.ok ? r.blob() : null))
+      .then((b) => {
+        if (!alive) return;
+        if (!b) {
+          setFailed(true);
+          return;
+        }
+        obj = URL.createObjectURL(b);
+        setUrl(obj);
+      })
+      .catch(() => {
+        if (alive) setFailed(true);
+      });
+    return () => {
+      alive = false;
+      if (obj) URL.revokeObjectURL(obj);
+    };
+  }, [convId, name]);
+  if (failed) {
+    return (
+      <span className="chat-img chat-img-loading" title="プレビューを取得できませんでした">
+        <Icon name="file-media" />
+      </span>
+    );
+  }
+  if (!url) {
+    return (
+      <span className="chat-img chat-img-loading">
+        <Icon name="loading" spin />
+      </span>
+    );
+  }
+  return (
+    <button type="button" className="chat-img" title="クリックで拡大" onClick={() => window.open(url, "_blank", "noopener")}>
+      <img src={url} alt="貼り付け画像" />
+    </button>
   );
 }
