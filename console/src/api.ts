@@ -58,6 +58,8 @@ export type FsResult = { status: number } & Record<string, unknown>;
 const ERR_TEXT: Record<string, string> = {
   quota_sessions:
     "同時に稼働できるセッション数の上限に達しています。稼働中のセッションをどれか停止してから作成してください。",
+  sessions_running:
+    "この作業コピーでは稼働中のセッションがあります。切り替えると足元の作業ツリーが入れ替わり壊れるため、ここでは切り替えできません。ブランチは別の作業コピーとして開いてください。",
 };
 
 // errText turns a `res.error` ({code, message}) into a user-facing string.

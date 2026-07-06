@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, apiJSON } from "../api.js";
+import { api, apiJSON, errText } from "../api.js";
 import BranchList from "./BranchList.jsx";
 import type { Branch } from "./BranchList.jsx";
 import Modal from "./Modal.jsx";
@@ -52,7 +52,7 @@ export default function BranchModal({ repoName, onClose, onChecked }: BranchModa
     try {
       const res = await apiJSON(`api/repos/${encodeURIComponent(repoName)}/checkout`, "POST", { branch: name });
       if (res && res.error) {
-        toast("ブランチ切替に失敗: " + (res.error.message || res.error));
+        toast("ブランチ切替に失敗: " + errText(res.error));
         return;
       }
       onChecked();
