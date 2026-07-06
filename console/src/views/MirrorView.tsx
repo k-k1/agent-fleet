@@ -165,6 +165,10 @@ export default function MirrorView({
   const [pendingText, setPendingText] = useState<string>(""); // prose streamed just before the pending question
   const [pendingPlan, setPendingPlan] = useState<string | null>(null); // ExitPlanMode plan awaiting approval
   const [pendingPerm, setPendingPerm] = useState<string | null>(null); // tool-permission prompt awaiting allow/deny
+  // Plans the user just 却下'd (keyed by plan text). Lets the historical plan badge show
+  // 却下 immediately, before the interrupt tool_result (its real signal) lands a poll or
+  // two later — otherwise it sits at the neutral 決定済み until then.
+  const rejectedPlansRef = useRef<Set<string>>(new Set());
   const [mode, setMode] = useState(""); // session permission mode ("plan" | …)
   const [suggestedTitle, setSuggestedTitle] = useState(""); // headless-LLM title candidate, "" = none
   const [titleActing, setTitleActing] = useState(false); // accept/dismiss request in flight
@@ -214,6 +218,7 @@ export default function MirrorView({
     statusRef.current = "";
     setTurns([]);
     setPendingSends([]); // echoes belong to the old session's transcript
+    rejectedPlansRef.current = new Set(); // optimistic 却下 marks belong to the old session
     setLoaded(false);
     setTermState("");
     setStatus("");
@@ -942,7 +947,7 @@ export default function MirrorView({
               : "まだ会話はありません。下の欄からプロンプトを送るか、ターミナルで対話すると、ここに ターンごとの Markdown で表示されます。"}
           </div>
         ) : (
-          renderGroups(groups, sendPrompt, openPlan, openDiff, maxSpend, session, setLightbox, agentName)
+          renderGroups(groups, sendPrompt, openPlan, openDiff, maxSpend, session, setLightbox, agentName, (p) => rejectedPlansRef.current.has(p.trim()))
         )}
         {pendingPlan && (
           <div className="mirror-turn assistant">
@@ -962,7 +967,10 @@ export default function MirrorView({
                 // NOT option 3, which routes to Ultraplan on the web. Selecting 4 keeps
                 // refining in-session; pendingPlan then clears and the composer unlocks so
                 // the user can type feedback. (Option order is claude-version dependent.)
-                onReject={() => sendKeys(["Down", "Down", "Down", "Enter"])}
+                onReject={() => {
+                  rejectedPlansRef.current.add(pendingPlan.trim()); // optimistic 却下 badge
+                  sendKeys(["Down", "Down", "Down", "Enter"]);
+                }}
               />
             </div>
           </div>
@@ -1333,6 +1341,7 @@ function renderGroups(
   session: string,
   onOpenImage: (url: string) => void,
   agentName: string,
+  isRejectedPlan: (plan: string) => boolean,
 ) {
   const els = [];
   let prevCtx = "";
@@ -1356,6 +1365,7 @@ function renderGroups(
           onOpenPlan={onOpenPlan}
           onOpenDiff={onOpenDiff}
           agentName={agentName}
+          isRejectedPlan={isRejectedPlan}
         />
       ),
     );
@@ -1468,6 +1478,7 @@ function Turn({
   onOpenPlan,
   onOpenDiff,
   agentName,
+  isRejectedPlan,
 }: {
   turn: Group;
   maxSpend: number;
@@ -1477,6 +1488,7 @@ function Turn({
   onOpenPlan: (plan: string) => void;
   onOpenDiff: (p: Part) => void;
   agentName: string;
+  isRejectedPlan: (plan: string) => boolean;
 }) {
   const isUser = turn.role === "user";
   const who = isUser ? "あなた" : turn.sidechain ? "サブエージェント" : agentName;
@@ -1534,6 +1546,7 @@ function Turn({
                 plan={item.p.plan}
                 answered
                 outcome={item.p.answer}
+                forceRejected={isRejectedPlan(item.p.plan || "")}
                 onOpen={() => onOpenPlan && onOpenPlan(item.p.plan || "")}
               />
             ) : item.p.kind === "thinking" ? (
@@ -2001,6 +2014,7 @@ function PlanBlock({
   pending,
   answered,
   outcome,
+  forceRejected,
   onOpen,
   onApprove,
   onReject,
@@ -2010,6 +2024,7 @@ function PlanBlock({
   pending?: boolean;
   answered?: boolean;
   outcome?: string;
+  forceRejected?: boolean;
   onOpen?: () => void;
   onApprove?: () => void;
   onReject?: () => void;
@@ -2018,9 +2033,11 @@ function PlanBlock({
   // A plan in the transcript was presented and resolved — classify its outcome text
   // (best-effort; the exact result text varies). A rejected plan's tool_result is an
   // interruption ("[Request interrupted by user for tool use]"), so isRejected wins to
-  // avoid mislabeling a 却下 as 承認済み. Unknown/empty → neutral 決定済み.
-  const rejected = isRejected(outcome);
-  const approved = !rejected && (!outcome || isApproved(outcome));
+  // avoid mislabeling a 却下 as 承認済み. Empty/unknown → neutral 決定済み: the tool_result
+  // can lag a poll or two behind the plan turn, and defaulting empty→approved made a
+  // just-rejected plan flash 承認済み until the interrupt result landed.
+  const rejected = forceRejected || isRejected(outcome);
+  const approved = !rejected && isApproved(outcome);
   return (
     <div className={"mt-plan" + (answered ? " decided" : "")}>
       <div className="mt-plan-head">
