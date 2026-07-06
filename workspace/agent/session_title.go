@@ -10,7 +10,9 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"sync"
@@ -228,13 +230,56 @@ func handleAcceptSuggestedTitle(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, wireSession(m, tmuxHasSession(tmuxName(name))))
 }
 
+// errNoTitleContent/errTitleGenBusy are sentinels generateTitleNow returns so
+// callers can translate them to the right HTTP status via writeTitleGenErr; any
+// other error means the LLM call itself failed.
+var (
+	errNoTitleContent = errors.New("not enough conversation yet")
+	errTitleGenBusy   = errors.New("a title generation is already in progress")
+)
+
+// generateTitleNow runs the headless LLM synchronously under the shared in-flight/
+// backoff guard (titleGenClaim/titleGenDone) used by the automatic trigger too, so
+// a manual request and a concurrent automatic one can't double-fire for the same
+// session.
+func generateTitleNow(ctx context.Context, name string, turns []chatTurn) (string, error) {
+	if len(turns) == 0 {
+		return "", errNoTitleContent
+	}
+	if !titleGenClaim(name) {
+		return "", errTitleGenBusy
+	}
+	succeeded := false
+	defer func() { titleGenDone(name, succeeded) }()
+
+	title, err := runTitleSuggestLLM(ctx, turns)
+	if err != nil || title == "" {
+		return "", fmt.Errorf("title generation failed: %w", err)
+	}
+	succeeded = true
+	return title, nil
+}
+
+func writeTitleGenErr(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, errNoTitleContent):
+		writeErr(w, http.StatusBadRequest, "no_content", "not enough conversation yet to suggest a title")
+	case errors.Is(err, errTitleGenBusy):
+		writeErr(w, http.StatusConflict, "busy", "a title generation is already in progress")
+	default:
+		writeErr(w, http.StatusInternalServerError, "generation_failed", "title generation failed")
+	}
+}
+
 // handleRegenerateSuggestedTitle lets the user explicitly ask for a fresh title
 // suggestion at any time (a button in the chat header), bypassing the automatic
 // trigger's turn-count/idle gating and any prior dismissal — the automatic path
 // still only offers once, but the user can always ask again manually. Runs
 // synchronously so the response carries the new suggestion directly; this is a
 // rare, user-initiated action (unlike the poll-driven automatic path), so blocking
-// the request on the LLM call is fine.
+// the request on the LLM call is fine. Persists into SuggestedTitle (so it also
+// surfaces as the header banner) — for a preview that doesn't touch sessionMeta,
+// see handleSuggestTitle.
 func handleRegenerateSuggestedTitle(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if !nameRe.MatchString(name) {
@@ -254,26 +299,13 @@ func handleRegenerateSuggestedTitle(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "already_titled", "session already has a title")
 		return
 	}
-	turns := sessionTitleTurns(m)
-	if len(turns) == 0 {
-		writeErr(w, http.StatusBadRequest, "no_content", "not enough conversation yet to suggest a title")
-		return
-	}
-	if !titleGenClaim(name) {
-		writeErr(w, http.StatusConflict, "busy", "a title generation is already in progress")
-		return
-	}
-	succeeded := false
-	defer func() { titleGenDone(name, succeeded) }()
-
 	ctx, cancel := context.WithTimeout(r.Context(), titleSuggestTimeout)
 	defer cancel()
-	title, err := runTitleSuggestLLM(ctx, turns)
-	if err != nil || title == "" {
-		writeErr(w, http.StatusInternalServerError, "generation_failed", "title generation failed")
+	title, err := generateTitleNow(ctx, name, sessionTitleTurns(m))
+	if err != nil {
+		writeTitleGenErr(w, err)
 		return
 	}
-	succeeded = true
 
 	// Re-read: the LLM call can take tens of seconds, during which the user may
 	// have set a title themselves.
@@ -286,6 +318,75 @@ func handleRegenerateSuggestedTitle(w http.ResponseWriter, r *http.Request) {
 	m.SuggestedTitleDismissed = false // an explicit re-ask overrides any earlier dismissal
 	writeSessionMeta(m)
 	writeJSON(w, http.StatusOK, map[string]any{"suggestedTitle": title})
+}
+
+// handleSuggestTitle previews a title suggestion WITHOUT touching sessionMeta —
+// used by the manual rename dialog's "AIに提案してもらう" button, which just fills
+// the text field for the user to edit/accept themselves. Unlike
+// handleRegenerateSuggestedTitle, this works even when the session already has a
+// title (renaming is exactly the case where one already exists) and never drives
+// the accept/dismiss banner flow.
+func handleSuggestTitle(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if !nameRe.MatchString(name) {
+		writeErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
+		return
+	}
+	if !autoTitleSuggestEnabled() {
+		writeErr(w, http.StatusBadRequest, "feature_disabled", "auto title suggestion is turned off")
+		return
+	}
+	m, found := readSessionMeta(name)
+	if !found {
+		writeErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), titleSuggestTimeout)
+	defer cancel()
+	title, err := generateTitleNow(ctx, name, sessionTitleTurns(m))
+	if err != nil {
+		writeTitleGenErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"suggestedTitle": title})
+}
+
+// handleSetTitle applies a user-typed title directly (the rename dialog's 保存
+// button) — the only path that lets the Console set an arbitrary title on an
+// EXISTING session (creation already accepts one; accept/regenerate only ever
+// write an LLM-produced string). An empty title reverts to the auto label and
+// re-opens the session to future auto-suggestions.
+func handleSetTitle(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if !nameRe.MatchString(name) {
+		writeErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
+		return
+	}
+	var req struct {
+		Title string `json:"title"`
+	}
+	if json.NewDecoder(io.LimitReader(r.Body, 4<<10)).Decode(&req) != nil {
+		writeErr(w, http.StatusBadRequest, "bad_json", "invalid request body")
+		return
+	}
+	title, ok := cleanTitle(req.Title)
+	if !ok {
+		writeErr(w, http.StatusBadRequest, "bad_title", "title too long or contains control characters")
+		return
+	}
+	m, found := readSessionMeta(name)
+	if !found {
+		writeErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
+		return
+	}
+	m.Title = title
+	m.SuggestedTitle = ""
+	m.SuggestedTitleDismissed = title != "" // clearing the title re-opens auto-suggestion
+	if agentOf(m.Kind).caps().usesLabel {
+		m.Label = sessionLabelFor(m.Dir, m.Title)
+	}
+	writeSessionMeta(m)
+	writeJSON(w, http.StatusOK, wireSession(m, tmuxHasSession(tmuxName(name))))
 }
 
 // sessionTitleTurns fetches the full turn list for a session regardless of kind,
