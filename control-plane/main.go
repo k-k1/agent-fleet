@@ -317,6 +317,8 @@ func main() {
 	mux.HandleFunc("POST /api/repos/{name}/checkout", cfg.proxyAgentREST)
 	mux.HandleFunc("POST /api/repos/{name}/fetch", cfg.proxyAgentREST)
 	mux.HandleFunc("POST /api/repos/{name}/ff", cfg.proxyAgentREST)
+	// Launch prompt templates (repo 起動 modal) — proxied to the Agent.
+	mux.HandleFunc("GET /api/repos/{name}/prompt-templates", cfg.proxyAgentREST)
 	// Source-control view + light edits (docs/17 P3-5) — proxied to the Agent.
 	mux.HandleFunc("GET /api/repos/{name}/changes", cfg.proxyAgentREST)
 	mux.HandleFunc("GET /api/repos/{name}/diff", cfg.proxyAgentREST)

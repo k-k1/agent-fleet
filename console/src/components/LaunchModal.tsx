@@ -1,18 +1,28 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Modal from "./Modal.jsx";
 import Icon from "./Icon.jsx";
 import { agentOf } from "../agents/registry.ts";
 import { readRepoLast } from "../lib/repoLast.js";
+import { readPromptHistory } from "../lib/promptHistory.js";
+import { repoPromptTemplates } from "../api.js";
+import type { PromptTemplateGroup } from "../api.js";
 import type { KeyboardEvent } from "react";
 
 // LaunchModal: the repo row's primary 起動 action. A small, agent-only dialog —
 // pick the agent (claude/codex/opencode), a model (claude only), and an optional
-// first prompt. On 起動 the parent creates the session, opens the chat mirror, and
-// (when a prompt was typed) auto-sends it once the session is alive.
+// first prompt (typed, or picked from a template). On 起動 the parent creates the
+// session, opens the chat mirror, and (when a prompt is present) auto-sends it once
+// the session is alive.
 //
 // shell is deliberately absent: it has no model and no "prompt" (a shell command is a
 // different, riskier semantic), so it keeps its old one-click path via the ▼ dropdown
 // and the right-click menu. `kinds` is the available agent kinds, in display order.
+//
+// Templates come from the working copy (.claude/commands, .claude/skills,
+// .agent-fleet/launch-prompts.md — GET /repos/{name}/prompt-templates) plus a local
+// 履歴 group. command/skill sources are claude-flavored (slash commands / skill
+// invocations), so they only show when the agent is claude. Picking a template fills
+// the prompt box, expanding {{repo}}/{{branch}}/{{path}} from this repo's context.
 const MODELS: [string, string][] = [
   ["", "既定"],
   ["opus", "Opus"],
@@ -22,12 +32,14 @@ const MODELS: [string, string][] = [
 
 interface LaunchModalProps {
   repo: string;
+  branch?: string;
+  path?: string;
   kinds: string[]; // available agent kinds (shell/ssm already excluded)
   onClose: () => void;
   onLaunch: (kind: string, model: string, prompt: string) => void;
 }
 
-export default function LaunchModal({ repo, kinds, onClose, onLaunch }: LaunchModalProps) {
+export default function LaunchModal({ repo, branch, path, kinds, onClose, onLaunch }: LaunchModalProps) {
   const last = readRepoLast(repo);
   // Default to the last agent used in this repo when it's still an available agent
   // kind; otherwise the first available agent (usually claude). Falls back to the
@@ -39,7 +51,46 @@ export default function LaunchModal({ repo, kinds, onClose, onLaunch }: LaunchMo
   const [busy, setBusy] = useState(false);
   const textRef = useRef<HTMLTextAreaElement>(null);
 
+  // Template sources fetched once for this repo; history is read from localStorage.
+  const [srvGroups, setSrvGroups] = useState<PromptTemplateGroup[]>([]);
+
+  useEffect(() => {
+    let alive = true;
+    repoPromptTemplates(repo)
+      .then((d) => alive && setSrvGroups(d.groups || []))
+      .catch(() => {}); // no templates dir / offline → just an empty picker
+    return () => {
+      alive = false;
+    };
+  }, [repo]);
+
   const hasModel = agentOf(kind).caps.model; // claude offers a model selector
+
+  // {{repo}}/{{branch}}/{{path}} auto-embed from this repo's row context (no fill-in).
+  const expand = (body: string) =>
+    body
+      .replaceAll("{{repo}}", repo)
+      .replaceAll("{{branch}}", branch || "")
+      .replaceAll("{{path}}", path || "");
+
+  // Visible template groups: 履歴 first, then the in-repo sources. command/skill are
+  // claude-flavored, so hide them for codex/opencode (their bodies wouldn't apply).
+  const history = readPromptHistory(repo);
+  const groups: PromptTemplateGroup[] = [
+    ...(history.length
+      ? [{ source: "history", label: "履歴", items: history.map((h, i) => ({ id: "h" + i, label: h, body: h })) }]
+      : []),
+    ...srvGroups.filter((g) => kind === "claude" || (g.source !== "command" && g.source !== "skill")),
+  ];
+  // Flattened for the <select>: option value = index into this list.
+  const flatItems = groups.flatMap((g) => g.items.map((it) => it.body));
+  const hasTemplates = flatItems.length > 0;
+
+  const pick = (body: string) => {
+    setPrompt(expand(body));
+    // Focus the box so the user can immediately tweak the filled-in text.
+    setTimeout(() => textRef.current?.focus(), 0);
+  };
 
   const submit = () => {
     if (busy) return;
@@ -105,7 +156,43 @@ export default function LaunchModal({ repo, kinds, onClose, onLaunch }: LaunchMo
 
         {/* 最初のプロンプト（任意） */}
         <div className="field">
-          <div className="field-label">最初のプロンプト（任意）</div>
+          <div className="field-label launch-prompt-label">
+            <span>最初のプロンプト（任意）</span>
+            {/* Template picker: fills the box from .claude/commands / skills /
+                launch-prompts.md and 履歴. A native select (with optgroups) so the
+                long list never gets clipped by the modal body's overflow. Resets to
+                the placeholder after each pick. Hidden when nothing is available. */}
+            {hasTemplates && (
+              <select
+                className="cinput launch-tmpl-select"
+                value=""
+                title="テンプレートから最初のプロンプトを挿入"
+                onChange={(e) => {
+                  if (e.target.value === "") return; // the placeholder row
+                  const i = Number(e.target.value);
+                  if (Number.isInteger(i) && flatItems[i] !== undefined) pick(flatItems[i]);
+                }}
+              >
+                <option value="">テンプレートから挿入…</option>
+                {(() => {
+                  let base = 0;
+                  return groups.map((g) => {
+                    const start = base;
+                    base += g.items.length;
+                    return (
+                      <optgroup key={g.source} label={g.label}>
+                        {g.items.map((it, j) => (
+                          <option key={g.source + ":" + it.id} value={start + j}>
+                            {it.label}
+                          </option>
+                        ))}
+                      </optgroup>
+                    );
+                  });
+                })()}
+              </select>
+            )}
+          </div>
           <textarea
             ref={textRef}
             className="cinput launch-prompt"

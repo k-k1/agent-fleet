@@ -15,6 +15,7 @@ import { kindIcon, kindLabel } from "../../lib/sessionkind.js";
 import { agentOf, repoLaunchKinds } from "../../agents/registry.ts";
 import { setLaunchSeed } from "../../lib/launchSeed.js";
 import { writeRepoLast } from "../../lib/repoLast.js";
+import { pushPromptHistory } from "../../lib/promptHistory.js";
 import { useSettings } from "../../lib/settings.js";
 import { repoPanes, ordClass, paneCount } from "../../lib/panebadge.js";
 import type { MouseEvent as RMouseEvent } from "react";
@@ -270,7 +271,10 @@ export default function ReposSection() {
                 return;
               }
               writeRepoLast(r.name, kind, hasModel ? model : undefined);
-              if (prompt) setLaunchSeed(res.name, prompt);
+              if (prompt) {
+                setLaunchSeed(res.name, prompt);
+                pushPromptHistory(r.name, prompt); // remember it for the 履歴 group next time
+              }
               bumpSessions();
               showChat(res.name);
             }}
@@ -537,6 +541,8 @@ function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected,
       {launchModal && (
         <LaunchModal
           repo={r.name}
+          branch={r.branch}
+          path={r.path}
           kinds={agentKinds}
           onClose={() => setLaunchModal(false)}
           onLaunch={(kind, model, prompt) => { setLaunchModal(false); onLaunchPrompt(kind, model, prompt); }}

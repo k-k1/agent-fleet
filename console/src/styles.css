@@ -7289,6 +7289,20 @@ button.mt-toolrun-head:hover {
   min-height: 84px;
   font-family: var(--mono);
 }
+/* Prompt field header: label on the left, the テンプレート picker on the right. */
+.launch-prompt-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.launch-tmpl-select {
+  flex: none;
+  font-weight: normal;
+  font-size: 11px;
+  max-width: 220px;
+  padding: 2px 6px;
+}
 .field {
   margin-bottom: 18px;
 }

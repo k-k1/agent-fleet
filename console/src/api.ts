@@ -328,6 +328,23 @@ export const assistantUpdate = (id: string, input: AssistantInput): Promise<Assi
 export const assistantDelete = (id: string): Promise<Response> =>
   raw(`api/assistants/${encodeURIComponent(id)}`, { method: "DELETE" });
 
+// --- launch prompt templates (repo 起動 modal) ---
+// Aggregated read-only from the working copy: .claude/commands, .claude/skills,
+// .agent-fleet/launch-prompts.md. Bodies are verbatim; the modal does {{repo}}/
+// {{branch}}/{{path}} expansion and adds a client-side 履歴 group (localStorage).
+export interface PromptTemplateItem {
+  id: string;
+  label: string;
+  body: string;
+}
+export interface PromptTemplateGroup {
+  source: string; // command | skill | file
+  label: string;
+  items: PromptTemplateItem[];
+}
+export const repoPromptTemplates = (name: string): Promise<{ groups: PromptTemplateGroup[] }> =>
+  api(`api/repos/${encodeURIComponent(name)}/prompt-templates`);
+
 // Build the terminal WebSocket URL for a session under the current mount, with
 // the tenant carried as a query param (headers aren't available on WS).
 export function wsURL(session: string): URL {
