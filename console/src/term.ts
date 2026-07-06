@@ -25,6 +25,8 @@ interface Inst {
   sessionListeners: Set<(name: string | null) => void>;
   ro?: ResizeObserver | null;
   dropped?: boolean;
+  hb?: ReturnType<typeof setInterval>; // heartbeat timer (see startHeartbeat)
+  lastPong?: number; // ms of the last pong seen on the current socket
 }
 const insts = new Map<string, Inst>();
 function inst(paneId: string): Inst | null {
@@ -448,6 +450,47 @@ export function focusTerm(paneId: string) {
   } catch {}
 }
 
+// A PTY socket can die WITHOUT a close frame — a flaky network, a laptop sleep, or a
+// proxy dropping an idle connection can leave the WebSocket wedged in OPEN with no
+// data and no onclose. The terminal then looks attached but is dead until a full page
+// reload. An app-level heartbeat closes that gap: the client pings over the DATA
+// channel (the only thing the Control-Plane proxy relays end-to-end — it re-frames and
+// swallows protocol ping/pong) and the Agent echoes a pong. Miss enough pongs and we
+// treat the socket as dead and re-attach in place, exactly what a reload does.
+const HB_INTERVAL = 15000; // ping cadence
+const HB_TIMEOUT = 45000; // no pong for this long ⇒ dead → re-attach
+
+function clearHeartbeat(it: Inst) {
+  if (it.hb !== undefined) {
+    clearInterval(it.hb);
+    it.hb = undefined;
+  }
+}
+
+// startHeartbeat begins pinging on `ws` and re-attaches the pane if pongs stop. Bound
+// to a specific socket so a timer left over from a replaced socket no-ops itself.
+function startHeartbeat(paneId: string, ws: WebSocket) {
+  const it0 = inst(paneId);
+  if (!it0) return;
+  clearHeartbeat(it0);
+  it0.lastPong = Date.now();
+  it0.hb = setInterval(() => {
+    const it = inst(paneId);
+    if (!it || it.ws !== ws) return; // socket was replaced — this timer is stale
+    if (ws.readyState !== WebSocket.OPEN) return;
+    if (Date.now() - (it.lastPong ?? 0) > HB_TIMEOUT) {
+      // Pongs stopped: the connection is a zombie. Re-attach (closes this socket and
+      // opens a fresh one, replaying the tmux screen) rather than waiting on a TCP
+      // timeout that may never come.
+      if (it.session) attach(paneId, it.session);
+      return;
+    }
+    try {
+      ws.send(JSON.stringify({ type: "ping" }));
+    } catch {}
+  }, HB_INTERVAL);
+}
+
 // attach opens a fresh WebSocket to the session's PTY for a pane, replacing any
 // current one on that pane.
 export function attach(paneId: string, session: string) {
@@ -459,8 +502,10 @@ export function attach(paneId: string, session: string) {
   if (it.ws) {
     it.ws.onclose = null;
     it.ws.onmessage = null;
+    it.ws.onerror = null; // a late error on the old socket must not flag the new one
     it.ws.close();
   }
+  clearHeartbeat(it); // stop the old socket's heartbeat before opening the new one
   it.term.reset();
   setSession(it, session);
   it.dropped = false; // fresh socket: clear any prior unexpected-drop flag
@@ -472,15 +517,30 @@ export function attach(paneId: string, session: string) {
     fitInst(it);
     setSoftKeyboard(it, true); // PTY connected → allow the soft keyboard for input
     ws.send(JSON.stringify({ type: "resize", cols: it.term!.cols, rows: it.term!.rows }));
+    startHeartbeat(paneId, ws); // begin liveness pinging on this socket
   };
   ws.onmessage = (ev) => {
-    if (ev.data instanceof ArrayBuffer) it.term!.write(new Uint8Array(ev.data));
-    else it.term!.write(ev.data);
+    const d = ev.data;
+    if (typeof d === "string") {
+      // Text frames are out-of-band control (heartbeat), never terminal output — PTY
+      // output is always binary. Consume the pong without writing it to the grid.
+      try {
+        if (JSON.parse(d)?.type === "pong") it.lastPong = Date.now();
+      } catch {}
+      return;
+    }
+    if (d instanceof ArrayBuffer) it.term!.write(new Uint8Array(d));
+  };
+  // A socket error usually precedes an unclean drop — flag it so a refocus reconnects
+  // even if onclose never arrives (the heartbeat is the backstop when neither fires).
+  ws.onerror = () => {
+    it.dropped = true;
   };
   // An unexpected server-side drop (intentional switches/detach null this handler
   // first). Flag it so refocusing the pane reconnects — see reconnect().
   ws.onclose = () => {
     it.dropped = true;
+    clearHeartbeat(it); // socket gone → stop pinging
     setSoftKeyboard(it, false); // no live PTY → don't summon the keyboard on focus
     it.term!.write("\r\n[disconnected]\r\n");
   };
@@ -517,9 +577,11 @@ export function reconnectSession(name: string) {
 export function detach(paneId: string) {
   const it = inst(paneId);
   if (!it) return;
+  clearHeartbeat(it);
   if (it.ws) {
     try {
       it.ws.onclose = null; // intentional detach — don't print "[disconnected]"
+      it.ws.onerror = null;
       it.ws.close();
     } catch {}
     it.ws = null;
@@ -546,10 +608,12 @@ export function clearTerm(paneId: string) {
 export function disposeTerm(paneId: string) {
   const it = inst(paneId);
   if (!it) return;
+  clearHeartbeat(it);
   if (it.ws) {
     try {
       it.ws.onclose = null;
       it.ws.onmessage = null;
+      it.ws.onerror = null;
       it.ws.close();
     } catch {}
     it.ws = null;
