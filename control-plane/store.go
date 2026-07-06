@@ -197,6 +197,15 @@ type Store interface {
 	RenameGitRepo(ctx context.Context, tenantID, oldName, newName string) error
 	DeleteGitRepo(ctx context.Context, tenantID, name string) error
 
+	// Git LFS object ledger (P3). PutLFSObject records an uploaded object (dedup on
+	// (tenant, repo, oid)); TenantLFSBytes sums a tenant's stored bytes for the
+	// capacity quota; the repo-scoped ops keep the ledger in step with repo
+	// delete/rename (the bytes on disk move with the .git dir).
+	PutLFSObject(ctx context.Context, tenantID, repo, oid string, size int64) error
+	TenantLFSBytes(ctx context.Context, tenantID string) (int64, error)
+	DeleteLFSObjectsByRepo(ctx context.Context, tenantID, repo string) error
+	RenameLFSObjectsRepo(ctx context.Context, tenantID, oldRepo, newRepo string) error
+
 	// Audit log (docs/decisions/0006, P3-6; docs/20 M1). InsertAudit records one
 	// action; ListAuditByTenant serves the most recent entries (newest first) scoped
 	// to a tenant, or — when tenantID=="" — deployment-wide (super_admin).

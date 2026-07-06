@@ -21,7 +21,8 @@
 
 - PR / コードレビュー / CI（GitHub 相当。将来 Gitea/Forgejo へ載せ替える「②」領域）。
 - 組織/チームの細粒度権限マトリクス（当面は membership role で read/write の2段）。
-- LFS（P2 以降で検討）。
+- LFS ロック API（`info/lfs/locks`）: 501 で未対応（push/pull には不要）。
+  ※ LFS 本体（Batch API＋basic 転送＋容量クォータ）は **P3 で実装済み**（§9）。
 
 ## 2. なぜこの形か（要約。詳細は ADR 0010）
 
@@ -62,6 +63,10 @@
   （既定 = flat、その他 = `<slug>/`）。git は別ツリー `git/<slug>/` に分ける。
 - メタデータ: SQLite に **`git_repo` テーブル**（新 migration）。一覧・作成者・作成時刻・
   （将来）クォータ/監査の台帳。ディレクトリ走査でなく DB を正にして FS レースを避ける。
+- **LFS オブジェクト**（P3）: content-addressed で `<repo>.git/lfs/objects/<oid[0:2]>/<oid[2:4]>/<oid>`
+  （oid=sha256）。repo の `.git` ツリー内に置くので delete/rename で一緒に移動/削除される。
+  容量クォータ用の会計台帳として **`lfs_object` テーブル**（tenant, repo, oid, size）を持ち、
+  テナント合計バイトを O(1) の SUM で得る（FS 走査を避ける）。
 
 ## 5. 認証・認可・トークンモデル
 
@@ -139,6 +144,9 @@
 - **秘密の非漏洩**: token は暗号ストア（`secrets.enc`, AES-256-GCM）に注入し平文化しない
   （[0003](../decisions/0003-ssh-to-connections.md) / [0005](../decisions/0005-envelope-custodian.md) 準拠）。
 - CP に **git 実行面が増える**点は新たな攻撃面。入力（refspec/パス）検証を厳格化する。
+- **LFS**（P3）: smart-HTTP と同じ `authorizeGitRepo`（テナント越境遮断・台帳存在）を全操作で適用。
+  oid は sha256 hex のみ許可＝転送パスのパス封じ込めも兼ねる。アップロードは sha256 を検証し oid 不一致を
+  拒否（汚染防止）。容量は batch/PUT 双方でクォータ強制。大容量はメモリに載せずストリーム（共有ホスト配慮）。
 
 ## 9. フェーズ
 
@@ -155,7 +163,16 @@
     `auditGit`）。admin 監査ビューに出る。
   - **空リポ/既定ブランチ UX**: 新規作成した空リポ（コミット無し＝ブランチ無し）でも RepoPicker が
     `default_branch` をプレースホルダとして選択・clone 可能に。
-- **見送り（将来）**: clone なしのツリー閲覧（bare から read-only 提供）は規模が大きく別フェーズ。
+- **P3（実装済み）**: **Git LFS**。
+  - `git_lfs.go`: Batch API（`POST .../info/lfs/objects/batch`）＋ basic 転送
+    （`PUT/GET .../info/lfs/objects/{oid}`）。認証・封じ込めは smart-HTTP と共通の
+    `authorizeGitRepo`（Basic トークン→membership→slug 一致→台帳存在）を再利用。
+  - **アップロードは sha256 検証**（oid 不一致は 422）、temp→fsync→rename で原子的公開、dedup。
+  - **容量クォータ**: `tenantLimits.max_lfs_bytes`（0=無制限）を **batch 時（507 error entry）と PUT 時**
+    の両方で強制。`lfs_object` 台帳で O(1) 集計。admin limits API / AdminTab（MB 入力）に露出。
+  - ロック API は 501（未対応でも push/pull は動く）。ワークスペースは git-lfs 同梱・cred helper 連携済みで
+    クライアント無改造。実 `git lfs push`/clone の E2E テストあり。
+- **見送り（将来）**: clone なしのツリー閲覧（bare から read-only 提供）／LFS 孤児オブジェクトの GC。
   PR/レビュー/CI が要れば ② へ載せ替え。
 - **将来（②）**: PR/レビュー/CI が要るなら Gitea/Forgejo を内包して載せ替え。
 

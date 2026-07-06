@@ -343,6 +343,8 @@ type tenantLimits struct {
 	// MaxGitRepos caps the tenant's internal git repositories (docs/reference/
 	// internal-git-provider, P2). 0 = unlimited, like the other int quotas.
 	MaxGitRepos int `json:"max_git_repos,omitempty"`
+	// MaxLFSBytes caps the tenant's total stored Git LFS bytes (P3). 0 = unlimited.
+	MaxLFSBytes int64 `json:"max_lfs_bytes,omitempty"`
 	// P3-9 idle-stop (docs/19): per-tenant, super_admin-editable.
 	SessionIdleTimeout string `json:"session_idle_timeout,omitempty"` // tier-1: idle claude -> halt
 	WSIdleTimeout      string `json:"ws_idle_timeout,omitempty"`      // tier-2: cold workspace -> docker stop

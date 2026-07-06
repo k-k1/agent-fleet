@@ -414,6 +414,16 @@ func main() {
 	mux.HandleFunc("DELETE /api/internal-git/repos/{name}", cfg.handleInternalGitRepoDelete)
 	mux.HandleFunc("POST /api/internal-git/repos/{name}/rename", cfg.handleInternalGitRepoRename)
 	mux.HandleFunc("GET /api/internal-git/repos/{name}/branches", cfg.handleInternalGitBranches)
+	// Git LFS face (docs/reference/internal-git-provider, P3). More specific than the
+	// smart-HTTP catch-all below, so these win for LFS paths; git-http-backend never
+	// sees them. Same Basic git-token auth (session-exempt under /git/).
+	mux.HandleFunc("POST /git/{slug}/{repo}/info/lfs/objects/batch", cfg.handleLFSBatch)
+	mux.HandleFunc("PUT /git/{slug}/{repo}/info/lfs/objects/{oid}", cfg.handleLFSUpload)
+	mux.HandleFunc("GET /git/{slug}/{repo}/info/lfs/objects/{oid}", cfg.handleLFSDownload)
+	mux.HandleFunc("POST /git/{slug}/{repo}/info/lfs/locks", cfg.handleLFSLocks)
+	mux.HandleFunc("GET /git/{slug}/{repo}/info/lfs/locks", cfg.handleLFSLocks)
+	mux.HandleFunc("POST /git/{slug}/{repo}/info/lfs/locks/verify", cfg.handleLFSLocks)
+
 	// Smart-HTTP git face (clone/fetch/push). Self-authenticating via a Basic git
 	// token (session-exempt, like /mcp); handles every method.
 	mux.HandleFunc("/git/{slug}/{repo...}", cfg.handleGitHTTP)

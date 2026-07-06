@@ -101,10 +101,65 @@ func canPush(role string) bool {
 	return role == "member" || role == "tenant_admin"
 }
 
+// gitAuthErr is a resolved-authorization failure. needAuth marks the 401 case so
+// a git/LFS client knows to (re)send Basic credentials. Callers render it in their
+// wire format via writeGit / writeLFS.
+type gitAuthErr struct {
+	status   int
+	msg      string
+	needAuth bool
+}
+
+func (e *gitAuthErr) writeGit(w http.ResponseWriter) {
+	if e.needAuth {
+		requireGitAuth(w)
+		return
+	}
+	http.Error(w, e.msg, e.status)
+}
+
+// authorizeGitRepo runs the auth + confinement shared by the smart-HTTP and LFS
+// faces: Basic password = git token → live (tenant, role) → slug==token-tenant →
+// repo name valid + present in the ledger. It does NOT apply the push gate — the
+// caller decides read vs write per operation. Returns the resolved repo name, the
+// membership view, and the token's membership id.
+func (c config) authorizeGitRepo(r *http.Request, slug, repoSeg string) (name string, mv MembershipView, membershipID string, aerr *gitAuthErr) {
+	_, pass, ok := r.BasicAuth()
+	if !ok || pass == "" {
+		return "", mv, "", &gitAuthErr{http.StatusUnauthorized, "authentication required", true}
+	}
+	membershipID, ok = verifyGitToken(gitSignKey(c.mgr.master32), pass)
+	if !ok {
+		return "", mv, "", &gitAuthErr{http.StatusUnauthorized, "authentication required", true}
+	}
+	mv, ok, err := c.mgr.store.GetMembershipByID(r.Context(), membershipID)
+	if err != nil {
+		return "", mv, "", &gitAuthErr{http.StatusInternalServerError, "store error", false}
+	}
+	if !ok {
+		return "", mv, "", &gitAuthErr{http.StatusUnauthorized, "authentication required", true} // inactive/removed
+	}
+	// Tenant confinement: the URL's slug must be the token's own tenant — the
+	// primary cross-tenant barrier, applied to every request.
+	if !strings.EqualFold(slug, mv.TenantSlug) {
+		return "", mv, "", &gitAuthErr{http.StatusForbidden, "forbidden: tenant mismatch", false}
+	}
+	name, isGit := strings.CutSuffix(repoSeg, ".git")
+	if !isGit || !validRepoName(name) {
+		return "", mv, "", &gitAuthErr{http.StatusNotFound, "not found", false}
+	}
+	// Ledger is the source of truth: only serve repos the API created.
+	if _, present, err := c.mgr.store.GetGitRepo(r.Context(), mv.TenantID, name); err != nil {
+		return "", mv, "", &gitAuthErr{http.StatusInternalServerError, "store error", false}
+	} else if !present {
+		return "", mv, "", &gitAuthErr{http.StatusNotFound, "not found", false}
+	}
+	return name, mv, membershipID, nil
+}
+
 // handleGitHTTP serves clone/fetch/push for /git/{slug}/{repo...}. It authenticates
-// the Basic password as a git token, enforces slug==token-tenant on every request,
-// gates push by role, contains the repo to the tenant's git tree, and requires the
-// repo to exist in the ledger before handing off to git-http-backend.
+// and confines via authorizeGitRepo, gates push by role, then hands off to
+// git-http-backend within the tenant's own git tree.
 func (c config) handleGitHTTP(w http.ResponseWriter, r *http.Request) {
 	rest := strings.TrimPrefix(r.URL.Path, "/git/")
 	slug, sub, _ := strings.Cut(rest, "/")
@@ -112,53 +167,14 @@ func (c config) handleGitHTTP(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-
-	// Basic password = git token. Verify tag, then resolve (tenant, role) live.
-	_, pass, ok := r.BasicAuth()
-	if !ok || pass == "" {
-		requireGitAuth(w)
-		return
-	}
-	membershipID, ok := verifyGitToken(gitSignKey(c.mgr.master32), pass)
-	if !ok {
-		requireGitAuth(w)
-		return
-	}
-	mv, ok, err := c.mgr.store.GetMembershipByID(r.Context(), membershipID)
-	if err != nil {
-		http.Error(w, "store error", http.StatusInternalServerError)
-		return
-	}
-	if !ok {
-		requireGitAuth(w) // membership removed/inactive → token no longer valid
-		return
-	}
-
-	// Tenant confinement: the URL's slug must be the token's own tenant. This is
-	// the primary cross-tenant barrier, checked on info/refs, upload-pack and
-	// receive-pack alike.
-	if !strings.EqualFold(slug, mv.TenantSlug) {
-		http.Error(w, "forbidden: tenant mismatch", http.StatusForbidden)
+	repoSeg, _, _ := strings.Cut(sub, "/")
+	_, mv, membershipID, aerr := c.authorizeGitRepo(r, slug, repoSeg)
+	if aerr != nil {
+		aerr.writeGit(w)
 		return
 	}
 	if isReceivePack(r) && !canPush(mv.Role) {
 		http.Error(w, "forbidden: read-only", http.StatusForbidden)
-		return
-	}
-
-	// Repo name is the first path segment under the slug, with a required ".git".
-	repoSeg, _, _ := strings.Cut(sub, "/")
-	name, isGit := strings.CutSuffix(repoSeg, ".git")
-	if !isGit || !validRepoName(name) {
-		http.NotFound(w, r)
-		return
-	}
-	// Ledger is the source of truth: only serve repos the API created.
-	if _, ok, err := c.mgr.store.GetGitRepo(r.Context(), mv.TenantID, name); err != nil {
-		http.Error(w, "store error", http.StatusInternalServerError)
-		return
-	} else if !ok {
-		http.NotFound(w, r)
 		return
 	}
 

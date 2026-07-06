@@ -695,6 +695,36 @@ func (s *sqliteStore) DeleteGitRepo(ctx context.Context, tenantID, name string) 
 	return err
 }
 
+// --- Git LFS object ledger (docs/reference/internal-git-provider, P3) ---
+
+func (s *sqliteStore) PutLFSObject(ctx context.Context, tenantID, repo, oid string, size int64) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO lfs_object(tenant_id, repo_name, oid, size, created_at)
+		 VALUES(?, ?, ?, ?, ?)
+		 ON CONFLICT(tenant_id, repo_name, oid) DO NOTHING`,
+		tenantID, repo, oid, size, nowTS())
+	return err
+}
+
+func (s *sqliteStore) TenantLFSBytes(ctx context.Context, tenantID string) (int64, error) {
+	var n int64
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COALESCE(SUM(size), 0) FROM lfs_object WHERE tenant_id=?`, tenantID).Scan(&n)
+	return n, err
+}
+
+func (s *sqliteStore) DeleteLFSObjectsByRepo(ctx context.Context, tenantID, repo string) error {
+	_, err := s.db.ExecContext(ctx,
+		`DELETE FROM lfs_object WHERE tenant_id=? AND repo_name=?`, tenantID, repo)
+	return err
+}
+
+func (s *sqliteStore) RenameLFSObjectsRepo(ctx context.Context, tenantID, oldRepo, newRepo string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE lfs_object SET repo_name=? WHERE tenant_id=? AND repo_name=?`, newRepo, tenantID, oldRepo)
+	return err
+}
+
 func (s *sqliteStore) InsertAudit(ctx context.Context, a AuditLog) error {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO audit_log(id, tenant_id, actor_kind, actor_id, action, target, detail, at)
