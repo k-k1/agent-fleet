@@ -1680,6 +1680,11 @@ button.wu-reload {
 .repopicker .branch-list {
   max-height: 230px;
 }
+/* The repo list sits above the branch list in the picker; keep it shorter so both
+   lists plus the submit button stay on screen. */
+.repopicker .repo-list {
+  max-height: 200px;
+}
 .branch-item {
   display: flex;
   flex-direction: column;

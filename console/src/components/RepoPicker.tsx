@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api } from "../api.js";
-import BranchList from "./BranchList.jsx";
+import BranchList, { relTime } from "./BranchList.jsx";
 import type { Branch } from "./BranchList.jsx";
 import type { ConnectionsStatus } from "../types/session.ts";
 
@@ -15,6 +15,7 @@ interface RepoItem {
   full_name: string;
   clone_url: string;
   private?: boolean;
+  updated_at?: string;
 }
 
 // The selection RepoPicker emits (or null when nothing valid is chosen).
@@ -40,6 +41,7 @@ export default function RepoPicker({ onChange }: RepoPickerProps) {
   const [repos, setRepos] = useState<RepoItem[] | null>(null); // null = not loaded
   const [reposErr, setReposErr] = useState("");
   const [loadingRepos, setLoadingRepos] = useState(false);
+  const [repoFilter, setRepoFilter] = useState("");
 
   const [fullName, setFullName] = useState("");
   const [branches, setBranches] = useState<Branch[]>([]);
@@ -69,6 +71,7 @@ export default function RepoPicker({ onChange }: RepoPickerProps) {
     setLoadingRepos(true);
     setReposErr("");
     setRepos(null);
+    setRepoFilter("");
     setFullName("");
     setBranches([]);
     setBranch("");
@@ -132,6 +135,17 @@ export default function RepoPicker({ onChange }: RepoPickerProps) {
     else onChange?.(null);
   };
 
+  const repoUnix = (r: RepoItem): number =>
+    r.updated_at ? Math.floor(Date.parse(r.updated_at) / 1000) || 0 : 0;
+
+  // Sort newest-updated-first, then substring-filter by full name.
+  const shownRepos = useMemo(() => {
+    const list = [...(repos || [])].sort((a, b) => repoUnix(b) - repoUnix(a));
+    const q = repoFilter.trim().toLowerCase();
+    if (!q) return list;
+    return list.filter((r) => r.full_name.toLowerCase().includes(q));
+  }, [repos, repoFilter]);
+
   return (
     <div className="repopicker">
       <div className="provider-tabs">
@@ -156,24 +170,53 @@ export default function RepoPicker({ onChange }: RepoPickerProps) {
         </p>
       ) : (
         <>
-          <label className="pick-field">
+          <div className="pick-field">
             <span>リポジトリ</span>
-            <select
-              value={fullName}
-              disabled={loadingRepos || !!reposErr}
-              onChange={(e) => pickRepo(e.target.value)}
-            >
-              <option value="">
-                {loadingRepos ? "読み込み中…" : reposErr ? reposErr : "選択してください"}
-              </option>
-              {(repos || []).map((r) => (
-                <option key={r.full_name} value={r.full_name}>
-                  {r.full_name}
-                  {r.private ? " 🔒" : ""}
-                </option>
-              ))}
-            </select>
-          </label>
+            {loadingRepos ? (
+              <p className="muted pad">読み込み中…</p>
+            ) : reposErr ? (
+              <p className="muted pad">{reposErr}</p>
+            ) : (
+              <div className="branchlist-wrap">
+                <input
+                  className="branch-filter"
+                  placeholder="フィルタ（リポジトリ名）"
+                  value={repoFilter}
+                  onChange={(e) => setRepoFilter(e.target.value)}
+                />
+                {shownRepos.length === 0 ? (
+                  <p className="muted pad">
+                    {repoFilter ? "該当するリポジトリがありません" : "リポジトリがありません"}
+                  </p>
+                ) : (
+                  <ul className="branch-list repo-list">
+                    {shownRepos.map((r) => {
+                      const active = r.full_name === fullName;
+                      return (
+                        <li key={r.full_name}>
+                          <button
+                            type="button"
+                            className={"branch-item" + (active ? " current" : "")}
+                            onClick={() => pickRepo(r.full_name)}
+                            title={r.full_name}
+                          >
+                            <span className="bi-main">
+                              <span className="bi-name">
+                                {active ? "● " : ""}
+                                {r.full_name}
+                                {r.private ? " 🔒" : ""}
+                              </span>
+                              <span className="bi-time">{relTime(repoUnix(r))}</span>
+                            </span>
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+              </div>
+            )}
+          </div>
 
           <div className="pick-field">
             <span>ブランチ</span>
