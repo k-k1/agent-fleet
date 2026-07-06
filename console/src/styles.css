@@ -6639,6 +6639,9 @@ button.mt-toolrun-head:hover {
    any other modal) so a strong custom top-bar color doesn't flood the whole dialog. */
 .modal.settings-modal {
   background: var(--bg);
+  /* Retint accents (buttons, active tabs, …) to the top-bar surface, like the admin
+     modal — --topbar-accent is concrete so rebinding --accent here can't cycle. */
+  --accent: var(--topbar-accent);
 }
 .settings-modal .modal-head {
   background: var(--topbar-bg);
