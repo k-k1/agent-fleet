@@ -123,6 +123,13 @@ type SessionRow struct {
 	CreatedAt, State, LastSeen                string
 }
 
+// GitRepo is one internal bare repository owned by a tenant (docs/reference/
+// internal-git-provider). The on-disk bare lives at ${DATA_DIR}/git/<slug>/<name>.git;
+// this row is the ledger the list/serve paths trust over an FS walk.
+type GitRepo struct {
+	ID, TenantID, Name, DefaultBranch, CreatedBy, CreatedAt string
+}
+
 // Store is the MetadataStore port. SQLite is the only adapter in P3-1/P3-2.
 type Store interface {
 	EnsureDefaultTenant(ctx context.Context) (Tenant, error)
@@ -142,6 +149,10 @@ type Store interface {
 	ListMembersByTenant(ctx context.Context, tenantID string) ([]MemberInfo, error)
 	EnsureMembership(ctx context.Context, identityID, tenantID, role string) (Membership, error)
 	GetMembership(ctx context.Context, identityID, tenantID string) (Membership, bool, error)
+	// GetMembershipByID resolves a membership (with its tenant slug + live role) by
+	// its id — used by the internal-git smart-HTTP handler to map a git token back
+	// to (tenant, role) on every request. ok=false when it is missing/inactive.
+	GetMembershipByID(ctx context.Context, membershipID string) (MembershipView, bool, error)
 	// SetMembershipRole changes a membership's tenant-scoped role (member |
 	// tenant_admin). EnsureMembership only inserts, so this is the update path.
 	SetMembershipRole(ctx context.Context, membershipID, role string) error
@@ -175,6 +186,14 @@ type Store interface {
 	ListPATsByIdentity(ctx context.Context, identityID string) ([]PAT, error)
 	RevokePAT(ctx context.Context, id, identityID string) error
 	TouchPAT(ctx context.Context, id string) error
+
+	// Internal git repositories (docs/reference/internal-git-provider, ADR 0010).
+	// CreateGitRepo inserts the ledger row (the bare is created on disk by the
+	// caller); the (tenant_id, name) uniqueness is enforced by the schema.
+	CreateGitRepo(ctx context.Context, g GitRepo) error
+	ListGitReposByTenant(ctx context.Context, tenantID string) ([]GitRepo, error)
+	GetGitRepo(ctx context.Context, tenantID, name string) (GitRepo, bool, error)
+	DeleteGitRepo(ctx context.Context, tenantID, name string) error
 
 	// Audit log (docs/decisions/0006, P3-6; docs/20 M1). InsertAudit records one
 	// action; ListAuditByTenant serves the most recent entries (newest first) scoped

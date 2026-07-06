@@ -37,6 +37,10 @@ func main() {
 
 	// Fold any pre-A3 plaintext credential files into the encrypted store.
 	migrateLegacySecrets()
+	// Seed the CP-injected internal git token (docs/reference/internal-git-provider)
+	// into the cred store so clone/push against the tenant's self-hosted repos auth
+	// transparently. No-op when the CP didn't inject one.
+	seedInternalGit()
 	// Make claude emit working/idle/question via hooks into the status files.
 	ensureStatusHooks()
 	// Apply the durable codex/opencode rtk prefs to their artifacts (the entrypoint

@@ -63,6 +63,13 @@ type manager struct {
 	// custodian wraps/unwraps per-workspace DEKs; nil in dev (no encryption).
 	master32  []byte
 	custodian KeyCustodian
+
+	// internalGitHost is the host of PUBLIC_BASE_URL (docs/reference/internal-git-
+	// provider). When set, each workspace gets a deterministic per-membership git
+	// token injected for this host so clone/push against the CP's self-hosted repos
+	// authenticate transparently via the cred helper. Empty (no PUBLIC_BASE_URL) =
+	// internal git disabled.
+	internalGitHost string
 }
 
 // apiError carries an HTTP status + machine code for handlers to return.
@@ -587,6 +594,16 @@ func (m *manager) workspaceExtraEnv(ctx context.Context, ws Workspace) []string 
 	st := parseWSSettings(raw)
 	if allowUpd && st.AgentUpdate {
 		env = append(env, "AF_AGENT_SELF_UPDATE=1")
+	}
+	// Internal git provider: inject the host + this membership's deterministic git
+	// token so the Agent seeds its cred store (secrets.go seedInternalGit) and
+	// clone/push authenticate transparently. Deterministic, so re-injection on
+	// every start is idempotent. Skipped when PUBLIC_BASE_URL is unset.
+	if m.internalGitHost != "" && ws.MembershipID != "" {
+		token := mintGitToken(gitSignKey(m.master32), ws.MembershipID)
+		env = append(env,
+			"AF_INTERNAL_GIT_HOST="+m.internalGitHost,
+			"AF_INTERNAL_GIT_TOKEN="+token)
 	}
 	return env
 }

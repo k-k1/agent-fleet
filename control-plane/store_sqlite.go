@@ -368,6 +368,22 @@ func (s *sqliteStore) ListMemberships(ctx context.Context, identityID string) ([
 	return out, rows.Err()
 }
 
+func (s *sqliteStore) GetMembershipByID(ctx context.Context, membershipID string) (MembershipView, bool, error) {
+	var v MembershipView
+	err := s.db.QueryRowContext(ctx,
+		`SELECT m.id, m.tenant_id, t.slug, t.name, m.role
+		 FROM membership m JOIN tenant t ON t.id = m.tenant_id
+		 WHERE m.id=? AND m.status='active'`, membershipID).
+		Scan(&v.MembershipID, &v.TenantID, &v.TenantSlug, &v.TenantName, &v.Role)
+	if err == sql.ErrNoRows {
+		return MembershipView{}, false, nil
+	}
+	if err != nil {
+		return MembershipView{}, false, err
+	}
+	return v, true, nil
+}
+
 func (s *sqliteStore) EnsureMembership(ctx context.Context, identityID, tenantID, role string) (Membership, error) {
 	if _, err := s.db.ExecContext(ctx,
 		`INSERT INTO membership(id, identity_id, tenant_id, role, status, created_at)
@@ -612,6 +628,55 @@ func (s *sqliteStore) RevokePAT(ctx context.Context, id, identityID string) erro
 
 func (s *sqliteStore) TouchPAT(ctx context.Context, id string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE pat SET last_used_at=? WHERE id=?`, nowTS(), id)
+	return err
+}
+
+// --- Internal git repositories (docs/reference/internal-git-provider) ---
+
+func (s *sqliteStore) CreateGitRepo(ctx context.Context, g GitRepo) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO git_repo(id, tenant_id, name, default_branch, created_by, created_at)
+		 VALUES(?, ?, ?, ?, ?, ?)`,
+		g.ID, g.TenantID, g.Name, g.DefaultBranch, nullable(g.CreatedBy), g.CreatedAt)
+	return err
+}
+
+func (s *sqliteStore) ListGitReposByTenant(ctx context.Context, tenantID string) ([]GitRepo, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, tenant_id, name, default_branch, COALESCE(created_by,''), created_at
+		 FROM git_repo WHERE tenant_id=? ORDER BY name`, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []GitRepo
+	for rows.Next() {
+		var g GitRepo
+		if err := rows.Scan(&g.ID, &g.TenantID, &g.Name, &g.DefaultBranch, &g.CreatedBy, &g.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, g)
+	}
+	return out, rows.Err()
+}
+
+func (s *sqliteStore) GetGitRepo(ctx context.Context, tenantID, name string) (GitRepo, bool, error) {
+	var g GitRepo
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id, tenant_id, name, default_branch, COALESCE(created_by,''), created_at
+		 FROM git_repo WHERE tenant_id=? AND name=?`, tenantID, name).
+		Scan(&g.ID, &g.TenantID, &g.Name, &g.DefaultBranch, &g.CreatedBy, &g.CreatedAt)
+	if err == sql.ErrNoRows {
+		return GitRepo{}, false, nil
+	}
+	if err != nil {
+		return GitRepo{}, false, err
+	}
+	return g, true, nil
+}
+
+func (s *sqliteStore) DeleteGitRepo(ctx context.Context, tenantID, name string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM git_repo WHERE tenant_id=? AND name=?`, tenantID, name)
 	return err
 }
 

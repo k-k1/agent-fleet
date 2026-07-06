@@ -10,6 +10,7 @@ import (
 	"encoding/base64"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -133,6 +134,12 @@ func main() {
 	mgr.rtFactory = rtFactory
 
 	publicBaseURL := os.Getenv("PUBLIC_BASE_URL")
+	// Internal git provider: the clone host workspaces authenticate against is the
+	// public base's host (Caddy TLS terminus). Recorded on the manager so each
+	// workspace start injects a token for it (docs/reference/internal-git-provider).
+	if u, err := url.Parse(publicBaseURL); err == nil {
+		mgr.internalGitHost = u.Hostname()
+	}
 	cfg := config{
 		addr:          envOr("CP_ADDR", ":8080"),
 		consoleDir:    envOr("CONSOLE_DIR", "./console"),
@@ -391,6 +398,17 @@ func main() {
 	mux.HandleFunc("POST /api/connections/codex/device/start", cfg.proxyAgentREST)
 	mux.HandleFunc("POST /api/connections/codex/device/poll", cfg.proxyAgentREST)
 	mux.HandleFunc("DELETE /api/connections/codex", cfg.proxyAgentREST)
+
+	// Internal git provider (docs/reference/internal-git-provider, ADR 0010).
+	// Repo management is CP-native (the CP owns the bare repos), so these are NOT
+	// proxied to the Agent like other providers.
+	mux.HandleFunc("GET /api/internal-git/repos", cfg.handleInternalGitReposList)
+	mux.HandleFunc("POST /api/internal-git/repos", cfg.handleInternalGitRepoCreate)
+	mux.HandleFunc("DELETE /api/internal-git/repos/{name}", cfg.handleInternalGitRepoDelete)
+	mux.HandleFunc("GET /api/internal-git/repos/{name}/branches", cfg.handleInternalGitBranches)
+	// Smart-HTTP git face (clone/fetch/push). Self-authenticating via a Basic git
+	// token (session-exempt, like /mcp); handles every method.
+	mux.HandleFunc("/git/{slug}/{repo...}", cfg.handleGitHTTP)
 
 	// Terminal PTY — proxied WebSocket.
 	mux.HandleFunc("GET /ws/terminal", cfg.proxyTerminal)
