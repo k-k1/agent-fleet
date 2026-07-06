@@ -94,6 +94,19 @@ RUN set -eux; \
     rm -rf /tmp/awscliv2.zip /tmp/aws /tmp/smp.deb; \
     aws --version && session-manager-plugin --version
 
+# GitHub CLI (gh) from the official pinned release (arch auto-detected). Baked into the
+# image so `gh` (PR/issue ops, `gh auth`, API) is available on a fresh container without a
+# per-home download. Bump GH_VERSION to upgrade.
+ARG GH_VERSION=2.96.0
+RUN set -eux; \
+    arch="$(dpkg --print-architecture)"; \
+    case "$arch" in amd64|arm64) gharch="$arch" ;; *) echo "unsupported arch: $arch" >&2; exit 1 ;; esac; \
+    curl -fsSL "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_${gharch}.tar.gz" -o /tmp/gh.tgz; \
+    tar -C /tmp -xzf /tmp/gh.tgz; \
+    install -m 0755 "/tmp/gh_${GH_VERSION}_linux_${gharch}/bin/gh" /usr/local/bin/gh; \
+    rm -rf /tmp/gh.tgz "/tmp/gh_${GH_VERSION}_linux_${gharch}"; \
+    gh --version
+
 # Coding-agent CLIs baked into the image (stable /usr/local install) for fast,
 # offline container start. claude: a user-home ~/.local install still takes PATH
 # precedence and is auto-updated by the entrypoint; this is the pinned fallback /
