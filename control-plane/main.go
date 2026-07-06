@@ -273,6 +273,7 @@ func main() {
 	// Auto session-title suggestion accept/dismiss (session_title.go, Agent-side).
 	mux.HandleFunc("POST /api/sessions/{name}/title/accept", cfg.proxyAgentREST)
 	mux.HandleFunc("POST /api/sessions/{name}/title/dismiss", cfg.proxyAgentREST)
+	mux.HandleFunc("POST /api/sessions/{name}/title/regenerate", cfg.proxyAgentREST)
 
 	// Assistant chat (docs/19) — headless-CLI LLM chat/translation, proxied to the
 	// Agent verbatim (kind-agnostic; non-streaming, so the plain REST proxy suffices).
