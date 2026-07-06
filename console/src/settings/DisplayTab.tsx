@@ -10,6 +10,7 @@ import {
   THEMES,
   SURFACE_TARGETS,
   MIRROR_SEND_MODES,
+  CLAUDE_MODELS,
 } from "../lib/settings.js";
 import FileIcon from "../components/FileIcon.jsx";
 import SwatchGrid from "../components/SwatchGrid.jsx";
@@ -90,6 +91,22 @@ export default function DisplayTab() {
           {s.mirrorSend === "enter"
             ? "Enter で送信、Shift+Enter で改行。"
             : "Ctrl+Enter（⌘+Enter）で送信、Enter で改行。スマホ向け。"}
+        </p>
+      </section>
+
+      <section className="ds-group">
+        <h4 className="ds-title">セッション</h4>
+        <Row label="既定モデル">
+          <Choice
+            value={s.defaultModel}
+            options={CLAUDE_MODELS}
+            onChange={(v) => setSetting("defaultModel", v)}
+          />
+        </Row>
+        <p className="muted ds-note">
+          {s.defaultModel
+            ? "claude セッションを起動するとき（作成ダイアログ・リポジトリの起動）このモデルを初期選択にします。"
+            : "「既定」は claude 任せ（リリースにより Sonnet / Fable などに変動）。固定したい場合はモデルを選んでください。"}
         </p>
       </section>
 
