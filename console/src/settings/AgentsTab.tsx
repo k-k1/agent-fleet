@@ -18,9 +18,10 @@ import { ProviderCard, StatusPill, Hint, DeviceSteps, DisconnectButton } from ".
 // api/agents/rtk and apply to NEW sessions. Both need the workspace running.
 export default function AgentsTab() {
   const toast = useToast();
-  // Client-side session prefs (既定モデル / タイトル自動提案) — persisted in the local
-  // settings store, so they show regardless of workspace state (unlike the agent
-  // behavior cards below, which need the container's Agent/CLI).
+  // Client-side session pref (タイトル自動提案) — persisted in the local settings
+  // store, so it shows regardless of workspace state (unlike the agent behavior
+  // cards below, which need the container's Agent/CLI). 既定モデルは claude 固有なので
+  // ClaudeCard 内に置く。
   const s = useSettings();
   // opencode web state is shared with the WS bar via the app context, so toggling
   // here updates the bar's "open" entry immediately (and vice-versa).
@@ -77,18 +78,6 @@ export default function AgentsTab() {
   const sessionSettings = (
     <section className="ds-group">
       <h4 className="ds-title">セッション</h4>
-      <Row label="既定モデル">
-        <Choice
-          value={s.defaultModel}
-          options={CLAUDE_MODELS}
-          onChange={(v) => setSetting("defaultModel", v)}
-        />
-      </Row>
-      <p className="muted ds-note">
-        {s.defaultModel
-          ? "claude セッションを起動するとき（作成ダイアログ・リポジトリの起動）このモデルを初期選択にします。"
-          : "「既定」は claude 任せ（リリースにより Sonnet / Fable などに変動）。固定したい場合はモデルを選んでください。"}
-      </p>
       <Row label="タイトル自動提案">
         <OnOff value={s.autoTitleSuggest} onChange={(v) => setSetting("autoTitleSuggest", v)} />
       </Row>
@@ -209,6 +198,8 @@ function ClaudeCard({
   updateClaude: (patch: unknown) => void;
 }) {
   const toast = useToast();
+  // 既定モデルは claude 起動時の初期モデル（クライアント側設定）。この card 内に置く。
+  const s = useSettings();
   const [flow, setFlow] = useState<any>(null); // { url, flow_id }
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
@@ -297,30 +288,45 @@ function ClaudeCard({
           </div>
         </>
       )}
-      {/* Behavior settings are a workspace-level file (independent of Claude auth),
-          so they show whenever loaded — you can pre-set them before connecting. */}
-      {claude && (
-        <div className="p-settings">
-          <div className="ps-title">設定</div>
-          <SettingRow label="リモートコントロール">
-            <OnOff
-              value={claude.remoteControlAtStartup}
-              onChange={(v) => updateClaude({ remoteControlAtStartup: v })}
-            />
-          </SettingRow>
-          <SettingRow label="通知">
-            <OnOff
-              value={claude.agentPushNotifEnabled}
-              onChange={(v) => updateClaude({ agentPushNotifEnabled: v })}
-            />
-          </SettingRow>
-          <RtkRow
-            available={claude.rtk_available}
-            value={claude.rtk_enabled}
-            onChange={(v) => updateClaude({ rtk: v })}
+      <div className="p-settings">
+        <div className="ps-title">設定</div>
+        {/* 既定モデルはクライアント側設定なので claude 認証・設定の読み込み状態に依らず表示。 */}
+        <SettingRow label="既定モデル">
+          <Choice
+            value={s.defaultModel}
+            options={CLAUDE_MODELS}
+            onChange={(v) => setSetting("defaultModel", v)}
           />
-        </div>
-      )}
+        </SettingRow>
+        <p className="ps-note">
+          {s.defaultModel
+            ? "claude セッションを起動するとき（作成ダイアログ・リポジトリの起動）このモデルを初期選択にします。"
+            : "「既定」は claude 任せ（リリースにより Sonnet / Fable などに変動）。固定したい場合はモデルを選んでください。"}
+        </p>
+        {/* Remote Control / 通知 / RTK are workspace-level files (independent of Claude
+            auth) — pre-settable, but need the api/claude/settings endpoint loaded. */}
+        {claude && (
+          <>
+            <SettingRow label="リモートコントロール">
+              <OnOff
+                value={claude.remoteControlAtStartup}
+                onChange={(v) => updateClaude({ remoteControlAtStartup: v })}
+              />
+            </SettingRow>
+            <SettingRow label="通知">
+              <OnOff
+                value={claude.agentPushNotifEnabled}
+                onChange={(v) => updateClaude({ agentPushNotifEnabled: v })}
+              />
+            </SettingRow>
+            <RtkRow
+              available={claude.rtk_available}
+              value={claude.rtk_enabled}
+              onChange={(v) => updateClaude({ rtk: v })}
+            />
+          </>
+        )}
+      </div>
     </ProviderCard>
   );
 }
