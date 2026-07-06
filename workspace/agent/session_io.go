@@ -272,7 +272,7 @@ var slashCmdRe = regexp.MustCompile(`^/[A-Za-z][\w-]*(\s|$)`)
 // sendSlashCommand types a literal line into the session's pane and submits it —
 // the same type-then-Enter primitive as handleSessionInput's {prompt} path, but
 // as a plain Go call (no HTTP round trip) for server-side orchestration like
-// handleSyncRemoteControlName.
+// disconnectRemoteControl.
 func sendSlashCommand(name, pane, text string) error {
 	if out, err := exec.Command("tmux", "send-keys", "-t", pane, "-l", text).CombinedOutput(); err != nil {
 		return fmt.Errorf("%v: %s", err, out)
@@ -284,71 +284,42 @@ func sendSlashCommand(name, pane, text string) error {
 	return nil
 }
 
-// handleSyncRemoteControlName refreshes the session's claude.ai Remote Control
-// display name after a title change, WITHOUT restarting the claude process.
-// claude.ai's shown name is fixed at RC-connect time, not re-read from a running
-// process's --name — relaunching claude (even with an updated --name) does not
-// update it (confirmed by hand: a Stop→Start round trip left the old name shown).
-// The only way to refresh it live is what disconnecting and reconnecting via
-// claude's own `/remote-control` slash command does — this replays exactly that,
-// sent to the pane as ordinary composer input (no new protocol/IPC needed):
-// "/remote-control off" to disconnect, then "/remote-control <label>" to
-// reconnect under the session's current label (disconnected, `/remote-control`
-// takes a name argument and reconnects immediately; connected, it shows an
-// interactive menu instead and ignores an argument — verified by hand).
+// disconnectRemoteControl best-effort disconnects an active claude.ai Remote
+// Control bridge right before handleHaltSession kills the tmux pane.
 //
-// Manual-only (a button), never automatic, because: (a) it's undocumented
-// `claude` CLI behavior this repo doesn't control, (b) it must only run while the
-// pane is idle — sent mid-turn it would just sit typed in the composer instead of
-// running as a command, and (c) it visibly flashes "disconnected"/"is active"
-// system lines into the pane.
-func handleSyncRemoteControlName(w http.ResponseWriter, r *http.Request) {
-	name := r.PathValue("name")
-	if !nameRe.MatchString(name) {
-		writeErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
-		return
+// Why: claude.ai's shown session name is fixed at RC-connect time; it is not
+// re-read from --name on a later relaunch. Verified by hand: stopping a session
+// while RC is still connected and resuming it later keeps showing the stale
+// name — but disconnecting RC BEFORE stopping means the next resume's
+// remote-control-at-startup autoconnect performs a genuinely fresh connection,
+// which picks up whatever title is current at THAT time. So this only needs to
+// run once, right before a halt, not after every title change or after resume.
+//
+// There is no non-interactive "off" — verified by hand, `/remote-control` with
+// an argument is only accepted while disconnected (it reconnects under that
+// name); while connected it always opens a 3-item menu (Disconnect this
+// session / Show QR code / Continue) with the cursor defaulting to "Continue".
+// One Down wraps to "Disconnect this session" — confirmed by hand.
+//
+// Best-effort and silent: a stop the user explicitly asked for must never be
+// blocked or delayed by a failure here, and this only ever runs immediately
+// before that kill — never while the session might still be in active use.
+func disconnectRemoteControl(name string, m sessionMeta) {
+	if m.Kind != kindClaude || remoteSessionURL(sessionUUID(m.Dir, m.Name)) == "" {
+		return // not a claude session, or RC has never been used here
 	}
-	m, found := readSessionMeta(name)
-	if !found {
-		writeErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
-		return
-	}
-	if m.Kind != kindClaude {
-		writeErr(w, http.StatusBadRequest, "unsupported_kind", "remote control sync is a claude-only feature")
-		return
-	}
-	tn := tmuxName(name)
-	if !tmuxHasSession(tn) {
-		writeErr(w, http.StatusConflict, "not_running", "session is not running")
-		return
-	}
-	if driveState(m, true, true) == "working" {
-		writeErr(w, http.StatusConflict, "busy", "session is mid-turn; wait until it's idle")
-		return
-	}
-	if remoteSessionURL(sessionUUID(m.Dir, m.Name)) == "" {
-		writeErr(w, http.StatusBadRequest, "not_connected", "remote control is not currently connected for this session")
-		return
-	}
-	pane := sessionPaneID(tn)
+	pane := sessionPaneID(tmuxName(name))
 	if pane == "" {
-		writeErr(w, http.StatusInternalServerError, "no_pane", "could not resolve session pane")
 		return
 	}
-	label := m.Label
-	if label == "" {
-		label = sessionLabelFor(m.Dir, m.Title)
-	}
-	if err := sendSlashCommand(name, pane, "/remote-control off"); err != nil {
-		writeErr(w, http.StatusInternalServerError, "tmux_failed", err.Error())
+	if sendSlashCommand(name, pane, "/remote-control") != nil {
 		return
 	}
-	time.Sleep(600 * time.Millisecond) // let claude actually process the disconnect before reconnecting
-	if err := sendSlashCommand(name, pane, "/remote-control "+label); err != nil {
-		writeErr(w, http.StatusInternalServerError, "tmux_failed", err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	time.Sleep(300 * time.Millisecond) // let the menu render
+	_ = exec.Command("tmux", "send-keys", "-t", pane, "Down").Run()
+	time.Sleep(90 * time.Millisecond)
+	_ = exec.Command("tmux", "send-keys", "-t", pane, "Enter").Run()
+	time.Sleep(300 * time.Millisecond) // let the disconnect actually land before the pane is killed
 }
 
 // inputSubmitDelay is how long to wait between typing a prompt and sending Enter, per

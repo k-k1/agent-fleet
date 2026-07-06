@@ -650,6 +650,10 @@ func handleHaltSession(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, wireSession(m, false))
 		return
 	}
+	// Best-effort: disconnect any active Remote Control bridge before killing the
+	// pane, so a later resume's autoconnect registers fresh under the current
+	// title instead of resuming the stale one (see disconnectRemoteControl).
+	disconnectRemoteControl(name, m)
 	if out, err := exec.Command("tmux", "kill-session", "-t", exactT(tn)).CombinedOutput(); err != nil {
 		writeErr(w, http.StatusInternalServerError, "tmux_failed", fmt.Sprintf("%v: %s", err, out))
 		return

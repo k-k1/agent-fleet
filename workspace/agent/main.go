@@ -77,7 +77,6 @@ func main() {
 	mux.HandleFunc("POST /sessions/{name}/title/regenerate", handleRegenerateSuggestedTitle)
 	mux.HandleFunc("POST /sessions/{name}/title/suggest", handleSuggestTitle)
 	mux.HandleFunc("POST /sessions/{name}/title/set", handleSetTitle)
-	mux.HandleFunc("POST /sessions/{name}/remote-control/resync", handleSyncRemoteControlName)
 	mux.HandleFunc("GET /ws/pty", handlePTY)
 
 	// Assistant chat — headless-CLI LLM chat/translation, separate from tmux
