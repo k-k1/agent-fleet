@@ -276,6 +276,7 @@ func main() {
 	mux.HandleFunc("POST /api/sessions/{name}/title/regenerate", cfg.proxyAgentREST)
 	mux.HandleFunc("POST /api/sessions/{name}/title/suggest", cfg.proxyAgentREST)
 	mux.HandleFunc("POST /api/sessions/{name}/title/set", cfg.proxyAgentREST)
+	mux.HandleFunc("POST /api/sessions/{name}/remote-control/resync", cfg.proxyAgentREST)
 
 	// Assistant chat (docs/19) — headless-CLI LLM chat/translation, proxied to the
 	// Agent verbatim (kind-agnostic; non-streaming, so the plain REST proxy suffices).

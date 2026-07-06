@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"os/exec"
@@ -267,6 +268,88 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 // slashCmdRe matches a single-token slash command like "/plan" or "/model foo" (but not a
 // path such as /home/dev/x, which has a second slash).
 var slashCmdRe = regexp.MustCompile(`^/[A-Za-z][\w-]*(\s|$)`)
+
+// sendSlashCommand types a literal line into the session's pane and submits it —
+// the same type-then-Enter primitive as handleSessionInput's {prompt} path, but
+// as a plain Go call (no HTTP round trip) for server-side orchestration like
+// handleSyncRemoteControlName.
+func sendSlashCommand(name, pane, text string) error {
+	if out, err := exec.Command("tmux", "send-keys", "-t", pane, "-l", text).CombinedOutput(); err != nil {
+		return fmt.Errorf("%v: %s", err, out)
+	}
+	time.Sleep(inputSubmitDelay(name))
+	if out, err := exec.Command("tmux", "send-keys", "-t", pane, "Enter").CombinedOutput(); err != nil {
+		return fmt.Errorf("%v: %s", err, out)
+	}
+	return nil
+}
+
+// handleSyncRemoteControlName refreshes the session's claude.ai Remote Control
+// display name after a title change, WITHOUT restarting the claude process.
+// claude.ai's shown name is fixed at RC-connect time, not re-read from a running
+// process's --name — relaunching claude (even with an updated --name) does not
+// update it (confirmed by hand: a Stop→Start round trip left the old name shown).
+// The only way to refresh it live is what disconnecting and reconnecting via
+// claude's own `/remote-control` slash command does — this replays exactly that,
+// sent to the pane as ordinary composer input (no new protocol/IPC needed):
+// "/remote-control off" to disconnect, then "/remote-control <label>" to
+// reconnect under the session's current label (disconnected, `/remote-control`
+// takes a name argument and reconnects immediately; connected, it shows an
+// interactive menu instead and ignores an argument — verified by hand).
+//
+// Manual-only (a button), never automatic, because: (a) it's undocumented
+// `claude` CLI behavior this repo doesn't control, (b) it must only run while the
+// pane is idle — sent mid-turn it would just sit typed in the composer instead of
+// running as a command, and (c) it visibly flashes "disconnected"/"is active"
+// system lines into the pane.
+func handleSyncRemoteControlName(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if !nameRe.MatchString(name) {
+		writeErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
+		return
+	}
+	m, found := readSessionMeta(name)
+	if !found {
+		writeErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
+		return
+	}
+	if m.Kind != kindClaude {
+		writeErr(w, http.StatusBadRequest, "unsupported_kind", "remote control sync is a claude-only feature")
+		return
+	}
+	tn := tmuxName(name)
+	if !tmuxHasSession(tn) {
+		writeErr(w, http.StatusConflict, "not_running", "session is not running")
+		return
+	}
+	if driveState(m, true, true) == "working" {
+		writeErr(w, http.StatusConflict, "busy", "session is mid-turn; wait until it's idle")
+		return
+	}
+	if remoteSessionURL(sessionUUID(m.Dir, m.Name)) == "" {
+		writeErr(w, http.StatusBadRequest, "not_connected", "remote control is not currently connected for this session")
+		return
+	}
+	pane := sessionPaneID(tn)
+	if pane == "" {
+		writeErr(w, http.StatusInternalServerError, "no_pane", "could not resolve session pane")
+		return
+	}
+	label := m.Label
+	if label == "" {
+		label = sessionLabelFor(m.Dir, m.Title)
+	}
+	if err := sendSlashCommand(name, pane, "/remote-control off"); err != nil {
+		writeErr(w, http.StatusInternalServerError, "tmux_failed", err.Error())
+		return
+	}
+	time.Sleep(600 * time.Millisecond) // let claude actually process the disconnect before reconnecting
+	if err := sendSlashCommand(name, pane, "/remote-control "+label); err != nil {
+		writeErr(w, http.StatusInternalServerError, "tmux_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
 
 // inputSubmitDelay is how long to wait between typing a prompt and sending Enter, per
 // kind. codex/opencode need a beat so their input widget doesn't drop the Enter mid-

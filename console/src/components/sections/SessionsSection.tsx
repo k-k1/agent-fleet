@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useApp } from "../../state.jsx";
-import { raw } from "../../api.js";
+import { raw, errText } from "../../api.js";
 import Section from "../Section.jsx";
 import Icon from "../Icon.jsx";
 import NewSessionModal from "../NewSessionModal.jsx";
@@ -212,6 +212,27 @@ export default function SessionsSection() {
     bumpSessions();
     setTimeout(() => bumpSessions(), 1200);
     closeNav(); // mobile: close the drawer after acting from the left-pane menu
+  };
+
+  // claude.ai's Remote Control shows the name it had when the browser/phone side
+  // connected — it does NOT re-read on a plain process relaunch (confirmed: a
+  // Stop→Start round trip left the stale name). The only way to refresh it live is
+  // a disconnect+reconnect of the RC bridge, which the Agent replays by sending
+  // claude's own `/remote-control off` then `/remote-control <label>` into the pane
+  // (workspace/agent/session_io.go handleSyncRemoteControlName). Manual only — it
+  // only works while the pane is idle, and briefly flashes system lines into the
+  // terminal, so it's not something to fire automatically on every rename.
+  const syncRemoteControlName = async (s: Session) => {
+    const res = await raw(`api/sessions/${encodeURIComponent(s.name)}/remote-control/resync`, {
+      method: "POST",
+    });
+    if (!res.ok) {
+      const j = await res.json().catch(() => ({}));
+      toast(j.error ? errText(j.error) : "claude.ai の表示名の更新に失敗しました");
+      return;
+    }
+    toast("claude.ai の表示名を更新しました", { kind: "success" });
+    closeNav();
   };
 
   // Discard the conversation and start the slot fresh. The Agent /recreate now mints a
@@ -560,6 +581,18 @@ export default function SessionsSection() {
                       }}
                     >
                       リモートセッションを開く ↗
+                    </button>
+                  )}
+                  {s.remoteUrl && s.alive && s.state !== "working" && (
+                    <button
+                      className="session-menu-item"
+                      title="claude.ai / モバイルアプリ側の表示名を、今のタイトルに合わせて更新します"
+                      onClick={() => {
+                        setMenuFor(null);
+                        syncRemoteControlName(s);
+                      }}
+                    >
+                      claude.ai の表示名を更新
                     </button>
                   )}
                   <button
