@@ -630,9 +630,15 @@ export default function MirrorView({
   // first option and dropping the rest. Lock the composer for those and steer the user to
   // the option cards (a single-select single question still accepts free text).
   const auqLocksComposer = !!pending && (pending.length > 1 || pending.some((q) => q?.multiSelect));
+  // A pending plan approval or permission prompt is a menu decision, NOT a free-text turn:
+  // sending would type text + Enter, and that Enter selects the menu's default (= 承認 /
+  // 許可), silently confirming it. A mode toggle would likewise mis-key the menu. So lock
+  // the composer AND the mode chip while one is pending; act via the card's buttons.
+  const decisionPending = !!pendingPlan || !!pendingPerm;
+  const composerLocked = auqLocksComposer || decisionPending;
 
   const send = async () => {
-    if (auqLocksComposer) return;
+    if (composerLocked) return;
     const text = draft.trim();
     if (!text && !attachments.length) return;
     const paths = attachments.map((a) => a.path);
@@ -951,6 +957,10 @@ export default function MirrorView({
                 sending={sending}
                 onOpen={() => openPlan(pendingPlan)}
                 onApprove={() => sendKeys(["Enter"])}
+                // 却下 = pick "No, keep planning" (the 3rd option, as in the permission
+                // dialog's 拒否). claude returns to plan mode and the composer unlocks so
+                // the user can type refinement feedback.
+                onReject={() => sendKeys(["Down", "Down", "Enter"])}
               />
             </div>
           </div>
@@ -1128,13 +1138,17 @@ export default function MirrorView({
             className="mirror-input"
             rows={2}
             placeholder={
-              auqLocksComposer
-                ? "複数質問は上のカードから回答してください（自由入力は無効）"
-                : modSend
-                  ? "プロンプトを入力（Ctrl+Enter で送信 / Enter で改行）"
-                  : "プロンプトを入力（Enter で送信 / Shift+Enter で改行）"
+              decisionPending
+                ? pendingPlan
+                  ? "プラン承認待ち：上のカードで承認 / 却下してください"
+                  : "許可待ち：上のカードで応答してください"
+                : auqLocksComposer
+                  ? "複数質問は上のカードから回答してください（自由入力は無効）"
+                  : modSend
+                    ? "プロンプトを入力（Ctrl+Enter で送信 / Enter で改行）"
+                    : "プロンプトを入力（Enter で送信 / Shift+Enter で改行）"
             }
-            disabled={auqLocksComposer}
+            disabled={composerLocked}
             value={draft}
             onChange={(e) => {
               setDraft(e.target.value);
@@ -1151,7 +1165,7 @@ export default function MirrorView({
               <button
                 type="button"
                 className={"mirror-mode" + (isPlan ? " on" : "")}
-                disabled={sending}
+                disabled={sending || decisionPending}
                 title="モードを切り替え（Plan ⇄ 実装）"
                 onClick={() => {
                   const toPlan = !isPlan;
@@ -1170,7 +1184,7 @@ export default function MirrorView({
             <button
               type="button"
               className="btn primary mirror-send"
-              disabled={(!draft.trim() && !attachments.length) || sending || auqLocksComposer}
+              disabled={(!draft.trim() && !attachments.length) || sending || composerLocked}
               onClick={send}
               title="送信"
             >
@@ -1984,6 +1998,7 @@ function PlanBlock({
   outcome,
   onOpen,
   onApprove,
+  onReject,
   sending,
 }: {
   plan?: string;
@@ -1992,6 +2007,7 @@ function PlanBlock({
   outcome?: string;
   onOpen?: () => void;
   onApprove?: () => void;
+  onReject?: () => void;
   sending?: boolean;
 }) {
   // A plan in the transcript was presented and resolved — treat as approved unless the
@@ -2013,9 +2029,22 @@ function PlanBlock({
           <Icon name="split-horizontal" /> 別ペインで開く
         </button>
         {pending && (
-          <button type="button" className="btn primary mt-plan-approve" disabled={sending} onClick={onApprove}>
-            <Icon name="check" /> 承認して実行
-          </button>
+          <>
+            <button type="button" className="btn primary mt-plan-approve" disabled={sending} onClick={onApprove}>
+              <Icon name="check" /> 承認して実行
+            </button>
+            {onReject && (
+              <button
+                type="button"
+                className="ghost mt-plan-reject"
+                disabled={sending}
+                title="このプランを承認せず、プランニングを続ける（フィードバックを入力できます）"
+                onClick={onReject}
+              >
+                <Icon name="close" /> 却下（続ける）
+              </button>
+            )}
+          </>
         )}
       </div>
     </div>
