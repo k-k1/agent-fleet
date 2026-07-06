@@ -204,6 +204,9 @@ export function applyTheme(s: Settings): void {
   const setVar = (name: string, val: string | null) =>
     val ? root.style.setProperty(name, val) : root.style.removeProperty(name);
   setVar("--topbar-bg", surfaceValue(s.topbarColor, theme));
+  // Admin modal accent follows the chosen top-bar surface (buttons/tabs/bars retint via
+  // .admin-surface). Null (no color chosen) → falls back to the CSS :root default blue.
+  setVar("--topbar-accent", surfaceAccent(s.topbarColor));
   const lp = surfaceValue(s.leftpaneColor, theme);
   setVar("--leftpane-bg", lp);
   // Make the left-pane row highlight follow the chosen surface color (sessions /
