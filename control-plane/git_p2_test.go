@@ -148,7 +148,7 @@ func TestInternalGitRename(t *testing.T) {
 
 func TestGitGCSweep(t *testing.T) {
 	// No git tree yet → sweep is a safe no-op.
-	newGitGC(filepath.Join(t.TempDir(), "empty"), 0).sweep(context.Background())
+	newGitGC(nil, filepath.Join(t.TempDir(), "empty"), 0, 0).sweep(context.Background())
 
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not installed")
@@ -162,8 +162,8 @@ func TestGitGCSweep(t *testing.T) {
 		t.Fatalf("init bare: %v: %s", err, out)
 	}
 	// Sweeping a real bare completes without error (gc --auto is a no-op on a fresh
-	// repo, but the walk + exec path is exercised).
-	newGitGC(dataRoot, 0).sweep(context.Background())
+	// repo, but the walk + exec path is exercised). No LFS dir → prune is skipped.
+	newGitGC(nil, dataRoot, 0, 0).sweep(context.Background())
 	if _, err := os.Stat(bare); err != nil {
 		t.Fatalf("bare gone after gc: %v", err)
 	}

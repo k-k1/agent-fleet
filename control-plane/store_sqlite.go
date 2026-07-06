@@ -725,6 +725,30 @@ func (s *sqliteStore) RenameLFSObjectsRepo(ctx context.Context, tenantID, oldRep
 	return err
 }
 
+func (s *sqliteStore) DeleteLFSObject(ctx context.Context, tenantID, repo, oid string) error {
+	_, err := s.db.ExecContext(ctx,
+		`DELETE FROM lfs_object WHERE tenant_id=? AND repo_name=? AND oid=?`, tenantID, repo, oid)
+	return err
+}
+
+func (s *sqliteStore) ListLFSObjectOIDs(ctx context.Context, tenantID, repo string) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT oid FROM lfs_object WHERE tenant_id=? AND repo_name=?`, tenantID, repo)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var oid string
+		if err := rows.Scan(&oid); err != nil {
+			return nil, err
+		}
+		out = append(out, oid)
+	}
+	return out, rows.Err()
+}
+
 func (s *sqliteStore) InsertAudit(ctx context.Context, a AuditLog) error {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO audit_log(id, tenant_id, actor_kind, actor_id, action, target, detail, at)

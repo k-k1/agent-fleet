@@ -192,11 +192,13 @@ func main() {
 		log.Printf("claude-audit: sweeping transcripts every %s", iv)
 	}
 
-	// Internal git maintenance (P2): repack bare repos so pushes don't leave loose
-	// objects unbounded. `git gc --auto`, sequential — cheap on the shared host.
-	// Default 24h; AF_GIT_GC_INTERVAL=0 disables it.
+	// Internal git maintenance (P2/P3): repack bare repos (`git gc --auto`) and prune
+	// orphaned LFS objects, sequential — cheap on the shared host. Default 24h;
+	// AF_GIT_GC_INTERVAL=0 disables it. AF_LFS_GC_GRACE (default 14d) protects
+	// recently-uploaded LFS objects from pruning so GC never races an in-flight push.
 	if iv := parseDurationOr(os.Getenv("AF_GIT_GC_INTERVAL"), 24*time.Hour); iv > 0 {
-		go newGitGC(mgr.dataRoot, iv).run(context.Background())
+		grace := parseDurationOr(os.Getenv("AF_LFS_GC_GRACE"), 14*24*time.Hour)
+		go newGitGC(mgr.store, mgr.dataRoot, iv, grace).run(context.Background())
 	}
 
 	mux := http.NewServeMux()
