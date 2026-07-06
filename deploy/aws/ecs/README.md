@@ -33,12 +33,13 @@ platform changes:
 | `cfn/00-network.yaml` | **proven** (deploy→verify→teardown in sandbox) | VPC, 2×AZ public+private subnets, IGW, NAT, base SGs (`alb`/`cp`/`ws`) |
 | `cfn/10-data.yaml` | **proven** (EFS 2 mount targets available, RDS pg18 available/private/encrypted) | EFS filesystem + mount targets, RDS(Postgres, single-AZ t4g.micro, RDS-managed master secret) |
 | `cfn/20-platform.yaml` | **proven** (ECR×2, cluster ACTIVE w/ SC default, 3 IAM roles) | ECR (cp+workspace), ECS cluster, Service Connect namespace (`af.internal`), IAM roles (`cp-task`/`exec`/`ws-task`) |
-| `cfn/30-ingress.yaml` | TODO | ALB+ACM+OIDC listener, CP/Console ECS service (needs a domain + Google OAuth client; ECR images pushed first) |
+| `cfn/30-ingress.yaml` | **authored + validated** (deploy pending OAuth secrets) | ACM(DNS-validated), ALB (TLS-termination only — auth is CP-native `AUTH=oauth`, no ALB OIDC), CP/Console Fargate service (Service Connect client), Route53 alias |
 
-> `30-ingress` is intentionally deferred: it carries the most AWS-specific risk
-> (ALB OIDC, ACM, the CP service wiring) and needs a real domain. `00`/`10`/`20`
-> are proven end-to-end (deploy→verify→`delete-stack`, no orphans); each imports
-> the earlier stacks' exports, so deploy in order `00 → 10 → 20`.
+> `00`/`10`/`20` are proven end-to-end (deploy→verify→`delete-stack`, no orphans).
+> `30-ingress` is authored and template-validated; standing it up needs a domain +
+> Google OAuth client + the CP image in ECR (see stand-up below). Each stack imports
+> the earlier ones' exports, so deploy in order `00 → 20 → 30` (10-data is only
+> needed once the store moves to RDS / workspaces mount EFS).
 
 ### Prerequisites (once per account)
 
@@ -55,6 +56,41 @@ platform changes:
     --template-file cfn/20-platform.yaml --capabilities CAPABILITY_NAMED_IAM \
     --profile af-sandbox --region ap-northeast-1
   ```
+
+### 30-ingress stand-up (milestone: CP boots + Google login)
+
+Auth is **CP-native Google OAuth** (`AUTH=oauth`); the ALB only terminates TLS.
+SQLite is ephemeral in this milestone (no EFS/RDS). Prerequisites:
+
+1. **Push the CP image to ECR** (image already built locally — no rebuild):
+   ```bash
+   AWS=<acct>; RG=ap-northeast-1
+   aws ecr get-login-password --region $RG --profile af-sandbox | \
+     docker login --username AWS --password-stdin $AWS.dkr.ecr.$RG.amazonaws.com
+   docker tag agent-fleet/control-plane:dev $AWS.dkr.ecr.$RG.amazonaws.com/af-control-plane:dev
+   docker push $AWS.dkr.ecr.$RG.amazonaws.com/af-control-plane:dev
+   ```
+2. **CP secrets into SSM SecureString** (read by the exec role; never in plaintext env):
+   ```bash
+   aws ssm put-parameter --profile af-sandbox --region $RG --type SecureString \
+     --name /af-cp/cookie-secret       --value "$(openssl rand -hex 32)"
+   aws ssm put-parameter --profile af-sandbox --region $RG --type SecureString \
+     --name /af-cp/master-key          --value "$(openssl rand -hex 32)"
+   aws ssm put-parameter --profile af-sandbox --region $RG --type SecureString \
+     --name /af-cp/google-client-secret --value "<GOOGLE_OAUTH_CLIENT_SECRET>"   # your terminal, not shared
+   ```
+3. **Google OAuth client**: add `https://af-dev.lazmix.jp/oauth2/callback` to the
+   client's Authorized redirect URIs. Pass its client id + allowed/super-admin emails
+   as parameters at deploy:
+   ```bash
+   aws cloudformation deploy --stack-name af-ecs-ingress \
+     --template-file cfn/30-ingress.yaml \
+     --parameter-overrides GoogleClientId=<id> \
+       AllowedEmails=you@example.com SuperAdminEmails=you@example.com \
+     --profile af-sandbox --region $RG
+   ```
+   ACM DNS validation and the Route53 alias are automated (the `lazmix.jp` zone is
+   in-account); cert issuance adds a few minutes to the first deploy.
 
 ## Prove-out sequence
 

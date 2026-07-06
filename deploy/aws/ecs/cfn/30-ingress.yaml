@@ -1,0 +1,214 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  agent-fleet ECS adapter (P3-7) — ingress + Control Plane service. ACM cert (DNS-
+  validated via Route53), an internet-facing ALB that only terminates TLS (auth is
+  CP-native Google OAuth, AUTH=oauth — no ALB OIDC), the CP/Console Fargate service
+  (Service Connect client so it can reach workspace Agents once 段2 lands), and the
+  Route53 alias. Imports 00-network and 20-platform. Milestone target: CP boots and
+  Google login works. SQLite store is EPHEMERAL here (persistence = EFS/RDS later);
+  workspace Start is not exercised (needs the 段2 ecsRuntime).
+
+Parameters:
+  NetworkStackName:
+    Type: String
+    Default: af-ecs-network
+  PlatformStackName:
+    Type: String
+    Default: af-ecs-platform
+  Fqdn:
+    Type: String
+    Default: af-dev.lazmix.jp
+    Description: Public host for the Console/API (ACM cert + Route53 alias).
+  HostedZoneId:
+    Type: String
+    Default: Z0992735RL5SSUMAHKT
+    Description: Route53 hosted zone id for the Fqdn's domain (lazmix.jp).
+  CpImageTag:
+    Type: String
+    Default: dev
+    Description: Tag of the af-control-plane image already pushed to ECR.
+  CpPort:
+    Type: Number
+    Default: 8099
+  CpCpu:
+    Type: String
+    Default: "512"
+  CpMemory:
+    Type: String
+    Default: "1024"
+  SsmPrefix:
+    Type: String
+    Default: /af-cp
+    Description: SSM SecureString path prefix holding the CP secrets (created out of
+      band before deploy — see README). Params - google-client-secret, cookie-secret,
+      master-key.
+  GoogleClientId:
+    Type: String
+    Default: ""
+    Description: Google OAuth client id (not secret; the secret comes from SSM).
+  AllowedEmails:
+    Type: String
+    Default: ""
+    Description: AF_OAUTH_ALLOWED_EMAILS (comma-separated) permitted to sign in.
+  SuperAdminEmails:
+    Type: String
+    Default: ""
+    Description: SUPER_ADMIN_EMAILS (comma-separated).
+
+Resources:
+  Cert:
+    Type: AWS::CertificateManager::Certificate
+    Properties:
+      DomainName: !Ref Fqdn
+      ValidationMethod: DNS
+      DomainValidationOptions:
+        - DomainName: !Ref Fqdn
+          HostedZoneId: !Ref HostedZoneId
+
+  Alb:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: !Sub "af-${AWS::StackName}"
+      Scheme: internet-facing
+      Type: application
+      Subnets: !Split [ ",", !ImportValue { "Fn::Sub": "${NetworkStackName}-PublicSubnets" } ]
+      SecurityGroups:
+        - Fn::ImportValue: !Sub "${NetworkStackName}-AlbSgId"
+
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      VpcId:
+        Fn::ImportValue: !Sub "${NetworkStackName}-VpcId"
+      Port: !Ref CpPort
+      Protocol: HTTP
+      TargetType: ip                     # Fargate awsvpc = register by ENI IP
+      HealthCheckPath: /healthz          # CP serves this unauthenticated
+      HealthCheckProtocol: HTTP
+      Matcher: { HttpCode: "200" }
+      TargetGroupAttributes:
+        - { Key: deregistration_delay.timeout_seconds, Value: "30" }
+
+  Listener443:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref Alb
+      Port: 443
+      Protocol: HTTPS
+      SslPolicy: ELBSecurityPolicy-TLS13-1-2-2021-06
+      Certificates:
+        - CertificateArn: !Ref Cert
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref TargetGroup
+
+  Listener80:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref Alb
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: redirect
+          RedirectConfig: { Protocol: HTTPS, Port: "443", StatusCode: HTTP_301 }
+
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    Properties:
+      LogGroupName: !Sub "/af/${AWS::StackName}/cp"
+      RetentionInDays: 7
+
+  TaskDef:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub "af-${AWS::StackName}-cp"
+      RequiresCompatibilities: [ FARGATE ]
+      NetworkMode: awsvpc
+      Cpu: !Ref CpCpu
+      Memory: !Ref CpMemory
+      ExecutionRoleArn:
+        Fn::ImportValue: !Sub "${PlatformStackName}-ExecRoleArn"
+      TaskRoleArn:
+        Fn::ImportValue: !Sub "${PlatformStackName}-CpTaskRoleArn"
+      ContainerDefinitions:
+        - Name: cp
+          Essential: true
+          Image: !Sub
+            - "${Uri}:${Tag}"
+            - Uri: !ImportValue { "Fn::Sub": "${PlatformStackName}-EcrControlPlaneUri" }
+              Tag: !Ref CpImageTag
+          PortMappings:
+            - ContainerPort: !Ref CpPort
+          Environment:
+            # ECS/awsvpc: the ALB reaches the task over its ENI, so CP must bind
+            # non-loopback (the CpSg restricts 8099 ingress to the ALB SG — the
+            # network isolation the compose loopback bind gives on a single box).
+            - { Name: CP_ADDR, Value: !Sub "0.0.0.0:${CpPort}" }
+            - { Name: WS_DATA, Value: /tmp/af-data }   # EPHEMERAL SQLite (milestone only)
+            - { Name: AUTH, Value: oauth }
+            - { Name: PUBLIC_BASE_URL, Value: !Sub "https://${Fqdn}" }
+            - { Name: PUBLIC_DOMAIN, Value: !Ref Fqdn }
+            - { Name: GOOGLE_OAUTH_CLIENT_ID, Value: !Ref GoogleClientId }
+            - { Name: AF_OAUTH_ALLOWED_EMAILS, Value: !Ref AllowedEmails }
+            - { Name: SUPER_ADMIN_EMAILS, Value: !Ref SuperAdminEmails }
+            # AF_RUNTIME=ecs = the P3-7 adapter. In this milestone its lifecycle is
+            # the 段2 skeleton (fail-loud on Start); boot/login/tenant do not touch it.
+            - { Name: AF_RUNTIME, Value: ecs }
+            - { Name: AF_ECS_REGION, Value: !Ref "AWS::Region" }
+            - { Name: AF_ECS_CLUSTER, Value: !ImportValue { "Fn::Sub": "${PlatformStackName}-ClusterName" } }
+          Secrets:
+            - Name: GOOGLE_OAUTH_CLIENT_SECRET
+              ValueFrom: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${SsmPrefix}/google-client-secret"
+            - Name: AF_COOKIE_SECRET
+              ValueFrom: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${SsmPrefix}/cookie-secret"
+            - Name: AF_MASTER_KEY
+              ValueFrom: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${SsmPrefix}/master-key"
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref LogGroup
+              awslogs-region: !Ref "AWS::Region"
+              awslogs-stream-prefix: cp
+
+  Service:
+    Type: AWS::ECS::Service
+    DependsOn: Listener443
+    Properties:
+      ServiceName: !Sub "af-${AWS::StackName}-cp"
+      Cluster: !ImportValue { "Fn::Sub": "${PlatformStackName}-ClusterArn" }
+      TaskDefinition: !Ref TaskDef
+      DesiredCount: 1
+      LaunchType: FARGATE
+      HealthCheckGracePeriodSeconds: 60
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          Subnets: !Split [ ",", !ImportValue { "Fn::Sub": "${NetworkStackName}-PrivateSubnets" } ]
+          SecurityGroups:
+            - Fn::ImportValue: !Sub "${NetworkStackName}-CpSgId"
+      LoadBalancers:
+        - TargetGroupArn: !Ref TargetGroup
+          ContainerName: cp
+          ContainerPort: !Ref CpPort
+      # CP as a Service Connect client so it can resolve workspace Agents by
+      # <service>.<namespace> once the 段2 adapter creates them.
+      ServiceConnectConfiguration:
+        Enabled: true
+        Namespace: !ImportValue { "Fn::Sub": "${PlatformStackName}-NamespaceArn" }
+
+  DnsRecord:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Ref Fqdn
+      Type: A
+      AliasTarget:
+        DNSName: !GetAtt Alb.DNSName
+        HostedZoneId: !GetAtt Alb.CanonicalHostedZoneID
+
+Outputs:
+  Url:
+    Value: !Sub "https://${Fqdn}"
+  AlbDnsName:
+    Value: !GetAtt Alb.DNSName
