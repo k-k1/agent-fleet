@@ -21,8 +21,7 @@
 
 - PR / コードレビュー / CI（GitHub 相当。将来 Gitea/Forgejo へ載せ替える「②」領域）。
 - 組織/チームの細粒度権限マトリクス（当面は membership role で read/write の2段）。
-- LFS ロック API（`info/lfs/locks`）: 501 で未対応（push/pull には不要）。
-  ※ LFS 本体（Batch API＋basic 転送＋容量クォータ）は **P3 で実装済み**（§9）。
+  ※ LFS 本体（Batch API＋basic 転送＋容量クォータ＋孤児 GC＋**ロック API**）は **P3 で実装済み**（§9）。
 
 ## 2. なぜこの形か（要約。詳細は ADR 0010）
 
@@ -170,14 +169,18 @@
   - **アップロードは sha256 検証**（oid 不一致は 422）、temp→fsync→rename で原子的公開、dedup。
   - **容量クォータ**: `tenantLimits.max_lfs_bytes`（0=無制限）を **batch 時（507 error entry）と PUT 時**
     の両方で強制。`lfs_object` 台帳で O(1) 集計。admin limits API / AdminTab（MB 入力）に露出。
-  - ロック API は 501（未対応でも push/pull は動く）。ワークスペースは git-lfs 同梱・cred helper 連携済みで
-    クライアント無改造。実 `git lfs push`/clone の E2E テストあり。
+  - **ロック API**（`git_lfs_locks.go`）: create / list / verify / unlock を実装（`info/lfs/locks`）。
+    認証は `authorizeGitRepo` 共用、create/unlock は write（`canPush`）・list/verify は read。path は
+    (tenant, repo) 毎に一意（二重ロックは 409＋既存ロック）。verify は所有者で ours/theirs に分割
+    （push 前に他人のロックを検知）。unlock は所有者のみ、`force` は tenant_admin に限り他人のロックも解除。
+    ロックは `lfs_lock` テーブルに保存し repo の delete/rename に追従。実 `git lfs lock/locks/unlock` の E2E あり。
+  - ワークスペースは git-lfs 同梱・cred helper 連携済みでクライアント無改造。実 `git lfs push`/clone の E2E あり。
   - **孤児オブジェクト GC**: 既存の `git gc` cron（`git_gc.go`）に統合。どの reachable なポインタからも
     参照されない LFS blob を削除して容量を戻す。参照 oid の列挙は **pure-git**（CP に git-lfs 不要）で
     `git cat-file --batch-all-objects` から全 blob を走査しポインタを抽出。**grace 期間**
     （`AF_LFS_GC_GRACE` 既定 14 日）で mtime が新しいオブジェクトは残し、「upload→ref push」途中の
     誤削除を防ぐ。列挙失敗時は**何も消さない**（conservative）。削除で `lfs_object` 台帳も減り quota が戻る。
-- **見送り（将来）**: clone なしのツリー閲覧（bare から read-only 提供）／LFS ロック API 本実装。
+- **見送り（将来）**: clone なしのツリー閲覧（bare から read-only 提供）。
   PR/レビュー/CI が要れば ② へ載せ替え。
 - **将来（②）**: PR/レビュー/CI が要るなら Gitea/Forgejo を内包して載せ替え。
 

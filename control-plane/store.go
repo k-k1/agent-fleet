@@ -130,6 +130,12 @@ type GitRepo struct {
 	ID, TenantID, Name, DefaultBranch, CreatedBy, CreatedAt string
 }
 
+// LFSLock is one Git LFS file lock (docs/reference/internal-git-provider, P3).
+// OwnerID is the locker's membership id; OwnerName is a display label.
+type LFSLock struct {
+	ID, TenantID, RepoName, Path, RefName, OwnerID, OwnerName, LockedAt string
+}
+
 // Store is the MetadataStore port. SQLite is the only adapter in P3-1/P3-2.
 type Store interface {
 	EnsureDefaultTenant(ctx context.Context) (Tenant, error)
@@ -211,6 +217,21 @@ type Store interface {
 	// ListLFSObjectOIDs returns the oids the ledger records for a repo — the set GC
 	// walks to reconcile against what git still references.
 	ListLFSObjectOIDs(ctx context.Context, tenantID, repo string) ([]string, error)
+
+	// Git LFS file locks (P3). CreateLFSLock inserts a lock (the (tenant, repo, path)
+	// UNIQUE makes a second lock on a path fail — the caller pre-checks for the 409).
+	// ListLFSLocks paginates by an opaque cursor (offset); a filter of "" matches all.
+	// The repo-scoped ops keep locks in step with repo delete/rename.
+	CreateLFSLock(ctx context.Context, l LFSLock) error
+	GetLFSLockByPath(ctx context.Context, tenantID, repo, path string) (LFSLock, bool, error)
+	GetLFSLock(ctx context.Context, tenantID, repo, id string) (LFSLock, bool, error)
+	ListLFSLocks(ctx context.Context, tenantID, repo, filterPath, filterID string, limit int, cursor string) ([]LFSLock, string, error)
+	DeleteLFSLock(ctx context.Context, tenantID, repo, id string) error
+	DeleteLFSLocksByRepo(ctx context.Context, tenantID, repo string) error
+	RenameLFSLocksRepo(ctx context.Context, tenantID, oldRepo, newRepo string) error
+	// MembershipOwnerName resolves a membership to a human display label (email, or
+	// the user key) for stamping on a lock. "" when it can't be resolved.
+	MembershipOwnerName(ctx context.Context, membershipID string) (string, error)
 
 	// Audit log (docs/decisions/0006, P3-6; docs/20 M1). InsertAudit records one
 	// action; ListAuditByTenant serves the most recent entries (newest first) scoped

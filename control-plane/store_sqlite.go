@@ -731,6 +731,132 @@ func (s *sqliteStore) DeleteLFSObject(ctx context.Context, tenantID, repo, oid s
 	return err
 }
 
+// --- Git LFS locks (docs/reference/internal-git-provider, P3) ---
+
+const lfsLockCols = `SELECT id, tenant_id, repo_name, path, ref_name, owner_id, owner_name, locked_at FROM lfs_lock`
+
+func scanLFSLock(row interface{ Scan(...any) error }) (LFSLock, error) {
+	var l LFSLock
+	err := row.Scan(&l.ID, &l.TenantID, &l.RepoName, &l.Path, &l.RefName, &l.OwnerID, &l.OwnerName, &l.LockedAt)
+	return l, err
+}
+
+func (s *sqliteStore) CreateLFSLock(ctx context.Context, l LFSLock) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO lfs_lock(id, tenant_id, repo_name, path, ref_name, owner_id, owner_name, locked_at)
+		 VALUES(?, ?, ?, ?, ?, ?, ?, ?)`,
+		l.ID, l.TenantID, l.RepoName, l.Path, l.RefName, l.OwnerID, l.OwnerName, l.LockedAt)
+	return err
+}
+
+func (s *sqliteStore) GetLFSLockByPath(ctx context.Context, tenantID, repo, path string) (LFSLock, bool, error) {
+	l, err := scanLFSLock(s.db.QueryRowContext(ctx,
+		lfsLockCols+` WHERE tenant_id=? AND repo_name=? AND path=?`, tenantID, repo, path))
+	if err == sql.ErrNoRows {
+		return LFSLock{}, false, nil
+	}
+	if err != nil {
+		return LFSLock{}, false, err
+	}
+	return l, true, nil
+}
+
+func (s *sqliteStore) GetLFSLock(ctx context.Context, tenantID, repo, id string) (LFSLock, bool, error) {
+	l, err := scanLFSLock(s.db.QueryRowContext(ctx,
+		lfsLockCols+` WHERE tenant_id=? AND repo_name=? AND id=?`, tenantID, repo, id))
+	if err == sql.ErrNoRows {
+		return LFSLock{}, false, nil
+	}
+	if err != nil {
+		return LFSLock{}, false, err
+	}
+	return l, true, nil
+}
+
+// ListLFSLocks returns locks ordered oldest-first, paginated by an opaque cursor
+// (a row offset). It fetches limit+1 to know whether a next page exists; the
+// returned cursor is "" when the page is the last.
+func (s *sqliteStore) ListLFSLocks(ctx context.Context, tenantID, repo, filterPath, filterID string, limit int, cursor string) ([]LFSLock, string, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 100
+	}
+	offset := 0
+	if cursor != "" {
+		if n, err := strconv.Atoi(cursor); err == nil && n > 0 {
+			offset = n
+		}
+	}
+	q := lfsLockCols + ` WHERE tenant_id=? AND repo_name=?`
+	args := []any{tenantID, repo}
+	if filterPath != "" {
+		q += ` AND path=?`
+		args = append(args, filterPath)
+	}
+	if filterID != "" {
+		q += ` AND id=?`
+		args = append(args, filterID)
+	}
+	q += ` ORDER BY locked_at, id LIMIT ? OFFSET ?`
+	args = append(args, limit+1, offset)
+	rows, err := s.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, "", err
+	}
+	defer rows.Close()
+	var out []LFSLock
+	for rows.Next() {
+		l, err := scanLFSLock(rows)
+		if err != nil {
+			return nil, "", err
+		}
+		out = append(out, l)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, "", err
+	}
+	next := ""
+	if len(out) > limit {
+		out = out[:limit]
+		next = strconv.Itoa(offset + limit)
+	}
+	return out, next, nil
+}
+
+func (s *sqliteStore) DeleteLFSLock(ctx context.Context, tenantID, repo, id string) error {
+	_, err := s.db.ExecContext(ctx,
+		`DELETE FROM lfs_lock WHERE tenant_id=? AND repo_name=? AND id=?`, tenantID, repo, id)
+	return err
+}
+
+func (s *sqliteStore) DeleteLFSLocksByRepo(ctx context.Context, tenantID, repo string) error {
+	_, err := s.db.ExecContext(ctx,
+		`DELETE FROM lfs_lock WHERE tenant_id=? AND repo_name=?`, tenantID, repo)
+	return err
+}
+
+func (s *sqliteStore) RenameLFSLocksRepo(ctx context.Context, tenantID, oldRepo, newRepo string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE lfs_lock SET repo_name=? WHERE tenant_id=? AND repo_name=?`, newRepo, tenantID, oldRepo)
+	return err
+}
+
+func (s *sqliteStore) MembershipOwnerName(ctx context.Context, membershipID string) (string, error) {
+	var email, key string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COALESCE(i.email,''), i.user_key FROM membership m JOIN identity i ON i.id = m.identity_id
+		 WHERE m.id=?`, membershipID).Scan(&email, &key)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if email != "" {
+		return email, nil
+	}
+	return key, nil
+}
+
 func (s *sqliteStore) ListLFSObjectOIDs(ctx context.Context, tenantID, repo string) ([]string, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT oid FROM lfs_object WHERE tenant_id=? AND repo_name=?`, tenantID, repo)
