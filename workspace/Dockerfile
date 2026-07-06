@@ -29,7 +29,7 @@ RUN bun install --frozen-lockfile && bun run build
 # --- runtime ---
 FROM node:22-bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      git git-lfs tmux vim openssh-client ca-certificates gnupg curl wget less procps htop strace tzdata \
+      git git-lfs subversion tmux vim openssh-client ca-certificates gnupg curl wget less procps htop strace tzdata \
       ripgrep fd-find bat jq unzip zip \
       build-essential pkg-config \
       python3 python3-pip python3-venv python3-dev python-is-python3 \
@@ -39,9 +39,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
  && git lfs install --system --skip-repo
 # Beyond the original baseline this adds a C/C++ toolchain (build-essential +
 # pkg-config + python3-dev) so cgo / node-gyp / source-built wheels compile, plus
-# common utilities (wget, jq, unzip/zip, gnupg, htop) and fd/bat (Debian ships them
-# as fdfind/batcat; symlinked to the expected names). git-delta is not in bookworm,
-# so it's intentionally omitted (add via its GitHub .deb if wanted).
+# common utilities (wget, jq, unzip/zip, gnupg, htop), fd/bat (Debian ships them
+# as fdfind/batcat; symlinked to the expected names), and subversion for svn repos
+# (HTTPS via libserf, pulled as a dep). git-delta is not in bookworm, so it's
+# intentionally omitted (add via its GitHub .deb if wanted).
 # Python 3 (bookworm = 3.11) baked in as a baseline tool, like git/tmux. python-is-
 # python3 provides `python`. Debian (PEP 668) marks the system env externally-managed,
 # which blocks `pip install` into it; allow break-system-packages so `pip install
