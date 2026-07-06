@@ -345,6 +345,36 @@ export interface PromptTemplateGroup {
 export const repoPromptTemplates = (name: string): Promise<{ groups: PromptTemplateGroup[] }> =>
   api(`api/repos/${encodeURIComponent(name)}/prompt-templates`);
 
+// --- memo queue (docs/21) ---
+// Per-membership notes accumulated across devices, then flushed to a session as one
+// message. Persisted in the Control Plane (membership-scoped), so they sync between
+// devices; there is no server push, so callers refetch on open + poll while open.
+import type { Memo, MemoInput, MemoPatch } from "./types/memo.ts";
+
+export const memoList = (): Promise<Memo[]> => api("api/memos");
+export const memoCreate = (input: MemoInput): Promise<Memo> =>
+  apiJSON("api/memos", "POST", input);
+export const memoUpdate = (id: string, patch: MemoPatch): Promise<Memo> =>
+  apiJSON(`api/memos/${encodeURIComponent(id)}`, "PATCH", patch);
+export const memoDelete = (id: string): Promise<Response> =>
+  raw(`api/memos/${encodeURIComponent(id)}`, { method: "DELETE" });
+// Flush concatenates the selected memos (by id) into one message, sends it once to
+// the session, and stamps them sent. Returns {sent, sentAt, ids} or {error}.
+export const memoFlush = (
+  sessionName: string,
+  ids: string[],
+): Promise<{ sent?: number; sentAt?: string; ids?: string[]; error?: ApiError }> =>
+  apiJSON("api/memos/flush", "POST", { sessionName, ids });
+
+// --- assistant one-shot ask (docs/21 メモ整理) ---
+// Stateless advisory turn (tools off) used to tidy up + auto-categorize memos. The
+// assistant is asked to return JSON; the caller parses and previews before applying.
+export const askAssistant = (
+  prompt: string,
+  assistant?: string,
+): Promise<{ assistant?: string; reply?: string; error?: ApiError }> =>
+  apiJSON("api/chat/ask", "POST", { prompt, assistant });
+
 // Build the terminal WebSocket URL for a session under the current mount, with
 // the tenant carried as a query param (headers aren't available on WS).
 export function wsURL(session: string): URL {
