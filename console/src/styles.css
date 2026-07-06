@@ -3058,6 +3058,11 @@ body.row-resizing {
   background: color-mix(in srgb, #2fb872 26%, transparent);
   color: color-mix(in srgb, #2fb872 60%, var(--fg));
 }
+/* 却下 (rejected/keep-planning): a muted red so it reads distinctly from 承認済み. */
+.mt-plan-badge.no {
+  background: color-mix(in srgb, #e5534b 24%, transparent);
+  color: color-mix(in srgb, #e5534b 62%, var(--fg));
+}
 /* A decided (historical) plan sits quieter than a pending one. */
 .mt-plan.decided {
   border-left-color: color-mix(in srgb, var(--chat-accent) 45%, var(--border));

@@ -2012,9 +2012,12 @@ function PlanBlock({
   onReject?: () => void;
   sending?: boolean;
 }) {
-  // A plan in the transcript was presented and resolved — treat as approved unless the
-  // outcome text clearly says otherwise (best-effort; the exact result text may vary).
-  const approved = !outcome || isApproved(outcome) || !isRejected(outcome);
+  // A plan in the transcript was presented and resolved — classify its outcome text
+  // (best-effort; the exact result text varies). A rejected plan's tool_result is an
+  // interruption ("[Request interrupted by user for tool use]"), so isRejected wins to
+  // avoid mislabeling a 却下 as 承認済み. Unknown/empty → neutral 決定済み.
+  const rejected = isRejected(outcome);
+  const approved = !rejected && (!outcome || isApproved(outcome));
   return (
     <div className={"mt-plan" + (answered ? " decided" : "")}>
       <div className="mt-plan-head">
@@ -2022,7 +2025,9 @@ function PlanBlock({
         <span className="mt-plan-title">{planTitle(plan)}</span>
         {pending && <span className="mt-plan-badge">承認待ち</span>}
         {answered && (
-          <span className={"mt-plan-badge" + (approved ? " ok" : "")}>{approved ? "承認済み" : "決定済み"}</span>
+          <span className={"mt-plan-badge" + (approved ? " ok" : rejected ? " no" : "")}>
+            {approved ? "承認済み" : rejected ? "却下" : "決定済み"}
+          </span>
         )}
       </div>
       {planSummary(plan) && <div className="mt-plan-summary">{planSummary(plan)}</div>}
@@ -2059,7 +2064,9 @@ function isApproved(outcome?: string) {
   return /approv|proceed|start coding|going to code|承認|実行してよい|yes/i.test(outcome || "");
 }
 function isRejected(outcome?: string) {
-  return /keep planning|not approv|reject|refine|declin|却下|中止|やり直/i.test(outcome || "");
+  // "interrupt" catches a rejected plan's tool_result ("[Request interrupted by user for
+  // tool use]"), which is how ExitPlanMode records 却下 / "tell Claude what to change".
+  return /keep planning|not approv|reject|refine|declin|interrupt|却下|中止|やり直/i.test(outcome || "");
 }
 
 // planTitle / planSummary derive a compact heading + lead line from the plan Markdown.
