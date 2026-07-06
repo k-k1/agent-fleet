@@ -416,6 +416,10 @@ func main() {
 	mux.HandleFunc("DELETE /api/internal-git/repos/{name}", cfg.handleInternalGitRepoDelete)
 	mux.HandleFunc("POST /api/internal-git/repos/{name}/rename", cfg.handleInternalGitRepoRename)
 	mux.HandleFunc("GET /api/internal-git/repos/{name}/branches", cfg.handleInternalGitBranches)
+	// Read-only browsing (clone-free): tree / blob / commits, served from the bare.
+	mux.HandleFunc("GET /api/internal-git/repos/{name}/tree", cfg.handleInternalGitTree)
+	mux.HandleFunc("GET /api/internal-git/repos/{name}/blob", cfg.handleInternalGitBlob)
+	mux.HandleFunc("GET /api/internal-git/repos/{name}/commits", cfg.handleInternalGitCommits)
 	// Git LFS face (docs/reference/internal-git-provider, P3). More specific than the
 	// smart-HTTP catch-all below, so these win for LFS paths; git-http-backend never
 	// sees them. Same Basic git-token auth (session-exempt under /git/).
