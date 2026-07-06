@@ -133,6 +133,30 @@ export default function SessionsSection() {
     closeNav(); // mobile: acting from the left-pane menu closes the drawer (no-op on desktop)
   };
 
+  // Delete: forget the session outright. Offered instead of archive for shell/ssm
+  // (caps.ephemeral) — they carry no conversation worth keeping, so hiding-but-keeping
+  // makes no sense. Backed by /stop (kills any live tmux + forgets the meta), which is
+  // irreversible, so it's confirmed as a destructive action.
+  const deleteSession = async (s: Session) => {
+    if (
+      !(await askConfirm({
+        title: "セッションを削除",
+        body: `「${displayName(s)}」を削除します。この操作は取り消せません。`,
+        confirmLabel: "削除する",
+        danger: true,
+      }))
+    )
+      return;
+    const res = await raw(`api/sessions/${encodeURIComponent(s.name)}/stop`, { method: "POST" });
+    if (!res.ok) {
+      toast("削除に失敗しました");
+      return;
+    }
+    closeSessionPanes(s.name); // it's leaving the list — close any pane still showing it
+    bumpSessions();
+    closeNav(); // mobile: acting from the left-pane menu closes the drawer (no-op on desktop)
+  };
+
   // Clear all stopped sessions: agent sessions (claude/opencode/codex) are archived
   // (kept + restorable via the archive), while shell/ssm have no conversation worth
   // keeping, so they're deleted outright (/stop forgets the meta).
@@ -550,15 +574,29 @@ export default function SessionsSection() {
                       分岐（会話を引き継いで新規）
                     </button>
                   )}
-                  <button
-                    className="session-menu-item"
-                    onClick={() => {
-                      setMenuFor(null);
-                      archive(s);
-                    }}
-                  >
-                    アーカイブする（一覧から消す）
-                  </button>
+                  {/* shell/ssm carry no conversation worth keeping → delete outright
+                      (irreversible); agent sessions archive (hidden but restorable). */}
+                  {agentOf(s.kind).caps.ephemeral ? (
+                    <button
+                      className="session-menu-item danger"
+                      onClick={() => {
+                        setMenuFor(null);
+                        deleteSession(s);
+                      }}
+                    >
+                      削除する
+                    </button>
+                  ) : (
+                    <button
+                      className="session-menu-item"
+                      onClick={() => {
+                        setMenuFor(null);
+                        archive(s);
+                      }}
+                    >
+                      アーカイブする（一覧から消す）
+                    </button>
+                  )}
                   {!dead && (
                     <button
                       className="session-menu-item"
