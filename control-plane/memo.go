@@ -2,7 +2,10 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"net/url"
+	"sort"
 	"strings"
 	"time"
 )
@@ -169,6 +172,103 @@ func (c config) handleMemoUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, memoToDTO(cur))
+}
+
+// buildFlushMessage concatenates the selected memos into one message, grouping by
+// category (empty category -> 未分類) and preserving the ORDER of the resolved memos
+// (already sorted by category/position on the way in). File memos surface their
+// ~/repos ref path plus any comment, text memos surface their body.
+func buildFlushMessage(memos []Memo) string {
+	var b strings.Builder
+	b.WriteString("以下のメモをまとめて処理して。\n")
+	lastCat := "\x00" // sentinel so the first real category (incl. "") emits a heading
+	n := 0
+	for _, m := range memos {
+		if m.Category != lastCat {
+			lastCat = m.Category
+			cat := m.Category
+			if cat == "" {
+				cat = "未分類"
+			}
+			b.WriteString("\n## " + cat + "\n")
+			n = 0
+		}
+		n++
+		if m.Kind == "file" {
+			fmt.Fprintf(&b, "%d. 対象ファイル: %s\n", n, m.RefPath)
+			if m.Body != "" {
+				b.WriteString("   " + m.Body + "\n")
+			}
+		} else {
+			fmt.Fprintf(&b, "%d. %s\n", n, m.Body)
+		}
+	}
+	return b.String()
+}
+
+// handleMemoFlush concatenates the selected memos into one message, sends it once to
+// the session's input, and stamps sent_at on those memos. The ids list unifies the
+// three send granularities (whole repo / category / individual) — the client just
+// builds the right ids. Sending happens through the running workspace agent, so this
+// resolves the full runtime (not just membership).
+func (c config) handleMemoFlush(w http.ResponseWriter, r *http.Request) {
+	res, ok := c.resolvedFor(w, r)
+	if !ok {
+		return
+	}
+	var in struct {
+		SessionName string   `json:"sessionName"`
+		IDs         []string `json:"ids"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid JSON body"})
+		return
+	}
+	in.SessionName = strings.TrimSpace(in.SessionName)
+	if in.SessionName == "" {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_session", "sessionName is required"})
+		return
+	}
+	if len(in.IDs) == 0 {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "no_ids", "ids is required"})
+		return
+	}
+	// Resolve the requested ids to owned memos (foreign/unknown ids are dropped).
+	memos := make([]Memo, 0, len(in.IDs))
+	for _, id := range in.IDs {
+		m, found, err := c.mgr.store.GetMemo(r.Context(), id)
+		if err != nil {
+			writeAPIErr(w, internalErr(err))
+			return
+		}
+		if found && m.MembershipID == res.mv.MembershipID {
+			memos = append(memos, m)
+		}
+	}
+	if len(memos) == 0 {
+		writeAPIErr(w, &apiError{http.StatusNotFound, "no_memos", "no owned memos for the given ids"})
+		return
+	}
+	// Group by category (stable within-category order preserved from ListMemos).
+	sort.SliceStable(memos, func(i, j int) bool { return memos[i].Category < memos[j].Category })
+
+	payload, _ := json.Marshal(map[string]string{"prompt": buildFlushMessage(memos)})
+	if _, err := agentText(r.Context(), res.rt,
+		"POST", "/sessions/"+url.PathEscape(in.SessionName)+"/input", payload); err != nil {
+		writeAPIErr(w, &apiError{http.StatusBadGateway, "flush_failed", err.Error()})
+		return
+	}
+
+	sentIDs := make([]string, len(memos))
+	for i, m := range memos {
+		sentIDs[i] = m.ID
+	}
+	sentAt := nowTS()
+	if err := c.mgr.store.MarkMemosSent(r.Context(), res.mv.MembershipID, sentIDs, sentAt); err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"sent": len(sentIDs), "sentAt": sentAt, "ids": sentIDs})
 }
 
 func (c config) handleMemoDelete(w http.ResponseWriter, r *http.Request) {
