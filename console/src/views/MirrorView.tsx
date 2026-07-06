@@ -721,12 +721,6 @@ export default function MirrorView({
       const j = await res.json().catch(() => ({}));
       if (res.ok && typeof j.suggestedTitle === "string") {
         setSuggestedTitle(j.suggestedTitle);
-      } else if (j.error?.code === "already_titled") {
-        // The button is only shown while sessionMeta.title is empty, but that prop
-        // can lag a beat behind the server (e.g. just set via the rename modal) —
-        // this isn't a real failure, just a stale render. Refresh quietly instead
-        // of surfacing an alarming error for something the user didn't cause.
-        bumpSessions();
       } else if (!res.ok) {
         toast(j.error ? errText(j.error) : `タイトル案の生成に失敗しました (${res.status})`);
       }
@@ -880,11 +874,15 @@ export default function MirrorView({
             <span className="fork-label">分岐</span>
           </button>
         )}
-        {sessionMeta?.kind === "claude" && !sessionMeta?.title && settings.autoTitleSuggest && (
+        {sessionMeta?.kind === "claude" && settings.autoTitleSuggest && (
           <button
             type="button"
             className="icon"
-            title="タイトルを再提案（現時点までの会話から作り直します）"
+            title={
+              sessionMeta?.title
+                ? "タイトルを再提案（現時点までの会話から作り直します。採用するまで今のタイトルは変わりません）"
+                : "タイトルを提案してもらう（現時点までの会話から作成します）"
+            }
             onClick={regenerateTitle}
             disabled={titleActing}
           >
