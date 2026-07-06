@@ -473,6 +473,17 @@ export default function SessionsSection() {
                     </span>
                   );
                 })()}
+                {/* Branch drift: the working copy was checked out to a different branch
+                    than this session started on (a checkout that slipped past the guard).
+                    Can't be prevented at the git layer, so surface it loudly here. */}
+                {s.branchDrift && (
+                  <span
+                    className="session-drift"
+                    title={`このセッションの作業コピーは起動時のブランチ「${s.branch}」から「${s.currentBranch}」へ切り替わっています。稼働中エージェントの作業ツリーが入れ替わり、編集や差分が食い違っている可能性があります。`}
+                  >
+                    <Icon name="warning" /> {s.currentBranch}
+                  </span>
+                )}
               </span>
             </button>
             {/* Ordinal badges: color-matched pane numbers for a session shown in one

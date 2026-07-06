@@ -1474,6 +1474,26 @@ button.wu-reload {
   border-color: color-mix(in srgb, var(--warn) 40%, transparent);
   font-weight: 600;
 }
+/* Branch drift: the working copy was switched off the session's start branch. A red
+   alert chip (more severe than the orange question state) since it means the agent's
+   working tree changed under it. Sits at the right end after the state chip. */
+.session-drift {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  max-width: 40%;
+  font-size: 10px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--del);
+  background: color-mix(in srgb, var(--del) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--del) 42%, transparent);
+  font-weight: 600;
+}
 @keyframes af-pulse {
   0%,
   100% {
