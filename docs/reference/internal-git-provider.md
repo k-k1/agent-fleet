@@ -1,6 +1,6 @@
 # internal-git-provider — テナント内部 git プロバイダ
 
-- 状態: **提案（設計）** — 未実装。契約はコードが正（実装後は本書を追従させる）。
+- 状態: **P1 実装済み**（MVP）。契約はコードが正（`control-plane/git_http.go`・`internal_git.go` ほか）。
 - 関連: [architecture](architecture.md) / [security §4.4](security.md#44-シークレット管理) /
   [api-agent](api-agent.md) / ADR [0010](../decisions/0010-internal-git-provider.md)（採否）/
   [0003](../decisions/0003-ssh-to-connections.md)（git 認証＝Connections）
@@ -74,17 +74,25 @@
 
 ### 5.2 git smart-HTTP 面（clone/fetch/push）
 
-- membership（identity × tenant）毎に**テナントスコープの git token** を発行。
-  保管は既存 **PAT テーブル流用**を第一候補（新設は避ける。ADR で確定）。
-- ワークスペース作成/更新時（`manager.go` の secrets 注入経路）に、暗号化ストアへ
-  `s.Git[<internal-host>] = { User: "x-access-token", Token: <token> }` を書き込む。
+- membership（identity × tenant）毎に**決定的な HMAC トークン**を用いる（**token 用の DB は持たない**）。
+  形式 `afg_<b64url(membershipID)>.<HMAC-tag>`。署名鍵はデプロイ master key（AF_MASTER_KEY）から
+  派生（`git_http.go` `gitSignKey`）。CP は同じ関数でトークンを**再生成**できるので、注入は冪等で
+  平文の保存も復元問題も無い（PAT 表流用は却下 → ADR 0010）。
+- ワークスペース起動時（`manager.go` `workspaceExtraEnv`）に、CP が env
+  `AF_INTERNAL_GIT_HOST` / `AF_INTERNAL_GIT_TOKEN`（= `mintGitToken(membershipID)`）を注入。
+  Agent は起動時（`secrets.go` `seedInternalGit`）にこれを暗号ストアへ
+  `s.Git[<host>] = { User: "x-access-token", Token: <token> }` として seed する。
   → 統一 cred helper（`secrets.go` `runCredHelper`）は**任意ホストを既に配信する**ので、
-  これだけで clone/push の Basic 認証が透過的に通る（追加コード不要）。
-- CP の smart-HTTP ハンドラは Basic の **password をこの token として検証** → (tenant, user, role)
-  を解決し、以下を**毎リクエスト強制**:
+  これだけで clone/push の Basic 認証が透過的に通る。
+- CP の smart-HTTP ハンドラは Basic の **password を token として検証**（tag 照合）→ 埋め込まれた
+  membership を**ライブ参照**して (tenant, role) を解決し、以下を**毎リクエスト強制**:
   - URL の `<slug>` == token のテナント（他テナントのリポに到達不可）。
-  - `git-upload-pack`（read）= member 以上。
-  - `git-receive-pack`（push/write）= role で可否（例: viewer は read-only）。
+  - repo が `git_repo` 台帳に存在（未登録は 404）。
+  - `git-upload-pack`（read）= 有効な membership。
+  - `git-receive-pack`（push/write）= role で可否（`canPush`: member / tenant_admin。将来の viewer は read-only）。
+- **失効**: membership を無効化すると `GetMembershipByID`（`status='active'` フィルタ）が外れ、同じ
+  決定的トークンが即座に通らなくなる（token 表が無くてもライブで失効）。全体ローテーションが要る段は
+  membership に epoch 列を足して HMAC 入力に混ぜる（P2）。
 
 ## 6. データフロー
 
@@ -104,19 +112,23 @@
 | # | 箇所 | 変更 |
 |---|------|------|
 | 1 | `control-plane/main.go`（mux, 〜419） | ルート追加: `/git/{slug}/{repo...}`（smart-HTTP）、`/api/internal-git/*`（管理 API） |
-| 2 | `control-plane/git_http.go`（新規） | `git http-backend`(CGI) ラッパ + Basic token 認証 + slug 封じ込め + role 認可 |
+| 2 | `control-plane/git_http.go`（新規） | HMAC トークン発行/検証 + `git http-backend`(CGI) ラッパ + slug 封じ込め + 台帳存在確認 + role 認可 |
 | 3 | `control-plane/internal_git.go`（新規） | repo 一覧/作成/削除、branches、`clone_url` 生成 |
-| 4 | `control-plane/migrations/00NN_git_repo.sql`（新規） | `git_repo` テーブル（+ token は PAT 流用） |
-| 5 | `control-plane/manager.go`（secrets 注入） | membership の git token を暗号ストアへ注入（`s.Git[internal-host]`） |
-| 6 | `workspace/agent/connections.go:21 gitHosts` | 内部ホストを追加（既定 user=`x-access-token`）→ 資格情報の保存/注入を有効化 |
-| 7 | `workspace/agent/connections.go handleConnectionsGet` | `internal: connected`（テナント標準で常時） |
-| 8 | `workspace/agent/git.go:61 gitProviderHost` | 内部ホストの slug/アイコン case（バッジ、任意） |
-| 9 | `console/src/components/RepoPicker.tsx` | `PROVIDERS` にタブ追加、internal 時は repo/branch を **`api/internal-git/*`** へ分岐 |
-| 10 | `console/src/settings/GitTab.tsx` | 「内部リポジトリを作成」カード（OAuth 不要） |
-| 11 | `docs/README.md` / 本書 / ADR 0010 | 索引・設計・決定の更新 |
+| 4 | `control-plane/migrations/0014_git_repo.sql`（新規） | `git_repo` テーブルのみ（**token 表は作らない** — 決定的 HMAC） |
+| 5 | `control-plane/store{,_sqlite}.go` | `GitRepo` 型 + CRUD、`GetMembershipByID`（token→tenant/role 解決用） |
+| 6 | `control-plane/main.go` | ルート登録（`/api/internal-git/*`、`/git/{slug}/{repo...}`）＋ `/git/` を authGate 免除、`internalGitHost` 設定 |
+| 7 | `control-plane/manager.go`（env 注入） | `workspaceExtraEnv` で `AF_INTERNAL_GIT_HOST` / `AF_INTERNAL_GIT_TOKEN` を注入 |
+| 8 | `control-plane/Dockerfile` | runtime に `git`（`git-http-backend`）を追加 |
+| 9 | `workspace/agent/secrets.go` | `seedInternalGit`（起動時に env→`s.Git[host]` へ seed）＋ `internalGitHost` |
+| 10 | `workspace/agent/connections.go` | `handleConnectionsGet` に `internal` 状態（`internalGitStatus`） |
+| 11 | `workspace/agent/git.go` `gitProviderHost` | 内部ホスト（env で動的一致）を `internal` slug にバッジ |
+| 12 | `console/src/components/RepoPicker.tsx` | `PROVIDERS` に `internal` タブ、internal 時は repo/branch を **`api/internal-git/*`**（CP 直）へ分岐 |
+| 13 | `console/src/settings/GitTab.tsx` | 「内部リポジトリ」カード（一覧/作成/削除、OAuth 不要、WS 停止中も可） |
+| 14 | `docs/README.md` / 本書 / ADR 0010 | 索引・設計・決定の更新 |
 
-`workspace/agent/git_remote.go` の switch は、内部一覧を **CP 直**で返す方針なら触らない
-（Agent→CP 認証が要るため Agent 経由は非推奨）。clone/閲覧/コミットは既存のまま。
+`workspace/agent/git_remote.go` の switch は触らない（内部一覧は **CP 直**。Agent→CP 認証が要るため Agent
+経由は非推奨）。clone/閲覧/コミットは既存のまま無改造。**`gitHosts`（connections.go）も触らない** —
+内部ホストは実行時 env で動的、cred helper は `s.Git[host]` にある任意ホストを配信するため登録不要。
 
 ## 8. 隔離・セキュリティ
 
@@ -136,10 +148,13 @@
   （任意）clone なしのツリー閲覧（bare から read-only 提供）。
 - **将来（②）**: PR/レビュー/CI が要るなら Gitea/Forgejo を内包して載せ替え。
 
-## 10. 未決事項（実装前に確定）
+## 10. 確定事項（P1 実装で確定）
 
-1. **CP イメージの `git` バイナリ**: `git http-backend` に依存。無ければ追加。CP は現状 git 非実行＝新面。
-2. **token モデル**: 既存 PAT 流用（第一候補）か新 `git_token` テーブルか。
-3. **clone URL ホスト**: コンテナから到達する CP のベース URL（Caddy TLS 終端）で確定してよいか。
-4. **内部ホスト id**: `RepoPicker`/`gitHosts`/`gitProviderHost` で使う識別子（例 `internal` 表示 /
-   実 URL ホスト）の命名。
+1. **CP イメージの `git` バイナリ**: → **追加**（`control-plane/Dockerfile` runtime に `git`）。
+   `git-http-backend` は `/usr/lib/git-core/git-http-backend`。`GIT_HTTP_BACKEND` env で上書き可。
+2. **token モデル**: → **membership 毎の決定的 HMAC トークン（token 用 DB なし）**。PAT 表流用は却下
+   （平文復元不可で注入が非冪等・ユーザー一覧を汚す）。§5.2 / ADR 0010 参照。
+3. **clone URL ホスト**: → **`PUBLIC_BASE_URL`**（Caddy TLS 終端。コンテナはヘアピン NAT で到達）。
+   未設定なら内部 git は無効（作成 API は 503 `not_configured`、注入もスキップ）。
+4. **内部ホスト id**: → provider id / UI ラベル = **`internal`（「内部」）**。実 URL ホストは
+   `PUBLIC_BASE_URL` のホストで、実行時に `AF_INTERNAL_GIT_HOST` として Agent へ注入（コンパイル時固定不可）。

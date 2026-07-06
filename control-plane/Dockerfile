@@ -32,8 +32,10 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/af-cp .
 
 # --- 3. runtime --------------------------------------------------------------
 FROM debian:bookworm-slim
+# git provides git-http-backend (/usr/lib/git-core/git-http-backend), which the
+# CP wraps to self-host tenant repos over smart-HTTP (docs/reference/internal-git-provider).
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates \
+ && apt-get install -y --no-install-recommends ca-certificates git \
  && rm -rf /var/lib/apt/lists/*
 # docker CLI (DooD). Pulled from the official docker image so it matches the
 # host engine's client; pin the major to keep releases reproducible.
