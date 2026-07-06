@@ -225,7 +225,8 @@ export default function ReposSection() {
               if (!ok) return;
               const res = await raw(`api/repos/${encodeURIComponent(r.name)}`, { method: "DELETE" });
               if (!res.ok) {
-                toast("削除に失敗しました");
+                const j = await res.json().catch(() => null);
+                toast(j?.error ? "削除に失敗: " + errText(j.error) : "削除に失敗しました");
                 return;
               }
               bumpRepos();
