@@ -306,14 +306,16 @@ func writeTitleGenErr(w http.ResponseWriter, err error) {
 }
 
 // handleRegenerateSuggestedTitle lets the user explicitly ask for a fresh title
-// suggestion at any time (a button in the chat header), bypassing the automatic
-// trigger's turn-count/idle gating and any prior dismissal — the automatic path
-// still only offers once, but the user can always ask again manually. Runs
-// synchronously so the response carries the new suggestion directly; this is a
-// rare, user-initiated action (unlike the poll-driven automatic path), so blocking
-// the request on the LLM call is fine. Persists into SuggestedTitle (so it also
-// surfaces as the header banner) — for a preview that doesn't touch sessionMeta,
-// see handleSuggestTitle.
+// suggestion at any time (a button in the chat header) — including for a session
+// that already has a title, since the point is offering a better one as the
+// conversation moves on; the banner's 採用/× still requires an explicit click
+// before anything is overwritten. Bypasses the automatic trigger's turn-count/idle
+// gating and any prior dismissal — the automatic path still only offers once, but
+// the user can always ask again manually. Runs synchronously so the response
+// carries the new suggestion directly; this is a rare, user-initiated action
+// (unlike the poll-driven automatic path), so blocking the request on the LLM call
+// is fine. Persists into SuggestedTitle (so it also surfaces as the header banner)
+// — for a preview that doesn't touch sessionMeta, see handleSuggestTitle.
 func handleRegenerateSuggestedTitle(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if !nameRe.MatchString(name) {
@@ -329,10 +331,6 @@ func handleRegenerateSuggestedTitle(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
 		return
 	}
-	if m.Title != "" {
-		writeErr(w, http.StatusBadRequest, "already_titled", "session already has a title")
-		return
-	}
 	ctx, cancel := context.WithTimeout(r.Context(), titleSuggestTimeout)
 	defer cancel()
 	title, err := generateTitleNow(ctx, name, sessionTitleTurns(m))
@@ -341,10 +339,10 @@ func handleRegenerateSuggestedTitle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Re-read: the LLM call can take tens of seconds, during which the user may
-	// have set a title themselves.
+	// Re-read: the LLM call can take tens of seconds, during which the session
+	// could have been archived/removed.
 	m, found = readSessionMeta(name)
-	if !found || m.Title != "" {
+	if !found {
 		writeErr(w, http.StatusConflict, "conflict", "session changed while generating")
 		return
 	}
