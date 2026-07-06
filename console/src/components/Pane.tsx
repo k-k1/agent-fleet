@@ -29,7 +29,7 @@ interface PaneProps {
   canClose?: boolean;
   canDrag?: boolean;
   onActivate: (id: string) => void;
-  onClose: (id: string) => void;
+  onClose: (id: string, remove?: boolean) => void;
   onSwap: (aId: string, bId: string) => void;
   onDropSplit: (srcId: string, refId: string, dir: "right" | "down") => void;
   sessionMeta?: Session | null;
@@ -231,8 +231,18 @@ export default function Pane({
           <button
             type="button"
             className="ghost pane-btn pane-close"
-            title="このペインを閉じる"
-            onClick={() => onClose(pane.id)}
+            title="このペインを閉じる（中クリック / Ctrl+クリックで空にせず直接閉じる）"
+            // Middle-click also closes outright; suppress the mousedown default so the
+            // browser doesn't start autoscroll.
+            onMouseDown={(e) => e.button === 1 && e.preventDefault()}
+            onAuxClick={(e) => {
+              if (e.button === 1) {
+                e.preventDefault();
+                onClose(pane.id, true);
+              }
+            }}
+            // Plain click: blank-then-remove. Ctrl/⌘+click: remove the pane outright.
+            onClick={(e) => onClose(pane.id, e.ctrlKey || e.metaKey)}
           >
             <Icon name="close" />
           </button>

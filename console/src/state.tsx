@@ -876,12 +876,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // empty pane again is what un-splits. The very last pane can't be removed (the layout
   // needs ≥1), so it just stays as the base empty terminal.
   const closePane = useCallback(
-    (paneId: string) => {
+    (paneId: string, removeOutright = false) => {
       const cur = layoutRef.current;
       const target = cur.cols.flatMap((c) => c.panes).find((p) => p.id === paneId);
       if (!target) return;
       // Step 1: content pane → clear to an empty terminal, keeping the pane (and split).
-      if (!isBlankPane(target)) {
+      // removeOutright (middle / Ctrl+click the ×) skips this and removes the pane at once.
+      if (!removeOutright && !isBlankPane(target)) {
         const cols = cur.cols.map((c) => ({
           ...c,
           panes: c.panes.map((p) => (p.id === paneId ? blankPane(paneId) : p)),
