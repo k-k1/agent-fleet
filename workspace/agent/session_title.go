@@ -228,6 +228,82 @@ func handleAcceptSuggestedTitle(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, wireSession(m, tmuxHasSession(tmuxName(name))))
 }
 
+// handleRegenerateSuggestedTitle lets the user explicitly ask for a fresh title
+// suggestion at any time (a button in the chat header), bypassing the automatic
+// trigger's turn-count/idle gating and any prior dismissal — the automatic path
+// still only offers once, but the user can always ask again manually. Runs
+// synchronously so the response carries the new suggestion directly; this is a
+// rare, user-initiated action (unlike the poll-driven automatic path), so blocking
+// the request on the LLM call is fine.
+func handleRegenerateSuggestedTitle(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if !nameRe.MatchString(name) {
+		writeErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
+		return
+	}
+	if !autoTitleSuggestEnabled() {
+		writeErr(w, http.StatusBadRequest, "feature_disabled", "auto title suggestion is turned off")
+		return
+	}
+	m, found := readSessionMeta(name)
+	if !found {
+		writeErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
+		return
+	}
+	if m.Title != "" {
+		writeErr(w, http.StatusBadRequest, "already_titled", "session already has a title")
+		return
+	}
+	turns := sessionTitleTurns(m)
+	if len(turns) == 0 {
+		writeErr(w, http.StatusBadRequest, "no_content", "not enough conversation yet to suggest a title")
+		return
+	}
+	if !titleGenClaim(name) {
+		writeErr(w, http.StatusConflict, "busy", "a title generation is already in progress")
+		return
+	}
+	succeeded := false
+	defer func() { titleGenDone(name, succeeded) }()
+
+	ctx, cancel := context.WithTimeout(r.Context(), titleSuggestTimeout)
+	defer cancel()
+	title, err := runTitleSuggestLLM(ctx, turns)
+	if err != nil || title == "" {
+		writeErr(w, http.StatusInternalServerError, "generation_failed", "title generation failed")
+		return
+	}
+	succeeded = true
+
+	// Re-read: the LLM call can take tens of seconds, during which the user may
+	// have set a title themselves.
+	m, found = readSessionMeta(name)
+	if !found || m.Title != "" {
+		writeErr(w, http.StatusConflict, "conflict", "session changed while generating")
+		return
+	}
+	m.SuggestedTitle = title
+	m.SuggestedTitleDismissed = false // an explicit re-ask overrides any earlier dismissal
+	writeSessionMeta(m)
+	writeJSON(w, http.StatusOK, map[string]any{"suggestedTitle": title})
+}
+
+// sessionTitleTurns fetches the full turn list for a session regardless of kind,
+// for the manual regenerate action (which needs the whole conversation, not a
+// poll window).
+func sessionTitleTurns(m sessionMeta) []chatTurn {
+	if m.Kind == kindClaude {
+		sid := sessionUUID(m.Dir, m.Name)
+		lines, _, _ := transcriptRead(sid)
+		return collectTurns(lines, 0, len(lines))
+	}
+	td, ok := agentOf(m.Kind).transcript(m)
+	if !ok {
+		return nil
+	}
+	return td.turns
+}
+
 // handleDismissSuggestedTitle discards the pending suggestion without adopting it,
 // and latches SuggestedTitleDismissed so it is never offered again for this session.
 func handleDismissSuggestedTitle(w http.ResponseWriter, r *http.Request) {

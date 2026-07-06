@@ -74,6 +74,7 @@ func main() {
 	// dismiss discards it — either way it's never offered again for this session.
 	mux.HandleFunc("POST /sessions/{name}/title/accept", handleAcceptSuggestedTitle)
 	mux.HandleFunc("POST /sessions/{name}/title/dismiss", handleDismissSuggestedTitle)
+	mux.HandleFunc("POST /sessions/{name}/title/regenerate", handleRegenerateSuggestedTitle)
 	mux.HandleFunc("GET /ws/pty", handlePTY)
 
 	// Assistant chat — headless-CLI LLM chat/translation, separate from tmux
