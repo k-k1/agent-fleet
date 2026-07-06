@@ -271,9 +271,11 @@ export default function ReposSection() {
                 return;
               }
               writeRepoLast(r.name, kind, hasModel ? model : undefined);
-              if (prompt) {
+              // Seed the prompt verbatim (trailing newline preserved for the auto-send);
+              // history stores the trimmed form so the 履歴 labels stay tidy.
+              if (prompt.trim()) {
                 setLaunchSeed(res.name, prompt);
-                pushPromptHistory(r.name, prompt); // remember it for the 履歴 group next time
+                pushPromptHistory(r.name, prompt.trim());
               }
               bumpSessions();
               showChat(res.name);
