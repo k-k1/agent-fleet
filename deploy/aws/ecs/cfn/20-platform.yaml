@@ -1,0 +1,188 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  agent-fleet ECS adapter (P3-7) — platform identity/compute core: ECR repos, the
+  ECS cluster, the Service Connect (Cloud Map private DNS) namespace, and the IAM
+  roles the Control Plane and workspace tasks assume. No ALB / services here (that
+  is 30-ingress). Imports the VPC from 00-network. Per-workspace ECS Services,
+  task definitions, EFS access points and SSM params are created by the CP at
+  runtime (段2) — not by CloudFormation.
+
+Parameters:
+  NetworkStackName:
+    Type: String
+    Default: af-ecs-network
+    Description: Name of the 00-network stack to import the VPC from.
+  ServiceConnectNamespace:
+    Type: String
+    Default: af.internal
+    Description: Private DNS namespace for Service Connect (CP reaches Agents by
+      <service>.<namespace>). Internal only.
+
+Resources:
+  # --- ECR ---
+  EcrControlPlane:
+    Type: AWS::ECR::Repository
+    DeletionPolicy: Delete
+    Properties:
+      RepositoryName: af-control-plane
+      EmptyOnDelete: true              # dev-ephemeral: drop images on stack delete
+      ImageScanningConfiguration: { ScanOnPush: true }
+  EcrWorkspace:
+    Type: AWS::ECR::Repository
+    DeletionPolicy: Delete
+    Properties:
+      RepositoryName: af-workspace
+      EmptyOnDelete: true
+      ImageScanningConfiguration: { ScanOnPush: true }
+
+  # --- Service Connect namespace (Cloud Map private DNS in the VPC) ---
+  Namespace:
+    Type: AWS::ServiceDiscovery::PrivateDnsNamespace
+    Properties:
+      Name: !Ref ServiceConnectNamespace
+      Vpc:
+        Fn::ImportValue: !Sub "${NetworkStackName}-VpcId"
+
+  # --- ECS cluster (defaults services to the Service Connect namespace) ---
+  Cluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Sub "af-${AWS::StackName}"
+      ClusterSettings:
+        - { Name: containerInsights, Value: disabled }   # avoid CW cost in dev
+      ServiceConnectDefaults:
+        Namespace: !GetAtt Namespace.Arn
+
+  # --- IAM: shared execution role (ECR pull + logs + SSM SecureString read) ---
+  ExecRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "af-${AWS::StackName}-exec"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ecs-tasks.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      Policies:
+        - PolicyName: ssm-read
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              # Injects AGENT_TOKEN / AF_SECRET_KEY into workspace tasks via
+              # `secrets: valueFrom` (frozen spec §20b.7.5). aws/ssm managed key
+              # needs no explicit kms grant.
+              - Effect: Allow
+                Action: [ ssm:GetParameters ]
+                Resource:
+                  - !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/af-ws/*"
+                  - !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/af-cp/*"
+
+  # --- IAM: workspace task role — Agent needs NO AWS APIs (least privilege) ---
+  WsTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "af-${AWS::StackName}-ws-task"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ecs-tasks.amazonaws.com }
+            Action: sts:AssumeRole
+      # No policies attached on purpose.
+
+  # --- IAM: Control Plane task role — drives ECS/EFS/SSM for per-workspace ops ---
+  CpTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "af-${AWS::StackName}-cp-task"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ecs-tasks.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: cp-runtime
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: EcsDrive
+                Effect: Allow
+                Action:
+                  - ecs:CreateService
+                  - ecs:UpdateService
+                  - ecs:DeleteService
+                  - ecs:DescribeServices
+                  - ecs:ListServices
+                  - ecs:RegisterTaskDefinition
+                  - ecs:DeregisterTaskDefinition
+                  - ecs:DescribeTaskDefinition
+                  - ecs:DescribeTasks
+                  - ecs:ListTasks
+                  - ecs:TagResource
+                Resource: "*"          # ECS actions are not tightly resource-scopable; dev-acceptable
+              - Sid: EfsAccessPoints
+                Effect: Allow
+                Action:
+                  - elasticfilesystem:CreateAccessPoint
+                  - elasticfilesystem:DeleteAccessPoint
+                  - elasticfilesystem:DescribeAccessPoints
+                  - elasticfilesystem:TagResource
+                Resource: "*"
+              - Sid: SsmWorkspaceParams
+                Effect: Allow
+                Action:
+                  - ssm:PutParameter
+                  - ssm:GetParameters
+                  - ssm:GetParameter
+                  - ssm:DeleteParameter
+                  - ssm:AddTagsToResource
+                Resource: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/af-ws/*"
+              - Sid: ServiceConnectDiscovery
+                Effect: Allow
+                Action:
+                  - servicediscovery:Get*
+                  - servicediscovery:List*
+                  - servicediscovery:DiscoverInstances
+                Resource: "*"
+              - Sid: PassTaskRoles
+                Effect: Allow
+                Action: iam:PassRole
+                Resource:
+                  - !GetAtt ExecRole.Arn
+                  - !GetAtt WsTaskRole.Arn
+                Condition:
+                  StringEquals:
+                    iam:PassedToService: ecs-tasks.amazonaws.com
+
+Outputs:
+  EcrControlPlaneUri:
+    Value: !GetAtt EcrControlPlane.RepositoryUri
+    Export: { Name: !Sub "${AWS::StackName}-EcrControlPlaneUri" }
+  EcrWorkspaceUri:
+    Value: !GetAtt EcrWorkspace.RepositoryUri
+    Export: { Name: !Sub "${AWS::StackName}-EcrWorkspaceUri" }
+  ClusterName:
+    Value: !Ref Cluster
+    Export: { Name: !Sub "${AWS::StackName}-ClusterName" }
+  ClusterArn:
+    Value: !GetAtt Cluster.Arn
+    Export: { Name: !Sub "${AWS::StackName}-ClusterArn" }
+  NamespaceArn:
+    Value: !GetAtt Namespace.Arn
+    Export: { Name: !Sub "${AWS::StackName}-NamespaceArn" }
+  NamespaceId:
+    Value: !GetAtt Namespace.Id
+    Export: { Name: !Sub "${AWS::StackName}-NamespaceId" }
+  ExecRoleArn:
+    Value: !GetAtt ExecRole.Arn
+    Export: { Name: !Sub "${AWS::StackName}-ExecRoleArn" }
+  WsTaskRoleArn:
+    Value: !GetAtt WsTaskRole.Arn
+    Export: { Name: !Sub "${AWS::StackName}-WsTaskRoleArn" }
+  CpTaskRoleArn:
+    Value: !GetAtt CpTaskRole.Arn
+    Export: { Name: !Sub "${AWS::StackName}-CpTaskRoleArn" }
