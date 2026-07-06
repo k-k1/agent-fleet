@@ -1218,6 +1218,9 @@ const SYS_PREFIXES = [
   "<command-args>",
   "<user-memory-input>",
   "<system-reminder>",
+  // Auto-logged when the user interrupts a tool (e.g. rejecting an ExitPlanMode plan) —
+  // a system record, not something the user typed, so keep it out of the mirror.
+  "[Request interrupted by user",
 ];
 
 function isNoise(t: Turn): boolean {
