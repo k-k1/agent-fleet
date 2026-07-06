@@ -11,6 +11,7 @@ import NewRepoModal from "../NewRepoModal.jsx";
 import BranchModal from "../BranchModal.jsx";
 import { kindIcon, kindLabel } from "../../lib/sessionkind.js";
 import { agentOf, repoLaunchKinds } from "../../agents/registry.ts";
+import { useSettings } from "../../lib/settings.js";
 import { repoPanes, ordClass, paneCount } from "../../lib/panebadge.js";
 import type { MouseEvent as RMouseEvent } from "react";
 import type { ConnectionsStatus, Session } from "../../types/session.ts";
@@ -50,6 +51,7 @@ const guessRepoName = (u: string | null | undefined) => {
 export default function ReposSection() {
   const { reposKey, connKey, bumpRepos, bumpSessions, bumpFiles, revealInFiles, showSCM, showSCMSplit, showChanges, showTerminal, showTerminalSplit, showChat, showChatSplit, scmRepo, mode, session, wsState, layout, setActivePane } =
     useApp();
+  const settings = useSettings(); // default model for claude 起動
   // repo name → panes showing it (ordinal badges), like the Sessions list; only when split.
   const multiPane = paneCount(layout) > 1;
   const rPanes = multiPane ? repoPanes(layout) : null;
@@ -208,9 +210,13 @@ export default function ReposSection() {
             // pane instead of replacing the active pane's content.
             onLaunch={async (kind: string, split: boolean) => {
               // The server allocates the session's identity (slug); we only say where
-              // (dir) and what kind. Open the created session by its returned slug —
-              // claude → chat mirror (live, PTY attached in bg), other kinds → terminal.
-              const res = await apiJSON("api/sessions", "POST", { dir: r.path, kind });
+              // (dir), what kind, and (for a model-taking kind = claude) the user's
+              // default model so a repo launch follows the setting like the dialog does.
+              // Open the created session by its returned slug — claude → chat mirror
+              // (live, PTY attached in bg), other kinds → terminal.
+              const body: Record<string, unknown> = { dir: r.path, kind };
+              if (agentOf(kind).caps.model && settings.defaultModel) body.model = settings.defaultModel;
+              const res = await apiJSON("api/sessions", "POST", body);
               if (res && res.error) {
                 toast("起動に失敗: " + errText(res.error));
                 return;

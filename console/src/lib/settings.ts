@@ -116,6 +116,9 @@ export interface Settings {
   viewerColor: string;
   chatColor: string;
   mirrorSend: string;
+  // Default claude model for new sessions (launch dialog + repo 起動). "" = let claude
+  // pick its own default (which varies between releases); a concrete alias pins it.
+  defaultModel: string;
   // Per-SSM-host terminal color: host id → color id (see lib/termcolor SSM_HOST_COLORS).
   // Applied to a session's terminal background when it's created (sent as its color).
   ssmHostColors: Record<string, string>;
@@ -141,6 +144,7 @@ const DEFAULTS: Settings = {
   // Markdown mirror composer: "mod-enter" = Ctrl/⌘+Enter submits, Enter inserts a
   // newline (phone-friendly default); "enter" = Enter submits, Shift+Enter newline.
   mirrorSend: "mod-enter",
+  defaultModel: "sonnet", // stable default (avoids claude's release-varying pick); "" = claude's own
   ssmHostColors: {},
 };
 
@@ -148,6 +152,15 @@ const DEFAULTS: Settings = {
 export const MIRROR_SEND_MODES = [
   { id: "mod-enter", label: "Ctrl+Enter で送信" },
   { id: "enter", label: "Enter で送信" },
+];
+
+// Claude model choices, shared by the launch dialog and the default-model setting.
+// "" lets claude pick its own (release-dependent) default; a concrete alias pins it.
+export const CLAUDE_MODELS: [string, string][] = [
+  ["", "既定"],
+  ["opus", "Opus"],
+  ["sonnet", "Sonnet"],
+  ["haiku", "Haiku"],
 ];
 
 // Build a CSS font-family stack for a chosen family, with CJK + generic fallbacks.

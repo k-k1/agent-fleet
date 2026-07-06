@@ -10,7 +10,7 @@ import SsmLoginModal from "./SsmLoginModal.jsx";
 import { readKindAvail, writeKindAvail } from "../lib/kindavail.js";
 import { deriveRepoName, sanitizeSeg, uniqueRepoName, repoNameRe } from "../lib/reponame.js";
 import { agentOf, availableKinds, newSessionKinds } from "../agents/registry.ts";
-import { useSettings } from "../lib/settings.js";
+import { useSettings, CLAUDE_MODELS } from "../lib/settings.js";
 import { hostColorBase } from "../lib/termcolor.js";
 import type { FormEvent } from "react";
 import type { SsmHost } from "../types/session.ts";
@@ -57,7 +57,7 @@ export default function NewSessionModal({ onClose, onCreated }: NewSessionModalP
   // set up" hint so it doesn't flash before the real status arrives.
   const [avail, setAvail] = useState(readKindAvail); // { claude, codex, opencode, ssm }
   const [loaded, setLoaded] = useState(false);
-  const [model, setModel] = useState(""); // "" = claude default
+  const [model, setModel] = useState(settings.defaultModel); // seed from the user's default ("" = claude default)
   const [source, setSource] = useState<Source>("dir");
   const [sourceTouched, setSourceTouched] = useState(false); // user picked a source → stop auto-defaulting
   const [sel, setSel] = useState<RepoSelection | null>(null); // picker: { cloneUrl, fullName, branch }
@@ -285,12 +285,7 @@ export default function NewSessionModal({ onClose, onCreated }: NewSessionModalP
             <div className="field">
               <div className="field-label">モデル</div>
               <div className="seg">
-                {[
-                  ["", "既定"],
-                  ["opus", "Opus"],
-                  ["sonnet", "Sonnet"],
-                  ["haiku", "Haiku"],
-                ].map(([v, label]) => (
+                {CLAUDE_MODELS.map(([v, label]) => (
                   <button
                     key={v || "default"}
                     type="button"
