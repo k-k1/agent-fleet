@@ -21,18 +21,33 @@ func uiPrefsPath() string {
 	return filepath.Join(homeDir(), ".config", "agent-fleet", "ui-prefs.json")
 }
 
-func handleGetUIPrefs(w http.ResponseWriter, r *http.Request) {
+// readUIPrefs loads the raw prefs blob from disk — the same file handleGetUIPrefs
+// serves over HTTP — for same-process feature gates that don't need (and shouldn't
+// pay for) an HTTP round trip. Any read/parse failure returns an empty map, same
+// fallback as the handler, so a corrupt/missing file just means "nothing set".
+func readUIPrefs() map[string]any {
 	b, err := os.ReadFile(uiPrefsPath())
 	if err != nil || len(b) == 0 {
-		writeJSON(w, http.StatusOK, map[string]any{}) // none yet → empty object
-		return
+		return map[string]any{}
 	}
 	var obj map[string]any
 	if json.Unmarshal(b, &obj) != nil {
-		writeJSON(w, http.StatusOK, map[string]any{})
-		return
+		return map[string]any{}
 	}
-	writeJSON(w, http.StatusOK, obj)
+	return obj
+}
+
+// autoTitleSuggestEnabled is the global ON/OFF for auto session-title suggestion
+// (Console DisplayTab セッション). Missing/invalid key ⇒ true, matching the frontend's
+// DEFAULTS.autoTitleSuggest (settings.ts) so pre-feature clients get it without an
+// explicit opt-in.
+func autoTitleSuggestEnabled() bool {
+	v, ok := readUIPrefs()["autoTitleSuggest"].(bool)
+	return !ok || v
+}
+
+func handleGetUIPrefs(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, readUIPrefs())
 }
 
 func handlePutUIPrefs(w http.ResponseWriter, r *http.Request) {

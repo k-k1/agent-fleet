@@ -166,6 +166,8 @@ export default function MirrorView({
   const [pendingPlan, setPendingPlan] = useState<string | null>(null); // ExitPlanMode plan awaiting approval
   const [pendingPerm, setPendingPerm] = useState<string | null>(null); // tool-permission prompt awaiting allow/deny
   const [mode, setMode] = useState(""); // session permission mode ("plan" | …)
+  const [suggestedTitle, setSuggestedTitle] = useState(""); // headless-LLM title candidate, "" = none
+  const [titleActing, setTitleActing] = useState(false); // accept/dismiss request in flight
   // Composer draft, persisted per session so switching ターミナル⇄チャット (which
   // unmounts this view) — or a reload — keeps what you were typing. Key by session.
   const draftKey = session ? "af.mirror-draft." + session : null;
@@ -222,6 +224,8 @@ export default function MirrorView({
     setPendingPlan(null);
     setPendingPerm(null);
     setMode("");
+    setSuggestedTitle("");
+    setTitleActing(false);
     setHistIdx(null);
     setPasting(false);
     setLightbox(null);
@@ -333,6 +337,7 @@ export default function MirrorView({
           // the optimistic set on click just gives instant feedback until this confirms.
           setMode(typeof d.mode === "string" ? d.mode : "");
           setTermState(typeof d.terminalState === "string" ? d.terminalState : "");
+          setSuggestedTitle(typeof d.suggestedTitle === "string" ? d.suggestedTitle : "");
           setLoaded(true); // first (and every) successful fetch: drop the loading spinner
         }
       } catch {
@@ -664,6 +669,37 @@ export default function MirrorView({
       setForking(false);
     }
   };
+  // Auto-suggested title (session_title.go): 承認 promotes it to the session's real
+  // title (bumpSessions so the left-pane label updates without waiting for its own
+  // poll); 却下 discards it. Either way the server never offers one again.
+  const acceptTitle = async () => {
+    if (!session || titleActing) return;
+    setTitleActing(true);
+    try {
+      const res = await raw(`api/sessions/${q(session)}/title/accept`, { method: "POST" });
+      if (res.ok) {
+        setSuggestedTitle("");
+        bumpSessions();
+      }
+    } catch {
+      /* transient — next poll re-syncs suggestedTitle either way */
+    } finally {
+      setTitleActing(false);
+    }
+  };
+  const dismissTitle = async () => {
+    if (!session || titleActing) return;
+    setTitleActing(true);
+    try {
+      const res = await raw(`api/sessions/${q(session)}/title/dismiss`, { method: "POST" });
+      if (res.ok) setSuggestedTitle("");
+    } catch {
+      /* same as above */
+    } finally {
+      setTitleActing(false);
+    }
+  };
+
   const openDiff = (p: Part) => showDiff(p.file || "", p.edits, p.tool || "");
 
   // Composer history = the user's own prompts in this conversation (so ↑ works even
@@ -835,6 +871,26 @@ export default function MirrorView({
       {termState === "compacting" && (
         <div className="mirror-compacting">
           <Icon name="loading" spin /> コンテキストを圧縮中…
+        </div>
+      )}
+      {suggestedTitle && (
+        <div className="mirror-title-suggest">
+          <Icon name="lightbulb" />
+          <span className="mts-text">
+            タイトル案: <strong>{suggestedTitle}</strong>
+          </span>
+          <button type="button" className="btn primary mts-btn" disabled={titleActing} onClick={acceptTitle}>
+            <Icon name={titleActing ? "loading" : "check"} spin={titleActing} /> 承認
+          </button>
+          <button
+            type="button"
+            className="icon mts-dismiss"
+            disabled={titleActing}
+            onClick={dismissTitle}
+            title="この提案を今後表示しません"
+          >
+            <Icon name="close" />
+          </button>
         </div>
       )}
 

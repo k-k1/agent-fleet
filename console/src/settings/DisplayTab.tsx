@@ -108,6 +108,12 @@ export default function DisplayTab() {
             ? "claude セッションを起動するとき（作成ダイアログ・リポジトリの起動）このモデルを初期選択にします。"
             : "「既定」は claude 任せ（リリースにより Sonnet / Fable などに変動）。固定したい場合はモデルを選んでください。"}
         </p>
+        <Row label="タイトル自動提案">
+          <OnOff value={s.autoTitleSuggest} onChange={(v) => setSetting("autoTitleSuggest", v)} />
+        </Row>
+        <p className="muted ds-note">
+          タイトル未設定のセッションで数回やり取りしたら、AIが短いタイトル案をチャット上部に表示します。
+        </p>
       </section>
 
       <section className="ds-group">
