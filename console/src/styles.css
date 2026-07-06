@@ -2764,6 +2764,20 @@ body.row-resizing {
   opacity: 0.5;
   font-variant-numeric: tabular-nums;
 }
+/* Optimistic-echo chip: a just-sent prompt shown before claude logs it (queued while
+   busy). A faint pill with a spinner so it reads as "sent, not yet processed". */
+.mt-pending {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 8px;
+  padding: 0 6px;
+  font-size: 10px;
+  line-height: 1.6;
+  border-radius: 4px;
+  background: var(--surface-2, rgba(127, 127, 127, 0.16));
+  color: var(--muted);
+}
 /* Reasoning effort/variant chip (codex reasoning_effort / opencode variant), shown
    right after the model. A faint pill so it reads as secondary metadata. */
 .mt-effort {

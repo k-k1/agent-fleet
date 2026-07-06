@@ -58,6 +58,7 @@ interface Turn {
   text?: string;
   ts?: string;
   idx?: number;
+  pending?: boolean; // optimistic local echo of a just-sent prompt, not yet in the jsonl
   parts?: Part[];
   sidechain?: boolean;
   compact?: boolean;
@@ -88,6 +89,7 @@ interface Group {
   cacheCreate: number;
   ts?: string;
   idx?: number;
+  pending?: boolean; // holds an optimistic local echo awaiting its real transcript turn
 }
 // foldParts output: a run of tool traces, or a single passthrough part.
 type FoldItem =
@@ -146,6 +148,13 @@ export default function MirrorView({
   // "enter": Enter submits, Shift+Enter newlines.
   const modSend = settings.mirrorSend !== "enter";
   const [turns, setTurns] = useState<Turn[]>([]); // {role:'user'|'assistant', text, ts, idx}
+  // Optimistic local echoes of just-sent prompts. While claude is working it queues a new
+  // prompt WITHOUT logging it to the jsonl until the current turn finishes, so the mirror
+  // (transcript-only) would show nothing — the message looks lost. We render these until
+  // the matching real user turn appears, then reconcile them away. sinceIdx = the newest
+  // real turn idx at send time, so we only match a turn that arrives AFTER the send.
+  const [pendingSends, setPendingSends] = useState<{ id: number; text: string; sinceIdx: number }[]>([]);
+  const echoSeq = useRef(0);
   const [loaded, setLoaded] = useState(false); // false until the first transcript fetch returns
   const [termState, setTermState] = useState(""); // terminal-only state: "resume" | "compacting" | ""
   const [status, setStatus] = useState("");
@@ -202,6 +211,7 @@ export default function MirrorView({
     diagRef.current = "";
     statusRef.current = "";
     setTurns([]);
+    setPendingSends([]); // echoes belong to the old session's transcript
     setLoaded(false);
     setTermState("");
     setStatus("");
@@ -343,6 +353,17 @@ export default function MirrorView({
     };
   }, [session]);
 
+  // Reconcile optimistic echoes: once a sent prompt's real user turn lands in the
+  // transcript (a non-noise user turn past the echo's anchor idx with the same text),
+  // drop the echo so the message isn't shown twice.
+  useEffect(() => {
+    setPendingSends((prev) => {
+      if (!prev.length) return prev;
+      const next = prev.filter((e) => !echoLanded(e, turns));
+      return next.length === prev.length ? prev : next;
+    });
+  }, [turns]);
+
   // Follow the latest turn / pending question / typing dots — but ONLY when the user is
   // already at the bottom. The poll replaces `pending` with a fresh array every tick, so
   // an unconditional scroll here yanked the user back down every 1.2–3s while they tried
@@ -464,11 +485,14 @@ export default function MirrorView({
   }, [readOnly, alive, termState]);
 
   // Low-level: type one prompt into the session (tmux send-keys). No state/guard.
-  const postInput = async (text: string) => {
+  // Returns whether the POST succeeded so the caller can drop an optimistic echo on
+  // outright failure (the Agent also marks working; the next poll reconciles real state).
+  const postInput = async (text: string): Promise<boolean> => {
     try {
       await apiJSON(`api/sessions/${q(session)}/input`, "POST", { prompt: text });
+      return true;
     } catch {
-      /* the Agent also marks working; the next poll reconciles real state */
+      return false;
     }
   };
 
@@ -484,6 +508,15 @@ export default function MirrorView({
     }
   };
 
+  // Newest real (jsonl-backed) turn idx currently held, or -1. Used to anchor an
+  // optimistic echo so it only reconciles against a turn that arrives after the send.
+  const newestIdx = (): number => {
+    for (let i = turns.length - 1; i >= 0; i--) {
+      if (turns[i].idx !== undefined) return turns[i].idx as number;
+    }
+    return -1;
+  };
+
   // sendPrompt submits one prompt (the composer, or a single-select answer).
   const sendPrompt = async (text: string) => {
     const t = (text || "").trim();
@@ -491,7 +524,12 @@ export default function MirrorView({
     setSending(true);
     statusRef.current = "working";
     setStatus("working");
-    await postInput(t);
+    // Show the message immediately (optimistic echo) so it never looks lost while claude
+    // is busy — reconciled away once its real user turn appears in the transcript.
+    const echoId = ++echoSeq.current;
+    setPendingSends((p) => [...p, { id: echoId, text: t, sinceIdx: newestIdx() }]);
+    const ok = await postInput(t);
+    if (!ok) setPendingSends((p) => p.filter((e) => e.id !== echoId)); // send failed → drop it
     setSending(false);
     // Pick up the just-logged user turn quickly rather than waiting a full interval.
     setTimeout(() => tickRef.current?.(), 250);
@@ -694,7 +732,17 @@ export default function MirrorView({
   // claude writes one logical response as several assistant events (text split by
   // tool calls), so merge consecutive same-role turns into one block and drop the
   // system-injected user lines (bash i/o, task notifications, slash-command echoes).
-  const groups = groupTurns(turns);
+  // Append any optimistic echoes as synthetic user turns (idx past any real line so keys
+  // stay unique and they sort last) — the mirror then shows a just-sent prompt at once.
+  const echoTurns: Turn[] = pendingSends
+    .filter((e) => !echoLanded(e, turns)) // hide at render the instant the real turn lands
+    .map((e) => ({
+      role: "user",
+      text: e.text,
+      idx: 1e9 + e.id,
+      pending: true,
+    }));
+  const groups = groupTurns(echoTurns.length ? [...turns, ...echoTurns] : turns);
 
   // A /context-like gauge: the newest assistant turn's prompt size (input + cache) is
   // the current context fill. The per-category split (/context) is computed inside
@@ -1106,6 +1154,20 @@ function isNoise(t: Turn): boolean {
   return SYS_PREFIXES.some((p) => s.startsWith(p));
 }
 
+// echoLanded reports whether an optimistic echo's real user turn has appeared in the
+// transcript: a non-noise user turn past the echo's anchor idx with the same text. Used
+// both to hide a landed echo at render time (no 1-frame double) and to prune it from state.
+function echoLanded(e: { text: string; sinceIdx: number }, turns: Turn[]): boolean {
+  return turns.some(
+    (t) =>
+      t.role === "user" &&
+      t.idx !== undefined &&
+      (t.idx as number) > e.sinceIdx &&
+      !isNoise(t) &&
+      (t.text || "").trim() === e.text,
+  );
+}
+
 // partsOf returns a turn's ordered parts, synthesizing a single text part for turns
 // from an older Agent that predates the parts field (backward compatible).
 function partsOf(t: Turn): Part[] {
@@ -1129,6 +1191,7 @@ function groupTurns(turns: Turn[]): Group[] {
     // adjacent user turn (nor merge a normal turn into it).
     if (last && last.role === t.role && last.sidechain === !!t.sidechain && !last.compact && !t.compact) {
       last.parts.push(...parts);
+      if (t.pending) last.pending = true;
       if (t.text) last.text += (last.text ? "\n\n" : "") + t.text;
       if (!last.model && t.model) last.model = t.model;
       if (!last.effort && t.effort) last.effort = t.effort;
@@ -1157,6 +1220,7 @@ function groupTurns(turns: Turn[]): Group[] {
         cacheCreate: t.cacheCreate || 0,
         ts: t.ts,
         idx: t.idx,
+        pending: !!t.pending,
       });
     }
   }
@@ -1347,6 +1411,11 @@ function Turn({
     <div className={"mirror-turn " + (isUser ? "user" : "assistant") + (turn.sidechain ? " sidechain" : "")}>
       <div className="mirror-turn-head">
         <span className="mt-who">{who}</span>
+        {turn.pending && (
+          <span className="mt-pending" title="送信済み。claude が処理を始めると反映されます">
+            <Icon name="loading" spin /> 反映待ち
+          </span>
+        )}
         {!isUser && turn.model && <span className="mt-model">{prettyModel(turn.model)}</span>}
         {!isUser && turn.effort && (
           <span className="mt-effort" title="推論の努力度（codex reasoning_effort / opencode variant）">
