@@ -312,6 +312,7 @@ func main() {
 	// to a session as one message. Scoped by membership (no workspace build for CRUD).
 	mux.HandleFunc("GET /api/memos", cfg.handleMemosList)
 	mux.HandleFunc("POST /api/memos", cfg.handleMemoCreate)
+	mux.HandleFunc("POST /api/memos/flush", cfg.handleMemoFlush)
 	mux.HandleFunc("PATCH /api/memos/{id}", cfg.handleMemoUpdate)
 	mux.HandleFunc("DELETE /api/memos/{id}", cfg.handleMemoDelete)
 
