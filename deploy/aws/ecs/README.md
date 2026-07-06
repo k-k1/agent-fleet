@@ -30,15 +30,15 @@ platform changes:
 
 | File | Status | Contents |
 |------|--------|----------|
-| `cfn/00-network.yaml` | **draft (this commit)** | VPC, 2×AZ public+private subnets, IGW, NAT, base SGs (`alb`/`cp`/`ws`) |
-| `cfn/10-data.yaml` | TODO (needs sandbox to validate) | EFS filesystem + mount targets, RDS(Postgres, single-AZ t4g.micro) |
+| `cfn/00-network.yaml` | **proven** (deploy→verify→teardown in sandbox) | VPC, 2×AZ public+private subnets, IGW, NAT, base SGs (`alb`/`cp`/`ws`) |
+| `cfn/10-data.yaml` | **proven** (EFS 2 mount targets available, RDS pg18 available/private/encrypted) | EFS filesystem + mount targets, RDS(Postgres, single-AZ t4g.micro, RDS-managed master secret) |
 | `cfn/20-platform.yaml` | TODO | ECR (cp+workspace), ECS cluster, Service Connect namespace, IAM roles (`cp-task`/`ws-exec`/`ws-task`), ALB+ACM+OIDC listener, CP/Console ECS service |
 
-> The `10`/`20` templates are intentionally deferred: they carry the real
-> AWS-specific risk (Service Connect wiring, ALB OIDC, EFS mount targets, IAM
-> scoping) and should be authored against `aws cloudformation validate-template`
-> in the sandbox, not written blind. `00-network.yaml` is standard enough to land
-> first and prove the deploy/teardown loop.
+> The `20` template is intentionally deferred: it carries the most
+> AWS-specific risk (Service Connect wiring, ALB OIDC, IAM scoping) and should be
+> authored against `aws cloudformation validate-template` in the sandbox, not
+> written blind. `00`/`10` are proven end-to-end (deploy→verify→`delete-stack`,
+> no orphans); `10` imports `00`'s exports (`aws cloudformation deploy` 00 then 10).
 
 ## Prove-out sequence
 
