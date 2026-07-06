@@ -308,6 +308,13 @@ func main() {
 	mux.HandleFunc("PUT /api/ssm/hosts/{id}", cfg.handleSSMHostUpdate)
 	mux.HandleFunc("DELETE /api/ssm/hosts/{id}", cfg.handleSSMHostDelete)
 
+	// Memo queue (docs/21) — per-member notes accumulated across devices, then flushed
+	// to a session as one message. Scoped by membership (no workspace build for CRUD).
+	mux.HandleFunc("GET /api/memos", cfg.handleMemosList)
+	mux.HandleFunc("POST /api/memos", cfg.handleMemoCreate)
+	mux.HandleFunc("PATCH /api/memos/{id}", cfg.handleMemoUpdate)
+	mux.HandleFunc("DELETE /api/memos/{id}", cfg.handleMemoDelete)
+
 	// Repository ops — proxied to the Workspace Agent (/api stripped -> /repos*).
 	mux.HandleFunc("GET /api/repos", cfg.proxyAgentREST)
 	mux.HandleFunc("POST /api/repos", cfg.proxyAgentREST)
