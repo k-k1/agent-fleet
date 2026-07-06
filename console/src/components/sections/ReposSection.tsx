@@ -10,8 +10,11 @@ import { useDismiss } from "../../lib/useDismiss.js";
 import { placeFixed } from "../../lib/placeFixed.js";
 import NewRepoModal from "../NewRepoModal.jsx";
 import BranchModal from "../BranchModal.jsx";
+import LaunchModal from "../LaunchModal.jsx";
 import { kindIcon, kindLabel } from "../../lib/sessionkind.js";
 import { agentOf, repoLaunchKinds } from "../../agents/registry.ts";
+import { setLaunchSeed } from "../../lib/launchSeed.js";
+import { writeRepoLast } from "../../lib/repoLast.js";
 import { useSettings } from "../../lib/settings.js";
 import { repoPanes, ordClass, paneCount } from "../../lib/panebadge.js";
 import type { MouseEvent as RMouseEvent } from "react";
@@ -236,18 +239,40 @@ export default function ReposSection() {
               // default model so a repo launch follows the setting like the dialog does.
               // Open the created session by its returned slug — claude → chat mirror
               // (live, PTY attached in bg), other kinds → terminal.
+              const hasModel = agentOf(kind).caps.model;
+              const model = hasModel ? settings.defaultModel || "" : "";
               const body: Record<string, unknown> = { dir: r.path, kind };
-              if (agentOf(kind).caps.model && settings.defaultModel) body.model = settings.defaultModel;
+              if (model) body.model = model;
               const res = await apiJSON("api/sessions", "POST", body);
               if (res && res.error) {
                 toast("起動に失敗: " + errText(res.error));
                 return;
               }
+              // Remember what was launched here so the 起動 modal defaults to it next
+              // time (model only for a model-taking kind, else leave the stored one).
+              writeRepoLast(r.name, kind, hasModel ? model : undefined);
               bumpSessions();
               const chat = agentOf(kind).caps.chat;
               (chat
                 ? split ? showChatSplit : showChat
                 : split ? showTerminalSplit : showTerminal)(res.name);
+            }}
+            // Modal 起動: agent + model + first prompt. Agent-only (all chat kinds),
+            // so it always opens the chat mirror; the typed prompt is stashed as a
+            // launch seed and auto-sent once MirrorView sees the session alive.
+            onLaunchPrompt={async (kind: string, model: string, prompt: string) => {
+              const hasModel = agentOf(kind).caps.model;
+              const body: Record<string, unknown> = { dir: r.path, kind };
+              if (hasModel && model) body.model = model;
+              const res = await apiJSON("api/sessions", "POST", body);
+              if (res && res.error) {
+                toast("起動に失敗: " + errText(res.error));
+                return;
+              }
+              writeRepoLast(r.name, kind, hasModel ? model : undefined);
+              if (prompt) setLaunchSeed(res.name, prompt);
+              bumpSessions();
+              showChat(res.name);
             }}
             // A checkout / new branch changed HEAD and the working tree — refresh the
             // repo row (branch label) and the Files tree.
@@ -280,13 +305,18 @@ interface RepoRowProps {
   onFF?: () => void;
   onDelete?: () => void;
   onLaunch: (kind: string, split: boolean) => void;
+  onLaunchPrompt: (kind: string, model: string, prompt: string) => void;
   onBranchChanged?: () => void;
   opens?: { ordinal: number; id: string }[];
   onFocusPane?: (id: string) => void;
 }
 
-function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected, onOpen, onOpenFolder, onOpenChanges, onFF, onDelete, onLaunch, onBranchChanged, opens, onFocusPane }: RepoRowProps) {
+function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected, onOpen, onOpenFolder, onOpenChanges, onFF, onDelete, onLaunch, onLaunchPrompt, onBranchChanged, opens, onFocusPane }: RepoRowProps) {
   const [showLaunch, setShowLaunch] = useState(false);
+  const [launchModal, setLaunchModal] = useState(false); // 起動 modal (agent + model + prompt)
+  // Agent kinds only (chat-capable: claude/codex/opencode) — shell/ssm have no model
+  // and no "first prompt", so the modal excludes them; they keep the ▼ quick path.
+  const agentKinds = kinds.filter((k) => agentOf(k).caps.chat);
   const wrapRef = useRef<HTMLDivElement>(null);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null); // right-click context menu
   const [branchOpen, setBranchOpen] = useState(false); // branch switch / create modal
@@ -380,14 +410,28 @@ function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected,
           </span>
         )}
         <div className="launch-wrap" ref={wrapRef} onClick={(e) => e.stopPropagation()}>
-          <button
-            className="chip launch"
-            title={running ? "このディレクトリでセッションを起動（複数可）" : "ワークスペース停止中"}
-            disabled={!running}
-            onClick={() => setShowLaunch((v) => !v)}
-          >
-            <Icon name="play" /> 起動 <Icon name="chevron-down" />
-          </button>
+          {/* Split button: 起動 opens the modal (agent + model + first prompt); the
+              ▼ caret opens the quick per-kind dropdown (instant launch, no prompt).
+              The main button needs an agent kind to be useful; when none is available
+              (only shell), it's disabled and the caret still offers shell. */}
+          <div className="launch-split">
+            <button
+              className="chip launch launch-main"
+              title={running ? (agentKinds.length ? "起動（エージェント・モデル・最初のプロンプト）" : "利用可能なエージェントがありません") : "ワークスペース停止中"}
+              disabled={!running || !agentKinds.length}
+              onClick={() => setLaunchModal(true)}
+            >
+              <Icon name="play" /> 起動
+            </button>
+            <button
+              className="chip launch launch-caret"
+              title={running ? "種別を選んで即起動（プロンプト無し）" : "ワークスペース停止中"}
+              disabled={!running}
+              onClick={() => setShowLaunch((v) => !v)}
+            >
+              <Icon name="chevron-down" />
+            </button>
+          </div>
           {showLaunch && (
             <div className="launch-menu">
               {kinds.map((k) => (
@@ -488,6 +532,14 @@ function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected,
           repoName={r.name}
           onClose={() => setBranchOpen(false)}
           onChecked={() => { setBranchOpen(false); onBranchChanged?.(); }}
+        />
+      )}
+      {launchModal && (
+        <LaunchModal
+          repo={r.name}
+          kinds={agentKinds}
+          onClose={() => setLaunchModal(false)}
+          onLaunch={(kind, model, prompt) => { setLaunchModal(false); onLaunchPrompt(kind, model, prompt); }}
         />
       )}
     </li>
