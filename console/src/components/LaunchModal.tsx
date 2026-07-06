@@ -96,9 +96,7 @@ export default function LaunchModal({ repo, branch, path, kinds, onClose, onLaun
     if (busy) return;
     setBusy(true);
     // Model only rides with an agent that has the cap; codex/opencode ignore it.
-    // Pass the prompt verbatim (no trim) so a trailing newline the user composed is
-    // preserved through to the auto-send; the parent guards the empty case.
-    onLaunch(kind, hasModel ? model : "", prompt);
+    onLaunch(kind, hasModel ? model : "", prompt.trim());
     // The parent opens the session + closes us; keep the button busy meanwhile so a
     // double-Enter can't fire two launches.
   };

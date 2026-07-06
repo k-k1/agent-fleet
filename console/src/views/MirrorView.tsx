@@ -528,13 +528,9 @@ export default function MirrorView({
   };
 
   // sendPrompt submits one prompt (the composer, or a single-select answer).
-  // keepEnds preserves the text verbatim (used by the launch seed, where a trailing
-  // newline the user composed must be sent too). The composer passes already-trimmed
-  // text, so its behavior is unchanged. The empty-guard still trims so whitespace-only
-  // never sends.
-  const sendPrompt = async (text: string, keepEnds = false) => {
-    const t = keepEnds ? text || "" : (text || "").trim();
-    if (!t.trim() || sending) return;
+  const sendPrompt = async (text: string) => {
+    const t = (text || "").trim();
+    if (!t || sending) return;
     setSending(true);
     statusRef.current = "working";
     setStatus("working");
@@ -549,12 +545,37 @@ export default function MirrorView({
     setTimeout(() => tickRef.current?.(), 250);
   };
 
+  // seedSubmit reliably fires the launch seed's first prompt. A freshly-launched CLI
+  // coalesces the pasted text and SWALLOWS an Enter that arrives inside that paste
+  // window — the prompt then sits in the composer unsent (the reported bug; the server's
+  // 20ms claude gap is far too short right after boot). So type the text on its own
+  // (seq, no bundled Enter), then submit with a couple of delayed Enters once the paste
+  // window has closed. Enter on an empty composer is a no-op, so the later nudge is
+  // harmless if the first one already submitted.
+  const seedSubmit = async (text: string) => {
+    const t = (text || "").trim();
+    if (!t) return;
+    statusRef.current = "working";
+    setStatus("working");
+    const echoId = ++echoSeq.current; // optimistic echo, reconciled when the real turn lands
+    setPendingSends((p) => [...p, { id: echoId, text: t, sinceIdx: newestIdx() }]);
+    try {
+      await apiJSON(`api/sessions/${q(session)}/input`, "POST", { seq: [{ t }] });
+    } catch {
+      setPendingSends((p) => p.filter((e) => e.id !== echoId));
+      return;
+    }
+    const enter = () => apiJSON(`api/sessions/${q(session)}/input`, "POST", { keys: ["Enter"] }).catch(() => {});
+    setTimeout(enter, 450);
+    setTimeout(enter, 1100);
+    setTimeout(() => tickRef.current?.(), 1400);
+  };
+
   // Launch seed: a session started from a repo row's 起動 modal carries a first prompt
   // (keyed by slug in launchSeed). Send it exactly once, and only after the session is
-  // actually alive and not mid-resume/compacting — send-keys before the CLI's prompt is
-  // up would be swallowed. takeLaunchSeed is one-shot, so we only take it when about to
-  // send (the guards below return before taking it). seededRef prevents a re-send across
-  // the polls that flip `alive`.
+  // actually alive and not mid-resume/compacting. takeLaunchSeed is one-shot, so we only
+  // take it when about to send (the guards below return before taking it). seededRef
+  // prevents a re-send across the polls that flip `alive`.
   const seededRef = useRef(false);
   useEffect(() => {
     seededRef.current = false; // new session → allow its own seed
@@ -564,7 +585,7 @@ export default function MirrorView({
     const seed = takeLaunchSeed(session);
     if (!seed) return;
     seededRef.current = true;
-    sendPrompt(seed, true); // verbatim: keep the composed trailing newline
+    seedSubmit(seed);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [alive, termState, session, readOnly]);
 
