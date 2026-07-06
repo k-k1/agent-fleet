@@ -141,10 +141,9 @@ export default function MirrorView({
   const agent = agentOf(sessionMeta?.kind);
   const agentName = agent.assistantName;
   const canPasteImage = agent.caps.imagePaste;
-  const { showDoc, showDiff, showTerminalSplit, bumpSessions, wsState } = useApp();
+  const { showDoc, showDiff, bumpSessions, wsState } = useApp();
   const toast = useToast();
   const running = wsState === "running"; // WS down → resume is inert, mirror the terminal 再開
-  const [forking, setForking] = useState(false);
   // "mod-enter" (default): Ctrl/⌘+Enter submits, plain Enter newlines (phone-safe).
   // "enter": Enter submits, Shift+Enter newlines.
   const modSend = settings.mirrorSend !== "enter";
@@ -678,28 +677,6 @@ export default function MirrorView({
   // Open a plan's Markdown in its own pane (manual — via a button, not automatic).
   const openPlan = (plan: string) => showDoc(planTitle(plan), plan);
 
-  // Fork this conversation into a new session (P3-9): the Agent runs
-  // `claude --resume <sid> --fork-session`, copying the history so far into a fresh
-  // session that diverges independently — this one is left untouched. On success we
-  // open the fork in a split pane and refresh the session list.
-  const doFork = async () => {
-    if (forking || !session) return;
-    setForking(true);
-    try {
-      const res = await raw(`api/sessions/${q(session)}/fork`, { method: "POST" });
-      const j = await res.json().catch(() => ({}));
-      if (res.ok && j.name) {
-        bumpSessions();
-        showTerminalSplit(j.name);
-      } else {
-        toast(j.error ? errText(j.error) : `分岐に失敗しました (${res.status})`);
-      }
-    } catch {
-      toast("分岐に失敗しました（通信エラー）");
-    } finally {
-      setForking(false);
-    }
-  };
   // Auto-suggested title (session_title.go): 採用 promotes it to the session's real
   // title (bumpSessions so the left-pane label updates without waiting for its own
   // poll); 却下 discards it. Either way the server never offers one again.
@@ -878,26 +855,10 @@ export default function MirrorView({
         ) : (
           <span className="view-title">セッション</span>
         )}
-        {sessionMeta?.kind === "claude" && (
-          <button
-            type="button"
-            className="icon fork-btn"
-            title={
-              running
-                ? "この会話を分岐（ここまでの履歴を引き継いだ新セッションを作成。元は残ります）"
-                : "ワークスペース停止中（分岐にはエージェント稼働が必要）"
-            }
-            onClick={doFork}
-            disabled={forking || !running}
-          >
-            <Icon name={forking ? "loading" : "git-branch"} spin={forking} />
-            <span className="fork-label">分岐</span>
-          </button>
-        )}
         {sessionMeta?.kind === "claude" && settings.autoTitleSuggest && (
           <button
             type="button"
-            className="icon"
+            className="icon title-suggest-btn"
             title={
               sessionMeta?.title
                 ? "タイトルを再提案（現時点までの会話から作り直します。採用するまで今のタイトルは変わりません）"

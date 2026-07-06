@@ -1183,35 +1183,44 @@ button.wu-reload {
   background: var(--btn);
   color: var(--fg);
 }
+/* The session ⋯ / right-click menu is a row-anchored dropdown (unlike the fixed,
+   cursor-placed .ctxmenu), but shares its visual language so every left-pane menu
+   reads the same. */
 .session-menu {
   position: absolute;
   right: 0;
   top: 100%;
   z-index: 20;
-  min-width: 160px;
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+  min-width: 150px;
+  background: var(--panel2, var(--panel));
+  border: 1px solid var(--border2, var(--border));
+  border-radius: 8px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
   padding: 4px;
+  font-size: 13px;
 }
 .session-menu-item {
-  display: block;
+  display: flex;
+  align-items: center;
   width: 100%;
   text-align: left;
   background: none;
   border: none;
   color: var(--fg);
   cursor: pointer;
-  font-size: 12px;
-  padding: 6px 8px;
-  border-radius: 4px;
+  font-size: inherit;
+  padding: 7px 10px;
+  border-radius: 6px;
+  white-space: nowrap;
 }
 .session-menu-item:hover {
-  background: var(--btn);
+  background: var(--hover-bg, var(--btn));
 }
 .session-menu-item.danger {
-  color: var(--del);
+  color: #f85149;
+}
+.session-menu-item .codicon {
+  margin-right: 7px;
 }
 /* Repo launch dropdown (claude/opencode/shell) */
 .launch-wrap {
@@ -2524,18 +2533,14 @@ body.row-resizing {
 .mirror-toggle {
   margin-left: auto;
 }
-/* Fork button sits at the right of the chat head, just left of the ターミナル⇄
-   チャット switch. It takes the auto-margin so the pair groups on the right; the
-   toggle then only needs a fixed gap (its own auto-margin would split the space). */
-.fork-btn {
+/* The title-suggest button sits at the right of the chat head, just left of the
+   ターミナル⇄チャット switch. It takes the auto-margin so the pair groups on the
+   right; the toggle then only needs a fixed gap (its own auto-margin would split
+   the space). */
+.title-suggest-btn {
   margin-left: auto;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 12px;
-  white-space: nowrap;
 }
-.fork-btn + .mirror-toggle {
+.title-suggest-btn + .mirror-toggle {
   margin-left: 8px;
 }
 /* Each ターミナル/チャット segment is an icon + label; center them with a small gap
@@ -2551,8 +2556,7 @@ body.row-resizing {
    tracks the PANE width, not the viewport — a narrow split in a wide window
    collapses too. The title attributes keep the words reachable as tooltips. */
 @container paneview (max-width: 560px) {
-  .mirror-toggle .seg-label,
-  .fork-label {
+  .mirror-toggle .seg-label {
     display: none;
   }
 }
@@ -7577,8 +7581,7 @@ button.primary:hover:not(:disabled) {
      slim split on a wide screen): on a phone the leftpane goes off-canvas so the
      pane is full-width and the container query wouldn't catch it. The title
      attributes keep the words reachable as tooltips. */
-  .mirror-toggle .seg-label,
-  .fork-label {
+  .mirror-toggle .seg-label {
     display: none;
   }
 
