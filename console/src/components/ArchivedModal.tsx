@@ -4,7 +4,7 @@ import Icon from "./Icon.jsx";
 import Modal from "./Modal.jsx";
 import { useConfirm } from "./ConfirmProvider.jsx";
 import { useToast } from "./ToastProvider.jsx";
-import { kindIcon, kindLabel } from "../lib/sessionkind.js";
+import { kindIcon, kindLabel, kindClass } from "../lib/sessionkind.js";
 import { displayName } from "../lib/sessionview.js";
 import type { Session } from "../types/session.ts";
 
@@ -202,7 +202,9 @@ export default function ArchivedModal({ onClose, onRestored }: ArchivedModalProp
                           <div className="archived-info" title={"ID: " + s.name}>
                             <span className="archived-name">{displayName(s)}</span>
                             <span className="archived-sub muted">
-                              <Icon name={kindIcon(s.kind)} /> {kindLabel(s.kind)}
+                              <span className={"kind-tag kind-" + kindClass(s.kind)}>
+                                <Icon name={kindIcon(s.kind)} /> {kindLabel(s.kind)}
+                              </span>
                               {s.started ? " · " + s.started : ""}
                               {s.resumable === false ? " · フォルダ無し" : ""}
                             </span>
