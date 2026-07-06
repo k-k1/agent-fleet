@@ -275,13 +275,6 @@ func (c config) handleLFSDownload(w http.ResponseWriter, r *http.Request) {
 	http.ServeContent(w, r, oid, fi.ModTime(), f)
 }
 
-// handleLFSLocks answers the LFS locking API with 501: locking is out of scope for
-// the internal provider. git-lfs treats this as "not supported" and continues, so
-// push/pull are unaffected.
-func (c config) handleLFSLocks(w http.ResponseWriter, r *http.Request) {
-	writeLFSErr(w, http.StatusNotImplemented, "file locking is not supported")
-}
-
 // copyCapped copies src→dst. With cap<0 it copies everything; with cap>=0 it copies
 // at most cap bytes and returns errQuotaExceeded if the source has more (so an
 // over-quota upload is rejected without buffering it all in memory).

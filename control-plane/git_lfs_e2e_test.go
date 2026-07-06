@@ -19,8 +19,10 @@ func (c config) gitMux() *http.ServeMux {
 	mux.HandleFunc("POST /git/{slug}/{repo}/info/lfs/objects/batch", c.handleLFSBatch)
 	mux.HandleFunc("PUT /git/{slug}/{repo}/info/lfs/objects/{oid}", c.handleLFSUpload)
 	mux.HandleFunc("GET /git/{slug}/{repo}/info/lfs/objects/{oid}", c.handleLFSDownload)
-	mux.HandleFunc("POST /git/{slug}/{repo}/info/lfs/locks", c.handleLFSLocks)
-	mux.HandleFunc("POST /git/{slug}/{repo}/info/lfs/locks/verify", c.handleLFSLocks)
+	mux.HandleFunc("POST /git/{slug}/{repo}/info/lfs/locks", c.handleLFSLockCreate)
+	mux.HandleFunc("GET /git/{slug}/{repo}/info/lfs/locks", c.handleLFSLocksList)
+	mux.HandleFunc("POST /git/{slug}/{repo}/info/lfs/locks/verify", c.handleLFSLocksVerify)
+	mux.HandleFunc("POST /git/{slug}/{repo}/info/lfs/locks/{id}/unlock", c.handleLFSUnlock)
 	mux.HandleFunc("/git/{slug}/{repo...}", c.handleGitHTTP)
 	return mux
 }
@@ -102,7 +104,7 @@ func TestLFSEndToEnd(t *testing.T) {
 		"GIT_TERMINAL_PROMPT=0",
 		"GIT_LFS_SKIP_SMUDGE=0",
 	}
-	run := func(dir string, args ...string) {
+	runOut := func(dir string, args ...string) string {
 		t.Helper()
 		cmd := exec.Command("git", args...)
 		cmd.Dir = dir
@@ -112,7 +114,9 @@ func TestLFSEndToEnd(t *testing.T) {
 		if err := cmd.Run(); err != nil {
 			t.Fatalf("git %v: %v\n%s", args, err, out.String())
 		}
+		return out.String()
 	}
+	run := func(dir string, args ...string) { runOut(dir, args...) }
 
 	// Author clone: track *.bin via LFS, commit a large blob, push.
 	wa := filepath.Join(tmp, "wsA")
@@ -145,5 +149,16 @@ func TestLFSEndToEnd(t *testing.T) {
 	}
 	if strings.HasPrefix(string(got), "version https://git-lfs") {
 		t.Fatal("cloned asset is still an LFS pointer (smudge did not fetch)")
+	}
+
+	// Locking API through the real client: lock → appears in `git lfs locks` →
+	// unlock → gone. Proves the create/list/unlock JSON contract matches git-lfs.
+	run(wa, "lfs", "lock", "asset.bin")
+	if locks := runOut(wa, "lfs", "locks"); !strings.Contains(locks, "asset.bin") {
+		t.Fatalf("locked file not listed by `git lfs locks`:\n%s", locks)
+	}
+	run(wa, "lfs", "unlock", "asset.bin")
+	if locks := runOut(wa, "lfs", "locks"); strings.Contains(locks, "asset.bin") {
+		t.Fatalf("file still locked after unlock:\n%s", locks)
 	}
 }

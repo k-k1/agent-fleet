@@ -175,9 +175,10 @@ func (c config) handleInternalGitRepoDelete(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	_ = os.RemoveAll(filepath.Join(c.mgr.dataRoot, "git", mv.TenantSlug, name+".git"))
-	// The bare (incl. its lfs/objects) is gone; drop the LFS ledger rows so the
-	// tenant's capacity quota frees up.
+	// The bare (incl. its lfs/objects) is gone; drop the LFS ledger + lock rows so
+	// the tenant's capacity quota frees up and no stale locks linger.
 	_ = c.mgr.store.DeleteLFSObjectsByRepo(r.Context(), mv.TenantID, name)
+	_ = c.mgr.store.DeleteLFSLocksByRepo(r.Context(), mv.TenantID, name)
 	c.auditGit(r.Context(), mv.TenantID, ident.ID, "internal_git.repo.delete", name, "")
 	writeJSON(w, http.StatusOK, map[string]any{"deleted": name})
 }
@@ -236,8 +237,9 @@ func (c config) handleInternalGitRepoRename(w http.ResponseWriter, r *http.Reque
 		writeAPIErr(w, internalErr(err))
 		return
 	}
-	// The on-disk lfs/objects moved with the .git dir; repoint the LFS ledger rows.
+	// The on-disk lfs/objects moved with the .git dir; repoint the LFS ledger + locks.
 	_ = c.mgr.store.RenameLFSObjectsRepo(r.Context(), mv.TenantID, oldName, newName)
+	_ = c.mgr.store.RenameLFSLocksRepo(r.Context(), mv.TenantID, oldName, newName)
 	c.auditGit(r.Context(), mv.TenantID, ident.ID, "internal_git.repo.rename", oldName, "to="+newName)
 	g.Name = newName
 	writeJSON(w, http.StatusOK, c.gitRepoDTO(mv.TenantSlug, g))
