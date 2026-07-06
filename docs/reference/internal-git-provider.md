@@ -1,0 +1,145 @@
+# internal-git-provider — テナント内部 git プロバイダ
+
+- 状態: **提案（設計）** — 未実装。契約はコードが正（実装後は本書を追従させる）。
+- 関連: [architecture](architecture.md) / [security §4.4](security.md#44-シークレット管理) /
+  [api-agent](api-agent.md) / ADR [0010](../decisions/0010-internal-git-provider.md)（採否）/
+  [0003](../decisions/0003-ssh-to-connections.md)（git 認証＝Connections）
+
+## 1. 目的とスコープ
+
+テナント内でリポジトリを**フリート内に閉じて**持てるようにする。外部 GitHub/Bitbucket
+アカウントを介さず、Control Plane（CP）がテナント毎の bare リポジトリを smart-HTTP で配信し、
+既存のプロバイダ抽象（Connections / RepoPicker / cred helper / clone・SCM 閲覧）にそのまま載せる。
+
+狙い（A–C）:
+
+- **A. チーム内共有** — 同一テナントのメンバー間でリポジトリ／エージェント成果（ブランチ）を共有。
+- **B. private scratch/seed** — エージェント用の内部リポジトリ（外部に出さない作業場）。
+- **C. コードを外に出さない** — コンプラ/隔離。資格情報も外部プロバイダを持たない。
+
+### 非目標（このフェーズでは作らない）
+
+- PR / コードレビュー / CI（GitHub 相当。将来 Gitea/Forgejo へ載せ替える「②」領域）。
+- 組織/チームの細粒度権限マトリクス（当面は membership role で read/write の2段）。
+- LFS（P2 以降で検討）。
+
+## 2. なぜこの形か（要約。詳細は ADR 0010）
+
+- **CP に置く**: テナントを知る唯一の共有コンポーネントが CP。per-user コンテナは
+  各ワークスペースに閉じており横断共有できない。
+- **bare + `git http-backend`**: 最小コードで clone/fetch/**push** まで smart-HTTP で成立。
+  閲覧は既存の SCM（コミットグラフ）を clone 後にそのまま使える。
+- **AWS CodeCommit は不採用**: 2024 年に新規顧客受付終了。かつ IAM 認証がトークン注入型の
+  統一 cred helper と噛み合わない。
+- clone/閲覧/コミットの機構は**既にホスト非依存**（`git.go` / `git_remote.go` / `fs.go` /
+  `SourceControlView`）。追加は「CP 側 git サーバ＋トークン注入＋プロバイダ登録」の 3 ブロックのみ。
+
+## 3. 全体構成
+
+```
+  Console ──(X-AF-Tenant)──▶ Control Plane ───proxy /api──▶ per-user Agent (per membership)
+     │                          │  ▲                              │  git clone / fetch / push
+     │ provider tab = internal  │  │ CP native (Agent 経由でない)  ▼
+     └── api/internal-git/* ─────┘  │                 https://<base>/git/<slug>/<repo>.git
+        （repo 一覧 / 作成 / 削除）  │                              ▲
+                                     └── smart-HTTP (git-http-backend) │ Basic: pw = tenant git token
+        bare repos:  ${DATA_DIR}/git/<slug>/<repo>.git                │ cred helper が自動注入
+        （既存の永続ボリューム。deploy compose の ${DATA_DIR} bind）  ─┘
+```
+
+- 内部プロバイダの **repo 一覧/作成は CP ネイティブ**（CP がリポの所有者なので Agent を経由しない。
+  既存の「全プロバイダは Agent 経由」から意図的に分岐）。
+- **clone/push はワークスペースのコンテナ内 git** が `https://<base>/git/<slug>/<repo>.git` へ。
+  コンテナは専用 docker ネットワーク＋NAT egress なので、到達は**共有コンテナ網ではなく
+  デプロイのベース URL（Caddy TLS 終端）** を用いる。
+
+## 4. ストレージ
+
+- 配置: `${DATA_DIR}/git/<tenant-slug>/<repo>.git`（bare）。
+  `WS_DATA`（既定 `/tmp/af-data`）配下で、既に永続化＋`${DATA_DIR}:${DATA_DIR}` bind 済み
+  （`deploy/compose/docker-compose.yml`）。
+- 既定テナント/その他テナントの slug 規則は既存の `manager.workspaceNames` に倣う
+  （既定 = flat、その他 = `<slug>/`）。git は別ツリー `git/<slug>/` に分ける。
+- メタデータ: SQLite に **`git_repo` テーブル**（新 migration）。一覧・作成者・作成時刻・
+  （将来）クォータ/監査の台帳。ディレクトリ走査でなく DB を正にして FS レースを避ける。
+
+## 5. 認証・認可・トークンモデル
+
+2 つの認証面がある。
+
+### 5.1 Console/API 面（repo 管理・プロバイダタブ）
+
+既存の CP identity＋tenant 解決（`X-AF-Tenant` → `resolvedFor`）をそのまま使う。
+`GET/POST/DELETE /api/internal-git/repos` は**解決済みテナントにスコープ**。追加の資格情報は不要。
+
+### 5.2 git smart-HTTP 面（clone/fetch/push）
+
+- membership（identity × tenant）毎に**テナントスコープの git token** を発行。
+  保管は既存 **PAT テーブル流用**を第一候補（新設は避ける。ADR で確定）。
+- ワークスペース作成/更新時（`manager.go` の secrets 注入経路）に、暗号化ストアへ
+  `s.Git[<internal-host>] = { User: "x-access-token", Token: <token> }` を書き込む。
+  → 統一 cred helper（`secrets.go` `runCredHelper`）は**任意ホストを既に配信する**ので、
+  これだけで clone/push の Basic 認証が透過的に通る（追加コード不要）。
+- CP の smart-HTTP ハンドラは Basic の **password をこの token として検証** → (tenant, user, role)
+  を解決し、以下を**毎リクエスト強制**:
+  - URL の `<slug>` == token のテナント（他テナントのリポに到達不可）。
+  - `git-upload-pack`（read）= member 以上。
+  - `git-receive-pack`（push/write）= role で可否（例: viewer は read-only）。
+
+## 6. データフロー
+
+- **リポ作成**: Console →（CP）`POST /api/internal-git/repos {name}` → `git_repo` 行 + `git init --bare`
+  `${DATA_DIR}/git/<slug>/<name>.git`（既定ブランチ設定）→ `clone_url` を返す。
+- **一覧**: Console（provider タブ=internal）→ `GET /api/internal-git/repos` → `git_repo` から
+  テナント分を返す（RepoPicker が Agent 経由でなくこの CP エンドポイントへ分岐）。
+- **ブランチ一覧**: `GET /api/internal-git/repos/{name}/branches`（bare を `git for-each-ref` で読む）。
+- **clone/起動**: 既存の clone-then-start（`ensureRepo` / `handleCloneRepo`）に `clone_url` を渡すだけ。
+  cred helper が token 注入。
+- **push（共有）**: エージェント/ユーザーがブランチを push → 他メンバーが同 URL から clone/fetch。
+- **閲覧・コミット**: clone 後は既存の `repos/{name}/graph|status|checkout|…` と `fs/*` がそのまま動く
+  （プロバイダ非依存）。
+
+## 7. 統合点（変更箇所の地図）
+
+| # | 箇所 | 変更 |
+|---|------|------|
+| 1 | `control-plane/main.go`（mux, 〜419） | ルート追加: `/git/{slug}/{repo...}`（smart-HTTP）、`/api/internal-git/*`（管理 API） |
+| 2 | `control-plane/git_http.go`（新規） | `git http-backend`(CGI) ラッパ + Basic token 認証 + slug 封じ込め + role 認可 |
+| 3 | `control-plane/internal_git.go`（新規） | repo 一覧/作成/削除、branches、`clone_url` 生成 |
+| 4 | `control-plane/migrations/00NN_git_repo.sql`（新規） | `git_repo` テーブル（+ token は PAT 流用） |
+| 5 | `control-plane/manager.go`（secrets 注入） | membership の git token を暗号ストアへ注入（`s.Git[internal-host]`） |
+| 6 | `workspace/agent/connections.go:21 gitHosts` | 内部ホストを追加（既定 user=`x-access-token`）→ 資格情報の保存/注入を有効化 |
+| 7 | `workspace/agent/connections.go handleConnectionsGet` | `internal: connected`（テナント標準で常時） |
+| 8 | `workspace/agent/git.go:61 gitProviderHost` | 内部ホストの slug/アイコン case（バッジ、任意） |
+| 9 | `console/src/components/RepoPicker.tsx` | `PROVIDERS` にタブ追加、internal 時は repo/branch を **`api/internal-git/*`** へ分岐 |
+| 10 | `console/src/settings/GitTab.tsx` | 「内部リポジトリを作成」カード（OAuth 不要） |
+| 11 | `docs/README.md` / 本書 / ADR 0010 | 索引・設計・決定の更新 |
+
+`workspace/agent/git_remote.go` の switch は、内部一覧を **CP 直**で返す方針なら触らない
+（Agent→CP 認証が要るため Agent 経由は非推奨）。clone/閲覧/コミットは既存のまま。
+
+## 8. 隔離・セキュリティ
+
+- **テナント越境の遮断**: token の tenant と URL の `<slug>` 一致を smart-HTTP の**全リクエスト**
+  （info/refs・upload-pack・receive-pack）で検証。
+- **パス封じ込め**: slug/repo 名は正規表現で検証、`..` 拒否、`${DATA_DIR}/git/<slug>/` 配下に限定。
+- **権限**: read=member 以上、write(push)=role。将来は repo 単位の ACL を `git_repo` に拡張可能。
+- **秘密の非漏洩**: token は暗号ストア（`secrets.enc`, AES-256-GCM）に注入し平文化しない
+  （[0003](../decisions/0003-ssh-to-connections.md) / [0005](../decisions/0005-envelope-custodian.md) 準拠）。
+- CP に **git 実行面が増える**点は新たな攻撃面。入力（refspec/パス）検証を厳格化する。
+
+## 9. フェーズ
+
+- **P1（MVP）**: `git_http.go` + `internal_git.go` + token 注入 + 作成/一覧 API + provider タブ。
+  → 内部リポを clone/push でき、閲覧は既存 SCM。A/B/C を満たす。
+- **P2**: 削除/リネーム、クォータ、`git gc` cron、監査ログ、空リポ/既定ブランチ UX、
+  （任意）clone なしのツリー閲覧（bare から read-only 提供）。
+- **将来（②）**: PR/レビュー/CI が要るなら Gitea/Forgejo を内包して載せ替え。
+
+## 10. 未決事項（実装前に確定）
+
+1. **CP イメージの `git` バイナリ**: `git http-backend` に依存。無ければ追加。CP は現状 git 非実行＝新面。
+2. **token モデル**: 既存 PAT 流用（第一候補）か新 `git_token` テーブルか。
+3. **clone URL ホスト**: コンテナから到達する CP のベース URL（Caddy TLS 終端）で確定してよいか。
+4. **内部ホスト id**: `RepoPicker`/`gitHosts`/`gitProviderHost` で使う識別子（例 `internal` 表示 /
+   実 URL ホスト）の命名。

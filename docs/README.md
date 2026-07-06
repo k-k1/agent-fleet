@@ -21,6 +21,7 @@
 - [security.md](reference/security.md) — 脅威モデル、隔離境界、シークレット管理（封筒暗号）
 - [preview.md](reference/preview.md) — コンテナ内サービスのプレビュー（/preview/{port} 経路）
 - [aws.md](reference/aws.md) — AWS 構成、ネットワーク、コスト試算
+- [internal-git-provider.md](reference/internal-git-provider.md) — テナント内部 git プロバイダ（bare + smart-HTTP）**提案**
 
 ## decisions/ — 意思決定の記録（ADR）
 
@@ -30,6 +31,7 @@
 - [0004-vanilla-to-react.md](decisions/0004-vanilla-to-react.md) — Console は React + Vite
 - [0005-envelope-custodian.md](decisions/0005-envelope-custodian.md) — 封筒暗号 + custodian 抽象
 - [0006-mcp-unified.md](decisions/0006-mcp-unified.md) — MCP は管理面+作業面を一体・PAT 認証・E が主目的
+- [0010-internal-git-provider.md](decisions/0010-internal-git-provider.md) — テナント内部 git プロバイダ（bare+http-backend を CP 自ホスト）**提案**
 
 ## history/ — 使い終わった実装プラン（P3-6 は ◐ 段1 完了・admin 残）
 
