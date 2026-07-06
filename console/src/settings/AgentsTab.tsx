@@ -4,7 +4,8 @@ import type { ReactNode } from "react";
 import { api, apiJSON, raw, ocwebURL } from "../api.js";
 import { useApp } from "../state.jsx";
 import EmptyState from "../components/EmptyState.jsx";
-import { OnOff } from "./controls.jsx";
+import { Choice, OnOff } from "./controls.jsx";
+import { useSettings, setSetting, CLAUDE_MODELS } from "../lib/settings.js";
 import { useConnections } from "./useConnections.js";
 import { usePolling } from "./usePolling.js";
 import { ProviderCard, StatusPill, Hint, DeviceSteps, DisconnectButton } from "./providerCard.jsx";
@@ -17,6 +18,10 @@ import { ProviderCard, StatusPill, Hint, DeviceSteps, DisconnectButton } from ".
 // api/agents/rtk and apply to NEW sessions. Both need the workspace running.
 export default function AgentsTab() {
   const toast = useToast();
+  // Client-side session prefs (既定モデル / タイトル自動提案) — persisted in the local
+  // settings store, so they show regardless of workspace state (unlike the agent
+  // behavior cards below, which need the container's Agent/CLI).
+  const s = useSettings();
   // opencode web state is shared with the WS bar via the app context, so toggling
   // here updates the bar's "open" entry immediately (and vice-versa).
   const { ocweb, setOcweb, refreshOcweb, wsState, startWs } = useApp();
@@ -67,26 +72,62 @@ export default function AgentsTab() {
   const updateAgents = mkUpdate("api/agents/rtk", setAgents);
   const updateOcweb = mkUpdate("api/agents/opencode-web", setOcweb);
 
+  // Session prefs render in every state (stopped / loading / running) since they're
+  // local, not container-backed.
+  const sessionSettings = (
+    <section className="ds-group">
+      <h4 className="ds-title">セッション</h4>
+      <Row label="既定モデル">
+        <Choice
+          value={s.defaultModel}
+          options={CLAUDE_MODELS}
+          onChange={(v) => setSetting("defaultModel", v)}
+        />
+      </Row>
+      <p className="muted ds-note">
+        {s.defaultModel
+          ? "claude セッションを起動するとき（作成ダイアログ・リポジトリの起動）このモデルを初期選択にします。"
+          : "「既定」は claude 任せ（リリースにより Sonnet / Fable などに変動）。固定したい場合はモデルを選んでください。"}
+      </p>
+      <Row label="タイトル自動提案">
+        <OnOff value={s.autoTitleSuggest} onChange={(v) => setSetting("autoTitleSuggest", v)} />
+      </Row>
+      <p className="muted ds-note">
+        タイトル未設定のセッションで数回やり取りしたら、AIが短いタイトル案をチャット上部に表示します。
+      </p>
+    </section>
+  );
+
   if (!running) {
     return (
-      <EmptyState
-        as="div"
-        icon="debug-disconnect"
-        message="設定はワークスペース内で実行されます"
-        hint="接続とエージェント設定はコンテナ内の Agent / CLI を経由するため、ワークスペースの起動が必要です。"
-        action={{
-          label: wsState.endsWith("…") ? "起動中…" : "ワークスペースを起動",
-          icon: "play",
-          onClick: startWs,
-          disabled: wsState.endsWith("…"),
-        }}
-      />
+      <>
+        {sessionSettings}
+        <EmptyState
+          as="div"
+          icon="debug-disconnect"
+          message="設定はワークスペース内で実行されます"
+          hint="接続とエージェント設定はコンテナ内の Agent / CLI を経由するため、ワークスペースの起動が必要です。"
+          action={{
+            label: wsState.endsWith("…") ? "起動中…" : "ワークスペースを起動",
+            icon: "play",
+            onClick: startWs,
+            disabled: wsState.endsWith("…"),
+          }}
+        />
+      </>
     );
   }
-  if (!conns) return <p className="muted pad">読み込み中…</p>;
+  if (!conns)
+    return (
+      <>
+        {sessionSettings}
+        <p className="muted pad">読み込み中…</p>
+      </>
+    );
 
   return (
     <div className="conns">
+      {sessionSettings}
       <p className="muted ds-note">
         接続の変更は即時、挙動設定は各エージェントの新しいセッションから反映されます。
       </p>
@@ -105,6 +146,16 @@ export default function AgentsTab() {
           このワークスペースのイメージはエージェント設定 API（rtk / opencode web）に未対応です。イメージを再ビルドして「作り直す」と有効になります。
         </p>
       )}
+    </div>
+  );
+}
+
+// A labeled row for the client-side session settings (mirrors DisplayTab's Row).
+function Row({ label, children }: { label: ReactNode; children?: ReactNode }) {
+  return (
+    <div className="ds-row">
+      <span className="ds-label">{label}</span>
+      {children}
     </div>
   );
 }
