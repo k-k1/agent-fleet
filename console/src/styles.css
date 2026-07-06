@@ -1766,6 +1766,26 @@ button.wu-reload {
 .chip.launch:hover {
   background: var(--active-bg);
 }
+/* Split 起動 button: [▷ 起動][⌄]. The two chips adjoin — square the inner corners
+   and share a 1px divider so they read as one control; the caret is a thin cap. */
+.launch-split {
+  display: inline-flex;
+}
+.launch-split .launch-main {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+.launch-split .launch-caret {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  border-left: none;
+  padding-left: 5px;
+  padding-right: 5px;
+}
+.launch-split .launch-main:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
 /* Left-pane icons read a touch large next to their labels — shrink them slightly:
    the session kind badge (Agent icon), the 起動 dropdown (▷ / ⌄ + menu items), and
    the repo icon. Relative em so they still scale with the label. */
@@ -7242,13 +7262,32 @@ button.mt-toolrun-head:hover {
   margin: 0;
   font-size: 15px;
 }
-.session-modal .modal-foot {
+.session-modal .modal-foot,
+.launch-modal .modal-foot {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
   padding: 12px 16px;
   background: var(--bar);
   border-top: 1px solid var(--border);
+}
+/* Launch dialog (repo row 起動): compact, height sizes to content — agent + model
+   + first prompt. Reuses .session-modal's field/seg/foot styling. */
+.launch-modal {
+  width: min(520px, 94vw);
+  height: auto;
+  max-height: 90vh;
+}
+.launch-modal .modal-title .codicon {
+  font-size: 0.85em;
+  color: var(--accent);
+  margin-right: 4px;
+}
+.launch-modal .launch-prompt {
+  width: 100%;
+  resize: vertical;
+  min-height: 84px;
+  font-family: var(--mono);
 }
 .field {
   margin-bottom: 18px;
