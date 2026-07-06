@@ -268,7 +268,7 @@ CP に `/mcp` を 1 本生やし、**管理面（運用チーム）と作業面�
 > **段2 実装仕様＝凍結済**（[p3-7-aws-adapter §20b.7](history/p3-7-aws-adapter.md#20b7-段2-実装仕様凍結)）: Service desired 0/1・
 > Service Connect 到達・EFS AP 2 本(CP 動的払出)・シークレットは SSM Parameter Store SecureString `valueFrom`(plaintext env / SM 不採用、実質無料で crypto-shred 保護)・
 > deterministic naming ゆえ**スキーマ/Agent/Console/CP コア変更ゼロ**（`runtime_ecs.go` + SDK に閉じる）。
-> 残＝段2 ecsRuntime 本実装+EFS / 段3 RDS+KMS / 段4 IaC(Terraform) / 段5 実 AWS E2E（要 AWS）。AWS 構成は [reference/aws](reference/aws.md)。
+> 残＝段2 ecsRuntime 本実装+EFS / 段3 RDS+KMS / 段4 IaC(**CloudFormation**、ec2-single と一貫・static substrate のみ) / 段5 実 AWS E2E（要 AWS）。AWS 構成は [reference/aws](reference/aws.md)。
 
 各社が**自社のデプロイ先を選ぶ**。コアは無改修、周縁アダプタのみ（[09](reference/portability.md)）。我々は両方を同梱（P3-10）。
 
