@@ -5870,6 +5870,10 @@ button.mt-toolrun-head:hover {
      surface's accent instead of the app blue, so the modal matches the chosen top-bar
      theme. --topbar-accent is concrete (applyTheme / :root), so this rebind is safe. */
   --accent: var(--topbar-accent);
+  /* Light-theme active seg-tabs fill with --active-bg (a fixed blue), not --accent, so
+     retint it to a soft accent tint too (theme-adaptive via --bg; matches the prior look
+     at the default blue). */
+  --active-bg: color-mix(in srgb, var(--topbar-accent) 18%, var(--bg));
   border: 1px solid var(--border);
   border-radius: 10px;
   overflow: hidden;
@@ -6642,6 +6646,10 @@ button.mt-toolrun-head:hover {
   /* Retint accents (buttons, active tabs, …) to the top-bar surface, like the admin
      modal — --topbar-accent is concrete so rebinding --accent here can't cycle. */
   --accent: var(--topbar-accent);
+  /* The light theme's active seg-tab uses --active-bg (a fixed blue) for its fill, not
+     --accent, so it wouldn't follow the top bar. Retint it to a soft tint of the accent
+     (theme-adaptive via --bg); at the default blue it matches the prior look. */
+  --active-bg: color-mix(in srgb, var(--topbar-accent) 18%, var(--bg));
 }
 .settings-modal .modal-head {
   background: var(--topbar-bg);
