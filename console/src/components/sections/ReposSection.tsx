@@ -223,7 +223,25 @@ export default function ReposSection() {
                 danger: true,
               });
               if (!ok) return;
-              const res = await raw(`api/repos/${encodeURIComponent(r.name)}`, { method: "DELETE" });
+              const del = (force: boolean) =>
+                raw(`api/repos/${encodeURIComponent(r.name)}${force ? "?force=true" : ""}`, { method: "DELETE" });
+              let res = await del(false);
+              // A worktree with uncommitted/unpushed work is refused (worktree_dirty);
+              // re-confirm the loss, then retry with force so it's an explicit choice.
+              if (!res.ok) {
+                const j = await res.json().catch(() => null);
+                const code = j?.error && typeof j.error === "object" ? j.error.code : "";
+                if (code === "worktree_dirty") {
+                  const force = await askConfirm({
+                    title: "未保存の変更があります",
+                    body: `"${r.name}" には未コミット/未pushの変更があります。強制的に削除すると失われます。続けますか？`,
+                    confirmLabel: "強制削除",
+                    danger: true,
+                  });
+                  if (!force) return;
+                  res = await del(true);
+                }
+              }
               if (!res.ok) {
                 const j = await res.json().catch(() => null);
                 toast(j?.error ? "削除に失敗: " + errText(j.error) : "削除に失敗しました");

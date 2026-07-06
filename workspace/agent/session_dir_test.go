@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
@@ -109,3 +110,102 @@ func TestGitCurrentBranch(t *testing.T) {
 }
 
 func execLookPathGit() (string, error) { return exec.LookPath("git") }
+
+// TestEnsureWorktree exercises the worktree-then-start core against a real repo:
+// forking a new branch off a base, idempotent reuse, checking out an existing branch,
+// and the ~/repos/<repo>@<branch> naming (with a slash branch sanitized).
+func TestEnsureWorktree(t *testing.T) {
+	if _, err := execLookPathGit(); err != nil {
+		t.Skip("git not available")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	parent := filepath.Join(home, "repos", "app")
+	gitInit(t, parent) // repo on "main", plus a "feature" branch
+
+	// New branch off base main → ~/repos/app@feat-x, checked out to feat-x.
+	dir, err := ensureWorktree(parent, "main", "feat-x")
+	if err != nil {
+		t.Fatalf("ensureWorktree new: %v", err)
+	}
+	if want := filepath.Join(home, "repos", "app@feat-x"); dir != want {
+		t.Fatalf("dir = %q, want %q", dir, want)
+	}
+	if b := gitCurrentBranch(dir); b != "feat-x" {
+		t.Fatalf("worktree branch = %q, want feat-x", b)
+	}
+
+	// Idempotent: same call returns the same path without error.
+	if again, err := ensureWorktree(parent, "main", "feat-x"); err != nil || again != dir {
+		t.Fatalf("ensureWorktree reuse = (%q,%v), want (%q,nil)", again, err, dir)
+	}
+
+	// Existing branch, no new branch → ~/repos/app@feature on that branch.
+	fdir, err := ensureWorktree(parent, "feature", "")
+	if err != nil {
+		t.Fatalf("ensureWorktree existing: %v", err)
+	}
+	if want := filepath.Join(home, "repos", "app@feature"); fdir != want {
+		t.Fatalf("existing dir = %q, want %q", fdir, want)
+	}
+	if b := gitCurrentBranch(fdir); b != "feature" {
+		t.Fatalf("existing worktree branch = %q, want feature", b)
+	}
+
+	// A slash in the new branch is sanitized in the folder but kept as the ref.
+	sdir, err := ensureWorktree(parent, "main", "fix/bug-1")
+	if err != nil {
+		t.Fatalf("ensureWorktree slash: %v", err)
+	}
+	if want := filepath.Join(home, "repos", "app@fix-bug-1"); sdir != want {
+		t.Fatalf("slash dir = %q, want %q", sdir, want)
+	}
+	if b := gitCurrentBranch(sdir); b != "fix/bug-1" {
+		t.Fatalf("slash worktree branch = %q, want fix/bug-1", b)
+	}
+}
+
+// TestWorktreeDeleteHelpers covers the worktree-aware delete path's building blocks
+// against real git: worktree detection, parent resolution, linked-worktree counting
+// (which guards deleting a parent), and `worktree remove --force` cleanup.
+func TestWorktreeDeleteHelpers(t *testing.T) {
+	if _, err := execLookPathGit(); err != nil {
+		t.Skip("git not available")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	parent := filepath.Join(home, "repos", "app")
+	gitInit(t, parent)
+
+	wt, err := ensureWorktree(parent, "main", "feat-x")
+	if err != nil {
+		t.Fatalf("ensureWorktree: %v", err)
+	}
+
+	if !isLinkedWorktree(wt) {
+		t.Errorf("isLinkedWorktree(worktree) = false, want true")
+	}
+	if isLinkedWorktree(parent) {
+		t.Errorf("isLinkedWorktree(parent) = true, want false")
+	}
+	if got := worktreeParent(wt); got != parent {
+		t.Errorf("worktreeParent = %q, want %q", got, parent)
+	}
+	// `git worktree list` reports the whole set regardless of which worktree it runs
+	// from, so the count is 1 (one linked worktree) whether asked from parent or wt.
+	// The delete handler only calls this on the main working copy, where 1 => refuse.
+	if got := linkedWorktreeCount(parent); got != 1 {
+		t.Errorf("linkedWorktreeCount(parent) = %d, want 1", got)
+	}
+
+	// Forced removal (the handler's core) drops the worktree and its registry entry.
+	if out, err := exec.Command("git", "-C", parent, "worktree", "remove", "--force", wt).CombinedOutput(); err != nil {
+		t.Fatalf("worktree remove: %v: %s", err, out)
+	}
+	if _, err := os.Stat(wt); err == nil {
+		t.Errorf("worktree dir still exists after remove")
+	}
+	if got := linkedWorktreeCount(parent); got != 0 {
+		t.Errorf("linkedWorktreeCount after remove = %d, want 0", got)
+	}
+}
