@@ -205,6 +205,12 @@ type Store interface {
 	TenantLFSBytes(ctx context.Context, tenantID string) (int64, error)
 	DeleteLFSObjectsByRepo(ctx context.Context, tenantID, repo string) error
 	RenameLFSObjectsRepo(ctx context.Context, tenantID, oldRepo, newRepo string) error
+	// DeleteLFSObject drops one object's ledger row (used by LFS GC when it prunes
+	// an orphaned object from disk, so the tenant's capacity quota frees up).
+	DeleteLFSObject(ctx context.Context, tenantID, repo, oid string) error
+	// ListLFSObjectOIDs returns the oids the ledger records for a repo — the set GC
+	// walks to reconcile against what git still references.
+	ListLFSObjectOIDs(ctx context.Context, tenantID, repo string) ([]string, error)
 
 	// Audit log (docs/decisions/0006, P3-6; docs/20 M1). InsertAudit records one
 	// action; ListAuditByTenant serves the most recent entries (newest first) scoped

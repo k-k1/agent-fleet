@@ -172,7 +172,12 @@
     の両方で強制。`lfs_object` 台帳で O(1) 集計。admin limits API / AdminTab（MB 入力）に露出。
   - ロック API は 501（未対応でも push/pull は動く）。ワークスペースは git-lfs 同梱・cred helper 連携済みで
     クライアント無改造。実 `git lfs push`/clone の E2E テストあり。
-- **見送り（将来）**: clone なしのツリー閲覧（bare から read-only 提供）／LFS 孤児オブジェクトの GC。
+  - **孤児オブジェクト GC**: 既存の `git gc` cron（`git_gc.go`）に統合。どの reachable なポインタからも
+    参照されない LFS blob を削除して容量を戻す。参照 oid の列挙は **pure-git**（CP に git-lfs 不要）で
+    `git cat-file --batch-all-objects` から全 blob を走査しポインタを抽出。**grace 期間**
+    （`AF_LFS_GC_GRACE` 既定 14 日）で mtime が新しいオブジェクトは残し、「upload→ref push」途中の
+    誤削除を防ぐ。列挙失敗時は**何も消さない**（conservative）。削除で `lfs_object` 台帳も減り quota が戻る。
+- **見送り（将来）**: clone なしのツリー閲覧（bare から read-only 提供）／LFS ロック API 本実装。
   PR/レビュー/CI が要れば ② へ載せ替え。
 - **将来（②）**: PR/レビュー/CI が要るなら Gitea/Forgejo を内包して載せ替え。
 
