@@ -127,10 +127,12 @@ export interface AppState {
   reposKey: number;
   connKey: number;
   filesKey: number;
+  memosKey: number;
   bumpSessions: () => void;
   bumpRepos: () => void;
   bumpConn: () => void;
   bumpFiles: () => void;
+  bumpMemos: () => void;
   newSessionTick: number;
   openNewSession: () => void;
   reveal: Reveal;
