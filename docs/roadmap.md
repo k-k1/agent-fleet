@@ -265,6 +265,9 @@ CP に `/mcp` を 1 本生やし、**管理面（運用チーム）と作業面�
 > ◐ **段1（シーム固め）完了**（実装記録 [p3-7-aws-adapter](history/p3-7-aws-adapter.md)）。`RuntimeFactory` 港を
 > 唯一の生成口にし、`&dockerRuntime{}` 直生成を factory 経由へ統一。`AF_RUNTIME=local|ecs` 分岐（unknown=起動時 fail-fast）。
 > `ecsRuntime` スケルトン（港は満たすが lifecycle は未実装で fail-loud）。`go build/vet/test` で検証済（`runtime_test.go`）。
+> **段2 実装仕様＝凍結済**（[p3-7-aws-adapter §20b.7](history/p3-7-aws-adapter.md#20b7-段2-実装仕様凍結)）: Service desired 0/1・
+> Service Connect 到達・EFS AP 2 本(CP 動的払出)・シークレットは Secrets Manager `valueFrom`(plaintext env 不採用)・
+> deterministic naming ゆえ**スキーマ/Agent/Console/CP コア変更ゼロ**（`runtime_ecs.go` + SDK に閉じる）。要ラティファイ＝シークレット注入方式。
 > 残＝段2 ecsRuntime 本実装+EFS / 段3 RDS+KMS / 段4 IaC(Terraform) / 段5 実 AWS E2E（要 AWS）。AWS 構成は [reference/aws](reference/aws.md)。
 
 各社が**自社のデプロイ先を選ぶ**。コアは無改修、周縁アダプタのみ（[09](reference/portability.md)）。我々は両方を同梱（P3-10）。
