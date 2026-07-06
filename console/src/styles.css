@@ -7769,7 +7769,10 @@ button.primary:hover:not(:disabled) {
   padding: 8px 11px;
   background: var(--panel);
   border: 1px solid var(--border);
-  max-width: 62ch;
+  /* Cap line length for readability, but `ch` is the half-width "0" advance — Japanese
+     (full-width) text fits only ~half that per line, so a tight cap wastes a wide pane.
+     Grow to fill a narrow pane (100%) and allow a generous cap on a wide one. */
+  max-width: min(96ch, 100%);
 }
 .chat-msg.role-user .chat-body {
   background: color-mix(in srgb, var(--accent) 12%, var(--panel));
