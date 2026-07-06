@@ -556,6 +556,12 @@ type createReq struct {
 	// NewBranch, when set, is created off Branch (the base) right after the clone and
 	// switched to, so the session starts on a fresh branch. Empty => no new branch.
 	NewBranch string `json:"new_branch"`
+	// Worktree switches to worktree-then-start: instead of cloning, spin a git worktree
+	// off an EXISTING working copy (Dir = the parent, e.g. the main/develop 壁打ち clone)
+	// at ~/repos/<repo>@<branch> and use it as CWD. Branch is the base, NewBranch (opt)
+	// the fresh branch to create off it. Lets a decided task branch off into its own
+	// directory + session without touching the parent. RemoteURL is ignored when set.
+	Worktree bool `json:"worktree"`
 	// SSM (kind=ssm) coordinates, resolved and forwarded by the Control Plane from a
 	// host bookmark (control-plane/ssm.go). No secrets — SSO login happens in-pane.
 	SSMProfile   string `json:"ssm_profile"`
@@ -583,8 +589,26 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "bad_title", "title is too long (max 80) or contains control characters")
 		return
 	}
-	// Clone-then-start: ensure the repo exists and use it as the working dir.
-	if strings.TrimSpace(req.RemoteURL) != "" {
+	// Worktree-then-start: spin a git worktree off an existing working copy (req.Dir =
+	// the parent) and use it as the CWD, so a decided task branches into its own dir +
+	// session without touching the parent's running sessions.
+	if req.Worktree {
+		parent := strings.TrimSpace(req.Dir)
+		if parent == "" {
+			writeErr(w, http.StatusBadRequest, "bad_dir", "worktree requires dir (the parent working copy)")
+			return
+		}
+		if !filepath.IsAbs(parent) {
+			parent = filepath.Join(homeDir(), parent)
+		}
+		dir, err := ensureWorktree(parent, req.Branch, req.NewBranch)
+		if err != nil {
+			writeErr(w, http.StatusBadGateway, "worktree_failed", err.Error())
+			return
+		}
+		req.Dir = dir
+	} else if strings.TrimSpace(req.RemoteURL) != "" {
+		// Clone-then-start: ensure the repo exists and use it as the working dir.
 		dir, err := ensureRepo(req.RemoteURL, req.Branch, req.NewBranch, req.RepoName)
 		if err != nil {
 			writeErr(w, http.StatusBadGateway, "clone_failed", err.Error())

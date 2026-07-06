@@ -3,8 +3,9 @@
 // side by side they need distinct folder names, so these helpers mirror the
 // server (workspace/agent/git.go) and suggest a collision-free name.
 
-// repoNameRe mirrors git.go repoNameRe — the valid folder-name charset.
-export const repoNameRe = /^[A-Za-z0-9][A-Za-z0-9._-]{0,59}$/;
+// repoNameRe mirrors git.go repoNameRe — the valid folder-name charset. "@" is
+// allowed for worktree folders named "<repo>@<branch>"; length 96 to fit them.
+export const repoNameRe = /^[A-Za-z0-9][A-Za-z0-9._@-]{0,95}$/;
 
 // deriveRepoName mirrors git.go deriveRepoName: last path segment of a clone URL
 // minus a trailing ".git" — the default working-copy folder name.
@@ -23,7 +24,7 @@ export const sanitizeSeg = (s: string | null | undefined): string =>
 export const uniqueRepoName = (base: string, taken: Set<string>): string => {
   if (!taken.has(base)) return base;
   for (let i = 2; i < 1000; i++) {
-    const n = `${base}-${i}`.slice(0, 60);
+    const n = `${base}-${i}`.slice(0, 96);
     if (!taken.has(n)) return n;
   }
   return base;
