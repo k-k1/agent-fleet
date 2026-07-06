@@ -7270,6 +7270,55 @@ button.mt-toolrun-head:hover {
 .name-input {
   width: 100%;
 }
+/* Title-edit dialog: a compact single-field form. Reuses .session-modal's shell
+   (height:auto + footer bar) but narrower. */
+.title-modal {
+  width: min(480px, 94vw);
+}
+.title-modal .ti-input {
+  width: 100%;
+  padding: 7px 10px;
+  font-size: 14px;
+}
+/* The AI-suggest button sits just under the field (the field's own 18px bottom
+   margin already separates them, so no extra top margin). */
+.title-modal .ti-suggest-row {
+  display: flex;
+}
+.title-modal .ti-suggest-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+/* The AI candidate shown as a proposal — never auto-applied. The user reads it and
+   presses この案にする to fill the input, so nothing they typed is lost silently. */
+.title-modal .ti-proposal {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--border));
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg));
+}
+.title-modal .ti-proposal-label {
+  flex: none;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.title-modal .ti-proposal-text {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+}
+.title-modal .ti-proposal-apply {
+  flex: none;
+  padding: 4px 10px;
+  font-size: 12px;
+}
 button.primary {
   background: var(--accent);
   color: var(--on-accent);
