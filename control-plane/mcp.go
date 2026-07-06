@@ -201,7 +201,7 @@ func memberTools() []mcpTool {
 	return []mcpTool{
 		{
 			name: "list_my_sessions", minScope: scopeRead,
-			desc:   "List the Claude/opencode/codex sessions in your Workspace (name, kind, alive, status).",
+			desc:   "List the Claude/opencode/codex sessions in your Workspace. Each has a human-readable `display` name and an opaque `name` slug: refer to sessions by `display` when talking to the user (the slug means nothing to them); pass `name` to the other session tools.",
 			schema: map[string]any{"type": "object", "properties": map[string]any{}},
 			run: func(ctx context.Context, c config, res *resolved, _ map[string]any) (string, error) {
 				return agentText(ctx, res.rt, "GET", "/sessions", nil)
@@ -682,7 +682,7 @@ func (c config) mcpMemberSessions(ctx context.Context, ws Workspace) []map[strin
 		if list, err := c.mgr.agentSessions(ctx, rt); err == nil {
 			out := make([]map[string]any, 0, len(list))
 			for _, s := range list {
-				out = append(out, map[string]any{"name": s.Name, "kind": s.Kind, "label": s.Label, "alive": s.Alive})
+				out = append(out, map[string]any{"name": s.Name, "display": s.Display, "kind": s.Kind, "label": s.Label, "alive": s.Alive})
 			}
 			return out
 		}
@@ -693,9 +693,22 @@ func (c config) mcpMemberSessions(ctx context.Context, ws Workspace) []map[strin
 	}
 	out := make([]map[string]any, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, map[string]any{"name": r.Name, "kind": r.Kind, "label": r.Label, "alive": false})
+		out = append(out, map[string]any{"name": r.Name, "display": sessionRowDisplay(r), "kind": r.Kind, "label": r.Label, "alive": false})
 	}
 	return out
+}
+
+// sessionRowDisplay is the DB-mirror fallback for a human-readable session name (the
+// Agent supplies Session.Display live; the store row has no title). Prefer the claude
+// --name label (minus the "[AF] " tag), else the repo, else the opaque slug.
+func sessionRowDisplay(r SessionRow) string {
+	if r.Label != "" {
+		return strings.TrimLeft(strings.TrimPrefix(r.Label, "[AF]"), " ")
+	}
+	if r.Repo != "" {
+		return r.Repo
+	}
+	return r.Name
 }
 
 func (c config) mcpListWorkspaces(ctx context.Context, ac *adminCtx) (string, error) {
