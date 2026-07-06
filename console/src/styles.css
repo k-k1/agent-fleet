@@ -11,6 +11,10 @@
   --accent: #6cf;
   --on-accent: #06222e; /* text/icon on an accent-filled button (dark theme: dark on light cyan) */
   --chat-accent: var(--accent); /* chat highlights follow the chosen surface color (overridden in applyTheme) */
+  /* Accent for the admin modal, following the chosen top-bar surface. Concrete (not
+     var(--accent)) so .admin-surface can rebind --accent to it without a cycle; set to
+     the surface accent in applyTheme, else this theme default. */
+  --topbar-accent: #6cf;
   --btn: #2b2b2b;
   --btn-h: #3a3a3a;
   --btn-border: #444;
@@ -55,6 +59,7 @@
   --muted2: #828a94;
   --accent: #2563eb;
   --on-accent: #ffffff; /* light theme: white text on the saturated blue accent */
+  --topbar-accent: #2563eb; /* light-theme default for the admin accent (see :root) */
   --btn: #e8eaee;
   --btn-h: #dcdfe5;
   --btn-border: #c6cbd2;
@@ -5858,8 +5863,13 @@ button.mt-toolrun-head:hover {
   flex-direction: column;
   width: min(1100px, 94vw);
   height: min(900px, 92vh);
-  /* Match the top bar's surface (follows the user's 外観 top-bar color / theme). */
-  background: var(--topbar-bg);
+  /* Neutral body (like any modal); only the head bar carries the top-bar surface color
+     so a strong custom color doesn't flood the whole dialog. */
+  background: var(--bg);
+  /* Retint everything inside (buttons, active tabs, usage bars, links) to the top-bar
+     surface's accent instead of the app blue, so the modal matches the chosen top-bar
+     theme. --topbar-accent is concrete (applyTheme / :root), so this rebind is safe. */
+  --accent: var(--topbar-accent);
   border: 1px solid var(--border);
   border-radius: 10px;
   overflow: hidden;
@@ -5869,6 +5879,8 @@ button.mt-toolrun-head:hover {
   align-items: center;
   gap: 8px;
   padding: 12px 16px;
+  /* Accent bar: match the top bar's surface (follows the user's 外観 top-bar color). */
+  background: var(--topbar-bg);
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
 }
@@ -6622,11 +6634,11 @@ button.mt-toolrun-head:hover {
 }
 
 /* settings modal: segmented section selector (like the New Session modal) */
-/* Settings modal takes the top bar's surface (follows the 外観 top-bar color / theme)
-   so it reads as part of the same chrome. The head already uses --bar; pin it to
-   --topbar-bg too so a chosen surface color carries through the whole dialog. */
+/* Only the HEAD bar takes the top bar's surface (follows the 外観 top-bar color /
+   theme) as an accent tying it to the same chrome; the body stays neutral (--bg, like
+   any other modal) so a strong custom top-bar color doesn't flood the whole dialog. */
 .modal.settings-modal {
-  background: var(--topbar-bg);
+  background: var(--bg);
 }
 .settings-modal .modal-head {
   background: var(--topbar-bg);
