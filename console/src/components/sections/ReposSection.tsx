@@ -11,6 +11,7 @@ import { placeFixed } from "../../lib/placeFixed.js";
 import NewRepoModal from "../NewRepoModal.jsx";
 import BranchModal from "../BranchModal.jsx";
 import LaunchModal from "../LaunchModal.jsx";
+import WorktreeModal from "../WorktreeModal.jsx";
 import { kindIcon, kindLabel } from "../../lib/sessionkind.js";
 import { agentOf, repoLaunchKinds } from "../../agents/registry.ts";
 import { setLaunchSeed } from "../../lib/launchSeed.js";
@@ -303,6 +304,29 @@ export default function ReposSection() {
               bumpRepos();
               bumpFiles();
             }}
+            // Worktree golden path: spin a git worktree of this repo (parent left
+            // untouched) and start a session in it. Mirrors onLaunch, but the server
+            // creates the worktree dir from { worktree, dir(parent), branch, new_branch }.
+            onWorktree={async ({ base, newBranch, kind, model }) => {
+              const body: Record<string, unknown> = {
+                worktree: true,
+                dir: r.path,
+                branch: base,
+                new_branch: newBranch,
+                kind,
+              };
+              if (model) body.model = model;
+              const res = await apiJSON("api/sessions", "POST", body);
+              if (res && res.error) {
+                toast("worktree 起動に失敗: " + errText(res.error));
+                return;
+              }
+              bumpRepos();
+              bumpFiles();
+              bumpSessions();
+              const chat = agentOf(kind).caps.chat;
+              (chat ? showChat : showTerminal)(res.name);
+            }}
           />
         ))}
       </ul>
@@ -330,11 +354,12 @@ interface RepoRowProps {
   onLaunch: (kind: string, split: boolean) => void;
   onLaunchPrompt: (kind: string, model: string, prompt: string) => void;
   onBranchChanged?: () => void;
+  onWorktree?: (opts: { base: string; newBranch: string; kind: string; model: string }) => void;
   opens?: { ordinal: number; id: string }[];
   onFocusPane?: (id: string) => void;
 }
 
-function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected, onOpen, onOpenFolder, onOpenChanges, onFF, onDelete, onLaunch, onLaunchPrompt, onBranchChanged, opens, onFocusPane }: RepoRowProps) {
+function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected, onOpen, onOpenFolder, onOpenChanges, onFF, onDelete, onLaunch, onLaunchPrompt, onBranchChanged, onWorktree, opens, onFocusPane }: RepoRowProps) {
   const [showLaunch, setShowLaunch] = useState(false);
   const [launchModal, setLaunchModal] = useState(false); // 起動 modal (agent + model + prompt)
   // Agent kinds only (chat-capable: claude/codex/opencode) — shell/ssm have no model
@@ -343,6 +368,7 @@ function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected,
   const wrapRef = useRef<HTMLDivElement>(null);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null); // right-click context menu
   const [branchOpen, setBranchOpen] = useState(false); // branch switch / create modal
+  const [worktreeOpen, setWorktreeOpen] = useState(false); // worktree golden-path modal
   const menuRef = useRef<HTMLUListElement>(null);
 
   // Context menu: open at the cursor, clamp on-screen, close on outside click / Esc.
@@ -529,6 +555,11 @@ function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected,
           <li onClick={() => { setMenu(null); setBranchOpen(true); }}>
             <Icon name="git-branch" /> ブランチ切替
           </li>
+          {onWorktree && (
+            <li onClick={() => { setMenu(null); setWorktreeOpen(true); }}>
+              <Icon name="repo-forked" /> このブランチで作業を始める（worktree）
+            </li>
+          )}
           {onFF && (
             <li onClick={() => { setMenu(null); onFF(); }}>
               <Icon name="arrow-down" /> Fast-Forward
@@ -555,6 +586,15 @@ function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected,
           repoName={r.name}
           onClose={() => setBranchOpen(false)}
           onChecked={() => { setBranchOpen(false); onBranchChanged?.(); }}
+        />
+      )}
+      {worktreeOpen && onWorktree && (
+        <WorktreeModal
+          repo={r.name}
+          branch={r.branch}
+          kinds={agentKinds}
+          onClose={() => setWorktreeOpen(false)}
+          onCreate={(opts) => { setWorktreeOpen(false); onWorktree(opts); }}
         />
       )}
       {launchModal && (
