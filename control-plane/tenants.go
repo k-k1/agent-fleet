@@ -128,6 +128,7 @@ func (c config) handleAdminListTenants(w http.ResponseWriter, r *http.Request) {
 			"slug": t.Slug, "name": t.Name, "status": t.Status, "isolation": t.Isolation,
 			"users": len(members), "running": running,
 			"max_workspaces": lim.MaxWorkspaces, "max_sessions": lim.MaxSessions,
+			"max_git_repos":        lim.MaxGitRepos,
 			"session_idle_timeout": lim.SessionIdleTimeout, "ws_idle_timeout": lim.WSIdleTimeout,
 			"allow_agent_self_update": lim.AllowAgentSelfUpdate,
 		})
@@ -330,6 +331,7 @@ func (c config) handleAdminSetTenantLimits(w http.ResponseWriter, r *http.Reques
 	var body struct {
 		MaxWorkspaces int `json:"max_workspaces"`
 		MaxSessions   int `json:"max_sessions"`
+		MaxGitRepos   int `json:"max_git_repos"` // internal git repo cap (P2); 0 = unlimited
 		// P3-9 idle-stop: duration strings ("30m"); "" => deployment default,
 		// "0" => disabled for this tenant.
 		SessionIdleTimeout string `json:"session_idle_timeout"`
@@ -362,6 +364,7 @@ func (c config) handleAdminSetTenantLimits(w http.ResponseWriter, r *http.Reques
 	lj, _ := json.Marshal(tenantLimits{
 		MaxWorkspaces:        body.MaxWorkspaces,
 		MaxSessions:          body.MaxSessions,
+		MaxGitRepos:          body.MaxGitRepos,
 		SessionIdleTimeout:   body.SessionIdleTimeout,
 		WSIdleTimeout:        body.WSIdleTimeout,
 		AllowAgentSelfUpdate: body.AllowAgentSelfUpdate,

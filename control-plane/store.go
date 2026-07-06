@@ -193,6 +193,8 @@ type Store interface {
 	CreateGitRepo(ctx context.Context, g GitRepo) error
 	ListGitReposByTenant(ctx context.Context, tenantID string) ([]GitRepo, error)
 	GetGitRepo(ctx context.Context, tenantID, name string) (GitRepo, bool, error)
+	CountGitReposByTenant(ctx context.Context, tenantID string) (int, error)
+	RenameGitRepo(ctx context.Context, tenantID, oldName, newName string) error
 	DeleteGitRepo(ctx context.Context, tenantID, name string) error
 
 	// Audit log (docs/decisions/0006, P3-6; docs/20 M1). InsertAudit records one

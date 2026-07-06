@@ -138,9 +138,15 @@ export default function RepoPicker({ onChange }: RepoPickerProps) {
         return;
       }
       // Internal branches are plain strings; external ones are Branch objects.
-      const list: Branch[] = isInternal
+      let list: Branch[] = isInternal
         ? (d.branches || []).map((n: string) => ({ name: n }))
         : d.branches || [];
+      // A freshly-created internal repo has no commits yet, so no branches. Offer
+      // its default branch as a selectable placeholder so it can still be cloned —
+      // the first commit lands on it.
+      if (isInternal && list.length === 0 && d.default_branch) {
+        list = [{ name: d.default_branch, default: true }];
+      }
       setBranches(list);
       const def = (isInternal ? d.default_branch : d.default) || (list[0] && list[0].name) || "";
       setBranch(def);

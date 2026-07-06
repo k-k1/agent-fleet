@@ -340,6 +340,9 @@ func (m *manager) resolve(ctx context.Context, key, email, tenantSel string) (Ru
 type tenantLimits struct {
 	MaxWorkspaces int `json:"max_workspaces"`
 	MaxSessions   int `json:"max_sessions"`
+	// MaxGitRepos caps the tenant's internal git repositories (docs/reference/
+	// internal-git-provider, P2). 0 = unlimited, like the other int quotas.
+	MaxGitRepos int `json:"max_git_repos,omitempty"`
 	// P3-9 idle-stop (docs/19): per-tenant, super_admin-editable.
 	SessionIdleTimeout string `json:"session_idle_timeout,omitempty"` // tier-1: idle claude -> halt
 	WSIdleTimeout      string `json:"ws_idle_timeout,omitempty"`      // tier-2: cold workspace -> docker stop
