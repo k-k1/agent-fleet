@@ -9,7 +9,9 @@
 // Which view a pane renders. The *Path/Repo/doc/diff fields are its per-kind payload.
 // scm = the repo's commit-graph; changes = its working-tree changes + commit box;
 // commit = one commit's detail/diff (scmRepo + commitSha).
-export type PaneKind = "terminal" | "file" | "scm" | "changes" | "commit" | "doc" | "diff" | "chat";
+// wtdiff = a single working-tree file's diff (scmRepo + filePath + diffStaged), opened
+// in its own pane from the 変更 view (like commit opens a commit's diff).
+export type PaneKind = "terminal" | "file" | "scm" | "changes" | "commit" | "doc" | "diff" | "wtdiff" | "chat";
 
 // A single pane descriptor. An empty terminal pane (session null) shows
 // "セッション未接続".
@@ -19,8 +21,9 @@ export interface Pane {
   session: string | null; // session name attached to a terminal pane
   chat: boolean; // terminal pane showing the claude chat mirror instead of the PTY
   filePath: string | null; // file view target (home-relative)
-  scmRepo: string | null; // source-control view target repo (scm / changes / commit)
+  scmRepo: string | null; // source-control view target repo (scm / changes / commit / wtdiff)
   commitSha: string | null; // commit-detail view target sha (commit kind)
+  diffStaged: boolean | null; // wtdiff: whether to show the staged (index) diff vs the worktree
   docTitle: string | null; // ad-hoc doc view title
   docContent: string | null; // ad-hoc doc view markdown/text
   diffTool: string | null; // diff view: originating tool label

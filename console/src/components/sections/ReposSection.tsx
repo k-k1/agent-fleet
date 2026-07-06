@@ -1,9 +1,10 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useApp } from "../../state.jsx";
-import { api, apiJSON, errText } from "../../api.js";
+import { api, apiJSON, raw, errText } from "../../api.js";
 import Section from "../Section.jsx";
 import Icon from "../Icon.jsx";
 import { useToast } from "../ToastProvider.jsx";
+import { useConfirm } from "../ConfirmProvider.jsx";
 import EmptyState from "../EmptyState.jsx";
 import { useDismiss } from "../../lib/useDismiss.js";
 import { placeFixed } from "../../lib/placeFixed.js";
@@ -56,6 +57,7 @@ export default function ReposSection() {
   const multiPane = paneCount(layout) > 1;
   const rPanes = multiPane ? repoPanes(layout) : null;
   const toast = useToast();
+  const askConfirm = useConfirm();
   const running = wsState === "running"; // WS down → clone/open/launch are inert
   const [repos, setRepos] = useState<Repo[]>([]);
   const [conns, setConns] = useState<ConnectionsStatus | null>(null); // null = unknown (loading/failed) → show all
@@ -206,6 +208,26 @@ export default function ReposSection() {
               bumpRepos();
               toast(`${r.name}: fast-forward しました`);
             }}
+            // Right-click → ワーキングコピーを削除: repo lifecycle op (moved here from the
+            // 変更 view). Reversible — history / remote stay; re-clone recreates it. Always
+            // confirmed since it's destructive to local work.
+            onDelete={async () => {
+              const ok = await askConfirm({
+                title: "ワーキングコピーを削除",
+                body: `"${r.name}" のローカル作業コピーを削除します。履歴・リモートはそのまま残ります。`,
+                confirmLabel: "削除する",
+                danger: true,
+              });
+              if (!ok) return;
+              const res = await raw(`api/repos/${encodeURIComponent(r.name)}`, { method: "DELETE" });
+              if (!res.ok) {
+                toast("削除に失敗しました");
+                return;
+              }
+              bumpRepos();
+              bumpFiles();
+              toast(`${r.name} を削除しました`);
+            }}
             // split=true (middle-click) opens the new session in a freshly split
             // pane instead of replacing the active pane's content.
             onLaunch={async (kind: string, split: boolean) => {
@@ -256,13 +278,14 @@ interface RepoRowProps {
   onOpenFolder?: () => void;
   onOpenChanges?: () => void;
   onFF?: () => void;
+  onDelete?: () => void;
   onLaunch: (kind: string, split: boolean) => void;
   onBranchChanged?: () => void;
   opens?: { ordinal: number; id: string }[];
   onFocusPane?: (id: string) => void;
 }
 
-function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected, onOpen, onOpenFolder, onOpenChanges, onFF, onLaunch, onBranchChanged, opens, onFocusPane }: RepoRowProps) {
+function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected, onOpen, onOpenFolder, onOpenChanges, onFF, onDelete, onLaunch, onBranchChanged, opens, onFocusPane }: RepoRowProps) {
   const [showLaunch, setShowLaunch] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null); // right-click context menu
@@ -450,6 +473,14 @@ function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected,
               <Icon name={kindIcon(k)} /> {kindLabel(k)} を起動
             </li>
           ))}
+          {onDelete && (
+            <>
+              <li className="ctx-sep" role="separator" />
+              <li className="danger" onClick={() => { setMenu(null); onDelete(); }}>
+                <Icon name="trash" /> ワーキングコピーを削除
+              </li>
+            </>
+          )}
         </ul>
       )}
       {branchOpen && (

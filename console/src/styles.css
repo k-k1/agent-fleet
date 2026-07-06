@@ -4734,6 +4734,13 @@ button.mt-toolrun-head:hover {
   overflow: auto;
   padding: 8px 10px;
 }
+/* The 変更 view and the working-tree diff pane have no inline right panel — their diff
+   opens in a separate pane — so the left column fills the whole pane. */
+.scmbody.scm-changes-single > .scmleft {
+  width: auto;
+  flex: 1;
+  border-right: none;
+}
 .changes {
   list-style: none;
   margin: 0;

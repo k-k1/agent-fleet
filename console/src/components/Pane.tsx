@@ -3,6 +3,7 @@ import TerminalView from "../views/TerminalView.jsx";
 import SourceControlView from "../views/SourceControlView.jsx";
 import ChangesView from "../views/ChangesView.jsx";
 import CommitDetailView from "../views/CommitDetailView.jsx";
+import WorkingDiffView from "../views/WorkingDiffView.jsx";
 import FileView from "../views/FileView.jsx";
 import MirrorView from "../views/MirrorView.jsx";
 import DocView from "../views/DocView.jsx";
@@ -140,7 +141,7 @@ export default function Pane({
   const { setPaneWrap } = useApp();
   const settings = useSettings();
   const wrapOn = pane.wrap ?? settings.wrap;
-  const canWrap = pane.kind === "file" || pane.kind === "diff";
+  const canWrap = pane.kind === "file" || pane.kind === "diff" || pane.kind === "wtdiff";
 
   const onDragStart = (e: RDragEvent) => {
     e.dataTransfer.setData(DND, pane.id);
@@ -288,6 +289,9 @@ export default function Pane({
       {pane.kind === "changes" && <ChangesView repo={pane.scmRepo ?? undefined} wrap={wrapOn} />}
       {pane.kind === "commit" && (
         <CommitDetailView repo={pane.scmRepo ?? undefined} sha={pane.commitSha ?? undefined} wrap={wrapOn} />
+      )}
+      {pane.kind === "wtdiff" && (
+        <WorkingDiffView repo={pane.scmRepo ?? undefined} path={pane.filePath} staged={pane.diffStaged} wrap={wrapOn} />
       )}
       {pane.kind === "chat" && (
         <ChatView

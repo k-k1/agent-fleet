@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useApp } from "../state.jsx";
-import { api, apiJSON, raw, rawJSON } from "../api.js";
+import { api, apiJSON, rawJSON } from "../api.js";
 import Icon from "../components/Icon.jsx";
-import { Diff } from "../components/GitDiff.jsx";
 import { useConfirm } from "../components/ConfirmProvider.jsx";
 import { useToast } from "../components/ToastProvider.jsx";
 import EmptyState from "../components/EmptyState.jsx";
@@ -16,17 +15,16 @@ interface Change {
 
 // ChangesView is the working-tree changes + commit workbench, split out of the SCM
 // graph into its own pane (opened via the graph's 変更 button or the repo context menu).
-// Left: changed files (stage / unstage / discard) + a commit box + the repo identity.
-// Right: the selected file's diff.
-export default function ChangesView({ repo, wrap }: { repo?: string; wrap?: boolean }) {
-  const { scmRepo: ctxRepo, bumpRepos, bumpFiles, showTerminal } = useApp();
+// It lists changed files (stage / unstage / discard) with a commit box + the repo
+// identity; a file's diff opens in a SEPARATE pane (showFileDiff), like the commit graph.
+export default function ChangesView({ repo }: { repo?: string; wrap?: boolean }) {
+  const { scmRepo: ctxRepo, bumpRepos, bumpFiles, showFileDiff } = useApp();
   const askConfirm = useConfirm();
   const toast = useToast();
   const scmRepo = repo !== undefined ? repo : ctxRepo;
   const enc = encodeURIComponent(scmRepo || "");
   const [changes, setChanges] = useState<Change[]>([]);
   const [selPath, setSelPath] = useState("");
-  const [diff, setDiff] = useState("");
   const [msg, setMsg] = useState("");
   const [all, setAll] = useState(false);
 
@@ -41,18 +39,13 @@ export default function ChangesView({ repo, wrap }: { repo?: string; wrap?: bool
 
   useEffect(() => {
     setSelPath("");
-    setDiff("");
     refresh();
   }, [refresh]);
 
-  const showDiff = async (path: string, staged: boolean) => {
+  // Open the file's diff in its own pane (reuses a single diff pane; see showFileDiff).
+  const showDiff = (path: string, staged: boolean) => {
     setSelPath(path);
-    try {
-      const d = await api(`api/repos/${enc}/diff?path=${encodeURIComponent(path)}${staged ? "&staged=1" : ""}`);
-      setDiff(d.diff && d.diff.length ? d.diff : "(差分なし)");
-    } catch {
-      setDiff("(diff 取得失敗)");
-    }
+    if (scmRepo) showFileDiff(scmRepo, path, staged);
   };
 
   const op = async (name: string, paths: string[]) => {
@@ -68,22 +61,6 @@ export default function ChangesView({ repo, wrap }: { repo?: string; wrap?: bool
     await apiJSON(`api/repos/${enc}/${name}`, "POST", { paths });
     refresh();
     bumpFiles();
-  };
-
-  // Delete the working copy (moved here from the graph header). Reversible — history /
-  // remote stay; Repos re-clone recreates it. Leaves this view for the terminal.
-  const del = async () => {
-    const ok = await askConfirm({
-      title: "ワーキングコピーを削除",
-      body: `"${scmRepo}" のローカル作業コピーを削除します。履歴・リモートはそのまま残ります。`,
-      confirmLabel: "削除する",
-      danger: true,
-    });
-    if (!ok) return;
-    await raw(`api/repos/${enc}`, { method: "DELETE" });
-    bumpRepos();
-    bumpFiles();
-    showTerminal();
   };
 
   const commitOp = async () => {
@@ -110,11 +87,8 @@ export default function ChangesView({ repo, wrap }: { repo?: string; wrap?: bool
         <button className="ghost" title="更新" onClick={refresh}>
           <Icon name="refresh" />
         </button>
-        <button className="ghost danger" title="ワーキングコピーを削除" onClick={del}>
-          <Icon name="trash" />
-        </button>
       </header>
-      <div className="scmbody">
+      <div className="scmbody scm-changes-single">
         <div className="scmleft">
           <div className="sub-head">変更</div>
           <ul className="changes">
@@ -132,9 +106,6 @@ export default function ChangesView({ repo, wrap }: { repo?: string; wrap?: bool
             <button onClick={commitOp}>Commit</button>
             <RepoIdentity enc={enc} />
           </div>
-        </div>
-        <div className="scmright">
-          <Diff text={diff} wrap={wrap} />
         </div>
       </div>
     </div>

@@ -34,7 +34,7 @@ export const useApp = (): AppState => useContext(AppContext) as AppState;
 // A pane descriptor. kind drives which view renders; the *Path/Repo/session fields
 // are the per-kind payload. Empty terminal pane = "セッション未接続".
 function blankPane(id: string, patch?: PanePatch): Pane {
-  return { id, kind: "terminal", session: null, chat: false, filePath: null, scmRepo: null, commitSha: null, docTitle: null, docContent: null, diffTool: null, diffEdits: null, conversationId: null, draftAssistantId: null, wrap: null, ...patch };
+  return { id, kind: "terminal", session: null, chat: false, filePath: null, scmRepo: null, commitSha: null, diffStaged: null, docTitle: null, docContent: null, diffTool: null, diffEdits: null, conversationId: null, draftAssistantId: null, wrap: null, ...patch };
 }
 
 // An empty terminal pane — no session, no file, no SCM target. Closing a pane's content
@@ -772,6 +772,30 @@ export function AppProvider({ children }: { children: ReactNode }) {
     },
     [openActive, pushDrawerEntry],
   );
+  // showFileDiff opens ONE working-tree file's diff in its OWN pane (from the 変更 view),
+  // the same "diff in a separate pane" model as showCommit: reuse a single wtdiff pane if
+  // one is open (just update its file), else split one off. So selecting file after file
+  // in the changes list updates one diff pane instead of spawning many.
+  const showFileDiff = useCallback(
+    (repo: string, path: string, staged: boolean) => {
+      const cur = layoutRef.current;
+      const existing = cur.cols.flatMap((c) => c.panes).find((p) => p.kind === "wtdiff");
+      if (existing) {
+        const cols = cur.cols.map((c) => ({
+          ...c,
+          panes: c.panes.map((p) =>
+            p.id === existing.id
+              ? { ...p, kind: "wtdiff" as const, scmRepo: repo, filePath: path, diffStaged: staged }
+              : p,
+          ),
+        }));
+        commit({ ...cur, cols, activeId: existing.id });
+        return;
+      }
+      openInNewPane({ kind: "wtdiff", scmRepo: repo, filePath: path, diffStaged: staged });
+    },
+    [commit, openInNewPane],
+  );
   // showFileSplit opens a file in a freshly split pane (middle-click in the Files
   // tree), instead of replacing the active pane's content.
   const showFileSplit = useCallback(
@@ -1165,6 +1189,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     showChangesSplit,
     showCommit,
     showCommitSplit,
+    showFileDiff,
     showFile,
     showFileSplit,
     showDoc,
