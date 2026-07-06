@@ -5,6 +5,7 @@ import { useApp } from "../state.jsx";
 import Icon from "../components/Icon.jsx";
 import { useToast } from "../components/ToastProvider.jsx";
 import EmptyState from "../components/EmptyState.jsx";
+import InternalRepoBrowser from "../components/InternalRepoBrowser.jsx";
 import { useConnections } from "./useConnections.js";
 import { ProviderCard, StatusPill, DeviceSteps, DisconnectButton } from "./providerCard.jsx";
 
@@ -81,6 +82,7 @@ function InternalRepos() {
   const [repos, setRepos] = useState<InternalRepo[] | null>(null);
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
+  const [browsing, setBrowsing] = useState<string | null>(null);
 
   const load = () =>
     api("api/internal-git/repos")
@@ -175,6 +177,7 @@ function InternalRepos() {
                   key={r.name}
                   repo={r}
                   onCopy={() => copyUrl(r.clone_url)}
+                  onBrowse={() => setBrowsing(r.name)}
                   onRename={rename}
                   onRemove={() => remove(r.name)}
                 />
@@ -183,6 +186,7 @@ function InternalRepos() {
           )}
         </div>
       </ProviderCard>
+      {browsing && <InternalRepoBrowser name={browsing} onClose={() => setBrowsing(null)} />}
     </>
   );
 }
@@ -288,11 +292,13 @@ function GlobalIdentity() {
 function InternalRepoRow({
   repo,
   onCopy,
+  onBrowse,
   onRename,
   onRemove,
 }: {
   repo: InternalRepo;
   onCopy: () => void;
+  onBrowse: () => void;
   onRename: (oldName: string, newName: string) => Promise<boolean>;
   onRemove: () => void;
 }) {
@@ -354,6 +360,9 @@ function InternalRepoRow({
       </span>
       <button type="button" className="ir-url" title="clone URL をコピー" onClick={onCopy}>
         <code>{repo.clone_url}</code>
+      </button>
+      <button type="button" className="ghost" title="参照（clone 不要）" onClick={onBrowse}>
+        参照
       </button>
       <button type="button" className="ghost" title="リネーム" onClick={() => setEditing(true)}>
         リネーム

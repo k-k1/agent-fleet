@@ -180,8 +180,14 @@
     `git cat-file --batch-all-objects` から全 blob を走査しポインタを抽出。**grace 期間**
     （`AF_LFS_GC_GRACE` 既定 14 日）で mtime が新しいオブジェクトは残し、「upload→ref push」途中の
     誤削除を防ぐ。列挙失敗時は**何も消さない**（conservative）。削除で `lfs_object` 台帳も減り quota が戻る。
-- **見送り（将来）**: clone なしのツリー閲覧（bare から read-only 提供）。
-  PR/レビュー/CI が要れば ② へ載せ替え。
+- **clone なしツリー閲覧**（実装済み）: `internal_git_browse.go`。CP が bare を直接読む read-only の
+  tree/blob/commit API（`GET .../repos/{name}/tree|blob|commits`、CP ネイティブ・テナントスコープ・read）。
+  - `git ls-tree`（dir 一覧、tree 優先ソート）／`cat-file`（blob。1 MiB 超は too_large、バイナリ・LFS
+    ポインタはフラグのみ返す）／`log`（コミット）を薄くラップ。ref/path は正規表現で検証
+    （`..`・先頭 `-`・絶対パス・制御文字を拒否＝arg 誤認/traversal 対策）。空リポは空一覧。
+  - Console: `InternalRepoBrowser`（GitTab の「参照」ボタン）でブランチ選択＋パンくず＋ツリー＋テキスト
+    プレビュー（binary/too_large/LFS は注記）。
+- **見送り（将来）**: PR/レビュー/CI が要れば ② へ載せ替え。
 - **将来（②）**: PR/レビュー/CI が要るなら Gitea/Forgejo を内包して載せ替え。
 
 ## 10. 確定事項（P1 実装で確定）
