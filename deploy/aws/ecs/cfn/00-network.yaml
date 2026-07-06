@@ -144,7 +144,7 @@ Resources:
   CpSg:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: !Sub "af-${AWS::StackName} Control Plane task (ALB -> CP)"
+      GroupDescription: !Sub "af-${AWS::StackName} Control Plane task (ALB to CP)"
       VpcId: !Ref Vpc
       SecurityGroupIngress:
         - IpProtocol: tcp
@@ -157,7 +157,7 @@ Resources:
   WsSg:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: !Sub "af-${AWS::StackName} Workspace task (CP -> Agent); egress to git/Anthropic"
+      GroupDescription: !Sub "af-${AWS::StackName} Workspace task (CP to Agent); egress to git/Anthropic"
       VpcId: !Ref Vpc
       SecurityGroupIngress:
         - IpProtocol: tcp
