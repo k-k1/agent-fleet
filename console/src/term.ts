@@ -563,6 +563,27 @@ export function reconnect(paneId: string) {
   attach(paneId, it.session);
 }
 
+// ensureAttached guarantees a live PTY socket to `session` for a pane, then refits it.
+// Used when a terminal is REVEALED (toggled back from the chat mirror / a split pane
+// un-hidden): if the pane is already connected to this session, just refit for the now-
+// laid-out size (scrollback preserved); otherwise (no socket, a socket wedged closed, or
+// one left over from a session this reused pane previously showed) attach afresh. This
+// is what recovers the "attached while hidden / reused pane" cases that otherwise only a
+// full page reload cleared.
+export function ensureAttached(paneId: string, session: string) {
+  const it = inst(paneId);
+  if (!it || !it.term || !session) return;
+  const live =
+    it.session === session &&
+    it.ws &&
+    (it.ws.readyState === WebSocket.CONNECTING || it.ws.readyState === WebSocket.OPEN);
+  if (live) {
+    fitInst(it); // connected → just size the grid to the visible container
+    return;
+  }
+  attach(paneId, session);
+}
+
 // reconnectSession revives any pane currently showing `name` whose PTY dropped. Used
 // when the user re-clicks an already-open but disconnected session in the list: that
 // doesn't change the pane's props, so the declarative attach and the active/focus
