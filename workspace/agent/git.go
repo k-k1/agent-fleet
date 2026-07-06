@@ -650,6 +650,15 @@ func handleDeleteRepo(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// Deleting the working copy out from under live sessions is even worse than a
+	// branch switch: their cwd vanishes mid-flight. Refuse while any session runs
+	// there — the user must stop/archive them first (same guard as checkout).
+	if running := liveSessionsInDir(dir); len(running) > 0 {
+		writeErr(w, http.StatusConflict, "sessions_running_delete",
+			fmt.Sprintf("%d session(s) are running in this working copy (%s); deleting it would break them. Stop those sessions first.",
+				len(running), strings.Join(running, ", ")))
+		return
+	}
 	if err := os.RemoveAll(dir); err != nil {
 		writeErr(w, http.StatusInternalServerError, "delete_failed", err.Error())
 		return
