@@ -229,6 +229,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
           if (dup.id !== cur.activeId) commit({ ...cur, activeId: dup.id }, false);
           return;
         }
+        // Prefer filling a vacant pane over growing the layout: a Ctrl/middle-click
+        // should land in an existing empty "セッション未接続" pane if one exists rather
+        // than spawning yet another split. Favor the active pane when it's the blank
+        // one, else the first blank found in layout order.
+        const all = cur.cols.flatMap((c) => c.panes);
+        const blank = all.find((p) => p.id === cur.activeId && isBlankPane(p)) || all.find(isBlankPane);
+        if (blank) {
+          const cols = cur.cols.map((c) => ({
+            ...c,
+            panes: c.panes.map((p) => (p.id === blank.id ? { ...blankPane(blank.id), ...patch } : p)),
+          }));
+          commit({ ...cur, cols, activeId: blank.id });
+          return;
+        }
       }
       const fresh = (id: string) => ({ ...blankPane(id), ...patch });
       const splitCol = (col: Column) => {
