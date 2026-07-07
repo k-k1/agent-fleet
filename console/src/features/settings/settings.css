@@ -1369,3 +1369,860 @@
   font-size: 12px;
 }
 
+
+/* Admin surface (tenants / members / quotas / sessions) — extracted from the old
+   console's styles.css (region 6119–6902) for pixel parity (docs/22 P7c).
+   Trimmed at P8. */
+
+/* Legacy control styles (old element globals), scoped — the verbatim-ported
+   AdminTab keeps raw <button>/<input>/<select> markup (:where() = old 0-0-1). */
+:where(.admin-surface) button {
+  background: var(--btn);
+  color: var(--fg);
+  border: 1px solid var(--btn-border);
+  border-radius: 4px;
+  padding: 4px 10px;
+  cursor: pointer;
+  font: inherit;
+}
+:where(.admin-surface) button:hover:not(:disabled) {
+  background: var(--btn-h);
+}
+:where(.admin-surface) button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+:where(.admin-surface) button.ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--muted);
+  padding: 2px 6px;
+}
+:where(.admin-surface) button.ghost:hover:not(:disabled) {
+  background: var(--btn);
+  color: var(--fg);
+}
+:where(.admin-surface) button.icon {
+  padding: 1px 6px;
+  font-size: 12px;
+  line-height: 1.3;
+}
+:where(.admin-surface) button.primary {
+  background: var(--accent);
+  color: var(--on-accent);
+  border-color: var(--accent);
+  font-weight: 600;
+}
+:where(.admin-surface) button.primary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 85%, #fff);
+}
+:where(.admin-surface) button.danger:hover:not(:disabled) {
+  background: #4a2222;
+  border-color: #6a3030;
+  color: #f3b6b6;
+}
+:where(.admin-surface) input,
+:where(.admin-surface) select {
+  background: var(--btn);
+  color: var(--fg);
+  border: 1px solid var(--btn-border);
+  border-radius: 4px;
+  padding: 4px 6px;
+  font: inherit;
+}
+:where(.admin-surface) input:focus,
+:where(.admin-surface) select:focus {
+  outline: 1px solid var(--accent);
+  border-color: var(--accent);
+}
+
+/* admin */
+/* ===== Admin surface (super_admin management) ===== */
+/* Near-full-screen overlay panel (not a small centered modal): the staged
+   drill-down + per-member resource/session views need the room. */
+.admin-surface {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: min(1100px, 94vw);
+  height: min(900px, 92vh);
+  /* Neutral body (like any modal); only the head bar carries the top-bar surface color
+     so a strong custom color doesn't flood the whole dialog. */
+  background: var(--bg);
+  /* Retint everything inside (buttons, active tabs, usage bars, links) to the top-bar
+     surface's accent instead of the app blue, so the modal matches the chosen top-bar
+     theme. --topbar-accent is concrete (applyTheme / :root), so this rebind is safe. */
+  --accent: var(--topbar-accent);
+  /* Light-theme active seg-tabs fill with --active-bg (a fixed blue), not --accent, so
+     retint it to a soft accent tint too (theme-adaptive via --bg; matches the prior look
+     at the default blue). */
+  --active-bg: color-mix(in srgb, var(--topbar-accent) 18%, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.admin-surface-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  /* Accent bar: match the top bar's surface (follows the user's 外観 top-bar color). */
+  background: var(--topbar-bg);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.admin-surface-head .modal-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  flex: 1;
+}
+.admin-surface-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 16px;
+}
+.admin {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-height: 0;
+}
+
+/* nav row: back button + breadcrumb */
+.admin-nav {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.admin-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+}
+/* breadcrumb */
+.admin-crumbs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.admin-crumbs .crumb {
+  background: none;
+  border: none;
+  padding: 3px 6px;
+  border-radius: 5px;
+  font-size: 13px;
+  color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+}
+.admin-crumbs .crumb:hover:not(.here) {
+  background: var(--hover-bg);
+  color: var(--fg);
+}
+.admin-crumbs .crumb.here {
+  color: var(--fg);
+  font-weight: 600;
+  cursor: default;
+}
+.admin-crumbs .crumb-sep {
+  color: var(--muted2);
+  font-size: 14px;
+}
+
+.admin-stage {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.stage-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.stage-head h4 {
+  margin: 0;
+}
+
+/* tenant cards */
+.tenant-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 10px;
+}
+.tenant-card {
+  text-align: left;
+  background: var(--panel2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.tenant-card:hover {
+  border-color: var(--accent);
+  background: var(--hover-bg);
+}
+.tc-top {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.tc-name {
+  font-size: 14px;
+  font-weight: 600;
+}
+.tc-slug {
+  font-size: 11px;
+  color: var(--muted2);
+}
+.tc-stats {
+  display: flex;
+  gap: 14px;
+  font-size: 12px;
+}
+.tc-stats span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.tc-run.on {
+  color: var(--ok);
+}
+.tc-limits {
+  font-size: 11px;
+}
+.new-tenant {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  padding: 12px;
+  background: var(--panel2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+/* panels (tenant detail + member detail sections) */
+.admin-panel {
+  background: var(--panel2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px;
+}
+.admin-panel h4 {
+  margin: 0 0 10px;
+}
+
+/* top-level admin mode toggle (テナント管理 / 使用量) */
+.admin-modes {
+  align-self: flex-start;
+}
+.admin-modes .seg-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+  padding: 5px 14px;
+  font-size: 12px;
+}
+
+/* usage / showback */
+.usage-toolbar {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.usage-toolbar label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.usage-toolbar input,
+.usage-toolbar select {
+  color-scheme: dark light;
+}
+.usage-csv {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  text-decoration: none;
+}
+.usage-summary {
+  display: flex;
+  align-items: baseline;
+  gap: 28px;
+  margin-bottom: 14px;
+}
+.us-metric {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.us-val {
+  font-size: 22px;
+  font-weight: 600;
+}
+.us-lab {
+  font-size: 11px;
+}
+.us-range {
+  margin-left: auto;
+  font-size: 12px;
+}
+.usage-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.usage-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.ur-key {
+  flex: 0 0 auto;
+  min-width: 140px;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ur-tenant {
+  flex: 0 0 auto;
+  font-size: 11px;
+}
+.ur-bar {
+  flex: 1;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--panel);
+  overflow: hidden;
+  min-width: 40px;
+}
+.ur-fill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  border-radius: 4px;
+}
+.ur-hrs {
+  flex: 0 0 auto;
+  min-width: 62px;
+  text-align: right;
+  font-size: 13px;
+}
+
+/* all-sessions overview */
+.as-search {
+  flex: 1 1 200px;
+}
+.as-count {
+  margin-left: auto;
+  font-size: 12px;
+  align-self: center;
+}
+.all-sessions {
+  display: flex;
+  flex-direction: column;
+}
+.all-session {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 4px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+.all-session:last-child {
+  border-bottom: none;
+}
+.asx-user {
+  flex: 0 1 auto;
+  min-width: 90px;
+  max-width: 170px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.asx-tenant {
+  flex: 0 0 auto;
+  font-size: 11px;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+.asx-name {
+  flex: 1 1 auto;
+  min-width: 80px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.asx-repo {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+.all-session .session-state {
+  flex: 0 0 auto;
+}
+.asx-time {
+  flex: 0 0 auto;
+  font-size: 11px;
+  min-width: 74px;
+  text-align: right;
+}
+.saved-note {
+  color: var(--ok);
+  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.form-err {
+  color: var(--del);
+  font-size: 12px;
+}
+
+/* member rows (tenant detail) */
+.member-rows {
+  display: flex;
+  flex-direction: column;
+}
+.member-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 6px;
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--border2);
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+  color: var(--fg);
+}
+.member-row:hover {
+  background: var(--hover-bg);
+}
+.state-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--muted2);
+}
+.state-dot.on {
+  background: var(--ok);
+}
+.state-dot.off {
+  background: var(--muted2);
+}
+/* Text label beside a state dot (admin member header) so 稼働中/停止中 is unambiguous. */
+.state-word {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.state-word.on {
+  color: var(--ok);
+}
+.state-word.off {
+  color: var(--muted2);
+}
+.mr-key {
+  font-size: 13px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.mr-star {
+  color: var(--warn);
+  font-size: 12px;
+}
+.mr-email {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+.mr-role {
+  font-size: 11px;
+  padding: 1px 7px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.mr-lim {
+  font-size: 11px;
+}
+.mr-go {
+  color: var(--muted2);
+}
+.add-member {
+  margin-top: 12px;
+}
+.add-member input,
+.add-member select {
+  font-size: 12px;
+}
+
+/* member detail */
+.member-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.mh-key {
+  font-size: 15px;
+  font-weight: 600;
+}
+.mh-role {
+  font-size: 11px;
+  padding: 1px 7px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.mh-email {
+  font-size: 12px;
+}
+
+/* resource tiles */
+.res-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+}
+.res-tile {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 10px 12px;
+}
+.res-tile.warn {
+  border-color: var(--warn);
+}
+.res-tile.crit {
+  border-color: var(--del);
+}
+.rt-label {
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.rt-value {
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+.rt-sub {
+  font-size: 11px;
+}
+.rt-bar {
+  margin-top: 8px;
+  height: 4px;
+  background: var(--border2);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.rt-fill {
+  height: 100%;
+  background: var(--ok);
+}
+.res-tile.warn .rt-fill {
+  background: var(--warn);
+}
+.res-tile.crit .rt-fill {
+  background: var(--del);
+}
+
+/* admin session list (read-only) */
+.admin-sessions {
+  display: flex;
+  flex-direction: column;
+}
+.adm-session {
+  display: flex;
+  align-items: center;
+  gap: 6px 10px;
+  padding: 6px 4px;
+  border-bottom: 1px solid var(--border2);
+  font-size: 12px;
+  flex-wrap: wrap; /* narrow (phone) screens wrap the columns instead of overflowing */
+}
+/* Tenant group header in the deployment-wide session overview. */
+.asx-group + .asx-group {
+  margin-top: 10px;
+}
+.asx-group-head {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--muted);
+  padding: 4px 2px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 2px;
+}
+.as-name {
+  flex-shrink: 0;
+  max-width: 30%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.as-repo {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.as-time {
+  flex-shrink: 0;
+  font-size: 11px;
+}
+
+/* Audit log rows (docs/20 M1): one change operation per line, action badge colored
+   by category (fs / git / session / egress). */
+.adm-audit-row {
+  display: flex;
+  align-items: center;
+  gap: 6px 10px;
+  padding: 6px 4px;
+  border-bottom: 1px solid var(--border2);
+  font-size: 12px;
+  flex-wrap: wrap;
+}
+.audit-action {
+  flex-shrink: 0;
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--border2);
+  color: var(--muted);
+  white-space: nowrap;
+}
+.audit-action.cat-fs {
+  color: #4a9eff;
+  border-color: #2b5c8a;
+}
+.audit-action.cat-git,
+.audit-action.cat-repo {
+  color: #d08a2e;
+  border-color: #7a5320;
+}
+.audit-action.cat-session {
+  color: #3fb950;
+  border-color: #256a30;
+}
+.audit-action.cat-egress {
+  color: #f85149;
+  border-color: #8a2b28;
+}
+.audit-action.cat-claude {
+  color: #bc8cff;
+  border-color: #5a3a8a;
+}
+
+/* Egress observation rows (docs/20 M2): destination host + would-allow/would-block. */
+.adm-egress-row {
+  display: flex;
+  align-items: center;
+  gap: 6px 12px;
+  padding: 6px 4px;
+  border-bottom: 1px solid var(--border2);
+  font-size: 12px;
+  flex-wrap: wrap;
+}
+.adm-egress-row .as-name {
+  flex: 1;
+  max-width: none;
+}
+.egress-allow {
+  flex-shrink: 0;
+  color: #3fb950;
+  font-variant-numeric: tabular-nums;
+}
+.egress-block {
+  flex-shrink: 0;
+  color: #f85149;
+  font-variant-numeric: tabular-nums;
+}
+/* egress allowlist management (docs/20 M3) */
+.egress-h {
+  margin: 0 0 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.egress-add {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+.egress-add input {
+  flex: 1;
+  min-width: 120px;
+}
+.adm-allow-row {
+  display: flex;
+  align-items: center;
+  gap: 6px 10px;
+  padding: 6px 4px;
+  border-bottom: 1px solid var(--border2);
+  font-size: 12px;
+  flex-wrap: wrap;
+}
+.adm-allow-row .as-name {
+  flex-shrink: 0;
+  max-width: none;
+}
+.adm-allow-row .as-repo {
+  flex: 1;
+}
+.allow-acts {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.btn.xs,
+.ghost.xs {
+  font-size: 11px;
+  padding: 2px 8px;
+}
+
+/* member actions */
+.member-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.member-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.limit-edit {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}
+.role-now {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 13px;
+  color: var(--ok);
+}
+.role-hint {
+  margin-top: 10px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--muted); /* match .field-help / .ds-hint (was inherited fg) */
+}
+
+/* Admin surface on a phone: full-bleed, single column, stacked forms, and a big
+   tap-target back button. Scoped to .admin* so global form-row etc. are untouched. */
+@media (max-width: 760px) {
+  .admin-surface {
+    width: 100vw;
+    height: 100dvh;
+    max-width: none;
+    border: none;
+    border-radius: 0;
+  }
+  .admin-surface-body {
+    padding: 12px;
+  }
+  .admin-back {
+    padding: 8px 14px;
+    font-size: 14px;
+  }
+  .admin-crumbs {
+    font-size: 12px;
+  }
+  .tenant-cards {
+    grid-template-columns: 1fr;
+  }
+  /* stack the limits / add-member rows vertically so inputs get full width */
+  .admin .form-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .admin .form-row input,
+  .admin .form-row select,
+  .admin .form-row button {
+    width: 100%;
+  }
+  .new-tenant input,
+  .new-tenant button {
+    width: 100%;
+  }
+  .res-tiles {
+    grid-template-columns: 1fr 1fr;
+  }
+  /* member row: let the email/role wrap under the key instead of overflowing */
+  .member-row {
+    flex-wrap: wrap;
+    row-gap: 2px;
+  }
+  .mr-email {
+    flex-basis: 100%;
+    order: 5;
+  }
+  .mr-go {
+    margin-left: auto;
+  }
+  /* session row: wrap to two lines on narrow screens */
+  .adm-session {
+    flex-wrap: wrap;
+    row-gap: 2px;
+  }
+  .as-name {
+    max-width: 100%;
+  }
+  .as-repo {
+    flex-basis: 100%;
+    order: 5;
+  }
+  .member-actions button {
+    flex: 1 1 100%;
+    justify-content: center;
+  }
+  .limit-edit {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .limit-edit button {
+    width: 100%;
+  }
+}
+
+
+/* Base modal title (old global) — the admin head's h3 builds on it. */
+.modal-title {
+  margin: 0;
+  font-size: 15px;
+}

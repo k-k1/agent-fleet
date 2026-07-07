@@ -1,18 +1,30 @@
-// AdminDialog — P7c で旧 settings/AdminDialog+AdminTab(1,378行) を移植予定の
-// プレースホルダ。openAdmin の履歴エントリ/クローズ動線だけ先に本実装している。
-import { Modal } from "../../ui/Modal.tsx";
+// AdminDialog — ported from the old settings/AdminDialog.tsx (docs/22 P7c).
+// The super_admin-only management surface (tenants / members / quotas / live
+// resources). It is a near-full-screen overlay rather than a small centered
+// modal: the staged drill-down (tenants → tenant → member) plus the per-member
+// resource + session views need room. Kept separate from the per-user
+// SettingsDialog so administration is clearly distinct from personal settings.
 import { useSettingsUI } from "./store.ts";
+import { AdminTab } from "./AdminTab.tsx";
+import { Icon } from "../../ui/Icon.tsx";
 
 export function AdminDialog() {
   const closeAdmin = useSettingsUI((s) => s.closeAdmin);
   return (
-    <Modal title="管理" onClose={closeAdmin} className="admin-modal">
-      <div className="ui-modal-body">
-        <div className="ui-field-hint" style={{ padding: "24px 8px" }}>
-          管理ダイアログ（テナント / メンバー / クォータ / 稼働セッション / 監査ログ）は移植中です（P7c）。
-          それまでは旧コンソール（index.html）の 管理 をご利用ください。
+    <div className="ui-modal-backdrop" onClick={closeAdmin}>
+      <div className="admin-surface" onClick={(e) => e.stopPropagation()}>
+        <header className="admin-surface-head">
+          <h3 className="modal-title">
+            <Icon name="shield" /> 管理
+          </h3>
+          <button type="button" className="icon" title="閉じる" onClick={closeAdmin}>
+            <Icon name="close" />
+          </button>
+        </header>
+        <div className="admin-surface-body">
+          <AdminTab />
         </div>
       </div>
-    </Modal>
+    </div>
   );
 }
