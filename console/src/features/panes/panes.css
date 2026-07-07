@@ -27,6 +27,21 @@
   border-color: color-mix(in srgb, var(--ord, var(--accent)) 70%, var(--border2));
 }
 
+/* .view wraps the pane's resident terminal (old styles.css "main / views" region):
+   it must fill the pane's flex column, and the explicit [hidden] rule keeps the
+   hidden attribute working (display:flex would otherwise override it) while the
+   mirror is shown in front. min-height:0 lets the terminal shrink to its flex
+   track instead of overflowing the pane. */
+.view {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+}
+.view[hidden] {
+  display: none;
+}
+
 /* Dividers between columns / rows (drag to resize). */
 .pane-divider {
   position: absolute;
