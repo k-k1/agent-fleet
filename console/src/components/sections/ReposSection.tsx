@@ -378,12 +378,16 @@ function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected,
     const name = renameVal.trim();
     setRenaming(false);
     if (!name || name === r.branch) return;
-    const res = await apiJSON(`api/repos/${encodeURIComponent(r.name)}/rename-branch`, "POST", { name });
-    if (res && res.error) {
-      rowToast("ブランチ名の変更に失敗: " + errText(res.error));
-      return;
+    try {
+      const res = await apiJSON(`api/repos/${encodeURIComponent(r.name)}/rename-branch`, "POST", { name });
+      if (res && res.error) {
+        rowToast("ブランチ名の変更に失敗: " + errText(res.error));
+        return;
+      }
+      onBranchChanged?.();
+    } catch {
+      rowToast("ブランチ名の変更に失敗しました（サーバが応答しません）");
     }
-    onBranchChanged?.();
   };
 
   // Ask the LLM to name the branch from the session's conversation, and pre-fill the
@@ -391,13 +395,20 @@ function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected,
   // naming payoff for prompts the derivation couldn't handle (e.g. Japanese).
   const aiSuggest = async () => {
     setSuggesting(true);
-    const res = await apiJSON(`api/repos/${encodeURIComponent(r.name)}/suggest-branch`, "POST", {});
-    setSuggesting(false);
-    if (res && res.error) {
-      rowToast("AI によるブランチ名の提案に失敗: " + errText(res.error));
-      return;
+    try {
+      const res = await apiJSON(`api/repos/${encodeURIComponent(r.name)}/suggest-branch`, "POST", {});
+      if (res && res.error) {
+        rowToast("AI によるブランチ名の提案に失敗: " + errText(res.error));
+        return;
+      }
+      if (res && res.branch) setRenameVal(res.branch);
+    } catch {
+      // A non-JSON reply (e.g. a gateway timeout while the LLM runs) rejects the JSON
+      // parse; without this the spinner would spin forever. Surface it and reset.
+      rowToast("AI によるブランチ名の提案に失敗しました（時間切れかサーバ無応答）");
+    } finally {
+      setSuggesting(false);
     }
-    if (res && res.branch) setRenameVal(res.branch);
   };
 
   // Context menu: open at the cursor, clamp on-screen, close on outside click / Esc.
