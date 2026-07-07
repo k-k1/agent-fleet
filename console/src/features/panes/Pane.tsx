@@ -15,6 +15,10 @@ import { SourceControlView } from "../scm/SourceControlView.tsx";
 import { ChangesView } from "../scm/ChangesView.tsx";
 import { CommitDetailView } from "../scm/CommitDetailView.tsx";
 import { WorkingDiffView } from "../scm/WorkingDiffView.tsx";
+import { FileView } from "../viewer/FileView.tsx";
+import { DocView } from "../viewer/DocView.tsx";
+import { DiffView } from "../viewer/DiffView.tsx";
+import type { DiffEdit } from "../viewer/DiffView.tsx";
 import { useSettings } from "../../lib/settings.ts";
 import { EmptyState } from "../../ui/EmptyState.tsx";
 import { IconButton } from "../../ui/Button.tsx";
@@ -26,9 +30,6 @@ const DND = "application/x-af-pane";
 
 // Placeholder copy for views whose port hasn't landed yet.
 const PENDING: Partial<Record<PaneContent["kind"], { icon: string; label: string; phase: string }>> = {
-  file: { icon: "file", label: "ファイルビュアー", phase: "P4" },
-  doc: { icon: "book", label: "ドキュメント", phase: "P4" },
-  diff: { icon: "diff", label: "編集差分", phase: "P4" },
   chat: { icon: "comment-discussion", label: "アシスタントチャット", phase: "P5" },
 };
 
@@ -219,6 +220,16 @@ export function Pane({
           repo={pane.content.scmRepo}
           path={pane.content.filePath}
           staged={pane.content.diffStaged}
+          wrap={wrapOn}
+        />
+      )}
+      {pane.content.kind === "file" && <FileView filePath={pane.content.filePath} wrap={pane.wrap} />}
+      {pane.content.kind === "doc" && <DocView title={pane.content.docTitle} content={pane.content.docContent} />}
+      {pane.content.kind === "diff" && (
+        <DiffView
+          title={pane.content.docTitle}
+          tool={pane.content.diffTool}
+          edits={pane.content.diffEdits as DiffEdit[]}
           wrap={wrapOn}
         />
       )}
