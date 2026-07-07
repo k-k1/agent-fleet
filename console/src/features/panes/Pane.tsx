@@ -9,6 +9,8 @@ import { usePaneHover, hoverMatches } from "../../lib/panehover.tsx";
 import { useLayoutStore } from "../../layout/store.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 import { TerminalView } from "../terminal/TerminalView.tsx";
+import { MirrorView } from "../mirror/MirrorView.tsx";
+import { agentOf } from "../../agents/registry.ts";
 import { SourceControlView } from "../scm/SourceControlView.tsx";
 import { ChangesView } from "../scm/ChangesView.tsx";
 import { CommitDetailView } from "../scm/CommitDetailView.tsx";
@@ -70,20 +72,37 @@ export function Pane({
   // 'right'/'down' → tear the dragged pane off into a new split.
   const [zone, setZone] = useState<string | null>(null);
 
-  // Whether the PTY is live. A stopped session opened as chat starts DETACHED
-  // (read-only history, no resume); the mirror itself is P5, but the alive-edge
-  // tracking below is the attach gate the terminal needs today: a live session
-  // is interactive (connecting doesn't resume it); a stopped one detaches so
-  // nothing silently resumes it — resume stays explicit (再開).
+  // Markdown mirror (case-A): a claude session pane can swap its raw terminal for
+  // a read-mostly chat view. A stopped session opened as chat starts DETACHED
+  // (read-only history, no resume) — 再開して続ける / the ターミナル toggle attaches.
   const chat = pane.content.kind === "terminal" && pane.content.chat;
+  const [mirror, setMirror] = useState(chat === true);
   const [attached, setAttached] = useState(!chat || sessionMeta?.alive === true);
+  // Re-sync when the pane's session/chat descriptor changes (a new session opened
+  // here); local toggles persist within the same session.
   useEffect(() => {
+    setMirror(chat === true);
     setAttached(!chat || sessionMeta?.alive === true);
   }, [pane.session, chat]);
+  // Track liveness: alive → attach (connecting doesn't resume); stopped → detach
+  // to read-only so nothing silently resumes. Runs only on an alive CHANGE, so a
+  // user resume (attached=true while alive still false) isn't undone.
   useEffect(() => {
     if (sessionMeta?.alive === true) setAttached(true);
     else if (sessionMeta?.alive === false) setAttached(false);
   }, [sessionMeta?.alive]);
+  // The mirror is offered only for agents with the `chat` capability (claude —
+  // /messages is claude-only). Guard on loaded sessionMeta.
+  const canMirror = isTerm && !!pane.session && !!sessionMeta && agentOf(sessionMeta.kind).caps.chat;
+  const showMirror = canMirror && mirror;
+  // The ターミナル toggle also resumes a stopped session (attach is explicit).
+  const onToggleMirror = (toChat: boolean) => {
+    if (toChat) setMirror(true);
+    else {
+      setMirror(false);
+      onResume();
+    }
+  };
 
   // Per-pane line-wrap override for text views (null = follow the global setting).
   const setPaneWrap = useLayoutStore((s) => s.setPaneWrap);
@@ -192,13 +211,31 @@ export function Pane({
       {/* The terminal stays mounted for any terminal-kind pane; other kinds keep
           the pane's xterm warm in the service (not mounted) until their view
           port lands. */}
+      {/* The terminal stays MOUNTED (hidden) while the mirror shows, so the PTY
+          socket + scrollback survive the toggle. */}
       {isTerm && (
-        <TerminalView
-          paneId={pane.id}
-          session={pane.session}
+        <div className="view" hidden={showMirror}>
+          <TerminalView
+            paneId={pane.id}
+            session={pane.session}
+            sessionMeta={sessionMeta}
+            active={(single || active) && isTerm && !showMirror}
+            attached={attached}
+            canMirror={canMirror}
+            mirror={mirror}
+            onToggleMirror={onToggleMirror}
+            onResume={onResume}
+          />
+        </div>
+      )}
+      {showMirror && (
+        <MirrorView
+          session={pane.session!}
           sessionMeta={sessionMeta}
-          active={(single || active) && isTerm}
-          attached={attached}
+          active={single || active}
+          mirror={mirror}
+          onToggleMirror={onToggleMirror}
+          readOnly={!attached}
           onResume={onResume}
         />
       )}

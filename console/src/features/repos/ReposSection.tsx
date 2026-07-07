@@ -2,10 +2,8 @@
 // branch switch, fast-forward, launch a session (作業を始める modal / quick ▼ /
 // right-click), delete, open Source Control. Ported from the old console onto
 // the zustand stores.
-//
-// Interim notes: SCM/変更 panes render as P3 placeholders; reveal-in-Files is
-// wired in P2d; launch prompts auto-send via sendPromptWhenAlive until the chat
-// mirror lands (P5).
+// Launch prompts: chat-capable kinds seed the mirror (auto-send once alive);
+// others paste into the PTY once up (sendPromptWhenAlive).
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { MouseEvent as RMouseEvent } from "react";
 import { api, apiJSON, raw, errText } from "../../core/api/client.ts";
@@ -27,7 +25,8 @@ import { activePane } from "../../layout/ops.ts";
 import { repoPanes, ordClass, paneCount } from "../../layout/badges.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { useSessionsStore } from "../sessions/store.ts";
-import { openSessionTerminal, openSessionTerminalSplit, sendPromptWhenAlive } from "../sessions/open.ts";
+import { openSessionTerminal, openSessionTerminalSplit, openSessionChat, openSessionChatSplit, sendPromptWhenAlive } from "../sessions/open.ts";
+import { setLaunchSeed } from "../../lib/launchSeed.ts";
 import { useReposStore } from "./store.ts";
 import type { Repo } from "./store.ts";
 import { useFilesStore } from "../files/store.ts";
@@ -239,7 +238,10 @@ export function ReposSection() {
               }
               writeRepoLast(r.name, kind, hasModel ? model : undefined);
               void refreshSessions();
-              (split ? openSessionTerminalSplit : openSessionTerminal)(res.name); // TODO(P5): chat mirror
+              const chat = agentOf(kind).caps.chat;
+              (chat
+                ? split ? openSessionChatSplit : openSessionChat
+                : split ? openSessionTerminalSplit : openSessionTerminal)(res.name);
             }}
             // 作業を始める: worktree (default) or in-place, with an optional first
             // prompt auto-sent once the session is alive.
@@ -263,8 +265,12 @@ export function ReposSection() {
                 return { ok: false };
               }
               writeRepoLast(r.name, kind, hasModel ? model : undefined);
+              const chat = agentOf(kind).caps.chat;
               if (prompt) {
-                sendPromptWhenAlive(res.name, prompt); // TODO(P5): launchSeed + mirror auto-send
+                // Chat-capable: stash as a launch seed — MirrorView auto-sends it once
+                // the session is alive. Other kinds: paste once the PTY is up.
+                if (chat) setLaunchSeed(res.name, prompt);
+                else sendPromptWhenAlive(res.name, prompt);
                 pushPromptHistory(r.name, prompt);
               }
               if (worktree) {
@@ -272,7 +278,7 @@ export function ReposSection() {
                 useFilesStore.getState().bump();
               }
               void refreshSessions();
-              openSessionTerminal(res.name); // TODO(P5): chat mirror
+              (chat ? openSessionChat : openSessionTerminal)(res.name);
               return { ok: true };
             }}
             onBranchChanged={() => {

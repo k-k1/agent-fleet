@@ -22,6 +22,7 @@ export {
   ocwebURL,
   downloadURL,
   uploadFiles,
+  pasteImage,
   fsMkdir,
   fsNewFile,
   fsRename,

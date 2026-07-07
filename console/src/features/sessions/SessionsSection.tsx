@@ -3,10 +3,8 @@
 // persists), state pills, ⋯/right-click menu with the full session lifecycle
 // (halt/archive/delete/fork/recreate/rename/branch-rename/SSM resume), ordinal
 // badges cross-highlighting panes, desktop notifications on state changes.
-//
-// TODO(P5): chat-mirror opens (stopped-claude history / alive-claude default)
-// land with MirrorView; until then every open goes to the terminal (open.ts).
-// TODO(P2b): New Session modal — the 新規 button is disabled with a hint.
+// Chat-capable sessions (claude) open the Markdown mirror by default; stopped
+// ones open read-only history (resume is explicit, inside the chat).
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { raw } from "../../core/api/client.ts";
 import { Section } from "../../ui/Section.tsx";
@@ -29,7 +27,7 @@ import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { useSessionsStore } from "./store.ts";
 import { useReposStore } from "../repos/store.ts";
 import { useFilesStore } from "../files/store.ts";
-import { openSessionTerminal, openSessionTerminalSplit } from "./open.ts";
+import { openSessionTerminal, openSessionTerminalSplit, openSessionChat, openSessionChatSplit } from "./open.ts";
 import { ArchivedModal } from "./ArchivedModal.tsx";
 import { SessionTitleModal } from "./SessionTitleModal.tsx";
 import { BranchRenameModal } from "./BranchRenameModal.tsx";
@@ -249,7 +247,8 @@ export function SessionsSection() {
     const created = await res.json().catch(() => null);
     const newName = created?.name || name;
     if (newName !== name) closeSessionPanes(name);
-    openSessionTerminal(newName); // TODO(P5): claude → chat mirror
+    // Open the fresh session: claude → live chat mirror, others → terminal.
+    (created && agentOf(created.kind).caps.chat ? openSessionChat : openSessionTerminal)(newName);
     void refreshSessions();
     setTimeout(() => void refreshSessions(), 1200);
   };
@@ -264,7 +263,7 @@ export function SessionsSection() {
       return;
     }
     void refreshSessions();
-    openSessionTerminalSplit(j.name); // TODO(P5): chat mirror split
+    openSessionChatSplit(j.name); // the fork inherits the history → open as chat
     setTimeout(() => void refreshSessions(), 1200);
   };
 
@@ -394,15 +393,28 @@ export function SessionsSection() {
                         }
                         aria-disabled={dead || undefined}
                         onClick={(e) => {
-                          if (dead) return;
-                          // TODO(P5): alive/stopped claude opened the chat mirror here.
-                          (e.ctrlKey || e.metaKey ? openSessionTerminalSplit : openSessionTerminal)(s.name);
+                          const split = e.ctrlKey || e.metaKey;
+                          if (!s.alive) {
+                            // Stopped chat-capable (claude) → read-only chat history (no
+                            // resume; resume happens inside the chat). Other kinds: ⋯ menu.
+                            if (!dead && agentOf(s.kind).caps.transcript) {
+                              (split ? openSessionChatSplit : openSessionChat)(s.name);
+                            }
+                            return;
+                          }
+                          // Alive: chat-capable opens the mirror (PTY attaches in the bg);
+                          // other kinds open the terminal directly.
+                          const chat = agentOf(s.kind).caps.chat;
+                          (chat
+                            ? split ? openSessionChatSplit : openSessionChat
+                            : split ? openSessionTerminalSplit : openSessionTerminal)(s.name);
                         }}
                         onMouseDown={(e) => e.button === 1 && e.preventDefault()}
                         onAuxClick={(e) => {
                           if (e.button !== 1 || dead) return;
                           e.preventDefault();
-                          openSessionTerminalSplit(s.name);
+                          if (s.alive) (agentOf(s.kind).caps.chat ? openSessionChatSplit : openSessionTerminalSplit)(s.name);
+                          else if (agentOf(s.kind).caps.transcript) openSessionChatSplit(s.name);
                         }}
                       >
                         <span className="sess-l1">{displayName(s)}</span>
@@ -460,7 +472,7 @@ export function SessionsSection() {
                           <div className="ui-menu sess-menu">
                             {/* Resume — kinds with no in-chat resume. SSM resumes through
                                 the login modal (SSO handshake before attach). */}
-                            {!s.alive && !dead && running && (
+                            {!s.alive && !dead && running && !agentOf(s.kind).caps.chat && (
                               <button
                                 type="button"
                                 className="ui-menu-item"
@@ -594,8 +606,7 @@ export function SessionsSection() {
       {showModal && (
         <NewSessionModal
           onClose={() => setShowModal(false)}
-          onCreated={(name, cloned, repo) => {
-            // TODO(P5): claude はチャットミラーで開く。
+          onCreated={(name, cloned, repo, kind) => {
             void refreshSessions();
             if (cloned) {
               void useReposStore.getState().refresh();
@@ -603,7 +614,8 @@ export function SessionsSection() {
               if (repo) useFilesStore.getState().revealInFiles("repos/" + repo);
               else useFilesStore.getState().bump();
             }
-            openSessionTerminal(name);
+            // A fresh claude session opens as chat (its CLI is already live).
+            (agentOf(kind).caps.chat ? openSessionChat : openSessionTerminal)(name);
             setShowModal(false);
           }}
         />

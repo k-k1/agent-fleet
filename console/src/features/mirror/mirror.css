@@ -1,0 +1,1274 @@
+/* Mirror (session chat) styles — extracted from the old console's styles.css
+   (regions 2551–3423, 3513–3910) for pixel parity. Trimmed at P8. */
+/* The chat (Markdown mirror) has its own surface, independent of the file viewer;
+   when unset it falls back to the viewer surface, then the theme --bg. */
+.mirrorview {
+  background: var(--chat-bg, var(--viewer-bg, var(--bg)));
+}
+/* ---- Markdown mirror (case-A: read-mostly view of a claude session) ---- */
+/* Right-align the ターミナル/ミラー switch in the view-head, left of the pane
+   control cluster (the head already reserves 84px on the right for it). */
+.mirror-toggle {
+  margin-left: auto;
+}
+/* The title-suggest button sits at the right of the chat head, just left of the
+   ターミナル⇄チャット switch. It takes the auto-margin so the pair groups on the
+   right; the toggle then only needs a fixed gap (its own auto-margin would split
+   the space). */
+.title-suggest-btn {
+  margin-left: auto;
+}
+.title-suggest-btn + .mirror-toggle {
+  margin-left: 8px;
+}
+/* Each ターミナル/チャット segment is an icon + label; center them with a small gap
+   so the button reads well both with the label and (on narrow panes) icon-only. */
+.mirror-toggle .seg-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+/* Narrow pane (mobile or a slim split): collapse the head's text controls to
+   icon-only. Driven by the paneview container (.termview / .mirrorview), so it
+   tracks the PANE width, not the viewport — a narrow split in a wide window
+   collapses too. The title attributes keep the words reachable as tooltips. */
+@container paneview (max-width: 560px) {
+  .mirror-toggle .seg-label {
+    display: none;
+  }
+}
+/* Checkbox rows: the EnvTab agent-update opt-in and the AdminTab operator gate. */
+.ds-check,
+.admin-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.ds-check input,
+.admin-check input {
+  flex: 0 0 auto;
+}
+.ds-sub {
+  margin: 4px 0 0;
+  font-size: 12px;
+}
+/* Flat transcript (not cards): a scrolling column of full-width turns separated by
+   a hairline, each with a small speaker header. block layout (not flex) so a turn
+   takes its natural height and the column scrolls — a flex column shrinks children
+   and, with overflow, clips them. */
+.mirror-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0;
+}
+.mirror-empty {
+  max-width: 42ch;
+  margin: 0 auto;
+  padding: 32px 16px;
+  text-align: center;
+  line-height: 1.6;
+}
+/* Loading spinner shown while the first transcript fetch is in flight. */
+.mirror-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+/* "Load older" affordance at the top of the transcript (backward paging, P2). */
+.mirror-loadmore {
+  display: flex;
+  justify-content: center;
+  padding: 8px 0 6px;
+}
+.mirror-loadmore-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  padding: 4px 14px;
+  border-radius: 999px;
+}
+/* /context-like fill gauge under the header: a segmented bar (cache read / cache
+   creation / fresh input) sized against the context window. */
+.mirror-ctxbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bar);
+  font-size: 11.5px;
+}
+/* Context half (left): "コンテキスト" label · bar · figure — a 50% flex column that
+   splits the row evenly with the token-spend trend on the right. */
+.cb-ctx {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.cb-ctx-label {
+  flex: none;
+  color: var(--muted);
+}
+/* Context-bar labels shorten (コンテキスト→ctx, トークン消費推移→token) when the pane
+   is narrow, via the paneview inline-size container (.mirrorview / .termview). */
+.cb-lbl-short {
+  display: none;
+}
+@container paneview (max-width: 560px) {
+  .cb-lbl-full {
+    display: none;
+  }
+  .cb-lbl-short {
+    display: inline;
+  }
+}
+.cb-track {
+  flex: 1;
+  min-width: 40px;
+  display: flex;
+  height: 6px;
+  border-radius: 3px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--fg) 10%, transparent);
+}
+.cb-seg {
+  height: 100%;
+}
+.cb-read {
+  background: color-mix(in srgb, var(--chat-accent) 32%, transparent);
+}
+.cb-create {
+  background: color-mix(in srgb, var(--chat-accent) 58%, transparent);
+}
+.cb-fresh {
+  background: var(--chat-accent);
+}
+.cb-label {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.cb-label .codicon {
+  font-size: 12px;
+}
+/* Approaching the auto-compaction zone: warn, then danger near the very top. The
+   growing uncached (fresh) segment and the label carry the color; a faint ring on
+   the track makes the fill itself read as "getting full". */
+.cb-near .cb-fresh {
+  background: var(--warn);
+}
+.cb-near .cb-label {
+  color: var(--warn);
+}
+.cb-full .cb-fresh {
+  background: var(--del);
+}
+.cb-full .cb-label {
+  color: var(--del);
+}
+.cb-full .cb-track {
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--del) 55%, transparent);
+}
+/* Token-spend trend, merged onto the context row (chat only): a divider, then a
+   Sparkline of each turn's newly-consumed tokens so heavy turns stand out. */
+.cb-div {
+  flex: none;
+  align-self: stretch;
+  width: 1px;
+  margin: 1px 0;
+  background: var(--border);
+}
+.cb-trend {
+  flex: 1 1 0; /* even 50/50 with .cb-ctx */
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--chat-accent);
+}
+.cb-trend-label {
+  flex: none;
+  color: var(--muted);
+}
+.cb-trend .spark {
+  flex: 1;
+  width: 100%;
+  height: 14px;
+}
+.cb-trend-peak {
+  flex: none;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+/* Context strip: shown above a turn only when the git branch / working dir changes,
+   marking the switch once instead of repeating it on every turn. */
+.mirror-context {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 5px 16px;
+  font-size: 11.5px;
+  opacity: 0.7;
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+  border-bottom: 1px solid var(--border);
+}
+.mc-branch {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: 600;
+  flex: none;
+}
+.mc-branch .codicon {
+  font-size: 12px;
+}
+.mc-cwd {
+  font-family: var(--viewer-font, var(--mono));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+/* One turn = one full-width band, divided from the next by a hairline. The user's
+   turns get a faint tint so the speaker alternation is readable without boxes. */
+.mirror-turn {
+  padding: 9px 16px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.mirror-turn.user {
+  background: color-mix(in srgb, var(--chat-accent) 6%, var(--bg));
+}
+/* Subagent (Task sidechain) turns: nested-looking left rule + faint tint so they
+   read as "work happening under the main thread", not top-level replies. */
+.mirror-turn.sidechain {
+  border-left: 2px solid color-mix(in srgb, var(--chat-accent) 45%, var(--border));
+  background: color-mix(in srgb, var(--fg) 3%, var(--bg));
+}
+.mirror-turn.sidechain .mt-who {
+  color: color-mix(in srgb, var(--chat-accent) 65%, var(--fg));
+}
+/* Header carries only the speaker; the timestamp + copy move to a footer row. */
+.mirror-turn-head {
+  font-size: 12px;
+  margin-bottom: 3px;
+}
+.mt-who {
+  font-weight: 600;
+}
+.mirror-turn.user .mt-who {
+  color: var(--chat-accent);
+}
+/* The model that produced the turn, faint beside the speaker. */
+.mt-model {
+  margin-left: 6px;
+  font-size: 11px;
+  opacity: 0.5;
+  font-variant-numeric: tabular-nums;
+}
+/* Optimistic-echo chip: a just-sent prompt shown before claude logs it (queued while
+   busy). A faint pill with a spinner so it reads as "sent, not yet processed". */
+.mt-pending {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 8px;
+  padding: 0 6px;
+  font-size: 10px;
+  line-height: 1.6;
+  border-radius: 4px;
+  background: var(--surface-2, rgba(127, 127, 127, 0.16));
+  color: var(--muted);
+}
+/* Reasoning effort/variant chip (codex reasoning_effort / opencode variant), shown
+   right after the model. A faint pill so it reads as secondary metadata. */
+.mt-effort {
+  margin-left: 6px;
+  padding: 0 5px;
+  font-size: 10px;
+  line-height: 1.5;
+  border-radius: 4px;
+  background: var(--surface-2, rgba(127, 127, 127, 0.16));
+  opacity: 0.7;
+  text-transform: lowercase;
+}
+/* The response body is indented a touch past the flush-left speaker label. */
+.mirror-turn-body {
+  padding-left: 15px;
+}
+/* Timestamp + copy sit together at the bottom-right of the turn. */
+.mirror-turn-foot {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  font-size: 12px;
+}
+.mt-time {
+  font-variant-numeric: tabular-nums;
+}
+.mt-tok {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+/* Per-turn spend bar: length = this turn's newly-consumed tokens relative to the
+   heaviest turn; segments split input(uncached)/cache-creation/output. */
+.mt-spend {
+  display: inline-flex;
+  width: 90px;
+  height: 6px;
+  border-radius: 3px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--fg) 8%, transparent);
+}
+.mt-spend .ts-seg {
+  height: 100%;
+}
+.mt-spend .ts-fresh {
+  background: color-mix(in srgb, var(--fg) 38%, transparent);
+}
+.mt-spend .ts-create {
+  background: color-mix(in srgb, var(--fg) 20%, transparent);
+}
+.mt-spend .ts-out {
+  background: var(--chat-accent);
+}
+.mt-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 7px;
+  font-size: 12px;
+  border-radius: 6px;
+  opacity: 0.6;
+}
+.mt-copy:hover {
+  opacity: 1;
+  background: var(--hover-bg);
+}
+/* Plan-mode banner + ExitPlanMode plan block. */
+.mirror-planmode {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 16px;
+  font-size: 12px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--chat-accent) 10%, var(--bar));
+  color: var(--fg);
+}
+/* Attention banner: a terminal-only state (resume menu) needs the user in the
+   terminal. Warning-tinted, with the guidance text growing and a right-aligned CTA. */
+.mirror-attention {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 16px;
+  font-size: 12px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--warn, #e0a45e) 16%, var(--bar));
+  color: var(--fg);
+}
+.mirror-attention .ma-text {
+  flex: 1;
+  min-width: 0;
+}
+.mirror-attention .ma-btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+/* Auto title-suggestion banner (headless-LLM proposed title, dismissible). Tinted
+   off --chat-accent like .mirror-planmode rather than --warn — it's an offer, not
+   a warning, so it should read distinctly calmer than .mirror-attention. */
+.mirror-title-suggest {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 16px;
+  font-size: 12px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--chat-accent) 12%, var(--bar));
+  color: var(--fg);
+}
+.mirror-title-suggest .mts-text {
+  flex: 1;
+  min-width: 0;
+  /* Wrap the candidate rather than ellipsis-truncating it — the user must be able to
+     read the whole proposed title before pressing 承認. */
+  overflow-wrap: anywhere;
+}
+.mirror-title-suggest .mts-btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.mirror-title-suggest .mts-dismiss {
+  flex: none;
+  opacity: 0.7;
+}
+.mirror-title-suggest .mts-dismiss:hover {
+  opacity: 1;
+}
+/* Compaction summary in the transcript: a collapsed disclosure (closed by default). */
+.mirror-compact {
+  margin: 6px 16px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bar);
+}
+.mirror-compact-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--muted);
+  list-style: none;
+}
+.mirror-compact-head::-webkit-details-marker {
+  display: none;
+}
+.mirror-compact-head .mc-title {
+  color: var(--fg);
+}
+.mirror-compact-head .mc-time {
+  margin-left: auto;
+}
+.mirror-compact[open] .mirror-compact-head {
+  border-bottom: 1px solid var(--border);
+}
+.mirror-compact-body {
+  padding: 8px 12px;
+}
+/* ToDo list (reconstructed from Task tool calls): a collapsed disclosure with a
+   done/total count. Completed items dim + strike; the in-progress one is emphasized. */
+.mirror-tasks {
+  margin: 6px 16px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bar);
+}
+.mirror-tasks-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--muted);
+  list-style: none;
+}
+.mirror-tasks-head::-webkit-details-marker {
+  display: none;
+}
+.mirror-tasks-head .mtk-title {
+  color: var(--fg);
+  font-weight: 600;
+}
+.mirror-tasks-head .mtk-active {
+  margin-left: auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mirror-tasks[open] .mirror-tasks-head {
+  border-bottom: 1px solid var(--border);
+}
+.mirror-tasks-list {
+  margin: 0;
+  padding: 6px 12px;
+  list-style: none;
+}
+.mtk-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 3px 0;
+  font-size: 12px;
+  color: var(--fg);
+}
+.mtk-item .mtk-mark {
+  flex: none;
+  position: relative;
+  top: 1px;
+}
+.mtk-completed {
+  color: var(--muted);
+}
+.mtk-completed .mtk-text {
+  text-decoration: line-through;
+}
+.mtk-completed .mtk-mark {
+  color: var(--ok, #4ea672);
+}
+.mtk-in_progress {
+  font-weight: 600;
+}
+.mtk-in_progress .mtk-mark {
+  color: var(--chat-accent);
+}
+.mtk-pending .mtk-mark {
+  color: var(--muted);
+}
+/* Auto-compaction in progress: an informational spinner strip. */
+.mirror-compacting {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 16px;
+  font-size: 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bar);
+  color: var(--muted);
+}
+.mt-plan {
+  margin: 0.4em 0;
+  border: 1px solid color-mix(in srgb, var(--chat-accent) 40%, var(--border));
+  border-left: 3px solid var(--chat-accent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--chat-accent) 6%, var(--bg));
+  padding: 9px 11px;
+}
+.mt-plan-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+.mt-plan-title {
+  font-weight: 600;
+}
+.mt-plan-badge {
+  margin-left: auto;
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--chat-accent) 22%, transparent);
+}
+.mt-plan-badge.ok {
+  background: color-mix(in srgb, #2fb872 26%, transparent);
+  color: color-mix(in srgb, #2fb872 60%, var(--fg));
+}
+/* 却下 (rejected/keep-planning): a muted red so it reads distinctly from 承認済み. */
+.mt-plan-badge.no {
+  background: color-mix(in srgb, #e5534b 24%, transparent);
+  color: color-mix(in srgb, #e5534b 62%, var(--fg));
+}
+/* A decided (historical) plan sits quieter than a pending one. */
+.mt-plan.decided {
+  border-left-color: color-mix(in srgb, var(--chat-accent) 45%, var(--border));
+  background: color-mix(in srgb, var(--fg) 3%, var(--bg));
+}
+.mt-plan-summary {
+  margin: 5px 0 8px;
+  font-size: 12px;
+  opacity: 0.8;
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mt-plan-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.mt-plan-open {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 12px;
+}
+.mt-plan-open:hover {
+  border-color: var(--chat-accent);
+}
+.mt-plan-approve {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 12px;
+}
+/* Tool-permission prompt (edit/command approval when not in bypass/accept mode). */
+.mt-perm {
+  margin: 0.4em 0;
+  border: 1px solid color-mix(in srgb, var(--chat-accent) 40%, var(--border));
+  border-left: 3px solid var(--chat-accent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--chat-accent) 6%, var(--bg));
+  padding: 9px 11px;
+}
+.mt-perm-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  font-size: 13px;
+}
+.mt-perm-msg {
+  margin: 4px 0 8px;
+  font-size: 12px;
+  opacity: 0.8;
+}
+.mt-perm-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.mt-perm-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 12px;
+  border-radius: 6px;
+}
+.mt-perm-btn.ghost {
+  border: 1px solid var(--border);
+}
+.mt-perm-btn.ghost:hover {
+  border-color: var(--chat-accent);
+}
+.mt-perm-hint {
+  margin-top: 7px;
+  font-size: 11px;
+}
+/* Chat primary actions (許可 / 承認して実行 / 回答を送信 / 送信) follow the theme
+   accent instead of the fixed app blue. */
+.mirrorview button.primary {
+  background: var(--chat-accent);
+  border-color: var(--chat-accent);
+}
+.mirrorview button.primary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--chat-accent) 82%, #ffffff);
+}
+/* "Claude is typing" indicator, shown while the session is working. */
+.mirror-typing {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 16px 12px;
+}
+.mirror-typing .mt-who {
+  font-weight: 600;
+  font-size: 12px;
+}
+/* Mode chip: a compact pill inline at the left of the input row, showing the live mode
+   name (Plan / Bypass / Default / Build). Full input height so it flanks the textarea like
+   the send button on the right; bottom-aligns with the growing textarea via the compose
+   row's align-items:flex-end. Accent when in Plan. */
+/* Mode chip — a small, rarely-used pill stacked above the send button (see
+   .mirror-send-col). Compact so it doesn't compete with the composer. */
+.mirror-mode {
+  flex: none;
+  height: 15px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 6px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--btn, var(--bg));
+  color: var(--muted);
+  cursor: pointer;
+}
+.mirror-mode:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.mirror-mode.on {
+  background: var(--accent, #6a7fdb);
+  border-color: transparent;
+  color: #fff;
+}
+/* Keep the chip legible on hover: the global button:hover swaps in a light --btn-h,
+   which would leave white .on text unreadable. Pin an accent-tinted hover for each state. */
+.mirror-mode:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent, #6a7fdb) 14%, var(--btn, var(--bg)));
+  border-color: var(--accent, #6a7fdb);
+  color: var(--fg);
+}
+.mirror-mode.on:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent, #6a7fdb) 82%, #000);
+  border-color: transparent;
+  color: #fff;
+}
+/* Stop lives in the typing-indicator row now (only while working) — push it to the far
+   right of that row. */
+.mirror-stop {
+  margin-left: auto;
+  font-size: 12px;
+  padding: 2px 10px;
+  color: var(--danger, #d9534f);
+}
+.typing-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.typing-dots i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--chat-accent);
+  opacity: 0.35;
+  animation: typing-bounce 1.2s infinite ease-in-out;
+}
+.typing-dots i:nth-child(2) {
+  animation-delay: 0.18s;
+}
+.typing-dots i:nth-child(3) {
+  animation-delay: 0.36s;
+}
+@keyframes typing-bounce {
+  0%, 80%, 100% {
+    opacity: 0.3;
+    transform: translateY(0);
+  }
+  40% {
+    opacity: 1;
+    transform: translateY(-3px);
+  }
+}
+/* A faint trace of claude's tool activity, interleaved between text parts. Kept
+   low-contrast and single-line so it reads as "background work", not content. */
+.mt-tool {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin: 0.3em 0;
+  font-size: 12px;
+  line-height: 1.4;
+  opacity: 0.42;
+}
+.mt-tool .codicon {
+  font-size: 12px;
+  position: relative;
+  top: 1px;
+}
+.mt-tool-name {
+  font-weight: 600;
+  flex: none;
+}
+.mt-tool-info {
+  font-family: var(--viewer-font, var(--mono));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+/* A tool trace that carries its output (codex/opencode): the head is a click-to-expand
+   button; the body is a scrollable monospace block. */
+button.mt-tool-outhead {
+  width: 100%;
+  padding: 2px 6px;
+  background: none;
+  border: 0;
+  text-align: left;
+  cursor: pointer;
+}
+.mt-tool-output {
+  margin: 2px 0 4px 18px;
+  padding: 6px 8px;
+  max-height: 260px;
+  overflow: auto;
+  font-family: var(--viewer-font, var(--mono));
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: var(--surface-2, rgba(127, 127, 127, 0.1));
+  border-radius: 4px;
+  opacity: 0.85;
+}
+/* Chain-of-thought disclosure (codex/opencode reasoning), styled like the compaction
+   summary: a faint collapsed row that expands to the reasoning Markdown. */
+.mirror-thinking {
+  margin: 2px 0;
+  font-size: 0.95em;
+}
+.mirror-thinking-head {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 4px;
+  cursor: pointer;
+  opacity: 0.6;
+  list-style: none;
+}
+.mirror-thinking-head::-webkit-details-marker {
+  display: none;
+}
+.mirror-thinking[open] .mirror-thinking-head {
+  opacity: 0.8;
+}
+.mth-title {
+  font-size: 12px;
+}
+.mirror-thinking-body {
+  padding: 2px 8px 4px 20px;
+  opacity: 0.8;
+}
+/* Edit-family traces are clickable — they open a diff pane. Reset the button and
+   lift the opacity so they read as interactive, not just a faint trace. */
+button.mt-tool-diff {
+  width: 100%;
+  padding: 2px 6px;
+  border: 0;
+  border-radius: 5px;
+  background: none;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  opacity: 0.6;
+  transition: opacity 0.12s, background 0.12s;
+}
+button.mt-tool-diff:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--chat-accent) 12%, transparent);
+}
+button.mt-tool-diff .codicon {
+  color: var(--chat-accent);
+}
+
+/* Collapsed run of consecutive tool traces: a single foldable summary row. The head
+   reuses .mt-tool for the faint look; the chevron + hover lift mark it interactive. */
+.mt-toolrun {
+  margin: 0.3em 0;
+}
+button.mt-toolrun-head {
+  width: 100%;
+  margin: 0;
+  padding: 2px 6px;
+  border: 0;
+  border-radius: 5px;
+  background: none;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: opacity 0.12s, background 0.12s;
+}
+button.mt-toolrun-head:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--chat-accent) 12%, transparent);
+}
+
+/* AskUserQuestion: a prominent, answerable block (not a faint trace). */
+.mt-question {
+  margin: 0.5em 0;
+  border: 1px solid color-mix(in srgb, var(--chat-accent) 40%, var(--border));
+  border-left: 3px solid var(--chat-accent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--chat-accent) 6%, var(--bg));
+  padding: 10px 12px;
+}
+.mq + .mq {
+  margin-top: 12px;
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+.mq-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+.mq-header {
+  font-weight: 600;
+  color: var(--chat-accent);
+}
+.mq-multi {
+  font-size: 11px;
+}
+.mq-text {
+  line-height: 1.5;
+  margin-bottom: 8px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+/* Options flow into as many ~220px columns as the pane width allows (2–3 on a wide
+   pane), collapsing to a single column on a phone or a split pane. */
+.mq-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 6px;
+}
+.mq-opt {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  text-align: left;
+  padding: 6px 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+  cursor: pointer;
+  font: inherit;
+  min-width: 0;
+}
+.mq-opt:hover:not(:disabled) {
+  border-color: var(--chat-accent);
+  background: color-mix(in srgb, var(--chat-accent) 10%, var(--bg));
+}
+/* Answered question: options are inert; the chosen one stays highlighted. */
+.mt-question.answered {
+  opacity: 0.9;
+  border-left-color: color-mix(in srgb, var(--chat-accent) 45%, var(--border));
+  background: color-mix(in srgb, var(--fg) 3%, var(--bg));
+}
+.mq-opt:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+.mq-opt.selected {
+  opacity: 1;
+  border-color: var(--chat-accent);
+  background: color-mix(in srgb, var(--chat-accent) 14%, var(--bg));
+}
+.mq-opt.selected .mq-opt-label {
+  color: var(--chat-accent);
+}
+.mq-done {
+  font-size: 11px;
+  margin-left: auto;
+}
+.mq-answer {
+  margin-top: 6px;
+  font-size: 12px;
+  /* Free-text answers can be multi-line — keep the line breaks the user typed. */
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.mq-page {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+/* A toggled option in a multi-select / multi-question form (before submit). */
+.mq-opt.checked {
+  border-color: var(--chat-accent);
+  background: color-mix(in srgb, var(--chat-accent) 12%, var(--bg));
+}
+/* The leading radio/checkbox marker (◉/○, ☑/☐, ✔). */
+.mq-mark {
+  flex: none;
+  line-height: 1.35;
+  opacity: 0.9;
+}
+.mq-opt.selected .mq-mark,
+.mq-opt.checked .mq-mark {
+  color: var(--chat-accent);
+  opacity: 1;
+}
+.mq-opt-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.mq-opt-label {
+  font-weight: 600;
+  line-height: 1.35;
+}
+.mq-opt-desc {
+  font-size: 11px;
+  opacity: 0.68;
+  line-height: 1.35;
+  /* Keep options compact: clamp long descriptions to two lines. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+/* Per-question "Type something" free-text answer (multi-question / multi-select cards). */
+.mq-freetext {
+  margin-top: 6px;
+  width: 100%;
+  padding: 6px 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+  resize: vertical;
+  line-height: 1.4;
+}
+.mq-freetext:focus {
+  outline: none;
+  border-color: var(--chat-accent);
+}
+.mq-freetext:disabled {
+  opacity: 0.55;
+}
+.mq-submit-row {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 10px;
+}
+.mq-submit {
+  padding: 6px 14px;
+}
+.mirror-turn .markdown {
+  /* MarkdownView is shared with the file viewer, which centers a max-width column
+     (margin:0 auto). In the transcript that reads as "everything is indented", so
+     reset it to fill the width, left-aligned. Tighter leading than the file viewer.
+     Scoped to the whole turn so user prompts (also Markdown now) get the same reset. */
+  padding: 0;
+  max-width: none;
+  margin: 0;
+  font-size: var(--chat-size, 13.5px);
+  line-height: 1.5;
+}
+/* Chat prose follows the configurable chat font (proportional by default), scoped so
+   the file viewer's own markdown is untouched. */
+.mirror-turn .markdown {
+  font-family: var(--chat-font, system-ui, sans-serif);
+}
+/* Vertical rhythm inside a chat turn: a touch tighter than the file viewer, but with
+   enough gap between blocks that paragraphs/lists read as distinct. */
+.mirror-turn .markdown p,
+.mirror-turn .markdown ul,
+.mirror-turn .markdown ol,
+.mirror-turn .markdown blockquote,
+.mirror-turn .markdown table {
+  margin: 0.7em 0;
+}
+.mirror-turn .markdown li {
+  margin: 0.25em 0;
+}
+.mirror-turn .markdown h1,
+.mirror-turn .markdown h2,
+.mirror-turn .markdown h3,
+.mirror-turn .markdown h4 {
+  margin: 0.7em 0 0.35em;
+}
+.mirror-turn .markdown > :first-child {
+  margin-top: 0;
+}
+.mirror-turn .markdown > :last-child {
+  margin-bottom: 0;
+}
+.mirror-compose {
+  display: flex;
+  flex-wrap: wrap; /* pasted-image strip (full width) wraps above the input row */
+  gap: 8px;
+  align-items: flex-end;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+  background: var(--bar);
+}
+/* Pasted-image attachment strip above the composer input. */
+.mirror-attach {
+  flex: 0 0 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.ma-chip {
+  position: relative;
+  width: 56px;
+  height: 56px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--bg);
+}
+.ma-thumb {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.ma-del {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--bg) 75%, transparent);
+  color: var(--fg);
+  cursor: pointer;
+}
+.ma-del .codicon {
+  font-size: 12px;
+}
+.ma-loading {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+/* In-chat pasted-image thumbnails (user turn) + click-to-enlarge lightbox. */
+.mt-imgs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+}
+.mt-img {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  max-width: 160px;
+  max-height: 160px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  overflow: hidden;
+  cursor: zoom-in;
+}
+.mt-img img {
+  display: block;
+  max-width: 160px;
+  max-height: 160px;
+  object-fit: contain;
+}
+.mt-img-loading {
+  width: 56px;
+  height: 56px;
+  color: var(--muted);
+  cursor: default;
+}
+.mirror-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: color-mix(in srgb, #000 72%, transparent);
+  cursor: zoom-out;
+}
+.mirror-lightbox img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  border-radius: 6px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+/* Read-only (history) / resuming composer: centered affordance instead of the input. */
+.mirror-compose-resume {
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  min-height: 54px;
+}
+.mirror-resume-hint,
+.mirror-resuming {
+  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.mirror-input {
+  flex: 1;
+  /* Height is driven by content (auto-grow in MirrorView); cap at ~10 lines, then scroll.
+     border-box so the JS-set height (from scrollHeight, which includes padding) matches. */
+  resize: none;
+  box-sizing: border-box;
+  min-height: 38px;
+  max-height: calc(14em + 18px);
+  overflow-y: auto;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--chat-font, system-ui, sans-serif);
+  font-size: var(--chat-size, 14px);
+  line-height: 1.4;
+}
+.mirror-input:focus {
+  outline: none;
+  border-color: var(--chat-accent);
+}
+/* Right column: mode chip (15) + gap (6) + send (26). Bottom-aligned by the parent's
+   align-items:flex-end, so the send button sits flush with the textarea bottom and the
+   chip rides just above; the column holds its place as the textarea grows. */
+.mirror-send-col {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch; /* chip + send share one width → read as a unit */
+  gap: 6px;
+}
+.mirror-send {
+  flex: none;
+  height: 31px;
+  padding: 0 16px;
+}
+/* Composer history buttons: only on phones (no arrow keys). Hidden elsewhere. */
+.mirror-hist {
+  display: none;
+  flex-direction: column;
+  gap: 2px;
+  flex: none;
+}
+.mirror-hist-btn {
+  width: 34px;
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.mirror-hist-btn:disabled {
+  opacity: 0.4;
+}
+@media (max-width: 760px) {
+  .mirror-hist {
+    display: flex;
+  }
+}
+.view-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  /* right padding reserves room for the pane control cluster overlaid at the top-right;
+     left padding reserves room for the drag grip overlaid at the top-left, just left of
+     the badge. Split moved to the WS bar, so the cluster is now just wrap+close (file/scm)
+     or close alone (terminal/chat, tightened below). */
+  padding: 6px 56px 6px 34px;
+  background: var(--bar);
+  border-bottom: 1px solid var(--border);
+}
+/* Terminal/chat panes have no wrap button — their control cluster is just the × — so the
+   head needs less right padding, pulling the チャット/ターミナル toggle closer to the ×. */
+.termview .view-head,
+.mirrorview .view-head {
+  padding-right: 40px;
+}
