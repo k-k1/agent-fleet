@@ -304,6 +304,8 @@ func main() {
 	mux.HandleFunc("POST /api/chat/conversations/{id}/stream", cfg.proxyAgentStream) // SSE (Phase B)
 	mux.HandleFunc("POST /api/chat/conversations/{id}/paste-image", cfg.proxyAgentREST)
 	mux.HandleFunc("GET /api/chat/conversations/{id}/pasted/{file}", cfg.proxyAgentREST)
+	// One-shot advisory turn (docs/21 メモ整理) — stateless, tools off. Proxied verbatim.
+	mux.HandleFunc("POST /api/chat/ask", cfg.proxyAgentREST)
 
 	// Assistant templates (docs/19 Q2) — configurable chat personas, proxied verbatim.
 	mux.HandleFunc("GET /api/assistants", cfg.proxyAgentREST)
@@ -323,6 +325,14 @@ func main() {
 	mux.HandleFunc("POST /api/ssm/hosts", cfg.handleSSMHostCreate)
 	mux.HandleFunc("PUT /api/ssm/hosts/{id}", cfg.handleSSMHostUpdate)
 	mux.HandleFunc("DELETE /api/ssm/hosts/{id}", cfg.handleSSMHostDelete)
+
+	// Memo queue (docs/21) — per-member notes accumulated across devices, then flushed
+	// to a session as one message. Scoped by membership (no workspace build for CRUD).
+	mux.HandleFunc("GET /api/memos", cfg.handleMemosList)
+	mux.HandleFunc("POST /api/memos", cfg.handleMemoCreate)
+	mux.HandleFunc("POST /api/memos/flush", cfg.handleMemoFlush)
+	mux.HandleFunc("PATCH /api/memos/{id}", cfg.handleMemoUpdate)
+	mux.HandleFunc("DELETE /api/memos/{id}", cfg.handleMemoDelete)
 
 	// Repository ops — proxied to the Workspace Agent (/api stripped -> /repos*).
 	mux.HandleFunc("GET /api/repos", cfg.proxyAgentREST)

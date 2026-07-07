@@ -8506,3 +8506,218 @@ button.primary:hover:not(:disabled) {
     opacity: 0;
   }
 }
+
+/* --- Memo queue (docs/21) --------------------------------------------------- */
+.pane-empty {
+  color: var(--muted);
+  font-size: 12px;
+  padding: 6px 2px;
+  line-height: 1.5;
+}
+.memo-add {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+.memo-add-text {
+  width: 100%;
+  resize: vertical;
+  font: inherit;
+  font-size: 12px;
+  padding: 5px 7px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--text);
+  box-sizing: border-box;
+}
+.memo-add-row {
+  display: flex;
+  gap: 6px;
+}
+.memo-add-cat {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: 12px;
+  padding: 3px 7px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--text);
+}
+.memo-flush-bar {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+.memo-flush-bar select {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: 12px;
+  padding: 3px 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--text);
+}
+.memo-repo {
+  margin-bottom: 8px;
+}
+.memo-repo-head {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin: 6px 0 2px;
+}
+.memo-repo-ic {
+  font-size: 12px;
+}
+.memo-cat {
+  margin-left: 2px;
+}
+.memo-cat-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 2px 0;
+}
+.memo-cat-check {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  cursor: pointer;
+}
+.memo-cat-n {
+  font-size: 10px;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--muted) 16%, transparent);
+  border-radius: 8px;
+  padding: 0 5px;
+  font-variant-numeric: tabular-nums;
+}
+.linkish {
+  background: none;
+  border: none;
+  color: var(--accent);
+  cursor: pointer;
+  padding: 0;
+  font: inherit;
+}
+.linkish:disabled {
+  color: var(--muted);
+  cursor: default;
+}
+.memo-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 3px 4px;
+  border-radius: 5px;
+}
+.memo-row:hover {
+  background: var(--lp-hover-bg);
+}
+.memo-row.sent {
+  opacity: 0.5;
+}
+.memo-row > input[type="checkbox"] {
+  margin-top: 2px;
+}
+.memo-body {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 1.4;
+  word-break: break-word;
+}
+.memo-ref {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--accent);
+}
+.memo-comment,
+.memo-text {
+  color: var(--text);
+  white-space: pre-wrap;
+}
+.memo-comment {
+  color: var(--muted);
+  font-size: 11px;
+}
+.memo-sent-tag {
+  margin-left: 6px;
+  font-size: 10px;
+  color: var(--muted);
+}
+.memo-del {
+  flex: none;
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 1px 3px;
+  opacity: 0;
+}
+.memo-row:hover .memo-del {
+  opacity: 1;
+}
+.memo-del:hover {
+  color: var(--del);
+}
+/* Tidy (organize) preview modal */
+.memo-tidy-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 55vh;
+  overflow: auto;
+}
+.memo-tidy-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 6px;
+  border: 1px solid var(--border2);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.memo-tidy-diff {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 12px;
+}
+.memo-tidy-before {
+  color: var(--muted);
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in srgb, var(--muted) 50%, transparent);
+  word-break: break-word;
+}
+.memo-tidy-after {
+  color: var(--text);
+  word-break: break-word;
+}
+.memo-cat-tag {
+  display: inline-block;
+  margin-left: 8px;
+  font-size: 10px;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border-radius: 8px;
+  padding: 0 6px;
+}

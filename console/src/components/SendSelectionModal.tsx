@@ -3,7 +3,7 @@ import type { FormEvent } from "react";
 import Modal from "./Modal.jsx";
 import { useApp } from "../state.jsx";
 import { useToast } from "./ToastProvider.jsx";
-import { apiJSON, chatCreate, assistantList, errText } from "../api.js";
+import { apiJSON, chatCreate, assistantList, memoCreate, memoList, errText } from "../api.js";
 import { displayName, stateInfo } from "../lib/sessionview.js";
 import { sessionPanes, ordClass } from "../lib/panebadge.js";
 import { agentOf } from "../agents/registry.ts";
@@ -32,12 +32,14 @@ interface SendSelectionModalProps {
 }
 
 export default function SendSelectionModal({ filePath, quote, startLine, endLine, onClose }: SendSelectionModalProps) {
-  const { sessions, openChat, layout } = useApp();
+  const { sessions, openChat, layout, bumpMemos } = useApp();
   const toast = useToast();
   const [assistants, setAssistants] = useState<Assistant[]>([]);
   const [comment, setComment] = useState("");
   const [target, setTarget] = useState(""); // "session:<name>" | "assistant:<id>"
   const [busy, setBusy] = useState(false);
+  const [category, setCategory] = useState("");
+  const [catSuggest, setCatSuggest] = useState<string[]>([]);
 
   const fileMode = quote == null; // whole file (session-only) vs an inline quote
 
@@ -47,6 +49,13 @@ export default function SendSelectionModal({ filePath, quote, startLine, endLine
       .then((r) => setAssistants(r.assistants || []))
       .catch(() => {});
   }, [fileMode]);
+
+  // Existing categories, to suggest while queuing (docs/21). Cheap membership-scoped read.
+  useEffect(() => {
+    memoList()
+      .then((list) => setCatSuggest([...new Set((Array.isArray(list) ? list : []).map((m) => m.category).filter(Boolean))]))
+      .catch(() => {});
+  }, []);
 
   // The repo the file lives in (repos/<repo>/…), used to prefer a session in it.
   const fileRepo = filePath.startsWith("repos/") ? filePath.split("/")[1] : null;
@@ -145,6 +154,32 @@ export default function SendSelectionModal({ filePath, quote, startLine, endLine
     }
   };
 
+  // Queue the item instead of sending now (docs/21): file mode → a file memo (path +
+  // comment), quote mode → a text memo carrying the composed quote. repo comes from the
+  // path; category is free-form (with existing-category suggestions). Doesn't need a
+  // running session — the queue is flushed later from the メモキュー panel.
+  const addToQueue = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const input = fileMode
+        ? { kind: "file" as const, repo: fileRepo || "", category: category.trim(), refPath: pathRef, body: comment.trim() }
+        : { kind: "text" as const, repo: fileRepo || "", category: category.trim(), body: composed };
+      const res = await memoCreate(input);
+      if ((res as { error?: unknown }).error) {
+        toast("メモの追加に失敗しました");
+        return;
+      }
+      bumpMemos();
+      toast("メモキューに追加しました", { kind: "success" });
+      onClose();
+    } catch {
+      toast("メモの追加に失敗しました");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const noTarget = sortedSessions.length === 0 && (fileMode || assistants.length === 0);
 
   return (
@@ -232,6 +267,24 @@ export default function SendSelectionModal({ filePath, quote, startLine, endLine
         </div>
 
         <div className="field">
+          <div className="field-label">カテゴリ（キューに追加する場合・任意）</div>
+          <label className="pick-field">
+            <input
+              type="text"
+              list="sendsel-cat-suggest"
+              value={category}
+              onChange={(e) => setCategory(e.target.value)}
+              placeholder="例: frontend / api（メモキューでのグループ分け）"
+            />
+          </label>
+          <datalist id="sendsel-cat-suggest">
+            {catSuggest.map((c) => (
+              <option key={c} value={c} />
+            ))}
+          </datalist>
+        </div>
+
+        <div className="field">
           <div className="field-label">プレビュー（{loc}）</div>
           <pre className="send-preview">{composed}</pre>
         </div>
@@ -240,6 +293,9 @@ export default function SendSelectionModal({ filePath, quote, startLine, endLine
       <footer className="modal-foot">
         <button type="button" className="ghost" onClick={onClose}>
           キャンセル
+        </button>
+        <button type="button" className="ghost" disabled={busy} onClick={addToQueue}>
+          キューに追加
         </button>
         <button type="submit" className="primary" disabled={!target || busy || sessionStopped}>
           {isAssistant ? "アシスタントで開く" : "セッションに送信"}

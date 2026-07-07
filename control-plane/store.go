@@ -107,6 +107,18 @@ type SSMHost struct {
 	InstanceID, DocumentName, CreatedAt string
 }
 
+// Memo is one queued note (docs/21), personal scope. Grouped by Repo then Category
+// (a free-form sub-project label); Repo="" is the common/unfiled bucket. Kind is
+// "file" (RefPath points at a ~/repos path, Body is an optional comment) or "text"
+// (Body is the note). SentAt="" means unsent; a non-empty RFC3339 stamp marks a
+// flushed memo kept until the retention sweep removes it.
+type Memo struct {
+	ID, MembershipID, Repo, Category string
+	Kind, Body, RefPath              string
+	Position                         int
+	CreatedAt, SentAt                string
+}
+
 // Workspace is one container per Membership (= identity × tenant).
 type Workspace struct {
 	ID, TenantID, MembershipID      string
@@ -279,6 +291,17 @@ type Store interface {
 	CreateSSMHost(ctx context.Context, h SSMHost) error
 	UpdateSSMHost(ctx context.Context, h SSMHost) error
 	DeleteSSMHost(ctx context.Context, id, membershipID string) error
+
+	// Memo queue (docs/21), personal scope. Mutations are scoped by membership so a
+	// member only touches their own rows. ListMemos returns unsent memos plus sent
+	// ones still inside the retention window (sent before retainBefore are swept).
+	ListMemos(ctx context.Context, membershipID, retainBefore string) ([]Memo, error)
+	GetMemo(ctx context.Context, id string) (Memo, bool, error)
+	CreateMemo(ctx context.Context, m Memo) error
+	UpdateMemo(ctx context.Context, m Memo) error
+	DeleteMemo(ctx context.Context, id, membershipID string) error
+	MarkMemosSent(ctx context.Context, membershipID string, ids []string, sentAt string) error
+	SweepSentMemos(ctx context.Context, retainBefore string) error
 
 	Close() error
 }
