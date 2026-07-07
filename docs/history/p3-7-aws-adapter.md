@@ -84,7 +84,13 @@
     ならず、workspace は非同期に収束・Console の State ポーリングが running を拾う。既定 budget も 120→90s に短縮
     （早く "starting" を返す）。unit test `TestECSStartNonFatalWhenAgentNotReady` で回帰固定。
   - **(B) CP の SQLite が ephemeral(/tmp)ゆえ CP 再デプロイで状態消失**→ ws レコードの token 不整合・ログイン状態リセット。
-    本番は CP store を永続化必須（EFS or RDS=段3a）。今回の milestone は既知の割り切り。
+    **→ 対応済（段3a Postgres Store アダプタ）**: EFS-SQLite は WAL が NFS 不可ゆえ避け、**RDS Postgres** を採用。
+    共有 `sqlStore`＋`?→$n` rebind ラッパ（`store_sql.go`）で SQLite 実装を無改修流用、Postgres は統合スキーマ
+    （`migrations-pg/0001_init.sql`）＋`store_postgres.go`。方言差は placeholder のみ（+accumulate UPSERT の既存値を
+    テーブル修飾＝両方言可）。**Docker Postgres で 53 メソッドの conformance テスト green**（`store_postgres_test.go`、
+    `AF_TEST_DATABASE_URL`）。CP は `AF_DATABASE_URL` or `AF_DB_HOST/PORT/USER/NAME`＋secret `AF_DB_PASSWORD` から DSN 組成
+    （password は RDS 管理 Secrets Manager から valueFrom、plaintext URL に出さない）。CFN 配線: 30-ingress が CP を RDS へ、
+    ExecRole に `secretsmanager:GetSecretValue`(rds!*)。CP 状態が task 入替を跨いで永続。残＝実 AWS での再検証（sandbox 再構築時）。
   - **(C) SC 動的ディスカバリは機能**（懸念は否定）: 先に起動していた CP が、後から作られた ws サービスに到達できた。
     初回の "unreachable" は SC ではなく task が pull 中で未 RUNNING だっただけ。
   残＝Stop(desired 0)→resume の明示確認（機構は unit test 済＋AP は tag 引き再利用で決定的）と、上記 (A)(B) の反映。

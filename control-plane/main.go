@@ -89,9 +89,17 @@ func main() {
 	// tenant/user/workspace records. Migrate, ensure the default tenant, then
 	// backfill existing on-disk users so the live deployment is wrapped as the
 	// default tenant without recreating containers.
+	// Postgres (AF_DATABASE_URL) is the RDS backend for a redeployable ECS CP whose
+	// state must outlive task replacement (P3-7 段3a); SQLite is the on-prem default.
 	dbPath := envOr("AF_DB", filepath.Join(mgr.dataRoot, "control-plane.db"))
-	store, err := openSQLite(dbPath)
-	if err != nil {
+	var store *sqlStore
+	var err error
+	if dburl := pgURLFromEnv(); dburl != "" {
+		if store, err = openPostgres(dburl); err != nil {
+			log.Fatalf("open postgres: %v", err)
+		}
+		log.Printf("metadata store: postgres")
+	} else if store, err = openSQLite(dbPath); err != nil {
 		log.Fatalf("open db %s: %v", dbPath, err)
 	}
 	ctx := context.Background()

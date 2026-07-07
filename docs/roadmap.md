@@ -273,7 +273,8 @@ CP に `/mcp` を 1 本生やし、**管理面（運用チーム）と作業面�
 > **段5（実 AWS E2E）＝到達確認済**: sandbox で 00-30 substrate＋段2 配線 CP を立て、実ブラウザで login→workspace
 > Start→shell まで到達。CP が ws ECS サービス＋EFS AP2本(transit 暗号)＋SSM SecureString を動的払出し、CP→Service
 > Connect→Agent 到達（`POST /sessions` 受理）、DEK/token は平文 env になし。findings=大容量イメージ cold pull が Start の
-> healthz 待ち超過(UX 改善案)/CP SQLite ephemeral ゆえ再デプロイで状態消失(永続化=段3a 必要)。残＝(A)(B)反映・Stop/resume 明示確認・段3(RDS store+KMS)。AWS 構成は [reference/aws](reference/aws.md)。
+> healthz 待ち超過(→(A)対応済=非致命化)/CP SQLite ephemeral ゆえ再デプロイで状態消失(→(B)対応済=**段3a RDS Postgres Store**、
+> 共有 sqlStore＋?→$n rebind、Docker Postgres で conformance green、CP→RDS を CFN 配線)。残＝段3b(KMS custodian)・実 AWS 再検証。AWS 構成は [reference/aws](reference/aws.md)。
 
 各社が**自社のデプロイ先を選ぶ**。コアは無改修、周縁アダプタのみ（[09](reference/portability.md)）。我々は両方を同梱（P3-10）。
 
