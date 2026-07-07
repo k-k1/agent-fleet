@@ -4,110 +4,476 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	awscfg "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/ecs"
+	ecstypes "github.com/aws/aws-sdk-go-v2/service/ecs/types"
+	"github.com/aws/aws-sdk-go-v2/service/efs"
+	efstypes "github.com/aws/aws-sdk-go-v2/service/efs/types"
+	"github.com/aws/aws-sdk-go-v2/service/ssm"
+	ssmtypes "github.com/aws/aws-sdk-go-v2/service/ssm/types"
 )
 
-// ecsRuntime is the `aws` Runtime adapter (P3-7). It maps one per-membership
-// Workspace onto an ECS Service (desiredCount 0/1 = scale-to-zero) with an EFS
-// access point for the persistent home, and reaches the Agent over the internal
-// network (Service Connect / awsvpc ENI) rather than a host-published port.
-//
-// This is the 段1 SKELETON: the type satisfies the Runtime port so the rest of the
-// CP compiles and routes through it unchanged, but the AWS calls are not wired yet
-// (段2). The lifecycle methods fail loudly instead of pretending to succeed, so a
-// misconfigured `AF_RUNTIME=ecs` deployment cannot silently no-op. The intended
-// mapping (documented here so 段2 implements against a fixed contract):
-//
-//	Start   -> UpdateService desiredCount=1 (create Service/TaskDef on first use),
-//	           inject AGENT_TOKEN + AF_SECRET_KEY as task env, wait until the task
-//	           is RUNNING and the Agent /healthz passes via Endpoint().
-//	Stop    -> UpdateService desiredCount=0 (home persists on EFS; resume on next Start).
-//	State   -> desiredCount/runningCount -> running | stopped | none.
-//	Endpoint-> internal DNS for the task's Agent (Service Connect name or ENI IP).
-//	Token   -> per-workspace CP↔Agent bearer (same contract as local).
+// ecsAgentPort is the fixed container port the workspace Agent listens on (the
+// same 7700 the docker adapter host-publishes). On ECS it is reached over Service
+// Connect by DNS name instead of a host-published port.
+const ecsAgentPort int32 = 7700
+
+// --- narrow AWS client ports (only the calls the adapter makes), so the runtime
+// is unit-testable against fakes. The real *ecs.Client / *efs.Client / *ssm.Client
+// satisfy these. ---
+
+type ecsAPI interface {
+	DescribeServices(context.Context, *ecs.DescribeServicesInput, ...func(*ecs.Options)) (*ecs.DescribeServicesOutput, error)
+	CreateService(context.Context, *ecs.CreateServiceInput, ...func(*ecs.Options)) (*ecs.CreateServiceOutput, error)
+	UpdateService(context.Context, *ecs.UpdateServiceInput, ...func(*ecs.Options)) (*ecs.UpdateServiceOutput, error)
+	RegisterTaskDefinition(context.Context, *ecs.RegisterTaskDefinitionInput, ...func(*ecs.Options)) (*ecs.RegisterTaskDefinitionOutput, error)
+}
+
+type efsAPI interface {
+	DescribeAccessPoints(context.Context, *efs.DescribeAccessPointsInput, ...func(*efs.Options)) (*efs.DescribeAccessPointsOutput, error)
+	CreateAccessPoint(context.Context, *efs.CreateAccessPointInput, ...func(*efs.Options)) (*efs.CreateAccessPointOutput, error)
+}
+
+type ssmAPI interface {
+	PutParameter(context.Context, *ssm.PutParameterInput, ...func(*ssm.Options)) (*ssm.PutParameterOutput, error)
+}
+
+// ecsRuntime is the `aws` Runtime adapter (P3-7 段2). It maps one per-membership
+// Workspace onto an ECS Service (desiredCount 0/1 = scale-to-zero) with two EFS
+// access points for the persistent home + claude-config, injects the CP↔Agent
+// token and at-rest DEK via SSM SecureString, and reaches the Agent over Service
+// Connect (frozen spec docs/history/p3-7-aws-adapter.md §20b.7). The adapter holds
+// NO CP-side state: every resource is addressed by a deterministic name/tag and
+// created-or-got on Start, so there is no schema change vs the docker adapter.
 type ecsRuntime struct {
-	cfg   ecsConfig
-	name  string // ECS service name (from Workspace.ContainerName)
-	token string // CP↔Agent shared secret (Workspace.AgentToken)
-	// secretKey is the per-workspace at-rest DEK, injected as AF_SECRET_KEY in the
-	// task definition on Start (same contract the docker adapter satisfies via -e).
-	secretKey string
-	// extraEnv carries per-workspace KEY=VAL task env (e.g. the per-tenant
-	// AF_AGENT_SELF_UPDATE_ALLOWED gate); 段2 wires these into the task definition.
-	extraEnv []string
+	cfg          ecsConfig
+	ecs          ecsAPI
+	efs          efsAPI
+	ssm          ssmAPI
+	name         string // ECS service name / SC dnsName (Workspace.ContainerName)
+	membershipID string // EFS access-point tag key (af-membership)
+	token        string // CP↔Agent bearer (Workspace.AgentToken)
+	secretKey    string // per-workspace at-rest DEK (hex); "" in dev
+	extraEnv     []string
+	// waitReady polls the Agent /healthz through Endpoint(); a field so tests can
+	// stub it out (real path hits HTTP, unavailable in unit tests).
+	waitReady func(ctx context.Context, endpoint string, timeout time.Duration) error
 }
 
 var _ Runtime = (*ecsRuntime)(nil)
 
-// ecsConfig holds the deployment-wide AWS placement the ECS adapter needs. It is
-// read once at boot (env for now; a typed config source can back it in 段2). The
-// fields are the ones docs/reference/aws.md §3.3–3.4 call out; they are declared
-// here so 段2 fills them in against a fixed shape rather than inventing it.
+// ecsConfig holds the deployment-wide AWS placement the ECS adapter needs, read
+// once at boot from AF_ECS_* env. IaC (deploy/aws/ecs, CloudFormation) owns the
+// static substrate these point at.
 type ecsConfig struct {
-	region        string
-	cluster       string   // ECS cluster ARN/name hosting the workspace services
-	subnets       []string // awsvpc subnets (private) for the tasks
-	securityGroup string   // SG allowing CP -> Agent (and egress to git/Anthropic)
-	efsFileSystem string   // EFS id; a per-user access point backs each home
-	taskRole      string   // task role (least-privilege; IMDS blocked)
-	execRole      string   // execution role (pull image, write logs)
-	logGroup      string   // CloudWatch Logs group for workspace tasks
+	region         string
+	cluster        string   // ECS cluster ARN/name hosting the workspace services
+	subnets        []string // awsvpc private subnets for the tasks
+	securityGroup  string   // ws SG: CP -> Agent:7700 + egress to git/Anthropic
+	efsFileSystem  string   // EFS id; two per-membership access points back each home
+	namespaceArn   string   // Service Connect (Cloud Map) namespace ARN
+	execRole       string   // task execution role (pull image, logs, read SSM secrets)
+	taskRole       string   // task role (least-privilege; Agent needs no AWS APIs)
+	logGroup       string   // CloudWatch Logs group for workspace tasks
+	workspaceImage string   // ECR image URI:tag for the Workspace Agent
+	sessionCmd     string   // AGENT_SESSION_CMD passthrough
+	cpu, memory    string   // Fargate task size (e.g. "1024" / "2048")
+	posixUID       int64    // EFS access-point owner uid/gid (container dev user)
+	posixGID       int64
+	startTimeout   time.Duration // wait budget for RUNNING + healthz on Start
 }
 
-// ecsFactory is the `aws` RuntimeFactory. It stamps each Workspace record into an
-// ecsRuntime carrying the shared ecsConfig.
+// ecsFactory is the `aws` RuntimeFactory. It carries the shared AWS clients and
+// config and stamps each Workspace record into an ecsRuntime.
 type ecsFactory struct {
 	cfg ecsConfig
+	ecs ecsAPI
+	efs efsAPI
+	ssm ssmAPI
 }
 
 func (f *ecsFactory) New(ws Workspace, secretKey string, extraEnv []string) Runtime {
 	return &ecsRuntime{
-		cfg:       f.cfg,
-		name:      ws.ContainerName,
-		token:     ws.AgentToken,
-		secretKey: secretKey,
-		extraEnv:  extraEnv,
+		cfg:          f.cfg,
+		ecs:          f.ecs,
+		efs:          f.efs,
+		ssm:          f.ssm,
+		name:         ws.ContainerName,
+		membershipID: ws.MembershipID,
+		token:        ws.AgentToken,
+		secretKey:    secretKey,
+		extraEnv:     extraEnv,
+		waitReady:    httpHealthz,
 	}
 }
 
 var _ RuntimeFactory = (*ecsFactory)(nil)
 
-// newECSFactory builds the AWS Runtime factory from AF_ECS_* env. In 段1 it
-// constructs successfully (so the profile switch is exercised end to end) but
-// warns that the adapter is a skeleton — the lifecycle methods are not wired yet.
-func newECSFactory(_ *manager) (RuntimeFactory, error) {
-	cfg := ecsConfig{
-		region:        os.Getenv("AF_ECS_REGION"),
-		cluster:       os.Getenv("AF_ECS_CLUSTER"),
-		subnets:       splitCSV(os.Getenv("AF_ECS_SUBNETS")),
-		securityGroup: os.Getenv("AF_ECS_SECURITY_GROUP"),
-		efsFileSystem: os.Getenv("AF_ECS_EFS_ID"),
-		taskRole:      os.Getenv("AF_ECS_TASK_ROLE"),
-		execRole:      os.Getenv("AF_ECS_EXEC_ROLE"),
-		logGroup:      os.Getenv("AF_ECS_LOG_GROUP"),
+// newECSFactory builds the AWS Runtime factory: it loads AWS config (region) and
+// constructs the ECS/EFS/SSM clients once, then reads the placement from AF_ECS_*.
+// Credentials are resolved lazily by the SDK (task role on ECS), so this does no
+// network I/O at boot.
+func newECSFactory(m *manager) (RuntimeFactory, error) {
+	region := os.Getenv("AF_ECS_REGION")
+	ac, err := awscfg.LoadDefaultConfig(context.Background(), awscfg.WithRegion(region))
+	if err != nil {
+		return nil, fmt.Errorf("aws config: %w", err)
 	}
-	log.Printf("WARNING: AF_RUNTIME=ecs selected but the ECS adapter is a P3-7 段1 skeleton — " +
-		"workspace lifecycle is not implemented (段2). Use AF_RUNTIME=local for a working deployment.")
-	return &ecsFactory{cfg: cfg}, nil
+	cfg := ecsConfig{
+		region:         region,
+		cluster:        os.Getenv("AF_ECS_CLUSTER"),
+		subnets:        splitCSV(os.Getenv("AF_ECS_SUBNETS")),
+		securityGroup:  os.Getenv("AF_ECS_SECURITY_GROUP"),
+		efsFileSystem:  os.Getenv("AF_ECS_EFS_ID"),
+		namespaceArn:   os.Getenv("AF_ECS_NAMESPACE_ARN"),
+		execRole:       os.Getenv("AF_ECS_EXEC_ROLE"),
+		taskRole:       os.Getenv("AF_ECS_TASK_ROLE"),
+		logGroup:       os.Getenv("AF_ECS_LOG_GROUP"),
+		workspaceImage: envOr("AF_ECS_WORKSPACE_IMAGE", m.image),
+		sessionCmd:     m.sessionCmd,
+		cpu:            envOr("AF_ECS_TASK_CPU", "1024"),
+		memory:         envOr("AF_ECS_TASK_MEMORY", "2048"),
+		posixUID:       int64(envInt("AF_ECS_POSIX_UID", 1000)),
+		posixGID:       int64(envInt("AF_ECS_POSIX_GID", 1000)),
+		startTimeout:   time.Duration(envInt("AF_ECS_START_TIMEOUT_SEC", 120)) * time.Second,
+	}
+	log.Printf("runtime=ecs region=%s cluster=%s namespace=%s efs=%s", cfg.region, cfg.cluster, cfg.namespaceArn, cfg.efsFileSystem)
+	return &ecsFactory{
+		cfg: cfg,
+		ecs: ecs.NewFromConfig(ac),
+		efs: efs.NewFromConfig(ac),
+		ssm: ssm.NewFromConfig(ac),
+	}, nil
 }
-
-// errECSUnimplemented marks the 段1 skeleton lifecycle. 段2 replaces each method
-// body with the AWS SDK calls documented on ecsRuntime.
-func errECSUnimplemented(op string) error {
-	return fmt.Errorf("ecs runtime: %s not implemented (P3-7 段2 skeleton)", op)
-}
-
-func (e *ecsRuntime) Start(_ context.Context) error { return errECSUnimplemented("Start") }
-func (e *ecsRuntime) Stop(_ context.Context) error  { return errECSUnimplemented("Stop") }
-
-// State reports "none" for the unimplemented skeleton so read paths (session list,
-// admin state) degrade gracefully to "not running" instead of erroring.
-func (e *ecsRuntime) State(_ context.Context) string { return "none" }
-
-// Endpoint would return the task's internal Agent URL (Service Connect / ENI). The
-// skeleton returns an obviously-unreachable placeholder so any accidental CP→Agent
-// call fails fast rather than hitting a wrong host.
-func (e *ecsRuntime) Endpoint() string { return "http://ecs-unimplemented.invalid" }
 
 func (e *ecsRuntime) Token() string { return e.token }
 func (e *ecsRuntime) Name() string  { return e.name }
+
+// Endpoint returns the Agent's internal Service Connect URL. The client alias the
+// workspace service advertises is its ContainerName, so the CP reaches it at
+// http://<name>:7700 from inside the same namespace/VPC.
+func (e *ecsRuntime) Endpoint() string {
+	return fmt.Sprintf("http://%s:%d", e.name, ecsAgentPort)
+}
+
+// State maps the ECS service to running | stopped | none. A missing/INACTIVE
+// service is "none"; desiredCount 0 is "stopped"; a service that is up but not yet
+// running degrades to "stopped" so read paths (session list, admin) don't error.
+func (e *ecsRuntime) State(ctx context.Context) string {
+	s, ok, err := e.describeService(ctx)
+	if err != nil || !ok {
+		return "none"
+	}
+	switch {
+	case s.DesiredCount >= 1 && s.RunningCount >= 1:
+		return "running"
+	default:
+		return "stopped"
+	}
+}
+
+func (e *ecsRuntime) describeService(ctx context.Context) (ecstypes.Service, bool, error) {
+	out, err := e.ecs.DescribeServices(ctx, &ecs.DescribeServicesInput{
+		Cluster:  aws.String(e.cfg.cluster),
+		Services: []string{e.name},
+	})
+	if err != nil {
+		return ecstypes.Service{}, false, err
+	}
+	for _, s := range out.Services {
+		if aws.ToString(s.Status) == "INACTIVE" {
+			return ecstypes.Service{}, false, nil // deleted; treat as none
+		}
+		return s, true, nil
+	}
+	return ecstypes.Service{}, false, nil
+}
+
+// Stop scales the service to zero (home persists on EFS; resume on next Start). A
+// missing service is already-stopped.
+func (e *ecsRuntime) Stop(ctx context.Context) error {
+	_, ok, err := e.describeService(ctx)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return nil
+	}
+	_, err = e.ecs.UpdateService(ctx, &ecs.UpdateServiceInput{
+		Cluster:      aws.String(e.cfg.cluster),
+		Service:      aws.String(e.name),
+		DesiredCount: aws.Int32(0),
+	})
+	return err
+}
+
+// Start brings the workspace up: ensure the two EFS access points, push the token
+// + DEK to SSM SecureString, register a fresh task definition (current image/env),
+// then create-or-update the service to desiredCount 1 and wait for the Agent to be
+// healthy over Service Connect.
+func (e *ecsRuntime) Start(ctx context.Context) error {
+	if e.State(ctx) == "running" {
+		return nil
+	}
+	homeAP, err := e.ensureAccessPoint(ctx, "home", "/home/"+e.membershipID)
+	if err != nil {
+		return fmt.Errorf("efs home access point: %w", err)
+	}
+	claudeAP, err := e.ensureAccessPoint(ctx, "claude", "/claude-config/"+e.membershipID)
+	if err != nil {
+		return fmt.Errorf("efs claude access point: %w", err)
+	}
+	secrets, err := e.putSecrets(ctx)
+	if err != nil {
+		return fmt.Errorf("ssm secrets: %w", err)
+	}
+	taskDefArn, err := e.registerTaskDef(ctx, homeAP, claudeAP, secrets)
+	if err != nil {
+		return fmt.Errorf("register task def: %w", err)
+	}
+	if err := e.upsertService(ctx, taskDefArn); err != nil {
+		return fmt.Errorf("service: %w", err)
+	}
+	if e.waitReady != nil {
+		return e.waitReady(ctx, e.Endpoint(), e.cfg.startTimeout)
+	}
+	return nil
+}
+
+// ensureAccessPoint returns the id of the per-membership EFS access point for the
+// given role (home|claude), creating it (tagged af-membership/af-role) if absent.
+// Deterministic tag lookup = no CP-side state.
+func (e *ecsRuntime) ensureAccessPoint(ctx context.Context, role, path string) (string, error) {
+	out, err := e.efs.DescribeAccessPoints(ctx, &efs.DescribeAccessPointsInput{
+		FileSystemId: aws.String(e.cfg.efsFileSystem),
+	})
+	if err != nil {
+		return "", err
+	}
+	for _, ap := range out.AccessPoints {
+		if tagValue(ap.Tags, "af-membership") == e.membershipID && tagValue(ap.Tags, "af-role") == role {
+			return aws.ToString(ap.AccessPointId), nil
+		}
+	}
+	created, err := e.efs.CreateAccessPoint(ctx, &efs.CreateAccessPointInput{
+		FileSystemId: aws.String(e.cfg.efsFileSystem),
+		RootDirectory: &efstypes.RootDirectory{
+			Path: aws.String(path),
+			CreationInfo: &efstypes.CreationInfo{
+				OwnerUid:    aws.Int64(e.cfg.posixUID),
+				OwnerGid:    aws.Int64(e.cfg.posixGID),
+				Permissions: aws.String("0755"),
+			},
+		},
+		PosixUser: &efstypes.PosixUser{Uid: aws.Int64(e.cfg.posixUID), Gid: aws.Int64(e.cfg.posixGID)},
+		Tags: []efstypes.Tag{
+			{Key: aws.String("af-membership"), Value: aws.String(e.membershipID)},
+			{Key: aws.String("af-role"), Value: aws.String(role)},
+			{Key: aws.String("Name"), Value: aws.String(e.name + "-" + role)},
+		},
+	})
+	if err != nil {
+		return "", err
+	}
+	return aws.ToString(created.AccessPointId), nil
+}
+
+// putSecrets writes the token + DEK to SSM SecureString (frozen spec §20b.7.5) and
+// returns the container `secrets` list referencing them by valueFrom. Empty values
+// (dev) are skipped, matching the docker adapter's "-e only if set".
+func (e *ecsRuntime) putSecrets(ctx context.Context) ([]ecstypes.Secret, error) {
+	var out []ecstypes.Secret
+	put := func(envName, suffix, val string) error {
+		if val == "" {
+			return nil
+		}
+		name := fmt.Sprintf("/af-ws/%s/%s", e.name, suffix)
+		if _, err := e.ssm.PutParameter(ctx, &ssm.PutParameterInput{
+			Name:      aws.String(name),
+			Value:     aws.String(val),
+			Type:      ssmtypes.ParameterTypeSecureString,
+			Overwrite: aws.Bool(true),
+		}); err != nil {
+			return err
+		}
+		out = append(out, ecstypes.Secret{Name: aws.String(envName), ValueFrom: aws.String(name)})
+		return nil
+	}
+	if err := put("AGENT_TOKEN", "agent-token", e.token); err != nil {
+		return nil, err
+	}
+	if err := put("AF_SECRET_KEY", "secret-key", e.secretKey); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// registerTaskDef registers a fresh revision with the current image, env, EFS
+// mounts and secrets, and returns its ARN. Registering every Start (rather than
+// reusing) keeps the running task on the current image — the ECS analogue of the
+// docker adapter's "rm -f + run". Old revisions are inert and free.
+func (e *ecsRuntime) registerTaskDef(ctx context.Context, homeAP, claudeAP string, secrets []ecstypes.Secret) (string, error) {
+	env := []ecstypes.KeyValuePair{
+		{Name: aws.String("CLAUDE_CONFIG_DIR"), Value: aws.String("/var/lib/af/claude")},
+	}
+	if e.cfg.sessionCmd != "" {
+		env = append(env, ecstypes.KeyValuePair{Name: aws.String("AGENT_SESSION_CMD"), Value: aws.String(e.cfg.sessionCmd)})
+	}
+	for _, kv := range e.extraEnv {
+		if k, v, ok := strings.Cut(kv, "="); ok {
+			env = append(env, ecstypes.KeyValuePair{Name: aws.String(k), Value: aws.String(v)})
+		}
+	}
+	container := ecstypes.ContainerDefinition{
+		Name:      aws.String("agent"),
+		Image:     aws.String(e.cfg.workspaceImage),
+		Essential: aws.Bool(true),
+		PortMappings: []ecstypes.PortMapping{
+			{ContainerPort: aws.Int32(ecsAgentPort), Name: aws.String("agent")},
+		},
+		Environment: env,
+		Secrets:     secrets,
+		MountPoints: []ecstypes.MountPoint{
+			{SourceVolume: aws.String("home"), ContainerPath: aws.String("/home/dev")},
+			{SourceVolume: aws.String("claude"), ContainerPath: aws.String("/var/lib/af/claude")},
+		},
+	}
+	if e.cfg.logGroup != "" {
+		container.LogConfiguration = &ecstypes.LogConfiguration{
+			LogDriver: ecstypes.LogDriverAwslogs,
+			Options: map[string]string{
+				"awslogs-group":         e.cfg.logGroup,
+				"awslogs-region":        e.cfg.region,
+				"awslogs-stream-prefix": "agent",
+			},
+		}
+	}
+	in := &ecs.RegisterTaskDefinitionInput{
+		Family:                  aws.String(e.name),
+		RequiresCompatibilities: []ecstypes.Compatibility{ecstypes.CompatibilityFargate},
+		NetworkMode:             ecstypes.NetworkModeAwsvpc,
+		Cpu:                     aws.String(e.cfg.cpu),
+		Memory:                  aws.String(e.cfg.memory),
+		ExecutionRoleArn:        strOrNil(e.cfg.execRole),
+		TaskRoleArn:             strOrNil(e.cfg.taskRole),
+		ContainerDefinitions:    []ecstypes.ContainerDefinition{container},
+		Volumes: []ecstypes.Volume{
+			efsVolume("home", e.cfg.efsFileSystem, homeAP),
+			efsVolume("claude", e.cfg.efsFileSystem, claudeAP),
+		},
+	}
+	out, err := e.ecs.RegisterTaskDefinition(ctx, in)
+	if err != nil {
+		return "", err
+	}
+	return aws.ToString(out.TaskDefinition.TaskDefinitionArn), nil
+}
+
+func efsVolume(name, fsID, apID string) ecstypes.Volume {
+	return ecstypes.Volume{
+		Name: aws.String(name),
+		EfsVolumeConfiguration: &ecstypes.EFSVolumeConfiguration{
+			FileSystemId:      aws.String(fsID),
+			TransitEncryption: ecstypes.EFSTransitEncryptionEnabled,
+			AuthorizationConfig: &ecstypes.EFSAuthorizationConfig{
+				AccessPointId: aws.String(apID),
+				Iam:           ecstypes.EFSAuthorizationConfigIAMEnabled,
+			},
+		},
+	}
+}
+
+// upsertService creates the service on first use or updates it to desiredCount 1
+// with the new task definition. The service advertises itself over Service Connect
+// under its ContainerName so the CP can reach the Agent at Endpoint().
+func (e *ecsRuntime) upsertService(ctx context.Context, taskDefArn string) error {
+	s, ok, err := e.describeService(ctx)
+	if err != nil {
+		return err
+	}
+	if ok && aws.ToString(s.Status) == "ACTIVE" {
+		_, err = e.ecs.UpdateService(ctx, &ecs.UpdateServiceInput{
+			Cluster:            aws.String(e.cfg.cluster),
+			Service:            aws.String(e.name),
+			DesiredCount:       aws.Int32(1),
+			TaskDefinition:     aws.String(taskDefArn),
+			ForceNewDeployment: true,
+		})
+		return err
+	}
+	_, err = e.ecs.CreateService(ctx, &ecs.CreateServiceInput{
+		Cluster:        aws.String(e.cfg.cluster),
+		ServiceName:    aws.String(e.name),
+		TaskDefinition: aws.String(taskDefArn),
+		DesiredCount:   aws.Int32(1),
+		LaunchType:     ecstypes.LaunchTypeFargate,
+		NetworkConfiguration: &ecstypes.NetworkConfiguration{
+			AwsvpcConfiguration: &ecstypes.AwsVpcConfiguration{
+				Subnets:        e.cfg.subnets,
+				SecurityGroups: []string{e.cfg.securityGroup},
+				AssignPublicIp: ecstypes.AssignPublicIpDisabled,
+			},
+		},
+		ServiceConnectConfiguration: &ecstypes.ServiceConnectConfiguration{
+			Enabled:   true,
+			Namespace: strOrNil(e.cfg.namespaceArn),
+			Services: []ecstypes.ServiceConnectService{{
+				PortName:      aws.String("agent"),
+				DiscoveryName: aws.String(e.name),
+				ClientAliases: []ecstypes.ServiceConnectClientAlias{
+					{DnsName: aws.String(e.name), Port: aws.Int32(ecsAgentPort)},
+				},
+			}},
+		},
+	})
+	return err
+}
+
+// httpHealthz polls the Agent /healthz through the Service Connect endpoint until
+// it returns 200 or the timeout elapses (same contract as the docker adapter).
+func httpHealthz(ctx context.Context, endpoint string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		req, _ := http.NewRequestWithContext(ctx, "GET", endpoint+"/healthz", nil)
+		if resp, err := http.DefaultClient.Do(req); err == nil {
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				return nil
+			}
+		}
+		time.Sleep(time.Second)
+	}
+	return fmt.Errorf("agent did not become healthy within %s", timeout)
+}
+
+func tagValue(tags []efstypes.Tag, key string) string {
+	for _, t := range tags {
+		if aws.ToString(t.Key) == key {
+			return aws.ToString(t.Value)
+		}
+	}
+	return ""
+}
+
+func strOrNil(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return aws.String(s)
+}
+
+func envInt(key string, def int) int {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
+	}
+	return def
+}

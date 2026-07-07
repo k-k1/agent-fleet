@@ -81,22 +81,3 @@ func TestDockerFactoryNew(t *testing.T) {
 		t.Errorf("dataDir = %q, want %q (re-rooted)", rt.dataDir, want)
 	}
 }
-
-// The ECS skeleton (段1) must satisfy the port and fail loudly on lifecycle calls
-// so a misconfigured AF_RUNTIME=ecs can't silently no-op.
-func TestECSRuntimeSkeleton(t *testing.T) {
-	f := &ecsFactory{}
-	rt := f.New(Workspace{ContainerName: "af-ws-x", AgentToken: "t"}, "", nil)
-	if rt.Name() != "af-ws-x" || rt.Token() != "t" {
-		t.Errorf("Name/Token = %q/%q, want af-ws-x/t", rt.Name(), rt.Token())
-	}
-	if rt.State(nil) != "none" {
-		t.Errorf("State = %q, want none", rt.State(nil))
-	}
-	if err := rt.Start(nil); err == nil {
-		t.Error("Start: expected not-implemented error, got nil")
-	}
-	if err := rt.Stop(nil); err == nil {
-		t.Error("Stop: expected not-implemented error, got nil")
-	}
-}
