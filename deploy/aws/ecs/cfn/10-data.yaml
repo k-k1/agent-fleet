@@ -1,0 +1,127 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  agent-fleet ECS adapter (P3-7) — data substrate: one encrypted EFS filesystem
+  (per-workspace access points are created by the Control Plane at runtime, not
+  here) and an RDS PostgreSQL instance for the MetadataStore. Imports network from
+  the 00-network stack. Dev-ephemeral: DeletionPolicy Delete, no backups.
+
+Parameters:
+  NetworkStackName:
+    Type: String
+    Default: af-ecs-network
+    Description: Name of the 00-network stack to import VPC/subnets/SGs from.
+  DbInstanceClass:
+    Type: String
+    Default: db.t4g.micro
+    Description: RDS instance class (t4g.micro is enough for a small deployment).
+  DbAllocatedStorage:
+    Type: Number
+    Default: 20
+    Description: RDS storage (GiB).
+  DbName:
+    Type: String
+    Default: agentfleet
+    Description: Initial database name.
+  DbUsername:
+    Type: String
+    Default: afadmin
+    Description: Master username. The password is generated and managed by RDS in
+      Secrets Manager (ManageMasterUserPassword) — never passed as a parameter.
+
+Resources:
+  # --- EFS ---
+  EfsSg:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub "af-${AWS::StackName} EFS mount targets (NFS from workspace tasks)"
+      VpcId:
+        Fn::ImportValue: !Sub "${NetworkStackName}-VpcId"
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 2049
+          ToPort: 2049
+          SourceSecurityGroupId:
+            Fn::ImportValue: !Sub "${NetworkStackName}-WsSgId"
+          Description: NFS from workspace tasks only
+      Tags: [ { Key: Name, Value: !Sub "af-${AWS::StackName}-efs-sg" } ]
+
+  FileSystem:
+    Type: AWS::EFS::FileSystem
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      Encrypted: true
+      PerformanceMode: generalPurpose
+      ThroughputMode: bursting
+      FileSystemTags:
+        - { Key: Name, Value: !Sub "af-${AWS::StackName}-efs" }
+
+  MountTarget0:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref FileSystem
+      SecurityGroups: [ !Ref EfsSg ]
+      SubnetId: !Select [ 0, !Split [ ",", !ImportValue { "Fn::Sub": "${NetworkStackName}-PrivateSubnets" } ] ]
+  MountTarget1:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref FileSystem
+      SecurityGroups: [ !Ref EfsSg ]
+      SubnetId: !Select [ 1, !Split [ ",", !ImportValue { "Fn::Sub": "${NetworkStackName}-PrivateSubnets" } ] ]
+
+  # --- RDS (MetadataStore, 段3a) ---
+  DbSg:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub "af-${AWS::StackName} RDS (5432 from Control Plane)"
+      VpcId:
+        Fn::ImportValue: !Sub "${NetworkStackName}-VpcId"
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          SourceSecurityGroupId:
+            Fn::ImportValue: !Sub "${NetworkStackName}-CpSgId"
+          Description: Postgres from Control Plane only
+      Tags: [ { Key: Name, Value: !Sub "af-${AWS::StackName}-db-sg" } ]
+
+  DbSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: !Sub "af-${AWS::StackName} private subnets"
+      SubnetIds: !Split [ ",", !ImportValue { "Fn::Sub": "${NetworkStackName}-PrivateSubnets" } ]
+
+  Db:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      Engine: postgres
+      DBInstanceClass: !Ref DbInstanceClass
+      AllocatedStorage: !Ref DbAllocatedStorage
+      DBName: !Ref DbName
+      MasterUsername: !Ref DbUsername
+      ManageMasterUserPassword: true   # RDS mints + rotates the password in Secrets Manager
+      DBSubnetGroupName: !Ref DbSubnetGroup
+      VPCSecurityGroups: [ !Ref DbSg ]
+      PubliclyAccessible: false
+      StorageEncrypted: true
+      MultiAZ: false
+      BackupRetentionPeriod: 0         # dev-ephemeral; a real env sets >0 + DeletionPolicy Snapshot
+      DeletionProtection: false
+      Tags: [ { Key: Name, Value: !Sub "af-${AWS::StackName}-db" } ]
+
+Outputs:
+  EfsId:
+    Value: !Ref FileSystem
+    Export: { Name: !Sub "${AWS::StackName}-EfsId" }
+  DbEndpoint:
+    Value: !GetAtt Db.Endpoint.Address
+    Export: { Name: !Sub "${AWS::StackName}-DbEndpoint" }
+  DbPort:
+    Value: !GetAtt Db.Endpoint.Port
+    Export: { Name: !Sub "${AWS::StackName}-DbPort" }
+  DbSecretArn:
+    Description: Secrets Manager ARN of the RDS-managed master credentials.
+    Value: !GetAtt Db.MasterUserSecret.SecretArn
+    Export: { Name: !Sub "${AWS::StackName}-DbSecretArn" }

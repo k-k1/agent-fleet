@@ -1,0 +1,188 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  agent-fleet ECS adapter (P3-7) — network substrate: VPC, 2-AZ public/private
+  subnets, IGW, one NAT gateway, and the base security groups (alb -> cp -> ws).
+  Static substrate only; per-workspace resources are created by the Control Plane
+  at runtime. Later stacks (10-data, 20-platform) import these via exports.
+
+Parameters:
+  VpcCidr:
+    Type: String
+    Default: 10.20.0.0/16
+    Description: CIDR for the VPC. Subnets are carved from it (see Mappings).
+  AlbIngressCidr:
+    Type: String
+    Default: 0.0.0.0/0
+    Description: CIDR allowed to reach the ALB on 80/443 (tighten for a private dev env).
+  CpPort:
+    Type: Number
+    Default: 8099
+    Description: Control Plane container port the ALB forwards to.
+  AgentPort:
+    Type: Number
+    Default: 7700
+    Description: Workspace Agent container port the CP reaches over Service Connect.
+
+Mappings:
+  Subnets:
+    Public0:  { Cidr: 10.20.0.0/24 }
+    Public1:  { Cidr: 10.20.1.0/24 }
+    Private0: { Cidr: 10.20.10.0/24 }
+    Private1: { Cidr: 10.20.11.0/24 }
+
+Resources:
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCidr
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags: [ { Key: Name, Value: !Sub "af-${AWS::StackName}-vpc" } ]
+
+  Igw:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags: [ { Key: Name, Value: !Sub "af-${AWS::StackName}-igw" } ]
+  IgwAttach:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref Vpc
+      InternetGatewayId: !Ref Igw
+
+  PublicSubnet0:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      AvailabilityZone: !Select [ 0, !GetAZs "" ]
+      CidrBlock: !FindInMap [ Subnets, Public0, Cidr ]
+      MapPublicIpOnLaunch: true
+      Tags: [ { Key: Name, Value: !Sub "af-${AWS::StackName}-public-0" } ]
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      AvailabilityZone: !Select [ 1, !GetAZs "" ]
+      CidrBlock: !FindInMap [ Subnets, Public1, Cidr ]
+      MapPublicIpOnLaunch: true
+      Tags: [ { Key: Name, Value: !Sub "af-${AWS::StackName}-public-1" } ]
+  PrivateSubnet0:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      AvailabilityZone: !Select [ 0, !GetAZs "" ]
+      CidrBlock: !FindInMap [ Subnets, Private0, Cidr ]
+      Tags: [ { Key: Name, Value: !Sub "af-${AWS::StackName}-private-0" } ]
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      AvailabilityZone: !Select [ 1, !GetAZs "" ]
+      CidrBlock: !FindInMap [ Subnets, Private1, Cidr ]
+      Tags: [ { Key: Name, Value: !Sub "af-${AWS::StackName}-private-1" } ]
+
+  PublicRt:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags: [ { Key: Name, Value: !Sub "af-${AWS::StackName}-public-rt" } ]
+  PublicDefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: IgwAttach
+    Properties:
+      RouteTableId: !Ref PublicRt
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref Igw
+  PublicAssoc0:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: { SubnetId: !Ref PublicSubnet0, RouteTableId: !Ref PublicRt }
+  PublicAssoc1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: { SubnetId: !Ref PublicSubnet1, RouteTableId: !Ref PublicRt }
+
+  # One NAT gateway (single-AZ) — the main standing cost. Enough for a dev loop;
+  # a prod env would put one NAT per AZ. Workspaces egress to git/Anthropic through it.
+  NatEip:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+      Tags: [ { Key: Name, Value: !Sub "af-${AWS::StackName}-nat-eip" } ]
+  Nat:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NatEip.AllocationId
+      SubnetId: !Ref PublicSubnet0
+      Tags: [ { Key: Name, Value: !Sub "af-${AWS::StackName}-nat" } ]
+  PrivateRt:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags: [ { Key: Name, Value: !Sub "af-${AWS::StackName}-private-rt" } ]
+  PrivateDefaultRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRt
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref Nat
+  PrivateAssoc0:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: { SubnetId: !Ref PrivateSubnet0, RouteTableId: !Ref PrivateRt }
+  PrivateAssoc1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: { SubnetId: !Ref PrivateSubnet1, RouteTableId: !Ref PrivateRt }
+
+  # --- Security groups: linear alb -> cp -> ws (no cycle) ---
+  AlbSg:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub "af-${AWS::StackName} ALB ingress (public 80/443)"
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - { IpProtocol: tcp, FromPort: 80,  ToPort: 80,  CidrIp: !Ref AlbIngressCidr, Description: HTTP (ACME/redirect) }
+        - { IpProtocol: tcp, FromPort: 443, ToPort: 443, CidrIp: !Ref AlbIngressCidr, Description: HTTPS (Console/API) }
+      Tags: [ { Key: Name, Value: !Sub "af-${AWS::StackName}-alb-sg" } ]
+
+  CpSg:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub "af-${AWS::StackName} Control Plane task (ALB to CP)"
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: !Ref CpPort
+          ToPort: !Ref CpPort
+          SourceSecurityGroupId: !Ref AlbSg
+          Description: CP port from ALB only
+      Tags: [ { Key: Name, Value: !Sub "af-${AWS::StackName}-cp-sg" } ]
+
+  WsSg:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub "af-${AWS::StackName} Workspace task (CP to Agent); egress to git/Anthropic"
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: !Ref AgentPort
+          ToPort: !Ref AgentPort
+          SourceSecurityGroupId: !Ref CpSg
+          Description: Agent port from CP only (no ALB, no cross-workspace)
+      Tags: [ { Key: Name, Value: !Sub "af-${AWS::StackName}-ws-sg" } ]
+
+Outputs:
+  VpcId:
+    Value: !Ref Vpc
+    Export: { Name: !Sub "${AWS::StackName}-VpcId" }
+  PublicSubnets:
+    Value: !Join [ ",", [ !Ref PublicSubnet0, !Ref PublicSubnet1 ] ]
+    Export: { Name: !Sub "${AWS::StackName}-PublicSubnets" }
+  PrivateSubnets:
+    Value: !Join [ ",", [ !Ref PrivateSubnet0, !Ref PrivateSubnet1 ] ]
+    Export: { Name: !Sub "${AWS::StackName}-PrivateSubnets" }
+  AlbSgId:
+    Value: !Ref AlbSg
+    Export: { Name: !Sub "${AWS::StackName}-AlbSgId" }
+  CpSgId:
+    Value: !Ref CpSg
+    Export: { Name: !Sub "${AWS::StackName}-CpSgId" }
+  WsSgId:
+    Value: !Ref WsSg
+    Export: { Name: !Sub "${AWS::StackName}-WsSgId" }
