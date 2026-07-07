@@ -73,6 +73,10 @@ export function App() {
       localStorage.setItem("af-left-open", n ? "1" : "0");
       return n;
     });
+  const closeLeft = () => {
+    setLeftOpen(false);
+    localStorage.setItem("af-left-open", "0");
+  };
   const toggleLeftMode = () =>
     setLeftMode((m) => {
       const n = m === "push" ? "overlay" : "push";
@@ -202,8 +206,15 @@ export function App() {
             <FilesSection />
           </div>
         </nav>
-        {/* Mobile drawer backdrop: tap outside to close. */}
-        <div className="app-nav-backdrop" onClick={() => setNavOpen(false)} />
+        {/* Dims the main area and dismisses the pane: the mobile drawer, and the
+            desktop overlay-mode left pane. */}
+        <div
+          className="app-nav-backdrop"
+          onClick={() => {
+            setNavOpen(false);
+            closeLeft();
+          }}
+        />
         <main className="app-main">
           <PaneHost />
         </main>
