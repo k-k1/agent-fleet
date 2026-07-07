@@ -81,6 +81,8 @@ func main() {
 	mux.HandleFunc("POST /sessions/{name}/title/regenerate", handleRegenerateSuggestedTitle)
 	mux.HandleFunc("POST /sessions/{name}/title/suggest", handleSuggestTitle)
 	mux.HandleFunc("POST /sessions/{name}/title/set", handleSetTitle)
+	mux.HandleFunc("POST /sessions/{name}/suggest-branch", handleSessionSuggestBranch)
+	mux.HandleFunc("POST /sessions/{name}/rename-branch", handleSessionRenameBranch)
 	mux.HandleFunc("GET /ws/pty", handlePTY)
 
 	// Assistant chat — headless-CLI LLM chat/translation, separate from tmux
@@ -117,8 +119,6 @@ func main() {
 	mux.HandleFunc("GET /repos/{name}/status", handleRepoStatus)
 	mux.HandleFunc("GET /repos/{name}/branches", handleRepoBranches)
 	mux.HandleFunc("POST /repos/{name}/checkout", handleRepoCheckout)
-	mux.HandleFunc("POST /repos/{name}/rename-branch", handleRepoRenameBranch)
-	mux.HandleFunc("POST /repos/{name}/suggest-branch", handleRepoSuggestBranch)
 	mux.HandleFunc("POST /repos/{name}/fetch", handleRepoFetch)
 	mux.HandleFunc("POST /repos/{name}/ff", handleRepoFF)
 	// Launch prompt templates (repo 起動 modal): .claude/commands, .claude/skills,

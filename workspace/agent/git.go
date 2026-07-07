@@ -354,6 +354,27 @@ func gitCurrentBranch(dir string) string {
 	return b
 }
 
+// gitDirInfo returns dir's current branch AND whether it's a linked worktree in a
+// single rev-parse (branch line + absolute-git-dir line), so the session list can
+// enrich every row with one git call per unique dir. "" branch / false for a non-repo.
+func gitDirInfo(dir string) (branch string, worktree bool) {
+	out, err := exec.Command("git", "-C", dir, "rev-parse", "--abbrev-ref", "HEAD", "--absolute-git-dir").Output()
+	if err != nil {
+		return "", false
+	}
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	if len(lines) >= 1 {
+		branch = strings.TrimSpace(lines[0])
+		if branch == "HEAD" {
+			branch = "(detached)"
+		}
+	}
+	if len(lines) >= 2 {
+		worktree = strings.Contains(filepath.ToSlash(strings.TrimSpace(lines[1])), "/.git/worktrees/")
+	}
+	return
+}
+
 // branchExists reports whether dir already has a local branch named branch.
 func branchExists(dir, branch string) bool {
 	return exec.Command("git", "-C", dir, "rev-parse", "--verify", "--quiet", "refs/heads/"+branch).Run() == nil
@@ -774,53 +795,9 @@ func handleRepoCheckout(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, st)
 }
 
+// renameBranchReq is the body for the session-scoped branch rename (session_title.go).
 type renameBranchReq struct {
 	Name string `json:"name"`
-}
-
-// handleRepoRenameBranch renames the working copy's current branch (git branch -m).
-// Unlike a checkout it does NOT touch the working tree, so it's safe under live
-// sessions — and it's the deferred-naming counterpart to worktree-then-start: start on
-// a provisional temp/<slug>, rename once the task has a shape (or from an LLM
-// suggestion). The worktree folder is intentionally left alone (renaming it would break
-// the session id); the recorded start branch of sessions in this dir is updated so the
-// intentional rename doesn't later read as branch drift.
-func handleRepoRenameBranch(w http.ResponseWriter, r *http.Request) {
-	dir, ok := repoDirFromPath(w, r)
-	if !ok {
-		return
-	}
-	var req renameBranchReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErr(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
-		return
-	}
-	name := strings.TrimSpace(req.Name)
-	if name == "" || strings.HasPrefix(name, "-") {
-		writeErr(w, http.StatusBadRequest, "bad_ref", "branch name is required and must not start with '-'")
-		return
-	}
-	// Refuse renaming onto an existing name (local or a past remote) — git branch -m
-	// would either fail (local) or create a divergent name that collides at push
-	// (remote). Renaming can't "use the existing branch", so just block for a new name.
-	if cur, _ := gitStatus(dir); name != cur.Branch {
-		if local, remote := branchNameStatus(dir, name); local || remote {
-			where := "ローカル"
-			if !local {
-				where = "リモート"
-			}
-			writeErr(w, http.StatusConflict, "branch_exists",
-				fmt.Sprintf("%sに同名ブランチ %q が既にあります。別の名前にしてください。", where, name))
-			return
-		}
-	}
-	if out, err := exec.Command("git", "-C", dir, "branch", "-m", name).CombinedOutput(); err != nil {
-		writeErr(w, http.StatusBadGateway, "rename_failed", strings.TrimSpace(string(out)))
-		return
-	}
-	updateSessionStartBranch(dir, name)
-	st, _ := gitStatus(dir)
-	writeJSON(w, http.StatusOK, st)
 }
 
 // handleRepoFF fast-forwards the current branch to its upstream (git pull --ff-only):

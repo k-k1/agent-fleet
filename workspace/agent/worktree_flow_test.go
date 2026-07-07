@@ -35,7 +35,7 @@ func TestWorktreeGuardDriftFlow(t *testing.T) {
 	mux.HandleFunc("POST /sessions/{name}/stop", handleStopSession)
 	mux.HandleFunc("GET /repos", handleListRepos)
 	mux.HandleFunc("POST /repos/{name}/checkout", handleRepoCheckout)
-	mux.HandleFunc("POST /repos/{name}/rename-branch", handleRepoRenameBranch)
+	mux.HandleFunc("POST /sessions/{name}/rename-branch", handleSessionRenameBranch)
 	mux.HandleFunc("DELETE /repos/{name}", handleDeleteRepo)
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
@@ -105,11 +105,11 @@ func TestWorktreeGuardDriftFlow(t *testing.T) {
 	// Deferred naming: rename the provisional branch in place. The working tree is
 	// untouched, the session's start-branch meta follows the rename, so it is NOT
 	// mistaken for drift.
-	if code := status(t, srv, "POST", "/repos/app@feat-x/rename-branch", map[string]any{"name": "renamed-x"}); code != http.StatusOK {
+	if code := status(t, srv, "POST", "/sessions/"+created.Name+"/rename-branch", map[string]any{"name": "renamed-x"}); code != http.StatusOK {
 		t.Fatalf("rename-branch = %d, want 200", code)
 	}
-	if s := sessionByName(created.Name); s.Branch != "renamed-x" || s.BranchDrift {
-		t.Fatalf("after rename: start=%q drift=%v, want renamed-x/false", s.Branch, s.BranchDrift)
+	if s := sessionByName(created.Name); s.Branch != "renamed-x" || s.BranchDrift || !s.Worktree {
+		t.Fatalf("after rename: start=%q drift=%v worktree=%v, want renamed-x/false/true", s.Branch, s.BranchDrift, s.Worktree)
 	}
 
 	// ③ a stray checkout inside the worktree (bypassing the guard) DOES show as drift.

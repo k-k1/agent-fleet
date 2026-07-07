@@ -36,42 +36,39 @@ func TestSessionsInDir(t *testing.T) {
 	}
 }
 
-// TestAnnotateBranchDrift covers branch-drift detection: a session is flagged only
-// when its working copy's current branch differs from the one it started on. No start
-// branch, a matching branch, or an unresolvable dir ("") must not flag. Resolution is
-// cached per dir (one lookup even with two sessions sharing a working copy).
-func TestAnnotateBranchDrift(t *testing.T) {
-	cur := map[string]string{
-		"/repos/foo": "feature-x", // drifted from main
-		"/repos/bar": "main",      // unchanged
-		"/repos/gone": "",         // dir not a git tree
+// TestAnnotateSessions covers session enrichment: Worktree flag (always applied) and
+// branch drift (only when a recorded start branch differs from the current one). Dir
+// info is cached per dir (one lookup even when two sessions share a working copy).
+func TestAnnotateSessions(t *testing.T) {
+	info := map[string]dirInfo{
+		"/repos/foo": {branch: "feature-x", worktree: true}, // drifted from main, is a worktree
+		"/repos/bar": {branch: "main", worktree: false},     // unchanged, plain clone
+		"/repos/gone": {branch: "", worktree: false},        // dir not a git tree
 	}
 	calls := 0
-	resolve := func(dir string) string { calls++; return cur[dir] }
+	resolve := func(dir string) dirInfo { calls++; return info[dir] }
 
 	sessions := []Session{
-		{Name: "a", Dir: "/repos/foo", Branch: "main"},   // drift → main→feature-x
-		{Name: "b", Dir: "/repos/foo", Branch: "main"},   // same dir, cached (no 2nd call)
-		{Name: "c", Dir: "/repos/bar", Branch: "main"},   // no drift
-		{Name: "d", Dir: "/repos/foo", Branch: ""},       // no start branch → skip
-		{Name: "e", Dir: "/repos/gone", Branch: "main"},  // unresolvable → no drift
+		{Name: "a", Dir: "/repos/foo", Branch: "main"},  // drift → main→feature-x; worktree
+		{Name: "b", Dir: "/repos/foo", Branch: "main"},  // same dir, cached (no 2nd call)
+		{Name: "c", Dir: "/repos/bar", Branch: "main"},  // no drift, not worktree
+		{Name: "d", Dir: "/repos/foo", Branch: ""},      // no start branch → no drift, but worktree
+		{Name: "e", Dir: "/repos/gone", Branch: "main"}, // unresolvable → no drift, not worktree
 	}
-	annotateBranchDrift(sessions, resolve)
+	annotateSessions(sessions, resolve)
 
 	for _, s := range sessions {
 		wantDrift := s.Name == "a" || s.Name == "b"
 		if s.BranchDrift != wantDrift {
 			t.Errorf("%s: BranchDrift = %v, want %v", s.Name, s.BranchDrift, wantDrift)
 		}
-		if wantDrift && s.CurrentBranch != "feature-x" {
-			t.Errorf("%s: CurrentBranch = %q, want feature-x", s.Name, s.CurrentBranch)
-		}
-		if !wantDrift && s.CurrentBranch != "" {
-			t.Errorf("%s: CurrentBranch = %q, want empty", s.Name, s.CurrentBranch)
+		wantWt := s.Dir == "/repos/foo"
+		if s.Worktree != wantWt {
+			t.Errorf("%s: Worktree = %v, want %v", s.Name, s.Worktree, wantWt)
 		}
 	}
-	// foo, bar, gone = 3 distinct dirs resolved once each; the "" start-branch session
-	// short-circuits before resolving.
+	// foo, bar, gone = 3 distinct dirs resolved once each (worktree needs the lookup
+	// even for the "" start-branch session, so no short-circuit skips it).
 	if calls != 3 {
 		t.Errorf("resolve called %d times, want 3 (cached per dir)", calls)
 	}
