@@ -12,6 +12,7 @@ import "../styles/tokens.css";
 import "../styles/base.css";
 import "../ui/ui.css";
 import "./app.css";
+import "./wsbar.css";
 import "../features/panes/panes.css";
 import "../features/terminal/terminal.css";
 import "../features/sessions/sessions.css";

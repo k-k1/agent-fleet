@@ -7,10 +7,13 @@
 // sessions polling. History (back/forward) traverses layout states.
 import { useEffect, useRef, useState } from "react";
 import { useTenantStore } from "../core/store/tenant.ts";
-import { useWorkspaceStore, wsBusy, startWorkspacePolling } from "../core/store/workspace.ts";
+import { useWorkspaceStore, startWorkspacePolling } from "../core/store/workspace.ts";
 import { useLayoutStore, wireLayoutHistory } from "../layout/store.ts";
 import { wireTerminalReconcile } from "../terminal/service.ts";
 import { useSessionsStore, startSessionsPolling } from "../features/sessions/store.ts";
+import { useReposStore } from "../features/repos/store.ts";
+import { useFilesStore } from "../features/files/store.ts";
+import { useChatStore } from "../features/chat/store.ts";
 import { hydrateUIPrefs, useSettings, setSetting } from "../lib/settings.ts";
 import { MOBILE_QUERY } from "../lib/device.ts";
 import { PaneHost } from "../features/panes/PaneHost.tsx";
@@ -19,9 +22,9 @@ import { SessionsSection } from "../features/sessions/SessionsSection.tsx";
 import { ReposSection } from "../features/repos/ReposSection.tsx";
 import { FilesSection } from "../features/files/FilesSection.tsx";
 import { AssistantSection } from "../features/chat/AssistantSection.tsx";
-import { Button, IconButton } from "../ui/Button.tsx";
+import { WsBar } from "./WsBar.tsx";
+import { IconButton } from "../ui/Button.tsx";
 import { Pill } from "../ui/Pill.tsx";
-import type { PillTone } from "../ui/Pill.tsx";
 
 interface TopBarProps {
   onToggleLeft: () => void;
@@ -70,64 +73,28 @@ function TopBar({ onToggleLeft, onToggleLeftMode }: TopBarProps) {
   );
 }
 
-function wsTone(state: string): PillTone {
-  if (state === "running") return "ok";
-  if (state === "stopped" || state === "unknown" || state === "…") return "muted";
-  return "warn";
-}
-
-function WsBar() {
-  const ws = useWorkspaceStore();
-  const busy = wsBusy(ws.state);
-  const running = ws.state === "running";
-  const layout = useLayoutStore((s) => s.layout);
-  const splitRight = useLayoutStore((s) => s.splitRight);
-  const splitDown = useLayoutStore((s) => s.splitDown);
-  // Stop kills every session in the container — require a second click until the
-  // ConfirmDialog port lands (P2 modals).
-  const [confirmStop, setConfirmStop] = useState(false);
-  useEffect(() => {
-    if (!confirmStop) return;
-    const t = setTimeout(() => setConfirmStop(false), 4000);
-    return () => clearTimeout(t);
-  }, [confirmStop]);
-  return (
-    <div className="app-wsbar">
-      <Pill tone={wsTone(ws.state)} icon="vm">
-        {ws.state}
-      </Pill>
-      {running ? (
-        <Button
-          small
-          variant={confirmStop ? "danger" : "default"}
-          icon="debug-stop"
-          disabled={busy}
-          onClick={() => {
-            if (!confirmStop) return setConfirmStop(true);
-            setConfirmStop(false);
-            void ws.stop();
-          }}
-        >
-          {confirmStop ? "もう一度クリックで停止" : "停止"}
-        </Button>
-      ) : (
-        <Button small variant="primary" icon="play" disabled={busy} onClick={() => void ws.start()}>
-          起動
-        </Button>
-      )}
-      <span className="app-spacer" />
-      <IconButton
-        icon="split-horizontal"
-        label="右に分割"
-        onClick={() => splitRight()}
-      />
-      <IconButton
-        icon="split-vertical"
-        label="上下に分割"
-        onClick={() => splitDown(layout.activeId)}
-      />
-    </div>
-  );
+// Refresh FILES (and repos/sessions/chat list on start) whenever the workspace
+// actually flips running↔stopped — including external changes the 4s sync catches
+// (admin stop, OOM, restart). Keyed on the transition, and on the RUNNING edge (not
+// the "starting…" click), so trees load once the agent is really up. Transient "…"
+// states are ignored until they settle. Returns the unsubscribe (StrictMode-safe).
+function wireWorkspaceRefresh(): () => void {
+  const settle = (s: string) => (s === "running" ? "running" : s === "none" || s === "stopped" ? "stopped" : "");
+  let prevRaw = useWorkspaceStore.getState().state;
+  return useWorkspaceStore.subscribe((s) => {
+    const from = settle(prevRaw);
+    const to = settle(s.state);
+    prevRaw = s.state;
+    if (to === "" || to === from) return;
+    useFilesStore.getState().bump();
+    if (to === "running") {
+      void useReposStore.getState().refresh();
+      void useSessionsStore.getState().refresh();
+      // Chat conversations are proxied into the workspace agent, so the list fails
+      // while it's still starting — re-fetch once it's really up.
+      useChatStore.getState().bumpList();
+    }
+  });
 }
 
 export function App() {
@@ -225,6 +192,7 @@ export function App() {
   useEffect(() => {
     const unHistory = wireLayoutHistory();
     const unReconcile = wireTerminalReconcile();
+    const unWsRefresh = wireWorkspaceRefresh();
     const stopWsPoll = startWorkspacePolling();
     const stopSessPoll = startSessionsPolling();
     void (async () => {
@@ -235,6 +203,7 @@ export function App() {
     return () => {
       unHistory();
       unReconcile();
+      unWsRefresh();
       stopWsPoll();
       stopSessPoll();
     };
@@ -247,8 +216,18 @@ export function App() {
     if (!booted) return;
     useLayoutStore.getState().load(tenant);
     void useWorkspaceStore.getState().refresh();
+    void useWorkspaceStore.getState().refreshOcweb();
     void useSessionsStore.getState().refresh();
   }, [booted, tenant]);
+
+  // openNewSession signal (WS bar 新規 / onboarding): the dialog mounts inside the
+  // left rail — on mobile that's an off-canvas drawer whose CSS transform would
+  // offset the modal's fixed positioning, so raise the drawer first (no-op on
+  // desktop, where the rail is in flow).
+  const newSessionTick = useSessionsStore((s) => s.newSessionTick);
+  useEffect(() => {
+    if (newSessionTick > 0 && window.matchMedia(MOBILE_QUERY).matches) setNavOpen(true);
+  }, [newSessionTick]);
 
   return (
     <div
