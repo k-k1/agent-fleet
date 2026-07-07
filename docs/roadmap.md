@@ -270,7 +270,10 @@ CP に `/mcp` を 1 本生やし、**管理面（運用チーム）と作業面�
 > token/DEK は SSM SecureString `valueFrom`(plaintext env 不使用)・deterministic naming ゆえ**スキーマ/Agent/Console/CP コア変更ゼロ**。
 > **段4（IaC substrate）＝実証済**: `deploy/aws/ecs/cfn/` 00-network/10-data/20-platform/30-ingress を sandbox で
 > deploy→検証→teardown、30 は `af-dev.lazmix.jp` で実 Google ログイン到達（**CloudFormation**、ec2-single と一貫・static のみ）。
-> 残＝段3 RDS(Postgres store)+KMS / **段5 実 AWS E2E**（CP に段2 を配線し workspace 動的払出→resume 通過）。AWS 構成は [reference/aws](reference/aws.md)。
+> **段5（実 AWS E2E）＝到達確認済**: sandbox で 00-30 substrate＋段2 配線 CP を立て、実ブラウザで login→workspace
+> Start→shell まで到達。CP が ws ECS サービス＋EFS AP2本(transit 暗号)＋SSM SecureString を動的払出し、CP→Service
+> Connect→Agent 到達（`POST /sessions` 受理）、DEK/token は平文 env になし。findings=大容量イメージ cold pull が Start の
+> healthz 待ち超過(UX 改善案)/CP SQLite ephemeral ゆえ再デプロイで状態消失(永続化=段3a 必要)。残＝(A)(B)反映・Stop/resume 明示確認・段3(RDS store+KMS)。AWS 構成は [reference/aws](reference/aws.md)。
 
 各社が**自社のデプロイ先を選ぶ**。コアは無改修、周縁アダプタのみ（[09](reference/portability.md)）。我々は両方を同梱（P3-10）。
 

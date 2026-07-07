@@ -73,8 +73,19 @@
   ツールは CFN に寄せた（`ec2-single/cfn.yaml` の前例と一貫、顧客 footprint 最小＝creds+`aws cloudformation deploy` のみ）。
   実地の学び: SG 説明文は `<>` 不可 / 新規アカウントは ECS service-linked role 事前作成 / Fargate は WS_DATA 親ディレクトリを
   scratch volume で用意（README 参照）。残＝CP タスクに `AF_RUNTIME=ecs`＋`AF_ECS_*`＋EFS を配線し段2 を実駆動。
-- ▶ **段5 — E2E 検証ゲート**（要 AWS）: 段4 substrate 上で CP に段2 を配線 → login → tenant →
-  workspace(Start=desired 1) → session → Stop(desired 0)→resume 通過（[§20b.7.14](#20b714-検証ゲート段5要-aws)）。
+- ✅ **段5 — E2E 検証ゲート（実 AWS 到達確認）**: sandbox で 00-30 substrate＋段2 配線済 CP を立て、実ブラウザで
+  login → workspace Start → shell セッションまで到達。確認できたこと: CP が ws ECS サービス(desired 1、RUNNING)＋
+  **EFS AP 2本(home/claude, transit 暗号)＋SSM SecureString(token/DEK)** を動的払い出し、**CP→Service Connect→Agent**
+  が到達（Agent ログに `POST /sessions` 受理）、task env に DEK/token 平文なし(secrets valueFrom のみ、env は
+  CLAUDE_CONFIG_DIR だけ)。**実地の findings（段2 の改善候補）**:
+  - **(A) 大容量イメージの cold pull が Start の healthz 待ちを超過**（af-workspace 7.4GB、初回 pull 数分）。現状 Start は
+    healthz タイムアウトで error 扱い→UI は「停止」表示になり、task は裏で RUNNING になる。改善案＝Start は「サービス作成＋
+    desired 1」で成功を返し healthz 待ちを非致命に（Console の State ポーリングに委ねる）。correctness ではなく UX。
+  - **(B) CP の SQLite が ephemeral(/tmp)ゆえ CP 再デプロイで状態消失**→ ws レコードの token 不整合・ログイン状態リセット。
+    本番は CP store を永続化必須（EFS or RDS=段3a）。今回の milestone は既知の割り切り。
+  - **(C) SC 動的ディスカバリは機能**（懸念は否定）: 先に起動していた CP が、後から作られた ws サービスに到達できた。
+    初回の "unreachable" は SC ではなく task が pull 中で未 RUNNING だっただけ。
+  残＝Stop(desired 0)→resume の明示確認（機構は unit test 済＋AP は tag 引き再利用で決定的）と、上記 (A)(B) の反映。
 
 ## 20b.5 CP↔Agent 到達（要点）
 
