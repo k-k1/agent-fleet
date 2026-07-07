@@ -374,6 +374,12 @@
   padding-left: 5px;
   padding-right: 5px;
 }
+/* Old .chip.launch .codicon: the ▷ / ⌄ glyphs shrink below the 11px label so
+   they don't inflate the chip height. */
+.launch-main .codicon,
+.launch-caret .codicon {
+  font-size: 0.85em;
+}
 .launch-main:hover:not(:disabled),
 .launch-caret:hover:not(:disabled) {
   background: var(--active-bg);
