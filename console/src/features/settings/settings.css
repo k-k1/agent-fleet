@@ -75,15 +75,26 @@
      (theme-adaptive via --bg); at the default blue it matches the prior look. */
   --active-bg: color-mix(in srgb, var(--topbar-accent) 18%, var(--bg));
 }
+/* Old .modal sizing: the settings dialog is a fixed large surface (not a
+   content-sized sheet) so the tab bar and content don't reflow per tab. */
+.settings-modal.ui-modal {
+  width: min(820px, 92vw);
+  max-width: min(820px, 92vw);
+  height: min(600px, 88vh);
+  max-height: 88vh;
+}
 .settings-modal .ui-modal-head {
   background: var(--topbar-bg);
 }
 .settings-modal .ui-modal-body {
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
 }
 .settings-seg {
+  flex: none; /* never let the flex column squash the tab bar (it would clip) */
   display: inline-flex;
   align-self: flex-start;
   margin-bottom: 16px;
