@@ -443,6 +443,14 @@ type sessionWire struct {
 	// still running" flag so the Console can badge it. Not persisted to the DB mirror
 	// (a stopped workspace has no live background work).
 	BackgroundBusy bool `json:"backgroundBusy"`
+	// Branch/worktree metadata passed through from the Agent (this struct decodes the
+	// Agent's /sessions response and is re-emitted to the Console, so any field absent
+	// here is silently dropped). Drives the branch-drift badge and the worktree branch-
+	// rename menu. omitempty so the DB-mirror path (stopped workspace) omits them.
+	Branch        string `json:"branch,omitempty"`
+	CurrentBranch string `json:"currentBranch,omitempty"`
+	BranchDrift   bool   `json:"branchDrift,omitempty"`
+	Worktree      bool   `json:"worktree,omitempty"`
 }
 
 func fmtStarted(createdAt string) string {
