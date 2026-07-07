@@ -62,22 +62,25 @@
   overflow-y: auto;
   overflow-x: hidden;
 }
-/* Desktop collapse (hamburger single-click). */
-.app-shell.left-collapsed .app-rail {
-  display: none;
-}
-/* Overlay mode (hamburger double-click): the rail floats above the main area
-   instead of docking (no reflow). */
 .app-body {
   position: relative;
 }
-.app-shell.left-overlay:not(.left-collapsed) .app-rail {
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  z-index: 20;
-  box-shadow: 4px 0 16px color-mix(in srgb, #000 30%, transparent);
+/* Desktop-only collapse / overlay (hamburger single/double-click). Scoped to
+   min-width so the persisted af-left-open="0" (shared with the old console)
+   can't display:none the MOBILE drawer — there navOpen is the only signal. */
+@media (min-width: 761px) {
+  .app-shell.left-collapsed .app-rail {
+    display: none;
+  }
+  /* Overlay mode: the rail floats above the main area instead of docking. */
+  .app-shell.left-overlay:not(.left-collapsed) .app-rail {
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    z-index: 20;
+    box-shadow: 4px 0 16px color-mix(in srgb, #000 30%, transparent);
+  }
 }
 .app-nav-backdrop {
   display: none;
