@@ -1,0 +1,120 @@
+/* Pane layout chrome (PaneHost / Pane) — co-located styles. */
+
+.panehost {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.pane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--panel);
+  border: 1px solid var(--border2);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.pane.active {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border2));
+}
+.pane.droptarget {
+  border-color: var(--accent);
+}
+
+/* Dividers between columns / rows (drag to resize). */
+.pane-divider {
+  position: absolute;
+  z-index: 3;
+  touch-action: none;
+}
+.pane-divider.col {
+  cursor: col-resize;
+}
+.pane-divider.row {
+  cursor: row-resize;
+}
+.pane-divider:hover {
+  background: color-mix(in srgb, var(--accent) 35%, transparent);
+}
+body.col-resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+body.row-resizing {
+  cursor: row-resize;
+  user-select: none;
+}
+
+/* Ordinal palette — ties a rail row, the mini-map, and the pane together. */
+.pane-ord-1 { --ord: #2f74d0; }
+.pane-ord-2 { --ord: #d9631b; }
+.pane-ord-3 { --ord: #1f9d57; }
+.pane-ord-4 { --ord: #8b45d6; }
+.pane-ord-5 { --ord: #d63384; }
+.pane-ord-6 { --ord: #0f8f84; }
+.pane-ord-7 { --ord: #b8860b; }
+.pane-ord-8 { --ord: #d53b3b; }
+
+/* Drag grip / ordinal chip (top-left) + control cluster (top-right). */
+.pane-grip {
+  position: absolute;
+  top: 4px;
+  left: 6px;
+  z-index: 4;
+  border: none;
+  border-radius: 4px;
+  padding: 0 6px;
+  min-width: 20px;
+  height: 20px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: grab;
+  color: #fff;
+  background: var(--ord, var(--btn));
+}
+.pane-grip:active {
+  cursor: grabbing;
+}
+.pane-controls {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  z-index: 4;
+  display: flex;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.pane:hover .pane-controls,
+.pane.active .pane-controls {
+  opacity: 1;
+}
+
+/* Drop hint while dragging a pane over this one: full ring for a swap, a
+   half-pane box on the edge where the new split would land. */
+.drop-indicator {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  border: 2px solid var(--accent);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.drop-indicator.zone-right {
+  left: 60%;
+}
+.drop-indicator.zone-down {
+  top: 60%;
+}
+
+/* Placeholder for views not yet ported (P3–P5). */
+.pane-pending {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}

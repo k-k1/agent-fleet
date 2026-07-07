@@ -1,0 +1,170 @@
+// PaneHost — lays the main area out as up to 4 columns, each a stack of 1 or 2
+// panes. All panes (and dividers) are FLAT, position:absolute children of one
+// stable .panehost: a pane's column/row is expressed purely by its computed CSS
+// rect, not DOM nesting. So moving a pane to another column only changes its
+// rect — React keeps the same keyed DOM node and the xterm is never re-parented
+// (the paneId contract, layout/types.ts). Ported from the old console onto the
+// zustand stores.
+import { useMemo, useRef } from "react";
+import type { CSSProperties, PointerEvent as RPointerEvent, ReactNode } from "react";
+import { useLayoutStore } from "../../layout/store.ts";
+import { paneOrdinals } from "../../layout/badges.ts";
+import { isBlankPane } from "../../layout/ops.ts";
+import { useSessionsStore } from "../sessions/store.ts";
+import { useIsMobile } from "../../lib/device.ts";
+import { Pane } from "./Pane.tsx";
+import type { Column, Pane as PaneT } from "../../layout/types.ts";
+
+const D = 6; // divider thickness in px
+
+export function PaneHost() {
+  const layout = useLayoutStore((s) => s.layout);
+  const setActive = useLayoutStore((s) => s.setActive);
+  const closePane = useLayoutStore((s) => s.closePane);
+  const setColRatios = useLayoutStore((s) => s.setColRatios);
+  const setRowRatio = useLayoutStore((s) => s.setRowRatio);
+  const swapPanes = useLayoutStore((s) => s.swapPanes);
+  const dropSplit = useLayoutStore((s) => s.dropSplit);
+  const sessions = useSessionsStore((s) => s.sessions);
+  const hostRef = useRef<HTMLDivElement>(null);
+  const isMobile = useIsMobile();
+
+  // Session lookup for the terminal headers; memoized so layout-only re-renders
+  // (drag/move) don't rebuild the Map.
+  const sessionByName = useMemo(() => new Map(sessions.map((s) => [s.name, s] as const)), [sessions]);
+
+  const cols = layout.cols;
+  const N = cols.length;
+  const ratios = layout.colRatios;
+  const total = cols.reduce((n, c) => n + c.panes.length, 0);
+  const ordinalById = useMemo(() => paneOrdinals(layout), [layout]);
+
+  // Cumulative left-ratio before column i.
+  const cum: number[] = [];
+  for (let i = 0, acc = 0; i < N; i++) {
+    cum.push(acc);
+    acc += ratios[i] ?? 0;
+  }
+  // Width budget = 100% minus the (N-1) column dividers; height budget = 100%
+  // minus the one row divider in a split column.
+  const Wb = `(100% - ${(N - 1) * D}px)`;
+  const Hb = `(100% - ${D}px)`;
+  const colLeft = (i: number) => `calc(${cum[i]} * ${Wb} + ${i * D}px)`;
+  const colWidth = (i: number) => `calc(${ratios[i]} * ${Wb})`;
+
+  const onColDown = (i: number) => (e: RPointerEvent) => {
+    e.preventDefault();
+    const start = e.clientX;
+    const base = ratios.slice();
+    const rect = hostRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    document.body.classList.add("col-resizing");
+    const onMove = (ev: PointerEvent) => {
+      const d = (ev.clientX - start) / rect.width;
+      const next = base.slice();
+      next[i] = Math.max(0.1, base[i] + d);
+      next[i + 1] = Math.max(0.1, base[i + 1] - d);
+      setColRatios(next);
+    };
+    const onUp = () => {
+      document.body.classList.remove("col-resizing");
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  };
+
+  const onRowDown = (colId: string) => (e: RPointerEvent) => {
+    e.preventDefault();
+    const rect = hostRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    document.body.classList.add("row-resizing");
+    const onMove = (ev: PointerEvent) => setRowRatio(colId, (ev.clientY - rect.top) / rect.height);
+    const onUp = () => {
+      document.body.classList.remove("row-resizing");
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  };
+
+  // A lone, empty terminal is the base state — nothing to close.
+  const isBlankSingle = (pane: PaneT) => total === 1 && isBlankPane(pane);
+
+  const renderPane = (pane: PaneT, col: Column, rect: CSSProperties) => (
+    <Pane
+      key={pane.id}
+      pane={pane}
+      style={{ position: "absolute", ...rect }}
+      active={total > 1 && pane.id === layout.activeId}
+      single={total === 1}
+      // Desktop: up to 4 columns, each splittable top/bottom. Mobile: only a
+      // single top/bottom split (max 2 panes total).
+      canSplitRight={!isMobile && N < 4}
+      canSplitDown={isMobile ? total < 2 : col.panes.length < 2}
+      canClose={total > 1 || !isBlankSingle(pane)}
+      canDrag={total > 1}
+      onActivate={setActive}
+      onClose={closePane}
+      onSwap={swapPanes}
+      onDropSplit={dropSplit}
+      sessionMeta={pane.session ? sessionByName.get(pane.session) : null}
+      ordinal={total > 1 ? ordinalById.get(pane.id) : null}
+    />
+  );
+
+  const paneEls: ReactNode[] = [];
+  const dividerEls: ReactNode[] = [];
+  cols.forEach((col, i) => {
+    const panes = col.panes;
+    // On a phone only the first column shows; panes in other columns stay
+    // mounted (terminal + socket alive) but hidden.
+    if (isMobile && i > 0) {
+      panes.forEach((p) => paneEls.push(renderPane(p, col, { display: "none" })));
+      return;
+    }
+    const left = isMobile ? "0" : colLeft(i);
+    const width = isMobile ? "100%" : colWidth(i);
+    if (panes.length === 1) {
+      paneEls.push(renderPane(panes[0], col, { left, top: 0, width, height: "100%" }));
+    } else {
+      const r = col.rowRatio;
+      paneEls.push(renderPane(panes[0], col, { left, top: 0, width, height: `calc(${r} * ${Hb})` }));
+      dividerEls.push(
+        <div
+          key={`r${col.id}`}
+          className="pane-divider row"
+          style={{ left, width, top: `calc(${r} * ${Hb})`, height: `${D}px` }}
+          onPointerDown={onRowDown(col.id)}
+        />,
+      );
+      paneEls.push(
+        renderPane(panes[1], col, {
+          left,
+          top: `calc(${r} * ${Hb} + ${D}px)`,
+          width,
+          height: `calc(${1 - r} * ${Hb})`,
+        }),
+      );
+    }
+    if (!isMobile && i < N - 1) {
+      dividerEls.push(
+        <div
+          key={`c${col.id}`}
+          className="pane-divider col"
+          style={{ left: `calc(${cum[i + 1]} * ${Wb} + ${i * D}px)`, top: 0, width: `${D}px`, height: "100%" }}
+          onPointerDown={onColDown(i)}
+        />,
+      );
+    }
+  });
+
+  return (
+    <div className="panehost" ref={hostRef}>
+      {paneEls}
+      {dividerEls}
+    </div>
+  );
+}

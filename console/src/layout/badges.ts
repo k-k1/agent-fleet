@@ -1,0 +1,84 @@
+// Pane ordinals + rail badge derivations — port of lib/panebadge.ts onto the new
+// layout types (pane.session + content union). An ordinal is the pane's 1-based
+// visual reading order (columns left→right; within a column, top→bottom); its
+// color class cycles a fixed 8-hue palette so the same pane reads identically as
+// a corner chip, a list badge, and a mini-map cell. Pure; vitest-friendly.
+import type { Layout, Pane } from "./types.ts";
+
+export const PANE_ORD_COUNT = 8;
+
+export interface PaneRow {
+  id: string;
+  ordinal: number;
+  col: number;
+  row: number;
+  pane: Pane;
+}
+
+export function ordClass(ordinal: number): string {
+  const n = ((ordinal - 1) % PANE_ORD_COUNT) + 1;
+  return "pane-ord-" + n;
+}
+
+export function paneRows(layout: Layout | null | undefined): PaneRow[] {
+  const rows: PaneRow[] = [];
+  const cols = layout?.cols ?? [];
+  let ord = 0;
+  for (let ci = 0; ci < cols.length; ci++) {
+    const col = cols[ci];
+    for (let ri = 0; ri < col.panes.length; ri++) {
+      ord += 1;
+      rows.push({ id: col.panes[ri].id, ordinal: ord, col: ci, row: ri, pane: col.panes[ri] });
+    }
+  }
+  return rows;
+}
+
+export function paneOrdinals(layout: Layout | null | undefined): Map<string, number> {
+  const m = new Map<string, number>();
+  for (const r of paneRows(layout)) m.set(r.id, r.ordinal);
+  return m;
+}
+
+type Ref = { ordinal: number; id: string };
+const push = (m: Map<string, Ref[]>, key: string, r: PaneRow) => {
+  const arr = m.get(key) || [];
+  arr.push({ ordinal: r.ordinal, id: r.id });
+  m.set(key, arr);
+};
+
+/** session name → panes showing it (terminal view), in visual order. */
+export function sessionPanes(layout: Layout | null | undefined): Map<string, Ref[]> {
+  const m = new Map<string, Ref[]>();
+  for (const r of paneRows(layout)) {
+    if (r.pane.content.kind === "terminal" && r.pane.session) push(m, r.pane.session, r);
+  }
+  return m;
+}
+
+/** repo name → panes showing its SCM surfaces (graph/changes/commit). */
+export function repoPanes(layout: Layout | null | undefined): Map<string, Ref[]> {
+  const m = new Map<string, Ref[]>();
+  for (const r of paneRows(layout)) {
+    const c = r.pane.content;
+    if ((c.kind === "scm" || c.kind === "changes" || c.kind === "commit") && c.scmRepo)
+      push(m, c.scmRepo, r);
+  }
+  return m;
+}
+
+/** assistant-chat conversation id → panes showing it. */
+export function chatPanes(layout: Layout | null | undefined): Map<string, Ref[]> {
+  const m = new Map<string, Ref[]>();
+  for (const r of paneRows(layout)) {
+    const c = r.pane.content;
+    if (c.kind === "chat" && c.conversationId) push(m, c.conversationId, r);
+  }
+  return m;
+}
+
+export function paneCount(layout: Layout | null | undefined): number {
+  let n = 0;
+  for (const c of layout?.cols ?? []) n += c.panes.length;
+  return n;
+}

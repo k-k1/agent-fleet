@@ -1,17 +1,22 @@
-// App shell for the next console — P0 skeleton (docs/22).
+// App shell for the next console — P1: terminal + layout core (docs/22).
 //
-// Renders the real chrome frame (top bar / WS bar / left rail / main) wired to
-// the new zustand stores against the live backend, plus a temporary ui/
-// primitives showcase in the main area so tokens + primitives can be eyeballed
-// in both themes. The showcase goes away as real features land (P1+).
+// The main area is the real PaneHost (split panes + live xterm PTYs) wired to
+// the zustand stores; the rail carries a provisional sessions list (full
+// SessionsSection lands in P2). Boot order: resolve tenant → per-tenant layout
+// restore (with old-format migration) → per-user display prefs → workspace +
+// sessions polling. History (back/forward) traverses layout states.
 import { useEffect, useState } from "react";
 import { useTenantStore } from "../core/store/tenant.ts";
 import { useWorkspaceStore, wsBusy, startWorkspacePolling } from "../core/store/workspace.ts";
+import { useLayoutStore, wireLayoutHistory } from "../layout/store.ts";
+import { wireTerminalReconcile } from "../terminal/service.ts";
+import { useSessionsStore, startSessionsPolling } from "../features/sessions/store.ts";
 import { hydrateUIPrefs, useSettings, setSetting } from "../lib/settings.ts";
+import { PaneHost } from "../features/panes/PaneHost.tsx";
+import { SessionsRail } from "../features/sessions/SessionsRail.tsx";
 import { Button, IconButton } from "../ui/Button.tsx";
 import { Pill } from "../ui/Pill.tsx";
 import type { PillTone } from "../ui/Pill.tsx";
-import { EmptyState } from "../ui/EmptyState.tsx";
 
 function TopBar() {
   const whoami = useTenantStore((s) => s.whoami);
@@ -49,20 +54,21 @@ function TopBar() {
   );
 }
 
-// Workspace-state chip tone, mirroring the old bar's reading of the CP state.
 function wsTone(state: string): PillTone {
   if (state === "running") return "ok";
-  if (state === "stopped") return "muted";
-  if (state === "unknown" || state === "…") return "muted";
-  return "warn"; // transitions ("starting…"/"stopping…") and anything unexpected
+  if (state === "stopped" || state === "unknown" || state === "…") return "muted";
+  return "warn";
 }
 
 function WsBar() {
   const ws = useWorkspaceStore();
   const busy = wsBusy(ws.state);
   const running = ws.state === "running";
-  // Stop kills every session in the container — a real footgun from a skeleton
-  // page, so require a second click (the ConfirmDialog port lands with P2 modals).
+  const layout = useLayoutStore((s) => s.layout);
+  const splitRight = useLayoutStore((s) => s.splitRight);
+  const splitDown = useLayoutStore((s) => s.splitDown);
+  // Stop kills every session in the container — require a second click until the
+  // ConfirmDialog port lands (P2 modals).
   const [confirmStop, setConfirmStop] = useState(false);
   useEffect(() => {
     if (!confirmStop) return;
@@ -93,79 +99,65 @@ function WsBar() {
           起動
         </Button>
       )}
-    </div>
-  );
-}
-
-// Temporary P0 showcase — lets the user eyeball tokens + primitives in both
-// themes against the real backdrop. Removed once real views land.
-function Showcase() {
-  return (
-    <div className="app-showcase">
-      <section>
-        <h2>Button</h2>
-        <div className="app-row">
-          <Button icon="add">既定</Button>
-          <Button variant="primary" icon="rocket">
-            プライマリ
-          </Button>
-          <Button variant="ghost" icon="gear">
-            ゴースト
-          </Button>
-          <Button variant="danger" icon="trash">
-            危険
-          </Button>
-          <Button disabled>無効</Button>
-          <Button small icon="git-branch">
-            小
-          </Button>
-          <IconButton icon="split-horizontal" label="分割" />
-        </div>
-      </section>
-      <section>
-        <h2>Pill</h2>
-        <div className="app-row">
-          <Pill tone="ok">running</Pill>
-          <Pill tone="warn">starting…</Pill>
-          <Pill tone="danger">error</Pill>
-          <Pill tone="accent">3 変更</Pill>
-          <Pill>stopped</Pill>
-        </div>
-      </section>
-      <section>
-        <h2>EmptyState</h2>
-        <div className="app-empty-demo">
-          <EmptyState icon="inbox" title="まだ何もありません" hint="P1 でターミナル + レイアウトコアが移植されます。">
-            <Button variant="primary" small icon="add">
-              新規セッション
-            </Button>
-          </EmptyState>
-        </div>
-      </section>
+      <span className="app-spacer" />
+      <IconButton
+        icon="split-horizontal"
+        label="右に分割"
+        onClick={() => splitRight()}
+      />
+      <IconButton
+        icon="split-vertical"
+        label="上下に分割"
+        onClick={() => splitDown(layout.activeId)}
+      />
     </div>
   );
 }
 
 export function App() {
-  // Boot: resolve tenant → pull per-user display prefs → workspace state + poll.
+  const tenant = useTenantStore((s) => s.tenant);
+  const [booted, setBooted] = useState(false);
+
+  // One-time wiring: history (back/forward → layout), terminal reconciliation,
+  // pollers. All return cleanups, so StrictMode's double-invoke is safe.
   useEffect(() => {
+    const unHistory = wireLayoutHistory();
+    const unReconcile = wireTerminalReconcile();
+    const stopWsPoll = startWorkspacePolling();
+    const stopSessPoll = startSessionsPolling();
     void (async () => {
       await useTenantStore.getState().init();
       void hydrateUIPrefs();
-      void useWorkspaceStore.getState().refresh();
+      setBooted(true);
     })();
-    return startWorkspacePolling();
+    return () => {
+      unHistory();
+      unReconcile();
+      stopWsPoll();
+      stopSessPoll();
+    };
   }, []);
+
+  // Per-tenant sync: on boot completion AND on tenant switch — restore that
+  // tenant's saved split (migrating the old console's format on first load)
+  // and refetch tenant-scoped data.
+  useEffect(() => {
+    if (!booted) return;
+    useLayoutStore.getState().load(tenant);
+    void useWorkspaceStore.getState().refresh();
+    void useSessionsStore.getState().refresh();
+  }, [booted, tenant]);
+
   return (
     <div className="app-shell">
       <TopBar />
       <WsBar />
       <div className="app-body">
         <nav className="app-rail">
-          <EmptyState icon="layout-sidebar-left" title="左レール" hint="Sessions / Repos / Files は P2 で移植。" />
+          <SessionsRail />
         </nav>
         <main className="app-main">
-          <Showcase />
+          <PaneHost />
         </main>
       </div>
     </div>

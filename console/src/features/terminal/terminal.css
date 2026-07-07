@@ -1,0 +1,131 @@
+/* Terminal view + kind badges — co-located styles. */
+
+.termview {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+/* Pane header: kind badge + session name + state pill. Leaves room for the
+   grip (left) and the control cluster (right), which float above it. */
+.pane-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 34px 4px 34px;
+  min-height: 28px;
+  border-bottom: 1px solid var(--border2);
+  background: var(--panel2);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.pane-head-title {
+  color: var(--muted);
+}
+.pane-session {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.pane-session-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 600;
+}
+
+/* Session kind badge — per-kind colors so agents are distinguishable at a glance. */
+.kind-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid;
+  border-radius: 4px;
+  padding: 0 5px;
+  font-size: 11px;
+  line-height: 1.6;
+  flex: none;
+}
+.kind-tag .kt-short {
+  display: none;
+}
+.kind-tag.kind-claude { color: #e0a45e; background: rgba(224, 164, 94, 0.14); border-color: rgba(224, 164, 94, 0.45); }
+.kind-tag.kind-codex { color: #4ec97a; background: rgba(78, 201, 122, 0.14); border-color: rgba(78, 201, 122, 0.45); }
+.kind-tag.kind-opencode { color: #b07cf2; background: rgba(176, 124, 242, 0.16); border-color: rgba(176, 124, 242, 0.45); }
+.kind-tag.kind-shell { color: #46c9d0; background: rgba(70, 201, 208, 0.14); border-color: rgba(70, 201, 208, 0.45); }
+.kind-tag.kind-ssm { color: #6d8bf5; background: rgba(109, 139, 245, 0.14); border-color: rgba(109, 139, 245, 0.45); }
+/* Light theme: darker text + stronger fill for legibility. */
+[data-theme="light"] .kind-tag.kind-claude { color: #a85f1c; background: rgba(224, 164, 94, 0.2); border-color: rgba(224, 164, 94, 0.55); }
+[data-theme="light"] .kind-tag.kind-codex { color: #18854a; background: rgba(78, 201, 122, 0.2); border-color: rgba(78, 201, 122, 0.55); }
+[data-theme="light"] .kind-tag.kind-opencode { color: #6d2fce; background: rgba(176, 124, 242, 0.2); border-color: rgba(176, 124, 242, 0.55); }
+[data-theme="light"] .kind-tag.kind-shell { color: #15828a; background: rgba(70, 201, 208, 0.2); border-color: rgba(70, 201, 208, 0.55); }
+[data-theme="light"] .kind-tag.kind-ssm { color: #3140b8; background: rgba(109, 139, 245, 0.2); border-color: rgba(109, 139, 245, 0.55); }
+
+/* Terminal body: xterm fills; overlays cover it. */
+.term-body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  background: #1e1e1e; /* matches the xterm theme; NOT the app theme (terminal stays dark) */
+}
+.term-body .terminal {
+  position: absolute;
+  inset: 0;
+  padding: 2px 0 0 4px;
+}
+.term-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--panel2);
+}
+.term-empty-img {
+  max-width: min(60%, 420px);
+  max-height: 60%;
+  opacity: 0.9;
+  border-radius: 8px;
+}
+.term-mask {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, #000 45%, transparent);
+}
+.term-mask-msg {
+  color: #ddd;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Mobile control-key strip (hidden on desktop). */
+.termkeys {
+  display: none;
+}
+@media (max-width: 760px) {
+  .termkeys {
+    display: flex;
+    gap: 4px;
+    padding: 4px 6px;
+    background: var(--panel2);
+    border-top: 1px solid var(--border2);
+    overflow-x: auto;
+  }
+  .termkey {
+    flex: 1;
+    min-width: 36px;
+    min-height: 34px;
+    background: var(--btn);
+    color: var(--fg);
+    border: 1px solid var(--btn-border);
+    border-radius: 4px;
+    font-family: var(--mono);
+    font-size: 13px;
+  }
+}

@@ -1,0 +1,57 @@
+/* P1 暫定セッションレール — 本実装（P2）で置き換え予定。 */
+
+.rail-sessions {
+  list-style: none;
+  margin: 0;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.rail-session {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  padding: 6px 8px;
+  color: var(--fg);
+  cursor: pointer;
+  min-width: 0;
+}
+.rail-session:hover {
+  background: var(--hover-bg);
+}
+.rail-session-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+.rail-session .kind-tag .kt-full {
+  display: none;
+}
+.rail-session .kind-tag .kt-short {
+  display: inline;
+}
+.rail-ord {
+  flex: none;
+  min-width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  background: var(--ord);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.rail-session .ui-pill {
+  flex: none;
+}
