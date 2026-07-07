@@ -71,6 +71,15 @@ func TestWorktreeGuardDriftFlow(t *testing.T) {
 		t.Fatalf("repo list worktree flag = %+v, want worktree=true parent=app", wtRepo)
 	}
 
+	// Name-collision guard: a second worktree whose new branch clashes with the now-
+	// existing local feat-x is refused (409) before anything is created — no silently
+	// divergent branch.
+	if code := status(t, srv, "POST", "/sessions", map[string]any{
+		"worktree": true, "dir": parent, "branch": "main", "new_branch": "feat-x", "kind": "shell",
+	}); code != http.StatusConflict {
+		t.Fatalf("colliding worktree create = %d, want 409", code)
+	}
+
 	// ① checkout on that working copy is refused while the session runs.
 	code := status(t, srv, "POST", "/repos/app@feat-x/checkout", map[string]any{"branch": "main"})
 	if code != http.StatusConflict {

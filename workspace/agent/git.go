@@ -359,6 +359,26 @@ func branchExists(dir, branch string) bool {
 	return exec.Command("git", "-C", dir, "rev-parse", "--verify", "--quiet", "refs/heads/"+branch).Run() == nil
 }
 
+// branchNameStatus reports whether name already exists as a local branch and/or as a
+// remote-tracking branch (on any remote). This catches a worktree/rename name that
+// would otherwise SILENTLY create a divergent branch: `git worktree add -b X` (and
+// `git branch -m X`) happily make a fresh local X when only a past remote X exists,
+// which then collides at push time. Callers refuse and offer the user a choice.
+func branchNameStatus(dir, name string) (local, remote bool) {
+	local = branchExists(dir, name)
+	out, err := exec.Command("git", "-C", dir, "for-each-ref", "--format=%(refname:short)", "refs/remotes").Output()
+	if err == nil {
+		suffix := "/" + name
+		for _, ln := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+			if ln = strings.TrimSpace(ln); ln != "" && strings.HasSuffix(ln, suffix) {
+				remote = true
+				break
+			}
+		}
+	}
+	return
+}
+
 // gitSubmodulesUpdate fetches/updates submodules of a working copy (after a clone,
 // reuse, or branch switch — the .gitmodules set/commits differ per branch).
 //
@@ -779,6 +799,20 @@ func handleRepoRenameBranch(w http.ResponseWriter, r *http.Request) {
 	if name == "" || strings.HasPrefix(name, "-") {
 		writeErr(w, http.StatusBadRequest, "bad_ref", "branch name is required and must not start with '-'")
 		return
+	}
+	// Refuse renaming onto an existing name (local or a past remote) — git branch -m
+	// would either fail (local) or create a divergent name that collides at push
+	// (remote). Renaming can't "use the existing branch", so just block for a new name.
+	if cur, _ := gitStatus(dir); name != cur.Branch {
+		if local, remote := branchNameStatus(dir, name); local || remote {
+			where := "ローカル"
+			if !local {
+				where = "リモート"
+			}
+			writeErr(w, http.StatusConflict, "branch_exists",
+				fmt.Sprintf("%sに同名ブランチ %q が既にあります。別の名前にしてください。", where, name))
+			return
+		}
 	}
 	if out, err := exec.Command("git", "-C", dir, "branch", "-m", name).CombinedOutput(); err != nil {
 		writeErr(w, http.StatusBadGateway, "rename_failed", strings.TrimSpace(string(out)))

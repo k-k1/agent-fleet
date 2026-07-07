@@ -11,7 +11,7 @@ import { placeFixed } from "../../lib/placeFixed.js";
 import NewRepoModal from "../NewRepoModal.jsx";
 import BranchModal from "../BranchModal.jsx";
 import LaunchModal from "../LaunchModal.jsx";
-import type { LaunchOpts } from "../LaunchModal.jsx";
+import type { LaunchOpts, LaunchResult } from "../LaunchModal.jsx";
 import { kindIcon, kindLabel } from "../../lib/sessionkind.js";
 import { agentOf, repoLaunchKinds } from "../../agents/registry.ts";
 import { setLaunchSeed } from "../../lib/launchSeed.js";
@@ -285,7 +285,7 @@ export default function ReposSection() {
             // checkout. The provisional branch is derived from the prompt (server falls
             // back to wip-<slug>); the typed prompt is stashed as a launch seed and
             // auto-sent once MirrorView sees the session alive.
-            onStartWork={async ({ kind, model, prompt, worktree, base, newBranch }) => {
+            onStartWork={async ({ kind, model, prompt, worktree, base, newBranch, useExisting }) => {
               const hasModel = agentOf(kind).caps.model;
               const body: Record<string, unknown> = { dir: r.path, kind };
               if (hasModel && model) body.model = model;
@@ -293,11 +293,17 @@ export default function ReposSection() {
                 body.worktree = true;
                 body.branch = base;
                 body.new_branch = newBranch;
+                if (useExisting) body.use_existing = true;
               }
               const res = await apiJSON("api/sessions", "POST", body);
               if (res && res.error) {
+                // A branch-name collision keeps the modal open so the user can rename or
+                // (remote-only) work on the existing branch; other errors just toast.
+                const code = typeof res.error === "object" ? res.error.code : "";
+                if (code === "branch_exists") return { ok: false, conflict: "local" as const };
+                if (code === "branch_exists_remote") return { ok: false, conflict: "remote" as const };
                 toast((worktree ? "worktree 起動に失敗: " : "起動に失敗: ") + errText(res.error));
-                return;
+                return { ok: false };
               }
               writeRepoLast(r.name, kind, hasModel ? model : undefined);
               if (prompt) {
@@ -311,6 +317,7 @@ export default function ReposSection() {
               bumpSessions();
               const chat = agentOf(kind).caps.chat;
               (chat ? showChat : showTerminal)(res.name);
+              return { ok: true };
             }}
             // A checkout / new branch changed HEAD and the working tree — refresh the
             // repo row (branch label) and the Files tree.
@@ -343,7 +350,7 @@ interface RepoRowProps {
   onFF?: () => void;
   onDelete?: () => void;
   onLaunch: (kind: string, split: boolean) => void;
-  onStartWork: (opts: LaunchOpts) => void;
+  onStartWork: (opts: LaunchOpts) => Promise<LaunchResult>;
   onBranchChanged?: () => void;
   opens?: { ordinal: number; id: string }[];
   onFocusPane?: (id: string) => void;
@@ -651,7 +658,7 @@ function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected,
           path={r.path}
           kinds={agentKinds}
           onClose={() => setLaunchModal(false)}
-          onLaunch={(opts) => { setLaunchModal(false); onStartWork(opts); }}
+          onLaunch={onStartWork}
         />
       )}
     </li>

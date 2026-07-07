@@ -615,6 +615,10 @@ type createReq struct {
 	// the fresh branch to create off it. Lets a decided task branch off into its own
 	// directory + session without touching the parent. RemoteURL is ignored when set.
 	Worktree bool `json:"worktree"`
+	// UseExisting (worktree only) checks out an EXISTING branch (Branch) into the
+	// worktree instead of creating a new one — the "work on the existing branch" answer
+	// to a name collision. NewBranch is ignored; a remote-only branch is DWIM-tracked.
+	UseExisting bool `json:"use_existing"`
 	// SSM (kind=ssm) coordinates, resolved and forwarded by the Control Plane from a
 	// host bookmark (control-plane/ssm.go). No secrets — SSO login happens in-pane.
 	SSMProfile   string `json:"ssm_profile"`
@@ -654,15 +658,36 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		if !filepath.IsAbs(parent) {
 			parent = filepath.Join(homeDir(), parent)
 		}
-		// Branch naming is deferred: the client derives a provisional name from the first
-		// prompt, but when that yields nothing (e.g. a Japanese-only prompt, or no prompt)
-		// we start on a throwaway wip-<slug>. The user (or the LLM suggestion) renames it
-		// to a real name later — the worktree folder stays put, so the session id holds.
-		nb := strings.TrimSpace(req.NewBranch)
-		if nb == "" {
-			nb = "wip-" + randSlug()
+		var dir string
+		var err error
+		if req.UseExisting {
+			// "Work on the existing branch": check out req.Branch (local or DWIM-tracked
+			// remote) into the worktree — the chosen resolution of a name collision.
+			dir, err = ensureWorktree(parent, req.Branch, "")
+		} else {
+			// Branch naming is deferred: the client derives a provisional name from the
+			// first prompt, but when that yields nothing (e.g. a Japanese-only prompt, or
+			// no prompt) we start on a throwaway wip-<slug>. The user (or the LLM
+			// suggestion) renames it later — the folder stays put, so the session id holds.
+			nb := strings.TrimSpace(req.NewBranch)
+			if nb == "" {
+				nb = "wip-" + randSlug() // random → effectively never collides; skip the check
+			} else if local, remote := branchNameStatus(parent, nb); local {
+				// A same-named local branch: -b would fail anyway, but stop with a clear
+				// message rather than git's raw error, and let the user pick another name.
+				writeErr(w, http.StatusConflict, "branch_exists",
+					fmt.Sprintf("branch %q already exists locally; choose another name", nb))
+				return
+			} else if remote {
+				// A same-named PAST remote branch: -b would silently create a divergent
+				// local branch that collides at push. Refuse and let the user rename or
+				// work on the existing one (use_existing).
+				writeErr(w, http.StatusConflict, "branch_exists_remote",
+					fmt.Sprintf("a remote branch %q already exists; rename it or work on the existing branch", nb))
+				return
+			}
+			dir, err = ensureWorktree(parent, req.Branch, nb)
 		}
-		dir, err := ensureWorktree(parent, req.Branch, nb)
 		if err != nil {
 			writeErr(w, http.StatusBadGateway, "worktree_failed", err.Error())
 			return

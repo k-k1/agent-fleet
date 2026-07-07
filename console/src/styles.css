@@ -7534,6 +7534,24 @@ button.mt-toolrun-head:hover {
   flex: 1;
   min-width: 0;
 }
+/* Name-collision notice inside the worktree detail: warn + an optional "use existing"
+   escape hatch when a past remote branch of the same name exists. */
+.launch-conflict {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--warn) 34%, transparent);
+}
+.launch-conflict-use {
+  flex: none;
+}
 /* Prompt field header: label on the left, the テンプレート picker on the right. */
 .launch-prompt-label {
   display: flex;
