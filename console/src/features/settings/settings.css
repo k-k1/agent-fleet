@@ -523,3 +523,849 @@
   font-size: 12px;
   color: var(--muted);
 }
+
+/* Connections / provider cards / OAuth flows — extracted from the old console's
+   styles.css (region 5276–6118) for pixel parity (docs/22 P7b). Trimmed at P8. */
+/* connections */
+.conns {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.conn-cat {
+  margin-top: 10px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+.conn-cat:first-child {
+  margin-top: 0;
+}
+
+/* ── Connection provider cards (設定 > 接続). Each provider is a card: a colored
+   2-char badge + name + status pill, then a description and its connect/flow UI.
+   Unifies what was a flat .conn-row per provider. Mock: console-connections-mock.html.
+   Badge colors match the session kind badges (codex green / opencode purple) rather
+   than the mock's swap, so a provider reads the same color across the app. */
+.p-card {
+  border: 1px solid var(--border2);
+  border-radius: 10px;
+  background: var(--panel2, var(--panel));
+  overflow: hidden;
+  margin-bottom: 8px;
+}
+.p-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 13px;
+}
+.p-badge {
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  color: #0c0c0c;
+}
+.p-badge.pb-claude { background: #e0a45e; }
+.p-badge.pb-codex { background: #4ec97a; }
+.p-badge.pb-opencode { background: #b07cf2; }
+.p-badge.pb-github { background: #c9d1d9; }
+.p-badge.pb-bitbucket { background: #4a90e2; }
+.p-name {
+  font-weight: 600;
+  font-size: 14px;
+}
+.p-status {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-family: var(--mono);
+  padding: 2px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--border2);
+  color: var(--muted);
+  white-space: nowrap;
+}
+.p-status.on {
+  color: var(--ok);
+  border-color: color-mix(in srgb, var(--ok) 45%, transparent);
+  background: color-mix(in srgb, var(--ok) 12%, transparent);
+}
+.p-status .p-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ok);
+}
+.p-desc {
+  padding: 0 13px 11px;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+.p-body {
+  padding: 12px 13px;
+  border-top: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg) 40%, var(--panel2));
+}
+/* stack body children (hint / key list / flow / steps) with breathing room */
+.p-body > * + * {
+  margin-top: 10px;
+}
+.p-who {
+  padding: 2px 13px 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.p-who .p-em {
+  font-size: 13px;
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.p-who .p-pl {
+  font-size: 11px;
+  color: var(--muted);
+  font-family: var(--mono);
+  flex: none;
+}
+.p-who .conn-disconnect {
+  margin-left: auto;
+}
+/* Internal git provider: the repo list inside its provider card (P2). */
+.internal-repo-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.internal-repo {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.internal-repo .ir-name {
+  font-size: 13px;
+  color: var(--fg);
+  font-weight: 500;
+  flex: none;
+  max-width: 30%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.internal-repo .ir-url {
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 3px 6px;
+  cursor: pointer;
+  overflow: hidden;
+}
+.internal-repo .ir-url code {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: block;
+}
+.internal-repo .ir-url:hover code {
+  color: var(--fg);
+}
+.internal-repo .ir-rename {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* Internal repo read-only browser modal (P3). */
+.modal.ig-browser {
+  width: min(920px, 94vw);
+  max-width: 94vw;
+}
+.ig-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.ig-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.ig-toolbar select {
+  flex: none;
+}
+.ig-crumbs {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px;
+  font-family: var(--mono);
+  font-size: 12px;
+  min-width: 0;
+}
+.ig-crumb {
+  background: none;
+  border: none;
+  color: var(--link, var(--accent));
+  cursor: pointer;
+  padding: 1px 3px;
+}
+.ig-crumb:hover {
+  text-decoration: underline;
+}
+.ig-sep {
+  color: var(--muted);
+}
+.ig-panes {
+  display: flex;
+  gap: 12px;
+  min-height: 320px;
+  max-height: 60vh;
+}
+.ig-tree {
+  flex: 0 0 38%;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.ig-view {
+  flex: 1 1 auto;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  min-width: 0;
+}
+.ig-entries {
+  list-style: none;
+  margin: 0;
+  padding: 4px;
+}
+.ig-entry {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: 4px;
+  font-size: 13px;
+  color: var(--fg);
+}
+.ig-entry:hover,
+.ig-entry.active {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+.ig-entry .ig-icon {
+  flex: none;
+}
+.ig-entry .ig-name {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ig-entry .ig-size {
+  flex: none;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+.ig-blob {
+  margin: 0;
+  padding: 10px 12px;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre;
+  overflow: auto;
+}
+
+/* Per-provider (and global) commit identity editor inside a provider card. */
+.git-identity {
+  padding: 4px 13px 12px;
+  border-top: 1px solid var(--border);
+}
+.git-identity.solo {
+  border-top: none;
+  padding-top: 8px;
+}
+.gi-title {
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+.gi-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.gi-row .cinput {
+  flex: 1;
+  min-width: 120px;
+}
+/* Repo commit-identity line under the commit box (SourceControlView). */
+.repo-identity {
+  margin-top: 6px;
+  font-size: 11px;
+}
+.ri-line {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 2px 0;
+  text-align: left;
+}
+.ri-line:hover {
+  color: var(--fg);
+}
+.ri-who {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ri-src {
+  flex: none;
+  font-size: 10px;
+  color: var(--muted2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0 5px;
+}
+.ri-edit {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.ri-edit .cinput {
+  flex: 1;
+  min-width: 90px;
+}
+/* connect-method options (Codex): recommended vs alternative */
+.p-opts {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.p-opt {
+  flex: 1;
+  min-width: 150px;
+  text-align: left;
+  border: 1px solid var(--border2);
+  border-radius: 8px;
+  padding: 9px 11px;
+  background: var(--panel2, var(--panel));
+  color: var(--fg);
+  cursor: pointer;
+}
+.p-opt:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+.p-opt-t {
+  font-size: 12.5px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.p-opt-s {
+  display: block;
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 3px;
+}
+.p-rec {
+  font-size: 9.5px;
+  font-family: var(--mono);
+  color: var(--ok);
+  border: 1px solid color-mix(in srgb, var(--ok) 45%, transparent);
+  background: color-mix(in srgb, var(--ok) 12%, transparent);
+  border-radius: 999px;
+  padding: 0 6px;
+  letter-spacing: 0.04em;
+}
+/* numbered device-flow steps (copy code → open link → wait for approval) */
+.p-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+}
+.p-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+}
+.p-step-k {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--panel2, var(--panel));
+  border: 1px solid var(--border2);
+  font-family: var(--mono);
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent);
+  margin-top: 1px;
+}
+.p-step-c {
+  flex: 1;
+  min-width: 0;
+}
+.p-step-lbl {
+  font-size: 12.5px;
+  margin-bottom: 5px;
+}
+.p-waiting {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--warn);
+  font-size: 12.5px;
+}
+/* unified hint block (replaces per-provider .field-help / inline notes) */
+.p-hint {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  font-size: 12px;
+  color: var(--muted);
+  border-left: 2px solid var(--border2);
+  padding: 2px 0 2px 10px;
+}
+.p-hint-i {
+  color: var(--accent);
+  font-family: var(--mono);
+  margin-top: 1px;
+}
+/* Per-agent settings group inside a provider card (エージェントタブ): the connection
+   card's behavior toggles (Remote Control / 通知 / RTK / Web UI), shown once the
+   agent is connected. */
+.p-settings {
+  border-top: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg) 40%, var(--panel2));
+  padding: 8px 13px 11px;
+}
+.ps-title {
+  font-size: 10.5px;
+  font-family: var(--mono);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--faint, var(--muted));
+  margin: 4px 0 6px;
+}
+.ps-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 30px;
+}
+.ps-label {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  color: var(--fg);
+}
+.ps-label .sub {
+  display: block;
+  font-size: 11px;
+  color: var(--muted);
+}
+.ps-note {
+  font-size: 11px;
+  color: var(--muted);
+  margin: 2px 0 6px;
+  line-height: 1.45;
+}
+.conn-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 4px;
+  border-bottom: 1px solid var(--border2);
+}
+.conn-block {
+  flex-direction: column;
+  align-items: stretch;
+}
+.conn-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.oc-keys {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0 0 0 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.oc-keys li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+.cdot {
+  font-size: 10px;
+}
+.cdot.ok {
+  color: var(--ok);
+}
+.cdot.off {
+  color: var(--muted2);
+}
+.cname {
+  min-width: 80px;
+  font-weight: 600;
+}
+.cwho {
+  flex: 1;
+  color: var(--muted);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.flow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  flex-basis: 100%;
+  padding-left: 18px;
+}
+.flow-link {
+  color: var(--accent);
+  font-size: 12px;
+}
+.cinput {
+  font-size: 12px;
+  min-width: 160px;
+}
+/* Inline text button that reads as a link (used in help text). */
+.linklike {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent);
+  cursor: pointer;
+  font: inherit;
+}
+/* SSM login settings (SsmTab) — SSO sessions + host bookmarks. */
+.ssm-section {
+  margin-bottom: 18px;
+}
+.ssm-list {
+  list-style: none;
+  margin: 8px 0 12px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ssm-item {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: var(--panel2);
+}
+.ssm-item-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.ssm-alias {
+  font-weight: 600;
+  font-size: 13px;
+}
+.ssm-meta {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 3px 18px;
+  margin-top: 7px;
+}
+.ssm-meta-row {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  font-size: 12px;
+  min-width: 0;
+}
+.ssm-meta-row.wide {
+  grid-column: 1 / -1;
+}
+/* Per-host terminal color picker (swatches of the vivid hue + a terminal preview). */
+.ssm-host-color {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+.ssm-swatches {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+.ssm-swatch {
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  cursor: pointer;
+  padding: 0;
+  font-size: 9px;
+  font-weight: 700;
+  color: rgba(0, 0, 0, 0.6);
+  line-height: 1;
+}
+.ssm-swatch.active {
+  outline: 2px solid var(--fg);
+  outline-offset: 1px;
+}
+.ssm-swatch-preview {
+  margin-left: 4px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  font-size: 11px;
+  color: #ddd;
+}
+.ssm-meta-k {
+  flex: 0 0 92px;
+  color: var(--muted2);
+}
+.ssm-meta-v {
+  flex: 1;
+  min-width: 0;
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ssm-meta-v.mono {
+  font-family: var(--mono);
+}
+@media (max-width: 560px) {
+  .ssm-meta {
+    grid-template-columns: 1fr;
+  }
+}
+.ssm-form {
+  margin-top: 8px;
+}
+.ssm-form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 8px;
+}
+.ssm-form-grid .cinput {
+  min-width: 0;
+  width: 100%;
+}
+/* Labeled, grouped SSM add-form (mock: console-ssm-mock.html): each field carries a
+   label, a required * marker, and a hint; grouped into 必須 / 詳細(任意). */
+.ssm-frm {
+  display: flex;
+  flex-direction: column;
+  gap: 13px;
+  margin-top: 10px;
+}
+.ssm-fgroup {
+  border: 1px solid var(--border2);
+  border-radius: 9px;
+  background: var(--panel2);
+  padding: 13px;
+}
+.ssm-fg-title {
+  font-size: 11px;
+  font-family: var(--mono);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin: 0 0 11px;
+}
+.ssm-fg-title .opt {
+  color: var(--faint, var(--muted));
+  text-transform: none;
+  letter-spacing: 0;
+  font-family: var(--sans);
+  font-size: 11px;
+}
+.ssm-fgrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+@media (max-width: 560px) {
+  .ssm-fgrid {
+    grid-template-columns: 1fr;
+  }
+}
+.ssm-fld {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+.ssm-fld.wide {
+  grid-column: 1 / -1;
+}
+.ssm-fld label {
+  font-size: 11.5px;
+  color: var(--fg);
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.ssm-fld label .req {
+  color: var(--accent);
+  font-family: var(--mono);
+}
+.ssm-fld .cinput {
+  width: 100%;
+  min-width: 0;
+}
+.ssm-fld .hint {
+  font-size: 11px;
+  color: var(--faint, var(--muted));
+  line-height: 1.45;
+}
+.ssm-fld .hint code {
+  font-family: var(--mono);
+  color: var(--muted);
+}
+.ssm-frm-foot {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.ssm-frm-foot .req-note {
+  font-size: 11px;
+  color: var(--faint, var(--muted));
+}
+.ssm-frm-foot .req-note b {
+  color: var(--accent);
+  font-family: var(--mono);
+}
+/* dependency banner: host add needs a profile first — a CTA, not a disabled form. */
+.ssm-dep {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid color-mix(in srgb, var(--warn) 40%, var(--border2));
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-top: 10px;
+}
+.ssm-dep .i {
+  color: var(--warn);
+  flex: none;
+  display: inline-flex;
+}
+.ssm-dep .t {
+  flex: 1;
+  font-size: 12.5px;
+  color: var(--fg);
+}
+/* item delete: a labeled danger button instead of a bare ✕ */
+.ssm-del {
+  font-size: 11.5px;
+  padding: 2px 9px;
+}
+/* collapsed add affordance — the labeled add-form only expands on demand */
+.ssm-add-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+  font-size: 12.5px;
+}
+.ssm-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 8px;
+}
+.ssm-code-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 8px 0;
+}
+.ssm-code-label {
+  font-size: 12px;
+  color: var(--muted);
+}
+/* The device-flow code is a button: clicking copies it to the clipboard (the glyph
+   flips to a check on success). It still reads as a code, just clickable. */
+.oauth-code {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--mono);
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  color: #fff;
+  background: #333;
+  padding: 1px 8px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.oauth-code:hover {
+  background: #444;
+}
+.oauth-copy-ic {
+  font-size: 11px;
+  letter-spacing: 0;
+  opacity: 0.7;
+}
+/* "切断" — the live-connection sever action; danger-red on hover (via .danger). */
+.conn-disconnect {
+  font-size: 12px;
+}
+

@@ -4,23 +4,17 @@
 // see AdminDialog (P7c), opened from its own top-bar button — so admin actions are
 // clearly distinct from personal settings.
 //
-// P7a ports the shell + 表示; the remaining tabs land in P7b and show a placeholder
-// until then.
 import { useEffect, useRef, useState } from "react";
 import type { TouchEvent as RTouchEvent } from "react";
 import { useSettingsUI } from "./store.ts";
 import { mobileMatches } from "../../lib/device.ts";
 import { Modal } from "../../ui/Modal.tsx";
 import { DisplayTab } from "./DisplayTab.tsx";
-
-// TODO(P7b): EnvTab / AgentsTab / GitTab / SsmTab / TokensTab.
-function PendingTab({ label }: { label: string }) {
-  return (
-    <div className="ui-field-hint" style={{ padding: "24px 8px" }}>
-      「{label}」タブは移植中です（P7b）。それまでは旧コンソール（index.html）の設定をご利用ください。
-    </div>
-  );
-}
+import { EnvTab } from "./EnvTab.tsx";
+import { AgentsTab } from "./AgentsTab.tsx";
+import { GitTab } from "./GitTab.tsx";
+import { SsmTab } from "./SsmTab.tsx";
+import { TokensTab } from "./TokensTab.tsx";
 
 export function SettingsDialog() {
   const closeSettings = useSettingsUI((s) => s.closeSettings);
@@ -81,11 +75,11 @@ export function SettingsDialog() {
           ))}
         </div>
         <div className="settings-content">
-          {section === "agents" && <PendingTab label="エージェント" />}
-          {section === "git" && <PendingTab label="Git" />}
-          {section === "env" && <PendingTab label="ワークスペース" />}
-          {section === "ssm" && <PendingTab label="AWS SSM" />}
-          {section === "tokens" && <PendingTab label="MCP" />}
+          {section === "agents" && <AgentsTab />}
+          {section === "git" && <GitTab />}
+          {section === "env" && <EnvTab />}
+          {section === "ssm" && <SsmTab />}
+          {section === "tokens" && <TokensTab />}
           {section === "display" && <DisplayTab />}
         </div>
       </div>
