@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os/exec"
 	"strings"
 	"sync"
 	"time"
@@ -479,37 +480,96 @@ func cleanBranchName(s string) string {
 	return name
 }
 
-// handleRepoSuggestBranch proposes a branch name for a working copy by summarizing the
-// conversation of a session running in it — the LLM half of deferred naming (start on
-// temp/<slug>, ask the AI for a real name once the task has a shape). Returns the
-// suggestion for the Console's rename field to pre-fill; it never renames on its own.
-func handleRepoSuggestBranch(w http.ResponseWriter, r *http.Request) {
-	dir, ok := repoDirFromPath(w, r)
-	if !ok {
+// handleSessionSuggestBranch proposes a branch name from THIS session's conversation —
+// the LLM half of deferred naming (start on temp/<slug>, ask the AI for a real name
+// once the task has a shape). Session-scoped (not repo-scoped) so the source is
+// unambiguous even when several sessions share one worktree. Preview only: it returns
+// the suggestion for the rename modal to fill; it never renames on its own.
+func handleSessionSuggestBranch(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if !nameRe.MatchString(name) {
+		writeErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
 		return
 	}
 	if !autoTitleSuggestEnabled() {
-		writeErr(w, http.StatusBadRequest, "feature_disabled", "auto suggestion is turned off")
+		writeErr(w, http.StatusBadRequest, "feature_disabled", "AI 提案が無効です（表示設定のタイトル自動提案をオンに）")
 		return
 	}
-	m, ok := sessionForDir(dir)
+	m, ok := readSessionMeta(name)
 	if !ok {
-		writeErr(w, http.StatusBadRequest, "no_session", "no session in this working copy to summarize")
+		writeErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
 		return
 	}
 	turns := sessionTitleTurns(m)
 	if len(turns) == 0 {
-		writeErr(w, http.StatusBadRequest, "no_content", "not enough conversation yet to suggest a name")
+		writeErr(w, http.StatusBadRequest, "no_content", "会話がまだ足りません（数往復してから試してください）")
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), titleSuggestTimeout)
 	defer cancel()
-	name, err := runBranchSuggestLLM(ctx, turns)
-	if err != nil || name == "" {
-		writeErr(w, http.StatusBadGateway, "generation_failed", "branch suggestion failed")
+	branch, err := runBranchSuggestLLM(ctx, turns)
+	if err != nil {
+		// Surface the underlying reason (auth/CLI/timeout) instead of a generic string.
+		writeErr(w, http.StatusBadGateway, "generation_failed", "AI 提案に失敗しました: "+err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"branch": name})
+	if branch == "" {
+		writeErr(w, http.StatusUnprocessableEntity, "empty_result",
+			"AI が有効なブランチ名を返しませんでした。手入力してください。")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"branch": branch})
+}
+
+// handleSessionRenameBranch renames the branch of the session's working copy (its
+// worktree) via git branch -m. Session-scoped so it pairs with the session-based AI
+// suggestion; the rename targets the one shared branch and every session in that dir
+// has its recorded start branch updated (so an intentional rename isn't read as drift).
+// Refuses a name that collides with an existing local or past-remote branch.
+func handleSessionRenameBranch(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if !nameRe.MatchString(name) {
+		writeErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
+		return
+	}
+	m, ok := readSessionMeta(name)
+	if !ok {
+		writeErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
+		return
+	}
+	dir := m.Dir
+	if !isGitRepo(dir) {
+		writeErr(w, http.StatusBadRequest, "bad_dir", "session working copy is not a git repo")
+		return
+	}
+	var req renameBranchReq
+	if err := json.NewDecoder(io.LimitReader(r.Body, 4<<10)).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
+		return
+	}
+	newName := strings.TrimSpace(req.Name)
+	if newName == "" || strings.HasPrefix(newName, "-") {
+		writeErr(w, http.StatusBadRequest, "bad_ref", "branch name is required and must not start with '-'")
+		return
+	}
+	if cur, _ := gitStatus(dir); newName != cur.Branch {
+		if local, remote := branchNameStatus(dir, newName); local || remote {
+			where := "ローカル"
+			if !local {
+				where = "リモート"
+			}
+			writeErr(w, http.StatusConflict, "branch_exists",
+				fmt.Sprintf("%sに同名ブランチ %q が既にあります。別の名前にしてください。", where, newName))
+			return
+		}
+	}
+	if out, err := exec.Command("git", "-C", dir, "branch", "-m", newName).CombinedOutput(); err != nil {
+		writeErr(w, http.StatusBadGateway, "rename_failed", strings.TrimSpace(string(out)))
+		return
+	}
+	updateSessionStartBranch(dir, newName)
+	m, _ = readSessionMeta(name)
+	writeJSON(w, http.StatusOK, wireSession(m, tmuxHasSession(tmuxName(name))))
 }
 
 // sessionTitleTurns fetches the full turn list for a session regardless of kind,

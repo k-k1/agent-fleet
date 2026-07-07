@@ -1584,35 +1584,6 @@ button.wu-reload {
 .repo-branch.worktree {
   color: var(--accent);
 }
-/* Inline branch-rename: input + an AI-suggest button, sized to sit in the meta line. */
-.repo-branch-rename {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
-.repo-branch-edit {
-  height: 20px;
-  padding: 0 6px;
-  font-size: 11px;
-  max-width: 16em;
-}
-.repo-branch-ai {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  height: 20px;
-  padding: 0 7px;
-  font-size: 11px;
-  border-radius: 4px;
-  border: 1px solid color-mix(in srgb, var(--accent) 34%, transparent);
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
-  color: var(--accent);
-  cursor: pointer;
-}
-.repo-branch-ai:disabled {
-  opacity: 0.6;
-  cursor: default;
-}
 /* Git provider badge — identifies which host the repo's origin is on. */
 .repo-provider {
   display: inline-flex;

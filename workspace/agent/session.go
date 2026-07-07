@@ -50,6 +50,10 @@ type Session struct {
 	Branch        string `json:"branch,omitempty"`
 	CurrentBranch string `json:"currentBranch,omitempty"`
 	BranchDrift   bool   `json:"branchDrift,omitempty"`
+	// Worktree marks a session running in a linked git worktree — the Console offers
+	// branch rename (deferred naming) only for these, since renaming a standalone
+	// clone's branch is a different, rarer intent.
+	Worktree bool `json:"worktree,omitempty"`
 }
 
 func tmuxName(name string) string { return tmuxPrefix + name }
@@ -425,29 +429,6 @@ func sessionsInDir(metas []sessionMeta, live map[string]bool, dir string) []stri
 	return names
 }
 
-// sessionForDir returns a session meta whose cwd is at or under dir, preferring a live
-// one (its conversation is current) and then claude (richest transcript). Used to pick
-// which session's conversation to summarize when suggesting a branch name for a
-// worktree. ok=false when no session runs there.
-func sessionForDir(dir string) (sessionMeta, bool) {
-	var best sessionMeta
-	found, bestLive := false, false
-	for _, m := range listSessionMetas() {
-		if m.Archived {
-			continue
-		}
-		if m.Dir != dir && !strings.HasPrefix(m.Dir, dir+string(os.PathSeparator)) {
-			continue
-		}
-		live := tmuxHasSession(tmuxName(m.Name))
-		// Prefer live over stopped, and claude over other kinds among equals.
-		if !found || (live && !bestLive) || (live == bestLive && m.Kind == kindClaude && best.Kind != kindClaude) {
-			best, found, bestLive = m, true, live
-		}
-	}
-	return best, found
-}
-
 // updateSessionStartBranch rewrites the recorded start branch (sessionMeta.Branch) for
 // every session whose cwd is at or under dir, after an intentional `git branch -m` on
 // that working copy — so the rename isn't mistaken for branch drift (③). Only touches
@@ -477,26 +458,33 @@ func worktreeHasSessions(dir string) bool {
 	return false
 }
 
-// annotateBranchDrift fills BranchDrift/CurrentBranch for any session whose working
-// copy has been switched off the branch it started on. curBranch resolves a dir's
-// current branch and is cached per dir, so N sessions sharing one working copy cost a
-// single git call. Sessions with no recorded start branch (pre-existing, or a non-git
-// dir) are left untouched. Split from the git/tmux plumbing so it is unit-testable.
-func annotateBranchDrift(sessions []Session, curBranch func(string) string) {
-	cache := map[string]string{}
+// dirInfo is a working copy's current branch + worktree flag, cached per dir.
+type dirInfo struct {
+	branch   string
+	worktree bool
+}
+
+// annotateSessions enriches each session from its working copy: Worktree (is it a
+// linked worktree) and BranchDrift/CurrentBranch (was it switched off its start
+// branch). info resolves a dir once and is cached, so N sessions sharing a working
+// copy cost a single git call. Drift needs a recorded start branch; worktree does not.
+// Split from the git/tmux plumbing so it is unit-testable.
+func annotateSessions(sessions []Session, info func(string) dirInfo) {
+	cache := map[string]dirInfo{}
 	for i := range sessions {
 		s := &sessions[i]
-		if s.Branch == "" {
+		if s.Dir == "" {
 			continue
 		}
-		cur, ok := cache[s.Dir]
+		v, ok := cache[s.Dir]
 		if !ok {
-			cur = curBranch(s.Dir)
-			cache[s.Dir] = cur
+			v = info(s.Dir)
+			cache[s.Dir] = v
 		}
-		if cur != "" && cur != s.Branch {
+		s.Worktree = v.worktree
+		if s.Branch != "" && v.branch != "" && v.branch != s.Branch {
 			s.BranchDrift = true
-			s.CurrentBranch = cur
+			s.CurrentBranch = v.branch
 		}
 	}
 }
@@ -556,9 +544,12 @@ func handleListSessions(w http.ResponseWriter, r *http.Request) {
 			Alive: true, Resumable: true,
 		})
 	}
-	// Flag any session whose working copy was checked out to a different branch than
-	// it started on (a checkout that bypassed the guard). One git call per unique dir.
-	annotateBranchDrift(sessions, gitCurrentBranch)
+	// Enrich rows from their working copy (worktree flag + branch-drift). One git call
+	// per unique dir.
+	annotateSessions(sessions, func(dir string) dirInfo {
+		b, wt := gitDirInfo(dir)
+		return dirInfo{branch: b, worktree: wt}
+	})
 	// Stable order: newest first by creation time.
 	sort.Slice(sessions, func(i, j int) bool { return sessions[i].CreatedAt > sessions[j].CreatedAt })
 	writeJSON(w, http.StatusOK, map[string]any{"sessions": sessions})

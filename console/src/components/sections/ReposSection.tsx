@@ -365,51 +365,7 @@ function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected,
   const wrapRef = useRef<HTMLDivElement>(null);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null); // right-click context menu
   const [branchOpen, setBranchOpen] = useState(false); // branch switch / create modal
-  const [renaming, setRenaming] = useState(false); // inline branch rename (worktrees)
-  const [renameVal, setRenameVal] = useState("");
-  const [suggesting, setSuggesting] = useState(false); // AI branch-name suggestion in flight
-  const rowToast = useToast();
   const menuRef = useRef<HTMLUListElement>(null);
-
-  // Rename the worktree's branch in place (git branch -m). The folder — and so the
-  // session id — is left untouched; only the branch moves. This is the deferred-naming
-  // payoff: start on a provisional name, settle on the real one here.
-  const doRename = async () => {
-    const name = renameVal.trim();
-    setRenaming(false);
-    if (!name || name === r.branch) return;
-    try {
-      const res = await apiJSON(`api/repos/${encodeURIComponent(r.name)}/rename-branch`, "POST", { name });
-      if (res && res.error) {
-        rowToast("ブランチ名の変更に失敗: " + errText(res.error));
-        return;
-      }
-      onBranchChanged?.();
-    } catch {
-      rowToast("ブランチ名の変更に失敗しました（サーバが応答しません）");
-    }
-  };
-
-  // Ask the LLM to name the branch from the session's conversation, and pre-fill the
-  // rename field — the user reviews and presses Enter to apply. This is the deferred-
-  // naming payoff for prompts the derivation couldn't handle (e.g. Japanese).
-  const aiSuggest = async () => {
-    setSuggesting(true);
-    try {
-      const res = await apiJSON(`api/repos/${encodeURIComponent(r.name)}/suggest-branch`, "POST", {});
-      if (res && res.error) {
-        rowToast("AI によるブランチ名の提案に失敗: " + errText(res.error));
-        return;
-      }
-      if (res && res.branch) setRenameVal(res.branch);
-    } catch {
-      // A non-JSON reply (e.g. a gateway timeout while the LLM runs) rejects the JSON
-      // parse; without this the spinner would spin forever. Surface it and reset.
-      rowToast("AI によるブランチ名の提案に失敗しました（時間切れかサーバ無応答）");
-    } finally {
-      setSuggesting(false);
-    }
-  };
 
   // Context menu: open at the cursor, clamp on-screen, close on outside click / Esc.
   useLayoutEffect(() => {
@@ -550,51 +506,19 @@ function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected,
       {/* Meta line under the name: current branch (left) + git provider (right). */}
       {(r.branch || r.provider || r.worktree) && (
         <div className="repo-meta">
-          {r.branch && (renaming ? (
-            <span className="repo-branch-rename" onClick={(e) => e.stopPropagation()}>
-              <input
-                className="cinput repo-branch-edit"
-                value={renameVal}
-                autoFocus
-                disabled={suggesting}
-                onChange={(e) => setRenameVal(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") doRename();
-                  else if (e.key === "Escape") setRenaming(false);
-                }}
-                onBlur={() => { if (!suggesting) setRenaming(false); }}
-              />
-              <button
-                type="button"
-                className="repo-branch-ai"
-                title="会話から AI にブランチ名を提案してもらう"
-                disabled={suggesting}
-                // Keep focus on the input so its onBlur doesn't close the editor first.
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={aiSuggest}
-              >
-                <Icon name={suggesting ? "loading" : "sparkle"} spin={suggesting} /> AI
-              </button>
-            </span>
-          ) : (
+          {r.branch && (
             <span
               className={"repo-branch" + (r.worktree ? " worktree" : "")}
               title={
                 r.worktree
-                  ? `worktree — クリックでブランチ名を変更（現在: ${r.branch}${r.parent ? "、親: " + r.parent : ""}）`
+                  ? `worktree — ブランチ: ${r.branch}${r.parent ? "（親: " + r.parent + "）" : ""}（名前変更はセッションのメニューから）`
                   : "現在のブランチ: " + r.branch
-              }
-              style={r.worktree ? { cursor: "text" } : undefined}
-              onClick={
-                r.worktree
-                  ? (e) => { e.stopPropagation(); setRenameVal(r.branch || ""); setRenaming(true); }
-                  : undefined
               }
             >
               <Icon name={r.worktree ? "repo-forked" : "git-branch"} className="repo-branch-ic" />
               <span className="repo-branch-name">{r.branch}</span>
             </span>
-          ))}
+          )}
           {r.provider && (
             <span
               className={"repo-provider prov-" + r.provider}
@@ -634,11 +558,6 @@ function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected,
           <li onClick={() => { setMenu(null); setBranchOpen(true); }}>
             <Icon name="git-branch" /> ブランチ切替
           </li>
-          {r.worktree && (
-            <li onClick={() => { setMenu(null); setRenameVal(r.branch || ""); setRenaming(true); aiSuggest(); }}>
-              <Icon name="sparkle" /> ブランチ名を変更（AI 提案）
-            </li>
-          )}
           {onFF && (
             <li onClick={() => { setMenu(null); onFF(); }}>
               <Icon name="arrow-down" /> Fast-Forward
