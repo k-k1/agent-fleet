@@ -245,46 +245,67 @@
 .ui-section {
   border-bottom: 1px solid var(--border2);
 }
+/* Header band — old .pane-head exactly: a tinted, sticky band (a subtle step off
+   the left-pane surface) plus a divider so SESSIONS / REPOS / FILES read as
+   headers, not just another row. z-index keeps it above the scrolling rows. */
 .ui-section-head {
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 2px 6px 2px 2px;
+  justify-content: space-between;
+  padding: 6px 8px;
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  background: var(--hover-bg);
+  border-bottom: 1px solid var(--border2);
 }
 .ui-section-toggle {
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   min-width: 0;
+  overflow: hidden;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   background: none;
   border: none;
   color: var(--fg);
   font: inherit;
+  text-transform: uppercase;
   font-weight: 600;
   font-size: 12px;
-  padding: 6px 4px;
+  letter-spacing: 0.04em;
+  padding: 2px;
   cursor: pointer;
   text-align: left;
 }
+.ui-section-toggle .codicon {
+  font-size: 13px;
+  color: currentColor;
+}
 .ui-section-caret {
   color: var(--muted);
-  width: 12px;
+  font-size: 10px;
+  width: 10px;
   flex: none;
 }
 .ui-section-title {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  min-width: 0;
 }
 .ui-section-count {
   flex: none;
-  color: var(--muted);
-  font-weight: 400;
   font-size: 11px;
-  background: color-mix(in srgb, var(--muted) 14%, transparent);
-  border-radius: 999px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--muted) 16%, transparent);
+  border-radius: 9px;
   padding: 0 6px;
+  min-width: 18px;
+  text-align: center;
 }
 .ui-section-actions {
   flex: none;

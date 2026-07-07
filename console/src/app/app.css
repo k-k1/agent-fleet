@@ -19,6 +19,12 @@
   display: flex;
   flex-direction: column;
   overflow: hidden; /* the map pins at the top; only .app-rail-scroll scrolls */
+  /* Rebind the row-state colors to shades derived from the chosen left-pane
+     surface (always set by applyTheme — derived when a surface is chosen, else
+     the theme default) so section headers / row active+hover follow the theme
+     instead of the fixed defaults (old .leftpane behavior). */
+  --active-bg: var(--lp-active-bg);
+  --hover-bg: var(--lp-hover-bg);
 }
 .app-rail-scroll {
   flex: 1;
