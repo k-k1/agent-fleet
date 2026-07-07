@@ -15,6 +15,7 @@ import "./app.css";
 import "../features/panes/panes.css";
 import "../features/terminal/terminal.css";
 import "../features/sessions/sessions.css";
+import "../features/repos/repos.css";
 
 // Pin the frame's bars above the mobile soft keyboard (iOS visual-viewport fit).
 wireViewport();
