@@ -5,6 +5,9 @@
   flex-direction: column;
   flex: 1;
   min-height: 0;
+  /* Inline-size container so the head's controls collapse on narrow panes via
+     the @container paneview rules (here and in mirror.css). */
+  container: paneview / inline-size;
 }
 
 /* Pane header: kind badge + session name + state pill. Leaves room for the

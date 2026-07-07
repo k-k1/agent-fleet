@@ -9,8 +9,9 @@
 }
 /* Legacy control styles (old styles.css element globals), scoped to the chat view —
    the verbatim-ported ChatView's raw buttons (送信 / 停止) relied on them. Same
-   rationale as the .mirrorview block in mirror.css; dissolved at P8. */
-.chatview button {
+   rationale (and same :where() specificity note) as the .mirrorview block in
+   mirror.css; dissolved at P8. */
+:where(.chatview) button {
   background: var(--btn);
   color: var(--fg);
   border: 1px solid var(--btn-border);
@@ -19,10 +20,10 @@
   cursor: pointer;
   font: inherit;
 }
-.chatview button:hover:not(:disabled) {
+:where(.chatview) button:hover:not(:disabled) {
   background: var(--btn-h);
 }
-.chatview button:disabled {
+:where(.chatview) button:disabled {
   opacity: 0.4;
   cursor: default;
 }
