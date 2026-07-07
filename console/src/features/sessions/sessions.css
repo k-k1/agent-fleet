@@ -91,14 +91,8 @@
   gap: 2px; /* old value — the kind badge carries its own margin-right */
   min-width: 0;
 }
-/* State chip sits at the ROW'S RIGHT EDGE (old .session-state margin-left:auto)
-   at the old compact size. */
-.sess-l2 .ui-pill {
-  margin-left: auto;
-  font-size: 10px;
-  padding: 1px 7px;
-  gap: 3px;
-}
+/* The state chip is span.session-state (old markup — rules at the bottom of this
+   file); its margin-left:auto puts it at the row's right edge. */
 .sess-drift {
   display: inline-flex;
   align-items: center;

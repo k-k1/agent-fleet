@@ -60,6 +60,11 @@
 .kind-tag .kt-short {
   display: none;
 }
+/* Old: the codicon inside the badge shrinks below the 10px label so it doesn't
+   inflate the chip height. */
+.kind-tag .codicon {
+  font-size: 0.85em;
+}
 /* The terminal pane is an inline-size container so its header badge collapses
    to icon + 2-char short label when the pane is narrow (split panes). */
 .termview {
