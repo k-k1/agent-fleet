@@ -491,3 +491,35 @@
   stroke-width: 1.25;
   vector-effect: non-scaling-stroke;
 }
+
+/* ---- SwatchGrid (ui/SwatchGrid.tsx) — old styles.css verbatim ---- */
+.swatch-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.swatch {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border-radius: 6px;
+  border: 1px solid var(--btn-border);
+  color: var(--fg);
+  font-size: 12px;
+  line-height: 1;
+  background: var(--btn);
+  cursor: pointer;
+}
+.swatch.active {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.swatch-default {
+  background: repeating-linear-gradient(
+    45deg,
+    var(--btn),
+    var(--btn) 4px,
+    var(--panel2) 4px,
+    var(--panel2) 8px
+  );
+}

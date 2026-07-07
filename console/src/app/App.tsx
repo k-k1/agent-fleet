@@ -14,7 +14,7 @@ import { useSessionsStore, startSessionsPolling } from "../features/sessions/sto
 import { useReposStore } from "../features/repos/store.ts";
 import { useFilesStore } from "../features/files/store.ts";
 import { useChatStore } from "../features/chat/store.ts";
-import { hydrateUIPrefs, useSettings, setSetting } from "../lib/settings.ts";
+import { hydrateUIPrefs } from "../lib/settings.ts";
 import { MOBILE_QUERY } from "../lib/device.ts";
 import { PaneHost } from "../features/panes/PaneHost.tsx";
 import { LayoutMap } from "../features/panes/LayoutMap.tsx";
@@ -23,55 +23,7 @@ import { ReposSection } from "../features/repos/ReposSection.tsx";
 import { FilesSection } from "../features/files/FilesSection.tsx";
 import { AssistantSection } from "../features/chat/AssistantSection.tsx";
 import { WsBar } from "./WsBar.tsx";
-import { IconButton } from "../ui/Button.tsx";
-import { Pill } from "../ui/Pill.tsx";
-
-interface TopBarProps {
-  onToggleLeft: () => void;
-  onToggleLeftMode: () => void;
-}
-
-function TopBar({ onToggleLeft, onToggleLeftMode }: TopBarProps) {
-  const whoami = useTenantStore((s) => s.whoami);
-  const tenants = useTenantStore((s) => s.tenants);
-  const tenant = useTenantStore((s) => s.tenant);
-  const showPicker = useTenantStore((s) => s.showPicker);
-  const select = useTenantStore((s) => s.select);
-  const settings = useSettings();
-  return (
-    <header className="app-topbar">
-      <IconButton
-        icon="menu"
-        label="左ペインを開閉（ダブルクリックで固定⇄オーバーレイ切替）"
-        onClick={onToggleLeft}
-        onDoubleClick={onToggleLeftMode}
-      />
-      <span className="app-brand">Agent Fleet</span>
-      <Pill tone="accent">next</Pill>
-      {showPicker && (
-        <select
-          className="app-tenant"
-          value={tenant}
-          onChange={(e) => select(e.target.value)}
-          aria-label="テナント"
-        >
-          {tenants.map((t) => (
-            <option key={t.slug} value={t.slug}>
-              {t.name || t.slug}
-            </option>
-          ))}
-        </select>
-      )}
-      <span className="app-spacer" />
-      <span className="app-whoami">{whoami?.email || whoami?.user || ""}</span>
-      <IconButton
-        icon={settings.theme === "light" ? "color-mode" : "lightbulb"}
-        label={settings.theme === "light" ? "ダークテーマへ" : "ライトテーマへ"}
-        onClick={() => setSetting("theme", settings.theme === "light" ? "dark" : "light")}
-      />
-    </header>
-  );
-}
+import { TopBar } from "./TopBar.tsx";
 
 // Refresh FILES (and repos/sessions/chat list on start) whenever the workspace
 // actually flips running↔stopped — including external changes the 4s sync catches
@@ -112,17 +64,14 @@ export function App() {
   const [leftMode, setLeftMode] = useState<string>(() =>
     localStorage.getItem("af-left-mode") === "overlay" ? "overlay" : "push",
   );
-  const toggleLeft = () => {
-    if (window.matchMedia(MOBILE_QUERY).matches) {
-      setNavOpen((o) => !o);
-      return;
-    }
+  const toggleNav = () => setNavOpen((o) => !o);
+  // Desktop-only (TopBar routes mobile taps to toggleNav itself).
+  const toggleLeft = () =>
     setLeftOpen((o) => {
       const n = !o;
       localStorage.setItem("af-left-open", n ? "1" : "0");
       return n;
     });
-  };
   const toggleLeftMode = () =>
     setLeftMode((m) => {
       const n = m === "push" ? "overlay" : "push";
@@ -238,7 +187,7 @@ export function App() {
         (navOpen ? " nav-open" : "")
       }
     >
-      <TopBar onToggleLeft={toggleLeft} onToggleLeftMode={toggleLeftMode} />
+      <TopBar toggleNav={toggleNav} toggleLeft={toggleLeft} toggleLeftMode={toggleLeftMode} />
       <WsBar />
       <div className="app-body">
         <nav className="app-rail">
