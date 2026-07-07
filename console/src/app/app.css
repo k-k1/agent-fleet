@@ -1,0 +1,94 @@
+/* App shell frame — chrome only; feature styles live with their feature. */
+
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.app-topbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  background: var(--topbar-bg);
+  border-bottom: 1px solid var(--border);
+}
+.app-brand {
+  font-weight: 700;
+}
+.app-tenant {
+  background: var(--btn);
+  color: var(--fg);
+  border: 1px solid var(--btn-border);
+  border-radius: 4px;
+  padding: 2px 6px;
+  font: inherit;
+}
+.app-spacer {
+  flex: 1;
+}
+.app-whoami {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.app-wsbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 12px;
+  background: var(--panel2);
+  border-bottom: 1px solid var(--border2);
+}
+
+.app-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+.app-rail {
+  width: 260px;
+  flex: none;
+  background: var(--leftpane-bg);
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+}
+.app-main {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+}
+
+/* --- temporary P0 showcase --- */
+.app-showcase {
+  max-width: 720px;
+  margin: 24px auto;
+  padding: 0 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.app-showcase h2 {
+  font-size: 13px;
+  color: var(--muted);
+  margin: 0 0 8px;
+  text-transform: none;
+}
+.app-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.app-empty-demo {
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+}
+
+/* Mobile: the rail collapses (drawer lands with P2) — keep the frame usable. */
+@media (max-width: 760px) {
+  .app-rail {
+    display: none;
+  }
+}

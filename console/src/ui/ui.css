@@ -1,0 +1,117 @@
+/* ui/ primitives — co-located styles. Tokens only from styles/tokens.css. */
+
+/* ---- Button ---- */
+.ui-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--btn);
+  color: var(--fg);
+  border: 1px solid var(--btn-border);
+  border-radius: 4px;
+  padding: 4px 10px;
+  cursor: pointer;
+  font: inherit;
+  white-space: nowrap;
+}
+.ui-btn:hover:not(:disabled) {
+  background: var(--btn-h);
+}
+.ui-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.ui-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.ui-btn-sm {
+  padding: 2px 8px;
+  font-size: 12px;
+}
+.ui-btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+}
+.ui-btn-primary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 85%, var(--fg));
+}
+.ui-btn-ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--muted);
+}
+.ui-btn-ghost:hover:not(:disabled) {
+  background: var(--btn);
+  color: var(--fg);
+}
+.ui-btn-danger {
+  color: var(--del);
+  border-color: color-mix(in srgb, var(--del) 45%, transparent);
+}
+.ui-btn-danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--del) 16%, var(--btn));
+  border-color: color-mix(in srgb, var(--del) 65%, transparent);
+}
+.ui-iconbtn {
+  padding: 3px 6px;
+}
+
+/* ---- Pill ---- */
+.ui-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 999px;
+  padding: 1px 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--muted) 14%, transparent);
+}
+.ui-pill-ok {
+  color: var(--ok);
+  background: color-mix(in srgb, var(--ok) 14%, transparent);
+}
+.ui-pill-warn {
+  color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 14%, transparent);
+}
+.ui-pill-danger {
+  color: var(--del);
+  background: color-mix(in srgb, var(--del) 14%, transparent);
+}
+.ui-pill-accent {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+/* ---- EmptyState ---- */
+.ui-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 24px 16px;
+  text-align: center;
+  color: var(--muted);
+}
+.ui-empty-icon {
+  font-size: 28px;
+  opacity: 0.7;
+}
+.ui-empty-title {
+  color: var(--fg);
+  font-weight: 600;
+}
+.ui-empty-hint {
+  font-size: 12px;
+  max-width: 36em;
+}
+.ui-empty-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
