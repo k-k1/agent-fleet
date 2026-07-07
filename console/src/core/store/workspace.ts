@@ -14,10 +14,17 @@ interface WorkspaceStore {
    * or null when unavailable/unreachable. The WS bar surfaces an "open" entry while
    * the enable toggle lives in 設定 > エージェント (P7); both read this. */
   ocweb: Ocweb | null;
+  /** Optimistic ocweb write (設定 > エージェント toggles it; the bar reads it). */
+  setOcweb(o: Ocweb | null): void;
   refresh(): Promise<void>;
   refreshOcweb(): Promise<void>;
   start(): Promise<void>;
   stop(): Promise<void>;
+  /** Tear the container down and start fresh from the current image. Logins +
+   * connections persist; cloned repos and running sessions are wiped — the caller
+   * guards this behind a warning dialog (設定 > 環境) and resets the layout first.
+   * Returns the error message on failure (the caller toasts). */
+  recreate(): Promise<string | null>;
 }
 
 export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
@@ -59,6 +66,22 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     await api("api/workspace/stop", { method: "POST" });
     await get().refresh();
     set({ ocweb: null }); // the container is gone — drop the stale status
+  },
+
+  setOcweb: (o) => set({ ocweb: o }),
+
+  async recreate() {
+    set({ state: "recreating…" });
+    let err: string | null = null;
+    try {
+      const res = await api("api/workspace/recreate", { method: "POST" });
+      if (res && res.error) err = res.error.message || String(res.error);
+    } catch {
+      err = "作り直しに失敗しました";
+    }
+    await get().refresh();
+    void get().refreshOcweb();
+    return err;
   },
 }));
 

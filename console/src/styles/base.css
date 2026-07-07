@@ -48,3 +48,6 @@ body {
 .mono {
   font-family: var(--mono);
 }
+.pad {
+  padding: 8px 4px;
+}
