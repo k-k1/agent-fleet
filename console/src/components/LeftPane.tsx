@@ -2,6 +2,7 @@ import LayoutMap from "./LayoutMap.jsx";
 import SessionsSection from "./sections/SessionsSection.jsx";
 import AssistantSection from "./sections/AssistantSection.jsx";
 import ReposSection from "./sections/ReposSection.jsx";
+import MemoQueueSection from "./sections/MemoQueueSection.jsx";
 import FilesSection from "./sections/FilesSection.jsx";
 
 // The left navigator: a pinned pane map on top, then three stacked, scrolling
@@ -19,6 +20,7 @@ export default function LeftPane() {
         <SessionsSection />
         <AssistantSection />
         <ReposSection />
+        <MemoQueueSection />
         <FilesSection />
       </div>
     </nav>

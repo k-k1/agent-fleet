@@ -1212,3 +1212,93 @@ func (s *sqliteStore) DeleteSSMHost(ctx context.Context, id, membershipID string
 		`DELETE FROM ssm_host WHERE id=? AND membership_id=?`, id, membershipID)
 	return err
 }
+
+// --- Memo queue (docs/21) --------------------------------------------------------
+
+const memoCols = `SELECT id, membership_id, repo, category, kind, body, ref_path, position, created_at, sent_at FROM memo`
+
+func scanMemo(row scanner) (Memo, error) {
+	var m Memo
+	err := row.Scan(&m.ID, &m.MembershipID, &m.Repo, &m.Category, &m.Kind,
+		&m.Body, &m.RefPath, &m.Position, &m.CreatedAt, &m.SentAt)
+	return m, err
+}
+
+// ListMemos returns unsent memos plus sent ones still inside the retention window
+// (sent_at empty, or sent_at at/after retainBefore). retainBefore is an RFC3339
+// cutoff; RFC3339 strings sort chronologically so the lexical compare is correct.
+func (s *sqliteStore) ListMemos(ctx context.Context, membershipID, retainBefore string) ([]Memo, error) {
+	rows, err := s.db.QueryContext(ctx,
+		memoCols+` WHERE membership_id=? AND (sent_at='' OR sent_at>=?)
+		           ORDER BY repo, category, position, created_at`, membershipID, retainBefore)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Memo
+	for rows.Next() {
+		m, err := scanMemo(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+func (s *sqliteStore) GetMemo(ctx context.Context, id string) (Memo, bool, error) {
+	m, err := scanMemo(s.db.QueryRowContext(ctx, memoCols+` WHERE id=?`, id))
+	if err == sql.ErrNoRows {
+		return Memo{}, false, nil
+	}
+	return m, err == nil, err
+}
+
+func (s *sqliteStore) CreateMemo(ctx context.Context, m Memo) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO memo(id, membership_id, repo, category, kind, body, ref_path, position, created_at, sent_at)
+		 VALUES(?,?,?,?,?,?,?,?,?,?)`,
+		m.ID, m.MembershipID, m.Repo, m.Category, m.Kind, m.Body, m.RefPath, m.Position, m.CreatedAt, m.SentAt)
+	return err
+}
+
+func (s *sqliteStore) UpdateMemo(ctx context.Context, m Memo) error {
+	// membership_id in the WHERE so a member can only update their own row.
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE memo SET repo=?, category=?, kind=?, body=?, ref_path=?, position=?
+		   WHERE id=? AND membership_id=?`,
+		m.Repo, m.Category, m.Kind, m.Body, m.RefPath, m.Position, m.ID, m.MembershipID)
+	return err
+}
+
+func (s *sqliteStore) DeleteMemo(ctx context.Context, id, membershipID string) error {
+	_, err := s.db.ExecContext(ctx,
+		`DELETE FROM memo WHERE id=? AND membership_id=?`, id, membershipID)
+	return err
+}
+
+// MarkMemosSent stamps sent_at on the caller's memos in ids (ownership enforced by
+// membership_id in the WHERE, so foreign ids are silently ignored).
+func (s *sqliteStore) MarkMemosSent(ctx context.Context, membershipID string, ids []string, sentAt string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	args := make([]any, 0, len(ids)+2)
+	args = append(args, sentAt)
+	ph := make([]string, len(ids))
+	for i, id := range ids {
+		ph[i] = "?"
+		args = append(args, id)
+	}
+	args = append(args, membershipID)
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE memo SET sent_at=? WHERE id IN (`+strings.Join(ph, ",")+`) AND membership_id=?`, args...)
+	return err
+}
+
+// SweepSentMemos deletes sent memos whose sent_at is before the retention cutoff.
+func (s *sqliteStore) SweepSentMemos(ctx context.Context, retainBefore string) error {
+	_, err := s.db.ExecContext(ctx,
+		`DELETE FROM memo WHERE sent_at!='' AND sent_at<?`, retainBefore)
+	return err
+}
