@@ -341,6 +341,8 @@ func main() {
 	mux.HandleFunc("GET /api/repos/{name}/status", cfg.proxyAgentREST)
 	mux.HandleFunc("GET /api/repos/{name}/branches", cfg.proxyAgentREST)
 	mux.HandleFunc("POST /api/repos/{name}/checkout", cfg.proxyAgentREST)
+	mux.HandleFunc("POST /api/repos/{name}/rename-branch", cfg.proxyAgentREST)  // worktree deferred-naming: git branch -m
+	mux.HandleFunc("POST /api/repos/{name}/suggest-branch", cfg.proxyAgentREST) // LLM branch-name suggestion
 	mux.HandleFunc("POST /api/repos/{name}/fetch", cfg.proxyAgentREST)
 	mux.HandleFunc("POST /api/repos/{name}/ff", cfg.proxyAgentREST)
 	// Launch prompt templates (repo 起動 modal) — proxied to the Agent.
