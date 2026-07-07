@@ -78,16 +78,21 @@
 .term-empty {
   position: absolute;
   inset: 0;
+  z-index: 1; /* above the .terminal so the overlay takes clicks */
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--panel2);
+  padding: 24px;
+  background: var(--viewer-bg, var(--bg));
 }
 .term-empty-img {
-  max-width: min(60%, 420px);
-  max-height: 60%;
-  opacity: 0.9;
-  border-radius: 8px;
+  max-width: min(72%, 440px);
+  max-height: 62%;
+  object-fit: contain;
+  /* うっすら透けるウォーターマーク程度に淡く（旧デザインと同一） */
+  opacity: 0.16;
+  user-select: none;
+  -webkit-user-drag: none;
 }
 .term-mask {
   position: absolute;
