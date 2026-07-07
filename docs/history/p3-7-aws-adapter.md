@@ -57,13 +57,24 @@
   - `ecsRuntime` **スケルトン**（`runtime_ecs.go`）: 港を満たすが lifecycle は not-implemented で**声高に失敗**（silent no-op 禁止）。
     段2 が実装する対応・`ecsConfig`（region/cluster/subnets/SG/EFS/roles/logGroup）を doc コメントで固定。
   - 検証: `go build ./...` / `go vet ./...` / `go test ./...`（`runtime_test.go` で factory 選択・ws スレッド・ecs 骨格を lock）。
-- ▶ **段2 — ecsRuntime 本実装 + EFS Volume**（要 AWS）: AWS SDK for Go v2 で ECS Service/TaskDef を駆動。EFS AP を
-  per-membership で払い出し task に mount。`Endpoint` を Service Connect で解決。secretKey/token を task env 注入。
+- ✅ **段2 — ecsRuntime 本実装 + EFS Volume**（コードは AWS 非依存で完結・実 AWS 疎通は段5）: AWS SDK for Go v2 で
+  ECS Service(desired 0/1)/TaskDef を駆動。EFS AP を per-membership で払い出し（tag 引きの create-or-get）task に
+  mount。`Endpoint` を Service Connect で解決。**token/DEK は SSM SecureString** を `secrets valueFrom` で注入（凍結
+  §20b.7.5、plaintext task env は不使用）。`runtime_ecs.go` に実装、狭い AWS クライアント IF（ecsAPI/efsAPI/ssmAPI）を
+  fake 化した `runtime_ecs_test.go` で create-or-get 冪等・desired 遷移・SC 配線・dev secret スキップを lock。
+  `go build`/`go vet`/`go test`（34 通過）green。**AF_ECS_\*** env で placement 注入（region/cluster/subnets/sg/
+  efs/namespace/roles/logGroup/image/cpu/mem/uid/gid/start-timeout）。
 - ▶ **段3 — MetadataStore(RDS) / KeyCustodian(KMS)**（要 AWS）: `Store` の Postgres アダプタ、`KeyCustodian` の KMS 実装。
-- ▶ **段4 — IaC + Ingress/Auth**（要 AWS）: **CloudFormation** で VPC/ECS/EFS/RDS/ALB(ACM,OIDC)/ECR/SG/roles。`deploy/aws/ecs/`。
-  ツールは CFN に寄せる（`deploy/aws/ec2-single/cfn.yaml` の前例と一貫、配布時の顧客 footprint 最小＝creds+`aws cloudformation deploy` のみ）。CFN は
-  **static substrate のみ**を作り、per-workspace リソース（Service/TaskDef/EFS AP/SSM param）は CP が実行時に動的払い出しする（[§20b.7.1](#20b71-凍結した不変条件)）。
-- ▶ **段5 — E2E 検証ゲート**（要 AWS）: 実 apply → login → tenant → workspace(Start=desired 1) → session → Stop(desired 0)→resume 通過。
+- ◐ **段4 — IaC + Ingress/Auth**（substrate 実証済・残＝CP を substrate に配線）: **CloudFormation** で
+  VPC/ECS/EFS/RDS/ALB(ACM)/ECR/SG/roles/SC namespace。`deploy/aws/ecs/cfn/`（`00-network`/`10-data`/`20-platform`/
+  `30-ingress`）を **sandbox(ap-northeast-1) で deploy→検証→teardown 実証済**（30 は ACM+ALB+CP Fargate で
+  `af-dev.<domain>` に実ログイン到達、認証は CP ネイティブ Google OAuth＝ALB は TLS 終端のみ・OIDC 不使用）。CFN は
+  **static substrate のみ**を作り、per-workspace リソース（Service/TaskDef/EFS AP/SSM param）は CP が実行時に動的払い出し（[§20b.7.1](#20b71-凍結した不変条件)）。
+  ツールは CFN に寄せた（`ec2-single/cfn.yaml` の前例と一貫、顧客 footprint 最小＝creds+`aws cloudformation deploy` のみ）。
+  実地の学び: SG 説明文は `<>` 不可 / 新規アカウントは ECS service-linked role 事前作成 / Fargate は WS_DATA 親ディレクトリを
+  scratch volume で用意（README 参照）。残＝CP タスクに `AF_RUNTIME=ecs`＋`AF_ECS_*`＋EFS を配線し段2 を実駆動。
+- ▶ **段5 — E2E 検証ゲート**（要 AWS）: 段4 substrate 上で CP に段2 を配線 → login → tenant →
+  workspace(Start=desired 1) → session → Stop(desired 0)→resume 通過（[§20b.7.14](#20b714-検証ゲート段5要-aws)）。
 
 ## 20b.5 CP↔Agent 到達（要点）
 
