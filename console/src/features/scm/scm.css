@@ -9,7 +9,10 @@
   container-type: inline-size;
 }
 
-/* Generic non-terminal pane header (also reused by the P4 viewers). */
+/* Generic non-terminal pane header (also reused by the P4 viewers).
+   NO overflow:hidden here — the ⋯ overflow menu (.scm-more-menu) is an
+   absolutely-positioned child and would be clipped invisible. Children carry
+   their own min-width:0 + ellipsis instead. */
 .view-head {
   display: flex;
   align-items: center;
@@ -20,7 +23,6 @@
   background: var(--panel2);
   font-size: 12px;
   white-space: nowrap;
-  overflow: hidden;
 }
 .view-title {
   display: inline-flex;
@@ -73,6 +75,13 @@
   }
   .scm-more {
     display: block;
+  }
+}
+/* Narrow pane: header action buttons collapse to icons (コミット詳細の
+   全て開く/閉じる/折り返し etc. — the icon + tooltip carry the meaning). */
+@container (max-width: 520px) {
+  .view-head .ui-btn .lbl {
+    display: none;
   }
 }
 
