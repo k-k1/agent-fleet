@@ -1,11 +1,9 @@
 // Pane — one slot of the main-area layout. The terminal stays mounted (just
 // hidden) while the pane shows another view, so the PTY socket and scrollback
-// survive switching kinds. Ported from the old console onto the content union;
-// views beyond the terminal render as placeholders until their phase lands
-// (P3 SCM, P4 viewers, P5 chat/mirror — docs/22).
+// survive switching kinds. Ported from the old console onto the content union.
 import { useEffect, useState } from "react";
 import type { CSSProperties, DragEvent as RDragEvent } from "react";
-import type { Pane as PaneT, PaneContent } from "../../layout/types.ts";
+import type { Pane as PaneT } from "../../layout/types.ts";
 import { ordClass } from "../../layout/badges.ts";
 import { usePaneHover, hoverMatches } from "../../lib/panehover.tsx";
 import { useLayoutStore } from "../../layout/store.ts";
@@ -19,8 +17,8 @@ import { FileView } from "../viewer/FileView.tsx";
 import { DocView } from "../viewer/DocView.tsx";
 import { DiffView } from "../viewer/DiffView.tsx";
 import type { DiffEdit } from "../viewer/DiffView.tsx";
+import { ChatView } from "../chat/ChatView.tsx";
 import { useSettings } from "../../lib/settings.ts";
-import { EmptyState } from "../../ui/EmptyState.tsx";
 import { IconButton } from "../../ui/Button.tsx";
 import { cx } from "../../ui/cx.ts";
 import type { Session } from "../../types/session.ts";
@@ -28,10 +26,6 @@ import type { Session } from "../../types/session.ts";
 // Drag payload MIME — identifies a pane-to-pane drag (vs any other drag).
 const DND = "application/x-af-pane";
 
-// Placeholder copy for views whose port hasn't landed yet.
-const PENDING: Partial<Record<PaneContent["kind"], { icon: string; label: string; phase: string }>> = {
-  chat: { icon: "comment-discussion", label: "アシスタントチャット", phase: "P5" },
-};
 
 interface PaneProps {
   pane: PaneT;
@@ -142,8 +136,6 @@ export function Pane({
     else onSwap(src, pane.id);
   };
 
-  const pending = PENDING[pane.content.kind];
-
   return (
     <div
       className={cx("pane", active && "active", zone && "droptarget", hovered && "pane-hover", ordCls)}
@@ -233,14 +225,13 @@ export function Pane({
           wrap={wrapOn}
         />
       )}
-      {pending && (
-        <div className="pane-pending">
-          <EmptyState
-            icon={pending.icon}
-            title={pending.label}
-            hint={`このビューは ${pending.phase} で移植されます（旧コンソールでは利用できます）。`}
-          />
-        </div>
+      {pane.content.kind === "chat" && (
+        <ChatView
+          conversationId={pane.content.conversationId}
+          draftAssistantId={pane.content.draftAssistantId}
+          paneId={pane.id}
+          active={single || active}
+        />
       )}
     </div>
   );
