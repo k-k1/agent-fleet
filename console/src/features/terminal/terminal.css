@@ -13,7 +13,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 4px 34px 4px 34px;
+  padding: 4px 40px 4px 34px; /* right clears the lone × cluster (old value) */
   min-height: 28px;
   border-bottom: 1px solid var(--border2);
   background: var(--panel2);

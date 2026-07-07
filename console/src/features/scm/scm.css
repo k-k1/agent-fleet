@@ -17,12 +17,24 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 4px 34px 4px 34px;
+  /* Right padding reserves room for the pane control cluster overlaid at the
+     top-right; left padding for the drag grip at the top-left (old console's
+     exact values). */
+  padding: 6px 56px 6px 34px;
   min-height: 28px;
   border-bottom: 1px solid var(--border2);
   background: var(--panel2);
   font-size: 12px;
   white-space: nowrap;
+}
+/* File panes add a wrap toggle to the control cluster → extra right room, or the
+   cluster overlaps the header's own right-edge buttons (path + download). */
+.fileview > .view-head {
+  padding-right: 112px;
+}
+/* scm / changes / commit panes' cluster is wrap+close or close alone. */
+.scmview > .view-head {
+  padding-right: 84px;
 }
 .view-title {
   display: inline-flex;
