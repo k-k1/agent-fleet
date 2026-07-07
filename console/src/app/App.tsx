@@ -14,6 +14,7 @@ import { useSessionsStore, startSessionsPolling } from "../features/sessions/sto
 import { hydrateUIPrefs, useSettings, setSetting } from "../lib/settings.ts";
 import { PaneHost } from "../features/panes/PaneHost.tsx";
 import { SessionsSection } from "../features/sessions/SessionsSection.tsx";
+import { ReposSection } from "../features/repos/ReposSection.tsx";
 import { Button, IconButton } from "../ui/Button.tsx";
 import { Pill } from "../ui/Pill.tsx";
 import type { PillTone } from "../ui/Pill.tsx";
@@ -155,6 +156,7 @@ export function App() {
       <div className="app-body">
         <nav className="app-rail">
           <SessionsSection />
+          <ReposSection />
         </nav>
         <main className="app-main">
           <PaneHost />

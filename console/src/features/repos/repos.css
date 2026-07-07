@@ -225,3 +225,189 @@
   font-size: 12px;
   color: var(--muted);
 }
+
+/* ---- Repos section rows ---- */
+.repo-cloning {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.repo-cloning .codicon {
+  color: var(--accent);
+}
+.repo-row {
+  position: relative;
+  border-radius: 6px;
+}
+.repo-row:hover {
+  background: var(--lp-hover-bg, var(--hover-bg));
+}
+.repo-row.active {
+  background: var(--lp-active-bg, var(--active-bg));
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.repo-card {
+  padding: 6px 8px 6px 14px;
+  cursor: pointer;
+  min-width: 0;
+}
+.repo-card.disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+.repo-info {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.repo-name {
+  flex: 1;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.repo-name .codicon {
+  color: var(--muted);
+  flex: none;
+}
+.repo-state {
+  flex: none;
+  display: inline-flex;
+  gap: 4px;
+}
+.repo-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  border-radius: 999px;
+  padding: 0 6px;
+}
+.repo-chip.dirty {
+  color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 14%, transparent);
+}
+.repo-chip.dirty .codicon {
+  font-size: 7px;
+}
+.repo-chip.ab {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+.repo-ords {
+  padding: 0;
+}
+.repo-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 3px;
+  min-width: 0;
+}
+.repo-branch {
+  flex: 1;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.repo-branch.worktree {
+  color: var(--accent);
+}
+.repo-branch-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.repo-provider {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted2);
+  font-size: 11px;
+}
+
+/* 起動 split button + quick menu. */
+.launch-wrap {
+  position: relative;
+  flex: none;
+}
+.launch-split {
+  display: flex;
+}
+.launch-main,
+.launch-caret {
+  background: var(--btn);
+  color: var(--fg);
+  border: 1px solid var(--btn-border);
+  font: inherit;
+  font-size: 12px;
+  padding: 2px 8px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.launch-main {
+  border-radius: 4px 0 0 4px;
+}
+.launch-caret {
+  border-radius: 0 4px 4px 0;
+  border-left: none;
+  padding: 2px 4px;
+}
+.launch-main:hover:not(:disabled),
+.launch-caret:hover:not(:disabled) {
+  background: var(--btn-h);
+}
+.launch-main:disabled,
+.launch-caret:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.launch-menu {
+  position: absolute;
+  right: 0;
+  top: 26px;
+}
+
+/* Launch modal bits. */
+.launch-conflict {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--warn);
+  font-size: 12px;
+  background: color-mix(in srgb, var(--warn) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--warn) 35%, transparent);
+  border-radius: 6px;
+  padding: 8px 10px;
+}
+.launch-prompt-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.launch-tmpl-select {
+  max-width: 200px;
+  background: var(--panel2);
+  color: var(--fg);
+  border: 1px solid var(--btn-border);
+  border-radius: 4px;
+  padding: 2px 6px;
+  font: inherit;
+  font-size: 12px;
+}
