@@ -87,7 +87,25 @@ export function FileView({ filePath, wrap }: FileViewProps) {
 
   const isText = !!data && !data.binary && typeof data.content === "string";
   const lines = isText ? countLines(data!.content!) : 0;
-  const isMarkdown = isText && langFor(filePath) === "markdown";
+  // Large-file mode: a huge file (or one with enormous single lines, e.g. embedded
+  // data-URI images in a generated md) breaks the per-line grid + highlighter —
+  // the line-number tracks balloon and the body renders blank. Fall back to a
+  // plain scrollable <pre>: readable, cheap, and honest about the size.
+  const huge = useMemo(() => {
+    if (!isText) return false;
+    const c = data!.content!;
+    if (c.length > 300_000 || lines > 20_000) return true;
+    // any single line longer than ~4000 chars (minified / data URIs)
+    let start = 0;
+    for (;;) {
+      const nl = c.indexOf("\n", start);
+      const end = nl === -1 ? c.length : nl;
+      if (end - start > 4000) return true;
+      if (nl === -1) return false;
+      start = nl + 1;
+    }
+  }, [isText, data, lines]);
+  const isMarkdown = isText && !huge && langFor(filePath) === "markdown";
   const isMarp = isMarkdown && isMarpDoc(data!.content);
 
   // A freshly opened Marp deck defaults to slides; other markdown to preview.
@@ -98,9 +116,10 @@ export function FileView({ filePath, wrap }: FileViewProps) {
   const showSlides = isMarp && mdMode === "slides";
   const showPreview = isMarkdown && mdMode === "preview";
 
-  // Highlight once per file load; fall back to escaped plain text.
+  // Highlight once per file load; fall back to escaped plain text. Huge files
+  // skip highlighting entirely (plain mode below).
   const html = useMemo(() => {
-    if (!isText) return "";
+    if (!isText || huge) return "";
     const lang = langFor(filePath);
     try {
       if (lang && hljs.getLanguage(lang)) {
@@ -108,7 +127,7 @@ export function FileView({ filePath, wrap }: FileViewProps) {
       }
     } catch {}
     return escapeHtml(data!.content!);
-  }, [isText, data, filePath]);
+  }, [isText, huge, data, filePath]);
 
   if (!filePath) return <div className="fileview" />;
 
@@ -135,6 +154,11 @@ export function FileView({ filePath, wrap }: FileViewProps) {
           {!isImage && isText ? ` · ${lines} 行` : ""}
           {data?.truncated ? " · 先頭のみ" : ""}
         </span>
+        {huge && (
+          <span className="fi-tag" title="巨大ファイル（または極端に長い行）のため、ハイライト・行番号なしのプレーン表示です">
+            プレーン表示
+          </span>
+        )}
         {data?.lfs && (
           <span className="fi-tag" title="Git LFS の実体は未取得です。端末で `git lfs pull` を実行してください。">
             LFS ポインタ
@@ -181,6 +205,8 @@ export function FileView({ filePath, wrap }: FileViewProps) {
         <ImageView src={downloadURL(filePath)} alt={baseName(filePath)} onLoad={setImgDims} />
       ) : data.binary ? (
         <pre className="filebody muted">(バイナリ, {humanSize(data.size)})</pre>
+      ) : huge ? (
+        <pre className="filebody fb-plain">{data.content}</pre>
       ) : showSlides ? (
         <MarpView source={data.content} />
       ) : showPreview ? (
