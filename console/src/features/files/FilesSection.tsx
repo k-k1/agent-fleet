@@ -16,7 +16,7 @@ import type { Assistant } from "../../types/assistant.ts";
 import { placeFixed } from "../../lib/placeFixed.ts";
 import { Section } from "../../ui/Section.tsx";
 import { Icon } from "../../ui/Icon.tsx";
-import FileIcon, { DirIcon } from "../../components/FileIcon.tsx";
+import FileIcon, { DirIcon } from "../../ui/FileIcon.tsx";
 import { useConfirm } from "../../ui/ConfirmProvider.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { EmptyState } from "../../ui/EmptyState.tsx";

@@ -15,5 +15,5 @@ export {
   assistantUpdate,
   assistantDelete,
   askAssistant,
-} from "../../api.ts";
-export type { ChatCreateOpts, ChatStreamHandlers } from "../../api.ts";
+} from "../../core/api/client.ts";
+export type { ChatCreateOpts, ChatStreamHandlers } from "../../core/api/client.ts";

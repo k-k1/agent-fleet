@@ -9,7 +9,7 @@
 //
 // Contract (see layout/types.ts): paneId == terminal identity. Terminals for
 // panes that left the layout are disposed here; nothing else may call keepOnly.
-import { keepOnly } from "../term.ts";
+import { keepOnly } from "./term.ts";
 import { useLayoutStore } from "../layout/store.ts";
 
 export {
@@ -26,7 +26,7 @@ export {
   setTermBackground,
   onSession,
   sessionOf,
-} from "../term.ts";
+} from "./term.ts";
 
 /** wireTerminalReconcile subscribes to the layout store and disposes terminals
  * whose pane no longer exists (pane closed, browser back, tenant switch) —

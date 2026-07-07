@@ -6,7 +6,7 @@ import { App } from "./App.tsx";
 import { ToastProvider } from "../ui/ToastProvider.tsx";
 import { ConfirmProvider } from "../ui/ConfirmProvider.tsx";
 import { PaneHoverProvider } from "../lib/panehover.tsx";
-import { wireViewport } from "../viewport.ts";
+import { wireViewport } from "./viewport.ts";
 import "@vscode/codicons/dist/codicon.css";
 import "../styles/tokens.css";
 import "../styles/base.css";
