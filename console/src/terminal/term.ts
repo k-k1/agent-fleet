@@ -8,11 +8,11 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
-import { coarsePointer } from "./lib/device.js";
+import { coarsePointer } from "../lib/device.ts";
 import { WebglAddon } from "@xterm/addon-webgl";
 import "@xterm/xterm/css/xterm.css";
-import { wsURL } from "./api.js";
-import { getSettings, subscribe as subscribeSettings, fontStack } from "./lib/settings.js";
+import { wsURL } from "../core/api/client.ts";
+import { getSettings, subscribe as subscribeSettings, fontStack } from "../lib/settings.ts";
 
 // One entry per pane. { term, fitAddon, ws, session, sessionListeners, ro }.
 // A placeholder (from an early onSession) may hold only session + sessionListeners,

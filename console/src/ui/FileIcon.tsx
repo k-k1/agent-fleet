@@ -1,6 +1,6 @@
 import { resolveIcon, mark } from "../lib/fileicons.js";
 import { useSettings } from "../lib/settings.js";
-import Icon from "./Icon.jsx";
+import { Icon } from "./Icon.tsx";
 
 // FileIcon renders the icon for a filename in the user's chosen set (Display
 // settings → iconSet): AI/secret files get an emphasized codicon; files with a

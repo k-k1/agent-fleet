@@ -11,7 +11,7 @@ import {
   SURFACE_TARGETS,
   MIRROR_SEND_MODES,
 } from "../../lib/settings.ts";
-import FileIcon from "../../components/FileIcon.tsx";
+import FileIcon from "../../ui/FileIcon.tsx";
 import { SwatchGrid } from "../../ui/SwatchGrid.tsx";
 import { Choice, OnOff } from "./controls.tsx";
 import type { ChoiceProps } from "./controls.tsx";

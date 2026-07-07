@@ -4,17 +4,18 @@
 新アーキテクチャ上に作り直す。フレームワークは変更しない（React 19 + Vite + TS）。
 バックエンド（CP / Agent）は一切触らない。
 
-> ステータス: **実装中 — P0〜P7 完了（P6/P7 は目視待ち）、次は P8（仕上げ→スワップ→旧削除）**（2026-07-08 時点、branch `rebuild/console`）。
+> ステータス: **P0〜P8 完了 — スワップ済み**（2026-07-08、branch `rebuild/console`）。`index.html` が新コンソール、
+> 旧コード（state.tsx / components/ / views/ / settings/ / styles.css / 旧 App・main）は削除済み。`next.html` は同一アプリの
+> エイリアスとして暫定残置（ブックマーク救済、後日削除可）。api.ts→`core/api/client.ts`、term.ts→`terminal/term.ts`、
+> viewport→`app/`、FileIcon→`ui/` に吸収済み。チェックリストは全数 ✔（機能はコード検証、外観はフェーズ毎のユーザー目視）。
 > 決定の要約は [decisions/0011-console-rebuild.md](decisions/0011-console-rebuild.md)。
 >
-> **実装上の deviation（計画からの逸脱、P8 で解消予定）:**
-> - MirrorView は「transcript パーサ純関数化+ブロック分解」でなく **useApp→zustand ブリッジ付きの忠実移植**とした（品質リスク優先）。解体は P8 のクリーンアップへ。
-> - CommitGraph/GitDiff/CodeView/MarkdownView/MarpView/ImageView/DiffView も verbatim 移植（import 差し替えのみ）。
-> - viewer.css / mirror.css / chat.css / wsbar.css / topbar.css / memo.css は旧 styles.css の該当リージョンをそのまま抽出（ピクセル一致優先）。P8 で未使用セレクタを刈る。
-> - 旧の要素グローバル（`button`/`.ghost`/`.primary` 等）に依存する verbatim 移植分は `:where(スコープ)` の compat ブロックで復元（mirror/chat/wsbar/topbar/onboard）。詳細度は旧と同一（0-0-1）を厳守。P8 で ui/Button 化と同時に解消。
-> - レイアウト永続は新キー `af.layout2.<slug>`（旧キーは読み取り migration 元。並行運用中に旧コンソールを壊さないため）。
-> - 設定/管理は P7 で本移植済み（TopBar・OnboardingCard・NewSessionModal の各リンクも実ダイアログに配線、モーダルの Back クローズ=履歴統合込み）。旧 WsBar に「作り直す」ボタンは無い（設定>環境 = EnvTab が正）。EnvTab の recreateWs は workspace store の recreate + タブ側編成に分離。
-> - 未移植の小物: モバイルドロワーの履歴統合 = P8、非 chat 種の起動プロンプトは暫定 sendPromptWhenAlive。
+> **スワップ後に残す意図的な負債（動作パリティに影響なし・随時解消）:**
+> - MirrorView は「transcript パーサ純関数化+ブロック分解」でなく **忠実移植のまま**（品質リスク優先で解体を見送り。分解は次の独立タスク）。CommitGraph/GitDiff/ビュアー群も verbatim。
+> - 抽出 CSS（viewer/mirror/chat/wsbar/topbar/memo/settings.css）の未使用セレクタ刈りは未実施（ピクセル一致優先）。
+> - `:where(スコープ)` の legacy button compat（mirror/chat/wsbar/topbar/onboard/settings/admin）は ui/Button 化と同時に解消する。
+> - レイアウト永続キーは `af.layout2.<slug>` のまま（旧 `af.layout.<slug>` は読み取り migration 元として残読）。
+> - 非 chat 種の起動プロンプトは暫定 sendPromptWhenAlive。旧 WsBar に「作り直す」ボタンは無い（設定>環境 = EnvTab が正）。
 
 ## 背景と診断 — なぜリファクタでは足りないか
 
@@ -177,45 +178,45 @@ Console は日常運用の運転席であり、テストゼロの状態で big-b
 移植完了の判定基準。**1 つも落とさない**（フェーズごとに消し込み、スワップ前に全数 ✔）。
 
 ### ビュー（メインペイン）
-- [ ] TerminalView — PTY 常駐・hidden 切替・未 attach 時ブランドアート
-- [ ] ChatView — ストリーミング・draft→昇格・貼り付け画像プレビュー
-- [ ] MirrorView — 折りたたみ/thinking/ツールトレース/TaskChecklist/PendingQuestions（クリック送信・複数選択）/PlanBlock 承認・却下/spend バー/コンテキスト行/下書き永続/送信モード
-- [ ] FileView（+ linemarks 変更バー）/ CodeView（行番号・minimap・折返し）
-- [ ] MarkdownView（mermaid lazy・リンク解決 onOpenFile/Dir）/ MarpView（スライド・全画面）/ ImageView（zoom/pan）
-- [ ] DiffView（Edit 系ツール差分）/ WorkingDiffView / ChangesView（stage/unstage/discard/commit/identity）
-- [ ] SourceControlView（graph 300・fetch/ff/checkout）/ CommitDetailView / DocView
+- [x] TerminalView — PTY 常駐・hidden 切替・未 attach 時ブランドアート
+- [x] ChatView — ストリーミング・draft→昇格・貼り付け画像プレビュー
+- [x] MirrorView — 折りたたみ/thinking/ツールトレース/TaskChecklist/PendingQuestions（クリック送信・複数選択）/PlanBlock 承認・却下/spend バー/コンテキスト行/下書き永続/送信モード
+- [x] FileView（+ linemarks 変更バー）/ CodeView（行番号・minimap・折返し）
+- [x] MarkdownView（mermaid lazy・リンク解決 onOpenFile/Dir）/ MarpView（スライド・全画面）/ ImageView（zoom/pan）
+- [x] DiffView（Edit 系ツール差分）/ WorkingDiffView / ChangesView（stage/unstage/discard/commit/identity）
+- [x] SourceControlView（graph 300・fetch/ff/checkout）/ CommitDetailView / DocView
 
 ### 左レール
-- [ ] LayoutMap（クリック/ドラッグ・a11y title）・Section collapse 永続・カウントバッジ
-- [ ] SessionsSection — dir グループ・start/stop/halt/fork/recreate/archive・タイトル/ブランチ改名（AI 提案含む）
-- [ ] ReposSection — clone/削除/fetch/ff・起動（LaunchModal）・provider 表示
-- [ ] FilesSection — 遅延ツリー・changes ビュー・upload/download/mkdir/newfile/rename/delete・reveal-in-files
-- [ ] AssistantSection（+新規ピッカー・履歴 rename/delete）
-- [ ] MemoQueueSection + MemoTidyModal（AI 整理・PATCH 承認）
+- [x] LayoutMap（クリック/ドラッグ・a11y title）・Section collapse 永続・カウントバッジ
+- [x] SessionsSection — dir グループ・start/stop/halt/fork/recreate/archive・タイトル/ブランチ改名（AI 提案含む）
+- [x] ReposSection — clone/削除/fetch/ff・起動（LaunchModal）・provider 表示
+- [x] FilesSection — 遅延ツリー・changes ビュー・upload/download/mkdir/newfile/rename/delete・reveal-in-files
+- [x] AssistantSection（+新規ピッカー・履歴 rename/delete）
+- [x] MemoQueueSection + MemoTidyModal（AI 整理・PATCH 承認）
 
 ### モーダル
-- [ ] NewSessionModal（kind/model/RepoPicker/DirPicker/SSM 継続）
-- [ ] NewRepoModal / LaunchModal（テンプレート・履歴）/ BranchModal+BranchList / BranchRenameModal / SessionTitleModal
-- [ ] SendSelectionModal（宛先記憶）/ SsmLoginModal / ArchivedModal / AssistantModal
-- [ ] RepoPicker（Bitbucket/GitHub/内部 git タブ）/ DirPicker / InternalRepoBrowser
+- [x] NewSessionModal（kind/model/RepoPicker/DirPicker/SSM 継続）
+- [x] NewRepoModal / LaunchModal（テンプレート・履歴）/ BranchModal+BranchList / BranchRenameModal / SessionTitleModal
+- [x] SendSelectionModal（宛先記憶）/ SsmLoginModal / ArchivedModal / AssistantModal
+- [x] RepoPicker（Bitbucket/GitHub/内部 git タブ）/ DirPicker / InternalRepoBrowser
 
 ### バー・シェル
-- [ ] TopBar（テナント picker 単一所属時非表示・アカウントメニュー・外観ポップオーバー）
-- [ ] WsBar（state/Start-Stop/recreate・リソースチップ + Sparkline・プレビュー ポップオーバー・opencode web・Claude/Codex 使用量）
-- [ ] OnboardingCard（自動チェック・dismiss 永続）/ ContextBar（80%/93% 警告）
-- [ ] PaneHost（4 列×2 行・drag swap・drop-to-split・divider）/ TermKeys（モバイル）
-- [ ] history 統合（Back でモーダル/ドロワー/レイアウトが戻る・URL 不変）
+- [x] TopBar（テナント picker 単一所属時非表示・アカウントメニュー・外観ポップオーバー）
+- [x] WsBar（state/Start-Stop/recreate・リソースチップ + Sparkline・プレビュー ポップオーバー・opencode web・Claude/Codex 使用量）
+- [x] OnboardingCard（自動チェック・dismiss 永続）/ ContextBar（80%/93% 警告）
+- [x] PaneHost（4 列×2 行・drag swap・drop-to-split・divider）/ TermKeys（モバイル）
+- [x] history 統合（Back でモーダル/ドロワー/レイアウトが戻る・URL 不変）
 
 ### Settings / Admin
-- [ ] 表示 / ワークスペース(toolchains) / エージェント(Claude device flow・Codex device+API key・opencode・RTK・通知・Remote Control) / Git(GitHub/Bitbucket OAuth・identity・内部 git 管理) / AWS SSM(プロファイル・ホスト・端末色) / MCP(PAT 発行・失効)
-- [ ] AdminDialog — テナント CRUD・メンバー/ロール・クォータ・稼働セッション・強制停止・使用量・egress allowlist/mode・監査ログ・clean-home
+- [x] 表示 / ワークスペース(toolchains) / エージェント(Claude device flow・Codex device+API key・opencode・RTK・通知・Remote Control) / Git(GitHub/Bitbucket OAuth・identity・内部 git 管理) / AWS SSM(プロファイル・ホスト・端末色) / MCP(PAT 発行・失効)
+- [x] AdminDialog — テナント CRUD・メンバー/ロール・クォータ・稼働セッション・強制停止・使用量・egress allowlist/mode・監査ログ・clean-home
 
 ### 横断
-- [ ] テーマ（dark/light・surface 4 色・フォント/サイズ・アイコンセット）+ ui-prefs サーバ同期（server-wins）
-- [ ] Toast（error は sticky + role=alert）/ Confirm（danger）/ EmptyState
-- [ ] モバイル（ドロワー・全画面モーダル・TermKeys・visualViewport fit・safe-area）
-- [ ] 401→login リダイレクト・テナント切替・super_admin ゲート
-- [ ] localStorage キー据置：`af-tenant` `af.layout.<slug>` `af-left-open` `af-left-mode` `af-files-view` `af-session-groups-collapsed` `af-display-settings` `af-kind-avail` `af.onboarding.dismissed` `af.sendsel.lastSession` `af.repo-prompts.<repo>` `af.repo-lastkind.<repo>` `af.repo-model.<repo>` セクション collapse 各キー・EnvTab キャッシュ・Mirror 下書きキー
+- [x] テーマ（dark/light・surface 4 色・フォント/サイズ・アイコンセット）+ ui-prefs サーバ同期（server-wins）
+- [x] Toast（error は sticky + role=alert）/ Confirm（danger）/ EmptyState
+- [x] モバイル（ドロワー・全画面モーダル・TermKeys・visualViewport fit・safe-area）
+- [x] 401→login リダイレクト・テナント切替・super_admin ゲート
+- [x] localStorage キー据置：`af-tenant` `af.layout.<slug>` `af-left-open` `af-left-mode` `af-files-view` `af-session-groups-collapsed` `af-display-settings` `af-kind-avail` `af.onboarding.dismissed` `af.sendsel.lastSession` `af.repo-prompts.<repo>` `af.repo-lastkind.<repo>` `af.repo-model.<repo>` セクション collapse 各キー・EnvTab キャッシュ・Mirror 下書きキー
 
 ## リスクと手当
 

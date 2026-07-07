@@ -10,7 +10,7 @@ import { SendSelectionModal } from "../memo/SendSelectionModal.tsx";
 import hljs from "highlight.js/lib/common";
 import { api, downloadURL } from "../../core/api/client.ts";
 import { baseName, langFor, langLabel, humanSize, countLines, isMarpDoc, imageFormat } from "../../lib/filemeta.ts";
-import FileIcon from "../../components/FileIcon.tsx";
+import FileIcon from "../../ui/FileIcon.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { useSettings, fontStack } from "../../lib/settings.ts";
 import { useLayoutStore } from "../../layout/store.ts";
