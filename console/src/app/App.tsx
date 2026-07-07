@@ -13,7 +13,7 @@ import { wireTerminalReconcile } from "../terminal/service.ts";
 import { useSessionsStore, startSessionsPolling } from "../features/sessions/store.ts";
 import { hydrateUIPrefs, useSettings, setSetting } from "../lib/settings.ts";
 import { PaneHost } from "../features/panes/PaneHost.tsx";
-import { SessionsRail } from "../features/sessions/SessionsRail.tsx";
+import { SessionsSection } from "../features/sessions/SessionsSection.tsx";
 import { Button, IconButton } from "../ui/Button.tsx";
 import { Pill } from "../ui/Pill.tsx";
 import type { PillTone } from "../ui/Pill.tsx";
@@ -154,7 +154,7 @@ export function App() {
       <WsBar />
       <div className="app-body">
         <nav className="app-rail">
-          <SessionsRail />
+          <SessionsSection />
         </nav>
         <main className="app-main">
           <PaneHost />

@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 import type { CSSProperties, DragEvent as RDragEvent } from "react";
 import type { Pane as PaneT, PaneContent } from "../../layout/types.ts";
 import { ordClass } from "../../layout/badges.ts";
+import { usePaneHover, hoverMatches } from "../../lib/panehover.tsx";
 import { useSessionsStore } from "../sessions/store.ts";
 import { TerminalView } from "../terminal/TerminalView.tsx";
 import { EmptyState } from "../../ui/EmptyState.tsx";
@@ -63,6 +64,10 @@ export function Pane({
   ordinal,
 }: PaneProps) {
   const isTerm = pane.content.kind === "terminal";
+  // Cross-highlight: glow this pane while its rail row / mini-map cell is
+  // hovered (and vice-versa). Keyed by pane id or a shared session name.
+  const { hover, setHover } = usePaneHover();
+  const hovered = hoverMatches(hover, pane.id, pane.session);
   const ordCls = ordinal ? ordClass(ordinal) : "";
   // null when not a drop target; else the pointer's zone: 'center' → swap;
   // 'right'/'down' → tear the dragged pane off into a new split.
@@ -131,9 +136,11 @@ export function Pane({
 
   return (
     <div
-      className={cx("pane", active && "active", zone && "droptarget", ordCls)}
+      className={cx("pane", active && "active", zone && "droptarget", hovered && "pane-hover", ordCls)}
       style={style}
       onMouseDownCapture={() => onActivate(pane.id)}
+      onMouseEnter={() => setHover({ session: pane.session || null, paneId: pane.id })}
+      onMouseLeave={() => setHover(null)}
       onDragOver={onDragOver}
       onDragLeave={onDragLeave}
       onDrop={onDrop}

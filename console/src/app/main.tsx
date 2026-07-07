@@ -3,6 +3,9 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App.tsx";
+import { ToastProvider } from "../ui/ToastProvider.tsx";
+import { ConfirmProvider } from "../ui/ConfirmProvider.tsx";
+import { PaneHoverProvider } from "../lib/panehover.tsx";
 import { wireViewport } from "../viewport.ts";
 import "@vscode/codicons/dist/codicon.css";
 import "../styles/tokens.css";
@@ -18,6 +21,12 @@ wireViewport();
 
 createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <App />
+    <ToastProvider>
+      <ConfirmProvider>
+        <PaneHoverProvider>
+          <App />
+        </PaneHoverProvider>
+      </ConfirmProvider>
+    </ToastProvider>
   </React.StrictMode>,
 );
