@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from "react";
-import { api, apiJSON } from "../api.js";
+import { api, apiJSON } from "../core/api/client.ts";
 
 // Display settings (theme / fonts / file-viewer options / icon set). Persisted in
 // localStorage for instant load + offline, AND mirrored to the server per-user

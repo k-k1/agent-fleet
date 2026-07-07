@@ -1,0 +1,301 @@
+/* Terminal view + kind badges — co-located styles. */
+
+.termview {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  /* Inline-size container so the head's controls collapse on narrow panes via
+     the @container paneview rules (here and in mirror.css). */
+  container: paneview / inline-size;
+}
+
+/* Pane header: kind badge + session name + state pill. Leaves room for the
+   grip (left) and the control cluster (right), which float above it. */
+.pane-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 40px 4px 34px; /* right clears the lone × cluster (old value) */
+  min-height: 28px;
+  border-bottom: 1px solid var(--border2);
+  background: var(--panel2);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.pane-head-title {
+  color: var(--muted);
+}
+.pane-session {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.pane-session-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 600;
+}
+
+/* Session kind badge — old base exactly (10px/600, radius 3, muted default);
+   per-kind colors below override color/bg/border. */
+.kind-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex: none; /* never shrink/wrap the badge */
+  white-space: nowrap;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  background: var(--btn);
+  border: 1px solid var(--btn-border);
+  border-radius: 3px;
+  padding: 1px 5px;
+  margin-right: 6px;
+  color: var(--muted);
+}
+.kind-tag .kt-short {
+  display: none;
+}
+/* Old: the codicon inside the badge shrinks below the 10px label so it doesn't
+   inflate the chip height. */
+.kind-tag .codicon {
+  font-size: 0.85em;
+}
+/* The terminal pane is an inline-size container so its header badge collapses
+   to icon + 2-char short label when the pane is narrow (split panes). */
+.termview {
+  container: paneview / inline-size;
+}
+@container paneview (max-width: 460px) {
+  .pane-head .kind-tag .kt-full {
+    display: none;
+  }
+  .pane-head .kind-tag .kt-short {
+    display: inline;
+  }
+}
+/* Collapse the kind badge to its 2-char short form when the pane header gets
+   narrow — the full word otherwise squeezes the session name to "nov…". Applies
+   to both the terminal and chat heads (same paneview container). */
+@container paneview (max-width: 460px) {
+  .view-head .kind-tag .kt-full {
+    display: none;
+  }
+  .view-head .kind-tag .kt-short {
+    display: inline;
+  }
+}
+.kind-tag.kind-claude { color: #e0a45e; background: rgba(224, 164, 94, 0.14); border-color: rgba(224, 164, 94, 0.45); }
+.kind-tag.kind-codex { color: #4ec97a; background: rgba(78, 201, 122, 0.14); border-color: rgba(78, 201, 122, 0.45); }
+.kind-tag.kind-opencode { color: #b07cf2; background: rgba(176, 124, 242, 0.16); border-color: rgba(176, 124, 242, 0.45); }
+.kind-tag.kind-shell { color: #46c9d0; background: rgba(70, 201, 208, 0.14); border-color: rgba(70, 201, 208, 0.45); }
+.kind-tag.kind-ssm { color: #6d8bf5; background: rgba(109, 139, 245, 0.14); border-color: rgba(109, 139, 245, 0.45); }
+/* Light theme: darker text + stronger fill for legibility. */
+[data-theme="light"] .kind-tag.kind-claude { color: #a85f1c; background: rgba(224, 164, 94, 0.2); border-color: rgba(224, 164, 94, 0.55); }
+[data-theme="light"] .kind-tag.kind-codex { color: #18854a; background: rgba(78, 201, 122, 0.2); border-color: rgba(78, 201, 122, 0.55); }
+[data-theme="light"] .kind-tag.kind-opencode { color: #6d2fce; background: rgba(176, 124, 242, 0.2); border-color: rgba(176, 124, 242, 0.55); }
+[data-theme="light"] .kind-tag.kind-shell { color: #15828a; background: rgba(70, 201, 208, 0.2); border-color: rgba(70, 201, 208, 0.55); }
+[data-theme="light"] .kind-tag.kind-ssm { color: #3140b8; background: rgba(109, 139, 245, 0.2); border-color: rgba(109, 139, 245, 0.55); }
+
+/* Terminal body: xterm fills; overlays cover it. */
+.term-body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  background: #1e1e1e; /* matches the xterm theme; NOT the app theme (terminal stays dark) */
+}
+.term-body .terminal {
+  position: absolute;
+  inset: 0;
+  padding: 2px 0 0 4px;
+}
+.term-empty {
+  position: absolute;
+  inset: 0;
+  z-index: 1; /* above the .terminal so the overlay takes clicks */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: var(--viewer-bg, var(--bg));
+}
+.term-empty-img {
+  max-width: min(72%, 440px);
+  max-height: 62%;
+  object-fit: contain;
+  /* うっすら透けるウォーターマーク程度に淡く（旧デザインと同一） */
+  opacity: 0.16;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+.term-mask {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, #000 45%, transparent);
+}
+.term-mask-msg {
+  color: #ddd;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Mobile control-key strip (hidden on desktop). */
+.termkeys {
+  display: none;
+}
+@media (max-width: 760px) {
+  .termkeys {
+    display: flex;
+    gap: 4px;
+    padding: 4px 6px;
+    background: var(--panel2);
+    border-top: 1px solid var(--border2);
+    overflow-x: auto;
+  }
+  .termkey {
+    flex: 1;
+    min-width: 36px;
+    min-height: 34px;
+    background: var(--btn);
+    color: var(--fg);
+    border: 1px solid var(--btn-border);
+    border-radius: 4px;
+    font-family: var(--mono);
+    font-size: 13px;
+  }
+}
+
+/* Onboarding card (first-run checklist over the empty starter pane) — old
+   styles.css region 4074–4171 verbatim (docs/22 P6d). */
+
+/* Legacy control styles (old element globals), scoped — the verbatim-ported card
+   keeps raw <button className="ghost"> markup (:where() = old 0-0-1 specificity). */
+:where(.onboard) button {
+  background: var(--btn);
+  color: var(--fg);
+  border: 1px solid var(--btn-border);
+  border-radius: 4px;
+  padding: 4px 10px;
+  cursor: pointer;
+  font: inherit;
+}
+:where(.onboard) button:hover:not(:disabled) {
+  background: var(--btn-h);
+}
+:where(.onboard) button.ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--muted);
+  padding: 2px 6px;
+}
+:where(.onboard) button.ghost:hover:not(:disabled) {
+  background: var(--btn);
+  color: var(--fg);
+}
+
+.onboard {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  overflow: auto;
+}
+.onboard-card {
+  width: min(94%, 460px);
+  padding: 22px 22px 14px;
+  background: var(--panel2, var(--panel));
+  border: 1px solid var(--border2, var(--border));
+  border-radius: 14px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45);
+}
+.onboard-title {
+  font-size: 17px;
+  font-weight: 600;
+}
+.onboard-sub {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.onboard-steps {
+  list-style: none;
+  margin: 16px 0 6px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.onboard-step {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+}
+.onboard-step.next {
+  border-color: var(--accent);
+  /* theme-derived accent tint (was a hardcoded blue that ignored the theme/accent) */
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.onboard-mark {
+  flex-shrink: 0;
+  font-size: 16px;
+  color: var(--muted2);
+}
+.onboard-step.done .onboard-mark {
+  color: var(--ok);
+}
+.onboard-step.next .onboard-mark {
+  color: var(--accent);
+}
+.onboard-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.onboard-label {
+  font-size: 13px;
+}
+.onboard-step.done .onboard-label {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+.onboard-hint {
+  font-size: 11px;
+  color: var(--muted);
+}
+.onboard-cta {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 12px;
+  min-height: 34px;
+}
+.onboard-cta-glyph {
+  font-size: 15px;
+  line-height: 1;
+}
+.onboard-cta.primary {
+  background: var(--accent);
+  color: var(--on-accent); /* was hardcoded #fff — use the accent's contrast token */
+  border-color: var(--accent);
+}
+.onboard-foot {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 8px;
+}

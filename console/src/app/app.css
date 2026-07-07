@@ -1,0 +1,181 @@
+/* App shell frame — chrome only; feature styles live with their feature. */
+
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.app-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+.app-rail {
+  width: 300px; /* matches the old console's left pane */
+  flex: none;
+  background: var(--leftpane-bg);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden; /* the map pins at the top; only .app-rail-scroll scrolls */
+  /* Rebind the row-state colors to shades derived from the chosen left-pane
+     surface (always set by applyTheme — derived when a surface is chosen, else
+     the theme default) so section headers / row active+hover follow the theme
+     instead of the fixed defaults (old .leftpane behavior). */
+  --active-bg: var(--lp-active-bg);
+  --hover-bg: var(--lp-hover-bg);
+}
+.app-rail-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+.app-body {
+  position: relative;
+}
+/* Desktop-only collapse / overlay (hamburger single/double-click). Scoped to
+   min-width so the persisted af-left-open="0" (shared with the old console)
+   can't display:none the MOBILE drawer — there navOpen is the only signal. */
+@media (min-width: 761px) {
+  .app-shell.left-collapsed .app-rail {
+    display: none;
+  }
+  /* Overlay mode: the rail floats above the main area instead of docking. */
+  .app-shell.left-overlay:not(.left-collapsed) .app-rail {
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    z-index: 20;
+    box-shadow: 4px 0 16px color-mix(in srgb, #000 30%, transparent);
+  }
+  /* Backdrop only in overlay mode while the pane is open — dims the main area;
+     clicking it collapses the pane (old .nav-backdrop behavior). */
+  .app-shell.left-overlay:not(.left-collapsed) .app-nav-backdrop {
+    display: block;
+    position: absolute;
+    inset: 0;
+    z-index: 15;
+    background: rgba(0, 0, 0, 0.35);
+  }
+}
+.app-nav-backdrop {
+  display: none;
+}
+.app-main {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  padding: 6px;
+}
+
+/* Mobile: the rail is an off-canvas drawer (hamburger / edge swipe). Overrides
+   the desktop collapse/overlay classes — navOpen is the only signal here. */
+@media (max-width: 760px) {
+  .app-shell .app-rail {
+    display: flex;
+    position: fixed;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    z-index: 40;
+    width: min(84vw, 320px);
+    transform: translateX(-102%);
+    transition: transform 0.18s ease-out;
+    box-shadow: 4px 0 16px color-mix(in srgb, #000 35%, transparent);
+  }
+  .app-shell.nav-open .app-rail {
+    transform: translateX(0);
+  }
+  .app-shell.nav-open .app-nav-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 30;
+    background: color-mix(in srgb, #000 40%, transparent);
+  }
+}
+
+/* ---- LayoutMap (pinned above the rail sections) ---- */
+.layoutmap {
+  flex: none;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border2);
+}
+.lm-cap {
+  color: var(--muted2);
+  font-size: 10px;
+  margin-bottom: 4px;
+}
+.lm-cols {
+  display: flex;
+  gap: 3px;
+}
+.lm-col {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.lm-cell {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  background: var(--panel2);
+  border: 1px solid var(--border2);
+  border-radius: 4px;
+  padding: 2px 6px;
+  font: inherit;
+  font-size: 11px;
+  color: var(--fg);
+  cursor: pointer;
+}
+.lm-cell.active {
+  border-color: var(--accent);
+}
+.lm-cell.hover {
+  border-color: var(--ord, var(--accent));
+}
+.lm-ord {
+  flex: none;
+  min-width: 15px;
+  height: 15px;
+  border-radius: 3px;
+  background: var(--ord);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.lm-kind {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+}
+.lm-kind.kc-claude { color: #e0a45e; }
+.lm-kind.kc-codex { color: #4ec97a; }
+.lm-kind.kc-opencode { color: #b07cf2; }
+.lm-kind.kc-shell { color: #46c9d0; }
+.lm-kind.kc-ssm { color: #6d8bf5; }
+.lm-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--muted2);
+}
+.lm-dot.on { background: var(--ok); }
+.lm-dot.working { background: var(--accent); }
+.lm-dot.question { background: var(--warn); }
+.lm-dot.bg { background: var(--warn); }
+.lm-dot.off { background: var(--muted2); }

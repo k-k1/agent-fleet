@@ -1,0 +1,241 @@
+/* Top bar — extracted from the old console's styles.css (regions 210–351,
+   .nav-toggle, .choice-seg, mobile tweaks) for pixel parity (docs/22 P6b).
+   Swatch styles live in ui/ui.css (owned by ui/SwatchGrid). Trimmed at P8. */
+
+/* Legacy control styles (old element globals), scoped — the verbatim-ported
+   TopBar keeps raw <button>/<select> markup. :where() keeps the old 0-0-1
+   specificity so class rules still win (see mirror.css). */
+:where(.topbar) button {
+  background: var(--btn);
+  color: var(--fg);
+  border: 1px solid var(--btn-border);
+  border-radius: 4px;
+  padding: 4px 10px;
+  cursor: pointer;
+  font: inherit;
+}
+:where(.topbar) button:hover:not(:disabled) {
+  background: var(--btn-h);
+}
+:where(.topbar) button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+:where(.topbar) select {
+  background: var(--btn);
+  color: var(--fg);
+  border: 1px solid var(--btn-border);
+  border-radius: 4px;
+  padding: 4px 6px;
+  font: inherit;
+}
+:where(.topbar) select:focus {
+  outline: 1px solid var(--accent);
+  border-color: var(--accent);
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 14px;
+  background: var(--topbar-bg);
+  border-bottom: 1px solid var(--border);
+}
+/* Left group: hamburger + brand, kept together at the start of the bar (so adding the
+   hamburger doesn't turn space-between into a 3-item layout that centers the brand). */
+.topbar-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.brand {
+  font-size: 15px;
+  font-weight: 600;
+}
+.brand-sub {
+  color: var(--muted);
+  font-weight: 400;
+  font-size: 11px;
+}
+.topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.tenant-pick {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.whoami {
+  color: var(--muted);
+  font-size: 12px;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* account menu: the signed-in email as a button opening a sign-out dropdown. */
+.acct {
+  position: relative;
+}
+.acct-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 4px;
+}
+.acct-btn:hover {
+  background: var(--btn);
+}
+.acct-name {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.acct-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 50;
+  min-width: 232px;
+  background: var(--panel2, var(--panel));
+  border: 1px solid var(--border2, var(--border));
+  border-radius: 8px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+  padding: 4px;
+}
+/* quick theme palette inside the account menu */
+.acct-theme {
+  padding: 6px 8px 2px;
+}
+.acct-theme-seg {
+  display: flex;
+  width: 100%;
+  margin-bottom: 8px;
+}
+.acct-theme-seg .seg-btn {
+  flex: 1;
+}
+.acct-swatch-row {
+  margin-bottom: 8px;
+}
+.acct-swatch-lbl {
+  display: block;
+  font-size: 10px;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+.acct-email {
+  padding: 6px 10px;
+  font-size: 11px;
+  color: var(--muted);
+  border-bottom: 1px solid var(--border2, var(--border));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.acct-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  font-size: 13px;
+  font-family: inherit;
+  color: var(--fg);
+  text-decoration: none;
+  border: 0;
+  background: none;
+  border-radius: 6px;
+  cursor: pointer;
+  text-align: left;
+}
+.acct-item:hover {
+  background: var(--hover-bg, var(--btn));
+}
+.acct-sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--border2, var(--border));
+}
+.acct-caret {
+  font-size: 11px;
+  color: var(--muted);
+}
+.gear {
+  font-size: 13px;
+}
+
+.choice-seg {
+  display: inline-flex;
+}
+.choice-seg .seg-btn {
+  flex: 0 0 auto;
+  padding: 5px 16px;
+  font-size: 12px;
+}
+.nav-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: var(--fg);
+  font-size: 20px;
+  padding: 4px 6px;
+  cursor: pointer;
+}
+
+/* Mobile (≤760px): hamburger in, secondary chrome trimmed to fit a phone. */
+@media (max-width: 760px) {
+  /* top bar: hamburger in, secondary chrome trimmed so it fits a phone width */
+  .nav-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: none;
+    color: var(--fg);
+    font-size: 20px;
+    padding: 4px 6px;
+  }
+  .topbar {
+    gap: 8px;
+    padding: 8px 10px;
+  }
+  .brand {
+    font-size: 14px;
+  }
+  .brand-sub {
+    display: none;
+  }
+  .topbar-right {
+    gap: 8px;
+  }
+  .whoami {
+    max-width: 96px;
+  }
+  /* 外観 popover: the paint button sits mid-bar, so the default right:0 anchoring
+     (relative to the button) pushes its fixed 232px menu off-screen on a phone. Pin
+     it to the viewport top-right and clamp its width/height instead. */
+  .appr-menu {
+    position: fixed;
+    top: 48px;
+    right: 8px;
+    left: auto;
+    max-width: calc(100vw - 16px);
+    max-height: calc(100vh - 60px);
+    overflow-y: auto;
+  }
+
+}

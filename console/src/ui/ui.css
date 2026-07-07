@@ -1,0 +1,584 @@
+/* ui/ primitives — co-located styles. Tokens only from styles/tokens.css. */
+
+/* ---- Button ---- */
+.ui-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--btn);
+  color: var(--fg);
+  border: 1px solid var(--btn-border);
+  border-radius: 4px;
+  padding: 4px 10px;
+  cursor: pointer;
+  font: inherit;
+  white-space: nowrap;
+}
+.ui-btn:hover:not(:disabled) {
+  background: var(--btn-h);
+}
+.ui-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.ui-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.ui-btn-sm {
+  padding: 2px 8px;
+  font-size: 12px;
+}
+.ui-btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+}
+.ui-btn-primary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 85%, var(--fg));
+}
+.ui-btn-ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--muted);
+}
+.ui-btn-ghost:hover:not(:disabled) {
+  background: var(--btn);
+  color: var(--fg);
+}
+.ui-btn-danger {
+  color: var(--del);
+  border-color: color-mix(in srgb, var(--del) 45%, transparent);
+}
+.ui-btn-danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--del) 16%, var(--btn));
+  border-color: color-mix(in srgb, var(--del) 65%, transparent);
+}
+.ui-iconbtn {
+  padding: 3px 6px;
+}
+
+/* ---- Pill ---- */
+.ui-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 999px;
+  padding: 1px 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--muted) 14%, transparent);
+}
+.ui-pill-ok {
+  color: var(--ok);
+  background: color-mix(in srgb, var(--ok) 14%, transparent);
+}
+.ui-pill-warn {
+  color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 14%, transparent);
+}
+.ui-pill-danger {
+  color: var(--del);
+  background: color-mix(in srgb, var(--del) 14%, transparent);
+}
+.ui-pill-accent {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+/* ---- EmptyState ---- */
+.ui-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 24px 16px;
+  text-align: center;
+  color: var(--muted);
+}
+.ui-empty-icon {
+  font-size: 28px;
+  opacity: 0.7;
+}
+.ui-empty-title {
+  color: var(--fg);
+  font-weight: 600;
+}
+.ui-empty-hint {
+  font-size: 12px;
+  max-width: 36em;
+}
+.ui-empty-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+/* ---- Modal ---- */
+.ui-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: color-mix(in srgb, #000 55%, transparent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+.ui-modal {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  min-width: min(420px, 92vw);
+  max-width: min(680px, 96vw);
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.ui-modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border2);
+}
+.ui-modal-title {
+  margin: 0;
+  font-size: 14px;
+}
+.ui-modal-body {
+  padding: 12px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.ui-modal-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--border2);
+}
+@media (max-width: 760px) {
+  .ui-modal {
+    min-width: 0;
+    width: 100%;
+    max-height: calc(100vh - 24px);
+  }
+}
+
+/* ---- Confirm ---- */
+.ui-confirm {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px 16px;
+  max-width: min(440px, 92vw);
+}
+.ui-confirm-title {
+  margin: 0 0 8px;
+  font-size: 14px;
+}
+.ui-confirm-body {
+  color: var(--muted);
+  font-size: 13px;
+  white-space: pre-wrap;
+}
+.ui-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+/* ---- Toast ---- */
+.ui-toasts {
+  position: fixed;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: min(520px, 92vw);
+}
+.ui-toast {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--muted);
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 13px;
+  box-shadow: 0 4px 16px color-mix(in srgb, #000 30%, transparent);
+}
+.ui-toast-error { border-left-color: var(--del); }
+.ui-toast-error > .codicon:first-child { color: var(--del); }
+.ui-toast-warn { border-left-color: var(--warn); }
+.ui-toast-warn > .codicon:first-child { color: var(--warn); }
+.ui-toast-success { border-left-color: var(--ok); }
+.ui-toast-success > .codicon:first-child { color: var(--ok); }
+.ui-toast-info { border-left-color: var(--accent); }
+.ui-toast-info > .codicon:first-child { color: var(--accent); }
+.ui-toast-msg {
+  flex: 1;
+  min-width: 0;
+  word-break: break-word;
+}
+.ui-toast-x {
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 0 2px;
+}
+
+/* ---- Section (left rail) ---- */
+.ui-section {
+  border-bottom: 1px solid var(--border2);
+}
+/* Header band — old .pane-head exactly: a tinted, sticky band (a subtle step off
+   the left-pane surface) plus a divider so SESSIONS / REPOS / FILES read as
+   headers, not just another row. z-index keeps it above the scrolling rows. */
+.ui-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 8px;
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  background: var(--hover-bg);
+  border-bottom: 1px solid var(--border2);
+}
+.ui-section-toggle {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  background: none;
+  border: none;
+  color: var(--fg);
+  font: inherit;
+  text-transform: uppercase;
+  font-weight: 600;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  padding: 2px;
+  cursor: pointer;
+  text-align: left;
+}
+.ui-section-toggle .codicon {
+  font-size: 13px;
+  color: currentColor;
+}
+.ui-section-caret {
+  color: var(--muted);
+  font-size: 10px;
+  width: 10px;
+  flex: none;
+}
+.ui-section-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.ui-section-count {
+  flex: none;
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--muted) 16%, transparent);
+  border-radius: 9px;
+  padding: 0 6px;
+  min-width: 18px;
+  text-align: center;
+}
+.ui-section-actions {
+  flex: none;
+  display: flex;
+  gap: 2px;
+}
+
+/* ---- Menu (context / dropdown) ---- */
+.ui-menu {
+  position: fixed;
+  z-index: 150;
+  min-width: 180px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px;
+  box-shadow: 0 6px 20px color-mix(in srgb, #000 35%, transparent);
+  display: flex;
+  flex-direction: column;
+}
+.ui-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: none;
+  border: none;
+  border-radius: 4px;
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
+  padding: 6px 8px;
+  cursor: pointer;
+  text-align: left;
+  white-space: nowrap;
+}
+.ui-menu-item:hover:not(:disabled) {
+  background: var(--hover-bg);
+}
+.ui-menu-item:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.ui-menu-item.danger {
+  color: var(--del);
+}
+.ui-menu-sep {
+  height: 1px;
+  background: var(--border2);
+  margin: 4px 2px;
+}
+
+/* ---- Form fields (labeled vertical) ---- */
+.ui-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.ui-field-label {
+  font-size: 12px;
+  color: var(--muted);
+}
+.ui-field input[type="text"],
+.ui-field input[type="password"],
+.ui-field textarea,
+.ui-field select {
+  background: var(--panel2);
+  color: var(--fg);
+  border: 1px solid var(--btn-border);
+  border-radius: 4px;
+  padding: 6px 8px;
+  font: inherit;
+}
+.ui-field input:focus-visible,
+.ui-field textarea:focus-visible,
+.ui-field select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 0;
+}
+.ui-field-hint {
+  font-size: 11px;
+  color: var(--muted2);
+}
+
+/* ---- Segmented control (kind/model/source pickers) ----
+   Joined bar, matching the old console's .seg: shared border, squared buttons,
+   active = accent fill (dark) / soft bg + accent text (light). */
+.ui-seg {
+  display: flex;
+  gap: 0;
+  border: 1px solid var(--btn-border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.ui-seg .seg-btn {
+  flex: 1;
+  border: none;
+  border-radius: 0;
+  background: var(--panel2);
+  color: var(--muted);
+  font: inherit;
+  font-size: 11px;
+  padding: 4px 6px;
+  cursor: pointer;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  white-space: nowrap;
+}
+.ui-seg .seg-btn:hover:not(.active) {
+  background: var(--btn-h);
+  color: var(--fg);
+}
+.ui-seg .seg-btn.active {
+  background: var(--accent);
+  color: var(--on-accent);
+  font-weight: 600;
+}
+/* Light theme: the saturated blue fill reads too heavy — soft bg + accent text. */
+[data-theme="light"] .ui-seg .seg-btn.active {
+  background: var(--active-bg);
+  color: var(--accent);
+}
+.ui-seg .seg-sub {
+  font-size: 10px;
+  color: var(--muted);
+}
+.ui-seg .seg-btn.active .seg-sub {
+  color: inherit;
+  opacity: 0.75;
+}
+.ui-seg.big .seg-btn {
+  min-width: 88px;
+  padding: 8px 10px;
+  font-size: 13px;
+  color: var(--fg);
+}
+.ui-seg.big .seg-ic {
+  font-size: 18px;
+}
+/* Kind tint on the big New Session buttons (matches .kind-tag hues; inactive only —
+   the active fill carries its own contrast). */
+.ui-seg.big .seg-btn.kind-claude:not(.active) .seg-ic { color: #e0a45e; }
+.ui-seg.big .seg-btn.kind-codex:not(.active) .seg-ic { color: #4ec97a; }
+.ui-seg.big .seg-btn.kind-opencode:not(.active) .seg-ic { color: #b07cf2; }
+.ui-seg.big .seg-btn.kind-shell:not(.active) .seg-ic { color: #46c9d0; }
+.ui-seg.big .seg-btn.kind-ssm:not(.active) .seg-ic { color: #6d8bf5; }
+/* Light theme: darker inactive icon hues for legibility (mirrors .kind-tag). */
+[data-theme="light"] .ui-seg.big .seg-btn.kind-claude:not(.active) .seg-ic { color: #a85f1c; }
+[data-theme="light"] .ui-seg.big .seg-btn.kind-codex:not(.active) .seg-ic { color: #18854a; }
+[data-theme="light"] .ui-seg.big .seg-btn.kind-opencode:not(.active) .seg-ic { color: #6d2fce; }
+[data-theme="light"] .ui-seg.big .seg-btn.kind-shell:not(.active) .seg-ic { color: #15828a; }
+[data-theme="light"] .ui-seg.big .seg-btn.kind-ssm:not(.active) .seg-ic { color: #3140b8; }
+
+/* Inline link-styled button (hints that point at another screen). */
+.linklike {
+  background: none;
+  border: none;
+  color: var(--accent);
+  font: inherit;
+  font-size: inherit;
+  padding: 0 2px;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+/* Checkbox row (e.g. SSM 強制再ログイン). */
+.ssm-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* Small segmented toggle (section headers, e.g. Files ツリー/変更). CJK labels
+   are breakable per character, which collapses the flex width and wraps the
+   label vertically — keep each button on one line. */
+.ui-seg.sm .seg-btn {
+  padding: 2px 10px;
+  font-size: 11px;
+  flex-direction: row;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+/* ---- Sparkline (ui/Sparkline.tsx) ---- */
+/* currentColor-driven so each host (resource tile, context bar) tints its own trend. */
+.spark {
+  display: block;
+}
+.spark-track {
+  fill: currentColor;
+  opacity: 0.08;
+}
+.spark-area {
+  fill: currentColor;
+  opacity: 0.16;
+}
+.spark-line {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.25;
+  vector-effect: non-scaling-stroke;
+}
+
+/* ---- SwatchGrid (ui/SwatchGrid.tsx) — old styles.css verbatim ---- */
+.swatch-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.swatch {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border-radius: 6px;
+  border: 1px solid var(--btn-border);
+  color: var(--fg);
+  font-size: 12px;
+  line-height: 1;
+  background: var(--btn);
+  cursor: pointer;
+}
+.swatch.active {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.swatch-default {
+  background: repeating-linear-gradient(
+    45deg,
+    var(--btn),
+    var(--btn) 4px,
+    var(--panel2) 4px,
+    var(--panel2) 8px
+  );
+}
+
+/* Warning variant of a field hint (e.g. a stopped send target). */
+.ui-field-hint.warn {
+  color: var(--warn, #e0a030);
+}
+
+/* ---- Raw segmented control (legacy .seg — old styles.css verbatim) ----
+   Used by verbatim-ported markup (FileView md-toggle, settings tabs' Choice /
+   settings-seg). The ui-seg variant above is the converted-component twin. */
+.seg {
+  display: flex;
+  gap: 0;
+  border: 1px solid var(--btn-border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.seg-btn {
+  flex: 1;
+  border: none;
+  border-radius: 0;
+  background: var(--panel2);
+  color: var(--muted);
+  font-size: 11px;
+  padding: 4px 6px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.seg-btn.active {
+  background: var(--accent);
+  color: var(--on-accent);
+  font-weight: 600;
+}
+/* Light theme: the accent (#2563eb) is a saturated blue, so a solid fill reads
+   too heavy. Use the soft selection background with accent-colored text instead. */
+[data-theme="light"] .seg-btn.active {
+  background: var(--active-bg);
+  color: var(--accent);
+}

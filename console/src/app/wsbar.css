@@ -1,0 +1,463 @@
+/* WS bar — extracted from the old console's styles.css (region 352–785) for
+   pixel parity (docs/22 P6a). The .spark base rules from that region live in
+   ui/ui.css (owned by ui/Sparkline). Trimmed at P8. */
+
+/* Legacy control styles (old element globals), scoped to the bar — the verbatim-
+   ported WsBar keeps raw <button className="ghost">/<input> markup. :where()
+   keeps the old 0-0-1 specificity so class rules still win (see mirror.css). */
+:where(.wsbar) button {
+  background: var(--btn);
+  color: var(--fg);
+  border: 1px solid var(--btn-border);
+  border-radius: 4px;
+  padding: 4px 10px;
+  cursor: pointer;
+  font: inherit;
+}
+:where(.wsbar) button:hover:not(:disabled) {
+  background: var(--btn-h);
+}
+:where(.wsbar) button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+:where(.wsbar) button.ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--muted);
+  padding: 2px 6px;
+}
+:where(.wsbar) button.ghost:hover:not(:disabled) {
+  background: var(--btn);
+  color: var(--fg);
+}
+:where(.wsbar) input {
+  background: var(--btn);
+  color: var(--fg);
+  border: 1px solid var(--btn-border);
+  border-radius: 4px;
+  padding: 4px 6px;
+  font: inherit;
+}
+:where(.wsbar) input:focus {
+  outline: 1px solid var(--accent);
+  border-color: var(--accent);
+}
+
+.wsbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  background: var(--panel2);
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+.ws-label {
+  color: var(--muted);
+  text-transform: uppercase;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+}
+.ws-dot {
+  font-size: 10px;
+}
+.ws-dot.on {
+  color: var(--ok);
+}
+.ws-dot.off {
+  color: var(--muted2);
+}
+.ws-state {
+  color: var(--accent);
+  min-width: 70px;
+}
+.wsbar button {
+  padding: 3px 12px;
+}
+/* Power toggle glued to the state chip: an icon-only ⏻ that starts/stops the
+   workspace (no label — the adjacent 稼働中/停止 chip states which it is). Tinted by
+   state (green = powered on / running, muted = off), and on hover flips to the
+   intent color of the action it will perform (amber = will stop, green = will
+   start). */
+.ws-power {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px 9px;
+  line-height: 1;
+}
+.ws-power-glyph {
+  font-size: 15px;
+  line-height: 1;
+}
+.ws-power .codicon {
+  font-size: 13px;
+}
+.ws-power.on:not(:disabled) {
+  color: var(--ok);
+  border-color: var(--ok);
+}
+.ws-power.off:not(:disabled) {
+  color: var(--muted2);
+}
+.ws-power.on:not(:disabled):hover {
+  color: var(--warn);
+  border-color: var(--warn);
+}
+.ws-power.off:not(:disabled):hover {
+  color: var(--ok);
+  border-color: var(--ok);
+}
+.ws-spacer {
+  flex: 1;
+}
+.ws-stat {
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.ws-stat.warn {
+  color: var(--warn);
+}
+
+/* Resource tiles: label + trend sparkline + current value, tinted by threshold. */
+.ws-graph {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.ws-graph.warn {
+  color: var(--warn);
+}
+.ws-graph.crit {
+  color: #e5534b;
+}
+.ws-graph-k {
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  opacity: 0.7;
+}
+.ws-graph-v {
+  min-width: 22px;
+}
+.ws-graph-sep {
+  width: 1px;
+  align-self: stretch;
+  margin: 2px 3px;
+  background: var(--border2, var(--border));
+}
+/* Claude usage: a compact trigger (glyph + max %) that opens a detail dropdown. */
+.ws-usage-wrap {
+  position: relative;
+  display: inline-flex;
+}
+/* The frame + color come from .kind-tag.kind-claude (same as the Sessions badge);
+   here we only reset the button chrome, drop the badge's row margin, and size the
+   caret. */
+button.ws-usage-btn {
+  margin: 0;
+  cursor: pointer;
+  line-height: 1.5;
+}
+button.ws-usage-btn:hover {
+  filter: brightness(1.12);
+}
+.ws-usage-nums {
+  font-variant-numeric: tabular-nums;
+}
+.ws-usage-btn .codicon {
+  font-size: 11px;
+}
+.ws-usage-btn .codicon-chevron-down {
+  font-size: 9px;
+  opacity: 0.7;
+}
+.ws-usage-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 50;
+  width: min(88vw, 280px);
+  padding: 12px;
+  background: var(--panel2, var(--panel));
+  border: 1px solid var(--border2, var(--border));
+  border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  white-space: normal;
+}
+.wu-title {
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 10px;
+}
+.wu-row + .wu-row {
+  margin-top: 12px;
+}
+.wu-row-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 12px;
+}
+.wu-pct {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+.wu-pct.warn {
+  color: var(--warn);
+}
+.wu-pct.crit {
+  color: var(--del);
+}
+.wu-bar {
+  height: 6px;
+  margin: 4px 0;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--fg) 12%, transparent);
+  overflow: hidden;
+}
+.wu-bar-fill {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--accent);
+}
+.wu-bar-fill.warn {
+  background: var(--warn);
+}
+.wu-bar-fill.crit {
+  background: var(--del);
+}
+.wu-reset {
+  font-size: 11px;
+}
+.wu-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 12px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border2, var(--border));
+}
+.wu-ago {
+  font-size: 11px;
+}
+button.wu-reload {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+}
+/* Snapshot note (codex): explains the reading isn't live, in place of a 更新 button. */
+.wu-note {
+  margin-top: 8px;
+  font-size: 11px;
+  line-height: 1.5;
+}
+/* In the mobile ⋯ popover the tiles stack, so the group divider is horizontal. */
+.ws-more-stats .ws-graph-sep {
+  width: 100%;
+  height: 1px;
+  align-self: auto;
+  margin: 2px 0;
+}
+.preview-port {
+  width: 80px;
+  padding: 3px 8px;
+  background: var(--panel);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 13px;
+}
+.preview-port:disabled {
+  opacity: 0.5;
+}
+
+/* port preview popover: one button on the bar, a small panel on click — so it
+   never wraps to a second line on a phone. */
+/* Close-all: icon + label so the affordance reads; label hides on a phone to keep
+   the tight left cluster compact (the title still names it). */
+.ws-closeall {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+/* Split buttons moved here from the pane header — icon + label, label folds away on a
+   narrow bar (like 全て閉じる). Disabled (not hidden) when the split isn't possible. */
+.ws-split {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+}
+/* New Session shortcut on the bar: an accent-tinted icon so it reads as a create
+   action distinct from the split buttons it sits beside. */
+.ws-newsession:not(:disabled) {
+  color: var(--accent, #6a7fdb);
+}
+@media (max-width: 760px) {
+  .ws-split .lbl {
+    display: none;
+  }
+}
+@media (max-width: 760px) {
+  .ws-closeall .lbl {
+    display: none;
+  }
+}
+
+/* Resource chip: a compact summary that opens the trend tiles in a popover, so the
+   bar isn't a row of sparklines. */
+.ws-res {
+  position: relative;
+}
+.ws-res-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.ws-res-btn .codicon {
+  font-size: 12px;
+}
+.ws-res-sum {
+  color: var(--muted);
+}
+.ws-res-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  min-width: 220px;
+  padding: 12px;
+  background: var(--panel2, var(--panel));
+  border: 1px solid var(--border2, var(--border));
+  border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+}
+/* Align the tiles as columns (label | trend | value) so the sparklines line up.
+   The old width:100% + space-between let each fixed-width sparkline float to a
+   different x depending on the label/value widths — visibly misaligned. */
+.ws-res-pop .ws-graph {
+  display: grid;
+  grid-template-columns: 34px 1fr auto;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  font-size: 11.5px;
+}
+.ws-res-pop .spark {
+  width: 100%; /* stretch the trend to fill its column (all rows same length) */
+}
+.ws-res-pop .ws-graph-v {
+  justify-self: end;
+}
+/* group divider becomes a horizontal rule inside the vertical popover */
+.ws-res-pop .ws-graph-sep {
+  width: auto;
+  height: 1px;
+  align-self: stretch;
+  margin: 1px 0;
+}
+.ws-preview {
+  position: relative;
+}
+.ws-preview-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 50;
+  width: min(86vw, 300px);
+  padding: 12px;
+  background: var(--panel2, var(--panel));
+  border: 1px solid var(--border2, var(--border));
+  border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+}
+.ws-preview-pop .pv-label,
+.ws-more-pop .pv-label {
+  display: block;
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+.ws-preview-pop .pv-row,
+.ws-more-pop .pv-row {
+  display: flex;
+  gap: 6px;
+}
+.ws-preview-pop .preview-port,
+.ws-more-pop .preview-port {
+  flex: 1;
+  width: auto;
+}
+.ws-preview-pop .pv-hint,
+.ws-more-pop .pv-hint {
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+/* The preview popover now holds two sections — a known app (opencode web) and the
+   free-form port — separated by a little space + a hairline. */
+.pv-section + .pv-section {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border2);
+}
+/* opencode web quick-open row: full-width, label left / ↗ right. */
+.pv-app {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+}
+
+/* Mobile: resource chips + opencode web + port preview fold into one ⋯ popover. */
+.ws-more {
+  position: relative;
+}
+.ws-more-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 50;
+  width: min(86vw, 300px);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: var(--panel2, var(--panel));
+  border: 1px solid var(--border2, var(--border));
+  border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+}
+.ws-more-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.ws-more-stats .ws-stat {
+  white-space: normal; /* the host line is long — let it wrap inside the popover */
+}
+
+.body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+/* ---- left pane ---- */

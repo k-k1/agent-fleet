@@ -1,0 +1,358 @@
+/* Sessions section (left rail) + session modals — co-located styles. */
+
+.sess-list {
+  list-style: none;
+  margin: 0;
+  padding: 4px 6px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+/* Working-dir group header. */
+.sess-group-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  background: none;
+  border: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  padding: 5px 4px 3px;
+  cursor: pointer;
+  text-align: left;
+  min-width: 0;
+}
+.sess-group-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+.sess-group-count {
+  flex: none;
+  font-size: 11px;
+  background: color-mix(in srgb, var(--muted) 14%, transparent);
+  border-radius: 999px;
+  padding: 0 6px;
+}
+
+/* Two-line session row. */
+.sess-row {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  border-radius: 6px;
+}
+.sess-row:hover,
+.sess-row.hover {
+  background: var(--lp-hover-bg, var(--hover-bg));
+}
+.sess-row.active {
+  background: var(--lp-active-bg, var(--active-bg));
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.sess-row.dead {
+  opacity: 0.55;
+}
+.sess-btn {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  background: none;
+  border: none;
+  color: var(--fg);
+  font: inherit;
+  text-align: left;
+  padding: 6px 8px 6px 14px;
+  cursor: pointer;
+}
+.sess-row.stopped .sess-l1 {
+  color: var(--muted);
+}
+.sess-btn[aria-disabled="true"] {
+  cursor: default;
+}
+.sess-l1 {
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sess-l2 {
+  display: flex;
+  align-items: center;
+  gap: 2px; /* old value — the kind badge carries its own margin-right */
+  min-width: 0;
+}
+/* The state chip is span.session-state (old markup — rules at the bottom of this
+   file); its margin-left:auto puts it at the row's right edge. */
+.sess-drift {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--warn);
+  font-size: 11px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Ordinal badges (top-right, shown while split). */
+.sess-ords {
+  display: flex;
+  gap: 3px;
+  padding: 6px 2px 0 0;
+}
+.rail-ord {
+  flex: none;
+  min-width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: 4px;
+  background: var(--ord);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0 3px;
+}
+
+/* ⋯ menu. */
+.sess-menu-wrap {
+  position: relative;
+  flex: none;
+  padding: 4px 4px 0 0;
+}
+.sess-menu-btn {
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 4px;
+  opacity: 0;
+}
+.sess-row:hover .sess-menu-btn,
+.sess-menu-btn:focus-visible,
+.sess-row.active .sess-menu-btn {
+  opacity: 1;
+}
+.sess-menu-btn:hover {
+  background: var(--btn);
+  color: var(--fg);
+}
+.sess-menu {
+  position: absolute;
+  right: 4px;
+  top: 26px;
+}
+
+/* Session modals: proposal row + prefix chips + SSM bits. */
+.sm-proposal {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--panel2);
+  border: 1px solid var(--border2);
+  border-radius: 6px;
+  padding: 8px 10px;
+  min-width: 0;
+}
+.sm-proposal-label {
+  flex: none;
+  font-size: 11px;
+  color: var(--accent);
+  font-weight: 600;
+}
+.sm-proposal-text {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.sm-prefix-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.sm-prefix-chip {
+  background: var(--btn);
+  color: var(--muted);
+  border: 1px solid var(--btn-border);
+  border-radius: 999px;
+  padding: 2px 10px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.sm-prefix-chip.active {
+  color: var(--on-accent);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.sm-muted {
+  color: var(--muted);
+  margin: 0;
+}
+.ssm-code-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.ssm-code {
+  font-family: var(--mono);
+  font-size: 18px;
+  letter-spacing: 2px;
+  background: var(--panel2);
+  border: 1px solid var(--border2);
+  border-radius: 6px;
+  padding: 4px 10px;
+}
+.ssm-error {
+  color: var(--del);
+  margin: 0;
+}
+
+/* Archived modal. */
+.arch-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.arch-search {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--panel2);
+  border: 1px solid var(--btn-border);
+  border-radius: 4px;
+  padding: 4px 8px;
+  color: var(--muted);
+}
+.arch-search input {
+  flex: 1;
+  min-width: 0;
+  background: none;
+  border: none;
+  color: var(--fg);
+  font: inherit;
+  outline: none;
+}
+.arch-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.arch-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 4px 5px 14px;
+  border-radius: 6px;
+}
+.arch-row:hover {
+  background: var(--hover-bg);
+}
+.arch-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.arch-name {
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.arch-sub {
+  color: var(--muted);
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.arch-actions {
+  flex: none;
+  display: flex;
+  gap: 4px;
+}
+
+/* Session state chip (入力待ち / 進行中… / 停止中 / 質問あり…) — old styles.css
+   verbatim. Shared markup between the rail rows and the pane/chat heads
+   (span.session-state + stateInfo cls), so this lives once here. */
+.session-state {
+  margin-left: auto;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  padding: 1px 7px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.session-state.on {
+  color: var(--ok);
+  background: color-mix(in srgb, var(--ok) 12%, transparent);
+  border-color: color-mix(in srgb, var(--ok) 38%, transparent);
+}
+/* Stopped: a quiet, un-tinted chip — a halted session is resumable, not an alert,
+   so it shouldn't shout in warn orange. */
+.session-state.off {
+  color: var(--muted);
+  border-color: var(--border2);
+}
+/* dir-gone, can't be resumed: muted (the row itself is struck through / disabled). */
+.session-state.dead {
+  color: var(--muted);
+  border-color: var(--border2);
+}
+.session-state.working {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  animation: af-pulse 1.4s ease-in-out infinite;
+}
+/* idle by hook, but a run_in_background task is still running — a calmer teal than
+   the accent "working", since the session isn't awaiting a reply from claude. */
+.session-state.bg {
+  color: #17a2a2;
+  background: color-mix(in srgb, #17a2a2 12%, transparent);
+  border-color: color-mix(in srgb, #17a2a2 38%, transparent);
+}
+/* Light theme: the mid teal dips below AA as small text on white — darken it. */
+[data-theme="light"] .session-state.bg {
+  color: #15828a;
+}
+.session-state.question {
+  color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 14%, transparent);
+  border-color: color-mix(in srgb, var(--warn) 40%, transparent);
+  font-weight: 600;
+}
+@keyframes af-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
