@@ -615,7 +615,15 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		if !filepath.IsAbs(parent) {
 			parent = filepath.Join(homeDir(), parent)
 		}
-		dir, err := ensureWorktree(parent, req.Branch, req.NewBranch)
+		// Branch naming is deferred: the client derives a provisional name from the first
+		// prompt, but when that yields nothing (e.g. a Japanese-only prompt, or no prompt)
+		// we start on a throwaway wip-<slug>. The user (or the LLM suggestion) renames it
+		// to a real name later — the worktree folder stays put, so the session id holds.
+		nb := strings.TrimSpace(req.NewBranch)
+		if nb == "" {
+			nb = "wip-" + randSlug()
+		}
+		dir, err := ensureWorktree(parent, req.Branch, nb)
 		if err != nil {
 			writeErr(w, http.StatusBadGateway, "worktree_failed", err.Error())
 			return
