@@ -488,6 +488,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const bumpRepos = useCallback(() => setReposKey((k) => k + 1), []);
   const bumpConn = useCallback(() => setConnKey((k) => k + 1), []);
   const bumpFiles = useCallback(() => setFilesKey((k) => k + 1), []);
+  // chatListKey bumps whenever a conversation is created/changed so the AssistantSection
+  // list refreshes (a draft becoming real happens inside ChatView, out of the section).
+  // Defined here — above the running-edge transition effect that also calls it — so it's
+  // out of the temporal dead zone when that effect's dep array is evaluated.
+  const bumpChatList = useCallback(() => setChatListKey((k) => k + 1), []);
   // Memo queue (docs/21): bump to make the queue panel refetch (after add from the
   // send modal, flush, tidy-apply). The panel also polls while open for cross-device.
   const bumpMemos = useCallback(() => setMemosKey((k) => k + 1), []);
@@ -585,10 +590,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (to === "running") {
         bumpRepos();
         bumpSessions();
+        // Chat conversations are proxied into the workspace agent, so chatList() fails
+        // while it's still starting. Without this bump the assistant list stays stale
+        // until a full browser reload re-mounts the section.
+        bumpChatList();
       }
     }
     prevWsRef.current = wsState;
-  }, [wsState, bumpFiles, bumpRepos, bumpSessions]);
+  }, [wsState, bumpFiles, bumpRepos, bumpSessions, bumpChatList]);
 
   // resetToTerminal collapses the layout back to a single, empty terminal pane. Used
   // when the world changes underneath the views (recreate / tenant switch): the
@@ -862,10 +871,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
     },
     [commit],
   );
-
-  // chatListKey bumps whenever a conversation is created/changed so the AssistantSection
-  // list refreshes (a draft becoming real happens inside ChatView, out of the section).
-  const bumpChatList = useCallback(() => setChatListKey((k) => k + 1), []);
 
   // ---- pane layout controls ----
   // splitRight appends a new full-height column (up to MAX_COLS) holding a fresh
