@@ -1,6 +1,6 @@
 # internal-git-provider — テナント内部 git プロバイダ
 
-- 状態: **提案（設計）** — 未実装。契約はコードが正（実装後は本書を追従させる）。
+- 状態: **P1 実装済み**（MVP）。契約はコードが正（`control-plane/git_http.go`・`internal_git.go` ほか）。
 - 関連: [architecture](architecture.md) / [security §4.4](security.md#44-シークレット管理) /
   [api-agent](api-agent.md) / ADR [0010](../decisions/0010-internal-git-provider.md)（採否）/
   [0003](../decisions/0003-ssh-to-connections.md)（git 認証＝Connections）
@@ -21,7 +21,7 @@
 
 - PR / コードレビュー / CI（GitHub 相当。将来 Gitea/Forgejo へ載せ替える「②」領域）。
 - 組織/チームの細粒度権限マトリクス（当面は membership role で read/write の2段）。
-- LFS（P2 以降で検討）。
+  ※ LFS 本体（Batch API＋basic 転送＋容量クォータ＋孤児 GC＋**ロック API**）は **P3 で実装済み**（§9）。
 
 ## 2. なぜこの形か（要約。詳細は ADR 0010）
 
@@ -62,6 +62,10 @@
   （既定 = flat、その他 = `<slug>/`）。git は別ツリー `git/<slug>/` に分ける。
 - メタデータ: SQLite に **`git_repo` テーブル**（新 migration）。一覧・作成者・作成時刻・
   （将来）クォータ/監査の台帳。ディレクトリ走査でなく DB を正にして FS レースを避ける。
+- **LFS オブジェクト**（P3）: content-addressed で `<repo>.git/lfs/objects/<oid[0:2]>/<oid[2:4]>/<oid>`
+  （oid=sha256）。repo の `.git` ツリー内に置くので delete/rename で一緒に移動/削除される。
+  容量クォータ用の会計台帳として **`lfs_object` テーブル**（tenant, repo, oid, size）を持ち、
+  テナント合計バイトを O(1) の SUM で得る（FS 走査を避ける）。
 
 ## 5. 認証・認可・トークンモデル
 
@@ -74,17 +78,25 @@
 
 ### 5.2 git smart-HTTP 面（clone/fetch/push）
 
-- membership（identity × tenant）毎に**テナントスコープの git token** を発行。
-  保管は既存 **PAT テーブル流用**を第一候補（新設は避ける。ADR で確定）。
-- ワークスペース作成/更新時（`manager.go` の secrets 注入経路）に、暗号化ストアへ
-  `s.Git[<internal-host>] = { User: "x-access-token", Token: <token> }` を書き込む。
+- membership（identity × tenant）毎に**決定的な HMAC トークン**を用いる（**token 用の DB は持たない**）。
+  形式 `afg_<b64url(membershipID)>.<HMAC-tag>`。署名鍵はデプロイ master key（AF_MASTER_KEY）から
+  派生（`git_http.go` `gitSignKey`）。CP は同じ関数でトークンを**再生成**できるので、注入は冪等で
+  平文の保存も復元問題も無い（PAT 表流用は却下 → ADR 0010）。
+- ワークスペース起動時（`manager.go` `workspaceExtraEnv`）に、CP が env
+  `AF_INTERNAL_GIT_HOST` / `AF_INTERNAL_GIT_TOKEN`（= `mintGitToken(membershipID)`）を注入。
+  Agent は起動時（`secrets.go` `seedInternalGit`）にこれを暗号ストアへ
+  `s.Git[<host>] = { User: "x-access-token", Token: <token> }` として seed する。
   → 統一 cred helper（`secrets.go` `runCredHelper`）は**任意ホストを既に配信する**ので、
-  これだけで clone/push の Basic 認証が透過的に通る（追加コード不要）。
-- CP の smart-HTTP ハンドラは Basic の **password をこの token として検証** → (tenant, user, role)
-  を解決し、以下を**毎リクエスト強制**:
+  これだけで clone/push の Basic 認証が透過的に通る。
+- CP の smart-HTTP ハンドラは Basic の **password を token として検証**（tag 照合）→ 埋め込まれた
+  membership を**ライブ参照**して (tenant, role) を解決し、以下を**毎リクエスト強制**:
   - URL の `<slug>` == token のテナント（他テナントのリポに到達不可）。
-  - `git-upload-pack`（read）= member 以上。
-  - `git-receive-pack`（push/write）= role で可否（例: viewer は read-only）。
+  - repo が `git_repo` 台帳に存在（未登録は 404）。
+  - `git-upload-pack`（read）= 有効な membership。
+  - `git-receive-pack`（push/write）= role で可否（`canPush`: member / tenant_admin。将来の viewer は read-only）。
+- **失効**: membership を無効化すると `GetMembershipByID`（`status='active'` フィルタ）が外れ、同じ
+  決定的トークンが即座に通らなくなる（token 表が無くてもライブで失効）。全体ローテーションが要る段は
+  membership に epoch 列を足して HMAC 入力に混ぜる（P2）。
 
 ## 6. データフロー
 
@@ -104,19 +116,23 @@
 | # | 箇所 | 変更 |
 |---|------|------|
 | 1 | `control-plane/main.go`（mux, 〜419） | ルート追加: `/git/{slug}/{repo...}`（smart-HTTP）、`/api/internal-git/*`（管理 API） |
-| 2 | `control-plane/git_http.go`（新規） | `git http-backend`(CGI) ラッパ + Basic token 認証 + slug 封じ込め + role 認可 |
+| 2 | `control-plane/git_http.go`（新規） | HMAC トークン発行/検証 + `git http-backend`(CGI) ラッパ + slug 封じ込め + 台帳存在確認 + role 認可 |
 | 3 | `control-plane/internal_git.go`（新規） | repo 一覧/作成/削除、branches、`clone_url` 生成 |
-| 4 | `control-plane/migrations/00NN_git_repo.sql`（新規） | `git_repo` テーブル（+ token は PAT 流用） |
-| 5 | `control-plane/manager.go`（secrets 注入） | membership の git token を暗号ストアへ注入（`s.Git[internal-host]`） |
-| 6 | `workspace/agent/connections.go:21 gitHosts` | 内部ホストを追加（既定 user=`x-access-token`）→ 資格情報の保存/注入を有効化 |
-| 7 | `workspace/agent/connections.go handleConnectionsGet` | `internal: connected`（テナント標準で常時） |
-| 8 | `workspace/agent/git.go:61 gitProviderHost` | 内部ホストの slug/アイコン case（バッジ、任意） |
-| 9 | `console/src/components/RepoPicker.tsx` | `PROVIDERS` にタブ追加、internal 時は repo/branch を **`api/internal-git/*`** へ分岐 |
-| 10 | `console/src/settings/GitTab.tsx` | 「内部リポジトリを作成」カード（OAuth 不要） |
-| 11 | `docs/README.md` / 本書 / ADR 0010 | 索引・設計・決定の更新 |
+| 4 | `control-plane/migrations/0014_git_repo.sql`（新規） | `git_repo` テーブルのみ（**token 表は作らない** — 決定的 HMAC） |
+| 5 | `control-plane/store{,_sqlite}.go` | `GitRepo` 型 + CRUD、`GetMembershipByID`（token→tenant/role 解決用） |
+| 6 | `control-plane/main.go` | ルート登録（`/api/internal-git/*`、`/git/{slug}/{repo...}`）＋ `/git/` を authGate 免除、`internalGitHost` 設定 |
+| 7 | `control-plane/manager.go`（env 注入） | `workspaceExtraEnv` で `AF_INTERNAL_GIT_HOST` / `AF_INTERNAL_GIT_TOKEN` を注入 |
+| 8 | `control-plane/Dockerfile` | runtime に `git`（`git-http-backend`）を追加 |
+| 9 | `workspace/agent/secrets.go` | `seedInternalGit`（起動時に env→`s.Git[host]` へ seed）＋ `internalGitHost` |
+| 10 | `workspace/agent/connections.go` | `handleConnectionsGet` に `internal` 状態（`internalGitStatus`） |
+| 11 | `workspace/agent/git.go` `gitProviderHost` | 内部ホスト（env で動的一致）を `internal` slug にバッジ |
+| 12 | `console/src/components/RepoPicker.tsx` | `PROVIDERS` に `internal` タブ、internal 時は repo/branch を **`api/internal-git/*`**（CP 直）へ分岐 |
+| 13 | `console/src/settings/GitTab.tsx` | 「内部リポジトリ」カード（一覧/作成/削除、OAuth 不要、WS 停止中も可） |
+| 14 | `docs/README.md` / 本書 / ADR 0010 | 索引・設計・決定の更新 |
 
-`workspace/agent/git_remote.go` の switch は、内部一覧を **CP 直**で返す方針なら触らない
-（Agent→CP 認証が要るため Agent 経由は非推奨）。clone/閲覧/コミットは既存のまま。
+`workspace/agent/git_remote.go` の switch は触らない（内部一覧は **CP 直**。Agent→CP 認証が要るため Agent
+経由は非推奨）。clone/閲覧/コミットは既存のまま無改造。**`gitHosts`（connections.go）も触らない** —
+内部ホストは実行時 env で動的、cred helper は `s.Git[host]` にある任意ホストを配信するため登録不要。
 
 ## 8. 隔離・セキュリティ
 
@@ -127,19 +143,60 @@
 - **秘密の非漏洩**: token は暗号ストア（`secrets.enc`, AES-256-GCM）に注入し平文化しない
   （[0003](../decisions/0003-ssh-to-connections.md) / [0005](../decisions/0005-envelope-custodian.md) 準拠）。
 - CP に **git 実行面が増える**点は新たな攻撃面。入力（refspec/パス）検証を厳格化する。
+- **LFS**（P3）: smart-HTTP と同じ `authorizeGitRepo`（テナント越境遮断・台帳存在）を全操作で適用。
+  oid は sha256 hex のみ許可＝転送パスのパス封じ込めも兼ねる。アップロードは sha256 を検証し oid 不一致を
+  拒否（汚染防止）。容量は batch/PUT 双方でクォータ強制。大容量はメモリに載せずストリーム（共有ホスト配慮）。
 
 ## 9. フェーズ
 
-- **P1（MVP）**: `git_http.go` + `internal_git.go` + token 注入 + 作成/一覧 API + provider タブ。
+- **P1（MVP・実装済み）**: `git_http.go` + `internal_git.go` + token 注入 + 作成/一覧/削除 API + provider タブ。
   → 内部リポを clone/push でき、閲覧は既存 SCM。A/B/C を満たす。
-- **P2**: 削除/リネーム、クォータ、`git gc` cron、監査ログ、空リポ/既定ブランチ UX、
-  （任意）clone なしのツリー閲覧（bare から read-only 提供）。
+- **P2（実装済み）**: 以下を追加。
+  - **リネーム**: `POST /api/internal-git/repos/{name}/rename {new_name}`（bare 移動＋台帳更新、
+    既存 clone は origin URL の更新が必要）。
+  - **クォータ**: `tenantLimits.max_git_repos`（0=無制限）を作成時に強制（`enforceGitRepoQuota` →
+    超過は 409 `quota_exceeded`）。admin limits API / AdminTab に露出。
+  - **`git gc` cron**: `git_gc.go`（全 bare を `git gc --auto` で逐次 repack。`AF_GIT_GC_INTERVAL`
+    既定 24h、0 で無効。メモリ配慮で逐次・`--auto`）。
+  - **監査ログ**: 作成/削除/リネームを既存 audit 台帳へ（`internal_git.repo.create|delete|rename`、
+    `auditGit`）。admin 監査ビューに出る。
+  - **空リポ/既定ブランチ UX**: 新規作成した空リポ（コミット無し＝ブランチ無し）でも RepoPicker が
+    `default_branch` をプレースホルダとして選択・clone 可能に。
+- **P3（実装済み）**: **Git LFS**。
+  - `git_lfs.go`: Batch API（`POST .../info/lfs/objects/batch`）＋ basic 転送
+    （`PUT/GET .../info/lfs/objects/{oid}`）。認証・封じ込めは smart-HTTP と共通の
+    `authorizeGitRepo`（Basic トークン→membership→slug 一致→台帳存在）を再利用。
+  - **アップロードは sha256 検証**（oid 不一致は 422）、temp→fsync→rename で原子的公開、dedup。
+  - **容量クォータ**: `tenantLimits.max_lfs_bytes`（0=無制限）を **batch 時（507 error entry）と PUT 時**
+    の両方で強制。`lfs_object` 台帳で O(1) 集計。admin limits API / AdminTab（MB 入力）に露出。
+  - **ロック API**（`git_lfs_locks.go`）: create / list / verify / unlock を実装（`info/lfs/locks`）。
+    認証は `authorizeGitRepo` 共用、create/unlock は write（`canPush`）・list/verify は read。path は
+    (tenant, repo) 毎に一意（二重ロックは 409＋既存ロック）。verify は所有者で ours/theirs に分割
+    （push 前に他人のロックを検知）。unlock は所有者のみ、`force` は tenant_admin に限り他人のロックも解除。
+    ロックは `lfs_lock` テーブルに保存し repo の delete/rename に追従。実 `git lfs lock/locks/unlock` の E2E あり。
+  - ワークスペースは git-lfs 同梱・cred helper 連携済みでクライアント無改造。実 `git lfs push`/clone の E2E あり。
+  - **孤児オブジェクト GC**: 既存の `git gc` cron（`git_gc.go`）に統合。どの reachable なポインタからも
+    参照されない LFS blob を削除して容量を戻す。参照 oid の列挙は **pure-git**（CP に git-lfs 不要）で
+    `git cat-file --batch-all-objects` から全 blob を走査しポインタを抽出。**grace 期間**
+    （`AF_LFS_GC_GRACE` 既定 14 日）で mtime が新しいオブジェクトは残し、「upload→ref push」途中の
+    誤削除を防ぐ。列挙失敗時は**何も消さない**（conservative）。削除で `lfs_object` 台帳も減り quota が戻る。
+- **clone なしツリー閲覧**（実装済み）: `internal_git_browse.go`。CP が bare を直接読む read-only の
+  tree/blob/commit API（`GET .../repos/{name}/tree|blob|commits`、CP ネイティブ・テナントスコープ・read）。
+  - `git ls-tree`（dir 一覧、tree 優先ソート）／`cat-file`（blob。1 MiB 超は too_large、バイナリ・LFS
+    ポインタはフラグのみ返す）／`log`（コミット）を薄くラップ。ref/path は正規表現で検証
+    （`..`・先頭 `-`・絶対パス・制御文字を拒否＝arg 誤認/traversal 対策）。空リポは空一覧。
+  - Console: `InternalRepoBrowser`（GitTab の「参照」ボタン）でブランチ選択＋パンくず＋ツリー＋テキスト
+    プレビュー（binary/too_large/LFS は注記）。
+- **見送り（将来）**: PR/レビュー/CI が要れば ② へ載せ替え。
 - **将来（②）**: PR/レビュー/CI が要るなら Gitea/Forgejo を内包して載せ替え。
 
-## 10. 未決事項（実装前に確定）
+## 10. 確定事項（P1 実装で確定）
 
-1. **CP イメージの `git` バイナリ**: `git http-backend` に依存。無ければ追加。CP は現状 git 非実行＝新面。
-2. **token モデル**: 既存 PAT 流用（第一候補）か新 `git_token` テーブルか。
-3. **clone URL ホスト**: コンテナから到達する CP のベース URL（Caddy TLS 終端）で確定してよいか。
-4. **内部ホスト id**: `RepoPicker`/`gitHosts`/`gitProviderHost` で使う識別子（例 `internal` 表示 /
-   実 URL ホスト）の命名。
+1. **CP イメージの `git` バイナリ**: → **追加**（`control-plane/Dockerfile` runtime に `git`）。
+   `git-http-backend` は `/usr/lib/git-core/git-http-backend`。`GIT_HTTP_BACKEND` env で上書き可。
+2. **token モデル**: → **membership 毎の決定的 HMAC トークン（token 用 DB なし）**。PAT 表流用は却下
+   （平文復元不可で注入が非冪等・ユーザー一覧を汚す）。§5.2 / ADR 0010 参照。
+3. **clone URL ホスト**: → **`PUBLIC_BASE_URL`**（Caddy TLS 終端。コンテナはヘアピン NAT で到達）。
+   未設定なら内部 git は無効（作成 API は 503 `not_configured`、注入もスキップ）。
+4. **内部ホスト id**: → provider id / UI ラベル = **`internal`（「内部」）**。実 URL ホストは
+   `PUBLIC_BASE_URL` のホストで、実行時に `AF_INTERNAL_GIT_HOST` として Agent へ注入（コンパイル時固定不可）。

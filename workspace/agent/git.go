@@ -75,6 +75,12 @@ func gitProviderHost(remote string) (string, string) {
 	if host == "" {
 		return "", ""
 	}
+	// The tenant's self-hosted git (docs/reference/internal-git-provider) has a
+	// deployment-specific host, so match it dynamically from the CP-injected env
+	// and badge it as "internal" rather than the bare host.
+	if ih := internalGitHost(); ih != "" && strings.EqualFold(host, ih) {
+		return "internal", host
+	}
 	switch {
 	case strings.Contains(host, "github."):
 		return "github", host

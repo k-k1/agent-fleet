@@ -92,6 +92,101 @@ func TestSQLiteStore(t *testing.T) {
 	}
 }
 
+// Memo queue (docs/21): CRUD is membership-scoped; ListMemos returns unsent plus
+// sent-within-retention; MarkMemosSent stamps only owned ids; SweepSentMemos drops
+// memos sent before the cutoff.
+func TestSQLiteMemo(t *testing.T) {
+	ctx := context.Background()
+	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer st.Close()
+	if err := st.migrate(ctx); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	tn, _ := st.EnsureDefaultTenant(ctx)
+	iA, _ := st.UpsertIdentity(ctx, "a@x.com", "a-x-com", "")
+	iB, _ := st.UpsertIdentity(ctx, "b@x.com", "b-x-com", "")
+	memA, _ := st.EnsureMembership(ctx, iA.ID, tn.ID, "member")
+	memB, _ := st.EnsureMembership(ctx, iB.ID, tn.ID, "member")
+
+	past := "2000-01-01T00:00:00Z" // retention cutoff far in the future relative to this
+
+	m1 := Memo{ID: newID(), MembershipID: memA.ID, Repo: "repo-a", Category: "frontend",
+		Kind: "text", Body: "tighten padding", Position: 0, CreatedAt: nowTS()}
+	m2 := Memo{ID: newID(), MembershipID: memA.ID, Repo: "repo-a", Category: "api",
+		Kind: "file", RefPath: "~/repos/repo-a/x.go", Position: 1, CreatedAt: nowTS()}
+	mOther := Memo{ID: newID(), MembershipID: memB.ID, Repo: "repo-a",
+		Kind: "text", Body: "not yours", CreatedAt: nowTS()}
+	for _, m := range []Memo{m1, m2, mOther} {
+		if err := st.CreateMemo(ctx, m); err != nil {
+			t.Fatalf("create: %v", err)
+		}
+	}
+
+	// List is scoped to the caller's membership.
+	rows, err := st.ListMemos(ctx, memA.ID, past)
+	if err != nil || len(rows) != 2 {
+		t.Fatalf("list A: err=%v n=%d", err, len(rows))
+	}
+
+	// Update overlays fields and stays ownership-guarded.
+	m1.Body = "tighten padding a lot"
+	m1.Category = "ui"
+	if err := st.UpdateMemo(ctx, m1); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	got, ok, err := st.GetMemo(ctx, m1.ID)
+	if err != nil || !ok || got.Body != "tighten padding a lot" || got.Category != "ui" {
+		t.Fatalf("get after update: ok=%v err=%v %+v", ok, err, got)
+	}
+
+	// MarkMemosSent stamps only owned ids (mOther is memB's, must be ignored).
+	sent := nowTS()
+	if err := st.MarkMemosSent(ctx, memA.ID, []string{m1.ID, m2.ID, mOther.ID}, sent); err != nil {
+		t.Fatalf("mark sent: %v", err)
+	}
+	if o, _, _ := st.GetMemo(ctx, mOther.ID); o.SentAt != "" {
+		t.Fatalf("foreign memo was stamped: %+v", o)
+	}
+	// Sent-but-within-retention memos still list (cutoff in the far past).
+	if rows, _ := st.ListMemos(ctx, memA.ID, past); len(rows) != 2 {
+		t.Fatalf("sent-within-retention list = %d, want 2", len(rows))
+	}
+	// A cutoff after the sent stamp hides them from the list.
+	future := "2999-01-01T00:00:00Z"
+	if rows, _ := st.ListMemos(ctx, memA.ID, future); len(rows) != 0 {
+		t.Fatalf("expired list = %d, want 0", len(rows))
+	}
+
+	// Sweep drops sent memos before the cutoff; unsent survive.
+	if err := st.SweepSentMemos(ctx, future); err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if _, ok, _ := st.GetMemo(ctx, m1.ID); ok {
+		t.Fatalf("swept memo still present")
+	}
+	if _, ok, _ := st.GetMemo(ctx, mOther.ID); !ok {
+		t.Fatalf("unsent memo was swept")
+	}
+
+	// Delete is ownership-guarded (wrong membership is a no-op).
+	if err := st.DeleteMemo(ctx, mOther.ID, memA.ID); err != nil {
+		t.Fatalf("delete wrong-owner: %v", err)
+	}
+	if _, ok, _ := st.GetMemo(ctx, mOther.ID); !ok {
+		t.Fatalf("memo deleted by non-owner")
+	}
+	if err := st.DeleteMemo(ctx, mOther.ID, memB.ID); err != nil {
+		t.Fatalf("delete owner: %v", err)
+	}
+	if _, ok, _ := st.GetMemo(ctx, mOther.ID); ok {
+		t.Fatalf("memo not deleted by owner")
+	}
+}
+
 // Showback usage accounting (P3-9): AddUsage must accumulate per (membership, day),
 // ListUsage must window by day + enrich with tenant slug / member key, and the
 // tenant filter must scope correctly.

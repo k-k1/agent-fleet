@@ -1,0 +1,95 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"net/http/httptest"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// TestInternalGitListTenantScoped verifies the repo-management list is confined to
+// the caller's resolved tenant: a member of two tenants sees only the repos of the
+// tenant selected via X-AF-Tenant, never the other's.
+func TestInternalGitListTenantScoped(t *testing.T) {
+	ctx := context.Background()
+	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer st.Close()
+	if err := st.migrate(ctx); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	dflt, _ := st.EnsureDefaultTenant(ctx)
+	sec, err := st.CreateTenant(ctx, "security", "Security")
+	if err != nil {
+		t.Fatalf("tenant: %v", err)
+	}
+	ident, err := st.UpsertIdentity(ctx, "u@x", "u-x", "")
+	if err != nil {
+		t.Fatalf("identity: %v", err)
+	}
+	if _, err := st.EnsureMembership(ctx, ident.ID, dflt.ID, "member"); err != nil {
+		t.Fatalf("mem default: %v", err)
+	}
+	if _, err := st.EnsureMembership(ctx, ident.ID, sec.ID, "member"); err != nil {
+		t.Fatalf("mem security: %v", err)
+	}
+	must := func(g GitRepo) {
+		if err := st.CreateGitRepo(ctx, g); err != nil {
+			t.Fatalf("repo: %v", err)
+		}
+	}
+	must(GitRepo{ID: newID(), TenantID: dflt.ID, Name: "alpha", DefaultBranch: "main", CreatedAt: nowTS()})
+	must(GitRepo{ID: newID(), TenantID: sec.ID, Name: "bravo", DefaultBranch: "main", CreatedAt: nowTS()})
+
+	c := config{
+		publicBaseURL: "https://fleet.example.com",
+		mgr:           &manager{store: st, authMode: "proxy", emailHeader: "X-Forwarded-Email"},
+	}
+
+	list := func(tenant string) []string {
+		r := httptest.NewRequest("GET", "/api/internal-git/repos", nil)
+		r.Header.Set("X-Forwarded-Email", "u@x")
+		r.Header.Set("X-AF-Tenant", tenant)
+		w := httptest.NewRecorder()
+		c.handleInternalGitReposList(w, r)
+		if w.Code != 200 {
+			t.Fatalf("tenant %s: status %d (%s)", tenant, w.Code, w.Body.String())
+		}
+		var body struct {
+			Repos []struct {
+				Name     string `json:"name"`
+				CloneURL string `json:"clone_url"`
+			} `json:"repos"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		names := make([]string, 0, len(body.Repos))
+		for _, r := range body.Repos {
+			names = append(names, r.Name)
+		}
+		return names
+	}
+
+	if got := list("default"); len(got) != 1 || got[0] != "alpha" {
+		t.Fatalf("default tenant list = %v, want [alpha]", got)
+	}
+	if got := list("security"); len(got) != 1 || got[0] != "bravo" {
+		t.Fatalf("security tenant list = %v, want [bravo]", got)
+	}
+
+	// clone_url uses the public base host.
+	r := httptest.NewRequest("GET", "/api/internal-git/repos", nil)
+	r.Header.Set("X-Forwarded-Email", "u@x")
+	r.Header.Set("X-AF-Tenant", "default")
+	w := httptest.NewRecorder()
+	c.handleInternalGitReposList(w, r)
+	if want := "https://fleet.example.com/git/default/alpha.git"; !strings.Contains(w.Body.String(), want) {
+		t.Fatalf("clone_url missing %q in %s", want, w.Body.String())
+	}
+}

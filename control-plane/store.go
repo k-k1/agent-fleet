@@ -107,6 +107,18 @@ type SSMHost struct {
 	InstanceID, DocumentName, CreatedAt string
 }
 
+// Memo is one queued note (docs/21), personal scope. Grouped by Repo then Category
+// (a free-form sub-project label); Repo="" is the common/unfiled bucket. Kind is
+// "file" (RefPath points at a ~/repos path, Body is an optional comment) or "text"
+// (Body is the note). SentAt="" means unsent; a non-empty RFC3339 stamp marks a
+// flushed memo kept until the retention sweep removes it.
+type Memo struct {
+	ID, MembershipID, Repo, Category string
+	Kind, Body, RefPath              string
+	Position                         int
+	CreatedAt, SentAt                string
+}
+
 // Workspace is one container per Membership (= identity × tenant).
 type Workspace struct {
 	ID, TenantID, MembershipID      string
@@ -121,6 +133,19 @@ type Workspace struct {
 type SessionRow struct {
 	WorkspaceID, Name, Kind, Dir, Repo, Label string
 	CreatedAt, State, LastSeen                string
+}
+
+// GitRepo is one internal bare repository owned by a tenant (docs/reference/
+// internal-git-provider). The on-disk bare lives at ${DATA_DIR}/git/<slug>/<name>.git;
+// this row is the ledger the list/serve paths trust over an FS walk.
+type GitRepo struct {
+	ID, TenantID, Name, DefaultBranch, CreatedBy, CreatedAt string
+}
+
+// LFSLock is one Git LFS file lock (docs/reference/internal-git-provider, P3).
+// OwnerID is the locker's membership id; OwnerName is a display label.
+type LFSLock struct {
+	ID, TenantID, RepoName, Path, RefName, OwnerID, OwnerName, LockedAt string
 }
 
 // Store is the MetadataStore port. SQLite is the only adapter in P3-1/P3-2.
@@ -142,6 +167,10 @@ type Store interface {
 	ListMembersByTenant(ctx context.Context, tenantID string) ([]MemberInfo, error)
 	EnsureMembership(ctx context.Context, identityID, tenantID, role string) (Membership, error)
 	GetMembership(ctx context.Context, identityID, tenantID string) (Membership, bool, error)
+	// GetMembershipByID resolves a membership (with its tenant slug + live role) by
+	// its id — used by the internal-git smart-HTTP handler to map a git token back
+	// to (tenant, role) on every request. ok=false when it is missing/inactive.
+	GetMembershipByID(ctx context.Context, membershipID string) (MembershipView, bool, error)
 	// SetMembershipRole changes a membership's tenant-scoped role (member |
 	// tenant_admin). EnsureMembership only inserts, so this is the update path.
 	SetMembershipRole(ctx context.Context, membershipID, role string) error
@@ -175,6 +204,46 @@ type Store interface {
 	ListPATsByIdentity(ctx context.Context, identityID string) ([]PAT, error)
 	RevokePAT(ctx context.Context, id, identityID string) error
 	TouchPAT(ctx context.Context, id string) error
+
+	// Internal git repositories (docs/reference/internal-git-provider, ADR 0010).
+	// CreateGitRepo inserts the ledger row (the bare is created on disk by the
+	// caller); the (tenant_id, name) uniqueness is enforced by the schema.
+	CreateGitRepo(ctx context.Context, g GitRepo) error
+	ListGitReposByTenant(ctx context.Context, tenantID string) ([]GitRepo, error)
+	GetGitRepo(ctx context.Context, tenantID, name string) (GitRepo, bool, error)
+	CountGitReposByTenant(ctx context.Context, tenantID string) (int, error)
+	RenameGitRepo(ctx context.Context, tenantID, oldName, newName string) error
+	DeleteGitRepo(ctx context.Context, tenantID, name string) error
+
+	// Git LFS object ledger (P3). PutLFSObject records an uploaded object (dedup on
+	// (tenant, repo, oid)); TenantLFSBytes sums a tenant's stored bytes for the
+	// capacity quota; the repo-scoped ops keep the ledger in step with repo
+	// delete/rename (the bytes on disk move with the .git dir).
+	PutLFSObject(ctx context.Context, tenantID, repo, oid string, size int64) error
+	TenantLFSBytes(ctx context.Context, tenantID string) (int64, error)
+	DeleteLFSObjectsByRepo(ctx context.Context, tenantID, repo string) error
+	RenameLFSObjectsRepo(ctx context.Context, tenantID, oldRepo, newRepo string) error
+	// DeleteLFSObject drops one object's ledger row (used by LFS GC when it prunes
+	// an orphaned object from disk, so the tenant's capacity quota frees up).
+	DeleteLFSObject(ctx context.Context, tenantID, repo, oid string) error
+	// ListLFSObjectOIDs returns the oids the ledger records for a repo — the set GC
+	// walks to reconcile against what git still references.
+	ListLFSObjectOIDs(ctx context.Context, tenantID, repo string) ([]string, error)
+
+	// Git LFS file locks (P3). CreateLFSLock inserts a lock (the (tenant, repo, path)
+	// UNIQUE makes a second lock on a path fail — the caller pre-checks for the 409).
+	// ListLFSLocks paginates by an opaque cursor (offset); a filter of "" matches all.
+	// The repo-scoped ops keep locks in step with repo delete/rename.
+	CreateLFSLock(ctx context.Context, l LFSLock) error
+	GetLFSLockByPath(ctx context.Context, tenantID, repo, path string) (LFSLock, bool, error)
+	GetLFSLock(ctx context.Context, tenantID, repo, id string) (LFSLock, bool, error)
+	ListLFSLocks(ctx context.Context, tenantID, repo, filterPath, filterID string, limit int, cursor string) ([]LFSLock, string, error)
+	DeleteLFSLock(ctx context.Context, tenantID, repo, id string) error
+	DeleteLFSLocksByRepo(ctx context.Context, tenantID, repo string) error
+	RenameLFSLocksRepo(ctx context.Context, tenantID, oldRepo, newRepo string) error
+	// MembershipOwnerName resolves a membership to a human display label (email, or
+	// the user key) for stamping on a lock. "" when it can't be resolved.
+	MembershipOwnerName(ctx context.Context, membershipID string) (string, error)
 
 	// Audit log (docs/decisions/0006, P3-6; docs/20 M1). InsertAudit records one
 	// action; ListAuditByTenant serves the most recent entries (newest first) scoped
@@ -222,6 +291,17 @@ type Store interface {
 	CreateSSMHost(ctx context.Context, h SSMHost) error
 	UpdateSSMHost(ctx context.Context, h SSMHost) error
 	DeleteSSMHost(ctx context.Context, id, membershipID string) error
+
+	// Memo queue (docs/21), personal scope. Mutations are scoped by membership so a
+	// member only touches their own rows. ListMemos returns unsent memos plus sent
+	// ones still inside the retention window (sent before retainBefore are swept).
+	ListMemos(ctx context.Context, membershipID, retainBefore string) ([]Memo, error)
+	GetMemo(ctx context.Context, id string) (Memo, bool, error)
+	CreateMemo(ctx context.Context, m Memo) error
+	UpdateMemo(ctx context.Context, m Memo) error
+	DeleteMemo(ctx context.Context, id, membershipID string) error
+	MarkMemosSent(ctx context.Context, membershipID string, ids []string, sentAt string) error
+	SweepSentMemos(ctx context.Context, retainBefore string) error
 
 	Close() error
 }

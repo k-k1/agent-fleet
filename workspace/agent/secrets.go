@@ -199,6 +199,36 @@ func credHelperHost(r *os.File) string {
 	return ""
 }
 
+// internalGitHost is the CP-injected host of the tenant's self-hosted git
+// (docs/reference/internal-git-provider). Empty when internal git is disabled.
+func internalGitHost() string { return strings.TrimSpace(os.Getenv("AF_INTERNAL_GIT_HOST")) }
+
+// seedInternalGit writes the CP-injected internal git credential into the store
+// so the unified cred helper serves clone/push for the tenant's self-hosted repos.
+// The token is a deterministic per-membership value the CP re-injects on every
+// start, so this is idempotent; it only saves when the stored value differs.
+func seedInternalGit() {
+	host := internalGitHost()
+	token := strings.TrimSpace(os.Getenv("AF_INTERNAL_GIT_TOKEN"))
+	if host == "" || token == "" {
+		return
+	}
+	s, err := loadSecrets()
+	if err != nil {
+		log.Printf("internal git: load secrets failed: %v", err)
+		return
+	}
+	if e, ok := s.Git[host]; ok && e.User == "x-access-token" && e.Token == token {
+		return // already current
+	}
+	s.Git[host] = gitEntry{User: "x-access-token", Token: token}
+	if err := s.save(); err != nil {
+		log.Printf("internal git: save failed: %v", err)
+		return
+	}
+	_ = ensureCredHelper()
+}
+
 // migrateLegacySecrets folds any pre-A3 plaintext files into the store on start
 // and deletes them, so the bind-mounted disk no longer holds plaintext. Runs
 // every start; a no-op once migrated.

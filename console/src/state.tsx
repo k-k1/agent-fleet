@@ -443,6 +443,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [reposKey, setReposKey] = useState(0);
   const [connKey, setConnKey] = useState(0);
   const [filesKey, setFilesKey] = useState(0);
+  const [memosKey, setMemosKey] = useState(0);
   const bumpSessions = useCallback(() => setSessionsKey((k) => k + 1), []);
 
   // Canonical session list, polled once here and shared via context (the left-pane
@@ -487,6 +488,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const bumpRepos = useCallback(() => setReposKey((k) => k + 1), []);
   const bumpConn = useCallback(() => setConnKey((k) => k + 1), []);
   const bumpFiles = useCallback(() => setFilesKey((k) => k + 1), []);
+  // Memo queue (docs/21): bump to make the queue panel refetch (after add from the
+  // send modal, flush, tidy-apply). The panel also polls while open for cross-device.
+  const bumpMemos = useCallback(() => setMemosKey((k) => k + 1), []);
 
   // openNewSession: a global signal so anything (e.g. the onboarding card) can open
   // the New Session dialog, which otherwise lives as local state inside the left-pane
@@ -1242,10 +1246,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
     reposKey,
     connKey,
     filesKey,
+    memosKey,
     bumpSessions,
     bumpRepos,
     bumpConn,
     bumpFiles,
+    bumpMemos,
     newSessionTick,
     openNewSession,
     reveal,
