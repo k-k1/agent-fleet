@@ -4,11 +4,21 @@ import BranchList, { relTime } from "./BranchList.jsx";
 import type { Branch } from "./BranchList.jsx";
 import type { ConnectionsStatus } from "../types/session.ts";
 
-// Provider tabs, Bitbucket first (the default selection).
+// Provider tabs, Bitbucket first (the default selection). "internal" is the
+// tenant's self-hosted git (docs/reference/internal-git-provider): its repo/branch
+// lists come from the CP directly (api/internal-git/*), not the per-user Agent.
 const PROVIDERS: [string, string][] = [
   ["bitbucket.org", "Bitbucket"],
   ["github.com", "GitHub"],
+  ["internal", "内部"],
 ];
+
+// conns key per provider tab (the connections bag names providers, not hosts).
+const CONN_KEY: Record<string, string> = {
+  "github.com": "github",
+  "bitbucket.org": "bitbucket",
+  internal: "internal",
+};
 
 // A remote repo from GET /api/connections/git/{host}/repos.
 interface RepoItem {
@@ -53,8 +63,7 @@ export default function RepoPicker({ onChange }: RepoPickerProps) {
     api("api/connections").then(setConns).catch(() => setConns({}));
   }, []);
 
-  const connected = (h: string): boolean =>
-    h === "github.com" ? !!conns?.github?.connected : !!conns?.bitbucket?.connected;
+  const connected = (h: string): boolean => !!conns?.[CONN_KEY[h] ?? h]?.connected;
 
   // If the default (Bitbucket) isn't connected, fall back to the first connected
   // provider so the picker isn't stuck on an unusable tab.
@@ -76,12 +85,23 @@ export default function RepoPicker({ onChange }: RepoPickerProps) {
     setBranches([]);
     setBranch("");
     onChange?.(null);
-    api(`api/connections/git/${host}/repos`)
+    const isInternal = host === "internal";
+    api(isInternal ? "api/internal-git/repos" : `api/connections/git/${host}/repos`)
       .then((d) => {
         if (!alive) return;
         if (d && d.error) {
           setReposErr(d.error.message || d.error.code || "取得に失敗しました");
           setRepos([]);
+        } else if (isInternal) {
+          // Internal repos are named by `name`; map to the common RepoItem shape.
+          setRepos(
+            (d.repos || []).map((r: { name: string; clone_url: string; created_at?: string }) => ({
+              full_name: r.name,
+              clone_url: r.clone_url,
+              updated_at: r.created_at,
+              private: true,
+            })),
+          );
         } else {
           setRepos(d.repos || []);
         }
@@ -107,14 +127,28 @@ export default function RepoPicker({ onChange }: RepoPickerProps) {
     if (!fn) return;
     setLoadingBranches(true);
     try {
-      const d = await api(`api/connections/git/${host}/branches?repo=${encodeURIComponent(fn)}`);
+      const isInternal = host === "internal";
+      const d = await api(
+        isInternal
+          ? `api/internal-git/repos/${encodeURIComponent(fn)}/branches`
+          : `api/connections/git/${host}/branches?repo=${encodeURIComponent(fn)}`,
+      );
       if (d && d.error) {
         setBranchErr(d.error.message || d.error.code || "ブランチ取得に失敗");
         return;
       }
-      const list: Branch[] = d.branches || [];
+      // Internal branches are plain strings; external ones are Branch objects.
+      let list: Branch[] = isInternal
+        ? (d.branches || []).map((n: string) => ({ name: n }))
+        : d.branches || [];
+      // A freshly-created internal repo has no commits yet, so no branches. Offer
+      // its default branch as a selectable placeholder so it can still be cloned —
+      // the first commit lands on it.
+      if (isInternal && list.length === 0 && d.default_branch) {
+        list = [{ name: d.default_branch, default: true }];
+      }
       setBranches(list);
-      const def = d.default || (list[0] && list[0].name) || "";
+      const def = (isInternal ? d.default_branch : d.default) || (list[0] && list[0].name) || "";
       setBranch(def);
       emit(fn, def);
     } catch {
@@ -166,7 +200,9 @@ export default function RepoPicker({ onChange }: RepoPickerProps) {
 
       {!connected(host) ? (
         <p className="muted pad">
-          {host === "github.com" ? "GitHub" : "Bitbucket"} が未接続です。⚙ 設定 → 接続 から繋いでください。
+          {host === "internal"
+            ? "内部リポジトリは利用できません（この環境では無効）。"
+            : `${host === "github.com" ? "GitHub" : "Bitbucket"} が未接続です。⚙ 設定 → 接続 から繋いでください。`}
         </p>
       ) : (
         <>
