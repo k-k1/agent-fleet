@@ -350,13 +350,15 @@
 .launch-split {
   display: flex;
 }
+/* Old .chip.launch look: accent text on the chip base, teal-ish border. */
 .launch-main,
 .launch-caret {
   background: var(--btn);
-  color: var(--fg);
-  border: 1px solid var(--btn-border);
+  color: var(--accent);
+  border: 1px solid #2f5a6a;
   font: inherit;
-  font-size: 12px;
+  font-size: 11px;
+  line-height: 1.4;
   padding: 2px 8px;
   cursor: pointer;
   display: inline-flex;
@@ -369,11 +371,12 @@
 .launch-caret {
   border-radius: 0 4px 4px 0;
   border-left: none;
-  padding: 2px 4px;
+  padding-left: 5px;
+  padding-right: 5px;
 }
 .launch-main:hover:not(:disabled),
 .launch-caret:hover:not(:disabled) {
-  background: var(--btn-h);
+  background: var(--active-bg);
 }
 .launch-main:disabled,
 .launch-caret:disabled {

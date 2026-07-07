@@ -10,8 +10,6 @@ import { raw } from "../../core/api/client.ts";
 import { Section } from "../../ui/Section.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { Button } from "../../ui/Button.tsx";
-import { Pill } from "../../ui/Pill.tsx";
-import type { PillTone } from "../../ui/Pill.tsx";
 import { EmptyState } from "../../ui/EmptyState.tsx";
 import { useConfirm } from "../../ui/ConfirmProvider.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
@@ -42,15 +40,6 @@ const notify = (title: string, body: string) => {
   } catch {
     /* ignore */
   }
-};
-
-const STATE_TONE: Record<string, PillTone> = {
-  on: "ok",
-  working: "accent",
-  question: "warn",
-  bg: "warn",
-  off: "muted",
-  "off dead": "danger",
 };
 
 // Sessions group by working directory; header = the dir's basename.
@@ -422,9 +411,9 @@ export function SessionsSection() {
                           <span className={"kind-tag kind-" + kindClass(s.kind)}>
                             <Icon name={kindIcon(s.kind)} /> {kindLabel(s.kind)}
                           </span>
-                          <Pill tone={STATE_TONE[st.cls] || "muted"} icon={st.icon}>
-                            {st.text}
-                          </Pill>
+                          <span className={"session-state " + st.cls}>
+                            <Icon name={st.icon} spin={st.spin} /> {st.text}
+                          </span>
                           {/* Branch drift: the working copy left the branch this session
                               started on — the agent's tree may be swapped out under it. */}
                           {s.branchDrift && (

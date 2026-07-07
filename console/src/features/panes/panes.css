@@ -96,19 +96,58 @@ body.row-resizing {
 .pane-grip:active {
   cursor: grabbing;
 }
+/* Control cluster (wrap / ×) — old styles.css verbatim: ALWAYS visible (loose
+   floating icons at rest); pane hover/active adds a faint backing + border that
+   pulls the actions into one recognizable cluster. */
 .pane-controls {
   position: absolute;
   top: 4px;
-  right: 6px;
-  z-index: 4;
+  right: 8px;
+  z-index: 6;
   display: flex;
+  align-items: center;
   gap: 2px;
-  opacity: 0;
-  transition: opacity 0.12s;
+  padding: 2px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease;
 }
-.pane:hover .pane-controls,
-.pane.active .pane-controls {
-  opacity: 1;
+.pane:hover > .pane-controls,
+.pane.active > .pane-controls {
+  background: color-mix(in srgb, var(--panel) 82%, transparent);
+  border-color: var(--border);
+}
+/* Close is the odd one out (it removes the pane, wrap reshapes it) — a hairline
+   divider sets it apart when something precedes it. */
+.pane-controls .pane-close:not(:first-child) {
+  margin-left: 5px;
+  position: relative;
+}
+.pane-controls .pane-close:not(:first-child)::before {
+  content: "";
+  position: absolute;
+  left: -3px;
+  top: 3px;
+  bottom: 3px;
+  width: 1px;
+  background: var(--border);
+}
+/* Old .pane-btn sizing, mapped onto the ui/IconButton the cluster renders. */
+.pane-controls .ui-btn {
+  width: 22px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 5px;
+  line-height: 1;
+}
+/* an on/off toggle in the control cluster (line-wrap) — accent when active */
+.pane-controls .ui-btn.on {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
 /* Drop hint while dragging a pane over this one: full ring for a swap, a

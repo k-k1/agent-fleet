@@ -24,8 +24,7 @@ import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { kindIcon, kindLabel, kindShort, kindClass } from "../../lib/sessionkind.ts";
 import { displayName, stateInfo } from "../../lib/sessionview.ts";
 import { Button } from "../../ui/Button.tsx";
-import { Pill } from "../../ui/Pill.tsx";
-import type { PillTone } from "../../ui/Pill.tsx";
+import { Icon } from "../../ui/Icon.tsx";
 import { TermKeys } from "./TermKeys.tsx";
 import { MirrorToggle } from "../mirror/MirrorToggle.tsx";
 import { ContextBar } from "../mirror/ContextBar.tsx";
@@ -34,16 +33,6 @@ import type { Session } from "../../types/session.ts";
 // Brand artwork shown over an unattached terminal so a freshly split (or initial)
 // pane isn't a bare black rectangle. Resolved against baseURI (path-strip proxy).
 const IDLE_ARTWORK = Array.from({ length: 7 }, (_, i) => rel(`brand/idle-${i + 1}.png`));
-
-// stateInfo cls → Pill tone (the old console themed these via CSS state classes).
-const STATE_TONE: Record<string, PillTone> = {
-  on: "ok",
-  working: "accent",
-  question: "warn",
-  bg: "warn",
-  off: "muted",
-  "off dead": "danger",
-};
 
 interface TerminalViewProps {
   paneId: string;
@@ -157,9 +146,9 @@ export function TerminalView({
               <span className="kt-short">{kindShort(sessionMeta.kind)}</span>
             </span>
             <span className="pane-session-name">{displayName(sessionMeta)}</span>
-            <Pill tone={STATE_TONE[st!.cls] || "muted"} icon={st!.icon}>
-              {st!.text}
-            </Pill>
+            <span className={"session-state " + st!.cls}>
+              <Icon name={st!.icon} spin={st!.spin} /> {st!.text}
+            </span>
           </span>
         ) : (
           <span className="pane-head-title">{session ? "セッション" : "セッション未接続"}</span>
