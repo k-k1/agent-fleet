@@ -1,0 +1,72 @@
+// Modal — the shared dialog shell: backdrop, centered panel, header with title +
+// close. Backdrop click / Escape close unless `lockClose` (an operation in
+// flight — the panel goes inert and the close button becomes a spinner). Pass
+// `as="form"` + onSubmit for form dialogs. Port of the old components/Modal.
+import { useEffect } from "react";
+import type { ReactNode, MouseEvent, FormEvent } from "react";
+import { Icon } from "./Icon.tsx";
+import { IconButton } from "./Button.tsx";
+
+interface ModalProps {
+  title?: ReactNode;
+  onClose?: () => void;
+  className?: string;
+  as?: "div" | "form";
+  onSubmit?: (e: FormEvent) => void;
+  lockClose?: boolean;
+  children?: ReactNode;
+}
+
+export function Modal({
+  title,
+  onClose,
+  className = "",
+  as = "div",
+  onSubmit,
+  lockClose = false,
+  children,
+}: ModalProps) {
+  // Esc closes (unless an operation is in flight). Registered at the document so
+  // it works regardless of where focus sits inside the panel.
+  useEffect(() => {
+    if (!onClose || lockClose) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        onClose();
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [onClose, lockClose]);
+
+  const Panel = as;
+  const panelProps: Record<string, unknown> = {
+    className: ("ui-modal " + className).trim(),
+    onClick: (e: MouseEvent) => e.stopPropagation(),
+  };
+  if (as === "form") panelProps.onSubmit = onSubmit;
+  // React 19 treats `inert` as a boolean prop.
+  if (lockClose) panelProps.inert = true;
+  return (
+    // Stop contextmenu bubbling past the backdrop: a modal may render inside an
+    // element with its own onContextMenu (e.g. a repo row's right-click menu).
+    <div
+      className="ui-modal-backdrop"
+      onClick={lockClose ? undefined : onClose}
+      onContextMenu={(e) => e.stopPropagation()}
+    >
+      <Panel {...panelProps}>
+        <header className="ui-modal-head">
+          <h3 className="ui-modal-title">{title}</h3>
+          {lockClose ? (
+            <Icon name="loading" spin title="処理中…" />
+          ) : (
+            <IconButton icon="close" label="閉じる" onClick={onClose} />
+          )}
+        </header>
+        {children}
+      </Panel>
+    </div>
+  );
+}

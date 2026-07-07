@@ -23,6 +23,9 @@
 .pane.droptarget {
   border-color: var(--accent);
 }
+.pane.pane-hover {
+  border-color: color-mix(in srgb, var(--ord, var(--accent)) 70%, var(--border2));
+}
 
 /* Dividers between columns / rows (drag to resize). */
 .pane-divider {
