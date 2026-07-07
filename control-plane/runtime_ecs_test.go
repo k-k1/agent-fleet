@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -160,6 +161,23 @@ func TestECSStartCreatesEverything(t *testing.T) {
 	}
 	if aws.ToInt32(fe.createCalls[0].DesiredCount) != 1 {
 		t.Errorf("desiredCount = %d, want 1", aws.ToInt32(fe.createCalls[0].DesiredCount))
+	}
+}
+
+func TestECSStartNonFatalWhenAgentNotReady(t *testing.T) {
+	// A large image cold-pull can outlast the readiness budget. Start must still
+	// succeed (service is at desired 1; the workspace converges) rather than flip a
+	// starting workspace to "failed" (P3-7 段5 finding A).
+	fe, ff, fs := &fakeECS{}, &fakeEFS{}, &fakeSSM{}
+	rt := newTestECS(fe, ff, fs)
+	rt.waitReady = func(context.Context, string, time.Duration) error {
+		return fmt.Errorf("agent did not become healthy within 90s")
+	}
+	if err := rt.Start(context.Background()); err != nil {
+		t.Fatalf("Start must not fail on readiness timeout, got %v", err)
+	}
+	if len(fe.createCalls) != 1 {
+		t.Errorf("service should still be created (desired 1), createCalls=%d", len(fe.createCalls))
 	}
 }
 

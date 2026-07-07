@@ -78,9 +78,11 @@
   **EFS AP 2本(home/claude, transit 暗号)＋SSM SecureString(token/DEK)** を動的払い出し、**CP→Service Connect→Agent**
   が到達（Agent ログに `POST /sessions` 受理）、task env に DEK/token 平文なし(secrets valueFrom のみ、env は
   CLAUDE_CONFIG_DIR だけ)。**実地の findings（段2 の改善候補）**:
-  - **(A) 大容量イメージの cold pull が Start の healthz 待ちを超過**（af-workspace 7.4GB、初回 pull 数分）。現状 Start は
-    healthz タイムアウトで error 扱い→UI は「停止」表示になり、task は裏で RUNNING になる。改善案＝Start は「サービス作成＋
-    desired 1」で成功を返し healthz 待ちを非致命に（Console の State ポーリングに委ねる）。correctness ではなく UX。
+  - **(A) 大容量イメージの cold pull が Start の healthz 待ちを超過**（af-workspace 7.4GB、初回 pull 数分）。**→ 対応済**
+    （commit: fix/p3-7-ecs-start-nonfatal）: `ecsRuntime.Start` は upsertService で desired 1 にした後、healthz 待ちを
+    **best-effort・非致命**にし（タイムアウトは error でなく log）、成功を返す。ゆえに cold pull 中でも Start は「失敗」に
+    ならず、workspace は非同期に収束・Console の State ポーリングが running を拾う。既定 budget も 120→90s に短縮
+    （早く "starting" を返す）。unit test `TestECSStartNonFatalWhenAgentNotReady` で回帰固定。
   - **(B) CP の SQLite が ephemeral(/tmp)ゆえ CP 再デプロイで状態消失**→ ws レコードの token 不整合・ログイン状態リセット。
     本番は CP store を永続化必須（EFS or RDS=段3a）。今回の milestone は既知の割り切り。
   - **(C) SC 動的ディスカバリは機能**（懸念は否定）: 先に起動していた CP が、後から作られた ws サービスに到達できた。
