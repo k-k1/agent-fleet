@@ -1,6 +1,6 @@
 # 0010. テナント内部 git プロバイダ — bare + git-http-backend を CP に自ホスト
 
-- 状態: **提案（設計）** — 未実装。設計は [reference/internal-git-provider](../reference/internal-git-provider.md)。
+- 状態: **採用・P1 実装済み**。設計は [reference/internal-git-provider](../reference/internal-git-provider.md)。
 - 関連: [0001](0001-self-host-vs-saas.md)（SaaS 断念・自ホスト）/ [0003](0003-ssh-to-connections.md)（git 認証＝Connections）/
   [0005](0005-envelope-custodian.md)（封筒暗号）/ [architecture](../reference/architecture.md)
 
@@ -21,6 +21,10 @@ Connections のみで、外部アカウント前提・コードが外に出る�
 - **認証はトークン注入型 cred helper を流用**: membership 毎のテナントスコープ token を暗号ストア
   `s.Git[internal-host]` に注入 → 統一 cred helper が任意ホストを既に配信するので透過。CP 側の
   smart-HTTP は Basic の password を token として検証し、`<slug>`==tenant を全リクエスト強制。
+- **token は membership 毎の決定的 HMAC（token 用 DB なし）**: 署名鍵はデプロイ master key 派生、
+  トークンは `membershipID` を内包し tag を HMAC。CP は同じ関数で再生成できるので注入は冪等・平文保存
+  不要。検証時は埋め込み membership を**ライブ参照**して (tenant, role) を解決し、無効化された
+  membership は即座に失効する（下記「捨てた選択肢: PAT 表流用」参照）。
 - ストレージは `${DATA_DIR}/git/<slug>/<repo>.git`（既存の永続ボリューム＋bind）。
 
 ### 捨てた選択肢
@@ -30,6 +34,10 @@ Connections のみで、外部アカウント前提・コードが外に出る�
 - **Gitea/Forgejo を最初から内包（②）**: org/権限/Web 操作まで揃うが、別アプリの運用が増える。
   A–C には PR/権限マトリクスが不要なので過剰。将来 PR/CI が要る段で載せ替える段階戦略を採る。
 - **外部 SaaS（GitHub/GitLab）に寄せる**: C（外に出さない）に反する。
+- **PAT 表流用でトークンを保管**（当初の第一候補）: 却下。PAT は hash のみ保存で**平文を復元できない**ため、
+  CP がワークスペースへ注入する平文を保持できず注入が非冪等になる（毎回再発行→再注入）。加えて machine
+  token がユーザーの Console PAT 一覧を汚す。トークンは自動管理で membership 状態が実ゲートなので、
+  個別失効・有効期限といった PAT の利点は不要 → **決定的 HMAC（DB なし）**が素直。
 - **Agent 経由で内部 repo を列挙**（`git_remote.go` の switch に internal case）: Agent→CP 認証が
   必要で複雑。CP がリポの所有者なので **repo 一覧/作成は CP ネイティブ**に分岐する方が素直。
 
@@ -39,5 +47,6 @@ Connections のみで、外部アカウント前提・コードが外に出る�
   （`gitHosts`・`RepoPicker`・`GitTab`・`handleConnectionsGet`）。clone/閲覧/コミットは**無改造**で動く。
 - CP に **git 実行面が増える**（新たな攻撃面）。refspec/パス検証を厳格化し、slug 封じ込めと
   tenant 一致を必須にする。
-- CP イメージに `git`（http-backend）依存が入る。token は既存 PAT テーブル流用を第一候補。
+- CP イメージに `git`（http-backend）依存が入る（`control-plane/Dockerfile`）。token 用のテーブルは
+  作らず（決定的 HMAC）、新規 migration は `git_repo` のみ。clone URL は `PUBLIC_BASE_URL` 由来。
 - 将来 PR/CI が必要になれば ② へ載せ替え可能（本決定は最小の土台に留める）。

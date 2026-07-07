@@ -18,6 +18,8 @@ interface Tenant {
   running?: number;
   max_workspaces?: number;
   max_sessions?: number;
+  max_git_repos?: number;
+  max_lfs_bytes?: number;
   session_idle_timeout?: string;
   ws_idle_timeout?: string;
   allow_agent_self_update?: boolean;
@@ -892,6 +894,9 @@ function TenantView({
 }) {
   const [maxWs, setMaxWs] = useState<number | string>(tenant?.max_workspaces || 0);
   const [maxSs, setMaxSs] = useState<number | string>(tenant?.max_sessions || 0);
+  const [maxRepos, setMaxRepos] = useState<number | string>(tenant?.max_git_repos || 0);
+  // LFS cap is stored in bytes but edited in MB for usability.
+  const [maxLfsMb, setMaxLfsMb] = useState<number | string>(Math.round((tenant?.max_lfs_bytes || 0) / 1048576));
   const [sessIdle, setSessIdle] = useState(tenant?.session_idle_timeout || "");
   const [wsIdle, setWsIdle] = useState(tenant?.ws_idle_timeout || "");
   const [allowUpd, setAllowUpd] = useState(!!tenant?.allow_agent_self_update);
@@ -902,6 +907,8 @@ function TenantView({
   useEffect(() => {
     setMaxWs(tenant?.max_workspaces || 0);
     setMaxSs(tenant?.max_sessions || 0);
+    setMaxRepos(tenant?.max_git_repos || 0);
+    setMaxLfsMb(Math.round((tenant?.max_lfs_bytes || 0) / 1048576));
     setSessIdle(tenant?.session_idle_timeout || "");
     setWsIdle(tenant?.ws_idle_timeout || "");
     setAllowUpd(!!tenant?.allow_agent_self_update);
@@ -924,6 +931,8 @@ function TenantView({
     const res = await apiJSON(`api/admin/tenants/${encodeURIComponent(slug)}/limits`, "PUT", {
       max_workspaces: +maxWs || 0,
       max_sessions: +maxSs || 0,
+      max_git_repos: +maxRepos || 0,
+      max_lfs_bytes: Math.round(+maxLfsMb || 0) * 1048576,
       session_idle_timeout: sessIdle.trim(),
       ws_idle_timeout: wsIdle.trim(),
       allow_agent_self_update: allowUpd,
@@ -950,6 +959,14 @@ function TenantView({
             <label>
               最大 Session
               <input type="number" min="0" value={maxSs} onChange={(e) => setMaxSs(e.target.value)} />
+            </label>
+            <label>
+              最大 内部リポジトリ
+              <input type="number" min="0" value={maxRepos} onChange={(e) => setMaxRepos(e.target.value)} />
+            </label>
+            <label>
+              最大 LFS 容量 (MB)
+              <input type="number" min="0" value={maxLfsMb} onChange={(e) => setMaxLfsMb(e.target.value)} />
             </label>
           </div>
           <h4>アイドル自動停止（空=無効 / デプロイ既定に従う）</h4>
