@@ -117,6 +117,8 @@ func main() {
 	mux.HandleFunc("GET /repos/{name}/status", handleRepoStatus)
 	mux.HandleFunc("GET /repos/{name}/branches", handleRepoBranches)
 	mux.HandleFunc("POST /repos/{name}/checkout", handleRepoCheckout)
+	mux.HandleFunc("POST /repos/{name}/rename-branch", handleRepoRenameBranch)
+	mux.HandleFunc("POST /repos/{name}/suggest-branch", handleRepoSuggestBranch)
 	mux.HandleFunc("POST /repos/{name}/fetch", handleRepoFetch)
 	mux.HandleFunc("POST /repos/{name}/ff", handleRepoFF)
 	// Launch prompt templates (repo 起動 modal): .claude/commands, .claude/skills,

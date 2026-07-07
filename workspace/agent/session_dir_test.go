@@ -254,3 +254,52 @@ func TestMaybePruneWorktreeKeeps(t *testing.T) {
 		t.Errorf("parent working copy was removed; maybePruneWorktree must ignore non-worktrees")
 	}
 }
+
+// TestUpdateSessionStartBranch verifies an intentional branch rename rewrites the
+// recorded start branch for sessions in that working copy (so it isn't later seen as
+// drift), while leaving other dirs and pre-existing ("") metas untouched.
+func TestUpdateSessionStartBranch(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("AF_SESSIONS_DIR", filepath.Join(home, "sessions"))
+	dir := filepath.Join(home, "repos", "app@wip-x")
+	writeSessionMeta(sessionMeta{Name: "a", Dir: dir, Branch: "wip-x"})
+	writeSessionMeta(sessionMeta{Name: "b", Dir: filepath.Join(dir, "sub"), Branch: "wip-x"}) // subdir
+	writeSessionMeta(sessionMeta{Name: "c", Dir: dir, Branch: ""})                            // pre-existing
+	writeSessionMeta(sessionMeta{Name: "d", Dir: filepath.Join(home, "repos", "other"), Branch: "main"})
+
+	updateSessionStartBranch(dir, "feat/login")
+
+	get := func(n string) sessionMeta { m, _ := readSessionMeta(n); return m }
+	if b := get("a").Branch; b != "feat/login" {
+		t.Errorf("a.Branch = %q, want feat/login", b)
+	}
+	if b := get("b").Branch; b != "feat/login" {
+		t.Errorf("b.Branch (subdir) = %q, want feat/login", b)
+	}
+	if b := get("c").Branch; b != "" {
+		t.Errorf("c.Branch = %q, want empty (pre-existing untouched)", b)
+	}
+	if b := get("d").Branch; b != "main" {
+		t.Errorf("d.Branch (other dir) = %q, want main (untouched)", b)
+	}
+}
+
+// TestCleanBranchName checks the LLM branch-name sanitizer produces git-safe kebab-case
+// from chatty/edge replies (quotes, prefixes, casing, punctuation, over-length, empty).
+func TestCleanBranchName(t *testing.T) {
+	cases := map[string]string{
+		"Fix the login redirect bug":            "fix-the-login-redirect-bug",
+		"\"feature/login-redirect\"":            "feature-login-redirect",
+		"Add   Rate  Limiting!!":                "add-rate-limiting",
+		"first line\nsecond line":               "first-line",
+		"日本語のみ":                                 "", // no ASCII word chars → empty
+		"----":                                  "",
+		"a-very-long-branch-name-that-should-definitely-exceed-forty-chars": "a-very-long-branch-name-that-should-defi", // capped at 40 runes
+	}
+	for in, want := range cases {
+		if got := cleanBranchName(in); got != want {
+			t.Errorf("cleanBranchName(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
