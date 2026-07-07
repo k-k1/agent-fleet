@@ -459,3 +459,11 @@
   font-size: 12px;
   color: var(--muted);
 }
+
+/* Small segmented toggle (section headers, e.g. Files ツリー/変更). */
+.ui-seg.sm .seg-btn {
+  padding: 2px 8px;
+  font-size: 11px;
+  flex-direction: row;
+  gap: 4px;
+}
