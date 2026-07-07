@@ -4,16 +4,12 @@
 // the first session — that ticks itself off as the user completes each step and
 // disappears once they have a session (or hit "あとで", remembered in localStorage).
 // Rendered only on the active empty pane (see TerminalView) so it shows just once.
-//
-// TODO(P7): the 接続する CTAs open SettingsDialog(git/agents) once it's ported;
-// until then they show a hint toast (settings live in the old console meanwhile).
-// TODO(P7): refetch connections when a connect action completes (old connKey bump).
 import { useEffect, useState } from "react";
 import { api } from "../../core/api/client.ts";
 import { Icon } from "../../ui/Icon.tsx";
-import { useToast } from "../../ui/ToastProvider.tsx";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { useSessionsStore } from "../sessions/store.ts";
+import { useSettingsUI } from "../settings/store.ts";
 import type { ConnectionsStatus } from "../../types/session.ts";
 
 const DISMISS_KEY = "af.onboarding.dismissed";
@@ -23,7 +19,8 @@ export function OnboardingCard() {
   const startWs = useWorkspaceStore((s) => s.start);
   const sessions = useSessionsStore((s) => s.sessions);
   const openNewSession = useSessionsStore((s) => s.openNewSession);
-  const toast = useToast();
+  const openSettings = useSettingsUI((s) => s.openSettings);
+  const connKey = useSettingsUI((s) => s.connTick);
   const [conns, setConns] = useState<ConnectionsStatus | null>(null); // null = still probing
   const [dismissed, setDismissed] = useState(() => {
     try {
@@ -33,8 +30,8 @@ export function OnboardingCard() {
     }
   });
 
-  // Connections aren't kept in global state — fetch here. On failure assume
-  // "not connected" so the card still helps.
+  // Connections aren't kept in global state — fetch here, refetch when a connect
+  // action bumps connTick. On failure assume "not connected" so the card still helps.
   useEffect(() => {
     let alive = true;
     api("api/connections")
@@ -43,7 +40,7 @@ export function OnboardingCard() {
     return () => {
       alive = false;
     };
-  }, []);
+  }, [connKey]);
 
   // Show until the user has a session (then they're past first-run), or dismisses.
   // We keep showing even after git/agent are connected so the final step — create
@@ -66,10 +63,6 @@ export function OnboardingCard() {
     setDismissed(true);
   };
 
-  // Settings tabs land in P7 — point at the old console until then.
-  const settingsHint = () =>
-    toast("接続の設定は P7 で移植予定です。それまでは旧コンソール（index.html）の 設定 から接続してください。", { kind: "info" });
-
   const steps = [
     {
       done: running,
@@ -82,13 +75,13 @@ export function OnboardingCard() {
       done: gitOk,
       label: "git プロバイダを接続",
       hint: "GitHub / Bitbucket からリポジトリを clone できます",
-      cta: gitOk ? null : { text: "接続する", icon: "plug", on: settingsHint },
+      cta: gitOk ? null : { text: "接続する", icon: "plug", on: () => openSettings("git") },
     },
     {
       done: agentOk,
       label: "エージェントを接続",
       hint: "Claude / Codex / opencode にサインインします",
-      cta: agentOk ? null : { text: "接続する", icon: "plug", on: settingsHint },
+      cta: agentOk ? null : { text: "接続する", icon: "plug", on: () => openSettings("agents") },
     },
     {
       done: false,

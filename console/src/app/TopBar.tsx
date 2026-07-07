@@ -1,8 +1,9 @@
 // Top bar — ported from the old components/TopBar.tsx (docs/22 P6b). Verbatim
-// except the useApp() reads (→ core/store/tenant) and the nav toggles (→ props
-// from App). 設定 / 管理 are stubs until SettingsDialog / AdminDialog land (P7).
+// except the useApp() reads (→ core/store/tenant), the nav toggles (→ props from
+// App) and openSettings/openAdmin (→ features/settings/store).
 import { useEffect, useRef, useState } from "react";
 import { useTenantStore } from "../core/store/tenant.ts";
+import { useSettingsUI } from "../features/settings/store.ts";
 import { rel } from "../core/api/client.ts";
 import { useSettings, setSetting, THEMES, SURFACE_TARGETS } from "../lib/settings.ts";
 import { useIsMobile } from "../lib/device.ts";
@@ -75,6 +76,13 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
   // would hide the live preview).
   useDismiss(acctRef, menuOpen, () => setMenuOpen(false));
   useDismiss(apprRef, apprOpen, () => setApprOpen(false));
+
+  const openSettings = useSettingsUI((st) => st.openSettings);
+  const openAdmin = useSettingsUI((st) => st.openAdmin);
+  const run = (fn: () => void) => {
+    setMenuOpen(false);
+    fn();
+  };
 
   return (
     <header className="topbar">
@@ -151,13 +159,11 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
             {menuOpen && (
               <div className="acct-menu" role="menu">
                 <div className="acct-email" title={me}>{me}</div>
-                {/* TODO(P7): SettingsDialog — enabled once the 6-tab dialog is ported. */}
-                <button className="acct-item" role="menuitem" disabled title="設定は P7 で移植予定">
+                <button className="acct-item" role="menuitem" onClick={() => run(() => openSettings())}>
                   <Icon name="gear" /> 設定
                 </button>
                 {(superAdmin || tenants?.some((t) => t.role === "tenant_admin")) && (
-                  // TODO(P7): AdminDialog — enabled once the admin dialog is ported.
-                  <button className="acct-item" role="menuitem" disabled title="管理は P7 で移植予定">
+                  <button className="acct-item" role="menuitem" onClick={() => run(openAdmin)}>
                     <Icon name="shield" /> 管理
                   </button>
                 )}
@@ -173,8 +179,7 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
             )}
           </div>
         ) : (
-          // TODO(P7): bare settings entry (no identity) — enabled with SettingsDialog.
-          <button className="gear" title="設定（P7 で移植予定）" disabled>
+          <button className="gear" title="設定（表示 / ワークスペース / エージェント / Git / AWS SSM / MCP）" onClick={() => openSettings()}>
             <Icon name="gear" /> 設定
           </button>
         )}

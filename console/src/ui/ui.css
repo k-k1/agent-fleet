@@ -549,3 +549,36 @@
 .ui-field-hint.warn {
   color: var(--warn, #e0a030);
 }
+
+/* ---- Raw segmented control (legacy .seg — old styles.css verbatim) ----
+   Used by verbatim-ported markup (FileView md-toggle, settings tabs' Choice /
+   settings-seg). The ui-seg variant above is the converted-component twin. */
+.seg {
+  display: flex;
+  gap: 0;
+  border: 1px solid var(--btn-border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.seg-btn {
+  flex: 1;
+  border: none;
+  border-radius: 0;
+  background: var(--panel2);
+  color: var(--muted);
+  font-size: 11px;
+  padding: 4px 6px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.seg-btn.active {
+  background: var(--accent);
+  color: var(--on-accent);
+  font-weight: 600;
+}
+/* Light theme: the accent (#2563eb) is a saturated blue, so a solid fill reads
+   too heavy. Use the soft selection background with accent-colored text instead. */
+[data-theme="light"] .seg-btn.active {
+  background: var(--active-bg);
+  color: var(--accent);
+}
