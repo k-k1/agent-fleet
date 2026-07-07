@@ -229,6 +229,9 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
     setConv((c) => (c ? { ...c, messages: [...c.messages, userMsg] } : c));
     setInput("");
     clearAttachments();
+    // On touch devices, drop focus so the soft keyboard (GBoard) retracts once the
+    // turn is sent — the reply is what the user wants to read, not keep typing.
+    if (coarsePointer()) inputRef.current?.blur();
     const ac = new AbortController();
     abortRef.current = ac;
     markChatBusy(target.id, true); // publish 進行中 to the rail

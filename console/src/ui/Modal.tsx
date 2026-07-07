@@ -2,11 +2,12 @@
 // close. Backdrop click / Escape close unless `lockClose` (an operation in
 // flight — the panel goes inert and the close button becomes a spinner). Pass
 // `as="form"` + onSubmit for form dialogs. Port of the old components/Modal.
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import type { ReactNode, MouseEvent, FormEvent } from "react";
 import { Icon } from "./Icon.tsx";
 import { IconButton } from "./Button.tsx";
+import { coarsePointer } from "../lib/device.ts";
 
 interface ModalProps {
   title?: ReactNode;
@@ -41,8 +42,20 @@ export function Modal({
     return () => document.removeEventListener("keydown", onKey);
   }, [onClose, lockClose]);
 
+  // On touch devices, undo any child's autoFocus once the panel mounts so opening a
+  // dialog doesn't pop the soft keyboard (GBoard) — the user usually reviews/taps
+  // before typing. autoFocus is applied synchronously on mount, so this effect (which
+  // runs after) blurs whatever landed inside. Desktop keeps autofocus for keyboard flow.
+  const panelRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (!coarsePointer()) return;
+    const el = document.activeElement as HTMLElement | null;
+    if (el && panelRef.current?.contains(el)) el.blur();
+  }, []);
+
   const Panel = as;
   const panelProps: Record<string, unknown> = {
+    ref: panelRef,
     className: ("ui-modal " + className).trim(),
     onClick: (e: MouseEvent) => e.stopPropagation(),
   };
