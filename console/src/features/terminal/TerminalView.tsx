@@ -82,14 +82,23 @@ export function TerminalView({
   // AND the workspace is running — opening /ws/pty is what the CP treats as
   // intent-to-work (auto-start), so a click while stopped must not boot the WS.
   useEffect(() => {
-    if (session && attached && running) attach(paneId, session);
-    else {
-      detach(paneId);
-      // A session-less pane is an empty terminal: wipe scrollback left over from
-      // a session this reused xterm previously showed. A stopped session keeps
-      // its `session` set, so its read-only history isn't cleared here.
-      if (!session) clearTerm(paneId);
+    if (session && attached && running) {
+      attach(paneId, session);
+      // A session opened right after creation (repo 起動 / worktree launch) can
+      // race its own bring-up: the first PTY connect may fail or die while the
+      // agent is still starting, and the focus-reconnect path only fires on a
+      // REFOCUS — leaving a silent black pane. Re-verify the socket a few times;
+      // ensureAttached no-ops (just refits) when the connection is live.
+      const timers = [1500, 4000, 9000].map((ms) =>
+        setTimeout(() => ensureAttached(paneId, session), ms),
+      );
+      return () => timers.forEach(clearTimeout);
     }
+    detach(paneId);
+    // A session-less pane is an empty terminal: wipe scrollback left over from
+    // a session this reused xterm previously showed. A stopped session keeps
+    // its `session` set, so its read-only history isn't cleared here.
+    if (!session) clearTerm(paneId);
   }, [paneId, session, attached, running]);
 
   // Guard against accidentally closing/reloading the tab while a session is attached.
