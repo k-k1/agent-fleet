@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useApp } from "../state.jsx";
-import { api, apiJSON } from "../api.js";
+import { api, apiJSON, errText } from "../api.js";
 import Icon from "../components/Icon.jsx";
 import BranchModal from "../components/BranchModal.jsx";
 import Modal from "../components/Modal.jsx";
@@ -139,7 +139,7 @@ export default function SourceControlView({ repo }: { repo?: string; wrap?: bool
     if (!name || !sha) return;
     const res = await apiJSON(`api/repos/${enc}/checkout`, "POST", { branch: name, ref: sha, create: true });
     if (res && res.error) {
-      toast("ブランチ作成に失敗: " + (res.error.message || res.error));
+      toast("ブランチ作成に失敗: " + errText(res.error));
       return;
     }
     setNbAt(null);
@@ -153,7 +153,7 @@ export default function SourceControlView({ repo }: { repo?: string; wrap?: bool
     setMenu(null);
     const res = await apiJSON(`api/repos/${enc}/checkout`, "POST", { branch: name });
     if (res && res.error) {
-      toast("ブランチ切替に失敗: " + (res.error.message || res.error));
+      toast("ブランチ切替に失敗: " + errText(res.error));
       return;
     }
     refresh();
@@ -173,7 +173,7 @@ export default function SourceControlView({ repo }: { repo?: string; wrap?: bool
     if (!ok) return;
     const res = await apiJSON(`api/repos/${enc}/checkout`, "POST", { branch: sha });
     if (res && res.error) {
-      toast("checkout 失敗: " + (res.error.message || res.error));
+      toast("checkout 失敗: " + errText(res.error));
       return;
     }
     refresh();

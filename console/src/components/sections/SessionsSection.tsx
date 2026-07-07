@@ -7,6 +7,7 @@ import NewSessionModal from "../NewSessionModal.jsx";
 import SsmLoginModal from "../SsmLoginModal.jsx";
 import ArchivedModal from "../ArchivedModal.jsx";
 import SessionTitleModal from "../SessionTitleModal.jsx";
+import BranchRenameModal from "../BranchRenameModal.jsx";
 import { useConfirm } from "../ConfirmProvider.jsx";
 import { useToast } from "../ToastProvider.jsx";
 import EmptyState from "../EmptyState.jsx";
@@ -116,6 +117,7 @@ export default function SessionsSection() {
   }, [newSessionTick]);
   const [showArchived, setShowArchived] = useState(false);
   const [resumeSsm, setResumeSsm] = useState<{ name: string; force: boolean } | null>(null); // SSM resume via login modal
+  const [branchRenaming, setBranchRenaming] = useState<Session | null>(null); // worktree session whose branch is being renamed
   const [renaming, setRenaming] = useState<Session | null>(null); // session whose title-edit modal is open
   const menuRef = useRef<HTMLDivElement>(null); // wrap of the currently-open ⋯ menu (outside-click test)
   const [menuFor, setMenuFor] = useState<string | null>(null); // session name whose ⋯ menu is open
@@ -473,6 +475,17 @@ export default function SessionsSection() {
                     </span>
                   );
                 })()}
+                {/* Branch drift: the working copy was checked out to a different branch
+                    than this session started on (a checkout that slipped past the guard).
+                    Can't be prevented at the git layer, so surface it loudly here. */}
+                {s.branchDrift && (
+                  <span
+                    className="session-drift"
+                    title={`このセッションの作業コピーは起動時のブランチ「${s.branch}」から「${s.currentBranch}」へ切り替わっています。稼働中エージェントの作業ツリーが入れ替わり、編集や差分が食い違っている可能性があります。`}
+                  >
+                    <Icon name="warning" /> {s.currentBranch}
+                  </span>
+                )}
               </span>
             </button>
             {/* Ordinal badges: color-matched pane numbers for a session shown in one
@@ -571,6 +584,20 @@ export default function SessionsSection() {
                   >
                     <Icon name="edit" /> タイトルを変更
                   </button>
+                  {/* Rename the worktree's branch (deferred naming). Worktree sessions
+                      only — renaming a standalone clone's branch is a different intent.
+                      The modal's AI suggestion uses THIS session's conversation. */}
+                  {s.worktree && (
+                    <button
+                      className="session-menu-item"
+                      onClick={() => {
+                        setMenuFor(null);
+                        setBranchRenaming(s);
+                      }}
+                    >
+                      <Icon name="repo-forked" /> ブランチ名を変更
+                    </button>
+                  )}
                   {/* Fork: branch a claude conversation into a new session (source kept).
                       Needs the workspace up (it launches the fork) and a resumable
                       conversation — offered for claude (caps.fork), alive or stopped. */}
@@ -681,6 +708,15 @@ export default function SessionsSection() {
           title={renaming.title || ""}
           onClose={() => setRenaming(null)}
           onSaved={() => bumpSessions()}
+        />
+      )}
+
+      {branchRenaming && (
+        <BranchRenameModal
+          name={branchRenaming.name}
+          branch={branchRenaming.branch || ""}
+          onClose={() => setBranchRenaming(null)}
+          onSaved={() => { bumpSessions(); bumpRepos(); }}
         />
       )}
     </Section>

@@ -11,6 +11,7 @@ import { placeFixed } from "../../lib/placeFixed.js";
 import NewRepoModal from "../NewRepoModal.jsx";
 import BranchModal from "../BranchModal.jsx";
 import LaunchModal from "../LaunchModal.jsx";
+import type { LaunchOpts, LaunchResult } from "../LaunchModal.jsx";
 import { kindIcon, kindLabel } from "../../lib/sessionkind.js";
 import { agentOf, repoLaunchKinds } from "../../agents/registry.ts";
 import { setLaunchSeed } from "../../lib/launchSeed.js";
@@ -31,6 +32,8 @@ interface Repo {
   behind?: number;
   provider?: string; // origin host slug: github/bitbucket/gitlab, or a bare host
   remote?: string; // origin host (tooltip)
+  worktree?: boolean; // linked git worktree (not a standalone clone)
+  parent?: string; // for a worktree, the parent working copy's folder name
 }
 
 // Provider display: known SaaS hosts get a friendly label (+ icon where a codicon
@@ -223,9 +226,28 @@ export default function ReposSection() {
                 danger: true,
               });
               if (!ok) return;
-              const res = await raw(`api/repos/${encodeURIComponent(r.name)}`, { method: "DELETE" });
+              const del = (force: boolean) =>
+                raw(`api/repos/${encodeURIComponent(r.name)}${force ? "?force=true" : ""}`, { method: "DELETE" });
+              let res = await del(false);
+              // A worktree with uncommitted/unpushed work is refused (worktree_dirty);
+              // re-confirm the loss, then retry with force so it's an explicit choice.
               if (!res.ok) {
-                toast("削除に失敗しました");
+                const j = await res.json().catch(() => null);
+                const code = j?.error && typeof j.error === "object" ? j.error.code : "";
+                if (code === "worktree_dirty") {
+                  const force = await askConfirm({
+                    title: "未保存の変更があります",
+                    body: `"${r.name}" には未コミット/未pushの変更があります。強制的に削除すると失われます。続けますか？`,
+                    confirmLabel: "強制削除",
+                    danger: true,
+                  });
+                  if (!force) return;
+                  res = await del(true);
+                }
+              }
+              if (!res.ok) {
+                const j = await res.json().catch(() => null);
+                toast(j?.error ? "削除に失敗: " + errText(j.error) : "削除に失敗しました");
                 return;
               }
               bumpRepos();
@@ -258,25 +280,45 @@ export default function ReposSection() {
                 ? split ? showChatSplit : showChat
                 : split ? showTerminalSplit : showTerminal)(res.name);
             }}
-            // Modal 起動: agent + model + first prompt. Agent-only (all chat kinds),
-            // so it always opens the chat mirror; the typed prompt is stashed as a
-            // launch seed and auto-sent once MirrorView sees the session alive.
-            onLaunchPrompt={async (kind: string, model: string, prompt: string) => {
+            // 作業を始める: unified launch. worktree (default) spins an isolated worktree
+            // of this repo and starts a session there; in-place starts in the current
+            // checkout. The provisional branch is derived from the prompt (server falls
+            // back to wip-<slug>); the typed prompt is stashed as a launch seed and
+            // auto-sent once MirrorView sees the session alive.
+            onStartWork={async ({ kind, model, prompt, worktree, base, newBranch, folder, useExisting }) => {
               const hasModel = agentOf(kind).caps.model;
               const body: Record<string, unknown> = { dir: r.path, kind };
               if (hasModel && model) body.model = model;
+              if (worktree) {
+                body.worktree = true;
+                body.branch = base;
+                body.new_branch = newBranch;
+                if (folder) body.folder = folder;
+                if (useExisting) body.use_existing = true;
+              }
               const res = await apiJSON("api/sessions", "POST", body);
               if (res && res.error) {
-                toast("起動に失敗: " + errText(res.error));
-                return;
+                // A branch-name collision keeps the modal open so the user can rename or
+                // (remote-only) work on the existing branch; other errors just toast.
+                const code = typeof res.error === "object" ? res.error.code : "";
+                if (code === "branch_exists") return { ok: false, conflict: "local" as const };
+                if (code === "branch_exists_remote") return { ok: false, conflict: "remote" as const };
+                toast((worktree ? "worktree 起動に失敗: " : "起動に失敗: ") + errText(res.error));
+                return { ok: false };
               }
               writeRepoLast(r.name, kind, hasModel ? model : undefined);
               if (prompt) {
                 setLaunchSeed(res.name, prompt);
                 pushPromptHistory(r.name, prompt); // remember it for the 履歴 group next time
               }
+              if (worktree) {
+                bumpRepos();
+                bumpFiles();
+              }
               bumpSessions();
-              showChat(res.name);
+              const chat = agentOf(kind).caps.chat;
+              (chat ? showChat : showTerminal)(res.name);
+              return { ok: true };
             }}
             // A checkout / new branch changed HEAD and the working tree — refresh the
             // repo row (branch label) and the Files tree.
@@ -309,13 +351,13 @@ interface RepoRowProps {
   onFF?: () => void;
   onDelete?: () => void;
   onLaunch: (kind: string, split: boolean) => void;
-  onLaunchPrompt: (kind: string, model: string, prompt: string) => void;
+  onStartWork: (opts: LaunchOpts) => Promise<LaunchResult>;
   onBranchChanged?: () => void;
   opens?: { ordinal: number; id: string }[];
   onFocusPane?: (id: string) => void;
 }
 
-function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected, onOpen, onOpenFolder, onOpenChanges, onFF, onDelete, onLaunch, onLaunchPrompt, onBranchChanged, opens, onFocusPane }: RepoRowProps) {
+function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected, onOpen, onOpenFolder, onOpenChanges, onFF, onDelete, onLaunch, onStartWork, onBranchChanged, opens, onFocusPane }: RepoRowProps) {
   const [showLaunch, setShowLaunch] = useState(false);
   const [launchModal, setLaunchModal] = useState(false); // 起動 modal (agent + model + prompt)
   // Agent kinds only (chat-capable: claude/codex/opencode) — shell/ssm have no model
@@ -421,7 +463,7 @@ function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected,
           <div className="launch-split">
             <button
               className="chip launch launch-main"
-              title={running ? (agentKinds.length ? "起動（エージェント・モデル・最初のプロンプト）" : "利用可能なエージェントがありません") : "ワークスペース停止中"}
+              title={running ? (agentKinds.length ? "作業を始める（既定は隔離 worktree・エージェント/モデル/最初の指示）" : "利用可能なエージェントがありません") : "ワークスペース停止中"}
               disabled={!running || !agentKinds.length}
               onClick={() => setLaunchModal(true)}
             >
@@ -463,11 +505,18 @@ function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected,
         </div>
       </div>
       {/* Meta line under the name: current branch (left) + git provider (right). */}
-      {(r.branch || r.provider) && (
+      {(r.branch || r.provider || r.worktree) && (
         <div className="repo-meta">
           {r.branch && (
-            <span className="repo-branch" title={"現在のブランチ: " + r.branch}>
-              <Icon name="git-branch" className="repo-branch-ic" />
+            <span
+              className={"repo-branch" + (r.worktree ? " worktree" : "")}
+              title={
+                r.worktree
+                  ? `worktree — ブランチ: ${r.branch}${r.parent ? "（親: " + r.parent + "）" : ""}（名前変更はセッションのメニューから）`
+                  : "現在のブランチ: " + r.branch
+              }
+            >
+              <Icon name={r.worktree ? "repo-forked" : "git-branch"} className="repo-branch-ic" />
               <span className="repo-branch-name">{r.branch}</span>
             </span>
           )}
@@ -545,7 +594,7 @@ function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected,
           path={r.path}
           kinds={agentKinds}
           onClose={() => setLaunchModal(false)}
-          onLaunch={(kind, model, prompt) => { setLaunchModal(false); onLaunchPrompt(kind, model, prompt); }}
+          onLaunch={onStartWork}
         />
       )}
     </li>

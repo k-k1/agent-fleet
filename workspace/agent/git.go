@@ -19,7 +19,10 @@ import (
 // delegates every operation here (docs/06 §6.4, docs/07 §7.3).
 
 // repoNameRe constrains a repo (folder) name; it doubles as path-traversal guard.
-var repoNameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,59}$`)
+// "@" is allowed so a worktree folder can be named "<repo>@<branch>" (branch slashes
+// are sanitized to "-" by the caller); it can't form ".." or "/", so traversal stays
+// blocked. Length is 96 to fit repo@branch without truncating common branch names.
+var repoNameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._@-]{0,95}$`)
 
 func reposRoot() string { return filepath.Join(homeDir(), "repos") }
 
@@ -53,6 +56,11 @@ type Repo struct {
 	Behind   int    `json:"behind"`
 	Provider string `json:"provider,omitempty"` // origin host slug: github/bitbucket/gitlab, or the bare host
 	Remote   string `json:"remote,omitempty"`   // origin host (for a tooltip); no path/token
+	// Worktree marks a linked git worktree (from `git worktree add`) rather than a
+	// standalone clone, so the Console can badge it; Parent is the folder name of the
+	// main working copy it hangs off (for a tooltip). Both empty/false for a plain clone.
+	Worktree bool   `json:"worktree,omitempty"`
+	Parent   string `json:"parent,omitempty"`
 }
 
 // gitProviderHost derives (provider slug, host) from an origin remote URL. Known SaaS
@@ -165,10 +173,16 @@ func handleListRepos(w http.ResponseWriter, r *http.Request) {
 		if origin, ok := gitOriginURL(dir); ok {
 			provider, host = gitProviderHost(origin)
 		}
+		var parent string
+		wt := isLinkedWorktree(dir)
+		if wt {
+			parent = filepath.Base(worktreeParent(dir))
+		}
 		repos = append(repos, Repo{
 			Name: e.Name(), Path: dir, Branch: st.Branch,
 			Dirty: st.Dirty, Ahead: st.Ahead, Behind: st.Behind,
 			Provider: provider, Remote: host,
+			Worktree: wt, Parent: parent,
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"repos": repos})
@@ -263,9 +277,127 @@ func gitCheckoutNewBranch(dir, newBranch string) error {
 	return nil
 }
 
+// isLinkedWorktree reports whether dir is a linked worktree (from `git worktree
+// add`), as opposed to a normal/main working copy. A linked worktree's git dir lives
+// under the parent's common dir (…/.git/worktrees/<name>).
+func isLinkedWorktree(dir string) bool {
+	out, err := exec.Command("git", "-C", dir, "rev-parse", "--absolute-git-dir").Output()
+	if err != nil {
+		return false
+	}
+	return strings.Contains(filepath.ToSlash(strings.TrimSpace(string(out))), "/.git/worktrees/")
+}
+
+// worktreeParent returns the main working copy a linked worktree belongs to (the
+// directory holding the shared .git), so `git worktree remove` can be run from it.
+func worktreeParent(dir string) string {
+	out, err := exec.Command("git", "-C", dir, "rev-parse", "--path-format=absolute", "--git-common-dir").Output()
+	if err != nil {
+		return ""
+	}
+	return filepath.Dir(strings.TrimSpace(string(out))) // …/repos/app/.git -> …/repos/app
+}
+
+// linkedWorktreeCount returns how many linked worktrees hang off dir (0 for a plain
+// clone). Deleting a main working copy with linked worktrees would break them, so the
+// delete handler refuses while this is > 0.
+func linkedWorktreeCount(dir string) int {
+	out, err := exec.Command("git", "-C", dir, "worktree", "list", "--porcelain").Output()
+	if err != nil {
+		return 0
+	}
+	total := 0
+	for _, line := range strings.Split(string(out), "\n") {
+		if strings.HasPrefix(line, "worktree ") {
+			total++ // one block per worktree; the first is the main one
+		}
+	}
+	if total > 0 {
+		return total - 1
+	}
+	return 0
+}
+
+// maybePruneWorktree auto-removes a linked worktree once nothing needs it — the
+// counterpart to worktree-then-start that keeps them from piling up. It removes only
+// when dir is a worktree, no session meta references it (worktreeHasSessions), AND it
+// is clean: uncommitted or unpushed work is preserved for manual handling via the
+// explicit force-delete path. Best-effort; called after a session's meta is forgotten.
+func maybePruneWorktree(dir string) {
+	if dir == "" || !isLinkedWorktree(dir) || worktreeHasSessions(dir) {
+		return
+	}
+	if st, err := gitStatus(dir); err != nil || st.Dirty || st.Ahead > 0 {
+		return // keep dirty/unpushed worktrees; the user force-deletes those explicitly
+	}
+	parent := worktreeParent(dir)
+	if parent == "" {
+		return
+	}
+	_ = exec.Command("git", "-C", parent, "worktree", "remove", "--force", dir).Run()
+	_ = exec.Command("git", "-C", parent, "worktree", "prune").Run()
+}
+
+// gitCurrentBranch returns dir's checked-out branch name, "(detached)" on a
+// detached HEAD, or "" when dir isn't a resolvable git working tree. Cheaper than
+// gitStatus (a single rev-parse, no porcelain parse) — used to stamp a session's
+// start branch at create and to detect later drift on the session list.
+func gitCurrentBranch(dir string) string {
+	out, err := exec.Command("git", "-C", dir, "rev-parse", "--abbrev-ref", "HEAD").Output()
+	if err != nil {
+		return ""
+	}
+	b := strings.TrimSpace(string(out))
+	if b == "HEAD" {
+		return "(detached)"
+	}
+	return b
+}
+
+// gitDirInfo returns dir's current branch AND whether it's a linked worktree in a
+// single rev-parse (branch line + absolute-git-dir line), so the session list can
+// enrich every row with one git call per unique dir. "" branch / false for a non-repo.
+func gitDirInfo(dir string) (branch string, worktree bool) {
+	out, err := exec.Command("git", "-C", dir, "rev-parse", "--abbrev-ref", "HEAD", "--absolute-git-dir").Output()
+	if err != nil {
+		return "", false
+	}
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	if len(lines) >= 1 {
+		branch = strings.TrimSpace(lines[0])
+		if branch == "HEAD" {
+			branch = "(detached)"
+		}
+	}
+	if len(lines) >= 2 {
+		worktree = strings.Contains(filepath.ToSlash(strings.TrimSpace(lines[1])), "/.git/worktrees/")
+	}
+	return
+}
+
 // branchExists reports whether dir already has a local branch named branch.
 func branchExists(dir, branch string) bool {
 	return exec.Command("git", "-C", dir, "rev-parse", "--verify", "--quiet", "refs/heads/"+branch).Run() == nil
+}
+
+// branchNameStatus reports whether name already exists as a local branch and/or as a
+// remote-tracking branch (on any remote). This catches a worktree/rename name that
+// would otherwise SILENTLY create a divergent branch: `git worktree add -b X` (and
+// `git branch -m X`) happily make a fresh local X when only a past remote X exists,
+// which then collides at push time. Callers refuse and offer the user a choice.
+func branchNameStatus(dir, name string) (local, remote bool) {
+	local = branchExists(dir, name)
+	out, err := exec.Command("git", "-C", dir, "for-each-ref", "--format=%(refname:short)", "refs/remotes").Output()
+	if err == nil {
+		suffix := "/" + name
+		for _, ln := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+			if ln = strings.TrimSpace(ln); ln != "" && strings.HasSuffix(ln, suffix) {
+				remote = true
+				break
+			}
+		}
+	}
+	return
 }
 
 // gitSubmodulesUpdate fetches/updates submodules of a working copy (after a clone,
@@ -404,6 +536,71 @@ func ensureRepo(remoteURL, branch, newBranch, name string) (string, error) {
 		return "", err
 	}
 	applyGitIdentity(dir) // bake the provider's commit identity into the fresh clone
+	return dir, nil
+}
+
+// ensureWorktree creates (or reuses) a git worktree of an existing working copy
+// (parentDir) under ~/repos/<repo>@<branch> and returns its path, so a session can
+// launch with that dir as CWD — the "worktree-then-start" path for session.create.
+//
+// This is the safe alternative to switching the parent's branch out from under its
+// running sessions: the new branch gets its OWN directory. newBranch, when set, is
+// created off base (git worktree add -b); otherwise the worktree checks out the
+// existing base branch. Submodules are populated into the worktree's own per-worktree
+// gitdir over the token-authed HTTPS path (see gitSubmodulesUpdate); this does not
+// disturb the parent's submodules. git refuses to check out a branch already live in
+// another worktree, which the error surfaces as-is.
+func ensureWorktree(parentDir, base, newBranch, folderSeg string) (string, error) {
+	if !isGitRepo(parentDir) {
+		return "", fmt.Errorf("not a git working copy: %s", parentDir)
+	}
+	base = strings.TrimSpace(base)
+	newBranch = strings.TrimSpace(newBranch)
+	// The branch the worktree ends up on names its folder: the new branch when forking,
+	// else the base being checked out.
+	target := newBranch
+	if target == "" {
+		target = base
+	}
+	if target == "" || strings.HasPrefix(base, "-") || strings.HasPrefix(newBranch, "-") {
+		return "", fmt.Errorf("a base or new branch is required and must not start with '-'")
+	}
+	// folderSeg lets the folder name diverge from the branch (e.g. an auto branch
+	// temp/<slug> living in a wip-<slug> folder); default to the branch-derived name.
+	seg := strings.TrimSpace(folderSeg)
+	if seg == "" {
+		seg = sanitizeSeg(target)
+	} else {
+		seg = sanitizeSeg(seg)
+	}
+	name := filepath.Base(parentDir) + "@" + seg
+	dir, ok := resolveRepoDir(name)
+	if !ok {
+		return "", fmt.Errorf("worktree name is invalid: %q", name)
+	}
+	// Reuse an existing worktree at that path (idempotent re-launch); a non-git path of
+	// the same name is a conflict the caller must resolve with a different branch.
+	if _, err := os.Stat(dir); err == nil {
+		if isGitRepo(dir) {
+			return dir, nil
+		}
+		return "", fmt.Errorf("path already exists and is not a worktree: %s", name)
+	}
+	// git worktree add [-b <newBranch>] <dir> [<base>]
+	args := []string{"-C", parentDir, "worktree", "add"}
+	if newBranch != "" {
+		args = append(args, "-b", newBranch, dir)
+		if base != "" {
+			args = append(args, base)
+		}
+	} else {
+		args = append(args, dir, base)
+	}
+	if out, err := exec.Command("git", args...).CombinedOutput(); err != nil {
+		return "", fmt.Errorf("worktree add: %v: %s", err, strings.TrimSpace(string(out)))
+	}
+	applyGitIdentity(dir)  // commit identity for the worktree (config is shared, but explicit)
+	gitSubmodulesUpdate(dir) // per-worktree submodule checkout; parent untouched (verified)
 	return dir, nil
 }
 
@@ -558,6 +755,17 @@ func handleRepoCheckout(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
 		return
 	}
+	// A working copy with running sessions is pinned to its branch: switching it
+	// out from under live agents corrupts them (see liveSessionsInDir). Refuse and
+	// steer the user to open the branch as its own working copy instead. This blocks
+	// the Console footgun; agent/manual `git checkout` inside a session still bypasses
+	// it (no pre-checkout hook exists) and is caught by branch-drift detection.
+	if running := liveSessionsInDir(dir); len(running) > 0 {
+		writeErr(w, http.StatusConflict, "sessions_running",
+			fmt.Sprintf("%d session(s) are running in this working copy (%s); switching branches here would corrupt them. Open the branch as a new working copy instead.",
+				len(running), strings.Join(running, ", ")))
+		return
+	}
 	var args []string
 	if req.Create {
 		// Create a branch: `checkout -b <name> [<start-point>]`. Branch is the new name;
@@ -593,6 +801,11 @@ func handleRepoCheckout(w http.ResponseWriter, r *http.Request) {
 	gitSubmodulesUpdate(dir)
 	st, _ := gitStatus(dir)
 	writeJSON(w, http.StatusOK, st)
+}
+
+// renameBranchReq is the body for the session-scoped branch rename (session_title.go).
+type renameBranchReq struct {
+	Name string `json:"name"`
 }
 
 // handleRepoFF fast-forwards the current branch to its upstream (git pull --ff-only):
@@ -643,6 +856,52 @@ func handleRepoFetch(w http.ResponseWriter, r *http.Request) {
 func handleDeleteRepo(w http.ResponseWriter, r *http.Request) {
 	dir, ok := repoDirFromPath(w, r)
 	if !ok {
+		return
+	}
+	// Deleting the working copy out from under live sessions is even worse than a
+	// branch switch: their cwd vanishes mid-flight. Refuse while any session runs
+	// there — the user must stop/archive them first (same guard as checkout).
+	if running := liveSessionsInDir(dir); len(running) > 0 {
+		writeErr(w, http.StatusConflict, "sessions_running_delete",
+			fmt.Sprintf("%d session(s) are running in this working copy (%s); deleting it would break them. Stop those sessions first.",
+				len(running), strings.Join(running, ", ")))
+		return
+	}
+	force := r.URL.Query().Get("force") == "true" || r.URL.Query().Get("force") == "1"
+
+	// A linked worktree can't be dropped with os.RemoveAll (it would orphan the parent's
+	// worktree registry) nor with a plain `git worktree remove` (git refuses when the
+	// worktree has submodules). Use `remove --force`, but gate it on our own dirty/ahead
+	// check so uncommitted or unpushed work isn't silently destroyed — the client must
+	// re-request with force=true to override.
+	if isLinkedWorktree(dir) {
+		if !force {
+			if st, err := gitStatus(dir); err == nil && (st.Dirty || st.Ahead > 0) {
+				writeErr(w, http.StatusConflict, "worktree_dirty",
+					"worktree has uncommitted or unpushed changes; pass force=true to delete anyway")
+				return
+			}
+		}
+		parent := worktreeParent(dir)
+		if parent == "" {
+			writeErr(w, http.StatusInternalServerError, "delete_failed", "cannot resolve worktree parent")
+			return
+		}
+		if out, err := exec.Command("git", "-C", parent, "worktree", "remove", "--force", dir).CombinedOutput(); err != nil {
+			writeErr(w, http.StatusBadGateway, "worktree_remove_failed", strings.TrimSpace(string(out)))
+			return
+		}
+		_ = exec.Command("git", "-C", parent, "worktree", "prune").Run()
+		writeJSON(w, http.StatusOK, map[string]any{"deleted": r.PathValue("name")})
+		return
+	}
+
+	// A main working copy with linked worktrees must not be removed — os.RemoveAll would
+	// break every worktree hanging off it. Refuse and let the user delete the worktrees
+	// first.
+	if n := linkedWorktreeCount(dir); n > 0 {
+		writeErr(w, http.StatusConflict, "has_worktrees",
+			fmt.Sprintf("this working copy has %d worktree(s) branched off it; delete those first", n))
 		return
 	}
 	if err := os.RemoveAll(dir); err != nil {

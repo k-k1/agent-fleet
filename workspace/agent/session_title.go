@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os/exec"
 	"strings"
 	"sync"
 	"time"
@@ -188,28 +189,58 @@ func titleSuggestPrompt(turns []chatTurn) string {
 	b.WriteString("悪い例（文章・語尾つき・視点が話者）: 短く確認するのが良さそう / メニュー変更を行いたい\n")
 	b.WriteString("会話の途中でテーマが変わっている場合は、直近で話している内容を優先してください。\n\n")
 	b.WriteString("--- 会話ログ ---\n")
+	writeConversationWindow(&b, real)
+	return b.String()
+}
 
+// writeConversationWindow appends the opening + most recent real turns (head/tail
+// windowing, per-turn length cap), shared by the title and branch-name prompts.
+func writeConversationWindow(b *strings.Builder, real []chatTurn) {
 	writeTurn := func(t chatTurn) {
 		text := t.Text
 		if r := []rune(text); len(r) > titlePerTurnRunes {
 			text = string(r[:titlePerTurnRunes]) + "…"
 		}
-		fmt.Fprintf(&b, "%s: %s\n", t.Role, text)
+		fmt.Fprintf(b, "%s: %s\n", t.Role, text)
 	}
-
 	if len(real) <= titleHeadTurns+titleTailTurns {
 		for _, t := range real {
 			writeTurn(t)
 		}
-	} else {
-		for _, t := range real[:titleHeadTurns] {
-			writeTurn(t)
-		}
-		b.WriteString("…（中略）…\n")
-		for _, t := range real[len(real)-titleTailTurns:] {
-			writeTurn(t)
-		}
+		return
 	}
+	for _, t := range real[:titleHeadTurns] {
+		writeTurn(t)
+	}
+	b.WriteString("…（中略）…\n")
+	for _, t := range real[len(real)-titleTailTurns:] {
+		writeTurn(t)
+	}
+}
+
+// branchSuggestPrompt builds an ENGLISH prompt for a git branch name. Crucially it does
+// NOT reuse titleSuggestPrompt (which is Japanese and asks for a Japanese 件名 — that
+// steered the model to reply in Japanese, which cleanBranchName then stripped to ""):
+// it instructs an English kebab-case name even when the conversation is Japanese, with
+// English few-shot anchors.
+func branchSuggestPrompt(turns []chatTurn) string {
+	real := make([]chatTurn, 0, len(turns))
+	for _, t := range turns {
+		if t.Sidechain || t.Compact || t.Text == "" {
+			continue
+		}
+		real = append(real, t)
+	}
+	var b strings.Builder
+	b.WriteString("Read the conversation log and output ONE git branch name for the task.\n")
+	b.WriteString("Rules: English only, lowercase kebab-case (words joined by hyphens), ")
+	b.WriteString("ASCII letters/digits/hyphens only, max 40 chars, no prefixes like 'feature/', no quotes.\n")
+	b.WriteString("The conversation is often in Japanese — TRANSLATE the topic into a concise English name. ")
+	b.WriteString("Never output Japanese or non-ASCII characters.\n")
+	b.WriteString("Good: fix-login-redirect / refactor-billing-api / session-branch-rename\n")
+	b.WriteString("If the conversation drifted, prefer the most recent topic. Output ONLY the name.\n\n")
+	b.WriteString("--- conversation log ---\n")
+	writeConversationWindow(&b, real)
 	return b.String()
 }
 
@@ -418,6 +449,156 @@ func handleSetTitle(w http.ResponseWriter, r *http.Request) {
 		m.Label = sessionLabelFor(m.Dir, m.Title)
 	}
 	writeSessionMeta(m)
+	writeJSON(w, http.StatusOK, wireSession(m, tmuxHasSession(tmuxName(name))))
+}
+
+// branchSuggestPersona pins the headless call to emit a git branch name, NOT a
+// Japanese title: lowercase English kebab-case, git-safe, short. The conversation may
+// be in Japanese but the branch name must be ASCII (folder/ref charset), so we ask for
+// a translation-to-name, not a transcription.
+const branchSuggestPersona = "You name git branches. Read the conversation log and output ONE short branch name " +
+	"describing the task. Rules: English, lowercase kebab-case (words joined by hyphens), " +
+	"ASCII letters/digits/hyphens only, max 40 chars, no leading verb like 'add'/'fix' unless natural, " +
+	"no prefixes like 'feature/', no quotes, no explanation. Output only the name."
+
+// runBranchSuggestLLM asks the title model for a git-safe branch name from the
+// conversation, then hard-sanitizes the reply so a chatty model can't produce an
+// invalid ref/folder segment.
+func runBranchSuggestLLM(ctx context.Context, turns []chatTurn) (string, error) {
+	args := []string{"-p", "--output-format", "json", "--dangerously-skip-permissions",
+		"--append-system-prompt", branchSuggestPersona, "--model", titleModel()}
+	args = append(args, chatToolLimits()...)
+	cmd := chatClaudeCmd(ctx, args...)
+	defer func() { _, _ = ensureChatClaudeConfig() }()
+	cmd.Stdin = strings.NewReader(branchSuggestPrompt(turns))
+
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("branch suggestion failed: %s", cliErr(err))
+	}
+	var r claudeResult
+	if json.Unmarshal(out, &r) != nil || r.IsError {
+		return "", fmt.Errorf("branch suggestion: bad/error response")
+	}
+	return cleanBranchName(r.Result), nil
+}
+
+// cleanBranchName reduces an LLM reply to a git-safe kebab-case name: first line,
+// lowercased, non-[a-z0-9] runs collapsed to a single hyphen, trimmed, capped at 40.
+// "" when nothing usable remains.
+func cleanBranchName(s string) string {
+	s = strings.TrimSpace(s)
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		s = s[:i]
+	}
+	s = strings.ToLower(s)
+	var b strings.Builder
+	lastHyphen := false
+	for _, c := range s {
+		if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') {
+			b.WriteRune(c)
+			lastHyphen = false
+		} else if !lastHyphen && b.Len() > 0 {
+			b.WriteByte('-')
+			lastHyphen = true
+		}
+	}
+	name := strings.Trim(b.String(), "-")
+	if r := []rune(name); len(r) > 40 {
+		name = strings.Trim(string(r[:40]), "-")
+	}
+	return name
+}
+
+// handleSessionSuggestBranch proposes a branch name from THIS session's conversation —
+// the LLM half of deferred naming (start on temp/<slug>, ask the AI for a real name
+// once the task has a shape). Session-scoped (not repo-scoped) so the source is
+// unambiguous even when several sessions share one worktree. Preview only: it returns
+// the suggestion for the rename modal to fill; it never renames on its own.
+func handleSessionSuggestBranch(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if !nameRe.MatchString(name) {
+		writeErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
+		return
+	}
+	if !autoTitleSuggestEnabled() {
+		writeErr(w, http.StatusBadRequest, "feature_disabled", "AI 提案が無効です（表示設定のタイトル自動提案をオンに）")
+		return
+	}
+	m, ok := readSessionMeta(name)
+	if !ok {
+		writeErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
+		return
+	}
+	turns := sessionTitleTurns(m)
+	if len(turns) == 0 {
+		writeErr(w, http.StatusBadRequest, "no_content", "会話がまだ足りません（数往復してから試してください）")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), titleSuggestTimeout)
+	defer cancel()
+	branch, err := runBranchSuggestLLM(ctx, turns)
+	if err != nil {
+		// Surface the underlying reason (auth/CLI/timeout) instead of a generic string.
+		writeErr(w, http.StatusBadGateway, "generation_failed", "AI 提案に失敗しました: "+err.Error())
+		return
+	}
+	if branch == "" {
+		writeErr(w, http.StatusUnprocessableEntity, "empty_result",
+			"AI が有効なブランチ名を返しませんでした。手入力してください。")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"branch": branch})
+}
+
+// handleSessionRenameBranch renames the branch of the session's working copy (its
+// worktree) via git branch -m. Session-scoped so it pairs with the session-based AI
+// suggestion; the rename targets the one shared branch and every session in that dir
+// has its recorded start branch updated (so an intentional rename isn't read as drift).
+// Refuses a name that collides with an existing local or past-remote branch.
+func handleSessionRenameBranch(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if !nameRe.MatchString(name) {
+		writeErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
+		return
+	}
+	m, ok := readSessionMeta(name)
+	if !ok {
+		writeErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
+		return
+	}
+	dir := m.Dir
+	if !isGitRepo(dir) {
+		writeErr(w, http.StatusBadRequest, "bad_dir", "session working copy is not a git repo")
+		return
+	}
+	var req renameBranchReq
+	if err := json.NewDecoder(io.LimitReader(r.Body, 4<<10)).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
+		return
+	}
+	newName := strings.TrimSpace(req.Name)
+	if newName == "" || strings.HasPrefix(newName, "-") {
+		writeErr(w, http.StatusBadRequest, "bad_ref", "branch name is required and must not start with '-'")
+		return
+	}
+	if cur, _ := gitStatus(dir); newName != cur.Branch {
+		if local, remote := branchNameStatus(dir, newName); local || remote {
+			where := "ローカル"
+			if !local {
+				where = "リモート"
+			}
+			writeErr(w, http.StatusConflict, "branch_exists",
+				fmt.Sprintf("%sに同名ブランチ %q が既にあります。別の名前にしてください。", where, newName))
+			return
+		}
+	}
+	if out, err := exec.Command("git", "-C", dir, "branch", "-m", newName).CombinedOutput(); err != nil {
+		writeErr(w, http.StatusBadGateway, "rename_failed", strings.TrimSpace(string(out)))
+		return
+	}
+	updateSessionStartBranch(dir, newName)
+	m, _ = readSessionMeta(name)
 	writeJSON(w, http.StatusOK, wireSession(m, tmuxHasSession(tmuxName(name))))
 }
 
