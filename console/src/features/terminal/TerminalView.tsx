@@ -3,9 +3,6 @@
 // stays mounted while the pane shows a terminal (Pane hides it rather than
 // unmounting), so the PTY socket and scrollback survive view switches. The PTY
 // connection follows the `session` prop declaratively.
-//
-// Not yet ported (docs/22): MirrorToggle/chat mirror (P5), ContextBar (P6),
-// OnboardingCard (P6).
 import { useEffect, useMemo, useRef } from "react";
 import {
   ensureTerm,
@@ -27,6 +24,7 @@ import { Button } from "../../ui/Button.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { TermKeys } from "./TermKeys.tsx";
 import { MirrorToggle } from "../mirror/MirrorToggle.tsx";
+import { OnboardingCard } from "./OnboardingCard.tsx";
 import { ContextBar } from "../mirror/ContextBar.tsx";
 import type { Session } from "../../types/session.ts";
 
@@ -161,6 +159,9 @@ export function TerminalView({
         {!session && (
           <div className="term-empty">
             <img className="term-empty-img" src={idleSrc} alt="Agent Fleet" />
+            {/* First-run checklist, only on the active empty pane. Renders null once
+                set up / dismissed, leaving just the brand placeholder. */}
+            {active && <OnboardingCard />}
           </div>
         )}
         {stopped && (
