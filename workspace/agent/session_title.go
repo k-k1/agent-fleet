@@ -189,28 +189,58 @@ func titleSuggestPrompt(turns []chatTurn) string {
 	b.WriteString("悪い例（文章・語尾つき・視点が話者）: 短く確認するのが良さそう / メニュー変更を行いたい\n")
 	b.WriteString("会話の途中でテーマが変わっている場合は、直近で話している内容を優先してください。\n\n")
 	b.WriteString("--- 会話ログ ---\n")
+	writeConversationWindow(&b, real)
+	return b.String()
+}
 
+// writeConversationWindow appends the opening + most recent real turns (head/tail
+// windowing, per-turn length cap), shared by the title and branch-name prompts.
+func writeConversationWindow(b *strings.Builder, real []chatTurn) {
 	writeTurn := func(t chatTurn) {
 		text := t.Text
 		if r := []rune(text); len(r) > titlePerTurnRunes {
 			text = string(r[:titlePerTurnRunes]) + "…"
 		}
-		fmt.Fprintf(&b, "%s: %s\n", t.Role, text)
+		fmt.Fprintf(b, "%s: %s\n", t.Role, text)
 	}
-
 	if len(real) <= titleHeadTurns+titleTailTurns {
 		for _, t := range real {
 			writeTurn(t)
 		}
-	} else {
-		for _, t := range real[:titleHeadTurns] {
-			writeTurn(t)
-		}
-		b.WriteString("…（中略）…\n")
-		for _, t := range real[len(real)-titleTailTurns:] {
-			writeTurn(t)
-		}
+		return
 	}
+	for _, t := range real[:titleHeadTurns] {
+		writeTurn(t)
+	}
+	b.WriteString("…（中略）…\n")
+	for _, t := range real[len(real)-titleTailTurns:] {
+		writeTurn(t)
+	}
+}
+
+// branchSuggestPrompt builds an ENGLISH prompt for a git branch name. Crucially it does
+// NOT reuse titleSuggestPrompt (which is Japanese and asks for a Japanese 件名 — that
+// steered the model to reply in Japanese, which cleanBranchName then stripped to ""):
+// it instructs an English kebab-case name even when the conversation is Japanese, with
+// English few-shot anchors.
+func branchSuggestPrompt(turns []chatTurn) string {
+	real := make([]chatTurn, 0, len(turns))
+	for _, t := range turns {
+		if t.Sidechain || t.Compact || t.Text == "" {
+			continue
+		}
+		real = append(real, t)
+	}
+	var b strings.Builder
+	b.WriteString("Read the conversation log and output ONE git branch name for the task.\n")
+	b.WriteString("Rules: English only, lowercase kebab-case (words joined by hyphens), ")
+	b.WriteString("ASCII letters/digits/hyphens only, max 40 chars, no prefixes like 'feature/', no quotes.\n")
+	b.WriteString("The conversation is often in Japanese — TRANSLATE the topic into a concise English name. ")
+	b.WriteString("Never output Japanese or non-ASCII characters.\n")
+	b.WriteString("Good: fix-login-redirect / refactor-billing-api / session-branch-rename\n")
+	b.WriteString("If the conversation drifted, prefer the most recent topic. Output ONLY the name.\n\n")
+	b.WriteString("--- conversation log ---\n")
+	writeConversationWindow(&b, real)
 	return b.String()
 }
 
@@ -440,7 +470,7 @@ func runBranchSuggestLLM(ctx context.Context, turns []chatTurn) (string, error) 
 	args = append(args, chatToolLimits()...)
 	cmd := chatClaudeCmd(ctx, args...)
 	defer func() { _, _ = ensureChatClaudeConfig() }()
-	cmd.Stdin = strings.NewReader(titleSuggestPrompt(turns))
+	cmd.Stdin = strings.NewReader(branchSuggestPrompt(turns))
 
 	out, err := cmd.Output()
 	if err != nil {
