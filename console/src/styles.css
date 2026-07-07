@@ -7521,18 +7521,22 @@ button.mt-toolrun-head:hover {
 }
 .launch-wt .pick-field {
   display: flex;
+  flex-direction: row; /* base .pick-field is column; a label+input row reads better here */
   align-items: center;
   gap: 8px;
+  width: 100%;
 }
 .launch-wt .pick-field > span {
   flex: none;
   width: 8.5em;
+  text-align: left;
   color: var(--muted);
   font-size: 12px;
 }
 .launch-wt .pick-field input {
-  flex: 1;
+  flex: 1 1 auto;
   min-width: 0;
+  width: 100%;
 }
 /* Name-collision notice inside the worktree detail: warn + an optional "use existing"
    escape hatch when a past remote branch of the same name exists. */

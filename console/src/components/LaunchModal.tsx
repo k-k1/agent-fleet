@@ -79,9 +79,12 @@ export default function LaunchModal({ repo, branch, path, kinds, onClose, onLaun
   const [base, setBase] = useState(branch || "");
   const [branchName, setBranchName] = useState(""); // "" => derived from the prompt
   const [conflict, setConflict] = useState<"local" | "remote" | null>(null);
-  // Provisional branch/folder name: an explicit entry wins, else derive from the prompt;
-  // shown as a preview so the user sees where the worktree lands (and can override).
-  const derived = branchName.trim() || deriveBranchName(prompt);
+  // Provisional branch/folder name: an explicit entry wins as-is; otherwise the prompt-
+  // derived name gets a "temp/" prefix so auto-named branches are obviously throwaway
+  // until renamed. Shown as a preview so the user sees where the worktree lands.
+  const autoSlug = deriveBranchName(prompt);
+  const auto = autoSlug ? "temp/" + autoSlug : "";
+  const derived = branchName.trim() || auto;
   const folder = worktree && derived ? `${repo}@${sanitizeSeg(derived)}` : "";
 
   // Template sources fetched once for this repo; history is read from localStorage.
@@ -239,7 +242,7 @@ export default function LaunchModal({ repo, branch, path, kinds, onClose, onLaun
                 <input
                   value={branchName}
                   onChange={(e) => { setBranchName(e.target.value); setConflict(null); }}
-                  placeholder={deriveBranchName(prompt) || "自動（最初の指示から）"}
+                  placeholder={auto || "自動（最初の指示から）"}
                 />
               </label>
               <div className="field-help">

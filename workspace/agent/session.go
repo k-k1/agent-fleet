@@ -667,11 +667,11 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		} else {
 			// Branch naming is deferred: the client derives a provisional name from the
 			// first prompt, but when that yields nothing (e.g. a Japanese-only prompt, or
-			// no prompt) we start on a throwaway wip-<slug>. The user (or the LLM
+			// no prompt) we start on a throwaway temp/<slug>. The user (or the LLM
 			// suggestion) renames it later — the folder stays put, so the session id holds.
 			nb := strings.TrimSpace(req.NewBranch)
 			if nb == "" {
-				nb = "wip-" + randSlug() // random → effectively never collides; skip the check
+				nb = "temp/" + randSlug() // throwaway auto name; random → skip the collision check
 			} else if local, remote := branchNameStatus(parent, nb); local {
 				// A same-named local branch: -b would fail anyway, but stop with a clear
 				// message rather than git's raw error, and let the user pick another name.
