@@ -543,7 +543,7 @@ export function FilesSection() {
     const tree = treeRef.current;
     if (!wrap || !tree) return;
     if (!scrollRef.current || !scrollRef.current.isConnected)
-      scrollRef.current = tree.closest<HTMLElement>(".app-rail");
+      scrollRef.current = tree.closest<HTMLElement>(".app-rail-scroll");
     const scroller = scrollRef.current;
     if (!scroller || !rows.length) {
       setSticky((s) => (s.rows.length ? { rows: [], top: 0 } : s));
@@ -576,7 +576,7 @@ export function FilesSection() {
       return;
     }
     const tree = treeRef.current;
-    const scroller = tree?.closest<HTMLElement>(".app-rail");
+    const scroller = tree?.closest<HTMLElement>(".app-rail-scroll");
     scrollRef.current = scroller || null;
     let raf = 0;
     const onScroll = () => {

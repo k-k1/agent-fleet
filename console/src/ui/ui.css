@@ -393,6 +393,7 @@
   align-items: center;
   justify-content: center;
   gap: 2px;
+  white-space: nowrap;
 }
 .ui-seg .seg-btn:hover:not(.active) {
   background: var(--btn-h);
@@ -460,10 +461,13 @@
   color: var(--muted);
 }
 
-/* Small segmented toggle (section headers, e.g. Files ツリー/変更). */
+/* Small segmented toggle (section headers, e.g. Files ツリー/変更). CJK labels
+   are breakable per character, which collapses the flex width and wraps the
+   label vertically — keep each button on one line. */
 .ui-seg.sm .seg-btn {
-  padding: 2px 8px;
+  padding: 2px 10px;
   font-size: 11px;
   flex-direction: row;
   gap: 4px;
+  white-space: nowrap;
 }
