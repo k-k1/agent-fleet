@@ -25,6 +25,9 @@ import { AssistantSection } from "../features/chat/AssistantSection.tsx";
 import { MemoQueueSection } from "../features/memo/MemoQueueSection.tsx";
 import { WsBar } from "./WsBar.tsx";
 import { TopBar } from "./TopBar.tsx";
+import { useSettingsUI, wireSettingsHistory } from "../features/settings/store.ts";
+import { SettingsDialog } from "../features/settings/SettingsDialog.tsx";
+import { AdminDialog } from "../features/settings/AdminDialog.tsx";
 
 // Refresh FILES (and repos/sessions/chat list on start) whenever the workspace
 // actually flips running↔stopped — including external changes the 4s sync catches
@@ -53,6 +56,8 @@ function wireWorkspaceRefresh(): () => void {
 export function App() {
   const tenant = useTenantStore((s) => s.tenant);
   const layout = useLayoutStore((s) => s.layout);
+  const settingsOpen = useSettingsUI((s) => s.settingsOpen);
+  const adminOpen = useSettingsUI((s) => s.adminOpen);
   const [booted, setBooted] = useState(false);
 
   // Left rail visibility. Desktop: leftOpen (persisted) + leftMode "push" (docks,
@@ -145,6 +150,7 @@ export function App() {
   // pollers. All return cleanups, so StrictMode's double-invoke is safe.
   useEffect(() => {
     const unHistory = wireLayoutHistory();
+    const unModalHistory = wireSettingsHistory();
     const unReconcile = wireTerminalReconcile();
     const unWsRefresh = wireWorkspaceRefresh();
     const stopWsPoll = startWorkspacePolling();
@@ -156,6 +162,7 @@ export function App() {
     })();
     return () => {
       unHistory();
+      unModalHistory();
       unReconcile();
       unWsRefresh();
       stopWsPoll();
@@ -219,6 +226,8 @@ export function App() {
           <PaneHost />
         </main>
       </div>
+      {settingsOpen && <SettingsDialog />}
+      {adminOpen && <AdminDialog />}
     </div>
   );
 }

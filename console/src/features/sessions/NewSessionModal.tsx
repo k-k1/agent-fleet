@@ -3,7 +3,6 @@
 // URL clone) with branch forking and parallel working copies; ssm hands off to
 // the SSO login modal after create. Port of the old components/NewSessionModal.
 //
-// TODO(P7): the 設定を開く links show a hint toast until SettingsDialog lands.
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { api, apiJSON, errText } from "../../core/api/client.ts";
@@ -16,6 +15,7 @@ import type { RepoSelection } from "../repos/RepoPicker.tsx";
 import { DirPicker } from "../repos/DirPicker.tsx";
 import type { RepoLite } from "../repos/DirPicker.tsx";
 import { SsmLoginModal } from "./SsmLoginModal.tsx";
+import { useSettingsUI } from "../settings/store.ts";
 import { readKindAvail, writeKindAvail } from "../../lib/kindavail.ts";
 import { deriveRepoName, sanitizeSeg, uniqueRepoName, repoNameRe } from "../../lib/reponame.ts";
 import { agentOf, availableKinds, newSessionKinds } from "../../agents/registry.ts";
@@ -42,8 +42,6 @@ interface NewSessionModalProps {
 export function NewSessionModal({ onClose, onCreated }: NewSessionModalProps) {
   const toast = useToast();
   const settings = useSettings();
-  const openSettingsHint = () =>
-    toast("設定画面は P7 で移植されます。それまでは旧コンソール（index.html）の設定をご利用ください。", { kind: "info" });
   // Optional user title → claude --name. The identity slug is server-allocated.
   const [title, setTitle] = useState("");
   const [kind, setKind] = useState("shell");
@@ -229,7 +227,7 @@ export function NewSessionModal({ onClose, onCreated }: NewSessionModalProps) {
           {loaded && !newSessionKinds.some((k) => k !== "shell" && kindAvail[k]) && (
             <span className="ui-field-hint">
               claude / codex / opencode / ssm は、
-              <button type="button" className="linklike" onClick={openSettingsHint}>
+              <button type="button" className="linklike" onClick={() => useSettingsUI.getState().openSettings("agents")}>
                 設定
               </button>
               で認証・ホスト登録すると選べるようになります。
@@ -391,7 +389,7 @@ export function NewSessionModal({ onClose, onCreated }: NewSessionModalProps) {
             ) : ssmHosts.length === 0 ? (
               <span className="ui-field-hint">
                 登録済みのホストがありません。
-                <button type="button" className="linklike" onClick={openSettingsHint}>
+                <button type="button" className="linklike" onClick={() => useSettingsUI.getState().openSettings("ssm")}>
                   設定 → SSM
                 </button>
                 で登録してください。
