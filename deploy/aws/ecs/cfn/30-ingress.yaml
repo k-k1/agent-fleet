@@ -3,10 +3,10 @@ Description: >-
   agent-fleet ECS adapter (P3-7) — ingress + Control Plane service. ACM cert (DNS-
   validated via Route53), an internet-facing ALB that only terminates TLS (auth is
   CP-native Google OAuth, AUTH=oauth — no ALB OIDC), the CP/Console Fargate service
-  (Service Connect client so it can reach workspace Agents once 段2 lands), and the
-  Route53 alias. Imports 00-network and 20-platform. Milestone target: CP boots and
-  Google login works. SQLite store is EPHEMERAL here (persistence = EFS/RDS later);
-  workspace Start is not exercised (needs the 段2 ecsRuntime).
+  (Service Connect client so it can reach the workspace Agents it provisions), and
+  the Route53 alias. Imports 00-network, 10-data (EFS) and 20-platform. The CP is
+  wired with AF_ECS_* so the 段2 ecsRuntime provisions workspaces on demand. SQLite
+  store is still EPHEMERAL here (RDS/段3a is separate); workspace homes persist on EFS.
 
 Parameters:
   NetworkStackName:
@@ -15,6 +15,14 @@ Parameters:
   PlatformStackName:
     Type: String
     Default: af-ecs-platform
+  DataStackName:
+    Type: String
+    Default: af-ecs-data
+    Description: Name of the 10-data stack (EFS filesystem for workspace homes).
+  WorkspaceImageTag:
+    Type: String
+    Default: dev
+    Description: Tag of the af-workspace image in ECR (the 段2 adapter runs it).
   Fqdn:
     Type: String
     Default: af-dev.<domain>
@@ -119,6 +127,15 @@ Resources:
       LogGroupName: !Sub "/af/${AWS::StackName}/cp"
       RetentionInDays: 7
 
+  # Workspace tasks (created by the CP at runtime) log here — the CP passes this
+  # group name to each task definition via AF_ECS_LOG_GROUP.
+  WsLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    Properties:
+      LogGroupName: !Sub "/af/${AWS::StackName}/ws"
+      RetentionInDays: 7
+
   TaskDef:
     Type: AWS::ECS::TaskDefinition
     Properties:
@@ -156,11 +173,23 @@ Resources:
             - { Name: GOOGLE_OAUTH_CLIENT_ID, Value: !Ref GoogleClientId }
             - { Name: AF_OAUTH_ALLOWED_EMAILS, Value: !Ref AllowedEmails }
             - { Name: SUPER_ADMIN_EMAILS, Value: !Ref SuperAdminEmails }
-            # AF_RUNTIME=ecs = the P3-7 adapter. In this milestone its lifecycle is
-            # the 段2 skeleton (fail-loud on Start); boot/login/tenant do not touch it.
+            # AF_RUNTIME=ecs = the P3-7 段2 adapter. The AF_ECS_* below give it the
+            # substrate placement it needs to provision per-workspace ECS services.
             - { Name: AF_RUNTIME, Value: ecs }
             - { Name: AF_ECS_REGION, Value: !Ref "AWS::Region" }
             - { Name: AF_ECS_CLUSTER, Value: !ImportValue { "Fn::Sub": "${PlatformStackName}-ClusterName" } }
+            - { Name: AF_ECS_SUBNETS, Value: !ImportValue { "Fn::Sub": "${NetworkStackName}-PrivateSubnets" } }
+            - { Name: AF_ECS_SECURITY_GROUP, Value: !ImportValue { "Fn::Sub": "${NetworkStackName}-WsSgId" } }
+            - { Name: AF_ECS_EFS_ID, Value: !ImportValue { "Fn::Sub": "${DataStackName}-EfsId" } }
+            - { Name: AF_ECS_NAMESPACE_ARN, Value: !ImportValue { "Fn::Sub": "${PlatformStackName}-NamespaceArn" } }
+            - { Name: AF_ECS_EXEC_ROLE, Value: !ImportValue { "Fn::Sub": "${PlatformStackName}-ExecRoleArn" } }
+            - { Name: AF_ECS_TASK_ROLE, Value: !ImportValue { "Fn::Sub": "${PlatformStackName}-WsTaskRoleArn" } }
+            - { Name: AF_ECS_LOG_GROUP, Value: !Ref WsLogGroup }
+            - Name: AF_ECS_WORKSPACE_IMAGE
+              Value: !Sub
+                - "${Uri}:${Tag}"
+                - Uri: !ImportValue { "Fn::Sub": "${PlatformStackName}-EcrWorkspaceUri" }
+                  Tag: !Ref WorkspaceImageTag
           MountPoints:
             - { SourceVolume: cpdata, ContainerPath: /var/lib/af/data }
           Secrets:
