@@ -18,6 +18,7 @@ import { LayoutMap } from "../features/panes/LayoutMap.tsx";
 import { SessionsSection } from "../features/sessions/SessionsSection.tsx";
 import { ReposSection } from "../features/repos/ReposSection.tsx";
 import { FilesSection } from "../features/files/FilesSection.tsx";
+import { AssistantSection } from "../features/chat/AssistantSection.tsx";
 import { Button, IconButton } from "../ui/Button.tsx";
 import { Pill } from "../ui/Pill.tsx";
 import type { PillTone } from "../ui/Pill.tsx";
@@ -266,6 +267,7 @@ export function App() {
           <div className="app-rail-scroll">
             <SessionsSection />
             <ReposSection />
+            <AssistantSection />
             <FilesSection />
           </div>
         </nav>
