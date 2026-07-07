@@ -36,6 +36,10 @@ export interface Session {
   createdAt?: string; // ISO timestamp
   model?: string; // claude model
   context?: unknown; // claude context-window usage (shape owned by the chat view)
+  branch?: string; // git branch the working copy was on when the session started
+  currentBranch?: string; // working copy's branch now, set only when it differs from `branch`
+  branchDrift?: boolean; // true = the working tree was switched off `branch` under the session
+  worktree?: boolean; // session runs in a linked git worktree (offers branch rename)
 }
 
 // Provider connection status for one agent, from GET /api/connections.

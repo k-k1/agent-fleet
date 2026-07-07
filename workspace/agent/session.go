@@ -42,6 +42,18 @@ type Session struct {
 	// claude only, nil when none recorded yet. Drives the Console's ContextBar in
 	// both the terminal and chat heads without a separate transcript poll.
 	Context *contextUsage `json:"context,omitempty"`
+	// Branch is the session's start branch (sessionMeta.Branch). CurrentBranch is the
+	// working copy's branch right now; it is set ONLY when it differs from Branch, at
+	// which point BranchDrift is true — the working tree was switched under the session
+	// (a checkout that bypassed the guard). The Console badges the row so the mishap is
+	// visible even though it can't be prevented at the git layer.
+	Branch        string `json:"branch,omitempty"`
+	CurrentBranch string `json:"currentBranch,omitempty"`
+	BranchDrift   bool   `json:"branchDrift,omitempty"`
+	// Worktree marks a session running in a linked git worktree — the Console offers
+	// branch rename (deferred naming) only for these, since renaming a standalone
+	// clone's branch is a different, rarer intent.
+	Worktree bool `json:"worktree,omitempty"`
 }
 
 func tmuxName(name string) string { return tmuxPrefix + name }
@@ -71,6 +83,13 @@ type sessionMeta struct {
 	Color                   string `json:"color"`     // terminal background hue (hex); set at create (SSM host color)
 	Label                   string `json:"label"`     // claude --name (display); derived from Title at create/recreate
 	Repo                    string `json:"repo"`      // working dir basename
+	// Branch is the git branch the working copy (Dir) was on when this session was
+	// created/recreated. Compared against Dir's current branch on each list to flag
+	// drift — a `git checkout` that slipped past the checkout guard (agent/manual
+	// shell inside the session). "" when Dir isn't a git working tree, or for
+	// pre-existing sessions minted before this field. Never rewritten after create,
+	// so the drift comparison stays meaningful.
+	Branch                  string `json:"branch,omitempty"`
 	CreatedAt               string `json:"createdAt"` // RFC3339, set at create
 	StoppedAt               string `json:"stoppedAt"` // RFC3339, set lazily when first seen exited; "" while live
 	Archived                bool   `json:"archived"`  // true = hidden from the active list, restorable (jsonl kept)
@@ -152,7 +171,7 @@ func wireSession(m sessionMeta, alive bool) Session {
 	return Session{
 		Name: m.Name, Tmux: tmuxName(m.Name), Dir: m.Dir, Kind: m.Kind,
 		Repo: m.Repo, Title: m.Title, Display: sessionDisplay(m), Color: m.Color, Label: m.Label,
-		Started: started, CreatedAt: m.CreatedAt,
+		Started: started, CreatedAt: m.CreatedAt, Branch: m.Branch,
 		RemoteUrl: li.remoteURL, State: li.state, Alive: alive, Resumable: li.resumable,
 		BackgroundBusy: li.backgroundBusy, Context: li.context,
 	}
@@ -360,6 +379,116 @@ func ensureSessionTmux(name string, ssmForce bool) bool {
 	return true
 }
 
+// liveSessionNames returns the set of currently-running claude_* tmux session
+// slugs. A missing tmux server / no sessions yields an error, which we treat as
+// "none live". Shared by the session list and the branch-switch guard so both
+// agree on what "running" means.
+func liveSessionNames() map[string]bool {
+	live := map[string]bool{}
+	out, err := exec.Command("tmux", "list-sessions", "-F", "#{session_name}").Output()
+	if err != nil {
+		return live
+	}
+	for _, tn := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if tn == "" || !strings.HasPrefix(tn, tmuxPrefix) {
+			continue
+		}
+		live[strings.TrimPrefix(tn, tmuxPrefix)] = true
+	}
+	return live
+}
+
+// liveSessionsInDir returns the display names of running sessions whose cwd is at
+// or under dir. Switching branches in dir would swap the working tree beneath
+// these processes mid-flight (vanished/rewritten files, stale diffs, edits landing
+// on the wrong branch) — the "大惨事" this guards against — so callers refuse the
+// operation while this is non-empty. Only LIVE sessions count: a stopped session
+// has no process to corrupt (branch drift for those is handled elsewhere). Archived
+// sessions are ignored. A subdir cwd still counts because checkout rewrites the
+// whole working tree, not just the repo root.
+func liveSessionsInDir(dir string) []string {
+	return sessionsInDir(listSessionMetas(), liveSessionNames(), dir)
+}
+
+// sessionsInDir is the pure core of liveSessionsInDir (tmux/fs kept out so it is
+// testable): from metas + the live set, the display names of running, non-archived
+// sessions whose cwd equals dir or sits strictly beneath it. The trailing
+// PathSeparator on the prefix test is load-bearing — it keeps "/r/foo" from matching
+// a sibling "/r/foobar".
+func sessionsInDir(metas []sessionMeta, live map[string]bool, dir string) []string {
+	var names []string
+	for _, m := range metas {
+		if m.Archived || !live[m.Name] {
+			continue
+		}
+		if m.Dir == dir || strings.HasPrefix(m.Dir, dir+string(os.PathSeparator)) {
+			names = append(names, sessionDisplay(m))
+		}
+	}
+	sort.Strings(names)
+	return names
+}
+
+// updateSessionStartBranch rewrites the recorded start branch (sessionMeta.Branch) for
+// every session whose cwd is at or under dir, after an intentional `git branch -m` on
+// that working copy — so the rename isn't mistaken for branch drift (③). Only touches
+// metas that carry a start branch; leaves pre-existing ("") ones alone.
+func updateSessionStartBranch(dir, branch string) {
+	for _, m := range listSessionMetas() {
+		if m.Branch == "" || m.Branch == branch {
+			continue
+		}
+		if m.Dir == dir || strings.HasPrefix(m.Dir, dir+string(os.PathSeparator)) {
+			m.Branch = branch
+			writeSessionMeta(m)
+		}
+	}
+}
+
+// worktreeHasSessions reports whether ANY session meta (live, stopped, or archived)
+// still has its cwd at or under dir. Auto-pruning a worktree checks this first so a
+// working copy that a stopped/archived session could still resume or restore into is
+// never removed out from under it.
+func worktreeHasSessions(dir string) bool {
+	for _, m := range listSessionMetas() {
+		if m.Dir == dir || strings.HasPrefix(m.Dir, dir+string(os.PathSeparator)) {
+			return true
+		}
+	}
+	return false
+}
+
+// dirInfo is a working copy's current branch + worktree flag, cached per dir.
+type dirInfo struct {
+	branch   string
+	worktree bool
+}
+
+// annotateSessions enriches each session from its working copy: Worktree (is it a
+// linked worktree) and BranchDrift/CurrentBranch (was it switched off its start
+// branch). info resolves a dir once and is cached, so N sessions sharing a working
+// copy cost a single git call. Drift needs a recorded start branch; worktree does not.
+// Split from the git/tmux plumbing so it is unit-testable.
+func annotateSessions(sessions []Session, info func(string) dirInfo) {
+	cache := map[string]dirInfo{}
+	for i := range sessions {
+		s := &sessions[i]
+		if s.Dir == "" {
+			continue
+		}
+		v, ok := cache[s.Dir]
+		if !ok {
+			v = info(s.Dir)
+			cache[s.Dir] = v
+		}
+		s.Worktree = v.worktree
+		if s.Branch != "" && v.branch != "" && v.branch != s.Branch {
+			s.BranchDrift = true
+			s.CurrentBranch = v.branch
+		}
+	}
+}
+
 // handleListSessions returns the live claude_* tmux sessions.
 // We query names and each session's cwd separately rather than packing both
 // into one -F line: a tab/control-char delimiter is mangled by some tmux
@@ -370,16 +499,7 @@ func handleListSessions(w http.ResponseWriter, r *http.Request) {
 		metas[m.Name] = m
 	}
 
-	live := map[string]bool{}
-	out, err := exec.Command("tmux", "list-sessions", "-F", "#{session_name}").Output()
-	if err == nil { // no server / no sessions => err; treat as empty
-		for _, tn := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-			if tn == "" || !strings.HasPrefix(tn, tmuxPrefix) {
-				continue
-			}
-			live[strings.TrimPrefix(tn, tmuxPrefix)] = true
-		}
-	}
+	live := liveSessionNames()
 
 	now := time.Now()
 	ttl := stoppedTTL()
@@ -404,6 +524,7 @@ func handleListSessions(w http.ResponseWriter, r *http.Request) {
 			writeSessionMeta(m)
 		} else if t, e := time.Parse(time.RFC3339, m.StoppedAt); e == nil && now.Sub(t) > ttl {
 			removeSessionMeta(name)
+			maybePruneWorktree(m.Dir) // last reference expired → clean up its worktree if clean
 			continue
 		}
 		sessions = append(sessions, wireSession(m, false))
@@ -423,6 +544,12 @@ func handleListSessions(w http.ResponseWriter, r *http.Request) {
 			Alive: true, Resumable: true,
 		})
 	}
+	// Enrich rows from their working copy (worktree flag + branch-drift). One git call
+	// per unique dir.
+	annotateSessions(sessions, func(dir string) dirInfo {
+		b, wt := gitDirInfo(dir)
+		return dirInfo{branch: b, worktree: wt}
+	})
 	// Stable order: newest first by creation time.
 	sort.Slice(sessions, func(i, j int) bool { return sessions[i].CreatedAt > sessions[j].CreatedAt })
 	writeJSON(w, http.StatusOK, map[string]any{"sessions": sessions})
@@ -473,6 +600,20 @@ type createReq struct {
 	// NewBranch, when set, is created off Branch (the base) right after the clone and
 	// switched to, so the session starts on a fresh branch. Empty => no new branch.
 	NewBranch string `json:"new_branch"`
+	// Worktree switches to worktree-then-start: instead of cloning, spin a git worktree
+	// off an EXISTING working copy (Dir = the parent, e.g. the main/develop 壁打ち clone)
+	// at ~/repos/<repo>@<branch> and use it as CWD. Branch is the base, NewBranch (opt)
+	// the fresh branch to create off it. Lets a decided task branch off into its own
+	// directory + session without touching the parent. RemoteURL is ignored when set.
+	Worktree bool `json:"worktree"`
+	// UseExisting (worktree only) checks out an EXISTING branch (Branch) into the
+	// worktree instead of creating a new one — the "work on the existing branch" answer
+	// to a name collision. NewBranch is ignored; a remote-only branch is DWIM-tracked.
+	UseExisting bool `json:"use_existing"`
+	// Folder (worktree only) overrides the ~/repos/<repo>@<seg> folder segment so it can
+	// diverge from the branch — e.g. an auto branch temp/<x> in a wip-<x> folder. Empty
+	// => the folder is derived from the branch name.
+	Folder string `json:"folder"`
 	// SSM (kind=ssm) coordinates, resolved and forwarded by the Control Plane from a
 	// host bookmark (control-plane/ssm.go). No secrets — SSO login happens in-pane.
 	SSMProfile   string `json:"ssm_profile"`
@@ -500,8 +641,59 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "bad_title", "title is too long (max 80) or contains control characters")
 		return
 	}
-	// Clone-then-start: ensure the repo exists and use it as the working dir.
-	if strings.TrimSpace(req.RemoteURL) != "" {
+	// Worktree-then-start: spin a git worktree off an existing working copy (req.Dir =
+	// the parent) and use it as the CWD, so a decided task branches into its own dir +
+	// session without touching the parent's running sessions.
+	if req.Worktree {
+		parent := strings.TrimSpace(req.Dir)
+		if parent == "" {
+			writeErr(w, http.StatusBadRequest, "bad_dir", "worktree requires dir (the parent working copy)")
+			return
+		}
+		if !filepath.IsAbs(parent) {
+			parent = filepath.Join(homeDir(), parent)
+		}
+		var dir string
+		var err error
+		folderSeg := strings.TrimSpace(req.Folder) // "" => folder derives from the branch
+		if req.UseExisting {
+			// "Work on the existing branch": check out req.Branch (local or DWIM-tracked
+			// remote) into the worktree — the chosen resolution of a name collision.
+			dir, err = ensureWorktree(parent, req.Branch, "", "")
+		} else {
+			// Branch naming is deferred: the client derives a provisional name from the
+			// first prompt, but when that yields nothing (e.g. a Japanese-only prompt, or
+			// no prompt) we start on a throwaway branch temp/<slug> in a wip-<slug> folder
+			// (same slug). The user (or the LLM suggestion) renames the branch later — the
+			// folder stays put, so the session id holds.
+			nb := strings.TrimSpace(req.NewBranch)
+			if nb == "" {
+				slug := randSlug() // random → skip the collision check
+				nb = "temp/" + slug
+				folderSeg = "wip-" + slug
+			} else if local, remote := branchNameStatus(parent, nb); local {
+				// A same-named local branch: -b would fail anyway, but stop with a clear
+				// message rather than git's raw error, and let the user pick another name.
+				writeErr(w, http.StatusConflict, "branch_exists",
+					fmt.Sprintf("branch %q already exists locally; choose another name", nb))
+				return
+			} else if remote {
+				// A same-named PAST remote branch: -b would silently create a divergent
+				// local branch that collides at push. Refuse and let the user rename or
+				// work on the existing one (use_existing).
+				writeErr(w, http.StatusConflict, "branch_exists_remote",
+					fmt.Sprintf("a remote branch %q already exists; rename it or work on the existing branch", nb))
+				return
+			}
+			dir, err = ensureWorktree(parent, req.Branch, nb, folderSeg)
+		}
+		if err != nil {
+			writeErr(w, http.StatusBadGateway, "worktree_failed", err.Error())
+			return
+		}
+		req.Dir = dir
+	} else if strings.TrimSpace(req.RemoteURL) != "" {
+		// Clone-then-start: ensure the repo exists and use it as the working dir.
 		dir, err := ensureRepo(req.RemoteURL, req.Branch, req.NewBranch, req.RepoName)
 		if err != nil {
 			writeErr(w, http.StatusBadGateway, "clone_failed", err.Error())
@@ -548,7 +740,8 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	}
 	meta := sessionMeta{
 		Name: name, Dir: req.Dir, Model: req.Model, Kind: kind, Title: title, Color: req.Color, Label: label,
-		Repo: filepath.Base(req.Dir), CreatedAt: time.Now().Format(time.RFC3339), SSM: ssm,
+		Repo: filepath.Base(req.Dir), Branch: gitCurrentBranch(req.Dir),
+		CreatedAt: time.Now().Format(time.RFC3339), SSM: ssm,
 	}
 	if err := startSessionTmux(meta, req.SSMForceLogin); err != nil {
 		writeErr(w, http.StatusInternalServerError, "tmux_failed", err.Error())
@@ -590,6 +783,7 @@ func handleForkSession(w http.ResponseWriter, r *http.Request) {
 	meta := sessionMeta{
 		Name: forkName, Dir: src.Dir, Model: src.Model, Kind: kindClaude, Title: title,
 		Label: sessionLabelFor(src.Dir, title), Repo: filepath.Base(src.Dir),
+		Branch:    gitCurrentBranch(src.Dir),
 		CreatedAt: time.Now().Format(time.RFC3339), ForkFrom: srcSid,
 	}
 	if err := startSessionTmux(meta, false); err != nil {
@@ -625,6 +819,11 @@ func handleStopSession(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	removeSessionMeta(name)
+	// Stopping forgets the session; if it was the last one in a worktree and that
+	// worktree is clean, auto-remove it so worktrees don't pile up (no-op otherwise).
+	if hadMeta {
+		maybePruneWorktree(meta.Dir)
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"stopped": name})
 }
 
@@ -753,7 +952,8 @@ func handleRecreateSession(w http.ResponseWriter, r *http.Request) {
 	// "re-copy the fork source".
 	newMeta := sessionMeta{
 		Name: allocSessionName(m.Dir), Dir: m.Dir, Model: m.Model, Kind: m.Kind,
-		Title: m.Title, Color: m.Color, Repo: m.Repo, CreatedAt: time.Now().Format(time.RFC3339), SSM: m.SSM,
+		Title: m.Title, Color: m.Color, Repo: m.Repo, Branch: gitCurrentBranch(m.Dir),
+		CreatedAt: time.Now().Format(time.RFC3339), SSM: m.SSM,
 	}
 	if agentOf(newMeta.Kind).caps().usesLabel {
 		newMeta.Label = sessionLabelFor(newMeta.Dir, newMeta.Title)

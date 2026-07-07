@@ -5,6 +5,7 @@ import { agentOf } from "../agents/registry.ts";
 import { readRepoLast } from "../lib/repoLast.js";
 import { readPromptHistory } from "../lib/promptHistory.js";
 import { repoPromptTemplates } from "../api.js";
+import { deriveBranchName, sanitizeSeg } from "../lib/reponame.js";
 import type { PromptTemplateGroup } from "../api.js";
 import type { KeyboardEvent } from "react";
 
@@ -30,13 +31,35 @@ const MODELS: [string, string][] = [
   ["haiku", "Haiku"],
 ];
 
+// LaunchOpts is what "作業を始める" hands back: the agent + optional first prompt, plus
+// WHERE to run — a new isolated worktree (default) or in-place in the current working
+// copy. For a worktree, base is the start point and newBranch the provisional branch
+// ("" => derived from the prompt, else a wip-<slug> the user renames later).
+export interface LaunchOpts {
+  kind: string;
+  model: string;
+  prompt: string;
+  worktree: boolean;
+  base: string;
+  newBranch: string;
+  folder?: string; // worktree folder segment override (auto: wip-<slug> while branch is temp/<slug>)
+  useExisting?: boolean; // worktree: check out the existing branch instead of creating one
+}
+
+// LaunchResult tells the modal whether to close (ok) or stay open and offer a fix — a
+// name collision with a local or a past-remote branch.
+export interface LaunchResult {
+  ok: boolean;
+  conflict?: "local" | "remote";
+}
+
 interface LaunchModalProps {
   repo: string;
   branch?: string;
   path?: string;
   kinds: string[]; // available agent kinds (shell/ssm already excluded)
   onClose: () => void;
-  onLaunch: (kind: string, model: string, prompt: string) => void;
+  onLaunch: (opts: LaunchOpts) => Promise<LaunchResult>;
 }
 
 export default function LaunchModal({ repo, branch, path, kinds, onClose, onLaunch }: LaunchModalProps) {
@@ -50,6 +73,23 @@ export default function LaunchModal({ repo, branch, path, kinds, onClose, onLaun
   const [prompt, setPrompt] = useState("");
   const [busy, setBusy] = useState(false);
   const textRef = useRef<HTMLTextAreaElement>(null);
+  // WHERE to run. Default to an isolated worktree — the safe path this whole feature is
+  // about (a branch switch can't corrupt other sessions when each task has its own dir).
+  // "このコピーで直接" stays available for quick in-place work on the current checkout.
+  const [worktree, setWorktree] = useState(true);
+  const [base, setBase] = useState(branch || "");
+  const [branchName, setBranchName] = useState(""); // "" => derived from the prompt
+  const [conflict, setConflict] = useState<"local" | "remote" | null>(null);
+  // Provisional naming: an explicit entry wins as-is (branch == folder). Otherwise the
+  // prompt-derived (or empty) auto name is throwaway — branch temp/<x> living in a
+  // wip-<x> folder, so a fresh worktree reads as "work in progress" until renamed.
+  const explicit = branchName.trim();
+  const autoSlug = deriveBranchName(prompt);
+  const autoBranch = autoSlug ? "temp/" + autoSlug : ""; // "" (e.g. JP prompt) → server picks temp/<slug>
+  const newBranch = explicit || autoBranch;
+  const folderSeg = explicit ? "" : autoSlug ? "wip-" + autoSlug : ""; // "" → server derives / picks wip-<slug>
+  const previewSeg = explicit ? sanitizeSeg(explicit) : autoSlug ? sanitizeSeg("wip-" + autoSlug) : "";
+  const folder = worktree && previewSeg ? `${repo}@${previewSeg}` : "";
 
   // Template sources fetched once for this repo; history is read from localStorage.
   const [srvGroups, setSrvGroups] = useState<PromptTemplateGroup[]>([]);
@@ -92,14 +132,35 @@ export default function LaunchModal({ repo, branch, path, kinds, onClose, onLaun
     setTimeout(() => textRef.current?.focus(), 0);
   };
 
-  const submit = () => {
+  // start fires the launch and, on a name collision, keeps the modal open with a fix
+  // panel instead of closing. useExisting re-runs the same launch to check out the
+  // colliding branch rather than create a new one.
+  const start = async (useExisting: boolean) => {
     if (busy) return;
     setBusy(true);
-    // Model only rides with an agent that has the cap; codex/opencode ignore it.
-    onLaunch(kind, hasModel ? model : "", prompt.trim());
-    // The parent opens the session + closes us; keep the button busy meanwhile so a
-    // double-Enter can't fire two launches.
+    setConflict(null);
+    // Model only rides with an agent that has the cap; codex/opencode ignore it. For a
+    // worktree, send the derived/typed provisional branch (may be "" → server picks a
+    // wip-<slug>); base defaults to the parent's current branch. For useExisting the
+    // colliding name IS the branch to check out, so it rides as base.
+    const r = await onLaunch({
+      kind,
+      model: hasModel ? model : "",
+      prompt: prompt.trim(),
+      worktree,
+      base: worktree ? (useExisting ? newBranch : base.trim()) : "",
+      newBranch: worktree && !useExisting ? newBranch : "",
+      folder: worktree && !useExisting ? folderSeg : "",
+      useExisting,
+    });
+    if (r?.ok) {
+      onClose();
+      return;
+    }
+    setBusy(false);
+    setConflict(r?.conflict ?? null);
   };
+  const submit = () => start(false);
 
   // ⌘/Ctrl+Enter submits from the prompt box (plain Enter newlines — the prompt is
   // free-form and may be multi-line; the 起動 button is the primary submit).
@@ -111,7 +172,7 @@ export default function LaunchModal({ repo, branch, path, kinds, onClose, onLaun
   };
 
   return (
-    <Modal title={<><Icon name="play" /> 起動: {repo}</>} onClose={onClose} className="launch-modal" lockClose={busy}>
+    <Modal title={<><Icon name="play" /> 作業を始める: {repo}</>} onClose={onClose} className="launch-modal" lockClose={busy}>
       <div className="modal-body">
         {/* エージェント */}
         <div className="field">
@@ -153,6 +214,71 @@ export default function LaunchModal({ repo, branch, path, kinds, onClose, onLaun
             </div>
           </div>
         )}
+
+        {/* 場所: worktree（隔離・既定）か このコピーで直接か */}
+        <div className="field">
+          <div className="field-label">場所</div>
+          <div className="seg">
+            <button
+              type="button"
+              className={"seg-btn" + (worktree ? " active" : "")}
+              onClick={() => setWorktree(true)}
+            >
+              <Icon name="repo-forked" /> 新しい worktree
+              <span className="seg-sub">隔離・ブランチ切替から安全</span>
+            </button>
+            <button
+              type="button"
+              className={"seg-btn" + (!worktree ? " active" : "")}
+              onClick={() => setWorktree(false)}
+            >
+              <Icon name="repo" /> このコピーで直接
+              <span className="seg-sub">現在の {branch || "作業コピー"} で作業</span>
+            </button>
+          </div>
+          {worktree && (
+            <div className="launch-wt">
+              <label className="pick-field">
+                <span>基点ブランチ</span>
+                <input value={base} onChange={(e) => setBase(e.target.value)} placeholder={branch || "既定"} />
+              </label>
+              <label className="pick-field">
+                <span>ブランチ名（任意）</span>
+                <input
+                  value={branchName}
+                  onChange={(e) => { setBranchName(e.target.value); setConflict(null); }}
+                  placeholder={autoBranch || "自動（最初の指示から）"}
+                />
+              </label>
+              <div className="field-help">
+                {folder ? (
+                  <>作業コピーは <code>{folder}</code> に作成します。後でブランチ名は変更できます。</>
+                ) : (
+                  <>名前は最初の指示から自動で付けます（決まらなければ暫定名。後で変更可）。</>
+                )}
+              </div>
+              {conflict && (
+                <div className="launch-conflict">
+                  {conflict === "local" ? (
+                    <span>
+                      同名のローカルブランチ <code>{newBranch}</code> が既にあります。別の名前にしてください。
+                    </span>
+                  ) : (
+                    <span>
+                      リモートに同名ブランチ <code>{newBranch}</code> があります（過去のブランチ）。別名にするか、
+                      その既存ブランチで作業できます。
+                    </span>
+                  )}
+                  {conflict === "remote" && (
+                    <button type="button" className="ghost launch-conflict-use" disabled={busy} onClick={() => start(true)}>
+                      <Icon name="git-branch" /> その既存ブランチで作業
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
 
         {/* 最初のプロンプト（任意） */}
         <div className="field">
@@ -214,7 +340,7 @@ export default function LaunchModal({ repo, branch, path, kinds, onClose, onLaun
           キャンセル
         </button>
         <button type="button" className="primary" onClick={submit} disabled={busy}>
-          {busy ? "起動中…" : "起動"}
+          {busy ? "起動中…" : worktree ? "worktree で始める" : "起動"}
         </button>
       </footer>
     </Modal>

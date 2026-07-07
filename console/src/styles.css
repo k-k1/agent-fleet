@@ -1474,6 +1474,26 @@ button.wu-reload {
   border-color: color-mix(in srgb, var(--warn) 40%, transparent);
   font-weight: 600;
 }
+/* Branch drift: the working copy was switched off the session's start branch. A red
+   alert chip (more severe than the orange question state) since it means the agent's
+   working tree changed under it. Sits at the right end after the state chip. */
+.session-drift {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  max-width: 40%;
+  font-size: 10px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--del);
+  background: color-mix(in srgb, var(--del) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--del) 42%, transparent);
+  font-weight: 600;
+}
 @keyframes af-pulse {
   0%,
   100% {
@@ -1557,6 +1577,12 @@ button.wu-reload {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* A worktree's branch chip is tinted accent (and forked-icon, set in the markup) so a
+   linked worktree reads as different from a standalone clone at a glance — no separate
+   badge needed, the branch name itself carries the signal. */
+.repo-branch.worktree {
+  color: var(--accent);
 }
 /* Git provider badge — identifies which host the repo's origin is on. */
 .repo-provider {
@@ -7456,6 +7482,51 @@ button.mt-toolrun-head:hover {
   min-height: 84px;
   font-family: var(--mono);
 }
+/* Worktree detail (base + provisional branch) revealed under the 場所 toggle. */
+.launch-wt {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+  padding-left: 4px;
+}
+.launch-wt .pick-field {
+  display: flex;
+  flex-direction: row; /* base .pick-field is column; a label+input row reads better here */
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+.launch-wt .pick-field > span {
+  flex: none;
+  width: 8.5em;
+  text-align: left;
+  color: var(--muted);
+  font-size: 12px;
+}
+.launch-wt .pick-field input {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: 100%;
+}
+/* Name-collision notice inside the worktree detail: warn + an optional "use existing"
+   escape hatch when a past remote branch of the same name exists. */
+.launch-conflict {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--warn) 34%, transparent);
+}
+.launch-conflict-use {
+  flex: none;
+}
 /* Prompt field header: label on the left, the テンプレート picker on the right. */
 .launch-prompt-label {
   display: flex;
@@ -7507,6 +7578,35 @@ button.mt-toolrun-head:hover {
 }
 /* The AI-suggest button sits just under the field (the field's own 18px bottom
    margin already separates them, so no extra top margin). */
+/* One-click conventional-commit prefix chips in the branch-rename modal. */
+.branch-prefix-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.branch-prefix-chip {
+  font-size: 12px;
+  font-family: var(--mono);
+  padding: 2px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--border2);
+  background: var(--btn);
+  color: var(--muted);
+  cursor: pointer;
+}
+.branch-prefix-chip:hover:not(:disabled) {
+  background: var(--btn-h);
+}
+.branch-prefix-chip.active {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+}
+.branch-prefix-chip:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
 .title-modal .ti-suggest-row {
   display: flex;
 }
