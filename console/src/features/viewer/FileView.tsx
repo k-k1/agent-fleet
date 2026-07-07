@@ -1,12 +1,12 @@
 // FileView — a single file (read-only) with CodeLeaf-style affordances: info bar
 // (name / language / size / lines / truncation), syntax-highlighted code with a
 // gutter + minimap + git change bar, markdown preview/source/slides toggle,
-// image preview. Port of views/FileView onto the zustand stores.
-//
-// TODO(P6): the selection → 送る pill (SendSelectionModal) returns with the memo
-// queue feature.
-import { useEffect, useMemo, useState } from "react";
+// image preview, and the selection → 送る pill (SendSelectionModal). Port of
+// views/FileView onto the zustand stores.
+import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import type { CSSProperties } from "react";
+import { SendSelectionModal } from "../memo/SendSelectionModal.tsx";
 import hljs from "highlight.js/lib/common";
 import { api, downloadURL } from "../../core/api/client.ts";
 import { baseName, langFor, langLabel, humanSize, countLines, isMarpDoc, imageFormat } from "../../lib/filemeta.ts";
@@ -20,6 +20,37 @@ import { MarpView } from "./MarpView.tsx";
 import { CodeView } from "./CodeView.tsx";
 import { ImageView } from "./ImageView.tsx";
 import type { LineMarks } from "./CodeView.tsx";
+
+// lineRangeOfSelection derives the 1-based line range + text of the current selection
+// within the code grid. Each code cell carries data-ln (its 1-based logical line), so
+// the selection's endpoints map to line numbers by walking up to their cell — wrap- and
+// highlight-agnostic (it reads data-ln, not DOM text lines). Returns null if the
+// selection is empty or not inside root.
+function lineRangeOfSelection(root: Element): { quote: string; startLine: number; endLine: number } | null {
+  const sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return null;
+  const range = sel.getRangeAt(0);
+  if (!root.contains(range.startContainer) || !root.contains(range.endContainer)) return null;
+  const quote = range.toString();
+  if (!quote.trim()) return null;
+  let a = lineNoOf(range.startContainer, root);
+  let b = lineNoOf(range.endContainer, root);
+  a = a ?? b;
+  b = b ?? a;
+  if (a == null || b == null) return null;
+  return { quote, startLine: Math.min(a, b), endLine: Math.max(a, b) };
+}
+
+// Walk up from a selection endpoint to the nearest code cell and read its 1-based line
+// number (data-ln). Returns null if the node isn't inside a code cell.
+function lineNoOf(node: Node, root: Element): number | null {
+  let el: HTMLElement | null = node.nodeType === Node.TEXT_NODE ? node.parentElement : (node as HTMLElement);
+  while (el && el !== root) {
+    if (el.dataset && el.dataset.ln) return parseInt(el.dataset.ln, 10);
+    el = el.parentElement;
+  }
+  return null;
+}
 
 interface FileViewProps {
   filePath: string;
@@ -47,6 +78,9 @@ export function FileView({ filePath, wrap }: FileViewProps) {
   const [imgMode, setImgMode] = useState<"preview" | "source">("preview");
   const [imgDims, setImgDims] = useState<{ w: number; h: number } | null>(null);
   const [marks, setMarks] = useState<LineMarks | null>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const [sel, setSel] = useState<{ quote: string; startLine: number; endLine: number; x: number; y: number } | null>(null);
+  const [sendOpen, setSendOpen] = useState(false);
 
   const showFile = (path: string) => openTarget({ content: { kind: "file", filePath: path } });
 
@@ -129,6 +163,25 @@ export function FileView({ filePath, wrap }: FileViewProps) {
     return escapeHtml(data!.content!);
   }, [isText, huge, data, filePath]);
 
+  // After a mouse selection in the code/source view, surface a floating "送る" pill by
+  // the selection. Scoped to CodeView because it queries that view's <code> element
+  // (absent in md-preview / slides / image), so it stays inert elsewhere.
+  const captureSelection = () => {
+    // While the send modal is open, ignore mouseups — React portals bubble events through
+    // the React tree, so a click inside the (body-portaled) modal reaches this handler and
+    // would clear `sel` (the modal is gated on it), closing the modal on the first click.
+    if (sendOpen) return;
+    const codeEl = bodyRef.current?.querySelector(".codeview .codegrid");
+    if (!codeEl) return;
+    const r = lineRangeOfSelection(codeEl);
+    if (!r) {
+      setSel(null);
+      return;
+    }
+    const rect = window.getSelection()!.getRangeAt(0).getBoundingClientRect();
+    setSel({ ...r, x: Math.round(rect.left), y: Math.round(rect.top - 34) });
+  };
+
   if (!filePath) return <div className="fileview" />;
 
   const viewerStyle = {
@@ -138,7 +191,7 @@ export function FileView({ filePath, wrap }: FileViewProps) {
   } as CSSProperties;
 
   return (
-    <div className="fileview" style={viewerStyle}>
+    <div className="fileview" style={viewerStyle} ref={bodyRef} onMouseUp={captureSelection} onKeyUp={captureSelection}>
       <header className="view-head fileinfo">
         <span className="fi-name mono">
           <FileIcon name={baseName(filePath)} /> {baseName(filePath)}
@@ -216,6 +269,39 @@ export function FileView({ filePath, wrap }: FileViewProps) {
       ) : (
         <CodeView html={html} lines={lines} lineNumbers={settings.lineNumbers} wrap={wrapOn} minimap={settings.minimap} marks={marks} />
       )}
+
+      {/* Portal to <body>: .fileview is a CSS container (container-type), which makes it
+          the containing block for position:fixed descendants — a pill/modal rendered
+          inside would be positioned relative to the pane, not the viewport. */}
+      {sel &&
+        !sendOpen &&
+        createPortal(
+          <button
+            type="button"
+            className="sel-send-pill"
+            style={{ left: sel.x, top: Math.max(4, sel.y) }}
+            onMouseDown={(e) => e.preventDefault()} // keep the text selection alive through the click
+            onClick={() => setSendOpen(true)}
+          >
+            <Icon name="comment-discussion" /> 送る
+          </button>,
+          document.body,
+        )}
+      {sendOpen &&
+        sel &&
+        createPortal(
+          <SendSelectionModal
+            filePath={filePath}
+            quote={sel.quote}
+            startLine={sel.startLine}
+            endLine={sel.endLine}
+            onClose={() => {
+              setSendOpen(false);
+              setSel(null);
+            }}
+          />,
+          document.body,
+        )}
     </div>
   );
 }

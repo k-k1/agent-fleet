@@ -8,7 +8,11 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent as RMouseEvent, DragEvent as RDragEvent, KeyboardEvent as RKeyboardEvent } from "react";
 import { api, uploadFiles, downloadURL, fsMkdir, fsNewFile, fsRename, fsDelete } from "../../core/api/client.ts";
-import { dirName } from "../../lib/filemeta.ts";
+import { dirName, imageFormat, isProbablyBinary } from "../../lib/filemeta.ts";
+import { assistantList, chatCreate } from "../chat/api.ts";
+import { openChat } from "../chat/open.ts";
+import { SendSelectionModal } from "../memo/SendSelectionModal.tsx";
+import type { Assistant } from "../../types/assistant.ts";
 import { placeFixed } from "../../lib/placeFixed.ts";
 import { Section } from "../../ui/Section.tsx";
 import { Icon } from "../../ui/Icon.tsx";
@@ -119,6 +123,9 @@ export function FilesSection() {
   const opsMenuRef = useRef<HTMLDivElement>(null);
   const [opsOpen, setOpsOpen] = useState(false);
   const [menu, setMenu] = useState<Menu | null>(null);
+  const [subOpen, setSubOpen] = useState(false); // "アシスタントで開く" submenu expanded (docs/19 Phase C)
+  const [sendFile, setSendFile] = useState<string | null>(null); // file → "セッションに送る" modal target
+  const [assistants, setAssistants] = useState<Assistant[]>([]); // for the assistant submenu
   const ctxRef = useRef<HTMLUListElement>(null);
   const treeRef = useRef<HTMLUListElement>(null);
   const selRef = useRef<HTMLLIElement>(null);
@@ -289,6 +296,7 @@ export function FilesSection() {
   const openMenu = useCallback((e: RMouseEvent, row: Row | null) => {
     e.preventDefault();
     e.stopPropagation();
+    setSubOpen(false); // each open starts with the assistant submenu collapsed
     setMenu({ x: e.clientX, y: e.clientY, row });
   }, []);
   useEffect(() => {
@@ -308,6 +316,31 @@ export function FilesSection() {
     setMenu(null);
     fn();
   };
+
+  // Assistant submenu (docs/19 Phase C): fetch the assistant list once so a right-click
+  // can hand the file/dir to an assistant. Failure just leaves the submenu empty.
+  useEffect(() => {
+    assistantList()
+      .then((r) => setAssistants(r.assistants || []))
+      .catch(() => {});
+  }, []);
+  // A row is eligible for "アシスタントで開く" if it's a directory, or a file that isn't a
+  // binary/image asset (translate/summarize/ask only make sense on readable content).
+  const menuAssistable = (row: Row) =>
+    row.type === "dir" || (!isProbablyBinary(row.name) && !imageFormat(row.name));
+  // Create a chat from the assistant, attaching the row's file/dir, then open it with the
+  // server-composed seed prefilled in the composer (never auto-sent).
+  const openWithAssistant = async (a: Assistant, row: Row, verb: "translate" | "summarize" | "") => {
+    try {
+      const c = await chatCreate(a.id, row.name, { attachPath: row.path, seedVerb: verb });
+      if (c && c.id) openChat(c.id, c.seed);
+      else toast("チャットの作成に失敗しました");
+    } catch {
+      toast("チャットの作成に失敗しました");
+    }
+  };
+  const translateAsst = assistants.find((a) => a.id === "translate");
+  const summarizeAsst = assistants.find((a) => a.id === "general");
 
   const copyText = useCallback(
     (text: string, label: string) => {
@@ -874,7 +907,34 @@ export function FilesSection() {
               <Icon name="new-folder" /> 新規フォルダ
             </button>
           </li>
-          {/* TODO(P5): アシスタントで開く submenu / TODO(P6): セッションに送る… */}
+          {menu.row && menuAssistable(menu.row) && assistants.length > 0 && (
+            <li className={"ctx-sub" + (subOpen ? " open" : "")}>
+              <span className="ctx-sub-head" onClick={(e) => { e.stopPropagation(); setSubOpen((o) => !o); }}>
+                <span className="ctx-sub-label">
+                  <Icon name="sparkle" /> アシスタントで開く
+                </span>
+                <span className="ctx-sub-arrow">{subOpen ? "▾" : "▸"}</span>
+              </span>
+              {subOpen && (
+                <ul className="ctx-submenu">
+                  {menu.row.type === "file" && translateAsst && (
+                    <li onClick={() => runMenu(() => void openWithAssistant(translateAsst, menu.row!, "translate"))}>翻訳</li>
+                  )}
+                  {menu.row.type === "file" && summarizeAsst && (
+                    <li onClick={() => runMenu(() => void openWithAssistant(summarizeAsst, menu.row!, "summarize"))}>要約</li>
+                  )}
+                  {menu.row.type === "file" && (translateAsst || summarizeAsst) && (
+                    <li className="ctx-sep" aria-hidden="true" />
+                  )}
+                  {assistants.map((a) => (
+                    <li key={a.id} onClick={() => runMenu(() => void openWithAssistant(a, menu.row!, ""))}>
+                      {a.name}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </li>
+          )}
           {menu.row && (
             <>
               <li>
@@ -898,6 +958,13 @@ export function FilesSection() {
               </li>
               {menu.row.type === "file" && (
                 <li>
+                  <button type="button" className="ui-menu-item" onClick={() => runMenu(() => setSendFile(menu.row!.path))}>
+                    <Icon name="send" /> セッションに送る…
+                  </button>
+                </li>
+              )}
+              {menu.row.type === "file" && (
+                <li>
                   <a className="ui-menu-item files-ctx-a" href={downloadURL(menu.row.path)} download onClick={() => setMenu(null)}>
                     <Icon name="cloud-download" /> ダウンロード
                   </a>
@@ -917,6 +984,7 @@ export function FilesSection() {
           )}
         </ul>
       )}
+      {sendFile && <SendSelectionModal filePath={sendFile} onClose={() => setSendFile(null)} />}
     </Section>
   );
 }

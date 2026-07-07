@@ -22,6 +22,7 @@ import { SessionsSection } from "../features/sessions/SessionsSection.tsx";
 import { ReposSection } from "../features/repos/ReposSection.tsx";
 import { FilesSection } from "../features/files/FilesSection.tsx";
 import { AssistantSection } from "../features/chat/AssistantSection.tsx";
+import { MemoQueueSection } from "../features/memo/MemoQueueSection.tsx";
 import { WsBar } from "./WsBar.tsx";
 import { TopBar } from "./TopBar.tsx";
 
@@ -192,10 +193,12 @@ export function App() {
       <div className="app-body">
         <nav className="app-rail">
           <LayoutMap />
+          {/* Same order as the old LeftPane: Sessions / Assistant / Repos / Memo / Files. */}
           <div className="app-rail-scroll">
             <SessionsSection />
-            <ReposSection />
             <AssistantSection />
+            <ReposSection />
+            <MemoQueueSection />
             <FilesSection />
           </div>
         </nav>
