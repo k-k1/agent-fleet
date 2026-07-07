@@ -8,7 +8,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useTenantStore } from "../core/store/tenant.ts";
 import { useWorkspaceStore, startWorkspacePolling } from "../core/store/workspace.ts";
-import { useLayoutStore, wireLayoutHistory, registerDrawerProbe } from "../layout/store.ts";
+import { useLayoutStore, wireLayoutHistory } from "../layout/store.ts";
 import { wireTerminalReconcile } from "../terminal/service.ts";
 import { useSessionsStore, startSessionsPolling } from "../features/sessions/store.ts";
 import { useReposStore } from "../features/repos/store.ts";
@@ -102,21 +102,41 @@ export function App() {
     setNavOpen(false);
   }, [layout]);
 
-  // Drawer history integration (old pushDrawerEntry): while the drawer is open,
-  // a navigation pushes an extra {drawer:true} entry first, so back reopens the
-  // drawer over the previous view; popstate restores navOpen from the flag.
+  // Drawer ↔ history integration. Opening the mobile drawer pushes a {drawer:true}
+  // entry so the device/browser back button CLOSES the drawer instead of leaving the
+  // page (which otherwise trips the terminal's beforeunload guard). Deriving the
+  // "are we on a drawer entry" from history.state keeps push/consume balanced across
+  // both UI toggles and popstate:
+  //   - open by UI on a non-drawer entry → push a guard entry
+  //   - close by UI while still on the drawer entry (backdrop / swipe / hamburger)
+  //     → history.back() consumes it
+  //   - navigating away from an open drawer leaves the guard entry buried, so a later
+  //     back reopens the drawer over the previous view (old pushDrawerEntry behavior)
+  //   - popstate-driven open/close already sits on the right entry → both no-op
   useEffect(() => {
-    registerDrawerProbe(() => navOpenRef.current && window.matchMedia(MOBILE_QUERY).matches);
+    const onDrawerEntry = !!(history.state && history.state.drawer);
+    const onMobile = window.matchMedia(MOBILE_QUERY).matches;
+    if (navOpen && onMobile && !onDrawerEntry) {
+      try {
+        history.pushState({ __af: true, layout: useLayoutStore.getState().layout, drawer: true }, "");
+      } catch {}
+    } else if (!navOpen && onDrawerEntry) {
+      try {
+        history.back();
+      } catch {}
+    }
+  }, [navOpen]);
+
+  // popstate restores navOpen from the entry's drawer flag; popNavRef tells the
+  // "close on layout change" effect above to skip (so back can REOPEN the drawer).
+  useEffect(() => {
     const onPop = (e: PopStateEvent) => {
       const open = !!(e.state && e.state.drawer);
       popNavRef.current = open;
       setNavOpen(open);
     };
     window.addEventListener("popstate", onPop);
-    return () => {
-      registerDrawerProbe(null);
-      window.removeEventListener("popstate", onPop);
-    };
+    return () => window.removeEventListener("popstate", onPop);
   }, []);
 
   // Mobile: swipe right (from the left third) opens the drawer; swipe left

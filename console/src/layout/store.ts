@@ -47,27 +47,11 @@ function persist(layout: Layout): void {
   } catch {}
 }
 
-// Drawer probe (docs/22 P8 history integration): the app shell registers a reader
-// for "is the mobile drawer open right now". When a navigation commits while the
-// drawer is open, an extra {drawer:true} entry is pushed first — so the device /
-// browser back button reopens the drawer over the previous view instead of jumping
-// straight to it (old pushDrawerEntry behavior). The shell's own popstate listener
-// restores navOpen from the flag.
-let drawerProbe: (() => boolean) | null = null;
-export function registerDrawerProbe(fn: (() => boolean) | null): void {
-  drawerProbe = fn;
-}
-
 export const useLayoutStore = create<LayoutStore>((set, get) => {
   const commit = (next: Layout, push = true): void => {
     const cur = get().layout;
     if (next === cur) return; // ops returned the input — a no-op
     if (push && JSON.stringify(next) === JSON.stringify(cur)) return; // no dup history entry
-    if (push && drawerProbe && drawerProbe()) {
-      try {
-        history.pushState({ __af: true, layout: cur, drawer: true }, "");
-      } catch {}
-    }
     set({ layout: next });
     if (get().hydrated) persist(next);
     if (push) {
