@@ -7578,6 +7578,35 @@ button.mt-toolrun-head:hover {
 }
 /* The AI-suggest button sits just under the field (the field's own 18px bottom
    margin already separates them, so no extra top margin). */
+/* One-click conventional-commit prefix chips in the branch-rename modal. */
+.branch-prefix-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.branch-prefix-chip {
+  font-size: 12px;
+  font-family: var(--mono);
+  padding: 2px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--border2);
+  background: var(--btn);
+  color: var(--muted);
+  cursor: pointer;
+}
+.branch-prefix-chip:hover:not(:disabled) {
+  background: var(--btn-h);
+}
+.branch-prefix-chip.active {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+}
+.branch-prefix-chip:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
 .title-modal .ti-suggest-row {
   display: flex;
 }
