@@ -623,6 +623,11 @@ function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected,
           <li onClick={() => { setMenu(null); setBranchOpen(true); }}>
             <Icon name="git-branch" /> ブランチ切替
           </li>
+          {r.worktree && (
+            <li onClick={() => { setMenu(null); setRenameVal(r.branch || ""); setRenaming(true); aiSuggest(); }}>
+              <Icon name="sparkle" /> ブランチ名を変更（AI 提案）
+            </li>
+          )}
           {onFF && (
             <li onClick={() => { setMenu(null); onFF(); }}>
               <Icon name="arrow-down" /> Fast-Forward
