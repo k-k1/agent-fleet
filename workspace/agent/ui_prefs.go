@@ -46,6 +46,19 @@ func autoTitleSuggestEnabled() bool {
 	return !ok || v
 }
 
+// chatOutputLanguage returns the user's forced chat output language ("ja" | "en"),
+// or "" when unset/"auto"/invalid — meaning "follow the input" (no language rule is
+// injected, preserving the persona-driven default). Read live per turn from ui-prefs
+// so a change takes effect on the next message of every conversation (not snapshotted).
+func chatOutputLanguage() string {
+	switch v, _ := readUIPrefs()["outputLanguage"].(string); v {
+	case "ja", "en":
+		return v
+	default:
+		return ""
+	}
+}
+
 func handleGetUIPrefs(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, readUIPrefs())
 }

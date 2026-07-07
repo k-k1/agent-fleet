@@ -95,14 +95,44 @@ const chatOutputRule = "【出力ルール（厳守）】ファイルの作成�
 	"翻訳・要約・回答などの成果物は、長い場合でも省略・分割保存をせず、必ずこの返信の本文にテキストとして全文出力してください。" +
 	"ファイルへ保存しようとしないでください。"
 
+// langRuleJA / langRuleEN force the reply language when the user pins one in ui-prefs
+// (DisplayTab). Each is written in its own target language so it also steers the model
+// (a Japanese rule after an English persona would give mixed signals). No rule = follow
+// the input language, the persona-driven default.
+const (
+	langRuleJA = "【言語】特に指示がない限り、必ず日本語で回答してください（渡された文章が他言語でも回答は日本語で）。"
+	langRuleEN = "[Language] Unless explicitly instructed otherwise, always respond in English (even if the given text is in another language)."
+)
+
+// languageRule returns the forced-output-language directive for this conversation, or ""
+// to leave language to the input/persona. The translate assistant is exempt: its whole
+// job is auto-detecting direction (JA↔EN), which a forced language would break.
+func (c *chatConversation) languageRule() string {
+	if c.AssistantID == "translate" {
+		return ""
+	}
+	switch chatOutputLanguage() {
+	case "ja":
+		return langRuleJA
+	case "en":
+		return langRuleEN
+	}
+	return ""
+}
+
 // personaOf is the system prompt for this conversation: the assistant snapshot's persona
-// (or the generic chat persona), always followed by the global output rule.
+// (or the generic chat persona), followed by the global output rule and, when the user
+// pinned an output language, a language directive.
 func (c *chatConversation) personaOf() string {
 	base := chatPersona
 	if strings.TrimSpace(c.Persona) != "" {
 		base = c.Persona
 	}
-	return base + "\n\n" + chatOutputRule
+	s := base + "\n\n" + chatOutputRule
+	if rule := c.languageRule(); rule != "" {
+		s += "\n\n" + rule
+	}
+	return s
 }
 
 // knowledgeArgs returns --add-dir flags for each knowledge dir that currently exists.

@@ -249,6 +249,25 @@ UX の確定事項（ユーザー確定 2 点）:
 - **未実施の目視**: 右クリック→アシスタント選択で、attach した file/dir を実際に Read して
   翻訳/要約/回答できるか（--add-dir 経由の絶対パス Read が効くか）。
 
+### 回答言語の指定（**実装済**）
+persona は当面**日本語のまま**でよい。指示プロンプトを英語化しても現行 Claude では指示追従の精度は
+上がらず、persona はユーザーが UI で編集する項目なので日本語のままが編集体験上も自然。ただし従来は
+「出力言語＝persona を日本語で書いていること」による**暗黙**の誘導だったのを、**指示言語と出力言語を分離**する。
+
+- **ユーザーごとの回答言語設定**を `ui-prefs.json`（`~/.config/agent-fleet/ui-prefs.json`、既存の per-user
+  設定 blob）に `outputLanguage` キーとして持つ。値は `"auto"（既定・入力に合わせる）| "ja" | "en"` の 3 値のみ。
+  完全な locale マトリクスは JA-first のこの製品には過剰なので採らない（YAGNI）。
+- Agent 側 `chatOutputLanguage()`（`ui_prefs.go`）が同 blob を**送信ごとに live 読み**し、`personaOf()`
+  （`chat.go`）が `"ja"→langRuleJA / "en"→langRuleEN` を system prompt 末尾に追記。ルール文は**各対象言語で**
+  書き（英語 persona の後ろに日本語ルールを付けると誘導が濁るため）、`"auto"` は**何も注入しない**＝入力/persona
+  任せ（≒ Claude の入力言語ミラーで従来挙動を維持）。
+- **送信時解決＝スナップショットしない**。persona/tools/knowledge は会話作成時にスナップショットするが、
+  言語は横断的な個人設定なので `personaOf()` 実行時に ui-prefs から解決する。→ 設定変更は既存会話にも次ターンで反映。
+- **翻訳アシスタント（`assistant_id == "translate"`）は対象外**。自動 JA↔EN 判定を強制言語が壊すため
+  `languageRule()` で除外。
+- Console: `settings.ts` の `Settings.outputLanguage`（既定 `"auto"`）＋`OUTPUT_LANGUAGES`、`AgentsTab`
+  「セッション」グループに選択 UI。ui-prefs は Settings 全体を verbatim で PUT/GET するため、キー追加だけで同期に載る。
+
 ### 実装順
 Q3（済）→ Q1（mcp-stdio, read-only, 済）→ **Q2＝アシスタント・テンプレート（済）**
 → **書き込みツール opt-in（済）** → **Phase C＝Files 右クリック連携（済、DocView/FileView ボタンは残）**。
