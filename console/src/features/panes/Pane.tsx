@@ -8,8 +8,14 @@ import type { CSSProperties, DragEvent as RDragEvent } from "react";
 import type { Pane as PaneT, PaneContent } from "../../layout/types.ts";
 import { ordClass } from "../../layout/badges.ts";
 import { usePaneHover, hoverMatches } from "../../lib/panehover.tsx";
+import { useLayoutStore } from "../../layout/store.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 import { TerminalView } from "../terminal/TerminalView.tsx";
+import { SourceControlView } from "../scm/SourceControlView.tsx";
+import { ChangesView } from "../scm/ChangesView.tsx";
+import { CommitDetailView } from "../scm/CommitDetailView.tsx";
+import { WorkingDiffView } from "../scm/WorkingDiffView.tsx";
+import { useSettings } from "../../lib/settings.ts";
 import { EmptyState } from "../../ui/EmptyState.tsx";
 import { IconButton } from "../../ui/Button.tsx";
 import { cx } from "../../ui/cx.ts";
@@ -20,10 +26,6 @@ const DND = "application/x-af-pane";
 
 // Placeholder copy for views whose port hasn't landed yet.
 const PENDING: Partial<Record<PaneContent["kind"], { icon: string; label: string; phase: string }>> = {
-  scm: { icon: "source-control", label: "ソース管理", phase: "P3" },
-  changes: { icon: "diff", label: "変更", phase: "P3" },
-  commit: { icon: "git-commit", label: "コミット詳細", phase: "P3" },
-  wtdiff: { icon: "diff", label: "ファイル差分", phase: "P3" },
   file: { icon: "file", label: "ファイルビュアー", phase: "P4" },
   doc: { icon: "book", label: "ドキュメント", phase: "P4" },
   diff: { icon: "diff", label: "編集差分", phase: "P4" },
@@ -87,6 +89,13 @@ export function Pane({
     if (sessionMeta?.alive === true) setAttached(true);
     else if (sessionMeta?.alive === false) setAttached(false);
   }, [sessionMeta?.alive]);
+
+  // Per-pane line-wrap override for text views (null = follow the global setting).
+  const setPaneWrap = useLayoutStore((s) => s.setPaneWrap);
+  const settings = useSettings();
+  const wrapOn = pane.wrap ?? settings.wrap;
+  const canWrap =
+    pane.content.kind === "file" || pane.content.kind === "diff" || pane.content.kind === "wtdiff";
 
   // Resume a stopped session EXPLICITLY (the terminal WS is connect-only): POST
   // /start, then attach. An already-alive session just attaches.
@@ -159,6 +168,14 @@ export function Pane({
         </button>
       )}
       <div className="pane-controls">
+        {canWrap && (
+          <IconButton
+            icon="word-wrap"
+            label={wrapOn ? "折り返しを解除" : "行を折り返す"}
+            className={wrapOn ? "on" : ""}
+            onClick={() => setPaneWrap(pane.id, !wrapOn)}
+          />
+        )}
         {canClose && (
           <IconButton
             icon="close"
@@ -190,6 +207,19 @@ export function Pane({
           active={(single || active) && isTerm}
           attached={attached}
           onResume={onResume}
+        />
+      )}
+      {pane.content.kind === "scm" && <SourceControlView repo={pane.content.scmRepo} />}
+      {pane.content.kind === "changes" && <ChangesView repo={pane.content.scmRepo} />}
+      {pane.content.kind === "commit" && (
+        <CommitDetailView repo={pane.content.scmRepo} sha={pane.content.commitSha} wrap={wrapOn} />
+      )}
+      {pane.content.kind === "wtdiff" && (
+        <WorkingDiffView
+          repo={pane.content.scmRepo}
+          path={pane.content.filePath}
+          staged={pane.content.diffStaged}
+          wrap={wrapOn}
         />
       )}
       {pending && (
