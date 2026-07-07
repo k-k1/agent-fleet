@@ -5,6 +5,60 @@
 .mirrorview {
   background: var(--chat-bg, var(--viewer-bg, var(--bg)));
 }
+/* Legacy control styles (old styles.css element globals), scoped to the mirror.
+   The verbatim-ported MirrorView keeps raw <button className="ghost|primary">
+   markup that relied on the old console's global button rules — the next entry
+   deliberately has no element globals (ui/ uses .ui-btn), so replicate them here.
+   Placed before the co-located rules below so later rules win ties, matching the
+   old cascade. Dissolved when MirrorView moves to ui/Button (P8). */
+.mirrorview button {
+  background: var(--btn);
+  color: var(--fg);
+  border: 1px solid var(--btn-border);
+  border-radius: 4px;
+  padding: 4px 10px;
+  cursor: pointer;
+  font: inherit;
+}
+.mirrorview button:hover:not(:disabled) {
+  background: var(--btn-h);
+}
+.mirrorview button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.mirrorview button.ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--muted);
+  padding: 2px 6px;
+}
+.mirrorview button.ghost:hover:not(:disabled) {
+  background: var(--btn);
+  color: var(--fg);
+}
+.mirrorview button.icon {
+  padding: 1px 6px;
+  font-size: 12px;
+  line-height: 1.3;
+}
+.mirrorview button.primary {
+  background: var(--accent);
+  color: var(--on-accent);
+  border-color: var(--accent);
+  font-weight: 600;
+}
+.mirrorview button.primary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 85%, #fff);
+}
+/* Session display name in the chat head (shared look with the sessions rail). */
+.mirrorview .session-display {
+  font-weight: 600;
+  font-size: 12.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 /* ---- Markdown mirror (case-A: read-mostly view of a claude session) ---- */
 /* Right-align the ターミナル/ミラー switch in the view-head, left of the pane
    control cluster (the head already reserves 84px on the right for it). */
