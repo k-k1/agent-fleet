@@ -9,6 +9,13 @@ import type { Session } from "../../types/session.ts";
 
 interface SessionsStore {
   sessions: Session[];
+  /** Global "open the New Session dialog" signal (old openNewSession): anything
+   * (WS bar 新規, onboarding card) bumps this; SessionsSection — which owns the
+   * modal — watches it and opens. App also watches to raise the mobile drawer
+   * first (the modal mounts inside the rail; a CSS transform there would offset
+   * its fixed positioning). */
+  newSessionTick: number;
+  openNewSession(): void;
   refresh(): Promise<void>;
   /** Resume/launch a stopped session (POST start). The caller re-attaches. */
   start(name: string): Promise<void>;
@@ -18,6 +25,8 @@ let ser = ""; // last published serialization (module-level: not render state)
 
 export const useSessionsStore = create<SessionsStore>((set) => ({
   sessions: [],
+  newSessionTick: 0,
+  openNewSession: () => set((s) => ({ newSessionTick: s.newSessionTick + 1 })),
 
   async refresh() {
     try {

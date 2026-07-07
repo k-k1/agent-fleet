@@ -113,6 +113,16 @@ export function SessionsSection() {
     });
 
   const [showModal, setShowModal] = useState(false);
+  // Global openNewSession signal (WS bar 新規 / onboarding card): the modal lives
+  // here, so watch the tick and open. Skip the initial value (mount ≠ a request).
+  const newSessionTick = useSessionsStore((s) => s.newSessionTick);
+  const lastTickRef = useRef(newSessionTick);
+  useEffect(() => {
+    if (newSessionTick !== lastTickRef.current) {
+      lastTickRef.current = newSessionTick;
+      setShowModal(true);
+    }
+  }, [newSessionTick]);
   const [showArchived, setShowArchived] = useState(false);
   const [resumeSsm, setResumeSsm] = useState<{ name: string; force: boolean } | null>(null);
   const [branchRenaming, setBranchRenaming] = useState<Session | null>(null);
