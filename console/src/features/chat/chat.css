@@ -7,6 +7,25 @@
   min-height: 0;
   background: var(--bg);
 }
+/* Legacy control styles (old styles.css element globals), scoped to the chat view —
+   the verbatim-ported ChatView's raw buttons (送信 / 停止) relied on them. Same
+   rationale as the .mirrorview block in mirror.css; dissolved at P8. */
+.chatview button {
+  background: var(--btn);
+  color: var(--fg);
+  border: 1px solid var(--btn-border);
+  border-radius: 4px;
+  padding: 4px 10px;
+  cursor: pointer;
+  font: inherit;
+}
+.chatview button:hover:not(:disabled) {
+  background: var(--btn-h);
+}
+.chatview button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
 .chat-scroll {
   flex: 1 1 auto;
   min-height: 0;

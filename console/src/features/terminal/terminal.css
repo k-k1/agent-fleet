@@ -51,6 +51,17 @@
 .kind-tag .kt-short {
   display: none;
 }
+/* Collapse the kind badge to its 2-char short form when the pane header gets
+   narrow — the full word otherwise squeezes the session name to "nov…". Applies
+   to both the terminal and chat heads (same paneview container). */
+@container paneview (max-width: 460px) {
+  .view-head .kind-tag .kt-full {
+    display: none;
+  }
+  .view-head .kind-tag .kt-short {
+    display: inline;
+  }
+}
 .kind-tag.kind-claude { color: #e0a45e; background: rgba(224, 164, 94, 0.14); border-color: rgba(224, 164, 94, 0.45); }
 .kind-tag.kind-codex { color: #4ec97a; background: rgba(78, 201, 122, 0.14); border-color: rgba(78, 201, 122, 0.45); }
 .kind-tag.kind-opencode { color: #b07cf2; background: rgba(176, 124, 242, 0.16); border-color: rgba(176, 124, 242, 0.45); }

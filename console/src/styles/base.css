@@ -38,3 +38,13 @@ body {
     transform: rotate(360deg);
   }
 }
+
+/* Text utilities shared app-wide (old styles.css globals — the verbatim-ported
+   components use them as-is). */
+.muted {
+  color: var(--muted2);
+  font-size: 12px;
+}
+.mono {
+  font-family: var(--mono);
+}
