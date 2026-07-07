@@ -32,6 +32,7 @@ import { ArchivedModal } from "./ArchivedModal.tsx";
 import { SessionTitleModal } from "./SessionTitleModal.tsx";
 import { BranchRenameModal } from "./BranchRenameModal.tsx";
 import { SsmLoginModal } from "./SsmLoginModal.tsx";
+import { NewSessionModal } from "./NewSessionModal.tsx";
 import type { Session } from "../../types/session.ts";
 
 const notify = (title: string, body: string) => {
@@ -122,6 +123,7 @@ export function SessionsSection() {
       return next;
     });
 
+  const [showModal, setShowModal] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
   const [resumeSsm, setResumeSsm] = useState<{ name: string; force: boolean } | null>(null);
   const [branchRenaming, setBranchRenaming] = useState<Session | null>(null);
@@ -320,8 +322,9 @@ export function SessionsSection() {
             small
             variant="ghost"
             icon="add"
-            title="新規セッション（P2b で移植 — それまでは旧コンソールで）"
-            disabled
+            title={running ? "新規セッション" : "新規セッション（ワークスペース停止中）"}
+            disabled={!running}
+            onClick={() => setShowModal(true)}
           >
             新規
           </Button>
@@ -586,6 +589,18 @@ export function SessionsSection() {
         })}
       </ul>
 
+      {showModal && (
+        <NewSessionModal
+          onClose={() => setShowModal(false)}
+          onCreated={(name) => {
+            // TODO(P2c): clone した場合の Repos/Files ツリー更新はセクション移植後に配線。
+            // TODO(P5): claude はチャットミラーで開く。
+            void refreshSessions();
+            openSessionTerminal(name);
+            setShowModal(false);
+          }}
+        />
+      )}
       {resumeSsm && (
         <SsmLoginModal
           name={resumeSsm.name}

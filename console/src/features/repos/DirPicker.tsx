@@ -1,0 +1,116 @@
+// DirPicker — browse the container's home tree and pick a directory to launch
+// in. `value` is home-relative ("" = home); the CURRENT browsed path IS the
+// selection. Git working copies get a quick list at home + a branch chip on
+// their folder rows. Port of the old components/DirPicker.
+import { useEffect, useState } from "react";
+import { api } from "../../core/api/client.ts";
+import { Icon } from "../../ui/Icon.tsx";
+
+interface Entry {
+  name: string;
+  type: string;
+}
+export interface RepoLite {
+  name: string;
+  path?: string;
+  branch?: string;
+}
+
+export function DirPicker({
+  value,
+  onChange,
+  repos = [],
+}: {
+  value: string;
+  onChange: (p: string) => void;
+  repos?: RepoLite[];
+}) {
+  const [entries, setEntries] = useState<Entry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState(false);
+  const path = value; // home-relative; "" = home
+
+  useEffect(() => {
+    let alive = true;
+    setLoading(true);
+    setErr(false);
+    api(`api/fs/tree?path=${encodeURIComponent(path)}`)
+      .then((d) => {
+        if (!alive) return;
+        setEntries((d.entries || []).filter((e: Entry) => e.type === "dir"));
+      })
+      .catch(() => alive && setErr(true))
+      .finally(() => alive && setLoading(false));
+    return () => {
+      alive = false;
+    };
+  }, [path]);
+
+  const segs = path ? path.split("/") : [];
+  const isHome = path === "";
+  const repoBranch = new Map(repos.map((r) => [`repos/${r.name}`, r.branch || ""]));
+  const full = (name: string) => (path ? `${path}/${name}` : name);
+
+  return (
+    <div className="dirpick">
+      <div className="dirpick-crumbs">
+        <button type="button" className="dirpick-crumb" onClick={() => onChange("")} title="ホーム">
+          <Icon name="home" /> ~
+        </button>
+        {segs.map((s, i) => (
+          <span key={i} className="dirpick-seg">
+            <span className="dirpick-slash">/</span>
+            <button type="button" className="dirpick-crumb" onClick={() => onChange(segs.slice(0, i + 1).join("/"))}>
+              {s}
+            </button>
+          </span>
+        ))}
+      </div>
+      <div className="dirpick-list">
+        {isHome && repos.length > 0 && (
+          <>
+            <div className="dirpick-head">リポジトリ</div>
+            {repos.map((r) => (
+              <button
+                key={"repo-" + r.name}
+                type="button"
+                className="dirpick-row"
+                onClick={() => onChange(`repos/${r.name}`)}
+              >
+                <Icon name="repo" className="dirpick-ic" />
+                <span className="dirpick-name">{r.name}</span>
+                {r.branch && <span className="dirpick-branch">{r.branch}</span>}
+                <Icon name="chevron-right" className="dirpick-go" />
+              </button>
+            ))}
+            <div className="dirpick-head">フォルダ</div>
+          </>
+        )}
+        {loading ? (
+          <div className="dirpick-empty">
+            <Icon name="loading" spin /> 読み込み中…
+          </div>
+        ) : err ? (
+          <div className="dirpick-empty">読み込めませんでした</div>
+        ) : entries.length === 0 ? (
+          <div className="dirpick-empty">サブフォルダはありません</div>
+        ) : (
+          entries.map((e) => {
+            const branch = repoBranch.get(full(e.name)); // defined ⇒ a working copy
+            return (
+              <button key={e.name} type="button" className="dirpick-row" onClick={() => onChange(full(e.name))}>
+                <Icon name={branch !== undefined ? "repo" : "folder"} className="dirpick-ic" />
+                <span className="dirpick-name">{e.name}</span>
+                {branch ? <span className="dirpick-branch">{branch}</span> : null}
+                <Icon name="chevron-right" className="dirpick-go" />
+              </button>
+            );
+          })
+        )}
+      </div>
+      <div className="dirpick-cur">
+        ここで起動: <code>~{path ? "/" + path : ""}</code>
+      </div>
+    </div>
+  );
+}

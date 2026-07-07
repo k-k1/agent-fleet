@@ -367,3 +367,69 @@
   font-size: 11px;
   color: var(--muted2);
 }
+
+/* ---- Segmented control (kind/model/source pickers) ---- */
+.ui-seg {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.ui-seg .seg-btn {
+  background: var(--btn);
+  color: var(--fg);
+  border: 1px solid var(--btn-border);
+  border-radius: 6px;
+  padding: 5px 12px;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+.ui-seg .seg-btn:hover:not(.active) {
+  background: var(--btn-h);
+}
+.ui-seg .seg-btn.active {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--btn));
+}
+.ui-seg .seg-sub {
+  font-size: 10px;
+  color: var(--muted);
+}
+.ui-seg.big .seg-btn {
+  min-width: 96px;
+  padding: 8px 12px;
+}
+.ui-seg.big .seg-ic {
+  font-size: 18px;
+}
+/* Kind tint on the big New Session buttons (matches .kind-tag hues). */
+.ui-seg.big .seg-btn.kind-claude .seg-ic { color: #e0a45e; }
+.ui-seg.big .seg-btn.kind-codex .seg-ic { color: #4ec97a; }
+.ui-seg.big .seg-btn.kind-opencode .seg-ic { color: #b07cf2; }
+.ui-seg.big .seg-btn.kind-shell .seg-ic { color: #46c9d0; }
+.ui-seg.big .seg-btn.kind-ssm .seg-ic { color: #6d8bf5; }
+
+/* Inline link-styled button (hints that point at another screen). */
+.linklike {
+  background: none;
+  border: none;
+  color: var(--accent);
+  font: inherit;
+  font-size: inherit;
+  padding: 0 2px;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+/* Checkbox row (e.g. SSM 強制再ログイン). */
+.ssm-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
