@@ -481,7 +481,7 @@ func cleanBranchName(s string) string {
 
 // handleRepoSuggestBranch proposes a branch name for a working copy by summarizing the
 // conversation of a session running in it — the LLM half of deferred naming (start on
-// wip-<slug>, ask the AI for a real name once the task has a shape). Returns the
+// temp/<slug>, ask the AI for a real name once the task has a shape). Returns the
 // suggestion for the Console's rename field to pre-fill; it never renames on its own.
 func handleRepoSuggestBranch(w http.ResponseWriter, r *http.Request) {
 	dir, ok := repoDirFromPath(w, r)

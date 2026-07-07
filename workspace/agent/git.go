@@ -781,7 +781,7 @@ type renameBranchReq struct {
 // handleRepoRenameBranch renames the working copy's current branch (git branch -m).
 // Unlike a checkout it does NOT touch the working tree, so it's safe under live
 // sessions — and it's the deferred-naming counterpart to worktree-then-start: start on
-// a provisional wip-<slug>, rename once the task has a shape (or from an LLM
+// a provisional temp/<slug>, rename once the task has a shape (or from an LLM
 // suggestion). The worktree folder is intentionally left alone (renaming it would break
 // the session id); the recorded start branch of sessions in this dir is updated so the
 // intentional rename doesn't later read as branch drift.
