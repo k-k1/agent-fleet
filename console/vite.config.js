@@ -34,5 +34,22 @@ export default defineConfig({
     // on this RAM-constrained host. Re-enable locally if you need to debug.
     sourcemap: false,
     chunkSizeWarningLimit: 1500,
+    // Parallel-entry transition (docs/22): index.html = the frozen current console,
+    // next.html = the rebuild. Both ship in the same dist so the CP serves them
+    // side by side against the live backend; at swap time next replaces index.
+    rollupOptions: {
+      input: {
+        index: fileURLToPath(new URL("./index.html", import.meta.url)),
+        next: fileURLToPath(new URL("./next.html", import.meta.url)),
+      },
+    },
+  },
+  // vitest — pure-logic tests only (layout ops, parsers, stores); node env, no DOM.
+  // Worker cap per the shared-host memory rule (workspace notes).
+  test: {
+    environment: "node",
+    include: ["src/**/*.test.ts"],
+    maxWorkers: 2,
+    minWorkers: 1,
   },
 });
