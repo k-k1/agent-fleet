@@ -3,6 +3,7 @@
 // flight — the panel goes inert and the close button becomes a spinner). Pass
 // `as="form"` + onSubmit for form dialogs. Port of the old components/Modal.
 import { useEffect } from "react";
+import { createPortal } from "react-dom";
 import type { ReactNode, MouseEvent, FormEvent } from "react";
 import { Icon } from "./Icon.tsx";
 import { IconButton } from "./Button.tsx";
@@ -48,7 +49,13 @@ export function Modal({
   if (as === "form") panelProps.onSubmit = onSubmit;
   // React 19 treats `inert` as a boolean prop.
   if (lockClose) panelProps.inert = true;
-  return (
+  // Portal to <body>: many modals are mounted deep inside the left rail sections,
+  // and on mobile the rail is an off-canvas drawer with `transform: translateX()`.
+  // A transformed ancestor becomes the containing block for position:fixed, which
+  // would trap the backdrop/panel inside the ~320px drawer instead of the viewport.
+  // Rendering at body decouples the modal from wherever it's invoked. Context
+  // (stores / toast / confirm) still flows through — portals preserve the React tree.
+  return createPortal(
     // Stop contextmenu bubbling past the backdrop: a modal may render inside an
     // element with its own onContextMenu (e.g. a repo row's right-click menu).
     <div
@@ -67,6 +74,7 @@ export function Modal({
         </header>
         {children}
       </Panel>
-    </div>
+    </div>,
+    document.body,
   );
 }
