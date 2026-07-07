@@ -39,20 +39,39 @@
   font-weight: 600;
 }
 
-/* Session kind badge — per-kind colors so agents are distinguishable at a glance. */
+/* Session kind badge — old base exactly (10px/600, radius 3, muted default);
+   per-kind colors below override color/bg/border. */
 .kind-tag {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  border: 1px solid;
-  border-radius: 4px;
-  padding: 0 5px;
-  font-size: 11px;
-  line-height: 1.6;
-  flex: none;
+  gap: 3px;
+  flex: none; /* never shrink/wrap the badge */
+  white-space: nowrap;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  background: var(--btn);
+  border: 1px solid var(--btn-border);
+  border-radius: 3px;
+  padding: 1px 5px;
+  margin-right: 6px;
+  color: var(--muted);
 }
 .kind-tag .kt-short {
   display: none;
+}
+/* The terminal pane is an inline-size container so its header badge collapses
+   to icon + 2-char short label when the pane is narrow (split panes). */
+.termview {
+  container: paneview / inline-size;
+}
+@container paneview (max-width: 460px) {
+  .pane-head .kind-tag .kt-full {
+    display: none;
+  }
+  .pane-head .kind-tag .kt-short {
+    display: inline;
+  }
 }
 /* Collapse the kind badge to its 2-char short form when the pane header gets
    narrow — the full word otherwise squeezes the session name to "nov…". Applies
