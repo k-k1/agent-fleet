@@ -10,6 +10,15 @@ import { useToast } from "./ToastProvider.jsx";
 // unambiguous even when several sessions share the worktree. Save runs git branch -m on
 // the session's working copy (the folder, hence the session id, is left untouched); the
 // start branch of every session in that dir follows, so it isn't read as drift.
+// Conventional-commit-style prefixes offered as one-click chips. Clicking one swaps
+// any existing known prefix for it (or strips it when already applied), so the AI's
+// bare kebab name (e.g. "login-redirect-fix") becomes "feat/login-redirect-fix".
+const PREFIXES = ["feat/", "fix/", "refactor/", "chore/", "docs/"];
+const stripKnownPrefix = (v: string): string => {
+  for (const p of PREFIXES) if (v.startsWith(p)) return v.slice(p.length);
+  return v;
+};
+
 interface BranchRenameModalProps {
   name: string; // session slug
   branch: string; // current branch (prefill)
@@ -74,6 +83,12 @@ export default function BranchRenameModal({ name, branch, onClose, onSaved }: Br
     setProposal("");
   };
 
+  // Toggle a prefix: prepend it (swapping any existing known prefix), or strip it when
+  // the name already has exactly that prefix.
+  const togglePrefix = (p: string) => {
+    setValue((v) => (v.startsWith(p) ? stripKnownPrefix(v) : p + stripKnownPrefix(v)));
+  };
+
   return (
     <Modal
       title="ブランチ名を変更"
@@ -97,6 +112,19 @@ export default function BranchRenameModal({ name, branch, onClose, onSaved }: Br
           />
           <div className="field-help">
             この worktree のブランチを <code>git branch -m</code> で改名します（フォルダ＝セッションはそのまま）。
+          </div>
+          <div className="branch-prefix-row">
+            {PREFIXES.map((p) => (
+              <button
+                key={p}
+                type="button"
+                className={"branch-prefix-chip" + (value.startsWith(p) ? " active" : "")}
+                onClick={() => togglePrefix(p)}
+                disabled={busy}
+              >
+                {p}
+              </button>
+            ))}
           </div>
         </div>
 
