@@ -11,7 +11,7 @@ import { placeFixed } from "../../lib/placeFixed.js";
 import NewRepoModal from "../NewRepoModal.jsx";
 import BranchModal from "../BranchModal.jsx";
 import LaunchModal from "../LaunchModal.jsx";
-import WorktreeModal from "../WorktreeModal.jsx";
+import type { LaunchOpts } from "../LaunchModal.jsx";
 import { kindIcon, kindLabel } from "../../lib/sessionkind.js";
 import { agentOf, repoLaunchKinds } from "../../agents/registry.ts";
 import { setLaunchSeed } from "../../lib/launchSeed.js";
@@ -280,16 +280,23 @@ export default function ReposSection() {
                 ? split ? showChatSplit : showChat
                 : split ? showTerminalSplit : showTerminal)(res.name);
             }}
-            // Modal 起動: agent + model + first prompt. Agent-only (all chat kinds),
-            // so it always opens the chat mirror; the typed prompt is stashed as a
-            // launch seed and auto-sent once MirrorView sees the session alive.
-            onLaunchPrompt={async (kind: string, model: string, prompt: string) => {
+            // 作業を始める: unified launch. worktree (default) spins an isolated worktree
+            // of this repo and starts a session there; in-place starts in the current
+            // checkout. The provisional branch is derived from the prompt (server falls
+            // back to wip-<slug>); the typed prompt is stashed as a launch seed and
+            // auto-sent once MirrorView sees the session alive.
+            onStartWork={async ({ kind, model, prompt, worktree, base, newBranch }) => {
               const hasModel = agentOf(kind).caps.model;
               const body: Record<string, unknown> = { dir: r.path, kind };
               if (hasModel && model) body.model = model;
+              if (worktree) {
+                body.worktree = true;
+                body.branch = base;
+                body.new_branch = newBranch;
+              }
               const res = await apiJSON("api/sessions", "POST", body);
               if (res && res.error) {
-                toast("起動に失敗: " + errText(res.error));
+                toast((worktree ? "worktree 起動に失敗: " : "起動に失敗: ") + errText(res.error));
                 return;
               }
               writeRepoLast(r.name, kind, hasModel ? model : undefined);
@@ -297,37 +304,19 @@ export default function ReposSection() {
                 setLaunchSeed(res.name, prompt);
                 pushPromptHistory(r.name, prompt); // remember it for the 履歴 group next time
               }
+              if (worktree) {
+                bumpRepos();
+                bumpFiles();
+              }
               bumpSessions();
-              showChat(res.name);
+              const chat = agentOf(kind).caps.chat;
+              (chat ? showChat : showTerminal)(res.name);
             }}
             // A checkout / new branch changed HEAD and the working tree — refresh the
             // repo row (branch label) and the Files tree.
             onBranchChanged={() => {
               bumpRepos();
               bumpFiles();
-            }}
-            // Worktree golden path: spin a git worktree of this repo (parent left
-            // untouched) and start a session in it. Mirrors onLaunch, but the server
-            // creates the worktree dir from { worktree, dir(parent), branch, new_branch }.
-            onWorktree={async ({ base, newBranch, kind, model }) => {
-              const body: Record<string, unknown> = {
-                worktree: true,
-                dir: r.path,
-                branch: base,
-                new_branch: newBranch,
-                kind,
-              };
-              if (model) body.model = model;
-              const res = await apiJSON("api/sessions", "POST", body);
-              if (res && res.error) {
-                toast("worktree 起動に失敗: " + errText(res.error));
-                return;
-              }
-              bumpRepos();
-              bumpFiles();
-              bumpSessions();
-              const chat = agentOf(kind).caps.chat;
-              (chat ? showChat : showTerminal)(res.name);
             }}
           />
         ))}
@@ -354,14 +343,13 @@ interface RepoRowProps {
   onFF?: () => void;
   onDelete?: () => void;
   onLaunch: (kind: string, split: boolean) => void;
-  onLaunchPrompt: (kind: string, model: string, prompt: string) => void;
+  onStartWork: (opts: LaunchOpts) => void;
   onBranchChanged?: () => void;
-  onWorktree?: (opts: { base: string; newBranch: string; kind: string; model: string }) => void;
   opens?: { ordinal: number; id: string }[];
   onFocusPane?: (id: string) => void;
 }
 
-function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected, onOpen, onOpenFolder, onOpenChanges, onFF, onDelete, onLaunch, onLaunchPrompt, onBranchChanged, onWorktree, opens, onFocusPane }: RepoRowProps) {
+function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected, onOpen, onOpenFolder, onOpenChanges, onFF, onDelete, onLaunch, onStartWork, onBranchChanged, opens, onFocusPane }: RepoRowProps) {
   const [showLaunch, setShowLaunch] = useState(false);
   const [launchModal, setLaunchModal] = useState(false); // 起動 modal (agent + model + prompt)
   // Agent kinds only (chat-capable: claude/codex/opencode) — shell/ssm have no model
@@ -370,7 +358,6 @@ function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected,
   const wrapRef = useRef<HTMLDivElement>(null);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null); // right-click context menu
   const [branchOpen, setBranchOpen] = useState(false); // branch switch / create modal
-  const [worktreeOpen, setWorktreeOpen] = useState(false); // worktree golden-path modal
   const menuRef = useRef<HTMLUListElement>(null);
 
   // Context menu: open at the cursor, clamp on-screen, close on outside click / Esc.
@@ -468,7 +455,7 @@ function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected,
           <div className="launch-split">
             <button
               className="chip launch launch-main"
-              title={running ? (agentKinds.length ? "起動（エージェント・モデル・最初のプロンプト）" : "利用可能なエージェントがありません") : "ワークスペース停止中"}
+              title={running ? (agentKinds.length ? "作業を始める（既定は隔離 worktree・エージェント/モデル/最初の指示）" : "利用可能なエージェントがありません") : "ワークスペース停止中"}
               disabled={!running || !agentKinds.length}
               onClick={() => setLaunchModal(true)}
             >
@@ -565,11 +552,6 @@ function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected,
           <li onClick={() => { setMenu(null); setBranchOpen(true); }}>
             <Icon name="git-branch" /> ブランチ切替
           </li>
-          {onWorktree && (
-            <li onClick={() => { setMenu(null); setWorktreeOpen(true); }}>
-              <Icon name="repo-forked" /> このブランチで作業を始める（worktree）
-            </li>
-          )}
           {onFF && (
             <li onClick={() => { setMenu(null); onFF(); }}>
               <Icon name="arrow-down" /> Fast-Forward
@@ -598,15 +580,6 @@ function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected,
           onChecked={() => { setBranchOpen(false); onBranchChanged?.(); }}
         />
       )}
-      {worktreeOpen && onWorktree && (
-        <WorktreeModal
-          repo={r.name}
-          branch={r.branch}
-          kinds={agentKinds}
-          onClose={() => setWorktreeOpen(false)}
-          onCreate={(opts) => { setWorktreeOpen(false); onWorktree(opts); }}
-        />
-      )}
       {launchModal && (
         <LaunchModal
           repo={r.name}
@@ -614,7 +587,7 @@ function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected,
           path={r.path}
           kinds={agentKinds}
           onClose={() => setLaunchModal(false)}
-          onLaunch={(kind, model, prompt) => { setLaunchModal(false); onLaunchPrompt(kind, model, prompt); }}
+          onLaunch={(opts) => { setLaunchModal(false); onStartWork(opts); }}
         />
       )}
     </li>
