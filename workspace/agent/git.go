@@ -56,6 +56,11 @@ type Repo struct {
 	Behind   int    `json:"behind"`
 	Provider string `json:"provider,omitempty"` // origin host slug: github/bitbucket/gitlab, or the bare host
 	Remote   string `json:"remote,omitempty"`   // origin host (for a tooltip); no path/token
+	// Worktree marks a linked git worktree (from `git worktree add`) rather than a
+	// standalone clone, so the Console can badge it; Parent is the folder name of the
+	// main working copy it hangs off (for a tooltip). Both empty/false for a plain clone.
+	Worktree bool   `json:"worktree,omitempty"`
+	Parent   string `json:"parent,omitempty"`
 }
 
 // gitProviderHost derives (provider slug, host) from an origin remote URL. Known SaaS
@@ -168,10 +173,16 @@ func handleListRepos(w http.ResponseWriter, r *http.Request) {
 		if origin, ok := gitOriginURL(dir); ok {
 			provider, host = gitProviderHost(origin)
 		}
+		var parent string
+		wt := isLinkedWorktree(dir)
+		if wt {
+			parent = filepath.Base(worktreeParent(dir))
+		}
 		repos = append(repos, Repo{
 			Name: e.Name(), Path: dir, Branch: st.Branch,
 			Dirty: st.Dirty, Ahead: st.Ahead, Behind: st.Behind,
 			Provider: provider, Remote: host,
+			Worktree: wt, Parent: parent,
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"repos": repos})
@@ -305,6 +316,26 @@ func linkedWorktreeCount(dir string) int {
 		return total - 1
 	}
 	return 0
+}
+
+// maybePruneWorktree auto-removes a linked worktree once nothing needs it — the
+// counterpart to worktree-then-start that keeps them from piling up. It removes only
+// when dir is a worktree, no session meta references it (worktreeHasSessions), AND it
+// is clean: uncommitted or unpushed work is preserved for manual handling via the
+// explicit force-delete path. Best-effort; called after a session's meta is forgotten.
+func maybePruneWorktree(dir string) {
+	if dir == "" || !isLinkedWorktree(dir) || worktreeHasSessions(dir) {
+		return
+	}
+	if st, err := gitStatus(dir); err != nil || st.Dirty || st.Ahead > 0 {
+		return // keep dirty/unpushed worktrees; the user force-deletes those explicitly
+	}
+	parent := worktreeParent(dir)
+	if parent == "" {
+		return
+	}
+	_ = exec.Command("git", "-C", parent, "worktree", "remove", "--force", dir).Run()
+	_ = exec.Command("git", "-C", parent, "worktree", "prune").Run()
 }
 
 // gitCurrentBranch returns dir's checked-out branch name, "(detached)" on a

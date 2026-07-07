@@ -32,6 +32,8 @@ interface Repo {
   behind?: number;
   provider?: string; // origin host slug: github/bitbucket/gitlab, or a bare host
   remote?: string; // origin host (tooltip)
+  worktree?: boolean; // linked git worktree (not a standalone clone)
+  parent?: string; // for a worktree, the parent working copy's folder name
 }
 
 // Provider display: known SaaS hosts get a friendly label (+ icon where a codicon
@@ -508,12 +510,20 @@ function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected,
         </div>
       </div>
       {/* Meta line under the name: current branch (left) + git provider (right). */}
-      {(r.branch || r.provider) && (
+      {(r.branch || r.provider || r.worktree) && (
         <div className="repo-meta">
           {r.branch && (
             <span className="repo-branch" title={"現在のブランチ: " + r.branch}>
               <Icon name="git-branch" className="repo-branch-ic" />
               <span className="repo-branch-name">{r.branch}</span>
+            </span>
+          )}
+          {r.worktree && (
+            <span
+              className="repo-worktree"
+              title={r.parent ? `worktree（親: ${r.parent}）` : "worktree"}
+            >
+              <Icon name="repo-forked" className="repo-worktree-ic" /> worktree
             </span>
           )}
           {r.provider && (

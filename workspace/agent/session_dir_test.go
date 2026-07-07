@@ -209,3 +209,48 @@ func TestWorktreeDeleteHelpers(t *testing.T) {
 		t.Errorf("linkedWorktreeCount after remove = %d, want 0", got)
 	}
 }
+
+// TestMaybePruneWorktreeKeeps verifies auto-cleanup is conservative: it removes a
+// worktree only when it is clean AND unreferenced. A dirty worktree, or one a session
+// meta still points at, must be left in place. (The clean+unreferenced removal path is
+// covered end-to-end by TestWorktreeGuardDriftFlow.)
+func TestMaybePruneWorktreeKeeps(t *testing.T) {
+	if _, err := execLookPathGit(); err != nil {
+		t.Skip("git not available")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("AF_SESSIONS_DIR", filepath.Join(home, "sessions"))
+	parent := filepath.Join(home, "repos", "app")
+	gitInit(t, parent)
+
+	// Dirty worktree: an uncommitted file must NOT be auto-removed (work would be lost).
+	dirty, err := ensureWorktree(parent, "main", "dirty-x")
+	if err != nil {
+		t.Fatalf("ensureWorktree dirty: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dirty, "wip.txt"), []byte("wip"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	maybePruneWorktree(dirty)
+	if !isGitRepo(dirty) {
+		t.Errorf("dirty worktree was auto-removed; should be kept")
+	}
+
+	// Referenced worktree: clean, but a session meta points at it → kept.
+	ref, err := ensureWorktree(parent, "main", "ref-x")
+	if err != nil {
+		t.Fatalf("ensureWorktree ref: %v", err)
+	}
+	writeSessionMeta(sessionMeta{Name: "zz", Dir: ref, Kind: "shell"})
+	maybePruneWorktree(ref)
+	if !isGitRepo(ref) {
+		t.Errorf("referenced worktree was auto-removed; should be kept while a meta points at it")
+	}
+
+	// A non-worktree (the parent) is never touched.
+	maybePruneWorktree(parent)
+	if !isGitRepo(parent) {
+		t.Errorf("parent working copy was removed; maybePruneWorktree must ignore non-worktrees")
+	}
+}

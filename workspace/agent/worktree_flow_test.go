@@ -9,7 +9,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
-	"time"
 )
 
 // TestWorktreeGuardDriftFlow drives the ①②③ feature set end-to-end over real HTTP +
@@ -33,6 +32,8 @@ func TestWorktreeGuardDriftFlow(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /sessions", handleListSessions)
 	mux.HandleFunc("POST /sessions", handleCreateSession)
+	mux.HandleFunc("POST /sessions/{name}/stop", handleStopSession)
+	mux.HandleFunc("GET /repos", handleListRepos)
 	mux.HandleFunc("POST /repos/{name}/checkout", handleRepoCheckout)
 	mux.HandleFunc("DELETE /repos/{name}", handleDeleteRepo)
 	srv := httptest.NewServer(mux)
@@ -54,6 +55,19 @@ func TestWorktreeGuardDriftFlow(t *testing.T) {
 	}
 	if !isGitRepo(wantDir) {
 		t.Fatalf("worktree not created at %s", wantDir)
+	}
+
+	// #2 badge: the repo list marks app@feat-x as a worktree of parent "app".
+	var repoList struct{ Repos []Repo }
+	do(t, srv, "GET", "/repos", nil, http.StatusOK, &repoList)
+	var wtRepo *Repo
+	for i := range repoList.Repos {
+		if repoList.Repos[i].Name == "app@feat-x" {
+			wtRepo = &repoList.Repos[i]
+		}
+	}
+	if wtRepo == nil || !wtRepo.Worktree || wtRepo.Parent != "app" {
+		t.Fatalf("repo list worktree flag = %+v, want worktree=true parent=app", wtRepo)
 	}
 
 	// ① checkout on that working copy is refused while the session runs.
@@ -85,19 +99,18 @@ func TestWorktreeGuardDriftFlow(t *testing.T) {
 		t.Fatalf("drift = %v cur=%q, want true/drifted", found.BranchDrift, found.CurrentBranch)
 	}
 
-	// Stop the session, then the worktree deletes cleanly (guard clears, git removes it).
-	if out, err := exec.Command("tmux", "kill-session", "-t", tmuxName(created.Name)).CombinedOutput(); err != nil {
-		t.Fatalf("kill session: %v: %s", err, out)
-	}
-	// tmux kill is async-ish; wait for liveness to clear.
-	for i := 0; i < 50 && tmuxHasSession(tmuxName(created.Name)); i++ {
-		time.Sleep(20 * time.Millisecond)
-	}
-	if code := status(t, srv, "DELETE", "/repos/app@feat-x", nil); code != http.StatusOK {
-		t.Fatalf("delete after stop = %d, want 200", code)
+	// #1 auto-cleanup: stopping the last (clean) session in the worktree forgets its
+	// meta and auto-removes the worktree — no manual delete needed. The stray branch
+	// above left no uncommitted/unpushed work, so it qualifies.
+	if code := status(t, srv, "POST", "/sessions/"+created.Name+"/stop", nil); code != http.StatusOK {
+		t.Fatalf("stop = %d, want 200", code)
 	}
 	if _, err := os.Stat(wantDir); err == nil {
-		t.Fatalf("worktree dir still exists after delete")
+		t.Fatalf("worktree dir still exists after stopping its last session (auto-prune failed)")
+	}
+	// The parent is untouched by the auto-prune.
+	if !isGitRepo(parent) {
+		t.Fatalf("parent working copy damaged by worktree prune")
 	}
 }
 
