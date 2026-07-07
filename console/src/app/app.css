@@ -45,6 +45,15 @@
     z-index: 20;
     box-shadow: 4px 0 16px color-mix(in srgb, #000 30%, transparent);
   }
+  /* Backdrop only in overlay mode while the pane is open — dims the main area;
+     clicking it collapses the pane (old .nav-backdrop behavior). */
+  .app-shell.left-overlay:not(.left-collapsed) .app-nav-backdrop {
+    display: block;
+    position: absolute;
+    inset: 0;
+    z-index: 15;
+    background: rgba(0, 0, 0, 0.35);
+  }
 }
 .app-nav-backdrop {
   display: none;
