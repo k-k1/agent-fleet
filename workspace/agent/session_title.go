@@ -421,6 +421,97 @@ func handleSetTitle(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, wireSession(m, tmuxHasSession(tmuxName(name))))
 }
 
+// branchSuggestPersona pins the headless call to emit a git branch name, NOT a
+// Japanese title: lowercase English kebab-case, git-safe, short. The conversation may
+// be in Japanese but the branch name must be ASCII (folder/ref charset), so we ask for
+// a translation-to-name, not a transcription.
+const branchSuggestPersona = "You name git branches. Read the conversation log and output ONE short branch name " +
+	"describing the task. Rules: English, lowercase kebab-case (words joined by hyphens), " +
+	"ASCII letters/digits/hyphens only, max 40 chars, no leading verb like 'add'/'fix' unless natural, " +
+	"no prefixes like 'feature/', no quotes, no explanation. Output only the name."
+
+// runBranchSuggestLLM asks the title model for a git-safe branch name from the
+// conversation, then hard-sanitizes the reply so a chatty model can't produce an
+// invalid ref/folder segment.
+func runBranchSuggestLLM(ctx context.Context, turns []chatTurn) (string, error) {
+	args := []string{"-p", "--output-format", "json", "--dangerously-skip-permissions",
+		"--append-system-prompt", branchSuggestPersona, "--model", titleModel()}
+	args = append(args, chatToolLimits()...)
+	cmd := chatClaudeCmd(ctx, args...)
+	defer func() { _, _ = ensureChatClaudeConfig() }()
+	cmd.Stdin = strings.NewReader(titleSuggestPrompt(turns))
+
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("branch suggestion failed: %s", cliErr(err))
+	}
+	var r claudeResult
+	if json.Unmarshal(out, &r) != nil || r.IsError {
+		return "", fmt.Errorf("branch suggestion: bad/error response")
+	}
+	return cleanBranchName(r.Result), nil
+}
+
+// cleanBranchName reduces an LLM reply to a git-safe kebab-case name: first line,
+// lowercased, non-[a-z0-9] runs collapsed to a single hyphen, trimmed, capped at 40.
+// "" when nothing usable remains.
+func cleanBranchName(s string) string {
+	s = strings.TrimSpace(s)
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		s = s[:i]
+	}
+	s = strings.ToLower(s)
+	var b strings.Builder
+	lastHyphen := false
+	for _, c := range s {
+		if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') {
+			b.WriteRune(c)
+			lastHyphen = false
+		} else if !lastHyphen && b.Len() > 0 {
+			b.WriteByte('-')
+			lastHyphen = true
+		}
+	}
+	name := strings.Trim(b.String(), "-")
+	if r := []rune(name); len(r) > 40 {
+		name = strings.Trim(string(r[:40]), "-")
+	}
+	return name
+}
+
+// handleRepoSuggestBranch proposes a branch name for a working copy by summarizing the
+// conversation of a session running in it — the LLM half of deferred naming (start on
+// wip-<slug>, ask the AI for a real name once the task has a shape). Returns the
+// suggestion for the Console's rename field to pre-fill; it never renames on its own.
+func handleRepoSuggestBranch(w http.ResponseWriter, r *http.Request) {
+	dir, ok := repoDirFromPath(w, r)
+	if !ok {
+		return
+	}
+	if !autoTitleSuggestEnabled() {
+		writeErr(w, http.StatusBadRequest, "feature_disabled", "auto suggestion is turned off")
+		return
+	}
+	m, ok := sessionForDir(dir)
+	if !ok {
+		writeErr(w, http.StatusBadRequest, "no_session", "no session in this working copy to summarize")
+		return
+	}
+	turns := sessionTitleTurns(m)
+	if len(turns) == 0 {
+		writeErr(w, http.StatusBadRequest, "no_content", "not enough conversation yet to suggest a name")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), titleSuggestTimeout)
+	defer cancel()
+	name, err := runBranchSuggestLLM(ctx, turns)
+	if err != nil || name == "" {
+		writeErr(w, http.StatusBadGateway, "generation_failed", "branch suggestion failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"branch": name})
+}
+
 // sessionTitleTurns fetches the full turn list for a session regardless of kind,
 // for the manual regenerate action (which needs the whole conversation, not a
 // poll window).

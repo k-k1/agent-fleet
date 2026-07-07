@@ -425,6 +425,45 @@ func sessionsInDir(metas []sessionMeta, live map[string]bool, dir string) []stri
 	return names
 }
 
+// sessionForDir returns a session meta whose cwd is at or under dir, preferring a live
+// one (its conversation is current) and then claude (richest transcript). Used to pick
+// which session's conversation to summarize when suggesting a branch name for a
+// worktree. ok=false when no session runs there.
+func sessionForDir(dir string) (sessionMeta, bool) {
+	var best sessionMeta
+	found, bestLive := false, false
+	for _, m := range listSessionMetas() {
+		if m.Archived {
+			continue
+		}
+		if m.Dir != dir && !strings.HasPrefix(m.Dir, dir+string(os.PathSeparator)) {
+			continue
+		}
+		live := tmuxHasSession(tmuxName(m.Name))
+		// Prefer live over stopped, and claude over other kinds among equals.
+		if !found || (live && !bestLive) || (live == bestLive && m.Kind == kindClaude && best.Kind != kindClaude) {
+			best, found, bestLive = m, true, live
+		}
+	}
+	return best, found
+}
+
+// updateSessionStartBranch rewrites the recorded start branch (sessionMeta.Branch) for
+// every session whose cwd is at or under dir, after an intentional `git branch -m` on
+// that working copy — so the rename isn't mistaken for branch drift (③). Only touches
+// metas that carry a start branch; leaves pre-existing ("") ones alone.
+func updateSessionStartBranch(dir, branch string) {
+	for _, m := range listSessionMetas() {
+		if m.Branch == "" || m.Branch == branch {
+			continue
+		}
+		if m.Dir == dir || strings.HasPrefix(m.Dir, dir+string(os.PathSeparator)) {
+			m.Branch = branch
+			writeSessionMeta(m)
+		}
+	}
+}
+
 // worktreeHasSessions reports whether ANY session meta (live, stopped, or archived)
 // still has its cwd at or under dir. Auto-pruning a worktree checks this first so a
 // working copy that a stopped/archived session could still resume or restore into is

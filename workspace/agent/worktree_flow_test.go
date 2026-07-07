@@ -35,6 +35,7 @@ func TestWorktreeGuardDriftFlow(t *testing.T) {
 	mux.HandleFunc("POST /sessions/{name}/stop", handleStopSession)
 	mux.HandleFunc("GET /repos", handleListRepos)
 	mux.HandleFunc("POST /repos/{name}/checkout", handleRepoCheckout)
+	mux.HandleFunc("POST /repos/{name}/rename-branch", handleRepoRenameBranch)
 	mux.HandleFunc("DELETE /repos/{name}", handleDeleteRepo)
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
@@ -80,23 +81,34 @@ func TestWorktreeGuardDriftFlow(t *testing.T) {
 		t.Fatalf("delete while live = %d, want 409", code)
 	}
 
-	// ③ a stray checkout inside the worktree (bypassing the guard) shows as drift.
+	sessionByName := func(name string) *Session {
+		var list struct{ Sessions []Session }
+		do(t, srv, "GET", "/sessions", nil, http.StatusOK, &list)
+		for i := range list.Sessions {
+			if list.Sessions[i].Name == name {
+				return &list.Sessions[i]
+			}
+		}
+		t.Fatalf("session %s not in list", name)
+		return nil
+	}
+
+	// Deferred naming: rename the provisional branch in place. The working tree is
+	// untouched, the session's start-branch meta follows the rename, so it is NOT
+	// mistaken for drift.
+	if code := status(t, srv, "POST", "/repos/app@feat-x/rename-branch", map[string]any{"name": "renamed-x"}); code != http.StatusOK {
+		t.Fatalf("rename-branch = %d, want 200", code)
+	}
+	if s := sessionByName(created.Name); s.Branch != "renamed-x" || s.BranchDrift {
+		t.Fatalf("after rename: start=%q drift=%v, want renamed-x/false", s.Branch, s.BranchDrift)
+	}
+
+	// ③ a stray checkout inside the worktree (bypassing the guard) DOES show as drift.
 	if out, err := exec.Command("git", "-C", wantDir, "checkout", "-b", "drifted").CombinedOutput(); err != nil {
 		t.Fatalf("stray checkout: %v: %s", err, out)
 	}
-	var list struct{ Sessions []Session }
-	do(t, srv, "GET", "/sessions", nil, http.StatusOK, &list)
-	var found *Session
-	for i := range list.Sessions {
-		if list.Sessions[i].Name == created.Name {
-			found = &list.Sessions[i]
-		}
-	}
-	if found == nil {
-		t.Fatalf("session %s not in list", created.Name)
-	}
-	if !found.BranchDrift || found.CurrentBranch != "drifted" {
-		t.Fatalf("drift = %v cur=%q, want true/drifted", found.BranchDrift, found.CurrentBranch)
+	if s := sessionByName(created.Name); !s.BranchDrift || s.CurrentBranch != "drifted" {
+		t.Fatalf("drift = %v cur=%q, want true/drifted", s.BranchDrift, s.CurrentBranch)
 	}
 
 	// #1 auto-cleanup: stopping the last (clean) session in the worktree forgets its
