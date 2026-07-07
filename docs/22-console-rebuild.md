@@ -4,8 +4,15 @@
 新アーキテクチャ上に作り直す。フレームワークは変更しない（React 19 + Vite + TS）。
 バックエンド（CP / Agent）は一切触らない。
 
-> ステータス: **設計確定・未実装**（2026-07-07 設計議論で決定）。
+> ステータス: **実装中 — P0〜P5 完了（各フェーズ目視済/一部目視待ち）、次は P6**（2026-07-07 時点、branch `rebuild/console`）。
 > 決定の要約は [decisions/0011-console-rebuild.md](decisions/0011-console-rebuild.md)。
+>
+> **実装上の deviation（計画からの逸脱、P8 で解消予定）:**
+> - MirrorView は「transcript パーサ純関数化+ブロック分解」でなく **useApp→zustand ブリッジ付きの忠実移植**とした（品質リスク優先）。解体は P8 のクリーンアップへ。
+> - CommitGraph/GitDiff/CodeView/MarkdownView/MarpView/ImageView/DiffView も verbatim 移植（import 差し替えのみ）。
+> - viewer.css / mirror.css / chat.css は旧 styles.css の該当リージョンをそのまま抽出（ピクセル一致優先）。P8 で未使用セレクタを刈る。
+> - レイアウト永続は新キー `af.layout2.<slug>`（旧キーは読み取り migration 元。並行運用中に旧コンソールを壊さないため）。
+> - 未移植の小物: Files 右クリック「アシスタントで開く」/「セッションに送る…」（SendSelectionModal）= P6、モバイルドロワーの履歴統合 = P8、非 chat 種の起動プロンプトは暫定 sendPromptWhenAlive。
 
 ## 背景と診断 — なぜリファクタでは足りないか
 
