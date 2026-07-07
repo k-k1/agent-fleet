@@ -285,7 +285,7 @@ export default function ReposSection() {
             // checkout. The provisional branch is derived from the prompt (server falls
             // back to wip-<slug>); the typed prompt is stashed as a launch seed and
             // auto-sent once MirrorView sees the session alive.
-            onStartWork={async ({ kind, model, prompt, worktree, base, newBranch, useExisting }) => {
+            onStartWork={async ({ kind, model, prompt, worktree, base, newBranch, folder, useExisting }) => {
               const hasModel = agentOf(kind).caps.model;
               const body: Record<string, unknown> = { dir: r.path, kind };
               if (hasModel && model) body.model = model;
@@ -293,6 +293,7 @@ export default function ReposSection() {
                 body.worktree = true;
                 body.branch = base;
                 body.new_branch = newBranch;
+                if (folder) body.folder = folder;
                 if (useExisting) body.use_existing = true;
               }
               const res = await apiJSON("api/sessions", "POST", body);

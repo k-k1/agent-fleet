@@ -550,7 +550,7 @@ func ensureRepo(remoteURL, branch, newBranch, name string) (string, error) {
 // gitdir over the token-authed HTTPS path (see gitSubmodulesUpdate); this does not
 // disturb the parent's submodules. git refuses to check out a branch already live in
 // another worktree, which the error surfaces as-is.
-func ensureWorktree(parentDir, base, newBranch string) (string, error) {
+func ensureWorktree(parentDir, base, newBranch, folderSeg string) (string, error) {
 	if !isGitRepo(parentDir) {
 		return "", fmt.Errorf("not a git working copy: %s", parentDir)
 	}
@@ -565,7 +565,15 @@ func ensureWorktree(parentDir, base, newBranch string) (string, error) {
 	if target == "" || strings.HasPrefix(base, "-") || strings.HasPrefix(newBranch, "-") {
 		return "", fmt.Errorf("a base or new branch is required and must not start with '-'")
 	}
-	name := filepath.Base(parentDir) + "@" + sanitizeSeg(target)
+	// folderSeg lets the folder name diverge from the branch (e.g. an auto branch
+	// temp/<slug> living in a wip-<slug> folder); default to the branch-derived name.
+	seg := strings.TrimSpace(folderSeg)
+	if seg == "" {
+		seg = sanitizeSeg(target)
+	} else {
+		seg = sanitizeSeg(seg)
+	}
+	name := filepath.Base(parentDir) + "@" + seg
 	dir, ok := resolveRepoDir(name)
 	if !ok {
 		return "", fmt.Errorf("worktree name is invalid: %q", name)
