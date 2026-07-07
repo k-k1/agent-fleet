@@ -1578,6 +1578,23 @@ button.wu-reload {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* Worktree badge — marks a linked worktree (vs a standalone clone). A quiet accent
+   chip so a repo list mixing parents and their worktrees reads at a glance. */
+.repo-worktree {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  padding: 0 6px;
+  border-radius: 999px;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 34%, transparent);
+}
+.repo-worktree-ic {
+  font-size: 12px;
+  flex: none;
+}
 /* Git provider badge — identifies which host the repo's origin is on. */
 .repo-provider {
   display: inline-flex;

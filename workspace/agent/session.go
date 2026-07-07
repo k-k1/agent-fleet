@@ -425,6 +425,19 @@ func sessionsInDir(metas []sessionMeta, live map[string]bool, dir string) []stri
 	return names
 }
 
+// worktreeHasSessions reports whether ANY session meta (live, stopped, or archived)
+// still has its cwd at or under dir. Auto-pruning a worktree checks this first so a
+// working copy that a stopped/archived session could still resume or restore into is
+// never removed out from under it.
+func worktreeHasSessions(dir string) bool {
+	for _, m := range listSessionMetas() {
+		if m.Dir == dir || strings.HasPrefix(m.Dir, dir+string(os.PathSeparator)) {
+			return true
+		}
+	}
+	return false
+}
+
 // annotateBranchDrift fills BranchDrift/CurrentBranch for any session whose working
 // copy has been switched off the branch it started on. curBranch resolves a dir's
 // current branch and is cached per dir, so N sessions sharing one working copy cost a
@@ -484,6 +497,7 @@ func handleListSessions(w http.ResponseWriter, r *http.Request) {
 			writeSessionMeta(m)
 		} else if t, e := time.Parse(time.RFC3339, m.StoppedAt); e == nil && now.Sub(t) > ttl {
 			removeSessionMeta(name)
+			maybePruneWorktree(m.Dir) // last reference expired → clean up its worktree if clean
 			continue
 		}
 		sessions = append(sessions, wireSession(m, false))
@@ -734,6 +748,11 @@ func handleStopSession(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	removeSessionMeta(name)
+	// Stopping forgets the session; if it was the last one in a worktree and that
+	// worktree is clean, auto-remove it so worktrees don't pile up (no-op otherwise).
+	if hadMeta {
+		maybePruneWorktree(meta.Dir)
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"stopped": name})
 }
 
