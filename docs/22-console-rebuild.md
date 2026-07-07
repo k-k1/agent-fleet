@@ -4,7 +4,7 @@
 新アーキテクチャ上に作り直す。フレームワークは変更しない（React 19 + Vite + TS）。
 バックエンド（CP / Agent）は一切触らない。
 
-> ステータス: **実装中 — P0〜P6 完了（P6 は目視待ち）、次は P7（Settings/Admin）**（2026-07-07 時点、branch `rebuild/console`）。
+> ステータス: **実装中 — P0〜P7 完了（P6/P7 は目視待ち）、次は P8（仕上げ→スワップ→旧削除）**（2026-07-08 時点、branch `rebuild/console`）。
 > 決定の要約は [decisions/0011-console-rebuild.md](decisions/0011-console-rebuild.md)。
 >
 > **実装上の deviation（計画からの逸脱、P8 で解消予定）:**
@@ -13,7 +13,7 @@
 > - viewer.css / mirror.css / chat.css / wsbar.css / topbar.css / memo.css は旧 styles.css の該当リージョンをそのまま抽出（ピクセル一致優先）。P8 で未使用セレクタを刈る。
 > - 旧の要素グローバル（`button`/`.ghost`/`.primary` 等）に依存する verbatim 移植分は `:where(スコープ)` の compat ブロックで復元（mirror/chat/wsbar/topbar/onboard）。詳細度は旧と同一（0-0-1）を厳守。P8 で ui/Button 化と同時に解消。
 > - レイアウト永続は新キー `af.layout2.<slug>`（旧キーは読み取り migration 元。並行運用中に旧コンソールを壊さないため）。
-> - P6 の P7 送り: TopBar の 設定/管理 メニュー項目は disabled、OnboardingCard の 接続する CTA は案内トースト（SettingsDialog 未移植のため）、connections の connKey 再取得配線も P7。旧 WsBar に「作り直す」ボタンは無い（設定>環境 = P7 EnvTab が正）。
+> - 設定/管理は P7 で本移植済み（TopBar・OnboardingCard・NewSessionModal の各リンクも実ダイアログに配線、モーダルの Back クローズ=履歴統合込み）。旧 WsBar に「作り直す」ボタンは無い（設定>環境 = EnvTab が正）。EnvTab の recreateWs は workspace store の recreate + タブ側編成に分離。
 > - 未移植の小物: モバイルドロワーの履歴統合 = P8、非 chat 種の起動プロンプトは暫定 sendPromptWhenAlive。
 
 ## 背景と診断 — なぜリファクタでは足りないか
