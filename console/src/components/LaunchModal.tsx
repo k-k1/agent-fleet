@@ -42,6 +42,7 @@ export interface LaunchOpts {
   worktree: boolean;
   base: string;
   newBranch: string;
+  folder?: string; // worktree folder segment override (auto: wip-<slug> while branch is temp/<slug>)
   useExisting?: boolean; // worktree: check out the existing branch instead of creating one
 }
 
@@ -79,13 +80,16 @@ export default function LaunchModal({ repo, branch, path, kinds, onClose, onLaun
   const [base, setBase] = useState(branch || "");
   const [branchName, setBranchName] = useState(""); // "" => derived from the prompt
   const [conflict, setConflict] = useState<"local" | "remote" | null>(null);
-  // Provisional branch/folder name: an explicit entry wins as-is; otherwise the prompt-
-  // derived name gets a "temp/" prefix so auto-named branches are obviously throwaway
-  // until renamed. Shown as a preview so the user sees where the worktree lands.
+  // Provisional naming: an explicit entry wins as-is (branch == folder). Otherwise the
+  // prompt-derived (or empty) auto name is throwaway — branch temp/<x> living in a
+  // wip-<x> folder, so a fresh worktree reads as "work in progress" until renamed.
+  const explicit = branchName.trim();
   const autoSlug = deriveBranchName(prompt);
-  const auto = autoSlug ? "temp/" + autoSlug : "";
-  const derived = branchName.trim() || auto;
-  const folder = worktree && derived ? `${repo}@${sanitizeSeg(derived)}` : "";
+  const autoBranch = autoSlug ? "temp/" + autoSlug : ""; // "" (e.g. JP prompt) → server picks temp/<slug>
+  const newBranch = explicit || autoBranch;
+  const folderSeg = explicit ? "" : autoSlug ? "wip-" + autoSlug : ""; // "" → server derives / picks wip-<slug>
+  const previewSeg = explicit ? sanitizeSeg(explicit) : autoSlug ? sanitizeSeg("wip-" + autoSlug) : "";
+  const folder = worktree && previewSeg ? `${repo}@${previewSeg}` : "";
 
   // Template sources fetched once for this repo; history is read from localStorage.
   const [srvGroups, setSrvGroups] = useState<PromptTemplateGroup[]>([]);
@@ -144,8 +148,9 @@ export default function LaunchModal({ repo, branch, path, kinds, onClose, onLaun
       model: hasModel ? model : "",
       prompt: prompt.trim(),
       worktree,
-      base: worktree ? (useExisting ? derived : base.trim()) : "",
-      newBranch: worktree && !useExisting ? derived : "",
+      base: worktree ? (useExisting ? newBranch : base.trim()) : "",
+      newBranch: worktree && !useExisting ? newBranch : "",
+      folder: worktree && !useExisting ? folderSeg : "",
       useExisting,
     });
     if (r?.ok) {
@@ -242,7 +247,7 @@ export default function LaunchModal({ repo, branch, path, kinds, onClose, onLaun
                 <input
                   value={branchName}
                   onChange={(e) => { setBranchName(e.target.value); setConflict(null); }}
-                  placeholder={auto || "自動（最初の指示から）"}
+                  placeholder={autoBranch || "自動（最初の指示から）"}
                 />
               </label>
               <div className="field-help">
@@ -256,11 +261,11 @@ export default function LaunchModal({ repo, branch, path, kinds, onClose, onLaun
                 <div className="launch-conflict">
                   {conflict === "local" ? (
                     <span>
-                      同名のローカルブランチ <code>{derived}</code> が既にあります。別の名前にしてください。
+                      同名のローカルブランチ <code>{newBranch}</code> が既にあります。別の名前にしてください。
                     </span>
                   ) : (
                     <span>
-                      リモートに同名ブランチ <code>{derived}</code> があります（過去のブランチ）。別名にするか、
+                      リモートに同名ブランチ <code>{newBranch}</code> があります（過去のブランチ）。別名にするか、
                       その既存ブランチで作業できます。
                     </span>
                   )}

@@ -610,6 +610,10 @@ type createReq struct {
 	// worktree instead of creating a new one — the "work on the existing branch" answer
 	// to a name collision. NewBranch is ignored; a remote-only branch is DWIM-tracked.
 	UseExisting bool `json:"use_existing"`
+	// Folder (worktree only) overrides the ~/repos/<repo>@<seg> folder segment so it can
+	// diverge from the branch — e.g. an auto branch temp/<x> in a wip-<x> folder. Empty
+	// => the folder is derived from the branch name.
+	Folder string `json:"folder"`
 	// SSM (kind=ssm) coordinates, resolved and forwarded by the Control Plane from a
 	// host bookmark (control-plane/ssm.go). No secrets — SSO login happens in-pane.
 	SSMProfile   string `json:"ssm_profile"`
@@ -651,18 +655,22 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		}
 		var dir string
 		var err error
+		folderSeg := strings.TrimSpace(req.Folder) // "" => folder derives from the branch
 		if req.UseExisting {
 			// "Work on the existing branch": check out req.Branch (local or DWIM-tracked
 			// remote) into the worktree — the chosen resolution of a name collision.
-			dir, err = ensureWorktree(parent, req.Branch, "")
+			dir, err = ensureWorktree(parent, req.Branch, "", "")
 		} else {
 			// Branch naming is deferred: the client derives a provisional name from the
 			// first prompt, but when that yields nothing (e.g. a Japanese-only prompt, or
-			// no prompt) we start on a throwaway temp/<slug>. The user (or the LLM
-			// suggestion) renames it later — the folder stays put, so the session id holds.
+			// no prompt) we start on a throwaway branch temp/<slug> in a wip-<slug> folder
+			// (same slug). The user (or the LLM suggestion) renames the branch later — the
+			// folder stays put, so the session id holds.
 			nb := strings.TrimSpace(req.NewBranch)
 			if nb == "" {
-				nb = "temp/" + randSlug() // throwaway auto name; random → skip the collision check
+				slug := randSlug() // random → skip the collision check
+				nb = "temp/" + slug
+				folderSeg = "wip-" + slug
 			} else if local, remote := branchNameStatus(parent, nb); local {
 				// A same-named local branch: -b would fail anyway, but stop with a clear
 				// message rather than git's raw error, and let the user pick another name.
@@ -677,7 +685,7 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 					fmt.Sprintf("a remote branch %q already exists; rename it or work on the existing branch", nb))
 				return
 			}
-			dir, err = ensureWorktree(parent, req.Branch, nb)
+			dir, err = ensureWorktree(parent, req.Branch, nb, folderSeg)
 		}
 		if err != nil {
 			writeErr(w, http.StatusBadGateway, "worktree_failed", err.Error())

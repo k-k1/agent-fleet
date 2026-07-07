@@ -121,7 +121,7 @@ func TestEnsureWorktree(t *testing.T) {
 	gitInit(t, parent) // repo on "main", plus a "feature" branch
 
 	// New branch off base main → ~/repos/app@feat-x, checked out to feat-x.
-	dir, err := ensureWorktree(parent, "main", "feat-x")
+	dir, err := ensureWorktree(parent, "main", "feat-x", "")
 	if err != nil {
 		t.Fatalf("ensureWorktree new: %v", err)
 	}
@@ -133,12 +133,12 @@ func TestEnsureWorktree(t *testing.T) {
 	}
 
 	// Idempotent: same call returns the same path without error.
-	if again, err := ensureWorktree(parent, "main", "feat-x"); err != nil || again != dir {
+	if again, err := ensureWorktree(parent, "main", "feat-x", ""); err != nil || again != dir {
 		t.Fatalf("ensureWorktree reuse = (%q,%v), want (%q,nil)", again, err, dir)
 	}
 
 	// Existing branch, no new branch → ~/repos/app@feature on that branch.
-	fdir, err := ensureWorktree(parent, "feature", "")
+	fdir, err := ensureWorktree(parent, "feature", "", "")
 	if err != nil {
 		t.Fatalf("ensureWorktree existing: %v", err)
 	}
@@ -150,7 +150,7 @@ func TestEnsureWorktree(t *testing.T) {
 	}
 
 	// A slash in the new branch is sanitized in the folder but kept as the ref.
-	sdir, err := ensureWorktree(parent, "main", "fix/bug-1")
+	sdir, err := ensureWorktree(parent, "main", "fix/bug-1", "")
 	if err != nil {
 		t.Fatalf("ensureWorktree slash: %v", err)
 	}
@@ -159,6 +159,19 @@ func TestEnsureWorktree(t *testing.T) {
 	}
 	if b := gitCurrentBranch(sdir); b != "fix/bug-1" {
 		t.Fatalf("slash worktree branch = %q, want fix/bug-1", b)
+	}
+
+	// folderSeg lets the folder diverge from the branch: branch temp/abc in a wip-abc
+	// folder (the auto-name convention).
+	wdir, err := ensureWorktree(parent, "main", "temp/abc", "wip-abc")
+	if err != nil {
+		t.Fatalf("ensureWorktree folderSeg: %v", err)
+	}
+	if want := filepath.Join(home, "repos", "app@wip-abc"); wdir != want {
+		t.Fatalf("folderSeg dir = %q, want %q", wdir, want)
+	}
+	if b := gitCurrentBranch(wdir); b != "temp/abc" {
+		t.Fatalf("folderSeg worktree branch = %q, want temp/abc", b)
 	}
 }
 
@@ -174,7 +187,7 @@ func TestWorktreeDeleteHelpers(t *testing.T) {
 	parent := filepath.Join(home, "repos", "app")
 	gitInit(t, parent)
 
-	wt, err := ensureWorktree(parent, "main", "feat-x")
+	wt, err := ensureWorktree(parent, "main", "feat-x", "")
 	if err != nil {
 		t.Fatalf("ensureWorktree: %v", err)
 	}
@@ -222,7 +235,7 @@ func TestMaybePruneWorktreeKeeps(t *testing.T) {
 	gitInit(t, parent)
 
 	// Dirty worktree: an uncommitted file must NOT be auto-removed (work would be lost).
-	dirty, err := ensureWorktree(parent, "main", "dirty-x")
+	dirty, err := ensureWorktree(parent, "main", "dirty-x", "")
 	if err != nil {
 		t.Fatalf("ensureWorktree dirty: %v", err)
 	}
@@ -235,7 +248,7 @@ func TestMaybePruneWorktreeKeeps(t *testing.T) {
 	}
 
 	// Referenced worktree: clean, but a session meta points at it → kept.
-	ref, err := ensureWorktree(parent, "main", "ref-x")
+	ref, err := ensureWorktree(parent, "main", "ref-x", "")
 	if err != nil {
 		t.Fatalf("ensureWorktree ref: %v", err)
 	}
