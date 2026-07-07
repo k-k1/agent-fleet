@@ -1,0 +1,2203 @@
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import type { CSSProperties, KeyboardEvent as RKeyboardEvent, ClipboardEvent as RClipboardEvent } from "react";
+import { api, apiJSON, raw, errText, pasteImage } from "../../core/api/client.ts";
+import { splitPastedImages, buildImagePrompt } from "../../lib/pastedImages.ts";
+import { useSettings, chatFontStack } from "../../lib/settings.ts";
+import { useLayoutStore } from "../../layout/store.ts";
+import { useWorkspaceStore } from "../../core/store/workspace.ts";
+import { useSessionsStore } from "../sessions/store.ts";
+import { Icon } from "../../ui/Icon.tsx";
+import { MarkdownView } from "../viewer/MarkdownView.tsx";
+import { MirrorToggle } from "./MirrorToggle.tsx";
+import { ContextBar } from "./ContextBar.tsx";
+import { useToast } from "../../ui/ToastProvider.tsx";
+import { fmtTok } from "../../lib/fmttok.ts";
+import { kindIcon, kindLabel, kindShort, kindClass } from "../../lib/sessionkind.ts";
+import { agentOf } from "../../agents/registry.ts";
+import { takeLaunchSeed } from "../../lib/launchSeed.ts";
+import { displayName, stateInfo } from "../../lib/sessionview.ts";
+import { coarsePointer } from "../../lib/device.ts";
+
+const q = encodeURIComponent;
+
+// Transcript window size (jsonl lines) for the initial tail load and each backward page.
+// The server clamps it; matches docs/decisions/0009 (P2).
+const WINDOW = 400;
+
+// One option in an AskUserQuestion, and one such question.
+interface QuestionOption {
+  label: string;
+  description?: string;
+}
+interface Question {
+  header?: string;
+  question?: string;
+  multiSelect?: boolean;
+  options?: QuestionOption[];
+}
+// One ToDo task, reconstructed server-side from the transcript's Task tool calls.
+interface TaskItem {
+  id: string;
+  subject: string;
+  activeForm?: string;
+  status: string; // "pending" | "in_progress" | "completed"
+}
+// One ordered part of a turn (Markdown text, a tool trace, a question, or a plan).
+interface Part {
+  kind: string;
+  text?: string;
+  tool?: string;
+  info?: string;
+  output?: string;
+  file?: string;
+  edits?: any[];
+  questions?: Question[];
+  answer?: string;
+  plan?: string;
+}
+// A raw transcript turn (GET …/messages) and a grouped block (groupTurns output).
+interface Turn {
+  role: string;
+  text?: string;
+  ts?: string;
+  idx?: number;
+  pending?: boolean; // optimistic local echo of a just-sent prompt, not yet in the jsonl
+  parts?: Part[];
+  sidechain?: boolean;
+  compact?: boolean;
+  model?: string;
+  effort?: string;
+  ctxWindow?: number;
+  branch?: string;
+  cwd?: string;
+  inTok?: number;
+  outTok?: number;
+  cacheRead?: number;
+  cacheCreate?: number;
+}
+interface Group {
+  role: string;
+  sidechain: boolean;
+  compact: boolean;
+  parts: Part[];
+  text: string;
+  model: string;
+  effort: string;
+  ctxWindow: number;
+  branch: string;
+  cwd: string;
+  inTok: number;
+  outTok: number;
+  cacheRead: number;
+  cacheCreate: number;
+  ts?: string;
+  idx?: number;
+  pending?: boolean; // holds an optimistic local echo awaiting its real transcript turn
+}
+// foldParts output: a run of tool traces, or a single passthrough part.
+type FoldItem =
+  | { kind: "toolrun"; tools: { p: Part; i: number }[] }
+  | { kind: "part"; p: Part; i: number };
+
+// readDraft loads a session's persisted composer draft ("" when none / unavailable).
+function readDraft(key: string | null): string {
+  if (!key) return "";
+  try {
+    return localStorage.getItem(key) || "";
+  } catch {
+    return "";
+  }
+}
+
+// MirrorView (user-facing: チャット) is a read-mostly Markdown view of a claude
+// session, built on the same Agent endpoints the MCP drive tools use: GET
+// /sessions/{name}/messages?since=<cursor> (the jsonl transcript as structured turns
+// — role + Markdown text + timestamp — plus a line cursor and live status) and POST
+// /sessions/{name}/input (tmux send-keys). It overlays the still-mounted terminal
+// (Pane keeps the PTY socket alive), so the user toggles ターミナル⇄チャット freely.
+//
+// Limits (case-A): the transcript is written per turn, so turns appear per response,
+// not token-by-token. Prompts typed in the raw terminal DO appear (they're logged as
+// user turns), just at the next poll.
+export function MirrorView({
+  session,
+  sessionMeta,
+  active,
+  mirror,
+  onToggleMirror,
+  readOnly = false,
+  onResume,
+}: {
+  session: string;
+  sessionMeta?: any;
+  active?: boolean;
+  mirror?: boolean;
+  onToggleMirror: (v: boolean) => void;
+  readOnly?: boolean;
+  onResume?: () => void;
+}) {
+  const settings = useSettings();
+  // Per-agent descriptor: how this session's assistant signs its turns, and which
+  // chat affordances (image paste, …) it supports. Defaults to claude for a not-yet
+  // loaded meta. codex/opencode reuse the same chat; only these bits differ.
+  const agent = agentOf(sessionMeta?.kind);
+  const agentName = agent.assistantName;
+  const canPasteImage = agent.caps.imagePaste;
+  // Store bridge (old context values): plans open as doc panes, edit-diffs as
+  // diff panes; bumpSessions refreshes the shared list; wsState gates attach.
+  const openTargetInNew = useLayoutStore((s) => s.openTargetInNew);
+  const showDoc = (title: string, content: string) =>
+    openTargetInNew({ content: { kind: "doc", docTitle: title, docContent: content } });
+  const showDiff = (title: string, edits: unknown, tool: string) =>
+    openTargetInNew({ content: { kind: "diff", docTitle: title, diffTool: tool, diffEdits: edits } });
+  const refreshSessions = useSessionsStore((s) => s.refresh);
+  const bumpSessions = () => void refreshSessions();
+  const wsState = useWorkspaceStore((s) => s.state);
+  const toast = useToast();
+  const running = wsState === "running"; // WS down → resume is inert, mirror the terminal 再開
+  // "mod-enter" (default): Ctrl/⌘+Enter submits, plain Enter newlines (phone-safe).
+  // "enter": Enter submits, Shift+Enter newlines.
+  const modSend = settings.mirrorSend !== "enter";
+  const [turns, setTurns] = useState<Turn[]>([]); // {role:'user'|'assistant', text, ts, idx}
+  // Optimistic local echoes of just-sent prompts. While claude is working it queues a new
+  // prompt WITHOUT logging it to the jsonl until the current turn finishes, so the mirror
+  // (transcript-only) would show nothing — the message looks lost. We render these until
+  // the matching real user turn appears, then reconcile them away. sinceIdx = the newest
+  // real turn idx at send time, so we only match a turn that arrives AFTER the send.
+  const [pendingSends, setPendingSends] = useState<{ id: number; text: string; sinceIdx: number }[]>([]);
+  const echoSeq = useRef(0);
+  const [loaded, setLoaded] = useState(false); // false until the first transcript fetch returns
+  const [termState, setTermState] = useState(""); // terminal-only state: "resume" | "compacting" | ""
+  const [status, setStatus] = useState("");
+  const [bgBusy, setBgBusy] = useState(false); // idle but a run_in_background task lingers
+  const [tasks, setTasks] = useState<TaskItem[]>([]); // current ToDo list (Task tool calls)
+  const [alive, setAlive] = useState(!!sessionMeta?.alive); // live session ⇒ composer usable
+  const [pending, setPending] = useState<Question[] | null>(null); // currently-awaiting AskUserQuestion
+  const [pendingText, setPendingText] = useState<string>(""); // prose streamed just before the pending question
+  const [pendingPlan, setPendingPlan] = useState<string | null>(null); // ExitPlanMode plan awaiting approval
+  const [pendingPerm, setPendingPerm] = useState<string | null>(null); // tool-permission prompt awaiting allow/deny
+  // Plans the user just 却下'd (keyed by plan text). Lets the historical plan badge show
+  // 却下 immediately, before the interrupt tool_result (its real signal) lands a poll or
+  // two later — otherwise it sits at the neutral 決定済み until then.
+  const rejectedPlansRef = useRef<Set<string>>(new Set());
+  const [mode, setMode] = useState(""); // session permission mode ("plan" | …)
+  const [suggestedTitle, setSuggestedTitle] = useState(""); // headless-LLM title candidate, "" = none
+  const [titleActing, setTitleActing] = useState(false); // accept/dismiss request in flight
+  // Composer draft, persisted per session so switching ターミナル⇄チャット (which
+  // unmounts this view) — or a reload — keeps what you were typing. Key by session.
+  const draftKey = session ? "af.mirror-draft." + session : null;
+  const [draft, setDraft] = useState(() => readDraft(draftKey));
+  const draftKeyRef = useRef<string | null>(draftKey);
+  const [sending, setSending] = useState(false);
+  // Pasted images awaiting send: {path} is the session-saved absolute path (referenced in
+  // the prompt), {url} an object URL for the local chip preview, {name} the basename.
+  const [attachments, setAttachments] = useState<{ path: string; name: string; url: string }[]>([]);
+  const [pasting, setPasting] = useState(false); // an image upload is in flight
+  const [lightbox, setLightbox] = useState<string | null>(null); // enlarged image (blob URL) or null
+  const [histIdx, setHistIdx] = useState<number | null>(null); // position in composer history, or null
+  const cursorRef = useRef(0);
+  // Backward paging (P2): firstLineRef = oldest jsonl line currently held; hasMore = there
+  // is older history above it to page in. loadingOlderRef guards against overlapping loads;
+  // prependAdjustRef carries the pre-prepend scrollHeight so we can pin the viewport.
+  const firstLineRef = useRef(0);
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const loadingOlderRef = useRef(false);
+  const prependAdjustRef = useRef<number | null>(null);
+  const topSentinelRef = useRef<HTMLDivElement>(null);
+  const diagRef = useRef(""); // last transcript-diagnostic signature (warn once per change)
+  const statusRef = useRef("");
+  const tickRef = useRef<(() => void) | null>(null); // lets send() trigger an immediate refresh
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  // Was the user pinned to the bottom at their last scroll? Only then do we auto-follow
+  // new content; if they've scrolled up to read history we leave their position alone.
+  // Updated on scroll (not on append — appending grows scrollHeight without a scroll
+  // event), so it reflects the user's intent, not the just-added content.
+  const atBottomRef = useRef(true);
+
+  // Reset accumulated turns when the session changes (cursor is a line index into
+  // that session's jsonl, meaningless across sessions).
+  useEffect(() => {
+    cursorRef.current = 0;
+    firstLineRef.current = 0;
+    loadingOlderRef.current = false;
+    prependAdjustRef.current = null;
+    setHasMore(false);
+    setLoadingOlder(false);
+    diagRef.current = "";
+    statusRef.current = "";
+    setTurns([]);
+    setPendingSends([]); // echoes belong to the old session's transcript
+    rejectedPlansRef.current = new Set(); // optimistic 却下 marks belong to the old session
+    setLoaded(false);
+    setTermState("");
+    setStatus("");
+    setBgBusy(false);
+    setTasks([]);
+    setAlive(!!sessionMeta?.alive);
+    setPending(null);
+    setPendingPlan(null);
+    setPendingPerm(null);
+    setMode("");
+    setSuggestedTitle("");
+    setTitleActing(false);
+    setHistIdx(null);
+    setPasting(false);
+    setLightbox(null);
+    setAttachments((prev) => {
+      prev.forEach((a) => URL.revokeObjectURL(a.url)); // don't leak the old session's previews
+      return [];
+    });
+    atBottomRef.current = true; // a freshly opened session starts pinned to the bottom
+  }, [session]);
+
+  // Persist the draft per session, and reload it when the session changes (so the old
+  // session's draft isn't clobbered under the new key). Runs on every draft edit.
+  useEffect(() => {
+    if (draftKeyRef.current !== draftKey) {
+      // Session switched under a mounted view — load the new session's draft instead
+      // of saving the old one here.
+      draftKeyRef.current = draftKey;
+      setDraft(readDraft(draftKey));
+      return;
+    }
+    if (!draftKey) return;
+    try {
+      if (draft) localStorage.setItem(draftKey, draft);
+      else localStorage.removeItem(draftKey);
+    } catch {
+      /* storage unavailable (private mode) — draft just won't persist */
+    }
+  }, [draft, draftKey]);
+
+  // Poll the transcript since our cursor while this view is mounted (Pane only mounts
+  // it while visible). Faster while claude is working, slower at rest. New turns are
+  // appended; the cursor advances by the transcript's line count.
+  useEffect(() => {
+    if (!session) return;
+    let alive = true;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const tick = async () => {
+      try {
+        // First poll: fetch only the TAIL window (fast on huge transcripts); the server
+        // returns firstLine/hasMore so we can page older history in on scroll. Subsequent
+        // polls are plain since=<cursor> increments (unchanged).
+        const first = cursorRef.current === 0;
+        const url = first
+          ? `api/sessions/${q(session)}/messages?since=0&tail=1&limit=${WINDOW}`
+          : `api/sessions/${q(session)}/messages?since=${cursorRef.current}`;
+        const d = await api(url);
+        if (!alive) return;
+        if (d && !d.error) {
+          if (typeof d.cursor === "number") cursorRef.current = d.cursor;
+          // reset: the server's jsonl shrank or was replaced (compaction, or a
+          // different <sid>.jsonl became live), so our line cursor was stale and it
+          // re-sent from the top — replace, don't append. Otherwise append new turns.
+          if (d.reset) {
+            setTurns(Array.isArray(d.messages) ? d.messages : []);
+            firstLineRef.current = 0; // reset re-sends from the top: nothing older to page
+            setHasMore(false);
+          } else if (Array.isArray(d.messages) && d.messages.length) {
+            // Idempotent append: keep only turns past the newest `idx` (jsonl line) we
+            // already hold. A quick re-poll (after sending) racing the in-flight poll can
+            // read the same cursor, so the server re-sends the same lines to both — this
+            // drops the overlap instead of duplicating turns in the view.
+            setTurns((t) => {
+              let lastIdx = -1;
+              for (let i = t.length - 1; i >= 0; i--) {
+                if (t[i].idx !== undefined) { lastIdx = t[i].idx as number; break; }
+              }
+              const fresh = (d.messages as Turn[]).filter((m) => m.idx === undefined || m.idx > lastIdx);
+              return fresh.length ? [...t, ...fresh] : t;
+            });
+          }
+          // Windowed (initial tail) response carries the oldest line we now hold.
+          if (typeof d.firstLine === "number") {
+            firstLineRef.current = d.firstLine;
+            setHasMore(!!d.hasMore);
+          }
+          // Diagnostic: surface the anomalies behind "sent but nothing shows" — no
+          // jsonl found, multiple <sid>.jsonl siblings (a stub may shadow the real
+          // log), or a cursor reset. Logged once per distinct situation (not every
+          // poll) so it's quiet in the normal case.
+          if (d.reset || d.jsonlMatches > 1 || (d.alive && !d.jsonlPath)) {
+            const sig = `${d.reset ? 1 : 0}|${d.jsonlPath || ""}|${d.jsonlMatches || 0}`;
+            if (sig !== diagRef.current) {
+              diagRef.current = sig;
+              // eslint-disable-next-line no-console
+              console.warn("[mirror] transcript diagnostic", {
+                session,
+                reset: !!d.reset,
+                jsonlPath: d.jsonlPath,
+                jsonlLines: d.jsonlLines,
+                jsonlMtime: d.jsonlMtime,
+                jsonlMatches: d.jsonlMatches,
+              });
+            }
+          }
+          if (d.status) {
+            statusRef.current = d.status;
+            setStatus(d.status);
+          }
+          // Track liveness so a read-only (history) view can enable its composer the
+          // moment a background resume brings the session up.
+          setAlive(!!d.alive);
+          setBgBusy(!!d.backgroundBusy);
+          setTasks(Array.isArray(d.tasks) ? d.tasks : []);
+          setPending(Array.isArray(d.pendingQuestions) ? d.pendingQuestions : null);
+          setPendingText(typeof d.pendingText === "string" ? d.pendingText : "");
+          setPendingPlan(typeof d.pendingPlan === "string" && d.pendingPlan ? d.pendingPlan : null);
+          setPendingPerm(typeof d.pendingPermission === "string" && d.pendingPermission ? d.pendingPermission : null);
+          // Mode comes from the terminal (paneMode) in real time, so trust every poll —
+          // the optimistic set on click just gives instant feedback until this confirms.
+          setMode(typeof d.mode === "string" ? d.mode : "");
+          setTermState(typeof d.terminalState === "string" ? d.terminalState : "");
+          setSuggestedTitle(typeof d.suggestedTitle === "string" ? d.suggestedTitle : "");
+          setLoaded(true); // first (and every) successful fetch: drop the loading spinner
+        }
+      } catch {
+        /* transient; retry on the next tick */
+      }
+      if (!alive) return;
+      timer = setTimeout(tick, statusRef.current === "working" ? 1200 : 3000);
+    };
+    tickRef.current = () => {
+      if (timer) clearTimeout(timer);
+      tick();
+    };
+    tick();
+    return () => {
+      alive = false;
+      if (timer) clearTimeout(timer);
+      tickRef.current = null;
+    };
+  }, [session]);
+
+  // Reconcile optimistic echoes: once a sent prompt's real user turn lands in the
+  // transcript (a non-noise user turn past the echo's anchor idx with the same text),
+  // drop the echo so the message isn't shown twice.
+  useEffect(() => {
+    setPendingSends((prev) => {
+      if (!prev.length) return prev;
+      const next = prev.filter((e) => !echoLanded(e, turns));
+      return next.length === prev.length ? prev : next;
+    });
+  }, [turns]);
+
+  // Follow the latest turn / pending question / typing dots — but ONLY when the user is
+  // already at the bottom. The poll replaces `pending` with a fresh array every tick, so
+  // an unconditional scroll here yanked the user back down every 1.2–3s while they tried
+  // to read history (and on every appended turn). atBottomRef (set on scroll) gates it.
+  useEffect(() => {
+    if (!atBottomRef.current) return;
+    const el = bodyRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [turns, pending, pendingPlan, pendingPerm, status]);
+
+  // Keep the latest message in view when the body's OWN height changes — the ToDo /
+  // 消費推移 / コンテキスト panels opening above it, the composer auto-growing, or a
+  // pane/window resize all shrink the scroll area and would otherwise clip the bottom
+  // (reads as the chat scrolling away). Re-pin only if the user was already at the bottom;
+  // reading mid-history is left alone. (Content-driven growth is handled by the effect
+  // above — adding turns changes scrollHeight, not the body's box, so it won't fire here.)
+  useEffect(() => {
+    const el = bodyRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => {
+      if (atBottomRef.current) el.scrollTop = el.scrollHeight;
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  // Track whether the user is at (within 80px of) the bottom. Content appends grow
+  // scrollHeight without firing a scroll event, so this only changes on real user
+  // scrolling — exactly the "did they scroll up to read?" signal the effect above needs.
+  const onBodyScroll = () => {
+    const el = bodyRef.current;
+    if (!el) return;
+    atBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+  };
+
+  // Page older history in (P2): fetch the window before the oldest line we hold and
+  // prepend it. Guard via refs so overlapping triggers (button + observer) can't double it.
+  const loadOlder = async () => {
+    if (loadingOlderRef.current || firstLineRef.current <= 0) return;
+    loadingOlderRef.current = true;
+    setLoadingOlder(true);
+    try {
+      const before = firstLineRef.current;
+      const d = await api(`api/sessions/${q(session)}/messages?before=${before}&limit=${WINDOW}`);
+      if (d && !d.error && Array.isArray(d.messages)) {
+        if (d.messages.length) {
+          const el = bodyRef.current;
+          prependAdjustRef.current = el ? el.scrollHeight : null; // pin the viewport across the prepend
+          const older = d.messages;
+          setTurns((t) => [...older, ...t]);
+        }
+        if (typeof d.firstLine === "number") firstLineRef.current = d.firstLine;
+        setHasMore(!!d.hasMore);
+      }
+    } catch {
+      /* transient — the user can trigger again */
+    } finally {
+      loadingOlderRef.current = false;
+      setLoadingOlder(false);
+    }
+  };
+
+  // After an older page is prepended, restore the viewport: scrollTop grows by exactly the
+  // height added on top, so the user stays on the same content instead of jumping up.
+  useLayoutEffect(() => {
+    const el = bodyRef.current;
+    if (el && prependAdjustRef.current != null) {
+      el.scrollTop += el.scrollHeight - prependAdjustRef.current;
+      prependAdjustRef.current = null;
+    }
+  }, [turns]);
+
+  // Auto-load older history when the top sentinel scrolls into view (prefetch a little
+  // early via rootMargin). Only active while there's more above.
+  useEffect(() => {
+    const el = topSentinelRef.current;
+    const root = bodyRef.current;
+    if (!el || !root || !hasMore) return;
+    const ob = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) loadOlder();
+      },
+      { root, rootMargin: "240px 0px 0px 0px" },
+    );
+    ob.observe(el);
+    return () => ob.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasMore, session]);
+
+  // Auto-grow the composer to fit its content (up to ~10 lines via the CSS max-height,
+  // then it scrolls). Runs on every draft change, including the per-session draft restored
+  // on mount. Reset to auto first so it can also shrink when text is deleted.
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = el.scrollHeight + "px";
+  }, [draft]);
+
+  // Focus the composer when this pane becomes the active chat — but not on touch
+  // devices, where auto-focus would pop the on-screen keyboard just from switching
+  // to read the chat. There the user taps the composer to type. (The other focus
+  // calls below are keystroke-driven — send / history nav — so the keyboard is
+  // already up and refocusing is fine.)
+  useEffect(() => {
+    if (active && !coarsePointer()) inputRef.current?.focus();
+  }, [active]);
+
+  // After the user hits 再開して続ける, focus the composer the moment it becomes usable
+  // (readOnly clears + the session goes alive + no resume menu in the terminal), so they
+  // can type straight away. Flag is set on the resume click so this fires only for a
+  // user-initiated resume, not a background one.
+  const wantResumeFocusRef = useRef(false);
+  useEffect(() => {
+    if (wantResumeFocusRef.current && !readOnly && alive && termState !== "resume") {
+      wantResumeFocusRef.current = false;
+      inputRef.current?.focus();
+    }
+  }, [readOnly, alive, termState]);
+
+  // Low-level: type one prompt into the session (tmux send-keys). No state/guard.
+  // Returns whether the POST succeeded so the caller can drop an optimistic echo on
+  // outright failure (the Agent also marks working; the next poll reconciles real state).
+  const postInput = async (text: string): Promise<boolean> => {
+    try {
+      await apiJSON(`api/sessions/${q(session)}/input`, "POST", { prompt: text });
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  // Low-level: send named keys with NO "working" status and NO quick re-poll — used by
+  // the plan-mode toggle, which isn't a turn. (The quick re-poll of sendKeys/sendPrompt
+  // would fire before the mode actually changed and momentarily revert the optimistic
+  // indicator; the regular poll picks up the real mode via paneMode.)
+  const postKeys = async (keys: string[]) => {
+    try {
+      await apiJSON(`api/sessions/${q(session)}/input`, "POST", { keys });
+    } catch {
+      /* next poll reconciles */
+    }
+  };
+
+  // Newest real (jsonl-backed) turn idx currently held, or -1. Used to anchor an
+  // optimistic echo so it only reconciles against a turn that arrives after the send.
+  const newestIdx = (): number => {
+    for (let i = turns.length - 1; i >= 0; i--) {
+      if (turns[i].idx !== undefined) return turns[i].idx as number;
+    }
+    return -1;
+  };
+
+  // sendPrompt submits one prompt (the composer, or a single-select answer).
+  const sendPrompt = async (text: string) => {
+    const t = (text || "").trim();
+    if (!t || sending) return;
+    setSending(true);
+    statusRef.current = "working";
+    setStatus("working");
+    // Show the message immediately (optimistic echo) so it never looks lost while claude
+    // is busy — reconciled away once its real user turn appears in the transcript.
+    const echoId = ++echoSeq.current;
+    setPendingSends((p) => [...p, { id: echoId, text: t, sinceIdx: newestIdx() }]);
+    const ok = await postInput(t);
+    if (!ok) setPendingSends((p) => p.filter((e) => e.id !== echoId)); // send failed → drop it
+    setSending(false);
+    // Pick up the just-logged user turn quickly rather than waiting a full interval.
+    setTimeout(() => tickRef.current?.(), 250);
+  };
+
+  // seedSubmit reliably fires the launch seed's first prompt. A freshly-launched CLI
+  // coalesces the pasted text and SWALLOWS an Enter that arrives inside that paste
+  // window — the prompt then sits in the composer unsent (the reported bug; the server's
+  // 20ms claude gap is far too short right after boot). So type the text on its own
+  // (seq, no bundled Enter), then submit with a couple of delayed Enters once the paste
+  // window has closed. Enter on an empty composer is a no-op, so the later nudge is
+  // harmless if the first one already submitted.
+  const seedSubmit = async (text: string) => {
+    const t = (text || "").trim();
+    if (!t) return;
+    statusRef.current = "working";
+    setStatus("working");
+    const echoId = ++echoSeq.current; // optimistic echo, reconciled when the real turn lands
+    setPendingSends((p) => [...p, { id: echoId, text: t, sinceIdx: newestIdx() }]);
+    try {
+      await apiJSON(`api/sessions/${q(session)}/input`, "POST", { seq: [{ t }] });
+    } catch {
+      setPendingSends((p) => p.filter((e) => e.id !== echoId));
+      return;
+    }
+    const enter = () => apiJSON(`api/sessions/${q(session)}/input`, "POST", { keys: ["Enter"] }).catch(() => {});
+    setTimeout(enter, 450);
+    setTimeout(enter, 1100);
+    setTimeout(() => tickRef.current?.(), 1400);
+  };
+
+  // Launch seed: a session started from a repo row's 起動 modal carries a first prompt
+  // (keyed by slug in launchSeed). Send it exactly once, and only after the session is
+  // actually alive and not mid-resume/compacting. takeLaunchSeed is one-shot, so we only
+  // take it when about to send (the guards below return before taking it). seededRef
+  // prevents a re-send across the polls that flip `alive`.
+  const seededRef = useRef(false);
+  useEffect(() => {
+    seededRef.current = false; // new session → allow its own seed
+  }, [session]);
+  useEffect(() => {
+    if (seededRef.current || readOnly || !alive || termState || sending) return;
+    const seed = takeLaunchSeed(session);
+    if (!seed) return;
+    seededRef.current = true;
+    seedSubmit(seed);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [alive, termState, session, readOnly]);
+
+  // sendKeys drives the AskUserQuestion modal via named keys (Down/Space/Enter), the
+  // only way to answer multi-select / multi-question forms (free text can't).
+  const sendKeys = async (keys: string[]) => {
+    if (!keys || !keys.length || sending) return;
+    setSending(true);
+    statusRef.current = "working";
+    setStatus("working");
+    try {
+      await apiJSON(`api/sessions/${q(session)}/input`, "POST", { keys });
+    } catch {
+      /* next poll reconciles */
+    }
+    setSending(false);
+    setTimeout(() => tickRef.current?.(), 400);
+  };
+
+  // sendSeq drives the modal with an ORDERED mix of named keys and literal text — the
+  // path for answering a question via its "Type something" free-text row (move down to
+  // it, type, Enter). Built by PendingQuestions.submit for multi-question / multi-select
+  // forms where free text and option navigation are interleaved.
+  const sendSeq = async (seq: Array<{ k?: string; t?: string }>) => {
+    if (!seq || !seq.length || sending) return;
+    setSending(true);
+    statusRef.current = "working";
+    setStatus("working");
+    try {
+      await apiJSON(`api/sessions/${q(session)}/input`, "POST", { seq });
+    } catch {
+      /* next poll reconciles */
+    }
+    setSending(false);
+    setTimeout(() => tickRef.current?.(), 400);
+  };
+
+  // Paste image(s) from the clipboard into the composer: upload each to the session and
+  // hold it as an attachment chip. Non-image pastes fall through to the default (text).
+  const onPaste = async (e: RClipboardEvent<HTMLTextAreaElement>) => {
+    // Image paste rides claude's Read-tool flow (saved path referenced in the prompt);
+    // agents without that cap let the paste fall through as ordinary text.
+    if (!canPasteImage) return;
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    const files: File[] = [];
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i];
+      if (it.kind === "file" && it.type.startsWith("image/")) {
+        const f = it.getAsFile();
+        if (f) files.push(f);
+      }
+    }
+    if (!files.length) return; // ordinary text paste — let it happen
+    e.preventDefault();
+    setPasting(true);
+    for (const f of files) {
+      try {
+        const res = await pasteImage(session, f);
+        if (res.status < 300 && res.path && res.name) {
+          const path = res.path;
+          const nm = res.name;
+          const url = URL.createObjectURL(f);
+          setAttachments((a) => [...a, { path, name: nm, url }]);
+        } else {
+          toast(res.error ? errText(res.error) : "画像の貼り付けに失敗しました");
+        }
+      } catch {
+        toast("画像の貼り付けに失敗しました（通信エラー）");
+      }
+    }
+    setPasting(false);
+    inputRef.current?.focus();
+  };
+
+  const removeAttachment = (i: number) => {
+    setAttachments((a) => {
+      if (a[i]) URL.revokeObjectURL(a[i].url);
+      return a.filter((_, idx) => idx !== i);
+    });
+  };
+  const clearAttachments = () => {
+    setAttachments((a) => {
+      a.forEach((x) => URL.revokeObjectURL(x.url));
+      return [];
+    });
+  };
+
+  // A multi-question or multi-select AskUserQuestion can't be answered by free text:
+  // the modal takes a typed answer as an immediate whole-tool submit, mis-selecting the
+  // first option and dropping the rest. Lock the composer for those and steer the user to
+  // the option cards (a single-select single question still accepts free text).
+  const auqLocksComposer = !!pending && (pending.length > 1 || pending.some((q) => q?.multiSelect));
+  // A pending plan approval or permission prompt is a menu decision, NOT a free-text turn:
+  // sending would type text + Enter, and that Enter selects the menu's default (= 承認 /
+  // 許可), silently confirming it. A mode toggle would likewise mis-key the menu. So lock
+  // the composer AND the mode chip while one is pending; act via the card's buttons.
+  const decisionPending = !!pendingPlan || !!pendingPerm;
+  const composerLocked = auqLocksComposer || decisionPending;
+
+  const send = async () => {
+    if (composerLocked) return;
+    const text = draft.trim();
+    if (!text && !attachments.length) return;
+    const paths = attachments.map((a) => a.path);
+    const prompt = buildImagePrompt(text, paths);
+    setHistIdx(null);
+    setDraft("");
+    clearAttachments();
+    await sendPrompt(prompt);
+    inputRef.current?.focus();
+  };
+
+  // Open a plan's Markdown in its own pane (manual — via a button, not automatic).
+  const openPlan = (plan: string) => showDoc(planTitle(plan), plan);
+
+  // Auto-suggested title (session_title.go): 採用 promotes it to the session's real
+  // title (bumpSessions so the left-pane label updates without waiting for its own
+  // poll); 却下 discards it. Either way the server never offers one again.
+  const acceptTitle = async () => {
+    if (!session || titleActing) return;
+    setTitleActing(true);
+    try {
+      const res = await raw(`api/sessions/${q(session)}/title/accept`, { method: "POST" });
+      if (res.ok) {
+        setSuggestedTitle("");
+        bumpSessions();
+      }
+    } catch {
+      /* transient — next poll re-syncs suggestedTitle either way */
+    } finally {
+      setTitleActing(false);
+    }
+  };
+  const dismissTitle = async () => {
+    if (!session || titleActing) return;
+    setTitleActing(true);
+    try {
+      const res = await raw(`api/sessions/${q(session)}/title/dismiss`, { method: "POST" });
+      if (res.ok) setSuggestedTitle("");
+    } catch {
+      /* same as above */
+    } finally {
+      setTitleActing(false);
+    }
+  };
+  // Manual re-ask (header button): unlike the automatic trigger, this ignores any
+  // prior dismissal/idle-turn gating and runs synchronously — the server call itself
+  // takes a few seconds (headless LLM), so this can be slower than accept/dismiss.
+  const regenerateTitle = async () => {
+    if (!session || titleActing) return;
+    setTitleActing(true);
+    try {
+      const res = await raw(`api/sessions/${q(session)}/title/regenerate`, { method: "POST" });
+      const j = await res.json().catch(() => ({}));
+      if (res.ok && typeof j.suggestedTitle === "string") {
+        setSuggestedTitle(j.suggestedTitle);
+      } else if (!res.ok) {
+        toast(j.error ? errText(j.error) : `タイトル案の生成に失敗しました (${res.status})`);
+      }
+    } catch {
+      toast("タイトル案の生成に失敗しました（通信エラー）");
+    } finally {
+      setTitleActing(false);
+    }
+  };
+
+  const openDiff = (p: Part) => showDiff(p.file || "", p.edits, p.tool || "");
+
+  // Composer history = the user's own prompts in this conversation (so ↑ works even
+  // after a reload, not just for prompts typed since mount). Newest last.
+  const history: string[] = [];
+  for (const t of turns) {
+    if (t.role === "user" && t.text && !isNoise(t)) {
+      const s = t.text.trim();
+      if (s && history[history.length - 1] !== s) history.push(s);
+    }
+  }
+
+  // Recall the previous / next prompt from history (shared by ↑/↓ and the on-screen
+  // buttons shown on phones, which have no arrow keys).
+  const recallPrev = () => {
+    if (!history.length) return;
+    const ni = histIdx !== null ? Math.max(0, histIdx - 1) : history.length - 1;
+    setHistIdx(ni);
+    setDraft(history[ni]);
+    inputRef.current?.focus();
+  };
+  const recallNext = () => {
+    if (histIdx === null) return;
+    const ni = histIdx + 1;
+    if (ni >= history.length) {
+      setHistIdx(null);
+      setDraft("");
+    } else {
+      setHistIdx(ni);
+      setDraft(history[ni]);
+    }
+    inputRef.current?.focus();
+  };
+
+  const onKeyDown = (e: RKeyboardEvent) => {
+    // Shell-style history: ↑/↓ recall past prompts when the field is empty (or once
+    // recall is underway). With text present, arrows move the caret as usual.
+    if ((e.key === "ArrowUp" || e.key === "ArrowDown") && !e.nativeEvent.isComposing) {
+      if (e.key === "ArrowUp" && (draft === "" || histIdx !== null) && history.length) {
+        e.preventDefault();
+        recallPrev();
+        return;
+      }
+      if (e.key === "ArrowDown" && histIdx !== null) {
+        e.preventDefault();
+        recallNext();
+        return;
+      }
+    }
+    // Don't intercept Enter while an IME candidate window is open (JP/CJK input).
+    if (e.key !== "Enter" || e.nativeEvent.isComposing) return;
+    const mod = e.ctrlKey || e.metaKey;
+    if (modSend) {
+      // Ctrl/⌘+Enter submits; plain Enter falls through to insert a newline.
+      if (mod) {
+        e.preventDefault();
+        send();
+      }
+    } else if (!e.shiftKey && !mod) {
+      // Enter submits; Shift+Enter falls through to insert a newline.
+      e.preventDefault();
+      send();
+    }
+  };
+
+  // claude writes one logical response as several assistant events (text split by
+  // tool calls), so merge consecutive same-role turns into one block and drop the
+  // system-injected user lines (bash i/o, task notifications, slash-command echoes).
+  // Append any optimistic echoes as synthetic user turns (idx past any real line so keys
+  // stay unique and they sort last) — the mirror then shows a just-sent prompt at once.
+  const echoTurns: Turn[] = pendingSends
+    .filter((e) => !echoLanded(e, turns)) // hide at render the instant the real turn lands
+    .map((e) => ({
+      role: "user",
+      text: e.text,
+      idx: 1e9 + e.id,
+      pending: true,
+    }));
+  const groups = groupTurns(echoTurns.length ? [...turns, ...echoTurns] : turns);
+
+  // A /context-like gauge: the newest assistant turn's prompt size (input + cache) is
+  // the current context fill. The per-category split (/context) is computed inside
+  // claude and isn't in the transcript, but the cache breakdown is real usage data.
+  const ctxUsage = latestContext(groups);
+
+  // Per-assistant-turn "spend" = newly-consumed tokens (uncached input + cache creation +
+  // output). Cache reads are reused context, not fresh spend, so they're excluded (the ↑
+  // number still carries total context). Drives the per-turn bar and the trend Sparkline.
+  const spends = groups.filter((g) => g.role !== "user").map(spendOf).filter((n) => n > 0);
+  const maxSpend = spends.length ? Math.max(...spends) : 0;
+
+  // Whether the session is in Plan mode. Case-insensitive so it holds against either the
+  // labeled agent ("Plan") or an older one ("plan") — so the toggle direction (enter vs
+  // exit) stays correct even before the Workspace picks up the new Agent image.
+  const isPlan = mode.toLowerCase() === "plan";
+
+  // Status chip: prefer the live polled status, fall back to the session meta.
+  const chip = status
+    ? stateInfo({ kind: "claude", alive: status !== "stopped", state: status, backgroundBusy: bgBusy } as any)
+    : sessionMeta
+      ? stateInfo(sessionMeta)
+      : null;
+
+  return (
+    <div
+      className="mirrorview"
+      style={{ "--chat-font": chatFontStack(settings.chatFont), "--chat-size": settings.chatSize + "px" } as CSSProperties}
+    >
+      <header className="view-head">
+        {sessionMeta ? (
+          // Slug hidden (internal id) → title tooltip; the display title is the name.
+          <span className="pane-session" title={"ID: " + sessionMeta.name}>
+            <span className={"kind-tag kind-" + kindClass(sessionMeta.kind)}>
+              <Icon name={kindIcon(sessionMeta.kind)} />
+              <span className="kt-label kt-full">{kindLabel(sessionMeta.kind)}</span>
+              <span className="kt-label kt-short">{kindShort(sessionMeta.kind)}</span>
+            </span>
+            <span className="session-display">{displayName(sessionMeta)}</span>
+            {chip && (
+              <span className={"session-state " + chip.cls}>
+                <Icon name={chip.icon} spin={chip.spin} /> {chip.text}
+              </span>
+            )}
+          </span>
+        ) : (
+          <span className="view-title">セッション</span>
+        )}
+        {sessionMeta?.kind === "claude" && settings.autoTitleSuggest && (
+          <button
+            type="button"
+            className="icon title-suggest-btn"
+            title={
+              sessionMeta?.title
+                ? "タイトルを再提案（現時点までの会話から作り直します。採用するまで今のタイトルは変わりません）"
+                : "タイトルを提案してもらう（現時点までの会話から作成します）"
+            }
+            onClick={regenerateTitle}
+            disabled={titleActing}
+          >
+            <Icon name={titleActing ? "loading" : "lightbulb"} spin={titleActing} />
+          </button>
+        )}
+        <MirrorToggle mirror={!!mirror} onToggle={onToggleMirror} running={running} />
+      </header>
+
+      {ctxUsage && <ContextBar {...ctxUsage} spends={spends} maxSpend={maxSpend} />}
+      {tasks.length > 0 && <TaskChecklist tasks={tasks} />}
+      {isPlan && (
+        <div className="mirror-planmode">
+          <Icon name="debug-pause" /> Plan モード — 承認するまで実装しません
+        </div>
+      )}
+      {termState === "resume" && (
+        // The startup resume menu is showing in the terminal (invisible from chat) —
+        // prompt the user to go choose. "2. Resume full session as-is" keeps the full
+        // context; the recommended summary option would drop it.
+        <div className="mirror-attention">
+          <Icon name="warning" />
+          <span className="ma-text">
+            ターミナルで再開方法の選択待ちです。コンテキストをそのまま維持するには
+            「2. Resume full session as-is」を選んでください。
+          </span>
+          <button type="button" className="btn primary ma-btn" onClick={() => onToggleMirror(false)}>
+            <Icon name="terminal" /> ターミナルを開く
+          </button>
+        </div>
+      )}
+      {termState === "compacting" && (
+        <div className="mirror-compacting">
+          <Icon name="loading" spin /> コンテキストを圧縮中…
+        </div>
+      )}
+      {suggestedTitle && (
+        <div className="mirror-title-suggest">
+          <Icon name="lightbulb" />
+          <span className="mts-text">
+            タイトル案: <strong>{suggestedTitle}</strong>
+          </span>
+          <button type="button" className="btn primary mts-btn" disabled={titleActing} onClick={acceptTitle}>
+            <Icon name={titleActing ? "loading" : "check"} spin={titleActing} /> 採用
+          </button>
+          <button
+            type="button"
+            className="icon mts-dismiss"
+            disabled={titleActing}
+            onClick={dismissTitle}
+            title="この提案を今後表示しません"
+          >
+            <Icon name="close" />
+          </button>
+        </div>
+      )}
+
+      <div className="mirror-body" ref={bodyRef} onScroll={onBodyScroll}>
+        {loaded && hasMore && (
+          <div className="mirror-loadmore" ref={topSentinelRef}>
+            <button
+              type="button"
+              className="ghost mirror-loadmore-btn"
+              disabled={loadingOlder}
+              onClick={loadOlder}
+            >
+              {loadingOlder ? (
+                <>
+                  <Icon name="loading" spin /> 読み込み中…
+                </>
+              ) : (
+                <>
+                  <Icon name="chevron-up" /> 以前の会話を読み込む
+                </>
+              )}
+            </button>
+          </div>
+        )}
+        {!loaded ? (
+          running ? (
+            // First fetch in flight (opening a session, or switching ターミナル→チャット):
+            // show a spinner instead of flashing the "no conversation yet" text.
+            <div className="mirror-empty muted mirror-loading">
+              <Icon name="loading" spin /> 読み込み中…
+            </div>
+          ) : (
+            // Workspace stopped: the transcript can't be fetched (the Agent is down), so
+            // never spin forever — say so and point at the explicit Start.
+            <div className="mirror-empty muted">
+              ワークスペースが停止しています。上部の Start で起動すると履歴を表示できます。
+            </div>
+          )
+        ) : groups.length === 0 && !pending && !pendingPlan && !pendingPerm ? (
+          <div className="mirror-empty muted">
+            {readOnly
+              ? "この会話に表示できる履歴はありません。"
+              : "まだ会話はありません。下の欄からプロンプトを送るか、ターミナルで対話すると、ここに ターンごとの Markdown で表示されます。"}
+          </div>
+        ) : (
+          renderGroups(groups, sendPrompt, openPlan, openDiff, maxSpend, session, setLightbox, agentName, (p) => rejectedPlansRef.current.has(p.trim()))
+        )}
+        {pendingPlan && (
+          <div className="mirror-turn assistant">
+            <div className="mirror-turn-head">
+              <span className="mt-who">Claude</span>
+              <span className="mt-model muted">プラン承認待ち</span>
+            </div>
+            <div className="mirror-turn-body">
+              <PlanBlock
+                plan={pendingPlan}
+                pending
+                sending={sending}
+                onOpen={() => openPlan(pendingPlan)}
+                onApprove={() => sendKeys(["Enter"])}
+                // 却下 = pick "Tell Claude what to change" — the 4th ExitPlanMode option
+                // (1 Yes-bypass / 2 Yes-manual / 3 No-refine-on-web / 4 tell-what-to-change).
+                // NOT option 3, which routes to Ultraplan on the web. Selecting 4 keeps
+                // refining in-session; pendingPlan then clears and the composer unlocks so
+                // the user can type feedback. (Option order is claude-version dependent.)
+                onReject={() => {
+                  rejectedPlansRef.current.add(pendingPlan.trim()); // optimistic 却下 badge
+                  sendKeys(["Down", "Down", "Down", "Enter"]);
+                }}
+              />
+            </div>
+          </div>
+        )}
+        {pendingPerm && !pending && !pendingPlan && (
+          // Defense-in-depth: a question/plan always wins over a generic permission
+          // dialog (the server already suppresses the permission in that case). This
+          // guards against a poll race ever showing 許可/拒否 over an AskUserQuestion,
+          // whose buttons would send keystrokes that mis-answer the question underneath.
+          <div className="mirror-turn assistant">
+            <div className="mirror-turn-head">
+              <span className="mt-who">Claude</span>
+              <span className="mt-model muted">許可待ち</span>
+            </div>
+            <div className="mirror-turn-body">
+              <div className="mt-perm">
+                <div className="mt-perm-head">
+                  <Icon name="shield" /> 許可を求めています（編集・コマンド等）
+                </div>
+                <div className="mt-perm-msg">{pendingPerm}</div>
+                <div className="mt-perm-actions">
+                  <button
+                    type="button"
+                    className="btn primary mt-perm-btn"
+                    disabled={sending}
+                    onClick={() => sendKeys(["Enter"])}
+                  >
+                    <Icon name="check" /> 許可
+                  </button>
+                  <button
+                    type="button"
+                    className="ghost mt-perm-btn"
+                    disabled={sending}
+                    title="以降このセッションでは自動許可（2番目の選択肢）"
+                    onClick={() => sendKeys(["Down", "Enter"])}
+                  >
+                    常に許可
+                  </button>
+                  <button
+                    type="button"
+                    className="ghost mt-perm-btn"
+                    disabled={sending}
+                    onClick={() => sendKeys(["Down", "Down", "Enter"])}
+                  >
+                    <Icon name="close" /> 拒否
+                  </button>
+                </div>
+                <div className="mt-perm-hint muted">対象（ファイル・コマンド）や差分はターミナルで確認できます</div>
+              </div>
+            </div>
+          </div>
+        )}
+        {pending && pending.length > 0 && (
+          <div className="mirror-turn assistant">
+            <div className="mirror-turn-head">
+              <span className="mt-who">{agentName}</span>
+              <span className="mt-model muted">質問中</span>
+            </div>
+            <div className="mirror-turn-body">
+              {pendingText && <MarkdownView source={pendingText} />}
+              <PendingQuestions
+                key={"pq-" + (pending[0]?.question || "")}
+                questions={pending}
+                sending={sending}
+                onSendOne={sendPrompt}
+                onSubmitKeys={sendKeys}
+                onSubmitSeq={sendSeq}
+                answerMode={sessionMeta?.kind === "claude" ? "claude" : "menu"}
+              />
+            </div>
+          </div>
+        )}
+        {status === "working" && !pending && (
+          <div className="mirror-typing" aria-label={agentName + " が入力中"}>
+            <span className="mt-who">{agentName}</span>
+            <span className="typing-dots">
+              <i />
+              <i />
+              <i />
+            </span>
+            {/* Stop the running turn (Escape) — lives with the typing indicator so it only
+                shows while working, and never shifts the composer. */}
+            <button
+              type="button"
+              className="ghost mirror-stop"
+              disabled={sending}
+              title="実行を停止（Esc）"
+              onClick={() => sendKeys(["Escape"])}
+            >
+              <Icon name="debug-stop" /> 停止
+            </button>
+          </div>
+        )}
+      </div>
+
+      {readOnly ? (
+        // History (read-only): the session isn't attached, so input is disabled. The
+        // button attaches (resumes) in the background while keeping this chat open —
+        // the composer enables once the session is live (alive from the poll).
+        <div className="mirror-compose mirror-compose-resume">
+          <button
+            type="button"
+            className="btn primary mirror-resume"
+            disabled={!running}
+            title={running ? "このセッションを再開" : "ワークスペース停止中"}
+            onClick={() => {
+              wantResumeFocusRef.current = true;
+              onResume?.();
+            }}
+          >
+            <Icon name="play" /> 再開して続ける
+          </button>
+          <span className="muted mirror-resume-hint">
+            {running ? "履歴を閲覧中（入力するには再開）" : "履歴を閲覧中（ワークスペース停止中）"}
+          </span>
+        </div>
+      ) : termState === "resume" ? (
+        // Resume menu is up in the terminal: block the composer (keystrokes would go to
+        // the menu) and send the user there to choose.
+        <div className="mirror-compose mirror-compose-resume">
+          <button type="button" className="btn primary mirror-resume" onClick={() => onToggleMirror(false)}>
+            <Icon name="terminal" /> ターミナルで選択
+          </button>
+          <span className="muted mirror-resume-hint">再開方法の選択待ち（コンテキスト維持は「2」）</span>
+        </div>
+      ) : !alive ? (
+        // Attached but the session is still coming up (resume in flight).
+        <div className="mirror-compose mirror-compose-resume">
+          <span className="muted mirror-resuming">
+            <Icon name="loading" spin /> 再開中… 準備ができると入力できます
+          </span>
+        </div>
+      ) : (
+        <div className="mirror-compose">
+          {(attachments.length > 0 || pasting) && (
+            <div className="mirror-attach">
+              {attachments.map((a, i) => (
+                <div className="ma-chip" key={a.path}>
+                  <img className="ma-thumb" src={a.url} alt="" />
+                  <button type="button" className="ma-del" title="削除" onClick={() => removeAttachment(i)}>
+                    <Icon name="close" />
+                  </button>
+                </div>
+              ))}
+              {pasting && (
+                <span className="ma-loading">
+                  <Icon name="loading" spin /> アップロード中…
+                </span>
+              )}
+            </div>
+          )}
+          {/* History nav for phones (no arrow keys); hidden on wider screens via CSS. */}
+          <div className="mirror-hist">
+            <button
+              type="button"
+              className="ghost mirror-hist-btn"
+              title="前の入力"
+              disabled={!history.length}
+              onClick={recallPrev}
+            >
+              <Icon name="chevron-up" />
+            </button>
+            <button
+              type="button"
+              className="ghost mirror-hist-btn"
+              title="次の入力"
+              disabled={histIdx === null}
+              onClick={recallNext}
+            >
+              <Icon name="chevron-down" />
+            </button>
+          </div>
+          <textarea
+            ref={inputRef}
+            className="mirror-input"
+            rows={2}
+            placeholder={
+              decisionPending
+                ? pendingPlan
+                  ? "プラン承認待ち：上のカードで承認 / 却下してください"
+                  : "許可待ち：上のカードで応答してください"
+                : auqLocksComposer
+                  ? "複数質問は上のカードから回答してください（自由入力は無効）"
+                  : modSend
+                    ? "プロンプトを入力（Ctrl+Enter で送信 / Enter で改行）"
+                    : "プロンプトを入力（Enter で送信 / Shift+Enter で改行）"
+            }
+            disabled={composerLocked}
+            value={draft}
+            onChange={(e) => {
+              setDraft(e.target.value);
+              setHistIdx(null); // typing leaves history-recall mode
+            }}
+            onKeyDown={onKeyDown}
+            onPaste={onPaste}
+          />
+          {/* Right column: a small mode chip stacked over the send button. The chip is a
+              rarely-used control, so it rides above send (compact, not competing with the
+              textarea) and only appears for agents with a plan toggle. */}
+          <div className="mirror-send-col">
+            {agent.caps.planMode && agent.planCycleKey && (
+              <button
+                type="button"
+                className={"mirror-mode" + (isPlan ? " on" : "")}
+                disabled={sending || decisionPending}
+                title="モードを切り替え（Plan ⇄ 実装）"
+                onClick={() => {
+                  const toPlan = !isPlan;
+                  // Optimistic label (codex/opencode only report the new mode after a turn);
+                  // the poll reconciles from the terminal via paneMode.
+                  setMode(toPlan ? "Plan" : agent.defaultModeLabel);
+                  // Low-level sends (no working status / no quick re-poll) so the optimistic
+                  // label holds until the regular poll reads the real mode.
+                  if (toPlan && agent.planEnterCmd) postInput(agent.planEnterCmd);
+                  else postKeys([agent.planCycleKey]);
+                }}
+              >
+                {mode || "…"}
+              </button>
+            )}
+            <button
+              type="button"
+              className="btn primary mirror-send"
+              disabled={(!draft.trim() && !attachments.length) || sending || composerLocked}
+              onClick={send}
+              title="送信"
+            >
+              <Icon name="send" />
+            </button>
+          </div>
+        </div>
+      )}
+      {lightbox && (
+        <div className="mirror-lightbox" onClick={() => setLightbox(null)} role="presentation">
+          <img src={lightbox} alt="貼り付け画像（拡大）" />
+        </div>
+      )}
+    </div>
+  );
+}
+
+// System-injected user lines that aren't real prompts: slash-command echoes, the
+// bash tool's stdin/stdout, task-notification frames, memory captures. We hide them
+// so the chat reads as the actual conversation. Matched at the start of the text.
+const SYS_PREFIXES = [
+  "<task-notification>",
+  "<bash-input>",
+  "<bash-stdout>",
+  "<bash-stderr>",
+  "<local-command",
+  "<command-message>",
+  "<command-name>",
+  "<command-args>",
+  "<user-memory-input>",
+  "<system-reminder>",
+  // Auto-logged when the user interrupts a tool (e.g. rejecting an ExitPlanMode plan) —
+  // a system record, not something the user typed, so keep it out of the mirror.
+  "[Request interrupted by user",
+];
+
+function isNoise(t: Turn): boolean {
+  if (t.role !== "user") return false;
+  const s = (t.text || "").replace(/^\s+/, "");
+  return SYS_PREFIXES.some((p) => s.startsWith(p));
+}
+
+// echoLanded reports whether an optimistic echo's real user turn has appeared in the
+// transcript: a non-noise user turn past the echo's anchor idx with the same text. Used
+// both to hide a landed echo at render time (no 1-frame double) and to prune it from state.
+function echoLanded(e: { text: string; sinceIdx: number }, turns: Turn[]): boolean {
+  return turns.some(
+    (t) =>
+      t.role === "user" &&
+      t.idx !== undefined &&
+      (t.idx as number) > e.sinceIdx &&
+      !isNoise(t) &&
+      (t.text || "").trim() === e.text,
+  );
+}
+
+// partsOf returns a turn's ordered parts, synthesizing a single text part for turns
+// from an older Agent that predates the parts field (backward compatible).
+function partsOf(t: Turn): Part[] {
+  if (Array.isArray(t.parts) && t.parts.length) return t.parts;
+  return t.text ? [{ kind: "text", text: t.text }] : [];
+}
+
+// groupTurns folds consecutive same-role turns into one block (concatenating their
+// ordered parts, and their text for copy) and drops noise. A block breaks on a role
+// OR sidechain change so a subagent's turns stay separate from the main thread. It
+// keeps the FIRST turn's idx/timestamp/branch/cwd, and for tokens sums output while
+// taking the last event's input/cache as the context size.
+function groupTurns(turns: Turn[]): Group[] {
+  const out: Group[] = [];
+  for (const t of turns) {
+    if (isNoise(t)) continue;
+    const parts = partsOf(t);
+    if (!parts.length) continue;
+    const last = out[out.length - 1];
+    // A compaction summary is its own standalone block — never merge it into an
+    // adjacent user turn (nor merge a normal turn into it).
+    if (last && last.role === t.role && last.sidechain === !!t.sidechain && !last.compact && !t.compact) {
+      last.parts.push(...parts);
+      if (t.pending) last.pending = true;
+      if (t.text) last.text += (last.text ? "\n\n" : "") + t.text;
+      if (!last.model && t.model) last.model = t.model;
+      if (!last.effort && t.effort) last.effort = t.effort;
+      if (t.ctxWindow) last.ctxWindow = t.ctxWindow;
+      last.outTok += t.outTok || 0;
+      if (t.inTok || t.cacheRead || t.cacheCreate) {
+        last.inTok = t.inTok || 0;
+        last.cacheRead = t.cacheRead || 0;
+        last.cacheCreate = t.cacheCreate || 0;
+      }
+    } else {
+      out.push({
+        role: t.role,
+        sidechain: !!t.sidechain,
+        compact: !!t.compact,
+        parts: [...parts],
+        text: t.text || "",
+        model: t.model || "",
+        effort: t.effort || "",
+        ctxWindow: t.ctxWindow || 0,
+        branch: t.branch || "",
+        cwd: t.cwd || "",
+        inTok: t.inTok || 0,
+        outTok: t.outTok || 0,
+        cacheRead: t.cacheRead || 0,
+        cacheCreate: t.cacheCreate || 0,
+        ts: t.ts,
+        idx: t.idx,
+        pending: !!t.pending,
+      });
+    }
+  }
+  return out;
+}
+
+// latestContext returns the newest assistant turn's prompt breakdown (reused-cache,
+// newly-cached, fresh) — the current context fill — or null if no usage is recorded
+// yet (e.g. an Agent that predates the usage field, before a Stop/Start).
+function latestContext(groups: Group[]) {
+  for (let i = groups.length - 1; i >= 0; i--) {
+    const g = groups[i];
+    if (g.role === "user") continue;
+    if (g.inTok + g.cacheRead + g.cacheCreate > 0) {
+      return { read: g.cacheRead, create: g.cacheCreate, fresh: g.inTok, model: g.model, window: g.ctxWindow };
+    }
+  }
+  return null;
+}
+
+// renderGroups lays the blocks out, inserting a context strip (branch · cwd) above a
+// block whenever either changes from the previously shown one — so a branch switch or
+// cd is marked once, not repeated on every turn. Empty context leaves the marker as-is.
+// spendOf is a turn's newly-consumed tokens (uncached input + cache creation + output).
+function spendOf(g: Group): number {
+  return g.inTok + g.cacheCreate + g.outTok;
+}
+
+function renderGroups(
+  groups: Group[],
+  onAnswer: (t: string) => void,
+  onOpenPlan: (plan: string) => void,
+  onOpenDiff: (p: Part) => void,
+  maxSpend: number,
+  session: string,
+  onOpenImage: (url: string) => void,
+  agentName: string,
+  isRejectedPlan: (plan: string) => boolean,
+) {
+  const els = [];
+  let prevCtx = "";
+  for (const g of groups) {
+    const ctx = g.branch || g.cwd ? (g.branch || "") + " " + (g.cwd || "") : "";
+    if (ctx && ctx !== prevCtx) {
+      els.push(<ContextLine key={"ctx-" + g.idx} branch={g.branch} cwd={g.cwd} />);
+    }
+    if (ctx) prevCtx = ctx;
+    els.push(
+      g.compact ? (
+        <CompactBlock key={g.idx} turn={g} />
+      ) : (
+        <Turn
+          key={g.idx}
+          turn={g}
+          maxSpend={maxSpend}
+          session={session}
+          onOpenImage={onOpenImage}
+          onAnswer={onAnswer}
+          onOpenPlan={onOpenPlan}
+          onOpenDiff={onOpenDiff}
+          agentName={agentName}
+          isRejectedPlan={isRejectedPlan}
+        />
+      ),
+    );
+  }
+  return els;
+}
+
+// taskIcon maps a ToDo status to its codicon glyph (in_progress spins via the caller).
+function taskIcon(status: string): string {
+  if (status === "completed") return "check";
+  if (status === "in_progress") return "loading";
+  return "circle-large-outline";
+}
+
+// TaskChecklist renders the current ToDo list (reconstructed from Task tool calls) as a
+// collapsed disclosure: a done/total count, the active task on the summary, and the full
+// list on expand. Open while work remains; collapses once everything is completed.
+function TaskChecklist({ tasks }: { tasks: TaskItem[] }) {
+  const done = tasks.filter((t) => t.status === "completed").length;
+  const total = tasks.length;
+  const active = tasks.find((t) => t.status === "in_progress");
+  const [open, setOpen] = useState(done < total);
+  return (
+    <details
+      className="mirror-tasks"
+      open={open}
+      onToggle={(e) => setOpen((e.currentTarget as HTMLDetailsElement).open)}
+    >
+      <summary className="mirror-tasks-head">
+        <Icon name="checklist" />
+        <span className="mtk-title">ToDo</span>
+        <span className="mtk-count muted">
+          {done}/{total}
+        </span>
+        {active && <span className="mtk-active muted">{active.activeForm || active.subject}</span>}
+      </summary>
+      <ol className="mirror-tasks-list">
+        {tasks.map((t) => (
+          <li key={t.id} className={"mtk-item mtk-" + t.status}>
+            <Icon name={taskIcon(t.status)} spin={t.status === "in_progress"} className="mtk-mark" />
+            <span className="mtk-text">
+              {t.status === "in_progress" && t.activeForm ? t.activeForm : t.subject}
+            </span>
+          </li>
+        ))}
+      </ol>
+    </details>
+  );
+}
+
+// CompactBlock renders claude's auto-compaction summary as a collapsed disclosure —
+// "コンテキストが圧縮されました" — rather than a giant user turn. Closed by default
+// (native <details>); expand to read the summary that replaced the earlier context.
+function CompactBlock({ turn }: { turn: Group }) {
+  return (
+    <details className="mirror-compact">
+      <summary className="mirror-compact-head">
+        <Icon name="archive" />
+        <span className="mc-title">コンテキストが圧縮されました</span>
+        {turn.ts && <span className="mc-time muted">{formatTS(turn.ts)}</span>}
+      </summary>
+      <div className="mirror-compact-body">
+        <MarkdownView source={turn.text} />
+      </div>
+    </details>
+  );
+}
+
+// ThinkingBlock renders an agent's chain-of-thought (codex/opencode reasoning) as a
+// collapsed disclosure — "思考" — so it's available without crowding the answer. Closed
+// by default (native <details>); expand to read the reasoning.
+function ThinkingBlock({ text }: { text?: string }) {
+  if (!text) return null;
+  return (
+    <details className="mirror-thinking">
+      <summary className="mirror-thinking-head">
+        <Icon name="lightbulb" />
+        <span className="mth-title">思考</span>
+      </summary>
+      <div className="mirror-thinking-body">
+        <MarkdownView source={text} />
+      </div>
+    </details>
+  );
+}
+
+// ContextLine marks the git branch / working dir in effect from here on.
+function ContextLine({ branch, cwd }: { branch?: string; cwd?: string }) {
+  return (
+    <div className="mirror-context">
+      {branch && (
+        <span className="mc-branch">
+          <Icon name="git-branch" /> {branch}
+        </span>
+      )}
+      {cwd && <span className="mc-cwd">{prettyCwd(cwd)}</span>}
+    </div>
+  );
+}
+
+// Turn renders one conversation block: a header (who + model), the body (user prompt
+// as text, assistant reply as Markdown with faint tool traces), and a footer (time +
+// token usage + copy). Subagent (sidechain) turns get a distinct label and tint.
+function Turn({
+  turn,
+  maxSpend,
+  session,
+  onOpenImage,
+  onAnswer,
+  onOpenPlan,
+  onOpenDiff,
+  agentName,
+  isRejectedPlan,
+}: {
+  turn: Group;
+  maxSpend: number;
+  session: string;
+  onOpenImage: (url: string) => void;
+  onAnswer: (t: string) => void;
+  onOpenPlan: (plan: string) => void;
+  onOpenDiff: (p: Part) => void;
+  agentName: string;
+  isRejectedPlan: (plan: string) => boolean;
+}) {
+  const isUser = turn.role === "user";
+  const who = isUser ? "あなた" : turn.sidechain ? "サブエージェント" : agentName;
+  const ctxTok = turn.inTok + turn.cacheRead + turn.cacheCreate;
+  const spend = spendOf(turn);
+  return (
+    <div className={"mirror-turn " + (isUser ? "user" : "assistant") + (turn.sidechain ? " sidechain" : "")}>
+      <div className="mirror-turn-head">
+        <span className="mt-who">{who}</span>
+        {turn.pending && (
+          <span className="mt-pending" title="送信済み。claude が処理を始めると反映されます">
+            <Icon name="loading" spin /> 反映待ち
+          </span>
+        )}
+        {!isUser && turn.model && <span className="mt-model">{prettyModel(turn.model)}</span>}
+        {!isUser && turn.effort && (
+          <span className="mt-effort" title="推論の努力度（codex reasoning_effort / opencode variant）">
+            {turn.effort}
+          </span>
+        )}
+      </div>
+      <div className="mirror-turn-body">
+        {isUser ? (
+          (() => {
+            // Split off any pasted-image references so the bubble shows the user's words
+            // plus clickable thumbnails, not the machine-facing paths.
+            const { text, images } = splitPastedImages(turn.text || "");
+            return (
+              <>
+                {text && <MarkdownView source={text} breaks />}
+                {images.length > 0 && (
+                  <div className="mt-imgs">
+                    {images.map((nm) => (
+                      <PastedThumb key={nm} session={session} name={nm} onOpen={onOpenImage} />
+                    ))}
+                  </div>
+                )}
+              </>
+            );
+          })()
+        ) : (
+          foldParts(turn.parts).map((item) =>
+            // Consecutive tool traces collapse into one foldable row (Edit/Write bursts
+            // between paragraphs). A lone tool renders inline (ToolRun handles length 1).
+            item.kind === "toolrun" ? (
+              <ToolRun key={"tr" + item.tools[0].i} tools={item.tools} onOpenDiff={onOpenDiff} />
+            ) : item.p.kind === "question" ? (
+              // A question from the transcript is already answered (claude writes the
+              // tool_use only after the answer) — show it resolved, not clickable.
+              <QuestionBlock key={item.i} questions={item.p.questions} answered answer={item.p.answer} />
+            ) : item.p.kind === "plan" ? (
+              // A historical plan (already decided) — show the outcome, open in a pane.
+              <PlanBlock
+                key={item.i}
+                plan={item.p.plan}
+                answered
+                outcome={item.p.answer}
+                forceRejected={isRejectedPlan(item.p.plan || "")}
+                onOpen={() => onOpenPlan && onOpenPlan(item.p.plan || "")}
+              />
+            ) : item.p.kind === "thinking" ? (
+              // The agent's chain-of-thought (codex reasoning / opencode reasoning),
+              // collapsed by default so it doesn't crowd the answer.
+              <ThinkingBlock key={item.i} text={item.p.text} />
+            ) : (
+              <MarkdownView key={item.i} source={item.p.text} />
+            ),
+          )
+        )}
+      </div>
+      <div className="mirror-turn-foot">
+        {turn.ts && <span className="mt-time muted">{formatTS(turn.ts)}</span>}
+        {turn.outTok > 0 && (
+          <span className="mt-tok muted" title="入力(文脈)↑ / 出力↓ トークン">
+            ↑{fmtTok(ctxTok)} ↓{fmtTok(turn.outTok)}
+          </span>
+        )}
+        {!isUser && spend > 0 && maxSpend > 0 && (
+          <TurnSpendBar fresh={turn.inTok} create={turn.cacheCreate} out={turn.outTok} max={maxSpend} />
+        )}
+        <CopyButton text={turn.text} />
+      </div>
+    </div>
+  );
+}
+
+// TurnSpendBar visualizes one turn's newly-consumed tokens as a stacked bar, scaled so
+// the heaviest turn in the conversation fills the track — the bar length shows the turn's
+// relative weight, the segments its input(uncached)/cache-creation/output split. Cache
+// reads (reused context) are excluded; the ↑ number beside it carries total context.
+function TurnSpendBar({ fresh, create, out, max }: { fresh: number; create: number; out: number; max: number }) {
+  const pct = (n: number) => (n / max) * 100 + "%";
+  const total = fresh + create + out;
+  const title =
+    `このターンの新規消費 ${total.toLocaleString()} トークン\n` +
+    `未キャッシュ入力 ${fresh.toLocaleString()} · 新規キャッシュ ${create.toLocaleString()} · 出力 ${out.toLocaleString()}`;
+  return (
+    <span className="mt-spend" title={title} aria-hidden="true">
+      <span className="ts-seg ts-fresh" style={{ width: pct(fresh) }} />
+      <span className="ts-seg ts-create" style={{ width: pct(create) }} />
+      <span className="ts-seg ts-out" style={{ width: pct(out) }} />
+    </span>
+  );
+}
+
+// PastedThumb shows a small preview of a pasted image referenced in a turn. It fetches
+// the bytes through the authenticated API wrapper (an <img src> can't carry the tenant
+// header) into an object URL, and hands that same URL to the lightbox on click.
+function PastedThumb({ session, name, onOpen }: { session: string; name: string; onOpen: (url: string) => void }) {
+  const [url, setUrl] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    let obj = "";
+    raw(`api/sessions/${q(session)}/pasted/${encodeURIComponent(name)}`)
+      .then((r) => (r.ok ? r.blob() : null))
+      .then((b) => {
+        if (!alive) return;
+        if (!b) {
+          setFailed(true);
+          return;
+        }
+        obj = URL.createObjectURL(b);
+        setUrl(obj);
+      })
+      .catch(() => {
+        if (alive) setFailed(true);
+      });
+    return () => {
+      alive = false;
+      if (obj) URL.revokeObjectURL(obj);
+    };
+  }, [session, name]);
+  if (failed) {
+    return (
+      <span className="mt-img mt-img-loading" title="プレビューを取得できませんでした">
+        <Icon name="file-media" />
+      </span>
+    );
+  }
+  if (!url) {
+    return (
+      <span className="mt-img mt-img-loading">
+        <Icon name="loading" spin />
+      </span>
+    );
+  }
+  return (
+    <button type="button" className="mt-img" title="クリックで拡大" onClick={() => onOpen(url)}>
+      <img src={url} alt="貼り付け画像" />
+    </button>
+  );
+}
+
+// foldParts walks a block's ordered parts and coalesces each maximal run of
+// consecutive tool traces into one { kind:"toolrun", tools:[{p,i}] } item; every
+// other part passes through as { kind:"part", p, i }. A run of length 1 still
+// becomes a toolrun (ToolRun renders it inline), so callers only branch two ways.
+function foldParts(parts: Part[]): FoldItem[] {
+  const items: FoldItem[] = [];
+  let run: { kind: "toolrun"; tools: { p: Part; i: number }[] } | null = null;
+  parts.forEach((p, i) => {
+    if (p.kind === "tool") {
+      if (!run) {
+        run = { kind: "toolrun", tools: [] };
+        items.push(run);
+      }
+      run.tools.push({ p, i });
+    } else {
+      run = null;
+      items.push({ kind: "part", p, i });
+    }
+  });
+  return items;
+}
+
+// ToolTrace renders one faint tool line. Edit-family tools carry their before/after,
+// so they render as a button that opens a diff pane; a tool that carries its output
+// (codex/opencode) becomes a click-to-expand row showing the result; the rest are a
+// static trace.
+function ToolTrace({ p, onOpenDiff }: { p: Part; onOpenDiff?: (p: Part) => void }) {
+  const [open, setOpen] = useState(false);
+  if (p.edits && p.edits.length) {
+    return (
+      <button
+        type="button"
+        className="mt-tool mt-tool-diff"
+        onClick={() => onOpenDiff && onOpenDiff(p)}
+        title="差分を別ペインで開く"
+      >
+        <Icon name="diff" />
+        <span className="mt-tool-name">{p.tool}</span>
+        {p.info && <span className="mt-tool-info">{p.info}</span>}
+      </button>
+    );
+  }
+  if (p.output) {
+    return (
+      <div className={"mt-tool-out" + (open ? " open" : "")}>
+        <button
+          type="button"
+          className="mt-tool mt-tool-outhead"
+          onClick={() => setOpen((o) => !o)}
+          aria-expanded={open}
+          title={open ? "出力をたたむ" : "出力を表示"}
+        >
+          <Icon name={open ? "chevron-down" : "chevron-right"} />
+          <span className="mt-tool-name">{p.tool}</span>
+          {p.info && <span className="mt-tool-info">{p.info}</span>}
+        </button>
+        {open && <pre className="mt-tool-output">{p.output}</pre>}
+      </div>
+    );
+  }
+  return (
+    <div className="mt-tool">
+      <Icon name="tools" />
+      <span className="mt-tool-name">{p.tool}</span>
+      {p.info && <span className="mt-tool-info">{p.info}</span>}
+    </div>
+  );
+}
+
+// ToolRun renders a run of consecutive tool traces. A lone tool shows inline as
+// before; two or more collapse (default) into a summary row — "N 件のツール" with a
+// per-tool tally (Edit×3 · Bash×2) — that expands on click to the individual traces,
+// keeping each edit's click-to-diff.
+function ToolRun({ tools, onOpenDiff }: { tools: { p: Part; i: number }[]; onOpenDiff?: (p: Part) => void }) {
+  const [open, setOpen] = useState(false);
+  if (tools.length === 1) return <ToolTrace p={tools[0].p} onOpenDiff={onOpenDiff} />;
+  const tally: [string, number][] = [];
+  const at: Record<string, number> = {};
+  for (const { p } of tools) {
+    const name = p.tool || "tool";
+    if (at[name] === undefined) {
+      at[name] = tally.length;
+      tally.push([name, 0]);
+    }
+    tally[at[name]][1]++;
+  }
+  const summary = tally.map(([n, c]) => (c > 1 ? `${n}×${c}` : n)).join(" · ");
+  return (
+    <div className={"mt-toolrun" + (open ? " open" : "")}>
+      <button
+        type="button"
+        className="mt-tool mt-toolrun-head"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        title={open ? "ツールをたたむ" : "ツールを展開"}
+      >
+        <Icon name={open ? "chevron-down" : "chevron-right"} />
+        <span className="mt-tool-name">{tools.length} 件のツール</span>
+        <span className="mt-tool-info">{summary}</span>
+      </button>
+      {open && (
+        <div className="mt-toolrun-body">
+          {tools.map(({ p, i }) => (
+            <ToolTrace key={i} p={p} onOpenDiff={onOpenDiff} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// PendingQuestions is the interactive form for the currently-awaiting AskUserQuestion.
+// One question with a single choice → click-to-send (the common, low-friction case).
+// Multi-select or multiple questions → build a selection, then submit: answers are
+// sent one page at a time (multi-select choices joined) so the terminal modal advances
+// through each question and doesn't close after the first pick.
+function PendingQuestions({
+  questions,
+  onSendOne,
+  onSubmitKeys,
+  onSubmitSeq,
+  sending,
+  answerMode = "claude",
+}: {
+  questions: Question[];
+  onSendOne: (label: string) => void;
+  onSubmitKeys: (keys: string[]) => void;
+  onSubmitSeq: (seq: Array<{ k?: string; t?: string }>) => void;
+  sending: boolean;
+  // "claude": AskUserQuestion's tabbed modal (free-text single / Down-Enter-Right multi).
+  // "menu": codex/opencode ask via a simple option menu — a single-select question is
+  // answered by moving Down to the option index and pressing Enter. Multi-select /
+  // multi-question menus aren't driven from chat (answered in the terminal).
+  answerMode?: "claude" | "menu";
+}) {
+  const qs = questions || [];
+  const [sel, setSel] = useState<string[][]>(() => qs.map(() => []));
+  // Per-question free-text ("Type something"). Filled → that question is answered by
+  // free text instead of an option (mutually exclusive with a selection, below).
+  const [freeText, setFreeText] = useState<string[]>(() => qs.map(() => ""));
+  const single = qs.length === 1 && !qs[0]?.multiSelect;
+  const menu = answerMode === "menu";
+  // In menu mode we can only drive a single-select single question; anything else is
+  // shown read-only with a hint to answer in the terminal.
+  const menuDrivable = menu && single;
+
+  const clearFree = (qi: number) =>
+    setFreeText((prev) => (prev[qi] ? prev.map((v, i) => (i === qi ? "" : v)) : prev));
+
+  const toggle = (qi: number, label: string, multi?: boolean) => {
+    clearFree(qi); // picking an option drops any free text for this question
+    setSel((prev) => {
+      const next = prev.map((a) => a.slice());
+      const cur = next[qi] || [];
+      if (multi) next[qi] = cur.includes(label) ? cur.filter((x) => x !== label) : [...cur, label];
+      else next[qi] = cur[0] === label ? [] : [label];
+      return next;
+    });
+  };
+
+  const setFree = (qi: number, v: string) => {
+    setFreeText((prev) => prev.map((x, i) => (i === qi ? v : x)));
+    if (v) setSel((prev) => ((prev[qi] || []).length ? prev.map((a, i) => (i === qi ? [] : a)) : prev));
+  };
+
+  // A question is answered by a selection OR free text (multi-select may be left empty).
+  const canSubmit = qs.every(
+    (q, qi) => (freeText[qi] || "").trim() !== "" || q.multiSelect || (sel[qi] || []).length > 0,
+  );
+
+  // Drive the modal with named keys, matching the real AskUserQuestion behavior
+  // (verified against the terminal). Each question page starts with the cursor at the
+  // top option; ↑/↓ navigate options, ←/→ switch question tabs, Enter selects/toggles.
+  //   single-select: move Down to the choice, Enter — this selects AND auto-advances
+  //                  to the next tab.
+  //   multi-select:  Enter TOGGLES in place (cursor stays); after toggling every
+  //                  choice, Right advances to the next tab.
+  // After all questions we land on the Submit tab (Review page); a final Enter
+  // activates "Submit answers".
+  const submit = () => {
+    const seq: Array<{ k?: string; t?: string }> = [];
+    qs.forEach((q, qi) => {
+      const opts = q.options || [];
+      const ft = (freeText[qi] || "").trim();
+      if (ft) {
+        // Free text: the "Type something" row sits just after the options — move down to
+        // it (no Enter needed to focus it), type, then Enter confirms + advances.
+        for (let k = 0; k < opts.length; k++) seq.push({ k: "Down" });
+        seq.push({ t: ft });
+        seq.push({ k: "Enter" });
+        return;
+      }
+      const idx = (sel[qi] || [])
+        .map((l) => opts.findIndex((o) => o.label === l))
+        .filter((i) => i >= 0)
+        .sort((a, b) => a - b);
+      if (q.multiSelect) {
+        let cur = 0;
+        for (const ci of idx) {
+          for (let k = 0; k < ci - cur; k++) seq.push({ k: "Down" });
+          seq.push({ k: "Enter" }); // toggle in place
+          cur = ci;
+        }
+        seq.push({ k: "Right" }); // advance to the next question / Submit tab
+      } else {
+        const ci = idx[0] ?? 0;
+        for (let k = 0; k < ci; k++) seq.push({ k: "Down" });
+        seq.push({ k: "Enter" }); // select + auto-advance to the next tab
+      }
+    });
+    seq.push({ k: "Enter" }); // Review page: "Submit answers"
+    onSubmitSeq(seq);
+  };
+
+  return (
+    <div className="mt-question">
+      {qs.map((qn, qi) => (
+        <div className="mq" key={qi}>
+          <div className="mq-head">
+            <Icon name="comment-discussion" />
+            {qn.header && <span className="mq-header">{qn.header}</span>}
+            {qs.length > 1 && (
+              <span className="mq-page muted">
+                {qi + 1}/{qs.length}
+              </span>
+            )}
+            {qn.multiSelect && <span className="mq-multi muted">複数選択</span>}
+          </div>
+          {qn.question && <div className="mq-text">{qn.question}</div>}
+          <div className="mq-options">
+            {(qn.options || []).map((o, oi) => {
+              const checked = (sel[qi] || []).includes(o.label);
+              // menu single-select: move Down to this option's index, then Enter.
+              const pick = menuDrivable
+                ? () => onSubmitKeys([...Array(oi).fill("Down"), "Enter"])
+                : single
+                  ? () => onSendOne(o.label)
+                  : () => toggle(qi, o.label, qn.multiSelect);
+              return (
+                <button
+                  type="button"
+                  className={"mq-opt" + (checked ? " checked" : "")}
+                  key={oi}
+                  disabled={sending || (menu && !menuDrivable)}
+                  onClick={pick}
+                  title={o.description || o.label}
+                >
+                  {!single && (
+                    <span className="mq-mark">{qn.multiSelect ? (checked ? "☑" : "☐") : checked ? "◉" : "○"}</span>
+                  )}
+                  <span className="mq-opt-body">
+                    <span className="mq-opt-label">{o.label}</span>
+                    {o.description && <span className="mq-opt-desc">{o.description}</span>}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+          {!single && !menu && (
+            <textarea
+              className="mq-freetext"
+              rows={2}
+              placeholder="または自由入力（Type something / 改行可）"
+              value={freeText[qi] || ""}
+              disabled={sending}
+              onChange={(e) => setFree(qi, e.target.value)}
+            />
+          )}
+        </div>
+      ))}
+      {!single && !menu && (
+        <div className="mq-submit-row">
+          <button
+            type="button"
+            className="btn primary mq-submit"
+            disabled={sending || !canSubmit}
+            onClick={submit}
+          >
+            回答を送信
+          </button>
+        </div>
+      )}
+      {menu && !menuDrivable && (
+        // A multi-select / multi-question menu we can't reliably drive from chat.
+        <div className="mq-submit-row muted mq-terminal-hint">
+          この形式の質問はターミナルで回答してください
+        </div>
+      )}
+    </div>
+  );
+}
+
+// QuestionBlock renders an already-answered AskUserQuestion from the transcript:
+// header + prompt + options, inert, with the chosen option highlighted.
+function QuestionBlock({
+  questions,
+  answered,
+  answer,
+}: {
+  questions?: Question[];
+  answered?: boolean;
+  answer?: string;
+}) {
+  const norm = (answer || "").trim();
+  // AskUserQuestion's tool_result reads:
+  //   Your questions have been answered: "<q1>"="<a1>", "<q2>"="<a2>". …
+  // Pull the per-question answers so each card shows its OWN reply — a free-text
+  // "Type something" answer then lands under the right question instead of dumping the
+  // whole raw string. Falls back to the raw text if the format ever changes.
+  const pairs = [...norm.matchAll(/"[^"]*"\s*=\s*"([^"]*)"/g)].map((m) => m[1].trim());
+  const answerAt = (qi: number) => (pairs.length ? pairs[qi] || "" : norm);
+  // Which options an answer picked: match each label present as a token, falling back to
+  // containment. The answer may list several labels ("AWS, セルフホスト").
+  const chosenFor = (a: string, opts: QuestionOption[]) => {
+    if (!answered || !a) return new Set<QuestionOption>();
+    const tokens = a.split(/[,、\/\s]+/).map((s) => s.trim()).filter(Boolean);
+    let chosen = opts.filter((o) => tokens.includes(o.label));
+    if (!chosen.length) chosen = opts.filter((o) => a.includes(o.label));
+    return new Set(chosen);
+  };
+  return (
+    <div className={"mt-question" + (answered ? " answered" : "")}>
+      {(questions || []).map((qn, qi) => {
+        const opts = qn.options || [];
+        const a = answerAt(qi);
+        const chosenSet = chosenFor(a, opts);
+        return (
+          <div className="mq" key={qi}>
+            <div className="mq-head">
+              <Icon name="comment-discussion" />
+              {qn.header && <span className="mq-header">{qn.header}</span>}
+              {qn.multiSelect && <span className="mq-multi muted">複数選択可</span>}
+              {answered && <span className="mq-done muted">回答済み</span>}
+            </div>
+            {qn.question && <div className="mq-text">{qn.question}</div>}
+            <div className="mq-options">
+              {opts.map((o, oi) => {
+                const sel = chosenSet.has(o);
+                return (
+                  <button
+                    type="button"
+                    className={"mq-opt" + (sel ? " selected" : "")}
+                    key={oi}
+                    disabled
+                    title={o.description || o.label}
+                  >
+                    <span className="mq-mark">{sel ? "✔" : qn.multiSelect ? "☐" : "○"}</span>
+                    <span className="mq-opt-body">
+                      <span className="mq-opt-label">{o.label}</span>
+                      {o.description && <span className="mq-opt-desc">{o.description}</span>}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+            {answered && a && !chosenSet.size && <div className="mq-answer muted">回答: {a}</div>}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// PlanBlock shows an ExitPlanMode plan compactly (title + one-line summary) with a
+// button to open the full Markdown in its own pane, and — while pending — an approve
+// button that confirms the plan (Enter = "Yes, and bypass permissions").
+function PlanBlock({
+  plan,
+  pending,
+  answered,
+  outcome,
+  forceRejected,
+  onOpen,
+  onApprove,
+  onReject,
+  sending,
+}: {
+  plan?: string;
+  pending?: boolean;
+  answered?: boolean;
+  outcome?: string;
+  forceRejected?: boolean;
+  onOpen?: () => void;
+  onApprove?: () => void;
+  onReject?: () => void;
+  sending?: boolean;
+}) {
+  // A plan in the transcript was presented and resolved — classify its outcome text
+  // (best-effort; the exact result text varies). A rejected plan's tool_result is an
+  // interruption ("[Request interrupted by user for tool use]"), so isRejected wins to
+  // avoid mislabeling a 却下 as 承認済み. Empty/unknown → neutral 決定済み: the tool_result
+  // can lag a poll or two behind the plan turn, and defaulting empty→approved made a
+  // just-rejected plan flash 承認済み until the interrupt result landed.
+  const rejected = forceRejected || isRejected(outcome);
+  const approved = !rejected && isApproved(outcome);
+  return (
+    <div className={"mt-plan" + (answered ? " decided" : "")}>
+      <div className="mt-plan-head">
+        <Icon name="checklist" />
+        <span className="mt-plan-title">{planTitle(plan)}</span>
+        {pending && <span className="mt-plan-badge">承認待ち</span>}
+        {answered && (
+          <span className={"mt-plan-badge" + (approved ? " ok" : rejected ? " no" : "")}>
+            {approved ? "承認済み" : rejected ? "却下" : "決定済み"}
+          </span>
+        )}
+      </div>
+      {planSummary(plan) && <div className="mt-plan-summary">{planSummary(plan)}</div>}
+      <div className="mt-plan-actions">
+        <button type="button" className="ghost mt-plan-open" onClick={onOpen}>
+          <Icon name="split-horizontal" /> 別ペインで開く
+        </button>
+        {pending && (
+          <>
+            <button type="button" className="btn primary mt-plan-approve" disabled={sending} onClick={onApprove}>
+              <Icon name="check" /> 承認して実行
+            </button>
+            {onReject && (
+              <button
+                type="button"
+                className="ghost mt-plan-reject"
+                disabled={sending}
+                title="このプランを承認せず、プランニングを続ける（フィードバックを入力できます）"
+                onClick={onReject}
+              >
+                <Icon name="close" /> 却下（続ける）
+              </button>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// isApproved guesses whether an ExitPlanMode tool_result text is an approval, to badge
+// a historical plan. Best-effort keyword match (the exact result text may vary).
+function isApproved(outcome?: string) {
+  return /approv|proceed|start coding|going to code|承認|実行してよい|yes/i.test(outcome || "");
+}
+function isRejected(outcome?: string) {
+  // "interrupt" catches a rejected plan's tool_result ("[Request interrupted by user for
+  // tool use]"), which is how ExitPlanMode records 却下 / "tell Claude what to change".
+  return /keep planning|not approv|reject|refine|declin|interrupt|却下|中止|やり直/i.test(outcome || "");
+}
+
+// planTitle / planSummary derive a compact heading + lead line from the plan Markdown.
+function planTitle(md?: string) {
+  const m = (md || "").match(/^#{1,3}\s+(.+)$/m);
+  return m ? m[1].trim() : "プラン";
+}
+function planSummary(md?: string) {
+  for (const line of (md || "").split("\n")) {
+    const s = line.trim();
+    if (s && !s.startsWith("#") && !s.startsWith("```")) {
+      return s.length > 100 ? s.slice(0, 100) + "…" : s;
+    }
+  }
+  return "";
+}
+
+// CopyButton copies the turn's RAW Markdown (not the rendered HTML) to the clipboard.
+function CopyButton({ text }: { text: string }) {
+  const [done, setDone] = useState(false);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setDone(true);
+      setTimeout(() => setDone(false), 1500);
+    } catch {
+      /* clipboard blocked (insecure context / permission) — no-op */
+    }
+  };
+  return (
+    <button
+      type="button"
+      className="ghost mt-copy"
+      title="Markdown をコピー"
+      onClick={copy}
+    >
+      <Icon name={done ? "check" : "copy"} /> {done ? "コピー済" : "コピー"}
+    </button>
+  );
+}
+
+// prettyModel shortens a model id for the turn header: "claude-opus-4-8" → "opus 4.8".
+function prettyModel(m: string) {
+  return m
+    .replace(/^claude-/, "")
+    .replace(/-(\d+)-(\d+)$/, " $1.$2")
+    .replace(/-latest$/, "");
+}
+
+// prettyCwd collapses the home prefix to ~ so the working dir reads compactly.
+function prettyCwd(p: string) {
+  return p.replace(/^\/home\/[^/]+/, "~");
+}
+
+// formatTS renders an RFC3339 timestamp as local "MM/DD HH:MM" (date kept so a long
+// session that spans days stays unambiguous).
+function formatTS(iso: string) {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${p(d.getMonth() + 1)}/${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}

@@ -22,13 +22,20 @@ export function openSessionTerminalSplit(name: string): void {
   reconnectSession(name);
 }
 
-// sendPromptWhenAlive delivers a launch prompt (repo 起動 modal) to a freshly
-// created session once it's actually up: poll the sessions list until the slot
-// reports alive, give the CLI a beat to draw its prompt, then paste-send once.
-//
-// TODO(P5): this is the interim path — the old console stashed the prompt as a
-// launchSeed and let MirrorView auto-send it when the chat mirror attached.
-// Replace with that flow when MirrorView lands.
+// Chat-mirror opens: a chat-capable session (claude) opens the Markdown mirror
+// by default — alive: the PTY still attaches in the background; stopped: the
+// history shows read-only without resuming (再開して続ける resumes explicitly).
+export function openSessionChat(name: string): void {
+  useLayoutStore.getState().openTarget({ content: { kind: "terminal", chat: true }, session: name });
+}
+
+export function openSessionChatSplit(name: string): void {
+  useLayoutStore.getState().openTargetInNew({ content: { kind: "terminal", chat: true }, session: name });
+}
+
+// sendPromptWhenAlive delivers a launch prompt to a freshly created NON-chat
+// session (codex/opencode terminals) once it's actually up. Chat-capable kinds
+// (claude) use setLaunchSeed + the mirror's auto-send instead (the old flow).
 export function sendPromptWhenAlive(name: string, prompt: string): void {
   if (!name || !prompt) return;
   let tries = 0;

@@ -27,6 +27,8 @@ import { Button } from "../../ui/Button.tsx";
 import { Pill } from "../../ui/Pill.tsx";
 import type { PillTone } from "../../ui/Pill.tsx";
 import { TermKeys } from "./TermKeys.tsx";
+import { MirrorToggle } from "../mirror/MirrorToggle.tsx";
+import { ContextBar } from "../mirror/ContextBar.tsx";
 import type { Session } from "../../types/session.ts";
 
 // Brand artwork shown over an unattached terminal so a freshly split (or initial)
@@ -49,6 +51,9 @@ interface TerminalViewProps {
   sessionMeta?: Session | null;
   active?: boolean;
   attached?: boolean;
+  canMirror?: boolean;
+  mirror?: boolean;
+  onToggleMirror?: (toChat: boolean) => void;
   onResume?: () => void;
 }
 
@@ -58,6 +63,9 @@ export function TerminalView({
   sessionMeta = null,
   active,
   attached = true,
+  canMirror = false,
+  mirror = false,
+  onToggleMirror,
   onResume,
 }: TerminalViewProps) {
   const ref = useRef<HTMLDivElement>(null);
@@ -122,15 +130,21 @@ export function TerminalView({
     }
   }, [active, paneId, attached, running]);
 
-  // Reveal fit: when a hidden container becomes visible its size was 0×0 — defer
-  // past layout (rAF) so the grid measures the real size and the TUI redraws.
+  // Reveal fit: when a hidden container becomes visible (toggled back from the
+  // chat mirror / a split un-hidden) its size was 0×0 — defer past layout (rAF)
+  // so the grid measures the real size and the TUI redraws.
+  const shown = !(canMirror && mirror);
   useEffect(() => {
-    if (!session || !attached || !running) return;
+    if (!shown || !session || !attached || !running) return;
     const raf = requestAnimationFrame(() => ensureAttached(paneId, session));
     return () => cancelAnimationFrame(raf);
-  }, [paneId, session, attached, running]);
+  }, [shown, paneId, session, attached, running]);
 
   const st = sessionMeta ? stateInfo(sessionMeta) : null;
+
+  // Context fill straight off the session (the Agent computes it) — claude only.
+  /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
+  const ctxUsage: any = sessionMeta?.context || null;
 
   return (
     <div className="termview">
@@ -150,7 +164,9 @@ export function TerminalView({
         ) : (
           <span className="pane-head-title">{session ? "セッション" : "セッション未接続"}</span>
         )}
+        {canMirror && <MirrorToggle mirror={mirror} onToggle={onToggleMirror} running={running} />}
       </header>
+      {ctxUsage && <ContextBar {...(ctxUsage as { read: number; create: number; fresh: number; model?: string; window?: number })} />}
       <div className="term-body">
         <div className="terminal" ref={ref} />
         {!session && (

@@ -20,6 +20,7 @@ import "../features/files/files.css";
 import "../features/scm/scm.css";
 import "../features/viewer/viewer.css";
 import "../features/chat/chat.css";
+import "../features/mirror/mirror.css";
 
 // Pin the frame's bars above the mobile soft keyboard (iOS visual-viewport fit).
 wireViewport();
