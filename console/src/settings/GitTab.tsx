@@ -5,6 +5,7 @@ import { useApp } from "../state.jsx";
 import Icon from "../components/Icon.jsx";
 import { useToast } from "../components/ToastProvider.jsx";
 import EmptyState from "../components/EmptyState.jsx";
+import InternalRepoBrowser from "../components/InternalRepoBrowser.jsx";
 import { useConnections } from "./useConnections.js";
 import { ProviderCard, StatusPill, DeviceSteps, DisconnectButton } from "./providerCard.jsx";
 
@@ -31,30 +32,162 @@ export default function GitTab() {
     if (running) reload();
   }, [running, reload]);
 
-  if (!running) {
-    return (
-      <EmptyState
-        as="div"
-        icon="debug-disconnect"
-        message="Git 接続はワークスペース内で実行されます"
-        hint="認証はコンテナ内の Agent を経由するため、ワークスペースの起動が必要です。"
-        action={{
-          label: wsState.endsWith("…") ? "起動中…" : "ワークスペースを起動",
-          icon: "play",
-          onClick: startWs,
-          disabled: wsState.endsWith("…"),
-        }}
-      />
-    );
-  }
-  if (!conns) return <p className="muted pad">読み込み中…</p>;
+  // Internal repos are CP-native (no Agent), so they render regardless of the
+  // workspace state; the external git-hosting cards still require a running Agent.
   return (
     <div className="conns">
-      <div className="conn-cat">git ホスティング</div>
-      <GithubRow st={conns.github} reload={reload} />
-      <BitbucketRow st={conns.bitbucket} reload={reload} />
-      <GlobalIdentity />
+      <InternalRepos />
+      {!running ? (
+        <EmptyState
+          as="div"
+          icon="debug-disconnect"
+          message="外部 Git 接続はワークスペース内で実行されます"
+          hint="外部プロバイダの認証はコンテナ内の Agent を経由するため、ワークスペースの起動が必要です。"
+          action={{
+            label: wsState.endsWith("…") ? "起動中…" : "ワークスペースを起動",
+            icon: "play",
+            onClick: startWs,
+            disabled: wsState.endsWith("…"),
+          }}
+        />
+      ) : !conns ? (
+        <p className="muted pad">読み込み中…</p>
+      ) : (
+        <>
+          <div className="conn-cat">git ホスティング</div>
+          <GithubRow st={conns.github} reload={reload} />
+          <BitbucketRow st={conns.bitbucket} reload={reload} />
+          <GlobalIdentity />
+        </>
+      )}
     </div>
+  );
+}
+
+// An internal repo from GET /api/internal-git/repos.
+interface InternalRepo {
+  name: string;
+  clone_url: string;
+  default_branch?: string;
+  created_at?: string;
+}
+
+// InternalRepos manages the tenant's self-hosted git repositories (docs/reference/
+// internal-git-provider). Unlike the OAuth provider cards, this is CP-native: list /
+// create / delete talk to the CP directly (api/internal-git/*), need no external
+// account, and work while the workspace is stopped. Clone URLs authenticate via the
+// CP-injected token, so no connect step is required.
+function InternalRepos() {
+  const toast = useToast();
+  const [repos, setRepos] = useState<InternalRepo[] | null>(null);
+  const [name, setName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [browsing, setBrowsing] = useState<string | null>(null);
+
+  const load = () =>
+    api("api/internal-git/repos")
+      .then((d) => setRepos(d && !d.error ? d.repos || [] : []))
+      .catch(() => setRepos([]));
+  useEffect(() => {
+    load();
+  }, []);
+
+  const create = async () => {
+    const n = name.trim();
+    if (!n) return;
+    setBusy(true);
+    try {
+      const res = await apiJSON("api/internal-git/repos", "POST", { name: n });
+      if (res && res.error) {
+        toast("作成に失敗: " + (res.error.message || res.error.code || ""));
+        return;
+      }
+      toast(`内部リポジトリ「${res.name}」を作成しました`);
+      setName("");
+      load();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const remove = async (rn: string) => {
+    if (!confirm(`内部リポジトリ「${rn}」を削除します。取り消せません。よろしいですか？`)) return;
+    const res = await raw(`api/internal-git/repos/${encodeURIComponent(rn)}`, { method: "DELETE" });
+    if (!res.ok) {
+      toast("削除に失敗しました");
+      return;
+    }
+    toast(`「${rn}」を削除しました`);
+    load();
+  };
+
+  const rename = async (oldName: string, newName: string) => {
+    const res = await apiJSON(`api/internal-git/repos/${encodeURIComponent(oldName)}/rename`, "POST", {
+      new_name: newName,
+    });
+    if (res && res.error) {
+      toast("リネームに失敗: " + (res.error.message || res.error.code || ""));
+      return false;
+    }
+    toast(`「${oldName}」→「${res.name}」にリネームしました`);
+    load();
+    return true;
+  };
+
+  const copyUrl = (url: string) => {
+    navigator.clipboard?.writeText(url).then(
+      () => toast("clone URL をコピーしました"),
+      () => {},
+    );
+  };
+
+  const count = repos?.length ?? 0;
+  return (
+    <>
+      <div className="conn-cat">内部リポジトリ（フリート内）</div>
+      <ProviderCard
+        id="internal"
+        name="内部 Git"
+        status={<StatusPill on>{count ? `${count} 個` : "利用可"}</StatusPill>}
+      >
+        <div className="p-desc">
+          外部アカウント不要。テナント内でリポジトリを共有できます（clone / push 可）。認証は自動注入されるトークンで透過。
+        </div>
+        <div className="p-body">
+          <div className="flow">
+            <input
+              className="cinput"
+              placeholder="リポジトリ名（例: my-repo）"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && create()}
+            />
+            <button disabled={busy || !name.trim()} onClick={create}>
+              作成
+            </button>
+          </div>
+          {repos === null ? (
+            <p className="muted pad">読み込み中…</p>
+          ) : repos.length === 0 ? (
+            <p className="muted pad">リポジトリはまだありません。上で作成してください。</p>
+          ) : (
+            <ul className="internal-repo-list">
+              {repos.map((r) => (
+                <InternalRepoRow
+                  key={r.name}
+                  repo={r}
+                  onCopy={() => copyUrl(r.clone_url)}
+                  onBrowse={() => setBrowsing(r.name)}
+                  onRename={rename}
+                  onRemove={() => remove(r.name)}
+                />
+              ))}
+            </ul>
+          )}
+        </div>
+      </ProviderCard>
+      {browsing && <InternalRepoBrowser name={browsing} onClose={() => setBrowsing(null)} />}
+    </>
   );
 }
 
@@ -151,6 +284,93 @@ function GlobalIdentity() {
         </div>
       </div>
     </>
+  );
+}
+
+// InternalRepoRow is one repo in the internal list: name (editable via リネーム),
+// its clone URL (click to copy), and 削除. Rename edit-state is per-row.
+function InternalRepoRow({
+  repo,
+  onCopy,
+  onBrowse,
+  onRename,
+  onRemove,
+}: {
+  repo: InternalRepo;
+  onCopy: () => void;
+  onBrowse: () => void;
+  onRename: (oldName: string, newName: string) => Promise<boolean>;
+  onRemove: () => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(repo.name);
+  const [busy, setBusy] = useState(false);
+
+  const commit = async () => {
+    const n = draft.trim();
+    if (!n || n === repo.name) {
+      setEditing(false);
+      setDraft(repo.name);
+      return;
+    }
+    setBusy(true);
+    const ok = await onRename(repo.name, n);
+    setBusy(false);
+    if (ok) setEditing(false);
+  };
+
+  if (editing) {
+    return (
+      <li className="internal-repo">
+        <input
+          className="cinput ir-rename"
+          value={draft}
+          autoFocus
+          disabled={busy}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") commit();
+            if (e.key === "Escape") {
+              setEditing(false);
+              setDraft(repo.name);
+            }
+          }}
+        />
+        <button type="button" disabled={busy} onClick={commit}>
+          保存
+        </button>
+        <button
+          type="button"
+          className="ghost"
+          disabled={busy}
+          onClick={() => {
+            setEditing(false);
+            setDraft(repo.name);
+          }}
+        >
+          取消
+        </button>
+      </li>
+    );
+  }
+  return (
+    <li className="internal-repo">
+      <span className="ir-name" title={repo.name}>
+        {repo.name}
+      </span>
+      <button type="button" className="ir-url" title="clone URL をコピー" onClick={onCopy}>
+        <code>{repo.clone_url}</code>
+      </button>
+      <button type="button" className="ghost" title="参照（clone 不要）" onClick={onBrowse}>
+        参照
+      </button>
+      <button type="button" className="ghost" title="リネーム" onClick={() => setEditing(true)}>
+        リネーム
+      </button>
+      <button type="button" className="ghost danger conn-disconnect" title="削除" onClick={onRemove}>
+        削除
+      </button>
+    </li>
   );
 }
 

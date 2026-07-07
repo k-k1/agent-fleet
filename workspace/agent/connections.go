@@ -34,9 +34,26 @@ func handleConnectionsGet(w http.ResponseWriter, r *http.Request) {
 		"claude":    claudeStatus(),
 		"github":    gitConnStatus(s, "github.com"),
 		"bitbucket": bitbucketStatus(s),
+		"internal":  internalGitStatus(s),
 		"opencode":  opencodeStatus(s),
 		"codex":     codexStatus(),
 	})
+}
+
+// internalGitStatus reports the tenant's self-hosted git provider (docs/reference/
+// internal-git-provider). It is CP-managed (the token is injected, not user-set),
+// so it reports connected whenever the CP seeded a credential for the internal
+// host. Absent AF_INTERNAL_GIT_HOST (internal git disabled) it is not connected.
+func internalGitStatus(s *secretsData) map[string]any {
+	host := internalGitHost()
+	if host == "" {
+		return map[string]any{"connected": false}
+	}
+	e, ok := s.Git[host]
+	if !ok {
+		return map[string]any{"connected": false, "host": host}
+	}
+	return map[string]any{"connected": true, "host": host, "username": firstNonEmpty(e.User, "x-access-token")}
 }
 
 // bitbucketStatus reports connected for either path: a pasted token (Git entry)

@@ -368,6 +368,22 @@ func (s *sqliteStore) ListMemberships(ctx context.Context, identityID string) ([
 	return out, rows.Err()
 }
 
+func (s *sqliteStore) GetMembershipByID(ctx context.Context, membershipID string) (MembershipView, bool, error) {
+	var v MembershipView
+	err := s.db.QueryRowContext(ctx,
+		`SELECT m.id, m.tenant_id, t.slug, t.name, m.role
+		 FROM membership m JOIN tenant t ON t.id = m.tenant_id
+		 WHERE m.id=? AND m.status='active'`, membershipID).
+		Scan(&v.MembershipID, &v.TenantID, &v.TenantSlug, &v.TenantName, &v.Role)
+	if err == sql.ErrNoRows {
+		return MembershipView{}, false, nil
+	}
+	if err != nil {
+		return MembershipView{}, false, err
+	}
+	return v, true, nil
+}
+
 func (s *sqliteStore) EnsureMembership(ctx context.Context, identityID, tenantID, role string) (Membership, error) {
 	if _, err := s.db.ExecContext(ctx,
 		`INSERT INTO membership(id, identity_id, tenant_id, role, status, created_at)
@@ -613,6 +629,250 @@ func (s *sqliteStore) RevokePAT(ctx context.Context, id, identityID string) erro
 func (s *sqliteStore) TouchPAT(ctx context.Context, id string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE pat SET last_used_at=? WHERE id=?`, nowTS(), id)
 	return err
+}
+
+// --- Internal git repositories (docs/reference/internal-git-provider) ---
+
+func (s *sqliteStore) CreateGitRepo(ctx context.Context, g GitRepo) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO git_repo(id, tenant_id, name, default_branch, created_by, created_at)
+		 VALUES(?, ?, ?, ?, ?, ?)`,
+		g.ID, g.TenantID, g.Name, g.DefaultBranch, nullable(g.CreatedBy), g.CreatedAt)
+	return err
+}
+
+func (s *sqliteStore) ListGitReposByTenant(ctx context.Context, tenantID string) ([]GitRepo, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, tenant_id, name, default_branch, COALESCE(created_by,''), created_at
+		 FROM git_repo WHERE tenant_id=? ORDER BY name`, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []GitRepo
+	for rows.Next() {
+		var g GitRepo
+		if err := rows.Scan(&g.ID, &g.TenantID, &g.Name, &g.DefaultBranch, &g.CreatedBy, &g.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, g)
+	}
+	return out, rows.Err()
+}
+
+func (s *sqliteStore) GetGitRepo(ctx context.Context, tenantID, name string) (GitRepo, bool, error) {
+	var g GitRepo
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id, tenant_id, name, default_branch, COALESCE(created_by,''), created_at
+		 FROM git_repo WHERE tenant_id=? AND name=?`, tenantID, name).
+		Scan(&g.ID, &g.TenantID, &g.Name, &g.DefaultBranch, &g.CreatedBy, &g.CreatedAt)
+	if err == sql.ErrNoRows {
+		return GitRepo{}, false, nil
+	}
+	if err != nil {
+		return GitRepo{}, false, err
+	}
+	return g, true, nil
+}
+
+func (s *sqliteStore) CountGitReposByTenant(ctx context.Context, tenantID string) (int, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM git_repo WHERE tenant_id=?`, tenantID).Scan(&n)
+	return n, err
+}
+
+// RenameGitRepo renames one repo within a tenant. The (tenant_id, name) UNIQUE
+// constraint makes a collision with an existing name an error (surfaced as a 409
+// by the caller after a pre-check).
+func (s *sqliteStore) RenameGitRepo(ctx context.Context, tenantID, oldName, newName string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE git_repo SET name=? WHERE tenant_id=? AND name=?`, newName, tenantID, oldName)
+	return err
+}
+
+func (s *sqliteStore) DeleteGitRepo(ctx context.Context, tenantID, name string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM git_repo WHERE tenant_id=? AND name=?`, tenantID, name)
+	return err
+}
+
+// --- Git LFS object ledger (docs/reference/internal-git-provider, P3) ---
+
+func (s *sqliteStore) PutLFSObject(ctx context.Context, tenantID, repo, oid string, size int64) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO lfs_object(tenant_id, repo_name, oid, size, created_at)
+		 VALUES(?, ?, ?, ?, ?)
+		 ON CONFLICT(tenant_id, repo_name, oid) DO NOTHING`,
+		tenantID, repo, oid, size, nowTS())
+	return err
+}
+
+func (s *sqliteStore) TenantLFSBytes(ctx context.Context, tenantID string) (int64, error) {
+	var n int64
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COALESCE(SUM(size), 0) FROM lfs_object WHERE tenant_id=?`, tenantID).Scan(&n)
+	return n, err
+}
+
+func (s *sqliteStore) DeleteLFSObjectsByRepo(ctx context.Context, tenantID, repo string) error {
+	_, err := s.db.ExecContext(ctx,
+		`DELETE FROM lfs_object WHERE tenant_id=? AND repo_name=?`, tenantID, repo)
+	return err
+}
+
+func (s *sqliteStore) RenameLFSObjectsRepo(ctx context.Context, tenantID, oldRepo, newRepo string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE lfs_object SET repo_name=? WHERE tenant_id=? AND repo_name=?`, newRepo, tenantID, oldRepo)
+	return err
+}
+
+func (s *sqliteStore) DeleteLFSObject(ctx context.Context, tenantID, repo, oid string) error {
+	_, err := s.db.ExecContext(ctx,
+		`DELETE FROM lfs_object WHERE tenant_id=? AND repo_name=? AND oid=?`, tenantID, repo, oid)
+	return err
+}
+
+// --- Git LFS locks (docs/reference/internal-git-provider, P3) ---
+
+const lfsLockCols = `SELECT id, tenant_id, repo_name, path, ref_name, owner_id, owner_name, locked_at FROM lfs_lock`
+
+func scanLFSLock(row interface{ Scan(...any) error }) (LFSLock, error) {
+	var l LFSLock
+	err := row.Scan(&l.ID, &l.TenantID, &l.RepoName, &l.Path, &l.RefName, &l.OwnerID, &l.OwnerName, &l.LockedAt)
+	return l, err
+}
+
+func (s *sqliteStore) CreateLFSLock(ctx context.Context, l LFSLock) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO lfs_lock(id, tenant_id, repo_name, path, ref_name, owner_id, owner_name, locked_at)
+		 VALUES(?, ?, ?, ?, ?, ?, ?, ?)`,
+		l.ID, l.TenantID, l.RepoName, l.Path, l.RefName, l.OwnerID, l.OwnerName, l.LockedAt)
+	return err
+}
+
+func (s *sqliteStore) GetLFSLockByPath(ctx context.Context, tenantID, repo, path string) (LFSLock, bool, error) {
+	l, err := scanLFSLock(s.db.QueryRowContext(ctx,
+		lfsLockCols+` WHERE tenant_id=? AND repo_name=? AND path=?`, tenantID, repo, path))
+	if err == sql.ErrNoRows {
+		return LFSLock{}, false, nil
+	}
+	if err != nil {
+		return LFSLock{}, false, err
+	}
+	return l, true, nil
+}
+
+func (s *sqliteStore) GetLFSLock(ctx context.Context, tenantID, repo, id string) (LFSLock, bool, error) {
+	l, err := scanLFSLock(s.db.QueryRowContext(ctx,
+		lfsLockCols+` WHERE tenant_id=? AND repo_name=? AND id=?`, tenantID, repo, id))
+	if err == sql.ErrNoRows {
+		return LFSLock{}, false, nil
+	}
+	if err != nil {
+		return LFSLock{}, false, err
+	}
+	return l, true, nil
+}
+
+// ListLFSLocks returns locks ordered oldest-first, paginated by an opaque cursor
+// (a row offset). It fetches limit+1 to know whether a next page exists; the
+// returned cursor is "" when the page is the last.
+func (s *sqliteStore) ListLFSLocks(ctx context.Context, tenantID, repo, filterPath, filterID string, limit int, cursor string) ([]LFSLock, string, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 100
+	}
+	offset := 0
+	if cursor != "" {
+		if n, err := strconv.Atoi(cursor); err == nil && n > 0 {
+			offset = n
+		}
+	}
+	q := lfsLockCols + ` WHERE tenant_id=? AND repo_name=?`
+	args := []any{tenantID, repo}
+	if filterPath != "" {
+		q += ` AND path=?`
+		args = append(args, filterPath)
+	}
+	if filterID != "" {
+		q += ` AND id=?`
+		args = append(args, filterID)
+	}
+	q += ` ORDER BY locked_at, id LIMIT ? OFFSET ?`
+	args = append(args, limit+1, offset)
+	rows, err := s.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, "", err
+	}
+	defer rows.Close()
+	var out []LFSLock
+	for rows.Next() {
+		l, err := scanLFSLock(rows)
+		if err != nil {
+			return nil, "", err
+		}
+		out = append(out, l)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, "", err
+	}
+	next := ""
+	if len(out) > limit {
+		out = out[:limit]
+		next = strconv.Itoa(offset + limit)
+	}
+	return out, next, nil
+}
+
+func (s *sqliteStore) DeleteLFSLock(ctx context.Context, tenantID, repo, id string) error {
+	_, err := s.db.ExecContext(ctx,
+		`DELETE FROM lfs_lock WHERE tenant_id=? AND repo_name=? AND id=?`, tenantID, repo, id)
+	return err
+}
+
+func (s *sqliteStore) DeleteLFSLocksByRepo(ctx context.Context, tenantID, repo string) error {
+	_, err := s.db.ExecContext(ctx,
+		`DELETE FROM lfs_lock WHERE tenant_id=? AND repo_name=?`, tenantID, repo)
+	return err
+}
+
+func (s *sqliteStore) RenameLFSLocksRepo(ctx context.Context, tenantID, oldRepo, newRepo string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE lfs_lock SET repo_name=? WHERE tenant_id=? AND repo_name=?`, newRepo, tenantID, oldRepo)
+	return err
+}
+
+func (s *sqliteStore) MembershipOwnerName(ctx context.Context, membershipID string) (string, error) {
+	var email, key string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COALESCE(i.email,''), i.user_key FROM membership m JOIN identity i ON i.id = m.identity_id
+		 WHERE m.id=?`, membershipID).Scan(&email, &key)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if email != "" {
+		return email, nil
+	}
+	return key, nil
+}
+
+func (s *sqliteStore) ListLFSObjectOIDs(ctx context.Context, tenantID, repo string) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT oid FROM lfs_object WHERE tenant_id=? AND repo_name=?`, tenantID, repo)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var oid string
+		if err := rows.Scan(&oid); err != nil {
+			return nil, err
+		}
+		out = append(out, oid)
+	}
+	return out, rows.Err()
 }
 
 func (s *sqliteStore) InsertAudit(ctx context.Context, a AuditLog) error {

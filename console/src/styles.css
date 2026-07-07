@@ -5365,6 +5365,165 @@ button.mt-toolrun-head:hover {
 .p-who .conn-disconnect {
   margin-left: auto;
 }
+/* Internal git provider: the repo list inside its provider card (P2). */
+.internal-repo-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.internal-repo {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.internal-repo .ir-name {
+  font-size: 13px;
+  color: var(--fg);
+  font-weight: 500;
+  flex: none;
+  max-width: 30%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.internal-repo .ir-url {
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 3px 6px;
+  cursor: pointer;
+  overflow: hidden;
+}
+.internal-repo .ir-url code {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: block;
+}
+.internal-repo .ir-url:hover code {
+  color: var(--fg);
+}
+.internal-repo .ir-rename {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* Internal repo read-only browser modal (P3). */
+.modal.ig-browser {
+  width: min(920px, 94vw);
+  max-width: 94vw;
+}
+.ig-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.ig-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.ig-toolbar select {
+  flex: none;
+}
+.ig-crumbs {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px;
+  font-family: var(--mono);
+  font-size: 12px;
+  min-width: 0;
+}
+.ig-crumb {
+  background: none;
+  border: none;
+  color: var(--link, var(--accent));
+  cursor: pointer;
+  padding: 1px 3px;
+}
+.ig-crumb:hover {
+  text-decoration: underline;
+}
+.ig-sep {
+  color: var(--muted);
+}
+.ig-panes {
+  display: flex;
+  gap: 12px;
+  min-height: 320px;
+  max-height: 60vh;
+}
+.ig-tree {
+  flex: 0 0 38%;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.ig-view {
+  flex: 1 1 auto;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  min-width: 0;
+}
+.ig-entries {
+  list-style: none;
+  margin: 0;
+  padding: 4px;
+}
+.ig-entry {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: 4px;
+  font-size: 13px;
+  color: var(--fg);
+}
+.ig-entry:hover,
+.ig-entry.active {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+.ig-entry .ig-icon {
+  flex: none;
+}
+.ig-entry .ig-name {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ig-entry .ig-size {
+  flex: none;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+.ig-blob {
+  margin: 0;
+  padding: 10px 12px;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre;
+  overflow: auto;
+}
+
 /* Per-provider (and global) commit identity editor inside a provider card. */
 .git-identity {
   padding: 4px 13px 12px;

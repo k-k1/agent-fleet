@@ -10,6 +10,7 @@ import (
 	"encoding/base64"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -133,6 +134,12 @@ func main() {
 	mgr.rtFactory = rtFactory
 
 	publicBaseURL := os.Getenv("PUBLIC_BASE_URL")
+	// Internal git provider: the clone host workspaces authenticate against is the
+	// public base's host (Caddy TLS terminus). Recorded on the manager so each
+	// workspace start injects a token for it (docs/reference/internal-git-provider).
+	if u, err := url.Parse(publicBaseURL); err == nil {
+		mgr.internalGitHost = u.Hostname()
+	}
 	cfg := config{
 		addr:          envOr("CP_ADDR", ":8080"),
 		consoleDir:    envOr("CONSOLE_DIR", "./console"),
@@ -183,6 +190,15 @@ func main() {
 	if iv := parseDurationOr(os.Getenv("AF_CLAUDE_AUDIT_INTERVAL"), 0); iv > 0 {
 		go newClaudeAuditor(mgr, iv).run(context.Background())
 		log.Printf("claude-audit: sweeping transcripts every %s", iv)
+	}
+
+	// Internal git maintenance (P2/P3): repack bare repos (`git gc --auto`) and prune
+	// orphaned LFS objects, sequential — cheap on the shared host. Default 24h;
+	// AF_GIT_GC_INTERVAL=0 disables it. AF_LFS_GC_GRACE (default 14d) protects
+	// recently-uploaded LFS objects from pruning so GC never races an in-flight push.
+	if iv := parseDurationOr(os.Getenv("AF_GIT_GC_INTERVAL"), 24*time.Hour); iv > 0 {
+		grace := parseDurationOr(os.Getenv("AF_LFS_GC_GRACE"), 14*24*time.Hour)
+		go newGitGC(mgr.store, mgr.dataRoot, iv, grace).run(context.Background())
 	}
 
 	mux := http.NewServeMux()
@@ -391,6 +407,34 @@ func main() {
 	mux.HandleFunc("POST /api/connections/codex/device/start", cfg.proxyAgentREST)
 	mux.HandleFunc("POST /api/connections/codex/device/poll", cfg.proxyAgentREST)
 	mux.HandleFunc("DELETE /api/connections/codex", cfg.proxyAgentREST)
+
+	// Internal git provider (docs/reference/internal-git-provider, ADR 0010).
+	// Repo management is CP-native (the CP owns the bare repos), so these are NOT
+	// proxied to the Agent like other providers.
+	mux.HandleFunc("GET /api/internal-git/repos", cfg.handleInternalGitReposList)
+	mux.HandleFunc("POST /api/internal-git/repos", cfg.handleInternalGitRepoCreate)
+	mux.HandleFunc("DELETE /api/internal-git/repos/{name}", cfg.handleInternalGitRepoDelete)
+	mux.HandleFunc("POST /api/internal-git/repos/{name}/rename", cfg.handleInternalGitRepoRename)
+	mux.HandleFunc("GET /api/internal-git/repos/{name}/branches", cfg.handleInternalGitBranches)
+	// Read-only browsing (clone-free): tree / blob / commits, served from the bare.
+	mux.HandleFunc("GET /api/internal-git/repos/{name}/tree", cfg.handleInternalGitTree)
+	mux.HandleFunc("GET /api/internal-git/repos/{name}/blob", cfg.handleInternalGitBlob)
+	mux.HandleFunc("GET /api/internal-git/repos/{name}/commits", cfg.handleInternalGitCommits)
+	// Git LFS face (docs/reference/internal-git-provider, P3). More specific than the
+	// smart-HTTP catch-all below, so these win for LFS paths; git-http-backend never
+	// sees them. Same Basic git-token auth (session-exempt under /git/).
+	mux.HandleFunc("POST /git/{slug}/{repo}/info/lfs/objects/batch", cfg.handleLFSBatch)
+	mux.HandleFunc("PUT /git/{slug}/{repo}/info/lfs/objects/{oid}", cfg.handleLFSUpload)
+	mux.HandleFunc("GET /git/{slug}/{repo}/info/lfs/objects/{oid}", cfg.handleLFSDownload)
+	// LFS file locking API (create / list / verify / unlock).
+	mux.HandleFunc("POST /git/{slug}/{repo}/info/lfs/locks", cfg.handleLFSLockCreate)
+	mux.HandleFunc("GET /git/{slug}/{repo}/info/lfs/locks", cfg.handleLFSLocksList)
+	mux.HandleFunc("POST /git/{slug}/{repo}/info/lfs/locks/verify", cfg.handleLFSLocksVerify)
+	mux.HandleFunc("POST /git/{slug}/{repo}/info/lfs/locks/{id}/unlock", cfg.handleLFSUnlock)
+
+	// Smart-HTTP git face (clone/fetch/push). Self-authenticating via a Basic git
+	// token (session-exempt, like /mcp); handles every method.
+	mux.HandleFunc("/git/{slug}/{repo...}", cfg.handleGitHTTP)
 
 	// Terminal PTY — proxied WebSocket.
 	mux.HandleFunc("GET /ws/terminal", cfg.proxyTerminal)
