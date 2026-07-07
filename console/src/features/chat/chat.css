@@ -1,0 +1,398 @@
+/* Chat view + assistant rail styles — extracted from the old console's
+   styles.css (regions 8199–8484, 8545–8608) for pixel parity. */
+.chatview {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--bg);
+}
+/* Legacy control styles (old styles.css element globals), scoped to the chat view —
+   the verbatim-ported ChatView's raw buttons (送信 / 停止) relied on them. Same
+   rationale (and same :where() specificity note) as the .mirrorview block in
+   mirror.css; dissolved at P8. */
+:where(.chatview) button {
+  background: var(--btn);
+  color: var(--fg);
+  border: 1px solid var(--btn-border);
+  border-radius: 4px;
+  padding: 4px 10px;
+  cursor: pointer;
+  font: inherit;
+}
+:where(.chatview) button:hover:not(:disabled) {
+  background: var(--btn-h);
+}
+:where(.chatview) button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.chat-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.chat-msg {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.chat-role {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.chat-msg.role-user .chat-role {
+  color: var(--accent);
+}
+.chat-body {
+  border-radius: 8px;
+  padding: 8px 11px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  /* Cap line length for readability, but `ch` is the half-width "0" advance — Japanese
+     (full-width) text fits only ~half that per line, so a tight cap wastes a wide pane.
+     Grow to fill a narrow pane (100%) and allow a generous cap on a wide one. */
+  max-width: min(96ch, 100%);
+}
+.chat-msg.role-user .chat-body {
+  background: color-mix(in srgb, var(--accent) 12%, var(--panel));
+  align-self: flex-start;
+}
+.chat-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.chat-thinking {
+  color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.chat-empty,
+.chat-error {
+  color: var(--muted);
+  font-size: 13px;
+  padding: 8px 4px;
+}
+.chat-error {
+  color: var(--del);
+}
+.chat-composer {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--border);
+}
+/* The input + send button sit on one row; the attachment strip (if any) stacks above. */
+.chat-composer-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+}
+/* Pasted-image attachment chips in the composer (before send). */
+.chat-attach {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.ca-chip {
+  position: relative;
+  width: 56px;
+  height: 56px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--bg);
+}
+.ca-thumb {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.ca-del {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--bg) 75%, transparent);
+  color: var(--fg);
+  cursor: pointer;
+}
+.ca-del .codicon {
+  font-size: 12px;
+}
+.ca-loading {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+/* In-chat pasted-image thumbnails on a user turn (click opens the full image). */
+.chat-imgs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+}
+.chat-img {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  max-width: 160px;
+  max-height: 160px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  overflow: hidden;
+  cursor: zoom-in;
+}
+.chat-img img {
+  display: block;
+  max-width: 160px;
+  max-height: 160px;
+  object-fit: contain;
+}
+.chat-img-loading {
+  width: 56px;
+  height: 56px;
+  color: var(--muted);
+  cursor: default;
+}
+.chat-input {
+  flex: 1 1 auto;
+  resize: vertical;
+  min-height: 38px;
+  max-height: 40vh;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--btn-border);
+  background: var(--panel);
+  color: var(--fg);
+  font: inherit;
+}
+.chat-send {
+  flex: 0 0 auto;
+  align-self: stretch;
+}
+/* Stop button (while a turn streams): same shape as send, danger-tinted. */
+.chat-stop {
+  color: var(--danger, #e05a5a);
+}
+/* Conversation-row status chip: compact, sits after the count (not far-right auto). */
+.chat-open .session-state {
+  margin-left: 4px;
+}
+/* Left-rail conversation rows */
+.chat-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.chat-open {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: 0;
+  color: inherit;
+  text-align: left;
+  padding: 5px 6px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.chat-open:hover {
+  background: var(--hover-bg);
+}
+.chat-open-title {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-open-meta {
+  flex: 0 0 auto;
+  font-size: 11px;
+}
+.chat-row .chat-del {
+  opacity: 0;
+}
+.chat-row:hover .chat-del {
+  opacity: 1;
+}
+
+/* Assistant templates (Q2): the ＋新規 picker popover + rows in the left rail. */
+.assistant-picker-wrap {
+  position: relative;
+  display: inline-flex;
+}
+.assistant-picker {
+  min-width: 220px;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+.assistant-picker-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 4px 8px 6px;
+}
+.assistant-picker-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.assistant-picker-open {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  background: none;
+  border: 0;
+  color: inherit;
+  text-align: left;
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.assistant-picker-open:hover {
+  background: var(--hover-bg, var(--btn));
+}
+.assistant-ic {
+  flex: 0 0 auto;
+  opacity: 0.85;
+}
+.assistant-badge {
+  flex: 0 0 auto;
+  font-size: 10px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0 4px;
+}
+/* Icon picker in the assistant create/edit modal. */
+.assistant-icon-pick {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.assistant-icon-opt.active {
+  background: var(--accent-soft, var(--hover-bg));
+  outline: 1px solid var(--accent, var(--border));
+}
+.assistant-persona,
+.assistant-knowledge {
+  width: 100%;
+  resize: vertical;
+  font: inherit;
+}
+
+/* MarkdownView is shared with the file viewer, which centers a max-width column with
+   large padding (margin:0 auto; padding:20px 28px 60px). In a chat bubble / greeting
+   card that reads as "everything is indented with a big bottom gap", so reset it to fill
+   the width, left-aligned, tight — same fix as .mirror-turn .markdown. */
+.chatview .markdown {
+  max-width: none;
+  margin: 0;
+  padding: 0;
+  font: inherit;
+  line-height: 1.6;
+}
+.chatview .markdown p,
+.chatview .markdown ul,
+.chatview .markdown ol,
+.chatview .markdown blockquote,
+.chatview .markdown table {
+  margin: 0.6em 0;
+}
+.chatview .markdown > :first-child {
+  margin-top: 0;
+}
+.chatview .markdown > :last-child {
+  margin-bottom: 0;
+}
+
+/* Greeting card: the assistant introduces itself before the chat has started (docs/19). */
+.chat-greeting {
+  margin: 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel2, var(--panel));
+}
+.chat-greeting-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.chat-greeting-ic {
+  font-size: 18px;
+  opacity: 0.9;
+}
+.chat-greeting-name {
+  font-weight: 600;
+}
+.chat-greeting-body {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+/* Streaming assistant reply: a soft blinking caret while tokens arrive (Phase B). */
+.chat-streaming::after {
+  content: "▍";
+  margin-left: 1px;
+  color: var(--muted);
+  animation: chat-caret 1s steps(1) infinite;
+}
+@keyframes chat-caret {
+  50% {
+    opacity: 0;
+  }
+}
+/* Rail chip: 進行中/待機中 (the old markup used .session-state; the port names it
+   .chat-state to avoid colliding with the sessions Pill styling). */
+.chat-state {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+  border-radius: 999px;
+  padding: 0 6px;
+}
+.chat-state.working {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+.chat-state.on {
+  color: var(--ok);
+  background: color-mix(in srgb, var(--ok) 14%, transparent);
+}
+.section-empty {
+  color: var(--muted);
+  font-size: 12px;
+  padding: 6px 10px 10px;
+  line-height: 1.5;
+}

@@ -1,0 +1,53 @@
+/* Base reset for the next console — element-level defaults only.
+ * Component styles live co-located with their component. */
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  /* Suppress the mobile browser's pull-to-refresh (swipe-down at the top reloads the
+     page). `contain` stops overscroll from chaining up to the viewport, which is what
+     triggers the reload — while leaving horizontal back/forward swipe gestures alone
+     (unlike `none`). The app-shell scrolls in inner containers, not the document. */
+  overscroll-behavior-y: contain;
+}
+
+body {
+  font: 14px/1.5 system-ui, sans-serif;
+  color: var(--fg);
+  background: var(--bg);
+}
+
+/* codicon (VS Code icon font) — inherit size/color from the surrounding element so
+   icons sit on the text baseline and follow currentColor / the button's color. */
+.codicon {
+  font-size: inherit;
+  line-height: inherit;
+  vertical-align: -0.12em;
+}
+.codicon-spin {
+  animation: codicon-spin 1.2s steps(12) infinite;
+}
+@keyframes codicon-spin {
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+/* Text utilities shared app-wide (old styles.css globals — the verbatim-ported
+   components use them as-is). */
+.muted {
+  color: var(--muted2);
+  font-size: 12px;
+}
+.mono {
+  font-family: var(--mono);
+}
+.pad {
+  padding: 8px 4px;
+}

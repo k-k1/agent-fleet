@@ -212,10 +212,14 @@ CP のルーティングが user→対象コンテナを解決するだけ。
 
 ### 6.10.1 Console アーキテクチャ（React+Vite）
 
-`console/` は Vite プロジェクト（`src/`、ビルド→`console/dist` を CP が `no-store` 配信）。旧 vanilla は `console/legacy-phase1/`。
+**2026-07-08 に docs/22 のリビルド版へスワップ済み**（機能パリティ維持・zustand ドメインストア・features/ 凝集）。
+構造: `src/{app(シェル・バー類), core(api/client.ts=旧 api.ts 吸収・store/tenant|workspace), layout(純関数エンジン+vitest 34件),
+terminal(term.ts+service), ui(プリミティブ+FileIcon), features/(sessions|repos|files|scm|viewer|chat|mirror|memo|settings), styles(tokens/base), lib, agents, types}`。
+旧 God-context（state.tsx）・components/・views/・styles.css は削除。`next.html` は同一アプリのエイリアス（暫定）。
+残債（動作影響なし）: MirrorView 解体・抽出 CSS の未使用刈り・legacy button compat の ui/Button 化 — docs/22 のステータス欄参照。
 `run-dev.sh` が `NODE_OPTIONS=--max-old-space-size=3072 npm run build`（mermaid で heap OOM 回避）し `CONSOLE_DIR=console/dist`。
 **フロントだけの調整は `npm --prefix console run dev`（=`vite build --watch`）→ リロードで反映、CP 再起動不要**。
-依存: react/react-dom・@xterm/*・highlight.js・marked・dompurify・mermaid（遅延 import チャンク）・@vscode/codicons。
+依存: react/react-dom・zustand・@xterm/*・highlight.js・marked・dompurify・mermaid（遅延 import チャンク）・@vscode/codicons。
 
 - **IA**: 2 段バー（TOP=アプリ名/テナント picker/`whoami`/⚙設定/`shield`管理[super_admin]、WS=状態●/Start⇄Stop トグル/プレビュー〔状態は4秒ポールで自動同期＝手動更新ボタン撤去・Start/Stop は1ボタン化〕。**作り直す**は設定>環境へ移設）＋ 左ペイン3セクション常駐（Sessions / Repos / Files）＋ メインが選択で切替（端末 / Source Control / ファイルビュアー）。端末は常駐（非表示でも WS 維持）。**接続中セッション/現セッションの repo はピン留め（先頭固定/バッジ/sticky）を廃止し、選択ハイライト（`.active`）のみ**（順序が入れ替わり使いづらいため）。
 - **設定モーダル**（`SettingsDialog.jsx`）: セグメント（接続 / Claude / 環境 / **MCP** / 表示）。**MCP**（`TokensTab.jsx`）= MCP 用 PAT の発行/一覧/失効（token は発行時 1 回だけ表示、scope=read|write|admin:dangerous を発行者 role 以下で選択、日付は `YYYY-MM-DD`）。管理は別モーダル `AdminDialog.jsx`（super_admin のみ、TopBar の `shield`）。

@@ -1,0 +1,483 @@
+/* SCM views (graph / changes / commit detail / working diff) — co-located. */
+
+.scmview {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  container-type: inline-size;
+}
+
+/* Generic non-terminal pane header (also reused by the P4 viewers).
+   NO overflow:hidden here — the ⋯ overflow menu (.scm-more-menu) is an
+   absolutely-positioned child and would be clipped invisible. Children carry
+   their own min-width:0 + ellipsis instead. */
+.view-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  /* Right padding reserves room for the pane control cluster overlaid at the
+     top-right; left padding for the drag grip at the top-left (old console's
+     exact values). */
+  padding: 6px 56px 6px 34px;
+  min-height: 28px;
+  border-bottom: 1px solid var(--border2);
+  background: var(--panel2);
+  font-size: 12px;
+  white-space: nowrap;
+}
+/* File panes add a wrap toggle to the control cluster → extra right room, or the
+   cluster overlaps the header's own right-edge buttons (path + download). */
+.fileview > .view-head {
+  padding-right: 112px;
+}
+/* scm / changes / commit panes' cluster is wrap+close or close alone. */
+.scmview > .view-head {
+  padding-right: 84px;
+}
+.view-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.view-title .codicon {
+  color: var(--accent);
+}
+.view-spacer {
+  flex: 1;
+}
+
+.scm-branch {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--btn);
+  color: var(--fg);
+  border: 1px solid var(--btn-border);
+  border-radius: 4px;
+  padding: 1px 8px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  max-width: 16em;
+  overflow: hidden;
+}
+.scm-branch:hover {
+  background: var(--btn-h);
+}
+
+/* Wide pane: inline action row; narrow pane: ⋯ overflow menu. */
+.scm-more {
+  position: relative;
+  display: none;
+}
+.scm-more-menu {
+  position: absolute;
+  right: 0;
+  top: 26px;
+}
+@container (max-width: 560px) {
+  .scm-acts {
+    display: none;
+  }
+  .scm-more {
+    display: block;
+  }
+}
+/* Narrow pane: header action buttons collapse to icons (コミット詳細の
+   全て開く/閉じる/折り返し etc. — the icon + tooltip carry the meaning). */
+@container (max-width: 520px) {
+  .view-head .ui-btn .lbl {
+    display: none;
+  }
+}
+
+/* Commit graph. */
+.cgraph-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  outline: none;
+}
+.cgraph {
+  list-style: none;
+  margin: 0;
+  padding: 0 6px;
+}
+.cgraph-row {
+  display: flex;
+  align-items: stretch;
+  height: 48px;
+  border-radius: 4px;
+  cursor: pointer;
+  min-width: 0;
+}
+.cgraph-row:hover {
+  background: var(--hover-bg);
+}
+.cgraph-row.active {
+  background: var(--active-bg);
+}
+.cgraph-row.dim {
+  opacity: 0.55;
+}
+.cgraph-svg {
+  flex: none;
+}
+.cgraph-msg {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  padding: 0 6px;
+}
+.cgraph-line1 {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+.cgraph-subj {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+.cgraph-line2 {
+  color: var(--muted);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cgraph-ref {
+  flex: none;
+  font-family: var(--mono);
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--btn);
+  border: 1px solid var(--btn-border);
+  color: var(--fg);
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cgraph-ref.ref-head.current {
+  background: var(--accent);
+  border-color: transparent;
+  color: var(--on-accent);
+  font-weight: 600;
+}
+.cgraph-ref.ref-tag {
+  color: #d6a13a;
+  border-color: #d6a13a66;
+}
+.cgraph-ref.ref-remote {
+  color: var(--muted);
+}
+
+/* Changes workbench. */
+.changes-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  padding: 6px 10px;
+  gap: 8px;
+}
+.changes {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.change {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 6px;
+  border-radius: 4px;
+  min-width: 0;
+}
+.change:hover {
+  background: var(--hover-bg);
+}
+.change.active {
+  background: var(--active-bg);
+}
+.chg {
+  flex: none;
+  width: 16px;
+  text-align: center;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+}
+.chg.staged {
+  color: var(--ok);
+}
+.chg.unstaged {
+  color: var(--warn);
+}
+.chg.untracked {
+  color: var(--muted);
+}
+.chg-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+  font-size: 12px;
+}
+.chg-name:hover {
+  color: var(--accent);
+}
+.chg-acts {
+  flex: none;
+  display: flex;
+  gap: 2px;
+  opacity: 0;
+}
+.change:hover .chg-acts,
+.change.active .chg-acts {
+  opacity: 1;
+}
+.chg-discard {
+  color: var(--del);
+}
+.commitbox {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border-top: 1px solid var(--border2);
+  padding-top: 8px;
+}
+.commitbox textarea {
+  background: var(--panel2);
+  color: var(--fg);
+  border: 1px solid var(--btn-border);
+  border-radius: 4px;
+  padding: 6px 8px;
+  font: inherit;
+  font-size: 13px;
+  resize: vertical;
+}
+.commitbox-all {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.repo-identity {
+  margin-top: 2px;
+}
+.ri-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  padding: 2px 0;
+  min-width: 0;
+}
+.ri-line:hover {
+  color: var(--fg);
+}
+.ri-who {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ri-src {
+  flex: none;
+  border: 1px solid var(--border2);
+  border-radius: 999px;
+  padding: 0 6px;
+  font-size: 10px;
+}
+.ri-edit {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.ri-edit input {
+  flex: 1;
+  min-width: 8em;
+  background: var(--panel2);
+  color: var(--fg);
+  border: 1px solid var(--btn-border);
+  border-radius: 4px;
+  padding: 3px 6px;
+  font: inherit;
+  font-size: 12px;
+}
+
+/* Diff rendering (shared). */
+.scm-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 6px 10px;
+}
+.diff {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--muted);
+  white-space: pre-wrap;
+}
+.commit-detail .cd-head {
+  padding: 4px 0 10px;
+  border-bottom: 1px solid var(--border2);
+  margin-bottom: 8px;
+}
+.cd-subject {
+  font-weight: 600;
+  font-size: 14px;
+}
+.cd-meta {
+  color: var(--muted);
+  font-size: 11px;
+  margin-top: 2px;
+}
+.cd-body {
+  margin: 6px 0 0;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--muted);
+  white-space: pre-wrap;
+}
+.cd-more {
+  background: none;
+  border: none;
+  color: var(--accent);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  padding: 2px 0;
+}
+.filediff {
+  border: 1px solid var(--border2);
+  border-radius: 6px;
+  margin-bottom: 8px;
+  overflow: hidden;
+}
+.filediff-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  background: var(--panel2);
+  border: none;
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+  padding: 5px 8px;
+  cursor: pointer;
+  text-align: left;
+  position: sticky;
+  top: 0;
+}
+.filediff-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--mono);
+}
+.filediff-stat {
+  flex: none;
+  display: flex;
+  gap: 6px;
+  font-family: var(--mono);
+  font-size: 11px;
+}
+.filediff-stat .add {
+  color: var(--ok);
+}
+.filediff-stat .del {
+  color: var(--del);
+}
+.diff-body {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-x: auto;
+}
+.diff-body .dl {
+  display: flex;
+  min-width: max-content;
+}
+.dl-num {
+  flex: none;
+  width: 3.2em;
+  text-align: right;
+  padding-right: 8px;
+  color: var(--muted2);
+  user-select: none;
+}
+.dl-text {
+  white-space: pre;
+}
+.diff-files.wrap .dl-text {
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.diff-files.wrap .diff-body .dl {
+  min-width: 0;
+}
+.diff-body .dl.add {
+  background: rgba(46, 160, 67, 0.1);
+  color: var(--ok);
+}
+.diff-body .dl.del {
+  background: rgba(248, 81, 73, 0.1);
+  color: var(--del);
+}
+.diff-body .dl.hunk {
+  color: var(--accent);
+}
+.diff-body .dl.fileh {
+  color: var(--muted);
+}
+.diff-trunc {
+  color: var(--muted);
+  font-size: 12px;
+  padding: 4px;
+}
+.scm-staged-tag,
+.scm-repo-tag {
+  flex: none;
+  color: var(--muted);
+  font-size: 11px;
+  border: 1px solid var(--border2);
+  border-radius: 999px;
+  padding: 0 6px;
+}
+.scm-staged-tag {
+  color: var(--ok);
+}

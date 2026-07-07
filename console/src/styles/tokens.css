@@ -1,0 +1,95 @@
+/* Design tokens — the ONLY place theme variables live in the next console.
+ *
+ * Copied verbatim from the frozen styles.css :root / [data-theme=light] blocks
+ * (docs/22: the theme mechanism is a hard constraint — <html data-theme> +
+ * lib/settings.ts applyTheme() writing region overrides onto the root element).
+ * The old styles.css is frozen during the rebuild, so drift risk is accepted;
+ * at swap time (P8) styles.css is deleted and this file becomes the single truth.
+ *
+ * Component styles do NOT belong here — they live co-located next to their
+ * component (ui/ui.css, app/app.css, features/<x>/<x>.css).
+ */
+:root {
+  --bg: #1e1e1e;
+  --panel: #181818;
+  --panel2: #141414;
+  --bar: #111;
+  --border: #333;
+  --border2: #2a2a2a;
+  --fg: #ddd;
+  --muted: #888;
+  --muted2: #777;
+  --accent: #6cf;
+  --on-accent: #06222e; /* text/icon on an accent-filled button (dark theme: dark on light cyan) */
+  --chat-accent: var(--accent); /* chat highlights follow the chosen surface color (overridden in applyTheme) */
+  /* Accent for the admin modal, following the chosen top-bar surface. Concrete (not
+     var(--accent)) so .admin-surface can rebind --accent to it without a cycle; set to
+     the surface accent in applyTheme, else this theme default. */
+  --topbar-accent: #6cf;
+  --btn: #2b2b2b;
+  --btn-h: #3a3a3a;
+  --btn-border: #444;
+  --ok: #67c23a;
+  --warn: #e6a23c;
+  --del: #e06c75;
+  /* selection / hover surfaces (so light theme can override the old hardcoded blues) */
+  --active-bg: #20303a;
+  --hover-bg: #1b2730;
+  /* highlight.js syntax palette (GitHub Dark) — themed via vars so the file viewer
+     follows light/dark instead of the dark-only github-dark.css import. */
+  --hl-fg: #c9d1d9;
+  --hl-comment: #8b949e;
+  --hl-keyword: #ff7b72;
+  --hl-title: #d2a8ff;
+  --hl-attr: #79c0ff;
+  --hl-string: #a5d6ff;
+  --hl-built: #ffa657;
+  --hl-name: #7ee787;
+  --hl-add-fg: #aff5b4;
+  --hl-add-bg: #033a16;
+  --hl-del-fg: #ffdcd7;
+  --hl-del-bg: #67060c;
+  /* region backgrounds — overridable independently of the base theme (Display
+     settings → カラーテーマ). Default to the theme's bar / panel. */
+  --topbar-bg: var(--bar);
+  --leftpane-bg: var(--panel);
+  --mono: "Source Code Pro", "SF Mono", Menlo, Consolas, "DejaVu Sans Mono",
+    "Noto Sans Mono CJK JP", monospace;
+}
+
+/* Light theme — applied via document.documentElement[data-theme="light"]. */
+:root[data-theme="light"] {
+  --bg: #ffffff;
+  --panel: #f4f5f7;
+  --panel2: #eaecef;
+  --bar: #eef0f3;
+  --border: #d2d6dc;
+  --border2: #e6e8ec;
+  --fg: #1c2024;
+  --muted: #6b7280;
+  --muted2: #828a94;
+  --accent: #2563eb;
+  --on-accent: #ffffff; /* light theme: white text on the saturated blue accent */
+  --topbar-accent: #2563eb; /* light-theme default for the admin accent (see :root) */
+  --btn: #e8eaee;
+  --btn-h: #dcdfe5;
+  --btn-border: #c6cbd2;
+  --ok: #1a7f37;
+  --warn: #b7791f;
+  --del: #c0392b;
+  --active-bg: #d7e6fb;
+  --hover-bg: #eaf1fb;
+  /* highlight.js syntax palette (GitHub Light). */
+  --hl-fg: #24292f;
+  --hl-comment: #6e7781;
+  --hl-keyword: #cf222e;
+  --hl-title: #8250df;
+  --hl-attr: #0550ae;
+  --hl-string: #0a3069;
+  --hl-built: #953800;
+  --hl-name: #116329;
+  --hl-add-fg: #1a7f37;
+  --hl-add-bg: #dafbe1;
+  --hl-del-fg: #82071e;
+  --hl-del-bg: #ffebe9;
+}

@@ -31,7 +31,11 @@
 - [0004-vanilla-to-react.md](decisions/0004-vanilla-to-react.md) — Console は React + Vite
 - [0005-envelope-custodian.md](decisions/0005-envelope-custodian.md) — 封筒暗号 + custodian 抽象
 - [0006-mcp-unified.md](decisions/0006-mcp-unified.md) — MCP は管理面+作業面を一体・PAT 認証・E が主目的
+- [0007-opencode-web-via-pk-webui.md](decisions/0007-opencode-web-via-pk-webui.md) — opencode web は pk-opencode-webui 経由で提供
+- [0008-antigravity-cli-agent-kind.md](decisions/0008-antigravity-cli-agent-kind.md) — Antigravity CLI（`agy`）を第 4 のエージェント種別に
+- [0009-transcript-paging.md](decisions/0009-transcript-paging.md) — transcript は末尾ウィンドウ読み込み + 逆方向ページング
 - [0010-internal-git-provider.md](decisions/0010-internal-git-provider.md) — テナント内部 git プロバイダ（bare+http-backend を CP 自ホスト）**採用**
+- [0011-console-rebuild.md](decisions/0011-console-rebuild.md) — Console リビルド：並行エントリ・zustand・旧側凍結（設計 [22](22-console-rebuild.md)）
 
 ## history/ — 使い終わった実装プラン（P3-6 は ◐ 段1 完了・admin 残）
 
