@@ -185,9 +185,9 @@ Resources:
             - { Name: AF_ECS_EXEC_ROLE, Value: !ImportValue { "Fn::Sub": "${PlatformStackName}-ExecRoleArn" } }
             - { Name: AF_ECS_TASK_ROLE, Value: !ImportValue { "Fn::Sub": "${PlatformStackName}-WsTaskRoleArn" } }
             - { Name: AF_ECS_LOG_GROUP, Value: !Ref WsLogGroup }
-            # Fargate cold-starts a large workspace image on first pull; give the
-            # Start healthz wait headroom beyond the 120s default.
-            - { Name: AF_ECS_START_TIMEOUT_SEC, Value: "300" }
+            # Start's Agent-readiness wait is best-effort (a cold pull that outlasts
+            # it does NOT fail Start — the workspace converges async), so the default
+            # 90s budget is fine; override AF_ECS_START_TIMEOUT_SEC only if needed.
             - Name: AF_ECS_WORKSPACE_IMAGE
               Value: !Sub
                 - "${Uri}:${Tag}"
