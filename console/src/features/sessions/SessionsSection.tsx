@@ -27,6 +27,7 @@ import { activePane } from "../../layout/ops.ts";
 import { sessionPanes, ordClass, paneCount } from "../../layout/badges.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { useSessionsStore } from "./store.ts";
+import { useReposStore } from "../repos/store.ts";
 import { openSessionTerminal, openSessionTerminalSplit } from "./open.ts";
 import { ArchivedModal } from "./ArchivedModal.tsx";
 import { SessionTitleModal } from "./SessionTitleModal.tsx";
@@ -592,10 +593,11 @@ export function SessionsSection() {
       {showModal && (
         <NewSessionModal
           onClose={() => setShowModal(false)}
-          onCreated={(name) => {
-            // TODO(P2c): clone した場合の Repos/Files ツリー更新はセクション移植後に配線。
+          onCreated={(name, cloned) => {
+            // TODO(P2d): reveal the cloned repo in the Files tree.
             // TODO(P5): claude はチャットミラーで開く。
             void refreshSessions();
+            if (cloned) void useReposStore.getState().refresh();
             openSessionTerminal(name);
             setShowModal(false);
           }}
