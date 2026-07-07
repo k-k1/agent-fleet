@@ -303,3 +303,39 @@ func TestCleanBranchName(t *testing.T) {
 		}
 	}
 }
+
+// TestBranchNameStatus checks collision detection distinguishes a local branch, a
+// remote-only (past) branch, and an unused name — the signal the worktree/rename guards
+// use to refuse a name that would silently create a divergent branch.
+func TestBranchNameStatus(t *testing.T) {
+	if _, err := execLookPathGit(); err != nil {
+		t.Skip("git not available")
+	}
+	base := t.TempDir()
+	run := func(dir string, args ...string) {
+		c := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		c.Env = append(os.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+		if out, err := c.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+	}
+	// remote: has local branches main + feature, no remotes configured.
+	remote := filepath.Join(base, "remote")
+	gitInit(t, remote) // main + feature
+	// work: a clone → main is local, feature is remote-only (origin/feature).
+	work := filepath.Join(base, "work")
+	run(base, "clone", remote, work)
+
+	// Local branch (in the source repo).
+	if l, r := branchNameStatus(remote, "feature"); !l || r {
+		t.Errorf("feature (local): local=%v remote=%v, want local=true remote=false", l, r)
+	}
+	// Remote-only branch (in the clone): the silent-divergence trap.
+	if l, r := branchNameStatus(work, "feature"); l || !r {
+		t.Errorf("feature (remote-only in clone): local=%v remote=%v, want local=false remote=true", l, r)
+	}
+	// Unused name.
+	if l, r := branchNameStatus(work, "brand-new-name"); l || r {
+		t.Errorf("brand-new-name: local=%v remote=%v, want both false", l, r)
+	}
+}

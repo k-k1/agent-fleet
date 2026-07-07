@@ -42,6 +42,14 @@ export interface LaunchOpts {
   worktree: boolean;
   base: string;
   newBranch: string;
+  useExisting?: boolean; // worktree: check out the existing branch instead of creating one
+}
+
+// LaunchResult tells the modal whether to close (ok) or stay open and offer a fix — a
+// name collision with a local or a past-remote branch.
+export interface LaunchResult {
+  ok: boolean;
+  conflict?: "local" | "remote";
 }
 
 interface LaunchModalProps {
@@ -50,7 +58,7 @@ interface LaunchModalProps {
   path?: string;
   kinds: string[]; // available agent kinds (shell/ssm already excluded)
   onClose: () => void;
-  onLaunch: (opts: LaunchOpts) => void;
+  onLaunch: (opts: LaunchOpts) => Promise<LaunchResult>;
 }
 
 export default function LaunchModal({ repo, branch, path, kinds, onClose, onLaunch }: LaunchModalProps) {
@@ -70,6 +78,7 @@ export default function LaunchModal({ repo, branch, path, kinds, onClose, onLaun
   const [worktree, setWorktree] = useState(true);
   const [base, setBase] = useState(branch || "");
   const [branchName, setBranchName] = useState(""); // "" => derived from the prompt
+  const [conflict, setConflict] = useState<"local" | "remote" | null>(null);
   // Provisional branch/folder name: an explicit entry wins, else derive from the prompt;
   // shown as a preview so the user sees where the worktree lands (and can override).
   const derived = branchName.trim() || deriveBranchName(prompt);
@@ -116,23 +125,34 @@ export default function LaunchModal({ repo, branch, path, kinds, onClose, onLaun
     setTimeout(() => textRef.current?.focus(), 0);
   };
 
-  const submit = () => {
+  // start fires the launch and, on a name collision, keeps the modal open with a fix
+  // panel instead of closing. useExisting re-runs the same launch to check out the
+  // colliding branch rather than create a new one.
+  const start = async (useExisting: boolean) => {
     if (busy) return;
     setBusy(true);
+    setConflict(null);
     // Model only rides with an agent that has the cap; codex/opencode ignore it. For a
     // worktree, send the derived/typed provisional branch (may be "" → server picks a
-    // wip-<slug>); base defaults to the parent's current branch.
-    onLaunch({
+    // wip-<slug>); base defaults to the parent's current branch. For useExisting the
+    // colliding name IS the branch to check out, so it rides as base.
+    const r = await onLaunch({
       kind,
       model: hasModel ? model : "",
       prompt: prompt.trim(),
       worktree,
-      base: worktree ? base.trim() : "",
-      newBranch: worktree ? derived : "",
+      base: worktree ? (useExisting ? derived : base.trim()) : "",
+      newBranch: worktree && !useExisting ? derived : "",
+      useExisting,
     });
-    // The parent opens the session + closes us; keep the button busy meanwhile so a
-    // double-Enter can't fire two launches.
+    if (r?.ok) {
+      onClose();
+      return;
+    }
+    setBusy(false);
+    setConflict(r?.conflict ?? null);
   };
+  const submit = () => start(false);
 
   // ⌘/Ctrl+Enter submits from the prompt box (plain Enter newlines — the prompt is
   // free-form and may be multi-line; the 起動 button is the primary submit).
@@ -218,7 +238,7 @@ export default function LaunchModal({ repo, branch, path, kinds, onClose, onLaun
                 <span>ブランチ名（任意）</span>
                 <input
                   value={branchName}
-                  onChange={(e) => setBranchName(e.target.value)}
+                  onChange={(e) => { setBranchName(e.target.value); setConflict(null); }}
                   placeholder={deriveBranchName(prompt) || "自動（最初の指示から）"}
                 />
               </label>
@@ -229,6 +249,25 @@ export default function LaunchModal({ repo, branch, path, kinds, onClose, onLaun
                   <>名前は最初の指示から自動で付けます（決まらなければ暫定名。後で変更可）。</>
                 )}
               </div>
+              {conflict && (
+                <div className="launch-conflict">
+                  {conflict === "local" ? (
+                    <span>
+                      同名のローカルブランチ <code>{derived}</code> が既にあります。別の名前にしてください。
+                    </span>
+                  ) : (
+                    <span>
+                      リモートに同名ブランチ <code>{derived}</code> があります（過去のブランチ）。別名にするか、
+                      その既存ブランチで作業できます。
+                    </span>
+                  )}
+                  {conflict === "remote" && (
+                    <button type="button" className="ghost launch-conflict-use" disabled={busy} onClick={() => start(true)}>
+                      <Icon name="git-branch" /> その既存ブランチで作業
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
           )}
         </div>
