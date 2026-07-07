@@ -5,7 +5,7 @@ import { api, apiJSON, raw, ocwebURL } from "../api.js";
 import { useApp } from "../state.jsx";
 import EmptyState from "../components/EmptyState.jsx";
 import { Choice, OnOff } from "./controls.jsx";
-import { useSettings, setSetting, CLAUDE_MODELS } from "../lib/settings.js";
+import { useSettings, setSetting, CLAUDE_MODELS, OUTPUT_LANGUAGES } from "../lib/settings.js";
 import { useConnections } from "./useConnections.js";
 import { usePolling } from "./usePolling.js";
 import { ProviderCard, StatusPill, Hint, DeviceSteps, DisconnectButton } from "./providerCard.jsx";
@@ -83,6 +83,17 @@ export default function AgentsTab() {
       </Row>
       <p className="muted ds-note">
         タイトル未設定のセッションで数回やり取りしたら、AIが短いタイトル案をチャット上部に表示します。
+      </p>
+      <Row label="アシスタントの回答言語">
+        <Choice
+          value={s.outputLanguage}
+          options={OUTPUT_LANGUAGES}
+          onChange={(v) => setSetting("outputLanguage", v)}
+        />
+      </Row>
+      <p className="muted ds-note">
+        アシスタント・チャットの回答言語です。「入力に合わせる」は、渡した文章や質問の言語に合わせて返します。
+        日本語／English を選ぶと、他言語の文章でもその言語で回答します（翻訳アシスタントは対象外）。
       </p>
     </section>
   );

@@ -122,6 +122,11 @@ export interface Settings {
   // Global ON/OFF for the auto session-title-suggestion feature (DisplayTab セッション).
   // Default true so existing users get it without an explicit opt-in.
   autoTitleSuggest: boolean;
+  // Forced output language for assistant chat: "auto" = follow the input language
+  // (default), "ja" / "en" = always reply in that language (even for foreign-language
+  // content). The Agent reads this key from ui-prefs and injects a language rule into the
+  // chat system prompt (translate assistant is exempt). See docs/19.
+  outputLanguage: string;
   // Per-SSM-host terminal color: host id → color id (see lib/termcolor SSM_HOST_COLORS).
   // Applied to a session's terminal background when it's created (sent as its color).
   ssmHostColors: Record<string, string>;
@@ -149,8 +154,17 @@ const DEFAULTS: Settings = {
   mirrorSend: "mod-enter",
   defaultModel: "sonnet", // stable default (avoids claude's release-varying pick); "" = claude's own
   autoTitleSuggest: true,
+  outputLanguage: "auto",
   ssmHostColors: {},
 };
+
+// Assistant-chat output-language choices, shared by the settings UI. "auto" leaves the
+// language to the user's input; "ja"/"en" force the reply language.
+export const OUTPUT_LANGUAGES: [string, string][] = [
+  ["auto", "入力に合わせる"],
+  ["ja", "日本語"],
+  ["en", "English"],
+];
 
 // Mirror composer submit-key options, shared by the settings UI.
 export const MIRROR_SEND_MODES = [
