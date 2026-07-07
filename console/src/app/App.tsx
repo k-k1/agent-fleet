@@ -8,7 +8,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useTenantStore } from "../core/store/tenant.ts";
 import { useWorkspaceStore, startWorkspacePolling } from "../core/store/workspace.ts";
-import { useLayoutStore, wireLayoutHistory } from "../layout/store.ts";
+import { useLayoutStore, wireLayoutHistory, registerDrawerProbe } from "../layout/store.ts";
 import { wireTerminalReconcile } from "../terminal/service.ts";
 import { useSessionsStore, startSessionsPolling } from "../features/sessions/store.ts";
 import { useReposStore } from "../features/repos/store.ts";
@@ -91,13 +91,36 @@ export function App() {
 
   // Any navigation (layout change) closes the mobile drawer so the main area
   // comes forward — covers every open-path without threading closeNav around.
+  // popstate-driven layout changes are exempt: there the drawer flag from the
+  // history entry decides (popNavRef), so back can REOPEN the drawer.
+  const popNavRef = useRef<boolean | null>(null);
   useEffect(() => {
+    if (popNavRef.current !== null) {
+      popNavRef.current = null;
+      return;
+    }
     setNavOpen(false);
   }, [layout]);
 
+  // Drawer history integration (old pushDrawerEntry): while the drawer is open,
+  // a navigation pushes an extra {drawer:true} entry first, so back reopens the
+  // drawer over the previous view; popstate restores navOpen from the flag.
+  useEffect(() => {
+    registerDrawerProbe(() => navOpenRef.current && window.matchMedia(MOBILE_QUERY).matches);
+    const onPop = (e: PopStateEvent) => {
+      const open = !!(e.state && e.state.drawer);
+      popNavRef.current = open;
+      setNavOpen(open);
+    };
+    window.addEventListener("popstate", onPop);
+    return () => {
+      registerDrawerProbe(null);
+      window.removeEventListener("popstate", onPop);
+    };
+  }, []);
+
   // Mobile: swipe right (from the left third) opens the drawer; swipe left
   // closes it. Passive listeners; vertical drags are left for scrolling.
-  // TODO(P8): drawer history entry (back button reopens the drawer).
   useEffect(() => {
     const mq = window.matchMedia(MOBILE_QUERY);
     const DIST = 50;
@@ -107,7 +130,10 @@ export function App() {
     const onStart = (e: TouchEvent) => {
       const t = e.touches[0];
       mode = null;
-      if (t && mq.matches) {
+      // While a modal is up, don't let an edge swipe open the drawer behind it (the
+      // settings modal also uses horizontal swipes for its own tabs).
+      const { settingsOpen, adminOpen } = useSettingsUI.getState();
+      if (t && mq.matches && !settingsOpen && !adminOpen) {
         if (navOpenRef.current) mode = "close";
         else if (t.clientX < Math.min(window.innerWidth * 0.33, 160)) mode = "open";
       }
