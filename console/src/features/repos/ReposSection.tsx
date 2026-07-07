@@ -30,6 +30,7 @@ import { useSessionsStore } from "../sessions/store.ts";
 import { openSessionTerminal, openSessionTerminalSplit, sendPromptWhenAlive } from "../sessions/open.ts";
 import { useReposStore } from "./store.ts";
 import type { Repo } from "./store.ts";
+import { useFilesStore } from "../files/store.ts";
 import { NewRepoModal } from "./NewRepoModal.tsx";
 import { BranchModal } from "./BranchModal.tsx";
 import { LaunchModal } from "./LaunchModal.tsx";
@@ -112,7 +113,9 @@ export function ReposSection() {
         return;
       }
       void refreshRepos();
-      // TODO(P2d): reveal the new repo in the Files tree once FilesSection lands.
+      // Clone finished server-side — reveal the new working copy in the Files tree.
+      if (res && res.name) useFilesStore.getState().revealInFiles("repos/" + res.name);
+      else useFilesStore.getState().bump();
     } catch (e) {
       toast("clone に失敗: " + e);
     } finally {
@@ -177,6 +180,8 @@ export function ReposSection() {
               if (e && (e.ctrlKey || e.metaKey || e.button === 1)) openTargetInNew(target);
               else openTarget(target);
             }}
+            // Right-click → フォルダを開く: expand + select the repo in the Files tree.
+            onOpenFolder={() => useFilesStore.getState().revealInFiles("repos/" + r.name)}
             onOpenChanges={() => openTarget({ content: { kind: "changes", scmRepo: r.name } })}
             onFF={async () => {
               const res = await apiJSON(`api/repos/${encodeURIComponent(r.name)}/ff`, "POST", {});
@@ -262,14 +267,18 @@ export function ReposSection() {
                 sendPromptWhenAlive(res.name, prompt); // TODO(P5): launchSeed + mirror auto-send
                 pushPromptHistory(r.name, prompt);
               }
-              if (worktree) void refreshRepos();
+              if (worktree) {
+                void refreshRepos();
+                useFilesStore.getState().bump();
+              }
               void refreshSessions();
               openSessionTerminal(res.name); // TODO(P5): chat mirror
               return { ok: true };
             }}
             onBranchChanged={() => {
+              // A checkout / new branch changed HEAD and the working tree.
               void refreshRepos();
-              // TODO(P2d): refresh the Files tree too.
+              useFilesStore.getState().bump();
             }}
           />
         ))}
@@ -288,6 +297,7 @@ interface RepoRowProps {
   active?: boolean;
   selected?: boolean;
   onOpen: (e?: RMouseEvent) => void;
+  onOpenFolder?: () => void;
   onOpenChanges?: () => void;
   onFF?: () => void;
   onDelete?: () => void;
@@ -298,7 +308,7 @@ interface RepoRowProps {
   onFocusPane?: (id: string) => void;
 }
 
-function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected, onOpen, onOpenChanges, onFF, onDelete, onLaunch, onStartWork, onBranchChanged, opens, onFocusPane }: RepoRowProps) {
+function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected, onOpen, onOpenFolder, onOpenChanges, onFF, onDelete, onLaunch, onStartWork, onBranchChanged, opens, onFocusPane }: RepoRowProps) {
   const [showLaunch, setShowLaunch] = useState(false);
   const [launchModal, setLaunchModal] = useState(false);
   // Agent kinds only — shell/ssm have no model/prompt, so the modal excludes
@@ -478,6 +488,13 @@ function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected,
               <Icon name="source-control" /> ソース管理を開く
             </button>
           </li>
+          {onOpenFolder && (
+            <li>
+              <button type="button" className="ui-menu-item" onClick={() => { setMenu(null); onOpenFolder(); }}>
+                <Icon name="folder-opened" /> フォルダを開く
+              </button>
+            </li>
+          )}
           {onOpenChanges && (
             <li>
               <button type="button" className="ui-menu-item" onClick={() => { setMenu(null); onOpenChanges(); }}>
