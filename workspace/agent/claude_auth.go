@@ -133,8 +133,7 @@ type claudeCompleteReq struct {
 // stores it. The flow's PTY/process is always cleaned up.
 func handleClaudeComplete(w http.ResponseWriter, r *http.Request) {
 	var req claudeCompleteReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErr(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
+	if !decodeJSON(w, r, &req) {
 		return
 	}
 	code := strings.TrimSpace(req.Code)

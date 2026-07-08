@@ -632,8 +632,7 @@ type createReq struct {
 // handleCreateSession launches a claude session inside a detached tmux session.
 func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	var req createReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErr(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
+	if !decodeJSON(w, r, &req) {
 		return
 	}
 	title, ok := cleanTitle(req.Title)

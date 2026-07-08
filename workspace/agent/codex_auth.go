@@ -105,8 +105,7 @@ type codexKeyReq struct {
 // `codex login --with-api-key` (codex writes its own auth.json).
 func handleCodexApiKey(w http.ResponseWriter, r *http.Request) {
 	var req codexKeyReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErr(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
+	if !decodeJSON(w, r, &req) {
 		return
 	}
 	key := strings.TrimSpace(req.Key)
@@ -209,8 +208,7 @@ type codexPollReq struct {
 // success it tears down the flow; codex has written auth.json by then.
 func handleCodexDevicePoll(w http.ResponseWriter, r *http.Request) {
 	var req codexPollReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErr(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
+	if !decodeJSON(w, r, &req) {
 		return
 	}
 	if codexLoggedIn() {

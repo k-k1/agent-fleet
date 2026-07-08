@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"net/http"
 	"regexp"
 	"sort"
@@ -57,8 +56,7 @@ type opencodeConnReq struct {
 // handlePutOpencodeConn stores a provider API key under its env var name.
 func handlePutOpencodeConn(w http.ResponseWriter, r *http.Request) {
 	var req opencodeConnReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErr(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
+	if !decodeJSON(w, r, &req) {
 		return
 	}
 	env := strings.TrimSpace(req.Env)

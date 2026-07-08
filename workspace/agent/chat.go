@@ -673,8 +673,7 @@ func appendUniqueStr(ss []string, v string) []string {
 
 func handleChatCreate(w http.ResponseWriter, r *http.Request) {
 	var req chatCreateReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErr(w, http.StatusBadRequest, "bad_request", "invalid body")
+	if !decodeJSON(w, r, &req) {
 		return
 	}
 	title := strings.TrimSpace(req.Title)
@@ -754,8 +753,7 @@ type chatAskReq struct {
 // only). Reached only via the local Agent REST (mcp_stdio → localhost); not CP-exposed.
 func handleChatAsk(w http.ResponseWriter, r *http.Request) {
 	var req chatAskReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErr(w, http.StatusBadRequest, "bad_request", "invalid body")
+	if !decodeJSON(w, r, &req) {
 		return
 	}
 	prompt := strings.TrimSpace(req.Prompt)
@@ -807,8 +805,7 @@ type chatRenameReq struct {
 func handleChatRename(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	var req chatRenameReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErr(w, http.StatusBadRequest, "bad_request", "invalid body")
+	if !decodeJSON(w, r, &req) {
 		return
 	}
 	title := strings.TrimSpace(req.Title)
@@ -852,8 +849,7 @@ type chatSendReq struct {
 func handleChatSend(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	var req chatSendReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErr(w, http.StatusBadRequest, "bad_request", "invalid body")
+	if !decodeJSON(w, r, &req) {
 		return
 	}
 	content := strings.TrimSpace(req.Content)
@@ -910,8 +906,7 @@ func handleChatSend(w http.ResponseWriter, r *http.Request) {
 func handleChatStream(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	var req chatSendReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErr(w, http.StatusBadRequest, "bad_request", "invalid body")
+	if !decodeJSON(w, r, &req) {
 		return
 	}
 	content := strings.TrimSpace(req.Content)

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"net/http"
 	"net/url"
 	"os"
@@ -147,8 +146,7 @@ func handleGitProviderIdentityPut(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req identityReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErr(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
+	if !decodeJSON(w, r, &req) {
 		return
 	}
 	s, err := loadSecrets()
@@ -179,8 +177,7 @@ func handleGlobalIdentityGet(w http.ResponseWriter, r *http.Request) {
 
 func handleGlobalIdentityPut(w http.ResponseWriter, r *http.Request) {
 	var req identityReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErr(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
+	if !decodeJSON(w, r, &req) {
 		return
 	}
 	if n := strings.TrimSpace(req.Name); n != "" {
@@ -235,8 +232,7 @@ func handleRepoIdentityPut(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req identityReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErr(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
+	if !decodeJSON(w, r, &req) {
 		return
 	}
 	name, email := strings.TrimSpace(req.Name), strings.TrimSpace(req.Email)

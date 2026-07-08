@@ -185,8 +185,7 @@ func handleToolchainsGet(w http.ResponseWriter, r *http.Request) {
 
 func handleToolchainsPut(w http.ResponseWriter, r *http.Request) {
 	var req toolchains
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErr(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
+	if !decodeJSON(w, r, &req) {
 		return
 	}
 	if req.Timezone == "" {

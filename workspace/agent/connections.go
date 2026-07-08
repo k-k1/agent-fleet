@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -161,8 +160,7 @@ func handlePutGitConn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req gitConnReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErr(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
+	if !decodeJSON(w, r, &req) {
 		return
 	}
 	token := strings.TrimSpace(req.Token)

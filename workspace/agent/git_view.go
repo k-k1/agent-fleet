@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"path/filepath"
@@ -356,8 +355,7 @@ func gitPathsOp(w http.ResponseWriter, r *http.Request, gitArgs []string, code s
 		return
 	}
 	var req pathsReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErr(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
+	if !decodeJSON(w, r, &req) {
 		return
 	}
 	paths, ok := validPaths(dir, req.Paths)
@@ -400,8 +398,7 @@ func handleRepoCommit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req commitReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErr(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
+	if !decodeJSON(w, r, &req) {
 		return
 	}
 	if strings.TrimSpace(req.Message) == "" {
