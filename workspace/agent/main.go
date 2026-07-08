@@ -113,6 +113,16 @@ func writeErr(w http.ResponseWriter, status int, code, msg string) {
 	writeJSON(w, status, map[string]any{"error": map[string]string{"code": code, "message": msg}})
 }
 
+// decodeJSON parses the request body into v; on failure it writes the shared
+// 400 bad_request response and returns false — the caller just returns.
+func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
+	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
+		writeErr(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
+		return false
+	}
+	return true
+}
+
 func logRequests(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()

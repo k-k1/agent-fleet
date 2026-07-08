@@ -302,8 +302,7 @@ func applyInput(a *assistant, in assistantInput) error {
 
 func handleAssistantCreate(w http.ResponseWriter, r *http.Request) {
 	var in assistantInput
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		writeErr(w, http.StatusBadRequest, "bad_request", "invalid body")
+	if !decodeJSON(w, r, &in) {
 		return
 	}
 	now := nowMs()
@@ -331,8 +330,7 @@ func handleAssistantUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in assistantInput
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		writeErr(w, http.StatusBadRequest, "bad_request", "invalid body")
+	if !decodeJSON(w, r, &in) {
 		return
 	}
 	if err := applyInput(a, in); err != nil {

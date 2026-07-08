@@ -199,8 +199,7 @@ type agentRTKReq struct {
 
 func handleAgentRTKPut(w http.ResponseWriter, r *http.Request) {
 	var req agentRTKReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErr(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
+	if !decodeJSON(w, r, &req) {
 		return
 	}
 	p := readAgentRTKPrefs()

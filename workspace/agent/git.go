@@ -600,8 +600,7 @@ func ensureWorktree(parentDir, base, newBranch, folderSeg string) (string, error
 
 func handleCloneRepo(w http.ResponseWriter, r *http.Request) {
 	var req cloneReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErr(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
+	if !decodeJSON(w, r, &req) {
 		return
 	}
 	req.RemoteURL = strings.TrimSpace(req.RemoteURL)
@@ -745,8 +744,7 @@ func handleRepoCheckout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req checkoutReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErr(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
+	if !decodeJSON(w, r, &req) {
 		return
 	}
 	// A working copy with running sessions is pinned to its branch: switching it

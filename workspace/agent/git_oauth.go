@@ -87,8 +87,7 @@ type ghPollReq struct {
 
 func handleGithubOAuthPoll(w http.ResponseWriter, r *http.Request) {
 	var req ghPollReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErr(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
+	if !decodeJSON(w, r, &req) {
 		return
 	}
 	ghMu.Lock()
@@ -201,8 +200,7 @@ type bitbucketStoreReq struct {
 // inherited global `store` helper so our refreshing helper is the sole source.
 func handleBitbucketStore(w http.ResponseWriter, r *http.Request) {
 	var req bitbucketStoreReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErr(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
+	if !decodeJSON(w, r, &req) {
 		return
 	}
 	if req.AccessToken == "" || req.Key == "" || req.Secret == "" {
