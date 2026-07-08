@@ -654,7 +654,7 @@ func (c config) sessionQuotaExceeded(ctx context.Context, res *resolved) *apiErr
 	if lim > 0 {
 		if n, err := c.mgr.countSessions(ctx, res.rt); err == nil && n >= lim {
 			// Developer-facing fallback; the Console localizes by `code` (quota_sessions).
-			return &apiError{http.StatusTooManyRequests, "quota_sessions",
+			return &apiError{http.StatusTooManyRequests, errCodeQuotaSessions,
 				fmt.Sprintf("concurrent session limit reached (%d running, max %d)", n, lim)}
 		}
 	}
