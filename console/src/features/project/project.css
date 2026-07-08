@@ -32,10 +32,11 @@
   display: flex;
   flex-direction: column;
 }
-/* Worktrees hang off their base: indented, with an accent spine binding them to
-   the base clone above (they're the same project, different checkout). */
+/* Worktrees hang off their base: a shallow indent with an accent spine binds them
+   to the base clone above (same project, different checkout) without pushing their
+   content far right. */
 .proj-node.wt {
-  margin-left: 13px;
+  margin-left: 7px;
   padding-left: 2px;
   border-left: 2px solid color-mix(in srgb, var(--accent) 30%, transparent);
 }
