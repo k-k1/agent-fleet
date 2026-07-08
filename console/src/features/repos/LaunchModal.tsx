@@ -47,11 +47,15 @@ interface LaunchModalProps {
   branch?: string;
   path?: string;
   kinds: string[]; // available agent kinds (shell/ssm already excluded)
+  /** Offer the "new worktree" location (default). False for a worktree row — it's
+   * already an isolated checkout, so only in-place launch is offered; new worktrees
+   * are created from the base clone. */
+  allowWorktree?: boolean;
   onClose: () => void;
   onLaunch: (opts: LaunchOpts) => Promise<LaunchResult>;
 }
 
-export function LaunchModal({ repo, branch, path, kinds, onClose, onLaunch }: LaunchModalProps) {
+export function LaunchModal({ repo, branch, path, kinds, allowWorktree = true, onClose, onLaunch }: LaunchModalProps) {
   const last = readRepoLast(repo);
   // Default to the last agent used in this repo when still available, else the first.
   const initialKind = last.kind && kinds.includes(last.kind) ? last.kind : kinds[0] || "claude";
@@ -61,8 +65,9 @@ export function LaunchModal({ repo, branch, path, kinds, onClose, onLaunch }: La
   const [busy, setBusy] = useState(false);
   const textRef = useRef<HTMLTextAreaElement>(null);
   // WHERE: default to an isolated worktree — a branch switch can't corrupt other
-  // sessions when each task has its own dir.
-  const [worktree, setWorktree] = useState(true);
+  // sessions when each task has its own dir. From a worktree row (allowWorktree
+  // false) there's no worktree choice: launch in place.
+  const [worktree, setWorktree] = useState(allowWorktree);
   const [base, setBase] = useState(branch || "");
   const [branchName, setBranchName] = useState(""); // "" => derived from the prompt
   const [conflict, setConflict] = useState<"local" | "remote" | null>(null);
@@ -193,7 +198,17 @@ export function LaunchModal({ repo, branch, path, kinds, onClose, onLaunch }: La
           </div>
         )}
 
-        {/* 場所: worktree（隔離・既定）か このコピーで直接か */}
+        {/* 場所: worktree（隔離・既定）か このコピーで直接か。worktree 行では選択肢
+            なし（この worktree 内で直接起動）。 */}
+        {!allowWorktree ? (
+          <div className="ui-field">
+            <span className="ui-field-label">場所</span>
+            <span className="ui-field-hint">
+              この worktree（<code>{branch || "現在の作業コピー"}</code>）で直接起動します。新しい worktree
+              はベースのリポジトリから作成してください。
+            </span>
+          </div>
+        ) : (
         <div className="ui-field">
           <span className="ui-field-label">場所</span>
           <div className="ui-seg">
@@ -254,6 +269,7 @@ export function LaunchModal({ repo, branch, path, kinds, onClose, onLaunch }: La
             </>
           )}
         </div>
+        )}
 
         {/* 最初のプロンプト（任意） */}
         <div className="ui-field">

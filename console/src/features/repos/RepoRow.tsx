@@ -97,9 +97,12 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
         onAuxClick={(e) => e.button === 1 && running && onOpen(e)}
       >
         <div className="repo-info">
-          <span className="repo-name">
-            <Icon name="repo" />
-            {r.name}
+          {/* Worktree rows collapse to one line: the BRANCH is the identity, and the
+              provider/remote is identical to the parent — so show the branch here and
+              drop the meta line below. Base clones keep name + branch/provider. */}
+          <span className="repo-name" title={r.worktree ? r.name : undefined}>
+            <Icon name={r.worktree ? "repo-forked" : "repo"} />
+            {r.worktree ? r.branch || r.name : r.name}
           </span>
           {(r.dirty || ((r.ahead || r.behind) ?? 0) > 0) && (
             <span className="repo-state">
@@ -192,19 +195,14 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
             )}
           </div>
         </div>
-        {/* Meta line: current branch (left) + git provider (right). */}
-        {(r.branch || r.provider || r.worktree) && (
+        {/* Meta line (base clones only): current branch (left) + git provider (right).
+            Worktrees are single-line — their branch is shown as the name above and the
+            provider is the same as the parent. */}
+        {!r.worktree && (r.branch || r.provider) && (
           <div className="repo-meta">
             {r.branch && (
-              <span
-                className={"repo-branch" + (r.worktree ? " worktree" : "")}
-                title={
-                  r.worktree
-                    ? `worktree — ブランチ: ${r.branch}${r.parent ? "（親: " + r.parent + "）" : ""}（名前変更はセッションのメニューから）`
-                    : "現在のブランチ: " + r.branch
-                }
-              >
-                <Icon name={r.worktree ? "repo-forked" : "git-branch"} />
+              <span className="repo-branch" title={"現在のブランチ: " + r.branch}>
+                <Icon name="git-branch" />
                 <span className="repo-branch-name">{r.branch}</span>
               </span>
             )}
@@ -287,6 +285,10 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
           branch={r.branch}
           path={r.path}
           kinds={agentKinds}
+          // From a worktree, only in-place launch is offered — spawning a worktree
+          // OFF a worktree yields a confusing double-@ name off the wrong base. New
+          // worktrees are created from the base clone (any base branch).
+          allowWorktree={!r.worktree}
           onClose={() => setLaunchModal(false)}
           onLaunch={onStartWork}
         />
