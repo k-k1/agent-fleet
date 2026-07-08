@@ -10,7 +10,6 @@ import (
 	"log"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -149,10 +148,10 @@ func newGCM(key []byte) (cipher.AEAD, error) {
 // and the per-host bitbucket helper). Idempotent.
 func ensureCredHelper() error {
 	// --unset-all exits 5 when the key is absent; that is not an error here.
-	_ = exec.Command("git", "config", "--global", "--unset-all", "credential.helper").Run()
-	_ = exec.Command("git", "config", "--global", "--unset-all", "credential.https://bitbucket.org.helper").Run()
-	if out, err := exec.Command("git", "config", "--global", "credential.helper", "!workspace-agent cred").CombinedOutput(); err != nil {
-		return fmt.Errorf("git config credential.helper: %v: %s", err, strings.TrimSpace(string(out)))
+	_ = gitCmd("", "config", "--global", "--unset-all", "credential.helper").Run()
+	_ = gitCmd("", "config", "--global", "--unset-all", "credential.https://bitbucket.org.helper").Run()
+	if out, err := runGitCombined("", "config", "--global", "credential.helper", "!workspace-agent cred"); err != nil {
+		return fmt.Errorf("git config credential.helper: %v: %s", err, out)
 	}
 	return nil
 }

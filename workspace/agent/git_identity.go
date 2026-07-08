@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 )
@@ -34,27 +33,27 @@ func remoteHost(dir string) string {
 }
 
 func gitConfigLocalGet(dir, key string) string {
-	out, err := exec.Command("git", "-C", dir, "config", "--local", "--get", key).Output()
+	out, err := runGit(dir, "config", "--local", "--get", key)
 	if err != nil {
 		return ""
 	}
-	return strings.TrimSpace(string(out))
+	return out
 }
 
 func gitConfigLocalSet(dir, key, val string) {
-	_ = exec.Command("git", "-C", dir, "config", "--local", key, val).Run()
+	_ = gitCmd(dir, "config", "--local", key, val).Run()
 }
 
 func gitConfigLocalUnset(dir, key string) {
-	_ = exec.Command("git", "-C", dir, "config", "--local", "--unset", key).Run()
+	_ = gitCmd(dir, "config", "--local", "--unset", key).Run()
 }
 
 func gitConfigGlobalGet(key string) string {
-	out, err := exec.Command("git", "config", "--global", "--get", key).Output()
+	out, err := runGit("", "config", "--global", "--get", key)
 	if err != nil {
 		return ""
 	}
-	return strings.TrimSpace(string(out))
+	return out
 }
 
 // resolvedAccount is the provider's connected account name/email (github login+email,
@@ -187,12 +186,12 @@ func handleGlobalIdentityPut(w http.ResponseWriter, r *http.Request) {
 	if n := strings.TrimSpace(req.Name); n != "" {
 		_ = gitConfigGlobal("user.name", n)
 	} else {
-		_ = exec.Command("git", "config", "--global", "--unset", "user.name").Run()
+		_ = gitCmd("", "config", "--global", "--unset", "user.name").Run()
 	}
 	if e := strings.TrimSpace(req.Email); e != "" {
 		_ = gitConfigGlobal("user.email", e)
 	} else {
-		_ = exec.Command("git", "config", "--global", "--unset", "user.email").Run()
+		_ = gitCmd("", "config", "--global", "--unset", "user.email").Run()
 	}
 	handleGlobalIdentityGet(w, r)
 }

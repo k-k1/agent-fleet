@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -49,7 +48,9 @@ func gitChanges(dir string) ([]Change, error) {
 	// instead of C-style octal escapes ("\346\227\245…"). Without it the escaped
 	// name reaches the Console FILES list and no longer matches the real path, so
 	// clicking a changed file fails to open it.
-	out, err := exec.Command("git", "-C", dir, "-c", "core.quotePath=false", "status", "--porcelain").Output()
+	// Raw .Output() (not runGit): porcelain lines may START with a space (" M foo")
+	// and trimming would corrupt the first line's XY status columns.
+	out, err := gitCmd(dir, "-c", "core.quotePath=false", "status", "--porcelain").Output()
 	if err != nil {
 		return nil, err
 	}
@@ -89,7 +90,7 @@ func handleRepoDiff(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	// core.quotePath=false: keep non-ASCII paths in the +++/--- headers as UTF-8
 	// so the Console renders them as text (see gitChanges).
-	args := []string{"-C", dir, "-c", "core.quotePath=false", "diff"}
+	args := []string{"-c", "core.quotePath=false", "diff"}
 	if v := q.Get("staged"); v == "1" || v == "true" {
 		args = append(args, "--staged")
 	}
@@ -101,7 +102,9 @@ func handleRepoDiff(w http.ResponseWriter, r *http.Request) {
 		}
 		args = append(args, "--", rel)
 	}
-	out, err := exec.Command("git", args...).Output() // diff exits 0 even with changes
+	// Raw .Output() (not runGit): the patch body is returned verbatim in the JSON
+	// response and must stay byte-identical (no trimming).
+	out, err := gitCmd(dir, args...).Output() // diff exits 0 even with changes
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "git_failed", err.Error())
 		return
@@ -132,7 +135,7 @@ func handleRepoLog(w http.ResponseWriter, r *http.Request) {
 	if n, err := strconv.Atoi(q.Get("limit")); err == nil && n > 0 && n <= 500 {
 		limit = n
 	}
-	args := []string{"-C", dir, "log", "--max-count=" + strconv.Itoa(limit),
+	args := []string{"log", "--max-count=" + strconv.Itoa(limit),
 		"--pretty=format:%H%x1f%h%x1f%an%x1f%aI%x1f%s"}
 	if ref := q.Get("ref"); ref != "" {
 		if strings.HasPrefix(ref, "-") {
@@ -141,13 +144,13 @@ func handleRepoLog(w http.ResponseWriter, r *http.Request) {
 		}
 		args = append(args, ref)
 	}
-	out, err := exec.Command("git", args...).Output()
+	out, err := runGit(dir, args...)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "git_failed", err.Error())
 		return
 	}
 	commits := []commitView{}
-	for _, line := range strings.Split(string(out), "\n") {
+	for _, line := range strings.Split(out, "\n") {
 		if p := strings.Split(line, "\x1f"); len(p) == 5 {
 			commits = append(commits, commitView{Hash: p[0], Short: p[1], Author: p[2], Date: p[3], Subject: p[4]})
 		}
@@ -228,23 +231,23 @@ func handleRepoGraph(w http.ResponseWriter, r *http.Request) {
 	// refs/tags/…). The short form is ambiguous for slash-containing branch names — a
 	// local "feat/x" and a remote "origin/feat/x" both just look like "a/b" — which made
 	// parseDecorate misclassify local branches as remotes (no branch-checkout offered).
-	out, err := exec.Command("git", "-C", dir, "log", "--all", "--topo-order", "--date-order",
+	out, err := runGit(dir, "log", "--all", "--topo-order", "--date-order",
 		"--decorate=full", "--max-count="+strconv.Itoa(limit),
-		"--pretty=format:%H%x1f%h%x1f%P%x1f%an%x1f%cI%x1f%s%x1f%D").Output()
+		"--pretty=format:%H%x1f%h%x1f%P%x1f%an%x1f%cI%x1f%s%x1f%D")
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "git_failed", err.Error())
 		return
 	}
 	// Reachable-from-HEAD set → inBranch. Empty (detached / no HEAD) ⇒ dim nothing.
 	reachable := map[string]bool{}
-	if rl, err := exec.Command("git", "-C", dir, "rev-list", "HEAD").Output(); err == nil {
-		for _, s := range strings.Fields(string(rl)) {
+	if rl, err := runGit(dir, "rev-list", "HEAD"); err == nil {
+		for _, s := range strings.Fields(rl) {
 			reachable[s] = true
 		}
 	}
 	commits := []graphCommit{}
 	current := ""
-	for _, line := range strings.Split(string(out), "\n") {
+	for _, line := range strings.Split(out, "\n") {
 		p := strings.Split(line, "\x1f")
 		if len(p) != 7 {
 			continue
@@ -289,23 +292,23 @@ func handleRepoShow(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Header: one record, fields separated by \x1f; body is last (may hold newlines).
-	hdr, err := exec.Command("git", "-C", dir, "log", "-1",
-		"--pretty=format:%H%x1f%h%x1f%an%x1f%aI%x1f%s%x1f%b", sha).Output()
+	hdr, err := runGit(dir, "log", "-1",
+		"--pretty=format:%H%x1f%h%x1f%an%x1f%aI%x1f%s%x1f%b", sha)
 	if err != nil {
 		writeErr(w, http.StatusNotFound, "not_found", "no such commit")
 		return
 	}
 	out := map[string]any{}
-	if p := strings.SplitN(string(hdr), "\x1f", 6); len(p) == 6 {
+	if p := strings.SplitN(hdr, "\x1f", 6); len(p) == 6 {
 		out["hash"], out["short"], out["author"] = p[0], p[1], p[2]
 		out["date"], out["subject"], out["body"] = p[3], p[4], strings.TrimRight(p[5], "\n")
 	}
 
 	// Changed files (name-status). First token = status, last = path (rename → new).
 	files := []commitFile{}
-	if ns, err := exec.Command("git", "-C", dir, "-c", "core.quotePath=false", "show", "--name-status",
-		"--format=", "--no-color", sha).Output(); err == nil {
-		for _, line := range strings.Split(string(ns), "\n") {
+	if ns, err := runGit(dir, "-c", "core.quotePath=false", "show", "--name-status",
+		"--format=", "--no-color", sha); err == nil {
+		for _, line := range strings.Split(ns, "\n") {
 			f := strings.Split(strings.TrimSpace(line), "\t")
 			if len(f) >= 2 && f[0] != "" {
 				files = append(files, commitFile{Status: f[0], Path: f[len(f)-1]})
@@ -314,8 +317,9 @@ func handleRepoShow(w http.ResponseWriter, r *http.Request) {
 	}
 	out["files"] = files
 
-	// Full patch.
-	diff, err := exec.Command("git", "-C", dir, "-c", "core.quotePath=false", "show", "--format=", "--no-color", sha).Output()
+	// Full patch. Raw .Output() (not runGit): the patch body is returned verbatim
+	// in the JSON response and must stay byte-identical (no trimming).
+	diff, err := gitCmd(dir, "-c", "core.quotePath=false", "show", "--format=", "--no-color", sha).Output()
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "git_failed", err.Error())
 		return
@@ -361,11 +365,11 @@ func gitPathsOp(w http.ResponseWriter, r *http.Request, gitArgs []string, code s
 		writeErr(w, http.StatusBadRequest, "bad_path", "paths required and must be inside the repo")
 		return
 	}
-	args := append([]string{"-C", dir}, gitArgs...)
+	args := append([]string{}, gitArgs...)
 	args = append(args, "--")
 	args = append(args, paths...)
-	if out, err := exec.Command("git", args...).CombinedOutput(); err != nil {
-		writeErr(w, http.StatusBadGateway, code, fmt.Sprintf("%v: %s", err, strings.TrimSpace(string(out))))
+	if out, err := runGitCombined(dir, args...); err != nil {
+		writeErr(w, http.StatusBadGateway, code, fmt.Sprintf("%v: %s", err, out))
 		return
 	}
 	cs, _ := gitChanges(dir)
@@ -405,13 +409,13 @@ func handleRepoCommit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	applyGitIdentity(dir) // self-heal: ensure the effective identity is in local config
-	args := []string{"-C", dir, "commit"}
+	args := []string{"commit"}
 	if req.All {
 		args = append(args, "-a")
 	}
 	args = append(args, "-m", req.Message)
-	if out, err := exec.Command("git", args...).CombinedOutput(); err != nil {
-		writeErr(w, http.StatusBadGateway, "commit_failed", fmt.Sprintf("%v: %s", err, strings.TrimSpace(string(out))))
+	if out, err := runGitCombined(dir, args...); err != nil {
+		writeErr(w, http.StatusBadGateway, "commit_failed", fmt.Sprintf("%v: %s", err, out))
 		return
 	}
 	st, _ := gitStatus(dir)

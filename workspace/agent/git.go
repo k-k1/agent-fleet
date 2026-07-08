@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -115,11 +114,11 @@ type RepoStatus struct {
 // the human-readable output.
 func gitStatus(dir string) (RepoStatus, error) {
 	var s RepoStatus
-	out, err := exec.Command("git", "-C", dir, "status", "--porcelain=v2", "--branch").Output()
+	out, err := runGit(dir, "status", "--porcelain=v2", "--branch")
 	if err != nil {
 		return s, err
 	}
-	for _, line := range strings.Split(string(out), "\n") {
+	for _, line := range strings.Split(out, "\n") {
 		switch {
 		case strings.HasPrefix(line, "# branch.head "):
 			h := strings.TrimPrefix(line, "# branch.head ")
@@ -240,11 +239,9 @@ func gitClone(dir, remoteURL, branch, newBranch string) error {
 		args = append(args, "--branch", b)
 	}
 	args = append(args, "--", remoteURL, dir)
-	cmd := exec.Command("git", args...)
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
-	if out, err := cmd.CombinedOutput(); err != nil {
+	if out, err := runGitCombined("", args...); err != nil {
 		_ = os.RemoveAll(dir)
-		return fmt.Errorf("%v: %s", err, strings.TrimSpace(string(out)))
+		return fmt.Errorf("%v: %s", err, out)
 	}
 	// Fork a fresh branch off the base and switch to it, before submodules (a new
 	// branch at the same commit shares the base's submodule pins).
@@ -266,13 +263,13 @@ func gitCheckoutNewBranch(dir, newBranch string) error {
 	if b == "" || strings.HasPrefix(b, "-") {
 		return fmt.Errorf("new branch name is required and must not start with '-'")
 	}
-	args := []string{"-C", dir, "checkout"}
+	args := []string{"checkout"}
 	if !branchExists(dir, b) {
 		args = append(args, "-b") // create it; else fall through to a plain switch
 	}
 	args = append(args, b)
-	if out, err := exec.Command("git", args...).CombinedOutput(); err != nil {
-		return fmt.Errorf("create branch %s: %v: %s", b, err, strings.TrimSpace(string(out)))
+	if out, err := runGitCombined(dir, args...); err != nil {
+		return fmt.Errorf("create branch %s: %v: %s", b, err, out)
 	}
 	return nil
 }
@@ -281,33 +278,33 @@ func gitCheckoutNewBranch(dir, newBranch string) error {
 // add`), as opposed to a normal/main working copy. A linked worktree's git dir lives
 // under the parent's common dir (…/.git/worktrees/<name>).
 func isLinkedWorktree(dir string) bool {
-	out, err := exec.Command("git", "-C", dir, "rev-parse", "--absolute-git-dir").Output()
+	out, err := runGit(dir, "rev-parse", "--absolute-git-dir")
 	if err != nil {
 		return false
 	}
-	return strings.Contains(filepath.ToSlash(strings.TrimSpace(string(out))), "/.git/worktrees/")
+	return strings.Contains(filepath.ToSlash(out), "/.git/worktrees/")
 }
 
 // worktreeParent returns the main working copy a linked worktree belongs to (the
 // directory holding the shared .git), so `git worktree remove` can be run from it.
 func worktreeParent(dir string) string {
-	out, err := exec.Command("git", "-C", dir, "rev-parse", "--path-format=absolute", "--git-common-dir").Output()
+	out, err := runGit(dir, "rev-parse", "--path-format=absolute", "--git-common-dir")
 	if err != nil {
 		return ""
 	}
-	return filepath.Dir(strings.TrimSpace(string(out))) // …/repos/app/.git -> …/repos/app
+	return filepath.Dir(out) // …/repos/app/.git -> …/repos/app
 }
 
 // linkedWorktreeCount returns how many linked worktrees hang off dir (0 for a plain
 // clone). Deleting a main working copy with linked worktrees would break them, so the
 // delete handler refuses while this is > 0.
 func linkedWorktreeCount(dir string) int {
-	out, err := exec.Command("git", "-C", dir, "worktree", "list", "--porcelain").Output()
+	out, err := runGit(dir, "worktree", "list", "--porcelain")
 	if err != nil {
 		return 0
 	}
 	total := 0
-	for _, line := range strings.Split(string(out), "\n") {
+	for _, line := range strings.Split(out, "\n") {
 		if strings.HasPrefix(line, "worktree ") {
 			total++ // one block per worktree; the first is the main one
 		}
@@ -334,8 +331,8 @@ func maybePruneWorktree(dir string) {
 	if parent == "" {
 		return
 	}
-	_ = exec.Command("git", "-C", parent, "worktree", "remove", "--force", dir).Run()
-	_ = exec.Command("git", "-C", parent, "worktree", "prune").Run()
+	_ = gitCmd(parent, "worktree", "remove", "--force", dir).Run()
+	_ = gitCmd(parent, "worktree", "prune").Run()
 }
 
 // gitCurrentBranch returns dir's checked-out branch name, "(detached)" on a
@@ -343,11 +340,11 @@ func maybePruneWorktree(dir string) {
 // gitStatus (a single rev-parse, no porcelain parse) — used to stamp a session's
 // start branch at create and to detect later drift on the session list.
 func gitCurrentBranch(dir string) string {
-	out, err := exec.Command("git", "-C", dir, "rev-parse", "--abbrev-ref", "HEAD").Output()
+	out, err := runGit(dir, "rev-parse", "--abbrev-ref", "HEAD")
 	if err != nil {
 		return ""
 	}
-	b := strings.TrimSpace(string(out))
+	b := out
 	if b == "HEAD" {
 		return "(detached)"
 	}
@@ -358,11 +355,11 @@ func gitCurrentBranch(dir string) string {
 // single rev-parse (branch line + absolute-git-dir line), so the session list can
 // enrich every row with one git call per unique dir. "" branch / false for a non-repo.
 func gitDirInfo(dir string) (branch string, worktree bool) {
-	out, err := exec.Command("git", "-C", dir, "rev-parse", "--abbrev-ref", "HEAD", "--absolute-git-dir").Output()
+	out, err := runGit(dir, "rev-parse", "--abbrev-ref", "HEAD", "--absolute-git-dir")
 	if err != nil {
 		return "", false
 	}
-	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	lines := strings.Split(out, "\n")
 	if len(lines) >= 1 {
 		branch = strings.TrimSpace(lines[0])
 		if branch == "HEAD" {
@@ -377,7 +374,7 @@ func gitDirInfo(dir string) (branch string, worktree bool) {
 
 // branchExists reports whether dir already has a local branch named branch.
 func branchExists(dir, branch string) bool {
-	return exec.Command("git", "-C", dir, "rev-parse", "--verify", "--quiet", "refs/heads/"+branch).Run() == nil
+	return gitOK(dir, "rev-parse", "--verify", "--quiet", "refs/heads/"+branch)
 }
 
 // branchNameStatus reports whether name already exists as a local branch and/or as a
@@ -387,10 +384,10 @@ func branchExists(dir, branch string) bool {
 // which then collides at push time. Callers refuse and offer the user a choice.
 func branchNameStatus(dir, name string) (local, remote bool) {
 	local = branchExists(dir, name)
-	out, err := exec.Command("git", "-C", dir, "for-each-ref", "--format=%(refname:short)", "refs/remotes").Output()
+	out, err := runGit(dir, "for-each-ref", "--format=%(refname:short)", "refs/remotes")
 	if err == nil {
 		suffix := "/" + name
-		for _, ln := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		for _, ln := range strings.Split(out, "\n") {
 			if ln = strings.TrimSpace(ln); ln != "" && strings.HasSuffix(ln, suffix) {
 				remote = true
 				break
@@ -411,11 +408,8 @@ func branchNameStatus(dir, name string) (local, remote bool) {
 // submodules is a no-op, and an unreachable submodule is non-fatal so the parent
 // operation still succeeds.
 func gitSubmodulesUpdate(dir string) {
-	env := append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
 	run := func(args ...string) {
-		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
-		cmd.Env = env
-		_ = cmd.Run()
+		_ = gitCmd(dir, args...).Run()
 	}
 	run("submodule", "init")
 	rewriteSubmoduleSSHURLs(dir)
@@ -427,17 +421,17 @@ func gitSubmodulesUpdate(dir string) {
 // `submodule init` materialized; nested submodules are handled best-effort by the
 // recursive update.
 func rewriteSubmoduleSSHURLs(dir string) {
-	out, err := exec.Command("git", "-C", dir, "config", "--get-regexp", `^submodule\..*\.url$`).Output()
+	out, err := runGit(dir, "config", "--get-regexp", `^submodule\..*\.url$`)
 	if err != nil {
 		return // no submodules / no config
 	}
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+	for _, line := range strings.Split(out, "\n") {
 		key, url, ok := strings.Cut(line, " ")
 		if !ok {
 			continue
 		}
 		if https := sshToHTTPS(url); https != url {
-			_ = exec.Command("git", "-C", dir, "config", key, https).Run()
+			_ = gitCmd(dir, "config", key, https).Run()
 		}
 	}
 }
@@ -466,11 +460,11 @@ func sshToHTTPS(url string) string {
 
 // gitOriginURL returns dir's origin remote URL (ok=false when there is none).
 func gitOriginURL(dir string) (string, bool) {
-	out, err := exec.Command("git", "-C", dir, "remote", "get-url", "origin").Output()
+	out, err := runGit(dir, "remote", "get-url", "origin")
 	if err != nil {
 		return "", false
 	}
-	return strings.TrimSpace(string(out)), true
+	return out, true
 }
 
 // normalizeRemote canonicalizes a clone URL for equality comparison: SSH→HTTPS,
@@ -520,8 +514,8 @@ func ensureRepo(remoteURL, branch, newBranch, name string) (string, error) {
 		// if the new branch already exists — then we just switch to it below), or when a
 		// plain base checkout was requested and no new branch is wanted.
 		if b := strings.TrimSpace(branch); b != "" && !strings.HasPrefix(b, "-") && (nb == "" || !branchExists(dir, nb)) {
-			if out, err := exec.Command("git", "-C", dir, "checkout", b).CombinedOutput(); err != nil {
-				return "", fmt.Errorf("checkout %s: %v: %s", b, err, strings.TrimSpace(string(out)))
+			if out, err := runGitCombined(dir, "checkout", b); err != nil {
+				return "", fmt.Errorf("checkout %s: %v: %s", b, err, out)
 			}
 		}
 		if nb != "" {
@@ -587,7 +581,7 @@ func ensureWorktree(parentDir, base, newBranch, folderSeg string) (string, error
 		return "", fmt.Errorf("path already exists and is not a worktree: %s", name)
 	}
 	// git worktree add [-b <newBranch>] <dir> [<base>]
-	args := []string{"-C", parentDir, "worktree", "add"}
+	args := []string{"worktree", "add"}
 	if newBranch != "" {
 		args = append(args, "-b", newBranch, dir)
 		if base != "" {
@@ -596,8 +590,8 @@ func ensureWorktree(parentDir, base, newBranch, folderSeg string) (string, error
 	} else {
 		args = append(args, dir, base)
 	}
-	if out, err := exec.Command("git", args...).CombinedOutput(); err != nil {
-		return "", fmt.Errorf("worktree add: %v: %s", err, strings.TrimSpace(string(out)))
+	if out, err := runGitCombined(parentDir, args...); err != nil {
+		return "", fmt.Errorf("worktree add: %v: %s", err, out)
 	}
 	applyGitIdentity(dir)    // commit identity for the worktree (config is shared, but explicit)
 	gitSubmodulesUpdate(dir) // per-worktree submodule checkout; parent untouched (verified)
@@ -702,12 +696,12 @@ func gitBranchInfos(dir, current string) []branchInfo {
 	seen := map[string]bool{}
 	// Local first so a local branch wins over its remote duplicate.
 	for _, ns := range []string{"refs/heads", "refs/remotes"} {
-		out, err := exec.Command("git", "-C", dir, "for-each-ref", "--format="+format, ns).Output()
+		out, err := runGit(dir, "for-each-ref", "--format="+format, ns)
 		if err != nil {
 			continue
 		}
 		isRemote := ns == "refs/remotes"
-		for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		for _, line := range strings.Split(out, "\n") {
 			if line == "" {
 				continue
 			}
@@ -775,7 +769,7 @@ func handleRepoCheckout(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusBadRequest, "bad_ref", "branch name is required and must not start with '-'")
 			return
 		}
-		args = []string{"-C", dir, "checkout", "-b", name}
+		args = []string{"checkout", "-b", name}
 		if start := strings.TrimSpace(req.Ref); start != "" {
 			if strings.HasPrefix(start, "-") {
 				writeErr(w, http.StatusBadRequest, "bad_ref", "start ref must not start with '-'")
@@ -792,10 +786,10 @@ func handleRepoCheckout(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusBadRequest, "bad_ref", "branch/ref is required and must not start with '-'")
 			return
 		}
-		args = []string{"-C", dir, "checkout", ref}
+		args = []string{"checkout", ref}
 	}
-	if out, err := exec.Command("git", args...).CombinedOutput(); err != nil {
-		writeErr(w, http.StatusBadGateway, "checkout_failed", fmt.Sprintf("%v: %s", err, strings.TrimSpace(string(out))))
+	if out, err := runGitCombined(dir, args...); err != nil {
+		writeErr(w, http.StatusBadGateway, "checkout_failed", fmt.Sprintf("%v: %s", err, out))
 		return
 	}
 	gitSubmodulesUpdate(dir)
@@ -817,10 +811,8 @@ func handleRepoFF(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	cmd := exec.Command("git", "-C", dir, "pull", "--ff-only")
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
-	if out, err := cmd.CombinedOutput(); err != nil {
-		writeErr(w, http.StatusBadGateway, "ff_failed", strings.TrimSpace(string(out)))
+	if out, err := runGitCombined(dir, "pull", "--ff-only"); err != nil {
+		writeErr(w, http.StatusBadGateway, "ff_failed", out)
 		return
 	}
 	gitSubmodulesUpdate(dir)
@@ -839,14 +831,12 @@ func handleRepoFetch(w http.ResponseWriter, r *http.Request) {
 	}
 	var req fetchReq
 	_ = json.NewDecoder(r.Body).Decode(&req) // empty body is fine
-	args := []string{"-C", dir, "fetch"}
+	args := []string{"fetch"}
 	if req.Prune {
 		args = append(args, "--prune")
 	}
-	cmd := exec.Command("git", args...)
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
-	if out, err := cmd.CombinedOutput(); err != nil {
-		writeErr(w, http.StatusBadGateway, "fetch_failed", fmt.Sprintf("%v: %s", err, strings.TrimSpace(string(out))))
+	if out, err := runGitCombined(dir, args...); err != nil {
+		writeErr(w, http.StatusBadGateway, "fetch_failed", fmt.Sprintf("%v: %s", err, out))
 		return
 	}
 	st, _ := gitStatus(dir)
@@ -887,11 +877,11 @@ func handleDeleteRepo(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusInternalServerError, "delete_failed", "cannot resolve worktree parent")
 			return
 		}
-		if out, err := exec.Command("git", "-C", parent, "worktree", "remove", "--force", dir).CombinedOutput(); err != nil {
-			writeErr(w, http.StatusBadGateway, errCodeWorktreeRemoveFailed, strings.TrimSpace(string(out)))
+		if out, err := runGitCombined(parent, "worktree", "remove", "--force", dir); err != nil {
+			writeErr(w, http.StatusBadGateway, errCodeWorktreeRemoveFailed, out)
 			return
 		}
-		_ = exec.Command("git", "-C", parent, "worktree", "prune").Run()
+		_ = gitCmd(parent, "worktree", "prune").Run()
 		writeJSON(w, http.StatusOK, map[string]any{"deleted": r.PathValue("name")})
 		return
 	}
