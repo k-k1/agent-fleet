@@ -77,14 +77,35 @@ type cpuSample struct {
 	at        time.Time
 }
 
-// cpuPrev holds the previous cpu.stat reading per container id so we can derive a
-// percentage from the cumulative counter. Keyed by id, so a recreate (new id)
-// starts fresh. Entries accumulate slowly (one per container ever seen) and are
-// trivially small, so we do not prune.
-var (
-	cpuMu   sync.Mutex
-	cpuPrev = map[string]cpuSample{}
-)
+// cpuTracker derives a CPU percentage from the cumulative cpu.stat counter by
+// remembering the previous reading per container id（docs/23 P2-W4: 生の
+// package 変数 map+mutex から struct 化。プロセス内キャッシュなのでマルチ
+// インスタンス CP でも各インスタンスが自分の差分を持てばよく、共有不要）。
+// Keyed by id, so a recreate (new id) starts fresh. Entries accumulate slowly
+// (one per container ever seen) and are trivially small, so we do not prune.
+type cpuTracker struct {
+	mu   sync.Mutex
+	prev map[string]cpuSample
+}
+
+// pct swaps in the new reading and returns the percentage vs the previous one
+// (!ok on the first sample for an id, wall-clock anomalies, or counter resets).
+func (t *cpuTracker) pct(id string, usage uint64, now time.Time) (float64, bool) {
+	t.mu.Lock()
+	prev, had := t.prev[id]
+	t.prev[id] = cpuSample{usageUsec: usage, at: now}
+	t.mu.Unlock()
+	if !had {
+		return 0, false
+	}
+	wall := now.Sub(prev.at).Microseconds()
+	if wall <= 0 || usage < prev.usageUsec {
+		return 0, false
+	}
+	return float64(usage-prev.usageUsec) / float64(wall) * 100, true
+}
+
+var cpuSamples = &cpuTracker{prev: map[string]cpuSample{}}
 
 // dockerContainerID returns the id of a RUNNING container, else "". docker inspect
 // resolves a stopped/exited container too, so we must gate on .State.Running —
@@ -145,19 +166,7 @@ func containerCPUPct(id, scope string) (float64, bool) {
 	if !ok {
 		return 0, false
 	}
-	now := time.Now()
-	cpuMu.Lock()
-	prev, had := cpuPrev[id]
-	cpuPrev[id] = cpuSample{usageUsec: usage, at: now}
-	cpuMu.Unlock()
-	if !had {
-		return 0, false
-	}
-	wall := now.Sub(prev.at).Microseconds()
-	if wall <= 0 || usage < prev.usageUsec {
-		return 0, false
-	}
-	return float64(usage-prev.usageUsec) / float64(wall) * 100, true
+	return cpuSamples.pct(id, usage, time.Now())
 }
 
 // containerStats reads a container's live mem/CPU from its cgroup v2 scope,
@@ -209,22 +218,39 @@ type diskSample struct {
 	at    time.Time
 }
 
-var (
-	diskMu    sync.Mutex
-	diskCache = map[string]diskSample{}
-)
+// diskUsageCache is the TTL cache for du results（docs/23 P2-W4: 生の package
+// 変数 map+mutex から struct 化。プロセス内キャッシュで、外すと du の再実行が
+// 増えるだけ — マルチインスタンス CP でも共有不要）。
+type diskUsageCache struct {
+	mu sync.Mutex
+	m  map[string]diskSample
+}
+
+func (c *diskUsageCache) get(key string, now time.Time) (uint64, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if s, ok := c.m[key]; ok && now.Sub(s.at) < diskTTL {
+		return s.bytes, true
+	}
+	return 0, false
+}
+
+func (c *diskUsageCache) put(key string, bytes uint64, now time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.m[key] = diskSample{bytes: bytes, at: now}
+}
+
+var diskUsages = &diskUsageCache{m: map[string]diskSample{}}
 
 // dirDiskUsage returns the byte size of <dataDir>/home via `du -sb`, cached for
 // diskTTL per dataDir. Reports !ok when du fails (path gone, etc.).
 func dirDiskUsage(ctx context.Context, dataDir string) (uint64, bool) {
 	home := dataDir + "/home"
 	now := time.Now()
-	diskMu.Lock()
-	if s, ok := diskCache[home]; ok && now.Sub(s.at) < diskTTL {
-		diskMu.Unlock()
-		return s.bytes, true
+	if v, ok := diskUsages.get(home, now); ok {
+		return v, true
 	}
-	diskMu.Unlock()
 
 	out, err := exec.CommandContext(ctx, "du", "-sb", home).Output()
 	if err != nil {
@@ -238,8 +264,6 @@ func dirDiskUsage(ctx context.Context, dataDir string) (uint64, bool) {
 	if err != nil {
 		return 0, false
 	}
-	diskMu.Lock()
-	diskCache[home] = diskSample{bytes: v, at: now}
-	diskMu.Unlock()
+	diskUsages.put(home, v, now)
 	return v, true
 }
