@@ -4,30 +4,102 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 )
 
-// buildMux は CP の全ルートを登録した mux を返す（docs/23 P0-2: main() からの機械的
-// 抽出）。テストが実ルート表を httptest で叩けるようにするための分離で、登録内容は
-// main() にあったものと同一。認証ゲート（authGate）や logRequests のラップは呼び出し
-// 側（main / テスト）の責務。
+// buildMux は CP の全ルートを登録した mux を返す（docs/23 P0-2 で main() から抽出、
+// P2-W1 で機能別 register 関数に分散）。テストが実ルート表を httptest で叩くための
+// 分離で、登録内容は従来と同一。認証ゲート（authGate）や logRequests のラップは
+// 呼び出し側（main / テスト）の責務。
 func buildMux(cfg config) *http.ServeMux {
 	mux := http.NewServeMux()
+	registerAuthRoutes(mux, cfg)
+	registerTenantAdminRoutes(mux, cfg)
+	registerPATRoutes(mux, cfg)
+	registerMCPRoutes(mux, cfg)
+	registerWorkspaceRoutes(mux, cfg)
+	registerSessionRoutes(mux, cfg)
+	registerChatRoutes(mux, cfg)
+	registerAssistantRoutes(mux, cfg)
+	registerSSMRoutes(mux, cfg)
+	registerMemoRoutes(mux, cfg)
+	registerRepoFSRoutes(mux, cfg)
+	registerAgentEnvRoutes(mux, cfg)
+	registerConnectionRoutes(mux, cfg)
+	registerInternalGitRoutes(mux, cfg)
+	registerTerminalPreviewRoutes(mux, cfg)
+	registerLegacyRedirect(mux)
+	registerStatic(mux, cfg)
+	return mux
+}
 
-	// Health + CP-native Google OAuth (AUTH=oauth). The login page, OAuth
-	// endpoints and health check are reachable without a session (authGate
-	// exempts them); see oauth_google.go.
+// --- authGate 除外レジストリ（docs/23 P2-W1） -------------------------------
+// セッション無しで到達できるパスは、従来 oauth_google.go にハードコードされ
+// ルート表と手動同期だった。各 register 関数が自分の除外を宣言し、authGate の
+// isAuthExempt はこのレジストリを参照する。buildMux はテストから複数回呼ばれる
+// ため登録は冪等（set への再追加）。
+
+var (
+	authExemptMu       sync.Mutex
+	authExemptExact    = map[string]bool{}
+	authExemptPrefixes = map[string]bool{}
+)
+
+func exemptExact(paths ...string) {
+	authExemptMu.Lock()
+	defer authExemptMu.Unlock()
+	for _, p := range paths {
+		authExemptExact[p] = true
+	}
+}
+
+func exemptPrefix(prefixes ...string) {
+	authExemptMu.Lock()
+	defer authExemptMu.Unlock()
+	for _, p := range prefixes {
+		authExemptPrefixes[p] = true
+	}
+}
+
+// isAuthExempt reports whether p is reachable without a session (consumed by
+// authGate, oauth_google.go). The set is declared next to each route group below.
+func isAuthExempt(p string) bool {
+	authExemptMu.Lock()
+	defer authExemptMu.Unlock()
+	if authExemptExact[p] {
+		return true
+	}
+	for pre := range authExemptPrefixes {
+		if strings.HasPrefix(p, pre) {
+			return true
+		}
+	}
+	return false
+}
+
+// --- 機能別ルート登録 ---------------------------------------------------------
+
+// Health + CP-native Google OAuth (AUTH=oauth) + identity. The login page, OAuth
+// endpoints, health check and the login page's brand asset are reachable without
+// a session; see oauth_google.go.
+func registerAuthRoutes(mux *http.ServeMux, cfg config) {
+	exemptExact("/login", "/healthz")
+	exemptPrefix("/oauth2/", "/brand/")
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("ok")) })
 	mux.HandleFunc("GET /login", cfg.handleLogin)
 	mux.HandleFunc("GET /oauth2/login", cfg.handleOAuthLogin)
 	mux.HandleFunc("GET /oauth2/callback", cfg.handleOAuthCallback)
 	mux.HandleFunc("GET /oauth2/logout", cfg.handleOAuthLogout)
-
 	// Identity — who the AuthGateway resolved this request to (and the raw
 	// gateway headers, for verifying the oauth2-proxy -> Caddy -> CP chain).
 	mux.HandleFunc("GET /api/whoami", cfg.handleWhoami)
+}
 
-	// Tenants — the caller's memberships (Console picker) + minimal admin API
-	// (super_admin only; full UI is P3-5). docs/14 P3-2.
+// Tenants — the caller's memberships (Console picker) + admin API + egress
+// observation (docs/14 P3-2, docs/20). /internal/* is deployment-internal
+// (egress proxy ingestion), authenticated by Bearer token — session-exempt.
+func registerTenantAdminRoutes(mux *http.ServeMux, cfg config) {
+	exemptPrefix("/internal/")
 	mux.HandleFunc("GET /api/tenants", cfg.handleTenants)
 	mux.HandleFunc("GET /api/admin/tenants", cfg.handleAdminListTenants)
 	mux.HandleFunc("GET /api/admin/tenants/{slug}/members", cfg.handleAdminListMembers)
@@ -52,28 +124,40 @@ func buildMux(cfg config) *http.ServeMux {
 	mux.HandleFunc("POST /api/admin/egress/allowlist/{id}/state", cfg.handleAdminAllowlistState) // approve/retire (super_admin)
 	mux.HandleFunc("GET /api/admin/egress/mode", cfg.handleAdminEgressMode)                      // read egress mode (super_admin)
 	mux.HandleFunc("PUT /api/admin/egress/mode", cfg.handleAdminEgressMode)                      // set log-only/enforce (super_admin)
+}
 
-	// Personal Access Tokens (Console-issued) for the MCP endpoint (docs/0006).
+// Personal Access Tokens (Console-issued) for the MCP endpoint (docs/0006).
+func registerPATRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("GET /api/pat", cfg.handlePATList)
 	mux.HandleFunc("POST /api/pat", cfg.handlePATCreate)
 	mux.HandleFunc("DELETE /api/pat/{id}", cfg.handlePATRevoke)
+}
 
-	// MCP endpoint (P3-6) — opt-in. Bearer PAT auth (not the gateway header), so
-	// the ingress must pass /mcp through without oauth2-proxy.
+// MCP endpoint (P3-6) — opt-in. Bearer PAT auth (not the gateway header), so
+// the ingress must pass /mcp through without oauth2-proxy. The session
+// exemption is declared unconditionally (as before): with MCP disabled the
+// path just falls through to the static catch-all.
+func registerMCPRoutes(mux *http.ServeMux, cfg config) {
+	exemptExact("/mcp")
+	exemptPrefix("/mcp/")
 	if envOr("AF_MCP_ENABLED", "") == "true" {
 		mux.HandleFunc("/mcp", cfg.handleMCP)
 		log.Printf("MCP endpoint enabled at /mcp")
 	}
+}
 
-	// Workspace lifecycle (local Docker Runtime adapter).
+// Workspace lifecycle (Runtime port).
+func registerWorkspaceRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("GET /api/workspace", cfg.handleWorkspaceGet)
 	mux.HandleFunc("POST /api/workspace/start", cfg.handleWorkspaceStart)
 	mux.HandleFunc("POST /api/workspace/stop", cfg.handleWorkspaceStop)
 	mux.HandleFunc("POST /api/workspace/recreate", cfg.handleWorkspaceRecreate)
 	// Own-workspace resource chip (mem / CPU vs quota) — host-read cgroup, all users.
 	mux.HandleFunc("GET /api/workspace/stats", cfg.handleWorkspaceStats)
+}
 
-	// Session ops — proxied to the Workspace Agent.
+// Session ops — proxied to the Workspace Agent.
+func registerSessionRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("GET /api/sessions", cfg.handleSessionsList)
 	mux.HandleFunc("POST /api/sessions", cfg.handleSessionCreate)
 	mux.HandleFunc("POST /api/sessions/{name}/fork", cfg.handleSessionFork)
@@ -104,9 +188,11 @@ func buildMux(cfg config) *http.ServeMux {
 	mux.HandleFunc("POST /api/sessions/{name}/title/set", cfg.proxyAgentREST)
 	mux.HandleFunc("POST /api/sessions/{name}/suggest-branch", cfg.proxyAgentREST) // LLM branch-name suggestion (this session's convo)
 	mux.HandleFunc("POST /api/sessions/{name}/rename-branch", cfg.proxyAgentREST)  // worktree deferred-naming: git branch -m
+}
 
-	// Assistant chat (docs/19) — headless-CLI LLM chat/translation, proxied to the
-	// Agent verbatim (kind-agnostic; non-streaming, so the plain REST proxy suffices).
+// Assistant chat (docs/19) — headless-CLI LLM chat/translation, proxied to the
+// Agent verbatim (kind-agnostic; non-streaming, so the plain REST proxy suffices).
+func registerChatRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("GET /api/chat/conversations", cfg.proxyAgentREST)
 	mux.HandleFunc("POST /api/chat/conversations", cfg.proxyAgentREST)
 	mux.HandleFunc("GET /api/chat/conversations/{id}", cfg.proxyAgentREST)
@@ -118,17 +204,21 @@ func buildMux(cfg config) *http.ServeMux {
 	mux.HandleFunc("GET /api/chat/conversations/{id}/pasted/{file}", cfg.proxyAgentREST)
 	// One-shot advisory turn (docs/21 メモ整理) — stateless, tools off. Proxied verbatim.
 	mux.HandleFunc("POST /api/chat/ask", cfg.proxyAgentREST)
+}
 
-	// Assistant templates (docs/19 Q2) — configurable chat personas, proxied verbatim.
+// Assistant templates (docs/19 Q2) — configurable chat personas, proxied verbatim.
+func registerAssistantRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("GET /api/assistants", cfg.proxyAgentREST)
 	mux.HandleFunc("POST /api/assistants", cfg.proxyAgentREST)
 	mux.HandleFunc("GET /api/assistants/{id}", cfg.proxyAgentREST)
 	mux.HandleFunc("PUT /api/assistants/{id}", cfg.proxyAgentREST)
 	mux.HandleFunc("DELETE /api/assistants/{id}", cfg.proxyAgentREST)
+}
 
-	// SSM login config (docs/history/p3-ssm-session.md) — per-member profiles (common
-	// auth bundle) + host bookmarks (per-instance). No AWS secrets; the aws CLI in the
-	// workspace authenticates via SSO.
+// SSM login config (docs/history/p3-ssm-session.md) — per-member profiles (common
+// auth bundle) + host bookmarks (per-instance). No AWS secrets; the aws CLI in the
+// workspace authenticates via SSO.
+func registerSSMRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("GET /api/ssm/profiles", cfg.handleSSMProfilesList)
 	mux.HandleFunc("POST /api/ssm/profiles", cfg.handleSSMProfileCreate)
 	mux.HandleFunc("PUT /api/ssm/profiles/{id}", cfg.handleSSMProfileUpdate)
@@ -137,16 +227,21 @@ func buildMux(cfg config) *http.ServeMux {
 	mux.HandleFunc("POST /api/ssm/hosts", cfg.handleSSMHostCreate)
 	mux.HandleFunc("PUT /api/ssm/hosts/{id}", cfg.handleSSMHostUpdate)
 	mux.HandleFunc("DELETE /api/ssm/hosts/{id}", cfg.handleSSMHostDelete)
+}
 
-	// Memo queue (docs/21) — per-member notes accumulated across devices, then flushed
-	// to a session as one message. Scoped by membership (no workspace build for CRUD).
+// Memo queue (docs/21) — per-member notes accumulated across devices, then flushed
+// to a session as one message. Scoped by membership (no workspace build for CRUD).
+func registerMemoRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("GET /api/memos", cfg.handleMemosList)
 	mux.HandleFunc("POST /api/memos", cfg.handleMemoCreate)
 	mux.HandleFunc("POST /api/memos/flush", cfg.handleMemoFlush)
 	mux.HandleFunc("PATCH /api/memos/{id}", cfg.handleMemoUpdate)
 	mux.HandleFunc("DELETE /api/memos/{id}", cfg.handleMemoDelete)
+}
 
-	// Repository ops — proxied to the Workspace Agent (/api stripped -> /repos*).
+// Repository ops + source-control view + file browser — proxied to the Workspace
+// Agent (/api stripped -> /repos*, /git/identity, /fs/*).
+func registerRepoFSRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("GET /api/repos", cfg.proxyAgentREST)
 	mux.HandleFunc("POST /api/repos", cfg.proxyAgentREST)
 	mux.HandleFunc("DELETE /api/repos/{name}", cfg.proxyAgentREST)
@@ -182,7 +277,11 @@ func buildMux(cfg config) *http.ServeMux {
 	mux.HandleFunc("POST /api/fs/newfile", cfg.proxyAgentREST)
 	mux.HandleFunc("POST /api/fs/rename", cfg.proxyAgentREST)
 	mux.HandleFunc("DELETE /api/fs/delete", cfg.proxyAgentREST)
+}
 
+// Per-CLI settings/usage + toolchains + UI prefs — mostly proxied to the Agent;
+// ws-settings is CP-owned (editable while stopped; applied at start).
+func registerAgentEnvRoutes(mux *http.ServeMux, cfg config) {
 	// Claude settings (Remote Control / notifications / RTK) — proxied to the Agent.
 	mux.HandleFunc("GET /api/claude/settings", cfg.proxyAgentREST)
 	mux.HandleFunc("PUT /api/claude/settings", cfg.proxyAgentREST)
@@ -191,19 +290,20 @@ func buildMux(cfg config) *http.ServeMux {
 	// codex / opencode rtk toggle — proxied to the Agent.
 	mux.HandleFunc("GET /api/agents/rtk", cfg.proxyAgentREST)
 	mux.HandleFunc("PUT /api/agents/rtk", cfg.proxyAgentREST)
-
 	// Toolchain selection (node / java) — proxied to the Agent.
 	mux.HandleFunc("GET /api/env/toolchains", cfg.proxyAgentREST)
 	mux.HandleFunc("PUT /api/env/toolchains", cfg.proxyAgentREST)
 	// CP-owned per-workspace settings (editable while stopped; applied at start).
 	mux.HandleFunc("GET /api/env/ws-settings", cfg.handleWSSettingsGet)
 	mux.HandleFunc("PUT /api/env/ws-settings", cfg.handleWSSettingsPut)
-
 	// Per-user UI preferences (Console display settings) — proxied to the Agent.
 	mux.HandleFunc("GET /api/env/ui-prefs", cfg.proxyAgentREST)
 	mux.HandleFunc("PUT /api/env/ui-prefs", cfg.proxyAgentREST)
+}
 
-	// Connections ops — proxied to the Workspace Agent (/api stripped).
+// Connections ops — proxied to the Workspace Agent (/api stripped), except the
+// Bitbucket OAuth code grant whose public callback the CP owns.
+func registerConnectionRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("GET /api/connections", cfg.proxyAgentREST)
 	mux.HandleFunc("GET /api/connections/git/{host}/repos", cfg.proxyAgentREST)
 	mux.HandleFunc("GET /api/connections/git/{host}/branches", cfg.proxyAgentREST)
@@ -226,10 +326,14 @@ func buildMux(cfg config) *http.ServeMux {
 	mux.HandleFunc("POST /api/connections/codex/device/start", cfg.proxyAgentREST)
 	mux.HandleFunc("POST /api/connections/codex/device/poll", cfg.proxyAgentREST)
 	mux.HandleFunc("DELETE /api/connections/codex", cfg.proxyAgentREST)
+}
 
-	// Internal git provider (docs/reference/internal-git-provider, ADR 0010).
-	// Repo management is CP-native (the CP owns the bare repos), so these are NOT
-	// proxied to the Agent like other providers.
+// Internal git provider (docs/reference/internal-git-provider, ADR 0010).
+// Repo management is CP-native (the CP owns the bare repos), so these are NOT
+// proxied to the Agent like other providers. /git/* self-authenticates via a
+// Basic git token — session-exempt.
+func registerInternalGitRoutes(mux *http.ServeMux, cfg config) {
+	exemptPrefix("/git/")
 	mux.HandleFunc("GET /api/internal-git/repos", cfg.handleInternalGitReposList)
 	mux.HandleFunc("POST /api/internal-git/repos", cfg.handleInternalGitRepoCreate)
 	mux.HandleFunc("DELETE /api/internal-git/repos/{name}", cfg.handleInternalGitRepoDelete)
@@ -250,25 +354,29 @@ func buildMux(cfg config) *http.ServeMux {
 	mux.HandleFunc("GET /git/{slug}/{repo}/info/lfs/locks", cfg.handleLFSLocksList)
 	mux.HandleFunc("POST /git/{slug}/{repo}/info/lfs/locks/verify", cfg.handleLFSLocksVerify)
 	mux.HandleFunc("POST /git/{slug}/{repo}/info/lfs/locks/{id}/unlock", cfg.handleLFSUnlock)
-
 	// Smart-HTTP git face (clone/fetch/push). Self-authenticating via a Basic git
 	// token (session-exempt, like /mcp); handles every method.
 	mux.HandleFunc("/git/{slug}/{repo...}", cfg.handleGitHTTP)
+}
 
-	// Terminal PTY — proxied WebSocket.
+// Terminal PTY (proxied WebSocket) + preview proxy to a service the user started
+// inside their container (Spring Boot, dev server, ...) via the Agent's
+// /proxy/{port}. The redirect adds the trailing slash so the app resolves
+// relative assets under the path.
+func registerTerminalPreviewRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("GET /ws/terminal", cfg.proxyTerminal)
-
-	// Preview — proxy to a service the user started inside their container
-	// (Spring Boot, dev server, ...) via the Agent's /proxy/{port}. The redirect
-	// adds the trailing slash so the app resolves relative assets under the path.
 	mux.HandleFunc("/preview/{port}", cfg.handlePreviewRedirect)
 	mux.HandleFunc("/preview/{port}/{rest...}", cfg.handlePreview)
+}
 
-	// Legacy path compatibility: the deployment used to be served under
-	// /agent-fleet (oauth2-proxy + Caddy stripped it). Now it's at the root, so
-	// old bookmarks — and any stale post-login next=/agent-fleet/… — would 404.
-	// Redirect /agent-fleet[/…] -> /… (auth-exempt, so it fires before login and
-	// the dead prefix never reaches next=).
+// Legacy path compatibility: the deployment used to be served under
+// /agent-fleet (oauth2-proxy + Caddy stripped it). Now it's at the root, so
+// old bookmarks — and any stale post-login next=/agent-fleet/… — would 404.
+// Redirect /agent-fleet[/…] -> /… (auth-exempt, so it fires before login and
+// the dead prefix never reaches next=).
+func registerLegacyRedirect(mux *http.ServeMux) {
+	exemptExact("/agent-fleet")
+	exemptPrefix("/agent-fleet/")
 	legacyRedirect := func(w http.ResponseWriter, r *http.Request) {
 		dest := strings.TrimPrefix(r.URL.Path, "/agent-fleet")
 		if !strings.HasPrefix(dest, "/") {
@@ -281,10 +389,10 @@ func buildMux(cfg config) *http.ServeMux {
 	}
 	mux.HandleFunc("/agent-fleet", legacyRedirect)
 	mux.HandleFunc("/agent-fleet/", legacyRedirect)
+}
 
-	// Static Console (catch-all). no-store so reloads always get fresh assets
-	// during active development.
+// Static Console (catch-all). no-store so reloads always get fresh assets
+// during active development.
+func registerStatic(mux *http.ServeMux, cfg config) {
 	mux.Handle("/", noStore(http.FileServer(http.Dir(cfg.consoleDir))))
-
-	return mux
 }

@@ -6,12 +6,6 @@ import (
 	"time"
 )
 
-func writeAPIErr(w http.ResponseWriter, e *apiError) {
-	writeJSON(w, e.status, map[string]any{
-		"error": map[string]string{"code": e.code, "message": e.message},
-	})
-}
-
 // handleTenants (GET /api/tenants) returns the caller's memberships for the
 // Console tenant picker (docs/14 P3-2). Single-membership users get one entry,
 // so the Console can auto-select and hide the picker.
