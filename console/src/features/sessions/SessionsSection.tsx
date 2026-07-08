@@ -1,41 +1,23 @@
 // SessionsSection — the left-rail sessions list, ported from the old console onto
 // the zustand stores. Two-line rows grouped by working dir (collapse persists),
-// state pills, ⋯/right-click menu with the full session lifecycle. The row + menu
-// (SessionRow) and the lifecycle ops (useSessionActions) are extracted so the same
-// pieces render under the project tree's working-copy nodes; this section keeps the
-// flat dir-grouped list, the new/archived/clear header, and the shared modals.
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+// state pills, ⋯/right-click menu. The row + menu (SessionRow) and lifecycle ops
+// (useSessionActions) are extracted so the same pieces render under the project
+// tree's working-copy nodes; the session dialogs live app-level (SessionModals),
+// so this section only owns the flat dir-grouped list and the new/archive/clear header.
+import { Fragment, useMemo, useState } from "react";
 import { Section } from "../../ui/Section.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { Button } from "../../ui/Button.tsx";
 import { EmptyState } from "../../ui/EmptyState.tsx";
-import { displayName } from "../../lib/sessionview.ts";
-import { agentOf } from "../../agents/registry.ts";
 import { useLayoutStore } from "../../layout/store.ts";
 import { activePane } from "../../layout/ops.ts";
 import { sessionPanes, paneCount } from "../../layout/badges.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { useSessionsStore } from "./store.ts";
-import { useReposStore } from "../repos/store.ts";
-import { useFilesStore } from "../files/store.ts";
-import { openSessionChat, openSessionTerminal } from "./open.ts";
+import { useSessionUI } from "./ui.ts";
 import { useSessionActions } from "./useSessionActions.tsx";
 import { SessionRow } from "./SessionRow.tsx";
-import { ArchivedModal } from "./ArchivedModal.tsx";
-import { SessionTitleModal } from "./SessionTitleModal.tsx";
-import { BranchRenameModal } from "./BranchRenameModal.tsx";
-import { SsmLoginModal } from "./SsmLoginModal.tsx";
-import { NewSessionModal } from "./NewSessionModal.tsx";
 import type { Session } from "../../types/session.ts";
-
-const notify = (title: string, body: string) => {
-  if (!("Notification" in window) || Notification.permission !== "granted") return;
-  try {
-    new Notification(title, { body });
-  } catch {
-    /* ignore */
-  }
-};
 
 // Sessions group by working directory; header = the dir's basename.
 const groupLabel = (dir: string) => (dir ? dir.split("/").filter(Boolean).pop() || dir : "その他");
@@ -57,12 +39,13 @@ const writeCollapsed = (s: Set<string>) => {
 
 export function SessionsSection() {
   const sessions = useSessionsStore((s) => s.sessions);
-  const refreshSessions = useSessionsStore((s) => s.refresh);
+  const openNewSession = useSessionsStore((s) => s.openNewSession);
+  const openArchived = useSessionUI((u) => u.openArchived);
   const layout = useLayoutStore((s) => s.layout);
   const running = useWorkspaceStore((s) => s.state) === "running";
   const actions = useSessionActions();
 
-  // The active pane's session → highlighted row; also skipped by notifications.
+  // The active pane's session → highlighted row.
   const activeSession = activePane(layout)?.session ?? null;
 
   // session name → panes showing it. Dormant when unsplit (nothing to disambiguate).
@@ -103,50 +86,6 @@ export function SessionsSection() {
       return next;
     });
 
-  const [showModal, setShowModal] = useState(false);
-  // Global openNewSession signal (WS bar 新規 / onboarding card): the modal lives
-  // here, so watch the tick and open. Skip the initial value (mount ≠ a request).
-  const newSessionTick = useSessionsStore((s) => s.newSessionTick);
-  const lastTickRef = useRef(newSessionTick);
-  useEffect(() => {
-    if (newSessionTick !== lastTickRef.current) {
-      lastTickRef.current = newSessionTick;
-      setShowModal(true);
-    }
-  }, [newSessionTick]);
-  const [showArchived, setShowArchived] = useState(false);
-  const [resumeSsm, setResumeSsm] = useState<{ name: string; force: boolean } | null>(null);
-  const [branchRenaming, setBranchRenaming] = useState<Session | null>(null);
-  const [renaming, setRenaming] = useState<Session | null>(null);
-  const prevStates = useRef<Record<string, string | undefined>>({});
-
-  // Ask once for notification permission (best-effort).
-  useEffect(() => {
-    if ("Notification" in window && Notification.permission === "default") {
-      Notification.requestPermission().catch(() => {});
-    }
-  }, []);
-
-  // Notify on claude state arrivals (skip the session being viewed).
-  useEffect(() => {
-    const prev = prevStates.current;
-    const seen: Record<string, boolean> = {};
-    for (const s of sessions) {
-      seen[s.name] = true;
-      if (agentOf(s.kind).caps.fixedAliveChip || !s.alive) {
-        prev[s.name] = s.state;
-        continue;
-      }
-      const before = prev[s.name];
-      if (before !== undefined && before !== s.state && s.name !== activeSession) {
-        if (s.state === "idle" && before === "working") notify("回答が返ってきました", displayName(s));
-        else if (s.state === "question") notify("質問が来ています", displayName(s));
-      }
-      prev[s.name] = s.state;
-    }
-    for (const n of Object.keys(prev)) if (!seen[n]) delete prev[n];
-  }, [sessions, activeSession]);
-
   return (
     <Section
       id="sessions"
@@ -165,7 +104,7 @@ export function SessionsSection() {
           >
             整理
           </Button>
-          <Button small variant="ghost" icon="archive" title="アーカイブを開く（復帰）" onClick={() => setShowArchived(true)}>
+          <Button small variant="ghost" icon="archive" title="アーカイブを開く（復帰）" onClick={openArchived}>
             アーカイブ
           </Button>
           <Button
@@ -174,7 +113,7 @@ export function SessionsSection() {
             icon="add"
             title={running ? "新規セッション" : "新規セッション（ワークスペース停止中）"}
             disabled={!running}
-            onClick={() => setShowModal(true)}
+            onClick={openNewSession}
           >
             新規
           </Button>
@@ -212,67 +151,12 @@ export function SessionsSection() {
                     multi={multi}
                     running={running}
                     actions={actions}
-                    onRename={setRenaming}
-                    onBranchRename={setBranchRenaming}
-                    onResumeSsm={(name, force) => setResumeSsm({ name, force })}
                   />
                 ))}
             </Fragment>
           );
         })}
       </ul>
-
-      {showModal && (
-        <NewSessionModal
-          onClose={() => setShowModal(false)}
-          onCreated={(name, cloned, repo, kind) => {
-            void refreshSessions();
-            if (cloned) {
-              void useReposStore.getState().refresh();
-              // Clone finished server-side: refresh the Files tree (reveal when known).
-              if (repo) useFilesStore.getState().revealInFiles("repos/" + repo);
-              else useFilesStore.getState().bump();
-            }
-            // A fresh claude session opens as chat (its CLI is already live).
-            (agentOf(kind).caps.chat ? openSessionChat : openSessionTerminal)(name);
-            setShowModal(false);
-          }}
-        />
-      )}
-      {resumeSsm && (
-        <SsmLoginModal
-          name={resumeSsm.name}
-          start
-          force={resumeSsm.force}
-          onReady={(n) => {
-            setResumeSsm(null);
-            openSessionTerminal(n);
-            void refreshSessions();
-            setTimeout(() => void refreshSessions(), 1200);
-          }}
-          onCancel={() => {
-            setResumeSsm(null);
-            void refreshSessions();
-          }}
-        />
-      )}
-      {showArchived && <ArchivedModal onClose={() => setShowArchived(false)} onRestored={() => void refreshSessions()} />}
-      {renaming && (
-        <SessionTitleModal
-          name={renaming.name}
-          title={renaming.title || ""}
-          onClose={() => setRenaming(null)}
-          onSaved={() => void refreshSessions()}
-        />
-      )}
-      {branchRenaming && (
-        <BranchRenameModal
-          name={branchRenaming.name}
-          branch={branchRenaming.branch || ""}
-          onClose={() => setBranchRenaming(null)}
-          onSaved={() => void refreshSessions()}
-        />
-      )}
     </Section>
   );
 }
