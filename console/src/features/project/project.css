@@ -1,0 +1,69 @@
+/* Project tree (left rail): working-copy nodes, each with a caret + repo-row header
+   and a nested body (sessions, and from P4 files). Reuses .sess-list / .repo-row /
+   .sess-group-btn from sessions.css + repos.css; only the node scaffolding is here. */
+
+.proj-tree {
+  gap: 2px;
+}
+
+/* One working-copy node. */
+.proj-node {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Header line: expand caret + the repo row. */
+.proj-node-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 2px;
+}
+.proj-node-caret {
+  flex: none;
+  width: 18px;
+  align-self: stretch;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 7px;
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+.proj-node-caret:hover {
+  color: var(--fg);
+}
+/* The repo row fills the rest; kill the list's own padding (the tree already pads). */
+.proj-node-repo {
+  flex: 1;
+  min-width: 0;
+  padding: 0 !important;
+  gap: 0;
+}
+
+/* Node body: sessions (and files) indented under the repo, aligned past the caret. */
+.proj-node-body {
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin-bottom: 2px;
+}
+
+/* Sub-section header (セッション / ファイル) — a lighter take on the dir-group button. */
+.proj-sub-btn {
+  padding-top: 3px;
+  padding-bottom: 2px;
+}
+
+/* Nested session/file list under a sub-section: no extra outer padding. */
+.proj-sub-list {
+  padding: 0 0 2px;
+}
+
+.proj-sub-empty {
+  color: var(--muted);
+  font-size: 12px;
+  padding: 2px 4px 4px 22px;
+}

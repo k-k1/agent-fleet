@@ -1,8 +1,7 @@
-// ReposSection — the flat working-copies list: clone (provider picker / URL) and
-// 更新 in the header, one RepoRow per repo. The row itself (launch / branch / FF /
-// delete / open-SCM) is RepoRowConnected, wired from the stores; the rail-level
-// derivations (launch kinds, active/scm highlight, ordinal badges) come from
-// useRepoRailContext. Both are reused by the project tree's working-copy nodes.
+// ProjectTree — the rail's main block: working copies as collapsible nodes, each
+// nesting its sessions (and, from P4, its files). Replaces the flat Sessions +
+// Repos sections. The block header carries the repo-level actions (clone / 更新);
+// nodes are ordered so a base clone and its worktrees sit adjacently (orderedRepos).
 import { useEffect, useState } from "react";
 import { apiJSON } from "../../core/api/client.ts";
 import { Section } from "../../ui/Section.tsx";
@@ -10,11 +9,13 @@ import { Icon } from "../../ui/Icon.tsx";
 import { Button } from "../../ui/Button.tsx";
 import { EmptyState } from "../../ui/EmptyState.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
-import { useReposStore } from "./store.ts";
+import { useReposStore } from "../repos/store.ts";
 import { useFilesStore } from "../files/store.ts";
-import { NewRepoModal } from "./NewRepoModal.tsx";
-import { RepoRowConnected } from "./RepoRowConnected.tsx";
-import { useRepoRailContext } from "./useRepoRail.ts";
+import { NewRepoModal } from "../repos/NewRepoModal.tsx";
+import { useRepoRailContext } from "../repos/useRepoRail.ts";
+import { useSessionActions } from "../sessions/useSessionActions.tsx";
+import { orderedRepos } from "../../lib/project.ts";
+import { RepoNode } from "./RepoNode.tsx";
 
 // guessRepoName derives a display name from a clone URL for the in-progress
 // spinner row, before the server reports the real name.
@@ -23,11 +24,12 @@ const guessRepoName = (u: string | null | undefined) => {
   return s.split(/[/:]/).pop() || "repo";
 };
 
-export function ReposSection() {
+export function ProjectTree() {
   const repos = useReposStore((s) => s.repos);
   const refreshRepos = useReposStore((s) => s.refresh);
   const toast = useToast();
   const ctx = useRepoRailContext();
+  const actions = useSessionActions(); // one instance shared by every node's rows
   const running = ctx.running;
 
   const [showClone, setShowClone] = useState(false);
@@ -37,8 +39,8 @@ export function ReposSection() {
     void refreshRepos();
   }, [refreshRepos]);
 
-  // Run a clone in the background: the modal closed already, so progress shows
-  // as a spinner row here until the server finishes.
+  const ordered = orderedRepos(repos);
+
   const doClone = async ({ remote_url, branch, name, new_branch }: { remote_url: string; branch: string; name: string; new_branch?: string }) => {
     setCloning({ name: name || guessRepoName(remote_url) });
     try {
@@ -48,7 +50,6 @@ export function ReposSection() {
         return;
       }
       void refreshRepos();
-      // Clone finished server-side — reveal the new working copy in the Files tree.
       if (res && res.name) useFilesStore.getState().revealInFiles("repos/" + res.name);
       else useFilesStore.getState().bump();
     } catch (e) {
@@ -60,10 +61,10 @@ export function ReposSection() {
 
   return (
     <Section
-      id="repos"
-      title="Repos"
+      id="projects"
+      title="プロジェクト"
       icon="repo"
-      count={repos.length}
+      count={ordered.length}
       actions={
         <>
           <Button
@@ -83,13 +84,13 @@ export function ReposSection() {
       }
     >
       {showClone && <NewRepoModal onClose={() => setShowClone(false)} onClone={doClone} repos={repos} />}
-      <ul className="sess-list">
+      <ul className="sess-list proj-tree">
         {cloning && (
           <li className="repo-cloning">
             <Icon name="loading" spin /> Cloning {cloning.name}…
           </li>
         )}
-        {repos.length === 0 && !cloning && (
+        {ordered.length === 0 && !cloning && (
           <EmptyState icon="repo" title="リポジトリがありません" hint="clone するとここに並びます">
             {running && (
               <Button small variant="primary" icon="add" onClick={() => setShowClone(true)}>
@@ -98,8 +99,8 @@ export function ReposSection() {
             )}
           </EmptyState>
         )}
-        {repos.map((r) => (
-          <RepoRowConnected key={r.name} r={r} ctx={ctx} />
+        {ordered.map((r) => (
+          <RepoNode key={r.name} r={r} ctx={ctx} actions={actions} />
         ))}
       </ul>
     </Section>
