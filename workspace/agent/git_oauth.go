@@ -21,7 +21,10 @@ const (
 	ghDeviceCodeURL  = "https://github.com/login/device/code"
 	ghAccessTokenURL = "https://github.com/login/oauth/access_token"
 	ghDeviceGrant    = "urn:ietf:params:oauth:grant-type:device_code"
-	ghScope          = "repo" // private read + push
+	// repo = private read + push。workflow は .github/workflows/ 配下の作成・変更を
+	// 含む push に GitHub が要求する追加スコープ（無いと remote rejected）。gh CLI の
+	// 既定スコープと同等。既存接続には遡及しない — 再接続で新スコープのトークンになる。
+	ghScope = "repo workflow"
 )
 
 func githubClientID() string { return os.Getenv("GITHUB_OAUTH_CLIENT_ID") }
