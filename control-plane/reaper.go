@@ -196,6 +196,9 @@ func (rp *reaper) sweep(ctx context.Context) {
 
 func (rp *reaper) sweepWorkspace(ctx context.Context, ws Workspace, sessTO time.Duration, sessOn bool, wsTO time.Duration, wsOn bool, live map[string]bool) {
 	rt := rp.mgr.runtimeFor(ws, "") // secretKey unused for read/halt calls
+	// Only a "running" workspace is swept. "starting" (ECS cold pull) is deliberately
+	// left alone — idle-stopping a workspace that is still converging would cancel a
+	// legitimate launch; its idle clock starts once it actually runs.
 	if rt.State(ctx) != "running" {
 		return
 	}

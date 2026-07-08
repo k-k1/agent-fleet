@@ -7,7 +7,7 @@ import { Button } from "../../ui/Button.tsx";
 import { Choice, OnOff } from "./controls.tsx";
 import { useSettings, setSetting, CLAUDE_MODELS, OUTPUT_LANGUAGES } from "../../lib/settings.ts";
 import { useConnections } from "./useConnections.ts";
-import { useWorkspaceStore } from "../../core/store/workspace.ts";
+import { useWorkspaceStore, wsStartBusy } from "../../core/store/workspace.ts";
 import { usePolling } from "./usePolling.ts";
 import { ProviderCard, StatusPill, Hint, DeviceSteps, DisconnectButton } from "./providerCard.tsx";
 
@@ -105,8 +105,8 @@ export function AgentsTab() {
           title="設定はワークスペース内で実行されます"
           hint="接続とエージェント設定はコンテナ内の Agent / CLI を経由するため、ワークスペースの起動が必要です。"
         >
-          <Button icon="play" disabled={wsState.endsWith("…")} onClick={() => void startWs()}>
-            {wsState.endsWith("…") ? "起動中…" : "ワークスペースを起動"}
+          <Button icon="play" disabled={wsStartBusy(wsState)} onClick={() => void startWs()}>
+            {wsStartBusy(wsState) ? "起動中…" : "ワークスペースを起動"}
           </Button>
         </EmptyState>
       </>

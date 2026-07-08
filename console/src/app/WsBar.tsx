@@ -7,7 +7,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, previewURL } from "../core/api/client.ts";
 import { useTenantStore } from "../core/store/tenant.ts";
-import { useWorkspaceStore, wsBusy } from "../core/store/workspace.ts";
+import { useWorkspaceStore, wsStartBusy } from "../core/store/workspace.ts";
 import { useLayoutStore } from "../layout/store.ts";
 import { isBlankPane } from "../layout/ops.ts";
 import { useSessionsStore } from "../features/sessions/store.ts";
@@ -319,16 +319,22 @@ function UsageChip({ src, tenant }: { src: UsageSource; tenant: string | null })
 // On desktop the resource chips / opencode web / port-preview sit inline at the
 // right; on a phone they'd wrap to a second line, so they fold into a single ⋯
 // overflow popover instead.
-// Friendly label for the raw container state. The CP returns docker-derived states
-// (runtime.go state()): "running" | "stopped" | "none". Stop does `docker rm -f`,
-// so the *normal* stopped state is "none" (no container — data persists in the bind
-// mount, recreated on Start); "stopped" only appears when a container exists but
-// exited on its own (crash / OOM). Both read as 停止 to the user; the raw state stays
-// in the tooltip. Transient states (set optimistically in the store) end in "…".
+// Friendly label for the raw container state. The CP returns runtime-derived
+// states (runtime.go State()): "running" | "starting" | "stopped" | "none".
+// "starting" is server-reported (ECS: the workspace image cold-pulls for minutes
+// before the task runs) — shown as 起動中 and walked to 稼働中 by the 4s poll, no
+// reload needed. Stop does `docker rm -f` locally, so the *normal* stopped state
+// is "none" (no container — data persists in the bind mount, recreated on Start);
+// "stopped" only appears when a container exists but exited on its own (crash /
+// OOM) or the ECS service sits at desired 0. Both read as 停止 to the user; the
+// raw state stays in the tooltip. Optimistic in-flight states (set by the store
+// around start/stop POSTs) end in "…".
 function wsLabel(s: string): string {
   switch (s) {
     case "running":
       return "稼働中";
+    case "starting":
+      return "起動中…";
     case "none":
     case "stopped":
       return "停止";
@@ -397,7 +403,10 @@ export function WsBar() {
   const moreRef = useRef<HTMLDivElement>(null);
   const resRef = useRef<HTMLDivElement>(null);
   const running = wsState === "running";
-  const busy = wsBusy(wsState); // starting… / stopping… / recreating… — toggle inert
+  // Toggle inert while a transition is in flight: the optimistic "…" states AND the
+  // server-reported "starting" (ECS cold pull — a second Start click must not
+  // re-drive the deployment; the 4s poll flips the bar to 稼働中 on its own).
+  const busy = wsStartBusy(wsState);
 
   // "Close all panes" collapses the split layout back to one empty terminal pane.
   // Disabled when there's already just a single empty pane (nothing to close).
@@ -618,7 +627,9 @@ export function WsBar() {
             ? "停止（コンテナなし — Stop で削除済み。データは保持、Start で再作成）"
             : wsState === "stopped"
               ? "停止（コンテナが自走終了 — クラッシュ / OOM の可能性）"
-              : `状態: ${wsState}`
+              : wsState === "starting"
+                ? "起動中（初回はイメージ取得のため数分かかることがあります。完了すると自動で稼働中になります）"
+                : `状態: ${wsState}`
         }
       >
         {wsLabel(wsState)}

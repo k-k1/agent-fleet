@@ -186,6 +186,10 @@ func main() {
 	mux.HandleFunc("POST /connections/codex/device/poll", handleCodexDevicePoll)
 	mux.HandleFunc("DELETE /connections/codex", handleCodexDisconnect)
 
+	// Translate the runtime's stop signal (SIGTERM from docker stop / ECS task
+	// stop) into a graceful in-container shutdown before the SIGKILL deadline.
+	watchShutdownSignals()
+
 	log.Printf("workspace-agent listening on %s", addr)
 	if err := http.ListenAndServe(addr, logRequests(requireToken(mux))); err != nil {
 		log.Fatal(err)

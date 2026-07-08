@@ -7,7 +7,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../../core/api/client.ts";
 import { Icon } from "../../ui/Icon.tsx";
-import { useWorkspaceStore } from "../../core/store/workspace.ts";
+import { useWorkspaceStore, wsStartBusy } from "../../core/store/workspace.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 import { useSettingsUI } from "../settings/store.ts";
 import type { ConnectionsStatus } from "../../types/session.ts";
@@ -49,6 +49,7 @@ export function OnboardingCard() {
   if (conns === null) return null; // wait for the probe so checks don't flash wrong
 
   const running = wsState === "running";
+  const startBusy = wsStartBusy(wsState); // start already in flight / ECS cold pull
   const gitOk = !!(conns.github?.connected || conns.bitbucket?.connected);
   const agentOk = !!(
     conns.claude?.connected ||
@@ -69,7 +70,11 @@ export function OnboardingCard() {
       label: "ワークスペースを起動",
       hint: "コンテナを起動して作業を開始します",
       // Power glyph (⏻) to match the WS バー's start/stop toggle — same metaphor.
-      cta: running ? null : { text: "起動", glyph: "⏻", on: () => void startWs() },
+      // Inert while a start is already under way (same guard as the WS バー) so
+      // mashing the CTA can't fire concurrent start POSTs.
+      cta: running
+        ? null
+        : { text: startBusy ? "起動中…" : "起動", glyph: "⏻", disabled: startBusy, on: () => void startWs() },
     },
     {
       done: gitOk,
@@ -109,9 +114,13 @@ export function OnboardingCard() {
               </span>
               {s.cta &&
                 (() => {
-                  const cta = s.cta as { text: string; on: () => void; icon?: string; glyph?: string };
+                  const cta = s.cta as { text: string; on: () => void; icon?: string; glyph?: string; disabled?: boolean };
                   return (
-                    <button className={"onboard-cta" + (i === nextIdx ? " primary" : "")} onClick={cta.on}>
+                    <button
+                      className={"onboard-cta" + (i === nextIdx ? " primary" : "")}
+                      disabled={cta.disabled}
+                      onClick={cta.on}
+                    >
                       {cta.glyph ? (
                         <span className="onboard-cta-glyph" aria-hidden="true">
                           {cta.glyph}

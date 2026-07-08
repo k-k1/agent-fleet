@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -37,7 +38,17 @@ type dockerRuntime struct {
 type Runtime interface {
 	Start(ctx context.Context) error
 	Stop(ctx context.Context) error
-	State(ctx context.Context) string // running | stopped | none
+	// State reports the live container/service state:
+	//   running  — up and the Agent is reachable (or about to be)
+	//   starting — a launch is converging (ECS: desired 1 but no task RUNNING yet,
+	//              e.g. a multi-minute Fargate cold image pull). Callers must NOT
+	//              re-Start (the adapter would force a new deployment) and must
+	//              NOT idle-stop it; read paths treat it like stopped (Agent not
+	//              reachable yet). The docker adapter starts in seconds and in
+	//              practice never reports it.
+	//   stopped  — exists but not running (docker: exited container; ECS: desired 0)
+	//   none     — no container / service
+	State(ctx context.Context) string // running | starting | stopped | none
 	Endpoint() string                 // http base URL for CP→Agent REST
 	Token() string                    // Bearer secret for CP→Agent (may be "")
 	Name() string                     // container / display name
@@ -127,7 +138,9 @@ func (d *dockerRuntime) Endpoint() string {
 func (d *dockerRuntime) Token() string { return d.token }
 func (d *dockerRuntime) Name() string  { return d.name }
 
-// State returns running | stopped | none.
+// State returns running | stopped | none. The docker adapter never reports
+// "starting": `docker run -d` returns with the container already running, so the
+// transient created/restarting statuses are collapsed into "stopped" as before.
 func (d *dockerRuntime) State(ctx context.Context) string {
 	out, err := exec.CommandContext(ctx, "docker", "inspect", "-f", "{{.State.Status}}", d.name).Output()
 	if err != nil {
@@ -173,12 +186,15 @@ func (d *dockerRuntime) Start(ctx context.Context) error {
 		// --init runs tini as PID 1 to reap orphaned children. workspace-agent is
 		// otherwise PID 1 and Go does not reap, so every claude/tmux session exit
 		// would leave a <defunct> zombie that lives for the container's lifetime.
+		// tini also forwards docker stop's SIGTERM to the Agent (graceful stop).
 		"--init",
 		"--memory", d.memory,
 		"-p", fmt.Sprintf("127.0.0.1:%s:7700", d.agentPort),
 		"-v", home + ":/home/dev",
 		"-v", claudeCfg + ":/var/lib/af/claude",
 		"-e", "CLAUDE_CONFIG_DIR=/var/lib/af/claude",
+		// Graceful-shutdown budget for the Agent's SIGTERM handler; see Stop.
+		"-e", fmt.Sprintf("AGENT_STOP_GRACE_SEC=%d", agentStopGraceSec()),
 	}
 	// Shared Temurin JDKs: mounted read-only from one host dir into every
 	// workspace (kept out of the image to stay slim). The entrypoint/agent pick
@@ -222,8 +238,47 @@ func (d *dockerRuntime) ensureNetwork(ctx context.Context) error {
 	return nil
 }
 
+// stopGraceSec is the workspace stop grace (seconds) before the runtime's hard
+// kill — `docker stop -t` locally, the container stopTimeout on ECS. One knob
+// (AF_STOP_GRACE_SEC, default 30) drives both adapters. Clamped to Fargate's
+// stopTimeout ceiling (120s) so one value stays valid everywhere.
+func stopGraceSec() int {
+	n := envInt("AF_STOP_GRACE_SEC", 30)
+	if n < 1 {
+		n = 1
+	}
+	if n > 120 {
+		n = 120
+	}
+	return n
+}
+
+// agentStopGraceSec is the budget injected into the container as
+// AGENT_STOP_GRACE_SEC: the runtime grace minus a safety margin, so the Agent's
+// graceful shutdown (Ctrl-C panes → wait → tmux kill-server → exit) always
+// finishes before the runtime's SIGKILL lands.
+func agentStopGraceSec() int {
+	if n := stopGraceSec() - 5; n >= 5 {
+		return n
+	}
+	return 5
+}
+
+// Stop is a two-stage graceful stop (previously a bare `docker rm -f`, i.e. an
+// instant SIGKILL to everything inside): `docker stop -t` delivers SIGTERM to
+// tini → the Agent, whose shutdown handler Ctrl-C's every live pane so claude /
+// git / builds land in a consistent state before exiting; past the grace, docker
+// itself SIGKILLs — the built-in second stage. The follow-up rm keeps the
+// "normal stopped state is none" semantics the Console relies on. If stop itself
+// errors (missing container, wedged daemon) fall back to the old hard remove so
+// Stop still converges.
 func (d *dockerRuntime) Stop(ctx context.Context) error {
-	if out, err := exec.CommandContext(ctx, "docker", "rm", "-f", d.name).CombinedOutput(); err != nil {
+	if out, err := exec.CommandContext(ctx, "docker", "stop", "-t", strconv.Itoa(stopGraceSec()), d.name).CombinedOutput(); err != nil {
+		if out2, err2 := exec.CommandContext(ctx, "docker", "rm", "-f", d.name).CombinedOutput(); err2 != nil {
+			return fmt.Errorf("docker stop: %v: %s; docker rm -f: %v: %s",
+				err, strings.TrimSpace(string(out)), err2, strings.TrimSpace(string(out2)))
+		}
+	} else if out, err := exec.CommandContext(ctx, "docker", "rm", d.name).CombinedOutput(); err != nil {
 		return fmt.Errorf("docker rm: %v: %s", err, out)
 	}
 	// Best-effort: drop the now-empty per-user network (recreated on next start).
@@ -377,7 +432,13 @@ func (c config) handleWorkspaceRecreate(w http.ResponseWriter, r *http.Request) 
 // explicit start/recreate handlers and P3-9 auto-start.
 func (c config) ensureWorkspaceStarted(ctx context.Context, res *resolved) *apiError {
 	rt := res.rt
-	if rt.State(ctx) == "running" {
+	switch rt.State(ctx) {
+	case "running":
+		return nil
+	case "starting":
+		// A launch is already converging (ECS cold pull can take minutes). Calling
+		// Start again would double-drive the service (fresh task def + forced
+		// deployment), so return and let the poller observe the transition.
 		return nil
 	}
 	t, err := c.mgr.store.GetTenant(ctx, res.ws.TenantID)
@@ -402,13 +463,15 @@ func (c config) ensureWorkspaceStarted(ctx context.Context, res *resolved) *apiE
 }
 
 // startResolved starts the container (with quota) and writes the JSON result.
-// Shared by the explicit start and recreate handlers.
+// Shared by the explicit start and recreate handlers. The reported state is the
+// live one, not a hardcoded "running" — on ECS a successful Start can leave the
+// service still "starting" (cold image pull), which the Console keeps polling.
 func (c config) startResolved(w http.ResponseWriter, r *http.Request, res *resolved) {
 	if aerr := c.ensureWorkspaceStarted(r.Context(), res); aerr != nil {
 		writeAPIErr(w, aerr)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"name": res.rt.Name(), "state": "running"})
+	writeJSON(w, http.StatusOK, map[string]any{"name": res.rt.Name(), "state": res.rt.State(r.Context())})
 }
 
 func (c config) handleWorkspaceStop(w http.ResponseWriter, r *http.Request) {

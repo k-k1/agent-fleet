@@ -189,7 +189,15 @@ func (c config) proxyTerminal(w http.ResponseWriter, r *http.Request) {
 	// mere session click (which opens /ws/pty) would silently revive the whole WS. A
 	// stopped workspace is brought up only by the explicit WORKSPACE Start control;
 	// here we fail fast so the terminal stays down and the user resumes on purpose.
-	if rt.State(r.Context()) != "running" {
+	switch rt.State(r.Context()) {
+	case "running":
+	case "starting":
+		// Distinct code so the Console can say "wait" instead of "start it first" —
+		// a starting workspace must not be re-started.
+		writeAPIErr(w, &apiError{http.StatusConflict, "workspace_starting",
+			"workspace is starting — wait for it to come up"})
+		return
+	default:
 		writeAPIErr(w, &apiError{http.StatusConflict, "workspace_stopped",
 			"workspace is stopped — start it first"})
 		return
