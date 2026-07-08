@@ -1,0 +1,74 @@
+# CI (docs/23 P0): CONTRIBUTING.md の手動規約（gofmt / vet / test / build 一式）の機械化。
+# 3 コンポーネントを独立ジョブで検証する。lint 追加（golangci-lint 等)は opt-in で後続。
+name: ci
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  control-plane:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: control-plane
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: control-plane/go.mod
+          cache-dependency-path: control-plane/go.sum
+      - name: gofmt
+        run: |
+          out=$(gofmt -l .)
+          if [ -n "$out" ]; then echo "gofmt needed:"; echo "$out"; exit 1; fi
+      - name: go vet
+        run: go vet ./...
+      - name: go build
+        run: go build ./...
+      - name: go test
+        run: go test ./...
+
+  workspace-agent:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: workspace/agent
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: workspace/agent/go.mod
+          cache-dependency-path: workspace/agent/go.sum
+      - name: gofmt
+        run: |
+          out=$(gofmt -l .)
+          if [ -n "$out" ]; then echo "gofmt needed:"; echo "$out"; exit 1; fi
+      - name: go vet
+        run: go vet ./...
+      - name: go build
+        run: go build ./...
+      - name: go test
+        run: go test ./...
+
+  console:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: console
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: console/package-lock.json
+      - name: npm ci
+        run: npm ci
+      - name: typecheck
+        run: npm run typecheck
+      - name: vitest
+        run: npm test
+      - name: build
+        run: npm run build
