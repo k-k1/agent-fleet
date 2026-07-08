@@ -11,6 +11,8 @@ import { useWorkspaceStore, startWorkspacePolling } from "../core/store/workspac
 import { useLayoutStore, wireLayoutHistory } from "../layout/store.ts";
 import { wireTerminalReconcile } from "../terminal/service.ts";
 import { useSessionsStore, startSessionsPolling } from "../features/sessions/store.ts";
+import { SessionModals } from "../features/sessions/SessionModals.tsx";
+import { useSessionNotifications } from "../features/sessions/useSessionNotifications.ts";
 import { useReposStore } from "../features/repos/store.ts";
 import { useFilesStore } from "../features/files/store.ts";
 import { useChatStore } from "../features/chat/store.ts";
@@ -236,6 +238,10 @@ export function App() {
     if (newSessionTick > 0 && window.matchMedia(MOBILE_QUERY).matches) setNavOpen(true);
   }, [newSessionTick]);
 
+  // Desktop notifications on claude state arrivals — lives at the shell now that
+  // the flat Sessions section no longer owns the rail.
+  useSessionNotifications();
+
   return (
     <div
       className={
@@ -274,6 +280,7 @@ export function App() {
       </div>
       {settingsOpen && <SettingsDialog />}
       {adminOpen && <AdminDialog />}
+      <SessionModals />
     </div>
   );
 }

@@ -20,6 +20,7 @@ import {
   openSessionChat,
   openSessionChatSplit,
 } from "./open.ts";
+import { useSessionUI } from "./ui.ts";
 import type { SessionActions } from "./useSessionActions.tsx";
 import type { Session } from "../../types/session.ts";
 
@@ -32,13 +33,13 @@ interface SessionRowProps {
   multi: boolean;
   running: boolean;
   actions: SessionActions;
-  onRename: (s: Session) => void;
-  onBranchRename: (s: Session) => void;
-  onResumeSsm: (name: string, force: boolean) => void;
 }
 
-export function SessionRow({ s, selected, opens, multi, running, actions, onRename, onBranchRename, onResumeSsm }: SessionRowProps) {
+export function SessionRow({ s, selected, opens, multi, running, actions }: SessionRowProps) {
   const setActive = useLayoutStore((st) => st.setActive);
+  const openRename = useSessionUI((u) => u.openRename);
+  const openBranchRename = useSessionUI((u) => u.openBranchRename);
+  const openSsmResume = useSessionUI((u) => u.openSsmResume);
   const { hover, setHover } = usePaneHover();
   const menuRef = useRef<HTMLDivElement>(null);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -159,7 +160,7 @@ export function SessionRow({ s, selected, opens, multi, running, actions, onRena
                 className="ui-menu-item"
                 onClick={() => {
                   setMenuOpen(false);
-                  if (s.kind === "ssm") onResumeSsm(s.name, false);
+                  if (s.kind === "ssm") openSsmResume(s.name, false);
                   else openSessionTerminal(s.name);
                 }}
               >
@@ -172,7 +173,7 @@ export function SessionRow({ s, selected, opens, multi, running, actions, onRena
                 className="ui-menu-item"
                 onClick={() => {
                   setMenuOpen(false);
-                  onResumeSsm(s.name, true);
+                  openSsmResume(s.name, true);
                 }}
               >
                 <Icon name="key" /> 再ログインして再開
@@ -207,7 +208,7 @@ export function SessionRow({ s, selected, opens, multi, running, actions, onRena
               className="ui-menu-item"
               onClick={() => {
                 setMenuOpen(false);
-                onRename(s);
+                openRename(s);
               }}
             >
               <Icon name="edit" /> タイトルを変更
@@ -220,7 +221,7 @@ export function SessionRow({ s, selected, opens, multi, running, actions, onRena
                 className="ui-menu-item"
                 onClick={() => {
                   setMenuOpen(false);
-                  onBranchRename(s);
+                  openBranchRename(s);
                 }}
               >
                 <Icon name="repo-forked" /> ブランチ名を変更
