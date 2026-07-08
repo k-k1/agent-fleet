@@ -113,16 +113,6 @@ export function previewURL(port: string | number): string {
   return u.toString();
 }
 
-// Build the opencode web UI URL (the per-workspace pk-webui served under /ocweb/,
-// not /api). Opened as a top-level navigation in a new tab, so the tenant rides as
-// a query param — the CP resolves it from this fallback (a new tab can't carry the
-// X-AF-Tenant header fetch() injects).
-export function ocwebURL(): string {
-  const u = new URL(rel("ocweb/"));
-  if (selectedTenant) u.searchParams.set("tenant", selectedTenant);
-  return u.toString();
-}
-
 // Build a download URL for a home-relative file. Opened as a top-level
 // navigation (anchor), so — like preview/terminal — the tenant rides as a query
 // param (a download click can't carry the X-AF-Tenant header fetch() injects).

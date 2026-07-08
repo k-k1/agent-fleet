@@ -32,7 +32,7 @@ import (
 // the reaper treats as a fresh grace window via bootTime).
 type connRegistry struct {
 	mu       sync.Mutex
-	wsConns  map[string]int            // workspaceID -> open long-lived conns (terminal/preview/ocweb)
+	wsConns  map[string]int            // workspaceID -> open long-lived conns (terminal/preview)
 	attached map[string]map[string]int // workspaceID -> session name -> attached terminals
 	lastSeen map[string]time.Time      // workspaceID -> last request activity
 }
@@ -57,7 +57,7 @@ func (r *connRegistry) touch(wsID string) {
 }
 
 // addConn/doneConn bracket a long-lived connection. session may be "" (preview /
-// ocweb / a fresh shell with no session name); a non-empty session also marks
+// a fresh shell with no session name); a non-empty session also marks
 // that specific session as terminal-attached so tier 1 won't halt it.
 func (r *connRegistry) addConn(wsID, session string) {
 	if r == nil || wsID == "" {

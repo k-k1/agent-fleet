@@ -27,7 +27,7 @@ import (
 //     text/reasoning: {text}          tool: {tool, state:{input:{command|file_path|…}}}
 //     patch: {files:[...]}            step-*: framing, dropped
 
-// opencodeDBPath is the shared SQLite store both the TUI slot and `opencode serve` write.
+// opencodeDBPath is the shared SQLite store the opencode TUI sessions write.
 func opencodeDBPath() string {
 	return filepath.Join(homeDir(), ".local", "share", "opencode", "opencode.db")
 }

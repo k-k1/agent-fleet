@@ -1,7 +1,6 @@
 // App-level shared types: the identity/tenant/workspace shapes and the full
 // AppContext value (AppState) exposed by state.tsx via useApp(). Kept here so
 // components can import a precise context type as they migrate to TSX.
-import type { Dispatch, SetStateAction } from "react";
 import type { Layout, Pane, PaneKind } from "./layout.ts";
 import type { Session } from "./session.ts";
 
@@ -17,15 +16,6 @@ export interface Tenant {
   slug: string;
   name?: string;
   role?: string;
-}
-
-// GET /api/agents/opencode-web status (null when unavailable/unreachable).
-export interface Ocweb {
-  available?: boolean;
-  enabled?: boolean;
-  running?: boolean;
-  port?: number;
-  [k: string]: unknown;
 }
 
 // A partial pane descriptor describing an open target (which view + its identity).
@@ -54,9 +44,6 @@ export interface AppState {
   startWs: () => Promise<void>;
   stopWs: () => Promise<void>;
   recreateWs: () => Promise<void>;
-  ocweb: Ocweb | null;
-  setOcweb: Dispatch<SetStateAction<Ocweb | null>>;
-  refreshOcweb: () => Promise<void>;
   // active-pane projection (back-compat for not-yet-pane-aware components)
   mode: PaneKind;
   scmRepo: string | null;
