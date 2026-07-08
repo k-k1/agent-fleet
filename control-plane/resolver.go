@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"sync"
 )
 
 // identity is what the AuthGateway resolves a request to.
@@ -87,9 +88,6 @@ func (m *manager) membershipsFor(ctx context.Context, ident Identity) ([]Members
 // records, creating the workspace on first use. tenantSel is the X-AF-Tenant
 // value (slug or tenant id); empty means "default selection".
 func (m *manager) resolveFull(ctx context.Context, key, email, tenantSel string) (*resolved, *apiError) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	ident, err := m.store.UpsertIdentity(ctx, email, key, m.roleHintFor(email))
 	if err != nil {
 		return nil, internalErr(err)
@@ -102,15 +100,13 @@ func (m *manager) resolveFull(ctx context.Context, key, email, tenantSel string)
 	if aerr != nil {
 		return nil, aerr
 	}
-	return m.buildResolvedLocked(ctx, ident, mv)
+	return m.buildResolved(ctx, ident, mv)
 }
 
 // resolveMembership maps a request's identity + selected tenant to its identity and
 // membership WITHOUT building/creating a workspace — for lightweight per-member
 // resources (e.g. SSM host bookmarks) that don't need a running container.
 func (m *manager) resolveMembership(ctx context.Context, key, email, tenantSel string) (Identity, MembershipView, *apiError) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
 	ident, err := m.store.UpsertIdentity(ctx, email, key, m.roleHintFor(email))
 	if err != nil {
 		return Identity{}, MembershipView{}, internalErr(err)
@@ -145,10 +141,23 @@ func selectMembership(ms []MembershipView, tenantSel string) (MembershipView, *a
 	}
 }
 
-// buildResolvedLocked maps an (identity, membership) to its runtime + workspace,
-// creating the workspace on first use. Assumes m.mu is held.
-func (m *manager) buildResolvedLocked(ctx context.Context, ident Identity, mv MembershipView) (*resolved, *apiError) {
-	if c, ok := m.rts[mv.MembershipID]; ok {
+// buildResolved maps an (identity, membership) to its runtime + workspace,
+// creating the workspace on first use. docs/23 P2-W2: 旧実装（buildResolvedLocked）
+// は manager.mu を store/custodian I/O 越しに保持し、全メンバーシップの解決を
+// 1 本のロックで直列化していた。現在 m.mu が守るのはキャッシュ map だけで、
+// I/O は per-membership の build ロック下で走る — 同一メンバーシップの初回同時
+// リクエストが workspace を二重作成しない一方、別メンバーシップは並行に解決する。
+// 注: evict*Cache との競合はベストエフォート（ビルド中に evict されると直後の
+// キャッシュ格納が旧 env のまま残り得るが、ポリシー変更は「次のコンテナ起動で
+// 反映」というこれまでの意味論の範囲内）。
+func (m *manager) buildResolved(ctx context.Context, ident Identity, mv MembershipView) (*resolved, *apiError) {
+	if c, ok := m.cachedRTFor(mv.MembershipID); ok {
+		return &resolved{rt: c.rt, ws: c.ws, ident: ident, mv: mv}, nil
+	}
+	bl := m.buildLockFor(mv.MembershipID)
+	bl.Lock()
+	defer bl.Unlock()
+	if c, ok := m.cachedRTFor(mv.MembershipID); ok { // built while we waited
 		return &resolved{rt: c.rt, ws: c.ws, ident: ident, mv: mv}, nil
 	}
 	ws, ok, err := m.store.GetWorkspaceByMembership(ctx, mv.MembershipID)
@@ -166,16 +175,39 @@ func (m *manager) buildResolvedLocked(ctx context.Context, ident Identity, mv Me
 		return nil, internalErr(err)
 	}
 	rt := m.runtimeFor(ws, dekHex, m.workspaceExtraEnv(ctx, ws)...)
+	m.mu.Lock()
 	m.rts[mv.MembershipID] = cachedRT{rt: rt, ws: ws}
+	m.mu.Unlock()
 	return &resolved{rt: rt, ws: ws, ident: ident, mv: mv}, nil
+}
+
+// cachedRTFor reads the runtime cache under the (now cache-only) manager lock.
+func (m *manager) cachedRTFor(membershipID string) (cachedRT, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	c, ok := m.rts[membershipID]
+	return c, ok
+}
+
+// buildLockFor returns the per-membership build mutex (lazily allocated).
+func (m *manager) buildLockFor(membershipID string) *sync.Mutex {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.buildLocks == nil {
+		m.buildLocks = map[string]*sync.Mutex{}
+	}
+	l, ok := m.buildLocks[membershipID]
+	if !ok {
+		l = &sync.Mutex{}
+		m.buildLocks[membershipID] = l
+	}
+	return l
 }
 
 // resolveByMembership resolves a runtime from a PAT's stored identity+membership
 // (the MCP path, which has no gateway headers). The membership must still be an
 // active membership of the identity — so a revoked membership 403s here.
 func (m *manager) resolveByMembership(ctx context.Context, identityID, membershipID string) (*resolved, *apiError) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
 	ident, ok, err := m.store.GetIdentityByID(ctx, identityID)
 	if err != nil {
 		return nil, internalErr(err)
@@ -189,7 +221,7 @@ func (m *manager) resolveByMembership(ctx context.Context, identityID, membershi
 	}
 	for _, mv := range ms {
 		if mv.MembershipID == membershipID {
-			return m.buildResolvedLocked(ctx, ident, mv)
+			return m.buildResolved(ctx, ident, mv)
 		}
 	}
 	return nil, &apiError{http.StatusForbidden, "forbidden_tenant", "membership not active"}

@@ -15,10 +15,15 @@ import (
 // (MetadataStore) is the source of truth; `rts` is an in-memory cache of built
 // runtimes keyed by membership id. The Agent contract is unchanged.
 type manager struct {
-	mu    sync.Mutex
-	rts   map[string]cachedRT // cache keyed by membership id; DB is source of truth
-	store Store
-	conns *connRegistry // P3-9: live activity/attachment tracking for idle-stop
+	// mu guards ONLY the in-memory maps below (rts cache + buildLocks) — it is
+	// never held across store/docker I/O（docs/23 P2-W2、以前は resolve 全体を
+	// この 1 本で直列化していた）。初回解決の I/O は per-membership の
+	// buildLocks で直列化する（buildResolved, resolver.go）。
+	mu         sync.Mutex
+	rts        map[string]cachedRT    // cache keyed by membership id; DB is source of truth
+	buildLocks map[string]*sync.Mutex // per-membership first-resolve serialization
+	store      Store
+	conns      *connRegistry // P3-9: live activity/attachment tracking for idle-stop
 
 	// rtFactory is the profile-selected Runtime adapter builder (Docker locally,
 	// ECS on AWS; P3-7). Every runtime is constructed through it — see runtimeFor.
