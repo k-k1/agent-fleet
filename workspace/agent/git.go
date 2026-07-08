@@ -761,7 +761,7 @@ func handleRepoCheckout(w http.ResponseWriter, r *http.Request) {
 	// the Console footgun; agent/manual `git checkout` inside a session still bypasses
 	// it (no pre-checkout hook exists) and is caught by branch-drift detection.
 	if running := liveSessionsInDir(dir); len(running) > 0 {
-		writeErr(w, http.StatusConflict, "sessions_running",
+		writeErr(w, http.StatusConflict, errCodeSessionsRunning,
 			fmt.Sprintf("%d session(s) are running in this working copy (%s); switching branches here would corrupt them. Open the branch as a new working copy instead.",
 				len(running), strings.Join(running, ", ")))
 		return
@@ -862,7 +862,7 @@ func handleDeleteRepo(w http.ResponseWriter, r *http.Request) {
 	// branch switch: their cwd vanishes mid-flight. Refuse while any session runs
 	// there — the user must stop/archive them first (same guard as checkout).
 	if running := liveSessionsInDir(dir); len(running) > 0 {
-		writeErr(w, http.StatusConflict, "sessions_running_delete",
+		writeErr(w, http.StatusConflict, errCodeSessionsRunningDelete,
 			fmt.Sprintf("%d session(s) are running in this working copy (%s); deleting it would break them. Stop those sessions first.",
 				len(running), strings.Join(running, ", ")))
 		return
@@ -877,7 +877,7 @@ func handleDeleteRepo(w http.ResponseWriter, r *http.Request) {
 	if isLinkedWorktree(dir) {
 		if !force {
 			if st, err := gitStatus(dir); err == nil && (st.Dirty || st.Ahead > 0) {
-				writeErr(w, http.StatusConflict, "worktree_dirty",
+				writeErr(w, http.StatusConflict, errCodeWorktreeDirty,
 					"worktree has uncommitted or unpushed changes; pass force=true to delete anyway")
 				return
 			}
@@ -888,7 +888,7 @@ func handleDeleteRepo(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if out, err := exec.Command("git", "-C", parent, "worktree", "remove", "--force", dir).CombinedOutput(); err != nil {
-			writeErr(w, http.StatusBadGateway, "worktree_remove_failed", strings.TrimSpace(string(out)))
+			writeErr(w, http.StatusBadGateway, errCodeWorktreeRemoveFailed, strings.TrimSpace(string(out)))
 			return
 		}
 		_ = exec.Command("git", "-C", parent, "worktree", "prune").Run()
@@ -900,7 +900,7 @@ func handleDeleteRepo(w http.ResponseWriter, r *http.Request) {
 	// break every worktree hanging off it. Refuse and let the user delete the worktrees
 	// first.
 	if n := linkedWorktreeCount(dir); n > 0 {
-		writeErr(w, http.StatusConflict, "has_worktrees",
+		writeErr(w, http.StatusConflict, errCodeHasWorktrees,
 			fmt.Sprintf("this working copy has %d worktree(s) branched off it; delete those first", n))
 		return
 	}
