@@ -203,7 +203,10 @@ func (e *ecsRuntime) describeService(ctx context.Context) (ecstypes.Service, boo
 }
 
 // Stop scales the service to zero (home persists on EFS; resume on next Start). A
-// missing service is already-stopped.
+// missing service is already-stopped. Graceful: ECS task stop SIGTERMs the
+// container and SIGKILLs after the task def's stopTimeout (set from
+// AF_STOP_GRACE_SEC at registration, i.e. a grace change applies from the next
+// Start) — the Agent's shutdown handler does the in-container Ctrl-C sweep.
 func (e *ecsRuntime) Stop(ctx context.Context) error {
 	_, ok, err := e.describeService(ctx)
 	if err != nil {
@@ -345,6 +348,9 @@ func (e *ecsRuntime) putSecrets(ctx context.Context) ([]ecstypes.Secret, error) 
 func (e *ecsRuntime) registerTaskDef(ctx context.Context, homeAP, claudeAP string, secrets []ecstypes.Secret) (string, error) {
 	env := []ecstypes.KeyValuePair{
 		{Name: aws.String("CLAUDE_CONFIG_DIR"), Value: aws.String("/var/lib/af/claude")},
+		// Graceful-shutdown budget for the Agent's SIGTERM handler — the container
+		// stopTimeout minus a safety margin (see StopTimeout below).
+		{Name: aws.String("AGENT_STOP_GRACE_SEC"), Value: aws.String(strconv.Itoa(agentStopGraceSec()))},
 	}
 	if e.cfg.sessionCmd != "" {
 		env = append(env, ecstypes.KeyValuePair{Name: aws.String("AGENT_SESSION_CMD"), Value: aws.String(e.cfg.sessionCmd)})
@@ -367,6 +373,16 @@ func (e *ecsRuntime) registerTaskDef(ctx context.Context, homeAP, claudeAP strin
 			{SourceVolume: aws.String("home"), ContainerPath: aws.String("/home/dev")},
 			{SourceVolume: aws.String("claude"), ContainerPath: aws.String("/var/lib/af/claude")},
 		},
+		// Two-stage graceful stop (§20b.7.8 停止改訂): on Stop (desired 0) ECS
+		// delivers SIGTERM, the Agent Ctrl-C's its panes and exits within its
+		// budget, and past stopTimeout ECS SIGKILLs — the built-in second stage.
+		// The ECS analogue of the docker adapter's `docker stop -t`.
+		StopTimeout: aws.Int32(int32(stopGraceSec())),
+		// docker --init parity: docker-init (tini) as PID 1 reaps zombies and
+		// forwards SIGTERM to the Agent. Without it the Agent is PID 1, where the
+		// kernel suppresses default-action signals — the pre-handler reason every
+		// ECS stop silently sat out the full stopTimeout and then got SIGKILLed.
+		LinuxParameters: &ecstypes.LinuxParameters{InitProcessEnabled: aws.Bool(true)},
 	}
 	if e.cfg.logGroup != "" {
 		container.LogConfiguration = &ecstypes.LogConfiguration{

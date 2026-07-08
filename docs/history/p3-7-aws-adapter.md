@@ -232,6 +232,22 @@ local の 2 マウント（`home` + `claude-config`、runtime.go:179-181）を E
     degrade（Agent 未到達なので DB ミラー提供・スキップが正）。
   - Console: `starting` を「起動中…」表示し、4 秒ポーリングで `running` へ自動遷移。
   - local(docker) アダプタは従来どおり 3 値のみ返す（起動が秒オーダーで `starting` を観測しない）。
+- **停止改訂（2026-07-08, fix/ws-starting-state）**: 停止を graceful な 2 段階に改めた。
+  従来 local は `docker rm -f`（即 SIGKILL）、ECS は SIGTERM→stopTimeout(30s)→SIGKILL だが
+  Agent が無ハンドラかつ PID 1（`initProcessEnabled` 無し、kernel が default-action シグナルを
+  PID 1 に配送しない）のため SIGTERM が黙殺され、実質「30 秒待つだけの SIGKILL」だった。
+  - **Agent**（workspace/agent/shutdown.go）: SIGTERM/SIGINT を捕捉 → 全 live pane に
+    `tmux send-keys C-c`（= SIGINT。claude は進行中ターンを中断し jsonl を整合確定）→
+    status hook が working を報告しなくなるまで待機（AGENT_STOP_GRACE_SEC 予算内）→
+    `tmux kill-server` → exit 0。セッションは従来どおり resume 可能（meta/jsonl は home 永続）。
+  - **local**: `docker stop -t <grace>` → `docker rm`（「通常の停止 = none」は維持）。
+    grace 超過時は docker が SIGKILL（2 段階目内蔵）。`docker stop` 自体の失敗時のみ
+    従来の `rm -f` にフォールバック。
+  - **ECS**: task def に `stopTimeout=<grace>` と `linuxParameters.initProcessEnabled=true`
+    （docker `--init` 対称: zombie reap + シグナル転送）を追加。Stop（desired 0）は不変。
+    stopTimeout は登録時に焼き込まれるため grace 変更は次回 Start から反映。
+  - **設定**: `AF_STOP_GRACE_SEC`（既定 30、1..120 にクランプ = Fargate stopTimeout 上限）が
+    両アダプタを駆動。コンテナへは安全マージンを引いた `AGENT_STOP_GRACE_SEC`（既定 25）を注入。
 - **Start 待ち**: UpdateService desired 1 → DescribeServices `running>=1` かつ DescribeTasks
   `lastStatus==RUNNING` → その後 `Endpoint()+/healthz` を 200 まで poll（local `waitHealthy`
   と同ロジック、runtime.go:273）。
