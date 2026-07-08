@@ -37,12 +37,11 @@
   font-weight: 700;
 }
 
-/* Worktrees hang off their base: a minimal indent — the accent spine does the
-   binding, so the content barely shifts right (same project, different checkout). */
+/* Worktrees hang off their base: the accent spine alone does the binding (≈2px
+   indent, no extra margin/padding). The spine follows the left-pane surface accent
+   so it matches the theme instead of the fixed app blue. */
 .proj-node.wt {
-  margin-left: 2px;
-  padding-left: 2px;
-  border-left: 2px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  border-left: 2px solid color-mix(in srgb, var(--lp-accent, var(--accent)) 45%, transparent);
 }
 
 /* Header line: expand caret + the repo row. */

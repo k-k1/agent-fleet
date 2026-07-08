@@ -250,7 +250,7 @@
 }
 .repo-row.active {
   background: var(--lp-active-bg, var(--active-bg));
-  box-shadow: inset 2px 0 0 var(--accent);
+  box-shadow: inset 2px 0 0 var(--lp-accent, var(--accent));
 }
 .repo-card {
   padding: 6px 8px 6px 14px;
