@@ -8,6 +8,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
 // The assistant chat's image attach rides the same save→Read flow as a terminal session
@@ -45,7 +47,7 @@ func TestChatPasteImageRoundtrip(t *testing.T) {
 
 	// A claude conversation accepts the upload and serves it back.
 	claudeID := "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
-	if err := saveConv(&chatConversation{ID: claudeID, Agent: kindClaude}); err != nil {
+	if err := saveConv(&chatConversation{ID: claudeID, Agent: session.KindClaude}); err != nil {
 		t.Fatal(err)
 	}
 	res := upload(t, claudeID)
@@ -78,7 +80,7 @@ func TestChatPasteImageRoundtrip(t *testing.T) {
 
 	// A codex conversation is rejected (no image-read path there).
 	codexID := "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
-	if err := saveConv(&chatConversation{ID: codexID, Agent: kindCodex}); err != nil {
+	if err := saveConv(&chatConversation{ID: codexID, Agent: session.KindCodex}); err != nil {
 		t.Fatal(err)
 	}
 	if res := upload(t, codexID); res.StatusCode != http.StatusBadRequest {

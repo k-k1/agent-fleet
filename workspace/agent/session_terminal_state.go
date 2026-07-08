@@ -3,6 +3,9 @@ package main
 import (
 	"os/exec"
 	"strings"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 )
 
 // sessionTerminalState detects claude terminal-only states that the chat view can't
@@ -18,7 +21,7 @@ import (
 // Best-effort: the wording is claude-CLI-specific, so a version bump may need the
 // match strings updated.
 func sessionTerminalState(name string) string {
-	pane := sessionPaneID(tmuxName(name))
+	pane := tmuxx.SessionPaneID(session.TmuxName(name))
 	if pane == "" {
 		return ""
 	}

@@ -1,24 +1,28 @@
 package main
 
+import (
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+)
+
 // shellAgent / ssmAgent — shell・ssm 種別の Agent 実装（docs/23 P1残: CLI 縦割りファイル分割）
 
 // --- shell ---------------------------------------------------------------------
 
 type shellAgent struct{ noGenericTranscript }
 
-func (shellAgent) kind() string    { return kindShell }
+func (shellAgent) kind() string    { return session.KindShell }
 func (shellAgent) caps() agentCaps { return agentCaps{} }
 
-func (shellAgent) buildLaunch(m sessionMeta, _ launchOpts) (launchPlan, error) {
+func (shellAgent) buildLaunch(m session.Meta, _ launchOpts) (launchPlan, error) {
 	// A shell falls back to home if its recorded dir is gone.
 	cwd := m.Dir
-	if !dirExists(cwd) {
+	if !session.DirExists(cwd) {
 		cwd = homeDir()
 	}
 	return launchPlan{program: "bash -l", cwd: cwd}, nil
 }
 
-func (shellAgent) wireLive(m sessionMeta, alive bool) liveInfo {
+func (shellAgent) wireLive(m session.Meta, alive bool) liveInfo {
 	return liveInfo{resumable: true}
 }
 
@@ -28,10 +32,10 @@ func (shellAgent) clearResume(string) {}
 
 type ssmAgent struct{ noGenericTranscript }
 
-func (ssmAgent) kind() string    { return kindSSM }
+func (ssmAgent) kind() string    { return session.KindSSM }
 func (ssmAgent) caps() agentCaps { return agentCaps{} }
 
-func (ssmAgent) buildLaunch(m sessionMeta, opts launchOpts) (launchPlan, error) {
+func (ssmAgent) buildLaunch(m session.Meta, opts launchOpts) (launchPlan, error) {
 	// An SSM session logs into the operator's OWN AWS via `aws sso login` (the
 	// device-code URL is surfaced in this terminal — click it to authenticate in
 	// another tab) then opens Session Manager on the target instance. No AWS
@@ -48,7 +52,7 @@ func (ssmAgent) buildLaunch(m sessionMeta, opts launchOpts) (launchPlan, error) 
 	return launchPlan{program: p, cwd: homeDir()}, nil
 }
 
-func (ssmAgent) wireLive(m sessionMeta, alive bool) liveInfo {
+func (ssmAgent) wireLive(m session.Meta, alive bool) liveInfo {
 	return liveInfo{resumable: true}
 }
 

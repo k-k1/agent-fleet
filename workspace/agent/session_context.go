@@ -3,19 +3,13 @@ package main
 import (
 	"sync"
 	"time"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
-// contextUsage is a claude session's current context fill — the newest assistant
-// turn's prompt token breakdown. It is serialized into Session.Context so the
-// Console can render the /context-like gauge in BOTH the terminal and chat heads
-// straight off the sessions list, with no separate transcript poll. The field
-// names match the Console's ContextBar props (read / create / fresh / model).
-type contextUsage struct {
-	Read   int    `json:"read"`   // cache_read_input_tokens (reused cache)
-	Create int    `json:"create"` // cache_creation_input_tokens (newly cached)
-	Fresh  int    `json:"fresh"`  // input_tokens (uncached)
-	Model  string `json:"model"`
-}
+// session.ContextUsage（claude セッションの現在のコンテキスト充填率、ワイヤ型）は
+// internal/session へ移設（docs/23 残① Wave A）。ここには jsonl の解析と
+// mtime キャッシュ（main 依存: transcriptRead/parseTurn）だけが残る。
 
 // ctxCache memoizes the parsed context per sid, keyed by the transcript's mtime, so
 // repeated sessions-list polls don't re-read and re-parse an unchanged jsonl. A new
@@ -27,7 +21,7 @@ var (
 
 type ctxCacheEntry struct {
 	mtime time.Time
-	usage *contextUsage
+	usage *session.ContextUsage
 }
 
 // latestSessionContext returns the current context fill for a claude session, or
@@ -36,7 +30,7 @@ type ctxCacheEntry struct {
 // the cached parse while the mtime is unchanged; it only reads+parses on change.
 // It reuses the same parseTurn as /messages, so the value matches the chat view's
 // own ContextBar exactly.
-func latestSessionContext(sid string) *contextUsage {
+func latestSessionContext(sid string) *session.ContextUsage {
 	paths := jsonlByMtime(sid)
 	if len(paths) == 0 {
 		return nil
@@ -52,7 +46,7 @@ func latestSessionContext(sid string) *contextUsage {
 	ctxCacheMu.Unlock()
 
 	lines, _, _ := transcriptRead(sid)
-	var u *contextUsage
+	var u *session.ContextUsage
 	// The last assistant event carrying usage is the current context size (matching
 	// MirrorView's latestContext, which takes the last event's input/cache).
 	for i, ln := range lines {
@@ -61,7 +55,7 @@ func latestSessionContext(sid string) *contextUsage {
 			continue
 		}
 		if t.InTok+t.CacheRead+t.CacheCreate > 0 {
-			u = &contextUsage{Read: t.CacheRead, Create: t.CacheCreate, Fresh: t.InTok, Model: t.Model}
+			u = &session.ContextUsage{Read: t.CacheRead, Create: t.CacheCreate, Fresh: t.InTok, Model: t.Model}
 		}
 	}
 

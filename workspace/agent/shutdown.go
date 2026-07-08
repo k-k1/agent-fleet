@@ -8,6 +8,10 @@ import (
 	"strconv"
 	"syscall"
 	"time"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 )
 
 // Graceful workspace stop (docs/history/p3-7-aws-adapter.md §20b.7.8 停止改訂).
@@ -54,17 +58,17 @@ func stopGraceBudget() time.Duration {
 // the halt endpoint's kill-session, minus a SIGKILL landing mid-write.
 func gracefulShutdown(budget time.Duration) {
 	deadline := time.Now().Add(budget)
-	live := liveSessionNames()
+	live := tmuxx.LiveSessionNames()
 	if len(live) == 0 {
 		_ = exec.Command("tmux", "kill-server").Run()
 		return
 	}
 	for name := range live {
 		// send-keys needs the %N pane id (the "=" exact-session form is a pane
-		// syntax error, see sessionPaneID). C-c goes to the pane's foreground
+		// syntax error, see tmuxx.SessionPaneID). C-c goes to the pane's foreground
 		// process group — exactly a user Ctrl-C: claude aborts the in-flight turn
 		// and finalizes its jsonl; a shell interrupts its running job.
-		if pane := sessionPaneID(tmuxName(name)); pane != "" {
+		if pane := tmuxx.SessionPaneID(session.TmuxName(name)); pane != "" {
 			_ = exec.Command("tmux", "send-keys", "-t", pane, "C-c").Run()
 		}
 	}
@@ -86,15 +90,15 @@ func gracefulShutdown(budget time.Duration) {
 // "working". Shell panes have no status file and are covered by the settle sleep
 // instead; a stale status without a live tmux session is ignored.
 func anySessionWorking() bool {
-	live := liveSessionNames()
+	live := tmuxx.LiveSessionNames()
 	if len(live) == 0 {
 		return false
 	}
-	for _, m := range listSessionMetas() {
+	for _, m := range session.ListMetas() {
 		if !live[m.Name] {
 			continue
 		}
-		if s, ok := readSessionStatus(sessionUUID(m.Dir, m.Name)); ok && s.State == "working" {
+		if s, ok := status.Read(session.UUID(m.Dir, m.Name)); ok && s.State == "working" {
 			return true
 		}
 	}

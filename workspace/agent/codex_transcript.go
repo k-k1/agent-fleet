@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
 
@@ -532,8 +533,8 @@ func codexTokenUsage(payload json.RawMessage) (in, out, read, window int, ok boo
 // readCodexTranscript reads a codex session's normalized chat turns plus the rollout
 // path (for diagnostics). ok is always true (codex supports generic transcript); an
 // absent rollout (no conversation yet) yields nil turns, which the chat shows as empty.
-func readCodexTranscript(m sessionMeta) (transcriptData, bool) {
-	slot := sessionUUID(m.Dir, m.Name)
+func readCodexTranscript(m session.Meta) (transcriptData, bool) {
+	slot := session.UUID(m.Dir, m.Name)
 	cxid := codexSids.read(slot)
 	path := codexRolloutPath(cxid)
 	if path == "" {

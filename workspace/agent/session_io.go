@@ -13,6 +13,9 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 )
 
 // opencodeStatusAgentRe pulls the current agent from opencode's composer status line
@@ -23,21 +26,8 @@ var opencodeStatusAgentRe = regexp.MustCompile(`([A-Za-z][\w-]*) +auto +·`)
 // "<model> <effort> · <cwd>" (the word right before " · " then the cwd path).
 var codexFooterEffortRe = regexp.MustCompile(`([a-z]+) +· +[~/]`)
 
-// capturePane returns the session's visible pane text, targeting the active pane by its
-// id. NOTE: capture-pane does NOT accept the "=<session>" exact-target syntax that
-// send-keys/list-panes take ("can't find pane: =name") — that silently returned empty and
-// broke all pane scraping — so we resolve the pane id via sessionPaneID first.
-func capturePane(tn string) string {
-	pane := sessionPaneID(tn)
-	if pane == "" {
-		return ""
-	}
-	out, err := exec.Command("tmux", "capture-pane", "-p", "-t", pane).Output()
-	if err != nil {
-		return ""
-	}
-	return string(out)
-}
+// pane キャプチャ/解決の tmux プリミティブ（capturePane / sessionPaneID）は
+// internal/tmuxx へ移設（docs/23 残① Wave A）。
 
 // paneTail returns the last n non-empty lines of s (the TUI's status/composer footer
 // region), so mode detection matches the STATUS LINE — not conversation text that merely
@@ -61,12 +51,12 @@ func paneTail(s string, n int) string {
 // "" = unknown (composer not drawn / stopped) → the Console shows no mode. Matching is
 // confined to the pane's tail (status line region) so conversation content can't spoof it.
 func paneMode(kind, tn string) string {
-	s := capturePane(tn)
+	s := tmuxx.CapturePane(tn)
 	if s == "" {
 		return ""
 	}
 	switch kind {
-	case kindClaude:
+	case session.KindClaude:
 		// claude's status line (last line) shows the active mode: "⏸ plan mode on
 		// (shift+tab to cycle)" vs "⏵⏵ bypass permissions on …" / "accept edits on …".
 		t := paneTail(s, 3)
@@ -82,13 +72,13 @@ func paneMode(kind, tn string) string {
 		if strings.Contains(t, "shift+tab to cycle") {
 			return "Default"
 		}
-	case kindOpencode:
+	case session.KindOpencode:
 		// The composer status line ("<Agent> auto · …") sits a few lines above the very
 		// bottom (above the border + token/commands footer). The agent name IS the mode.
 		if m := opencodeStatusAgentRe.FindStringSubmatch(paneTail(s, 8)); m != nil {
 			return titleFirst(m[1]) // "Plan" / "Build" / …
 		}
-	case kindCodex:
+	case session.KindCodex:
 		// codex's composer footer is "<model> <effort> · <cwd>  Plan mode [(shift+tab to
 		// cycle)]" — "Plan mode" appears ONLY in plan mode (Default shows no label). The
 		// "(shift+tab to cycle)" suffix is truncated on a narrow pane, so DON'T require it.
@@ -125,7 +115,7 @@ func titleFirst(s string) string {
 // /output for the reply.
 func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if !nameRe.MatchString(name) {
+	if !session.ValidName(name) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
 		return
 	}
@@ -152,15 +142,15 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "empty_prompt", "prompt, keys or seq is required")
 		return
 	}
-	tn := tmuxName(name)
-	if !tmuxHasSession(tn) {
+	tn := session.TmuxName(name)
+	if !tmuxx.HasSession(tn) {
 		httpx.WriteErr(w, http.StatusConflict, "not_running", "session is not running; start it first")
 		return
 	}
 	// Resolve the active pane id. send-keys takes a target-PANE, where tmux's "="
 	// exact-session prefix is read literally ("can't find pane: =claude_x"); a
 	// globally-unique pane id (%N) is unambiguous and avoids tmux's prefix matching.
-	pane := sessionPaneID(tn)
+	pane := tmuxx.SessionPaneID(tn)
 	if pane == "" {
 		httpx.WriteErr(w, http.StatusInternalServerError, "no_pane", "could not resolve session pane")
 		return
@@ -306,11 +296,11 @@ func sendSlashCommand(name, pane, text string) error {
 // Best-effort and silent: a stop the user explicitly asked for must never be
 // blocked or delayed by a failure here, and this only ever runs immediately
 // before that kill — never while the session might still be in active use.
-func disconnectRemoteControl(name string, m sessionMeta) {
-	if m.Kind != kindClaude || remoteSessionURL(sessionUUID(m.Dir, m.Name)) == "" {
+func disconnectRemoteControl(name string, m session.Meta) {
+	if m.Kind != session.KindClaude || remoteSessionURL(session.UUID(m.Dir, m.Name)) == "" {
 		return // not a claude session, or RC has never been used here
 	}
-	pane := sessionPaneID(tmuxName(name))
+	pane := tmuxx.SessionPaneID(session.TmuxName(name))
 	if pane == "" {
 		return
 	}
@@ -330,7 +320,7 @@ func disconnectRemoteControl(name string, m sessionMeta) {
 // back so it gets a token pause. Tunable via AGENT_INPUT_SUBMIT_DELAY_MS.
 func inputSubmitDelay(name string) time.Duration {
 	ms := 200
-	if meta, ok := readSessionMeta(name); ok && meta.Kind == kindClaude {
+	if meta, ok := session.ReadMeta(name); ok && meta.Kind == session.KindClaude {
 		ms = 20
 	}
 	if v := os.Getenv("AGENT_INPUT_SUBMIT_DELAY_MS"); v != "" {
@@ -346,18 +336,18 @@ func inputSubmitDelay(name string) time.Duration {
 // In that view Escape only navigates, so the stop button must step out (Up) first.
 // Best-effort: a capture failure returns false (treat as the normal view → plain Escape).
 func opencodeInSubagentView(tn string) bool {
-	s := capturePane(tn)
+	s := tmuxx.CapturePane(tn)
 	return strings.Contains(s, "Parent") && strings.Contains(s, "Next")
 }
 
 // markSessionWorking optimistically marks the session working so a poll immediately
 // after a send doesn't read a stale idle before claude's UserPromptSubmit hook fires.
 func markSessionWorking(name string) {
-	meta, ok := readSessionMeta(name)
+	meta, ok := session.ReadMeta(name)
 	if !ok {
 		return
 	}
-	persistSessionStatus(sessionUUID(meta.Dir, name), "working")
+	status.Persist(session.UUID(meta.Dir, name), "working")
 }
 
 // allowedKey is the whitelist of tmux key names the Console may send to drive a TUI
@@ -370,44 +360,20 @@ func allowedKey(k string) bool {
 	return false
 }
 
-// sessionPaneID returns the active pane id (e.g. "%0") of a session's current
-// window, or "" if none. Uses the "=" exact target for list-panes (a target-
-// SESSION context, where "=" is honored), then returns the active pane.
-func sessionPaneID(tn string) string {
-	out, err := exec.Command("tmux", "list-panes", "-t", exactT(tn), "-F", "#{pane_active} #{pane_id}").Output()
-	if err != nil {
-		return ""
-	}
-	first := ""
-	for _, ln := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		f := strings.Fields(ln)
-		if len(f) != 2 {
-			continue
-		}
-		if first == "" {
-			first = f[1]
-		}
-		if f[0] == "1" {
-			return f[1]
-		}
-	}
-	return first // fall back to the first pane if none flagged active
-}
-
 // handleSessionStatus (GET /sessions/{name}/status) returns the session's live
 // state for the drive poll loop: working | idle | question, plus alive.
 func handleSessionStatus(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if !nameRe.MatchString(name) {
+	if !session.ValidName(name) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
 		return
 	}
-	meta, ok := readSessionMeta(name)
+	meta, ok := session.ReadMeta(name)
 	if !ok {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
 		return
 	}
-	alive := tmuxHasSession(tmuxName(name))
+	alive := tmuxx.HasSession(session.TmuxName(name))
 	state := driveState(meta, alive, true)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"name": name, "kind": meta.Kind, "alive": alive, "status": state})
 }
@@ -418,16 +384,16 @@ func handleSessionStatus(w http.ResponseWriter, r *http.Request) {
 // index into the transcript.
 func handleSessionOutput(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if !nameRe.MatchString(name) {
+	if !session.ValidName(name) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
 		return
 	}
-	meta, ok := readSessionMeta(name)
+	meta, ok := session.ReadMeta(name)
 	if !ok {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
 		return
 	}
-	alive := tmuxHasSession(tmuxName(name))
+	alive := tmuxx.HasSession(session.TmuxName(name))
 	// /output opts out of the idle-heal (heal=false) to preserve its historical behavior.
 	state := driveState(meta, alive, false)
 	if !agentOf(meta.Kind).caps().canTranscript {
@@ -440,7 +406,7 @@ func handleSessionOutput(w http.ResponseWriter, r *http.Request) {
 			since = n
 		}
 	}
-	sid := sessionUUID(meta.Dir, name)
+	sid := session.UUID(meta.Dir, name)
 	lines := transcriptLines(sid)
 	var sb strings.Builder
 	for i := since; i < len(lines); i++ {

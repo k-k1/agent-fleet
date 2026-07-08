@@ -10,6 +10,8 @@ import (
 	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 )
 
 // SSM login status (docs/history/p3-ssm-session.md). An ssm session runs
@@ -41,11 +43,11 @@ type ssmLoginStatus struct {
 // (logout + login) for ssm sessions. Idempotent: a live session is left as-is.
 func handleStartSession(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if !nameRe.MatchString(name) {
+	if !session.ValidName(name) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
 		return
 	}
-	if _, ok := readSessionMeta(name); !ok {
+	if _, ok := session.ReadMeta(name); !ok {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
 		return
 	}
@@ -59,22 +61,22 @@ func handleStartSession(w http.ResponseWriter, r *http.Request) {
 
 func handleSSMLoginStatus(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if !nameRe.MatchString(name) {
+	if !session.ValidName(name) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
 		return
 	}
-	meta, ok := readSessionMeta(name)
+	meta, ok := session.ReadMeta(name)
 	if !ok {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
 		return
 	}
-	if meta.Kind != kindSSM {
+	if meta.Kind != session.KindSSM {
 		httpx.WriteErr(w, http.StatusBadRequest, "unsupported_kind", "ssm-login is for ssm sessions only")
 		return
 	}
-	alive := tmuxHasSession(tmuxName(name))
+	alive := tmuxx.HasSession(session.TmuxName(name))
 	buf := ""
-	if pane := sessionPaneID(tmuxName(name)); pane != "" {
+	if pane := tmuxx.SessionPaneID(session.TmuxName(name)); pane != "" {
 		// -S - captures the whole scrollback so the URL (early) and the SessionId line
 		// (later) are both visible regardless of pane size.
 		if out, err := exec.Command("tmux", "capture-pane", "-p", "-S", "-", "-t", pane).Output(); err == nil {
@@ -138,7 +140,7 @@ func ssmConfigPath(name string) string {
 // writeSSMConfig writes an isolated aws config (sso-session + profile) from the
 // non-secret SSM meta. Idempotent — rewritten on every (re)launch. Contains no
 // secrets (only the SSO start URL / account / role).
-func writeSSMConfig(path string, s ssmMeta) error {
+func writeSSMConfig(path string, s session.SSMMeta) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
@@ -170,7 +172,7 @@ func writeSSMConfig(path string, s ssmMeta) error {
 // only when the cached token is missing/expired (surfacing the login URL in the
 // terminal), then exec start-session. When StartURL is set an isolated aws config is
 // generated; otherwise the profile is assumed to exist in the member's own ~/.aws.
-func buildSSMProgram(name string, s ssmMeta, force bool) (string, error) {
+func buildSSMProgram(name string, s session.SSMMeta, force bool) (string, error) {
 	var b strings.Builder
 	if s.StartURL != "" && s.Profile != "" {
 		cfg := ssmConfigPath(name)

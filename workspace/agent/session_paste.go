@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
 // Pasted-image support. A claude session driven over tmux can't receive an image through
@@ -153,7 +154,7 @@ func servePastedImageFrom(w http.ResponseWriter, dir, file string) {
 // it and claude's Read tool can open it regardless of cwd.
 func handlePasteImage(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	meta, ok := readSessionMeta(name)
+	meta, ok := session.ReadMeta(name)
 	if !ok {
 		httpx.WriteErr(w, http.StatusNotFound, "no_session", "session not found: "+name)
 		return
@@ -162,18 +163,18 @@ func handlePasteImage(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "not_claude", "画像を渡せるのは claude セッションのみです")
 		return
 	}
-	savePastedImageTo(w, r, pastedDir(sessionUUID(meta.Dir, name)))
+	savePastedImageTo(w, r, pastedDir(session.UUID(meta.Dir, name)))
 }
 
 // handlePastedImage serves a previously-pasted session image by basename (GET).
 func handlePastedImage(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	meta, ok := readSessionMeta(name)
+	meta, ok := session.ReadMeta(name)
 	if !ok {
 		httpx.WriteErr(w, http.StatusNotFound, "no_session", "session not found: "+name)
 		return
 	}
-	servePastedImageFrom(w, pastedDir(sessionUUID(meta.Dir, name)), r.PathValue("file"))
+	servePastedImageFrom(w, pastedDir(session.UUID(meta.Dir, name)), r.PathValue("file"))
 }
 
 // chatPastedDir is where an assistant chat's pasted images live — keyed by conversation
@@ -190,7 +191,7 @@ func handleChatPasteImage(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusNotFound, "no_conversation", "conversation not found: "+id)
 		return
 	}
-	if c.Agent != kindClaude {
+	if c.Agent != session.KindClaude {
 		httpx.WriteErr(w, http.StatusBadRequest, "not_claude", "画像を渡せるのは claude のアシスタントのみです")
 		return
 	}

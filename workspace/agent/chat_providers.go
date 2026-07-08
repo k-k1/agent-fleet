@@ -14,6 +14,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
 // --- providers ---
@@ -25,8 +27,8 @@ type chatProvider interface {
 }
 
 var chatProviders = map[string]chatProvider{
-	kindClaude: claudeChat{},
-	kindCodex:  codexChat{},
+	session.KindClaude: claudeChat{},
+	session.KindCodex:  codexChat{},
 }
 
 // claudeChat runs `claude -p` (headless), pinning a session id on the first turn

@@ -1,6 +1,10 @@
 package main
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+)
 
 // randSlug returns a valid, "s"-prefixed, fixed-length slug and doesn't repeat across
 // a batch of draws (random, so collisions are astronomically unlikely).
@@ -11,8 +15,8 @@ func TestRandSlugFormat(t *testing.T) {
 		if len(s) != slugLen || s[0] != 's' {
 			t.Fatalf("randSlug() = %q; want %d chars starting with 's'", s, slugLen)
 		}
-		if !nameRe.MatchString(s) {
-			t.Fatalf("randSlug() = %q; does not match nameRe", s)
+		if !session.ValidName(s) {
+			t.Fatalf("randSlug() = %q; does not match session.ValidName", s)
 		}
 		if seen[s] {
 			t.Fatalf("randSlug() repeated %q within 200 draws", s)
@@ -28,10 +32,10 @@ func TestAllocSessionNameUnused(t *testing.T) {
 	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir()) // empty → sessionJSONLExists is false
 
 	s := allocSessionName(t.TempDir())
-	if !nameRe.MatchString(s) {
+	if !session.ValidName(s) {
 		t.Fatalf("allocSessionName = %q; invalid slug", s)
 	}
-	if _, ok := readSessionMeta(s); ok {
+	if _, ok := session.ReadMeta(s); ok {
 		t.Fatalf("allocSessionName returned an already-taken slug %q", s)
 	}
 }
@@ -39,7 +43,7 @@ func TestAllocSessionNameUnused(t *testing.T) {
 // slugTaken reflects an existing meta.
 func TestSlugTaken(t *testing.T) {
 	t.Setenv("AF_SESSIONS_DIR", t.TempDir())
-	writeSessionMeta(sessionMeta{Name: "staken1"})
+	session.WriteMeta(session.Meta{Name: "staken1"})
 	if !slugTaken("staken1") {
 		t.Fatalf("slugTaken(existing meta) = false; want true")
 	}
