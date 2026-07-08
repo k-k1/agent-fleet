@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
@@ -533,16 +534,16 @@ func codexTokenUsage(payload json.RawMessage) (in, out, read, window int, ok boo
 // readCodexTranscript reads a codex session's normalized chat turns plus the rollout
 // path (for diagnostics). ok is always true (codex supports generic transcript); an
 // absent rollout (no conversation yet) yields nil turns, which the chat shows as empty.
-func readCodexTranscript(m session.Meta) (transcriptData, bool) {
+func readCodexTranscript(m session.Meta) (agents.TranscriptData, bool) {
 	slot := session.UUID(m.Dir, m.Name)
 	cxid := codexSids.read(slot)
 	path := codexRolloutPath(cxid)
 	if path == "" {
-		return transcriptData{}, true
+		return agents.TranscriptData{}, true
 	}
 	b, err := os.ReadFile(path)
 	if err != nil {
-		return transcriptData{path: path}, true
+		return agents.TranscriptData{Path: path}, true
 	}
 	var lines [][]byte
 	for _, ln := range strings.Split(string(b), "\n") {
@@ -551,5 +552,5 @@ func readCodexTranscript(m session.Meta) (transcriptData, bool) {
 		}
 	}
 	turns, tasks, pending, mode := codexParseRolloutFull(lines)
-	return transcriptData{turns: turns, path: path, tasks: tasks, pending: pending, mode: mode}, true
+	return agents.TranscriptData{Turns: turns, Path: path, Tasks: tasks, Pending: pending, Mode: mode}, true
 }

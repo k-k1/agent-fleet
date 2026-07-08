@@ -1,6 +1,7 @@
 package main
 
 import (
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 )
@@ -11,21 +12,21 @@ import (
 
 type opencodeAgent struct{}
 
-func (opencodeAgent) kind() string { return session.KindOpencode }
+func (opencodeAgent) Kind() string { return session.KindOpencode }
 
-// canTranscript lights up the Console chat mirror for opencode; its turns come from the
-// SQLite store via transcript() (readOpencodeTranscript), windowed by the generic
+// CanTranscript lights up the Console chat mirror for opencode; its turns come from the
+// SQLite store via Transcript() (readOpencodeTranscript), windowed by the generic
 // /messages handler. No fork/label/inline-questions (those are claude-specific).
-func (opencodeAgent) caps() agentCaps { return agentCaps{canTranscript: true} }
+func (opencodeAgent) Caps() agents.Caps { return agents.Caps{CanTranscript: true} }
 
-func (opencodeAgent) transcript(m session.Meta) (transcriptData, bool) {
+func (opencodeAgent) Transcript(m session.Meta) (agents.TranscriptData, bool) {
 	return readOpencodeTranscript(m)
 }
 
-func (opencodeAgent) buildLaunch(m session.Meta, _ launchOpts) (launchPlan, error) {
+func (opencodeAgent) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.LaunchPlan, error) {
 	// opencode resumes (or starts) in its real project dir; refuse if it's gone.
 	if !session.DirExists(m.Dir) {
-		return launchPlan{}, dirGoneErr(m.Dir)
+		return agents.LaunchPlan{}, agents.DirGoneErr(m.Dir)
 	}
 	// AF_SESSION_SID lets the bundled opencode plugin report this session's
 	// working/idle state back keyed by OUR deterministic sid (same store claude
@@ -51,24 +52,24 @@ func (opencodeAgent) buildLaunch(m session.Meta, _ launchOpts) (launchPlan, erro
 	if resume != "" && !opencodeSessionResumable(resume) {
 		resume = ""
 	}
-	return launchPlan{program: buildOpencodeProgram(m.Model, envs, resume), cwd: m.Dir}, nil
+	return agents.LaunchPlan{Program: buildOpencodeProgram(m.Model, envs, resume), Cwd: m.Dir}, nil
 }
 
-func (opencodeAgent) wireLive(m session.Meta, alive bool) liveInfo {
+func (opencodeAgent) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 	// State is derived from opencode's own store (opencodeLiveState) — robust against the
 	// status plugin not firing — falling back to the plugin status file when the db can't
-	// be read. resumable unless the working dir is gone.
-	li := liveInfo{resumable: true}
+	// be read. Resumable unless the working dir is gone.
+	li := agents.LiveInfo{Resumable: true}
 	if alive {
 		if st := opencodeLiveState(m); st != "" {
-			li.state = st
+			li.State = st
 		} else {
-			li.state = status.LiveState(session.UUID(m.Dir, m.Name))
+			li.State = status.LiveState(session.UUID(m.Dir, m.Name))
 		}
 	} else if !session.DirExists(m.Dir) {
-		li.resumable = false
+		li.Resumable = false
 	}
 	return li
 }
 
-func (opencodeAgent) clearResume(sid string) { opencodeSids.remove(sid) }
+func (opencodeAgent) ClearResume(sid string) { opencodeSids.remove(sid) }

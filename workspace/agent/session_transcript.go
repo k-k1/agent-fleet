@@ -47,7 +47,7 @@ func handleSessionMessages(w http.ResponseWriter, r *http.Request) {
 	// heal=true: self-correct a stale waiting/working cache when the pane is back at
 	// the ready prompt (rejected permission, abandoned question, killed+resumed).
 	state := driveState(meta, alive, true)
-	if !agentOf(meta.Kind).caps().canTranscript {
+	if !agentOf(meta.Kind).Caps().CanTranscript {
 		httpx.WriteErr(w, http.StatusBadRequest, "unsupported_kind", "messages are available for transcript-capable sessions only")
 		return
 	}
@@ -188,8 +188,8 @@ func handleSessionMessages(w http.ResponseWriter, r *http.Request) {
 // unchanged. The cursor here is a TURN count (not a jsonl line count), but the client
 // treats it opaquely (reset / firstLine / hasMore drive it), so the two are compatible.
 func handleGenericMessages(w http.ResponseWriter, r *http.Request, meta session.Meta, alive bool, state string) {
-	td, _ := agentOf(meta.Kind).transcript(meta)
-	all, path := td.turns, td.path
+	td, _ := agentOf(meta.Kind).Transcript(meta)
+	all, path := td.Turns, td.Path
 	total := len(all)
 	if autoTitleSuggestEnabled() && meta.Title == "" && meta.SuggestedTitle == "" &&
 		!meta.SuggestedTitleDismissed && titleGenReady(meta.Name) {
@@ -258,14 +258,14 @@ func handleGenericMessages(w http.ResponseWriter, r *http.Request, meta session.
 	}
 	// Current ToDo list (opencode todo table / codex update_plan), so the chat shows the
 	// same progress checklist claude gets. Whole-transcript (not windowed), like claude's.
-	if len(td.tasks) > 0 {
-		resp["tasks"] = td.tasks
+	if len(td.Tasks) > 0 {
+		resp["tasks"] = td.Tasks
 	}
 	// A currently-awaiting agent question (codex request_user_input / opencode question
 	// tool), surfaced interactively like claude's AskUserQuestion — only while the session
 	// is live (a stopped session can't be answered).
-	if alive && len(td.pending) > 0 {
-		resp["pendingQuestions"] = td.pending
+	if alive && len(td.Pending) > 0 {
+		resp["pendingQuestions"] = td.Pending
 	}
 	// Current mode (plan / normal) so the Console shows the plan indicator and toggle.
 	// Read it ONLY from the live terminal — a stopped session isn't "in plan mode", and

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 	_ "modernc.org/sqlite" // pure-Go SQLite driver (registers "sqlite"), as in the CP
@@ -105,23 +106,23 @@ func opencodeLiveState(m session.Meta) string {
 // readOpencodeTranscript reads the slot's current opencode conversation as normalized
 // chat turns plus the db path (diagnostics). ok is always true; no conversation yet
 // yields nil turns (an empty chat).
-func readOpencodeTranscript(m session.Meta) (transcriptData, bool) {
+func readOpencodeTranscript(m session.Meta) (agents.TranscriptData, bool) {
 	db, ok := opencodeOpenRO()
 	if !ok {
-		return transcriptData{}, true
+		return agents.TranscriptData{}, true
 	}
 	defer db.Close()
 	path := opencodeDBPath()
 	ses := opencodeActiveSession(db, m)
 	if ses == "" {
-		return transcriptData{path: path}, true
+		return agents.TranscriptData{Path: path}, true
 	}
-	return transcriptData{
-		turns:   opencodeReadSession(db, ses),
-		path:    path,
-		tasks:   opencodeTasks(db, ses),
-		pending: opencodePending(db, ses),
-		mode:    opencodeMode(db, ses),
+	return agents.TranscriptData{
+		Turns:   opencodeReadSession(db, ses),
+		Path:    path,
+		Tasks:   opencodeTasks(db, ses),
+		Pending: opencodePending(db, ses),
+		Mode:    opencodeMode(db, ses),
 	}, true
 }
 

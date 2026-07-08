@@ -1,6 +1,7 @@
 package main
 
 import (
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -10,21 +11,21 @@ import (
 
 type codexAgent struct{}
 
-func (codexAgent) kind() string { return session.KindCodex }
+func (codexAgent) Kind() string { return session.KindCodex }
 
-// canTranscript lights up the Console chat mirror for codex; its turns come from the
-// rollout JSONL via transcript() (readCodexTranscript), windowed by the generic
+// CanTranscript lights up the Console chat mirror for codex; its turns come from the
+// rollout JSONL via Transcript() (readCodexTranscript), windowed by the generic
 // /messages handler. No fork/label (codex has no --session-id pin nor --name).
-func (codexAgent) caps() agentCaps { return agentCaps{canTranscript: true} }
+func (codexAgent) Caps() agents.Caps { return agents.Caps{CanTranscript: true} }
 
-func (codexAgent) transcript(m session.Meta) (transcriptData, bool) {
+func (codexAgent) Transcript(m session.Meta) (agents.TranscriptData, bool) {
 	return readCodexTranscript(m)
 }
 
-func (codexAgent) buildLaunch(m session.Meta, _ launchOpts) (launchPlan, error) {
+func (codexAgent) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.LaunchPlan, error) {
 	// codex resumes (or starts) in its real project dir; refuse if it's gone.
 	if !session.DirExists(m.Dir) {
-		return launchPlan{}, dirGoneErr(m.Dir)
+		return agents.LaunchPlan{}, agents.DirGoneErr(m.Dir)
 	}
 	// Pre-accept codex's per-dir trust gate so a freshly cloned repo doesn't stall at
 	// the "Do you trust this directory?" prompt (the bypass flags don't cover it).
@@ -34,12 +35,12 @@ func (codexAgent) buildLaunch(m session.Meta, _ launchOpts) (launchPlan, error) 
 	// codex hooks injected on the command line (-c), keyed by our deterministic slot
 	// sid — see buildCodexProgram.
 	cxSid := session.UUID(m.Dir, m.Name)
-	return launchPlan{program: buildCodexProgram(m.Model, cxSid, codexSids.read(cxSid)), cwd: m.Dir}, nil
+	return agents.LaunchPlan{Program: buildCodexProgram(m.Model, cxSid, codexSids.read(cxSid)), Cwd: m.Dir}, nil
 }
 
-func (codexAgent) wireLive(m session.Meta, alive bool) liveInfo {
+func (codexAgent) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 	// State comes from codex's -c-injected status hooks keyed by our sid.
 	return statusOnlyLive(m, alive)
 }
 
-func (codexAgent) clearResume(sid string) { codexSids.remove(sid) }
+func (codexAgent) ClearResume(sid string) { codexSids.remove(sid) }

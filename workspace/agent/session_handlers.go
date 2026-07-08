@@ -223,7 +223,7 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 
 	kind := normalizeKind(req.Kind)
 	label := ""
-	if agentOf(kind).caps().usesLabel {
+	if agentOf(kind).Caps().UsesLabel {
 		label = sessionLabelFor(req.Dir, title)
 	}
 	var ssm *session.SSMMeta
@@ -268,7 +268,7 @@ func handleForkSession(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusNotFound, "no_session", "session not found: "+name)
 		return
 	}
-	if !agentOf(src.Kind).caps().canFork {
+	if !agentOf(src.Kind).Caps().CanFork {
 		httpx.WriteErr(w, http.StatusBadRequest, "not_claude", "分岐できるのは claude セッションのみです")
 		return
 	}
@@ -458,7 +458,7 @@ func handleRecreateSession(w http.ResponseWriter, r *http.Request) {
 		Title: m.Title, Color: m.Color, Repo: m.Repo, Branch: gitCurrentBranch(m.Dir),
 		CreatedAt: time.Now().Format(time.RFC3339), SSM: m.SSM,
 	}
-	if agentOf(newMeta.Kind).caps().usesLabel {
+	if agentOf(newMeta.Kind).Caps().UsesLabel {
 		newMeta.Label = sessionLabelFor(newMeta.Dir, newMeta.Title)
 	}
 	if err := startSessionTmux(newMeta, false); err != nil {

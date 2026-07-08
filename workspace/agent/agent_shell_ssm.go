@@ -1,6 +1,7 @@
 package main
 
 import (
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -8,34 +9,34 @@ import (
 
 // --- shell ---------------------------------------------------------------------
 
-type shellAgent struct{ noGenericTranscript }
+type shellAgent struct{ agents.NoGenericTranscript }
 
-func (shellAgent) kind() string    { return session.KindShell }
-func (shellAgent) caps() agentCaps { return agentCaps{} }
+func (shellAgent) Kind() string      { return session.KindShell }
+func (shellAgent) Caps() agents.Caps { return agents.Caps{} }
 
-func (shellAgent) buildLaunch(m session.Meta, _ launchOpts) (launchPlan, error) {
+func (shellAgent) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.LaunchPlan, error) {
 	// A shell falls back to home if its recorded dir is gone.
 	cwd := m.Dir
 	if !session.DirExists(cwd) {
 		cwd = homeDir()
 	}
-	return launchPlan{program: "bash -l", cwd: cwd}, nil
+	return agents.LaunchPlan{Program: "bash -l", Cwd: cwd}, nil
 }
 
-func (shellAgent) wireLive(m session.Meta, alive bool) liveInfo {
-	return liveInfo{resumable: true}
+func (shellAgent) WireLive(m session.Meta, alive bool) agents.LiveInfo {
+	return agents.LiveInfo{Resumable: true}
 }
 
-func (shellAgent) clearResume(string) {}
+func (shellAgent) ClearResume(string) {}
 
 // --- ssm -----------------------------------------------------------------------
 
-type ssmAgent struct{ noGenericTranscript }
+type ssmAgent struct{ agents.NoGenericTranscript }
 
-func (ssmAgent) kind() string    { return session.KindSSM }
-func (ssmAgent) caps() agentCaps { return agentCaps{} }
+func (ssmAgent) Kind() string      { return session.KindSSM }
+func (ssmAgent) Caps() agents.Caps { return agents.Caps{} }
 
-func (ssmAgent) buildLaunch(m session.Meta, opts launchOpts) (launchPlan, error) {
+func (ssmAgent) BuildLaunch(m session.Meta, opts agents.LaunchOpts) (agents.LaunchPlan, error) {
 	// An SSM session logs into the operator's OWN AWS via `aws sso login` (the
 	// device-code URL is surfaced in this terminal — click it to authenticate in
 	// another tab) then opens Session Manager on the target instance. No AWS
@@ -43,17 +44,17 @@ func (ssmAgent) buildLaunch(m session.Meta, opts launchOpts) (launchPlan, error)
 	// caches the short-lived token in the home volume. Launch dir is home (the work
 	// happens on the remote instance).
 	if m.SSM == nil || m.SSM.Target == "" {
-		return launchPlan{}, errSSMNoTarget
+		return agents.LaunchPlan{}, agents.ErrSSMNoTarget
 	}
-	p, err := buildSSMProgram(m.Name, *m.SSM, opts.ssmForce)
+	p, err := buildSSMProgram(m.Name, *m.SSM, opts.SSMForce)
 	if err != nil {
-		return launchPlan{}, err
+		return agents.LaunchPlan{}, err
 	}
-	return launchPlan{program: p, cwd: homeDir()}, nil
+	return agents.LaunchPlan{Program: p, Cwd: homeDir()}, nil
 }
 
-func (ssmAgent) wireLive(m session.Meta, alive bool) liveInfo {
-	return liveInfo{resumable: true}
+func (ssmAgent) WireLive(m session.Meta, alive bool) agents.LiveInfo {
+	return agents.LiveInfo{Resumable: true}
 }
 
-func (ssmAgent) clearResume(string) {}
+func (ssmAgent) ClearResume(string) {}

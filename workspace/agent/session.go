@@ -24,14 +24,14 @@ func wireSession(m session.Meta, alive bool) session.Session {
 		}
 	}
 	// The live-dependent fields (state / remote URL / context / resumable / bg-busy)
-	// diverge by kind — the agent computes them (see wireLive per implementation).
-	li := agentOf(m.Kind).wireLive(m, alive)
+	// diverge by kind — the agent computes them (see WireLive per implementation).
+	li := agentOf(m.Kind).WireLive(m, alive)
 	return session.Session{
 		Name: m.Name, Tmux: session.TmuxName(m.Name), Dir: m.Dir, Kind: m.Kind,
 		Repo: m.Repo, Title: m.Title, Display: session.Display(m), Color: m.Color, Label: m.Label,
 		Started: started, CreatedAt: m.CreatedAt, Branch: m.Branch,
-		RemoteUrl: li.remoteURL, State: li.state, Alive: alive, Resumable: li.resumable,
-		BackgroundBusy: li.backgroundBusy, Context: li.context,
+		RemoteUrl: li.RemoteURL, State: li.State, Alive: alive, Resumable: li.Resumable,
+		BackgroundBusy: li.BackgroundBusy, Context: li.Context,
 	}
 }
 

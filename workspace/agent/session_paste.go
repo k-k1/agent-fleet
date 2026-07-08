@@ -159,7 +159,7 @@ func handlePasteImage(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusNotFound, "no_session", "session not found: "+name)
 		return
 	}
-	if !agentOf(meta.Kind).caps().canTranscript {
+	if !agentOf(meta.Kind).Caps().CanTranscript {
 		httpx.WriteErr(w, http.StatusBadRequest, "not_claude", "画像を渡せるのは claude セッションのみです")
 		return
 	}
