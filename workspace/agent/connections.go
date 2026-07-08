@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os/exec"
 	"strings"
 )
 
@@ -229,8 +228,8 @@ func removeGitCredential(host string) error {
 }
 
 func gitConfigGlobal(key, val string) error {
-	if out, err := exec.Command("git", "config", "--global", key, val).CombinedOutput(); err != nil {
-		return fmt.Errorf("git config %s: %v: %s", key, err, strings.TrimSpace(string(out)))
+	if out, err := runGitCombined("", "config", "--global", key, val); err != nil {
+		return fmt.Errorf("git config %s: %v: %s", key, err, out)
 	}
 	return nil
 }

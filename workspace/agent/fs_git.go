@@ -3,7 +3,6 @@ package main
 import (
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -84,7 +83,7 @@ func handleFSLineMarks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Untracked file => the whole thing is "added".
-	if st, _ := exec.Command("git", "-C", dir, "status", "--porcelain", "--", inrepo).Output(); strings.HasPrefix(string(st), "??") {
+	if st, _ := runGit(dir, "status", "--porcelain", "--", inrepo); strings.HasPrefix(st, "??") {
 		n := countFileLines(full)
 		added := make([]int, 0, n)
 		for i := 1; i <= n; i++ {
@@ -94,12 +93,12 @@ func handleFSLineMarks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// --unified=0: hunks are pure deletion/addition runs (no context) => simple map.
-	out, err := exec.Command("git", "-C", dir, "diff", "HEAD", "--unified=0", "--", inrepo).Output()
+	out, err := runGit(dir, "diff", "HEAD", "--unified=0", "--", inrepo)
 	if err != nil {
 		writeJSON(w, http.StatusOK, emptyMarks())
 		return
 	}
-	added, modified, deleted := parseDiffMarks(string(out))
+	added, modified, deleted := parseDiffMarks(out)
 	writeJSON(w, http.StatusOK, map[string]any{"added": added, "modified": modified, "deleted": deleted})
 }
 

@@ -14,7 +14,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os/exec"
 	"strings"
 	"sync"
 	"time"
@@ -593,8 +592,8 @@ func handleSessionRenameBranch(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if out, err := exec.Command("git", "-C", dir, "branch", "-m", newName).CombinedOutput(); err != nil {
-		writeErr(w, http.StatusBadGateway, "rename_failed", strings.TrimSpace(string(out)))
+	if out, err := runGitCombined(dir, "branch", "-m", newName); err != nil {
+		writeErr(w, http.StatusBadGateway, "rename_failed", out)
 		return
 	}
 	updateSessionStartBranch(dir, newName)
