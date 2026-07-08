@@ -380,8 +380,10 @@ func idleTimeout(tenantVal string, def time.Duration) (d time.Duration, enabled 
 	return d, d > 0
 }
 
-// countRunningInTenant counts running Workspace containers in a tenant via docker
-// (authoritative — independent of the DB state column).
+// countRunningInTenant counts running Workspace containers in a tenant via the
+// runtime (authoritative — independent of the DB state column). "starting" counts
+// too: an ECS task mid-pull already occupies a workspace slot, and excluding it
+// would let a tenant burst past max_workspaces during cold starts.
 func (m *manager) countRunningInTenant(ctx context.Context, tenantID string) (int, error) {
 	wss, err := m.store.ListWorkspaces(ctx, tenantID)
 	if err != nil {
@@ -389,7 +391,8 @@ func (m *manager) countRunningInTenant(ctx context.Context, tenantID string) (in
 	}
 	n := 0
 	for _, ws := range wss {
-		if m.runtimeFor(ws, "").State(ctx) == "running" {
+		switch m.runtimeFor(ws, "").State(ctx) {
+		case "running", "starting":
 			n++
 		}
 	}
