@@ -1,35 +1,41 @@
 # docs 索引
 
-ドキュメントは性質（ジャンル）で分ける。**現状の正は [HANDOFF](HANDOFF.md)**。設計ドキュメントは
-「不変の契約と設計意図」に純化し、運用の現在地は HANDOFF を指す。
+ドキュメントは性質（ジャンル）で分ける。**仕様の正は [dev/](dev/README.md)（開発者向け）とコード、
+操作の正は [guide/](guide/README.md)（利用者向け）、稼働状態の正は [HANDOFF](HANDOFF.md)。**
 
 | ジャンル | 置き場 | 役割 |
 |----------|--------|------|
-| 現状リファレンス | [HANDOFF.md](HANDOFF.md) | いま動いているもの・実行作法・落とし穴・テーマ別機能リファレンス（**まず読む**）|
-| 時系列ログ | [CHANGELOG-handoff.md](CHANGELOG-handoff.md) | HANDOFF へ至った作業ログ（日付 + 1 行）|
+| 開発者向け設計 | [dev/](dev/README.md) | アーキテクチャ・各コンポーネント・API・データモデル・セキュリティ・連携・デプロイ（**開発者はまず読む**・コードに追従）|
+| 利用者向けガイド | [guide/](guide/README.md) | ペルソナ別分冊（member / admin / operator / lite）。操作の正 |
+| 引き継ぎ | [HANDOFF.md](HANDOFF.md) | このホストの稼働状態・実行作法・落とし穴・現在地 |
+| 時系列ログ | [CHANGELOG-handoff.md](CHANGELOG-handoff.md) | 作業ログ（日付 + 1 行）|
 | 前向きの計画 | [roadmap.md](roadmap.md) | フェーズ一覧・マイルストーン + Phase 3 詳細設計 |
-| 不変の設計・契約 | [reference/](reference/) | コードに追従させる設計（下記）|
 | 意思決定（なぜ）| [decisions/](decisions/) | 採否の記録・捨てた選択肢（追記型・不変）|
-| 使い終わった計画 | [history/](history/) | 完了済みフェーズの実装プラン（記録）|
+| 使い終わった計画 | [history/](history/) | 完了済みフェーズの実装プラン・機能設計（記録）|
 
-## 機能設計（番号付き）— 個別機能の設計・検討
+## 進行中の機能設計（番号付き）
 
-- [19-assistant-chat.md](19-assistant-chat.md) — アシスタント・チャット（ヘッドレス CLI 方式）
-- [20-container-audit-egress.md](20-container-audit-egress.md) — コンテナ内操作の監査ログ & egress 統制（設計検討）
-- [21-memo-queue.md](21-memo-queue.md) — メモキュー（溜めて一括でセッションへ送る）
-- [22-console-rebuild.md](22-console-rebuild.md) — Console リビルド（機能パリティ・React+Vite 続投）
+- [20-container-audit-egress.md](20-container-audit-egress.md) — コンテナ内操作の監査ログ & egress 統制（enforce 未了・進行中）
 
-## reference/ — 不変の設計・契約
+> 完了した機能設計は history/ へ移動: [19 assistant-chat](history/19-assistant-chat.md) /
+> [21 memo-queue](history/21-memo-queue.md) / [22 console-rebuild](history/22-console-rebuild.md)。
+> Go 内部リファクタ（docs/23）は別ブランチで進行中（本ブランチには未マージ）。
 
-- [requirements.md](reference/requirements.md) — 用語、機能要件、非機能要件、確定/未決
-- [architecture.md](reference/architecture.md) — 全体構成、コンポーネント、データモデル（テナント/identity）、主要フロー
-- [api-agent.md](reference/api-agent.md) — API 表面の地図 + Workspace Agent 設計（契約はコードが正）
-- [portability.md](reference/portability.md) — ポート&アダプタ（local/aws 両対応）
-- [security.md](reference/security.md) — 脅威モデル、隔離境界、シークレット管理（封筒暗号）
-- [auth.md](reference/auth.md) — Tailscale Funnel + CP ネイティブ Google OAuth 構成
-- [preview.md](reference/preview.md) — コンテナ内サービスのプレビュー（/preview/{port} 経路）
-- [aws.md](reference/aws.md) — AWS 構成、ネットワーク、コスト試算
-- [internal-git-provider.md](reference/internal-git-provider.md) — テナント内部 git プロバイダ（bare + smart-HTTP）**P1実装済み**
+## reference/ は dev/ へ再編しました（2026-07）
+
+旧 `reference/` の各ファイルは転送スタブになり、内容は下表のとおり dev/ へ移設済み。
+
+| 旧 reference/ | 新しい置き場 |
+|---------------|--------------|
+| requirements.md | [dev/01](dev/01-architecture.md) + [roadmap](roadmap.md) |
+| architecture.md | [dev/01](dev/01-architecture.md)（+ 06/07/08）|
+| api-agent.md | [dev/05](dev/05-api-contracts.md)（+ 04/07）|
+| portability.md | [dev/09](dev/09-deploy.md) |
+| aws.md | [dev/09 §9.5](dev/09-deploy.md) |
+| security.md | [dev/07](dev/07-security.md) |
+| auth.md | [dev/07 §7.3](dev/07-security.md) + [dev/09 §9.3](dev/09-deploy.md) |
+| preview.md | [dev/05 §5.3](dev/05-api-contracts.md)（旧記述は廃止）|
+| internal-git-provider.md | [dev/91](dev/91-internal-git.md) |
 
 ## decisions/ — 意思決定の記録（ADR）
 
@@ -43,7 +49,7 @@
 - [0008-antigravity-cli-agent-kind.md](decisions/0008-antigravity-cli-agent-kind.md) — Antigravity CLI（`agy`）を第 4 のエージェント種別に
 - [0009-transcript-paging.md](decisions/0009-transcript-paging.md) — transcript は末尾ウィンドウ読み込み + 逆方向ページング
 - [0010-internal-git-provider.md](decisions/0010-internal-git-provider.md) — テナント内部 git プロバイダ（bare+http-backend を CP 自ホスト）**採用**
-- [0011-console-rebuild.md](decisions/0011-console-rebuild.md) — Console リビルド：並行エントリ・zustand・旧側凍結（設計 [22](22-console-rebuild.md)）
+- [0011-console-rebuild.md](decisions/0011-console-rebuild.md) — Console リビルド：並行エントリ・zustand・旧側凍結（設計 [22](history/22-console-rebuild.md)）
 
 ## history/ — 使い終わった実装プラン（P3-6 は ◐ 段1 完了・admin 残）
 
