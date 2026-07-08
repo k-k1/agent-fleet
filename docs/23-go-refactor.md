@@ -5,11 +5,27 @@
 層化し、重複を畳む。Console リビルド（docs/22, ADR 0011）が新アーキテクチャへのスワップを終えた今、
 バックエンドだけが「増築を全部吸い込むフラット構造」のまま残っている — その解消が目的。
 
-> ステータス: **P0 完了**（2026-07-08、branch `temp/sfiv6ai`）— CI（.github/workflows/ci.yml）、
-> `buildMux()` 抽出 + httptest スモーク（CP 6 本 / Agent 4 本、routes.go / routes_test.go）、
-> エラーコード const 化（errcodes.go ×2 + client.ts 相互ポインタ）、agent の gofmt 整形済み。
-> 次は P1（Agent の畳み込み → `internal/` 分割）。決定の要約は
+> ステータス: **P0〜P2 完了**（2026-07-09、branch `temp/sfiv6ai`）。決定の要約は
 > [decisions/0012-go-internal-refactor.md](decisions/0012-go-internal-refactor.md)。
+>
+> - **P0**: CI（.github/workflows/ci.yml）/ `buildMux()` 抽出 + httptest スモーク（CP・Agent）/
+>   エラーコード const 化（errcodes.go ×2 ↔ client.ts）/ agent gofmt 整形。
+> - **P1**: gitx.Run 系ラッパー（生 git exec 54 箇所置換）/ fstore（per-sid ストア 7 家系統一）/
+>   decodeJSON（25 箇所）/ session.go を 5 ファイルに分割 / **internal/{gitx,fstore,httpx,transcript}
+>   の 4 パッケージ切り出し**（writeJSON 110・writeErr 267 箇所書き換え、transcript は共有モデル型
+>   Turn/Part/Edit/Question/Task）/ agent.go を CLI 種別ファイルに分割。
+> - **P2**: runtime.go 分離（ports / runtime_docker / workspace_handlers / httpapi）/ buildMux を
+>   機能別 register 関数 17 個に分散 + **authGate 除外レジストリ**（isAuthExempt のハードコード解消、
+>   同一判定テスト付き）/ manager.go を 6 ファイルに分割 + dockerInspectOut シーム /
+>   **manager.mu の DB I/O 跨ぎ直列化を解消**（per-membership build ロック、-race テスト付き —
+>   本計画で挙動に触れた唯一のコミット 6eb0303）/ Store を機能別サブインターフェース 17 個に再構成
+>   （gitGC を narrow view の実例に）/ グローバル可変 map 3 つを struct 化。
+>
+> **残タスク（独立に着手可能）**: ① Agent の CLI 縦割り**パッケージ化**（internal/agents/{claude,
+> codex,opencode} — セッションモデル（sessionMeta/Session）の internal/session 抽出が前提の
+> 非機械的カスケード。ファイルレベルの縦割りまでは実施済み）② chat.go（976 行）の責務分割
+> ③ CP の config（133 ハンドラ）の機能別 struct 化 + resolvedFor プリアンブルのラッパー化
+> ④ P3（契約の型化、任意）。
 
 ## 背景と診断
 
