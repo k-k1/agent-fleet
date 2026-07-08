@@ -151,6 +151,24 @@ func TestECSStartCreatesEverything(t *testing.T) {
 	if aws.ToString(c0.Image) != "ecr/af-workspace:dev" || len(c0.Secrets) != 2 {
 		t.Errorf("container image/secrets = %q/%d", aws.ToString(c0.Image), len(c0.Secrets))
 	}
+	// Graceful two-stage stop wiring (§20b.7.8 停止改訂): SIGTERM → stopTimeout →
+	// SIGKILL, with docker --init parity so the signal actually reaches the Agent,
+	// and the Agent's own budget under the runtime grace.
+	if aws.ToInt32(c0.StopTimeout) != 30 {
+		t.Errorf("StopTimeout = %d, want 30 (AF_STOP_GRACE_SEC default)", aws.ToInt32(c0.StopTimeout))
+	}
+	if c0.LinuxParameters == nil || !aws.ToBool(c0.LinuxParameters.InitProcessEnabled) {
+		t.Errorf("InitProcessEnabled not set — SIGTERM would be suppressed for a PID-1 agent")
+	}
+	agentGrace := ""
+	for _, kv := range c0.Environment {
+		if aws.ToString(kv.Name) == "AGENT_STOP_GRACE_SEC" {
+			agentGrace = aws.ToString(kv.Value)
+		}
+	}
+	if agentGrace != "25" {
+		t.Errorf("AGENT_STOP_GRACE_SEC = %q, want 25 (grace - safety margin)", agentGrace)
+	}
 	// Service created (first use), desired 1, with Service Connect advertising the name.
 	if len(fe.createCalls) != 1 || len(fe.updateCalls) != 0 {
 		t.Fatalf("create/update = %d/%d, want 1/0", len(fe.createCalls), len(fe.updateCalls))
