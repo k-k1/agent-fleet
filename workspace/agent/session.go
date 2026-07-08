@@ -661,10 +661,9 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 			// remote) into the worktree — the chosen resolution of a name collision.
 			dir, err = ensureWorktree(parent, req.Branch, "", "")
 		} else {
-			// Branch naming is deferred: the client derives a provisional name from the
-			// first prompt, but when that yields nothing (e.g. a Japanese-only prompt, or
-			// no prompt) we start on a throwaway branch temp/<slug> in a wip-<slug> folder
-			// (same slug). The user (or the LLM suggestion) renames the branch later — the
+			// Branch naming is deferred: unless the client sends an explicit name we
+			// start on a throwaway branch temp/<slug> in a wip-<slug> folder (same
+			// slug). The user (or the LLM suggestion) renames the branch later — the
 			// folder stays put, so the session id holds.
 			nb := strings.TrimSpace(req.NewBranch)
 			if nb == "" {

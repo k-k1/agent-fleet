@@ -120,7 +120,7 @@ export function RepoRowConnected({ r, ctx, onToggle }: RepoRowConnectedProps) {
       }}
       // 作業を始める: worktree (default) or in-place, with an optional first prompt
       // auto-sent once the session is alive.
-      onStartWork={async ({ kind, model, prompt, worktree, base, newBranch, folder, useExisting }) => {
+      onStartWork={async ({ kind, model, prompt, worktree, base, newBranch, useExisting }) => {
         const hasModel = agentOf(kind).caps.model;
         const body: Record<string, unknown> = { dir: r.path, kind };
         if (hasModel && model) body.model = model;
@@ -128,7 +128,6 @@ export function RepoRowConnected({ r, ctx, onToggle }: RepoRowConnectedProps) {
           body.worktree = true;
           body.branch = base;
           body.new_branch = newBranch;
-          if (folder) body.folder = folder;
           if (useExisting) body.use_existing = true;
         }
         const res = await apiJSON("api/sessions", "POST", body);
