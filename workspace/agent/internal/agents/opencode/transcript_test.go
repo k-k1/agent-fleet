@@ -1,4 +1,4 @@
-package main
+package opencode
 
 import (
 	"database/sql"
@@ -70,7 +70,7 @@ func TestOpencodeReadSession(t *testing.T) {
 	insMsg(t, db, "z1", "ses_other", 1500, `{"role":"user"}`)
 	insPart(t, db, "pz", "z1", "ses_other", 1, `{"type":"text","text":"other session"}`)
 
-	turns := opencodeReadSession(db, ses)
+	turns := readSession(db, ses)
 	if len(turns) != 2 {
 		t.Fatalf("want 2 turns (m3 dropped, other session excluded), got %d: %+v", len(turns), turns)
 	}
@@ -124,7 +124,7 @@ func TestOpencodeQuestions(t *testing.T) {
 	insPart(t, db, "pqa", "mq", ses, 1, `{"type":"tool","tool":"question","state":{"status":"completed","input":{"questions":[{"header":"H","question":"pick?","options":[{"label":"A"},{"label":"B"}]}]},"output":"User has answered your questions: \"pick?\"=\"B\". You may continue."}}`)
 	insPart(t, db, "pqb", "mq", ses, 2, `{"type":"tool","tool":"question","state":{"status":"running","input":{"questions":[{"header":"H2","question":"next?","options":[{"label":"X"},{"label":"Y"}]}]}}}`)
 
-	turns := opencodeReadSession(db, ses)
+	turns := readSession(db, ses)
 	if len(turns) != 1 {
 		t.Fatalf("want 1 turn, got %d", len(turns))
 	}
@@ -137,10 +137,10 @@ func TestOpencodeQuestions(t *testing.T) {
 		t.Fatalf("question part = %+v, want pick?/answer B", q)
 	}
 
-	// opencodePending returns the running question.
-	pending := opencodePending(db, ses)
-	if len(pending) != 1 || pending[0].Question != "next?" || len(pending[0].Options) != 2 {
-		t.Fatalf("pending = %+v, want the running 'next?' question", pending)
+	// pending returns the running question.
+	pd := pending(db, ses)
+	if len(pd) != 1 || pd[0].Question != "next?" || len(pd[0].Options) != 2 {
+		t.Fatalf("pending = %+v, want the running 'next?' question", pd)
 	}
 }
 
@@ -148,11 +148,11 @@ func TestOpencodeMode(t *testing.T) {
 	db := newOpencodeTestDB(t)
 	// Newest message's agent decides the mode: "plan" → plan, else normal.
 	insMsg(t, db, "b1", "ses_b", 1, `{"role":"assistant","agent":"build"}`)
-	if got := opencodeMode(db, "ses_b"); got != "normal" {
+	if got := mode(db, "ses_b"); got != "normal" {
 		t.Fatalf("build agent -> %q, want normal", got)
 	}
 	insMsg(t, db, "p1", "ses_p", 1, `{"role":"assistant","agent":"plan"}`)
-	if got := opencodeMode(db, "ses_p"); got != "plan" {
+	if got := mode(db, "ses_p"); got != "plan" {
 		t.Fatalf("plan agent -> %q, want plan", got)
 	}
 }
@@ -171,15 +171,15 @@ func TestOpencodeTasks(t *testing.T) {
 	if _, err := db.Exec(`INSERT INTO todo(session_id,content,status,priority,position) VALUES(?,?,?,?,?)`, "ses_other", "nope", "pending", "low", 1); err != nil {
 		t.Fatal(err)
 	}
-	tasks := opencodeTasks(db, ses)
-	if len(tasks) != 2 || tasks[0].Subject != "first" || tasks[0].Status != "completed" ||
-		tasks[1].Subject != "second" || tasks[1].Status != "pending" {
-		t.Fatalf("tasks = %+v, want [first/completed, second/pending] in position order", tasks)
+	ts := tasks(db, ses)
+	if len(ts) != 2 || ts[0].Subject != "first" || ts[0].Status != "completed" ||
+		ts[1].Subject != "second" || ts[1].Status != "pending" {
+		t.Fatalf("tasks = %+v, want [first/completed, second/pending] in position order", ts)
 	}
 }
 
 func TestOpencodeSessionResumable(t *testing.T) {
-	// opencodeSessionResumable opens the db at $HOME/.local/share/opencode/opencode.db;
+	// sessionResumable opens the db at $HOME/.local/share/opencode/opencode.db;
 	// build one there so the real path resolves.
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -220,15 +220,15 @@ func TestOpencodeSessionResumable(t *testing.T) {
 		{"ses_pend", false}, // user message unanswered — would generate
 	}
 	for _, c := range cases {
-		if got := opencodeSessionResumable(c.ses); got != c.want {
-			t.Errorf("opencodeSessionResumable(%q) = %v, want %v", c.ses, got, c.want)
+		if got := sessionResumable(c.ses); got != c.want {
+			t.Errorf("sessionResumable(%q) = %v, want %v", c.ses, got, c.want)
 		}
 	}
 }
 
 func TestOpencodeReadSessionEmpty(t *testing.T) {
 	db := newOpencodeTestDB(t)
-	if turns := opencodeReadSession(db, "ses_none"); len(turns) != 0 {
+	if turns := readSession(db, "ses_none"); len(turns) != 0 {
 		t.Fatalf("empty session -> %d turns, want 0", len(turns))
 	}
 }

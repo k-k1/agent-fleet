@@ -728,17 +728,8 @@ func toolInfo(name string, input json.RawMessage) string {
 	return s
 }
 
-// editCap bounds each before/after block so a huge Write can't bloat the messages
-// payload. The full turn is sent once (the poll uses a cursor), so this only guards
-// pathological cases; the Console shows the truncation marker.
-const editCap = 20000
-
-func capEdit(s string) string {
-	if r := []rune(s); len(r) > editCap {
-		return string(r[:editCap]) + "\n…（省略）"
-	}
-	return s
-}
+// capEdit（editCap 上限つき切り詰め）は internal/transcript の transcript.CapEdit
+// へ移設（docs/23 残① Wave D — opencode 縦割りと共有のため）。
 
 // toolEdits extracts the before/after content of an edit-family tool so the Console can
 // render a diff pane. Returns the target file and one entry per edit; non-edit tools
@@ -757,7 +748,7 @@ func toolEdits(name string, input json.RawMessage) (string, []transcript.Edit) {
 		if json.Unmarshal(input, &in) != nil || in.FilePath == "" {
 			return "", nil
 		}
-		return in.FilePath, []transcript.Edit{{Old: capEdit(in.OldString), New: capEdit(in.NewString)}}
+		return in.FilePath, []transcript.Edit{{Old: transcript.CapEdit(in.OldString), New: transcript.CapEdit(in.NewString)}}
 	case "Write":
 		var in struct {
 			FilePath string `json:"file_path"`
@@ -766,7 +757,7 @@ func toolEdits(name string, input json.RawMessage) (string, []transcript.Edit) {
 		if json.Unmarshal(input, &in) != nil || in.FilePath == "" {
 			return "", nil
 		}
-		return in.FilePath, []transcript.Edit{{Old: "", New: capEdit(in.Content)}}
+		return in.FilePath, []transcript.Edit{{Old: "", New: transcript.CapEdit(in.Content)}}
 	case "MultiEdit":
 		var in struct {
 			FilePath string `json:"file_path"`
@@ -780,7 +771,7 @@ func toolEdits(name string, input json.RawMessage) (string, []transcript.Edit) {
 		}
 		var es []transcript.Edit
 		for _, e := range in.Edits {
-			es = append(es, transcript.Edit{Old: capEdit(e.OldString), New: capEdit(e.NewString)})
+			es = append(es, transcript.Edit{Old: transcript.CapEdit(e.OldString), New: transcript.CapEdit(e.NewString)})
 		}
 		return in.FilePath, es
 	case "NotebookEdit":
@@ -791,7 +782,7 @@ func toolEdits(name string, input json.RawMessage) (string, []transcript.Edit) {
 		if json.Unmarshal(input, &in) != nil || in.NotebookPath == "" {
 			return "", nil
 		}
-		return in.NotebookPath, []transcript.Edit{{Old: "", New: capEdit(in.NewSource)}}
+		return in.NotebookPath, []transcript.Edit{{Old: "", New: transcript.CapEdit(in.NewSource)}}
 	}
 	return "", nil
 }

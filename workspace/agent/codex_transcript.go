@@ -408,7 +408,7 @@ func codexParseCallOutput(payload json.RawMessage) (callID, output string) {
 			}
 		}
 	}
-	return p.CallID, capOutput(out)
+	return p.CallID, transcript.CapOutput(out)
 }
 
 // codexParsePlan turns an update_plan function_call into the current ToDo list. codex
@@ -443,14 +443,8 @@ func codexParsePlan(payload json.RawMessage) []transcript.Task {
 	return out
 }
 
-// capOutput bounds a tool output so a huge result can't bloat the chat payload.
-func capOutput(s string) string {
-	s = strings.TrimSpace(s)
-	if r := []rune(s); len(r) > 4000 {
-		return string(r[:4000]) + "\n…（省略）"
-	}
-	return s
-}
+// capOutput / codexClip は internal/transcript の transcript.CapOutput /
+// transcript.Clip へ移設（docs/23 残① Wave D — opencode 縦割りと共有のため）。
 
 // codexIsWrapper reports whether a codex user message is entirely an injected-context
 // wrapper (environment/instructions/mode) rather than a human prompt.
@@ -478,7 +472,7 @@ func codexToolInfo(payload json.RawMessage) string {
 	if json.Unmarshal([]byte(p.Arguments), &args) == nil {
 		for _, k := range []string{"command", "cmd", "file_path", "path", "query"} {
 			if v, ok := args[k].(string); ok && v != "" {
-				return codexClip(v)
+				return transcript.Clip(v)
 			}
 		}
 		// command is sometimes an array of argv tokens (codex exec_command).
@@ -489,21 +483,10 @@ func codexToolInfo(payload json.RawMessage) string {
 					parts = append(parts, s)
 				}
 			}
-			return codexClip(strings.Join(parts, " "))
+			return transcript.Clip(strings.Join(parts, " "))
 		}
 	}
-	return codexClip(p.Arguments)
-}
-
-func codexClip(s string) string {
-	s = strings.TrimSpace(s)
-	if i := strings.IndexByte(s, '\n'); i >= 0 {
-		s = s[:i]
-	}
-	if r := []rune(s); len(r) > 80 {
-		s = string(r[:80]) + "…"
-	}
-	return s
+	return transcript.Clip(p.Arguments)
 }
 
 // codexTokenUsage extracts the fresh-input / output / cached-read token counts from a
@@ -536,7 +519,7 @@ func codexTokenUsage(payload json.RawMessage) (in, out, read, window int, ok boo
 // absent rollout (no conversation yet) yields nil turns, which the chat shows as empty.
 func readCodexTranscript(m session.Meta) (agents.TranscriptData, bool) {
 	slot := session.UUID(m.Dir, m.Name)
-	cxid := codexSids.read(slot)
+	cxid := codexSids.Read(slot)
 	path := codexRolloutPath(cxid)
 	if path == "" {
 		return agents.TranscriptData{}, true

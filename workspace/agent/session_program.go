@@ -1,13 +1,16 @@
 package main
 
-// CLI（claude / opencode / codex）の起動コマンド組み立てと、resume 判定に使う
-// jsonl の所在確認。session.go からの機械的分割（docs/23 P1-W4）。
+// CLI（claude / codex）の起動コマンド組み立てと、resume 判定に使う jsonl の
+// 所在確認。session.go からの機械的分割（docs/23 P1-W4）。opencode の組み立ては
+// internal/agents/opencode へ移設（docs/23 残① Wave D）。
 
 import (
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
 // buildSessionProgram returns the shell command tmux should run for a session.
@@ -21,10 +24,10 @@ func buildSessionProgram(sid, model, label, forkFrom string) string {
 	}
 	flags := envOr("AGENT_CLAUDE_FLAGS", "--dangerously-skip-permissions")
 	if model != "" {
-		flags += " --model " + shellQuote(model)
+		flags += " --model " + session.ShellQuote(model)
 	}
 	if label != "" {
-		flags += " --name " + shellQuote(label)
+		flags += " --name " + session.ShellQuote(label)
 	}
 	if sessionJSONLExists(sid) {
 		// Already materialized (normal session, or a fork after its first launch):
@@ -40,49 +43,6 @@ func buildSessionProgram(sid, model, label, forkFrom string) string {
 		return fmt.Sprintf("claude --resume %s --fork-session --session-id %s %s", forkFrom, sid, flags)
 	}
 	return fmt.Sprintf("claude --session-id %s %s", sid, flags)
-}
-
-// buildOpencodeProgram returns the tmux program for an opencode session. opencode
-// keeps its sessions in a local SQLite db (~/.local/share/opencode) and --continue
-// resumes the most recent session for the current project, while safely starting a
-// new one when none exists — so we always pass it (first launch = fresh, relaunch =
-// continue). Auth is the user's own `opencode auth login` (persisted in home), so
-// there's no token to inject. Caveat: multiple opencode slots in the SAME dir share
-// --continue's "most recent" target.
-func buildOpencodeProgram(model string, envs []string, ocid string) string {
-	// Prefix env assignments onto the command so the opencode process actually
-	// receives them (NAME='value' … opencode). Values are shell-quoted; names are
-	// trusted (our sid + validated ALL_CAPS provider env names).
-	prefix := ""
-	for _, kv := range envs {
-		i := strings.IndexByte(kv, '=')
-		if i <= 0 {
-			continue
-		}
-		prefix += kv[:i] + "=" + shellQuote(kv[i+1:]) + " "
-	}
-	parts := []string{"opencode"}
-	// Run unattended like claude (--dangerously-skip-permissions) and codex
-	// (--dangerously-bypass-…): the container IS the sandbox, so auto-approve every
-	// permission prompt (external-dir access, edits, bash) instead of stalling the TUI on
-	// an approval the Console user can't answer from chat. --auto approves anything not
-	// explicitly denied. Overridable via AGENT_OPENCODE_FLAGS (set to alternate flags).
-	parts = append(parts, envOr("AGENT_OPENCODE_FLAGS", "--auto"))
-	// Per-slot session: when we've captured this slot's opencode session id (the
-	// plugin records it on session.created, keyed by AF_SESSION_SID), resume exactly
-	// THAT session. Otherwise launch plain opencode — the TUI creates a fresh session
-	// on first message, distinct from other slots. We deliberately do NOT use
-	// --continue: it resumes the most-recent session in the project, so two slots in
-	// the same dir would collide on one shared conversation.
-	if ocid != "" {
-		parts = append(parts, "--session", shellQuote(ocid))
-	}
-	if model != "" {
-		// opencode expects provider/model (e.g. anthropic/claude-...); passed through
-		// verbatim. The Console only sends this for opencode when explicitly chosen.
-		parts = append(parts, "--model", shellQuote(model))
-	}
-	return prefix + strings.Join(parts, " ")
 }
 
 // buildCodexProgram returns the tmux program for a codex session. codex owns its
@@ -113,17 +73,17 @@ func buildCodexProgram(model, slotSid, codexResumeID string) string {
 		// each hold a NESTED "hooks" list of {type,command}. A flat [{type,command}]
 		// parses without error but never fires, so the nesting is required.
 		val := fmt.Sprintf(`hooks.%s=[{hooks=[{type="command",command=%s}]}]`, event, tomlString(cmd))
-		return "-c " + shellQuote(val)
+		return "-c " + session.ShellQuote(val)
 	}
 	parts := []string{"codex"}
 	if codexResumeID != "" {
-		parts = append(parts, "resume", shellQuote(codexResumeID))
+		parts = append(parts, "resume", session.ShellQuote(codexResumeID))
 	}
 	parts = append(parts, flags)
 	parts = append(parts, hookFlag("UserPromptSubmit", "working"))
 	parts = append(parts, hookFlag("Stop", "idle"))
 	if model != "" {
-		parts = append(parts, "-m", shellQuote(model))
+		parts = append(parts, "-m", session.ShellQuote(model))
 	}
 	return strings.Join(parts, " ")
 }

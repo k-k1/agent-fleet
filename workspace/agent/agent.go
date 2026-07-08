@@ -2,23 +2,23 @@ package main
 
 import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/fstore"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 )
 
 // The Agent interface and its input/output types live in internal/agents
-// (docs/23 残① Wave C); this file keeps the registry, the shared live-state
-// helpers, and the sid stores until the per-CLI impls move out in later waves.
+// (docs/23 残① Wave C); opencode の実装は internal/agents/opencode（Wave D）。
+// This file keeps the registry, the shared live-state helpers, and the codex sid
+// store until the remaining per-CLI impls move out in later waves.
 
 // agentRegistry is the kind → agents.Agent registry. agentOf falls back to claude
 // for an unknown or empty kind, matching the historical default (a session with no
 // recognized kind launches claude).
 var agentRegistry = map[string]agents.Agent{
 	session.KindClaude:   claudeAgent{},
-	session.KindOpencode: opencodeAgent{},
+	session.KindOpencode: opencode.New(),
 	session.KindCodex:    codexAgent{},
 	session.KindShell:    shellAgent{},
 	session.KindSSM:      ssmAgent{},
@@ -54,7 +54,7 @@ func driveState(m session.Meta, alive, heal bool) string {
 	// opencode: derive state from its own store (the status plugin is unreliable) so the
 	// chat chip doesn't stick on 進行中 after a turn the plugin never reported idle for.
 	if m.Kind == session.KindOpencode {
-		if st := opencodeLiveState(m); st != "" {
+		if st := opencode.LiveState(m); st != "" {
 			return st
 		}
 	}
@@ -67,7 +67,8 @@ func driveState(m session.Meta, alive, heal bool) string {
 	return state
 }
 
-// statusOnlyLive is the WireLive body shared by opencode/codex: state from the
+// statusOnlyLive is the codex WireLive body (opencode's equivalent moved into its
+// vertical package with Wave D): state from the
 // status store (no idle-heal, no background-busy), and resumable unless the working
 // dir is gone.
 func statusOnlyLive(m session.Meta, alive bool) agents.LiveInfo {
@@ -82,24 +83,7 @@ func statusOnlyLive(m session.Meta, alive bool) agents.LiveInfo {
 
 // --- sid store -----------------------------------------------------------------
 
-// sidStore maps our deterministic slot sid to an agent's own session id, so a slot
-// resumes its OWN conversation (internal/fstore の Store に薄い読み口を被せたもの:
-// read は ok を潰して "" を返す — 呼び出し側は空文字を「無し」として扱う)。
-type sidStore struct{ files fstore.Store[string] }
-
-func (s sidStore) read(sid string) string {
-	v, _ := s.files.Read(sid)
-	return v
-}
-
-func (s sidStore) write(sid, val string) { _ = s.files.Write(sid, val) }
-func (s sidStore) remove(sid string)     { s.files.Remove(sid) }
-
-var (
-	// opencode: written externally by the bundled plugin (on session.created, keyed
-	// by AF_SESSION_SID); the agent only reads/removes it.
-	opencodeSids = sidStore{fstore.TrimmedStrings(paths.AgentConfigDir, "opencode-sid")}
-	// codex: written by the session-status hook from codex's own session_id (codex
-	// has no --session-id flag to pin), read for `codex resume <id>`.
-	codexSids = sidStore{fstore.TrimmedStrings(paths.AgentConfigDir, "codex-sid")}
-)
+// codex sid store (agents.SidStore): written by the session-status hook from codex's
+// own session_id (codex has no --session-id flag to pin), read for `codex resume <id>`.
+// Wave E moves this into the codex vertical package.
+var codexSids = agents.NewSidStore("codex-sid")

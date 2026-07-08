@@ -1,6 +1,10 @@
 package main
 
-import "net/http"
+import (
+	"net/http"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
+)
 
 // buildMux は Agent の全ルートを登録した mux を返す（docs/23 P0-2: main() からの
 // 機械的抽出）。テストが実ルート表を httptest で叩けるようにするための分離で、登録
@@ -136,8 +140,8 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("POST /connections/claude/start", handleClaudeStart)
 	mux.HandleFunc("POST /connections/claude/complete", handleClaudeComplete)
 	mux.HandleFunc("DELETE /connections/claude", handleClaudeDisconnect)
-	mux.HandleFunc("PUT /connections/opencode", handlePutOpencodeConn)
-	mux.HandleFunc("DELETE /connections/opencode/{env}", handleDeleteOpencodeConn)
+	mux.HandleFunc("PUT /connections/opencode", opencode.HandlePutConn)
+	mux.HandleFunc("DELETE /connections/opencode/{env}", opencode.HandleDeleteConn)
 	mux.HandleFunc("POST /connections/codex/api-key", handleCodexApiKey)
 	mux.HandleFunc("POST /connections/codex/device/start", handleCodexDeviceStart)
 	mux.HandleFunc("POST /connections/codex/device/poll", handleCodexDevicePoll)

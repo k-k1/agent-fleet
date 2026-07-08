@@ -179,10 +179,10 @@ func buildSSMProgram(name string, s session.SSMMeta, force bool) (string, error)
 		if err := writeSSMConfig(cfg, s); err != nil {
 			return "", err
 		}
-		fmt.Fprintf(&b, "export AWS_CONFIG_FILE=%s; ", shellQuote(cfg))
+		fmt.Fprintf(&b, "export AWS_CONFIG_FILE=%s; ", session.ShellQuote(cfg))
 	}
 	if s.Profile != "" {
-		fmt.Fprintf(&b, "export AWS_PROFILE=%s; ", shellQuote(s.Profile))
+		fmt.Fprintf(&b, "export AWS_PROFILE=%s; ", session.ShellQuote(s.Profile))
 	}
 	// aws sso login refreshes only when the cached token is missing/expired.
 	// --use-device-code forces the device-authorization grant (user_code + verify URL,
@@ -202,12 +202,12 @@ func buildSSMProgram(name string, s session.SSMMeta, force bool) (string, error)
 			"aws sso login --use-device-code --no-browser; }; ")
 	}
 	b.WriteString("exec aws ssm start-session")
-	fmt.Fprintf(&b, " --target %s", shellQuote(s.Target))
+	fmt.Fprintf(&b, " --target %s", session.ShellQuote(s.Target))
 	if s.Document != "" {
-		fmt.Fprintf(&b, " --document-name %s", shellQuote(s.Document))
+		fmt.Fprintf(&b, " --document-name %s", session.ShellQuote(s.Document))
 	}
 	if s.Region != "" {
-		fmt.Fprintf(&b, " --region %s", shellQuote(s.Region))
+		fmt.Fprintf(&b, " --region %s", session.ShellQuote(s.Region))
 	}
 	return b.String(), nil
 }
