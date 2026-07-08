@@ -34,7 +34,9 @@ import { AdminDialog } from "../features/settings/AdminDialog.tsx";
 // actually flips running↔stopped — including external changes the 4s sync catches
 // (admin stop, OOM, restart). Keyed on the transition, and on the RUNNING edge (not
 // the "starting…" click), so trees load once the agent is really up. Transient "…"
-// states are ignored until they settle. Returns the unsubscribe (StrictMode-safe).
+// states — and the server-reported "starting" (ECS cold pull) — are unsettled and
+// ignored, so the refresh fires exactly once on the starting→running flip.
+// Returns the unsubscribe (StrictMode-safe).
 function wireWorkspaceRefresh(): () => void {
   const settle = (s: string) => (s === "running" ? "running" : s === "none" || s === "stopped" ? "stopped" : "");
   let prevRaw = useWorkspaceStore.getState().state;

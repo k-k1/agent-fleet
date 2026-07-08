@@ -205,6 +205,27 @@ func TestECSStartReusesAccessPointsAndUpdatesService(t *testing.T) {
 	}
 }
 
+func TestECSStartWhileStartingIsNoop(t *testing.T) {
+	// A second Start while the service is converging (desired 1, task still
+	// pulling) must not double-drive it: re-registering the task def and forcing a
+	// new deployment would restart the cold pull from zero.
+	fe := &fakeECS{services: map[string]ecstypes.Service{
+		"af-ws-acme-alice": {Status: aws.String("ACTIVE"), DesiredCount: 1, RunningCount: 0},
+	}}
+	ff, fs := &fakeEFS{}, &fakeSSM{}
+	rt := newTestECS(fe, ff, fs)
+	if err := rt.Start(context.Background()); err != nil {
+		t.Fatalf("Start while starting: %v", err)
+	}
+	if len(fe.createCalls) != 0 || len(fe.updateCalls) != 0 || len(fe.regCalls) != 0 {
+		t.Errorf("Start while starting must be a no-op, got create/update/register = %d/%d/%d",
+			len(fe.createCalls), len(fe.updateCalls), len(fe.regCalls))
+	}
+	if len(ff.createCalls) != 0 || len(fs.puts) != 0 {
+		t.Errorf("no EFS/SSM side effects expected, got %d/%d", len(ff.createCalls), len(fs.puts))
+	}
+}
+
 func TestECSStopScalesToZero(t *testing.T) {
 	fe := &fakeECS{services: map[string]ecstypes.Service{
 		"af-ws-acme-alice": {Status: aws.String("ACTIVE"), DesiredCount: 1, RunningCount: 1},
@@ -238,7 +259,10 @@ func TestECSState(t *testing.T) {
 		{"missing", nil, "none"},
 		{"inactive", &ecstypes.Service{Status: aws.String("INACTIVE"), DesiredCount: 1, RunningCount: 1}, "none"},
 		{"stopped", &ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}, "stopped"},
-		{"starting", &ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 1, RunningCount: 0}, "stopped"},
+		// desired 1 with no RUNNING task = a converging launch (e.g. the multi-minute
+		// Fargate cold image pull). Reported as its own state — not "stopped" — so the
+		// Console shows 起動中 and the reaper/autostart keep their hands off.
+		{"starting", &ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 1, RunningCount: 0}, "starting"},
 		{"running", &ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 1, RunningCount: 1}, "running"},
 	}
 	for _, tc := range cases {

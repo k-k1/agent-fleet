@@ -165,9 +165,11 @@ func (e *ecsRuntime) Endpoint() string {
 	return fmt.Sprintf("http://%s:%d", e.name, ecsAgentPort)
 }
 
-// State maps the ECS service to running | stopped | none. A missing/INACTIVE
-// service is "none"; desiredCount 0 is "stopped"; a service that is up but not yet
-// running degrades to "stopped" so read paths (session list, admin) don't error.
+// State maps the ECS service to running | starting | stopped | none. A missing/
+// INACTIVE service is "none"; desiredCount 0 is "stopped"; desired 1 with no task
+// RUNNING yet is "starting" — the workspace image cold-pulls for minutes on
+// Fargate, and reporting that window as "stopped" (the pre-revision §20b.7.8
+// mapping) made a legitimately starting workspace look dead in the Console.
 func (e *ecsRuntime) State(ctx context.Context) string {
 	s, ok, err := e.describeService(ctx)
 	if err != nil || !ok {
@@ -176,6 +178,8 @@ func (e *ecsRuntime) State(ctx context.Context) string {
 	switch {
 	case s.DesiredCount >= 1 && s.RunningCount >= 1:
 		return "running"
+	case s.DesiredCount >= 1:
+		return "starting"
 	default:
 		return "stopped"
 	}
@@ -222,7 +226,13 @@ func (e *ecsRuntime) Stop(ctx context.Context) error {
 // Agent to be healthy over Service Connect but does not fail if a cold image pull
 // outlasts the budget (see below) — the workspace converges asynchronously.
 func (e *ecsRuntime) Start(ctx context.Context) error {
-	if e.State(ctx) == "running" {
+	switch e.State(ctx) {
+	case "running":
+		return nil
+	case "starting":
+		// Already converging (desired 1, task pulling/booting). Re-issuing Start
+		// would register a fresh task def and ForceNewDeployment — restarting the
+		// multi-minute cold pull from zero. Let the in-flight launch finish.
 		return nil
 	}
 	homeAP, err := e.ensureAccessPoint(ctx, "home", "/home/"+e.membershipID)

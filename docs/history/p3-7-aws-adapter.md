@@ -219,8 +219,19 @@ local の 2 マウント（`home` + `claude-config`、runtime.go:179-181）を E
 ### 20b.7.8 State / Start 待ち / タイムアウト
 
 - **State**（DescribeServices）: `desired==0` → `stopped`。`desired>=1 && running>=1` → `running`。
-  `desired>=1 && running==0`（起動中/入替中）→ `stopped`（read paths を graceful degrade。local の
-  none/stopped と同じ扱い）。Service 不在 → `none`。
+  `desired>=1 && running==0`（起動中/入替中）→ **`starting`**。Service 不在・INACTIVE → `none`。
+- **改訂（2026-07-08, fix/ws-starting-state）**: 当初は `desired>=1 && running==0` を `stopped` に
+  degrade させていた（read paths を壊さない意図）。しかし af-workspace（約7.4GB）の Fargate cold pull は
+  数分かかり、その間「起動処理中なのに停止に見える」— 利用者が二重 Start / 起動失敗と誤認する実害が出たため、
+  Runtime 契約を 4 値（`running | starting | stopped | none`）に改訂した。消費者側の扱い:
+  - `ensureWorkspaceStarted` / `ecsRuntime.Start`: `starting` は early-return（再 Start は task def
+    再登録 + ForceNewDeployment で pull をやり直させてしまうため厳禁）。
+  - reaper: `!= "running"` は従来どおり sweep 対象外 → starting を誤 stop しない。
+  - quota（`countRunningInTenant`）: `starting` も 1 枠として数える（pull 中の突破を防ぐ）。
+  - read paths（sessions list / admin / audit / usage / mcp）: `== "running"` 判定のままで安全に
+    degrade（Agent 未到達なので DB ミラー提供・スキップが正）。
+  - Console: `starting` を「起動中…」表示し、4 秒ポーリングで `running` へ自動遷移。
+  - local(docker) アダプタは従来どおり 3 値のみ返す（起動が秒オーダーで `starting` を観測しない）。
 - **Start 待ち**: UpdateService desired 1 → DescribeServices `running>=1` かつ DescribeTasks
   `lastStatus==RUNNING` → その後 `Endpoint()+/healthz` を 200 まで poll（local `waitHealthy`
   と同ロジック、runtime.go:273）。

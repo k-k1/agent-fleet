@@ -37,7 +37,17 @@ type dockerRuntime struct {
 type Runtime interface {
 	Start(ctx context.Context) error
 	Stop(ctx context.Context) error
-	State(ctx context.Context) string // running | stopped | none
+	// State reports the live container/service state:
+	//   running  — up and the Agent is reachable (or about to be)
+	//   starting — a launch is converging (ECS: desired 1 but no task RUNNING yet,
+	//              e.g. a multi-minute Fargate cold image pull). Callers must NOT
+	//              re-Start (the adapter would force a new deployment) and must
+	//              NOT idle-stop it; read paths treat it like stopped (Agent not
+	//              reachable yet). The docker adapter starts in seconds and in
+	//              practice never reports it.
+	//   stopped  — exists but not running (docker: exited container; ECS: desired 0)
+	//   none     — no container / service
+	State(ctx context.Context) string // running | starting | stopped | none
 	Endpoint() string                 // http base URL for CP→Agent REST
 	Token() string                    // Bearer secret for CP→Agent (may be "")
 	Name() string                     // container / display name
@@ -127,7 +137,9 @@ func (d *dockerRuntime) Endpoint() string {
 func (d *dockerRuntime) Token() string { return d.token }
 func (d *dockerRuntime) Name() string  { return d.name }
 
-// State returns running | stopped | none.
+// State returns running | stopped | none. The docker adapter never reports
+// "starting": `docker run -d` returns with the container already running, so the
+// transient created/restarting statuses are collapsed into "stopped" as before.
 func (d *dockerRuntime) State(ctx context.Context) string {
 	out, err := exec.CommandContext(ctx, "docker", "inspect", "-f", "{{.State.Status}}", d.name).Output()
 	if err != nil {
@@ -377,7 +389,13 @@ func (c config) handleWorkspaceRecreate(w http.ResponseWriter, r *http.Request) 
 // explicit start/recreate handlers and P3-9 auto-start.
 func (c config) ensureWorkspaceStarted(ctx context.Context, res *resolved) *apiError {
 	rt := res.rt
-	if rt.State(ctx) == "running" {
+	switch rt.State(ctx) {
+	case "running":
+		return nil
+	case "starting":
+		// A launch is already converging (ECS cold pull can take minutes). Calling
+		// Start again would double-drive the service (fresh task def + forced
+		// deployment), so return and let the poller observe the transition.
 		return nil
 	}
 	t, err := c.mgr.store.GetTenant(ctx, res.ws.TenantID)
@@ -402,13 +420,15 @@ func (c config) ensureWorkspaceStarted(ctx context.Context, res *resolved) *apiE
 }
 
 // startResolved starts the container (with quota) and writes the JSON result.
-// Shared by the explicit start and recreate handlers.
+// Shared by the explicit start and recreate handlers. The reported state is the
+// live one, not a hardcoded "running" — on ECS a successful Start can leave the
+// service still "starting" (cold image pull), which the Console keeps polling.
 func (c config) startResolved(w http.ResponseWriter, r *http.Request, res *resolved) {
 	if aerr := c.ensureWorkspaceStarted(r.Context(), res); aerr != nil {
 		writeAPIErr(w, aerr)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"name": res.rt.Name(), "state": "running"})
+	writeJSON(w, http.StatusOK, map[string]any{"name": res.rt.Name(), "state": res.rt.State(r.Context())})
 }
 
 func (c config) handleWorkspaceStop(w http.ResponseWriter, r *http.Request) {
