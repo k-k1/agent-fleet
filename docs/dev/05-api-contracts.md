@@ -1,0 +1,74 @@
+# 05. API 境界と中継 — 契約はコードが正
+
+> 正: コード（本書は地図と普遍設計。逐一の請求/応答形は code-as-contract）/
+> 主な更新トリガ: API グループの追加・中継経路の変更 / 最終確認: 2026-07
+
+境界は 2 つ: **公開面**（Console ↔ CP、`/api/*` ほか）と**内部面**（CP ↔ Workspace Agent）。
+ルート定義は CP 176 本・Agent 101 本あり全列挙は保守不能なので、本書は「グループ → 代表パス →
+詳細の所在」の**地図**に徹する。**内部リファクタ（docs/23）はワイヤ完全互換（パス・JSON 形・
+エラーコード文字列を変えない）がハード制約のため、本書の記述はリファクタで陳腐化しない。**
+
+## 5.1 公開面の地図（Console ↔ CP）
+
+L1 認証（authGate）通過後に到達。認可は「自分のリソースのみ」＋ membership 検証が原則（§5.4）。
+
+| グループ | 代表パス | 処理場所 | 詳細 |
+|----------|---------|----------|------|
+| identity / tenant | `GET /api/whoami`・`GET /api/tenants` | CP | [03](03-control-plane.md) |
+| workspace | `GET /api/workspace`・`POST /api/workspace/{start,stop,recreate}`・`GET /api/workspace/stats` | CP（Runtime）| [03](03-control-plane.md) |
+| sessions | `GET/POST /api/sessions`・`POST /api/sessions/{name}/{stop,halt,recreate,archive,restore,fork,start,input,paste-image,suggest-branch,rename-branch}`・`GET …/{status,output,messages}`・`POST …/title/*`・`GET /api/sessions/archived` | 生成/fork/start=CP→Agent、他は中継 | [04](04-workspace-agent.md) |
+| repos (SCM) | `GET/POST /api/repos`・`/api/repos/{name}/{status,branches,checkout,fetch,ff,changes,diff,log,graph,show,stage,unstage,discard,commit,identity,prompt-templates}` | 中継 | [04](04-workspace-agent.md) |
+| fs | `GET /api/fs/{tree,file,download,changes,linemarks}`・`POST /api/fs/{upload,mkdir,newfile,rename,delete}` | 中継 | [04](04-workspace-agent.md) |
+| connections | `GET /api/connections`・git `PUT/DELETE /api/connections/git/{host}`（+ GitHub Device / Bitbucket OAuth / claude / codex / opencode）| 中継（Bitbucket OAuth 開始と callback のみ CP）| [08](08-integrations.md) |
+| chat / assistants | `/api/chat/conversations*`（stream は SSE）・`POST /api/chat/ask`・`/api/assistants*` | 中継 | [04](04-workspace-agent.md) |
+| env / settings | `GET/PUT /api/env/{toolchains,ui-prefs}`・`GET/PUT /api/env/ws-settings`・`GET/PUT /api/claude/settings`・`GET /api/{claude,codex}/usage`・`GET/PUT /api/agents/rtk` | ws-settings=CP、他は中継 | [04](04-workspace-agent.md) |
+| memo | `GET/POST/PATCH/DELETE /api/memos*`・`POST /api/memos/flush` | CP（flush 時のみ Agent へ）| [03](03-control-plane.md) |
+| pat | `GET/POST/DELETE /api/pat*` | CP | [07 §7.6](07-security.md) |
+| ssm | `GET/POST/PUT/DELETE /api/ssm/{profiles,hosts}*`・`GET /api/sessions/{name}/ssm-login` | CP（DB）+ Agent（セッション）| [08](08-integrations.md) |
+| internal git | `GET/POST/DELETE /api/internal-git/repos*`（管理）・`/git/{slug}/{repo...}` smart-HTTP・`/git/…/info/lfs/*` | CP（Agent を経由しない）| [91](91-internal-git.md) |
+| admin | `GET /api/admin/{tenants,sessions,usage,audit,host,egress*}`・`POST /api/admin/{tenants,memberships,stop-workspace,clean-home}`・`PUT /api/admin/{tenants/{slug}/limits,user-limits,membership-role,egress/mode}` | CP（super_admin / tenant_admin gate）| [03](03-control-plane.md) |
+| MCP | `POST /mcp`（Streamable HTTP JSON-RPC・Bearer PAT・authGate 除外）| CP | [03](03-control-plane.md) / [decisions/0006](../decisions/0006-mcp-unified.md) |
+| preview | `GET /preview/{port}/{rest...}`（`/preview/{port}` は 301 で末尾 `/` 付与）| CP → Agent `/proxy/{port}` | §5.3 |
+| WebSocket | `GET /ws/terminal?session=&tenant=` | CP → Agent `/ws/pty` | §5.3 |
+| auth / その他 | `GET /login`・`/oauth2/{login,callback,logout}`・`GET /api/oauth/bitbucket/callback`・`GET /healthz`・`/internal/egress{,/policy}`（`AF_EGRESS_TOKEN`）・`/` = Console 静的配信（no-store）| CP | [07](07-security.md) |
+
+- 旧 `/agent-fleet` プレフィクスは**廃止**（ルート配信）。`/agent-fleet*` は互換リダイレクトのみ。
+- 非同期操作（起動・clone）は**同期 + ポーリング**で運用（`/jobs` 構想は未採用）。
+
+## 5.2 内部面（CP ↔ Agent）
+
+- Agent は外部公開されず、CP からのみ内部到達（`127.0.0.1` publish + `af-net-<user>`）。
+- 全リクエストに `Authorization: Bearer <AGENT_TOKEN>`（per-container、CP が起動時注入）。
+  Agent の `requireToken` が `/healthz` 以外を定数時間比較で検証（[07 §7.5](07-security.md)）。
+- パス規約: CP は公開パスから **`/api` を剥がして**そのまま Agent へ転送する
+  （例 `/api/sessions/x/stop` → `<agent>/sessions/x/stop`）。Agent 固有の面は
+  `/ws/pty`（PTY）と `/proxy/{port}/{rest...}`（preview 下請け）。
+- Agent のグループ構成は公開面と同型: `/sessions`(24)・`/repos`(20)・`/connections`(18)・
+  `/fs`(10)・`/chat`(10)・`/assistants`・`/env`・`/claude`・`/codex`・`/git`・`/agents`。
+
+## 5.3 中継の 4 経路（CP の proxy 層）
+
+| 経路 | 入口 → 出口 | 特性 |
+|------|-------------|------|
+| **REST**（proxyAgentREST）| `/api/*` → Agent 同パス（`/api` 剥がし）| 変更系は 2xx 応答時に監査記録（§5.5）。workspace が running でなければ 409 |
+| **SSE**（proxyAgentStream）| `POST /api/chat/conversations/{id}/stream` → Agent | チャンク毎 flush。チャットのストリーミング用 |
+| **WS**（proxyTerminal）| `GET /ws/terminal` → Agent `/ws/pty` | running 確認（stopped/starting=409、自動起動しない）→ 双方向リレー（binary=PTY 出力 / text=入力・resize）。接続追跡が workspace を warm 維持（reaper のアイドル判定に使用）|
+| **preview** | `GET /preview/{port}/{rest...}` → Agent `/proxy/{port}/{rest...}` → コンテナ内 `127.0.0.1:{port}` | `X-Forwarded-{Prefix,Host,Proto}` 付与、Agent 側は Authorization を除去して ReverseProxy。新タブは cookie 以外のヘッダを運べないため `?tenant=<slug>` の query fallback で解決。**制約: HTTP のみ（WS/SSE 不可＝HMR 不可）**。アプリ側は `X-Forwarded-Prefix` 尊重の設定（例 Spring Boot `server.forward-headers-strategy`）が必要 |
+
+## 5.4 横断規約
+
+- **テナント選択**: `X-AF-Tenant` ヘッダ（WS/preview/新タブは `?tenant=` query fallback。header→query の順で解決）。
+  membership 検証: 所属 1 件は自動 / 複数で未指定=409 / 非所属=403。
+- **エラー形**: JSON + 安定したエラーコード文字列（const 化済み・ワイヤ互換の一部）。
+  代表: 401（未認証）/ 403（membership 外）/ 404 / 409（`workspace_stopped`・`starting`・テナント未指定・状態競合）/
+  429（クォータ超過、既定は無制限）。
+- **認可の原則**: 自分の workspace / repos / sessions のみ。admin API は role gate
+  （super_admin はデプロイ全体、tenant_admin は自テナントのみ）。
+- Console のビルド成果物（`console/dist`）は CP が `no-store` で配信（デプロイ即反映）。
+
+## 5.5 監査の書き込み点
+
+proxyAgentREST は**変更系**操作の 2xx 応答時に `audit_log` へ記録する（分類は auditActionTarget）:
+`fs.*`（upload/mkdir/rename/delete…）、`repo.*`（clone/delete）、`git.{commit,checkout,fetch,ff,discard}`、
+`session.{create,fork,stop}` など。加えて admin API・MCP write ツール（`actor_kind=mcp`）・
+システム動作（reaper 等）が各処理内で記録する。スキーマは [06](06-data-model.md)、運用視点は [07 §7.7](07-security.md)。
