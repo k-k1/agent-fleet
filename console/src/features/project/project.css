@@ -32,11 +32,15 @@
   display: flex;
   flex-direction: column;
 }
-/* Worktrees hang off their base: a shallow indent with an accent spine binds them
-   to the base clone above (same project, different checkout) without pushing their
-   content far right. */
+/* The base (parent) clone's name is bold — it anchors the project group. */
+.proj-node.base .repo-name {
+  font-weight: 700;
+}
+
+/* Worktrees hang off their base: a minimal indent — the accent spine does the
+   binding, so the content barely shifts right (same project, different checkout). */
 .proj-node.wt {
-  margin-left: 7px;
+  margin-left: 2px;
   padding-left: 2px;
   border-left: 2px solid color-mix(in srgb, var(--accent) 30%, transparent);
 }
