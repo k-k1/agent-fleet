@@ -43,7 +43,7 @@ func runSessionStatusHook(args []string) {
 			// own session id for `codex resume`. The question/plan/permission payloads
 			// are claude-only, so they are intentionally NOT carried over here.
 			if in.sessionID != "" {
-				codexSids.write(sid, in.sessionID)
+				codexSids.Write(sid, in.sessionID)
 			}
 		} else {
 			h = in             // claude: sid + pending payloads come from stdin

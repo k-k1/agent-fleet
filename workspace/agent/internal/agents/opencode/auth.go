@@ -1,4 +1,4 @@
-package main
+package opencode
 
 import (
 	"net/http"
@@ -21,9 +21,9 @@ import (
 // arbitrary value can't be smuggled into the container environment.
 var envNameRe = regexp.MustCompile(`^[A-Z][A-Z0-9_]{1,63}$`)
 
-// opencodeEnv loads the stored provider keys as "NAME=value" entries for the
+// env loads the stored provider keys as "NAME=value" entries for the
 // session launcher to pass via `docker`/tmux `-e`. Order is stable (sorted).
-func opencodeEnv() []string {
+func env() []string {
 	s, err := secrets.Load()
 	if err != nil || len(s.Opencode) == 0 {
 		return nil
@@ -40,9 +40,9 @@ func opencodeEnv() []string {
 	return out
 }
 
-// opencodeStatus reports which provider env vars are configured (names only,
-// never the keys) for the Console Connections panel.
-func opencodeStatus(s *secrets.Data) map[string]any {
+// Status reports which provider env vars are configured (names only,
+// never the keys) for the Console Connections panel (GET /connections).
+func Status(s *secrets.Data) map[string]any {
 	names := []string{}
 	for k := range s.Opencode {
 		names = append(names, k)
@@ -51,14 +51,15 @@ func opencodeStatus(s *secrets.Data) map[string]any {
 	return map[string]any{"connected": len(names) > 0, "envs": names}
 }
 
-type opencodeConnReq struct {
+type connReq struct {
 	Env string `json:"env"` // provider env var name, e.g. ANTHROPIC_API_KEY
 	Key string `json:"key"` // the API key
 }
 
-// handlePutOpencodeConn stores a provider API key under its env var name.
-func handlePutOpencodeConn(w http.ResponseWriter, r *http.Request) {
-	var req opencodeConnReq
+// HandlePutConn stores a provider API key under its env var name
+// (PUT /connections/opencode).
+func HandlePutConn(w http.ResponseWriter, r *http.Request) {
+	var req connReq
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
@@ -88,8 +89,9 @@ func handlePutOpencodeConn(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"connected": true, "env": env})
 }
 
-// handleDeleteOpencodeConn removes a stored provider key.
-func handleDeleteOpencodeConn(w http.ResponseWriter, r *http.Request) {
+// HandleDeleteConn removes a stored provider key
+// (DELETE /connections/opencode/{env}).
+func HandleDeleteConn(w http.ResponseWriter, r *http.Request) {
 	env := r.PathValue("env")
 	if !envNameRe.MatchString(env) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_env", "invalid env name")

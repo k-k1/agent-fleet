@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
@@ -37,7 +38,7 @@ func handleConnectionsGet(w http.ResponseWriter, r *http.Request) {
 		"github":    gitConnStatus(s, "github.com"),
 		"bitbucket": bitbucketStatus(s),
 		"internal":  internalGitStatus(s),
-		"opencode":  opencodeStatus(s),
+		"opencode":  opencode.Status(s),
 		"codex":     codexStatus(),
 	})
 }

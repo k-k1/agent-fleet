@@ -136,4 +136,4 @@ func forkTitle(src session.Meta) string {
 	return strings.TrimSpace(base + " (fork)")
 }
 
-func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
+// shellQuote は internal/session の session.ShellQuote へ移設（docs/23 残① Wave D）。

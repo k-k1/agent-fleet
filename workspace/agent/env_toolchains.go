@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
 // Toolchain selection (node via nvm, java via pre-baked Temurin), stored per-
@@ -124,14 +125,14 @@ func toolchainShellPrefix() string {
 	jh, nodeBin, tz := resolvedToolchains()
 	var b strings.Builder
 	if jh != "" {
-		b.WriteString("export JAVA_HOME=" + shellQuote(jh) + "; ")
-		b.WriteString("export PATH=" + shellQuote(jh+"/bin") + ":\"$PATH\"; ")
+		b.WriteString("export JAVA_HOME=" + session.ShellQuote(jh) + "; ")
+		b.WriteString("export PATH=" + session.ShellQuote(jh+"/bin") + ":\"$PATH\"; ")
 	}
 	if nodeBin != "" {
-		b.WriteString("export PATH=" + shellQuote(nodeBin) + ":\"$PATH\"; ")
+		b.WriteString("export PATH=" + session.ShellQuote(nodeBin) + ":\"$PATH\"; ")
 	}
 	if tz != "" {
-		b.WriteString("export TZ=" + shellQuote(tz) + "; ")
+		b.WriteString("export TZ=" + session.ShellQuote(tz) + "; ")
 	}
 	return b.String()
 }

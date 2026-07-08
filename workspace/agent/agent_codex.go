@@ -35,7 +35,7 @@ func (codexAgent) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launc
 	// codex hooks injected on the command line (-c), keyed by our deterministic slot
 	// sid — see buildCodexProgram.
 	cxSid := session.UUID(m.Dir, m.Name)
-	return agents.LaunchPlan{Program: buildCodexProgram(m.Model, cxSid, codexSids.read(cxSid)), Cwd: m.Dir}, nil
+	return agents.LaunchPlan{Program: buildCodexProgram(m.Model, cxSid, codexSids.Read(cxSid)), Cwd: m.Dir}, nil
 }
 
 func (codexAgent) WireLive(m session.Meta, alive bool) agents.LiveInfo {
@@ -43,4 +43,4 @@ func (codexAgent) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 	return statusOnlyLive(m, alive)
 }
 
-func (codexAgent) ClearResume(sid string) { codexSids.remove(sid) }
+func (codexAgent) ClearResume(sid string) { codexSids.Remove(sid) }

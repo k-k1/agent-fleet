@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 )
 
@@ -26,8 +27,6 @@ import (
 // "rtk auto-applied to all agents" behavior). The agent OWNS applying that
 // preference to the artifacts — both at startup (reconcileAgentRTK) and live from
 // the Console toggle (PUT /agents/rtk) — so the logic lives in one place.
-
-const opencodeRTKPluginSrc = "/usr/local/share/agent-fleet/opencode-plugin/rtk.ts"
 
 const codexRTKMarkerStart = "<!-- agent-fleet:rtk -->"
 const codexRTKMarkerEnd = "<!-- /agent-fleet:rtk -->"
@@ -90,33 +89,8 @@ func codexHome() string {
 
 func codexAgentsPath() string { return filepath.Join(codexHome(), "AGENTS.md") }
 
-func opencodeRTKPluginDst() string {
-	return filepath.Join(homeDir(), ".config", "opencode", "plugin", "rtk.ts")
-}
-
-// applyOpencodeRTK seeds (on) or removes (off) the vendored rtk plugin. Writes only
-// when the content differs, so the startup reconcile is a no-op on an unchanged home.
-func applyOpencodeRTK(on bool) {
-	dst := opencodeRTKPluginDst()
-	if !on {
-		_ = os.Remove(dst)
-		return
-	}
-	src, err := os.ReadFile(opencodeRTKPluginSrc)
-	if err != nil {
-		return // no vendored plugin in this image — nothing to seed
-	}
-	if cur, err := os.ReadFile(dst); err == nil && string(cur) == string(src) {
-		return
-	}
-	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-		return
-	}
-	tmp := dst + ".af-tmp"
-	if os.WriteFile(tmp, src, 0o644) == nil {
-		_ = os.Rename(tmp, dst)
-	}
-}
+// opencode 側の適用（rtk.ts プラグインの seed/remove）は opencode.ApplyRTK
+// （internal/agents/opencode、docs/23 残① Wave D）。
 
 // stripMarkedBlock removes the region from start..end (inclusive) and rejoins. A
 // missing end marker (malformed file) drops everything from start onward.
@@ -177,7 +151,7 @@ func applyCodexRTK(on bool) {
 func reconcileAgentRTK() {
 	avail := rtkAvailable()
 	p := readAgentRTKPrefs()
-	applyOpencodeRTK(avail && prefOnDefault(p.Opencode))
+	opencode.ApplyRTK(avail && prefOnDefault(p.Opencode))
 	applyCodexRTK(avail && prefOnDefault(p.Codex))
 }
 
