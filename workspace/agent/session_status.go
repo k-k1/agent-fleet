@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"log"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 )
@@ -18,18 +17,21 @@ import (
 // --dangerously-skip-permissions there is no tool-approval QA state, so the two
 // meaningful states are working and idle(=response ready / awaiting input).
 
-func sessionStatusDir() string {
-	return filepath.Join(homeDir(), ".config", "agent-fleet", "session-status")
-}
-
-func sessionStatusPath(sid string) string {
-	return filepath.Join(sessionStatusDir(), sid+".json")
-}
-
 type sessionStatus struct {
 	State string `json:"state"` // "working" | "idle"
 	TS    string `json:"ts"`    // RFC3339
 }
+
+// Per-sid file stores (fstore.go). pending-question holds the raw tool_input
+// payload; last-tool shares pending-perm's dir under a different extension.
+var (
+	statusFiles      = jsonStore[sessionStatus]("session-status", ".json")
+	pendingQuestions = rawStore("pending-question", ".json")
+	pendingPlans     = stringStore("pending-plan", ".md")
+	pendingPerms     = stringStore("pending-perm", ".txt")
+	lastTools        = stringStore("pending-perm", ".tool")
+	pendingTexts     = stringStore("pending-text", ".txt")
+)
 
 // runSessionStatusHook is `workspace-agent session-status <state> [sid] [codex]`.
 // Three callers key the status differently:
@@ -150,13 +152,9 @@ func decodeHookStdin() hookInput {
 // swallowed): a failed write leaves the Console's 進行中/応答あり badge silently
 // stale, so a log line is the only breadcrumb the write ever failed.
 func persistSessionStatus(sid, state string) {
-	if err := os.MkdirAll(sessionStatusDir(), 0o700); err != nil {
-		log.Printf("session-status: mkdir %s: %v", sessionStatusDir(), err)
-		return
-	}
-	b, _ := json.Marshal(sessionStatus{State: state, TS: time.Now().Format(time.RFC3339)})
-	if err := os.WriteFile(sessionStatusPath(sid), b, 0o600); err != nil {
-		log.Printf("session-status: write %s: %v", sessionStatusPath(sid), err)
+	s := sessionStatus{State: state, TS: time.Now().Format(time.RFC3339)}
+	if err := statusFiles.write(sid, s); err != nil {
+		log.Printf("session-status: write %s: %v", statusFiles.path(sid), err)
 	}
 }
 
@@ -224,69 +222,34 @@ func permToolDetail(name, file, notebook, path, command string) string {
 
 // last-tool: the tool about to run, recorded by the permtool PreToolUse hook and read
 // when a permission prompt fires, to give the permission block a concrete subject.
-func lastToolPath(sid string) string {
-	return filepath.Join(pendingPermDir(), sid+".tool")
-}
-
 func writeLastTool(sid, detail string) {
 	if detail == "" {
 		return
 	}
-	if err := os.MkdirAll(pendingPermDir(), 0o700); err != nil {
-		return
-	}
-	_ = os.WriteFile(lastToolPath(sid), []byte(detail), 0o600)
+	_ = lastTools.write(sid, detail)
 }
 
-func readLastTool(sid string) (string, bool) {
-	b, err := os.ReadFile(lastToolPath(sid))
-	if err != nil || len(b) == 0 {
-		return "", false
-	}
-	return string(b), true
-}
-
-func removeLastTool(sid string) { _ = os.Remove(lastToolPath(sid)) }
+func readLastTool(sid string) (string, bool) { return lastTools.read(sid) }
+func removeLastTool(sid string)              { lastTools.remove(sid) }
 
 // A pending AskUserQuestion (the tool_input.questions array), kept only while the
 // session is in the question state so the Console can render and answer it.
-func pendingQuestionDir() string {
-	return filepath.Join(homeDir(), ".config", "agent-fleet", "pending-question")
-}
-
-func pendingQuestionPath(sid string) string {
-	return filepath.Join(pendingQuestionDir(), sid+".json")
-}
-
 func writePendingQuestion(sid string, questions json.RawMessage) {
-	if err := os.MkdirAll(pendingQuestionDir(), 0o700); err != nil {
-		return
-	}
-	_ = os.WriteFile(pendingQuestionPath(sid), questions, 0o600)
+	_ = pendingQuestions.write(sid, questions)
 }
 
 func readPendingQuestion(sid string) (json.RawMessage, bool) {
-	b, err := os.ReadFile(pendingQuestionPath(sid))
-	if err != nil || len(b) == 0 {
-		return nil, false
-	}
-	return b, true
+	b, ok := pendingQuestions.read(sid)
+	return json.RawMessage(b), ok
 }
 
-func removePendingQuestion(sid string) { _ = os.Remove(pendingQuestionPath(sid)) }
+func removePendingQuestion(sid string) { pendingQuestions.remove(sid) }
 
 // pending-text: the assistant's streaming text for the in-flight turn, accumulated from
 // the MessageDisplay hook. Kept only long enough for a pending AskUserQuestion to show
 // the prose that preceded it (the turn's text lands in the transcript only after the
 // question is answered). Reset each turn — see applyPendingPayloads.
-func pendingTextDir() string {
-	return filepath.Join(homeDir(), ".config", "agent-fleet", "pending-text")
-}
-
-func pendingTextPath(sid string) string {
-	return filepath.Join(pendingTextDir(), sid+".txt")
-}
-
+//
 // pendingTextCap bounds the buffer: the prose before a question is small, so a runaway
 // stream shouldn't grow an unbounded file (it's reset every turn regardless).
 const pendingTextCap = 16 << 10
@@ -295,13 +258,14 @@ func appendPendingText(sid, delta string) {
 	if delta == "" {
 		return
 	}
-	if err := os.MkdirAll(pendingTextDir(), 0o700); err != nil {
+	if err := os.MkdirAll(pendingTexts.dir(), 0o700); err != nil {
 		return
 	}
-	if fi, err := os.Stat(pendingTextPath(sid)); err == nil && fi.Size() >= pendingTextCap {
+	path := pendingTexts.path(sid)
+	if fi, err := os.Stat(path); err == nil && fi.Size() >= pendingTextCap {
 		return // already at the cap; drop further chunks
 	}
-	f, err := os.OpenFile(pendingTextPath(sid), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		return
 	}
@@ -309,82 +273,25 @@ func appendPendingText(sid, delta string) {
 	_, _ = f.WriteString(delta)
 }
 
-func readPendingText(sid string) (string, bool) {
-	b, err := os.ReadFile(pendingTextPath(sid))
-	if err != nil || len(b) == 0 {
-		return "", false
-	}
-	return string(b), true
-}
-
-func removePendingText(sid string) { _ = os.Remove(pendingTextPath(sid)) }
+func readPendingText(sid string) (string, bool) { return pendingTexts.read(sid) }
+func removePendingText(sid string)              { pendingTexts.remove(sid) }
 
 // A pending ExitPlanMode plan (the tool_input.plan markdown), kept only while the
 // session waits for plan approval so the Console can show it / open it in a pane.
-func pendingPlanDir() string {
-	return filepath.Join(homeDir(), ".config", "agent-fleet", "pending-plan")
-}
-
-func pendingPlanPath(sid string) string {
-	return filepath.Join(pendingPlanDir(), sid+".md")
-}
-
-func writePendingPlan(sid, plan string) {
-	if err := os.MkdirAll(pendingPlanDir(), 0o700); err != nil {
-		return
-	}
-	_ = os.WriteFile(pendingPlanPath(sid), []byte(plan), 0o600)
-}
-
-func readPendingPlan(sid string) (string, bool) {
-	b, err := os.ReadFile(pendingPlanPath(sid))
-	if err != nil || len(b) == 0 {
-		return "", false
-	}
-	return string(b), true
-}
-
-func removePendingPlan(sid string) { _ = os.Remove(pendingPlanPath(sid)) }
+func writePendingPlan(sid, plan string)         { _ = pendingPlans.write(sid, plan) }
+func readPendingPlan(sid string) (string, bool) { return pendingPlans.read(sid) }
+func removePendingPlan(sid string)              { pendingPlans.remove(sid) }
 
 // A pending tool-permission prompt (the Notification message), kept while the session
 // is blocked awaiting an allow/deny decision so the Console can approve it inline.
-func pendingPermDir() string {
-	return filepath.Join(homeDir(), ".config", "agent-fleet", "pending-perm")
-}
+func writePendingPermission(sid, message string)      { _ = pendingPerms.write(sid, message) }
+func readPendingPermission(sid string) (string, bool) { return pendingPerms.read(sid) }
+func removePendingPermission(sid string)              { pendingPerms.remove(sid) }
 
-func pendingPermPath(sid string) string { return filepath.Join(pendingPermDir(), sid+".txt") }
-
-func writePendingPermission(sid, message string) {
-	if err := os.MkdirAll(pendingPermDir(), 0o700); err != nil {
-		return
-	}
-	_ = os.WriteFile(pendingPermPath(sid), []byte(message), 0o600)
-}
-
-func readPendingPermission(sid string) (string, bool) {
-	b, err := os.ReadFile(pendingPermPath(sid))
-	if err != nil || len(b) == 0 {
-		return "", false
-	}
-	return string(b), true
-}
-
-func removePendingPermission(sid string) { _ = os.Remove(pendingPermPath(sid)) }
-
-func readSessionStatus(sid string) (sessionStatus, bool) {
-	var s sessionStatus
-	b, err := os.ReadFile(sessionStatusPath(sid))
-	if err != nil {
-		return s, false
-	}
-	if json.Unmarshal(b, &s) != nil {
-		return s, false
-	}
-	return s, true
-}
+func readSessionStatus(sid string) (sessionStatus, bool) { return statusFiles.read(sid) }
 
 func removeSessionStatus(sid string) {
-	_ = os.Remove(sessionStatusPath(sid))
+	statusFiles.remove(sid)
 	removePendingQuestion(sid)
 	removePendingPlan(sid)
 	removePendingPermission(sid)
