@@ -1848,7 +1848,9 @@ function PendingQuestions({
     setFreeText((prev) => (prev[qi] ? prev.map((v, i) => (i === qi ? "" : v)) : prev));
 
   const toggle = (qi: number, label: string, multi?: boolean) => {
-    clearFree(qi); // picking an option drops any free text for this question
+    // Multi-select COMBINES a custom "Type something" entry with checked options (verified
+    // in the terminal), so only a single-select pick is mutually exclusive with free text.
+    if (!multi) clearFree(qi);
     setSel((prev) => {
       const next = prev.map((a) => a.slice());
       const cur = next[qi] || [];
@@ -1858,9 +1860,11 @@ function PendingQuestions({
     });
   };
 
-  const setFree = (qi: number, v: string) => {
+  const setFree = (qi: number, v: string, multi?: boolean) => {
     setFreeText((prev) => prev.map((x, i) => (i === qi ? v : x)));
-    if (v) setSel((prev) => ((prev[qi] || []).length ? prev.map((a, i) => (i === qi ? [] : a)) : prev));
+    // Single-select: typing a custom answer drops the radio pick (mutually exclusive).
+    // Multi-select: keep the checked options — the custom entry is an ADDITIONAL choice.
+    if (v && !multi) setSel((prev) => ((prev[qi] || []).length ? prev.map((a, i) => (i === qi ? [] : a)) : prev));
   };
 
   // A question is answered by a selection OR free text (multi-select may be left empty).
@@ -1882,26 +1886,37 @@ function PendingQuestions({
     qs.forEach((q, qi) => {
       const opts = q.options || [];
       const ft = (freeText[qi] || "").trim();
-      if (ft) {
-        // Free text: the "Type something" row sits just after the options — move down to
-        // it (no Enter needed to focus it), type, then Enter confirms + advances.
-        for (let k = 0; k < opts.length; k++) seq.push({ k: "Down" });
-        seq.push({ t: ft });
-        seq.push({ k: "Enter" });
-        return;
-      }
       const idx = (sel[qi] || [])
         .map((l) => opts.findIndex((o) => o.label === l))
         .filter((i) => i >= 0)
         .sort((a, b) => a - b);
       if (q.multiSelect) {
+        // Toggle each checked option in place (Enter toggles, cursor stays). Then, if a
+        // custom answer was typed, drop to the "Type something" row and type it — checked
+        // options and the custom entry COMBINE (verified in the terminal). Crucially, do
+        // NOT press Enter after typing: on a multi-select row Enter toggles the auto-checked
+        // custom entry back OFF, silently losing it (the bug). Instead one Down exits the
+        // field to the Submit row, and the trailing Enter below submits.
         let cur = 0;
         for (const ci of idx) {
           for (let k = 0; k < ci - cur; k++) seq.push({ k: "Down" });
           seq.push({ k: "Enter" }); // toggle in place
           cur = ci;
         }
-        seq.push({ k: "Right" }); // advance to the next question / Submit tab
+        if (ft) {
+          const typeRow = opts.length; // the "Type something" row sits just after the options
+          for (let k = 0; k < typeRow - cur; k++) seq.push({ k: "Down" });
+          seq.push({ t: ft }); // typing auto-checks the custom row (NO Enter — it would uncheck)
+          seq.push({ k: "Down" }); // exit the field down to the Submit row
+        } else {
+          seq.push({ k: "Right" }); // advance to the next question / Submit tab
+        }
+      } else if (ft) {
+        // single-select free text: move to the "Type something" row, type, then Enter
+        // confirms + auto-advances (single-select Enter does NOT toggle-off — verified).
+        for (let k = 0; k < opts.length; k++) seq.push({ k: "Down" });
+        seq.push({ t: ft });
+        seq.push({ k: "Enter" });
       } else {
         const ci = idx[0] ?? 0;
         for (let k = 0; k < ci; k++) seq.push({ k: "Down" });
@@ -1967,7 +1982,7 @@ function PendingQuestions({
               placeholder="または自由入力（Type something / 改行可）"
               value={freeText[qi] || ""}
               disabled={sending}
-              onChange={(e) => setFree(qi, e.target.value)}
+              onChange={(e) => setFree(qi, e.target.value, qn.multiSelect)}
             />
           )}
         </div>
