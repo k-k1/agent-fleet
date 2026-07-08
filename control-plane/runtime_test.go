@@ -43,6 +43,32 @@ func TestNewRuntimeFactory(t *testing.T) {
 	}
 }
 
+// The stop grace drives docker stop -t AND the ECS stopTimeout from one env knob;
+// the Agent budget must stay under it (safety margin) so the in-container graceful
+// shutdown finishes before the runtime's SIGKILL. Clamps: >=1, <=120 (Fargate
+// stopTimeout ceiling).
+func TestStopGraceSec(t *testing.T) {
+	cases := []struct {
+		env         string
+		want, agent int
+	}{
+		{"", 30, 25},      // default
+		{"60", 60, 55},    // explicit
+		{"300", 120, 115}, // clamped to the Fargate ceiling
+		{"3", 3, 5},       // tiny grace: agent floor is 5 (runtime kills first; still bounded)
+		{"0", 1, 5},       // nonsense → minimal but valid
+	}
+	for _, tc := range cases {
+		t.Setenv("AF_STOP_GRACE_SEC", tc.env)
+		if got := stopGraceSec(); got != tc.want {
+			t.Errorf("AF_STOP_GRACE_SEC=%q: stopGraceSec = %d, want %d", tc.env, got, tc.want)
+		}
+		if got := agentStopGraceSec(); got != tc.agent {
+			t.Errorf("AF_STOP_GRACE_SEC=%q: agentStopGraceSec = %d, want %d", tc.env, got, tc.agent)
+		}
+	}
+}
+
 // dockerFactory.New must thread the Workspace record and the per-call secretKey
 // into the concrete dockerRuntime, and re-root the data dir via the manager's
 // closure — otherwise a restored/moved deployment would mount the wrong home.

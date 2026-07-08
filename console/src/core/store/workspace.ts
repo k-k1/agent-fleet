@@ -1,9 +1,12 @@
 // Workspace lifecycle store (zustand). Replaces the workspace slice of the old
 // God-context: the per-membership container's state plus start/stop.
 //
-// state values come from the CP ("running" / "stopped" / …); "unknown" = fetch
-// failed, and a trailing "…" marks an optimistic in-flight transition (the old
-// convention — pollers and buttons treat it as busy and keep their hands off).
+// state values come from the CP ("running" / "starting" / "stopped" / "none");
+// "starting" is a real server state (ECS: the workspace image cold-pulls for
+// minutes) — the 4s poll keeps following it and flips to "running" on its own,
+// no manual reload. "unknown" = fetch failed, and a trailing "…" marks an
+// optimistic in-flight transition (the old convention — pollers and buttons
+// treat it as busy and keep their hands off).
 import { create } from "zustand";
 import { api } from "../api/client.ts";
 
@@ -33,7 +36,16 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
 
   async start() {
     set({ state: "starting…" });
-    await api("api/workspace/start", { method: "POST" });
+    // The poll skips while the state ends in "…", so even an aborted POST (e.g. a
+    // gateway timeout on a slow ECS start) must settle to the real server state —
+    // otherwise the bar sticks on 起動中… until a manual reload. api() only
+    // rejects on network failure (HTTP errors come back as {error} JSON), so a
+    // catch + unconditional refresh covers both.
+    try {
+      await api("api/workspace/start", { method: "POST" });
+    } catch {
+      /* settled by the refresh below */
+    }
     await get().refresh();
   },
 
@@ -42,7 +54,11 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     // poll skips mid-stop — otherwise a second click re-issues the stop / a poll
     // clobbers the state during the multi-second docker stop.
     set({ state: "stopping…" });
-    await api("api/workspace/stop", { method: "POST" });
+    try {
+      await api("api/workspace/stop", { method: "POST" });
+    } catch {
+      /* settled by the refresh below */
+    }
     await get().refresh();
   },
 
@@ -63,9 +79,17 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
 /** True while a start/stop transition is in flight (or state not yet fetched). */
 export const wsBusy = (state: string): boolean => state.endsWith("…");
 
+/** True while starting the workspace would be wrong: an optimistic "…" transition
+ * is in flight OR the server already reports "starting" (ECS cold pull, minutes).
+ * The CP no-ops a re-Start anyway, but every start button disables on this so the
+ * UI doesn't offer 起動 for a workspace that is already coming up. */
+export const wsStartBusy = (state: string): boolean => wsBusy(state) || state === "starting";
+
 // Auto-sync every 4s so an externally-changed workspace (admin stop, OOM death,
-// crash) reflects on its own. Skipped while hidden or mid-transition. Returns the
-// cleanup, so the caller (App boot effect) is StrictMode-safe.
+// crash) reflects on its own. Skipped while hidden or mid-transition (trailing
+// "…" only — the server-reported "starting" keeps polling, which is what walks
+// an ECS cold start to 稼働中 without a reload). Returns the cleanup, so the
+// caller (App boot effect) is StrictMode-safe.
 export function startWorkspacePolling(): () => void {
   const t = setInterval(() => {
     if (document.hidden || wsBusy(useWorkspaceStore.getState().state)) return;
