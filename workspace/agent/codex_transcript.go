@@ -6,13 +6,15 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
 
 // Codex chat transcript. Unlike claude (a single <sid>.jsonl we read directly),
 // codex writes a "rollout" JSONL under ~/.codex/sessions/YYYY/MM/DD/rollout-<ts>-
 // <session_id>.jsonl, one JSON event per line. We already capture codex's own
 // session_id (codexSids, from its status hook), so we locate that slot's rollout by
-// id and normalize its events into the SAME chatTurn/chatPart model the Console chat
+// id and normalize its events into the SAME transcript.Turn/transcript.Part model the Console chat
 // consumes for claude. The rollout is append-only JSONL, so — like claude — the line
 // order is chronological; here we parse the whole file into ordered turns and let the
 // generic /messages windower page over them (see handleGenericMessages).
@@ -68,12 +70,12 @@ var codexWrapperTags = []string{
 	"<INSTRUCTIONS>",
 }
 
-// codexParseRollout normalizes a codex rollout's lines into ordered chatTurns. Each
+// codexParseRollout normalizes a codex rollout's lines into ordered transcript.Turns. Each
 // turn keeps its ABSOLUTE line index as Idx (a stable React key, and the unit the
 // generic windower pages over). session_meta seeds the cwd/branch shown as a context
 // line; token_count events attach usage to the preceding assistant turn so the chat's
 // context gauge works the same as claude's.
-func codexParseRollout(lines [][]byte) ([]chatTurn, []taskItem) {
+func codexParseRollout(lines [][]byte) ([]transcript.Turn, []transcript.Task) {
 	turns, tasks, _, _ := codexParseRolloutFull(lines)
 	return turns, tasks
 }
@@ -81,9 +83,9 @@ func codexParseRollout(lines [][]byte) ([]chatTurn, []taskItem) {
 // codexParseRolloutFull is codexParseRollout plus the currently-pending question
 // (request_user_input awaiting an answer), split out so readCodexTranscript can surface
 // it while the two-value form stays convenient for tests.
-func codexParseRolloutFull(lines [][]byte) ([]chatTurn, []taskItem, []chatQuestion, string) {
-	var turns []chatTurn
-	var tasks []taskItem
+func codexParseRolloutFull(lines [][]byte) ([]transcript.Turn, []transcript.Task, []transcript.Question, string) {
+	var turns []transcript.Turn
+	var tasks []transcript.Task
 	var cwd, branch, model, effort, mode string
 	lastAssistant := -1           // index of the most recent assistant turn (for usage)
 	callTurn := map[string]int{}  // function_call call_id -> its tool/question turn index
@@ -161,7 +163,7 @@ func codexParseRolloutFull(lines [][]byte) ([]chatTurn, []taskItem, []chatQuesti
 	// function_call is already in the rollout, so drop that turn from the transcript
 	// (it's surfaced interactively as pending instead) to avoid showing it twice — once
 	// answered it stays in the transcript as a normal answered question block.
-	var pending []chatQuestion
+	var pending []transcript.Question
 	for i := len(askCalls) - 1; i >= 0; i-- {
 		id := askCalls[i]
 		if answered[id] {
@@ -193,10 +195,10 @@ func codexTurnMode(payload json.RawMessage) string {
 	return "normal"
 }
 
-// codexQuestions parses request_user_input's arguments into chatQuestions. codex's
+// codexQuestions parses request_user_input's arguments into transcript.Questions. codex's
 // schema mirrors AskUserQuestion (questions[]{question,header,options}); a flatter
 // {question,options} form is also accepted. Returns nil when neither is present.
-func codexQuestions(payload json.RawMessage) []chatQuestion {
+func codexQuestions(payload json.RawMessage) []transcript.Question {
 	var p struct {
 		Arguments string `json:"arguments"`
 	}
@@ -204,14 +206,14 @@ func codexQuestions(payload json.RawMessage) []chatQuestion {
 		return nil
 	}
 	var multi struct {
-		Questions []chatQuestion `json:"questions"`
+		Questions []transcript.Question `json:"questions"`
 	}
 	if json.Unmarshal([]byte(p.Arguments), &multi) == nil && len(multi.Questions) > 0 {
 		return multi.Questions
 	}
-	var one chatQuestion
+	var one transcript.Question
 	if json.Unmarshal([]byte(p.Arguments), &one) == nil && (one.Question != "" || len(one.Options) > 0) {
-		return []chatQuestion{one}
+		return []transcript.Question{one}
 	}
 	return nil
 }
@@ -254,11 +256,11 @@ func codexTurnModel(payload json.RawMessage) (model, effort string) {
 	return m.Model, effort
 }
 
-// codexParseResponseItem turns one response_item payload into a chatTurn, returning the
+// codexParseResponseItem turns one response_item payload into a transcript.Turn, returning the
 // function_call's call_id (when it is one) so its later output can be attached. ok is
 // false for non-displayable items (developer/system messages, tool outputs, an
 // injected-context user turn); those are handled by the caller (plan / call output).
-func codexParseResponseItem(payload json.RawMessage, ts string, idx int, cwd, branch string) (chatTurn, string, bool) {
+func codexParseResponseItem(payload json.RawMessage, ts string, idx int, cwd, branch string) (transcript.Turn, string, bool) {
 	var p struct {
 		Type    string `json:"type"`
 		Role    string `json:"role"`
@@ -270,12 +272,12 @@ func codexParseResponseItem(payload json.RawMessage, ts string, idx int, cwd, br
 		} `json:"content"`
 	}
 	if json.Unmarshal(payload, &p) != nil {
-		return chatTurn{}, "", false
+		return transcript.Turn{}, "", false
 	}
 	switch p.Type {
 	case "message":
 		if p.Role != "user" && p.Role != "assistant" {
-			return chatTurn{}, "", false // developer/system instructions — noise
+			return transcript.Turn{}, "", false // developer/system instructions — noise
 		}
 		var sb strings.Builder
 		for _, c := range p.Content {
@@ -287,39 +289,39 @@ func codexParseResponseItem(payload json.RawMessage, ts string, idx int, cwd, br
 		}
 		text := strings.TrimSpace(sb.String())
 		if text == "" {
-			return chatTurn{}, "", false
+			return transcript.Turn{}, "", false
 		}
 		if p.Role == "user" && codexIsWrapper(text) {
-			return chatTurn{}, "", false // an injected-context user turn, not a prompt
+			return transcript.Turn{}, "", false // an injected-context user turn, not a prompt
 		}
-		return chatTurn{
-			Role: p.Role, Parts: []chatPart{{Kind: "text", Text: text}}, Text: text,
+		return transcript.Turn{
+			Role: p.Role, Parts: []transcript.Part{{Kind: "text", Text: text}}, Text: text,
 			Idx: idx, TS: ts, Cwd: cwd, Branch: branch,
 		}, "", true
 	case "reasoning":
 		// codex's chain-of-thought summary — shown as a collapsible thinking block (like
 		// claude's thinking). Encrypted-only reasoning (no summary text) is skipped.
 		if txt := codexReasoningText(payload); txt != "" {
-			return chatTurn{
-				Role: "assistant", Parts: []chatPart{{Kind: "thinking", Text: txt}}, Text: "",
+			return transcript.Turn{
+				Role: "assistant", Parts: []transcript.Part{{Kind: "thinking", Text: txt}}, Text: "",
 				Idx: idx, TS: ts, Cwd: cwd, Branch: branch,
 			}, "", true
 		}
-		return chatTurn{}, "", false
+		return transcript.Turn{}, "", false
 	case "function_call":
 		// A tool call: a faint trace on the assistant side (the Console merges it into the
 		// adjacent assistant block); its output is attached when the matching
 		// function_call_output arrives. update_plan is not a trace — it feeds the ToDo list.
 		if p.Name == "update_plan" {
-			return chatTurn{}, "", false
+			return transcript.Turn{}, "", false
 		}
 		// request_user_input is codex's AskUserQuestion: render as a question block, and
 		// (when still unanswered) surface as the pending question. call_id lets its answer
 		// attach when the output arrives.
 		if p.Name == "request_user_input" {
 			if qs := codexQuestions(payload); len(qs) > 0 {
-				return chatTurn{
-					Role: "assistant", Parts: []chatPart{{Kind: "question", Tool: "request_user_input", Questions: qs}},
+				return transcript.Turn{
+					Role: "assistant", Parts: []transcript.Part{{Kind: "question", Tool: "request_user_input", Questions: qs}},
 					Idx: idx, TS: ts, Cwd: cwd, Branch: branch,
 				}, p.CallID, true
 			}
@@ -328,12 +330,12 @@ func codexParseResponseItem(payload json.RawMessage, ts string, idx int, cwd, br
 		if name == "" {
 			name = "tool"
 		}
-		return chatTurn{
-			Role: "assistant", Parts: []chatPart{{Kind: "tool", Tool: name, Info: codexToolInfo(payload)}},
+		return transcript.Turn{
+			Role: "assistant", Parts: []transcript.Part{{Kind: "tool", Tool: name, Info: codexToolInfo(payload)}},
 			Idx: idx, TS: ts, Cwd: cwd, Branch: branch,
 		}, p.CallID, true
 	}
-	return chatTurn{}, "", false
+	return transcript.Turn{}, "", false
 }
 
 // codexReasoningText extracts the human-readable reasoning from a reasoning payload:
@@ -410,7 +412,7 @@ func codexParseCallOutput(payload json.RawMessage) (callID, output string) {
 // codexParsePlan turns an update_plan function_call into the current ToDo list. codex
 // resends the whole plan each call (like claude's TodoWrite), so the latest wins.
 // Returns nil for non-update_plan payloads.
-func codexParsePlan(payload json.RawMessage) []taskItem {
+func codexParsePlan(payload json.RawMessage) []transcript.Task {
 	var p struct {
 		Type string `json:"type"`
 		Name string `json:"name"`
@@ -428,13 +430,13 @@ func codexParsePlan(payload json.RawMessage) []taskItem {
 	if json.Unmarshal([]byte(p.Args), &in) != nil || len(in.Plan) == 0 {
 		return nil
 	}
-	out := make([]taskItem, 0, len(in.Plan))
+	out := make([]transcript.Task, 0, len(in.Plan))
 	for i, s := range in.Plan {
 		st := s.Status
 		if st == "" {
 			st = "pending"
 		}
-		out = append(out, taskItem{ID: strconv.Itoa(i + 1), Subject: s.Step, Status: st})
+		out = append(out, transcript.Task{ID: strconv.Itoa(i + 1), Subject: s.Step, Status: st})
 	}
 	return out
 }

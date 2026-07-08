@@ -20,6 +20,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
 
 const (
@@ -92,7 +93,7 @@ func titleGenDone(name string, ok bool) {
 // goroutine exists anywhere else in this package). Callers must have already
 // checked the cheap sessionMeta fields (Title == "", SuggestedTitle == "",
 // !SuggestedTitleDismissed) and autoTitleSuggestEnabled() before computing turns.
-func maybeSuggestTitle(name string, turns []chatTurn, idleFor time.Duration) {
+func maybeSuggestTitle(name string, turns []transcript.Turn, idleFor time.Duration) {
 	if len(turns) < minTitleSuggestTurns || idleFor < titleIdleThreshold {
 		return
 	}
@@ -106,7 +107,7 @@ func maybeSuggestTitle(name string, turns []chatTurn, idleFor time.Duration) {
 // re-reads the meta itself (not the caller's snapshot) because the LLM call can take
 // tens of seconds, during which the user may have set a title / the suggestion may
 // already have been resolved.
-func generateSessionTitle(name string, turns []chatTurn) {
+func generateSessionTitle(name string, turns []transcript.Turn) {
 	ok := false
 	defer func() { titleGenDone(name, ok) }()
 
@@ -140,7 +141,7 @@ const titleSuggestPersona = "あなたはセッションの会話ログを読み
 // wide with AF_TITLE_MODEL.
 func titleModel() string { return envOr("AF_TITLE_MODEL", "haiku") }
 
-func runTitleSuggestLLM(ctx context.Context, turns []chatTurn) (string, error) {
+func runTitleSuggestLLM(ctx context.Context, turns []transcript.Turn) (string, error) {
 	args := []string{"-p", "--output-format", "json", "--dangerously-skip-permissions",
 		"--append-system-prompt", titleSuggestPersona, "--model", titleModel()}
 	args = append(args, chatToolLimits()...) // no subagents/file/bash — pure text in/out
@@ -174,8 +175,8 @@ const (
 // titleSuggestPrompt feeds the opening and the most recent real exchanges (skipping
 // sidechain/compaction/tool-only turns), weighting the recent topic — so the title
 // tracks where the conversation is now, not just where it started.
-func titleSuggestPrompt(turns []chatTurn) string {
-	real := make([]chatTurn, 0, len(turns))
+func titleSuggestPrompt(turns []transcript.Turn) string {
+	real := make([]transcript.Turn, 0, len(turns))
 	for _, t := range turns {
 		if t.Sidechain || t.Compact || t.Text == "" {
 			continue
@@ -197,8 +198,8 @@ func titleSuggestPrompt(turns []chatTurn) string {
 
 // writeConversationWindow appends the opening + most recent real turns (head/tail
 // windowing, per-turn length cap), shared by the title and branch-name prompts.
-func writeConversationWindow(b *strings.Builder, real []chatTurn) {
-	writeTurn := func(t chatTurn) {
+func writeConversationWindow(b *strings.Builder, real []transcript.Turn) {
+	writeTurn := func(t transcript.Turn) {
 		text := t.Text
 		if r := []rune(text); len(r) > titlePerTurnRunes {
 			text = string(r[:titlePerTurnRunes]) + "…"
@@ -225,8 +226,8 @@ func writeConversationWindow(b *strings.Builder, real []chatTurn) {
 // steered the model to reply in Japanese, which cleanBranchName then stripped to ""):
 // it instructs an English kebab-case name even when the conversation is Japanese, with
 // English few-shot anchors.
-func branchSuggestPrompt(turns []chatTurn) string {
-	real := make([]chatTurn, 0, len(turns))
+func branchSuggestPrompt(turns []transcript.Turn) string {
+	real := make([]transcript.Turn, 0, len(turns))
 	for _, t := range turns {
 		if t.Sidechain || t.Compact || t.Text == "" {
 			continue
@@ -309,7 +310,7 @@ var (
 // backoff guard (titleGenClaim/titleGenDone) used by the automatic trigger too, so
 // a manual request and a concurrent automatic one can't double-fire for the same
 // session.
-func generateTitleNow(ctx context.Context, name string, turns []chatTurn) (string, error) {
+func generateTitleNow(ctx context.Context, name string, turns []transcript.Turn) (string, error) {
 	if len(turns) == 0 {
 		return "", errNoTitleContent
 	}
@@ -466,7 +467,7 @@ const branchSuggestPersona = "You name git branches. Read the conversation log a
 // runBranchSuggestLLM asks the title model for a git-safe branch name from the
 // conversation, then hard-sanitizes the reply so a chatty model can't produce an
 // invalid ref/folder segment.
-func runBranchSuggestLLM(ctx context.Context, turns []chatTurn) (string, error) {
+func runBranchSuggestLLM(ctx context.Context, turns []transcript.Turn) (string, error) {
 	args := []string{"-p", "--output-format", "json", "--dangerously-skip-permissions",
 		"--append-system-prompt", branchSuggestPersona, "--model", titleModel()}
 	args = append(args, chatToolLimits()...)
@@ -607,7 +608,7 @@ func handleSessionRenameBranch(w http.ResponseWriter, r *http.Request) {
 // sessionTitleTurns fetches the full turn list for a session regardless of kind,
 // for the manual regenerate action (which needs the whole conversation, not a
 // poll window).
-func sessionTitleTurns(m sessionMeta) []chatTurn {
+func sessionTitleTurns(m sessionMeta) []transcript.Turn {
 	if m.Kind == kindClaude {
 		sid := sessionUUID(m.Dir, m.Name)
 		lines, _, _ := transcriptRead(sid)

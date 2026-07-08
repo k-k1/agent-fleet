@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fstore"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
 
 // dirGoneErr is the "can't (re)launch — working dir removed" error shared by the
@@ -84,7 +85,7 @@ type Agent interface {
 	// no resume state (shell/ssm).
 	clearResume(sid string)
 	// transcript returns the session's full chronological chat turns (normalized to the
-	// common chatTurn model) plus diagnostics and the reconstructed ToDo list, for agents
+	// common transcript.Turn model) plus diagnostics and the reconstructed ToDo list, for agents
 	// whose native store isn't claude's <sid>.jsonl (codex rollout, opencode SQLite).
 	// ok=false means the agent has no generic transcript source — claude uses its own
 	// jsonl path in handleSessionMessages instead. The generic /messages handler windows
@@ -96,9 +97,9 @@ type Agent interface {
 // chronological turns, the source path (diagnostics), and the current ToDo list
 // (reconstructed from the agent's plan/todo state; nil when none).
 type transcriptData struct {
-	turns []chatTurn
+	turns []transcript.Turn
 	path  string
-	tasks []taskItem
+	tasks []transcript.Task
 	// mode is the agent's current permission/collaboration mode, normalized to "plan"
 	// (plan mode) or "normal", so the Console can show the plan indicator and drive the
 	// plan-mode toggle. "" when unknown.
@@ -106,7 +107,7 @@ type transcriptData struct {
 	// pending is the question the agent is currently awaiting an answer to (codex
 	// request_user_input / opencode question tool), or nil. Surfaced like claude's
 	// pendingQuestions so the Console can render it interactively.
-	pending []chatQuestion
+	pending []transcript.Question
 }
 
 // noGenericTranscript is the transcript() default for agents that either have no
