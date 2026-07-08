@@ -11,6 +11,8 @@ import { useWorkspaceStore, startWorkspacePolling } from "../core/store/workspac
 import { useLayoutStore, wireLayoutHistory } from "../layout/store.ts";
 import { wireTerminalReconcile } from "../terminal/service.ts";
 import { useSessionsStore, startSessionsPolling } from "../features/sessions/store.ts";
+import { SessionModals } from "../features/sessions/SessionModals.tsx";
+import { useSessionNotifications } from "../features/sessions/useSessionNotifications.ts";
 import { useReposStore } from "../features/repos/store.ts";
 import { useFilesStore } from "../features/files/store.ts";
 import { useChatStore } from "../features/chat/store.ts";
@@ -18,11 +20,10 @@ import { hydrateUIPrefs } from "../lib/settings.ts";
 import { MOBILE_QUERY } from "../lib/device.ts";
 import { PaneHost } from "../features/panes/PaneHost.tsx";
 import { LayoutMap } from "../features/panes/LayoutMap.tsx";
-import { SessionsSection } from "../features/sessions/SessionsSection.tsx";
-import { ReposSection } from "../features/repos/ReposSection.tsx";
-import { FilesSection } from "../features/files/FilesSection.tsx";
 import { AssistantSection } from "../features/chat/AssistantSection.tsx";
 import { MemoQueueSection } from "../features/memo/MemoQueueSection.tsx";
+import { ProjectTree } from "../features/project/ProjectTree.tsx";
+import { OtherSessionsSection } from "../features/project/OtherSessionsSection.tsx";
 import { WsBar } from "./WsBar.tsx";
 import { TopBar } from "./TopBar.tsx";
 import { useSettingsUI, wireSettingsHistory } from "../features/settings/store.ts";
@@ -236,6 +237,10 @@ export function App() {
     if (newSessionTick > 0 && window.matchMedia(MOBILE_QUERY).matches) setNavOpen(true);
   }, [newSessionTick]);
 
+  // Desktop notifications on claude state arrivals — lives at the shell now that
+  // the flat Sessions section no longer owns the rail.
+  useSessionNotifications();
+
   return (
     <div
       className={
@@ -250,13 +255,15 @@ export function App() {
       <div className="app-body">
         <nav className="app-rail">
           <LayoutMap />
-          {/* Same order as the old LeftPane: Sessions / Assistant / Repos / Memo / Files. */}
+          {/* Project-first IA: Assistant + Memo pinned on top (global tools), then
+              the working-copy tree (each node nests its sessions + files), then the
+              repo-less session catch-all. Files are per-node now (ProjectFiles),
+              so there's no global Files section. */}
           <div className="app-rail-scroll">
-            <SessionsSection />
             <AssistantSection />
-            <ReposSection />
             <MemoQueueSection />
-            <FilesSection />
+            <ProjectTree />
+            <OtherSessionsSection />
           </div>
         </nav>
         {/* Dims the main area and dismisses the pane: the mobile drawer, and the
@@ -274,6 +281,7 @@ export function App() {
       </div>
       {settingsOpen && <SettingsDialog />}
       {adminOpen && <AdminDialog />}
+      <SessionModals />
     </div>
   );
 }
