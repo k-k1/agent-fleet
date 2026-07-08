@@ -5,8 +5,8 @@
 バックエンド（CP / Agent）は一切触らない。
 
 > ステータス: **P0〜P8 完了 — スワップ済み**（2026-07-08、branch `rebuild/console`）。`index.html` が新コンソール、
-> 旧コード（state.tsx / components/ / views/ / settings/ / styles.css / 旧 App・main）は削除済み。`next.html` は同一アプリの
-> エイリアスとして暫定残置（ブックマーク救済、後日削除可）。api.ts→`core/api/client.ts`、term.ts→`terminal/term.ts`、
+> 旧コード（state.tsx / components/ / views/ / settings/ / styles.css / 旧 App・main）は削除済み。スワップ時の暫定エイリアス
+> `next.html`（+ vite multi-entry の `next` 入力）も撤去済み（`index.html` 単一エントリ）。api.ts→`core/api/client.ts`、term.ts→`terminal/term.ts`、
 > viewport→`app/`、FileIcon→`ui/` に吸収済み。チェックリストは全数 ✔（機能はコード検証、外観はフェーズ毎のユーザー目視）。
 > 決定の要約は [decisions/0011-console-rebuild.md](decisions/0011-console-rebuild.md)。
 >

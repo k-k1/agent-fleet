@@ -78,11 +78,10 @@ workspace/          Workspace イメージ
                     fs/secrets/session_status/ui_prefs ほか。HTTP:/sessions・/repos・/connections・/fs・/env, WS:/ws/pty。
 control-plane/      Control Plane(Go)。main/runtime/proxy/manager/store(_sqlite)/custodian/tenants/oauth_bitbucket。
   migrations/       0001_init 〜 0005_session。`//go:embed` 冪等マイグレータ。
-console/            React+Vite Console（src/→console/dist）。旧 vanilla は console/legacy-phase1/。
+console/            React+Vite Console（src/→console/dist）。
 deploy/local/run-dev.sh   dev 一括起動（image+CP build+起動）。provision-jvm.sh 共有 JVM 展開。
 deploy/local/restart-cp.sh  CP/Console だけ軽量反映（image 再ビルドなしで af-cp をその場再起動）。
 docs/               reference/(設計) + decisions/(ADR) + roadmap.md + history/(済プラン) + 本書 + CHANGELOG-handoff。
-phase0/             /login 検証 PoC(参考)。
 ```
 
 API/契約は [06](reference/api-agent.md)・[07](reference/api-agent.md)。CP↔Agent は内部HTTP/WS（per-container `AGENT_TOKEN` で Bearer 認証、§6.8 A2）。
@@ -215,7 +214,7 @@ CP のルーティングが user→対象コンテナを解決するだけ。
 **2026-07-08 に docs/22 のリビルド版へスワップ済み**（機能パリティ維持・zustand ドメインストア・features/ 凝集）。
 構造: `src/{app(シェル・バー類), core(api/client.ts=旧 api.ts 吸収・store/tenant|workspace), layout(純関数エンジン+vitest 34件),
 terminal(term.ts+service), ui(プリミティブ+FileIcon), features/(sessions|repos|files|scm|viewer|chat|mirror|memo|settings), styles(tokens/base), lib, agents, types}`。
-旧 God-context（state.tsx）・components/・views/・styles.css は削除。`next.html` は同一アプリのエイリアス（暫定）。
+旧 God-context（state.tsx）・components/・views/・styles.css は削除。スワップ暫定の `next.html` エイリアスも撤去済み（`index.html` 単一エントリ）。
 残債（動作影響なし）: MirrorView 解体・抽出 CSS の未使用刈り・legacy button compat の ui/Button 化 — docs/22 のステータス欄参照。
 `run-dev.sh` が `NODE_OPTIONS=--max-old-space-size=3072 npm run build`（mermaid で heap OOM 回避）し `CONSOLE_DIR=console/dist`。
 **フロントだけの調整は `npm --prefix console run dev`（=`vite build --watch`）→ リロードで反映、CP 再起動不要**。

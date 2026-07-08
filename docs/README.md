@@ -12,6 +12,13 @@
 | 意思決定（なぜ）| [decisions/](decisions/) | 採否の記録・捨てた選択肢（追記型・不変）|
 | 使い終わった計画 | [history/](history/) | 完了済みフェーズの実装プラン（記録）|
 
+## 機能設計（番号付き）— 個別機能の設計・検討
+
+- [19-assistant-chat.md](19-assistant-chat.md) — アシスタント・チャット（ヘッドレス CLI 方式）
+- [20-container-audit-egress.md](20-container-audit-egress.md) — コンテナ内操作の監査ログ & egress 統制（設計検討）
+- [21-memo-queue.md](21-memo-queue.md) — メモキュー（溜めて一括でセッションへ送る）
+- [22-console-rebuild.md](22-console-rebuild.md) — Console リビルド（機能パリティ・React+Vite 続投）
+
 ## reference/ — 不変の設計・契約
 
 - [requirements.md](reference/requirements.md) — 用語、機能要件、非機能要件、確定/未決
@@ -19,6 +26,7 @@
 - [api-agent.md](reference/api-agent.md) — API 表面の地図 + Workspace Agent 設計（契約はコードが正）
 - [portability.md](reference/portability.md) — ポート&アダプタ（local/aws 両対応）
 - [security.md](reference/security.md) — 脅威モデル、隔離境界、シークレット管理（封筒暗号）
+- [auth.md](reference/auth.md) — Tailscale Funnel + CP ネイティブ Google OAuth 構成
 - [preview.md](reference/preview.md) — コンテナ内サービスのプレビュー（/preview/{port} 経路）
 - [aws.md](reference/aws.md) — AWS 構成、ネットワーク、コスト試算
 - [internal-git-provider.md](reference/internal-git-provider.md) — テナント内部 git プロバイダ（bare + smart-HTTP）**P1実装済み**
@@ -47,4 +55,12 @@
 - [p3-4-quota.md](history/p3-4-quota.md) — リソースバジェット/クォータ
 - [p3-5-member-console.md](history/p3-5-member-console.md) — メンバー Console UX
 - [console-redesign.md](history/console-redesign.md) — Console UI 刷新ブリーフ
+- [console-redesign-backlog.md](history/console-redesign-backlog.md) — Console UX 刷新の残作業バックログ（実装済）
 - [p3-6-mcp.md](history/p3-6-mcp.md) — MCP（管理面+作業面を一体・E 駆動）実装プラン（◐ 段1=member/drive 完了・ライブ / admin ツール残）
+- [p3-7-aws-adapter.md](history/p3-7-aws-adapter.md) — P3-7: AWS デプロイ先アダプタ（ECS）実装プラン
+- [p3-9-idle-stop.md](history/p3-9-idle-stop.md) — P3-9: アイドル自動停止（scale-to-zero, 二段構え）
+- [p3-9-showback.md](history/p3-9-showback.md) — P3-9: showback（社内使用量の可視化）実装記録
+- [p3-10-packaging.md](history/p3-10-packaging.md) — P3-10: パッケージング & 配布 & アップグレード（設計プラン）
+- [agent-cli-self-update.md](history/agent-cli-self-update.md) — エージェント CLI の自己更新（opt-in + 運用者ゲート）
+- [chat-opencode-codex.md](history/chat-opencode-codex.md) — チャット（MirrorView）を codex / opencode へ汎化
+- [fork-from-chat.md](history/fork-from-chat.md) — チャット履歴からの会話 fork（ワンクリック分岐）

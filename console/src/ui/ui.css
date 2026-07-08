@@ -58,35 +58,6 @@
   padding: 3px 6px;
 }
 
-/* ---- Pill ---- */
-.ui-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  border-radius: 999px;
-  padding: 1px 8px;
-  font-size: 12px;
-  line-height: 1.5;
-  color: var(--muted);
-  background: color-mix(in srgb, var(--muted) 14%, transparent);
-}
-.ui-pill-ok {
-  color: var(--ok);
-  background: color-mix(in srgb, var(--ok) 14%, transparent);
-}
-.ui-pill-warn {
-  color: var(--warn);
-  background: color-mix(in srgb, var(--warn) 14%, transparent);
-}
-.ui-pill-danger {
-  color: var(--del);
-  background: color-mix(in srgb, var(--del) 14%, transparent);
-}
-.ui-pill-accent {
-  color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
-}
-
 /* ---- EmptyState ---- */
 .ui-empty {
   display: flex;
