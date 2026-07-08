@@ -1,11 +1,11 @@
 // WS bar — ported from the old components/WsBar.tsx (docs/22 P6a). Verbatim
 // except the useApp() reads, which map onto the zustand stores:
-//   wsState/startWs/stopWs/ocweb → core/store/workspace
+//   wsState/startWs/stopWs       → core/store/workspace
 //   tenant/superAdmin            → core/store/tenant
 //   layout/splitRight/splitDown/resetToTerminal/activePaneId → layout/store
 //   openNewSession               → features/sessions/store (tick signal)
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, previewURL, ocwebURL } from "../core/api/client.ts";
+import { api, previewURL } from "../core/api/client.ts";
 import { useTenantStore } from "../core/store/tenant.ts";
 import { useWorkspaceStore, wsBusy } from "../core/store/workspace.ts";
 import { useLayoutStore } from "../layout/store.ts";
@@ -378,7 +378,6 @@ export function WsBar() {
   const wsState = useWorkspaceStore((s) => s.state);
   const startWs = useWorkspaceStore((s) => s.start);
   const stopWs = useWorkspaceStore((s) => s.stop);
-  const ocweb = useWorkspaceStore((s) => s.ocweb);
   const tenant = useTenantStore((s) => s.tenant);
   const superAdmin = useTenantStore((s) => s.superAdmin);
   const layout = useLayoutStore((s) => s.layout);
@@ -547,34 +546,8 @@ export function WsBar() {
     </>
   );
 
-  // opencode web (a known service on a fixed port) and an arbitrary port share one
-  // "open a container service in a new tab" popover, so there's a single entry point
-  // instead of two 🌐 buttons. The known app sits above the free-form port input.
-  const ocwebRow = ocweb && ocweb.available && ocweb.enabled && (
-    <div className="pv-section">
-      <label className="pv-label">アプリ</label>
-      <button
-        className="ghost pv-app"
-        disabled={!running || !ocweb.running}
-        title={ocweb.running ? "opencode web を新しいタブで開く" : "opencode web 起動中…"}
-        onClick={() => {
-          if (!ocweb.running) return;
-          window.open(ocwebURL(), "_blank", "noopener");
-          setPvOpen(false);
-          setMoreOpen(false);
-        }}
-      >
-        <span>
-          <Icon name="globe" /> opencode web
-        </span>
-        {ocweb.running ? <span aria-hidden="true">↗</span> : <span className="muted">起動中…</span>}
-      </button>
-    </div>
-  );
-
   const previewPop = (
     <>
-      {ocwebRow}
       <div className="pv-section">
         <label className="pv-label">ポートを指定して開く</label>
         <div className="pv-row">
