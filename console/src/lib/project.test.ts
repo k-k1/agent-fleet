@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import type { Repo } from "../features/repos/store.ts";
 import type { Session } from "../types/session.ts";
-import { sessionFolder, orderedRepos, sessionsInFolder, orphanSessions } from "./project.ts";
+import { sessionFolder, orderedRepos, groupedRepos, sessionsInFolder, orphanSessions } from "./project.ts";
 
 const repo = (name: string, extra: Partial<Repo> = {}): Repo => ({ name, ...extra });
 const wt = (name: string, parent: string, extra: Partial<Repo> = {}): Repo => ({
@@ -46,6 +46,23 @@ describe("orderedRepos", () => {
   });
   it("returns [] for no repos", () => {
     expect(orderedRepos([])).toEqual([]);
+  });
+});
+
+describe("groupedRepos", () => {
+  it("clusters each base with its worktrees; orphan worktree is its own group", () => {
+    const repos = [
+      wt("af@wip-b", "agent-fleet"),
+      repo("zzz"),
+      repo("agent-fleet"),
+      wt("af@wip-a", "agent-fleet"),
+      wt("orphan@wt", "deleted-base"),
+    ];
+    expect(groupedRepos(repos).map((g) => g.map((r) => r.name))).toEqual([
+      ["agent-fleet", "af@wip-a", "af@wip-b"],
+      ["zzz"],
+      ["orphan@wt"],
+    ]);
   });
 });
 
