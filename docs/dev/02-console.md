@@ -6,7 +6,7 @@
 
 React 19 + Vite 6 + TypeScript + zustand 5 の SPA。CP が `console/dist` を静的配信し（[05 §5.4](05-api-contracts.md)）、
 バックエンドとは `/api` REST・SSE・`/ws/terminal` のみで会話する。2026-07 に機能パリティを保った全面リビルド
-（[../22-console-rebuild.md](../22-console-rebuild.md)）で God-context 構造を廃した — 経緯と決定は
+（[../22-console-rebuild.md](../history/22-console-rebuild.md)）で God-context 構造を廃した — 経緯と決定は
 [decisions/0011](../decisions/0011-console-rebuild.md)。設計原則:
 
 - **ドメイン別 zustand ストア + selector 購読**。単一 Context・`bump*()` カウンタ・ref ミラーは全廃（§2.3）。
@@ -135,7 +135,7 @@ React 19 + Vite 6 + TypeScript + zustand 5 の SPA。CP が `console/dist` を�
 
 ## 2.8 残債（動作影響なし・随時解消）
 
-[../22-console-rebuild.md](../22-console-rebuild.md) のステータス欄が正。要点:
+[../22-console-rebuild.md](../history/22-console-rebuild.md) のステータス欄が正。要点:
 
 - MirrorView 解体（transcript パーサ純関数化 + ブロック分解）— 忠実移植のまま。CommitGraph / GitDiff / ビュアー群も verbatim。
 - 抽出 CSS（viewer / mirror / chat / settings 等）の未使用セレクタ刈り。

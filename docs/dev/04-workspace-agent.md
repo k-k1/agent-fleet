@@ -74,7 +74,7 @@ Console は 4 秒ポーリングで ● 進行中 / ❓ 質問 / ✓ 入力待�
 
 ## 4.5 チャット・アシスタント面（headless CLI）
 
-設計の全容は [docs/19](../19-assistant-chat.md)。要点:
+設計の全容は [docs/19](../history/19-assistant-chat.md)。要点:
 
 - **チャットは tmux セッションではない**。Agent 内の並列サブシステムで、`claude -p`（headless）を
   会話ストア（`~/.config/agent-fleet/chats/<id>.json`）と組で駆動。ストリームは SSE（[05 §5.3](05-api-contracts.md)）。

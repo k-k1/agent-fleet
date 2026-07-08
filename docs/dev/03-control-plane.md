@@ -86,7 +86,7 @@ CP は tmux にも working copy にも直接触れず必ず Agent 経由で操�
 
 ## 3.6 memo キュー
 
-「溜めて一括でセッションへ送る」メモ（確定仕様は [docs/21](../21-memo-queue.md)、テーブルは [06](06-data-model.md)）。
+「溜めて一括でセッションへ送る」メモ（確定仕様は [docs/21](../history/21-memo-queue.md)、テーブルは [06](06-data-model.md)）。
 実装済み・main マージ済み（CP CRUD / flush / 整理用 `/api/chat/ask` 露出 / Console UI の全フェーズ。
 docs/21 冒頭の「未実装」注記は設計時点のもの）。
 
