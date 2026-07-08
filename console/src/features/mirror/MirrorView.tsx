@@ -685,11 +685,14 @@ export function MirrorView({
     });
   };
 
-  // A multi-question or multi-select AskUserQuestion can't be answered by free text:
-  // the modal takes a typed answer as an immediate whole-tool submit, mis-selecting the
-  // first option and dropping the rest. Lock the composer for those and steer the user to
-  // the option cards (a single-select single question still accepts free text).
-  const auqLocksComposer = !!pending && (pending.length > 1 || pending.some((q) => q?.multiSelect));
+  // An AskUserQuestion can't be answered by the composer's free text — verified by hand:
+  // claude's modal treats typed characters as an OPTION FILTER, so arbitrary text that
+  // matches no option is dropped and the Enter selects the highlighted (first) option.
+  // (The earlier belief that a single-select single question accepts composer free text
+  // was wrong; it silently lost the text and mis-selected option 1.) Lock the composer for
+  // ANY pending question and steer the user to the card — its "または自由入力" row drives the
+  // modal correctly (navigate to the "Type something" row, then type).
+  const auqLocksComposer = !!pending;
   // A pending plan approval or permission prompt is a menu decision, NOT a free-text turn:
   // sending would type text + Enter, and that Enter selects the menu's default (= 承認 /
   // 許可), silently confirming it. A mode toggle would likewise mis-key the menu. So lock
@@ -1205,7 +1208,7 @@ export function MirrorView({
                   ? "プラン承認待ち：上のカードで承認 / 却下してください"
                   : "許可待ち：上のカードで応答してください"
                 : auqLocksComposer
-                  ? "複数質問は上のカードから回答してください（自由入力は無効）"
+                  ? "上のカードから回答してください（自由入力はカード内の欄へ）"
                   : modSend
                     ? "プロンプトを入力（Ctrl+Enter で送信 / Enter で改行）"
                     : "プロンプトを入力（Enter で送信 / Shift+Enter で改行）"
@@ -1953,7 +1956,11 @@ function PendingQuestions({
               );
             })}
           </div>
-          {!single && !menu && (
+          {!menu && (
+            // Free-text ("Type something") — rendered for single questions too: the
+            // composer can't answer an AUQ (it mis-selects option 1), so this in-card row,
+            // driven via submit()'s reliable Down-to-the-row-then-type sequence, is the
+            // only working free-text path. Options above still click-to-send for single.
             <textarea
               className="mq-freetext"
               rows={2}
@@ -1965,7 +1972,9 @@ function PendingQuestions({
           )}
         </div>
       ))}
-      {!single && !menu && (
+      {!menu && (
+        // For a single question the options click-to-send, so canSubmit is only true once
+        // free text is typed — the button then submits that via submit()'s free-text path.
         <div className="mq-submit-row">
           <button
             type="button"
