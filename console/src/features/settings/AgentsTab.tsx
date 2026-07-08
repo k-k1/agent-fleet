@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import type { ReactNode } from "react";
-import { api, apiJSON, raw, ocwebURL } from "../../core/api/client.ts";
+import { api, apiJSON, raw } from "../../core/api/client.ts";
 import { EmptyState } from "../../ui/EmptyState.tsx";
 import { Button } from "../../ui/Button.tsx";
 import { Choice, OnOff } from "./controls.tsx";
@@ -24,11 +24,6 @@ export function AgentsTab() {
   // cards below, which need the container's Agent/CLI). 既定モデルは claude 固有なので
   // ClaudeCard 内に置く。
   const s = useSettings();
-  // opencode web state is shared with the WS bar via the app context, so toggling
-  // here updates the bar's "open" entry immediately (and vice-versa).
-  const ocweb = useWorkspaceStore((s) => s.ocweb);
-  const setOcweb = useWorkspaceStore((s) => s.setOcweb);
-  const refreshOcweb = useWorkspaceStore((s) => s.refreshOcweb);
   const wsState = useWorkspaceStore((s) => s.state);
   const startWs = useWorkspaceStore((s) => s.start);
   // Connection auth AND behavior settings both go through the in-container Agent
@@ -52,8 +47,7 @@ export function AgentsTab() {
     api("api/agents/rtk")
       .then((a) => setAgents(a && !a.error ? a : false))
       .catch(() => setAgents(false));
-    refreshOcweb();
-  }, [refreshOcweb]);
+  }, []);
 
   // (Re)load when the workspace is running — including when it transitions
   // stopped→running while this dialog is open, so settings appear without a reopen.
@@ -76,7 +70,6 @@ export function AgentsTab() {
     };
   const updateClaude = mkUpdate("api/claude/settings", setClaude);
   const updateAgents = mkUpdate("api/agents/rtk", setAgents);
-  const updateOcweb = mkUpdate("api/agents/opencode-web", setOcweb);
 
   // Session prefs render in every state (stopped / loading / running) since they're
   // local, not container-backed.
@@ -140,12 +133,10 @@ export function AgentsTab() {
         reload={reload}
         agents={agents}
         updateAgents={updateAgents}
-        ocweb={ocweb}
-        updateOcweb={updateOcweb}
       />
       {agents === false && (
         <p className="ps-note">
-          このワークスペースのイメージはエージェント設定 API（rtk / opencode web）に未対応です。イメージを再ビルドして「作り直す」と有効になります。
+          このワークスペースのイメージはエージェント設定 API（rtk）に未対応です。イメージを再ビルドして「作り直す」と有効になります。
         </p>
       )}
     </div>
@@ -527,15 +518,11 @@ function OpencodeCard({
   reload,
   agents,
   updateAgents,
-  ocweb,
-  updateOcweb,
 }: {
   st: any;
   reload: () => void;
   agents: any;
   updateAgents: (patch: unknown) => void;
-  ocweb: any;
-  updateOcweb: (patch: unknown) => void;
 }) {
   const toast = useToast();
   const [preset, setPreset] = useState("go");
@@ -632,19 +619,6 @@ function OpencodeCard({
             value={agents.opencode_rtk}
             onChange={(v) => updateAgents({ opencode_rtk: v })}
           />
-          {ocweb && ocweb.available && (
-            <SettingRow label="Web UI" sub="ブラウザ版 opencode を serve と同時に起動。全セッションを Web UI で扱えます。">
-              {ocweb.enabled &&
-                (ocweb.running ? (
-                  <button className="ghost" onClick={() => window.open(ocwebURL(), "_blank", "noopener")}>
-                    開く ↗
-                  </button>
-                ) : (
-                  <span className="muted">起動中…</span>
-                ))}
-              <OnOff value={ocweb.enabled} onChange={(v) => updateOcweb({ enabled: v })} />
-            </SettingRow>
-          )}
         </div>
       )}
     </ProviderCard>
