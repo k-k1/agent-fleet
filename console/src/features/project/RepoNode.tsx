@@ -45,7 +45,9 @@ export function RepoNode({ r, ctx, actions }: RepoNodeProps) {
   const mine = sessionsInFolder(sessions, r.name);
   const node = usePersistedOpen(`af-proj-${r.name}`);
   const ses = usePersistedOpen(`af-proj-${r.name}-ses`);
-  const files = usePersistedOpen(`af-proj-${r.name}-files`);
+  // Files default COLLAPSED: a repo's whole tree expanded on load buried everything
+  // below it. Open on demand (and auto-open on a reveal into this folder).
+  const files = usePersistedOpen(`af-proj-${r.name}-files`, false);
   const rootPath = "repos/" + r.name;
 
   // A reveal into this working copy (clone landed here / フォルダを開く) surfaces it:
@@ -61,7 +63,7 @@ export function RepoNode({ r, ctx, actions }: RepoNodeProps) {
   }, [reveal.n]);
 
   return (
-    <li className={"proj-node" + (node.open ? "" : " collapsed")}>
+    <li className={"proj-node" + (node.open ? "" : " collapsed") + (r.worktree ? " wt" : " base")}>
       <div className="proj-node-head">
         <button
           type="button"
