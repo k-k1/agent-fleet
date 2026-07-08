@@ -1,8 +1,11 @@
 package main
 
 import (
+	"fmt"
 	"net/http"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 )
@@ -119,4 +122,88 @@ func lastNonEmptyLines(s string, n int) string {
 		}
 	}
 	return strings.Join(keep, "\n")
+}
+
+// ssmConfigPath is the per-session ~/.aws config file for an SSM session. It is
+// per-session (not shared) so concurrent SSM sessions to different accounts don't
+// clobber each other's AWS_CONFIG_FILE; the SSO token cache stays in the default
+// ~/.aws/sso/cache so one `aws sso login` is reused across sessions of the same
+// portal. The ".aws" tree is denylisted from the file browser (fs.go).
+func ssmConfigPath(name string) string {
+	return filepath.Join(homeDir(), ".aws", "af-sessions", name+".config")
+}
+
+// writeSSMConfig writes an isolated aws config (sso-session + profile) from the
+// non-secret SSM meta. Idempotent — rewritten on every (re)launch. Contains no
+// secrets (only the SSO start URL / account / role).
+func writeSSMConfig(path string, s ssmMeta) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	region := s.Region
+	if region == "" {
+		region = s.SSORegion
+	}
+	ssoName := "af-" + s.Profile
+	var b strings.Builder
+	fmt.Fprintf(&b, "[sso-session %s]\n", ssoName)
+	fmt.Fprintf(&b, "sso_start_url = %s\n", s.StartURL)
+	fmt.Fprintf(&b, "sso_region = %s\n", s.SSORegion)
+	b.WriteString("sso_registration_scopes = sso:account:access\n\n")
+	fmt.Fprintf(&b, "[profile %s]\n", s.Profile)
+	fmt.Fprintf(&b, "sso_session = %s\n", ssoName)
+	if s.AccountID != "" {
+		fmt.Fprintf(&b, "sso_account_id = %s\n", s.AccountID)
+	}
+	if s.RoleName != "" {
+		fmt.Fprintf(&b, "sso_role_name = %s\n", s.RoleName)
+	}
+	if region != "" {
+		fmt.Fprintf(&b, "region = %s\n", region)
+	}
+	return os.WriteFile(path, []byte(b.String()), 0o600)
+}
+
+// buildSSMProgram assembles the pane command for an SSM session: refresh SSO creds
+// only when the cached token is missing/expired (surfacing the login URL in the
+// terminal), then exec start-session. When StartURL is set an isolated aws config is
+// generated; otherwise the profile is assumed to exist in the member's own ~/.aws.
+func buildSSMProgram(name string, s ssmMeta, force bool) (string, error) {
+	var b strings.Builder
+	if s.StartURL != "" && s.Profile != "" {
+		cfg := ssmConfigPath(name)
+		if err := writeSSMConfig(cfg, s); err != nil {
+			return "", err
+		}
+		fmt.Fprintf(&b, "export AWS_CONFIG_FILE=%s; ", shellQuote(cfg))
+	}
+	if s.Profile != "" {
+		fmt.Fprintf(&b, "export AWS_PROFILE=%s; ", shellQuote(s.Profile))
+	}
+	// aws sso login refreshes only when the cached token is missing/expired.
+	// --use-device-code forces the device-authorization grant (user_code + verify URL,
+	// polled) instead of the default authorization-code+PKCE flow, which spins up a
+	// local 127.0.0.1 listener and redirects the browser there — unreachable when the
+	// browser is on the user's machine and the CLI runs in this remote container.
+	// --no-browser prints the URL instead of trying to open a (nonexistent) browser.
+	// Phishing guard: the device-code grant is only safe when the user approves a code
+	// they themselves initiated. Warn right before the URL/code appears. force drops the
+	// cached-token short-circuit (logout+login) so the user can re-authenticate on demand.
+	if force {
+		b.WriteString("echo '[Agent Fleet] 再ログインします（自分で開始したこのログインのみ承認してください）'; " +
+			"aws sso logout >/dev/null 2>&1; aws sso login --use-device-code --no-browser; ")
+	} else {
+		b.WriteString("aws sts get-caller-identity >/dev/null 2>&1 || { " +
+			"echo '[Agent Fleet] 自分で開始したこのログインのみ承認してください（身に覚えのないコード/URL は入力しない）'; " +
+			"aws sso login --use-device-code --no-browser; }; ")
+	}
+	b.WriteString("exec aws ssm start-session")
+	fmt.Fprintf(&b, " --target %s", shellQuote(s.Target))
+	if s.Document != "" {
+		fmt.Fprintf(&b, " --document-name %s", shellQuote(s.Document))
+	}
+	if s.Region != "" {
+		fmt.Fprintf(&b, " --region %s", shellQuote(s.Region))
+	}
+	return b.String(), nil
 }
