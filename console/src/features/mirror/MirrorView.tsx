@@ -1907,9 +1907,13 @@ function PendingQuestions({
           const typeRow = opts.length; // the "Type something" row sits just after the options
           for (let k = 0; k < typeRow - cur; k++) seq.push({ k: "Down" });
           seq.push({ t: ft }); // typing auto-checks the custom row (NO Enter — it would uncheck)
-          seq.push({ k: "Down" }); // exit the field down to the Submit row
+          // Right is swallowed by the text field, so reach the review page the manual way:
+          // Down to the question-page "Submit" row, Enter to activate it (→ review page,
+          // cursor on "Submit answers"). The shared trailing Enter then submits.
+          seq.push({ k: "Down" });
+          seq.push({ k: "Enter" });
         } else {
-          seq.push({ k: "Right" }); // advance to the next question / Submit tab
+          seq.push({ k: "Right" }); // advance to the next question / review (Submit) page
         }
       } else if (ft) {
         // single-select free text: move to the "Type something" row, type, then Enter
