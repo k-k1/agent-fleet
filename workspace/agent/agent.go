@@ -4,8 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
-	"strings"
 )
 
 // dirGoneErr is the "can't (re)launch — working dir removed" error shared by the
@@ -198,41 +196,25 @@ func statusOnlyLive(m sessionMeta, alive bool) liveInfo {
 // --- sid store -----------------------------------------------------------------
 
 // sidStore maps our deterministic slot sid to an agent's own session id, so a slot
-// resumes its OWN conversation. opencode and codex each own a store (differing only
-// by the sub-directory name); the files live under the denylisted .config/agent-fleet.
-// The dir is resolved lazily (homeDir() may be set at runtime) rather than cached.
-type sidStore struct{ sub string }
-
-func (s sidStore) dir() string {
-	return filepath.Join(homeDir(), ".config", "agent-fleet", s.sub)
-}
-
-func (s sidStore) path(sid string) string { return filepath.Join(s.dir(), sid) }
+// resumes its OWN conversation (fstore.go の fileStore に薄い読み口を被せたもの:
+// read は ok を潰して "" を返す — 呼び出し側は空文字を「無し」として扱う)。
+type sidStore struct{ files fileStore[string] }
 
 func (s sidStore) read(sid string) string {
-	b, err := os.ReadFile(s.path(sid))
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(b))
+	v, _ := s.files.read(sid)
+	return v
 }
 
-func (s sidStore) write(sid, val string) {
-	if err := os.MkdirAll(s.dir(), 0o700); err != nil {
-		return
-	}
-	_ = os.WriteFile(s.path(sid), []byte(val), 0o600)
-}
-
-func (s sidStore) remove(sid string) { _ = os.Remove(s.path(sid)) }
+func (s sidStore) write(sid, val string) { _ = s.files.write(sid, val) }
+func (s sidStore) remove(sid string)     { s.files.remove(sid) }
 
 var (
 	// opencode: written externally by the bundled plugin (on session.created, keyed
 	// by AF_SESSION_SID); the agent only reads/removes it.
-	opencodeSids = sidStore{sub: "opencode-sid"}
+	opencodeSids = sidStore{trimmedStringStore("opencode-sid")}
 	// codex: written by the session-status hook from codex's own session_id (codex
 	// has no --session-id flag to pin), read for `codex resume <id>`.
-	codexSids = sidStore{sub: "codex-sid"}
+	codexSids = sidStore{trimmedStringStore("codex-sid")}
 )
 
 // --- claude --------------------------------------------------------------------
