@@ -20,10 +20,27 @@ import { useLayoutStore } from "../../layout/store.ts";
 import { activePane } from "../../layout/ops.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { useFilesStore } from "../files/store.ts";
+import { openFileDiff } from "../scm/open.ts";
 
 interface Entry {
   name: string;
   type: string;
+}
+// A git working-tree change for this working copy (from api/repos/<name>/changes).
+interface FsChange {
+  path: string; // repo-relative
+  untracked?: boolean;
+  index?: string;
+  worktree?: string;
+}
+// Porcelain XY → a JP label + color class (revived from the old FilesSection).
+function changeBadge(c: FsChange) {
+  if (c.untracked) return { cls: "st-add", label: "未追跡" };
+  const code = c.worktree !== " " && c.worktree !== "" ? c.worktree : c.index;
+  if (code === "D") return { cls: "st-del", label: "削除" };
+  if (code === "A") return { cls: "st-add", label: "追加" };
+  if (code === "R" || code === "C") return { cls: "st-mod", label: "改名" };
+  return { cls: "st-mod", label: "変更" };
 }
 interface Row {
   path: string;
@@ -56,9 +73,13 @@ const fsList = (path: string) =>
 interface ProjectFilesProps {
   /** The working copy's home-relative folder, e.g. "repos/agent-fleet". */
   root: string;
+  /** The working copy's folder NAME (repos/<name>) — for the changes endpoint. */
+  repo: string;
+  /** "tree" = the lazy file tree; "changes" = this copy's git working-tree changes. */
+  view: "tree" | "changes";
 }
 
-export function ProjectFiles({ root }: ProjectFilesProps) {
+export function ProjectFiles({ root, repo, view }: ProjectFilesProps) {
   const layout = useLayoutStore((s) => s.layout);
   const openTarget = useLayoutStore((s) => s.openTarget);
   const openTargetInNew = useLayoutStore((s) => s.openTargetInNew);
@@ -67,6 +88,20 @@ export function ProjectFiles({ root }: ProjectFilesProps) {
   const filesTick = useFilesStore((s) => s.tick);
   const askConfirm = useConfirm();
   const toast = useToast();
+
+  // Changes view: this working copy's git status (lazy — only while shown).
+  const [changes, setChanges] = useState<FsChange[] | null>(null);
+  useEffect(() => {
+    if (view !== "changes") return;
+    let alive = true;
+    setChanges(null);
+    api(`api/repos/${encodeURIComponent(repo)}/changes`)
+      .then((d) => alive && setChanges(d.changes || []))
+      .catch(() => alive && setChanges([]));
+    return () => {
+      alive = false;
+    };
+  }, [view, repo, filesTick]);
 
   const ac = activePane(layout)?.content;
   const activeFile = ac && ac.kind === "file" ? ac.filePath : "";
@@ -84,8 +119,10 @@ export function ProjectFiles({ root }: ProjectFilesProps) {
   const showFileSplit = useCallback((p: string) => openTargetInNew({ content: { kind: "file", filePath: p } }), [openTargetInNew]);
 
   // Load (mount / manual refresh via files tick): fetch the root folder's children
-  // and re-fetch every currently-open dir, preserving expansion + selection.
+  // and re-fetch every currently-open dir, preserving expansion + selection. Skipped
+  // in changes view (the tree isn't shown then).
   useEffect(() => {
+    if (view !== "tree") return;
     let alive = true;
     void (async () => {
       const r = await fsList(root);
@@ -106,7 +143,7 @@ export function ProjectFiles({ root }: ProjectFilesProps) {
       alive = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [root, filesTick]);
+  }, [root, filesTick, view]);
 
   const fetchInto = useCallback(
     async (path: string) => {
@@ -369,6 +406,39 @@ export function ProjectFiles({ root }: ProjectFilesProps) {
 
   return (
     <div className="proj-files">
+      {view === "changes" ? (
+        <ul className="fstree proj-fstree changeslist" role="list" aria-label="変更ファイル">
+          {!running ? (
+            <EmptyState icon="debug-disconnect" title="ワークスペース停止中" />
+          ) : changes === null ? (
+            <EmptyState icon="loading" title="読み込み中…" />
+          ) : changes.length === 0 ? (
+            <EmptyState icon="check" title="変更はありません" />
+          ) : (
+            changes.map((c) => {
+              const b = changeBadge(c);
+              const staged = !c.untracked && c.index !== " " && c.index !== "";
+              return (
+                <li
+                  key={c.path + (c.untracked ? "?" : "")}
+                  className="fsrow chg-row"
+                  title={c.path + "（クリックで作業差分を開く）"}
+                  onClick={() => openFileDiff(repo, c.path, staged)}
+                >
+                  <span className="fs-file">
+                    <span className={"chg-badge " + b.cls}>{b.label}</span>
+                    <span className="fs-ic">
+                      <FileIcon name={baseName(c.path)} />
+                    </span>
+                    {c.path}
+                  </span>
+                </li>
+              );
+            })
+          )}
+        </ul>
+      ) : (
+        <>
       <input
         ref={fileInputRef}
         type="file"
@@ -432,6 +502,8 @@ export function ProjectFiles({ root }: ProjectFilesProps) {
           );
         })}
       </ul>
+        </>
+      )}
       {menu && (
         <ul className="ui-menu files-ctxmenu" ref={menuRef} style={{ left: menu.x, top: menu.y }} role="menu" onMouseDown={(e) => e.stopPropagation()}>
           <li>

@@ -33,6 +33,18 @@ function usePersistedOpen(key: string, dflt = true) {
   return { open, toggle: () => set(!open), set };
 }
 
+// A small persisted string choice (the ファイル view: tree / changes).
+function usePersistedStr(key: string, dflt: string): readonly [string, (v: string) => void] {
+  const [v, setV] = useState(() => localStorage.getItem(key) ?? dflt);
+  const set = (nv: string) => {
+    setV(nv);
+    try {
+      localStorage.setItem(key, nv);
+    } catch {}
+  };
+  return [v, set] as const;
+}
+
 interface RepoNodeProps {
   r: Repo;
   ctx: RepoRailContext;
@@ -48,6 +60,7 @@ export function RepoNode({ r, ctx, actions }: RepoNodeProps) {
   // Files default COLLAPSED: a repo's whole tree expanded on load buried everything
   // below it. Open on demand (and auto-open on a reveal into this folder).
   const files = usePersistedOpen(`af-proj-${r.name}-files`, false);
+  const [filesView, setFilesView] = usePersistedStr(`af-proj-${r.name}-fview`, "tree");
   const rootPath = "repos/" + r.name;
 
   // A reveal into this working copy (clone landed here / フォルダを開く) surfaces it:
@@ -106,13 +119,36 @@ export function RepoNode({ r, ctx, actions }: RepoNodeProps) {
             </ul>
           )}
 
-          <button type="button" className="sess-group-btn proj-sub-btn" onClick={files.toggle}>
-            <Icon name={files.open ? "chevron-down" : "chevron-right"} />
-            <Icon name="files" />
-            <span className="sess-group-name">ファイル</span>
-          </button>
-          {/* Lazy: the subtree only fetches once the ファイル sub is open. */}
-          {files.open && <ProjectFiles root={rootPath} />}
+          <div className="proj-sub-head">
+            <button type="button" className="sess-group-btn proj-sub-btn" onClick={files.toggle}>
+              <Icon name={files.open ? "chevron-down" : "chevron-right"} />
+              <Icon name="files" />
+              <span className="sess-group-name">ファイル</span>
+            </button>
+            {/* Tree vs this working copy's git changes. Shown only while the sub is open. */}
+            {files.open && (
+              <span className="ui-seg sm proj-file-view">
+                <button
+                  type="button"
+                  className={"seg-btn" + (filesView === "tree" ? " active" : "")}
+                  title="ツリー"
+                  onClick={() => setFilesView("tree")}
+                >
+                  <Icon name="list-tree" /> ツリー
+                </button>
+                <button
+                  type="button"
+                  className={"seg-btn" + (filesView === "changes" ? " active" : "")}
+                  title="変更ファイルのみ"
+                  onClick={() => setFilesView("changes")}
+                >
+                  <Icon name="git-compare" /> 変更
+                </button>
+              </span>
+            )}
+          </div>
+          {/* Lazy: fetch only once the ファイル sub is open. */}
+          {files.open && <ProjectFiles root={rootPath} repo={r.name} view={filesView as "tree" | "changes"} />}
         </div>
       )}
     </li>
