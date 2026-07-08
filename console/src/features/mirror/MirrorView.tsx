@@ -14,7 +14,7 @@ import { useToast } from "../../ui/ToastProvider.tsx";
 import { fmtTok } from "../../lib/fmttok.ts";
 import { kindIcon, kindLabel, kindShort, kindClass } from "../../lib/sessionkind.ts";
 import { agentOf } from "../../agents/registry.ts";
-import { takeLaunchSeed } from "../../lib/launchSeed.ts";
+import { hasLaunchSeed, takeLaunchSeed } from "../../lib/launchSeed.ts";
 import { displayName, stateInfo } from "../../lib/sessionview.ts";
 import { coarsePointer } from "../../lib/device.ts";
 
@@ -99,6 +99,16 @@ type FoldItem =
   | { kind: "toolrun"; tools: { p: Part; i: number }[] }
   | { kind: "part"; p: Part; i: number };
 
+// Optimistic send echoes ("反映待ち"), stashed per session at module level. MirrorView
+// unmounts on a チャット→ターミナル switch, so keeping them only in component state made a
+// just-sent (or worse, never-delivered) message vanish from the chat on return. They are
+// restored on mount and removed exactly as before — when the real turn lands or the POST
+// fails. The id counter is module-level for the same reason: a remount must not reissue
+// ids still held by stashed echoes.
+type SendEcho = { id: number; text: string; sinceIdx: number };
+const echoStore = new Map<string, SendEcho[]>();
+let echoSeqCounter = 0;
+
 // readDraft loads a session's persisted composer draft ("" when none / unavailable).
 function readDraft(key: string | null): string {
   if (!key) return "";
@@ -164,8 +174,15 @@ export function MirrorView({
   // (transcript-only) would show nothing — the message looks lost. We render these until
   // the matching real user turn appears, then reconcile them away. sinceIdx = the newest
   // real turn idx at send time, so we only match a turn that arrives AFTER the send.
-  const [pendingSends, setPendingSends] = useState<{ id: number; text: string; sinceIdx: number }[]>([]);
-  const echoSeq = useRef(0);
+  const [pendingSends, setPendingSends] = useState<SendEcho[]>(() => echoStore.get(session) ?? []);
+  // Every echo update goes through here so the module stash stays in sync (write-through)
+  // and a remounted view can restore the un-landed ones.
+  const applyEchoes = (fn: (prev: SendEcho[]) => SendEcho[]) =>
+    setPendingSends((prev) => {
+      const next = fn(prev);
+      echoStore.set(session, next);
+      return next;
+    });
   const [loaded, setLoaded] = useState(false); // false until the first transcript fetch returns
   const [termState, setTermState] = useState(""); // terminal-only state: "resume" | "compacting" | ""
   const [status, setStatus] = useState("");
@@ -228,7 +245,7 @@ export function MirrorView({
     diagRef.current = "";
     statusRef.current = "";
     setTurns([]);
-    setPendingSends([]); // echoes belong to the old session's transcript
+    setPendingSends(echoStore.get(session) ?? []); // restore this session's un-landed echoes
     rejectedPlansRef.current = new Set(); // optimistic 却下 marks belong to the old session
     setLoaded(false);
     setTermState("");
@@ -378,11 +395,12 @@ export function MirrorView({
   // transcript (a non-noise user turn past the echo's anchor idx with the same text),
   // drop the echo so the message isn't shown twice.
   useEffect(() => {
-    setPendingSends((prev) => {
+    applyEchoes((prev) => {
       if (!prev.length) return prev;
       const next = prev.filter((e) => !echoLanded(e, turns));
       return next.length === prev.length ? prev : next;
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [turns]);
 
   // Follow the latest turn / pending question / typing dots — but ONLY when the user is
@@ -547,10 +565,10 @@ export function MirrorView({
     setStatus("working");
     // Show the message immediately (optimistic echo) so it never looks lost while claude
     // is busy — reconciled away once its real user turn appears in the transcript.
-    const echoId = ++echoSeq.current;
-    setPendingSends((p) => [...p, { id: echoId, text: t, sinceIdx: newestIdx() }]);
+    const echoId = ++echoSeqCounter;
+    applyEchoes((p) => [...p, { id: echoId, text: t, sinceIdx: newestIdx() }]);
     const ok = await postInput(t);
-    if (!ok) setPendingSends((p) => p.filter((e) => e.id !== echoId)); // send failed → drop it
+    if (!ok) applyEchoes((p) => p.filter((e) => e.id !== echoId)); // send failed → drop it
     setSending(false);
     // Pick up the just-logged user turn quickly rather than waiting a full interval.
     setTimeout(() => tickRef.current?.(), 250);
@@ -568,12 +586,12 @@ export function MirrorView({
     if (!t) return;
     statusRef.current = "working";
     setStatus("working");
-    const echoId = ++echoSeq.current; // optimistic echo, reconciled when the real turn lands
-    setPendingSends((p) => [...p, { id: echoId, text: t, sinceIdx: newestIdx() }]);
+    const echoId = ++echoSeqCounter; // optimistic echo, reconciled when the real turn lands
+    applyEchoes((p) => [...p, { id: echoId, text: t, sinceIdx: newestIdx() }]);
     try {
       await apiJSON(`api/sessions/${q(session)}/input`, "POST", { seq: [{ t }] });
     } catch {
-      setPendingSends((p) => p.filter((e) => e.id !== echoId));
+      applyEchoes((p) => p.filter((e) => e.id !== echoId));
       return;
     }
     const enter = () => apiJSON(`api/sessions/${q(session)}/input`, "POST", { keys: ["Enter"] }).catch(() => {});
@@ -587,18 +605,46 @@ export function MirrorView({
   // actually alive and not mid-resume/compacting. takeLaunchSeed is one-shot, so we only
   // take it when about to send (the guards below return before taking it). seededRef
   // prevents a re-send across the polls that flip `alive`.
+  //
+  // Readiness gate: `alive` only means the tmux session exists — that's true seconds
+  // before the CLI can accept input, and text/Enter typed into the boot screen gets
+  // buffered into one paste burst whose Enter is coalesced away (or eaten with the boot
+  // screen entirely): the launch prompt was intermittently lost. `mode` (paneMode) is
+  // non-empty exactly when the agent has drawn its composer/status line — for claude,
+  // codex and opencode alike — so wait for it. seedForce is the escape hatch if the
+  // status line never becomes detectable (odd pane state): fall back to sending anyway.
   const seededRef = useRef(false);
+  const [seedForce, setSeedForce] = useState(false);
+  const seedForceTimer = useRef<number | null>(null);
   useEffect(() => {
     seededRef.current = false; // new session → allow its own seed
+    setSeedForce(false);
+    if (seedForceTimer.current != null) {
+      clearTimeout(seedForceTimer.current);
+      seedForceTimer.current = null;
+    }
   }, [session]);
+  useEffect(
+    () => () => {
+      if (seedForceTimer.current != null) clearTimeout(seedForceTimer.current);
+    },
+    [],
+  );
   useEffect(() => {
     if (seededRef.current || readOnly || !alive || termState || sending) return;
+    if (!hasLaunchSeed(session)) return;
+    if (!mode && !seedForce) {
+      if (seedForceTimer.current == null) {
+        seedForceTimer.current = window.setTimeout(() => setSeedForce(true), 15000);
+      }
+      return; // TUI not confirmed ready — the next poll's mode (or the timer) retries
+    }
     const seed = takeLaunchSeed(session);
     if (!seed) return;
     seededRef.current = true;
     seedSubmit(seed);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [alive, termState, session, readOnly]);
+  }, [alive, termState, session, readOnly, mode, seedForce]);
 
   // sendKeys drives the AskUserQuestion modal via named keys (Down/Space/Enter), the
   // only way to answer multi-select / multi-question forms (free text can't).
