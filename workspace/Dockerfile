@@ -12,20 +12,6 @@ RUN go mod download
 COPY agent/ ./
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -o /out/workspace-agent .
 
-# --- build the opencode web UI (pk-opencode-webui — prefix-aware reimplementation
-# so opencode web works under our /ocweb proxy; core opencode web is root-only).
-# Built with Bun; run at runtime by `bun serve-ui.ts`. Pinned to a release commit.
-# See docs/decisions/0007-opencode-web-via-pk-webui.md. ---
-FROM oven/bun:1 AS ocwebbuild
-ARG PK_OPENCODE_WEBUI_REF=d252201ccbbfb4d5cd569933d7634572d6168921
-WORKDIR /src
-RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates \
- && git clone https://github.com/prokube/pk-opencode-webui.git . \
- && git checkout "$PK_OPENCODE_WEBUI_REF" \
- && rm -rf /var/lib/apt/lists/*
-WORKDIR /src/app-prefixable
-RUN bun install --frozen-lockfile && bun run build
-
 # --- runtime ---
 FROM node:22-bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -114,11 +100,8 @@ RUN set -eux; \
 # (opencode auth login) and sessions persist under ~/.local/share/opencode (home).
 # codex: OpenAI Codex CLI (kind="codex"); auth (codex login --with-api-key /
 # --device-auth) writes ~/.codex/auth.json and sessions land in ~/.codex (home).
-# bun is also installed here (no apt package exists; npm is the consistent route)
-# as the RUNTIME for the opencode web UI server (serve-ui.ts uses Bun.serve/WS and
-# will not run under node). The UI itself is built in the ocwebbuild stage above.
-RUN npm install -g @anthropic-ai/claude-code opencode-ai @openai/codex bun \
- && claude --version && opencode --version && codex --version && bun --version
+RUN npm install -g @anthropic-ai/claude-code opencode-ai @openai/codex \
+ && claude --version && opencode --version && codex --version
 
 # The baked claude is a root-owned npm-global install run as the non-root `dev`
 # user, so Claude Code's background auto-updater can never write to
@@ -136,14 +119,6 @@ ENV DISABLE_AUTOUPDATER=1
 # recreates from the image, so turning the toggle off reverts to these baked versions.
 # Numeric uid:gid 1000 (the node/dev user; the node→dev rename happens further down).
 RUN chown -R 1000:1000 /usr/local/lib/node_modules /usr/local/bin
-
-# opencode web UI (pk-opencode-webui), built in ocwebbuild → /opt/opencode-web.
-# The agent runs `bun /opt/opencode-web/serve-ui.ts` (with BASE_PATH/API_URL/PORT)
-# in front of `opencode serve` when the Console toggle is on (kept off by default).
-# serve-ui.ts imports ../shared/*, so shared sits beside it as /opt/shared.
-COPY --from=ocwebbuild /src/app-prefixable/dist /opt/opencode-web/dist
-COPY --from=ocwebbuild /src/docker/serve-ui.ts /opt/opencode-web/serve-ui.ts
-COPY --from=ocwebbuild /src/shared /opt/shared
 
 # UTF-8 ロケール。未設定(POSIX)だと tmux が UTF-8 を無効化し日本語等が化ける。
 # C.UTF-8 は locale 生成不要で Debian に存在する。

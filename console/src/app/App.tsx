@@ -224,7 +224,6 @@ export function App() {
     if (!booted) return;
     useLayoutStore.getState().load(tenant);
     void useWorkspaceStore.getState().refresh();
-    void useWorkspaceStore.getState().refreshOcweb();
     void useSessionsStore.getState().refresh();
   }, [booted, tenant]);
 

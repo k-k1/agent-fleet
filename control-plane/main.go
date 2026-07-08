@@ -381,9 +381,6 @@ func main() {
 	// codex / opencode rtk toggle — proxied to the Agent.
 	mux.HandleFunc("GET /api/agents/rtk", cfg.proxyAgentREST)
 	mux.HandleFunc("PUT /api/agents/rtk", cfg.proxyAgentREST)
-	// opencode web toggle — PUT injects base_prefix (externalPrefix) for BASE_PATH.
-	mux.HandleFunc("GET /api/agents/opencode-web", cfg.proxyAgentREST)
-	mux.HandleFunc("PUT /api/agents/opencode-web", cfg.handleOpencodeWebToggle)
 
 	// Toolchain selection (node / java) — proxied to the Agent.
 	mux.HandleFunc("GET /api/env/toolchains", cfg.proxyAgentREST)
@@ -456,11 +453,6 @@ func main() {
 	// adds the trailing slash so the app resolves relative assets under the path.
 	mux.HandleFunc("/preview/{port}", cfg.handlePreviewRedirect)
 	mux.HandleFunc("/preview/{port}/{rest...}", cfg.handlePreview)
-
-	// opencode web — dedicated prefix-aware proxy (path-preserving + WebSocket/SSE)
-	// to the per-workspace pk-webui. docs/decisions/0007.
-	mux.HandleFunc("/ocweb", cfg.handleOcwebRedirect)
-	mux.HandleFunc("/ocweb/{rest...}", cfg.handleOcweb)
 
 	// Legacy path compatibility: the deployment used to be served under
 	// /agent-fleet (oauth2-proxy + Caddy stripped it). Now it's at the root, so

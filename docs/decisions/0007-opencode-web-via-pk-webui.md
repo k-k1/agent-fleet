@@ -1,6 +1,9 @@
 # 0007. opencode web を pk-opencode-webui 経由で提供する
 
-- 状態: 確定（設計）・**未実装**（段階実装中）
+- 状態: **廃止（撤回, 2026-07）** — `temp/remove-opencode-web-opencode-web-ui` で
+  実装（pk-opencode-webui の焼き込み・`opencode serve`＋`bun serve-ui.ts`・`/ocweb`
+  プロキシ・Console トグル）を撤去。opencode の利用は tmux 内 TUI（CLI）に一本化。
+  以下は当時の設計記録として残す。
 - 関連: [reference/preview.md](../reference/preview.md)（同じプロキシ機構・WS 制約）/ [HANDOFF §opencode](../HANDOFF.md) / rtk トグル（[エージェント設定タブ](../HANDOFF.md)）の隣に並ぶ機能
 
 ## 背景
