@@ -80,19 +80,19 @@ type sessionMeta struct {
 	// SuggestedTitleDismissed latches true once the user accepts OR dismisses a
 	// suggestion, so a session is offered one at most once (v1: no re-suggestion loop).
 	SuggestedTitleDismissed bool   `json:"suggestedTitleDismissed,omitempty"`
-	Color                   string `json:"color"`     // terminal background hue (hex); set at create (SSM host color)
-	Label                   string `json:"label"`     // claude --name (display); derived from Title at create/recreate
-	Repo                    string `json:"repo"`      // working dir basename
+	Color                   string `json:"color"` // terminal background hue (hex); set at create (SSM host color)
+	Label                   string `json:"label"` // claude --name (display); derived from Title at create/recreate
+	Repo                    string `json:"repo"`  // working dir basename
 	// Branch is the git branch the working copy (Dir) was on when this session was
 	// created/recreated. Compared against Dir's current branch on each list to flag
 	// drift — a `git checkout` that slipped past the checkout guard (agent/manual
 	// shell inside the session). "" when Dir isn't a git working tree, or for
 	// pre-existing sessions minted before this field. Never rewritten after create,
 	// so the drift comparison stays meaningful.
-	Branch                  string `json:"branch,omitempty"`
-	CreatedAt               string `json:"createdAt"` // RFC3339, set at create
-	StoppedAt               string `json:"stoppedAt"` // RFC3339, set lazily when first seen exited; "" while live
-	Archived                bool   `json:"archived"`  // true = hidden from the active list, restorable (jsonl kept)
+	Branch    string `json:"branch,omitempty"`
+	CreatedAt string `json:"createdAt"` // RFC3339, set at create
+	StoppedAt string `json:"stoppedAt"` // RFC3339, set lazily when first seen exited; "" while live
+	Archived  bool   `json:"archived"`  // true = hidden from the active list, restorable (jsonl kept)
 	// ForkFrom is the SOURCE session's sid this session was forked from (claude
 	// only). It only affects the FIRST launch: buildSessionProgram then runs
 	// `claude --resume <ForkFrom> --fork-session --session-id <ownsid>`, which copies

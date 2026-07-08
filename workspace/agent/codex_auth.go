@@ -128,7 +128,7 @@ func handleCodexApiKey(w http.ResponseWriter, r *http.Request) {
 
 var (
 	// The verification URL and one-time code codex prints under `--device-auth`.
-	codexURLRe  = regexp.MustCompile(`https://auth\.openai\.com/\S*`)
+	codexURLRe = regexp.MustCompile(`https://auth\.openai\.com/\S*`)
 	// The one-time code is XXXX-XXXXX (4 then 5 in observed samples); allow 4-6 on
 	// each side so a length tweak doesn't silently drop it.
 	codexCodeRe = regexp.MustCompile(`\b[A-Z0-9]{4,6}-[A-Z0-9]{4,6}\b`)

@@ -8,7 +8,10 @@ import (
 )
 
 func TestNormalizeRemote(t *testing.T) {
-	cases := []struct{ a, b string; same bool }{
+	cases := []struct {
+		a, b string
+		same bool
+	}{
 		// SSH vs HTTPS, .git suffix, trailing slash, case — all "same repo".
 		{"git@github.com:owner/repo.git", "https://github.com/owner/repo", true},
 		{"https://github.com/owner/repo.git", "https://github.com/owner/repo/", true},

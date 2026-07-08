@@ -455,7 +455,7 @@ func parseTurn(line []byte, idx int) (chatTurn, bool) {
 		IsCompactSummary bool   `json:"isCompactSummary"`
 		GitBranch        string `json:"gitBranch"`
 		Cwd              string `json:"cwd"`
-		Message     struct {
+		Message          struct {
 			Model   string          `json:"model"`
 			Content json.RawMessage `json:"content"`
 			Usage   struct {
