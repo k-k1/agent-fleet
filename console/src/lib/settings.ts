@@ -239,6 +239,10 @@ export function applyTheme(s: Settings): void {
     setVar("--lp-active-bg", d.active);
     setVar("--lp-hover-bg", d.hover);
   }
+  // Left-pane accent = the chosen surface's matching accent, so the rail's focus
+  // bar (active session / repo) and the worktree spine follow the palette instead
+  // of the fixed app blue. Null (no surface chosen) → CSS falls back to --accent.
+  setVar("--lp-accent", surfaceAccent(s.leftpaneColor));
   // File viewer background, derived from the chosen surface: lighter than the
   // surfaces in light theme (toward white), darker in dark theme (toward black).
   // Unset => theme --bg.

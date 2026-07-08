@@ -43,7 +43,7 @@
   text-overflow: ellipsis;
 }
 .fs-file.active {
-  color: var(--accent);
+  color: var(--lp-accent, var(--accent));
 }
 .fs-chev {
   width: 12px;
