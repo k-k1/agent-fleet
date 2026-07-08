@@ -2,6 +2,7 @@ package main
 
 import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
@@ -9,9 +10,10 @@ import (
 )
 
 // The Agent interface and its input/output types live in internal/agents
-// (docs/23 残① Wave C); opencode の実装は internal/agents/opencode（Wave D）。
-// This file keeps the registry, the shared live-state helpers, and the codex sid
-// store until the remaining per-CLI impls move out in later waves.
+// (docs/23 残① Wave C); opencode の実装は internal/agents/opencode（Wave D）、
+// codex の実装は internal/agents/codex（Wave E）。
+// This file keeps the registry and the shared live-state helpers until the
+// remaining per-CLI impls move out in later waves.
 
 // agentRegistry is the kind → agents.Agent registry. agentOf falls back to claude
 // for an unknown or empty kind, matching the historical default (a session with no
@@ -19,7 +21,7 @@ import (
 var agentRegistry = map[string]agents.Agent{
 	session.KindClaude:   claudeAgent{},
 	session.KindOpencode: opencode.New(),
-	session.KindCodex:    codexAgent{},
+	session.KindCodex:    codex.New(),
 	session.KindShell:    shellAgent{},
 	session.KindSSM:      ssmAgent{},
 }
@@ -66,24 +68,3 @@ func driveState(m session.Meta, alive, heal bool) string {
 	}
 	return state
 }
-
-// statusOnlyLive is the codex WireLive body (opencode's equivalent moved into its
-// vertical package with Wave D): state from the
-// status store (no idle-heal, no background-busy), and resumable unless the working
-// dir is gone.
-func statusOnlyLive(m session.Meta, alive bool) agents.LiveInfo {
-	li := agents.LiveInfo{Resumable: true}
-	if alive {
-		li.State = status.LiveState(session.UUID(m.Dir, m.Name))
-	} else if !session.DirExists(m.Dir) {
-		li.Resumable = false
-	}
-	return li
-}
-
-// --- sid store -----------------------------------------------------------------
-
-// codex sid store (agents.SidStore): written by the session-status hook from codex's
-// own session_id (codex has no --session-id flag to pin), read for `codex resume <id>`.
-// Wave E moves this into the codex vertical package.
-var codexSids = agents.NewSidStore("codex-sid")

@@ -1,4 +1,4 @@
-package main
+package codex
 
 import (
 	"testing"
@@ -24,7 +24,7 @@ func codexRolloutLines() [][]byte {
 }
 
 func TestCodexParseRollout(t *testing.T) {
-	turns, _ := codexParseRollout(codexRolloutLines())
+	turns, _ := parseRollout(codexRolloutLines())
 	// developer + wrapper user are dropped; user prompt, assistant, function_call remain.
 	if len(turns) != 3 {
 		t.Fatalf("want 3 turns, got %d: %+v", len(turns), turns)
@@ -82,7 +82,7 @@ func TestCodexReasoningPlanOutput(t *testing.T) {
 		[]byte(`{"type":"response_item","payload":{"type":"function_call","name":"update_plan","arguments":"{\"plan\":[{\"step\":\"read\",\"status\":\"completed\"},{\"step\":\"write\",\"status\":\"in_progress\"}]}"}}`),
 		[]byte(`{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"ok"}]}}`),
 	}
-	turns, tasks := codexParseRollout(lines)
+	turns, tasks := parseRollout(lines)
 
 	// Turns: user, thinking, tool(shell), assistant. update_plan is NOT a turn.
 	if len(turns) != 4 {
@@ -110,7 +110,7 @@ func TestCodexQuestion(t *testing.T) {
 		[]byte(`{"type":"response_item","payload":{"type":"function_call_output","call_id":"q1","output":"B"}}`),
 		[]byte(`{"type":"response_item","payload":{"type":"function_call","name":"request_user_input","call_id":"q2","arguments":"{\"questions\":[{\"question\":\"next?\",\"options\":[{\"label\":\"X\"}]}]}"}}`),
 	}
-	turns, _, pending, _ := codexParseRolloutFull(answered)
+	turns, _, pending, _ := parseRolloutFull(answered)
 
 	// The answered question renders as a question part with its answer.
 	var q *transcript.Part
@@ -133,14 +133,14 @@ func TestCodexMode(t *testing.T) {
 		[]byte(`{"type":"turn_context","payload":{"model":"gpt-5.5","collaboration_mode":{"mode":"plan"}}}`),
 		[]byte(`{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]}}`),
 	}
-	if _, _, _, mode := codexParseRolloutFull(plan); mode != "plan" {
+	if _, _, _, mode := parseRolloutFull(plan); mode != "plan" {
 		t.Fatalf("plan mode = %q, want plan", mode)
 	}
 	def := [][]byte{
 		[]byte(`{"type":"turn_context","payload":{"model":"gpt-5.5","collaboration_mode":{"mode":"default"}}}`),
 		[]byte(`{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]}}`),
 	}
-	if _, _, _, mode := codexParseRolloutFull(def); mode != "normal" {
+	if _, _, _, mode := parseRolloutFull(def); mode != "normal" {
 		t.Fatalf("default mode = %q, want normal", mode)
 	}
 }
@@ -159,14 +159,14 @@ func TestCodexIsWrapper(t *testing.T) {
 		{"please read <environment_context>", false}, // tag not at start = a real prompt
 	}
 	for _, c := range cases {
-		if got := codexIsWrapper(c.text); got != c.want {
-			t.Errorf("codexIsWrapper(%q) = %v, want %v", c.text, got, c.want)
+		if got := isWrapper(c.text); got != c.want {
+			t.Errorf("isWrapper(%q) = %v, want %v", c.text, got, c.want)
 		}
 	}
 }
 
 func TestCodexParseRolloutEmpty(t *testing.T) {
-	if turns, _ := codexParseRollout(nil); len(turns) != 0 {
+	if turns, _ := parseRollout(nil); len(turns) != 0 {
 		t.Fatalf("empty rollout -> %d turns, want 0", len(turns))
 	}
 	// A rollout with only bookkeeping/system lines yields no displayable turns.
@@ -175,7 +175,7 @@ func TestCodexParseRolloutEmpty(t *testing.T) {
 		[]byte(`{"type":"response_item","payload":{"type":"message","role":"developer","content":[{"type":"input_text","text":"sys"}]}}`),
 		[]byte(`{"type":"event_msg","payload":{"type":"task_started"}}`),
 	}
-	if turns, _ := codexParseRollout(only); len(turns) != 0 {
+	if turns, _ := parseRollout(only); len(turns) != 0 {
 		t.Fatalf("system-only rollout -> %d turns, want 0", len(turns))
 	}
 }

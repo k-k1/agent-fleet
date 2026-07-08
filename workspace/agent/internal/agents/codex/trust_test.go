@@ -1,4 +1,4 @@
-package main
+package codex
 
 import (
 	"os"
@@ -19,7 +19,7 @@ func readCodexConfig(t *testing.T) string {
 func TestEnsureCodexFolderTrustedCreates(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	dir := "/home/dev/repos/novel-idea"
-	ensureCodexFolderTrusted(dir)
+	ensureFolderTrusted(dir)
 	got := readCodexConfig(t)
 	if !strings.Contains(got, `[projects."/home/dev/repos/novel-idea"]`) {
 		t.Fatalf("missing project section:\n%s", got)
@@ -44,7 +44,7 @@ func TestEnsureCodexFolderTrustedPreservesAndIsIdempotent(t *testing.T) {
 	}
 
 	dir := "/home/dev/repos/novel-idea"
-	ensureCodexFolderTrusted(dir)
+	ensureFolderTrusted(dir)
 	after := readCodexConfig(t)
 	// Existing content preserved.
 	if !strings.Contains(after, `model = "gpt-5"`) || !strings.Contains(after, `[projects."/home/dev/repos/codeleaf"]`) {
@@ -56,7 +56,7 @@ func TestEnsureCodexFolderTrustedPreservesAndIsIdempotent(t *testing.T) {
 	}
 
 	// Idempotent: a second call must not add a duplicate section.
-	ensureCodexFolderTrusted(dir)
+	ensureFolderTrusted(dir)
 	twice := readCodexConfig(t)
 	if n := strings.Count(twice, `[projects."/home/dev/repos/novel-idea"]`); n != 1 {
 		t.Fatalf("section duplicated %d times:\n%s", n, twice)
