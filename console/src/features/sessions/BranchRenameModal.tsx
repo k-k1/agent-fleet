@@ -80,13 +80,11 @@ export function BranchRenameModal({ name, branch, onClose, onSaved }: BranchRena
   const togglePrefix = (p: string) =>
     setValue((v) => (v.startsWith(p) ? stripKnownPrefix(v) : p + stripKnownPrefix(v)));
 
-  // Adopt the AI proposal. It normally arrives prefixed (feat/… — the suggester picks
-  // a conventional type from the conversation); if the model skipped the prefix,
-  // inherit whichever chip prefix the current value carries.
+  // Adopt the AI proposal (a bare kebab-case slug): keep whichever chip prefix the
+  // current value carries, so adopting doesn't drop the selected type.
   const adoptProposal = () => {
     const cur = PREFIXES.find((p) => value.startsWith(p));
-    const prefixed = PREFIXES.some((p) => proposal.startsWith(p));
-    setValue(!prefixed && cur ? cur + proposal : proposal);
+    setValue(cur ? cur + proposal : proposal);
     setProposal("");
   };
 

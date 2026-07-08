@@ -232,13 +232,12 @@ func branchSuggestPrompt(turns []chatTurn) string {
 		real = append(real, t)
 	}
 	var b strings.Builder
-	b.WriteString("Read the conversation log and output ONE git branch name for the task, ")
-	b.WriteString("in the form <type>/<name> where <type> is exactly one of: feat, fix, refactor, chore, docs.\n")
-	b.WriteString("Rules for <name>: English only, lowercase kebab-case (words joined by hyphens), ")
-	b.WriteString("ASCII letters/digits/hyphens only, max 40 chars, no quotes.\n")
+	b.WriteString("Read the conversation log and output ONE git branch name for the task.\n")
+	b.WriteString("Rules: English only, lowercase kebab-case (words joined by hyphens), ")
+	b.WriteString("ASCII letters/digits/hyphens only, max 40 chars, no prefixes like 'feature/', no quotes.\n")
 	b.WriteString("The conversation is often in Japanese — TRANSLATE the topic into a concise English name. ")
 	b.WriteString("Never output Japanese or non-ASCII characters.\n")
-	b.WriteString("Good: fix/login-redirect / refactor/billing-api / feat/session-branch-rename\n")
+	b.WriteString("Good: fix-login-redirect / refactor-billing-api / session-branch-rename\n")
 	b.WriteString("If the conversation drifted, prefer the most recent topic. Output ONLY the name.\n\n")
 	b.WriteString("--- conversation log ---\n")
 	writeConversationWindow(&b, real)
@@ -456,14 +455,11 @@ func handleSetTitle(w http.ResponseWriter, r *http.Request) {
 // branchSuggestPersona pins the headless call to emit a git branch name, NOT a
 // Japanese title: lowercase English kebab-case, git-safe, short. The conversation may
 // be in Japanese but the branch name must be ASCII (folder/ref charset), so we ask for
-// a translation-to-name, not a transcription. The name carries a conventional-commit
-// type prefix (feat/…) so adopting the proposal needs no extra chip click; the allowed
-// set mirrors the Console's prefix chips.
+// a translation-to-name, not a transcription.
 const branchSuggestPersona = "You name git branches. Read the conversation log and output ONE short branch name " +
-	"describing the task, in the form <type>/<name> where <type> is exactly one of: feat, fix, refactor, chore, docs. " +
-	"Rules for <name>: English, lowercase kebab-case (words joined by hyphens), " +
+	"describing the task. Rules: English, lowercase kebab-case (words joined by hyphens), " +
 	"ASCII letters/digits/hyphens only, max 40 chars, no leading verb like 'add'/'fix' unless natural, " +
-	"no quotes, no explanation. Output only the branch name."
+	"no prefixes like 'feature/', no quotes, no explanation. Output only the name."
 
 // runBranchSuggestLLM asks the title model for a git-safe branch name from the
 // conversation, then hard-sanitizes the reply so a chatty model can't produce an
@@ -487,33 +483,14 @@ func runBranchSuggestLLM(ctx context.Context, turns []chatTurn) (string, error) 
 	return cleanBranchName(r.Result), nil
 }
 
-// branchTypePrefixes are the conventional-commit types the suggester may emit as a
-// "<type>/" prefix; must stay in sync with the Console's prefix chips (PREFIXES in
-// BranchRenameModal.tsx).
-var branchTypePrefixes = map[string]bool{"feat": true, "fix": true, "refactor": true, "chore": true, "docs": true}
-
-// cleanBranchName reduces an LLM reply to a git-safe branch name: first line only,
-// with a single conventional "<type>/" prefix preserved when valid and the rest
-// kebab-collapsed. "" when nothing usable remains.
+// cleanBranchName reduces an LLM reply to a git-safe kebab-case name: first line,
+// lowercased, non-[a-z0-9] runs collapsed to a single hyphen, trimmed, capped at 40.
+// "" when nothing usable remains.
 func cleanBranchName(s string) string {
 	s = strings.TrimSpace(s)
 	if i := strings.IndexByte(s, '\n'); i >= 0 {
 		s = s[:i]
 	}
-	if i := strings.IndexByte(s, '/'); i >= 0 {
-		if head := kebabCase(s[:i]); branchTypePrefixes[head] {
-			if rest := kebabCase(s[i+1:]); rest != "" {
-				return head + "/" + rest
-			}
-			return ""
-		}
-	}
-	return kebabCase(s)
-}
-
-// kebabCase lowercases and collapses non-[a-z0-9] runs to single hyphens, trims
-// hyphens, caps at 40 runes. "" when no usable characters remain.
-func kebabCase(s string) string {
 	s = strings.ToLower(s)
 	var b strings.Builder
 	lastHyphen := false

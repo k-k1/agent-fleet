@@ -14,12 +14,12 @@ import (
 // with a shared prefix, archived, stopped, and parent-dir sessions must not.
 func TestSessionsInDir(t *testing.T) {
 	metas := []sessionMeta{
-		{Name: "a", Dir: "/repos/foo", Title: "root"},       // exact match, live
-		{Name: "b", Dir: "/repos/foo/sub", Title: "subdir"}, // strict subdir, live
-		{Name: "c", Dir: "/repos/foobar", Title: "sibling"}, // shared prefix, NOT under foo
-		{Name: "d", Dir: "/repos/foo", Title: "stopped"},    // under foo but not live
+		{Name: "a", Dir: "/repos/foo", Title: "root"},           // exact match, live
+		{Name: "b", Dir: "/repos/foo/sub", Title: "subdir"},     // strict subdir, live
+		{Name: "c", Dir: "/repos/foobar", Title: "sibling"},     // shared prefix, NOT under foo
+		{Name: "d", Dir: "/repos/foo", Title: "stopped"},        // under foo but not live
 		{Name: "e", Dir: "/repos/foo", Title: "archived", Archived: true},
-		{Name: "f", Dir: "/repos", Title: "parent"}, // parent dir, not under foo
+		{Name: "f", Dir: "/repos", Title: "parent"},             // parent dir, not under foo
 	}
 	live := map[string]bool{"a": true, "b": true, "c": true, "e": true, "f": true} // "d" stopped
 
@@ -41,9 +41,9 @@ func TestSessionsInDir(t *testing.T) {
 // info is cached per dir (one lookup even when two sessions share a working copy).
 func TestAnnotateSessions(t *testing.T) {
 	info := map[string]dirInfo{
-		"/repos/foo":  {branch: "feature-x", worktree: true}, // drifted from main, is a worktree
-		"/repos/bar":  {branch: "main", worktree: false},     // unchanged, plain clone
-		"/repos/gone": {branch: "", worktree: false},         // dir not a git tree
+		"/repos/foo": {branch: "feature-x", worktree: true}, // drifted from main, is a worktree
+		"/repos/bar": {branch: "main", worktree: false},     // unchanged, plain clone
+		"/repos/gone": {branch: "", worktree: false},        // dir not a git tree
 	}
 	calls := 0
 	resolve := func(dir string) dirInfo { calls++; return info[dir] }
@@ -299,17 +299,13 @@ func TestUpdateSessionStartBranch(t *testing.T) {
 // from chatty/edge replies (quotes, prefixes, casing, punctuation, over-length, empty).
 func TestCleanBranchName(t *testing.T) {
 	cases := map[string]string{
-		"Fix the login redirect bug": "fix-the-login-redirect-bug",
-		"\"feature/login-redirect\"": "feature-login-redirect",
-		"Add   Rate  Limiting!!":     "add-rate-limiting",
-		"first line\nsecond line":    "first-line",
-		"日本語のみ":                      "", // no ASCII word chars → empty
-		"----":                       "",
+		"Fix the login redirect bug":            "fix-the-login-redirect-bug",
+		"\"feature/login-redirect\"":            "feature-login-redirect",
+		"Add   Rate  Limiting!!":                "add-rate-limiting",
+		"first line\nsecond line":               "first-line",
+		"日本語のみ":                                 "", // no ASCII word chars → empty
+		"----":                                  "",
 		"a-very-long-branch-name-that-should-definitely-exceed-forty-chars": "a-very-long-branch-name-that-should-defi", // capped at 40 runes
-		"feat/login-redirect":        "feat/login-redirect",    // conventional prefix preserved
-		"\"Fix/Login Redirect Bug\"": "fix/login-redirect-bug", // prefix survives quotes/casing
-		"feature/login-redirect":     "feature-login-redirect", // unknown prefix → flattened
-		"docs/":                      "",                       // prefix with no name → empty
 	}
 	for in, want := range cases {
 		if got := cleanBranchName(in); got != want {
