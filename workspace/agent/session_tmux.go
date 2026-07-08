@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 )
@@ -20,15 +21,15 @@ import (
 // --resume once a jsonl exists); for shell it runs a login bash.
 func startSessionTmux(m session.Meta, ssmForce bool) error {
 	// The kind decides the pane program and launch dir; the agent builds both.
-	plan, err := agentOf(m.Kind).buildLaunch(m, launchOpts{ssmForce: ssmForce})
+	plan, err := agentOf(m.Kind).BuildLaunch(m, agents.LaunchOpts{SSMForce: ssmForce})
 	if err != nil {
 		return err
 	}
 	// Inject the current toolchain selection (JAVA_HOME / node / TZ) so a Console
 	// change applies to this freshly-launched session without a Stop→Start. tmux
 	// runs the pane command via /bin/sh -c, so the export prefix takes effect.
-	program := toolchainShellPrefix() + plan.program
-	args := []string{"new-session", "-d", "-s", session.TmuxName(m.Name), "-c", plan.cwd, program}
+	program := toolchainShellPrefix() + plan.Program
+	args := []string{"new-session", "-d", "-s", session.TmuxName(m.Name), "-c", plan.Cwd, program}
 	if out, err := exec.Command("tmux", args...).CombinedOutput(); err != nil {
 		return fmt.Errorf("%v: %s", err, out)
 	}

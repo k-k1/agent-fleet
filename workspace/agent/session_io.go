@@ -396,7 +396,7 @@ func handleSessionOutput(w http.ResponseWriter, r *http.Request) {
 	alive := tmuxx.HasSession(session.TmuxName(name))
 	// /output opts out of the idle-heal (heal=false) to preserve its historical behavior.
 	state := driveState(meta, alive, false)
-	if !agentOf(meta.Kind).caps().canTranscript {
+	if !agentOf(meta.Kind).Caps().CanTranscript {
 		httpx.WriteErr(w, http.StatusBadRequest, "unsupported_kind", "output is available for claude sessions only (phase 1)")
 		return
 	}

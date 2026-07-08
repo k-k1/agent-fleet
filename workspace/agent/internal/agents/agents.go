@@ -1,0 +1,114 @@
+// Package agents は coding-agent 抽象の型層（Agent インターフェイスと入出力型）。
+// docs/23 残① Wave C: package main の agent.go からインターフェイス層のみを切り出した。
+// 依存は internal/session・internal/transcript のみ。実装（claude/opencode/codex/
+// shell/ssm）とレジストリは後続 Wave で移すまで main に残る。
+package agents
+
+import (
+	"errors"
+	"fmt"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
+)
+
+// DirGoneErr is the "can't (re)launch — working dir removed" error shared by the
+// agents that require their real project dir (claude/opencode/codex).
+func DirGoneErr(dir string) error {
+	return fmt.Errorf("作業フォルダが存在しないため再開できません: %s", dir)
+}
+
+// ErrSSMNoTarget is returned when an ssm session has no connection target recorded.
+var ErrSSMNoTarget = errors.New("SSM セッションの接続先が指定されていません")
+
+// Coding-agent abstraction. A session's "kind" (claude/opencode/codex/shell/ssm)
+// used to be a bare string branched on in ~50 places — a new agent meant touching
+// every switch/if. This package makes kind a canonical const list (now
+// session.Kind*, internal/session) and folds the per-kind behavior behind an
+// Agent interface + registry, so the diverging logic (how to launch the tmux
+// program, what live state to surface, which capabilities exist) lives in ONE
+// implementation per agent. Adding an agent = one Agent impl + one registry
+// entry. The wire contract (session.Session/session.Meta JSON, HTTP shapes) is
+// unchanged: the field VALUES are computed exactly as before, only the dispatch moved.
+
+// Caps flags the optional features a kind supports, replacing the scattered
+// `kind == "claude"` guards at the HTTP endpoints.
+type Caps struct {
+	CanFork       bool // POST /fork — copy the conversation into a new session (claude)
+	CanTranscript bool // GET /output & /messages — read the jsonl transcript (claude)
+	UsesLabel     bool // set a claude --name display label at create/recreate (claude)
+}
+
+// LaunchOpts carries the per-launch inputs that aren't in session.Meta.
+type LaunchOpts struct {
+	SSMForce bool // ssm: force re-login (logout+login) instead of reusing a cached token
+}
+
+// LaunchPlan is what an Agent hands back to startSessionTmux: the pane program and
+// the directory to launch it in (which may differ from meta.Dir — shell/ssm fall
+// back to home).
+type LaunchPlan struct {
+	Program string
+	Cwd     string
+}
+
+// LiveInfo is the slice of a wire Session whose values depend on the kind and live
+// state. wireSession fills the static fields and asks the agent for this.
+type LiveInfo struct {
+	State          string                // claude/opencode/codex live state; "" for shell/ssm
+	RemoteURL      string                // claude Remote Control URL, "" otherwise
+	Context        *session.ContextUsage // claude context fill, nil otherwise
+	Resumable      bool                  // false = stopped agent whose working dir is gone
+	BackgroundBusy bool                  // claude: idle turn but a run_in_background task lingers
+}
+
+// Agent is the per-kind behavior seam. Implementations are stateless value types
+// (the registry holds one of each); all session state is derived from the passed
+// meta and the on-disk stores.
+type Agent interface {
+	Kind() string
+	Caps() Caps
+	// BuildLaunch returns the tmux pane program + launch dir for m, or an error when
+	// the session can't start (e.g. its working dir is gone). The common tmux
+	// plumbing + toolchain prefix is applied by startSessionTmux.
+	BuildLaunch(m session.Meta, opts LaunchOpts) (LaunchPlan, error)
+	// WireLive computes the live-dependent Session fields for the sessions list.
+	WireLive(m session.Meta, alive bool) LiveInfo
+	// ClearResume forgets any captured per-slot resume id so recreate starts a fresh
+	// conversation. No-op for agents that pin their own session id (claude) or keep
+	// no resume state (shell/ssm).
+	ClearResume(sid string)
+	// Transcript returns the session's full chronological chat turns (normalized to the
+	// common transcript.Turn model) plus diagnostics and the reconstructed ToDo list, for agents
+	// whose native store isn't claude's <sid>.jsonl (codex rollout, opencode SQLite).
+	// ok=false means the agent has no generic transcript source — claude uses its own
+	// jsonl path in handleSessionMessages instead. The generic /messages handler windows
+	// the turns and surfaces the tasks.
+	Transcript(m session.Meta) (TranscriptData, bool)
+}
+
+// TranscriptData is what a non-claude agent's Transcript() yields: the full
+// chronological turns, the source path (diagnostics), and the current ToDo list
+// (reconstructed from the agent's plan/todo state; nil when none).
+type TranscriptData struct {
+	Turns []transcript.Turn
+	Path  string
+	Tasks []transcript.Task
+	// Mode is the agent's current permission/collaboration mode, normalized to "plan"
+	// (plan mode) or "normal", so the Console can show the plan indicator and drive the
+	// plan-mode toggle. "" when unknown.
+	Mode string
+	// Pending is the question the agent is currently awaiting an answer to (codex
+	// request_user_input / opencode question tool), or nil. Surfaced like claude's
+	// pending questions so the Console can render it interactively.
+	Pending []transcript.Question
+}
+
+// NoGenericTranscript is the Transcript() default for agents that either have no
+// readable transcript (shell/ssm) or use their own path (claude). Embedding it keeps
+// the interface satisfied without a per-agent stub.
+type NoGenericTranscript struct{}
+
+func (NoGenericTranscript) Transcript(session.Meta) (TranscriptData, bool) {
+	return TranscriptData{}, false
+}

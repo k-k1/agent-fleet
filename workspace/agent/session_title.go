@@ -293,7 +293,7 @@ func handleAcceptSuggestedTitle(w http.ResponseWriter, r *http.Request) {
 	m.Title = m.SuggestedTitle
 	m.SuggestedTitle = ""
 	m.SuggestedTitleDismissed = true // resolved — v1 never re-suggests for this session
-	if agentOf(m.Kind).caps().usesLabel {
+	if agentOf(m.Kind).Caps().UsesLabel {
 		m.Label = sessionLabelFor(m.Dir, m.Title)
 	}
 	session.WriteMeta(m)
@@ -450,7 +450,7 @@ func handleSetTitle(w http.ResponseWriter, r *http.Request) {
 	m.Title = title
 	m.SuggestedTitle = ""
 	m.SuggestedTitleDismissed = title != "" // clearing the title re-opens auto-suggestion
-	if agentOf(m.Kind).caps().usesLabel {
+	if agentOf(m.Kind).Caps().UsesLabel {
 		m.Label = sessionLabelFor(m.Dir, m.Title)
 	}
 	session.WriteMeta(m)
@@ -616,11 +616,11 @@ func sessionTitleTurns(m session.Meta) []transcript.Turn {
 		lines, _, _ := transcriptRead(sid)
 		return collectTurns(lines, 0, len(lines))
 	}
-	td, ok := agentOf(m.Kind).transcript(m)
+	td, ok := agentOf(m.Kind).Transcript(m)
 	if !ok {
 		return nil
 	}
-	return td.turns
+	return td.Turns
 }
 
 // handleDismissSuggestedTitle discards the pending suggestion without adopting it,
