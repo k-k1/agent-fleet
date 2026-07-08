@@ -34,6 +34,9 @@ export interface RepoRowProps {
   active?: boolean;
   selected?: boolean;
   onOpen: (e?: RMouseEvent) => void;
+  /** Plain click on the card toggles the node's fold (SCM moved to the right-click
+   * menu). Ctrl/⌘/middle-click still opens Source Control in a split. */
+  onToggle?: () => void;
   onOpenFolder?: () => void;
   onOpenChanges?: () => void;
   onFF?: () => void;
@@ -45,7 +48,7 @@ export interface RepoRowProps {
   onFocusPane?: (id: string) => void;
 }
 
-export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected, onOpen, onOpenFolder, onOpenChanges, onFF, onDelete, onLaunch, onStartWork, onBranchChanged, opens, onFocusPane }: RepoRowProps) {
+export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected, onOpen, onToggle, onOpenFolder, onOpenChanges, onFF, onDelete, onLaunch, onStartWork, onBranchChanged, opens, onFocusPane }: RepoRowProps) {
   const [showLaunch, setShowLaunch] = useState(false);
   const [launchModal, setLaunchModal] = useState(false);
   // Agent kinds only — shell/ssm have no model/prompt, so the modal excludes
@@ -91,8 +94,16 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
     >
       <div
         className={"repo-card" + (running ? "" : " disabled")}
-        title={running ? "ソース管理を開く: " + r.path + "（Ctrl/中クリックで新ペイン）" : "ワークスペース停止中"}
-        onClick={(e) => running && onOpen(e)}
+        title={(running ? "クリックで開閉 / Ctrl・中クリックでソース管理を新ペイン\n" : "クリックで開閉\n") + (r.path || "")}
+        // Plain click folds/unfolds the node (SCM is on the right-click menu now).
+        // Ctrl/⌘ still opens Source Control in a split (a power gesture).
+        onClick={(e) => {
+          if (running && (e.ctrlKey || e.metaKey)) {
+            onOpen(e);
+            return;
+          }
+          onToggle?.();
+        }}
         onMouseDown={(e) => e.button === 1 && e.preventDefault()}
         onAuxClick={(e) => e.button === 1 && running && onOpen(e)}
       >
