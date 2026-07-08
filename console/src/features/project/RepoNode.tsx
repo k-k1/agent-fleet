@@ -75,7 +75,7 @@ export function RepoNode({ r, ctx, actions }: RepoNodeProps) {
           <Icon name={node.open ? "chevron-down" : "chevron-right"} />
         </button>
         <ul className="sess-list proj-node-repo">
-          <RepoRowConnected r={r} ctx={ctx} />
+          <RepoRowConnected r={r} ctx={ctx} onToggle={node.toggle} />
         </ul>
       </div>
       {node.open && (

@@ -23,9 +23,11 @@ import type { RepoRailContext } from "./useRepoRail.ts";
 interface RepoRowConnectedProps {
   r: Repo;
   ctx: RepoRailContext;
+  /** Plain card click toggles the owning node's fold (SCM is on the right-click menu). */
+  onToggle?: () => void;
 }
 
-export function RepoRowConnected({ r, ctx }: RepoRowConnectedProps) {
+export function RepoRowConnected({ r, ctx, onToggle }: RepoRowConnectedProps) {
   const settings = useSettings(); // default model for claude 起動
   const toast = useToast();
   const askConfirm = useConfirm();
@@ -44,6 +46,7 @@ export function RepoRowConnected({ r, ctx }: RepoRowConnectedProps) {
       selected={r.name === ctx.activeRepo}
       opens={ctx.rPanes?.get(r.name)}
       onFocusPane={setActive}
+      onToggle={onToggle}
       // One click opens Source Control; Ctrl/Cmd/middle-click → a freshly split pane.
       onOpen={(e) => {
         const target = { content: { kind: "scm", scmRepo: r.name } as const };
