@@ -139,3 +139,26 @@ func TestSmokeStaticCatchAll(t *testing.T) {
 		t.Fatalf("static catch-all: want 404 got %d", w.Code)
 	}
 }
+
+// The registry-based isAuthExempt must reproduce the historical hardcoded set
+// (oauth_google.go pre-P2-W1) exactly — a drifted exemption either locks out an
+// internal caller or exposes a session-gated path.
+func TestAuthExemptRegistry(t *testing.T) {
+	smokeEnv(t) // buildMux registers the exemptions
+	exempt := []string{
+		"/login", "/healthz", "/oauth2/callback", "/mcp", "/mcp/sub",
+		"/internal/egress", "/git/default/repo.git/info/refs", "/brand/banner.png",
+		"/agent-fleet", "/agent-fleet/old/path",
+	}
+	for _, p := range exempt {
+		if !isAuthExempt(p) {
+			t.Errorf("%s must be exempt", p)
+		}
+	}
+	gated := []string{"/", "/api/tenants", "/api/sessions", "/ws/terminal", "/gitx", "/mcpx", "/loginx"}
+	for _, p := range gated {
+		if isAuthExempt(p) {
+			t.Errorf("%s must NOT be exempt", p)
+		}
+	}
+}
