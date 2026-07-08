@@ -102,6 +102,11 @@
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 8px;
+  /* Fixed width so the panel doesn't shrink-wrap its content: text inputs and
+     variable-length option lists would otherwise make the width jump around on
+     desktop each time the contents change. min/max stay as viewport clamps.
+     Modals that need a different width override via className (settings-modal etc.). */
+  width: min(520px, 96vw);
   min-width: min(420px, 92vw);
   max-width: min(680px, 96vw);
   max-height: 90vh;
