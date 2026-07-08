@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
 
 // Remote repository listing: enumerate the repositories the connected provider
@@ -60,7 +61,7 @@ func firstLine(s string) string {
 // GET /connections/git/{host}/repos
 func handleListRemoteRepos(w http.ResponseWriter, r *http.Request) {
 	host := r.PathValue("host")
-	s, err := loadSecrets()
+	s, err := secrets.Load()
 	if err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
 		return
@@ -105,7 +106,7 @@ func handleListRemoteBranches(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_repo", "repo=owner/name is required")
 		return
 	}
-	s, err := loadSecrets()
+	s, err := secrets.Load()
 	if err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
 		return
@@ -360,14 +361,14 @@ func githubReposPage(client *http.Client, token, url string) ([]remoteRepo, stri
 // OAuth creds (refreshed on the fly, like the git credential helper) are preferred;
 // a token-paste connection (Atlassian email + API token) falls back to HTTP Basic.
 // May refresh and persist the OAuth token as a side effect.
-func bitbucketAuthHeader(s *secretsData) (string, error) {
+func bitbucketAuthHeader(s *secrets.Data) (string, error) {
 	if s.Bitbucket != nil && s.Bitbucket.AccessToken != "" {
 		c := *s.Bitbucket
 		if time.Now().Unix() >= c.Expiry-120 { // refresh within 2 min of expiry
 			if nc, err := refreshBitbucket(c); err == nil {
 				c = nc
 				s.Bitbucket = &c
-				_ = s.save()
+				_ = s.Save()
 			}
 		}
 		return "Bearer " + c.AccessToken, nil

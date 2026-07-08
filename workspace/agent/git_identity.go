@@ -9,6 +9,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
 
 // Git commit identity (user.name / user.email) resolution. The effective identity is
@@ -61,7 +62,7 @@ func gitConfigGlobalGet(key string) string {
 // resolvedAccount is the provider's connected account name/email (github login+email,
 // or the Bitbucket account), used to auto-seed the commit identity. Works for either
 // connect method (token entry or OAuth).
-func resolvedAccount(s *secretsData, host string) (name, email string) {
+func resolvedAccount(s *secrets.Data, host string) (name, email string) {
 	if e, ok := s.Git[host]; ok {
 		name, email = e.Login, e.Email
 	}
@@ -79,7 +80,7 @@ func providerIdentity(host string) (name, email string) {
 	if host == "" {
 		return "", ""
 	}
-	s, err := loadSecrets()
+	s, err := secrets.Load()
 	if err != nil {
 		return "", ""
 	}
@@ -152,16 +153,16 @@ func handleGitProviderIdentityPut(w http.ResponseWriter, r *http.Request) {
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
-	s, err := loadSecrets()
+	s, err := secrets.Load()
 	if err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
 		return
 	}
 	if s.GitIdentity == nil {
-		s.GitIdentity = map[string]gitIdentity{}
+		s.GitIdentity = map[string]secrets.GitIdentity{}
 	}
-	s.GitIdentity[host] = gitIdentity{Name: strings.TrimSpace(req.Name), Email: strings.TrimSpace(req.Email)}
-	if err := s.save(); err != nil {
+	s.GitIdentity[host] = secrets.GitIdentity{Name: strings.TrimSpace(req.Name), Email: strings.TrimSpace(req.Email)}
+	if err := s.Save(); err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
 		return
 	}

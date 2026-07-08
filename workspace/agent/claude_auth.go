@@ -15,6 +15,7 @@ import (
 	"github.com/creack/pty"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
 
 // Claude auth is driven from the WebUI, not the terminal. We run the real
@@ -183,9 +184,9 @@ func handleClaudeDisconnect(w http.ResponseWriter, r *http.Request) {
 	// claude owns its credentials; log out via the CLI so it clears them properly.
 	_ = exec.Command("claude", "auth", "logout").Run()
 	// Best-effort: drop any legacy stored token from the encrypted store too.
-	if s, err := loadSecrets(); err == nil && s.Claude != "" {
+	if s, err := secrets.Load(); err == nil && s.Claude != "" {
 		s.Claude = ""
-		_ = s.save()
+		_ = s.Save()
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"disconnected": "claude"})
 }

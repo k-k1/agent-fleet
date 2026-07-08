@@ -7,12 +7,13 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
 
 // Connections hold the per-user provider credentials the Workspace consumes:
 // git provider tokens (HTTPS) and the Claude OAuth token. They live in the
 // user's home — the container's isolation boundary — inside the encrypted store
-// (secrets.go). The Control Plane delegates here and never holds secrets itself.
+// (internal/secrets). The Control Plane delegates here and never holds secrets itself.
 // See plan / docs/06 §6.7-6.8, docs/07 §7.3.
 
 // gitHosts maps a supported provider host to its default git username. GitHub
@@ -26,7 +27,7 @@ var gitHosts = map[string]string{
 
 // handleConnectionsGet reports connection status per provider, never secrets.
 func handleConnectionsGet(w http.ResponseWriter, r *http.Request) {
-	s, err := loadSecrets()
+	s, err := secrets.Load()
 	if err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
 		return
@@ -45,7 +46,7 @@ func handleConnectionsGet(w http.ResponseWriter, r *http.Request) {
 // internal-git-provider). It is CP-managed (the token is injected, not user-set),
 // so it reports connected whenever the CP seeded a credential for the internal
 // host. Absent AF_INTERNAL_GIT_HOST (internal git disabled) it is not connected.
-func internalGitStatus(s *secretsData) map[string]any {
+func internalGitStatus(s *secrets.Data) map[string]any {
 	host := internalGitHost()
 	if host == "" {
 		return map[string]any{"connected": false}
@@ -62,7 +63,7 @@ func internalGitStatus(s *secretsData) map[string]any {
 // Bitbucket account, resolved once from the API and cached in the store (so the
 // polled endpoint doesn't re-fetch); on resolve failure it falls back to the
 // stored email (token paste) or a placeholder (OAuth).
-func bitbucketStatus(s *secretsData) map[string]any {
+func bitbucketStatus(s *secrets.Data) map[string]any {
 	if e, ok := s.Git["bitbucket.org"]; ok {
 		m := map[string]any{"connected": true}
 		if (e.Login == "" || e.Email == "") && e.Token != "" {
@@ -70,7 +71,7 @@ func bitbucketStatus(s *secretsData) map[string]any {
 				if h, email, err := bitbucketAccount(auth); err == nil && h != "" {
 					e.Login, e.Email = h, email
 					s.Git["bitbucket.org"] = e
-					_ = s.save()
+					_ = s.Save()
 				}
 			}
 		}
@@ -91,7 +92,7 @@ func bitbucketStatus(s *secretsData) map[string]any {
 			if auth, err := bitbucketAuthHeader(s); err == nil {
 				if h, email, err := bitbucketAccount(auth); err == nil && h != "" {
 					s.Bitbucket.Account, s.Bitbucket.Email = h, email
-					_ = s.save()
+					_ = s.Save()
 				}
 			}
 		}
@@ -111,7 +112,7 @@ func bitbucketStatus(s *secretsData) map[string]any {
 // email), resolved once from the provider API and cached in the store
 // (write-through), so the polled endpoint doesn't re-fetch. Falls back to the
 // git-username placeholder; email is omitted when unavailable.
-func gitConnStatus(s *secretsData, host string) map[string]any {
+func gitConnStatus(s *secrets.Data, host string) map[string]any {
 	e, ok := s.Git[host]
 	m := map[string]any{"connected": ok}
 	if !ok {
@@ -121,7 +122,7 @@ func gitConnStatus(s *secretsData, host string) map[string]any {
 		if login, email, err := githubAccount(e.Token); err == nil && login != "" {
 			e.Login, e.Email = login, email
 			s.Git[host] = e
-			_ = s.save()
+			_ = s.Save()
 		}
 	}
 	if name := firstNonEmpty(e.Login, e.User); name != "" {
@@ -208,24 +209,24 @@ func handleDeleteGitConn(w http.ResponseWriter, r *http.Request) {
 // upsertGitCredential stores an HTTPS credential for host in the encrypted store
 // and ensures the cred helper is the active git credential source.
 func upsertGitCredential(host, user, token string) error {
-	s, err := loadSecrets()
+	s, err := secrets.Load()
 	if err != nil {
 		return err
 	}
-	s.Git[host] = gitEntry{User: user, Token: token}
-	if err := s.save(); err != nil {
+	s.Git[host] = secrets.GitEntry{User: user, Token: token}
+	if err := s.Save(); err != nil {
 		return err
 	}
 	return ensureCredHelper()
 }
 
 func removeGitCredential(host string) error {
-	s, err := loadSecrets()
+	s, err := secrets.Load()
 	if err != nil {
 		return err
 	}
 	delete(s.Git, host)
-	return s.save()
+	return s.Save()
 }
 
 func gitConfigGlobal(key, val string) error {

@@ -1,10 +1,11 @@
 package main
 
+// git credential-helper glue and startup seeding/migration over the encrypted
+// store (internal/secrets). The store itself moved to internal/secrets in
+// docs/23 残① Wave B; the subcommand entry (`workspace-agent cred`), env-driven
+// seeding and legacy-file migration stay in package main.
+
 import (
-	"crypto/aes"
-	"crypto/cipher"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -15,135 +16,8 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
-
-// secrets is the single encrypted store for every provider credential the
-// Workspace holds: git tokens, the Claude OAuth token, and Bitbucket's refresh
-// creds. It replaces the former plaintext files (~/.git-credentials,
-// claude-oauth-token, bitbucket.json). At rest it is AES-256-GCM sealed with a
-// per-user subkey the Control Plane injects as AF_SECRET_KEY (derived from the
-// deployment master key; CP never stores plaintext). With no key (dev) the same
-// store is written as plaintext JSON — one code path, encryption is just the
-// seal. git reads it on demand via the `workspace-agent cred` helper, so no
-// plaintext credential file is ever written to the bind-mounted disk. (A3)
-
-type gitEntry struct {
-	User  string `json:"user"`
-	Token string `json:"token"`
-	Login string `json:"login,omitempty"` // cached real provider account/handle (resolved from the API)
-	Email string `json:"email,omitempty"` // cached account email (resolved from the API)
-}
-
-// gitIdentity is a provider's explicit commit identity (user.name / user.email),
-// decoupled from the credential entry so it works for either connect method (token or
-// OAuth). Empty fields fall back to the resolved account (Login/Email).
-type gitIdentity struct {
-	Name  string `json:"name,omitempty"`
-	Email string `json:"email,omitempty"`
-}
-
-type secretsData struct {
-	Git         map[string]gitEntry    `json:"git"`                   // host -> https cred
-	GitIdentity map[string]gitIdentity `json:"gitIdentity,omitempty"` // host -> explicit commit identity
-	Claude      string                 `json:"claude"`                // CLAUDE_CODE_OAUTH_TOKEN
-	Bitbucket   *bitbucketCreds        `json:"bitbucket"`             // OAuth refresh creds (bitbucket.org)
-	Opencode    map[string]string      `json:"opencode"`              // provider env var name -> API key (injected for opencode sessions)
-}
-
-// agentSecretKey returns the 32-byte per-user key from AF_SECRET_KEY (hex), or
-// nil when unset/invalid (dev: store is plaintext JSON).
-func agentSecretKey() []byte {
-	h := os.Getenv("AF_SECRET_KEY")
-	if h == "" {
-		return nil
-	}
-	b, err := hex.DecodeString(strings.TrimSpace(h))
-	if err != nil || len(b) != 32 {
-		log.Printf("WARNING: AF_SECRET_KEY is set but not 32-byte hex — storing secrets in PLAINTEXT")
-		return nil
-	}
-	return b
-}
-
-func secretsPath() string {
-	name := "secrets.json"
-	if agentSecretKey() != nil {
-		name = "secrets.enc"
-	}
-	return filepath.Join(homeDir(), ".config", "agent-fleet", name)
-}
-
-func loadSecrets() (*secretsData, error) {
-	s := &secretsData{Git: map[string]gitEntry{}}
-	b, err := os.ReadFile(secretsPath())
-	if err != nil {
-		if os.IsNotExist(err) {
-			return s, nil
-		}
-		return s, err
-	}
-	if key := agentSecretKey(); key != nil {
-		if b, err = aesOpen(key, b); err != nil {
-			return s, fmt.Errorf("decrypt secrets: %w", err)
-		}
-	}
-	if err := json.Unmarshal(b, s); err != nil {
-		return s, err
-	}
-	if s.Git == nil {
-		s.Git = map[string]gitEntry{}
-	}
-	return s, nil
-}
-
-func (s *secretsData) save() error {
-	p := secretsPath()
-	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
-		return err
-	}
-	b, err := json.Marshal(s)
-	if err != nil {
-		return err
-	}
-	if key := agentSecretKey(); key != nil {
-		if b, err = aesSeal(key, b); err != nil {
-			return err
-		}
-	}
-	return os.WriteFile(p, b, 0o600)
-}
-
-func aesSeal(key, plaintext []byte) ([]byte, error) {
-	gcm, err := newGCM(key)
-	if err != nil {
-		return nil, err
-	}
-	nonce := make([]byte, gcm.NonceSize())
-	if _, err := rand.Read(nonce); err != nil {
-		return nil, err
-	}
-	return gcm.Seal(nonce, nonce, plaintext, nil), nil // nonce prepended
-}
-
-func aesOpen(key, ct []byte) ([]byte, error) {
-	gcm, err := newGCM(key)
-	if err != nil {
-		return nil, err
-	}
-	ns := gcm.NonceSize()
-	if len(ct) < ns {
-		return nil, fmt.Errorf("ciphertext too short")
-	}
-	return gcm.Open(nil, ct[:ns], ct[ns:], nil)
-}
-
-func newGCM(key []byte) (cipher.AEAD, error) {
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, err
-	}
-	return cipher.NewGCM(block)
-}
 
 // ensureCredHelper makes `workspace-agent cred` the sole global git credential
 // helper for every host, clearing any inherited/legacy helpers (the old `store`
@@ -166,7 +40,7 @@ func runCredHelper(args []string) {
 		return // store/erase: nothing to do
 	}
 	host := credHelperHost(os.Stdin)
-	s, err := loadSecrets()
+	s, err := secrets.Load()
 	if err != nil {
 		return // emit nothing: git falls through / prompts
 	}
@@ -176,7 +50,7 @@ func runCredHelper(args []string) {
 			if nc, rerr := refreshBitbucket(c); rerr == nil {
 				c = nc
 				s.Bitbucket = &c
-				_ = s.save()
+				_ = s.Save()
 			}
 		}
 		fmt.Printf("username=x-token-auth\npassword=%s\n", c.AccessToken)
@@ -214,7 +88,7 @@ func seedInternalGit() {
 	if host == "" || token == "" {
 		return
 	}
-	s, err := loadSecrets()
+	s, err := secrets.Load()
 	if err != nil {
 		log.Printf("internal git: load secrets failed: %v", err)
 		return
@@ -222,8 +96,8 @@ func seedInternalGit() {
 	if e, ok := s.Git[host]; ok && e.User == "x-access-token" && e.Token == token {
 		return // already current
 	}
-	s.Git[host] = gitEntry{User: "x-access-token", Token: token}
-	if err := s.save(); err != nil {
+	s.Git[host] = secrets.GitEntry{User: "x-access-token", Token: token}
+	if err := s.Save(); err != nil {
 		log.Printf("internal git: save failed: %v", err)
 		return
 	}
@@ -234,7 +108,7 @@ func seedInternalGit() {
 // and deletes them, so the bind-mounted disk no longer holds plaintext. Runs
 // every start; a no-op once migrated.
 func migrateLegacySecrets() {
-	s, err := loadSecrets()
+	s, err := secrets.Load()
 	if err != nil {
 		log.Printf("secrets migration: load failed: %v", err)
 		return
@@ -252,13 +126,13 @@ func migrateLegacySecrets() {
 			}
 			if u, err := url.Parse(line); err == nil && u.Host != "" {
 				pw, _ := u.User.Password()
-				s.Git[u.Host] = gitEntry{User: u.User.Username(), Token: pw}
+				s.Git[u.Host] = secrets.GitEntry{User: u.User.Username(), Token: pw}
 				changed = true
 			}
 		}
 	}
 	if b, err := os.ReadFile(bjp); err == nil {
-		var c bitbucketCreds
+		var c secrets.BitbucketCreds
 		if json.Unmarshal(b, &c) == nil && c.AccessToken != "" {
 			s.Bitbucket = &c
 			changed = true
@@ -273,7 +147,7 @@ func migrateLegacySecrets() {
 	if !changed {
 		return
 	}
-	if err := s.save(); err != nil {
+	if err := s.Save(); err != nil {
 		log.Printf("secrets migration: save failed (keeping legacy files): %v", err)
 		return
 	}
@@ -281,5 +155,5 @@ func migrateLegacySecrets() {
 		_ = os.Remove(p)
 	}
 	_ = ensureCredHelper()
-	log.Printf("secrets: migrated legacy plaintext credentials into %s", filepath.Base(secretsPath()))
+	log.Printf("secrets: migrated legacy plaintext credentials into %s", filepath.Base(secrets.Path()))
 }
