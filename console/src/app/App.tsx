@@ -13,7 +13,7 @@ import { wireTerminalReconcile } from "../terminal/service.ts";
 import { useSessionsStore, startSessionsPolling } from "../features/sessions/store.ts";
 import { SessionModals } from "../features/sessions/SessionModals.tsx";
 import { useSessionNotifications } from "../features/sessions/useSessionNotifications.ts";
-import { useReposStore } from "../features/repos/store.ts";
+import { useReposStore, startReposPolling } from "../features/repos/store.ts";
 import { useFilesStore } from "../features/files/store.ts";
 import { useChatStore } from "../features/chat/store.ts";
 import { hydrateUIPrefs } from "../lib/settings.ts";
@@ -204,6 +204,7 @@ export function App() {
     const unWsRefresh = wireWorkspaceRefresh();
     const stopWsPoll = startWorkspacePolling();
     const stopSessPoll = startSessionsPolling();
+    const stopReposPoll = startReposPolling();
     void (async () => {
       await useTenantStore.getState().init();
       void hydrateUIPrefs();
@@ -216,6 +217,7 @@ export function App() {
       unWsRefresh();
       stopWsPoll();
       stopSessPoll();
+      stopReposPoll();
     };
   }, []);
 

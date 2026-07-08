@@ -306,6 +306,16 @@
   color: var(--accent);
   background: color-mix(in srgb, var(--accent) 14%, transparent);
 }
+/* origin が先行していてクリーンに FF できる（behind のみ） */
+.repo-chip.ab.ff {
+  color: var(--ok);
+  background: color-mix(in srgb, var(--ok) 14%, transparent);
+}
+/* origin と分岐していて FF 不可＝マージ/リベースが要る（ahead + behind） */
+.repo-chip.ab.diverged {
+  color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 14%, transparent);
+}
 .repo-ords {
   padding: 0;
 }

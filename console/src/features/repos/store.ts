@@ -33,3 +33,15 @@ export const useReposStore = create<ReposStore>((set) => ({
     }
   },
 }));
+
+/** Poll every 60s while the tab is visible, so the origin-ahead badge (kept
+ * fresh server-side by the Agent's auto-fetch) updates without a manual
+ * refresh. Returns cleanup (StrictMode-safe). */
+export function startReposPolling(): () => void {
+  const load = () => {
+    if (!document.hidden) void useReposStore.getState().refresh();
+  };
+  load();
+  const t = setInterval(load, 60000);
+  return () => clearInterval(t);
+}
