@@ -98,6 +98,21 @@
   background: color-mix(in srgb, var(--fg) 9%, transparent);
 }
 
+/* ファイル sub-header row: the collapse button + a ツリー/変更 view toggle. */
+.proj-sub-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.proj-sub-head .proj-sub-btn {
+  flex: 1;
+  min-width: 0;
+}
+.proj-file-view {
+  flex: none;
+  margin-right: 2px;
+}
+
 /* Nested session/file list under a sub-section: no extra outer padding. */
 .proj-sub-list {
   padding: 1px 0 2px;
