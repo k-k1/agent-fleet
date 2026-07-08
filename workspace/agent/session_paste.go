@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 )
 
 // Pasted-image support. A claude session driven over tmux can't receive an image through
@@ -68,7 +70,7 @@ func imageMime(ext string) string {
 func savePastedImageTo(w http.ResponseWriter, r *http.Request, dir string) {
 	mr, err := r.MultipartReader()
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, "bad_form", "expected multipart/form-data")
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_form", "expected multipart/form-data")
 		return
 	}
 	max := maxUploadBytes()
@@ -78,7 +80,7 @@ func savePastedImageTo(w http.ResponseWriter, r *http.Request, dir string) {
 			break
 		}
 		if err != nil {
-			writeErr(w, http.StatusBadRequest, "bad_part", err.Error())
+			httpx.WriteErr(w, http.StatusBadRequest, "bad_part", err.Error())
 			return
 		}
 		if part.FormName() != "file" {
@@ -86,16 +88,16 @@ func savePastedImageTo(w http.ResponseWriter, r *http.Request, dir string) {
 		}
 		ext, ok := imageExt(part.Header.Get("Content-Type"), part.FileName())
 		if !ok {
-			writeErr(w, http.StatusUnsupportedMediaType, "not_image", "画像ファイルのみ対応しています")
+			httpx.WriteErr(w, http.StatusUnsupportedMediaType, "not_image", "画像ファイルのみ対応しています")
 			return
 		}
 		if err := os.MkdirAll(dir, 0o700); err != nil {
-			writeErr(w, http.StatusInternalServerError, "mkdir_failed", err.Error())
+			httpx.WriteErr(w, http.StatusInternalServerError, "mkdir_failed", err.Error())
 			return
 		}
 		tmp, err := os.CreateTemp(dir, ".paste-*")
 		if err != nil {
-			writeErr(w, http.StatusInternalServerError, "write_failed", err.Error())
+			httpx.WriteErr(w, http.StatusInternalServerError, "write_failed", err.Error())
 			return
 		}
 		n, err := io.Copy(tmp, io.LimitReader(part, max+1))
@@ -103,9 +105,9 @@ func savePastedImageTo(w http.ResponseWriter, r *http.Request, dir string) {
 		if err != nil || n > max {
 			_ = os.Remove(tmp.Name())
 			if n > max {
-				writeErr(w, http.StatusRequestEntityTooLarge, "too_large", "画像が大きすぎます")
+				httpx.WriteErr(w, http.StatusRequestEntityTooLarge, "too_large", "画像が大きすぎます")
 			} else {
-				writeErr(w, http.StatusInternalServerError, "write_failed", "upload failed")
+				httpx.WriteErr(w, http.StatusInternalServerError, "write_failed", "upload failed")
 			}
 			return
 		}
@@ -113,13 +115,13 @@ func savePastedImageTo(w http.ResponseWriter, r *http.Request, dir string) {
 		dest := filepath.Join(dir, fname)
 		if err := os.Rename(tmp.Name(), dest); err != nil {
 			_ = os.Remove(tmp.Name())
-			writeErr(w, http.StatusInternalServerError, "write_failed", err.Error())
+			httpx.WriteErr(w, http.StatusInternalServerError, "write_failed", err.Error())
 			return
 		}
-		writeJSON(w, http.StatusCreated, map[string]any{"path": dest, "name": fname})
+		httpx.WriteJSON(w, http.StatusCreated, map[string]any{"path": dest, "name": fname})
 		return
 	}
-	writeErr(w, http.StatusBadRequest, "no_file", "no file part")
+	httpx.WriteErr(w, http.StatusBadRequest, "no_file", "no file part")
 }
 
 // servePastedImageFrom serves a stored image by basename (GET) from dir, for the Console's
@@ -127,17 +129,17 @@ func savePastedImageTo(w http.ResponseWriter, r *http.Request, dir string) {
 func servePastedImageFrom(w http.ResponseWriter, dir, file string) {
 	base := filepath.Base(file)
 	if base != file || base == "." || base == ".." {
-		writeErr(w, http.StatusBadRequest, "bad_name", "invalid file")
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_name", "invalid file")
 		return
 	}
 	ext, ok := imageExt("", base)
 	if !ok {
-		writeErr(w, http.StatusBadRequest, "not_image", "not an image")
+		httpx.WriteErr(w, http.StatusBadRequest, "not_image", "not an image")
 		return
 	}
 	b, err := os.ReadFile(filepath.Join(dir, base))
 	if err != nil {
-		writeErr(w, http.StatusNotFound, "not_found", "no such image")
+		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such image")
 		return
 	}
 	w.Header().Set("Content-Type", imageMime(ext))
@@ -153,11 +155,11 @@ func handlePasteImage(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	meta, ok := readSessionMeta(name)
 	if !ok {
-		writeErr(w, http.StatusNotFound, "no_session", "session not found: "+name)
+		httpx.WriteErr(w, http.StatusNotFound, "no_session", "session not found: "+name)
 		return
 	}
 	if !agentOf(meta.Kind).caps().canTranscript {
-		writeErr(w, http.StatusBadRequest, "not_claude", "画像を渡せるのは claude セッションのみです")
+		httpx.WriteErr(w, http.StatusBadRequest, "not_claude", "画像を渡せるのは claude セッションのみです")
 		return
 	}
 	savePastedImageTo(w, r, pastedDir(sessionUUID(meta.Dir, name)))
@@ -168,7 +170,7 @@ func handlePastedImage(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	meta, ok := readSessionMeta(name)
 	if !ok {
-		writeErr(w, http.StatusNotFound, "no_session", "session not found: "+name)
+		httpx.WriteErr(w, http.StatusNotFound, "no_session", "session not found: "+name)
 		return
 	}
 	servePastedImageFrom(w, pastedDir(sessionUUID(meta.Dir, name)), r.PathValue("file"))
@@ -185,11 +187,11 @@ func handleChatPasteImage(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	c, err := loadConv(id)
 	if err != nil {
-		writeErr(w, http.StatusNotFound, "no_conversation", "conversation not found: "+id)
+		httpx.WriteErr(w, http.StatusNotFound, "no_conversation", "conversation not found: "+id)
 		return
 	}
 	if c.Agent != kindClaude {
-		writeErr(w, http.StatusBadRequest, "not_claude", "画像を渡せるのは claude のアシスタントのみです")
+		httpx.WriteErr(w, http.StatusBadRequest, "not_claude", "画像を渡せるのは claude のアシスタントのみです")
 		return
 	}
 	savePastedImageTo(w, r, chatPastedDir(id))
@@ -199,7 +201,7 @@ func handleChatPasteImage(w http.ResponseWriter, r *http.Request) {
 func handleChatPastedImage(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if !validConvID(id) {
-		writeErr(w, http.StatusBadRequest, "bad_id", "invalid conversation id")
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_id", "invalid conversation id")
 		return
 	}
 	servePastedImageFrom(w, chatPastedDir(id), r.PathValue("file"))

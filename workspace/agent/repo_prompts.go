@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 )
 
 // Prompt templates surfaced in the repo row's 起動 modal (LaunchModal). Aggregated
@@ -37,7 +39,7 @@ func handleRepoPromptTemplates(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	dir, ok := resolveRepoDir(name)
 	if !ok {
-		writeErr(w, http.StatusBadRequest, "bad_repo", "invalid repo name")
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_repo", "invalid repo name")
 		return
 	}
 	groups := []promptGroup{}
@@ -50,7 +52,7 @@ func handleRepoPromptTemplates(w http.ResponseWriter, r *http.Request) {
 	if f := readFileTemplates(dir); len(f) > 0 {
 		groups = append(groups, promptGroup{Source: "file", Label: "テンプレート", Items: f})
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"groups": groups})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"groups": groups})
 }
 
 // splitFrontmatter peels a leading "---\n … \n---" YAML block off a Markdown file and

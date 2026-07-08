@@ -4,6 +4,9 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 )
 
 // Connections hold the per-user provider credentials the Workspace consumes:
@@ -25,10 +28,10 @@ var gitHosts = map[string]string{
 func handleConnectionsGet(w http.ResponseWriter, r *http.Request) {
 	s, err := loadSecrets()
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "store_failed", err.Error())
+		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"claude":    claudeStatus(),
 		"github":    gitConnStatus(s, "github.com"),
 		"bitbucket": bitbucketStatus(s),
@@ -156,16 +159,16 @@ func handlePutGitConn(w http.ResponseWriter, r *http.Request) {
 	host := r.PathValue("host")
 	defUser, ok := gitHosts[host]
 	if !ok {
-		writeErr(w, http.StatusBadRequest, "bad_host", "unsupported host: "+host)
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_host", "unsupported host: "+host)
 		return
 	}
 	var req gitConnReq
-	if !decodeJSON(w, r, &req) {
+	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
 	token := strings.TrimSpace(req.Token)
 	if token == "" {
-		writeErr(w, http.StatusBadRequest, "bad_token", "token is required")
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_token", "token is required")
 		return
 	}
 	user := strings.TrimSpace(req.Username)
@@ -173,33 +176,33 @@ func handlePutGitConn(w http.ResponseWriter, r *http.Request) {
 		user = defUser
 	}
 	if user == "" {
-		writeErr(w, http.StatusBadRequest, "bad_username", "username (Atlassian email) is required for "+host)
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_username", "username (Atlassian email) is required for "+host)
 		return
 	}
 
 	if err := upsertGitCredential(host, user, token); err != nil {
-		writeErr(w, http.StatusInternalServerError, "store_failed", err.Error())
+		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
 		return
 	}
 	// Commit identity is set separately (per provider) via /identity — not clobbered
 	// into the global config at connect time.
-	writeJSON(w, http.StatusOK, map[string]any{"connected": true, "host": host, "username": user})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"connected": true, "host": host, "username": user})
 }
 
 func handleDeleteGitConn(w http.ResponseWriter, r *http.Request) {
 	host := r.PathValue("host")
 	if _, ok := gitHosts[host]; !ok {
-		writeErr(w, http.StatusBadRequest, "bad_host", "unsupported host: "+host)
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_host", "unsupported host: "+host)
 		return
 	}
 	if err := removeGitCredential(host); err != nil {
-		writeErr(w, http.StatusInternalServerError, "store_failed", err.Error())
+		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
 		return
 	}
 	if host == "bitbucket.org" {
 		removeBitbucketOAuth() // also clear OAuth tokens + the refresh helper
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"disconnected": host})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"disconnected": host})
 }
 
 // upsertGitCredential stores an HTTPS credential for host in the encrypted store
@@ -226,7 +229,7 @@ func removeGitCredential(host string) error {
 }
 
 func gitConfigGlobal(key, val string) error {
-	if out, err := runGitCombined("", "config", "--global", key, val); err != nil {
+	if out, err := gitx.Combined("", "config", "--global", key, val); err != nil {
 		return fmt.Errorf("git config %s: %v: %s", key, err, out)
 	}
 	return nil

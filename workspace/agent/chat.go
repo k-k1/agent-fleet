@@ -29,6 +29,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 )
 
 // chatMessage is one turn in a conversation.
@@ -627,10 +629,10 @@ func cliErr(err error) string {
 func handleChatList(w http.ResponseWriter, r *http.Request) {
 	metas, err := listConvs()
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "chat_list", err.Error())
+		httpx.WriteErr(w, http.StatusInternalServerError, "chat_list", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"conversations": metas})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"conversations": metas})
 }
 
 type chatCreateReq struct {
@@ -673,7 +675,7 @@ func appendUniqueStr(ss []string, v string) []string {
 
 func handleChatCreate(w http.ResponseWriter, r *http.Request) {
 	var req chatCreateReq
-	if !decodeJSON(w, r, &req) {
+	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
 	title := strings.TrimSpace(req.Title)
@@ -690,7 +692,7 @@ func handleChatCreate(w http.ResponseWriter, r *http.Request) {
 		// to the assistant leave existing threads untouched.
 		a, err := getAssistant(req.AssistantID)
 		if err != nil {
-			writeErr(w, http.StatusBadRequest, "bad_assistant", "アシスタントが見つかりません")
+			httpx.WriteErr(w, http.StatusBadRequest, "bad_assistant", "アシスタントが見つかりません")
 			return
 		}
 		c.AssistantID = a.ID
@@ -703,7 +705,7 @@ func handleChatCreate(w http.ResponseWriter, r *http.Request) {
 		// Legacy path: plain agent + optional model, generic persona, read-only fleet tools
 		// for claude (mirrors the pre-assistant default).
 		if _, ok := chatProviders[req.Agent]; !ok {
-			writeErr(w, http.StatusBadRequest, "bad_agent", "未対応のエージェントです")
+			httpx.WriteErr(w, http.StatusBadRequest, "bad_agent", "未対応のエージェントです")
 			return
 		}
 		c.Agent = req.Agent
@@ -732,11 +734,11 @@ func handleChatCreate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := saveConv(c); err != nil {
-		writeErr(w, http.StatusInternalServerError, "chat_save", err.Error())
+		httpx.WriteErr(w, http.StatusInternalServerError, "chat_save", err.Error())
 		return
 	}
 	c.Seed = seed // transient: set after save so it's returned once but never persisted
-	writeJSON(w, http.StatusOK, c)
+	httpx.WriteJSON(w, http.StatusOK, c)
 }
 
 // chatAskReq is the assistant-to-assistant consult (docs/19): an af_write orchestrator's
@@ -753,17 +755,17 @@ type chatAskReq struct {
 // only). Reached only via the local Agent REST (mcp_stdio → localhost); not CP-exposed.
 func handleChatAsk(w http.ResponseWriter, r *http.Request) {
 	var req chatAskReq
-	if !decodeJSON(w, r, &req) {
+	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
 	prompt := strings.TrimSpace(req.Prompt)
 	if prompt == "" {
-		writeErr(w, http.StatusBadRequest, "empty", "prompt が空です")
+		httpx.WriteErr(w, http.StatusBadRequest, "empty", "prompt が空です")
 		return
 	}
 	a, err := resolveAssistant(strings.TrimSpace(req.Assistant))
 	if err != nil {
-		writeErr(w, http.StatusNotFound, "not_found", "アシスタントが見つかりません")
+		httpx.WriteErr(w, http.StatusNotFound, "not_found", "アシスタントが見つかりません")
 		return
 	}
 	// Ephemeral, non-persisted conversation carrying the assistant's persona/model/knowledge
@@ -774,26 +776,26 @@ func handleChatAsk(w http.ResponseWriter, r *http.Request) {
 	}
 	prov, ok := chatProviders[c.Agent]
 	if !ok {
-		writeErr(w, http.StatusBadRequest, "bad_agent", "未対応のエージェントです")
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_agent", "未対応のエージェントです")
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), chatTimeout)
 	defer cancel()
 	reply, err := prov.send(ctx, c, prompt)
 	if err != nil {
-		writeErr(w, http.StatusBadGateway, "provider", err.Error())
+		httpx.WriteErr(w, http.StatusBadGateway, "provider", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"assistant": a.Name, "reply": reply})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"assistant": a.Name, "reply": reply})
 }
 
 func handleChatGet(w http.ResponseWriter, r *http.Request) {
 	c, err := loadConv(r.PathValue("id"))
 	if err != nil {
-		writeErr(w, http.StatusNotFound, "not_found", "会話が見つかりません")
+		httpx.WriteErr(w, http.StatusNotFound, "not_found", "会話が見つかりません")
 		return
 	}
-	writeJSON(w, http.StatusOK, c)
+	httpx.WriteJSON(w, http.StatusOK, c)
 }
 
 type chatRenameReq struct {
@@ -805,41 +807,41 @@ type chatRenameReq struct {
 func handleChatRename(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	var req chatRenameReq
-	if !decodeJSON(w, r, &req) {
+	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
 	title := strings.TrimSpace(req.Title)
 	if title == "" {
-		writeErr(w, http.StatusBadRequest, "empty", "表示名が空です")
+		httpx.WriteErr(w, http.StatusBadRequest, "empty", "表示名が空です")
 		return
 	}
 	unlock := lockConv(id) // serialize with an in-flight turn's load-modify-save
 	defer unlock()
 	c, err := loadConv(id)
 	if err != nil {
-		writeErr(w, http.StatusNotFound, "not_found", "会話が見つかりません")
+		httpx.WriteErr(w, http.StatusNotFound, "not_found", "会話が見つかりません")
 		return
 	}
 	c.Title = title
 	c.UpdatedAt = nowMs()
 	if err := saveConv(c); err != nil {
-		writeErr(w, http.StatusInternalServerError, "chat_save", err.Error())
+		httpx.WriteErr(w, http.StatusInternalServerError, "chat_save", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, c)
+	httpx.WriteJSON(w, http.StatusOK, c)
 }
 
 func handleChatDelete(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if !validConvID(id) {
-		writeErr(w, http.StatusBadRequest, "bad_request", "invalid id")
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_request", "invalid id")
 		return
 	}
 	if err := os.Remove(convPath(id)); err != nil && !os.IsNotExist(err) {
-		writeErr(w, http.StatusInternalServerError, "chat_delete", err.Error())
+		httpx.WriteErr(w, http.StatusInternalServerError, "chat_delete", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 type chatSendReq struct {
@@ -849,12 +851,12 @@ type chatSendReq struct {
 func handleChatSend(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	var req chatSendReq
-	if !decodeJSON(w, r, &req) {
+	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
 	content := strings.TrimSpace(req.Content)
 	if content == "" {
-		writeErr(w, http.StatusBadRequest, "empty", "メッセージが空です")
+		httpx.WriteErr(w, http.StatusBadRequest, "empty", "メッセージが空です")
 		return
 	}
 
@@ -863,12 +865,12 @@ func handleChatSend(w http.ResponseWriter, r *http.Request) {
 
 	c, err := loadConv(id)
 	if err != nil {
-		writeErr(w, http.StatusNotFound, "not_found", "会話が見つかりません")
+		httpx.WriteErr(w, http.StatusNotFound, "not_found", "会話が見つかりません")
 		return
 	}
 	prov, ok := chatProviders[c.Agent]
 	if !ok {
-		writeErr(w, http.StatusBadRequest, "bad_agent", "未対応のエージェントです")
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_agent", "未対応のエージェントです")
 		return
 	}
 
@@ -881,7 +883,7 @@ func handleChatSend(w http.ResponseWriter, r *http.Request) {
 		// Persist the user turn + resume handle even on failure so a retry continues.
 		c.UpdatedAt = nowMs()
 		_ = saveConv(c)
-		writeErr(w, http.StatusBadGateway, "provider", err.Error())
+		httpx.WriteErr(w, http.StatusBadGateway, "provider", err.Error())
 		return
 	}
 
@@ -889,10 +891,10 @@ func handleChatSend(w http.ResponseWriter, r *http.Request) {
 	c.Messages = append(c.Messages, assistant)
 	c.UpdatedAt = nowMs()
 	if err := saveConv(c); err != nil {
-		writeErr(w, http.StatusInternalServerError, "chat_save", err.Error())
+		httpx.WriteErr(w, http.StatusInternalServerError, "chat_save", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"message": assistant, "conversation": c})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"message": assistant, "conversation": c})
 }
 
 // handleChatStream is the streaming (Phase B) form of send: it runs the provider
@@ -906,12 +908,12 @@ func handleChatSend(w http.ResponseWriter, r *http.Request) {
 func handleChatStream(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	var req chatSendReq
-	if !decodeJSON(w, r, &req) {
+	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
 	content := strings.TrimSpace(req.Content)
 	if content == "" {
-		writeErr(w, http.StatusBadRequest, "empty", "メッセージが空です")
+		httpx.WriteErr(w, http.StatusBadRequest, "empty", "メッセージが空です")
 		return
 	}
 
@@ -920,12 +922,12 @@ func handleChatStream(w http.ResponseWriter, r *http.Request) {
 
 	c, err := loadConv(id)
 	if err != nil {
-		writeErr(w, http.StatusNotFound, "not_found", "会話が見つかりません")
+		httpx.WriteErr(w, http.StatusNotFound, "not_found", "会話が見つかりません")
 		return
 	}
 	prov, ok := chatProviders[c.Agent]
 	if !ok {
-		writeErr(w, http.StatusBadRequest, "bad_agent", "未対応のエージェントです")
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_agent", "未対応のエージェントです")
 		return
 	}
 

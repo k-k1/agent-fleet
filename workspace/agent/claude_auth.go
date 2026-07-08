@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/creack/pty"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 )
 
 // Claude auth is driven from the WebUI, not the terminal. We run the real
@@ -90,7 +92,7 @@ func handleClaudeStart(w http.ResponseWriter, r *http.Request) {
 	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
 	ptmx, err := pty.Start(cmd)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "pty_failed", err.Error())
+		httpx.WriteErr(w, http.StatusInternalServerError, "pty_failed", err.Error())
 		return
 	}
 	_ = pty.Setsize(ptmx, &pty.Winsize{Rows: 50, Cols: 4000}) // wide => URL on one line
@@ -114,14 +116,14 @@ func handleClaudeStart(w http.ResponseWriter, r *http.Request) {
 	url := waitFor(f, urlRe, 20*time.Second)
 	if url == "" {
 		f.close()
-		writeErr(w, http.StatusBadGateway, "no_url", "setup-token did not emit an authorize URL")
+		httpx.WriteErr(w, http.StatusBadGateway, "no_url", "setup-token did not emit an authorize URL")
 		return
 	}
 	id := newFlowID()
 	flowsMu.Lock()
 	flows[id] = f
 	flowsMu.Unlock()
-	writeJSON(w, http.StatusOK, map[string]any{"flow_id": id, "url": url})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"flow_id": id, "url": url})
 }
 
 type claudeCompleteReq struct {
@@ -133,12 +135,12 @@ type claudeCompleteReq struct {
 // stores it. The flow's PTY/process is always cleaned up.
 func handleClaudeComplete(w http.ResponseWriter, r *http.Request) {
 	var req claudeCompleteReq
-	if !decodeJSON(w, r, &req) {
+	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
 	code := strings.TrimSpace(req.Code)
 	if code == "" {
-		writeErr(w, http.StatusBadRequest, "bad_code", "code is required")
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_code", "code is required")
 		return
 	}
 	flowsMu.Lock()
@@ -146,7 +148,7 @@ func handleClaudeComplete(w http.ResponseWriter, r *http.Request) {
 	delete(flows, req.FlowID)
 	flowsMu.Unlock()
 	if f == nil {
-		writeErr(w, http.StatusNotFound, "no_flow", "unknown or expired flow_id")
+		httpx.WriteErr(w, http.StatusNotFound, "no_flow", "unknown or expired flow_id")
 		return
 	}
 	defer f.close()
@@ -155,26 +157,26 @@ func handleClaudeComplete(w http.ResponseWriter, r *http.Request) {
 	// delay. Ink ignores the carriage return if it arrives in the same write as
 	// the pasted code, leaving the form unsubmitted (verified via a PTY probe).
 	if _, err := f.ptmx.Write([]byte(code)); err != nil {
-		writeErr(w, http.StatusInternalServerError, "write_failed", err.Error())
+		httpx.WriteErr(w, http.StatusInternalServerError, "write_failed", err.Error())
 		return
 	}
 	time.Sleep(300 * time.Millisecond)
 	if _, err := f.ptmx.Write([]byte("\r")); err != nil {
-		writeErr(w, http.StatusInternalServerError, "write_failed", err.Error())
+		httpx.WriteErr(w, http.StatusInternalServerError, "write_failed", err.Error())
 		return
 	}
 
 	ok, oauthErr := awaitClaudeLogin(f, 40*time.Second)
 	if !ok {
 		if oauthErr != "" {
-			writeErr(w, http.StatusBadGateway, "oauth_error", oauthErr)
+			httpx.WriteErr(w, http.StatusBadGateway, "oauth_error", oauthErr)
 		} else {
-			writeErr(w, http.StatusBadGateway, "login_failed", "login did not complete (code wrong or expired?)")
+			httpx.WriteErr(w, http.StatusBadGateway, "login_failed", "login did not complete (code wrong or expired?)")
 		}
 		return
 	}
 	// claude wrote its own .credentials.json; nothing for us to store.
-	writeJSON(w, http.StatusOK, map[string]any{"connected": true})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"connected": true})
 }
 
 func handleClaudeDisconnect(w http.ResponseWriter, r *http.Request) {
@@ -185,7 +187,7 @@ func handleClaudeDisconnect(w http.ResponseWriter, r *http.Request) {
 		s.Claude = ""
 		_ = s.save()
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"disconnected": "claude"})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"disconnected": "claude"})
 }
 
 // awaitClaudeLogin polls `claude auth status` until login succeeds, or surfaces an

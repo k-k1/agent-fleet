@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"sort"
 	"time"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 )
 
 // Codex subscription usage (the 5-hour + weekly rate-limit bars) surfaced for the
@@ -34,7 +36,7 @@ func handleCodexUsage(w http.ResponseWriter, _ *http.Request) {
 	if u.AgeSec >= 0 {
 		out["ageSec"] = u.AgeSec
 	}
-	writeJSON(w, http.StatusOK, out)
+	httpx.WriteJSON(w, http.StatusOK, out)
 }
 
 type codexUsage struct {

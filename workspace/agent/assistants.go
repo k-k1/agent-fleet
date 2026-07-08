@@ -23,6 +23,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 )
 
 // Tool grants an assistant can hold. af_read attaches the local read-only stdio MCP
@@ -249,16 +251,16 @@ func resolveAssistant(idOrName string) (*assistant, error) {
 // --- HTTP handlers ---
 
 func handleAssistantsList(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"assistants": listAssistants()})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"assistants": listAssistants()})
 }
 
 func handleAssistantGet(w http.ResponseWriter, r *http.Request) {
 	a, err := getAssistant(r.PathValue("id"))
 	if err != nil {
-		writeErr(w, http.StatusNotFound, "not_found", "アシスタントが見つかりません")
+		httpx.WriteErr(w, http.StatusNotFound, "not_found", "アシスタントが見つかりません")
 		return
 	}
-	writeJSON(w, http.StatusOK, a)
+	httpx.WriteJSON(w, http.StatusOK, a)
 }
 
 // assistantInput is the create/update body (only user-editable fields).
@@ -302,62 +304,62 @@ func applyInput(a *assistant, in assistantInput) error {
 
 func handleAssistantCreate(w http.ResponseWriter, r *http.Request) {
 	var in assistantInput
-	if !decodeJSON(w, r, &in) {
+	if !httpx.DecodeJSON(w, r, &in) {
 		return
 	}
 	now := nowMs()
 	a := &assistant{ID: randUUID(), Builtin: false, CreatedAt: now, UpdatedAt: now}
 	if err := applyInput(a, in); err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid", err.Error())
+		httpx.WriteErr(w, http.StatusBadRequest, "invalid", err.Error())
 		return
 	}
 	if err := saveUserAssistant(a); err != nil {
-		writeErr(w, http.StatusInternalServerError, "save", err.Error())
+		httpx.WriteErr(w, http.StatusInternalServerError, "save", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, a)
+	httpx.WriteJSON(w, http.StatusOK, a)
 }
 
 func handleAssistantUpdate(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if isBuiltinID(id) {
-		writeErr(w, http.StatusForbidden, "builtin", "ビルトインは編集できません")
+		httpx.WriteErr(w, http.StatusForbidden, "builtin", "ビルトインは編集できません")
 		return
 	}
 	a, err := loadUserAssistant(id)
 	if err != nil {
-		writeErr(w, http.StatusNotFound, "not_found", "アシスタントが見つかりません")
+		httpx.WriteErr(w, http.StatusNotFound, "not_found", "アシスタントが見つかりません")
 		return
 	}
 	var in assistantInput
-	if !decodeJSON(w, r, &in) {
+	if !httpx.DecodeJSON(w, r, &in) {
 		return
 	}
 	if err := applyInput(a, in); err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid", err.Error())
+		httpx.WriteErr(w, http.StatusBadRequest, "invalid", err.Error())
 		return
 	}
 	a.UpdatedAt = nowMs()
 	if err := saveUserAssistant(a); err != nil {
-		writeErr(w, http.StatusInternalServerError, "save", err.Error())
+		httpx.WriteErr(w, http.StatusInternalServerError, "save", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, a)
+	httpx.WriteJSON(w, http.StatusOK, a)
 }
 
 func handleAssistantDelete(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if isBuiltinID(id) {
-		writeErr(w, http.StatusForbidden, "builtin", "ビルトインは削除できません")
+		httpx.WriteErr(w, http.StatusForbidden, "builtin", "ビルトインは削除できません")
 		return
 	}
 	if !validConvID(id) {
-		writeErr(w, http.StatusBadRequest, "bad_request", "invalid id")
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_request", "invalid id")
 		return
 	}
 	if err := os.Remove(assistantPath(id)); err != nil && !os.IsNotExist(err) {
-		writeErr(w, http.StatusInternalServerError, "delete", err.Error())
+		httpx.WriteErr(w, http.StatusInternalServerError, "delete", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
 }

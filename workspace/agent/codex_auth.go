@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/creack/pty"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 )
 
 // Codex auth is driven from the WebUI, like Claude: codex owns its credential file
@@ -105,22 +107,22 @@ type codexKeyReq struct {
 // `codex login --with-api-key` (codex writes its own auth.json).
 func handleCodexApiKey(w http.ResponseWriter, r *http.Request) {
 	var req codexKeyReq
-	if !decodeJSON(w, r, &req) {
+	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
 	key := strings.TrimSpace(req.Key)
 	if key == "" {
-		writeErr(w, http.StatusBadRequest, "bad_key", "key is required")
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_key", "key is required")
 		return
 	}
 	cmd := exec.Command("codex", "login", "--with-api-key")
 	cmd.Stdin = strings.NewReader(key)
 	out, err := cmd.CombinedOutput()
 	if err != nil || !codexLoggedIn() {
-		writeErr(w, http.StatusBadGateway, "login_failed", "codex login failed: "+strings.TrimSpace(string(out)))
+		httpx.WriteErr(w, http.StatusBadGateway, "login_failed", "codex login failed: "+strings.TrimSpace(string(out)))
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"connected": true})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"connected": true})
 }
 
 // --- device-auth (subscription) flow ---
@@ -163,7 +165,7 @@ func handleCodexDeviceStart(w http.ResponseWriter, r *http.Request) {
 	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
 	ptmx, err := pty.Start(cmd)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "pty_failed", err.Error())
+		httpx.WriteErr(w, http.StatusInternalServerError, "pty_failed", err.Error())
 		return
 	}
 	_ = pty.Setsize(ptmx, &pty.Winsize{Rows: 50, Cols: 4000}) // wide => URL on one line
@@ -187,7 +189,7 @@ func handleCodexDeviceStart(w http.ResponseWriter, r *http.Request) {
 	url := waitFor(f, codexURLRe, 20*time.Second)
 	if url == "" {
 		f.close()
-		writeErr(w, http.StatusBadGateway, "no_url", "codex did not emit a device-auth URL (device code login may be disabled for this account)")
+		httpx.WriteErr(w, http.StatusBadGateway, "no_url", "codex did not emit a device-auth URL (device code login may be disabled for this account)")
 		return
 	}
 	// The one-time code prints on the line AFTER the URL, so wait for it separately
@@ -197,7 +199,7 @@ func handleCodexDeviceStart(w http.ResponseWriter, r *http.Request) {
 	codexFlowsMu.Lock()
 	codexFlows[id] = f
 	codexFlowsMu.Unlock()
-	writeJSON(w, http.StatusOK, map[string]any{"flow_id": id, "url": url, "user_code": code})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"flow_id": id, "url": url, "user_code": code})
 }
 
 type codexPollReq struct {
@@ -208,7 +210,7 @@ type codexPollReq struct {
 // success it tears down the flow; codex has written auth.json by then.
 func handleCodexDevicePoll(w http.ResponseWriter, r *http.Request) {
 	var req codexPollReq
-	if !decodeJSON(w, r, &req) {
+	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
 	if codexLoggedIn() {
@@ -218,16 +220,16 @@ func handleCodexDevicePoll(w http.ResponseWriter, r *http.Request) {
 			delete(codexFlows, req.FlowID)
 		}
 		codexFlowsMu.Unlock()
-		writeJSON(w, http.StatusOK, map[string]any{"connected": true})
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"connected": true})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"connected": false})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"connected": false})
 }
 
 // handleCodexDisconnect logs codex out (clears auth.json) via the CLI.
 func handleCodexDisconnect(w http.ResponseWriter, r *http.Request) {
 	_ = exec.Command("codex", "logout").Run()
-	writeJSON(w, http.StatusOK, map[string]any{"disconnected": "codex"})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"disconnected": "codex"})
 }
 
 // ensureCodexFolderTrusted pre-accepts codex's per-directory trust gate ("Do you trust

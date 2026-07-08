@@ -5,6 +5,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 )
 
 // opencode provider auth: mirrors the claude "settings-driven" model — the user
@@ -56,22 +58,22 @@ type opencodeConnReq struct {
 // handlePutOpencodeConn stores a provider API key under its env var name.
 func handlePutOpencodeConn(w http.ResponseWriter, r *http.Request) {
 	var req opencodeConnReq
-	if !decodeJSON(w, r, &req) {
+	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
 	env := strings.TrimSpace(req.Env)
 	if !envNameRe.MatchString(env) {
-		writeErr(w, http.StatusBadRequest, "bad_env", "env must be ALL_CAPS like ANTHROPIC_API_KEY")
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_env", "env must be ALL_CAPS like ANTHROPIC_API_KEY")
 		return
 	}
 	key := strings.TrimSpace(req.Key)
 	if key == "" {
-		writeErr(w, http.StatusBadRequest, "bad_key", "key is required")
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_key", "key is required")
 		return
 	}
 	s, err := loadSecrets()
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "store_failed", err.Error())
+		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
 		return
 	}
 	if s.Opencode == nil {
@@ -79,28 +81,28 @@ func handlePutOpencodeConn(w http.ResponseWriter, r *http.Request) {
 	}
 	s.Opencode[env] = key
 	if err := s.save(); err != nil {
-		writeErr(w, http.StatusInternalServerError, "store_failed", err.Error())
+		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"connected": true, "env": env})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"connected": true, "env": env})
 }
 
 // handleDeleteOpencodeConn removes a stored provider key.
 func handleDeleteOpencodeConn(w http.ResponseWriter, r *http.Request) {
 	env := r.PathValue("env")
 	if !envNameRe.MatchString(env) {
-		writeErr(w, http.StatusBadRequest, "bad_env", "invalid env name")
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_env", "invalid env name")
 		return
 	}
 	s, err := loadSecrets()
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "store_failed", err.Error())
+		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
 		return
 	}
 	delete(s.Opencode, env)
 	if err := s.save(); err != nil {
-		writeErr(w, http.StatusInternalServerError, "store_failed", err.Error())
+		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"disconnected": env})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"disconnected": env})
 }
