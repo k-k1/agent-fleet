@@ -7,11 +7,12 @@ import (
 	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
 
 // opencode provider auth: mirrors the claude "settings-driven" model — the user
 // pastes a provider API key in the Console, it's kept in the encrypted store
-// (secrets.go, at-rest sealed), and the Agent injects it as the provider's env var
+// (internal/secrets, at-rest sealed), and the Agent injects it as the provider's env var
 // when it launches an opencode session. opencode natively reads provider keys from
 // the environment (ANTHROPIC_API_KEY, OPENAI_API_KEY, …), so no auth.json is written
 // and the key never lands in a plaintext file on the bind-mounted disk.
@@ -23,7 +24,7 @@ var envNameRe = regexp.MustCompile(`^[A-Z][A-Z0-9_]{1,63}$`)
 // opencodeEnv loads the stored provider keys as "NAME=value" entries for the
 // session launcher to pass via `docker`/tmux `-e`. Order is stable (sorted).
 func opencodeEnv() []string {
-	s, err := loadSecrets()
+	s, err := secrets.Load()
 	if err != nil || len(s.Opencode) == 0 {
 		return nil
 	}
@@ -41,7 +42,7 @@ func opencodeEnv() []string {
 
 // opencodeStatus reports which provider env vars are configured (names only,
 // never the keys) for the Console Connections panel.
-func opencodeStatus(s *secretsData) map[string]any {
+func opencodeStatus(s *secrets.Data) map[string]any {
 	names := []string{}
 	for k := range s.Opencode {
 		names = append(names, k)
@@ -71,7 +72,7 @@ func handlePutOpencodeConn(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_key", "key is required")
 		return
 	}
-	s, err := loadSecrets()
+	s, err := secrets.Load()
 	if err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
 		return
@@ -80,7 +81,7 @@ func handlePutOpencodeConn(w http.ResponseWriter, r *http.Request) {
 		s.Opencode = map[string]string{}
 	}
 	s.Opencode[env] = key
-	if err := s.save(); err != nil {
+	if err := s.Save(); err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
 		return
 	}
@@ -94,13 +95,13 @@ func handleDeleteOpencodeConn(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_env", "invalid env name")
 		return
 	}
-	s, err := loadSecrets()
+	s, err := secrets.Load()
 	if err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
 		return
 	}
 	delete(s.Opencode, env)
-	if err := s.save(); err != nil {
+	if err := s.Save(); err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
 		return
 	}

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
 
 // GitHub OAuth via the Device Authorization Grant (RFC 8628): no callback, no
@@ -162,31 +163,21 @@ func ghPostForm(endpoint string, form url.Values, out any) error {
 //
 // Bitbucket has no device flow, so the Control Plane runs the auth-code grant
 // (it owns the public callback) and hands the tokens here to store. Bitbucket
-// access tokens expire in ~2h, so git uses the cred helper (secrets.go,
+// access tokens expire in ~2h, so git uses the cred helper (cred_helper.go,
 // `workspace-agent cred`), which refreshes on demand. The helper covers BOTH our
 // /repos calls and git run inside claude sessions. Refresh creds live in the
-// encrypted store (secrets.Bitbucket). See plan.
+// encrypted store (secrets.Data.Bitbucket, see internal/secrets). See plan.
 
 const bbTokenURL = "https://bitbucket.org/site/oauth2/access_token"
 
-type bitbucketCreds struct {
-	AccessToken  string `json:"access_token"`
-	RefreshToken string `json:"refresh_token"`
-	Expiry       int64  `json:"expiry"` // unix seconds
-	Key          string `json:"key"`
-	Secret       string `json:"secret"`
-	Account      string `json:"account,omitempty"` // cached real Bitbucket handle (resolved from the API)
-	Email        string `json:"email,omitempty"`   // cached account email (resolved from the API)
-}
-
 // writeBitbucketCreds persists the OAuth refresh creds into the encrypted store.
-func writeBitbucketCreds(c bitbucketCreds) error {
-	s, err := loadSecrets()
+func writeBitbucketCreds(c secrets.BitbucketCreds) error {
+	s, err := secrets.Load()
 	if err != nil {
 		return err
 	}
 	s.Bitbucket = &c
-	return s.save()
+	return s.Save()
 }
 
 type bitbucketStoreReq struct {
@@ -213,7 +204,7 @@ func handleBitbucketStore(w http.ResponseWriter, r *http.Request) {
 	if exp == 0 {
 		exp = 7200
 	}
-	c := bitbucketCreds{
+	c := secrets.BitbucketCreds{
 		AccessToken: req.AccessToken, RefreshToken: req.RefreshToken,
 		Expiry: time.Now().Unix() + exp, Key: req.Key, Secret: req.Secret,
 	}
@@ -231,16 +222,16 @@ func handleBitbucketStore(w http.ResponseWriter, r *http.Request) {
 // removeBitbucketOAuth clears the stored OAuth refresh creds. Called from the
 // generic disconnect (connections.go) so one ✕ covers both paths.
 func removeBitbucketOAuth() {
-	s, err := loadSecrets()
+	s, err := secrets.Load()
 	if err != nil {
 		return
 	}
 	s.Bitbucket = nil
-	_ = s.save()
+	_ = s.Save()
 }
 
 // refreshBitbucket exchanges the refresh_token for a fresh access token.
-func refreshBitbucket(c bitbucketCreds) (bitbucketCreds, error) {
+func refreshBitbucket(c secrets.BitbucketCreds) (secrets.BitbucketCreds, error) {
 	form := url.Values{"grant_type": {"refresh_token"}, "refresh_token": {c.RefreshToken}}
 	req, err := http.NewRequest("POST", bbTokenURL, strings.NewReader(form.Encode()))
 	if err != nil {
