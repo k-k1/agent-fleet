@@ -3,7 +3,7 @@
 社内の複数メンバーが Claude Code を効率良く共同利用するための Web サービス。
 ユーザー毎の隔離環境（コンテナ）で Bitbucket リポジトリを扱い、Claude セッションを
 Web から起動・操作・管理する。同一コアを**ローカル（Docker）でも AWS でも**動かせるよう
-デプロイ層をポート&アダプタで分離する（[docs/09](docs/reference/portability.md)）。
+デプロイ層をポート&アダプタで分離する（[portability](docs/reference/portability.md)）。
 
 **状態: Phase 2 完了・Phase 3 進行中。** オンプレ 1 台で複数ユーザーが相互不可視に並行利用でき
 （per-user Workspace / AuthGateway / ネットワーク分離 / at-rest 暗号化）、Phase 3 のプロダクト化は
@@ -75,7 +75,7 @@ docker compose up -d --build
 **history/ — 使い終わった実装プラン（完了・記録）**
 | ファイル | 内容 |
 |----------|------|
-| [phase0-poc.md](docs/history/phase0-poc.md) | Phase 0 PoC 手順書（`/login` 検証）。実体は [`phase0/`](phase0/)|
+| [phase0-poc.md](docs/history/phase0-poc.md) | Phase 0 PoC 手順書（`/login` 検証）|
 | [phase1-plan.md](docs/history/phase1-plan.md) | Phase 1 実装プラン + 実装結果（§11.10 は今も有効な知見）|
 | [p3-1-metadatastore.md](docs/history/p3-1-metadatastore.md) | P3-1: MetadataStore（SQLite）導入 |
 | [p3-2-identity-tenant.md](docs/history/p3-2-identity-tenant.md) | P3-2: identity↔tenant 多対多 |

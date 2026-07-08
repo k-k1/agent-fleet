@@ -1,8 +1,8 @@
 // core/api/client — the console's API core (absorbed from src/api.ts at the
 // docs/22 P8 swap; the parallel-entry shim is gone). Transport primitives +
 // domain wrappers; features re-export their slice via features/*/api.ts.
-// Shared API layer. Ported from the Phase 1 Console (console/legacy-phase1/app.js)
-// — the behavioral contract is unchanged; only the packaging moved to modules.
+// Shared API layer, originally ported from the Phase 1 Console — the behavioral
+// contract is unchanged; only the packaging moved to modules.
 
 // Resolve URLs relative to where the Console is mounted, so it works both at the
 // host root (http://localhost:8099/) and behind a path-stripping proxy (Tailscale

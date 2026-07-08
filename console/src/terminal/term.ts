@@ -1,8 +1,8 @@
 // xterm.js terminal manager. Terminals live outside React so each instance and its
 // WebSocket survive view switches (a pane's DOM container stays mounted and we just
 // open() the term into it once). Originally a module singleton; now keyed by paneId
-// so the console can show several sessions side by side (split panes). Ported from
-// legacy-phase1/app.js.
+// so the console can show several sessions side by side (split panes). Originally
+// ported from the Phase 1 Console.
 
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";

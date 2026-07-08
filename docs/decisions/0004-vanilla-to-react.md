@@ -23,6 +23,6 @@ no-build の手軽さより、増えた機能（左アクティビティ・レ�
 
 ## 帰結
 
-- 旧 vanilla は `console/legacy-phase1/` に退避。振る舞いの正は現 Console（HANDOFF §6.10.1）。
+- 旧 vanilla は一時 `console/legacy-phase1/` に退避していたが、移植完了後に削除済み。振る舞いの正は現 Console（HANDOFF §6.10.1）。
 - ビルド工程が増えるが、`run-dev.sh` が `NODE_OPTIONS=--max-old-space-size=3072 npm run build`（mermaid の
   heap OOM 回避）で吸収。P3-10 パッケージングは dist 同梱で配布する。

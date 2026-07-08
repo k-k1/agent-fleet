@@ -1,5 +1,4 @@
-// Entry for the NEXT console (docs/22 rebuild) — served as next.html alongside the
-// frozen current console (index.html) during the parallel-entry transition.
+// Console entry (docs/22 rebuild). Loaded by index.html.
 import React from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App.tsx";

@@ -723,26 +723,6 @@ func applyTaskUpdate(m map[string]*taskItem, input json.RawMessage) {
 	}
 }
 
-// latestMode returns the session's current permission mode from the last "mode"
-// event ("normal" | "plan" | "acceptEdits" | …), or "" if none. Lets the Console
-// show a plan-mode indicator.
-func latestMode(lines [][]byte) string {
-	mode := ""
-	for _, ln := range lines {
-		if !bytesContains(ln, `"type":"mode"`) {
-			continue
-		}
-		var ev struct {
-			Type string `json:"type"`
-			Mode string `json:"mode"`
-		}
-		if json.Unmarshal(ln, &ev) == nil && ev.Type == "mode" && ev.Mode != "" {
-			mode = ev.Mode
-		}
-	}
-	return mode
-}
-
 // bytesContains is strings.Contains for a []byte without allocating a string.
 func bytesContains(b []byte, sub string) bool {
 	return strings.Contains(string(b), sub)
