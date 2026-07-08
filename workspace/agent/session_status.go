@@ -413,10 +413,11 @@ const permToolMatcher = "Write|Edit|MultiEdit|NotebookEdit|Bash"
 // ensureStatusHooks makes settings.json carry the hooks that feed session state,
 // merging without disturbing the rtk PreToolUse/Bash hook or other settings.
 // Idempotent; called at agent startup (before sessions launch). States:
-//   UserPromptSubmit → working   (user sent a prompt)
-//   Stop             → idle      (response done / awaiting user)
-//   PreToolUse(AskUserQuestion)  → question (claude is asking the user; QA来た)
-//   PostToolUse(AskUserQuestion) → working  (question answered, continuing)
+//
+//	UserPromptSubmit → working   (user sent a prompt)
+//	Stop             → idle      (response done / awaiting user)
+//	PreToolUse(AskUserQuestion)  → question (claude is asking the user; QA来た)
+//	PostToolUse(AskUserQuestion) → working  (question answered, continuing)
 func ensureStatusHooks() {
 	m := readClaudeSettings()
 	hooks := hooksMap(m)

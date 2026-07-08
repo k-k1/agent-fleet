@@ -599,7 +599,7 @@ func ensureWorktree(parentDir, base, newBranch, folderSeg string) (string, error
 	if out, err := exec.Command("git", args...).CombinedOutput(); err != nil {
 		return "", fmt.Errorf("worktree add: %v: %s", err, strings.TrimSpace(string(out)))
 	}
-	applyGitIdentity(dir)  // commit identity for the worktree (config is shared, but explicit)
+	applyGitIdentity(dir)    // commit identity for the worktree (config is shared, but explicit)
 	gitSubmodulesUpdate(dir) // per-worktree submodule checkout; parent untouched (verified)
 	return dir, nil
 }

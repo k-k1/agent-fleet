@@ -213,11 +213,11 @@ func TestOpencodeSessionResumable(t *testing.T) {
 		ses  string
 		want bool
 	}{
-		{"", true},           // no captured session
-		{"ses_none", true},   // unknown session — nothing to re-run
-		{"ses_done", true},   // completed last turn — safe to resume
-		{"ses_int", false},   // interrupted mid-turn — would re-run
-		{"ses_pend", false},  // user message unanswered — would generate
+		{"", true},          // no captured session
+		{"ses_none", true},  // unknown session — nothing to re-run
+		{"ses_done", true},  // completed last turn — safe to resume
+		{"ses_int", false},  // interrupted mid-turn — would re-run
+		{"ses_pend", false}, // user message unanswered — would generate
 	}
 	for _, c := range cases {
 		if got := opencodeSessionResumable(c.ses); got != c.want {

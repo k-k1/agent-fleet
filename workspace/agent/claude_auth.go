@@ -29,8 +29,8 @@ import (
 var (
 	// CSI/escape sequences and lone control chars Ink emits while redrawing.
 	ansiRe = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b[()][AB012]|\x1b[<>=]|[\x00-\x08\x0b\x0c\x0e-\x1f]`)
-	urlRe = regexp.MustCompile(`https://claude\.com/cai/oauth/authorize\?\S+`)
-	errRe = regexp.MustCompile(`OAuth error:[^\n]*`)
+	urlRe  = regexp.MustCompile(`https://claude\.com/cai/oauth/authorize\?\S+`)
+	errRe  = regexp.MustCompile(`OAuth error:[^\n]*`)
 )
 
 type claudeFlow struct {
