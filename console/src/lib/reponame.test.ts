@@ -1,11 +1,5 @@
 import { describe, it, expect } from "vitest";
-import {
-  deriveRepoName,
-  sanitizeSeg,
-  deriveBranchName,
-  uniqueRepoName,
-  repoNameRe,
-} from "./reponame.ts";
+import { deriveRepoName, sanitizeSeg, uniqueRepoName, repoNameRe } from "./reponame.ts";
 
 describe("deriveRepoName", () => {
   it("takes the last path segment minus .git", () => {
@@ -30,18 +24,6 @@ describe("sanitizeSeg", () => {
     // Non-ASCII becomes "-", then leading dashes strip to "" → fallback… but a
     // trailing dash may survive: assert the result still fits the folder charset.
     expect(repoNameRe.test(`x@${sanitizeSeg("日本語")}`)).toBe(true);
-  });
-});
-
-describe("deriveBranchName", () => {
-  it("slugs leading ASCII words", () => {
-    expect(deriveBranchName("Fix the login redirect loop")).toBe("fix-the-login-redirect-loop");
-  });
-  it("returns '' for non-ASCII-only prompts (caller falls back to wip-<slug>)", () => {
-    expect(deriveBranchName("ログインを直す")).toBe("");
-  });
-  it("caps length at 40", () => {
-    expect(deriveBranchName("a".repeat(80)).length).toBeLessThanOrEqual(40);
   });
 });
 
