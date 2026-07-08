@@ -235,6 +235,12 @@
   background: var(--hover-bg);
   border-bottom: 1px solid var(--border2);
 }
+/* sticky+z-index はスタッキングコンテキストを作るため、ヘッダー内で開いたメニュー
+   (アシスタントの＋ピッカー等) は後続セクションのヘッダー帯 (同 z:3) に隠れる。
+   メニューを開いているヘッダーだけ持ち上げて回避する。 */
+.ui-section-head:has(.ui-menu) {
+  z-index: 4;
+}
 .ui-section-toggle {
   flex: 0 1 auto;
   min-width: 0;
