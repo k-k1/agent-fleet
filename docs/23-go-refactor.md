@@ -5,7 +5,10 @@
 層化し、重複を畳む。Console リビルド（docs/22, ADR 0011）が新アーキテクチャへのスワップを終えた今、
 バックエンドだけが「増築を全部吸い込むフラット構造」のまま残っている — その解消が目的。
 
-> ステータス: **P0 着手**（2026-07-08）。決定の要約は
+> ステータス: **P0 完了**（2026-07-08、branch `temp/sfiv6ai`）— CI（.github/workflows/ci.yml）、
+> `buildMux()` 抽出 + httptest スモーク（CP 6 本 / Agent 4 本、routes.go / routes_test.go）、
+> エラーコード const 化（errcodes.go ×2 + client.ts 相互ポインタ）、agent の gofmt 整形済み。
+> 次は P1（Agent の畳み込み → `internal/` 分割）。決定の要約は
 > [decisions/0012-go-internal-refactor.md](decisions/0012-go-internal-refactor.md)。
 
 ## 背景と診断
