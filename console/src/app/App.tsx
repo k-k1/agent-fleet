@@ -20,11 +20,11 @@ import { hydrateUIPrefs } from "../lib/settings.ts";
 import { MOBILE_QUERY } from "../lib/device.ts";
 import { PaneHost } from "../features/panes/PaneHost.tsx";
 import { LayoutMap } from "../features/panes/LayoutMap.tsx";
-import { SessionsSection } from "../features/sessions/SessionsSection.tsx";
-import { ReposSection } from "../features/repos/ReposSection.tsx";
 import { FilesSection } from "../features/files/FilesSection.tsx";
 import { AssistantSection } from "../features/chat/AssistantSection.tsx";
 import { MemoQueueSection } from "../features/memo/MemoQueueSection.tsx";
+import { ProjectTree } from "../features/project/ProjectTree.tsx";
+import { OtherSessionsSection } from "../features/project/OtherSessionsSection.tsx";
 import { WsBar } from "./WsBar.tsx";
 import { TopBar } from "./TopBar.tsx";
 import { useSettingsUI, wireSettingsHistory } from "../features/settings/store.ts";
@@ -256,12 +256,15 @@ export function App() {
       <div className="app-body">
         <nav className="app-rail">
           <LayoutMap />
-          {/* Same order as the old LeftPane: Sessions / Assistant / Repos / Memo / Files. */}
+          {/* Project-first IA: Assistant + Memo pinned on top (global tools), then
+              the working-copy tree (each node nests its sessions + files), then the
+              repo-less session catch-all. Files (global) stays until P4 folds the
+              subtree into each node. */}
           <div className="app-rail-scroll">
-            <SessionsSection />
             <AssistantSection />
-            <ReposSection />
             <MemoQueueSection />
+            <ProjectTree />
+            <OtherSessionsSection />
             <FilesSection />
           </div>
         </nav>

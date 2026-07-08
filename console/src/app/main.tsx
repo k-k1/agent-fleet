@@ -17,6 +17,7 @@ import "../features/panes/panes.css";
 import "../features/terminal/terminal.css";
 import "../features/sessions/sessions.css";
 import "../features/repos/repos.css";
+import "../features/project/project.css";
 import "../features/files/files.css";
 import "../features/scm/scm.css";
 import "../features/viewer/viewer.css";

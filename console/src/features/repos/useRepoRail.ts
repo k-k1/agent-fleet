@@ -8,7 +8,7 @@ import { api } from "../../core/api/client.ts";
 import { agentOf, repoLaunchKinds } from "../../agents/registry.ts";
 import { useLayoutStore } from "../../layout/store.ts";
 import { activePane } from "../../layout/ops.ts";
-import { repoPanes, paneCount } from "../../layout/badges.ts";
+import { repoPanes, sessionPanes, paneCount } from "../../layout/badges.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 import type { ConnectionsStatus } from "../../types/session.ts";
@@ -23,7 +23,11 @@ export interface RepoRailContext {
   scmRepo: string | null | undefined;
   /** repo name → panes showing it (ordinal badges); null when unsplit. */
   rPanes: Map<string, { ordinal: number; id: string }[]> | null;
+  /** session name → panes showing it (SessionRow ordinal badges); null when unsplit. */
+  sPanes: Map<string, { ordinal: number; id: string }[]> | null;
   multiPane: boolean;
+  /** The active pane's session name → highlighted SessionRow. */
+  activeSession: string | null;
 }
 
 export function useRepoRailContext(): RepoRailContext {
@@ -47,15 +51,16 @@ export function useRepoRailContext(): RepoRailContext {
 
   const multiPane = paneCount(layout) > 1;
   const rPanes = multiPane ? repoPanes(layout) : null;
+  const sPanes = multiPane ? sessionPanes(layout) : null;
 
   // The attached session's repo (from the shared list — no extra fetch).
   const activeSessionName = activePane(layout)?.session ?? null;
-  const activeSession = sessions.find((s) => s.name === activeSessionName);
-  const activeRepo = activeSession && agentOf(activeSession.kind).caps.runsInDir ? activeSession.repo : null;
+  const activeSessionObj = sessions.find((s) => s.name === activeSessionName);
+  const activeRepo = activeSessionObj && agentOf(activeSessionObj.kind).caps.runsInDir ? activeSessionObj.repo : null;
 
   // The SCM pane target → active row.
   const ac = activePane(layout)?.content;
   const scmRepo = ac && (ac.kind === "scm" || ac.kind === "changes" || ac.kind === "commit") ? ac.scmRepo : null;
 
-  return { launchKinds, running, activeRepo, scmRepo, rPanes, multiPane };
+  return { launchKinds, running, activeRepo, scmRepo, rPanes, sPanes, multiPane, activeSession: activeSessionName };
 }
