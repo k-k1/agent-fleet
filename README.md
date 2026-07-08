@@ -3,7 +3,7 @@
 社内の複数メンバーが Claude Code を効率良く共同利用するための Web サービス。
 ユーザー毎の隔離環境（コンテナ）で Bitbucket リポジトリを扱い、Claude セッションを
 Web から起動・操作・管理する。同一コアを**ローカル（Docker）でも AWS でも**動かせるよう
-デプロイ層をポート&アダプタで分離する（[portability](docs/reference/portability.md)）。
+デプロイ層をポート&アダプタで分離する（[portability](docs/dev/09-deploy.md)）。
 
 **状態: Phase 2 完了・Phase 3 進行中。** オンプレ 1 台で複数ユーザーが相互不可視に並行利用でき
 （per-user Workspace / AuthGateway / ネットワーク分離 / at-rest 暗号化）、Phase 3 のプロダクト化は
@@ -42,26 +42,30 @@ docker compose up -d --build
 
 ## ドキュメント構成
 
-ジャンルで分ける（索引は [docs/README.md](docs/README.md)）。**現状の正＝[HANDOFF](docs/HANDOFF.md)**、不変設計＝
-`reference/`、意思決定（なぜ）＝`decisions/`、前向きの計画＝`roadmap.md`、使い終わった計画＝`history/`。
+索引は [docs/README.md](docs/README.md)。**仕様の正＝[docs/dev/](docs/dev/README.md)（開発者向け）とコード、
+操作の正＝[docs/guide/](docs/guide/README.md)（利用者向け）、稼働状態＝[HANDOFF](docs/HANDOFF.md)。**
+意思決定（なぜ）＝`decisions/`、前向きの計画＝`roadmap.md`、使い終わった計画・完了した機能設計＝`history/`。
 
-**現状・引き継ぎ**
+**開発者向け [docs/dev/](docs/dev/README.md)**（コードに追従する設計と契約）
 | ファイル | 内容 |
 |----------|------|
-| [docs/HANDOFF.md](docs/HANDOFF.md) | **引き継ぎ**: 稼働状態・実行作法・落とし穴・テーマ別機能リファレンス（次セッションはまず読む）|
-| [docs/CHANGELOG-handoff.md](docs/CHANGELOG-handoff.md) | HANDOFF の時系列ログ（日付＋1行）|
-| [docs/roadmap.md](docs/roadmap.md) | フェーズ一覧・マイルストーン + Phase 3 詳細設計（ワークストリーム P3-1〜P3-10）|
+| [01-architecture](docs/dev/01-architecture.md) | 提供モデル・用語・3プロセス構成・認証2層・主要フロー・アダプタ |
+| [02-console](docs/dev/02-console.md) / [03-control-plane](docs/dev/03-control-plane.md) / [04-workspace-agent](docs/dev/04-workspace-agent.md) | 各コンポーネントの設計 |
+| [05-api-contracts](docs/dev/05-api-contracts.md) / [06-data-model](docs/dev/06-data-model.md) | API 境界・中継 / データモデル |
+| [07-security](docs/dev/07-security.md) / [08-integrations](docs/dev/08-integrations.md) | 脅威モデル・認証・暗号 / 外部連携 |
+| [09-deploy](docs/dev/09-deploy.md) / [10-development](docs/dev/10-development.md) | デプロイ・ポータビリティ / 開発作法 |
+| [90-code-map](docs/dev/90-code-map.md) / [91-internal-git](docs/dev/91-internal-git.md) | コード地図 / 内部 git プロバイダ |
 
-**reference/ — 不変の設計・契約（コードに追従）**
+**利用者向け [docs/guide/](docs/guide/README.md)**: ペルソナ別分冊（member / admin / operator / lite）。
+
+**引き継ぎ・計画**
 | ファイル | 内容 |
 |----------|------|
-| [requirements.md](docs/reference/requirements.md) | 用語、機能要件、非機能要件、確定事項と未決事項 |
-| [architecture.md](docs/reference/architecture.md) | 全体構成、コンポーネント、データモデル（テナント/identity）、主要フロー |
-| [api-agent.md](docs/reference/api-agent.md) | API 表面の地図 + Workspace Agent 設計（契約はコードが正）|
-| [portability.md](docs/reference/portability.md) | デプロイ層の分離（ポート&アダプタ、local/aws 両対応）|
-| [security.md](docs/reference/security.md) | 脅威モデル、隔離境界、シークレット管理（封筒暗号）|
-| [aws.md](docs/reference/aws.md) | AWS 構成、ネットワーク、コスト試算 |
-| [preview.md](docs/reference/preview.md) | コンテナ内サービスのプレビュー（`/preview/{port}` 経路）|
+| [docs/HANDOFF.md](docs/HANDOFF.md) | このホストの稼働状態・実行作法・落とし穴・現在地 |
+| [docs/CHANGELOG-handoff.md](docs/CHANGELOG-handoff.md) | 時系列ログ（日付＋1行）|
+| [docs/roadmap.md](docs/roadmap.md) | フェーズ一覧・マイルストーン + Phase 3 詳細設計（P3-1〜P3-10）|
+
+> 旧 `docs/reference/` は dev/ へ再編済み（読み替え表は [docs/README.md](docs/README.md)）。
 
 **decisions/ — 意思決定（なぜ・捨てた選択肢）**
 | ファイル | 内容 |
@@ -88,7 +92,7 @@ docker compose up -d --build
 
 個人用フリート運用の仕組みがすでに存在し、これをサービス化する。
 
-- **`oauth2-proxy`** — Google ドメイン制限の認証ゲート（`emails.txt` ホワイトリスト）。**現行はこれを廃し CP ネイティブ Google OAuth（`AUTH=oauth`）に集約**——許可リストは `deploy/local/allowed-emails.txt`（メール / `@domain`）。設計 [docs/reference/auth.md](docs/reference/auth.md)
+- **`oauth2-proxy`** — Google ドメイン制限の認証ゲート（`emails.txt` ホワイトリスト）。**現行はこれを廃し CP ネイティブ Google OAuth（`AUTH=oauth`）に集約**——許可リストは `deploy/local/allowed-emails.txt`（メール / `@domain`）。設計 [docs/dev/07 §7.3](docs/dev/07-security.md)
 - **`scripts/tmux-claude.sh`** — detached tmux で複数 Claude CLI を冪等起動・resume・世代管理
 - **`CLAUDE_CONFIG_DIR` プロファイル分離** — ディレクトリ配下で別 `~/.claude` を使い分ける仕組み
 - **`~/.claude/settings.json`** — `remoteControlAtStartup` / `skipDangerousModePermissionPrompt` 設定済み
