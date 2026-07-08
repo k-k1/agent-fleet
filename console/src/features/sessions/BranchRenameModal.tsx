@@ -11,8 +11,11 @@ import { useToast } from "../../ui/ToastProvider.tsx";
 import { apiJSON, errText } from "../../core/api/client.ts";
 
 const PREFIXES = ["feat/", "fix/", "refactor/", "chore/", "docs/"];
+// temp/ is the auto-generated placeholder prefix (deferred naming) — never offered
+// as a chip, but a chip click should replace it just like a sibling prefix.
+const STRIP_PREFIXES = [...PREFIXES, "temp/"];
 const stripKnownPrefix = (v: string): string => {
-  for (const p of PREFIXES) if (v.startsWith(p)) return v.slice(p.length);
+  for (const p of STRIP_PREFIXES) if (v.startsWith(p)) return v.slice(p.length);
   return v;
 };
 
@@ -72,10 +75,20 @@ export function BranchRenameModal({ name, branch, onClose, onSaved }: BranchRena
     }
   };
 
-  // Toggle a prefix: prepend it (swapping any existing known prefix), or strip it
-  // when the name already has exactly that prefix.
+  // Toggle a prefix: prepend it (swapping any existing known/temp prefix), or strip
+  // it when the name already has exactly that prefix.
   const togglePrefix = (p: string) =>
     setValue((v) => (v.startsWith(p) ? stripKnownPrefix(v) : p + stripKnownPrefix(v)));
+
+  // Adopt the AI proposal. It normally arrives prefixed (feat/… — the suggester picks
+  // a conventional type from the conversation); if the model skipped the prefix,
+  // inherit whichever chip prefix the current value carries.
+  const adoptProposal = () => {
+    const cur = PREFIXES.find((p) => value.startsWith(p));
+    const prefixed = PREFIXES.some((p) => proposal.startsWith(p));
+    setValue(!prefixed && cur ? cur + proposal : proposal);
+    setProposal("");
+  };
 
   return (
     <Modal title="ブランチ名を変更" onClose={onClose} as="form" onSubmit={submit} lockClose={saving}>
@@ -120,10 +133,7 @@ export function BranchRenameModal({ name, branch, onClose, onSaved }: BranchRena
               small
               variant="primary"
               disabled={busy}
-              onClick={() => {
-                setValue(proposal);
-                setProposal("");
-              }}
+              onClick={adoptProposal}
             >
               この案にする
             </Button>
