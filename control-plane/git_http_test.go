@@ -82,7 +82,7 @@ func TestIsReceivePackAndCanPush(t *testing.T) {
 // helpers for minting tokens and issuing requests, with the CGI backend stubbed.
 type gitTestEnv struct {
 	c        config
-	st       *sqliteStore
+	st       *sqlStore
 	signKey  []byte
 	served   bool
 	servedTo string // tenantRoot the authorized request resolved to

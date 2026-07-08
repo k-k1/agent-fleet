@@ -79,6 +79,12 @@ Resources:
                 Resource:
                   - !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/af-ws/*"
                   - !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/af-cp/*"
+              # Reads the RDS-managed master password (Secrets Manager) to inject
+              # AF_DB_PASSWORD into the CP task (P3-7 段3a). RDS-managed secrets are
+              # named rds!db-*; scope to that prefix.
+              - Effect: Allow
+                Action: [ secretsmanager:GetSecretValue ]
+                Resource: !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:rds!*"
 
   # --- IAM: workspace task role — Agent needs NO AWS APIs (least privilege) ---
   WsTaskRole:

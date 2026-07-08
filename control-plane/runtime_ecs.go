@@ -142,7 +142,9 @@ func newECSFactory(m *manager) (RuntimeFactory, error) {
 		memory:         envOr("AF_ECS_TASK_MEMORY", "2048"),
 		posixUID:       int64(envInt("AF_ECS_POSIX_UID", 1000)),
 		posixGID:       int64(envInt("AF_ECS_POSIX_GID", 1000)),
-		startTimeout:   time.Duration(envInt("AF_ECS_START_TIMEOUT_SEC", 120)) * time.Second,
+		// Best-effort readiness budget (Start no longer fails on timeout): keep it
+		// modest so a cold pull returns "starting" quickly rather than blocking.
+		startTimeout: time.Duration(envInt("AF_ECS_START_TIMEOUT_SEC", 90)) * time.Second,
 	}
 	log.Printf("runtime=ecs region=%s cluster=%s namespace=%s efs=%s", cfg.region, cfg.cluster, cfg.namespaceArn, cfg.efsFileSystem)
 	return &ecsFactory{
@@ -216,8 +218,9 @@ func (e *ecsRuntime) Stop(ctx context.Context) error {
 
 // Start brings the workspace up: ensure the two EFS access points, push the token
 // + DEK to SSM SecureString, register a fresh task definition (current image/env),
-// then create-or-update the service to desiredCount 1 and wait for the Agent to be
-// healthy over Service Connect.
+// then create-or-update the service to desiredCount 1. It best-effort waits for the
+// Agent to be healthy over Service Connect but does not fail if a cold image pull
+// outlasts the budget (see below) — the workspace converges asynchronously.
 func (e *ecsRuntime) Start(ctx context.Context) error {
 	if e.State(ctx) == "running" {
 		return nil
@@ -241,8 +244,18 @@ func (e *ecsRuntime) Start(ctx context.Context) error {
 	if err := e.upsertService(ctx, taskDefArn); err != nil {
 		return fmt.Errorf("service: %w", err)
 	}
+	// Best-effort readiness: wait for the Agent /healthz so the common warm-image
+	// case returns already-reachable (an immediate session-create then succeeds).
+	// But a large workspace image cold-pulls for minutes on first launch, which can
+	// outlast the budget — do NOT fail Start then. The service is at desiredCount 1
+	// and converges on its own; the Console polls State() and the caller retries
+	// against the now-provisioned service. Erroring here would flip a legitimately
+	// starting workspace to "failed" (P3-7 段5 finding A).
 	if e.waitReady != nil {
-		return e.waitReady(ctx, e.Endpoint(), e.cfg.startTimeout)
+		if err := e.waitReady(ctx, e.Endpoint(), e.cfg.startTimeout); err != nil {
+			log.Printf("ecs start: service %s at desired 1 but Agent not ready within %s (%v); it will converge",
+				e.name, e.cfg.startTimeout, err)
+		}
 	}
 	return nil
 }
