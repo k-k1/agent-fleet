@@ -1,6 +1,10 @@
 package main
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
+)
 
 // TestCollectTurnsWindow checks that a windowed read returns turns in chronological order
 // carrying their ABSOLUTE line index (stable across windows/pages), for a sub-range and
@@ -68,7 +72,7 @@ func TestCollectTasks(t *testing.T) {
 	if len(got) != 3 {
 		t.Fatalf("len = %d, want 3 (%v)", len(got), got)
 	}
-	want := []taskItem{
+	want := []transcript.Task{
 		{ID: "1", Subject: "A", Active: "doing A", Status: "completed"},
 		{ID: "2", Subject: "B2", Active: "", Status: "in_progress"},
 		{ID: "3", Subject: "C", Active: "C-ing", Status: "pending"},

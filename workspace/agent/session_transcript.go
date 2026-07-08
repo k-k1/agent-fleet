@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
 
 // Structured transcript for the Console chat view. Where /output (session_io.go)
@@ -17,66 +18,8 @@ import (
 // with the assistant's text, so the Console can faintly show what claude was doing
 // (Read/Bash/Edit …) between paragraphs. Both read the same jsonl (cursor = line #).
 
-// chatPart is one ordered piece of a turn: rendered text, a faint tool trace, an
-// AskUserQuestion the user can answer inline, or an ExitPlanMode plan.
-type chatPart struct {
-	Kind      string         `json:"kind"`                // "text" | "thinking" | "tool" | "question" | "plan"
-	Text      string         `json:"text,omitempty"`      // kind=text/thinking: Markdown
-	Tool      string         `json:"tool,omitempty"`      // kind=tool/question/plan: tool name
-	Info      string         `json:"info,omitempty"`      // kind=tool: short arg summary
-	Output    string         `json:"output,omitempty"`    // kind=tool: the tool's output/result (codex/opencode), truncated
-	Questions []chatQuestion `json:"questions,omitempty"` // kind=question: AskUserQuestion
-	Answer    string         `json:"answer,omitempty"`    // kind=question: the chosen answer text
-	Plan      string         `json:"plan,omitempty"`      // kind=plan: ExitPlanMode plan Markdown
-	File      string         `json:"file,omitempty"`      // kind=tool: edit/write target (openable as a diff)
-	Edits     []chatEdit     `json:"edits,omitempty"`     // kind=tool: before/after per edit (Edit/Write/MultiEdit)
-	qid       string         // kind=question: tool_use id, to resolve the answer (unexported)
-}
-
-// chatEdit is one before/after pair for an edit-family tool, so the Console can render
-// a diff. Write is a single all-added entry (Old=""); MultiEdit is one entry per edit.
-type chatEdit struct {
-	Old string `json:"old"`
-	New string `json:"new"`
-}
-
-// chatQuestion mirrors one AskUserQuestion entry (header + prompt + options).
-type chatQuestion struct {
-	Header      string       `json:"header,omitempty"`
-	Question    string       `json:"question"`
-	MultiSelect bool         `json:"multiSelect,omitempty"`
-	Options     []chatOption `json:"options,omitempty"`
-}
-
-type chatOption struct {
-	Label       string `json:"label"`
-	Description string `json:"description,omitempty"`
-}
-
-// chatTurn is one displayable conversation turn.
-type chatTurn struct {
-	Role      string     `json:"role"`                // "user" | "assistant"
-	Parts     []chatPart `json:"parts"`               // ordered text/tool pieces
-	Text      string     `json:"text"`                // concatenated text only (for copy / fallback)
-	Model     string     `json:"model,omitempty"`     // assistant only: the model that answered
-	Effort    string     `json:"effort,omitempty"`    // assistant only: reasoning effort/variant (codex reasoning_effort, opencode variant); "" when the agent records none (claude)
-	CtxWindow int        `json:"ctxWindow,omitempty"` // assistant only: the model's real context-window size when the agent records it (codex model_context_window); 0 = let the Console guess from the model name
-	Sidechain bool       `json:"sidechain,omitempty"` // true = a subagent (Task) sidechain turn
-	Branch    string     `json:"branch,omitempty"`    // git branch at the time of the turn
-	Cwd       string     `json:"cwd,omitempty"`       // working dir at the time of the turn
-	// Token usage (assistant only), per event; the Console sums output across a turn's
-	// events and takes the last event's input/cache as the context size.
-	InTok       int    `json:"inTok,omitempty"`
-	OutTok      int    `json:"outTok,omitempty"`
-	CacheRead   int    `json:"cacheRead,omitempty"`
-	CacheCreate int    `json:"cacheCreate,omitempty"`
-	TS          string `json:"ts"`  // RFC3339 from the transcript line, "" if absent
-	Idx         int    `json:"idx"` // transcript line index — a stable render key
-	// Compact: this "turn" is claude's auto-compaction summary (jsonl isCompactSummary),
-	// written as a user message. The Console shows it as a collapsible "圧縮されました"
-	// block instead of a normal user prompt.
-	Compact bool `json:"compact,omitempty"`
-}
+// The shared turn/part model itself lives in internal/transcript (docs/23 P1-W5),
+// so the claude/codex/opencode parsers are compiler-bound to one output vocabulary.
 
 // forkPreviewCursor is an out-of-range line cursor handed out while a fork previews its
 // source transcript, so the first poll that reads the fork's own (shorter) jsonl trips
@@ -106,7 +49,7 @@ func handleSessionMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Non-claude transcript agents (codex now, opencode later) don't have claude's
-	// <sid>.jsonl; they normalize their native store into chatTurns via transcript(),
+	// <sid>.jsonl; they normalize their native store into transcript.Turns via transcript(),
 	// and the generic windower pages over those. claude keeps its own line-cursor path
 	// below (battle-tested reset/stub/compaction handling — left untouched).
 	if meta.Kind != kindClaude {
@@ -236,7 +179,7 @@ func handleSessionMessages(w http.ResponseWriter, r *http.Request) {
 
 // handleGenericMessages serves /messages for a non-claude transcript agent (codex,
 // and later opencode). The agent hands back the whole conversation as normalized
-// chatTurns (chronological, each carrying its absolute index); this windows them with
+// transcript.Turns (chronological, each carrying its absolute index); this windows them with
 // the SAME semantics claude's line path uses — an initial tail window, backward
 // ?before paging, and live since=<cursor> increments — so the Console chat is
 // unchanged. The cursor here is a TURN count (not a jsonl line count), but the client
@@ -293,7 +236,7 @@ func handleGenericMessages(w http.ResponseWriter, r *http.Request, meta sessionM
 	if hi > total {
 		hi = total
 	}
-	turns := []chatTurn{}
+	turns := []transcript.Turn{}
 	if lo < hi {
 		turns = capTurnsNewest(all[lo:hi])
 	}
@@ -337,7 +280,7 @@ func handleGenericMessages(w http.ResponseWriter, r *http.Request, meta sessionM
 // capTurnsNewest bounds a returned window to ~1 MiB of text, keeping the NEWEST turns
 // (walk from the end, keep until the budget is spent). Mirrors collectTurns' cap so a
 // huge single response can't bloat the payload.
-func capTurnsNewest(turns []chatTurn) []chatTurn {
+func capTurnsNewest(turns []transcript.Turn) []transcript.Turn {
 	budget := 0
 	start := 0
 	for i := len(turns) - 1; i >= 0; i-- {
@@ -356,7 +299,7 @@ func capTurnsNewest(turns []chatTurn) []chatTurn {
 // chosen answer from its tool_result for display (the currently-pending one is surfaced
 // separately). Each turn keeps its ABSOLUTE line index as idx (stable across windows, so
 // React keys and ordering hold when pages are prepended). Capped at 1 MiB of newest text.
-func collectTurns(lines [][]byte, lo, hi int) []chatTurn {
+func collectTurns(lines [][]byte, lo, hi int) []transcript.Turn {
 	if lo < 0 {
 		lo = 0
 	}
@@ -366,7 +309,7 @@ func collectTurns(lines [][]byte, lo, hi int) []chatTurn {
 	// Answers are resolved within the window: a question and its tool_result are adjacent
 	// (claude writes the tool_use only after the answer), so window-local is enough.
 	answers := collectAnswers(lines[lo:hi])
-	turns := []chatTurn{}
+	turns := []transcript.Turn{}
 	budget := 0
 	// Walk newest→oldest so the 1 MiB cap keeps the LATEST turns (the old oldest-first cap
 	// could drop the newest of a huge transcript); reverse to chronological before return.
@@ -376,8 +319,8 @@ func collectTurns(lines [][]byte, lo, hi int) []chatTurn {
 			continue // tool results, summaries, bridge/meta bookkeeping
 		}
 		for pi := range t.Parts {
-			if (t.Parts[pi].Kind == "question" || t.Parts[pi].Kind == "plan") && t.Parts[pi].qid != "" {
-				t.Parts[pi].Answer = answers[t.Parts[pi].qid]
+			if (t.Parts[pi].Kind == "question" || t.Parts[pi].Kind == "plan") && t.Parts[pi].QID != "" {
+				t.Parts[pi].Answer = answers[t.Parts[pi].QID]
 			}
 		}
 		turns = append(turns, t)
@@ -445,10 +388,10 @@ func surfacePendingPayloads(resp map[string]any, sid, state string) {
 	}
 }
 
-// parseTurn builds a chatTurn from a transcript line. ok is false for lines that
+// parseTurn builds a transcript.Turn from a transcript line. ok is false for lines that
 // carry nothing displayable: tool_result-only user turns, summaries, the Remote
 // Control bridge-session line, and meta entries (isMeta).
-func parseTurn(line []byte, idx int) (chatTurn, bool) {
+func parseTurn(line []byte, idx int) (transcript.Turn, bool) {
 	var ev struct {
 		Type             string `json:"type"`
 		Timestamp        string `json:"timestamp"`
@@ -469,22 +412,22 @@ func parseTurn(line []byte, idx int) (chatTurn, bool) {
 		} `json:"message"`
 	}
 	if json.Unmarshal(line, &ev) != nil {
-		return chatTurn{}, false
+		return transcript.Turn{}, false
 	}
 	if ev.IsMeta || (ev.Type != "user" && ev.Type != "assistant") {
-		return chatTurn{}, false
+		return transcript.Turn{}, false
 	}
-	var parts []chatPart
+	var parts []transcript.Part
 	var text string
 	if ev.Type == "assistant" {
 		parts, text = assistantParts(ev.Message.Content)
 	} else if t := contentText(ev.Message.Content); t != "" {
-		parts, text = []chatPart{{Kind: "text", Text: t}}, t
+		parts, text = []transcript.Part{{Kind: "text", Text: t}}, t
 	}
 	if len(parts) == 0 {
-		return chatTurn{}, false
+		return transcript.Turn{}, false
 	}
-	t := chatTurn{
+	t := transcript.Turn{
 		Role: ev.Type, Parts: parts, Text: text, Idx: idx, TS: ev.Timestamp,
 		Sidechain: ev.IsSidechain, Branch: ev.GitBranch, Cwd: ev.Cwd,
 		Compact: ev.IsCompactSummary,
@@ -502,13 +445,13 @@ func parseTurn(line []byte, idx int) (chatTurn, bool) {
 // text part per text block and a tool part per tool_use (thinking/other are skipped).
 // It also returns the concatenated text (for copy). content is normally an array of
 // blocks; a bare-string form is handled as a single text part.
-func assistantParts(raw json.RawMessage) (parts []chatPart, text string) {
+func assistantParts(raw json.RawMessage) (parts []transcript.Part, text string) {
 	if len(raw) == 0 {
 		return nil, ""
 	}
 	if raw[0] != '[' {
 		if s := contentText(raw); s != "" {
-			return []chatPart{{Kind: "text", Text: s}}, s
+			return []transcript.Part{{Kind: "text", Text: s}}, s
 		}
 		return nil, ""
 	}
@@ -529,7 +472,7 @@ func assistantParts(raw json.RawMessage) (parts []chatPart, text string) {
 			if strings.TrimSpace(b.Text) == "" {
 				continue
 			}
-			parts = append(parts, chatPart{Kind: "text", Text: b.Text})
+			parts = append(parts, transcript.Part{Kind: "text", Text: b.Text})
 			if sb.Len() > 0 {
 				sb.WriteString("\n")
 			}
@@ -538,7 +481,7 @@ func assistantParts(raw json.RawMessage) (parts []chatPart, text string) {
 			// AskUserQuestion becomes an answerable question block, not a faint trace.
 			if b.Name == "AskUserQuestion" {
 				if qs := parseQuestions(b.Input); len(qs) > 0 {
-					parts = append(parts, chatPart{Kind: "question", Tool: b.Name, Questions: qs, qid: b.ID})
+					parts = append(parts, transcript.Part{Kind: "question", Tool: b.Name, Questions: qs, QID: b.ID})
 					continue
 				}
 			}
@@ -548,11 +491,11 @@ func assistantParts(raw json.RawMessage) (parts []chatPart, text string) {
 					Plan string `json:"plan"`
 				}
 				if json.Unmarshal(b.Input, &pin) == nil && pin.Plan != "" {
-					parts = append(parts, chatPart{Kind: "plan", Tool: b.Name, Plan: pin.Plan, qid: b.ID})
+					parts = append(parts, transcript.Part{Kind: "plan", Tool: b.Name, Plan: pin.Plan, QID: b.ID})
 					continue
 				}
 			}
-			part := chatPart{Kind: "tool", Tool: b.Name, Info: toolInfo(b.Name, b.Input)}
+			part := transcript.Part{Kind: "tool", Tool: b.Name, Info: toolInfo(b.Name, b.Input)}
 			if f, es := toolEdits(b.Name, b.Input); len(es) > 0 {
 				part.File, part.Edits = f, es
 			}
@@ -595,23 +538,14 @@ func collectAnswers(lines [][]byte) map[string]string {
 	return out
 }
 
-// A ToDo task reconstructed from the transcript's Task tool calls. Unlike TodoWrite
-// (which resends the whole list each time), TaskCreate/TaskUpdate are incremental.
-type taskItem struct {
-	ID      string `json:"id"`
-	Subject string `json:"subject"`
-	Active  string `json:"activeForm,omitempty"`
-	Status  string `json:"status"` // pending | in_progress | completed
-}
-
 // collectTasks reconstructs the current ToDo list from the transcript. TaskCreate adds
 // a task (single, or a batch via tasks[]) with a sequential id matching claude's
 // "Task #N" numbering; TaskUpdate merges status/subject/activeForm onto an existing id.
 // TaskStop (a background-agent stop, a hash id in a different space) and TaskList/TaskGet
 // (reads) don't change the list and are ignored. Returns tasks in creation order.
-func collectTasks(lines [][]byte) []taskItem {
+func collectTasks(lines [][]byte) []transcript.Task {
 	order := []string{}
-	m := map[string]*taskItem{}
+	m := map[string]*transcript.Task{}
 	next := 1
 	for _, ln := range lines {
 		// Cheap prefilter so this stays a light full-scan (kept whole-transcript for an
@@ -661,7 +595,7 @@ func collectTasks(lines [][]byte) []taskItem {
 			}
 		}
 	}
-	out := make([]taskItem, 0, len(order))
+	out := make([]transcript.Task, 0, len(order))
 	for _, id := range order {
 		if it, ok := m[id]; ok {
 			out = append(out, *it)
@@ -672,7 +606,7 @@ func collectTasks(lines [][]byte) []taskItem {
 
 // parseTaskCreate returns the tasks one TaskCreate call adds — normally one (the subject
 // is on the input itself), or several when it carries a tasks[] batch.
-func parseTaskCreate(input json.RawMessage) []taskItem {
+func parseTaskCreate(input json.RawMessage) []transcript.Task {
 	var in struct {
 		Subject    string `json:"subject"`
 		ActiveForm string `json:"activeForm"`
@@ -685,10 +619,10 @@ func parseTaskCreate(input json.RawMessage) []taskItem {
 		return nil
 	}
 	if len(in.Tasks) > 0 {
-		out := make([]taskItem, 0, len(in.Tasks))
+		out := make([]transcript.Task, 0, len(in.Tasks))
 		for _, t := range in.Tasks {
 			if t.Subject != "" {
-				out = append(out, taskItem{Subject: t.Subject, Active: t.ActiveForm})
+				out = append(out, transcript.Task{Subject: t.Subject, Active: t.ActiveForm})
 			}
 		}
 		return out
@@ -696,11 +630,11 @@ func parseTaskCreate(input json.RawMessage) []taskItem {
 	if in.Subject == "" {
 		return nil
 	}
-	return []taskItem{{Subject: in.Subject, Active: in.ActiveForm}}
+	return []transcript.Task{{Subject: in.Subject, Active: in.ActiveForm}}
 }
 
 // applyTaskUpdate merges a TaskUpdate's non-empty fields onto the referenced task.
-func applyTaskUpdate(m map[string]*taskItem, input json.RawMessage) {
+func applyTaskUpdate(m map[string]*transcript.Task, input json.RawMessage) {
 	var in struct {
 		TaskID     string `json:"taskId"`
 		Status     string `json:"status"`
@@ -730,14 +664,14 @@ func bytesContains(b []byte, sub string) bool {
 	return strings.Contains(string(b), sub)
 }
 
-// parseQuestions pulls the AskUserQuestion tool input into chatQuestions. Returns
+// parseQuestions pulls the AskUserQuestion tool input into transcript.Questions. Returns
 // nil when the input doesn't carry a questions array (falls back to a tool trace).
-func parseQuestions(input json.RawMessage) []chatQuestion {
+func parseQuestions(input json.RawMessage) []transcript.Question {
 	if len(input) == 0 {
 		return nil
 	}
 	var in struct {
-		Questions []chatQuestion `json:"questions"`
+		Questions []transcript.Question `json:"questions"`
 	}
 	if json.Unmarshal(input, &in) != nil {
 		return nil
@@ -806,7 +740,7 @@ func capEdit(s string) string {
 // toolEdits extracts the before/after content of an edit-family tool so the Console can
 // render a diff pane. Returns the target file and one entry per edit; non-edit tools
 // (or malformed input) return nil, so the tool part stays a plain trace.
-func toolEdits(name string, input json.RawMessage) (string, []chatEdit) {
+func toolEdits(name string, input json.RawMessage) (string, []transcript.Edit) {
 	if len(input) == 0 {
 		return "", nil
 	}
@@ -820,7 +754,7 @@ func toolEdits(name string, input json.RawMessage) (string, []chatEdit) {
 		if json.Unmarshal(input, &in) != nil || in.FilePath == "" {
 			return "", nil
 		}
-		return in.FilePath, []chatEdit{{Old: capEdit(in.OldString), New: capEdit(in.NewString)}}
+		return in.FilePath, []transcript.Edit{{Old: capEdit(in.OldString), New: capEdit(in.NewString)}}
 	case "Write":
 		var in struct {
 			FilePath string `json:"file_path"`
@@ -829,7 +763,7 @@ func toolEdits(name string, input json.RawMessage) (string, []chatEdit) {
 		if json.Unmarshal(input, &in) != nil || in.FilePath == "" {
 			return "", nil
 		}
-		return in.FilePath, []chatEdit{{Old: "", New: capEdit(in.Content)}}
+		return in.FilePath, []transcript.Edit{{Old: "", New: capEdit(in.Content)}}
 	case "MultiEdit":
 		var in struct {
 			FilePath string `json:"file_path"`
@@ -841,9 +775,9 @@ func toolEdits(name string, input json.RawMessage) (string, []chatEdit) {
 		if json.Unmarshal(input, &in) != nil || in.FilePath == "" {
 			return "", nil
 		}
-		var es []chatEdit
+		var es []transcript.Edit
 		for _, e := range in.Edits {
-			es = append(es, chatEdit{Old: capEdit(e.OldString), New: capEdit(e.NewString)})
+			es = append(es, transcript.Edit{Old: capEdit(e.OldString), New: capEdit(e.NewString)})
 		}
 		return in.FilePath, es
 	case "NotebookEdit":
@@ -854,7 +788,7 @@ func toolEdits(name string, input json.RawMessage) (string, []chatEdit) {
 		if json.Unmarshal(input, &in) != nil || in.NotebookPath == "" {
 			return "", nil
 		}
-		return in.NotebookPath, []chatEdit{{Old: "", New: capEdit(in.NewSource)}}
+		return in.NotebookPath, []transcript.Edit{{Old: "", New: capEdit(in.NewSource)}}
 	}
 	return "", nil
 }

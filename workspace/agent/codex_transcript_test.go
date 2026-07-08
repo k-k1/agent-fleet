@@ -1,6 +1,10 @@
 package main
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
+)
 
 // A synthetic codex rollout exercising the event shapes we normalize: session_meta
 // (context), a dropped developer message, a wrapper-only user turn (dropped), a real
@@ -109,7 +113,7 @@ func TestCodexQuestion(t *testing.T) {
 	turns, _, pending, _ := codexParseRolloutFull(answered)
 
 	// The answered question renders as a question part with its answer.
-	var q *chatPart
+	var q *transcript.Part
 	for i := range turns {
 		if len(turns[i].Parts) > 0 && turns[i].Parts[0].Kind == "question" && turns[i].Parts[0].Questions[0].Question == "pick?" {
 			q = &turns[i].Parts[0]

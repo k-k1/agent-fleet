@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 	_ "modernc.org/sqlite" // pure-Go SQLite driver (registers "sqlite"), as in the CP
 )
 
@@ -18,7 +19,7 @@ import (
 // (text / reasoning / tool / patch, ordered by time_created). We already capture this
 // slot's opencode session id (opencodeSids, "ses_…", written by the bundled plugin), so
 // we read that session's messages+parts read-only and normalize them into the SAME
-// chatTurn model the Console chat consumes for claude/codex. The generic /messages
+// transcript.Turn model the Console chat consumes for claude/codex. The generic /messages
 // handler windows the result (there's no line cursor — the store isn't append-only text).
 //
 // Shapes (verified against a real opencode.db):
@@ -154,7 +155,7 @@ func opencodeMode(db *sql.DB, ses string) string {
 // opencodePending returns the questions of a currently-running `question` tool part in
 // this session (opencode is awaiting the user's answer), or nil. Same shape as claude's
 // AskUserQuestion so the Console renders it interactively.
-func opencodePending(db *sql.DB, ses string) []chatQuestion {
+func opencodePending(db *sql.DB, ses string) []transcript.Question {
 	rows, err := db.Query(
 		`SELECT data FROM part WHERE session_id = ? AND json_extract(data,'$.tool') = 'question' AND json_extract(data,'$.state.status') = 'running' ORDER BY time_created DESC LIMIT 1`,
 		ses,
@@ -181,14 +182,14 @@ func opencodePending(db *sql.DB, ses string) []chatQuestion {
 	return opencodeQuestions(p.State.Input)
 }
 
-// opencodeQuestions parses a question tool's state.input into chatQuestions (identical
+// opencodeQuestions parses a question tool's state.input into transcript.Questions (identical
 // schema to claude's AskUserQuestion: questions[]{question,header,multiSelect,options}).
-func opencodeQuestions(input json.RawMessage) []chatQuestion {
+func opencodeQuestions(input json.RawMessage) []transcript.Question {
 	if len(input) == 0 {
 		return nil
 	}
 	var in struct {
-		Questions []chatQuestion `json:"questions"`
+		Questions []transcript.Question `json:"questions"`
 	}
 	if json.Unmarshal(input, &in) != nil {
 		return nil
@@ -214,13 +215,13 @@ func opencodeAnswer(output string) string {
 // opencodeTasks reads this session's ToDo list from opencode's `todo` table (direct
 // columns: content/status/priority/position) so the chat shows the same checklist claude
 // gets. Returns nil when the table is empty for the session.
-func opencodeTasks(db *sql.DB, ses string) []taskItem {
+func opencodeTasks(db *sql.DB, ses string) []transcript.Task {
 	rows, err := db.Query(`SELECT content, status FROM todo WHERE session_id = ? ORDER BY position`, ses)
 	if err != nil {
 		return nil
 	}
 	defer rows.Close()
-	var out []taskItem
+	var out []transcript.Task
 	i := 0
 	for rows.Next() {
 		var content, status string
@@ -231,7 +232,7 @@ func opencodeTasks(db *sql.DB, ses string) []taskItem {
 		if status == "" {
 			status = "pending"
 		}
-		out = append(out, taskItem{ID: strconv.Itoa(i), Subject: content, Status: status})
+		out = append(out, transcript.Task{ID: strconv.Itoa(i), Subject: content, Status: status})
 	}
 	return out
 }
@@ -278,10 +279,10 @@ func opencodeSessionResumable(ses string) bool {
 }
 
 // opencodeReadSession loads one session's messages (ordered) and their parts, building a
-// chatTurn per displayable message. A message with no displayable part (a pure
+// transcript.Turn per displayable message. A message with no displayable part (a pure
 // reasoning/step frame) is dropped. Best-effort: a query error yields the turns gathered
 // so far rather than failing the whole poll.
-func opencodeReadSession(db *sql.DB, ses string) []chatTurn {
+func opencodeReadSession(db *sql.DB, ses string) []transcript.Turn {
 	rows, err := db.Query(`SELECT id, data FROM message WHERE session_id = ? ORDER BY time_created`, ses)
 	if err != nil {
 		return nil
@@ -299,7 +300,7 @@ func opencodeReadSession(db *sql.DB, ses string) []chatTurn {
 	}
 	rows.Close()
 
-	turns := make([]chatTurn, 0, len(msgs))
+	turns := make([]transcript.Turn, 0, len(msgs))
 	for i, mr := range msgs {
 		t, ok := opencodeParseMessage(db, mr.id, mr.data, i)
 		if ok {
@@ -309,9 +310,9 @@ func opencodeReadSession(db *sql.DB, ses string) []chatTurn {
 	return turns
 }
 
-// opencodeParseMessage builds a chatTurn from one message row and its parts. idx is the
+// opencodeParseMessage builds a transcript.Turn from one message row and its parts. idx is the
 // message ordinal (a stable render key + the unit the generic windower pages over).
-func opencodeParseMessage(db *sql.DB, msgID string, data []byte, idx int) (chatTurn, bool) {
+func opencodeParseMessage(db *sql.DB, msgID string, data []byte, idx int) (transcript.Turn, bool) {
 	var md struct {
 		Role    string `json:"role"`
 		ModelID string `json:"modelID"`
@@ -332,16 +333,16 @@ func opencodeParseMessage(db *sql.DB, msgID string, data []byte, idx int) (chatT
 		} `json:"path"`
 	}
 	if json.Unmarshal(data, &md) != nil {
-		return chatTurn{}, false
+		return transcript.Turn{}, false
 	}
 	if md.Role != "user" && md.Role != "assistant" {
-		return chatTurn{}, false // system / synthetic messages are not part of the chat
+		return transcript.Turn{}, false // system / synthetic messages are not part of the chat
 	}
 	parts, text := opencodeParts(db, msgID)
 	if len(parts) == 0 {
-		return chatTurn{}, false
+		return transcript.Turn{}, false
 	}
-	t := chatTurn{
+	t := transcript.Turn{
 		Role: md.Role, Parts: parts, Text: text, Idx: idx,
 		Cwd: md.Path.Cwd,
 	}
@@ -358,16 +359,16 @@ func opencodeParseMessage(db *sql.DB, msgID string, data []byte, idx int) (chatT
 	return t, true
 }
 
-// opencodeParts reads a message's parts in order and maps them onto chatParts: text →
+// opencodeParts reads a message's parts in order and maps them onto transcript.Parts: text →
 // rendered Markdown, tool/patch → a faint trace, reasoning/step framing → dropped.
 // Returns the parts and the concatenated text (for copy).
-func opencodeParts(db *sql.DB, msgID string) ([]chatPart, string) {
+func opencodeParts(db *sql.DB, msgID string) ([]transcript.Part, string) {
 	rows, err := db.Query(`SELECT data FROM part WHERE message_id = ? ORDER BY time_created`, msgID)
 	if err != nil {
 		return nil, ""
 	}
 	defer rows.Close()
-	var parts []chatPart
+	var parts []transcript.Part
 	var sb strings.Builder
 	for rows.Next() {
 		var pd []byte
@@ -393,7 +394,7 @@ func opencodeParts(db *sql.DB, msgID string) ([]chatPart, string) {
 			if strings.TrimSpace(p.Text) == "" {
 				continue
 			}
-			parts = append(parts, chatPart{Kind: "text", Text: p.Text})
+			parts = append(parts, transcript.Part{Kind: "text", Text: p.Text})
 			if sb.Len() > 0 {
 				sb.WriteString("\n")
 			}
@@ -401,7 +402,7 @@ func opencodeParts(db *sql.DB, msgID string) ([]chatPart, string) {
 		case "reasoning":
 			// opencode's chain-of-thought — a collapsible thinking block (like claude's).
 			if strings.TrimSpace(p.Text) != "" {
-				parts = append(parts, chatPart{Kind: "thinking", Text: p.Text})
+				parts = append(parts, transcript.Part{Kind: "thinking", Text: p.Text})
 			}
 		case "tool":
 			name := p.Tool
@@ -414,12 +415,12 @@ func opencodeParts(db *sql.DB, msgID string) ([]chatPart, string) {
 			if name == "question" {
 				if p.State.Status == "completed" {
 					if qs := opencodeQuestions(p.State.Input); len(qs) > 0 {
-						parts = append(parts, chatPart{Kind: "question", Tool: "question", Questions: qs, Answer: opencodeAnswer(p.State.Output)})
+						parts = append(parts, transcript.Part{Kind: "question", Tool: "question", Questions: qs, Answer: opencodeAnswer(p.State.Output)})
 					}
 				}
 				continue
 			}
-			part := chatPart{Kind: "tool", Tool: name, Info: opencodeToolInfo(p.State.Input), Output: capOutput(p.State.Output)}
+			part := transcript.Part{Kind: "tool", Tool: name, Info: opencodeToolInfo(p.State.Input), Output: capOutput(p.State.Output)}
 			// Edit-family tools carry before/after so the trace opens as a diff pane.
 			if f, es := opencodeToolEdits(name, p.State.Input); len(es) > 0 {
 				part.File, part.Edits = f, es
@@ -428,7 +429,7 @@ func opencodeParts(db *sql.DB, msgID string) ([]chatPart, string) {
 		case "patch":
 			// A committed edit; opencode records only the file list + hash, so it's a
 			// trace (no before/after to open as a diff).
-			parts = append(parts, chatPart{Kind: "tool", Tool: "patch", Info: codexClip(strings.Join(p.Files, ", "))})
+			parts = append(parts, transcript.Part{Kind: "tool", Tool: "patch", Info: codexClip(strings.Join(p.Files, ", "))})
 		}
 		// step-start / step-finish are framing — dropped.
 	}
@@ -456,7 +457,7 @@ func opencodeToolInfo(input json.RawMessage) string {
 // opencodeToolEdits extracts before/after content for opencode's edit-family tools so
 // the Console can open a diff pane: `write` is all-added (Old=""), `edit` carries the
 // old/new strings. Other tools return nil (they stay a plain trace).
-func opencodeToolEdits(name string, input json.RawMessage) (string, []chatEdit) {
+func opencodeToolEdits(name string, input json.RawMessage) (string, []transcript.Edit) {
 	if len(input) == 0 {
 		return "", nil
 	}
@@ -469,7 +470,7 @@ func opencodeToolEdits(name string, input json.RawMessage) (string, []chatEdit) 
 		if json.Unmarshal(input, &in) != nil || in.FilePath == "" {
 			return "", nil
 		}
-		return in.FilePath, []chatEdit{{Old: "", New: capEdit(in.Content)}}
+		return in.FilePath, []transcript.Edit{{Old: "", New: capEdit(in.Content)}}
 	case "edit":
 		var in struct {
 			FilePath  string `json:"filePath"`
@@ -479,7 +480,7 @@ func opencodeToolEdits(name string, input json.RawMessage) (string, []chatEdit) 
 		if json.Unmarshal(input, &in) != nil || in.FilePath == "" {
 			return "", nil
 		}
-		return in.FilePath, []chatEdit{{Old: capEdit(in.OldString), New: capEdit(in.NewString)}}
+		return in.FilePath, []transcript.Edit{{Old: capEdit(in.OldString), New: capEdit(in.NewString)}}
 	}
 	return "", nil
 }
