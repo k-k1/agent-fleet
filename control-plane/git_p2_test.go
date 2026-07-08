@@ -16,7 +16,7 @@ import (
 // member of the default tenant resolvable via proxy-auth headers.
 type p2Env struct {
 	c        config
-	st       *sqliteStore
+	st       *sqlStore
 	tenantID string
 }
 

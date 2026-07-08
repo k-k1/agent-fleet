@@ -16,16 +16,22 @@ import (
 //go:embed migrations/*.sql
 var migrationFS embed.FS
 
-// sqliteStore is the default MetadataStore adapter (docs/12 P3-1). One embedded
-// DB file per deployment fits the self-host model (CP = 1 process / 1 host).
-type sqliteStore struct {
-	db *sql.DB
+// sqlStore is the shared database/sql MetadataStore adapter. Both the SQLite
+// (default self-host) and Postgres (P3-7 段3a / RDS) backends use it: the SQL is
+// dialect-neutral except placeholders, so the only per-dialect state is the db
+// wrapper's rebind (?→$n for Postgres), the embedded migrations, and a SQLite-only
+// legacy data hook. See openSQLite / openPostgres.
+type sqlStore struct {
+	db         *sqlDB
+	mfs        embed.FS                    // embedded numbered migrations
+	mdir       string                      // dir within mfs
+	legacyHook func(context.Context) error // sqlite-only post-migration data move; nil for pg
 }
 
 // openSQLite opens the DB with the server-app pragmas (WAL + busy_timeout +
 // foreign keys). MaxOpenConns(1) serializes access — simplest correct choice at
 // this scale and avoids "database is locked".
-func openSQLite(path string) (*sqliteStore, error) {
+func openSQLite(path string) (*sqlStore, error) {
 	dsn := path + "?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)" +
 		"&_pragma=foreign_keys(ON)&_pragma=synchronous(NORMAL)"
 	db, err := sql.Open("sqlite", dsn)
@@ -37,19 +43,21 @@ func openSQLite(path string) (*sqliteStore, error) {
 		db.Close()
 		return nil, err
 	}
-	return &sqliteStore{db: db}, nil
+	s := &sqlStore{db: &sqlDB{DB: db, rb: rebindNoop}, mfs: migrationFS, mdir: "migrations"}
+	s.legacyHook = s.migrateMemberships
+	return s, nil
 }
 
-func (s *sqliteStore) Close() error { return s.db.Close() }
+func (s *sqlStore) Close() error { return s.db.Close() }
 
 // migrate applies embedded numbered migrations idempotently, then runs the
 // identity/membership data migration (docs/14, P3-2).
-func (s *sqliteStore) migrate(ctx context.Context) error {
+func (s *sqlStore) migrate(ctx context.Context) error {
 	if _, err := s.db.ExecContext(ctx,
 		`CREATE TABLE IF NOT EXISTS schema_migrations(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)`); err != nil {
 		return err
 	}
-	entries, err := fs.ReadDir(migrationFS, "migrations")
+	entries, err := fs.ReadDir(s.mfs, s.mdir)
 	if err != nil {
 		return err
 	}
@@ -69,7 +77,7 @@ func (s *sqliteStore) migrate(ctx context.Context) error {
 		if s.db.QueryRowContext(ctx, `SELECT 1 FROM schema_migrations WHERE version=?`, version).Scan(&one) == nil {
 			continue // already applied
 		}
-		body, err := migrationFS.ReadFile("migrations/" + name)
+		body, err := s.mfs.ReadFile(s.mdir + "/" + name)
 		if err != nil {
 			return err
 		}
@@ -95,14 +103,17 @@ func (s *sqliteStore) migrate(ctx context.Context) error {
 			return err
 		}
 	}
-	return s.migrateMemberships(ctx)
+	if s.legacyHook != nil {
+		return s.legacyHook(ctx)
+	}
+	return nil
 }
 
 // migrateMemberships moves app_user(tenant_id) + workspace(user_id) into the
 // identity/membership/workspace(membership_id) shape (docs/14). It runs once,
 // gated on the presence of the transient `workspace_new` table created by 0002.
 // Idempotent and safe on a fresh DB (no app_user rows to copy).
-func (s *sqliteStore) migrateMemberships(ctx context.Context) error {
+func (s *sqlStore) migrateMemberships(ctx context.Context) error {
 	var name string
 	err := s.db.QueryRowContext(ctx,
 		`SELECT name FROM sqlite_master WHERE type='table' AND name='workspace_new'`).Scan(&name)
@@ -213,7 +224,7 @@ func (s *sqliteStore) migrateMemberships(ctx context.Context) error {
 	return tx.Commit()
 }
 
-func (s *sqliteStore) EnsureDefaultTenant(ctx context.Context) (Tenant, error) {
+func (s *sqlStore) EnsureDefaultTenant(ctx context.Context) (Tenant, error) {
 	if _, err := s.db.ExecContext(ctx,
 		`INSERT INTO tenant(id, slug, name, status, limits, isolation, created_at)
 		 VALUES('default','default','Default','active','{}','shared',?)
@@ -223,7 +234,7 @@ func (s *sqliteStore) EnsureDefaultTenant(ctx context.Context) (Tenant, error) {
 	return s.getTenant(ctx, "default")
 }
 
-func (s *sqliteStore) CreateTenant(ctx context.Context, slug, name string) (Tenant, error) {
+func (s *sqlStore) CreateTenant(ctx context.Context, slug, name string) (Tenant, error) {
 	id := newID()
 	if _, err := s.db.ExecContext(ctx,
 		`INSERT INTO tenant(id, slug, name, status, limits, isolation, created_at)
@@ -233,7 +244,7 @@ func (s *sqliteStore) CreateTenant(ctx context.Context, slug, name string) (Tena
 	return s.getTenant(ctx, id)
 }
 
-func (s *sqliteStore) GetTenantBySlug(ctx context.Context, slug string) (Tenant, bool, error) {
+func (s *sqlStore) GetTenantBySlug(ctx context.Context, slug string) (Tenant, bool, error) {
 	var id string
 	err := s.db.QueryRowContext(ctx, `SELECT id FROM tenant WHERE slug=?`, slug).Scan(&id)
 	if err == sql.ErrNoRows {
@@ -246,16 +257,16 @@ func (s *sqliteStore) GetTenantBySlug(ctx context.Context, slug string) (Tenant,
 	return t, err == nil, err
 }
 
-func (s *sqliteStore) GetTenant(ctx context.Context, id string) (Tenant, error) {
+func (s *sqlStore) GetTenant(ctx context.Context, id string) (Tenant, error) {
 	return s.getTenant(ctx, id)
 }
 
-func (s *sqliteStore) SetTenantLimits(ctx context.Context, tenantID, limitsJSON string) error {
+func (s *sqlStore) SetTenantLimits(ctx context.Context, tenantID, limitsJSON string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE tenant SET limits=? WHERE id=?`, limitsJSON, tenantID)
 	return err
 }
 
-func (s *sqliteStore) getTenant(ctx context.Context, id string) (Tenant, error) {
+func (s *sqlStore) getTenant(ctx context.Context, id string) (Tenant, error) {
 	var t Tenant
 	var keyRef sql.NullString
 	err := s.db.QueryRowContext(ctx,
@@ -266,7 +277,7 @@ func (s *sqliteStore) getTenant(ctx context.Context, id string) (Tenant, error) 
 	return t, err
 }
 
-func (s *sqliteStore) UpsertIdentity(ctx context.Context, email, key, roleHint string) (Identity, error) {
+func (s *sqlStore) UpsertIdentity(ctx context.Context, email, key, roleHint string) (Identity, error) {
 	if _, err := s.db.ExecContext(ctx,
 		`INSERT INTO identity(id, email, user_key, role, status, last_login_at)
 		 VALUES(?, ?, ?, 'user', 'active', ?)
@@ -292,7 +303,7 @@ func (s *sqliteStore) UpsertIdentity(ctx context.Context, email, key, roleHint s
 	return id, err
 }
 
-func (s *sqliteStore) GetIdentityByID(ctx context.Context, id string) (Identity, bool, error) {
+func (s *sqlStore) GetIdentityByID(ctx context.Context, id string) (Identity, bool, error) {
 	var idn Identity
 	var last sql.NullString
 	err := s.db.QueryRowContext(ctx,
@@ -308,7 +319,7 @@ func (s *sqliteStore) GetIdentityByID(ctx context.Context, id string) (Identity,
 	return idn, true, nil
 }
 
-func (s *sqliteStore) ListTenants(ctx context.Context) ([]Tenant, error) {
+func (s *sqlStore) ListTenants(ctx context.Context) ([]Tenant, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, slug, name, status, limits, isolation, COALESCE(key_ref,''), created_at
 		 FROM tenant ORDER BY slug`)
@@ -327,7 +338,7 @@ func (s *sqliteStore) ListTenants(ctx context.Context) ([]Tenant, error) {
 	return out, rows.Err()
 }
 
-func (s *sqliteStore) ListMembersByTenant(ctx context.Context, tenantID string) ([]MemberInfo, error) {
+func (s *sqlStore) ListMembersByTenant(ctx context.Context, tenantID string) ([]MemberInfo, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT m.id, i.user_key, i.email, i.role, m.role
 		 FROM membership m JOIN identity i ON i.id = m.identity_id
@@ -347,7 +358,7 @@ func (s *sqliteStore) ListMembersByTenant(ctx context.Context, tenantID string) 
 	return out, rows.Err()
 }
 
-func (s *sqliteStore) ListMemberships(ctx context.Context, identityID string) ([]MembershipView, error) {
+func (s *sqlStore) ListMemberships(ctx context.Context, identityID string) ([]MembershipView, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT m.id, m.tenant_id, t.slug, t.name, m.role
 		 FROM membership m JOIN tenant t ON t.id = m.tenant_id
@@ -368,7 +379,7 @@ func (s *sqliteStore) ListMemberships(ctx context.Context, identityID string) ([
 	return out, rows.Err()
 }
 
-func (s *sqliteStore) GetMembershipByID(ctx context.Context, membershipID string) (MembershipView, bool, error) {
+func (s *sqlStore) GetMembershipByID(ctx context.Context, membershipID string) (MembershipView, bool, error) {
 	var v MembershipView
 	err := s.db.QueryRowContext(ctx,
 		`SELECT m.id, m.tenant_id, t.slug, t.name, m.role
@@ -384,7 +395,7 @@ func (s *sqliteStore) GetMembershipByID(ctx context.Context, membershipID string
 	return v, true, nil
 }
 
-func (s *sqliteStore) EnsureMembership(ctx context.Context, identityID, tenantID, role string) (Membership, error) {
+func (s *sqlStore) EnsureMembership(ctx context.Context, identityID, tenantID, role string) (Membership, error) {
 	if _, err := s.db.ExecContext(ctx,
 		`INSERT INTO membership(id, identity_id, tenant_id, role, status, created_at)
 		 VALUES(?, ?, ?, ?, 'active', ?) ON CONFLICT(identity_id, tenant_id) DO NOTHING`,
@@ -399,7 +410,7 @@ func (s *sqliteStore) EnsureMembership(ctx context.Context, identityID, tenantID
 	return m, err
 }
 
-func (s *sqliteStore) GetMembership(ctx context.Context, identityID, tenantID string) (Membership, bool, error) {
+func (s *sqlStore) GetMembership(ctx context.Context, identityID, tenantID string) (Membership, bool, error) {
 	var m Membership
 	err := s.db.QueryRowContext(ctx,
 		`SELECT id, identity_id, tenant_id, role, status, created_at FROM membership
@@ -414,13 +425,13 @@ func (s *sqliteStore) GetMembership(ctx context.Context, identityID, tenantID st
 	return m, true, nil
 }
 
-func (s *sqliteStore) SetMembershipRole(ctx context.Context, membershipID, role string) error {
+func (s *sqlStore) SetMembershipRole(ctx context.Context, membershipID, role string) error {
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE membership SET role=? WHERE id=?`, role, membershipID)
 	return err
 }
 
-func (s *sqliteStore) GetUserLimit(ctx context.Context, membershipID string) (UserLimit, bool, error) {
+func (s *sqlStore) GetUserLimit(ctx context.Context, membershipID string) (UserLimit, bool, error) {
 	var u UserLimit
 	err := s.db.QueryRowContext(ctx,
 		`SELECT membership_id, max_sessions, disk_gb, created_at FROM user_limit WHERE membership_id=?`, membershipID).
@@ -434,7 +445,7 @@ func (s *sqliteStore) GetUserLimit(ctx context.Context, membershipID string) (Us
 	return u, true, nil
 }
 
-func (s *sqliteStore) PutUserLimit(ctx context.Context, membershipID string, maxSessions, diskGB int) error {
+func (s *sqlStore) PutUserLimit(ctx context.Context, membershipID string, maxSessions, diskGB int) error {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO user_limit(membership_id, max_sessions, disk_gb, created_at)
 		 VALUES(?, ?, ?, ?)
@@ -443,13 +454,13 @@ func (s *sqliteStore) PutUserLimit(ctx context.Context, membershipID string, max
 	return err
 }
 
-func (s *sqliteStore) SetWorkspaceState(ctx context.Context, workspaceID, state string) error {
+func (s *sqlStore) SetWorkspaceState(ctx context.Context, workspaceID, state string) error {
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE workspace SET state=?, last_active_at=? WHERE id=?`, state, nowTS(), workspaceID)
 	return err
 }
 
-func (s *sqliteStore) GetWorkspaceByMembership(ctx context.Context, membershipID string) (Workspace, bool, error) {
+func (s *sqlStore) GetWorkspaceByMembership(ctx context.Context, membershipID string) (Workspace, bool, error) {
 	ws, err := scanWorkspace(s.db.QueryRowContext(ctx, workspaceCols+` WHERE membership_id=?`, membershipID))
 	if err == sql.ErrNoRows {
 		return Workspace{}, false, nil
@@ -460,7 +471,7 @@ func (s *sqliteStore) GetWorkspaceByMembership(ctx context.Context, membershipID
 	return ws, true, nil
 }
 
-func (s *sqliteStore) CreateWorkspace(ctx context.Context, ws Workspace) error {
+func (s *sqlStore) CreateWorkspace(ctx context.Context, ws Workspace) error {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO workspace(id, tenant_id, membership_id, container_name, network, data_dir,
 		   agent_port, agent_token, state, created_at)
@@ -470,7 +481,7 @@ func (s *sqliteStore) CreateWorkspace(ctx context.Context, ws Workspace) error {
 	return err
 }
 
-func (s *sqliteStore) GetWorkspaceSettings(ctx context.Context, workspaceID string) (string, error) {
+func (s *sqlStore) GetWorkspaceSettings(ctx context.Context, workspaceID string) (string, error) {
 	var v string
 	err := s.db.QueryRowContext(ctx, `SELECT COALESCE(settings,'') FROM workspace WHERE id=?`, workspaceID).Scan(&v)
 	if err == sql.ErrNoRows {
@@ -479,19 +490,19 @@ func (s *sqliteStore) GetWorkspaceSettings(ctx context.Context, workspaceID stri
 	return v, err
 }
 
-func (s *sqliteStore) SetWorkspaceSettings(ctx context.Context, workspaceID, settingsJSON string) error {
+func (s *sqlStore) SetWorkspaceSettings(ctx context.Context, workspaceID, settingsJSON string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE workspace SET settings=? WHERE id=?`, settingsJSON, workspaceID)
 	return err
 }
 
-func (s *sqliteStore) MaxAgentPort(ctx context.Context) (int, error) {
+func (s *sqlStore) MaxAgentPort(ctx context.Context) (int, error) {
 	var max int
 	err := s.db.QueryRowContext(ctx,
 		`SELECT COALESCE(MAX(CAST(agent_port AS INTEGER)), 0) FROM workspace`).Scan(&max)
 	return max, err
 }
 
-func (s *sqliteStore) ListWorkspaces(ctx context.Context, tenantID string) ([]Workspace, error) {
+func (s *sqlStore) ListWorkspaces(ctx context.Context, tenantID string) ([]Workspace, error) {
 	rows, err := s.db.QueryContext(ctx, workspaceCols+` WHERE tenant_id=? ORDER BY created_at`, tenantID)
 	if err != nil {
 		return nil, err
@@ -508,7 +519,7 @@ func (s *sqliteStore) ListWorkspaces(ctx context.Context, tenantID string) ([]Wo
 	return out, rows.Err()
 }
 
-func (s *sqliteStore) GetWrappedDEK(ctx context.Context, workspaceID string) (string, string, bool, error) {
+func (s *sqlStore) GetWrappedDEK(ctx context.Context, workspaceID string) (string, string, bool, error) {
 	var ct, kr string
 	err := s.db.QueryRowContext(ctx,
 		`SELECT ciphertext, key_ref FROM wrapped_dek WHERE workspace_id=?`, workspaceID).Scan(&ct, &kr)
@@ -521,7 +532,7 @@ func (s *sqliteStore) GetWrappedDEK(ctx context.Context, workspaceID string) (st
 	return ct, kr, true, nil
 }
 
-func (s *sqliteStore) PutWrappedDEK(ctx context.Context, workspaceID, ciphertext, keyRef string) error {
+func (s *sqlStore) PutWrappedDEK(ctx context.Context, workspaceID, ciphertext, keyRef string) error {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO wrapped_dek(workspace_id, ciphertext, key_ref, key_version, created_at)
 		 VALUES(?, ?, ?, 1, ?)
@@ -530,7 +541,7 @@ func (s *sqliteStore) PutWrappedDEK(ctx context.Context, workspaceID, ciphertext
 	return err
 }
 
-func (s *sqliteStore) ReplaceSessions(ctx context.Context, workspaceID string, rows []SessionRow) error {
+func (s *sqlStore) ReplaceSessions(ctx context.Context, workspaceID string, rows []SessionRow) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -550,7 +561,7 @@ func (s *sqliteStore) ReplaceSessions(ctx context.Context, workspaceID string, r
 	return tx.Commit()
 }
 
-func (s *sqliteStore) ListSessions(ctx context.Context, workspaceID string) ([]SessionRow, error) {
+func (s *sqlStore) ListSessions(ctx context.Context, workspaceID string) ([]SessionRow, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT name, kind, dir, repo, label, created_at, state, last_seen
 		 FROM session WHERE workspace_id=? ORDER BY created_at DESC`, workspaceID)
@@ -571,7 +582,7 @@ func (s *sqliteStore) ListSessions(ctx context.Context, workspaceID string) ([]S
 
 // --- Personal Access Tokens (docs/decisions/0006, P3-6) ---
 
-func (s *sqliteStore) CreatePAT(ctx context.Context, p PAT, tokenHash string) error {
+func (s *sqlStore) CreatePAT(ctx context.Context, p PAT, tokenHash string) error {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO pat(id, identity_id, membership_id, token_hash, scope, name, created_at, expires_at)
 		 VALUES(?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -579,7 +590,7 @@ func (s *sqliteStore) CreatePAT(ctx context.Context, p PAT, tokenHash string) er
 	return err
 }
 
-func (s *sqliteStore) GetPATByHash(ctx context.Context, tokenHash string) (PAT, bool, error) {
+func (s *sqlStore) GetPATByHash(ctx context.Context, tokenHash string) (PAT, bool, error) {
 	var p PAT
 	var mid, exp, rev, last sql.NullString
 	err := s.db.QueryRowContext(ctx,
@@ -596,7 +607,7 @@ func (s *sqliteStore) GetPATByHash(ctx context.Context, tokenHash string) (PAT, 
 	return p, true, nil
 }
 
-func (s *sqliteStore) ListPATsByIdentity(ctx context.Context, identityID string) ([]PAT, error) {
+func (s *sqlStore) ListPATsByIdentity(ctx context.Context, identityID string) ([]PAT, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, identity_id, COALESCE(membership_id,''), scope, name, created_at,
 		        COALESCE(expires_at,''), COALESCE(revoked_at,''), COALESCE(last_used_at,'')
@@ -619,21 +630,21 @@ func (s *sqliteStore) ListPATsByIdentity(ctx context.Context, identityID string)
 
 // RevokePAT marks a token revoked, scoped to its owner so a user can only revoke
 // their own tokens.
-func (s *sqliteStore) RevokePAT(ctx context.Context, id, identityID string) error {
+func (s *sqlStore) RevokePAT(ctx context.Context, id, identityID string) error {
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE pat SET revoked_at=? WHERE id=? AND identity_id=? AND revoked_at IS NULL`,
 		nowTS(), id, identityID)
 	return err
 }
 
-func (s *sqliteStore) TouchPAT(ctx context.Context, id string) error {
+func (s *sqlStore) TouchPAT(ctx context.Context, id string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE pat SET last_used_at=? WHERE id=?`, nowTS(), id)
 	return err
 }
 
 // --- Internal git repositories (docs/reference/internal-git-provider) ---
 
-func (s *sqliteStore) CreateGitRepo(ctx context.Context, g GitRepo) error {
+func (s *sqlStore) CreateGitRepo(ctx context.Context, g GitRepo) error {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO git_repo(id, tenant_id, name, default_branch, created_by, created_at)
 		 VALUES(?, ?, ?, ?, ?, ?)`,
@@ -641,7 +652,7 @@ func (s *sqliteStore) CreateGitRepo(ctx context.Context, g GitRepo) error {
 	return err
 }
 
-func (s *sqliteStore) ListGitReposByTenant(ctx context.Context, tenantID string) ([]GitRepo, error) {
+func (s *sqlStore) ListGitReposByTenant(ctx context.Context, tenantID string) ([]GitRepo, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, tenant_id, name, default_branch, COALESCE(created_by,''), created_at
 		 FROM git_repo WHERE tenant_id=? ORDER BY name`, tenantID)
@@ -660,7 +671,7 @@ func (s *sqliteStore) ListGitReposByTenant(ctx context.Context, tenantID string)
 	return out, rows.Err()
 }
 
-func (s *sqliteStore) GetGitRepo(ctx context.Context, tenantID, name string) (GitRepo, bool, error) {
+func (s *sqlStore) GetGitRepo(ctx context.Context, tenantID, name string) (GitRepo, bool, error) {
 	var g GitRepo
 	err := s.db.QueryRowContext(ctx,
 		`SELECT id, tenant_id, name, default_branch, COALESCE(created_by,''), created_at
@@ -675,7 +686,7 @@ func (s *sqliteStore) GetGitRepo(ctx context.Context, tenantID, name string) (Gi
 	return g, true, nil
 }
 
-func (s *sqliteStore) CountGitReposByTenant(ctx context.Context, tenantID string) (int, error) {
+func (s *sqlStore) CountGitReposByTenant(ctx context.Context, tenantID string) (int, error) {
 	var n int
 	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM git_repo WHERE tenant_id=?`, tenantID).Scan(&n)
 	return n, err
@@ -684,20 +695,20 @@ func (s *sqliteStore) CountGitReposByTenant(ctx context.Context, tenantID string
 // RenameGitRepo renames one repo within a tenant. The (tenant_id, name) UNIQUE
 // constraint makes a collision with an existing name an error (surfaced as a 409
 // by the caller after a pre-check).
-func (s *sqliteStore) RenameGitRepo(ctx context.Context, tenantID, oldName, newName string) error {
+func (s *sqlStore) RenameGitRepo(ctx context.Context, tenantID, oldName, newName string) error {
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE git_repo SET name=? WHERE tenant_id=? AND name=?`, newName, tenantID, oldName)
 	return err
 }
 
-func (s *sqliteStore) DeleteGitRepo(ctx context.Context, tenantID, name string) error {
+func (s *sqlStore) DeleteGitRepo(ctx context.Context, tenantID, name string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM git_repo WHERE tenant_id=? AND name=?`, tenantID, name)
 	return err
 }
 
 // --- Git LFS object ledger (docs/reference/internal-git-provider, P3) ---
 
-func (s *sqliteStore) PutLFSObject(ctx context.Context, tenantID, repo, oid string, size int64) error {
+func (s *sqlStore) PutLFSObject(ctx context.Context, tenantID, repo, oid string, size int64) error {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO lfs_object(tenant_id, repo_name, oid, size, created_at)
 		 VALUES(?, ?, ?, ?, ?)
@@ -706,26 +717,26 @@ func (s *sqliteStore) PutLFSObject(ctx context.Context, tenantID, repo, oid stri
 	return err
 }
 
-func (s *sqliteStore) TenantLFSBytes(ctx context.Context, tenantID string) (int64, error) {
+func (s *sqlStore) TenantLFSBytes(ctx context.Context, tenantID string) (int64, error) {
 	var n int64
 	err := s.db.QueryRowContext(ctx,
 		`SELECT COALESCE(SUM(size), 0) FROM lfs_object WHERE tenant_id=?`, tenantID).Scan(&n)
 	return n, err
 }
 
-func (s *sqliteStore) DeleteLFSObjectsByRepo(ctx context.Context, tenantID, repo string) error {
+func (s *sqlStore) DeleteLFSObjectsByRepo(ctx context.Context, tenantID, repo string) error {
 	_, err := s.db.ExecContext(ctx,
 		`DELETE FROM lfs_object WHERE tenant_id=? AND repo_name=?`, tenantID, repo)
 	return err
 }
 
-func (s *sqliteStore) RenameLFSObjectsRepo(ctx context.Context, tenantID, oldRepo, newRepo string) error {
+func (s *sqlStore) RenameLFSObjectsRepo(ctx context.Context, tenantID, oldRepo, newRepo string) error {
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE lfs_object SET repo_name=? WHERE tenant_id=? AND repo_name=?`, newRepo, tenantID, oldRepo)
 	return err
 }
 
-func (s *sqliteStore) DeleteLFSObject(ctx context.Context, tenantID, repo, oid string) error {
+func (s *sqlStore) DeleteLFSObject(ctx context.Context, tenantID, repo, oid string) error {
 	_, err := s.db.ExecContext(ctx,
 		`DELETE FROM lfs_object WHERE tenant_id=? AND repo_name=? AND oid=?`, tenantID, repo, oid)
 	return err
@@ -741,7 +752,7 @@ func scanLFSLock(row interface{ Scan(...any) error }) (LFSLock, error) {
 	return l, err
 }
 
-func (s *sqliteStore) CreateLFSLock(ctx context.Context, l LFSLock) error {
+func (s *sqlStore) CreateLFSLock(ctx context.Context, l LFSLock) error {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO lfs_lock(id, tenant_id, repo_name, path, ref_name, owner_id, owner_name, locked_at)
 		 VALUES(?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -749,7 +760,7 @@ func (s *sqliteStore) CreateLFSLock(ctx context.Context, l LFSLock) error {
 	return err
 }
 
-func (s *sqliteStore) GetLFSLockByPath(ctx context.Context, tenantID, repo, path string) (LFSLock, bool, error) {
+func (s *sqlStore) GetLFSLockByPath(ctx context.Context, tenantID, repo, path string) (LFSLock, bool, error) {
 	l, err := scanLFSLock(s.db.QueryRowContext(ctx,
 		lfsLockCols+` WHERE tenant_id=? AND repo_name=? AND path=?`, tenantID, repo, path))
 	if err == sql.ErrNoRows {
@@ -761,7 +772,7 @@ func (s *sqliteStore) GetLFSLockByPath(ctx context.Context, tenantID, repo, path
 	return l, true, nil
 }
 
-func (s *sqliteStore) GetLFSLock(ctx context.Context, tenantID, repo, id string) (LFSLock, bool, error) {
+func (s *sqlStore) GetLFSLock(ctx context.Context, tenantID, repo, id string) (LFSLock, bool, error) {
 	l, err := scanLFSLock(s.db.QueryRowContext(ctx,
 		lfsLockCols+` WHERE tenant_id=? AND repo_name=? AND id=?`, tenantID, repo, id))
 	if err == sql.ErrNoRows {
@@ -776,7 +787,7 @@ func (s *sqliteStore) GetLFSLock(ctx context.Context, tenantID, repo, id string)
 // ListLFSLocks returns locks ordered oldest-first, paginated by an opaque cursor
 // (a row offset). It fetches limit+1 to know whether a next page exists; the
 // returned cursor is "" when the page is the last.
-func (s *sqliteStore) ListLFSLocks(ctx context.Context, tenantID, repo, filterPath, filterID string, limit int, cursor string) ([]LFSLock, string, error) {
+func (s *sqlStore) ListLFSLocks(ctx context.Context, tenantID, repo, filterPath, filterID string, limit int, cursor string) ([]LFSLock, string, error) {
 	if limit <= 0 || limit > 100 {
 		limit = 100
 	}
@@ -822,25 +833,25 @@ func (s *sqliteStore) ListLFSLocks(ctx context.Context, tenantID, repo, filterPa
 	return out, next, nil
 }
 
-func (s *sqliteStore) DeleteLFSLock(ctx context.Context, tenantID, repo, id string) error {
+func (s *sqlStore) DeleteLFSLock(ctx context.Context, tenantID, repo, id string) error {
 	_, err := s.db.ExecContext(ctx,
 		`DELETE FROM lfs_lock WHERE tenant_id=? AND repo_name=? AND id=?`, tenantID, repo, id)
 	return err
 }
 
-func (s *sqliteStore) DeleteLFSLocksByRepo(ctx context.Context, tenantID, repo string) error {
+func (s *sqlStore) DeleteLFSLocksByRepo(ctx context.Context, tenantID, repo string) error {
 	_, err := s.db.ExecContext(ctx,
 		`DELETE FROM lfs_lock WHERE tenant_id=? AND repo_name=?`, tenantID, repo)
 	return err
 }
 
-func (s *sqliteStore) RenameLFSLocksRepo(ctx context.Context, tenantID, oldRepo, newRepo string) error {
+func (s *sqlStore) RenameLFSLocksRepo(ctx context.Context, tenantID, oldRepo, newRepo string) error {
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE lfs_lock SET repo_name=? WHERE tenant_id=? AND repo_name=?`, newRepo, tenantID, oldRepo)
 	return err
 }
 
-func (s *sqliteStore) MembershipOwnerName(ctx context.Context, membershipID string) (string, error) {
+func (s *sqlStore) MembershipOwnerName(ctx context.Context, membershipID string) (string, error) {
 	var email, key string
 	err := s.db.QueryRowContext(ctx,
 		`SELECT COALESCE(i.email,''), i.user_key FROM membership m JOIN identity i ON i.id = m.identity_id
@@ -857,7 +868,7 @@ func (s *sqliteStore) MembershipOwnerName(ctx context.Context, membershipID stri
 	return key, nil
 }
 
-func (s *sqliteStore) ListLFSObjectOIDs(ctx context.Context, tenantID, repo string) ([]string, error) {
+func (s *sqlStore) ListLFSObjectOIDs(ctx context.Context, tenantID, repo string) ([]string, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT oid FROM lfs_object WHERE tenant_id=? AND repo_name=?`, tenantID, repo)
 	if err != nil {
@@ -875,7 +886,7 @@ func (s *sqliteStore) ListLFSObjectOIDs(ctx context.Context, tenantID, repo stri
 	return out, rows.Err()
 }
 
-func (s *sqliteStore) InsertAudit(ctx context.Context, a AuditLog) error {
+func (s *sqlStore) InsertAudit(ctx context.Context, a AuditLog) error {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO audit_log(id, tenant_id, actor_kind, actor_id, action, target, detail, at)
 		 VALUES(?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -883,7 +894,7 @@ func (s *sqliteStore) InsertAudit(ctx context.Context, a AuditLog) error {
 	return err
 }
 
-func (s *sqliteStore) ListAuditByTenant(ctx context.Context, tenantID string, limit int) ([]AuditLog, error) {
+func (s *sqlStore) ListAuditByTenant(ctx context.Context, tenantID string, limit int) ([]AuditLog, error) {
 	if limit <= 0 {
 		limit = 100
 	}
@@ -916,7 +927,7 @@ func (s *sqliteStore) ListAuditByTenant(ctx context.Context, tenantID string, li
 
 // RecordEgress accumulates egress hits into the (day, host, allowed) bucket
 // (docs/20 M2). Upsert += so repeated batches add up.
-func (s *sqliteStore) RecordEgress(ctx context.Context, day, host string, allowed bool, count int) error {
+func (s *sqlStore) RecordEgress(ctx context.Context, day, host string, allowed bool, count int) error {
 	a := 0
 	if allowed {
 		a = 1
@@ -924,14 +935,14 @@ func (s *sqliteStore) RecordEgress(ctx context.Context, day, host string, allowe
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO egress_daily(day, host, allowed, count)
 		 VALUES(?, ?, ?, ?)
-		 ON CONFLICT(day, host, allowed) DO UPDATE SET count = count + excluded.count`,
+		 ON CONFLICT(day, host, allowed) DO UPDATE SET count = egress_daily.count + excluded.count`,
 		day, host, a, count)
 	return err
 }
 
 // ListEgress returns the busiest destination hosts on/after sinceDay, each with its
 // would-allow / would-block totals, most-hit first (docs/20 M2).
-func (s *sqliteStore) ListEgress(ctx context.Context, sinceDay string, limit int) ([]EgressStat, error) {
+func (s *sqlStore) ListEgress(ctx context.Context, sinceDay string, limit int) ([]EgressStat, error) {
 	if limit <= 0 {
 		limit = 200
 	}
@@ -958,7 +969,7 @@ func (s *sqliteStore) ListEgress(ctx context.Context, sinceDay string, limit int
 
 // --- egress allowlist + deployment settings (docs/20 M3) --------------------
 
-func (s *sqliteStore) ListAllowlist(ctx context.Context, state string, limit int) ([]AllowlistEntry, error) {
+func (s *sqlStore) ListAllowlist(ctx context.Context, state string, limit int) ([]AllowlistEntry, error) {
 	if limit <= 0 {
 		limit = 500
 	}
@@ -986,7 +997,7 @@ func (s *sqliteStore) ListAllowlist(ctx context.Context, state string, limit int
 	return out, rows.Err()
 }
 
-func (s *sqliteStore) AddAllowlist(ctx context.Context, e AllowlistEntry) error {
+func (s *sqlStore) AddAllowlist(ctx context.Context, e AllowlistEntry) error {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO egress_allowlist(id, tenant_id, entry, state, reason, added_by, added_at)
 		 VALUES(?, ?, ?, ?, ?, ?, ?)`,
@@ -994,12 +1005,12 @@ func (s *sqliteStore) AddAllowlist(ctx context.Context, e AllowlistEntry) error 
 	return err
 }
 
-func (s *sqliteStore) SetAllowlistState(ctx context.Context, id, state string) error {
+func (s *sqlStore) SetAllowlistState(ctx context.Context, id, state string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE egress_allowlist SET state=? WHERE id=?`, state, id)
 	return err
 }
 
-func (s *sqliteStore) EffectiveAllowlist(ctx context.Context) ([]string, error) {
+func (s *sqlStore) EffectiveAllowlist(ctx context.Context) ([]string, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT entry FROM egress_allowlist WHERE state='active'`)
 	if err != nil {
 		return nil, err
@@ -1016,7 +1027,7 @@ func (s *sqliteStore) EffectiveAllowlist(ctx context.Context) ([]string, error) 
 	return out, rows.Err()
 }
 
-func (s *sqliteStore) GetSetting(ctx context.Context, key string) (string, error) {
+func (s *sqlStore) GetSetting(ctx context.Context, key string) (string, error) {
 	var v string
 	err := s.db.QueryRowContext(ctx, `SELECT value FROM deployment_setting WHERE key=?`, key).Scan(&v)
 	if err == sql.ErrNoRows {
@@ -1025,7 +1036,7 @@ func (s *sqliteStore) GetSetting(ctx context.Context, key string) (string, error
 	return v, err
 }
 
-func (s *sqliteStore) SetSetting(ctx context.Context, key, value string) error {
+func (s *sqlStore) SetSetting(ctx context.Context, key, value string) error {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO deployment_setting(key, value) VALUES(?, ?)
 		 ON CONFLICT(key) DO UPDATE SET value = excluded.value`, key, value)
@@ -1034,11 +1045,11 @@ func (s *sqliteStore) SetSetting(ctx context.Context, key, value string) error {
 
 // AddUsage accumulates workspace running-seconds into the (membership, day)
 // showback bucket (docs/roadmap.md P3-9). Upsert += so repeated samples add up.
-func (s *sqliteStore) AddUsage(ctx context.Context, membershipID, tenantID, day string, secs int) error {
+func (s *sqlStore) AddUsage(ctx context.Context, membershipID, tenantID, day string, secs int) error {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO usage_daily(membership_id, tenant_id, day, running_secs)
 		 VALUES(?, ?, ?, ?)
-		 ON CONFLICT(membership_id, day) DO UPDATE SET running_secs = running_secs + excluded.running_secs`,
+		 ON CONFLICT(membership_id, day) DO UPDATE SET running_secs = usage_daily.running_secs + excluded.running_secs`,
 		membershipID, tenantID, day, secs)
 	return err
 }
@@ -1047,7 +1058,7 @@ func (s *sqliteStore) AddUsage(ctx context.Context, membershipID, tenantID, day 
 // enriched with tenant slug + member key/email via LEFT JOINs (a row survives
 // even if its membership/identity was later removed). tenantID=="" spans all
 // tenants (super_admin); otherwise it is scoped to that tenant.
-func (s *sqliteStore) ListUsage(ctx context.Context, tenantID, fromDay, toDay string) ([]UsageRow, error) {
+func (s *sqlStore) ListUsage(ctx context.Context, tenantID, fromDay, toDay string) ([]UsageRow, error) {
 	q := `SELECT u.tenant_id, COALESCE(t.slug,''), u.membership_id,
 	             COALESCE(i.user_key,''), COALESCE(i.email,''), u.day, u.running_secs
 	      FROM usage_daily u
@@ -1109,7 +1120,7 @@ func scanSSMProfile(row scanner) (SSMProfile, error) {
 	return p, err
 }
 
-func (s *sqliteStore) ListSSMProfiles(ctx context.Context, membershipID string) ([]SSMProfile, error) {
+func (s *sqlStore) ListSSMProfiles(ctx context.Context, membershipID string) ([]SSMProfile, error) {
 	rows, err := s.db.QueryContext(ctx, ssmProfileCols+` WHERE membership_id=? ORDER BY label`, membershipID)
 	if err != nil {
 		return nil, err
@@ -1126,7 +1137,7 @@ func (s *sqliteStore) ListSSMProfiles(ctx context.Context, membershipID string) 
 	return out, rows.Err()
 }
 
-func (s *sqliteStore) GetSSMProfile(ctx context.Context, id string) (SSMProfile, bool, error) {
+func (s *sqlStore) GetSSMProfile(ctx context.Context, id string) (SSMProfile, bool, error) {
 	p, err := scanSSMProfile(s.db.QueryRowContext(ctx, ssmProfileCols+` WHERE id=?`, id))
 	if err == sql.ErrNoRows {
 		return SSMProfile{}, false, nil
@@ -1134,7 +1145,7 @@ func (s *sqliteStore) GetSSMProfile(ctx context.Context, id string) (SSMProfile,
 	return p, err == nil, err
 }
 
-func (s *sqliteStore) CreateSSMProfile(ctx context.Context, p SSMProfile) error {
+func (s *sqlStore) CreateSSMProfile(ctx context.Context, p SSMProfile) error {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO ssm_profile(id, membership_id, label, start_url, sso_region, account_id, role_name, region, created_at)
 		 VALUES(?,?,?,?,?,?,?,?,?)`,
@@ -1142,7 +1153,7 @@ func (s *sqliteStore) CreateSSMProfile(ctx context.Context, p SSMProfile) error 
 	return err
 }
 
-func (s *sqliteStore) UpdateSSMProfile(ctx context.Context, p SSMProfile) error {
+func (s *sqlStore) UpdateSSMProfile(ctx context.Context, p SSMProfile) error {
 	// membership_id in the WHERE so a member can only update their own row.
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE ssm_profile SET label=?, start_url=?, sso_region=?, account_id=?, role_name=?, region=?
@@ -1151,7 +1162,7 @@ func (s *sqliteStore) UpdateSSMProfile(ctx context.Context, p SSMProfile) error 
 	return err
 }
 
-func (s *sqliteStore) DeleteSSMProfile(ctx context.Context, id, membershipID string) error {
+func (s *sqlStore) DeleteSSMProfile(ctx context.Context, id, membershipID string) error {
 	_, err := s.db.ExecContext(ctx,
 		`DELETE FROM ssm_profile WHERE id=? AND membership_id=?`, id, membershipID)
 	return err
@@ -1166,7 +1177,7 @@ func scanSSMHost(row scanner) (SSMHost, error) {
 	return h, err
 }
 
-func (s *sqliteStore) ListSSMHosts(ctx context.Context, membershipID string) ([]SSMHost, error) {
+func (s *sqlStore) ListSSMHosts(ctx context.Context, membershipID string) ([]SSMHost, error) {
 	rows, err := s.db.QueryContext(ctx, ssmHostCols+` WHERE membership_id=? ORDER BY alias`, membershipID)
 	if err != nil {
 		return nil, err
@@ -1183,7 +1194,7 @@ func (s *sqliteStore) ListSSMHosts(ctx context.Context, membershipID string) ([]
 	return out, rows.Err()
 }
 
-func (s *sqliteStore) GetSSMHost(ctx context.Context, id string) (SSMHost, bool, error) {
+func (s *sqlStore) GetSSMHost(ctx context.Context, id string) (SSMHost, bool, error) {
 	h, err := scanSSMHost(s.db.QueryRowContext(ctx, ssmHostCols+` WHERE id=?`, id))
 	if err == sql.ErrNoRows {
 		return SSMHost{}, false, nil
@@ -1191,7 +1202,7 @@ func (s *sqliteStore) GetSSMHost(ctx context.Context, id string) (SSMHost, bool,
 	return h, err == nil, err
 }
 
-func (s *sqliteStore) CreateSSMHost(ctx context.Context, h SSMHost) error {
+func (s *sqlStore) CreateSSMHost(ctx context.Context, h SSMHost) error {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO ssm_host(id, membership_id, alias, profile_id, region, instance_id, document_name, created_at)
 		 VALUES(?,?,?,?,?,?,?,?)`,
@@ -1199,7 +1210,7 @@ func (s *sqliteStore) CreateSSMHost(ctx context.Context, h SSMHost) error {
 	return err
 }
 
-func (s *sqliteStore) UpdateSSMHost(ctx context.Context, h SSMHost) error {
+func (s *sqlStore) UpdateSSMHost(ctx context.Context, h SSMHost) error {
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE ssm_host SET alias=?, profile_id=?, region=?, instance_id=?, document_name=?
 		   WHERE id=? AND membership_id=?`,
@@ -1207,7 +1218,7 @@ func (s *sqliteStore) UpdateSSMHost(ctx context.Context, h SSMHost) error {
 	return err
 }
 
-func (s *sqliteStore) DeleteSSMHost(ctx context.Context, id, membershipID string) error {
+func (s *sqlStore) DeleteSSMHost(ctx context.Context, id, membershipID string) error {
 	_, err := s.db.ExecContext(ctx,
 		`DELETE FROM ssm_host WHERE id=? AND membership_id=?`, id, membershipID)
 	return err
@@ -1227,7 +1238,7 @@ func scanMemo(row scanner) (Memo, error) {
 // ListMemos returns unsent memos plus sent ones still inside the retention window
 // (sent_at empty, or sent_at at/after retainBefore). retainBefore is an RFC3339
 // cutoff; RFC3339 strings sort chronologically so the lexical compare is correct.
-func (s *sqliteStore) ListMemos(ctx context.Context, membershipID, retainBefore string) ([]Memo, error) {
+func (s *sqlStore) ListMemos(ctx context.Context, membershipID, retainBefore string) ([]Memo, error) {
 	rows, err := s.db.QueryContext(ctx,
 		memoCols+` WHERE membership_id=? AND (sent_at='' OR sent_at>=?)
 		           ORDER BY repo, category, position, created_at`, membershipID, retainBefore)
@@ -1246,7 +1257,7 @@ func (s *sqliteStore) ListMemos(ctx context.Context, membershipID, retainBefore 
 	return out, rows.Err()
 }
 
-func (s *sqliteStore) GetMemo(ctx context.Context, id string) (Memo, bool, error) {
+func (s *sqlStore) GetMemo(ctx context.Context, id string) (Memo, bool, error) {
 	m, err := scanMemo(s.db.QueryRowContext(ctx, memoCols+` WHERE id=?`, id))
 	if err == sql.ErrNoRows {
 		return Memo{}, false, nil
@@ -1254,7 +1265,7 @@ func (s *sqliteStore) GetMemo(ctx context.Context, id string) (Memo, bool, error
 	return m, err == nil, err
 }
 
-func (s *sqliteStore) CreateMemo(ctx context.Context, m Memo) error {
+func (s *sqlStore) CreateMemo(ctx context.Context, m Memo) error {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO memo(id, membership_id, repo, category, kind, body, ref_path, position, created_at, sent_at)
 		 VALUES(?,?,?,?,?,?,?,?,?,?)`,
@@ -1262,7 +1273,7 @@ func (s *sqliteStore) CreateMemo(ctx context.Context, m Memo) error {
 	return err
 }
 
-func (s *sqliteStore) UpdateMemo(ctx context.Context, m Memo) error {
+func (s *sqlStore) UpdateMemo(ctx context.Context, m Memo) error {
 	// membership_id in the WHERE so a member can only update their own row.
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE memo SET repo=?, category=?, kind=?, body=?, ref_path=?, position=?
@@ -1271,7 +1282,7 @@ func (s *sqliteStore) UpdateMemo(ctx context.Context, m Memo) error {
 	return err
 }
 
-func (s *sqliteStore) DeleteMemo(ctx context.Context, id, membershipID string) error {
+func (s *sqlStore) DeleteMemo(ctx context.Context, id, membershipID string) error {
 	_, err := s.db.ExecContext(ctx,
 		`DELETE FROM memo WHERE id=? AND membership_id=?`, id, membershipID)
 	return err
@@ -1279,7 +1290,7 @@ func (s *sqliteStore) DeleteMemo(ctx context.Context, id, membershipID string) e
 
 // MarkMemosSent stamps sent_at on the caller's memos in ids (ownership enforced by
 // membership_id in the WHERE, so foreign ids are silently ignored).
-func (s *sqliteStore) MarkMemosSent(ctx context.Context, membershipID string, ids []string, sentAt string) error {
+func (s *sqlStore) MarkMemosSent(ctx context.Context, membershipID string, ids []string, sentAt string) error {
 	if len(ids) == 0 {
 		return nil
 	}
@@ -1297,7 +1308,7 @@ func (s *sqliteStore) MarkMemosSent(ctx context.Context, membershipID string, id
 }
 
 // SweepSentMemos deletes sent memos whose sent_at is before the retention cutoff.
-func (s *sqliteStore) SweepSentMemos(ctx context.Context, retainBefore string) error {
+func (s *sqlStore) SweepSentMemos(ctx context.Context, retainBefore string) error {
 	_, err := s.db.ExecContext(ctx,
 		`DELETE FROM memo WHERE sent_at!='' AND sent_at<?`, retainBefore)
 	return err

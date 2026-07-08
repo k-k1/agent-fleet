@@ -4,9 +4,9 @@ Description: >-
   validated via Route53), an internet-facing ALB that only terminates TLS (auth is
   CP-native Google OAuth, AUTH=oauth — no ALB OIDC), the CP/Console Fargate service
   (Service Connect client so it can reach the workspace Agents it provisions), and
-  the Route53 alias. Imports 00-network, 10-data (EFS) and 20-platform. The CP is
-  wired with AF_ECS_* so the 段2 ecsRuntime provisions workspaces on demand. SQLite
-  store is still EPHEMERAL here (RDS/段3a is separate); workspace homes persist on EFS.
+  the Route53 alias. Imports 00-network, 10-data (EFS + RDS) and 20-platform. The CP
+  is wired with AF_ECS_* so the 段2 ecsRuntime provisions workspaces on demand, and
+  its MetadataStore is RDS Postgres (段3a) so state survives task replacement.
 
 Parameters:
   NetworkStackName:
@@ -148,10 +148,6 @@ Resources:
         Fn::ImportValue: !Sub "${PlatformStackName}-ExecRoleArn"
       TaskRoleArn:
         Fn::ImportValue: !Sub "${PlatformStackName}-CpTaskRoleArn"
-      # Ephemeral scratch volume so WS_DATA exists and is writable (SQLite does not
-      # create the DB's parent dir; compose relied on the bind-mount pre-existing).
-      Volumes:
-        - Name: cpdata
       ContainerDefinitions:
         - Name: cp
           Essential: true
@@ -166,7 +162,14 @@ Resources:
             # non-loopback (the CpSg restricts 8099 ingress to the ALB SG — the
             # network isolation the compose loopback bind gives on a single box).
             - { Name: CP_ADDR, Value: !Sub "0.0.0.0:${CpPort}" }
-            - { Name: WS_DATA, Value: /var/lib/af/data }   # EPHEMERAL SQLite on the cpdata scratch volume (milestone only)
+            - { Name: WS_DATA, Value: /tmp }   # unused for state now (store = RDS/Postgres, below)
+            # MetadataStore = RDS Postgres (P3-7 段3a): survives CP task replacement.
+            # The CP composes the DSN from these parts; the password arrives as a
+            # secret (below) so it never sits in a plaintext URL/env.
+            - { Name: AF_DB_HOST, Value: !ImportValue { "Fn::Sub": "${DataStackName}-DbEndpoint" } }
+            - { Name: AF_DB_PORT, Value: !ImportValue { "Fn::Sub": "${DataStackName}-DbPort" } }
+            - { Name: AF_DB_NAME, Value: agentfleet }
+            - { Name: AF_DB_USER, Value: afadmin }
             - { Name: AUTH, Value: oauth }
             - { Name: PUBLIC_BASE_URL, Value: !Sub "https://${Fqdn}" }
             - { Name: PUBLIC_DOMAIN, Value: !Ref Fqdn }
@@ -185,17 +188,20 @@ Resources:
             - { Name: AF_ECS_EXEC_ROLE, Value: !ImportValue { "Fn::Sub": "${PlatformStackName}-ExecRoleArn" } }
             - { Name: AF_ECS_TASK_ROLE, Value: !ImportValue { "Fn::Sub": "${PlatformStackName}-WsTaskRoleArn" } }
             - { Name: AF_ECS_LOG_GROUP, Value: !Ref WsLogGroup }
-            # Fargate cold-starts a large workspace image on first pull; give the
-            # Start healthz wait headroom beyond the 120s default.
-            - { Name: AF_ECS_START_TIMEOUT_SEC, Value: "300" }
+            # Start's Agent-readiness wait is best-effort (a cold pull that outlasts
+            # it does NOT fail Start — the workspace converges async), so the default
+            # 90s budget is fine; override AF_ECS_START_TIMEOUT_SEC only if needed.
             - Name: AF_ECS_WORKSPACE_IMAGE
               Value: !Sub
                 - "${Uri}:${Tag}"
                 - Uri: !ImportValue { "Fn::Sub": "${PlatformStackName}-EcrWorkspaceUri" }
                   Tag: !Ref WorkspaceImageTag
-          MountPoints:
-            - { SourceVolume: cpdata, ContainerPath: /var/lib/af/data }
           Secrets:
+            # RDS-managed master password (Secrets Manager JSON → the `password` key).
+            - Name: AF_DB_PASSWORD
+              ValueFrom: !Sub
+                - "${Arn}:password::"
+                - Arn: !ImportValue { "Fn::Sub": "${DataStackName}-DbSecretArn" }
             - Name: GOOGLE_OAUTH_CLIENT_SECRET
               ValueFrom: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${SsmPrefix}/google-client-secret"
             - Name: AF_COOKIE_SECRET

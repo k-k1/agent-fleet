@@ -17,7 +17,7 @@ import (
 // plus a valid git token, for exercising the LFS handlers directly.
 type lfsEnv struct {
 	c     config
-	st    *sqliteStore
+	st    *sqlStore
 	token string
 	memID string
 }
