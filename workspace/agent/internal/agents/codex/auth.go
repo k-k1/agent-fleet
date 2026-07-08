@@ -1,7 +1,9 @@
-package main
+package codex
 
 import (
+	"crypto/rand"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"os"
@@ -15,6 +17,7 @@ import (
 	"github.com/creack/pty"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 )
 
 // Codex auth is driven from the WebUI, like Claude: codex owns its credential file
@@ -28,9 +31,59 @@ import (
 // The file is codex-owned (out of our encrypted store, like claude's creds) and
 // denylisted from the file browser.
 
-// codexLoggedIn reports whether codex has stored credentials, via `codex login
+// --- PTY flow plumbing -----------------------------------------------------------
+// flow / clean / close / waitFor / newFlowID / ansiRe は package main の claudeFlow
+// 一式の複製（main は import できないため — docs/23 残① Wave E。挙動は同一）。
+
+var (
+	// CSI/escape sequences and lone control chars Ink emits while redrawing.
+	ansiRe = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b[()][AB012]|\x1b[<>=]|[\x00-\x08\x0b\x0c\x0e-\x1f]`)
+)
+
+type flow struct {
+	ptmx    *os.File
+	cmd     *exec.Cmd
+	mu      sync.Mutex
+	out     strings.Builder
+	created time.Time
+}
+
+// clean returns the accumulated PTY output with ANSI/control noise removed.
+func (f *flow) clean() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	s := ansiRe.ReplaceAllString(f.out.String(), "")
+	return strings.ReplaceAll(s, "\r", "\n")
+}
+
+func (f *flow) close() {
+	_ = f.cmd.Process.Kill()
+	_ = f.ptmx.Close()
+}
+
+func newFlowID() string {
+	b := make([]byte, 8)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
+}
+
+// waitFor polls the flow's cleaned output until re matches or the timeout hits.
+func waitFor(f *flow, re *regexp.Regexp, timeout time.Duration) string {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if m := re.FindString(f.clean()); m != "" {
+			return m
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	return ""
+}
+
+// --- status ------------------------------------------------------------------------
+
+// loggedIn reports whether codex has stored credentials, via `codex login
 // status` (prints "Not logged in" when logged out; anything else => connected).
-func codexLoggedIn() bool {
+func loggedIn() bool {
 	out, err := exec.Command("codex", "login", "status").CombinedOutput()
 	if err != nil {
 		return false
@@ -38,17 +91,17 @@ func codexLoggedIn() bool {
 	return !strings.Contains(strings.ToLower(string(out)), "not logged in")
 }
 
-// codexStatus reports connection status plus the authenticated account for the
-// Console. `codex login status` only prints the method ("Logged in using ChatGPT"),
-// so we read ~/.codex/auth.json for the auth_mode and, for a ChatGPT login, the
-// account email + plan from the id_token's claims (codex stores them there). Only
-// non-secret claims are surfaced; tokens themselves are never returned.
-func codexStatus() map[string]any {
-	if !codexLoggedIn() {
+// Status reports connection status plus the authenticated account for the
+// Console (GET /connections). `codex login status` only prints the method ("Logged in
+// using ChatGPT"), so we read ~/.codex/auth.json for the auth_mode and, for a ChatGPT
+// login, the account email + plan from the id_token's claims (codex stores them there).
+// Only non-secret claims are surfaced; tokens themselves are never returned.
+func Status() map[string]any {
+	if !loggedIn() {
 		return map[string]any{"connected": false}
 	}
 	info := map[string]any{"connected": true}
-	b, err := os.ReadFile(filepath.Join(homeDir(), ".codex", "auth.json"))
+	b, err := os.ReadFile(filepath.Join(paths.HomeDir(), ".codex", "auth.json"))
 	if err != nil {
 		return info
 	}
@@ -65,7 +118,7 @@ func codexStatus() map[string]any {
 		info["method"] = a.AuthMode // "chatgpt" | "apikey"
 	}
 	if a.AuthMode == "chatgpt" {
-		if email, plan := codexIDTokenInfo(a.Tokens.IDToken); email != "" {
+		if email, plan := idTokenInfo(a.Tokens.IDToken); email != "" {
 			info["email"] = email
 			if plan != "" {
 				info["plan"] = plan
@@ -75,10 +128,10 @@ func codexStatus() map[string]any {
 	return info
 }
 
-// codexIDTokenInfo decodes the (unverified) JWT payload of a ChatGPT id_token and
+// idTokenInfo decodes the (unverified) JWT payload of a ChatGPT id_token and
 // returns the account email + plan claim. We only read identity claims for display;
 // no signature check is needed since we're reading codex's own stored token.
-func codexIDTokenInfo(idToken string) (email, plan string) {
+func idTokenInfo(idToken string) (email, plan string) {
 	parts := strings.Split(idToken, ".")
 	if len(parts) < 2 {
 		return "", ""
@@ -99,14 +152,15 @@ func codexIDTokenInfo(idToken string) (email, plan string) {
 	return claims.Email, claims.Auth.Plan
 }
 
-type codexKeyReq struct {
+type keyReq struct {
 	Key string `json:"key"` // the OpenAI/Codex API key
 }
 
-// handleCodexApiKey logs codex in with an API key by piping it to
+// HandleAPIKey logs codex in with an API key by piping it to
 // `codex login --with-api-key` (codex writes its own auth.json).
-func handleCodexApiKey(w http.ResponseWriter, r *http.Request) {
-	var req codexKeyReq
+// POST /connections/codex/api-key.
+func HandleAPIKey(w http.ResponseWriter, r *http.Request) {
+	var req keyReq
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
@@ -118,7 +172,7 @@ func handleCodexApiKey(w http.ResponseWriter, r *http.Request) {
 	cmd := exec.Command("codex", "login", "--with-api-key")
 	cmd.Stdin = strings.NewReader(key)
 	out, err := cmd.CombinedOutput()
-	if err != nil || !codexLoggedIn() {
+	if err != nil || !loggedIn() {
 		httpx.WriteErr(w, http.StatusBadGateway, "login_failed", "codex login failed: "+strings.TrimSpace(string(out)))
 		return
 	}
@@ -129,38 +183,39 @@ func handleCodexApiKey(w http.ResponseWriter, r *http.Request) {
 
 var (
 	// The verification URL and one-time code codex prints under `--device-auth`.
-	codexURLRe = regexp.MustCompile(`https://auth\.openai\.com/\S*`)
+	urlRe = regexp.MustCompile(`https://auth\.openai\.com/\S*`)
 	// The one-time code is XXXX-XXXXX (4 then 5 in observed samples); allow 4-6 on
 	// each side so a length tweak doesn't silently drop it.
-	codexCodeRe = regexp.MustCompile(`\b[A-Z0-9]{4,6}-[A-Z0-9]{4,6}\b`)
+	codeRe = regexp.MustCompile(`\b[A-Z0-9]{4,6}-[A-Z0-9]{4,6}\b`)
 )
 
 // codex device-auth keeps the codex process running (it polls OpenAI itself) until
-// the user approves; we reuse the claudeFlow PTY plumbing to hold it and scrape
+// the user approves; we reuse the flow PTY plumbing to hold it and scrape
 // the URL + code. The device code expires in ~15 min.
-const codexFlowTTL = 16 * time.Minute
+const flowTTL = 16 * time.Minute
 
 var (
-	codexFlowsMu sync.Mutex
-	codexFlows   = map[string]*claudeFlow{}
+	flowsMu sync.Mutex
+	flows   = map[string]*flow{}
 )
 
-func reapCodexFlows() {
-	codexFlowsMu.Lock()
-	defer codexFlowsMu.Unlock()
-	for id, f := range codexFlows {
-		if time.Since(f.created) > codexFlowTTL {
+func reapFlows() {
+	flowsMu.Lock()
+	defer flowsMu.Unlock()
+	for id, f := range flows {
+		if time.Since(f.created) > flowTTL {
 			f.close()
-			delete(codexFlows, id)
+			delete(flows, id)
 		}
 	}
 }
 
-// handleCodexDeviceStart launches `codex login --device-auth`, scrapes the
+// HandleDeviceStart launches `codex login --device-auth`, scrapes the
 // verification URL + one-time code, and returns them with a flow_id the client
 // polls. The codex process is kept alive to do the OpenAI-side polling.
-func handleCodexDeviceStart(w http.ResponseWriter, r *http.Request) {
-	reapCodexFlows()
+// POST /connections/codex/device/start.
+func HandleDeviceStart(w http.ResponseWriter, r *http.Request) {
+	reapFlows()
 	cmd := exec.Command("codex", "login", "--device-auth")
 	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
 	ptmx, err := pty.Start(cmd)
@@ -170,7 +225,7 @@ func handleCodexDeviceStart(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = pty.Setsize(ptmx, &pty.Winsize{Rows: 50, Cols: 4000}) // wide => URL on one line
 
-	f := &claudeFlow{ptmx: ptmx, cmd: cmd, created: time.Now()}
+	f := &flow{ptmx: ptmx, cmd: cmd, created: time.Now()}
 	go func() {
 		buf := make([]byte, 8192)
 		for {
@@ -186,7 +241,7 @@ func handleCodexDeviceStart(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	url := waitFor(f, codexURLRe, 20*time.Second)
+	url := waitFor(f, urlRe, 20*time.Second)
 	if url == "" {
 		f.close()
 		httpx.WriteErr(w, http.StatusBadGateway, "no_url", "codex did not emit a device-auth URL (device code login may be disabled for this account)")
@@ -194,45 +249,47 @@ func handleCodexDeviceStart(w http.ResponseWriter, r *http.Request) {
 	}
 	// The one-time code prints on the line AFTER the URL, so wait for it separately
 	// rather than reading the buffer the instant the URL matched (it isn't there yet).
-	code := waitFor(f, codexCodeRe, 8*time.Second)
+	code := waitFor(f, codeRe, 8*time.Second)
 	id := newFlowID()
-	codexFlowsMu.Lock()
-	codexFlows[id] = f
-	codexFlowsMu.Unlock()
+	flowsMu.Lock()
+	flows[id] = f
+	flowsMu.Unlock()
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"flow_id": id, "url": url, "user_code": code})
 }
 
-type codexPollReq struct {
+type pollReq struct {
 	FlowID string `json:"flow_id"`
 }
 
-// handleCodexDevicePoll reports whether the device-auth login has completed. On
+// HandleDevicePoll reports whether the device-auth login has completed. On
 // success it tears down the flow; codex has written auth.json by then.
-func handleCodexDevicePoll(w http.ResponseWriter, r *http.Request) {
-	var req codexPollReq
+// POST /connections/codex/device/poll.
+func HandleDevicePoll(w http.ResponseWriter, r *http.Request) {
+	var req pollReq
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
-	if codexLoggedIn() {
-		codexFlowsMu.Lock()
-		if f := codexFlows[req.FlowID]; f != nil {
+	if loggedIn() {
+		flowsMu.Lock()
+		if f := flows[req.FlowID]; f != nil {
 			f.close()
-			delete(codexFlows, req.FlowID)
+			delete(flows, req.FlowID)
 		}
-		codexFlowsMu.Unlock()
+		flowsMu.Unlock()
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"connected": true})
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"connected": false})
 }
 
-// handleCodexDisconnect logs codex out (clears auth.json) via the CLI.
-func handleCodexDisconnect(w http.ResponseWriter, r *http.Request) {
+// HandleDisconnect logs codex out (clears auth.json) via the CLI.
+// DELETE /connections/codex.
+func HandleDisconnect(w http.ResponseWriter, r *http.Request) {
 	_ = exec.Command("codex", "logout").Run()
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"disconnected": "codex"})
 }
 
-// ensureCodexFolderTrusted pre-accepts codex's per-directory trust gate ("Do you trust
+// ensureFolderTrusted pre-accepts codex's per-directory trust gate ("Do you trust
 // the contents of this directory?") for dir, the way claude's ensureFolderTrusted does
 // for its own dialog. codex records trust in ~/.codex/config.toml as a
 // [projects."<dir>"] section with trust_level = "trusted" (what it writes when the user
@@ -240,11 +297,11 @@ func handleCodexDisconnect(w http.ResponseWriter, r *http.Request) {
 // launch. The bypass flags on the launch command cover approvals/sandbox/hook-trust,
 // NOT this project trust, so we seed the entry here. Best-effort and idempotent: appends
 // the section only when absent, leaving any existing config untouched.
-func ensureCodexFolderTrusted(dir string) {
+func ensureFolderTrusted(dir string) {
 	if dir == "" {
 		return
 	}
-	p := filepath.Join(homeDir(), ".codex", "config.toml")
+	p := filepath.Join(paths.HomeDir(), ".codex", "config.toml")
 	b, _ := os.ReadFile(p)
 	// tomlString quotes+escapes the path as a TOML key, matching codex's own format.
 	header := "[projects." + tomlString(dir) + "]"

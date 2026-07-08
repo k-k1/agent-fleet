@@ -1,4 +1,4 @@
-package main
+package codex
 
 import (
 	"bytes"
@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 )
 
 // Codex subscription usage (the 5-hour + weekly rate-limit bars) surfaced for the
@@ -27,8 +28,16 @@ import (
 //                  "plan_type":"plus"}
 // primary = the ~5h window, secondary = the weekly (10080 min = 7d) window.
 
-func handleCodexUsage(w http.ResponseWriter, _ *http.Request) {
-	u := readCodexUsage()
+// usageWindow は package main（claude_usage.go）の同名 struct の複製（極小のため
+// 共有せず重複を許容）: percent used (0–100) + the ISO reset instant.
+type usageWindow struct {
+	Pct      float64 `json:"pct"`
+	ResetsAt string  `json:"resetsAt"`
+}
+
+// HandleUsage serves GET /codex/usage for the Console's WsBar chip.
+func HandleUsage(w http.ResponseWriter, _ *http.Request) {
+	u := readUsage()
 	out := map[string]any{"ok": u.OK, "fiveHour": u.FiveHour, "sevenDay": u.SevenDay}
 	if u.PlanType != "" {
 		out["planType"] = u.PlanType
@@ -39,7 +48,7 @@ func handleCodexUsage(w http.ResponseWriter, _ *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, out)
 }
 
-type codexUsage struct {
+type usage struct {
 	OK       bool
 	FiveHour *usageWindow
 	SevenDay *usageWindow
@@ -47,14 +56,14 @@ type codexUsage struct {
 	AgeSec   int
 }
 
-// readCodexUsage finds the freshest rate_limits across codex rollouts. rate_limits are
+// readUsage finds the freshest rate_limits across codex rollouts. rate_limits are
 // account-wide, so the most recently written rollout that carries one wins — we iterate
 // rollout files newest-first and return the first reading found.
-func readCodexUsage() codexUsage {
-	root := filepath.Join(homeDir(), ".codex", "sessions")
+func readUsage() usage {
+	root := filepath.Join(paths.HomeDir(), ".codex", "sessions")
 	matches, err := filepath.Glob(filepath.Join(root, "*", "*", "*", "rollout-*.jsonl"))
 	if err != nil || len(matches) == 0 {
-		return codexUsage{OK: false, AgeSec: -1}
+		return usage{OK: false, AgeSec: -1}
 	}
 	// newest file first
 	sort.Slice(matches, func(i, j int) bool {
@@ -66,25 +75,25 @@ func readCodexUsage() codexUsage {
 		matches = matches[:8]
 	}
 	for _, path := range matches {
-		if u, ok := codexUsageFromRollout(path); ok {
+		if u, ok := usageFromRollout(path); ok {
 			return u
 		}
 	}
-	return codexUsage{OK: false, AgeSec: -1}
+	return usage{OK: false, AgeSec: -1}
 }
 
-// codexUsageFromRollout scans a rollout file from the end for the last token_count
+// usageFromRollout scans a rollout file from the end for the last token_count
 // event bearing a rate_limits block. ok is false when the file has no such reading yet.
-func codexUsageFromRollout(path string) (codexUsage, bool) {
+func usageFromRollout(path string) (usage, bool) {
 	b, err := os.ReadFile(path)
 	if err != nil {
-		return codexUsage{}, false
+		return usage{}, false
 	}
-	return codexUsageFromRolloutBytes(b)
+	return usageFromRolloutBytes(b)
 }
 
-// codexUsageFromRolloutBytes is the parse over rollout content (split out for tests).
-func codexUsageFromRolloutBytes(b []byte) (codexUsage, bool) {
+// usageFromRolloutBytes is the parse over rollout content (split out for tests).
+func usageFromRolloutBytes(b []byte) (usage, bool) {
 	lines := bytes.Split(b, []byte("\n"))
 	for i := len(lines) - 1; i >= 0; i-- {
 		line := bytes.TrimSpace(lines[i])
@@ -99,17 +108,17 @@ func codexUsageFromRolloutBytes(b []byte) (codexUsage, bool) {
 		if json.Unmarshal(line, &ev) != nil {
 			continue
 		}
-		if u, ok := codexRateLimits(ev.Payload); ok {
+		if u, ok := parseRateLimits(ev.Payload); ok {
 			u.AgeSec = ageSecFrom(ev.Timestamp)
 			return u, true
 		}
 	}
-	return codexUsage{}, false
+	return usage{}, false
 }
 
-// codexRateLimits parses the rate_limits from a token_count payload into the shared
+// parseRateLimits parses the rate_limits from a token_count payload into the shared
 // usageWindow shape. ok is false for payloads without a rate_limits block.
-func codexRateLimits(payload json.RawMessage) (codexUsage, bool) {
+func parseRateLimits(payload json.RawMessage) (usage, bool) {
 	type win struct {
 		UsedPercent   float64 `json:"used_percent"`
 		WindowMinutes int     `json:"window_minutes"`
@@ -124,32 +133,32 @@ func codexRateLimits(payload json.RawMessage) (codexUsage, bool) {
 		} `json:"rate_limits"`
 	}
 	if json.Unmarshal(payload, &p) != nil || p.Type != "token_count" || p.RateLimits == nil {
-		return codexUsage{}, false
+		return usage{}, false
 	}
 	rl := p.RateLimits
 	// Both windows can be absent very early; require at least one to call it a reading.
 	if rl.Primary == nil && rl.Secondary == nil {
-		return codexUsage{}, false
+		return usage{}, false
 	}
-	u := codexUsage{OK: true, PlanType: rl.PlanType, AgeSec: -1}
+	u := usage{OK: true, PlanType: rl.PlanType, AgeSec: -1}
 	now := time.Now().UTC()
 	toWin := func(x *win) *usageWindow {
 		if x == nil {
 			return nil
 		}
-		return codexAdjustWindow(x.UsedPercent, x.WindowMinutes, x.ResetsAt, now)
+		return adjustWindow(x.UsedPercent, x.WindowMinutes, x.ResetsAt, now)
 	}
 	u.FiveHour = toWin(rl.Primary)
 	u.SevenDay = toWin(rl.Secondary)
 	return u, true
 }
 
-// codexAdjustWindow maps one recorded rate-limit window onto a usageWindow, correcting
+// adjustWindow maps one recorded rate-limit window onto a usageWindow, correcting
 // for staleness. A codex reading is a snapshot from the last turn; if its window has
 // since reset (resetEpoch is at/before now), the recorded % no longer applies — usage
 // is back to 0 — so we zero it and roll the reset forward by whole windows to the next
 // sensible boundary. A window still in the future passes through unchanged.
-func codexAdjustWindow(pct float64, windowMin int, resetEpoch int64, now time.Time) *usageWindow {
+func adjustWindow(pct float64, windowMin int, resetEpoch int64, now time.Time) *usageWindow {
 	reset := time.Unix(resetEpoch, 0).UTC()
 	if !reset.After(now) {
 		pct = 0

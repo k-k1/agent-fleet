@@ -1,4 +1,4 @@
-package main
+package codex
 
 import (
 	"os"
@@ -11,9 +11,9 @@ import (
 const codexRateLimitLine = `{"timestamp":"2026-07-04T03:10:38.864Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":297059,"cached_input_tokens":226304,"output_tokens":3320,"reasoning_output_tokens":867,"total_tokens":300379},"last_token_usage":{"input_tokens":38619,"cached_input_tokens":24448,"output_tokens":540,"reasoning_output_tokens":84,"total_tokens":39159},"model_context_window":258400},"rate_limits":{"limit_id":"codex","limit_name":null,"primary":{"used_percent":3.0,"window_minutes":300,"resets_at":1783142674},"secondary":{"used_percent":0.0,"window_minutes":10080,"resets_at":1783729474},"credits":null,"individual_limit":null,"plan_type":"plus","rate_limit_reached_type":null}}}`
 
 func TestCodexRateLimits(t *testing.T) {
-	// Parse via the same path handleCodexUsage uses. The recorded %s are time-adjusted
+	// Parse via the same path HandleUsage uses. The recorded %s are time-adjusted
 	// (see TestCodexAdjustWindow), so here we only assert the shape parses.
-	u, ok := codexUsageFromRolloutBytes([]byte(codexRateLimitLine))
+	u, ok := usageFromRolloutBytes([]byte(codexRateLimitLine))
 	if !ok || !u.OK {
 		t.Fatalf("expected a usage reading, got ok=%v u=%+v", ok, u)
 	}
@@ -33,14 +33,14 @@ func TestCodexAdjustWindow(t *testing.T) {
 
 	// A window still in the future passes through unchanged.
 	future := now.Add(2 * time.Hour).Unix()
-	if w := codexAdjustWindow(37.0, 300, future, now); w.Pct != 37.0 {
+	if w := adjustWindow(37.0, 300, future, now); w.Pct != 37.0 {
 		t.Fatalf("live window pct = %v, want 37.0", w.Pct)
 	}
 
 	// An expired window (reset in the past) zeroes the %, and rolls the reset forward
 	// by whole windows to a future instant.
 	past := now.Add(-7 * time.Hour).Unix() // 5h window reset 7h ago
-	w := codexAdjustWindow(3.0, 300, past, now)
+	w := adjustWindow(3.0, 300, past, now)
 	if w.Pct != 0 {
 		t.Fatalf("expired window pct = %v, want 0", w.Pct)
 	}
@@ -53,12 +53,12 @@ func TestCodexAdjustWindow(t *testing.T) {
 // A line with no rate_limits must not be read as a usage reading.
 func TestCodexRateLimitsAbsent(t *testing.T) {
 	line := `{"timestamp":"2026-07-04T03:10:38.864Z","type":"event_msg","payload":{"type":"token_count","info":{"model_context_window":258400}}}`
-	if _, ok := codexUsageFromRolloutBytes([]byte(line)); ok {
+	if _, ok := usageFromRolloutBytes([]byte(line)); ok {
 		t.Fatalf("expected no reading for a rate_limits-free line")
 	}
 }
 
-// readCodexUsage picks the freshest reading from the newest rollout on disk.
+// readUsage picks the freshest reading from the newest rollout on disk.
 func TestReadCodexUsageFromDir(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
@@ -69,8 +69,8 @@ func TestReadCodexUsageFromDir(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(roll, "rollout-2026-07-04T09-24-19-abc.jsonl"), []byte(codexRateLimitLine+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	u := readCodexUsage()
+	u := readUsage()
 	if !u.OK || u.FiveHour == nil || u.SevenDay == nil {
-		t.Fatalf("readCodexUsage = %+v, want ok with both windows", u)
+		t.Fatalf("readUsage = %+v, want ok with both windows", u)
 	}
 }

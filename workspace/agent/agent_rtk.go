@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 )
@@ -27,18 +27,6 @@ import (
 // "rtk auto-applied to all agents" behavior). The agent OWNS applying that
 // preference to the artifacts — both at startup (reconcileAgentRTK) and live from
 // the Console toggle (PUT /agents/rtk) — so the logic lives in one place.
-
-const codexRTKMarkerStart = "<!-- agent-fleet:rtk -->"
-const codexRTKMarkerEnd = "<!-- /agent-fleet:rtk -->"
-
-// codexRTKBlock is the instruction appended to codex's AGENTS.md when rtk is on.
-// Kept terse; codex reads AGENTS.md at session start.
-const codexRTKBlock = "## rtk (token saver) — prefer it for shell commands\n" +
-	"`rtk` is a CLI proxy that compacts command output to save context tokens. Prefix\n" +
-	"read / inspect / build commands with it — same command, smaller output:\n" +
-	"`rtk git status`, `rtk ls`, `rtk grep ...`, `rtk cargo test`, `rtk npm run build`.\n" +
-	"Skip it only when you need the raw, unfiltered stream; `rtk proxy <cmd>` runs a\n" +
-	"command without filtering.\n"
 
 // agentRTKPrefs is the durable per-agent rtk toggle state. Pointers distinguish
 // "unset" (⇒ default on) from an explicit false.
@@ -78,72 +66,9 @@ func prefOnDefault(p *bool) bool {
 	return *p
 }
 
-// codexHome mirrors codex's own resolution: $CODEX_HOME, else ~/.codex (where the
-// entrypoint seeds AGENTS.md).
-func codexHome() string {
-	if d := os.Getenv("CODEX_HOME"); d != "" {
-		return d
-	}
-	return filepath.Join(homeDir(), ".codex")
-}
-
-func codexAgentsPath() string { return filepath.Join(codexHome(), "AGENTS.md") }
-
-// opencode 側の適用（rtk.ts プラグインの seed/remove）は opencode.ApplyRTK
-// （internal/agents/opencode、docs/23 残① Wave D）。
-
-// stripMarkedBlock removes the region from start..end (inclusive) and rejoins. A
-// missing end marker (malformed file) drops everything from start onward.
-func stripMarkedBlock(s, start, end string) string {
-	i := strings.Index(s, start)
-	if i < 0 {
-		return s
-	}
-	rest := s[i+len(start):]
-	k := strings.Index(rest, end)
-	if k < 0 {
-		return strings.TrimRight(s[:i], "\n") + "\n"
-	}
-	tail := rest[k+len(end):]
-	head := strings.TrimRight(s[:i], "\n")
-	tail = strings.TrimLeft(tail, "\n")
-	if head == "" {
-		return tail
-	}
-	if tail == "" {
-		return head + "\n"
-	}
-	return head + "\n\n" + tail
-}
-
-// applyCodexRTK appends (on) or removes (off) the marked rtk block in AGENTS.md.
-// Idempotent: any prior block is stripped first. Writes only when changed.
-func applyCodexRTK(on bool) {
-	path := codexAgentsPath()
-	orig := ""
-	if b, err := os.ReadFile(path); err == nil {
-		orig = string(b)
-	}
-	out := stripMarkedBlock(orig, codexRTKMarkerStart, codexRTKMarkerEnd)
-	if on {
-		block := codexRTKMarkerStart + "\n" + codexRTKBlock + codexRTKMarkerEnd + "\n"
-		if out == "" {
-			out = block
-		} else {
-			out = strings.TrimRight(out, "\n") + "\n\n" + block
-		}
-	}
-	if out == orig || out == "" {
-		return // no change, or nothing to write (no base file & rtk off)
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return
-	}
-	tmp := path + ".af-tmp"
-	if os.WriteFile(tmp, []byte(out), 0o644) == nil {
-		_ = os.Rename(tmp, path)
-	}
-}
+// 各エージェント側の適用 artifact は縦割りパッケージへ移設済み: opencode は
+// opencode.ApplyRTK（rtk.ts プラグインの seed/remove、docs/23 残① Wave D）、codex
+// は codex.ApplyRTK（AGENTS.md のマーカーブロック、同 Wave E）。
 
 // reconcileAgentRTK applies the durable prefs to the on-disk artifacts. Called at
 // startup (after the entrypoint reseeded the base files). When rtk is not in the
@@ -152,7 +77,7 @@ func reconcileAgentRTK() {
 	avail := rtkAvailable()
 	p := readAgentRTKPrefs()
 	opencode.ApplyRTK(avail && prefOnDefault(p.Opencode))
-	applyCodexRTK(avail && prefOnDefault(p.Codex))
+	codex.ApplyRTK(avail && prefOnDefault(p.Codex))
 }
 
 func agentRTKBody() map[string]any {

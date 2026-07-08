@@ -3,6 +3,7 @@ package main
 import (
 	"net/http"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 )
 
@@ -114,7 +115,7 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("PUT /claude/settings", handleClaudeSettingsPut)
 	// Claude subscription usage (5-hour + weekly bars) for the WsBar chip.
 	mux.HandleFunc("GET /claude/usage", handleClaudeUsage)
-	mux.HandleFunc("GET /codex/usage", handleCodexUsage)
+	mux.HandleFunc("GET /codex/usage", codex.HandleUsage)
 	// codex / opencode rtk toggle (durable pref → on-disk artifacts) — Console.
 	mux.HandleFunc("GET /agents/rtk", handleAgentRTKGet)
 	mux.HandleFunc("PUT /agents/rtk", handleAgentRTKPut)
@@ -142,10 +143,10 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("DELETE /connections/claude", handleClaudeDisconnect)
 	mux.HandleFunc("PUT /connections/opencode", opencode.HandlePutConn)
 	mux.HandleFunc("DELETE /connections/opencode/{env}", opencode.HandleDeleteConn)
-	mux.HandleFunc("POST /connections/codex/api-key", handleCodexApiKey)
-	mux.HandleFunc("POST /connections/codex/device/start", handleCodexDeviceStart)
-	mux.HandleFunc("POST /connections/codex/device/poll", handleCodexDevicePoll)
-	mux.HandleFunc("DELETE /connections/codex", handleCodexDisconnect)
+	mux.HandleFunc("POST /connections/codex/api-key", codex.HandleAPIKey)
+	mux.HandleFunc("POST /connections/codex/device/start", codex.HandleDeviceStart)
+	mux.HandleFunc("POST /connections/codex/device/poll", codex.HandleDevicePoll)
+	mux.HandleFunc("DELETE /connections/codex", codex.HandleDisconnect)
 
 	return mux
 }
