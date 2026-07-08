@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 )
 
 // Read-only file browser for the Console explorer (docs/17 P3-5 段2). Rooted at
@@ -82,12 +84,12 @@ type fsEntry struct {
 func handleFSTree(w http.ResponseWriter, r *http.Request) {
 	full, rel, ok := safeBrowsePath(r.URL.Query().Get("path"))
 	if !ok {
-		writeErr(w, http.StatusBadRequest, "bad_path", "invalid path")
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_path", "invalid path")
 		return
 	}
 	ents, err := os.ReadDir(full)
 	if err != nil {
-		writeErr(w, http.StatusNotFound, "not_dir", "cannot list: "+rel)
+		httpx.WriteErr(w, http.StatusNotFound, "not_dir", "cannot list: "+rel)
 		return
 	}
 	out := []fsEntry{}
@@ -111,31 +113,31 @@ func handleFSTree(w http.ResponseWriter, r *http.Request) {
 	})
 	// root: the absolute browse root, so the Console can build an absolute path for a
 	// row ("パスをコピー"). It's the same for every entry, so it rides on the response.
-	writeJSON(w, http.StatusOK, map[string]any{"path": rel, "entries": out, "root": browseRoot()})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"path": rel, "entries": out, "root": browseRoot()})
 }
 
 func handleFSFile(w http.ResponseWriter, r *http.Request) {
 	full, rel, ok := safeBrowsePath(r.URL.Query().Get("path"))
 	if !ok {
-		writeErr(w, http.StatusBadRequest, "bad_path", "invalid path")
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_path", "invalid path")
 		return
 	}
 	fi, err := os.Stat(full)
 	if err != nil || fi.IsDir() {
-		writeErr(w, http.StatusNotFound, "not_file", "not a file: "+rel)
+		httpx.WriteErr(w, http.StatusNotFound, "not_file", "not a file: "+rel)
 		return
 	}
 	if fi.Size() > maxViewBytes {
-		writeJSON(w, http.StatusOK, map[string]any{"path": rel, "size": fi.Size(), "truncated": true, "binary": false, "content": "(file too large to preview)"})
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"path": rel, "size": fi.Size(), "truncated": true, "binary": false, "content": "(file too large to preview)"})
 		return
 	}
 	b, err := os.ReadFile(full)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "read_failed", err.Error())
+		httpx.WriteErr(w, http.StatusInternalServerError, "read_failed", err.Error())
 		return
 	}
 	if bytes.IndexByte(b, 0) >= 0 || !utf8.Valid(b) {
-		writeJSON(w, http.StatusOK, map[string]any{"path": rel, "size": fi.Size(), "binary": true})
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"path": rel, "size": fi.Size(), "binary": true})
 		return
 	}
 	resp := map[string]any{"path": rel, "size": fi.Size(), "content": string(b)}
@@ -145,7 +147,7 @@ func handleFSFile(w http.ResponseWriter, r *http.Request) {
 		// the viewer can say so and suggest `git lfs pull`.
 		resp["lfs"] = true
 	}
-	writeJSON(w, http.StatusOK, resp)
+	httpx.WriteJSON(w, http.StatusOK, resp)
 }
 
 // handleFSDownload streams a file's raw bytes as an attachment. Same guards as
@@ -155,17 +157,17 @@ func handleFSFile(w http.ResponseWriter, r *http.Request) {
 func handleFSDownload(w http.ResponseWriter, r *http.Request) {
 	full, rel, ok := safeBrowsePath(r.URL.Query().Get("path"))
 	if !ok {
-		writeErr(w, http.StatusBadRequest, "bad_path", "invalid path")
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_path", "invalid path")
 		return
 	}
 	fi, err := os.Stat(full)
 	if err != nil || fi.IsDir() {
-		writeErr(w, http.StatusNotFound, "not_file", "not a file: "+rel)
+		httpx.WriteErr(w, http.StatusNotFound, "not_file", "not a file: "+rel)
 		return
 	}
 	f, err := os.Open(full)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "read_failed", err.Error())
+		httpx.WriteErr(w, http.StatusInternalServerError, "read_failed", err.Error())
 		return
 	}
 	defer f.Close()
@@ -196,18 +198,18 @@ func maxUploadBytes() int64 {
 func handleFSUpload(w http.ResponseWriter, r *http.Request) {
 	dirFull, dirRel, ok := safeBrowsePath(r.URL.Query().Get("path"))
 	if !ok {
-		writeErr(w, http.StatusBadRequest, "bad_path", "invalid path")
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_path", "invalid path")
 		return
 	}
 	if fi, err := os.Stat(dirFull); err != nil || !fi.IsDir() {
-		writeErr(w, http.StatusBadRequest, "not_dir", "target is not a directory")
+		httpx.WriteErr(w, http.StatusBadRequest, "not_dir", "target is not a directory")
 		return
 	}
 	overwrite := r.URL.Query().Get("overwrite") == "1"
 	max := maxUploadBytes()
 	mr, err := r.MultipartReader()
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, "bad_form", "expected multipart/form-data")
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_form", "expected multipart/form-data")
 		return
 	}
 	written := []string{}
@@ -218,7 +220,7 @@ func handleFSUpload(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 		if err != nil {
-			writeErr(w, http.StatusBadRequest, "bad_part", err.Error())
+			httpx.WriteErr(w, http.StatusBadRequest, "bad_part", err.Error())
 			return
 		}
 		if part.FormName() != "file" || part.FileName() == "" {
@@ -226,11 +228,11 @@ func handleFSUpload(w http.ResponseWriter, r *http.Request) {
 		}
 		name := filepath.Base(part.FileName())
 		if name == "" || name == "." || name == ".." || strings.ContainsRune(name, '/') || strings.ContainsRune(name, filepath.Separator) {
-			writeErr(w, http.StatusBadRequest, "bad_name", "invalid filename")
+			httpx.WriteErr(w, http.StatusBadRequest, "bad_name", "invalid filename")
 			return
 		}
 		if isDenied(filepath.Join(dirRel, name)) {
-			writeErr(w, http.StatusForbidden, "denied", "destination not allowed")
+			httpx.WriteErr(w, http.StatusForbidden, "denied", "destination not allowed")
 			return
 		}
 		destFull := filepath.Join(dirFull, name)
@@ -240,7 +242,7 @@ func handleFSUpload(w http.ResponseWriter, r *http.Request) {
 		}
 		tmp, err := os.CreateTemp(dirFull, ".upload-*")
 		if err != nil {
-			writeErr(w, http.StatusInternalServerError, "write_failed", err.Error())
+			httpx.WriteErr(w, http.StatusInternalServerError, "write_failed", err.Error())
 			return
 		}
 		n, err := io.Copy(tmp, io.LimitReader(part, max+1))
@@ -248,24 +250,24 @@ func handleFSUpload(w http.ResponseWriter, r *http.Request) {
 		if err != nil || n > max {
 			_ = os.Remove(tmp.Name())
 			if n > max {
-				writeErr(w, http.StatusRequestEntityTooLarge, "too_large", "file exceeds AF_UPLOAD_MAX")
+				httpx.WriteErr(w, http.StatusRequestEntityTooLarge, "too_large", "file exceeds AF_UPLOAD_MAX")
 			} else {
-				writeErr(w, http.StatusInternalServerError, "write_failed", "upload failed")
+				httpx.WriteErr(w, http.StatusInternalServerError, "write_failed", "upload failed")
 			}
 			return
 		}
 		if err := os.Rename(tmp.Name(), destFull); err != nil {
 			_ = os.Remove(tmp.Name())
-			writeErr(w, http.StatusInternalServerError, "write_failed", err.Error())
+			httpx.WriteErr(w, http.StatusInternalServerError, "write_failed", err.Error())
 			return
 		}
 		written = append(written, name)
 	}
 	if len(conflicts) > 0 && !overwrite {
-		writeJSON(w, http.StatusConflict, map[string]any{"path": dirRel, "written": written, "conflicts": conflicts})
+		httpx.WriteJSON(w, http.StatusConflict, map[string]any{"path": dirRel, "written": written, "conflicts": conflicts})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"path": dirRel, "written": written, "conflicts": conflicts})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"path": dirRel, "written": written, "conflicts": conflicts})
 }
 
 // handleFSMkdir creates a new directory at path. The parent must already exist
@@ -273,38 +275,38 @@ func handleFSUpload(w http.ResponseWriter, r *http.Request) {
 func handleFSMkdir(w http.ResponseWriter, r *http.Request) {
 	full, rel, ok := safeBrowsePath(r.URL.Query().Get("path"))
 	if !ok || rel == "" {
-		writeErr(w, http.StatusBadRequest, "bad_path", "invalid path")
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_path", "invalid path")
 		return
 	}
 	if _, err := os.Stat(full); err == nil {
-		writeErr(w, http.StatusConflict, "exists", "already exists: "+rel)
+		httpx.WriteErr(w, http.StatusConflict, "exists", "already exists: "+rel)
 		return
 	}
 	if err := os.Mkdir(full, 0o755); err != nil {
-		writeErr(w, http.StatusInternalServerError, "mkdir_failed", err.Error())
+		httpx.WriteErr(w, http.StatusInternalServerError, "mkdir_failed", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"path": rel})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"path": rel})
 }
 
 // handleFSNewFile creates an empty file at path (O_EXCL => 409 if it exists).
 func handleFSNewFile(w http.ResponseWriter, r *http.Request) {
 	full, rel, ok := safeBrowsePath(r.URL.Query().Get("path"))
 	if !ok || rel == "" {
-		writeErr(w, http.StatusBadRequest, "bad_path", "invalid path")
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_path", "invalid path")
 		return
 	}
 	f, err := os.OpenFile(full, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
 	if err != nil {
 		if os.IsExist(err) {
-			writeErr(w, http.StatusConflict, "exists", "already exists: "+rel)
+			httpx.WriteErr(w, http.StatusConflict, "exists", "already exists: "+rel)
 			return
 		}
-		writeErr(w, http.StatusInternalServerError, "create_failed", err.Error())
+		httpx.WriteErr(w, http.StatusInternalServerError, "create_failed", err.Error())
 		return
 	}
 	_ = f.Close()
-	writeJSON(w, http.StatusOK, map[string]any{"path": rel})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"path": rel})
 }
 
 // handleFSRename moves from -> to within the browse root. Both ends are guarded
@@ -314,22 +316,22 @@ func handleFSRename(w http.ResponseWriter, r *http.Request) {
 	srcFull, srcRel, ok1 := safeBrowsePath(q.Get("from"))
 	dstFull, dstRel, ok2 := safeBrowsePath(q.Get("to"))
 	if !ok1 || !ok2 || srcRel == "" || dstRel == "" {
-		writeErr(w, http.StatusBadRequest, "bad_path", "invalid path")
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_path", "invalid path")
 		return
 	}
 	if _, err := os.Stat(srcFull); err != nil {
-		writeErr(w, http.StatusNotFound, "not_found", "no such path: "+srcRel)
+		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such path: "+srcRel)
 		return
 	}
 	if _, err := os.Stat(dstFull); err == nil {
-		writeErr(w, http.StatusConflict, "exists", "already exists: "+dstRel)
+		httpx.WriteErr(w, http.StatusConflict, "exists", "already exists: "+dstRel)
 		return
 	}
 	if err := os.Rename(srcFull, dstFull); err != nil {
-		writeErr(w, http.StatusInternalServerError, "rename_failed", err.Error())
+		httpx.WriteErr(w, http.StatusInternalServerError, "rename_failed", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"path": dstRel})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"path": dstRel})
 }
 
 // handleFSDelete removes a file or directory (recursive). Refuses the browse
@@ -337,18 +339,18 @@ func handleFSRename(w http.ResponseWriter, r *http.Request) {
 func handleFSDelete(w http.ResponseWriter, r *http.Request) {
 	full, rel, ok := safeBrowsePath(r.URL.Query().Get("path"))
 	if !ok || rel == "" {
-		writeErr(w, http.StatusBadRequest, "bad_path", "invalid path")
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_path", "invalid path")
 		return
 	}
 	if _, err := os.Stat(full); err != nil {
-		writeErr(w, http.StatusNotFound, "not_found", "no such path: "+rel)
+		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such path: "+rel)
 		return
 	}
 	if err := os.RemoveAll(full); err != nil {
-		writeErr(w, http.StatusInternalServerError, "delete_failed", err.Error())
+		httpx.WriteErr(w, http.StatusInternalServerError, "delete_failed", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"deleted": rel})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"deleted": rel})
 }
 
 // lfsPointerMagic is the first line of a Git LFS pointer file.

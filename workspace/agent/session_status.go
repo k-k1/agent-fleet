@@ -6,6 +6,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/fstore"
 )
 
 // Session liveness via claude hooks. claude fires UserPromptSubmit when work
@@ -22,15 +24,15 @@ type sessionStatus struct {
 	TS    string `json:"ts"`    // RFC3339
 }
 
-// Per-sid file stores (fstore.go). pending-question holds the raw tool_input
+// Per-sid file stores (internal/fstore). pending-question holds the raw tool_input
 // payload; last-tool shares pending-perm's dir under a different extension.
 var (
-	statusFiles      = jsonStore[sessionStatus]("session-status", ".json")
-	pendingQuestions = rawStore("pending-question", ".json")
-	pendingPlans     = stringStore("pending-plan", ".md")
-	pendingPerms     = stringStore("pending-perm", ".txt")
-	lastTools        = stringStore("pending-perm", ".tool")
-	pendingTexts     = stringStore("pending-text", ".txt")
+	statusFiles      = fstore.JSON[sessionStatus](agentConfigDir, "session-status", ".json")
+	pendingQuestions = fstore.Raw(agentConfigDir, "pending-question", ".json")
+	pendingPlans     = fstore.Strings(agentConfigDir, "pending-plan", ".md")
+	pendingPerms     = fstore.Strings(agentConfigDir, "pending-perm", ".txt")
+	lastTools        = fstore.Strings(agentConfigDir, "pending-perm", ".tool")
+	pendingTexts     = fstore.Strings(agentConfigDir, "pending-text", ".txt")
 )
 
 // runSessionStatusHook is `workspace-agent session-status <state> [sid] [codex]`.
@@ -153,8 +155,8 @@ func decodeHookStdin() hookInput {
 // stale, so a log line is the only breadcrumb the write ever failed.
 func persistSessionStatus(sid, state string) {
 	s := sessionStatus{State: state, TS: time.Now().Format(time.RFC3339)}
-	if err := statusFiles.write(sid, s); err != nil {
-		log.Printf("session-status: write %s: %v", statusFiles.path(sid), err)
+	if err := statusFiles.Write(sid, s); err != nil {
+		log.Printf("session-status: write %s: %v", statusFiles.Path(sid), err)
 	}
 }
 
@@ -226,24 +228,24 @@ func writeLastTool(sid, detail string) {
 	if detail == "" {
 		return
 	}
-	_ = lastTools.write(sid, detail)
+	_ = lastTools.Write(sid, detail)
 }
 
-func readLastTool(sid string) (string, bool) { return lastTools.read(sid) }
-func removeLastTool(sid string)              { lastTools.remove(sid) }
+func readLastTool(sid string) (string, bool) { return lastTools.Read(sid) }
+func removeLastTool(sid string)              { lastTools.Remove(sid) }
 
 // A pending AskUserQuestion (the tool_input.questions array), kept only while the
 // session is in the question state so the Console can render and answer it.
 func writePendingQuestion(sid string, questions json.RawMessage) {
-	_ = pendingQuestions.write(sid, questions)
+	_ = pendingQuestions.Write(sid, questions)
 }
 
 func readPendingQuestion(sid string) (json.RawMessage, bool) {
-	b, ok := pendingQuestions.read(sid)
+	b, ok := pendingQuestions.Read(sid)
 	return json.RawMessage(b), ok
 }
 
-func removePendingQuestion(sid string) { pendingQuestions.remove(sid) }
+func removePendingQuestion(sid string) { pendingQuestions.Remove(sid) }
 
 // pending-text: the assistant's streaming text for the in-flight turn, accumulated from
 // the MessageDisplay hook. Kept only long enough for a pending AskUserQuestion to show
@@ -258,10 +260,10 @@ func appendPendingText(sid, delta string) {
 	if delta == "" {
 		return
 	}
-	if err := os.MkdirAll(pendingTexts.dir(), 0o700); err != nil {
+	if err := os.MkdirAll(pendingTexts.Dir(), 0o700); err != nil {
 		return
 	}
-	path := pendingTexts.path(sid)
+	path := pendingTexts.Path(sid)
 	if fi, err := os.Stat(path); err == nil && fi.Size() >= pendingTextCap {
 		return // already at the cap; drop further chunks
 	}
@@ -273,25 +275,25 @@ func appendPendingText(sid, delta string) {
 	_, _ = f.WriteString(delta)
 }
 
-func readPendingText(sid string) (string, bool) { return pendingTexts.read(sid) }
-func removePendingText(sid string)              { pendingTexts.remove(sid) }
+func readPendingText(sid string) (string, bool) { return pendingTexts.Read(sid) }
+func removePendingText(sid string)              { pendingTexts.Remove(sid) }
 
 // A pending ExitPlanMode plan (the tool_input.plan markdown), kept only while the
 // session waits for plan approval so the Console can show it / open it in a pane.
-func writePendingPlan(sid, plan string)         { _ = pendingPlans.write(sid, plan) }
-func readPendingPlan(sid string) (string, bool) { return pendingPlans.read(sid) }
-func removePendingPlan(sid string)              { pendingPlans.remove(sid) }
+func writePendingPlan(sid, plan string)         { _ = pendingPlans.Write(sid, plan) }
+func readPendingPlan(sid string) (string, bool) { return pendingPlans.Read(sid) }
+func removePendingPlan(sid string)              { pendingPlans.Remove(sid) }
 
 // A pending tool-permission prompt (the Notification message), kept while the session
 // is blocked awaiting an allow/deny decision so the Console can approve it inline.
-func writePendingPermission(sid, message string)      { _ = pendingPerms.write(sid, message) }
-func readPendingPermission(sid string) (string, bool) { return pendingPerms.read(sid) }
-func removePendingPermission(sid string)              { pendingPerms.remove(sid) }
+func writePendingPermission(sid, message string)      { _ = pendingPerms.Write(sid, message) }
+func readPendingPermission(sid string) (string, bool) { return pendingPerms.Read(sid) }
+func removePendingPermission(sid string)              { pendingPerms.Remove(sid) }
 
-func readSessionStatus(sid string) (sessionStatus, bool) { return statusFiles.read(sid) }
+func readSessionStatus(sid string) (sessionStatus, bool) { return statusFiles.Read(sid) }
 
 func removeSessionStatus(sid string) {
-	statusFiles.remove(sid)
+	statusFiles.Remove(sid)
 	removePendingQuestion(sid)
 	removePendingPlan(sid)
 	removePendingPermission(sid)

@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 )
 
 // Per-user UI preferences (theme / icon set / fonts / viewer options). The Console
@@ -60,32 +62,32 @@ func chatOutputLanguage() string {
 }
 
 func handleGetUIPrefs(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, readUIPrefs())
+	httpx.WriteJSON(w, http.StatusOK, readUIPrefs())
 }
 
 func handlePutUIPrefs(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(io.LimitReader(r.Body, maxUIPrefsBytes+1))
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, "bad_request", "read failed")
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_request", "read failed")
 		return
 	}
 	if len(body) > maxUIPrefsBytes {
-		writeErr(w, http.StatusRequestEntityTooLarge, "too_large", "prefs too large")
+		httpx.WriteErr(w, http.StatusRequestEntityTooLarge, "too_large", "prefs too large")
 		return
 	}
 	// Validate it's a JSON object before persisting (the Console owns the shape).
 	var obj map[string]any
 	if json.Unmarshal(body, &obj) != nil {
-		writeErr(w, http.StatusBadRequest, "bad_json", "body must be a JSON object")
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_json", "body must be a JSON object")
 		return
 	}
 	if err := os.MkdirAll(filepath.Dir(uiPrefsPath()), 0o700); err != nil {
-		writeErr(w, http.StatusInternalServerError, "mkdir_failed", err.Error())
+		httpx.WriteErr(w, http.StatusInternalServerError, "mkdir_failed", err.Error())
 		return
 	}
 	if err := os.WriteFile(uiPrefsPath(), body, 0o600); err != nil {
-		writeErr(w, http.StatusInternalServerError, "write_failed", err.Error())
+		httpx.WriteErr(w, http.StatusInternalServerError, "write_failed", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, obj)
+	httpx.WriteJSON(w, http.StatusOK, obj)
 }

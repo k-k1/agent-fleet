@@ -12,6 +12,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 )
 
 // handleListSessions returns the live claude_* tmux sessions.
@@ -77,7 +79,7 @@ func handleListSessions(w http.ResponseWriter, r *http.Request) {
 	})
 	// Stable order: newest first by creation time.
 	sort.Slice(sessions, func(i, j int) bool { return sessions[i].CreatedAt > sessions[j].CreatedAt })
-	writeJSON(w, http.StatusOK, map[string]any{"sessions": sessions})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"sessions": sessions})
 }
 
 type createReq struct {
@@ -132,12 +134,12 @@ type createReq struct {
 // handleCreateSession launches a claude session inside a detached tmux session.
 func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	var req createReq
-	if !decodeJSON(w, r, &req) {
+	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
 	title, ok := cleanTitle(req.Title)
 	if !ok {
-		writeErr(w, http.StatusBadRequest, "bad_title", "title is too long (max 80) or contains control characters")
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_title", "title is too long (max 80) or contains control characters")
 		return
 	}
 	// Worktree-then-start: spin a git worktree off an existing working copy (req.Dir =
@@ -146,7 +148,7 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	if req.Worktree {
 		parent := strings.TrimSpace(req.Dir)
 		if parent == "" {
-			writeErr(w, http.StatusBadRequest, "bad_dir", "worktree requires dir (the parent working copy)")
+			httpx.WriteErr(w, http.StatusBadRequest, "bad_dir", "worktree requires dir (the parent working copy)")
 			return
 		}
 		if !filepath.IsAbs(parent) {
@@ -172,21 +174,21 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 			} else if local, remote := branchNameStatus(parent, nb); local {
 				// A same-named local branch: -b would fail anyway, but stop with a clear
 				// message rather than git's raw error, and let the user pick another name.
-				writeErr(w, http.StatusConflict, "branch_exists",
+				httpx.WriteErr(w, http.StatusConflict, "branch_exists",
 					fmt.Sprintf("branch %q already exists locally; choose another name", nb))
 				return
 			} else if remote {
 				// A same-named PAST remote branch: -b would silently create a divergent
 				// local branch that collides at push. Refuse and let the user rename or
 				// work on the existing one (use_existing).
-				writeErr(w, http.StatusConflict, "branch_exists_remote",
+				httpx.WriteErr(w, http.StatusConflict, "branch_exists_remote",
 					fmt.Sprintf("a remote branch %q already exists; rename it or work on the existing branch", nb))
 				return
 			}
 			dir, err = ensureWorktree(parent, req.Branch, nb, folderSeg)
 		}
 		if err != nil {
-			writeErr(w, http.StatusBadGateway, "worktree_failed", err.Error())
+			httpx.WriteErr(w, http.StatusBadGateway, "worktree_failed", err.Error())
 			return
 		}
 		req.Dir = dir
@@ -194,7 +196,7 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		// Clone-then-start: ensure the repo exists and use it as the working dir.
 		dir, err := ensureRepo(req.RemoteURL, req.Branch, req.NewBranch, req.RepoName)
 		if err != nil {
-			writeErr(w, http.StatusBadGateway, "clone_failed", err.Error())
+			httpx.WriteErr(w, http.StatusBadGateway, "clone_failed", err.Error())
 			return
 		}
 		req.Dir = dir
@@ -207,7 +209,7 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		req.Dir = filepath.Join(homeDir(), req.Dir)
 	}
 	if fi, err := os.Stat(req.Dir); err != nil || !fi.IsDir() {
-		writeErr(w, http.StatusBadRequest, "bad_dir", "dir does not exist: "+req.Dir)
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_dir", "dir does not exist: "+req.Dir)
 		return
 	}
 
@@ -224,7 +226,7 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	var ssm *ssmMeta
 	if kind == kindSSM {
 		if strings.TrimSpace(req.SSMTarget) == "" {
-			writeErr(w, http.StatusBadRequest, "bad_ssm", "ssm_target (instance id) is required")
+			httpx.WriteErr(w, http.StatusBadRequest, "bad_ssm", "ssm_target (instance id) is required")
 			return
 		}
 		ssm = &ssmMeta{
@@ -242,12 +244,12 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		CreatedAt: time.Now().Format(time.RFC3339), SSM: ssm,
 	}
 	if err := startSessionTmux(meta, req.SSMForceLogin); err != nil {
-		writeErr(w, http.StatusInternalServerError, "tmux_failed", err.Error())
+		httpx.WriteErr(w, http.StatusInternalServerError, "tmux_failed", err.Error())
 		return
 	}
 	writeSessionMeta(meta)
 
-	writeJSON(w, http.StatusCreated, wireSession(meta, true))
+	httpx.WriteJSON(w, http.StatusCreated, wireSession(meta, true))
 }
 
 // handleForkSession forks a claude session's conversation into a NEW session
@@ -260,20 +262,20 @@ func handleForkSession(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	src, ok := readSessionMeta(name)
 	if !ok {
-		writeErr(w, http.StatusNotFound, "no_session", "session not found: "+name)
+		httpx.WriteErr(w, http.StatusNotFound, "no_session", "session not found: "+name)
 		return
 	}
 	if !agentOf(src.Kind).caps().canFork {
-		writeErr(w, http.StatusBadRequest, "not_claude", "分岐できるのは claude セッションのみです")
+		httpx.WriteErr(w, http.StatusBadRequest, "not_claude", "分岐できるのは claude セッションのみです")
 		return
 	}
 	if !dirExists(src.Dir) {
-		writeErr(w, http.StatusBadRequest, "bad_dir", "作業フォルダが存在しないため分岐できません")
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_dir", "作業フォルダが存在しないため分岐できません")
 		return
 	}
 	srcSid := sessionUUID(src.Dir, name)
 	if !jsonlResumable(srcSid) {
-		writeErr(w, http.StatusBadRequest, "not_resumable", "分岐できる会話がまだありません")
+		httpx.WriteErr(w, http.StatusBadRequest, "not_resumable", "分岐できる会話がまだありません")
 		return
 	}
 	forkName := allocSessionName(src.Dir)
@@ -285,11 +287,11 @@ func handleForkSession(w http.ResponseWriter, r *http.Request) {
 		CreatedAt: time.Now().Format(time.RFC3339), ForkFrom: srcSid,
 	}
 	if err := startSessionTmux(meta, false); err != nil {
-		writeErr(w, http.StatusInternalServerError, "tmux_failed", err.Error())
+		httpx.WriteErr(w, http.StatusInternalServerError, "tmux_failed", err.Error())
 		return
 	}
 	writeSessionMeta(meta)
-	writeJSON(w, http.StatusCreated, wireSession(meta, true))
+	httpx.WriteJSON(w, http.StatusCreated, wireSession(meta, true))
 }
 
 // handleStopSession kills the tmux session and forgets its meta so it stops
@@ -297,14 +299,14 @@ func handleForkSession(w http.ResponseWriter, r *http.Request) {
 func handleStopSession(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if !nameRe.MatchString(name) {
-		writeErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
 		return
 	}
 	tn := tmuxName(name)
 	meta, hadMeta := readSessionMeta(name)
 	live := tmuxHasSession(tn)
 	if !live && !hadMeta {
-		writeErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
+		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
 		return
 	}
 	if hadMeta {
@@ -312,7 +314,7 @@ func handleStopSession(w http.ResponseWriter, r *http.Request) {
 	}
 	if live {
 		if out, err := exec.Command("tmux", "kill-session", "-t", exactT(tn)).CombinedOutput(); err != nil {
-			writeErr(w, http.StatusInternalServerError, "tmux_failed", fmt.Sprintf("%v: %s", err, out))
+			httpx.WriteErr(w, http.StatusInternalServerError, "tmux_failed", fmt.Sprintf("%v: %s", err, out))
 			return
 		}
 	}
@@ -322,7 +324,7 @@ func handleStopSession(w http.ResponseWriter, r *http.Request) {
 	if hadMeta {
 		maybePruneWorktree(meta.Dir)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"stopped": name})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"stopped": name})
 }
 
 // handleHaltSession stops a RUNNING session into the 停止中 (resumable) state: it
@@ -333,18 +335,18 @@ func handleStopSession(w http.ResponseWriter, r *http.Request) {
 func handleHaltSession(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if !nameRe.MatchString(name) {
-		writeErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
 		return
 	}
 	m, ok := readSessionMeta(name)
 	if !ok {
-		writeErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
+		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
 		return
 	}
 	tn := tmuxName(name)
 	if !tmuxHasSession(tn) {
 		// Already stopped — nothing to do; report the current (stopped) wire.
-		writeJSON(w, http.StatusOK, wireSession(m, false))
+		httpx.WriteJSON(w, http.StatusOK, wireSession(m, false))
 		return
 	}
 	// Best-effort: disconnect any active Remote Control bridge before killing the
@@ -352,7 +354,7 @@ func handleHaltSession(w http.ResponseWriter, r *http.Request) {
 	// title instead of resuming the stale one (see disconnectRemoteControl).
 	disconnectRemoteControl(name, m)
 	if out, err := exec.Command("tmux", "kill-session", "-t", exactT(tn)).CombinedOutput(); err != nil {
-		writeErr(w, http.StatusInternalServerError, "tmux_failed", fmt.Sprintf("%v: %s", err, out))
+		httpx.WriteErr(w, http.StatusInternalServerError, "tmux_failed", fmt.Sprintf("%v: %s", err, out))
 		return
 	}
 	removeSessionStatus(sessionUUID(m.Dir, name))
@@ -360,7 +362,7 @@ func handleHaltSession(w http.ResponseWriter, r *http.Request) {
 	// otherwise stamp it on the next poll; doing it here keeps the wire consistent).
 	m.StoppedAt = time.Now().Format(time.RFC3339)
 	writeSessionMeta(m)
-	writeJSON(w, http.StatusOK, wireSession(m, false))
+	httpx.WriteJSON(w, http.StatusOK, wireSession(m, false))
 }
 
 // handleArchiveSession hides a session from the active list but KEEPS its meta (and
@@ -369,12 +371,12 @@ func handleHaltSession(w http.ResponseWriter, r *http.Request) {
 func handleArchiveSession(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if !nameRe.MatchString(name) {
-		writeErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
 		return
 	}
 	m, ok := readSessionMeta(name)
 	if !ok {
-		writeErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
+		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
 		return
 	}
 	if tn := tmuxName(name); tmuxHasSession(tn) {
@@ -383,7 +385,7 @@ func handleArchiveSession(w http.ResponseWriter, r *http.Request) {
 	removeSessionStatus(sessionUUID(m.Dir, name))
 	m.Archived = true
 	writeSessionMeta(m)
-	writeJSON(w, http.StatusOK, map[string]any{"archived": name})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"archived": name})
 }
 
 // handleRestoreSession brings an archived session back into the active list as a
@@ -391,18 +393,18 @@ func handleArchiveSession(w http.ResponseWriter, r *http.Request) {
 func handleRestoreSession(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if !nameRe.MatchString(name) {
-		writeErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
 		return
 	}
 	m, ok := readSessionMeta(name)
 	if !ok {
-		writeErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
+		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
 		return
 	}
 	m.Archived = false
 	m.StoppedAt = "" // re-stamped on next list, resetting the prune clock
 	writeSessionMeta(m)
-	writeJSON(w, http.StatusOK, wireSession(m, false))
+	httpx.WriteJSON(w, http.StatusOK, wireSession(m, false))
 }
 
 // handleListArchived returns archived sessions (for the restore modal).
@@ -414,7 +416,7 @@ func handleListArchived(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	sort.Slice(sessions, func(i, j int) bool { return sessions[i].CreatedAt > sessions[j].CreatedAt })
-	writeJSON(w, http.StatusOK, map[string]any{"sessions": sessions})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"sessions": sessions})
 }
 
 // handleRecreateSession starts a fresh session in the slot while PRESERVING the old
@@ -429,12 +431,12 @@ func handleListArchived(w http.ResponseWriter, r *http.Request) {
 func handleRecreateSession(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if !nameRe.MatchString(name) {
-		writeErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
 		return
 	}
 	m, ok := readSessionMeta(name)
 	if !ok {
-		writeErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
+		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
 		return
 	}
 	// Archive the old identity: kill its tmux, clear the live status cache, hide it from
@@ -461,9 +463,9 @@ func handleRecreateSession(w http.ResponseWriter, r *http.Request) {
 		// the active list.
 		m.Archived = false
 		writeSessionMeta(m)
-		writeErr(w, http.StatusInternalServerError, "tmux_failed", err.Error())
+		httpx.WriteErr(w, http.StatusInternalServerError, "tmux_failed", err.Error())
 		return
 	}
 	writeSessionMeta(newMeta)
-	writeJSON(w, http.StatusOK, wireSession(newMeta, true))
+	httpx.WriteJSON(w, http.StatusOK, wireSession(newMeta, true))
 }

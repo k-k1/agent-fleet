@@ -13,6 +13,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 )
 
 // secrets is the single encrypted store for every provider credential the
@@ -148,9 +150,9 @@ func newGCM(key []byte) (cipher.AEAD, error) {
 // and the per-host bitbucket helper). Idempotent.
 func ensureCredHelper() error {
 	// --unset-all exits 5 when the key is absent; that is not an error here.
-	_ = gitCmd("", "config", "--global", "--unset-all", "credential.helper").Run()
-	_ = gitCmd("", "config", "--global", "--unset-all", "credential.https://bitbucket.org.helper").Run()
-	if out, err := runGitCombined("", "config", "--global", "credential.helper", "!workspace-agent cred"); err != nil {
+	_ = gitx.Cmd("", "config", "--global", "--unset-all", "credential.helper").Run()
+	_ = gitx.Cmd("", "config", "--global", "--unset-all", "credential.https://bitbucket.org.helper").Run()
+	if out, err := gitx.Combined("", "config", "--global", "credential.helper", "!workspace-agent cred"); err != nil {
 		return fmt.Errorf("git config credential.helper: %v: %s", err, out)
 	}
 	return nil

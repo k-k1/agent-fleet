@@ -7,6 +7,9 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 )
 
 // git view/edit endpoints for the Console source-control panel (docs/17 P3-5).
@@ -49,7 +52,7 @@ func gitChanges(dir string) ([]Change, error) {
 	// clicking a changed file fails to open it.
 	// Raw .Output() (not runGit): porcelain lines may START with a space (" M foo")
 	// and trimming would corrupt the first line's XY status columns.
-	out, err := gitCmd(dir, "-c", "core.quotePath=false", "status", "--porcelain").Output()
+	out, err := gitx.Cmd(dir, "-c", "core.quotePath=false", "status", "--porcelain").Output()
 	if err != nil {
 		return nil, err
 	}
@@ -75,10 +78,10 @@ func handleRepoChanges(w http.ResponseWriter, r *http.Request) {
 	}
 	cs, err := gitChanges(dir)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "git_failed", err.Error())
+		httpx.WriteErr(w, http.StatusInternalServerError, "git_failed", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"changes": cs})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"changes": cs})
 }
 
 func handleRepoDiff(w http.ResponseWriter, r *http.Request) {
@@ -96,16 +99,16 @@ func handleRepoDiff(w http.ResponseWriter, r *http.Request) {
 	if p := q.Get("path"); p != "" {
 		rel, ok := relRepoPath(dir, p)
 		if !ok {
-			writeErr(w, http.StatusBadRequest, "bad_path", "invalid path")
+			httpx.WriteErr(w, http.StatusBadRequest, "bad_path", "invalid path")
 			return
 		}
 		args = append(args, "--", rel)
 	}
 	// Raw .Output() (not runGit): the patch body is returned verbatim in the JSON
 	// response and must stay byte-identical (no trimming).
-	out, err := gitCmd(dir, args...).Output() // diff exits 0 even with changes
+	out, err := gitx.Cmd(dir, args...).Output() // diff exits 0 even with changes
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "git_failed", err.Error())
+		httpx.WriteErr(w, http.StatusInternalServerError, "git_failed", err.Error())
 		return
 	}
 	s := string(out)
@@ -113,7 +116,7 @@ func handleRepoDiff(w http.ResponseWriter, r *http.Request) {
 	if len(s) > maxViewBytes {
 		s, truncated = s[:maxViewBytes], true
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"diff": s, "truncated": truncated})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"diff": s, "truncated": truncated})
 }
 
 type commitView struct {
@@ -138,14 +141,14 @@ func handleRepoLog(w http.ResponseWriter, r *http.Request) {
 		"--pretty=format:%H%x1f%h%x1f%an%x1f%aI%x1f%s"}
 	if ref := q.Get("ref"); ref != "" {
 		if strings.HasPrefix(ref, "-") {
-			writeErr(w, http.StatusBadRequest, "bad_ref", "ref must not start with '-'")
+			httpx.WriteErr(w, http.StatusBadRequest, "bad_ref", "ref must not start with '-'")
 			return
 		}
 		args = append(args, ref)
 	}
-	out, err := runGit(dir, args...)
+	out, err := gitx.Run(dir, args...)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "git_failed", err.Error())
+		httpx.WriteErr(w, http.StatusInternalServerError, "git_failed", err.Error())
 		return
 	}
 	commits := []commitView{}
@@ -154,7 +157,7 @@ func handleRepoLog(w http.ResponseWriter, r *http.Request) {
 			commits = append(commits, commitView{Hash: p[0], Short: p[1], Author: p[2], Date: p[3], Subject: p[4]})
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"commits": commits})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"commits": commits})
 }
 
 // graphRef is one ref badge on a commit: a display name + its kind (head/remote/tag).
@@ -230,16 +233,16 @@ func handleRepoGraph(w http.ResponseWriter, r *http.Request) {
 	// refs/tags/…). The short form is ambiguous for slash-containing branch names — a
 	// local "feat/x" and a remote "origin/feat/x" both just look like "a/b" — which made
 	// parseDecorate misclassify local branches as remotes (no branch-checkout offered).
-	out, err := runGit(dir, "log", "--all", "--topo-order", "--date-order",
+	out, err := gitx.Run(dir, "log", "--all", "--topo-order", "--date-order",
 		"--decorate=full", "--max-count="+strconv.Itoa(limit),
 		"--pretty=format:%H%x1f%h%x1f%P%x1f%an%x1f%cI%x1f%s%x1f%D")
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "git_failed", err.Error())
+		httpx.WriteErr(w, http.StatusInternalServerError, "git_failed", err.Error())
 		return
 	}
 	// Reachable-from-HEAD set → inBranch. Empty (detached / no HEAD) ⇒ dim nothing.
 	reachable := map[string]bool{}
-	if rl, err := runGit(dir, "rev-list", "HEAD"); err == nil {
+	if rl, err := gitx.Run(dir, "rev-list", "HEAD"); err == nil {
 		for _, s := range strings.Fields(rl) {
 			reachable[s] = true
 		}
@@ -264,7 +267,7 @@ func handleRepoGraph(w http.ResponseWriter, r *http.Request) {
 			Refs: refs, InBranch: len(reachable) == 0 || reachable[p[0]],
 		})
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"commits": commits, "current": current})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"commits": commits, "current": current})
 }
 
 // shaRe guards the ?sha= param: hex only (full or abbreviated), so it can't be an
@@ -286,15 +289,15 @@ func handleRepoShow(w http.ResponseWriter, r *http.Request) {
 	}
 	sha := strings.TrimSpace(r.URL.Query().Get("sha"))
 	if !shaRe.MatchString(sha) {
-		writeErr(w, http.StatusBadRequest, "bad_sha", "sha must be a hex commit id")
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_sha", "sha must be a hex commit id")
 		return
 	}
 
 	// Header: one record, fields separated by \x1f; body is last (may hold newlines).
-	hdr, err := runGit(dir, "log", "-1",
+	hdr, err := gitx.Run(dir, "log", "-1",
 		"--pretty=format:%H%x1f%h%x1f%an%x1f%aI%x1f%s%x1f%b", sha)
 	if err != nil {
-		writeErr(w, http.StatusNotFound, "not_found", "no such commit")
+		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such commit")
 		return
 	}
 	out := map[string]any{}
@@ -305,7 +308,7 @@ func handleRepoShow(w http.ResponseWriter, r *http.Request) {
 
 	// Changed files (name-status). First token = status, last = path (rename → new).
 	files := []commitFile{}
-	if ns, err := runGit(dir, "-c", "core.quotePath=false", "show", "--name-status",
+	if ns, err := gitx.Run(dir, "-c", "core.quotePath=false", "show", "--name-status",
 		"--format=", "--no-color", sha); err == nil {
 		for _, line := range strings.Split(ns, "\n") {
 			f := strings.Split(strings.TrimSpace(line), "\t")
@@ -318,9 +321,9 @@ func handleRepoShow(w http.ResponseWriter, r *http.Request) {
 
 	// Full patch. Raw .Output() (not runGit): the patch body is returned verbatim
 	// in the JSON response and must stay byte-identical (no trimming).
-	diff, err := gitCmd(dir, "-c", "core.quotePath=false", "show", "--format=", "--no-color", sha).Output()
+	diff, err := gitx.Cmd(dir, "-c", "core.quotePath=false", "show", "--format=", "--no-color", sha).Output()
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "git_failed", err.Error())
+		httpx.WriteErr(w, http.StatusInternalServerError, "git_failed", err.Error())
 		return
 	}
 	s := string(diff)
@@ -329,7 +332,7 @@ func handleRepoShow(w http.ResponseWriter, r *http.Request) {
 		s, truncated = s[:maxViewBytes], true
 	}
 	out["diff"], out["truncated"] = s, truncated
-	writeJSON(w, http.StatusOK, out)
+	httpx.WriteJSON(w, http.StatusOK, out)
 }
 
 type pathsReq struct {
@@ -355,23 +358,23 @@ func gitPathsOp(w http.ResponseWriter, r *http.Request, gitArgs []string, code s
 		return
 	}
 	var req pathsReq
-	if !decodeJSON(w, r, &req) {
+	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
 	paths, ok := validPaths(dir, req.Paths)
 	if !ok {
-		writeErr(w, http.StatusBadRequest, "bad_path", "paths required and must be inside the repo")
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_path", "paths required and must be inside the repo")
 		return
 	}
 	args := append([]string{}, gitArgs...)
 	args = append(args, "--")
 	args = append(args, paths...)
-	if out, err := runGitCombined(dir, args...); err != nil {
-		writeErr(w, http.StatusBadGateway, code, fmt.Sprintf("%v: %s", err, out))
+	if out, err := gitx.Combined(dir, args...); err != nil {
+		httpx.WriteErr(w, http.StatusBadGateway, code, fmt.Sprintf("%v: %s", err, out))
 		return
 	}
 	cs, _ := gitChanges(dir)
-	writeJSON(w, http.StatusOK, map[string]any{"changes": cs})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"changes": cs})
 }
 
 func handleRepoStage(w http.ResponseWriter, r *http.Request) {
@@ -398,11 +401,11 @@ func handleRepoCommit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req commitReq
-	if !decodeJSON(w, r, &req) {
+	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
 	if strings.TrimSpace(req.Message) == "" {
-		writeErr(w, http.StatusBadRequest, "bad_message", "commit message is required")
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_message", "commit message is required")
 		return
 	}
 	applyGitIdentity(dir) // self-heal: ensure the effective identity is in local config
@@ -411,10 +414,10 @@ func handleRepoCommit(w http.ResponseWriter, r *http.Request) {
 		args = append(args, "-a")
 	}
 	args = append(args, "-m", req.Message)
-	if out, err := runGitCombined(dir, args...); err != nil {
-		writeErr(w, http.StatusBadGateway, "commit_failed", fmt.Sprintf("%v: %s", err, out))
+	if out, err := gitx.Combined(dir, args...); err != nil {
+		httpx.WriteErr(w, http.StatusBadGateway, "commit_failed", fmt.Sprintf("%v: %s", err, out))
 		return
 	}
 	st, _ := gitStatus(dir)
-	writeJSON(w, http.StatusOK, st)
+	httpx.WriteJSON(w, http.StatusOK, st)
 }

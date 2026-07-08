@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 )
 
 // Claude subscription usage (the 5-hour + weekly bars claude shows in its /usage
@@ -83,7 +85,7 @@ func writeClaudeUsage(w http.ResponseWriter, v claudeUsage, at time.Time) {
 	if !at.IsZero() {
 		out["ageSec"] = int(time.Since(at).Seconds())
 	}
-	writeJSON(w, http.StatusOK, out)
+	httpx.WriteJSON(w, http.StatusOK, out)
 }
 
 // claudeOAuthToken reads the subscription OAuth access token from the credentials

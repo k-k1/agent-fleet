@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 )
 
 // opencodeStatusAgentRe pulls the current agent from opencode's composer status line
@@ -124,7 +126,7 @@ func titleFirst(s string) string {
 func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if !nameRe.MatchString(name) {
-		writeErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
 		return
 	}
 	// Body is one of:
@@ -143,16 +145,16 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 		} `json:"seq"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&body); err != nil {
-		writeErr(w, http.StatusBadRequest, "bad_body", "invalid JSON body")
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_body", "invalid JSON body")
 		return
 	}
 	if len(body.Keys) == 0 && len(body.Seq) == 0 && strings.TrimSpace(body.Prompt) == "" {
-		writeErr(w, http.StatusBadRequest, "empty_prompt", "prompt, keys or seq is required")
+		httpx.WriteErr(w, http.StatusBadRequest, "empty_prompt", "prompt, keys or seq is required")
 		return
 	}
 	tn := tmuxName(name)
 	if !tmuxHasSession(tn) {
-		writeErr(w, http.StatusConflict, "not_running", "session is not running; start it first")
+		httpx.WriteErr(w, http.StatusConflict, "not_running", "session is not running; start it first")
 		return
 	}
 	// Resolve the active pane id. send-keys takes a target-PANE, where tmux's "="
@@ -160,7 +162,7 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 	// globally-unique pane id (%N) is unambiguous and avoids tmux's prefix matching.
 	pane := sessionPaneID(tn)
 	if pane == "" {
-		writeErr(w, http.StatusInternalServerError, "no_pane", "could not resolve session pane")
+		httpx.WriteErr(w, http.StatusInternalServerError, "no_pane", "could not resolve session pane")
 		return
 	}
 	if len(body.Keys) > 0 {
@@ -176,13 +178,13 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 		// re-render between keys (e.g. after Enter advances to the next question page).
 		for _, k := range keys {
 			if !allowedKey(k) {
-				writeErr(w, http.StatusBadRequest, "bad_key", "unsupported key: "+k)
+				httpx.WriteErr(w, http.StatusBadRequest, "bad_key", "unsupported key: "+k)
 				return
 			}
 		}
 		for i, k := range keys {
 			if out, err := exec.Command("tmux", "send-keys", "-t", pane, k).CombinedOutput(); err != nil {
-				writeErr(w, http.StatusInternalServerError, "tmux_failed", string(out))
+				httpx.WriteErr(w, http.StatusInternalServerError, "tmux_failed", string(out))
 				return
 			}
 			if i < len(keys)-1 {
@@ -199,7 +201,7 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 				break
 			}
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"sent": name})
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"sent": name})
 		return
 	}
 	if len(body.Seq) > 0 {
@@ -207,11 +209,11 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 		// either a whitelisted named key or literal text.
 		for _, s := range body.Seq {
 			if s.K != "" && !allowedKey(s.K) {
-				writeErr(w, http.StatusBadRequest, "bad_key", "unsupported key: "+s.K)
+				httpx.WriteErr(w, http.StatusBadRequest, "bad_key", "unsupported key: "+s.K)
 				return
 			}
 			if s.K == "" && s.T == "" {
-				writeErr(w, http.StatusBadRequest, "bad_seq", "each seq step needs k or t")
+				httpx.WriteErr(w, http.StatusBadRequest, "bad_seq", "each seq step needs k or t")
 				return
 			}
 		}
@@ -228,7 +230,7 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 				cmd = exec.Command("tmux", "send-keys", "-t", pane, "-l", s.T)
 			}
 			if out, err := cmd.CombinedOutput(); err != nil {
-				writeErr(w, http.StatusInternalServerError, "tmux_failed", string(out))
+				httpx.WriteErr(w, http.StatusInternalServerError, "tmux_failed", string(out))
 				return
 			}
 			if i < len(body.Seq)-1 {
@@ -238,12 +240,12 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 		if working {
 			markSessionWorking(name)
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"sent": name})
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"sent": name})
 		return
 	}
 	// Send the prompt literally (-l: no key-name interpretation), then Enter to submit.
 	if out, err := exec.Command("tmux", "send-keys", "-t", pane, "-l", body.Prompt).CombinedOutput(); err != nil {
-		writeErr(w, http.StatusInternalServerError, "tmux_failed", string(out))
+		httpx.WriteErr(w, http.StatusInternalServerError, "tmux_failed", string(out))
 		return
 	}
 	// Pause before Enter so the TUI finishes ingesting the pasted text first. codex's
@@ -253,7 +255,7 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 	// short beat is harmless there too.
 	time.Sleep(inputSubmitDelay(name))
 	if out, err := exec.Command("tmux", "send-keys", "-t", pane, "Enter").CombinedOutput(); err != nil {
-		writeErr(w, http.StatusInternalServerError, "tmux_failed", string(out))
+		httpx.WriteErr(w, http.StatusInternalServerError, "tmux_failed", string(out))
 		return
 	}
 	// A slash command (/plan, /model, …) isn't a turn — don't optimistically mark the
@@ -262,7 +264,7 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 	if !slashCmdRe.MatchString(strings.TrimSpace(body.Prompt)) {
 		markSessionWorking(name)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"sent": name})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"sent": name})
 }
 
 // slashCmdRe matches a single-token slash command like "/plan" or "/model foo" (but not a
@@ -397,17 +399,17 @@ func sessionPaneID(tn string) string {
 func handleSessionStatus(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if !nameRe.MatchString(name) {
-		writeErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
 		return
 	}
 	meta, ok := readSessionMeta(name)
 	if !ok {
-		writeErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
+		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
 		return
 	}
 	alive := tmuxHasSession(tmuxName(name))
 	state := driveState(meta, alive, true)
-	writeJSON(w, http.StatusOK, map[string]any{"name": name, "kind": meta.Kind, "alive": alive, "status": state})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"name": name, "kind": meta.Kind, "alive": alive, "status": state})
 }
 
 // handleSessionOutput (GET /sessions/{name}/output?since=<cursor>) returns the
@@ -417,19 +419,19 @@ func handleSessionStatus(w http.ResponseWriter, r *http.Request) {
 func handleSessionOutput(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if !nameRe.MatchString(name) {
-		writeErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
 		return
 	}
 	meta, ok := readSessionMeta(name)
 	if !ok {
-		writeErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
+		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
 		return
 	}
 	alive := tmuxHasSession(tmuxName(name))
 	// /output opts out of the idle-heal (heal=false) to preserve its historical behavior.
 	state := driveState(meta, alive, false)
 	if !agentOf(meta.Kind).caps().canTranscript {
-		writeErr(w, http.StatusBadRequest, "unsupported_kind", "output is available for claude sessions only (phase 1)")
+		httpx.WriteErr(w, http.StatusBadRequest, "unsupported_kind", "output is available for claude sessions only (phase 1)")
 		return
 	}
 	since := 0
@@ -452,7 +454,7 @@ func handleSessionOutput(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"name": name, "output": sb.String(), "cursor": len(lines),
 		"status": state, "alive": alive,
 	})

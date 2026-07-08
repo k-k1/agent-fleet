@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 )
 
 // Structured transcript for the Console chat view. Where /output (session_io.go)
@@ -87,12 +89,12 @@ const forkPreviewCursor = 1 << 30
 func handleSessionMessages(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if !nameRe.MatchString(name) {
-		writeErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
 		return
 	}
 	meta, ok := readSessionMeta(name)
 	if !ok {
-		writeErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
+		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
 		return
 	}
 	alive := tmuxHasSession(tmuxName(name))
@@ -100,7 +102,7 @@ func handleSessionMessages(w http.ResponseWriter, r *http.Request) {
 	// the ready prompt (rejected permission, abandoned question, killed+resumed).
 	state := driveState(meta, alive, true)
 	if !agentOf(meta.Kind).caps().canTranscript {
-		writeErr(w, http.StatusBadRequest, "unsupported_kind", "messages are available for transcript-capable sessions only")
+		httpx.WriteErr(w, http.StatusBadRequest, "unsupported_kind", "messages are available for transcript-capable sessions only")
 		return
 	}
 	// Non-claude transcript agents (codex now, opencode later) don't have claude's
@@ -229,7 +231,7 @@ func handleSessionMessages(w http.ResponseWriter, r *http.Request) {
 			resp["backgroundBusy"] = sessionBackgroundBusy(name)
 		}
 	}
-	writeJSON(w, http.StatusOK, resp)
+	httpx.WriteJSON(w, http.StatusOK, resp)
 }
 
 // handleGenericMessages serves /messages for a non-claude transcript agent (codex,
@@ -329,7 +331,7 @@ func handleGenericMessages(w http.ResponseWriter, r *http.Request, meta sessionM
 			resp["mode"] = pm
 		}
 	}
-	writeJSON(w, http.StatusOK, resp)
+	httpx.WriteJSON(w, http.StatusOK, resp)
 }
 
 // capTurnsNewest bounds a returned window to ~1 MiB of text, keeping the NEWEST turns

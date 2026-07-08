@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 )
 
 // Remote repository listing: enumerate the repositories the connected provider
@@ -60,36 +62,36 @@ func handleListRemoteRepos(w http.ResponseWriter, r *http.Request) {
 	host := r.PathValue("host")
 	s, err := loadSecrets()
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "store_failed", err.Error())
+		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
 		return
 	}
 	switch host {
 	case "github.com":
 		e, ok := s.Git[host]
 		if !ok || e.Token == "" {
-			writeErr(w, http.StatusBadRequest, "not_connected", "GitHub is not connected")
+			httpx.WriteErr(w, http.StatusBadRequest, "not_connected", "GitHub is not connected")
 			return
 		}
 		repos, err := githubListRepos(e.Token)
 		if err != nil {
-			writeErr(w, http.StatusBadGateway, "provider_error", err.Error())
+			httpx.WriteErr(w, http.StatusBadGateway, "provider_error", err.Error())
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"host": host, "repos": repos})
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"host": host, "repos": repos})
 	case "bitbucket.org":
 		auth, err := bitbucketAuthHeader(s)
 		if err != nil {
-			writeErr(w, http.StatusBadRequest, "not_connected", err.Error())
+			httpx.WriteErr(w, http.StatusBadRequest, "not_connected", err.Error())
 			return
 		}
 		repos, err := bitbucketListRepos(auth)
 		if err != nil {
-			writeErr(w, http.StatusBadGateway, "provider_error", err.Error())
+			httpx.WriteErr(w, http.StatusBadGateway, "provider_error", err.Error())
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"host": host, "repos": repos})
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"host": host, "repos": repos})
 	default:
-		writeErr(w, http.StatusBadRequest, "bad_host", "unsupported host: "+host)
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_host", "unsupported host: "+host)
 	}
 }
 
@@ -100,41 +102,41 @@ func handleListRemoteBranches(w http.ResponseWriter, r *http.Request) {
 	host := r.PathValue("host")
 	repo := strings.TrimSpace(r.URL.Query().Get("repo"))
 	if repo == "" || !strings.Contains(repo, "/") {
-		writeErr(w, http.StatusBadRequest, "bad_repo", "repo=owner/name is required")
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_repo", "repo=owner/name is required")
 		return
 	}
 	s, err := loadSecrets()
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "store_failed", err.Error())
+		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
 		return
 	}
 	switch host {
 	case "github.com":
 		e, ok := s.Git[host]
 		if !ok || e.Token == "" {
-			writeErr(w, http.StatusBadRequest, "not_connected", "GitHub is not connected")
+			httpx.WriteErr(w, http.StatusBadRequest, "not_connected", "GitHub is not connected")
 			return
 		}
 		branches, def, err := githubListBranches(e.Token, repo)
 		if err != nil {
-			writeErr(w, http.StatusBadGateway, "provider_error", err.Error())
+			httpx.WriteErr(w, http.StatusBadGateway, "provider_error", err.Error())
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"branches": branches, "default": def})
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"branches": branches, "default": def})
 	case "bitbucket.org":
 		auth, err := bitbucketAuthHeader(s)
 		if err != nil {
-			writeErr(w, http.StatusBadRequest, "not_connected", err.Error())
+			httpx.WriteErr(w, http.StatusBadRequest, "not_connected", err.Error())
 			return
 		}
 		branches, def, err := bitbucketListBranchesRich(auth, repo)
 		if err != nil {
-			writeErr(w, http.StatusBadGateway, "provider_error", err.Error())
+			httpx.WriteErr(w, http.StatusBadGateway, "provider_error", err.Error())
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"branches": branches, "default": def})
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"branches": branches, "default": def})
 	default:
-		writeErr(w, http.StatusBadRequest, "bad_host", "unsupported host: "+host)
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_host", "unsupported host: "+host)
 	}
 }
 

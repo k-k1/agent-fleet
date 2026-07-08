@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/fstore"
 )
 
 // dirGoneErr is the "can't (re)launch — working dir removed" error shared by the
@@ -198,23 +200,23 @@ func statusOnlyLive(m sessionMeta, alive bool) liveInfo {
 // sidStore maps our deterministic slot sid to an agent's own session id, so a slot
 // resumes its OWN conversation (fstore.go の fileStore に薄い読み口を被せたもの:
 // read は ok を潰して "" を返す — 呼び出し側は空文字を「無し」として扱う)。
-type sidStore struct{ files fileStore[string] }
+type sidStore struct{ files fstore.Store[string] }
 
 func (s sidStore) read(sid string) string {
-	v, _ := s.files.read(sid)
+	v, _ := s.files.Read(sid)
 	return v
 }
 
-func (s sidStore) write(sid, val string) { _ = s.files.write(sid, val) }
-func (s sidStore) remove(sid string)     { s.files.remove(sid) }
+func (s sidStore) write(sid, val string) { _ = s.files.Write(sid, val) }
+func (s sidStore) remove(sid string)     { s.files.Remove(sid) }
 
 var (
 	// opencode: written externally by the bundled plugin (on session.created, keyed
 	// by AF_SESSION_SID); the agent only reads/removes it.
-	opencodeSids = sidStore{trimmedStringStore("opencode-sid")}
+	opencodeSids = sidStore{fstore.TrimmedStrings(agentConfigDir, "opencode-sid")}
 	// codex: written by the session-status hook from codex's own session_id (codex
 	// has no --session-id flag to pin), read for `codex resume <id>`.
-	codexSids = sidStore{trimmedStringStore("codex-sid")}
+	codexSids = sidStore{fstore.TrimmedStrings(agentConfigDir, "codex-sid")}
 )
 
 // --- claude --------------------------------------------------------------------

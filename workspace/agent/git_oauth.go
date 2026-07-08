@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 )
 
 // GitHub OAuth via the Device Authorization Grant (RFC 8628): no callback, no
@@ -43,7 +45,7 @@ var (
 func handleGithubOAuthStart(w http.ResponseWriter, r *http.Request) {
 	cid := githubClientID()
 	if cid == "" {
-		writeErr(w, http.StatusBadRequest, "not_configured", "GITHUB_OAUTH_CLIENT_ID is not set")
+		httpx.WriteErr(w, http.StatusBadRequest, "not_configured", "GITHUB_OAUTH_CLIENT_ID is not set")
 		return
 	}
 	var resp struct {
@@ -55,11 +57,11 @@ func handleGithubOAuthStart(w http.ResponseWriter, r *http.Request) {
 		Error           string `json:"error"`
 	}
 	if err := ghPostForm(ghDeviceCodeURL, url.Values{"client_id": {cid}, "scope": {ghScope}}, &resp); err != nil {
-		writeErr(w, http.StatusBadGateway, "github_error", err.Error())
+		httpx.WriteErr(w, http.StatusBadGateway, "github_error", err.Error())
 		return
 	}
 	if resp.DeviceCode == "" {
-		writeErr(w, http.StatusBadGateway, "github_error", "no device_code returned: "+resp.Error)
+		httpx.WriteErr(w, http.StatusBadGateway, "github_error", "no device_code returned: "+resp.Error)
 		return
 	}
 	interval := resp.Interval
@@ -75,7 +77,7 @@ func handleGithubOAuthStart(w http.ResponseWriter, r *http.Request) {
 	}
 	ghFlows[id] = &ghFlow{deviceCode: resp.DeviceCode, interval: interval, deadline: time.Now().Add(time.Duration(resp.ExpiresIn) * time.Second)}
 	ghMu.Unlock()
-	writeJSON(w, http.StatusOK, map[string]any{
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"flow_id": id, "user_code": resp.UserCode, "verification_uri": resp.VerificationURI,
 		"interval": interval, "expires_in": resp.ExpiresIn,
 	})
@@ -87,19 +89,19 @@ type ghPollReq struct {
 
 func handleGithubOAuthPoll(w http.ResponseWriter, r *http.Request) {
 	var req ghPollReq
-	if !decodeJSON(w, r, &req) {
+	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
 	ghMu.Lock()
 	f := ghFlows[req.FlowID]
 	ghMu.Unlock()
 	if f == nil {
-		writeErr(w, http.StatusNotFound, "no_flow", "unknown or expired flow_id")
+		httpx.WriteErr(w, http.StatusNotFound, "no_flow", "unknown or expired flow_id")
 		return
 	}
 	if time.Now().After(f.deadline) {
 		ghForget(req.FlowID)
-		writeErr(w, http.StatusBadRequest, "expired_token", "device code expired; restart")
+		httpx.WriteErr(w, http.StatusBadRequest, "expired_token", "device code expired; restart")
 		return
 	}
 	var resp struct {
@@ -108,28 +110,28 @@ func handleGithubOAuthPoll(w http.ResponseWriter, r *http.Request) {
 	}
 	form := url.Values{"client_id": {githubClientID()}, "device_code": {f.deviceCode}, "grant_type": {ghDeviceGrant}}
 	if err := ghPostForm(ghAccessTokenURL, form, &resp); err != nil {
-		writeErr(w, http.StatusBadGateway, "github_error", err.Error())
+		httpx.WriteErr(w, http.StatusBadGateway, "github_error", err.Error())
 		return
 	}
 	switch {
 	case resp.AccessToken != "":
 		if err := upsertGitCredential("github.com", "x-access-token", resp.AccessToken); err != nil {
-			writeErr(w, http.StatusInternalServerError, "store_failed", err.Error())
+			httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
 			return
 		}
 		ghForget(req.FlowID)
-		writeJSON(w, http.StatusOK, map[string]any{"connected": true})
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"connected": true})
 	case resp.Error == "authorization_pending":
-		writeJSON(w, http.StatusOK, map[string]any{"pending": true})
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"pending": true})
 	case resp.Error == "slow_down":
 		ghMu.Lock()
 		f.interval += 5
 		iv := f.interval
 		ghMu.Unlock()
-		writeJSON(w, http.StatusOK, map[string]any{"pending": true, "interval": iv})
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"pending": true, "interval": iv})
 	default:
 		ghForget(req.FlowID)
-		writeErr(w, http.StatusBadRequest, "oauth_error", resp.Error)
+		httpx.WriteErr(w, http.StatusBadRequest, "oauth_error", resp.Error)
 	}
 }
 
@@ -200,11 +202,11 @@ type bitbucketStoreReq struct {
 // inherited global `store` helper so our refreshing helper is the sole source.
 func handleBitbucketStore(w http.ResponseWriter, r *http.Request) {
 	var req bitbucketStoreReq
-	if !decodeJSON(w, r, &req) {
+	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
 	if req.AccessToken == "" || req.Key == "" || req.Secret == "" {
-		writeErr(w, http.StatusBadRequest, "bad_request", "access_token, key, secret are required")
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_request", "access_token, key, secret are required")
 		return
 	}
 	exp := req.ExpiresIn
@@ -216,14 +218,14 @@ func handleBitbucketStore(w http.ResponseWriter, r *http.Request) {
 		Expiry: time.Now().Unix() + exp, Key: req.Key, Secret: req.Secret,
 	}
 	if err := writeBitbucketCreds(c); err != nil {
-		writeErr(w, http.StatusInternalServerError, "store_failed", err.Error())
+		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
 		return
 	}
 	if err := ensureCredHelper(); err != nil { // unified cred helper handles refresh
-		writeErr(w, http.StatusInternalServerError, "config_failed", err.Error())
+		httpx.WriteErr(w, http.StatusInternalServerError, "config_failed", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"connected": true})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"connected": true})
 }
 
 // removeBitbucketOAuth clears the stored OAuth refresh creds. Called from the

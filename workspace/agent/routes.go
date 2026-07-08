@@ -4,7 +4,7 @@ import "net/http"
 
 // buildMux は Agent の全ルートを登録した mux を返す（docs/23 P0-2: main() からの
 // 機械的抽出）。テストが実ルート表を httptest で叩けるようにするための分離で、登録
-// 内容は main() にあったものと同一。requireToken / logRequests のラップは呼び出し側
+// 内容は main() にあったものと同一。httpx.RequireToken / httpx.LogRequests のラップは呼び出し側
 // （main / テスト）の責務。
 func buildMux() *http.ServeMux {
 	mux := http.NewServeMux()

@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 )
 
 // rtk (token-saving CLI proxy) for the non-claude agents. claude routes Bash
@@ -189,7 +191,7 @@ func agentRTKBody() map[string]any {
 }
 
 func handleAgentRTKGet(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, agentRTKBody())
+	httpx.WriteJSON(w, http.StatusOK, agentRTKBody())
 }
 
 type agentRTKReq struct {
@@ -199,7 +201,7 @@ type agentRTKReq struct {
 
 func handleAgentRTKPut(w http.ResponseWriter, r *http.Request) {
 	var req agentRTKReq
-	if !decodeJSON(w, r, &req) {
+	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
 	p := readAgentRTKPrefs()
@@ -210,9 +212,9 @@ func handleAgentRTKPut(w http.ResponseWriter, r *http.Request) {
 		p.Opencode = req.OpencodeRTK
 	}
 	if err := writeAgentRTKPrefs(p); err != nil {
-		writeErr(w, http.StatusInternalServerError, "write_failed", err.Error())
+		httpx.WriteErr(w, http.StatusInternalServerError, "write_failed", err.Error())
 		return
 	}
 	reconcileAgentRTK()
-	writeJSON(w, http.StatusOK, agentRTKBody())
+	httpx.WriteJSON(w, http.StatusOK, agentRTKBody())
 }

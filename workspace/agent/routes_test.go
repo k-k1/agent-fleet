@@ -6,17 +6,19 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 )
 
 // docs/23 P0-2: smoke tests over the real route table (buildMux) + the real
-// requireToken gate, in an isolated HOME. Regression detectors for handler
+// httpx.RequireToken gate, in an isolated HOME. Regression detectors for handler
 // moves — status + known JSON keys only, no docker / tmux / CLI involved.
 
 func smokeHandler(t *testing.T) http.Handler {
 	t.Helper()
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("AGENT_TOKEN", "smoke-token")
-	return requireToken(buildMux())
+	return httpx.RequireToken(buildMux())
 }
 
 func smokeDo(t *testing.T, h http.Handler, method, path, token, body string) *httptest.ResponseRecorder {

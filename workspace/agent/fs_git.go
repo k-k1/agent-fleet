@@ -7,6 +7,9 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 )
 
 // git-aware file-browser endpoints (docs/17 P3-5, FILES 改善):
@@ -30,7 +33,7 @@ func handleFSChanges(w http.ResponseWriter, r *http.Request) {
 	root := reposRoot()
 	ents, err := os.ReadDir(root)
 	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]any{"changes": []fileChange{}})
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"changes": []fileChange{}})
 		return
 	}
 	out := []fileChange{}
@@ -54,7 +57,7 @@ func handleFSChanges(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"changes": out})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"changes": out})
 }
 
 func emptyMarks() map[string]any {
@@ -68,38 +71,38 @@ func emptyMarks() map[string]any {
 func handleFSLineMarks(w http.ResponseWriter, r *http.Request) {
 	full, rel, ok := safeBrowsePath(r.URL.Query().Get("path"))
 	if !ok {
-		writeErr(w, http.StatusBadRequest, "bad_path", "invalid path")
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_path", "invalid path")
 		return
 	}
 	parts := strings.SplitN(filepath.ToSlash(rel), "/", 3)
 	if len(parts) < 3 || parts[0] != "repos" {
-		writeJSON(w, http.StatusOK, emptyMarks())
+		httpx.WriteJSON(w, http.StatusOK, emptyMarks())
 		return
 	}
 	repo, inrepo := parts[1], parts[2]
 	dir := filepath.Join(reposRoot(), repo)
 	if _, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
-		writeJSON(w, http.StatusOK, emptyMarks())
+		httpx.WriteJSON(w, http.StatusOK, emptyMarks())
 		return
 	}
 	// Untracked file => the whole thing is "added".
-	if st, _ := runGit(dir, "status", "--porcelain", "--", inrepo); strings.HasPrefix(st, "??") {
+	if st, _ := gitx.Run(dir, "status", "--porcelain", "--", inrepo); strings.HasPrefix(st, "??") {
 		n := countFileLines(full)
 		added := make([]int, 0, n)
 		for i := 1; i <= n; i++ {
 			added = append(added, i)
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"added": added, "modified": []int{}, "deleted": []int{}})
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"added": added, "modified": []int{}, "deleted": []int{}})
 		return
 	}
 	// --unified=0: hunks are pure deletion/addition runs (no context) => simple map.
-	out, err := runGit(dir, "diff", "HEAD", "--unified=0", "--", inrepo)
+	out, err := gitx.Run(dir, "diff", "HEAD", "--unified=0", "--", inrepo)
 	if err != nil {
-		writeJSON(w, http.StatusOK, emptyMarks())
+		httpx.WriteJSON(w, http.StatusOK, emptyMarks())
 		return
 	}
 	added, modified, deleted := parseDiffMarks(out)
-	writeJSON(w, http.StatusOK, map[string]any{"added": added, "modified": modified, "deleted": deleted})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"added": added, "modified": modified, "deleted": deleted})
 }
 
 var hunkRe = regexp.MustCompile(`^@@ -\d+(?:,\d+)? \+(\d+)`)

@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 )
 
 // SSM login status (docs/history/p3-ssm-session.md). An ssm session runs
@@ -40,34 +42,34 @@ type ssmLoginStatus struct {
 func handleStartSession(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if !nameRe.MatchString(name) {
-		writeErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
 		return
 	}
 	if _, ok := readSessionMeta(name); !ok {
-		writeErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
+		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
 		return
 	}
 	force := r.URL.Query().Get("force") == "1"
 	if !ensureSessionTmux(name, force) {
-		writeErr(w, http.StatusInternalServerError, "start_failed", "could not start session")
+		httpx.WriteErr(w, http.StatusInternalServerError, "start_failed", "could not start session")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 func handleSSMLoginStatus(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if !nameRe.MatchString(name) {
-		writeErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
 		return
 	}
 	meta, ok := readSessionMeta(name)
 	if !ok {
-		writeErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
+		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
 		return
 	}
 	if meta.Kind != kindSSM {
-		writeErr(w, http.StatusBadRequest, "unsupported_kind", "ssm-login is for ssm sessions only")
+		httpx.WriteErr(w, http.StatusBadRequest, "unsupported_kind", "ssm-login is for ssm sessions only")
 		return
 	}
 	alive := tmuxHasSession(tmuxName(name))
@@ -79,7 +81,7 @@ func handleSSMLoginStatus(w http.ResponseWriter, r *http.Request) {
 			buf = string(out)
 		}
 	}
-	writeJSON(w, http.StatusOK, parseSSMLogin(buf, alive))
+	httpx.WriteJSON(w, http.StatusOK, parseSSMLogin(buf, alive))
 }
 
 // parseSSMLogin derives the login phase from the pane buffer. Order matters: an

@@ -7,6 +7,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 )
 
 // Claude settings: read/write a curated subset of the workspace's claude
@@ -216,7 +218,7 @@ func claudeSettingsBody(m map[string]any) map[string]any {
 }
 
 func handleClaudeSettingsGet(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, claudeSettingsBody(readClaudeSettings()))
+	httpx.WriteJSON(w, http.StatusOK, claudeSettingsBody(readClaudeSettings()))
 }
 
 type claudeSettingsReq struct {
@@ -227,7 +229,7 @@ type claudeSettingsReq struct {
 
 func handleClaudeSettingsPut(w http.ResponseWriter, r *http.Request) {
 	var req claudeSettingsReq
-	if !decodeJSON(w, r, &req) {
+	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
 	m := readClaudeSettings()
@@ -241,8 +243,8 @@ func handleClaudeSettingsPut(w http.ResponseWriter, r *http.Request) {
 		setRTK(m, *req.RTK)
 	}
 	if err := writeClaudeSettings(m); err != nil {
-		writeErr(w, http.StatusInternalServerError, "write_failed", err.Error())
+		httpx.WriteErr(w, http.StatusInternalServerError, "write_failed", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, claudeSettingsBody(m))
+	httpx.WriteJSON(w, http.StatusOK, claudeSettingsBody(m))
 }
