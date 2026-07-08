@@ -258,6 +258,38 @@ func cleanHome(dataDir string) error {
 	return nil
 }
 
+// dockerInspectOut runs `docker <args...>` and returns its stdout.
+// テスト用シーム（gitBackendServe と同型）。
+var dockerInspectOut = func(args ...string) ([]byte, error) {
+	return exec.Command("docker", args...).Output()
+}
+
+// dockerPublishedPort returns the host port mapped to the container's 7700/tcp.
+func dockerPublishedPort(name string) string {
+	out, err := dockerInspectOut("inspect", "-f",
+		`{{with index .NetworkSettings.Ports "7700/tcp"}}{{(index . 0).HostPort}}{{end}}`, name)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// dockerEnvValue returns the value of an env var baked into a container's config.
+func dockerEnvValue(name, key string) string {
+	out, err := dockerInspectOut("inspect", "-f",
+		`{{range .Config.Env}}{{println .}}{{end}}`, name)
+	if err != nil {
+		return ""
+	}
+	prefix := key + "="
+	for _, line := range strings.Split(string(out), "\n") {
+		if strings.HasPrefix(line, prefix) {
+			return strings.TrimSpace(strings.TrimPrefix(line, prefix))
+		}
+	}
+	return ""
+}
+
 func (d *dockerRuntime) waitHealthy(ctx context.Context, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
