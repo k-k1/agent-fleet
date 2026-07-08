@@ -18,3 +18,9 @@ export function takeLaunchSeed(session: string): string | undefined {
   if (s !== undefined) seeds.delete(session);
   return s;
 }
+
+// hasLaunchSeed peeks without consuming — lets the mirror decide whether it must
+// wait for the TUI to become ready before taking (and thereby committing to send).
+export function hasLaunchSeed(session: string): boolean {
+  return seeds.has(session);
+}
