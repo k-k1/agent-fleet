@@ -79,6 +79,12 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
 /** True while a start/stop transition is in flight (or state not yet fetched). */
 export const wsBusy = (state: string): boolean => state.endsWith("…");
 
+/** True while starting the workspace would be wrong: an optimistic "…" transition
+ * is in flight OR the server already reports "starting" (ECS cold pull, minutes).
+ * The CP no-ops a re-Start anyway, but every start button disables on this so the
+ * UI doesn't offer 起動 for a workspace that is already coming up. */
+export const wsStartBusy = (state: string): boolean => wsBusy(state) || state === "starting";
+
 // Auto-sync every 4s so an externally-changed workspace (admin stop, OOM death,
 // crash) reflects on its own. Skipped while hidden or mid-transition (trailing
 // "…" only — the server-reported "starting" keeps polling, which is what walks

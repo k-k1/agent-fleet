@@ -190,6 +190,10 @@
 :where(.onboard) button:hover:not(:disabled) {
   background: var(--btn-h);
 }
+:where(.onboard) button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
 :where(.onboard) button.ghost {
   background: transparent;
   border-color: transparent;

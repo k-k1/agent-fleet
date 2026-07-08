@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, apiJSON, raw } from "../../core/api/client.ts";
 import { usePolling } from "./usePolling.ts";
-import { useWorkspaceStore } from "../../core/store/workspace.ts";
+import { useWorkspaceStore, wsStartBusy } from "../../core/store/workspace.ts";
 import { Icon } from "../../ui/Icon.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { EmptyState } from "../../ui/EmptyState.tsx";
@@ -45,8 +45,8 @@ export function GitTab() {
           title="外部 Git 接続はワークスペース内で実行されます"
           hint="外部プロバイダの認証はコンテナ内の Agent を経由するため、ワークスペースの起動が必要です。"
         >
-          <Button icon="play" disabled={wsState.endsWith("…")} onClick={() => void startWs()}>
-            {wsState.endsWith("…") ? "起動中…" : "ワークスペースを起動"}
+          <Button icon="play" disabled={wsStartBusy(wsState)} onClick={() => void startWs()}>
+            {wsStartBusy(wsState) ? "起動中…" : "ワークスペースを起動"}
           </Button>
         </EmptyState>
       ) : !conns ? (
