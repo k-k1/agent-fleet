@@ -7,7 +7,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, previewURL } from "../core/api/client.ts";
 import { useTenantStore } from "../core/store/tenant.ts";
-import { useWorkspaceStore, wsBusy } from "../core/store/workspace.ts";
+import { useWorkspaceStore, wsStartBusy } from "../core/store/workspace.ts";
 import { useLayoutStore } from "../layout/store.ts";
 import { isBlankPane } from "../layout/ops.ts";
 import { useSessionsStore } from "../features/sessions/store.ts";
@@ -406,7 +406,7 @@ export function WsBar() {
   // Toggle inert while a transition is in flight: the optimistic "…" states AND the
   // server-reported "starting" (ECS cold pull — a second Start click must not
   // re-drive the deployment; the 4s poll flips the bar to 稼働中 on its own).
-  const busy = wsBusy(wsState) || wsState === "starting";
+  const busy = wsStartBusy(wsState);
 
   // "Close all panes" collapses the split layout back to one empty terminal pane.
   // Disabled when there's already just a single empty pane (nothing to close).
