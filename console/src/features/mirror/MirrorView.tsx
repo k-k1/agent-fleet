@@ -2049,6 +2049,19 @@ function QuestionBlock({
         const opts = qn.options || [];
         const a = answerAt(qi);
         const chosenSet = chosenFor(a, opts);
+        // Any part of the answer that isn't a listed option is a custom "Type something"
+        // entry (multi-select can COMBINE checked options with a custom one). Show it even
+        // when an option also matched — otherwise the custom text silently vanishes from
+        // the answered card. Split on the tool_result's ", " join; drop tokens that are (or
+        // contain) a listed label so only genuine free text remains.
+        const optLabels = opts.map((o) => o.label);
+        const extras = !answered
+          ? []
+          : a
+              .split(/[,、]/)
+              .map((s) => s.trim())
+              .filter(Boolean)
+              .filter((t) => !optLabels.some((l) => t === l || t.includes(l)));
         return (
           <div className="mq" key={qi}>
             <div className="mq-head">
@@ -2078,7 +2091,9 @@ function QuestionBlock({
                 );
               })}
             </div>
-            {answered && a && !chosenSet.size && <div className="mq-answer muted">回答: {a}</div>}
+            {answered && extras.length > 0 && (
+              <div className="mq-answer muted">{chosenSet.size ? "自由入力: " : "回答: "}{extras.join("、")}</div>
+            )}
           </div>
         );
       })}
