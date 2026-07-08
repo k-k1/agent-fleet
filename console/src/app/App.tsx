@@ -20,7 +20,6 @@ import { hydrateUIPrefs } from "../lib/settings.ts";
 import { MOBILE_QUERY } from "../lib/device.ts";
 import { PaneHost } from "../features/panes/PaneHost.tsx";
 import { LayoutMap } from "../features/panes/LayoutMap.tsx";
-import { FilesSection } from "../features/files/FilesSection.tsx";
 import { AssistantSection } from "../features/chat/AssistantSection.tsx";
 import { MemoQueueSection } from "../features/memo/MemoQueueSection.tsx";
 import { ProjectTree } from "../features/project/ProjectTree.tsx";
@@ -258,14 +257,13 @@ export function App() {
           <LayoutMap />
           {/* Project-first IA: Assistant + Memo pinned on top (global tools), then
               the working-copy tree (each node nests its sessions + files), then the
-              repo-less session catch-all. Files (global) stays until P4 folds the
-              subtree into each node. */}
+              repo-less session catch-all. Files are per-node now (ProjectFiles),
+              so there's no global Files section. */}
           <div className="app-rail-scroll">
             <AssistantSection />
             <MemoQueueSection />
             <ProjectTree />
             <OtherSessionsSection />
-            <FilesSection />
           </div>
         </nav>
         {/* Dims the main area and dismisses the pane: the mobile drawer, and the

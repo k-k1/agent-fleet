@@ -67,3 +67,15 @@
   font-size: 12px;
   padding: 2px 4px 4px 22px;
 }
+
+/* Per-node file subtree: the shared .fstree/.fsrow styles apply; drop the tree's
+   own outer padding since the node body already indents, and cap its height so a
+   big repo doesn't push the rest of the tree off-screen. */
+.proj-files {
+  position: relative;
+}
+.proj-fstree {
+  padding: 0 0 2px;
+  max-height: 320px;
+  overflow-y: auto;
+}
