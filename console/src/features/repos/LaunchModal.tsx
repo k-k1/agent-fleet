@@ -1,6 +1,6 @@
 // LaunchModal（作業を始める）— the repo row's primary 起動 action: agent + model
 // (claude only) + optional first prompt (typed or from a template), and WHERE —
-// a new isolated worktree (default; provisional branch derived from the prompt,
+// a new isolated worktree (default; unnamed = a server-minted provisional branch
 // temp/<slug> in a wip-<slug> folder) or in-place on the current checkout.
 // Port of the old components/LaunchModal.
 import { useEffect, useRef, useState } from "react";
@@ -13,7 +13,7 @@ import { readRepoLast } from "../../lib/repoLast.ts";
 import { readPromptHistory } from "../../lib/promptHistory.ts";
 import { repoPromptTemplates } from "./api.ts";
 import type { PromptTemplateGroup } from "./api.ts";
-import { deriveBranchName, sanitizeSeg } from "../../lib/reponame.ts";
+import { sanitizeSeg } from "../../lib/reponame.ts";
 
 const MODELS: [string, string][] = [
   ["", "既定"],
@@ -23,8 +23,8 @@ const MODELS: [string, string][] = [
 ];
 
 // LaunchOpts: agent + optional first prompt, plus WHERE to run. For a worktree,
-// base is the start point and newBranch the provisional branch ("" => derived
-// from the prompt, else a wip-<slug> the user renames later).
+// base is the start point and newBranch the branch to create ("" => the server
+// mints a provisional temp/<slug> the user renames later).
 export interface LaunchOpts {
   kind: string;
   model: string;
@@ -32,7 +32,6 @@ export interface LaunchOpts {
   worktree: boolean;
   base: string;
   newBranch: string;
-  folder?: string; // worktree folder segment override
   useExisting?: boolean; // check out the existing branch instead of creating one
 }
 
@@ -71,15 +70,13 @@ export function LaunchModal({ repo, branch, path, kinds, allowWorktree = true, o
   const [base, setBase] = useState(branch || "");
   const [branchName, setBranchName] = useState(""); // "" => derived from the prompt
   const [conflict, setConflict] = useState<"local" | "remote" | null>(null);
-  // Provisional naming: an explicit entry wins as-is (branch == folder); otherwise
-  // the prompt-derived auto name is throwaway — branch temp/<x> in a wip-<x> folder.
+  // Naming: an explicit entry wins as-is (branch == folder); otherwise the server
+  // mints a throwaway temp/<slug> in a wip-<slug> folder. The prompt text never
+  // feeds the name — deriving words from it produced odd names on mixed-language
+  // prompts, so provisional naming is always the slug.
   const explicit = branchName.trim();
-  const autoSlug = deriveBranchName(prompt);
-  const autoBranch = autoSlug ? "temp/" + autoSlug : ""; // "" (e.g. JP prompt) → server picks temp/<slug>
-  const newBranch = explicit || autoBranch;
-  const folderSeg = explicit ? "" : autoSlug ? "wip-" + autoSlug : ""; // "" → server derives
-  const previewSeg = explicit ? sanitizeSeg(explicit) : autoSlug ? sanitizeSeg("wip-" + autoSlug) : "";
-  const folder = worktree && previewSeg ? `${repo}@${previewSeg}` : "";
+  const newBranch = explicit; // "" → server picks temp/<slug>
+  const folder = worktree && explicit ? `${repo}@${sanitizeSeg(explicit)}` : "";
 
   // Template sources fetched once for this repo; 履歴 comes from localStorage.
   const [srvGroups, setSrvGroups] = useState<PromptTemplateGroup[]>([]);
@@ -128,7 +125,6 @@ export function LaunchModal({ repo, branch, path, kinds, allowWorktree = true, o
       worktree,
       base: worktree ? (useExisting ? newBranch : base.trim()) : "",
       newBranch: worktree && !useExisting ? newBranch : "",
-      folder: worktree && !useExisting ? folderSeg : "",
       useExisting,
     });
     if (r?.ok) {
@@ -235,7 +231,7 @@ export function LaunchModal({ repo, branch, path, kinds, allowWorktree = true, o
                     setBranchName(e.target.value);
                     setConflict(null);
                   }}
-                  placeholder={autoBranch || "自動（最初の指示から）"}
+                  placeholder="自動（暫定名 temp/…）"
                 />
               </label>
               <span className="ui-field-hint">
@@ -244,7 +240,7 @@ export function LaunchModal({ repo, branch, path, kinds, allowWorktree = true, o
                     作業コピーは <code>{folder}</code> に作成します。後でブランチ名は変更できます。
                   </>
                 ) : (
-                  <>名前は最初の指示から自動で付けます（決まらなければ暫定名。後で変更可）。</>
+                  <>空なら暫定名（temp/…）で始めます。ブランチ名は後で変更できます。</>
                 )}
               </span>
               {conflict && (

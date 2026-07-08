@@ -122,11 +122,24 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
                   <Icon name="circle-filled" /> 未コミット
                 </span>
               )}
+              {/* origin との差分: behind のみ = クリーンに FF 可能 / 両方 = 分岐して
+                  いて要マージ / ahead のみ = 未 push。Agent の auto-fetch が origin
+                  refs を更新し続けるので、押さなくてもここに出る。 */}
               {((r.ahead || r.behind) ?? 0) > 0 && (
-                <span className="repo-chip ab" title={`リモートに対して 先行 ${r.ahead ?? 0} / 遅延 ${r.behind ?? 0}`}>
+                <span
+                  className={"repo-chip ab" + (r.behind ? (r.ahead ? " diverged" : " ff") : "")}
+                  title={
+                    r.behind
+                      ? r.ahead
+                        ? `origin と分岐しています（先行 ${r.ahead} / 遅延 ${r.behind}）。fast-forward 不可 — マージかリベースが必要です`
+                        : `origin が ${r.behind} コミット先行。クリーンに fast-forward できます（ソース管理 → Fast-Forward）`
+                      : `origin より ${r.ahead} コミット先行（未 push）`
+                  }
+                >
                   {r.ahead ? `↑${r.ahead}` : ""}
                   {r.ahead && r.behind ? " " : ""}
                   {r.behind ? `↓${r.behind}` : ""}
+                  {r.behind ? (r.ahead ? " 要マージ" : " FF可") : ""}
                 </span>
               )}
             </span>

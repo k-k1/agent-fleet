@@ -1,7 +1,9 @@
 // DirPicker — browse the container's home tree and pick a directory to launch
 // in. `value` is home-relative ("" = home); the CURRENT browsed path IS the
-// selection. Git working copies get a quick list at home + a branch chip on
-// their folder rows. Port of the old components/DirPicker.
+// selection. Base clones get a quick list at home (worktrees are omitted —
+// they launch from their project-tree row, and folding them in buries the
+// repos as tasks pile up) + a branch chip on any working copy's folder row.
+// Port of the old components/DirPicker.
 import { useEffect, useState } from "react";
 import { api } from "../../core/api/client.ts";
 import { Icon } from "../../ui/Icon.tsx";
@@ -14,6 +16,7 @@ export interface RepoLite {
   name: string;
   path?: string;
   branch?: string;
+  worktree?: boolean; // linked git worktree (not a standalone clone)
 }
 
 export function DirPicker({
@@ -48,7 +51,10 @@ export function DirPicker({
 
   const segs = path ? path.split("/") : [];
   const isHome = path === "";
+  // Branch chips cover ALL working copies (worktrees included) so browsing into
+  // repos/ still identifies them; only the home quick list hides worktrees.
   const repoBranch = new Map(repos.map((r) => [`repos/${r.name}`, r.branch || ""]));
+  const baseRepos = repos.filter((r) => !r.worktree);
   const full = (name: string) => (path ? `${path}/${name}` : name);
 
   return (
@@ -67,10 +73,10 @@ export function DirPicker({
         ))}
       </div>
       <div className="dirpick-list">
-        {isHome && repos.length > 0 && (
+        {isHome && baseRepos.length > 0 && (
           <>
             <div className="dirpick-head">リポジトリ</div>
-            {repos.map((r) => (
+            {baseRepos.map((r) => (
               <button
                 key={"repo-" + r.name}
                 type="button"

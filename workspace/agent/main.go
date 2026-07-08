@@ -190,6 +190,10 @@ func main() {
 	// stop) into a graceful in-container shutdown before the SIGKILL deadline.
 	watchShutdownSignals()
 
+	// Keep origin refs fresh in the background so repo rows can badge
+	// "origin advanced" without a manual fetch (fetch_loop.go).
+	startAutoFetch()
+
 	log.Printf("workspace-agent listening on %s", addr)
 	if err := http.ListenAndServe(addr, logRequests(requireToken(mux))); err != nil {
 		log.Fatal(err)
