@@ -20,12 +20,15 @@ export function sessionFolder(s: Session): string {
   return dir ? dir.split("/").filter(Boolean).pop() || "" : "";
 }
 
-// orderedRepos lists working copies in display order: each base clone followed by
-// its worktrees (parent === base.name), then the next base. Bases and worktrees
-// are sorted by name within their group. A worktree whose parent is unknown (its
-// base was deleted) becomes its own trailing node so it never disappears.
-export function orderedRepos(repos: Repo[]): Repo[] {
-  const bases = repos.filter((r) => r.worktree !== true).sort((a, b) => a.name.localeCompare(b.name));
+// groupedRepos partitions working copies into PROJECT GROUPS: each group is a base
+// clone followed by its worktrees (parent === base.name), e.g. [base, wt-a, wt-b].
+// Bases sort by name; worktrees by name within their base. A worktree whose parent
+// is unknown (its base was deleted) becomes its own single-member trailing group so
+// it never disappears. The rail renders one visual cluster per group so a base and
+// its worktrees read as one project, separated from the next.
+export function groupedRepos(repos: Repo[]): Repo[][] {
+  const byName = (a: Repo, b: Repo) => a.name.localeCompare(b.name);
+  const bases = repos.filter((r) => r.worktree !== true).sort(byName);
   const baseNames = new Set(bases.map((r) => r.name));
   const worktreesByParent = new Map<string, Repo[]>();
   const orphanWorktrees: Repo[] = [];
@@ -39,15 +42,16 @@ export function orderedRepos(repos: Repo[]): Repo[] {
       orphanWorktrees.push(r);
     }
   }
-  const byName = (a: Repo, b: Repo) => a.name.localeCompare(b.name);
-  const out: Repo[] = [];
-  for (const base of bases) {
-    out.push(base);
-    const wts = worktreesByParent.get(base.name);
-    if (wts) out.push(...wts.sort(byName));
-  }
-  out.push(...orphanWorktrees.sort(byName));
-  return out;
+  const groups: Repo[][] = [];
+  for (const base of bases) groups.push([base, ...(worktreesByParent.get(base.name) || []).sort(byName)]);
+  for (const o of orphanWorktrees.sort(byName)) groups.push([o]);
+  return groups;
+}
+
+// orderedRepos is the flat display order (groups concatenated) — each base clone
+// followed by its worktrees, then the next base.
+export function orderedRepos(repos: Repo[]): Repo[] {
+  return groupedRepos(repos).flat();
 }
 
 // sessionsInFolder returns the sessions running in one working-copy folder, newest

@@ -1,15 +1,43 @@
-/* Project tree (left rail): working-copy nodes, each with a caret + repo-row header
-   and a nested body (sessions, and from P4 files). Reuses .sess-list / .repo-row /
-   .sess-group-btn from sessions.css + repos.css; only the node scaffolding is here. */
+/* Project tree (left rail): working copies clustered into project groups (a base
+   clone + its worktrees), each node a caret + repo-row header and a nested body
+   (sessions + files). Reuses .sess-list / .repo-row / .sess-group-btn from
+   sessions.css + repos.css; the grouping / node scaffolding is here. */
 
 .proj-tree {
-  gap: 2px;
+  gap: 0;
+  padding-top: 4px;
 }
 
-/* One working-copy node. */
+/* One project group = base + its worktrees. Groups are clearly separated so the
+   project boundaries read at a glance (the base+worktree cluster stays together). */
+.proj-group {
+  list-style: none;
+}
+.proj-group + .proj-group {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.proj-group-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+/* A node (one working copy). */
 .proj-node {
   display: flex;
   flex-direction: column;
+}
+/* Worktrees hang off their base: indented, with an accent spine binding them to
+   the base clone above (they're the same project, different checkout). */
+.proj-node.wt {
+  margin-left: 13px;
+  padding-left: 2px;
+  border-left: 2px solid color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
 /* Header line: expand caret + the repo row. */
@@ -34,7 +62,7 @@
 .proj-node-caret:hover {
   color: var(--fg);
 }
-/* The repo row fills the rest; kill the list's own padding (the tree already pads). */
+/* The repo row fills the rest; kill the list's own padding (the group already pads). */
 .proj-node-repo {
   flex: 1;
   min-width: 0;
@@ -42,30 +70,48 @@
   gap: 0;
 }
 
-/* Node body: sessions (and files) indented under the repo, aligned past the caret. */
+/* Node body: sessions + files, indented under the repo with a guide line so the
+   nesting is obvious. */
 .proj-node-body {
-  padding-left: 18px;
+  margin: 1px 0 3px 9px;
+  padding-left: 8px;
+  border-left: 1px solid var(--border);
   display: flex;
   flex-direction: column;
   gap: 1px;
-  margin-bottom: 2px;
 }
 
-/* Sub-section header (セッション / ファイル) — a lighter take on the dir-group button. */
+/* Sub-section header (セッション / ファイル): a banded, bolder header so it reads
+   as a collapsible divider — not another content row that the list buries. */
 .proj-sub-btn {
-  padding-top: 3px;
-  padding-bottom: 2px;
+  border-radius: 5px;
+  padding: 4px 6px 4px 3px;
+  color: var(--fg);
+  font-weight: 600;
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+}
+.proj-sub-btn:hover {
+  background: color-mix(in srgb, var(--fg) 9%, transparent);
 }
 
 /* Nested session/file list under a sub-section: no extra outer padding. */
 .proj-sub-list {
-  padding: 0 0 2px;
+  padding: 1px 0 2px;
 }
-
 .proj-sub-empty {
   color: var(--muted);
   font-size: 12px;
-  padding: 2px 4px 4px 22px;
+  padding: 3px 4px 4px 22px;
+}
+
+/* Separator in the プロジェクト header, between repo actions and the session
+   maintenance actions (整理 / アーカイブ). */
+.proj-head-sep {
+  flex: none;
+  width: 1px;
+  align-self: stretch;
+  margin: 3px 3px;
+  background: var(--border);
 }
 
 /* Per-node file subtree: the shared .fstree/.fsrow styles apply; drop the tree's
@@ -75,7 +121,7 @@
   position: relative;
 }
 .proj-fstree {
-  padding: 0 0 2px;
-  max-height: 320px;
+  padding: 1px 0 2px;
+  max-height: 240px;
   overflow-y: auto;
 }
