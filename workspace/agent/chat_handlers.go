@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
 // --- HTTP handlers ---
@@ -101,7 +102,7 @@ func handleChatCreate(w http.ResponseWriter, r *http.Request) {
 		}
 		c.Agent = req.Agent
 		c.Model = strings.TrimSpace(req.Model)
-		if req.Agent == kindClaude {
+		if req.Agent == session.KindClaude {
 			c.Tools = toolsAFRead
 		} else {
 			c.Tools = toolsNone

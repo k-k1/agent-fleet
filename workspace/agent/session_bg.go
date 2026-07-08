@@ -8,6 +8,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 )
 
 // Background-activity detection. A claude session can launch a run_in_background
@@ -100,7 +103,7 @@ var shellComm = map[string]bool{
 // paneRootPID returns the pane's root process (the shell/program tmux launched for
 // the session), the root of the tree we search. 0 if it can't be resolved.
 func paneRootPID(tn string) int {
-	pane := sessionPaneID(tn)
+	pane := tmuxx.SessionPaneID(tn)
 	if pane == "" {
 		return 0
 	}
@@ -115,7 +118,7 @@ func paneRootPID(tn string) int {
 // sessionBackgroundBusy reports whether a live worker process runs under the
 // session's pane — a run_in_background task still going while claude is idle.
 func sessionBackgroundBusy(name string) bool {
-	root := paneRootPID(tmuxName(name))
+	root := paneRootPID(session.TmuxName(name))
 	if root == 0 {
 		return false
 	}

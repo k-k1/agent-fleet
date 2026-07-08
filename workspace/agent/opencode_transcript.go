@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 	_ "modernc.org/sqlite" // pure-Go SQLite driver (registers "sqlite"), as in the CP
 )
@@ -54,7 +55,7 @@ func opencodeOpenRO() (*sql.DB, bool) {
 // trust the captured sid alone — we read what opencode is actually using. Falls back to
 // the captured sid only when the query can't run. (Caveat: two opencode slots in the SAME
 // dir resolve to the same session — the pre-existing multi-slot-same-dir limitation.)
-func opencodeActiveSession(db *sql.DB, m sessionMeta) string {
+func opencodeActiveSession(db *sql.DB, m session.Meta) string {
 	var id string
 	_ = db.QueryRow(
 		`SELECT s.id FROM session s JOIN message msg ON msg.session_id = s.id
@@ -62,7 +63,7 @@ func opencodeActiveSession(db *sql.DB, m sessionMeta) string {
 		 GROUP BY s.id ORDER BY MAX(msg.time_created) DESC LIMIT 1`, m.Dir,
 	).Scan(&id)
 	if id == "" {
-		return opencodeSids.read(sessionUUID(m.Dir, m.Name))
+		return opencodeSids.read(session.UUID(m.Dir, m.Name))
 	}
 	return id
 }
@@ -71,7 +72,7 @@ func opencodeActiveSession(db *sql.DB, m sessionMeta) string {
 // status plugin's events are unreliable): a turn is in flight when the active session's
 // newest message isn't a completed assistant reply. Returns "" when the db can't be read
 // (caller falls back to the plugin status store).
-func opencodeLiveState(m sessionMeta) string {
+func opencodeLiveState(m session.Meta) string {
 	db, ok := opencodeOpenRO()
 	if !ok {
 		return ""
@@ -104,7 +105,7 @@ func opencodeLiveState(m sessionMeta) string {
 // readOpencodeTranscript reads the slot's current opencode conversation as normalized
 // chat turns plus the db path (diagnostics). ok is always true; no conversation yet
 // yields nil turns (an empty chat).
-func readOpencodeTranscript(m sessionMeta) (transcriptData, bool) {
+func readOpencodeTranscript(m session.Meta) (transcriptData, bool) {
 	db, ok := opencodeOpenRO()
 	if !ok {
 		return transcriptData{}, true

@@ -20,6 +20,8 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
 
@@ -91,7 +93,7 @@ func titleGenDone(name string, ok bool) {
 // cursor path and the generic codex/opencode path both already parse turns every
 // poll — this reuses that instead of adding a server-side ticker; no periodic
 // goroutine exists anywhere else in this package). Callers must have already
-// checked the cheap sessionMeta fields (Title == "", SuggestedTitle == "",
+// checked the cheap session.Meta fields (Title == "", SuggestedTitle == "",
 // !SuggestedTitleDismissed) and autoTitleSuggestEnabled() before computing turns.
 func maybeSuggestTitle(name string, turns []transcript.Turn, idleFor time.Duration) {
 	if len(turns) < minTitleSuggestTurns || idleFor < titleIdleThreshold {
@@ -119,12 +121,12 @@ func generateSessionTitle(name string, turns []transcript.Turn) {
 	}
 	ok = true
 
-	m, found := readSessionMeta(name)
+	m, found := session.ReadMeta(name)
 	if !found || m.Title != "" || m.SuggestedTitle != "" || m.SuggestedTitleDismissed {
 		return // gone, or resolved by the user while we were generating
 	}
 	m.SuggestedTitle = title
-	writeSessionMeta(m)
+	session.WriteMeta(m)
 }
 
 // titleSuggestPersona keeps the headless call laser-focused: no preamble, no
@@ -275,11 +277,11 @@ func cleanSuggestedTitle(s string) string {
 // launch.
 func handleAcceptSuggestedTitle(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if !nameRe.MatchString(name) {
+	if !session.ValidName(name) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
 		return
 	}
-	m, ok := readSessionMeta(name)
+	m, ok := session.ReadMeta(name)
 	if !ok {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
 		return
@@ -294,8 +296,8 @@ func handleAcceptSuggestedTitle(w http.ResponseWriter, r *http.Request) {
 	if agentOf(m.Kind).caps().usesLabel {
 		m.Label = sessionLabelFor(m.Dir, m.Title)
 	}
-	writeSessionMeta(m)
-	httpx.WriteJSON(w, http.StatusOK, wireSession(m, tmuxHasSession(tmuxName(name))))
+	session.WriteMeta(m)
+	httpx.WriteJSON(w, http.StatusOK, wireSession(m, tmuxx.HasSession(session.TmuxName(name))))
 }
 
 // errNoTitleContent/errTitleGenBusy are sentinels generateTitleNow returns so
@@ -349,10 +351,10 @@ func writeTitleGenErr(w http.ResponseWriter, err error) {
 // carries the new suggestion directly; this is a rare, user-initiated action
 // (unlike the poll-driven automatic path), so blocking the request on the LLM call
 // is fine. Persists into SuggestedTitle (so it also surfaces as the header banner)
-// — for a preview that doesn't touch sessionMeta, see handleSuggestTitle.
+// — for a preview that doesn't touch session.Meta, see handleSuggestTitle.
 func handleRegenerateSuggestedTitle(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if !nameRe.MatchString(name) {
+	if !session.ValidName(name) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
 		return
 	}
@@ -360,7 +362,7 @@ func handleRegenerateSuggestedTitle(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "feature_disabled", "auto title suggestion is turned off")
 		return
 	}
-	m, found := readSessionMeta(name)
+	m, found := session.ReadMeta(name)
 	if !found {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
 		return
@@ -375,18 +377,18 @@ func handleRegenerateSuggestedTitle(w http.ResponseWriter, r *http.Request) {
 
 	// Re-read: the LLM call can take tens of seconds, during which the session
 	// could have been archived/removed.
-	m, found = readSessionMeta(name)
+	m, found = session.ReadMeta(name)
 	if !found {
 		httpx.WriteErr(w, http.StatusConflict, "conflict", "session changed while generating")
 		return
 	}
 	m.SuggestedTitle = title
 	m.SuggestedTitleDismissed = false // an explicit re-ask overrides any earlier dismissal
-	writeSessionMeta(m)
+	session.WriteMeta(m)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"suggestedTitle": title})
 }
 
-// handleSuggestTitle previews a title suggestion WITHOUT touching sessionMeta —
+// handleSuggestTitle previews a title suggestion WITHOUT touching session.Meta —
 // used by the manual rename dialog's "AIに提案してもらう" button, which just fills
 // the text field for the user to edit/accept themselves. Unlike
 // handleRegenerateSuggestedTitle, this works even when the session already has a
@@ -394,7 +396,7 @@ func handleRegenerateSuggestedTitle(w http.ResponseWriter, r *http.Request) {
 // the accept/dismiss banner flow.
 func handleSuggestTitle(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if !nameRe.MatchString(name) {
+	if !session.ValidName(name) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
 		return
 	}
@@ -402,7 +404,7 @@ func handleSuggestTitle(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "feature_disabled", "auto title suggestion is turned off")
 		return
 	}
-	m, found := readSessionMeta(name)
+	m, found := session.ReadMeta(name)
 	if !found {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
 		return
@@ -424,7 +426,7 @@ func handleSuggestTitle(w http.ResponseWriter, r *http.Request) {
 // re-opens the session to future auto-suggestions.
 func handleSetTitle(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if !nameRe.MatchString(name) {
+	if !session.ValidName(name) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
 		return
 	}
@@ -440,7 +442,7 @@ func handleSetTitle(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_title", "title too long or contains control characters")
 		return
 	}
-	m, found := readSessionMeta(name)
+	m, found := session.ReadMeta(name)
 	if !found {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
 		return
@@ -451,8 +453,8 @@ func handleSetTitle(w http.ResponseWriter, r *http.Request) {
 	if agentOf(m.Kind).caps().usesLabel {
 		m.Label = sessionLabelFor(m.Dir, m.Title)
 	}
-	writeSessionMeta(m)
-	httpx.WriteJSON(w, http.StatusOK, wireSession(m, tmuxHasSession(tmuxName(name))))
+	session.WriteMeta(m)
+	httpx.WriteJSON(w, http.StatusOK, wireSession(m, tmuxx.HasSession(session.TmuxName(name))))
 }
 
 // branchSuggestPersona pins the headless call to emit a git branch name, NOT a
@@ -520,7 +522,7 @@ func cleanBranchName(s string) string {
 // the suggestion for the rename modal to fill; it never renames on its own.
 func handleSessionSuggestBranch(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if !nameRe.MatchString(name) {
+	if !session.ValidName(name) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
 		return
 	}
@@ -528,7 +530,7 @@ func handleSessionSuggestBranch(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "feature_disabled", "AI 提案が無効です（表示設定のタイトル自動提案をオンに）")
 		return
 	}
-	m, ok := readSessionMeta(name)
+	m, ok := session.ReadMeta(name)
 	if !ok {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
 		return
@@ -561,11 +563,11 @@ func handleSessionSuggestBranch(w http.ResponseWriter, r *http.Request) {
 // Refuses a name that collides with an existing local or past-remote branch.
 func handleSessionRenameBranch(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if !nameRe.MatchString(name) {
+	if !session.ValidName(name) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
 		return
 	}
-	m, ok := readSessionMeta(name)
+	m, ok := session.ReadMeta(name)
 	if !ok {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
 		return
@@ -600,17 +602,17 @@ func handleSessionRenameBranch(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadGateway, "rename_failed", out)
 		return
 	}
-	updateSessionStartBranch(dir, newName)
-	m, _ = readSessionMeta(name)
-	httpx.WriteJSON(w, http.StatusOK, wireSession(m, tmuxHasSession(tmuxName(name))))
+	session.UpdateStartBranch(dir, newName)
+	m, _ = session.ReadMeta(name)
+	httpx.WriteJSON(w, http.StatusOK, wireSession(m, tmuxx.HasSession(session.TmuxName(name))))
 }
 
 // sessionTitleTurns fetches the full turn list for a session regardless of kind,
 // for the manual regenerate action (which needs the whole conversation, not a
 // poll window).
-func sessionTitleTurns(m sessionMeta) []transcript.Turn {
-	if m.Kind == kindClaude {
-		sid := sessionUUID(m.Dir, m.Name)
+func sessionTitleTurns(m session.Meta) []transcript.Turn {
+	if m.Kind == session.KindClaude {
+		sid := session.UUID(m.Dir, m.Name)
 		lines, _, _ := transcriptRead(sid)
 		return collectTurns(lines, 0, len(lines))
 	}
@@ -625,17 +627,17 @@ func sessionTitleTurns(m sessionMeta) []transcript.Turn {
 // and latches SuggestedTitleDismissed so it is never offered again for this session.
 func handleDismissSuggestedTitle(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if !nameRe.MatchString(name) {
+	if !session.ValidName(name) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
 		return
 	}
-	m, ok := readSessionMeta(name)
+	m, ok := session.ReadMeta(name)
 	if !ok {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
 		return
 	}
 	m.SuggestedTitle = ""
 	m.SuggestedTitleDismissed = true
-	writeSessionMeta(m)
-	httpx.WriteJSON(w, http.StatusOK, wireSession(m, tmuxHasSession(tmuxName(name))))
+	session.WriteMeta(m)
+	httpx.WriteJSON(w, http.StatusOK, wireSession(m, tmuxx.HasSession(session.TmuxName(name))))
 }

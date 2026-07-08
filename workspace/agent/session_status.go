@@ -2,12 +2,10 @@ package main
 
 import (
 	"encoding/json"
-	"log"
 	"os"
 	"strings"
-	"time"
 
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/fstore"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 )
 
 // Session liveness via claude hooks. claude fires UserPromptSubmit when work
@@ -18,22 +16,10 @@ import (
 // driven by claude's own events, no TUI parsing or transcript polling. With
 // --dangerously-skip-permissions there is no tool-approval QA state, so the two
 // meaningful states are working and idle(=response ready / awaiting input).
-
-type sessionStatus struct {
-	State string `json:"state"` // "working" | "idle"
-	TS    string `json:"ts"`    // RFC3339
-}
-
-// Per-sid file stores (internal/fstore). pending-question holds the raw tool_input
-// payload; last-tool shares pending-perm's dir under a different extension.
-var (
-	statusFiles      = fstore.JSON[sessionStatus](agentConfigDir, "session-status", ".json")
-	pendingQuestions = fstore.Raw(agentConfigDir, "pending-question", ".json")
-	pendingPlans     = fstore.Strings(agentConfigDir, "pending-plan", ".md")
-	pendingPerms     = fstore.Strings(agentConfigDir, "pending-perm", ".txt")
-	lastTools        = fstore.Strings(agentConfigDir, "pending-perm", ".tool")
-	pendingTexts     = fstore.Strings(agentConfigDir, "pending-text", ".txt")
-)
+//
+// 状態と pending ペイロードのストア本体は internal/status（docs/23 残① Wave A）;
+// このファイルは claude settings への hook 配線と session-status サブコマンドの
+// 入口だけを持つ。
 
 // runSessionStatusHook is `workspace-agent session-status <state> [sid] [codex]`.
 // Three callers key the status differently:
@@ -72,14 +58,14 @@ func runSessionStatusHook(args []string) {
 	// the chunks so a pending AskUserQuestion can show the prose that preceded it, which
 	// isn't in the transcript until the question is answered. Never touches the status.
 	if state == "message" {
-		appendPendingText(sid, h.delta)
+		status.AppendPendingText(sid, h.delta)
 		return
 	}
 	// permtool: a PreToolUse hook for edit/command tools that just records what is
 	// about to run (for the permission block's detail) — it fires in EVERY mode, so
 	// it must not change the session status.
 	if state == "permtool" {
-		writeLastTool(sid, h.toolDetail)
+		status.WriteLastTool(sid, h.toolDetail)
 		return
 	}
 	// The Notification hook fires for several reasons (idle, permission, …); only
@@ -88,7 +74,7 @@ func runSessionStatusHook(args []string) {
 	if state == "permission" && h.ntype != "permission_prompt" {
 		return
 	}
-	persistSessionStatus(sid, state)
+	status.Persist(sid, state)
 	applyPendingPayloads(sid, state, h)
 }
 
@@ -150,16 +136,6 @@ func decodeHookStdin() hookInput {
 	}
 }
 
-// persistSessionStatus writes {state, ts} keyed by sid. Errors are logged (not
-// swallowed): a failed write leaves the Console's 進行中/応答あり badge silently
-// stale, so a log line is the only breadcrumb the write ever failed.
-func persistSessionStatus(sid, state string) {
-	s := sessionStatus{State: state, TS: time.Now().Format(time.RFC3339)}
-	if err := statusFiles.Write(sid, s); err != nil {
-		log.Printf("session-status: write %s: %v", statusFiles.Path(sid), err)
-	}
-}
-
 // applyPendingPayloads persists/clears the pending AskUserQuestion / ExitPlanMode /
 // permission payloads alongside the status (each cleared whenever the session isn't
 // in that state) — except that a permission prompt must NOT clear a pending
@@ -171,34 +147,34 @@ func persistSessionStatus(sid, state string) {
 // (PostToolUse→working, idle).
 func applyPendingPayloads(sid, state string, h hookInput) {
 	if state == "question" && len(h.questions) > 0 {
-		writePendingQuestion(sid, h.questions)
+		status.WritePendingQuestion(sid, h.questions)
 	} else if state != "permission" {
-		removePendingQuestion(sid)
+		status.RemovePendingQuestion(sid)
 	}
 	if state == "plan" && h.plan != "" {
-		writePendingPlan(sid, h.plan)
+		status.WritePendingPlan(sid, h.plan)
 	} else if state != "permission" {
-		removePendingPlan(sid)
+		status.RemovePendingPlan(sid)
 	}
 	if state == "permission" {
 		message := h.message
 		// Prefer the specific tool detail captured just before the prompt.
-		if detail, ok := readLastTool(sid); ok && detail != "" {
+		if detail, ok := status.ReadLastTool(sid); ok && detail != "" {
 			message = detail
 		} else if message == "" {
 			message = "Claude needs your permission"
 		}
-		removeLastTool(sid)
-		writePendingPermission(sid, message)
+		status.RemoveLastTool(sid)
+		status.WritePendingPermission(sid, message)
 	} else {
-		removePendingPermission(sid)
+		status.RemovePendingPermission(sid)
 	}
 	// The MessageDisplay text buffer belongs to the in-flight turn: reset it at turn
 	// start (UserPromptSubmit→working) and drop it once the turn moves past the question
 	// (answered→working, Stop→idle). Kept during "question"/"permission" so a pending
 	// question can still surface the prose that preceded it.
 	if state == "working" || state == "idle" {
-		removePendingText(sid)
+		status.RemovePendingText(sid)
 	}
 }
 
@@ -220,83 +196,6 @@ func permToolDetail(name, file, notebook, path, command string) string {
 		return name
 	}
 	return name + " · " + arg
-}
-
-// last-tool: the tool about to run, recorded by the permtool PreToolUse hook and read
-// when a permission prompt fires, to give the permission block a concrete subject.
-func writeLastTool(sid, detail string) {
-	if detail == "" {
-		return
-	}
-	_ = lastTools.Write(sid, detail)
-}
-
-func readLastTool(sid string) (string, bool) { return lastTools.Read(sid) }
-func removeLastTool(sid string)              { lastTools.Remove(sid) }
-
-// A pending AskUserQuestion (the tool_input.questions array), kept only while the
-// session is in the question state so the Console can render and answer it.
-func writePendingQuestion(sid string, questions json.RawMessage) {
-	_ = pendingQuestions.Write(sid, questions)
-}
-
-func readPendingQuestion(sid string) (json.RawMessage, bool) {
-	b, ok := pendingQuestions.Read(sid)
-	return json.RawMessage(b), ok
-}
-
-func removePendingQuestion(sid string) { pendingQuestions.Remove(sid) }
-
-// pending-text: the assistant's streaming text for the in-flight turn, accumulated from
-// the MessageDisplay hook. Kept only long enough for a pending AskUserQuestion to show
-// the prose that preceded it (the turn's text lands in the transcript only after the
-// question is answered). Reset each turn — see applyPendingPayloads.
-//
-// pendingTextCap bounds the buffer: the prose before a question is small, so a runaway
-// stream shouldn't grow an unbounded file (it's reset every turn regardless).
-const pendingTextCap = 16 << 10
-
-func appendPendingText(sid, delta string) {
-	if delta == "" {
-		return
-	}
-	if err := os.MkdirAll(pendingTexts.Dir(), 0o700); err != nil {
-		return
-	}
-	path := pendingTexts.Path(sid)
-	if fi, err := os.Stat(path); err == nil && fi.Size() >= pendingTextCap {
-		return // already at the cap; drop further chunks
-	}
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
-	if err != nil {
-		return
-	}
-	defer f.Close()
-	_, _ = f.WriteString(delta)
-}
-
-func readPendingText(sid string) (string, bool) { return pendingTexts.Read(sid) }
-func removePendingText(sid string)              { pendingTexts.Remove(sid) }
-
-// A pending ExitPlanMode plan (the tool_input.plan markdown), kept only while the
-// session waits for plan approval so the Console can show it / open it in a pane.
-func writePendingPlan(sid, plan string)         { _ = pendingPlans.Write(sid, plan) }
-func readPendingPlan(sid string) (string, bool) { return pendingPlans.Read(sid) }
-func removePendingPlan(sid string)              { pendingPlans.Remove(sid) }
-
-// A pending tool-permission prompt (the Notification message), kept while the session
-// is blocked awaiting an allow/deny decision so the Console can approve it inline.
-func writePendingPermission(sid, message string)      { _ = pendingPerms.Write(sid, message) }
-func readPendingPermission(sid string) (string, bool) { return pendingPerms.Read(sid) }
-func removePendingPermission(sid string)              { pendingPerms.Remove(sid) }
-
-func readSessionStatus(sid string) (sessionStatus, bool) { return statusFiles.Read(sid) }
-
-func removeSessionStatus(sid string) {
-	statusFiles.Remove(sid)
-	removePendingQuestion(sid)
-	removePendingPlan(sid)
-	removePendingPermission(sid)
 }
 
 // agentExe is the absolute path to this binary, used to build hook commands that

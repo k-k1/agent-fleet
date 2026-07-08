@@ -1,4 +1,4 @@
-package main
+package session
 
 import (
 	"crypto/sha1"
@@ -13,10 +13,10 @@ var nsURL = [16]byte{
 	0x80, 0xb4, 0x00, 0xc0, 0x4f, 0xd4, 0x30, 0xc8,
 }
 
-// sessionUUID returns the deterministic UUIDv5 for a (dir, name) slot.
+// UUID returns the deterministic UUIDv5 for a (dir, name) slot.
 // Same slot => same id => claude --resume reuses the same web session,
 // mirroring tmux-claude.sh's `uuidgen --sha1 --namespace @url --name "dir|name"`.
-func sessionUUID(dir, name string) string {
+func UUID(dir, name string) string {
 	return uuidV5(nsURL, dir+"|"+name)
 }
 

@@ -8,6 +8,9 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
 
@@ -31,16 +34,16 @@ const forkPreviewCursor = 1 << 30
 // only (its jsonl transcript). cursor is a line index into that transcript.
 func handleSessionMessages(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if !nameRe.MatchString(name) {
+	if !session.ValidName(name) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
 		return
 	}
-	meta, ok := readSessionMeta(name)
+	meta, ok := session.ReadMeta(name)
 	if !ok {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
 		return
 	}
-	alive := tmuxHasSession(tmuxName(name))
+	alive := tmuxx.HasSession(session.TmuxName(name))
 	// heal=true: self-correct a stale waiting/working cache when the pane is back at
 	// the ready prompt (rejected permission, abandoned question, killed+resumed).
 	state := driveState(meta, alive, true)
@@ -52,7 +55,7 @@ func handleSessionMessages(w http.ResponseWriter, r *http.Request) {
 	// <sid>.jsonl; they normalize their native store into transcript.Turns via transcript(),
 	// and the generic windower pages over those. claude keeps its own line-cursor path
 	// below (battle-tested reset/stub/compaction handling — left untouched).
-	if meta.Kind != kindClaude {
+	if meta.Kind != session.KindClaude {
 		handleGenericMessages(w, r, meta, alive, state)
 		return
 	}
@@ -62,7 +65,7 @@ func handleSessionMessages(w http.ResponseWriter, r *http.Request) {
 			since = n
 		}
 	}
-	sid := sessionUUID(meta.Dir, name)
+	sid := session.UUID(meta.Dir, name)
 	lines, jpath, jmatched := transcriptRead(sid)
 	// A just-forked session's OWN jsonl isn't materialized until claude finishes copying
 	// the source conversation (buildSessionProgram runs --fork-session on first launch).
@@ -152,7 +155,7 @@ func handleSessionMessages(w http.ResponseWriter, r *http.Request) {
 	// status line so it reflects a terminal-side Shift+Tab too. The jsonl mode is a stale
 	// per-prompt snapshot with a different vocabulary, so it's not used as a fallback.
 	if alive {
-		if m := paneMode(kindClaude, tmuxName(name)); m != "" {
+		if m := paneMode(session.KindClaude, session.TmuxName(name)); m != "" {
 			resp["mode"] = m
 		}
 	}
@@ -184,7 +187,7 @@ func handleSessionMessages(w http.ResponseWriter, r *http.Request) {
 // ?before paging, and live since=<cursor> increments — so the Console chat is
 // unchanged. The cursor here is a TURN count (not a jsonl line count), but the client
 // treats it opaquely (reset / firstLine / hasMore drive it), so the two are compatible.
-func handleGenericMessages(w http.ResponseWriter, r *http.Request, meta sessionMeta, alive bool, state string) {
+func handleGenericMessages(w http.ResponseWriter, r *http.Request, meta session.Meta, alive bool, state string) {
 	td, _ := agentOf(meta.Kind).transcript(meta)
 	all, path := td.turns, td.path
 	total := len(all)
@@ -270,7 +273,7 @@ func handleGenericMessages(w http.ResponseWriter, r *http.Request, meta sessionM
 	// stopped codex show 計画モードON. When not alive, or the composer isn't drawn yet,
 	// report no mode (the Console shows the default, normal).
 	if alive {
-		if pm := paneMode(meta.Kind, tmuxName(meta.Name)); pm != "" {
+		if pm := paneMode(meta.Kind, session.TmuxName(meta.Name)); pm != "" {
 			resp["mode"] = pm
 		}
 	}
@@ -362,12 +365,12 @@ func surfacePendingPayloads(resp map[string]any, sid, state string) {
 	// menu underneath, skipping it. So whenever a question/plan is captured, surface it
 	// and suppress the permission — the Console drives it with the correct keys. The
 	// payload is cleared by its own lifecycle (PostToolUse→working, idle) once resolved.
-	pq, hasQ := readPendingQuestion(sid)
-	pp, hasP := readPendingPlan(sid)
+	pq, hasQ := status.ReadPendingQuestion(sid)
+	pp, hasP := status.ReadPendingPlan(sid)
 	if state == "permission" && !hasQ && !hasP {
 		// A genuine tool-permission prompt (Edit/Bash) with no question/plan behind it:
 		// surface only it, because answer keystrokes must reach the permission dialog.
-		if pm, ok := readPendingPermission(sid); ok {
+		if pm, ok := status.ReadPendingPermission(sid); ok {
 			resp["pendingPermission"] = pm
 		}
 		return
@@ -377,7 +380,7 @@ func surfacePendingPayloads(resp map[string]any, sid, state string) {
 		// The prose the assistant streamed just before the question (accumulated by the
 		// MessageDisplay hook). Absent if MessageDisplay hasn't populated it by question
 		// time — the pending card then renders without preceding context, as before.
-		if txt, ok := readPendingText(sid); ok {
+		if txt, ok := status.ReadPendingText(sid); ok {
 			if txt = strings.TrimSpace(txt); txt != "" {
 				resp["pendingText"] = txt
 			}
