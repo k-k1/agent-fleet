@@ -1324,6 +1324,11 @@ button.mt-toolrun-head:hover {
   display: flex;
   align-items: center;
   gap: 10px;
+  /* Equalize head heights across pane types: the mirror/terminal heads are sized
+     by the ターミナル⇄チャット seg control (~23px content), but the chat head has
+     only text chips and would render ~4px shorter. 36px = 23px content + 12px
+     vertical padding + 1px border-bottom (border-box). */
+  min-height: 36px;
   /* right padding reserves room for the pane control cluster overlaid at the top-right;
      left padding reserves room for the drag grip overlaid at the top-left, just left of
      the badge. Split moved to the WS bar, so the cluster is now just wrap+close (file/scm)

@@ -287,7 +287,12 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
         <span className="fi-name">
           <Icon name={draftAsst?.icon || "comment-discussion"} /> {title}
         </span>
-        {agent && <span className={"kind-tag kind-" + kindClass(agentKind!)}>{agent.assistantName}</span>}
+        {agent && (
+          <span className={"kind-tag kind-" + kindClass(agentKind!)}>
+            <Icon name={agent.icon} />
+            {agent.assistantName}
+          </span>
+        )}
         {(conv || sending) && (
           <span className={"session-state " + stateChip.cls}>
             <Icon name={stateChip.icon} spin={stateChip.spin} /> {stateChip.text}
