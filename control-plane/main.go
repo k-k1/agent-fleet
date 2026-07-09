@@ -41,6 +41,10 @@ type config struct {
 	// rows to one per (day, host). Both empty/nil unless egress is configured.
 	egressToken string
 	egressDedup *egressAuditDedup
+	// TTS 読み上げ（docs/24 + ADR0013）: CP が直接叩く VOICEVOX エンジンの base URL。
+	// dev は host 起動の CP から docker 公開の 127.0.0.1:50021 へ。AWS は ECS + Cloud Map
+	// の固定 DNS を差し込む（Phase 2）。
+	voicevoxURL string
 }
 
 func main() {
@@ -170,6 +174,8 @@ func main() {
 		// docs/20 M2 egress ingestion auth + audit dedup (empty token => endpoint 401s).
 		egressToken: os.Getenv("AF_EGRESS_TOKEN"),
 		egressDedup: &egressAuditDedup{},
+		// docs/24 TTS: 既定は dev の docker 公開先（host loopback）。
+		voicevoxURL: envOr("AF_VOICEVOX_URL", "http://127.0.0.1:50021"),
 	}
 
 	// P3-9 idle-stop (docs/19): a background reaper halts idle claude sessions
