@@ -61,6 +61,12 @@ func TestTechTerms(t *testing.T) {
 		"DynamoDB":   "ダイナモディービー",
 		"kubernetes": "クーバネティス",
 		"IPv6":       "アイピーブイシックス",
+		"Google":     "グーグル",
+		"Figma":      "フィグマ",
+		"Jira":       "ジラ",
+		"GitHub":     "ギットハブ",
+		"Slack":      "スラック",
+		"Excel":      "エクセル",
 	}
 	for in, exp := range want {
 		if got := englishToKana(in); got != exp {
