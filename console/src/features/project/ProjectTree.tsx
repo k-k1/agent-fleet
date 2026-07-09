@@ -111,8 +111,8 @@ export function ProjectTree() {
             )}
           </EmptyState>
         )}
-        {groups.map((members) => (
-          <li key={members[0].name} className="proj-group">
+        {groups.map((members, i) => (
+          <li key={members[0].name} className={i % 2 === 1 ? "proj-group alt" : "proj-group"}>
             <ul className="proj-group-list">
               {members.map((r) => (
                 <RepoNode key={r.name} r={r} ctx={ctx} actions={actions} />

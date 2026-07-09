@@ -8,15 +8,19 @@
   padding-top: 4px;
 }
 
-/* One project group = base + its worktrees. Groups are clearly separated so the
-   project boundaries read at a glance (the base+worktree cluster stays together). */
+/* One project group = base + its worktrees. Every other group gets a faint band
+   (.alt, assigned in repo order by ProjectTree) so the project boundaries read at
+   a glance — the band replaces the old border-top separator. */
 .proj-group {
   list-style: none;
+  padding: 4px 3px;
+  border-radius: 6px;
 }
 .proj-group + .proj-group {
-  margin-top: 10px;
-  padding-top: 10px;
-  border-top: 1px solid var(--border);
+  margin-top: 4px;
+}
+.proj-group.alt {
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
 }
 .proj-group-list {
   list-style: none;
