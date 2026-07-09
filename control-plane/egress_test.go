@@ -107,7 +107,7 @@ func TestEgressStore(t *testing.T) {
 	}
 }
 
-// handleEgressIngest end-to-end: auth gate, aggregation, and a single deduped
+// egressAPI.ingest end-to-end: auth gate, aggregation, and a single deduped
 // would-block audit row per host.
 func TestEgressIngestHandler(t *testing.T) {
 	ctx := context.Background()
@@ -119,12 +119,12 @@ func TestEgressIngestHandler(t *testing.T) {
 	if err := st.migrate(ctx); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	cfg := config{mgr: &manager{store: st}, egressToken: "tok", egressDedup: &egressAuditDedup{}}
+	eg := newEgressAPI(&manager{store: st}, "tok", &egressAuditDedup{})
 	body := `{"events":[{"host":"api.anthropic.com","allowed":true,"count":3},` +
 		`{"host":"paste.ee","allowed":false,"count":2},{"host":"paste.ee","allowed":false,"count":1}]}`
 
 	w0 := httptest.NewRecorder()
-	cfg.handleEgressIngest(w0, httptest.NewRequest("POST", "/internal/egress", strings.NewReader(body)))
+	eg.ingest(w0, httptest.NewRequest("POST", "/internal/egress", strings.NewReader(body)))
 	if w0.Code != 401 {
 		t.Fatalf("unauthorized: want 401 got %d", w0.Code)
 	}
@@ -132,7 +132,7 @@ func TestEgressIngestHandler(t *testing.T) {
 	r := httptest.NewRequest("POST", "/internal/egress", strings.NewReader(body))
 	r.Header.Set("Authorization", "Bearer tok")
 	w := httptest.NewRecorder()
-	cfg.handleEgressIngest(w, r)
+	eg.ingest(w, r)
 	if w.Code != 204 {
 		t.Fatalf("authorized: want 204 got %d", w.Code)
 	}
@@ -230,9 +230,9 @@ func TestEffectivePolicyEndpoint(t *testing.T) {
 	}
 	_ = st.AddAllowlist(ctx, AllowlistEntry{ID: newID(), Entry: "extra.internal", State: "active", AddedAt: nowTS()})
 	_ = st.SetSetting(ctx, "egress_mode", "enforce")
-	cfg := config{mgr: &manager{store: st}, egressToken: "tok"}
+	eg := newEgressAPI(&manager{store: st}, "tok", nil)
 
-	entries, enforce := cfg.effectivePolicy(ctx)
+	entries, enforce := eg.effectivePolicy(ctx)
 	if !enforce {
 		t.Fatalf("enforce should be true")
 	}
@@ -251,14 +251,14 @@ func TestEffectivePolicyEndpoint(t *testing.T) {
 
 	// The proxy-facing endpoint requires the token.
 	w0 := httptest.NewRecorder()
-	cfg.handleEgressPolicy(w0, httptest.NewRequest("GET", "/internal/egress/policy", nil))
+	eg.policy(w0, httptest.NewRequest("GET", "/internal/egress/policy", nil))
 	if w0.Code != 401 {
 		t.Fatalf("no token: want 401 got %d", w0.Code)
 	}
 	r := httptest.NewRequest("GET", "/internal/egress/policy", nil)
 	r.Header.Set("Authorization", "Bearer tok")
 	w := httptest.NewRecorder()
-	cfg.handleEgressPolicy(w, r)
+	eg.policy(w, r)
 	if w.Code != 200 {
 		t.Fatalf("with token: want 200 got %d", w.Code)
 	}

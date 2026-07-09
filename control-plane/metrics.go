@@ -60,10 +60,9 @@ func readHostStats() (load1 float64, ncpu int, memUsed, memTotal uint64) {
 	return
 }
 
-func (c config) handleHostStats(w http.ResponseWriter, r *http.Request) {
-	if _, ok := c.requireSuperAdmin(w, r); !ok {
-		return
-	}
+// hostStats serves host load / memory（docs/23 残③: adminAPI のメソッドとして
+// 登録側で withSuperAdmin に包む）.
+func (a adminAPI) hostStats(w http.ResponseWriter, _ *http.Request, _ Identity) {
 	load1, ncpu, memUsed, memTotal := readHostStats()
 	writeJSON(w, http.StatusOK, map[string]any{
 		"load1": load1, "ncpu": ncpu, "mem_used": memUsed, "mem_total": memTotal,
