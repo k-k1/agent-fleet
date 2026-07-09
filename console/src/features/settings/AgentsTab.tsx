@@ -122,6 +122,13 @@ export function AgentsTab() {
         音声合成には VOICEVOX エンジンが必要です（未起動のときは無音になります）。
         {s.ttsEnabled && <> 音声引用：VOICEVOX：ずんだもん。</>}
       </p>
+      <Row label="セッションの音声通知">
+        <OnOff value={s.ttsSessionNotify} onChange={(v) => setSetting("ttsSessionNotify", v)} />
+      </Row>
+      <p className="muted ds-note">
+        バックグラウンドのセッションが回答／確認を返したら、セッション名を添えて短く音声でお知らせします
+        （複数同時でも順番に読み上げ）。ブラウザ通知に音声を足すもので、Console のタブが見えている間だけ有効です。
+      </p>
     </section>
   );
 
