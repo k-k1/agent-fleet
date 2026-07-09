@@ -20,6 +20,37 @@ import (
 // workspace (manager.go) and to verify here, so injection is idempotent and no
 // plaintext is ever persisted. Every request re-checks (tenant, role) live.
 
+// gitServerAPI is the internal-git feature handler set (docs/23 残③): the
+// smart-HTTP + LFS + LFS-lock faces (self-authenticating Basic git token,
+// session-exempt under /git/) and the CP-native management/browse API
+// (/api/internal-git/*, session auth via the embedded memberAuth's
+// withMembership). dataRoot and the token sign key are copied from the manager
+// at construction; store is the narrow composed view (gitServerStore) of the
+// sub-stores these handlers actually use.
+type gitServerAPI struct {
+	memberAuth
+	dataRoot      string
+	signKey       []byte // git-token signing key, derived from the deployment master
+	publicBaseURL string // external base for clone/LFS hrefs ("" = not configured)
+	store         gitServerStore
+}
+
+// gitServerStore is the internal-git server's store view: the repo ledger, the
+// LFS object + lock ledgers, tenant limits (quotas), membership resolution
+// (git token → live tenant/role), and the audit ledger.
+type gitServerStore interface {
+	TenantStore
+	MembershipStore
+	GitRepoStore
+	LFSObjectStore
+	LFSLockStore
+	AuditStore
+}
+
+func newGitServerAPI(m *manager, publicBaseURL string) gitServerAPI {
+	return gitServerAPI{memberAuth{m}, m.dataRoot, gitSignKey(m.master32), publicBaseURL, m.store}
+}
+
 // gitBackendPath is the git-http-backend CGI. Debian ships it under git-core;
 // overridable for other layouts.
 func gitBackendPath() string {
@@ -123,16 +154,16 @@ func (e *gitAuthErr) writeGit(w http.ResponseWriter) {
 // repo name valid + present in the ledger. It does NOT apply the push gate — the
 // caller decides read vs write per operation. Returns the resolved repo name, the
 // membership view, and the token's membership id.
-func (c config) authorizeGitRepo(r *http.Request, slug, repoSeg string) (name string, mv MembershipView, membershipID string, aerr *gitAuthErr) {
+func (a gitServerAPI) authorizeGitRepo(r *http.Request, slug, repoSeg string) (name string, mv MembershipView, membershipID string, aerr *gitAuthErr) {
 	_, pass, ok := r.BasicAuth()
 	if !ok || pass == "" {
 		return "", mv, "", &gitAuthErr{http.StatusUnauthorized, "authentication required", true}
 	}
-	membershipID, ok = verifyGitToken(gitSignKey(c.mgr.master32), pass)
+	membershipID, ok = verifyGitToken(a.signKey, pass)
 	if !ok {
 		return "", mv, "", &gitAuthErr{http.StatusUnauthorized, "authentication required", true}
 	}
-	mv, ok, err := c.mgr.store.GetMembershipByID(r.Context(), membershipID)
+	mv, ok, err := a.store.GetMembershipByID(r.Context(), membershipID)
 	if err != nil {
 		return "", mv, "", &gitAuthErr{http.StatusInternalServerError, "store error", false}
 	}
@@ -149,7 +180,7 @@ func (c config) authorizeGitRepo(r *http.Request, slug, repoSeg string) (name st
 		return "", mv, "", &gitAuthErr{http.StatusNotFound, "not found", false}
 	}
 	// Ledger is the source of truth: only serve repos the API created.
-	if _, present, err := c.mgr.store.GetGitRepo(r.Context(), mv.TenantID, name); err != nil {
+	if _, present, err := a.store.GetGitRepo(r.Context(), mv.TenantID, name); err != nil {
 		return "", mv, "", &gitAuthErr{http.StatusInternalServerError, "store error", false}
 	} else if !present {
 		return "", mv, "", &gitAuthErr{http.StatusNotFound, "not found", false}
@@ -157,10 +188,10 @@ func (c config) authorizeGitRepo(r *http.Request, slug, repoSeg string) (name st
 	return name, mv, membershipID, nil
 }
 
-// handleGitHTTP serves clone/fetch/push for /git/{slug}/{repo...}. It authenticates
+// gitHTTP serves clone/fetch/push for /git/{slug}/{repo...}. It authenticates
 // and confines via authorizeGitRepo, gates push by role, then hands off to
 // git-http-backend within the tenant's own git tree.
-func (c config) handleGitHTTP(w http.ResponseWriter, r *http.Request) {
+func (a gitServerAPI) gitHTTP(w http.ResponseWriter, r *http.Request) {
 	rest := strings.TrimPrefix(r.URL.Path, "/git/")
 	slug, sub, _ := strings.Cut(rest, "/")
 	if slug == "" || sub == "" {
@@ -168,7 +199,7 @@ func (c config) handleGitHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	repoSeg, _, _ := strings.Cut(sub, "/")
-	_, mv, membershipID, aerr := c.authorizeGitRepo(r, slug, repoSeg)
+	_, mv, membershipID, aerr := a.authorizeGitRepo(r, slug, repoSeg)
 	if aerr != nil {
 		aerr.writeGit(w)
 		return
@@ -181,7 +212,7 @@ func (c config) handleGitHTTP(w http.ResponseWriter, r *http.Request) {
 	// Path containment: the project root is the tenant's own git tree, so even a
 	// crafted PATH_INFO cannot escape into another tenant (defense in depth over
 	// the slug check). filepath.Join collapses any residual traversal.
-	tenantRoot := filepath.Join(c.mgr.dataRoot, "git", filepath.Base(slug))
+	tenantRoot := filepath.Join(a.dataRoot, "git", filepath.Base(slug))
 	gitBackendServe(w, r, slug, tenantRoot, membershipID)
 }
 

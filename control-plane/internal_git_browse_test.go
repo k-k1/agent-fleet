@@ -19,7 +19,7 @@ func (e *p2Env) initRepoWithTree(t *testing.T, name string, files map[string][]b
 		t.Skip("git not installed")
 	}
 	ctx := context.Background()
-	bare := filepath.Join(e.c.mgr.dataRoot, "git", "default", name+".git")
+	bare := filepath.Join(e.g.dataRoot, "git", "default", name+".git")
 	if err := os.MkdirAll(filepath.Dir(bare), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -53,11 +53,11 @@ func (e *p2Env) browse(t *testing.T, name, endpoint, query string) (*httptest.Re
 	w := httptest.NewRecorder()
 	switch endpoint {
 	case "tree":
-		e.c.handleInternalGitTree(w, r)
+		e.g.withMembership(e.g.tree)(w, r)
 	case "blob":
-		e.c.handleInternalGitBlob(w, r)
+		e.g.withMembership(e.g.blob)(w, r)
 	case "commits":
-		e.c.handleInternalGitCommits(w, r)
+		e.g.withMembership(e.g.commits)(w, r)
 	}
 	var body map[string]any
 	_ = json.Unmarshal(w.Body.Bytes(), &body)
@@ -174,7 +174,7 @@ func TestInternalGitBrowseEmptyRepo(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not installed")
 	}
-	bare := filepath.Join(e.c.mgr.dataRoot, "git", "default", "fresh.git")
+	bare := filepath.Join(e.g.dataRoot, "git", "default", "fresh.git")
 	if err := os.MkdirAll(filepath.Dir(bare), 0o700); err != nil {
 		t.Fatal(err)
 	}

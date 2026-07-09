@@ -12,10 +12,10 @@ import (
 	"testing"
 )
 
-// p2Env is a config + store wired for the CP-native management handlers, with a
-// member of the default tenant resolvable via proxy-auth headers.
+// p2Env is a gitServerAPI + store wired for the CP-native management handlers,
+// with a member of the default tenant resolvable via proxy-auth headers.
 type p2Env struct {
-	c        config
+	g        gitServerAPI
 	st       *sqlStore
 	tenantID string
 }
@@ -39,10 +39,8 @@ func newP2Env(t *testing.T) *p2Env {
 	return &p2Env{
 		st:       st,
 		tenantID: dflt.ID,
-		c: config{
-			publicBaseURL: "https://fleet.example.com",
-			mgr:           &manager{store: st, authMode: "proxy", emailHeader: "X-Forwarded-Email", dataRoot: t.TempDir()},
-		},
+		g: newGitServerAPI(&manager{store: st, authMode: "proxy", emailHeader: "X-Forwarded-Email", dataRoot: t.TempDir()},
+			"https://fleet.example.com"),
 	}
 }
 
@@ -74,7 +72,7 @@ func (e *p2Env) seedRepo(t *testing.T, name string) {
 	}); err != nil {
 		t.Fatalf("seed repo: %v", err)
 	}
-	dir := filepath.Join(e.c.mgr.dataRoot, "git", "default", name+".git")
+	dir := filepath.Join(e.g.dataRoot, "git", "default", name+".git")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatalf("seed dir: %v", err)
 	}
@@ -83,18 +81,18 @@ func (e *p2Env) seedRepo(t *testing.T, name string) {
 func TestInternalGitQuota(t *testing.T) {
 	e := newP2Env(t)
 	// Unlimited by default: enforce passes.
-	if aerr := e.c.enforceGitRepoQuota(context.Background(), e.tenantID); aerr != nil {
+	if aerr := e.g.enforceGitRepoQuota(context.Background(), e.tenantID); aerr != nil {
 		t.Fatalf("unlimited should pass: %v", aerr)
 	}
 	// Cap at 1 and seed 1 → at the cap, creation blocked.
 	e.setLimits(t, tenantLimits{MaxGitRepos: 1})
 	e.seedRepo(t, "one")
-	if aerr := e.c.enforceGitRepoQuota(context.Background(), e.tenantID); aerr == nil || aerr.code != "quota_exceeded" {
+	if aerr := e.g.enforceGitRepoQuota(context.Background(), e.tenantID); aerr == nil || aerr.code != "quota_exceeded" {
 		t.Fatalf("want quota_exceeded, got %v", aerr)
 	}
 	// The create handler surfaces it as 409 before touching disk/git.
 	w, r := e.req("POST", "/api/internal-git/repos", map[string]string{"name": "two"})
-	e.c.handleInternalGitRepoCreate(w, r)
+	e.g.withMembership(e.g.repoCreate)(w, r)
 	if w.Code != 409 {
 		t.Fatalf("create over quota: want 409 got %d (%s)", w.Code, w.Body.String())
 	}
@@ -103,13 +101,13 @@ func TestInternalGitQuota(t *testing.T) {
 func TestInternalGitRename(t *testing.T) {
 	e := newP2Env(t)
 	e.seedRepo(t, "old")
-	oldDir := filepath.Join(e.c.mgr.dataRoot, "git", "default", "old.git")
-	newDir := filepath.Join(e.c.mgr.dataRoot, "git", "default", "new.git")
+	oldDir := filepath.Join(e.g.dataRoot, "git", "default", "old.git")
+	newDir := filepath.Join(e.g.dataRoot, "git", "default", "new.git")
 
 	// Happy path: row + bare move together, clone_url reflects the new name.
 	w, r := e.req("POST", "/api/internal-git/repos/old/rename", map[string]string{"new_name": "new"})
 	r.SetPathValue("name", "old")
-	e.c.handleInternalGitRepoRename(w, r)
+	e.g.withMembership(e.g.repoRename)(w, r)
 	if w.Code != 200 {
 		t.Fatalf("rename: want 200 got %d (%s)", w.Code, w.Body.String())
 	}
@@ -132,7 +130,7 @@ func TestInternalGitRename(t *testing.T) {
 	e.seedRepo(t, "taken")
 	w, r = e.req("POST", "/api/internal-git/repos/new/rename", map[string]string{"new_name": "taken"})
 	r.SetPathValue("name", "new")
-	e.c.handleInternalGitRepoRename(w, r)
+	e.g.withMembership(e.g.repoRename)(w, r)
 	if w.Code != 409 {
 		t.Fatalf("collision: want 409 got %d", w.Code)
 	}
@@ -140,7 +138,7 @@ func TestInternalGitRename(t *testing.T) {
 	// Nonexistent source → 404.
 	w, r = e.req("POST", "/api/internal-git/repos/ghost/rename", map[string]string{"new_name": "x"})
 	r.SetPathValue("name", "ghost")
-	e.c.handleInternalGitRepoRename(w, r)
+	e.g.withMembership(e.g.repoRename)(w, r)
 	if w.Code != 404 {
 		t.Fatalf("missing source: want 404 got %d", w.Code)
 	}

@@ -65,28 +65,6 @@ func hostToDTO(h SSMHost) ssmHostDTO {
 		InstanceID: h.InstanceID, DocumentName: h.DocumentName, CreatedAt: h.CreatedAt}
 }
 
-// membershipFor resolves the caller's identity + active membership without building a
-// workspace (lightweight per-member CRUD). 401/403/409 mirror withResolved.
-// 残ユーザーは internal_git*.go のみ（docs/23 残③ Batch 1 時点）。ssm/memo は
-// memberAuth.withMembership（httpapi.go）へ移行済み。
-func (c config) membershipFor(w http.ResponseWriter, r *http.Request) (Identity, MembershipView, bool) {
-	id := c.mgr.resolveIdentity(r)
-	if id.key == "" {
-		writeAPIErr(w, &apiError{http.StatusUnauthorized, "unauthenticated", "no gateway identity"})
-		return Identity{}, MembershipView{}, false
-	}
-	tenantSel := r.Header.Get("X-AF-Tenant")
-	if tenantSel == "" {
-		tenantSel = r.URL.Query().Get("tenant")
-	}
-	ident, mv, aerr := c.mgr.resolveMembership(r.Context(), id.key, id.email, tenantSel)
-	if aerr != nil {
-		writeAPIErr(w, aerr)
-		return Identity{}, MembershipView{}, false
-	}
-	return ident, mv, true
-}
-
 // ssmConfigAPI は SSM ログイン設定の機能ハンドラ集（docs/23 残③）。解決は埋め込みの
 // memberAuth（登録側で withMembership に包む）、store は SSMStore の narrow view
 // だけを持つ。※ ssmAPI という名前は runtime_ecs.go の AWS SSM クライアント

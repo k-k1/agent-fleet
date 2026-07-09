@@ -12,7 +12,7 @@ import (
 
 // Memo queue (docs/21). Per-membership notes accumulated across devices, then flushed
 // to a coding session as one concatenated message. All routes resolve scope with
-// membershipFor (no workspace build); mutations are ownership-guarded in the store by
+// withMembership (no workspace build); mutations are ownership-guarded in the store by
 // membership_id. Persistence mirrors the SSM profile CRUD (ssm.go) 1:1.
 
 // memoRetentionDays is how long a flushed (sent) memo is kept for history/re-send

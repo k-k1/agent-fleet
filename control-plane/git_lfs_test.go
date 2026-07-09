@@ -13,10 +13,10 @@ import (
 	"testing"
 )
 
-// lfsEnv wires a store + config with a default-tenant member and a repo "shared",
-// plus a valid git token, for exercising the LFS handlers directly.
+// lfsEnv wires a store + gitServerAPI with a default-tenant member and a repo
+// "shared", plus a valid git token, for exercising the LFS handlers directly.
 type lfsEnv struct {
-	c     config
+	g     gitServerAPI
 	st    *sqlStore
 	token string
 	memID string
@@ -44,10 +44,8 @@ func newLFSEnv(t *testing.T) *lfsEnv {
 		st:    st,
 		memID: mem.ID,
 		token: mintGitToken(gitSignKey(master), mem.ID),
-		c: config{
-			publicBaseURL: "https://fleet.example.com",
-			mgr:           &manager{store: st, master32: master, dataRoot: t.TempDir()},
-		},
+		g: newGitServerAPI(&manager{store: st, master32: master, dataRoot: t.TempDir()},
+			"https://fleet.example.com"),
 	}
 }
 
@@ -87,7 +85,7 @@ func (e *lfsEnv) batch(t *testing.T, op string, objs []map[string]any) map[strin
 	r := e.req("POST", "/git/default/shared.git/info/lfs/objects/batch", body,
 		map[string]string{"slug": "default", "repo": "shared.git"})
 	w := httptest.NewRecorder()
-	e.c.handleLFSBatch(w, r)
+	e.g.lfsBatch(w, r)
 	if w.Code != 200 {
 		t.Fatalf("batch %s: want 200 got %d (%s)", op, w.Code, w.Body.String())
 	}
@@ -102,7 +100,7 @@ func (e *lfsEnv) upload(oid string, data []byte) *httptest.ResponseRecorder {
 	r := e.req("PUT", "/git/default/shared.git/info/lfs/objects/"+oid, data,
 		map[string]string{"slug": "default", "repo": "shared.git", "oid": oid})
 	w := httptest.NewRecorder()
-	e.c.handleLFSUpload(w, r)
+	e.g.lfsUpload(w, r)
 	return w
 }
 
@@ -110,7 +108,7 @@ func (e *lfsEnv) download(oid string) *httptest.ResponseRecorder {
 	r := e.req("GET", "/git/default/shared.git/info/lfs/objects/"+oid, nil,
 		map[string]string{"slug": "default", "repo": "shared.git", "oid": oid})
 	w := httptest.NewRecorder()
-	e.c.handleLFSDownload(w, r)
+	e.g.lfsDownload(w, r)
 	return w
 }
 
@@ -220,7 +218,7 @@ func TestLFSCrossTenantAndAuth(t *testing.T) {
 	r.SetPathValue("slug", "default")
 	r.SetPathValue("repo", "shared.git")
 	w := httptest.NewRecorder()
-	e.c.handleLFSBatch(w, r)
+	e.g.lfsBatch(w, r)
 	if w.Code != 401 {
 		t.Fatalf("no auth: want 401 got %d", w.Code)
 	}
@@ -230,7 +228,7 @@ func TestLFSCrossTenantAndAuth(t *testing.T) {
 	sec, _ := e.st.CreateTenant(ctx, "security", "Security")
 	id2, _ := e.st.UpsertIdentity(ctx, "s@x", "s-x", "")
 	mem2, _ := e.st.EnsureMembership(ctx, id2.ID, sec.ID, "member")
-	otherTok := mintGitToken(gitSignKey(e.c.mgr.master32), mem2.ID)
+	otherTok := mintGitToken(gitSignKey(e.g.mgr.master32), mem2.ID)
 
 	body, _ := json.Marshal(map[string]any{"operation": "download", "objects": []map[string]any{}})
 	r = httptest.NewRequest("POST", "/git/default/shared.git/info/lfs/objects/batch", bytes.NewReader(body))
@@ -238,7 +236,7 @@ func TestLFSCrossTenantAndAuth(t *testing.T) {
 	r.SetPathValue("slug", "default")
 	r.SetPathValue("repo", "shared.git")
 	w = httptest.NewRecorder()
-	e.c.handleLFSBatch(w, r)
+	e.g.lfsBatch(w, r)
 	if w.Code != 403 {
 		t.Fatalf("cross-tenant: want 403 got %d (%s)", w.Code, w.Body.String())
 	}
