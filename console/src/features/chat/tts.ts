@@ -16,6 +16,7 @@ export interface TtsOptions {
   provider: string; // "auto" | "voicevox" | "polly"
   voice: string; // VOICEVOX speaker 番号
   speed: number; // speedScale
+  enkana?: boolean; // 英語をカタカナ英語に前処理して読ませる（CP の enkana）
 }
 
 // 同時に合成を投げる上限。長文で数十並列にしてエンジン/CP を溢れさせない。
@@ -154,7 +155,13 @@ export function startTts(opts: TtsOptions, source = "", onEnd?: (reason: "done" 
       const res = await fetch(rel("api/tts/synthesize"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text, provider: opts.provider, voice: opts.voice, speed: opts.speed }),
+        body: JSON.stringify({
+          text,
+          provider: opts.provider,
+          voice: opts.voice,
+          speed: opts.speed,
+          enkana: opts.enkana ?? false,
+        }),
         signal: ac.signal,
       });
       if (!res.ok) return null;
@@ -252,7 +259,7 @@ function pumpAnnounce(): void {
   announcing = true;
   const s = getSettings();
   const c = startTts(
-    { provider: s.ttsProvider, voice: s.ttsVoiceVoicevox, speed: s.ttsSpeed },
+    { provider: s.ttsProvider, voice: s.ttsVoiceVoicevox, speed: s.ttsSpeed, enkana: s.ttsEnglishKana },
     next.source,
     (reason) => {
       announcing = false;
@@ -275,7 +282,7 @@ export function speakText(text: string, source = ""): void {
   const t = text.trim();
   if (!t) return;
   const s = getSettings();
-  const c = startTts({ provider: s.ttsProvider, voice: s.ttsVoiceVoicevox, speed: s.ttsSpeed }, source);
+  const c = startTts({ provider: s.ttsProvider, voice: s.ttsVoiceVoicevox, speed: s.ttsSpeed, enkana: s.ttsEnglishKana }, source);
   c.push(t);
   c.flush();
 }

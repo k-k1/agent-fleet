@@ -179,6 +179,15 @@ TTS 設定画面かフッターに小さく常時表示する。Polly は AWS �
   制約: Console タブが可視の間のみ（状態ポーリングが `document.hidden` で止まるため）。
   未採用: 全セッションの回答**本文**の読み上げ（直列音声＋長文で遅延・混線するため、
   必要なら将来 Tier2=単一セッションのチューニング全文で対応）。実機確認は未。
+- **Phase 1.7（英語をカタカナ読み・enkana）** ✅ 実装済み: 英単語を「カタカナ英語」に前処理して
+  から VOICEVOX に渡し、ずんだもんの声のまま英語を "それっぽく" 読む。CP 側 `control-plane/enkana.go`:
+  CMU 発音辞書（`assets/cmudict.dict.gz`, BSD-2, 遅延ロード）で英単語→ARPABET を引き、ARPABET→
+  カタカナ・モーラへ写像（拗音・促音・長音対応、camelCase 分割、全大文字は英字名読み、辞書外は
+  綴りのまま）。`/api/tts/synthesize` の `enkana` フラグで有効化。設定「英語をカタカナ読み」
+  (`ttsEnglishKana`)。**性質**: CMUdict はアメリカ英語の音写なので、定着した和製カタカナ
+  （コーヒー）ではなく音写（カフィー）になる＝“それっぽい”止まり。より自然な和製読みは GPL の
+  alkana/bep-eng.dic が持つが Apache-2.0 の本リポジトリと非互換のため不採用。テスト
+  `control-plane/enkana_test.go`。NOTICE に CMUdict 帰属を記載。実機の音は未確認。
 - **Phase 2（AWS）**: Polly プロバイダ（IAM ロール）、管理者トグル → ECS desired 0↔1、
   Cloud Map 固定 DNS、readiness ゲート、`auto` の Polly フォールバック有効化。
 

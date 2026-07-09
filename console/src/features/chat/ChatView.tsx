@@ -242,7 +242,12 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
     ttsRef.current?.stop();
     ttsRef.current = settings.ttsEnabled
       ? startTts(
-          { provider: settings.ttsProvider, voice: settings.ttsVoiceVoicevox, speed: settings.ttsSpeed },
+          {
+            provider: settings.ttsProvider,
+            voice: settings.ttsVoiceVoicevox,
+            speed: settings.ttsSpeed,
+            enkana: settings.ttsEnglishKana,
+          },
           "チャット",
         )
       : null;

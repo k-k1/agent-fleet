@@ -30,6 +30,7 @@ type ttsSynthReq struct {
 	Provider string  `json:"provider"` // "" | "auto" | "voicevox" | "polly"
 	Voice    string  `json:"voice"`    // provider 固有。voicevox は speaker 番号（例 "3"=ずんだもん）
 	Speed    float64 `json:"speed"`    // 0.5〜2.0（voicevox の speedScale）。0/未指定=1.0
+	EnKana   bool    `json:"enkana"`   // 英単語をカタカナ英語に前処理してから合成（docs/24, enkana.go）
 }
 
 // registerTTSRoutes は CP-native TTS のルートを登録する（buildMux から呼ぶ）。認証は
@@ -46,6 +47,10 @@ func registerTTSRoutes(mux *http.ServeMux, cfg config) {
 		if text == "" {
 			writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "empty text"})
 			return
+		}
+		// 英語をカタカナ英語に前処理（VOICEVOX は英語綴りを読めないため）。docs/24。
+		if req.EnKana {
+			text = englishToKana(text)
 		}
 		// Phase 1: auto / voicevox → voicevox。polly は Phase 2 まで未実装。
 		switch req.Provider {
