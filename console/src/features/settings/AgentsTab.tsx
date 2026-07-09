@@ -115,6 +115,14 @@ export function AgentsTab() {
           <Row label="読み上げ速度">
             <Choice value={s.ttsSpeed} options={TTS_SPEEDS} onChange={(v) => setSetting("ttsSpeed", v)} />
           </Row>
+          <Row label="英語をカタカナ読み">
+            <OnOff value={s.ttsEnglishKana} onChange={(v) => setSetting("ttsEnglishKana", v)} />
+          </Row>
+          <p className="muted ds-note">
+            英単語をカタカナ英語に変換して、ずんだもんの声のまま「それっぽく」読みます（CMU 発音辞書ベースの音写。
+            定着した和製カタカナ＝コーヒー等ではなく音写＝カフィー等になります）。AWS サービスや開発用語
+            （EC2→イーシーツー, Dao→ダオ, nginx 等）は専用辞書で補正、辞書外の一般語は綴りのまま。
+          </p>
         </>
       )}
       <p className="muted ds-note">
