@@ -27,6 +27,7 @@ agent-fleet の**開発者向け**体系ドキュメント。読者は「新規�
 | [10-development.md](10-development.md) | ビルド反映早見表・テスト・規約・ドキュメント更新責務 |
 | [90-code-map.md](90-code-map.md) | コード地図（**ファイルパス列挙を許す唯一のファイル**・陳腐化前提）|
 | [91-internal-git.md](91-internal-git.md) | 内部 git プロバイダ（bare + smart-HTTP + LFS）|
+| [92-tui-modal-driving.md](92-tui-modal-driving.md) | TUI モーダル駆動（AUQ ほか）の実測検証プレイブックと挙動記録 |
 
 ## 執筆規範（dev/ 全ファイル共通）
 
