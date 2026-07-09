@@ -8,6 +8,8 @@ import { displayName } from "../../lib/sessionview.ts";
 import { agentOf } from "../../agents/registry.ts";
 import { useLayoutStore } from "../../layout/store.ts";
 import { activePane } from "../../layout/ops.ts";
+import { getSettings } from "../../lib/settings.ts";
+import { announce } from "../chat/tts.ts";
 import { useSessionsStore } from "./store.ts";
 
 const notify = (title: string, body: string) => {
@@ -44,8 +46,16 @@ export function useSessionNotifications(): void {
       }
       const before = prev[s.name];
       if (before !== undefined && before !== s.state && s.name !== activeSession) {
-        if (s.state === "idle" && before === "working") notify("回答が返ってきました", displayName(s));
-        else if (s.state === "question") notify("質問が来ています", displayName(s));
+        // ブラウザ通知（従来）＋ 音声通知（docs/24 Tier1, 有効時）。バックグラウンドのセッション
+        // が回答/質問を返したら、名前を前置きして短くアナウンス（直列キューで割り込まない）。
+        const speak = getSettings().ttsSessionNotify;
+        if (s.state === "idle" && before === "working") {
+          notify("回答が返ってきました", displayName(s));
+          if (speak) announce(`${displayName(s)} の回答が返りました。`, displayName(s));
+        } else if (s.state === "question") {
+          notify("質問が来ています", displayName(s));
+          if (speak) announce(`${displayName(s)} が確認を求めています。`, displayName(s));
+        }
       }
       prev[s.name] = s.state;
     }

@@ -8,6 +8,7 @@ import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 import { Icon } from "../../ui/Icon.tsx";
 import { MarkdownView } from "../viewer/MarkdownView.tsx";
+import { TtsReadButton } from "../chat/TtsReadButton.tsx";
 import { MirrorToggle } from "./MirrorToggle.tsx";
 import { ContextBar } from "./ContextBar.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
@@ -1670,6 +1671,7 @@ function Turn({
         {!isUser && spend > 0 && maxSpend > 0 && (
           <TurnSpendBar fresh={turn.inTok} create={turn.cacheCreate} out={turn.outTok} max={maxSpend} />
         )}
+        {!isUser && <TtsReadButton text={turn.text} source="セッション" className="mt-copy" />}
         <CopyButton text={turn.text} />
       </div>
     </div>

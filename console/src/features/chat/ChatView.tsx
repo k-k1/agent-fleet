@@ -10,6 +10,7 @@ import { takeChatSeed } from "../../lib/chatSeed.ts";
 import { coarsePointer } from "../../lib/device.ts";
 import { useSettings } from "../../lib/settings.ts";
 import { startTts, type TtsController } from "./tts.ts";
+import { TtsReadButton } from "./TtsReadButton.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { splitPastedImages, buildImagePrompt } from "../../lib/pastedImages.ts";
 import { agentOf } from "../../agents/registry.ts";
@@ -373,6 +374,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
               {/* Footer under the bubble — time + copy, mirroring MirrorView's turn foot. */}
               <div className="chat-msg-foot">
                 {m.ts > 0 && <span className="cm-time">{formatMsgTS(m.ts)}</span>}
+                {m.role === "assistant" && <TtsReadButton text={text} />}
                 <ChatCopyButton text={text} />
               </div>
             </div>
