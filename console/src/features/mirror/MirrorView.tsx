@@ -556,7 +556,8 @@ export function MirrorView({
     return -1;
   };
 
-  // sendPrompt submits one prompt (the composer, or a single-select answer).
+  // sendPrompt submits one prompt (the composer). Never used to answer an AUQ —
+  // the modal ignores typed text, so a text send would confirm option 1 (docs/dev/92).
   const sendPrompt = async (text: string) => {
     const t = (text || "").trim();
     if (!t || sending) return;
@@ -731,13 +732,13 @@ export function MirrorView({
     });
   };
 
-  // An AskUserQuestion can't be answered by the composer's free text — verified by hand:
-  // claude's modal treats typed characters as an OPTION FILTER, so arbitrary text that
-  // matches no option is dropped and the Enter selects the highlighted (first) option.
-  // (The earlier belief that a single-select single question accepts composer free text
-  // was wrong; it silently lost the text and mis-selected option 1.) Lock the composer for
-  // ANY pending question and steer the user to the card — its "または自由入力" row drives the
-  // modal correctly (navigate to the "Type something" row, then type).
+  // An AskUserQuestion can't be answered by the composer's free text — verified against
+  // the terminal (v2.1.204, docs/dev/92): the modal IGNORES typed text on option rows
+  // entirely (the older "option filter" behavior is gone), so the trailing Enter just
+  // confirms the highlighted (first) option — a silent wrong answer. Digit keys 1-9 even
+  // select-and-submit instantly, so stray text is doubly dangerous. Lock the composer for
+  // ANY pending question and steer the user to the card — its options key-drive the modal
+  // (Down×i, Enter) and its "または自由入力" row uses the still-working "Type something" path.
   const auqLocksComposer = !!pending;
   // A pending plan approval or permission prompt is a menu decision, NOT a free-text turn:
   // sending would type text + Enter, and that Enter selects the menu's default (= 承認 /
@@ -1136,7 +1137,6 @@ export function MirrorView({
                 key={"pq-" + (pending[0]?.question || "")}
                 questions={pending}
                 sending={sending}
-                onSendOne={sendPrompt}
                 onSubmitKeys={sendKeys}
                 onSubmitSeq={sendSeq}
                 answerMode={sessionMeta?.kind === "claude" ? "claude" : "menu"}
@@ -1856,20 +1856,21 @@ function ToolRun({ tools, onOpenDiff }: { tools: { p: Part; i: number }[]; onOpe
 }
 
 // PendingQuestions is the interactive form for the currently-awaiting AskUserQuestion.
-// One question with a single choice → click-to-send (the common, low-friction case).
-// Multi-select or multiple questions → build a selection, then submit: answers are
-// sent one page at a time (multi-select choices joined) so the terminal modal advances
-// through each question and doesn't close after the first pick.
+// One question with a single choice → click answers immediately via named keys
+// (Down×i, Enter). Multi-select or multiple questions → build a selection, then
+// submit: answers are sent one page at a time (multi-select choices joined) so the
+// terminal modal advances through each question and doesn't close after the first pick.
+// Every path is key-driven; NEVER send an option label as text — the modal ignores
+// typed text on option rows and the Enter confirms the highlighted first option
+// (v2.1.204 実測, docs/dev/92-tui-modal-driving.md).
 function PendingQuestions({
   questions,
-  onSendOne,
   onSubmitKeys,
   onSubmitSeq,
   sending,
   answerMode = "claude",
 }: {
   questions: Question[];
-  onSendOne: (label: string) => void;
   onSubmitKeys: (keys: string[]) => void;
   onSubmitSeq: (seq: Array<{ k?: string; t?: string }>) => void;
   sending: boolean;
@@ -1997,12 +1998,11 @@ function PendingQuestions({
           <div className="mq-options">
             {(qn.options || []).map((o, oi) => {
               const checked = (sel[qi] || []).includes(o.label);
-              // menu single-select: move Down to this option's index, then Enter.
-              const pick = menuDrivable
+              // Single-select single question (claude and menu alike): key-drive the
+              // modal — Down to this option's index, then Enter (selects + submits).
+              const pick = single
                 ? () => onSubmitKeys([...Array(oi).fill("Down"), "Enter"])
-                : single
-                  ? () => onSendOne(o.label)
-                  : () => toggle(qi, o.label, qn.multiSelect);
+                : () => toggle(qi, o.label, qn.multiSelect);
               return (
                 <button
                   type="button"
@@ -2025,9 +2025,10 @@ function PendingQuestions({
           </div>
           {!menu && (
             // Free-text ("Type something") — rendered for single questions too: the
-            // composer can't answer an AUQ (it mis-selects option 1), so this in-card row,
-            // driven via submit()'s reliable Down-to-the-row-then-type sequence, is the
-            // only working free-text path. Options above still click-to-send for single.
+            // composer can't answer an AUQ (typed text is ignored and Enter confirms
+            // option 1), so this in-card row, driven via submit()'s reliable
+            // Down-to-the-row-then-type sequence, is the only working free-text path.
+            // Options above key-drive (Down×i, Enter) for single.
             <textarea
               className="mq-freetext"
               rows={2}
