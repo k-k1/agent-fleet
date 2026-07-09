@@ -12,7 +12,8 @@
   min-height: 0;
 }
 .app-rail {
-  width: 300px; /* matches the old console's left pane */
+  width: 340px; /* wider than the old console's 300px: the project tree nests
+                   (repo → sessions/files) and indentation eats the name column */
   flex: none;
   background: var(--leftpane-bg);
   border-right: 1px solid var(--border);
@@ -82,7 +83,7 @@
     top: 0;
     bottom: 0;
     z-index: 40;
-    width: min(84vw, 320px);
+    width: min(84vw, 340px);
     transform: translateX(-102%);
     transition: transform 0.18s ease-out;
     box-shadow: 4px 0 16px color-mix(in srgb, #000 35%, transparent);
