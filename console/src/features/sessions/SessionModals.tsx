@@ -75,6 +75,7 @@ export function SessionModals() {
       {rename && (
         <SessionTitleModal
           name={rename.name}
+          kind={rename.kind}
           title={rename.title || ""}
           onClose={close}
           onSaved={() => void refreshSessions()}
