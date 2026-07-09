@@ -23,6 +23,25 @@ body {
   background: var(--bg);
 }
 
+/* Thin scrollbars app-wide. The standard properties (Chrome 121+ / Firefox /
+   Safari 18.2+) take precedence; the ::-webkit-scrollbar rules only kick in on
+   older WebKit engines that ignore scrollbar-width. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--btn-border) transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--btn-border);
+  border-radius: 4px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
 /* codicon (VS Code icon font) — inherit size/color from the surrounding element so
    icons sit on the text baseline and follow currentColor / the button's color. */
 .codicon {
