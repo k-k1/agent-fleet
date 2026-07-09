@@ -182,6 +182,24 @@ TTS 設定画面かフッターに小さく常時表示する。Polly は AWS �
 - **Phase 2（AWS）**: Polly プロバイダ（IAM ロール）、管理者トグル → ECS desired 0↔1、
   Cloud Map 固定 DNS、readiness ゲート、`auto` の Polly フォールバック有効化。
 
+## 将来の追加プロバイダ: Voiceger（多言語ずんだもん）— 保留
+
+「ずんだもんの声のまま英語も喋る」需要への候補。2026-07-10 に実現性を調査し、**設計記録のみ・
+実装保留**と決定（VOICEVOX＋Polly 構成を継続）。
+
+- **Voiceger:Zundamon**（SSS LLC, 2025-08-05）＝ GPT-SoVITS + RVC ベースの多言語ずんだもん TTS。
+  日本語/英語/中国語/韓国語/広東語＋6〜8 感情。無料・商用可、クレジット「Voiceger:Zundamon」要。
+  配布は Windows バイナリ＋GitHub（zunzun999/voiceger_v2, zundamon-speech-webui）。
+- **統合上の壁**: (1) 公式は **Streamlit UI のみで HTTP API 無し** → 基盤の GPT-SoVITS
+  `api_v2.py`（既定 `:9880` の `/tts`）にずんだもんモデル＋参照音声を載せて起動し、CP に
+  `voiceger` プロバイダ（`AF_VOICEGER_URL` を指すアダプタ）を足す経路になる。(2) **CUDA/ROCm=GPU 前提**。
+- **保留理由**: dev ホストの GPU は **AMD Vega 内蔵APU（Picasso/Raven2, gfx90c/gfx902）**で、CUDA 不可・
+  **ROCm も APU 非対応** → GPU 加速不可、CPU 実行は遅く重い（OOM 多発ホストで非推奨）。よって
+  **このホストでは検証不能**。実装すると「未検証コード」になるため見送り。
+- **やるならの前提**: NVIDIA GPU 機 or クラウド GPU（Colab/RunPod/AWS g4dn 等）に GPT-SoVITS を立て、
+  CP の `voiceger` プロバイダから `/tts` を叩く（「エンジン＝CP が指す URL」の抽象がそのまま効く）。
+  その際 `auto` を「英語→ずんだもん(Voiceger) / 日本語→VOICEVOX / それ以外→Polly」に拡張できる。
+
 ## 未決 / 論点
 
 - 逐次再生のチャンク粒度（句点のみ vs 読点も。短文結合の閾値）。実測で調整。
