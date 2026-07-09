@@ -55,10 +55,34 @@ func bearerToken(r *http.Request) string {
 	return strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
 }
 
+// egressStore is the narrow store view the egress feature needs: observation
+// aggregation + allowlist (EgressStore), the admin-action / observe audit rows
+// (AuditStore) and the egress_mode setting (SettingsStore).
+type egressStore interface {
+	EgressStore
+	AuditStore
+	SettingsStore
+}
+
+// egressAPI is the egress observation/allowlist handler set（docs/23 残③）.
+// The /internal/* routes (ingest, policy) are authenticated by the shared
+// AF_EGRESS_TOKEN bearer — NOT a user session — so they register directly;
+// the /api/admin/egress* routes register through withSuperAdmin.
+type egressAPI struct {
+	memberAuth
+	token string // AF_EGRESS_TOKEN ("" = ingestion/policy disabled)
+	dedup *egressAuditDedup
+	store egressStore
+}
+
+func newEgressAPI(m *manager, token string, dedup *egressAuditDedup) egressAPI {
+	return egressAPI{memberAuth{m}, token, dedup, m.store}
+}
+
 // auditAdmin records a deployment-wide admin action (docs/20 M3: allowlist/mode edits
 // are themselves audited). Best-effort.
-func (c config) auditAdmin(ctx context.Context, ident Identity, action, target, detail string) {
-	_ = c.mgr.store.InsertAudit(ctx, AuditLog{
+func (a egressAPI) auditAdmin(ctx context.Context, ident Identity, action, target, detail string) {
+	_ = a.store.InsertAudit(ctx, AuditLog{
 		ID: newID(), TenantID: "", ActorKind: "admin", ActorID: ident.ID,
 		Action: action, Target: target, Detail: detail, At: nowTS(),
 	})
@@ -67,32 +91,32 @@ func (c config) auditAdmin(ctx context.Context, ident Identity, action, target, 
 // effectivePolicy is what the proxy enforces: the built-in product-critical defaults
 // (docs/20 §B.5) plus every ACTIVE allowlist entry, and the deployment egress mode
 // (log-only unless set to enforce).
-func (c config) effectivePolicy(ctx context.Context) (entries []string, enforce bool) {
+func (a egressAPI) effectivePolicy(ctx context.Context) (entries []string, enforce bool) {
 	entries = append(entries, defaultEgressAllowlist...)
-	if extra, err := c.mgr.store.EffectiveAllowlist(ctx); err == nil {
+	if extra, err := a.store.EffectiveAllowlist(ctx); err == nil {
 		entries = append(entries, extra...)
 	}
-	mode, _ := c.mgr.store.GetSetting(ctx, "egress_mode")
+	mode, _ := a.store.GetSetting(ctx, "egress_mode")
 	return entries, mode == "enforce"
 }
 
-// handleEgressPolicy (GET /internal/egress/policy) serves the effective allowlist +
+// policy (GET /internal/egress/policy) serves the effective allowlist +
 // mode to the forward proxy, which polls it so admin edits take effect without a proxy
 // restart. AF_EGRESS_TOKEN bearer (authGate-exempt), same as ingestion.
-func (c config) handleEgressPolicy(w http.ResponseWriter, r *http.Request) {
-	if c.egressToken == "" || bearerToken(r) != c.egressToken {
+func (a egressAPI) policy(w http.ResponseWriter, r *http.Request) {
+	if a.token == "" || bearerToken(r) != a.token {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
-	entries, enforce := c.effectivePolicy(r.Context())
+	entries, enforce := a.effectivePolicy(r.Context())
 	writeJSON(w, http.StatusOK, map[string]any{"allowlist": entries, "enforce": enforce})
 }
 
-// handleEgressIngest (POST /internal/egress) receives a batch of observations from the
+// ingest (POST /internal/egress) receives a batch of observations from the
 // egress proxy. Deployment-internal: authenticated by the shared AF_EGRESS_TOKEN bearer
 // (not a user session — it is authGate-exempt). Best-effort: a bad row is skipped.
-func (c config) handleEgressIngest(w http.ResponseWriter, r *http.Request) {
-	if c.egressToken == "" || bearerToken(r) != c.egressToken {
+func (a egressAPI) ingest(w http.ResponseWriter, r *http.Request) {
+	if a.token == "" || bearerToken(r) != a.token {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -108,9 +132,9 @@ func (c config) handleEgressIngest(w http.ResponseWriter, r *http.Request) {
 		if host == "" || e.Count <= 0 {
 			continue
 		}
-		_ = c.mgr.store.RecordEgress(ctx, day, host, e.Allowed, e.Count)
-		if !e.Allowed && c.egressDedup != nil && c.egressDedup.firstToday(day, host) {
-			_ = c.mgr.store.InsertAudit(ctx, AuditLog{
+		_ = a.store.RecordEgress(ctx, day, host, e.Allowed, e.Count)
+		if !e.Allowed && a.dedup != nil && a.dedup.firstToday(day, host) {
+			_ = a.store.InsertAudit(ctx, AuditLog{
 				ID: newID(), TenantID: "", ActorKind: "system", ActorID: "egress-proxy",
 				Action: "egress.observe", Target: host, Detail: "would-block (log-only)", At: nowTS(),
 			})
@@ -119,13 +143,10 @@ func (c config) handleEgressIngest(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// handleAdminEgress (GET /api/admin/egress?days=N) serves aggregated egress stats
+// stats (GET /api/admin/egress?days=N) serves aggregated egress stats
 // (busiest destination hosts with would-allow / would-block split). Attribution is
 // deployment-wide in M2, so this is super_admin only.
-func (c config) handleAdminEgress(w http.ResponseWriter, r *http.Request) {
-	if _, ok := c.requireSuperAdmin(w, r); !ok {
-		return
-	}
+func (a egressAPI) stats(w http.ResponseWriter, r *http.Request, _ Identity) {
 	days := 7
 	if v := r.URL.Query().Get("days"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 90 {
@@ -133,7 +154,7 @@ func (c config) handleAdminEgress(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	since := time.Now().UTC().AddDate(0, 0, -(days - 1)).Format("2006-01-02")
-	rows, err := c.mgr.store.ListEgress(r.Context(), since, 500)
+	rows, err := a.store.ListEgress(r.Context(), since, 500)
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
@@ -142,20 +163,17 @@ func (c config) handleAdminEgress(w http.ResponseWriter, r *http.Request) {
 	for _, e := range rows {
 		out = append(out, map[string]any{"host": e.Host, "allowed": e.Allowed, "blocked": e.Blocked})
 	}
-	mode, _ := c.mgr.store.GetSetting(r.Context(), "egress_mode")
+	mode, _ := a.store.GetSetting(r.Context(), "egress_mode")
 	if mode == "" {
 		mode = "log-only"
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"egress": out, "days": days, "mode": mode, "enforce": mode == "enforce"})
 }
 
-// handleAdminAllowlistList (GET /api/admin/egress/allowlist?state=) lists allowlist
+// allowlistList (GET /api/admin/egress/allowlist?state=) lists allowlist
 // entries, optionally filtered by state (active | proposed | retired). super_admin only.
-func (c config) handleAdminAllowlistList(w http.ResponseWriter, r *http.Request) {
-	if _, ok := c.requireSuperAdmin(w, r); !ok {
-		return
-	}
-	rows, err := c.mgr.store.ListAllowlist(r.Context(), r.URL.Query().Get("state"), 500)
+func (a egressAPI) allowlistList(w http.ResponseWriter, r *http.Request, _ Identity) {
+	rows, err := a.store.ListAllowlist(r.Context(), r.URL.Query().Get("state"), 500)
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
@@ -170,13 +188,9 @@ func (c config) handleAdminAllowlistList(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, map[string]any{"allowlist": out, "defaults": defaultEgressAllowlist})
 }
 
-// handleAdminAllowlistAdd (POST /api/admin/egress/allowlist) adds an ACTIVE entry.
+// allowlistAdd (POST /api/admin/egress/allowlist) adds an ACTIVE entry.
 // Body: {entry, reason?, tenant?}. super_admin only; the change is audited.
-func (c config) handleAdminAllowlistAdd(w http.ResponseWriter, r *http.Request) {
-	ident, ok := c.requireSuperAdmin(w, r)
-	if !ok {
-		return
-	}
+func (a egressAPI) allowlistAdd(w http.ResponseWriter, r *http.Request, ident Identity) {
 	var b struct{ Entry, Reason, Tenant string }
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&b); err != nil {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_body", "invalid JSON"})
@@ -191,21 +205,17 @@ func (c config) handleAdminAllowlistAdd(w http.ResponseWriter, r *http.Request) 
 		ID: newID(), TenantID: b.Tenant, Entry: entry, State: "active",
 		Reason: b.Reason, AddedBy: ident.Email, AddedAt: nowTS(),
 	}
-	if err := c.mgr.store.AddAllowlist(r.Context(), e); err != nil {
+	if err := a.store.AddAllowlist(r.Context(), e); err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
-	c.auditAdmin(r.Context(), ident, "egress.allow.add", entry, "reason="+b.Reason)
+	a.auditAdmin(r.Context(), ident, "egress.allow.add", entry, "reason="+b.Reason)
 	writeJSON(w, http.StatusOK, map[string]any{"id": e.ID, "entry": e.Entry, "state": e.State})
 }
 
-// handleAdminAllowlistState (POST /api/admin/egress/allowlist/{id}/state) transitions
+// allowlistState (POST /api/admin/egress/allowlist/{id}/state) transitions
 // an entry: approve a proposed one (active), or retire one. Body: {state}. super_admin.
-func (c config) handleAdminAllowlistState(w http.ResponseWriter, r *http.Request) {
-	ident, ok := c.requireSuperAdmin(w, r)
-	if !ok {
-		return
-	}
+func (a egressAPI) allowlistState(w http.ResponseWriter, r *http.Request, ident Identity) {
 	var b struct{ State string }
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&b); err != nil {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_body", "invalid JSON"})
@@ -216,23 +226,19 @@ func (c config) handleAdminAllowlistState(w http.ResponseWriter, r *http.Request
 		return
 	}
 	id := r.PathValue("id")
-	if err := c.mgr.store.SetAllowlistState(r.Context(), id, b.State); err != nil {
+	if err := a.store.SetAllowlistState(r.Context(), id, b.State); err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
-	c.auditAdmin(r.Context(), ident, "egress.allow."+b.State, id, "")
+	a.auditAdmin(r.Context(), ident, "egress.allow."+b.State, id, "")
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// handleAdminEgressMode (GET|PUT /api/admin/egress/mode) reads or sets the deployment
+// mode (GET|PUT /api/admin/egress/mode) reads or sets the deployment
 // egress mode. PUT body: {enforce:bool}. super_admin only; a change is audited.
-func (c config) handleAdminEgressMode(w http.ResponseWriter, r *http.Request) {
-	ident, ok := c.requireSuperAdmin(w, r)
-	if !ok {
-		return
-	}
+func (a egressAPI) mode(w http.ResponseWriter, r *http.Request, ident Identity) {
 	if r.Method == http.MethodGet {
-		mode, _ := c.mgr.store.GetSetting(r.Context(), "egress_mode")
+		mode, _ := a.store.GetSetting(r.Context(), "egress_mode")
 		if mode == "" {
 			mode = "log-only"
 		}
@@ -248,10 +254,10 @@ func (c config) handleAdminEgressMode(w http.ResponseWriter, r *http.Request) {
 	if b.Enforce {
 		mode = "enforce"
 	}
-	if err := c.mgr.store.SetSetting(r.Context(), "egress_mode", mode); err != nil {
+	if err := a.store.SetSetting(r.Context(), "egress_mode", mode); err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
-	c.auditAdmin(r.Context(), ident, "egress.mode", mode, "")
+	a.auditAdmin(r.Context(), ident, "egress.mode", mode, "")
 	writeJSON(w, http.StatusOK, map[string]any{"mode": mode, "enforce": mode == "enforce"})
 }
