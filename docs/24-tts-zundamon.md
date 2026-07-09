@@ -1,6 +1,6 @@
 # 24. エージェント回答の音声読み上げ（TTS / ずんだもん・Polly）
 
-- 状態: 設計（2026-07-09）・未着手
+- 状態: Phase 1 実装済み（2026-07-09, feat/tts-zundamon）・Phase 2（AWS/Polly）未着手
 - 関連: [decisions/0013-tts-zundamon.md](decisions/0013-tts-zundamon.md)（決定記録）/
   [decisions/0005-envelope-custodian.md](decisions/0005-envelope-custodian.md)（秘密情報の封筒暗号）/
   [history/p3-7-aws-adapter.md](history/p3-7-aws-adapter.md)（ECS アダプタ）/
@@ -67,8 +67,9 @@ type voiceOpts struct { voice string; speed float64; lang string }
 var ttsProviders = map[string]ttsProvider{ "voicevox": ..., "polly": ... }
 ```
 
-- `voicevox`: `cfg.voicevoxURL`（`main.go:21-44` の `config` 構造体に
-  `envOr("AF_VOICEVOX_URL", "http://voicevox:50021")` を追加）へ `audio_query`→`synthesis`。認証なし。
+- `voicevox`: `cfg.voicevoxURL`（`main.go` の `config` 構造体に
+  `envOr("AF_VOICEVOX_URL", "http://127.0.0.1:50021")` を追加。既定は dev の docker 公開先＝
+  host loopback）へ `audio_query`→`synthesis`。認証なし。
 - `polly`: AWS SDK 既定認証チェーン（IAM ロール）。`SynthesizeSpeech` で `OutputFormat=pcm/mp3`。
   日本語ニューラル音声（Takumi / Kazuha）ほか。egress allowlist は `.amazonaws.com` 既登録
   （`control-plane/egress_policy.go:18-31`）。
@@ -132,7 +133,7 @@ VOICEVOX = 「config で指すバックエンド」＋「差し替え可能な�
 
 | 環境 | エンジンの居場所 | ライフサイクル | URL |
 |---|---|---|---|
-| 開発 / 自ホスト | 常駐 docker サイドカー（`voicevox/voicevox_engine:cpu-latest`, GPU 不要, 常駐 ~1GB）| compose 等・外部管理 | `AF_VOICEVOX_URL` 固定 |
+| 開発 / 自ホスト | 常駐 docker（`voicevox/voicevox_engine:cpu-latest`, GPU 不要, 常駐 ~1GB。`deploy/local/run-voicevox.sh`）| 外部管理 | 既定 `http://127.0.0.1:50021` |
 | AWS 本番 | ECS タスク | **管理者トグルで desired 0↔1** | Cloud Map の固定 DNS |
 
 ### AWS: 管理者トグルで ECS オンデマンド起動
@@ -155,9 +156,13 @@ TTS 設定画面かフッターに小さく常時表示する。Polly は AWS �
 
 ## フェーズ計画
 
-- **Phase 1（自ホスト）**: CP-native TTS ルート（`tts.ts` プロバイダ抽象・`/api/tts/synthesize`・
-  `/api/tts/status`）、VOICEVOX 常駐サイドカー、フロント句点逐次再生、設定トグル、使い分け `auto`
-  （この時点では VOICEVOX only + engine 不在時は無効表示）。クレジット表記。
+- **Phase 1（自ホスト）** ✅ 実装済み: CP-native TTS ルート（`control-plane/tts.go`:
+  `/api/tts/synthesize`・`/api/tts/status`、VOICEVOX 2 段呼び出し）、フロント句点逐次再生
+  （`console/src/features/chat/tts.ts` + 整形 `ttsText.ts` + `ChatView` フック）、設定トグル
+  （`lib/settings.ts` + `AgentsTab`: 有効/話者/速度）、クレジット表記、engine 起動ヘルパー
+  （`deploy/local/run-voicevox.sh`）。テスト: `control-plane/tts_test.go`（httptest 偽エンジン）+
+  `console/src/features/chat/tts.test.ts`（整形）。使い分けは Phase 1 では voicevox 固定
+  （polly 指定は 501）。**残**: 実機 VOICEVOX での目視確認（音が出るか）は未実施。
 - **Phase 2（AWS）**: Polly プロバイダ（IAM ロール）、管理者トグル → ECS desired 0↔1、
   Cloud Map 固定 DNS、readiness ゲート、`auto` の Polly フォールバック有効化。
 
