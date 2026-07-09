@@ -48,6 +48,31 @@ func TestAcronymAndCamel(t *testing.T) {
 	}
 }
 
+func TestTechTerms(t *testing.T) {
+	// AWS/開発ジャルゴンのオーバーライド＋略語＋数字ルールの網羅確認。
+	want := map[string]string{
+		"EC2":        "イーシーツー",
+		"S3":         "エススリー",
+		"Dao":        "ダオ",
+		"nginx":      "エンジンエックス",
+		"json":       "ジェイソン",
+		"IAM":        "アイアム",
+		"lambda":     "ラムダ",
+		"DynamoDB":   "ダイナモディービー",
+		"kubernetes": "クーバネティス",
+		"IPv6":       "アイピーブイシックス",
+	}
+	for in, exp := range want {
+		if got := englishToKana(in); got != exp {
+			t.Errorf("%q -> %q, want %q", in, got, exp)
+		}
+	}
+	// 単独の数字は日本語読みのまま（英字と地続きの数字だけ英語読み）。
+	if got := englishToKana("3個"); got != "3個" {
+		t.Errorf("単独数字 3個 -> %q, want 3個", got)
+	}
+}
+
 func containsASCIILetters(s string) bool {
 	for _, r := range s {
 		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {

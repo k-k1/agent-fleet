@@ -60,8 +60,10 @@ func loadCmudict() {
 	}
 }
 
-// englishToKana は文中の英単語（連続する ASCII 英字）をカタカナに変換し、それ以外
-// （日本語・記号・数字・空白）はそのまま通す。
+// englishToKana は文中の英数字トークン（英字で始まる [A-Za-z0-9] の連なり）をカタカナに
+// 変換し、それ以外（日本語・記号・単独の数字・空白）はそのまま通す。英字始まりに限るので
+// 単独の数字（"3個" の 3）は日本語読みのまま残る。EC2 / iPhone15 のような英字＋数字は
+// 1 トークンとして拾う。
 func englishToKana(text string) string {
 	cmuOnce.Do(loadCmudict)
 	var b strings.Builder
@@ -69,10 +71,10 @@ func englishToKana(text string) string {
 	for i := 0; i < len(runes); {
 		if isAsciiLetter(runes[i]) {
 			j := i
-			for j < len(runes) && isAsciiLetter(runes[j]) {
+			for j < len(runes) && (isAsciiLetter(runes[j]) || isAsciiDigit(runes[j])) {
 				j++
 			}
-			b.WriteString(convertWord(string(runes[i:j])))
+			b.WriteString(convertToken(string(runes[i:j])))
 			i = j
 			continue
 		}
@@ -86,10 +88,71 @@ func isAsciiLetter(r rune) bool {
 	return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z')
 }
 
+func isAsciiDigit(r rune) bool { return r >= '0' && r <= '9' }
+
+func hasDigit(s string) bool {
+	for _, r := range s {
+		if isAsciiDigit(r) {
+			return true
+		}
+	}
+	return false
+}
+
+// 数字を英語読みで（EC2→…ツー, S3→…スリー）。技術語の版番号・型番向け。単独数字は
+// englishToKana で拾わないので、ここに来るのは英字と地続きの数字のみ。
+var digitKana = map[rune]string{
+	'0': "ゼロ", '1': "ワン", '2': "ツー", '3': "スリー", '4': "フォー",
+	'5': "ファイブ", '6': "シックス", '7': "セブン", '8': "エイト", '9': "ナイン",
+}
+
+// convertToken は 1 英数字トークンを変換する。まずトークン全体をオーバーライド辞書で引き、
+// 数字を含むなら英字塊/数字塊に割って変換、英字のみなら convertWord。
+func convertToken(tok string) string {
+	if k, ok := techKana[strings.ToLower(tok)]; ok {
+		return k
+	}
+	if hasDigit(tok) {
+		return convertAlnum(tok)
+	}
+	return convertWord(tok)
+}
+
+// convertAlnum は英字塊・数字塊が混じるトークン（EC2, iPhone15, utf8）を変換する。数字塊は
+// 一桁ずつ英語読み、英字塊は convertWord（未変換なら英字名読みにフォールバック＝s3→エススリー）。
+func convertAlnum(tok string) string {
+	var b strings.Builder
+	rs := []rune(tok)
+	for i := 0; i < len(rs); {
+		if isAsciiDigit(rs[i]) {
+			for i < len(rs) && isAsciiDigit(rs[i]) {
+				b.WriteString(digitKana[rs[i]])
+				i++
+			}
+			continue
+		}
+		j := i
+		for j < len(rs) && isAsciiLetter(rs[j]) {
+			j++
+		}
+		seg := string(rs[i:j])
+		conv := convertWord(seg)
+		if conv == seg { // 辞書外の英字塊は英字名読み（S3→エス, utf→ユーティーエフ）
+			conv = spellLetters(strings.ToUpper(seg))
+		}
+		b.WriteString(conv)
+		i = j
+	}
+	return b.String()
+}
+
 // convertWord は 1 英単語をカタカナへ。辞書ヒット→ARPABET 変換、全大文字の略語→英字名読み、
 // それ以外の未知語→camelCase 等で分割して各部を再帰、なお未知なら綴りのまま残す。
 func convertWord(word string) string {
 	lower := strings.ToLower(word)
+	if k, ok := techKana[lower]; ok { // AWS/開発ジャルゴンのオーバーライド優先
+		return k
+	}
 	if arpa, ok := cmuMap[lower]; ok {
 		return arpabetToKana(arpa)
 	}
