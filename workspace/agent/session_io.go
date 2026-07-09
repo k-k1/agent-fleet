@@ -233,6 +233,16 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"sent": name})
 		return
 	}
+	// While an AskUserQuestion is awaiting an answer, the TUI modal IGNORES typed text
+	// on option rows and the trailing Enter confirms the highlighted FIRST option — a
+	// {prompt} here silently answers the wrong choice (v2.1.204 実測, docs/dev/92).
+	// Reject it for every {prompt} sender (Console composer, MCP drive tools); answers
+	// must go through {keys}/{seq}, which stay allowed above.
+	if questionPending(name) {
+		httpx.WriteErr(w, http.StatusConflict, "question_pending",
+			"a question is awaiting an answer; answer it via keys/seq (the question card), not free text")
+		return
+	}
 	// Send the prompt literally (-l: no key-name interpretation), then Enter to submit.
 	if out, err := exec.Command("tmux", "send-keys", "-t", pane, "-l", body.Prompt).CombinedOutput(); err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "tmux_failed", string(out))
@@ -338,6 +348,19 @@ func inputSubmitDelay(name string) time.Duration {
 func opencodeInSubagentView(tn string) bool {
 	s := tmuxx.CapturePane(tn)
 	return strings.Contains(s, "Parent") && strings.Contains(s, "Next")
+}
+
+// questionPending reports whether the session is blocked on an AskUserQuestion
+// (status "question": written by the PreToolUse hook, cleared when the question's
+// own lifecycle moves on — answered→working / Stop→idle). Unknown sessions or a
+// missing status file read as not-pending.
+func questionPending(name string) bool {
+	meta, ok := session.ReadMeta(name)
+	if !ok {
+		return false
+	}
+	st, ok := status.Read(session.UUID(meta.Dir, name))
+	return ok && st.State == "question"
 }
 
 // markSessionWorking optimistically marks the session working so a poll immediately
