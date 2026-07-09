@@ -8,6 +8,7 @@ import type { ReactNode, MouseEvent, FormEvent } from "react";
 import { Icon } from "./Icon.tsx";
 import { IconButton } from "./Button.tsx";
 import { coarsePointer } from "../lib/device.ts";
+import { useEscLayer } from "../lib/escLayer.ts";
 
 interface ModalProps {
   title?: ReactNode;
@@ -28,19 +29,9 @@ export function Modal({
   lockClose = false,
   children,
 }: ModalProps) {
-  // Esc closes (unless an operation is in flight). Registered at the document so
-  // it works regardless of where focus sits inside the panel.
-  useEffect(() => {
-    if (!onClose || lockClose) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.stopPropagation();
-        onClose();
-      }
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [onClose, lockClose]);
+  // Esc closes (unless an operation is in flight) — layered, so with a confirm
+  // dialog open above this modal, Esc peels the confirm first, not both at once.
+  useEscLayer(onClose, !lockClose);
 
   // On touch devices, undo any child's autoFocus once the panel mounts so opening a
   // dialog doesn't pop the soft keyboard (GBoard) — the user usually reviews/taps
