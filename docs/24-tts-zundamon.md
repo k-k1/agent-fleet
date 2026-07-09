@@ -186,8 +186,12 @@ TTS 設定画面かフッターに小さく常時表示する。Polly は AWS �
   綴りのまま）。`/api/tts/synthesize` の `enkana` フラグで有効化。設定「英語をカタカナ読み」
   (`ttsEnglishKana`)。**性質**: CMUdict はアメリカ英語の音写なので、定着した和製カタカナ
   （コーヒー）ではなく音写（カフィー）になる＝“それっぽい”止まり。より自然な和製読みは GPL の
-  alkana/bep-eng.dic が持つが Apache-2.0 の本リポジトリと非互換のため不採用。テスト
-  `control-plane/enkana_test.go`。NOTICE に CMUdict 帰属を記載。実機の音は未確認。
+  alkana/bep-eng.dic が持つが Apache-2.0 の本リポジトリと非互換のため不採用。
+  **AWS/開発ジャルゴン対応**: CMUdict は技術語を網羅できない（EC2 は数字が読まれず、Dao は辞書外で
+  綴りのまま等）ため、手キュレーションのオーバーライド辞書 `control-plane/enkana_dict.go`（`techKana`,
+  CMUdict より優先）を併設。加えて「略語＋数字」ルールで EC2→イーシーツー・S3→エススリー（英字塊は
+  英字名読み、数字塊は英語数字読み。単独数字は日本語読みのまま）。語を足すには `techKana` に 1 行追加。
+  テスト `control-plane/enkana_test.go`（一般語＋技術語）。NOTICE に CMUdict 帰属を記載。実機の音は未確認。
 - **Phase 2（AWS）**: Polly プロバイダ（IAM ロール）、管理者トグル → ECS desired 0↔1、
   Cloud Map 固定 DNS、readiness ゲート、`auto` の Polly フォールバック有効化。
 
