@@ -43,16 +43,16 @@ func validOID(oid string) bool {
 
 // lfsObjectPath is the on-disk location of an object, sharded by the oid prefix and
 // contained within the repo's .git tree (so delete/rename of the repo carries it).
-func (c config) lfsObjectPath(slug, repo, oid string) string {
-	return filepath.Join(c.mgr.dataRoot, "git", filepath.Base(slug), repo+".git",
+func (a gitServerAPI) lfsObjectPath(slug, repo, oid string) string {
+	return filepath.Join(a.dataRoot, "git", filepath.Base(slug), repo+".git",
 		"lfs", "objects", oid[0:2], oid[2:4], oid)
 }
 
 // lfsHref is the absolute transfer URL returned in a batch action; it points back
 // to the CP (public base = Caddy TLS terminus), which the LFS client reaches with
 // the same Basic git token via the cred helper.
-func (c config) lfsHref(slug, repo, oid string) string {
-	return strings.TrimRight(c.publicBaseURL, "/") + "/git/" + slug + "/" + repo + ".git/info/lfs/objects/" + oid
+func (a gitServerAPI) lfsHref(slug, repo, oid string) string {
+	return strings.TrimRight(a.publicBaseURL, "/") + "/git/" + slug + "/" + repo + ".git/info/lfs/objects/" + oid
 }
 
 func fileExists(p string) bool {
@@ -71,18 +71,18 @@ func writeLFSErr(w http.ResponseWriter, status int, msg string) {
 
 func (e *gitAuthErr) writeLFS(w http.ResponseWriter) { writeLFSErr(w, e.status, e.msg) }
 
-// handleLFSBatch answers POST .../info/lfs/objects/batch: for each requested object
+// lfsBatch answers POST .../info/lfs/objects/batch: for each requested object
 // it returns a transfer action (upload/download) or an inline error (missing on
 // download, over-quota on upload). Quota is projected across the batch so a single
 // request cannot slip past the cap.
-func (c config) handleLFSBatch(w http.ResponseWriter, r *http.Request) {
+func (a gitServerAPI) lfsBatch(w http.ResponseWriter, r *http.Request) {
 	slug, repoSeg := r.PathValue("slug"), r.PathValue("repo")
-	name, mv, _, aerr := c.authorizeGitRepo(r, slug, repoSeg)
+	name, mv, _, aerr := a.authorizeGitRepo(r, slug, repoSeg)
 	if aerr != nil {
 		aerr.writeLFS(w)
 		return
 	}
-	if c.publicBaseURL == "" {
+	if a.publicBaseURL == "" {
 		writeLFSErr(w, http.StatusServiceUnavailable, "internal git not configured (PUBLIC_BASE_URL)")
 		return
 	}
@@ -107,13 +107,13 @@ func (c config) handleLFSBatch(w http.ResponseWriter, r *http.Request) {
 	// accumulates the not-yet-present objects in THIS batch.
 	var remaining int64 = -1 // -1 = unlimited
 	if upload {
-		t, err := c.mgr.store.GetTenant(r.Context(), mv.TenantID)
+		t, err := a.store.GetTenant(r.Context(), mv.TenantID)
 		if err != nil {
 			writeLFSErr(w, http.StatusInternalServerError, "store error")
 			return
 		}
 		if max := parseLimits(t.Limits).MaxLFSBytes; max > 0 {
-			used, err := c.mgr.store.TenantLFSBytes(r.Context(), mv.TenantID)
+			used, err := a.store.TenantLFSBytes(r.Context(), mv.TenantID)
 			if err != nil {
 				writeLFSErr(w, http.StatusInternalServerError, "store error")
 				return
@@ -130,8 +130,8 @@ func (c config) handleLFSBatch(w http.ResponseWriter, r *http.Request) {
 			out = append(out, obj)
 			continue
 		}
-		exists := fileExists(c.lfsObjectPath(slug, name, o.OID))
-		href := c.lfsHref(slug, name, o.OID)
+		exists := fileExists(a.lfsObjectPath(slug, name, o.OID))
+		href := a.lfsHref(slug, name, o.OID)
 		switch {
 		case upload && exists:
 			// Already stored → no action; the client skips the transfer.
@@ -153,13 +153,13 @@ func (c config) handleLFSBatch(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"transfer": "basic", "objects": out})
 }
 
-// handleLFSUpload stores an object (PUT .../info/lfs/objects/{oid}). It streams the
+// lfsUpload stores an object (PUT .../info/lfs/objects/{oid}). It streams the
 // body to a temp file while hashing, enforces the tenant capacity cap mid-stream,
 // verifies the sha256 matches the oid, then atomically publishes it and records the
 // ledger row. A re-upload of a present object is a no-op 200 (dedup).
-func (c config) handleLFSUpload(w http.ResponseWriter, r *http.Request) {
+func (a gitServerAPI) lfsUpload(w http.ResponseWriter, r *http.Request) {
 	slug, repoSeg, oid := r.PathValue("slug"), r.PathValue("repo"), r.PathValue("oid")
-	name, mv, _, aerr := c.authorizeGitRepo(r, slug, repoSeg)
+	name, mv, _, aerr := a.authorizeGitRepo(r, slug, repoSeg)
 	if aerr != nil {
 		aerr.writeLFS(w)
 		return
@@ -172,7 +172,7 @@ func (c config) handleLFSUpload(w http.ResponseWriter, r *http.Request) {
 		writeLFSErr(w, http.StatusUnprocessableEntity, "invalid oid")
 		return
 	}
-	dest := c.lfsObjectPath(slug, name, oid)
+	dest := a.lfsObjectPath(slug, name, oid)
 	if fileExists(dest) {
 		w.WriteHeader(http.StatusOK) // already have it
 		return
@@ -181,13 +181,13 @@ func (c config) handleLFSUpload(w http.ResponseWriter, r *http.Request) {
 	// Remaining quota (-1 = unlimited). Checked upfront against Content-Length for a
 	// fast reject, and enforced hard mid-stream below.
 	remaining := int64(-1)
-	t, err := c.mgr.store.GetTenant(r.Context(), mv.TenantID)
+	t, err := a.store.GetTenant(r.Context(), mv.TenantID)
 	if err != nil {
 		writeLFSErr(w, http.StatusInternalServerError, "store error")
 		return
 	}
 	if max := parseLimits(t.Limits).MaxLFSBytes; max > 0 {
-		used, err := c.mgr.store.TenantLFSBytes(r.Context(), mv.TenantID)
+		used, err := a.store.TenantLFSBytes(r.Context(), mv.TenantID)
 		if err != nil {
 			writeLFSErr(w, http.StatusInternalServerError, "store error")
 			return
@@ -239,7 +239,7 @@ func (c config) handleLFSUpload(w http.ResponseWriter, r *http.Request) {
 		writeLFSErr(w, http.StatusInternalServerError, "publish failed")
 		return
 	}
-	if err := c.mgr.store.PutLFSObject(r.Context(), mv.TenantID, name, oid, written); err != nil {
+	if err := a.store.PutLFSObject(r.Context(), mv.TenantID, name, oid, written); err != nil {
 		// The object is stored; a ledger miss only under-counts the quota. Log-worthy
 		// but not client-facing.
 		_ = err
@@ -247,11 +247,11 @@ func (c config) handleLFSUpload(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-// handleLFSDownload serves an object (GET .../info/lfs/objects/{oid}) with range
+// lfsDownload serves an object (GET .../info/lfs/objects/{oid}) with range
 // support via http.ServeContent.
-func (c config) handleLFSDownload(w http.ResponseWriter, r *http.Request) {
+func (a gitServerAPI) lfsDownload(w http.ResponseWriter, r *http.Request) {
 	slug, repoSeg, oid := r.PathValue("slug"), r.PathValue("repo"), r.PathValue("oid")
-	name, _, _, aerr := c.authorizeGitRepo(r, slug, repoSeg)
+	name, _, _, aerr := a.authorizeGitRepo(r, slug, repoSeg)
 	if aerr != nil {
 		aerr.writeLFS(w)
 		return
@@ -260,7 +260,7 @@ func (c config) handleLFSDownload(w http.ResponseWriter, r *http.Request) {
 		writeLFSErr(w, http.StatusUnprocessableEntity, "invalid oid")
 		return
 	}
-	f, err := os.Open(c.lfsObjectPath(slug, name, oid))
+	f, err := os.Open(a.lfsObjectPath(slug, name, oid))
 	if err != nil {
 		writeLFSErr(w, http.StatusNotFound, "object does not exist")
 		return

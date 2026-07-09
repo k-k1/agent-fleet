@@ -7,10 +7,15 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 )
 
 // opencodeStatusAgentRe pulls the current agent from opencode's composer status line
@@ -21,21 +26,8 @@ var opencodeStatusAgentRe = regexp.MustCompile(`([A-Za-z][\w-]*) +auto +·`)
 // "<model> <effort> · <cwd>" (the word right before " · " then the cwd path).
 var codexFooterEffortRe = regexp.MustCompile(`([a-z]+) +· +[~/]`)
 
-// capturePane returns the session's visible pane text, targeting the active pane by its
-// id. NOTE: capture-pane does NOT accept the "=<session>" exact-target syntax that
-// send-keys/list-panes take ("can't find pane: =name") — that silently returned empty and
-// broke all pane scraping — so we resolve the pane id via sessionPaneID first.
-func capturePane(tn string) string {
-	pane := sessionPaneID(tn)
-	if pane == "" {
-		return ""
-	}
-	out, err := exec.Command("tmux", "capture-pane", "-p", "-t", pane).Output()
-	if err != nil {
-		return ""
-	}
-	return string(out)
-}
+// pane キャプチャ/解決の tmux プリミティブ（capturePane / sessionPaneID）は
+// internal/tmuxx へ移設（docs/23 残① Wave A）。
 
 // paneTail returns the last n non-empty lines of s (the TUI's status/composer footer
 // region), so mode detection matches the STATUS LINE — not conversation text that merely
@@ -59,12 +51,12 @@ func paneTail(s string, n int) string {
 // "" = unknown (composer not drawn / stopped) → the Console shows no mode. Matching is
 // confined to the pane's tail (status line region) so conversation content can't spoof it.
 func paneMode(kind, tn string) string {
-	s := capturePane(tn)
+	s := tmuxx.CapturePane(tn)
 	if s == "" {
 		return ""
 	}
 	switch kind {
-	case kindClaude:
+	case session.KindClaude:
 		// claude's status line (last line) shows the active mode: "⏸ plan mode on
 		// (shift+tab to cycle)" vs "⏵⏵ bypass permissions on …" / "accept edits on …".
 		t := paneTail(s, 3)
@@ -80,13 +72,13 @@ func paneMode(kind, tn string) string {
 		if strings.Contains(t, "shift+tab to cycle") {
 			return "Default"
 		}
-	case kindOpencode:
+	case session.KindOpencode:
 		// The composer status line ("<Agent> auto · …") sits a few lines above the very
 		// bottom (above the border + token/commands footer). The agent name IS the mode.
 		if m := opencodeStatusAgentRe.FindStringSubmatch(paneTail(s, 8)); m != nil {
 			return titleFirst(m[1]) // "Plan" / "Build" / …
 		}
-	case kindCodex:
+	case session.KindCodex:
 		// codex's composer footer is "<model> <effort> · <cwd>  Plan mode [(shift+tab to
 		// cycle)]" — "Plan mode" appears ONLY in plan mode (Default shows no label). The
 		// "(shift+tab to cycle)" suffix is truncated on a narrow pane, so DON'T require it.
@@ -123,8 +115,8 @@ func titleFirst(s string) string {
 // /output for the reply.
 func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if !nameRe.MatchString(name) {
-		writeErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
+	if !session.ValidName(name) {
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
 		return
 	}
 	// Body is one of:
@@ -143,24 +135,24 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 		} `json:"seq"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&body); err != nil {
-		writeErr(w, http.StatusBadRequest, "bad_body", "invalid JSON body")
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_body", "invalid JSON body")
 		return
 	}
 	if len(body.Keys) == 0 && len(body.Seq) == 0 && strings.TrimSpace(body.Prompt) == "" {
-		writeErr(w, http.StatusBadRequest, "empty_prompt", "prompt, keys or seq is required")
+		httpx.WriteErr(w, http.StatusBadRequest, "empty_prompt", "prompt, keys or seq is required")
 		return
 	}
-	tn := tmuxName(name)
-	if !tmuxHasSession(tn) {
-		writeErr(w, http.StatusConflict, "not_running", "session is not running; start it first")
+	tn := session.TmuxName(name)
+	if !tmuxx.HasSession(tn) {
+		httpx.WriteErr(w, http.StatusConflict, "not_running", "session is not running; start it first")
 		return
 	}
 	// Resolve the active pane id. send-keys takes a target-PANE, where tmux's "="
 	// exact-session prefix is read literally ("can't find pane: =claude_x"); a
 	// globally-unique pane id (%N) is unambiguous and avoids tmux's prefix matching.
-	pane := sessionPaneID(tn)
+	pane := tmuxx.SessionPaneID(tn)
 	if pane == "" {
-		writeErr(w, http.StatusInternalServerError, "no_pane", "could not resolve session pane")
+		httpx.WriteErr(w, http.StatusInternalServerError, "no_pane", "could not resolve session pane")
 		return
 	}
 	if len(body.Keys) > 0 {
@@ -176,13 +168,13 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 		// re-render between keys (e.g. after Enter advances to the next question page).
 		for _, k := range keys {
 			if !allowedKey(k) {
-				writeErr(w, http.StatusBadRequest, "bad_key", "unsupported key: "+k)
+				httpx.WriteErr(w, http.StatusBadRequest, "bad_key", "unsupported key: "+k)
 				return
 			}
 		}
 		for i, k := range keys {
 			if out, err := exec.Command("tmux", "send-keys", "-t", pane, k).CombinedOutput(); err != nil {
-				writeErr(w, http.StatusInternalServerError, "tmux_failed", string(out))
+				httpx.WriteErr(w, http.StatusInternalServerError, "tmux_failed", string(out))
 				return
 			}
 			if i < len(keys)-1 {
@@ -199,7 +191,7 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 				break
 			}
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"sent": name})
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"sent": name})
 		return
 	}
 	if len(body.Seq) > 0 {
@@ -207,11 +199,11 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 		// either a whitelisted named key or literal text.
 		for _, s := range body.Seq {
 			if s.K != "" && !allowedKey(s.K) {
-				writeErr(w, http.StatusBadRequest, "bad_key", "unsupported key: "+s.K)
+				httpx.WriteErr(w, http.StatusBadRequest, "bad_key", "unsupported key: "+s.K)
 				return
 			}
 			if s.K == "" && s.T == "" {
-				writeErr(w, http.StatusBadRequest, "bad_seq", "each seq step needs k or t")
+				httpx.WriteErr(w, http.StatusBadRequest, "bad_seq", "each seq step needs k or t")
 				return
 			}
 		}
@@ -228,7 +220,7 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 				cmd = exec.Command("tmux", "send-keys", "-t", pane, "-l", s.T)
 			}
 			if out, err := cmd.CombinedOutput(); err != nil {
-				writeErr(w, http.StatusInternalServerError, "tmux_failed", string(out))
+				httpx.WriteErr(w, http.StatusInternalServerError, "tmux_failed", string(out))
 				return
 			}
 			if i < len(body.Seq)-1 {
@@ -238,12 +230,12 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 		if working {
 			markSessionWorking(name)
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"sent": name})
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"sent": name})
 		return
 	}
 	// Send the prompt literally (-l: no key-name interpretation), then Enter to submit.
 	if out, err := exec.Command("tmux", "send-keys", "-t", pane, "-l", body.Prompt).CombinedOutput(); err != nil {
-		writeErr(w, http.StatusInternalServerError, "tmux_failed", string(out))
+		httpx.WriteErr(w, http.StatusInternalServerError, "tmux_failed", string(out))
 		return
 	}
 	// Pause before Enter so the TUI finishes ingesting the pasted text first. codex's
@@ -253,7 +245,7 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 	// short beat is harmless there too.
 	time.Sleep(inputSubmitDelay(name))
 	if out, err := exec.Command("tmux", "send-keys", "-t", pane, "Enter").CombinedOutput(); err != nil {
-		writeErr(w, http.StatusInternalServerError, "tmux_failed", string(out))
+		httpx.WriteErr(w, http.StatusInternalServerError, "tmux_failed", string(out))
 		return
 	}
 	// A slash command (/plan, /model, …) isn't a turn — don't optimistically mark the
@@ -262,7 +254,7 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 	if !slashCmdRe.MatchString(strings.TrimSpace(body.Prompt)) {
 		markSessionWorking(name)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"sent": name})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"sent": name})
 }
 
 // slashCmdRe matches a single-token slash command like "/plan" or "/model foo" (but not a
@@ -304,11 +296,11 @@ func sendSlashCommand(name, pane, text string) error {
 // Best-effort and silent: a stop the user explicitly asked for must never be
 // blocked or delayed by a failure here, and this only ever runs immediately
 // before that kill — never while the session might still be in active use.
-func disconnectRemoteControl(name string, m sessionMeta) {
-	if m.Kind != kindClaude || remoteSessionURL(sessionUUID(m.Dir, m.Name)) == "" {
+func disconnectRemoteControl(name string, m session.Meta) {
+	if m.Kind != session.KindClaude || claude.RemoteSessionURL(session.UUID(m.Dir, m.Name)) == "" {
 		return // not a claude session, or RC has never been used here
 	}
-	pane := sessionPaneID(tmuxName(name))
+	pane := tmuxx.SessionPaneID(session.TmuxName(name))
 	if pane == "" {
 		return
 	}
@@ -328,7 +320,7 @@ func disconnectRemoteControl(name string, m sessionMeta) {
 // back so it gets a token pause. Tunable via AGENT_INPUT_SUBMIT_DELAY_MS.
 func inputSubmitDelay(name string) time.Duration {
 	ms := 200
-	if meta, ok := readSessionMeta(name); ok && meta.Kind == kindClaude {
+	if meta, ok := session.ReadMeta(name); ok && meta.Kind == session.KindClaude {
 		ms = 20
 	}
 	if v := os.Getenv("AGENT_INPUT_SUBMIT_DELAY_MS"); v != "" {
@@ -344,18 +336,18 @@ func inputSubmitDelay(name string) time.Duration {
 // In that view Escape only navigates, so the stop button must step out (Up) first.
 // Best-effort: a capture failure returns false (treat as the normal view → plain Escape).
 func opencodeInSubagentView(tn string) bool {
-	s := capturePane(tn)
+	s := tmuxx.CapturePane(tn)
 	return strings.Contains(s, "Parent") && strings.Contains(s, "Next")
 }
 
 // markSessionWorking optimistically marks the session working so a poll immediately
 // after a send doesn't read a stale idle before claude's UserPromptSubmit hook fires.
 func markSessionWorking(name string) {
-	meta, ok := readSessionMeta(name)
+	meta, ok := session.ReadMeta(name)
 	if !ok {
 		return
 	}
-	persistSessionStatus(sessionUUID(meta.Dir, name), "working")
+	status.Persist(session.UUID(meta.Dir, name), "working")
 }
 
 // allowedKey is the whitelist of tmux key names the Console may send to drive a TUI
@@ -368,46 +360,22 @@ func allowedKey(k string) bool {
 	return false
 }
 
-// sessionPaneID returns the active pane id (e.g. "%0") of a session's current
-// window, or "" if none. Uses the "=" exact target for list-panes (a target-
-// SESSION context, where "=" is honored), then returns the active pane.
-func sessionPaneID(tn string) string {
-	out, err := exec.Command("tmux", "list-panes", "-t", exactT(tn), "-F", "#{pane_active} #{pane_id}").Output()
-	if err != nil {
-		return ""
-	}
-	first := ""
-	for _, ln := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		f := strings.Fields(ln)
-		if len(f) != 2 {
-			continue
-		}
-		if first == "" {
-			first = f[1]
-		}
-		if f[0] == "1" {
-			return f[1]
-		}
-	}
-	return first // fall back to the first pane if none flagged active
-}
-
 // handleSessionStatus (GET /sessions/{name}/status) returns the session's live
 // state for the drive poll loop: working | idle | question, plus alive.
 func handleSessionStatus(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if !nameRe.MatchString(name) {
-		writeErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
+	if !session.ValidName(name) {
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
 		return
 	}
-	meta, ok := readSessionMeta(name)
+	meta, ok := session.ReadMeta(name)
 	if !ok {
-		writeErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
+		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
 		return
 	}
-	alive := tmuxHasSession(tmuxName(name))
+	alive := tmuxx.HasSession(session.TmuxName(name))
 	state := driveState(meta, alive, true)
-	writeJSON(w, http.StatusOK, map[string]any{"name": name, "kind": meta.Kind, "alive": alive, "status": state})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"name": name, "kind": meta.Kind, "alive": alive, "status": state})
 }
 
 // handleSessionOutput (GET /sessions/{name}/output?since=<cursor>) returns the
@@ -416,20 +384,20 @@ func handleSessionStatus(w http.ResponseWriter, r *http.Request) {
 // index into the transcript.
 func handleSessionOutput(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if !nameRe.MatchString(name) {
-		writeErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
+	if !session.ValidName(name) {
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
 		return
 	}
-	meta, ok := readSessionMeta(name)
+	meta, ok := session.ReadMeta(name)
 	if !ok {
-		writeErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
+		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
 		return
 	}
-	alive := tmuxHasSession(tmuxName(name))
+	alive := tmuxx.HasSession(session.TmuxName(name))
 	// /output opts out of the idle-heal (heal=false) to preserve its historical behavior.
 	state := driveState(meta, alive, false)
-	if !agentOf(meta.Kind).caps().canTranscript {
-		writeErr(w, http.StatusBadRequest, "unsupported_kind", "output is available for claude sessions only (phase 1)")
+	if !agentOf(meta.Kind).Caps().CanTranscript {
+		httpx.WriteErr(w, http.StatusBadRequest, "unsupported_kind", "output is available for claude sessions only (phase 1)")
 		return
 	}
 	since := 0
@@ -438,11 +406,11 @@ func handleSessionOutput(w http.ResponseWriter, r *http.Request) {
 			since = n
 		}
 	}
-	sid := sessionUUID(meta.Dir, name)
-	lines := transcriptLines(sid)
+	sid := session.UUID(meta.Dir, name)
+	lines := claude.TranscriptLines(sid)
 	var sb strings.Builder
 	for i := since; i < len(lines); i++ {
-		if t := assistantText(lines[i]); t != "" {
+		if t := claude.AssistantText(lines[i]); t != "" {
 			if sb.Len() > 0 {
 				sb.WriteString("\n")
 			}
@@ -452,116 +420,12 @@ func handleSessionOutput(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"name": name, "output": sb.String(), "cursor": len(lines),
 		"status": state, "alive": alive,
 	})
 }
 
-// jsonlByMtime returns sid's conversation logs newest-first. claude can leave more
-// than one <sid>.jsonl under projects/* (a cwd change, a CLAUDE_CONFIG_DIR switch,
-// or a stale log from an earlier run all produce siblings under different project
-// dirs). glob order is lexical, so paths[0] can be an OLD file that never grows —
-// the chat then freezes on stale content. The live log is the most recently written
-// one, so we sort by mtime and read that.
-func jsonlByMtime(sid string) []string {
-	paths := jsonlPaths(sid)
-	sort.SliceStable(paths, func(i, j int) bool {
-		return jsonlMtime(paths[i]).After(jsonlMtime(paths[j]))
-	})
-	return paths
-}
-
-func jsonlMtime(p string) time.Time {
-	fi, err := os.Stat(p)
-	if err != nil {
-		return time.Time{}
-	}
-	return fi.ModTime()
-}
-
-// transcriptRead reads the session's live jsonl as raw lines — one JSON event per
-// line, the line count being the cursor — and returns the chosen path plus every
-// matching path (for the /messages diagnostics).
-//
-// It prefers the NEWEST log that actually holds a conversation. A session commonly
-// has sibling <sid>.jsonl files: the real transcript, plus stubs (a Remote Control
-// "bridge-session", a lone summary) that can carry a NEWER mtime — while a workflow
-// runs, a bridge stub may be touched more recently than the main log. Reading a stub
-// would show an empty chat, so we skip stubs and fall back to the newest file only
-// when none has real turns yet.
-func transcriptRead(sid string) (lines [][]byte, path string, matched []string) {
-	matched = jsonlByMtime(sid)
-	if len(matched) == 0 {
-		return nil, "", nil
-	}
-	var fallback [][]byte
-	fallbackPath := matched[0]
-	for i, p := range matched {
-		ls := readJSONLLines(p)
-		if i == 0 {
-			fallback = ls
-		}
-		if jsonlHasConversation(ls) {
-			return ls, p, matched
-		}
-	}
-	return fallback, fallbackPath, matched
-}
-
-// readJSONLLines reads a jsonl file into its non-empty raw lines.
-func readJSONLLines(p string) [][]byte {
-	b, err := os.ReadFile(p)
-	if err != nil {
-		return nil
-	}
-	var out [][]byte
-	for _, ln := range strings.Split(string(b), "\n") {
-		if strings.TrimSpace(ln) != "" {
-			out = append(out, []byte(ln))
-		}
-	}
-	return out
-}
-
-// jsonlHasConversation reports whether the lines include a real user/assistant turn
-// (not just bookkeeping) — the per-file form of jsonlResumable, so we can skip stubs.
-func jsonlHasConversation(lines [][]byte) bool {
-	for _, ln := range lines {
-		if bytesContains(ln, `"type":"user"`) || bytesContains(ln, `"type":"assistant"`) {
-			return true
-		}
-	}
-	return false
-}
-
-// transcriptLines is the lines-only view (the /output MCP poll doesn't need the
-// source path); both share the newest-file selection above.
-func transcriptLines(sid string) [][]byte {
-	lines, _, _ := transcriptRead(sid)
-	return lines
-}
-
-// assistantText extracts the concatenated text blocks from an assistant event
-// line (skips user/tool/bookkeeping lines).
-func assistantText(line []byte) string {
-	var ev struct {
-		Type    string `json:"type"`
-		Message struct {
-			Content []struct {
-				Type string `json:"type"`
-				Text string `json:"text"`
-			} `json:"content"`
-		} `json:"message"`
-	}
-	if json.Unmarshal(line, &ev) != nil || ev.Type != "assistant" {
-		return ""
-	}
-	var sb strings.Builder
-	for _, c := range ev.Message.Content {
-		if c.Type == "text" {
-			sb.WriteString(c.Text)
-		}
-	}
-	return sb.String()
-}
+// claude jsonl の読み出し（jsonlByMtime / transcriptRead / jsonlHasConversation /
+// transcriptLines / assistantText）は internal/agents/claude の transcript.go へ
+// 移設（docs/23 残① Wave F）。

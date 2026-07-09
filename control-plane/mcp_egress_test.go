@@ -19,23 +19,23 @@ func TestMCPEgressProposeAndGate(t *testing.T) {
 	if err := st.migrate(ctx); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
-	cfg := config{mgr: &manager{store: st}}
+	api := newMCPAPI(&manager{store: st})
 	super := &adminCtx{prin: &mcpPrincipal{patID: "pat1"}, tenant: Tenant{ID: "t1"}, isSuper: true, isAdmin: true}
 	tenantAdmin := &adminCtx{prin: &mcpPrincipal{patID: "pat2"}, tenant: Tenant{ID: "t1"}, isSuper: false, isAdmin: true}
 
 	// A tenant_admin (not super) is rejected from every egress tool.
-	if _, err := cfg.mcpProposeAllowlist(ctx, tenantAdmin, "x.com", "r"); err == nil {
+	if _, err := api.mcpProposeAllowlist(ctx, tenantAdmin, "x.com", "r"); err == nil {
 		t.Fatal("propose: expected super_admin gate")
 	}
-	if _, err := cfg.mcpEgressStats(ctx, tenantAdmin, 7); err == nil {
+	if _, err := api.mcpEgressStats(ctx, tenantAdmin, 7); err == nil {
 		t.Fatal("stats: expected super_admin gate")
 	}
-	if _, err := cfg.mcpListAllowlist(ctx, tenantAdmin, ""); err == nil {
+	if _, err := api.mcpListAllowlist(ctx, tenantAdmin, ""); err == nil {
 		t.Fatal("list: expected super_admin gate")
 	}
 
 	// super_admin proposes; entry is normalised, PROPOSED, and returns the approval note.
-	out, err := cfg.mcpProposeAllowlist(ctx, super, "  Paste.EE ", "under review")
+	out, err := api.mcpProposeAllowlist(ctx, super, "  Paste.EE ", "under review")
 	if err != nil {
 		t.Fatalf("propose: %v", err)
 	}
@@ -63,7 +63,7 @@ func TestMCPEgressProposeAndGate(t *testing.T) {
 	}
 
 	// stats works for super.
-	if _, err := cfg.mcpEgressStats(ctx, super, 7); err != nil {
+	if _, err := api.mcpEgressStats(ctx, super, 7); err != nil {
 		t.Fatalf("stats super: %v", err)
 	}
 }

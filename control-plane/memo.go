@@ -12,7 +12,7 @@ import (
 
 // Memo queue (docs/21). Per-membership notes accumulated across devices, then flushed
 // to a coding session as one concatenated message. All routes resolve scope with
-// membershipFor (no workspace build); mutations are ownership-guarded in the store by
+// withMembership (no workspace build); mutations are ownership-guarded in the store by
 // membership_id. Persistence mirrors the SSM profile CRUD (ssm.go) 1:1.
 
 // memoRetentionDays is how long a flushed (sent) memo is kept for history/re-send
@@ -43,16 +43,23 @@ func memoToDTO(m Memo) memoDTO {
 		CreatedAt: m.CreatedAt, SentAt: m.SentAt}
 }
 
-func (c config) handleMemosList(w http.ResponseWriter, r *http.Request) {
-	_, mv, ok := c.membershipFor(w, r)
-	if !ok {
-		return
-	}
+// memoAPI is the memo-queue feature handler set（docs/23 残③ の機能 struct 実例）:
+// 解決は埋め込みの memberAuth（登録側で withMembership / withResolved に包む）、
+// store は MemoStore の narrow view だけを持つ。flush だけは実ランタイムへ送る
+// ため withResolved で登録する。
+type memoAPI struct {
+	memberAuth
+	store MemoStore
+}
+
+func newMemoAPI(m *manager) memoAPI { return memoAPI{memberAuth{m}, m.store} }
+
+func (a memoAPI) list(w http.ResponseWriter, r *http.Request, _ Identity, mv MembershipView) {
 	cutoff := memoRetainBefore()
 	// Lazy sweep: drop expired sent memos before listing (best-effort; a failed
 	// sweep still lets the list run, the cutoff filter hides expired rows anyway).
-	_ = c.mgr.store.SweepSentMemos(r.Context(), cutoff)
-	rows, err := c.mgr.store.ListMemos(r.Context(), mv.MembershipID, cutoff)
+	_ = a.store.SweepSentMemos(r.Context(), cutoff)
+	rows, err := a.store.ListMemos(r.Context(), mv.MembershipID, cutoff)
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
@@ -91,11 +98,7 @@ func validateMemo(mv MembershipView, in memoDTO) (Memo, *apiError) {
 	return m, nil
 }
 
-func (c config) handleMemoCreate(w http.ResponseWriter, r *http.Request) {
-	_, mv, ok := c.membershipFor(w, r)
-	if !ok {
-		return
-	}
+func (a memoAPI) create(w http.ResponseWriter, r *http.Request, _ Identity, mv MembershipView) {
 	var in memoDTO
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid JSON body"})
@@ -108,7 +111,7 @@ func (c config) handleMemoCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	m.ID = newID()
 	m.CreatedAt = nowTS()
-	if err := c.mgr.store.CreateMemo(r.Context(), m); err != nil {
+	if err := a.store.CreateMemo(r.Context(), m); err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
@@ -125,12 +128,8 @@ type memoPatch struct {
 	Position *int    `json:"position"`
 }
 
-func (c config) handleMemoUpdate(w http.ResponseWriter, r *http.Request) {
-	_, mv, ok := c.membershipFor(w, r)
-	if !ok {
-		return
-	}
-	cur, found, err := c.mgr.store.GetMemo(r.Context(), r.PathValue("id"))
+func (a memoAPI) update(w http.ResponseWriter, r *http.Request, _ Identity, mv MembershipView) {
+	cur, found, err := a.store.GetMemo(r.Context(), r.PathValue("id"))
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
@@ -167,7 +166,7 @@ func (c config) handleMemoUpdate(w http.ResponseWriter, r *http.Request) {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_body", "body is required for kind=text"})
 		return
 	}
-	if err := c.mgr.store.UpdateMemo(r.Context(), cur); err != nil {
+	if err := a.store.UpdateMemo(r.Context(), cur); err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
@@ -211,11 +210,7 @@ func buildFlushMessage(memos []Memo) string {
 // three send granularities (whole repo / category / individual) — the client just
 // builds the right ids. Sending happens through the running workspace agent, so this
 // resolves the full runtime (not just membership).
-func (c config) handleMemoFlush(w http.ResponseWriter, r *http.Request) {
-	res, ok := c.resolvedFor(w, r)
-	if !ok {
-		return
-	}
+func (a memoAPI) flush(w http.ResponseWriter, r *http.Request, res *resolved) {
 	var in struct {
 		SessionName string   `json:"sessionName"`
 		IDs         []string `json:"ids"`
@@ -236,7 +231,7 @@ func (c config) handleMemoFlush(w http.ResponseWriter, r *http.Request) {
 	// Resolve the requested ids to owned memos (foreign/unknown ids are dropped).
 	memos := make([]Memo, 0, len(in.IDs))
 	for _, id := range in.IDs {
-		m, found, err := c.mgr.store.GetMemo(r.Context(), id)
+		m, found, err := a.store.GetMemo(r.Context(), id)
 		if err != nil {
 			writeAPIErr(w, internalErr(err))
 			return
@@ -264,19 +259,15 @@ func (c config) handleMemoFlush(w http.ResponseWriter, r *http.Request) {
 		sentIDs[i] = m.ID
 	}
 	sentAt := nowTS()
-	if err := c.mgr.store.MarkMemosSent(r.Context(), res.mv.MembershipID, sentIDs, sentAt); err != nil {
+	if err := a.store.MarkMemosSent(r.Context(), res.mv.MembershipID, sentIDs, sentAt); err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"sent": len(sentIDs), "sentAt": sentAt, "ids": sentIDs})
 }
 
-func (c config) handleMemoDelete(w http.ResponseWriter, r *http.Request) {
-	_, mv, ok := c.membershipFor(w, r)
-	if !ok {
-		return
-	}
-	if err := c.mgr.store.DeleteMemo(r.Context(), r.PathValue("id"), mv.MembershipID); err != nil {
+func (a memoAPI) delete(w http.ResponseWriter, r *http.Request, _ Identity, mv MembershipView) {
+	if err := a.store.DeleteMemo(r.Context(), r.PathValue("id"), mv.MembershipID); err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	}

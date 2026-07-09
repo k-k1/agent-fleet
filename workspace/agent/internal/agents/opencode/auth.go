@@ -1,0 +1,111 @@
+package opencode
+
+import (
+	"net/http"
+	"regexp"
+	"sort"
+	"strings"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
+)
+
+// opencode provider auth: mirrors the claude "settings-driven" model — the user
+// pastes a provider API key in the Console, it's kept in the encrypted store
+// (internal/secrets, at-rest sealed), and the Agent injects it as the provider's env var
+// when it launches an opencode session. opencode natively reads provider keys from
+// the environment (ANTHROPIC_API_KEY, OPENAI_API_KEY, …), so no auth.json is written
+// and the key never lands in a plaintext file on the bind-mounted disk.
+
+// envNameRe constrains the env var name to the conventional ALL_CAPS form so an
+// arbitrary value can't be smuggled into the container environment.
+var envNameRe = regexp.MustCompile(`^[A-Z][A-Z0-9_]{1,63}$`)
+
+// env loads the stored provider keys as "NAME=value" entries for the
+// session launcher to pass via `docker`/tmux `-e`. Order is stable (sorted).
+func env() []string {
+	s, err := secrets.Load()
+	if err != nil || len(s.Opencode) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(s.Opencode))
+	for k := range s.Opencode {
+		names = append(names, k)
+	}
+	sort.Strings(names)
+	out := make([]string, 0, len(names))
+	for _, k := range names {
+		out = append(out, k+"="+s.Opencode[k])
+	}
+	return out
+}
+
+// Status reports which provider env vars are configured (names only,
+// never the keys) for the Console Connections panel (GET /connections).
+func Status(s *secrets.Data) map[string]any {
+	names := []string{}
+	for k := range s.Opencode {
+		names = append(names, k)
+	}
+	sort.Strings(names)
+	return map[string]any{"connected": len(names) > 0, "envs": names}
+}
+
+type connReq struct {
+	Env string `json:"env"` // provider env var name, e.g. ANTHROPIC_API_KEY
+	Key string `json:"key"` // the API key
+}
+
+// HandlePutConn stores a provider API key under its env var name
+// (PUT /connections/opencode).
+func HandlePutConn(w http.ResponseWriter, r *http.Request) {
+	var req connReq
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	env := strings.TrimSpace(req.Env)
+	if !envNameRe.MatchString(env) {
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_env", "env must be ALL_CAPS like ANTHROPIC_API_KEY")
+		return
+	}
+	key := strings.TrimSpace(req.Key)
+	if key == "" {
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_key", "key is required")
+		return
+	}
+	s, err := secrets.Load()
+	if err != nil {
+		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
+		return
+	}
+	if s.Opencode == nil {
+		s.Opencode = map[string]string{}
+	}
+	s.Opencode[env] = key
+	if err := s.Save(); err != nil {
+		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"connected": true, "env": env})
+}
+
+// HandleDeleteConn removes a stored provider key
+// (DELETE /connections/opencode/{env}).
+func HandleDeleteConn(w http.ResponseWriter, r *http.Request) {
+	env := r.PathValue("env")
+	if !envNameRe.MatchString(env) {
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_env", "invalid env name")
+		return
+	}
+	s, err := secrets.Load()
+	if err != nil {
+		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
+		return
+	}
+	delete(s.Opencode, env)
+	if err := s.Save(); err != nil {
+		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"disconnected": env})
+}

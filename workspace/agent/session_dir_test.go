@@ -7,19 +7,21 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
 // TestSessionsInDir covers the branch-switch guard's core: which running sessions
 // count as "occupying" a working copy. dir equality and strict-subdir match; siblings
 // with a shared prefix, archived, stopped, and parent-dir sessions must not.
 func TestSessionsInDir(t *testing.T) {
-	metas := []sessionMeta{
-		{Name: "a", Dir: "/repos/foo", Title: "root"},           // exact match, live
-		{Name: "b", Dir: "/repos/foo/sub", Title: "subdir"},     // strict subdir, live
-		{Name: "c", Dir: "/repos/foobar", Title: "sibling"},     // shared prefix, NOT under foo
-		{Name: "d", Dir: "/repos/foo", Title: "stopped"},        // under foo but not live
+	metas := []session.Meta{
+		{Name: "a", Dir: "/repos/foo", Title: "root"},       // exact match, live
+		{Name: "b", Dir: "/repos/foo/sub", Title: "subdir"}, // strict subdir, live
+		{Name: "c", Dir: "/repos/foobar", Title: "sibling"}, // shared prefix, NOT under foo
+		{Name: "d", Dir: "/repos/foo", Title: "stopped"},    // under foo but not live
 		{Name: "e", Dir: "/repos/foo", Title: "archived", Archived: true},
-		{Name: "f", Dir: "/repos", Title: "parent"},             // parent dir, not under foo
+		{Name: "f", Dir: "/repos", Title: "parent"}, // parent dir, not under foo
 	}
 	live := map[string]bool{"a": true, "b": true, "c": true, "e": true, "f": true} // "d" stopped
 
@@ -41,14 +43,14 @@ func TestSessionsInDir(t *testing.T) {
 // info is cached per dir (one lookup even when two sessions share a working copy).
 func TestAnnotateSessions(t *testing.T) {
 	info := map[string]dirInfo{
-		"/repos/foo": {branch: "feature-x", worktree: true}, // drifted from main, is a worktree
-		"/repos/bar": {branch: "main", worktree: false},     // unchanged, plain clone
-		"/repos/gone": {branch: "", worktree: false},        // dir not a git tree
+		"/repos/foo":  {branch: "feature-x", worktree: true}, // drifted from main, is a worktree
+		"/repos/bar":  {branch: "main", worktree: false},     // unchanged, plain clone
+		"/repos/gone": {branch: "", worktree: false},         // dir not a git tree
 	}
 	calls := 0
 	resolve := func(dir string) dirInfo { calls++; return info[dir] }
 
-	sessions := []Session{
+	sessions := []session.Session{
 		{Name: "a", Dir: "/repos/foo", Branch: "main"},  // drift → main→feature-x; worktree
 		{Name: "b", Dir: "/repos/foo", Branch: "main"},  // same dir, cached (no 2nd call)
 		{Name: "c", Dir: "/repos/bar", Branch: "main"},  // no drift, not worktree
@@ -252,7 +254,7 @@ func TestMaybePruneWorktreeKeeps(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ensureWorktree ref: %v", err)
 	}
-	writeSessionMeta(sessionMeta{Name: "zz", Dir: ref, Kind: "shell"})
+	session.WriteMeta(session.Meta{Name: "zz", Dir: ref, Kind: "shell"})
 	maybePruneWorktree(ref)
 	if !isGitRepo(ref) {
 		t.Errorf("referenced worktree was auto-removed; should be kept while a meta points at it")
@@ -273,14 +275,14 @@ func TestUpdateSessionStartBranch(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("AF_SESSIONS_DIR", filepath.Join(home, "sessions"))
 	dir := filepath.Join(home, "repos", "app@wip-x")
-	writeSessionMeta(sessionMeta{Name: "a", Dir: dir, Branch: "wip-x"})
-	writeSessionMeta(sessionMeta{Name: "b", Dir: filepath.Join(dir, "sub"), Branch: "wip-x"}) // subdir
-	writeSessionMeta(sessionMeta{Name: "c", Dir: dir, Branch: ""})                            // pre-existing
-	writeSessionMeta(sessionMeta{Name: "d", Dir: filepath.Join(home, "repos", "other"), Branch: "main"})
+	session.WriteMeta(session.Meta{Name: "a", Dir: dir, Branch: "wip-x"})
+	session.WriteMeta(session.Meta{Name: "b", Dir: filepath.Join(dir, "sub"), Branch: "wip-x"}) // subdir
+	session.WriteMeta(session.Meta{Name: "c", Dir: dir, Branch: ""})                            // pre-existing
+	session.WriteMeta(session.Meta{Name: "d", Dir: filepath.Join(home, "repos", "other"), Branch: "main"})
 
-	updateSessionStartBranch(dir, "feat/login")
+	session.UpdateStartBranch(dir, "feat/login")
 
-	get := func(n string) sessionMeta { m, _ := readSessionMeta(n); return m }
+	get := func(n string) session.Meta { m, _ := session.ReadMeta(n); return m }
 	if b := get("a").Branch; b != "feat/login" {
 		t.Errorf("a.Branch = %q, want feat/login", b)
 	}
@@ -299,12 +301,12 @@ func TestUpdateSessionStartBranch(t *testing.T) {
 // from chatty/edge replies (quotes, prefixes, casing, punctuation, over-length, empty).
 func TestCleanBranchName(t *testing.T) {
 	cases := map[string]string{
-		"Fix the login redirect bug":            "fix-the-login-redirect-bug",
-		"\"feature/login-redirect\"":            "feature-login-redirect",
-		"Add   Rate  Limiting!!":                "add-rate-limiting",
-		"first line\nsecond line":               "first-line",
-		"日本語のみ":                                 "", // no ASCII word chars → empty
-		"----":                                  "",
+		"Fix the login redirect bug": "fix-the-login-redirect-bug",
+		"\"feature/login-redirect\"": "feature-login-redirect",
+		"Add   Rate  Limiting!!":     "add-rate-limiting",
+		"first line\nsecond line":    "first-line",
+		"日本語のみ":                      "", // no ASCII word chars → empty
+		"----":                       "",
 		"a-very-long-branch-name-that-should-definitely-exceed-forty-chars": "a-very-long-branch-name-that-should-defi", // capped at 40 runes
 	}
 	for in, want := range cases {

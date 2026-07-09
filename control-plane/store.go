@@ -148,21 +148,51 @@ type LFSLock struct {
 	ID, TenantID, RepoName, Path, RefName, OwnerID, OwnerName, LockedAt string
 }
 
-// Store is the MetadataStore port. SQLite is the only adapter in P3-1/P3-2.
+// Store is the MetadataStore port — the union of the feature-scoped sub-
+// interfaces below (docs/23 P2-W3). 実装は単一の sqlStore（sqlite/postgres 共用）
+// のまま。利用側は原則 Store を持つが、独立コンポーネントは必要最小のサブ
+// インターフェース（narrow view）に依存できる（例: git_gc.go）。メソッドの
+// 追加は該当サブインターフェースへ。
 type Store interface {
+	TenantStore
+	IdentityStore
+	MembershipStore
+	WorkspaceStore
+	QuotaStore
+	DEKStore
+	SessionIndexStore
+	PATStore
+	GitRepoStore
+	LFSObjectStore
+	LFSLockStore
+	AuditStore
+	EgressStore
+	SettingsStore
+	UsageStore
+	SSMStore
+	MemoStore
+
+	Close() error
+}
+
+type TenantStore interface {
 	EnsureDefaultTenant(ctx context.Context) (Tenant, error)
 	CreateTenant(ctx context.Context, slug, name string) (Tenant, error)
 	GetTenant(ctx context.Context, id string) (Tenant, error)
 	GetTenantBySlug(ctx context.Context, slug string) (Tenant, bool, error)
 	SetTenantLimits(ctx context.Context, tenantID, limitsJSON string) error
+	ListTenants(ctx context.Context) ([]Tenant, error)
+}
 
+type IdentityStore interface {
 	// UpsertIdentity creates/updates the person. roleHint, when non-empty,
 	// upgrades the deployment role (e.g. "super_admin" from SUPER_ADMIN_EMAILS);
 	// it never downgrades.
 	UpsertIdentity(ctx context.Context, email, key, roleHint string) (Identity, error)
 	GetIdentityByID(ctx context.Context, id string) (Identity, bool, error)
+}
 
-	ListTenants(ctx context.Context) ([]Tenant, error)
+type MembershipStore interface {
 	ListMemberships(ctx context.Context, identityID string) ([]MembershipView, error)
 	ListMembersByTenant(ctx context.Context, tenantID string) ([]MemberInfo, error)
 	EnsureMembership(ctx context.Context, identityID, tenantID, role string) (Membership, error)
@@ -174,7 +204,12 @@ type Store interface {
 	// SetMembershipRole changes a membership's tenant-scoped role (member |
 	// tenant_admin). EnsureMembership only inserts, so this is the update path.
 	SetMembershipRole(ctx context.Context, membershipID, role string) error
+	// MembershipOwnerName resolves a membership to a human display label (email, or
+	// the user key) — e.g. for stamping on an LFS lock. "" when it can't be resolved.
+	MembershipOwnerName(ctx context.Context, membershipID string) (string, error)
+}
 
+type WorkspaceStore interface {
 	GetWorkspaceByMembership(ctx context.Context, membershipID string) (Workspace, bool, error)
 	CreateWorkspace(ctx context.Context, ws Workspace) error
 	SetWorkspaceState(ctx context.Context, workspaceID, state string) error
@@ -184,41 +219,55 @@ type Store interface {
 	SetWorkspaceSettings(ctx context.Context, workspaceID, settingsJSON string) error
 	MaxAgentPort(ctx context.Context) (int, error)
 	ListWorkspaces(ctx context.Context, tenantID string) ([]Workspace, error)
+}
 
-	// Per-membership quota override (docs/16 P3-4).
+// QuotaStore is the per-membership quota override (docs/16 P3-4).
+type QuotaStore interface {
 	GetUserLimit(ctx context.Context, membershipID string) (UserLimit, bool, error)
 	PutUserLimit(ctx context.Context, membershipID string, maxSessions, diskGB int) error
+}
 
-	// Envelope-encrypted per-workspace DEK (docs/15 P3-3).
+// DEKStore holds the envelope-encrypted per-workspace DEK (docs/15 P3-3).
+type DEKStore interface {
 	GetWrappedDEK(ctx context.Context, workspaceID string) (ciphertext, keyRef string, ok bool, err error)
 	PutWrappedDEK(ctx context.Context, workspaceID, ciphertext, keyRef string) error
+}
 
-	// Session index mirror: ReplaceSessions swaps the workspace's rows for the
-	// Agent's current list; ListSessions serves them while the container is down.
+// SessionIndexStore mirrors the Agent's session list: ReplaceSessions swaps the
+// workspace's rows for the current list; ListSessions serves them while the
+// container is down.
+type SessionIndexStore interface {
 	ReplaceSessions(ctx context.Context, workspaceID string, rows []SessionRow) error
 	ListSessions(ctx context.Context, workspaceID string) ([]SessionRow, error)
+}
 
-	// Personal Access Tokens for the MCP endpoint (docs/decisions/0006, P3-6).
+// PATStore holds Personal Access Tokens for the MCP endpoint (docs/decisions/0006, P3-6).
+type PATStore interface {
 	CreatePAT(ctx context.Context, p PAT, tokenHash string) error
 	GetPATByHash(ctx context.Context, tokenHash string) (PAT, bool, error)
 	ListPATsByIdentity(ctx context.Context, identityID string) ([]PAT, error)
 	RevokePAT(ctx context.Context, id, identityID string) error
 	TouchPAT(ctx context.Context, id string) error
+}
 
-	// Internal git repositories (docs/reference/internal-git-provider, ADR 0010).
-	// CreateGitRepo inserts the ledger row (the bare is created on disk by the
-	// caller); the (tenant_id, name) uniqueness is enforced by the schema.
+// GitRepoStore is the internal-git repository ledger (docs/reference/
+// internal-git-provider, ADR 0010). CreateGitRepo inserts the ledger row (the
+// bare is created on disk by the caller); the (tenant_id, name) uniqueness is
+// enforced by the schema.
+type GitRepoStore interface {
 	CreateGitRepo(ctx context.Context, g GitRepo) error
 	ListGitReposByTenant(ctx context.Context, tenantID string) ([]GitRepo, error)
 	GetGitRepo(ctx context.Context, tenantID, name string) (GitRepo, bool, error)
 	CountGitReposByTenant(ctx context.Context, tenantID string) (int, error)
 	RenameGitRepo(ctx context.Context, tenantID, oldName, newName string) error
 	DeleteGitRepo(ctx context.Context, tenantID, name string) error
+}
 
-	// Git LFS object ledger (P3). PutLFSObject records an uploaded object (dedup on
-	// (tenant, repo, oid)); TenantLFSBytes sums a tenant's stored bytes for the
-	// capacity quota; the repo-scoped ops keep the ledger in step with repo
-	// delete/rename (the bytes on disk move with the .git dir).
+// LFSObjectStore is the Git LFS object ledger (P3). PutLFSObject records an
+// uploaded object (dedup on (tenant, repo, oid)); TenantLFSBytes sums a tenant's
+// stored bytes for the capacity quota; the repo-scoped ops keep the ledger in
+// step with repo delete/rename (the bytes on disk move with the .git dir).
+type LFSObjectStore interface {
 	PutLFSObject(ctx context.Context, tenantID, repo, oid string, size int64) error
 	TenantLFSBytes(ctx context.Context, tenantID string) (int64, error)
 	DeleteLFSObjectsByRepo(ctx context.Context, tenantID, repo string) error
@@ -229,11 +278,14 @@ type Store interface {
 	// ListLFSObjectOIDs returns the oids the ledger records for a repo — the set GC
 	// walks to reconcile against what git still references.
 	ListLFSObjectOIDs(ctx context.Context, tenantID, repo string) ([]string, error)
+}
 
-	// Git LFS file locks (P3). CreateLFSLock inserts a lock (the (tenant, repo, path)
-	// UNIQUE makes a second lock on a path fail — the caller pre-checks for the 409).
-	// ListLFSLocks paginates by an opaque cursor (offset); a filter of "" matches all.
-	// The repo-scoped ops keep locks in step with repo delete/rename.
+// LFSLockStore is the Git LFS file-lock ledger (P3). CreateLFSLock inserts a
+// lock (the (tenant, repo, path) UNIQUE makes a second lock on a path fail —
+// the caller pre-checks for the 409). ListLFSLocks paginates by an opaque
+// cursor (offset); a filter of "" matches all. The repo-scoped ops keep locks
+// in step with repo delete/rename.
+type LFSLockStore interface {
 	CreateLFSLock(ctx context.Context, l LFSLock) error
 	GetLFSLockByPath(ctx context.Context, tenantID, repo, path string) (LFSLock, bool, error)
 	GetLFSLock(ctx context.Context, tenantID, repo, id string) (LFSLock, bool, error)
@@ -241,46 +293,55 @@ type Store interface {
 	DeleteLFSLock(ctx context.Context, tenantID, repo, id string) error
 	DeleteLFSLocksByRepo(ctx context.Context, tenantID, repo string) error
 	RenameLFSLocksRepo(ctx context.Context, tenantID, oldRepo, newRepo string) error
-	// MembershipOwnerName resolves a membership to a human display label (email, or
-	// the user key) for stamping on a lock. "" when it can't be resolved.
-	MembershipOwnerName(ctx context.Context, membershipID string) (string, error)
+}
 
-	// Audit log (docs/decisions/0006, P3-6; docs/20 M1). InsertAudit records one
-	// action; ListAuditByTenant serves the most recent entries (newest first) scoped
-	// to a tenant, or — when tenantID=="" — deployment-wide (super_admin).
+// AuditStore is the audit log (docs/decisions/0006, P3-6; docs/20 M1).
+// InsertAudit records one action; ListAuditByTenant serves the most recent
+// entries (newest first) scoped to a tenant, or — when tenantID=="" —
+// deployment-wide (super_admin).
+type AuditStore interface {
 	InsertAudit(ctx context.Context, a AuditLog) error
 	ListAuditByTenant(ctx context.Context, tenantID string, limit int) ([]AuditLog, error)
+}
 
-	// Egress observation aggregation (docs/20 M2, log-only proxy). RecordEgress adds
-	// hits into the (day, host, allowed) bucket; ListEgress returns the busiest hosts
-	// on/after sinceDay (YYYY-MM-DD) with their would-allow / would-block split.
+// EgressStore aggregates egress observation (docs/20 M2, log-only proxy) and
+// holds the allowlist (M3). RecordEgress adds hits into the (day, host,
+// allowed) bucket; ListEgress returns the busiest hosts on/after sinceDay
+// (YYYY-MM-DD) with their would-allow / would-block split. ListAllowlist
+// returns entries with the given state ("" = any); AddAllowlist inserts one;
+// SetAllowlistState transitions a row (approve a proposed entry to active, or
+// retire one); EffectiveAllowlist returns the active entry strings the proxy
+// enforces.
+type EgressStore interface {
 	RecordEgress(ctx context.Context, day, host string, allowed bool, count int) error
 	ListEgress(ctx context.Context, sinceDay string, limit int) ([]EgressStat, error)
-
-	// Egress allowlist (docs/20 M3). ListAllowlist returns entries with the given
-	// state ("" = any); AddAllowlist inserts one; SetAllowlistState transitions a row
-	// (approve a proposed entry to active, or retire one); EffectiveAllowlist returns
-	// the active entry strings the proxy enforces.
 	ListAllowlist(ctx context.Context, state string, limit int) ([]AllowlistEntry, error)
 	AddAllowlist(ctx context.Context, e AllowlistEntry) error
 	SetAllowlistState(ctx context.Context, id, state string) error
 	EffectiveAllowlist(ctx context.Context) ([]string, error)
+}
 
-	// Deployment settings (docs/20 M3): small kv for deployment-wide toggles such as
-	// the egress mode. GetSetting returns "" when unset.
+// SettingsStore is a small kv for deployment-wide toggles such as the egress
+// mode (docs/20 M3). GetSetting returns "" when unset.
+type SettingsStore interface {
 	GetSetting(ctx context.Context, key string) (string, error)
 	SetSetting(ctx context.Context, key, value string) error
+}
 
-	// Showback usage (docs/roadmap.md P3-9). AddUsage accumulates workspace
-	// running-seconds into the (membership, day) bucket; ListUsage returns the
-	// per-day rows in [fromDay, toDay] (inclusive, YYYY-MM-DD), scoped to one
-	// tenant or, when tenantID=="", every tenant (super_admin).
+// UsageStore is showback usage (docs/roadmap.md P3-9). AddUsage accumulates
+// workspace running-seconds into the (membership, day) bucket; ListUsage
+// returns the per-day rows in [fromDay, toDay] (inclusive, YYYY-MM-DD), scoped
+// to one tenant or, when tenantID=="", every tenant (super_admin).
+type UsageStore interface {
 	AddUsage(ctx context.Context, membershipID, tenantID, day string, secs int) error
 	ListUsage(ctx context.Context, tenantID, fromDay, toDay string) ([]UsageRow, error)
+}
 
-	// SSM login config (docs/history/p3-ssm-session.md), personal scope. No AWS
-	// secrets stored. Mutations are scoped by membership so a member only touches
-	// their own rows. A profile is the common auth bundle; a host references one.
+// SSMStore is the SSM login config (docs/history/p3-ssm-session.md), personal
+// scope. No AWS secrets stored. Mutations are scoped by membership so a member
+// only touches their own rows. A profile is the common auth bundle; a host
+// references one.
+type SSMStore interface {
 	ListSSMProfiles(ctx context.Context, membershipID string) ([]SSMProfile, error)
 	GetSSMProfile(ctx context.Context, id string) (SSMProfile, bool, error)
 	CreateSSMProfile(ctx context.Context, p SSMProfile) error
@@ -291,10 +352,13 @@ type Store interface {
 	CreateSSMHost(ctx context.Context, h SSMHost) error
 	UpdateSSMHost(ctx context.Context, h SSMHost) error
 	DeleteSSMHost(ctx context.Context, id, membershipID string) error
+}
 
-	// Memo queue (docs/21), personal scope. Mutations are scoped by membership so a
-	// member only touches their own rows. ListMemos returns unsent memos plus sent
-	// ones still inside the retention window (sent before retainBefore are swept).
+// MemoStore is the memo queue (docs/21), personal scope. Mutations are scoped
+// by membership so a member only touches their own rows. ListMemos returns
+// unsent memos plus sent ones still inside the retention window (sent before
+// retainBefore are swept).
+type MemoStore interface {
 	ListMemos(ctx context.Context, membershipID, retainBefore string) ([]Memo, error)
 	GetMemo(ctx context.Context, id string) (Memo, bool, error)
 	CreateMemo(ctx context.Context, m Memo) error
@@ -302,8 +366,6 @@ type Store interface {
 	DeleteMemo(ctx context.Context, id, membershipID string) error
 	MarkMemosSent(ctx context.Context, membershipID string, ids []string, sentAt string) error
 	SweepSentMemos(ctx context.Context, retainBefore string) error
-
-	Close() error
 }
 
 // newID mints an opaque record id (not a strict UUID; sufficient for keys).

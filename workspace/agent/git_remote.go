@@ -9,6 +9,9 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
 
 // Remote repository listing: enumerate the repositories the connected provider
@@ -58,38 +61,38 @@ func firstLine(s string) string {
 // GET /connections/git/{host}/repos
 func handleListRemoteRepos(w http.ResponseWriter, r *http.Request) {
 	host := r.PathValue("host")
-	s, err := loadSecrets()
+	s, err := secrets.Load()
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "store_failed", err.Error())
+		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
 		return
 	}
 	switch host {
 	case "github.com":
 		e, ok := s.Git[host]
 		if !ok || e.Token == "" {
-			writeErr(w, http.StatusBadRequest, "not_connected", "GitHub is not connected")
+			httpx.WriteErr(w, http.StatusBadRequest, "not_connected", "GitHub is not connected")
 			return
 		}
 		repos, err := githubListRepos(e.Token)
 		if err != nil {
-			writeErr(w, http.StatusBadGateway, "provider_error", err.Error())
+			httpx.WriteErr(w, http.StatusBadGateway, "provider_error", err.Error())
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"host": host, "repos": repos})
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"host": host, "repos": repos})
 	case "bitbucket.org":
 		auth, err := bitbucketAuthHeader(s)
 		if err != nil {
-			writeErr(w, http.StatusBadRequest, "not_connected", err.Error())
+			httpx.WriteErr(w, http.StatusBadRequest, "not_connected", err.Error())
 			return
 		}
 		repos, err := bitbucketListRepos(auth)
 		if err != nil {
-			writeErr(w, http.StatusBadGateway, "provider_error", err.Error())
+			httpx.WriteErr(w, http.StatusBadGateway, "provider_error", err.Error())
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"host": host, "repos": repos})
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"host": host, "repos": repos})
 	default:
-		writeErr(w, http.StatusBadRequest, "bad_host", "unsupported host: "+host)
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_host", "unsupported host: "+host)
 	}
 }
 
@@ -100,41 +103,41 @@ func handleListRemoteBranches(w http.ResponseWriter, r *http.Request) {
 	host := r.PathValue("host")
 	repo := strings.TrimSpace(r.URL.Query().Get("repo"))
 	if repo == "" || !strings.Contains(repo, "/") {
-		writeErr(w, http.StatusBadRequest, "bad_repo", "repo=owner/name is required")
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_repo", "repo=owner/name is required")
 		return
 	}
-	s, err := loadSecrets()
+	s, err := secrets.Load()
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "store_failed", err.Error())
+		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
 		return
 	}
 	switch host {
 	case "github.com":
 		e, ok := s.Git[host]
 		if !ok || e.Token == "" {
-			writeErr(w, http.StatusBadRequest, "not_connected", "GitHub is not connected")
+			httpx.WriteErr(w, http.StatusBadRequest, "not_connected", "GitHub is not connected")
 			return
 		}
 		branches, def, err := githubListBranches(e.Token, repo)
 		if err != nil {
-			writeErr(w, http.StatusBadGateway, "provider_error", err.Error())
+			httpx.WriteErr(w, http.StatusBadGateway, "provider_error", err.Error())
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"branches": branches, "default": def})
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"branches": branches, "default": def})
 	case "bitbucket.org":
 		auth, err := bitbucketAuthHeader(s)
 		if err != nil {
-			writeErr(w, http.StatusBadRequest, "not_connected", err.Error())
+			httpx.WriteErr(w, http.StatusBadRequest, "not_connected", err.Error())
 			return
 		}
 		branches, def, err := bitbucketListBranchesRich(auth, repo)
 		if err != nil {
-			writeErr(w, http.StatusBadGateway, "provider_error", err.Error())
+			httpx.WriteErr(w, http.StatusBadGateway, "provider_error", err.Error())
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"branches": branches, "default": def})
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"branches": branches, "default": def})
 	default:
-		writeErr(w, http.StatusBadRequest, "bad_host", "unsupported host: "+host)
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_host", "unsupported host: "+host)
 	}
 }
 
@@ -358,14 +361,14 @@ func githubReposPage(client *http.Client, token, url string) ([]remoteRepo, stri
 // OAuth creds (refreshed on the fly, like the git credential helper) are preferred;
 // a token-paste connection (Atlassian email + API token) falls back to HTTP Basic.
 // May refresh and persist the OAuth token as a side effect.
-func bitbucketAuthHeader(s *secretsData) (string, error) {
+func bitbucketAuthHeader(s *secrets.Data) (string, error) {
 	if s.Bitbucket != nil && s.Bitbucket.AccessToken != "" {
 		c := *s.Bitbucket
 		if time.Now().Unix() >= c.Expiry-120 { // refresh within 2 min of expiry
 			if nc, err := refreshBitbucket(c); err == nil {
 				c = nc
 				s.Bitbucket = &c
-				_ = s.save()
+				_ = s.Save()
 			}
 		}
 		return "Bearer " + c.AccessToken, nil

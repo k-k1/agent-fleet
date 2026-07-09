@@ -29,23 +29,23 @@ type adminSessionRow struct {
 	Started        string `json:"started"`
 }
 
-// handleAdminAllSessions (GET /api/admin/sessions?tenant=<slug>) serves the
-// overview. super_admin spans every tenant; a tenant_admin is scoped to a tenant
-// they administer (via ?tenant=), enforced by adminTenantScope.
-func (c config) handleAdminAllSessions(w http.ResponseWriter, r *http.Request) {
-	tenantID, ok := c.adminTenantScope(w, r)
+// allSessions (GET /api/admin/sessions?tenant=<slug>) serves the overview.
+// super_admin spans every tenant; a tenant_admin is scoped to a tenant they
+// administer (via ?tenant=), enforced by tenantScope.
+func (a adminAPI) allSessions(w http.ResponseWriter, r *http.Request) {
+	tenantID, ok := a.tenantScope(w, r)
 	if !ok {
 		return
 	}
 	ctx := r.Context()
-	tenants, aerr := c.mgr.tenantsInScope(ctx, tenantID)
+	tenants, aerr := a.mgr.tenantsInScope(ctx, tenantID)
 	if aerr != nil {
 		writeAPIErr(w, aerr)
 		return
 	}
 	out := make([]adminSessionRow, 0)
 	for _, t := range tenants {
-		members, err := c.mgr.store.ListMembersByTenant(ctx, t.ID)
+		members, err := a.mgr.store.ListMembersByTenant(ctx, t.ID)
 		if err != nil {
 			continue
 		}
@@ -53,15 +53,15 @@ func (c config) handleAdminAllSessions(w http.ResponseWriter, r *http.Request) {
 		for _, m := range members {
 			byMembership[m.MembershipID] = m
 		}
-		wss, err := c.mgr.store.ListWorkspaces(ctx, t.ID)
+		wss, err := a.mgr.store.ListWorkspaces(ctx, t.ID)
 		if err != nil {
 			continue
 		}
 		for _, ws := range wss {
 			mi := byMembership[ws.MembershipID]
-			rt := c.mgr.runtimeFor(ws, "")
+			rt := a.mgr.runtimeFor(ws, "")
 			state := rt.State(ctx)
-			for _, s := range c.mgr.sessionsForOverview(ctx, ws, rt, state) {
+			for _, s := range a.mgr.sessionsForOverview(ctx, ws, rt, state) {
 				out = append(out, adminSessionRow{
 					Tenant: t.Slug, UserKey: mi.UserKey, Email: mi.Email, WorkspaceState: state,
 					Name: s.Name, Kind: s.Kind, Label: s.Label, Repo: s.Repo, Dir: s.Dir,
@@ -74,7 +74,7 @@ func (c config) handleAdminAllSessions(w http.ResponseWriter, r *http.Request) {
 }
 
 // tenantsInScope returns the tenants an admin view should span: exactly the one
-// when tenantID is set (already gate-checked by adminTenantScope), else all.
+// when tenantID is set (already gate-checked by tenantScope), else all.
 func (m *manager) tenantsInScope(ctx context.Context, tenantID string) ([]Tenant, *apiError) {
 	if tenantID != "" {
 		t, err := m.store.GetTenant(ctx, tenantID)
@@ -92,7 +92,7 @@ func (m *manager) tenantsInScope(ctx context.Context, tenantID string) ([]Tenant
 
 // sessionsForOverview returns a workspace's sessions for the admin overview: live
 // from the Agent when running (with a computed Started), else the DB mirror marked
-// stopped/resumable. Mirrors handleSessionsList so the two views agree.
+// stopped/resumable. Mirrors workspaceAPI.sessionsList so the two views agree.
 func (m *manager) sessionsForOverview(ctx context.Context, ws Workspace, rt Runtime, state string) []sessionWire {
 	if state == "running" {
 		if list, err := m.agentSessions(ctx, rt); err == nil {

@@ -4,13 +4,17 @@ import (
 	"crypto/rand"
 	"encoding/base32"
 	"strings"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 )
 
 // Session slugs are short, RANDOM, unique identifiers ("sk7f3q9"). A slug is the
 // session's IMMUTABLE identity: the tmux name (claude_sk7f3q9), the meta filename
-// (sk7f3q9.json), and — via sessionUUID(dir, slug) — the claude session id that keys
+// (sk7f3q9.json), and — via session.UUID(dir, slug) — the claude session id that keys
 // the jsonl. The user-facing, editable display name lives separately in
-// sessionMeta.Title; the slug itself is hidden from the list (shown only in the row
+// session.Meta.Title; the slug itself is hidden from the list (shown only in the row
 // tooltip) so it never needs to be human-meaningful.
 //
 // Random rather than a persisted counter: a counter file would live in the home
@@ -36,7 +40,7 @@ func allocSessionName(dir string) string {
 		// orphan from a pruned session), so a new session can't --resume a past
 		// conversation. Astronomically unlikely for a random slug, but this makes the
 		// no-resurrection guarantee independent of the id scheme.
-		if sessionJSONLExists(sessionUUID(dir, slug)) {
+		if claude.SessionJSONLExists(session.UUID(dir, slug)) {
 			continue
 		}
 		return slug
@@ -45,14 +49,14 @@ func allocSessionName(dir string) string {
 
 // slugTaken reports whether a slug is already claimed by a meta or a live tmux session.
 func slugTaken(slug string) bool {
-	if _, ok := readSessionMeta(slug); ok {
+	if _, ok := session.ReadMeta(slug); ok {
 		return true
 	}
-	return tmuxHasSession(tmuxName(slug))
+	return tmuxx.HasSession(session.TmuxName(slug))
 }
 
 // randSlug returns a random slug: an "s" prefix (visual marker; keeps it non-numeric)
-// followed by 6 lowercase base32 chars (a-z2-7, ~30 bits). Matches nameRe. Panics only
+// followed by 6 lowercase base32 chars (a-z2-7, ~30 bits). Matches session.ValidName. Panics only
 // if crypto/rand fails, which it should not — the agent can't safely mint sessions
 // without a unique id.
 func randSlug() string {

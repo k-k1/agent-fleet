@@ -23,6 +23,9 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
 // Tool grants an assistant can hold. af_read attaches the local read-only stdio MCP
@@ -122,29 +125,29 @@ func builtinAssistants() []assistant {
 		{
 			ID: afAssistantID, Name: "Agent Fleet アシスタント", Icon: "rocket",
 			Description: "こんにちは。Agent Fleet の使い方を案内します。操作手順や、今のワークスペースの状態（動いているセッションなど）を実際に確認しながらお答えします。",
-			Builtin:     true, Agent: kindClaude, Persona: afAssistantPersona,
+			Builtin:     true, Agent: session.KindClaude, Persona: afAssistantPersona,
 			Tools: toolsAFRead, Knowledge: []string{know},
 		},
 		{
 			ID: "operator", Name: "フリート・オペレーター", Icon: "broadcast",
 			Description: "フリートの司令塔です。走っているセッションを俯瞰し、必要ならセッションに指示を出して作業を進めます。専門的な判断は他のアシスタントにも相談します。実行前に内容を確認します。",
-			Builtin:     true, Agent: kindClaude, Persona: operatorPersona,
+			Builtin:     true, Agent: session.KindClaude, Persona: operatorPersona,
 			Tools: toolsAFWrite, Knowledge: []string{know},
 		},
 		{
 			ID: "integrity", Name: "整合性チェッカー", Icon: "checklist",
 			Description: "整合性チェッカーです。ファイルやディレクトリを渡してください。ドキュメントと実装の食い違い、用語・表記のゆれ、（物語なら）設定の矛盾や伏線の抜けを洗い出します。",
-			Builtin:     true, Agent: kindClaude, Persona: integrityPersona, Tools: toolsNone,
+			Builtin:     true, Agent: session.KindClaude, Persona: integrityPersona, Tools: toolsNone,
 		},
 		{
 			ID: "general", Name: "汎用アシスタント", Icon: "comment-discussion",
 			Description: "汎用アシスタントです。翻訳・要約・質問への回答など、幅広くお手伝いします。何でも聞いてください。",
-			Builtin:     true, Agent: kindClaude, Persona: chatPersona, Tools: toolsNone,
+			Builtin:     true, Agent: session.KindClaude, Persona: chatPersona, Tools: toolsNone,
 		},
 		{
 			ID: "translate", Name: "翻訳アシスタント", Icon: "globe",
 			Description: "翻訳アシスタントです。文章を渡してください。日本語↔英語を自動判定して翻訳します（訳文だけを返します）。",
-			Builtin:     true, Agent: kindClaude, Persona: translatePersona, Tools: toolsNone,
+			Builtin:     true, Agent: session.KindClaude, Persona: translatePersona, Tools: toolsNone,
 		},
 	}
 }
@@ -249,16 +252,16 @@ func resolveAssistant(idOrName string) (*assistant, error) {
 // --- HTTP handlers ---
 
 func handleAssistantsList(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"assistants": listAssistants()})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"assistants": listAssistants()})
 }
 
 func handleAssistantGet(w http.ResponseWriter, r *http.Request) {
 	a, err := getAssistant(r.PathValue("id"))
 	if err != nil {
-		writeErr(w, http.StatusNotFound, "not_found", "アシスタントが見つかりません")
+		httpx.WriteErr(w, http.StatusNotFound, "not_found", "アシスタントが見つかりません")
 		return
 	}
-	writeJSON(w, http.StatusOK, a)
+	httpx.WriteJSON(w, http.StatusOK, a)
 }
 
 // assistantInput is the create/update body (only user-editable fields).
@@ -302,64 +305,62 @@ func applyInput(a *assistant, in assistantInput) error {
 
 func handleAssistantCreate(w http.ResponseWriter, r *http.Request) {
 	var in assistantInput
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		writeErr(w, http.StatusBadRequest, "bad_request", "invalid body")
+	if !httpx.DecodeJSON(w, r, &in) {
 		return
 	}
 	now := nowMs()
 	a := &assistant{ID: randUUID(), Builtin: false, CreatedAt: now, UpdatedAt: now}
 	if err := applyInput(a, in); err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid", err.Error())
+		httpx.WriteErr(w, http.StatusBadRequest, "invalid", err.Error())
 		return
 	}
 	if err := saveUserAssistant(a); err != nil {
-		writeErr(w, http.StatusInternalServerError, "save", err.Error())
+		httpx.WriteErr(w, http.StatusInternalServerError, "save", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, a)
+	httpx.WriteJSON(w, http.StatusOK, a)
 }
 
 func handleAssistantUpdate(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if isBuiltinID(id) {
-		writeErr(w, http.StatusForbidden, "builtin", "ビルトインは編集できません")
+		httpx.WriteErr(w, http.StatusForbidden, "builtin", "ビルトインは編集できません")
 		return
 	}
 	a, err := loadUserAssistant(id)
 	if err != nil {
-		writeErr(w, http.StatusNotFound, "not_found", "アシスタントが見つかりません")
+		httpx.WriteErr(w, http.StatusNotFound, "not_found", "アシスタントが見つかりません")
 		return
 	}
 	var in assistantInput
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		writeErr(w, http.StatusBadRequest, "bad_request", "invalid body")
+	if !httpx.DecodeJSON(w, r, &in) {
 		return
 	}
 	if err := applyInput(a, in); err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid", err.Error())
+		httpx.WriteErr(w, http.StatusBadRequest, "invalid", err.Error())
 		return
 	}
 	a.UpdatedAt = nowMs()
 	if err := saveUserAssistant(a); err != nil {
-		writeErr(w, http.StatusInternalServerError, "save", err.Error())
+		httpx.WriteErr(w, http.StatusInternalServerError, "save", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, a)
+	httpx.WriteJSON(w, http.StatusOK, a)
 }
 
 func handleAssistantDelete(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if isBuiltinID(id) {
-		writeErr(w, http.StatusForbidden, "builtin", "ビルトインは削除できません")
+		httpx.WriteErr(w, http.StatusForbidden, "builtin", "ビルトインは削除できません")
 		return
 	}
 	if !validConvID(id) {
-		writeErr(w, http.StatusBadRequest, "bad_request", "invalid id")
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_request", "invalid id")
 		return
 	}
 	if err := os.Remove(assistantPath(id)); err != nil && !os.IsNotExist(err) {
-		writeErr(w, http.StatusInternalServerError, "delete", err.Error())
+		httpx.WriteErr(w, http.StatusInternalServerError, "delete", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
 }

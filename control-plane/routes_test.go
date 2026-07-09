@@ -1,0 +1,164 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"path/filepath"
+	"testing"
+)
+
+// smokeEnv wires the real route table (buildMux) to a real SQLite store in dev
+// auth mode — no docker / agent involved. docs/23 P0-2: these are the regression
+// detectors for handler moves; they assert status + known JSON keys, not shapes.
+func smokeEnv(t *testing.T) (config, *http.ServeMux) {
+	t.Helper()
+	ctx := context.Background()
+	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { st.Close() })
+	if err := st.migrate(ctx); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	dt, err := st.EnsureDefaultTenant(ctx)
+	if err != nil {
+		t.Fatalf("default tenant: %v", err)
+	}
+	mgr := &manager{
+		rts:             map[string]cachedRT{},
+		store:           st,
+		dataRoot:        t.TempDir(),
+		authMode:        "dev",
+		devUser:         "smoke",
+		provisionMode:   "auto",
+		defaultTenantID: dt.ID,
+		conns:           newConnRegistry(),
+	}
+	cfg := config{consoleDir: t.TempDir(), mgr: mgr, egressDedup: &egressAuditDedup{}}
+	return cfg, buildMux(cfg)
+}
+
+func smokeGet(t *testing.T, mux *http.ServeMux, method, path string) *httptest.ResponseRecorder {
+	t.Helper()
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest(method, path, nil))
+	return w
+}
+
+func TestSmokeHealthz(t *testing.T) {
+	_, mux := smokeEnv(t)
+	w := smokeGet(t, mux, "GET", "/healthz")
+	if w.Code != http.StatusOK || w.Body.String() != "ok" {
+		t.Fatalf("healthz: %d %q", w.Code, w.Body.String())
+	}
+}
+
+func TestSmokeWhoami(t *testing.T) {
+	_, mux := smokeEnv(t)
+	w := smokeGet(t, mux, "GET", "/api/whoami")
+	if w.Code != http.StatusOK {
+		t.Fatalf("whoami: %d %s", w.Code, w.Body.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("json: %v", err)
+	}
+	if got["auth_mode"] != "dev" || got["resolved_user"] != "smoke" {
+		t.Fatalf("whoami payload: %v", got)
+	}
+}
+
+// /api/tenants auto-provisions the dev user into the default tenant (AF_PROVISION=auto)
+// and reports super_admin=false — the Console picker path, store-only.
+func TestSmokeTenants(t *testing.T) {
+	_, mux := smokeEnv(t)
+	w := smokeGet(t, mux, "GET", "/api/tenants")
+	if w.Code != http.StatusOK {
+		t.Fatalf("tenants: %d %s", w.Code, w.Body.String())
+	}
+	var got struct {
+		Tenants []struct {
+			Slug string `json:"slug"`
+			Role string `json:"role"`
+		} `json:"tenants"`
+		SuperAdmin bool `json:"super_admin"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("json: %v", err)
+	}
+	if len(got.Tenants) != 1 || got.Tenants[0].Slug != "default" || got.Tenants[0].Role != "member" {
+		t.Fatalf("tenants payload: %+v", got)
+	}
+	if got.SuperAdmin {
+		t.Fatal("dev user must not be super_admin")
+	}
+}
+
+// A super_admin-only route refuses a plain member with the shared error shape
+// {error:{code,message}} — the contract ERR_TEXT keys off (client.ts).
+func TestSmokeAdminForbidden(t *testing.T) {
+	_, mux := smokeEnv(t)
+	w := smokeGet(t, mux, "POST", "/api/admin/tenants")
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("admin create tenant: want 403 got %d %s", w.Code, w.Body.String())
+	}
+	var got struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("json: %v", err)
+	}
+	if got.Error.Code != "forbidden" {
+		t.Fatalf("error code: %q", got.Error.Code)
+	}
+}
+
+// Memo CRUD is membership-scoped and store-only (no workspace build) — the
+// lightest authenticated member route.
+func TestSmokeMemosEmpty(t *testing.T) {
+	_, mux := smokeEnv(t)
+	w := smokeGet(t, mux, "GET", "/api/memos")
+	if w.Code != http.StatusOK {
+		t.Fatalf("memos: %d %s", w.Code, w.Body.String())
+	}
+	var got []any
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil || len(got) != 0 {
+		t.Fatalf("memos payload: %v err=%v", got, err)
+	}
+}
+
+// The catch-all static Console 404s unknown paths (and stays last in the table).
+func TestSmokeStaticCatchAll(t *testing.T) {
+	_, mux := smokeEnv(t)
+	if w := smokeGet(t, mux, "GET", "/no-such-asset.js"); w.Code != http.StatusNotFound {
+		t.Fatalf("static catch-all: want 404 got %d", w.Code)
+	}
+}
+
+// The registry-based isAuthExempt must reproduce the historical hardcoded set
+// (oauth_google.go pre-P2-W1) exactly — a drifted exemption either locks out an
+// internal caller or exposes a session-gated path.
+func TestAuthExemptRegistry(t *testing.T) {
+	smokeEnv(t) // buildMux registers the exemptions
+	exempt := []string{
+		"/login", "/healthz", "/oauth2/callback", "/mcp", "/mcp/sub",
+		"/internal/egress", "/git/default/repo.git/info/refs", "/brand/banner.png",
+		"/agent-fleet", "/agent-fleet/old/path",
+	}
+	for _, p := range exempt {
+		if !isAuthExempt(p) {
+			t.Errorf("%s must be exempt", p)
+		}
+	}
+	gated := []string{"/", "/api/tenants", "/api/sessions", "/ws/terminal", "/gitx", "/mcpx", "/loginx"}
+	for _, p := range gated {
+		if isAuthExempt(p) {
+			t.Errorf("%s must NOT be exempt", p)
+		}
+	}
+}

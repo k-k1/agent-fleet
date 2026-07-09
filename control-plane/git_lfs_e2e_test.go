@@ -13,17 +13,17 @@ import (
 )
 
 // gitMux builds a mux with the internal-git routes (LFS + smart-HTTP) exactly as
-// main.go registers them, so the test exercises real route precedence and dispatch.
-func (c config) gitMux() *http.ServeMux {
+// routes.go registers them, so the test exercises real route precedence and dispatch.
+func (a gitServerAPI) gitMux() *http.ServeMux {
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /git/{slug}/{repo}/info/lfs/objects/batch", c.handleLFSBatch)
-	mux.HandleFunc("PUT /git/{slug}/{repo}/info/lfs/objects/{oid}", c.handleLFSUpload)
-	mux.HandleFunc("GET /git/{slug}/{repo}/info/lfs/objects/{oid}", c.handleLFSDownload)
-	mux.HandleFunc("POST /git/{slug}/{repo}/info/lfs/locks", c.handleLFSLockCreate)
-	mux.HandleFunc("GET /git/{slug}/{repo}/info/lfs/locks", c.handleLFSLocksList)
-	mux.HandleFunc("POST /git/{slug}/{repo}/info/lfs/locks/verify", c.handleLFSLocksVerify)
-	mux.HandleFunc("POST /git/{slug}/{repo}/info/lfs/locks/{id}/unlock", c.handleLFSUnlock)
-	mux.HandleFunc("/git/{slug}/{repo...}", c.handleGitHTTP)
+	mux.HandleFunc("POST /git/{slug}/{repo}/info/lfs/objects/batch", a.lfsBatch)
+	mux.HandleFunc("PUT /git/{slug}/{repo}/info/lfs/objects/{oid}", a.lfsUpload)
+	mux.HandleFunc("GET /git/{slug}/{repo}/info/lfs/objects/{oid}", a.lfsDownload)
+	mux.HandleFunc("POST /git/{slug}/{repo}/info/lfs/locks", a.lfsLockCreate)
+	mux.HandleFunc("GET /git/{slug}/{repo}/info/lfs/locks", a.lfsLocksList)
+	mux.HandleFunc("POST /git/{slug}/{repo}/info/lfs/locks/verify", a.lfsLocksVerify)
+	mux.HandleFunc("POST /git/{slug}/{repo}/info/lfs/locks/{id}/unlock", a.lfsUnlock)
+	mux.HandleFunc("/git/{slug}/{repo...}", a.gitHTTP)
 	return mux
 }
 
@@ -60,7 +60,7 @@ func TestLFSEndToEnd(t *testing.T) {
 	mem, _ := st.EnsureMembership(ctx, ident.ID, dflt.ID, "member")
 
 	master := []byte("master-key-lfs-e2e-0000000000000000")
-	c := config{publicBaseURL: "", mgr: &manager{store: st, master32: master, dataRoot: dataRoot}}
+	mgr := &manager{store: st, master32: master, dataRoot: dataRoot}
 	token := mintGitToken(gitSignKey(master), mem.ID)
 
 	// Create the bare + ledger row.
@@ -76,12 +76,12 @@ func TestLFSEndToEnd(t *testing.T) {
 	}
 
 	// publicBaseURL must point at the test server so batch hrefs resolve back to it.
-	// Handlers bind the config by value, so set it BEFORE building the mux: an
-	// unstarted server exposes its listener address without serving yet.
+	// gitServerAPI binds it by value at construction, so build the API AFTER the
+	// listener exists: an unstarted server exposes its address without serving yet.
 	srv := httptest.NewUnstartedServer(nil)
 	defer srv.Close()
-	c.publicBaseURL = "http://" + srv.Listener.Addr().String()
-	srv.Config.Handler = c.gitMux()
+	g := newGitServerAPI(mgr, "http://"+srv.Listener.Addr().String())
+	srv.Config.Handler = g.gitMux()
 	srv.Start()
 
 	hostPart := srv.URL[len("http://"):]

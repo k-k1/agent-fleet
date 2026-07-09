@@ -5,6 +5,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
 
 // applyGitIdentity bakes the provider identity into a repo's local config, and a manual
@@ -32,10 +34,10 @@ func TestApplyGitIdentity(t *testing.T) {
 	}
 
 	// Provider identity in the store → baked into local config as source=provider.
-	s := &secretsData{Git: map[string]gitEntry{}, GitIdentity: map[string]gitIdentity{
+	s := &secrets.Data{Git: map[string]secrets.GitEntry{}, GitIdentity: map[string]secrets.GitIdentity{
 		"github.com": {Name: "Dev", Email: "dev@acme.io"},
 	}}
-	if err := s.save(); err != nil {
+	if err := s.Save(); err != nil {
 		t.Fatalf("save secrets: %v", err)
 	}
 	applyGitIdentity(dir)
@@ -52,8 +54,8 @@ func TestApplyGitIdentity(t *testing.T) {
 	// Manual override wins and survives a reapply even after the provider changes.
 	gitConfigLocalSet(dir, "user.name", "Me")
 	gitConfigLocalSet(dir, identitySourceKey, "manual")
-	s.GitIdentity["github.com"] = gitIdentity{Name: "Other", Email: "other@acme.io"}
-	_ = s.save()
+	s.GitIdentity["github.com"] = secrets.GitIdentity{Name: "Other", Email: "other@acme.io"}
+	_ = s.Save()
 	reapplyProviderIdentity("github.com")
 	if got := gitConfigLocalGet(dir, "user.name"); got != "Me" {
 		t.Fatalf("manual override clobbered: user.name = %q; want Me", got)

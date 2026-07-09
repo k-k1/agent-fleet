@@ -40,7 +40,7 @@ func TestGitHTTPEndToEnd(t *testing.T) {
 	mem, _ := st.EnsureMembership(ctx, ident.ID, dflt.ID, "member")
 
 	master := []byte("master-key-e2e-000000000000000000")
-	c := config{mgr: &manager{store: st, master32: master, dataRoot: dataRoot}}
+	g := newGitServerAPI(&manager{store: st, master32: master, dataRoot: dataRoot}, "")
 	token := mintGitToken(gitSignKey(master), mem.ID)
 
 	// Create the bare + ledger row the way the API does.
@@ -53,7 +53,7 @@ func TestGitHTTPEndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	srv := httptest.NewServer(http.HandlerFunc(c.handleGitHTTP))
+	srv := httptest.NewServer(http.HandlerFunc(g.gitHTTP))
 	defer srv.Close()
 
 	// Clone URL with Basic creds embedded, as the cred helper supplies them.

@@ -78,10 +78,10 @@ func TestIsReceivePackAndCanPush(t *testing.T) {
 
 // --- smart-HTTP isolation tests --------------------------------------------
 
-// gitTestEnv wires an in-memory store with two tenants and returns a config plus
-// helpers for minting tokens and issuing requests, with the CGI backend stubbed.
+// gitTestEnv wires an in-memory store with two tenants and returns a gitServerAPI
+// plus helpers for minting tokens and issuing requests, with the CGI backend stubbed.
 type gitTestEnv struct {
-	c        config
+	g        gitServerAPI
 	st       *sqlStore
 	signKey  []byte
 	served   bool
@@ -103,11 +103,11 @@ func newGitTestEnv(t *testing.T) *gitTestEnv {
 	env := &gitTestEnv{
 		st:      st,
 		signKey: gitSignKey(master),
-		c: config{mgr: &manager{
+		g: newGitServerAPI(&manager{
 			store:    st,
 			master32: master,
 			dataRoot: t.TempDir(),
-		}},
+		}, ""),
 	}
 	// Stub the CGI backend so the authorized path is observable without git.
 	prev := gitBackendServe
@@ -168,7 +168,7 @@ func (e *gitTestEnv) do(method, path, token string) *httptest.ResponseRecorder {
 		r.SetBasicAuth("x-access-token", token)
 	}
 	w := httptest.NewRecorder()
-	e.c.handleGitHTTP(w, r)
+	e.g.gitHTTP(w, r)
 	return w
 }
 
@@ -196,7 +196,7 @@ func TestGitHTTPAuthAndIsolation(t *testing.T) {
 	if w.Code != http.StatusOK || !e.served {
 		t.Fatalf("authorized fetch: code=%d served=%v", w.Code, e.served)
 	}
-	if want := filepath.Join(e.c.mgr.dataRoot, "git", "default"); e.servedTo != want {
+	if want := filepath.Join(e.g.dataRoot, "git", "default"); e.servedTo != want {
 		t.Fatalf("served to %q, want tenant root %q", e.servedTo, want)
 	}
 

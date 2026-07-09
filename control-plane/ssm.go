@@ -65,34 +65,21 @@ func hostToDTO(h SSMHost) ssmHostDTO {
 		InstanceID: h.InstanceID, DocumentName: h.DocumentName, CreatedAt: h.CreatedAt}
 }
 
-// membershipFor resolves the caller's identity + active membership without building a
-// workspace (lightweight per-member CRUD). 401/403/409 mirror resolvedFor.
-func (c config) membershipFor(w http.ResponseWriter, r *http.Request) (Identity, MembershipView, bool) {
-	id := c.mgr.resolveIdentity(r)
-	if id.key == "" {
-		writeAPIErr(w, &apiError{http.StatusUnauthorized, "unauthenticated", "no gateway identity"})
-		return Identity{}, MembershipView{}, false
-	}
-	tenantSel := r.Header.Get("X-AF-Tenant")
-	if tenantSel == "" {
-		tenantSel = r.URL.Query().Get("tenant")
-	}
-	ident, mv, aerr := c.mgr.resolveMembership(r.Context(), id.key, id.email, tenantSel)
-	if aerr != nil {
-		writeAPIErr(w, aerr)
-		return Identity{}, MembershipView{}, false
-	}
-	return ident, mv, true
+// ssmConfigAPI は SSM ログイン設定の機能ハンドラ集（docs/23 残③）。解決は埋め込みの
+// memberAuth（登録側で withMembership に包む）、store は SSMStore の narrow view
+// だけを持つ。※ ssmAPI という名前は runtime_ecs.go の AWS SSM クライアント
+// インターフェースが先に使っているため避けた。
+type ssmConfigAPI struct {
+	memberAuth
+	store SSMStore
 }
+
+func newSSMConfigAPI(m *manager) ssmConfigAPI { return ssmConfigAPI{memberAuth{m}, m.store} }
 
 // --- profiles (common auth bundle) -----------------------------------------------
 
-func (c config) handleSSMProfilesList(w http.ResponseWriter, r *http.Request) {
-	_, mv, ok := c.membershipFor(w, r)
-	if !ok {
-		return
-	}
-	rows, err := c.mgr.store.ListSSMProfiles(r.Context(), mv.MembershipID)
+func (a ssmConfigAPI) listProfiles(w http.ResponseWriter, r *http.Request, _ Identity, mv MembershipView) {
+	rows, err := a.store.ListSSMProfiles(r.Context(), mv.MembershipID)
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
@@ -128,11 +115,7 @@ func validateProfile(mv MembershipView, in ssmProfileDTO) (SSMProfile, *apiError
 	return p, nil
 }
 
-func (c config) handleSSMProfileCreate(w http.ResponseWriter, r *http.Request) {
-	_, mv, ok := c.membershipFor(w, r)
-	if !ok {
-		return
-	}
+func (a ssmConfigAPI) createProfile(w http.ResponseWriter, r *http.Request, _ Identity, mv MembershipView) {
 	var in ssmProfileDTO
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid JSON body"})
@@ -145,19 +128,15 @@ func (c config) handleSSMProfileCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	p.ID = newID()
 	p.CreatedAt = nowTS()
-	if err := c.mgr.store.CreateSSMProfile(r.Context(), p); err != nil {
+	if err := a.store.CreateSSMProfile(r.Context(), p); err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
 	writeJSON(w, http.StatusCreated, profileToDTO(p))
 }
 
-func (c config) handleSSMProfileUpdate(w http.ResponseWriter, r *http.Request) {
-	_, mv, ok := c.membershipFor(w, r)
-	if !ok {
-		return
-	}
-	cur, found, err := c.mgr.store.GetSSMProfile(r.Context(), r.PathValue("id"))
+func (a ssmConfigAPI) updateProfile(w http.ResponseWriter, r *http.Request, _ Identity, mv MembershipView) {
+	cur, found, err := a.store.GetSSMProfile(r.Context(), r.PathValue("id"))
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
@@ -178,19 +157,15 @@ func (c config) handleSSMProfileUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	p.ID = cur.ID
 	p.CreatedAt = cur.CreatedAt
-	if err := c.mgr.store.UpdateSSMProfile(r.Context(), p); err != nil {
+	if err := a.store.UpdateSSMProfile(r.Context(), p); err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
 	writeJSON(w, http.StatusOK, profileToDTO(p))
 }
 
-func (c config) handleSSMProfileDelete(w http.ResponseWriter, r *http.Request) {
-	_, mv, ok := c.membershipFor(w, r)
-	if !ok {
-		return
-	}
-	if err := c.mgr.store.DeleteSSMProfile(r.Context(), r.PathValue("id"), mv.MembershipID); err != nil {
+func (a ssmConfigAPI) deleteProfile(w http.ResponseWriter, r *http.Request, _ Identity, mv MembershipView) {
+	if err := a.store.DeleteSSMProfile(r.Context(), r.PathValue("id"), mv.MembershipID); err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
@@ -199,12 +174,8 @@ func (c config) handleSSMProfileDelete(w http.ResponseWriter, r *http.Request) {
 
 // --- SSM hosts -------------------------------------------------------------------
 
-func (c config) handleSSMHostsList(w http.ResponseWriter, r *http.Request) {
-	_, mv, ok := c.membershipFor(w, r)
-	if !ok {
-		return
-	}
-	rows, err := c.mgr.store.ListSSMHosts(r.Context(), mv.MembershipID)
+func (a ssmConfigAPI) listHosts(w http.ResponseWriter, r *http.Request, _ Identity, mv MembershipView) {
+	rows, err := a.store.ListSSMHosts(r.Context(), mv.MembershipID)
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
@@ -218,7 +189,7 @@ func (c config) handleSSMHostsList(w http.ResponseWriter, r *http.Request) {
 
 // validateHost trims and checks a host DTO, and verifies the referenced profile
 // belongs to the caller. Returns a normalized SSMHost (id/created_at unset).
-func (c config) validateHost(ctx context.Context, mv MembershipView, in ssmHostDTO) (SSMHost, *apiError) {
+func (a ssmConfigAPI) validateHost(ctx context.Context, mv MembershipView, in ssmHostDTO) (SSMHost, *apiError) {
 	h := SSMHost{
 		MembershipID: mv.MembershipID,
 		Alias:        strings.TrimSpace(in.Alias),
@@ -236,7 +207,7 @@ func (c config) validateHost(ctx context.Context, mv MembershipView, in ssmHostD
 	if h.ProfileID == "" {
 		return SSMHost{}, &apiError{http.StatusBadRequest, "bad_profile", "profileId is required"}
 	}
-	p, found, err := c.mgr.store.GetSSMProfile(ctx, h.ProfileID)
+	p, found, err := a.store.GetSSMProfile(ctx, h.ProfileID)
 	if err != nil {
 		return SSMHost{}, internalErr(err)
 	}
@@ -246,37 +217,29 @@ func (c config) validateHost(ctx context.Context, mv MembershipView, in ssmHostD
 	return h, nil
 }
 
-func (c config) handleSSMHostCreate(w http.ResponseWriter, r *http.Request) {
-	_, mv, ok := c.membershipFor(w, r)
-	if !ok {
-		return
-	}
+func (a ssmConfigAPI) createHost(w http.ResponseWriter, r *http.Request, _ Identity, mv MembershipView) {
 	var in ssmHostDTO
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid JSON body"})
 		return
 	}
-	h, aerr := c.validateHost(r.Context(), mv, in)
+	h, aerr := a.validateHost(r.Context(), mv, in)
 	if aerr != nil {
 		writeAPIErr(w, aerr)
 		return
 	}
 	h.ID = newID()
 	h.CreatedAt = nowTS()
-	if err := c.mgr.store.CreateSSMHost(r.Context(), h); err != nil {
+	if err := a.store.CreateSSMHost(r.Context(), h); err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
 	writeJSON(w, http.StatusCreated, hostToDTO(h))
 }
 
-func (c config) handleSSMHostUpdate(w http.ResponseWriter, r *http.Request) {
-	_, mv, ok := c.membershipFor(w, r)
-	if !ok {
-		return
-	}
+func (a ssmConfigAPI) updateHost(w http.ResponseWriter, r *http.Request, _ Identity, mv MembershipView) {
 	id := r.PathValue("id")
-	cur, found, err := c.mgr.store.GetSSMHost(r.Context(), id)
+	cur, found, err := a.store.GetSSMHost(r.Context(), id)
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
@@ -290,26 +253,22 @@ func (c config) handleSSMHostUpdate(w http.ResponseWriter, r *http.Request) {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid JSON body"})
 		return
 	}
-	h, aerr := c.validateHost(r.Context(), mv, in)
+	h, aerr := a.validateHost(r.Context(), mv, in)
 	if aerr != nil {
 		writeAPIErr(w, aerr)
 		return
 	}
 	h.ID = cur.ID
 	h.CreatedAt = cur.CreatedAt
-	if err := c.mgr.store.UpdateSSMHost(r.Context(), h); err != nil {
+	if err := a.store.UpdateSSMHost(r.Context(), h); err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
 	writeJSON(w, http.StatusOK, hostToDTO(h))
 }
 
-func (c config) handleSSMHostDelete(w http.ResponseWriter, r *http.Request) {
-	_, mv, ok := c.membershipFor(w, r)
-	if !ok {
-		return
-	}
-	if err := c.mgr.store.DeleteSSMHost(r.Context(), r.PathValue("id"), mv.MembershipID); err != nil {
+func (a ssmConfigAPI) deleteHost(w http.ResponseWriter, r *http.Request, _ Identity, mv MembershipView) {
+	if err := a.store.DeleteSSMHost(r.Context(), r.PathValue("id"), mv.MembershipID); err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
@@ -333,7 +292,8 @@ func ssmProfileName(label string) string {
 // coordinates. The client only sends {name, kind:"ssm", ssm_host_id}; the host's
 // instance/document/region and SSO config stay authoritative in the CP DB and
 // ownership is enforced here. Non-ssm requests pass through untouched.
-func (c config) rewriteSSMCreate(ctx context.Context, res *resolved, r *http.Request) *apiError {
+// 呼び手は workspaceAPI.sessionCreate のみなので receiver も workspaceAPI（docs/23 残③）。
+func (a workspaceAPI) rewriteSSMCreate(ctx context.Context, res *resolved, r *http.Request) *apiError {
 	var peek struct {
 		Name          string `json:"name"`
 		Title         string `json:"title"`
@@ -356,14 +316,14 @@ func (c config) rewriteSSMCreate(ctx context.Context, res *resolved, r *http.Req
 	if peek.SSMHostID == "" {
 		return &apiError{http.StatusBadRequest, "bad_request", "ssm_host_id is required for kind=ssm"}
 	}
-	h, found, err := c.mgr.store.GetSSMHost(ctx, peek.SSMHostID)
+	h, found, err := a.mgr.store.GetSSMHost(ctx, peek.SSMHostID)
 	if err != nil {
 		return internalErr(err)
 	}
 	if !found || h.MembershipID != res.mv.MembershipID {
 		return &apiError{http.StatusNotFound, "not_found", "ssm host not found"}
 	}
-	p, pok, err := c.mgr.store.GetSSMProfile(ctx, h.ProfileID)
+	p, pok, err := a.mgr.store.GetSSMProfile(ctx, h.ProfileID)
 	if err != nil {
 		return internalErr(err)
 	}
@@ -396,7 +356,7 @@ func (c config) rewriteSSMCreate(ctx context.Context, res *resolved, r *http.Req
 	}
 	restoreBody(r, nb)
 	// Record the intent (no secrets: instance + document + actor). Best-effort.
-	_ = c.mgr.store.InsertAudit(ctx, AuditLog{
+	_ = a.mgr.store.InsertAudit(ctx, AuditLog{
 		ID: newID(), TenantID: res.ws.TenantID, ActorKind: "user", ActorID: res.ident.ID,
 		Action: "ssm.start_session", Target: h.InstanceID,
 		Detail: "alias=" + h.Alias + " document=" + h.DocumentName, At: nowTS(),

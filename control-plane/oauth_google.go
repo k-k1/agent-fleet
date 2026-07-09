@@ -295,28 +295,8 @@ func (c config) authGate(next http.Handler) http.Handler {
 	})
 }
 
-// isAuthExempt lists paths reachable without a session: the login page + its
-// brand asset, the OAuth endpoints, the public health check, and /mcp (which
-// authenticates by Bearer PAT, not the session).
-func isAuthExempt(p string) bool {
-	switch {
-	case p == "/login" || p == "/healthz":
-		return true
-	case strings.HasPrefix(p, "/oauth2/"):
-		return true
-	case p == "/mcp" || strings.HasPrefix(p, "/mcp/"):
-		return true
-	case strings.HasPrefix(p, "/internal/"):
-		return true // deployment-internal (e.g. egress ingestion); Bearer-token auth
-	case strings.HasPrefix(p, "/git/"):
-		return true // internal git smart-HTTP; authenticates by Basic git token
-	case strings.HasPrefix(p, "/brand/"):
-		return true
-	case p == "/agent-fleet" || strings.HasPrefix(p, "/agent-fleet/"):
-		return true // legacy-path redirect; fires before login so next= stays clean
-	}
-	return false
-}
+// isAuthExempt（セッション無しで到達できるパス）は routes.go の除外レジストリに
+// 移動した — 各 register 関数が自分の除外を宣言する（docs/23 P2-W1）。
 
 // wantsHTML is true for top-level browser navigations (redirect to /login);
 // everything else (XHR, WS) gets a 401 the SPA handles.

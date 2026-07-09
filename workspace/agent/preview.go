@@ -5,6 +5,8 @@ import (
 	"net/http/httputil"
 	"strconv"
 	"strings"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 )
 
 // handlePreview reverse-proxies /proxy/{port}/{rest...} to a service the user
@@ -18,11 +20,11 @@ func handlePreview(w http.ResponseWriter, r *http.Request) {
 	portStr := r.PathValue("port")
 	port, err := strconv.Atoi(portStr)
 	if err != nil || port < 1 || port > 65535 {
-		writeErr(w, http.StatusBadRequest, "bad_port", "preview port must be 1..65535")
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_port", "preview port must be 1..65535")
 		return
 	}
 	if port == 7700 { // the agent itself — forwarding here would loop
-		writeErr(w, http.StatusBadRequest, "bad_port", "port 7700 is the workspace agent")
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_port", "port 7700 is the workspace agent")
 		return
 	}
 
@@ -46,7 +48,7 @@ func handlePreview(w http.ResponseWriter, r *http.Request) {
 			pr.Out.Header.Del("Authorization")
 		},
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
-			writeErr(w, http.StatusBadGateway, "preview_unreachable",
+			httpx.WriteErr(w, http.StatusBadGateway, "preview_unreachable",
 				"nothing is listening on 127.0.0.1:"+portStr+" inside the workspace")
 		},
 	}
