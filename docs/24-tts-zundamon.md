@@ -163,6 +163,11 @@ TTS 設定画面かフッターに小さく常時表示する。Polly は AWS �
   （`deploy/local/run-voicevox.sh`）。テスト: `control-plane/tts_test.go`（httptest 偽エンジン）+
   `console/src/features/chat/tts.test.ts`（整形）。使い分けは Phase 1 では voicevox 固定
   （polly 指定は 501）。**残**: 実機 VOICEVOX での目視確認（音が出るか）は未実施。
+- **Phase 1.5（再生制御・FileView 連携）** ✅ 実装済み: 再生をアプリ全体で 1 本に集約する
+  グローバルストア `core/store/tts.ts`（`useTtsStore`: speaking/source/stop）。TopBar に
+  「読み上げ中・〇〇」インジケータ兼**停止ボタン**を追加（再生中のみ表示、`app/TopBar.tsx`
+  + `topbar.css`）。FileView の選択範囲を読み上げるピルを既存「送る」の隣に追加（`speakText()`、
+  `ttsEnabled` 有効時のみ、`FileView.tsx` + `viewer.css`）。実機での音出し確認は未。
 - **Phase 2（AWS）**: Polly プロバイダ（IAM ロール）、管理者トグル → ECS desired 0↔1、
   Cloud Map 固定 DNS、readiness ゲート、`auto` の Polly フォールバック有効化。
 

@@ -888,11 +888,15 @@
   padding: 8px 14px;
 }
 
-/* Floating "送る" pill by a code selection (→ SendSelectionModal, docs/19 Phase C).
-   Old styles.css verbatim; body-portaled, so positioned against the viewport. */
-.sel-send-pill {
+/* Floating action pills by a code selection (→ 送る / 読み上げ). body-portaled group,
+   positioned against the viewport; the pills sit statically inside it (docs/19, docs/24). */
+.sel-pill-group {
   position: fixed;
   z-index: 60;
+  display: inline-flex;
+  gap: 6px;
+}
+.sel-send-pill {
   display: inline-flex;
   align-items: center;
   gap: 5px;

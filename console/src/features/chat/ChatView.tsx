@@ -240,7 +240,10 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
     // 直前のターンが残っていれば止めてから。
     ttsRef.current?.stop();
     ttsRef.current = settings.ttsEnabled
-      ? startTts({ provider: settings.ttsProvider, voice: settings.ttsVoiceVoicevox, speed: settings.ttsSpeed })
+      ? startTts(
+          { provider: settings.ttsProvider, voice: settings.ttsVoiceVoicevox, speed: settings.ttsSpeed },
+          "チャット",
+        )
       : null;
     markChatBusy(target.id, true); // publish 進行中 to the rail
     await chatStream(
