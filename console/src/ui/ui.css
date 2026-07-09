@@ -98,6 +98,12 @@
   justify-content: center;
   padding: 16px;
 }
+/* Confirm dialogs (useConfirm / ConfirmDialog) sit one layer above modals: they
+   are asked FROM a modal and must cover it regardless of DOM order. Layering:
+   modal 100 < confirm 120 < menu 150 < toast 200. */
+.ui-confirm-backdrop {
+  z-index: 120;
+}
 .ui-modal {
   background: var(--panel);
   border: 1px solid var(--border);

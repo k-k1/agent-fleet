@@ -4,6 +4,7 @@
 // user chooses. Port of the old ConfirmProvider + ConfirmDialog (merged — the
 // standalone dialog had no other consumer).
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import type { ReactNode, MouseEvent } from "react";
 import { Button } from "./Button.tsx";
 
@@ -55,22 +56,28 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
   return (
     <ConfirmCtx.Provider value={askConfirm}>
       {children}
-      {req && (
-        <div className="ui-modal-backdrop" onClick={() => finish(false)}>
-          <div className="ui-confirm" onClick={(e: MouseEvent) => e.stopPropagation()}>
-            <h3 className="ui-confirm-title">{req.title}</h3>
-            <div className="ui-confirm-body">{req.body}</div>
-            <div className="ui-confirm-actions">
-              <Button variant="ghost" onClick={() => finish(false)}>
-                キャンセル
-              </Button>
-              <Button variant={req.danger ?? true ? "danger" : "primary"} onClick={() => finish(true)}>
-                {req.confirmLabel || "実行"}
-              </Button>
+      {req &&
+        // Portal to <body> + ui-confirm-backdrop (higher z-index): a confirm is
+        // usually asked from inside a Modal, which itself portals to <body>. In-tree
+        // rendering would leave this overlay earlier in the DOM at the same z-index,
+        // painting it BEHIND the modal.
+        createPortal(
+          <div className="ui-modal-backdrop ui-confirm-backdrop" onClick={() => finish(false)}>
+            <div className="ui-confirm" onClick={(e: MouseEvent) => e.stopPropagation()}>
+              <h3 className="ui-confirm-title">{req.title}</h3>
+              <div className="ui-confirm-body">{req.body}</div>
+              <div className="ui-confirm-actions">
+                <Button variant="ghost" onClick={() => finish(false)}>
+                  キャンセル
+                </Button>
+                <Button variant={req.danger ?? true ? "danger" : "primary"} onClick={() => finish(true)}>
+                  {req.confirmLabel || "実行"}
+                </Button>
+              </div>
             </div>
-          </div>
-        </div>
-      )}
+          </div>,
+          document.body,
+        )}
     </ConfirmCtx.Provider>
   );
 }
