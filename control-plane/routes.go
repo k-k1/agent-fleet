@@ -145,7 +145,7 @@ func registerMCPRoutes(mux *http.ServeMux, cfg config) {
 	exemptExact("/mcp")
 	exemptPrefix("/mcp/")
 	if envOr("AF_MCP_ENABLED", "") == "true" {
-		mux.HandleFunc("/mcp", cfg.handleMCP)
+		mux.HandleFunc("/mcp", newMCPAPI(cfg.mgr).handleMCP)
 		log.Printf("MCP endpoint enabled at /mcp")
 	}
 }
@@ -355,29 +355,30 @@ func registerConnectionRoutes(mux *http.ServeMux, cfg config) {
 // Basic git token — session-exempt.
 func registerInternalGitRoutes(mux *http.ServeMux, cfg config) {
 	exemptPrefix("/git/")
-	mux.HandleFunc("GET /api/internal-git/repos", cfg.handleInternalGitReposList)
-	mux.HandleFunc("POST /api/internal-git/repos", cfg.handleInternalGitRepoCreate)
-	mux.HandleFunc("DELETE /api/internal-git/repos/{name}", cfg.handleInternalGitRepoDelete)
-	mux.HandleFunc("POST /api/internal-git/repos/{name}/rename", cfg.handleInternalGitRepoRename)
-	mux.HandleFunc("GET /api/internal-git/repos/{name}/branches", cfg.handleInternalGitBranches)
+	g := newGitServerAPI(cfg.mgr, cfg.publicBaseURL)
+	mux.HandleFunc("GET /api/internal-git/repos", g.withMembership(g.reposList))
+	mux.HandleFunc("POST /api/internal-git/repos", g.withMembership(g.repoCreate))
+	mux.HandleFunc("DELETE /api/internal-git/repos/{name}", g.withMembership(g.repoDelete))
+	mux.HandleFunc("POST /api/internal-git/repos/{name}/rename", g.withMembership(g.repoRename))
+	mux.HandleFunc("GET /api/internal-git/repos/{name}/branches", g.withMembership(g.branches))
 	// Read-only browsing (clone-free): tree / blob / commits, served from the bare.
-	mux.HandleFunc("GET /api/internal-git/repos/{name}/tree", cfg.handleInternalGitTree)
-	mux.HandleFunc("GET /api/internal-git/repos/{name}/blob", cfg.handleInternalGitBlob)
-	mux.HandleFunc("GET /api/internal-git/repos/{name}/commits", cfg.handleInternalGitCommits)
+	mux.HandleFunc("GET /api/internal-git/repos/{name}/tree", g.withMembership(g.tree))
+	mux.HandleFunc("GET /api/internal-git/repos/{name}/blob", g.withMembership(g.blob))
+	mux.HandleFunc("GET /api/internal-git/repos/{name}/commits", g.withMembership(g.commits))
 	// Git LFS face (docs/reference/internal-git-provider, P3). More specific than the
 	// smart-HTTP catch-all below, so these win for LFS paths; git-http-backend never
 	// sees them. Same Basic git-token auth (session-exempt under /git/).
-	mux.HandleFunc("POST /git/{slug}/{repo}/info/lfs/objects/batch", cfg.handleLFSBatch)
-	mux.HandleFunc("PUT /git/{slug}/{repo}/info/lfs/objects/{oid}", cfg.handleLFSUpload)
-	mux.HandleFunc("GET /git/{slug}/{repo}/info/lfs/objects/{oid}", cfg.handleLFSDownload)
+	mux.HandleFunc("POST /git/{slug}/{repo}/info/lfs/objects/batch", g.lfsBatch)
+	mux.HandleFunc("PUT /git/{slug}/{repo}/info/lfs/objects/{oid}", g.lfsUpload)
+	mux.HandleFunc("GET /git/{slug}/{repo}/info/lfs/objects/{oid}", g.lfsDownload)
 	// LFS file locking API (create / list / verify / unlock).
-	mux.HandleFunc("POST /git/{slug}/{repo}/info/lfs/locks", cfg.handleLFSLockCreate)
-	mux.HandleFunc("GET /git/{slug}/{repo}/info/lfs/locks", cfg.handleLFSLocksList)
-	mux.HandleFunc("POST /git/{slug}/{repo}/info/lfs/locks/verify", cfg.handleLFSLocksVerify)
-	mux.HandleFunc("POST /git/{slug}/{repo}/info/lfs/locks/{id}/unlock", cfg.handleLFSUnlock)
+	mux.HandleFunc("POST /git/{slug}/{repo}/info/lfs/locks", g.lfsLockCreate)
+	mux.HandleFunc("GET /git/{slug}/{repo}/info/lfs/locks", g.lfsLocksList)
+	mux.HandleFunc("POST /git/{slug}/{repo}/info/lfs/locks/verify", g.lfsLocksVerify)
+	mux.HandleFunc("POST /git/{slug}/{repo}/info/lfs/locks/{id}/unlock", g.lfsUnlock)
 	// Smart-HTTP git face (clone/fetch/push). Self-authenticating via a Basic git
 	// token (session-exempt, like /mcp); handles every method.
-	mux.HandleFunc("/git/{slug}/{repo...}", cfg.handleGitHTTP)
+	mux.HandleFunc("/git/{slug}/{repo...}", g.gitHTTP)
 }
 
 // Terminal PTY (proxied WebSocket) + preview proxy to a service the user started

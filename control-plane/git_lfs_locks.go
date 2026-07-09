@@ -38,11 +38,11 @@ func lfsRefName(v any) string {
 	return ""
 }
 
-// handleLFSLockCreate (POST .../info/lfs/locks) creates a lock on a path. A path
+// lfsLockCreate (POST .../info/lfs/locks) creates a lock on a path. A path
 // already locked returns 409 with the existing lock (the git-lfs contract).
-func (c config) handleLFSLockCreate(w http.ResponseWriter, r *http.Request) {
+func (a gitServerAPI) lfsLockCreate(w http.ResponseWriter, r *http.Request) {
 	slug, repoSeg := r.PathValue("slug"), r.PathValue("repo")
-	name, mv, membershipID, aerr := c.authorizeGitRepo(r, slug, repoSeg)
+	name, mv, membershipID, aerr := a.authorizeGitRepo(r, slug, repoSeg)
 	if aerr != nil {
 		aerr.writeLFS(w)
 		return
@@ -59,7 +59,7 @@ func (c config) handleLFSLockCreate(w http.ResponseWriter, r *http.Request) {
 		writeLFSErr(w, http.StatusBadRequest, "path is required")
 		return
 	}
-	if existing, ok, err := c.mgr.store.GetLFSLockByPath(r.Context(), mv.TenantID, name, body.Path); err != nil {
+	if existing, ok, err := a.store.GetLFSLockByPath(r.Context(), mv.TenantID, name, body.Path); err != nil {
 		writeLFSErr(w, http.StatusInternalServerError, "store error")
 		return
 	} else if ok {
@@ -69,14 +69,14 @@ func (c config) handleLFSLockCreate(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	ownerName, _ := c.mgr.store.MembershipOwnerName(r.Context(), membershipID)
+	ownerName, _ := a.store.MembershipOwnerName(r.Context(), membershipID)
 	lock := LFSLock{
 		ID: newID(), TenantID: mv.TenantID, RepoName: name, Path: body.Path,
 		RefName: lfsRefName(body.Ref), OwnerID: membershipID, OwnerName: ownerName, LockedAt: nowTS(),
 	}
-	if err := c.mgr.store.CreateLFSLock(r.Context(), lock); err != nil {
+	if err := a.store.CreateLFSLock(r.Context(), lock); err != nil {
 		// Lost a race on the (tenant, repo, path) uniqueness → report the winner.
-		if existing, ok, gerr := c.mgr.store.GetLFSLockByPath(r.Context(), mv.TenantID, name, body.Path); gerr == nil && ok {
+		if existing, ok, gerr := a.store.GetLFSLockByPath(r.Context(), mv.TenantID, name, body.Path); gerr == nil && ok {
 			w.Header().Set("Content-Type", lfsContentType)
 			writeJSON(w, http.StatusConflict, map[string]any{"lock": lfsLockDTO(existing), "message": "already created lock"})
 			return
@@ -88,18 +88,18 @@ func (c config) handleLFSLockCreate(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, map[string]any{"lock": lfsLockDTO(lock)})
 }
 
-// handleLFSLocksList (GET .../info/lfs/locks) lists locks, optionally filtered by
+// lfsLocksList (GET .../info/lfs/locks) lists locks, optionally filtered by
 // ?path= or ?id=, paginated by ?cursor= / ?limit=.
-func (c config) handleLFSLocksList(w http.ResponseWriter, r *http.Request) {
+func (a gitServerAPI) lfsLocksList(w http.ResponseWriter, r *http.Request) {
 	slug, repoSeg := r.PathValue("slug"), r.PathValue("repo")
-	name, mv, _, aerr := c.authorizeGitRepo(r, slug, repoSeg)
+	name, mv, _, aerr := a.authorizeGitRepo(r, slug, repoSeg)
 	if aerr != nil {
 		aerr.writeLFS(w)
 		return
 	}
 	q := r.URL.Query()
 	limit, _ := strconv.Atoi(q.Get("limit"))
-	locks, next, err := c.mgr.store.ListLFSLocks(r.Context(), mv.TenantID, name, q.Get("path"), q.Get("id"), limit, q.Get("cursor"))
+	locks, next, err := a.store.ListLFSLocks(r.Context(), mv.TenantID, name, q.Get("path"), q.Get("id"), limit, q.Get("cursor"))
 	if err != nil {
 		writeLFSErr(w, http.StatusInternalServerError, "store error")
 		return
@@ -112,12 +112,12 @@ func (c config) handleLFSLocksList(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"locks": out, "next_cursor": next})
 }
 
-// handleLFSLocksVerify (POST .../info/lfs/locks/verify) partitions locks into the
+// lfsLocksVerify (POST .../info/lfs/locks/verify) partitions locks into the
 // caller's own ("ours") and everyone else's ("theirs"); git-lfs checks "theirs"
 // before a push to block changes to files locked by others.
-func (c config) handleLFSLocksVerify(w http.ResponseWriter, r *http.Request) {
+func (a gitServerAPI) lfsLocksVerify(w http.ResponseWriter, r *http.Request) {
 	slug, repoSeg := r.PathValue("slug"), r.PathValue("repo")
-	name, mv, membershipID, aerr := c.authorizeGitRepo(r, slug, repoSeg)
+	name, mv, membershipID, aerr := a.authorizeGitRepo(r, slug, repoSeg)
 	if aerr != nil {
 		aerr.writeLFS(w)
 		return
@@ -127,7 +127,7 @@ func (c config) handleLFSLocksVerify(w http.ResponseWriter, r *http.Request) {
 		Limit  int    `json:"limit"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
-	locks, next, err := c.mgr.store.ListLFSLocks(r.Context(), mv.TenantID, name, "", "", body.Limit, body.Cursor)
+	locks, next, err := a.store.ListLFSLocks(r.Context(), mv.TenantID, name, "", "", body.Limit, body.Cursor)
 	if err != nil {
 		writeLFSErr(w, http.StatusInternalServerError, "store error")
 		return
@@ -144,12 +144,12 @@ func (c config) handleLFSLocksVerify(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ours": ours, "theirs": theirs, "next_cursor": next})
 }
 
-// handleLFSUnlock (POST .../info/lfs/locks/{id}/unlock) releases a lock. Only the
+// lfsUnlock (POST .../info/lfs/locks/{id}/unlock) releases a lock. Only the
 // owner may unlock unless force=true AND the caller is a tenant_admin (an operator
 // override for abandoned locks).
-func (c config) handleLFSUnlock(w http.ResponseWriter, r *http.Request) {
+func (a gitServerAPI) lfsUnlock(w http.ResponseWriter, r *http.Request) {
 	slug, repoSeg, id := r.PathValue("slug"), r.PathValue("repo"), r.PathValue("id")
-	name, mv, membershipID, aerr := c.authorizeGitRepo(r, slug, repoSeg)
+	name, mv, membershipID, aerr := a.authorizeGitRepo(r, slug, repoSeg)
 	if aerr != nil {
 		aerr.writeLFS(w)
 		return
@@ -163,7 +163,7 @@ func (c config) handleLFSUnlock(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
 
-	lock, ok, err := c.mgr.store.GetLFSLock(r.Context(), mv.TenantID, name, id)
+	lock, ok, err := a.store.GetLFSLock(r.Context(), mv.TenantID, name, id)
 	if err != nil {
 		writeLFSErr(w, http.StatusInternalServerError, "store error")
 		return
@@ -176,7 +176,7 @@ func (c config) handleLFSUnlock(w http.ResponseWriter, r *http.Request) {
 		writeLFSErr(w, http.StatusForbidden, "lock belongs to another user (force unlock requires tenant_admin)")
 		return
 	}
-	if err := c.mgr.store.DeleteLFSLock(r.Context(), mv.TenantID, name, id); err != nil {
+	if err := a.store.DeleteLFSLock(r.Context(), mv.TenantID, name, id); err != nil {
 		writeLFSErr(w, http.StatusInternalServerError, "store error")
 		return
 	}

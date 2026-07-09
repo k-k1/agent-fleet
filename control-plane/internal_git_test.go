@@ -46,17 +46,15 @@ func TestInternalGitListTenantScoped(t *testing.T) {
 	must(GitRepo{ID: newID(), TenantID: dflt.ID, Name: "alpha", DefaultBranch: "main", CreatedAt: nowTS()})
 	must(GitRepo{ID: newID(), TenantID: sec.ID, Name: "bravo", DefaultBranch: "main", CreatedAt: nowTS()})
 
-	c := config{
-		publicBaseURL: "https://fleet.example.com",
-		mgr:           &manager{store: st, authMode: "proxy", emailHeader: "X-Forwarded-Email"},
-	}
+	g := newGitServerAPI(&manager{store: st, authMode: "proxy", emailHeader: "X-Forwarded-Email"},
+		"https://fleet.example.com")
 
 	list := func(tenant string) []string {
 		r := httptest.NewRequest("GET", "/api/internal-git/repos", nil)
 		r.Header.Set("X-Forwarded-Email", "u@x")
 		r.Header.Set("X-AF-Tenant", tenant)
 		w := httptest.NewRecorder()
-		c.handleInternalGitReposList(w, r)
+		g.withMembership(g.reposList)(w, r)
 		if w.Code != 200 {
 			t.Fatalf("tenant %s: status %d (%s)", tenant, w.Code, w.Body.String())
 		}
@@ -88,7 +86,7 @@ func TestInternalGitListTenantScoped(t *testing.T) {
 	r.Header.Set("X-Forwarded-Email", "u@x")
 	r.Header.Set("X-AF-Tenant", "default")
 	w := httptest.NewRecorder()
-	c.handleInternalGitReposList(w, r)
+	g.withMembership(g.reposList)(w, r)
 	if want := "https://fleet.example.com/git/default/alpha.git"; !strings.Contains(w.Body.String(), want) {
 		t.Fatalf("clone_url missing %q in %s", want, w.Body.String())
 	}
