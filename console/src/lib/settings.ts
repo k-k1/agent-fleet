@@ -130,6 +130,14 @@ export interface Settings {
   // Per-SSM-host terminal color: host id → color id (see lib/termcolor SSM_HOST_COLORS).
   // Applied to a session's terminal background when it's created (sent as its color).
   ssmHostColors: Record<string, string>;
+  // 音声読み上げ（TTS, docs/24 + ADR0013）。エージェント回答を VOICEVOX（ずんだもん）で
+  // 読み上げる。CP-native な /api/tts/synthesize を句点区切りで逐次呼ぶ（features/chat/tts.ts）。
+  ttsEnabled: boolean;
+  // プロバイダ選択。Phase 1 は auto=voicevox のみ実装（polly は Phase 2）。UI は未露出だが
+  // 前方互換のため保持し、synthesize リクエストに渡す。
+  ttsProvider: string; // "auto" | "voicevox" | "polly"
+  ttsVoiceVoicevox: string; // VOICEVOX の speaker 番号（"3"=ずんだもん・ノーマル）
+  ttsSpeed: number; // 0.5〜2.0（speedScale）
 }
 
 const DEFAULTS: Settings = {
@@ -156,7 +164,29 @@ const DEFAULTS: Settings = {
   autoTitleSuggest: true,
   outputLanguage: "auto",
   ssmHostColors: {},
+  ttsEnabled: false,
+  ttsProvider: "auto",
+  ttsVoiceVoicevox: "3",
+  ttsSpeed: 1.0,
 };
+
+// VOICEVOX ずんだもんのスタイル（speaker 番号 → ラベル）。設定 UI の話者選択に使う。
+export const VOICEVOX_ZUNDAMON: [string, string][] = [
+  ["3", "ノーマル"],
+  ["1", "あまあま"],
+  ["7", "ツンツン"],
+  ["5", "セクシー"],
+  ["22", "ささやき"],
+  ["38", "ヒソヒソ"],
+];
+
+// 読み上げ速度（speedScale）。
+export const TTS_SPEEDS: [number, string][] = [
+  [0.75, "ゆっくり"],
+  [1.0, "標準"],
+  [1.25, "はやめ"],
+  [1.5, "はやい"],
+];
 
 // Assistant-chat output-language choices, shared by the settings UI. "auto" leaves the
 // language to the user's input; "ja"/"en" force the reply language.

@@ -9,6 +9,7 @@ import { errText, raw } from "../../core/api/client.ts";
 import { takeChatSeed } from "../../lib/chatSeed.ts";
 import { coarsePointer } from "../../lib/device.ts";
 import { useSettings } from "../../lib/settings.ts";
+import { startTts, type TtsController } from "./tts.ts";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { splitPastedImages, buildImagePrompt } from "../../lib/pastedImages.ts";
 import { agentOf } from "../../agents/registry.ts";
@@ -58,6 +59,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const convRef = useRef<Conversation | null>(null); // mirror of conv, to guard reloads
   const abortRef = useRef<AbortController | null>(null); // aborts the in-flight streaming turn
+  const ttsRef = useRef<TtsController | null>(null); // 音声読み上げ（docs/24）。有効時のみ生成
   const applyConv = (c: Conversation | null) => {
     convRef.current = c;
     setConv(c);
@@ -234,15 +236,25 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
     if (coarsePointer()) inputRef.current?.blur();
     const ac = new AbortController();
     abortRef.current = ac;
+    // 音声読み上げ（docs/24）: 有効時のみコントローラを起こし、delta を句点区切りで逐次合成。
+    // 直前のターンが残っていれば止めてから。
+    ttsRef.current?.stop();
+    ttsRef.current = settings.ttsEnabled
+      ? startTts({ provider: settings.ttsProvider, voice: settings.ttsVoiceVoicevox, speed: settings.ttsSpeed })
+      : null;
     markChatBusy(target.id, true); // publish 進行中 to the rail
     await chatStream(
       target.id,
       prompt,
       {
-        onDelta: (t) => setStreamText((s) => s + t),
+        onDelta: (t) => {
+          setStreamText((s) => s + t);
+          ttsRef.current?.push(t);
+        },
         onError: (m) => setError(m),
         onDone: (updated) => {
           if (updated) applyConv(updated);
+          ttsRef.current?.flush();
         },
       },
       ac.signal,
@@ -256,7 +268,13 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
 
   // Stop the in-flight turn: aborting the fetch cancels the request context up the chain
   // (CP → Agent), which kills the headless `claude` process (docs/19).
-  const stop = () => abortRef.current?.abort();
+  const stop = () => {
+    abortRef.current?.abort();
+    ttsRef.current?.stop(); // 読み上げも即停止（in-flight abort・再生停止・キュー破棄）
+  };
+
+  // ペインを閉じる/アンマウント時は読み上げを止める（音声が居残らないように）。
+  useEffect(() => () => ttsRef.current?.stop(), []);
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     // Don't intercept Enter while an IME candidate window is open (JP/CJK input).
