@@ -1,13 +1,15 @@
 package main
 
 import (
-	"encoding/json"
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
 
 // Git commit identity (user.name / user.email) resolution. The effective identity is
@@ -34,33 +36,33 @@ func remoteHost(dir string) string {
 }
 
 func gitConfigLocalGet(dir, key string) string {
-	out, err := exec.Command("git", "-C", dir, "config", "--local", "--get", key).Output()
+	out, err := gitx.Run(dir, "config", "--local", "--get", key)
 	if err != nil {
 		return ""
 	}
-	return strings.TrimSpace(string(out))
+	return out
 }
 
 func gitConfigLocalSet(dir, key, val string) {
-	_ = exec.Command("git", "-C", dir, "config", "--local", key, val).Run()
+	_ = gitx.Cmd(dir, "config", "--local", key, val).Run()
 }
 
 func gitConfigLocalUnset(dir, key string) {
-	_ = exec.Command("git", "-C", dir, "config", "--local", "--unset", key).Run()
+	_ = gitx.Cmd(dir, "config", "--local", "--unset", key).Run()
 }
 
 func gitConfigGlobalGet(key string) string {
-	out, err := exec.Command("git", "config", "--global", "--get", key).Output()
+	out, err := gitx.Run("", "config", "--global", "--get", key)
 	if err != nil {
 		return ""
 	}
-	return strings.TrimSpace(string(out))
+	return out
 }
 
 // resolvedAccount is the provider's connected account name/email (github login+email,
 // or the Bitbucket account), used to auto-seed the commit identity. Works for either
 // connect method (token entry or OAuth).
-func resolvedAccount(s *secretsData, host string) (name, email string) {
+func resolvedAccount(s *secrets.Data, host string) (name, email string) {
 	if e, ok := s.Git[host]; ok {
 		name, email = e.Login, e.Email
 	}
@@ -78,7 +80,7 @@ func providerIdentity(host string) (name, email string) {
 	if host == "" {
 		return "", ""
 	}
-	s, err := loadSecrets()
+	s, err := secrets.Load()
 	if err != nil {
 		return "", ""
 	}
@@ -144,35 +146,34 @@ type identityReq struct {
 func handleGitProviderIdentityPut(w http.ResponseWriter, r *http.Request) {
 	host := r.PathValue("host")
 	if _, ok := gitHosts[host]; !ok {
-		writeErr(w, http.StatusBadRequest, "bad_host", "unsupported host: "+host)
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_host", "unsupported host: "+host)
 		return
 	}
 	var req identityReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErr(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
+	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
-	s, err := loadSecrets()
+	s, err := secrets.Load()
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "store_failed", err.Error())
+		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
 		return
 	}
 	if s.GitIdentity == nil {
-		s.GitIdentity = map[string]gitIdentity{}
+		s.GitIdentity = map[string]secrets.GitIdentity{}
 	}
-	s.GitIdentity[host] = gitIdentity{Name: strings.TrimSpace(req.Name), Email: strings.TrimSpace(req.Email)}
-	if err := s.save(); err != nil {
-		writeErr(w, http.StatusInternalServerError, "store_failed", err.Error())
+	s.GitIdentity[host] = secrets.GitIdentity{Name: strings.TrimSpace(req.Name), Email: strings.TrimSpace(req.Email)}
+	if err := s.Save(); err != nil {
+		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
 		return
 	}
 	reapplyProviderIdentity(host)
 	name, email := providerIdentity(host)
-	writeJSON(w, http.StatusOK, map[string]any{"host": host, "name": name, "email": email})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"host": host, "name": name, "email": email})
 }
 
 // handleGlobalIdentityGet / Put read and write the global default identity (~/.gitconfig).
 func handleGlobalIdentityGet(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"name":  gitConfigGlobalGet("user.name"),
 		"email": gitConfigGlobalGet("user.email"),
 	})
@@ -180,19 +181,18 @@ func handleGlobalIdentityGet(w http.ResponseWriter, r *http.Request) {
 
 func handleGlobalIdentityPut(w http.ResponseWriter, r *http.Request) {
 	var req identityReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErr(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
+	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
 	if n := strings.TrimSpace(req.Name); n != "" {
 		_ = gitConfigGlobal("user.name", n)
 	} else {
-		_ = exec.Command("git", "config", "--global", "--unset", "user.name").Run()
+		_ = gitx.Cmd("", "config", "--global", "--unset", "user.name").Run()
 	}
 	if e := strings.TrimSpace(req.Email); e != "" {
 		_ = gitConfigGlobal("user.email", e)
 	} else {
-		_ = exec.Command("git", "config", "--global", "--unset", "user.email").Run()
+		_ = gitx.Cmd("", "config", "--global", "--unset", "user.email").Run()
 	}
 	handleGlobalIdentityGet(w, r)
 }
@@ -224,7 +224,7 @@ func handleRepoIdentityGet(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	writeJSON(w, http.StatusOK, repoIdentityInfo(dir))
+	httpx.WriteJSON(w, http.StatusOK, repoIdentityInfo(dir))
 }
 
 // handleRepoIdentityPut sets or clears a repo's manual override. A non-empty name or
@@ -236,15 +236,14 @@ func handleRepoIdentityPut(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req identityReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErr(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
+	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
 	name, email := strings.TrimSpace(req.Name), strings.TrimSpace(req.Email)
 	if name == "" && email == "" {
 		gitConfigLocalUnset(dir, identitySourceKey)
 		applyGitIdentity(dir) // revert to provider / global
-		writeJSON(w, http.StatusOK, repoIdentityInfo(dir))
+		httpx.WriteJSON(w, http.StatusOK, repoIdentityInfo(dir))
 		return
 	}
 	if name != "" {
@@ -254,5 +253,5 @@ func handleRepoIdentityPut(w http.ResponseWriter, r *http.Request) {
 		gitConfigLocalSet(dir, "user.email", email)
 	}
 	gitConfigLocalSet(dir, identitySourceKey, "manual")
-	writeJSON(w, http.StatusOK, repoIdentityInfo(dir))
+	httpx.WriteJSON(w, http.StatusOK, repoIdentityInfo(dir))
 }

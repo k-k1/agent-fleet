@@ -58,6 +58,8 @@ export type FsResult = { status: number } & Record<string, unknown>;
 // Server error messages are language-neutral developer fallbacks. The user-facing
 // text is localized here, keyed by the stable error `code`. Add a locale layer over
 // this map when i18n lands; unknown codes fall back to the server's message.
+// Go 側の対は control-plane/errcodes.go / workspace/agent/errcodes.go（docs/23 P0-3）—
+// キーを増減・変更するときは必ず両側同時に。
 const ERR_TEXT: Record<string, string> = {
   quota_sessions:
     "同時に稼働できるセッション数の上限に達しています。稼働中のセッションをどれか停止してから作成してください。",

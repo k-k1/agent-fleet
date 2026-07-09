@@ -34,10 +34,36 @@ type bbState struct {
 	created time.Time
 }
 
-var (
-	bbStateMu sync.Mutex
-	bbStates  = map[string]bbState{} // csrf state -> {user, tenant, created}
-)
+// bbFlowRegistry owns the in-flight OAuth CSRF states（docs/23 P2-W4: 生の
+// package 変数 map+mutex から struct 化）。プロセス内メモリなので、CP を
+// マルチインスタンス化する際は sticky ルーティングか DB 退避が必要（P3-7）。
+type bbFlowRegistry struct {
+	mu     sync.Mutex
+	states map[string]bbState // csrf state -> {user, tenant, created}
+}
+
+// put registers a new flow state, reaping entries older than 10 minutes.
+func (b *bbFlowRegistry) put(state string, s bbState) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for k, old := range b.states {
+		if time.Since(old.created) > 10*time.Minute {
+			delete(b.states, k)
+		}
+	}
+	b.states[state] = s
+}
+
+// take consumes a flow state (single use — the callback deletes it).
+func (b *bbFlowRegistry) take(state string) (bbState, bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	s, ok := b.states[state]
+	delete(b.states, state)
+	return s, ok
+}
+
+var bbFlows = &bbFlowRegistry{states: map[string]bbState{}}
 
 func (c config) bbConfigured() bool {
 	return c.bbKey != "" && c.bbSecret != "" && c.publicBaseURL != ""
@@ -62,14 +88,7 @@ func (c config) handleBitbucketOAuthStart(w http.ResponseWriter, r *http.Request
 		return
 	}
 	state := randHex(16)
-	bbStateMu.Lock()
-	for k, s := range bbStates { // reap stale states
-		if time.Since(s.created) > 10*time.Minute {
-			delete(bbStates, k)
-		}
-	}
-	bbStates[state] = bbState{user: user, tenant: r.Header.Get("X-AF-Tenant"), created: time.Now()}
-	bbStateMu.Unlock()
+	bbFlows.put(state, bbState{user: user, tenant: r.Header.Get("X-AF-Tenant"), created: time.Now()})
 
 	au := bbAuthorizeURL + "?client_id=" + url.QueryEscape(c.bbKey) +
 		"&response_type=code&state=" + url.QueryEscape(state) +
@@ -81,10 +100,7 @@ func (c config) handleBitbucketOAuthCallback(w http.ResponseWriter, r *http.Requ
 	code := r.URL.Query().Get("code")
 	state := r.URL.Query().Get("state")
 
-	bbStateMu.Lock()
-	st, ok := bbStates[state]
-	delete(bbStates, state)
-	bbStateMu.Unlock()
+	st, ok := bbFlows.take(state)
 	if !ok {
 		bbCallbackPage(w, "認証エラー: state が一致しません。Console からやり直してください。")
 		return

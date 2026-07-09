@@ -6,47 +6,47 @@ import (
 
 const gib = 1024 * 1024 * 1024
 
-// adminResolveMember maps a {slug, user_key} pair to its membership and (if one
+// resolveMember maps a {slug, user_key} pair to its membership and (if one
 // exists) its workspace record — the shared lookup for the admin per-member
 // stats/sessions views. Mirrors the resolution in stop-workspace/clean-home
 // (UpsertIdentity → GetMembership → GetWorkspaceByMembership). hasWS is false
 // when the member has never started a workspace.
-func (c config) adminResolveMember(r *http.Request, slug, key string) (mem Membership, ws Workspace, hasWS bool, aerr *apiError) {
+func (a adminAPI) resolveMember(r *http.Request, slug, key string) (mem Membership, ws Workspace, hasWS bool, aerr *apiError) {
 	ctx := r.Context()
-	t, ok, err := c.mgr.store.GetTenantBySlug(ctx, slug)
+	t, ok, err := a.mgr.store.GetTenantBySlug(ctx, slug)
 	if err != nil {
 		return Membership{}, Workspace{}, false, internalErr(err)
 	}
 	if !ok {
 		return Membership{}, Workspace{}, false, &apiError{http.StatusNotFound, "no_tenant", "unknown tenant"}
 	}
-	ident, err := c.mgr.store.UpsertIdentity(ctx, "", key, "")
+	ident, err := a.mgr.store.UpsertIdentity(ctx, "", key, "")
 	if err != nil {
 		return Membership{}, Workspace{}, false, internalErr(err)
 	}
-	mem, ok, err = c.mgr.store.GetMembership(ctx, ident.ID, t.ID)
+	mem, ok, err = a.mgr.store.GetMembership(ctx, ident.ID, t.ID)
 	if err != nil {
 		return Membership{}, Workspace{}, false, internalErr(err)
 	}
 	if !ok {
 		return Membership{}, Workspace{}, false, &apiError{http.StatusNotFound, "no_membership", "not a member"}
 	}
-	ws, hasWS, err = c.mgr.store.GetWorkspaceByMembership(ctx, mem.ID)
+	ws, hasWS, err = a.mgr.store.GetWorkspaceByMembership(ctx, mem.ID)
 	if err != nil {
 		return Membership{}, Workspace{}, false, internalErr(err)
 	}
 	return mem, ws, hasWS, nil
 }
 
-// handleAdminMemberStats (GET /api/admin/tenants/{slug}/members/{key}/stats)
+// memberStats (GET /api/admin/tenants/{slug}/members/{key}/stats)
 // returns a member's live Workspace resource usage: mem/CPU from cgroup and disk
 // from `du` on the home tree, plus the disk quota if one is set. Disk is reported
 // even while the container is stopped (the home path persists on the host).
-func (c config) handleAdminMemberStats(w http.ResponseWriter, r *http.Request) {
-	if _, _, ok := c.requireTenantAdmin(w, r, r.PathValue("slug")); !ok {
+func (a adminAPI) memberStats(w http.ResponseWriter, r *http.Request) {
+	if _, _, ok := a.tenantAdminFor(w, r, r.PathValue("slug")); !ok {
 		return
 	}
-	mem, ws, hasWS, aerr := c.adminResolveMember(r, r.PathValue("slug"), r.PathValue("key"))
+	mem, ws, hasWS, aerr := a.resolveMember(r, r.PathValue("slug"), r.PathValue("key"))
 	if aerr != nil {
 		writeAPIErr(w, aerr)
 		return
@@ -56,24 +56,24 @@ func (c config) handleAdminMemberStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := containerStats(r.Context(), ws.ContainerName)
-	if used, ok := dirDiskUsage(r.Context(), c.mgr.rootedDataDir(ws)); ok {
+	if used, ok := dirDiskUsage(r.Context(), a.mgr.rootedDataDir(ws)); ok {
 		out["disk_used"] = used
 	}
-	if ul, ok, _ := c.mgr.store.GetUserLimit(r.Context(), mem.ID); ok && ul.DiskGB > 0 {
+	if ul, ok, _ := a.mgr.store.GetUserLimit(r.Context(), mem.ID); ok && ul.DiskGB > 0 {
 		out["disk_quota"] = uint64(ul.DiskGB) * gib
 	}
 	writeJSON(w, http.StatusOK, out)
 }
 
-// handleAdminMemberSessions (GET /api/admin/tenants/{slug}/members/{key}/sessions)
-// lists a member's sessions (read-only). Mirrors handleSessionsList but keyed by
+// memberSessions (GET /api/admin/tenants/{slug}/members/{key}/sessions)
+// lists a member's sessions (read-only). Mirrors workspaceAPI.sessionsList but keyed by
 // membership: the Agent is authoritative while the container runs (and we refresh
 // the DB mirror); otherwise serve the last mirrored list as stopped.
-func (c config) handleAdminMemberSessions(w http.ResponseWriter, r *http.Request) {
-	if _, _, ok := c.requireTenantAdmin(w, r, r.PathValue("slug")); !ok {
+func (a adminAPI) memberSessions(w http.ResponseWriter, r *http.Request) {
+	if _, _, ok := a.tenantAdminFor(w, r, r.PathValue("slug")); !ok {
 		return
 	}
-	_, ws, hasWS, aerr := c.adminResolveMember(r, r.PathValue("slug"), r.PathValue("key"))
+	_, ws, hasWS, aerr := a.resolveMember(r, r.PathValue("slug"), r.PathValue("key"))
 	if aerr != nil {
 		writeAPIErr(w, aerr)
 		return
@@ -83,9 +83,9 @@ func (c config) handleAdminMemberSessions(w http.ResponseWriter, r *http.Request
 		return
 	}
 	ctx := r.Context()
-	rt := c.mgr.runtimeFor(ws, "")
+	rt := a.mgr.runtimeFor(ws, "")
 	if rt.State(ctx) == "running" {
-		if list, err := c.mgr.agentSessions(ctx, rt); err == nil {
+		if list, err := a.mgr.agentSessions(ctx, rt); err == nil {
 			rows := make([]SessionRow, 0, len(list))
 			for _, s := range list {
 				state := "stopped"
@@ -97,13 +97,13 @@ func (c config) handleAdminMemberSessions(w http.ResponseWriter, r *http.Request
 					Label: s.Label, CreatedAt: s.CreatedAt, State: state,
 				})
 			}
-			_ = c.mgr.store.ReplaceSessions(ctx, ws.ID, rows)
+			_ = a.mgr.store.ReplaceSessions(ctx, ws.ID, rows)
 			writeJSON(w, http.StatusOK, map[string]any{"sessions": list})
 			return
 		}
 		// Agent unreachable (e.g. mid-start): fall through to the DB mirror.
 	}
-	rows, err := c.mgr.store.ListSessions(ctx, ws.ID)
+	rows, err := a.mgr.store.ListSessions(ctx, ws.ID)
 	if err != nil {
 		rows = nil
 	}

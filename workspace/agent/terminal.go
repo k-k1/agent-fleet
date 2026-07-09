@@ -11,6 +11,9 @@ import (
 
 	"github.com/creack/pty"
 	"github.com/gorilla/websocket"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 )
 
 // Internal-only endpoint; the Control Plane is the sole client and enforces
@@ -37,11 +40,13 @@ var pongMsg = []byte(`{"type":"pong"}`)
 // attaches the matching tmux session; otherwise it opens a login shell
 // (used for `claude /login` and ad-hoc commands).
 func handlePTY(w http.ResponseWriter, r *http.Request) {
-	session := r.URL.Query().Get("session")
+	// NOTE: ローカル変数名は internal/session パッケージと衝突するため name に変更
+	// （旧: session）。挙動は同一。
+	name := r.URL.Query().Get("session")
 
 	var cmd *exec.Cmd
-	if session != "" {
-		if !nameRe.MatchString(session) {
+	if name != "" {
+		if !session.ValidName(name) {
 			http.Error(w, "invalid session name", http.StatusBadRequest)
 			return
 		}
@@ -49,12 +54,12 @@ func handlePTY(w http.ResponseWriter, r *http.Request) {
 		// opening a session's chat/terminal (or a stale "alive" right after a Workspace
 		// Start) used to auto-relaunch it via ensureSessionTmux; resuming is now explicit
 		// (POST /sessions/{name}/start, driven by 再開して続ける / the ターミナル toggle).
-		if !tmuxHasSession(tmuxName(session)) {
+		if !tmuxx.HasSession(session.TmuxName(name)) {
 			http.Error(w, "session not running", http.StatusConflict)
 			return
 		}
 		// new-session -A attaches (the session exists per the check above).
-		cmd = exec.Command("tmux", "new-session", "-A", "-s", tmuxName(session))
+		cmd = exec.Command("tmux", "new-session", "-A", "-s", session.TmuxName(name))
 	} else {
 		cmd = exec.Command(envOr("AGENT_SHELL", "bash"), "-l")
 	}

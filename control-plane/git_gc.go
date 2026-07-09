@@ -25,8 +25,16 @@ import (
 // It runs SEQUENTIALLY with --auto so the memory footprint stays tiny on the
 // shared host (see host-oom-fleet-risk). Off when the interval is 0
 // (AF_GIT_GC_INTERVAL=0).
+// gitGCStore is gitGC's narrow store view (docs/23 P2-W3): tenant slug→id
+// lookup + the LFS object ledger it reconciles. Standalone components should
+// depend on the sub-interfaces they use, not the full Store.
+type gitGCStore interface {
+	TenantStore
+	LFSObjectStore
+}
+
 type gitGC struct {
-	store    Store
+	store    gitGCStore
 	dataRoot string
 	interval time.Duration
 	// lfsGrace protects an object whose file mtime is younger than this from
@@ -35,7 +43,7 @@ type gitGC struct {
 	lfsGrace time.Duration
 }
 
-func newGitGC(store Store, dataRoot string, interval, lfsGrace time.Duration) *gitGC {
+func newGitGC(store gitGCStore, dataRoot string, interval, lfsGrace time.Duration) *gitGC {
 	return &gitGC{store: store, dataRoot: dataRoot, interval: interval, lfsGrace: lfsGrace}
 }
 

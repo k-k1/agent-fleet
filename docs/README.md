@@ -16,10 +16,10 @@
 ## 進行中の機能設計（番号付き）
 
 - [20-container-audit-egress.md](20-container-audit-egress.md) — コンテナ内操作の監査ログ & egress 統制（enforce 未了・進行中）
+- [23-go-refactor.md](23-go-refactor.md) — Go バックエンド内部リファクタ（CP / Agent、機能不変・ワイヤ互換。残=④契約の型化のみ）
 
 > 完了した機能設計は history/ へ移動: [19 assistant-chat](history/19-assistant-chat.md) /
 > [21 memo-queue](history/21-memo-queue.md) / [22 console-rebuild](history/22-console-rebuild.md)。
-> Go 内部リファクタ（docs/23）は別ブランチで進行中（本ブランチには未マージ）。
 
 ## reference/ は dev/ へ再編しました（2026-07）
 
@@ -50,6 +50,7 @@
 - [0009-transcript-paging.md](decisions/0009-transcript-paging.md) — transcript は末尾ウィンドウ読み込み + 逆方向ページング
 - [0010-internal-git-provider.md](decisions/0010-internal-git-provider.md) — テナント内部 git プロバイダ（bare+http-backend を CP 自ホスト）**採用**
 - [0011-console-rebuild.md](decisions/0011-console-rebuild.md) — Console リビルド：並行エントリ・zustand・旧側凍結（設計 [22](history/22-console-rebuild.md)）
+- [0012-go-internal-refactor.md](decisions/0012-go-internal-refactor.md) — Go バックエンド内部リファクタ：internal 層化・2 バイナリ維持・共有モジュール見送り（設計 [23](23-go-refactor.md)）
 
 ## history/ — 使い終わった実装プラン（P3-6 は ◐ 段1 完了・admin 残）
 

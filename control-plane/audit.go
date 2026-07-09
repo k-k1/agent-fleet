@@ -9,12 +9,12 @@ import (
 // + InsertAudit) and mcp.go/ssm.go. This exposes the ledger to operators; there is no
 // read path anywhere else yet.
 
-// handleAdminAudit (GET /api/admin/audit?tenant=<slug>&limit=N) serves the most recent
+// audit (GET /api/admin/audit?tenant=<slug>&limit=N) serves the most recent
 // audit entries. super_admin sees the whole deployment; a tenant_admin is scoped to a
-// tenant they administer (via ?tenant=), enforced by adminTenantScope. Entries are
+// tenant they administer (via ?tenant=), enforced by tenantScope. Entries are
 // enriched best-effort with the tenant slug and the actor's email for display.
-func (c config) handleAdminAudit(w http.ResponseWriter, r *http.Request) {
-	tenantID, ok := c.adminTenantScope(w, r)
+func (a adminAPI) audit(w http.ResponseWriter, r *http.Request) {
+	tenantID, ok := a.tenantScope(w, r)
 	if !ok {
 		return
 	}
@@ -28,39 +28,39 @@ func (c config) handleAdminAudit(w http.ResponseWriter, r *http.Request) {
 			limit = n
 		}
 	}
-	rows, err := c.mgr.store.ListAuditByTenant(ctx, tenantID, limit)
+	rows, err := a.mgr.store.ListAuditByTenant(ctx, tenantID, limit)
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
 	// tenant id -> slug (one query), and a small actor id -> email cache (best-effort).
 	slug := map[string]string{}
-	if ts, e := c.mgr.store.ListTenants(ctx); e == nil {
+	if ts, e := a.mgr.store.ListTenants(ctx); e == nil {
 		for _, t := range ts {
 			slug[t.ID] = t.Slug
 		}
 	}
 	email := map[string]string{}
 	out := make([]map[string]any, 0, len(rows))
-	for _, a := range rows {
-		em, seen := email[a.ActorID]
-		if !seen && a.ActorID != "" {
-			if id, found, _ := c.mgr.store.GetIdentityByID(ctx, a.ActorID); found {
+	for _, row := range rows {
+		em, seen := email[row.ActorID]
+		if !seen && row.ActorID != "" {
+			if id, found, _ := a.mgr.store.GetIdentityByID(ctx, row.ActorID); found {
 				em = id.Email
 			}
-			email[a.ActorID] = em
+			email[row.ActorID] = em
 		}
 		out = append(out, map[string]any{
-			"id":          a.ID,
-			"tenant":      slug[a.TenantID],
-			"tenant_id":   a.TenantID,
-			"actor_kind":  a.ActorKind,
-			"actor_id":    a.ActorID,
+			"id":          row.ID,
+			"tenant":      slug[row.TenantID],
+			"tenant_id":   row.TenantID,
+			"actor_kind":  row.ActorKind,
+			"actor_id":    row.ActorID,
 			"actor_email": em,
-			"action":      a.Action,
-			"target":      a.Target,
-			"detail":      a.Detail,
-			"at":          a.At,
+			"action":      row.Action,
+			"target":      row.Target,
+			"detail":      row.Detail,
+			"at":          row.At,
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"audit": out})

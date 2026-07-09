@@ -26,6 +26,14 @@ import (
 
 const mcpProtocolVersion = "2025-06-18"
 
+// mcpAPI is the MCP feature handler set (docs/23 残③): the /mcp endpoint plus
+// its tool registry/impls, converted receiver-only from config. Auth is a
+// Bearer PAT (authMCP), never the session gateway; everything it needs hangs
+// off the embedded memberAuth's manager (store + runtime resolution).
+type mcpAPI struct{ memberAuth }
+
+func newMCPAPI(m *manager) mcpAPI { return mcpAPI{memberAuth{m}} }
+
 // mcpPrincipal is the resolved caller behind a PAT for one MCP request.
 type mcpPrincipal struct {
 	patID, identityID, membershipID, scope string
@@ -60,7 +68,7 @@ func rpcErr(id json.RawMessage, code int, msg string) *rpcResponse {
 }
 
 // handleMCP is the /mcp endpoint. Registered only when AF_MCP_ENABLED=true.
-func (c config) handleMCP(w http.ResponseWriter, r *http.Request) {
+func (a mcpAPI) handleMCP(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet || r.Method == http.MethodDelete {
 		// No server-initiated stream / session teardown in the minimal server.
 		w.WriteHeader(http.StatusMethodNotAllowed)
@@ -70,7 +78,7 @@ func (c config) handleMCP(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	prin, aerr := c.authMCP(r)
+	prin, aerr := a.authMCP(r)
 	if aerr != nil {
 		w.Header().Set("WWW-Authenticate", "Bearer")
 		writeAPIErr(w, aerr)
@@ -93,7 +101,7 @@ func (c config) handleMCP(w http.ResponseWriter, r *http.Request) {
 		}
 		var out []*rpcResponse
 		for _, req := range reqs {
-			if resp := c.dispatchMCP(r.Context(), prin, req); resp != nil {
+			if resp := a.dispatchMCP(r.Context(), prin, req); resp != nil {
 				out = append(out, resp)
 			}
 		}
@@ -110,7 +118,7 @@ func (c config) handleMCP(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, rpcErr(nil, -32700, "parse error"))
 		return
 	}
-	resp := c.dispatchMCP(r.Context(), prin, req)
+	resp := a.dispatchMCP(r.Context(), prin, req)
 	if resp == nil { // notification
 		w.WriteHeader(http.StatusAccepted)
 		return
@@ -120,13 +128,13 @@ func (c config) handleMCP(w http.ResponseWriter, r *http.Request) {
 
 // authMCP resolves the Bearer PAT to a principal, rejecting missing/unknown/
 // revoked/expired tokens. role is resolved live downstream (per call).
-func (c config) authMCP(r *http.Request) (*mcpPrincipal, *apiError) {
+func (a mcpAPI) authMCP(r *http.Request) (*mcpPrincipal, *apiError) {
 	auth := r.Header.Get("Authorization")
 	tok := strings.TrimSpace(strings.TrimPrefix(auth, "Bearer "))
 	if tok == "" || tok == auth { // no/!Bearer prefix
 		return nil, &apiError{http.StatusUnauthorized, "unauthenticated", "missing bearer token"}
 	}
-	p, ok, err := c.mgr.store.GetPATByHash(r.Context(), hashPAT(tok))
+	p, ok, err := a.mgr.store.GetPATByHash(r.Context(), hashPAT(tok))
 	if err != nil {
 		return nil, internalErr(err)
 	}
@@ -138,11 +146,11 @@ func (c config) authMCP(r *http.Request) (*mcpPrincipal, *apiError) {
 			return nil, &apiError{http.StatusUnauthorized, "unauthenticated", "token expired"}
 		}
 	}
-	_ = c.mgr.store.TouchPAT(r.Context(), p.ID) // best-effort last-used
+	_ = a.mgr.store.TouchPAT(r.Context(), p.ID) // best-effort last-used
 	return &mcpPrincipal{patID: p.ID, identityID: p.IdentityID, membershipID: p.MembershipID, scope: p.Scope}, nil
 }
 
-func (c config) dispatchMCP(ctx context.Context, prin *mcpPrincipal, req rpcRequest) *rpcResponse {
+func (a mcpAPI) dispatchMCP(ctx context.Context, prin *mcpPrincipal, req rpcRequest) *rpcResponse {
 	isNotification := len(req.ID) == 0
 	switch req.Method {
 	case "initialize":
@@ -165,9 +173,9 @@ func (c config) dispatchMCP(ctx context.Context, prin *mcpPrincipal, req rpcRequ
 	case "ping":
 		return rpcOK(req.ID, map[string]any{})
 	case "tools/list":
-		return rpcOK(req.ID, map[string]any{"tools": c.mcpToolList(ctx, prin)})
+		return rpcOK(req.ID, map[string]any{"tools": a.mcpToolList(ctx, prin)})
 	case "tools/call":
-		return c.mcpToolCall(ctx, prin, req)
+		return a.mcpToolCall(ctx, prin, req)
 	default:
 		if isNotification {
 			return nil
@@ -185,9 +193,9 @@ type mcpTool struct {
 	admin    bool   // admin tool: requires super_admin / tenant_admin in the PAT's tenant
 	schema   map[string]any
 	// run executes a member/drive tool against the caller's own Workspace.
-	run func(ctx context.Context, c config, res *resolved, args map[string]any) (string, error)
+	run func(ctx context.Context, a mcpAPI, res *resolved, args map[string]any) (string, error)
 	// runAdmin executes an admin tool within the PAT's tenant (admin == true).
-	runAdmin func(ctx context.Context, c config, ac *adminCtx, args map[string]any) (string, error)
+	runAdmin func(ctx context.Context, a mcpAPI, ac *adminCtx, args map[string]any) (string, error)
 }
 
 // memberTools are the Phase-1 member/drive tools (E). Each runs against the
@@ -203,7 +211,7 @@ func memberTools() []mcpTool {
 			name: "list_my_sessions", minScope: scopeRead,
 			desc:   "List the Claude/opencode/codex sessions in your Workspace. Each has a human-readable `display` name and an opaque `name` slug: refer to sessions by `display` when talking to the user (the slug means nothing to them); pass `name` to the other session tools.",
 			schema: map[string]any{"type": "object", "properties": map[string]any{}},
-			run: func(ctx context.Context, c config, res *resolved, _ map[string]any) (string, error) {
+			run: func(ctx context.Context, a mcpAPI, res *resolved, _ map[string]any) (string, error) {
 				return agentText(ctx, res.rt, "GET", "/sessions", nil)
 			},
 		},
@@ -211,8 +219,8 @@ func memberTools() []mcpTool {
 			name: "get_session_status", minScope: scopeRead,
 			desc:   "Get a session's live state: working | idle (awaiting input) | question (AskUserQuestion).",
 			schema: nameArg,
-			run: func(ctx context.Context, c config, res *resolved, a map[string]any) (string, error) {
-				return agentText(ctx, res.rt, "GET", "/sessions/"+url.PathEscape(argStr(a, "name"))+"/status", nil)
+			run: func(ctx context.Context, a mcpAPI, res *resolved, args map[string]any) (string, error) {
+				return agentText(ctx, res.rt, "GET", "/sessions/"+url.PathEscape(argStr(args, "name"))+"/status", nil)
 			},
 		},
 		{
@@ -226,12 +234,12 @@ func memberTools() []mcpTool {
 				},
 				"required": []string{"name"},
 			},
-			run: func(ctx context.Context, c config, res *resolved, a map[string]any) (string, error) {
+			run: func(ctx context.Context, a mcpAPI, res *resolved, args map[string]any) (string, error) {
 				q := ""
-				if s := argStr(a, "since"); s != "" {
+				if s := argStr(args, "since"); s != "" {
 					q = "?since=" + url.QueryEscape(s)
 				}
-				return agentText(ctx, res.rt, "GET", "/sessions/"+url.PathEscape(argStr(a, "name"))+"/output"+q, nil)
+				return agentText(ctx, res.rt, "GET", "/sessions/"+url.PathEscape(argStr(args, "name"))+"/output"+q, nil)
 			},
 		},
 		{
@@ -245,9 +253,9 @@ func memberTools() []mcpTool {
 				},
 				"required": []string{"name", "prompt"},
 			},
-			run: func(ctx context.Context, c config, res *resolved, a map[string]any) (string, error) {
-				body, _ := json.Marshal(map[string]string{"prompt": argStr(a, "prompt")})
-				return agentText(ctx, res.rt, "POST", "/sessions/"+url.PathEscape(argStr(a, "name"))+"/input", body)
+			run: func(ctx context.Context, a mcpAPI, res *resolved, args map[string]any) (string, error) {
+				body, _ := json.Marshal(map[string]string{"prompt": argStr(args, "prompt")})
+				return agentText(ctx, res.rt, "POST", "/sessions/"+url.PathEscape(argStr(args, "name"))+"/input", body)
 			},
 		},
 	}
@@ -259,14 +267,14 @@ func memberTools() []mcpTool {
 // scope, and a demotion takes effect immediately (role is resolved live, not
 // frozen in the token). The capability filter is UX — authz is re-checked in
 // mcpToolCall before any admin tool runs.
-func (c config) toolsFor(ctx context.Context, prin *mcpPrincipal) []mcpTool {
+func (a mcpAPI) toolsFor(ctx context.Context, prin *mcpPrincipal) []mcpTool {
 	var out []mcpTool
 	for _, t := range memberTools() {
 		if scopeRank(prin.scope) >= scopeRank(t.minScope) {
 			out = append(out, t)
 		}
 	}
-	if ac, _ := c.adminPrincipal(ctx, prin); ac != nil && ac.isAdmin {
+	if ac, _ := a.adminPrincipal(ctx, prin); ac != nil && ac.isAdmin {
 		for _, t := range adminTools() {
 			if scopeRank(prin.scope) >= scopeRank(t.minScope) {
 				out = append(out, t)
@@ -276,8 +284,8 @@ func (c config) toolsFor(ctx context.Context, prin *mcpPrincipal) []mcpTool {
 	return out
 }
 
-func (c config) mcpToolList(ctx context.Context, prin *mcpPrincipal) []map[string]any {
-	tools := c.toolsFor(ctx, prin)
+func (a mcpAPI) mcpToolList(ctx context.Context, prin *mcpPrincipal) []map[string]any {
+	tools := a.toolsFor(ctx, prin)
 	out := make([]map[string]any, 0, len(tools))
 	for _, t := range tools {
 		out = append(out, map[string]any{"name": t.name, "description": t.desc, "inputSchema": t.schema})
@@ -285,7 +293,7 @@ func (c config) mcpToolList(ctx context.Context, prin *mcpPrincipal) []map[strin
 	return out
 }
 
-func (c config) mcpToolCall(ctx context.Context, prin *mcpPrincipal, req rpcRequest) *rpcResponse {
+func (a mcpAPI) mcpToolCall(ctx context.Context, prin *mcpPrincipal, req rpcRequest) *rpcResponse {
 	var p struct {
 		Name string         `json:"name"`
 		Args map[string]any `json:"arguments"`
@@ -294,7 +302,7 @@ func (c config) mcpToolCall(ctx context.Context, prin *mcpPrincipal, req rpcRequ
 		return rpcErr(req.ID, -32602, "invalid params")
 	}
 	var tool *mcpTool
-	for _, t := range c.toolsFor(ctx, prin) {
+	for _, t := range a.toolsFor(ctx, prin) {
 		if t.name == p.Name {
 			tt := t
 			tool = &tt
@@ -313,22 +321,22 @@ func (c config) mcpToolCall(ctx context.Context, prin *mcpPrincipal, req rpcRequ
 		// Re-check authz in the service layer (the capability filter is UX, not
 		// the authority): resolve the live role behind the PAT and require admin
 		// of the token's tenant. The tenant is fixed by the token, never supplied.
-		ac, aerr := c.adminPrincipal(ctx, prin)
+		ac, aerr := a.adminPrincipal(ctx, prin)
 		if aerr != nil {
 			return rpcOK(req.ID, toolError(aerr.message))
 		}
 		if ac == nil || !ac.isAdmin {
 			return rpcOK(req.ID, toolError("admin role required"))
 		}
-		text, err = tool.runAdmin(ctx, c, ac, p.Args)
+		text, err = tool.runAdmin(ctx, a, ac, p.Args)
 	} else {
 		// Resolve the caller's own Workspace from the PAT's membership (live role/
 		// membership check; tenant fixed by the token, never client-supplied).
-		res, aerr := c.mgr.resolveByMembership(ctx, prin.identityID, prin.membershipID)
+		res, aerr := a.mgr.resolveByMembership(ctx, prin.identityID, prin.membershipID)
 		if aerr != nil {
 			return rpcOK(req.ID, toolError(aerr.message))
 		}
-		text, err = tool.run(ctx, c, res, p.Args)
+		text, err = tool.run(ctx, a, res, p.Args)
 	}
 	if err != nil {
 		return rpcOK(req.ID, toolError(err.Error()))
@@ -406,15 +414,15 @@ type adminCtx struct {
 // membership removal takes effect immediately. Returns an apiError only on a real
 // failure (DB error / unknown identity / inactive membership); a valid non-admin
 // principal returns ac with isAdmin=false.
-func (c config) adminPrincipal(ctx context.Context, prin *mcpPrincipal) (*adminCtx, *apiError) {
-	ident, ok, err := c.mgr.store.GetIdentityByID(ctx, prin.identityID)
+func (a mcpAPI) adminPrincipal(ctx context.Context, prin *mcpPrincipal) (*adminCtx, *apiError) {
+	ident, ok, err := a.mgr.store.GetIdentityByID(ctx, prin.identityID)
 	if err != nil {
 		return nil, internalErr(err)
 	}
 	if !ok {
 		return nil, &apiError{http.StatusUnauthorized, "unauthenticated", "identity not found"}
 	}
-	ms, err := c.mgr.store.ListMemberships(ctx, prin.identityID)
+	ms, err := a.mgr.store.ListMemberships(ctx, prin.identityID)
 	if err != nil {
 		return nil, internalErr(err)
 	}
@@ -429,7 +437,7 @@ func (c config) adminPrincipal(ctx context.Context, prin *mcpPrincipal) (*adminC
 	if !found {
 		return nil, &apiError{http.StatusForbidden, "forbidden_tenant", "membership not active"}
 	}
-	t, err := c.mgr.store.GetTenant(ctx, mv.TenantID)
+	t, err := a.mgr.store.GetTenant(ctx, mv.TenantID)
 	if err != nil {
 		return nil, internalErr(err)
 	}
@@ -457,32 +465,32 @@ func adminTools() []mcpTool {
 			name: "list_workspaces", minScope: scopeRead, admin: true,
 			desc:   "List your tenant's members with their Workspace container state (admin).",
 			schema: empty,
-			runAdmin: func(ctx context.Context, c config, ac *adminCtx, _ map[string]any) (string, error) {
-				return c.mcpListWorkspaces(ctx, ac)
+			runAdmin: func(ctx context.Context, a mcpAPI, ac *adminCtx, _ map[string]any) (string, error) {
+				return a.mcpListWorkspaces(ctx, ac)
 			},
 		},
 		{
 			name: "get_usage", minScope: scopeRead, admin: true,
 			desc:   "Tenant resource usage: member count, running Workspaces, quota limits (plus host load/memory for super_admin).",
 			schema: empty,
-			runAdmin: func(ctx context.Context, c config, ac *adminCtx, _ map[string]any) (string, error) {
-				return c.mcpGetUsage(ctx, ac)
+			runAdmin: func(ctx context.Context, a mcpAPI, ac *adminCtx, _ map[string]any) (string, error) {
+				return a.mcpGetUsage(ctx, ac)
 			},
 		},
 		{
 			name: "list_sessions", minScope: scopeRead, admin: true,
 			desc:   "List sessions across the tenant, or for one member when user_key is given (admin).",
 			schema: userKeyArg(nil),
-			runAdmin: func(ctx context.Context, c config, ac *adminCtx, a map[string]any) (string, error) {
-				return c.mcpListSessions(ctx, ac, argStr(a, "user_key"))
+			runAdmin: func(ctx context.Context, a mcpAPI, ac *adminCtx, args map[string]any) (string, error) {
+				return a.mcpListSessions(ctx, ac, argStr(args, "user_key"))
 			},
 		},
 		{
 			name: "stop_workspace", minScope: scopeWrite, admin: true,
 			desc:   "Force-stop a member's Workspace container (admin). The home persists; it restarts on next use.",
 			schema: userKeyArg(nil, "user_key"),
-			runAdmin: func(ctx context.Context, c config, ac *adminCtx, a map[string]any) (string, error) {
-				return c.mcpStopWorkspace(ctx, ac, argStr(a, "user_key"))
+			runAdmin: func(ctx context.Context, a mcpAPI, ac *adminCtx, args map[string]any) (string, error) {
+				return a.mcpStopWorkspace(ctx, ac, argStr(args, "user_key"))
 			},
 		},
 		{
@@ -491,8 +499,8 @@ func adminTools() []mcpTool {
 			schema: userKeyArg(map[string]any{
 				"name": map[string]any{"type": "string", "description": "session name"},
 			}, "user_key", "name"),
-			runAdmin: func(ctx context.Context, c config, ac *adminCtx, a map[string]any) (string, error) {
-				return c.mcpStopSession(ctx, ac, argStr(a, "user_key"), argStr(a, "name"))
+			runAdmin: func(ctx context.Context, a mcpAPI, ac *adminCtx, args map[string]any) (string, error) {
+				return a.mcpStopSession(ctx, ac, argStr(args, "user_key"), argStr(args, "name"))
 			},
 		},
 		{
@@ -502,8 +510,8 @@ func adminTools() []mcpTool {
 				"max_sessions": map[string]any{"type": "integer", "description": "max concurrent sessions (0 = unset)"},
 				"disk_gb":      map[string]any{"type": "integer", "description": "disk quota in GiB (0 = unset)"},
 			}, "user_key"),
-			runAdmin: func(ctx context.Context, c config, ac *adminCtx, a map[string]any) (string, error) {
-				return c.mcpSetUserQuota(ctx, ac, argStr(a, "user_key"), argInt(a, "max_sessions"), argInt(a, "disk_gb"))
+			runAdmin: func(ctx context.Context, a mcpAPI, ac *adminCtx, args map[string]any) (string, error) {
+				return a.mcpSetUserQuota(ctx, ac, argStr(args, "user_key"), argInt(args, "max_sessions"), argInt(args, "disk_gb"))
 			},
 		},
 		// --- egress review (docs/20 M4: agent 壁打ち) ---------------------------
@@ -516,16 +524,16 @@ func adminTools() []mcpTool {
 			schema: map[string]any{"type": "object", "properties": map[string]any{
 				"days": map[string]any{"type": "integer", "description": "lookback window in days (default 7)"},
 			}},
-			runAdmin: func(ctx context.Context, c config, ac *adminCtx, a map[string]any) (string, error) {
-				return c.mcpEgressStats(ctx, ac, argInt(a, "days"))
+			runAdmin: func(ctx context.Context, a mcpAPI, ac *adminCtx, args map[string]any) (string, error) {
+				return a.mcpEgressStats(ctx, ac, argInt(args, "days"))
 			},
 		},
 		{
 			name: "list_allowlist", minScope: scopeRead, admin: true,
 			desc:   "List egress allowlist entries (super_admin), optionally filtered by state (active | proposed | retired). Also returns the built-in product defaults.",
 			schema: map[string]any{"type": "object", "properties": map[string]any{"state": map[string]any{"type": "string", "description": "active | proposed | retired (optional)"}}},
-			runAdmin: func(ctx context.Context, c config, ac *adminCtx, a map[string]any) (string, error) {
-				return c.mcpListAllowlist(ctx, ac, argStr(a, "state"))
+			runAdmin: func(ctx context.Context, a mcpAPI, ac *adminCtx, args map[string]any) (string, error) {
+				return a.mcpListAllowlist(ctx, ac, argStr(args, "state"))
 			},
 		},
 		{
@@ -535,16 +543,16 @@ func adminTools() []mcpTool {
 				"entry":  map[string]any{"type": "string", "description": "host or .suffix.example.com"},
 				"reason": map[string]any{"type": "string", "description": "why this should be allowed"},
 			}, "required": []string{"entry"}},
-			runAdmin: func(ctx context.Context, c config, ac *adminCtx, a map[string]any) (string, error) {
-				return c.mcpProposeAllowlist(ctx, ac, argStr(a, "entry"), argStr(a, "reason"))
+			runAdmin: func(ctx context.Context, a mcpAPI, ac *adminCtx, args map[string]any) (string, error) {
+				return a.mcpProposeAllowlist(ctx, ac, argStr(args, "entry"), argStr(args, "reason"))
 			},
 		},
 		{
 			name: "tail_audit", minScope: scopeRead, admin: true,
 			desc:   "Recent audit-log entries (super_admin: whole deployment, else your tenant): file/git/session changes, egress observations, and admin edits. Review-only.",
 			schema: map[string]any{"type": "object", "properties": map[string]any{"limit": map[string]any{"type": "integer", "description": "max rows (default 50)"}}},
-			runAdmin: func(ctx context.Context, c config, ac *adminCtx, a map[string]any) (string, error) {
-				return c.mcpTailAudit(ctx, ac, argInt(a, "limit"))
+			runAdmin: func(ctx context.Context, a mcpAPI, ac *adminCtx, args map[string]any) (string, error) {
+				return a.mcpTailAudit(ctx, ac, argInt(args, "limit"))
 			},
 		},
 	}
@@ -559,7 +567,7 @@ func superOnly(ac *adminCtx) error {
 	return nil
 }
 
-func (c config) mcpEgressStats(ctx context.Context, ac *adminCtx, days int) (string, error) {
+func (a mcpAPI) mcpEgressStats(ctx context.Context, ac *adminCtx, days int) (string, error) {
 	if err := superOnly(ac); err != nil {
 		return "", err
 	}
@@ -569,11 +577,11 @@ func (c config) mcpEgressStats(ctx context.Context, ac *adminCtx, days int) (str
 		days = 90
 	}
 	since := time.Now().UTC().AddDate(0, 0, -(days - 1)).Format("2006-01-02")
-	rows, err := c.mgr.store.ListEgress(ctx, since, 500)
+	rows, err := a.mgr.store.ListEgress(ctx, since, 500)
 	if err != nil {
 		return "", err
 	}
-	mode, _ := c.mgr.store.GetSetting(ctx, "egress_mode")
+	mode, _ := a.mgr.store.GetSetting(ctx, "egress_mode")
 	if mode == "" {
 		mode = "log-only"
 	}
@@ -585,11 +593,11 @@ func (c config) mcpEgressStats(ctx context.Context, ac *adminCtx, days int) (str
 	return string(b), nil
 }
 
-func (c config) mcpListAllowlist(ctx context.Context, ac *adminCtx, state string) (string, error) {
+func (a mcpAPI) mcpListAllowlist(ctx context.Context, ac *adminCtx, state string) (string, error) {
 	if err := superOnly(ac); err != nil {
 		return "", err
 	}
-	rows, err := c.mgr.store.ListAllowlist(ctx, state, 500)
+	rows, err := a.mgr.store.ListAllowlist(ctx, state, 500)
 	if err != nil {
 		return "", err
 	}
@@ -601,7 +609,7 @@ func (c config) mcpListAllowlist(ctx context.Context, ac *adminCtx, state string
 	return string(b), nil
 }
 
-func (c config) mcpProposeAllowlist(ctx context.Context, ac *adminCtx, entry, reason string) (string, error) {
+func (a mcpAPI) mcpProposeAllowlist(ctx context.Context, ac *adminCtx, entry, reason string) (string, error) {
 	if err := superOnly(ac); err != nil {
 		return "", err
 	}
@@ -610,15 +618,15 @@ func (c config) mcpProposeAllowlist(ctx context.Context, ac *adminCtx, entry, re
 		return "", fmt.Errorf("entry required")
 	}
 	e := AllowlistEntry{ID: newID(), Entry: entry, State: "proposed", Reason: reason, AddedBy: "mcp:" + ac.prin.patID, AddedAt: nowTS()}
-	if err := c.mgr.store.AddAllowlist(ctx, e); err != nil {
+	if err := a.mgr.store.AddAllowlist(ctx, e); err != nil {
 		return "", err
 	}
-	c.mcpAudit(ctx, ac, "egress.propose", entry, "reason="+reason)
+	a.mcpAudit(ctx, ac, "egress.propose", entry, "reason="+reason)
 	b, _ := json.Marshal(map[string]any{"id": e.ID, "entry": entry, "state": "proposed", "note": "awaiting human admin approval in the console"})
 	return string(b), nil
 }
 
-func (c config) mcpTailAudit(ctx context.Context, ac *adminCtx, limit int) (string, error) {
+func (a mcpAPI) mcpTailAudit(ctx context.Context, ac *adminCtx, limit int) (string, error) {
 	if limit <= 0 {
 		limit = 50
 	} else if limit > 500 {
@@ -628,7 +636,7 @@ func (c config) mcpTailAudit(ctx context.Context, ac *adminCtx, limit int) (stri
 	if ac.isSuper {
 		tenantID = "" // whole deployment
 	}
-	rows, err := c.mgr.store.ListAuditByTenant(ctx, tenantID, limit)
+	rows, err := a.mgr.store.ListAuditByTenant(ctx, tenantID, limit)
 	if err != nil {
 		return "", err
 	}
@@ -643,22 +651,22 @@ func (c config) mcpTailAudit(ctx context.Context, ac *adminCtx, limit int) (stri
 // mcpResolveMember maps a user_key to its membership + workspace within the admin
 // principal's tenant (the target of an admin tool). hasWS is false when the member
 // has never started a workspace.
-func (c config) mcpResolveMember(ctx context.Context, tenantID, key string) (Membership, Workspace, bool, error) {
+func (a mcpAPI) mcpResolveMember(ctx context.Context, tenantID, key string) (Membership, Workspace, bool, error) {
 	if strings.TrimSpace(key) == "" {
 		return Membership{}, Workspace{}, false, fmt.Errorf("user_key required")
 	}
-	ident, err := c.mgr.store.UpsertIdentity(ctx, "", key, "")
+	ident, err := a.mgr.store.UpsertIdentity(ctx, "", key, "")
 	if err != nil {
 		return Membership{}, Workspace{}, false, err
 	}
-	mem, ok, err := c.mgr.store.GetMembership(ctx, ident.ID, tenantID)
+	mem, ok, err := a.mgr.store.GetMembership(ctx, ident.ID, tenantID)
 	if err != nil {
 		return Membership{}, Workspace{}, false, err
 	}
 	if !ok {
 		return Membership{}, Workspace{}, false, fmt.Errorf("%q is not a member of this tenant", key)
 	}
-	ws, hasWS, err := c.mgr.store.GetWorkspaceByMembership(ctx, mem.ID)
+	ws, hasWS, err := a.mgr.store.GetWorkspaceByMembership(ctx, mem.ID)
 	if err != nil {
 		return Membership{}, Workspace{}, false, err
 	}
@@ -667,8 +675,8 @@ func (c config) mcpResolveMember(ctx context.Context, tenantID, key string) (Mem
 
 // mcpAudit records an admin write action (best-effort: a logging failure must not
 // fail an action that already happened).
-func (c config) mcpAudit(ctx context.Context, ac *adminCtx, action, target, detail string) {
-	_ = c.mgr.store.InsertAudit(ctx, AuditLog{
+func (a mcpAPI) mcpAudit(ctx context.Context, ac *adminCtx, action, target, detail string) {
+	_ = a.mgr.store.InsertAudit(ctx, AuditLog{
 		ID: newID(), TenantID: ac.tenant.ID, ActorKind: "mcp", ActorID: ac.prin.patID,
 		Action: action, Target: target, Detail: detail, At: nowTS(),
 	})
@@ -676,10 +684,10 @@ func (c config) mcpAudit(ctx context.Context, ac *adminCtx, action, target, deta
 
 // mcpMemberSessions summarizes a member's sessions (Agent-authoritative while the
 // container runs, DB mirror otherwise) — same precedence as the admin REST view.
-func (c config) mcpMemberSessions(ctx context.Context, ws Workspace) []map[string]any {
-	rt := c.mgr.runtimeFor(ws, "")
+func (a mcpAPI) mcpMemberSessions(ctx context.Context, ws Workspace) []map[string]any {
+	rt := a.mgr.runtimeFor(ws, "")
 	if rt.State(ctx) == "running" {
-		if list, err := c.mgr.agentSessions(ctx, rt); err == nil {
+		if list, err := a.mgr.agentSessions(ctx, rt); err == nil {
 			out := make([]map[string]any, 0, len(list))
 			for _, s := range list {
 				out = append(out, map[string]any{"name": s.Name, "display": s.Display, "kind": s.Kind, "label": s.Label, "alive": s.Alive})
@@ -687,7 +695,7 @@ func (c config) mcpMemberSessions(ctx context.Context, ws Workspace) []map[strin
 			return out
 		}
 	}
-	rows, err := c.mgr.store.ListSessions(ctx, ws.ID)
+	rows, err := a.mgr.store.ListSessions(ctx, ws.ID)
 	if err != nil {
 		return []map[string]any{}
 	}
@@ -711,14 +719,14 @@ func sessionRowDisplay(r SessionRow) string {
 	return r.Name
 }
 
-func (c config) mcpListWorkspaces(ctx context.Context, ac *adminCtx) (string, error) {
-	members, err := c.mgr.store.ListMembersByTenant(ctx, ac.tenant.ID)
+func (a mcpAPI) mcpListWorkspaces(ctx context.Context, ac *adminCtx) (string, error) {
+	members, err := a.mgr.store.ListMembersByTenant(ctx, ac.tenant.ID)
 	if err != nil {
 		return "", err
 	}
 	rows := make([]map[string]any, 0, len(members))
 	for _, m := range members {
-		container, state := c.mgr.workspaceStateByMembership(ctx, m.MembershipID)
+		container, state := a.mgr.workspaceStateByMembership(ctx, m.MembershipID)
 		rows = append(rows, map[string]any{
 			"user_key": m.UserKey, "email": m.Email, "role": m.MemberRole,
 			"container": container, "state": state,
@@ -727,12 +735,12 @@ func (c config) mcpListWorkspaces(ctx context.Context, ac *adminCtx) (string, er
 	return jsonText(map[string]any{"tenant": ac.tenant.Slug, "workspaces": rows})
 }
 
-func (c config) mcpGetUsage(ctx context.Context, ac *adminCtx) (string, error) {
-	members, err := c.mgr.store.ListMembersByTenant(ctx, ac.tenant.ID)
+func (a mcpAPI) mcpGetUsage(ctx context.Context, ac *adminCtx) (string, error) {
+	members, err := a.mgr.store.ListMembersByTenant(ctx, ac.tenant.ID)
 	if err != nil {
 		return "", err
 	}
-	running, err := c.mgr.countRunningInTenant(ctx, ac.tenant.ID)
+	running, err := a.mgr.countRunningInTenant(ctx, ac.tenant.ID)
 	if err != nil {
 		return "", err
 	}
@@ -748,59 +756,59 @@ func (c config) mcpGetUsage(ctx context.Context, ac *adminCtx) (string, error) {
 	return jsonText(out)
 }
 
-func (c config) mcpListSessions(ctx context.Context, ac *adminCtx, userKey string) (string, error) {
+func (a mcpAPI) mcpListSessions(ctx context.Context, ac *adminCtx, userKey string) (string, error) {
 	if strings.TrimSpace(userKey) != "" {
-		_, ws, hasWS, err := c.mcpResolveMember(ctx, ac.tenant.ID, userKey)
+		_, ws, hasWS, err := a.mcpResolveMember(ctx, ac.tenant.ID, userKey)
 		if err != nil {
 			return "", err
 		}
 		if !hasWS {
 			return jsonText(map[string]any{"user_key": userKey, "sessions": []any{}})
 		}
-		return jsonText(map[string]any{"user_key": userKey, "sessions": c.mcpMemberSessions(ctx, ws)})
+		return jsonText(map[string]any{"user_key": userKey, "sessions": a.mcpMemberSessions(ctx, ws)})
 	}
-	members, err := c.mgr.store.ListMembersByTenant(ctx, ac.tenant.ID)
+	members, err := a.mgr.store.ListMembersByTenant(ctx, ac.tenant.ID)
 	if err != nil {
 		return "", err
 	}
 	out := make([]map[string]any, 0, len(members))
 	for _, m := range members {
-		ws, hasWS, err := c.mgr.store.GetWorkspaceByMembership(ctx, m.MembershipID)
+		ws, hasWS, err := a.mgr.store.GetWorkspaceByMembership(ctx, m.MembershipID)
 		if err != nil || !hasWS {
 			continue
 		}
-		out = append(out, map[string]any{"user_key": m.UserKey, "sessions": c.mcpMemberSessions(ctx, ws)})
+		out = append(out, map[string]any{"user_key": m.UserKey, "sessions": a.mcpMemberSessions(ctx, ws)})
 	}
 	return jsonText(map[string]any{"tenant": ac.tenant.Slug, "members": out})
 }
 
-func (c config) mcpStopWorkspace(ctx context.Context, ac *adminCtx, userKey string) (string, error) {
-	mem, _, hasWS, err := c.mcpResolveMember(ctx, ac.tenant.ID, userKey)
+func (a mcpAPI) mcpStopWorkspace(ctx context.Context, ac *adminCtx, userKey string) (string, error) {
+	mem, _, hasWS, err := a.mcpResolveMember(ctx, ac.tenant.ID, userKey)
 	if err != nil {
 		return "", err
 	}
 	if !hasWS {
 		return "", fmt.Errorf("%q has no workspace", userKey)
 	}
-	if err := c.mgr.stopWorkspaceByMembership(ctx, mem.ID); err != nil {
+	if err := a.mgr.stopWorkspaceByMembership(ctx, mem.ID); err != nil {
 		return "", err
 	}
-	c.mcpAudit(ctx, ac, "stop_workspace", userKey, "tenant="+ac.tenant.Slug)
+	a.mcpAudit(ctx, ac, "stop_workspace", userKey, "tenant="+ac.tenant.Slug)
 	return jsonText(map[string]any{"stopped": userKey, "tenant": ac.tenant.Slug})
 }
 
-func (c config) mcpStopSession(ctx context.Context, ac *adminCtx, userKey, name string) (string, error) {
+func (a mcpAPI) mcpStopSession(ctx context.Context, ac *adminCtx, userKey, name string) (string, error) {
 	if strings.TrimSpace(name) == "" {
 		return "", fmt.Errorf("name required")
 	}
-	_, ws, hasWS, err := c.mcpResolveMember(ctx, ac.tenant.ID, userKey)
+	_, ws, hasWS, err := a.mcpResolveMember(ctx, ac.tenant.ID, userKey)
 	if err != nil {
 		return "", err
 	}
 	if !hasWS {
 		return "", fmt.Errorf("%q has no workspace", userKey)
 	}
-	rt := c.mgr.runtimeFor(ws, "")
+	rt := a.mgr.runtimeFor(ws, "")
 	if rt.State(ctx) != "running" {
 		return "", fmt.Errorf("%q workspace is not running", userKey)
 	}
@@ -808,19 +816,19 @@ func (c config) mcpStopSession(ctx context.Context, ac *adminCtx, userKey, name 
 	if err != nil {
 		return "", err
 	}
-	c.mcpAudit(ctx, ac, "stop_session", userKey+"/"+name, "tenant="+ac.tenant.Slug)
+	a.mcpAudit(ctx, ac, "stop_session", userKey+"/"+name, "tenant="+ac.tenant.Slug)
 	return text, nil
 }
 
-func (c config) mcpSetUserQuota(ctx context.Context, ac *adminCtx, userKey string, maxSessions, diskGB int) (string, error) {
-	mem, _, _, err := c.mcpResolveMember(ctx, ac.tenant.ID, userKey)
+func (a mcpAPI) mcpSetUserQuota(ctx context.Context, ac *adminCtx, userKey string, maxSessions, diskGB int) (string, error) {
+	mem, _, _, err := a.mcpResolveMember(ctx, ac.tenant.ID, userKey)
 	if err != nil {
 		return "", err
 	}
-	if err := c.mgr.store.PutUserLimit(ctx, mem.ID, maxSessions, diskGB); err != nil {
+	if err := a.mgr.store.PutUserLimit(ctx, mem.ID, maxSessions, diskGB); err != nil {
 		return "", err
 	}
-	c.mcpAudit(ctx, ac, "set_user_quota", userKey, fmt.Sprintf("max_sessions=%d disk_gb=%d", maxSessions, diskGB))
+	a.mcpAudit(ctx, ac, "set_user_quota", userKey, fmt.Sprintf("max_sessions=%d disk_gb=%d", maxSessions, diskGB))
 	return jsonText(map[string]any{"user_key": userKey, "tenant": ac.tenant.Slug, "max_sessions": maxSessions, "disk_gb": diskGB})
 }
 

@@ -9,6 +9,9 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
 // Toolchain selection (node via nvm, java via pre-baked Temurin), stored per-
@@ -122,14 +125,14 @@ func toolchainShellPrefix() string {
 	jh, nodeBin, tz := resolvedToolchains()
 	var b strings.Builder
 	if jh != "" {
-		b.WriteString("export JAVA_HOME=" + shellQuote(jh) + "; ")
-		b.WriteString("export PATH=" + shellQuote(jh+"/bin") + ":\"$PATH\"; ")
+		b.WriteString("export JAVA_HOME=" + session.ShellQuote(jh) + "; ")
+		b.WriteString("export PATH=" + session.ShellQuote(jh+"/bin") + ":\"$PATH\"; ")
 	}
 	if nodeBin != "" {
-		b.WriteString("export PATH=" + shellQuote(nodeBin) + ":\"$PATH\"; ")
+		b.WriteString("export PATH=" + session.ShellQuote(nodeBin) + ":\"$PATH\"; ")
 	}
 	if tz != "" {
-		b.WriteString("export TZ=" + shellQuote(tz) + "; ")
+		b.WriteString("export TZ=" + session.ShellQuote(tz) + "; ")
 	}
 	return b.String()
 }
@@ -172,7 +175,7 @@ func applyToolchainEnv(env []string) []string {
 
 func handleToolchainsGet(w http.ResponseWriter, r *http.Request) {
 	t := readToolchains()
-	writeJSON(w, http.StatusOK, map[string]any{
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
 		"node":           t.Node,
 		"java":           t.Java,
 		"timezone":       t.Timezone,
@@ -185,25 +188,24 @@ func handleToolchainsGet(w http.ResponseWriter, r *http.Request) {
 
 func handleToolchainsPut(w http.ResponseWriter, r *http.Request) {
 	var req toolchains
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErr(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
+	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
 	if req.Timezone == "" {
 		req.Timezone = defaultTimezone
 	}
 	if !tzNameRe.MatchString(req.Timezone) {
-		writeErr(w, http.StatusBadRequest, "bad_timezone", "invalid timezone name")
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_timezone", "invalid timezone name")
 		return
 	}
 	p := toolchainsPath()
 	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
-		writeErr(w, http.StatusInternalServerError, "write_failed", err.Error())
+		httpx.WriteErr(w, http.StatusInternalServerError, "write_failed", err.Error())
 		return
 	}
 	b, _ := json.MarshalIndent(req, "", "  ")
 	if err := os.WriteFile(p, append(b, '\n'), 0o600); err != nil {
-		writeErr(w, http.StatusInternalServerError, "write_failed", err.Error())
+		httpx.WriteErr(w, http.StatusInternalServerError, "write_failed", err.Error())
 		return
 	}
 	handleToolchainsGet(w, r)

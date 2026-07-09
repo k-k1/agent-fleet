@@ -8,20 +8,28 @@ import (
 	"strings"
 )
 
-// handlePreview proxies /preview/{port}/{rest...} to the caller's Workspace Agent
+// previewAPI は /preview/{port} プロキシの機能ハンドラ集（docs/23 残③）。解決は
+// 埋め込みの memberAuth（登録側で withResolved に包む — 従来の resolvedFor と同一
+// 判定）。X-Forwarded-Prefix の組み立てに使う publicBaseURL だけ config から写す。
+type previewAPI struct {
+	memberAuth
+	publicBaseURL string
+}
+
+func newPreviewAPI(m *manager, publicBaseURL string) previewAPI {
+	return previewAPI{memberAuth{m}, publicBaseURL}
+}
+
+// proxy proxies /preview/{port}/{rest...} to the caller's Workspace Agent
 // at /proxy/{port}/..., which in turn reaches a service the user started inside
-// the container (Spring Boot, dev server, ...). Auth reuses rtFor — the same
+// the container (Spring Boot, dev server, ...). Auth reuses withResolved — the same
 // gateway-resolved identity as every other route — and the CP↔Agent bearer is
 // injected here. We attach X-Forwarded-* so apps that honor them (Spring Boot's
 // server.forward-headers-strategy) generate correct absolute URLs/redirects under
 // the /preview/{port} sub-path. HTTP only for now; WebSocket/HMR is a follow-up.
-func (c config) handlePreview(w http.ResponseWriter, r *http.Request) {
-	res, ok := c.resolvedFor(w, r)
-	if !ok {
-		return
-	}
+func (a previewAPI) proxy(w http.ResponseWriter, r *http.Request, res *resolved) {
 	rt := res.rt
-	c.mgr.conns.touch(res.ws.ID) // P3-9: preview traffic keeps the workspace warm
+	a.mgr.conns.touch(res.ws.ID) // P3-9: preview traffic keeps the workspace warm
 	port := r.PathValue("port")
 	if n, err := strconv.Atoi(port); err != nil || n < 1 || n > 65535 {
 		http.Error(w, "bad preview port", http.StatusBadRequest)
@@ -46,7 +54,7 @@ func (c config) handlePreview(w http.ResponseWriter, r *http.Request) {
 	// Tell the previewed app where it really lives, as the browser sees it:
 	// <public base path>/preview/{port}. Spring Boot uses these to build correct
 	// links/redirects; a plain JSON REST app ignores them and still works.
-	req.Header.Set("X-Forwarded-Prefix", c.externalPrefix()+"/preview/"+port)
+	req.Header.Set("X-Forwarded-Prefix", a.externalPrefix()+"/preview/"+port)
 	if r.Host != "" && req.Header.Get("X-Forwarded-Host") == "" {
 		req.Header.Set("X-Forwarded-Host", r.Host)
 	}
@@ -70,13 +78,13 @@ func (c config) handlePreview(w http.ResponseWriter, r *http.Request) {
 	_, _ = io.Copy(w, resp.Body)
 }
 
-// handlePreviewRedirect bounces /preview/{port} to /preview/{port}/ so the
+// redirect bounces /preview/{port} to /preview/{port}/ so the
 // previewed app resolves its relative assets under the sub-path. The target is
 // rebuilt with the external prefix because a path-stripping proxy (Caddy) has
 // already removed it from r.URL.Path — redirecting to that bare path would drop
-// /agent-fleet and escape the mount.
-func (c config) handlePreviewRedirect(w http.ResponseWriter, r *http.Request) {
-	target := c.externalPrefix() + "/preview/" + r.PathValue("port") + "/"
+// /agent-fleet and escape the mount. No resolution preamble, so it registers unwrapped.
+func (a previewAPI) redirect(w http.ResponseWriter, r *http.Request) {
+	target := a.externalPrefix() + "/preview/" + r.PathValue("port") + "/"
 	if r.URL.RawQuery != "" {
 		target += "?" + r.URL.RawQuery
 	}
@@ -86,11 +94,11 @@ func (c config) handlePreviewRedirect(w http.ResponseWriter, r *http.Request) {
 // externalPrefix is the URL path the deployment is mounted under as seen by the
 // browser (e.g. "/agent-fleet"), derived from PUBLIC_BASE_URL. Empty when CP is
 // served at the root (local dev).
-func (c config) externalPrefix() string {
-	if c.publicBaseURL == "" {
+func (a previewAPI) externalPrefix() string {
+	if a.publicBaseURL == "" {
 		return ""
 	}
-	if u, err := url.Parse(c.publicBaseURL); err == nil {
+	if u, err := url.Parse(a.publicBaseURL); err == nil {
 		return strings.TrimRight(u.Path, "/")
 	}
 	return ""

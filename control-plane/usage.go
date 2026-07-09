@@ -102,20 +102,20 @@ func usageRange(r *http.Request) (from, to string, aerr *apiError) {
 	return from, to, nil
 }
 
-// adminTenantScope applies the admin gate and returns the tenant filter shared by
-// the deployment-wide admin views (usage, all-sessions). With a `tenant` query
-// param, a super_admin OR that tenant's tenant_admin may read it (scoped to that
-// tenant). Without it, only a super_admin may read the deployment-wide view
+// tenantScope applies the admin gate and returns the tenant filter shared by
+// the deployment-wide admin views (usage, all-sessions, audit). With a `tenant`
+// query param, a super_admin OR that tenant's tenant_admin may read it (scoped to
+// that tenant). Without it, only a super_admin may read the deployment-wide view
 // (tenantID="" = every tenant).
-func (c config) adminTenantScope(w http.ResponseWriter, r *http.Request) (tenantID string, ok bool) {
+func (a adminAPI) tenantScope(w http.ResponseWriter, r *http.Request) (tenantID string, ok bool) {
 	if slug := r.URL.Query().Get("tenant"); slug != "" {
-		_, t, ok := c.requireTenantAdmin(w, r, slug)
+		_, t, ok := a.tenantAdminFor(w, r, slug)
 		if !ok {
 			return "", false
 		}
 		return t.ID, true
 	}
-	if _, ok := c.requireSuperAdmin(w, r); !ok {
+	if _, ok := a.superAdminFor(w, r); !ok {
 		return "", false
 	}
 	return "", true
@@ -157,11 +157,11 @@ func hoursOf(secs int) float64 {
 	return h
 }
 
-// handleAdminUsage (GET /api/admin/usage?from=&to=&tenant=&format=json|csv).
+// usage (GET /api/admin/usage?from=&to=&tenant=&format=json|csv).
 // Returns the per-day rows (for a dashboard chart) and per-member totals (for a
 // table); format=csv streams the daily rows as a spreadsheet.
-func (c config) handleAdminUsage(w http.ResponseWriter, r *http.Request) {
-	tenantID, ok := c.adminTenantScope(w, r)
+func (a adminAPI) usage(w http.ResponseWriter, r *http.Request) {
+	tenantID, ok := a.tenantScope(w, r)
 	if !ok {
 		return
 	}
@@ -170,7 +170,7 @@ func (c config) handleAdminUsage(w http.ResponseWriter, r *http.Request) {
 		writeAPIErr(w, aerr)
 		return
 	}
-	rows, err := c.mgr.store.ListUsage(r.Context(), tenantID, from, to)
+	rows, err := a.mgr.store.ListUsage(r.Context(), tenantID, from, to)
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
 		return

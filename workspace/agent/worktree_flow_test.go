@@ -9,6 +9,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
 // TestWorktreeGuardDriftFlow drives the ①②③ feature set end-to-end over real HTTP +
@@ -41,11 +43,11 @@ func TestWorktreeGuardDriftFlow(t *testing.T) {
 	defer srv.Close()
 
 	// ② worktree-then-start: shell session (no claude needed) on a new branch off main.
-	var created Session
+	var created session.Session
 	do(t, srv, "POST", "/sessions", map[string]any{
 		"worktree": true, "dir": parent, "branch": "main", "new_branch": "feat-x", "kind": "shell",
 	}, http.StatusCreated, &created)
-	defer exec.Command("tmux", "kill-session", "-t", tmuxName(created.Name)).Run()
+	defer exec.Command("tmux", "kill-session", "-t", session.TmuxName(created.Name)).Run()
 
 	wantDir := filepath.Join(home, "repos", "app@feat-x")
 	if created.Dir != wantDir {
@@ -74,24 +76,24 @@ func TestWorktreeGuardDriftFlow(t *testing.T) {
 	// Name-collision guard: a second worktree whose new branch clashes with the now-
 	// existing local feat-x is refused (409) before anything is created — no silently
 	// divergent branch.
-	if code := status(t, srv, "POST", "/sessions", map[string]any{
+	if code := httpStatus(t, srv, "POST", "/sessions", map[string]any{
 		"worktree": true, "dir": parent, "branch": "main", "new_branch": "feat-x", "kind": "shell",
 	}); code != http.StatusConflict {
 		t.Fatalf("colliding worktree create = %d, want 409", code)
 	}
 
 	// ① checkout on that working copy is refused while the session runs.
-	code := status(t, srv, "POST", "/repos/app@feat-x/checkout", map[string]any{"branch": "main"})
+	code := httpStatus(t, srv, "POST", "/repos/app@feat-x/checkout", map[string]any{"branch": "main"})
 	if code != http.StatusConflict {
 		t.Fatalf("checkout while live = %d, want 409", code)
 	}
 	// ① delete is likewise refused.
-	if code := status(t, srv, "DELETE", "/repos/app@feat-x", nil); code != http.StatusConflict {
+	if code := httpStatus(t, srv, "DELETE", "/repos/app@feat-x", nil); code != http.StatusConflict {
 		t.Fatalf("delete while live = %d, want 409", code)
 	}
 
-	sessionByName := func(name string) *Session {
-		var list struct{ Sessions []Session }
+	sessionByName := func(name string) *session.Session {
+		var list struct{ Sessions []session.Session }
 		do(t, srv, "GET", "/sessions", nil, http.StatusOK, &list)
 		for i := range list.Sessions {
 			if list.Sessions[i].Name == name {
@@ -105,7 +107,7 @@ func TestWorktreeGuardDriftFlow(t *testing.T) {
 	// Deferred naming: rename the provisional branch in place. The working tree is
 	// untouched, the session's start-branch meta follows the rename, so it is NOT
 	// mistaken for drift.
-	if code := status(t, srv, "POST", "/sessions/"+created.Name+"/rename-branch", map[string]any{"name": "renamed-x"}); code != http.StatusOK {
+	if code := httpStatus(t, srv, "POST", "/sessions/"+created.Name+"/rename-branch", map[string]any{"name": "renamed-x"}); code != http.StatusOK {
 		t.Fatalf("rename-branch = %d, want 200", code)
 	}
 	if s := sessionByName(created.Name); s.Branch != "renamed-x" || s.BranchDrift || !s.Worktree {
@@ -123,7 +125,7 @@ func TestWorktreeGuardDriftFlow(t *testing.T) {
 	// #1 auto-cleanup: stopping the last (clean) session in the worktree forgets its
 	// meta and auto-removes the worktree — no manual delete needed. The stray branch
 	// above left no uncommitted/unpushed work, so it qualifies.
-	if code := status(t, srv, "POST", "/sessions/"+created.Name+"/stop", nil); code != http.StatusOK {
+	if code := httpStatus(t, srv, "POST", "/sessions/"+created.Name+"/stop", nil); code != http.StatusOK {
 		t.Fatalf("stop = %d, want 200", code)
 	}
 	if _, err := os.Stat(wantDir); err == nil {
@@ -149,7 +151,7 @@ func do(t *testing.T, srv *httptest.Server, method, path string, body any, want 
 	}
 }
 
-func status(t *testing.T, srv *httptest.Server, method, path string, body any) int {
+func httpStatus(t *testing.T, srv *httptest.Server, method, path string, body any) int {
 	t.Helper()
 	code, _ := roundtrip(t, srv, method, path, body)
 	return code

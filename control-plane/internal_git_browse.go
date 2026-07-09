@@ -13,7 +13,7 @@ import (
 // Read-only tree/blob/commit browsing for internal repos (docs/reference/
 // internal-git-provider, P3). The CP owns the bare repos, so it serves a repo's
 // contents directly (git ls-tree / cat-file / log) without anyone cloning it —
-// CP-native like the repo list, tenant-scoped via membershipFor. Read only: any
+// CP-native like the repo list, tenant-scoped via withMembership. Read only: any
 // active member; no write surface.
 
 const maxBlobPreview = 1 << 20 // 1 MiB — larger blobs return metadata only
@@ -49,19 +49,16 @@ func validTreePath(p string) bool {
 	return true
 }
 
-// browseCtx resolves the tenant + repo and the effective ref for a browse request.
-// It writes the error response and returns ok=false on any failure.
-func (c config) browseCtx(w http.ResponseWriter, r *http.Request) (bareDir, ref, path string, ok bool) {
-	_, mv, authed := c.membershipFor(w, r)
-	if !authed {
-		return "", "", "", false
-	}
+// browseCtx resolves the repo and the effective ref for a browse request within
+// the caller's already-resolved membership (withMembership). It writes the error
+// response and returns ok=false on any failure.
+func (a gitServerAPI) browseCtx(w http.ResponseWriter, r *http.Request, mv MembershipView) (bareDir, ref, path string, ok bool) {
 	name := r.PathValue("name")
 	if !validRepoName(name) {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_name", "invalid repo name"})
 		return "", "", "", false
 	}
-	g, exists, err := c.mgr.store.GetGitRepo(r.Context(), mv.TenantID, name)
+	g, exists, err := a.store.GetGitRepo(r.Context(), mv.TenantID, name)
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
 		return "", "", "", false
@@ -83,14 +80,14 @@ func (c config) browseCtx(w http.ResponseWriter, r *http.Request) (bareDir, ref,
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_path", "invalid path"})
 		return "", "", "", false
 	}
-	bareDir = filepath.Join(c.mgr.dataRoot, "git", mv.TenantSlug, name+".git")
+	bareDir = filepath.Join(a.dataRoot, "git", mv.TenantSlug, name+".git")
 	return bareDir, ref, path, true
 }
 
-// handleInternalGitTree (GET .../repos/{name}/tree?ref=&path=) lists the entries of
-// a directory at a ref. An empty/absent ref (unborn repo) yields an empty listing.
-func (c config) handleInternalGitTree(w http.ResponseWriter, r *http.Request) {
-	bareDir, ref, path, ok := c.browseCtx(w, r)
+// tree (GET .../repos/{name}/tree?ref=&path=) lists the entries of a directory
+// at a ref. An empty/absent ref (unborn repo) yields an empty listing.
+func (a gitServerAPI) tree(w http.ResponseWriter, r *http.Request, _ Identity, mv MembershipView) {
+	bareDir, ref, path, ok := a.browseCtx(w, r, mv)
 	if !ok {
 		return
 	}
@@ -144,11 +141,11 @@ func sortTreeEntries(entries []map[string]any) {
 	}
 }
 
-// handleInternalGitBlob (GET .../repos/{name}/blob?ref=&path=) returns a file's
-// content. Text under the size cap is returned inline; larger, binary, or LFS
-// pointer blobs return metadata with a flag instead of the bytes.
-func (c config) handleInternalGitBlob(w http.ResponseWriter, r *http.Request) {
-	bareDir, ref, path, ok := c.browseCtx(w, r)
+// blob (GET .../repos/{name}/blob?ref=&path=) returns a file's content. Text
+// under the size cap is returned inline; larger, binary, or LFS pointer blobs
+// return metadata with a flag instead of the bytes.
+func (a gitServerAPI) blob(w http.ResponseWriter, r *http.Request, _ Identity, mv MembershipView) {
+	bareDir, ref, path, ok := a.browseCtx(w, r, mv)
 	if !ok {
 		return
 	}
@@ -199,10 +196,10 @@ func (c config) handleInternalGitBlob(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// handleInternalGitCommits (GET .../repos/{name}/commits?ref=&path=&limit=) returns
-// recent commits touching a path (or the whole repo).
-func (c config) handleInternalGitCommits(w http.ResponseWriter, r *http.Request) {
-	bareDir, ref, path, ok := c.browseCtx(w, r)
+// commits (GET .../repos/{name}/commits?ref=&path=&limit=) returns recent
+// commits touching a path (or the whole repo).
+func (a gitServerAPI) commits(w http.ResponseWriter, r *http.Request, _ Identity, mv MembershipView) {
+	bareDir, ref, path, ok := a.browseCtx(w, r, mv)
 	if !ok {
 		return
 	}
