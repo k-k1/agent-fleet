@@ -27,59 +27,65 @@ func parseWSSettings(s string) wsSettings {
 	return w
 }
 
+// wsSettingsAPI は CP 管理のワークスペース設定の機能ハンドラ集（docs/23 残③）。
+// 解決は埋め込みの memberAuth（登録側で withResolved に包む）。store は
+// WorkspaceStore、tenants はオペレータゲート参照用 TenantStore の narrow view。
+// キャッシュ破棄（evictMembershipCache）だけは memberAuth 経由の a.mgr を直接呼ぶ。
+type wsSettingsAPI struct {
+	memberAuth
+	store   WorkspaceStore
+	tenants TenantStore
+}
+
+func newWSSettingsAPI(m *manager) wsSettingsAPI {
+	return wsSettingsAPI{memberAuth{m}, m.store, m.store}
+}
+
 // tenantAllowsAgentUpdate reports the operator gate for a workspace's tenant.
-func (c config) tenantAllowsAgentUpdate(r *http.Request, ws Workspace) bool {
-	t, err := c.mgr.store.GetTenant(r.Context(), ws.TenantID)
+func (a wsSettingsAPI) tenantAllowsAgentUpdate(r *http.Request, ws Workspace) bool {
+	t, err := a.tenants.GetTenant(r.Context(), ws.TenantID)
 	if err != nil {
 		return false
 	}
 	return parseLimits(t.Limits).AllowAgentSelfUpdate
 }
 
-// handleWSSettingsGet (GET /api/env/ws-settings) returns the workspace's CP-owned
+// get (GET /api/env/ws-settings) returns the workspace's CP-owned
 // settings plus the relevant operator gates. DB-backed, so it works whether the
 // container is running or stopped.
-func (c config) handleWSSettingsGet(w http.ResponseWriter, r *http.Request) {
-	res, ok := c.resolvedFor(w, r)
-	if !ok {
-		return
-	}
-	raw, _ := c.mgr.store.GetWorkspaceSettings(r.Context(), res.ws.ID)
+func (a wsSettingsAPI) get(w http.ResponseWriter, r *http.Request, res *resolved) {
+	raw, _ := a.store.GetWorkspaceSettings(r.Context(), res.ws.ID)
 	st := parseWSSettings(raw)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"agentUpdate":      st.AgentUpdate,
-		"allowAgentUpdate": c.tenantAllowsAgentUpdate(r, res.ws),
+		"allowAgentUpdate": a.tenantAllowsAgentUpdate(r, res.ws),
 	})
 }
 
-// handleWSSettingsPut (PUT /api/env/ws-settings) merges the posted known keys into the
+// put (PUT /api/env/ws-settings) merges the posted known keys into the
 // workspace's stored JSON. Works while the container is stopped; the value takes
 // effect at the next container start. Only known keys are honored, and agentUpdate is
 // gated by the tenant policy (a member can't enable it when the operator forbids it).
-func (c config) handleWSSettingsPut(w http.ResponseWriter, r *http.Request) {
-	res, ok := c.resolvedFor(w, r)
-	if !ok {
-		return
-	}
+func (a wsSettingsAPI) put(w http.ResponseWriter, r *http.Request, res *resolved) {
 	var body map[string]any
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "bad json", http.StatusBadRequest)
 		return
 	}
-	raw, _ := c.mgr.store.GetWorkspaceSettings(r.Context(), res.ws.ID)
+	raw, _ := a.store.GetWorkspaceSettings(r.Context(), res.ws.ID)
 	st := parseWSSettings(raw)
 	if v, ok := body["agentUpdate"].(bool); ok {
-		st.AgentUpdate = v && c.tenantAllowsAgentUpdate(r, res.ws)
+		st.AgentUpdate = v && a.tenantAllowsAgentUpdate(r, res.ws)
 	}
 	out, _ := json.Marshal(st)
-	if err := c.mgr.store.SetWorkspaceSettings(r.Context(), res.ws.ID, string(out)); err != nil {
+	if err := a.store.SetWorkspaceSettings(r.Context(), res.ws.ID, string(out)); err != nil {
 		http.Error(w, "save failed", http.StatusInternalServerError)
 		return
 	}
 	// Drop the cached runtime so the next start rebuilds its env from the new setting.
-	c.mgr.evictMembershipCache(res.ws.MembershipID)
+	a.mgr.evictMembershipCache(res.ws.MembershipID)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"agentUpdate":      st.AgentUpdate,
-		"allowAgentUpdate": c.tenantAllowsAgentUpdate(r, res.ws),
+		"allowAgentUpdate": a.tenantAllowsAgentUpdate(r, res.ws),
 	})
 }
