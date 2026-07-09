@@ -154,18 +154,6 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
             </div>
           )}
         </div>
-        {showPicker && (
-          <label className="tenant-pick">
-            <span className="lbl">Tenant</span>
-            <select value={tenant} onChange={(e) => selectTenant(e.target.value)}>
-              {tenants.map((t) => (
-                <option key={t.slug} value={t.slug}>
-                  {t.name} ({t.role})
-                </option>
-              ))}
-            </select>
-          </label>
-        )}
         {me ? (
           <div className="acct" ref={acctRef}>
             <button className="whoami acct-btn" title={me} onClick={() => setMenuOpen((o) => !o)}>
@@ -175,6 +163,22 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
             {menuOpen && (
               <div className="acct-menu" role="menu">
                 <div className="acct-email" title={me}>{me}</div>
+                {/* テナント選択はアカウントメニュー内に集約（上部バーの横幅を節約）。 */}
+                {showPicker && (
+                  <>
+                    <label className="acct-tenant">
+                      <span className="acct-tenant-lbl">テナント</span>
+                      <select value={tenant} onChange={(e) => selectTenant(e.target.value)}>
+                        {tenants.map((t) => (
+                          <option key={t.slug} value={t.slug}>
+                            {t.name} ({t.role})
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <div className="acct-sep" />
+                  </>
+                )}
                 <button className="acct-item" role="menuitem" onClick={() => run(() => openSettings())}>
                   <Icon name="gear" /> 設定
                 </button>

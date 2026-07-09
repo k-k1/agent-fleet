@@ -102,12 +102,22 @@
     display: none;
   }
 }
-.tenant-pick {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
+/* テナント選択（アカウントメニュー内）。ラベル＋フル幅 select。 */
+.acct-tenant {
+  display: block;
+  padding: 6px 10px 8px;
+  border-bottom: 1px solid var(--border2, var(--border));
+}
+.acct-tenant-lbl {
+  display: block;
+  font-size: 10px;
   color: var(--muted);
+  margin-bottom: 4px;
+}
+.acct-tenant select {
+  width: 100%;
+  font-size: 13px;
+  font-family: inherit;
 }
 .whoami {
   color: var(--muted);
