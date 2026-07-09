@@ -36,6 +36,12 @@
   display: flex;
   flex-direction: column;
 }
+/* Within a group, alternate nodes too (base + worktrees, in order). The overlay is
+   translucent so it stays visible stacked on an .alt group's band (4% → ~8%). */
+.proj-group-list > .proj-node:nth-child(even) {
+  background: color-mix(in srgb, var(--fg) 4%, transparent);
+  border-radius: 6px;
+}
 /* The base (parent) clone's name is bold — it anchors the project group. */
 .proj-node.base .repo-name {
   font-weight: 700;
