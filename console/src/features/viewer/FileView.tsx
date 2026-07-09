@@ -15,6 +15,7 @@ import { Icon } from "../../ui/Icon.tsx";
 import { useSettings, fontStack } from "../../lib/settings.ts";
 import { useLayoutStore } from "../../layout/store.ts";
 import { useFilesStore } from "../files/store.ts";
+import { speakText } from "../chat/tts.ts";
 import { MarkdownView } from "./MarkdownView.tsx";
 import { MarpView } from "./MarpView.tsx";
 import { CodeView } from "./CodeView.tsx";
@@ -276,15 +277,27 @@ export function FileView({ filePath, wrap }: FileViewProps) {
       {sel &&
         !sendOpen &&
         createPortal(
-          <button
-            type="button"
-            className="sel-send-pill"
-            style={{ left: sel.x, top: Math.max(4, sel.y) }}
-            onMouseDown={(e) => e.preventDefault()} // keep the text selection alive through the click
-            onClick={() => setSendOpen(true)}
-          >
-            <Icon name="comment-discussion" /> 送る
-          </button>,
+          <div className="sel-pill-group" style={{ left: sel.x, top: Math.max(4, sel.y) }}>
+            <button
+              type="button"
+              className="sel-send-pill"
+              onMouseDown={(e) => e.preventDefault()} // keep the text selection alive through the click
+              onClick={() => setSendOpen(true)}
+            >
+              <Icon name="comment-discussion" /> 送る
+            </button>
+            {/* 音声読み上げが有効なときだけ、選択範囲を読み上げるピルを併置（docs/24）。 */}
+            {settings.ttsEnabled && (
+              <button
+                type="button"
+                className="sel-send-pill"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => speakText(sel.quote, "選択範囲")}
+              >
+                <Icon name="unmute" /> 読み上げ
+              </button>
+            )}
+          </div>,
           document.body,
         )}
       {sendOpen &&
