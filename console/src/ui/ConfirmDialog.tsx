@@ -1,3 +1,4 @@
+import { createPortal } from "react-dom";
 import type { ReactNode, MouseEvent } from "react";
 import { Button } from "./Button.tsx";
 
@@ -25,8 +26,11 @@ export function ConfirmDialog({
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
-  return (
-    <div className="ui-modal-backdrop" onClick={busy ? undefined : onCancel}>
+  // Portal to <body> + ui-confirm-backdrop (higher z-index): callers render this
+  // from inside a settings/admin dialog, so an in-tree overlay at the modal
+  // z-index could paint behind the dialog it should cover.
+  return createPortal(
+    <div className="ui-modal-backdrop ui-confirm-backdrop" onClick={busy ? undefined : onCancel}>
       <div className="confirm" onClick={(e: MouseEvent) => e.stopPropagation()}>
         <h3 className="confirm-title">{title}</h3>
         <div className="confirm-body">{children}</div>
@@ -39,6 +43,7 @@ export function ConfirmDialog({
           </Button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
