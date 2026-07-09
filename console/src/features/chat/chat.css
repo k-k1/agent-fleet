@@ -73,10 +73,6 @@
   background: color-mix(in srgb, var(--accent) 12%, var(--panel));
   align-self: flex-start;
 }
-.chat-text {
-  white-space: pre-wrap;
-  word-break: break-word;
-}
 /* Timestamp + copy under an assistant reply — mirrors .mirror-turn-foot. Capped to the
    same width as the bubble so the button hugs its right edge, not the pane's. */
 .chat-msg-foot {
@@ -399,18 +395,6 @@
   line-height: 1.6;
 }
 
-/* Streaming assistant reply: a soft blinking caret while tokens arrive (Phase B). */
-.chat-streaming::after {
-  content: "▍";
-  margin-left: 1px;
-  color: var(--muted);
-  animation: chat-caret 1s steps(1) infinite;
-}
-@keyframes chat-caret {
-  50% {
-    opacity: 0;
-  }
-}
 /* Rail chip: 進行中/待機中 (the old markup used .session-state; the port names it
    .chat-state to avoid colliding with the sessions Pill styling). */
 .chat-state {
