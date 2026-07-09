@@ -5,7 +5,14 @@ import { api, apiJSON, raw } from "../../core/api/client.ts";
 import { EmptyState } from "../../ui/EmptyState.tsx";
 import { Button } from "../../ui/Button.tsx";
 import { Choice, OnOff } from "./controls.tsx";
-import { useSettings, setSetting, CLAUDE_MODELS, OUTPUT_LANGUAGES } from "../../lib/settings.ts";
+import {
+  useSettings,
+  setSetting,
+  CLAUDE_MODELS,
+  OUTPUT_LANGUAGES,
+  VOICEVOX_ZUNDAMON,
+  TTS_SPEEDS,
+} from "../../lib/settings.ts";
 import { useConnections } from "./useConnections.ts";
 import { useWorkspaceStore, wsStartBusy } from "../../core/store/workspace.ts";
 import { usePolling } from "./usePolling.ts";
@@ -92,6 +99,28 @@ export function AgentsTab() {
       <p className="muted ds-note">
         アシスタント・チャットの回答言語です。「入力に合わせる」は、渡した文章や質問の言語に合わせて返します。
         日本語／English を選ぶと、他言語の文章でもその言語で回答します（翻訳アシスタントは対象外）。
+      </p>
+      <Row label="音声読み上げ">
+        <OnOff value={s.ttsEnabled} onChange={(v) => setSetting("ttsEnabled", v)} />
+      </Row>
+      {s.ttsEnabled && (
+        <>
+          <Row label="話者（ずんだもん）">
+            <Choice
+              value={s.ttsVoiceVoicevox}
+              options={VOICEVOX_ZUNDAMON}
+              onChange={(v) => setSetting("ttsVoiceVoicevox", v)}
+            />
+          </Row>
+          <Row label="読み上げ速度">
+            <Choice value={s.ttsSpeed} options={TTS_SPEEDS} onChange={(v) => setSetting("ttsSpeed", v)} />
+          </Row>
+        </>
+      )}
+      <p className="muted ds-note">
+        エージェントの回答を VOICEVOX（ずんだもん）で読み上げます。回答が届くと文ごとに順次再生します。
+        音声合成には VOICEVOX エンジンが必要です（未起動のときは無音になります）。
+        {s.ttsEnabled && <> 音声引用：VOICEVOX：ずんだもん。</>}
       </p>
     </section>
   );

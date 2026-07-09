@@ -21,6 +21,7 @@ func buildMux(cfg config) *http.ServeMux {
 	registerSessionRoutes(mux, cfg)
 	registerChatRoutes(mux, cfg)
 	registerAssistantRoutes(mux, cfg)
+	registerTTSRoutes(mux, cfg)
 	registerSSMRoutes(mux, cfg)
 	registerMemoRoutes(mux, cfg)
 	registerRepoFSRoutes(mux, cfg)
