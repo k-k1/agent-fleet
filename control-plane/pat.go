@@ -70,14 +70,20 @@ func hashPAT(token string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// handlePATList (GET /api/pat) — the caller's tokens (no secrets/hashes).
-func (c config) handlePATList(w http.ResponseWriter, r *http.Request) {
-	ident, aerr := c.mgr.identityFor(r.Context(), r)
-	if aerr != nil {
-		writeAPIErr(w, aerr)
-		return
-	}
-	pats, err := c.mgr.store.ListPATsByIdentity(r.Context(), ident.ID)
+// patAPI は PAT（docs/decisions/0006 P3-6）の機能ハンドラ集（docs/23 残③）。
+// 解決は埋め込みの memberAuth（登録側で withIdentity に包む）、store は PATStore
+// の narrow view だけを持つ。create のテナント選択だけは a.mgr.membershipsFor を
+// 経由する（memberAuth が mgr を運ぶ）。
+type patAPI struct {
+	memberAuth
+	store PATStore
+}
+
+func newPATAPI(m *manager) patAPI { return patAPI{memberAuth{m}, m.store} }
+
+// list (GET /api/pat) — the caller's tokens (no secrets/hashes).
+func (a patAPI) list(w http.ResponseWriter, r *http.Request, ident Identity) {
+	pats, err := a.store.ListPATsByIdentity(r.Context(), ident.ID)
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
@@ -94,15 +100,10 @@ func (c config) handlePATList(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"tokens": out, "ceiling": ceilingScope(ident.Role)})
 }
 
-// handlePATCreate (POST /api/pat {name, scope, tenant, ttl_days}) mints a token.
+// create (POST /api/pat {name, scope, tenant, ttl_days}) mints a token.
 // scope is clamped to the issuer's ceiling. ttl_days: omitted/0 = 90 days,
 // negative = never expires, positive = that many days. Returns the secret once.
-func (c config) handlePATCreate(w http.ResponseWriter, r *http.Request) {
-	ident, aerr := c.mgr.identityFor(r.Context(), r)
-	if aerr != nil {
-		writeAPIErr(w, aerr)
-		return
-	}
+func (a patAPI) create(w http.ResponseWriter, r *http.Request, ident Identity) {
 	var body struct {
 		Name    string `json:"name"`
 		Scope   string `json:"scope"`
@@ -111,7 +112,7 @@ func (c config) handlePATCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
 
-	ms, aerr := c.mgr.membershipsFor(r.Context(), ident)
+	ms, aerr := a.mgr.membershipsFor(r.Context(), ident)
 	if aerr != nil {
 		writeAPIErr(w, aerr)
 		return
@@ -146,7 +147,7 @@ func (c config) handlePATCreate(w http.ResponseWriter, r *http.Request) {
 		CreatedAt:    nowTS(),
 		ExpiresAt:    expires,
 	}
-	if err := c.mgr.store.CreatePAT(r.Context(), p, hash); err != nil {
+	if err := a.store.CreatePAT(r.Context(), p, hash); err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
@@ -157,14 +158,9 @@ func (c config) handlePATCreate(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handlePATRevoke (DELETE /api/pat/{id}) revokes one of the caller's tokens.
-func (c config) handlePATRevoke(w http.ResponseWriter, r *http.Request) {
-	ident, aerr := c.mgr.identityFor(r.Context(), r)
-	if aerr != nil {
-		writeAPIErr(w, aerr)
-		return
-	}
-	if err := c.mgr.store.RevokePAT(r.Context(), r.PathValue("id"), ident.ID); err != nil {
+// revoke (DELETE /api/pat/{id}) revokes one of the caller's tokens.
+func (a patAPI) revoke(w http.ResponseWriter, r *http.Request, ident Identity) {
+	if err := a.store.RevokePAT(r.Context(), r.PathValue("id"), ident.ID); err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	}

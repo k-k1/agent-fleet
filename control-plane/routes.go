@@ -128,9 +128,10 @@ func registerTenantAdminRoutes(mux *http.ServeMux, cfg config) {
 
 // Personal Access Tokens (Console-issued) for the MCP endpoint (docs/0006).
 func registerPATRoutes(mux *http.ServeMux, cfg config) {
-	mux.HandleFunc("GET /api/pat", cfg.handlePATList)
-	mux.HandleFunc("POST /api/pat", cfg.handlePATCreate)
-	mux.HandleFunc("DELETE /api/pat/{id}", cfg.handlePATRevoke)
+	pat := newPATAPI(cfg.mgr)
+	mux.HandleFunc("GET /api/pat", pat.withIdentity(pat.list))
+	mux.HandleFunc("POST /api/pat", pat.withIdentity(pat.create))
+	mux.HandleFunc("DELETE /api/pat/{id}", pat.withIdentity(pat.revoke))
 }
 
 // MCP endpoint (P3-6) — opt-in. Bearer PAT auth (not the gateway header), so
@@ -219,14 +220,15 @@ func registerAssistantRoutes(mux *http.ServeMux, cfg config) {
 // auth bundle) + host bookmarks (per-instance). No AWS secrets; the aws CLI in the
 // workspace authenticates via SSO.
 func registerSSMRoutes(mux *http.ServeMux, cfg config) {
-	mux.HandleFunc("GET /api/ssm/profiles", cfg.handleSSMProfilesList)
-	mux.HandleFunc("POST /api/ssm/profiles", cfg.handleSSMProfileCreate)
-	mux.HandleFunc("PUT /api/ssm/profiles/{id}", cfg.handleSSMProfileUpdate)
-	mux.HandleFunc("DELETE /api/ssm/profiles/{id}", cfg.handleSSMProfileDelete)
-	mux.HandleFunc("GET /api/ssm/hosts", cfg.handleSSMHostsList)
-	mux.HandleFunc("POST /api/ssm/hosts", cfg.handleSSMHostCreate)
-	mux.HandleFunc("PUT /api/ssm/hosts/{id}", cfg.handleSSMHostUpdate)
-	mux.HandleFunc("DELETE /api/ssm/hosts/{id}", cfg.handleSSMHostDelete)
+	ssm := newSSMConfigAPI(cfg.mgr)
+	mux.HandleFunc("GET /api/ssm/profiles", ssm.withMembership(ssm.listProfiles))
+	mux.HandleFunc("POST /api/ssm/profiles", ssm.withMembership(ssm.createProfile))
+	mux.HandleFunc("PUT /api/ssm/profiles/{id}", ssm.withMembership(ssm.updateProfile))
+	mux.HandleFunc("DELETE /api/ssm/profiles/{id}", ssm.withMembership(ssm.deleteProfile))
+	mux.HandleFunc("GET /api/ssm/hosts", ssm.withMembership(ssm.listHosts))
+	mux.HandleFunc("POST /api/ssm/hosts", ssm.withMembership(ssm.createHost))
+	mux.HandleFunc("PUT /api/ssm/hosts/{id}", ssm.withMembership(ssm.updateHost))
+	mux.HandleFunc("DELETE /api/ssm/hosts/{id}", ssm.withMembership(ssm.deleteHost))
 }
 
 // Memo queue (docs/21) — per-member notes accumulated across devices, then flushed
@@ -295,8 +297,9 @@ func registerAgentEnvRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("GET /api/env/toolchains", cfg.proxyAgentREST)
 	mux.HandleFunc("PUT /api/env/toolchains", cfg.proxyAgentREST)
 	// CP-owned per-workspace settings (editable while stopped; applied at start).
-	mux.HandleFunc("GET /api/env/ws-settings", cfg.handleWSSettingsGet)
-	mux.HandleFunc("PUT /api/env/ws-settings", cfg.handleWSSettingsPut)
+	wss := newWSSettingsAPI(cfg.mgr)
+	mux.HandleFunc("GET /api/env/ws-settings", wss.withResolved(wss.get))
+	mux.HandleFunc("PUT /api/env/ws-settings", wss.withResolved(wss.put))
 	// Per-user UI preferences (Console display settings) — proxied to the Agent.
 	mux.HandleFunc("GET /api/env/ui-prefs", cfg.proxyAgentREST)
 	mux.HandleFunc("PUT /api/env/ui-prefs", cfg.proxyAgentREST)
