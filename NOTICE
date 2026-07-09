@@ -2,3 +2,11 @@ Agent Fleet
 Copyright 2026 k-k1
 
 This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+--------------------------------------------------------------------------------
+This product bundles the CMU Pronouncing Dictionary (used by the TTS English→katakana
+preprocessing in control-plane/enkana.go):
+
+  cmudict — Copyright (C) 1993-2015 Carnegie Mellon University. All rights reserved.
+  Licensed under a 2-clause BSD-style license. Full text: control-plane/assets/cmudict.LICENSE
+  Source: https://github.com/cmusphinx/cmudict
