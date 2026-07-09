@@ -6,13 +6,14 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 )
 
 // rtk (token-saving CLI proxy) for the non-claude agents. claude routes Bash
-// through rtk via its settings.json PreToolUse hook (see claude_settings.go);
+// through rtk via its settings.json PreToolUse hook (see internal/agents/claude);
 // codex and opencode have no such hook, so their on/off state is a different
 // artifact entirely:
 //
@@ -74,7 +75,7 @@ func prefOnDefault(p *bool) bool {
 // startup (after the entrypoint reseeded the base files). When rtk is not in the
 // image, both are forced off (any stale artifact is removed).
 func reconcileAgentRTK() {
-	avail := rtkAvailable()
+	avail := claude.RTKAvailable()
 	p := readAgentRTKPrefs()
 	opencode.ApplyRTK(avail && prefOnDefault(p.Opencode))
 	codex.ApplyRTK(avail && prefOnDefault(p.Codex))
@@ -83,7 +84,7 @@ func reconcileAgentRTK() {
 func agentRTKBody() map[string]any {
 	p := readAgentRTKPrefs()
 	return map[string]any{
-		"rtk_available": rtkAvailable(),
+		"rtk_available": claude.RTKAvailable(),
 		"codex_rtk":     prefOnDefault(p.Codex),
 		"opencode_rtk":  prefOnDefault(p.Opencode),
 	}

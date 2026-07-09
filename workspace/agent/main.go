@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 )
 
@@ -40,7 +41,7 @@ func main() {
 	// transparently. No-op when the CP didn't inject one.
 	seedInternalGit()
 	// Make claude emit working/idle/question via hooks into the status files.
-	ensureStatusHooks()
+	claude.EnsureStatusHooks()
 	// Apply the durable codex/opencode rtk prefs to their artifacts (the entrypoint
 	// reseeded the base AGENTS.md / status plugin just before us). claude's rtk is
 	// handled separately via its settings.json hook.

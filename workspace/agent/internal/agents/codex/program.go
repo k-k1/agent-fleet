@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -14,17 +15,6 @@ func envOr(key, def string) string {
 		return v
 	}
 	return def
-}
-
-// agentExe は package main の同名ヘルパの複製（main は import できないため）:
-// this binary's absolute path, used to build hook commands that resolve in codex's
-// hook context regardless of PATH.
-func agentExe() string {
-	exe, err := os.Executable()
-	if err != nil || exe == "" {
-		return "/usr/local/bin/workspace-agent"
-	}
-	return exe
 }
 
 // buildProgram returns the tmux program for a codex session. codex owns its
@@ -45,7 +35,7 @@ func buildProgram(model, slotSid, codexResumeID string) string {
 		return override
 	}
 	flags := envOr("AGENT_CODEX_FLAGS", "--dangerously-bypass-approvals-and-sandbox --dangerously-bypass-hook-trust")
-	exe := agentExe()
+	exe := paths.ExePath()
 	// A hook entry as a TOML inline array-of-tables value for `-c hooks.<event>=…`.
 	// The command bakes in our slot sid + the "codex" marker so the status helper
 	// keys by the slot and captures codex's own session id from the hook's stdin.

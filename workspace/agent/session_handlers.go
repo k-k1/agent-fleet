@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
@@ -260,7 +261,7 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 // then diverges independently — the official `claude --fork-session` copies the
 // transcript, leaving the source running/intact. Only claude sessions carry a
 // resumable jsonl to fork; the fork's first launch (via ForkFrom) materializes its
-// own jsonl (see buildSessionProgram), so restarts resume it normally.
+// own jsonl (see claude 縦割りの buildProgram), so restarts resume it normally.
 func handleForkSession(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	src, ok := session.ReadMeta(name)
@@ -277,7 +278,7 @@ func handleForkSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	srcSid := session.UUID(src.Dir, name)
-	if !jsonlResumable(srcSid) {
+	if !claude.JSONLResumable(srcSid) {
 		httpx.WriteErr(w, http.StatusBadRequest, "not_resumable", "分岐できる会話がまだありません")
 		return
 	}

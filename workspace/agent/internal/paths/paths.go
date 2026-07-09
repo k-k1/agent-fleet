@@ -20,3 +20,14 @@ func HomeDir() string {
 func AgentConfigDir() string {
 	return filepath.Join(HomeDir(), ".config", "agent-fleet")
 }
+
+// ExePath is the absolute path to this binary, used to build hook/MCP commands
+// that resolve in an agent's hook context regardless of PATH (docs/23 残① Wave F
+// で main の agentExe / codex の複製を一本化).
+func ExePath() string {
+	exe, err := os.Executable()
+	if err != nil || exe == "" {
+		return "/usr/local/bin/workspace-agent"
+	}
+	return exe
+}

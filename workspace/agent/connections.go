@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
@@ -35,7 +36,7 @@ func handleConnectionsGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"claude":    claudeStatus(),
+		"claude":    claude.Status(),
 		"github":    gitConnStatus(s, "github.com"),
 		"bitbucket": bitbucketStatus(s),
 		"internal":  internalGitStatus(s),

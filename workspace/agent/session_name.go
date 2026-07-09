@@ -5,6 +5,7 @@ import (
 	"encoding/base32"
 	"strings"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 )
@@ -39,7 +40,7 @@ func allocSessionName(dir string) string {
 		// orphan from a pruned session), so a new session can't --resume a past
 		// conversation. Astronomically unlikely for a random slug, but this makes the
 		// no-resurrection guarantee independent of the id scheme.
-		if sessionJSONLExists(session.UUID(dir, slug)) {
+		if claude.SessionJSONLExists(session.UUID(dir, slug)) {
 			continue
 		}
 		return slug

@@ -1,12 +1,13 @@
 package main
 
 import (
-	"encoding/json"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
@@ -20,14 +21,27 @@ import (
 // turn's timestamp, and — as ordered "parts" — the tool_use activity interleaved
 // with the assistant's text, so the Console can faintly show what claude was doing
 // (Read/Bash/Edit …) between paragraphs. Both read the same jsonl (cursor = line #).
-
+//
 // The shared turn/part model itself lives in internal/transcript (docs/23 P1-W5),
 // so the claude/codex/opencode parsers are compiler-bound to one output vocabulary.
+// claude の jsonl 解析（CollectTurns/CollectTasks ほか）は internal/agents/claude
+// へ移設（docs/23 残① Wave F）; ここにはウィンドウ処理・ページング・internal/status
+// の pending 合成を行う HTTP ハンドラだけが残る。
 
 // forkPreviewCursor is an out-of-range line cursor handed out while a fork previews its
 // source transcript, so the first poll that reads the fork's own (shorter) jsonl trips
 // the reset branch and swaps cleanly. Far above any real transcript length.
 const forkPreviewCursor = 1 << 30
+
+// jsonlMtime は internal/agents/claude の同名ヘルパの複製（極小 stat のため共有せず
+// 重複を許容 — generic /messages はエージェント種別を問わず使う）。
+func jsonlMtime(p string) time.Time {
+	fi, err := os.Stat(p)
+	if err != nil {
+		return time.Time{}
+	}
+	return fi.ModTime()
+}
 
 // handleSessionMessages (GET /sessions/{name}/messages?since=<cursor>) returns the
 // turns appended since the cursor, plus a new cursor and the live status. claude
@@ -66,15 +80,15 @@ func handleSessionMessages(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	sid := session.UUID(meta.Dir, name)
-	lines, jpath, jmatched := transcriptRead(sid)
+	lines, jpath, jmatched := claude.TranscriptRead(sid)
 	// A just-forked session's OWN jsonl isn't materialized until claude finishes copying
-	// the source conversation (buildSessionProgram runs --fork-session on first launch).
+	// the source conversation (buildProgram runs --fork-session on first launch).
 	// Until then, show the source's history (identical up to the fork point) instead of an
 	// empty chat. Served as a reset with an out-of-range cursor, so the first poll that
 	// sees the fork's own jsonl trips the `since > len(lines)` reset below and swaps to it.
 	forkPreview := false
-	if meta.ForkFrom != "" && !jsonlHasConversation(lines) {
-		if srcLines, srcPath, srcMatched := transcriptRead(meta.ForkFrom); jsonlHasConversation(srcLines) {
+	if meta.ForkFrom != "" && !claude.HasConversation(lines) {
+		if srcLines, srcPath, srcMatched := claude.TranscriptRead(meta.ForkFrom); claude.HasConversation(srcLines) {
 			lines, jpath, jmatched = srcLines, srcPath, srcMatched
 			forkPreview = true
 		}
@@ -121,7 +135,7 @@ func handleSessionMessages(w http.ResponseWriter, r *http.Request) {
 			firstLine = lo
 		}
 	}
-	turns := collectTurns(lines, lo, hi)
+	turns := claude.CollectTurns(lines, lo, hi)
 	mt := jsonlMtime(jpath) // hoisted: also feeds the title-suggestion idle check below
 	if autoTitleSuggestEnabled() && meta.Title == "" && meta.SuggestedTitle == "" &&
 		!meta.SuggestedTitleDismissed && titleGenReady(name) {
@@ -129,7 +143,7 @@ func handleSessionMessages(w http.ResponseWriter, r *http.Request) {
 		// checks above pass. Once Title/SuggestedTitle/Dismissed settle, this line never
 		// runs again for this session (see docs/decisions/0009 on why the windowed
 		// `turns` above can't be reused here: it's an incremental slice after the first poll).
-		maybeSuggestTitle(name, collectTurns(lines, 0, len(lines)), time.Since(mt))
+		maybeSuggestTitle(name, claude.CollectTurns(lines, 0, len(lines)), time.Since(mt))
 	}
 	resp := map[string]any{
 		"name": name, "messages": turns, "cursor": cursor,
@@ -160,7 +174,7 @@ func handleSessionMessages(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	// Current ToDo list (reconstructed from Task tool calls) so the chat can show progress.
-	if tasks := collectTasks(lines); len(tasks) > 0 {
+	if tasks := claude.CollectTasks(lines); len(tasks) > 0 {
 		resp["tasks"] = tasks
 	}
 	// Surface terminal-only states (startup resume menu / auto-compaction) the chat
@@ -174,7 +188,7 @@ func handleSessionMessages(w http.ResponseWriter, r *http.Request) {
 		// already working (the chip prefers 進行中 then), keeping the process scan off the
 		// hot path during active turns.
 		if state == "idle" || state == "" {
-			resp["backgroundBusy"] = sessionBackgroundBusy(name)
+			resp["backgroundBusy"] = claude.BackgroundBusy(name)
 		}
 	}
 	httpx.WriteJSON(w, http.StatusOK, resp)
@@ -281,7 +295,7 @@ func handleGenericMessages(w http.ResponseWriter, r *http.Request, meta session.
 }
 
 // capTurnsNewest bounds a returned window to ~1 MiB of text, keeping the NEWEST turns
-// (walk from the end, keep until the budget is spent). Mirrors collectTurns' cap so a
+// (walk from the end, keep until the budget is spent). Mirrors CollectTurns' cap so a
 // huge single response can't bloat the payload.
 func capTurnsNewest(turns []transcript.Turn) []transcript.Turn {
 	budget := 0
@@ -293,48 +307,6 @@ func capTurnsNewest(turns []transcript.Turn) []transcript.Turn {
 		}
 	}
 	return turns[start:]
-}
-
-// collectTurns builds the displayable turns from lines[lo:hi] (a window into the
-// transcript — the whole file, a tail window, a backward page, or a live increment; see
-// docs/decisions/0009). A transcript AskUserQuestion/ExitPlanMode is always already
-// answered (claude writes the tool_use only after the answer), so it resolves each one's
-// chosen answer from its tool_result for display (the currently-pending one is surfaced
-// separately). Each turn keeps its ABSOLUTE line index as idx (stable across windows, so
-// React keys and ordering hold when pages are prepended). Capped at 1 MiB of newest text.
-func collectTurns(lines [][]byte, lo, hi int) []transcript.Turn {
-	if lo < 0 {
-		lo = 0
-	}
-	if hi > len(lines) {
-		hi = len(lines)
-	}
-	// Answers are resolved within the window: a question and its tool_result are adjacent
-	// (claude writes the tool_use only after the answer), so window-local is enough.
-	answers := collectAnswers(lines[lo:hi])
-	turns := []transcript.Turn{}
-	budget := 0
-	// Walk newest→oldest so the 1 MiB cap keeps the LATEST turns (the old oldest-first cap
-	// could drop the newest of a huge transcript); reverse to chronological before return.
-	for i := hi - 1; i >= lo; i-- {
-		t, ok := parseTurn(lines[i], i) // i is the absolute line index (stable across windows)
-		if !ok {
-			continue // tool results, summaries, bridge/meta bookkeeping
-		}
-		for pi := range t.Parts {
-			if (t.Parts[pi].Kind == "question" || t.Parts[pi].Kind == "plan") && t.Parts[pi].QID != "" {
-				t.Parts[pi].Answer = answers[t.Parts[pi].QID]
-			}
-		}
-		turns = append(turns, t)
-		if budget += len(t.Text); budget > 1<<20 { // cap a single response at 1 MiB (newest kept)
-			break
-		}
-	}
-	for l, r := 0, len(turns)-1; l < r; l, r = l+1, r-1 {
-		turns[l], turns[r] = turns[r], turns[l]
-	}
-	return turns
 }
 
 // clampWindowLimit parses the window line-limit query param, with sane defaults/bounds.
@@ -389,431 +361,4 @@ func surfacePendingPayloads(resp map[string]any, sid, state string) {
 	if hasP {
 		resp["pendingPlan"] = pp
 	}
-}
-
-// parseTurn builds a transcript.Turn from a transcript line. ok is false for lines that
-// carry nothing displayable: tool_result-only user turns, summaries, the Remote
-// Control bridge-session line, and meta entries (isMeta).
-func parseTurn(line []byte, idx int) (transcript.Turn, bool) {
-	var ev struct {
-		Type             string `json:"type"`
-		Timestamp        string `json:"timestamp"`
-		IsMeta           bool   `json:"isMeta"`
-		IsSidechain      bool   `json:"isSidechain"`
-		IsCompactSummary bool   `json:"isCompactSummary"`
-		GitBranch        string `json:"gitBranch"`
-		Cwd              string `json:"cwd"`
-		Message          struct {
-			Model   string          `json:"model"`
-			Content json.RawMessage `json:"content"`
-			Usage   struct {
-				InputTokens              int `json:"input_tokens"`
-				OutputTokens             int `json:"output_tokens"`
-				CacheReadInputTokens     int `json:"cache_read_input_tokens"`
-				CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
-			} `json:"usage"`
-		} `json:"message"`
-	}
-	if json.Unmarshal(line, &ev) != nil {
-		return transcript.Turn{}, false
-	}
-	if ev.IsMeta || (ev.Type != "user" && ev.Type != "assistant") {
-		return transcript.Turn{}, false
-	}
-	var parts []transcript.Part
-	var text string
-	if ev.Type == "assistant" {
-		parts, text = assistantParts(ev.Message.Content)
-	} else if t := contentText(ev.Message.Content); t != "" {
-		parts, text = []transcript.Part{{Kind: "text", Text: t}}, t
-	}
-	if len(parts) == 0 {
-		return transcript.Turn{}, false
-	}
-	t := transcript.Turn{
-		Role: ev.Type, Parts: parts, Text: text, Idx: idx, TS: ev.Timestamp,
-		Sidechain: ev.IsSidechain, Branch: ev.GitBranch, Cwd: ev.Cwd,
-		Compact: ev.IsCompactSummary,
-	}
-	if ev.Type == "assistant" {
-		u := ev.Message.Usage
-		t.Model = ev.Message.Model
-		t.InTok, t.OutTok = u.InputTokens, u.OutputTokens
-		t.CacheRead, t.CacheCreate = u.CacheReadInputTokens, u.CacheCreationInputTokens
-	}
-	return t, true
-}
-
-// assistantParts walks an assistant message's content blocks in order, emitting a
-// text part per text block and a tool part per tool_use (thinking/other are skipped).
-// It also returns the concatenated text (for copy). content is normally an array of
-// blocks; a bare-string form is handled as a single text part.
-func assistantParts(raw json.RawMessage) (parts []transcript.Part, text string) {
-	if len(raw) == 0 {
-		return nil, ""
-	}
-	if raw[0] != '[' {
-		if s := contentText(raw); s != "" {
-			return []transcript.Part{{Kind: "text", Text: s}}, s
-		}
-		return nil, ""
-	}
-	var blocks []struct {
-		Type  string          `json:"type"`
-		Text  string          `json:"text"`
-		Name  string          `json:"name"`
-		ID    string          `json:"id"`
-		Input json.RawMessage `json:"input"`
-	}
-	if json.Unmarshal(raw, &blocks) != nil {
-		return nil, ""
-	}
-	var sb strings.Builder
-	for _, b := range blocks {
-		switch b.Type {
-		case "text":
-			if strings.TrimSpace(b.Text) == "" {
-				continue
-			}
-			parts = append(parts, transcript.Part{Kind: "text", Text: b.Text})
-			if sb.Len() > 0 {
-				sb.WriteString("\n")
-			}
-			sb.WriteString(b.Text)
-		case "tool_use":
-			// AskUserQuestion becomes an answerable question block, not a faint trace.
-			if b.Name == "AskUserQuestion" {
-				if qs := parseQuestions(b.Input); len(qs) > 0 {
-					parts = append(parts, transcript.Part{Kind: "question", Tool: b.Name, Questions: qs, QID: b.ID})
-					continue
-				}
-			}
-			// ExitPlanMode carries the plan Markdown — a plan block, openable in a pane.
-			if b.Name == "ExitPlanMode" {
-				var pin struct {
-					Plan string `json:"plan"`
-				}
-				if json.Unmarshal(b.Input, &pin) == nil && pin.Plan != "" {
-					parts = append(parts, transcript.Part{Kind: "plan", Tool: b.Name, Plan: pin.Plan, QID: b.ID})
-					continue
-				}
-			}
-			part := transcript.Part{Kind: "tool", Tool: b.Name, Info: toolInfo(b.Name, b.Input)}
-			if f, es := toolEdits(b.Name, b.Input); len(es) > 0 {
-				part.File, part.Edits = f, es
-			}
-			parts = append(parts, part)
-		}
-	}
-	return parts, strings.TrimSpace(sb.String())
-}
-
-// collectAnswers maps each tool_use id to the text of its tool_result — used to show
-// which option an answered AskUserQuestion resolved to. Best-effort: the answer text
-// is whatever text the tool_result carried (a selected label, or a free-text reply).
-func collectAnswers(lines [][]byte) map[string]string {
-	out := map[string]string{}
-	for _, ln := range lines {
-		var ev struct {
-			Message struct {
-				Content json.RawMessage `json:"content"`
-			} `json:"message"`
-		}
-		if json.Unmarshal(ln, &ev) != nil || len(ev.Message.Content) == 0 || ev.Message.Content[0] != '[' {
-			continue
-		}
-		var blocks []struct {
-			Type      string          `json:"type"`
-			ToolUseID string          `json:"tool_use_id"`
-			Content   json.RawMessage `json:"content"`
-		}
-		if json.Unmarshal(ev.Message.Content, &blocks) != nil {
-			continue
-		}
-		for _, b := range blocks {
-			if b.Type == "tool_result" && b.ToolUseID != "" {
-				if t := contentText(b.Content); t != "" {
-					out[b.ToolUseID] = t
-				}
-			}
-		}
-	}
-	return out
-}
-
-// collectTasks reconstructs the current ToDo list from the transcript. TaskCreate adds
-// a task (single, or a batch via tasks[]) with a sequential id matching claude's
-// "Task #N" numbering; TaskUpdate merges status/subject/activeForm onto an existing id.
-// TaskStop (a background-agent stop, a hash id in a different space) and TaskList/TaskGet
-// (reads) don't change the list and are ignored. Returns tasks in creation order.
-func collectTasks(lines [][]byte) []transcript.Task {
-	order := []string{}
-	m := map[string]*transcript.Task{}
-	next := 1
-	for _, ln := range lines {
-		// Cheap prefilter so this stays a light full-scan (kept whole-transcript for an
-		// accurate ToDo list even when turns are windowed — see docs/decisions/0009).
-		if !bytesContains(ln, "TaskCreate") && !bytesContains(ln, "TaskUpdate") {
-			continue
-		}
-		var ev struct {
-			Type    string `json:"type"`
-			Message struct {
-				Content json.RawMessage `json:"content"`
-			} `json:"message"`
-		}
-		if json.Unmarshal(ln, &ev) != nil || ev.Type != "assistant" {
-			continue
-		}
-		if len(ev.Message.Content) == 0 || ev.Message.Content[0] != '[' {
-			continue
-		}
-		var blocks []struct {
-			Type  string          `json:"type"`
-			Name  string          `json:"name"`
-			Input json.RawMessage `json:"input"`
-		}
-		if json.Unmarshal(ev.Message.Content, &blocks) != nil {
-			continue
-		}
-		for _, b := range blocks {
-			if b.Type != "tool_use" {
-				continue
-			}
-			switch b.Name {
-			case "TaskCreate":
-				for _, tc := range parseTaskCreate(b.Input) {
-					id := strconv.Itoa(next)
-					next++
-					tc.ID = id
-					if tc.Status == "" {
-						tc.Status = "pending"
-					}
-					cp := tc
-					m[id] = &cp
-					order = append(order, id)
-				}
-			case "TaskUpdate":
-				applyTaskUpdate(m, b.Input)
-			}
-		}
-	}
-	out := make([]transcript.Task, 0, len(order))
-	for _, id := range order {
-		if it, ok := m[id]; ok {
-			out = append(out, *it)
-		}
-	}
-	return out
-}
-
-// parseTaskCreate returns the tasks one TaskCreate call adds — normally one (the subject
-// is on the input itself), or several when it carries a tasks[] batch.
-func parseTaskCreate(input json.RawMessage) []transcript.Task {
-	var in struct {
-		Subject    string `json:"subject"`
-		ActiveForm string `json:"activeForm"`
-		Tasks      []struct {
-			Subject    string `json:"subject"`
-			ActiveForm string `json:"activeForm"`
-		} `json:"tasks"`
-	}
-	if json.Unmarshal(input, &in) != nil {
-		return nil
-	}
-	if len(in.Tasks) > 0 {
-		out := make([]transcript.Task, 0, len(in.Tasks))
-		for _, t := range in.Tasks {
-			if t.Subject != "" {
-				out = append(out, transcript.Task{Subject: t.Subject, Active: t.ActiveForm})
-			}
-		}
-		return out
-	}
-	if in.Subject == "" {
-		return nil
-	}
-	return []transcript.Task{{Subject: in.Subject, Active: in.ActiveForm}}
-}
-
-// applyTaskUpdate merges a TaskUpdate's non-empty fields onto the referenced task.
-func applyTaskUpdate(m map[string]*transcript.Task, input json.RawMessage) {
-	var in struct {
-		TaskID     string `json:"taskId"`
-		Status     string `json:"status"`
-		Subject    string `json:"subject"`
-		ActiveForm string `json:"activeForm"`
-	}
-	if json.Unmarshal(input, &in) != nil || in.TaskID == "" {
-		return
-	}
-	it, ok := m[in.TaskID]
-	if !ok {
-		return
-	}
-	if in.Status != "" {
-		it.Status = in.Status
-	}
-	if in.Subject != "" {
-		it.Subject = in.Subject
-	}
-	if in.ActiveForm != "" {
-		it.Active = in.ActiveForm
-	}
-}
-
-// bytesContains is strings.Contains for a []byte without allocating a string.
-func bytesContains(b []byte, sub string) bool {
-	return strings.Contains(string(b), sub)
-}
-
-// parseQuestions pulls the AskUserQuestion tool input into transcript.Questions. Returns
-// nil when the input doesn't carry a questions array (falls back to a tool trace).
-func parseQuestions(input json.RawMessage) []transcript.Question {
-	if len(input) == 0 {
-		return nil
-	}
-	var in struct {
-		Questions []transcript.Question `json:"questions"`
-	}
-	if json.Unmarshal(input, &in) != nil {
-		return nil
-	}
-	return in.Questions
-}
-
-// toolInfo renders a short, single-line summary of a tool_use's input — the piece a
-// human would recognize (the command, the file, the pattern). Best-effort; unknown
-// tools fall back to the first recognizable string field.
-func toolInfo(name string, input json.RawMessage) string {
-	if len(input) == 0 {
-		return ""
-	}
-	var m map[string]any
-	if json.Unmarshal(input, &m) != nil {
-		return ""
-	}
-	pick := func(keys ...string) string {
-		for _, k := range keys {
-			if v, ok := m[k].(string); ok && v != "" {
-				return v
-			}
-		}
-		return ""
-	}
-	var s string
-	switch name {
-	case "Bash":
-		s = pick("command")
-	case "Read", "Write", "Edit", "NotebookEdit":
-		s = pick("file_path", "notebook_path", "path")
-	case "Grep", "Glob":
-		s = pick("pattern")
-	case "Task":
-		s = pick("description")
-	case "WebFetch":
-		s = pick("url")
-	case "WebSearch":
-		s = pick("query")
-	default:
-		s = pick("file_path", "path", "command", "pattern", "query", "description", "url")
-	}
-	s = strings.TrimSpace(s)
-	if i := strings.IndexByte(s, '\n'); i >= 0 {
-		s = s[:i] // first line only
-	}
-	if r := []rune(s); len(r) > 80 {
-		s = string(r[:80]) + "…"
-	}
-	return s
-}
-
-// capEdit（editCap 上限つき切り詰め）は internal/transcript の transcript.CapEdit
-// へ移設（docs/23 残① Wave D — opencode 縦割りと共有のため）。
-
-// toolEdits extracts the before/after content of an edit-family tool so the Console can
-// render a diff pane. Returns the target file and one entry per edit; non-edit tools
-// (or malformed input) return nil, so the tool part stays a plain trace.
-func toolEdits(name string, input json.RawMessage) (string, []transcript.Edit) {
-	if len(input) == 0 {
-		return "", nil
-	}
-	switch name {
-	case "Edit":
-		var in struct {
-			FilePath  string `json:"file_path"`
-			OldString string `json:"old_string"`
-			NewString string `json:"new_string"`
-		}
-		if json.Unmarshal(input, &in) != nil || in.FilePath == "" {
-			return "", nil
-		}
-		return in.FilePath, []transcript.Edit{{Old: transcript.CapEdit(in.OldString), New: transcript.CapEdit(in.NewString)}}
-	case "Write":
-		var in struct {
-			FilePath string `json:"file_path"`
-			Content  string `json:"content"`
-		}
-		if json.Unmarshal(input, &in) != nil || in.FilePath == "" {
-			return "", nil
-		}
-		return in.FilePath, []transcript.Edit{{Old: "", New: transcript.CapEdit(in.Content)}}
-	case "MultiEdit":
-		var in struct {
-			FilePath string `json:"file_path"`
-			Edits    []struct {
-				OldString string `json:"old_string"`
-				NewString string `json:"new_string"`
-			} `json:"edits"`
-		}
-		if json.Unmarshal(input, &in) != nil || in.FilePath == "" {
-			return "", nil
-		}
-		var es []transcript.Edit
-		for _, e := range in.Edits {
-			es = append(es, transcript.Edit{Old: transcript.CapEdit(e.OldString), New: transcript.CapEdit(e.NewString)})
-		}
-		return in.FilePath, es
-	case "NotebookEdit":
-		var in struct {
-			NotebookPath string `json:"notebook_path"`
-			NewSource    string `json:"new_source"`
-		}
-		if json.Unmarshal(input, &in) != nil || in.NotebookPath == "" {
-			return "", nil
-		}
-		return in.NotebookPath, []transcript.Edit{{Old: "", New: transcript.CapEdit(in.NewSource)}}
-	}
-	return "", nil
-}
-
-// contentText pulls the human text out of a message's content, which claude encodes
-// either as a plain string (simple user turns) or an array of typed blocks. Only
-// text blocks count; tool_use / tool_result / thinking / image blocks are skipped,
-// so a turn that is purely a tool round-trip yields "".
-func contentText(raw json.RawMessage) string {
-	if len(raw) == 0 {
-		return ""
-	}
-	if raw[0] == '"' { // plain-string content
-		var s string
-		if json.Unmarshal(raw, &s) == nil {
-			return strings.TrimSpace(s)
-		}
-		return ""
-	}
-	var blocks []struct {
-		Type string `json:"type"`
-		Text string `json:"text"`
-	}
-	if json.Unmarshal(raw, &blocks) != nil {
-		return ""
-	}
-	var sb strings.Builder
-	for _, b := range blocks {
-		if b.Type == "text" {
-			sb.WriteString(b.Text)
-		}
-	}
-	return strings.TrimSpace(sb.String())
 }

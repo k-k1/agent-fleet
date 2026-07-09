@@ -1,9 +1,7 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -13,7 +11,8 @@ import (
 
 // セッションのワイヤ変換とタイトル/ラベル導出。モデル・メタ永続化・UUID は
 // internal/session（docs/23 残① Wave A）/ tmux= session_tmux.go /
-// HTTPハンドラ= session_handlers.go / CLI起動コマンド= session_program.go（docs/23 P1-W4）
+// HTTPハンドラ= session_handlers.go / claude の CLI 起動コマンドは
+// internal/agents/claude の program.go（docs/23 残① Wave F）
 
 // wireSession builds the API representation from a meta and liveness.
 func wireSession(m session.Meta, alive bool) session.Session {
@@ -35,34 +34,8 @@ func wireSession(m session.Meta, alive bool) session.Session {
 	}
 }
 
-// remoteSessionURL derives the claude.ai Remote Control page for sid from its
-// jsonl "bridge-session" line (written when RC connects). The web URL is
-// "…/code/session_<bridgeSessionId without the cse_ prefix>". We read only the
-// head of the log (the bridge line is written at session start) to stay cheap on
-// the polled list. Returns "" when there is no bridge (RC off / not yet connected).
-func remoteSessionURL(sid string) string {
-	for _, p := range jsonlPaths(sid) {
-		f, err := os.Open(p)
-		if err != nil {
-			continue
-		}
-		buf := make([]byte, 64*1024)
-		n, _ := f.Read(buf)
-		f.Close()
-		for _, line := range strings.Split(string(buf[:n]), "\n") {
-			if !strings.Contains(line, `"type":"bridge-session"`) {
-				continue
-			}
-			var b struct {
-				BridgeSessionID string `json:"bridgeSessionId"`
-			}
-			if json.Unmarshal([]byte(line), &b) == nil && b.BridgeSessionID != "" {
-				return "https://claude.ai/code/session_" + strings.TrimPrefix(b.BridgeSessionID, "cse_")
-			}
-		}
-	}
-	return ""
-}
+// remoteSessionURL（claude.ai Remote Control URL の導出）は internal/agents/claude
+// の claude.RemoteSessionURL へ移設（docs/23 残① Wave F）。
 
 // dirInfo is a working copy's current branch + worktree flag, cached per dir.
 type dirInfo struct {

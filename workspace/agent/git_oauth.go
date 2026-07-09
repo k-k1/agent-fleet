@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
@@ -69,7 +70,7 @@ func handleGithubOAuthStart(w http.ResponseWriter, r *http.Request) {
 	if interval <= 0 {
 		interval = 5
 	}
-	id := newFlowID()
+	id := agents.NewFlowID()
 	ghMu.Lock()
 	for k, f := range ghFlows { // reap expired flows
 		if time.Now().After(f.deadline) {

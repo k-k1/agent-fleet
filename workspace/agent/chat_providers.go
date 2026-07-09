@@ -15,6 +15,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -256,13 +258,13 @@ func ensureChatClaudeConfig() (string, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", err
 	}
-	shared := filepath.Join(claudeConfigDir(), ".credentials.json")
+	shared := filepath.Join(claude.ConfigDir(), ".credentials.json")
 	reconcileChatCreds(shared, filepath.Join(dir, ".credentials.json"))
 	// Seed onboarding/theme/trust once from the shared config so a headless run in a
 	// fresh dir doesn't stall on first-run prompts; it diverges independently after.
 	seed := filepath.Join(dir, ".claude.json")
 	if _, err := os.Stat(seed); os.IsNotExist(err) {
-		if b, rerr := os.ReadFile(filepath.Join(claudeConfigDir(), ".claude.json")); rerr == nil {
+		if b, rerr := os.ReadFile(filepath.Join(claude.ConfigDir(), ".claude.json")); rerr == nil {
 			_ = os.WriteFile(seed, b, 0o600)
 		}
 	}
@@ -341,7 +343,7 @@ func chatMCPArgs(write bool) []string {
 		// an af_read chat's server never lists send_to_session, so the model can't call it.
 		serverArgs = `"mcp-stdio","--write"`
 	}
-	cfg := fmt.Sprintf(`{"mcpServers":{"af":{"command":%q,"args":[%s]}}}`, agentExe(), serverArgs)
+	cfg := fmt.Sprintf(`{"mcpServers":{"af":{"command":%q,"args":[%s]}}}`, paths.ExePath(), serverArgs)
 	return []string{"--mcp-config", cfg, "--strict-mcp-config"}
 }
 

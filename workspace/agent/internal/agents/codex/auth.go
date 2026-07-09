@@ -1,9 +1,7 @@
 package codex
 
 import (
-	"crypto/rand"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"os"
@@ -11,11 +9,9 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-	"sync"
 	"time"
 
-	"github.com/creack/pty"
-
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 )
@@ -31,53 +27,8 @@ import (
 // The file is codex-owned (out of our encrypted store, like claude's creds) and
 // denylisted from the file browser.
 
-// --- PTY flow plumbing -----------------------------------------------------------
-// flow / clean / close / waitFor / newFlowID / ansiRe は package main の claudeFlow
-// 一式の複製（main は import できないため — docs/23 残① Wave E。挙動は同一）。
-
-var (
-	// CSI/escape sequences and lone control chars Ink emits while redrawing.
-	ansiRe = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b[()][AB012]|\x1b[<>=]|[\x00-\x08\x0b\x0c\x0e-\x1f]`)
-)
-
-type flow struct {
-	ptmx    *os.File
-	cmd     *exec.Cmd
-	mu      sync.Mutex
-	out     strings.Builder
-	created time.Time
-}
-
-// clean returns the accumulated PTY output with ANSI/control noise removed.
-func (f *flow) clean() string {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	s := ansiRe.ReplaceAllString(f.out.String(), "")
-	return strings.ReplaceAll(s, "\r", "\n")
-}
-
-func (f *flow) close() {
-	_ = f.cmd.Process.Kill()
-	_ = f.ptmx.Close()
-}
-
-func newFlowID() string {
-	b := make([]byte, 8)
-	_, _ = rand.Read(b)
-	return hex.EncodeToString(b)
-}
-
-// waitFor polls the flow's cleaned output until re matches or the timeout hits.
-func waitFor(f *flow, re *regexp.Regexp, timeout time.Duration) string {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if m := re.FindString(f.clean()); m != "" {
-			return m
-		}
-		time.Sleep(200 * time.Millisecond)
-	}
-	return ""
-}
+// PTY flow plumbing (agents.Flow / agents.FlowStore) は internal/agents/flow.go の
+// 共有実装を使う（docs/23 残① Wave F で Wave E の複製を一本化）。
 
 // --- status ------------------------------------------------------------------------
 
@@ -194,66 +145,32 @@ var (
 // the URL + code. The device code expires in ~15 min.
 const flowTTL = 16 * time.Minute
 
-var (
-	flowsMu sync.Mutex
-	flows   = map[string]*flow{}
-)
-
-func reapFlows() {
-	flowsMu.Lock()
-	defer flowsMu.Unlock()
-	for id, f := range flows {
-		if time.Since(f.created) > flowTTL {
-			f.close()
-			delete(flows, id)
-		}
-	}
-}
+var flows = agents.NewFlowStore(flowTTL)
 
 // HandleDeviceStart launches `codex login --device-auth`, scrapes the
 // verification URL + one-time code, and returns them with a flow_id the client
 // polls. The codex process is kept alive to do the OpenAI-side polling.
 // POST /connections/codex/device/start.
 func HandleDeviceStart(w http.ResponseWriter, r *http.Request) {
-	reapFlows()
+	flows.Reap()
 	cmd := exec.Command("codex", "login", "--device-auth")
 	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
-	ptmx, err := pty.Start(cmd)
+	f, err := agents.StartFlow(cmd)
 	if err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "pty_failed", err.Error())
 		return
 	}
-	_ = pty.Setsize(ptmx, &pty.Winsize{Rows: 50, Cols: 4000}) // wide => URL on one line
 
-	f := &flow{ptmx: ptmx, cmd: cmd, created: time.Now()}
-	go func() {
-		buf := make([]byte, 8192)
-		for {
-			n, rerr := ptmx.Read(buf)
-			if n > 0 {
-				f.mu.Lock()
-				f.out.Write(buf[:n])
-				f.mu.Unlock()
-			}
-			if rerr != nil {
-				return
-			}
-		}
-	}()
-
-	url := waitFor(f, urlRe, 20*time.Second)
+	url := f.WaitFor(urlRe, 20*time.Second)
 	if url == "" {
-		f.close()
+		f.Close()
 		httpx.WriteErr(w, http.StatusBadGateway, "no_url", "codex did not emit a device-auth URL (device code login may be disabled for this account)")
 		return
 	}
 	// The one-time code prints on the line AFTER the URL, so wait for it separately
 	// rather than reading the buffer the instant the URL matched (it isn't there yet).
-	code := waitFor(f, codeRe, 8*time.Second)
-	id := newFlowID()
-	flowsMu.Lock()
-	flows[id] = f
-	flowsMu.Unlock()
+	code := f.WaitFor(codeRe, 8*time.Second)
+	id := flows.Put(f)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"flow_id": id, "url": url, "user_code": code})
 }
 
@@ -270,12 +187,9 @@ func HandleDevicePoll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if loggedIn() {
-		flowsMu.Lock()
-		if f := flows[req.FlowID]; f != nil {
-			f.close()
-			delete(flows, req.FlowID)
+		if f := flows.Take(req.FlowID); f != nil {
+			f.Close()
 		}
-		flowsMu.Unlock()
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"connected": true})
 		return
 	}
