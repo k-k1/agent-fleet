@@ -183,6 +183,10 @@
 }
 .choice-seg {
   display: inline-flex;
+  /* 選択肢が多い（話者=6個 等）と狭幅で .seg の overflow:hidden に見切れるため、
+     flex 子として縮められるよう min-width:0 にし、入り切らない分は折り返す（docs/24）。 */
+  flex-wrap: wrap;
+  min-width: 0;
 }
 .choice-seg .seg-btn {
   flex: 0 0 auto;

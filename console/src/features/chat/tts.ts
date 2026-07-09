@@ -8,6 +8,8 @@
 // Markdown/コードブロック/URL は読み上げ用にプレーン化して除く（plainify）。
 
 import { rel } from "../../core/api/client.ts";
+import { getSettings } from "../../lib/settings.ts";
+import { useTtsStore } from "../../core/store/tts.ts";
 import { plainifyStreaming } from "./ttsText.ts";
 
 export interface TtsOptions {
@@ -44,7 +46,11 @@ function audioCtx(): AudioContext | null {
   }
 }
 
-export function startTts(opts: TtsOptions): TtsController {
+// startTts は 1 つの読み上げセッションを開始する。アプリ全体で再生は 1 本に集約するため、
+// 既存の再生中セッションがあれば止めてから始め、グローバルストアに自分を active として登録する。
+// source は TopBar の「読み上げ中・〇〇」表示に使うラベル。
+export function startTts(opts: TtsOptions, source = ""): TtsController {
+  useTtsStore.getState().active?.stop(); // 直前の再生を停止（グローバル 1 本）
   const ctx = audioCtx();
   let buf = ""; // 未確定バッファ（文の途中）
   let pending = ""; // MIN_CHUNK 未満で持ち越し中の短い断片
@@ -57,7 +63,17 @@ export function startTts(opts: TtsOptions): TtsController {
   let playing = false;
   let cur: AudioBufferSourceNode | null = null;
   let stopped = false;
+  let startedAudio = false; // 最初の文を submit したら true（＝読み上げ開始）
+  let flushed = false; // ストリーム完了（これ以上文は来ない）
   const acs = new Set<AbortController>();
+
+  // 再生中か（合成待ち/再生中/ストリーム継続中）をストアへ通知。文間の一瞬の空きで
+  // チラつかないよう、flush 前は startedAudio 以降ずっと true に保つ。
+  const notify = () => {
+    if (stopped) return;
+    const active = startedAudio && (playing || jobs.length > 0 || inflight > 0 || !flushed);
+    useTtsStore.getState().setSpeaking(active);
+  };
 
   // 確定バッファから完全な文を切り出し、プレーン化してジョブ投入する。
   const drain = (force: boolean) => {
@@ -98,7 +114,9 @@ export function startTts(opts: TtsOptions): TtsController {
     const t = text.trim();
     if (!t) return;
     jobs.push({ seq: seq++, text: t });
+    startedAudio = true;
     pump();
+    notify();
   };
 
   // in-flight を上限まで満たしつつ合成を回す。
@@ -113,6 +131,7 @@ export function startTts(opts: TtsOptions): TtsController {
           inflight--;
           tryPlay();
           pump();
+          notify();
         });
     }
   };
@@ -157,12 +176,13 @@ export function startTts(opts: TtsOptions): TtsController {
       playing = false;
       cur = null;
       tryPlay();
+      notify();
     };
     cur = src;
     src.start();
   };
 
-  return {
+  const controller: TtsController = {
     push(delta: string) {
       if (stopped) return;
       buf += delta;
@@ -170,9 +190,12 @@ export function startTts(opts: TtsOptions): TtsController {
     },
     flush() {
       if (stopped) return;
+      flushed = true;
       drain(true);
+      notify();
     },
     stop() {
+      if (stopped) return;
       stopped = true;
       jobs.length = 0;
       acs.forEach((a) => a.abort());
@@ -184,6 +207,25 @@ export function startTts(opts: TtsOptions): TtsController {
         cur = null;
       }
       playing = false;
+      // 自分がまだ active なら speaking を落とす（別セッションに置き換わっている場合は触らない）。
+      const st = useTtsStore.getState();
+      if (st.active === controller) {
+        st.setActive(null, "");
+        st.setSpeaking(false);
+      }
     },
   };
+  useTtsStore.getState().setActive(controller, source);
+  return controller;
+}
+
+// speakText は与えたテキストをその場で読み上げる（FileView の選択範囲など、非ストリーム用途）。
+// 設定（話者/速度/プロバイダ）は React 外から getSettings() で取得。空文字は無視。
+export function speakText(text: string, source = ""): void {
+  const t = text.trim();
+  if (!t) return;
+  const s = getSettings();
+  const c = startTts({ provider: s.ttsProvider, voice: s.ttsVoiceVoicevox, speed: s.ttsSpeed }, source);
+  c.push(t);
+  c.flush();
 }
