@@ -142,6 +142,10 @@ export interface Settings {
   // 自動読み上げ(ttsEnabled)とは別軸。名前前置きの短い告知を直列キューで読む。タブが見えている
   // 間のみ（セッション監視は document.hidden で止まるため）。
   ttsSessionNotify: boolean;
+  // 英単語をカタカナ英語に変換してから VOICEVOX に読ませる（docs/24, CP の enkana 前処理）。
+  // ずんだもんの声のまま英語を "それっぽく"（日本語アクセントで）読む。CMU 発音辞書ベースの
+  // 音写なので、定着した和製カタカナ（コーヒー等）ではなく音写（カフィー等）になる。
+  ttsEnglishKana: boolean;
 }
 
 const DEFAULTS: Settings = {
@@ -173,6 +177,7 @@ const DEFAULTS: Settings = {
   ttsVoiceVoicevox: "3",
   ttsSpeed: 1.0,
   ttsSessionNotify: false,
+  ttsEnglishKana: false,
 };
 
 // VOICEVOX ずんだもんのスタイル（speaker 番号 → ラベル）。設定 UI の話者選択に使う。
