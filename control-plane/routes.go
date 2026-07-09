@@ -232,11 +232,12 @@ func registerSSMRoutes(mux *http.ServeMux, cfg config) {
 // Memo queue (docs/21) — per-member notes accumulated across devices, then flushed
 // to a session as one message. Scoped by membership (no workspace build for CRUD).
 func registerMemoRoutes(mux *http.ServeMux, cfg config) {
-	mux.HandleFunc("GET /api/memos", cfg.handleMemosList)
-	mux.HandleFunc("POST /api/memos", cfg.handleMemoCreate)
-	mux.HandleFunc("POST /api/memos/flush", cfg.handleMemoFlush)
-	mux.HandleFunc("PATCH /api/memos/{id}", cfg.handleMemoUpdate)
-	mux.HandleFunc("DELETE /api/memos/{id}", cfg.handleMemoDelete)
+	memo := newMemoAPI(cfg.mgr)
+	mux.HandleFunc("GET /api/memos", memo.withMembership(memo.list))
+	mux.HandleFunc("POST /api/memos", memo.withMembership(memo.create))
+	mux.HandleFunc("POST /api/memos/flush", memo.withResolved(memo.flush))
+	mux.HandleFunc("PATCH /api/memos/{id}", memo.withMembership(memo.update))
+	mux.HandleFunc("DELETE /api/memos/{id}", memo.withMembership(memo.delete))
 }
 
 // Repository ops + source-control view + file browser — proxied to the Workspace
