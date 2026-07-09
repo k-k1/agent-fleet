@@ -349,6 +349,13 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
                 })()
               )}
             </div>
+            {/* Footer under the assistant reply — time + copy, mirroring MirrorView's turn foot. */}
+            {m.role === "assistant" && (
+              <div className="chat-msg-foot">
+                {m.ts > 0 && <span className="cm-time">{formatMsgTS(m.ts)}</span>}
+                <ChatCopyButton text={m.content} />
+              </div>
+            )}
           </div>
         ))}
         {sending && (
@@ -429,6 +436,35 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
         </div>
       </div>
     </div>
+  );
+}
+
+// formatMsgTS renders a unix-millis timestamp as local "MM/DD HH:MM" — same shape as
+// MirrorView's turn footer (date kept so a thread that spans days stays unambiguous).
+function formatMsgTS(ms: number) {
+  const d = new Date(ms);
+  if (isNaN(d.getTime())) return "";
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${p(d.getMonth() + 1)}/${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+// ChatCopyButton copies the reply's RAW Markdown (not the rendered HTML) to the
+// clipboard — same behavior as MirrorView's CopyButton.
+function ChatCopyButton({ text }: { text: string }) {
+  const [done, setDone] = useState(false);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setDone(true);
+      setTimeout(() => setDone(false), 1500);
+    } catch {
+      /* clipboard blocked (insecure context / permission) — no-op */
+    }
+  };
+  return (
+    <button type="button" className="ghost cm-copy" title="Markdown をコピー" onClick={copy}>
+      <Icon name={done ? "check" : "copy"} /> {done ? "コピー済" : "コピー"}
+    </button>
   );
 }
 
