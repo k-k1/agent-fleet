@@ -330,6 +330,9 @@ function InternalRepoRow({
           onKeyDown={(e) => {
             if (e.key === "Enter") commit();
             if (e.key === "Escape") {
+              // Don't let the Esc bubble to the settings modal's document-level
+              // close handler — it should only cancel the rename.
+              e.stopPropagation();
               setEditing(false);
               setDraft(repo.name);
             }

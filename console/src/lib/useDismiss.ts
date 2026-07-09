@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import type { RefObject } from "react";
+import { useEscLayer } from "./escLayer.ts";
 
 // useDismiss: while `open`, close on a mousedown outside `ref` OR an Escape key —
 // the shared dismissal for anchored popovers and menus (account menu, 外観 popover,
@@ -18,19 +19,15 @@ export function useDismiss<T extends HTMLElement>(
 ): void {
   const cb = useRef(onClose);
   cb.current = onClose;
+  // Escape goes through the shared layer stack so a popover open above a modal
+  // closes alone — the modal's own Esc handler stays quiet until the next press.
+  useEscLayer(() => cb.current(), open);
   useEffect(() => {
     if (!open) return;
     const onDown = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) cb.current();
     };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") cb.current();
-    };
     document.addEventListener("mousedown", onDown);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDown);
-      document.removeEventListener("keydown", onKey);
-    };
+    return () => document.removeEventListener("mousedown", onDown);
   }, [ref, open]);
 }

@@ -3,10 +3,11 @@
 // The provider mounts a single dialog and resolves the pending promise when the
 // user chooses. Port of the old ConfirmProvider + ConfirmDialog (merged — the
 // standalone dialog had no other consumer).
-import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { ReactNode, MouseEvent } from "react";
 import { Button } from "./Button.tsx";
+import { useEscLayer } from "../lib/escLayer.ts";
 
 export interface ConfirmOptions {
   title?: ReactNode;
@@ -43,15 +44,9 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
     setReq(null);
   }, []);
 
-  // Escape cancels, matching the native confirm() this replaced.
-  useEffect(() => {
-    if (!req) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") finish(false);
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [req, finish]);
+  // Escape cancels, matching the native confirm() this replaced — layered, so
+  // the modal the confirm was asked from stays open.
+  useEscLayer(() => finish(false), !!req);
 
   return (
     <ConfirmCtx.Provider value={askConfirm}>

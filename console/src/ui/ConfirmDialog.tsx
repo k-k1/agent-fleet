@@ -1,6 +1,7 @@
 import { createPortal } from "react-dom";
 import type { ReactNode, MouseEvent } from "react";
 import { Button } from "./Button.tsx";
+import { useEscLayer } from "../lib/escLayer.ts";
 
 // ConfirmDialog: a small modal for confirming destructive actions (old
 // components/ConfirmDialog). Renders a title, a body (string or nodes), and
@@ -26,6 +27,10 @@ export function ConfirmDialog({
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
+  // Escape cancels (unless the operation is running) — layered, so the dialog
+  // this confirm was opened from stays open.
+  useEscLayer(onCancel, !busy);
+
   // Portal to <body> + ui-confirm-backdrop (higher z-index): callers render this
   // from inside a settings/admin dialog, so an in-tree overlay at the modal
   // z-index could paint behind the dialog it should cover.
