@@ -92,7 +92,7 @@ func (m *manager) tenantsInScope(ctx context.Context, tenantID string) ([]Tenant
 
 // sessionsForOverview returns a workspace's sessions for the admin overview: live
 // from the Agent when running (with a computed Started), else the DB mirror marked
-// stopped/resumable. Mirrors handleSessionsList so the two views agree.
+// stopped/resumable. Mirrors workspaceAPI.sessionsList so the two views agree.
 func (m *manager) sessionsForOverview(ctx context.Context, ws Workspace, rt Runtime, state string) []sessionWire {
 	if state == "running" {
 		if list, err := m.agentSessions(ctx, rt); err == nil {

@@ -60,20 +60,24 @@ func auditActionTarget(r *http.Request) (action, target string, ok bool) {
 	return "", "", false
 }
 
-// proxyAgentREST forwards /api/sessions* to the Workspace Agent's /sessions*.
+// agentProxyAPI は Workspace Agent への素通しプロキシ集（docs/23 残③）。解決は
+// 埋め込みの memberAuth（登録側で withResolved に包む — terminal/WS の tenant 選択
+// が query param なのも tenantSel が吸収し従来の resolvedFor と同一）。依存は
+// a.mgr（conns の activity フック・監査 store）のみ。
+type agentProxyAPI struct{ memberAuth }
+
+func newAgentProxyAPI(m *manager) agentProxyAPI { return agentProxyAPI{memberAuth{m}} }
+
+// rest forwards /api/sessions* to the Workspace Agent's /sessions*.
 // The Control Plane never talks to tmux directly; it delegates to the Agent.
-func (c config) proxyAgentREST(w http.ResponseWriter, r *http.Request) {
-	res, ok := c.resolvedFor(w, r)
-	if !ok {
-		return
-	}
+func (a agentProxyAPI) rest(w http.ResponseWriter, r *http.Request, res *resolved) {
 	rt := res.rt
 	// P3-9: only mutating calls (session input/create, repo clone, connections…)
 	// count as activity. Background GET polling (session list, workspace state)
 	// must NOT keep a workspace warm, or a left-open tab would defeat idle-stop —
 	// real presence is instead signalled by an attached terminal or a busy session.
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-		c.mgr.conns.touch(res.ws.ID)
+		a.mgr.conns.touch(res.ws.ID)
 	}
 	target := rt.Endpoint() + strings.TrimPrefix(r.URL.Path, "/api")
 	if r.URL.RawQuery != "" {
@@ -101,7 +105,7 @@ func (c config) proxyAgentREST(w http.ResponseWriter, r *http.Request) {
 	// the resolved request; best-effort with a detached context so a client disconnect
 	// during the body copy below can't cancel the write.
 	if action, target, ok := auditActionTarget(r); ok && resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		_ = c.mgr.store.InsertAudit(context.Background(), AuditLog{
+		_ = a.mgr.store.InsertAudit(context.Background(), AuditLog{
 			ID: newID(), TenantID: res.ws.TenantID, ActorKind: "user", ActorID: res.ident.ID,
 			Action: action, Target: target, At: nowTS(),
 		})
@@ -116,16 +120,12 @@ func (c config) proxyAgentREST(w http.ResponseWriter, r *http.Request) {
 	_, _ = io.Copy(w, resp.Body)
 }
 
-// proxyAgentStream is proxyAgentREST for a streaming (SSE) endpoint: it forwards to
+// stream is rest for a streaming (SSE) endpoint: it forwards to
 // the Agent and copies the response back FLUSHING after each chunk, so token deltas
 // reach the browser as they arrive instead of buffering in net/http's ~4KB writer.
-func (c config) proxyAgentStream(w http.ResponseWriter, r *http.Request) {
-	res, ok := c.resolvedFor(w, r)
-	if !ok {
-		return
-	}
+func (a agentProxyAPI) stream(w http.ResponseWriter, r *http.Request, res *resolved) {
 	rt := res.rt
-	c.mgr.conns.touch(res.ws.ID) // a chat turn is real activity (POST)
+	a.mgr.conns.touch(res.ws.ID) // a chat turn is real activity (POST)
 	target := rt.Endpoint() + strings.TrimPrefix(r.URL.Path, "/api")
 	if r.URL.RawQuery != "" {
 		target += "?" + r.URL.RawQuery
@@ -171,20 +171,16 @@ func (c config) proxyAgentStream(w http.ResponseWriter, r *http.Request) {
 
 var upgrader = websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
 
-// proxyTerminal bridges the browser terminal WS to the Agent's /ws/pty,
+// terminal bridges the browser terminal WS to the Agent's /ws/pty,
 // relaying frames in both directions while preserving message types
 // (binary = PTY output, text = input/resize control).
-func (c config) proxyTerminal(w http.ResponseWriter, r *http.Request) {
-	res, ok := c.resolvedFor(w, r)
-	if !ok {
-		return
-	}
+func (a agentProxyAPI) terminal(w http.ResponseWriter, r *http.Request, res *resolved) {
 	rt := res.rt
 	// P3-9: an attached terminal keeps the workspace warm and pins its session
 	// (tier 1 won't halt a session someone is watching).
 	session := r.URL.Query().Get("session")
-	c.mgr.conns.addConn(res.ws.ID, session)
-	defer c.mgr.conns.doneConn(res.ws.ID, session)
+	a.mgr.conns.addConn(res.ws.ID, session)
+	defer a.mgr.conns.doneConn(res.ws.ID, session)
 	// No auto-start: opening a terminal must NOT boot a stopped workspace. Otherwise a
 	// mere session click (which opens /ws/pty) would silently revive the whole WS. A
 	// stopped workspace is brought up only by the explicit WORKSPACE Start control;

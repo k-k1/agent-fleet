@@ -66,7 +66,7 @@ func (c config) handleAdminMemberStats(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleAdminMemberSessions (GET /api/admin/tenants/{slug}/members/{key}/sessions)
-// lists a member's sessions (read-only). Mirrors handleSessionsList but keyed by
+// lists a member's sessions (read-only). Mirrors workspaceAPI.sessionsList but keyed by
 // membership: the Agent is authoritative while the container runs (and we refresh
 // the DB mirror); otherwise serve the last mirrored list as stopped.
 func (c config) handleAdminMemberSessions(w http.ResponseWriter, r *http.Request) {
