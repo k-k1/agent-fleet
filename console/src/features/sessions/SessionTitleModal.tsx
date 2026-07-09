@@ -1,21 +1,26 @@
 // SessionTitleModal — manual title edit (⋯ → タイトルを変更). "AIに提案" fetches a
 // candidate via the preview-only /title/suggest endpoint and shows it as a
 // proposal the user applies explicitly — it never clobbers what they typed.
+// The suggest button only renders for kinds with a transcript (claude/codex/
+// opencode) — shell/ssm have no conversation log, so suggestion always failed.
 import { useState } from "react";
 import type { FormEvent } from "react";
 import { Modal } from "../../ui/Modal.tsx";
 import { Button } from "../../ui/Button.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { apiJSON, errText } from "../../core/api/client.ts";
+import { agentOf } from "../../agents/registry.ts";
 
 interface SessionTitleModalProps {
   name: string;
+  kind: string;
   title: string;
   onClose: () => void;
   onSaved: () => void;
 }
 
-export function SessionTitleModal({ name, title, onClose, onSaved }: SessionTitleModalProps) {
+export function SessionTitleModal({ name, kind, title, onClose, onSaved }: SessionTitleModalProps) {
+  const canSuggest = agentOf(kind).caps.transcript;
   const [value, setValue] = useState(title);
   const [saving, setSaving] = useState(false);
   const [suggesting, setSuggesting] = useState(false);
@@ -77,11 +82,13 @@ export function SessionTitleModal({ name, title, onClose, onSaved }: SessionTitl
           />
           <span className="ui-field-hint">未入力のまま保存すると自動命名（リポジトリ名＋日時）に戻ります。</span>
         </label>
-        <div>
-          <Button icon={suggesting ? "loading" : "lightbulb"} onClick={suggest} disabled={busy}>
-            AIに提案してもらう
-          </Button>
-        </div>
+        {canSuggest && (
+          <div>
+            <Button icon={suggesting ? "loading" : "lightbulb"} onClick={suggest} disabled={busy}>
+              AIに提案してもらう
+            </Button>
+          </div>
+        )}
         {proposal && (
           <div className="sm-proposal">
             <span className="sm-proposal-label">提案</span>
