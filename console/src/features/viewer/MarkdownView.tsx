@@ -4,6 +4,7 @@ import DOMPurify from "dompurify";
 import hljs from "highlight.js/lib/common";
 import { dirName, baseName, joinPath, isExternalUrl, slug } from "../../lib/filemeta.ts";
 import { api, downloadURL } from "../../core/api/client.ts";
+import { useSettings } from "../../lib/settings.ts";
 
 // MarkdownView renders Markdown to sanitized HTML, highlights fenced code blocks,
 // turns ```mermaid blocks into rendered diagrams (lazy-loaded), and wires links:
@@ -21,6 +22,16 @@ interface MarkdownViewProps {
 
 export function MarkdownView({ source, basePath = "", breaks = false, onOpenFile, onOpenDir }: MarkdownViewProps) {
   const ref = useRef<HTMLDivElement>(null);
+  // Follow the app theme so mermaid diagrams re-render in matching colors.
+  const theme = useSettings().theme === "light" ? "light" : "dark";
+  // Callers pass inline arrow callbacks (new identity every render), and panes
+  // re-render on hover/focus — keep the latest callbacks in refs so the render
+  // effect doesn't depend on them. Otherwise every pane hover re-parsed the whole
+  // document and re-rendered mermaid async, making the preview width flap.
+  const onOpenFileRef = useRef(onOpenFile);
+  const onOpenDirRef = useRef(onOpenDir);
+  onOpenFileRef.current = onOpenFile;
+  onOpenDirRef.current = onOpenDir;
 
   useEffect(() => {
     const el = ref.current;
@@ -37,7 +48,12 @@ export function MarkdownView({ source, basePath = "", breaks = false, onOpenFile
       if (!h.id) h.id = slug(h.textContent || "");
     });
 
-    wireLinks(el, basePath, onOpenFile, onOpenDir);
+    wireLinks(
+      el,
+      basePath,
+      (p) => onOpenFileRef.current?.(p),
+      (p) => onOpenDirRef.current?.(p),
+    );
     wireImages(el, basePath);
 
     // VS Code-style sticky headings: when this markdown is inside a scroll container
@@ -63,7 +79,11 @@ export function MarkdownView({ source, basePath = "", breaks = false, onOpenFile
     if (blocks.length) {
       import("mermaid").then(({ default: mermaid }) => {
         if (!alive) return;
-        mermaid.initialize({ startOnLoad: false, theme: "dark", securityLevel: "strict" });
+        mermaid.initialize({
+          startOnLoad: false,
+          theme: theme === "light" ? "default" : "dark",
+          securityLevel: "strict",
+        });
         blocks.forEach(async (code) => {
           const src = code.textContent || "";
           const id = "mmd-" + ++mermaidSeq;
@@ -85,7 +105,7 @@ export function MarkdownView({ source, basePath = "", breaks = false, onOpenFile
       alive = false;
       stickyCleanup();
     };
-  }, [source, basePath, breaks, onOpenFile]);
+  }, [source, basePath, breaks, theme]);
 
   return <div className="markdown" ref={ref} />;
 }
