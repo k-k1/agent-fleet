@@ -357,7 +357,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
             <div className="chat-role">{agent?.assistantName || "アシスタント"}</div>
             <div className="chat-body">
               {streamText ? (
-                <div className="chat-text chat-streaming">{streamText}</div>
+                <StreamingMarkdown text={streamText} />
               ) : (
                 <span className="chat-thinking">
                   <Icon name="loading" spin /> 考え中…
@@ -431,6 +431,40 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
       </div>
     </div>
   );
+}
+
+// StreamingMarkdown renders the live-accumulating reply as Markdown, throttled to one
+// re-render per ~120ms — per-delta would re-parse and innerHTML-swap the whole bubble on
+// every SSE chunk (killing text selection, wasting CPU). Trailing updates are always
+// flushed, so the shown text never lags more than one window behind the stream.
+const STREAM_RENDER_MS = 120;
+function StreamingMarkdown({ text }: { text: string }) {
+  const [shown, setShown] = useState(text);
+  const lastRef = useRef(0); // when we last flushed
+  const timerRef = useRef<number | null>(null);
+  const textRef = useRef(text); // latest text, for the trailing flush
+  textRef.current = text;
+  useEffect(() => {
+    const due = lastRef.current + STREAM_RENDER_MS;
+    const now = Date.now();
+    if (now >= due) {
+      lastRef.current = now;
+      setShown(text);
+    } else if (timerRef.current == null) {
+      timerRef.current = window.setTimeout(() => {
+        timerRef.current = null;
+        lastRef.current = Date.now();
+        setShown(textRef.current);
+      }, due - now);
+    }
+  }, [text]);
+  useEffect(
+    () => () => {
+      if (timerRef.current != null) clearTimeout(timerRef.current);
+    },
+    [],
+  );
+  return <MarkdownView source={shown} breaks streaming />;
 }
 
 // formatMsgTS renders a unix-millis timestamp as local "MM/DD HH:MM" — same shape as

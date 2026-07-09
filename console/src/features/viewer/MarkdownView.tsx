@@ -16,11 +16,24 @@ interface MarkdownViewProps {
   source?: string;
   basePath?: string;
   breaks?: boolean; // treat a single newline as <br> (chat prompts keep their line breaks)
+  // Lightweight mode for a live-accumulating source (a streaming chat reply): the effect
+  // re-runs on every delta, so only parse + sanitize + highlight run — mermaid (would
+  // render half-written diagrams over and over), link/image wiring and per-block copy
+  // buttons are skipped; the finished message re-renders through the full path anyway.
+  // A blinking caret marks the tail of the last block.
+  streaming?: boolean;
   onOpenFile?: (path: string) => void;
   onOpenDir?: (path: string) => void; // a relative link to a directory → reveal in FILES
 }
 
-export function MarkdownView({ source, basePath = "", breaks = false, onOpenFile, onOpenDir }: MarkdownViewProps) {
+export function MarkdownView({
+  source,
+  basePath = "",
+  breaks = false,
+  streaming = false,
+  onOpenFile,
+  onOpenDir,
+}: MarkdownViewProps) {
   const ref = useRef<HTMLDivElement>(null);
   // Follow the app theme so mermaid diagrams re-render in matching colors.
   const theme = useSettings().theme === "light" ? "light" : "dark";
@@ -42,6 +55,20 @@ export function MarkdownView({ source, basePath = "", breaks = false, onOpenFile
     el.innerHTML = DOMPurify.sanitize(rawHtml);
 
     renderEmoji(el); // :shortcode: → emoji (skips code / pre)
+
+    if (streaming) {
+      el.querySelectorAll<HTMLElement>("pre > code").forEach((code) => {
+        if (code.classList.contains("language-mermaid")) return; // leave as plain source
+        try {
+          hljs.highlightElement(code);
+        } catch {}
+      });
+      const caret = document.createElement("span");
+      caret.className = "md-stream-caret";
+      caret.textContent = "▍";
+      (el.lastElementChild ?? el).appendChild(caret);
+      return;
+    }
 
     // Give headings slug ids so in-page #anchors can resolve.
     el.querySelectorAll("h1,h2,h3,h4,h5,h6").forEach((h) => {
@@ -105,7 +132,7 @@ export function MarkdownView({ source, basePath = "", breaks = false, onOpenFile
       alive = false;
       stickyCleanup();
     };
-  }, [source, basePath, breaks, theme]);
+  }, [source, basePath, breaks, streaming, theme]);
 
   return <div className="markdown" ref={ref} />;
 }

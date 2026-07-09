@@ -703,6 +703,17 @@
   color: var(--ok, #4ec97a);
   opacity: 1;
 }
+/* Blinking caret at the tail of a streaming render (MarkdownView streaming mode). */
+.markdown .md-stream-caret {
+  margin-left: 1px;
+  color: var(--muted);
+  animation: md-stream-caret 1s steps(1) infinite;
+}
+@keyframes md-stream-caret {
+  50% {
+    opacity: 0;
+  }
+}
 .markdown pre code {
   background: none;
   border: none;
