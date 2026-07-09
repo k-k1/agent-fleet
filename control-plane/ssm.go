@@ -66,7 +66,7 @@ func hostToDTO(h SSMHost) ssmHostDTO {
 }
 
 // membershipFor resolves the caller's identity + active membership without building a
-// workspace (lightweight per-member CRUD). 401/403/409 mirror resolvedFor.
+// workspace (lightweight per-member CRUD). 401/403/409 mirror withResolved.
 // 残ユーザーは internal_git*.go のみ（docs/23 残③ Batch 1 時点）。ssm/memo は
 // memberAuth.withMembership（httpapi.go）へ移行済み。
 func (c config) membershipFor(w http.ResponseWriter, r *http.Request) (Identity, MembershipView, bool) {
@@ -314,7 +314,8 @@ func ssmProfileName(label string) string {
 // coordinates. The client only sends {name, kind:"ssm", ssm_host_id}; the host's
 // instance/document/region and SSO config stay authoritative in the CP DB and
 // ownership is enforced here. Non-ssm requests pass through untouched.
-func (c config) rewriteSSMCreate(ctx context.Context, res *resolved, r *http.Request) *apiError {
+// 呼び手は workspaceAPI.sessionCreate のみなので receiver も workspaceAPI（docs/23 残③）。
+func (a workspaceAPI) rewriteSSMCreate(ctx context.Context, res *resolved, r *http.Request) *apiError {
 	var peek struct {
 		Name          string `json:"name"`
 		Title         string `json:"title"`
@@ -337,14 +338,14 @@ func (c config) rewriteSSMCreate(ctx context.Context, res *resolved, r *http.Req
 	if peek.SSMHostID == "" {
 		return &apiError{http.StatusBadRequest, "bad_request", "ssm_host_id is required for kind=ssm"}
 	}
-	h, found, err := c.mgr.store.GetSSMHost(ctx, peek.SSMHostID)
+	h, found, err := a.mgr.store.GetSSMHost(ctx, peek.SSMHostID)
 	if err != nil {
 		return internalErr(err)
 	}
 	if !found || h.MembershipID != res.mv.MembershipID {
 		return &apiError{http.StatusNotFound, "not_found", "ssm host not found"}
 	}
-	p, pok, err := c.mgr.store.GetSSMProfile(ctx, h.ProfileID)
+	p, pok, err := a.mgr.store.GetSSMProfile(ctx, h.ProfileID)
 	if err != nil {
 		return internalErr(err)
 	}
@@ -377,7 +378,7 @@ func (c config) rewriteSSMCreate(ctx context.Context, res *resolved, r *http.Req
 	}
 	restoreBody(r, nb)
 	// Record the intent (no secrets: instance + document + actor). Best-effort.
-	_ = c.mgr.store.InsertAudit(ctx, AuditLog{
+	_ = a.mgr.store.InsertAudit(ctx, AuditLog{
 		ID: newID(), TenantID: res.ws.TenantID, ActorKind: "user", ActorID: res.ident.ID,
 		Action: "ssm.start_session", Target: h.InstanceID,
 		Detail: "alias=" + h.Alias + " document=" + h.DocumentName, At: nowTS(),

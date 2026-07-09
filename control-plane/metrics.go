@@ -196,11 +196,10 @@ func containerStats(ctx context.Context, name string) map[string]any {
 	return out
 }
 
-func (c config) handleWorkspaceStats(w http.ResponseWriter, r *http.Request) {
-	rt, ok := c.rtFor(w, r)
-	if !ok {
-		return
-	}
+// stats serves the own-workspace resource chip（docs/23 残③: workspaceAPI の
+// メソッドとして登録側で withResolved に包む）.
+func (a workspaceAPI) stats(w http.ResponseWriter, r *http.Request, res *resolved) {
+	rt := res.rt
 	writeJSON(w, http.StatusOK, containerStats(r.Context(), rt.Name()))
 }
 

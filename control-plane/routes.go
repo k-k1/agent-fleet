@@ -92,7 +92,7 @@ func registerAuthRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("GET /oauth2/logout", cfg.handleOAuthLogout)
 	// Identity — who the AuthGateway resolved this request to (and the raw
 	// gateway headers, for verifying the oauth2-proxy -> Caddy -> CP chain).
-	mux.HandleFunc("GET /api/whoami", cfg.handleWhoami)
+	mux.HandleFunc("GET /api/whoami", newWorkspaceAPI(cfg.mgr, cfg.autostart).whoami)
 }
 
 // Tenants — the caller's memberships (Console picker) + admin API + egress
@@ -149,71 +149,79 @@ func registerMCPRoutes(mux *http.ServeMux, cfg config) {
 
 // Workspace lifecycle (Runtime port).
 func registerWorkspaceRoutes(mux *http.ServeMux, cfg config) {
-	mux.HandleFunc("GET /api/workspace", cfg.handleWorkspaceGet)
-	mux.HandleFunc("POST /api/workspace/start", cfg.handleWorkspaceStart)
-	mux.HandleFunc("POST /api/workspace/stop", cfg.handleWorkspaceStop)
-	mux.HandleFunc("POST /api/workspace/recreate", cfg.handleWorkspaceRecreate)
+	ws := newWorkspaceAPI(cfg.mgr, cfg.autostart)
+	mux.HandleFunc("GET /api/workspace", ws.withResolved(ws.get))
+	mux.HandleFunc("POST /api/workspace/start", ws.withResolved(ws.start))
+	mux.HandleFunc("POST /api/workspace/stop", ws.withResolved(ws.stop))
+	mux.HandleFunc("POST /api/workspace/recreate", ws.withResolved(ws.recreate))
 	// Own-workspace resource chip (mem / CPU vs quota) — host-read cgroup, all users.
-	mux.HandleFunc("GET /api/workspace/stats", cfg.handleWorkspaceStats)
+	mux.HandleFunc("GET /api/workspace/stats", ws.withResolved(ws.stats))
 }
 
 // Session ops — proxied to the Workspace Agent.
 func registerSessionRoutes(mux *http.ServeMux, cfg config) {
-	mux.HandleFunc("GET /api/sessions", cfg.handleSessionsList)
-	mux.HandleFunc("POST /api/sessions", cfg.handleSessionCreate)
-	mux.HandleFunc("POST /api/sessions/{name}/fork", cfg.handleSessionFork)
-	mux.HandleFunc("POST /api/sessions/{name}/stop", cfg.proxyAgentREST)
-	mux.HandleFunc("POST /api/sessions/{name}/halt", cfg.proxyAgentREST)
-	mux.HandleFunc("POST /api/sessions/{name}/recreate", cfg.proxyAgentREST)
-	mux.HandleFunc("GET /api/sessions/archived", cfg.proxyAgentREST)
-	mux.HandleFunc("POST /api/sessions/{name}/archive", cfg.proxyAgentREST)
-	mux.HandleFunc("POST /api/sessions/{name}/restore", cfg.proxyAgentREST)
+	ws := newWorkspaceAPI(cfg.mgr, cfg.autostart)
+	proxy := newAgentProxyAPI(cfg.mgr)
+	rest := proxy.withResolved(proxy.rest)
+	mux.HandleFunc("GET /api/sessions", ws.withResolved(ws.sessionsList))
+	mux.HandleFunc("POST /api/sessions", ws.withResolved(ws.sessionCreate))
+	mux.HandleFunc("POST /api/sessions/{name}/fork", ws.withResolved(ws.sessionFork))
+	mux.HandleFunc("POST /api/sessions/{name}/stop", rest)
+	mux.HandleFunc("POST /api/sessions/{name}/halt", rest)
+	mux.HandleFunc("POST /api/sessions/{name}/recreate", rest)
+	mux.HandleFunc("GET /api/sessions/archived", rest)
+	mux.HandleFunc("POST /api/sessions/{name}/archive", rest)
+	mux.HandleFunc("POST /api/sessions/{name}/restore", rest)
 	// Programmatic drive I/O (docs/0006 P3-6 E) — proxied to the Agent. Also used
 	// by the MCP tools, which call the Agent directly via the resolved runtime.
-	mux.HandleFunc("POST /api/sessions/{name}/input", cfg.proxyAgentREST)
-	mux.HandleFunc("POST /api/sessions/{name}/paste-image", cfg.proxyAgentREST)
-	mux.HandleFunc("GET /api/sessions/{name}/pasted/{file}", cfg.proxyAgentREST)
-	mux.HandleFunc("GET /api/sessions/{name}/status", cfg.proxyAgentREST)
-	mux.HandleFunc("GET /api/sessions/{name}/output", cfg.proxyAgentREST)
+	mux.HandleFunc("POST /api/sessions/{name}/input", rest)
+	mux.HandleFunc("POST /api/sessions/{name}/paste-image", rest)
+	mux.HandleFunc("GET /api/sessions/{name}/pasted/{file}", rest)
+	mux.HandleFunc("GET /api/sessions/{name}/status", rest)
+	mux.HandleFunc("GET /api/sessions/{name}/output", rest)
 	// SSM login status polled by the New Session modal (docs/history/p3-ssm-session.md)
 	// — surfaces the device-auth URL and the "ready" transition without attaching yet.
-	mux.HandleFunc("GET /api/sessions/{name}/ssm-login", cfg.proxyAgentREST)
-	mux.HandleFunc("POST /api/sessions/{name}/start", cfg.handleSessionStart)
+	mux.HandleFunc("GET /api/sessions/{name}/ssm-login", rest)
+	mux.HandleFunc("POST /api/sessions/{name}/start", ws.withResolved(ws.sessionStart))
 	// Structured transcript for the Console chat view (case-A).
-	mux.HandleFunc("GET /api/sessions/{name}/messages", cfg.proxyAgentREST)
+	mux.HandleFunc("GET /api/sessions/{name}/messages", rest)
 	// Auto session-title suggestion accept/dismiss (session_title.go, Agent-side).
-	mux.HandleFunc("POST /api/sessions/{name}/title/accept", cfg.proxyAgentREST)
-	mux.HandleFunc("POST /api/sessions/{name}/title/dismiss", cfg.proxyAgentREST)
-	mux.HandleFunc("POST /api/sessions/{name}/title/regenerate", cfg.proxyAgentREST)
-	mux.HandleFunc("POST /api/sessions/{name}/title/suggest", cfg.proxyAgentREST)
-	mux.HandleFunc("POST /api/sessions/{name}/title/set", cfg.proxyAgentREST)
-	mux.HandleFunc("POST /api/sessions/{name}/suggest-branch", cfg.proxyAgentREST) // LLM branch-name suggestion (this session's convo)
-	mux.HandleFunc("POST /api/sessions/{name}/rename-branch", cfg.proxyAgentREST)  // worktree deferred-naming: git branch -m
+	mux.HandleFunc("POST /api/sessions/{name}/title/accept", rest)
+	mux.HandleFunc("POST /api/sessions/{name}/title/dismiss", rest)
+	mux.HandleFunc("POST /api/sessions/{name}/title/regenerate", rest)
+	mux.HandleFunc("POST /api/sessions/{name}/title/suggest", rest)
+	mux.HandleFunc("POST /api/sessions/{name}/title/set", rest)
+	mux.HandleFunc("POST /api/sessions/{name}/suggest-branch", rest) // LLM branch-name suggestion (this session's convo)
+	mux.HandleFunc("POST /api/sessions/{name}/rename-branch", rest)  // worktree deferred-naming: git branch -m
 }
 
 // Assistant chat (docs/19) — headless-CLI LLM chat/translation, proxied to the
 // Agent verbatim (kind-agnostic; non-streaming, so the plain REST proxy suffices).
 func registerChatRoutes(mux *http.ServeMux, cfg config) {
-	mux.HandleFunc("GET /api/chat/conversations", cfg.proxyAgentREST)
-	mux.HandleFunc("POST /api/chat/conversations", cfg.proxyAgentREST)
-	mux.HandleFunc("GET /api/chat/conversations/{id}", cfg.proxyAgentREST)
-	mux.HandleFunc("PATCH /api/chat/conversations/{id}", cfg.proxyAgentREST)
-	mux.HandleFunc("DELETE /api/chat/conversations/{id}", cfg.proxyAgentREST)
-	mux.HandleFunc("POST /api/chat/conversations/{id}/messages", cfg.proxyAgentREST)
-	mux.HandleFunc("POST /api/chat/conversations/{id}/stream", cfg.proxyAgentStream) // SSE (Phase B)
-	mux.HandleFunc("POST /api/chat/conversations/{id}/paste-image", cfg.proxyAgentREST)
-	mux.HandleFunc("GET /api/chat/conversations/{id}/pasted/{file}", cfg.proxyAgentREST)
+	proxy := newAgentProxyAPI(cfg.mgr)
+	rest := proxy.withResolved(proxy.rest)
+	mux.HandleFunc("GET /api/chat/conversations", rest)
+	mux.HandleFunc("POST /api/chat/conversations", rest)
+	mux.HandleFunc("GET /api/chat/conversations/{id}", rest)
+	mux.HandleFunc("PATCH /api/chat/conversations/{id}", rest)
+	mux.HandleFunc("DELETE /api/chat/conversations/{id}", rest)
+	mux.HandleFunc("POST /api/chat/conversations/{id}/messages", rest)
+	mux.HandleFunc("POST /api/chat/conversations/{id}/stream", proxy.withResolved(proxy.stream)) // SSE (Phase B)
+	mux.HandleFunc("POST /api/chat/conversations/{id}/paste-image", rest)
+	mux.HandleFunc("GET /api/chat/conversations/{id}/pasted/{file}", rest)
 	// One-shot advisory turn (docs/21 メモ整理) — stateless, tools off. Proxied verbatim.
-	mux.HandleFunc("POST /api/chat/ask", cfg.proxyAgentREST)
+	mux.HandleFunc("POST /api/chat/ask", rest)
 }
 
 // Assistant templates (docs/19 Q2) — configurable chat personas, proxied verbatim.
 func registerAssistantRoutes(mux *http.ServeMux, cfg config) {
-	mux.HandleFunc("GET /api/assistants", cfg.proxyAgentREST)
-	mux.HandleFunc("POST /api/assistants", cfg.proxyAgentREST)
-	mux.HandleFunc("GET /api/assistants/{id}", cfg.proxyAgentREST)
-	mux.HandleFunc("PUT /api/assistants/{id}", cfg.proxyAgentREST)
-	mux.HandleFunc("DELETE /api/assistants/{id}", cfg.proxyAgentREST)
+	proxy := newAgentProxyAPI(cfg.mgr)
+	rest := proxy.withResolved(proxy.rest)
+	mux.HandleFunc("GET /api/assistants", rest)
+	mux.HandleFunc("POST /api/assistants", rest)
+	mux.HandleFunc("GET /api/assistants/{id}", rest)
+	mux.HandleFunc("PUT /api/assistants/{id}", rest)
+	mux.HandleFunc("DELETE /api/assistants/{id}", rest)
 }
 
 // SSM login config (docs/history/p3-ssm-session.md) — per-member profiles (common
@@ -245,91 +253,97 @@ func registerMemoRoutes(mux *http.ServeMux, cfg config) {
 // Repository ops + source-control view + file browser — proxied to the Workspace
 // Agent (/api stripped -> /repos*, /git/identity, /fs/*).
 func registerRepoFSRoutes(mux *http.ServeMux, cfg config) {
-	mux.HandleFunc("GET /api/repos", cfg.proxyAgentREST)
-	mux.HandleFunc("POST /api/repos", cfg.proxyAgentREST)
-	mux.HandleFunc("DELETE /api/repos/{name}", cfg.proxyAgentREST)
-	mux.HandleFunc("GET /api/repos/{name}/status", cfg.proxyAgentREST)
-	mux.HandleFunc("GET /api/repos/{name}/branches", cfg.proxyAgentREST)
-	mux.HandleFunc("POST /api/repos/{name}/checkout", cfg.proxyAgentREST)
-	mux.HandleFunc("POST /api/repos/{name}/fetch", cfg.proxyAgentREST)
-	mux.HandleFunc("POST /api/repos/{name}/ff", cfg.proxyAgentREST)
+	proxy := newAgentProxyAPI(cfg.mgr)
+	rest := proxy.withResolved(proxy.rest)
+	mux.HandleFunc("GET /api/repos", rest)
+	mux.HandleFunc("POST /api/repos", rest)
+	mux.HandleFunc("DELETE /api/repos/{name}", rest)
+	mux.HandleFunc("GET /api/repos/{name}/status", rest)
+	mux.HandleFunc("GET /api/repos/{name}/branches", rest)
+	mux.HandleFunc("POST /api/repos/{name}/checkout", rest)
+	mux.HandleFunc("POST /api/repos/{name}/fetch", rest)
+	mux.HandleFunc("POST /api/repos/{name}/ff", rest)
 	// Launch prompt templates (repo 起動 modal) — proxied to the Agent.
-	mux.HandleFunc("GET /api/repos/{name}/prompt-templates", cfg.proxyAgentREST)
+	mux.HandleFunc("GET /api/repos/{name}/prompt-templates", rest)
 	// Source-control view + light edits (docs/17 P3-5) — proxied to the Agent.
-	mux.HandleFunc("GET /api/repos/{name}/changes", cfg.proxyAgentREST)
-	mux.HandleFunc("GET /api/repos/{name}/diff", cfg.proxyAgentREST)
-	mux.HandleFunc("GET /api/repos/{name}/log", cfg.proxyAgentREST)
-	mux.HandleFunc("GET /api/repos/{name}/graph", cfg.proxyAgentREST)
-	mux.HandleFunc("GET /api/repos/{name}/show", cfg.proxyAgentREST)
-	mux.HandleFunc("POST /api/repos/{name}/stage", cfg.proxyAgentREST)
-	mux.HandleFunc("POST /api/repos/{name}/unstage", cfg.proxyAgentREST)
-	mux.HandleFunc("POST /api/repos/{name}/discard", cfg.proxyAgentREST)
-	mux.HandleFunc("POST /api/repos/{name}/commit", cfg.proxyAgentREST)
-	mux.HandleFunc("GET /api/repos/{name}/identity", cfg.proxyAgentREST)
-	mux.HandleFunc("PUT /api/repos/{name}/identity", cfg.proxyAgentREST)
-	mux.HandleFunc("GET /api/git/identity", cfg.proxyAgentREST)
-	mux.HandleFunc("PUT /api/git/identity", cfg.proxyAgentREST)
+	mux.HandleFunc("GET /api/repos/{name}/changes", rest)
+	mux.HandleFunc("GET /api/repos/{name}/diff", rest)
+	mux.HandleFunc("GET /api/repos/{name}/log", rest)
+	mux.HandleFunc("GET /api/repos/{name}/graph", rest)
+	mux.HandleFunc("GET /api/repos/{name}/show", rest)
+	mux.HandleFunc("POST /api/repos/{name}/stage", rest)
+	mux.HandleFunc("POST /api/repos/{name}/unstage", rest)
+	mux.HandleFunc("POST /api/repos/{name}/discard", rest)
+	mux.HandleFunc("POST /api/repos/{name}/commit", rest)
+	mux.HandleFunc("GET /api/repos/{name}/identity", rest)
+	mux.HandleFunc("PUT /api/repos/{name}/identity", rest)
+	mux.HandleFunc("GET /api/git/identity", rest)
+	mux.HandleFunc("PUT /api/git/identity", rest)
 	// File browser (docs/17 P3-5 段2) — proxied to the Agent.
-	mux.HandleFunc("GET /api/fs/tree", cfg.proxyAgentREST)
-	mux.HandleFunc("GET /api/fs/file", cfg.proxyAgentREST)
-	mux.HandleFunc("GET /api/fs/download", cfg.proxyAgentREST)
-	mux.HandleFunc("POST /api/fs/upload", cfg.proxyAgentREST)
-	mux.HandleFunc("GET /api/fs/changes", cfg.proxyAgentREST)
-	mux.HandleFunc("GET /api/fs/linemarks", cfg.proxyAgentREST)
-	mux.HandleFunc("POST /api/fs/mkdir", cfg.proxyAgentREST)
-	mux.HandleFunc("POST /api/fs/newfile", cfg.proxyAgentREST)
-	mux.HandleFunc("POST /api/fs/rename", cfg.proxyAgentREST)
-	mux.HandleFunc("DELETE /api/fs/delete", cfg.proxyAgentREST)
+	mux.HandleFunc("GET /api/fs/tree", rest)
+	mux.HandleFunc("GET /api/fs/file", rest)
+	mux.HandleFunc("GET /api/fs/download", rest)
+	mux.HandleFunc("POST /api/fs/upload", rest)
+	mux.HandleFunc("GET /api/fs/changes", rest)
+	mux.HandleFunc("GET /api/fs/linemarks", rest)
+	mux.HandleFunc("POST /api/fs/mkdir", rest)
+	mux.HandleFunc("POST /api/fs/newfile", rest)
+	mux.HandleFunc("POST /api/fs/rename", rest)
+	mux.HandleFunc("DELETE /api/fs/delete", rest)
 }
 
 // Per-CLI settings/usage + toolchains + UI prefs — mostly proxied to the Agent;
 // ws-settings is CP-owned (editable while stopped; applied at start).
 func registerAgentEnvRoutes(mux *http.ServeMux, cfg config) {
+	proxy := newAgentProxyAPI(cfg.mgr)
+	rest := proxy.withResolved(proxy.rest)
 	// Claude settings (Remote Control / notifications / RTK) — proxied to the Agent.
-	mux.HandleFunc("GET /api/claude/settings", cfg.proxyAgentREST)
-	mux.HandleFunc("PUT /api/claude/settings", cfg.proxyAgentREST)
-	mux.HandleFunc("GET /api/claude/usage", cfg.proxyAgentREST)
-	mux.HandleFunc("GET /api/codex/usage", cfg.proxyAgentREST)
+	mux.HandleFunc("GET /api/claude/settings", rest)
+	mux.HandleFunc("PUT /api/claude/settings", rest)
+	mux.HandleFunc("GET /api/claude/usage", rest)
+	mux.HandleFunc("GET /api/codex/usage", rest)
 	// codex / opencode rtk toggle — proxied to the Agent.
-	mux.HandleFunc("GET /api/agents/rtk", cfg.proxyAgentREST)
-	mux.HandleFunc("PUT /api/agents/rtk", cfg.proxyAgentREST)
+	mux.HandleFunc("GET /api/agents/rtk", rest)
+	mux.HandleFunc("PUT /api/agents/rtk", rest)
 	// Toolchain selection (node / java) — proxied to the Agent.
-	mux.HandleFunc("GET /api/env/toolchains", cfg.proxyAgentREST)
-	mux.HandleFunc("PUT /api/env/toolchains", cfg.proxyAgentREST)
+	mux.HandleFunc("GET /api/env/toolchains", rest)
+	mux.HandleFunc("PUT /api/env/toolchains", rest)
 	// CP-owned per-workspace settings (editable while stopped; applied at start).
 	wss := newWSSettingsAPI(cfg.mgr)
 	mux.HandleFunc("GET /api/env/ws-settings", wss.withResolved(wss.get))
 	mux.HandleFunc("PUT /api/env/ws-settings", wss.withResolved(wss.put))
 	// Per-user UI preferences (Console display settings) — proxied to the Agent.
-	mux.HandleFunc("GET /api/env/ui-prefs", cfg.proxyAgentREST)
-	mux.HandleFunc("PUT /api/env/ui-prefs", cfg.proxyAgentREST)
+	mux.HandleFunc("GET /api/env/ui-prefs", rest)
+	mux.HandleFunc("PUT /api/env/ui-prefs", rest)
 }
 
 // Connections ops — proxied to the Workspace Agent (/api stripped), except the
 // Bitbucket OAuth code grant whose public callback the CP owns.
 func registerConnectionRoutes(mux *http.ServeMux, cfg config) {
-	mux.HandleFunc("GET /api/connections", cfg.proxyAgentREST)
-	mux.HandleFunc("GET /api/connections/git/{host}/repos", cfg.proxyAgentREST)
-	mux.HandleFunc("GET /api/connections/git/{host}/branches", cfg.proxyAgentREST)
-	mux.HandleFunc("PUT /api/connections/git/{host}", cfg.proxyAgentREST)
-	mux.HandleFunc("PUT /api/connections/git/{host}/identity", cfg.proxyAgentREST)
-	mux.HandleFunc("DELETE /api/connections/git/{host}", cfg.proxyAgentREST)
-	mux.HandleFunc("POST /api/connections/git/github/oauth/start", cfg.proxyAgentREST)
-	mux.HandleFunc("POST /api/connections/git/github/oauth/poll", cfg.proxyAgentREST)
+	proxy := newAgentProxyAPI(cfg.mgr)
+	rest := proxy.withResolved(proxy.rest)
+	mux.HandleFunc("GET /api/connections", rest)
+	mux.HandleFunc("GET /api/connections/git/{host}/repos", rest)
+	mux.HandleFunc("GET /api/connections/git/{host}/branches", rest)
+	mux.HandleFunc("PUT /api/connections/git/{host}", rest)
+	mux.HandleFunc("PUT /api/connections/git/{host}/identity", rest)
+	mux.HandleFunc("DELETE /api/connections/git/{host}", rest)
+	mux.HandleFunc("POST /api/connections/git/github/oauth/start", rest)
+	mux.HandleFunc("POST /api/connections/git/github/oauth/poll", rest)
 	// Bitbucket OAuth — CP-native (owns the public callback), not proxied.
 	mux.HandleFunc("GET /api/connections/git/bitbucket/oauth/start", cfg.handleBitbucketOAuthStart)
 	mux.HandleFunc("GET /api/oauth/bitbucket/callback", cfg.handleBitbucketOAuthCallback)
-	mux.HandleFunc("POST /api/connections/claude/start", cfg.proxyAgentREST)
-	mux.HandleFunc("POST /api/connections/claude/complete", cfg.proxyAgentREST)
-	mux.HandleFunc("DELETE /api/connections/claude", cfg.proxyAgentREST)
-	mux.HandleFunc("PUT /api/connections/opencode", cfg.proxyAgentREST)
-	mux.HandleFunc("DELETE /api/connections/opencode/{env}", cfg.proxyAgentREST)
+	mux.HandleFunc("POST /api/connections/claude/start", rest)
+	mux.HandleFunc("POST /api/connections/claude/complete", rest)
+	mux.HandleFunc("DELETE /api/connections/claude", rest)
+	mux.HandleFunc("PUT /api/connections/opencode", rest)
+	mux.HandleFunc("DELETE /api/connections/opencode/{env}", rest)
 	// Codex auth — proxied to the Agent (codex owns auth.json; no public callback,
 	// device-auth polls OpenAI from inside the container).
-	mux.HandleFunc("POST /api/connections/codex/api-key", cfg.proxyAgentREST)
-	mux.HandleFunc("POST /api/connections/codex/device/start", cfg.proxyAgentREST)
-	mux.HandleFunc("POST /api/connections/codex/device/poll", cfg.proxyAgentREST)
-	mux.HandleFunc("DELETE /api/connections/codex", cfg.proxyAgentREST)
+	mux.HandleFunc("POST /api/connections/codex/api-key", rest)
+	mux.HandleFunc("POST /api/connections/codex/device/start", rest)
+	mux.HandleFunc("POST /api/connections/codex/device/poll", rest)
+	mux.HandleFunc("DELETE /api/connections/codex", rest)
 }
 
 // Internal git provider (docs/reference/internal-git-provider, ADR 0010).
@@ -368,9 +382,11 @@ func registerInternalGitRoutes(mux *http.ServeMux, cfg config) {
 // /proxy/{port}. The redirect adds the trailing slash so the app resolves
 // relative assets under the path.
 func registerTerminalPreviewRoutes(mux *http.ServeMux, cfg config) {
-	mux.HandleFunc("GET /ws/terminal", cfg.proxyTerminal)
-	mux.HandleFunc("/preview/{port}", cfg.handlePreviewRedirect)
-	mux.HandleFunc("/preview/{port}/{rest...}", cfg.handlePreview)
+	proxy := newAgentProxyAPI(cfg.mgr)
+	pv := newPreviewAPI(cfg.mgr, cfg.publicBaseURL)
+	mux.HandleFunc("GET /ws/terminal", proxy.withResolved(proxy.terminal))
+	mux.HandleFunc("/preview/{port}", pv.redirect)
+	mux.HandleFunc("/preview/{port}/{rest...}", pv.withResolved(pv.proxy))
 }
 
 // Legacy path compatibility: the deployment used to be served under
