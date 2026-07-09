@@ -125,7 +125,7 @@ type Meta struct {
 	StoppedAt string `json:"stoppedAt"` // RFC3339, set lazily when first seen exited; "" while live
 	Archived  bool   `json:"archived"`  // true = hidden from the active list, restorable (jsonl kept)
 	// ForkFrom is the SOURCE session's sid this session was forked from (claude
-	// only). It only affects the FIRST launch: buildSessionProgram then runs
+	// only). It only affects the FIRST launch: claude 縦割りの buildProgram then runs
 	// `claude --resume <ForkFrom> --fork-session --session-id <ownsid>`, which copies
 	// the source history into this session's own jsonl. Once that jsonl exists,
 	// later launches resume normally and ForkFrom is ignored — so a restart never

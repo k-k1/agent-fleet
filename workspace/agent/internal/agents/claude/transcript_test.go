@@ -1,4 +1,4 @@
-package main
+package claude
 
 import (
 	"testing"
@@ -25,7 +25,7 @@ func TestCollectTurnsWindow(t *testing.T) {
 	}
 	lines := toLines(user("u0"), asst("a1"), user("u2"), asst("a3"), user("u4"))
 
-	got := collectTurns(lines, 2, 5) // window [2,5): u2, a3, u4
+	got := CollectTurns(lines, 2, 5) // window [2,5): u2, a3, u4
 	wantIdx := []int{2, 3, 4}
 	wantText := []string{"u2", "a3", "u4"}
 	if len(got) != 3 {
@@ -37,7 +37,7 @@ func TestCollectTurnsWindow(t *testing.T) {
 		}
 	}
 
-	all := collectTurns(lines, 0, len(lines)) // whole file, chronological, idx from 0
+	all := CollectTurns(lines, 0, len(lines)) // whole file, chronological, idx from 0
 	if len(all) != 5 || all[0].Idx != 0 || all[0].Text != "u0" || all[4].Idx != 4 || all[4].Text != "u4" {
 		t.Errorf("full window mismatch: %+v", all)
 	}
@@ -68,7 +68,7 @@ func TestCollectTasks(t *testing.T) {
 		`{"type":"user","message":{"content":"noise"}}`,
 	)
 
-	got := collectTasks(lines)
+	got := CollectTasks(lines)
 	if len(got) != 3 {
 		t.Fatalf("len = %d, want 3 (%v)", len(got), got)
 	}
@@ -84,7 +84,34 @@ func TestCollectTasks(t *testing.T) {
 		}
 	}
 
-	if got := collectTasks(toLines(`{"type":"user","message":{"content":"hi"}}`)); len(got) != 0 {
+	if got := CollectTasks(toLines(`{"type":"user","message":{"content":"hi"}}`)); len(got) != 0 {
 		t.Errorf("no Task calls: want empty, got %v", got)
+	}
+}
+
+func TestHasConversation(t *testing.T) {
+	toLines := func(ss ...string) [][]byte {
+		out := make([][]byte, 0, len(ss))
+		for _, s := range ss {
+			out = append(out, []byte(s))
+		}
+		return out
+	}
+	cases := []struct {
+		name  string
+		lines [][]byte
+		want  bool
+	}{
+		{"empty", nil, false},
+		{"bridge stub only", toLines(`{"type":"bridge-session"}`, `{"type":"summary","summary":"x"}`), false},
+		{"has user turn", toLines(`{"type":"summary"}`, `{"type":"user","message":{"content":"hi"}}`), true},
+		{"has assistant turn", toLines(`{"type":"assistant","message":{"content":[]}}`), true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := HasConversation(c.lines); got != c.want {
+				t.Fatalf("HasConversation = %v, want %v", got, c.want)
+			}
+		})
 	}
 }

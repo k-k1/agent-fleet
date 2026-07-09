@@ -7,11 +7,11 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
@@ -297,7 +297,7 @@ func sendSlashCommand(name, pane, text string) error {
 // blocked or delayed by a failure here, and this only ever runs immediately
 // before that kill — never while the session might still be in active use.
 func disconnectRemoteControl(name string, m session.Meta) {
-	if m.Kind != session.KindClaude || remoteSessionURL(session.UUID(m.Dir, m.Name)) == "" {
+	if m.Kind != session.KindClaude || claude.RemoteSessionURL(session.UUID(m.Dir, m.Name)) == "" {
 		return // not a claude session, or RC has never been used here
 	}
 	pane := tmuxx.SessionPaneID(session.TmuxName(name))
@@ -407,10 +407,10 @@ func handleSessionOutput(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	sid := session.UUID(meta.Dir, name)
-	lines := transcriptLines(sid)
+	lines := claude.TranscriptLines(sid)
 	var sb strings.Builder
 	for i := since; i < len(lines); i++ {
-		if t := assistantText(lines[i]); t != "" {
+		if t := claude.AssistantText(lines[i]); t != "" {
 			if sb.Len() > 0 {
 				sb.WriteString("\n")
 			}
@@ -426,110 +426,6 @@ func handleSessionOutput(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// jsonlByMtime returns sid's conversation logs newest-first. claude can leave more
-// than one <sid>.jsonl under projects/* (a cwd change, a CLAUDE_CONFIG_DIR switch,
-// or a stale log from an earlier run all produce siblings under different project
-// dirs). glob order is lexical, so paths[0] can be an OLD file that never grows —
-// the chat then freezes on stale content. The live log is the most recently written
-// one, so we sort by mtime and read that.
-func jsonlByMtime(sid string) []string {
-	paths := jsonlPaths(sid)
-	sort.SliceStable(paths, func(i, j int) bool {
-		return jsonlMtime(paths[i]).After(jsonlMtime(paths[j]))
-	})
-	return paths
-}
-
-func jsonlMtime(p string) time.Time {
-	fi, err := os.Stat(p)
-	if err != nil {
-		return time.Time{}
-	}
-	return fi.ModTime()
-}
-
-// transcriptRead reads the session's live jsonl as raw lines — one JSON event per
-// line, the line count being the cursor — and returns the chosen path plus every
-// matching path (for the /messages diagnostics).
-//
-// It prefers the NEWEST log that actually holds a conversation. A session commonly
-// has sibling <sid>.jsonl files: the real transcript, plus stubs (a Remote Control
-// "bridge-session", a lone summary) that can carry a NEWER mtime — while a workflow
-// runs, a bridge stub may be touched more recently than the main log. Reading a stub
-// would show an empty chat, so we skip stubs and fall back to the newest file only
-// when none has real turns yet.
-func transcriptRead(sid string) (lines [][]byte, path string, matched []string) {
-	matched = jsonlByMtime(sid)
-	if len(matched) == 0 {
-		return nil, "", nil
-	}
-	var fallback [][]byte
-	fallbackPath := matched[0]
-	for i, p := range matched {
-		ls := readJSONLLines(p)
-		if i == 0 {
-			fallback = ls
-		}
-		if jsonlHasConversation(ls) {
-			return ls, p, matched
-		}
-	}
-	return fallback, fallbackPath, matched
-}
-
-// readJSONLLines reads a jsonl file into its non-empty raw lines.
-func readJSONLLines(p string) [][]byte {
-	b, err := os.ReadFile(p)
-	if err != nil {
-		return nil
-	}
-	var out [][]byte
-	for _, ln := range strings.Split(string(b), "\n") {
-		if strings.TrimSpace(ln) != "" {
-			out = append(out, []byte(ln))
-		}
-	}
-	return out
-}
-
-// jsonlHasConversation reports whether the lines include a real user/assistant turn
-// (not just bookkeeping) — the per-file form of jsonlResumable, so we can skip stubs.
-func jsonlHasConversation(lines [][]byte) bool {
-	for _, ln := range lines {
-		if bytesContains(ln, `"type":"user"`) || bytesContains(ln, `"type":"assistant"`) {
-			return true
-		}
-	}
-	return false
-}
-
-// transcriptLines is the lines-only view (the /output MCP poll doesn't need the
-// source path); both share the newest-file selection above.
-func transcriptLines(sid string) [][]byte {
-	lines, _, _ := transcriptRead(sid)
-	return lines
-}
-
-// assistantText extracts the concatenated text blocks from an assistant event
-// line (skips user/tool/bookkeeping lines).
-func assistantText(line []byte) string {
-	var ev struct {
-		Type    string `json:"type"`
-		Message struct {
-			Content []struct {
-				Type string `json:"type"`
-				Text string `json:"text"`
-			} `json:"content"`
-		} `json:"message"`
-	}
-	if json.Unmarshal(line, &ev) != nil || ev.Type != "assistant" {
-		return ""
-	}
-	var sb strings.Builder
-	for _, c := range ev.Message.Content {
-		if c.Type == "text" {
-			sb.WriteString(c.Text)
-		}
-	}
-	return sb.String()
-}
+// claude jsonl の読み出し（jsonlByMtime / transcriptRead / jsonlHasConversation /
+// transcriptLines / assistantText）は internal/agents/claude の transcript.go へ
+// 移設（docs/23 残① Wave F）。

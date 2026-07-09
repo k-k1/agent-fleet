@@ -1,4 +1,4 @@
-package main
+package claude
 
 import (
 	"encoding/json"
@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 )
 
 // Claude settings: read/write a curated subset of the workspace's claude
@@ -16,25 +17,25 @@ import (
 // so the Console can toggle them. Changes take effect for NEW claude sessions
 // (claude reads settings at startup). Unknown keys in the file are preserved.
 
-// claudeConfigDir resolves where claude reads/writes its state. P3-5 段2 relocates
+// ConfigDir resolves where claude reads/writes its state. P3-5 段2 relocates
 // plaintext claude state out of home via CLAUDE_CONFIG_DIR; when unset it is the
 // classic ~/.claude. Both settings.json and projects/*.jsonl live under this dir,
-// so session resume detection must agree with it (see sessionJSONLExists).
-func claudeConfigDir() string {
+// so session resume detection must agree with it (see SessionJSONLExists).
+func ConfigDir() string {
 	if d := os.Getenv("CLAUDE_CONFIG_DIR"); d != "" {
 		return d
 	}
-	return filepath.Join(homeDir(), ".claude")
+	return filepath.Join(paths.HomeDir(), ".claude")
 }
 
-func claudeSettingsPath() string {
-	return filepath.Join(claudeConfigDir(), "settings.json")
+func settingsPath() string {
+	return filepath.Join(ConfigDir(), "settings.json")
 }
 
 // claudeJSONPath is claude's per-user state file (project trust, onboarding, …).
 // With CLAUDE_CONFIG_DIR set claude reads/writes it under that dir — NOT home.
 func claudeJSONPath() string {
-	return filepath.Join(claudeConfigDir(), ".claude.json")
+	return filepath.Join(ConfigDir(), ".claude.json")
 }
 
 // ensureFolderTrusted prepares .claude.json so an interactive claude session
@@ -100,16 +101,16 @@ func ensureFolderTrusted(dir string) {
 	}
 }
 
-func readClaudeSettings() map[string]any {
+func readSettings() map[string]any {
 	m := map[string]any{}
-	if b, err := os.ReadFile(claudeSettingsPath()); err == nil {
+	if b, err := os.ReadFile(settingsPath()); err == nil {
 		_ = json.Unmarshal(b, &m)
 	}
 	return m
 }
 
-func writeClaudeSettings(m map[string]any) error {
-	p := claudeSettingsPath()
+func writeSettings(m map[string]any) error {
+	p := settingsPath()
 	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
 		return err
 	}
@@ -202,37 +203,41 @@ func setRTK(m map[string]any, on bool) {
 	}
 }
 
-func rtkAvailable() bool {
+// RTKAvailable reports whether the rtk binary is in the image (shared with the
+// codex/opencode rtk toggle in package main's agent_rtk.go).
+func RTKAvailable() bool {
 	_, err := exec.LookPath("rtk")
 	return err == nil
 }
 
-func claudeSettingsBody(m map[string]any) map[string]any {
+func settingsBody(m map[string]any) map[string]any {
 	return map[string]any{
 		"remoteControlAtStartup":            settingBool(m, "remoteControlAtStartup"),
 		"agentPushNotifEnabled":             settingBool(m, "agentPushNotifEnabled"),
 		"skipDangerousModePermissionPrompt": settingBool(m, "skipDangerousModePermissionPrompt"),
 		"rtk_enabled":                       rtkEnabled(m),
-		"rtk_available":                     rtkAvailable(),
+		"rtk_available":                     RTKAvailable(),
 	}
 }
 
-func handleClaudeSettingsGet(w http.ResponseWriter, r *http.Request) {
-	httpx.WriteJSON(w, http.StatusOK, claudeSettingsBody(readClaudeSettings()))
+// HandleSettingsGet serves GET /claude/settings for the Console toggles.
+func HandleSettingsGet(w http.ResponseWriter, r *http.Request) {
+	httpx.WriteJSON(w, http.StatusOK, settingsBody(readSettings()))
 }
 
-type claudeSettingsReq struct {
+type settingsReq struct {
 	RemoteControlAtStartup *bool `json:"remoteControlAtStartup"`
 	AgentPushNotifEnabled  *bool `json:"agentPushNotifEnabled"`
 	RTK                    *bool `json:"rtk"`
 }
 
-func handleClaudeSettingsPut(w http.ResponseWriter, r *http.Request) {
-	var req claudeSettingsReq
+// HandleSettingsPut serves PUT /claude/settings.
+func HandleSettingsPut(w http.ResponseWriter, r *http.Request) {
+	var req settingsReq
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
-	m := readClaudeSettings()
+	m := readSettings()
 	if req.RemoteControlAtStartup != nil {
 		m["remoteControlAtStartup"] = *req.RemoteControlAtStartup
 	}
@@ -242,9 +247,9 @@ func handleClaudeSettingsPut(w http.ResponseWriter, r *http.Request) {
 	if req.RTK != nil {
 		setRTK(m, *req.RTK)
 	}
-	if err := writeClaudeSettings(m); err != nil {
+	if err := writeSettings(m); err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "write_failed", err.Error())
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, claudeSettingsBody(m))
+	httpx.WriteJSON(w, http.StatusOK, settingsBody(m))
 }

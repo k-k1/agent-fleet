@@ -16,9 +16,9 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 )
 
-// startSessionTmux launches the detached tmux session for m. For claude it injects
-// the OAuth token and builds the resume/new program (buildSessionProgram picks
-// --resume once a jsonl exists); for shell it runs a login bash.
+// startSessionTmux launches the detached tmux session for m. For claude it builds
+// the resume/new program (claude 縦割りの buildProgram が jsonl の有無で --resume を
+// 選ぶ); for shell it runs a login bash.
 func startSessionTmux(m session.Meta, ssmForce bool) error {
 	// The kind decides the pane program and launch dir; the agent builds both.
 	plan, err := agentOf(m.Kind).BuildLaunch(m, agents.LaunchOpts{SSMForce: ssmForce})

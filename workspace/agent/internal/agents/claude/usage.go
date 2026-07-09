@@ -1,4 +1,4 @@
-package main
+package claude
 
 import (
 	"context"
@@ -20,14 +20,14 @@ import (
 // {ok:false} so the Console simply hides the chip instead of erroring. Cached
 // briefly so the Console's poll can't hammer the endpoint (it rate-limits).
 
-const claudeUsageURL = "https://api.anthropic.com/api/oauth/usage"
+const usageURL = "https://api.anthropic.com/api/oauth/usage"
 
 // The unofficial usage endpoint is rate-limited, so we keep it soft: the cached value
 // is served for up to 5 minutes, and the real endpoint is hit only when the cache is
 // empty/older than that on a request, or on an explicit ?refresh=1 from the user.
 // Forced refreshes are floored so a user mashing the button can't hammer it.
-const claudeUsageTTL = 5 * time.Minute
-const claudeUsageMinRefresh = 10 * time.Second
+const usageTTL = 5 * time.Minute
+const usageMinRefresh = 10 * time.Second
 
 // usageWindow is one limit window: percent used (0–100) and the ISO reset instant
 // (the Console formats it as a relative "あとN時間/N日" + an absolute date-time).
@@ -36,7 +36,7 @@ type usageWindow struct {
 	ResetsAt string  `json:"resetsAt"`
 }
 
-type claudeUsage struct {
+type usage struct {
 	OK       bool         `json:"ok"`
 	FiveHour *usageWindow `json:"fiveHour,omitempty"`
 	SevenDay *usageWindow `json:"sevenDay,omitempty"`
@@ -45,10 +45,11 @@ type claudeUsage struct {
 var (
 	usageMu  sync.Mutex
 	usageAt  time.Time
-	usageVal claudeUsage
+	usageVal usage
 )
 
-func handleClaudeUsage(w http.ResponseWriter, r *http.Request) {
+// HandleUsage serves GET /claude/usage for the Console's WsBar chip.
+func HandleUsage(w http.ResponseWriter, r *http.Request) {
 	refresh := r.URL.Query().Get("refresh") == "1"
 
 	usageMu.Lock()
@@ -56,16 +57,16 @@ func handleClaudeUsage(w http.ResponseWriter, r *http.Request) {
 	age := time.Since(usageAt)
 	// Hit the real endpoint only when the cache is empty or older than the TTL, or on
 	// an explicit refresh that isn't within the floor window. Else serve the cache.
-	fetch := !have || age >= claudeUsageTTL || (refresh && age >= claudeUsageMinRefresh)
+	fetch := !have || age >= usageTTL || (refresh && age >= usageMinRefresh)
 	if !fetch {
 		v, at := usageVal, usageAt
 		usageMu.Unlock()
-		writeClaudeUsage(w, v, at)
+		writeUsage(w, v, at)
 		return
 	}
 	usageMu.Unlock()
 
-	v := fetchClaudeUsage(r.Context())
+	v := fetchUsage(r.Context())
 
 	usageMu.Lock()
 	// Keep the last good value if a refresh failed — don't blank a working chip; the
@@ -75,12 +76,12 @@ func handleClaudeUsage(w http.ResponseWriter, r *http.Request) {
 	}
 	rv, rat := usageVal, usageAt
 	usageMu.Unlock()
-	writeClaudeUsage(w, rv, rat)
+	writeUsage(w, rv, rat)
 }
 
-// writeClaudeUsage emits the usage plus its age in seconds (so the Console can show
+// writeUsage emits the usage plus its age in seconds (so the Console can show
 // "N分前" and offer a manual refresh).
-func writeClaudeUsage(w http.ResponseWriter, v claudeUsage, at time.Time) {
+func writeUsage(w http.ResponseWriter, v usage, at time.Time) {
 	out := map[string]any{"ok": v.OK, "fiveHour": v.FiveHour, "sevenDay": v.SevenDay}
 	if !at.IsZero() {
 		out["ageSec"] = int(time.Since(at).Seconds())
@@ -88,10 +89,10 @@ func writeClaudeUsage(w http.ResponseWriter, v claudeUsage, at time.Time) {
 	httpx.WriteJSON(w, http.StatusOK, out)
 }
 
-// claudeOAuthToken reads the subscription OAuth access token from the credentials
+// oauthToken reads the subscription OAuth access token from the credentials
 // file claude maintains (and refreshes) under its config dir. "" when absent.
-func claudeOAuthToken() string {
-	b, err := os.ReadFile(filepath.Join(claudeConfigDir(), ".credentials.json"))
+func oauthToken() string {
+	b, err := os.ReadFile(filepath.Join(ConfigDir(), ".credentials.json"))
 	if err != nil {
 		return ""
 	}
@@ -106,9 +107,9 @@ func claudeOAuthToken() string {
 	return c.ClaudeAiOauth.AccessToken
 }
 
-// claudeProfileURL is the (undocumented) OAuth profile endpoint; we read the
+// profileURL is the (undocumented) OAuth profile endpoint; we read the
 // account's organization uuid from it.
-const claudeProfileURL = "https://api.anthropic.com/api/oauth/profile"
+const profileURL = "https://api.anthropic.com/api/oauth/profile"
 
 // The org uuid is stable for a container's lifetime, so cache it once resolved.
 var (
@@ -117,13 +118,13 @@ var (
 	orgUUIDKnown bool
 )
 
-// claudeOrgUUID resolves the account's organization uuid (cached). Only used as the
+// orgUUID resolves the account's organization uuid (cached). Only used as the
 // Team-plan fallback: the usage endpoint returns 401 for a Team token without
 // ?organization_uuid=<uuid>. We deliberately do NOT attach it to a request that
 // already works (personal Pro/Max) — a Pro/Max account can also belong to other
 // orgs, and the profile's organization may not be the usage context we want.
 // Returns "" on failure.
-func claudeOrgUUID(ctx context.Context, tok string) string {
+func orgUUID(ctx context.Context, tok string) string {
 	orgUUIDMu.Lock()
 	if orgUUIDKnown {
 		v := orgUUIDVal
@@ -132,7 +133,7 @@ func claudeOrgUUID(ctx context.Context, tok string) string {
 	}
 	orgUUIDMu.Unlock()
 
-	uuid := fetchClaudeOrgUUID(ctx, tok)
+	uuid := fetchOrgUUID(ctx, tok)
 	if uuid != "" {
 		orgUUIDMu.Lock()
 		orgUUIDVal, orgUUIDKnown = uuid, true
@@ -141,10 +142,10 @@ func claudeOrgUUID(ctx context.Context, tok string) string {
 	return uuid
 }
 
-func fetchClaudeOrgUUID(ctx context.Context, tok string) string {
+func fetchOrgUUID(ctx context.Context, tok string) string {
 	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, claudeProfileURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, profileURL, nil)
 	if err != nil {
 		return ""
 	}
@@ -171,37 +172,37 @@ func fetchClaudeOrgUUID(ctx context.Context, tok string) string {
 	return raw.Organization.UUID
 }
 
-func fetchClaudeUsage(ctx context.Context) claudeUsage {
-	tok := claudeOAuthToken()
+func fetchUsage(ctx context.Context) usage {
+	tok := oauthToken()
 	if tok == "" {
-		return claudeUsage{OK: false}
+		return usage{OK: false}
 	}
 	// Try the bare endpoint first — this is what personal Pro/Max accounts need,
 	// and it leaves their usage context untouched. ONLY when it rejects with 401
 	// (the Team-plan signal) do we resolve the org uuid and retry with
 	// ?organization_uuid=. Don't attach an org to a request that already works.
-	if u, status := getClaudeUsage(ctx, tok, claudeUsageURL); status == http.StatusOK {
+	if u, status := getUsage(ctx, tok, usageURL); status == http.StatusOK {
 		return u
 	} else if status == http.StatusUnauthorized {
-		if org := claudeOrgUUID(ctx, tok); org != "" {
+		if org := orgUUID(ctx, tok); org != "" {
 			// uuid chars are query-safe, no escaping needed.
-			u2, s2 := getClaudeUsage(ctx, tok, claudeUsageURL+"?organization_uuid="+org)
+			u2, s2 := getUsage(ctx, tok, usageURL+"?organization_uuid="+org)
 			if s2 == http.StatusOK {
 				return u2
 			}
 		}
 	}
-	return claudeUsage{OK: false}
+	return usage{OK: false}
 }
 
-// getClaudeUsage performs one usage GET and returns the parsed value plus the HTTP
+// getUsage performs one usage GET and returns the parsed value plus the HTTP
 // status (0 on a transport/parse error). The caller decides whether to retry.
-func getClaudeUsage(ctx context.Context, tok, url string) (claudeUsage, int) {
+func getUsage(ctx context.Context, tok, url string) (usage, int) {
 	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return claudeUsage{OK: false}, 0
+		return usage{OK: false}, 0
 	}
 	req.Header.Set("Authorization", "Bearer "+tok)
 	req.Header.Set("anthropic-version", "2023-06-01")
@@ -209,11 +210,11 @@ func getClaudeUsage(ctx context.Context, tok, url string) (claudeUsage, int) {
 	req.Header.Set("User-Agent", "agent-fleet-console")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return claudeUsage{OK: false}, 0
+		return usage{OK: false}, 0
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return claudeUsage{OK: false}, resp.StatusCode
+		return usage{OK: false}, resp.StatusCode
 	}
 	var raw struct {
 		FiveHour *struct {
@@ -226,9 +227,9 @@ func getClaudeUsage(ctx context.Context, tok, url string) (claudeUsage, int) {
 		} `json:"seven_day"`
 	}
 	if json.NewDecoder(resp.Body).Decode(&raw) != nil {
-		return claudeUsage{OK: false}, resp.StatusCode
+		return usage{OK: false}, resp.StatusCode
 	}
-	out := claudeUsage{OK: true}
+	out := usage{OK: true}
 	if raw.FiveHour != nil {
 		out.FiveHour = &usageWindow{Pct: raw.FiveHour.Utilization, ResetsAt: raw.FiveHour.ResetsAt}
 	}

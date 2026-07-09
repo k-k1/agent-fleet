@@ -3,6 +3,7 @@ package main
 import (
 	"net/http"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 )
@@ -111,10 +112,10 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("DELETE /fs/delete", handleFSDelete)
 
 	// Claude settings (Remote Control / notifications / RTK hook) — Console toggles.
-	mux.HandleFunc("GET /claude/settings", handleClaudeSettingsGet)
-	mux.HandleFunc("PUT /claude/settings", handleClaudeSettingsPut)
+	mux.HandleFunc("GET /claude/settings", claude.HandleSettingsGet)
+	mux.HandleFunc("PUT /claude/settings", claude.HandleSettingsPut)
 	// Claude subscription usage (5-hour + weekly bars) for the WsBar chip.
-	mux.HandleFunc("GET /claude/usage", handleClaudeUsage)
+	mux.HandleFunc("GET /claude/usage", claude.HandleUsage)
 	mux.HandleFunc("GET /codex/usage", codex.HandleUsage)
 	// codex / opencode rtk toggle (durable pref → on-disk artifacts) — Console.
 	mux.HandleFunc("GET /agents/rtk", handleAgentRTKGet)
@@ -138,9 +139,9 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("POST /connections/git/github/oauth/start", handleGithubOAuthStart)
 	mux.HandleFunc("POST /connections/git/github/oauth/poll", handleGithubOAuthPoll)
 	mux.HandleFunc("PUT /connections/git/bitbucket/oauth", handleBitbucketStore)
-	mux.HandleFunc("POST /connections/claude/start", handleClaudeStart)
-	mux.HandleFunc("POST /connections/claude/complete", handleClaudeComplete)
-	mux.HandleFunc("DELETE /connections/claude", handleClaudeDisconnect)
+	mux.HandleFunc("POST /connections/claude/start", claude.HandleStart)
+	mux.HandleFunc("POST /connections/claude/complete", claude.HandleComplete)
+	mux.HandleFunc("DELETE /connections/claude", claude.HandleDisconnect)
 	mux.HandleFunc("PUT /connections/opencode", opencode.HandlePutConn)
 	mux.HandleFunc("DELETE /connections/opencode/{env}", opencode.HandleDeleteConn)
 	mux.HandleFunc("POST /connections/codex/api-key", codex.HandleAPIKey)

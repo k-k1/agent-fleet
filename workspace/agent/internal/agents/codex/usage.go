@@ -28,8 +28,8 @@ import (
 //                  "plan_type":"plus"}
 // primary = the ~5h window, secondary = the weekly (10080 min = 7d) window.
 
-// usageWindow は package main（claude_usage.go）の同名 struct の複製（極小のため
-// 共有せず重複を許容）: percent used (0–100) + the ISO reset instant.
+// usageWindow は internal/agents/claude（usage.go）の同名 struct の複製（極小の
+// ため共有せず重複を許容）: percent used (0–100) + the ISO reset instant.
 type usageWindow struct {
 	Pct      float64 `json:"pct"`
 	ResetsAt string  `json:"resetsAt"`

@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -613,8 +614,8 @@ func handleSessionRenameBranch(w http.ResponseWriter, r *http.Request) {
 func sessionTitleTurns(m session.Meta) []transcript.Turn {
 	if m.Kind == session.KindClaude {
 		sid := session.UUID(m.Dir, m.Name)
-		lines, _, _ := transcriptRead(sid)
-		return collectTurns(lines, 0, len(lines))
+		lines, _, _ := claude.TranscriptRead(sid)
+		return claude.CollectTurns(lines, 0, len(lines))
 	}
 	td, ok := agentOf(m.Kind).Transcript(m)
 	if !ok {

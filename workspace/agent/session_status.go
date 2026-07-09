@@ -18,9 +18,9 @@ import (
 // --dangerously-skip-permissions there is no tool-approval QA state, so the two
 // meaningful states are working and idle(=response ready / awaiting input).
 //
-// 状態と pending ペイロードのストア本体は internal/status（docs/23 残① Wave A）;
-// このファイルは claude settings への hook 配線と session-status サブコマンドの
-// 入口だけを持つ。
+// 状態と pending ペイロードのストア本体は internal/status（docs/23 残① Wave A）、
+// claude settings への hook 配線（EnsureStatusHooks）は internal/agents/claude
+// （同 Wave F）; このファイルは session-status サブコマンドの入口だけを持つ。
 
 // runSessionStatusHook is `workspace-agent session-status <state> [sid] [codex]`.
 // Three callers key the status differently:
@@ -197,92 +197,4 @@ func permToolDetail(name, file, notebook, path, command string) string {
 		return name
 	}
 	return name + " · " + arg
-}
-
-// agentExe is the absolute path to this binary, used to build hook commands that
-// resolve in an agent's hook context regardless of PATH.
-func agentExe() string {
-	exe, err := os.Executable()
-	if err != nil || exe == "" {
-		return "/usr/local/bin/workspace-agent"
-	}
-	return exe
-}
-
-// statusHookCmd is the absolute command claude runs for an event (absolute so it
-// resolves in claude's hook context regardless of PATH).
-func statusHookCmd(state string) string {
-	return agentExe() + " session-status " + state
-}
-
-// permToolMatcher is the PreToolUse regex for edit/command tools whose permission
-// prompts we surface (with the file/command) in the Console.
-const permToolMatcher = "Write|Edit|MultiEdit|NotebookEdit|Bash"
-
-// ensureStatusHooks makes settings.json carry the hooks that feed session state,
-// merging without disturbing the rtk PreToolUse/Bash hook or other settings.
-// Idempotent; called at agent startup (before sessions launch). States:
-//
-//	UserPromptSubmit → working   (user sent a prompt)
-//	Stop             → idle      (response done / awaiting user)
-//	PreToolUse(AskUserQuestion)  → question (claude is asking the user; QA来た)
-//	PostToolUse(AskUserQuestion) → working  (question answered, continuing)
-func ensureStatusHooks() {
-	m := readClaudeSettings()
-	hooks := hooksMap(m)
-	changed := false
-
-	// Simple (matcher-less) events. MessageDisplay fires as the assistant's text streams
-	// (before the turn's tool_use); we buffer it (state "message" never changes status)
-	// so a pending AskUserQuestion can surface the prose that preceded it.
-	for event, state := range map[string]string{"UserPromptSubmit": "working", "Stop": "idle", "MessageDisplay": "message"} {
-		if b, _ := json.Marshal(hooks[event]); !strings.Contains(string(b), "session-status") {
-			hooks[event] = []any{map[string]any{
-				"hooks": []any{map[string]any{"type": "command", "command": statusHookCmd(state)}},
-			}}
-			changed = true
-		}
-	}
-	// AskUserQuestion → question, ExitPlanMode → plan: distinct "needs your input"
-	// states (not suppressed by --dangerously-skip-permissions). Their tool_use is
-	// written to the transcript only after it's resolved, so the hook is how the
-	// Console learns about the pending question / plan.
-	if !preToolUseHasMatcher(hooks, "AskUserQuestion") {
-		ensurePreToolUseMatcher(hooks, "AskUserQuestion", statusHookCmd("question"))
-		changed = true
-	}
-	if !preToolUseHasMatcher(hooks, "ExitPlanMode") {
-		ensurePreToolUseMatcher(hooks, "ExitPlanMode", statusHookCmd("plan"))
-		changed = true
-	}
-	// Edit/command tools: record what's about to run so the permission block (below)
-	// can name the file/command. Matcher is a regex over the tool name; permtool never
-	// changes status, so it's harmless when no prompt follows (bypass/accept modes).
-	if !preToolUseHasMatcher(hooks, permToolMatcher) {
-		ensurePreToolUseMatcher(hooks, permToolMatcher, statusHookCmd("permtool"))
-		changed = true
-	}
-	// PostToolUse: both resume to working once answered/approved. Re-set when the
-	// ExitPlanMode matcher is missing (older settings only had AskUserQuestion).
-	if b, _ := json.Marshal(hooks["PostToolUse"]); !strings.Contains(string(b), "ExitPlanMode") {
-		hooks["PostToolUse"] = []any{
-			map[string]any{"matcher": "AskUserQuestion", "hooks": []any{map[string]any{"type": "command", "command": statusHookCmd("working")}}},
-			map[string]any{"matcher": "ExitPlanMode", "hooks": []any{map[string]any{"type": "command", "command": statusHookCmd("working")}}},
-		}
-		changed = true
-	}
-	// Notification → permission: fires when claude is blocked on a tool-permission
-	// prompt (notification_type=permission_prompt). The handler ignores other
-	// notification types, so this matcher-less hook is safe to always set.
-	if b, _ := json.Marshal(hooks["Notification"]); !strings.Contains(string(b), "session-status") {
-		hooks["Notification"] = []any{map[string]any{
-			"hooks": []any{map[string]any{"type": "command", "command": statusHookCmd("permission")}},
-		}}
-		changed = true
-	}
-
-	if changed {
-		m["hooks"] = hooks
-		_ = writeClaudeSettings(m)
-	}
 }

@@ -2,6 +2,7 @@ package main
 
 import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -11,15 +12,14 @@ import (
 
 // The Agent interface and its input/output types live in internal/agents
 // (docs/23 残① Wave C); opencode の実装は internal/agents/opencode（Wave D）、
-// codex の実装は internal/agents/codex（Wave E）。
-// This file keeps the registry and the shared live-state helpers until the
-// remaining per-CLI impls move out in later waves.
+// codex は internal/agents/codex（Wave E）、claude は internal/agents/claude
+// （Wave F）。This file keeps the registry and the shared live-state helpers.
 
 // agentRegistry is the kind → agents.Agent registry. agentOf falls back to claude
 // for an unknown or empty kind, matching the historical default (a session with no
 // recognized kind launches claude).
 var agentRegistry = map[string]agents.Agent{
-	session.KindClaude:   claudeAgent{},
+	session.KindClaude:   claude.New(),
 	session.KindOpencode: opencode.New(),
 	session.KindCodex:    codex.New(),
 	session.KindShell:    shellAgent{},

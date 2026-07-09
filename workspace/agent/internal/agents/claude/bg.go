@@ -1,4 +1,4 @@
-package main
+package claude
 
 import (
 	"os"
@@ -115,9 +115,9 @@ func paneRootPID(tn string) int {
 	return pid
 }
 
-// sessionBackgroundBusy reports whether a live worker process runs under the
+// BackgroundBusy reports whether a live worker process runs under the
 // session's pane — a run_in_background task still going while claude is idle.
-func sessionBackgroundBusy(name string) bool {
+func BackgroundBusy(name string) bool {
 	root := paneRootPID(session.TmuxName(name))
 	if root == 0 {
 		return false

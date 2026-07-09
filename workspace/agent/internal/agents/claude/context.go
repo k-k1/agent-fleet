@@ -1,4 +1,4 @@
-package main
+package claude
 
 import (
 	"sync"
@@ -8,8 +8,8 @@ import (
 )
 
 // session.ContextUsage（claude セッションの現在のコンテキスト充填率、ワイヤ型）は
-// internal/session へ移設（docs/23 残① Wave A）。ここには jsonl の解析と
-// mtime キャッシュ（main 依存: transcriptRead/parseTurn）だけが残る。
+// internal/session（docs/23 残① Wave A）。ここには jsonl の解析と mtime
+// キャッシュだけを置く（旧 package main session_context.go — 同 Wave F で移設）。
 
 // ctxCache memoizes the parsed context per sid, keyed by the transcript's mtime, so
 // repeated sessions-list polls don't re-read and re-parse an unchanged jsonl. A new
@@ -24,13 +24,13 @@ type ctxCacheEntry struct {
 	usage *session.ContextUsage
 }
 
-// latestSessionContext returns the current context fill for a claude session, or
+// latestContext returns the current context fill for a claude session, or
 // nil when none is recorded yet (a fresh session, or an older Agent that predates
 // the usage field). Cheap on the common path: it stats the transcript and reuses
 // the cached parse while the mtime is unchanged; it only reads+parses on change.
 // It reuses the same parseTurn as /messages, so the value matches the chat view's
 // own ContextBar exactly.
-func latestSessionContext(sid string) *session.ContextUsage {
+func latestContext(sid string) *session.ContextUsage {
 	paths := jsonlByMtime(sid)
 	if len(paths) == 0 {
 		return nil
@@ -45,7 +45,7 @@ func latestSessionContext(sid string) *session.ContextUsage {
 	}
 	ctxCacheMu.Unlock()
 
-	lines, _, _ := transcriptRead(sid)
+	lines, _, _ := TranscriptRead(sid)
 	var u *session.ContextUsage
 	// The last assistant event carrying usage is the current context size (matching
 	// MirrorView's latestContext, which takes the last event's input/cache).
