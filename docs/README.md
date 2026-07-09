@@ -17,6 +17,7 @@
 
 - [20-container-audit-egress.md](20-container-audit-egress.md) — コンテナ内操作の監査ログ & egress 統制（enforce 未了・進行中）
 - [23-go-refactor.md](23-go-refactor.md) — Go バックエンド内部リファクタ（CP / Agent、機能不変・ワイヤ互換。残=④契約の型化のみ）
+- [24-tts-zundamon.md](24-tts-zundamon.md) — エージェント回答の音声読み上げ（VOICEVOX/ずんだもん・Polly、CP-native・未着手）
 
 > 完了した機能設計は history/ へ移動: [19 assistant-chat](history/19-assistant-chat.md) /
 > [21 memo-queue](history/21-memo-queue.md) / [22 console-rebuild](history/22-console-rebuild.md)。
@@ -51,6 +52,7 @@
 - [0010-internal-git-provider.md](decisions/0010-internal-git-provider.md) — テナント内部 git プロバイダ（bare+http-backend を CP 自ホスト）**採用**
 - [0011-console-rebuild.md](decisions/0011-console-rebuild.md) — Console リビルド：並行エントリ・zustand・旧側凍結（設計 [22](history/22-console-rebuild.md)）
 - [0012-go-internal-refactor.md](decisions/0012-go-internal-refactor.md) — Go バックエンド内部リファクタ：internal 層化・2 バイナリ維持・共有モジュール見送り（設計 [23](23-go-refactor.md)）
+- [0013-tts-zundamon.md](decisions/0013-tts-zundamon.md) — 回答の音声読み上げ：CP-native TTS・プロバイダ抽象・ずんだもん主役/Polly 受け皿・ECS オンデマンド（設計 [24](24-tts-zundamon.md)）
 
 ## history/ — 使い終わった実装プラン（P3-6 は ◐ 段1 完了・admin 残）
 
