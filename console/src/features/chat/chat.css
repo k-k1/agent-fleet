@@ -84,11 +84,6 @@
   color: var(--muted);
   max-width: min(96ch, 100%);
 }
-/* A user bubble is content-sized and left-aligned (align-self: flex-start), so its
-   foot sits at the left too — a far-right button would look detached. */
-.chat-msg.role-user .chat-msg-foot {
-  justify-content: flex-start;
-}
 .cm-time {
   font-variant-numeric: tabular-nums;
 }
