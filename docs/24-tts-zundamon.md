@@ -170,6 +170,15 @@ TTS 設定画面かフッターに小さく常時表示する。Polly は AWS �
   `ttsEnabled` 有効時のみ、`FileView.tsx` + `viewer.css`）。過去の回答フッターに読み上げ
   ボタンを追加（共用 `features/chat/TtsReadButton.tsx`、ChatView と MirrorView の各ターン
   フッター、assistant/非 user ターンかつ `ttsEnabled` 時のみ）。実機での音出し確認は未。
+- **Phase 1.6（バックグラウンドセッションの音声通知・Tier1）** ✅ 実装済み: 稼働中の複数
+  セッションが回答/質問を返したら、セッション名を添えて短く音声でお知らせ（設計検討の結論＝
+  直列音声なので「全文読み上げ」でなく「アナウンス方式」を採用）。既存の `useSessionNotifications`
+  （app 常駐・全セッションの状態を 4s ポーリングし working→idle / →question を検知）に接続。
+  多セッション衝突は tts.ts の**アナウンス直列キュー**（`announce()`, 何か再生中なら待つ、
+  溜まりすぎは古いものを捨てる）で解消。設定「セッションの音声通知」(`ttsSessionNotify`)。
+  制約: Console タブが可視の間のみ（状態ポーリングが `document.hidden` で止まるため）。
+  未採用: 全セッションの回答**本文**の読み上げ（直列音声＋長文で遅延・混線するため、
+  必要なら将来 Tier2=単一セッションのチューニング全文で対応）。実機確認は未。
 - **Phase 2（AWS）**: Polly プロバイダ（IAM ロール）、管理者トグル → ECS desired 0↔1、
   Cloud Map 固定 DNS、readiness ゲート、`auto` の Polly フォールバック有効化。
 

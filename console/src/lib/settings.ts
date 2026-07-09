@@ -138,6 +138,10 @@ export interface Settings {
   ttsProvider: string; // "auto" | "voicevox" | "polly"
   ttsVoiceVoicevox: string; // VOICEVOX の speaker 番号（"3"=ずんだもん・ノーマル）
   ttsSpeed: number; // 0.5〜2.0（speedScale）
+  // バックグラウンドのセッションが回答/質問を返したら音声で知らせる（docs/24 Tier1）。チャットの
+  // 自動読み上げ(ttsEnabled)とは別軸。名前前置きの短い告知を直列キューで読む。タブが見えている
+  // 間のみ（セッション監視は document.hidden で止まるため）。
+  ttsSessionNotify: boolean;
 }
 
 const DEFAULTS: Settings = {
@@ -168,6 +172,7 @@ const DEFAULTS: Settings = {
   ttsProvider: "auto",
   ttsVoiceVoicevox: "3",
   ttsSpeed: 1.0,
+  ttsSessionNotify: false,
 };
 
 // VOICEVOX ずんだもんのスタイル（speaker 番号 → ラベル）。設定 UI の話者選択に使う。

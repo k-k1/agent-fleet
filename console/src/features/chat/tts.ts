@@ -48,8 +48,9 @@ function audioCtx(): AudioContext | null {
 
 // startTts は 1 つの読み上げセッションを開始する。アプリ全体で再生は 1 本に集約するため、
 // 既存の再生中セッションがあれば止めてから始め、グローバルストアに自分を active として登録する。
-// source は TopBar の「読み上げ中・〇〇」表示に使うラベル。
-export function startTts(opts: TtsOptions, source = ""): TtsController {
+// source は TopBar の「読み上げ中・〇〇」表示に使うラベル。onEnd は自然終了("done")／停止
+// ("stopped")のどちらでも 1 回だけ呼ばれる（アナウンスキューの直列制御に使う）。
+export function startTts(opts: TtsOptions, source = "", onEnd?: (reason: "done" | "stopped") => void): TtsController {
   useTtsStore.getState().active?.stop(); // 直前の再生を停止（グローバル 1 本）
   const ctx = audioCtx();
   let buf = ""; // 未確定バッファ（文の途中）
@@ -65,14 +66,23 @@ export function startTts(opts: TtsOptions, source = ""): TtsController {
   let stopped = false;
   let startedAudio = false; // 最初の文を submit したら true（＝読み上げ開始）
   let flushed = false; // ストリーム完了（これ以上文は来ない）
+  let ended = false; // onEnd を 1 回だけ呼ぶためのガード
   const acs = new Set<AbortController>();
 
+  const finish = (reason: "done" | "stopped") => {
+    if (ended) return;
+    ended = true;
+    onEnd?.(reason);
+  };
+
   // 再生中か（合成待ち/再生中/ストリーム継続中）をストアへ通知。文間の一瞬の空きで
-  // チラつかないよう、flush 前は startedAudio 以降ずっと true に保つ。
+  // チラつかないよう、flush 前は startedAudio 以降ずっと true に保つ。flush 後に空になったら
+  // 自然終了（done）を通知。
   const notify = () => {
     if (stopped) return;
     const active = startedAudio && (playing || jobs.length > 0 || inflight > 0 || !flushed);
     useTtsStore.getState().setSpeaking(active);
+    if (flushed && !active) finish("done");
   };
 
   // 確定バッファから完全な文を切り出し、プレーン化してジョブ投入する。
@@ -213,11 +223,51 @@ export function startTts(opts: TtsOptions, source = ""): TtsController {
         st.setActive(null, "");
         st.setSpeaking(false);
       }
+      finish("stopped");
     },
   };
   useTtsStore.getState().setActive(controller, source);
   return controller;
 }
+
+// --- アナウンス直列キュー（docs/24 Tier1: バックグラウンドのセッション通知など） ------------
+// 短い告知を「1 本ずつ・割り込まず」読み上げる。何か再生中（チャット読み上げ等）なら終わるのを
+// 待ってから。溜まりすぎ（>4 件）は古いものから捨てる（席を外した間の洪水を防ぐ）。
+const announceQueue: { text: string; source: string }[] = [];
+let announcing = false;
+
+export function announce(text: string, source = ""): void {
+  const t = text.trim();
+  if (!t) return;
+  announceQueue.push({ text: t, source });
+  while (announceQueue.length > 4) announceQueue.shift();
+  pumpAnnounce();
+}
+
+function pumpAnnounce(): void {
+  if (announcing) return;
+  if (useTtsStore.getState().speaking) return; // 何か再生中 → 終了後に再開（下の subscribe）
+  const next = announceQueue.shift();
+  if (!next) return;
+  announcing = true;
+  const s = getSettings();
+  const c = startTts(
+    { provider: s.ttsProvider, voice: s.ttsVoiceVoicevox, speed: s.ttsSpeed },
+    next.source,
+    (reason) => {
+      announcing = false;
+      if (reason === "stopped") announceQueue.length = 0; // 全体停止でキューも破棄
+      else pumpAnnounce();
+    },
+  );
+  c.push(next.text);
+  c.flush();
+}
+
+// 再生（チャット読み上げ等）が外部で終わったら、待たせていた告知を再開する。
+useTtsStore.subscribe((st, prev) => {
+  if (prev.speaking && !st.speaking) pumpAnnounce();
+});
 
 // speakText は与えたテキストをその場で読み上げる（FileView の選択範囲など、非ストリーム用途）。
 // 設定（話者/速度/プロバイダ）は React 外から getSettings() で取得。空文字は無視。
