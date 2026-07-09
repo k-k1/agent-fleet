@@ -321,43 +321,37 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
             メッセージを送って会話を始めましょう。Markdown 文書の翻訳や要約、質問への回答などを依頼できます。
           </div>
         )}
-        {conv?.messages.map((m, i) => (
-          <div key={i} className={"chat-msg role-" + m.role}>
-            <div className="chat-role">
-              {m.role === "user" ? "あなた" : agent?.assistantName || "アシスタント"}
-            </div>
-            <div className="chat-body">
-              {m.role === "assistant" ? (
-                <MarkdownView source={m.content} breaks />
-              ) : (
-                (() => {
-                  // Split off any pasted-image references so the bubble shows the user's
-                  // words + clickable thumbnails, not the machine-facing paths.
-                  const { text, images } = splitPastedImages(m.content);
-                  return (
-                    <>
-                      {text && <div className="chat-text">{text}</div>}
-                      {images.length > 0 && conv && (
-                        <div className="chat-imgs">
-                          {images.map((nm) => (
-                            <ChatPastedThumb key={nm} convId={conv.id} name={nm} />
-                          ))}
-                        </div>
-                      )}
-                    </>
-                  );
-                })()
-              )}
-            </div>
-            {/* Footer under the assistant reply — time + copy, mirroring MirrorView's turn foot. */}
-            {m.role === "assistant" && (
+        {conv?.messages.map((m, i) => {
+          // Split off any pasted-image references so a user bubble shows the user's
+          // words + clickable thumbnails, not the machine-facing paths — and so the
+          // copy button copies the words, not the image instruction.
+          const { text, images } =
+            m.role === "user" ? splitPastedImages(m.content) : { text: m.content, images: [] as string[] };
+          return (
+            <div key={i} className={"chat-msg role-" + m.role}>
+              <div className="chat-role">
+                {m.role === "user" ? "あなた" : agent?.assistantName || "アシスタント"}
+              </div>
+              <div className="chat-body">
+                {/* Both roles render as Markdown; `breaks` keeps plain newlines as
+                    line breaks (mirrors MirrorView's user turns). */}
+                {text && <MarkdownView source={text} breaks />}
+                {images.length > 0 && conv && (
+                  <div className="chat-imgs">
+                    {images.map((nm) => (
+                      <ChatPastedThumb key={nm} convId={conv.id} name={nm} />
+                    ))}
+                  </div>
+                )}
+              </div>
+              {/* Footer under the bubble — time + copy, mirroring MirrorView's turn foot. */}
               <div className="chat-msg-foot">
                 {m.ts > 0 && <span className="cm-time">{formatMsgTS(m.ts)}</span>}
-                <ChatCopyButton text={m.content} />
+                <ChatCopyButton text={text} />
               </div>
-            )}
-          </div>
-        ))}
+            </div>
+          );
+        })}
         {sending && (
           <div className="chat-msg role-assistant">
             <div className="chat-role">{agent?.assistantName || "アシスタント"}</div>
