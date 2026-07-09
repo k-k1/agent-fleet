@@ -3,6 +3,7 @@
 // App) and openSettings/openAdmin (→ features/settings/store).
 import { useEffect, useRef, useState } from "react";
 import { useTenantStore } from "../core/store/tenant.ts";
+import { useTtsStore } from "../core/store/tts.ts";
 import { useSettingsUI } from "../features/settings/store.ts";
 import { rel } from "../core/api/client.ts";
 import { useSettings, setSetting, THEMES, SURFACE_TARGETS } from "../lib/settings.ts";
@@ -30,6 +31,10 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
   const superAdmin = useTenantStore((s) => s.superAdmin);
   const s = useSettings();
   const isMobile = useIsMobile();
+  // 音声読み上げ（docs/24）: 再生中だけ「読み上げ中＋停止」を右側に出す。停止は全体で 1 本の
+  // 再生を止める（チャット回答・FileView 選択のどちらでも）。
+  const ttsSpeaking = useTtsStore((st) => st.speaking);
+  const ttsSource = useTtsStore((st) => st.source);
   // Hamburger: single-click toggles the left pane open/closed; double-click toggles
   // its desktop display mode (Push ⇄ overlay). We debounce the single action so a
   // double-click doesn't also fire it. Mobile keeps the immediate drawer toggle.
@@ -99,6 +104,17 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
         </div>
       </div>
       <div className="topbar-right">
+        {ttsSpeaking && (
+          <button
+            className="tts-status"
+            title="読み上げを停止"
+            onClick={() => useTtsStore.getState().stop()}
+          >
+            <Icon name="unmute" className="tts-status-ic" />
+            <span className="tts-status-lbl">読み上げ中{ttsSource ? `・${ttsSource}` : ""}</span>
+            <Icon name="debug-stop" />
+          </button>
+        )}
         <button
           className="gear fs-toggle"
           title={fullscreen ? "全画面解除" : "全画面表示"}
