@@ -21,11 +21,22 @@
 >   本計画で挙動に触れた唯一のコミット 6eb0303）/ Store を機能別サブインターフェース 17 個に再構成
 >   （gitGC を narrow view の実例に）/ グローバル可変 map 3 つを struct 化。
 >
-> **残タスク（独立に着手可能）**: ① Agent の CLI 縦割り**パッケージ化**（internal/agents/{claude,
-> codex,opencode} — セッションモデル（sessionMeta/Session）の internal/session 抽出が前提の
-> 非機械的カスケード。ファイルレベルの縦割りまでは実施済み）② chat.go（976 行）の責務分割
-> ③ CP の config（133 ハンドラ）の機能別 struct 化 + resolvedFor プリアンブルのラッパー化
-> ④ P3（契約の型化、任意）。
+> **残タスク①〜③も完了**（2026-07-09 後半）:
+> ① **CLI 縦割りパッケージ化完了** — Wave A: internal/{session,status,tmuxx,paths} → B:
+> internal/secrets → C: internal/agents（IF層 + Flow/SidStore 共有部）→ D/E/F:
+> internal/agents/{opencode,codex,claude}（impl+auth+usage+settings+transcript+ハンドラを
+> CLI ごとに集約）。main 残置は registry / routes / hook サブコマンド入口 / ペイン I/O switch /
+> session_title / chat プロバイダのみ。Agent は main + 13 internal パッケージ構成。
+> ② chat.go → 4 ファイル（モデル/store/プロバイダ/ハンドラ）。
+> ③ CP ハンドラ層: memberAuth（withMembership/withResolved/withIdentity/withSuperAdmin +
+> superAdminFor/tenantAdminFor）に解決プリアンブルを集約し、機能 struct へ全面変換 —
+> memoAPI / ssmConfigAPI / wsSettingsAPI / patAPI / workspaceAPI / agentProxyAPI / previewAPI /
+> tenantAPI / adminAPI / egressAPI / gitServerAPI / mcpAPI。store は narrow view
+> （合成サブインターフェース）を持つ。config に残るのは edge/auth（Google/Bitbucket OAuth +
+> authGate）の 17 メソッドのみ — 「config 解体」完了。
+>
+> 未着手は **④ P3（契約の型化、任意）** のみ — console/src/types の手書き型との突き合わせを
+> 伴うため、着手はユーザー判断。
 
 ## 背景と診断
 
