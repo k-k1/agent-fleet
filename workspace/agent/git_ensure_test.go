@@ -127,6 +127,56 @@ func TestEnsureRepoNewBranch(t *testing.T) {
 	}
 }
 
+// TestEnsureRepoEmptyRemote covers cloning a freshly created, commit-less remote
+// (what the internal git provider makes): `git clone --branch main` fails against
+// a repo with zero refs, so gitClone must fall back to a plain clone that lands on
+// the unborn default branch, and a reused copy must not try to check the unborn
+// branch out. A missing branch on a POPULATED remote must still fail loudly.
+func TestEnsureRepoEmptyRemote(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	src := filepath.Join(t.TempDir(), "app.git")
+	if out, err := exec.Command("git", "init", "--bare", "--initial-branch=main", src).CombinedOutput(); err != nil {
+		t.Fatalf("init bare: %v: %s", err, out)
+	}
+	remote := "file://" + src
+
+	// Clone at the (not-yet-born) default branch => fallback plain clone on unborn main.
+	dir, err := ensureRepo(remote, "main", "", "")
+	if err != nil {
+		t.Fatalf("ensureRepo empty remote: %v", err)
+	}
+	if got := unbornHead(dir); got != "main" {
+		t.Fatalf("unborn HEAD = %q, want main", got)
+	}
+
+	// Reuse the same copy at the same branch: must not attempt a checkout of a
+	// ref that does not exist yet.
+	if _, err := ensureRepo(remote, "main", "", ""); err != nil {
+		t.Fatalf("ensureRepo reuse empty clone: %v", err)
+	}
+
+	// Fork a session branch off the unborn base (checkout -b works on unborn HEAD).
+	dirNB, err := ensureRepo(remote, "main", "temp/x", "app-x")
+	if err != nil {
+		t.Fatalf("ensureRepo empty remote + new branch: %v", err)
+	}
+	if got := unbornHead(dirNB); got != "temp/x" {
+		t.Fatalf("unborn HEAD after fork = %q, want temp/x", got)
+	}
+
+	// A populated remote with a missing branch must NOT silently fall back.
+	srcFull := filepath.Join(t.TempDir(), "full")
+	gitInit(t, srcFull)
+	if _, err := ensureRepo("file://"+srcFull, "nosuch", "", "full-nosuch"); err == nil {
+		t.Fatalf("ensureRepo populated remote + missing branch: expected error, got nil")
+	}
+}
+
 func TestEnsureRepoOriginMismatch(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")

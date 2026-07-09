@@ -230,12 +230,29 @@ func gitClone(dir, remoteURL, branch, newBranch string) error {
 	// SSH URL (git@host:) with no SSH key fails "Host key verification failed" and
 	// would abort the whole clone. Clone the parent first, then fetch submodules
 	// best-effort (over HTTPS via the token helper; see gitSubmodulesUpdate).
-	args := []string{"clone"}
-	if b := strings.TrimSpace(branch); b != "" && !strings.HasPrefix(b, "-") {
-		args = append(args, "--branch", b)
+	run := func(withBranch string) (string, error) {
+		args := []string{"clone"}
+		if withBranch != "" {
+			args = append(args, "--branch", withBranch)
+		}
+		args = append(args, "--", remoteURL, dir)
+		return gitx.Combined("", args...)
 	}
-	args = append(args, "--", remoteURL, dir)
-	if out, err := gitx.Combined("", args...); err != nil {
+	b := strings.TrimSpace(branch)
+	if strings.HasPrefix(b, "-") {
+		b = ""
+	}
+	out, err := run(b)
+	// A commit-less remote (a freshly created internal repo) has zero refs, so
+	// `--branch` fails with "Remote branch X not found in upstream". Verify the
+	// remote really is empty (not a typo'd branch on a populated repo), then retry
+	// plain: the clone lands on the remote HEAD's unborn branch, and the first
+	// push will create it.
+	if err != nil && b != "" && remoteHasNoBranches(remoteURL) {
+		_ = os.RemoveAll(dir)
+		out, err = run("")
+	}
+	if err != nil {
 		_ = os.RemoveAll(dir)
 		return fmt.Errorf("%v: %s", err, out)
 	}
@@ -249,6 +266,28 @@ func gitClone(dir, remoteURL, branch, newBranch string) error {
 	}
 	gitSubmodulesUpdate(dir)
 	return nil
+}
+
+// remoteHasNoBranches reports whether the remote advertises zero branch refs —
+// i.e. a freshly created, commit-less repository. Used to tell "empty repo" apart
+// from "requested branch missing on a populated repo" before retrying a clone.
+func remoteHasNoBranches(remoteURL string) bool {
+	out, err := gitx.Run("", "ls-remote", "--heads", "--", remoteURL)
+	return err == nil && out == ""
+}
+
+// unbornHead returns the branch name HEAD symbolically points at when the working
+// copy has no commits yet (a fresh clone of an empty remote), or "" when HEAD
+// resolves to a commit (the normal case).
+func unbornHead(dir string) string {
+	if gitx.OK(dir, "rev-parse", "--verify", "-q", "HEAD") {
+		return ""
+	}
+	out, err := gitx.Run(dir, "symbolic-ref", "--short", "HEAD")
+	if err != nil {
+		return ""
+	}
+	return out
 }
 
 // gitCheckoutNewBranch creates newBranch at the current HEAD (the just-cloned or
@@ -510,8 +549,12 @@ func ensureRepo(remoteURL, branch, newBranch, name string) (string, error) {
 		// if the new branch already exists — then we just switch to it below), or when a
 		// plain base checkout was requested and no new branch is wanted.
 		if b := strings.TrimSpace(branch); b != "" && !strings.HasPrefix(b, "-") && (nb == "" || !branchExists(dir, nb)) {
-			if out, err := gitx.Combined(dir, "checkout", b); err != nil {
-				return "", fmt.Errorf("checkout %s: %v: %s", b, err, out)
+			// A reused clone of a still-empty remote sits on an unborn branch with no
+			// ref to check out; when it's already the requested one there is nothing to do.
+			if unbornHead(dir) != b {
+				if out, err := gitx.Combined(dir, "checkout", b); err != nil {
+					return "", fmt.Errorf("checkout %s: %v: %s", b, err, out)
+				}
 			}
 		}
 		if nb != "" {
