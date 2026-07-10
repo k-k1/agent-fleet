@@ -120,6 +120,8 @@ func buildMux() *http.ServeMux {
 	// codex / opencode rtk toggle (durable pref → on-disk artifacts) — Console.
 	mux.HandleFunc("GET /agents/rtk", handleAgentRTKGet)
 	mux.HandleFunc("PUT /agents/rtk", handleAgentRTKPut)
+	// rtk token-savings history (rtk gain) for the WsBar "rtk 効果" chip.
+	mux.HandleFunc("GET /agents/rtk/gain", handleAgentRTKGain)
 
 	// Toolchain selection (node via nvm / java via pre-baked Temurin) — Console.
 	mux.HandleFunc("GET /env/toolchains", handleToolchainsGet)

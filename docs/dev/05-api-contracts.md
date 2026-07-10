@@ -21,7 +21,7 @@ L1 認証（authGate）通過後に到達。認可は「自分のリソースの
 | fs | `GET /api/fs/{tree,file,download,changes,linemarks}`・`POST /api/fs/{upload,mkdir,newfile,rename,delete}` | 中継 | [04](04-workspace-agent.md) |
 | connections | `GET /api/connections`・git `PUT/DELETE /api/connections/git/{host}`（+ GitHub Device / Bitbucket OAuth / claude / codex / opencode）| 中継（Bitbucket OAuth 開始と callback のみ CP）| [08](08-integrations.md) |
 | chat / assistants | `/api/chat/conversations*`（stream は SSE）・`POST /api/chat/ask`・`/api/assistants*` | 中継 | [04](04-workspace-agent.md) |
-| env / settings | `GET/PUT /api/env/{toolchains,ui-prefs}`・`GET/PUT /api/env/ws-settings`・`GET/PUT /api/claude/settings`・`GET /api/{claude,codex}/usage`・`GET/PUT /api/agents/rtk` | ws-settings=CP、他は中継 | [04](04-workspace-agent.md) |
+| env / settings | `GET/PUT /api/env/{toolchains,ui-prefs}`・`GET/PUT /api/env/ws-settings`・`GET/PUT /api/claude/settings`・`GET /api/{claude,codex}/usage`・`GET/PUT /api/agents/rtk`・`GET /api/agents/rtk/gain`（rtk 節約履歴＝WsBar「rtk 効果」チップ、`rtk gain --format json` 素通し）| ws-settings=CP、他は中継 | [04](04-workspace-agent.md) |
 | memo | `GET/POST/PATCH/DELETE /api/memos*`・`POST /api/memos/flush` | CP（flush 時のみ Agent へ）| [03](03-control-plane.md) |
 | pat | `GET/POST/DELETE /api/pat*` | CP | [07 §7.6](07-security.md) |
 | ssm | `GET/POST/PUT/DELETE /api/ssm/{profiles,hosts}*`・`GET /api/sessions/{name}/ssm-login` | CP（DB）+ Agent（セッション）| [08](08-integrations.md) |
