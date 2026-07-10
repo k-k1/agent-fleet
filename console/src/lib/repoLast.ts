@@ -23,6 +23,18 @@ export function readRepoLast(repo: string): RepoLast {
   }
 }
 
+// resolveModel picks the initial claude model for a NEW session in `repo`, applying the
+// one shared priority chain used by every launch entry point (LaunchModal / quick launch;
+// NewSessionModal has no repo yet so it passes "" and starts at the default tier):
+//   repo last-used  →  global default (settings.defaultModel)  →  ""  (claude's own,
+//   release-varying default; reached only when the global default is itself "既定"/"").
+// The caller's own explicit pick (modal selection) and fork/relaunch inheritance sit ABOVE
+// this — they overwrite whatever this returns — so this only computes the initial default.
+// Only meaningful for claude (caps.model); other agents pass "" straight through.
+export function resolveModel(repo: string, defaultModel: string): string {
+  return readRepoLast(repo).model || defaultModel || "";
+}
+
 // writeRepoLast records the kind, and (when provided) the model — model is only
 // meaningful for claude, so callers pass it only then; "" clears it back to 既定.
 export function writeRepoLast(repo: string, kind: string, model?: string): void {
