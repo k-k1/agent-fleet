@@ -155,6 +155,11 @@ var mcpStdioTools = []map[string]any{
 		"description": "利用者のワークスペースにある git 作業コピー（~/repos 配下）の一覧を返す。新規セッションをどのディレクトリ（リポジトリ）で起こすか決める時に、まだセッションが動いていないリポジトリも含めて選ぶために呼ぶ。返る各リポジトリの path を create_session の dir に渡す。",
 		"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}},
 	},
+	{
+		"name":        "list_memos",
+		"description": "メモキュー（溜めて一括でセッションへ送るメモ）の一覧を返す。未送信＋保持期間内の送信済みを含む。各メモは id/repo/category/kind(file|text)/body/refPath を持つ。利用者に「今どんなメモが溜まっている?」と聞かれた時や、flush_memos / update_memo / delete_memo で対象の id を選ぶ前に呼ぶ。",
+		"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}},
+	},
 }
 
 // mcpStdioWriteTools — Agent Fleet write/orchestrate tools, advertised only under --write
@@ -177,6 +182,58 @@ var mcpStdioWriteTools = []map[string]any{
 				"model":          map[string]any{"type": "string", "description": "モデル上書き（任意）。"},
 				"initial_prompt": map[string]any{"type": "string", "description": "起動後に自動送信する最初のタスク/引き継ぎ文（任意）。"},
 			},
+		},
+	},
+	{
+		"name": "add_memo",
+		"description": "メモキューに1件追加する。kind=text は body（メモ本文）、kind=file は refPath（~/repos/... パス）が必須で body は任意コメント。repo（''=共通/未分類）と category（サブプロジェクトの自由ラベル）で仕分ける。チャット中に出た TODO・依頼・後で渡したい対象を溜めておく時に呼ぶ。",
+		"inputSchema": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"kind":     map[string]any{"type": "string", "description": "text | file"},
+				"body":     map[string]any{"type": "string", "description": "メモ本文（kind=text）またはコメント（kind=file）"},
+				"refPath":  map[string]any{"type": "string", "description": "~/repos/... のパス（kind=file）"},
+				"repo":     map[string]any{"type": "string", "description": "レポのバケツ。''=共通/未分類（任意）"},
+				"category": map[string]any{"type": "string", "description": "サブプロジェクトのラベル（任意）"},
+			},
+			"required": []string{"kind"},
+		},
+	},
+	{
+		"name": "update_memo",
+		"description": "既存メモ（id 指定）を編集する。渡したフィールドだけ変わり、省略した項目はそのまま。文言の整形・カテゴリ変更・並び替え(position)に使う。id は list_memos で得る。",
+		"inputSchema": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"id":       map[string]any{"type": "string", "description": "メモ id（list_memos で取得）"},
+				"body":     map[string]any{"type": "string", "description": "新しい本文（任意）"},
+				"repo":     map[string]any{"type": "string", "description": "新しいレポバケツ（任意）"},
+				"category": map[string]any{"type": "string", "description": "新しいカテゴリ（任意）"},
+				"refPath":  map[string]any{"type": "string", "description": "新しい参照パス（任意）"},
+				"position": map[string]any{"type": "integer", "description": "グループ内の新しい並び順（任意）"},
+			},
+			"required": []string{"id"},
+		},
+	},
+	{
+		"name":        "delete_memo",
+		"description": "メモを id で削除する。id は list_memos で取得する。",
+		"inputSchema": map[string]any{
+			"type":       "object",
+			"properties": map[string]any{"id": map[string]any{"type": "string", "description": "メモ id（list_memos で取得）"}},
+			"required":   []string{"id"},
+		},
+	},
+	{
+		"name": "flush_memos",
+		"description": "選択したメモを1メッセージに連結（カテゴリを見出しに）してセッションに1回だけ送信し、送信済み(sent_at)にする。sessionName（list_my_sessions の name）と ids（list_memos の id 配列）を渡す。レポ全体/カテゴリ単位/個別は ids の作り方だけの違い。溜めたメモをまとめてセッションに渡す時に呼ぶ。",
+		"inputSchema": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"sessionName": map[string]any{"type": "string", "description": "送信先セッション名（list_my_sessions の name）"},
+				"ids":         map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "送るメモ id の配列（list_memos で取得）"},
+			},
+			"required": []string{"sessionName", "ids"},
 		},
 	},
 	{
@@ -227,8 +284,65 @@ func mcpStdioCall(req mcpReq) []byte {
 		Kind          string `json:"kind"`
 		Model         string `json:"model"`
 		InitialPrompt string `json:"initial_prompt"`
+		// memo args (id in the path; the rest are forwarded verbatim via p.Args)
+		ID string `json:"id"`
 	}
 	_ = json.Unmarshal(p.Args, &a)
+
+	// Memo-queue tools relay to the CP's /internal/memos bridge (the queue lives in the
+	// CP store, not the Agent), authenticated by AF_MEMO_TOKEN. list_memos is read-only
+	// (available to af_read too); the mutating ones require --write. The tool args match
+	// the CP wire shape, so p.Args is forwarded as the request body verbatim.
+	switch p.Name {
+	case "list_memos":
+		out, err := cpMemoDo(http.MethodGet, "/internal/memos", nil)
+		if err != nil {
+			return mcpToolErr(req.ID, err.Error())
+		}
+		return mcpTextResult(req.ID, out)
+	case "add_memo":
+		if !mcpWriteEnabled {
+			return mcpToolErr(req.ID, "このアシスタントはメモの追加を許可されていません")
+		}
+		out, err := cpMemoDo(http.MethodPost, "/internal/memos", []byte(p.Args))
+		if err != nil {
+			return mcpToolErr(req.ID, err.Error())
+		}
+		return mcpTextResult(req.ID, out)
+	case "update_memo":
+		if !mcpWriteEnabled {
+			return mcpToolErr(req.ID, "このアシスタントはメモの編集を許可されていません")
+		}
+		if a.ID == "" {
+			return mcpToolErr(req.ID, "id（メモ id）が必要です")
+		}
+		out, err := cpMemoDo(http.MethodPatch, "/internal/memos/"+url.PathEscape(a.ID), []byte(p.Args))
+		if err != nil {
+			return mcpToolErr(req.ID, err.Error())
+		}
+		return mcpTextResult(req.ID, out)
+	case "delete_memo":
+		if !mcpWriteEnabled {
+			return mcpToolErr(req.ID, "このアシスタントはメモの削除を許可されていません")
+		}
+		if a.ID == "" {
+			return mcpToolErr(req.ID, "id（メモ id）が必要です")
+		}
+		out, err := cpMemoDo(http.MethodDelete, "/internal/memos/"+url.PathEscape(a.ID), nil)
+		if err != nil {
+			return mcpToolErr(req.ID, err.Error())
+		}
+		return mcpTextResult(req.ID, out)
+	case "flush_memos":
+		if !mcpWriteEnabled {
+			return mcpToolErr(req.ID, "このアシスタントはメモの一括送信を許可されていません")
+		}
+		out, err := cpMemoDo(http.MethodPost, "/internal/memos/flush", []byte(p.Args))
+		if err != nil {
+			return mcpToolErr(req.ID, err.Error())
+		}
+		return mcpTextResult(req.ID, out)
+	}
 
 	// Write/orchestrate tools — only when this server was started with --write.
 	switch p.Name {
@@ -334,6 +448,39 @@ func mcpToolErr(id json.RawMessage, msg string) []byte {
 		"content": []any{map[string]any{"type": "text", "text": msg}},
 		"isError": true,
 	})
+}
+
+// cpMemoDo calls the CP's /internal/memos bridge over the public hairpin (AF_CP_BASE_URL)
+// authenticated by the per-membership AF_MEMO_TOKEN — the queue lives in the CP store,
+// not the local Agent. Both env vars are injected by the CP only when PUBLIC_BASE_URL is
+// set; absent them the memo feature is unavailable and we say so in-band.
+func cpMemoDo(method, path string, body []byte) (string, error) {
+	base := os.Getenv("AF_CP_BASE_URL")
+	if base == "" || os.Getenv("AF_MEMO_TOKEN") == "" {
+		return "", fmt.Errorf("メモ機能はこの環境では利用できません（CP の公開URL/トークンが未設定）")
+	}
+	var rdr io.Reader
+	if body != nil {
+		rdr = bytes.NewReader(body)
+	}
+	req, err := http.NewRequest(method, base+path, rdr)
+	if err != nil {
+		return "", err
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	req.Header.Set("Authorization", "Bearer "+os.Getenv("AF_MEMO_TOKEN"))
+	resp, err := (&http.Client{Timeout: 20 * time.Second}).Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode >= 400 {
+		return "", fmt.Errorf("CP メモAPI エラー (%d): %s", resp.StatusCode, string(b))
+	}
+	return string(b), nil
 }
 
 // agentGET calls the local Agent REST with the shared AGENT_TOKEN.

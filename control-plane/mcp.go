@@ -290,6 +290,104 @@ func memberTools() []mcpTool {
 				return agentText(ctx, res.rt, "POST", "/sessions", body)
 			},
 		},
+		// Memo queue (docs/21). The queue lives in the CP store (membership-scoped), so
+		// these tools hit it DIRECTLY via the shared memo core (memo.go), scoped to the
+		// PAT's membership — no Agent round-trip. flush_memos does reach the workspace to
+		// deliver the concatenated message.
+		{
+			name: "list_memos", minScope: scopeRead,
+			desc:   "List your memo-queue notes (unsent + recently-sent within retention). Each memo has an `id`, `repo`, `category`, `kind` (file|text), `body`, and `refPath`. Use before flush_memos / update_memo / delete_memo to pick ids.",
+			schema: map[string]any{"type": "object", "properties": map[string]any{}},
+			run: func(ctx context.Context, a mcpAPI, res *resolved, _ map[string]any) (string, error) {
+				out, err := memoListFor(ctx, a.mgr.store, res.mv.MembershipID)
+				if err != nil {
+					return "", err
+				}
+				return jsonText(out)
+			},
+		},
+		{
+			name: "add_memo", minScope: scopeWrite,
+			desc: "Add a note to your memo queue. kind=text needs `body`; kind=file needs `refPath` (a ~/repos/... path) with `body` as an optional comment. `repo` ('' = 共通/未分類) and `category` (free label) group it. Capture TODOs/ideas here to flush together later.",
+			schema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"kind":     map[string]any{"type": "string", "description": "text | file"},
+					"body":     map[string]any{"type": "string", "description": "note text (kind=text) or comment (kind=file)"},
+					"refPath":  map[string]any{"type": "string", "description": "~/repos/... path (kind=file)"},
+					"repo":     map[string]any{"type": "string", "description": "repo bucket, '' = 共通/未分類 (optional)"},
+					"category": map[string]any{"type": "string", "description": "sub-project label (optional)"},
+				},
+				"required": []string{"kind"},
+			},
+			run: func(ctx context.Context, a mcpAPI, res *resolved, args map[string]any) (string, error) {
+				dto, aerr := memoCreateFor(ctx, a.mgr.store, res.mv, memoDTO{
+					Repo: argStr(args, "repo"), Category: argStr(args, "category"),
+					Kind: argStr(args, "kind"), Body: argStr(args, "body"), RefPath: argStr(args, "refPath"),
+				})
+				if aerr != nil {
+					return "", fmt.Errorf("%s", aerr.message)
+				}
+				return jsonText(dto)
+			},
+		},
+		{
+			name: "update_memo", minScope: scopeWrite,
+			desc: "Edit an existing memo (by `id`). Only the fields you pass change; omit the rest. Use to tidy wording, re-categorize, or reorder (position).",
+			schema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"id":       map[string]any{"type": "string", "description": "memo id (from list_memos)"},
+					"body":     map[string]any{"type": "string", "description": "new body (optional)"},
+					"repo":     map[string]any{"type": "string", "description": "new repo bucket (optional)"},
+					"category": map[string]any{"type": "string", "description": "new category (optional)"},
+					"refPath":  map[string]any{"type": "string", "description": "new ref path (optional)"},
+					"position": map[string]any{"type": "integer", "description": "new position within its group (optional)"},
+				},
+				"required": []string{"id"},
+			},
+			run: func(ctx context.Context, a mcpAPI, res *resolved, args map[string]any) (string, error) {
+				dto, aerr := memoUpdateFor(ctx, a.mgr.store, res.mv.MembershipID, argStr(args, "id"), memoPatch{
+					Repo: argStrPtr(args, "repo"), Category: argStrPtr(args, "category"),
+					Body: argStrPtr(args, "body"), RefPath: argStrPtr(args, "refPath"),
+					Position: argIntPtr(args, "position"),
+				})
+				if aerr != nil {
+					return "", fmt.Errorf("%s", aerr.message)
+				}
+				return jsonText(dto)
+			},
+		},
+		{
+			name: "delete_memo", minScope: scopeWrite,
+			desc:   "Delete a memo by `id`.",
+			schema: map[string]any{"type": "object", "properties": map[string]any{"id": map[string]any{"type": "string", "description": "memo id (from list_memos)"}}, "required": []string{"id"}},
+			run: func(ctx context.Context, a mcpAPI, res *resolved, args map[string]any) (string, error) {
+				if err := a.mgr.store.DeleteMemo(ctx, argStr(args, "id"), res.mv.MembershipID); err != nil {
+					return "", err
+				}
+				return `{"ok":true}`, nil
+			},
+		},
+		{
+			name: "flush_memos", minScope: scopeWrite,
+			desc: "Concatenate the selected memos into ONE message (category-grouped) and send it once to a session's input, stamping them sent. Pass `sessionName` (a `name` from list_my_sessions) and `ids` (from list_memos). The three send granularities (whole repo / category / individual) are all just different id lists.",
+			schema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"sessionName": map[string]any{"type": "string", "description": "target session name"},
+					"ids":         map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "memo ids to flush"},
+				},
+				"required": []string{"sessionName", "ids"},
+			},
+			run: func(ctx context.Context, a mcpAPI, res *resolved, args map[string]any) (string, error) {
+				out, aerr := memoFlushFor(ctx, a.mgr.store, res.rt, res.mv.MembershipID, argStr(args, "sessionName"), argStrings(args, "ids"))
+				if aerr != nil {
+					return "", fmt.Errorf("%s", aerr.message)
+				}
+				return jsonText(out)
+			},
+		},
 	}
 }
 
@@ -411,6 +509,48 @@ func argInt(a map[string]any, k string) int {
 		return n
 	}
 	return 0
+}
+
+// argStrPtr / argIntPtr return a pointer only when the key is present with the right
+// type — the "leave unchanged" semantics a memo PATCH needs (a nil field is not edited).
+func argStrPtr(a map[string]any, k string) *string {
+	if a == nil {
+		return nil
+	}
+	if v, ok := a[k].(string); ok {
+		return &v
+	}
+	return nil
+}
+
+func argIntPtr(a map[string]any, k string) *int {
+	if a == nil {
+		return nil
+	}
+	switch v := a[k].(type) {
+	case float64:
+		n := int(v)
+		return &n
+	case int:
+		return &v
+	}
+	return nil
+}
+
+// argStrings coerces a JSON array argument into []string (a tool call delivers arrays
+// as []any). Non-string elements are skipped.
+func argStrings(a map[string]any, k string) []string {
+	raw, ok := a[k].([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(raw))
+	for _, v := range raw {
+		if s, ok := v.(string); ok {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 func jsonText(v any) (string, error) {
