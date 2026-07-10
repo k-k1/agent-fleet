@@ -24,6 +24,10 @@ function contentFromFlat(p: any): PaneContent {
       const filePath = str(p.filePath);
       return filePath ? { kind: "file", filePath } : { kind: "terminal", chat: false };
     }
+    case "read": {
+      const filePath = str(p.filePath);
+      return filePath ? { kind: "read", filePath } : { kind: "terminal", chat: false };
+    }
     case "scm": {
       const scmRepo = str(p.scmRepo);
       return scmRepo ? { kind: "scm", scmRepo } : { kind: "terminal", chat: false };
