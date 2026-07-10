@@ -4,7 +4,7 @@
 // temp/<slug> in a wip-<slug> folder) or in-place on the current checkout.
 // Port of the old components/LaunchModal.
 import { useEffect, useRef, useState } from "react";
-import type { KeyboardEvent } from "react";
+import type { KeyboardEvent, ClipboardEvent } from "react";
 import { Modal } from "../../ui/Modal.tsx";
 import { Button } from "../../ui/Button.tsx";
 import { Icon } from "../../ui/Icon.tsx";
@@ -29,6 +29,10 @@ export interface LaunchOpts {
   kind: string;
   model: string;
   prompt: string;
+  // Pasted images awaiting upload. Held as raw Files (not yet uploaded) because no
+  // session exists at compose time — the caller uploads them once the session is
+  // minted and embeds the saved paths into the first prompt (claude Read-tool flow).
+  images: File[];
   worktree: boolean;
   base: string;
   newBranch: string;
@@ -61,6 +65,12 @@ export function LaunchModal({ repo, branch, path, kinds, allowWorktree = true, o
   const [kind, setKind] = useState(initialKind);
   const [model, setModel] = useState(last.model || "");
   const [prompt, setPrompt] = useState("");
+  // Pasted images awaiting the launch: raw File + an object URL for the chip preview.
+  // Uploaded only after the session is minted (in onStartWork), then referenced in the
+  // first prompt. Non-claude agents lack the imagePaste cap, so paste is a no-op there.
+  const [images, setImages] = useState<{ file: File; url: string }[]>([]);
+  const imagesRef = useRef(images);
+  imagesRef.current = images;
   const [busy, setBusy] = useState(false);
   const textRef = useRef<HTMLTextAreaElement>(null);
   // WHERE: default to an isolated worktree — a branch switch can't corrupt other
@@ -91,6 +101,45 @@ export function LaunchModal({ repo, branch, path, kinds, allowWorktree = true, o
   }, [repo]);
 
   const hasModel = agentOf(kind).caps.model;
+  const canPasteImage = agentOf(kind).caps.imagePaste;
+
+  // Revoke every held preview URL when the modal unmounts (avoids leaking object URLs).
+  useEffect(() => () => imagesRef.current.forEach((x) => URL.revokeObjectURL(x.url)), []);
+
+  // Switching to an agent without image support drops any staged images (they'd have
+  // nowhere to go). Runs only on that transition.
+  useEffect(() => {
+    if (!canPasteImage)
+      setImages((prev) => {
+        prev.forEach((x) => URL.revokeObjectURL(x.url));
+        return prev.length ? [] : prev;
+      });
+  }, [canPasteImage]);
+
+  // Paste image(s) into the prompt: stage each File + a preview URL. Actual upload waits
+  // for the session (onStartWork). Non-image pastes fall through to the default (text).
+  const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
+    if (!canPasteImage) return;
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    const files: File[] = [];
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i];
+      if (it.kind === "file" && it.type.startsWith("image/")) {
+        const f = it.getAsFile();
+        if (f) files.push(f);
+      }
+    }
+    if (!files.length) return; // ordinary text paste — let it happen
+    e.preventDefault();
+    setImages((prev) => [...prev, ...files.map((f) => ({ file: f, url: URL.createObjectURL(f) }))]);
+  };
+
+  const removeImage = (i: number) =>
+    setImages((prev) => {
+      if (prev[i]) URL.revokeObjectURL(prev[i].url);
+      return prev.filter((_, idx) => idx !== i);
+    });
 
   // {{repo}}/{{branch}}/{{path}} auto-embed from this repo's row context.
   const expand = (body: string) =>
@@ -122,6 +171,7 @@ export function LaunchModal({ repo, branch, path, kinds, allowWorktree = true, o
       kind,
       model: hasModel ? model : "",
       prompt: prompt.trim(),
+      images: canPasteImage ? images.map((x) => x.file) : [],
       worktree,
       base: worktree ? (useExisting ? newBranch : base.trim()) : "",
       newBranch: worktree && !useExisting ? newBranch : "",
@@ -302,17 +352,31 @@ export function LaunchModal({ repo, branch, path, kinds, allowWorktree = true, o
               </select>
             )}
           </span>
+          {images.length > 0 && (
+            <div className="mirror-attach">
+              {images.map((im, i) => (
+                <div className="ma-chip" key={im.url}>
+                  <img className="ma-thumb" src={im.url} alt="" />
+                  <button type="button" className="ma-del" title="削除" onClick={() => removeImage(i)}>
+                    <Icon name="close" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
           <textarea
             ref={textRef}
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
             onKeyDown={onKey}
+            onPaste={onPaste}
             rows={4}
             autoFocus
             placeholder="起動後にこのプロンプトを送信します。空なら送信せず開くだけ。"
           />
           <span className="ui-field-hint">
             セッション起動後、準備でき次第この内容を1回だけ自動送信します（⌘/Ctrl+Enter で起動）。
+            {canPasteImage && "画像はここに貼り付けられます。"}
           </span>
         </div>
       </div>
