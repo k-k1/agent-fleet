@@ -88,6 +88,26 @@ func TestVoicevoxSynthesize(t *testing.T) {
 	}
 }
 
+func TestCollapseJaSpaces(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"submit 時に", "submit時に"},                // 英単語→日本語
+		{"green です。", "greenです。"},                // 英単語→日本語（文末）
+		{"設定 tts_engine を見る", "設定tts_engineを見る"}, // 日本語→英単語→日本語
+		{"tsc / vitest", "tsc / vitest"},         // 英単語同士は残す
+		{"This is a pen", "This is a pen"},       // 英文はそのまま
+		{"submit   時に", "submit時に"},              // 連続スペースも除去
+		{"a  b", "a b"},                          // 英単語間の連続は 1 つに正規化
+		{"それは　いい", "それは　いい"},                     // 全角スペースは意図した間として残す
+		{"「code です」", "「codeです」"},                // 和文記号にも隣接扱いが効く
+		{"67件 まで OK です", "67件までOKです"},            // 数字+助数詞は和文側
+	}
+	for _, c := range cases {
+		if got := collapseJaSpaces(c.in); got != c.want {
+			t.Errorf("collapseJaSpaces(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
 func TestVoicevoxUnreachable(t *testing.T) {
 	// A closed port → BadGateway with the engine-unreachable code, not a panic.
 	_, aerr := voicevoxSynthesize(t.Context(), "http://127.0.0.1:1", "x。", "3", 1)

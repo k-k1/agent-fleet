@@ -213,10 +213,53 @@ func (v *voicevoxProvider) Synthesize(ctx context.Context, text string, o voiceO
 	return wav, "audio/wav", nil
 }
 
+// collapseJaSpaces は和文文字に隣接する半角スペースを除去する。「submit 時に」
+// 「green です」のような英単語と日本語の間の空白は組版上のもので読みの間ではないが、
+// VOICEVOX はスペースをポーズとして合成し読みが途切れる。英単語同士の空白
+// （"tsc / vitest" 等）は語の区切りとして残す（連続分は 1 つに正規化）。
+// 全角スペースは触らない（意図した「間」の表現として使われる）。
+func collapseJaSpaces(s string) string {
+	runes := []rune(s)
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(runes); i++ {
+		if runes[i] != ' ' {
+			b.WriteRune(runes[i])
+			continue
+		}
+		j := i
+		for j < len(runes) && runes[j] == ' ' {
+			j++
+		}
+		prevJa := i > 0 && isJaRune(runes[i-1])
+		nextJa := j < len(runes) && isJaRune(runes[j])
+		if !prevJa && !nextJa {
+			b.WriteRune(' ')
+		}
+		i = j - 1
+	}
+	return b.String()
+}
+
+func isJaRune(r rune) bool {
+	switch {
+	case r >= 0x3040 && r <= 0x30FF: // ひらがな・カタカナ・ー
+		return true
+	case r >= 0x4E00 && r <= 0x9FFF: // CJK 統合漢字
+		return true
+	case r >= 0x3001 && r <= 0x303F: // 和文記号（、。「」等。全角スペース U+3000 は除く）
+		return true
+	case r >= 0xFF00 && r <= 0xFFEF: // 全角英数・全角記号・半角カナ
+		return true
+	}
+	return false
+}
+
 // voicevoxSynthesize は VOICEVOX の 2 段 API（audio_query → synthesis）で WAV を得る。
 // speaker=3 がずんだもん・ノーマル。speed は audio_query の speedScale を上書きする。
 func voicevoxSynthesize(ctx context.Context, base, text, voice string, speed float64) ([]byte, *apiError) {
 	base = strings.TrimRight(base, "/")
+	text = collapseJaSpaces(text)
 	speaker := strings.TrimSpace(voice)
 	if speaker == "" {
 		speaker = "3" // ずんだもん（ノーマル）
