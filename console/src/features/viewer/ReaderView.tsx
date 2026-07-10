@@ -7,6 +7,7 @@
 // content kind は "read"（layout/types.ts）。ファイル右クリック「朗読で開く」や FileView の
 // 「朗読」ボタンから開く。
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { api } from "../../core/api/client.ts";
 import { baseName, langFor } from "../../lib/filemeta.ts";
 import FileIcon from "../../ui/FileIcon.tsx";
@@ -30,6 +31,8 @@ export function ReaderView({ filePath }: { filePath: string }) {
   const [reading, setReading] = useState(false);
   const [paused, setPaused] = useState(false);
   const [active, setActive] = useState<number | null>(null);
+  // 選択範囲から朗読を（再）開始するピル（選択の先頭にある読み上げ単位の index と表示位置）。
+  const [selPill, setSelPill] = useState<{ x: number; y: number; idx: number } | null>(null);
 
   // 本文取得（FileView と同じ /api/fs/file）。ファイルが変わったら朗読を止めてリセット。
   useEffect(() => {
@@ -41,6 +44,7 @@ export function ReaderView({ filePath }: { filePath: string }) {
     setActive(null);
     setReading(false);
     setPaused(false);
+    setSelPill(null);
     api(`api/fs/file?path=${encodeURIComponent(filePath)}`)
       .then((d) => {
         if (!alive) return;
@@ -83,10 +87,13 @@ export function ReaderView({ filePath }: { filePath: string }) {
   // アンマウントで朗読停止（別ファイルを開く等で本文 DOM が消えるため）。
   useEffect(() => () => handleRef.current?.stop(), []);
 
-  const start = () => {
-    if (!flat.length) return;
-    const h = startNarration(flat, baseName(filePath), (i) => {
-      setActive(i);
+  // from 番目の読み上げ単位から（再）開始。ハイライトは from を足してフル配列基準に戻す。
+  const startFrom = (from: number) => {
+    const slice = flat.slice(from);
+    if (!slice.length) return;
+    handleRef.current?.stop();
+    const h = startNarration(slice, baseName(filePath), (i) => {
+      setActive(i == null ? null : i + from);
       if (i == null) {
         // 自然終了 or 外部（TopBar 停止・他再生開始）で終了
         setReading(false);
@@ -98,7 +105,50 @@ export function ReaderView({ filePath }: { filePath: string }) {
     setReading(true);
     setPaused(false);
   };
+  const start = () => startFrom(0);
   const stop = () => handleRef.current?.stop();
+
+  // 選択の開始ノードから、その位置（以降）の読み上げ単位の index を得る。選択が非読み上げ単位
+  // （空行/区切り）に始まるときは後続の最初の読み上げ単位へ送る。無ければ null。
+  const spokenIdxAt = (node: Node): number | null => {
+    const el = node.nodeType === Node.TEXT_NODE ? node.parentElement : (node as HTMLElement);
+    const unit = el?.closest<HTMLElement>(".reader-unit");
+    if (!unit) return null;
+    if (unit.dataset.si != null) return Number(unit.dataset.si);
+    for (let n = unit.nextElementSibling; n; n = n.nextElementSibling) {
+      const si = (n as HTMLElement).dataset?.si;
+      if (si != null) return Number(si);
+    }
+    return null;
+  };
+
+  // 本文内で選択が確定したら、選択の先頭に「ここから朗読」ピルを出す（再生中でも再スタート可）。
+  const onBodyMouseUp = () => {
+    const sel = window.getSelection();
+    const body = scrollRef.current;
+    if (!ttsOn || !sel || sel.isCollapsed || sel.rangeCount === 0 || !body) {
+      setSelPill(null);
+      return;
+    }
+    const range = sel.getRangeAt(0);
+    if (!body.contains(range.startContainer)) {
+      setSelPill(null);
+      return;
+    }
+    const idx = spokenIdxAt(range.startContainer);
+    if (idx == null) {
+      setSelPill(null);
+      return;
+    }
+    const rect = range.getBoundingClientRect();
+    setSelPill({ x: Math.round(rect.left), y: Math.round(rect.top - 34), idx });
+  };
+  const startFromSelection = () => {
+    if (!selPill) return;
+    startFrom(selPill.idx);
+    setSelPill(null);
+    window.getSelection()?.removeAllRanges();
+  };
   const togglePause = () => {
     const h = handleRef.current;
     if (!h) return;
@@ -166,7 +216,7 @@ export function ReaderView({ filePath }: { filePath: string }) {
       ) : !flat.length ? (
         <pre className="filebody muted">(読み上げる本文がありません)</pre>
       ) : (
-        <div className={"reader-body" + (vertical ? " vertical" : "")} ref={scrollRef}>
+        <div className={"reader-body" + (vertical ? " vertical" : "")} ref={scrollRef} onMouseUp={onBodyMouseUp}>
           {units.map((u, ui) => {
             const si = spokenIdx[ui];
             return (
@@ -190,6 +240,15 @@ export function ReaderView({ filePath }: { filePath: string }) {
           })}
         </div>
       )}
+      {selPill &&
+        createPortal(
+          <div className="sel-pill-group" style={{ left: selPill.x, top: Math.max(4, selPill.y) }}>
+            <button type="button" className="sel-send-pill" onMouseDown={(e) => e.preventDefault()} onClick={startFromSelection}>
+              <Icon name="unmute" /> ここから朗読
+            </button>
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }
