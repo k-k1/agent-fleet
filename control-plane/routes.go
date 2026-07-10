@@ -252,6 +252,15 @@ func registerMemoRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("POST /api/memos/flush", memo.withResolved(memo.flush))
 	mux.HandleFunc("PATCH /api/memos/{id}", memo.withMembership(memo.update))
 	mux.HandleFunc("DELETE /api/memos/{id}", memo.withMembership(memo.delete))
+
+	// Internal (operator-token) face: an in-container フリート・オペレーター has no
+	// gateway session, so it hits these with its AF_MEMO_TOKEN Bearer (memo_bridge.go).
+	// /internal/* is session-exempt; auth + membership scoping live in withMemoToken.
+	mux.HandleFunc("GET /internal/memos", memo.withMemoToken(memo.list))
+	mux.HandleFunc("POST /internal/memos", memo.withMemoToken(memo.create))
+	mux.HandleFunc("POST /internal/memos/flush", memo.withMemoTokenResolved(memo.flush))
+	mux.HandleFunc("PATCH /internal/memos/{id}", memo.withMemoToken(memo.update))
+	mux.HandleFunc("DELETE /internal/memos/{id}", memo.withMemoToken(memo.delete))
 }
 
 // Repository ops + source-control view + file browser — proxied to the Workspace

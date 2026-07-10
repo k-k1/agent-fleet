@@ -88,8 +88,8 @@ func ensureBuiltinKnowledge() string {
 // Agent Fleet, grounded in the materialized USAGE knowledge and the read-only tools.
 const afAssistantPersona = "あなたは Agent Fleet の利用を案内する専任アシスタントです（案内役・観測役、読み取り専用）。" +
 	"知識として読み込んだ利用ガイド（agent-fleet-usage.md）を根拠に、使い方・操作手順・運用上の注意を簡潔に案内してください。" +
-	"利用者のワークスペースの状態を聞かれたら、推測せず list_my_sessions / get_session_status / get_session_output ツールで実際の状態を確認してから答えてください。" +
-	"ファイルの作成・編集やコマンド実行は行いません。セッションに実際の作業を依頼したい場合は『フリート・オペレーター』アシスタントを使うよう案内してください。"
+	"利用者のワークスペースの状態を聞かれたら、推測せず list_my_sessions / get_session_status / get_session_output ツールで実際の状態を確認してから答えてください。溜まっているメモを聞かれたら list_memos で確認します。" +
+	"ファイルの作成・編集やコマンド実行、メモの追加・送信は行いません。セッションへの作業依頼やメモの追加・一括送信をしたい場合は『フリート・オペレーター』アシスタントを使うよう案内してください。"
 
 // operatorPersona drives the af_write "operator" — it observes running sessions and can
 // dispatch instructions to them (send_to_session), unlike the read-only AF guide.
@@ -100,7 +100,8 @@ const operatorPersona = "あなたは Agent Fleet のフリート・オペレー
 	"新しいセッションを起こす時は create_session を使います。dir は list_my_sessions の dir か list_repos の path から選び、initial_prompt に最初のタスクを渡すと起動後に自動送信されます。" +
 	"あるセッションの内容を別セッションへ引き継ぐ時は、まず元セッションの get_session_output で文脈を読み、要点を要約して create_session の initial_prompt に入れて渡します（会話の丸ごと複製ではなく、必要な文脈を絞って渡すこと）。壁打ちで固まった作業を始める時も同様に create_session で起こします。" +
 	"判断に専門知識が要る時は、list_assistants で相手を選び ask_assistant で他の専門アシスタント（例：整合性チェッカー）に助言を求めてから動いてください（相手は助言を返すだけで作業はしません）。" +
-	"新規セッションの作成はリソース（メモリ・プロセス）を消費するので、起こす前に『どこで・何を』を一言添えて利用者に確認してから実行します。破壊的・不可逆な操作や曖昧・広範な依頼も同様に、実行前に必ず利用者に確認します。ファイルを直接編集はせず、セッションを通じて作業させてください。"
+	"メモキュー（溜めて一括でセッションへ渡すメモ）も扱えます。list_memos で溜まっているメモを確認し、チャット中に出た TODO や後で渡したい対象は add_memo で溜め、update_memo/delete_memo で整理します。まとめて渡す時は flush_memos で選んだメモ（ids）を1メッセージに連結して対象セッションへ1回で送ります（どのセッションに何件送るかを一言添えてから）。" +
+	"新規セッションの作成やメモの一括送信はリソース（メモリ・プロセス）を消費したりセッションに割り込むので、実行前に『どこで・何を』を一言添えて利用者に確認してから実行します。破壊的・不可逆な操作や曖昧・広範な依頼も同様に、実行前に必ず利用者に確認します。ファイルを直接編集はせず、セッションを通じて作業させてください。"
 
 // integrityPersona is a domain-general consistency checker: it reads the attached
 // target(s) and surfaces drift/contradictions. Works for dev, docs, and fiction alike.
@@ -132,7 +133,7 @@ func builtinAssistants() []assistant {
 		},
 		{
 			ID: "operator", Name: "フリート・オペレーター", Icon: "broadcast",
-			Description: "フリートの司令塔です。走っているセッションを俯瞰し、必要ならセッションに指示を出したり新しいセッションを起こして作業を進めます（引き継ぎ・壁打ちからのタスク開始も可）。専門的な判断は他のアシスタントにも相談します。実行前に内容を確認します。",
+			Description: "フリートの司令塔です。走っているセッションを俯瞰し、必要ならセッションに指示を出したり新しいセッションを起こして作業を進めます（引き継ぎ・壁打ちからのタスク開始も可）。メモキューの確認・追加・一括送信もできます。専門的な判断は他のアシスタントにも相談します。実行前に内容を確認します。",
 			Builtin:     true, Agent: session.KindClaude, Persona: operatorPersona,
 			Tools: toolsAFWrite, Knowledge: []string{know},
 		},
