@@ -26,6 +26,8 @@ export {
   setTermBackground,
   onSession,
   sessionOf,
+  hideTerm,
+  revealTerm,
 } from "./term.ts";
 
 /** wireTerminalReconcile subscribes to the layout store and disposes terminals

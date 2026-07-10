@@ -29,6 +29,7 @@ interface Inst {
   hb?: ReturnType<typeof setInterval>; // heartbeat timer (see startHeartbeat)
   lastPong?: number; // ms of the last pong seen on the current socket
   rx?: boolean; // any PTY byte received on the CURRENT socket (see ensureAttached)
+  webgl?: WebglAddon | null; // live WebGL renderer addon (dropped while hidden — see hideTerm)
 }
 const insts = new Map<string, Inst>();
 function inst(paneId: string): Inst | null {
@@ -215,10 +216,16 @@ function keepInputVisible(it: Inst | null) {
 export function ensureTerm(paneId: string, el: HTMLElement) {
   let it = insts.get(paneId);
   if (it && it.term) {
-    // Re-open into the element if React remounted the container.
+    // Re-open into the element if React remounted the container. Reparenting a
+    // canvas keeps its GL context but may discard the drawn frame, and a kept
+    // instance may have sat hidden for a while — so repaint every row instead of
+    // trusting the canvas (same contract as revealTerm).
     if (el && it.term.element?.parentElement !== el) it.term.open(el);
     observe(it, el);
     fitInst(it);
+    try {
+      it.term.refresh(0, it.term.rows - 1);
+    } catch {}
     return it.term;
   }
   // May already hold a placeholder from an early onSession() subscription.
@@ -339,28 +346,8 @@ export function ensureTerm(paneId: string, el: HTMLElement) {
     term.element.addEventListener("touchend", endTouch, { passive: true });
     term.element.addEventListener("touchcancel", endTouch, { passive: true });
   }
-  // Crisp GPU rendering; fall back silently if WebGL2 is unavailable/lost. One
-  // WebGL context per terminal — browsers cap ~16, so splits stay well within.
-  // On context loss (GPU reset / tab backgrounded / the browser reclaiming the
-  // oldest context once its ~16 cap is hit across all tabs) we dispose the addon
-  // so xterm reverts to the DOM renderer. Disposing alone leaves the grid blank —
-  // the existing rows aren't marked dirty, so nothing repaints until the next PTY
-  // write or resize. That's the "pane content sometimes goes blank" symptom. Force
-  // a refit + full repaint right after dispose so the fallback renderer paints the
-  // current screen immediately.
-  try {
-    const webgl = new WebglAddon();
-    webgl.onContextLoss(() => {
-      try {
-        webgl.dispose();
-      } catch {}
-      try {
-        fitInst(it);
-        term.refresh(0, term.rows - 1);
-      } catch {}
-    });
-    term.loadAddon(webgl);
-  } catch {}
+  // Crisp GPU rendering; fall back silently if WebGL2 is unavailable/lost.
+  loadWebgl(it);
   // The web font loads async — refit/redraw once ready so metrics are right.
   if (document.fonts && document.fonts.ready) {
     document.fonts.ready.then(() => {
@@ -463,6 +450,87 @@ export function ensureTerm(paneId: string, el: HTMLElement) {
   term.onResize(({ cols, rows }) => it.ws && it.ws.readyState === 1 && it.ws.send(JSON.stringify({ type: "resize", cols, rows })));
   observe(it, el);
   return term;
+}
+
+// loadWebgl attaches a WebGL renderer to a pane's terminal (no-op when one is
+// already live, or when WebGL2 is unavailable — xterm then stays on the DOM
+// renderer). One WebGL context per VISIBLE terminal — browsers cap ~16 across
+// all tabs, so hidden panes give theirs up (hideTerm) to stay off the reclaim
+// radar. On context loss (GPU reset / tab backgrounded / the browser reclaiming
+// the oldest context once the cap is hit) we dispose the addon so xterm reverts
+// to the DOM renderer. Disposing alone leaves the grid blank — the existing rows
+// aren't marked dirty, so nothing repaints until the next PTY write or resize.
+// That's the "pane content sometimes goes blank" symptom. Force a refit + full
+// repaint right after dispose so the fallback renderer paints the current screen
+// immediately.
+function loadWebgl(it: Inst) {
+  const term = it.term;
+  if (!term || it.webgl) return;
+  try {
+    const webgl = new WebglAddon();
+    webgl.onContextLoss(() => {
+      if (it.webgl === webgl) it.webgl = null;
+      try {
+        webgl.dispose();
+      } catch {}
+      try {
+        fitInst(it);
+        term.refresh(0, term.rows - 1);
+      } catch {}
+    });
+    term.loadAddon(webgl);
+    it.webgl = webgl;
+  } catch {
+    it.webgl = null;
+  }
+}
+
+// dropWebgl tears a pane's WebGL renderer down (xterm falls back to the DOM
+// renderer); the terminal, its buffer and its socket are untouched.
+function dropWebgl(it: Inst) {
+  const webgl = it.webgl;
+  if (!webgl) return;
+  it.webgl = null;
+  try {
+    webgl.dispose();
+  } catch {}
+}
+
+// hideTerm releases a pane's GPU resources while its container is display:none
+// (the mirror/chat is shown in front). A hidden WebGL canvas is exactly what
+// browsers silently reclaim under GPU pressure — and a reclaim that never fires
+// webglcontextlost (or whose restore never comes because the canvas isn't
+// visible) leaves a renderer that looks alive but can never paint again: the
+// permanently-black-until-reload pane. Holding no context while hidden removes
+// that whole failure class; the DOM renderer that takes over is paused by
+// xterm's IntersectionObserver anyway, so writes while hidden stay cheap.
+export function hideTerm(paneId: string) {
+  const it = inst(paneId);
+  if (it) dropWebgl(it);
+}
+
+// revealTerm makes a re-shown terminal paint deterministically instead of hoping
+// the canvas still holds last frame's pixels: rebuild the WebGL renderer (fresh
+// context; also replaces one whose context died without our handler firing),
+// refit for the now-laid-out size, and mark every row dirty so the current
+// screen is repainted from the buffer. Must run after layout (the caller defers
+// past the un-hide, e.g. via rAF). Complements ensureAttached, which guards the
+// socket side of a reveal — this guards the renderer side.
+export function revealTerm(paneId: string) {
+  const it = inst(paneId);
+  if (!it || !it.term) return;
+  try {
+    // Private API (like FitAddon's _core reach-in): detect a context that was
+    // lost while we weren't looking, where isContextLost() is all we ever get.
+    /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
+    const gl = (it.webgl as any)?._renderer?._gl;
+    if (gl?.isContextLost?.()) dropWebgl(it);
+  } catch {}
+  loadWebgl(it);
+  fitInst(it);
+  try {
+    it.term.refresh(0, it.term.rows - 1);
+  } catch {}
 }
 
 // observe attaches a ResizeObserver to the pane container so the grid refits when
@@ -723,9 +791,10 @@ export function disposeTerm(paneId: string) {
   }
   if (it.term) {
     try {
-      it.term.dispose();
+      it.term.dispose(); // also disposes loaded addons (webgl included)
     } catch {}
     it.term = null;
+    it.webgl = null;
   }
   setSession(it, null);
   insts.delete(paneId);
