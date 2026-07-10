@@ -913,3 +913,14 @@
 .sel-send-pill:hover {
   background: var(--hover-bg, var(--btn));
 }
+
+/* 朗読モード（docs/24）: いま読み上げているブロック/行のカラオケ・ハイライト。
+   アクセント色の淡い下地＋左のバーで、明暗どちらのテーマでも視認できる。 */
+.markdown .tts-reading,
+.codegrid .tts-reading.tts-reading {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  box-shadow: inset 3px 0 0 0 var(--accent);
+  border-radius: 3px;
+  scroll-margin: 40vh 0; /* scrollIntoView(center) の余白 */
+  transition: background 0.15s ease;
+}

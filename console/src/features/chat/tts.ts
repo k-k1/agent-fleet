@@ -10,7 +10,7 @@
 import { rel } from "../../core/api/client.ts";
 import { getSettings } from "../../lib/settings.ts";
 import { useTtsStore } from "../../core/store/tts.ts";
-import { plainifyStreaming, firstChunkCut, parseUserDict, applyUserDict } from "./ttsText.ts";
+import { plainify, plainifyStreaming, firstChunkCut, parseUserDict, applyUserDict } from "./ttsText.ts";
 
 export interface TtsOptions {
   provider: string; // "auto" | "voicevox" | "polly"
@@ -33,6 +33,36 @@ export interface TtsController {
   push(delta: string): void;
   flush(): void;
   stop(): void;
+}
+
+// synthToBuffer は 1 文を CP の /api/tts/synthesize で合成し、AudioBuffer へ復号する。
+// 失敗（abort / ネットワーク / 非 200 / 復号失敗）は null（呼び手は当該文をスキップ）。
+// ストリーム読み上げ（startTts）と朗読（startNarration）の両方から使う共通処理。
+async function synthToBuffer(
+  ctx: AudioContext,
+  text: string,
+  opts: TtsOptions,
+  signal: AbortSignal,
+): Promise<AudioBuffer | null> {
+  try {
+    const res = await fetch(rel("api/tts/synthesize"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        text,
+        provider: opts.provider,
+        voice: opts.voice,
+        speed: opts.speed,
+        enkana: opts.enkana ?? false,
+      }),
+      signal,
+    });
+    if (!res.ok) return null;
+    const arr = await res.arrayBuffer();
+    return await ctx.decodeAudioData(arr);
+  } catch {
+    return null;
+  }
 }
 
 // AudioContext は 1 つを使い回す（ユーザー操作＝送信起点で resume できる）。
@@ -167,23 +197,7 @@ export function startTts(opts: TtsOptions, source = "", onEnd?: (reason: "done" 
     const ac = new AbortController();
     acs.add(ac);
     try {
-      const res = await fetch(rel("api/tts/synthesize"), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          text,
-          provider: opts.provider,
-          voice: opts.voice,
-          speed: opts.speed,
-          enkana: opts.enkana ?? false,
-        }),
-        signal: ac.signal,
-      });
-      if (!res.ok) return null;
-      const arr = await res.arrayBuffer();
-      return await ctx.decodeAudioData(arr);
-    } catch {
-      return null; // abort / ネットワーク / 復号失敗 → その文はスキップ（キューは止めない）
+      return await synthToBuffer(ctx, text, opts, ac.signal);
     } finally {
       acs.delete(ac);
     }
@@ -300,4 +314,162 @@ export function speakText(text: string, source = ""): void {
   const c = startTts({ provider: s.ttsProvider, voice: s.ttsVoiceVoicevox, speed: s.ttsSpeed, enkana: s.ttsEnglishKana }, source);
   c.push(t);
   c.flush();
+}
+
+// --- 朗読モード（docs/24）: ファイル本文を冒頭から順次読み上げ＋カラオケ追従 --------------
+// units（各ブロックのプレーンテキスト）を上から順に合成・再生し、再生を開始した unit の index を
+// onUnit で通知する（呼び手＝FileView がその要素をハイライト＋スクロールする）。startTts と同じ
+// 合成・順次再生・グローバル 1 本再生の仕組みを流用しつつ、一時停止/再開（AudioContext の
+// suspend/resume）と unit 単位の進捗通知を持つ点が異なる。
+
+export interface NarrationHandle {
+  pause(): void;
+  resume(): void;
+  stop(): void;
+  isPaused(): boolean;
+}
+
+export function startNarration(units: string[], source: string, onUnit: (i: number | null) => void): NarrationHandle {
+  useTtsStore.getState().active?.stop(); // グローバル 1 本（既存の再生を止める）
+  const ctx = audioCtx();
+  const s = getSettings();
+  const opts: TtsOptions = {
+    provider: s.ttsProvider,
+    voice: s.ttsVoiceVoicevox,
+    speed: s.ttsSpeed,
+    enkana: s.ttsEnglishKana,
+  };
+  const userDict = parseUserDict(s.ttsUserDict);
+
+  // 各 unit を読み上げ用にクリーン化（Markdown 記法/URL 除去 + ユーザー辞書）。空になった
+  // unit（コード等）は "" のまま残し、原 index を保つ（再生・ハイライトを飛ばす）。
+  const texts = units.map((u) => {
+    let t = plainify(u).trim();
+    if (t && userDict.length) t = applyUserDict(t, userDict).trim();
+    return t;
+  });
+
+  const buffers = new Map<number, AudioBuffer | null>(); // index → 復号済み（null=空/失敗）
+  const acs = new Set<AbortController>();
+  let synthAt = 0; // 次に合成を仕掛ける index
+  let cursor = 0; // 次に再生する index
+  let inflight = 0;
+  let playing = false;
+  let cur: AudioBufferSourceNode | null = null;
+  let paused = false;
+  let stopped = false;
+  let ended = false;
+
+  const finish = (reason: "done" | "stopped") => {
+    if (ended) return;
+    ended = true;
+    onUnit(null);
+    const st = useTtsStore.getState();
+    if (st.active === adapter) {
+      st.setActive(null, "");
+      st.setSpeaking(false);
+    }
+    void reason;
+  };
+
+  const maybeDone = () => {
+    if (!stopped && !playing && inflight === 0 && cursor >= texts.length) finish("done");
+  };
+
+  // in-flight 上限まで先読み合成。空 unit は即 null。
+  const pump = () => {
+    while (!stopped && inflight < MAX_INFLIGHT && synthAt < texts.length) {
+      const i = synthAt++;
+      const text = texts[i];
+      if (!text) {
+        buffers.set(i, null);
+        continue;
+      }
+      inflight++;
+      const ac = new AbortController();
+      acs.add(ac);
+      synthToBuffer(ctx!, text, opts, ac.signal)
+        .then((ab) => buffers.set(i, ab))
+        .catch(() => buffers.set(i, null))
+        .finally(() => {
+          acs.delete(ac);
+          inflight--;
+          pump();
+          tryPlay();
+        });
+    }
+  };
+
+  // 連番順に再生。空/失敗 unit は飛ばし、次に再生開始した unit を onUnit で通知。
+  const tryPlay = () => {
+    if (stopped || paused || playing || !ctx) return;
+    while (cursor < texts.length && buffers.has(cursor)) {
+      const ab = buffers.get(cursor)!;
+      buffers.delete(cursor);
+      const idx = cursor;
+      cursor++;
+      if (!ab) continue; // 空/失敗 → ハイライトせず次へ
+      playing = true;
+      onUnit(idx);
+      useTtsStore.getState().setSpeaking(true);
+      const src = ctx.createBufferSource();
+      src.buffer = ab;
+      src.connect(ctx.destination);
+      src.onended = () => {
+        playing = false;
+        cur = null;
+        if (stopped) return;
+        tryPlay();
+        maybeDone();
+      };
+      cur = src;
+      src.start();
+      return;
+    }
+    maybeDone();
+  };
+
+  const adapter: TtsController = { push() {}, flush() {}, stop: () => stop() };
+
+  const pause = () => {
+    if (stopped || paused) return;
+    paused = true;
+    if (ctx && ctx.state === "running") void ctx.suspend(); // 現在の音を含めて停止
+  };
+  const resume = () => {
+    if (stopped || !paused) return;
+    paused = false;
+    if (ctx) void ctx.resume();
+    tryPlay(); // 一時停止が「文の切れ目」だった場合に備え、再生を促す
+  };
+  const stop = () => {
+    if (stopped) return;
+    stopped = true;
+    acs.forEach((a) => a.abort());
+    acs.clear();
+    if (cur) {
+      try {
+        cur.stop();
+      } catch {}
+      cur = null;
+    }
+    playing = false;
+    if (ctx && ctx.state === "suspended") void ctx.resume(); // 次の再生のため戻しておく
+    finish("stopped");
+  };
+
+  useTtsStore.getState().setActive(adapter, source);
+  // 初回キックは microtask に回す。呼び手（FileView）が返り値の handle と自分の state を
+  // 確定してから onUnit が走るようにするため（空/エンジン無しで finish が同期発火すると、
+  // beginNarration のセットアップ前に onUnit(null) が来て状態が不整合になるのを防ぐ）。
+  queueMicrotask(() => {
+    if (stopped) return;
+    if (!ctx || texts.every((t) => !t)) {
+      finish("done"); // エンジン無し（AudioContext 不可）or 読む中身が無い
+      return;
+    }
+    pump();
+    tryPlay();
+  });
+  return { pause, resume, stop, isPaused: () => paused };
 }
