@@ -153,3 +153,28 @@ UI は `repo → category` の 2 段でグルーピングして表示する。`r
   レポ構成が変われば `ref_path` が解決不能になり得る（パス参照方式は docs/19 と同じ前提）。
 - リアルタイム同期は基盤上不可（プッシュ無し）。別端末反映はポーリング粒度にとどまる。
 ```
+
+## 追記（2026-07-10）: MCP からのメモ読み書き（オペレーター＋PAT）
+
+フリート・オペレーター（在コンソールのローカル stdio MCP）と CP 側 MCP（PAT）の両面から、
+メモキューを **list / add / update / delete / flush** できるようにした。
+
+- **共有コア化**: `memo.go` の CRUD/flush 本体を `memoListFor / memoCreateFor / memoUpdateFor /
+  memoFlushFor`（＋`DeleteMemo` 直呼び）に抽出。既存のセッション認証ハンドラ・内部トークン面・
+  CP MCP ツールの 3 面がすべてこの membership スコープのコアを通る（flush の「1回送信＋sent_at」原子性を単一化）。
+- **CP MCP（PAT）**: `memberTools` に `list_memos`(read) / `add_memo` / `update_memo` / `delete_memo` /
+  `flush_memos`(write) を追加。メモは CP store に住むので Agent 往復せず**直接** store を叩く（membership は
+  PAT 由来の `res.mv`）。flush だけは `res.rt` でワークスペースへ連結メッセージを届ける。
+- **オペレーター（コンテナ内）向けブリッジ**: コンテナは各自専用ネットワークで CP と直結できず、内部 git と
+  同じ**公開ハイピン**でしか CP に届かない。そこで内部 git トークンに倣い、**membership 毎のメモトークン**
+  `AF_MEMO_TOKEN`（HMAC・`afm_` 接頭辞、`memo_bridge.go`）と公開ベース URL `AF_CP_BASE_URL` を
+  `workspaceExtraEnv` で注入（`PUBLIC_BASE_URL` 設定時のみ）。CP は `/internal/memos*`（session-exempt）で
+  Bearer メモトークン→membership を**サーバ側で解決**（クライアント供給の id は信用しない）。ローカル stdio MCP は
+  `cpMemoDo` で `AF_CP_BASE_URL` + `AF_MEMO_TOKEN` を使い CP を叩く。`list_memos` は read（読み取り専用の
+  Agent Fleet アシスタントも保持）、変更系は `--write`（オペレーター）限定。
+- **セキュリティ**: メモトークンは git トークンと**別鍵・別クレデンシャル**なので、漏えい時の影響はメモ面に限定。
+  トークンは membership を内包し CP がトークン→membership を引くため、クロス membership アクセスは起きない。
+- **store**: `IdentityIDForMembership`（membership→identity）を追加（internal flush が
+  `resolveByMembership` でランタイムを解決するため）。sqlStore 実装で sqlite/postgres 両対応。
+- **ペルソナ**: `operatorPersona` にメモ運用（list/add/整理→flush）と、一括送信も作成前に利用者へ確認する
+  ガードを追記。案内役の Agent Fleet アシスタントは `list_memos` で溜まり具合を答えるのみ（追加・送信はオペレーターへ誘導）。
