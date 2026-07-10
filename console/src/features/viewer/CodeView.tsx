@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent as RMouseEvent, TouchEvent as RTouchEvent, SyntheticEvent } from "react";
 
 // CodeView renders highlighted code with an optional line-number gutter and a
@@ -68,7 +68,12 @@ interface CodeViewProps {
   marks?: LineMarks | null;
 }
 
-export function CodeView({ html, lines, lineNumbers, wrap, minimap, marks }: CodeViewProps) {
+// Memoised: FileView re-renders on every text-selection change (to position the 送る/
+// 読み上げ pill), but the grid's props (html / lines / gutter / wrap / marks) are stable
+// across those renders. Without memo, each Shift+↓ rebuilt all N line rows and forced the
+// browser to re-evaluate the live selection inside the contentEditable — so holding the
+// key got progressively slower. memo skips the grid entirely when only `sel` changed.
+export const CodeView = memo(function CodeView({ html, lines, lineNumbers, wrap, minimap, marks }: CodeViewProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const miniInnerRef = useRef<HTMLDivElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
@@ -306,4 +311,4 @@ export function CodeView({ html, lines, lineNumbers, wrap, minimap, marks }: Cod
       )}
     </div>
   );
-}
+});

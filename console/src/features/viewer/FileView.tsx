@@ -217,7 +217,11 @@ export function FileView({ filePath, wrap }: FileViewProps) {
   } as CSSProperties;
 
   return (
-    <div className="fileview" style={viewerStyle} ref={bodyRef} onMouseUp={captureSelection} onKeyUp={captureSelection}>
+    // Keyboard selection (Shift+arrows) is captured via the debounced `selectionchange`
+    // listener below, NOT onKeyUp: firing per keypress made a held Shift+↓ run
+    // range.toString() + a state update on every repeat, degrading O(n²) as the selection
+    // grew. Mouse selection keeps its instant onMouseUp (one event per drag).
+    <div className="fileview" style={viewerStyle} ref={bodyRef} onMouseUp={captureSelection}>
       <header className="view-head fileinfo">
         <span className="fi-name mono">
           <FileIcon name={baseName(filePath)} /> {baseName(filePath)}
