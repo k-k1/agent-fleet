@@ -119,12 +119,23 @@ export function TerminalView({
 
   // Reveal fit: when a hidden container becomes visible (toggled back from the
   // chat mirror / a split un-hidden) its size was 0×0 — defer past layout (rAF)
-  // so the grid measures the real size and the TUI redraws.
+  // so the grid measures the real size and the TUI redraws. Re-verify the socket
+  // on the SAME retry ladder as the initial attach: the attach effect above does
+  // NOT re-run on a mirror toggle (its deps session/attached/running don't change),
+  // so a reveal whose single attach raced — the WS never opened, dropped, or opened
+  // but never drew — would otherwise stay a black pane until a full reload. This is
+  // the mirror-toggle counterpart of the 起動直後の黒ターミナル recovery.
   const shown = !(canMirror && mirror);
   useEffect(() => {
     if (!shown || !session || !attached || !running) return;
     const raf = requestAnimationFrame(() => ensureAttached(paneId, session));
-    return () => cancelAnimationFrame(raf);
+    const timers = [1500, 4000, 9000].map((ms) =>
+      setTimeout(() => ensureAttached(paneId, session), ms),
+    );
+    return () => {
+      cancelAnimationFrame(raf);
+      timers.forEach(clearTimeout);
+    };
   }, [shown, paneId, session, attached, running]);
 
   const st = sessionMeta ? stateInfo(sessionMeta) : null;
