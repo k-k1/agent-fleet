@@ -709,16 +709,21 @@
 .mt-files-list {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 5px;
   margin-top: 8px;
+}
+/* Multiple files tile as cards that wrap; a single file stays a full-width row. */
+.mt-files-list.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
 }
 .mt-file-item {
   display: flex;
-  align-items: center;
-  gap: 7px;
-  width: 100%;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
   text-align: left;
-  padding: 5px 8px;
+  padding: 7px 9px;
   border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--bg);
@@ -729,12 +734,20 @@
   border-color: var(--chat-accent);
   background: color-mix(in srgb, var(--chat-accent) 8%, var(--bg));
 }
+.mt-file-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
 .mt-file-name {
   font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 .mt-file-path {
-  flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -743,6 +756,7 @@
 }
 .mt-file-open {
   flex: none;
+  margin-left: auto;
   opacity: 0.55;
 }
 .mt-file-item:hover .mt-file-open {
