@@ -35,6 +35,14 @@
   /* selection / hover surfaces (so light theme can override the old hardcoded blues) */
   --active-bg: #20303a;
   --hover-bg: #1b2730;
+  /* Selected/active fill for segmented controls. Dark mode dissolves the accent into
+     the bg — a solid saturated block (raw --accent) read too loud and crushed the light
+     labels — and follows --sel-accent, which defaults to the top-bar surface but is
+     REBOUND per region (left pane → --lp-accent, terminal/chat toggle → --viewer-accent)
+     so a control's selection tracks the theme of the region it lives in. */
+  --sel-accent: var(--topbar-accent);
+  --sel-bg: color-mix(in srgb, var(--sel-accent) 30%, var(--bg));
+  --sel-fg: var(--fg);
   /* highlight.js syntax palette (GitHub Dark) — themed via vars so the file viewer
      follows light/dark instead of the dark-only github-dark.css import. */
   --hl-fg: #c9d1d9;
@@ -79,6 +87,12 @@
   --del: #c0392b;
   --active-bg: #d7e6fb;
   --hover-bg: #eaf1fb;
+  /* Light: soft tint + accent-colored text (a solid fill reads too heavy). Same
+     --sel-accent mechanism so region rebinds apply in light too; for the default top-bar
+     accent this stays visually identical to the prior fixed --active-bg / --accent pair. */
+  --sel-accent: var(--topbar-accent);
+  --sel-bg: color-mix(in srgb, var(--sel-accent) 16%, var(--bg));
+  --sel-fg: var(--sel-accent);
   /* highlight.js syntax palette (GitHub Light). */
   --hl-fg: #24292f;
   --hl-comment: #6e7781;
