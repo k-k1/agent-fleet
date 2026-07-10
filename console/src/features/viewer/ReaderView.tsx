@@ -123,7 +123,7 @@ export function ReaderView({ filePath }: { filePath: string }) {
   };
 
   // 本文内で選択が確定したら、選択の先頭に「ここから朗読」ピルを出す（再生中でも再スタート可）。
-  const onBodyMouseUp = () => {
+  const captureSelection = () => {
     const sel = window.getSelection();
     const body = scrollRef.current;
     if (!ttsOn || !sel || sel.isCollapsed || sel.rangeCount === 0 || !body) {
@@ -149,6 +149,23 @@ export function ReaderView({ filePath }: { filePath: string }) {
     setSelPill(null);
     window.getSelection()?.removeAllRanges();
   };
+
+  // タッチ選択（長押し＋ドラッグ）は mouseup を出さないので、selectionchange でもピルを更新
+  // する。連続発火するのでデバウンス。最新クロージャを ref 経由で呼ぶ（mount-once の effect）。
+  const captureRef = useRef(captureSelection);
+  captureRef.current = captureSelection;
+  useEffect(() => {
+    let t: ReturnType<typeof setTimeout> | null = null;
+    const onSelChange = () => {
+      if (t) clearTimeout(t);
+      t = setTimeout(() => captureRef.current(), 250);
+    };
+    document.addEventListener("selectionchange", onSelChange);
+    return () => {
+      document.removeEventListener("selectionchange", onSelChange);
+      if (t) clearTimeout(t);
+    };
+  }, []);
   const togglePause = () => {
     const h = handleRef.current;
     if (!h) return;
@@ -216,7 +233,7 @@ export function ReaderView({ filePath }: { filePath: string }) {
       ) : !flat.length ? (
         <pre className="filebody muted">(読み上げる本文がありません)</pre>
       ) : (
-        <div className={"reader-body" + (vertical ? " vertical" : "")} ref={scrollRef} onMouseUp={onBodyMouseUp}>
+        <div className={"reader-body" + (vertical ? " vertical" : "")} ref={scrollRef} onMouseUp={captureSelection}>
           {units.map((u, ui) => {
             const si = spokenIdx[ui];
             return (
