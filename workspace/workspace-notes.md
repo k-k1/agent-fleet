@@ -31,6 +31,14 @@ The shared host is memory-constrained; build tools are the main cause of OOM tro
   - Run one heavy build at a time; do not build several projects in parallel.
 - For long-running servers, open the port via the WS bar "Preview" instead of leaving ad-hoc processes up.
 
+## Headless browser (UI verification / screenshots)
+Chromium's runtime libraries and fonts (DejaVu + Noto CJK — Japanese renders correctly)
+are baked into the image; the browser binary is not. To verify web UIs headlessly:
+- One-time per user (persists in `~/.cache/ms-playwright` across container recreation):
+  `npm i playwright-core && npx playwright-core install chromium`
+- Run headless and short-lived; close the browser when done (memory-constrained host).
+  Screenshots and WebGL (SwiftShader) work; there is no display for headful runs.
+
 ## Also
 - Outbound network may be restricted; an unreachable host is not necessarily an error.
 - Do not try to reach other tenants' or users' data. Containers are isolated.

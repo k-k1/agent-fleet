@@ -34,6 +34,24 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # which blocks `pip install` into it; allow break-system-packages so `pip install
 # --user <pkg>` lands in the persistent home (~/.local, on PATH). venvs work as usual.
 RUN printf '[global]\nbreak-system-packages = true\n' > /etc/pip.conf
+
+# Headless-browser verification support: the shared libraries Chromium needs at
+# runtime, plus fonts (DejaVu + Noto CJK so the Console's Japanese UI renders in
+# screenshots instead of tofu). The browser binary itself is NOT baked — this
+# image is root-only at build time and these libs were the one thing an agent
+# could not install itself (no sudo at runtime; hand-extracting .debs cost a
+# session ~30min). Each user fetches the browser once into the persistent home:
+#   npm i playwright-core && npx playwright-core install chromium
+# (~/.cache/ms-playwright survives container recreation; version tracks whatever
+# playwright the task needs). Keep runs headless and short-lived — the shared
+# host is memory-constrained (workspace-notes).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      libglib2.0-0 libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libatspi2.0-0 \
+      libcups2 libdbus-1-3 libdrm2 libgbm1 libasound2 libpango-1.0-0 libcairo2 \
+      libx11-6 libxcb1 libxcomposite1 libxdamage1 libxext6 libxfixes3 libxi6 \
+      libxrandr2 libxkbcommon0 libxshmfence1 \
+      fonts-dejavu-core fonts-noto-cjk \
+ && rm -rf /var/lib/apt/lists/*
 # git-lfs filters live in the system gitconfig (/etc/gitconfig) so clones/checkouts
 # smudge LFS objects for every user regardless of home state. LFS auth reuses the
 # HTTPS credential helper (same host token), so private LFS objects fetch too.
