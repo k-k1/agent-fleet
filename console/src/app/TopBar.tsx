@@ -31,8 +31,9 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
   const superAdmin = useTenantStore((s) => s.superAdmin);
   const s = useSettings();
   const isMobile = useIsMobile();
-  // 音声読み上げ（docs/24）: 再生中だけ「読み上げ中＋停止」を右側に出す。停止は全体で 1 本の
-  // 再生を止める（チャット回答・FileView 選択のどちらでも）。
+  // 音声読み上げ（docs/24）: ピルは常時表示。再生中は「読み上げ中＋停止」（クリックで全体
+  // 1 本の再生を止める）、アイドル時は設定 ttsEnabled の ON/OFF トグルとして働く。
+  // ttsSessionNotify（音声通知）は別軸なので、OFF でも speaking になり得る＝speaking 優先。
   const ttsSpeaking = useTtsStore((st) => st.speaking);
   const ttsSource = useTtsStore((st) => st.source);
   // Hamburger: single-click toggles the left pane open/closed; double-click toggles
@@ -104,17 +105,28 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
         </div>
       </div>
       <div className="topbar-right">
-        {ttsSpeaking && (
-          <button
-            className="tts-status"
-            title="読み上げを停止"
-            onClick={() => useTtsStore.getState().stop()}
-          >
-            <Icon name="unmute" className="tts-status-ic" />
-            <span className="tts-status-lbl">読み上げ中{ttsSource ? `・${ttsSource}` : ""}</span>
-            <Icon name="debug-stop" />
-          </button>
-        )}
+        <button
+          className={"tts-status" + (ttsSpeaking ? " speaking" : s.ttsEnabled ? "" : " off")}
+          title={
+            ttsSpeaking
+              ? "読み上げを停止"
+              : s.ttsEnabled
+                ? "音声読み上げ: ON（クリックで OFF）"
+                : "音声読み上げ: OFF（クリックで ON）"
+          }
+          onClick={() => {
+            if (ttsSpeaking) useTtsStore.getState().stop();
+            else setSetting("ttsEnabled", !s.ttsEnabled);
+          }}
+        >
+          <Icon name={ttsSpeaking || s.ttsEnabled ? "unmute" : "mute"} className="tts-status-ic" />
+          {ttsSpeaking && (
+            <>
+              <span className="tts-status-lbl">読み上げ中{ttsSource ? `・${ttsSource}` : ""}</span>
+              <Icon name="debug-stop" />
+            </>
+          )}
+        </button>
         <button
           className="gear fs-toggle"
           title={fullscreen ? "全画面解除" : "全画面表示"}

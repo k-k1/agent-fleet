@@ -12,6 +12,8 @@ import {
   OUTPUT_LANGUAGES,
   VOICEVOX_ZUNDAMON,
   TTS_SPEEDS,
+  TTS_PROVIDERS,
+  TTS_POLLY_VOICES,
 } from "../../lib/settings.ts";
 import { useConnections } from "./useConnections.ts";
 import { useWorkspaceStore, wsStartBusy } from "../../core/store/workspace.ts";
@@ -105,13 +107,35 @@ export function AgentsTab() {
       </Row>
       {s.ttsEnabled && (
         <>
-          <Row label="話者（ずんだもん）">
+          <Row label="音声エンジン">
             <Choice
-              value={s.ttsVoiceVoicevox}
-              options={VOICEVOX_ZUNDAMON}
-              onChange={(v) => setSetting("ttsVoiceVoicevox", v)}
+              value={s.ttsProvider}
+              options={TTS_PROVIDERS}
+              onChange={(v) => setSetting("ttsProvider", v)}
             />
           </Row>
+          <p className="muted ds-note">
+            「自動」は日本語をずんだもん（VOICEVOX）で読み、エンジンが起動していない間や日本語以外は
+            AWS Polly に自動で切り替えます（次の文からずんだもんに復帰）。「Polly」は常に Polly で読みます。
+          </p>
+          {s.ttsProvider !== "polly" && (
+            <Row label="話者（ずんだもん）">
+              <Choice
+                value={s.ttsVoiceVoicevox}
+                options={VOICEVOX_ZUNDAMON}
+                onChange={(v) => setSetting("ttsVoiceVoicevox", v)}
+              />
+            </Row>
+          )}
+          {s.ttsProvider !== "voicevox" && (
+            <Row label="話者（Polly）">
+              <Choice
+                value={s.ttsVoicePolly}
+                options={TTS_POLLY_VOICES}
+                onChange={(v) => setSetting("ttsVoicePolly", v)}
+              />
+            </Row>
+          )}
           <Row label="読み上げ速度">
             <Choice value={s.ttsSpeed} options={TTS_SPEEDS} onChange={(v) => setSetting("ttsSpeed", v)} />
           </Row>
@@ -141,8 +165,9 @@ export function AgentsTab() {
         </>
       )}
       <p className="muted ds-note">
-        エージェントの回答を VOICEVOX（ずんだもん）で読み上げます。回答が届くと文ごとに順次再生します。
-        音声合成には VOICEVOX エンジンが必要です（未起動のときは無音になります）。
+        エージェントの回答を音声で読み上げます。回答が届くと文ごとに順次再生します。
+        ずんだもんの合成には VOICEVOX エンジンが必要です（未起動のときは Polly があれば代読、
+        どちらも無ければ無音になります）。
         {s.ttsEnabled && <> 音声引用：VOICEVOX：ずんだもん。</>}
       </p>
       <Row label="セッションの音声通知">

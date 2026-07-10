@@ -9,7 +9,7 @@ import { errText, raw } from "../../core/api/client.ts";
 import { takeChatSeed } from "../../lib/chatSeed.ts";
 import { coarsePointer } from "../../lib/device.ts";
 import { useSettings } from "../../lib/settings.ts";
-import { startTts, type TtsController } from "./tts.ts";
+import { startTts, ttsOptsFromSettings, type TtsController } from "./tts.ts";
 import { TtsReadButton } from "./TtsReadButton.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { splitPastedImages, buildImagePrompt } from "../../lib/pastedImages.ts";
@@ -260,17 +260,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
     // 音声読み上げ（docs/24）: 有効時のみコントローラを起こし、delta を句点区切りで逐次合成。
     // 直前のターンが残っていれば止めてから。
     ttsRef.current?.stop();
-    ttsRef.current = settings.ttsEnabled
-      ? startTts(
-          {
-            provider: settings.ttsProvider,
-            voice: settings.ttsVoiceVoicevox,
-            speed: settings.ttsSpeed,
-            enkana: settings.ttsEnglishKana,
-          },
-          "チャット",
-        )
-      : null;
+    ttsRef.current = settings.ttsEnabled ? startTts(ttsOptsFromSettings(settings), "チャット") : null;
     markChatBusy(target.id, true); // publish 進行中 to the rail
     // Mirror the live reply + final conversation into the store so a pane re-opened on this
     // conversation mid-stream re-attaches and picks up the answer even if THIS pane (and

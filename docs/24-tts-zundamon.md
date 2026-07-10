@@ -1,6 +1,6 @@
 # 24. エージェント回答の音声読み上げ（TTS / ずんだもん・Polly）
 
-- 状態: Phase 1 実装済み（2026-07-09, feat/tts-zundamon）・Phase 2（AWS/Polly）未着手
+- 状態: Phase 1〜2 実装済み（2026-07-10, feat/tts-zundamon）。実機での音出し・AWS 実環境（Polly/ECS）の検証は未
 - 関連: [decisions/0013-tts-zundamon.md](decisions/0013-tts-zundamon.md)（決定記録）/
   [decisions/0005-envelope-custodian.md](decisions/0005-envelope-custodian.md)（秘密情報の封筒暗号）/
   [history/p3-7-aws-adapter.md](history/p3-7-aws-adapter.md)（ECS アダプタ）/
@@ -91,6 +91,18 @@ var ttsProviders = map[string]ttsProvider{ "voicevox": ..., "polly": ... }
   切り出し、末尾の未完片は buffer に残す。`onDone`（`:244`）で残りを flush。短すぎる断片は結合。
 - **合成 in-flight を 2〜3 に制限**（長文で数十並列にしない backpressure）。ただし
   **再生は到着順ではなく文の連番順**に固定（seq index を振り、`AudioContext` の `onended` で次を鳴らす）。
+- **文間レイテンシ対策（2026-07-10 調整）**: 待機時間の主因は先読み不足ではなく
+  ①VOICEVOX が WAV に焼き込む前後無音（pre/postPhonemeLength 既定 0.1s ずつ ≒ 毎境界 0.2s）と
+  ②onended 駆動 start() のイベントループジッタ。対策として CP が audio_query の
+  `prePhonemeLength=0.02` / `postPhonemeLength=0.05` を上書きし、フロントは準備済みバッファを
+  `AudioContext` の時計で「前の終了時刻 + 間」に先行予約する。間は境界の種類で使い分け:
+  句点・改行で確定した文の後は一拍 `SENTENCE_GAP`(0.3s)、読点などでの文中早出しの後は
+  `CLAUSE_GAP`(0.08s)（チャット読み上げ
+  経路のみ。朗読モードはカラオケハイライトが実再生開始に同期するため onended 駆動のまま）。
+  なお LLM の生成が再生より遅い場合の待ち（テキスト律速）は原理的に残る。
+  あわせて「submit 時に」のような**英単語と日本語の間の半角スペース**は CP の voicevox 経路で
+  除去する（`collapseJaSpaces`。VOICEVOX はスペースをポーズとして合成し読みが途切れるため。
+  英単語同士のスペースと全角スペースは残す）。
 - 読み上げ用整形: Markdown 記法・コードブロック（`` ``` `` は読み飛ばし/「コード省略」）・URL 短縮。
   （`console/src/features/chat/MarkdownView.tsx` のレンダ経路とは別に、プレーン化ユーティリティを持つ）
 - 中断: `stop()`（`ChatView.tsx:259`）と連動し in-flight fetch abort ＋ 現在 source stop ＋ キュー破棄。
@@ -228,8 +240,32 @@ TTS 設定画面かフッターに小さく常時表示する。Polly は AWS �
   英字読み止まり）」だった語を洗い出し、一般的な開発語・外部プロダクト名・小文字略語（config/grep/
   tmux/worktree/opencode/codex/voicevox/mcp/css/svg 等 約50語）を `enkana_dict.go` に追加。突合は
   使い捨ての scan テストで実施（コミット対象外）。`TestCorpusTerms` で回帰を固定。
-- **Phase 2（AWS）**: Polly プロバイダ（IAM ロール）、管理者トグル → ECS desired 0↔1、
-  Cloud Map 固定 DNS、readiness ゲート、`auto` の Polly フォールバック有効化。
+- **Phase 2（AWS）** ✅ 実装済み（2026-07-10）: 3 点セットを CP に実装。
+  - **Polly プロバイダ**（`control-plane/tts_polly.go`）: SDK 既定チェーン（IAM ロール、鍵保存ゼロ）。
+    出力 MP3（フロントの `decodeAudioData` がそのまま復号するので UI 変更不要）、速度は SSML
+    `<prosody rate>`、テキストは XML エスケープ。region は `AF_POLLY_REGION` →
+    `AF_ECS_REGION` → `AWS_REGION` の順（未設定なら not-ready = dev では自然に voicevox 専）。
+    engine は `AF_POLLY_ENGINE`（既定 neural）。話者は明示 > 言語別既定（ja=Takumi / en=Joanna）。
+  - **auto ルーティング**（`tts.go` の純関数 `chooseTTSProvider` + `ttsProvider` インターフェース/map
+    dispatch）: 上の表のとおり。言語は設定 `outputLanguage` をフロントが `lang` として送るだけで
+    新規言語検出なし。enkana は **voicevox に決まったときだけ**適用（Polly は英語をそのまま読める）。
+    voicevox の Ready は 4s TTL キャッシュ（文ごとの /version 連打を避ける）。実際に使った
+    プロバイダは `X-TTS-Provider` ヘッダで返す。受け皿不在（Polly 未設定×engine 停止）は
+    voicevox に落として 502 を返す。
+  - **ECS オンデマンド**（`tts_ecs.go` + `GET/PUT /api/admin/tts`）: `AF_TTS_ECS_SERVICE`
+    （cluster/region は `AF_TTS_ECS_*` → `AF_ECS_*` に相乗り）を設定すると管理下になり、
+    管理者トグル（super_admin・AdminTab「読み上げ」）で desired count 0↔1。CP ロールに要
+    `ecs:DescribeServices`/`UpdateService`。managed 時の enabled は desired count が真実源、
+    非管理（dev）は SettingsStore の `tts_engine`（egress_mode と同じ流儀・"off" で voicevox
+    ルーティング停止）。readiness ゲート = `/api/tts/status` の `voicevox.state`
+    （running/starting/stopped）+ AdminTab の 5s ポーリング「準備中」表示。起動中の日本語は
+    auto が Polly JP に逃がし、ready 復帰で次の文からずんだもんに戻る。トグル操作は監査
+    （`tts.engine`）。Cloud Map の固定 DNS は `AF_VOICEVOX_URL` に差すだけ（ハンドラ不変）。
+  - フロント: 設定に「音声エンジン」（自動/ずんだもん/Polly）と「話者（Polly）」
+    （Takumi/Kazuha/Tomoko, `ttsVoicePolly`）を追加。synthesize リクエストに `pollyVoice`/`lang`
+    を同送。テスト: `tts_test.go`（ルーティング表・admin トグル）/`tts_polly_test.go`（SSML/
+    話者既定/未設定 503）/`tts_ecs_test.go`（state 写像・desired 0↔1）。
+    **未検証**: AWS 実環境（実 Polly 音声・ECS トグル・IAM）と実機の音出し。
 
 ## 将来の追加プロバイダ: Voiceger（多言語ずんだもん）— 保留
 
@@ -254,6 +290,7 @@ TTS 設定画面かフッターに小さく常時表示する。Polly は AWS �
 - 逐次再生のチャンク粒度（句点のみ vs 読点も。短文結合の閾値）。実測で調整。
   → 最初の 1 文だけ読点/一定長で早出しする対応を 2026-07-10 に実施（`firstChunkCut`）。
   2 文目以降を読点でも切るか（体感レイテンシ vs 細切れ）は引き続き実測で調整。
-- Polly の出力フォーマット（pcm を AudioContext 直、または mp3 を `<audio>`）。
+- ~~Polly の出力フォーマット~~ → mp3 に決定（`AudioContext.decodeAudioData` が直接復号
+  できるためフロント変更なし。2026-07-10）。
 - 有効な間の VOICEVOX warm 維持と ECS のアイドル停止（[p3-9-idle-stop](history/p3-9-idle-stop.md)）の整合。
 - 会話の途中参加（既存メッセージの手動再生）時の話者・速度の解決順。
