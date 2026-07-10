@@ -152,12 +152,16 @@ export function FileView({ filePath, wrap }: FileViewProps) {
   const showPreview = isMarkdown && mdMode === "preview";
 
   // Highlight once per file load; fall back to escaped plain text. Huge files
-  // skip highlighting entirely (plain mode below).
+  // skip highlighting entirely (plain mode below). Markdown source is deliberately
+  // NOT highlighted: its "rendered" view is the preview, so colouring the raw markup
+  // adds little, while hljs's markdown grammar emits many <span>s per line — the
+  // dominant cost that made a doc-heavy source view slow to open and freeze on a wide
+  // text-selection. Plain escaped text keeps line numbers / wrap / selection, cheaply.
   const html = useMemo(() => {
     if (!isText || huge) return "";
     const lang = langFor(filePath);
     try {
-      if (lang && hljs.getLanguage(lang)) {
+      if (lang && lang !== "markdown" && hljs.getLanguage(lang)) {
         return hljs.highlight(data!.content!, { language: lang, ignoreIllegals: true }).value;
       }
     } catch {}
