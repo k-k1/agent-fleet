@@ -28,10 +28,11 @@ func fakeVoicevox(t *testing.T) (*httptest.Server, *string) {
 		var m map[string]any
 		_ = json.NewDecoder(r.Body).Decode(&m)
 		ss, _ := m["speedScale"].(float64)
+		pre, _ := m["prePhonemeLength"].(float64)
+		post, _ := m["postPhonemeLength"].(float64)
 		w.Header().Set("Content-Type", "audio/wav")
-		// Encode the speedScale back into the "WAV" so the caller can verify injection.
-		_, _ = w.Write([]byte("WAVspeed=" + strings.TrimRight(strings.TrimRight(
-			formatFloat(ss), "0"), ".")))
+		// Encode the overridden params back into the "WAV" so the caller can verify injection.
+		_, _ = w.Write([]byte("WAVspeed=" + trimFloat(ss) + ",pre=" + trimFloat(pre) + ",post=" + trimFloat(post)))
 	})
 	mux.HandleFunc("GET /version", func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte("0.14.0"))
@@ -41,9 +42,9 @@ func fakeVoicevox(t *testing.T) (*httptest.Server, *string) {
 	return srv, &gotSpeaker
 }
 
-func formatFloat(f float64) string {
+func trimFloat(f float64) string {
 	b, _ := json.Marshal(f)
-	return string(b)
+	return strings.TrimRight(strings.TrimRight(string(b), "0"), ".")
 }
 
 // clearTTSEnv detaches the test from the host's AWS/TTS env so provider readiness
@@ -68,16 +69,22 @@ func TestVoicevoxSynthesize(t *testing.T) {
 	if *gotSpeaker != "3" {
 		t.Errorf("speaker = %q, want 3", *gotSpeaker)
 	}
-	if got := string(wav); got != "WAVspeed=1.25" {
-		t.Errorf("wav = %q, want WAVspeed=1.25 (speedScale not injected?)", got)
+	// speedScale の注入と、前後無音の短縮（文間の待機対策）の両方が synthesis へ届くこと。
+	if got := string(wav); got != "WAVspeed=1.25,pre=0.02,post=0.05" {
+		t.Errorf("wav = %q, want WAVspeed=1.25,pre=0.02,post=0.05 (param override not injected?)", got)
 	}
 
-	// Empty voice defaults to ずんだもん (speaker 3).
-	if _, aerr := voicevoxSynthesize(t.Context(), srv.URL, "テスト。", "", 0); aerr != nil {
+	// Empty voice defaults to ずんだもん (speaker 3); speed 0 keeps speedScale=1
+	// while the silence trim still applies.
+	wav, aerr = voicevoxSynthesize(t.Context(), srv.URL, "テスト。", "", 0)
+	if aerr != nil {
 		t.Fatalf("default-voice synthesize: %+v", aerr)
 	}
 	if *gotSpeaker != "3" {
 		t.Errorf("default speaker = %q, want 3", *gotSpeaker)
+	}
+	if got := string(wav); got != "WAVspeed=1,pre=0.02,post=0.05" {
+		t.Errorf("wav = %q, want WAVspeed=1,pre=0.02,post=0.05", got)
 	}
 }
 
