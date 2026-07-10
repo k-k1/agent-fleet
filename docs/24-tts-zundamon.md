@@ -180,6 +180,14 @@ TTS 設定画面かフッターに小さく常時表示する。Polly は AWS �
   `ttsEnabled` 有効時のみ、`FileView.tsx` + `viewer.css`）。過去の回答フッターに読み上げ
   ボタンを追加（共用 `features/chat/TtsReadButton.tsx`、ChatView と MirrorView の各ターン
   フッター、assistant/非 user ターンかつ `ttsEnabled` 時のみ）。実機での音出し確認は未。
+  **朗読モード（2026-07-10）**: FileView に「朗読」ボタンを追加し、ファイル本文を冒頭から順次
+  読み上げつつ、いま読んでいるブロック/行を**カラオケ・ハイライト＋自動スクロール**で追従する。
+  一時停止/再開（AudioContext の suspend/resume）・停止に対応。対象はレンダリング済みの読める
+  塊＝Markdown プレビューの葉ブロック（p/li/見出し等、コードは除く）／コード・プレーン表示の行。
+  実装: `tts.ts` の `startNarration`（共通の合成処理 `synthToBuffer` を startTts と共有、unit 単位の
+  進捗を `onUnit` で通知）＋ FileView の `collectNarrationUnits`（DOM から塊を収集し `.tts-reading`
+  を付与）＋ `viewer.css`。グローバル 1 本再生に相乗り（TopBar 停止ボタン・他再生との排他も従来どおり）。
+  クライアント完結（CP 変更なし）。実機の音・追従は未確認。
 - **Phase 1.6（バックグラウンドセッションの音声通知・Tier1）** ✅ 実装済み: 稼働中の複数
   セッションが回答/質問を返したら、セッション名を添えて短く音声でお知らせ（設計検討の結論＝
   直列音声なので「全文読み上げ」でなく「アナウンス方式」を採用）。既存の `useSessionNotifications`
