@@ -185,7 +185,7 @@ var mcpStdioWriteTools = []map[string]any{
 		},
 	},
 	{
-		"name": "add_memo",
+		"name":        "add_memo",
 		"description": "メモキューに1件追加する。kind=text は body（メモ本文）、kind=file は refPath（~/repos/... パス）が必須で body は任意コメント。repo（''=共通/未分類）と category（サブプロジェクトの自由ラベル）で仕分ける。チャット中に出た TODO・依頼・後で渡したい対象を溜めておく時に呼ぶ。",
 		"inputSchema": map[string]any{
 			"type": "object",
@@ -200,7 +200,7 @@ var mcpStdioWriteTools = []map[string]any{
 		},
 	},
 	{
-		"name": "update_memo",
+		"name":        "update_memo",
 		"description": "既存メモ（id 指定）を編集する。渡したフィールドだけ変わり、省略した項目はそのまま。文言の整形・カテゴリ変更・並び替え(position)に使う。id は list_memos で得る。",
 		"inputSchema": map[string]any{
 			"type": "object",
@@ -225,7 +225,7 @@ var mcpStdioWriteTools = []map[string]any{
 		},
 	},
 	{
-		"name": "flush_memos",
+		"name":        "flush_memos",
 		"description": "選択したメモを1メッセージに連結（カテゴリを見出しに）してセッションに1回だけ送信し、送信済み(sent_at)にする。sessionName（list_my_sessions の name）と ids（list_memos の id 配列）を渡す。レポ全体/カテゴリ単位/個別は ids の作り方だけの違い。溜めたメモをまとめてセッションに渡す時に呼ぶ。",
 		"inputSchema": map[string]any{
 			"type": "object",
