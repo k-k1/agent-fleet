@@ -76,6 +76,9 @@
    control cluster (the head already reserves 84px on the right for it). */
 .mirror-toggle {
   margin-left: auto;
+  /* The チャット/ターミナル switch lives on the terminal (and chat) surface, so its
+     selected segment follows the viewer/terminal accent rather than the top bar's. */
+  --sel-accent: var(--viewer-accent, var(--topbar-accent));
 }
 /* The title-suggest button sits at the right of the chat head, just left of the
    ターミナル⇄チャット switch. It takes the auto-margin so the pair groups on the

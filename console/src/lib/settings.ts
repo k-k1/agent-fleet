@@ -303,6 +303,9 @@ export function applyTheme(s: Settings): void {
   // Unset => theme --bg.
   const vw = surfaceValue(s.viewerColor, theme);
   setVar("--viewer-bg", vw ? (theme === "light" ? mixHex(vw, "#ffffff", 0.45) : mixHex(vw, "#000000", 0.34)) : null);
+  // Viewer surface accent — the terminal pane shares --viewer-bg, so the チャット/ターミナル
+  // toggle rebinds --sel-accent to this. Null (no viewer color) → CSS falls back to topbar.
+  setVar("--viewer-accent", surfaceAccent(s.viewerColor));
   // Chat surface (the Markdown mirror) is independent of the file viewer: its own
   // background, derived the same way. Unset => falls back to the viewer surface (then
   // the theme --bg) in CSS, preserving the prior "chat sits on the viewer" behavior.
