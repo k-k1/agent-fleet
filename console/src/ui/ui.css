@@ -117,7 +117,10 @@
   width: min(520px, 96vw);
   min-width: min(420px, 92vw);
   max-width: min(680px, 96vw);
-  max-height: 90vh;
+  /* dvh, not vh: on mobile the URL / nav bars shrink the visible area, but 100vh
+     stays the tall (bars-hidden) height — so the footer gets clipped behind the
+     browser chrome. dvh tracks the actually-visible viewport. */
+  max-height: 90dvh;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -152,7 +155,7 @@
   .ui-modal {
     min-width: 0;
     width: 100%;
-    max-height: calc(100vh - 24px);
+    max-height: calc(100dvh - 24px);
   }
 }
 

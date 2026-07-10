@@ -9,6 +9,7 @@ import { Icon } from "./Icon.tsx";
 import { IconButton } from "./Button.tsx";
 import { coarsePointer } from "../lib/device.ts";
 import { useEscLayer } from "../lib/escLayer.ts";
+import { useBackClose } from "../lib/backClose.ts";
 
 interface ModalProps {
   title?: ReactNode;
@@ -32,6 +33,9 @@ export function Modal({
   // Esc closes (unless an operation is in flight) — layered, so with a confirm
   // dialog open above this modal, Esc peels the confirm first, not both at once.
   useEscLayer(onClose, !lockClose);
+  // The device/browser back button (and back-swipe) closes the modal too, instead
+  // of navigating the page away — same layered peel as Esc.
+  useBackClose(onClose, !lockClose);
 
   // On touch devices, undo any child's autoFocus once the panel mounts so opening a
   // dialog doesn't pop the soft keyboard (GBoard) — the user usually reviews/taps

@@ -563,6 +563,11 @@
   margin: 0;
   padding: 6px 12px;
   list-style: none;
+  /* A long ToDo list would otherwise push the whole conversation down; cap the
+     height and scroll the list itself. */
+  max-height: min(280px, 40vh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 .mtk-item {
   display: flex;

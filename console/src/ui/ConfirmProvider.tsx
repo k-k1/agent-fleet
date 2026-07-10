@@ -8,6 +8,7 @@ import { createPortal } from "react-dom";
 import type { ReactNode, MouseEvent } from "react";
 import { Button } from "./Button.tsx";
 import { useEscLayer } from "../lib/escLayer.ts";
+import { useBackClose } from "../lib/backClose.ts";
 import { registerConfirm } from "./confirmBridge.ts";
 
 export interface ConfirmOptions {
@@ -48,6 +49,9 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
   // Escape cancels, matching the native confirm() this replaced — layered, so
   // the modal the confirm was asked from stays open.
   useEscLayer(() => finish(false), !!req);
+  // Back button / back-swipe also cancels, and peels the confirm before the
+  // modal beneath it (both push a layered history guard).
+  useBackClose(() => finish(false), !!req);
 
   // Expose this provider imperatively so non-React code (terminal/term.ts) can confirm.
   useEffect(() => {
