@@ -221,6 +221,21 @@
 .ds-note span {
   color: var(--fg);
 }
+/* 読み仮名辞書エディタ（docs/24）: ラベル＋全幅テキストエリアの縦積みブロック。 */
+.ds-userdict-block {
+  padding: 6px 0;
+}
+.ds-userdict {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: 4px;
+  min-height: 4.5em;
+  resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+}
 /* A wrapping row whose sub-note (ds-hint) drops to its own line, aligned under
    the control (ds-label width 120 + row gap 12). Used by the codex RTK toggle. */
 .ds-row-wrap {

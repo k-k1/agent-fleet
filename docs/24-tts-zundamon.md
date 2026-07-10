@@ -124,6 +124,9 @@ var ttsProviders = map[string]ttsProvider{ "voicevox": ..., "polly": ... }
 - `ttsVoiceVoicevox`（既定 `3` = ずんだもんノーマル）
 - `ttsVoicePolly`（既定 `Takumi`）
 - `ttsSpeed`（0.5〜2.0, 既定 1.0）
+- `ttsUserDict`（ユーザー読み仮名辞書, 既定 空）: 1 行 `表記=読み`。読み上げ直前にテキストへ
+  リテラル置換で適用（英語/日本語/記号どれでも。enkana の ON/OFF に依らず先に当たる）。
+  クライアント完結（`ttsText.ts` の `parseUserDict`/`applyUserDict`、`tts.ts` の `submit` で適用）。
 
 VOICEVOX エンジンの URL は**ユーザー設定ではなく CP config**（`AF_VOICEVOX_URL`, デプロイ管理）。
 
@@ -166,6 +169,10 @@ TTS 設定画面かフッターに小さく常時表示する。Polly は AWS �
   **ブラッシュアップ（2026-07-10）**: 読み上げ開始レイテンシ短縮のため、**最初の 1 文だけ**句点を
   待たず読点/一定長で早出しするようにした（`ttsText.ts` の純関数 `firstChunkCut`、`tts.ts` の
   `drain` から使用。2 文目以降は従来どおり句点粒度）。テスト `tts.test.ts` に追加。
+  **ユーザー読み仮名辞書（2026-07-10）**: 設定 `ttsUserDict`（1 行 `表記=読み`）を読み上げ直前に
+  リテラル置換で適用する汎用辞書を追加（英語/日本語/記号どれでも。長い表記優先・enkana より先に当たる）。
+  クライアント完結（CP/API 変更なし）。UI は AgentsTab の TTS 設定内テキストエリア。純関数
+  `parseUserDict`/`applyUserDict`（`ttsText.ts`）＋テスト。VOICEVOX のユーザー辞書と同じ発想。
 - **Phase 1.5（再生制御・FileView 連携）** ✅ 実装済み: 再生をアプリ全体で 1 本に集約する
   グローバルストア `core/store/tts.ts`（`useTtsStore`: speaking/source/stop）。TopBar に
   「読み上げ中・〇〇」インジケータ兼**停止ボタン**を追加（再生中のみ表示、`app/TopBar.tsx`
