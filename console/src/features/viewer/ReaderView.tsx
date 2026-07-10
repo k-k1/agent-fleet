@@ -72,6 +72,23 @@ export function ReaderView({ filePath }: { filePath: string }) {
 
   const vertical = settings.readerVertical;
   const ttsOn = settings.ttsEnabled;
+  const verticalRef = useRef(vertical);
+  verticalRef.current = vertical;
+
+  // 縦書き（vertical-rl）は横スクロールで読み進める。ホイール↓（deltaY>0）を「←へ」
+  // ＝後続の列（左）へ変換する。React の onWheel は passive 登録で preventDefault が効かない
+  // ため、ネイティブ wheel を passive:false で張る。本文 DOM の有無で張り直す。
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      if (!verticalRef.current || e.deltaY === 0) return;
+      el.scrollLeft -= e.deltaY; // spec準拠ブラウザ: 後続列は scrollLeft 負方向
+      e.preventDefault();
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, [isText, units.length]);
 
   // いま読んでいる文をビューへ。block=論理ブロック軸なので縦書き（vertical-rl）でも
   // 横スクロールで正しく追従する。
