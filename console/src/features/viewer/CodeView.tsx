@@ -2,16 +2,16 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import type { MouseEvent as RMouseEvent, TouchEvent as RTouchEvent, SyntheticEvent } from "react";
 
 // CodeView renders highlighted code with an optional line-number gutter and a
-// VSCode-style minimap on the right edge: a scaled-down mirror of the file with a
-// draggable viewport box. Clicking/dragging the minimap scrolls the code.
+// VSCode-style minimap on the right edge: a scaled-down PLAIN-TEXT mirror of the file
+// with a draggable viewport box. Clicking/dragging the minimap scrolls the code.
 // `marks` (added/modified/deleted line numbers, from /fs/linemarks) draws a
 // VSCode-style change bar in the gutter when the file is git-modified.
 const SCALE = 0.16; // minimap size relative to the real code
 
-// Above this many lines the minimap is suppressed: it mirrors the ENTIRE highlighted
-// DOM a second time, so a huge file would double an already-large node count (heavy to
-// mount and to repaint while scrolling) for a mirror that's illegible at 0.16 scale
-// anyway. The code area still scrolls normally without it.
+// Above this many lines the minimap is suppressed: it mirrors the file's text a second
+// time, so a huge file would double an already-large node count (heavy to mount and to
+// repaint) for a mirror that's illegible at 0.16 scale anyway. The code area still
+// scrolls normally without it.
 const MINIMAP_MAX_LINES = 10000;
 
 // Per-line change marks for the gutter change bar.
@@ -77,6 +77,41 @@ export function CodeView({ html, lines, lineNumbers, wrap, minimap, marks }: Cod
   // Big files: don't render the second (mirrored) DOM at all.
   const showMini = !!minimap && lines <= MINIMAP_MAX_LINES;
 
+  // The minimap mirrors the code as PLAIN TEXT, not the highlighted markup: at 0.16
+  // scale the token colours are unreadable anyway, but the thousands of hljs <span>s
+  // were the dominant cost — every text-selection in the code area triggers a
+  // document-wide style recalc + repaint that had to walk the scaled mirror's spans
+  // each frame, which is what froze the browser on a wide selection (and doubled the
+  // node count at open). Stripping to plain text keeps the shape map for pennies.
+  const miniText = useMemo(() => {
+    if (!showMini) return "";
+    return html
+      .replace(/<[^>]+>/g, "")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&amp;/g, "&");
+  }, [html, showMini]);
+
+  // Defer the minimap's first paint until the browser is idle, so opening a big file
+  // renders the code grid immediately instead of blocking on the mirror. Reset on each
+  // new file so it defers again.
+  const [miniReady, setMiniReady] = useState(false);
+  useEffect(() => {
+    if (!showMini) return;
+    setMiniReady(false);
+    let idle = 0;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    if (typeof requestIdleCallback === "function") {
+      idle = requestIdleCallback(() => setMiniReady(true), { timeout: 400 });
+    } else {
+      timer = setTimeout(() => setMiniReady(true), 120);
+    }
+    return () => {
+      if (idle) cancelIdleCallback(idle);
+      if (timer) clearTimeout(timer);
+    };
+  }, [showMini, html]);
+
   // Cached geometry, updated only when the layout can actually change (content / wrap /
   // gutter / resize) — never on scroll. Keeping the scroll hot path free of layout
   // reads (offsetHeight) is what stops the scroll-time layout thrash that made big
@@ -130,10 +165,10 @@ export function CodeView({ html, lines, lineNumbers, wrap, minimap, marks }: Cod
   }, [apply]);
 
   useLayoutEffect(() => {
-    if (!showMini) return;
+    if (!showMini || !miniReady) return;
     measure();
     apply();
-  }, [html, lineNumbers, wrap, showMini, measure, apply]);
+  }, [html, lineNumbers, wrap, showMini, miniReady, measure, apply]);
 
   // The viewport box is mounted only once vpVisible flips true, so the apply() that
   // flipped it couldn't position it yet (its ref wasn't attached). Re-apply once it's
@@ -264,11 +299,9 @@ export function CodeView({ html, lines, lineNumbers, wrap, minimap, marks }: Cod
       {showMini && (
         <div className="minimap" onMouseDown={onMiniDown} onTouchStart={onMiniTouch} onTouchMove={onMiniTouch}>
           <div className="minimap-inner" ref={miniInnerRef} style={{ transform: `scale(${SCALE})` }}>
-            <pre className="code">
-              <code className="hljs" dangerouslySetInnerHTML={{ __html: html }} />
-            </pre>
+            {miniReady && <pre className="code hljs">{miniText}</pre>}
           </div>
-          {vpVisible && <div className="minimap-viewport" ref={viewportRef} />}
+          {vpVisible && miniReady && <div className="minimap-viewport" ref={viewportRef} />}
         </div>
       )}
     </div>
