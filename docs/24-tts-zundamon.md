@@ -163,6 +163,9 @@ TTS 設定画面かフッターに小さく常時表示する。Polly は AWS �
   （`deploy/local/run-voicevox.sh`）。テスト: `control-plane/tts_test.go`（httptest 偽エンジン）+
   `console/src/features/chat/tts.test.ts`（整形）。使い分けは Phase 1 では voicevox 固定
   （polly 指定は 501）。**残**: 実機 VOICEVOX での目視確認（音が出るか）は未実施。
+  **ブラッシュアップ（2026-07-10）**: 読み上げ開始レイテンシ短縮のため、**最初の 1 文だけ**句点を
+  待たず読点/一定長で早出しするようにした（`ttsText.ts` の純関数 `firstChunkCut`、`tts.ts` の
+  `drain` から使用。2 文目以降は従来どおり句点粒度）。テスト `tts.test.ts` に追加。
 - **Phase 1.5（再生制御・FileView 連携）** ✅ 実装済み: 再生をアプリ全体で 1 本に集約する
   グローバルストア `core/store/tts.ts`（`useTtsStore`: speaking/source/stop）。TopBar に
   「読み上げ中・〇〇」インジケータ兼**停止ボタン**を追加（再生中のみ表示、`app/TopBar.tsx`
@@ -192,6 +195,11 @@ TTS 設定画面かフッターに小さく常時表示する。Polly は AWS �
   CMUdict より優先）を併設。加えて「略語＋数字」ルールで EC2→イーシーツー・S3→エススリー（英字塊は
   英字名読み、数字塊は英語数字読み。単独数字は日本語読みのまま）。語を足すには `techKana` に 1 行追加。
   テスト `control-plane/enkana_test.go`（一般語＋技術語）。NOTICE に CMUdict 帰属を記載。実機の音は未確認。
+  **辞書拡充（2026-07-10）**: このコンテナの過去セッション記録（`/var/lib/af/claude/projects` の
+  transcript）から英単語頻度を抽出し、CMUdict/`techKana` と突合して「高頻度なのに未カバー（綴りママ/
+  英字読み止まり）」だった語を洗い出し、一般的な開発語・外部プロダクト名・小文字略語（config/grep/
+  tmux/worktree/opencode/codex/voicevox/mcp/css/svg 等 約50語）を `enkana_dict.go` に追加。突合は
+  使い捨ての scan テストで実施（コミット対象外）。`TestCorpusTerms` で回帰を固定。
 - **Phase 2（AWS）**: Polly プロバイダ（IAM ロール）、管理者トグル → ECS desired 0↔1、
   Cloud Map 固定 DNS、readiness ゲート、`auto` の Polly フォールバック有効化。
 
@@ -216,6 +224,8 @@ TTS 設定画面かフッターに小さく常時表示する。Polly は AWS �
 ## 未決 / 論点
 
 - 逐次再生のチャンク粒度（句点のみ vs 読点も。短文結合の閾値）。実測で調整。
+  → 最初の 1 文だけ読点/一定長で早出しする対応を 2026-07-10 に実施（`firstChunkCut`）。
+  2 文目以降を読点でも切るか（体感レイテンシ vs 細切れ）は引き続き実測で調整。
 - Polly の出力フォーマット（pcm を AudioContext 直、または mp3 を `<audio>`）。
 - 有効な間の VOICEVOX warm 維持と ECS のアイドル停止（[p3-9-idle-stop](history/p3-9-idle-stop.md)）の整合。
 - 会話の途中参加（既存メッセージの手動再生）時の話者・速度の解決順。

@@ -79,6 +79,33 @@ func TestTechTerms(t *testing.T) {
 	}
 }
 
+func TestCorpusTerms(t *testing.T) {
+	// 過去セッションのコーパスから追加した未カバー語（enkana_dict.go 後半）。
+	want := map[string]string{
+		"config":   "コンフィグ",
+		"grep":     "グレップ",
+		"tmux":     "ティーマックス",
+		"worktree": "ワークツリー",
+		"refactor": "リファクター",
+		"handoff":  "ハンドオフ",
+		"opencode": "オープンコード",
+		"codex":    "コーデックス",
+		"voicevox": "ボイスボックス",
+		"zundamon": "ずんだもん",
+		// 小文字略語は大文字表記でも同じ読み（convertWord が小文字化して techKana を引く）。
+		"mcp": "エムシーピー",
+		"MCP": "エムシーピー",
+		"css": "シーエスエス",
+		"CSS": "シーエスエス",
+		"svg": "エスブイジー",
+	}
+	for in, exp := range want {
+		if got := englishToKana(in); got != exp {
+			t.Errorf("%q -> %q, want %q", in, got, exp)
+		}
+	}
+}
+
 func containsASCIILetters(s string) bool {
 	for _, r := range s {
 		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {
