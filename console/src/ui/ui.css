@@ -313,6 +313,11 @@
   box-shadow: 0 6px 20px color-mix(in srgb, #000 35%, transparent);
   display: flex;
   flex-direction: column;
+  list-style: none;
+  margin: 0;
+}
+.ui-menu > li {
+  list-style: none;
 }
 .ui-menu-item {
   display: flex;
