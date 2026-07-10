@@ -16,7 +16,21 @@ export interface TtsOptions {
   provider: string; // "auto" | "voicevox" | "polly"
   voice: string; // VOICEVOX speaker 番号
   speed: number; // speedScale
-  enkana?: boolean; // 英語をカタカナ英語に前処理して読ませる（CP の enkana）
+  enkana?: boolean; // 英語をカタカナ英語に前処理して読ませる（CP の enkana。voicevox 時のみ効く）
+  pollyVoice?: string; // Polly の VoiceId（auto のフォールバック先でも使う）
+  lang?: string; // 言語ヒント（設定 outputLanguage を再利用）: "auto" | "ja" | "en"
+}
+
+// settings から TtsOptions を組む共通処理（announce / speakText / startNarration / ChatView）。
+export function ttsOptsFromSettings(s = getSettings()): TtsOptions {
+  return {
+    provider: s.ttsProvider,
+    voice: s.ttsVoiceVoicevox,
+    speed: s.ttsSpeed,
+    enkana: s.ttsEnglishKana,
+    pollyVoice: s.ttsVoicePolly,
+    lang: s.outputLanguage,
+  };
 }
 
 // 同時に合成を投げる上限。長文で数十並列にしてエンジン/CP を溢れさせない。
@@ -54,6 +68,8 @@ async function synthToBuffer(
         voice: opts.voice,
         speed: opts.speed,
         enkana: opts.enkana ?? false,
+        pollyVoice: opts.pollyVoice ?? "",
+        lang: opts.lang ?? "",
       }),
       signal,
     });
@@ -286,9 +302,8 @@ function pumpAnnounce(): void {
   const next = announceQueue.shift();
   if (!next) return;
   announcing = true;
-  const s = getSettings();
   const c = startTts(
-    { provider: s.ttsProvider, voice: s.ttsVoiceVoicevox, speed: s.ttsSpeed, enkana: s.ttsEnglishKana },
+    ttsOptsFromSettings(),
     next.source,
     (reason) => {
       announcing = false;
@@ -310,8 +325,7 @@ useTtsStore.subscribe((st, prev) => {
 export function speakText(text: string, source = ""): void {
   const t = text.trim();
   if (!t) return;
-  const s = getSettings();
-  const c = startTts({ provider: s.ttsProvider, voice: s.ttsVoiceVoicevox, speed: s.ttsSpeed, enkana: s.ttsEnglishKana }, source);
+  const c = startTts(ttsOptsFromSettings(), source);
   c.push(t);
   c.flush();
 }
@@ -333,12 +347,7 @@ export function startNarration(units: string[], source: string, onUnit: (i: numb
   useTtsStore.getState().active?.stop(); // グローバル 1 本（既存の再生を止める）
   const ctx = audioCtx();
   const s = getSettings();
-  const opts: TtsOptions = {
-    provider: s.ttsProvider,
-    voice: s.ttsVoiceVoicevox,
-    speed: s.ttsSpeed,
-    enkana: s.ttsEnglishKana,
-  };
+  const opts = ttsOptsFromSettings(s);
   const userDict = parseUserDict(s.ttsUserDict);
 
   // 各 unit を読み上げ用にクリーン化（Markdown 記法/URL 除去 + ユーザー辞書）。空になった

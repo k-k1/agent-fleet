@@ -133,10 +133,12 @@ export interface Settings {
   // 音声読み上げ（TTS, docs/24 + ADR0013）。エージェント回答を VOICEVOX（ずんだもん）で
   // 読み上げる。CP-native な /api/tts/synthesize を句点区切りで逐次呼ぶ（features/chat/tts.ts）。
   ttsEnabled: boolean;
-  // プロバイダ選択。Phase 1 は auto=voicevox のみ実装（polly は Phase 2）。UI は未露出だが
-  // 前方互換のため保持し、synthesize リクエストに渡す。
+  // プロバイダ選択（Phase 2 で auto ルーティング実装）。auto = 日本語×engine ready なら
+  // ずんだもん、engine 不在（起動中/無効）は Polly JP へ自動フォールバック、非日本語は Polly。
+  // 最終決定は CP（engine の ready を知る単一の真実源）。明示 polly なら常に Polly。
   ttsProvider: string; // "auto" | "voicevox" | "polly"
   ttsVoiceVoicevox: string; // VOICEVOX の speaker 番号（"3"=ずんだもん・ノーマル）
+  ttsVoicePolly: string; // Polly の VoiceId（"Takumi" 等）。auto のフォールバック時も使う
   ttsSpeed: number; // 0.5〜2.0（speedScale）
   // バックグラウンドのセッションが回答/質問を返したら音声で知らせる（docs/24 Tier1）。チャットの
   // 自動読み上げ(ttsEnabled)とは別軸。名前前置きの短い告知を直列キューで読む。タブが見えている
@@ -181,6 +183,7 @@ const DEFAULTS: Settings = {
   ttsEnabled: false,
   ttsProvider: "auto",
   ttsVoiceVoicevox: "3",
+  ttsVoicePolly: "Takumi",
   ttsSpeed: 1.0,
   ttsSessionNotify: false,
   ttsEnglishKana: false,
@@ -196,6 +199,20 @@ export const VOICEVOX_ZUNDAMON: [string, string][] = [
   ["5", "セクシー"],
   ["22", "ささやき"],
   ["38", "ヒソヒソ"],
+];
+
+// TTS プロバイダ（docs/24 Phase 2）。auto の使い分けは CP が決める。
+export const TTS_PROVIDERS: [string, string][] = [
+  ["auto", "自動"],
+  ["voicevox", "ずんだもん"],
+  ["polly", "Polly"],
+];
+
+// Polly の日本語ニューラル話者（VoiceId → ラベル）。
+export const TTS_POLLY_VOICES: [string, string][] = [
+  ["Takumi", "Takumi（男性）"],
+  ["Kazuha", "Kazuha（女性）"],
+  ["Tomoko", "Tomoko（女性）"],
 ];
 
 // 読み上げ速度（speedScale）。
