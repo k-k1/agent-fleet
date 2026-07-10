@@ -100,6 +100,9 @@ var ttsProviders = map[string]ttsProvider{ "voicevox": ..., "polly": ... }
   `CLAUSE_GAP`(0.08s)（チャット読み上げ
   経路のみ。朗読モードはカラオケハイライトが実再生開始に同期するため onended 駆動のまま）。
   なお LLM の生成が再生より遅い場合の待ち（テキスト律速）は原理的に残る。
+  あわせて「submit 時に」のような**英単語と日本語の間の半角スペース**は CP の voicevox 経路で
+  除去する（`collapseJaSpaces`。VOICEVOX はスペースをポーズとして合成し読みが途切れるため。
+  英単語同士のスペースと全角スペースは残す）。
 - 読み上げ用整形: Markdown 記法・コードブロック（`` ``` `` は読み飛ばし/「コード省略」）・URL 短縮。
   （`console/src/features/chat/MarkdownView.tsx` のレンダ経路とは別に、プレーン化ユーティリティを持つ）
 - 中断: `stop()`（`ChatView.tsx:259`）と連動し in-flight fetch abort ＋ 現在 source stop ＋ キュー破棄。
