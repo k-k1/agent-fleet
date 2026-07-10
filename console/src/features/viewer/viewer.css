@@ -914,7 +914,8 @@
   background: var(--hover-bg, var(--btn));
 }
 
-/* 朗読ビュー（docs/24, ReaderView）: 読むための版組＋カラオケ・ハイライト。 */
+/* 朗読ビュー（docs/24, ReaderView）: 読むための版組＋カラオケ・ハイライト。
+   原文の改行・行頭スペースを保つため pre-wrap。単位（.reader-unit）はインライン span。 */
 .reader-body {
   flex: 1;
   min-height: 0;
@@ -922,22 +923,25 @@
   padding: 28px 32px;
   margin: 0 auto;
   max-width: 42em;
-  line-height: 2;
+  line-height: 2.1;
   font-size: 1.05rem;
   font-family: var(--reader-font, "Hiragino Mincho ProN", "Yu Mincho", "Noto Serif JP", "Noto Serif", serif);
   color: var(--fg);
+  white-space: pre-wrap; /* 改行・行頭スペースを保持 */
+  overflow-wrap: anywhere;
 }
-.reader-para {
-  margin: 0 0 1.1em;
-}
-.reader-sent {
+.reader-unit {
   border-radius: 4px;
   scroll-margin: 20vh 20vw; /* scrollIntoView(center) の余白（縦横どちらの向きでも効く） */
   transition: background 0.15s ease;
 }
-.reader-sent.active {
+.reader-unit.active {
   background: color-mix(in srgb, var(--accent) 18%, transparent);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+/* なろう形式ルビ（<ruby>base<rt>ruby</rt>）の見た目。 */
+.reader-body rt {
+  font-size: 0.5em;
+  opacity: 0.8;
 }
 /* 縦書き: 文字は上→下、列は右→左。max-width/margin を解いて横スクロールで読み進める。 */
 .reader-body.vertical {
@@ -947,9 +951,6 @@
   height: 100%;
   margin: 0;
   padding: 32px 28px;
-}
-.reader-body.vertical .reader-para {
-  margin: 0 1.1em 0 0;
 }
 .reader-vtoggle .codicon {
   font-size: 13px;

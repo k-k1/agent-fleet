@@ -1,46 +1,62 @@
 import { describe, it, expect } from "vitest";
-import { splitSentences, toReadingParagraphs } from "./readerText.ts";
+import { parseRuby, buildReadUnits, type ReadUnit } from "./readerText.ts";
 
-describe("splitSentences", () => {
-  it("句点類で文に割る（区切りは末尾に残す）", () => {
-    expect(splitSentences("これは一文目。これは二文目！おわり？")).toEqual([
-      "これは一文目。",
-      "これは二文目！",
-      "おわり？",
+// 単位の表示テキストを平坦化（ルビは [base:ruby] で表現）してアサートしやすくする。
+const disp = (u: ReadUnit) => u.segs.map((s) => (s.ruby !== undefined ? `[${s.base}:${s.ruby}]` : s.base)).join("");
+
+describe("parseRuby (なろう形式ルビ)", () => {
+  it("｜親文字《ルビ》 を base+ruby に割る", () => {
+    expect(parseRuby("｜東京《とうきょう》へ")).toEqual([{ base: "東京", ruby: "とうきょう" }, { base: "へ" }]);
+  });
+
+  it("｜省略の自動ルビは直前の漢字連続にだけ付く（手前のかなは素のまま）", () => {
+    expect(parseRuby("私は東京《とうきょう》へ")).toEqual([
+      { base: "私は" },
+      { base: "東京", ruby: "とうきょう" },
+      { base: "へ" },
     ]);
   });
-  it("区切りが無ければ全体で1文", () => {
-    expect(splitSentences("区切りのない行")).toEqual(["区切りのない行"]);
+
+  it("自動ルビ: 漢字連続の切り出し", () => {
+    expect(parseRuby("あの日暮里《にっぽり》駅")).toEqual([
+      { base: "あの" },
+      { base: "日暮里", ruby: "にっぽり" },
+      { base: "駅" },
+    ]);
   });
-  it("末尾の区切り無し断片も拾う", () => {
-    expect(splitSentences("一文目。続き")).toEqual(["一文目。", "続き"]);
+
+  it("直前に漢字が無い《》は素の文字として扱う", () => {
+    expect(parseRuby("これは《見出し》です")).toEqual([{ base: "これは《見出し》です" }]);
+  });
+
+  it("半角 | はルビ制御にしない（Markdown 表と衝突回避）", () => {
+    expect(parseRuby("| a | b |")).toEqual([{ base: "| a | b |" }]);
   });
 });
 
-describe("toReadingParagraphs (Markdown)", () => {
-  it("見出し/リストの記法を落とし、空行で段落を分ける", () => {
-    // 見出し・各リスト項目は（空行が無くても）1 段落に切り出す＝読み上げの自然な区切り。
-    const md = "# タイトル\n\n本文の一文目。二文目。\n\n- 項目A\n- 項目B";
-    expect(toReadingParagraphs(md, true)).toEqual([["タイトル"], ["本文の一文目。", "二文目。"], ["項目A"], ["項目B"]]);
+describe("buildReadUnits (原文忠実＋文/行区切り)", () => {
+  it("改行・行頭スペースを表示に保持し、読み上げ文は trim/整形する", () => {
+    const units = buildReadUnits("　吾輩は猫である。名前はまだ無い。\n次の行。", false);
+    expect(units.map(disp)).toEqual(["　吾輩は猫である。", "名前はまだ無い。\n", "次の行。"]);
+    expect(units.map((u) => u.spoken)).toEqual(["吾輩は猫である。", "名前はまだ無い。", "次の行。"]);
   });
 
-  it("コードフェンスの中身は読み飛ばす", () => {
-    const md = "説明です。\n\n```js\nconst x = 1;\n```\n\n続きの段落。";
-    expect(toReadingParagraphs(md, true)).toEqual([["説明です。"], ["続きの段落。"]]);
+  it("ルビは表示に残し、読み上げは読みを採用する", () => {
+    const units = buildReadUnits("｜東京《とうきょう》タワー。", false);
+    expect(units).toHaveLength(1);
+    expect(units[0].segs).toEqual([{ base: "東京", ruby: "とうきょう" }, { base: "タワー。" }]);
+    expect(units[0].spoken).toBe("とうきょうタワー。");
   });
 
-  it("リンク/URL/インラインコードを落とす", () => {
-    const md = "詳しくは [ドキュメント](https://x.example) と `code` を参照。";
-    expect(toReadingParagraphs(md, true)).toEqual([["詳しくは ドキュメント と code を参照。"]]);
+  it("空行は表示に残す（改行として保持）が読み上げ対象にしない", () => {
+    const units = buildReadUnits("一行目。\n\n三行目。", false);
+    expect(units.map(disp).join("")).toBe("一行目。\n\n三行目。"); // 空行の改行を保持
+    expect(units.map((u) => u.spoken).filter((s) => s)).toEqual(["一行目。", "三行目。"]);
   });
-});
 
-describe("toReadingParagraphs (プレーンテキスト)", () => {
-  it("txt は段落（空行区切り）と文に素直に割る", () => {
-    const txt = "むかしむかし。あるところに。\n\nおじいさんがいました。";
-    expect(toReadingParagraphs(txt, false)).toEqual([["むかしむかし。", "あるところに。"], ["おじいさんがいました。"]]);
-  });
-  it("空 = 段落なし", () => {
-    expect(toReadingParagraphs("\n\n  \n", false)).toEqual([]);
+  it("Markdown のコードフェンス内は表示するが読み上げない", () => {
+    const units = buildReadUnits("説明。\n```\ncode();\n```\n続き。", true);
+    expect(units.map((u) => u.spoken).filter((s) => s)).toEqual(["説明。", "続き。"]);
+    expect(units.map(disp).join("")).toContain("code();"); // 表示には残る
   });
 });

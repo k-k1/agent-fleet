@@ -13,7 +13,7 @@ import FileIcon from "../../ui/FileIcon.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { useSettings, setSetting } from "../../lib/settings.ts";
 import { startNarration, type NarrationHandle } from "../chat/tts.ts";
-import { toReadingParagraphs } from "./readerText.ts";
+import { buildReadUnits } from "./readerText.ts";
 
 interface FileData {
   error?: { message?: string };
@@ -55,18 +55,16 @@ export function ReaderView({ filePath }: { filePath: string }) {
 
   const isText = !!data && !data.binary && typeof data.content === "string";
   const isMarkdown = isText && langFor(filePath) === "markdown";
-  const paras = useMemo(() => (isText ? toReadingParagraphs(data!.content!, isMarkdown) : []), [isText, data, isMarkdown]);
-  const flat = useMemo(() => paras.flat(), [paras]);
-  // 段落 → その先頭文のフラット index（文 span に一意の data-ri を振るため）。
-  const offsets = useMemo(() => {
-    const o: number[] = [];
+  // 原文忠実（改行・行頭スペース保持）＋なろう形式ルビの表示単位。
+  const units = useMemo(() => (isText ? buildReadUnits(data!.content!, isMarkdown) : []), [isText, data, isMarkdown]);
+  // 読み上げ対象（spoken 非空）の単位に連番を振る。data-si=その連番、active と一致でハイライト。
+  const spokenIdx = useMemo(() => {
+    const m: (number | null)[] = [];
     let n = 0;
-    for (const p of paras) {
-      o.push(n);
-      n += p.length;
-    }
-    return o;
-  }, [paras]);
+    for (const u of units) m.push(u.spoken ? n++ : null);
+    return m;
+  }, [units]);
+  const flat = useMemo(() => units.filter((u) => u.spoken).map((u) => u.spoken), [units]);
 
   const vertical = settings.readerVertical;
   const ttsOn = settings.ttsEnabled;
@@ -75,7 +73,7 @@ export function ReaderView({ filePath }: { filePath: string }) {
   // 横スクロールで正しく追従する。
   useEffect(() => {
     if (active == null) return;
-    scrollRef.current?.querySelector<HTMLElement>(`[data-ri="${active}"]`)?.scrollIntoView({
+    scrollRef.current?.querySelector<HTMLElement>(`[data-si="${active}"]`)?.scrollIntoView({
       block: "center",
       inline: "nearest",
       behavior: "smooth",
@@ -169,18 +167,27 @@ export function ReaderView({ filePath }: { filePath: string }) {
         <pre className="filebody muted">(読み上げる本文がありません)</pre>
       ) : (
         <div className={"reader-body" + (vertical ? " vertical" : "")} ref={scrollRef}>
-          {paras.map((sents, pi) => (
-            <p className="reader-para" key={pi}>
-              {sents.map((s, si) => {
-                const idx = offsets[pi] + si;
-                return (
-                  <span key={si} data-ri={idx} className={"reader-sent" + (idx === active ? " active" : "")}>
-                    {s}{" "}
-                  </span>
-                );
-              })}
-            </p>
-          ))}
+          {units.map((u, ui) => {
+            const si = spokenIdx[ui];
+            return (
+              <span
+                key={ui}
+                data-si={si ?? undefined}
+                className={"reader-unit" + (si != null && si === active ? " active" : "")}
+              >
+                {u.segs.map((s, j) =>
+                  s.ruby !== undefined ? (
+                    <ruby key={j}>
+                      {s.base}
+                      <rt>{s.ruby}</rt>
+                    </ruby>
+                  ) : (
+                    s.base
+                  ),
+                )}
+              </span>
+            );
+          })}
         </div>
       )}
     </div>

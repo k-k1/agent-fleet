@@ -184,9 +184,12 @@ TTS 設定画面かフッターに小さく常時表示する。Polly は AWS �
   `layout/types.ts`＋`Pane.tsx`＋`ops.ts`＋`migrate.ts`）を新設。ファイル本文を段落・**文**に分割して
   読みやすい版組で表示し、冒頭から順次読み上げつつ、いま読んでいる**文をカラオケ・ハイライト＋
   自動スクロール**で追従する。一時停止/再開（AudioContext suspend/resume）・停止、**縦書き/横書き
-  トグル**（設定 `readerVertical`、`writing-mode: vertical-rl`）。Markdown も **txt も対応**（文分割は
-  純関数 `readerText.ts` の `toReadingParagraphs`/`splitSentences`＝md はフェンス除去・行記法除去・
-  見出し/リスト項目は 1 単位、txt は素直に段落/文へ。テスト有り）。読み上げエンジンは `tts.ts` の
+  トグル**（設定 `readerVertical`、`writing-mode: vertical-rl`）。Markdown も **txt も対応**。
+  **原文忠実表示**＝改行・行頭スペースを `white-space: pre-wrap` で保持し、**なろう形式ルビ**
+  （`｜漢字《かな》` の明示指定＋`漢字《かな》` の自動ルビ＝直前の漢字連続に付与。半角 `|` は md 表と
+  衝突するので全角 `｜` のみ制御記号）を `<ruby>` で描画。読み上げはルビ箇所は**読み（かな）を音声化**。
+  分割は純関数 `readerText.ts` の `parseRuby`/`buildReadUnits`（行内は文・行末で区切り、空行/コード
+  フェンス内は表示のみ読まない。テスト有り）。読み上げエンジンは `tts.ts` の
   `startNarration`（合成 `synthToBuffer` を startTts と共有・文 index を `onUnit` で通知）を流用。ReaderView
   は文を React 要素で描くのでハイライトは `activeIndex` state 駆動（旧 FileView 版の DOM クラス後付けを
   廃止）。開き方＝ファイル右クリック「朗読で開く」／FileView の「朗読」ボタン（`kind:read` を openTarget）。
