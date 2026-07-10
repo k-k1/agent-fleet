@@ -91,6 +91,13 @@ var ttsProviders = map[string]ttsProvider{ "voicevox": ..., "polly": ... }
   切り出し、末尾の未完片は buffer に残す。`onDone`（`:244`）で残りを flush。短すぎる断片は結合。
 - **合成 in-flight を 2〜3 に制限**（長文で数十並列にしない backpressure）。ただし
   **再生は到着順ではなく文の連番順**に固定（seq index を振り、`AudioContext` の `onended` で次を鳴らす）。
+- **文間レイテンシ対策（2026-07-10 調整）**: 待機時間の主因は先読み不足ではなく
+  ①VOICEVOX が WAV に焼き込む前後無音（pre/postPhonemeLength 既定 0.1s ずつ ≒ 毎境界 0.2s）と
+  ②onended 駆動 start() のイベントループジッタ。対策として CP が audio_query の
+  `prePhonemeLength=0.02` / `postPhonemeLength=0.05` を上書きし、フロントは準備済みバッファを
+  `AudioContext` の時計で「前の終了時刻 + `SENTENCE_GAP`(0.08s)」に先行予約する（チャット読み上げ
+  経路のみ。朗読モードはカラオケハイライトが実再生開始に同期するため onended 駆動のまま）。
+  なお LLM の生成が再生より遅い場合の待ち（テキスト律速）は原理的に残る。
 - 読み上げ用整形: Markdown 記法・コードブロック（`` ``` `` は読み飛ばし/「コード省略」）・URL 短縮。
   （`console/src/features/chat/MarkdownView.tsx` のレンダ経路とは別に、プレーン化ユーティリティを持つ）
 - 中断: `stop()`（`ChatView.tsx:259`）と連動し in-flight fetch abort ＋ 現在 source stop ＋ キュー破棄。

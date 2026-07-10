@@ -237,14 +237,19 @@ func voicevoxSynthesize(ctx context.Context, base, text, voice string, speed flo
 		return nil, &apiError{http.StatusBadGateway, "tts_engine_error", "voicevox audio_query failed: " + strings.TrimSpace(string(aqBody))}
 	}
 
-	// 2) speedScale を上書き（0/未指定は 1.0 のまま）。
-	if speed > 0 {
-		var m map[string]any
-		if json.Unmarshal(aqBody, &m) == nil {
+	// 2) 合成パラメータを上書き。前後の無音（既定 0.1s ずつ）は文単位の逐次再生では
+	// 文境界ごとに約 0.2s の待機として毎回体感されるため短縮する。文間の「間」は
+	// フロントが再生スケジュール（SENTENCE_GAP）で管理する。speedScale は 0/未指定
+	// なら audio_query の返した値（1.0）のまま。
+	var m map[string]any
+	if json.Unmarshal(aqBody, &m) == nil {
+		m["prePhonemeLength"] = 0.02
+		m["postPhonemeLength"] = 0.05
+		if speed > 0 {
 			m["speedScale"] = clampSpeed(speed)
-			if nb, e := json.Marshal(m); e == nil {
-				aqBody = nb
-			}
+		}
+		if nb, e := json.Marshal(m); e == nil {
+			aqBody = nb
 		}
 	}
 
