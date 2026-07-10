@@ -65,6 +65,12 @@ type manager struct {
 	// authenticate transparently via the cred helper. Empty (no PUBLIC_BASE_URL) =
 	// internal git disabled.
 	internalGitHost string
+
+	// publicBaseURL is PUBLIC_BASE_URL verbatim (scheme + host). Injected into each
+	// workspace as AF_CP_BASE_URL so the in-container フリート・オペレーター can reach
+	// the CP's /internal/memos bridge over the public hairpin (memo_bridge.go). Empty
+	// (no PUBLIC_BASE_URL) = the memo bridge is not reachable, so it is not injected.
+	publicBaseURL string
 }
 
 // apiError carries an HTTP status + machine code for handlers to return.

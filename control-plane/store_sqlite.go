@@ -395,6 +395,19 @@ func (s *sqlStore) GetMembershipByID(ctx context.Context, membershipID string) (
 	return v, true, nil
 }
 
+func (s *sqlStore) IdentityIDForMembership(ctx context.Context, membershipID string) (string, bool, error) {
+	var id string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT identity_id FROM membership WHERE id=? AND status='active'`, membershipID).Scan(&id)
+	if err == sql.ErrNoRows {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return id, true, nil
+}
+
 func (s *sqlStore) EnsureMembership(ctx context.Context, identityID, tenantID, role string) (Membership, error) {
 	if _, err := s.db.ExecContext(ctx,
 		`INSERT INTO membership(id, identity_id, tenant_id, role, status, created_at)

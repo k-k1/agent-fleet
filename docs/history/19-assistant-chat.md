@@ -276,3 +276,27 @@ Q3（済）→ Q1（mcp-stdio, read-only, 済）→ **Q2＝アシスタント・
 
 no-store 配信 / URL は `document.baseURI` 相対 / `X-AF-Tenant` 注入 / xterm 内部は不可侵。
 ヘッドレス CLI は既存のコンテナ内認証をそのまま継承するため**新しい資格情報・接続 UI は不要**。
+
+## 追記（2026-07-10）: フリート・オペレーターに新規セッション作成を追加
+
+司令塔（af_write）に「新しいセッションを起こす」能力を足した。用途は ①あるセッションの内容を
+読み、要点を要約して次の新規セッションへ引き継ぐ ②チャットで壁打ちしたあと新規セッションでタスクを
+開始する、の 2 つ。**会話まるごと複製（`--fork-session`）ではなく要約引き継ぎ**（オペレーターが
+`get_session_output` で文脈を読み、絞った要約を `initial_prompt` に渡す）を採る。
+
+- **Agent REST**: `POST /sessions` に任意フィールド `initial_prompt` を追加。作成後 `deliverInitialPrompt`
+  を goroutine で起動し、CLI 起動（tmux + pane 解決）→合成 2.5s 待ち→ペインへ type + Enter で最初の
+  タスクを投入する（Console の client 側 `sendPromptWhenAlive`（open.ts）の**サーバ側版**。live な
+  Console ミラー無しでも 1 コールで作成＋初期タスク投入が成立）。best-effort・失敗しても作成済みセッションは
+  残す。type-then-Enter プリミティブ `sendSlashCommand` は `typeLineAndSubmit` に改称して共用。
+- **ローカル stdio MCP（オペレーター）**: write に `create_session`（`dir`/`title`/`kind`/`model`/
+  `initial_prompt` → `POST /sessions` 中継）、read に `list_repos`（`GET /repos` 中継。起こす dir を
+  走っていないリポジトリも含めて選べるように）を追加。
+- **CP 側 MCP（PAT）**: `memberTools` に同じ `create_session`（scopeWrite）/ `list_repos`（scopeRead）を
+  Agent REST 中継で追加。write PAT を持つ外部/管理オーケストレーターからも新規セッションを起こせる。
+- **ペルソナ**: `operatorPersona` に引き継ぎ/壁打ち起動の手順（元の `get_session_output`→要約→
+  `create_session` の `initial_prompt`）と、**リソース消費のため作成前に『どこで・何を』を利用者へ確認**する
+  ガードを追記。オペレーターは write MCP を `--dangerously-skip-permissions` で走らせるため、ゲートは
+  「公開ツール集合＋ペルソナの確認指示」であってパーミッションプロンプトではない（既存方針を踏襲）。
+- **worktree 分離は今回スコープ外**（プレーン dir のみ）。将来 `worktree:true`＋自動 `temp/<slug>` を
+  `handleCreateSession` が既にゼロ設定で持つので、低摩擦で足せる。

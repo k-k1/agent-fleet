@@ -152,6 +152,8 @@ func main() {
 	if u, err := url.Parse(publicBaseURL); err == nil {
 		mgr.internalGitHost = u.Hostname()
 	}
+	// Full public base (scheme+host) for the in-container memo bridge (AF_CP_BASE_URL).
+	mgr.publicBaseURL = strings.TrimRight(publicBaseURL, "/")
 	cfg := config{
 		addr:          envOr("CP_ADDR", ":8080"),
 		consoleDir:    envOr("CONSOLE_DIR", "./console"),

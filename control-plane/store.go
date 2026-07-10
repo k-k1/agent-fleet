@@ -201,6 +201,10 @@ type MembershipStore interface {
 	// its id — used by the internal-git smart-HTTP handler to map a git token back
 	// to (tenant, role) on every request. ok=false when it is missing/inactive.
 	GetMembershipByID(ctx context.Context, membershipID string) (MembershipView, bool, error)
+	// IdentityIDForMembership maps a membership id back to its owning identity id —
+	// used by the internal memo-bridge flush to resolve the workspace runtime from a
+	// memo token (which carries only the membership). ok=false when it is missing.
+	IdentityIDForMembership(ctx context.Context, membershipID string) (string, bool, error)
 	// SetMembershipRole changes a membership's tenant-scoped role (member |
 	// tenant_admin). EnsureMembership only inserts, so this is the update path.
 	SetMembershipRole(ctx context.Context, membershipID, role string) error

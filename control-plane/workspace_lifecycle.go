@@ -182,5 +182,14 @@ func (m *manager) workspaceExtraEnv(ctx context.Context, ws Workspace) []string 
 			"AF_INTERNAL_GIT_HOST="+m.internalGitHost,
 			"AF_INTERNAL_GIT_TOKEN="+token)
 	}
+	// Memo bridge: inject the CP public base + this membership's memo token so the
+	// in-container フリート・オペレーター can read/write the memo queue over the public
+	// hairpin (memo_bridge.go). Deterministic token → idempotent re-injection. Requires
+	// PUBLIC_BASE_URL (else the bridge is unreachable, so we inject nothing).
+	if m.publicBaseURL != "" && ws.MembershipID != "" {
+		env = append(env,
+			"AF_CP_BASE_URL="+m.publicBaseURL,
+			"AF_MEMO_TOKEN="+mintMemoToken(memoSignKey(m.master32), ws.MembershipID))
+	}
 	return env
 }
