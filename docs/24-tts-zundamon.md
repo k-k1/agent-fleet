@@ -184,7 +184,9 @@ TTS 設定画面かフッターに小さく常時表示する。Polly は AWS �
   `layout/types.ts`＋`Pane.tsx`＋`ops.ts`＋`migrate.ts`）を新設。ファイル本文を段落・**文**に分割して
   読みやすい版組で表示し、冒頭から順次読み上げつつ、いま読んでいる**文をカラオケ・ハイライト＋
   自動スクロール**で追従する。一時停止/再開（AudioContext suspend/resume）・停止、**縦書き/横書き
-  トグル**（設定 `readerVertical`、`writing-mode: vertical-rl`）。Markdown も **txt も対応**。
+  トグル**（設定 `readerVertical`、`writing-mode: vertical-rl`。縦書き時はホイール↓を横スクロール
+  ←＝後続の列へ変換。React onWheel は passive で preventDefault 不可のためネイティブ wheel を
+  passive:false で処理）。Markdown も **txt も対応**。
   **原文忠実表示**＝改行・行頭スペースを `white-space: pre-wrap` で保持し、**なろう形式ルビ**
   （`｜漢字《かな》` の明示指定＋`漢字《かな》` の自動ルビ＝直前の漢字連続に付与。半角 `|` は md 表と
   衝突するので全角 `｜` のみ制御記号）を `<ruby>` で描画。読み上げはルビ箇所は**読み（かな）を音声化**。
