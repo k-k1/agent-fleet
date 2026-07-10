@@ -20,6 +20,7 @@ import { readKindAvail, writeKindAvail } from "../../lib/kindavail.ts";
 import { deriveRepoName, sanitizeSeg, uniqueRepoName, repoNameRe } from "../../lib/reponame.ts";
 import { agentOf, availableKinds, newSessionKinds } from "../../agents/registry.ts";
 import { useSettings, CLAUDE_MODELS } from "../../lib/settings.ts";
+import { resolveModel } from "../../lib/repoLast.ts";
 import { hostColorBase } from "../../lib/termcolor.ts";
 import type { SsmHost } from "../../types/session.ts";
 
@@ -53,10 +54,10 @@ export function NewSessionModal({ onClose, onCreated }: NewSessionModalProps) {
   // Kind availability, seeded from the cache so buttons render instantly.
   const [avail, setAvail] = useState(readKindAvail);
   const [loaded, setLoaded] = useState(false);
-  // Initial model = the global-default tier of the shared launch chain (see repoLast.ts
-  // resolveModel). This modal targets a not-yet-chosen repo, so the repo last-used tier
-  // above it doesn't apply here — it starts at the global default.
-  const [model, setModel] = useState(settings.defaultModel);
+  // Initial model via the shared chain (repoLast.ts resolveModel). This modal targets a
+  // not-yet-chosen repo, so the repo last-used tier doesn't apply — it resolves to the
+  // global default, coerced to a concrete tier (a legacy "" default becomes DEFAULT_MODEL).
+  const [model, setModel] = useState(() => resolveModel("", settings.defaultModel));
   const [source, setSource] = useState<Source>("dir");
   const [sourceTouched, setSourceTouched] = useState(false);
   const [sel, setSel] = useState<RepoSelection | null>(null);

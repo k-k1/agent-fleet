@@ -362,9 +362,8 @@ function ClaudeCard({
           />
         </SettingRow>
         <p className="ps-note">
-          {s.defaultModel
-            ? "claude セッションを起動するとき（作成ダイアログ・リポジトリの起動）このモデルを初期選択にします。"
-            : "「既定」は claude 任せ（リリースにより Sonnet / Fable などに変動）。固定したい場合はモデルを選んでください。"}
+          claude セッションを起動するとき（作成ダイアログ・リポジトリの起動）このモデルを初期選択にします。
+          リポジトリで前回使ったモデルがあればそちらを優先します。
         </p>
         {/* Remote Control / 通知 / RTK are workspace-level files (independent of Claude
             auth) — pre-settable, but need the api/claude/settings endpoint loaded. */}

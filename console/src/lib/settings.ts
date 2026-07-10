@@ -116,8 +116,9 @@ export interface Settings {
   viewerColor: string;
   chatColor: string;
   mirrorSend: string;
-  // Default claude model for new sessions (launch dialog + repo 起動). "" = let claude
-  // pick its own default (which varies between releases); a concrete alias pins it.
+  // Default claude model for new sessions (launch dialog + repo 起動). Always a concrete
+  // tier alias (opus/sonnet/haiku) — the alias tracks the newest model in that tier, but
+  // the tier itself is pinned, so cost/behavior never shift under you between releases.
   defaultModel: string;
   // Global ON/OFF for the auto session-title-suggestion feature (DisplayTab セッション).
   // Default true so existing users get it without an explicit opt-in.
@@ -154,6 +155,11 @@ export interface Settings {
   readerVertical: boolean;
 }
 
+// The pinned fallback model. Used as the seeded global default and as resolveModel's
+// terminal fallback, so a new session always launches on a concrete tier — never claude's
+// own release-varying default. Change here to move everyone's baseline tier.
+export const DEFAULT_MODEL = "sonnet";
+
 const DEFAULTS: Settings = {
   termFont: "Source Code Pro",
   termSize: 13,
@@ -174,7 +180,7 @@ const DEFAULTS: Settings = {
   // Markdown mirror composer: "mod-enter" = Ctrl/⌘+Enter submits, Enter inserts a
   // newline (phone-friendly default); "enter" = Enter submits, Shift+Enter newline.
   mirrorSend: "mod-enter",
-  defaultModel: "sonnet", // stable default (avoids claude's release-varying pick); "" = claude's own
+  defaultModel: DEFAULT_MODEL, // concrete tier (avoids claude's release-varying own pick)
   autoTitleSuggest: true,
   outputLanguage: "auto",
   ssmHostColors: {},
@@ -220,10 +226,11 @@ export const MIRROR_SEND_MODES = [
   { id: "enter", label: "Enter で送信" },
 ];
 
-// Claude model choices, shared by the launch dialog and the default-model setting.
-// "" lets claude pick its own (release-dependent) default; a concrete alias pins it.
+// Claude model choices, shared by the launch dialog and the default-model setting. Only
+// concrete tiers — the "既定"/"" (defer to claude's release-varying own default) option was
+// dropped on purpose so model selection stays deterministic. Each alias still tracks the
+// newest model within its tier.
 export const CLAUDE_MODELS: [string, string][] = [
-  ["", "既定"],
   ["opus", "Opus"],
   ["sonnet", "Sonnet"],
   ["haiku", "Haiku"],
