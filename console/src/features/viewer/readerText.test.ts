@@ -54,6 +54,19 @@ describe("buildReadUnits (原文忠実＋文/行区切り)", () => {
     expect(units.map((u) => u.spoken).filter((s) => s)).toEqual(["一行目。", "三行目。"]);
   });
 
+  it("傍点ルビ（・）は表示は点のまま、読み上げは親文字を読む", () => {
+    const units = buildReadUnits("｜イ《・》｜カ《・》", false);
+    expect(units).toHaveLength(1);
+    expect(units[0].segs).toEqual([{ base: "イ", ruby: "・" }, { base: "カ", ruby: "・" }]);
+    expect(units[0].spoken).toBe("イカ"); // 点ではなく元の文字
+  });
+
+  it("記号だけの区切り行（＊ 等）は表示するが読み上げない", () => {
+    const units = buildReadUnits("前の場面。\n＊\n＊＊＊\n次の場面。", false);
+    expect(units.map((u) => u.spoken).filter((s) => s)).toEqual(["前の場面。", "次の場面。"]);
+    expect(units.map(disp).join("")).toContain("＊＊＊"); // 表示には残る
+  });
+
   it("Markdown のコードフェンス内は表示するが読み上げない", () => {
     const units = buildReadUnits("説明。\n```\ncode();\n```\n続き。", true);
     expect(units.map((u) => u.spoken).filter((s) => s)).toEqual(["説明。", "続き。"]);
