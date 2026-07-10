@@ -62,9 +62,9 @@ function copySelection(term: Terminal) {
   const sel = term && term.getSelection();
   if (sel && navigator.clipboard) navigator.clipboard.writeText(sel).catch(() => {});
 }
-// Warn before pasting risky content into the terminal. A paste that contains newlines
-// runs line-by-line at a shell prompt (each Enter executes), and a very large paste can
-// flood the pane — both are easy to trigger by an accidental right/middle-click. When
+// Warn before pasting risky content into the terminal. At a raw shell prompt a paste
+// that contains newlines runs line-by-line (each Enter executes), and a very large paste
+// can flood the pane — both are easy to trigger by an accidental right/middle-click. When
 // the clipboard has a newline or exceeds PASTE_WARN_CHARS we confirm first; otherwise it
 // pastes straight through. Covers every paste gesture (they all funnel through here).
 const PASTE_WARN_CHARS = 1000;
@@ -75,6 +75,14 @@ function pasteClipboard(term: Terminal) {
     .then((t) => {
       if (!t) return;
       // term.paste() routes through onData (incl. bracketed-paste wrapping) → PTY.
+      // In bracketed-paste mode (claude/codex, vim, readline shells, …) the paste is
+      // delivered wrapped and is NOT auto-executed, so the newline/size risks don't
+      // apply — paste straight through and skip the nag. The warning is only for a raw
+      // prompt (bracketed paste off) where each pasted newline runs immediately.
+      if (term.modes.bracketedPasteMode) {
+        term.paste(t);
+        return;
+      }
       const newline = /[\r\n]/.test(t);
       if (!newline && t.length <= PASTE_WARN_CHARS) {
         term.paste(t);
