@@ -121,6 +121,9 @@
 .proj-file-view {
   flex: none;
   margin-right: 2px;
+  /* ツリー/変更 lives in the left pane, so its selected segment follows the left-pane
+     accent rather than the top bar's. */
+  --sel-accent: var(--lp-accent, var(--topbar-accent));
 }
 
 /* Nested session/file list under a sub-section: no extra outer padding. */
