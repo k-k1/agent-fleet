@@ -5,7 +5,7 @@
 // global session-maintenance actions (整理 / アーカイブ) that used to float on the
 // orphan section's header.
 import { useEffect, useState } from "react";
-import { apiJSON } from "../../core/api/client.ts";
+import { apiJSON, errText } from "../../core/api/client.ts";
 import { Section } from "../../ui/Section.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { Button, IconButton } from "../../ui/Button.tsx";
@@ -48,11 +48,25 @@ export function ProjectTree() {
   const groups = groupedRepos(repos);
 
   const doClone = async ({ remote_url, branch, name, new_branch }: { remote_url: string; branch: string; name: string; new_branch?: string }) => {
+    // Snapshot the existing folders so we can tell an actually-new working copy
+    // apart from the ones already here, if we have to re-check after an error.
+    const beforeNames = new Set(useReposStore.getState().repos.map((r) => r.name));
     setCloning({ name: name || guessRepoName(remote_url) });
     try {
       const res = await apiJSON("api/repos", "POST", { remote_url, branch, name, new_branch: new_branch || "" });
       if (res && res.error) {
-        toast("clone に失敗: " + (res.error.message || res.error));
+        // A big clone can outlive an upstream proxy timeout: the server keeps
+        // cloning (it doesn't watch the request context) and usually finishes,
+        // but the browser gets an empty/gateway response that surfaces here as an
+        // error. Re-check the repo list — if a new working copy appeared, the
+        // clone actually succeeded and we should reveal it, not cry failure.
+        await refreshRepos();
+        const added = useReposStore.getState().repos.find((r) => !beforeNames.has(r.name));
+        if (!added) {
+          toast("clone に失敗: " + errText(res.error));
+          return;
+        }
+        useFilesStore.getState().revealInFiles("repos/" + added.name);
         return;
       }
       void refreshRepos();

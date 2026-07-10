@@ -83,9 +83,29 @@ export const errText = (error: ApiError | string | null | undefined): string =>
 // api() resolves the path against baseURI and parses JSON. Mirrors the legacy
 // helper: callers handle `res.error` shapes themselves. Returns `any` on purpose —
 // the response shape is per-endpoint and validated at the call site.
+//
+// The body is read as text first so an EMPTY or NON-JSON response never blows up
+// as a raw `JSON.parse: unexpected end of data` SyntaxError. That happens for real:
+// a slow request (a big `git clone`) can outlive an upstream proxy's timeout, which
+// then answers the browser with an empty-body 502/504; and the CP itself writes a
+// plain-text body on some gateway errors. We fold both into the shape callers already
+// branch on — a 2xx with no body is an empty success ({}), any other empty/non-JSON
+// body becomes {error:{code,message}} so the UI shows a real message.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export const api = (path: string, opts?: RequestInit): Promise<any> =>
-  fetch(rel(path), opts).then((r) => r.json());
+  fetch(rel(path), opts).then(async (r) => {
+    const text = await r.text();
+    if (text) {
+      try {
+        return JSON.parse(text);
+      } catch {
+        // Non-JSON body (plain-text proxy error, HTML error page): fall through
+        // and synthesize a result from the HTTP status.
+      }
+    }
+    if (r.ok) return {};
+    return { error: { code: "http_" + r.status, message: text.trim() || r.status + " " + r.statusText } };
+  });
 
 // apiJSON is a convenience for the common "POST/PUT JSON body" shape.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
