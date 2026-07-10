@@ -146,6 +146,10 @@ export interface Settings {
   // ずんだもんの声のまま英語を "それっぽく"（日本語アクセントで）読む。CMU 発音辞書ベースの
   // 音写なので、定着した和製カタカナ（コーヒー等）ではなく音写（カフィー等）になる。
   ttsEnglishKana: boolean;
+  // ユーザー読み仮名辞書（docs/24）。1 行 "表記=読み"。読み上げ直前に読み上げテキストへ
+  // リテラル置換で適用（英語/日本語/記号どれでも。enkana の ON/OFF に依らず効く）。表記は
+  // 長いものから当てる。空 = 無効。features/chat/ttsText.ts の parse/applyUserDict。
+  ttsUserDict: string;
 }
 
 const DEFAULTS: Settings = {
@@ -178,6 +182,7 @@ const DEFAULTS: Settings = {
   ttsSpeed: 1.0,
   ttsSessionNotify: false,
   ttsEnglishKana: false,
+  ttsUserDict: "",
 };
 
 // VOICEVOX ずんだもんのスタイル（speaker 番号 → ラベル）。設定 UI の話者選択に使う。

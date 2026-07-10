@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { plainify, plainifyStreaming } from "./ttsText.ts";
+import { plainify, plainifyStreaming, firstChunkCut, parseUserDict, applyUserDict } from "./ttsText.ts";
 
 describe("plainify (読み上げ用プレーン化)", () => {
   it("インラインコード/リンク/URL/強調を落とす", () => {
@@ -18,6 +18,68 @@ describe("plainify (読み上げ用プレーン化)", () => {
 
   it("画像を落とす", () => {
     expect(plainify("図 ![alt](https://x/y.png) を参照")).toBe("図 を参照");
+  });
+});
+
+describe("parseUserDict / applyUserDict (ユーザー読み仮名辞書)", () => {
+  it("表記=読み をパースする（全角＝・空行・コメントを許容）", () => {
+    const raw = "GPT-4=ジーピーティーフォー\n\n# コメント\n神＝かみ\n  k-k1 = ケーケーワン ";
+    expect(parseUserDict(raw)).toEqual([
+      // 長い表記から（長さ降順）
+      ["GPT-4", "ジーピーティーフォー"],
+      ["k-k1", "ケーケーワン"],
+      ["神", "かみ"],
+    ]);
+  });
+
+  it("区切りが無い/表記が空の行は捨てる。読みは空でも可", () => {
+    expect(parseUserDict("区切りなし\n=読みだけ\nfoo=")).toEqual([["foo", ""]]);
+  });
+
+  it("空文字列は空配列", () => {
+    expect(parseUserDict("")).toEqual([]);
+  });
+
+  it("リテラル置換で全出現を置き換える", () => {
+    const d = parseUserDict("GPT-4=ジーピーティーフォー");
+    expect(applyUserDict("GPT-4 と GPT-4 は同じ", d)).toBe("ジーピーティーフォー と ジーピーティーフォー は同じ");
+  });
+
+  it("長い表記を先に当てる（部分一致に食われない）", () => {
+    const d = parseUserDict("AB=エービー\nABC=エービーシー");
+    expect(applyUserDict("ABC", d)).toBe("エービーシー");
+  });
+
+  it("読みが空なら読み飛ばす（除去）", () => {
+    const d = parseUserDict("(社外秘)=");
+    expect(applyUserDict("これは(社外秘)です", d)).toBe("これはです");
+  });
+});
+
+describe("firstChunkCut (最初の発話の早出し)", () => {
+  it("読点が FIRST_MIN 以降にあればそこで切る", () => {
+    // "これは長めの前置きで、" → 読点(11 文字目)で切る
+    const s = "これは長めの前置きで、続きます";
+    expect(firstChunkCut(s)).toBe(s.indexOf("、") + 1);
+  });
+
+  it("読点が早すぎる（FIRST_MIN 未満）ときは切らない", () => {
+    // "はい、" の読点は 3 文字目 → 短すぎるので早出ししない
+    expect(firstChunkCut("はい、まだ短い")).toBe(-1);
+  });
+
+  it("区切りが無くても FIRST_MAX まで伸びたら強制的に切る", () => {
+    const long = "あ".repeat(40); // 区切り無しの長い連続
+    expect(firstChunkCut(long)).toBe(28);
+  });
+
+  it("短くて区切りも無ければ切らない（-1）", () => {
+    expect(firstChunkCut("みじかい")).toBe(-1);
+  });
+
+  it("閉じ括弧類も早出しの区切りになる", () => {
+    const s = "設定（詳しくは後述）を開きます";
+    expect(firstChunkCut(s)).toBe(s.indexOf("）") + 1);
   });
 });
 
