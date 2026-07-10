@@ -41,6 +41,14 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
     setPaneTarget(pid, { content: { kind: "chat", conversationId: cid, draftAssistantId: null } });
   const bumpChatList = useChatStore((s) => s.bumpList);
   const markChatBusy = useChatStore((s) => s.markBusy);
+  // In-flight turn state parked in the store, so closing + re-opening this pane mid-answer
+  // re-attaches to the running turn instead of dropping its result (docs/19).
+  const setLive = useChatStore((s) => s.setLive);
+  const clearLive = useChatStore((s) => s.clearLive);
+  const publishSnapshot = useChatStore((s) => s.publishSnapshot);
+  const storeBusy = useChatStore((s) => (conversationId ? !!s.busy[conversationId] : false));
+  const liveText = useChatStore((s) => (conversationId ? s.live[conversationId] : undefined));
+  const snapshot = useChatStore((s) => (conversationId ? s.snapshots[conversationId] : undefined));
   const settings = useSettings();
   const toast = useToast();
   // Send key follows the user's global preference (shared with the Markdown mirror
@@ -105,11 +113,21 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
     };
   }, [conversationId, draftAssistantId]);
 
+  // Re-attach to a turn that completed while this pane was closed (or that another pane
+  // ran): when a fresher conversation snapshot for this id lands in the store, adopt it.
+  // Guarded by updated_at so a stale snapshot never clobbers a newer local state.
+  useEffect(() => {
+    if (!snapshot || snapshot.id !== conversationId) return;
+    const cur = convRef.current;
+    if (cur && cur.id === snapshot.id && cur.updated_at >= snapshot.updated_at) return;
+    applyConv(snapshot);
+  }, [snapshot, conversationId]);
+
   // Keep the transcript pinned to the newest turn (and to the thinking indicator).
   useEffect(() => {
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [conv?.messages.length, sending, streamText]);
+  }, [conv?.messages.length, sending, streamText, liveText]);
 
   // Focus the composer when this pane becomes the active chat (opening a conversation or
   // an assistant draft) — but NOT on touch devices, where auto-focus would pop the
@@ -200,7 +218,9 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
   };
 
   const send = async () => {
-    if (sending) return;
+    // Block a second turn on this conversation, whether it was started here or by another
+    // pane whose turn is still running in the background (store busy).
+    if (sending || (conversationId && storeBusy)) return;
     const text = input.trim();
     const paths = attachments.map((a) => a.path);
     if (!text && !paths.length) return;
@@ -252,24 +272,35 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
         )
       : null;
     markChatBusy(target.id, true); // publish 進行中 to the rail
+    // Mirror the live reply + final conversation into the store so a pane re-opened on this
+    // conversation mid-stream re-attaches and picks up the answer even if THIS pane (and
+    // component) is gone by the time the turn finishes.
+    const convId = target.id;
+    let acc = "";
     await chatStream(
-      target.id,
+      convId,
       prompt,
       {
         onDelta: (t) => {
-          setStreamText((s) => s + t);
+          acc += t;
+          setStreamText(acc);
+          setLive(convId, acc);
           ttsRef.current?.push(t);
         },
         onError: (m) => setError(m),
         onDone: (updated) => {
-          if (updated) applyConv(updated);
+          if (updated) {
+            applyConv(updated);
+            publishSnapshot(updated); // reaches any live pane, even after this one unmounts
+          }
           ttsRef.current?.flush();
         },
       },
       ac.signal,
     );
+    clearLive(convId);
     abortRef.current = null;
-    markChatBusy(target.id, false);
+    markChatBusy(convId, false);
     setStreamText("");
     setSending(false);
     bumpChatList(); // a new/updated thread should surface in the rail list
@@ -302,9 +333,13 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
   const agent = agentKind ? agentOf(agentKind) : null;
   const title = conv?.title || draftAsst?.name || "チャット";
   const isDraft = !conversationId && !!draftAssistantId;
-  const empty = (!conv || conv.messages.length === 0) && !loadError;
+  // A turn may be in flight because THIS pane is sending, or because a background turn on
+  // this conversation (started before the pane was closed + re-opened) is still running.
+  const showStreaming = sending || storeBusy;
+  const streamBody = sending ? streamText : (liveText ?? "");
+  const empty = (!conv || conv.messages.length === 0) && !loadError && !showStreaming;
   // Status chip like the Sessions list / MirrorView header: 進行中 while streaming, else 待機中.
-  const stateChip = sending
+  const stateChip = showStreaming
     ? { cls: "working", icon: "loading", spin: true, text: "進行中" }
     : { cls: "on", icon: "check", text: "待機中" };
 
@@ -320,7 +355,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
             {agent.assistantName}
           </span>
         )}
-        {(conv || sending) && (
+        {(conv || showStreaming) && (
           <span className={"session-state " + stateChip.cls}>
             <Icon name={stateChip.icon} spin={stateChip.spin} /> {stateChip.text}
           </span>
@@ -385,12 +420,12 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
             </div>
           );
         })}
-        {sending && (
+        {showStreaming && (
           <div className="chat-msg role-assistant">
             <div className="chat-role">{agent?.assistantName || "アシスタント"}</div>
             <div className="chat-body">
-              {streamText ? (
-                <StreamingMarkdown text={streamText} />
+              {streamBody ? (
+                <StreamingMarkdown text={streamBody} />
               ) : (
                 <span className="chat-thinking">
                   <Icon name="loading" spin /> 考え中…
@@ -439,7 +474,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
                     : "メッセージを入力（Enter で送信 / Shift+Enter で改行）"
                 : "読み込み中…"
             }
-            disabled={(!conv && !isDraft) || sending}
+            disabled={(!conv && !isDraft) || showStreaming}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={onKeyDown}
             onPaste={onPaste}
@@ -453,7 +488,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
             <button
               type="button"
               className="btn chat-send"
-              disabled={(!conv && !isDraft) || (!input.trim() && !attachments.length)}
+              disabled={(!conv && !isDraft) || showStreaming || (!input.trim() && !attachments.length)}
               onClick={() => void send()}
               title="送信"
             >
