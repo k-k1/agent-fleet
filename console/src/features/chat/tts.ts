@@ -145,6 +145,19 @@ export function startTts(opts: TtsOptions, source = "", onEnd?: (reason: "done" 
 
   // 確定バッファから完全な文を切り出し、プレーン化してジョブ投入する。
   const drain = (force: boolean) => {
+    // 最初の発話だけ、最初の文の頭を読点/長さで短く早出しして再生開始を早める
+    // （最初の文を丸ごと合成すると、その合成時間がそのまま開始待ちになる。
+    // ストリーミングだけでなく speakText/announce の一括 push も同経路）。
+    // 文中の切れ目なので後の間は詰める。startedAudio 後は句点粒度。
+    if (!startedAudio) {
+      const m = buf.match(SENTENCE_END);
+      const head = m ? buf.slice(0, m.index! + 1) : buf;
+      const cut = firstChunkCut(head);
+      if (cut > 0) {
+        enqueuePiece(buf.slice(0, cut), /*hard*/ true, /*beat*/ false);
+        buf = buf.slice(cut);
+      }
+    }
     for (;;) {
       const m = buf.match(SENTENCE_END);
       if (!m) break;
@@ -152,15 +165,6 @@ export function startTts(opts: TtsOptions, source = "", onEnd?: (reason: "done" 
       const piece = buf.slice(0, end);
       buf = buf.slice(end);
       enqueuePiece(piece, /*hard*/ /\n/.test(m[0]) || /[。！？!?]/.test(m[0]));
-    }
-    // 最初の発話だけ、句点が来る前に読点/長さで早出しして発話開始を早める。
-    // startedAudio 後は何もしない（以降は句点粒度）。文中の切れ目なので後の間は詰める。
-    if (!force && !startedAudio) {
-      const cut = firstChunkCut(buf);
-      if (cut > 0) {
-        enqueuePiece(buf.slice(0, cut), /*hard*/ true, /*beat*/ false);
-        buf = buf.slice(cut);
-      }
     }
     if (force) {
       // 末尾の未確定分 + 持ち越しをすべて読み上げる。fence 状態は引き回す。
