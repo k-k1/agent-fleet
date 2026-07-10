@@ -172,10 +172,47 @@ func handleFSDownload(w http.ResponseWriter, r *http.Request) {
 	}
 	defer f.Close()
 	name := filepath.Base(rel)
-	w.Header().Set("Content-Type", "application/octet-stream")
+	// Serve a proper image Content-Type for known image extensions so the Console's
+	// <img> preview renders them. Raster formats (png/jpeg/…) the browser sniffs even
+	// under octet-stream, but SVG is NOT sniffed in an <img> — it needs image/svg+xml,
+	// or it shows as a broken image. Everything else stays octet-stream. The attachment
+	// disposition below is kept regardless: <img> ignores it (so previews still render),
+	// while a direct navigation to an SVG downloads it instead of executing its scripts.
+	ct := "application/octet-stream"
+	if it := imageContentType(name); it != "" {
+		ct = it
+	}
+	w.Header().Set("Content-Type", ct)
 	// filename* (RFC 5987) carries UTF-8 names safely.
 	w.Header().Set("Content-Disposition", "attachment; filename*=UTF-8''"+url.PathEscape(name))
 	http.ServeContent(w, r, name, fi.ModTime(), f)
+}
+
+// imageContentType maps a filename to its image MIME type (mirrors the Console's
+// IMAGE_EXT in lib/filemeta.ts), or "" when it isn't a previewable image extension.
+func imageContentType(name string) string {
+	ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(name), "."))
+	switch ext {
+	case "png":
+		return "image/png"
+	case "apng":
+		return "image/apng"
+	case "jpg", "jpeg", "jfif":
+		return "image/jpeg"
+	case "gif":
+		return "image/gif"
+	case "webp":
+		return "image/webp"
+	case "avif":
+		return "image/avif"
+	case "bmp":
+		return "image/bmp"
+	case "ico":
+		return "image/x-icon"
+	case "svg":
+		return "image/svg+xml"
+	}
+	return ""
 }
 
 const defaultMaxUpload = 64 << 20 // 64 MiB per file unless AF_UPLOAD_MAX overrides
