@@ -27,6 +27,7 @@ interface Inst {
   dropped?: boolean;
   hb?: ReturnType<typeof setInterval>; // heartbeat timer (see startHeartbeat)
   lastPong?: number; // ms of the last pong seen on the current socket
+  rx?: boolean; // any PTY byte received on the CURRENT socket (see ensureAttached)
 }
 const insts = new Map<string, Inst>();
 function inst(paneId: string): Inst | null {
@@ -509,6 +510,7 @@ export function attach(paneId: string, session: string) {
   it.term.reset();
   setSession(it, session);
   it.dropped = false; // fresh socket: clear any prior unexpected-drop flag
+  it.rx = false; // fresh socket: no PTY bytes yet (ensureAttached watches this)
   setSoftKeyboard(it, false); // keep the keyboard down until the PTY is live
   const ws = new WebSocket(wsURL(session));
   it.ws = ws;
@@ -529,7 +531,10 @@ export function attach(paneId: string, session: string) {
       } catch {}
       return;
     }
-    if (d instanceof ArrayBuffer) it.term!.write(new Uint8Array(d));
+    if (d instanceof ArrayBuffer) {
+      it.rx = true; // real PTY output arrived — the attach painted, not a blank socket
+      it.term!.write(new Uint8Array(d));
+    }
   };
   // A socket error usually precedes an unclean drop — flag it so a refocus reconnects
   // even if onclose never arrives (the heartbeat is the backstop when neither fires).
@@ -573,10 +578,19 @@ export function reconnect(paneId: string) {
 export function ensureAttached(paneId: string, session: string) {
   const it = inst(paneId);
   if (!it || !it.term || !session) return;
+  // A socket wedged OPEN but with no PTY byte ever received is the "起動直後の黒
+  // ターミナル": the fresh attach raced the session bring-up and produced no draw,
+  // yet the socket looks healthy (heartbeat pongs keep flowing regardless of PTY
+  // output), so neither the drop-flag reconnect nor the zombie heartbeat fires and
+  // it sits blank until a full reload. Treat OPEN-but-never-drew as NOT live so the
+  // retry re-attaches and repaints. A CONNECTING socket is left alone (an in-flight
+  // connect will draw shortly); by the first retry (1.5s) a healthy attach has long
+  // since received tmux's initial redraw, so rx===false here reliably means blank.
   const live =
     it.session === session &&
     it.ws &&
-    (it.ws.readyState === WebSocket.CONNECTING || it.ws.readyState === WebSocket.OPEN);
+    (it.ws.readyState === WebSocket.CONNECTING ||
+      (it.ws.readyState === WebSocket.OPEN && it.rx === true));
   if (live) {
     fitInst(it); // connected → just size the grid to the visible container
     return;
