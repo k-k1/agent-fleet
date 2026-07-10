@@ -3,6 +3,7 @@ package main
 import (
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -136,6 +137,7 @@ func handleSessionMessages(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	turns := claude.CollectTurns(lines, lo, hi)
+	resolveUserFiles(turns) // SendUserFile paths → browse-root-relative, per each turn's cwd
 	mt := jsonlMtime(jpath) // hoisted: also feeds the title-suggestion idle check below
 	if autoTitleSuggestEnabled() && meta.Title == "" && meta.SuggestedTitle == "" &&
 		!meta.SuggestedTitleDismissed && titleGenReady(name) {
@@ -322,6 +324,45 @@ func clampWindowLimit(s string) int {
 		return 4000
 	}
 	return n
+}
+
+// resolveUserFiles rewrites each SendUserFile part's paths (raw from the transcript —
+// absolute or cwd-relative) into browse-root-relative paths the Console can open via
+// api/fs/file. Resolution uses the part's own turn cwd (recorded on the jsonl line).
+// A path that lands outside the browse root (e.g. a /tmp scratchpad) is left untouched:
+// it still shows in the panel, but opening it will honestly report "読み込めません".
+func resolveUserFiles(turns []transcript.Turn) {
+	root := browseRoot()
+	for ti := range turns {
+		cwd := turns[ti].Cwd
+		for pi := range turns[ti].Parts {
+			p := &turns[ti].Parts[pi]
+			if p.Kind != "userfile" {
+				continue
+			}
+			for fi, f := range p.Files {
+				p.Files[fi] = toBrowseRel(f, cwd, root)
+			}
+		}
+	}
+}
+
+// toBrowseRel maps a SendUserFile path to a browse-root-relative path. A relative path
+// is first joined onto the turn's cwd; an absolute path within root becomes root-relative
+// (forward-slashed, the form the Console's fs API and FileView expect). Anything that
+// can't be placed under root is returned unchanged.
+func toBrowseRel(p, cwd, root string) string {
+	if !filepath.IsAbs(p) {
+		if cwd == "" {
+			return p // no cwd to anchor a relative path — leave as-is
+		}
+		p = filepath.Join(cwd, p)
+	}
+	rel, err := filepath.Rel(root, p)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return p // outside the browse root — not openable, but still listed
+	}
+	return filepath.ToSlash(rel)
 }
 
 // surfacePendingPayloads adds any currently-pending AskUserQuestion / ExitPlanMode /

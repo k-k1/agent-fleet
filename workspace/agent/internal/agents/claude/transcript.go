@@ -276,6 +276,28 @@ func assistantParts(raw json.RawMessage) (parts []transcript.Part, text string) 
 					continue
 				}
 			}
+			// SendUserFile surfaces one or more files the agent wants shown — a file
+			// panel, each entry openable in its own pane. Paths (raw here — absolute or
+			// cwd-relative) are resolved to browse-root-relative by the HTTP handler,
+			// which knows the browse root and the turn's cwd.
+			if b.Name == "SendUserFile" {
+				var fin struct {
+					Files   []string `json:"files"`
+					Caption string   `json:"caption"`
+				}
+				if json.Unmarshal(b.Input, &fin) == nil {
+					var files []string
+					for _, f := range fin.Files {
+						if f = strings.TrimSpace(f); f != "" {
+							files = append(files, f)
+						}
+					}
+					if len(files) > 0 {
+						parts = append(parts, transcript.Part{Kind: "userfile", Tool: b.Name, Files: files, Caption: strings.TrimSpace(fin.Caption)})
+						continue
+					}
+				}
+			}
 			part := transcript.Part{Kind: "tool", Tool: b.Name, Info: toolInfo(b.Name, b.Input)}
 			if f, es := toolEdits(b.Name, b.Input); len(es) > 0 {
 				part.File, part.Edits = f, es

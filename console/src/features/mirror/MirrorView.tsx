@@ -7,6 +7,8 @@ import { useLayoutStore } from "../../layout/store.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 import { Icon } from "../../ui/Icon.tsx";
+import FileIcon from "../../ui/FileIcon.tsx";
+import { baseName } from "../../lib/filemeta.ts";
 import { MarkdownView } from "../viewer/MarkdownView.tsx";
 import { TtsReadButton } from "../chat/TtsReadButton.tsx";
 import { MirrorToggle } from "./MirrorToggle.tsx";
@@ -55,6 +57,8 @@ interface Part {
   questions?: Question[];
   answer?: string;
   plan?: string;
+  files?: string[]; // kind=userfile: SendUserFile paths (browse-root-relative)
+  caption?: string; // kind=userfile: optional caption
 }
 // A raw transcript turn (GET …/messages) and a grouped block (groupTurns output).
 interface Turn {
@@ -764,6 +768,9 @@ export function MirrorView({
   // Open a plan's Markdown in its own pane (manual — via a button, not automatic).
   const openPlan = (plan: string) => showDoc(planTitle(plan), plan);
 
+  // Open a SendUserFile entry in its own split pane (same as the file tree's split-open).
+  const openFile = (path: string) => openTargetInNew({ content: { kind: "file", filePath: path } });
+
   // Auto-suggested title (session_title.go): 採用 promotes it to the session's real
   // title (bumpSessions so the left-pane label updates without waiting for its own
   // poll); 却下 discards it. Either way the server never offers one again.
@@ -1050,7 +1057,7 @@ export function MirrorView({
               : "まだ会話はありません。下の欄からプロンプトを送るか、ターミナルで対話すると、ここに ターンごとの Markdown で表示されます。"}
           </div>
         ) : (
-          renderGroups(groups, sendPrompt, openPlan, openDiff, maxSpend, session, setLightbox, agentName, (p) => rejectedPlansRef.current.has(p.trim()))
+          renderGroups(groups, sendPrompt, openPlan, openDiff, openFile, maxSpend, session, setLightbox, agentName, (p) => rejectedPlansRef.current.has(p.trim()))
         )}
         {pendingPlan && (
           <div className="mirror-turn assistant">
@@ -1439,6 +1446,7 @@ function renderGroups(
   onAnswer: (t: string) => void,
   onOpenPlan: (plan: string) => void,
   onOpenDiff: (p: Part) => void,
+  onOpenFile: (path: string) => void,
   maxSpend: number,
   session: string,
   onOpenImage: (url: string) => void,
@@ -1466,6 +1474,7 @@ function renderGroups(
           onAnswer={onAnswer}
           onOpenPlan={onOpenPlan}
           onOpenDiff={onOpenDiff}
+          onOpenFile={onOpenFile}
           agentName={agentName}
           isRejectedPlan={isRejectedPlan}
         />
@@ -1579,6 +1588,7 @@ function Turn({
   onAnswer,
   onOpenPlan,
   onOpenDiff,
+  onOpenFile,
   agentName,
   isRejectedPlan,
 }: {
@@ -1589,6 +1599,7 @@ function Turn({
   onAnswer: (t: string) => void;
   onOpenPlan: (plan: string) => void;
   onOpenDiff: (p: Part) => void;
+  onOpenFile: (path: string) => void;
   agentName: string;
   isRejectedPlan: (plan: string) => boolean;
 }) {
@@ -1651,6 +1662,9 @@ function Turn({
                 forceRejected={isRejectedPlan(item.p.plan || "")}
                 onOpen={() => onOpenPlan && onOpenPlan(item.p.plan || "")}
               />
+            ) : item.p.kind === "userfile" ? (
+              // Files the agent shared via SendUserFile — a panel; each opens in a pane.
+              <UserFileBlock key={item.i} files={item.p.files} caption={item.p.caption} onOpen={onOpenFile} />
             ) : item.p.kind === "thinking" ? (
               // The agent's chain-of-thought (codex reasoning / opencode reasoning),
               // collapsed by default so it doesn't crowd the answer.
@@ -2219,6 +2233,35 @@ function PlanBlock({
             )}
           </>
         )}
+      </div>
+    </div>
+  );
+}
+
+// UserFileBlock shows the files an agent shared via SendUserFile as a compact panel:
+// an optional caption and one clickable row per file (icon + name + path), each opening
+// the file in its own split pane. Paths are browse-root-relative (resolved server-side);
+// a file outside the browse root still lists here but will report an error on open.
+function UserFileBlock({ files, caption, onOpen }: { files?: string[]; caption?: string; onOpen: (path: string) => void }) {
+  const list = files || [];
+  if (list.length === 0) return null;
+  return (
+    <div className="mt-files">
+      <div className="mt-files-head">
+        <Icon name="files" />
+        <span className="mt-files-title">共有ファイル</span>
+        {list.length > 1 && <span className="mt-files-count muted">{list.length}</span>}
+      </div>
+      {caption && <div className="mt-files-caption">{caption}</div>}
+      <div className="mt-files-list">
+        {list.map((p, i) => (
+          <button key={p + i} type="button" className="mt-file-item" title={"別ペインで開く: " + p} onClick={() => onOpen(p)}>
+            <FileIcon name={baseName(p)} />
+            <span className="mt-file-name">{baseName(p)}</span>
+            <span className="mt-file-path muted">{p}</span>
+            <Icon name="split-horizontal" className="mt-file-open" />
+          </button>
+        ))}
       </div>
     </div>
   );

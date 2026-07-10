@@ -5,9 +5,9 @@ package transcript
 // Part is one ordered piece of a turn: rendered text, a faint tool trace, an
 // AskUserQuestion the user can answer inline, or an ExitPlanMode plan.
 type Part struct {
-	Kind      string     `json:"kind"`                // "text" | "thinking" | "tool" | "question" | "plan"
+	Kind      string     `json:"kind"`                // "text" | "thinking" | "tool" | "question" | "plan" | "userfile"
 	Text      string     `json:"text,omitempty"`      // kind=text/thinking: Markdown
-	Tool      string     `json:"tool,omitempty"`      // kind=tool/question/plan: tool name
+	Tool      string     `json:"tool,omitempty"`      // kind=tool/question/plan/userfile: tool name
 	Info      string     `json:"info,omitempty"`      // kind=tool: short arg summary
 	Output    string     `json:"output,omitempty"`    // kind=tool: the tool's output/result (codex/opencode), truncated
 	Questions []Question `json:"questions,omitempty"` // kind=question: AskUserQuestion
@@ -15,6 +15,8 @@ type Part struct {
 	Plan      string     `json:"plan,omitempty"`      // kind=plan: ExitPlanMode plan Markdown
 	File      string     `json:"file,omitempty"`      // kind=tool: edit/write target (openable as a diff)
 	Edits     []Edit     `json:"edits,omitempty"`     // kind=tool: before/after per edit (Edit/Write/MultiEdit)
+	Files     []string   `json:"files,omitempty"`     // kind=userfile: SendUserFile paths, browse-root-relative (openable in a pane)
+	Caption   string     `json:"caption,omitempty"`   // kind=userfile: optional caption the agent attached
 	QID       string     `json:"-"`                   // kind=question: tool_use id, to resolve the answer (never serialized)
 }
 

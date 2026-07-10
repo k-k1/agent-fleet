@@ -89,6 +89,33 @@ func TestCollectTasks(t *testing.T) {
 	}
 }
 
+// TestSendUserFilePart checks that a SendUserFile tool_use becomes a "userfile" part
+// carrying its (raw, unresolved) paths + caption, while empty/whitespace paths drop and
+// an all-empty files list falls back to a plain tool trace.
+func TestSendUserFilePart(t *testing.T) {
+	asstTool := func(input string) []byte {
+		return []byte(`{"type":"assistant","message":{"content":[{"type":"tool_use","name":"SendUserFile","input":` + input + `}]}}`)
+	}
+
+	turn, ok := parseTurn(asstTool(`{"files":["repos/x/report.md"," /tmp/a.png ",""],"caption":"見て"}`), 0)
+	if !ok || len(turn.Parts) != 1 {
+		t.Fatalf("parse: ok=%v parts=%d (%+v)", ok, len(turn.Parts), turn.Parts)
+	}
+	p := turn.Parts[0]
+	if p.Kind != "userfile" || p.Caption != "見て" {
+		t.Fatalf("part = kind %q caption %q, want userfile/見て", p.Kind, p.Caption)
+	}
+	if len(p.Files) != 2 || p.Files[0] != "repos/x/report.md" || p.Files[1] != "/tmp/a.png" {
+		t.Errorf("files = %v, want [repos/x/report.md /tmp/a.png]", p.Files)
+	}
+
+	// No usable files → not a userfile part (falls through to a faint tool trace).
+	turn, ok = parseTurn(asstTool(`{"files":[""," "]}`), 0)
+	if !ok || len(turn.Parts) != 1 || turn.Parts[0].Kind != "tool" {
+		t.Errorf("empty files: want a single tool part, got ok=%v %+v", ok, turn.Parts)
+	}
+}
+
 func TestHasConversation(t *testing.T) {
 	toLines := func(ss ...string) [][]byte {
 		out := make([][]byte, 0, len(ss))
