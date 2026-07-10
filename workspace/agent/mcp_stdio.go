@@ -150,6 +150,11 @@ var mcpStdioTools = []map[string]any{
 			"required": []string{"name"},
 		},
 	},
+	{
+		"name":        "list_repos",
+		"description": "利用者のワークスペースにある git 作業コピー（~/repos 配下）の一覧を返す。新規セッションをどのディレクトリ（リポジトリ）で起こすか決める時に、まだセッションが動いていないリポジトリも含めて選ぶために呼ぶ。返る各リポジトリの path を create_session の dir に渡す。",
+		"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}},
+	},
 }
 
 // mcpStdioWriteTools — Agent Fleet write/orchestrate tools, advertised only under --write
@@ -157,6 +162,23 @@ var mcpStdioTools = []map[string]any{
 // assistants (list_assistants / ask_assistant). Consults are advisory-only by construction
 // (the sub-turn runs with no tools), so they can't loop or escalate.
 var mcpStdioWriteTools = []map[string]any{
+	{
+		"name": "create_session",
+		"description": "新しいコーディングセッションを起こす。dir（作業ディレクトリ）で指定したリポジトリで claude 等を起動する。" +
+			"initial_prompt を渡すと、起動後に最初のタスクとして自動で送信される（別コールの send_to_session は不要）。" +
+			"用途例：あるセッションの内容を引き継いで別セッションで続ける（先に get_session_output で文脈を読み、要約を initial_prompt に入れる）／壁打ちで固めた作業を新規セッションで開始する。" +
+			"dir は list_my_sessions の dir（走っているセッションと同じ場所）か list_repos の path から選ぶ。新規セッションはリソースを消費するので、起こす前に利用者へ一言確認すること。作成後は返る name を使って get_session_status / get_session_output で進行を確認する。",
+		"inputSchema": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"dir":            map[string]any{"type": "string", "description": "作業ディレクトリ（リポジトリの作業コピー等）。省略時はホーム。list_my_sessions の dir か list_repos の path を渡す。"},
+				"title":          map[string]any{"type": "string", "description": "セッションの表示名（任意）。何のタスクかが分かる短い名前。"},
+				"kind":           map[string]any{"type": "string", "description": "エージェント種別（任意）。claude（既定）| codex | opencode | shell。"},
+				"model":          map[string]any{"type": "string", "description": "モデル上書き（任意）。"},
+				"initial_prompt": map[string]any{"type": "string", "description": "起動後に自動送信する最初のタスク/引き継ぎ文（任意）。"},
+			},
+		},
+	},
 	{
 		"name":        "send_to_session",
 		"description": "指定セッションにプロンプト（テキスト）を送信して実行させる（末尾に Enter）。すぐ返るので、応答は get_session_status で稼働確認後 get_session_output で取得する。利用者が「s7 に○○を伝えて/やらせて」等の作業依頼をした時に呼ぶ。",
@@ -199,11 +221,33 @@ func mcpStdioCall(req mcpReq) []byte {
 		Since     int64  `json:"since"`
 		Prompt    string `json:"prompt"`
 		Assistant string `json:"assistant"`
+		// create_session args
+		Dir           string `json:"dir"`
+		Title         string `json:"title"`
+		Kind          string `json:"kind"`
+		Model         string `json:"model"`
+		InitialPrompt string `json:"initial_prompt"`
 	}
 	_ = json.Unmarshal(p.Args, &a)
 
 	// Write/orchestrate tools — only when this server was started with --write.
 	switch p.Name {
+	case "create_session":
+		if !mcpWriteEnabled {
+			return mcpToolErr(req.ID, "このアシスタントはセッションの作成を許可されていません")
+		}
+		reqBody, _ := json.Marshal(map[string]string{
+			"dir":            a.Dir,
+			"title":          a.Title,
+			"kind":           a.Kind,
+			"model":          a.Model,
+			"initial_prompt": a.InitialPrompt,
+		})
+		out, err := agentPOST("/sessions", reqBody)
+		if err != nil {
+			return mcpToolErr(req.ID, "セッションの作成に失敗しました: "+err.Error())
+		}
+		return mcpTextResult(req.ID, out)
 	case "send_to_session":
 		if !mcpWriteEnabled {
 			return mcpToolErr(req.ID, "このアシスタントは書き込みツールを許可されていません")
@@ -248,6 +292,8 @@ func mcpStdioCall(req mcpReq) []byte {
 	switch p.Name {
 	case "list_my_sessions":
 		path = "/sessions"
+	case "list_repos":
+		path = "/repos"
 	case "get_session_status":
 		if a.Name == "" {
 			return mcpToolErr(req.ID, "name（セッション名）が必要です")

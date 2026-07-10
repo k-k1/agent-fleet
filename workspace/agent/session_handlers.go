@@ -96,6 +96,12 @@ type createReq struct {
 	Dir   string `json:"dir"`
 	Model string `json:"model"`
 	Kind  string `json:"kind"` // "claude" (default) | "opencode" | "codex" | "shell"
+	// InitialPrompt, when set, is typed into the session once its agent CLI has booted
+	// and then submitted (deliverInitialPrompt) — the server-side launch-task delivery an
+	// orchestrator (フリート・オペレーター / create_session MCP tool) uses to spawn a session
+	// AND hand it the first task in one call. The Console delivers its own launch prompt
+	// client-side (open.ts) and leaves this empty.
+	InitialPrompt string `json:"initial_prompt"`
 	// Optional clone-then-start: when remote_url is set, the repo is cloned
 	// (or reused) under ~/repos and its path becomes the session CWD, ignoring dir.
 	// RepoName overrides the target folder so two branches of the same repo can
@@ -252,6 +258,12 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	session.WriteMeta(meta)
+
+	// Optional launch task: deliver it once the CLI has booted (async — the create
+	// response returns the session immediately so the caller can start polling).
+	if strings.TrimSpace(req.InitialPrompt) != "" {
+		go deliverInitialPrompt(name, req.InitialPrompt)
+	}
 
 	httpx.WriteJSON(w, http.StatusCreated, wireSession(meta, true))
 }

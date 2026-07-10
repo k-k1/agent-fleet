@@ -271,11 +271,11 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 // path such as /home/dev/x, which has a second slash).
 var slashCmdRe = regexp.MustCompile(`^/[A-Za-z][\w-]*(\s|$)`)
 
-// sendSlashCommand types a literal line into the session's pane and submits it —
+// typeLineAndSubmit types a literal line into the session's pane and submits it —
 // the same type-then-Enter primitive as handleSessionInput's {prompt} path, but
-// as a plain Go call (no HTTP round trip) for server-side orchestration like
-// disconnectRemoteControl.
-func sendSlashCommand(name, pane, text string) error {
+// as a plain Go call (no HTTP round trip) for server-side orchestration (e.g.
+// disconnectRemoteControl's /remote-control, deliverInitialPrompt's launch task).
+func typeLineAndSubmit(name, pane, text string) error {
 	if out, err := exec.Command("tmux", "send-keys", "-t", pane, "-l", text).CombinedOutput(); err != nil {
 		return fmt.Errorf("%v: %s", err, out)
 	}
@@ -284,6 +284,46 @@ func sendSlashCommand(name, pane, text string) error {
 		return fmt.Errorf("%v: %s", err, out)
 	}
 	return nil
+}
+
+// deliverInitialPrompt types a launch task into a freshly created session once its
+// agent CLI has booted, then submits it. It is the SERVER-SIDE counterpart of the
+// Console's sendPromptWhenAlive (open.ts): handleCreateSession fires it in a goroutine
+// when a create carries initial_prompt, so an orchestrator (フリート・オペレーター /
+// the create_session MCP tool) can spawn a session AND hand it the first task in a
+// single call, without a live Console mirror to auto-send.
+//
+// Best-effort and silent: if the session never becomes typable within the window we
+// give up (the session still exists; the user can paste the task manually) — a failed
+// hand-off must never wedge the created session.
+func deliverInitialPrompt(name, prompt string) {
+	prompt = strings.TrimSpace(prompt)
+	if prompt == "" {
+		return
+	}
+	tn := session.TmuxName(name)
+	// Wait for tmux + a resolvable pane id (the agent process is up). Cap ~30s to match
+	// the Console's give-up budget, polling on the same cadence.
+	var pane string
+	for i := 0; i < 60; i++ {
+		if tmuxx.HasSession(tn) {
+			if pane = tmuxx.SessionPaneID(tn); pane != "" {
+				break
+			}
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	if pane == "" {
+		return
+	}
+	// Alive ≠ ready to type: wait a beat for the agent CLI to finish drawing its composer
+	// so the paste isn't swallowed by the boot screen (the same 2.5s the Console uses).
+	time.Sleep(2500 * time.Millisecond)
+	if typeLineAndSubmit(name, pane, prompt) != nil {
+		return
+	}
+	// A real task starts a turn — mark working so the chip reacts before the agent's hook.
+	markSessionWorking(name)
 }
 
 // disconnectRemoteControl best-effort disconnects an active claude.ai Remote
@@ -314,7 +354,7 @@ func disconnectRemoteControl(name string, m session.Meta) {
 	if pane == "" {
 		return
 	}
-	if sendSlashCommand(name, pane, "/remote-control") != nil {
+	if typeLineAndSubmit(name, pane, "/remote-control") != nil {
 		return
 	}
 	time.Sleep(300 * time.Millisecond) // let the menu render
