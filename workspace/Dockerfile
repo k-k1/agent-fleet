@@ -83,15 +83,19 @@ RUN set -eux; \
 # GitHub CLI (gh) from the official pinned release (arch auto-detected). Baked into the
 # image so `gh` (PR/issue ops, `gh auth`, API) is available on a fresh container without a
 # per-home download. Bump GH_VERSION to upgrade.
+# 実体は /usr/local/libexec/gh に置き、/usr/local/bin/gh は透過認証ラッパー
+# (gh-auth-wrapper.sh) にする。ラッパーが呼び出しのたびに git と同一の cred helper
+# からトークンを取り出し GH_TOKEN に注入するので、`gh auth login` 不要で gh が使える
+# （docs/dev/08 §8.3）。ラッパー本体の COPY は末尾の高頻度 COPY 群でまとめて行う。
 ARG GH_VERSION=2.96.0
 RUN set -eux; \
     arch="$(dpkg --print-architecture)"; \
     case "$arch" in amd64|arm64) gharch="$arch" ;; *) echo "unsupported arch: $arch" >&2; exit 1 ;; esac; \
     curl -fsSL "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_${gharch}.tar.gz" -o /tmp/gh.tgz; \
     tar -C /tmp -xzf /tmp/gh.tgz; \
-    install -m 0755 "/tmp/gh_${GH_VERSION}_linux_${gharch}/bin/gh" /usr/local/bin/gh; \
+    install -D -m 0755 "/tmp/gh_${GH_VERSION}_linux_${gharch}/bin/gh" /usr/local/libexec/gh; \
     rm -rf /tmp/gh.tgz "/tmp/gh_${GH_VERSION}_linux_${gharch}"; \
-    gh --version
+    /usr/local/libexec/gh --version
 
 # Coding-agent CLIs baked into the image (stable /usr/local install) for fast,
 # offline container start. claude: a user-home ~/.local install still takes PATH
@@ -145,7 +149,9 @@ RUN echo 'export PATH="$HOME/.local/bin:$HOME/go/bin:/usr/local/go/bin:$PATH"' >
 # 無効化しないよう末尾に集約する。すべて root 操作なので USER dev の前に置く。
 COPY --from=agentbuild /out/workspace-agent /usr/local/bin/workspace-agent
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN chmod +x /usr/local/bin/entrypoint.sh
+# gh 透過認証ラッパー（実体は /usr/local/libexec/gh）。§8.3 参照。
+COPY gh-auth-wrapper.sh /usr/local/bin/gh
+RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/gh
 # opencode plugins source (seeded into ~/.config/opencode/plugin at runtime):
 # agent-fleet-status.js (session working/idle bridge — seeded by the entrypoint) +
 # rtk.ts (token-saving command rewrite, the opencode analog of claude's rtk hook —

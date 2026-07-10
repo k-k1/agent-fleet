@@ -42,6 +42,30 @@ CP ネイティブ実装。フロー・許可リスト・authGate の防御は [
   コールバック不要＝どんなエッジ構成でも成立する。
 - リモート列挙（clone 用の repo/branch 一覧）は GraphQL（branch は commit 日降順）。
 
+### gh（GitHub CLI）透過認証
+
+`gh` は git の `credential.helper` を参照せず `GH_TOKEN`/`GITHUB_TOKEN` か `~/.config/gh`
+しか見ないため、放置すると Connections でトークンを保存済みでも `gh auth login` が別途必要
+になる。これを避けるため、イメージは `/usr/local/bin/gh` を薄いラッパー
+（`workspace/gh-auth-wrapper.sh`）にし、実体を `/usr/local/libexec/gh` へ退避している。
+ラッパーは呼び出しのたびに git と同一のヘルパー（`workspace-agent cred`）から
+`git credential fill` でトークンを取り出し `GH_TOKEN` に注入してから実 gh を exec する。
+これで全ユーザーが `gh auth login` なしに gh を使える（git と同じ鮮度で、失効/ローテーション
+にも都度取得で自己修復する）。
+
+**注意点 / 制約:**
+
+- **スコープ**: 供給されるのは Device Flow で得た scope `repo` のトークン。`gh pr`/`gh issue`/
+  `gh api` の大半は動くが、org 系（`gh api /orgs/...` 等）は `read:org` が無く失敗し得る。
+  必要なら connection 側でスコープを追加する。
+- **GitHub Enterprise 非対応**: ラッパーは github.com のトークンのみ注入する。GHE を使う
+  場合は利用者が従来どおり `GH_HOST`/`GH_ENTERPRISE_TOKEN` 等を自分で設定する。
+- **明示トークン優先**: 既に `GH_TOKEN`/`GITHUB_TOKEN` が環境にあればラッパーは上書きしない。
+- **コスト**: gh 呼び出しごとに `workspace-agent cred` を1回叩く（git の push/fetch と同等の負荷）。
+- **home shadow**: home volume に実体の `~/.local/bin/gh` があると PATH 先頭で焼き込み
+  ラッパーを隠す。entrypoint が起動時にシンボリックリンク以外の `~/.local/bin/gh` を除去して
+  ラッパーへ PATH を通す（標準イメージは `~/.local/bin` に gh を置かない）。
+
 ## 8.4 Bitbucket
 
 - **貼付**: Atlassian の email + API token（Basic）。
