@@ -3,7 +3,8 @@
 // copy appears (the flat Repos list, each node of the project tree). All the launch
 // / clone-target / delete / fast-forward / open-SCM logic that used to live inline
 // in ReposSection lives here once.
-import { apiJSON, raw, errText } from "../../core/api/client.ts";
+import { apiJSON, raw, errText, pasteImage } from "../../core/api/client.ts";
+import { buildImagePrompt } from "../../lib/pastedImages.ts";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { useConfirm } from "../../ui/ConfirmProvider.tsx";
 import { agentOf } from "../../agents/registry.ts";
@@ -120,7 +121,7 @@ export function RepoRowConnected({ r, ctx, onToggle }: RepoRowConnectedProps) {
       }}
       // 作業を始める: worktree (default) or in-place, with an optional first prompt
       // auto-sent once the session is alive.
-      onStartWork={async ({ kind, model, prompt, worktree, base, newBranch, useExisting }) => {
+      onStartWork={async ({ kind, model, prompt, images, worktree, base, newBranch, useExisting }) => {
         const hasModel = agentOf(kind).caps.model;
         const body: Record<string, unknown> = { dir: r.path, kind };
         if (hasModel && model) body.model = model;
@@ -140,12 +141,28 @@ export function RepoRowConnected({ r, ctx, onToggle }: RepoRowConnectedProps) {
         }
         writeRepoLast(r.name, kind, hasModel ? model : undefined);
         const chat = agentOf(kind).caps.chat;
-        if (prompt) {
+        // Now that the session exists, upload any pasted images to it and fold their
+        // saved paths into the first prompt (claude opens them with its Read tool).
+        let seed = prompt;
+        if (images?.length && agentOf(kind).caps.imagePaste) {
+          const paths: string[] = [];
+          for (const f of images) {
+            try {
+              const up = await pasteImage(res.name, f);
+              if (up.status < 300 && up.path) paths.push(up.path);
+              else toast("画像のアップロードに失敗しました: " + (up.error ? errText(up.error) : ""));
+            } catch {
+              toast("画像のアップロードに失敗しました（通信エラー）");
+            }
+          }
+          seed = buildImagePrompt(prompt, paths);
+        }
+        if (seed) {
           // Chat-capable: stash as a launch seed — MirrorView auto-sends it once the
           // session is alive. Other kinds: paste once the PTY is up.
-          if (chat) setLaunchSeed(res.name, prompt);
-          else sendPromptWhenAlive(res.name, prompt);
-          pushPromptHistory(r.name, prompt);
+          if (chat) setLaunchSeed(res.name, seed);
+          else sendPromptWhenAlive(res.name, seed);
+          if (prompt) pushPromptHistory(r.name, prompt);
         }
         if (worktree) {
           void refreshRepos();
