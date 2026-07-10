@@ -224,6 +224,28 @@ export function ensureTerm(paneId: string, el: HTMLElement) {
     term.loadAddon(new WebLinksAddon((e, uri) => window.open(uri, "_blank", "noopener")));
   } catch {}
   term.open(el);
+  // OSC 52: with `set-clipboard on`, tmux emits the just-copied selection as an
+  // OSC 52 sequence to its outer terminal (us). xterm has no built-in OSC 52 handler,
+  // so a plain mouse drag-select in the terminal (which tmux, in mouse mode, turns into
+  // a copy-mode selection) would never reach the browser clipboard. Register one that
+  // decodes the base64 payload and writes it out — this is the copy half of the mouse
+  // clipboard for shell/ssm panes. (Shift+drag still does a browser-native selection
+  // handled by the mouseup path below; the two coexist.)
+  try {
+    term.parser.registerOscHandler(52, (data) => {
+      // data is "<targets>;<base64>" e.g. "c;SGVsbG8=". "?" is a read request — ignore.
+      const semi = data.indexOf(";");
+      const b64 = semi >= 0 ? data.slice(semi + 1) : data;
+      if (!b64 || b64 === "?" || !navigator.clipboard) return true;
+      try {
+        const bin = atob(b64);
+        const bytes = Uint8Array.from(bin, (c) => c.charCodeAt(0));
+        const text = new TextDecoder().decode(bytes);
+        if (text) navigator.clipboard.writeText(text).catch(() => {});
+      } catch {}
+      return true; // handled — don't fall through to the OSC fallback
+    });
+  } catch {}
   // Mouse clipboard (terminal idiom): left-release auto-copies the current
   // selection; right/middle click pastes. This is the reliable path even where the
   // browser reserves Ctrl+Shift+C (DevTools) outside fullscreen.
