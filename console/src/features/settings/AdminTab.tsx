@@ -46,7 +46,7 @@ interface View {
 // the member's session list, served by the per-member admin endpoints.
 
 // GiB with adaptive precision (shared fmtGiB) plus AdminTab's "G" suffix.
-const ADMIN_MODES = ["manage", "sessions", "usage", "audit", "egress"]; // swipe order for the mode tabs
+const ADMIN_MODES = ["manage", "sessions", "usage", "audit", "egress", "tts"]; // swipe order for the mode tabs
 const fmtG = (b: number) => fmtGiB(b) + "G";
 const fmtPct = (n: number | null | undefined) => (n == null ? "–" : Math.round(n) + "%");
 
@@ -158,12 +158,16 @@ export function AdminTab() {
         <button type="button" className={"seg-btn" + (mode === "egress" ? " active" : "")} onClick={() => setMode("egress")}>
           <Icon name="globe" /> 通信
         </button>
+        <button type="button" className={"seg-btn" + (mode === "tts" ? " active" : "")} onClick={() => setMode("tts")}>
+          <Icon name="unmute" /> 読み上げ
+        </button>
       </div>
 
       {mode === "sessions" && <AllSessionsView tenants={tenants} isSuper={isSuper} />}
       {mode === "usage" && <UsageView tenants={tenants} isSuper={isSuper} />}
       {mode === "audit" && <AuditView tenants={tenants} isSuper={isSuper} />}
       {mode === "egress" && <EgressView />}
+      {mode === "tts" && <TtsAdminView />}
 
       {mode === "manage" && (
       <>
@@ -651,6 +655,118 @@ function EgressView() {
             ))}
           </div>
         )}
+      </section>
+    </div>
+  );
+}
+
+// --- TTS: VOICEVOX エンジンの管理者トグル（docs/24 Phase 2） -------------------
+// super_admin のみ。AWS では ECS Service の desired count を 0↔1（オンデマンド起動・
+// 停止中コスト 0）。起動〜ready まで 1〜2 分かかるので、その間は 5s ポーリングで
+// 「準備中」を追従表示する（auto ルーティングは Polly JP が代読）。ECS 管理外（dev の
+// 常駐 docker 等）ではトグルはルーティングの有効/無効のみ。
+
+function TtsAdminView() {
+  const [data, setData] = useState<any | null>(null); // { managed, enabled, engine, polly }
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      const d = await api("api/admin/tts");
+      if (d?.error) {
+        setErr(errText(d.error));
+        return;
+      }
+      setErr("");
+      setData(d);
+    } catch {
+      setErr("読み込めません");
+    }
+  }, []);
+  useEffect(() => {
+    load();
+  }, [load]);
+  // 有効なのに未 ready（ECS 起動中）の間は自動更新して readiness を追う。
+  useEffect(() => {
+    if (!data?.enabled || data?.engine?.ready) return;
+    const t = setInterval(load, 5000);
+    return () => clearInterval(t);
+  }, [data, load]);
+
+  const setEnabled = async (enabled: boolean) => {
+    setBusy(true);
+    try {
+      const d = await apiJSON("api/admin/tts", "PUT", { enabled });
+      if (d?.error) setErr(errText(d.error));
+      else setData(d);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const enabled = !!data?.enabled;
+  const engine = data?.engine || {};
+  const engineLabel = !data
+    ? "…"
+    : engine.ready
+      ? "稼働中"
+      : engine.state === "starting"
+        ? "起動中（準備中）"
+        : engine.state === "running"
+          ? "稼働中（応答待ち）"
+          : enabled && data.managed
+            ? "停止中"
+            : "停止中/未起動";
+
+  return (
+    <div className="admin-stage">
+      <section className="admin-panel">
+        <div className="usage-toolbar">
+          <span>VOICEVOX エンジン（ずんだもん）</span>
+          <span className="seg sm">
+            <button
+              type="button"
+              className={"seg-btn" + (enabled ? " active" : "")}
+              disabled={busy || data === null}
+              onClick={() => setEnabled(true)}
+            >
+              有効
+            </button>
+            <button
+              type="button"
+              className={"seg-btn" + (!enabled ? " active" : "")}
+              disabled={busy || data === null}
+              onClick={() => setEnabled(false)}
+            >
+              無効
+            </button>
+          </span>
+          <button type="button" className="ghost" title="更新" onClick={load}>
+            <Icon name="refresh" />
+          </button>
+        </div>
+        {data && (
+          <>
+            <p className={engine.ready ? "muted" : enabled ? "form-err" : "muted"}>
+              エンジン: {engineLabel}
+              {data.managed ? "（ECS 管理）" : "（外部管理: 常駐 docker 等）"}
+              {" ／ "}Polly: {data.polly?.ready ? "利用可" : "未設定"}
+            </p>
+            {enabled && !engine.ready && data.managed && (
+              <p className="muted">
+                起動には 1〜2 分かかります。準備が整うまで、日本語の読み上げは Polly が代読します
+                （Polly 未設定なら無音）。
+              </p>
+            )}
+            {engine.error && <p className="form-err">{engine.error}</p>}
+          </>
+        )}
+        {err && <p className="form-err">{err}</p>}
+        <p className="muted">
+          無効にすると、AWS では ECS の desired count を 0 にしてエンジンを停止します（停止中コスト 0）。
+          読み上げ自体はユーザー設定（音声読み上げ）側で ON/OFF します。
+        </p>
       </section>
     </div>
   );
