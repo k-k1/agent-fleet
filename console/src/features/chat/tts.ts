@@ -10,7 +10,7 @@
 import { rel } from "../../core/api/client.ts";
 import { getSettings } from "../../lib/settings.ts";
 import { useTtsStore } from "../../core/store/tts.ts";
-import { plainifyStreaming, firstChunkCut } from "./ttsText.ts";
+import { plainifyStreaming, firstChunkCut, parseUserDict, applyUserDict } from "./ttsText.ts";
 
 export interface TtsOptions {
   provider: string; // "auto" | "voicevox" | "polly"
@@ -53,6 +53,9 @@ function audioCtx(): AudioContext | null {
 // ("stopped")のどちらでも 1 回だけ呼ばれる（アナウンスキューの直列制御に使う）。
 export function startTts(opts: TtsOptions, source = "", onEnd?: (reason: "done" | "stopped") => void): TtsController {
   useTtsStore.getState().active?.stop(); // 直前の再生を停止（グローバル 1 本）
+  // ユーザー読み仮名辞書はターン開始時に一度だけ読む（opts の provider/voice とは独立した
+  // テキスト処理なので、全呼び出し元で opts に載せ替えず getSettings から取る）。
+  const userDict = parseUserDict(getSettings().ttsUserDict);
   const ctx = audioCtx();
   let buf = ""; // 未確定バッファ（文の途中）
   let pending = ""; // MIN_CHUNK 未満で持ち越し中の短い断片
@@ -131,7 +134,10 @@ export function startTts(opts: TtsOptions, source = "", onEnd?: (reason: "done" 
   };
 
   const submit = (text: string) => {
-    const t = text.trim();
+    let t = text.trim();
+    if (!t) return;
+    // ユーザー辞書を適用（enkana は CP 側でこの後。katakana はそのまま通るので競合しない）。
+    if (userDict.length) t = applyUserDict(t, userDict).trim();
     if (!t) return;
     jobs.push({ seq: seq++, text: t });
     startedAudio = true;

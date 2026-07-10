@@ -123,6 +123,21 @@ export function AgentsTab() {
             定着した和製カタカナ＝コーヒー等ではなく音写＝カフィー等になります）。AWS サービスや開発用語
             （EC2→イーシーツー, Dao→ダオ, nginx 等）は専用辞書で補正、辞書外の一般語は綴りのまま。
           </p>
+          <div className="ds-userdict-block">
+            <span className="ds-label">読み仮名辞書</span>
+            <textarea
+              className="ds-userdict"
+              value={s.ttsUserDict}
+              onChange={(e) => setSetting("ttsUserDict", e.target.value)}
+              rows={4}
+              spellCheck={false}
+              placeholder={"表記=読み（1行に1件）\n例）GPT-4=ジーピーティーフォー\n神=かみ"}
+            />
+            <p className="muted ds-note">
+              読み上げ前に、テキスト中の「表記」を指定した「読み」に置き換えます。英語・日本語・記号どれでも可。
+              1 行に 1 件「表記=読み」、# 始まりはコメント。長い表記から優先し、「英語をカタカナ読み」よりも先に当たります。
+            </p>
+          </div>
         </>
       )}
       <p className="muted ds-note">
