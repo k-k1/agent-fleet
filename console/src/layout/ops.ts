@@ -59,6 +59,8 @@ export function sameTarget(pane: Pane, target: OpenTarget): boolean {
       return target.session != null && pane.session === target.session;
     case "file":
       return c.kind === "file" && c.filePath === t.filePath;
+    case "read":
+      return c.kind === "read" && c.filePath === t.filePath;
     case "scm":
       return c.kind === "scm" && c.scmRepo === t.scmRepo;
     case "changes":

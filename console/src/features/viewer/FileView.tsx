@@ -15,7 +15,7 @@ import { Icon } from "../../ui/Icon.tsx";
 import { useSettings, fontStack } from "../../lib/settings.ts";
 import { useLayoutStore } from "../../layout/store.ts";
 import { useFilesStore } from "../files/store.ts";
-import { speakText, startNarration, type NarrationHandle } from "../chat/tts.ts";
+import { speakText } from "../chat/tts.ts";
 import { MarkdownView } from "./MarkdownView.tsx";
 import { MarpView } from "./MarpView.tsx";
 import { CodeView } from "./CodeView.tsx";
@@ -82,11 +82,6 @@ export function FileView({ filePath, wrap }: FileViewProps) {
   const bodyRef = useRef<HTMLDivElement>(null);
   const [sel, setSel] = useState<{ quote: string; startLine: number; endLine: number; x: number; y: number } | null>(null);
   const [sendOpen, setSendOpen] = useState(false);
-  // 朗読モード（docs/24）: 冒頭から順次読み上げ＋読んでいるブロックをハイライト追従。
-  const [narrOn, setNarrOn] = useState(false);
-  const [narrPaused, setNarrPaused] = useState(false);
-  const [pendingNarr, setPendingNarr] = useState(false); // preview へ切替後に開始するための保留
-  const narrRef = useRef<{ handle: NarrationHandle; els: HTMLElement[] } | null>(null);
 
   const showFile = (path: string) => openTarget({ content: { kind: "file", filePath: path } });
 
@@ -209,97 +204,8 @@ export function FileView({ filePath, wrap }: FileViewProps) {
     };
   }, []);
 
-  // --- 朗読モード（docs/24） ------------------------------------------------------
-  // 朗読の対象ブロックを DOM から集める。Markdown プレビューは葉ブロック（p/li/見出し等、
-  // コードは除く）、コード/プレーン表示は行（.cl-code[data-ln]）。各要素をハイライトに使う。
-  const collectNarrationUnits = (): HTMLElement[] => {
-    const body = bodyRef.current;
-    if (!body) return [];
-    const md = body.querySelector(".markdown");
-    if (md) {
-      const cand = Array.from(md.querySelectorAll<HTMLElement>("p,li,h1,h2,h3,h4,h5,h6,blockquote,dd,dt,td,th,figcaption"));
-      return cand.filter((el) => {
-        if (!(el.textContent || "").trim()) return false;
-        if (el.closest("pre")) return false; // コードブロックは読まない
-        for (const other of cand) if (other !== el && el.contains(other)) return false; // 入れ子は内側だけ（重複読み防止）
-        return true;
-      });
-    }
-    const grid = body.querySelector(".codegrid");
-    if (grid) return Array.from(grid.querySelectorAll<HTMLElement>(".cl-code[data-ln]")).filter((el) => (el.textContent || "").trim() !== "");
-    return [];
-  };
-
-  const clearNarrHighlight = () => narrRef.current?.els.forEach((e) => e.classList.remove("tts-reading"));
-
-  const beginNarration = () => {
-    const els = collectNarrationUnits();
-    if (!els.length) return;
-    const handle = startNarration(
-      els.map((el) => el.textContent || ""),
-      baseName(filePath),
-      (i) => {
-        clearNarrHighlight();
-        if (i != null && els[i]) {
-          els[i].classList.add("tts-reading");
-          els[i].scrollIntoView({ block: "center", behavior: "smooth" });
-        }
-        if (i == null) {
-          // 自然終了 or 外部（TopBar 停止・他の再生開始）で終了 → 状態リセット
-          setNarrOn(false);
-          setNarrPaused(false);
-          narrRef.current = null;
-        }
-      },
-    );
-    narrRef.current = { handle, els };
-    setNarrOn(true);
-    setNarrPaused(false);
-  };
-
-  const startNarr = () => {
-    // Markdown はプレビュー表示のブロックを対象にするため、ソース/スライドなら preview へ切替。
-    if (isMarkdown && !showPreview) {
-      setMdMode("preview");
-      setPendingNarr(true);
-      return;
-    }
-    beginNarration();
-  };
-  const stopNarr = () => narrRef.current?.handle.stop(); // onUnit(null) が解除・リセットを行う
-  const togglePauseNarr = () => {
-    const h = narrRef.current?.handle;
-    if (!h) return;
-    if (h.isPaused()) {
-      h.resume();
-      setNarrPaused(false);
-    } else {
-      h.pause();
-      setNarrPaused(true);
-    }
-  };
-
-  // プレビューへ切替後に朗読開始（DOM が出来てから集める）。
-  useEffect(() => {
-    if (pendingNarr && showPreview) {
-      setPendingNarr(false);
-      beginNarration();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pendingNarr, showPreview]);
-
-  // ファイル変更・アンマウントで朗読停止（ハイライト先の DOM が消えるため）。
-  useEffect(() => {
-    return () => {
-      narrRef.current?.handle.stop();
-      narrRef.current = null;
-    };
-  }, [filePath]);
-
-  // ソース/スライドへ切替＝プレビューの対象 DOM が消えるので朗読を止める。
-  useEffect(() => {
-    if (narrOn && isMarkdown && !showPreview) narrRef.current?.handle.stop();
-  }, [showPreview, isMarkdown, narrOn]);
+  // 朗読ビュー（docs/24）を開く。読み上げ＋縦書き閲覧は専用の ReaderView（kind="read"）に集約。
+  const openReader = () => openTarget({ content: { kind: "read", filePath } });
 
   if (!filePath) return <div className="fileview" />;
 
@@ -361,22 +267,11 @@ export function FileView({ filePath, wrap }: FileViewProps) {
             </button>
           </span>
         )}
-        {settings.ttsEnabled && isText && !huge && (
-          <span className="ui-seg sm md-toggle tts-narrate">
-            {!narrOn ? (
-              <button type="button" className="seg-btn" onClick={startNarr} title="ファイルの冒頭から順次読み上げ（朗読）">
-                <Icon name="unmute" /> 朗読
-              </button>
-            ) : (
-              <>
-                <button type="button" className="seg-btn" onClick={togglePauseNarr} title={narrPaused ? "再開" : "一時停止"}>
-                  <Icon name={narrPaused ? "play" : "debug-pause"} /> {narrPaused ? "再開" : "一時停止"}
-                </button>
-                <button type="button" className="seg-btn active" onClick={stopNarr} title="朗読を停止">
-                  <Icon name="debug-stop" /> 停止
-                </button>
-              </>
-            )}
+        {isText && !huge && (
+          <span className="ui-seg sm md-toggle">
+            <button type="button" className="seg-btn" onClick={openReader} title="朗読ビューで開く（順次読み上げ＋縦書き閲覧）">
+              <Icon name="book" /> 朗読
+            </button>
           </span>
         )}
         <span className="fi-path muted" title={filePath}>
