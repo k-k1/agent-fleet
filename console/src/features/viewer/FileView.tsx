@@ -208,6 +208,9 @@ export function FileView({ filePath, wrap }: FileViewProps) {
     };
   }, []);
 
+  // 朗読ビュー（docs/24）を開く。読み上げ＋縦書き閲覧は専用の ReaderView（kind="read"）に集約。
+  const openReader = () => openTarget({ content: { kind: "read", filePath } });
+
   if (!filePath) return <div className="fileview" />;
 
   const viewerStyle = {
@@ -269,6 +272,13 @@ export function FileView({ filePath, wrap }: FileViewProps) {
             </button>
             <button type="button" className={"seg-btn" + (imgMode === "source" ? " active" : "")} onClick={() => setImgMode("source")}>
               ソース
+            </button>
+          </span>
+        )}
+        {isText && !huge && (
+          <span className="ui-seg sm md-toggle">
+            <button type="button" className="seg-btn" onClick={openReader} title="朗読ビューで開く（順次読み上げ＋縦書き閲覧）">
+              <Icon name="book" /> 朗読
             </button>
           </span>
         )}

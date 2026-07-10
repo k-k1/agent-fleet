@@ -913,3 +913,44 @@
 .sel-send-pill:hover {
   background: var(--hover-bg, var(--btn));
 }
+
+/* 朗読ビュー（docs/24, ReaderView）: 読むための版組＋カラオケ・ハイライト。 */
+.reader-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 28px 32px;
+  margin: 0 auto;
+  max-width: 42em;
+  line-height: 2;
+  font-size: 1.05rem;
+  font-family: var(--reader-font, "Hiragino Mincho ProN", "Yu Mincho", "Noto Serif JP", "Noto Serif", serif);
+  color: var(--fg);
+}
+.reader-para {
+  margin: 0 0 1.1em;
+}
+.reader-sent {
+  border-radius: 4px;
+  scroll-margin: 20vh 20vw; /* scrollIntoView(center) の余白（縦横どちらの向きでも効く） */
+  transition: background 0.15s ease;
+}
+.reader-sent.active {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+/* 縦書き: 文字は上→下、列は右→左。max-width/margin を解いて横スクロールで読み進める。 */
+.reader-body.vertical {
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  max-width: none;
+  height: 100%;
+  margin: 0;
+  padding: 32px 28px;
+}
+.reader-body.vertical .reader-para {
+  margin: 0 1.1em 0 0;
+}
+.reader-vtoggle .codicon {
+  font-size: 13px;
+}
