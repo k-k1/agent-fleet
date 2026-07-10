@@ -9,18 +9,12 @@ import { Modal } from "../../ui/Modal.tsx";
 import { Button } from "../../ui/Button.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { agentOf } from "../../agents/registry.ts";
-import { readRepoLast } from "../../lib/repoLast.ts";
+import { readRepoLast, resolveModel } from "../../lib/repoLast.ts";
 import { readPromptHistory } from "../../lib/promptHistory.ts";
+import { useSettings, CLAUDE_MODELS } from "../../lib/settings.ts";
 import { repoPromptTemplates } from "./api.ts";
 import type { PromptTemplateGroup } from "./api.ts";
 import { sanitizeSeg } from "../../lib/reponame.ts";
-
-const MODELS: [string, string][] = [
-  ["", "既定"],
-  ["opus", "Opus"],
-  ["sonnet", "Sonnet"],
-  ["haiku", "Haiku"],
-];
 
 // LaunchOpts: agent + optional first prompt, plus WHERE to run. For a worktree,
 // base is the start point and newBranch the branch to create ("" => the server
@@ -59,11 +53,13 @@ interface LaunchModalProps {
 }
 
 export function LaunchModal({ repo, branch, path, kinds, allowWorktree = true, onClose, onLaunch }: LaunchModalProps) {
+  const settings = useSettings();
   const last = readRepoLast(repo);
   // Default to the last agent used in this repo when still available, else the first.
   const initialKind = last.kind && kinds.includes(last.kind) ? last.kind : kinds[0] || "claude";
   const [kind, setKind] = useState(initialKind);
-  const [model, setModel] = useState(last.model || "");
+  // Shared priority chain: repo last-used → global default → "" (claude's own).
+  const [model, setModel] = useState(() => resolveModel(repo, settings.defaultModel));
   const [prompt, setPrompt] = useState("");
   // Pasted images awaiting the launch: raw File + an object URL for the chip preview.
   // Uploaded only after the session is minted (in onStartWork), then referenced in the
@@ -230,7 +226,7 @@ export function LaunchModal({ repo, branch, path, kinds, allowWorktree = true, o
           <div className="ui-field">
             <span className="ui-field-label">モデル</span>
             <div className="ui-seg">
-              {MODELS.map(([v, label]) => (
+              {CLAUDE_MODELS.map(([v, label]) => (
                 <button
                   key={v || "default"}
                   type="button"

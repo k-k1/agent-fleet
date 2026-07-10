@@ -53,6 +53,9 @@ export function NewSessionModal({ onClose, onCreated }: NewSessionModalProps) {
   // Kind availability, seeded from the cache so buttons render instantly.
   const [avail, setAvail] = useState(readKindAvail);
   const [loaded, setLoaded] = useState(false);
+  // Initial model = the global-default tier of the shared launch chain (see repoLast.ts
+  // resolveModel). This modal targets a not-yet-chosen repo, so the repo last-used tier
+  // above it doesn't apply here — it starts at the global default.
   const [model, setModel] = useState(settings.defaultModel);
   const [source, setSource] = useState<Source>("dir");
   const [sourceTouched, setSourceTouched] = useState(false);

@@ -8,7 +8,7 @@ import { buildImagePrompt } from "../../lib/pastedImages.ts";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { useConfirm } from "../../ui/ConfirmProvider.tsx";
 import { agentOf } from "../../agents/registry.ts";
-import { writeRepoLast } from "../../lib/repoLast.ts";
+import { writeRepoLast, resolveModel } from "../../lib/repoLast.ts";
 import { pushPromptHistory } from "../../lib/promptHistory.ts";
 import { useSettings } from "../../lib/settings.ts";
 import { setLaunchSeed } from "../../lib/launchSeed.ts";
@@ -104,7 +104,8 @@ export function RepoRowConnected({ r, ctx, onToggle }: RepoRowConnectedProps) {
       // Quick launch (▼ / right-click): no prompt, straight to a session.
       onLaunch={async (kind, split) => {
         const hasModel = agentOf(kind).caps.model;
-        const model = hasModel ? settings.defaultModel || "" : "";
+        // Shared priority chain: repo last-used → global default → "" (claude's own).
+        const model = hasModel ? resolveModel(r.name, settings.defaultModel) : "";
         const body: Record<string, unknown> = { dir: r.path, kind };
         if (model) body.model = model;
         const res = await apiJSON("api/sessions", "POST", body);
