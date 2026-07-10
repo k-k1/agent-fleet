@@ -1,10 +1,13 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
@@ -117,4 +120,31 @@ func handleAgentRTKPut(w http.ResponseWriter, r *http.Request) {
 	}
 	reconcileAgentRTK()
 	httpx.WriteJSON(w, http.StatusOK, agentRTKBody())
+}
+
+// handleAgentRTKGain serves GET /agents/rtk/gain for the Console's WsBar "rtk 効果"
+// chip. rtk itself keeps the accounting (compaction bytes/tokens per command) in its
+// own history DB under ~/.local/share/rtk; `rtk gain --format json` exposes the daily
+// series + cumulative summary. We shell out and pass the JSON through verbatim (plus
+// an `available` flag) so the schema stays rtk's, not ours. Best-effort: rtk missing
+// or any failure returns a soft body and the Console just hides/blanks the chip.
+func handleAgentRTKGain(w http.ResponseWriter, r *http.Request) {
+	if !claude.RTKAvailable() {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"available": false})
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "rtk", "gain", "--daily", "--format", "json").Output()
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"available": true, "error": err.Error()})
+		return
+	}
+	var body map[string]any
+	if err := json.Unmarshal(out, &body); err != nil {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"available": true, "error": "parse_failed"})
+		return
+	}
+	body["available"] = true
+	httpx.WriteJSON(w, http.StatusOK, body)
 }

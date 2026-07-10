@@ -318,6 +318,8 @@ func registerAgentEnvRoutes(mux *http.ServeMux, cfg config) {
 	// codex / opencode rtk toggle — proxied to the Agent.
 	mux.HandleFunc("GET /api/agents/rtk", rest)
 	mux.HandleFunc("PUT /api/agents/rtk", rest)
+	// rtk token-savings history (WsBar "rtk 効果" chip) — proxied to the Agent.
+	mux.HandleFunc("GET /api/agents/rtk/gain", rest)
 	// Toolchain selection (node / java) — proxied to the Agent.
 	mux.HandleFunc("GET /api/env/toolchains", rest)
 	mux.HandleFunc("PUT /api/env/toolchains", rest)
