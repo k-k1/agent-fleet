@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { plainify, plainifyStreaming } from "./ttsText.ts";
+import { plainify, plainifyStreaming, firstChunkCut } from "./ttsText.ts";
 
 describe("plainify (読み上げ用プレーン化)", () => {
   it("インラインコード/リンク/URL/強調を落とす", () => {
@@ -18,6 +18,33 @@ describe("plainify (読み上げ用プレーン化)", () => {
 
   it("画像を落とす", () => {
     expect(plainify("図 ![alt](https://x/y.png) を参照")).toBe("図 を参照");
+  });
+});
+
+describe("firstChunkCut (最初の発話の早出し)", () => {
+  it("読点が FIRST_MIN 以降にあればそこで切る", () => {
+    // "これは長めの前置きで、" → 読点(11 文字目)で切る
+    const s = "これは長めの前置きで、続きます";
+    expect(firstChunkCut(s)).toBe(s.indexOf("、") + 1);
+  });
+
+  it("読点が早すぎる（FIRST_MIN 未満）ときは切らない", () => {
+    // "はい、" の読点は 3 文字目 → 短すぎるので早出ししない
+    expect(firstChunkCut("はい、まだ短い")).toBe(-1);
+  });
+
+  it("区切りが無くても FIRST_MAX まで伸びたら強制的に切る", () => {
+    const long = "あ".repeat(40); // 区切り無しの長い連続
+    expect(firstChunkCut(long)).toBe(28);
+  });
+
+  it("短くて区切りも無ければ切らない（-1）", () => {
+    expect(firstChunkCut("みじかい")).toBe(-1);
+  });
+
+  it("閉じ括弧類も早出しの区切りになる", () => {
+    const s = "設定（詳しくは後述）を開きます";
+    expect(firstChunkCut(s)).toBe(s.indexOf("）") + 1);
   });
 });
 

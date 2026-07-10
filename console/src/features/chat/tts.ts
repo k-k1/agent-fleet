@@ -10,7 +10,7 @@
 import { rel } from "../../core/api/client.ts";
 import { getSettings } from "../../lib/settings.ts";
 import { useTtsStore } from "../../core/store/tts.ts";
-import { plainifyStreaming } from "./ttsText.ts";
+import { plainifyStreaming, firstChunkCut } from "./ttsText.ts";
 
 export interface TtsOptions {
   provider: string; // "auto" | "voicevox" | "polly"
@@ -95,6 +95,15 @@ export function startTts(opts: TtsOptions, source = "", onEnd?: (reason: "done" 
       const piece = buf.slice(0, end);
       buf = buf.slice(end);
       enqueuePiece(piece, /*hard*/ /\n/.test(m[0]) || /[。！？!?]/.test(m[0]));
+    }
+    // 最初の発話だけ、句点が来る前に読点/長さで早出しして発話開始を早める。
+    // startedAudio 後は何もしない（以降は句点粒度）。
+    if (!force && !startedAudio) {
+      const cut = firstChunkCut(buf);
+      if (cut > 0) {
+        enqueuePiece(buf.slice(0, cut), /*hard*/ true);
+        buf = buf.slice(cut);
+      }
     }
     if (force) {
       // 末尾の未確定分 + 持ち越しをすべて読み上げる。fence 状態は引き回す。
