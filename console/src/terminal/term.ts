@@ -13,6 +13,7 @@ import { WebglAddon } from "@xterm/addon-webgl";
 import "@xterm/xterm/css/xterm.css";
 import { wsURL } from "../core/api/client.ts";
 import { getSettings, subscribe as subscribeSettings, fontStack } from "../lib/settings.ts";
+import { askConfirm } from "../ui/confirmBridge.ts";
 
 // One entry per pane. { term, fitAddon, ws, session, sessionListeners, ro }.
 // A placeholder (from an early onSession) may hold only session + sessionListeners,
@@ -61,13 +62,37 @@ function copySelection(term: Terminal) {
   const sel = term && term.getSelection();
   if (sel && navigator.clipboard) navigator.clipboard.writeText(sel).catch(() => {});
 }
+// Warn before pasting risky content into the terminal. A paste that contains newlines
+// runs line-by-line at a shell prompt (each Enter executes), and a very large paste can
+// flood the pane — both are easy to trigger by an accidental right/middle-click. When
+// the clipboard has a newline or exceeds PASTE_WARN_CHARS we confirm first; otherwise it
+// pastes straight through. Covers every paste gesture (they all funnel through here).
+const PASTE_WARN_CHARS = 1000;
 function pasteClipboard(term: Terminal) {
   if (!term || !navigator.clipboard) return;
   navigator.clipboard
     .readText()
     .then((t) => {
+      if (!t) return;
       // term.paste() routes through onData (incl. bracketed-paste wrapping) → PTY.
-      if (t) term.paste(t);
+      const newline = /[\r\n]/.test(t);
+      if (!newline && t.length <= PASTE_WARN_CHARS) {
+        term.paste(t);
+        return;
+      }
+      const lines = t.split(/\r\n|[\r\n]/).length;
+      askConfirm({
+        title: "ターミナルに貼り付けますか？",
+        body:
+          `クリップボードの ${t.length} 文字` +
+          (newline ? `（${lines} 行）` : "") +
+          " を貼り付けます。" +
+          (newline ? "改行を含むため、シェルではそのまま実行される場合があります。" : ""),
+        confirmLabel: "貼り付け",
+        danger: true,
+      }).then((ok) => {
+        if (ok) term.paste(t);
+      });
     })
     .catch(() => {});
 }
