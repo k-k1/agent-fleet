@@ -87,6 +87,27 @@ export function parseRuby(line: string): RubySeg[] {
 
 const SENTENCE_ENDERS = "。．！？!?";
 
+// 傍点（圏点）用のルビ記号。ルビがこれらだけなら「読み」ではなく強調なので、読み上げは
+// 親文字（base）を読む（例 ｜イ《・》｜カ《・》→「イカ」）。表示はルビ（点）のまま。
+const EMPHASIS_MARKS = new Set(["・", "･", "•", "·", "﹅", "﹆", "●", "○", "◎", "、"]);
+function isEmphasisRuby(ruby: string | undefined): boolean {
+  if (!ruby) return false;
+  for (const ch of ruby) if (!EMPHASIS_MARKS.has(ch)) return false;
+  return true;
+}
+
+// 読み上げ対象になる文字（かな/漢字/英数字）を 1 つでも含むか。含まなければ記号だけの行＝
+// 視点切り替えの ＊ / ◇ / --- 等の区切りなので読まずに飛ばす（表示はする）。
+function hasSpeakable(text: string): boolean {
+  return /[0-9A-Za-zぁ-んァ-ヶーｦ-ﾟ一-鿿㐀-䶿豈-﫿々]/.test(text);
+}
+
+// 1 セグメントの読み上げ文字列。傍点ルビは親文字、通常ルビは読み、素の文字はそのまま。
+function spokenOf(s: RubySeg): string {
+  if (isEmphasisRuby(s.ruby)) return s.base;
+  return s.ruby !== undefined ? s.ruby : s.base;
+}
+
 // buildReadUnits は本文を「行内は文、行末で区切り」の ReadUnit 列へ。原文の改行・行頭スペース・
 // ルビはすべて表示側（segs）に保持する。Markdown のコードフェンス内は表示するが読み上げない。
 export function buildReadUnits(content: string, isMarkdown: boolean): ReadUnit[] {
@@ -116,8 +137,9 @@ export function buildReadUnits(content: string, isMarkdown: boolean): ReadUnit[]
       if (!cur.length) return;
       const disp = cur;
       cur = [];
-      const raw = skipSpoken ? "" : disp.map((s) => (s.ruby !== undefined ? s.ruby : s.base)).join("");
-      const spoken = raw ? plainify(raw).trim() : "";
+      const raw = skipSpoken ? "" : disp.map(spokenOf).join("");
+      let spoken = raw ? plainify(raw).trim() : "";
+      if (spoken && !hasSpeakable(spoken)) spoken = ""; // 記号だけ（＊/◇/--- 等の区切り）は読まない
       units.push({ segs: disp, spoken });
     };
 
