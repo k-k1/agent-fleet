@@ -27,6 +27,15 @@ if [ -x /usr/local/bin/claude ] && [ ! -e "$HOME/.local/bin/claude" ] \
     || echo "[entrypoint] WARN: claude install failed (using baked /usr/local)"
 fi
 
+# gh 透過認証（§8.3）: 焼き込みの /usr/local/bin/gh は git と同一トークンを注入する
+# ラッパー。home volume に実体の ~/.local/bin/gh が残っていると PATH 先頭で焼き込み
+# ラッパーを隠し、透過認証が効かなくなる。シンボリックリンク以外（=実バイナリ）なら
+# 除去して PATH をラッパーへ通す（標準イメージは ~/.local/bin に gh を置かない）。
+if [ -e "$HOME/.local/bin/gh" ] && [ ! -L "$HOME/.local/bin/gh" ]; then
+  echo "[entrypoint] removing shadowing $HOME/.local/bin/gh (use baked gh auth wrapper)"
+  rm -f "$HOME/.local/bin/gh"
+fi
+
 # Relocate Claude state out of the browsable home BEFORE claude runs (docs/17
 # P3-5 段2): when CLAUDE_CONFIG_DIR points outside home, migrate a pre-existing
 # ~/.claude into it once (must precede claude install/update, which would
