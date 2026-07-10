@@ -16,6 +16,7 @@ import { ChangesView } from "../scm/ChangesView.tsx";
 import { CommitDetailView } from "../scm/CommitDetailView.tsx";
 import { WorkingDiffView } from "../scm/WorkingDiffView.tsx";
 import { FileView } from "../viewer/FileView.tsx";
+import { ReaderView } from "../viewer/ReaderView.tsx";
 import { DocView } from "../viewer/DocView.tsx";
 import { DiffView } from "../viewer/DiffView.tsx";
 import type { DiffEdit } from "../viewer/DiffView.tsx";
@@ -253,6 +254,7 @@ export function Pane({
         />
       )}
       {pane.content.kind === "file" && <FileView filePath={pane.content.filePath} wrap={pane.wrap} />}
+      {pane.content.kind === "read" && <ReaderView filePath={pane.content.filePath} />}
       {pane.content.kind === "doc" && <DocView title={pane.content.docTitle} content={pane.content.docContent} />}
       {pane.content.kind === "diff" && (
         <DiffView

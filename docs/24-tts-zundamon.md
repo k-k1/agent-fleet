@@ -180,6 +180,18 @@ TTS 設定画面かフッターに小さく常時表示する。Polly は AWS �
   `ttsEnabled` 有効時のみ、`FileView.tsx` + `viewer.css`）。過去の回答フッターに読み上げ
   ボタンを追加（共用 `features/chat/TtsReadButton.tsx`、ChatView と MirrorView の各ターン
   フッター、assistant/非 user ターンかつ `ttsEnabled` 時のみ）。実機での音出し確認は未。
+  **朗読ビュー ReaderView（2026-07-10）**: 「読む」ための専用ビュー（content kind `read`、
+  `layout/types.ts`＋`Pane.tsx`＋`ops.ts`＋`migrate.ts`）を新設。ファイル本文を段落・**文**に分割して
+  読みやすい版組で表示し、冒頭から順次読み上げつつ、いま読んでいる**文をカラオケ・ハイライト＋
+  自動スクロール**で追従する。一時停止/再開（AudioContext suspend/resume）・停止、**縦書き/横書き
+  トグル**（設定 `readerVertical`、`writing-mode: vertical-rl`）。Markdown も **txt も対応**（文分割は
+  純関数 `readerText.ts` の `toReadingParagraphs`/`splitSentences`＝md はフェンス除去・行記法除去・
+  見出し/リスト項目は 1 単位、txt は素直に段落/文へ。テスト有り）。読み上げエンジンは `tts.ts` の
+  `startNarration`（合成 `synthToBuffer` を startTts と共有・文 index を `onUnit` で通知）を流用。ReaderView
+  は文を React 要素で描くのでハイライトは `activeIndex` state 駆動（旧 FileView 版の DOM クラス後付けを
+  廃止）。開き方＝ファイル右クリック「朗読で開く」／FileView の「朗読」ボタン（`kind:read` を openTarget）。
+  グローバル 1 本再生・TopBar 停止と相乗り。クライアント完結（CP 変更なし）。実機の音・追従・縦書きは未確認。
+  ※初期に FileView へ inline 実装した朗読（`collectNarrationUnits`＋DOM ハイライト）は ReaderView へ集約し撤去。
 - **Phase 1.6（バックグラウンドセッションの音声通知・Tier1）** ✅ 実装済み: 稼働中の複数
   セッションが回答/質問を返したら、セッション名を添えて短く音声でお知らせ（設計検討の結論＝
   直列音声なので「全文読み上げ」でなく「アナウンス方式」を採用）。既存の `useSessionNotifications`

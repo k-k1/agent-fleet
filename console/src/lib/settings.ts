@@ -150,6 +150,8 @@ export interface Settings {
   // リテラル置換で適用（英語/日本語/記号どれでも。enkana の ON/OFF に依らず効く）。表記は
   // 長いものから当てる。空 = 無効。features/chat/ttsText.ts の parse/applyUserDict。
   ttsUserDict: string;
+  // 朗読ビュー（docs/24）を縦書きで表示するか（既定 false=横書き）。ReaderView のトグルに追随。
+  readerVertical: boolean;
 }
 
 const DEFAULTS: Settings = {
@@ -183,6 +185,7 @@ const DEFAULTS: Settings = {
   ttsSessionNotify: false,
   ttsEnglishKana: false,
   ttsUserDict: "",
+  readerVertical: false,
 };
 
 // VOICEVOX ずんだもんのスタイル（speaker 番号 → ラベル）。設定 UI の話者選択に使う。

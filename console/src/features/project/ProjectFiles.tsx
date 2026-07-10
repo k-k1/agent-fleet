@@ -528,6 +528,17 @@ export function ProjectFiles({ root, repo, view }: ProjectFilesProps) {
           </li>
           {menu.row.type === "file" && (
             <li>
+              <button
+                type="button"
+                className="ui-menu-item"
+                onClick={() => runMenu(() => openTarget({ content: { kind: "read", filePath: menu.row.path } }))}
+              >
+                <Icon name="book" /> 朗読で開く
+              </button>
+            </li>
+          )}
+          {menu.row.type === "file" && (
+            <li>
               <a className="ui-menu-item files-ctx-a" href={downloadURL(menu.row.path)} download onClick={() => setMenu(null)}>
                 <Icon name="cloud-download" /> ダウンロード
               </a>
