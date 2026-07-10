@@ -676,6 +676,79 @@
   gap: 4px;
   padding: 4px 12px;
 }
+/* SendUserFile panel: files the agent shared, each a click-to-open row. */
+.mt-files {
+  margin: 0.4em 0;
+  border: 1px solid color-mix(in srgb, var(--chat-accent) 40%, var(--border));
+  border-left: 3px solid var(--chat-accent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--chat-accent) 6%, var(--bg));
+  padding: 9px 11px;
+}
+.mt-files-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+.mt-files-title {
+  font-weight: 600;
+}
+.mt-files-count {
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--chat-accent) 22%, transparent);
+}
+.mt-files-caption {
+  margin: 5px 0 2px;
+  font-size: 12px;
+  opacity: 0.85;
+  line-height: 1.4;
+}
+.mt-files-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+}
+.mt-file-item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  text-align: left;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  font-size: 12px;
+  cursor: pointer;
+}
+.mt-file-item:hover {
+  border-color: var(--chat-accent);
+  background: color-mix(in srgb, var(--chat-accent) 8%, var(--bg));
+}
+.mt-file-name {
+  font-weight: 600;
+  white-space: nowrap;
+}
+.mt-file-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+}
+.mt-file-open {
+  flex: none;
+  opacity: 0.55;
+}
+.mt-file-item:hover .mt-file-open {
+  opacity: 1;
+}
+
 /* Tool-permission prompt (edit/command approval when not in bypass/accept mode). */
 .mt-perm {
   margin: 0.4em 0;
