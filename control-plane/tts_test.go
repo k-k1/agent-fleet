@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -27,10 +28,11 @@ func fakeVoicevox(t *testing.T) (*httptest.Server, *string) {
 		var m map[string]any
 		_ = json.NewDecoder(r.Body).Decode(&m)
 		ss, _ := m["speedScale"].(float64)
+		pre, _ := m["prePhonemeLength"].(float64)
+		post, _ := m["postPhonemeLength"].(float64)
 		w.Header().Set("Content-Type", "audio/wav")
-		// Encode the speedScale back into the "WAV" so the caller can verify injection.
-		_, _ = w.Write([]byte("WAVspeed=" + strings.TrimRight(strings.TrimRight(
-			formatFloat(ss), "0"), ".")))
+		// Encode the overridden params back into the "WAV" so the caller can verify injection.
+		_, _ = w.Write([]byte("WAVspeed=" + trimFloat(ss) + ",pre=" + trimFloat(pre) + ",post=" + trimFloat(post)))
 	})
 	mux.HandleFunc("GET /version", func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte("0.14.0"))
@@ -40,9 +42,21 @@ func fakeVoicevox(t *testing.T) (*httptest.Server, *string) {
 	return srv, &gotSpeaker
 }
 
-func formatFloat(f float64) string {
+func trimFloat(f float64) string {
 	b, _ := json.Marshal(f)
-	return string(b)
+	return strings.TrimRight(strings.TrimRight(string(b), "0"), ".")
+}
+
+// clearTTSEnv detaches the test from the host's AWS/TTS env so provider readiness
+// is deterministic (polly not-ready, no ECS engine control).
+func clearTTSEnv(t *testing.T) {
+	t.Helper()
+	for _, k := range []string{
+		"AF_POLLY_REGION", "AF_ECS_REGION", "AWS_REGION", "AWS_DEFAULT_REGION",
+		"AF_TTS_ECS_SERVICE", "AF_TTS_ECS_CLUSTER", "AF_TTS_ECS_REGION",
+	} {
+		t.Setenv(k, "")
+	}
 }
 
 func TestVoicevoxSynthesize(t *testing.T) {
@@ -55,16 +69,42 @@ func TestVoicevoxSynthesize(t *testing.T) {
 	if *gotSpeaker != "3" {
 		t.Errorf("speaker = %q, want 3", *gotSpeaker)
 	}
-	if got := string(wav); got != "WAVspeed=1.25" {
-		t.Errorf("wav = %q, want WAVspeed=1.25 (speedScale not injected?)", got)
+	// speedScale の注入と、前後無音の短縮（文間の待機対策）の両方が synthesis へ届くこと。
+	if got := string(wav); got != "WAVspeed=1.25,pre=0.02,post=0.05" {
+		t.Errorf("wav = %q, want WAVspeed=1.25,pre=0.02,post=0.05 (param override not injected?)", got)
 	}
 
-	// Empty voice defaults to ずんだもん (speaker 3).
-	if _, aerr := voicevoxSynthesize(t.Context(), srv.URL, "テスト。", "", 0); aerr != nil {
+	// Empty voice defaults to ずんだもん (speaker 3); speed 0 keeps speedScale=1
+	// while the silence trim still applies.
+	wav, aerr = voicevoxSynthesize(t.Context(), srv.URL, "テスト。", "", 0)
+	if aerr != nil {
 		t.Fatalf("default-voice synthesize: %+v", aerr)
 	}
 	if *gotSpeaker != "3" {
 		t.Errorf("default speaker = %q, want 3", *gotSpeaker)
+	}
+	if got := string(wav); got != "WAVspeed=1,pre=0.02,post=0.05" {
+		t.Errorf("wav = %q, want WAVspeed=1,pre=0.02,post=0.05", got)
+	}
+}
+
+func TestCollapseJaSpaces(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"submit 時に", "submit時に"},                // 英単語→日本語
+		{"green です。", "greenです。"},                // 英単語→日本語（文末）
+		{"設定 tts_engine を見る", "設定tts_engineを見る"}, // 日本語→英単語→日本語
+		{"tsc / vitest", "tsc / vitest"},         // 英単語同士は残す
+		{"This is a pen", "This is a pen"},       // 英文はそのまま
+		{"submit   時に", "submit時に"},              // 連続スペースも除去
+		{"a  b", "a b"},                          // 英単語間の連続は 1 つに正規化
+		{"それは　いい", "それは　いい"},                     // 全角スペースは意図した間として残す
+		{"「code です」", "「codeです」"},                // 和文記号にも隣接扱いが効く
+		{"67件 まで OK です", "67件までOKです"},            // 数字+助数詞は和文側
+	}
+	for _, c := range cases {
+		if got := collapseJaSpaces(c.in); got != c.want {
+			t.Errorf("collapseJaSpaces(%q) = %q, want %q", c.in, got, c.want)
+		}
 	}
 }
 
@@ -77,16 +117,18 @@ func TestVoicevoxUnreachable(t *testing.T) {
 }
 
 func TestTTSRoutes(t *testing.T) {
+	clearTTSEnv(t)
 	srv, _ := fakeVoicevox(t)
 	mux := http.NewServeMux()
 	registerTTSRoutes(mux, config{voicevoxURL: srv.URL})
 
-	// status → voicevox ready true (engine /version reachable), polly false.
+	// status → voicevox ready true (engine /version reachable), polly false (no region).
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/tts/status", nil))
 	var st struct {
 		Providers map[string]struct {
-			Ready bool `json:"ready"`
+			Ready   bool `json:"ready"`
+			Enabled bool `json:"enabled"`
 		} `json:"providers"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &st); err != nil {
@@ -95,11 +137,14 @@ func TestTTSRoutes(t *testing.T) {
 	if !st.Providers["voicevox"].Ready {
 		t.Error("voicevox should be ready")
 	}
+	if !st.Providers["voicevox"].Enabled {
+		t.Error("voicevox should be enabled by default")
+	}
 	if st.Providers["polly"].Ready {
-		t.Error("polly should be not-ready in Phase 1")
+		t.Error("polly should be not-ready without an AWS region")
 	}
 
-	// synthesize → audio/wav bytes + X-TTS-Provider header.
+	// synthesize (auto) → voicevox: audio/wav bytes + X-TTS-Provider header.
 	rec = httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/tts/synthesize", strings.NewReader(`{"text":"やあ。","voice":"3","speed":1}`))
 	mux.ServeHTTP(rec, req)
@@ -123,10 +168,110 @@ func TestTTSRoutes(t *testing.T) {
 		t.Errorf("empty text status = %d, want 400", rec.Code)
 	}
 
-	// polly provider → 501 (not implemented in Phase 1).
+	// explicit polly without AWS config → 503 (unavailable), not a panic.
 	rec = httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/tts/synthesize", strings.NewReader(`{"text":"hi.","provider":"polly"}`)))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("polly status = %d, want 503", rec.Code)
+	}
+
+	// unknown provider → 501.
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/tts/synthesize", strings.NewReader(`{"text":"hi.","provider":"nope"}`)))
 	if rec.Code != http.StatusNotImplemented {
-		t.Errorf("polly status = %d, want 501", rec.Code)
+		t.Errorf("unknown provider status = %d, want 501", rec.Code)
+	}
+}
+
+// TestTTSAutoFallsBackToUnreachableVoicevox: auto+日本語で engine 不在・polly 不在なら
+// voicevox の 502 がそのまま返る（受け皿がいないケースの明示）。
+func TestTTSAutoNoProviders(t *testing.T) {
+	clearTTSEnv(t)
+	mux := http.NewServeMux()
+	registerTTSRoutes(mux, config{voicevoxURL: "http://127.0.0.1:1"})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/tts/synthesize", strings.NewReader(`{"text":"やあ。","lang":"ja"}`)))
+	if rec.Code != http.StatusBadGateway {
+		t.Errorf("status = %d, want 502", rec.Code)
+	}
+	if p := rec.Header().Get("X-TTS-Provider"); p != "" {
+		t.Errorf("X-TTS-Provider = %q, want empty on error", p)
+	}
+}
+
+// chooseTTSProvider — docs/24 の使い分け表の純関数テスト。
+func TestChooseTTSProvider(t *testing.T) {
+	cases := []struct {
+		name                        string
+		pref, lang                  string
+		engineOff, vvReady, plReady bool
+		want                        string
+	}{
+		{"明示voicevox", "voicevox", "en", false, false, true, "voicevox"},
+		{"明示polly", "polly", "ja", false, true, true, "polly"},
+		{"日本語×engine ready→ずんだもん", "auto", "ja", false, true, true, "voicevox"},
+		{"auto言語×engine ready→ずんだもん", "", "auto", false, true, true, "voicevox"},
+		{"日本語×engine不在→Polly JP", "auto", "ja", false, false, true, "polly"},
+		{"日本語×engine無効→Polly JP", "auto", "ja", true, true, true, "polly"},
+		{"非日本語→Polly", "auto", "en", false, true, true, "polly"},
+		{"非日本語×Polly不在→voicevox受け皿", "auto", "en", false, true, false, "voicevox"},
+		{"日本語×両方不在→voicevox(502)", "auto", "ja", false, false, false, "voicevox"},
+	}
+	for _, c := range cases {
+		if got := chooseTTSProvider(c.pref, c.lang, c.engineOff, c.vvReady, c.plReady); got != c.want {
+			t.Errorf("%s: chooseTTSProvider(%q,%q,%v,%v,%v) = %q, want %q",
+				c.name, c.pref, c.lang, c.engineOff, c.vvReady, c.plReady, got, c.want)
+		}
+	}
+}
+
+// auto+日本語で engine 停止中でも、Polly が設定されていれば「フォールバック先が polly に
+// なる」ことをルート越しに確認する（Polly 実呼び出しは行わない: 偽の region を与えると
+// SDK が実 AWS へ出て行ってしまうため、chooseTTSProvider の単体テストと status の
+// enabled/managed 表示で代替する）。ここでは admin トグル off → 表示に反映を見る。
+func TestTTSAdminToggleSetting(t *testing.T) {
+	clearTTSEnv(t)
+	srv, _ := fakeVoicevox(t)
+	store, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer store.Close()
+	if err := store.migrate(t.Context()); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	mgr := &manager{store: store}
+	mux := http.NewServeMux()
+	registerTTSRoutes(mux, config{voicevoxURL: srv.URL, mgr: mgr})
+
+	// setting を直接 off にして（PUT は super_admin 認証が要るため store 経由）、
+	// status の enabled が落ちること＝ルーティングの engineOff 判定が効くことを見る。
+	if err := store.SetSetting(t.Context(), ttsEngineSetting, "off"); err != nil {
+		t.Fatalf("set setting: %v", err)
+	}
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/tts/status", nil))
+	var st struct {
+		Providers map[string]struct {
+			Ready   bool `json:"ready"`
+			Enabled bool `json:"enabled"`
+		} `json:"providers"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &st); err != nil {
+		t.Fatalf("status body: %v", err)
+	}
+	if st.Providers["voicevox"].Enabled {
+		t.Error("voicevox should be disabled after tts_engine=off")
+	}
+	if !st.Providers["voicevox"].Ready {
+		t.Error("readiness probe should still see the engine")
+	}
+
+	// engine 無効 + polly 不在 → auto は voicevox に落ちて合成自体は通る（受け皿なしの
+	// 最後の砦。ready なエンジンがいるので音は出る）。
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/tts/synthesize", strings.NewReader(`{"text":"やあ。"}`)))
+	if rec.Code != http.StatusOK {
+		t.Errorf("synthesize with engine off = %d, want 200 (last-resort voicevox)", rec.Code)
 	}
 }

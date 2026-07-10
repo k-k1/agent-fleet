@@ -65,7 +65,8 @@
   gap: 12px;
 }
 
-/* 音声読み上げ中インジケータ兼・停止ボタン（docs/24）。再生中だけ表示。クリックで停止。 */
+/* 音声読み上げピル（docs/24）。常時表示：再生中=停止ボタン（パルス＋ラベル）、
+   アイドル=設定 ttsEnabled の ON/OFF トグル（OFF はグレー）。 */
 .tts-status {
   display: inline-flex;
   align-items: center;
@@ -81,7 +82,15 @@
 .tts-status:hover {
   background: color-mix(in srgb, var(--accent, #6b8fc4) 26%, transparent);
 }
-.tts-status-ic {
+.tts-status.off {
+  color: var(--muted);
+  background: transparent;
+  border-color: var(--btn-border);
+}
+.tts-status.off:hover {
+  background: var(--btn-h);
+}
+.tts-status.speaking .tts-status-ic {
   animation: tts-pulse 1.1s ease-in-out infinite;
 }
 .tts-status-lbl {

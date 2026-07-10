@@ -2,8 +2,10 @@
 //
 // ストリーミング中の delta を受け取り、句点で「確定した文」だけを切り出して CP の
 // /api/tts/synthesize（VOICEVOX/ずんだもん）へ逐次投げる。合成は in-flight を絞り
-// （backpressure）、再生は到着順ではなく文の連番順に固定する（AudioContext のチェーン）。
-// stop() で in-flight fetch を abort・再生停止・キュー破棄。
+// （backpressure）、再生は到着順ではなく文の連番順に固定。準備できたバッファは
+// AudioContext の時計で「前の終了時刻 + SENTENCE_GAP」に先行予約し、文間の隙間を
+// 設計値に固定する（onended 駆動の start() ではイベントループ分のジッタが毎回入る）。
+// stop() で in-flight fetch を abort・再生（予約済み含む）停止・キュー破棄。
 //
 // Markdown/コードブロック/URL は読み上げ用にプレーン化して除く（plainify）。
 
@@ -16,11 +18,30 @@ export interface TtsOptions {
   provider: string; // "auto" | "voicevox" | "polly"
   voice: string; // VOICEVOX speaker 番号
   speed: number; // speedScale
-  enkana?: boolean; // 英語をカタカナ英語に前処理して読ませる（CP の enkana）
+  enkana?: boolean; // 英語をカタカナ英語に前処理して読ませる（CP の enkana。voicevox 時のみ効く）
+  pollyVoice?: string; // Polly の VoiceId（auto のフォールバック先でも使う）
+  lang?: string; // 言語ヒント（設定 outputLanguage を再利用）: "auto" | "ja" | "en"
+}
+
+// settings から TtsOptions を組む共通処理（announce / speakText / startNarration / ChatView）。
+export function ttsOptsFromSettings(s = getSettings()): TtsOptions {
+  return {
+    provider: s.ttsProvider,
+    voice: s.ttsVoiceVoicevox,
+    speed: s.ttsSpeed,
+    enkana: s.ttsEnglishKana,
+    pollyVoice: s.ttsVoicePolly,
+    lang: s.outputLanguage,
+  };
 }
 
 // 同時に合成を投げる上限。長文で数十並列にしてエンジン/CP を溢れさせない。
 const MAX_INFLIGHT = 2;
+// チャンク間に挟む「間」（秒）。素材側の前後無音は CP が短縮している（audio_query の
+// pre/postPhonemeLength 上書き）ため、実際の間隔はほぼこの値＋残り無音（~0.07s）になる。
+// 句点・改行で確定した文の後は一拍置き、読点などでの文中早出しの後は詰める。
+const SENTENCE_GAP = 0.3;
+const CLAUSE_GAP = 0.08;
 // これ未満の断片は次の文とまとめてから読む（細切れ再生を避ける）。改行/文末では強制フラッシュ。
 const MIN_CHUNK = 6;
 
@@ -54,6 +75,8 @@ async function synthToBuffer(
         voice: opts.voice,
         speed: opts.speed,
         enkana: opts.enkana ?? false,
+        pollyVoice: opts.pollyVoice ?? "",
+        lang: opts.lang ?? "",
       }),
       signal,
     });
@@ -94,9 +117,10 @@ export function startTts(opts: TtsOptions, source = "", onEnd?: (reason: "done" 
   let inflight = 0;
   const jobs: { seq: number; text: string }[] = [];
   const buffers = new Map<number, AudioBuffer | null>(); // seq → 復号済み（null=失敗/スキップ）
+  const gaps = new Map<number, number>(); // seq → そのチャンクの後に挟む間（秒）
   let playCursor = 0; // 次に鳴らす seq
-  let playing = false;
-  let cur: AudioBufferSourceNode | null = null;
+  const srcs = new Set<AudioBufferSourceNode>(); // 再生中＋先行スケジュール済みのノード
+  let nextStartAt = 0; // 次のバッファを開始する AudioContext 時刻
   let stopped = false;
   let startedAudio = false; // 最初の文を submit したら true（＝読み上げ開始）
   let flushed = false; // ストリーム完了（これ以上文は来ない）
@@ -114,7 +138,7 @@ export function startTts(opts: TtsOptions, source = "", onEnd?: (reason: "done" 
   // 自然終了（done）を通知。
   const notify = () => {
     if (stopped) return;
-    const active = startedAudio && (playing || jobs.length > 0 || inflight > 0 || !flushed);
+    const active = startedAudio && (srcs.size > 0 || jobs.length > 0 || inflight > 0 || !flushed);
     useTtsStore.getState().setSpeaking(active);
     if (flushed && !active) finish("done");
   };
@@ -130,11 +154,11 @@ export function startTts(opts: TtsOptions, source = "", onEnd?: (reason: "done" 
       enqueuePiece(piece, /*hard*/ /\n/.test(m[0]) || /[。！？!?]/.test(m[0]));
     }
     // 最初の発話だけ、句点が来る前に読点/長さで早出しして発話開始を早める。
-    // startedAudio 後は何もしない（以降は句点粒度）。
+    // startedAudio 後は何もしない（以降は句点粒度）。文中の切れ目なので後の間は詰める。
     if (!force && !startedAudio) {
       const cut = firstChunkCut(buf);
       if (cut > 0) {
-        enqueuePiece(buf.slice(0, cut), /*hard*/ true);
+        enqueuePiece(buf.slice(0, cut), /*hard*/ true, /*beat*/ false);
         buf = buf.slice(cut);
       }
     }
@@ -148,7 +172,7 @@ export function startTts(opts: TtsOptions, source = "", onEnd?: (reason: "done" 
     }
   };
 
-  const enqueuePiece = (piece: string, hard: boolean) => {
+  const enqueuePiece = (piece: string, hard: boolean, beat = true) => {
     const spoken = plainifyStreaming(piece, {
       get: () => inFence,
       set: (v) => (inFence = v),
@@ -160,15 +184,16 @@ export function startTts(opts: TtsOptions, source = "", onEnd?: (reason: "done" 
       return;
     }
     pending = "";
-    submit(combined);
+    submit(combined, beat);
   };
 
-  const submit = (text: string) => {
+  const submit = (text: string, beat = true) => {
     let t = text.trim();
     if (!t) return;
     // ユーザー辞書を適用（enkana は CP 側でこの後。katakana はそのまま通るので競合しない）。
     if (userDict.length) t = applyUserDict(t, userDict).trim();
     if (!t) return;
+    gaps.set(seq, beat ? SENTENCE_GAP : CLAUSE_GAP);
     jobs.push({ seq: seq++, text: t });
     startedAudio = true;
     pump();
@@ -204,28 +229,31 @@ export function startTts(opts: TtsOptions, source = "", onEnd?: (reason: "done" 
   };
 
   // 連番順に再生。次の seq がまだ来ていなければ待つ（合成が前後しても順序は保つ）。
+  // onended を待ってから start() すると毎回イベントループ分の隙間が入るため、準備できた
+  // バッファは「前の終了時刻 + SENTENCE_GAP」に AudioContext の時計で先行予約する。
+  // 再生が追いついていた（予約時刻が過去）場合は即時開始。
   const tryPlay = () => {
-    if (stopped || playing || !ctx) return;
-    if (!buffers.has(playCursor)) return; // まだ合成中
-    const ab = buffers.get(playCursor)!;
-    buffers.delete(playCursor);
-    playCursor++;
-    if (!ab) {
-      tryPlay(); // 失敗文はスキップして次へ
-      return;
+    if (stopped || !ctx) return;
+    while (buffers.has(playCursor)) {
+      const sq = playCursor;
+      const ab = buffers.get(sq)!;
+      buffers.delete(sq);
+      const gap = gaps.get(sq) ?? SENTENCE_GAP;
+      gaps.delete(sq);
+      playCursor++;
+      if (!ab) continue; // 失敗文はスキップして次へ
+      const src = ctx.createBufferSource();
+      src.buffer = ab;
+      src.connect(ctx.destination);
+      src.onended = () => {
+        srcs.delete(src);
+        notify();
+      };
+      srcs.add(src);
+      const at = Math.max(ctx.currentTime, nextStartAt);
+      src.start(at);
+      nextStartAt = at + ab.duration + gap;
     }
-    playing = true;
-    const src = ctx.createBufferSource();
-    src.buffer = ab;
-    src.connect(ctx.destination);
-    src.onended = () => {
-      playing = false;
-      cur = null;
-      tryPlay();
-      notify();
-    };
-    cur = src;
-    src.start();
   };
 
   const controller: TtsController = {
@@ -246,13 +274,12 @@ export function startTts(opts: TtsOptions, source = "", onEnd?: (reason: "done" 
       jobs.length = 0;
       acs.forEach((a) => a.abort());
       acs.clear();
-      if (cur) {
+      srcs.forEach((s) => {
         try {
-          cur.stop();
+          s.stop(); // 再生中も予約済み（未開始）もまとめて破棄
         } catch {}
-        cur = null;
-      }
-      playing = false;
+      });
+      srcs.clear();
       // 自分がまだ active なら speaking を落とす（別セッションに置き換わっている場合は触らない）。
       const st = useTtsStore.getState();
       if (st.active === controller) {
@@ -286,9 +313,8 @@ function pumpAnnounce(): void {
   const next = announceQueue.shift();
   if (!next) return;
   announcing = true;
-  const s = getSettings();
   const c = startTts(
-    { provider: s.ttsProvider, voice: s.ttsVoiceVoicevox, speed: s.ttsSpeed, enkana: s.ttsEnglishKana },
+    ttsOptsFromSettings(),
     next.source,
     (reason) => {
       announcing = false;
@@ -310,8 +336,7 @@ useTtsStore.subscribe((st, prev) => {
 export function speakText(text: string, source = ""): void {
   const t = text.trim();
   if (!t) return;
-  const s = getSettings();
-  const c = startTts({ provider: s.ttsProvider, voice: s.ttsVoiceVoicevox, speed: s.ttsSpeed, enkana: s.ttsEnglishKana }, source);
+  const c = startTts(ttsOptsFromSettings(), source);
   c.push(t);
   c.flush();
 }
@@ -333,12 +358,7 @@ export function startNarration(units: string[], source: string, onUnit: (i: numb
   useTtsStore.getState().active?.stop(); // グローバル 1 本（既存の再生を止める）
   const ctx = audioCtx();
   const s = getSettings();
-  const opts: TtsOptions = {
-    provider: s.ttsProvider,
-    voice: s.ttsVoiceVoicevox,
-    speed: s.ttsSpeed,
-    enkana: s.ttsEnglishKana,
-  };
+  const opts = ttsOptsFromSettings(s);
   const userDict = parseUserDict(s.ttsUserDict);
 
   // 各 unit を読み上げ用にクリーン化（Markdown 記法/URL 除去 + ユーザー辞書）。空になった
