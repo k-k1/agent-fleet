@@ -37,9 +37,11 @@ export function ttsOptsFromSettings(s = getSettings()): TtsOptions {
 
 // 同時に合成を投げる上限。長文で数十並列にしてエンジン/CP を溢れさせない。
 const MAX_INFLIGHT = 2;
-// 文と文の間に挟む「間」（秒）。素材側の前後無音は CP が短縮している（audio_query の
-// pre/postPhonemeLength 上書き）ため、文間の実際の間隔はほぼこの値＋残り無音（~0.07s）になる。
-const SENTENCE_GAP = 0.08;
+// チャンク間に挟む「間」（秒）。素材側の前後無音は CP が短縮している（audio_query の
+// pre/postPhonemeLength 上書き）ため、実際の間隔はほぼこの値＋残り無音（~0.07s）になる。
+// 句点・改行で確定した文の後は一拍置き、読点などでの文中早出しの後は詰める。
+const SENTENCE_GAP = 0.3;
+const CLAUSE_GAP = 0.08;
 // これ未満の断片は次の文とまとめてから読む（細切れ再生を避ける）。改行/文末では強制フラッシュ。
 const MIN_CHUNK = 6;
 
@@ -115,6 +117,7 @@ export function startTts(opts: TtsOptions, source = "", onEnd?: (reason: "done" 
   let inflight = 0;
   const jobs: { seq: number; text: string }[] = [];
   const buffers = new Map<number, AudioBuffer | null>(); // seq → 復号済み（null=失敗/スキップ）
+  const gaps = new Map<number, number>(); // seq → そのチャンクの後に挟む間（秒）
   let playCursor = 0; // 次に鳴らす seq
   const srcs = new Set<AudioBufferSourceNode>(); // 再生中＋先行スケジュール済みのノード
   let nextStartAt = 0; // 次のバッファを開始する AudioContext 時刻
@@ -151,11 +154,11 @@ export function startTts(opts: TtsOptions, source = "", onEnd?: (reason: "done" 
       enqueuePiece(piece, /*hard*/ /\n/.test(m[0]) || /[。！？!?]/.test(m[0]));
     }
     // 最初の発話だけ、句点が来る前に読点/長さで早出しして発話開始を早める。
-    // startedAudio 後は何もしない（以降は句点粒度）。
+    // startedAudio 後は何もしない（以降は句点粒度）。文中の切れ目なので後の間は詰める。
     if (!force && !startedAudio) {
       const cut = firstChunkCut(buf);
       if (cut > 0) {
-        enqueuePiece(buf.slice(0, cut), /*hard*/ true);
+        enqueuePiece(buf.slice(0, cut), /*hard*/ true, /*beat*/ false);
         buf = buf.slice(cut);
       }
     }
@@ -169,7 +172,7 @@ export function startTts(opts: TtsOptions, source = "", onEnd?: (reason: "done" 
     }
   };
 
-  const enqueuePiece = (piece: string, hard: boolean) => {
+  const enqueuePiece = (piece: string, hard: boolean, beat = true) => {
     const spoken = plainifyStreaming(piece, {
       get: () => inFence,
       set: (v) => (inFence = v),
@@ -181,15 +184,16 @@ export function startTts(opts: TtsOptions, source = "", onEnd?: (reason: "done" 
       return;
     }
     pending = "";
-    submit(combined);
+    submit(combined, beat);
   };
 
-  const submit = (text: string) => {
+  const submit = (text: string, beat = true) => {
     let t = text.trim();
     if (!t) return;
     // ユーザー辞書を適用（enkana は CP 側でこの後。katakana はそのまま通るので競合しない）。
     if (userDict.length) t = applyUserDict(t, userDict).trim();
     if (!t) return;
+    gaps.set(seq, beat ? SENTENCE_GAP : CLAUSE_GAP);
     jobs.push({ seq: seq++, text: t });
     startedAudio = true;
     pump();
@@ -231,8 +235,11 @@ export function startTts(opts: TtsOptions, source = "", onEnd?: (reason: "done" 
   const tryPlay = () => {
     if (stopped || !ctx) return;
     while (buffers.has(playCursor)) {
-      const ab = buffers.get(playCursor)!;
-      buffers.delete(playCursor);
+      const sq = playCursor;
+      const ab = buffers.get(sq)!;
+      buffers.delete(sq);
+      const gap = gaps.get(sq) ?? SENTENCE_GAP;
+      gaps.delete(sq);
       playCursor++;
       if (!ab) continue; // 失敗文はスキップして次へ
       const src = ctx.createBufferSource();
@@ -245,7 +252,7 @@ export function startTts(opts: TtsOptions, source = "", onEnd?: (reason: "done" 
       srcs.add(src);
       const at = Math.max(ctx.currentTime, nextStartAt);
       src.start(at);
-      nextStartAt = at + ab.duration + SENTENCE_GAP;
+      nextStartAt = at + ab.duration + gap;
     }
   };
 

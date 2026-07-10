@@ -95,7 +95,9 @@ var ttsProviders = map[string]ttsProvider{ "voicevox": ..., "polly": ... }
   ①VOICEVOX が WAV に焼き込む前後無音（pre/postPhonemeLength 既定 0.1s ずつ ≒ 毎境界 0.2s）と
   ②onended 駆動 start() のイベントループジッタ。対策として CP が audio_query の
   `prePhonemeLength=0.02` / `postPhonemeLength=0.05` を上書きし、フロントは準備済みバッファを
-  `AudioContext` の時計で「前の終了時刻 + `SENTENCE_GAP`(0.08s)」に先行予約する（チャット読み上げ
+  `AudioContext` の時計で「前の終了時刻 + 間」に先行予約する。間は境界の種類で使い分け:
+  句点・改行で確定した文の後は一拍 `SENTENCE_GAP`(0.3s)、読点などでの文中早出しの後は
+  `CLAUSE_GAP`(0.08s)（チャット読み上げ
   経路のみ。朗読モードはカラオケハイライトが実再生開始に同期するため onended 駆動のまま）。
   なお LLM の生成が再生より遅い場合の待ち（テキスト律速）は原理的に残る。
 - 読み上げ用整形: Markdown 記法・コードブロック（`` ``` `` は読み飛ばし/「コード省略」）・URL 短縮。
