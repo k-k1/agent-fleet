@@ -2253,13 +2253,15 @@ function UserFileBlock({ files, caption, onOpen }: { files?: string[]; caption?:
         {list.length > 1 && <span className="mt-files-count muted">{list.length}</span>}
       </div>
       {caption && <div className="mt-files-caption">{caption}</div>}
-      <div className="mt-files-list">
+      <div className={"mt-files-list" + (list.length > 1 ? " grid" : "")}>
         {list.map((p, i) => (
           <button key={p + i} type="button" className="mt-file-item" title={"別ペインで開く: " + p} onClick={() => onOpen(p)}>
-            <FileIcon name={baseName(p)} />
-            <span className="mt-file-name">{baseName(p)}</span>
+            <span className="mt-file-top">
+              <FileIcon name={baseName(p)} />
+              <span className="mt-file-name">{baseName(p)}</span>
+              <Icon name="split-horizontal" className="mt-file-open" />
+            </span>
             <span className="mt-file-path muted">{p}</span>
-            <Icon name="split-horizontal" className="mt-file-open" />
           </button>
         ))}
       </div>
