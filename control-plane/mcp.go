@@ -258,6 +258,38 @@ func memberTools() []mcpTool {
 				return agentText(ctx, res.rt, "POST", "/sessions/"+url.PathEscape(argStr(args, "name"))+"/input", body)
 			},
 		},
+		{
+			name: "list_repos", minScope: scopeRead,
+			desc:   "List the git working copies in your Workspace (~/repos). Use before create_session to pick the `dir` (each repo has a `path`) — including repos with no running session.",
+			schema: map[string]any{"type": "object", "properties": map[string]any{}},
+			run: func(ctx context.Context, a mcpAPI, res *resolved, _ map[string]any) (string, error) {
+				return agentText(ctx, res.rt, "GET", "/repos", nil)
+			},
+		},
+		{
+			name: "create_session", minScope: scopeWrite,
+			desc: "Start a NEW coding session in your Workspace. `dir` selects the repo to launch in (a `dir` from list_my_sessions or a `path` from list_repos; omitted = home). If `initial_prompt` is set it is delivered as the session's first task once its CLI boots (no separate send_to_session needed) — use it to hand off context from another session (read it first with get_session_output) or to kick off a task decided in chat. Returns the new session; drive it with get_session_status / get_session_output by the returned `name`.",
+			schema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"dir":            map[string]any{"type": "string", "description": "working directory (repo working copy); omitted = home"},
+					"title":          map[string]any{"type": "string", "description": "display name (optional)"},
+					"kind":           map[string]any{"type": "string", "description": "agent kind: claude (default) | codex | opencode | shell"},
+					"model":          map[string]any{"type": "string", "description": "model override (optional)"},
+					"initial_prompt": map[string]any{"type": "string", "description": "first task/hand-off text, auto-sent after boot (optional)"},
+				},
+			},
+			run: func(ctx context.Context, a mcpAPI, res *resolved, args map[string]any) (string, error) {
+				body, _ := json.Marshal(map[string]string{
+					"dir":            argStr(args, "dir"),
+					"title":          argStr(args, "title"),
+					"kind":           argStr(args, "kind"),
+					"model":          argStr(args, "model"),
+					"initial_prompt": argStr(args, "initial_prompt"),
+				})
+				return agentText(ctx, res.rt, "POST", "/sessions", body)
+			},
+		},
 	}
 }
 
