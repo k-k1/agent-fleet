@@ -14,6 +14,8 @@ import {
   ensureAttached,
   setTermBackground,
   clearTerm,
+  hideTerm,
+  revealTerm,
 } from "../../terminal/service.ts";
 import { termBackground } from "../../lib/termcolor.ts";
 import { rel } from "../../core/api/client.ts";
@@ -117,21 +119,35 @@ export function TerminalView({
     }
   }, [active, paneId, attached, running]);
 
-  // Reveal fit: when a hidden container becomes visible (toggled back from the
-  // chat mirror / a split un-hidden) its size was 0×0 — defer past layout (rAF)
-  // so the grid measures the real size and the TUI redraws. Re-verify the socket
-  // on the SAME retry ladder as the initial attach: the attach effect above does
-  // NOT re-run on a mirror toggle (its deps session/attached/running don't change),
-  // so a reveal whose single attach raced — the WS never opened, dropped, or opened
-  // but never drew — would otherwise stay a black pane until a full reload. This is
-  // the mirror-toggle counterpart of the 起動直後の黒ターミナル recovery.
+  // Hide/reveal lifecycle for the mirror toggle. A hidden (display:none) WebGL
+  // canvas is exactly what browsers reclaim under GPU pressure, and a reclaim
+  // that never fires webglcontextlost — or whose restore never comes while the
+  // canvas isn't visible — leaves a renderer that looks alive but can never
+  // paint again: the black-until-reload pane. So a reveal must never bet on the
+  // canvas still holding pixels. Hiding drops the pane's WebGL context
+  // (hideTerm); revealing rebuilds it and repaints every row from the buffer
+  // (revealTerm), deferred past layout (rAF) so the grid measures the real size.
+  //
+  // The socket side is guarded separately: re-verify on the SAME retry ladder as
+  // the initial attach — the attach effect above does NOT re-run on a mirror
+  // toggle (its deps session/attached/running don't change), so a reveal whose
+  // attach raced (the WS never opened, dropped, or opened but never drew) would
+  // otherwise sit on a dead socket. revealTerm runs even detached/stopped: a
+  // read-only scrollback must repaint too.
   const shown = !(canMirror && mirror);
   useEffect(() => {
-    if (!shown || !session || !attached || !running) return;
-    const raf = requestAnimationFrame(() => ensureAttached(paneId, session));
-    const timers = [1500, 4000, 9000].map((ms) =>
-      setTimeout(() => ensureAttached(paneId, session), ms),
-    );
+    if (!shown) {
+      hideTerm(paneId);
+      return;
+    }
+    const connect = !!session && attached && running;
+    const raf = requestAnimationFrame(() => {
+      if (connect) ensureAttached(paneId, session!);
+      revealTerm(paneId);
+    });
+    const timers = connect
+      ? [1500, 4000, 9000].map((ms) => setTimeout(() => ensureAttached(paneId, session!), ms))
+      : [];
     return () => {
       cancelAnimationFrame(raf);
       timers.forEach(clearTimeout);
