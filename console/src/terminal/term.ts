@@ -338,12 +338,17 @@ export function ensureTerm(paneId: string, el: HTMLElement) {
     });
   }
   // Keep terminal-relevant shortcuts inside the PTY rather than the browser while
-  // the terminal is focused. preventDefault stops the browser default for the
-  // combos browsers *allow* us to (Ctrl+S/P/…). The hard-reserved ones (Ctrl+W/T/N
-  // = close/new tab) only yield to the page while it holds a Keyboard Lock in
-  // fullscreen — see the ⛶ toggle in TerminalView. We still return true so xterm
-  // forwards the key to the PTY (e.g. Ctrl+W = delete-word in the shell).
-  const GRAB = new Set(["KeyW", "KeyT", "KeyN", "KeyS", "KeyP"]);
+  // the terminal is focused. We preventDefault the browser action and return true so
+  // xterm still forwards the key to the PTY. Chrome/Firefox honour preventDefault for
+  // most Ctrl-combos (Ctrl+R reload, Ctrl+L address bar, Ctrl+D bookmark, Ctrl+F find,
+  // Ctrl+U view-source, Ctrl+S save, Ctrl+P print, …) and for F1–F10, so those pass
+  // through to the shell (Ctrl+R reverse-search, Ctrl+U kill-line, F-keys in TUIs, …).
+  // The hard-reserved ones (Ctrl+W/T/N = close/new tab, Ctrl+Tab, Ctrl+digit, F11/F12)
+  // ignore preventDefault outside a fullscreen Keyboard Lock, so they only reach the
+  // shell in fullscreen — see the ⛶ toggle in TerminalView / the kb.lock KEYS below.
+  // Carve-outs (NO_GRAB): plain Ctrl+C/Ctrl+V stay SIGINT / ^V (and the mac ⌘ clipboard
+  // cases are handled above), and Ctrl +/-/0 keep browser zoom (no PTY meaning).
+  const NO_GRAB = new Set(["KeyC", "KeyV", "Minus", "Equal", "Digit0", "NumpadAdd", "NumpadSubtract", "Numpad0"]);
   term.attachCustomKeyEventHandler((e) => {
     if (e.type !== "keydown") return true;
     const mod = e.ctrlKey || e.metaKey;
@@ -381,7 +386,9 @@ export function ensureTerm(paneId: string, el: HTMLElement) {
       e.preventDefault();
       return false;
     }
-    if (mod && !e.altKey && GRAB.has(e.code)) e.preventDefault();
+    // Pass-through: claim the key for the PTY (see NO_GRAB / hard-reserved notes above).
+    if (/^F([1-9]|10)$/.test(e.code)) e.preventDefault();
+    else if (e.ctrlKey && !e.altKey && !NO_GRAB.has(e.code)) e.preventDefault();
     return true;
   });
   // Engage the Keyboard Lock API while the terminal is focused so that, in
