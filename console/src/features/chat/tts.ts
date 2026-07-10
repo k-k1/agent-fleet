@@ -10,7 +10,7 @@
 import { rel } from "../../core/api/client.ts";
 import { getSettings } from "../../lib/settings.ts";
 import { useTtsStore } from "../../core/store/tts.ts";
-import { plainifyStreaming } from "./ttsText.ts";
+import { plainifyStreaming, firstChunkCut, parseUserDict, applyUserDict } from "./ttsText.ts";
 
 export interface TtsOptions {
   provider: string; // "auto" | "voicevox" | "polly"
@@ -53,6 +53,9 @@ function audioCtx(): AudioContext | null {
 // ("stopped")のどちらでも 1 回だけ呼ばれる（アナウンスキューの直列制御に使う）。
 export function startTts(opts: TtsOptions, source = "", onEnd?: (reason: "done" | "stopped") => void): TtsController {
   useTtsStore.getState().active?.stop(); // 直前の再生を停止（グローバル 1 本）
+  // ユーザー読み仮名辞書はターン開始時に一度だけ読む（opts の provider/voice とは独立した
+  // テキスト処理なので、全呼び出し元で opts に載せ替えず getSettings から取る）。
+  const userDict = parseUserDict(getSettings().ttsUserDict);
   const ctx = audioCtx();
   let buf = ""; // 未確定バッファ（文の途中）
   let pending = ""; // MIN_CHUNK 未満で持ち越し中の短い断片
@@ -96,6 +99,15 @@ export function startTts(opts: TtsOptions, source = "", onEnd?: (reason: "done" 
       buf = buf.slice(end);
       enqueuePiece(piece, /*hard*/ /\n/.test(m[0]) || /[。！？!?]/.test(m[0]));
     }
+    // 最初の発話だけ、句点が来る前に読点/長さで早出しして発話開始を早める。
+    // startedAudio 後は何もしない（以降は句点粒度）。
+    if (!force && !startedAudio) {
+      const cut = firstChunkCut(buf);
+      if (cut > 0) {
+        enqueuePiece(buf.slice(0, cut), /*hard*/ true);
+        buf = buf.slice(cut);
+      }
+    }
     if (force) {
       // 末尾の未確定分 + 持ち越しをすべて読み上げる。fence 状態は引き回す。
       const spokenTail = plainifyStreaming(buf, { get: () => inFence, set: (v) => (inFence = v) });
@@ -122,7 +134,10 @@ export function startTts(opts: TtsOptions, source = "", onEnd?: (reason: "done" 
   };
 
   const submit = (text: string) => {
-    const t = text.trim();
+    let t = text.trim();
+    if (!t) return;
+    // ユーザー辞書を適用（enkana は CP 側でこの後。katakana はそのまま通るので競合しない）。
+    if (userDict.length) t = applyUserDict(t, userDict).trim();
     if (!t) return;
     jobs.push({ seq: seq++, text: t });
     startedAudio = true;
