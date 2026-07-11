@@ -267,6 +267,17 @@
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 12px;
   line-height: 1.5;
+  /* 管理モーダル（admin-surface）は settings-modal のフォーム配色が及ばないため、
+     テーマ配色を自前で持つ（設定モーダル側では同値の再指定になるだけ）。 */
+  background: var(--btn);
+  color: var(--fg);
+  border: 1px solid var(--btn-border);
+  border-radius: 4px;
+  padding: 4px 6px;
+}
+.ds-userdict:focus {
+  outline: 1px solid var(--accent);
+  border-color: var(--accent);
 }
 /* 読み上げ: キャラクター一覧（TtsTab の CharList）。エンジン実カタログ駆動で行数が
    多くなるのでスクロール枠に収める。行 = チェック＋名前｜スタイル｜速度｜試聴。 */

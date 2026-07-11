@@ -135,6 +135,36 @@ export function abbrevCode(token: string, dict: [string, string][] = []): string
   return `${t.slice(0, 2)} ${filler}`;
 }
 
+// --- 組み込みの読み補正 ------------------------------------------------------------
+// VOICEVOX が読み間違えやすい開発文脈の一般語を補正する（例: 空レポ→そられぽ）。
+// ユーザー/テナント辞書の**後**に適用するので、同じ表記をユーザーが定義すればそちらが勝つ
+// （先に置換されて表記が消えるため）。「空＋カタカナ語」（空レポ・空リスト等）は規則で
+// 「から」に、漢字が続く複合語は個別エントリで持つ。航空券・空港などの熟語や
+// 「空が青い」（ひらがな続き）は触らない。
+const KARA_KATAKANA = /空(?=[ァ-ヶー])/g;
+const BUILTIN_READINGS: [string, string][] = [
+  ["空文字", "から文字"], // 空文字列も前方一致で拾う
+  ["空配列", "から配列"],
+  ["空要素", "から要素"],
+  ["空判定", "から判定"],
+  ["空行", "からぎょう"], // 行 単体は読みが揺れる（こう/ぎょう）ので読みまで固定
+];
+
+export function applyBuiltinReadings(text: string): string {
+  return applyUserDict(text.replace(KARA_KATAKANA, "から"), BUILTIN_READINGS);
+}
+
+// applyReadings は読み上げ直前の「読みの整形」ひとまとめ: ユーザー/テナント辞書（優先）→
+// 組み込みの読み補正 → 助詞の小休止。tts.ts の 3 経路（ストリーミング/朗読/告知の差し挟み）
+// が共通で通る（enkana は CP 側でこの後段）。
+export function applyReadings(text: string, dict: [string, string][], particlePause: boolean): string {
+  let t = text;
+  if (dict.length) t = applyUserDict(t, dict);
+  t = applyBuiltinReadings(t);
+  if (particlePause) t = pauseParticles(t);
+  return t.trim();
+}
+
 // --- 助詞のあとの小休止 -----------------------------------------------------------
 // 「を・は・で・に・と」の直後に漢字が続くとき、読点を挿入して合成に「息継ぎ」相当の
 // 小さな間を作る（例: 神は細部に宿る → 神は、細部に、宿る）。文中は 1 回の合成の内側

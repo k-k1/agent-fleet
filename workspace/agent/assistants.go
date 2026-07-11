@@ -55,6 +55,10 @@ type assistant struct {
 	Persona     string   `json:"persona,omitempty"` // system prompt (--append-system-prompt)
 	Tools       string   `json:"tools"`             // "none" | "af_read" | "af_write"
 	Knowledge   []string `json:"knowledge,omitempty"`
+	// Voice is the Console-side TTS voice override ("vv:<speaker>" / "polly:<VoiceId>").
+	// "" = auto (the Console assigns one from the user's character pool). The agent only
+	// stores and echoes it — synthesis and resolution are entirely client-side (docs/24).
+	Voice string `json:"voice,omitempty"`
 	CreatedAt   int64    `json:"created_at,omitempty"`
 	UpdatedAt   int64    `json:"updated_at,omitempty"`
 }
@@ -277,6 +281,7 @@ type assistantInput struct {
 	Persona     string   `json:"persona"`
 	Tools       string   `json:"tools"`
 	Knowledge   []string `json:"knowledge"`
+	Voice       string   `json:"voice"`
 }
 
 // applyInput validates the input and folds it onto a (new or existing) assistant.
@@ -303,6 +308,7 @@ func applyInput(a *assistant, in assistantInput) error {
 	a.Persona = strings.TrimSpace(in.Persona)
 	a.Tools = tools
 	a.Knowledge = in.Knowledge
+	a.Voice = strings.TrimSpace(in.Voice)
 	return nil
 }
 
