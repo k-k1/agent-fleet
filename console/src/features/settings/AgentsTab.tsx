@@ -12,6 +12,7 @@ import {
   OUTPUT_LANGUAGES,
   VOICEVOX_ZUNDAMON,
   TTS_SPEEDS,
+  TTS_CACHE_SIZES,
   TTS_PROVIDERS,
   TTS_POLLY_VOICES,
 } from "../../lib/settings.ts";
@@ -139,6 +140,13 @@ export function AgentsTab() {
           <Row label="読み上げ速度">
             <Choice value={s.ttsSpeed} options={TTS_SPEEDS} onChange={(v) => setSetting("ttsSpeed", v)} />
           </Row>
+          <Row label="音声キャッシュ">
+            <Choice value={s.ttsCacheSec} options={TTS_CACHE_SIZES} onChange={(v) => setSetting("ttsCacheSec", v)} />
+          </Row>
+          <p className="muted ds-note">
+            一度読み上げた文言の音声をメモリに保持し、同じ文言の再読み上げを待ちなしで再生します。
+            上限は合計の再生時間で、超えた分は古いものから消えます（ページを再読み込みしても消えます）。
+          </p>
           <Row label="英語をカタカナ読み">
             <OnOff value={s.ttsEnglishKana} onChange={(v) => setSetting("ttsEnglishKana", v)} />
           </Row>
