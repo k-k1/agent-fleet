@@ -1,6 +1,6 @@
 // SettingsDialog — ported from the old settings/SettingsDialog.tsx (docs/22 P7a).
-// Holds the per-user settings (表示 / ワークスペース / エージェント / Git / AWS SSM /
-// MCP). Super_admin (tenant/member/quota) management lives in a SEPARATE modal —
+// Holds the per-user settings (表示 / ワークスペース / エージェント / 読み上げ / Git /
+// AWS SSM / MCP). Super_admin (tenant/member/quota) management lives in a SEPARATE modal —
 // see AdminDialog (P7c), opened from its own top-bar button — so admin actions are
 // clearly distinct from personal settings.
 //
@@ -12,6 +12,7 @@ import { Modal } from "../../ui/Modal.tsx";
 import { DisplayTab } from "./DisplayTab.tsx";
 import { EnvTab } from "./EnvTab.tsx";
 import { AgentsTab } from "./AgentsTab.tsx";
+import { TtsTab } from "./TtsTab.tsx";
 import { GitTab } from "./GitTab.tsx";
 import { SsmTab } from "./SsmTab.tsx";
 import { TokensTab } from "./TokensTab.tsx";
@@ -25,6 +26,7 @@ export function SettingsDialog() {
     ["display", "表示"],
     ["env", "ワークスペース"],
     ["agents", "エージェント"],
+    ["tts", "読み上げ"],
     ["git", "Git"],
     ["ssm", "AWS SSM"],
     ["tokens", "MCP"],
@@ -76,6 +78,7 @@ export function SettingsDialog() {
         </div>
         <div className="settings-content">
           {section === "agents" && <AgentsTab />}
+          {section === "tts" && <TtsTab />}
           {section === "git" && <GitTab />}
           {section === "env" && <EnvTab />}
           {section === "ssm" && <SsmTab />}
