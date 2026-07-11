@@ -130,10 +130,15 @@ func (a workspaceAPI) stop(w http.ResponseWriter, r *http.Request, res *resolved
 // sessionWire is the session shape exchanged with the Agent and the Console. The
 // CP mirrors it into the DB so it can be re-served while the container is down.
 type sessionWire struct {
-	Name      string `json:"name"`
-	Kind      string `json:"kind"`
-	Dir       string `json:"dir"`
-	Repo      string `json:"repo"`
+	Name string `json:"name"`
+	Kind string `json:"kind"`
+	Dir  string `json:"dir"`
+	Repo string `json:"repo"`
+	// Title: the user-supplied display title. Console の displayName は title を最優先
+	// で見るが、この struct に無かった頃は中継で silently drop されていた（claude 系は
+	// label にも title が埋まるため露見せず、label を使わない shell/ssm だけ表示名が
+	// フォールバックに落ちるバグ）。DB ミラー（停止中の再配信）には列が無いので載らない。
+	Title     string `json:"title,omitempty"`
 	Display   string `json:"display"` // human-readable name from the Agent (title → label → repo@time)
 	Label     string `json:"label"`
 	Started   string `json:"started"`
