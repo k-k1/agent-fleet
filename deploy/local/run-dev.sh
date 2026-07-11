@@ -39,6 +39,12 @@ if [ -f "$OAUTH_ENV" ]; then
   set -a; . "$OAUTH_ENV"; set +a
 fi
 
+# rtk を最新へ自動更新（rtk-ai/rtk のリリース取得。既に最新なら no-op）。ネットワーク /
+# gh 認証が要るので失敗はソフト（オフライン時は現状の rtk のまま続行）。WS_RTK_UPDATE=0 で無効。
+if [ "${WS_RTK_UPDATE:-1}" = "1" ]; then
+  bash "$ROOT/deploy/local/update-rtk.sh" || echo "WARN: rtk 自動更新に失敗（現状の rtk のまま続行）"
+fi
+
 # Vendor a host rtk binary into the build context so the image installs it
 # (token-saving claude hook). Static binary → runs in the slim container. Other
 # deployments leave vendor/ empty. Override the source with WS_RTK_BIN.
