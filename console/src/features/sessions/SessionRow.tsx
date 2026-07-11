@@ -9,7 +9,9 @@
 // dialogs render at section level.
 import { useRef, useState } from "react";
 import { Icon } from "../../ui/Icon.tsx";
+import { useToast } from "../../ui/ToastProvider.tsx";
 import { useDismiss } from "../../lib/useDismiss.ts";
+import { copyText } from "../../lib/clipboard.ts";
 import { usePaneHover } from "../../lib/panehover.tsx";
 import { kindIcon, kindLabel, kindClass } from "../../lib/sessionkind.ts";
 import { displayName, stateInfo } from "../../lib/sessionview.ts";
@@ -43,9 +45,17 @@ export function SessionRow({ s, selected, opens, multi, running, actions }: Sess
   const openBranchRename = useSessionUI((u) => u.openBranchRename);
   const openSsmResume = useSessionUI((u) => u.openSsmResume);
   const { hover, setHover } = usePaneHover();
+  const toast = useToast();
   const menuRef = useRef<HTMLDivElement>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   useDismiss(menuRef, menuOpen, () => setMenuOpen(false));
+  // The session's name IS its slug (immutable id, e.g. "sk7f3q9") — the thing
+  // shown as ID in the row tooltip.
+  const copyId = () => {
+    void copyText(s.name).then((ok) =>
+      ok ? toast(`IDをコピーしました: ${s.name}`, { kind: "success" }) : toast("コピーに失敗しました"),
+    );
+  };
 
   const dead = !s.alive && s.resumable === false; // dir gone → can't resume
   const open = opens.length > 0;
@@ -209,6 +219,16 @@ export function SessionRow({ s, selected, opens, multi, running, actions }: Sess
                 <Icon name="link-external" /> リモートセッションを開く
               </button>
             )}
+            <button
+              type="button"
+              className="ui-menu-item"
+              onClick={() => {
+                setMenuOpen(false);
+                copyId();
+              }}
+            >
+              <Icon name="copy" /> ID（slug）をコピー
+            </button>
             <button
               type="button"
               className="ui-menu-item"
