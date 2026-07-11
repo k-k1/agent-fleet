@@ -524,6 +524,68 @@
 .mirror-compact-body {
   padding: 8px 12px;
 }
+/* Reduction summary on the head: "820k → 240k −71%". Pinned right, before the time. */
+.mirror-compact-head .mc-effect {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg);
+}
+.mirror-compact-head .mc-effect .mc-effect-pct {
+  padding: 0 6px;
+  border-radius: 999px;
+  font-weight: 600;
+  font-size: 11px;
+  background: color-mix(in srgb, #2fb872 22%, transparent);
+  color: color-mix(in srgb, #2fb872 62%, var(--fg));
+}
+/* When the effect chip is present it owns the right edge, so the time follows it. */
+.mirror-compact-head .mc-effect ~ .mc-time {
+  margin-left: 8px;
+}
+/* Before/after bars in the expanded body: two full-width tracks, the 圧縮後 fill scaled
+   to after/before so the shrink is visible at a glance. */
+.mirror-compact .mc-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-bottom: 10px;
+}
+.mirror-compact .mc-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.mirror-compact .mc-bar-lbl {
+  flex: 0 0 3.2em;
+}
+.mirror-compact .mc-bar-track {
+  flex: 1;
+  height: 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--fg) 10%, transparent);
+  overflow: hidden;
+}
+.mirror-compact .mc-bar-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+}
+.mirror-compact .mc-bar-fill.before {
+  background: color-mix(in srgb, var(--fg) 35%, transparent);
+}
+.mirror-compact .mc-bar-fill.after {
+  background: #2fb872;
+}
+.mirror-compact .mc-bar-val {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg);
+}
 /* ToDo list (reconstructed from Task tool calls): a collapsed disclosure with a
    done/total count. Completed items dim + strike; the in-progress one is emphasized. */
 .mirror-tasks {
