@@ -74,14 +74,14 @@ export interface TurnReadHandle {
 const ACTIVE = "tts-active";
 
 // readTurn は body の fromBlock 番目のブロック以降を朗読する。再生を開始した文が属する
-// ブロックへカラオケ・ハイライト＋追従スクロール。onEnd は自然終了・停止（TopBar 停止や
-// 他の再生開始を含む）のどちらでも 1 回だけ呼ばれる。読み上げる文が無ければ null を返し、
-// onEnd は呼ばれない。
+// ブロックへカラオケ・ハイライト＋追従スクロール。onEnd は自然終了（stopped=false）・停止
+// （TopBar 停止や他の再生開始を含む。stopped=true）のどちらでも 1 回だけ呼ばれる。読み上げる
+// 文が無ければ null を返し、onEnd は呼ばれない。
 export function readTurn(
   body: HTMLElement,
   source: string,
   fromBlock: number,
-  onEnd: () => void,
+  onEnd: (stopped: boolean) => void,
 ): TurnReadHandle | null {
   const blocks = collectBlocks(body);
   const texts: string[] = [];
@@ -105,10 +105,10 @@ export function readTurn(
       el.scrollIntoView({ block: "nearest", behavior: "smooth" });
     }
   };
-  const h = startNarration(texts, source, (i) => {
+  const h = startNarration(texts, source, (i, endReason) => {
     if (i == null) {
       light(null);
-      onEnd();
+      onEnd(endReason === "stopped");
     } else light(blocks[blockOf[i]]);
   });
   return { pause: h.pause, resume: h.resume, stop: h.stop };

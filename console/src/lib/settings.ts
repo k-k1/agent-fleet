@@ -156,6 +156,10 @@ export interface Settings {
   // 合成キャッシュの上限（合計再生秒数）。同一文言＋同一合成条件の音声をメモリに保持して
   // 再読み上げを即時化する（features/chat/tts.ts）。PCM で約 0.1MB/秒。0 = キャッシュなし。
   ttsCacheSec: number;
+  // ミラー（チャット）: アクティブなペインのセッションに新しい回答が届いたら自動でカラオケ
+  // 朗読する（features/mirror/turnTts.ts）。見ていないセッションの短い告知 ttsSessionNotify
+  // とは相補（こちらは見ている画面の本文を読む）。
+  ttsAutoReadMirror: boolean;
   // 朗読ビュー（docs/24）を縦書きで表示するか（既定 false=横書き）。ReaderView のトグルに追随。
   readerVertical: boolean;
 }
@@ -198,6 +202,7 @@ const DEFAULTS: Settings = {
   ttsEnglishKana: false,
   ttsUserDict: "",
   ttsCacheSec: 300,
+  ttsAutoReadMirror: false,
   readerVertical: false,
 };
 

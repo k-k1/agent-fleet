@@ -12,6 +12,7 @@ import FileIcon from "../../ui/FileIcon.tsx";
 import { baseName } from "../../lib/filemeta.ts";
 import { MarkdownView } from "../viewer/MarkdownView.tsx";
 import { readTurn, collectBlocks, blockIndexAt, type TurnReadHandle } from "./turnTts.ts";
+import { useTtsStore } from "../../core/store/tts.ts";
 import { MirrorToggle } from "./MirrorToggle.tsx";
 import { ContextBar } from "./ContextBar.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
@@ -273,16 +274,54 @@ export function MirrorView({
   const [ttsPill, setTtsPill] = useState<{ x: number; y: number; idx: number; body: HTMLElement; block: number } | null>(
     null,
   );
+  // 自動読み上げ（P2）: 基準 idx（これ以前の履歴は読まない）／読むべきグループ idx のキュー／
+  // グループごとの読み上げ済みブロック数（グループは追記で育つので、増えた分だけ読む）。
+  const ttsAutoSeenRef = useRef<number | null>(null);
+  const ttsAutoQueueRef = useRef<number[]>([]);
+  const ttsAutoDoneRef = useRef(new Map<number, number>());
   const ttsStart = (idx: number, body: HTMLElement, fromBlock = 0) => {
     ttsHandleRef.current?.stop(); // 自分の再生を先に止める（他の再生は startNarration が止める）
-    const h = readTurn(body, sessionMeta ? displayName(sessionMeta) : "セッション", fromBlock, () => {
+    const h = readTurn(body, sessionMeta ? displayName(sessionMeta) : "セッション", fromBlock, (stopped) => {
       ttsHandleRef.current = null;
       setTtsReading((cur) => (cur?.idx === idx ? null : cur));
+      // 明示的な停止（TopBar・フッター・他の再生への置き換え）は自動読み上げキューも黙らせる。
+      // 自然終了なら待っていた次の回答を続けて読む。
+      if (stopped) ttsAutoQueueRef.current.length = 0;
+      else ttsAutoPumpRef.current();
     });
     if (!h) return; // 読み上げられる本文が無い（ツールだけのターン等）
     ttsHandleRef.current = h;
     setTtsReading({ idx, paused: false });
   };
+  // キューの先頭から「まだ読んでいないブロック」を読む。何か再生中（自分・チャット読み上げ・
+  // アナウンス）なら待つ — 再開のトリガは onEnd と speaking の解放（下の subscribe）。
+  const ttsAutoPump = () => {
+    if (!settings.ttsEnabled || !settings.ttsAutoReadMirror) {
+      ttsAutoQueueRef.current.length = 0;
+      return;
+    }
+    if (ttsHandleRef.current || useTtsStore.getState().speaking) return;
+    const q = ttsAutoQueueRef.current;
+    while (q.length) {
+      const gi = q.shift()!;
+      const body = bodyRef.current?.querySelector<HTMLElement>(`[data-turn-idx="${gi}"] .mirror-turn-body`);
+      if (!body) continue; // リセット等で消えたターン
+      const done = ttsAutoDoneRef.current.get(gi) ?? 0;
+      const total = collectBlocks(body).length;
+      ttsAutoDoneRef.current.set(gi, total);
+      if (total <= done) continue; // 増分なし（ツールだけの追記等）
+      ttsStart(gi, body, done);
+      if (ttsHandleRef.current) return; // 読み始めた（読める文が無ければ次の候補へ）
+    }
+  };
+  const ttsAutoPumpRef = useRef(ttsAutoPump);
+  ttsAutoPumpRef.current = ttsAutoPump;
+  // 他の再生が終わって音声が空いたら、待たせていた自動読み上げを再開する。
+  useEffect(() => {
+    return useTtsStore.subscribe((st, prev) => {
+      if (prev.speaking && !st.speaking) ttsAutoPumpRef.current();
+    });
+  }, []);
   const ttsWiring: TurnTtsWiring = {
     reading: ttsReading,
     start: ttsStart,
@@ -378,6 +417,9 @@ export function MirrorView({
     atBottomRef.current = true; // a freshly opened session starts pinned to the bottom
     anchoredIdxRef.current = undefined; // no reply anchored yet in the new session
     didInitRef.current = false; // re-run the "land at bottom on open" settle for this session
+    ttsAutoSeenRef.current = null; // 自動読み上げの基準も取り直す（履歴は読まない）
+    ttsAutoQueueRef.current.length = 0;
+    ttsAutoDoneRef.current.clear();
   }, [session]);
 
   // Persist the draft per session, and reload it when the session changes (so the old
@@ -427,6 +469,9 @@ export function MirrorView({
             firstLineRef.current = 0; // reset re-sends from the top: nothing older to page
             setHasMore(false);
             ttsHandleRef.current?.stop(); // 読み上げ中の本文 DOM ごと入れ替わる
+            ttsAutoSeenRef.current = null; // idx が振り直されるので基準も取り直す
+            ttsAutoQueueRef.current.length = 0;
+            ttsAutoDoneRef.current.clear();
           } else if (Array.isArray(d.messages) && d.messages.length) {
             // Idempotent append: keep only turns past the newest `idx` (jsonl line) we
             // already hold. A quick re-poll (after sending) racing the in-flight poll can
@@ -1088,6 +1133,45 @@ export function MirrorView({
       pending: true,
     }));
   const groups = groupTurns(echoTurns.length ? [...turns, ...echoTurns] : turns);
+
+  // 新しい回答の自動読み上げ（P2）: ポーリングで append された新規 assistant ターンを、
+  // アクティブなペインでだけ朗読キューへ。初回ロード（tail）とリセット（idx の巻き戻り）は
+  // 基準 idx を取り直すだけで履歴は読まない。連続 assistant ターンは同じグループに折り畳まれて
+  // 育つので、キューはグループ idx 単位（重複なし）に持ち、pump が増えたブロックだけ読む。
+  // DOM は commit 後（この effect 実行時）に描画済み。
+  useEffect(() => {
+    let newest = -1;
+    for (let i = turns.length - 1; i >= 0; i--) {
+      const x = turns[i].idx;
+      if (x !== undefined) {
+        newest = x;
+        break;
+      }
+    }
+    if (newest < 0) return; // まだ何も届いていない
+    const seen = ttsAutoSeenRef.current;
+    ttsAutoSeenRef.current = newest;
+    if (seen === null || newest <= seen) return; // 初回/巻き戻り→基準のみ更新。増分なしも何もしない
+    if (!active || readOnly) return; // 読むのはアクティブなペインだけ（他は ttsSessionNotify の領分）
+    if (!settings.ttsEnabled || !settings.ttsAutoReadMirror) return;
+    const q = ttsAutoQueueRef.current;
+    for (const t of turns) {
+      if (t.idx === undefined || t.idx <= seen) continue;
+      if (t.role !== "assistant" || t.sidechain || t.compact) continue;
+      // このターンが属するグループ＝idx が t.idx 以下で最後のグループ（グループは先頭ターンの idx を持つ）
+      let g: Group | null = null;
+      for (const gg of groups) {
+        if (gg.idx === undefined) continue;
+        if (gg.idx <= t.idx) g = gg;
+        else break;
+      }
+      if (!g || g.idx === undefined || g.role !== "assistant" || g.sidechain || g.compact) continue;
+      if (!q.includes(g.idx)) q.push(g.idx);
+    }
+    while (q.length > 4) q.shift(); // 席を外した間の洪水は古い回答から捨てる（announce と同じ思想）
+    ttsAutoPumpRef.current();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [turns]);
 
   // A /context-like gauge: the newest assistant turn's prompt size (input + cache) is
   // the current context fill. The per-category split (/context) is computed inside
