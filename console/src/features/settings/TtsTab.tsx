@@ -123,7 +123,9 @@ export function TtsTab() {
               バッククォートのコード片を全部読まずに省略します。コミットハッシュ等は頭 2 文字＋
               「なんとか」等のフィラー語（例: e79853e → e7 ふがふが）、camelCase やパスは頭の一語＋フィラー
               （3 語以上は末尾の一語も。例: ttsAutoReadMirror → tts なんとか Mirror）。短い語・空白を含む
-              コマンド・読み仮名辞書に載せた表記はそのまま読みます。
+              コマンド・読み仮名辞書に載せた表記はそのまま読みます。バッククォートで括られていない
+              裸のハッシュ・UUID も、地の文の中から見つけて同じように省略します（英単語や長い数値は
+              誤検知しないよう 16 進らしいものだけ）。
             </p>
             <Row label="英語をカタカナ読み">
               <OnOff value={s.ttsEnglishKana} onChange={(v) => setSetting("ttsEnglishKana", v)} />
