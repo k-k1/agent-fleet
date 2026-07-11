@@ -311,6 +311,12 @@
   position: fixed;
   z-index: 150;
   min-width: 180px;
+  /* Never taller than the viewport: a menu opened near the screen edge scrolls
+     internally instead of running off-screen (placeFixed clamps the position,
+     this clamps the size). Submenus expand inline, so overflow-y is safe. */
+  max-height: calc(100vh - 16px);
+  max-height: calc(100dvh - 16px);
+  overflow-y: auto;
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 6px;

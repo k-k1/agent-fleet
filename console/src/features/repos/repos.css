@@ -422,11 +422,9 @@
   opacity: 0.4;
   cursor: default;
 }
-.launch-menu {
-  position: absolute;
-  right: 0;
-  top: 26px;
-}
+/* .launch-menu keeps .ui-menu's position:fixed — RepoRow anchors it under the
+   split button with placeFixed, so near the rail's foot it slides up on-screen
+   instead of dropping below the viewport. */
 
 /* Launch modal bits. */
 .launch-conflict {

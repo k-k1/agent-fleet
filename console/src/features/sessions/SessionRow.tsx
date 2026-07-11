@@ -7,11 +7,12 @@
 // Lifecycle ops come from useSessionActions; the three modal triggers (rename,
 // branch-rename, SSM resume) are lifted to the parent via callbacks since their
 // dialogs render at section level.
-import { useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { Icon } from "../../ui/Icon.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { useDismiss } from "../../lib/useDismiss.ts";
 import { copyText } from "../../lib/clipboard.ts";
+import { placeFixed } from "../../lib/placeFixed.ts";
 import { usePaneHover } from "../../lib/panehover.tsx";
 import { kindIcon, kindLabel, kindClass } from "../../lib/sessionkind.ts";
 import { displayName, stateInfo } from "../../lib/sessionview.ts";
@@ -47,8 +48,20 @@ export function SessionRow({ s, selected, opens, multi, running, actions }: Sess
   const { hover, setHover } = usePaneHover();
   const toast = useToast();
   const menuRef = useRef<HTMLDivElement>(null);
+  const menuElRef = useRef<HTMLDivElement>(null);
+  const menuBtnRef = useRef<HTMLButtonElement>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   useDismiss(menuRef, menuOpen, () => setMenuOpen(false));
+  // The dropdown is position:fixed, anchored under the ⋯ button and clamped
+  // on-screen every render — a row near the rail's foot must not push its menu
+  // below the viewport (the old absolute top:26px did).
+  useLayoutEffect(() => {
+    const el = menuElRef.current;
+    const anchor = menuBtnRef.current;
+    if (!menuOpen || !el || !anchor) return;
+    const a = anchor.getBoundingClientRect();
+    placeFixed(el, a.right - el.offsetWidth, a.bottom + 2, el.closest<HTMLElement>(".app-rail"));
+  });
   // The session's immutable id (e.g. "sk7f3q9") — the thing shown as ID in the
   // row tooltip. The menu label shows the concrete value, not jargon ("slug").
   const copyId = () => {
@@ -163,11 +176,11 @@ export function SessionRow({ s, selected, opens, multi, running, actions }: Sess
         </div>
       )}
       <div className="sess-menu-wrap" ref={menuOpen ? menuRef : undefined}>
-        <button type="button" className="sess-menu-btn" title="メニュー" onClick={() => setMenuOpen((v) => !v)}>
+        <button type="button" className="sess-menu-btn" title="メニュー" ref={menuBtnRef} onClick={() => setMenuOpen((v) => !v)}>
           <Icon name="ellipsis" />
         </button>
         {menuOpen && (
-          <div className="ui-menu sess-menu">
+          <div className="ui-menu sess-menu" ref={menuElRef}>
             {/* Resume — kinds with no in-chat resume. SSM resumes through the login
                 modal (SSO handshake before attach). */}
             {!s.alive && !dead && running && !agentOf(s.kind).caps.chat && (
