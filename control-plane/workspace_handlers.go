@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -116,6 +117,14 @@ func (a workspaceAPI) ensureWorkspaceStarted(ctx context.Context, res *resolved)
 			return &apiError{http.StatusTooManyRequests, "quota_workspaces",
 				fmt.Sprintf("tenant workspace limit reached (%d)", lim.MaxWorkspaces)}
 		}
+	}
+	// Stage the role-scoped docs subset (member → guide/member, tenant_admin →
+	// guide/, super_admin → all) into <dataDir>/docs so the container's agents can
+	// answer environment questions from the authoritative docs. Gated here because
+	// the CP knows the role — a member's container never holds the internal docs.
+	// Best-effort: a failure just means no docs mount, never a failed start.
+	if err := stageWorkspaceDocs(a.mgr.rootedDataDir(res.ws), res.mv.Role); err != nil {
+		log.Printf("stage workspace docs (ws=%s role=%s): %v", res.ws.ID, res.mv.Role, err)
 	}
 	if err := rt.Start(ctx); err != nil {
 		return internalErr(err)

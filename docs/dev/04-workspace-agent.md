@@ -149,6 +149,15 @@ Console は 4 秒ポーリングで ● 進行中 / ❓ 質問 / ✓ 入力待�
   ⚠️ `.dockerignore` は `**/*.md` 除外に `!workspace-notes.md` 例外が必要（`//go:embed` も同様）。
 - **タイムゾーン**: toolchains 設定の `timezone`（既定 `Asia/Tokyo`）を entrypoint が `export TZ`。
   反映は Stop→Start。
+- **ロール別 docs のマウント**: エージェントが環境仕様の QA に docs で根拠付き回答できるよう、
+  `docs/` を **CP イメージ**に焼き込み（`control-plane/Dockerfile`、context=repo root）、コンテナ
+  起動時に **CP が呼び出し元メンバーのロールで許可分だけ**を `<dataDir>/docs` へステージ
+  （`control-plane/workspace_docs.go` `stageWorkspaceDocs`）→ `dockerRuntime.Start` が
+  `/usr/local/share/agent-fleet/docs:ro` でマウント。共有イメージには docs を含めないので、
+  member のコンテナは内部 docs をディスク上に一切持たない（＝ provisioning 時点でロール分離）。
+  露出範囲: `member`→`guide/member`、`tenant_admin`→`guide/`、`super_admin`→全 docs。毎起動で
+  再ステージ（ロール変更が次回起動で反映・イメージ版に追従）。ECS アダプタは未配線
+  （`<dataDir>` が EFS AP でホスト経路が異なるため。未配線でも起動は壊れず docs 無しになるだけ）。
 - claude の自己更新は `~/.local` 側のみ・焼き込み版は固定。壊れた symlink（旧 home パス）は
   entrypoint が検出して repair。
 - 反映ルール: image / entrypoint に触れたら **image 再ビルド + 利用者の Stop→Start**（[10](10-development.md)）。

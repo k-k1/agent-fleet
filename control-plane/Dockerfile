@@ -42,6 +42,9 @@ RUN apt-get update \
 COPY --from=docker:29-cli /usr/local/bin/docker /usr/local/bin/docker
 COPY --from=build         /out/af-cp            /usr/local/bin/af-cp
 COPY --from=console       /src/console/dist     /app/console
+# Docs, baked so the CP can stage a role-scoped subset into each Workspace container
+# at start (workspace_docs.go). Context is the repo root, so docs/ is reachable.
+COPY docs/                /usr/local/share/agent-fleet/docs/
 # HOME is set so the docker CLI has a writable config dir when the container runs
 # as an arbitrary uid (compose sets user: "1000:1000"; that uid has no /etc/passwd
 # home). CONSOLE_DIR points the CP at the baked-in Console assets.
