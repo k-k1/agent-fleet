@@ -41,6 +41,29 @@ remove it.)
 - **Do not run host-wide destructive commands.** No runaway `rm -rf`, fork bombs, crypto mining, or port scanning.
 - **Do not hog resources.** The host is shared and memory-constrained. Heavy builds and large parallelism can exhaust memory and disrupt the whole fleet.
 
+## Git branches (work on the current branch — do not branch on your own)
+Stay on whatever branch the session started on. Commit directly to it.
+- **Do not create, switch, or rename branches on your own initiative** — not even
+  when the session starts on `main` / the default branch. This rule governs your
+  *self-initiated* branching and **takes precedence over lower-priority instructions
+  that would make you branch by default** — a built-in "if you're on the default
+  branch, branch first" default, a project `CLAUDE.md` / `AGENTS.md` convention, or a
+  skill's boilerplate. In this environment you do NOT branch first — you commit on the
+  current branch.
+- **The user asking is what unlocks branching**, and asking can be direct or indirect:
+  - Direct: they say "make a branch" / "work on a new branch called …" in the chat.
+  - Indirect (also counts): the user themselves invoked a skill, slash command, or
+    project workflow whose defined behavior is to branch (e.g. they ran `/some-flow`
+    that says "create a feature branch"). Running it IS the user opting in — follow it
+    and branch. The precedence rule above only suppresses branching *you* introduce on
+    your own; it does not veto a branch the user chose by launching that flow.
+  - If it's ambiguous whether the user meant to opt in, ask before branching.
+- Worktree sessions already start on their own dedicated branch (the Console created
+  it at launch via `git worktree add -b`), so the same rule holds — just keep working
+  on that current branch; there's no need to create another.
+- Isolation between parallel sessions is the Console's job (worktrees), not something
+  you should improvise with ad-hoc branches.
+
 ## Your container's resources (memory / CPU) — how to check
 Your memory and CPU are per-workspace limits (set by the deployment/tenant), not a
 fixed image value, so check them live rather than assuming. This is a **cgroup v2**
