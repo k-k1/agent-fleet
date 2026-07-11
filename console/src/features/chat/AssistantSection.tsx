@@ -90,9 +90,12 @@ export function AssistantSection() {
       window.removeEventListener("blur", close);
     };
   }, [menu]);
+  // Clamped every render (no deps): the JSX re-applies the raw cursor coords as
+  // inline style on re-renders, which would undo a one-shot clamp near the
+  // viewport edge.
   useLayoutEffect(() => {
     if (menu && menuRef.current) placeFixed(menuRef.current, menu.x, menu.y);
-  }, [menu]);
+  });
   const runMenu = (fn: () => void) => {
     setMenu(null);
     fn();

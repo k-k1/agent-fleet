@@ -5,7 +5,7 @@
 // the core file ops. It reuses the shared primitives (api fs endpoints,
 // FileIcon/DirIcon, the .fstree/.fsrow classes); per-copy git changes live in the
 // SCM pane, not here. Mounted only while its section is open, so the fetch is lazy.
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent as RMouseEvent, DragEvent as RDragEvent } from "react";
 import { api, uploadFiles, downloadURL, fsMkdir, fsNewFile, fsRename, fsDelete } from "../../core/api/client.ts";
 import FileIcon, { DirIcon } from "../../ui/FileIcon.tsx";
@@ -372,9 +372,13 @@ export function ProjectFiles({ root, markRepos }: ProjectFilesProps) {
       window.removeEventListener("blur", close);
     };
   }, [menu]);
-  useEffect(() => {
+  // Clamp EVERY render, before paint: the JSX re-applies the raw cursor coords
+  // as inline style on each re-render (store polls re-render this component
+  // while the menu is open), which would undo a one-shot clamp and push a menu
+  // opened near the rail's foot back off-screen.
+  useLayoutEffect(() => {
     if (menu && menuRef.current) placeFixed(menuRef.current, menu.x, menu.y, menuRef.current.closest<HTMLElement>(".app-rail"));
-  }, [menu]);
+  });
   const runMenu = (fn: () => void) => {
     setMenu(null);
     fn();
