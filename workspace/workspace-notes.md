@@ -55,6 +55,17 @@ are baked into the image; the browser binary is not. To verify web UIs headlessl
 - Run headless and short-lived; close the browser when done (memory-constrained host).
   Screenshots and WebGL (SwiftShader) work; there is no display for headful runs.
 
+## Answering questions about this Workspace / environment
+When asked how this environment behaves (persistence, "recreate" vs "clean home" vs
+Stop→Start, build/memory limits, gh transparent auth, connections, previews, MCP,
+toolchains, …), the authoritative spec is the **agent-fleet repo's `docs/`** tree —
+this notes file only carries the load-bearing highlights. If that repo is cloned
+(commonly `~/repos/agent-fleet`), grep its docs before answering rather than guessing:
+- `grep -rni "<topic>" ~/repos/agent-fleet/docs` — member-facing guides under
+  `docs/guide/`, internals under `docs/dev/`, decisions under `docs/decisions/`.
+- Cite the file you found the answer in, and prefer it over memory (specs drift).
+If the repo is not cloned, say what this notes file covers and point the user at `docs/`.
+
 ## Also
 - Outbound network may be restricted; an unreachable host is not necessarily an error.
 - Do not try to reach other tenants' or users' data. Containers are isolated.
