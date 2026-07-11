@@ -16,7 +16,8 @@
 | `control-plane/` | CP（Go 単一モジュール・単一バイナリ。egress proxy はサブコマンド）（§90.2）|
 | `workspace/` | Workspace イメージ一式: `agent/`（Go）+ Dockerfile/entrypoint（§90.3, §90.5）|
 | `deploy/` | デプロイ 3 形態（local / compose / aws）の runbook と定義（§90.6）|
-| `e2e/` | フリート E2E（独立 Go モジュール・stdlib のみ、`-tags e2e`）。CP + 実コンテナ疎通（[10 §10.4](10-development.md)）|
+| `e2e/` | フリート E2E（独立 Go モジュール・stdlib のみ、`-tags e2e`）。CP + 実コンテナ疎通（L2）+ 実 API スモーク（L4 `live_test.go`）（[10 §10.4](10-development.md)）|
+| `console-e2e/` | Console UI E2E（Playwright、L3）。global-setup が CP/コンテナを起動、ブラウザ打鍵 → fs API で観測 |
 | `docs/` | dev/（本体系）・guide/・decisions/（ADR）・HANDOFF・番号付き計画文書（19〜23…）|
 
 ## 90.2 control-plane/ — フラットな `package main`
