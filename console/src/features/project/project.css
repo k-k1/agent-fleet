@@ -106,38 +106,7 @@
   gap: 2px;
 }
 
-/* Sub-section header (ファイル): a banded, bolder header so it reads as a
-   collapsible divider — not another content row that the list buries. */
-.proj-sub-btn {
-  border-radius: 5px;
-  padding: 4px 6px 4px 3px;
-  color: var(--fg);
-  font-weight: 600;
-  background: color-mix(in srgb, var(--fg) 5%, transparent);
-}
-.proj-sub-btn:hover {
-  background: color-mix(in srgb, var(--fg) 9%, transparent);
-}
-
-/* ファイル sub-header row: the collapse button + a ツリー/変更 view toggle. */
-.proj-sub-head {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-.proj-sub-head .proj-sub-btn {
-  flex: 1;
-  min-width: 0;
-}
-.proj-file-view {
-  flex: none;
-  margin-right: 2px;
-  /* ツリー/変更 lives in the left pane, so its selected segment follows the left-pane
-     accent rather than the top bar's. */
-  --sel-accent: var(--lp-accent, var(--topbar-accent));
-}
-
-/* Nested session/file list under a node: no extra outer padding. */
+/* Nested session list under a node: no extra outer padding. */
 .proj-sub-list {
   padding: 1px 0 2px;
 }
@@ -147,14 +116,12 @@
   padding: 3px 4px 4px 22px;
 }
 
-/* Per-node file subtree: the shared .fstree/.fsrow styles apply; drop the tree's
-   own outer padding since the node body already indents, and cap its height so a
-   big repo doesn't push the rest of the tree off-screen. */
+/* Rail-bottom ファイル section's tree (FilesSection → ProjectFiles). The shared
+   .fstree/.fsrow styles apply; no height cap — the rail itself scrolls (the old
+   per-node 240px scrollbox is gone). */
 .proj-files {
   position: relative;
 }
 .proj-fstree {
   padding: 1px 0 2px;
-  max-height: 240px;
-  overflow-y: auto;
 }

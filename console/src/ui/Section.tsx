@@ -13,23 +13,35 @@ interface SectionProps {
   count?: number;
   actions?: ReactNode;
   defaultOpen?: boolean;
+  /** Controlled mode: pass `open` (+ `onToggle`) and the section renders that
+   * state instead of owning it — for callers that must open programmatically
+   * (e.g. the Files section on a reveal). Persistence is the caller's job then. */
+  open?: boolean;
+  onToggle?: () => void;
   children?: ReactNode;
 }
 
 const storeKey = (id: string) => `af-section-${id}`;
 
-export function Section({ id, title, icon, count, actions, defaultOpen = true, children }: SectionProps) {
-  const [open, setOpen] = useState(() => {
+export function Section({ id, title, icon, count, actions, defaultOpen = true, open: openProp, onToggle, children }: SectionProps) {
+  const [openState, setOpen] = useState(() => {
     if (!id) return defaultOpen;
     const v = localStorage.getItem(storeKey(id));
     return v === null ? defaultOpen : v === "1";
   });
-  const toggle = () =>
+  const controlled = openProp !== undefined;
+  const open = controlled ? openProp : openState;
+  const toggle = () => {
+    if (controlled) {
+      onToggle?.();
+      return;
+    }
     setOpen((o) => {
       const next = !o;
       if (id) localStorage.setItem(storeKey(id), next ? "1" : "0");
       return next;
     });
+  };
   return (
     <section className={"ui-section" + (open ? "" : " collapsed")}>
       <div className="ui-section-head">
