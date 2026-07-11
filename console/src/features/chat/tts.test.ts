@@ -252,6 +252,12 @@ describe("applyBuiltinReadings / applyReadings (組み込みの読み補正)", (
     expect(applyBuiltinReadings("mai18nx")).toBe("mai18nx"); // 語中は触らない
   });
 
+  it("大文字の IT はアイティー（小文字の it = 英語の代名詞は触らない）", () => {
+    expect(applyBuiltinReadings("IT業界のIT投資")).toBe("アイティー業界のアイティー投資");
+    expect(applyBuiltinReadings("do it now")).toBe("do it now");
+    expect(applyBuiltinReadings("GITHUB")).toBe("GITHUB"); // 語中は触らない
+  });
+
   it("ユーザー辞書が先に当たれば組み込みより優先される", () => {
     const dict = parseUserDict("空レポ=そらレポ");
     expect(applyReadings("空レポです", dict, false)).toBe("そらレポです");
