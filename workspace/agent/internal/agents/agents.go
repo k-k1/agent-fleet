@@ -102,6 +102,13 @@ type TranscriptData struct {
 	// request_user_input / opencode question tool), or nil. Surfaced like claude's
 	// pending questions so the Console can render it interactively.
 	Pending []transcript.Question
+	// Queued are prompts typed into the RUNNING turn but not yet injected as a user
+	// message (opencode's session_input rows awaiting promotion) — surfaced as the
+	// mirror's キュー済み badge, like claude's queue-operation reconstruction.
+	Queued []string
+	// Compacting reports the agent is compacting its conversation right now
+	// (opencode session.time_compacting) — surfaced as the mirror's 圧縮中 badge.
+	Compacting bool
 }
 
 // NoGenericTranscript is the Transcript() default for agents that either have no
