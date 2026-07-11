@@ -10,6 +10,8 @@ import {
   abbrevCode,
   isBareHash,
   pauseParticles,
+  applyBuiltinReadings,
+  applyReadings,
   emotionOf,
   pendingSpeech,
   startsBlock,
@@ -225,6 +227,28 @@ describe("abbrevCode (インラインコードの省略読み)", () => {
     );
     expect(plainify("コミット `e79853e` を見て")).toBe("コミット e79853e を見て");
     expect(plainify("`e79853e` は", { abbrev: false, dict: [] })).toBe("e79853e は");
+  });
+});
+
+describe("applyBuiltinReadings / applyReadings (組み込みの読み補正)", () => {
+  it("空＋カタカナ語・空文字列などは「から」で読む", () => {
+    expect(applyBuiltinReadings("空レポを作成")).toBe("からレポを作成");
+    expect(applyBuiltinReadings("空リストと空文字列")).toBe("からリストとから文字列");
+    expect(applyBuiltinReadings("空行を削除")).toBe("からぎょうを削除");
+  });
+
+  it("熟語・ひらがな続きの空は触らない", () => {
+    expect(applyBuiltinReadings("空が青い")).toBe("空が青い");
+    expect(applyBuiltinReadings("航空券と空港と空白")).toBe("航空券と空港と空白");
+  });
+
+  it("ユーザー辞書が先に当たれば組み込みより優先される", () => {
+    const dict = parseUserDict("空レポ=そらレポ");
+    expect(applyReadings("空レポです", dict, false)).toBe("そらレポです");
+  });
+
+  it("applyReadings は 辞書 → 読み補正 → 助詞の小休止 の順で通す", () => {
+    expect(applyReadings("空配列を確認", [], true)).toBe("から配列を、確認");
   });
 });
 

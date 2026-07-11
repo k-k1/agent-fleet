@@ -350,6 +350,22 @@ TTS 設定画面かフッターに小さく常時表示する。Polly は AWS �
   `ttsSessionNotify` の短い告知を重ねない（`hasTurnReader` で判定）。付随修正:
   `startTts` の自然終了で store の `active` を解放するようにした（従来は残置 — `active` を
   見る新ガードが永久待ちになるため）。
+- **アシスタントの声＋組み込み読み補正（2026-07-12）** ✅: ①アシスタント・チャットも
+  キャラプールに参加 — 声の優先順位は **明示指定（`assistant.voice`）＞ プール割り当て
+  （`ttsVoicePerSession` ON のとき `assistant:<id>` のハッシュ、`voicePoolOpts` に共通化）＞
+  設定の話者**。明示指定はアシスタント作成/編集モーダルの「読み上げの声」（自動＋プールの
+  キャラ＋Polly。エンジン実カタログ駆動）で選び、エージェント側の assistant レコードに
+  `voice` として保存（`workspace/agent/assistants.go` — 保存と echo のみ、解決・合成は
+  Console 側）。ストリーミング読み上げと回答フッターの読み上げボタン（`TtsReadButton` に
+  voice prop、`speakText` に voice 引数）の両方に適用。②**組み込みの読み補正**
+  （`applyBuiltinReadings`）: VOICEVOX が読み間違える開発語を補正 — 「空＋カタカナ語」
+  （空レポ・空リスト等）は規則で「から」、空文字（列）/空配列/空要素/空判定/空行
+  （からぎょう）は個別エントリ。ユーザー/テナント辞書の**後**に適用するので同じ表記は
+  ユーザー定義が勝つ。読み整形は `applyReadings`（辞書 → 補正 → 助詞の小休止）に一本化し
+  3 経路共通。個別の読み間違いは従来どおり読み仮名辞書（ユーザー/テナント）でも直せる。
+  ③enkana 辞書に id/origin/repo（レポ）/repos（レポズ）。④管理モーダルのテナント辞書
+  textarea にテーマ配色（`.ds-userdict` が自前で配色を持つ — admin-surface には
+  settings-modal のフォーム配色が及ばないため）。
 - **間の 3 段化・助詞の小休止・生成中表示・再生のビュー非依存（2026-07-12）** ✅:
   ①「間」を 3 段に — 改行・段落・ブロック頭は一拍（`SENTENCE_GAP`/`BLOCK_BEAT`=0.3）、
   **文中の句点（。！？）はより短い一拍（`SENT_BEAT`=0.15）**、読点早出しは `CLAUSE_GAP`。

@@ -30,6 +30,8 @@ var techKana = map[string]string{
 	"gui":        "グーイ",
 	"oauth":      "オーオース",
 	"origin":     "オリジン",
+	"repo":       "レポ",
+	"repos":      "レポズ",
 	"jwt":        "ジェイダブリューティー",
 	"regex":      "レジェックス",
 	"enum":       "イーナム",

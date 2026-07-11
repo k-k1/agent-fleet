@@ -21,6 +21,9 @@ export interface Assistant {
   persona?: string;
   tools: ToolGrant;
   knowledge?: string[];
+  // 読み上げの声（"vv:<speaker>" / "polly:<VoiceId>"。"" = 自動 = キャラプールから割り当て）。
+  // 保存はエージェント側、解決・合成はすべて Console 側（docs/24）。
+  voice?: string;
   created_at?: number;
   updated_at?: number;
 }
@@ -35,4 +38,5 @@ export interface AssistantInput {
   persona?: string;
   tools: ToolGrant;
   knowledge?: string[];
+  voice?: string;
 }

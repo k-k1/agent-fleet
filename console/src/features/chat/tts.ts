@@ -12,15 +12,7 @@
 import { rel } from "../../core/api/client.ts";
 import { getSettings } from "../../lib/settings.ts";
 import { useTtsStore } from "../../core/store/tts.ts";
-import {
-  plainify,
-  plainifyStreaming,
-  firstChunkCut,
-  applyUserDict,
-  pauseParticles,
-  emotionOf,
-  startsBlock,
-} from "./ttsText.ts";
+import { plainify, plainifyStreaming, firstChunkCut, applyReadings, emotionOf, startsBlock } from "./ttsText.ts";
 import { effectiveDict } from "./ttsDict.ts";
 import { makeAudioLru } from "./ttsCache.ts";
 import { speakersCatalog, type Speaker, type SpeakerStyle } from "./ttsSpeakers.ts";
@@ -177,12 +169,14 @@ export function voiceCharName(opts: TtsOptions): string {
 // sessionVoiceOpts はセッション名から声の上書き（voice / pollyVoice）を返す。設定 OFF や
 // セッション名なしは undefined（= 選択中の話者のまま）。startTts / startNarration の
 // opts にスプレッドして使う。
-export function sessionVoiceOpts(session: string): Partial<TtsOptions> | undefined {
-  if (!session || !getSettings().ttsVoicePerSession) return undefined;
+// voicePoolOpts はキー文字列のハッシュで有効キャラのプール（activeVoicePool）から声を
+// 決定的に選ぶ（同じキーは常に同じ声）。セッション（sessionVoiceOpts）とアシスタント・
+// チャット（assistantVoiceOpts）の共通処理。
+function voicePoolOpts(key: string): Partial<TtsOptions> | undefined {
   const pool = activeVoicePool();
   if (!pool.length) return undefined; // 全キャラ OFF → 選択中の話者のまま
   let h = 0;
-  for (const c of session) h = (h * 31 + c.codePointAt(0)!) >>> 0;
+  for (const c of key) h = (h * 31 + c.codePointAt(0)!) >>> 0;
   // 上位ビットを折り込んでから剰余を取る。素の h % N は下位ビットしか見ず、31 ≡ -1 (mod 8)
   // なので実質「文字コードの交代和」になり、似た形式の名前（共通プレフィックス＋数字等）で
   // 偏る（例: 末尾が 1 と 9、0 と 8 の違いだと必ず同じ声）。折り畳みで実質一様にする。
@@ -194,6 +188,21 @@ export function sessionVoiceOpts(session: string): Partial<TtsOptions> | undefin
   };
   if (v.speed) o.speed = v.speed; // キャラ別速度（未設定キーを作らない — spread で上書きするため）
   return o;
+}
+
+export function sessionVoiceOpts(session: string): Partial<TtsOptions> | undefined {
+  if (!session || !getSettings().ttsVoicePerSession) return undefined;
+  return voicePoolOpts(session);
+}
+
+// assistantVoiceOpts はアシスタント・チャットの声。アシスタントに明示の声（assistant.voice、
+// 作成/編集で指定）があれば最優先。無ければ「セッションごとに声を変える」ON のときに
+// アシスタント ID のハッシュでプールから割り当て（同じアシスタントは常に同じ声）。
+// どちらも無ければ undefined（設定の話者）。
+export function assistantVoiceOpts(assistantId?: string, explicit?: string): Partial<TtsOptions> | undefined {
+  if (explicit) return voiceChoiceOpts(explicit);
+  if (!assistantId || !getSettings().ttsVoicePerSession) return undefined;
+  return voicePoolOpts("assistant:" + assistantId);
 }
 
 // --- 朗読ビューの声選択（docs/24） -----------------------------------------------
@@ -498,10 +507,9 @@ export function startTts(opts: TtsOptions, source = "", onEnd?: (reason: "done" 
   const submit = (text: string, gap = SENTENCE_GAP, pre = false) => {
     let t = text.trim();
     if (!t) return;
-    // ユーザー辞書を適用（enkana は CP 側でこの後。katakana はそのまま通るので競合しない）。
-    if (userDict.length) t = applyUserDict(t, userDict).trim();
+    // 読みの整形: ユーザー/テナント辞書 → 組み込み読み補正 → 助詞の小休止（enkana は CP 側で後段）。
+    t = applyReadings(t, userDict, getSettings().ttsParticlePause);
     if (!t) return;
-    if (getSettings().ttsParticlePause) t = pauseParticles(t); // 助詞＋漢字の小休止（辞書の後）
     gaps.set(seq, gap);
     if (pre) preGaps.set(seq, BLOCK_BEAT); // リスト・見出し等の頭 → 読む前に一拍
     jobs.push({ seq: seq++, text: t });
@@ -656,11 +664,12 @@ function takeAnnounce(): { text: string; source: string; voice?: Partial<TtsOpti
 }
 
 // speakText は与えたテキストをその場で読み上げる（FileView の選択範囲など、非ストリーム用途）。
-// 設定（話者/速度/プロバイダ）は React 外から getSettings() で取得。空文字は無視。
-export function speakText(text: string, source = ""): void {
+// 設定（話者/速度/プロバイダ）は React 外から getSettings() で取得。voice は声の上書き
+// （アシスタントの声 assistantVoiceOpts 等）。空文字は無視。
+export function speakText(text: string, source = "", voice?: Partial<TtsOptions>): void {
   const t = text.trim();
   if (!t) return;
-  const c = startTts(ttsOptsFromSettings(), source);
+  const c = startTts({ ...ttsOptsFromSettings(), ...voice }, source);
   c.push(t);
   c.flush();
 }
@@ -704,8 +713,7 @@ export function startNarration(
   const codeOpts = { abbrev: s.ttsAbbrevCode, dict: userDict };
   const texts = units.map((u) => {
     let t = plainify(u, codeOpts).trim();
-    if (t && userDict.length) t = applyUserDict(t, userDict).trim();
-    if (t && s.ttsParticlePause) t = pauseParticles(t); // 助詞＋漢字の小休止（辞書の後）
+    if (t) t = applyReadings(t, userDict, s.ttsParticlePause); // 辞書 → 読み補正 → 助詞の小休止
     return t;
   });
 
@@ -791,8 +799,7 @@ export function startNarration(
   // 一体（同じ ctx・同じ adapter）。
   const playInterlude = (a: { text: string; source: string; voice?: Partial<TtsOptions> }) => {
     let t = plainify(a.text, codeOpts).trim();
-    if (t && userDict.length) t = applyUserDict(t, userDict).trim();
-    if (t && getSettings().ttsParticlePause) t = pauseParticles(t);
+    if (t) t = applyReadings(t, userDict, getSettings().ttsParticlePause);
     if (!t) {
       tryPlay();
       return;
