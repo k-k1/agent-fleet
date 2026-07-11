@@ -72,11 +72,23 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
   };
 
   // Context menu: open at the cursor, clamp within the rail, close on outside
-  // click / Esc / window blur.
+  // click / Esc / window blur. Clamped every render (no deps): the JSX re-applies
+  // the raw cursor coords as inline style on re-renders, undoing a one-shot clamp.
   useLayoutEffect(() => {
     if (menu && menuRef.current)
       placeFixed(menuRef.current, menu.x, menu.y, menuRef.current.closest<HTMLElement>(".app-rail"));
-  }, [menu]);
+  });
+  // The 起動 ▼ quick menu is position:fixed (an absolute dropdown under a row
+  // near the rail's foot ran off-screen) — anchor it under the split button,
+  // clamped like the context menus.
+  const launchMenuRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const el = launchMenuRef.current;
+    const anchor = wrapRef.current;
+    if (!showLaunch || !el || !anchor) return;
+    const a = anchor.getBoundingClientRect();
+    placeFixed(el, a.right - el.offsetWidth, a.bottom + 2, el.closest<HTMLElement>(".app-rail"));
+  });
   useEffect(() => {
     if (!menu) return;
     const close = () => setMenu(null);
@@ -232,7 +244,7 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
               </button>
             </div>
             {showLaunch && (
-              <div className="ui-menu launch-menu">
+              <div className="ui-menu launch-menu" ref={launchMenuRef}>
                 {kinds.map((k) => (
                   <button
                     key={k}

@@ -182,11 +182,9 @@
   background: var(--btn);
   color: var(--fg);
 }
-.sess-menu {
-  position: absolute;
-  right: 4px;
-  top: 26px;
-}
+/* .sess-menu keeps .ui-menu's position:fixed — SessionRow anchors it under the
+   ⋯ button with placeFixed, so rows near the rail's foot open upward on-screen
+   instead of below the viewport. */
 
 /* Session modals: proposal row + prefix chips + SSM bits. */
 .sm-proposal {
