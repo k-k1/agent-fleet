@@ -7,7 +7,7 @@
 // 対応維持が脆いため — textContent なら記法は既に落ちており、リンクは表示テキストだけが残る。
 // ターンは完結してから届く（ポーリング）ので、抽出は読み上げ開始時の 1 回で安定する。
 
-import { startNarration } from "../chat/tts.ts";
+import { startNarration, type TtsOptions } from "../chat/tts.ts";
 import { splitSentences, abbrevCode, type CodeReadOpts } from "../chat/ttsText.ts";
 import { effectiveDict } from "../chat/ttsDict.ts";
 import { getSettings } from "../../lib/settings.ts";
@@ -96,6 +96,7 @@ export function readTurn(
   source: string,
   fromBlock: number,
   onEnd: (stopped: boolean) => void,
+  voice?: Partial<TtsOptions>, // セッションごとの声（sessionVoiceOpts）等の上書き
 ): TurnReadHandle | null {
   const code: CodeReadOpts = { abbrev: getSettings().ttsAbbrevCode, dict: effectiveDict() };
   const blocks = collectBlocks(body);
@@ -120,11 +121,16 @@ export function readTurn(
       el.scrollIntoView({ block: "nearest", behavior: "smooth" });
     }
   };
-  const h = startNarration(texts, source, (i, endReason) => {
-    if (i == null) {
-      light(null);
-      onEnd(endReason === "stopped");
-    } else light(blocks[blockOf[i]]);
-  });
+  const h = startNarration(
+    texts,
+    source,
+    (i, endReason) => {
+      if (i == null) {
+        light(null);
+        onEnd(endReason === "stopped");
+      } else light(blocks[blockOf[i]]);
+    },
+    voice,
+  );
   return { pause: h.pause, resume: h.resume, stop: h.stop };
 }

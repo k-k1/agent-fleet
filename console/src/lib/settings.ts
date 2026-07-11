@@ -160,6 +160,11 @@ export interface Settings {
   // 朗読する（features/mirror/turnTts.ts）。見ていないセッションの短い告知 ttsSessionNotify
   // とは相補（こちらは見ている画面の本文を読む）。
   ttsAutoReadMirror: boolean;
+  // セッションごとに声を変える（features/chat/tts.ts の sessionVoiceOpts）。セッション名の
+  // ハッシュで話者プール（VOICEVOX 標準キャラ / Polly 3 声）から決定的に割り当て、ミラーの
+  // 読み上げとセッション音声通知に適用（どのセッションの回答かを声で判別できる）。
+  // チャットタブ・朗読ビューは選択した話者のまま。
+  ttsVoicePerSession: boolean;
   // インラインコード（`…`）を省略して読む（features/chat/ttsText.ts の abbrevCode）。
   // ハッシュ等は頭 2 文字＋フィラー語（なんとか 等）、camelCase/パスは頭一語＋フィラー
   // （3 語以上は＋末尾一語）。短い語・空白入り・日本語入り・読み仮名辞書に掛かる表記はそのまま。
@@ -207,6 +212,7 @@ const DEFAULTS: Settings = {
   ttsUserDict: "",
   ttsCacheSec: 300,
   ttsAutoReadMirror: false,
+  ttsVoicePerSession: false,
   ttsAbbrevCode: true,
   readerVertical: false,
 };
