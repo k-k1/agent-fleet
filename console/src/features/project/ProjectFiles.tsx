@@ -52,7 +52,7 @@ const fsList = (path: string) =>
   api(`api/fs/tree?path=${encodeURIComponent(path)}`).catch(() => ({ entries: [] }));
 
 interface ProjectFilesProps {
-  /** The tree's home-relative root folder — the rail section passes "repos". */
+  /** The tree's home-relative root folder ("" = home itself, the rail default). */
   root: string;
 }
 
@@ -198,19 +198,20 @@ export function ProjectFiles({ root }: ProjectFilesProps) {
 
   // Reveal: when something requests a path under the root (a clone just landed,
   // or a repo row's フォルダを開く), expand its ancestor chain — and the target
-  // itself when it's a directory — then select it.
+  // itself when it's a directory — then select it. root "" (home) contains every
+  // home-relative path.
   useEffect(() => {
     const p = reveal.path;
-    if (!p || (p !== root && !p.startsWith(root + "/"))) return;
+    if (!p || (root && p !== root && !p.startsWith(root + "/"))) return;
     let alive = true;
     void (async () => {
-      const rel = p === root ? "" : p.slice(root.length + 1);
+      const rel = !root ? p : p === root ? "" : p.slice(root.length + 1);
       const segs = rel ? rel.split("/").filter(Boolean) : [];
       if (!segs.length) return; // the root itself has no row to select
       let cur = root;
       const toOpen: string[] = [];
       for (let i = 0; i < segs.length - 1; i++) {
-        cur = cur + "/" + segs[i];
+        cur = joinPath(cur, segs[i]); // joinPath: a "" root must not yield "/xxx"
         await fetchInto(cur);
         if (!alive) return;
         toOpen.push(cur);
