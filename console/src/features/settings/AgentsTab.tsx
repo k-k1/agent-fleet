@@ -156,6 +156,14 @@ export function AgentsTab() {
             一度読み上げた文言の音声をメモリに保持し、同じ文言の再読み上げを待ちなしで再生します。
             上限は合計の再生時間で、超えた分は古いものから消えます（ページを再読み込みしても消えます）。
           </p>
+          <Row label="新しい回答を自動で読み上げ">
+            <OnOff value={s.ttsAutoReadMirror} onChange={(v) => setSetting("ttsAutoReadMirror", v)} />
+          </Row>
+          <p className="muted ds-note">
+            アクティブなペインのチャットに新しい回答が届いたら、自動でカラオケ・ハイライト付きで読み上げます。
+            読み上げ中に次の回答が届いたら、終わってから順番に読みます（見ていないセッションは
+            「セッションの音声通知」が担当）。
+          </p>
           <Row label="英語をカタカナ読み">
             <OnOff value={s.ttsEnglishKana} onChange={(v) => setSetting("ttsEnglishKana", v)} />
           </Row>
