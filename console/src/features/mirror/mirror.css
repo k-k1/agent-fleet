@@ -359,6 +359,12 @@
   background: var(--surface-2, rgba(127, 127, 127, 0.16));
   color: var(--muted);
 }
+/* キュー済み variant: claude confirmed the prompt is in its mid-run queue (the
+   terminal's dimmed queued line). Same pill, accent tint = "accepted, waiting". */
+.mt-queued {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+}
 /* Reasoning effort/variant chip (codex reasoning_effort / opencode variant), shown
    right after the model. A faint pill so it reads as secondary metadata. */
 .mt-effort {

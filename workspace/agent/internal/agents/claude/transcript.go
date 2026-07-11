@@ -181,7 +181,14 @@ func parseTurn(line []byte, idx int) (transcript.Turn, bool) {
 		IsCompactSummary bool   `json:"isCompactSummary"`
 		GitBranch        string `json:"gitBranch"`
 		Cwd              string `json:"cwd"`
-		Message          struct {
+		Attachment       struct {
+			Type   string `json:"type"`
+			Prompt string `json:"prompt"`
+			Origin struct {
+				Kind string `json:"kind"`
+			} `json:"origin"`
+		} `json:"attachment"`
+		Message struct {
 			Model   string          `json:"model"`
 			Content json.RawMessage `json:"content"`
 			Usage   struct {
@@ -195,7 +202,26 @@ func parseTurn(line []byte, idx int) (transcript.Turn, bool) {
 	if json.Unmarshal(line, &ev) != nil {
 		return transcript.Turn{}, false
 	}
-	if ev.IsMeta || (ev.Type != "user" && ev.Type != "assistant") {
+	if ev.IsMeta {
+		return transcript.Turn{}, false
+	}
+	// A prompt sent INTO a running turn (steering) is never logged as a user line —
+	// claude (≥2.1.207 observed) records only an attachment/queued_command event when it
+	// injects the queued text. Surface it as the user turn it is, or the mirror never
+	// shows mid-run prompts. Origin is checked so a non-human queued command (none seen
+	// yet, but the field exists) doesn't masquerade as the user.
+	if ev.Type == "attachment" {
+		a := ev.Attachment
+		txt := strings.TrimSpace(a.Prompt)
+		if a.Type != "queued_command" || txt == "" || (a.Origin.Kind != "" && a.Origin.Kind != "human") {
+			return transcript.Turn{}, false
+		}
+		return transcript.Turn{
+			Role: "user", Parts: []transcript.Part{{Kind: "text", Text: txt}}, Text: txt,
+			Idx: idx, TS: ev.Timestamp, Sidechain: ev.IsSidechain, Branch: ev.GitBranch, Cwd: ev.Cwd,
+		}, true
+	}
+	if ev.Type != "user" && ev.Type != "assistant" {
 		return transcript.Turn{}, false
 	}
 	var parts []transcript.Part
@@ -405,6 +431,52 @@ func CollectTasks(lines [][]byte) []transcript.Task {
 		}
 	}
 	return out
+}
+
+// CollectQueued reconstructs the prompts currently sitting in claude's mid-run queue
+// (typed while a turn runs, not yet injected) from the transcript's queue-operation
+// events: "enqueue" adds the content, any other content-carrying op (remove — the only
+// one observed) drops its first match, and a content-less op clears the queue. A real
+// (non-meta, non-tool_result) user prompt line also clears it: a fresh human turn can
+// only start once the previous run's queue was consumed or discarded, so anything still
+// tracked at that point is a stale leftover (e.g. a run killed mid-queue), not a live
+// queue. Returns queued prompts in enqueue order; the caller gates on run state.
+func CollectQueued(lines [][]byte) []string {
+	var queue []string
+	for _, ln := range lines {
+		if bytesContains(ln, `"queue-operation"`) {
+			var ev struct {
+				Type      string `json:"type"`
+				Operation string `json:"operation"`
+				Content   string `json:"content"`
+			}
+			if json.Unmarshal(ln, &ev) != nil || ev.Type != "queue-operation" {
+				continue
+			}
+			switch {
+			case ev.Operation == "enqueue" && ev.Content != "":
+				queue = append(queue, ev.Content)
+			case ev.Content != "":
+				for i, q := range queue {
+					if q == ev.Content {
+						queue = append(queue[:i], queue[i+1:]...)
+						break
+					}
+				}
+			default:
+				queue = nil
+			}
+			continue
+		}
+		// Cheap prefilter for the clearing rule; parseTurn does the real classification
+		// (drops meta lines and tool_result-only turns).
+		if len(queue) > 0 && bytesContains(ln, `"type":"user"`) && !bytesContains(ln, `"tool_result"`) {
+			if t, ok := parseTurn(ln, 0); ok && t.Role == "user" {
+				queue = nil
+			}
+		}
+	}
+	return queue
 }
 
 // parseTaskCreate returns the tasks one TaskCreate call adds — normally one (the subject

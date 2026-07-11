@@ -67,6 +67,7 @@ interface Turn {
   ts?: string;
   idx?: number;
   pending?: boolean; // optimistic local echo of a just-sent prompt, not yet in the jsonl
+  queued?: boolean; // sitting in claude's mid-run queue (enqueued, awaiting injection)
   parts?: Part[];
   sidechain?: boolean;
   compact?: boolean;
@@ -98,6 +99,7 @@ interface Group {
   ts?: string;
   idx?: number;
   pending?: boolean; // holds an optimistic local echo awaiting its real transcript turn
+  queued?: boolean; // holds a prompt claude reports queued for the running turn
 }
 // foldParts output: a run of tool traces, or a single passthrough part.
 type FoldItem =
@@ -195,6 +197,10 @@ export function MirrorView({
   const [status, setStatus] = useState("");
   const [bgBusy, setBgBusy] = useState(false); // idle but a run_in_background task lingers
   const [tasks, setTasks] = useState<TaskItem[]>([]); // current ToDo list (Task tool calls)
+  // Prompts claude reports queued into the RUNNING turn (queue-operation events) — sent
+  // mid-run from this composer or typed in the raw terminal, not yet injected. Matching
+  // echoes get a キュー済み badge; the rest render as synthetic queued bubbles.
+  const [queuedPrompts, setQueuedPrompts] = useState<string[]>([]);
   const [alive, setAlive] = useState(!!sessionMeta?.alive); // live session ⇒ composer usable
   const [pending, setPending] = useState<Question[] | null>(null); // currently-awaiting AskUserQuestion
   const [pendingText, setPendingText] = useState<string>(""); // prose streamed just before the pending question
@@ -271,6 +277,7 @@ export function MirrorView({
     setStatus("");
     setBgBusy(false);
     setTasks([]);
+    setQueuedPrompts([]);
     setAlive(!!sessionMeta?.alive);
     setPending(null);
     setPendingPlan(null);
@@ -383,6 +390,7 @@ export function MirrorView({
           setAlive(!!d.alive);
           setBgBusy(!!d.backgroundBusy);
           setTasks(Array.isArray(d.tasks) ? d.tasks : []);
+          setQueuedPrompts(Array.isArray(d.queuedPrompts) ? d.queuedPrompts : []);
           setPending(Array.isArray(d.pendingQuestions) ? d.pendingQuestions : null);
           setPendingText(typeof d.pendingText === "string" ? d.pendingText : "");
           setPendingPlan(typeof d.pendingPlan === "string" && d.pendingPlan ? d.pendingPlan : null);
@@ -504,7 +512,7 @@ export function MirrorView({
     // fresh on every run; keeping them out of the deps avoids re-firing on unrelated
     // re-renders (e.g. every composer keystroke).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [turns, pending, pendingPlan, pendingPerm, status, pendingSends]);
+  }, [turns, pending, pendingPlan, pendingPerm, status, pendingSends, queuedPrompts]);
 
   // Keep the latest message in view when the body's OWN height changes — the ToDo /
   // 消費推移 / コンテキスト panels opening above it, the composer auto-growing, or a
@@ -988,6 +996,16 @@ export function MirrorView({
   // system-injected user lines (bash i/o, task notifications, slash-command echoes).
   // Append any optimistic echoes as synthetic user turns (idx past any real line so keys
   // stay unique and they sort last) — the mirror then shows a just-sent prompt at once.
+  // A queued prompt that matches a pending echo upgrades that echo's badge to キュー済み
+  // (no second bubble); whatever remains was typed straight into the terminal, so it gets
+  // its own synthetic queued bubble. Multiset take: duplicate texts consume one entry each.
+  const queuedLeft = [...queuedPrompts];
+  const takeQueued = (text: string): boolean => {
+    const i = queuedLeft.findIndex((q) => q.trim() === text);
+    if (i < 0) return false;
+    queuedLeft.splice(i, 1);
+    return true;
+  };
   const echoTurns: Turn[] = pendingSends
     .filter((e) => !echoLanded(e, turns)) // hide at render the instant the real turn lands
     .map((e) => ({
@@ -995,8 +1013,16 @@ export function MirrorView({
       text: e.text,
       idx: 1e9 + e.id,
       pending: true,
+      queued: takeQueued(e.text),
     }));
-  const groups = groupTurns(echoTurns.length ? [...turns, ...echoTurns] : turns);
+  const queuedTurns: Turn[] = queuedLeft.map((q, i) => ({
+    role: "user",
+    text: q,
+    idx: 2e9 + i,
+    queued: true,
+  }));
+  const extras = [...queuedTurns, ...echoTurns];
+  const groups = groupTurns(extras.length ? [...turns, ...extras] : turns);
 
   // A /context-like gauge: the newest assistant turn's prompt size (input + cache) is
   // the current context fill. The per-category split (/context) is computed inside
@@ -1489,6 +1515,7 @@ function groupTurns(turns: Turn[]): Group[] {
     if (last && last.role === t.role && last.sidechain === !!t.sidechain && !last.compact && !t.compact) {
       last.parts.push(...parts);
       if (t.pending) last.pending = true;
+      if (t.queued) last.queued = true;
       if (t.text) last.text += (last.text ? "\n\n" : "") + t.text;
       if (!last.model && t.model) last.model = t.model;
       if (!last.effort && t.effort) last.effort = t.effort;
@@ -1518,6 +1545,7 @@ function groupTurns(turns: Turn[]): Group[] {
         ts: t.ts,
         idx: t.idx,
         pending: !!t.pending,
+        queued: !!t.queued,
       });
     }
   }
@@ -1773,10 +1801,19 @@ function Turn({
     >
       <div className="mirror-turn-head">
         <span className="mt-who">{who}</span>
-        {turn.pending && (
-          <span className="mt-pending" title="送信済み。claude が処理を始めると反映されます">
-            <Icon name="loading" spin /> 反映待ち
+        {turn.queued ? (
+          <span
+            className="mt-pending mt-queued"
+            title="キュー済み。実行中のターンが区切りに達すると取り込まれます"
+          >
+            <Icon name="history" /> キュー済み
           </span>
+        ) : (
+          turn.pending && (
+            <span className="mt-pending" title="送信済み。claude が処理を始めると反映されます">
+              <Icon name="loading" spin /> 反映待ち
+            </span>
+          )
         )}
         {!isUser && turn.model && <span className="mt-model">{prettyModel(turn.model)}</span>}
         {!isUser && turn.effort && (

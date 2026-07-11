@@ -116,6 +116,75 @@ func TestSendUserFilePart(t *testing.T) {
 	}
 }
 
+// TestQueuedCommandTurn checks that a mid-run steering prompt — logged only as an
+// attachment/queued_command event, never as a user line (claude ≥2.1.207) — parses
+// into a plain user turn, and that non-human / non-queued attachments stay invisible.
+func TestQueuedCommandTurn(t *testing.T) {
+	line := []byte(`{"type":"attachment","attachment":{"type":"queued_command","prompt":" origin/mainをマージして ","commandMode":"prompt","origin":{"kind":"human"}},"timestamp":"2026-07-11T09:16:51.851Z","gitBranch":"feat/x","cwd":"/w"}`)
+	turn, ok := parseTurn(line, 7)
+	if !ok {
+		t.Fatalf("queued_command: not parsed")
+	}
+	if turn.Role != "user" || turn.Text != "origin/mainをマージして" || turn.Idx != 7 ||
+		turn.TS != "2026-07-11T09:16:51.851Z" || turn.Branch != "feat/x" || turn.Cwd != "/w" {
+		t.Errorf("turn = %+v", turn)
+	}
+	if len(turn.Parts) != 1 || turn.Parts[0].Kind != "text" || turn.Parts[0].Text != "origin/mainをマージして" {
+		t.Errorf("parts = %+v", turn.Parts)
+	}
+
+	for name, ln := range map[string]string{
+		"other attachment": `{"type":"attachment","attachment":{"type":"task_reminder"}}`,
+		"non-human origin": `{"type":"attachment","attachment":{"type":"queued_command","prompt":"x","origin":{"kind":"assistant"}}}`,
+		"empty prompt":     `{"type":"attachment","attachment":{"type":"queued_command","prompt":"  ","origin":{"kind":"human"}}}`,
+	} {
+		if _, ok := parseTurn([]byte(ln), 0); ok {
+			t.Errorf("%s: parsed as a turn, want dropped", name)
+		}
+	}
+}
+
+// TestCollectQueued reconstructs the live mid-run queue: enqueue adds, remove drops its
+// first match, a content-less op clears, and a real user prompt line clears leftovers
+// (while tool_result / meta user lines don't).
+func TestCollectQueued(t *testing.T) {
+	qop := func(op, content string) string {
+		return `{"type":"queue-operation","operation":"` + op + `","content":"` + content + `"}`
+	}
+	toLines := func(ss ...string) [][]byte {
+		out := make([][]byte, 0, len(ss))
+		for _, s := range ss {
+			out = append(out, []byte(s))
+		}
+		return out
+	}
+
+	got := CollectQueued(toLines(qop("enqueue", "a"), qop("enqueue", "b"), qop("remove", "a")))
+	if len(got) != 1 || got[0] != "b" {
+		t.Errorf("enqueue/remove: got %v, want [b]", got)
+	}
+
+	// tool_result and meta user lines keep the queue; a real prompt clears it.
+	got = CollectQueued(toLines(
+		qop("enqueue", "a"),
+		`{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":"ok"}]}}`,
+		`{"type":"user","isMeta":true,"message":{"content":"<command-name>/foo</command-name>"}}`,
+	))
+	if len(got) != 1 || got[0] != "a" {
+		t.Errorf("tool_result/meta: got %v, want [a]", got)
+	}
+	got = CollectQueued(toLines(qop("enqueue", "a"), `{"type":"user","message":{"content":"next prompt"}}`))
+	if len(got) != 0 {
+		t.Errorf("user prompt should clear stale queue, got %v", got)
+	}
+
+	// A content-less queue op clears everything.
+	got = CollectQueued(toLines(qop("enqueue", "a"), qop("enqueue", "b"), `{"type":"queue-operation","operation":"clear"}`))
+	if len(got) != 0 {
+		t.Errorf("clear: got %v, want empty", got)
+	}
+}
+
 func TestHasConversation(t *testing.T) {
 	toLines := func(ss ...string) [][]byte {
 		out := make([][]byte, 0, len(ss))
