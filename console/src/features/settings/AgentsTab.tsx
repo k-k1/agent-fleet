@@ -4,6 +4,8 @@ import type { ReactNode } from "react";
 import { api, apiJSON, raw } from "../../core/api/client.ts";
 import { EmptyState } from "../../ui/EmptyState.tsx";
 import { Button } from "../../ui/Button.tsx";
+import { Sparkline } from "../../ui/Sparkline.tsx";
+import { fmtTok } from "../../lib/fmttok.ts";
 import { Choice, OnOff } from "./controls.tsx";
 import {
   useSettings,
@@ -49,6 +51,10 @@ export function AgentsTab() {
   // endpoint missing (older image), object = ready.
   const [claude, setClaude] = useState<any>(null);
   const [agents, setAgents] = useState<any>(null);
+  // rtk 効果（トークン節約の累積履歴）: rtk gain のワークスペース集計。WsBar から移設
+  // したもので、コンテナ内 Agent が `rtk gain --format json` を叩いた結果。
+  // ダイアログを開いた時に1回取得すれば十分（累積で低速変化のため常時ポーリング不要）。
+  const [gain, setGain] = useState<any>(null);
 
   const loadSettings = useCallback(() => {
     api("api/claude/settings")
@@ -57,6 +63,9 @@ export function AgentsTab() {
     api("api/agents/rtk")
       .then((a) => setAgents(a && !a.error ? a : false))
       .catch(() => setAgents(false));
+    api("api/agents/rtk/gain")
+      .then((d) => setGain(d && d.available && !d.error && d.summary ? d : null))
+      .catch(() => setGain(null));
   }, []);
 
   // (Re)load when the workspace is running — including when it transitions
@@ -215,6 +224,7 @@ export function AgentsTab() {
   return (
     <div className="conns">
       {sessionSettings}
+      {gain && <RtkGainPanel gain={gain} />}
       <p className="muted ds-note">
         接続の変更は即時、挙動設定は各エージェントの新しいセッションから反映されます。
       </p>
@@ -232,6 +242,60 @@ export function AgentsTab() {
         </p>
       )}
     </div>
+  );
+}
+
+const RTK_HIST_N = 30; // sparkline shows ~the last month of daily savings
+
+// RtkGainPanel: the workspace-level "rtk 効果" summary — a sparkline of daily tokens
+// saved plus the cumulative total, average savings %, and the input→output / command
+// totals. rtk keeps this history itself (the Agent shells out to `rtk gain --format
+// json`); it's a per-container aggregate across this user's agents, so it lives here
+// once — next to the per-agent RTK toggles below — rather than in the WsBar. Self-hides
+// until gain reads back with something actually saved. Savings read as positive, so the
+// sparkline / meter use the ok color (green), not the resource warn/crit scale.
+function RtkGainPanel({ gain }: { gain: any }) {
+  const s = gain?.summary;
+  const saved = s?.total_saved || 0;
+  if (!s || saved <= 0) return null;
+  const pct = Math.round(s.avg_savings_pct || 0);
+  const series = (gain.daily || []).slice(-RTK_HIST_N).map((d: any) => d.saved_tokens);
+  return (
+    <section className="ds-group rtk-gain">
+      <h4 className="ds-title">rtk 効果（トークン節約）</h4>
+      <div className="rtk-gain-head">
+        <Sparkline data={series} width={80} height={30} />
+        <div className="rtk-gain-headline">
+          <b>{fmtTok(saved)}</b>
+          <span className="muted"> 累計節約</span>
+        </div>
+      </div>
+      <div className="rtk-gain-meter">
+        <div className="wu-row-head">
+          <span className="muted">平均節約率</span>
+          <span className="wu-pct">{pct}%</span>
+        </div>
+        <div className="wu-bar">
+          <span className="wu-bar-fill" style={{ width: Math.min(100, pct) + "%" }} />
+        </div>
+      </div>
+      <div className="ws-rtk-stats">
+        <div className="ws-rtk-stat">
+          <span className="muted">入力 → 出力</span>
+          <b>
+            {fmtTok(s.total_input)} → {fmtTok(s.total_output)}
+          </b>
+        </div>
+        <div className="ws-rtk-stat">
+          <span className="muted">実行コマンド</span>
+          <b>{(s.total_commands || 0).toLocaleString()}</b>
+        </div>
+      </div>
+      <p className="muted ds-note">
+        rtk がコマンド出力を圧縮して節約したトークン量です（直近 {RTK_HIST_N} 日の推移）。
+        計上範囲は各エージェントの rtk 設定（下記）により変わります。
+      </p>
+    </section>
   );
 }
 

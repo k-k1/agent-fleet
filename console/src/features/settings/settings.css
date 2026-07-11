@@ -139,6 +139,38 @@
 .ds-group {
   margin-bottom: 22px;
 }
+
+/* rtk 効果 panel (agents tab): workspace-level token-savings summary, moved here from
+   the WsBar. Reuses the .wu-* meter + .ws-rtk-stats rows (globally bundled from
+   wsbar.css). Savings are positive, so the sparkline/meter are tinted with --ok. */
+.rtk-gain-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 12px;
+}
+.rtk-gain .spark {
+  color: var(--ok, #3fb950);
+  flex-shrink: 0;
+}
+.rtk-gain-headline {
+  font-size: 20px;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.rtk-gain-headline .muted {
+  font-size: 13px;
+  font-variant-numeric: normal;
+}
+.rtk-gain-meter {
+  margin-bottom: 12px;
+}
+.rtk-gain .wu-bar-fill {
+  background: var(--ok, #3fb950);
+}
+.rtk-gain .ws-rtk-stats {
+  font-size: 12.5px;
+}
 .ds-title {
   margin: 0 0 10px;
   font-size: 12px;

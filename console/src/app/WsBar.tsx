@@ -17,7 +17,6 @@ import { useConfirm } from "../ui/ConfirmProvider.tsx";
 import { useIsMobile } from "../lib/device.ts";
 import { useDismiss } from "../lib/useDismiss.ts";
 import { fmtGiB as fg } from "../lib/bytes.ts";
-import { fmtTok } from "../lib/fmttok.ts";
 
 const HIST_N = 60; // sparkline ring buffer: ~4 min at the 4s poll cadence
 
@@ -314,127 +313,6 @@ function UsageChip({ src, tenant }: { src: UsageSource; tenant: string | null })
   );
 }
 
-// useRtkGain surfaces the workspace's rtk token-savings history (`rtk gain`) for the
-// WsBar "rtk 効果" chip. rtk itself keeps the accounting (compaction bytes/tokens per
-// command) in its own history DB; the Agent shells out to `rtk gain --format json`.
-// Unlike the resource chips this is CUMULATIVE history that only moves when rtk-wrapped
-// commands run, so a slow 60s poll is plenty (no 4s live cadence needed). Kept in WsBar
-// so it doesn't re-render the app. Self-hides (returns null) when rtk isn't in the image
-// or gain can't be read. Per-workspace: one container's history aggregates that user's
-// agents, matching the resource chips' per-container scope.
-function useRtkGain(tenant: string | null) {
-  const [gain, setGain] = useState<any>(null);
-  const key = useRef("");
-  useEffect(() => {
-    let alive = true;
-    key.current = "";
-    setGain(null);
-    const load = () => {
-      if (document.hidden) return;
-      api("api/agents/rtk/gain")
-        .then((d) => {
-          if (!alive) return;
-          const ok = d && d.available && !d.error && d.summary;
-          // Re-render only when a displayed value changes — same remote-cursor concern
-          // as the resource chips: a steady total shouldn't repaint the sparkline every
-          // minute. Key on the cumulative saved total + the latest day bucket.
-          const last = ok && d.daily && d.daily.length ? d.daily[d.daily.length - 1].date : "";
-          const k = ok ? `${d.summary.total_saved}|${last}` : "off";
-          if (k === key.current) return;
-          key.current = k;
-          setGain(ok ? d : null);
-        })
-        .catch(() => {
-          if (!alive || key.current === "off") return;
-          key.current = "off";
-          setGain(null);
-        });
-    };
-    load();
-    const id = setInterval(load, 60000); // 1 min; cumulative history, Agent shells out to rtk
-    const onVis = () => !document.hidden && load();
-    document.addEventListener("visibilitychange", onVis);
-    return () => {
-      alive = false;
-      clearInterval(id);
-      document.removeEventListener("visibilitychange", onVis);
-    };
-  }, [tenant]);
-  return gain;
-}
-
-const RTK_HIST_N = 30; // sparkline shows ~the last month of daily savings
-
-// RtkChip: a graphical "rtk 効果" chip — a sparkline of daily tokens saved plus the
-// cumulative total and average savings %, opening a popover with the efficiency meter,
-// the input→output totals, and the command count. Self-hides until the Agent answers
-// with rtk gain data (and something was actually saved), so users without rtk — or with
-// no history yet — don't see it. Savings read as positive, so no warn/crit tinting; the
-// sparkline is tinted with the ok color to signal benefit.
-function RtkChip({ tenant }: { tenant: string | null }) {
-  const gain = useRtkGain(tenant);
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-  useDismiss(ref, open, () => setOpen(false));
-  if (!gain || !gain.summary) return null;
-  const s = gain.summary;
-  const saved = s.total_saved || 0;
-  if (saved <= 0) return null; // nothing saved yet → don't clutter the bar
-  const pct = Math.round(s.avg_savings_pct || 0);
-  const series = (gain.daily || []).slice(-RTK_HIST_N).map((d: any) => d.saved_tokens);
-  return (
-    <div className="ws-rtk" ref={ref}>
-      <button
-        type="button"
-        className="ghost ws-res-btn ws-rtk-btn"
-        title={`rtk トークン節約: 累計 ${fmtTok(saved)}（平均 ${pct}%）`}
-        aria-expanded={open}
-        onClick={() => setOpen((o) => !o)}
-      >
-        <Icon name="graph" />
-        <Sparkline data={series} />
-        <span className="ws-res-sum">
-          {fmtTok(saved)} · {pct}%
-        </span>
-        <Icon name="chevron-down" />
-      </button>
-      {open && (
-        <div className="ws-usage-pop">
-          <div className="wu-title">rtk 効果（トークン節約）</div>
-          <div className="wu-row">
-            <div className="wu-row-head">
-              <span className="wu-label">平均節約率</span>
-              <span className="wu-pct">{pct}%</span>
-            </div>
-            <div className="wu-bar">
-              <span className="wu-bar-fill" style={{ width: Math.min(100, pct) + "%" }} />
-            </div>
-          </div>
-          <div className="ws-rtk-stats">
-            <div className="ws-rtk-stat">
-              <span className="muted">累計節約</span>
-              <b>{fmtTok(saved)}</b>
-            </div>
-            <div className="ws-rtk-stat">
-              <span className="muted">入力 → 出力</span>
-              <b>
-                {fmtTok(s.total_input)} → {fmtTok(s.total_output)}
-              </b>
-            </div>
-            <div className="ws-rtk-stat">
-              <span className="muted">実行コマンド</span>
-              <b>{(s.total_commands || 0).toLocaleString()}</b>
-            </div>
-          </div>
-          <div className="wu-note muted">
-            rtk がコマンド出力を圧縮して節約したトークン量です。エージェント別の rtk 適用状況により計上範囲が変わります。
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
 // WS bar: the (single) workspace's state plus Start / Stop. The backend models one
 // workspace per membership, so there is no select / create / delete. The
 // destructive "作り直す" lives deep in 設定 > 環境 (warning-gated), off this bar.
@@ -674,7 +552,6 @@ export function WsBar() {
     <>
       {graphs}
       {usageChips}
-      <RtkChip tenant={tenant} />
     </>
   );
 
@@ -818,7 +695,6 @@ export function WsBar() {
       ) : (
         <>
           {usageChips}
-          <RtkChip tenant={tenant} />
           {resourcesEl}
           <div className="ws-preview" ref={pvRef}>
             <button
