@@ -80,9 +80,15 @@ func headlessAgentAvailable(kind string) bool {
 }
 
 // preferredHeadlessAgent picks the backend for new builtin-assistant conversations
-// and one-shot calls: the first authenticated of claude → codex → opencode. Falls
-// back to claude when nothing is connected (the call then surfaces a clear error).
+// and one-shot calls. The user's explicit choice (設定 > エージェント「アシスタントの
+// エージェント」, ui-prefs assistantAgent) wins while that CLI is usable; otherwise —
+// auto, unset, or the pinned CLI not connected — the first authenticated of
+// claude → codex → opencode. Falls back to claude when nothing is connected (the
+// call then surfaces a clear error).
 func preferredHeadlessAgent() string {
+	if pin := assistantAgentPref(); pin != "" && headlessAgentAvailable(pin) {
+		return pin
+	}
 	for _, k := range []string{session.KindClaude, session.KindCodex, session.KindOpencode} {
 		if headlessAgentAvailable(k) {
 			return k

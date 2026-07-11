@@ -140,6 +140,12 @@ export interface Settings {
   // content). The Agent reads this key from ui-prefs and injects a language rule into the
   // chat system prompt (translate assistant is exempt). See docs/19.
   outputLanguage: string;
+  // Assistant-chat backend: "auto" = the first connected of claude → codex → opencode
+  // (the Agent's preferredHeadlessAgent), or a fixed kind. Applies to builtin
+  // assistants' NEW conversations and one-shot calls (title/branch suggestions); the
+  // Agent reads this key from ui-prefs live. User-defined assistants keep their own
+  // per-assistant agent choice.
+  assistantAgent: string;
   // Per-SSM-host terminal color: host id → color id (see lib/termcolor SSM_HOST_COLORS).
   // Applied to a session's terminal background when it's created (sent as its color).
   ssmHostColors: Record<string, string>;
@@ -249,6 +255,7 @@ const DEFAULTS: Settings = {
   defaultModel: DEFAULT_MODEL, // concrete tier (avoids claude's release-varying own pick)
   autoTitleSuggest: true,
   outputLanguage: "auto",
+  assistantAgent: "auto",
   ssmHostColors: {},
   ttsEnabled: false,
   ttsProvider: "auto",
@@ -320,6 +327,16 @@ export const OUTPUT_LANGUAGES: [string, string][] = [
   ["auto", "入力に合わせる"],
   ["ja", "日本語"],
   ["en", "English"],
+];
+
+// Assistant-chat backend choices (AgentsTab). "auto" picks the first CONNECTED of
+// claude → codex → opencode; a fixed choice falls back to auto when that CLI isn't
+// connected (opencode is always usable — its free tier needs no login).
+export const ASSISTANT_AGENTS: [string, string][] = [
+  ["auto", "自動（接続済みを優先）"],
+  ["claude", "Claude"],
+  ["codex", "Codex"],
+  ["opencode", "opencode"],
 ];
 
 // Mirror composer submit-key options, shared by the settings UI.
