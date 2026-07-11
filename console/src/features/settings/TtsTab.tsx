@@ -87,6 +87,14 @@ export function TtsTab() {
               読み上げ中に次の回答が届いたら、終わってから順番に読みます（見ていないセッションは
               「セッションの音声通知」が担当）。
             </p>
+            <Row label="確認・質問を読み上げる">
+              <OnOff value={s.ttsReadPending} onChange={(v) => setSetting("ttsReadPending", v)} />
+            </Row>
+            <p className="muted ds-note">
+              アクティブなペインのセッションが確認待ち（質問カード・プラン承認・許可要求）になったら、
+              質問文と選択肢を読み上げます。選択肢は画面の短いラベルではなく説明文の方を読みます。
+              画面を見ていなくても、何を聞かれているかが音声で分かります。
+            </p>
             <Row label="長い回答は要約して読む">
               <OnOff value={s.ttsSummaryRead} onChange={(v) => setSetting("ttsSummaryRead", v)} />
             </Row>

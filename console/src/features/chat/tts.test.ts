@@ -9,6 +9,7 @@ import {
   splitSentences,
   abbrevCode,
   emotionOf,
+  pendingSpeech,
 } from "./ttsText.ts";
 import { makeAudioLru } from "./ttsCache.ts";
 
@@ -91,6 +92,34 @@ describe("firstChunkCut (最初の発話の早出し)", () => {
   it("閉じ括弧類も早出しの区切りになる", () => {
     const s = "設定（詳しくは後述）を開きます";
     expect(firstChunkCut(s)).toBe(s.indexOf("）") + 1);
+  });
+});
+
+describe("pendingSpeech (保留中の質問の読み上げ文)", () => {
+  it("質問文＋選択肢（説明文優先）を番号つきで読む", () => {
+    const t = pendingSpeech([
+      {
+        question: "どの方式にしますか？",
+        options: [
+          { label: "案A", description: "設定を専用タブに分離する" },
+          { label: "案B" },
+        ],
+      },
+    ]);
+    expect(t).toBe("確認です。どの方式にしますか？選択肢は2つ。1、設定を専用タブに分離する。2、案B。");
+  });
+
+  it("複数質問は番号を振り、multiSelect は補足する", () => {
+    const t = pendingSpeech([
+      { question: "対象は？", multiSelect: true, options: [{ label: "全部" }] },
+      { question: "いつ？" },
+    ]);
+    expect(t).toBe("確認です。質問1。対象は？選択肢は1つ。1、全部。複数選択できます。質問2。いつ？");
+  });
+
+  it("Markdown 断片は plainify される", () => {
+    const t = pendingSpeech([{ question: "`main` にマージしますか？", options: [] }]);
+    expect(t).toBe("確認です。main にマージしますか？");
   });
 });
 
