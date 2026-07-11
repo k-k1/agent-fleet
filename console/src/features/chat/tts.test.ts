@@ -242,6 +242,13 @@ describe("applyBuiltinReadings / applyReadings (組み込みの読み補正)", (
     expect(applyBuiltinReadings("航空券と空港と空白")).toBe("航空券と空港と空白");
   });
 
+  it("ヌメロニム（i18n 等）は元の語の慣用カタカナで読む（大文字小文字不問・単語境界）", () => {
+    expect(applyBuiltinReadings("I18n対応とa11yの改善")).toBe("インターナショナリゼーション対応とアクセシビリティの改善");
+    expect(applyBuiltinReadings("l10n と e2e テスト")).toBe("ローカリゼーション と エンドツーエンド テスト");
+    expect(applyBuiltinReadings("k8sクラスタ")).toBe("クーバネティスクラスタ");
+    expect(applyBuiltinReadings("mai18nx")).toBe("mai18nx"); // 語中は触らない
+  });
+
   it("ユーザー辞書が先に当たれば組み込みより優先される", () => {
     const dict = parseUserDict("空レポ=そらレポ");
     expect(applyReadings("空レポです", dict, false)).toBe("そらレポです");

@@ -358,7 +358,9 @@ TTS 設定画面かフッターに小さく常時表示する。Polly は AWS �
   `voice` として保存（`workspace/agent/assistants.go` — 保存と echo のみ、解決・合成は
   Console 側）。ストリーミング読み上げと回答フッターの読み上げボタン（`TtsReadButton` に
   voice prop、`speakText` に voice 引数）の両方に適用。②**組み込みの読み補正**
-  （`applyBuiltinReadings`）: VOICEVOX が読み間違える開発語を補正 — 「空＋カタカナ語」
+  （`applyBuiltinReadings`）: VOICEVOX が読み間違える開発語を補正 — **ヌメロニム**（i18n→
+  インターナショナリゼーション, l10n, a11y, o11y, g11n, e2e, k8s。単語境界・大文字小文字
+  不問。数字を数として読ませない）、「空＋カタカナ語」
   （空レポ・空リスト等）は規則で「から」、空文字（列）/空配列/空要素/空判定/空行
   （からぎょう）は個別エントリ。ユーザー/テナント辞書の**後**に適用するので同じ表記は
   ユーザー定義が勝つ。読み整形は `applyReadings`（辞書 → 補正 → 助詞の小休止）に一本化し
