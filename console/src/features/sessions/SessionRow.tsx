@@ -1,7 +1,9 @@
-// SessionRow — one two-line session row plus its ⋯/right-click menu, extracted
-// from SessionsSection so the same row renders in the flat list AND under each
-// working-copy node of the project tree. Self-contained: it owns its menu open
-// state (outside-click / Escape dismiss) and reads pane-hover + layout itself.
+// SessionRow — one single-line session row plus its ⋯/right-click menu: a
+// kind-colored leading icon, the title, and a compact state chip (icon-only for
+// the calm states; question/plan/permission keep their text — they demand the
+// user). Renders in the flat "その他" list AND under each working-copy node of
+// the project tree. Self-contained: it owns its menu open state (outside-click /
+// Escape dismiss) and reads pane-hover + layout itself.
 // Lifecycle ops come from useSessionActions; the three modal triggers (rename,
 // branch-rename, SSM resume) are lifted to the parent via callbacks since their
 // dialogs render at section level.
@@ -49,6 +51,9 @@ export function SessionRow({ s, selected, opens, multi, running, actions }: Sess
   const open = opens.length > 0;
   const hl = open && hover?.session === s.name;
   const st = stateInfo(s);
+  // question/plan/permission want the user — keep their text. Everything else
+  // (入力待ち/進行中/停止中…) collapses to an icon-only chip; the text moves to title.
+  const loud = st.cls.includes("question");
 
   return (
     <li
@@ -76,7 +81,8 @@ export function SessionRow({ s, selected, opens, multi, running, actions }: Sess
             ? "作業フォルダが存在しないため再開できません"
             : !s.alive
               ? "停止中（クリックで開いて再開ボタン / Ctrl・中クリックで新ペイン）"
-              : (s.dir || "") + "（Ctrl/中クリックで新ペインに開く）") + `\nID: ${s.name}`
+              : (s.dir || "") + "（Ctrl/中クリックで新ペインに開く）") +
+          `\n${kindLabel(s.kind)} · ${st.text}\nID: ${s.name}`
         }
         aria-disabled={dead || undefined}
         onClick={(e) => {
@@ -104,24 +110,24 @@ export function SessionRow({ s, selected, opens, multi, running, actions }: Sess
           else if (agentOf(s.kind).caps.transcript) openSessionChatSplit(s.name);
         }}
       >
+        {/* Leading kind icon: color says claude/codex/… so the text tag is gone. */}
+        <span className={"sess-kic kind-" + kindClass(s.kind)} title={kindLabel(s.kind)}>
+          <Icon name={kindIcon(s.kind)} />
+        </span>
         <span className="sess-l1">{displayName(s)}</span>
-        <span className="sess-l2">
-          <span className={"kind-tag kind-" + kindClass(s.kind)}>
-            <Icon name={kindIcon(s.kind)} /> {kindLabel(s.kind)}
+        {/* Branch drift: the working copy left the branch this session started
+            on — the agent's tree may be swapped out under it. */}
+        {s.branchDrift && (
+          <span
+            className="sess-drift"
+            title={`このセッションの作業コピーは起動時のブランチ「${s.branch}」から「${s.currentBranch}」へ切り替わっています。稼働中エージェントの作業ツリーが入れ替わり、編集や差分が食い違っている可能性があります。`}
+          >
+            <Icon name="warning" /> {s.currentBranch}
           </span>
-          <span className={"session-state " + st.cls}>
-            <Icon name={st.icon} spin={st.spin} /> {st.text}
-          </span>
-          {/* Branch drift: the working copy left the branch this session started
-              on — the agent's tree may be swapped out under it. */}
-          {s.branchDrift && (
-            <span
-              className="sess-drift"
-              title={`このセッションの作業コピーは起動時のブランチ「${s.branch}」から「${s.currentBranch}」へ切り替わっています。稼働中エージェントの作業ツリーが入れ替わり、編集や差分が食い違っている可能性があります。`}
-            >
-              <Icon name="warning" /> {s.currentBranch}
-            </span>
-          )}
+        )}
+        <span className={"session-state " + st.cls + (loud ? "" : " mini")} title={st.text}>
+          <Icon name={st.icon} spin={st.spin} />
+          {loud && <> {st.text}</>}
         </span>
       </button>
       {/* Ordinal badges: pane numbers for a session shown in ≥1 panes; click
