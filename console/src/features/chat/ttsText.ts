@@ -135,6 +135,80 @@ export function abbrevCode(token: string, dict: [string, string][] = []): string
   return `${t.slice(0, 2)} ${filler}`;
 }
 
+// --- 組み込みの読み補正 ------------------------------------------------------------
+// VOICEVOX が読み間違えやすい開発文脈の一般語を補正する（例: 空レポ→そられぽ）。
+// ユーザー/テナント辞書の**後**に適用するので、同じ表記をユーザーが定義すればそちらが勝つ
+// （先に置換されて表記が消えるため）。「空＋カタカナ語」（空レポ・空リスト等）は規則で
+// 「から」に、漢字が続く複合語は個別エントリで持つ。航空券・空港などの熟語や
+// 「空が青い」（ひらがな続き）は触らない。
+const KARA_KATAKANA = /空(?=[ァ-ヶー])/g;
+const BUILTIN_READINGS: [string, string][] = [
+  ["空文字", "から文字"], // 空文字列も前方一致で拾う
+  ["空配列", "から配列"],
+  ["空要素", "から要素"],
+  ["空判定", "から判定"],
+  ["空行", "からぎょう"], // 行 単体は読みが揺れる（こう/ぎょう）ので読みまで固定
+];
+
+// ヌメロニム（i18n = internationalization 等の中抜き略語）。数字は「省略した文字数」で
+// 数ではないので、数字読みさせず元の語の慣用カタカナに展開する。単語境界つき・大文字
+// 小文字は不問（I18n / A11Y 等も拾う）。一覧は ja.wikipedia の「ヌメロニム」の IT 系＋
+// 開発現場の頻出（o11y / e2e）。enkana（CP 側・英語→カタカナ）はこの後段だが、ここで
+// 展開済みなので二重変換にはならない。読みは各語のいちばん流通しているカタカナ形。
+const NUMERONYMS: [RegExp, string][] = [
+  [/\bi18n\b/gi, "インターナショナリゼーション"],
+  [/\bl10n\b/gi, "ローカリゼーション"],
+  [/\bg11n\b/gi, "グローバリゼーション"],
+  [/\bm17n\b/gi, "マルチリンガライゼーション"],
+  [/\ba11y\b/gi, "アクセシビリティ"],
+  [/\bo11y\b/gi, "オブザーバビリティ"],
+  [/\bi14y\b/gi, "インターオペラビリティ"],
+  [/\bc14n\b/gi, "カノニカライゼーション"],
+  [/\bn11n\b/gi, "ノーマライゼーション"],
+  [/\bd11n\b/gi, "ドキュメンテーション"],
+  [/\bp13n\b/gi, "パーソナライゼーション"],
+  [/\bv12n\b/gi, "バーチャライゼーション"],
+  [/\btr8n\b/gi, "トランスレーション"],
+  [/\be2e\b/gi, "エンドツーエンド"],
+  [/\bk8s\b/gi, "クーバネティス"],
+];
+
+// 大文字だけの略語で、同綴りの英単語に読みを食われるもの（IT は CMU 辞書の it=イット が
+// 勝ってしまう）。**大文字小文字を区別して**単語境界で当てる — 小文字の it は英語の代名詞
+// なので触らない（enkana の辞書はキーを小文字化するため大小を区別できず、ここで扱う）。
+const UPPER_ACRONYMS: [RegExp, string][] = [[/\bIT\b/g, "アイティー"]];
+
+export function applyBuiltinReadings(text: string): string {
+  let t = text.replace(KARA_KATAKANA, "から");
+  for (const [re, to] of NUMERONYMS) t = t.replace(re, to);
+  for (const [re, to] of UPPER_ACRONYMS) t = t.replace(re, to);
+  return applyUserDict(t, BUILTIN_READINGS);
+}
+
+// applyReadings は読み上げ直前の「読みの整形」ひとまとめ: ユーザー/テナント辞書（優先）→
+// 組み込みの読み補正 → 助詞の小休止。tts.ts の 3 経路（ストリーミング/朗読/告知の差し挟み）
+// が共通で通る（enkana は CP 側でこの後段）。
+export function applyReadings(text: string, dict: [string, string][], particlePause: boolean): string {
+  let t = text;
+  if (dict.length) t = applyUserDict(t, dict);
+  t = applyBuiltinReadings(t);
+  if (particlePause) t = pauseParticles(t);
+  return t.trim();
+}
+
+// --- 助詞のあとの小休止 -----------------------------------------------------------
+// 「を・は・で・に・と」の直後に漢字が続くとき、読点を挿入して合成に「息継ぎ」相当の
+// 小さな間を作る（例: 神は細部に宿る → 神は、細部に、宿る）。文中は 1 回の合成の内側
+// なので再生スケジュールの間（SENT_BEAT 等）では作れず、テキスト側で VOICEVOX の
+// 読点ポーズ（句点より短い）に変換する。ひらがなが続く場合（とき・など・のような）は
+// 挿入しない — 漢字の頭は語の切れ目である可能性が高く、誤挿入が少ない。
+// 合成直前（ユーザー辞書の後）に適用し、表示には影響しない。
+const PARTICLE_PAUSE = /([をはでにと])(?=[一-鿿㐀-䶿々])/g;
+
+export function pauseParticles(text: string): string {
+  return text.replace(PARTICLE_PAUSE, "$1、");
+}
+
 // --- ブロック頭の判定（リスト・見出し・引用の前拍用） -----------------------------
 // リスト項目・見出し・引用など「新しいブロックの頭」で始まるテキストか。読み上げでは
 // マーカー記号自体は落とす（plainify）ため、代わりに直前へ一拍（前拍）を置いて構造の
@@ -196,6 +270,35 @@ export function emotionOf(text: string): "happy" | "angry" | null {
 // （罫線・記号だけ等）は捨てる。
 const SENT_END = "。．！？!?";
 const SPEAKABLE = /[0-9A-Za-zぁ-んァ-ヶーｦ-ﾟ一-鿿㐀-䶿豈-﫿々]/;
+
+// --- 長文の合成用分割 --------------------------------------------------------------
+// 句点で切った「1 文」が長すぎるとき、合成用にさらに弱い区切り（読点・中黒・スラッシュ・
+// ダッシュ・閉じ括弧など）で割る。合成 1 回が長いと CPU エンジンの合成時間がそのまま
+// 無音の待ちになる（先読みの息切れ）ため、開始レイテンシとパイプラインの持続性を優先する。
+// 区切りは前の片に含める。max までに区切りが無ければ長さで強制分割。呼び手（tts.ts の
+// submit / turnTts / ReaderView）は途中の片の間を詰めて連続再生し、ハイライトは元の文の
+// 単位のまま扱う。
+const SENT_SPLIT_BREAK = "、，・；：／—–」』）】";
+const SPLIT_HEAD_MIN = 8; // 先頭 8 文字未満では切らない（細切れ防止）
+
+export function splitLongSentence(s: string, max = 60): string[] {
+  const out: string[] = [];
+  let rest = s;
+  while (rest.length > max) {
+    let cut = -1;
+    for (let i = max; i >= SPLIT_HEAD_MIN; i--) {
+      if (SENT_SPLIT_BREAK.includes(rest[i])) {
+        cut = i + 1;
+        break;
+      }
+    }
+    if (cut < 0) cut = max; // 区切りが無い → 長さで強制分割
+    out.push(rest.slice(0, cut));
+    rest = rest.slice(cut);
+  }
+  if (rest) out.push(rest);
+  return out;
+}
 
 export function splitSentences(text: string): string[] {
   const out: string[] = [];

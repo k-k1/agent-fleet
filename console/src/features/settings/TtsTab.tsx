@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import {
   useSettings,
   setSetting,
@@ -7,7 +7,11 @@ import {
   TTS_CACHE_SIZES,
   TTS_PROVIDERS,
   TTS_POLLY_VOICES,
+  type TtsCharConf,
 } from "../../lib/settings.ts";
+import { voiceCharacters, isDefaultVoice, previewVoice } from "../chat/tts.ts";
+import { loadSpeakers, speakersCatalog } from "../chat/ttsSpeakers.ts";
+import { Icon } from "../../ui/Icon.tsx";
 import { Choice, OnOff } from "./controls.tsx";
 
 // TtsTab — 音声読み上げ（TTS, docs/24 + ADR0013）の設定タブ。もとは AgentsTab から分離した
@@ -73,6 +77,20 @@ export function TtsTab() {
               同じセッションは常に同じ声になり、複数セッションの読み上げ・音声通知を声で聞き分けられます。
               アシスタント・チャットや朗読ビューは上で選んだ話者のままです。
             </p>
+            {s.ttsProvider !== "polly" && (
+              <>
+                <div className="ds-row">
+                  <span className="ds-label">キャラクター</span>
+                </div>
+                <CharList />
+                <p className="muted ds-note">
+                  セッションに割り当てるキャラと、キャラごとの基準スタイル・速度を選べます（朗読ビューの
+                  声の選択肢もここで有効にしたキャラになります）。▶ で試聴。一覧は VOICEVOX エンジンから
+                  取得するので、エンジンにいるキャラ・スタイルがすべて選べます。速度の「既定」は上の
+                  「読み上げ速度」に従います。
+                </p>
+              </>
+            )}
             <Row label="内容で感情を変える">
               <OnOff value={s.ttsEmotion} onChange={(v) => setSetting("ttsEmotion", v)} />
             </Row>
@@ -138,6 +156,14 @@ export function TtsTab() {
               裸のハッシュ・UUID も、地の文の中から見つけて同じように省略します（英単語や長い数値は
               誤検知しないよう 16 進らしいものだけ）。
             </p>
+            <Row label="助詞のあとで一呼吸">
+              <OnOff value={s.ttsParticlePause} onChange={(v) => setSetting("ttsParticlePause", v)} />
+            </Row>
+            <p className="muted ds-note">
+              「を・は・で・に・と」の直後に漢字が続くところで、読点ひとつぶんの小さな間を入れて読みます
+              （例:「神は細部に宿る」→「神は、細部に、宿る」）。文の切れ目の一拍より短い「息継ぎ」で、
+              語の切れ目が聞き取りやすくなります。
+            </p>
             <Row label="英語をカタカナ読み">
               <OnOff value={s.ttsEnglishKana} onChange={(v) => setSetting("ttsEnglishKana", v)} />
             </Row>
@@ -196,6 +222,81 @@ function Row({ label, children }: { label: ReactNode; children?: ReactNode }) {
     <div className="ds-row">
       <span className="ds-label">{label}</span>
       {children}
+    </div>
+  );
+}
+
+// CharList — キャラクター設定（docs/24）。使用の ON/OFF・基準スタイル・キャラ別速度・試聴。
+// 一覧はエンジン実カタログ（GET /api/tts/speakers）駆動で、取得できるまで（エンジン停止中
+// 含む）は既定 14 キャラの静的フォールバックを表示する（スタイルはノーマルのみ）。
+function CharList() {
+  const s = useSettings();
+  const [, setLoaded] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    void loadSpeakers().then((l) => alive && l && setLoaded(true));
+    return () => {
+      alive = false;
+    };
+  }, []);
+  const chars = voiceCharacters();
+  const live = !!speakersCatalog(); // エンジン実カタログか（false = 静的フォールバック）
+  const pool = s.ttsVoicePool || {};
+  const patch = (name: string, p: TtsCharConf) => setSetting("ttsVoicePool", { ...pool, [name]: { ...pool[name], ...p } });
+  return (
+    <div className="ds-charlist">
+      {chars.map((c) => {
+        const conf = pool[c.name];
+        const use = conf?.use ?? isDefaultVoice(c.name);
+        const style = conf?.style && c.styles.some((st) => st.id === conf.style) ? conf.style : c.profile.base;
+        return (
+          <div key={c.name} className={"ds-char" + (use ? "" : " off")}>
+            <label className="ds-char-use" title={use ? "セッション割り当てから外す" : "セッション割り当てに使う"}>
+              <input type="checkbox" checked={use} onChange={(e) => patch(c.name, { use: e.target.checked })} />
+              <span className="ds-char-name">{c.name}</span>
+            </label>
+            <select
+              value={style}
+              disabled={!use || c.styles.length < 2}
+              title="基準スタイル（ノーマル以外を選ぶと感情の読み分けは行いません）"
+              onChange={(e) => patch(c.name, { style: e.target.value })}
+            >
+              {c.styles.map((st) => (
+                <option key={st.id} value={st.id}>
+                  {st.name}
+                </option>
+              ))}
+            </select>
+            <select
+              value={conf?.speed ?? 0}
+              disabled={!use}
+              title="このキャラの読み上げ速度（既定 = 全体の設定に従う）"
+              onChange={(e) => patch(c.name, { speed: Number(e.target.value) || undefined })}
+            >
+              <option value={0}>既定</option>
+              {TTS_SPEEDS.map(([v, label]) => (
+                <option key={v} value={v}>
+                  {label}
+                </option>
+              ))}
+            </select>
+            <button
+              type="button"
+              className="ds-char-play"
+              title="この声で試聴"
+              onClick={() => previewVoice(c.name, style, conf?.speed)}
+            >
+              <Icon name="unmute" />
+            </button>
+          </div>
+        );
+      })}
+      {!live && (
+        <p className="muted ds-note">
+          （VOICEVOX エンジンに接続できないため既定の一覧を表示しています。エンジン起動中は全キャラ・
+          全スタイルから選べます）
+        </p>
+      )}
     </div>
   );
 }

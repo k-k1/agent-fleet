@@ -12,9 +12,18 @@
 import { rel } from "../../core/api/client.ts";
 import { getSettings } from "../../lib/settings.ts";
 import { useTtsStore } from "../../core/store/tts.ts";
-import { plainify, plainifyStreaming, firstChunkCut, applyUserDict, emotionOf, startsBlock } from "./ttsText.ts";
+import {
+  plainify,
+  plainifyStreaming,
+  firstChunkCut,
+  applyReadings,
+  splitLongSentence,
+  emotionOf,
+  startsBlock,
+} from "./ttsText.ts";
 import { effectiveDict } from "./ttsDict.ts";
 import { makeAudioLru } from "./ttsCache.ts";
+import { speakersCatalog, type Speaker, type SpeakerStyle } from "./ttsSpeakers.ts";
 
 export interface TtsOptions {
   provider: string; // "auto" | "voicevox" | "polly"
@@ -40,30 +49,101 @@ export function ttsOptsFromSettings(s = getSettings()): TtsOptions {
 // --- セッションごとの声（docs/24） ----------------------------------------------
 // 複数セッションの並行運用時に「どのセッションの回答か」を声で判別できるようにする。
 // セッション名のハッシュで話者プールから決定的に選ぶ（同じセッション名は常に同じ声）。
-// プールは VOICEVOX 標準エンジンの代表キャラ。感情スタイル（あまあま/ツンツン等）を持つ
-// キャラは variant も持たせておく（感情読み分け機能が使う）。Polly は JP 3 声で同様に。
+// プールは「エンジン実カタログ（ttsSpeakers.ts）×ユーザーのキャラクター設定
+// （settings.ttsVoicePool）」で決まる（activeVoicePool）。カタログ未取得（エンジン停止中
+// 等）は下の静的一覧にフォールバック — これが既定で有効なキャラの定義でもある。感情
+// スタイル（あまあま/ツンツン等）を持つキャラは variant も持たせておく（感情読み分けが
+// 使う。カタログがあればスタイル名から導出）。Polly は JP 3 声で同様に。
 export interface VoiceProfile {
+  name: string; // エンジンのキャラ名（settings.ttsVoicePool のキー）
   base: string; // ノーマルの speaker 番号
   happy?: string; // 明るい系スタイル（あまあま等）
   angry?: string; // とがった系スタイル（ツンツン等）
 }
 const SESSION_VOICES: VoiceProfile[] = [
-  { base: "3", happy: "1", angry: "7" }, // ずんだもん
-  { base: "2", happy: "0", angry: "6" }, // 四国めたん
-  { base: "8" }, // 春日部つむぎ
-  { base: "10" }, // 雨晴はう
-  { base: "9" }, // 波音リツ
-  { base: "14" }, // 冥鳴ひまり
-  { base: "16", happy: "15", angry: "18" }, // 九州そら
-  { base: "20" }, // もち子さん
-  { base: "11", happy: "39", angry: "40" }, // 玄野武宏（男声。喜び/ツンギレ）
-  { base: "12", happy: "32", angry: "34" }, // 白上虎太郎（わーい/おこ）
-  { base: "13" }, // 青山龍星（低い男声。感情スタイルは新しめの ID なので base のみ）
-  { base: "23", happy: "24" }, // WhiteCUL（たのしい）
-  { base: "47", happy: "48" }, // ナースロボ＿タイプT（楽々）
-  { base: "43" }, // 櫻歌ミコ
+  { name: "ずんだもん", base: "3", happy: "1", angry: "7" },
+  { name: "四国めたん", base: "2", happy: "0", angry: "6" },
+  { name: "春日部つむぎ", base: "8" },
+  { name: "雨晴はう", base: "10" },
+  { name: "波音リツ", base: "9" },
+  { name: "冥鳴ひまり", base: "14" },
+  { name: "九州そら", base: "16", happy: "15", angry: "18" },
+  { name: "もち子さん", base: "20" },
+  { name: "玄野武宏", base: "11", happy: "39", angry: "40" }, // 男声
+  { name: "白上虎太郎", base: "12", happy: "32", angry: "34" },
+  { name: "青山龍星", base: "13" }, // 低い男声
+  { name: "WhiteCUL", base: "23", happy: "24" },
+  { name: "ナースロボ＿タイプＴ", base: "47", happy: "48" },
+  { name: "櫻歌ミコ", base: "43" },
 ];
 const SESSION_POLLY_VOICES = ["Takumi", "Kazuha", "Tomoko"]; // Polly の JP ニューラルは現状この 3 声
+
+// 既定で有効なキャラ（ttsVoicePool に use 未設定のときの既定値）。
+const DEFAULT_VOICE_NAMES = new Set(SESSION_VOICES.map((p) => p.name));
+export function isDefaultVoice(name: string): boolean {
+  return DEFAULT_VOICE_NAMES.has(name);
+}
+
+// --- キャラクター設定（ユーザーごとの使用キャラ・基準スタイル・速度, docs/24） --------
+// エンジンのスタイル名から感情 variant を導出するためのキーワード（部分一致）。
+const HAPPY_STYLES = ["あまあま", "わーい", "喜び", "たのしい", "楽々", "元気", "うきうき"];
+const ANGRY_STYLES = ["ツンツン", "おこ", "ツンギレ", "不機嫌", "怒り"];
+
+// profileOf はカタログの 1 キャラから既定プロファイルを組む。base はノーマル系スタイル
+// （名前が「ノーマル」/「ふつう」。無ければ先頭）、happy/angry はスタイル名から導出。
+function profileOf(sp: Speaker): VoiceProfile {
+  const byName = (words: string[]) => sp.styles.find((st) => words.some((w) => st.name.includes(w)))?.id;
+  const normal = sp.styles.find((st) => st.name === "ノーマル" || st.name === "ふつう")?.id ?? sp.styles[0].id;
+  return { name: sp.name, base: normal, happy: byName(HAPPY_STYLES), angry: byName(ANGRY_STYLES) };
+}
+
+// TtsTab のキャラリスト 1 行分。styles は基準スタイルの選択肢（カタログ未取得時はノーマルのみ）。
+export interface VoiceCharRow {
+  name: string;
+  styles: SpeakerStyle[];
+  profile: VoiceProfile;
+}
+
+// voiceCharacters は設定 UI・プール解決の元になるキャラ一覧。エンジン実カタログがあれば
+// それを（新キャラ・新スタイルも自動で載る）、無ければ静的フォールバックを返す。
+export function voiceCharacters(): VoiceCharRow[] {
+  const cat = speakersCatalog();
+  if (cat && cat.length) return cat.map((sp) => ({ name: sp.name, styles: sp.styles, profile: profileOf(sp) }));
+  return SESSION_VOICES.map((p) => ({ name: p.name, styles: [{ id: p.base, name: "ノーマル" }], profile: p }));
+}
+
+// activeVoicePool は「いま使うキャラのプール」= voiceCharacters にユーザーのキャラクター
+// 設定（use/style/speed）を適用した結果。セッション声の割り当てと朗読ビューの声一覧の
+// 共通の源。voice は基準スタイルの speaker 番号、speed はキャラ別速度（undefined =
+// グローバル設定に従う）。
+export interface ActiveVoice {
+  name: string;
+  voice: string;
+  speed?: number;
+  profile: VoiceProfile;
+}
+export function activeVoicePool(): ActiveVoice[] {
+  const pool = getSettings().ttsVoicePool || {};
+  const out: ActiveVoice[] = [];
+  for (const c of voiceCharacters()) {
+    const conf = pool[c.name];
+    if (!(conf?.use ?? DEFAULT_VOICE_NAMES.has(c.name))) continue;
+    // 保存済みスタイルがカタログに無い（エンジン更新等）ときはノーマルへ。
+    const style = conf?.style && c.styles.some((st) => st.id === conf.style) ? conf.style : c.profile.base;
+    out.push({ name: c.name, voice: style, speed: conf?.speed || undefined, profile: c.profile });
+  }
+  return out;
+}
+
+// previewVoice は設定のキャラリストの試聴。短い定型文をその場で読む（グローバル 1 本再生に
+// 乗るので TopBar 停止と統合。同一文言×同一条件は合成キャッシュで 2 回目以降は即再生）。
+export function previewVoice(name: string, voice: string, speed?: number): void {
+  const opts = { ...ttsOptsFromSettings(), provider: "auto", voice };
+  if (speed) opts.speed = speed;
+  const c = startTts(opts, "試聴・" + name);
+  c.push("こんにちは。この声で読み上げます。");
+  c.flush();
+}
 
 // speaker 番号 → キャラ名（スタイル違いも同じキャラに束ねる）。TopBar の「読み上げ中・
 // 〇〇（キャラ名）」表示用。セッション別の声や感情スタイルで「いま誰が喋っているか」を
@@ -83,59 +163,100 @@ const VV_CHAR_NAMES: Record<string, string> = {
 };
 
 // voiceCharName は再生に使う声のキャラ名ラベル。明示 polly は VoiceId をそのまま。
+// エンジン実カタログがあればそこから引く（新キャラ・新スタイルも正しく出る）。
 // auto ルーティングで Polly に落ちた場合までは追わない（設定ベースのベストエフォート）。
 export function voiceCharName(opts: TtsOptions): string {
   if (opts.provider === "polly") return opts.pollyVoice || "Polly";
+  const cat = speakersCatalog();
+  if (cat) {
+    for (const sp of cat) if (sp.styles.some((st) => st.id === opts.voice)) return sp.name;
+  }
   return VV_CHAR_NAMES[opts.voice] || "";
 }
 
 // sessionVoiceOpts はセッション名から声の上書き（voice / pollyVoice）を返す。設定 OFF や
 // セッション名なしは undefined（= 選択中の話者のまま）。startTts / startNarration の
 // opts にスプレッドして使う。
-export function sessionVoiceOpts(session: string): Partial<TtsOptions> | undefined {
-  if (!session || !getSettings().ttsVoicePerSession) return undefined;
+// voicePoolOpts はキー文字列のハッシュで有効キャラのプール（activeVoicePool）から声を
+// 決定的に選ぶ（同じキーは常に同じ声）。セッション（sessionVoiceOpts）とアシスタント・
+// チャット（assistantVoiceOpts）の共通処理。
+function voicePoolOpts(key: string): Partial<TtsOptions> | undefined {
+  const pool = activeVoicePool();
+  if (!pool.length) return undefined; // 全キャラ OFF → 選択中の話者のまま
   let h = 0;
-  for (const c of session) h = (h * 31 + c.codePointAt(0)!) >>> 0;
+  for (const c of key) h = (h * 31 + c.codePointAt(0)!) >>> 0;
   // 上位ビットを折り込んでから剰余を取る。素の h % N は下位ビットしか見ず、31 ≡ -1 (mod 8)
   // なので実質「文字コードの交代和」になり、似た形式の名前（共通プレフィックス＋数字等）で
   // 偏る（例: 末尾が 1 と 9、0 と 8 の違いだと必ず同じ声）。折り畳みで実質一様にする。
   h = (h ^ (h >>> 16)) >>> 0;
-  return {
-    voice: SESSION_VOICES[h % SESSION_VOICES.length].base,
+  const v = pool[h % pool.length];
+  const o: Partial<TtsOptions> = {
+    voice: v.voice,
     pollyVoice: SESSION_POLLY_VOICES[h % SESSION_POLLY_VOICES.length],
   };
+  if (v.speed) o.speed = v.speed; // キャラ別速度（未設定キーを作らない — spread で上書きするため）
+  return o;
+}
+
+export function sessionVoiceOpts(session: string): Partial<TtsOptions> | undefined {
+  if (!session || !getSettings().ttsVoicePerSession) return undefined;
+  return voicePoolOpts(session);
+}
+
+// assistantVoiceOpts はアシスタント・チャットの声。アシスタントに明示の声（assistant.voice、
+// 作成/編集で指定）があれば最優先。無ければ「セッションごとに声を変える」ON のときに
+// アシスタント ID のハッシュでプールから割り当て（同じアシスタントは常に同じ声）。
+// どちらも無ければ undefined（設定の話者）。
+export function assistantVoiceOpts(assistantId?: string, explicit?: string): Partial<TtsOptions> | undefined {
+  if (explicit) return voiceChoiceOpts(explicit);
+  if (!assistantId || !getSettings().ttsVoicePerSession) return undefined;
+  return voicePoolOpts("assistant:" + assistantId);
 }
 
 // --- 朗読ビューの声選択（docs/24） -----------------------------------------------
 // ReaderView ヘッダーの「声」セレクト用。"" = 設定の話者のまま。"vv:<speaker>" は VOICEVOX
 // のキャラ（provider は auto に上げる — エンジン不在時は Polly が代読し、復帰したら選んだ
-// キャラに戻る）。"polly:<VoiceId>" は明示 Polly。
-export const READER_VOICE_CHOICES: [string, string][] = [
-  ["", "設定の話者"],
-  ...SESSION_VOICES.map((p): [string, string] => ["vv:" + p.base, VV_CHAR_NAMES[p.base] ?? p.base]),
-  ...SESSION_POLLY_VOICES.map((v): [string, string] => ["polly:" + v, "Polly（" + v + "）"]),
-];
+// キャラに戻る）。"polly:<VoiceId>" は明示 Polly。一覧はキャラクター設定で有効にした
+// キャラ（activeVoicePool。基準スタイル・キャラ別速度も反映）。
+export function readerVoiceChoices(): [string, string][] {
+  return [
+    ["", "設定の話者"],
+    ...activeVoicePool().map((v): [string, string] => ["vv:" + v.voice, v.name]),
+    ...SESSION_POLLY_VOICES.map((v): [string, string] => ["polly:" + v, "Polly（" + v + "）"]),
+  ];
+}
 
-// voiceChoiceOpts は READER_VOICE_CHOICES の値を TtsOptions の上書きへ解決する（"" や不明値は
-// undefined = 設定のまま）。
+// voiceChoiceOpts は readerVoiceChoices の値を TtsOptions の上書きへ解決する（"" や不明値は
+// undefined = 設定のまま）。キャラ別速度が設定されていればそれも載せる。
 export function voiceChoiceOpts(v: string): Partial<TtsOptions> | undefined {
-  if (v.startsWith("vv:")) return { provider: "auto", voice: v.slice(3) };
+  if (v.startsWith("vv:")) {
+    const id = v.slice(3);
+    const o: Partial<TtsOptions> = { provider: "auto", voice: id };
+    const pv = activeVoicePool().find((p) => p.voice === id);
+    if (pv?.speed) o.speed = pv.speed;
+    return o;
+  }
   if (v.startsWith("polly:")) return { provider: "polly", pollyVoice: v.slice(6) };
   return undefined;
 }
 
 // --- 感情スタイルの読み分け（docs/24） -------------------------------------------
 // 文にエラー・失敗系の語があればツンツン系、成功・完了系ならあまあま系のスタイルで読む
-// （emotionOf の判定。文単位＝合成 1 回単位で切り替え）。スタイル variant を持つ話者
-// （SESSION_VOICES で happy/angry を持たせたもの）のときだけ効き、Polly やスタイル無しの
-// 話者はそのまま。ノーマル以外を基準スタイルに選んでいる場合も触らない（好みを尊重）。
-const STYLE_VARIANTS: Record<string, VoiceProfile> = Object.fromEntries(
-  SESSION_VOICES.filter((p) => p.happy || p.angry).map((p) => [p.base, p]),
-);
+// （emotionOf の判定。文単位＝合成 1 回単位で切り替え）。感情 variant を持つ話者
+// （エンジン実カタログのスタイル名から導出。カタログ未取得時は SESSION_VOICES の
+// happy/angry）のときだけ効き、Polly やスタイル無しの話者はそのまま。ノーマル以外を
+// 基準スタイルに選んでいる場合も触らない（好みを尊重 — voice がノーマルの speaker 番号に
+// 一致するときだけ変える）。
+function emotionProfile(voice: string): VoiceProfile | undefined {
+  for (const c of voiceCharacters()) {
+    if (c.profile.base === voice && (c.profile.happy || c.profile.angry)) return c.profile;
+  }
+  return undefined;
+}
 
 function emotionOpts(text: string, base: TtsOptions): TtsOptions {
   if (!getSettings().ttsEmotion) return base;
-  const prof = STYLE_VARIANTS[base.voice];
+  const prof = emotionProfile(base.voice);
   if (!prof) return base;
   const e = emotionOf(text);
   if (e === "happy" && prof.happy) return { ...base, voice: prof.happy };
@@ -147,9 +268,14 @@ function emotionOpts(text: string, base: TtsOptions): TtsOptions {
 const MAX_INFLIGHT = 2;
 // チャンク間に挟む「間」（秒）。素材側の前後無音は CP が短縮している（audio_query の
 // pre/postPhonemeLength 上書き）ため、実際の間隔はほぼこの値＋残り無音（~0.07s）になる。
-// 句点・改行で確定した文の後は一拍置き、読点などでの文中早出しの後は詰める。
+// 3 段構え: 改行（段落・行の切れ目）の後は一拍 SENTENCE_GAP、文中の句点（。！？）の後は
+// より短い一拍 SENT_BEAT、読点などでの文中早出しの後は詰める CLAUSE_GAP。
 const SENTENCE_GAP = 0.3;
 const CLAUSE_GAP = 0.08;
+// 文中の句点（。！？）の後の短い一拍。ストリーミング（startTts）はチャンク後の間として、
+// 朗読（startNarration）では同一ブロック/行内の文境界の前拍として呼び手（turnTts /
+// readerText 経由）が使う。改行・ブロック頭（SENTENCE_GAP / BLOCK_BEAT = 0.3）より短い。
+export const SENT_BEAT = 0.15;
 // リスト項目・見出し・引用など「新しいブロックの頭」の前に足す一拍（前拍）。マーカー記号は
 // 読まないので、構造の切れ目を間で表す。ストリーミング（startTts）は通常の間に加算、
 // 朗読（startNarration）は preGaps として呼び手（turnTts / ReaderView）が渡す。
@@ -305,6 +431,7 @@ export function startTts(opts: TtsOptions, source = "", onEnd?: (reason: "done" 
     if (st.active === controller) {
       st.setActive(null, "");
       st.setSpeaking(false);
+      st.setPreparing(false);
     }
     onEnd?.(reason);
   };
@@ -330,7 +457,7 @@ export function startTts(opts: TtsOptions, source = "", onEnd?: (reason: "done" 
       const head = m ? buf.slice(0, m.index! + 1) : buf;
       const cut = firstChunkCut(head);
       if (cut > 0) {
-        enqueuePiece(buf.slice(0, cut), /*hard*/ true, /*beat*/ false);
+        enqueuePiece(buf.slice(0, cut), /*hard*/ true, CLAUSE_GAP);
         buf = buf.slice(cut);
       }
     }
@@ -340,7 +467,9 @@ export function startTts(opts: TtsOptions, source = "", onEnd?: (reason: "done" 
       const end = m.index! + 1;
       const piece = buf.slice(0, end);
       buf = buf.slice(end);
-      enqueuePiece(piece, /*hard*/ /\n/.test(m[0]) || /[。！？!?]/.test(m[0]));
+      const nl = /\n/.test(m[0]);
+      // 改行で確定 → 一拍（SENTENCE_GAP）、文中の句点 → 短い一拍（SENT_BEAT）。
+      enqueuePiece(piece, /*hard*/ nl || /[。！？!?]/.test(m[0]), nl ? SENTENCE_GAP : SENT_BEAT);
     }
     if (force) {
       // 末尾の未確定分 + 持ち越しをすべて読み上げる。fence 状態は引き回す。
@@ -351,11 +480,11 @@ export function startTts(opts: TtsOptions, source = "", onEnd?: (reason: "done" 
       const pre = pending ? pendingPre : tailPre;
       pending = "";
       pendingPre = false;
-      if (combined) submit(combined, true, pre);
+      if (combined) submit(combined, SENTENCE_GAP, pre);
     }
   };
 
-  const enqueuePiece = (piece: string, hard: boolean, beat = true) => {
+  const enqueuePiece = (piece: string, hard: boolean, gap = SENTENCE_GAP) => {
     const pre = pending ? pendingPre : startsBlock(piece); // チャンク開始片の頭で判定
     const spoken = plainifyStreaming(
       piece,
@@ -365,7 +494,13 @@ export function startTts(opts: TtsOptions, source = "", onEnd?: (reason: "done" 
       },
       codeOpts,
     );
-    if (!spoken.trim()) return;
+    if (!spoken.trim()) {
+      // 読み上げの無い改行だけの断片（段落の切れ目）: 直前チャンクの後の間を行間へ格上げする
+      // （「…た。\n」は句点で先に SENT_BEAT が付いているため、段落末だけここで一拍になる）。
+      // 直前チャンクが既に再生スケジュール済み（gaps 消費済み）なら間に合わないので触らない。
+      if (/\n/.test(piece) && gaps.has(seq - 1)) gaps.set(seq - 1, Math.max(gaps.get(seq - 1)!, SENTENCE_GAP));
+      return;
+    }
     const combined = pending + spoken;
     if (!hard && combined.trim().length < MIN_CHUNK) {
       pending = combined; // まだ短い → 次とまとめる
@@ -374,18 +509,24 @@ export function startTts(opts: TtsOptions, source = "", onEnd?: (reason: "done" 
     }
     pending = "";
     pendingPre = false;
-    submit(combined, beat, pre);
+    submit(combined, gap, pre);
   };
 
-  const submit = (text: string, beat = true, pre = false) => {
+  const submit = (text: string, gap = SENTENCE_GAP, pre = false) => {
     let t = text.trim();
     if (!t) return;
-    // ユーザー辞書を適用（enkana は CP 側でこの後。katakana はそのまま通るので競合しない）。
-    if (userDict.length) t = applyUserDict(t, userDict).trim();
+    // 読みの整形: ユーザー/テナント辞書 → 組み込み読み補正 → 助詞の小休止（enkana は CP 側で後段）。
+    t = applyReadings(t, userDict, getSettings().ttsParticlePause);
     if (!t) return;
-    gaps.set(seq, beat ? SENTENCE_GAP : CLAUSE_GAP);
-    if (pre) preGaps.set(seq, BLOCK_BEAT); // リスト・見出し等の頭 → 読む前に一拍
-    jobs.push({ seq: seq++, text: t });
+    // 長い 1 文は合成用に分割（1 回の合成が重いと先読みが息切れして無音になる）。途中の片は
+    // 読点相当に詰め、本来の間は最後の片の後だけ。前拍（ブロック頭）は先頭の片だけ。
+    const pieces = splitLongSentence(t);
+    for (let i = 0; i < pieces.length; i++) {
+      gaps.set(seq, i === pieces.length - 1 ? gap : CLAUSE_GAP);
+      if (pre && i === 0) preGaps.set(seq, BLOCK_BEAT); // リスト・見出し等の頭 → 読む前に一拍
+      jobs.push({ seq: seq++, text: pieces[i] });
+    }
+    if (!startedAudio) useTtsStore.getState().setPreparing(true); // 最初の音まで「生成中」
     startedAudio = true;
     pump();
     notify();
@@ -446,6 +587,7 @@ export function startTts(opts: TtsOptions, source = "", onEnd?: (reason: "done" 
       let at = Math.max(ctx.currentTime, nextStartAt);
       if (sq > 0) at += pre; // ブロック頭の前拍（先頭チャンクは開始を遅らせない）
       src.start(at);
+      useTtsStore.getState().setPreparing(false); // 最初の音がスケジュールされた → 生成中を解除
       nextStartAt = at + ab.duration + gap;
     }
   };
@@ -526,12 +668,21 @@ useTtsStore.subscribe((st, prev) => {
   if (prev.speaking && !st.speaking) queueMicrotask(pumpAnnounce);
 });
 
+// takeAnnounce は朗読（startNarration）がユニット境界で告知を差し挟むための取り出し口。
+// 長い朗読（ファイル・長文ターン）が終わるまでセッション通知を待たせない（docs/24）。
+// pumpAnnounce は何か再生中（active あり）は動かないので、再生中の取り出しはここだけ
+// ＝二重再生にはならない。
+function takeAnnounce(): { text: string; source: string; voice?: Partial<TtsOptions> } | undefined {
+  return announceQueue.shift();
+}
+
 // speakText は与えたテキストをその場で読み上げる（FileView の選択範囲など、非ストリーム用途）。
-// 設定（話者/速度/プロバイダ）は React 外から getSettings() で取得。空文字は無視。
-export function speakText(text: string, source = ""): void {
+// 設定（話者/速度/プロバイダ）は React 外から getSettings() で取得。voice は声の上書き
+// （アシスタントの声 assistantVoiceOpts 等）。空文字は無視。
+export function speakText(text: string, source = "", voice?: Partial<TtsOptions>): void {
   const t = text.trim();
   if (!t) return;
-  const c = startTts(ttsOptsFromSettings(), source);
+  const c = startTts({ ...ttsOptsFromSettings(), ...voice }, source);
   c.push(t);
   c.flush();
 }
@@ -547,6 +698,8 @@ export interface NarrationHandle {
   resume(): void;
   stop(): void;
   isPaused(): boolean;
+  // 声の即時切替（朗読ビューのセレクト）。いま鳴っている文はそのまま、次の文から新しい声。
+  setVoice(voice?: Partial<TtsOptions>): void;
 }
 
 export function startNarration(
@@ -564,7 +717,7 @@ export function startNarration(
   preemptActive(); // グローバル 1 本（既存の再生を止める・キューは温存）
   const ctx = audioCtx();
   const s = getSettings();
-  const opts = { ...ttsOptsFromSettings(s), ...voice };
+  let opts = { ...ttsOptsFromSettings(s), ...voice }; // let: setVoice で差し替わる
   const userDict = effectiveDict(); // ユーザー＋テナント共通辞書（ユーザー優先）
 
   // 各 unit を読み上げ用にクリーン化（Markdown 記法/URL 除去 + コード片の省略読み +
@@ -573,7 +726,7 @@ export function startNarration(
   const codeOpts = { abbrev: s.ttsAbbrevCode, dict: userDict };
   const texts = units.map((u) => {
     let t = plainify(u, codeOpts).trim();
-    if (t && userDict.length) t = applyUserDict(t, userDict).trim();
+    if (t) t = applyReadings(t, userDict, s.ttsParticlePause); // 辞書 → 読み補正 → 助詞の小休止
     return t;
   });
 
@@ -581,6 +734,7 @@ export function startNarration(
   const acs = new Set<AbortController>();
   let synthAt = 0; // 次に合成を仕掛ける index
   let cursor = 0; // 次に再生する index
+  let epoch = 0; // 声の世代（setVoice で進む。古い声の合成結果を無効化する）
   let inflight = 0;
   let playing = false;
   let cur: AudioBufferSourceNode | null = null;
@@ -596,6 +750,7 @@ export function startNarration(
     if (st.active === adapter) {
       st.setActive(null, "");
       st.setSpeaking(false);
+      st.setPreparing(false);
     }
   };
 
@@ -603,7 +758,8 @@ export function startNarration(
     if (!stopped && !playing && inflight === 0 && cursor >= texts.length) finish("done");
   };
 
-  // in-flight 上限まで先読み合成。空 unit は即 null。
+  // in-flight 上限まで先読み合成。空 unit は即 null。結果はエポック一致時だけ採用
+  // （setVoice 後に届いた古い声の合成を鳴らさない）。
   const pump = () => {
     while (!stopped && inflight < MAX_INFLIGHT && synthAt < texts.length) {
       const i = synthAt++;
@@ -615,9 +771,14 @@ export function startNarration(
       inflight++;
       const ac = new AbortController();
       acs.add(ac);
+      const ep = epoch;
       synthToBuffer(ctx!, text, emotionOpts(text, opts), ac.signal)
-        .then((ab) => buffers.set(i, ab))
-        .catch(() => buffers.set(i, null))
+        .then((ab) => {
+          if (ep === epoch) buffers.set(i, ab);
+        })
+        .catch(() => {
+          if (ep === epoch) buffers.set(i, null);
+        })
         .finally(() => {
           acs.delete(ac);
           inflight--;
@@ -627,9 +788,95 @@ export function startNarration(
     }
   };
 
+  // 声の即時切替（NarrationHandle.setVoice）。いま鳴っている文は触らず、次の文から新しい
+  // 声にする: 未再生の先読み分（buffers は再生済みを消しながら進むので残りは全部 cursor
+  // 以降）を捨て、次に鳴る文（cursor）から合成をやり直す。in-flight は abort しつつ、
+  // 応答順の競合はエポックで確実に無効化する。
+  const setVoice = (voice2?: Partial<TtsOptions>) => {
+    if (stopped) return;
+    opts = { ...ttsOptsFromSettings(getSettings()), ...voice2 };
+    epoch++;
+    acs.forEach((a) => a.abort());
+    acs.clear();
+    buffers.clear();
+    synthAt = cursor;
+    const st = useTtsStore.getState();
+    if (st.active === adapter) st.setActive(adapter, source, voiceCharName(opts)); // TopBar の声表示を更新
+    pump();
+    tryPlay(); // 再生が追いついて待っていた場合に備える
+  };
+
+  // 告知の差し挟み（docs/24）: 長い朗読の途中でもセッション通知・確認の告知を待たせすぎない。
+  // ユニット境界で announce キューから 1 件取り出し、次のユニットの前にその場で読む。再生中は
+  // TopBar のラベル/声を告知側に差し替え、終わったら朗読のものへ戻す。停止・一時停止は朗読と
+  // 一体（同じ ctx・同じ adapter）。
+  const playInterlude = (a: { text: string; source: string; voice?: Partial<TtsOptions> }) => {
+    let t = plainify(a.text, codeOpts).trim();
+    if (t) t = applyReadings(t, userDict, getSettings().ttsParticlePause);
+    if (!t) {
+      tryPlay();
+      return;
+    }
+    const aopts = { ...ttsOptsFromSettings(getSettings()), ...a.voice };
+    const label = (on: boolean) => {
+      const st = useTtsStore.getState();
+      if (st.active !== adapter) return;
+      if (on) st.setActive(adapter, a.source, voiceCharName(aopts));
+      else st.setActive(adapter, source, voiceCharName(opts));
+    };
+    // 長い告知（要約など）も合成用に分割して順に鳴らす（1 回の合成が重いと無音の待ちになる）。
+    const pieces = splitLongSentence(t);
+    let pi = 0;
+    playing = true; // 合成待ちの間も次ユニットの再生開始と maybeDone を抑える
+    const playNext = () => {
+      if (stopped) return;
+      if (pi >= pieces.length) {
+        playing = false;
+        label(false);
+        tryPlay();
+        maybeDone();
+        return;
+      }
+      const piece = pieces[pi++];
+      const ac = new AbortController();
+      acs.add(ac);
+      void synthToBuffer(ctx!, piece, emotionOpts(piece, aopts), ac.signal).then((ab) => {
+        acs.delete(ac);
+        if (stopped) {
+          playing = false;
+          return;
+        }
+        if (!ab) {
+          playNext(); // 失敗した片は飛ばして次へ
+          return;
+        }
+        label(true);
+        const src = ctx!.createBufferSource();
+        src.buffer = ab;
+        src.connect(ctx!.destination);
+        src.onended = () => {
+          cur = null;
+          playNext();
+        };
+        cur = src;
+        src.start(ctx!.currentTime + (pi === 1 ? 0.15 : 0)); // 朗読との切れ目に小さな間（先頭の片のみ）
+        useTtsStore.getState().setSpeaking(true);
+        useTtsStore.getState().setPreparing(false);
+      });
+    };
+    playNext();
+  };
+
   // 連番順に再生。空/失敗 unit は飛ばし、次に再生開始した unit を onUnit で通知。
   const tryPlay = () => {
     if (stopped || paused || playing || !ctx) return;
+    if (cursor < texts.length) {
+      const a = takeAnnounce(); // 朗読の続きがあるときだけ差し挟む（最後は通常の直列へ）
+      if (a) {
+        playInterlude(a);
+        return;
+      }
+    }
     while (cursor < texts.length && buffers.has(cursor)) {
       const ab = buffers.get(cursor)!;
       buffers.delete(cursor);
@@ -639,6 +886,7 @@ export function startNarration(
       playing = true;
       onUnit(idx);
       useTtsStore.getState().setSpeaking(true);
+      useTtsStore.getState().setPreparing(false); // 音が出はじめた → 生成中を解除
       const src = ctx.createBufferSource();
       src.buffer = ab;
       src.connect(ctx.destination);
@@ -699,8 +947,9 @@ export function startNarration(
       finish("done"); // エンジン無し（AudioContext 不可）or 読む中身が無い
       return;
     }
+    useTtsStore.getState().setPreparing(true); // 最初の音が鳴るまで「生成中」（TopBar のぐるぐる）
     pump();
     tryPlay();
   });
-  return { pause, resume, stop, isPaused: () => paused };
+  return { pause, resume, stop, isPaused: () => paused, setVoice };
 }

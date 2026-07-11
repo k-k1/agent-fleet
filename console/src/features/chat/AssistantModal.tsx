@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { Modal } from "../../ui/Modal.tsx";
 import { Icon } from "../../ui/Icon.tsx";
@@ -6,6 +6,8 @@ import { AGENTS } from "../../agents/registry.ts";
 import { SESSION_KINDS } from "../../types/session.ts";
 import type { SessionKind } from "../../types/session.ts";
 import type { Assistant, AssistantInput, ToolGrant } from "../../types/assistant.ts";
+import { readerVoiceChoices } from "./tts.ts";
+import { loadSpeakers } from "./ttsSpeakers.ts";
 
 // AssistantModal creates or edits a user-defined assistant template (docs/19 Q2):
 // name, backend agent, optional model, a persona (system prompt), a tool grant, and
@@ -48,7 +50,20 @@ export function AssistantModal({ initial, onClose, onSave }: AssistantModalProps
   const [persona, setPersona] = useState(initial?.persona ?? "");
   const [tools, setTools] = useState<ToolGrant>(initial?.tools ?? "none");
   const [knowledge, setKnowledge] = useState((initial?.knowledge ?? []).join("\n"));
+  const [voice, setVoice] = useState(initial?.voice ?? "");
   const [busy, setBusy] = useState(false);
+  // 声の選択肢はキャラクター設定×エンジン実カタログ（tts.ts）。届いたら再レンダ。
+  const [, setCatalogLoaded] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    void loadSpeakers().then((l) => alive && l && setCatalogLoaded(true));
+    return () => {
+      alive = false;
+    };
+  }, []);
+  // 先頭の「設定の話者」を「自動」に読み替える（アシスタントの "" = プールから自動割り当て）。
+  const voiceChoices: [string, string][] = [["", "自動（キャラプールから）"], ...readerVoiceChoices().slice(1)];
+  if (voice && !voiceChoices.some(([v]) => v === voice)) voiceChoices.push([voice, voice]); // プール外の保存値も表示
 
   const canSubmit = name.trim().length > 0 && !busy;
 
@@ -69,6 +84,7 @@ export function AssistantModal({ initial, onClose, onSave }: AssistantModalProps
           .split("\n")
           .map((s) => s.trim())
           .filter(Boolean),
+        voice,
       });
       onClose();
     } finally {
@@ -146,6 +162,23 @@ export function AssistantModal({ initial, onClose, onSave }: AssistantModalProps
           <div className="ui-field-label">モデル（任意）</div>
           <label className="ui-field">
             <input value={model} onChange={(e) => setModel(e.target.value)} placeholder="既定モデル" />
+          </label>
+        </div>
+
+        <div className="ui-field">
+          <div className="ui-field-label">読み上げの声（任意）</div>
+          <div className="ui-field-hint">
+            このアシスタントの回答を読み上げるときの声。「自動」は読み上げ設定のキャラプールから固定で
+            割り当てます（「セッションごとに声を変える」が ON のとき。OFF なら設定の話者）。
+          </div>
+          <label className="ui-field">
+            <select value={voice} onChange={(e) => setVoice(e.target.value)}>
+              {voiceChoices.map(([v, label]) => (
+                <option key={v} value={v}>
+                  {label}
+                </option>
+              ))}
+            </select>
           </label>
         </div>
 

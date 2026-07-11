@@ -175,6 +175,32 @@ func registerTTSRoutes(mux *http.ServeMux, cfg config) {
 		})
 	})
 
+	// キャラ一覧（VOICEVOX の /speakers のプロキシ）。設定 UI の「キャラクター」選択が
+	// 実エンジンのデータで選択肢（キャラ名・スタイル・speaker 番号）を出すために使う —
+	// speaker 番号を静的に持つと実エンジンとずれる（docs/24）。60s キャッシュで設定画面の
+	// 再描画がエンジンを叩き続けないようにする。エンジン停止中は 502（UI は現在の設定を
+	// 表示するだけの読み取り専用にフォールバック）。
+	var spMu sync.Mutex
+	var spCache []ttsSpeaker
+	var spAt time.Time
+	mux.HandleFunc("GET /api/tts/speakers", func(w http.ResponseWriter, r *http.Request) {
+		spMu.Lock()
+		cached, fresh := spCache, !spAt.IsZero() && time.Since(spAt) < 60*time.Second
+		spMu.Unlock()
+		if !fresh {
+			list, aerr := voicevoxSpeakers(r.Context(), cfg.voicevoxURL)
+			if aerr != nil {
+				writeAPIErr(w, aerr)
+				return
+			}
+			spMu.Lock()
+			spCache, spAt = list, time.Now()
+			spMu.Unlock()
+			cached = list
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"speakers": cached})
+	})
+
 	// テナント共通の読み仮名辞書。全ユーザー（要ログイン）が読める。クライアントは起動時に
 	// 取得してユーザー辞書と合成する（適用はクライアント側なので合成ハンドラは触らない）。
 	mux.HandleFunc("GET /api/tts/dict", func(w http.ResponseWriter, r *http.Request) {
@@ -328,6 +354,58 @@ func voicevoxSynthesize(ctx context.Context, base, text, voice string, speed flo
 		return nil, &apiError{http.StatusBadGateway, "tts_engine_error", "voicevox synthesis failed: " + strings.TrimSpace(string(wav))}
 	}
 	return wav, nil
+}
+
+// ttsSpeaker は /api/tts/speakers の 1 キャラ。styles の id は speaker 番号（クライアントが
+// 合成リクエストに使う値なので文字列で返す）。
+type ttsSpeakerStyle struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+type ttsSpeaker struct {
+	Name   string            `json:"name"`
+	Styles []ttsSpeakerStyle `json:"styles"`
+}
+
+// voicevoxSpeakers はエンジンの GET /speakers をキャラ名＋トーク用スタイル一覧に変換する。
+// 歌唱系スタイル（type が "talk" 以外。0.14 以降の song/humming 等）は読み上げに使えない
+// ので除き、トークスタイルが 1 つも無いキャラは落とす。
+func voicevoxSpeakers(ctx context.Context, base string) ([]ttsSpeaker, *apiError) {
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(base, "/")+"/speakers", nil)
+	resp, err := ttsHTTP.Do(req)
+	if err != nil {
+		return nil, &apiError{http.StatusBadGateway, "tts_engine_unreachable", "voicevox unreachable: " + err.Error()}
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode != http.StatusOK {
+		return nil, &apiError{http.StatusBadGateway, "tts_engine_error", "voicevox speakers failed: " + strings.TrimSpace(string(body))}
+	}
+	var raw []struct {
+		Name   string `json:"name"`
+		Styles []struct {
+			ID   json.Number `json:"id"`
+			Name string      `json:"name"`
+			Type string      `json:"type"`
+		} `json:"styles"`
+	}
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return nil, &apiError{http.StatusBadGateway, "tts_engine_error", "voicevox speakers: invalid JSON"}
+	}
+	out := make([]ttsSpeaker, 0, len(raw))
+	for _, sp := range raw {
+		s := ttsSpeaker{Name: sp.Name}
+		for _, st := range sp.Styles {
+			if st.Type != "" && st.Type != "talk" {
+				continue
+			}
+			s.Styles = append(s.Styles, ttsSpeakerStyle{ID: st.ID.String(), Name: st.Name})
+		}
+		if len(s.Styles) > 0 {
+			out = append(out, s)
+		}
+	}
+	return out, nil
 }
 
 // voicevoxReady は /version が 200 を返すかで到達性を判定する（短いタイムアウト）。

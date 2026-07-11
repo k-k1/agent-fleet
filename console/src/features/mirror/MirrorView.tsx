@@ -454,8 +454,16 @@ export function MirrorView({
     },
     stop: () => ttsHandleRef.current?.stop(), // 後始末は onEnd 側で
   };
-  // セッション切替・アンマウントで停止（本文 DOM ごと入れ替わるため）。
-  useEffect(() => () => ttsHandleRef.current?.stop(), [session]);
+  // セッション切替で停止（本文 DOM ごと入れ替わるため）。アンマウント（ターミナルへの
+  // 切替・ペインを閉じる）では止めない — 再生はグローバル 1 本でビューに依存しないので
+  // そのまま流し、操作は TopBar の停止で足りる。カラオケ・ハイライトは外れた DOM に付いた
+  // まま破棄されるだけで無害（ミラーへ戻ったときのハイライト復元まではしない）。
+  const ttsSessionRef = useRef(session);
+  useEffect(() => {
+    if (ttsSessionRef.current === session) return;
+    ttsSessionRef.current = session;
+    ttsHandleRef.current?.stop();
+  }, [session]);
 
   // 本文内でテキスト選択が確定したら「ここから読み上げ」ピルを出す（assistant ターン内のみ）。
   const captureTtsSel = () => {
@@ -2211,6 +2219,7 @@ function Turn({
 
 // TurnTtsButtons — ターンフッターの読み上げ操作（カラオケ朗読）。待機中は「読み上げ」1 つ、
 // このターンを読み上げ中は「一時停止/再開・停止」に切り替わる（ReaderView ヘッダと同構成）。
+// ラベルは付けずアイコンのみ（ペインが狭いとフッターの並びが崩れるため。意味は title で）。
 // ttsEnabled かつ本文があるときだけ表示。ChatView の TtsReadButton（ストリーム型 speakText）
 // とは別物で、ミラーは完結ターンを朗読するのでハイライト・途中再開が付く。
 function TurnTtsButtons({
@@ -2233,7 +2242,7 @@ function TurnTtsButtons({
         title="このターンを読み上げ"
         onClick={() => body.current && tts.start(turn.idx!, body.current)}
       >
-        <Icon name="unmute" /> 読み上げ
+        <Icon name="unmute" />
       </button>
     );
   }
@@ -2246,10 +2255,10 @@ function TurnTtsButtons({
         title={paused ? "読み上げを再開" : "読み上げを一時停止"}
         onClick={paused ? tts.resume : tts.pause}
       >
-        <Icon name={paused ? "play" : "debug-pause"} /> {paused ? "再開" : "一時停止"}
+        <Icon name={paused ? "play" : "debug-pause"} />
       </button>
       <button type="button" className="ghost mt-copy" title="読み上げを停止" onClick={tts.stop}>
-        <Icon name="debug-stop" /> 停止
+        <Icon name="debug-stop" />
       </button>
     </>
   );

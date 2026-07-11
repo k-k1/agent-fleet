@@ -7,8 +7,12 @@ import {
   applyUserDict,
   mergeDicts,
   splitSentences,
+  splitLongSentence,
   abbrevCode,
   isBareHash,
+  pauseParticles,
+  applyBuiltinReadings,
+  applyReadings,
   emotionOf,
   pendingSpeech,
   startsBlock,
@@ -227,6 +231,58 @@ describe("abbrevCode (インラインコードの省略読み)", () => {
   });
 });
 
+describe("applyBuiltinReadings / applyReadings (組み込みの読み補正)", () => {
+  it("空＋カタカナ語・空文字列などは「から」で読む", () => {
+    expect(applyBuiltinReadings("空レポを作成")).toBe("からレポを作成");
+    expect(applyBuiltinReadings("空リストと空文字列")).toBe("からリストとから文字列");
+    expect(applyBuiltinReadings("空行を削除")).toBe("からぎょうを削除");
+  });
+
+  it("熟語・ひらがな続きの空は触らない", () => {
+    expect(applyBuiltinReadings("空が青い")).toBe("空が青い");
+    expect(applyBuiltinReadings("航空券と空港と空白")).toBe("航空券と空港と空白");
+  });
+
+  it("ヌメロニム（i18n 等）は元の語の慣用カタカナで読む（大文字小文字不問・単語境界）", () => {
+    expect(applyBuiltinReadings("I18n対応とa11yの改善")).toBe("インターナショナリゼーション対応とアクセシビリティの改善");
+    expect(applyBuiltinReadings("l10n と e2e テスト")).toBe("ローカリゼーション と エンドツーエンド テスト");
+    expect(applyBuiltinReadings("k8sクラスタ")).toBe("クーバネティスクラスタ");
+    expect(applyBuiltinReadings("v12n と o11y と p13n")).toBe(
+      "バーチャライゼーション と オブザーバビリティ と パーソナライゼーション",
+    );
+    expect(applyBuiltinReadings("mai18nx")).toBe("mai18nx"); // 語中は触らない
+  });
+
+  it("大文字の IT はアイティー（小文字の it = 英語の代名詞は触らない）", () => {
+    expect(applyBuiltinReadings("IT業界のIT投資")).toBe("アイティー業界のアイティー投資");
+    expect(applyBuiltinReadings("do it now")).toBe("do it now");
+    expect(applyBuiltinReadings("GITHUB")).toBe("GITHUB"); // 語中は触らない
+  });
+
+  it("ユーザー辞書が先に当たれば組み込みより優先される", () => {
+    const dict = parseUserDict("空レポ=そらレポ");
+    expect(applyReadings("空レポです", dict, false)).toBe("そらレポです");
+  });
+
+  it("applyReadings は 辞書 → 読み補正 → 助詞の小休止 の順で通す", () => {
+    expect(applyReadings("空配列を確認", [], true)).toBe("から配列を、確認");
+  });
+});
+
+describe("pauseParticles (助詞＋漢字の小休止)", () => {
+  it("を・は・で・に・と の直後に漢字が続くとき読点を入れる", () => {
+    expect(pauseParticles("神は細部に宿る")).toBe("神は、細部に、宿る");
+    expect(pauseParticles("設定を保存して再起動")).toBe("設定を、保存して再起動");
+    expect(pauseParticles("ミラーで再生とターミナルで停止")).toBe("ミラーで、再生とターミナルで、停止");
+  });
+
+  it("ひらがな・カタカナ・句読点が続くときは入れない", () => {
+    expect(pauseParticles("これはそのままです")).toBe("これはそのままです");
+    expect(pauseParticles("画面にカーソルを、")).toBe("画面にカーソルを、");
+    expect(pauseParticles("ペインとタブ")).toBe("ペインとタブ");
+  });
+});
+
 describe("isBareHash / 裸のハッシュの省略読み", () => {
   const F = "(なんとか|ふがふが|むにゅむにゅ)";
 
@@ -263,6 +319,27 @@ describe("isBareHash / 裸のハッシュの省略読み", () => {
 
   it("長い SHA はインラインコードでも頭 2 文字＋フィラー（語の誤認をしない）", () => {
     expect(abbrevCode("b2d7fac36b996a9ae6245c188b51c4dbac2c9aef")).toMatch(new RegExp(`^b2 ${F}$`));
+  });
+});
+
+describe("splitLongSentence (長文の合成用分割)", () => {
+  it("短い文はそのまま", () => {
+    expect(splitLongSentence("短い文です。")).toEqual(["短い文です。"]);
+  });
+
+  it("長い文は弱い区切り（読点・中黒・閉じ括弧等）で割り、結合すると元に戻る", () => {
+    const s =
+      "キャリア系は au（エーユー）・ymobile（ワイモバイル）を追加し、NTT や KDDI は自動で読めるので対象外としつつ、SOFTBANK と RAKUTEN は綴りママになるため辞書で手当てしました。";
+    const pieces = splitLongSentence(s, 40);
+    expect(pieces.length).toBeGreaterThan(1);
+    expect(pieces.join("")).toBe(s);
+    for (const p of pieces) expect(p.length).toBeLessThanOrEqual(41); // 区切りを含めて max+1 まで
+  });
+
+  it("区切りが無い長文は長さで強制分割する", () => {
+    const s = "あ".repeat(100);
+    const pieces = splitLongSentence(s, 40);
+    expect(pieces).toEqual(["あ".repeat(40), "あ".repeat(40), "あ".repeat(20)]);
   });
 });
 
