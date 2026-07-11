@@ -133,7 +133,9 @@ export function startTts(opts: TtsOptions, source = "", onEnd?: (reason: "done" 
   useTtsStore.getState().active?.stop(); // 直前の再生を停止（グローバル 1 本）
   // ユーザー読み仮名辞書はターン開始時に一度だけ読む（opts の provider/voice とは独立した
   // テキスト処理なので、全呼び出し元で opts に載せ替えず getSettings から取る）。
-  const userDict = parseUserDict(getSettings().ttsUserDict);
+  const st = getSettings();
+  const userDict = parseUserDict(st.ttsUserDict);
+  const codeOpts = { abbrev: st.ttsAbbrevCode, dict: userDict }; // インラインコードの省略読み
   const ctx = audioCtx();
   let buf = ""; // 未確定バッファ（文の途中）
   let pending = ""; // MIN_CHUNK 未満で持ち越し中の短い断片
@@ -193,7 +195,7 @@ export function startTts(opts: TtsOptions, source = "", onEnd?: (reason: "done" 
     }
     if (force) {
       // 末尾の未確定分 + 持ち越しをすべて読み上げる。fence 状態は引き回す。
-      const spokenTail = plainifyStreaming(buf, { get: () => inFence, set: (v) => (inFence = v) });
+      const spokenTail = plainifyStreaming(buf, { get: () => inFence, set: (v) => (inFence = v) }, codeOpts);
       buf = "";
       const combined = (pending + spokenTail).trim();
       pending = "";
@@ -202,10 +204,14 @@ export function startTts(opts: TtsOptions, source = "", onEnd?: (reason: "done" 
   };
 
   const enqueuePiece = (piece: string, hard: boolean, beat = true) => {
-    const spoken = plainifyStreaming(piece, {
-      get: () => inFence,
-      set: (v) => (inFence = v),
-    });
+    const spoken = plainifyStreaming(
+      piece,
+      {
+        get: () => inFence,
+        set: (v) => (inFence = v),
+      },
+      codeOpts,
+    );
     if (!spoken.trim()) return;
     const combined = pending + spoken;
     if (!hard && combined.trim().length < MIN_CHUNK) {
@@ -396,10 +402,12 @@ export function startNarration(
   const opts = ttsOptsFromSettings(s);
   const userDict = parseUserDict(s.ttsUserDict);
 
-  // 各 unit を読み上げ用にクリーン化（Markdown 記法/URL 除去 + ユーザー辞書）。空になった
-  // unit（コード等）は "" のまま残し、原 index を保つ（再生・ハイライトを飛ばす）。
+  // 各 unit を読み上げ用にクリーン化（Markdown 記法/URL 除去 + コード片の省略読み +
+  // ユーザー辞書）。空になった unit（コード等）は "" のまま残し、原 index を保つ
+  // （再生・ハイライトを飛ばす）。
+  const codeOpts = { abbrev: s.ttsAbbrevCode, dict: userDict };
   const texts = units.map((u) => {
-    let t = plainify(u).trim();
+    let t = plainify(u, codeOpts).trim();
     if (t && userDict.length) t = applyUserDict(t, userDict).trim();
     return t;
   });

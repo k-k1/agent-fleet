@@ -72,6 +72,15 @@ export function TtsTab() {
               読み上げ中に次の回答が届いたら、終わってから順番に読みます（見ていないセッションは
               「セッションの音声通知」が担当）。
             </p>
+            <Row label="コード片を省略して読む">
+              <OnOff value={s.ttsAbbrevCode} onChange={(v) => setSetting("ttsAbbrevCode", v)} />
+            </Row>
+            <p className="muted ds-note">
+              バッククォートのコード片を全部読まずに省略します。コミットハッシュ等は頭 2 文字＋
+              「なんとか」等のフィラー語（例: e79853e → e7 ふがふが）、camelCase やパスは頭の一語＋フィラー
+              （3 語以上は末尾の一語も。例: ttsAutoReadMirror → tts なんとか Mirror）。短い語・空白を含む
+              コマンド・読み仮名辞書に載せた表記はそのまま読みます。
+            </p>
             <Row label="英語をカタカナ読み">
               <OnOff value={s.ttsEnglishKana} onChange={(v) => setSetting("ttsEnglishKana", v)} />
             </Row>

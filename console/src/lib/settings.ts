@@ -160,6 +160,10 @@ export interface Settings {
   // 朗読する（features/mirror/turnTts.ts）。見ていないセッションの短い告知 ttsSessionNotify
   // とは相補（こちらは見ている画面の本文を読む）。
   ttsAutoReadMirror: boolean;
+  // インラインコード（`…`）を省略して読む（features/chat/ttsText.ts の abbrevCode）。
+  // ハッシュ等は頭 2 文字＋フィラー語（なんとか 等）、camelCase/パスは頭一語＋フィラー
+  // （3 語以上は＋末尾一語）。短い語・空白入り・日本語入り・読み仮名辞書に掛かる表記はそのまま。
+  ttsAbbrevCode: boolean;
   // 朗読ビュー（docs/24）を縦書きで表示するか（既定 false=横書き）。ReaderView のトグルに追随。
   readerVertical: boolean;
 }
@@ -203,6 +207,7 @@ const DEFAULTS: Settings = {
   ttsUserDict: "",
   ttsCacheSec: 300,
   ttsAutoReadMirror: false,
+  ttsAbbrevCode: true,
   readerVertical: false,
 };
 
