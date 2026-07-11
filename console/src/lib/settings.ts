@@ -260,6 +260,7 @@ export const MIRROR_SEND_MODES = [
 // dropped on purpose so model selection stays deterministic. Each alias still tracks the
 // newest model within its tier.
 export const CLAUDE_MODELS: [string, string][] = [
+  ["fable", "Fable"],
   ["opus", "Opus"],
   ["sonnet", "Sonnet"],
   ["haiku", "Haiku"],
