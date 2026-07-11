@@ -622,6 +622,14 @@ useTtsStore.subscribe((st, prev) => {
   if (prev.speaking && !st.speaking) queueMicrotask(pumpAnnounce);
 });
 
+// takeAnnounce は朗読（startNarration）がユニット境界で告知を差し挟むための取り出し口。
+// 長い朗読（ファイル・長文ターン）が終わるまでセッション通知を待たせない（docs/24）。
+// pumpAnnounce は何か再生中（active あり）は動かないので、再生中の取り出しはここだけ
+// ＝二重再生にはならない。
+function takeAnnounce(): { text: string; source: string; voice?: Partial<TtsOptions> } | undefined {
+  return announceQueue.shift();
+}
+
 // speakText は与えたテキストをその場で読み上げる（FileView の選択範囲など、非ストリーム用途）。
 // 設定（話者/速度/プロバイダ）は React 外から getSettings() で取得。空文字は無視。
 export function speakText(text: string, source = ""): void {
@@ -723,9 +731,64 @@ export function startNarration(
     }
   };
 
+  // 告知の差し挟み（docs/24）: 長い朗読の途中でもセッション通知・確認の告知を待たせすぎない。
+  // ユニット境界で announce キューから 1 件取り出し、次のユニットの前にその場で読む。再生中は
+  // TopBar のラベル/声を告知側に差し替え、終わったら朗読のものへ戻す。停止・一時停止は朗読と
+  // 一体（同じ ctx・同じ adapter）。
+  const playInterlude = (a: { text: string; source: string; voice?: Partial<TtsOptions> }) => {
+    let t = plainify(a.text, codeOpts).trim();
+    if (t && userDict.length) t = applyUserDict(t, userDict).trim();
+    if (!t) {
+      tryPlay();
+      return;
+    }
+    const aopts = { ...ttsOptsFromSettings(getSettings()), ...a.voice };
+    const label = (on: boolean) => {
+      const st = useTtsStore.getState();
+      if (st.active !== adapter) return;
+      if (on) st.setActive(adapter, a.source, voiceCharName(aopts));
+      else st.setActive(adapter, source, voiceCharName(opts));
+    };
+    playing = true; // 合成待ちの間も次ユニットの再生開始と maybeDone を抑える
+    const ac = new AbortController();
+    acs.add(ac);
+    void synthToBuffer(ctx!, t, emotionOpts(t, aopts), ac.signal).then((ab) => {
+      acs.delete(ac);
+      playing = false;
+      if (stopped) return;
+      if (!ab) {
+        tryPlay();
+        return;
+      }
+      playing = true;
+      label(true);
+      const src = ctx!.createBufferSource();
+      src.buffer = ab;
+      src.connect(ctx!.destination);
+      src.onended = () => {
+        playing = false;
+        cur = null;
+        label(false);
+        if (stopped) return;
+        tryPlay();
+        maybeDone();
+      };
+      cur = src;
+      src.start(ctx!.currentTime + 0.15); // 朗読との切れ目に小さな間
+      useTtsStore.getState().setSpeaking(true);
+    });
+  };
+
   // 連番順に再生。空/失敗 unit は飛ばし、次に再生開始した unit を onUnit で通知。
   const tryPlay = () => {
     if (stopped || paused || playing || !ctx) return;
+    if (cursor < texts.length) {
+      const a = takeAnnounce(); // 朗読の続きがあるときだけ差し挟む（最後は通常の直列へ）
+      if (a) {
+        playInterlude(a);
+        return;
+      }
+    }
     while (cursor < texts.length && buffers.has(cursor)) {
       const ab = buffers.get(cursor)!;
       buffers.delete(cursor);

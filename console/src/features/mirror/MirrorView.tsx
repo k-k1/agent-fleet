@@ -2211,6 +2211,7 @@ function Turn({
 
 // TurnTtsButtons — ターンフッターの読み上げ操作（カラオケ朗読）。待機中は「読み上げ」1 つ、
 // このターンを読み上げ中は「一時停止/再開・停止」に切り替わる（ReaderView ヘッダと同構成）。
+// ラベルは付けずアイコンのみ（ペインが狭いとフッターの並びが崩れるため。意味は title で）。
 // ttsEnabled かつ本文があるときだけ表示。ChatView の TtsReadButton（ストリーム型 speakText）
 // とは別物で、ミラーは完結ターンを朗読するのでハイライト・途中再開が付く。
 function TurnTtsButtons({
@@ -2233,7 +2234,7 @@ function TurnTtsButtons({
         title="このターンを読み上げ"
         onClick={() => body.current && tts.start(turn.idx!, body.current)}
       >
-        <Icon name="unmute" /> 読み上げ
+        <Icon name="unmute" />
       </button>
     );
   }
@@ -2246,10 +2247,10 @@ function TurnTtsButtons({
         title={paused ? "読み上げを再開" : "読み上げを一時停止"}
         onClick={paused ? tts.resume : tts.pause}
       >
-        <Icon name={paused ? "play" : "debug-pause"} /> {paused ? "再開" : "一時停止"}
+        <Icon name={paused ? "play" : "debug-pause"} />
       </button>
       <button type="button" className="ghost mt-copy" title="読み上げを停止" onClick={tts.stop}>
-        <Icon name="debug-stop" /> 停止
+        <Icon name="debug-stop" />
       </button>
     </>
   );
