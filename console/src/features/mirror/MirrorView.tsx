@@ -11,8 +11,16 @@ import { Icon } from "../../ui/Icon.tsx";
 import FileIcon from "../../ui/FileIcon.tsx";
 import { baseName } from "../../lib/filemeta.ts";
 import { MarkdownView } from "../viewer/MarkdownView.tsx";
-import { readTurn, collectBlocks, blockIndexAt, turnSpokenText, type TurnReadHandle } from "./turnTts.ts";
-import { sessionVoiceOpts, announce } from "../chat/tts.ts";
+import {
+  readTurn,
+  collectBlocks,
+  blockIndexAt,
+  turnSpokenText,
+  claimTurnReader,
+  isTurnReader,
+  type TurnReadHandle,
+} from "./turnTts.ts";
+import { sessionVoiceOpts, announce, onTtsStop } from "../chat/tts.ts";
 import { pendingSpeech } from "../chat/ttsText.ts";
 import { askAssistant } from "../chat/api.ts";
 import { useTtsStore } from "../../core/store/tts.ts";
@@ -282,6 +290,22 @@ export function MirrorView({
   const ttsAutoSeenRef = useRef<number | null>(null);
   const ttsAutoQueueRef = useRef<number[]>([]);
   const ttsAutoDoneRef = useRef(new Map<number, number>());
+  // 読み上げ担当の登録（turnTts.ts）。同じセッションを複数ペインで開いても読むのは先着の
+  // 1 ペインだけ。readOnly（未アタッチ）ペインは読まないので登録しない。
+  const ttsTokenRef = useRef(Symbol("ttsReader"));
+  useEffect(() => {
+    if (readOnly) return;
+    return claimTurnReader(session, ttsTokenRef.current);
+  }, [session, readOnly]);
+  // 明示的な停止（TopBar・フッター等。プリエンプトは除く）は「静かにして」の意思なので、
+  // 自分の自動読み上げキューも捨てる（全ペイン読みでは他ペイン発の停止もここに届く）。
+  useEffect(
+    () =>
+      onTtsStop(() => {
+        ttsAutoQueueRef.current.length = 0;
+      }),
+    [],
+  );
   const ttsStart = (idx: number, body: HTMLElement, fromBlock = 0) => {
     ttsHandleRef.current?.stop(); // 自分の再生を先に止める（他の再生は startNarration が止める）
     const h = readTurn(
@@ -339,7 +363,10 @@ export function MirrorView({
       return;
     }
     if (ttsSummaryBusyRef.current) return; // 要約の生成中 → 終わってから順に
-    if (ttsHandleRef.current || useTtsStore.getState().speaking) return;
+    // 何か再生中/準備中なら待つ。speaking だけだと合成待ち（登録済みで最初の音がまだ）の
+    // 再生へ割り込むため active も見る（全ペイン読みでは他ペインのポンプと直列になる要）。
+    const st = useTtsStore.getState();
+    if (ttsHandleRef.current || st.speaking || st.active) return;
     const q = ttsAutoQueueRef.current;
     while (q.length) {
       const gi = q.shift()!;
@@ -363,16 +390,19 @@ export function MirrorView({
   };
   const ttsAutoPumpRef = useRef(ttsAutoPump);
   ttsAutoPumpRef.current = ttsAutoPump;
-  // 他の再生が終わって音声が空いたら、待たせていた自動読み上げを再開する。
+  // 他の再生が終わって音声が空いたら、待たせていた自動読み上げを再開する。zustand の
+  // subscribe は setState 中に同期で呼ばれ、プリエンプト（旧再生 stop → 新再生の登録）の
+  // 途中は active が一瞬 null になるため、microtask に逃がして置き換え完了後の状態で判定する。
   useEffect(() => {
     return useTtsStore.subscribe((st, prev) => {
-      if (prev.speaking && !st.speaking) ttsAutoPumpRef.current();
+      if (prev.speaking && !st.speaking) queueMicrotask(() => ttsAutoPumpRef.current());
     });
   }, []);
 
   // 確認・質問の読み上げ（設定 ttsReadPending）: 保留中の AskUserQuestion／プラン承認／
-  // 許可要求が「新しく現れたら」内容を読む（アクティブなペインのみ。バックグラウンドの
-  // セッションは useSessionNotifications の短い告知が担当）。開いた時点で既に出ていた
+  // 許可要求が「新しく現れたら」内容を読む（アクティブなペインのみ。全ペイン読み
+  // ttsAutoReadAllPanes では開いている全ペイン。ペインに無いセッションは
+  // useSessionNotifications の短い告知が担当）。開いた時点で既に出ていた
   // 保留は基準として飲み込み、読まない（ペインを行き来するたびに再読しないため）。
   const ttsPendingInitRef = useRef(false);
   const ttsPendingSigRef = useRef("");
@@ -392,7 +422,9 @@ export function MirrorView({
     }
     if (sig === ttsPendingSigRef.current) return;
     ttsPendingSigRef.current = sig;
-    if (!sig || !active || readOnly) return;
+    if (!sig || readOnly) return;
+    // 対象ペインは自動読み上げと同じ規則（アクティブのみ／全ペイン読みなら担当ペイン）。
+    if (settings.ttsAutoReadAllPanes ? !isTurnReader(session, ttsTokenRef.current) : !active) return;
     if (!settings.ttsEnabled || !settings.ttsReadPending) return;
     const label = (sessionMeta ? displayName(sessionMeta) : "セッション") + "・確認";
     const text = pending
@@ -1217,8 +1249,9 @@ export function MirrorView({
     }));
   const groups = groupTurns(echoTurns.length ? [...turns, ...echoTurns] : turns);
 
-  // 新しい回答の自動読み上げ（P2）: ポーリングで append された新規 assistant ターンを、
-  // アクティブなペインでだけ朗読キューへ。初回ロード（tail）とリセット（idx の巻き戻り）は
+  // 新しい回答の自動読み上げ（P2）: ポーリングで append された新規 assistant ターンを
+  // 朗読キューへ（通常はアクティブなペインのみ、ttsAutoReadAllPanes なら開いている全ペイン。
+  // ペイン間は 1 本の再生を待ち合って直列）。初回ロード（tail）とリセット（idx の巻き戻り）は
   // 基準 idx を取り直すだけで履歴は読まない。連続 assistant ターンは同じグループに折り畳まれて
   // 育つので、キューはグループ idx 単位（重複なし）に持ち、pump が増えたブロックだけ読む。
   // DOM は commit 後（この effect 実行時）に描画済み。
@@ -1235,7 +1268,11 @@ export function MirrorView({
     const seen = ttsAutoSeenRef.current;
     ttsAutoSeenRef.current = newest;
     if (seen === null || newest <= seen) return; // 初回/巻き戻り→基準のみ更新。増分なしも何もしない
-    if (!active || readOnly) return; // 読むのはアクティブなペインだけ（他は ttsSessionNotify の領分）
+    if (readOnly) return;
+    // 読むペイン: 通常はアクティブなペインだけ（他は ttsSessionNotify の領分）。全ペイン読み
+    // （ttsAutoReadAllPanes）では開いている全ペインが対象 — ただし同じセッションを複数ペインで
+    // 開いているときは担当（先着）ペインだけが読む（二重読み防止）。
+    if (settings.ttsAutoReadAllPanes ? !isTurnReader(session, ttsTokenRef.current) : !active) return;
     if (!settings.ttsEnabled || !settings.ttsAutoReadMirror) return;
     const q = ttsAutoQueueRef.current;
     for (const t of turns) {

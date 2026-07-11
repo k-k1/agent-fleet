@@ -13,7 +13,7 @@ import { baseName, langFor } from "../../lib/filemeta.ts";
 import FileIcon from "../../ui/FileIcon.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { useSettings, setSetting } from "../../lib/settings.ts";
-import { startNarration, BLOCK_BEAT, type NarrationHandle } from "../chat/tts.ts";
+import { startNarration, BLOCK_BEAT, READER_VOICE_CHOICES, voiceChoiceOpts, type NarrationHandle } from "../chat/tts.ts";
 import { effectiveDict } from "../chat/ttsDict.ts";
 import { buildReadUnits } from "./readerText.ts";
 
@@ -133,7 +133,7 @@ export function ReaderView({ filePath }: { filePath: string }) {
           handleRef.current = null;
         }
       },
-      undefined,
+      voiceChoiceOpts(settings.readerVoice), // ヘッダーで選んだ声（"" = 設定の話者）
       flatPre.slice(from),
     );
     handleRef.current = h;
@@ -243,6 +243,21 @@ export function ReaderView({ filePath }: { filePath: string }) {
               </>
             )}
           </span>
+        )}
+        {isText && (
+          <select
+            className="reader-voice"
+            value={settings.readerVoice}
+            onChange={(e) => setSetting("readerVoice", e.target.value)}
+            disabled={!ttsOn}
+            title={ttsOn ? "朗読の声（次の朗読開始から適用）" : "設定で音声読み上げを有効にしてください"}
+          >
+            {READER_VOICE_CHOICES.map(([v, label]) => (
+              <option key={v} value={v}>
+                {label}
+              </option>
+            ))}
+          </select>
         )}
         <span className="ui-seg sm md-toggle">
           <button

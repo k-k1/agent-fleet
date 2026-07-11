@@ -87,6 +87,19 @@ export function TtsTab() {
               読み上げ中に次の回答が届いたら、終わってから順番に読みます（見ていないセッションは
               「セッションの音声通知」が担当）。
             </p>
+            {s.ttsAutoReadMirror && (
+              <>
+                <Row label="開いている全ペインで読む">
+                  <OnOff value={s.ttsAutoReadAllPanes} onChange={(v) => setSetting("ttsAutoReadAllPanes", v)} />
+                </Row>
+                <p className="muted ds-note">
+                  アクティブなペインだけでなく、開いているすべてのチャットペインの新着回答（確認・質問も）を
+                  読み上げます。複数ペインの回答は 1 本の音声に順番に並びます。「セッションごとに声を変える」と
+                  組み合わせると、どのセッションの回答かを声で聞き分けられます。ペインで読むセッションには
+                  「セッションの音声通知」の短い告知を重ねません。
+                </p>
+              </>
+            )}
             <Row label="確認・質問を読み上げる">
               <OnOff value={s.ttsReadPending} onChange={(v) => setSetting("ttsReadPending", v)} />
             </Row>

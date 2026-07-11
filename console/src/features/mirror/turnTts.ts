@@ -89,6 +89,38 @@ export function turnSpokenText(body: HTMLElement, fromBlock = 0): string {
     .join("\n");
 }
 
+// --- 読み上げ担当の登録（全ペイン自動読み上げ, docs/24） ---------------------------
+// 同じセッションを複数ペインで開いているとき、自動読み上げ・確認読み上げを担うのは最初に
+// 登録したペインだけ（二重読み防止）。担当ペインが閉じたら次の登録ペインが自動で引き継ぐ。
+// hasTurnReader は useSessionNotifications が「本文をそのまま朗読するセッション」へ短い告知を
+// 重ねないための判定に使う。
+const readers = new Map<string, symbol[]>();
+
+// claimTurnReader はペイン（token）をセッションの読み上げ担当候補に登録し、解除関数を返す
+// （useEffect のクリーンアップにそのまま渡せる）。
+export function claimTurnReader(session: string, token: symbol): () => void {
+  const arr = readers.get(session) ?? [];
+  arr.push(token);
+  readers.set(session, arr);
+  return () => {
+    const cur = readers.get(session);
+    if (!cur) return;
+    const i = cur.indexOf(token);
+    if (i >= 0) cur.splice(i, 1);
+    if (!cur.length) readers.delete(session);
+  };
+}
+
+// isTurnReader は token がそのセッションの担当（先着）か。
+export function isTurnReader(session: string, token: symbol): boolean {
+  return (readers.get(session) ?? [])[0] === token;
+}
+
+// hasTurnReader はそのセッションを読み上げ可能なミラーペインが（どこかに）開いているか。
+export function hasTurnReader(session: string): boolean {
+  return (readers.get(session)?.length ?? 0) > 0;
+}
+
 export interface TurnReadHandle {
   pause(): void;
   resume(): void;

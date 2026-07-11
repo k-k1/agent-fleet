@@ -10,6 +10,7 @@ import { useLayoutStore } from "../../layout/store.ts";
 import { activePane } from "../../layout/ops.ts";
 import { getSettings } from "../../lib/settings.ts";
 import { announce, sessionVoiceOpts } from "../chat/tts.ts";
+import { hasTurnReader } from "../mirror/turnTts.ts";
 import { useSessionsStore } from "./store.ts";
 
 const notify = (title: string, body: string) => {
@@ -48,15 +49,21 @@ export function useSessionNotifications(): void {
       if (before !== undefined && before !== s.state && s.name !== activeSession) {
         // ブラウザ通知（従来）＋ 音声通知（docs/24 Tier1, 有効時）。バックグラウンドのセッション
         // が回答/質問を返したら、名前を前置きして短くアナウンス（直列キューで割り込まない）。
-        const speak = getSettings().ttsSessionNotify;
+        // 全ペイン自動読み上げ（ttsAutoReadAllPanes）でミラーが本文をそのまま読むセッションには
+        // 告知を重ねない（回答は自動朗読、確認は ttsReadPending の読み上げが担当）。
+        const st = getSettings();
+        const speak = st.ttsSessionNotify;
+        const mirrored = st.ttsEnabled && st.ttsAutoReadAllPanes && hasTurnReader(s.name);
         if (s.state === "idle" && before === "working") {
           notify("回答が返ってきました", displayName(s));
           // 声はセッション単位で固定（sessionVoiceOpts）。表示名でなくセッション名で引く
           // （リネームで声が変わらないように）。
-          if (speak) announce(`${displayName(s)} の回答が返りました。`, displayName(s), sessionVoiceOpts(s.name));
+          if (speak && !(mirrored && st.ttsAutoReadMirror))
+            announce(`${displayName(s)} の回答が返りました。`, displayName(s), sessionVoiceOpts(s.name));
         } else if (s.state === "question") {
           notify("質問が来ています", displayName(s));
-          if (speak) announce(`${displayName(s)} が確認を求めています。`, displayName(s), sessionVoiceOpts(s.name));
+          if (speak && !(mirrored && st.ttsReadPending))
+            announce(`${displayName(s)} が確認を求めています。`, displayName(s), sessionVoiceOpts(s.name));
         }
       }
       prev[s.name] = s.state;
