@@ -131,10 +131,11 @@ var ttsProviders = map[string]ttsProvider{ "voicevox": ..., "polly": ... }
 - 言語判定は既存 `outputLanguage`（`workspace/agent/ui_prefs.go:55` `chatOutputLanguage()`）を再利用し、
   新規の言語検出器は持たない（混在時は文単位でヒューリスティック）。
 
-## 設定（`console/src/lib/settings.ts` + `AgentsTab.tsx`）
+## 設定（`console/src/lib/settings.ts` + `TtsTab.tsx`）
 
-`AgentsTab.tsx:76-97`「セッション」セクションに、既存 `outputLanguage`（`:85-91`）と同じ
-`OnOff`/`Choice`（`./controls.tsx`）定型で追加。localStorage（`af-display-settings`）＋
+設定モーダルの専用タブ「**読み上げ**」（`TtsTab.tsx`、2026-07-11 に AgentsTab の「セッション」
+セクションから分離 — 項目が増えて他のエージェント設定を圧迫したため。`ttsSessionNotify` も同居）。
+`OnOff`/`Choice`（`./controls.tsx`）定型。localStorage（`af-display-settings`）＋
 `PUT /api/env/ui-prefs` サーバミラー（`workspace/agent/ui_prefs.go`）に自動追随。
 
 - `ttsEnabled`（bool, 既定 false）
