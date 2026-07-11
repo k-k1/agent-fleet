@@ -6,13 +6,13 @@
 // 文の index を onUnit で受けてハイライトする）。グローバル 1 本再生・TopBar 停止と相乗り。
 // content kind は "read"（layout/types.ts）。ファイル右クリック「朗読で開く」や FileView の
 // 「朗読」ボタンから開く。
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import { api } from "../../core/api/client.ts";
 import { baseName, langFor } from "../../lib/filemeta.ts";
 import FileIcon from "../../ui/FileIcon.tsx";
 import { Icon } from "../../ui/Icon.tsx";
-import { useSettings, setSetting } from "../../lib/settings.ts";
+import { useSettings, setSetting, readerFontStack } from "../../lib/settings.ts";
 import { startNarration, BLOCK_BEAT, SENT_BEAT, readerVoiceChoices, voiceChoiceOpts, type NarrationHandle } from "../chat/tts.ts";
 import { effectiveDict } from "../chat/ttsDict.ts";
 import { loadSpeakers } from "../chat/ttsSpeakers.ts";
@@ -250,8 +250,14 @@ export function ReaderView({ filePath }: { filePath: string }) {
     }
   };
 
+  // 本文フォント・サイズは CSS 変数で .reader-body へ渡す（viewer.css が参照）。
+  const readerStyle = {
+    "--reader-font": readerFontStack(settings.readerFont),
+    "--reader-size": settings.readerSize + "px",
+  } as CSSProperties;
+
   return (
-    <div className="fileview readerview">
+    <div className="fileview readerview" style={readerStyle}>
       <header className="view-head fileinfo reader-head">
         <span className="fi-name mono">
           <FileIcon name={baseName(filePath)} /> {baseName(filePath)}

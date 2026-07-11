@@ -23,6 +23,11 @@ export const CODE_FONTS = [
 // monospace code fonts still available for anyone who prefers them.
 export const CHAT_FONTS = ["システム", "セリフ", "Source Code Pro", "JetBrains Mono", "Fira Code", "IBM Plex Mono"];
 
+// Reader (朗読ビュー) fonts: the reader is Japanese prose, so it offers the two
+// families that matter for reading — 明朝 (serif, the default) and ゴシック (sans) —
+// each resolved with CJK fallbacks in readerFontStack.
+export const READER_FONTS = ["明朝", "ゴシック"];
+
 // File-icon sets (brand SVGs under assets/fileicons/<id>/). value = asset subdir.
 export const ICON_SETS = [
   { id: "vscode", label: "VS Code Icons（カラー）" },
@@ -209,6 +214,11 @@ export interface Settings {
   // "polly:<VoiceId>" = Polly。ReaderView ヘッダーの選択に追随（features/chat/tts.ts の
   // voiceChoiceOpts が TtsOptions の上書きへ解決する）。
   readerVoice: string;
+  // 朗読ビューの本文フォント（READER_FONTS の値。"明朝"=セリフ既定 / "ゴシック"=サンセリフ）。
+  // ReaderView が --reader-font（readerFontStack で解決）として本文へ渡す。
+  readerFont: string;
+  // 朗読ビューの本文文字サイズ（px）。ReaderView が --reader-size として本文へ渡す。
+  readerSize: number;
 }
 
 // The pinned fallback model. Used as the seeded global default and as resolveModel's
@@ -260,6 +270,8 @@ const DEFAULTS: Settings = {
   ttsParticlePause: true,
   readerVertical: false,
   readerVoice: "",
+  readerFont: "明朝",
+  readerSize: 17,
 };
 
 // VOICEVOX ずんだもんのスタイル（speaker 番号 → ラベル）。設定 UI の話者選択に使う。
@@ -345,6 +357,16 @@ export function chatFontStack(name: string): string {
     return 'Georgia, "Times New Roman", "Hiragino Mincho ProN", "Noto Serif CJK JP", serif';
   }
   return fontStack(name);
+}
+
+// Reader font stack — Japanese prose. "ゴシック" = sans (gothic); anything else
+// (default "明朝") = serif (mincho). Both list CJK families first with generic
+// fallbacks so they render correctly where the OS lacks Hiragino/Yu.
+export function readerFontStack(name: string): string {
+  if (name === "ゴシック") {
+    return '"Hiragino Kaku Gothic ProN", "Yu Gothic", "Noto Sans JP", "Noto Sans CJK JP", system-ui, sans-serif';
+  }
+  return '"Hiragino Mincho ProN", "Yu Mincho", "Noto Serif JP", "Noto Serif CJK JP", "Noto Serif", serif';
 }
 
 function load(): Settings {
