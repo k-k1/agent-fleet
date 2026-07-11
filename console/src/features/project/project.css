@@ -130,11 +130,13 @@
   gap: 0;
 }
 
-/* Node body: sessions + files + child worktrees, indented under the repo with a
-   guide line so the nesting is obvious. */
+/* Node body: sessions + child worktrees, indented under the repo with a guide
+   line so the nesting is obvious. The indent is deliberately deep (guide at
+   10px + 16px) so a session row's kind icon lands clearly right of its repo's
+   icon — the repo row itself keeps its icon tight against the caret. */
 .proj-node-body {
-  margin: 1px 0 3px 9px;
-  padding-left: 8px;
+  margin: 1px 0 3px 10px;
+  padding-left: 16px;
   border-left: 1px solid var(--border);
   display: flex;
   flex-direction: column;
@@ -156,34 +158,6 @@
   padding: 1px 0 2px;
 }
 
-/* 停止中 disclosure: a quiet one-liner that tucks the stopped sessions away so
-   the alive ones own the space. */
-.sess-stopped {
-  list-style: none;
-}
-.sess-stopped-btn {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  width: 100%;
-  min-width: 0;
-  background: none;
-  border: none;
-  color: var(--muted);
-  font: inherit;
-  font-size: 11px;
-  text-align: left;
-  padding: 3px 6px 3px 8px;
-  border-radius: 5px;
-  cursor: pointer;
-}
-.sess-stopped-btn:hover {
-  color: var(--fg);
-  background: var(--lp-hover-bg, var(--hover-bg));
-}
-.sess-stopped-btn .codicon {
-  font-size: 11px;
-}
 .proj-sub-empty {
   color: var(--muted);
   font-size: 12px;
