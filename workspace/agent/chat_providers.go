@@ -603,8 +603,10 @@ func oneShotHeadless(ctx context.Context, persona, prompt, claudeModel string) (
 		}
 		return reply, nil
 	}
-	// claude (default): the historical path, kept native.
-	args := []string{"-p", "--output-format", "json", "--dangerously-skip-permissions",
+	// claude (default): the historical path, kept native. --no-session-persistence is
+	// claude's --ephemeral analog (print-mode only, no transcript written, no resume):
+	// a one-shot never resumes, so don't pile per-call jsonl into chat-claude/projects.
+	args := []string{"-p", "--no-session-persistence", "--output-format", "json", "--dangerously-skip-permissions",
 		"--append-system-prompt", persona, "--model", claudeModel}
 	args = append(args, chatToolLimits()...)
 	cmd := chatClaudeCmd(ctx, args...)
