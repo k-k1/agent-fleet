@@ -90,23 +90,46 @@ function codeWords(token: string): string[] {
   );
 }
 
+// --- 裸のハッシュの判定 -----------------------------------------------------------
+// バッククォートで括られていない生ハッシュ（f437e17 等）も省略読みの対象にする。地の文に
+// 混ざるので、対象は「16 進ハッシュにしか見えない」トークンに厳しく絞る:
+//  - 小文字 16 進のみ・7 文字以上（git 短縮ハッシュの下限）
+//  - 数字と英字の両方を含む（英字のみ → facade / deadbeef 等の英単語を守る。数字のみ →
+//    トークン数・タイムスタンプ等の長い数値はそのまま読む）
+//  - UUID（8-4-4-4-12）は構造だけで判定できるので数字英字の混在は求めない
+// 適用は plainify の地の文ステップ（コード片と同じ ttsAbbrevCode 設定でゲート）。読み方は
+// abbrevCode のハッシュ枝（頭 2 文字＋フィラー・辞書優先）に乗る。
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+export function isBareHash(t: string): boolean {
+  if (UUID_RE.test(t)) return true;
+  return /^[0-9a-f]{7,}$/.test(t) && /\d/.test(t) && /[a-f]/.test(t);
+}
+
+// 地の文からハッシュ候補を拾う正規表現（UUID を先に、次に 16 進列。最終判定は isBareHash。
+// 末尾の \b で「16 進の後に英字が続く語」= deadbeef12ghost のような識別子の頭は拾わない）。
+const BARE_HASH_RE = /\b(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[0-9a-f]{7,})\b/g;
+
 // abbrevCode はインラインコード 1 個の読み上げ形を決める。
 //  - 短い（<6 文字）・空白を含むコマンド/フレーズ・日本語入り・ユーザー辞書に掛かるもの → そのまま
+//  - ハッシュ・UUID（isBareHash）→ 頭 2 文字＋フィラー
 //  - 純粋な 1 単語（vitest 等）→ そのまま
 //  - 2 語（ttsEnabled 等）→ 頭一語＋フィラー
 //  - 3 語以上（ttsAutoReadMirror・パス等）→ 頭一語＋フィラー＋末尾一語
-//  - 語が無い（ハッシュ等）→ 頭 2 文字＋フィラー
+//  - 語が無い（バージョン番号等）→ 頭 2 文字＋フィラー
 export function abbrevCode(token: string, dict: [string, string][] = []): string {
   const t = token.trim();
   if (t.length < 6) return token;
   if (/\s/.test(t)) return token;
   if (JA_CHAR.test(t)) return token;
   if (dict.some(([from]) => from && t.includes(from))) return token; // 辞書優先
-  const words = codeWords(t);
-  if (words.length === 1 && words[0] === t) return token; // 純粋な 1 単語
   let sum = 0;
   for (const c of t) sum += c.codePointAt(0)!;
   const filler = CODE_FILLERS[sum % CODE_FILLERS.length];
+  // ハッシュは語の切り出しに掛けない（長い SHA は偶然の英字連続を「語」と誤認するため）。
+  if (isBareHash(t)) return `${t.slice(0, 2)} ${filler}`;
+  const words = codeWords(t);
+  if (words.length === 1 && words[0] === t) return token; // 純粋な 1 単語
   if (words.length >= 3) return `${words[0]} ${filler} ${words[words.length - 1]}`;
   if (words.length === 2) return `${words[0]} ${filler}`;
   return `${t.slice(0, 2)} ${filler}`;
@@ -227,6 +250,8 @@ export function plainify(s: string, code?: CodeReadOpts): string {
       .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
       // 裸の URL は読まない
       .replace(/https?:\/\/\S+/g, "")
+      // 裸のハッシュ（バッククォート無しの f437e17 等）もコード片と同じ省略読みに
+      .replace(BARE_HASH_RE, (m) => (code?.abbrev && isBareHash(m) ? abbrevCode(m, code.dict) : m))
       // 行頭の見出し/引用/リストマーカー
       .replace(/^\s{0,3}(#{1,6}\s+|>\s+|[-*+]\s+|\d+\.\s+)/gm, "")
       // 強調・打ち消し

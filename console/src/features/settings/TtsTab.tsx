@@ -69,7 +69,7 @@ export function TtsTab() {
               <OnOff value={s.ttsVoicePerSession} onChange={(v) => setSetting("ttsVoicePerSession", v)} />
             </Row>
             <p className="muted ds-note">
-              セッション名から話者（VOICEVOX 標準の 8 キャラ／Polly 3 声）を自動で割り当てます。
+              セッション名から話者（VOICEVOX 標準の 14 キャラ／Polly 3 声）を自動で割り当てます。
               同じセッションは常に同じ声になり、複数セッションの読み上げ・音声通知を声で聞き分けられます。
               アシスタント・チャットや朗読ビューは上で選んだ話者のままです。
             </p>
@@ -78,7 +78,8 @@ export function TtsTab() {
             </Row>
             <p className="muted ds-note">
               エラー・失敗を含む文はツンツン、成功・完了を含む文はあまあまのスタイルで読みます（文ごとに判定）。
-              スタイルを持つ話者（ずんだもん・四国めたん・九州そら）のときだけ効き、Polly には影響しません。
+              スタイルを持つ話者（ずんだもん・四国めたん・九州そら・玄野武宏・白上虎太郎など）のときだけ効き、
+              Polly には影響しません。
             </p>
             <Row label="読み上げ速度">
               <Choice value={s.ttsSpeed} options={TTS_SPEEDS} onChange={(v) => setSetting("ttsSpeed", v)} />
@@ -133,7 +134,9 @@ export function TtsTab() {
               バッククォートのコード片を全部読まずに省略します。コミットハッシュ等は頭 2 文字＋
               「なんとか」等のフィラー語（例: e79853e → e7 ふがふが）、camelCase やパスは頭の一語＋フィラー
               （3 語以上は末尾の一語も。例: ttsAutoReadMirror → tts なんとか Mirror）。短い語・空白を含む
-              コマンド・読み仮名辞書に載せた表記はそのまま読みます。
+              コマンド・読み仮名辞書に載せた表記はそのまま読みます。バッククォートで括られていない
+              裸のハッシュ・UUID も、地の文の中から見つけて同じように省略します（英単語や長い数値は
+              誤検知しないよう 16 進らしいものだけ）。
             </p>
             <Row label="英語をカタカナ読み">
               <OnOff value={s.ttsEnglishKana} onChange={(v) => setSetting("ttsEnglishKana", v)} />

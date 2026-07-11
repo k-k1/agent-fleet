@@ -8,6 +8,7 @@ import {
   mergeDicts,
   splitSentences,
   abbrevCode,
+  isBareHash,
   emotionOf,
   pendingSpeech,
   startsBlock,
@@ -223,6 +224,45 @@ describe("abbrevCode (インラインコードの省略読み)", () => {
     );
     expect(plainify("コミット `e79853e` を見て")).toBe("コミット e79853e を見て");
     expect(plainify("`e79853e` は", { abbrev: false, dict: [] })).toBe("e79853e は");
+  });
+});
+
+describe("isBareHash / 裸のハッシュの省略読み", () => {
+  const F = "(なんとか|ふがふが|むにゅむにゅ)";
+
+  it("16 進ハッシュにしか見えないトークンだけを真にする", () => {
+    expect(isBareHash("f437e17")).toBe(true); // git 短縮ハッシュ
+    expect(isBareHash("b2d7fac36b996a9ae6245c188b51c4dbac2c9aef")).toBe(true); // フル SHA
+    expect(isBareHash("28733db5-247d-5fd9-a6b9-6d64d685412a")).toBe(true); // UUID
+    expect(isBareHash("deadbeef")).toBe(false); // 英字のみ（英単語かもしれない）
+    expect(isBareHash("facade")).toBe(false); // 英字のみ＋7 文字未満
+    expect(isBareHash("1783780316")).toBe(false); // 数字のみ（トークン数・時刻等）
+    expect(isBareHash("F437E17")).toBe(false); // 大文字は対象外（git は小文字）
+    expect(isBareHash("abc123")).toBe(false); // 6 文字（短縮ハッシュの下限未満）
+  });
+
+  it("plainify: 地の文の裸ハッシュを省略読みにする（ttsAbbrevCode でゲート）", () => {
+    const code = { abbrev: true, dict: [] as [string, string][] };
+    expect(plainify("前回マージ f437e17 以降の 8 コミット", code)).toMatch(
+      new RegExp(`^前回マージ f4 ${F} 以降の 8 コミット$`),
+    );
+    expect(plainify("前回マージ f437e17 以降の")).toBe("前回マージ f437e17 以降の"); // 省略読み OFF
+    expect(plainify("値は 1783780316 です", code)).toBe("値は 1783780316 です"); // 長い数値はそのまま
+    expect(plainify("facade を deadbeef に", code)).toBe("facade を deadbeef に"); // 英単語はそのまま
+  });
+
+  it("辞書に掛かる表記は触らない（置換は後段の applyUserDict）", () => {
+    const dict = parseUserDict("f437e17=まえのマージ");
+    expect(plainify("f437e17 を見て", { abbrev: true, dict })).toBe("f437e17 を見て");
+  });
+
+  it("範囲表記や句読点に隣接しても各ハッシュを拾う", () => {
+    const code = { abbrev: true, dict: [] as [string, string][] };
+    expect(plainify("f437e17..0415b6a を比較。", code)).toMatch(new RegExp(`^f4 ${F}..04 ${F} を比較。$`));
+  });
+
+  it("長い SHA はインラインコードでも頭 2 文字＋フィラー（語の誤認をしない）", () => {
+    expect(abbrevCode("b2d7fac36b996a9ae6245c188b51c4dbac2c9aef")).toMatch(new RegExp(`^b2 ${F}$`));
   });
 });
 
