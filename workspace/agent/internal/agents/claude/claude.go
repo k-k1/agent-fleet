@@ -8,6 +8,7 @@ package claude
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"strings"
 
@@ -27,6 +28,17 @@ func (agentImpl) Kind() string { return session.KindClaude }
 
 func (agentImpl) Caps() agents.Caps {
 	return agents.Caps{CanFork: true, CanTranscript: true, UsesLabel: true}
+}
+
+// ForkSource resolves this session's conversation id (its deterministic sid) as the
+// fork source, refusing when the jsonl holds no real conversation yet — `claude
+// --resume` would die with "No conversation found".
+func (agentImpl) ForkSource(m session.Meta) (string, error) {
+	sid := session.UUID(m.Dir, m.Name)
+	if !JSONLResumable(sid) {
+		return "", errors.New("分岐できる会話がまだありません")
+	}
+	return sid, nil
 }
 
 func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.LaunchPlan, error) {

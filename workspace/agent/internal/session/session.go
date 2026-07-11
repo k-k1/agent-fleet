@@ -124,12 +124,14 @@ type Meta struct {
 	CreatedAt string `json:"createdAt"` // RFC3339, set at create
 	StoppedAt string `json:"stoppedAt"` // RFC3339, set lazily when first seen exited; "" while live
 	Archived  bool   `json:"archived"`  // true = hidden from the active list, restorable (jsonl kept)
-	// ForkFrom is the SOURCE session's sid this session was forked from (claude
-	// only). It only affects the FIRST launch: claude 縦割りの buildProgram then runs
-	// `claude --resume <ForkFrom> --fork-session --session-id <ownsid>`, which copies
-	// the source history into this session's own jsonl. Once that jsonl exists,
-	// later launches resume normally and ForkFrom is ignored — so a restart never
-	// re-forks. Empty for non-forked sessions.
+	// ForkFrom is the SOURCE conversation id this session was forked from, in the
+	// kind's own id space: claude = the source slot's sid (jsonl), opencode = its
+	// ses_… id, codex = its session uuid. It only affects the FIRST launch — each
+	// kind's BuildLaunch turns it into the CLI's fork invocation (claude --resume
+	// <id> --fork-session --session-id <ownsid> / opencode --session <id> --fork /
+	// codex fork <id>), which copies the source history into this session's own
+	// conversation. Once that exists, later launches resume normally and ForkFrom
+	// is ignored — a restart never re-forks. Empty for non-forked sessions.
 	ForkFrom string `json:"forkFrom,omitempty"`
 	// SSM holds the (non-secret) coordinates for a kind=ssm session: which instance,
 	// run-as document, region, and the SSO profile to authenticate with. Persisted so

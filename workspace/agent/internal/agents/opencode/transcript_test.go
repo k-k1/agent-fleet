@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	_ "modernc.org/sqlite"
@@ -378,5 +379,49 @@ func TestOpencodeLiveStateQuestion(t *testing.T) {
 	m := session.Meta{Dir: dir, Name: "n"}
 	if got := LiveState(m); got != "question" {
 		t.Fatalf("LiveState = %q, want question", got)
+	}
+}
+
+func TestOpencodeActiveSession(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home) // sids store lives under $HOME/.config/agent-fleet
+	db := newOpencodeTestDB(t)
+	dir := "/home/dev/repos/temp"
+	insSes := func(id string, tc int64) {
+		t.Helper()
+		if _, err := db.Exec(`INSERT INTO session(id,parent_id,directory,time_created) VALUES(?,NULL,?,?)`, id, dir, tc); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// An OLD conversation in the dir (created + messaged long before the slot).
+	insSes("ses_old", 1000)
+	insMsg(t, db, "mo", "ses_old", 2000, `{"role":"user"}`)
+
+	// szyyh2f regression: a NEW slot (created at t=10000) in a previously-used dir
+	// must NOT hijack the dir's old conversation.
+	slot := session.Meta{Dir: dir, Name: "new1", CreatedAt: time.UnixMilli(10000).UTC().Format(time.RFC3339)}
+	if got := activeSession(db, slot); got != "" {
+		t.Fatalf("new slot resolved %q, want none (old conversation must not be hijacked)", got)
+	}
+
+	// A conversation opened AFTER the slot was created resolves (plugin-less fallback).
+	insSes("ses_own", 11000)
+	insMsg(t, db, "mn", "ses_own", 12000, `{"role":"user"}`)
+	if got := activeSession(db, slot); got != "ses_own" {
+		t.Fatalf("post-slot conversation = %q, want ses_own", got)
+	}
+
+	// The plugin-captured per-slot mapping wins over the store-derived fallback.
+	insSes("ses_mapped", 13000)
+	insMsg(t, db, "mm", "ses_mapped", 14000, `{"role":"user"}`)
+	sids.Write(session.UUID(dir, "new1"), "ses_mapped")
+	if got := activeSession(db, slot); got != "ses_mapped" {
+		t.Fatalf("mapped = %q, want ses_mapped", got)
+	}
+
+	// A STALE mapping (session gone from the store) falls back to the store lookup.
+	sids.Write(session.UUID(dir, "new1"), "ses_gone")
+	if got := activeSession(db, slot); got != "ses_mapped" && got != "ses_own" {
+		t.Fatalf("stale mapping fallback = %q, want a post-slot store session", got)
 	}
 }
