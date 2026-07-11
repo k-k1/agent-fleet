@@ -147,6 +147,16 @@ var ttsProviders = map[string]ttsProvider{ "voicevox": ..., "polly": ... }
   リテラル置換で適用（英語/日本語/記号どれでも。enkana の ON/OFF に依らず先に当たる）。
   クライアント完結（`ttsText.ts` の `parseUserDict`/`applyUserDict`、`tts.ts` の `submit` で適用）。
 
+**テナント共通辞書（2026-07-11）**: ユーザー辞書と同じ書式の共通辞書を管理者が置ける。
+保存先は CP の SettingsStore（キー `tts_dict`、`tts_engine` と同じ deployment-wide 流儀）。
+編集＝管理モーダル「読み上げ」パネルの専用エディタ（super_admin、`PUT /api/admin/tts/dict`、
+監査 `tts.dict`）。配布＝全ユーザーが `GET /api/tts/dict` で取得（`features/chat/ttsDict.ts` が
+起動時に取得してキャッシュ、`effectiveDict()` がユーザー辞書と**マージ**して返す）。
+**同じ表記はユーザー辞書が勝つ**（上書き。読みを空にした読み飛ばし上書きも可）。マージは
+純関数 `mergeDicts`（`ttsText.ts`・表記長降順を維持・テスト有り）。適用は全読み上げ経路
+（チャット/announce/朗読/ミラー）と abbrevCode の辞書優先判定に共通で効く。CP は配るだけで
+合成ハンドラは触らない。
+
 VOICEVOX エンジンの URL は**ユーザー設定ではなく CP config**（`AF_VOICEVOX_URL`, デプロイ管理）。
 
 ## デプロイ形態
@@ -274,7 +284,78 @@ TTS 設定画面かフッターに小さく常時表示する。Polly は AWS �
   **増えた分だけ**読む（回答が届くたび続きから）。溜まりすぎ（>4 回答）は古い方から捨てる。
   明示停止（フッター停止・TopBar・他の再生への置き換え）はキューも破棄（`startNarration` の
   `onUnit(null, reason)` に done/stopped を追加して判別、後方互換）。自然終了なら次へ。
-- **Phase 2（AWS）** ✅ 実装済み（2026-07-10）: 3 点セットを CP に実装。
+- **インラインコードの省略読み（2026-07-11）** ✅: `` `e79853e` `` のようなコード片を全部読まずに
+  省略する（設定 `ttsAbbrevCode`、既定 ON、「読み上げ」タブ）。純関数 `abbrevCode`
+  （`ttsText.ts`・テスト有り）: 語が無いハッシュ等＝頭 2 文字＋フィラー語（なんとか/ふがふが/
+  むにゅむにゅ）、camelCase・パス等の複数語＝頭一語＋フィラー（3 語以上は＋末尾一語、例:
+  `ttsAutoReadMirror` →「tts なんとか Mirror」）。短い語（<6 文字）・純粋な 1 単語・空白入りの
+  コマンド・日本語入り・**ユーザー辞書に掛かる表記はそのまま**（辞書優先）。フィラーは
+  トークン内容から**決定的に**選ぶ（同一トークン＝同一語尾 → 合成キャッシュが効き聞き直しも安定）。
+  適用点＝`plainify` の code オプション（チャット/announce/speakText/朗読 ReaderView）＋
+  `turnTts.blockText` の `<code>` 要素（ミラー。レンダ済み DOM にはバッククォートが無いため）。
+  注意: 英語回答が Polly 英語音声に行くと日本語フィラーだけ浮く（必要なら lang=en で英語
+  フィラーに切り替え可、未実装）。
+- **セッションごとの声（2026-07-11）** ✅: 設定 `ttsVoicePerSession`（既定 OFF）。セッション名の
+  ハッシュで話者プール（`tts.ts` の `SESSION_VOICES`: VOICEVOX 標準 8 キャラ／Polly 3 声）から
+  決定的に割り当て（`sessionVoiceOpts`）。ミラーの読み上げ（手動・自動）とセッション音声通知に
+  適用（`startNarration`/`readTurn`/`announce` に voice 上書きパラメータを追加）。ハッシュは
+  表示タイトルでなく**セッション名（固定 ID）**で取るので、タイトルを変えても声は変わらない。
+  チャットタブ・朗読ビューは選択中の話者のまま。
+- **感情スタイルの読み分け（2026-07-11）** ✅: 設定 `ttsEmotion`（既定 OFF）。文（合成 1 回）
+  単位で `emotionOf`（`ttsText.ts`・純関数・テスト有り）がエラー/失敗系→ツンツン、成功/完了系→
+  あまあまと判定し、`emotionOpts`（`tts.ts`）が speaker 番号を差し替える。スタイル variant を
+  持つ話者（ずんだもん・四国めたん・九州そら）のときだけ効き、Polly・ノーマル以外を基準にした
+  場合は触らない。キャッシュはキーに voice を含むためスタイル別に共存。
+- **ブロック頭の前拍（2026-07-11）** ✅: リスト項目・見出し・引用など「新しいブロックの頭」を
+  読む前に一拍（`BLOCK_BEAT`=0.3s）おく。マーカー記号（`-`/`1.`/`#`/`>`）は読まないぶん、
+  構造の切れ目を間で表す。判定は純関数 `startsBlock`（`ttsText.ts`・テスト有り。ハイフン語や
+  負数には反応しない）。適用: ①ストリーミング（`startTts`）は submit 時に `preGaps` を記録し
+  クロック予約に加算、②朗読（`startNarration`）は `preGaps[]` 引数を追加 — ミラー（`turnTts`、
+  ブロックが変わる最初の文）と ReaderView（`buildReadUnits` が `preBeat` を付与）が渡す。
+  先頭チャンクの前拍は開始遅延になるだけなので無視。ハイライトは前拍の間に先に出る
+  （「次はここ」の予告として自然）。
+- **確認・質問の読み上げ（2026-07-11）** ✅: 設定 `ttsReadPending`（既定 OFF）。アクティブな
+  ペインのセッションが確認待ち（AskUserQuestion／プラン承認／許可要求）になったら内容を読む
+  （ポーリングの `pending`/`pendingPlan`/`pendingPermission` の**出現を検知**。開いた時点で既に
+  出ていた保留は基準として飲み込み読まない＝ペイン行き来で再読しない。セッション切替でリセット）。
+  質問は純関数 `pendingSpeech`（`ttsText.ts`・テスト有り）で「確認です。（質問）選択肢は N つ。
+  1、…。2、…。」に組む — 選択肢は**表示ラベルでなく説明文（ツールチップの中身）を優先**して
+  読む（画面の表示は省略されがちなため）。プランは定型句、許可は先頭 100 字。`announce` 経由
+  （直列・セッションの声）。バックグラウンドのセッションは従来どおり `ttsSessionNotify` の
+  短い告知が担当（アクティブ限定なので二重にならない）。
+- **再生キャラの表示（2026-07-11）** ✅: TopBar の「読み上げ中・〇〇」に**キャラ名**を追記
+  （「読み上げ中・セッション名（ずんだもん）」）。`useTtsStore` に `voice` ラベルを追加し、
+  `startTts`/`startNarration` が `voiceCharName`（speaker 番号→キャラ名の写像。スタイル違いは
+  同じキャラに束ねる・明示 polly は VoiceId）を登録。auto ルーティングで Polly に落ちた場合
+  までは追わない（設定ベースのベストエフォート）。
+- **長い回答の要約読み上げ（2026-07-11）** ✅: 設定 `ttsSummaryRead`（既定 OFF）。ミラーの
+  **自動読み上げのみ**対象。新着分の読み上げテキスト（`turnTts.turnSpokenText`）が 500 字を
+  超えたら、`POST /api/chat/ask`（assistant one-shot・ツールなし）で 2 文要約を生成し、
+  `announce` 経由で読む（「要約。…」・セッションの声・TopBar 停止と統合。カラオケは付けない —
+  要約文は画面に無いため。フル本文はフッターの読み上げボタンで従来どおり）。生成は 1 本ずつ
+  （busy 中はキュー待機）・30s タイムアウト・失敗（ワークスペース停止含む）は全文読みへ
+  フォールバック。入力は 6000 字で打ち切り。
+- **全ペイン自動読み上げ（2026-07-11）** ✅: 設定 `ttsAutoReadAllPanes`（既定 OFF、
+  `ttsAutoReadMirror` のサブオプション）。自動読み上げ・確認読み上げの対象を「アクティブな
+  ペイン」から「開いている全チャットペイン」へ広げる。各ペインのキューは 1 本の再生を
+  待ち合って直列に読まれる（`ttsAutoPump` のガードを `speaking` だけでなく **store の
+  `active`** も見るよう強化 — 合成待ち（登録済みでまだ無音）の再生への割り込みを防ぐ。
+  `announce` の pump も同様）。zustand の subscribe は setState 中に同期発火し、プリエンプト
+  中（旧 stop→新登録）の一瞬 `active=null` の窓で誤発進するため、ポンプ再開は microtask に
+  逃がす。**同じセッションを複数ペインで開いても読むのは先着 1 ペイン**（`turnTts.ts` の
+  担当登録 `claimTurnReader`/`isTurnReader`。担当ペインが閉じたら次が引き継ぐ。readOnly
+  ペインは登録しない）。停止の意味論を整理: 明示停止（TopBar・フッター）は全ペインの
+  キュー＋announce キューを破棄（`tts.ts` の `onTtsStop` 購読）、新再生開始に伴う置き換えは
+  `preemptActive()` で区別しキューを温存。ミラーが本文を読むセッションには
+  `ttsSessionNotify` の短い告知を重ねない（`hasTurnReader` で判定）。付随修正:
+  `startTts` の自然終了で store の `active` を解放するようにした（従来は残置 — `active` を
+  見る新ガードが永久待ちになるため）。
+- **朗読ビューの声選択（2026-07-11）** ✅: 設定 `readerVoice`（既定 "" = 設定の話者）。
+  ReaderView ヘッダーに「声」セレクトを追加（VOICEVOX 標準 8 キャラ＋Polly 3 声、
+  `READER_VOICE_CHOICES`/`voiceChoiceOpts`（`tts.ts`）が `TtsOptions` 上書きへ解決して
+  `startNarration` に渡す）。VOICEVOX キャラ選択時は provider を `auto` に上げる —
+  エンジン不在時は Polly が代読し、復帰したら選んだキャラに戻る。Polly 選択は明示 polly。
+  変更は次の朗読開始から適用。選択は設定として永続（他ファイル・他ブラウザにも追随）。
   - **Polly プロバイダ**（`control-plane/tts_polly.go`）: SDK 既定チェーン（IAM ロール、鍵保存ゼロ）。
     出力 MP3（フロントの `decodeAudioData` がそのまま復号するので UI 変更不要）、速度は SSML
     `<prosody rate>`、テキストは XML エスケープ。region は `AF_POLLY_REGION` →

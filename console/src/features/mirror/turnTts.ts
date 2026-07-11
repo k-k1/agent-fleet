@@ -7,8 +7,10 @@
 // 対応維持が脆いため — textContent なら記法は既に落ちており、リンクは表示テキストだけが残る。
 // ターンは完結してから届く（ポーリング）ので、抽出は読み上げ開始時の 1 回で安定する。
 
-import { startNarration } from "../chat/tts.ts";
-import { splitSentences } from "../chat/ttsText.ts";
+import { startNarration, BLOCK_BEAT, type TtsOptions } from "../chat/tts.ts";
+import { splitSentences, abbrevCode, type CodeReadOpts } from "../chat/ttsText.ts";
+import { effectiveDict } from "../chat/ttsDict.ts";
+import { getSettings } from "../../lib/settings.ts";
 
 // 読み上げ対象のリーフブロック。ul/ol は li 単位（入れ子リストは別ブロック）、blockquote は
 // 中の段落へ降りる。pre / table / hr / mermaid（div）などはスキップ。
@@ -43,12 +45,24 @@ function walkList(list: HTMLElement, out: HTMLElement[]): void {
 }
 
 // blockText はブロック自身の読み上げテキスト。li は入れ子リスト（別ブロックとして読む）と
-// コード・表・mermaid（div）を除いた自前のテキストだけを返す。
+// コードブロック・表・mermaid（div）を除いた自前のテキストだけを返す。インライン要素は
+// 再帰で降り、<code>（バッククォート由来）は省略読み（abbrevCode）を当てる — レンダ済み
+// DOM にはバッククォートが残っていないため、ここが plainify 相当の唯一の判定点。
 const EXCLUDE = new Set(["UL", "OL", "PRE", "TABLE", "DIV"]);
-function blockText(el: HTMLElement): string {
+function blockText(el: HTMLElement, code?: CodeReadOpts): string {
   let t = "";
   el.childNodes.forEach((n) => {
-    if (n.nodeType === Node.ELEMENT_NODE && EXCLUDE.has((n as HTMLElement).tagName)) return;
+    if (n.nodeType === Node.ELEMENT_NODE) {
+      const e = n as HTMLElement;
+      if (EXCLUDE.has(e.tagName)) return;
+      if (e.tagName === "CODE") {
+        const s = e.textContent ?? "";
+        t += code?.abbrev ? abbrevCode(s, code.dict) : s;
+        return;
+      }
+      t += blockText(e, code);
+      return;
+    }
     t += n.textContent ?? "";
   });
   return t;
@@ -63,6 +77,48 @@ export function blockIndexAt(blocks: HTMLElement[], node: Node): number {
   const within = blocks.findIndex((b) => b.contains(el));
   if (within >= 0) return within;
   return blocks.findIndex((b) => !!(node.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING));
+}
+
+// turnSpokenText は fromBlock 以降の読み上げ対象テキストを返す（要約読み上げの入力・
+// 長さ判定用。省略読みや辞書は掛けない生テキスト。コード・表はブロック収集段階で除外済み）。
+export function turnSpokenText(body: HTMLElement, fromBlock = 0): string {
+  return collectBlocks(body)
+    .slice(fromBlock)
+    .map((b) => blockText(b).replace(/\s+/g, " ").trim())
+    .filter(Boolean)
+    .join("\n");
+}
+
+// --- 読み上げ担当の登録（全ペイン自動読み上げ, docs/24） ---------------------------
+// 同じセッションを複数ペインで開いているとき、自動読み上げ・確認読み上げを担うのは最初に
+// 登録したペインだけ（二重読み防止）。担当ペインが閉じたら次の登録ペインが自動で引き継ぐ。
+// hasTurnReader は useSessionNotifications が「本文をそのまま朗読するセッション」へ短い告知を
+// 重ねないための判定に使う。
+const readers = new Map<string, symbol[]>();
+
+// claimTurnReader はペイン（token）をセッションの読み上げ担当候補に登録し、解除関数を返す
+// （useEffect のクリーンアップにそのまま渡せる）。
+export function claimTurnReader(session: string, token: symbol): () => void {
+  const arr = readers.get(session) ?? [];
+  arr.push(token);
+  readers.set(session, arr);
+  return () => {
+    const cur = readers.get(session);
+    if (!cur) return;
+    const i = cur.indexOf(token);
+    if (i >= 0) cur.splice(i, 1);
+    if (!cur.length) readers.delete(session);
+  };
+}
+
+// isTurnReader は token がそのセッションの担当（先着）か。
+export function isTurnReader(session: string, token: symbol): boolean {
+  return (readers.get(session) ?? [])[0] === token;
+}
+
+// hasTurnReader はそのセッションを読み上げ可能なミラーペインが（どこかに）開いているか。
+export function hasTurnReader(session: string): boolean {
+  return (readers.get(session)?.length ?? 0) > 0;
 }
 
 export interface TurnReadHandle {
@@ -82,13 +138,15 @@ export function readTurn(
   source: string,
   fromBlock: number,
   onEnd: (stopped: boolean) => void,
+  voice?: Partial<TtsOptions>, // セッションごとの声（sessionVoiceOpts）等の上書き
 ): TurnReadHandle | null {
+  const code: CodeReadOpts = { abbrev: getSettings().ttsAbbrevCode, dict: effectiveDict() };
   const blocks = collectBlocks(body);
   const texts: string[] = [];
   const blockOf: number[] = [];
   blocks.forEach((b, bi) => {
     if (bi < fromBlock) return;
-    for (const s of splitSentences(blockText(b))) {
+    for (const s of splitSentences(blockText(b, code))) {
       texts.push(s);
       blockOf.push(bi);
     }
@@ -105,11 +163,20 @@ export function readTurn(
       el.scrollIntoView({ block: "nearest", behavior: "smooth" });
     }
   };
-  const h = startNarration(texts, source, (i, endReason) => {
-    if (i == null) {
-      light(null);
-      onEnd(endReason === "stopped");
-    } else light(blocks[blockOf[i]]);
-  });
+  // ブロック（段落・リスト項目・見出し）が変わる最初の文には前拍を置く（マーカー記号は
+  // 読まないぶん、構造の切れ目を間で表す）。
+  const preGaps = blockOf.map((b, i) => (i > 0 && b !== blockOf[i - 1] ? BLOCK_BEAT : 0));
+  const h = startNarration(
+    texts,
+    source,
+    (i, endReason) => {
+      if (i == null) {
+        light(null);
+        onEnd(endReason === "stopped");
+      } else light(blocks[blockOf[i]]);
+    },
+    voice,
+    preGaps,
+  );
   return { pause: h.pause, resume: h.resume, stop: h.stop };
 }

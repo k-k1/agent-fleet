@@ -14,6 +14,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -81,6 +82,12 @@ func chooseTTSProvider(pref, lang string, engineOff, vvReady, plReady bool) stri
 // ttsEngineSetting は管理者トグルの設定キー。"off" のときだけ voicevox への
 // ルーティングを止める（"" = 既定で有効。dev の外部管理エンジンは従来どおり動く）。
 const ttsEngineSetting = "tts_engine"
+
+// ttsDictSetting はテナント共通の読み仮名辞書（1 行 "表記=読み"、クライアントの
+// ユーザー辞書と同じ書式）。管理者が /api/admin/tts/dict で編集し、全ユーザーの
+// クライアントが GET /api/tts/dict で取得してユーザー辞書と合成する（同じ表記は
+// ユーザー辞書が勝つ＝上書き）。適用はクライアント側（docs/24）。
+const ttsDictSetting = "tts_dict"
 
 // registerTTSRoutes は CP-native TTS のルートを登録する（buildMux から呼ぶ）。認証は
 // 既定の authGate 配下（exempt しない）＝ログイン必須。ワークスペース非依存なので
@@ -168,12 +175,23 @@ func registerTTSRoutes(mux *http.ServeMux, cfg config) {
 		})
 	})
 
+	// テナント共通の読み仮名辞書。全ユーザー（要ログイン）が読める。クライアントは起動時に
+	// 取得してユーザー辞書と合成する（適用はクライアント側なので合成ハンドラは触らない）。
+	mux.HandleFunc("GET /api/tts/dict", func(w http.ResponseWriter, r *http.Request) {
+		dict := ""
+		if settings != nil {
+			dict, _ = settings.GetSetting(r.Context(), ttsDictSetting)
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"dict": dict})
+	})
+
 	// 管理者トグル（super_admin）: VOICEVOX エンジンの有効/無効。ECS 管理下なら desired
 	// count 0↔1 を切り替え（オンデマンド起動・停止中コスト 0）、常に setting へ意図を記録
 	// する（egress の SettingsStore と同じ流儀）。docs/24 Phase 2。
 	adm := ttsAdminAPI{memberAuth{cfg.mgr}, settings, eng, vv, pl}
 	mux.HandleFunc("GET /api/admin/tts", adm.withSuperAdmin(adm.get))
 	mux.HandleFunc("PUT /api/admin/tts", adm.withSuperAdmin(adm.put))
+	mux.HandleFunc("PUT /api/admin/tts/dict", adm.withSuperAdmin(adm.putDict))
 }
 
 // --- voicevox プロバイダ -------------------------------------------------------
@@ -369,11 +387,16 @@ func (a ttsAdminAPI) status(ctx context.Context) map[string]any {
 			engine["error"] = err.Error()
 		}
 	}
+	dict := ""
+	if a.settings != nil {
+		dict, _ = a.settings.GetSetting(ctx, ttsDictSetting)
+	}
 	return map[string]any{
 		"managed": managed,
 		"enabled": enabled,
 		"engine":  engine,
 		"polly":   map[string]any{"ready": a.pl.Ready(ctx)},
+		"dict":    dict,
 	}
 }
 
@@ -405,6 +428,32 @@ func (a ttsAdminAPI) put(w http.ResponseWriter, r *http.Request, ident Identity)
 		_ = a.mgr.store.InsertAudit(r.Context(), AuditLog{
 			ID: newID(), TenantID: "", ActorKind: "admin", ActorID: ident.ID,
 			Action: "tts.engine", Target: val, At: nowTS(),
+		})
+	}
+	writeJSON(w, http.StatusOK, a.status(r.Context()))
+}
+
+// putDict (PUT /api/admin/tts/dict) — body {dict:string}。テナント共通の読み仮名辞書を
+// 丸ごと差し替える（1 行 "表記=読み"、パース規約はクライアントの parseUserDict と同じ）。
+// 監査あり（中身は個票で追えるようサイズだけ記録）。
+func (a ttsAdminAPI) putDict(w http.ResponseWriter, r *http.Request, ident Identity) {
+	var b struct{ Dict string }
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<18)).Decode(&b); err != nil {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_body", "invalid JSON (dict は 256KB まで)"})
+		return
+	}
+	if a.settings == nil {
+		writeAPIErr(w, &apiError{http.StatusServiceUnavailable, "store_unavailable", "settings store unavailable"})
+		return
+	}
+	if err := a.settings.SetSetting(r.Context(), ttsDictSetting, b.Dict); err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	if a.mgr != nil && a.mgr.store != nil {
+		_ = a.mgr.store.InsertAudit(r.Context(), AuditLog{
+			ID: newID(), TenantID: "", ActorKind: "admin", ActorID: ident.ID,
+			Action: "tts.dict", Target: fmt.Sprintf("%d bytes", len(b.Dict)), At: nowTS(),
 		})
 	}
 	writeJSON(w, http.StatusOK, a.status(r.Context()))

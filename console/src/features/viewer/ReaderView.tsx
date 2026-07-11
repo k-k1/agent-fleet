@@ -13,7 +13,8 @@ import { baseName, langFor } from "../../lib/filemeta.ts";
 import FileIcon from "../../ui/FileIcon.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { useSettings, setSetting } from "../../lib/settings.ts";
-import { startNarration, type NarrationHandle } from "../chat/tts.ts";
+import { startNarration, BLOCK_BEAT, READER_VOICE_CHOICES, voiceChoiceOpts, type NarrationHandle } from "../chat/tts.ts";
+import { effectiveDict } from "../chat/ttsDict.ts";
 import { buildReadUnits } from "./readerText.ts";
 
 interface FileData {
@@ -59,8 +60,17 @@ export function ReaderView({ filePath }: { filePath: string }) {
 
   const isText = !!data && !data.binary && typeof data.content === "string";
   const isMarkdown = isText && langFor(filePath) === "markdown";
-  // 原文忠実（改行・行頭スペース保持）＋なろう形式ルビの表示単位。
-  const units = useMemo(() => (isText ? buildReadUnits(data!.content!, isMarkdown) : []), [isText, data, isMarkdown]);
+  // 原文忠実（改行・行頭スペース保持）＋なろう形式ルビの表示単位。インラインコードの
+  // 省略読み（abbrevCode）は読み上げテキスト側にだけ効く（表示は原文のまま）。辞書は
+  // ユーザー＋テナント共通の合成（ユーザー優先）。
+  const codeOpts = useMemo(
+    () => ({ abbrev: settings.ttsAbbrevCode, dict: effectiveDict() }),
+    [settings.ttsAbbrevCode, settings.ttsUserDict],
+  );
+  const units = useMemo(
+    () => (isText ? buildReadUnits(data!.content!, isMarkdown, codeOpts) : []),
+    [isText, data, isMarkdown, codeOpts],
+  );
   // 読み上げ対象（spoken 非空）の単位に連番を振る。data-si=その連番、active と一致でハイライト。
   const spokenIdx = useMemo(() => {
     const m: (number | null)[] = [];
@@ -69,6 +79,8 @@ export function ReaderView({ filePath }: { filePath: string }) {
     return m;
   }, [units]);
   const flat = useMemo(() => units.filter((u) => u.spoken).map((u) => u.spoken), [units]);
+  // 読み上げ単位ごとの前拍（リスト・見出し・引用の頭で一拍）。flat と同じ並び。
+  const flatPre = useMemo(() => units.filter((u) => u.spoken).map((u) => (u.preBeat ? BLOCK_BEAT : 0)), [units]);
 
   const vertical = settings.readerVertical;
   const ttsOn = settings.ttsEnabled;
@@ -109,15 +121,21 @@ export function ReaderView({ filePath }: { filePath: string }) {
     const slice = flat.slice(from);
     if (!slice.length) return;
     handleRef.current?.stop();
-    const h = startNarration(slice, baseName(filePath), (i) => {
-      setActive(i == null ? null : i + from);
-      if (i == null) {
-        // 自然終了 or 外部（TopBar 停止・他再生開始）で終了
-        setReading(false);
-        setPaused(false);
-        handleRef.current = null;
-      }
-    });
+    const h = startNarration(
+      slice,
+      baseName(filePath),
+      (i) => {
+        setActive(i == null ? null : i + from);
+        if (i == null) {
+          // 自然終了 or 外部（TopBar 停止・他再生開始）で終了
+          setReading(false);
+          setPaused(false);
+          handleRef.current = null;
+        }
+      },
+      voiceChoiceOpts(settings.readerVoice), // ヘッダーで選んだ声（"" = 設定の話者）
+      flatPre.slice(from),
+    );
     handleRef.current = h;
     setReading(true);
     setPaused(false);
@@ -225,6 +243,21 @@ export function ReaderView({ filePath }: { filePath: string }) {
               </>
             )}
           </span>
+        )}
+        {isText && (
+          <select
+            className="reader-voice"
+            value={settings.readerVoice}
+            onChange={(e) => setSetting("readerVoice", e.target.value)}
+            disabled={!ttsOn}
+            title={ttsOn ? "朗読の声（次の朗読開始から適用）" : "設定で音声読み上げを有効にしてください"}
+          >
+            {READER_VOICE_CHOICES.map(([v, label]) => (
+              <option key={v} value={v}>
+                {label}
+              </option>
+            ))}
+          </select>
         )}
         <span className="ui-seg sm md-toggle">
           <button

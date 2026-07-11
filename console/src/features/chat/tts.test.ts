@@ -1,5 +1,17 @@
 import { describe, it, expect } from "vitest";
-import { plainify, plainifyStreaming, firstChunkCut, parseUserDict, applyUserDict, splitSentences } from "./ttsText.ts";
+import {
+  plainify,
+  plainifyStreaming,
+  firstChunkCut,
+  parseUserDict,
+  applyUserDict,
+  mergeDicts,
+  splitSentences,
+  abbrevCode,
+  emotionOf,
+  pendingSpeech,
+  startsBlock,
+} from "./ttsText.ts";
 import { makeAudioLru } from "./ttsCache.ts";
 
 describe("plainify (読み上げ用プレーン化)", () => {
@@ -81,6 +93,136 @@ describe("firstChunkCut (最初の発話の早出し)", () => {
   it("閉じ括弧類も早出しの区切りになる", () => {
     const s = "設定（詳しくは後述）を開きます";
     expect(firstChunkCut(s)).toBe(s.indexOf("）") + 1);
+  });
+});
+
+describe("startsBlock (ブロック頭の判定 = 前拍を置く合図)", () => {
+  it("リスト・番号リスト・見出し・引用の頭に一致する", () => {
+    expect(startsBlock("- 項目A")).toBe(true);
+    expect(startsBlock("  * ネスト項目")).toBe(true);
+    expect(startsBlock("1. 手順")).toBe(true);
+    expect(startsBlock("## 見出し")).toBe(true);
+    expect(startsBlock("> 引用")).toBe(true);
+  });
+
+  it("普通の文・ハイフンだけの語・マイナス値には一致しない", () => {
+    expect(startsBlock("次の手順です。")).toBe(false);
+    expect(startsBlock("-1 が返ります")).toBe(false);
+    expect(startsBlock("run-dev.sh を実行")).toBe(false);
+  });
+});
+
+describe("pendingSpeech (保留中の質問の読み上げ文)", () => {
+  it("質問文＋選択肢（説明文優先）を番号つきで読む", () => {
+    const t = pendingSpeech([
+      {
+        question: "どの方式にしますか？",
+        options: [
+          { label: "案A", description: "設定を専用タブに分離する" },
+          { label: "案B" },
+        ],
+      },
+    ]);
+    expect(t).toBe("確認です。どの方式にしますか？選択肢は2つ。1、設定を専用タブに分離する。2、案B。");
+  });
+
+  it("複数質問は番号を振り、multiSelect は補足する", () => {
+    const t = pendingSpeech([
+      { question: "対象は？", multiSelect: true, options: [{ label: "全部" }] },
+      { question: "いつ？" },
+    ]);
+    expect(t).toBe("確認です。質問1。対象は？選択肢は1つ。1、全部。複数選択できます。質問2。いつ？");
+  });
+
+  it("Markdown 断片は plainify される", () => {
+    const t = pendingSpeech([{ question: "`main` にマージしますか？", options: [] }]);
+    expect(t).toBe("確認です。main にマージしますか？");
+  });
+});
+
+describe("emotionOf (文の感情推定)", () => {
+  it("エラー・失敗系は angry", () => {
+    expect(emotionOf("テストが失敗しました。")).toBe("angry");
+    expect(emotionOf("ビルドでエラーが出ています。")).toBe("angry");
+    expect(emotionOf("3 tests FAILED")).toBe("angry"); // 英語は小文字化して判定
+  });
+
+  it("成功・完了系は happy", () => {
+    expect(emotionOf("マージが完了しました。")).toBe("happy");
+    expect(emotionOf("テストは全部 green です。")).toBe("happy");
+  });
+
+  it("混在は angry 優先、どちらも無ければ null", () => {
+    expect(emotionOf("修正は完了しましたがテストが失敗しています。")).toBe("angry");
+    expect(emotionOf("次にドキュメントを更新します。")).toBeNull();
+  });
+});
+
+describe("mergeDicts (ユーザー辞書＋テナント共通辞書の合成)", () => {
+  it("同じ表記はユーザー辞書が勝つ（読み飛ばし上書きも含む）", () => {
+    const user = parseUserDict("神=かみ\n(社外秘)=");
+    const tenant = parseUserDict("神=しん\n(社外秘)=しゃがいひ\nagent-fleet=エージェントフリート");
+    const m = mergeDicts(user, tenant);
+    expect(applyUserDict("神は(社外秘)のagent-fleet", m)).toBe("かみはのエージェントフリート");
+  });
+
+  it("合成後も長い表記から当たる（テナント側の長い表記が部分一致に食われない）", () => {
+    const user = parseUserDict("AB=エービー");
+    const tenant = parseUserDict("ABC=エービーシー");
+    expect(applyUserDict("ABC", mergeDicts(user, tenant))).toBe("エービーシー");
+  });
+
+  it("テナント辞書が空ならユーザー辞書そのまま", () => {
+    const user = parseUserDict("神=かみ");
+    expect(mergeDicts(user, [])).toBe(user);
+  });
+});
+
+describe("abbrevCode (インラインコードの省略読み)", () => {
+  const F = "(なんとか|ふがふが|むにゅむにゅ)";
+
+  it("語が無いハッシュ等は頭 2 文字＋フィラー", () => {
+    expect(abbrevCode("e79853e")).toMatch(new RegExp(`^e7 ${F}$`));
+    expect(abbrevCode("1c74d26")).toMatch(new RegExp(`^1c ${F}$`));
+    expect(abbrevCode("v1.2.30")).toMatch(new RegExp(`^v1 ${F}$`));
+  });
+
+  it("フィラーはトークンから決定的に選ぶ（毎回同じ）", () => {
+    expect(abbrevCode("e79853e")).toBe(abbrevCode("e79853e"));
+  });
+
+  it("camelCase 2 語は頭一語＋フィラー", () => {
+    expect(abbrevCode("ttsEnabled")).toMatch(new RegExp(`^tts ${F}$`));
+  });
+
+  it("camelCase 3 語以上は頭一語＋フィラー＋末尾一語", () => {
+    expect(abbrevCode("ttsAutoReadMirror")).toMatch(new RegExp(`^tts ${F} Mirror$`));
+  });
+
+  it("区切り記号の語も同じ扱い（ファイル名・パス）", () => {
+    expect(abbrevCode("run-dev.sh")).toMatch(new RegExp(`^run ${F} sh$`));
+    expect(abbrevCode("console/src/features/mirror/turnTts.ts")).toMatch(new RegExp(`^console ${F} ts$`));
+  });
+
+  it("そのまま読むもの: 短い・純粋な 1 単語・空白入り・日本語入り", () => {
+    expect(abbrevCode("main")).toBe("main");
+    expect(abbrevCode("EC2")).toBe("EC2");
+    expect(abbrevCode("vitest")).toBe("vitest");
+    expect(abbrevCode("git push origin main")).toBe("git push origin main");
+    expect(abbrevCode("「読み上げ」タブ")).toBe("「読み上げ」タブ");
+  });
+
+  it("ユーザー辞書に掛かるトークンは触らない（辞書優先）", () => {
+    const d = parseUserDict("e79853e=れいのコミット");
+    expect(abbrevCode("e79853e", d)).toBe("e79853e");
+  });
+
+  it("plainify に組み込み（code 指定時のみ効く）", () => {
+    expect(plainify("コミット `e79853e` を見て", { abbrev: true, dict: [] })).toMatch(
+      new RegExp(`^コミット e7 ${F} を見て$`),
+    );
+    expect(plainify("コミット `e79853e` を見て")).toBe("コミット e79853e を見て");
+    expect(plainify("`e79853e` は", { abbrev: false, dict: [] })).toBe("e79853e は");
   });
 });
 
