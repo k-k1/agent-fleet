@@ -231,7 +231,9 @@
 .chat-open .session-state {
   margin-left: 4px;
 }
-/* Left-rail conversation rows */
+/* Left-rail conversation rows — same one-line language as the session rows:
+   tinted icon square (.chat-kic follows the left-pane accent, since assistants
+   have no agent kind) + title + muted count + icon-only state chip. */
 .chat-row {
   display: flex;
   align-items: center;
@@ -247,12 +249,16 @@
   border: 0;
   color: inherit;
   text-align: left;
-  padding: 5px 6px;
+  padding: 4px 6px 4px 8px;
   border-radius: 6px;
   cursor: pointer;
 }
 .chat-open:hover {
   background: var(--hover-bg);
+}
+.chat-kic {
+  color: var(--lp-accent, var(--accent));
+  background: color-mix(in srgb, var(--lp-accent, var(--accent)) 14%, transparent);
 }
 .chat-open-title {
   flex: 1 1 auto;
@@ -263,6 +269,7 @@
 .chat-open-meta {
   flex: 0 0 auto;
   font-size: 11px;
+  color: var(--muted);
 }
 .chat-row .chat-del {
   opacity: 0;
@@ -390,25 +397,6 @@
   line-height: 1.6;
 }
 
-/* Rail chip: 進行中/待機中 (the old markup used .session-state; the port names it
-   .chat-state to avoid colliding with the sessions Pill styling). */
-.chat-state {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  font-size: 10px;
-  border-radius: 999px;
-  padding: 0 6px;
-}
-.chat-state.working {
-  color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
-}
-.chat-state.on {
-  color: var(--ok);
-  background: color-mix(in srgb, var(--ok) 14%, transparent);
-}
 .section-empty {
   color: var(--muted);
   font-size: 12px;

@@ -258,16 +258,20 @@ export function AssistantSection() {
                     onMouseDown={(e) => e.button === 1 && e.preventDefault()}
                     onAuxClick={(e) => e.button === 1 && openTargetInNew(convTarget(c.id))}
                   >
-                    <Icon name={a?.icon || "comment"} className="assistant-ic" />
+                    {/* Same row language as the session rows: a tinted leading
+                        icon square + an icon-only state chip (text in tooltip). */}
+                    <span className="sess-kic chat-kic">
+                      <Icon name={a?.icon || "comment"} />
+                    </span>
                     <span className="chat-open-title">{c.title}</span>
                     {c.message_count > 0 && <span className="chat-open-meta">{c.message_count}</span>}
                     {chatBusy[c.id] ? (
-                      <span className="chat-state working">
-                        <Icon name="loading" spin /> 進行中
+                      <span className="session-state working mini" title="進行中">
+                        <Icon name="loading" spin />
                       </span>
                     ) : (
-                      <span className="chat-state on">
-                        <Icon name="check" /> 待機中
+                      <span className="session-state on mini" title="待機中">
+                        <Icon name="check" />
                       </span>
                     )}
                   </button>
