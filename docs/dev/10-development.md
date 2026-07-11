@@ -109,6 +109,16 @@ NODE_OPTIONS=--max-old-space-size=3072 npm --prefix console run build
 workspace-notes を参照）。gofmt + `go vet` clean・`npm run build` clean が提出前の基準
 （[CONTRIBUTING](../../CONTRIBUTING.md)）。
 
+> **コミット前に gofmt を必ず回す（ハードゲート）**。`ci.yml` は各 Go モジュールで
+> `gofmt -l .` を実行し、未整形ファイルが 1 つでもあれば fail する。`go build`/`go vet`/
+> `go test` が通ることは不十分（エディタの自動整形が `_test.go` を取りこぼす事例が実際に
+> すり抜けた）。触れた各モジュールで `gofmt -l .` が**何も出力しない**ことを確認し、出たら
+> `gofmt -w <file>` で直す:
+> ```bash
+> (cd control-plane && gofmt -l .)
+> (cd workspace/agent && gofmt -l .)
+> ```
+
 ### E2E（イメージスモーク + フリート疎通 + UI + 実 API）
 
 4 層構成。**L1 = `deploy/local/e2e-smoke.sh`**（§10.3、イメージ焼き込み内容の検証・数秒）、

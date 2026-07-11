@@ -20,6 +20,16 @@ patent grant; no separate CLA is required.
   KeyCustodian, MetadataStore, AuthGateway) — see `docs/dev/09-deploy.md`.
 - **Match the surrounding code.** Go: `gofmt` + `go vet` clean, `go test ./...`
   passing. Console: `npm run build` clean.
+- **Run `gofmt` before every commit that touches Go — this is a hard gate.**
+  `ci.yml` runs `gofmt -l .` per Go module and fails the build on *any* unformatted
+  file, so `go build` / `go vet` / `go test` passing is not enough (editors and
+  auto-format often skip `_test.go` files, which is exactly what has slipped through).
+  Before committing, run in each touched module and make sure it prints nothing:
+  ```bash
+  (cd control-plane && gofmt -l .)      # lists unformatted files; empty = OK
+  (cd workspace/agent && gofmt -l .)
+  ```
+  Fix with `gofmt -w <file>` (or `gofmt -w .`). Same for `go vet ./...`.
 
 ## Building & running
 
