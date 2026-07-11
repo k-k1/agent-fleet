@@ -160,6 +160,11 @@ export interface Settings {
   // 朗読する（features/mirror/turnTts.ts）。見ていないセッションの短い告知 ttsSessionNotify
   // とは相補（こちらは見ている画面の本文を読む）。
   ttsAutoReadMirror: boolean;
+  // 自動読み上げをアクティブなペインだけでなく「開いている全ペイン」で行う（ttsAutoReadMirror
+  // のサブオプション）。各ペインの新着回答は 1 本の再生に直列で並ぶ。同じセッションを複数
+  // ペインで開いていても読むのは 1 ペインだけ（features/mirror/turnTts.ts の担当登録）。
+  // セッションごとの声（ttsVoicePerSession）と併用すると、どのペインの回答かを声で判別できる。
+  ttsAutoReadAllPanes: boolean;
   // セッションごとに声を変える（features/chat/tts.ts の sessionVoiceOpts）。セッション名の
   // ハッシュで話者プール（VOICEVOX 標準キャラ / Polly 3 声）から決定的に割り当て、ミラーの
   // 読み上げとセッション音声通知に適用（どのセッションの回答かを声で判別できる）。
@@ -183,6 +188,10 @@ export interface Settings {
   ttsAbbrevCode: boolean;
   // 朗読ビュー（docs/24）を縦書きで表示するか（既定 false=横書き）。ReaderView のトグルに追随。
   readerVertical: boolean;
+  // 朗読ビューの声。"" = 設定の話者のまま / "vv:<speaker>" = VOICEVOX のキャラ /
+  // "polly:<VoiceId>" = Polly。ReaderView ヘッダーの選択に追随（features/chat/tts.ts の
+  // voiceChoiceOpts が TtsOptions の上書きへ解決する）。
+  readerVoice: string;
 }
 
 // The pinned fallback model. Used as the seeded global default and as resolveModel's
@@ -224,12 +233,14 @@ const DEFAULTS: Settings = {
   ttsUserDict: "",
   ttsCacheSec: 300,
   ttsAutoReadMirror: false,
+  ttsAutoReadAllPanes: false,
   ttsVoicePerSession: false,
   ttsEmotion: false,
   ttsReadPending: false,
   ttsSummaryRead: false,
   ttsAbbrevCode: true,
   readerVertical: false,
+  readerVoice: "",
 };
 
 // VOICEVOX ずんだもんのスタイル（speaker 番号 → ラベル）。設定 UI の話者選択に使う。

@@ -335,7 +335,27 @@ TTS 設定画面かフッターに小さく常時表示する。Polly は AWS �
   要約文は画面に無いため。フル本文はフッターの読み上げボタンで従来どおり）。生成は 1 本ずつ
   （busy 中はキュー待機）・30s タイムアウト・失敗（ワークスペース停止含む）は全文読みへ
   フォールバック。入力は 6000 字で打ち切り。
-- **Phase 2（AWS）** ✅ 実装済み（2026-07-10）: 3 点セットを CP に実装。
+- **全ペイン自動読み上げ（2026-07-11）** ✅: 設定 `ttsAutoReadAllPanes`（既定 OFF、
+  `ttsAutoReadMirror` のサブオプション）。自動読み上げ・確認読み上げの対象を「アクティブな
+  ペイン」から「開いている全チャットペイン」へ広げる。各ペインのキューは 1 本の再生を
+  待ち合って直列に読まれる（`ttsAutoPump` のガードを `speaking` だけでなく **store の
+  `active`** も見るよう強化 — 合成待ち（登録済みでまだ無音）の再生への割り込みを防ぐ。
+  `announce` の pump も同様）。zustand の subscribe は setState 中に同期発火し、プリエンプト
+  中（旧 stop→新登録）の一瞬 `active=null` の窓で誤発進するため、ポンプ再開は microtask に
+  逃がす。**同じセッションを複数ペインで開いても読むのは先着 1 ペイン**（`turnTts.ts` の
+  担当登録 `claimTurnReader`/`isTurnReader`。担当ペインが閉じたら次が引き継ぐ。readOnly
+  ペインは登録しない）。停止の意味論を整理: 明示停止（TopBar・フッター）は全ペインの
+  キュー＋announce キューを破棄（`tts.ts` の `onTtsStop` 購読）、新再生開始に伴う置き換えは
+  `preemptActive()` で区別しキューを温存。ミラーが本文を読むセッションには
+  `ttsSessionNotify` の短い告知を重ねない（`hasTurnReader` で判定）。付随修正:
+  `startTts` の自然終了で store の `active` を解放するようにした（従来は残置 — `active` を
+  見る新ガードが永久待ちになるため）。
+- **朗読ビューの声選択（2026-07-11）** ✅: 設定 `readerVoice`（既定 "" = 設定の話者）。
+  ReaderView ヘッダーに「声」セレクトを追加（VOICEVOX 標準 8 キャラ＋Polly 3 声、
+  `READER_VOICE_CHOICES`/`voiceChoiceOpts`（`tts.ts`）が `TtsOptions` 上書きへ解決して
+  `startNarration` に渡す）。VOICEVOX キャラ選択時は provider を `auto` に上げる —
+  エンジン不在時は Polly が代読し、復帰したら選んだキャラに戻る。Polly 選択は明示 polly。
+  変更は次の朗読開始から適用。選択は設定として永続（他ファイル・他ブラウザにも追随）。
   - **Polly プロバイダ**（`control-plane/tts_polly.go`）: SDK 既定チェーン（IAM ロール、鍵保存ゼロ）。
     出力 MP3（フロントの `decodeAudioData` がそのまま復号するので UI 変更不要）、速度は SSML
     `<prosody rate>`、テキストは XML エスケープ。region は `AF_POLLY_REGION` →

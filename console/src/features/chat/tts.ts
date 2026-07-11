@@ -90,6 +90,24 @@ export function sessionVoiceOpts(session: string): Partial<TtsOptions> | undefin
   };
 }
 
+// --- 朗読ビューの声選択（docs/24） -----------------------------------------------
+// ReaderView ヘッダーの「声」セレクト用。"" = 設定の話者のまま。"vv:<speaker>" は VOICEVOX
+// のキャラ（provider は auto に上げる — エンジン不在時は Polly が代読し、復帰したら選んだ
+// キャラに戻る）。"polly:<VoiceId>" は明示 Polly。
+export const READER_VOICE_CHOICES: [string, string][] = [
+  ["", "設定の話者"],
+  ...SESSION_VOICES.map((p): [string, string] => ["vv:" + p.base, VV_CHAR_NAMES[p.base] ?? p.base]),
+  ...SESSION_POLLY_VOICES.map((v): [string, string] => ["polly:" + v, "Polly（" + v + "）"]),
+];
+
+// voiceChoiceOpts は READER_VOICE_CHOICES の値を TtsOptions の上書きへ解決する（"" や不明値は
+// undefined = 設定のまま）。
+export function voiceChoiceOpts(v: string): Partial<TtsOptions> | undefined {
+  if (v.startsWith("vv:")) return { provider: "auto", voice: v.slice(3) };
+  if (v.startsWith("polly:")) return { provider: "polly", pollyVoice: v.slice(6) };
+  return undefined;
+}
+
 // --- 感情スタイルの読み分け（docs/24） -------------------------------------------
 // 文にエラー・失敗系の語があればツンツン系、成功・完了系ならあまあま系のスタイルで読む
 // （emotionOf の判定。文単位＝合成 1 回単位で切り替え）。スタイル variant を持つ話者
@@ -202,12 +220,42 @@ function audioCtx(): AudioContext | null {
   }
 }
 
+// --- グローバル停止の伝播 --------------------------------------------------------
+// stop には 2 種類ある。(1) 明示的な停止（TopBar・ターンフッターの停止ボタン等）＝「静かに
+// して」の意思なので、待機中のアナウンスキューと各ミラーペインの自動読み上げキューもまとめて
+// 捨てる。(2) 新しい再生開始に伴う置き換え（プリエンプト、グローバル 1 本再生の維持）＝停止
+// ではないので何も捨てない。preemptActive() 経由の stop だけを (2) として除外する。
+let preempting = false;
+function preemptActive(): void {
+  const st = useTtsStore.getState();
+  if (!st.active) return;
+  preempting = true;
+  try {
+    st.active.stop();
+  } finally {
+    preempting = false;
+  }
+}
+// onTtsStop は明示停止の購読（ミラーの自動読み上げキュー破棄用）。解除関数を返す。
+const stopSubs = new Set<() => void>();
+export function onTtsStop(fn: () => void): () => void {
+  stopSubs.add(fn);
+  return () => {
+    stopSubs.delete(fn);
+  };
+}
+function notifyStopped(): void {
+  if (preempting) return;
+  announceQueue.length = 0;
+  stopSubs.forEach((f) => f());
+}
+
 // startTts は 1 つの読み上げセッションを開始する。アプリ全体で再生は 1 本に集約するため、
 // 既存の再生中セッションがあれば止めてから始め、グローバルストアに自分を active として登録する。
 // source は TopBar の「読み上げ中・〇〇」表示に使うラベル。onEnd は自然終了("done")／停止
 // ("stopped")のどちらでも 1 回だけ呼ばれる（アナウンスキューの直列制御に使う）。
 export function startTts(opts: TtsOptions, source = "", onEnd?: (reason: "done" | "stopped") => void): TtsController {
-  useTtsStore.getState().active?.stop(); // 直前の再生を停止（グローバル 1 本）
+  preemptActive(); // 直前の再生を停止（グローバル 1 本・キューは温存）
   // 読み仮名辞書（ユーザー＋テナント共通の合成・ユーザー優先）はターン開始時に一度だけ
   // 組む（opts の provider/voice とは独立したテキスト処理なので opts には載せない）。
   const userDict = effectiveDict();
@@ -235,6 +283,13 @@ export function startTts(opts: TtsOptions, source = "", onEnd?: (reason: "done" 
   const finish = (reason: "done" | "stopped") => {
     if (ended) return;
     ended = true;
+    // 自分がまだ active なら登録を外す（自然終了でも外す — 残すと「準備中の再生あり」と
+    // 区別できず、待機系のポンプ（announce / ミラー自動読み上げ）が永久に待ってしまう）。
+    const st = useTtsStore.getState();
+    if (st.active === controller) {
+      st.setActive(null, "");
+      st.setSpeaking(false);
+    }
     onEnd?.(reason);
   };
 
@@ -403,13 +458,8 @@ export function startTts(opts: TtsOptions, source = "", onEnd?: (reason: "done" 
         } catch {}
       });
       srcs.clear();
-      // 自分がまだ active なら speaking を落とす（別セッションに置き換わっている場合は触らない）。
-      const st = useTtsStore.getState();
-      if (st.active === controller) {
-        st.setActive(null, "");
-        st.setSpeaking(false);
-      }
-      finish("stopped");
+      finish("stopped"); // ストアの後片づけ（active/speaking 解除）は finish が行う
+      notifyStopped(); // 明示停止 → 待機中のキューも捨てる（プリエンプト時は no-op）
     },
   };
   useTtsStore.getState().setActive(controller, source, voiceCharName(opts));
@@ -433,7 +483,10 @@ export function announce(text: string, source = "", voice?: Partial<TtsOptions>)
 
 function pumpAnnounce(): void {
   if (announcing) return;
-  if (useTtsStore.getState().speaking) return; // 何か再生中 → 終了後に再開（下の subscribe）
+  // 何か再生中/準備中（登録済みで最初の音がまだ）→ 終了後に再開（下の subscribe）。
+  // speaking だけ見ると合成待ちの再生に割り込んでしまうので active も見る。
+  const st = useTtsStore.getState();
+  if (st.speaking || st.active) return;
   const next = announceQueue.shift();
   if (!next) return;
   announcing = true;
@@ -450,9 +503,11 @@ function pumpAnnounce(): void {
   c.flush();
 }
 
-// 再生（チャット読み上げ等）が外部で終わったら、待たせていた告知を再開する。
+// 再生（チャット読み上げ等）が外部で終わったら、待たせていた告知を再開する。zustand の
+// subscribe は setState 中に同期で呼ばれ、プリエンプト（旧再生 stop → 新再生の登録）の途中は
+// active が一瞬 null になるため、microtask に逃がして置き換え完了後の状態で判定する。
 useTtsStore.subscribe((st, prev) => {
-  if (prev.speaking && !st.speaking) pumpAnnounce();
+  if (prev.speaking && !st.speaking) queueMicrotask(pumpAnnounce);
 });
 
 // speakText は与えたテキストをその場で読み上げる（FileView の選択範囲など、非ストリーム用途）。
@@ -490,7 +545,7 @@ export function startNarration(
   // 渡すと、読む前に一拍おく（先頭 unit の前拍は開始遅延になるだけなので無視する）。
   preGaps?: number[],
 ): NarrationHandle {
-  useTtsStore.getState().active?.stop(); // グローバル 1 本（既存の再生を止める）
+  preemptActive(); // グローバル 1 本（既存の再生を止める・キューは温存）
   const ctx = audioCtx();
   const s = getSettings();
   const opts = { ...ttsOptsFromSettings(s), ...voice };
@@ -615,6 +670,7 @@ export function startNarration(
     playing = false;
     if (ctx && ctx.state === "suspended") void ctx.resume(); // 次の再生のため戻しておく
     finish("stopped");
+    notifyStopped(); // 明示停止 → 待機中のキューも捨てる（プリエンプト時は no-op）
   };
 
   useTtsStore.getState().setActive(adapter, source, voiceCharName(opts));
