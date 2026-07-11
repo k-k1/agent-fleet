@@ -13,6 +13,7 @@ import { rel } from "../../core/api/client.ts";
 import { getSettings } from "../../lib/settings.ts";
 import { useTtsStore } from "../../core/store/tts.ts";
 import { plainify, plainifyStreaming, firstChunkCut, parseUserDict, applyUserDict } from "./ttsText.ts";
+import { makeAudioLru } from "./ttsCache.ts";
 
 export interface TtsOptions {
   provider: string; // "auto" | "voicevox" | "polly"
@@ -56,15 +57,38 @@ export interface TtsController {
   stop(): void;
 }
 
+// --- 合成キャッシュ ------------------------------------------------------------
+// 同一文言＋同一合成条件の復号済み AudioBuffer をメモリ内 LRU で持ち、再読み上げ
+// （同じ回答の読み上げボタン再押下、定型 announce、朗読のやり直し等）を合成・
+// ネットワークなしで即再生する。AudioBuffer は再生ごとに AudioBufferSourceNode を
+// 作り直すので使い回して安全。上限は合計再生秒数で管理する（VOICEVOX 24kHz mono
+// float32 の PCM で約 0.1MB/秒 — 300 秒 ≒ 30MB）。リロードで消える（永続化しない）。
+
+const SYNTH_CACHE_MAX_SEC = 300;
+const synthCache = makeAudioLru<AudioBuffer>(SYNTH_CACHE_MAX_SEC);
+
+// キーは合成条件＋テキスト。区切りはテキストに現れない NUL。provider は設定値
+// （auto 含む）で持つため、auto のルーティング先が変わった直後は旧エンジンの声が
+// 再生されうる（エビクトで解消する程度の割り切り）。
+function synthCacheKey(text: string, opts: TtsOptions): string {
+  return [opts.provider, opts.voice, opts.speed, opts.enkana ? 1 : 0, opts.pollyVoice ?? "", opts.lang ?? "", text].join(
+    "\u0000",
+  );
+}
+
 // synthToBuffer は 1 文を CP の /api/tts/synthesize で合成し、AudioBuffer へ復号する。
-// 失敗（abort / ネットワーク / 非 200 / 復号失敗）は null（呼び手は当該文をスキップ）。
-// ストリーム読み上げ（startTts）と朗読（startNarration）の両方から使う共通処理。
+// キャッシュにあれば即返す。失敗（abort / ネットワーク / 非 200 / 復号失敗）は null
+// （呼び手は当該文をスキップ）。ストリーム読み上げ（startTts）と朗読（startNarration）
+// の両方から使う共通処理。
 async function synthToBuffer(
   ctx: AudioContext,
   text: string,
   opts: TtsOptions,
   signal: AbortSignal,
 ): Promise<AudioBuffer | null> {
+  const key = synthCacheKey(text, opts);
+  const hit = synthCache.get(key);
+  if (hit) return hit;
   try {
     const res = await fetch(rel("api/tts/synthesize"), {
       method: "POST",
@@ -82,7 +106,9 @@ async function synthToBuffer(
     });
     if (!res.ok) return null;
     const arr = await res.arrayBuffer();
-    return await ctx.decodeAudioData(arr);
+    const ab = await ctx.decodeAudioData(arr);
+    synthCache.put(key, ab);
+    return ab;
   } catch {
     return null;
   }

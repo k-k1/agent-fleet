@@ -103,6 +103,10 @@ var ttsProviders = map[string]ttsProvider{ "voicevox": ..., "polly": ... }
   あわせて「submit 時に」のような**英単語と日本語の間の半角スペース**は CP の voicevox 経路で
   除去する（`collapseJaSpaces`。VOICEVOX はスペースをポーズとして合成し読みが途切れるため。
   英単語同士のスペースと全角スペースは残す）。
+- **合成キャッシュ（2026-07-11）**: 同一文言＋同一合成条件（provider/voice/speed/enkana/lang）の
+  復号済み AudioBuffer をフロントのメモリ内 LRU（`ttsCache.ts` の `makeAudioLru`、合計 300 秒 ≒
+  30MB 上限）に持ち、再読み上げ・定型 announce の 2 回目以降は合成もネットワークもなしで即再生。
+  リロードで消える（永続化しない）。
 - 読み上げ用整形: Markdown 記法・コードブロック（`` ``` `` は読み飛ばし/「コード省略」）・URL 短縮。
   （`console/src/features/chat/MarkdownView.tsx` のレンダ経路とは別に、プレーン化ユーティリティを持つ）
 - 中断: `stop()`（`ChatView.tsx:259`）と連動し in-flight fetch abort ＋ 現在 source stop ＋ キュー破棄。
