@@ -237,6 +237,18 @@ export function MirrorView({
   // Updated on scroll (not on append — appending grows scrollHeight without a scroll
   // event), so it reflects the user's intent, not the just-added content.
   const atBottomRef = useRef(true);
+  // The idx of the assistant block whose TOP we last brought to the viewport top. A fresh
+  // reply is anchored there once (so the user reads it from its first line) and then left
+  // alone as it streams; this remembers which reply we've already anchored.
+  const anchoredIdxRef = useRef<number | undefined>(undefined);
+  // Set just before we scroll the body ourselves so the scroll handler can tell our own
+  // programmatic scroll apart from a real user scroll (and not mistake anchoring-to-top
+  // for the user scrolling up to read history).
+  const selfScrollRef = useRef(false);
+  // False until the first content settle for a session. On open we land at the bottom (as
+  // before) and mark the reply already present as "seen", so only replies that arrive while
+  // the user is watching get anchored to the top — history isn't retro-scrolled.
+  const didInitRef = useRef(false);
 
   // Reset accumulated turns when the session changes (cursor is a line index into
   // that session's jsonl, meaningless across sessions).
@@ -272,6 +284,8 @@ export function MirrorView({
       return [];
     });
     atBottomRef.current = true; // a freshly opened session starts pinned to the bottom
+    anchoredIdxRef.current = undefined; // no reply anchored yet in the new session
+    didInitRef.current = false; // re-run the "land at bottom on open" settle for this session
   }, [session]);
 
   // Persist the draft per session, and reload it when the session changes (so the old
@@ -408,27 +422,95 @@ export function MirrorView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [turns]);
 
-  // Follow the latest turn / pending question / typing dots — but ONLY when the user is
-  // already at the bottom. The poll replaces `pending` with a fresh array every tick, so
-  // an unconditional scroll here yanked the user back down every 1.2–3s while they tried
-  // to read history (and on every appended turn). atBottomRef (set on scroll) gates it.
+  // Keep the conversation in view as it grows — but ONLY when the user is at the bottom
+  // (atBottomRef, set on scroll). If they've scrolled up to read, we never move them; the
+  // poll replaces `pending` with a fresh array every tick, so an unconditional scroll here
+  // yanked them back down every 1.2–3s.
+  //
+  // When a NEW reply appears we do NOT jump to the bottom of it — a long answer would drop
+  // the user at the end, forcing them to scroll back up to read it from the start. Instead
+  // we bring the TOP of the reply to the top of the viewport once (tracked by its idx) and
+  // then leave the user alone as it streams, so they read it top-down at their own pace.
   useEffect(() => {
     if (!atBottomRef.current) return;
     const el = bodyRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [turns, pending, pendingPlan, pendingPerm, status]);
+    if (!el) return;
+    // Scrolling to the bottom lands the user "at the bottom", which is exactly what the
+    // scroll handler would record — so it needs no selfScroll guard (only the upward
+    // anchor-to-top below does, to avoid being read as the user leaving the bottom).
+    const toBottom = () => {
+      el.scrollTop = el.scrollHeight;
+    };
+
+    // Actionable prompts (question / plan / permission) render at the very bottom and need
+    // a response — always surface them fully.
+    if (pending || pendingPlan || pendingPerm) {
+      toBottom();
+      return;
+    }
+
+    // The reply to the latest user prompt is the first assistant block after the last user
+    // turn. Its idx is stable for the whole reply (further streamed turns and any subagent
+    // blocks append after it), so a change of idx marks a genuinely new reply.
+    let u = -1;
+    for (let i = groups.length - 1; i >= 0; i--) {
+      if (groups[i].role === "user") { u = i; break; }
+    }
+    const reply = groups[u + 1];
+    const replyIdx = reply && reply.role !== "user" ? reply.idx : undefined;
+
+    // First settle for this session: land at the bottom (the familiar "open shows the
+    // latest" position) and remember whatever reply is already there, so history isn't
+    // retro-anchored — only replies that arrive while watching get the top treatment below.
+    if (!didInitRef.current) {
+      if (groups.length || loaded) {
+        didInitRef.current = true;
+        anchoredIdxRef.current = replyIdx;
+      }
+      toBottom();
+      return;
+    }
+
+    if (replyIdx !== undefined) {
+      if (replyIdx !== anchoredIdxRef.current) {
+        // A new reply just appeared: bring its head to the viewport top (small gap so it
+        // isn't flush) so the user reads it from the first line, then leave them alone as
+        // it streams. Guard the scroll handler so this upward move isn't misread as the
+        // user scrolling up off the bottom.
+        anchoredIdxRef.current = replyIdx;
+        const node = el.querySelector<HTMLElement>(`[data-turn-idx="${replyIdx}"]`);
+        if (node) {
+          const top = el.scrollTop + (node.getBoundingClientRect().top - el.getBoundingClientRect().top) - 12;
+          if (Math.abs(el.scrollTop - top) >= 1) {
+            selfScrollRef.current = true;
+            el.scrollTop = Math.max(0, top);
+          }
+        }
+      }
+      // Otherwise we've already anchored this reply — it's streaming; leave the position be.
+      return;
+    }
+
+    // No reply yet (the user's own just-sent prompt is the newest thing): keep it in view.
+    toBottom();
+    // `groups` and `loaded` are derived from / move with the listed deps, so the closure is
+    // fresh on every run; keeping them out of the deps avoids re-firing on unrelated
+    // re-renders (e.g. every composer keystroke).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [turns, pending, pendingPlan, pendingPerm, status, pendingSends]);
 
   // Keep the latest message in view when the body's OWN height changes — the ToDo /
   // 消費推移 / コンテキスト panels opening above it, the composer auto-growing, or a
   // pane/window resize all shrink the scroll area and would otherwise clip the bottom
-  // (reads as the chat scrolling away). Re-pin only if the user was already at the bottom;
-  // reading mid-history is left alone. (Content-driven growth is handled by the effect
-  // above — adding turns changes scrollHeight, not the body's box, so it won't fire here.)
+  // (reads as the chat scrolling away). Re-pin only if the body is ACTUALLY near the bottom
+  // right now — a user parked at the top of a freshly-anchored reply must not be yanked
+  // down. (Content-driven growth is handled by the effect above — adding turns changes
+  // scrollHeight, not the body's box, so it won't fire here.)
   useEffect(() => {
     const el = bodyRef.current;
     if (!el || typeof ResizeObserver === "undefined") return;
     const ro = new ResizeObserver(() => {
-      if (atBottomRef.current) el.scrollTop = el.scrollHeight;
+      if (el.scrollHeight - el.scrollTop - el.clientHeight < 80) el.scrollTop = el.scrollHeight;
     });
     ro.observe(el);
     return () => ro.disconnect();
@@ -437,9 +519,16 @@ export function MirrorView({
   // Track whether the user is at (within 80px of) the bottom. Content appends grow
   // scrollHeight without firing a scroll event, so this only changes on real user
   // scrolling — exactly the "did they scroll up to read?" signal the effect above needs.
+  // When we anchor a new reply to the top ourselves, that upward scroll fires a scroll
+  // event too; selfScrollRef lets us skip it so it isn't misread as the user scrolling up
+  // off the bottom (which would switch following off).
   const onBodyScroll = () => {
     const el = bodyRef.current;
     if (!el) return;
+    if (selfScrollRef.current) {
+      selfScrollRef.current = false;
+      return;
+    }
     atBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
   };
 
@@ -1608,7 +1697,10 @@ function Turn({
   const ctxTok = turn.inTok + turn.cacheRead + turn.cacheCreate;
   const spend = spendOf(turn);
   return (
-    <div className={"mirror-turn " + (isUser ? "user" : "assistant") + (turn.sidechain ? " sidechain" : "")}>
+    <div
+      className={"mirror-turn " + (isUser ? "user" : "assistant") + (turn.sidechain ? " sidechain" : "")}
+      data-turn-idx={turn.idx}
+    >
       <div className="mirror-turn-head">
         <span className="mt-who">{who}</span>
         {turn.pending && (
