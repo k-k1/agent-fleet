@@ -132,8 +132,6 @@ export function ReaderView({ filePath }: { filePath: string }) {
   useEffect(() => () => handleRef.current?.stop(), []);
 
   // from 番目の読み上げ単位から（再）開始。ハイライトは from を足してフル配列基準に戻す。
-  // voice は再生中の声変更（下のセレクト onChange）用 — setSetting 直後は settings の
-  // クロージャが古いので、新しい選択値から組んだ上書きを直接渡す。
   const startFrom = (from: number, voice = voiceChoiceOpts(readerVoice)) => {
     const slice = flat.slice(from);
     if (!slice.length) return;
@@ -268,11 +266,11 @@ export function ReaderView({ filePath }: { filePath: string }) {
             onChange={(e) => {
               const v = e.target.value;
               setSetting("readerVoice", v);
-              // 朗読中の変更は、いま読んでいる文から新しい声で読み直す（続きから声が切り替わる）。
-              if (reading) startFrom(active ?? 0, voiceChoiceOpts(v));
+              // 朗読中の変更は中断しない。いま読んでいる文はそのまま、次の文から新しい声。
+              handleRef.current?.setVoice(voiceChoiceOpts(v));
             }}
             disabled={!ttsOn}
-            title={ttsOn ? "朗読の声（朗読中に変えると続きから切り替え）" : "設定で音声読み上げを有効にしてください"}
+            title={ttsOn ? "朗読の声（朗読中に変えると次の文から切り替え）" : "設定で音声読み上げを有効にしてください"}
           >
             {voiceChoices.map(([v, label]) => (
               <option key={v} value={v}>

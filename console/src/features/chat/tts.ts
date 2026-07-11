@@ -651,6 +651,8 @@ export interface NarrationHandle {
   resume(): void;
   stop(): void;
   isPaused(): boolean;
+  // 声の即時切替（朗読ビューのセレクト）。いま鳴っている文はそのまま、次の文から新しい声。
+  setVoice(voice?: Partial<TtsOptions>): void;
 }
 
 export function startNarration(
@@ -668,7 +670,7 @@ export function startNarration(
   preemptActive(); // グローバル 1 本（既存の再生を止める・キューは温存）
   const ctx = audioCtx();
   const s = getSettings();
-  const opts = { ...ttsOptsFromSettings(s), ...voice };
+  let opts = { ...ttsOptsFromSettings(s), ...voice }; // let: setVoice で差し替わる
   const userDict = effectiveDict(); // ユーザー＋テナント共通辞書（ユーザー優先）
 
   // 各 unit を読み上げ用にクリーン化（Markdown 記法/URL 除去 + コード片の省略読み +
@@ -685,6 +687,7 @@ export function startNarration(
   const acs = new Set<AbortController>();
   let synthAt = 0; // 次に合成を仕掛ける index
   let cursor = 0; // 次に再生する index
+  let epoch = 0; // 声の世代（setVoice で進む。古い声の合成結果を無効化する）
   let inflight = 0;
   let playing = false;
   let cur: AudioBufferSourceNode | null = null;
@@ -707,7 +710,8 @@ export function startNarration(
     if (!stopped && !playing && inflight === 0 && cursor >= texts.length) finish("done");
   };
 
-  // in-flight 上限まで先読み合成。空 unit は即 null。
+  // in-flight 上限まで先読み合成。空 unit は即 null。結果はエポック一致時だけ採用
+  // （setVoice 後に届いた古い声の合成を鳴らさない）。
   const pump = () => {
     while (!stopped && inflight < MAX_INFLIGHT && synthAt < texts.length) {
       const i = synthAt++;
@@ -719,9 +723,14 @@ export function startNarration(
       inflight++;
       const ac = new AbortController();
       acs.add(ac);
+      const ep = epoch;
       synthToBuffer(ctx!, text, emotionOpts(text, opts), ac.signal)
-        .then((ab) => buffers.set(i, ab))
-        .catch(() => buffers.set(i, null))
+        .then((ab) => {
+          if (ep === epoch) buffers.set(i, ab);
+        })
+        .catch(() => {
+          if (ep === epoch) buffers.set(i, null);
+        })
         .finally(() => {
           acs.delete(ac);
           inflight--;
@@ -729,6 +738,24 @@ export function startNarration(
           tryPlay();
         });
     }
+  };
+
+  // 声の即時切替（NarrationHandle.setVoice）。いま鳴っている文は触らず、次の文から新しい
+  // 声にする: 未再生の先読み分（buffers は再生済みを消しながら進むので残りは全部 cursor
+  // 以降）を捨て、次に鳴る文（cursor）から合成をやり直す。in-flight は abort しつつ、
+  // 応答順の競合はエポックで確実に無効化する。
+  const setVoice = (voice2?: Partial<TtsOptions>) => {
+    if (stopped) return;
+    opts = { ...ttsOptsFromSettings(getSettings()), ...voice2 };
+    epoch++;
+    acs.forEach((a) => a.abort());
+    acs.clear();
+    buffers.clear();
+    synthAt = cursor;
+    const st = useTtsStore.getState();
+    if (st.active === adapter) st.setActive(adapter, source, voiceCharName(opts)); // TopBar の声表示を更新
+    pump();
+    tryPlay(); // 再生が追いついて待っていた場合に備える
   };
 
   // 告知の差し挟み（docs/24）: 長い朗読の途中でもセッション通知・確認の告知を待たせすぎない。
@@ -861,5 +888,5 @@ export function startNarration(
     pump();
     tryPlay();
   });
-  return { pause, resume, stop, isPaused: () => paused };
+  return { pause, resume, stop, isPaused: () => paused, setVoice };
 }
