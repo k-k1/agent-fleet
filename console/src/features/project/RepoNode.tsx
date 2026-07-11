@@ -62,13 +62,6 @@ export function RepoNode({ r, childRepos, ctx, actions }: RepoNodeProps) {
   // pruned the tree to matches) and only matching sessions render.
   const open = nq ? true : node.open;
   const shownSessions = nq ? mine.filter((s) => sessionMatches(s, nq)) : mine;
-  // Stopped sessions tuck behind a "停止中 n" disclosure (alive ones always
-  // show) — but one that's active in a pane must stay visible, and a filter
-  // shows its matches directly.
-  const alive = shownSessions.filter((s) => s.alive);
-  const stopped = shownSessions.filter((s) => !s.alive);
-  const [stoppedOpen, setStoppedOpen] = useState(false);
-  const showStopped = !!nq || stoppedOpen || stopped.some((s) => s.name === ctx.activeSession);
   // Session tally for the repo row's badge — real counts, not the filtered view:
   // own folder while open (the rows are visible right below); the worktrees'
   // sessions fold in while collapsed, so a folded project still shows what's
@@ -112,29 +105,8 @@ export function RepoNode({ r, childRepos, ctx, actions }: RepoNodeProps) {
       {open && (
         <div className="proj-node-body">
           {/* Sessions sit directly under the repo row — no sub-header, no empty
-              placeholder: a repo with none simply shows nothing here. Alive rows
-              always; stopped ones behind the 停止中 disclosure. */}
-          {shownSessions.length > 0 && (
-            <ul className="sess-list proj-sub-list">
-              {alive.map(row)}
-              {!nq && stopped.length > 0 && (
-                <li className="sess-stopped">
-                  <button
-                    type="button"
-                    className="sess-stopped-btn"
-                    onClick={() => setStoppedOpen((v) => !v)}
-                    aria-expanded={showStopped}
-                    title={showStopped ? "停止中のセッションを隠す" : "停止中のセッションを表示"}
-                  >
-                    <Icon name={showStopped ? "chevron-down" : "chevron-right"} />
-                    <Icon name="debug-pause" /> 停止中
-                    <span className="sess-group-count">{stopped.length}</span>
-                  </button>
-                </li>
-              )}
-              {showStopped && stopped.map(row)}
-            </ul>
-          )}
+              placeholder: a repo with none simply shows nothing here. */}
+          {shownSessions.length > 0 && <ul className="sess-list proj-sub-list">{shownSessions.map(row)}</ul>}
 
           {/* Worktrees as real child nodes — indentation says "belongs to this
               base" (the old peer-row + group band is gone). */}
