@@ -13,9 +13,11 @@ import { baseName, langFor } from "../../lib/filemeta.ts";
 import FileIcon from "../../ui/FileIcon.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { useSettings, setSetting } from "../../lib/settings.ts";
-import { startNarration, BLOCK_BEAT, READER_VOICE_CHOICES, voiceChoiceOpts, type NarrationHandle } from "../chat/tts.ts";
+import { startNarration, BLOCK_BEAT, SENT_BEAT, readerVoiceChoices, voiceChoiceOpts, type NarrationHandle } from "../chat/tts.ts";
 import { effectiveDict } from "../chat/ttsDict.ts";
-import { buildReadUnits } from "./readerText.ts";
+import { loadSpeakers } from "../chat/ttsSpeakers.ts";
+import { splitLongSentence } from "../chat/ttsText.ts";
+import { buildReadUnits, readPreGaps } from "./readerText.ts";
 
 interface FileData {
   error?: { message?: string };
@@ -34,6 +36,20 @@ export function ReaderView({ filePath }: { filePath: string }) {
   const [active, setActive] = useState<number | null>(null);
   // 選択範囲から朗読を（再）開始するピル（選択の先頭にある読み上げ単位の index と表示位置）。
   const [selPill, setSelPill] = useState<{ x: number; y: number; idx: number } | null>(null);
+  // 声セレクトの選択肢はキャラクター設定×エンジン実カタログ（tts.ts の readerVoiceChoices）。
+  // カタログは非同期取得なので、届いたら再レンダして静的フォールバックから差し替える。
+  const [, setCatalogLoaded] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    void loadSpeakers().then((l) => alive && l && setCatalogLoaded(true));
+    return () => {
+      alive = false;
+    };
+  }, []);
+  const voiceChoices = readerVoiceChoices();
+  // 保存済みの声が選択肢に無い（キャラを無効化した・基準スタイルを変えた等）→「設定の話者」
+  // として扱う（表示と実再生を一致させる）。
+  const readerVoice = voiceChoices.some(([v]) => v === settings.readerVoice) ? settings.readerVoice : "";
 
   // 本文取得（FileView と同じ /api/fs/file）。ファイルが変わったら朗読を止めてリセット。
   useEffect(() => {
@@ -79,8 +95,24 @@ export function ReaderView({ filePath }: { filePath: string }) {
     return m;
   }, [units]);
   const flat = useMemo(() => units.filter((u) => u.spoken).map((u) => u.spoken), [units]);
-  // 読み上げ単位ごとの前拍（リスト・見出し・引用の頭で一拍）。flat と同じ並び。
-  const flatPre = useMemo(() => units.filter((u) => u.spoken).map((u) => (u.preBeat ? BLOCK_BEAT : 0)), [units]);
+  // 読み上げ単位ごとの前拍（段落・マーカー行の頭は一拍、行内の句点は短い一拍、ハードラップは
+  // 間なし）。flat と同じ並び。
+  const flatPre = useMemo(() => readPreGaps(units, BLOCK_BEAT, SENT_BEAT), [units]);
+  // 長い 1 文は合成用にさらに分割（合成の待ちで無音にならないように）。origOf で元の
+  // 読み上げ単位（ハイライト単位）へ戻す。head=文の先頭の片（前拍はここだけ）。
+  const split = useMemo(() => {
+    const texts: string[] = [];
+    const origOf: number[] = [];
+    const head: boolean[] = [];
+    flat.forEach((s, i) => {
+      splitLongSentence(s).forEach((piece, j) => {
+        texts.push(piece);
+        origOf.push(i);
+        head.push(j === 0);
+      });
+    });
+    return { texts, origOf, head };
+  }, [flat]);
 
   const vertical = settings.readerVertical;
   const ttsOn = settings.ttsEnabled;
@@ -116,16 +148,21 @@ export function ReaderView({ filePath }: { filePath: string }) {
   // アンマウントで朗読停止（別ファイルを開く等で本文 DOM が消えるため）。
   useEffect(() => () => handleRef.current?.stop(), []);
 
-  // from 番目の読み上げ単位から（再）開始。ハイライトは from を足してフル配列基準に戻す。
-  const startFrom = (from: number) => {
-    const slice = flat.slice(from);
+  // from 番目の読み上げ単位から（再）開始。合成は分割済みテキスト（split）で行い、
+  // ハイライトは origOf で元の読み上げ単位へ戻す。
+  const startFrom = (from: number, voice = voiceChoiceOpts(readerVoice)) => {
+    const start = split.origOf.findIndex((o) => o >= from);
+    if (start < 0) return;
+    const slice = split.texts.slice(start);
     if (!slice.length) return;
+    // 前拍: 文の先頭の片は元の単位の前拍、合成分割の続き片は間なし。
+    const pres = slice.map((_, k) => (split.head[start + k] ? flatPre[split.origOf[start + k]] : 0));
     handleRef.current?.stop();
     const h = startNarration(
       slice,
       baseName(filePath),
       (i) => {
-        setActive(i == null ? null : i + from);
+        setActive(i == null ? null : split.origOf[start + i]);
         if (i == null) {
           // 自然終了 or 外部（TopBar 停止・他再生開始）で終了
           setReading(false);
@@ -133,8 +170,8 @@ export function ReaderView({ filePath }: { filePath: string }) {
           handleRef.current = null;
         }
       },
-      voiceChoiceOpts(settings.readerVoice), // ヘッダーで選んだ声（"" = 設定の話者）
-      flatPre.slice(from),
+      voice, // ヘッダーで選んだ声（"" = 設定の話者）
+      pres,
     );
     handleRef.current = h;
     setReading(true);
@@ -247,12 +284,17 @@ export function ReaderView({ filePath }: { filePath: string }) {
         {isText && (
           <select
             className="reader-voice"
-            value={settings.readerVoice}
-            onChange={(e) => setSetting("readerVoice", e.target.value)}
+            value={readerVoice}
+            onChange={(e) => {
+              const v = e.target.value;
+              setSetting("readerVoice", v);
+              // 朗読中の変更は中断しない。いま読んでいる文はそのまま、次の文から新しい声。
+              handleRef.current?.setVoice(voiceChoiceOpts(v));
+            }}
             disabled={!ttsOn}
-            title={ttsOn ? "朗読の声（次の朗読開始から適用）" : "設定で音声読み上げを有効にしてください"}
+            title={ttsOn ? "朗読の声（朗読中に変えると次の文から切り替え）" : "設定で音声読み上げを有効にしてください"}
           >
-            {READER_VOICE_CHOICES.map(([v, label]) => (
+            {voiceChoices.map(([v, label]) => (
               <option key={v} value={v}>
                 {label}
               </option>
