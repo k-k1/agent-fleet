@@ -56,8 +56,14 @@ const SESSION_VOICES: VoiceProfile[] = [
   { base: "14" }, // 冥鳴ひまり
   { base: "16", happy: "15", angry: "18" }, // 九州そら
   { base: "20" }, // もち子さん
+  { base: "11", happy: "39", angry: "40" }, // 玄野武宏（男声。喜び/ツンギレ）
+  { base: "12", happy: "32", angry: "34" }, // 白上虎太郎（わーい/おこ）
+  { base: "13" }, // 青山龍星（低い男声。感情スタイルは新しめの ID なので base のみ）
+  { base: "23", happy: "24" }, // WhiteCUL（たのしい）
+  { base: "47", happy: "48" }, // ナースロボ＿タイプT（楽々）
+  { base: "43" }, // 櫻歌ミコ
 ];
-const SESSION_POLLY_VOICES = ["Takumi", "Kazuha", "Tomoko"];
+const SESSION_POLLY_VOICES = ["Takumi", "Kazuha", "Tomoko"]; // Polly の JP ニューラルは現状この 3 声
 
 // speaker 番号 → キャラ名（スタイル違いも同じキャラに束ねる）。TopBar の「読み上げ中・
 // 〇〇（キャラ名）」表示用。セッション別の声や感情スタイルで「いま誰が喋っているか」を
@@ -68,6 +74,12 @@ const VV_CHAR_NAMES: Record<string, string> = {
   "8": "春日部つむぎ", "10": "雨晴はう", "9": "波音リツ", "14": "冥鳴ひまり",
   "16": "九州そら", "15": "九州そら", "18": "九州そら", "17": "九州そら", "19": "九州そら",
   "20": "もち子さん",
+  "11": "玄野武宏", "39": "玄野武宏", "40": "玄野武宏", "41": "玄野武宏",
+  "12": "白上虎太郎", "32": "白上虎太郎", "33": "白上虎太郎", "34": "白上虎太郎", "35": "白上虎太郎",
+  "13": "青山龍星",
+  "23": "WhiteCUL", "24": "WhiteCUL", "25": "WhiteCUL", "26": "WhiteCUL",
+  "47": "ナースロボT", "48": "ナースロボT", "49": "ナースロボT", "50": "ナースロボT",
+  "43": "櫻歌ミコ", "44": "櫻歌ミコ", "45": "櫻歌ミコ",
 };
 
 // voiceCharName は再生に使う声のキャラ名ラベル。明示 polly は VoiceId をそのまま。
@@ -84,6 +96,10 @@ export function sessionVoiceOpts(session: string): Partial<TtsOptions> | undefin
   if (!session || !getSettings().ttsVoicePerSession) return undefined;
   let h = 0;
   for (const c of session) h = (h * 31 + c.codePointAt(0)!) >>> 0;
+  // 上位ビットを折り込んでから剰余を取る。素の h % N は下位ビットしか見ず、31 ≡ -1 (mod 8)
+  // なので実質「文字コードの交代和」になり、似た形式の名前（共通プレフィックス＋数字等）で
+  // 偏る（例: 末尾が 1 と 9、0 と 8 の違いだと必ず同じ声）。折り畳みで実質一様にする。
+  h = (h ^ (h >>> 16)) >>> 0;
   return {
     voice: SESSION_VOICES[h % SESSION_VOICES.length].base,
     pollyVoice: SESSION_POLLY_VOICES[h % SESSION_POLLY_VOICES.length],
@@ -111,8 +127,8 @@ export function voiceChoiceOpts(v: string): Partial<TtsOptions> | undefined {
 // --- 感情スタイルの読み分け（docs/24） -------------------------------------------
 // 文にエラー・失敗系の語があればツンツン系、成功・完了系ならあまあま系のスタイルで読む
 // （emotionOf の判定。文単位＝合成 1 回単位で切り替え）。スタイル variant を持つ話者
-// （ずんだもん・四国めたん・九州そら）のときだけ効き、Polly やスタイル無しの話者は
-// そのまま。ノーマル以外を基準スタイルに選んでいる場合も触らない（好みを尊重）。
+// （SESSION_VOICES で happy/angry を持たせたもの）のときだけ効き、Polly やスタイル無しの
+// 話者はそのまま。ノーマル以外を基準スタイルに選んでいる場合も触らない（好みを尊重）。
 const STYLE_VARIANTS: Record<string, VoiceProfile> = Object.fromEntries(
   SESSION_VOICES.filter((p) => p.happy || p.angry).map((p) => [p.base, p]),
 );
