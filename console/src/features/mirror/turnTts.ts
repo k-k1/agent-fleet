@@ -79,6 +79,16 @@ export function blockIndexAt(blocks: HTMLElement[], node: Node): number {
   return blocks.findIndex((b) => !!(node.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING));
 }
 
+// turnSpokenText は fromBlock 以降の読み上げ対象テキストを返す（要約読み上げの入力・
+// 長さ判定用。省略読みや辞書は掛けない生テキスト。コード・表はブロック収集段階で除外済み）。
+export function turnSpokenText(body: HTMLElement, fromBlock = 0): string {
+  return collectBlocks(body)
+    .slice(fromBlock)
+    .map((b) => blockText(b).replace(/\s+/g, " ").trim())
+    .filter(Boolean)
+    .join("\n");
+}
+
 export interface TurnReadHandle {
   pause(): void;
   resume(): void;

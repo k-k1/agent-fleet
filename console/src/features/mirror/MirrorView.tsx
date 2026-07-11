@@ -11,8 +11,9 @@ import { Icon } from "../../ui/Icon.tsx";
 import FileIcon from "../../ui/FileIcon.tsx";
 import { baseName } from "../../lib/filemeta.ts";
 import { MarkdownView } from "../viewer/MarkdownView.tsx";
-import { readTurn, collectBlocks, blockIndexAt, type TurnReadHandle } from "./turnTts.ts";
-import { sessionVoiceOpts } from "../chat/tts.ts";
+import { readTurn, collectBlocks, blockIndexAt, turnSpokenText, type TurnReadHandle } from "./turnTts.ts";
+import { sessionVoiceOpts, announce } from "../chat/tts.ts";
+import { askAssistant } from "../chat/api.ts";
 import { useTtsStore } from "../../core/store/tts.ts";
 import { MirrorToggle } from "./MirrorToggle.tsx";
 import { ContextBar } from "./ContextBar.tsx";
@@ -300,6 +301,35 @@ export function MirrorView({
     ttsHandleRef.current = h;
     setTtsReading({ idx, paused: false });
   };
+  // 長い回答の要約読み上げ（設定 ttsSummaryRead）。この文字数を超える新着分は、全文を
+  // 読む代わりにアシスタント（headless CLI・ツールなし one-shot）へ 2 文要約させて読む。
+  const TTS_SUMMARY_MIN = 500;
+  const TTS_SUMMARY_PROMPT =
+    "次のテキストはコーディングエージェントの回答です。音声で聞くための要約を、日本語で最大2文・120字以内で書いてください。" +
+    "記号・コード・URL・箇条書きは使わず、プレーンな文章だけを返してください。要約以外の前置きや説明は書かないでください。\n\n---\n";
+  const ttsSummaryBusyRef = useRef(false); // 要約の生成中（1 本ずつ。終わるまでキューは待つ）
+
+  // 要約を生成してアナウンス（announce = 再生が空くのを待つ直列キュー・TopBar 停止と統合）で
+  // 読む。カラオケ・ハイライトは付けない（要約文は画面に無いため）— フル本文はフッターの
+  // 読み上げボタンでいつでもカラオケ再生できる。失敗・タイムアウトは全文読みへフォールバック。
+  const ttsSummarize = async (gi: number, body: HTMLElement, fromBlock: number, text: string) => {
+    const label = (sessionMeta ? displayName(sessionMeta) : "セッション") + "・要約";
+    try {
+      const r = await Promise.race([
+        askAssistant(TTS_SUMMARY_PROMPT + text.slice(0, 6000)),
+        new Promise<never>((_, rej) => setTimeout(() => rej(new Error("timeout")), 30000)),
+      ]);
+      const reply = (r?.reply || "").trim();
+      if (!r?.error && reply) announce("要約。" + reply, label, sessionVoiceOpts(session));
+      else ttsStart(gi, body, fromBlock); // 要約が得られない → 全文読み
+    } catch {
+      ttsStart(gi, body, fromBlock); // ワークスペース停止・タイムアウト等 → 全文読み
+    } finally {
+      ttsSummaryBusyRef.current = false;
+      ttsAutoPumpRef.current(); // 待たせていた後続へ（再生中なら speaking 解放で再開）
+    }
+  };
+
   // キューの先頭から「まだ読んでいないブロック」を読む。何か再生中（自分・チャット読み上げ・
   // アナウンス）なら待つ — 再開のトリガは onEnd と speaking の解放（下の subscribe）。
   const ttsAutoPump = () => {
@@ -307,6 +337,7 @@ export function MirrorView({
       ttsAutoQueueRef.current.length = 0;
       return;
     }
+    if (ttsSummaryBusyRef.current) return; // 要約の生成中 → 終わってから順に
     if (ttsHandleRef.current || useTtsStore.getState().speaking) return;
     const q = ttsAutoQueueRef.current;
     while (q.length) {
@@ -317,6 +348,14 @@ export function MirrorView({
       const total = collectBlocks(body).length;
       ttsAutoDoneRef.current.set(gi, total);
       if (total <= done) continue; // 増分なし（ツールだけの追記等）
+      if (settings.ttsSummaryRead) {
+        const text = turnSpokenText(body, done);
+        if (text.length > TTS_SUMMARY_MIN) {
+          ttsSummaryBusyRef.current = true;
+          void ttsSummarize(gi, body, done, text);
+          return;
+        }
+      }
       ttsStart(gi, body, done);
       if (ttsHandleRef.current) return; // 読み始めた（読める文が無ければ次の候補へ）
     }
