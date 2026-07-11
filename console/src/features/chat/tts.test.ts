@@ -10,6 +10,7 @@ import {
   abbrevCode,
   emotionOf,
   pendingSpeech,
+  startsBlock,
 } from "./ttsText.ts";
 import { makeAudioLru } from "./ttsCache.ts";
 
@@ -92,6 +93,22 @@ describe("firstChunkCut (最初の発話の早出し)", () => {
   it("閉じ括弧類も早出しの区切りになる", () => {
     const s = "設定（詳しくは後述）を開きます";
     expect(firstChunkCut(s)).toBe(s.indexOf("）") + 1);
+  });
+});
+
+describe("startsBlock (ブロック頭の判定 = 前拍を置く合図)", () => {
+  it("リスト・番号リスト・見出し・引用の頭に一致する", () => {
+    expect(startsBlock("- 項目A")).toBe(true);
+    expect(startsBlock("  * ネスト項目")).toBe(true);
+    expect(startsBlock("1. 手順")).toBe(true);
+    expect(startsBlock("## 見出し")).toBe(true);
+    expect(startsBlock("> 引用")).toBe(true);
+  });
+
+  it("普通の文・ハイフンだけの語・マイナス値には一致しない", () => {
+    expect(startsBlock("次の手順です。")).toBe(false);
+    expect(startsBlock("-1 が返ります")).toBe(false);
+    expect(startsBlock("run-dev.sh を実行")).toBe(false);
   });
 });
 

@@ -12,7 +12,7 @@
 import { rel } from "../../core/api/client.ts";
 import { getSettings } from "../../lib/settings.ts";
 import { useTtsStore } from "../../core/store/tts.ts";
-import { plainify, plainifyStreaming, firstChunkCut, applyUserDict, emotionOf } from "./ttsText.ts";
+import { plainify, plainifyStreaming, firstChunkCut, applyUserDict, emotionOf, startsBlock } from "./ttsText.ts";
 import { effectiveDict } from "./ttsDict.ts";
 import { makeAudioLru } from "./ttsCache.ts";
 
@@ -116,6 +116,10 @@ const MAX_INFLIGHT = 2;
 // 句点・改行で確定した文の後は一拍置き、読点などでの文中早出しの後は詰める。
 const SENTENCE_GAP = 0.3;
 const CLAUSE_GAP = 0.08;
+// リスト項目・見出し・引用など「新しいブロックの頭」の前に足す一拍（前拍）。マーカー記号は
+// 読まないので、構造の切れ目を間で表す。ストリーミング（startTts）は通常の間に加算、
+// 朗読（startNarration）は preGaps として呼び手（turnTts / ReaderView）が渡す。
+export const BLOCK_BEAT = 0.3;
 // これ未満の断片は次の文とまとめてから読む（細切れ再生を避ける）。改行/文末では強制フラッシュ。
 const MIN_CHUNK = 6;
 
@@ -211,12 +215,14 @@ export function startTts(opts: TtsOptions, source = "", onEnd?: (reason: "done" 
   const ctx = audioCtx();
   let buf = ""; // 未確定バッファ（文の途中）
   let pending = ""; // MIN_CHUNK 未満で持ち越し中の短い断片
+  let pendingPre = false; // 持ち越し断片がブロック頭（リスト等）で始まっていたか
   let inFence = false; // ```code``` の内側か（読み飛ばす）
   let seq = 0; // 投入した文の連番
   let inflight = 0;
   const jobs: { seq: number; text: string }[] = [];
   const buffers = new Map<number, AudioBuffer | null>(); // seq → 復号済み（null=失敗/スキップ）
   const gaps = new Map<number, number>(); // seq → そのチャンクの後に挟む間（秒）
+  const preGaps = new Map<number, number>(); // seq → そのチャンクの前に足す前拍（ブロック頭）
   let playCursor = 0; // 次に鳴らす seq
   const srcs = new Set<AudioBufferSourceNode>(); // 再生中＋先行スケジュール済みのノード
   let nextStartAt = 0; // 次のバッファを開始する AudioContext 時刻
@@ -267,15 +273,19 @@ export function startTts(opts: TtsOptions, source = "", onEnd?: (reason: "done" 
     }
     if (force) {
       // 末尾の未確定分 + 持ち越しをすべて読み上げる。fence 状態は引き回す。
+      const tailPre = !pending && startsBlock(buf); // 持ち越しが無ければ末尾片の頭で判定
       const spokenTail = plainifyStreaming(buf, { get: () => inFence, set: (v) => (inFence = v) }, codeOpts);
       buf = "";
       const combined = (pending + spokenTail).trim();
+      const pre = pending ? pendingPre : tailPre;
       pending = "";
-      if (combined) submit(combined);
+      pendingPre = false;
+      if (combined) submit(combined, true, pre);
     }
   };
 
   const enqueuePiece = (piece: string, hard: boolean, beat = true) => {
+    const pre = pending ? pendingPre : startsBlock(piece); // チャンク開始片の頭で判定
     const spoken = plainifyStreaming(
       piece,
       {
@@ -288,19 +298,22 @@ export function startTts(opts: TtsOptions, source = "", onEnd?: (reason: "done" 
     const combined = pending + spoken;
     if (!hard && combined.trim().length < MIN_CHUNK) {
       pending = combined; // まだ短い → 次とまとめる
+      pendingPre = pre;
       return;
     }
     pending = "";
-    submit(combined, beat);
+    pendingPre = false;
+    submit(combined, beat, pre);
   };
 
-  const submit = (text: string, beat = true) => {
+  const submit = (text: string, beat = true, pre = false) => {
     let t = text.trim();
     if (!t) return;
     // ユーザー辞書を適用（enkana は CP 側でこの後。katakana はそのまま通るので競合しない）。
     if (userDict.length) t = applyUserDict(t, userDict).trim();
     if (!t) return;
     gaps.set(seq, beat ? SENTENCE_GAP : CLAUSE_GAP);
+    if (pre) preGaps.set(seq, BLOCK_BEAT); // リスト・見出し等の頭 → 読む前に一拍
     jobs.push({ seq: seq++, text: t });
     startedAudio = true;
     pump();
@@ -347,6 +360,8 @@ export function startTts(opts: TtsOptions, source = "", onEnd?: (reason: "done" 
       buffers.delete(sq);
       const gap = gaps.get(sq) ?? SENTENCE_GAP;
       gaps.delete(sq);
+      const pre = preGaps.get(sq) ?? 0;
+      preGaps.delete(sq);
       playCursor++;
       if (!ab) continue; // 失敗文はスキップして次へ
       const src = ctx.createBufferSource();
@@ -357,7 +372,8 @@ export function startTts(opts: TtsOptions, source = "", onEnd?: (reason: "done" 
         notify();
       };
       srcs.add(src);
-      const at = Math.max(ctx.currentTime, nextStartAt);
+      let at = Math.max(ctx.currentTime, nextStartAt);
+      if (sq > 0) at += pre; // ブロック頭の前拍（先頭チャンクは開始を遅らせない）
       src.start(at);
       nextStartAt = at + ab.duration + gap;
     }
@@ -470,6 +486,9 @@ export function startNarration(
   onUnit: (i: number | null, endReason?: "done" | "stopped") => void,
   // 声の上書き（セッションごとの声 sessionVoiceOpts 等）。未指定は設定の話者。
   voice?: Partial<TtsOptions>,
+  // unit ごとの前拍（秒）。リスト項目・段落頭など「新しいブロックの最初の文」に BLOCK_BEAT を
+  // 渡すと、読む前に一拍おく（先頭 unit の前拍は開始遅延になるだけなので無視する）。
+  preGaps?: number[],
 ): NarrationHandle {
   useTtsStore.getState().active?.stop(); // グローバル 1 本（既存の再生を止める）
   const ctx = audioCtx();
@@ -560,7 +579,10 @@ export function startNarration(
         maybeDone();
       };
       cur = src;
-      src.start();
+      // ブロック頭の前拍。ハイライト（onUnit）は先に出るが、間が「次はここ」の予告に
+      // なるのでカラオケとしてはむしろ自然。
+      const pre = idx > 0 ? (preGaps?.[idx] ?? 0) : 0;
+      src.start(ctx.currentTime + pre);
       return;
     }
     maybeDone();
