@@ -24,6 +24,8 @@ bind mount で永続し、イメージ更新の影響を受けない。
 | Console（`console/src`）| `vite build`（watch 可）→ ブラウザ**リロードのみ**（CP は dist を no-store 配信・CP 再起動不要）|
 | CP の Go | CP を再ビルドして再起動（`restart-cp.sh`）。イメージ再ビルド不要 |
 | Agent の Go / イメージ焼き込み | イメージ再ビルド → 稼働中 Workspace は**利用者が Console で Stop→Start**（CP からの強制入替はしない）|
+| 焼き込み CLI（claude / opencode / codex）の版 | `npm view <pkg> version` で latest を確認 → Dockerfile の `ARG CLAUDE_CODE_VERSION` / `OPENCODE_VERSION` / `CODEX_VERSION` を bump → イメージ再ビルド → Stop→Start。ARG 変更がキャッシュを破るので `--no-cache` 不要 |
+| rtk の版 | ホストの `~/.local/bin/rtk`（または `WS_RTK_BIN`）を新バイナリに差し替え → `run-dev.sh` 再実行（vendor COPY が内容ハッシュでキャッシュを破る）→ Stop→Start |
 | entrypoint が適用する類（設定 seed・TZ 等）| Stop→Start のみ（再ビルド不要）|
 | 共有 JVM | 共有 dir を消して再 provision（`deploy/local/provision-jvm.sh`）|
 
