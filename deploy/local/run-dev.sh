@@ -5,10 +5,11 @@
 # 前提: docker（docker グループ有効、無ければ `sg docker -c "deploy/local/run-dev.sh"`）と
 #       Go（host）。ブラウザで http://localhost:8099 を開く。
 #
-# claude CLI はイメージに焼き込まず、コンテナ起動時(entrypoint)に最新を取得する。
+# claude / opencode / codex はイメージに焼き込み（Dockerfile の ARG でピン止め）。
+# 版の bump 手順は docs/dev/10-development.md §10.2。
 #
 # 例:
-#   deploy/local/run-dev.sh                          # 起動時に最新 claude を install
+#   deploy/local/run-dev.sh
 #   WS_ENV=CLAUDE_INSTALL=0 WS_SESSION_CMD=bash \      # claude 抜きの軽量検証
 #     deploy/local/run-dev.sh
 set -euo pipefail

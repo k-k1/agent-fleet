@@ -122,7 +122,16 @@ RUN set -eux; \
 # (opencode auth login) and sessions persist under ~/.local/share/opencode (home).
 # codex: OpenAI Codex CLI (kind="codex"); auth (codex login --with-api-key /
 # --device-auth) writes ~/.codex/auth.json and sessions land in ~/.codex (home).
-RUN npm install -g @anthropic-ai/claude-code opencode-ai @openai/codex \
+# 版は ARG でピン止め（GH_VERSION / GO_VERSION と同じ流儀）。bump は下の ARG を書き
+# 換えて再ビルド → 各 Workspace を Stop→Start。latest の確認は `npm view <pkg> version`。
+# 未ピン時代は同一 RUN 行が Docker レイヤキャッシュに当たり、再ビルドしても古い版の
+# ままになる罠があった（ピン止めなら ARG 変更が確実にキャッシュを破る）。
+ARG CLAUDE_CODE_VERSION=2.1.207
+ARG OPENCODE_VERSION=1.17.18
+ARG CODEX_VERSION=0.144.1
+RUN npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
+      "opencode-ai@${OPENCODE_VERSION}" \
+      "@openai/codex@${CODEX_VERSION}" \
  && claude --version && opencode --version && codex --version
 
 # The baked claude is a root-owned npm-global install run as the non-root `dev`

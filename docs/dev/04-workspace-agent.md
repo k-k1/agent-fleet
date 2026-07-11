@@ -128,8 +128,10 @@ Console は 4 秒ポーリングで ● 進行中 / ❓ 質問 / ✓ 入力待�
 `workspace/Dockerfile`（multi-stage golang→node:22-slim、約 2.8G）。**イメージと Agent は
 全デプロイターゲット共通**（移植の肝、[09](09-deploy.md)）。
 
-- **焼き込み**: claude / opencode / codex（global npm）、rtk（vendor 静的バイナリ、git 管理外——
-  ビルド時にホストから vendor）、Go toolchain（`ARG GO_VERSION`、go.mod と歩調）、
+- **焼き込み**: claude / opencode / codex（global npm、`ARG CLAUDE_CODE_VERSION` /
+  `OPENCODE_VERSION` / `CODEX_VERSION` でピン止め——bump 手順は [10 §10.2](10-development.md)）、
+  rtk（vendor 静的バイナリ、git 管理外——ビルド時にホストから vendor）、
+  Go toolchain（`ARG GO_VERSION`、go.mod と歩調）、
   build-essential + python3（+ `break-system-packages`、pip --user は home 永続）、vim・git-lfs・
   jq 等の定番、tzdata。**Java は image 外**: 共有 JVM dir（Temurin 8/21/25）を `/usr/lib/jvm:ro` で
   マウント（イメージ 2.1G→1.0G の削減。⚠️ Temurin の cacerts symlink は抽出時に実体化しないと
