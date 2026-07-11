@@ -49,8 +49,8 @@ export function SessionRow({ s, selected, opens, multi, running, actions }: Sess
   const menuRef = useRef<HTMLDivElement>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   useDismiss(menuRef, menuOpen, () => setMenuOpen(false));
-  // The session's name IS its slug (immutable id, e.g. "sk7f3q9") — the thing
-  // shown as ID in the row tooltip.
+  // The session's immutable id (e.g. "sk7f3q9") — the thing shown as ID in the
+  // row tooltip. The menu label shows the concrete value, not jargon ("slug").
   const copyId = () => {
     void copyText(s.name).then((ok) =>
       ok ? toast(`IDをコピーしました: ${s.name}`, { kind: "success" }) : toast("コピーに失敗しました"),
@@ -227,7 +227,7 @@ export function SessionRow({ s, selected, opens, multi, running, actions }: Sess
                 copyId();
               }}
             >
-              <Icon name="copy" /> ID（slug）をコピー
+              <Icon name="copy" /> IDをコピー（{s.name}）
             </button>
             <button
               type="button"
