@@ -112,6 +112,16 @@ export function abbrevCode(token: string, dict: [string, string][] = []): string
   return `${t.slice(0, 2)} ${filler}`;
 }
 
+// --- ブロック頭の判定（リスト・見出し・引用の前拍用） -----------------------------
+// リスト項目・見出し・引用など「新しいブロックの頭」で始まるテキストか。読み上げでは
+// マーカー記号自体は落とす（plainify）ため、代わりに直前へ一拍（前拍）を置いて構造の
+// 切れ目を耳で分かるようにする。tts.ts（ストリーミング）と readerText.ts（朗読）が使う。
+const BLOCK_HEAD = /^\s*([-*+・•]\s|\d+[.)．]\s|#{1,6}\s|>\s)/;
+
+export function startsBlock(s: string): boolean {
+  return BLOCK_HEAD.test(s);
+}
+
 // --- 保留中の質問（AskUserQuestion）の読み上げ文 ---------------------------------
 // ミラーが確認待ちになったとき、質問文と選択肢を音声用の 1 本のテキストに組む。選択肢は
 // 画面の表示ラベル（短縮されがち）ではなく **説明文（ツールチップの中身）を優先**して読む。

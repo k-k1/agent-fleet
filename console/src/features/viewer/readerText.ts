@@ -2,7 +2,7 @@
 // ttsText の plainify のみ）。**原文の改行・行頭スペースを保持**しつつ、**なろう形式のルビ**を
 // 解釈して表示用セグメントに割り、読み上げ用テキスト（ルビは読みを採用）を作る。
 // カラオケ・ハイライトの単位＝「行内は文（句点区切り）、行末で区切り」。node の vitest でテスト可。
-import { plainify, type CodeReadOpts } from "../chat/ttsText.ts";
+import { plainify, startsBlock, type CodeReadOpts } from "../chat/ttsText.ts";
 
 // RubySeg は表示の 1 かたまり。ruby があれば <ruby>base<rt>ruby</rt></ruby>、無ければ素の base。
 // base には空白・改行をそのまま含める（原文忠実表示のため）。
@@ -13,9 +13,12 @@ export interface RubySeg {
 
 // ReadUnit はカラオケ 1 単位。segs=表示（原文の空白/改行/ルビを保持）、spoken=読み上げ
 // テキスト（ルビは読みを採用・plainify 済み・trim）。spoken==="" の単位は表示のみ（読まない）。
+// preBeat=リスト・見出し・引用など「新しいブロックの頭」の最初の文（読む前に一拍おく合図。
+// マーカー記号は読まないぶん、構造の切れ目を間で表す）。
 export interface ReadUnit {
   segs: RubySeg[];
   spoken: string;
+  preBeat?: boolean;
 }
 
 const RUBY_OPEN = "《";
@@ -123,6 +126,8 @@ export function buildReadUnits(content: string, isMarkdown: boolean, code?: Code
     const fenceMarker = isMarkdown && line.trimStart().startsWith("```");
     if (fenceMarker) inFence = !inFence;
     const skipSpoken = isMarkdown && (inFence || fenceMarker); // フェンス行は読まない
+    // ブロック頭の行（リスト・見出し・引用）: この行から生まれる最初の読み上げ単位に前拍を付ける。
+    let linePre = isMarkdown && !skipSpoken && startsBlock(line);
 
     let cur: RubySeg[] = [];
     const flush = (lineEnd: boolean) => {
@@ -141,7 +146,9 @@ export function buildReadUnits(content: string, isMarkdown: boolean, code?: Code
       const raw = skipSpoken ? "" : disp.map(spokenOf).join("");
       let spoken = raw ? plainify(raw, code).trim() : "";
       if (spoken && !hasSpeakable(spoken)) spoken = ""; // 記号だけ（＊/◇/--- 等の区切り）は読まない
-      units.push({ segs: disp, spoken });
+      const preBeat = !!spoken && linePre; // 行の最初の読み上げ単位にだけ付ける
+      if (preBeat) linePre = false;
+      units.push({ segs: disp, spoken, preBeat });
     };
 
     for (const seg of parseRuby(line)) {
