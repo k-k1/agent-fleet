@@ -37,6 +37,51 @@
   background: var(--border);
 }
 
+/* Quick filter box (repos + sessions, incl. その他のセッション). */
+.proj-filter {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 3px 8px 2px;
+  padding: 2px 8px;
+  background: var(--panel2);
+  border: 1px solid var(--btn-border);
+  border-radius: 5px;
+  color: var(--muted);
+}
+.proj-filter:focus-within {
+  border-color: var(--lp-accent, var(--accent));
+}
+.proj-filter .codicon {
+  font-size: 12px;
+  flex: none;
+}
+.proj-filter input {
+  flex: 1;
+  min-width: 0;
+  background: none;
+  border: none;
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+  padding: 2px 0;
+  outline: none;
+}
+.proj-filter-clear {
+  flex: none;
+  display: inline-flex;
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 1px 2px;
+  border-radius: 3px;
+}
+.proj-filter-clear:hover {
+  color: var(--fg);
+  background: var(--btn);
+}
+
 /* A node (one working copy). */
 .proj-node {
   display: flex;

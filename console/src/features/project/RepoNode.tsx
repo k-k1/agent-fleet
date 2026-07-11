@@ -16,6 +16,7 @@ import type { RepoRailContext } from "../repos/useRepoRail.ts";
 import type { Repo } from "../repos/store.ts";
 import type { Session } from "../../types/session.ts";
 import { sessionsInFolder } from "../../lib/project.ts";
+import { useProjectFilter, normQuery, sessionMatches } from "./filter.ts";
 
 // A collapse flag persisted under `key`. While nothing is stored yet the flag
 // FOLLOWS `dflt` live (it's derived, not snapshotted) — so a node whose default
@@ -49,6 +50,7 @@ interface RepoNodeProps {
 
 export function RepoNode({ r, childRepos, ctx, actions }: RepoNodeProps) {
   const sessions = useSessionsStore((s) => s.sessions);
+  const nq = normQuery(useProjectFilter((f) => f.q));
   const mine = sessionsInFolder(sessions, r.name);
   // Empty repos (no sessions anywhere under them, worktrees included) default
   // folded — an unused clone shouldn't take up rail space. The default is live
@@ -56,18 +58,24 @@ export function RepoNode({ r, childRepos, ctx, actions }: RepoNodeProps) {
   const subtreeTotal =
     mine.length + (childRepos ?? []).reduce((n, c) => n + sessionsInFolder(sessions, c.name).length, 0);
   const node = usePersistedOpen(`af-proj-${r.name}`, subtreeTotal > 0);
+  // While filtering, every visible node is forced open (the parent already
+  // pruned the tree to matches) and only matching sessions render.
+  const open = nq ? true : node.open;
+  const shownSessions = nq ? mine.filter((s) => sessionMatches(s, nq)) : mine;
   // Stopped sessions tuck behind a "停止中 n" disclosure (alive ones always
-  // show) — but one that's active in a pane must stay visible.
-  const alive = mine.filter((s) => s.alive);
-  const stopped = mine.filter((s) => !s.alive);
+  // show) — but one that's active in a pane must stay visible, and a filter
+  // shows its matches directly.
+  const alive = shownSessions.filter((s) => s.alive);
+  const stopped = shownSessions.filter((s) => !s.alive);
   const [stoppedOpen, setStoppedOpen] = useState(false);
-  const showStopped = stoppedOpen || stopped.some((s) => s.name === ctx.activeSession);
-  // Session tally for the repo row's badge: own folder while open (the rows are
-  // visible right below); the worktrees' sessions fold in while collapsed, so a
-  // folded project still shows what's running inside.
-  let sessAlive = alive.length;
+  const showStopped = !!nq || stoppedOpen || stopped.some((s) => s.name === ctx.activeSession);
+  // Session tally for the repo row's badge — real counts, not the filtered view:
+  // own folder while open (the rows are visible right below); the worktrees'
+  // sessions fold in while collapsed, so a folded project still shows what's
+  // running inside.
+  let sessAlive = mine.filter((s) => s.alive).length;
   let sessTotal = mine.length;
-  if (!node.open && childRepos) {
+  if (!open && childRepos) {
     for (const c of childRepos) {
       const cs = sessionsInFolder(sessions, c.name);
       sessAlive += cs.filter((s) => s.alive).length;
@@ -86,30 +94,30 @@ export function RepoNode({ r, childRepos, ctx, actions }: RepoNodeProps) {
     />
   );
   return (
-    <li className={"proj-node" + (node.open ? "" : " collapsed") + (r.worktree ? " wt" : " base")}>
+    <li className={"proj-node" + (open ? "" : " collapsed") + (r.worktree ? " wt" : " base")}>
       <div className="proj-node-head">
         <button
           type="button"
           className="proj-node-caret"
           onClick={node.toggle}
-          aria-expanded={node.open}
-          title={node.open ? "折りたたむ" : "展開"}
+          aria-expanded={open}
+          title={open ? "折りたたむ" : "展開"}
         >
-          <Icon name={node.open ? "chevron-down" : "chevron-right"} />
+          <Icon name={open ? "chevron-down" : "chevron-right"} />
         </button>
         <ul className="sess-list proj-node-repo">
           <RepoRowConnected r={r} ctx={ctx} onToggle={node.toggle} sess={{ alive: sessAlive, total: sessTotal }} />
         </ul>
       </div>
-      {node.open && (
+      {open && (
         <div className="proj-node-body">
           {/* Sessions sit directly under the repo row — no sub-header, no empty
               placeholder: a repo with none simply shows nothing here. Alive rows
               always; stopped ones behind the 停止中 disclosure. */}
-          {mine.length > 0 && (
+          {shownSessions.length > 0 && (
             <ul className="sess-list proj-sub-list">
               {alive.map(row)}
-              {stopped.length > 0 && (
+              {!nq && stopped.length > 0 && (
                 <li className="sess-stopped">
                   <button
                     type="button"
