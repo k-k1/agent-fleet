@@ -13,9 +13,11 @@ import { Icon } from "../../ui/Icon.tsx";
 import { IconButton } from "../../ui/Button.tsx";
 import { useFilesStore } from "../files/store.ts";
 import { ProjectFiles } from "./ProjectFiles.tsx";
+import { FilesChanges } from "./FilesChanges.tsx";
 
 const KEY = "af-section-files";
 const HOME_KEY = "af-files-home";
+const VIEW_KEY = "af-files-view"; // the old console's tree/changes choice carries over
 
 export function FilesSection() {
   const reveal = useFilesStore((s) => s.reveal);
@@ -34,9 +36,19 @@ export function FilesSection() {
       localStorage.setItem(HOME_KEY, v ? "1" : "0");
     } catch {}
   };
+  const [view, setView] = useState(() => localStorage.getItem(VIEW_KEY) || "tree");
+  const setViewPersist = (v: string) => {
+    setView(v);
+    try {
+      localStorage.setItem(VIEW_KEY, v);
+    } catch {}
+  };
 
   useEffect(() => {
-    if (reveal.path) set(true);
+    if (reveal.path) {
+      set(true);
+      setView("tree"); // a reveal targets the tree — switch back so it's visible
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reveal.n]);
 
@@ -46,22 +58,51 @@ export function FilesSection() {
       icon="files"
       open={open}
       onToggle={() => set(!open)}
-      actions={<IconButton icon="refresh" label="更新" onClick={bump} />}
+      actions={
+        <>
+          {/* Tree vs every working copy's git changes (cross-repo). */}
+          <span className="ui-seg sm files-view">
+            <button
+              type="button"
+              className={"seg-btn" + (view === "tree" ? " active" : "")}
+              title="ツリー"
+              onClick={() => setViewPersist("tree")}
+            >
+              <Icon name="list-tree" /> ツリー
+            </button>
+            <button
+              type="button"
+              className={"seg-btn" + (view === "changes" ? " active" : "")}
+              title="変更ファイルのみ（全作業コピー）"
+              onClick={() => setViewPersist("changes")}
+            >
+              <Icon name="git-compare" /> 変更
+            </button>
+          </span>
+          <IconButton icon="refresh" label="更新" onClick={bump} />
+        </>
+      }
     >
-      <ProjectFiles root="repos" />
-      {/* home: the rest of ~ (repos/ shows again inside — harmless). Lazy:
-          mounted only while open. */}
-      <button
-        type="button"
-        className="files-home-btn"
-        onClick={() => setHome(!homeOpen)}
-        aria-expanded={homeOpen}
-        title={homeOpen ? "home を折りたたむ" : "home を展開（~ 全体をブラウズ）"}
-      >
-        <Icon name={homeOpen ? "chevron-down" : "chevron-right"} />
-        <Icon name="home" /> home
-      </button>
-      {homeOpen && <ProjectFiles root="" />}
+      {view === "changes" ? (
+        <FilesChanges />
+      ) : (
+        <>
+          <ProjectFiles root="repos" markRepos />
+          {/* home: the rest of ~ (repos/ shows again inside — harmless). Lazy:
+              mounted only while open. */}
+          <button
+            type="button"
+            className="files-home-btn"
+            onClick={() => setHome(!homeOpen)}
+            aria-expanded={homeOpen}
+            title={homeOpen ? "home を折りたたむ" : "home を展開（~ 全体をブラウズ）"}
+          >
+            <Icon name={homeOpen ? "chevron-down" : "chevron-right"} />
+            <Icon name="vm" /> home
+          </button>
+          {homeOpen && <ProjectFiles root="" />}
+        </>
+      )}
     </Section>
   );
 }

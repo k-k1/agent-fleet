@@ -18,6 +18,7 @@ import { useLayoutStore } from "../../layout/store.ts";
 import { activePane } from "../../layout/ops.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { useFilesStore } from "../files/store.ts";
+import { useReposStore } from "../repos/store.ts";
 
 interface Entry {
   name: string;
@@ -54,9 +55,14 @@ const fsList = (path: string) =>
 interface ProjectFilesProps {
   /** The tree's home-relative root folder ("" = home itself, the rail default). */
   root: string;
+  /** Mark top-level working-copy folders with the repo/worktree icon (matching
+   * the リポジトリ section rows) instead of the plain folder — for the tree
+   * rooted at "repos", whose depth-0 dirs ARE the working copies. */
+  markRepos?: boolean;
 }
 
-export function ProjectFiles({ root }: ProjectFilesProps) {
+export function ProjectFiles({ root, markRepos }: ProjectFilesProps) {
+  const repos = useReposStore((s) => s.repos);
   const layout = useLayoutStore((s) => s.layout);
   const openTarget = useLayoutStore((s) => s.openTarget);
   const openTargetInNew = useLayoutStore((s) => s.openTargetInNew);
@@ -433,7 +439,19 @@ export function ProjectFiles({ root }: ProjectFilesProps) {
             >
               <span className={isDir ? "fs-dir" : "fs-file" + (isActiveFile ? " active" : "")}>
                 <span className="fs-chev">{isDir ? (isOpen ? "▾" : "▸") : ""}</span>
-                <span className="fs-ic">{isDir ? <DirIcon open={isOpen} /> : <FileIcon name={r.name} />}</span>
+                <span className="fs-ic">
+                  {(() => {
+                    if (!isDir) return <FileIcon name={r.name} />;
+                    // Working-copy folders (depth 0 under repos/) wear the same
+                    // icon as their リポジトリ row; segPaths[0] survives chain
+                    // folding (the row name may read "repo/sub").
+                    if (markRepos && r.depth === 0) {
+                      const wc = repos.find((x) => x.name === baseName(r.segPaths[0]));
+                      if (wc) return <Icon name={wc.worktree ? "git-branch" : "root-folder"} className="fi-folder" />;
+                    }
+                    return <DirIcon open={isOpen} />;
+                  })()}
+                </span>
                 {r.name}
               </span>
             </li>
