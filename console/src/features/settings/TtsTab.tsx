@@ -10,10 +10,12 @@ import {
 } from "../../lib/settings.ts";
 import { Choice, OnOff } from "./controls.tsx";
 
-// TtsTab — 音声読み上げ（TTS, docs/24 + ADR0013）の設定タブ。もとは AgentsTab の
-// 「セッション」グループにあったが、項目が増えて他のエージェント設定を圧迫したため分離。
-// すべてクライアント側の設定（settings store）なので、ワークスペースの起動状態に依らず
-// 表示・変更できる。
+// TtsTab — 音声読み上げ（TTS, docs/24 + ADR0013）の設定タブ。もとは AgentsTab から分離した
+// 1 セクションだったが、項目が増えて関心事（声の選択・読むタイミング・テキスト加工・性能）が
+// フラットに混在したため、「声＝何で読むか」「自動読み上げ＝いつ読むか」「読み方＝どう読むか」
+// 「詳細」のグループに分けている。すべてクライアント側の設定（settings store）なので、
+// ワークスペースの起動状態に依らず表示・変更できる。
+// 「音声通知」だけは読み上げ本体（ttsEnabled）と独立に効くため、トグルの外＝最後に置く。
 export function TtsTab() {
   const s = useSettings();
   return (
@@ -23,8 +25,17 @@ export function TtsTab() {
         <Row label="音声読み上げ">
           <OnOff value={s.ttsEnabled} onChange={(v) => setSetting("ttsEnabled", v)} />
         </Row>
-        {s.ttsEnabled && (
-          <>
+        <p className="muted ds-note">
+          エージェントの回答を音声で読み上げます。回答が届くと文ごとに順次再生します。
+          ずんだもんの合成には VOICEVOX エンジンが必要です（未起動のときは Polly があれば代読、
+          どちらも無ければ無音になります）。
+          {s.ttsEnabled && <> 音声引用：VOICEVOX：ずんだもん。</>}
+        </p>
+      </section>
+      {s.ttsEnabled && (
+        <>
+          <section className="ds-group">
+            <h4 className="ds-title">声</h4>
             <Row label="音声エンジン">
               <Choice
                 value={s.ttsProvider}
@@ -72,13 +83,9 @@ export function TtsTab() {
             <Row label="読み上げ速度">
               <Choice value={s.ttsSpeed} options={TTS_SPEEDS} onChange={(v) => setSetting("ttsSpeed", v)} />
             </Row>
-            <Row label="音声キャッシュ">
-              <Choice value={s.ttsCacheSec} options={TTS_CACHE_SIZES} onChange={(v) => setSetting("ttsCacheSec", v)} />
-            </Row>
-            <p className="muted ds-note">
-              一度読み上げた文言の音声をメモリに保持し、同じ文言の再読み上げを待ちなしで再生します。
-              上限は合計の再生時間で、超えた分は古いものから消えます（ページを再読み込みしても消えます）。
-            </p>
+          </section>
+          <section className="ds-group">
+            <h4 className="ds-title">自動読み上げ</h4>
             <Row label="新しい回答を自動で読み上げ">
               <OnOff value={s.ttsAutoReadMirror} onChange={(v) => setSetting("ttsAutoReadMirror", v)} />
             </Row>
@@ -98,6 +105,14 @@ export function TtsTab() {
                   組み合わせると、どのセッションの回答かを声で聞き分けられます。ペインで読むセッションには
                   「セッションの音声通知」の短い告知を重ねません。
                 </p>
+                <Row label="長い回答は要約して読む">
+                  <OnOff value={s.ttsSummaryRead} onChange={(v) => setSetting("ttsSummaryRead", v)} />
+                </Row>
+                <p className="muted ds-note">
+                  長い回答（目安 500 字超）は AI が 2 文に要約してそれだけを読みます
+                  （生成に数秒かかります。要約にはアシスタント・チャットを使うため、ワークスペースの起動が必要です）。
+                  フル本文はターンの「読み上げ」ボタンでいつでも聞けます。要約に失敗したときは全文を読みます。
+                </p>
               </>
             )}
             <Row label="確認・質問を読み上げる">
@@ -108,14 +123,9 @@ export function TtsTab() {
               質問文と選択肢を読み上げます。選択肢は画面の短いラベルではなく説明文の方を読みます。
               画面を見ていなくても、何を聞かれているかが音声で分かります。
             </p>
-            <Row label="長い回答は要約して読む">
-              <OnOff value={s.ttsSummaryRead} onChange={(v) => setSetting("ttsSummaryRead", v)} />
-            </Row>
-            <p className="muted ds-note">
-              自動読み上げのとき、長い回答（目安 500 字超）は AI が 2 文に要約してそれだけを読みます
-              （生成に数秒かかります。要約にはアシスタント・チャットを使うため、ワークスペースの起動が必要です）。
-              フル本文はターンの「読み上げ」ボタンでいつでも聞けます。要約に失敗したときは全文を読みます。
-            </p>
+          </section>
+          <section className="ds-group">
+            <h4 className="ds-title">読み方</h4>
             <Row label="コード片を省略して読む">
               <OnOff value={s.ttsAbbrevCode} onChange={(v) => setSetting("ttsAbbrevCode", v)} />
             </Row>
@@ -149,15 +159,19 @@ export function TtsTab() {
                 管理者が設定したテナント共通辞書がある場合はそれも一緒に適用され、同じ表記はここでの指定が優先されます。
               </p>
             </div>
-          </>
-        )}
-        <p className="muted ds-note">
-          エージェントの回答を音声で読み上げます。回答が届くと文ごとに順次再生します。
-          ずんだもんの合成には VOICEVOX エンジンが必要です（未起動のときは Polly があれば代読、
-          どちらも無ければ無音になります）。
-          {s.ttsEnabled && <> 音声引用：VOICEVOX：ずんだもん。</>}
-        </p>
-      </section>
+          </section>
+          <section className="ds-group">
+            <h4 className="ds-title">詳細</h4>
+            <Row label="音声キャッシュ">
+              <Choice value={s.ttsCacheSec} options={TTS_CACHE_SIZES} onChange={(v) => setSetting("ttsCacheSec", v)} />
+            </Row>
+            <p className="muted ds-note">
+              一度読み上げた文言の音声をメモリに保持し、同じ文言の再読み上げを待ちなしで再生します。
+              上限は合計の再生時間で、超えた分は古いものから消えます（ページを再読み込みしても消えます）。
+            </p>
+          </section>
+        </>
+      )}
       <section className="ds-group">
         <h4 className="ds-title">音声通知</h4>
         <Row label="セッションの音声通知">
@@ -166,6 +180,7 @@ export function TtsTab() {
         <p className="muted ds-note">
           バックグラウンドのセッションが回答／確認を返したら、セッション名を添えて短く音声でお知らせします
           （複数同時でも順番に読み上げ）。ブラウザ通知に音声を足すもので、Console のタブが見えている間だけ有効です。
+          上の「音声読み上げ」がオフでも独立して使えます（声・速度などの設定は共通）。
         </p>
       </section>
     </div>
