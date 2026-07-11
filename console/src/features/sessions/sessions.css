@@ -277,6 +277,21 @@
   font: inherit;
   outline: none;
 }
+/* Populated archive list: pin the panel to a stable height and let only the list
+   scroll, so filtering doesn't resize/recenter the modal on each keystroke. The
+   search toolbar stays put; the panel still clamps to the viewport on short screens. */
+.arch-modal-tall.ui-modal {
+  height: min(88dvh, 820px);
+}
+.arch-modal-tall .ui-modal-body {
+  min-height: 0;
+  overflow: hidden;
+}
+.arch-modal-tall .arch-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
 .arch-list {
   list-style: none;
   margin: 0;

@@ -19,7 +19,15 @@ interface ArchivedModalProps {
   onRestored?: () => void;
 }
 
-const groupLabel = (dir: string) => (dir ? dir.split("/").filter(Boolean).pop() || dir : "その他");
+// Group heading. A worktree's folder is "<repo>@<seg>", so for those show the
+// newest session's recorded branch instead of the folder name. The archived
+// endpoint never sends the `worktree` flag, so the "@" is the only wt signal.
+const groupLabel = (dir: string, head?: ArchivedSession) => {
+  const seg = dir ? dir.split("/").filter(Boolean).pop() || dir : "";
+  if (!seg) return "その他";
+  if (seg.includes("@")) return head?.branch || seg.slice(seg.indexOf("@") + 1) || seg;
+  return seg;
+};
 
 // "Old" cutoff for bulk-prune. No createdAt = never pruned by age.
 const OLD_DAYS = 30;
@@ -54,7 +62,7 @@ export function ArchivedModal({ onClose, onRestored }: ArchivedModalProps) {
     );
   }, [items, q]);
 
-  // Group by dir; groups by newest session desc, rows by createdAt desc.
+  // Group by dir. Groups sorted by repo name (asc), rows by createdAt desc.
   const groups = useMemo(() => {
     const by = new Map<string, ArchivedSession[]>();
     for (const s of filtered) {
@@ -65,11 +73,22 @@ export function ArchivedModal({ onClose, onRestored }: ArchivedModalProps) {
     }
     const arr = [...by.entries()].map(([dir, list]) => {
       list.sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
-      return { dir, list, newest: list[0]?.createdAt || "" };
+      const head = list[0];
+      return {
+        dir,
+        list,
+        newest: head?.createdAt || "",
+        label: groupLabel(dir, head),
+        repoKey: head?.repo || groupLabel(dir),
+      };
     });
-    arr.sort((a, b) => b.newest.localeCompare(a.newest));
+    arr.sort((a, b) => a.repoKey.localeCompare(b.repoKey) || b.newest.localeCompare(a.newest));
     return arr;
   }, [filtered]);
+
+  const allCollapsed = groups.length > 0 && groups.every((g) => collapsed.has(g.dir));
+  const toggleAll = () =>
+    setCollapsed(allCollapsed ? new Set() : new Set(groups.map((g) => g.dir)));
 
   const toggleGroup = (dir: string) =>
     setCollapsed((prev) => {
@@ -140,8 +159,12 @@ export function ArchivedModal({ onClose, onRestored }: ArchivedModalProps) {
 
   const total = items?.length ?? 0;
 
+  // Once there are enough rows to fill the panel, pin the panel height so typing
+  // in the filter scrolls the list instead of resizing/recentering the modal.
+  const tall = total > 6;
+
   return (
-    <Modal title="アーカイブ済みセッション" onClose={onClose}>
+    <Modal title="アーカイブ済みセッション" onClose={onClose} className={tall ? "arch-modal arch-modal-tall" : "arch-modal"}>
       <div className="ui-modal-body">
         {items === null && <p className="sm-muted">読み込み中…</p>}
         {items && total === 0 && <p className="sm-muted">アーカイブはありません。</p>}
@@ -158,6 +181,16 @@ export function ArchivedModal({ onClose, onRestored }: ArchivedModalProps) {
                   autoFocus
                 />
               </div>
+              <Button
+                small
+                variant="ghost"
+                icon={allCollapsed ? "expand-all" : "collapse-all"}
+                disabled={groups.length === 0}
+                title={allCollapsed ? "すべてのグループを開く" : "すべてのグループを閉じる"}
+                onClick={toggleAll}
+              >
+                {allCollapsed ? "すべて開く" : "すべて閉じる"}
+              </Button>
               <Button
                 small
                 variant="danger"
@@ -184,7 +217,7 @@ export function ArchivedModal({ onClose, onRestored }: ArchivedModalProps) {
                     >
                       <Icon name={isCollapsed ? "chevron-right" : "chevron-down"} />
                       <Icon name="folder" />
-                      <span className="sess-group-name">{groupLabel(g.dir)}</span>
+                      <span className="sess-group-name">{g.label}</span>
                       <span className="sess-group-count">{g.list.length}</span>
                     </button>
                     {!isCollapsed &&
