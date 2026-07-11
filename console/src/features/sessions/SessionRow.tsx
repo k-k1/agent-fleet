@@ -227,7 +227,7 @@ export function SessionRow({ s, selected, opens, multi, running, actions }: Sess
                 copyId();
               }}
             >
-              <Icon name="copy" /> IDをコピー（{s.name}）
+              <Icon name="copy" /> ID（{s.name}）をコピー
             </button>
             <button
               type="button"
