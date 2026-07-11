@@ -1137,6 +1137,74 @@ button.mt-toolrun-head:hover {
   background: color-mix(in srgb, var(--chat-accent) 12%, transparent);
 }
 
+/* A `!`-run shell command (BashBlock): a terminal-flavored block — the command line is
+   always shown; its output collapses behind a toggle, styled like the tool-output row. */
+.mt-bash {
+  margin: 0.3em 0;
+  border: 1px solid var(--border);
+  border-left: 3px solid color-mix(in srgb, var(--chat-accent) 55%, var(--border));
+  border-radius: 6px;
+  background: var(--surface-2, rgba(127, 127, 127, 0.08));
+  overflow: hidden;
+}
+.mt-bash-cmd {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 10px;
+  font-family: var(--viewer-font, var(--mono));
+  font-size: 12px;
+  line-height: 1.4;
+}
+.mt-bash-prompt {
+  flex: none;
+  font-weight: 700;
+  color: color-mix(in srgb, var(--chat-accent) 75%, var(--fg));
+  user-select: none;
+}
+.mt-bash-code {
+  font-family: inherit;
+  white-space: pre-wrap;
+  word-break: break-word;
+  min-width: 0;
+}
+button.mt-bash-toggle {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  margin: 0;
+  padding: 3px 10px;
+  border: 0;
+  border-top: 1px solid var(--border);
+  background: none;
+  color: inherit;
+  text-align: left;
+  font-size: 11px;
+  cursor: pointer;
+  opacity: 0.65;
+  transition: opacity 0.12s, background 0.12s;
+}
+button.mt-bash-toggle:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--chat-accent) 10%, transparent);
+}
+.mt-bash-output {
+  margin: 0;
+  padding: 6px 10px;
+  max-height: 320px;
+  overflow: auto;
+  font-family: var(--viewer-font, var(--mono));
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  border-top: 1px solid var(--border);
+}
+.mt-bash-err {
+  color: var(--danger, #e5534b);
+}
+
 /* AskUserQuestion: a prominent, answerable block (not a faint trace). */
 .mt-question {
   margin: 0.5em 0;

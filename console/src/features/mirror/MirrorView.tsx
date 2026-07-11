@@ -72,6 +72,7 @@ interface Part {
   plan?: string;
   files?: string[]; // kind=userfile: SendUserFile paths (browse-root-relative)
   caption?: string; // kind=userfile: optional caption
+  stderr?: string; // kind=bash: the ! command's stderr (output field holds stdout)
 }
 // A raw transcript turn (GET …/messages) and a grouped block (groupTurns output).
 interface Turn {
@@ -84,6 +85,7 @@ interface Turn {
   parts?: Part[];
   sidechain?: boolean;
   compact?: boolean;
+  bash?: boolean; // a `!`-run shell command block (coalesceBash), rendered as a terminal block
   model?: string;
   effort?: string;
   ctxWindow?: number;
@@ -98,6 +100,7 @@ interface Group {
   role: string;
   sidechain: boolean;
   compact: boolean;
+  bash: boolean; // a `!` shell-command block — render as a terminal block, never merged
   parts: Part[];
   text: string;
   model: string;
@@ -1281,7 +1284,8 @@ export function MirrorView({
     queued: true,
   }));
   const extras = [...queuedTurns, ...echoTurns];
-  const groups = groupTurns(extras.length ? [...turns, ...extras] : turns);
+  const baseTurns = coalesceBash(turns);
+  const groups = groupTurns(extras.length ? [...baseTurns, ...extras] : baseTurns);
 
   // 新しい回答の自動読み上げ（P2）: ポーリングで append された新規 assistant ターンを
   // 朗読キューへ（通常はアクティブなペインのみ、ttsAutoReadAllPanes なら開いている全ペイン。
@@ -1798,6 +1802,50 @@ function isNoise(t: Turn): boolean {
   return SYS_PREFIXES.some((p) => s.startsWith(p));
 }
 
+// A `!`-run shell command is logged by Claude as a user turn `<bash-input>cmd</bash-input>`,
+// its result as the next user turn `<bash-stdout>…</bash-stdout><bash-stderr>…</bash-stderr>`.
+// These are hidden by isNoise; parseBashInput/parseBashOutput recover the command + result
+// so coalesceBash can surface them as a terminal block instead of dropping them entirely.
+const BASH_IN_RE = /^\s*<bash-input>([\s\S]*?)<\/bash-input>\s*$/;
+function parseBashInput(t: Turn): string | null {
+  if (t.role !== "user") return null;
+  const m = (t.text || "").match(BASH_IN_RE);
+  return m ? m[1].trim() : null;
+}
+function parseBashOutput(t: Turn): { stdout: string; stderr: string } | null {
+  if (t.role !== "user") return null;
+  const s = (t.text || "").replace(/^\s+/, "");
+  if (!s.startsWith("<bash-stdout>")) return null;
+  const out = s.match(/<bash-stdout>([\s\S]*?)<\/bash-stdout>/);
+  const err = s.match(/<bash-stderr>([\s\S]*?)<\/bash-stderr>/);
+  return { stdout: out ? out[1] : "", stderr: err ? err[1] : "" };
+}
+
+// coalesceBash folds each `<bash-input>` user turn (plus the paired `<bash-stdout>` turn that
+// immediately follows) into one synthetic bash turn carrying a kind="bash" part. groupTurns
+// then keeps it as its own standalone block (never merged into an adjacent prompt), and the
+// user branch renders it as a terminal block. Untouched turns pass through as-is; an orphan
+// output turn (no preceding input) stays and is dropped by isNoise as before.
+function coalesceBash(turns: Turn[]): Turn[] {
+  const out: Turn[] = [];
+  for (let i = 0; i < turns.length; i++) {
+    const cmd = parseBashInput(turns[i]);
+    if (cmd === null) {
+      out.push(turns[i]);
+      continue;
+    }
+    const paired = i + 1 < turns.length ? parseBashOutput(turns[i + 1]) : null;
+    if (paired) i++; // consume the result turn
+    out.push({
+      ...turns[i - (paired ? 1 : 0)],
+      bash: true,
+      text: "$ " + cmd, // plain form used for copy
+      parts: [{ kind: "bash", text: cmd, output: paired?.stdout || "", stderr: paired?.stderr || "" }],
+    });
+  }
+  return out;
+}
+
 // echoLanded reports whether an optimistic echo's real user turn has appeared in the
 // transcript: a non-noise user turn past the echo's anchor idx with the same text. Used
 // both to hide a landed echo at render time (no 1-frame double) and to prune it from state.
@@ -1833,7 +1881,17 @@ function groupTurns(turns: Turn[]): Group[] {
     const last = out[out.length - 1];
     // A compaction summary is its own standalone block — never merge it into an
     // adjacent user turn (nor merge a normal turn into it).
-    if (last && last.role === t.role && last.sidechain === !!t.sidechain && !last.compact && !t.compact) {
+    // A compaction summary and a `!` bash-command block are each standalone — never
+    // merged into an adjacent turn (nor a normal turn into them).
+    if (
+      last &&
+      last.role === t.role &&
+      last.sidechain === !!t.sidechain &&
+      !last.compact &&
+      !t.compact &&
+      !last.bash &&
+      !t.bash
+    ) {
       last.parts.push(...parts);
       if (t.pending) last.pending = true;
       if (t.queued) last.queued = true;
@@ -1852,6 +1910,7 @@ function groupTurns(turns: Turn[]): Group[] {
         role: t.role,
         sidechain: !!t.sidechain,
         compact: !!t.compact,
+        bash: !!t.bash,
         parts: [...parts],
         text: t.text || "",
         model: t.model || "",
@@ -2073,6 +2132,51 @@ function ThinkingBlock({ text }: { text?: string }) {
   );
 }
 
+// stripAnsi removes SGR color/style escape sequences so shell output renders as plain text.
+function stripAnsi(s: string): string {
+  // eslint-disable-next-line no-control-regex
+  return s.replace(/\x1b\[[0-9;]*m/g, "");
+}
+
+// BashBlock renders a `!`-run shell command as a terminal block: the command line always
+// shown ("$ cmd"), its stdout/stderr collapsed by default behind a "出力 (N 行)" toggle
+// (matching the tool-run disclosure). stderr is tinted; an empty result shows no toggle.
+function BashBlock({ command, stdout, stderr }: { command?: string; stdout?: string; stderr?: string }) {
+  const [open, setOpen] = useState(false);
+  const out = stripAnsi(stdout || "").replace(/\s+$/, "");
+  const err = stripAnsi(stderr || "").replace(/\s+$/, "");
+  const hasOut = !!(out || err);
+  const lines = (out ? out.split("\n").length : 0) + (err ? err.split("\n").length : 0);
+  return (
+    <div className={"mt-bash" + (open ? " open" : "")}>
+      <div className="mt-bash-cmd">
+        <span className="mt-bash-prompt">$</span>
+        <code className="mt-bash-code">{command}</code>
+      </div>
+      {hasOut && (
+        <>
+          <button
+            type="button"
+            className="mt-bash-toggle"
+            onClick={() => setOpen((o) => !o)}
+            aria-expanded={open}
+            title={open ? "出力をたたむ" : "出力を表示"}
+          >
+            <Icon name={open ? "chevron-down" : "chevron-right"} />
+            <span>出力 ({lines} 行)</span>
+          </button>
+          {open && (
+            <pre className="mt-bash-output">
+              {out}
+              {err && <span className="mt-bash-err">{(out ? "\n" : "") + err}</span>}
+            </pre>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 // ContextLine marks the git branch / working dir in effect from here on.
 function ContextLine({ branch, cwd }: { branch?: string; cwd?: string }) {
   return (
@@ -2149,7 +2253,13 @@ function Turn({
         )}
       </div>
       <div className="mirror-turn-body" ref={bodyEl}>
-        {isUser ? (
+        {isUser && turn.bash ? (
+          // A `!`-run shell command (coalesceBash): render each as a terminal block with
+          // the command line and its collapsed output, rather than hiding it as noise.
+          turn.parts.map((p, i) => (
+            <BashBlock key={i} command={p.text} stdout={p.output} stderr={p.stderr} />
+          ))
+        ) : isUser ? (
           (() => {
             // Split off any pasted-image references so the bubble shows the user's words
             // plus clickable thumbnails, not the machine-facing paths.
