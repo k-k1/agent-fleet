@@ -56,12 +56,23 @@ type BitbucketCreds struct {
 	Email        string `json:"email,omitempty"`   // cached account email (resolved from the API)
 }
 
+// PagerDutyCreds is the user's PagerDuty API credential (docs/25 Phase 1). The
+// key is injected into `uvx pagerduty-mcp` at spawn time by the `mcp-run`
+// wrapper (workspace-agent mcp-run pagerduty) so no plaintext key ever reaches
+// the MCP config — only the wrapper reference does. Host overrides the API base
+// (EU accounts use https://api.eu.pagerduty.com).
+type PagerDutyCreds struct {
+	APIKey string `json:"apiKey"`
+	Host   string `json:"host,omitempty"`
+}
+
 type Data struct {
 	Git         map[string]GitEntry    `json:"git"`                   // host -> https cred
 	GitIdentity map[string]GitIdentity `json:"gitIdentity,omitempty"` // host -> explicit commit identity
 	Claude      string                 `json:"claude"`                // CLAUDE_CODE_OAUTH_TOKEN
 	Bitbucket   *BitbucketCreds        `json:"bitbucket"`             // OAuth refresh creds (bitbucket.org)
 	Opencode    map[string]string      `json:"opencode"`              // provider env var name -> API key (injected for opencode sessions)
+	PagerDuty   *PagerDutyCreds        `json:"pagerduty,omitempty"`   // ops MCP credential (docs/25)
 }
 
 // agentSecretKey returns the 32-byte per-user key from AF_SECRET_KEY (hex), or

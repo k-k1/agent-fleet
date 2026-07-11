@@ -53,6 +53,10 @@ type chatConversation struct {
 	Persona     string   `json:"persona,omitempty"`   // --append-system-prompt (falls back to chatPersona)
 	Tools       string   `json:"tools,omitempty"`     // "none" | "af_read" | "af_write"
 	Knowledge   []string `json:"knowledge,omitempty"` // dirs passed to --add-dir
+	// Integrations snapshots the assistant's ops MCP servers (docs/25 Phase 1), e.g.
+	// ["pagerduty"]. mcpConfigArgs attaches each read-only via mcp-run when the user
+	// has the matching connection configured.
+	Integrations []string `json:"integrations,omitempty"`
 	// Seed is a transient first-turn prompt returned by create (Files attach, docs/19
 	// Phase C) for the Console to prefill the composer. It is set AFTER saveConv, so it is
 	// never persisted — the composer owns it thereafter.

@@ -25,6 +25,7 @@ import (
 	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -41,6 +42,39 @@ func validToolGrant(t string) bool {
 	return t == toolsNone || t == toolsAFRead || t == toolsAFWrite
 }
 
+// Ops integration ids (docs/25 Phase 1). Each maps to an external MCP server the
+// chat attaches read-only via `workspace-agent mcp-run <id>`.
+const integrationPagerDuty = "pagerduty"
+
+// opsIntegration describes how one integration's MCP server is launched. runArgs
+// are the subcommand args passed to this binary (mcp-run injects the user's key).
+type opsIntegration struct {
+	runArgs []string
+}
+
+// opsIntegrations is the catalog of supported external ops MCP servers. Adding
+// Grafana / CloudWatch later is a new entry here plus a mcp-run provider case.
+var opsIntegrations = map[string]opsIntegration{
+	integrationPagerDuty: {runArgs: []string{"mcp-run", "pagerduty"}},
+}
+
+func validIntegration(id string) bool {
+	_, ok := opsIntegrations[id]
+	return ok
+}
+
+// integrationReady reports whether the user has configured the credential an
+// integration needs, so mcpConfigArgs attaches only servers that can actually
+// start (a missing connection means the assistant just has no ops tools).
+func integrationReady(id string) bool {
+	switch id {
+	case integrationPagerDuty:
+		s, err := secrets.Load()
+		return err == nil && s.PagerDuty != nil && s.PagerDuty.APIKey != ""
+	}
+	return false
+}
+
 // assistant is a chat persona template (builtin or user-defined).
 type assistant struct {
 	ID   string `json:"id"`
@@ -55,6 +89,11 @@ type assistant struct {
 	Persona     string   `json:"persona,omitempty"` // system prompt (--append-system-prompt)
 	Tools       string   `json:"tools"`             // "none" | "af_read" | "af_write"
 	Knowledge   []string `json:"knowledge,omitempty"`
+	// Integrations are external ops MCP servers attached to this assistant's chat,
+	// orthogonal to the af tools grant (docs/25 Phase 1). Each id (e.g. "pagerduty")
+	// is launched read-only via `workspace-agent mcp-run <id>`, which injects the
+	// user's stored key — so a server attaches only when the user has connected it.
+	Integrations []string `json:"integrations,omitempty"`
 	// Voice is the Console-side TTS voice override ("vv:<speaker>" / "polly:<VoiceId>").
 	// "" = auto (the Console assigns one from the user's character pool). The agent only
 	// stores and echoes it — synthesis and resolution are entirely client-side (docs/24).
@@ -115,6 +154,15 @@ const integrityPersona = "あなたは整合性チェッカーです。" +
 	"指摘は『場所（ファイル／箇所）→ 何が食い違うか → 直す方向』の形で簡潔に列挙してください。" +
 	"ファイルは編集せず指摘に徹し、断定できない点は推測と明示します。"
 
+// srePersona drives the read-only SRE assistant: an incident-response sounding
+// board that grounds every claim in the ops tools (PagerDuty …) rather than
+// guessing, separates fact from hypothesis, and helps draft status updates.
+const srePersona = "あなたは SRE / オンコール担当の相談相手（壁打ち役）です。読み取り専用で、対応の判断は人間が行います。" +
+	"インシデントについて聞かれたら推測せず、PagerDuty のツール（list_incidents / get_incident / list_incident_notes / list_oncalls など）で実際の状態を確認してから答えてください。" +
+	"回答は『事実（メトリクス・アラート・ログで確認できたこと）』と『推測（仮説）』を明確に分け、影響範囲 → 原因の仮説 → 次に取るべきアクション、の順で構造化します。" +
+	"対外報告やポストモーテムの草稿を頼まれたら、時系列を整理して簡潔にまとめます。" +
+	"インシデントの ack / resolve やスケジュール変更などの書き込み操作は行いません（ツールは読み取り専用です）。復旧オペレーションが必要なときは、手順を提示するに留め、実行は担当者に委ねてください。"
+
 // translatePersona focuses the assistant on faithful translation.
 const translatePersona = "あなたは翻訳アシスタントです。" +
 	"渡された文章を、指定がなければ日本語↔英語を自動判定して自然に翻訳してください。" +
@@ -140,6 +188,12 @@ func builtinAssistants() []assistant {
 			Description: "フリートの司令塔です。走っているセッションを俯瞰し、必要ならセッションに指示を出したり新しいセッションを起こして作業を進めます（引き継ぎ・壁打ちからのタスク開始も可）。メモキューの確認・追加・一括送信もできます。専門的な判断は他のアシスタントにも相談します。実行前に内容を確認します。",
 			Builtin:     true, Agent: session.KindClaude, Persona: operatorPersona,
 			Tools: toolsAFWrite, Knowledge: []string{know},
+		},
+		{
+			ID: "sre", Name: "SRE アシスタント", Icon: "pulse",
+			Description: "インシデント対応・監視運用の相談相手です（読み取り専用）。PagerDuty を接続しておくと、開いているインシデントや経緯を実際に確認しながら、状況整理・原因の仮説出し・対外報告の草稿を手伝います。",
+			Builtin:     true, Agent: session.KindClaude, Persona: srePersona,
+			Tools: toolsAFRead, Integrations: []string{integrationPagerDuty}, Knowledge: []string{know},
 		},
 		{
 			ID: "integrity", Name: "整合性チェッカー", Icon: "checklist",
@@ -273,15 +327,16 @@ func handleAssistantGet(w http.ResponseWriter, r *http.Request) {
 
 // assistantInput is the create/update body (only user-editable fields).
 type assistantInput struct {
-	Name        string   `json:"name"`
-	Icon        string   `json:"icon"`
-	Description string   `json:"description"`
-	Agent       string   `json:"agent"`
-	Model       string   `json:"model"`
-	Persona     string   `json:"persona"`
-	Tools       string   `json:"tools"`
-	Knowledge   []string `json:"knowledge"`
-	Voice       string   `json:"voice"`
+	Name         string   `json:"name"`
+	Icon         string   `json:"icon"`
+	Description  string   `json:"description"`
+	Agent        string   `json:"agent"`
+	Model        string   `json:"model"`
+	Persona      string   `json:"persona"`
+	Tools        string   `json:"tools"`
+	Knowledge    []string `json:"knowledge"`
+	Integrations []string `json:"integrations"`
+	Voice        string   `json:"voice"`
 }
 
 // applyInput validates the input and folds it onto a (new or existing) assistant.
@@ -300,6 +355,17 @@ func applyInput(a *assistant, in assistantInput) error {
 	if !validToolGrant(tools) {
 		return errors.New("未対応のツール指定です")
 	}
+	integrations := []string{}
+	for _, id := range in.Integrations {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		if !validIntegration(id) {
+			return errors.New("未対応の連携です: " + id)
+		}
+		integrations = appendUniqueStr(integrations, id)
+	}
 	a.Name = name
 	a.Icon = strings.TrimSpace(in.Icon)
 	a.Description = strings.TrimSpace(in.Description)
@@ -308,6 +374,7 @@ func applyInput(a *assistant, in assistantInput) error {
 	a.Persona = strings.TrimSpace(in.Persona)
 	a.Tools = tools
 	a.Knowledge = in.Knowledge
+	a.Integrations = integrations
 	a.Voice = strings.TrimSpace(in.Voice)
 	return nil
 }

@@ -167,6 +167,21 @@ Phase 0 は 2026-07-12 に着手済み。手順は [guide/member/10-ops-mcp-poc.
 
 Phase 1 の判断材料は Phase 0 の実地検証。**Phase 0 は現行 main のまま今日から実施できる**（唯一の前提は監視系エンドポイントへの outbound が通ること）。
 
+### Phase 1 着手（PagerDuty 縦切り）— 2026-07-12 実装
+
+「まず PagerDuty から、ユーザーが API キーを設定する形」で最小縦切りを実装（temp/syxbw7o）。既存の Connections/secrets/アシスタント seam にそのまま乗せ、**キーは平文化しない**設計にした（Phase 0 の `~/.claude.json` 平文問題の解消）。
+
+- **接続（per-user）**: Settings > **運用**タブに PagerDuty カード。API キー（+EU ホスト任意）を貼ると Agent の暗号化ストア（`secrets.enc`、`PagerDutyCreds`）に保存。CP は proxy するだけで保持しない。エンドポイント `PUT/DELETE /api/connections/pagerduty`。
+- **秘密注入ラッパー**: `workspace-agent mcp-run pagerduty`（新サブコマンド `mcp_run.go`）。起動時にストアを復号して `PAGERDUTY_USER_API_KEY` を**子プロセスの env にのみ**入れて `uvx pagerduty-mcp` を exec。**MCP 設定にはラッパー参照だけが載り、キーは一切現れない**（git cred-helper と同じ idiom）。read-only 既定（`--enable-write-tools` は渡さない）。
+- **チャット注入**: アシスタントに `integrations`（`["pagerduty"]`）を追加（af tools grant と直交）。`chatMCPArgs` を `mcpConfigArgs` に一般化し、接続済みのときだけ pagerduty サーバを `--mcp-config` にマージ（`--strict-mcp-config` 維持）。未接続なら黙って外す。
+- **ビルトイン「SRE アシスタント」**: read-only（af_read + pagerduty）。事実と推測を分け、影響範囲→原因仮説→次アクションで構造化、対外文案の草稿支援。write（ack/resolve 等）は非提供。
+- **イメージ**: `uv`/`uvx` を `/usr/local/bin` にベイク（Dockerfile）。要**再ビルド**。
+- **反映タイミング**: 接続の有効化に**ワークスペース再起動は不要**。チャットは毎ターン `claude -p` を起こし直し、`mcp-run` が起動時にストアを読むため、**次のチャット送信**から反映。対話セッション（tmux claude）側は従来どおり Phase 0 手順（`claude mcp add`）で、こちらは新セッションが必要。
+- **検証済み（2026-07-12, dev コンテナ）**: 実キーで `mcp-run pagerduty` 経由の end-to-end 疎通（`list_incidents` 実データ取得）、資格なし/不明プロバイダの安全な失敗、Go build/vet/test（99 passed）・gofmt・Console tsc（0 errors）。
+- **残**: 実 workspace（再ビルド後）での UI→チャットの通し確認。カスタムアシスタント編集 UI（AssistantModal）への integrations ピッカー追加（現状は組み込み SRE のみ integrations 保持）。Grafana/CloudWatch を同じ枠（opsIntegrations 追加 + mcp-run provider 追加）で拡張。
+
+未決論点（§8）のうち **③チャットの組み込みツール権限**は本実装で前提を確認済み: チャットは `chatToolLimits()` で Bash/Edit/Write/MultiEdit/NotebookEdit と Agent/Task/Workflow を `--disallowedTools` で禁止（`--dangerously-skip-permissions` 下でも deny は有効）。ops MCP は read-only ツールのみを広告するため、read-only 統制は「MCP 集合」「組み込みツール」の両方で閉じている。
+
 ---
 
 ## 7. やらない / 捨てる候補

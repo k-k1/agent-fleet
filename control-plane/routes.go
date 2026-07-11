@@ -361,6 +361,11 @@ func registerConnectionRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("POST /api/connections/codex/device/start", rest)
 	mux.HandleFunc("POST /api/connections/codex/device/poll", rest)
 	mux.HandleFunc("DELETE /api/connections/codex", rest)
+	// PagerDuty ops connection (docs/25 Phase 1): the API key is stored in the
+	// Workspace's encrypted secrets and injected into the PagerDuty MCP at spawn;
+	// the CP only proxies here, never holds the key.
+	mux.HandleFunc("PUT /api/connections/pagerduty", rest)
+	mux.HandleFunc("DELETE /api/connections/pagerduty", rest)
 }
 
 // Internal git provider (docs/reference/internal-git-provider, ADR 0010).
