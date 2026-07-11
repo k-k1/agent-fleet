@@ -165,6 +165,10 @@ export interface Settings {
   // 読み上げとセッション音声通知に適用（どのセッションの回答かを声で判別できる）。
   // チャットタブ・朗読ビューは選択した話者のまま。
   ttsVoicePerSession: boolean;
+  // ミラー（チャット）: アクティブなペインのセッションが確認待ち（AskUserQuestion／
+  // プラン承認／許可要求）になったら、質問文と選択肢を読み上げる。選択肢は表示ラベルで
+  // なく説明文（ツールチップの中身）を優先して読む（features/chat/ttsText.ts の pendingSpeech）。
+  ttsReadPending: boolean;
   // ミラーの自動読み上げで、長い回答（目安 500 字超）はアシスタント（headless CLI）に
   // 2 文へ要約させてそれを読む（features/mirror/MirrorView.tsx）。フル本文はターンの
   // 読み上げボタンでいつでも聞ける。生成失敗・タイムアウトは全文読みにフォールバック。
@@ -222,6 +226,7 @@ const DEFAULTS: Settings = {
   ttsAutoReadMirror: false,
   ttsVoicePerSession: false,
   ttsEmotion: false,
+  ttsReadPending: false,
   ttsSummaryRead: false,
   ttsAbbrevCode: true,
   readerVertical: false,

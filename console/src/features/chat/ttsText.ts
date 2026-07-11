@@ -112,6 +112,36 @@ export function abbrevCode(token: string, dict: [string, string][] = []): string
   return `${t.slice(0, 2)} ${filler}`;
 }
 
+// --- 保留中の質問（AskUserQuestion）の読み上げ文 ---------------------------------
+// ミラーが確認待ちになったとき、質問文と選択肢を音声用の 1 本のテキストに組む。選択肢は
+// 画面の表示ラベル（短縮されがち）ではなく **説明文（ツールチップの中身）を優先**して読む。
+// question/option は Markdown 断片のことがあるので plainify を通す。
+export interface SpokenQuestion {
+  question?: string;
+  multiSelect?: boolean;
+  options?: { label: string; description?: string }[];
+}
+
+export function pendingSpeech(qs: SpokenQuestion[]): string {
+  const parts: string[] = ["確認です。"];
+  const period = (t: string) => (/[。．！？!?]$/.test(t) ? t : t + "。");
+  qs.forEach((q, qi) => {
+    if (qs.length > 1) parts.push(`質問${qi + 1}。`);
+    const question = q.question ? plainify(q.question).trim() : "";
+    if (question) parts.push(period(question));
+    const opts = q.options || [];
+    if (opts.length) {
+      parts.push(`選択肢は${opts.length}つ。`);
+      opts.forEach((o, oi) => {
+        const alt = plainify(o.description || o.label).trim();
+        if (alt) parts.push(`${oi + 1}、${period(alt)}`);
+      });
+    }
+    if (q.multiSelect) parts.push("複数選択できます。");
+  });
+  return parts.join("");
+}
+
 // --- 文の感情推定（感情スタイル読み分け用） --------------------------------------
 // 文にエラー・失敗系の語があれば "angry"（ツンツン系スタイル）、成功・完了系なら
 // "happy"（あまあま系）、どちらも無ければ null（ノーマル）。読み上げ済みテキスト

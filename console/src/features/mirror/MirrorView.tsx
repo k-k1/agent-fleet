@@ -13,6 +13,7 @@ import { baseName } from "../../lib/filemeta.ts";
 import { MarkdownView } from "../viewer/MarkdownView.tsx";
 import { readTurn, collectBlocks, blockIndexAt, turnSpokenText, type TurnReadHandle } from "./turnTts.ts";
 import { sessionVoiceOpts, announce } from "../chat/tts.ts";
+import { pendingSpeech } from "../chat/ttsText.ts";
 import { askAssistant } from "../chat/api.ts";
 import { useTtsStore } from "../../core/store/tts.ts";
 import { MirrorToggle } from "./MirrorToggle.tsx";
@@ -368,6 +369,40 @@ export function MirrorView({
       if (prev.speaking && !st.speaking) ttsAutoPumpRef.current();
     });
   }, []);
+
+  // 確認・質問の読み上げ（設定 ttsReadPending）: 保留中の AskUserQuestion／プラン承認／
+  // 許可要求が「新しく現れたら」内容を読む（アクティブなペインのみ。バックグラウンドの
+  // セッションは useSessionNotifications の短い告知が担当）。開いた時点で既に出ていた
+  // 保留は基準として飲み込み、読まない（ペインを行き来するたびに再読しないため）。
+  const ttsPendingInitRef = useRef(false);
+  const ttsPendingSigRef = useRef("");
+  useEffect(() => {
+    if (!loaded) return;
+    const sig = pending
+      ? "q:" + JSON.stringify(pending)
+      : pendingPlan
+        ? "plan:" + pendingPlan.slice(0, 200)
+        : pendingPerm
+          ? "perm:" + pendingPerm
+          : "";
+    if (!ttsPendingInitRef.current) {
+      ttsPendingInitRef.current = true;
+      ttsPendingSigRef.current = sig;
+      return;
+    }
+    if (sig === ttsPendingSigRef.current) return;
+    ttsPendingSigRef.current = sig;
+    if (!sig || !active || readOnly) return;
+    if (!settings.ttsEnabled || !settings.ttsReadPending) return;
+    const label = (sessionMeta ? displayName(sessionMeta) : "セッション") + "・確認";
+    const text = pending
+      ? pendingSpeech(pending)
+      : pendingPlan
+        ? "プランができました。承認待ちです。"
+        : "許可待ちです。" + (pendingPerm || "").slice(0, 100);
+    announce(text, label, sessionVoiceOpts(session));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loaded, pending, pendingPlan, pendingPerm]);
   const ttsWiring: TurnTtsWiring = {
     reading: ttsReading,
     start: ttsStart,
@@ -466,6 +501,8 @@ export function MirrorView({
     ttsAutoSeenRef.current = null; // 自動読み上げの基準も取り直す（履歴は読まない）
     ttsAutoQueueRef.current.length = 0;
     ttsAutoDoneRef.current.clear();
+    ttsPendingInitRef.current = false; // 確認読み上げの基準も取り直す
+    ttsPendingSigRef.current = "";
   }, [session]);
 
   // Persist the draft per session, and reload it when the session changes (so the old

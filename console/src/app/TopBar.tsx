@@ -36,6 +36,7 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
   // ttsSessionNotify（音声通知）は別軸なので、OFF でも speaking になり得る＝speaking 優先。
   const ttsSpeaking = useTtsStore((st) => st.speaking);
   const ttsSource = useTtsStore((st) => st.source);
+  const ttsVoice = useTtsStore((st) => st.voice);
   // Hamburger: single-click toggles the left pane open/closed; double-click toggles
   // its desktop display mode (Push ⇄ overlay). We debounce the single action so a
   // double-click doesn't also fire it. Mobile keeps the immediate drawer toggle.
@@ -122,7 +123,10 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
           <Icon name={ttsSpeaking || s.ttsEnabled ? "unmute" : "mute"} className="tts-status-ic" />
           {ttsSpeaking && (
             <>
-              <span className="tts-status-lbl">読み上げ中{ttsSource ? `・${ttsSource}` : ""}</span>
+              <span className="tts-status-lbl">
+                読み上げ中{ttsSource ? `・${ttsSource}` : ""}
+                {ttsVoice ? `（${ttsVoice}）` : ""}
+              </span>
               <Icon name="debug-stop" />
             </>
           )}

@@ -59,6 +59,24 @@ const SESSION_VOICES: VoiceProfile[] = [
 ];
 const SESSION_POLLY_VOICES = ["Takumi", "Kazuha", "Tomoko"];
 
+// speaker 番号 → キャラ名（スタイル違いも同じキャラに束ねる）。TopBar の「読み上げ中・
+// 〇〇（キャラ名）」表示用。セッション別の声や感情スタイルで「いま誰が喋っているか」を
+// 見て確かめられるようにする。
+const VV_CHAR_NAMES: Record<string, string> = {
+  "3": "ずんだもん", "1": "ずんだもん", "7": "ずんだもん", "5": "ずんだもん", "22": "ずんだもん", "38": "ずんだもん",
+  "2": "四国めたん", "0": "四国めたん", "6": "四国めたん", "4": "四国めたん",
+  "8": "春日部つむぎ", "10": "雨晴はう", "9": "波音リツ", "14": "冥鳴ひまり",
+  "16": "九州そら", "15": "九州そら", "18": "九州そら", "17": "九州そら", "19": "九州そら",
+  "20": "もち子さん",
+};
+
+// voiceCharName は再生に使う声のキャラ名ラベル。明示 polly は VoiceId をそのまま。
+// auto ルーティングで Polly に落ちた場合までは追わない（設定ベースのベストエフォート）。
+export function voiceCharName(opts: TtsOptions): string {
+  if (opts.provider === "polly") return opts.pollyVoice || "Polly";
+  return VV_CHAR_NAMES[opts.voice] || "";
+}
+
 // sessionVoiceOpts はセッション名から声の上書き（voice / pollyVoice）を返す。設定 OFF や
 // セッション名なしは undefined（= 選択中の話者のまま）。startTts / startNarration の
 // opts にスプレッドして使う。
@@ -378,7 +396,7 @@ export function startTts(opts: TtsOptions, source = "", onEnd?: (reason: "done" 
       finish("stopped");
     },
   };
-  useTtsStore.getState().setActive(controller, source);
+  useTtsStore.getState().setActive(controller, source, voiceCharName(opts));
   return controller;
 }
 
@@ -577,7 +595,7 @@ export function startNarration(
     finish("stopped");
   };
 
-  useTtsStore.getState().setActive(adapter, source);
+  useTtsStore.getState().setActive(adapter, source, voiceCharName(opts));
   // 初回キックは microtask に回す。呼び手（FileView）が返り値の handle と自分の state を
   // 確定してから onUnit が走るようにするため（空/エンジン無しで finish が同期発火すると、
   // beginNarration のセットアップ前に onUnit(null) が来て状態が不整合になるのを防ぐ）。
