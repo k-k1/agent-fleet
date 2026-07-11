@@ -383,7 +383,13 @@ export interface NarrationHandle {
   isPaused(): boolean;
 }
 
-export function startNarration(units: string[], source: string, onUnit: (i: number | null) => void): NarrationHandle {
+export function startNarration(
+  units: string[],
+  source: string,
+  // onUnit(i) = i 番目の unit の再生を開始。onUnit(null, reason) = 終了（done=自然終了 /
+  // stopped=停止・他の再生への置き換え。ミラーの自動読み上げキューが継続可否の判断に使う）。
+  onUnit: (i: number | null, endReason?: "done" | "stopped") => void,
+): NarrationHandle {
   useTtsStore.getState().active?.stop(); // グローバル 1 本（既存の再生を止める）
   const ctx = audioCtx();
   const s = getSettings();
@@ -412,13 +418,12 @@ export function startNarration(units: string[], source: string, onUnit: (i: numb
   const finish = (reason: "done" | "stopped") => {
     if (ended) return;
     ended = true;
-    onUnit(null);
+    onUnit(null, reason);
     const st = useTtsStore.getState();
     if (st.active === adapter) {
       st.setActive(null, "");
       st.setSpeaking(false);
     }
-    void reason;
   };
 
   const maybeDone = () => {

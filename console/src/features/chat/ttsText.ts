@@ -53,6 +53,29 @@ export function firstChunkCut(buf: string): number {
   return -1;
 }
 
+// --- レンダ済みテキストの文分割（ミラーのカラオケ朗読用） ------------------------
+// textContent 由来のテキスト（Markdown 記法は既に落ちている）を文単位に割る。句点は前の
+// 文に含める。改行・連続空白は 1 つの空白に潰し、かな/漢字/英数字を 1 つも含まない断片
+// （罫線・記号だけ等）は捨てる。
+const SENT_END = "。．！？!?";
+const SPEAKABLE = /[0-9A-Za-zぁ-んァ-ヶーｦ-ﾟ一-鿿㐀-䶿豈-﫿々]/;
+
+export function splitSentences(text: string): string[] {
+  const out: string[] = [];
+  let buf = "";
+  const flush = () => {
+    const t = buf.replace(/\s+/g, " ").trim();
+    buf = "";
+    if (t && SPEAKABLE.test(t)) out.push(t);
+  };
+  for (const c of text) {
+    buf += c;
+    if (SENT_END.includes(c)) flush();
+  }
+  flush();
+  return out;
+}
+
 // plainifyStreaming — 1 文分のテキストを読み上げ用にプレーン化。```fence``` は
 // またぎ状態（inFence）を引き回して内側を丸ごと落とす。
 export function plainifyStreaming(
