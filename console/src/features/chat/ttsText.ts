@@ -53,6 +53,54 @@ export function firstChunkCut(buf: string): number {
   return -1;
 }
 
+// --- インラインコードの省略読み ---------------------------------------------------
+// `e79853e` のようなコード片は素直に読んでも意味が無いので、頭だけ読んで残りをフィラー語
+// に置き換える。フィラーはトークン内容から決定的に選ぶ（同じトークンは常に同じ語尾 →
+// 合成キャッシュが効き、聞き直しでも安定。トークンごとには変わるのでランダム感は残る）。
+export const CODE_FILLERS = ["なんとか", "ふがふが", "むにゅむにゅ"];
+
+// plainify / abbrevCode に渡す省略読みの文脈。dict はユーザー読み仮名辞書（辞書に掛かる
+// トークンは省略しない＝辞書優先。実際の置換は後段の applyUserDict が行う）。
+export interface CodeReadOpts {
+  abbrev: boolean;
+  dict: [string, string][];
+}
+
+const JA_CHAR = /[ぁ-んァ-ヶーｦ-ﾟ一-鿿㐀-䶿豈-﫿々]/;
+
+// codeWords は camelCase 境界と区切り記号からアルファベットの語（2 文字以上）を抜き出す。
+// 語が取れないトークン（ハッシュ・バージョン番号等）は「読める語が無い」扱いになる。
+function codeWords(token: string): string[] {
+  return (
+    token
+      .replace(/([a-z0-9])([A-Z])/g, "$1 $2") // fooBar → foo Bar
+      .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2") // TTSEnabled → TTS Enabled
+      .match(/[A-Za-z]{2,}/g) ?? []
+  );
+}
+
+// abbrevCode はインラインコード 1 個の読み上げ形を決める。
+//  - 短い（<6 文字）・空白を含むコマンド/フレーズ・日本語入り・ユーザー辞書に掛かるもの → そのまま
+//  - 純粋な 1 単語（vitest 等）→ そのまま
+//  - 2 語（ttsEnabled 等）→ 頭一語＋フィラー
+//  - 3 語以上（ttsAutoReadMirror・パス等）→ 頭一語＋フィラー＋末尾一語
+//  - 語が無い（ハッシュ等）→ 頭 2 文字＋フィラー
+export function abbrevCode(token: string, dict: [string, string][] = []): string {
+  const t = token.trim();
+  if (t.length < 6) return token;
+  if (/\s/.test(t)) return token;
+  if (JA_CHAR.test(t)) return token;
+  if (dict.some(([from]) => from && t.includes(from))) return token; // 辞書優先
+  const words = codeWords(t);
+  if (words.length === 1 && words[0] === t) return token; // 純粋な 1 単語
+  let sum = 0;
+  for (const c of t) sum += c.codePointAt(0)!;
+  const filler = CODE_FILLERS[sum % CODE_FILLERS.length];
+  if (words.length >= 3) return `${words[0]} ${filler} ${words[words.length - 1]}`;
+  if (words.length === 2) return `${words[0]} ${filler}`;
+  return `${t.slice(0, 2)} ${filler}`;
+}
+
 // --- レンダ済みテキストの文分割（ミラーのカラオケ朗読用） ------------------------
 // textContent 由来のテキスト（Markdown 記法は既に落ちている）を文単位に割る。句点は前の
 // 文に含める。改行・連続空白は 1 つの空白に潰し、かな/漢字/英数字を 1 つも含まない断片
@@ -81,6 +129,7 @@ export function splitSentences(text: string): string[] {
 export function plainifyStreaming(
   s: string,
   fence: { get: () => boolean; set: (v: boolean) => void },
+  code?: CodeReadOpts,
 ): string {
   const out: string[] = [];
   let rest = s;
@@ -95,16 +144,17 @@ export function plainifyStreaming(
     fence.set(!fence.get());
     rest = rest.slice(i + 3);
   }
-  return plainify(out.join(""));
+  return plainify(out.join(""), code);
 }
 
 // plainify — Markdown 記法・リンク・URL・記号を落として読み上げ用テキストにする。
-// fence の除去は plainifyStreaming が済ませている前提。
-export function plainify(s: string): string {
+// fence の除去は plainifyStreaming が済ませている前提。code を渡すとインラインコードを
+// 省略読み（abbrevCode）にする（未指定は従来どおり中身をそのまま）。
+export function plainify(s: string, code?: CodeReadOpts): string {
   return (
     s
-      // インラインコード `x` → x
-      .replace(/`([^`]*)`/g, "$1")
+      // インラインコード `x` → x（省略読み有効時は abbrevCode で頭＋フィラーに）
+      .replace(/`([^`]*)`/g, (_, p: string) => (code?.abbrev ? abbrevCode(p, code.dict) : p))
       // 画像 ![alt](url) → 落とす
       .replace(/!\[[^\]]*\]\([^)]*\)/g, "")
       // リンク [text](url) → text

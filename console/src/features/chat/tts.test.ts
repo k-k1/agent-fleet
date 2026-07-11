@@ -1,5 +1,13 @@
 import { describe, it, expect } from "vitest";
-import { plainify, plainifyStreaming, firstChunkCut, parseUserDict, applyUserDict, splitSentences } from "./ttsText.ts";
+import {
+  plainify,
+  plainifyStreaming,
+  firstChunkCut,
+  parseUserDict,
+  applyUserDict,
+  splitSentences,
+  abbrevCode,
+} from "./ttsText.ts";
 import { makeAudioLru } from "./ttsCache.ts";
 
 describe("plainify (読み上げ用プレーン化)", () => {
@@ -81,6 +89,54 @@ describe("firstChunkCut (最初の発話の早出し)", () => {
   it("閉じ括弧類も早出しの区切りになる", () => {
     const s = "設定（詳しくは後述）を開きます";
     expect(firstChunkCut(s)).toBe(s.indexOf("）") + 1);
+  });
+});
+
+describe("abbrevCode (インラインコードの省略読み)", () => {
+  const F = "(なんとか|ふがふが|むにゅむにゅ)";
+
+  it("語が無いハッシュ等は頭 2 文字＋フィラー", () => {
+    expect(abbrevCode("e79853e")).toMatch(new RegExp(`^e7 ${F}$`));
+    expect(abbrevCode("1c74d26")).toMatch(new RegExp(`^1c ${F}$`));
+    expect(abbrevCode("v1.2.30")).toMatch(new RegExp(`^v1 ${F}$`));
+  });
+
+  it("フィラーはトークンから決定的に選ぶ（毎回同じ）", () => {
+    expect(abbrevCode("e79853e")).toBe(abbrevCode("e79853e"));
+  });
+
+  it("camelCase 2 語は頭一語＋フィラー", () => {
+    expect(abbrevCode("ttsEnabled")).toMatch(new RegExp(`^tts ${F}$`));
+  });
+
+  it("camelCase 3 語以上は頭一語＋フィラー＋末尾一語", () => {
+    expect(abbrevCode("ttsAutoReadMirror")).toMatch(new RegExp(`^tts ${F} Mirror$`));
+  });
+
+  it("区切り記号の語も同じ扱い（ファイル名・パス）", () => {
+    expect(abbrevCode("run-dev.sh")).toMatch(new RegExp(`^run ${F} sh$`));
+    expect(abbrevCode("console/src/features/mirror/turnTts.ts")).toMatch(new RegExp(`^console ${F} ts$`));
+  });
+
+  it("そのまま読むもの: 短い・純粋な 1 単語・空白入り・日本語入り", () => {
+    expect(abbrevCode("main")).toBe("main");
+    expect(abbrevCode("EC2")).toBe("EC2");
+    expect(abbrevCode("vitest")).toBe("vitest");
+    expect(abbrevCode("git push origin main")).toBe("git push origin main");
+    expect(abbrevCode("「読み上げ」タブ")).toBe("「読み上げ」タブ");
+  });
+
+  it("ユーザー辞書に掛かるトークンは触らない（辞書優先）", () => {
+    const d = parseUserDict("e79853e=れいのコミット");
+    expect(abbrevCode("e79853e", d)).toBe("e79853e");
+  });
+
+  it("plainify に組み込み（code 指定時のみ効く）", () => {
+    expect(plainify("コミット `e79853e` を見て", { abbrev: true, dict: [] })).toMatch(
+      new RegExp(`^コミット e7 ${F} を見て$`),
+    );
+    expect(plainify("コミット `e79853e` を見て")).toBe("コミット e79853e を見て");
+    expect(plainify("`e79853e` は", { abbrev: false, dict: [] })).toBe("e79853e は");
   });
 });
 

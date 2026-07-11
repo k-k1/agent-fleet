@@ -2,7 +2,7 @@
 // ttsText の plainify のみ）。**原文の改行・行頭スペースを保持**しつつ、**なろう形式のルビ**を
 // 解釈して表示用セグメントに割り、読み上げ用テキスト（ルビは読みを採用）を作る。
 // カラオケ・ハイライトの単位＝「行内は文（句点区切り）、行末で区切り」。node の vitest でテスト可。
-import { plainify } from "../chat/ttsText.ts";
+import { plainify, type CodeReadOpts } from "../chat/ttsText.ts";
 
 // RubySeg は表示の 1 かたまり。ruby があれば <ruby>base<rt>ruby</rt></ruby>、無ければ素の base。
 // base には空白・改行をそのまま含める（原文忠実表示のため）。
@@ -110,7 +110,8 @@ function spokenOf(s: RubySeg): string {
 
 // buildReadUnits は本文を「行内は文、行末で区切り」の ReadUnit 列へ。原文の改行・行頭スペース・
 // ルビはすべて表示側（segs）に保持する。Markdown のコードフェンス内は表示するが読み上げない。
-export function buildReadUnits(content: string, isMarkdown: boolean): ReadUnit[] {
+// code を渡すとインラインコード（`…`）を省略読みにする（plainify に伝搬。表示は原文のまま）。
+export function buildReadUnits(content: string, isMarkdown: boolean, code?: CodeReadOpts): ReadUnit[] {
   const units: ReadUnit[] = [];
   const lines = content.split("\n");
   let inFence = false;
@@ -138,7 +139,7 @@ export function buildReadUnits(content: string, isMarkdown: boolean): ReadUnit[]
       const disp = cur;
       cur = [];
       const raw = skipSpoken ? "" : disp.map(spokenOf).join("");
-      let spoken = raw ? plainify(raw).trim() : "";
+      let spoken = raw ? plainify(raw, code).trim() : "";
       if (spoken && !hasSpeakable(spoken)) spoken = ""; // 記号だけ（＊/◇/--- 等の区切り）は読まない
       units.push({ segs: disp, spoken });
     };

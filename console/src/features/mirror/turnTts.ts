@@ -8,7 +8,8 @@
 // ターンは完結してから届く（ポーリング）ので、抽出は読み上げ開始時の 1 回で安定する。
 
 import { startNarration } from "../chat/tts.ts";
-import { splitSentences } from "../chat/ttsText.ts";
+import { splitSentences, abbrevCode, parseUserDict, type CodeReadOpts } from "../chat/ttsText.ts";
+import { getSettings } from "../../lib/settings.ts";
 
 // 読み上げ対象のリーフブロック。ul/ol は li 単位（入れ子リストは別ブロック）、blockquote は
 // 中の段落へ降りる。pre / table / hr / mermaid（div）などはスキップ。
@@ -43,12 +44,24 @@ function walkList(list: HTMLElement, out: HTMLElement[]): void {
 }
 
 // blockText はブロック自身の読み上げテキスト。li は入れ子リスト（別ブロックとして読む）と
-// コード・表・mermaid（div）を除いた自前のテキストだけを返す。
+// コードブロック・表・mermaid（div）を除いた自前のテキストだけを返す。インライン要素は
+// 再帰で降り、<code>（バッククォート由来）は省略読み（abbrevCode）を当てる — レンダ済み
+// DOM にはバッククォートが残っていないため、ここが plainify 相当の唯一の判定点。
 const EXCLUDE = new Set(["UL", "OL", "PRE", "TABLE", "DIV"]);
-function blockText(el: HTMLElement): string {
+function blockText(el: HTMLElement, code?: CodeReadOpts): string {
   let t = "";
   el.childNodes.forEach((n) => {
-    if (n.nodeType === Node.ELEMENT_NODE && EXCLUDE.has((n as HTMLElement).tagName)) return;
+    if (n.nodeType === Node.ELEMENT_NODE) {
+      const e = n as HTMLElement;
+      if (EXCLUDE.has(e.tagName)) return;
+      if (e.tagName === "CODE") {
+        const s = e.textContent ?? "";
+        t += code?.abbrev ? abbrevCode(s, code.dict) : s;
+        return;
+      }
+      t += blockText(e, code);
+      return;
+    }
     t += n.textContent ?? "";
   });
   return t;
@@ -83,12 +96,14 @@ export function readTurn(
   fromBlock: number,
   onEnd: (stopped: boolean) => void,
 ): TurnReadHandle | null {
+  const st = getSettings();
+  const code: CodeReadOpts = { abbrev: st.ttsAbbrevCode, dict: parseUserDict(st.ttsUserDict) };
   const blocks = collectBlocks(body);
   const texts: string[] = [];
   const blockOf: number[] = [];
   blocks.forEach((b, bi) => {
     if (bi < fromBlock) return;
-    for (const s of splitSentences(blockText(b))) {
+    for (const s of splitSentences(blockText(b, code))) {
       texts.push(s);
       blockOf.push(bi);
     }
