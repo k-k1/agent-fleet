@@ -9,6 +9,7 @@ import { useToast } from "../../ui/ToastProvider.tsx";
 import { kindLabel, kindClass, kindIcon } from "../../lib/sessionkind.ts";
 import { fmtGiB } from "../../lib/bytes.ts";
 import { stateInfo } from "../../lib/sessionview.ts";
+import { setTenantDict } from "../chat/ttsDict.ts";
 
 // Admin API shapes (only the fields the UI reads; server responses may carry more).
 interface Tenant {
@@ -667,9 +668,14 @@ function EgressView() {
 // 常駐 docker 等）ではトグルはルーティングの有効/無効のみ。
 
 function TtsAdminView() {
-  const [data, setData] = useState<any | null>(null); // { managed, enabled, engine, polly }
+  const [data, setData] = useState<any | null>(null); // { managed, enabled, engine, polly, dict }
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
+  // テナント共通の読み仮名辞書（全ユーザーの読み上げに適用。ユーザー辞書が同表記を上書き）。
+  // dict=編集中の値（null=未ロード）、savedDict=サーバ側の値（dirty 判定用）。
+  const [dict, setDict] = useState<string | null>(null);
+  const [savedDict, setSavedDict] = useState("");
+  const [dictBusy, setDictBusy] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -680,6 +686,9 @@ function TtsAdminView() {
       }
       setErr("");
       setData(d);
+      const dv = typeof d.dict === "string" ? d.dict : "";
+      setSavedDict(dv);
+      setDict((cur) => (cur === null ? dv : cur)); // 編集中の入力はポーリングで潰さない
     } catch {
       setErr("読み込めません");
     }
@@ -702,6 +711,24 @@ function TtsAdminView() {
       else setData(d);
     } finally {
       setBusy(false);
+    }
+  };
+
+  const saveDict = async () => {
+    if (dict === null) return;
+    setDictBusy(true);
+    try {
+      const d = await apiJSON("api/admin/tts/dict", "PUT", { dict });
+      if (d?.error) {
+        setErr(errText(d.error));
+        return;
+      }
+      setErr("");
+      setData(d);
+      setSavedDict(dict);
+      setTenantDict(dict); // 自分のブラウザの読み上げにも即反映（他ユーザーは次回ロードから）
+    } finally {
+      setDictBusy(false);
     }
   };
 
@@ -766,6 +793,33 @@ function TtsAdminView() {
         <p className="muted">
           無効にすると、AWS では ECS の desired count を 0 にしてエンジンを停止します（停止中コスト 0）。
           読み上げ自体はユーザー設定（音声読み上げ）側で ON/OFF します。
+        </p>
+      </section>
+      <section className="admin-panel">
+        <div className="usage-toolbar">
+          <span>テナント共通の読み仮名辞書</span>
+          <button
+            type="button"
+            className="btn primary"
+            disabled={dictBusy || dict === null || dict === savedDict}
+            onClick={saveDict}
+          >
+            {dictBusy ? "保存中…" : "保存"}
+          </button>
+        </div>
+        <textarea
+          className="ds-userdict"
+          value={dict ?? ""}
+          onChange={(e) => setDict(e.target.value)}
+          rows={8}
+          spellCheck={false}
+          disabled={dict === null}
+          placeholder={"表記=読み（1行に1件）\n例）agent-fleet=エージェントフリート\n# コメント行"}
+        />
+        <p className="muted">
+          全ユーザーの読み上げに適用される共通辞書です（1 行に 1 件「表記=読み」、# 始まりはコメント）。
+          各ユーザーが設定（読み上げタブ）の読み仮名辞書に同じ表記を持つ場合は、そのユーザーの指定が
+          優先されます。保存後、他のユーザーには Console の次回ロードから反映されます。
         </p>
       </section>
     </div>

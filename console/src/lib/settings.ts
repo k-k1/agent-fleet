@@ -160,8 +160,38 @@ export interface Settings {
   // 朗読する（features/mirror/turnTts.ts）。見ていないセッションの短い告知 ttsSessionNotify
   // とは相補（こちらは見ている画面の本文を読む）。
   ttsAutoReadMirror: boolean;
+  // 自動読み上げをアクティブなペインだけでなく「開いている全ペイン」で行う（ttsAutoReadMirror
+  // のサブオプション）。各ペインの新着回答は 1 本の再生に直列で並ぶ。同じセッションを複数
+  // ペインで開いていても読むのは 1 ペインだけ（features/mirror/turnTts.ts の担当登録）。
+  // セッションごとの声（ttsVoicePerSession）と併用すると、どのペインの回答かを声で判別できる。
+  ttsAutoReadAllPanes: boolean;
+  // セッションごとに声を変える（features/chat/tts.ts の sessionVoiceOpts）。セッション名の
+  // ハッシュで話者プール（VOICEVOX 標準キャラ / Polly 3 声）から決定的に割り当て、ミラーの
+  // 読み上げとセッション音声通知に適用（どのセッションの回答かを声で判別できる）。
+  // チャットタブ・朗読ビューは選択した話者のまま。
+  ttsVoicePerSession: boolean;
+  // ミラー（チャット）: アクティブなペインのセッションが確認待ち（AskUserQuestion／
+  // プラン承認／許可要求）になったら、質問文と選択肢を読み上げる。選択肢は表示ラベルで
+  // なく説明文（ツールチップの中身）を優先して読む（features/chat/ttsText.ts の pendingSpeech）。
+  ttsReadPending: boolean;
+  // ミラーの自動読み上げで、長い回答（目安 500 字超）はアシスタント（headless CLI）に
+  // 2 文へ要約させてそれを読む（features/mirror/MirrorView.tsx）。フル本文はターンの
+  // 読み上げボタンでいつでも聞ける。生成失敗・タイムアウトは全文読みにフォールバック。
+  ttsSummaryRead: boolean;
+  // 文の内容で感情スタイルを切り替える（features/chat/tts.ts の emotionOpts）。エラー・
+  // 失敗系の文はツンツン系、成功・完了系はあまあま系スタイルで読む。スタイル variant を
+  // 持つ話者（ずんだもん・四国めたん・九州そら）のときだけ効く。
+  ttsEmotion: boolean;
+  // インラインコード（`…`）を省略して読む（features/chat/ttsText.ts の abbrevCode）。
+  // ハッシュ等は頭 2 文字＋フィラー語（なんとか 等）、camelCase/パスは頭一語＋フィラー
+  // （3 語以上は＋末尾一語）。短い語・空白入り・日本語入り・読み仮名辞書に掛かる表記はそのまま。
+  ttsAbbrevCode: boolean;
   // 朗読ビュー（docs/24）を縦書きで表示するか（既定 false=横書き）。ReaderView のトグルに追随。
   readerVertical: boolean;
+  // 朗読ビューの声。"" = 設定の話者のまま / "vv:<speaker>" = VOICEVOX のキャラ /
+  // "polly:<VoiceId>" = Polly。ReaderView ヘッダーの選択に追随（features/chat/tts.ts の
+  // voiceChoiceOpts が TtsOptions の上書きへ解決する）。
+  readerVoice: string;
 }
 
 // The pinned fallback model. Used as the seeded global default and as resolveModel's
@@ -203,7 +233,14 @@ const DEFAULTS: Settings = {
   ttsUserDict: "",
   ttsCacheSec: 300,
   ttsAutoReadMirror: false,
+  ttsAutoReadAllPanes: false,
+  ttsVoicePerSession: false,
+  ttsEmotion: false,
+  ttsReadPending: false,
+  ttsSummaryRead: false,
+  ttsAbbrevCode: true,
   readerVertical: false,
+  readerVoice: "",
 };
 
 // VOICEVOX ずんだもんのスタイル（speaker 番号 → ラベル）。設定 UI の話者選択に使う。

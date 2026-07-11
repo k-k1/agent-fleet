@@ -955,3 +955,15 @@
 .reader-vtoggle .codicon {
   font-size: 13px;
 }
+/* ヘッダーの声セレクト（"" = 設定の話者）。ボタン群と同じ高さ感の小型 select。 */
+.reader-voice {
+  font-size: 12px;
+  padding: 2px 4px;
+  color: var(--fg);
+  background: var(--panel2, var(--panel));
+  border: 1px solid var(--btn-border, var(--border));
+  border-radius: 4px;
+}
+.reader-voice:disabled {
+  opacity: 0.5;
+}
