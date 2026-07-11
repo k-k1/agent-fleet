@@ -147,6 +147,16 @@ var ttsProviders = map[string]ttsProvider{ "voicevox": ..., "polly": ... }
   リテラル置換で適用（英語/日本語/記号どれでも。enkana の ON/OFF に依らず先に当たる）。
   クライアント完結（`ttsText.ts` の `parseUserDict`/`applyUserDict`、`tts.ts` の `submit` で適用）。
 
+**テナント共通辞書（2026-07-11）**: ユーザー辞書と同じ書式の共通辞書を管理者が置ける。
+保存先は CP の SettingsStore（キー `tts_dict`、`tts_engine` と同じ deployment-wide 流儀）。
+編集＝管理モーダル「読み上げ」パネルの専用エディタ（super_admin、`PUT /api/admin/tts/dict`、
+監査 `tts.dict`）。配布＝全ユーザーが `GET /api/tts/dict` で取得（`features/chat/ttsDict.ts` が
+起動時に取得してキャッシュ、`effectiveDict()` がユーザー辞書と**マージ**して返す）。
+**同じ表記はユーザー辞書が勝つ**（上書き。読みを空にした読み飛ばし上書きも可）。マージは
+純関数 `mergeDicts`（`ttsText.ts`・表記長降順を維持・テスト有り）。適用は全読み上げ経路
+（チャット/announce/朗読/ミラー）と abbrevCode の辞書優先判定に共通で効く。CP は配るだけで
+合成ハンドラは触らない。
+
 VOICEVOX エンジンの URL は**ユーザー設定ではなく CP config**（`AF_VOICEVOX_URL`, デプロイ管理）。
 
 ## デプロイ形態

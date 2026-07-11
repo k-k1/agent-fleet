@@ -14,7 +14,7 @@ import FileIcon from "../../ui/FileIcon.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { useSettings, setSetting } from "../../lib/settings.ts";
 import { startNarration, type NarrationHandle } from "../chat/tts.ts";
-import { parseUserDict } from "../chat/ttsText.ts";
+import { effectiveDict } from "../chat/ttsDict.ts";
 import { buildReadUnits } from "./readerText.ts";
 
 interface FileData {
@@ -61,9 +61,10 @@ export function ReaderView({ filePath }: { filePath: string }) {
   const isText = !!data && !data.binary && typeof data.content === "string";
   const isMarkdown = isText && langFor(filePath) === "markdown";
   // 原文忠実（改行・行頭スペース保持）＋なろう形式ルビの表示単位。インラインコードの
-  // 省略読み（abbrevCode）は読み上げテキスト側にだけ効く（表示は原文のまま）。
+  // 省略読み（abbrevCode）は読み上げテキスト側にだけ効く（表示は原文のまま）。辞書は
+  // ユーザー＋テナント共通の合成（ユーザー優先）。
   const codeOpts = useMemo(
-    () => ({ abbrev: settings.ttsAbbrevCode, dict: parseUserDict(settings.ttsUserDict) }),
+    () => ({ abbrev: settings.ttsAbbrevCode, dict: effectiveDict() }),
     [settings.ttsAbbrevCode, settings.ttsUserDict],
   );
   const units = useMemo(

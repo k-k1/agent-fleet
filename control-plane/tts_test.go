@@ -275,3 +275,47 @@ func TestTTSAdminToggleSetting(t *testing.T) {
 		t.Errorf("synthesize with engine off = %d, want 200 (last-resort voicevox)", rec.Code)
 	}
 }
+
+// テナント共通の読み仮名辞書: setting に置いた値が GET /api/tts/dict（全ユーザー用）で
+// 読めること（PUT /api/admin/tts/dict は super_admin 認証が要るため store 経由で書く。
+// admin トグルのテストと同じ流儀）。store 無し構成では空文字が返る。
+func TestTTSDict(t *testing.T) {
+	clearTTSEnv(t)
+
+	// store 無し（テスト構成）→ 空の辞書。
+	mux := http.NewServeMux()
+	registerTTSRoutes(mux, config{voicevoxURL: "http://127.0.0.1:1"})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/tts/dict", nil))
+	var got struct{ Dict string }
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("dict body: %v", err)
+	}
+	if got.Dict != "" {
+		t.Errorf("dict without store = %q, want empty", got.Dict)
+	}
+
+	// store あり → setting の中身がそのまま返る。
+	store, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer store.Close()
+	if err := store.migrate(t.Context()); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	const dict = "GPT-4=ジーピーティーフォー\n# コメント\nk-k1=ケーケーワン"
+	if err := store.SetSetting(t.Context(), ttsDictSetting, dict); err != nil {
+		t.Fatalf("set setting: %v", err)
+	}
+	mux = http.NewServeMux()
+	registerTTSRoutes(mux, config{voicevoxURL: "http://127.0.0.1:1", mgr: &manager{store: store}})
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/tts/dict", nil))
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("dict body: %v", err)
+	}
+	if got.Dict != dict {
+		t.Errorf("dict = %q, want %q", got.Dict, dict)
+	}
+}
