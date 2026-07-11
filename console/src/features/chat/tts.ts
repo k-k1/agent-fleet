@@ -12,7 +12,15 @@
 import { rel } from "../../core/api/client.ts";
 import { getSettings } from "../../lib/settings.ts";
 import { useTtsStore } from "../../core/store/tts.ts";
-import { plainify, plainifyStreaming, firstChunkCut, applyReadings, emotionOf, startsBlock } from "./ttsText.ts";
+import {
+  plainify,
+  plainifyStreaming,
+  firstChunkCut,
+  applyReadings,
+  splitLongSentence,
+  emotionOf,
+  startsBlock,
+} from "./ttsText.ts";
 import { effectiveDict } from "./ttsDict.ts";
 import { makeAudioLru } from "./ttsCache.ts";
 import { speakersCatalog, type Speaker, type SpeakerStyle } from "./ttsSpeakers.ts";
@@ -510,9 +518,14 @@ export function startTts(opts: TtsOptions, source = "", onEnd?: (reason: "done" 
     // 読みの整形: ユーザー/テナント辞書 → 組み込み読み補正 → 助詞の小休止（enkana は CP 側で後段）。
     t = applyReadings(t, userDict, getSettings().ttsParticlePause);
     if (!t) return;
-    gaps.set(seq, gap);
-    if (pre) preGaps.set(seq, BLOCK_BEAT); // リスト・見出し等の頭 → 読む前に一拍
-    jobs.push({ seq: seq++, text: t });
+    // 長い 1 文は合成用に分割（1 回の合成が重いと先読みが息切れして無音になる）。途中の片は
+    // 読点相当に詰め、本来の間は最後の片の後だけ。前拍（ブロック頭）は先頭の片だけ。
+    const pieces = splitLongSentence(t);
+    for (let i = 0; i < pieces.length; i++) {
+      gaps.set(seq, i === pieces.length - 1 ? gap : CLAUSE_GAP);
+      if (pre && i === 0) preGaps.set(seq, BLOCK_BEAT); // リスト・見出し等の頭 → 読む前に一拍
+      jobs.push({ seq: seq++, text: pieces[i] });
+    }
     if (!startedAudio) useTtsStore.getState().setPreparing(true); // 最初の音まで「生成中」
     startedAudio = true;
     pump();
@@ -811,35 +824,47 @@ export function startNarration(
       if (on) st.setActive(adapter, a.source, voiceCharName(aopts));
       else st.setActive(adapter, source, voiceCharName(opts));
     };
+    // 長い告知（要約など）も合成用に分割して順に鳴らす（1 回の合成が重いと無音の待ちになる）。
+    const pieces = splitLongSentence(t);
+    let pi = 0;
     playing = true; // 合成待ちの間も次ユニットの再生開始と maybeDone を抑える
-    const ac = new AbortController();
-    acs.add(ac);
-    void synthToBuffer(ctx!, t, emotionOpts(t, aopts), ac.signal).then((ab) => {
-      acs.delete(ac);
-      playing = false;
+    const playNext = () => {
       if (stopped) return;
-      if (!ab) {
-        tryPlay();
-        return;
-      }
-      playing = true;
-      label(true);
-      const src = ctx!.createBufferSource();
-      src.buffer = ab;
-      src.connect(ctx!.destination);
-      src.onended = () => {
+      if (pi >= pieces.length) {
         playing = false;
-        cur = null;
         label(false);
-        if (stopped) return;
         tryPlay();
         maybeDone();
-      };
-      cur = src;
-      src.start(ctx!.currentTime + 0.15); // 朗読との切れ目に小さな間
-      useTtsStore.getState().setSpeaking(true);
-      useTtsStore.getState().setPreparing(false);
-    });
+        return;
+      }
+      const piece = pieces[pi++];
+      const ac = new AbortController();
+      acs.add(ac);
+      void synthToBuffer(ctx!, piece, emotionOpts(piece, aopts), ac.signal).then((ab) => {
+        acs.delete(ac);
+        if (stopped) {
+          playing = false;
+          return;
+        }
+        if (!ab) {
+          playNext(); // 失敗した片は飛ばして次へ
+          return;
+        }
+        label(true);
+        const src = ctx!.createBufferSource();
+        src.buffer = ab;
+        src.connect(ctx!.destination);
+        src.onended = () => {
+          cur = null;
+          playNext();
+        };
+        cur = src;
+        src.start(ctx!.currentTime + (pi === 1 ? 0.15 : 0)); // 朗読との切れ目に小さな間（先頭の片のみ）
+        useTtsStore.getState().setSpeaking(true);
+        useTtsStore.getState().setPreparing(false);
+      });
+    };
+    playNext();
   };
 
   // 連番順に再生。空/失敗 unit は飛ばし、次に再生開始した unit を onUnit で通知。
