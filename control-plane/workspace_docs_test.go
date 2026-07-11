@@ -49,8 +49,8 @@ func TestStageWorkspaceDocs_RoleScoping(t *testing.T) {
 	t.Setenv("AF_DOCS_DIR", src)
 
 	cases := []struct {
-		role      string
-		wantHave  []string
+		role       string
+		wantHave   []string
 		wantAbsent []string
 	}{
 		{
