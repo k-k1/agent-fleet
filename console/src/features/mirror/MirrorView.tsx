@@ -85,7 +85,8 @@ interface Turn {
   parts?: Part[];
   sidechain?: boolean;
   compact?: boolean;
-  bash?: boolean; // a `!`-run shell command block (coalesceBash), rendered as a terminal block
+  bash?: boolean; // a `!`-run shell command block (coalesceUserActions), rendered as a terminal block
+  cmd?: boolean; // a `/`-run slash command / skill invocation, rendered as a compact chip
   model?: string;
   effort?: string;
   ctxWindow?: number;
@@ -101,6 +102,7 @@ interface Group {
   sidechain: boolean;
   compact: boolean;
   bash: boolean; // a `!` shell-command block — render as a terminal block, never merged
+  cmd: boolean; // a `/` slash-command / skill chip — standalone, never merged
   parts: Part[];
   text: string;
   model: string;
@@ -1284,7 +1286,7 @@ export function MirrorView({
     queued: true,
   }));
   const extras = [...queuedTurns, ...echoTurns];
-  const baseTurns = coalesceBash(turns);
+  const baseTurns = coalesceUserActions(turns);
   const groups = groupTurns(extras.length ? [...baseTurns, ...extras] : baseTurns);
 
   // 新しい回答の自動読み上げ（P2）: ポーリングで append された新規 assistant ターンを
@@ -1821,27 +1823,50 @@ function parseBashOutput(t: Turn): { stdout: string; stderr: string } | null {
   return { stdout: out ? out[1] : "", stderr: err ? err[1] : "" };
 }
 
-// coalesceBash folds each `<bash-input>` user turn (plus the paired `<bash-stdout>` turn that
-// immediately follows) into one synthetic bash turn carrying a kind="bash" part. groupTurns
-// then keeps it as its own standalone block (never merged into an adjacent prompt), and the
-// user branch renders it as a terminal block. Untouched turns pass through as-is; an orphan
-// output turn (no preceding input) stays and is dropped by isNoise as before.
-function coalesceBash(turns: Turn[]): Turn[] {
+// A `/`-run slash command or skill is logged as a user turn
+// `<command-name>/foo</command-name><command-message>…</command-message><command-args>…</command-args>`.
+// It's hidden by isNoise; parseCommand recovers the name + args so it can surface as a chip.
+function parseCommand(t: Turn): { name: string; args: string } | null {
+  if (t.role !== "user") return null;
+  const s = (t.text || "").replace(/^\s+/, "");
+  if (!s.startsWith("<command-name>")) return null;
+  const name = s.match(/<command-name>([\s\S]*?)<\/command-name>/);
+  if (!name || !name[1].trim()) return null;
+  const args = s.match(/<command-args>([\s\S]*?)<\/command-args>/);
+  return { name: name[1].trim(), args: args ? args[1].trim() : "" };
+}
+
+// coalesceUserActions surfaces user actions that Claude logs as system-tagged user turns and
+// isNoise would otherwise drop: a `!` shell command (`<bash-input>` + the paired `<bash-stdout>`
+// result turn) becomes a kind="bash" terminal block; a `/` slash command / skill invocation
+// (`<command-name>`) becomes a kind="cmd" chip. groupTurns keeps each as its own standalone
+// block. Untouched turns pass through; an orphan bash-output turn stays and is dropped by isNoise.
+function coalesceUserActions(turns: Turn[]): Turn[] {
   const out: Turn[] = [];
   for (let i = 0; i < turns.length; i++) {
-    const cmd = parseBashInput(turns[i]);
-    if (cmd === null) {
-      out.push(turns[i]);
+    const shell = parseBashInput(turns[i]);
+    if (shell !== null) {
+      const paired = i + 1 < turns.length ? parseBashOutput(turns[i + 1]) : null;
+      if (paired) i++; // consume the result turn
+      out.push({
+        ...turns[i - (paired ? 1 : 0)],
+        bash: true,
+        text: "$ " + shell, // plain form used for copy
+        parts: [{ kind: "bash", text: shell, output: paired?.stdout || "", stderr: paired?.stderr || "" }],
+      });
       continue;
     }
-    const paired = i + 1 < turns.length ? parseBashOutput(turns[i + 1]) : null;
-    if (paired) i++; // consume the result turn
-    out.push({
-      ...turns[i - (paired ? 1 : 0)],
-      bash: true,
-      text: "$ " + cmd, // plain form used for copy
-      parts: [{ kind: "bash", text: cmd, output: paired?.stdout || "", stderr: paired?.stderr || "" }],
-    });
+    const slash = parseCommand(turns[i]);
+    if (slash) {
+      out.push({
+        ...turns[i],
+        cmd: true,
+        text: slash.name + (slash.args ? " " + slash.args : ""), // plain form used for copy
+        parts: [{ kind: "cmd", text: slash.name, info: slash.args }],
+      });
+      continue;
+    }
+    out.push(turns[i]);
   }
   return out;
 }
@@ -1881,8 +1906,8 @@ function groupTurns(turns: Turn[]): Group[] {
     const last = out[out.length - 1];
     // A compaction summary is its own standalone block — never merge it into an
     // adjacent user turn (nor merge a normal turn into it).
-    // A compaction summary and a `!` bash-command block are each standalone — never
-    // merged into an adjacent turn (nor a normal turn into them).
+    // A compaction summary, a `!` bash-command block, and a `/` command chip are each
+    // standalone — never merged into an adjacent turn (nor a normal turn into them).
     if (
       last &&
       last.role === t.role &&
@@ -1890,7 +1915,9 @@ function groupTurns(turns: Turn[]): Group[] {
       !last.compact &&
       !t.compact &&
       !last.bash &&
-      !t.bash
+      !t.bash &&
+      !last.cmd &&
+      !t.cmd
     ) {
       last.parts.push(...parts);
       if (t.pending) last.pending = true;
@@ -1911,6 +1938,7 @@ function groupTurns(turns: Turn[]): Group[] {
         sidechain: !!t.sidechain,
         compact: !!t.compact,
         bash: !!t.bash,
+        cmd: !!t.cmd,
         parts: [...parts],
         text: t.text || "",
         model: t.model || "",
@@ -2177,6 +2205,19 @@ function BashBlock({ command, stdout, stderr }: { command?: string; stdout?: str
   );
 }
 
+// CmdChip renders a `/`-run slash command / skill invocation as a compact chip — the
+// command name with its arguments — marking that the user triggered it. The command's
+// effect (a skill's work) shows as the following turns; builtins' terminal feedback stays hidden.
+function CmdChip({ name, args }: { name?: string; args?: string }) {
+  return (
+    <div className="mt-cmd">
+      <Icon name="play" />
+      <code className="mt-cmd-name">{name}</code>
+      {args && <span className="mt-cmd-args">{args}</span>}
+    </div>
+  );
+}
+
 // ContextLine marks the git branch / working dir in effect from here on.
 function ContextLine({ branch, cwd }: { branch?: string; cwd?: string }) {
   return (
@@ -2254,11 +2295,14 @@ function Turn({
       </div>
       <div className="mirror-turn-body" ref={bodyEl}>
         {isUser && turn.bash ? (
-          // A `!`-run shell command (coalesceBash): render each as a terminal block with
-          // the command line and its collapsed output, rather than hiding it as noise.
+          // A `!`-run shell command (coalesceUserActions): render each as a terminal block
+          // with the command line and its collapsed output, rather than hiding it as noise.
           turn.parts.map((p, i) => (
             <BashBlock key={i} command={p.text} stdout={p.output} stderr={p.stderr} />
           ))
+        ) : isUser && turn.cmd ? (
+          // A `/`-run slash command / skill invocation: a compact chip marking the action.
+          turn.parts.map((p, i) => <CmdChip key={i} name={p.text} args={p.info} />)
         ) : isUser ? (
           (() => {
             // Split off any pasted-image references so the bubble shows the user's words

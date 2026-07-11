@@ -1205,6 +1205,41 @@ button.mt-bash-toggle:hover {
   color: var(--danger, #e5534b);
 }
 
+/* A `/`-run slash command / skill invocation (CmdChip): a compact inline chip — the
+   command name (monospace, accent) with any arguments — marking a user action. */
+.mt-cmd {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  margin: 0.2em 0;
+  padding: 2px 9px;
+  border: 1px solid color-mix(in srgb, var(--chat-accent) 35%, var(--border));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--chat-accent) 8%, var(--bg));
+  font-size: 12px;
+  line-height: 1.5;
+  max-width: 100%;
+}
+.mt-cmd .codicon {
+  font-size: 11px;
+  align-self: center;
+  color: color-mix(in srgb, var(--chat-accent) 75%, var(--fg));
+}
+.mt-cmd-name {
+  font-family: var(--viewer-font, var(--mono));
+  font-weight: 600;
+  color: color-mix(in srgb, var(--chat-accent) 80%, var(--fg));
+  white-space: nowrap;
+}
+.mt-cmd-args {
+  font-family: var(--viewer-font, var(--mono));
+  opacity: 0.75;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
 /* AskUserQuestion: a prominent, answerable block (not a faint trace). */
 .mt-question {
   margin: 0.5em 0;
