@@ -6,7 +6,7 @@
 #       Go（host）。ブラウザで http://localhost:8099 を開く。
 #
 # claude / opencode / codex はイメージに焼き込み（Dockerfile の ARG でピン止め）。
-# 版の bump 手順は docs/dev/10-development.md §10.2。
+# 版の bump 手順（runbook）は docs/dev/10-development.md §10.2.1。
 #
 # 例:
 #   deploy/local/run-dev.sh

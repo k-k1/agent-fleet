@@ -26,10 +26,49 @@ bind mount で永続し、イメージ更新の影響を受けない。
 | Console（`console/src`）| `vite build`（watch 可）→ ブラウザ**リロードのみ**（CP は dist を no-store 配信・CP 再起動不要）|
 | CP の Go | CP を再ビルドして再起動（`restart-cp.sh`）。イメージ再ビルド不要 |
 | Agent の Go / イメージ焼き込み | イメージ再ビルド → 稼働中 Workspace は**利用者が Console で Stop→Start**（CP からの強制入替はしない）|
-| 焼き込み CLI（claude / opencode / codex）の版 | `npm view <pkg> version` で latest を確認 → Dockerfile の `ARG CLAUDE_CODE_VERSION` / `OPENCODE_VERSION` / `CODEX_VERSION` を bump → イメージ再ビルド → Stop→Start。ARG 変更がキャッシュを破るので `--no-cache` 不要。版一致はビルド直後の `e2e-smoke.sh` が自動検証 |
+| 焼き込み CLI（claude / opencode / codex）の版 | **§10.2.1 の runbook に従う**（ARG bump → push → CI 検証 → run-dev.sh → Stop→Start）|
 | rtk の版 | `run-dev.sh` が起動時に `update-rtk.sh` で rtk-ai/rtk の最新を自動取得・vendor する（既に最新なら no-op、オフライン時は現状維持）→ Stop→Start。自動更新を止めるなら `WS_RTK_UPDATE=0`。手動更新は `deploy/local/update-rtk.sh`、版確認は `--check` |
 | entrypoint が適用する類（設定 seed・TZ 等）| Stop→Start のみ（再ビルド不要）|
 | 共有 JVM | 共有 dir を消して再 provision（`deploy/local/provision-jvm.sh`）|
+
+### 10.2.1 焼き込みツールの版上げ runbook（定型運用）
+
+CLI 3 種（claude / opencode / codex）・gh・Go の版を上げるときは、この手順どおりに進める。
+背景: 版未指定の `npm install -g` は Docker レイヤキャッシュに当たり「再ビルドしても
+上がらない」罠があったため ARG ピン化した経緯（[04 §4.9](04-workspace-agent.md)）。
+
+1. **latest 確認**
+   - CLI 3 種: `npm view @anthropic-ai/claude-code version`（`opencode-ai` / `@openai/codex` も同様）
+   - gh: [cli/cli の releases](https://github.com/cli/cli/releases) の最新
+   - Go: `workspace/agent/go.mod` の `go` ディレクティブと**歩調を合わせる**（go.mod を
+     上げないなら据え置く）。rtk は手動不要 — run-dev.sh が `update-rtk.sh` で自動更新。
+2. **ARG bump**: `workspace/Dockerfile` の `ARG CLAUDE_CODE_VERSION` / `OPENCODE_VERSION` /
+   `CODEX_VERSION`（/ `GH_VERSION` / `GO_VERSION`）を書き換える。ARG 変更が確実に
+   キャッシュを破るので `--no-cache` は不要。
+3. **commit & push**: 1 行 diff・日本語メッセージ
+   （例 `build(workspace): 焼き込み CLI を bump（claude X.Y.Z）`）。
+4. **CI green を確認**: push で `.github/workflows/e2e.yml` が発火し、イメージ build →
+   L1（**実版 = ピンの一致**・versions.json）→ L2（フリート疎通）→ L3（Console UI）を
+   自動検証する。`gh run watch $(gh run list --workflow e2e --limit 1 --json databaseId --jq '.[0].databaseId')`
+   で完走を見届ける。red のまま先へ進まない。
+5. **（大きめの版上げのみ）L4 実クレデンシャル・スモーク**: claude のメジャー更新や
+   認証・API まわりの変更が疑われるときは `gh workflow run e2e -f live=true`。
+   secret `E2E_CLAUDE_OAUTH_TOKEN`（`claude setup-token` で発行、Max/Pro 枠・追加課金なし）
+   使用。失効時（トークン再発行時）は setup-token をやり直して secret を更新する。
+6. **ホスト反映**: ホストで `deploy/local/run-dev.sh`。イメージ再ビルド直後に
+   `e2e-smoke.sh`（L1）が自動で走り、版一致を再検証する。rtk もこのとき自動更新される。
+   ⚠️ ホストはメモリ制約 — 重いビルドを並走させない（[HANDOFF §2](../HANDOFF.md)）。
+7. **Workspace 反映**: 各利用者が Console で **Stop→Start**（home は永続・repos は残る。
+   CP からの強制入替はしない）。
+8. **反映確認（任意）**: 再起動後のコンテナ内で
+   `EXPECT_… bash deploy/local/e2e-smoke.sh --inner`、または Console の
+   設定 → 環境「ツールのバージョン」（実効 / イメージ / ピン差分が見える）。
+
+補足:
+- **週次 cron**（e2e.yml、月曜 6:00 JST）がコード無変更でも上流 CLI / base image の破壊を
+  検出する。cron が red になったら上流変更起因を疑い、この runbook の 4〜5 で切り分ける。
+- 再ビルドせず特定メンバーだけ最新化したい場合は自己更新 opt-in
+  （AdminTab の `allow_agent_self_update` ＋ 設定 → 環境のトグル。Stop→Start で焼き込み版に戻る）。
 
 ## 10.3 起動スクリプトの責務（`deploy/local/`）
 
