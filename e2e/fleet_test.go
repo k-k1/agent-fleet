@@ -49,6 +49,21 @@ func TestFleet(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// GitHub ランナーなどホスト uid がコンテナの dev(uid 1000) と一致しない環境では、
+	// CP(=このプロセスの uid) が 0755 で作る home / claude-config がコンテナ内から
+	// 書けず、entrypoint（set -e）が落ちて Agent が healthz に到達しない。mount 先を
+	// 先に 0777 で掘っておく（既存 dir は CP の MkdirAll が素通し。uid 1000 のホスト
+	// では従来どおり無害）。パスは manager.rootedDataDir の既定テナント形
+	// <WS_DATA>/<user>/{home,claude-config}。
+	for _, d := range []string{"home", "claude-config"} {
+		p := filepath.Join(dataDir, devUser, d)
+		if err := os.MkdirAll(p, 0o777); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(p, 0o777); err != nil { // MkdirAll は umask に削られる
+			t.Fatal(err)
+		}
+	}
 
 	cpAddr := fmt.Sprintf("127.0.0.1:%d", freePort(t))
 	agentPort := freePort(t)
