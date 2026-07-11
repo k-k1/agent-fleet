@@ -12,7 +12,7 @@ import { api } from "../../core/api/client.ts";
 import { baseName, langFor } from "../../lib/filemeta.ts";
 import FileIcon from "../../ui/FileIcon.tsx";
 import { Icon } from "../../ui/Icon.tsx";
-import { useSettings, setSetting, readerFontStack } from "../../lib/settings.ts";
+import { useSettings, setSetting, READER_FONTS, readerFontStack } from "../../lib/settings.ts";
 import { startNarration, BLOCK_BEAT, SENT_BEAT, readerVoiceChoices, voiceChoiceOpts, type NarrationHandle } from "../chat/tts.ts";
 import { effectiveDict } from "../chat/ttsDict.ts";
 import { loadSpeakers } from "../chat/ttsSpeakers.ts";
@@ -315,6 +315,42 @@ export function ReaderView({ filePath }: { filePath: string }) {
             title={vertical ? "横書きに切り替え" : "縦書きに切り替え"}
           >
             <Icon name="book" /> {vertical ? "横書き" : "縦書き"}
+          </button>
+        </span>
+        <select
+          className="reader-voice reader-font"
+          value={settings.readerFont}
+          onChange={(e) => setSetting("readerFont", e.target.value)}
+          title="本文フォント"
+          style={{ fontFamily: readerFontStack(settings.readerFont) }}
+        >
+          {READER_FONTS.map((f) => (
+            <option key={f} value={f} style={{ fontFamily: readerFontStack(f) }}>
+              {f}
+            </option>
+          ))}
+        </select>
+        <span className="ui-seg sm md-toggle reader-size">
+          <button
+            type="button"
+            className="seg-btn"
+            onClick={() => setSetting("readerSize", Math.max(9, settings.readerSize - 1))}
+            disabled={settings.readerSize <= 9}
+            title="文字を小さく"
+          >
+            <Icon name="dash" />
+          </button>
+          <span className="seg-btn reader-size-val" title="本文の文字サイズ">
+            {settings.readerSize}
+          </span>
+          <button
+            type="button"
+            className="seg-btn"
+            onClick={() => setSetting("readerSize", Math.min(28, settings.readerSize + 1))}
+            disabled={settings.readerSize >= 28}
+            title="文字を大きく"
+          >
+            <Icon name="add" />
           </button>
         </span>
         <span className="fi-path muted" title={filePath}>
