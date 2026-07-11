@@ -12,6 +12,7 @@ import FileIcon from "../../ui/FileIcon.tsx";
 import { baseName } from "../../lib/filemeta.ts";
 import { MarkdownView } from "../viewer/MarkdownView.tsx";
 import { readTurn, collectBlocks, blockIndexAt, type TurnReadHandle } from "./turnTts.ts";
+import { sessionVoiceOpts } from "../chat/tts.ts";
 import { useTtsStore } from "../../core/store/tts.ts";
 import { MirrorToggle } from "./MirrorToggle.tsx";
 import { ContextBar } from "./ContextBar.tsx";
@@ -281,14 +282,20 @@ export function MirrorView({
   const ttsAutoDoneRef = useRef(new Map<number, number>());
   const ttsStart = (idx: number, body: HTMLElement, fromBlock = 0) => {
     ttsHandleRef.current?.stop(); // 自分の再生を先に止める（他の再生は startNarration が止める）
-    const h = readTurn(body, sessionMeta ? displayName(sessionMeta) : "セッション", fromBlock, (stopped) => {
-      ttsHandleRef.current = null;
-      setTtsReading((cur) => (cur?.idx === idx ? null : cur));
-      // 明示的な停止（TopBar・フッター・他の再生への置き換え）は自動読み上げキューも黙らせる。
-      // 自然終了なら待っていた次の回答を続けて読む。
-      if (stopped) ttsAutoQueueRef.current.length = 0;
-      else ttsAutoPumpRef.current();
-    });
+    const h = readTurn(
+      body,
+      sessionMeta ? displayName(sessionMeta) : "セッション",
+      fromBlock,
+      (stopped) => {
+        ttsHandleRef.current = null;
+        setTtsReading((cur) => (cur?.idx === idx ? null : cur));
+        // 明示的な停止（TopBar・フッター・他の再生への置き換え）は自動読み上げキューも黙らせる。
+        // 自然終了なら待っていた次の回答を続けて読む。
+        if (stopped) ttsAutoQueueRef.current.length = 0;
+        else ttsAutoPumpRef.current();
+      },
+      sessionVoiceOpts(session), // セッションごとの声（設定 OFF なら undefined）
+    );
     if (!h) return; // 読み上げられる本文が無い（ツールだけのターン等）
     ttsHandleRef.current = h;
     setTtsReading({ idx, paused: false });

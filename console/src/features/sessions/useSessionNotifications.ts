@@ -9,7 +9,7 @@ import { agentOf } from "../../agents/registry.ts";
 import { useLayoutStore } from "../../layout/store.ts";
 import { activePane } from "../../layout/ops.ts";
 import { getSettings } from "../../lib/settings.ts";
-import { announce } from "../chat/tts.ts";
+import { announce, sessionVoiceOpts } from "../chat/tts.ts";
 import { useSessionsStore } from "./store.ts";
 
 const notify = (title: string, body: string) => {
@@ -51,10 +51,12 @@ export function useSessionNotifications(): void {
         const speak = getSettings().ttsSessionNotify;
         if (s.state === "idle" && before === "working") {
           notify("回答が返ってきました", displayName(s));
-          if (speak) announce(`${displayName(s)} の回答が返りました。`, displayName(s));
+          // 声はセッション単位で固定（sessionVoiceOpts）。表示名でなくセッション名で引く
+          // （リネームで声が変わらないように）。
+          if (speak) announce(`${displayName(s)} の回答が返りました。`, displayName(s), sessionVoiceOpts(s.name));
         } else if (s.state === "question") {
           notify("質問が来ています", displayName(s));
-          if (speak) announce(`${displayName(s)} が確認を求めています。`, displayName(s));
+          if (speak) announce(`${displayName(s)} が確認を求めています。`, displayName(s), sessionVoiceOpts(s.name));
         }
       }
       prev[s.name] = s.state;

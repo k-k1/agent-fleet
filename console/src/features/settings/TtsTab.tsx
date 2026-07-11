@@ -54,6 +54,14 @@ export function TtsTab() {
                 />
               </Row>
             )}
+            <Row label="セッションごとに声を変える">
+              <OnOff value={s.ttsVoicePerSession} onChange={(v) => setSetting("ttsVoicePerSession", v)} />
+            </Row>
+            <p className="muted ds-note">
+              セッション名から話者（VOICEVOX 標準の 8 キャラ／Polly 3 声）を自動で割り当てます。
+              同じセッションは常に同じ声になり、複数セッションの読み上げ・音声通知を声で聞き分けられます。
+              アシスタント・チャットや朗読ビューは上で選んだ話者のままです。
+            </p>
             <Row label="読み上げ速度">
               <Choice value={s.ttsSpeed} options={TTS_SPEEDS} onChange={(v) => setSetting("ttsSpeed", v)} />
             </Row>

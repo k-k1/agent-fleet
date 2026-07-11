@@ -37,6 +37,41 @@ export function ttsOptsFromSettings(s = getSettings()): TtsOptions {
   };
 }
 
+// --- セッションごとの声（docs/24） ----------------------------------------------
+// 複数セッションの並行運用時に「どのセッションの回答か」を声で判別できるようにする。
+// セッション名のハッシュで話者プールから決定的に選ぶ（同じセッション名は常に同じ声）。
+// プールは VOICEVOX 標準エンジンの代表キャラ。感情スタイル（あまあま/ツンツン等）を持つ
+// キャラは variant も持たせておく（感情読み分け機能が使う）。Polly は JP 3 声で同様に。
+export interface VoiceProfile {
+  base: string; // ノーマルの speaker 番号
+  happy?: string; // 明るい系スタイル（あまあま等）
+  angry?: string; // とがった系スタイル（ツンツン等）
+}
+const SESSION_VOICES: VoiceProfile[] = [
+  { base: "3", happy: "1", angry: "7" }, // ずんだもん
+  { base: "2", happy: "0", angry: "6" }, // 四国めたん
+  { base: "8" }, // 春日部つむぎ
+  { base: "10" }, // 雨晴はう
+  { base: "9" }, // 波音リツ
+  { base: "14" }, // 冥鳴ひまり
+  { base: "16", happy: "15", angry: "18" }, // 九州そら
+  { base: "20" }, // もち子さん
+];
+const SESSION_POLLY_VOICES = ["Takumi", "Kazuha", "Tomoko"];
+
+// sessionVoiceOpts はセッション名から声の上書き（voice / pollyVoice）を返す。設定 OFF や
+// セッション名なしは undefined（= 選択中の話者のまま）。startTts / startNarration の
+// opts にスプレッドして使う。
+export function sessionVoiceOpts(session: string): Partial<TtsOptions> | undefined {
+  if (!session || !getSettings().ttsVoicePerSession) return undefined;
+  let h = 0;
+  for (const c of session) h = (h * 31 + c.codePointAt(0)!) >>> 0;
+  return {
+    voice: SESSION_VOICES[h % SESSION_VOICES.length].base,
+    pollyVoice: SESSION_POLLY_VOICES[h % SESSION_POLLY_VOICES.length],
+  };
+}
+
 // 同時に合成を投げる上限。長文で数十並列にしてエンジン/CP を溢れさせない。
 const MAX_INFLIGHT = 2;
 // チャンク間に挟む「間」（秒）。素材側の前後無音は CP が短縮している（audio_query の
@@ -331,13 +366,14 @@ export function startTts(opts: TtsOptions, source = "", onEnd?: (reason: "done" 
 // --- アナウンス直列キュー（docs/24 Tier1: バックグラウンドのセッション通知など） ------------
 // 短い告知を「1 本ずつ・割り込まず」読み上げる。何か再生中（チャット読み上げ等）なら終わるのを
 // 待ってから。溜まりすぎ（>4 件）は古いものから捨てる（席を外した間の洪水を防ぐ）。
-const announceQueue: { text: string; source: string }[] = [];
+const announceQueue: { text: string; source: string; voice?: Partial<TtsOptions> }[] = [];
 let announcing = false;
 
-export function announce(text: string, source = ""): void {
+// voice はセッションごとの声（sessionVoiceOpts）等の上書き。未指定は設定の話者。
+export function announce(text: string, source = "", voice?: Partial<TtsOptions>): void {
   const t = text.trim();
   if (!t) return;
-  announceQueue.push({ text: t, source });
+  announceQueue.push({ text: t, source, voice });
   while (announceQueue.length > 4) announceQueue.shift();
   pumpAnnounce();
 }
@@ -349,7 +385,7 @@ function pumpAnnounce(): void {
   if (!next) return;
   announcing = true;
   const c = startTts(
-    ttsOptsFromSettings(),
+    { ...ttsOptsFromSettings(), ...next.voice },
     next.source,
     (reason) => {
       announcing = false;
@@ -395,11 +431,13 @@ export function startNarration(
   // onUnit(i) = i 番目の unit の再生を開始。onUnit(null, reason) = 終了（done=自然終了 /
   // stopped=停止・他の再生への置き換え。ミラーの自動読み上げキューが継続可否の判断に使う）。
   onUnit: (i: number | null, endReason?: "done" | "stopped") => void,
+  // 声の上書き（セッションごとの声 sessionVoiceOpts 等）。未指定は設定の話者。
+  voice?: Partial<TtsOptions>,
 ): NarrationHandle {
   useTtsStore.getState().active?.stop(); // グローバル 1 本（既存の再生を止める）
   const ctx = audioCtx();
   const s = getSettings();
-  const opts = ttsOptsFromSettings(s);
+  const opts = { ...ttsOptsFromSettings(s), ...voice };
   const userDict = effectiveDict(); // ユーザー＋テナント共通辞書（ユーザー優先）
 
   // 各 unit を読み上げ用にクリーン化（Markdown 記法/URL 除去 + コード片の省略読み +
