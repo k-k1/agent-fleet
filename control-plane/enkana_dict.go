@@ -144,6 +144,13 @@ var techKana = map[string]string{
 	"trello":     "トレロ",
 	"asana":      "アサナ",
 	"linear":     "リニア",
+	"kintone":    "キントーン",
+	"nexmo":      "ネクスモ",
+	"sinch":      "シンチ",
+	"citic":      "シティック",
+	"softbank":   "ソフトバンク", // 全大文字 SOFTBANK は 5 字超で英字名読みルールから漏れるため明示
+	"rakuten":    "ラクテン",
+	"docomo":     "ドコモ",
 	"claude":     "クロード",
 	"chatgpt":    "チャットジーピーティー",
 	"openai":     "オープンエーアイ",
