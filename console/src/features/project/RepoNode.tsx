@@ -60,6 +60,18 @@ export function RepoNode({ r, childRepos, ctx, actions }: RepoNodeProps) {
   const reveal = useFilesStore((s) => s.reveal);
   const mine = sessionsInFolder(sessions, r.name);
   const node = usePersistedOpen(`af-proj-${r.name}`);
+  // Session tally for the repo row's badge: own folder while open (the rows are
+  // visible right below); the worktrees' sessions fold in while collapsed, so a
+  // folded project still shows what's running inside.
+  let sessAlive = mine.filter((s) => s.alive).length;
+  let sessTotal = mine.length;
+  if (!node.open && childRepos) {
+    for (const c of childRepos) {
+      const cs = sessionsInFolder(sessions, c.name);
+      sessAlive += cs.filter((s) => s.alive).length;
+      sessTotal += cs.length;
+    }
+  }
   // Files default COLLAPSED: a repo's whole tree expanded on load buried everything
   // below it. Open on demand (and auto-open on a reveal into this folder).
   const files = usePersistedOpen(`af-proj-${r.name}-files`, false);
@@ -91,7 +103,7 @@ export function RepoNode({ r, childRepos, ctx, actions }: RepoNodeProps) {
           <Icon name={node.open ? "chevron-down" : "chevron-right"} />
         </button>
         <ul className="sess-list proj-node-repo">
-          <RepoRowConnected r={r} ctx={ctx} onToggle={node.toggle} />
+          <RepoRowConnected r={r} ctx={ctx} onToggle={node.toggle} sess={{ alive: sessAlive, total: sessTotal }} />
         </ul>
       </div>
       {node.open && (

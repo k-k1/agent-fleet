@@ -267,9 +267,18 @@
   gap: 6px;
   min-width: 0;
 }
-.repo-name {
+/* Name + inline branch share the flexible slot; each ellipsizes on its own so a
+   long branch can't push the chips/badges off the row. */
+.repo-id {
   flex: 1;
   min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.repo-name {
+  flex: 0 1 auto;
+  min-width: 3em;
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -281,6 +290,16 @@
 .repo-name .codicon {
   color: var(--muted);
   flex: none;
+}
+/* Current branch, inline after a base clone's name (the old meta line is gone). */
+.repo-branch-inline {
+  flex: 0 1 auto;
+  min-width: 2em;
+  color: var(--muted);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .repo-state {
   flex: none;
@@ -319,43 +338,44 @@
 .repo-ords {
   padding: 0;
 }
-.repo-meta {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 3px;
-  min-width: 0;
-}
-.repo-branch {
-  flex: 1;
-  min-width: 0;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
+/* Session tally badge: how many sessions live in this working copy (and, while
+   the node is folded, in its worktrees too). Green ●n = alive; plain muted n =
+   stopped only. */
+.repo-sess-badge {
+  flex: none;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
   color: var(--muted);
-  font-size: 11px;
-}
-.repo-branch.worktree {
-  color: var(--accent);
-}
-.repo-branch-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0 6px;
   white-space: nowrap;
 }
-.repo-provider {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  color: var(--muted2);
-  font-size: 11px;
+.repo-sess-badge.run {
+  color: var(--ok);
+  border-color: color-mix(in srgb, var(--ok) 45%, transparent);
+  background: color-mix(in srgb, var(--ok) 10%, transparent);
 }
 
-/* 起動 split button + quick menu. */
+/* 起動 split button + quick menu. Hidden until the row is hovered / focused (or
+   its quick menu is open) so the right edge belongs to state badges; pointer-less
+   devices keep it always visible. */
 .launch-wrap {
   position: relative;
   flex: none;
+}
+@media (hover: hover) {
+  .repo-row .launch-wrap {
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.1s;
+  }
+  .repo-row:hover .launch-wrap,
+  .repo-row:focus-within .launch-wrap,
+  .repo-row .launch-wrap.open {
+    opacity: 1;
+    pointer-events: auto;
+  }
 }
 .launch-split {
   display: flex;
