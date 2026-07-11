@@ -9,13 +9,16 @@ import { SessionRow } from "../sessions/SessionRow.tsx";
 import { useReposStore } from "../repos/store.ts";
 import { useRepoRailContext } from "../repos/useRepoRail.ts";
 import { orphanSessions } from "../../lib/project.ts";
+import { useProjectFilter, normQuery, sessionMatches } from "./filter.ts";
 
 export function OtherSessionsSection() {
   const sessions = useSessionsStore((s) => s.sessions);
   const repos = useReposStore((s) => s.repos);
   const ctx = useRepoRailContext();
   const actions = useSessionActions();
-  const orphans = orphanSessions(sessions, repos);
+  const nq = normQuery(useProjectFilter((f) => f.q));
+  // The rail filter (the ProjectTree search box) narrows this list too.
+  const orphans = orphanSessions(sessions, repos).filter((s) => sessionMatches(s, nq));
 
   // Nothing loose → no section at all (keeps the rail's foot clean).
   if (orphans.length === 0) return null;
