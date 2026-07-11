@@ -87,6 +87,14 @@ export function TtsTab() {
               読み上げ中に次の回答が届いたら、終わってから順番に読みます（見ていないセッションは
               「セッションの音声通知」が担当）。
             </p>
+            <Row label="長い回答は要約して読む">
+              <OnOff value={s.ttsSummaryRead} onChange={(v) => setSetting("ttsSummaryRead", v)} />
+            </Row>
+            <p className="muted ds-note">
+              自動読み上げのとき、長い回答（目安 500 字超）は AI が 2 文に要約してそれだけを読みます
+              （生成に数秒かかります。要約にはアシスタント・チャットを使うため、ワークスペースの起動が必要です）。
+              フル本文はターンの「読み上げ」ボタンでいつでも聞けます。要約に失敗したときは全文を読みます。
+            </p>
             <Row label="コード片を省略して読む">
               <OnOff value={s.ttsAbbrevCode} onChange={(v) => setSetting("ttsAbbrevCode", v)} />
             </Row>

@@ -165,6 +165,10 @@ export interface Settings {
   // 読み上げとセッション音声通知に適用（どのセッションの回答かを声で判別できる）。
   // チャットタブ・朗読ビューは選択した話者のまま。
   ttsVoicePerSession: boolean;
+  // ミラーの自動読み上げで、長い回答（目安 500 字超）はアシスタント（headless CLI）に
+  // 2 文へ要約させてそれを読む（features/mirror/MirrorView.tsx）。フル本文はターンの
+  // 読み上げボタンでいつでも聞ける。生成失敗・タイムアウトは全文読みにフォールバック。
+  ttsSummaryRead: boolean;
   // 文の内容で感情スタイルを切り替える（features/chat/tts.ts の emotionOpts）。エラー・
   // 失敗系の文はツンツン系、成功・完了系はあまあま系スタイルで読む。スタイル variant を
   // 持つ話者（ずんだもん・四国めたん・九州そら）のときだけ効く。
@@ -218,6 +222,7 @@ const DEFAULTS: Settings = {
   ttsAutoReadMirror: false,
   ttsVoicePerSession: false,
   ttsEmotion: false,
+  ttsSummaryRead: false,
   ttsAbbrevCode: true,
   readerVertical: false,
 };
