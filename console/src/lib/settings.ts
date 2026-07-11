@@ -153,6 +153,9 @@ export interface Settings {
   // リテラル置換で適用（英語/日本語/記号どれでも。enkana の ON/OFF に依らず効く）。表記は
   // 長いものから当てる。空 = 無効。features/chat/ttsText.ts の parse/applyUserDict。
   ttsUserDict: string;
+  // 合成キャッシュの上限（合計再生秒数）。同一文言＋同一合成条件の音声をメモリに保持して
+  // 再読み上げを即時化する（features/chat/tts.ts）。PCM で約 0.1MB/秒。0 = キャッシュなし。
+  ttsCacheSec: number;
   // 朗読ビュー（docs/24）を縦書きで表示するか（既定 false=横書き）。ReaderView のトグルに追随。
   readerVertical: boolean;
 }
@@ -194,6 +197,7 @@ const DEFAULTS: Settings = {
   ttsSessionNotify: false,
   ttsEnglishKana: false,
   ttsUserDict: "",
+  ttsCacheSec: 300,
   readerVertical: false,
 };
 
@@ -219,6 +223,14 @@ export const TTS_POLLY_VOICES: [string, string][] = [
   ["Takumi", "Takumi（男性）"],
   ["Kazuha", "Kazuha（女性）"],
   ["Tomoko", "Tomoko（女性）"],
+];
+
+// 合成キャッシュの上限（合計再生秒数 → ラベル）。メモリ消費は PCM で約 0.1MB/秒。
+export const TTS_CACHE_SIZES: [number, string][] = [
+  [0, "なし"],
+  [300, "5分（約30MB）"],
+  [900, "15分（約90MB）"],
+  [1800, "30分（約180MB）"],
 ];
 
 // 読み上げ速度（speedScale）。
