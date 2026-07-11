@@ -261,26 +261,34 @@ function WorkspaceDangerZone() {
   // Recreate = reset the layout up front (everything the views point at is about
   // to go away; the terminal reconciler then disposes the other panes' xterms),
   // then tear down + refresh. Old state.tsx recreateWs, orchestrated here.
-  const recreateWs = async () => {
+  // Both destructive actions share the same post-teardown refresh: everything the
+  // views point at is about to go away (the terminal reconciler disposes the other
+  // panes' xterms after resetToTerminal), then we refresh sessions/repos/files.
+  const runDestructive = async (
+    action: () => Promise<string | null>,
+    failMsg: string,
+  ) => {
     useLayoutStore.getState().resetToTerminal();
-    const err = await useWorkspaceStore.getState().recreate();
-    if (err) toast("作り直しに失敗: " + err);
+    const err = await action();
+    if (err) toast(failMsg + err);
     void useSessionsStore.getState().refresh();
     void useReposStore.getState().refresh();
     useFilesStore.getState().bump();
   };
-  const [confirm, setConfirm] = useState(false);
+  const [confirm, setConfirm] = useState<null | "recreate" | "cleanHome">(null);
   const [busy, setBusy] = useState(false);
 
-  const doRecreate = async () => {
+  const run = async (action: () => Promise<string | null>, failMsg: string) => {
     setBusy(true);
     try {
-      await recreateWs();
-      setConfirm(false);
+      await runDestructive(action, failMsg);
+      setConfirm(null);
     } finally {
       setBusy(false);
     }
   };
+  const doRecreate = () => run(() => useWorkspaceStore.getState().recreate(), "作り直しに失敗: ");
+  const doCleanHome = () => run(() => useWorkspaceStore.getState().cleanHome(), "掃除に失敗: ");
 
   return (
     <section className="danger-zone">
@@ -290,25 +298,52 @@ function WorkspaceDangerZone() {
       <div className="danger-zone-row">
         <div className="danger-zone-text">
           <strong>Workspace を作り直す</strong>
-          <span className="muted">コンテナを破棄し、最新イメージで再生成します（セッション・clone は失われます）。</span>
+          <span className="muted">コンテナを破棄し、最新イメージで再生成します（<code>~/repos</code> のみ削除。セッションは失われます）。</span>
         </div>
-        <button className="danger-btn" onClick={() => setConfirm(true)}>
+        <button className="danger-btn" onClick={() => setConfirm("recreate")}>
           作り直す
         </button>
       </div>
-      {confirm && (
+      <div className="danger-zone-row">
+        <div className="danger-zone-text">
+          <strong>ホームを掃除する</strong>
+          <span className="muted">ログイン・接続以外のホーム（<code>~/repos</code>・<code>~/.local</code>・各種キャッシュ）を消して作り直します。より深いリセット。</span>
+        </div>
+        <button className="danger-btn" onClick={() => setConfirm("cleanHome")}>
+          掃除する
+        </button>
+      </div>
+      {confirm === "recreate" && (
         <ConfirmDialog
           title="Workspace を作り直しますか？"
           confirmLabel="作り直す"
           busy={busy}
           onConfirm={doRecreate}
-          onCancel={() => setConfirm(false)}
+          onCancel={() => setConfirm(null)}
         >
           <p>コンテナを破棄し、最新イメージで新しく作り直します。</p>
           <ul className="confirm-list">
             <li className="keep"><Icon name="check" /> ログイン・接続（GitHub / Bitbucket / Claude）は保持されます</li>
+            <li className="keep"><Icon name="check" /> <code>~/repos</code> 以外のホーム（<code>~/.local</code> など）は残ります</li>
             <li className="lose"><Icon name="close" /> 実行中のセッションは失われます</li>
             <li className="lose"><Icon name="close" /> clone 済みリポジトリ（未コミット変更を含む）は削除されます</li>
+          </ul>
+        </ConfirmDialog>
+      )}
+      {confirm === "cleanHome" && (
+        <ConfirmDialog
+          title="ホームを掃除しますか？"
+          confirmLabel="掃除する"
+          busy={busy}
+          onConfirm={doCleanHome}
+          onCancel={() => setConfirm(null)}
+        >
+          <p>ログイン・接続を除くホーム全体を削除し、最新イメージで作り直します。作り直しより深いリセットで、ホーム側が壊れて作り直しでも直らないときに使います。</p>
+          <ul className="confirm-list">
+            <li className="keep"><Icon name="check" /> ログイン・接続（GitHub / Bitbucket / Claude）は保持されます</li>
+            <li className="lose"><Icon name="close" /> 実行中のセッションは失われます</li>
+            <li className="lose"><Icon name="close" /> clone 済みリポジトリ（未コミット変更を含む）は削除されます</li>
+            <li className="lose"><Icon name="close" /> <code>~/.local</code>・キャッシュ・設定など、ホームのその他はすべて削除されます</li>
           </ul>
         </ConfirmDialog>
       )}

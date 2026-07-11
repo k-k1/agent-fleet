@@ -158,6 +158,7 @@ func registerWorkspaceRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("POST /api/workspace/start", ws.withResolved(ws.start))
 	mux.HandleFunc("POST /api/workspace/stop", ws.withResolved(ws.stop))
 	mux.HandleFunc("POST /api/workspace/recreate", ws.withResolved(ws.recreate))
+	mux.HandleFunc("POST /api/workspace/clean-home", ws.withResolved(ws.cleanHome)) // deeper reset: wipe home except logins/connections
 	// Own-workspace resource chip (mem / CPU vs quota) — host-read cgroup, all users.
 	mux.HandleFunc("GET /api/workspace/stats", ws.withResolved(ws.stats))
 }

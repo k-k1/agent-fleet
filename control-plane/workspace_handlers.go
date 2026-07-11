@@ -70,6 +70,24 @@ func (a workspaceAPI) recreate(w http.ResponseWriter, r *http.Request, res *reso
 	a.startResolved(w, r, res)
 }
 
+// cleanHome tears the container down, wipes the whole home EXCEPT auth/connection
+// state (the homeKeep keep-list: logins, git/agent connections), and starts a fresh
+// one from the current image. A deeper reset than recreate, which deletes only
+// ~/repos: use this when something under home *outside* ~/repos is wedged — a broken
+// ~/.local claude install, corrupt caches, a bad dotfile. Login and connections
+// survive; everything else in home (repos, ~/.local, ~/.cache, ~/.gradle, dotfiles)
+// is wiped and re-seeded by the entrypoint on start. Same self-serve member action
+// as recreate — the Console guards it behind its own warning dialog. (The admin
+// "home 掃除" uses the same cleanHome but leaves the container stopped; here we start
+// back up so the member lands in a working, freshly-seeded environment.)
+func (a workspaceAPI) cleanHome(w http.ResponseWriter, r *http.Request, res *resolved) {
+	_ = res.rt.Stop(r.Context()) // best-effort: may not exist yet
+	// Wipe home (keep-list preserved) while the container is down — deleting under a
+	// live bind-mount risks inconsistency (see cleanHome's contract in runtime_docker.go).
+	_ = cleanHome(a.mgr.rootedDataDir(res.ws))
+	a.startResolved(w, r, res)
+}
+
 // ensureWorkspaceStarted brings a stopped workspace up, enforcing the same
 // max_workspaces quota as a manual start (docs/16 P3-4; 0/unset = unlimited,
 // counted authoritatively via docker). No-op if already running. Shared by the
