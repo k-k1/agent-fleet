@@ -129,7 +129,10 @@ Console は 4 秒ポーリングで ● 進行中 / ❓ 質問 / ✓ 入力待�
 全デプロイターゲット共通**（移植の肝、[09](09-deploy.md)）。
 
 - **焼き込み**: claude / opencode / codex（global npm、`ARG CLAUDE_CODE_VERSION` /
-  `OPENCODE_VERSION` / `CODEX_VERSION` でピン止め——bump 手順は [10 §10.2](10-development.md)）、
+  `OPENCODE_VERSION` / `CODEX_VERSION` でピン止め——bump 手順は [10 §10.2](10-development.md)。
+  ピンの写しを `/usr/local/share/agent-fleet/versions.json` に書き出し、Agent の
+  `GET /env/tool-versions`（設定→環境「ツールのバージョン」: 実効 / 焼き込み / ~/.local
+  override / ピン差分の read-only 表示）と e2e-smoke が参照する）、
   rtk（vendor 静的バイナリ、git 管理外——ビルド時にホストから vendor）、
   Go toolchain（`ARG GO_VERSION`、go.mod と歩調）、
   build-essential + python3（+ `break-system-packages`、pip --user は home 永続）、vim・git-lfs・

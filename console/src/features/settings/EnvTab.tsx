@@ -92,8 +92,92 @@ export function EnvTab() {
         <p className="muted pad">読み込み中…</p>
       )}
       {au && au.allowAgentUpdate && <AgentUpdateRow au={au} onChange={setAgentUpdate} />}
+      <ToolVersions running={running} />
       <WorkspaceDangerZone />
     </div>
+  );
+}
+
+// ToolVersions: バンドルツール（claude / opencode / codex / rtk / gh / go / node /
+// python）の版を「実効（PATH 解決）/ イメージ焼き込み / ~/.local override」の 3 観点で
+// 表示する read-only セクション。PATH は ~/.local/bin が優先なので実効≠イメージが
+// 起こり得る（override バッジ）。イメージ列にはビルド時ピンとのずれも出す（自己更新
+// opt-in で上がった場合など）。Agent 経由なので workspace が起動中のときだけ取れる。
+function ToolVersions({ running }: { running: boolean }) {
+  const [tv, setTv] = useState<any>(null);
+  const [busy, setBusy] = useState(false);
+  const load = useCallback(
+    (refresh = false) => {
+      if (!running) return;
+      setBusy(true);
+      api("api/env/tool-versions" + (refresh ? "?refresh=1" : ""))
+        .then((res) => setTv(res && !res.error ? res : null))
+        .catch(() => setTv(null))
+        .finally(() => setBusy(false));
+    },
+    [running],
+  );
+  useEffect(() => load(), [load]);
+
+  const cell = (bin: any) => {
+    if (!bin) return <span className="muted">—</span>;
+    return <span title={bin.path + (bin.raw ? "\n" + bin.raw : "")}>{bin.version || bin.raw || "?"}</span>;
+  };
+
+  return (
+    <section className="ds-group">
+      <h4 className="ds-title">
+        ツールのバージョン
+        {running && (
+          <button className="tool-ver-reload" disabled={busy} onClick={() => load(true)}>
+            {busy ? "取得中…" : "再取得"}
+          </button>
+        )}
+      </h4>
+      {!running ? (
+        <p className="muted ds-sub">Workspace を起動すると表示できます。</p>
+      ) : !tv ? (
+        <p className="muted ds-sub">{busy ? "読み込み中…" : "取得できませんでした"}</p>
+      ) : (
+        <table className="tool-ver">
+          <thead>
+            <tr>
+              <th>ツール</th>
+              <th>実効</th>
+              <th>イメージ</th>
+              <th>~/.local</th>
+            </tr>
+          </thead>
+          <tbody>
+            {(tv.tools || []).map((t: any) => (
+              <tr key={t.name}>
+                <td className="tool-ver-name">{t.name}</td>
+                <td>
+                  {cell(t.effective)}
+                  {t.overridden && (
+                    <span className="tool-ver-badge" title="~/.local 側の実体が PATH でイメージ版より優先されています">
+                      override
+                    </span>
+                  )}
+                </td>
+                <td>
+                  {cell(t.baked)}
+                  {t.pin && t.baked && t.baked.version !== t.pin && (
+                    <span className="tool-ver-pin" title="イメージビルド時のピンと現在の実体がずれています（自己更新など）">
+                      （ピン: {t.pin}）
+                    </span>
+                  )}
+                </td>
+                <td>{cell(t.userLocal)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      <p className="muted ds-sub">
+        実効 = PATH で解決される実体（~/.local/bin がイメージより優先）。セルにカーソルを載せるとパスと元の出力を表示します。
+      </p>
+    </section>
   );
 }
 

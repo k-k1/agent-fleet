@@ -126,6 +126,8 @@ func buildMux() *http.ServeMux {
 	// Toolchain selection (node via nvm / java via pre-baked Temurin) — Console.
 	mux.HandleFunc("GET /env/toolchains", handleToolchainsGet)
 	mux.HandleFunc("PUT /env/toolchains", handleToolchainsPut)
+	// バンドルツールの版レポート（実効 / 焼き込み / ~/.local override / ビルド時ピン）。
+	mux.HandleFunc("GET /env/tool-versions", handleToolVersions)
 
 	// Per-user UI preferences (Console display settings, synced across browsers).
 	mux.HandleFunc("GET /env/ui-prefs", handleGetUIPrefs)

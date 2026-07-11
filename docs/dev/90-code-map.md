@@ -86,7 +86,7 @@
 | `connections.go` | Connections 状態 API（git ホスト / internal / bitbucket） |
 | `mcp_stdio.go` | コンテナ内 stdio MCP サーバ（read-only fleet ツール） |
 | `preview.go` / `terminal.go` | `/proxy/{port}` コンテナ内中継 / `/ws/pty`（WebSocket PTY） |
-| `env_toolchains.go` / `ui_prefs.go` / `repo_prompts.go` | Java/Node/TZ ツールチェーン解決 / UI プリファレンス / リポの command・skill テンプレ列挙 |
+| `env_toolchains.go` / `env_tool_versions.go` / `ui_prefs.go` / `repo_prompts.go` | Java/Node/TZ ツールチェーン解決 / バンドルツール版レポート（実効・焼き込み・~/.local・ピン）/ UI プリファレンス / リポの command・skill テンプレ列挙 |
 | `shutdown.go` / `uuid.go` | graceful shutdown（作業中セッション考慮）/ ID 生成 |
 
 **リファクタ到達点（別ブランチ・main 未マージ）**: `internal/{httpx,gitx,fstore,transcript}` の 4 パッケージを

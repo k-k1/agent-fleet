@@ -134,6 +134,13 @@ RUN npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
       "@openai/codex@${CODEX_VERSION}" \
  && claude --version && opencode --version && codex --version
 
+# ビルド時ピンをコンテナ内へ書き出す（ARG はビルド後に消えて実行時に参照できない）。
+# 設定 UI「ツールのバージョン」の「ピン vs 実体」表示と、スモークの検証材料に使う。
+RUN mkdir -p /usr/local/share/agent-fleet \
+ && printf '{"claude":"%s","opencode":"%s","codex":"%s","go":"%s","gh":"%s"}\n' \
+      "$CLAUDE_CODE_VERSION" "$OPENCODE_VERSION" "$CODEX_VERSION" "$GO_VERSION" "$GH_VERSION" \
+      > /usr/local/share/agent-fleet/versions.json
+
 # The baked claude is a root-owned npm-global install run as the non-root `dev`
 # user, so Claude Code's background auto-updater can never write to
 # /usr/local/lib/node_modules and prints "auto-update failed" on every start. We

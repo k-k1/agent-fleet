@@ -2256,3 +2256,44 @@
   margin: 0;
   font-size: 15px;
 }
+
+/* ツールのバージョン（EnvTab）— 実効 / イメージ / ~/.local の read-only 表。 */
+.tool-ver {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+  margin: 4px 0 2px;
+}
+.tool-ver th,
+.tool-ver td {
+  text-align: left;
+  padding: 4px 10px 4px 0;
+  border-bottom: 1px solid var(--btn-border);
+  white-space: nowrap;
+}
+.tool-ver th {
+  color: var(--muted);
+  font-weight: 500;
+}
+.tool-ver-name {
+  font-family: var(--mono, monospace);
+}
+.tool-ver-badge {
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  font-size: 10.5px;
+  background: color-mix(in srgb, var(--warn) 18%, transparent);
+  color: var(--warn);
+  border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent);
+}
+.tool-ver-pin {
+  margin-left: 4px;
+  color: var(--warn);
+  font-size: 11.5px;
+}
+.tool-ver-reload {
+  margin-left: 10px;
+  font-size: 11.5px;
+  padding: 2px 10px;
+}
