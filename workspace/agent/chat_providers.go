@@ -56,9 +56,7 @@ func (claudeChat) send(ctx context.Context, c *chatConversation, prompt string) 
 		args = append(args, "--session-id", c.ClaudeSessionID)
 	}
 	args = append(args, c.knowledgeArgs()...)
-	if c.afToolsEnabled() {
-		args = append(args, chatMCPArgs(c.afWriteEnabled())...)
-	}
+	args = append(args, c.mcpConfigArgs()...)
 	cmd := chatClaudeCmd(ctx, args...)
 	// claude writes .credentials.json via tmp+rename (verified with strace): a refresh
 	// during this run replaces the symlink with a real file. Re-run the reconcile after
@@ -123,9 +121,7 @@ func (claudeChat) sendStream(ctx context.Context, c *chatConversation, prompt st
 		args = append(args, "--session-id", c.ClaudeSessionID)
 	}
 	args = append(args, c.knowledgeArgs()...)
-	if c.afToolsEnabled() {
-		args = append(args, chatMCPArgs(c.afWriteEnabled())...)
-	}
+	args = append(args, c.mcpConfigArgs()...)
 	cmd := chatClaudeCmd(ctx, args...)
 	defer func() { _, _ = ensureChatClaudeConfig() }() // copy any refreshed token back to shared (see send)
 	cmd.Stdin = strings.NewReader(prompt)
@@ -333,18 +329,43 @@ func chatToolLimits() []string {
 		"Bash", "Edit", "Write", "MultiEdit", "NotebookEdit"}
 }
 
-// chatMCPArgs attaches the local Agent Fleet stdio MCP server (this same binary's
-// `mcp-stdio` subcommand) to a chat's claude, scoped strictly to it (no global/project
-// MCP config leaks in, and it doesn't leak out to the interactive sessions). docs/19 Q1.
-func chatMCPArgs(write bool) []string {
-	serverArgs := `"mcp-stdio"`
-	if write {
-		// Advertise the write tools too (docs/19 Q2). The advertised set is the gate:
-		// an af_read chat's server never lists send_to_session, so the model can't call it.
-		serverArgs = `"mcp-stdio","--write"`
+// mcpConfigArgs builds the chat's --mcp-config from two orthogonal sources, scoped
+// strictly to this claude (--strict-mcp-config: no global/project MCP leaks in, and
+// none of these leak out to the interactive sessions). docs/19 Q1, docs/25 Phase 1.
+//   - the local Agent Fleet stdio server ("af"), when the assistant grants af tools;
+//     with af_write it also advertises the write tools (the advertised set is the gate).
+//   - one server per ops integration ("pagerduty" …) the assistant holds, launched via
+//     `workspace-agent mcp-run <id>` which injects the user's stored key at spawn — so a
+//     server is attached only when that connection is actually configured.
+func (c *chatConversation) mcpConfigArgs() []string {
+	exe := paths.ExePath()
+	servers := map[string]any{}
+	if c.afToolsEnabled() {
+		sargs := []any{"mcp-stdio"}
+		if c.afWriteEnabled() {
+			sargs = []any{"mcp-stdio", "--write"}
+		}
+		servers["af"] = map[string]any{"command": exe, "args": sargs}
 	}
-	cfg := fmt.Sprintf(`{"mcpServers":{"af":{"command":%q,"args":[%s]}}}`, paths.ExePath(), serverArgs)
-	return []string{"--mcp-config", cfg, "--strict-mcp-config"}
+	for _, id := range c.Integrations {
+		reg, ok := opsIntegrations[id]
+		if !ok || !integrationReady(id) {
+			continue // unknown, or the user hasn't connected it — skip silently
+		}
+		sargs := make([]any, len(reg.runArgs))
+		for i, a := range reg.runArgs {
+			sargs[i] = a
+		}
+		servers[id] = map[string]any{"command": exe, "args": sargs}
+	}
+	if len(servers) == 0 {
+		return nil
+	}
+	cfg, err := json.Marshal(map[string]any{"mcpServers": servers})
+	if err != nil {
+		return nil
+	}
+	return []string{"--mcp-config", string(cfg), "--strict-mcp-config"}
 }
 
 // chatClaudeCmd builds a claude exec configured for the chat: run in chatWorkdir with

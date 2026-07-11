@@ -33,6 +33,13 @@ func main() {
 		runMCPStdio(os.Args[2:])
 		return
 	}
+	// Credential-injecting launcher for external ops MCP servers (docs/25): loads
+	// the encrypted store, injects the provider key as env, and execs the real MCP
+	// server (e.g. uvx pagerduty-mcp). Keeps API keys out of any MCP config file.
+	if len(os.Args) > 1 && os.Args[1] == "mcp-run" {
+		runMCPRun(os.Args[2:])
+		return
+	}
 
 	// Fold any pre-A3 plaintext credential files into the encrypted store.
 	migrateLegacySecrets()

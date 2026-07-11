@@ -93,6 +93,7 @@ func handleChatCreate(w http.ResponseWriter, r *http.Request) {
 		c.Persona = a.Persona
 		c.Tools = a.Tools
 		c.Knowledge = a.Knowledge
+		c.Integrations = a.Integrations
 	} else {
 		// Legacy path: plain agent + optional model, generic persona, read-only fleet tools
 		// for claude (mirrors the pre-assistant default).
