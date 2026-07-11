@@ -1,10 +1,11 @@
 // RepoNode — one working-copy node in the project tree: a collapsible node whose
 // header is the repo row (RepoRowConnected: launch / SCM / branch / delete) and
-// whose body nests the sessions running in that folder and the folder's file
-// subtree. Collapsing a node hides its sessions/files — that's how you focus on one
-// working copy ("畳む＝擬似集中"). Node + sub open states persist per folder
-// (af-proj-<repo> / -ses / -files). A reveal targeting this folder (a clone just
-// landed / フォルダを開く) auto-opens the node and its ファイル sub.
+// whose body nests the sessions running in that folder (directly — no
+// "セッション" sub-header: it only duplicated the node's own fold) and the
+// folder's file subtree. Collapsing a node hides its sessions/files — that's how
+// you focus on one working copy ("畳む＝擬似集中"). Node + files open states
+// persist per folder (af-proj-<repo> / -files). A reveal targeting this folder
+// (a clone just landed / フォルダを開く) auto-opens the node and its ファイル sub.
 import { useEffect, useState } from "react";
 import { Icon } from "../../ui/Icon.tsx";
 import { useSessionsStore } from "../sessions/store.ts";
@@ -56,7 +57,6 @@ export function RepoNode({ r, ctx, actions }: RepoNodeProps) {
   const reveal = useFilesStore((s) => s.reveal);
   const mine = sessionsInFolder(sessions, r.name);
   const node = usePersistedOpen(`af-proj-${r.name}`);
-  const ses = usePersistedOpen(`af-proj-${r.name}-ses`);
   // Files default COLLAPSED: a repo's whole tree expanded on load buried everything
   // below it. Open on demand (and auto-open on a reveal into this folder).
   const files = usePersistedOpen(`af-proj-${r.name}-files`, false);
@@ -93,29 +93,21 @@ export function RepoNode({ r, ctx, actions }: RepoNodeProps) {
       </div>
       {node.open && (
         <div className="proj-node-body">
-          <button type="button" className="sess-group-btn proj-sub-btn" onClick={ses.toggle}>
-            <Icon name={ses.open ? "chevron-down" : "chevron-right"} />
-            <Icon name="terminal" />
-            <span className="sess-group-name">セッション</span>
-            <span className="sess-group-count">{mine.length}</span>
-          </button>
-          {ses.open && (
+          {/* Sessions sit directly under the repo row — no sub-header, no empty
+              placeholder: a repo with none simply shows nothing here. */}
+          {mine.length > 0 && (
             <ul className="sess-list proj-sub-list">
-              {mine.length === 0 ? (
-                <li className="proj-sub-empty">セッションなし</li>
-              ) : (
-                mine.map((s) => (
-                  <SessionRow
-                    key={s.name}
-                    s={s}
-                    selected={ctx.activeSession === s.name}
-                    opens={ctx.sPanes?.get(s.name) || []}
-                    multi={ctx.multiPane}
-                    running={ctx.running}
-                    actions={actions}
-                  />
-                ))
-              )}
+              {mine.map((s) => (
+                <SessionRow
+                  key={s.name}
+                  s={s}
+                  selected={ctx.activeSession === s.name}
+                  opens={ctx.sPanes?.get(s.name) || []}
+                  multi={ctx.multiPane}
+                  running={ctx.running}
+                  actions={actions}
+                />
+              ))}
             </ul>
           )}
 
