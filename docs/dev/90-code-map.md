@@ -122,7 +122,7 @@
 
 | ディレクトリ | 主要ファイル |
 |--------------|--------------|
-| `local/` | `run-dev.sh`（dev 一括起動）・`restart-cp.sh`・`provision-jvm.sh`・`oauth.env.example` |
+| `local/` | `run-dev.sh`（dev 一括起動）・`restart-cp.sh`・`e2e-smoke.sh`（イメージスモーク）・`provision-jvm.sh`・`oauth.env.example` |
 | `compose/` | `docker-compose.yml`・`Caddyfile`・`release.sh` / `load-images.sh`・`backup.sh` / `restore.sh`・`.env.example`・README（**運用 runbook の正**） |
 | `aws/ec2-single/` | `cfn.yaml` + README（単一 EC2 に compose 構成） |
 | `aws/ecs/` | `cfn/{00-network,10-data,20-platform,30-ingress}.yaml` + README 🚧 |

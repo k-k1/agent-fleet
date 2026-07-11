@@ -55,6 +55,12 @@ bash "$ROOT/deploy/local/provision-jvm.sh" "$WS_JVM_DIR" || echo "WARN: jvm prov
 echo "==> build workspace image ($WS_IMAGE)"
 docker build -t "$WS_IMAGE" "$ROOT/workspace"
 
+# イメージスモーク（焼き込み CLI の版 = Dockerfile の ARG ピン等を検証、数秒）。
+# WS_SMOKE=0 でスキップ。
+if [ "${WS_SMOKE:-1}" = "1" ]; then
+  bash "$ROOT/deploy/local/e2e-smoke.sh" "$WS_IMAGE"
+fi
+
 # Console is now a Vite + React app: build it to console/dist, which the CP serves
 # statically (no-store). Node is user-local via nvm and not on a non-login shell's
 # PATH (e.g. under `sg docker`), so source nvm first. Run `npm --prefix console run

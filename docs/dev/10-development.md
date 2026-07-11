@@ -24,7 +24,7 @@ bind mount で永続し、イメージ更新の影響を受けない。
 | Console（`console/src`）| `vite build`（watch 可）→ ブラウザ**リロードのみ**（CP は dist を no-store 配信・CP 再起動不要）|
 | CP の Go | CP を再ビルドして再起動（`restart-cp.sh`）。イメージ再ビルド不要 |
 | Agent の Go / イメージ焼き込み | イメージ再ビルド → 稼働中 Workspace は**利用者が Console で Stop→Start**（CP からの強制入替はしない）|
-| 焼き込み CLI（claude / opencode / codex）の版 | `npm view <pkg> version` で latest を確認 → Dockerfile の `ARG CLAUDE_CODE_VERSION` / `OPENCODE_VERSION` / `CODEX_VERSION` を bump → イメージ再ビルド → Stop→Start。ARG 変更がキャッシュを破るので `--no-cache` 不要 |
+| 焼き込み CLI（claude / opencode / codex）の版 | `npm view <pkg> version` で latest を確認 → Dockerfile の `ARG CLAUDE_CODE_VERSION` / `OPENCODE_VERSION` / `CODEX_VERSION` を bump → イメージ再ビルド → Stop→Start。ARG 変更がキャッシュを破るので `--no-cache` 不要。版一致はビルド直後の `e2e-smoke.sh` が自動検証 |
 | rtk の版 | ホストの `~/.local/bin/rtk`（または `WS_RTK_BIN`）を新バイナリに差し替え → `run-dev.sh` 再実行（vendor COPY が内容ハッシュでキャッシュを破る）→ Stop→Start |
 | entrypoint が適用する類（設定 seed・TZ 等）| Stop→Start のみ（再ビルド不要）|
 | 共有 JVM | 共有 dir を消して再 provision（`deploy/local/provision-jvm.sh`）|
@@ -37,6 +37,10 @@ bind mount で永続し、イメージ更新の影響を受けない。
 - **`restart-cp.sh`** — 軽量反映: Console + CP だけ再ビルドし、稼働中の CP プロセスをその場で入れ替えて
   `/healthz` まで検証。**Workspace イメージは再ビルドしない**。`SKIP_CONSOLE=1` で Go のみ。
   env は oauth.env + run-dev.sh と同じ `WS_*` 既定を再現する。
+- **`e2e-smoke.sh`** — イメージスモーク（L1）: ビルド済みイメージ内の CLI 実版が Dockerfile の
+  ARG ピンと一致するか（＝キャッシュ staleness の検出）、焼き込み一式（agent / entrypoint /
+  CLAUDE.md / rtk 等）の存在を `docker run` で検証。run-dev.sh がビルド直後に自動実行
+  （`WS_SMOKE=0` でスキップ）。単体でも `deploy/local/e2e-smoke.sh [image]` で実行可。
 
 ホスト固有の作法（PATH・docker グループ等）は HANDOFF §2 の領分で、ここには書かない。
 
