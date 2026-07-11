@@ -182,8 +182,11 @@ func handleSessionMessages(w http.ResponseWriter, r *http.Request) {
 	// Surface terminal-only states (startup resume menu / auto-compaction) the chat
 	// can't otherwise see, so the Console can prompt the user or show a 圧縮中 badge.
 	if alive {
-		if ts := sessionTerminalState(name); ts != "" {
+		if ts, prog := sessionTerminalState(name); ts != "" {
 			resp["terminalState"] = ts
+			if prog != nil {
+				resp["compactProgress"] = prog
+			}
 		}
 		// Idle by hook but a run_in_background task may still be running under the pane;
 		// surface it so the chat header shows "入力待ち · BG実行中". Only computed when not
