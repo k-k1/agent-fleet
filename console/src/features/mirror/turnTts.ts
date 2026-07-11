@@ -8,7 +8,7 @@
 // ターンは完結してから届く（ポーリング）ので、抽出は読み上げ開始時の 1 回で安定する。
 
 import { startNarration, BLOCK_BEAT, SENT_BEAT, type TtsOptions } from "../chat/tts.ts";
-import { splitSentences, abbrevCode, type CodeReadOpts } from "../chat/ttsText.ts";
+import { splitSentences, splitLongSentence, abbrevCode, type CodeReadOpts } from "../chat/ttsText.ts";
 import { effectiveDict } from "../chat/ttsDict.ts";
 import { getSettings } from "../../lib/settings.ts";
 
@@ -144,11 +144,17 @@ export function readTurn(
   const blocks = collectBlocks(body);
   const texts: string[] = [];
   const blockOf: number[] = [];
+  const sentHead: boolean[] = []; // 文の先頭の片か（false = 長文の合成分割の続き）
   blocks.forEach((b, bi) => {
     if (bi < fromBlock) return;
     for (const s of splitSentences(blockText(b, code))) {
-      texts.push(s);
-      blockOf.push(bi);
+      // 長い 1 文は合成用にさらに分割（合成の待ちで無音にならないように）。ハイライトは
+      // ブロック単位のままなので見た目は変わらない。
+      splitLongSentence(s).forEach((piece, j) => {
+        texts.push(piece);
+        blockOf.push(bi);
+        sentHead.push(j === 0);
+      });
     }
   });
   if (!texts.length) return null;
@@ -165,8 +171,11 @@ export function readTurn(
   };
   // ブロック（段落・リスト項目・見出し）が変わる最初の文には前拍を置く（マーカー記号は
   // 読まないぶん、構造の切れ目を間で表す）。同一ブロック内の文境界（。区切り）には
-  // より短い一拍（SENT_BEAT）。
-  const preGaps = blockOf.map((b, i) => (i === 0 ? 0 : b !== blockOf[i - 1] ? BLOCK_BEAT : SENT_BEAT));
+  // より短い一拍（SENT_BEAT）。長文の合成分割の続き片は間を置かない（素材の残り無音のみ）。
+  const preGaps = blockOf.map((b, i) => {
+    if (i === 0 || !sentHead[i]) return 0;
+    return b !== blockOf[i - 1] ? BLOCK_BEAT : SENT_BEAT;
+  });
   const h = startNarration(
     texts,
     source,

@@ -7,6 +7,7 @@ import {
   applyUserDict,
   mergeDicts,
   splitSentences,
+  splitLongSentence,
   abbrevCode,
   isBareHash,
   pauseParticles,
@@ -318,6 +319,27 @@ describe("isBareHash / 裸のハッシュの省略読み", () => {
 
   it("長い SHA はインラインコードでも頭 2 文字＋フィラー（語の誤認をしない）", () => {
     expect(abbrevCode("b2d7fac36b996a9ae6245c188b51c4dbac2c9aef")).toMatch(new RegExp(`^b2 ${F}$`));
+  });
+});
+
+describe("splitLongSentence (長文の合成用分割)", () => {
+  it("短い文はそのまま", () => {
+    expect(splitLongSentence("短い文です。")).toEqual(["短い文です。"]);
+  });
+
+  it("長い文は弱い区切り（読点・中黒・閉じ括弧等）で割り、結合すると元に戻る", () => {
+    const s =
+      "キャリア系は au（エーユー）・ymobile（ワイモバイル）を追加し、NTT や KDDI は自動で読めるので対象外としつつ、SOFTBANK と RAKUTEN は綴りママになるため辞書で手当てしました。";
+    const pieces = splitLongSentence(s, 40);
+    expect(pieces.length).toBeGreaterThan(1);
+    expect(pieces.join("")).toBe(s);
+    for (const p of pieces) expect(p.length).toBeLessThanOrEqual(41); // 区切りを含めて max+1 まで
+  });
+
+  it("区切りが無い長文は長さで強制分割する", () => {
+    const s = "あ".repeat(100);
+    const pieces = splitLongSentence(s, 40);
+    expect(pieces).toEqual(["あ".repeat(40), "あ".repeat(40), "あ".repeat(20)]);
   });
 });
 

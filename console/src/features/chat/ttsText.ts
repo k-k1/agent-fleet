@@ -271,6 +271,35 @@ export function emotionOf(text: string): "happy" | "angry" | null {
 const SENT_END = "。．！？!?";
 const SPEAKABLE = /[0-9A-Za-zぁ-んァ-ヶーｦ-ﾟ一-鿿㐀-䶿豈-﫿々]/;
 
+// --- 長文の合成用分割 --------------------------------------------------------------
+// 句点で切った「1 文」が長すぎるとき、合成用にさらに弱い区切り（読点・中黒・スラッシュ・
+// ダッシュ・閉じ括弧など）で割る。合成 1 回が長いと CPU エンジンの合成時間がそのまま
+// 無音の待ちになる（先読みの息切れ）ため、開始レイテンシとパイプラインの持続性を優先する。
+// 区切りは前の片に含める。max までに区切りが無ければ長さで強制分割。呼び手（tts.ts の
+// submit / turnTts / ReaderView）は途中の片の間を詰めて連続再生し、ハイライトは元の文の
+// 単位のまま扱う。
+const SENT_SPLIT_BREAK = "、，・；：／—–」』）】";
+const SPLIT_HEAD_MIN = 8; // 先頭 8 文字未満では切らない（細切れ防止）
+
+export function splitLongSentence(s: string, max = 60): string[] {
+  const out: string[] = [];
+  let rest = s;
+  while (rest.length > max) {
+    let cut = -1;
+    for (let i = max; i >= SPLIT_HEAD_MIN; i--) {
+      if (SENT_SPLIT_BREAK.includes(rest[i])) {
+        cut = i + 1;
+        break;
+      }
+    }
+    if (cut < 0) cut = max; // 区切りが無い → 長さで強制分割
+    out.push(rest.slice(0, cut));
+    rest = rest.slice(cut);
+  }
+  if (rest) out.push(rest);
+  return out;
+}
+
 export function splitSentences(text: string): string[] {
   const out: string[] = [];
   let buf = "";

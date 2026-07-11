@@ -16,6 +16,7 @@ import { useSettings, setSetting } from "../../lib/settings.ts";
 import { startNarration, BLOCK_BEAT, SENT_BEAT, readerVoiceChoices, voiceChoiceOpts, type NarrationHandle } from "../chat/tts.ts";
 import { effectiveDict } from "../chat/ttsDict.ts";
 import { loadSpeakers } from "../chat/ttsSpeakers.ts";
+import { splitLongSentence } from "../chat/ttsText.ts";
 import { buildReadUnits, readPreGaps } from "./readerText.ts";
 
 interface FileData {
@@ -97,6 +98,21 @@ export function ReaderView({ filePath }: { filePath: string }) {
   // 読み上げ単位ごとの前拍（段落・マーカー行の頭は一拍、行内の句点は短い一拍、ハードラップは
   // 間なし）。flat と同じ並び。
   const flatPre = useMemo(() => readPreGaps(units, BLOCK_BEAT, SENT_BEAT), [units]);
+  // 長い 1 文は合成用にさらに分割（合成の待ちで無音にならないように）。origOf で元の
+  // 読み上げ単位（ハイライト単位）へ戻す。head=文の先頭の片（前拍はここだけ）。
+  const split = useMemo(() => {
+    const texts: string[] = [];
+    const origOf: number[] = [];
+    const head: boolean[] = [];
+    flat.forEach((s, i) => {
+      splitLongSentence(s).forEach((piece, j) => {
+        texts.push(piece);
+        origOf.push(i);
+        head.push(j === 0);
+      });
+    });
+    return { texts, origOf, head };
+  }, [flat]);
 
   const vertical = settings.readerVertical;
   const ttsOn = settings.ttsEnabled;
@@ -132,16 +148,21 @@ export function ReaderView({ filePath }: { filePath: string }) {
   // アンマウントで朗読停止（別ファイルを開く等で本文 DOM が消えるため）。
   useEffect(() => () => handleRef.current?.stop(), []);
 
-  // from 番目の読み上げ単位から（再）開始。ハイライトは from を足してフル配列基準に戻す。
+  // from 番目の読み上げ単位から（再）開始。合成は分割済みテキスト（split）で行い、
+  // ハイライトは origOf で元の読み上げ単位へ戻す。
   const startFrom = (from: number, voice = voiceChoiceOpts(readerVoice)) => {
-    const slice = flat.slice(from);
+    const start = split.origOf.findIndex((o) => o >= from);
+    if (start < 0) return;
+    const slice = split.texts.slice(start);
     if (!slice.length) return;
+    // 前拍: 文の先頭の片は元の単位の前拍、合成分割の続き片は間なし。
+    const pres = slice.map((_, k) => (split.head[start + k] ? flatPre[split.origOf[start + k]] : 0));
     handleRef.current?.stop();
     const h = startNarration(
       slice,
       baseName(filePath),
       (i) => {
-        setActive(i == null ? null : i + from);
+        setActive(i == null ? null : split.origOf[start + i]);
         if (i == null) {
           // 自然終了 or 外部（TopBar 停止・他再生開始）で終了
           setReading(false);
@@ -150,7 +171,7 @@ export function ReaderView({ filePath }: { filePath: string }) {
         }
       },
       voice, // ヘッダーで選んだ声（"" = 設定の話者）
-      flatPre.slice(from),
+      pres,
     );
     handleRef.current = h;
     setReading(true);
