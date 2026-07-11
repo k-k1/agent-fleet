@@ -118,6 +118,7 @@ var techKana = map[string]string{
 	"digitalocean": "デジタルオーシャン",
 	// --- SaaS / サービス / ブランド ---
 	"google":     "グーグル",
+	"wikipedia":  "ウィキペディア",
 	"gmail":      "ジーメール",
 	"chrome":     "クローム",
 	"slack":      "スラック",
