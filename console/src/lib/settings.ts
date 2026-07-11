@@ -185,6 +185,7 @@ export interface Settings {
   // インラインコード（`…`）を省略して読む（features/chat/ttsText.ts の abbrevCode）。
   // ハッシュ等は頭 2 文字＋フィラー語（なんとか 等）、camelCase/パスは頭一語＋フィラー
   // （3 語以上は＋末尾一語）。短い語・空白入り・日本語入り・読み仮名辞書に掛かる表記はそのまま。
+  // バッククォート無しの裸ハッシュ（f437e17 等の小文字 16 進・UUID）も同じ扱い（isBareHash）。
   ttsAbbrevCode: boolean;
   // 朗読ビュー（docs/24）を縦書きで表示するか（既定 false=横書き）。ReaderView のトグルに追随。
   readerVertical: boolean;
