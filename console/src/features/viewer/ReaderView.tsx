@@ -13,10 +13,10 @@ import { baseName, langFor } from "../../lib/filemeta.ts";
 import FileIcon from "../../ui/FileIcon.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { useSettings, setSetting } from "../../lib/settings.ts";
-import { startNarration, BLOCK_BEAT, readerVoiceChoices, voiceChoiceOpts, type NarrationHandle } from "../chat/tts.ts";
+import { startNarration, BLOCK_BEAT, SENT_BEAT, readerVoiceChoices, voiceChoiceOpts, type NarrationHandle } from "../chat/tts.ts";
 import { effectiveDict } from "../chat/ttsDict.ts";
 import { loadSpeakers } from "../chat/ttsSpeakers.ts";
-import { buildReadUnits } from "./readerText.ts";
+import { buildReadUnits, readPreGaps } from "./readerText.ts";
 
 interface FileData {
   error?: { message?: string };
@@ -94,8 +94,9 @@ export function ReaderView({ filePath }: { filePath: string }) {
     return m;
   }, [units]);
   const flat = useMemo(() => units.filter((u) => u.spoken).map((u) => u.spoken), [units]);
-  // 読み上げ単位ごとの前拍（リスト・見出し・引用の頭で一拍）。flat と同じ並び。
-  const flatPre = useMemo(() => units.filter((u) => u.spoken).map((u) => (u.preBeat ? BLOCK_BEAT : 0)), [units]);
+  // 読み上げ単位ごとの前拍（段落・マーカー行の頭は一拍、行内の句点は短い一拍、ハードラップは
+  // 間なし）。flat と同じ並び。
+  const flatPre = useMemo(() => readPreGaps(units, BLOCK_BEAT, SENT_BEAT), [units]);
 
   const vertical = settings.readerVertical;
   const ttsOn = settings.ttsEnabled;

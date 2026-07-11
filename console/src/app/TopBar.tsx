@@ -35,8 +35,10 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
   // 1 本の再生を止める）、アイドル時は設定 ttsEnabled の ON/OFF トグルとして働く。
   // ttsSessionNotify（音声通知）は別軸なので、OFF でも speaking になり得る＝speaking 優先。
   const ttsSpeaking = useTtsStore((st) => st.speaking);
+  const ttsPreparing = useTtsStore((st) => st.preparing);
   const ttsSource = useTtsStore((st) => st.source);
   const ttsVoice = useTtsStore((st) => st.voice);
+  const ttsBusy = ttsSpeaking || ttsPreparing; // 生成中（最初の音の前）もピルは再生扱い
   // Hamburger: single-click toggles the left pane open/closed; double-click toggles
   // its desktop display mode (Push ⇄ overlay). We debounce the single action so a
   // double-click doesn't also fire it. Mobile keeps the immediate drawer toggle.
@@ -107,24 +109,30 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
       </div>
       <div className="topbar-right">
         <button
-          className={"tts-status" + (ttsSpeaking ? " speaking" : s.ttsEnabled ? "" : " off")}
+          className={"tts-status" + (ttsBusy ? " speaking" : s.ttsEnabled ? "" : " off")}
           title={
-            ttsSpeaking
+            ttsBusy
               ? "読み上げを停止"
               : s.ttsEnabled
                 ? "音声読み上げ: ON（クリックで OFF）"
                 : "音声読み上げ: OFF（クリックで ON）"
           }
           onClick={() => {
-            if (ttsSpeaking) useTtsStore.getState().stop();
+            if (ttsBusy) useTtsStore.getState().stop();
             else setSetting("ttsEnabled", !s.ttsEnabled);
           }}
         >
-          <Icon name={ttsSpeaking || s.ttsEnabled ? "unmute" : "mute"} className="tts-status-ic" />
-          {ttsSpeaking && (
+          {/* 最初の音が鳴る前（合成待ち）はぐるぐるで「生成中」を示す */}
+          <Icon
+            name={ttsPreparing ? "loading" : ttsBusy || s.ttsEnabled ? "unmute" : "mute"}
+            spin={ttsPreparing}
+            className="tts-status-ic"
+          />
+          {ttsBusy && (
             <>
               <span className="tts-status-lbl">
-                読み上げ中{ttsSource ? `・${ttsSource}` : ""}
+                {ttsPreparing ? "音声を生成中" : "読み上げ中"}
+                {ttsSource ? `・${ttsSource}` : ""}
                 {ttsVoice ? `（${ttsVoice}）` : ""}
               </span>
               <Icon name="debug-stop" />

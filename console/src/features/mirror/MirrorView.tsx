@@ -454,8 +454,16 @@ export function MirrorView({
     },
     stop: () => ttsHandleRef.current?.stop(), // 後始末は onEnd 側で
   };
-  // セッション切替・アンマウントで停止（本文 DOM ごと入れ替わるため）。
-  useEffect(() => () => ttsHandleRef.current?.stop(), [session]);
+  // セッション切替で停止（本文 DOM ごと入れ替わるため）。アンマウント（ターミナルへの
+  // 切替・ペインを閉じる）では止めない — 再生はグローバル 1 本でビューに依存しないので
+  // そのまま流し、操作は TopBar の停止で足りる。カラオケ・ハイライトは外れた DOM に付いた
+  // まま破棄されるだけで無害（ミラーへ戻ったときのハイライト復元まではしない）。
+  const ttsSessionRef = useRef(session);
+  useEffect(() => {
+    if (ttsSessionRef.current === session) return;
+    ttsSessionRef.current = session;
+    ttsHandleRef.current?.stop();
+  }, [session]);
 
   // 本文内でテキスト選択が確定したら「ここから読み上げ」ピルを出す（assistant ターン内のみ）。
   const captureTtsSel = () => {

@@ -7,7 +7,7 @@
 // 対応維持が脆いため — textContent なら記法は既に落ちており、リンクは表示テキストだけが残る。
 // ターンは完結してから届く（ポーリング）ので、抽出は読み上げ開始時の 1 回で安定する。
 
-import { startNarration, BLOCK_BEAT, type TtsOptions } from "../chat/tts.ts";
+import { startNarration, BLOCK_BEAT, SENT_BEAT, type TtsOptions } from "../chat/tts.ts";
 import { splitSentences, abbrevCode, type CodeReadOpts } from "../chat/ttsText.ts";
 import { effectiveDict } from "../chat/ttsDict.ts";
 import { getSettings } from "../../lib/settings.ts";
@@ -164,8 +164,9 @@ export function readTurn(
     }
   };
   // ブロック（段落・リスト項目・見出し）が変わる最初の文には前拍を置く（マーカー記号は
-  // 読まないぶん、構造の切れ目を間で表す）。
-  const preGaps = blockOf.map((b, i) => (i > 0 && b !== blockOf[i - 1] ? BLOCK_BEAT : 0));
+  // 読まないぶん、構造の切れ目を間で表す）。同一ブロック内の文境界（。区切り）には
+  // より短い一拍（SENT_BEAT）。
+  const preGaps = blockOf.map((b, i) => (i === 0 ? 0 : b !== blockOf[i - 1] ? BLOCK_BEAT : SENT_BEAT));
   const h = startNarration(
     texts,
     source,

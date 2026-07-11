@@ -9,6 +9,7 @@ import {
   splitSentences,
   abbrevCode,
   isBareHash,
+  pauseParticles,
   emotionOf,
   pendingSpeech,
   startsBlock,
@@ -224,6 +225,20 @@ describe("abbrevCode (インラインコードの省略読み)", () => {
     );
     expect(plainify("コミット `e79853e` を見て")).toBe("コミット e79853e を見て");
     expect(plainify("`e79853e` は", { abbrev: false, dict: [] })).toBe("e79853e は");
+  });
+});
+
+describe("pauseParticles (助詞＋漢字の小休止)", () => {
+  it("を・は・で・に・と の直後に漢字が続くとき読点を入れる", () => {
+    expect(pauseParticles("神は細部に宿る")).toBe("神は、細部に、宿る");
+    expect(pauseParticles("設定を保存して再起動")).toBe("設定を、保存して再起動");
+    expect(pauseParticles("ミラーで再生とターミナルで停止")).toBe("ミラーで、再生とターミナルで、停止");
+  });
+
+  it("ひらがな・カタカナ・句読点が続くときは入れない", () => {
+    expect(pauseParticles("これはそのままです")).toBe("これはそのままです");
+    expect(pauseParticles("画面にカーソルを、")).toBe("画面にカーソルを、");
+    expect(pauseParticles("ペインとタブ")).toBe("ペインとタブ");
   });
 });
 

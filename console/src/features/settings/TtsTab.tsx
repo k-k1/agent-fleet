@@ -156,6 +156,14 @@ export function TtsTab() {
               裸のハッシュ・UUID も、地の文の中から見つけて同じように省略します（英単語や長い数値は
               誤検知しないよう 16 進らしいものだけ）。
             </p>
+            <Row label="助詞のあとで一呼吸">
+              <OnOff value={s.ttsParticlePause} onChange={(v) => setSetting("ttsParticlePause", v)} />
+            </Row>
+            <p className="muted ds-note">
+              「を・は・で・に・と」の直後に漢字が続くところで、読点ひとつぶんの小さな間を入れて読みます
+              （例:「神は細部に宿る」→「神は、細部に、宿る」）。文の切れ目の一拍より短い「息継ぎ」で、
+              語の切れ目が聞き取りやすくなります。
+            </p>
             <Row label="英語をカタカナ読み">
               <OnOff value={s.ttsEnglishKana} onChange={(v) => setSetting("ttsEnglishKana", v)} />
             </Row>

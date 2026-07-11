@@ -29,6 +29,7 @@ var techKana = map[string]string{
 	"cli":        "シーエルアイ",
 	"gui":        "グーイ",
 	"oauth":      "オーオース",
+	"origin":     "オリジン",
 	"jwt":        "ジェイダブリューティー",
 	"regex":      "レジェックス",
 	"enum":       "イーナム",
