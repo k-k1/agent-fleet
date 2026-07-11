@@ -48,11 +48,14 @@ function usePersistedStr(key: string, dflt: string): readonly [string, (v: strin
 
 interface RepoNodeProps {
   r: Repo;
+  /** This base clone's worktrees — rendered as nested child nodes, so folding the
+   * base folds the whole project. Absent/empty for worktree nodes themselves. */
+  childRepos?: Repo[];
   ctx: RepoRailContext;
   actions: SessionActions;
 }
 
-export function RepoNode({ r, ctx, actions }: RepoNodeProps) {
+export function RepoNode({ r, childRepos, ctx, actions }: RepoNodeProps) {
   const sessions = useSessionsStore((s) => s.sessions);
   const reveal = useFilesStore((s) => s.reveal);
   const mine = sessionsInFolder(sessions, r.name);
@@ -141,6 +144,16 @@ export function RepoNode({ r, ctx, actions }: RepoNodeProps) {
           </div>
           {/* Lazy: fetch only once the ファイル sub is open. */}
           {files.open && <ProjectFiles root={rootPath} repo={r.name} view={filesView as "tree" | "changes"} />}
+
+          {/* Worktrees as real child nodes — indentation says "belongs to this
+              base" (the old peer-row + group band is gone). */}
+          {childRepos && childRepos.length > 0 && (
+            <ul className="proj-children">
+              {childRepos.map((c) => (
+                <RepoNode key={c.name} r={c} ctx={ctx} actions={actions} />
+              ))}
+            </ul>
+          )}
         </div>
       )}
     </li>

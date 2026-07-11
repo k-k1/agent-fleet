@@ -1,12 +1,11 @@
-// ProjectTree — the rail's main block: working copies as collapsible nodes,
-// clustered into project groups (a base clone + its worktrees) so each project
-// reads as one visual unit, separated from the next. Replaces the flat Sessions +
-// Repos sections. The block header carries repo actions (clone / 更新) plus the
-// global session-maintenance actions (整理 / アーカイブ) that used to float on the
-// orphan section's header.
+// ProjectTree — the rail's main block: repos laid out directly (no "プロジェクト"
+// section frame, no group bands). Each base clone is a top-level collapsible node
+// and its worktrees nest as child nodes inside it, so a project reads as real
+// hierarchy instead of a decorated flat list — and folding the base folds the
+// whole project. A slim toolbar row carries the repo actions (clone / 更新) and
+// the session-maintenance actions (整理 / アーカイブ).
 import { useEffect, useState } from "react";
 import { apiJSON, errText } from "../../core/api/client.ts";
-import { Section } from "../../ui/Section.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { Button, IconButton } from "../../ui/Button.tsx";
 import { EmptyState } from "../../ui/EmptyState.tsx";
@@ -80,35 +79,33 @@ export function ProjectTree() {
   };
 
   return (
-    <Section
-      id="projects"
-      title="プロジェクト"
-      icon="repo"
-      count={repos.length}
-      actions={
-        <>
-          <Button
-            small
-            variant="ghost"
-            icon="add"
-            title={running ? "clone" : "clone（ワークスペース停止中）"}
-            disabled={!!cloning || !running}
-            onClick={() => setShowClone((s) => !s)}
-          >
-            クローン
-          </Button>
-          <IconButton icon="refresh" label="更新" onClick={() => void refreshRepos()} />
-          <span className="proj-head-sep" aria-hidden="true" />
-          <IconButton
-            icon="clear-all"
-            label="停止中をまとめてアーカイブ（shell/ssm は削除）"
-            disabled={!sessions.some((s) => !s.alive)}
-            onClick={actions.clearStopped}
-          />
-          <IconButton icon="archive" label="アーカイブを開く（復帰）" onClick={openArchived} />
-        </>
-      }
-    >
+    <div className="proj-block">
+      {/* Slim toolbar (replaces the old section header): repo ops | session upkeep. */}
+      <div className="proj-toolbar">
+        <span className="proj-toolbar-title">
+          <Icon name="repo" /> リポジトリ
+        </span>
+        <span className="proj-toolbar-sp" aria-hidden="true" />
+        <Button
+          small
+          variant="ghost"
+          icon="add"
+          title={running ? "clone" : "clone（ワークスペース停止中）"}
+          disabled={!!cloning || !running}
+          onClick={() => setShowClone((s) => !s)}
+        >
+          クローン
+        </Button>
+        <IconButton icon="refresh" label="更新" onClick={() => void refreshRepos()} />
+        <span className="proj-head-sep" aria-hidden="true" />
+        <IconButton
+          icon="clear-all"
+          label="停止中をまとめてアーカイブ（shell/ssm は削除）"
+          disabled={!sessions.some((s) => !s.alive)}
+          onClick={actions.clearStopped}
+        />
+        <IconButton icon="archive" label="アーカイブを開く（復帰）" onClick={openArchived} />
+      </div>
       {showClone && <NewRepoModal onClose={() => setShowClone(false)} onClone={doClone} repos={repos} />}
       <ul className="sess-list proj-tree">
         {cloning && (
@@ -125,16 +122,12 @@ export function ProjectTree() {
             )}
           </EmptyState>
         )}
-        {groups.map((members, i) => (
-          <li key={members[0].name} className={i % 2 === 1 ? "proj-group alt" : "proj-group"}>
-            <ul className="proj-group-list">
-              {members.map((r) => (
-                <RepoNode key={r.name} r={r} ctx={ctx} actions={actions} />
-              ))}
-            </ul>
-          </li>
+        {/* One top-level node per base clone; its worktrees nest inside as child
+            nodes (an orphaned worktree group has the worktree itself at [0]). */}
+        {groups.map((members) => (
+          <RepoNode key={members[0].name} r={members[0]} childRepos={members.slice(1)} ctx={ctx} actions={actions} />
         ))}
       </ul>
-    </Section>
+    </div>
   );
 }
