@@ -15,7 +15,7 @@ L1 認証（authGate）通過後に到達。認可は「自分のリソースの
 | グループ | 代表パス | 処理場所 | 詳細 |
 |----------|---------|----------|------|
 | identity / tenant | `GET /api/whoami`・`GET /api/tenants` | CP | [03](03-control-plane.md) |
-| workspace | `GET /api/workspace`・`POST /api/workspace/{start,stop,recreate}`・`GET /api/workspace/stats` | CP（Runtime）| [03](03-control-plane.md) |
+| workspace | `GET /api/workspace`・`POST /api/workspace/{start,stop,recreate,clean-home}`・`GET /api/workspace/stats` | CP（Runtime）| [03](03-control-plane.md) |
 | sessions | `GET/POST /api/sessions`・`POST /api/sessions/{name}/{stop,halt,recreate,archive,restore,fork,start,input,paste-image,suggest-branch,rename-branch}`・`GET …/{status,output,messages}`・`POST …/title/*`・`GET /api/sessions/archived` | 生成/fork/start=CP→Agent、他は中継 | [04](04-workspace-agent.md) |
 | repos (SCM) | `GET/POST /api/repos`・`/api/repos/{name}/{status,branches,checkout,fetch,ff,changes,diff,log,graph,show,stage,unstage,discard,commit,identity,prompt-templates}` | 中継 | [04](04-workspace-agent.md) |
 | fs | `GET /api/fs/{tree,file,download,changes,linemarks}`・`POST /api/fs/{upload,mkdir,newfile,rename,delete}` | 中継 | [04](04-workspace-agent.md) |

@@ -20,6 +20,11 @@ interface WorkspaceStore {
    * guards this behind a warning dialog (設定 > 環境) and resets the layout first.
    * Returns the error message on failure (the caller toasts). */
   recreate(): Promise<string | null>;
+  /** Deeper reset than recreate: wipe the whole home EXCEPT logins/connections
+   * (repos, ~/.local, ~/.cache, dotfiles all go), then start fresh from the image.
+   * For when something under home outside ~/repos is wedged. Returns the error
+   * message on failure (the caller toasts). */
+  cleanHome(): Promise<string | null>;
 }
 
 export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
@@ -70,6 +75,19 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       if (res && res.error) err = res.error.message || String(res.error);
     } catch {
       err = "作り直しに失敗しました";
+    }
+    await get().refresh();
+    return err;
+  },
+
+  async cleanHome() {
+    set({ state: "recreating…" });
+    let err: string | null = null;
+    try {
+      const res = await api("api/workspace/clean-home", { method: "POST" });
+      if (res && res.error) err = res.error.message || String(res.error);
+    } catch {
+      err = "掃除に失敗しました";
     }
     await get().refresh();
     return err;
