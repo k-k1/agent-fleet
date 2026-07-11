@@ -9,6 +9,22 @@ every Claude / Codex / OpenCode session reads it at startup. Edit it in the repo
 - Working directories live under `~/repos/<repo>`. Clone repositories from the Console.
 - The container can be recreated from "Settings > Environment" (rebuilt from the latest image).
 
+## What survives a recreate (persistence model)
+"Recreate" (Settings > Environment) tears down the container and starts a fresh one
+from the latest image. The rule is simple:
+- **Only `~/repos` is deleted.** All cloned repos — *including uncommitted work* — are
+  wiped. Nothing else in your home is touched.
+- **The rest of `~` persists** — it lives on a bind-mounted home volume that is
+  re-attached to the new container. This includes `~/.local` (the auto-updating
+  `claude` install, nvm node, `pip --user`), `~/.config` (`~/.config/agent-fleet`
+  encrypted connections, `~/.config/opencode`), `~/.claude`/`~/.codex`/`~/.local/share/opencode`
+  (agent auth/state), `~/.ssh`/`~/.git-credentials`/`~/.gitconfig`, `~/.cache/ms-playwright`,
+  `~/.gradle`, and anything you put in `~` outside `~/repos`. Login and connections stay intact.
+- **The container filesystem outside home is ephemeral** — `apt install`ed packages and
+  anything written under `/`, `/usr`, `/opt`, `/tmp` etc. revert to the image on recreate.
+  Persist tools in your home (e.g. under `~/.local`) if you want them to survive.
+- So the only data loss risk from a recreate is `~/repos`: **commit / push before recreating.**
+
 ## Do not
 - **Do not leave uncommitted changes.** Recreating the container deletes cloned repos — commit / push often.
 - **Do not store credentials in plaintext.** Never write API keys or tokens into repos or files. Manage connections under "Settings > Connections" (stored encrypted).
