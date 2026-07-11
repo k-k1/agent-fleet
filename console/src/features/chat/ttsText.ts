@@ -150,8 +150,24 @@ const BUILTIN_READINGS: [string, string][] = [
   ["空行", "からぎょう"], // 行 単体は読みが揺れる（こう/ぎょう）ので読みまで固定
 ];
 
+// ヌメロニム（i18n = internationalization 等の中抜き略語）。数字は「省略した文字数」で
+// 数ではないので、数字読みさせず元の語の慣用カタカナに展開する。単語境界つき・大文字
+// 小文字は不問（I18n / A11Y 等も拾う）。enkana（CP 側・英語→カタカナ）はこの後段だが、
+// ここで展開済みなので二重変換にはならない。
+const NUMERONYMS: [RegExp, string][] = [
+  [/\bi18n\b/gi, "インターナショナリゼーション"],
+  [/\bl10n\b/gi, "ローカリゼーション"],
+  [/\ba11y\b/gi, "アクセシビリティ"],
+  [/\bo11y\b/gi, "オブザーバビリティ"],
+  [/\bg11n\b/gi, "グローバリゼーション"],
+  [/\be2e\b/gi, "エンドツーエンド"],
+  [/\bk8s\b/gi, "クーバネティス"],
+];
+
 export function applyBuiltinReadings(text: string): string {
-  return applyUserDict(text.replace(KARA_KATAKANA, "から"), BUILTIN_READINGS);
+  let t = text.replace(KARA_KATAKANA, "から");
+  for (const [re, to] of NUMERONYMS) t = t.replace(re, to);
+  return applyUserDict(t, BUILTIN_READINGS);
 }
 
 // applyReadings は読み上げ直前の「読みの整形」ひとまとめ: ユーザー/テナント辞書（優先）→
