@@ -12,7 +12,7 @@
 import { rel } from "../../core/api/client.ts";
 import { getSettings } from "../../lib/settings.ts";
 import { useTtsStore } from "../../core/store/tts.ts";
-import { plainify, plainifyStreaming, firstChunkCut, applyUserDict } from "./ttsText.ts";
+import { plainify, plainifyStreaming, firstChunkCut, applyUserDict, emotionOf } from "./ttsText.ts";
 import { effectiveDict } from "./ttsDict.ts";
 import { makeAudioLru } from "./ttsCache.ts";
 
@@ -70,6 +70,25 @@ export function sessionVoiceOpts(session: string): Partial<TtsOptions> | undefin
     voice: SESSION_VOICES[h % SESSION_VOICES.length].base,
     pollyVoice: SESSION_POLLY_VOICES[h % SESSION_POLLY_VOICES.length],
   };
+}
+
+// --- 感情スタイルの読み分け（docs/24） -------------------------------------------
+// 文にエラー・失敗系の語があればツンツン系、成功・完了系ならあまあま系のスタイルで読む
+// （emotionOf の判定。文単位＝合成 1 回単位で切り替え）。スタイル variant を持つ話者
+// （ずんだもん・四国めたん・九州そら）のときだけ効き、Polly やスタイル無しの話者は
+// そのまま。ノーマル以外を基準スタイルに選んでいる場合も触らない（好みを尊重）。
+const STYLE_VARIANTS: Record<string, VoiceProfile> = Object.fromEntries(
+  SESSION_VOICES.filter((p) => p.happy || p.angry).map((p) => [p.base, p]),
+);
+
+function emotionOpts(text: string, base: TtsOptions): TtsOptions {
+  if (!getSettings().ttsEmotion) return base;
+  const prof = STYLE_VARIANTS[base.voice];
+  if (!prof) return base;
+  const e = emotionOf(text);
+  if (e === "happy" && prof.happy) return { ...base, voice: prof.happy };
+  if (e === "angry" && prof.angry) return { ...base, voice: prof.angry };
+  return base;
 }
 
 // 同時に合成を投げる上限。長文で数十並列にしてエンジン/CP を溢れさせない。
@@ -292,7 +311,7 @@ export function startTts(opts: TtsOptions, source = "", onEnd?: (reason: "done" 
     const ac = new AbortController();
     acs.add(ac);
     try {
-      return await synthToBuffer(ctx, text, opts, ac.signal);
+      return await synthToBuffer(ctx, text, emotionOpts(text, opts), ac.signal);
     } finally {
       acs.delete(ac);
     }
@@ -488,7 +507,7 @@ export function startNarration(
       inflight++;
       const ac = new AbortController();
       acs.add(ac);
-      synthToBuffer(ctx!, text, opts, ac.signal)
+      synthToBuffer(ctx!, text, emotionOpts(text, opts), ac.signal)
         .then((ab) => buffers.set(i, ab))
         .catch(() => buffers.set(i, null))
         .finally(() => {

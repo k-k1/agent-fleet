@@ -112,6 +112,21 @@ export function abbrevCode(token: string, dict: [string, string][] = []): string
   return `${t.slice(0, 2)} ${filler}`;
 }
 
+// --- 文の感情推定（感情スタイル読み分け用） --------------------------------------
+// 文にエラー・失敗系の語があれば "angry"（ツンツン系スタイル）、成功・完了系なら
+// "happy"（あまあま系）、どちらも無ければ null（ノーマル）。読み上げ済みテキスト
+// （プレーン化後の 1 文）に対するキーワード判定で、angry を優先する（失敗の報告に
+// 成功語が混ざることはあっても逆は稀なため）。
+const ANGRY_WORDS = ["エラー", "失敗", "例外", "できませんでした", "落ちました", "error", "fail"];
+const HAPPY_WORDS = ["成功", "完了", "できました", "通りました", "問題ありません", "green", "passed", "✅", "🎉"];
+
+export function emotionOf(text: string): "happy" | "angry" | null {
+  const t = text.toLowerCase();
+  for (const w of ANGRY_WORDS) if (t.includes(w)) return "angry";
+  for (const w of HAPPY_WORDS) if (t.includes(w)) return "happy";
+  return null;
+}
+
 // --- レンダ済みテキストの文分割（ミラーのカラオケ朗読用） ------------------------
 // textContent 由来のテキスト（Markdown 記法は既に落ちている）を文単位に割る。句点は前の
 // 文に含める。改行・連続空白は 1 つの空白に潰し、かな/漢字/英数字を 1 つも含まない断片

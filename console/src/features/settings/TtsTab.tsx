@@ -62,6 +62,13 @@ export function TtsTab() {
               同じセッションは常に同じ声になり、複数セッションの読み上げ・音声通知を声で聞き分けられます。
               アシスタント・チャットや朗読ビューは上で選んだ話者のままです。
             </p>
+            <Row label="内容で感情を変える">
+              <OnOff value={s.ttsEmotion} onChange={(v) => setSetting("ttsEmotion", v)} />
+            </Row>
+            <p className="muted ds-note">
+              エラー・失敗を含む文はツンツン、成功・完了を含む文はあまあまのスタイルで読みます（文ごとに判定）。
+              スタイルを持つ話者（ずんだもん・四国めたん・九州そら）のときだけ効き、Polly には影響しません。
+            </p>
             <Row label="読み上げ速度">
               <Choice value={s.ttsSpeed} options={TTS_SPEEDS} onChange={(v) => setSetting("ttsSpeed", v)} />
             </Row>
