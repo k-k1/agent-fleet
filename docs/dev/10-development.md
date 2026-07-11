@@ -10,6 +10,7 @@
 | `control-plane/` | Control Plane（Go・単独モジュール）。migrations を埋め込み、起動時に自動適用 |
 | `workspace/` | Workspace イメージ（Dockerfile / entrypoint）+ `workspace/agent/`（Agent・独立 Go モジュール）|
 | `deploy/` | デプロイ層（local / compose / aws）。runbook は各 README（[09](09-deploy.md)）|
+| `e2e/` | フリート E2E（独立 Go モジュール・stdlib のみ）。CP + 実コンテナの疎通検証（§10.4）|
 
 ファイル単位の地図は [90-code-map](90-code-map.md)。
 
@@ -55,7 +56,8 @@ Go は **2 モジュール**（`control-plane/` と `workspace/agent/`）でそ�
 
 - CP 側は `httptest` ベースのスモークを多数含む（audit / egress / 内部 git smart-HTTP / LFS /
   store 両実装など）。Postgres 系は `AF_TEST_DATABASE_URL` 未設定なら skip。
-- CI（GitHub Actions）は Go リファクタ側ブランチで整備中・未マージ（本ブランチに `.github/workflows/` は無い）。
+- CI（GitHub Actions）: `ci.yml` が push/PR ごとに 3 コンポーネント（CP / Agent / Console）の
+  fmt・vet・test・build を検証。`e2e.yml`（下記 E2E）はイメージ build が重いため分離。
 - Console:
 
 ```bash
@@ -66,6 +68,25 @@ NODE_OPTIONS=--max-old-space-size=3072 npm --prefix console run build
 本番 build は Node ヒープを上げないと OOM しうる（メモリ制約ホストでの一般指針は Workspace 配布の
 workspace-notes を参照）。gofmt + `go vet` clean・`npm run build` clean が提出前の基準
 （[CONTRIBUTING](../../CONTRIBUTING.md)）。
+
+### E2E（イメージスモーク + フリート疎通）
+
+2 層構成。**L1 = `deploy/local/e2e-smoke.sh`**（§10.3、イメージ焼き込み内容の検証・数秒）、
+**L2 = `e2e/`**（独立 Go モジュール・stdlib のみ）。L2 は CP をヘッドレス（AUTH=dev）で起動し、
+公開 API だけで workspace 起動 → **shell セッション**作成 → input（echo 打鍵）→ fs API で
+読み戻し → 停止、を実コンテナで検証する。kind=shell なので **LLM クレデンシャル不要**。
+
+```bash
+cd e2e && WS_IMAGE=agent-fleet/workspace:dev go test -v -tags e2e -timeout 15m
+```
+
+- 前提（docker + build 済みイメージ）が無ければ skip（CI は `E2E_REQUIRE=1` で fail に格上げ）。
+- 実フリートが動く dev ホストでも安全: DEV_USER=e2e（`af-ws-e2e`）・ポートは動的確保・
+  teardown 内蔵（コンテナ / ネットワーク / 一時データ）。ただしメモリ制約ホストなので同時 1 実行。
+- CI は `.github/workflows/e2e.yml`: workspace/CP/e2e の変更時 + **週次 cron**（コード無変更でも
+  上流 CLI・base image の破壊を検出）+ 手動。イメージ build（GHA キャッシュ）→ L1 → L2 の順。
+  rtk は git-ignored のホスト vendor 品のため CI は「rtk なし」パスの検証になる（rtk 込みは
+  ホストで run-dev.sh / 本テストを回して確認）。
 
 ## 10.5 コミット規約・ブランチ運用
 
