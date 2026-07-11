@@ -173,9 +173,15 @@ const NUMERONYMS: [RegExp, string][] = [
   [/\bk8s\b/gi, "クーバネティス"],
 ];
 
+// 大文字だけの略語で、同綴りの英単語に読みを食われるもの（IT は CMU 辞書の it=イット が
+// 勝ってしまう）。**大文字小文字を区別して**単語境界で当てる — 小文字の it は英語の代名詞
+// なので触らない（enkana の辞書はキーを小文字化するため大小を区別できず、ここで扱う）。
+const UPPER_ACRONYMS: [RegExp, string][] = [[/\bIT\b/g, "アイティー"]];
+
 export function applyBuiltinReadings(text: string): string {
   let t = text.replace(KARA_KATAKANA, "から");
   for (const [re, to] of NUMERONYMS) t = t.replace(re, to);
+  for (const [re, to] of UPPER_ACRONYMS) t = t.replace(re, to);
   return applyUserDict(t, BUILTIN_READINGS);
 }
 
