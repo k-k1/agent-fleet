@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import type { CSSProperties, KeyboardEvent as RKeyboardEvent, ClipboardEvent as RClipboardEvent } from "react";
+import { createPortal } from "react-dom";
+import type { CSSProperties, KeyboardEvent as RKeyboardEvent, ClipboardEvent as RClipboardEvent, RefObject } from "react";
 import { api, apiJSON, raw, errText, pasteImage } from "../../core/api/client.ts";
 import { splitPastedImages, buildImagePrompt } from "../../lib/pastedImages.ts";
 import { useSettings, chatFontStack } from "../../lib/settings.ts";
@@ -10,7 +11,7 @@ import { Icon } from "../../ui/Icon.tsx";
 import FileIcon from "../../ui/FileIcon.tsx";
 import { baseName } from "../../lib/filemeta.ts";
 import { MarkdownView } from "../viewer/MarkdownView.tsx";
-import { TtsReadButton } from "../chat/TtsReadButton.tsx";
+import { readTurn, collectBlocks, blockIndexAt, type TurnReadHandle } from "./turnTts.ts";
 import { MirrorToggle } from "./MirrorToggle.tsx";
 import { ContextBar } from "./ContextBar.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
@@ -103,6 +104,17 @@ interface Group {
 type FoldItem =
   | { kind: "toolrun"; tools: { p: Part; i: number }[] }
   | { kind: "part"; p: Part; i: number };
+
+// カラオケ朗読（turnTts, docs/24）の配線。いま読み上げ中のターン（transcript の idx）と
+// 操作を renderGroups 経由で各 Turn のフッターへ渡す。ハイライトは turnTts が DOM
+// （classList）側で行い、React はボタンの表示切り替えだけを持つ。
+interface TurnTtsWiring {
+  reading: { idx: number; paused: boolean } | null;
+  start: (idx: number, body: HTMLElement) => void;
+  pause: () => void;
+  resume: () => void;
+  stop: () => void;
+}
 
 // Optimistic send echoes ("反映待ち"), stashed per session at module level. MirrorView
 // unmounts on a チャット→ターミナル switch, so keeping them only in component state made a
@@ -252,6 +264,84 @@ export function MirrorView({
   // the user is watching get anchored to the top — history isn't retro-scrolled.
   const didInitRef = useRef(false);
 
+  // --- カラオケ朗読（turnTts, docs/24） -----------------------------------------
+  // 読み上げ中のターン（transcript の idx）と一時停止状態。onEnd（自然終了・TopBar 停止・
+  // 他の再生開始）で自分の分だけ片づける。
+  const [ttsReading, setTtsReading] = useState<{ idx: number; paused: boolean } | null>(null);
+  const ttsHandleRef = useRef<TurnReadHandle | null>(null);
+  // 選択位置から読み上げるピル（ReaderView の「ここから朗読」と同パターン）。
+  const [ttsPill, setTtsPill] = useState<{ x: number; y: number; idx: number; body: HTMLElement; block: number } | null>(
+    null,
+  );
+  const ttsStart = (idx: number, body: HTMLElement, fromBlock = 0) => {
+    ttsHandleRef.current?.stop(); // 自分の再生を先に止める（他の再生は startNarration が止める）
+    const h = readTurn(body, sessionMeta ? displayName(sessionMeta) : "セッション", fromBlock, () => {
+      ttsHandleRef.current = null;
+      setTtsReading((cur) => (cur?.idx === idx ? null : cur));
+    });
+    if (!h) return; // 読み上げられる本文が無い（ツールだけのターン等）
+    ttsHandleRef.current = h;
+    setTtsReading({ idx, paused: false });
+  };
+  const ttsWiring: TurnTtsWiring = {
+    reading: ttsReading,
+    start: ttsStart,
+    pause: () => {
+      ttsHandleRef.current?.pause();
+      setTtsReading((c) => (c ? { ...c, paused: true } : c));
+    },
+    resume: () => {
+      ttsHandleRef.current?.resume();
+      setTtsReading((c) => (c ? { ...c, paused: false } : c));
+    },
+    stop: () => ttsHandleRef.current?.stop(), // 後始末は onEnd 側で
+  };
+  // セッション切替・アンマウントで停止（本文 DOM ごと入れ替わるため）。
+  useEffect(() => () => ttsHandleRef.current?.stop(), [session]);
+
+  // 本文内でテキスト選択が確定したら「ここから読み上げ」ピルを出す（assistant ターン内のみ）。
+  const captureTtsSel = () => {
+    const sel = window.getSelection();
+    const root = bodyRef.current;
+    if (!settings.ttsEnabled || !sel || sel.isCollapsed || sel.rangeCount === 0 || !root) {
+      setTtsPill(null);
+      return;
+    }
+    const range = sel.getRangeAt(0);
+    const node = range.startContainer;
+    const el = node.nodeType === Node.TEXT_NODE ? node.parentElement : (node as HTMLElement);
+    const turnEl = root.contains(node) ? el?.closest<HTMLElement>(".mirror-turn.assistant") : null;
+    const turnBody = turnEl ? el?.closest<HTMLElement>(".mirror-turn-body") : null;
+    const idx = turnEl?.dataset.turnIdx;
+    if (!turnEl || !turnBody || idx === undefined) {
+      setTtsPill(null);
+      return;
+    }
+    const block = blockIndexAt(collectBlocks(turnBody), node);
+    if (block < 0) {
+      setTtsPill(null);
+      return;
+    }
+    const rect = range.getBoundingClientRect();
+    setTtsPill({ x: Math.round(rect.left), y: Math.round(rect.top - 34), idx: Number(idx), body: turnBody, block });
+  };
+  // タッチ選択（長押し＋ドラッグ）は mouseup を出さないので selectionchange でも更新する
+  // （デバウンス・最新クロージャを ref 経由で。ReaderView と同じ）。
+  const ttsCaptureRef = useRef(captureTtsSel);
+  ttsCaptureRef.current = captureTtsSel;
+  useEffect(() => {
+    let t: ReturnType<typeof setTimeout> | null = null;
+    const onSelChange = () => {
+      if (t) clearTimeout(t);
+      t = setTimeout(() => ttsCaptureRef.current(), 250);
+    };
+    document.addEventListener("selectionchange", onSelChange);
+    return () => {
+      document.removeEventListener("selectionchange", onSelChange);
+      if (t) clearTimeout(t);
+    };
+  }, []);
+
   // Reset accumulated turns when the session changes (cursor is a line index into
   // that session's jsonl, meaningless across sessions).
   useEffect(() => {
@@ -336,6 +426,7 @@ export function MirrorView({
             setTurns(Array.isArray(d.messages) ? d.messages : []);
             firstLineRef.current = 0; // reset re-sends from the top: nothing older to page
             setHasMore(false);
+            ttsHandleRef.current?.stop(); // 読み上げ中の本文 DOM ごと入れ替わる
           } else if (Array.isArray(d.messages) && d.messages.length) {
             // Idempotent append: keep only turns past the newest `idx` (jsonl line) we
             // already hold. A quick re-poll (after sending) racing the in-flight poll can
@@ -1120,7 +1211,7 @@ export function MirrorView({
         </div>
       )}
 
-      <div className="mirror-body" ref={bodyRef} onScroll={onBodyScroll}>
+      <div className="mirror-body" ref={bodyRef} onScroll={onBodyScroll} onMouseUp={captureTtsSel}>
         {loaded && hasMore && (
           <div className="mirror-loadmore" ref={topSentinelRef}>
             <button
@@ -1162,7 +1253,7 @@ export function MirrorView({
               : "まだ会話はありません。下の欄からプロンプトを送るか、ターミナルで対話すると、ここに ターンごとの Markdown で表示されます。"}
           </div>
         ) : (
-          renderGroups(groups, sendPrompt, openPlan, openDiff, openFile, maxSpend, session, setLightbox, agentName, (p) => rejectedPlansRef.current.has(p.trim()))
+          renderGroups(groups, sendPrompt, openPlan, openDiff, openFile, maxSpend, session, setLightbox, agentName, ttsWiring, (p) => rejectedPlansRef.current.has(p.trim()))
         )}
         {pendingPlan && (
           <div className="mirror-turn assistant">
@@ -1422,6 +1513,24 @@ export function MirrorView({
           <img src={lightbox} alt="貼り付け画像（拡大）" />
         </div>
       )}
+      {ttsPill &&
+        createPortal(
+          <div className="sel-pill-group" style={{ left: ttsPill.x, top: Math.max(4, ttsPill.y) }}>
+            <button
+              type="button"
+              className="sel-send-pill"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => {
+                ttsStart(ttsPill.idx, ttsPill.body, ttsPill.block);
+                setTtsPill(null);
+                window.getSelection()?.removeAllRanges();
+              }}
+            >
+              <Icon name="unmute" /> ここから読み上げ
+            </button>
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }
@@ -1580,6 +1689,7 @@ function renderGroups(
   session: string,
   onOpenImage: (url: string) => void,
   agentName: string,
+  tts: TurnTtsWiring,
   isRejectedPlan: (plan: string) => boolean,
 ) {
   const els = [];
@@ -1606,6 +1716,7 @@ function renderGroups(
           onOpenDiff={onOpenDiff}
           onOpenFile={onOpenFile}
           agentName={agentName}
+          tts={tts}
           isRejectedPlan={isRejectedPlan}
         />
       ),
@@ -1749,6 +1860,7 @@ function Turn({
   onOpenDiff,
   onOpenFile,
   agentName,
+  tts,
   isRejectedPlan,
 }: {
   turn: Group;
@@ -1760,12 +1872,14 @@ function Turn({
   onOpenDiff: (p: Part) => void;
   onOpenFile: (path: string) => void;
   agentName: string;
+  tts: TurnTtsWiring;
   isRejectedPlan: (plan: string) => boolean;
 }) {
   const isUser = turn.role === "user";
   const who = isUser ? "あなた" : turn.sidechain ? "サブエージェント" : agentName;
   const ctxTok = turn.inTok + turn.cacheRead + turn.cacheCreate;
   const spend = spendOf(turn);
+  const bodyEl = useRef<HTMLDivElement>(null); // カラオケ朗読（turnTts）の本文 DOM
   return (
     <div
       className={"mirror-turn " + (isUser ? "user" : "assistant") + (turn.sidechain ? " sidechain" : "")}
@@ -1785,7 +1899,7 @@ function Turn({
           </span>
         )}
       </div>
-      <div className="mirror-turn-body">
+      <div className="mirror-turn-body" ref={bodyEl}>
         {isUser ? (
           (() => {
             // Split off any pasted-image references so the bubble shows the user's words
@@ -1847,10 +1961,56 @@ function Turn({
         {!isUser && spend > 0 && maxSpend > 0 && (
           <TurnSpendBar fresh={turn.inTok} create={turn.cacheCreate} out={turn.outTok} max={maxSpend} />
         )}
-        {!isUser && <TtsReadButton text={turn.text} source="セッション" className="mt-copy" />}
+        {!isUser && <TurnTtsButtons turn={turn} tts={tts} body={bodyEl} />}
         <CopyButton text={turn.text} />
       </div>
     </div>
+  );
+}
+
+// TurnTtsButtons — ターンフッターの読み上げ操作（カラオケ朗読）。待機中は「読み上げ」1 つ、
+// このターンを読み上げ中は「一時停止/再開・停止」に切り替わる（ReaderView ヘッダと同構成）。
+// ttsEnabled かつ本文があるときだけ表示。ChatView の TtsReadButton（ストリーム型 speakText）
+// とは別物で、ミラーは完結ターンを朗読するのでハイライト・途中再開が付く。
+function TurnTtsButtons({
+  turn,
+  tts,
+  body,
+}: {
+  turn: Group;
+  tts: TurnTtsWiring;
+  body: RefObject<HTMLDivElement | null>;
+}) {
+  const enabled = useSettings().ttsEnabled;
+  if (!enabled || turn.idx === undefined || !(turn.text || "").trim()) return null;
+  const mine = tts.reading?.idx === turn.idx;
+  if (!mine) {
+    return (
+      <button
+        type="button"
+        className="ghost mt-copy"
+        title="このターンを読み上げ"
+        onClick={() => body.current && tts.start(turn.idx!, body.current)}
+      >
+        <Icon name="unmute" /> 読み上げ
+      </button>
+    );
+  }
+  const paused = tts.reading!.paused;
+  return (
+    <>
+      <button
+        type="button"
+        className="ghost mt-copy"
+        title={paused ? "読み上げを再開" : "読み上げを一時停止"}
+        onClick={paused ? tts.resume : tts.pause}
+      >
+        <Icon name={paused ? "play" : "debug-pause"} /> {paused ? "再開" : "一時停止"}
+      </button>
+      <button type="button" className="ghost mt-copy" title="読み上げを停止" onClick={tts.stop}>
+        <Icon name="debug-stop" /> 停止
+      </button>
+    </>
   );
 }
 

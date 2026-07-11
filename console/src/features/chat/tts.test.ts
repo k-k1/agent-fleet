@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { plainify, plainifyStreaming, firstChunkCut, parseUserDict, applyUserDict } from "./ttsText.ts";
+import { plainify, plainifyStreaming, firstChunkCut, parseUserDict, applyUserDict, splitSentences } from "./ttsText.ts";
 import { makeAudioLru } from "./ttsCache.ts";
 
 describe("plainify (読み上げ用プレーン化)", () => {
@@ -81,6 +81,29 @@ describe("firstChunkCut (最初の発話の早出し)", () => {
   it("閉じ括弧類も早出しの区切りになる", () => {
     const s = "設定（詳しくは後述）を開きます";
     expect(firstChunkCut(s)).toBe(s.indexOf("）") + 1);
+  });
+});
+
+describe("splitSentences (レンダ済みテキストの文分割)", () => {
+  it("句点で分割し、句点は前の文に残す", () => {
+    expect(splitSentences("これは一文目。二文目です。")).toEqual(["これは一文目。", "二文目です。"]);
+  });
+
+  it("末尾の句点なし断片も 1 文として返す", () => {
+    expect(splitSentences("読点だけで、終わる断片")).toEqual(["読点だけで、終わる断片"]);
+  });
+
+  it("改行・連続空白は 1 つの空白に潰す", () => {
+    expect(splitSentences("一行目\n  二行目です。")).toEqual(["一行目 二行目です。"]);
+  });
+
+  it("かな/漢字/英数字を含まない断片（記号だけ）は捨てる", () => {
+    expect(splitSentences("---")).toEqual([]);
+    expect(splitSentences("読む。※")).toEqual(["読む。"]);
+  });
+
+  it("空文字列は空配列", () => {
+    expect(splitSentences("")).toEqual([]);
   });
 });
 

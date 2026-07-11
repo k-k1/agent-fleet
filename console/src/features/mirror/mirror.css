@@ -413,6 +413,12 @@
 .mt-spend .ts-out {
   background: var(--chat-accent);
 }
+/* カラオケ朗読（turnTts, docs/24）: いま読んでいる文が属するブロックのハイライト。 */
+.mirror-turn-body .tts-active {
+  background: color-mix(in srgb, var(--chat-accent) 14%, transparent);
+  border-radius: 4px;
+  scroll-margin: 64px; /* scrollIntoView(nearest) がヘッダ等に隠れない余白 */
+}
 .mt-copy {
   display: inline-flex;
   align-items: center;

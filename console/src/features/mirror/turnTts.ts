@@ -1,0 +1,115 @@
+// features/mirror/turnTts — ミラーのターン本文をカラオケ朗読する（docs/24）。
+//
+// MarkdownView が innerHTML で描画した DOM からブロック（p / h1-h6 / li / blockquote 内の
+// 段落）を文書順に集め、textContent を文分割して startNarration（features/chat/tts.ts）へ
+// 渡す。音声の単位＝文、ハイライトの単位＝ブロック。pre（コード）・table・mermaid は
+// 読まない。ソース（Markdown 文字列）側で分割しないのは、marked のトークンとレンダ結果の
+// 対応維持が脆いため — textContent なら記法は既に落ちており、リンクは表示テキストだけが残る。
+// ターンは完結してから届く（ポーリング）ので、抽出は読み上げ開始時の 1 回で安定する。
+
+import { startNarration } from "../chat/tts.ts";
+import { splitSentences } from "../chat/ttsText.ts";
+
+// 読み上げ対象のリーフブロック。ul/ol は li 単位（入れ子リストは別ブロック）、blockquote は
+// 中の段落へ降りる。pre / table / hr / mermaid（div）などはスキップ。
+const LEAF = new Set(["P", "H1", "H2", "H3", "H4", "H5", "H6"]);
+
+// collectBlocks はターン本文（.mirror-turn-body）から読み上げ・ハイライト単位のブロック要素を
+// 文書順で返す。テキストパート（本文直下の .markdown ＝ MarkdownView のルート）だけが対象で、
+// ツール表示・thinking（details 内の .markdown）・plan・question は拾わない。
+export function collectBlocks(body: HTMLElement): HTMLElement[] {
+  const out: HTMLElement[] = [];
+  body.querySelectorAll<HTMLElement>(":scope > .markdown").forEach((md) => walk(md, out));
+  return out;
+}
+
+function walk(container: HTMLElement, out: HTMLElement[]): void {
+  for (const el of Array.from(container.children) as HTMLElement[]) {
+    const tag = el.tagName;
+    if (LEAF.has(tag)) out.push(el);
+    else if (tag === "UL" || tag === "OL") walkList(el, out);
+    else if (tag === "BLOCKQUOTE") walk(el, out);
+  }
+}
+
+function walkList(list: HTMLElement, out: HTMLElement[]): void {
+  for (const li of Array.from(list.children) as HTMLElement[]) {
+    if (li.tagName !== "LI") continue;
+    out.push(li);
+    for (const sub of Array.from(li.children) as HTMLElement[]) {
+      if (sub.tagName === "UL" || sub.tagName === "OL") walkList(sub, out);
+    }
+  }
+}
+
+// blockText はブロック自身の読み上げテキスト。li は入れ子リスト（別ブロックとして読む）と
+// コード・表・mermaid（div）を除いた自前のテキストだけを返す。
+const EXCLUDE = new Set(["UL", "OL", "PRE", "TABLE", "DIV"]);
+function blockText(el: HTMLElement): string {
+  let t = "";
+  el.childNodes.forEach((n) => {
+    if (n.nodeType === Node.ELEMENT_NODE && EXCLUDE.has((n as HTMLElement).tagName)) return;
+    t += n.textContent ?? "";
+  });
+  return t;
+}
+
+// blockIndexAt は選択開始ノードから「そこ（以降）で最初に読めるブロック」の index を返す。
+// ノードがブロック内ならそのブロック、ブロック間（ツール表示等）に始まる選択なら後続の
+// 最初のブロック。無ければ -1。
+export function blockIndexAt(blocks: HTMLElement[], node: Node): number {
+  const el = node.nodeType === Node.TEXT_NODE ? node.parentElement : (node as HTMLElement);
+  if (!el) return -1;
+  const within = blocks.findIndex((b) => b.contains(el));
+  if (within >= 0) return within;
+  return blocks.findIndex((b) => !!(node.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING));
+}
+
+export interface TurnReadHandle {
+  pause(): void;
+  resume(): void;
+  stop(): void;
+}
+
+const ACTIVE = "tts-active";
+
+// readTurn は body の fromBlock 番目のブロック以降を朗読する。再生を開始した文が属する
+// ブロックへカラオケ・ハイライト＋追従スクロール。onEnd は自然終了・停止（TopBar 停止や
+// 他の再生開始を含む）のどちらでも 1 回だけ呼ばれる。読み上げる文が無ければ null を返し、
+// onEnd は呼ばれない。
+export function readTurn(
+  body: HTMLElement,
+  source: string,
+  fromBlock: number,
+  onEnd: () => void,
+): TurnReadHandle | null {
+  const blocks = collectBlocks(body);
+  const texts: string[] = [];
+  const blockOf: number[] = [];
+  blocks.forEach((b, bi) => {
+    if (bi < fromBlock) return;
+    for (const s of splitSentences(blockText(b))) {
+      texts.push(s);
+      blockOf.push(bi);
+    }
+  });
+  if (!texts.length) return null;
+
+  let lit: HTMLElement | null = null;
+  const light = (el: HTMLElement | null) => {
+    if (lit === el) return;
+    lit?.classList.remove(ACTIVE);
+    lit = el;
+    if (el) {
+      el.classList.add(ACTIVE);
+      el.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    }
+  };
+  const h = startNarration(texts, source, (i) => {
+    if (i == null) {
+      light(null);
+      onEnd();
+    } else light(blocks[blockOf[i]]);
+  });
+  return { pause: h.pause, resume: h.resume, stop: h.stop };
+}
