@@ -19,6 +19,22 @@
          page up and pushing those bars off-screen. -->
     <meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-content" />
     <title>Agent Fleet — Console</title>
+
+    <!-- PWA / add-to-home-screen. All hrefs are RELATIVE (no leading slash) so they
+         resolve against the dynamic <base href> above — required behind the
+         path-stripping proxy. The manifest sits at the site root but is NOT under the
+         auth-exempt /brand/ prefix, so crossorigin=use-credentials makes its fetch
+         carry the session cookie (otherwise the manifest request is anonymous and the
+         auth proxy 302s it). The icons live under /brand/, which authGate exempts, so
+         they load regardless. -->
+    <link rel="manifest" href="manifest.webmanifest" crossorigin="use-credentials" />
+    <meta name="theme-color" content="#149ba7" />
+    <link rel="icon" type="image/png" href="brand/icon-192.png" />
+    <link rel="apple-touch-icon" href="brand/apple-touch-icon.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Agent Fleet" />
     <link
       rel="preconnect"
       href="https://fonts.gstatic.com"
