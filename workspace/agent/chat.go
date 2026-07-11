@@ -39,8 +39,9 @@ type chatConversation struct {
 	Messages  []chatMessage `json:"messages"`
 	// Provider-native resume handles so each turn continues the CLI's own
 	// conversation (context + caching) instead of re-feeding the whole history.
-	ClaudeSessionID string `json:"claude_session_id,omitempty"`
-	CodexSessionID  string `json:"codex_session_id,omitempty"`
+	ClaudeSessionID   string `json:"claude_session_id,omitempty"`
+	CodexSessionID    string `json:"codex_session_id,omitempty"`
+	OpencodeSessionID string `json:"opencode_session_id,omitempty"`
 	// AFTools attaches the local Agent Fleet MCP tools (read-only) to this chat's
 	// claude so it can inspect the user's workspace (docs/19 Q1). Legacy field kept for
 	// conversations created before assistants (Q2); new conversations drive tools via the
@@ -128,17 +129,28 @@ func (c *chatConversation) personaOf() string {
 // knowledgeArgs returns --add-dir flags for each knowledge dir that currently exists.
 // Builtin knowledge is re-materialized first so a container rebuild self-heals.
 func (c *chatConversation) knowledgeArgs() []string {
+	var args []string
+	for _, d := range c.knowledgeDirs() {
+		args = append(args, "--add-dir", d)
+	}
+	return args
+}
+
+// knowledgeDirs returns the existing knowledge dirs (re-materializing builtin
+// knowledge first). claude passes them as --add-dir; codex/opencode get them listed
+// in the prompt preamble (their read tools can open the paths directly).
+func (c *chatConversation) knowledgeDirs() []string {
 	if len(c.Knowledge) == 0 {
 		return nil
 	}
 	_ = ensureBuiltinKnowledge()
-	var args []string
+	var dirs []string
 	for _, d := range c.Knowledge {
 		if fi, err := os.Stat(d); err == nil && fi.IsDir() {
-			args = append(args, "--add-dir", d)
+			dirs = append(dirs, d)
 		}
 	}
-	return args
+	return dirs
 }
 
 // chatMeta is the light shape returned by the list endpoint (no message bodies).

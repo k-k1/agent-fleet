@@ -30,7 +30,7 @@ func envOr(key, def string) string {
 // The bypass flags make codex run unattended like claude's --dangerously-skip-
 // permissions: the container IS the sandbox, and we author the injected hooks so
 // hook-trust is bypassed too (otherwise the status hooks wouldn't fire).
-func buildProgram(model, slotSid, codexResumeID string) string {
+func buildProgram(model, slotSid, codexResumeID, forkFrom string) string {
 	if override := os.Getenv("AGENT_CODEX_CMD"); override != "" {
 		return override
 	}
@@ -48,8 +48,13 @@ func buildProgram(model, slotSid, codexResumeID string) string {
 		return "-c " + session.ShellQuote(val)
 	}
 	parts := []string{"codex"}
-	if codexResumeID != "" {
+	switch {
+	case codexResumeID != "":
 		parts = append(parts, "resume", session.ShellQuote(codexResumeID))
+	case forkFrom != "":
+		// First launch of a forked slot: copy forkFrom's conversation into a new
+		// session and diverge (the codex analog of claude's --fork-session).
+		parts = append(parts, "fork", session.ShellQuote(forkFrom))
 	}
 	parts = append(parts, flags)
 	parts = append(parts, hookFlag("UserPromptSubmit", "working"))

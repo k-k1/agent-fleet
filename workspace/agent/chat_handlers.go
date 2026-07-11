@@ -166,11 +166,7 @@ func handleChatAsk(w http.ResponseWriter, r *http.Request) {
 		ID: randUUID(), Agent: a.Agent, Model: a.Model,
 		Persona: a.Persona, Tools: toolsNone, Knowledge: a.Knowledge,
 	}
-	prov, ok := chatProviders[c.Agent]
-	if !ok {
-		httpx.WriteErr(w, http.StatusBadRequest, "bad_agent", "未対応のエージェントです")
-		return
-	}
+	prov := chatProviderFor(c) // pinned agent, or the available fallback (claude-less WS)
 	ctx, cancel := context.WithTimeout(r.Context(), chatTimeout)
 	defer cancel()
 	reply, err := prov.send(ctx, c, prompt)
@@ -260,11 +256,7 @@ func handleChatSend(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "会話が見つかりません")
 		return
 	}
-	prov, ok := chatProviders[c.Agent]
-	if !ok {
-		httpx.WriteErr(w, http.StatusBadRequest, "bad_agent", "未対応のエージェントです")
-		return
-	}
+	prov := chatProviderFor(c) // pinned agent, or the available fallback (claude-less WS)
 
 	c.Messages = append(c.Messages, chatMessage{Role: "user", Content: content, TS: nowMs()})
 
@@ -317,11 +309,7 @@ func handleChatStream(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "会話が見つかりません")
 		return
 	}
-	prov, ok := chatProviders[c.Agent]
-	if !ok {
-		httpx.WriteErr(w, http.StatusBadRequest, "bad_agent", "未対応のエージェントです")
-		return
-	}
+	prov := chatProviderFor(c) // pinned agent, or the available fallback (claude-less WS)
 
 	c.Messages = append(c.Messages, chatMessage{Role: "user", Content: content, TS: nowMs()})
 

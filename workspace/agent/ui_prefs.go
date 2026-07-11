@@ -48,6 +48,19 @@ func autoTitleSuggestEnabled() bool {
 	return !ok || v
 }
 
+// assistantAgentPref returns the user's pinned assistant-chat backend ("claude" |
+// "codex" | "opencode"), or "" for auto/unset — the AgentsTab アシスタントのエージェント
+// setting. Read live per call (like chatOutputLanguage) so a change applies from the
+// next builtin-assistant conversation / one-shot call without a restart.
+func assistantAgentPref() string {
+	switch v, _ := readUIPrefs()["assistantAgent"].(string); v {
+	case "claude", "codex", "opencode":
+		return v
+	default:
+		return ""
+	}
+}
+
 // chatOutputLanguage returns the user's forced chat output language ("ja" | "en"),
 // or "" when unset/"auto"/invalid — meaning "follow the input" (no language rule is
 // injected, preserving the persona-driven default). Read live per turn from ui-prefs

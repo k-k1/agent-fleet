@@ -5,7 +5,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	_ "modernc.org/sqlite"
 )
 
@@ -23,6 +25,8 @@ func newOpencodeTestDB(t *testing.T) *sql.DB {
 		`CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT)`,
 		`CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT, session_id TEXT, time_created INTEGER, data TEXT)`,
 		`CREATE TABLE todo (session_id TEXT, content TEXT, status TEXT, priority TEXT, position INTEGER)`,
+		`CREATE TABLE session (id TEXT PRIMARY KEY, parent_id TEXT, directory TEXT, time_created INTEGER, time_compacting INTEGER)`,
+		`CREATE TABLE session_input (id TEXT PRIMARY KEY, session_id TEXT, prompt TEXT, delivery TEXT, admitted_seq INTEGER, promoted_seq INTEGER, time_created INTEGER)`,
 	}
 	for _, s := range stmts {
 		if _, err := db.Exec(s); err != nil {
@@ -230,5 +234,194 @@ func TestOpencodeReadSessionEmpty(t *testing.T) {
 	db := newOpencodeTestDB(t)
 	if turns := readSession(db, "ses_none"); len(turns) != 0 {
 		t.Fatalf("empty session -> %d turns, want 0", len(turns))
+	}
+}
+
+func TestOpencodeQueued(t *testing.T) {
+	db := newOpencodeTestDB(t)
+	ses := "ses_q"
+	ins := func(id, prompt string, promoted any, tc int) {
+		t.Helper()
+		if _, err := db.Exec(`INSERT INTO session_input(id,session_id,prompt,delivery,admitted_seq,promoted_seq,time_created) VALUES(?,?,?,?,?,?,?)`,
+			id, ses, prompt, "queue", tc, promoted, tc); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Pending rows (promoted_seq NULL) in arrival order; a promoted row is excluded.
+	ins("i2", `"second queued"`, nil, 2000)
+	ins("i1", `"first queued"`, nil, 1000)
+	ins("i0", `"already promoted"`, 5, 500)
+	// Another session's queue must not leak.
+	if _, err := db.Exec(`INSERT INTO session_input(id,session_id,prompt,delivery,admitted_seq,promoted_seq,time_created) VALUES('ix','ses_other','"nope"','queue',1,NULL,1)`); err != nil {
+		t.Fatal(err)
+	}
+	got := queued(db, ses)
+	if len(got) != 2 || got[0] != "first queued" || got[1] != "second queued" {
+		t.Fatalf("queued = %+v, want [first queued, second queued]", got)
+	}
+}
+
+func TestOpencodePromptText(t *testing.T) {
+	cases := []struct{ raw, want string }{
+		{`"plain string"`, "plain string"},                                              // JSON string
+		{`[{"type":"text","text":"a"},{"type":"file","text":""},{"text":"b"}]`, "a\nb"}, // parts array
+		{`{"text":"obj text"}`, "obj text"},                                             // object with text
+		{`{"parts":[{"type":"text","text":"nested"}]}`, "nested"},                       // object with parts
+		{`raw unencoded`, `raw unencoded`},                                              // not JSON — raw fallback
+	}
+	for _, c := range cases {
+		if got := promptText(c.raw); got != c.want {
+			t.Errorf("promptText(%q) = %q, want %q", c.raw, got, c.want)
+		}
+	}
+}
+
+func TestOpencodeSidechain(t *testing.T) {
+	db := newOpencodeTestDB(t)
+	ses := "ses_parent"
+	if _, err := db.Exec(`INSERT INTO session(id,parent_id,directory,time_created) VALUES('ses_child',?,'/d',1)`, ses); err != nil {
+		t.Fatal(err)
+	}
+	// Unrelated root session — must not be pulled in.
+	if _, err := db.Exec(`INSERT INTO session(id,parent_id,directory,time_created) VALUES('ses_root',NULL,'/d',1)`); err != nil {
+		t.Fatal(err)
+	}
+	// Parent user turn, then the subagent's turns land while the parent assistant turn
+	// is still in flight, then the parent assistant completes.
+	insMsg(t, db, "m1", ses, 1000, `{"role":"user","time":{"created":1000}}`)
+	insPart(t, db, "p1", "m1", ses, 1, `{"type":"text","text":"do it"}`)
+	insMsg(t, db, "m2", ses, 2000, `{"role":"assistant","modelID":"m","time":{"created":2000}}`)
+	insPart(t, db, "p2", "m2", ses, 1, `{"type":"tool","tool":"task","state":{"input":{"description":"explore stuff","prompt":"..."}}}`)
+	insMsg(t, db, "c1", "ses_child", 3000, `{"role":"assistant","modelID":"m","time":{"created":3000}}`)
+	insPart(t, db, "pc1", "c1", "ses_child", 1, `{"type":"text","text":"subagent findings"}`)
+	insMsg(t, db, "m3", ses, 4000, `{"role":"assistant","modelID":"m","time":{"created":4000}}`)
+	insPart(t, db, "p3", "m3", ses, 1, `{"type":"text","text":"summary"}`)
+	// An unrelated root session's message stays out.
+	insMsg(t, db, "r1", "ses_root", 3500, `{"role":"user"}`)
+	insPart(t, db, "pr1", "r1", "ses_root", 1, `{"type":"text","text":"other"}`)
+
+	turns := readSession(db, ses)
+	if len(turns) != 4 {
+		t.Fatalf("want 4 turns (parent 3 + child 1), got %d: %+v", len(turns), turns)
+	}
+	if turns[1].Sidechain || turns[0].Sidechain || turns[3].Sidechain {
+		t.Fatalf("parent turns must not be sidechain: %+v", turns)
+	}
+	// The task tool trace shows its description as the info line.
+	if turns[1].Parts[0].Tool != "task" || turns[1].Parts[0].Info != "explore stuff" {
+		t.Fatalf("task part = %+v, want info 'explore stuff'", turns[1].Parts[0])
+	}
+	c := turns[2]
+	if !c.Sidechain || c.Text != "subagent findings" {
+		t.Fatalf("turn2 = %+v, want sidechain 'subagent findings'", c)
+	}
+	// Idx is the merged ordinal (stable render key).
+	if turns[2].Idx != 2 || turns[3].Idx != 3 {
+		t.Fatalf("idx = %d/%d, want 2/3", turns[2].Idx, turns[3].Idx)
+	}
+}
+
+func TestOpencodeCompacting(t *testing.T) {
+	db := newOpencodeTestDB(t)
+	if _, err := db.Exec(`INSERT INTO session(id,parent_id,directory,time_created,time_compacting) VALUES('ses_c',NULL,'/d',1,12345)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO session(id,parent_id,directory,time_created,time_compacting) VALUES('ses_n',NULL,'/d',1,NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	if !compacting(db, "ses_c") {
+		t.Fatal("ses_c: want compacting=true")
+	}
+	if compacting(db, "ses_n") || compacting(db, "ses_missing") {
+		t.Fatal("ses_n/missing: want compacting=false")
+	}
+}
+
+func TestOpencodeLiveStateQuestion(t *testing.T) {
+	// LiveState opens the db at $HOME/.local/share/opencode/opencode.db — build one
+	// there (like TestOpencodeSessionResumable) so the real path resolves.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dbDir := filepath.Join(home, ".local", "share", "opencode")
+	if err := os.MkdirAll(dbDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(dbDir, "opencode.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	stmts := []string{
+		`CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT)`,
+		`CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT, session_id TEXT, time_created INTEGER, data TEXT)`,
+		`CREATE TABLE session (id TEXT PRIMARY KEY, parent_id TEXT, directory TEXT, time_created INTEGER, time_compacting INTEGER)`,
+	}
+	for _, s := range stmts {
+		if _, err := db.Exec(s); err != nil {
+			t.Fatal(err)
+		}
+	}
+	dir := "/home/dev/repos/x"
+	ses := "ses_lq"
+	if _, err := db.Exec(`INSERT INTO session(id,parent_id,directory,time_created) VALUES(?,NULL,?,1)`, ses, dir); err != nil {
+		t.Fatal(err)
+	}
+	// In-flight assistant turn (no completed time) whose question tool is running.
+	if _, err := db.Exec(`INSERT INTO message(id,session_id,time_created,time_updated,data) VALUES('m1',?,1000,1000,?)`,
+		ses, `{"role":"assistant","time":{}}`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO part(id,message_id,session_id,time_created,data) VALUES('p1','m1',?,1,?)`,
+		ses, `{"type":"tool","tool":"question","state":{"status":"running","input":{"questions":[{"question":"pick?","options":[{"label":"A"}]}]}}}`); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+
+	m := session.Meta{Dir: dir, Name: "n"}
+	if got := LiveState(m); got != "question" {
+		t.Fatalf("LiveState = %q, want question", got)
+	}
+}
+
+func TestOpencodeActiveSession(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home) // sids store lives under $HOME/.config/agent-fleet
+	db := newOpencodeTestDB(t)
+	dir := "/home/dev/repos/temp"
+	insSes := func(id string, tc int64) {
+		t.Helper()
+		if _, err := db.Exec(`INSERT INTO session(id,parent_id,directory,time_created) VALUES(?,NULL,?,?)`, id, dir, tc); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// An OLD conversation in the dir (created + messaged long before the slot).
+	insSes("ses_old", 1000)
+	insMsg(t, db, "mo", "ses_old", 2000, `{"role":"user"}`)
+
+	// szyyh2f regression: a NEW slot (created at t=10000) in a previously-used dir
+	// must NOT hijack the dir's old conversation.
+	slot := session.Meta{Dir: dir, Name: "new1", CreatedAt: time.UnixMilli(10000).UTC().Format(time.RFC3339)}
+	if got := activeSession(db, slot); got != "" {
+		t.Fatalf("new slot resolved %q, want none (old conversation must not be hijacked)", got)
+	}
+
+	// A conversation opened AFTER the slot was created resolves (plugin-less fallback).
+	insSes("ses_own", 11000)
+	insMsg(t, db, "mn", "ses_own", 12000, `{"role":"user"}`)
+	if got := activeSession(db, slot); got != "ses_own" {
+		t.Fatalf("post-slot conversation = %q, want ses_own", got)
+	}
+
+	// The plugin-captured per-slot mapping wins over the store-derived fallback.
+	insSes("ses_mapped", 13000)
+	insMsg(t, db, "mm", "ses_mapped", 14000, `{"role":"user"}`)
+	sids.Write(session.UUID(dir, "new1"), "ses_mapped")
+	if got := activeSession(db, slot); got != "ses_mapped" {
+		t.Fatalf("mapped = %q, want ses_mapped", got)
+	}
+
+	// A STALE mapping (session gone from the store) falls back to the store lookup.
+	sids.Write(session.UUID(dir, "new1"), "ses_gone")
+	if got := activeSession(db, slot); got != "ses_mapped" && got != "ses_own" {
+		t.Fatalf("stale mapping fallback = %q, want a post-slot store session", got)
 	}
 }

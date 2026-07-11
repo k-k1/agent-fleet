@@ -2,6 +2,7 @@ package opencode
 
 import (
 	"net/http"
+	"os/exec"
 	"regexp"
 	"sort"
 	"strings"
@@ -38,6 +39,21 @@ func env() []string {
 		out = append(out, k+"="+s.Opencode[k])
 	}
 	return out
+}
+
+// Env is the exported form of env for the assistant chat's headless `opencode run`,
+// which needs the same provider keys the interactive launcher injects.
+func Env() []string { return env() }
+
+// Available reports whether opencode can run a headless turn at all. Unlike
+// claude/codex (whose CLIs hard-fail without a login), opencode always works when
+// installed — with stored provider keys, its own login, or its zero-auth free tier
+// (verified live: a fresh data dir answers via the free model). So availability is
+// simply "the binary is on PATH"; it sits LAST in the preferred-backend order, so a
+// logged-in claude/codex still wins for defaults.
+func Available() bool {
+	_, err := exec.LookPath("opencode")
+	return err == nil
 }
 
 // Status reports which provider env vars are configured (names only,
