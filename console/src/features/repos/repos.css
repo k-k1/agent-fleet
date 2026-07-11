@@ -253,7 +253,10 @@
   box-shadow: inset 2px 0 0 var(--lp-accent, var(--accent));
 }
 .repo-card {
-  padding: 6px 8px 6px 14px;
+  /* Slim left padding: the repo/worktree icon hugs the expand caret, so the
+     kind icons of the session rows below sit visibly DEEPER than the repo icon
+     (the old 14px pushed the repo icon right of its own children). */
+  padding: 6px 8px 6px 4px;
   cursor: pointer;
   min-width: 0;
 }
