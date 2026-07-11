@@ -1,7 +1,9 @@
 # E2E（docs/dev/10 §10.4): Workspace イメージを build し、L1（e2e-smoke.sh: CLI 実版 =
-# Dockerfile ARG ピン等）→ L2（e2e/: CP をヘッドレス起動して workspace/session 疎通）を
-# 検証する。イメージ build が重いので ci.yml から分離し、関係パスの変更時 + 週次 cron
-# （コード無変更でも上流 CLI の破壊を検出）+ 手動のみ実行する。
+# Dockerfile ARG ピン等）→ L2（e2e/: CP をヘッドレス起動して workspace/session 疎通）→
+# L3（console-e2e/: Playwright でブラウザ→CP→コンテナの縦串）を検証する。イメージ build が
+# 重いので ci.yml から分離し、関係パスの変更時 + 週次 cron（コード無変更でも上流 CLI の
+# 破壊を検出）+ 手動のみ実行する。L4（実 API キーの claude 疎通）は課金を伴うため
+# workflow_dispatch の live 入力を立てた時だけ走る（secrets.E2E_ANTHROPIC_API_KEY が必要）。
 # 注: rtk は git-ignored のホスト vendor 品なので CI は「rtk なし」パスの検証になる。
 name: e2e
 
@@ -10,19 +12,28 @@ on:
     paths:
       - "workspace/**"
       - "control-plane/**"
+      - "console/**"
       - "e2e/**"
+      - "console-e2e/**"
       - "deploy/local/e2e-smoke.sh"
       - ".github/workflows/e2e.yml"
   pull_request:
     paths:
       - "workspace/**"
       - "control-plane/**"
+      - "console/**"
       - "e2e/**"
+      - "console-e2e/**"
       - "deploy/local/e2e-smoke.sh"
       - ".github/workflows/e2e.yml"
   schedule:
     - cron: "0 21 * * 0" # 毎週月曜 6:00 JST — 上流 CLI / base image の破壊検出
   workflow_dispatch:
+    inputs:
+      live:
+        description: "L4: 実 API キーで claude 疎通スモークを実行する（課金あり）"
+        type: boolean
+        default: false
 
 concurrency:
   group: e2e-${{ github.ref }}
@@ -59,3 +70,89 @@ jobs:
         env:
           E2E_REQUIRE: "1"
         run: go test -v -tags e2e -timeout 15m ./...
+
+  ui-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      WS_IMAGE: agent-fleet/workspace:dev
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: control-plane/go.mod
+          cache-dependency-path: control-plane/go.sum
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            console/package-lock.json
+            console-e2e/package-lock.json
+      - uses: docker/setup-buildx-action@v3
+      - name: build workspace image
+        uses: docker/build-push-action@v6
+        with:
+          context: workspace
+          tags: ${{ env.WS_IMAGE }}
+          load: true
+          cache-from: type=gha
+          # e2e ジョブが cache-to を担う（同じ内容の二重書き込みを避ける）
+      - name: build console
+        working-directory: console
+        run: |
+          npm ci
+          NODE_OPTIONS=--max-old-space-size=3072 npm run build
+      - name: install playwright
+        working-directory: console-e2e
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+      - name: console ui e2e (L3)
+        working-directory: console-e2e
+        env:
+          E2E_REQUIRE: "1"
+        run: npx playwright test
+      - name: upload traces & CP log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-e2e-results
+          path: console-e2e/test-results/
+          if-no-files-found: ignore
+
+  live-smoke:
+    # L4: 実 API キーで claude -p の疎通を見る。手動 + 明示 opt-in のみ（課金あり）。
+    if: github.event_name == 'workflow_dispatch' && inputs.live
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      WS_IMAGE: agent-fleet/workspace:dev
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: control-plane/go.mod
+          cache-dependency-path: control-plane/go.sum
+      - uses: docker/setup-buildx-action@v3
+      - name: build workspace image
+        uses: docker/build-push-action@v6
+        with:
+          context: workspace
+          tags: ${{ env.WS_IMAGE }}
+          load: true
+          cache-from: type=gha
+      - name: guard secret
+        env:
+          KEY: ${{ secrets.E2E_ANTHROPIC_API_KEY }}
+        run: |
+          if [ -z "$KEY" ]; then
+            echo "::error::secrets.E2E_ANTHROPIC_API_KEY が未設定です（リポジトリ Settings > Secrets に登録）"
+            exit 1
+          fi
+      - name: claude live smoke (L4)
+        working-directory: e2e
+        env:
+          E2E_REQUIRE: "1"
+          E2E_ANTHROPIC_API_KEY: ${{ secrets.E2E_ANTHROPIC_API_KEY }}
+        run: go test -v -tags e2e -timeout 15m -run TestClaudeLive ./...

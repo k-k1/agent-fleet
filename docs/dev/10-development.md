@@ -11,6 +11,7 @@
 | `workspace/` | Workspace イメージ（Dockerfile / entrypoint）+ `workspace/agent/`（Agent・独立 Go モジュール）|
 | `deploy/` | デプロイ層（local / compose / aws）。runbook は各 README（[09](09-deploy.md)）|
 | `e2e/` | フリート E2E（独立 Go モジュール・stdlib のみ）。CP + 実コンテナの疎通検証（§10.4）|
+| `console-e2e/` | Console UI E2E（Playwright）。ブラウザ → CP → 実コンテナの縦串検証（§10.4）|
 
 ファイル単位の地図は [90-code-map](90-code-map.md)。
 
@@ -69,22 +70,36 @@ NODE_OPTIONS=--max-old-space-size=3072 npm --prefix console run build
 workspace-notes を参照）。gofmt + `go vet` clean・`npm run build` clean が提出前の基準
 （[CONTRIBUTING](../../CONTRIBUTING.md)）。
 
-### E2E（イメージスモーク + フリート疎通）
+### E2E（イメージスモーク + フリート疎通 + UI + 実 API）
 
-2 層構成。**L1 = `deploy/local/e2e-smoke.sh`**（§10.3、イメージ焼き込み内容の検証・数秒）、
-**L2 = `e2e/`**（独立 Go モジュール・stdlib のみ）。L2 は CP をヘッドレス（AUTH=dev）で起動し、
-公開 API だけで workspace 起動 → **shell セッション**作成 → input（echo 打鍵）→ fs API で
-読み戻し → 停止、を実コンテナで検証する。kind=shell なので **LLM クレデンシャル不要**。
+4 層構成。**L1 = `deploy/local/e2e-smoke.sh`**（§10.3、イメージ焼き込み内容の検証・数秒）、
+**L2 = `e2e/`**（独立 Go モジュール・stdlib のみ）、**L3 = `console-e2e/`**（Playwright）、
+**L4 = `e2e/live_test.go`**（実 API キー・手動のみ）。
+
+- **L2**: CP をヘッドレス（AUTH=dev）で起動し、公開 API だけで workspace 起動 →
+  **shell セッション**作成 → input（echo 打鍵）→ fs API で読み戻し → 停止、を実コンテナで
+  検証する。kind=shell なので **LLM クレデンシャル不要**。
+- **L3**: 実ブラウザで Console を開き、セッションを開いて xterm へ打鍵 → 効果を fs API で
+  観測（xterm は canvas 描画で DOM から文字が読めないため）。CP・コンテナの起動は
+  global-setup が行う（L2 の Node 版。DEV_USER=e2e-ui で分離）。
+- **L4**: shell セッション内で `claude -p`（headless、TUI オンボーディング非依存）を実行し、
+  焼き込み CLI が実際に Anthropic API と会話できることを確認。**課金があるため自動トリガに
+  載せない** — `E2E_ANTHROPIC_API_KEY` がある時だけ動く。
 
 ```bash
-cd e2e && WS_IMAGE=agent-fleet/workspace:dev go test -v -tags e2e -timeout 15m
+cd e2e && WS_IMAGE=agent-fleet/workspace:dev go test -v -tags e2e -timeout 15m   # L2（+L4 は key があれば）
+cd console-e2e && npm ci && npx playwright test                                  # L3（console/dist 要ビルド）
 ```
 
-- 前提（docker + build 済みイメージ）が無ければ skip（CI は `E2E_REQUIRE=1` で fail に格上げ）。
-- 実フリートが動く dev ホストでも安全: DEV_USER=e2e（`af-ws-e2e`）・ポートは動的確保・
-  teardown 内蔵（コンテナ / ネットワーク / 一時データ）。ただしメモリ制約ホストなので同時 1 実行。
-- CI は `.github/workflows/e2e.yml`: workspace/CP/e2e の変更時 + **週次 cron**（コード無変更でも
-  上流 CLI・base image の破壊を検出）+ 手動。イメージ build（GHA キャッシュ）→ L1 → L2 の順。
+- 前提（docker + build 済みイメージ、L3 は console/dist も）が無ければ skip
+  （CI は `E2E_REQUIRE=1` で fail に格上げ）。
+- 実フリートが動く dev ホストでも安全: テスト毎に DEV_USER を分離（e2e / e2e-ui / e2e-live）・
+  ポートは動的確保・teardown 内蔵（コンテナ / ネットワーク / 一時データ）。
+  ただしメモリ制約ホストなので同時 1 実行。
+- CI は `.github/workflows/e2e.yml`: workspace/CP/console/e2e の変更時 + **週次 cron**（コード
+  無変更でも上流 CLI・base image の破壊を検出）+ 手動。`e2e` ジョブ（L1→L2）と `ui-e2e` ジョブ
+  （L3、失敗時は trace/CP ログを artifact 保存）が並列、`live-smoke`（L4）は workflow_dispatch の
+  `live` 入力 + `secrets.E2E_ANTHROPIC_API_KEY` で明示 opt-in。
   rtk は git-ignored のホスト vendor 品のため CI は「rtk なし」パスの検証になる（rtk 込みは
   ホストで run-dev.sh / 本テストを回して確認）。
 
