@@ -121,7 +121,9 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
               line (branch + provider) is gone; the provider lives in the tooltip. */}
           <span className="repo-id">
             <span className="repo-name" title={r.worktree ? r.name : undefined}>
-              <Icon name={r.worktree ? "repo-forked" : "repo"} />
+              {/* Folder-flavored icons (shared with the ファイル tree's top level):
+                  base clone = root-folder, worktree = git-branch. */}
+              <Icon name={r.worktree ? "git-branch" : "root-folder"} />
               {r.worktree ? r.branch || r.name : r.name}
             </span>
             {!r.worktree && r.branch && (

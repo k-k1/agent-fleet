@@ -156,6 +156,13 @@
   padding: 1px 0 2px;
 }
 
+/* ツリー/変更 toggle in the ファイル section header. Lives in the left pane, so
+   its selected segment follows the left-pane accent rather than the top bar's. */
+.files-view {
+  flex: none;
+  --sel-accent: var(--lp-accent, var(--topbar-accent));
+}
+
 /* The "home" disclosure between the repos tree and the full-home tree: a banded
    divider row so the two trees don't blur together. */
 .files-home-btn {
