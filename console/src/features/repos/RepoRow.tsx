@@ -8,7 +8,9 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { MouseEvent as RMouseEvent } from "react";
 import { Icon } from "../../ui/Icon.tsx";
+import { useToast } from "../../ui/ToastProvider.tsx";
 import { useDismiss } from "../../lib/useDismiss.ts";
+import { copyText } from "../../lib/clipboard.ts";
 import { placeFixed } from "../../lib/placeFixed.ts";
 import { kindIcon, kindLabel } from "../../lib/sessionkind.ts";
 import { agentOf, repoLaunchKinds } from "../../agents/registry.ts";
@@ -61,6 +63,13 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
   const [branchOpen, setBranchOpen] = useState(false);
   const menuRef = useRef<HTMLUListElement>(null);
+  const toast = useToast();
+  const copyBranch = () => {
+    const b = r.branch || "";
+    void copyText(b).then((ok) =>
+      ok ? toast(`ブランチ名をコピーしました: ${b}`, { kind: "success" }) : toast("コピーに失敗しました"),
+    );
+  };
 
   // Context menu: open at the cursor, clamp within the rail, close on outside
   // click / Esc / window blur.
@@ -278,6 +287,13 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
               <Icon name="git-branch" /> ブランチ切替
             </button>
           </li>
+          {r.branch && (
+            <li>
+              <button type="button" className="ui-menu-item" onClick={() => { setMenu(null); copyBranch(); }}>
+                <Icon name="copy" /> ブランチ名をコピー
+              </button>
+            </li>
+          )}
           {onFF && (
             <li>
               <button type="button" className="ui-menu-item" onClick={() => { setMenu(null); onFF(); }}>
