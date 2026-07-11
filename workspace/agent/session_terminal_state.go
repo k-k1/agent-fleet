@@ -2,10 +2,29 @@ package main
 
 import (
 	"os/exec"
+	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
+)
+
+// compactProgress is the parsed state of a running auto-compaction: the CLI draws a
+// "Compacting conversation… (2m 3s) [====] 74%" line, and the chat surfaces the same
+// percent/elapsed as a progress bar instead of a blind spinner. Fields are best-effort
+// — either may be zero/empty if that CLI version renders the line differently.
+type compactProgress struct {
+	Pct     int    `json:"pct"`               // 0–100; -1 when no percent was on screen
+	Elapsed string `json:"elapsed,omitempty"` // e.g. "2m 3s" (verbatim from the pane)
+}
+
+// compactPctRe / compactElapsedRe pull the percent and the elapsed timer out of the
+// captured pane text. The elapsed match is anchored to the parenthetical that follows
+// "Compacting …" so an unrelated "(3s)" elsewhere on screen can't be mistaken for it.
+var (
+	compactPctRe     = regexp.MustCompile(`(\d{1,3})%`)
+	compactElapsedRe = regexp.MustCompile(`Compacting[^\n(]*\((\d+m \d+s|\d+m|\d+s)\)`)
 )
 
 // sessionTerminalState detects claude terminal-only states that the chat view can't
@@ -15,27 +34,44 @@ import (
 //	"resume"     — parked at the startup "Resume from summary / Resume full session /
 //	               Don't ask me again" menu (a chat user who pressed 再開して続ける is
 //	               stuck here; keystrokes go to the menu, not a prompt).
-//	"compacting" — auto-compaction (context compression) is running.
+//	"compacting" — auto-compaction (context compression) is running; the second return
+//	               carries the parsed progress bar (nil for the other states).
 //	""           — none detected.
 //
 // Best-effort: the wording is claude-CLI-specific, so a version bump may need the
 // match strings updated.
-func sessionTerminalState(name string) string {
+func sessionTerminalState(name string) (string, *compactProgress) {
 	pane := tmuxx.SessionPaneID(session.TmuxName(name))
 	if pane == "" {
-		return ""
+		return "", nil
 	}
 	out, err := exec.Command("tmux", "capture-pane", "-p", "-t", pane).Output()
 	if err != nil {
-		return ""
+		return "", nil
 	}
 	s := string(out)
 	switch {
 	case strings.Contains(s, "Resume from summary") || strings.Contains(s, "Resume full session"):
-		return "resume"
+		return "resume", nil
 	case strings.Contains(s, "Compacting"):
-		return "compacting"
+		return "compacting", parseCompactProgress(s)
 	default:
-		return ""
+		return "", nil
 	}
+}
+
+// parseCompactProgress reads the percent and elapsed timer off a pane already known to
+// be compacting. pct is -1 when the CLI hasn't drawn a percentage yet, so the chat can
+// keep the spinner until the first tick lands.
+func parseCompactProgress(s string) *compactProgress {
+	p := &compactProgress{Pct: -1}
+	if m := compactPctRe.FindStringSubmatch(s); m != nil {
+		if n, err := strconv.Atoi(m[1]); err == nil && n >= 0 && n <= 100 {
+			p.Pct = n
+		}
+	}
+	if m := compactElapsedRe.FindStringSubmatch(s); m != nil {
+		p.Elapsed = m[1]
+	}
+	return p
 }

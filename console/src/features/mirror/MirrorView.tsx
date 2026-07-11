@@ -190,6 +190,8 @@ export function MirrorView({
     });
   const [loaded, setLoaded] = useState(false); // false until the first transcript fetch returns
   const [termState, setTermState] = useState(""); // terminal-only state: "resume" | "compacting" | ""
+  // Compaction progress (parsed from the pane) so the 圧縮中 block shows a bar, not just a spinner.
+  const [compactProg, setCompactProg] = useState<{ pct: number; elapsed?: string } | null>(null);
   const [status, setStatus] = useState("");
   const [bgBusy, setBgBusy] = useState(false); // idle but a run_in_background task lingers
   const [tasks, setTasks] = useState<TaskItem[]>([]); // current ToDo list (Task tool calls)
@@ -389,6 +391,11 @@ export function MirrorView({
           // the optimistic set on click just gives instant feedback until this confirms.
           setMode(typeof d.mode === "string" ? d.mode : "");
           setTermState(typeof d.terminalState === "string" ? d.terminalState : "");
+          setCompactProg(
+            d.compactProgress && typeof d.compactProgress.pct === "number"
+              ? { pct: d.compactProgress.pct, elapsed: d.compactProgress.elapsed }
+              : null,
+          );
           setSuggestedTitle(typeof d.suggestedTitle === "string" ? d.suggestedTitle : "");
           setLoaded(true); // first (and every) successful fetch: drop the loading spinner
         }
@@ -1080,7 +1087,16 @@ export function MirrorView({
       )}
       {termState === "compacting" && (
         <div className="mirror-compacting">
-          <Icon name="loading" spin /> コンテキストを圧縮中…
+          <div className="mc-head">
+            <Icon name="loading" spin /> コンテキストを圧縮中…
+            {compactProg?.elapsed && <span className="mc-elapsed">{compactProg.elapsed}</span>}
+            {compactProg && compactProg.pct >= 0 && <span className="mc-pct">{compactProg.pct}%</span>}
+          </div>
+          {compactProg && compactProg.pct >= 0 && (
+            <div className="mc-track" role="progressbar" aria-valuenow={compactProg.pct} aria-valuemin={0} aria-valuemax={100}>
+              <div className="mc-fill" style={{ width: compactProg.pct + "%" }} />
+            </div>
+          )}
         </div>
       )}
       {suggestedTitle && (
