@@ -13,8 +13,9 @@ import { baseName, langFor } from "../../lib/filemeta.ts";
 import FileIcon from "../../ui/FileIcon.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { useSettings, setSetting } from "../../lib/settings.ts";
-import { startNarration, BLOCK_BEAT, READER_VOICE_CHOICES, voiceChoiceOpts, type NarrationHandle } from "../chat/tts.ts";
+import { startNarration, BLOCK_BEAT, readerVoiceChoices, voiceChoiceOpts, type NarrationHandle } from "../chat/tts.ts";
 import { effectiveDict } from "../chat/ttsDict.ts";
+import { loadSpeakers } from "../chat/ttsSpeakers.ts";
 import { buildReadUnits } from "./readerText.ts";
 
 interface FileData {
@@ -34,6 +35,20 @@ export function ReaderView({ filePath }: { filePath: string }) {
   const [active, setActive] = useState<number | null>(null);
   // 選択範囲から朗読を（再）開始するピル（選択の先頭にある読み上げ単位の index と表示位置）。
   const [selPill, setSelPill] = useState<{ x: number; y: number; idx: number } | null>(null);
+  // 声セレクトの選択肢はキャラクター設定×エンジン実カタログ（tts.ts の readerVoiceChoices）。
+  // カタログは非同期取得なので、届いたら再レンダして静的フォールバックから差し替える。
+  const [, setCatalogLoaded] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    void loadSpeakers().then((l) => alive && l && setCatalogLoaded(true));
+    return () => {
+      alive = false;
+    };
+  }, []);
+  const voiceChoices = readerVoiceChoices();
+  // 保存済みの声が選択肢に無い（キャラを無効化した・基準スタイルを変えた等）→「設定の話者」
+  // として扱う（表示と実再生を一致させる）。
+  const readerVoice = voiceChoices.some(([v]) => v === settings.readerVoice) ? settings.readerVoice : "";
 
   // 本文取得（FileView と同じ /api/fs/file）。ファイルが変わったら朗読を止めてリセット。
   useEffect(() => {
@@ -133,7 +148,7 @@ export function ReaderView({ filePath }: { filePath: string }) {
           handleRef.current = null;
         }
       },
-      voiceChoiceOpts(settings.readerVoice), // ヘッダーで選んだ声（"" = 設定の話者）
+      voiceChoiceOpts(readerVoice), // ヘッダーで選んだ声（"" = 設定の話者）
       flatPre.slice(from),
     );
     handleRef.current = h;
@@ -247,12 +262,12 @@ export function ReaderView({ filePath }: { filePath: string }) {
         {isText && (
           <select
             className="reader-voice"
-            value={settings.readerVoice}
+            value={readerVoice}
             onChange={(e) => setSetting("readerVoice", e.target.value)}
             disabled={!ttsOn}
             title={ttsOn ? "朗読の声（次の朗読開始から適用）" : "設定で音声読み上げを有効にしてください"}
           >
-            {READER_VOICE_CHOICES.map(([v, label]) => (
+            {voiceChoices.map(([v, label]) => (
               <option key={v} value={v}>
                 {label}
               </option>

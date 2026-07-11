@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -317,5 +318,62 @@ func TestTTSDict(t *testing.T) {
 	}
 	if got.Dict != dict {
 		t.Errorf("dict = %q, want %q", got.Dict, dict)
+	}
+}
+
+// キャラ一覧プロキシ: エンジンの /speakers をキャラ名＋トーク用スタイル（speaker 番号は
+// 文字列化）へ変換して返すこと。歌唱系スタイル（type != "talk"）は除き、トークスタイルの
+// 無いキャラは落とす。2 回目はキャッシュ（エンジンを再度叩かない）。エンジン不在は 502。
+func TestTTSSpeakers(t *testing.T) {
+	clearTTSEnv(t)
+
+	hits := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/speakers" {
+			http.NotFound(w, r)
+			return
+		}
+		hits++
+		_, _ = w.Write([]byte(`[
+			{"name":"ずんだもん","styles":[{"id":3,"name":"ノーマル"},{"id":1,"name":"あまあま","type":"talk"}]},
+			{"name":"波音リツ","styles":[{"id":9,"name":"ノーマル","type":"talk"},{"id":65,"name":"クイーン","type":"talk"},{"id":100,"name":"ハミング","type":"frame_decode"}]},
+			{"name":"歌唱専用","styles":[{"id":200,"name":"ソング","type":"sing"}]}
+		]`))
+	}))
+	defer srv.Close()
+
+	mux := http.NewServeMux()
+	registerTTSRoutes(mux, config{voicevoxURL: srv.URL})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/tts/speakers", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("speakers = %d, want 200 (body %s)", rec.Code, rec.Body.String())
+	}
+	var got struct{ Speakers []ttsSpeaker }
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("speakers body: %v", err)
+	}
+	want := []ttsSpeaker{
+		{Name: "ずんだもん", Styles: []ttsSpeakerStyle{{ID: "3", Name: "ノーマル"}, {ID: "1", Name: "あまあま"}}},
+		{Name: "波音リツ", Styles: []ttsSpeakerStyle{{ID: "9", Name: "ノーマル"}, {ID: "65", Name: "クイーン"}}},
+	}
+	if !reflect.DeepEqual(got.Speakers, want) {
+		t.Errorf("speakers = %+v, want %+v", got.Speakers, want)
+	}
+
+	// 2 回目はキャッシュから（エンジンを叩かない）。
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/tts/speakers", nil))
+	if rec.Code != http.StatusOK || hits != 1 {
+		t.Errorf("cached speakers: code=%d hits=%d, want 200 / 1", rec.Code, hits)
+	}
+
+	// エンジン不在 → 502。
+	mux = http.NewServeMux()
+	registerTTSRoutes(mux, config{voicevoxURL: "http://127.0.0.1:1"})
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/tts/speakers", nil))
+	if rec.Code != http.StatusBadGateway {
+		t.Errorf("speakers without engine = %d, want 502", rec.Code)
 	}
 }

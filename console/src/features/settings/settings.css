@@ -268,6 +268,59 @@
   font-size: 12px;
   line-height: 1.5;
 }
+/* 読み上げ: キャラクター一覧（TtsTab の CharList）。エンジン実カタログ駆動で行数が
+   多くなるのでスクロール枠に収める。行 = チェック＋名前｜スタイル｜速度｜試聴。 */
+.ds-charlist {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 300px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 10px;
+  margin: 4px 0;
+}
+.ds-char {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0;
+}
+.ds-char.off .ds-char-name {
+  color: var(--muted);
+}
+.ds-char-use {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  cursor: pointer;
+}
+.ds-char-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ds-char select {
+  font-size: 12px;
+  max-width: 9em;
+}
+.ds-char-play {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 7px;
+  font-size: 12px;
+  color: var(--fg);
+  background: var(--btn);
+  border: 1px solid var(--btn-border);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.ds-char-play:hover {
+  background: var(--hover-bg, var(--btn));
+}
 /* A wrapping row whose sub-note (ds-hint) drops to its own line, aligned under
    the control (ds-label width 120 + row gap 12). Used by the codex RTK toggle. */
 .ds-row-wrap {

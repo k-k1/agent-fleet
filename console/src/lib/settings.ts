@@ -98,6 +98,13 @@ function shadeForSurface(hex: string, theme: string, kind: string): string {
   return mixHex(hex, theme === "light" ? "#000000" : "#ffffff", t);
 }
 
+// 読み上げのキャラクター 1 体分の設定（ttsVoicePool の値）。すべて省略可＝既定挙動。
+export interface TtsCharConf {
+  use?: boolean;
+  style?: string;
+  speed?: number;
+}
+
 export interface Settings {
   termFont: string;
   termSize: number;
@@ -170,6 +177,12 @@ export interface Settings {
   // 読み上げとセッション音声通知に適用（どのセッションの回答かを声で判別できる）。
   // チャットタブ・朗読ビューは選択した話者のまま。
   ttsVoicePerSession: boolean;
+  // キャラクター設定（features/chat/tts.ts の voiceCharacters/activeVoicePool）。キーは
+  // エンジンのキャラ名。use=セッション声プール・朗読ビューの選択肢に入れるか（未設定は
+  // 既定プール = tts.ts の SESSION_VOICES に載っているキャラのみ true）、style=基準スタイル
+  // （speaker 番号。未設定はノーマル）、speed=キャラ別速度（未設定はグローバル ttsSpeed）。
+  // 一覧は VOICEVOX エンジンの実カタログ（GET /api/tts/speakers）から出す。
+  ttsVoicePool: Record<string, TtsCharConf>;
   // ミラー（チャット）: アクティブなペインのセッションが確認待ち（AskUserQuestion／
   // プラン承認／許可要求）になったら、質問文と選択肢を読み上げる。選択肢は表示ラベルで
   // なく説明文（ツールチップの中身）を優先して読む（features/chat/ttsText.ts の pendingSpeech）。
@@ -236,6 +249,7 @@ const DEFAULTS: Settings = {
   ttsAutoReadMirror: false,
   ttsAutoReadAllPanes: false,
   ttsVoicePerSession: false,
+  ttsVoicePool: {},
   ttsEmotion: false,
   ttsReadPending: false,
   ttsSummaryRead: false,
