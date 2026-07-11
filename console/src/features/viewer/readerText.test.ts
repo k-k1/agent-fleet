@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseRuby, buildReadUnits, type ReadUnit } from "./readerText.ts";
+import { parseRuby, buildReadUnits, readPreGaps, type ReadUnit } from "./readerText.ts";
 
 // 単位の表示テキストを平坦化（ルビは [base:ruby] で表現）してアサートしやすくする。
 const disp = (u: ReadUnit) => u.segs.map((s) => (s.ruby !== undefined ? `[${s.base}:${s.ruby}]` : s.base)).join("");
@@ -71,5 +71,36 @@ describe("buildReadUnits (原文忠実＋文/行区切り)", () => {
     const units = buildReadUnits("説明。\n```\ncode();\n```\n続き。", true);
     expect(units.map((u) => u.spoken).filter((s) => s)).toEqual(["説明。", "続き。"]);
     expect(units.map(disp).join("")).toContain("code();"); // 表示には残る
+  });
+});
+
+describe("readPreGaps (前拍: 段落 > 句点 > ハードラップ)", () => {
+  const B = 0.3; // blockBeat
+  const S = 0.15; // sentBeat
+
+  it("行内の文境界（。区切り）は短い一拍、行の切れ目（文が終わった後の改行）は一拍", () => {
+    const units = buildReadUnits("一文目。二文目。\n次の行。", false);
+    expect(readPreGaps(units, B, S)).toEqual([0, S, B]);
+  });
+
+  it("文の途中の改行（ハードラップされた散文）には間を入れない", () => {
+    const units = buildReadUnits("この文は途中で\n折り返されている。次の文。", false);
+    // 「この文は途中で」→（ラップ）→「折り返されている。」→（句点）→「次の文。」
+    expect(readPreGaps(units, B, S)).toEqual([0, 0, S]);
+  });
+
+  it("マーカー行（リスト等）は前の文の終わり方に依らず一拍", () => {
+    const units = buildReadUnits("説明\n- 項目A。\n- 項目B。", true);
+    expect(readPreGaps(units, B, S)).toEqual([0, B, B]);
+  });
+
+  it("閉じ鉤括弧で終わる文も「文の終わり」とみなす", () => {
+    const units = buildReadUnits("「終わりです。」\n次の段落。", false);
+    expect(readPreGaps(units, B, S)).toEqual([0, B]);
+  });
+
+  it("先頭の単位に前拍は付けない", () => {
+    const units = buildReadUnits("最初の文。", false);
+    expect(readPreGaps(units, B, S)).toEqual([0]);
   });
 });

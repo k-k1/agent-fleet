@@ -14,11 +14,13 @@ export interface RubySeg {
 // ReadUnit はカラオケ 1 単位。segs=表示（原文の空白/改行/ルビを保持）、spoken=読み上げ
 // テキスト（ルビは読みを採用・plainify 済み・trim）。spoken==="" の単位は表示のみ（読まない）。
 // preBeat=リスト・見出し・引用など「新しいブロックの頭」の最初の文（読む前に一拍おく合図。
-// マーカー記号は読まないぶん、構造の切れ目を間で表す）。
+// マーカー記号は読まないぶん、構造の切れ目を間で表す）。lineHead=原文の新しい行の最初の
+// 読み上げ単位（readPreGaps が段落の切れ目とハードラップを見分けるのに使う）。
 export interface ReadUnit {
   segs: RubySeg[];
   spoken: string;
   preBeat?: boolean;
+  lineHead?: boolean;
 }
 
 const RUBY_OPEN = "《";
@@ -128,6 +130,8 @@ export function buildReadUnits(content: string, isMarkdown: boolean, code?: Code
     const skipSpoken = isMarkdown && (inFence || fenceMarker); // フェンス行は読まない
     // ブロック頭の行（リスト・見出し・引用）: この行から生まれる最初の読み上げ単位に前拍を付ける。
     let linePre = isMarkdown && !skipSpoken && startsBlock(line);
+    // この行の最初の読み上げ単位に「新しい行の頭」の印を付ける（先頭行は除く）。
+    let lineHeadPending = li > 0;
 
     let cur: RubySeg[] = [];
     const flush = (lineEnd: boolean) => {
@@ -148,7 +152,9 @@ export function buildReadUnits(content: string, isMarkdown: boolean, code?: Code
       if (spoken && !hasSpeakable(spoken)) spoken = ""; // 記号だけ（＊/◇/--- 等の区切り）は読まない
       const preBeat = !!spoken && linePre; // 行の最初の読み上げ単位にだけ付ける
       if (preBeat) linePre = false;
-      units.push({ segs: disp, spoken, preBeat });
+      const lineHead = !!spoken && lineHeadPending;
+      if (lineHead) lineHeadPending = false;
+      units.push({ segs: disp, spoken, preBeat, lineHead });
     };
 
     for (const seg of parseRuby(line)) {
@@ -171,4 +177,23 @@ export function buildReadUnits(content: string, isMarkdown: boolean, code?: Code
     flush(true); // 行末
   }
   return units;
+}
+
+// 文の終わり（句点類。閉じ括弧・閉じ鉤括弧が続いてもよい）で終わっているか。
+const SENT_ENDED = /[。．！？!?][」』）)】]*$/;
+
+// readPreGaps は読み上げ単位（spoken 非空のみ、buildReadUnits の出力順）ごとの前拍（秒）を
+// 返す。段階: マーカー行（preBeat）と「文が終わったあとの新しい行」（段落・行の切れ目）は
+// blockBeat、行内の文境界（。区切り）は短い sentBeat、文の途中の改行（ハードラップされた
+// 散文）は 0（間を入れると文が途切れて聞こえる）。ReaderView が startNarration の preGaps
+// に渡す。
+export function readPreGaps(units: ReadUnit[], blockBeat: number, sentBeat: number): number[] {
+  const spoken = units.filter((u) => u.spoken);
+  return spoken.map((u, i) => {
+    if (i === 0) return 0; // 先頭の前拍は開始遅延になるだけ
+    if (u.preBeat) return blockBeat;
+    const prevEnded = SENT_ENDED.test(spoken[i - 1].spoken);
+    if (u.lineHead) return prevEnded ? blockBeat : 0;
+    return prevEnded ? sentBeat : 0;
+  });
 }

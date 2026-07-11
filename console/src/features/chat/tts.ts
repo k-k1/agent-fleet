@@ -12,7 +12,15 @@
 import { rel } from "../../core/api/client.ts";
 import { getSettings } from "../../lib/settings.ts";
 import { useTtsStore } from "../../core/store/tts.ts";
-import { plainify, plainifyStreaming, firstChunkCut, applyUserDict, emotionOf, startsBlock } from "./ttsText.ts";
+import {
+  plainify,
+  plainifyStreaming,
+  firstChunkCut,
+  applyUserDict,
+  pauseParticles,
+  emotionOf,
+  startsBlock,
+} from "./ttsText.ts";
 import { effectiveDict } from "./ttsDict.ts";
 import { makeAudioLru } from "./ttsCache.ts";
 import { speakersCatalog, type Speaker, type SpeakerStyle } from "./ttsSpeakers.ts";
@@ -243,9 +251,14 @@ function emotionOpts(text: string, base: TtsOptions): TtsOptions {
 const MAX_INFLIGHT = 2;
 // チャンク間に挟む「間」（秒）。素材側の前後無音は CP が短縮している（audio_query の
 // pre/postPhonemeLength 上書き）ため、実際の間隔はほぼこの値＋残り無音（~0.07s）になる。
-// 句点・改行で確定した文の後は一拍置き、読点などでの文中早出しの後は詰める。
+// 3 段構え: 改行（段落・行の切れ目）の後は一拍 SENTENCE_GAP、文中の句点（。！？）の後は
+// より短い一拍 SENT_BEAT、読点などでの文中早出しの後は詰める CLAUSE_GAP。
 const SENTENCE_GAP = 0.3;
 const CLAUSE_GAP = 0.08;
+// 文中の句点（。！？）の後の短い一拍。ストリーミング（startTts）はチャンク後の間として、
+// 朗読（startNarration）では同一ブロック/行内の文境界の前拍として呼び手（turnTts /
+// readerText 経由）が使う。改行・ブロック頭（SENTENCE_GAP / BLOCK_BEAT = 0.3）より短い。
+export const SENT_BEAT = 0.15;
 // リスト項目・見出し・引用など「新しいブロックの頭」の前に足す一拍（前拍）。マーカー記号は
 // 読まないので、構造の切れ目を間で表す。ストリーミング（startTts）は通常の間に加算、
 // 朗読（startNarration）は preGaps として呼び手（turnTts / ReaderView）が渡す。
@@ -401,6 +414,7 @@ export function startTts(opts: TtsOptions, source = "", onEnd?: (reason: "done" 
     if (st.active === controller) {
       st.setActive(null, "");
       st.setSpeaking(false);
+      st.setPreparing(false);
     }
     onEnd?.(reason);
   };
@@ -426,7 +440,7 @@ export function startTts(opts: TtsOptions, source = "", onEnd?: (reason: "done" 
       const head = m ? buf.slice(0, m.index! + 1) : buf;
       const cut = firstChunkCut(head);
       if (cut > 0) {
-        enqueuePiece(buf.slice(0, cut), /*hard*/ true, /*beat*/ false);
+        enqueuePiece(buf.slice(0, cut), /*hard*/ true, CLAUSE_GAP);
         buf = buf.slice(cut);
       }
     }
@@ -436,7 +450,9 @@ export function startTts(opts: TtsOptions, source = "", onEnd?: (reason: "done" 
       const end = m.index! + 1;
       const piece = buf.slice(0, end);
       buf = buf.slice(end);
-      enqueuePiece(piece, /*hard*/ /\n/.test(m[0]) || /[。！？!?]/.test(m[0]));
+      const nl = /\n/.test(m[0]);
+      // 改行で確定 → 一拍（SENTENCE_GAP）、文中の句点 → 短い一拍（SENT_BEAT）。
+      enqueuePiece(piece, /*hard*/ nl || /[。！？!?]/.test(m[0]), nl ? SENTENCE_GAP : SENT_BEAT);
     }
     if (force) {
       // 末尾の未確定分 + 持ち越しをすべて読み上げる。fence 状態は引き回す。
@@ -447,11 +463,11 @@ export function startTts(opts: TtsOptions, source = "", onEnd?: (reason: "done" 
       const pre = pending ? pendingPre : tailPre;
       pending = "";
       pendingPre = false;
-      if (combined) submit(combined, true, pre);
+      if (combined) submit(combined, SENTENCE_GAP, pre);
     }
   };
 
-  const enqueuePiece = (piece: string, hard: boolean, beat = true) => {
+  const enqueuePiece = (piece: string, hard: boolean, gap = SENTENCE_GAP) => {
     const pre = pending ? pendingPre : startsBlock(piece); // チャンク開始片の頭で判定
     const spoken = plainifyStreaming(
       piece,
@@ -461,7 +477,13 @@ export function startTts(opts: TtsOptions, source = "", onEnd?: (reason: "done" 
       },
       codeOpts,
     );
-    if (!spoken.trim()) return;
+    if (!spoken.trim()) {
+      // 読み上げの無い改行だけの断片（段落の切れ目）: 直前チャンクの後の間を行間へ格上げする
+      // （「…た。\n」は句点で先に SENT_BEAT が付いているため、段落末だけここで一拍になる）。
+      // 直前チャンクが既に再生スケジュール済み（gaps 消費済み）なら間に合わないので触らない。
+      if (/\n/.test(piece) && gaps.has(seq - 1)) gaps.set(seq - 1, Math.max(gaps.get(seq - 1)!, SENTENCE_GAP));
+      return;
+    }
     const combined = pending + spoken;
     if (!hard && combined.trim().length < MIN_CHUNK) {
       pending = combined; // まだ短い → 次とまとめる
@@ -470,18 +492,20 @@ export function startTts(opts: TtsOptions, source = "", onEnd?: (reason: "done" 
     }
     pending = "";
     pendingPre = false;
-    submit(combined, beat, pre);
+    submit(combined, gap, pre);
   };
 
-  const submit = (text: string, beat = true, pre = false) => {
+  const submit = (text: string, gap = SENTENCE_GAP, pre = false) => {
     let t = text.trim();
     if (!t) return;
     // ユーザー辞書を適用（enkana は CP 側でこの後。katakana はそのまま通るので競合しない）。
     if (userDict.length) t = applyUserDict(t, userDict).trim();
     if (!t) return;
-    gaps.set(seq, beat ? SENTENCE_GAP : CLAUSE_GAP);
+    if (getSettings().ttsParticlePause) t = pauseParticles(t); // 助詞＋漢字の小休止（辞書の後）
+    gaps.set(seq, gap);
     if (pre) preGaps.set(seq, BLOCK_BEAT); // リスト・見出し等の頭 → 読む前に一拍
     jobs.push({ seq: seq++, text: t });
+    if (!startedAudio) useTtsStore.getState().setPreparing(true); // 最初の音まで「生成中」
     startedAudio = true;
     pump();
     notify();
@@ -542,6 +566,7 @@ export function startTts(opts: TtsOptions, source = "", onEnd?: (reason: "done" 
       let at = Math.max(ctx.currentTime, nextStartAt);
       if (sq > 0) at += pre; // ブロック頭の前拍（先頭チャンクは開始を遅らせない）
       src.start(at);
+      useTtsStore.getState().setPreparing(false); // 最初の音がスケジュールされた → 生成中を解除
       nextStartAt = at + ab.duration + gap;
     }
   };
@@ -680,6 +705,7 @@ export function startNarration(
   const texts = units.map((u) => {
     let t = plainify(u, codeOpts).trim();
     if (t && userDict.length) t = applyUserDict(t, userDict).trim();
+    if (t && s.ttsParticlePause) t = pauseParticles(t); // 助詞＋漢字の小休止（辞書の後）
     return t;
   });
 
@@ -703,6 +729,7 @@ export function startNarration(
     if (st.active === adapter) {
       st.setActive(null, "");
       st.setSpeaking(false);
+      st.setPreparing(false);
     }
   };
 
@@ -765,6 +792,7 @@ export function startNarration(
   const playInterlude = (a: { text: string; source: string; voice?: Partial<TtsOptions> }) => {
     let t = plainify(a.text, codeOpts).trim();
     if (t && userDict.length) t = applyUserDict(t, userDict).trim();
+    if (t && getSettings().ttsParticlePause) t = pauseParticles(t);
     if (!t) {
       tryPlay();
       return;
@@ -803,6 +831,7 @@ export function startNarration(
       cur = src;
       src.start(ctx!.currentTime + 0.15); // 朗読との切れ目に小さな間
       useTtsStore.getState().setSpeaking(true);
+      useTtsStore.getState().setPreparing(false);
     });
   };
 
@@ -825,6 +854,7 @@ export function startNarration(
       playing = true;
       onUnit(idx);
       useTtsStore.getState().setSpeaking(true);
+      useTtsStore.getState().setPreparing(false); // 音が出はじめた → 生成中を解除
       const src = ctx.createBufferSource();
       src.buffer = ab;
       src.connect(ctx.destination);
@@ -885,6 +915,7 @@ export function startNarration(
       finish("done"); // エンジン無し（AudioContext 不可）or 読む中身が無い
       return;
     }
+    useTtsStore.getState().setPreparing(true); // 最初の音が鳴るまで「生成中」（TopBar のぐるぐる）
     pump();
     tryPlay();
   });
