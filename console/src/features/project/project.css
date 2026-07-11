@@ -110,6 +110,35 @@
 .proj-sub-list {
   padding: 1px 0 2px;
 }
+
+/* 停止中 disclosure: a quiet one-liner that tucks the stopped sessions away so
+   the alive ones own the space. */
+.sess-stopped {
+  list-style: none;
+}
+.sess-stopped-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  min-width: 0;
+  background: none;
+  border: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 11px;
+  text-align: left;
+  padding: 3px 6px 3px 8px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+.sess-stopped-btn:hover {
+  color: var(--fg);
+  background: var(--lp-hover-bg, var(--hover-bg));
+}
+.sess-stopped-btn .codicon {
+  font-size: 11px;
+}
 .proj-sub-empty {
   color: var(--muted);
   font-size: 12px;
