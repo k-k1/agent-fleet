@@ -59,6 +59,13 @@ func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 	li := agents.LiveInfo{Resumable: true}
 	if alive {
 		li.State = status.LiveState(session.UUID(m.Dir, m.Name))
+		// The hooks report only working/idle — a request_user_input dialog keeps the
+		// turn "working" forever. Probe the rollout tail so the sessions list shows
+		// 質問あり (and notifies) like claude; only while working, to keep the probe
+		// off the common idle path.
+		if li.State == "working" && HasPendingQuestion(m) {
+			li.State = "question"
+		}
 	} else if !session.DirExists(m.Dir) {
 		li.Resumable = false
 	}

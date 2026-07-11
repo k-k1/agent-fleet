@@ -145,22 +145,13 @@ const titleSuggestPersona = "あなたはセッションの会話ログを読み
 func titleModel() string { return envOr("AF_TITLE_MODEL", "haiku") }
 
 func runTitleSuggestLLM(ctx context.Context, turns []transcript.Turn) (string, error) {
-	args := []string{"-p", "--output-format", "json", "--dangerously-skip-permissions",
-		"--append-system-prompt", titleSuggestPersona, "--model", titleModel()}
-	args = append(args, chatToolLimits()...) // no subagents/file/bash — pure text in/out
-	cmd := chatClaudeCmd(ctx, args...)
-	defer func() { _, _ = ensureChatClaudeConfig() }() // reconcile any credential refresh (chat.go pattern)
-	cmd.Stdin = strings.NewReader(titleSuggestPrompt(turns))
-
-	out, err := cmd.Output()
+	// Backend-agnostic one-shot (oneShotHeadless): runs on the first available of
+	// claude → codex → opencode, so claude-less workspaces get suggestions too.
+	reply, err := oneShotHeadless(ctx, titleSuggestPersona, titleSuggestPrompt(turns), titleModel())
 	if err != nil {
-		return "", fmt.Errorf("title generation failed: %s", cliErr(err))
+		return "", fmt.Errorf("title generation failed: %w", err)
 	}
-	var r claudeResult
-	if json.Unmarshal(out, &r) != nil || r.IsError {
-		return "", fmt.Errorf("title generation: bad/error response")
-	}
-	return cleanSuggestedTitle(r.Result), nil
+	return cleanSuggestedTitle(reply), nil
 }
 
 const (
@@ -471,22 +462,11 @@ const branchSuggestPersona = "You name git branches. Read the conversation log a
 // conversation, then hard-sanitizes the reply so a chatty model can't produce an
 // invalid ref/folder segment.
 func runBranchSuggestLLM(ctx context.Context, turns []transcript.Turn) (string, error) {
-	args := []string{"-p", "--output-format", "json", "--dangerously-skip-permissions",
-		"--append-system-prompt", branchSuggestPersona, "--model", titleModel()}
-	args = append(args, chatToolLimits()...)
-	cmd := chatClaudeCmd(ctx, args...)
-	defer func() { _, _ = ensureChatClaudeConfig() }()
-	cmd.Stdin = strings.NewReader(branchSuggestPrompt(turns))
-
-	out, err := cmd.Output()
+	reply, err := oneShotHeadless(ctx, branchSuggestPersona, branchSuggestPrompt(turns), titleModel())
 	if err != nil {
-		return "", fmt.Errorf("branch suggestion failed: %s", cliErr(err))
+		return "", fmt.Errorf("branch suggestion failed: %w", err)
 	}
-	var r claudeResult
-	if json.Unmarshal(out, &r) != nil || r.IsError {
-		return "", fmt.Errorf("branch suggestion: bad/error response")
-	}
-	return cleanBranchName(r.Result), nil
+	return cleanBranchName(reply), nil
 }
 
 // cleanBranchName reduces an LLM reply to a git-safe kebab-case name: first line,
