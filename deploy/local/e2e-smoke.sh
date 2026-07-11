@@ -57,6 +57,20 @@ if [ "${1:-}" = "--inner" ]; then
   [ "${DISABLE_AUTOUPDATER:-}" = "1" ] && echo "ok  DISABLE_AUTOUPDATER=1" \
     || { echo "NG  DISABLE_AUTOUPDATER が 1 でない"; fail=1; }
 
+  # ビルド時ピンの写し versions.json（設定 UI「ツールのバージョン」のピン表示の源）。
+  VJ=/usr/local/share/agent-fleet/versions.json
+  if [ -f "$VJ" ]; then
+    for pair in "claude=$EXPECT_CLAUDE" "opencode=$EXPECT_OPENCODE" "codex=$EXPECT_CODEX" \
+                "go=$EXPECT_GO" "gh=$EXPECT_GH"; do
+      k="${pair%%=*}"; want="${pair#*=}"
+      got="$(jq -r ".$k" "$VJ" 2>/dev/null)"
+      if [ "$got" = "$want" ]; then echo "ok  versions.json $k=$got"
+      else echo "NG  versions.json $k: ${got:-?} ≠ $want"; fail=1; fi
+    done
+  else
+    echo "NG  $VJ が無い"; fail=1
+  fi
+
   # rtk は任意焼き込み（vendor 品）。期待値はホスト側の vendor/ 有無から EXPECT_RTK で渡る。
   if [ "${EXPECT_RTK:-0}" = "1" ]; then
     if command -v rtk >/dev/null; then echo "ok  rtk $(rtk --version 2>/dev/null | semver)"

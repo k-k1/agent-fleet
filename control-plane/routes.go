@@ -323,6 +323,7 @@ func registerAgentEnvRoutes(mux *http.ServeMux, cfg config) {
 	// Toolchain selection (node / java) — proxied to the Agent.
 	mux.HandleFunc("GET /api/env/toolchains", rest)
 	mux.HandleFunc("PUT /api/env/toolchains", rest)
+	mux.HandleFunc("GET /api/env/tool-versions", rest)
 	// CP-owned per-workspace settings (editable while stopped; applied at start).
 	wss := newWSSettingsAPI(cfg.mgr)
 	mux.HandleFunc("GET /api/env/ws-settings", wss.withResolved(wss.get))
