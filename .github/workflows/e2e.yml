@@ -1,0 +1,61 @@
+# E2E（docs/dev/10 §10.4): Workspace イメージを build し、L1（e2e-smoke.sh: CLI 実版 =
+# Dockerfile ARG ピン等）→ L2（e2e/: CP をヘッドレス起動して workspace/session 疎通）を
+# 検証する。イメージ build が重いので ci.yml から分離し、関係パスの変更時 + 週次 cron
+# （コード無変更でも上流 CLI の破壊を検出）+ 手動のみ実行する。
+# 注: rtk は git-ignored のホスト vendor 品なので CI は「rtk なし」パスの検証になる。
+name: e2e
+
+on:
+  push:
+    paths:
+      - "workspace/**"
+      - "control-plane/**"
+      - "e2e/**"
+      - "deploy/local/e2e-smoke.sh"
+      - ".github/workflows/e2e.yml"
+  pull_request:
+    paths:
+      - "workspace/**"
+      - "control-plane/**"
+      - "e2e/**"
+      - "deploy/local/e2e-smoke.sh"
+      - ".github/workflows/e2e.yml"
+  schedule:
+    - cron: "0 21 * * 0" # 毎週月曜 6:00 JST — 上流 CLI / base image の破壊検出
+  workflow_dispatch:
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      WS_IMAGE: agent-fleet/workspace:dev
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: control-plane/go.mod
+          cache-dependency-path: control-plane/go.sum
+      - uses: docker/setup-buildx-action@v3
+      - name: build workspace image
+        uses: docker/build-push-action@v6
+        with:
+          context: workspace
+          tags: ${{ env.WS_IMAGE }}
+          load: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: image smoke (L1)
+        run: deploy/local/e2e-smoke.sh "$WS_IMAGE"
+      - name: vet e2e module
+        working-directory: e2e
+        run: go vet -tags e2e ./...
+      - name: fleet e2e (L2)
+        working-directory: e2e
+        env:
+          E2E_REQUIRE: "1"
+        run: go test -v -tags e2e -timeout 15m ./...
