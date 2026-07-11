@@ -20,12 +20,25 @@
   display: flex;
   flex-direction: column;
   overflow: hidden; /* the map pins at the top; only .app-rail-scroll scrolls */
+  /* The rail is navigation, not copy: suppress text selection so a mobile
+     long-press reaches the row's context menu instead of starting a selection
+     (and iOS doesn't pop the callout). The filter input opts back in below. */
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
   /* Rebind the row-state colors to shades derived from the chosen left-pane
      surface (always set by applyTheme — derived when a surface is chosen, else
      the theme default) so section headers / row active+hover follow the theme
      instead of the fixed defaults (old .leftpane behavior). */
   --active-bg: var(--lp-active-bg);
   --hover-bg: var(--lp-hover-bg);
+}
+/* Inputs inside the rail (the 絞り込み box) must stay editable/selectable —
+   Safari inherits -webkit-user-select: none into form fields. */
+.app-rail input,
+.app-rail textarea {
+  user-select: text;
+  -webkit-user-select: text;
 }
 .app-rail-scroll {
   flex: 1;
