@@ -70,10 +70,12 @@ func activeSession(db *sql.DB, m session.Meta) string {
 	return id
 }
 
-// LiveState derives opencode's working/idle state from the store (robust — the
-// status plugin's events are unreliable): a turn is in flight when the active session's
-// newest message isn't a completed assistant reply. Returns "" when the db can't be read
-// (caller falls back to the plugin status store).
+// LiveState derives opencode's working/idle/question state from the store (robust —
+// the status plugin's events are unreliable): a turn is in flight when the active
+// session's newest message isn't a completed assistant reply, and an in-flight turn
+// whose question tool is running is "question" — the same state claude raises, so the
+// sessions list chip (質問あり) and desktop notifications light up for opencode too.
+// Returns "" when the db can't be read (caller falls back to the plugin status store).
 func LiveState(m session.Meta) string {
 	db, ok := openRO()
 	if !ok {
@@ -101,6 +103,9 @@ func LiveState(m session.Meta) string {
 	if md.Role == "assistant" && md.Time.Completed > 0 {
 		return "idle"
 	}
+	if len(pending(db, ses)) > 0 {
+		return "question" // the in-flight turn is waiting on the user's answer
+	}
 	return "working" // an in-flight assistant turn, or a user message awaiting a reply
 }
 
@@ -119,12 +124,102 @@ func readTranscript(m session.Meta) (agents.TranscriptData, bool) {
 		return agents.TranscriptData{Path: path}, true
 	}
 	return agents.TranscriptData{
-		Turns:   readSession(db, ses),
-		Path:    path,
-		Tasks:   tasks(db, ses),
-		Pending: pending(db, ses),
-		Mode:    mode(db, ses),
+		Turns:      readSession(db, ses),
+		Path:       path,
+		Tasks:      tasks(db, ses),
+		Pending:    pending(db, ses),
+		Mode:       mode(db, ses),
+		Queued:     queued(db, ses),
+		Compacting: compacting(db, ses),
 	}, true
+}
+
+// queued returns the prompts sitting in opencode's mid-run input queue — typed while a
+// turn runs, recorded as session_input rows, and not yet promoted to a real user
+// message (promoted_seq is set on promotion; consumed rows are cleaned up). Surfaced as
+// the mirror's キュー済み badge, like claude's queue-operation reconstruction. Ordered by
+// arrival. The generic handler gates on the working state, so stale leftovers from a
+// killed run stay hidden.
+func queued(db *sql.DB, ses string) []string {
+	rows, err := db.Query(
+		`SELECT prompt FROM session_input WHERE session_id = ? AND promoted_seq IS NULL ORDER BY time_created, id`, ses,
+	)
+	if err != nil {
+		return nil // older store without session_input — no queue to show
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var p string
+		if rows.Scan(&p) != nil {
+			continue
+		}
+		if t := strings.TrimSpace(promptText(p)); t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// promptText decodes a session_input prompt column into displayable text. opencode
+// stores it JSON-encoded; the shapes seen/anticipated are a bare string, an object
+// with a text field, or a parts array whose text parts carry the typed message.
+// Anything undecodable falls back to the raw column so the queue never shows blank.
+func promptText(raw string) string {
+	b := []byte(strings.TrimSpace(raw))
+	if len(b) == 0 {
+		return ""
+	}
+	var s string
+	if json.Unmarshal(b, &s) == nil {
+		return s
+	}
+	type textPart struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	join := func(parts []textPart) string {
+		var sb strings.Builder
+		for _, p := range parts {
+			if (p.Type == "" || p.Type == "text") && strings.TrimSpace(p.Text) != "" {
+				if sb.Len() > 0 {
+					sb.WriteString("\n")
+				}
+				sb.WriteString(p.Text)
+			}
+		}
+		return sb.String()
+	}
+	var arr []textPart
+	if json.Unmarshal(b, &arr) == nil {
+		if t := join(arr); t != "" {
+			return t
+		}
+	}
+	var obj struct {
+		Text  string     `json:"text"`
+		Parts []textPart `json:"parts"`
+	}
+	if json.Unmarshal(b, &obj) == nil {
+		if obj.Text != "" {
+			return obj.Text
+		}
+		if t := join(obj.Parts); t != "" {
+			return t
+		}
+	}
+	return raw
+}
+
+// compacting reports whether opencode is compacting this session's conversation right
+// now — session.time_compacting is set while a compaction runs and cleared after
+// (opencode's own status derives "compacting" from exactly this field).
+func compacting(db *sql.DB, ses string) bool {
+	var v sql.NullInt64
+	if db.QueryRow(`SELECT time_compacting FROM session WHERE id = ?`, ses).Scan(&v) != nil {
+		return false
+	}
+	return v.Valid && v.Int64 > 0
 }
 
 // mode reports the session's current agent/mode normalized to "plan" | "normal".
@@ -282,22 +377,37 @@ func sessionResumable(ses string) bool {
 }
 
 // readSession loads one session's messages (ordered) and their parts, building a
-// transcript.Turn per displayable message. A message with no displayable part (a pure
-// reasoning/step frame) is dropped. Best-effort: a query error yields the turns gathered
-// so far rather than failing the whole poll.
+// transcript.Turn per displayable message. Subagent activity (child sessions with
+// parent_id = ses, spawned by the task tool) is interleaved by creation time and
+// flagged Sidechain, so the chat shows it like claude's subagent turns. A message with
+// no displayable part (a pure reasoning/step frame) is dropped. Best-effort: a query
+// error yields the turns gathered so far rather than failing the whole poll.
+//
+// Ordering note: rows are stamped time_created at insert, so the merged parent+child
+// sequence is append-only across polls — each turn's ordinal (Idx, the render key and
+// paging cursor unit) stays stable as new messages arrive.
 func readSession(db *sql.DB, ses string) []transcript.Turn {
-	rows, err := db.Query(`SELECT id, data FROM message WHERE session_id = ? ORDER BY time_created`, ses)
+	sessions := append([]string{ses}, childSessions(db, ses)...)
+	ph := strings.TrimSuffix(strings.Repeat("?,", len(sessions)), ",")
+	args := make([]any, len(sessions))
+	for i, s := range sessions {
+		args[i] = s
+	}
+	rows, err := db.Query(
+		`SELECT id, session_id, data FROM message WHERE session_id IN (`+ph+`) ORDER BY time_created, id`, args...,
+	)
 	if err != nil {
 		return nil
 	}
 	type msgRow struct {
 		id   string
+		ses  string
 		data []byte
 	}
 	var msgs []msgRow
 	for rows.Next() {
 		var mr msgRow
-		if rows.Scan(&mr.id, &mr.data) == nil {
+		if rows.Scan(&mr.id, &mr.ses, &mr.data) == nil {
 			msgs = append(msgs, mr)
 		}
 	}
@@ -307,10 +417,29 @@ func readSession(db *sql.DB, ses string) []transcript.Turn {
 	for i, mr := range msgs {
 		t, ok := parseMessage(db, mr.id, mr.data, i)
 		if ok {
+			t.Sidechain = mr.ses != ses
 			turns = append(turns, t)
 		}
 	}
 	return turns
+}
+
+// childSessions lists the subagent sessions spawned under ses (one level — the task
+// tool's children). Best-effort: any error just means no sidechain turns.
+func childSessions(db *sql.DB, ses string) []string {
+	rows, err := db.Query(`SELECT id FROM session WHERE parent_id = ? ORDER BY time_created, id`, ses)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var id string
+		if rows.Scan(&id) == nil && id != "" {
+			out = append(out, id)
+		}
+	}
+	return out
 }
 
 // parseMessage builds a transcript.Turn from one message row and its parts. idx is the
@@ -449,7 +578,9 @@ func toolInfo(input json.RawMessage) string {
 	if json.Unmarshal(input, &m) != nil {
 		return ""
 	}
-	for _, k := range []string{"command", "file_path", "filePath", "path", "pattern", "query", "url"} {
+	// description last: it's the task (subagent) tool's summary, but a more specific
+	// field (command/path/pattern) should win when both exist.
+	for _, k := range []string{"command", "file_path", "filePath", "path", "pattern", "query", "url", "description"} {
 		if v, ok := m[k].(string); ok && v != "" {
 			return transcript.Clip(v)
 		}

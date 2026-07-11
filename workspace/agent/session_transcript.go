@@ -295,6 +295,17 @@ func handleGenericMessages(w http.ResponseWriter, r *http.Request, meta session.
 	if alive && len(td.Pending) > 0 {
 		resp["pendingQuestions"] = td.Pending
 	}
+	// Prompts queued into the running turn (typed mid-run, not yet injected as a user
+	// message) so the mirror can badge them キュー済み — same gate as claude's path: the
+	// queue only means anything while a turn runs, and this hides stale leftovers.
+	if alive && state == "working" && len(td.Queued) > 0 {
+		resp["queuedPrompts"] = td.Queued
+	}
+	// Compaction in flight (opencode session.time_compacting): reuse the chat's claude
+	// 圧縮中 block (spinner-only — opencode reports no progress percentage).
+	if alive && td.Compacting {
+		resp["terminalState"] = "compacting"
+	}
 	// Current mode (plan / normal) so the Console shows the plan indicator and toggle.
 	// Read it ONLY from the live terminal — a stopped session isn't "in plan mode", and
 	// the rollout's per-turn mode is a stale snapshot (the last turn's), which made a
