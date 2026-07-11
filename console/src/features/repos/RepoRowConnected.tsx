@@ -26,9 +26,11 @@ interface RepoRowConnectedProps {
   ctx: RepoRailContext;
   /** Plain card click toggles the owning node's fold (SCM is on the right-click menu). */
   onToggle?: () => void;
+  /** Session tally badge (see RepoRow.sess) — computed by the owning node. */
+  sess?: { alive: number; total: number };
 }
 
-export function RepoRowConnected({ r, ctx, onToggle }: RepoRowConnectedProps) {
+export function RepoRowConnected({ r, ctx, onToggle, sess }: RepoRowConnectedProps) {
   const settings = useSettings(); // default model for claude 起動
   const toast = useToast();
   const askConfirm = useConfirm();
@@ -45,6 +47,7 @@ export function RepoRowConnected({ r, ctx, onToggle }: RepoRowConnectedProps) {
       running={ctx.running}
       active={ctx.scmRepo === r.name}
       selected={r.name === ctx.activeRepo}
+      sess={sess}
       opens={ctx.rPanes?.get(r.name)}
       onFocusPane={setActive}
       onToggle={onToggle}

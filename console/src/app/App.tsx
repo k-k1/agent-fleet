@@ -24,6 +24,7 @@ import { AssistantSection } from "../features/chat/AssistantSection.tsx";
 import { MemoQueueSection } from "../features/memo/MemoQueueSection.tsx";
 import { ProjectTree } from "../features/project/ProjectTree.tsx";
 import { OtherSessionsSection } from "../features/project/OtherSessionsSection.tsx";
+import { FilesSection } from "../features/project/FilesSection.tsx";
 import { WsBar } from "./WsBar.tsx";
 import { TopBar } from "./TopBar.tsx";
 import { useSettingsUI, wireSettingsHistory } from "../features/settings/store.ts";
@@ -259,14 +260,15 @@ export function App() {
         <nav className="app-rail">
           <LayoutMap />
           {/* Project-first IA: Assistant + Memo pinned on top (global tools), then
-              the working-copy tree (each node nests its sessions + files), then the
-              repo-less session catch-all. Files are per-node now (ProjectFiles),
-              so there's no global Files section. */}
+              the repo tree (each base node nests its sessions + worktrees), then
+              the repo-less session catch-all, and the global file browser at the
+              foot (default collapsed; a reveal opens it). */}
           <div className="app-rail-scroll">
             <AssistantSection />
             <MemoQueueSection />
             <ProjectTree />
             <OtherSessionsSection />
+            <FilesSection />
           </div>
         </nav>
         {/* Dims the main area and dismisses the pane: the mobile drawer, and the

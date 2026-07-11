@@ -41,11 +41,11 @@
   padding: 0 6px;
 }
 
-/* Two-line session row. */
+/* Single-line session row: [kind icon] title … [drift?] [state chip]. */
 .sess-row {
   position: relative;
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   border-radius: 6px;
 }
 .sess-row:hover,
@@ -63,53 +63,80 @@
   flex: 1;
   min-width: 0;
   display: flex;
-  flex-direction: column;
-  gap: 3px;
+  align-items: center;
+  gap: 6px;
   background: none;
   border: none;
   color: var(--fg);
   font: inherit;
   text-align: left;
-  padding: 6px 8px 6px 14px;
+  padding: 4px 6px 4px 8px;
   cursor: pointer;
 }
 .sess-row.stopped .sess-l1 {
   color: var(--muted);
 }
+.sess-row.stopped .sess-kic {
+  opacity: 0.55;
+}
 .sess-btn[aria-disabled="true"] {
   cursor: default;
 }
 .sess-l1 {
+  flex: 1;
+  min-width: 0;
   font-size: 13px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.sess-l2 {
-  display: flex;
+/* Leading kind icon — a small tinted square whose color IS the kind (the old
+   text kind-tag is gone from rows; panes/archive still use it). Palette matches
+   terminal.css .kind-tag. */
+.sess-kic {
+  flex: none;
+  width: 17px;
+  height: 17px;
+  border-radius: 4px;
+  display: inline-flex;
   align-items: center;
-  gap: 2px; /* old value — the kind badge carries its own margin-right */
-  min-width: 0;
+  justify-content: center;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--muted) 14%, transparent);
 }
+.sess-kic .codicon {
+  font-size: 12px;
+}
+.sess-kic.kind-claude { color: #e0a45e; background: rgba(224, 164, 94, 0.14); }
+.sess-kic.kind-codex { color: #4ec97a; background: rgba(78, 201, 122, 0.14); }
+.sess-kic.kind-opencode { color: #b07cf2; background: rgba(176, 124, 242, 0.16); }
+[data-theme="light"] .sess-kic.kind-claude { color: #a85f1c; background: rgba(224, 164, 94, 0.2); }
+[data-theme="light"] .sess-kic.kind-codex { color: #18854a; background: rgba(78, 201, 122, 0.2); }
+[data-theme="light"] .sess-kic.kind-opencode { color: #6d2fce; background: rgba(176, 124, 242, 0.2); }
 /* The state chip is span.session-state (old markup — rules at the bottom of this
-   file); its margin-left:auto puts it at the row's right edge. */
+   file); its margin-left:auto puts it at the row's right edge. Calm states are
+   icon-only (.mini); question/plan/permission keep their text. */
+.sess-row .session-state.mini {
+  padding: 1px 4px;
+}
 .sess-drift {
+  flex: none;
   display: inline-flex;
   align-items: center;
   gap: 3px;
   color: var(--warn);
   font-size: 11px;
-  max-width: 100%;
+  max-width: 9em; /* one flex line now — don't let a long branch eat the title */
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-/* Ordinal badges (top-right, shown while split). */
+/* Ordinal badges (right side, shown while split). */
 .sess-ords {
   display: flex;
   gap: 3px;
-  padding: 6px 2px 0 0;
+  padding: 0 2px 0 0;
 }
 .rail-ord {
   flex: none;
@@ -132,7 +159,10 @@
 .sess-menu-wrap {
   position: relative;
   flex: none;
-  padding: 4px 4px 0 0;
+  padding: 0 4px 0 0;
+  align-self: stretch;
+  display: flex;
+  align-items: center;
 }
 .sess-menu-btn {
   background: none;
