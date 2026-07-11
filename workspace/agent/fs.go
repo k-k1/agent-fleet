@@ -27,6 +27,49 @@ func browseRoot() string {
 	return homeDir()
 }
 
+// scratchRoot is the agent's own per-user temp/scratch base (e.g. /tmp/claude-1000),
+// where the harness places each session's scratchpad. It sits OUTSIDE the browse root,
+// so SendUserFile paths from there (a shared preview PNG, a generated report) would
+// otherwise be un-openable. The browser is allowed to READ under it: it holds only
+// agent-authored scratch — credentials live under home and are denylisted. Listing the
+// tree is unaffected (still rooted at home); this only widens direct file/download reads.
+func scratchRoot() string {
+	return filepath.Join(os.TempDir(), "claude-"+strconv.Itoa(os.Getuid()))
+}
+
+// allowedReadRoots are the absolute roots the file browser may serve a file from when the
+// query path is itself absolute (a SendUserFile path that landed outside the browse root).
+// The browse root comes first so an absolute path under home maps back to a home-relative
+// display path.
+func allowedReadRoots() []string {
+	return []string{browseRoot(), scratchRoot()}
+}
+
+// resolveAbs handles an absolute query path (see safeBrowsePath). It serves the file only
+// when it sits under an allowed read root, returning the absolute path plus a display path
+// (home-relative when under the browse root, else the absolute path). Denylisted paths
+// under the browse root are refused.
+func resolveAbs(clean, root string) (full, rel string, ok bool) {
+	for _, ar := range allowedReadRoots() {
+		r, err := filepath.Rel(ar, clean)
+		if err != nil || r == ".." || strings.HasPrefix(r, ".."+string(filepath.Separator)) {
+			continue // not under this root
+		}
+		r = filepath.ToSlash(r)
+		if r == "." {
+			r = ""
+		}
+		if ar == root {
+			if isDenied(r) {
+				return "", "", false
+			}
+			return clean, r, true
+		}
+		return clean, clean, true // under a non-home root (scratch): display the absolute path
+	}
+	return "", "", false
+}
+
 // fsDeny lists browse-root-relative paths that are never exposed.
 var fsDeny = map[string]bool{
 	".claude":               true, // plaintext claude state (also relocated via CLAUDE_CONFIG_DIR)
@@ -49,11 +92,21 @@ func isDenied(rel string) bool {
 	return false
 }
 
-// safeBrowsePath resolves a query path within the browse root, rejecting
-// traversal and denylisted paths. Returns absolute + root-relative paths.
+// safeBrowsePath resolves a query path to an absolute file the browser may serve, plus a
+// display path. Two forms are accepted:
+//   - browse-root-relative (no leading slash): the form the Console's file tree and FileView
+//     use. Joined onto the browse root; traversal above the root and denylisted paths are
+//     rejected.
+//   - absolute (leading slash): a SendUserFile path that resolved outside the browse root
+//     (e.g. a /tmp/claude-<uid> scratchpad, left absolute by toBrowseRel). Served only when
+//     it sits under an allowed read root — the browse root itself or the scratch base — so a
+//     shared scratchpad file opens in the viewer instead of erroring. See resolveAbs.
 func safeBrowsePath(p string) (full, rel string, ok bool) {
 	root := browseRoot()
-	p = strings.TrimPrefix(strings.TrimSpace(p), "/")
+	p = strings.TrimSpace(p)
+	if filepath.IsAbs(p) {
+		return resolveAbs(filepath.Clean(p), root)
+	}
 	clean := filepath.Clean(p)
 	if clean == "." {
 		clean = ""
