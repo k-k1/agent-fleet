@@ -246,6 +246,9 @@ describe("applyBuiltinReadings / applyReadings (組み込みの読み補正)", (
     expect(applyBuiltinReadings("I18n対応とa11yの改善")).toBe("インターナショナリゼーション対応とアクセシビリティの改善");
     expect(applyBuiltinReadings("l10n と e2e テスト")).toBe("ローカリゼーション と エンドツーエンド テスト");
     expect(applyBuiltinReadings("k8sクラスタ")).toBe("クーバネティスクラスタ");
+    expect(applyBuiltinReadings("v12n と o11y と p13n")).toBe(
+      "バーチャライゼーション と オブザーバビリティ と パーソナライゼーション",
+    );
     expect(applyBuiltinReadings("mai18nx")).toBe("mai18nx"); // 語中は触らない
   });
 
