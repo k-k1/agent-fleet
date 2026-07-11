@@ -9,26 +9,8 @@
   padding-top: 2px;
 }
 
-/* Slim toolbar (replaces the old section header): title, then repo ops (clone /
-   更新) | session upkeep (整理 / アーカイブ). */
-.proj-toolbar {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 8px 2px 10px;
-}
-.proj-toolbar-title {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--muted);
-}
-.proj-toolbar-sp {
-  flex: 1;
-}
-/* Separator between the repo ops and the session maintenance actions. */
+/* Separator in the section header, between the repo ops (clone / 更新) and the
+   session maintenance actions (整理 / アーカイブ). */
 .proj-head-sep {
   flex: none;
   width: 1px;
