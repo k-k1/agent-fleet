@@ -158,7 +158,8 @@ Phase 0 は 2026-07-12 に着手済み。手順は [guide/member/10-ops-mcp-poc.
 - PagerDuty 公式 self-host は PyPI `pagerduty-mcp`（`uvx pagerduty-mcp`、env `PAGERDUTY_USER_API_KEY`）で**既定 read-only**、write は `--enable-write-tools` 明示。hosted（mcp.pagerduty.com）は既定で write も出るため PoC では非推奨。
 - awslabs CloudWatch は `uvx awslabs.cloudwatch-mcp-server@latest` + `AWS_PROFILE`（SSO チェーン = 既存 ssm 接続と同じ資格で追加秘密なし）。
 - initMAX zabbix は systemd 常駐のチーム共有型（remote HTTP + config.toml の `read_only = true`）で個人 PoC には重い。stdio の軽量版で雰囲気確認 → 本採用評価時に initMAX。
-- 残タスク = 実トークンでの UC1/UC2 実地検証（実 workspace + 実監視環境が必要。dev コンテナは PyPI 遮断のため uvx 系は実 workspace で確認）。
+- PagerDuty は**実アカウントで疎通済み**（2026-07-12、dev コンテナ）: `uvx pagerduty-mcp` 1.28.1 を `claude mcp add -s user` で登録、read 系 63 ツール、`list_incidents` で実データ（Zabbix 連携サービスのインシデント）取得を確認。認証は env `PAGERDUTY_USER_API_KEY` のみで成立。
+- 残タスク = Grafana / CloudWatch の実環境接続と、実インシデントでの UC1/UC2 壁打ち評価（新規 claude セッションで pagerduty ツールが使える状態になっている）。※PyPI 遮断は一時的だった（uvx はこの dev コンテナでも動作）。
 | **1. 最小の製品化** | Connections に ops kind 追加 + テナント MCP カタログ + `chatMCPArgs` のカタログ駆動化 + ビルトイン SRE アシスタント + §4.5 の権限明文化 | Agent: connections/chat_providers/assistants、CP: カタログ CRUD、Console: 設定 UI | 中。既存 seam に沿う |
 | **2. 通知と導線** | Slack outbound（CP-native、セッション状態通知含む）+ インシデント起点の会話テンプレ | CP: notify、Console: 導線 | 小〜中 |
 | **3. イベント駆動** | webhook ingress（PagerDuty v3 署名）→ memo キュー + 通知。自動初動は ops ボット identity の ADR 決着後に | CP: /hooks、脅威モデル追記 | 中〜大（身元問題込み） |
