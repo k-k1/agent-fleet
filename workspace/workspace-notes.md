@@ -25,12 +25,36 @@ from the latest image. The rule is simple:
   Persist tools in your home (e.g. under `~/.local`) if you want them to survive.
 - So the only data loss risk from a recreate is `~/repos`: **commit / push before recreating.**
 
+**Claude's memory / config persists too, and nothing deletes it.** Claude state
+(`CLAUDE_CONFIG_DIR=/var/lib/af/claude`, including its saved memory under
+`.../projects/*/memory/`) lives on a *separate* dedicated mount, not in home. No
+Workspace operation removes it — not Stop/Start (only the container is removed; data
+stays), not "recreate" (touches only `~/repos`), not "clean home" (touches only home).
+There is no product action that wipes a Workspace's data; the container can go away
+and come back with memory intact. (Only an operator deleting the host data dir would
+remove it.)
+
 ## Do not
 - **Do not leave uncommitted changes.** Recreating the container deletes cloned repos — commit / push often.
 - **Do not store credentials in plaintext.** Never write API keys or tokens into repos or files. Manage connections under "Settings > Connections" (stored encrypted).
 - **Do not touch or read the agents' internal state.** `~/.config/agent-fleet`, `~/.claude`, `~/.codex`, and `~/.local/share/opencode` hold credentials and the encrypted store. Leave them alone.
 - **Do not run host-wide destructive commands.** No runaway `rm -rf`, fork bombs, crypto mining, or port scanning.
 - **Do not hog resources.** The host is shared and memory-constrained. Heavy builds and large parallelism can exhaust memory and disrupt the whole fleet.
+
+## Your container's resources (memory / CPU) — how to check
+Your memory and CPU are per-workspace limits (set by the deployment/tenant), not a
+fixed image value, so check them live rather than assuming. This is a **cgroup v2**
+container; read *your own* limits and usage from inside — do NOT trust `free` or
+`/proc/meminfo`, which show the whole shared HOST, not your slice:
+- **Memory limit:** `cat /sys/fs/cgroup/memory.max`  (bytes; `max` = uncapped)
+- **Memory in use now:** `cat /sys/fs/cgroup/memory.current`
+- **Near the cap? / OOM pressure:** `cat /sys/fs/cgroup/memory.events` — a rising
+  `high`/`max`/`oom` count means you are hitting the limit (the kernel throttles, then
+  OOM-kills; a build dying with code 137 = OOM-killed).
+- **CPU cores available to you:** `nproc`  (or `cat /sys/fs/cgroup/cpu.max`)
+- Human-readable: `awk '{printf "%.1f GiB\n",$1/1073741824}' /sys/fs/cgroup/memory.max`.
+- The Console also shows this live: the WS-bar resource chip and Settings > Environment
+  (mem / CPU vs quota). If you are near the cap, apply the avoidance rules below.
 
 ## Build memory (important — this has caused real incidents)
 The shared host is memory-constrained; build tools are the main cause of OOM trouble.
