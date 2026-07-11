@@ -127,6 +127,13 @@ func parseRolloutFull(lines [][]byte) ([]transcript.Turn, []transcript.Task, []t
 			if cm := turnMode(ev.Payload); cm != "" {
 				mode = cm
 			}
+		case "compacted":
+			// codex compacted its history (auto or /compact) and wrote the replacement
+			// summary; shown as claude's collapsible 圧縮されました block.
+			turns = append(turns, transcript.Turn{
+				Role: "user", Compact: true, Text: compactedText(ev.Payload),
+				Idx: i, TS: ev.Timestamp, Cwd: cwd, Branch: branch,
+			})
 		case "response_item":
 			t, callID, ok := parseResponseItem(ev.Payload, ev.Timestamp, i, cwd, branch)
 			if ok {
@@ -169,6 +176,16 @@ func parseRolloutFull(lines [][]byte) ([]transcript.Turn, []transcript.Task, []t
 				if win > 0 {
 					turns[lastAssistant].CtxWindow = win
 				}
+			}
+			// context_compacted marks a compaction when no "compacted" line was written
+			// (version-dependent). Skip it when the previous turn already is the compact
+			// block from that line, so one compaction never renders twice.
+			if isContextCompacted(ev.Payload) &&
+				(len(turns) == 0 || !turns[len(turns)-1].Compact) {
+				turns = append(turns, transcript.Turn{
+					Role: "user", Compact: true,
+					Idx: i, TS: ev.Timestamp, Cwd: cwd, Branch: branch,
+				})
 			}
 		}
 	}
@@ -288,6 +305,31 @@ func parseResponseItem(payload json.RawMessage, ts string, idx int, cwd, branch 
 		return transcript.Turn{}, "", false
 	}
 	switch p.Type {
+	case "custom_tool_call":
+		// A freeform tool call — in practice apply_patch (codex's edit tool, invoked with
+		// the raw patch envelope as `input`). Parsed into per-file before/after parts so
+		// the trace opens as a diff pane, like claude's Edit/Write. Other custom tools
+		// fall back to a plain trace. Output attaches when custom_tool_call_output lands.
+		var ct struct {
+			Name   string `json:"name"`
+			CallID string `json:"call_id"`
+			Input  string `json:"input"`
+		}
+		if json.Unmarshal(payload, &ct) != nil {
+			return transcript.Turn{}, "", false
+		}
+		name := ct.Name
+		if name == "" {
+			name = "tool"
+		}
+		parts := patchParts(name, ct.Input)
+		if len(parts) == 0 {
+			parts = []transcript.Part{{Kind: "tool", Tool: name, Info: transcript.Clip(ct.Input)}}
+		}
+		return transcript.Turn{
+			Role: "assistant", Parts: parts,
+			Idx: idx, TS: ts, Cwd: cwd, Branch: branch,
+		}, ct.CallID, true
 	case "message":
 		if p.Role != "user" && p.Role != "assistant" {
 			return transcript.Turn{}, "", false // developer/system instructions — noise
@@ -339,6 +381,18 @@ func parseResponseItem(payload json.RawMessage, ts string, idx int, cwd, branch 
 				}, p.CallID, true
 			}
 		}
+		// apply_patch can also arrive as a function_call whose arguments carry the patch
+		// envelope as {"input": …} — same diff-pane treatment as the custom_tool_call form.
+		if p.Name == "apply_patch" {
+			if in := applyPatchInput(payload); in != "" {
+				if parts := patchParts(p.Name, in); len(parts) > 0 {
+					return transcript.Turn{
+						Role: "assistant", Parts: parts,
+						Idx: idx, TS: ts, Cwd: cwd, Branch: branch,
+					}, p.CallID, true
+				}
+			}
+		}
 		name := p.Name
 		if name == "" {
 			name = "tool"
@@ -388,16 +442,17 @@ func reasoningText(payload json.RawMessage) string {
 	return strings.TrimSpace(sb.String())
 }
 
-// parseCallOutput returns a function_call_output's call_id and its (truncated)
-// output text, or "","" for other payloads. The output is codex's tool result; the JSON
-// shape varies (string, or {output:...}) so we best-effort stringify.
+// parseCallOutput returns a function_call_output's / custom_tool_call_output's call_id
+// and its (truncated) output text, or "","" for other payloads. The output is codex's
+// tool result; the JSON shape varies (string, or {output:...}) so we best-effort stringify.
 func parseCallOutput(payload json.RawMessage) (callID, output string) {
 	var p struct {
 		Type   string          `json:"type"`
 		CallID string          `json:"call_id"`
 		Output json.RawMessage `json:"output"`
 	}
-	if json.Unmarshal(payload, &p) != nil || p.Type != "function_call_output" {
+	if json.Unmarshal(payload, &p) != nil ||
+		(p.Type != "function_call_output" && p.Type != "custom_tool_call_output") {
 		return "", ""
 	}
 	out := ""
@@ -478,7 +533,7 @@ func toolInfo(payload json.RawMessage) string {
 	// arguments is a JSON string; try to pull a command / path out of it.
 	var args map[string]any
 	if json.Unmarshal([]byte(p.Arguments), &args) == nil {
-		for _, k := range []string{"command", "cmd", "file_path", "path", "query"} {
+		for _, k := range []string{"command", "cmd", "file_path", "path", "query", "url", "description"} {
 			if v, ok := args[k].(string); ok && v != "" {
 				return transcript.Clip(v)
 			}
@@ -495,6 +550,142 @@ func toolInfo(payload json.RawMessage) string {
 		}
 	}
 	return transcript.Clip(p.Arguments)
+}
+
+// applyPatchInput pulls the patch envelope out of a function_call apply_patch's
+// arguments ({"input": "*** Begin Patch…"}). "" when the shape doesn't match.
+func applyPatchInput(payload json.RawMessage) string {
+	var p struct {
+		Arguments string `json:"arguments"`
+	}
+	if json.Unmarshal(payload, &p) != nil || p.Arguments == "" {
+		return ""
+	}
+	var args struct {
+		Input string `json:"input"`
+	}
+	if json.Unmarshal([]byte(p.Arguments), &args) != nil {
+		return ""
+	}
+	return args.Input
+}
+
+// patchParts parses an apply_patch envelope ("*** Begin Patch" … "*** End Patch")
+// into one tool part per touched file, each carrying before/after Edits so the
+// Console opens it as a diff pane (claude's Edit/Write treatment). The before/after
+// are reconstructed from the hunks: context+removed lines vs context+added lines —
+// an approximation (context may be partial), but a faithful view of what changed.
+// Returns nil when the input isn't a patch envelope (caller falls back to a trace).
+func patchParts(tool, input string) []transcript.Part {
+	if !strings.Contains(input, "*** Begin Patch") {
+		return nil
+	}
+	var parts []transcript.Part
+	var file, verb string
+	var oldB, newB strings.Builder
+	flush := func() {
+		if file == "" {
+			return
+		}
+		info := file
+		if verb == "delete" {
+			info = "delete " + file
+		}
+		p := transcript.Part{Kind: "tool", Tool: tool, Info: transcript.Clip(info), File: file}
+		if verb != "delete" {
+			p.Edits = []transcript.Edit{{Old: transcript.CapEdit(strings.TrimRight(oldB.String(), "\n")),
+				New: transcript.CapEdit(strings.TrimRight(newB.String(), "\n"))}}
+		}
+		parts = append(parts, p)
+		file, verb = "", ""
+		oldB.Reset()
+		newB.Reset()
+	}
+	for _, ln := range strings.Split(input, "\n") {
+		switch {
+		case strings.HasPrefix(ln, "*** Add File: "):
+			flush()
+			file, verb = strings.TrimSpace(strings.TrimPrefix(ln, "*** Add File: ")), "add"
+		case strings.HasPrefix(ln, "*** Update File: "):
+			flush()
+			file, verb = strings.TrimSpace(strings.TrimPrefix(ln, "*** Update File: ")), "update"
+		case strings.HasPrefix(ln, "*** Delete File: "):
+			flush()
+			file, verb = strings.TrimSpace(strings.TrimPrefix(ln, "*** Delete File: ")), "delete"
+		case strings.HasPrefix(ln, "*** Move to: "):
+			// Rename: show the destination in the info line, keep diffing under the source.
+			if file != "" {
+				file = file + " → " + strings.TrimSpace(strings.TrimPrefix(ln, "*** Move to: "))
+			}
+		case strings.HasPrefix(ln, "***"): // Begin/End Patch or other directives — framing
+		case file == "":
+			// Preamble outside any file section — ignore.
+		case strings.HasPrefix(ln, "+"):
+			newB.WriteString(ln[1:])
+			newB.WriteString("\n")
+		case strings.HasPrefix(ln, "-"):
+			oldB.WriteString(ln[1:])
+			oldB.WriteString("\n")
+		case strings.HasPrefix(ln, "@@"):
+			// Hunk separator — keep both sides aligned with a blank spacer between hunks.
+			if oldB.Len() > 0 || newB.Len() > 0 {
+				oldB.WriteString("\n")
+				newB.WriteString("\n")
+			}
+		default:
+			// Context line (leading space or bare) — present on both sides.
+			t := strings.TrimPrefix(ln, " ")
+			oldB.WriteString(t)
+			oldB.WriteString("\n")
+			newB.WriteString(t)
+			newB.WriteString("\n")
+		}
+	}
+	flush()
+	return parts
+}
+
+// compactedText extracts the display text of a "compacted" rollout item: the summary
+// message (older shape {message}) or the replacement history's text content (newer
+// shape {replacement_history:[…]}), capped for display.
+func compactedText(payload json.RawMessage) string {
+	var p struct {
+		Message            string `json:"message"`
+		ReplacementHistory []struct {
+			Role    string `json:"role"`
+			Content []struct {
+				Text string `json:"text"`
+			} `json:"content"`
+		} `json:"replacement_history"`
+	}
+	if json.Unmarshal(payload, &p) != nil {
+		return ""
+	}
+	if p.Message != "" {
+		return transcript.CapOutput(p.Message)
+	}
+	var sb strings.Builder
+	for _, m := range p.ReplacementHistory {
+		for _, c := range m.Content {
+			if strings.TrimSpace(c.Text) == "" || isWrapper(c.Text) {
+				continue // injected wrappers re-appear in the replacement history — noise
+			}
+			if sb.Len() > 0 {
+				sb.WriteString("\n\n")
+			}
+			sb.WriteString(c.Text)
+		}
+	}
+	return transcript.CapOutput(sb.String())
+}
+
+// isContextCompacted reports an event_msg payload of type context_compacted
+// ("Conversation history was compacted", auto or manual).
+func isContextCompacted(payload json.RawMessage) bool {
+	var p struct {
+		Type string `json:"type"`
+	}
+	return json.Unmarshal(payload, &p) == nil && p.Type == "context_compacted"
 }
 
 // tokenUsage extracts the fresh-input / output / cached-read token counts from a
@@ -520,6 +711,62 @@ func tokenUsage(payload json.RawMessage) (in, out, read, window int, ok bool) {
 		fresh = 0
 	}
 	return fresh, p.Info.Last.OutputTokens, p.Info.Last.CachedInput, p.Info.ModelContextWindow, true
+}
+
+// HasPendingQuestion reports whether the slot's rollout currently ends in an
+// unanswered request_user_input — codex is sitting on its question dialog. Used by
+// WireLive to surface the "question" state (the 質問あり chip + notification) that
+// codex's injected hooks can't report (no notification hook fires for it). Light
+// tail probe: only the last chunk of the rollout is scanned, so it stays cheap on
+// the sessions-list poll even for a long conversation.
+func HasPendingQuestion(m session.Meta) bool {
+	path := rolloutPath(sids.Read(session.UUID(m.Dir, m.Name)))
+	if path == "" {
+		return false
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	const tail = 256 << 10
+	off := int64(0)
+	if fi, err := f.Stat(); err == nil && fi.Size() > tail {
+		off = fi.Size() - tail
+	}
+	b := make([]byte, tail)
+	n, _ := f.ReadAt(b, off)
+	b = b[:n]
+	lines := strings.Split(string(b), "\n")
+	if off > 0 && len(lines) > 0 {
+		lines = lines[1:] // drop the first, likely partial, line of a mid-file read
+	}
+	pendingCalls := map[string]bool{}
+	for _, ln := range lines {
+		if strings.TrimSpace(ln) == "" {
+			continue
+		}
+		var ev struct {
+			Type    string `json:"type"`
+			Payload struct {
+				Type   string `json:"type"`
+				Name   string `json:"name"`
+				CallID string `json:"call_id"`
+			} `json:"payload"`
+		}
+		if json.Unmarshal([]byte(ln), &ev) != nil || ev.Type != "response_item" {
+			continue
+		}
+		switch ev.Payload.Type {
+		case "function_call":
+			if ev.Payload.Name == "request_user_input" && ev.Payload.CallID != "" {
+				pendingCalls[ev.Payload.CallID] = true
+			}
+		case "function_call_output", "custom_tool_call_output":
+			delete(pendingCalls, ev.Payload.CallID)
+		}
+	}
+	return len(pendingCalls) > 0
 }
 
 // readTranscript reads a codex session's normalized chat turns plus the rollout

@@ -7,7 +7,13 @@ import { Button } from "../../ui/Button.tsx";
 import { Sparkline } from "../../ui/Sparkline.tsx";
 import { fmtTok } from "../../lib/fmttok.ts";
 import { Choice, OnOff } from "./controls.tsx";
-import { useSettings, setSetting, CLAUDE_MODELS, OUTPUT_LANGUAGES } from "../../lib/settings.ts";
+import {
+  useSettings,
+  setSetting,
+  CLAUDE_MODELS,
+  OUTPUT_LANGUAGES,
+  ASSISTANT_AGENTS,
+} from "../../lib/settings.ts";
 import { useConnections } from "./useConnections.ts";
 import { useWorkspaceStore, wsStartBusy } from "../../core/store/workspace.ts";
 import { usePolling } from "./usePolling.ts";
@@ -101,6 +107,18 @@ export function AgentsTab() {
       <p className="muted ds-note">
         アシスタント・チャットの回答言語です。「入力に合わせる」は、渡した文章や質問の言語に合わせて返します。
         日本語／English を選ぶと、他言語の文章でもその言語で回答します（翻訳アシスタントは対象外）。
+      </p>
+      <Row label="アシスタントのエージェント">
+        <Choice
+          value={s.assistantAgent}
+          options={ASSISTANT_AGENTS}
+          onChange={(v) => setSetting("assistantAgent", v)}
+        />
+      </Row>
+      <p className="muted ds-note">
+        アシスタント・チャットとタイトル案の生成を動かす CLI です。「自動」は接続済みのものを Claude → Codex →
+        opencode の順で選びます。固定した CLI が未接続のときは自動選択に戻ります。反映はビルトインアシスタントの
+        新しい会話から（カスタムアシスタントは各自のエージェント設定が優先）。
       </p>
     </section>
   );

@@ -134,12 +134,15 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     planEnterCmd: "/plan", // codex also has /plan ("switch to Plan mode")
     defaultModeLabel: "Default",
     // Chat mirror lit up (段1): turns come from codex's rollout JSONL, normalized by the
-    // Agent's transcript() and windowed by the generic /messages handler. No fork (codex
-    // has no --session-id pin); the context gauge works — codex logs token counts too.
-    // Plan mode + inline request_user_input questions are supported.
+    // Agent's transcript() and windowed by the generic /messages handler. The context
+    // gauge works — codex logs token counts too. Plan mode + inline request_user_input
+    // questions are supported. headlessChat via `codex exec --json` (assistant chat /
+    // title suggestion backend); fork via `codex fork <id>` (server ForkSource).
     caps: caps({
       chat: true,
+      headlessChat: true,
       transcript: true,
+      fork: true,
       contextBar: true,
       planMode: true,
       runsInDir: true,
@@ -162,9 +165,13 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     // Chat mirror lit up (段2): turns come from opencode's SQLite store (message+part),
     // normalized by the Agent's transcript() and windowed by the generic /messages
     // handler. Context gauge works (per-message tokens); plan mode + inline question tool.
+    // headlessChat via `opencode run --format json` (assistant chat / title backend);
+    // fork via `opencode --session <id> --fork` (server ForkSource).
     caps: caps({
       chat: true,
+      headlessChat: true,
       transcript: true,
+      fork: true,
       contextBar: true,
       planMode: true,
       runsInDir: true,

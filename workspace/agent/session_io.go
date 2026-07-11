@@ -316,12 +316,34 @@ func deliverInitialPrompt(name, prompt string) {
 	if pane == "" {
 		return
 	}
-	// Alive ≠ ready to type: wait a beat for the agent CLI to finish drawing its composer
-	// so the paste isn't swallowed by the boot screen (the same 2.5s the Console uses).
-	time.Sleep(2500 * time.Millisecond)
+	// Alive ≠ ready to type: text sent into the boot screen is simply eaten (verified
+	// live with a cold opencode — a fixed 2.5s beat lost the prompt). Wait until the CLI
+	// has actually drawn its composer, using the same readiness signal the Console's
+	// launch seed uses: paneMode reads the status/footer line that claude/codex/opencode
+	// draw only once ready. Cap the wait, then fall back to the old fixed beat.
+	kind := session.KindClaude
+	if m, ok := session.ReadMeta(name); ok {
+		kind = m.Kind
+	}
+	ready := false
+	for i := 0; i < 60; i++ {
+		if paneMode(kind, tn) != "" {
+			ready = true
+			break
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	if !ready {
+		time.Sleep(2500 * time.Millisecond) // composer never detected — best-effort send anyway
+	}
 	if typeLineAndSubmit(name, pane, prompt) != nil {
 		return
 	}
+	// A freshly booted CLI can coalesce the paste and swallow the Enter that arrives
+	// inside the paste window (the Console's seedSubmit nudges for the same reason).
+	// A second Enter after the window closes is a no-op if the first already submitted.
+	time.Sleep(900 * time.Millisecond)
+	_ = exec.Command("tmux", "send-keys", "-t", pane, "Enter").Run()
 	// A real task starts a turn — mark working so the chip reacts before the agent's hook.
 	markSessionWorking(name)
 }
@@ -460,7 +482,7 @@ func handleSessionOutput(w http.ResponseWriter, r *http.Request) {
 	// /output opts out of the idle-heal (heal=false) to preserve its historical behavior.
 	state := driveState(meta, alive, false)
 	if !agentOf(meta.Kind).Caps().CanTranscript {
-		httpx.WriteErr(w, http.StatusBadRequest, "unsupported_kind", "output is available for claude sessions only (phase 1)")
+		httpx.WriteErr(w, http.StatusBadRequest, "unsupported_kind", "output is available for transcript-capable sessions only")
 		return
 	}
 	since := 0
@@ -468,6 +490,27 @@ func handleSessionOutput(w http.ResponseWriter, r *http.Request) {
 		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
 			since = n
 		}
+	}
+	// codex/opencode: their stores aren't claude's jsonl — build the flattened assistant
+	// output from the generic Transcript() turns instead (cursor = turn count), so the
+	// drive tools (MCP get_session_output) work for every transcript-capable kind.
+	if meta.Kind != session.KindClaude {
+		td, _ := agentOf(meta.Kind).Transcript(meta)
+		var gb strings.Builder
+		for i := since; i < len(td.Turns); i++ {
+			t := td.Turns[i]
+			if t.Role == "assistant" && t.Text != "" {
+				if gb.Len() > 0 {
+					gb.WriteString("\n\n")
+				}
+				gb.WriteString(t.Text)
+			}
+		}
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{
+			"name": name, "output": gb.String(), "cursor": len(td.Turns),
+			"status": state, "alive": alive,
+		})
+		return
 	}
 	sid := session.UUID(meta.Dir, name)
 	lines := claude.TranscriptLines(sid)

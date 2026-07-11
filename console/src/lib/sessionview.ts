@@ -35,7 +35,9 @@ export const stateInfo = (s: Session): StateInfo => {
   // shell has no working/idle state model — alive means it's running.
   if (agentOf(s.kind).caps.fixedAliveChip) return { cls: "on", icon: "pulse", text: "起動中" };
   // claude (hooks), opencode (plugin) and codex (injected hooks) all report
-  // working/idle. opencode/codex have no "question" state; an empty state = idle.
+  // working/idle. opencode (a running question tool in its store) and codex (an
+  // unanswered request_user_input in the rollout tail) also derive "question".
+  // An empty state = idle.
   switch (s.state) {
     case "working":
       return { cls: "working", icon: "loading", spin: true, text: "進行中…" };
