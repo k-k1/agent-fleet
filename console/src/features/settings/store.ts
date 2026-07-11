@@ -1,7 +1,13 @@
 // Settings/Admin dialog UI store (zustand) — replaces the old God-context slice
-// (settingsOpen/settingsSection/adminOpen + connKey). Open pushes a history entry
-// so the device/browser back button closes the modal (same {__af, layout, modal}
-// state shape as the layout history — wireSettingsHistory syncs on popstate).
+// (settingsOpen/settingsSection/adminOpen + connKey).
+//
+// The settings modal gets close-on-back for free from the shared ui/Modal
+// (useBackClose), like every other dialog, so it needs NO bespoke history entry
+// here — pushing one on top of Modal's own guard double-stacked the history and
+// made ✕/Esc reopen instead of close. The Admin modal does NOT use ui/Modal (it's
+// a full-screen surface with its own drill-down history: tenants→tenant→member),
+// so it keeps the bespoke entry: openAdmin pushes {modal:"admin"}, closeAdmin pops
+// all drill levels at once, and wireSettingsHistory syncs adminOpen on popstate.
 import { create } from "zustand";
 import { useLayoutStore } from "../../layout/store.ts";
 
@@ -41,11 +47,10 @@ export const useSettingsUI = create<SettingsUIStore>((set) => ({
     // "connections" is a legacy alias for the merged エージェント tab (the old 接続
     // tab was folded into it), so any caller asking for connections lands there.
     set({ settingsSection: section === "connections" ? "agents" : section || "agents", settingsOpen: true });
-    pushModalEntry("settings");
   },
   closeSettings() {
-    if (typeof history !== "undefined" && history.state && history.state.modal === "settings") history.back();
-    else set({ settingsOpen: false });
+    // Close-on-back is handled by ui/Modal (useBackClose); just drop the flag.
+    set({ settingsOpen: false });
   },
 
   openAdmin() {
@@ -65,15 +70,14 @@ export const useSettingsUI = create<SettingsUIStore>((set) => ({
   bumpConn: () => set((s) => ({ connTick: s.connTick + 1 })),
 }));
 
-/** Browser back/forward closes (or re-opens) the modals — the layout part of the
- * entry is handled by wireLayoutHistory; this syncs only the modal flags. Wired
- * once from App boot; returns the cleanup (StrictMode-safe). */
+/** Browser back/forward closes (or re-opens) the ADMIN modal — the layout part of
+ * the entry is handled by wireLayoutHistory; this syncs only the admin flag. (The
+ * settings modal manages its own history through ui/Modal's useBackClose, so it is
+ * deliberately NOT synced here.) Wired once from App boot; returns the cleanup
+ * (StrictMode-safe). */
 export function wireSettingsHistory(): () => void {
   const onPop = (e: PopStateEvent) => {
-    useSettingsUI.setState({
-      settingsOpen: !!(e.state && e.state.modal === "settings"),
-      adminOpen: !!(e.state && e.state.modal === "admin"),
-    });
+    useSettingsUI.setState({ adminOpen: !!(e.state && e.state.modal === "admin") });
   };
   window.addEventListener("popstate", onPop);
   return () => window.removeEventListener("popstate", onPop);
