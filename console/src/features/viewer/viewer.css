@@ -924,7 +924,7 @@
   margin: 0 auto;
   max-width: 42em;
   line-height: 2.1;
-  font-size: 1.05rem;
+  font-size: var(--reader-size, 17px);
   font-family: var(--reader-font, "Hiragino Mincho ProN", "Yu Mincho", "Noto Serif JP", "Noto Serif", serif);
   color: var(--fg);
   white-space: pre-wrap; /* 改行・行頭スペースを保持 */

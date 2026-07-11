@@ -4,8 +4,10 @@ import {
   setSetting,
   CODE_FONTS,
   CHAT_FONTS,
+  READER_FONTS,
   fontStack,
   chatFontStack,
+  readerFontStack,
   ICON_SETS,
   THEMES,
   SURFACE_TARGETS,
@@ -91,6 +93,16 @@ export function DisplayTab() {
             ? "Enter で送信、Shift+Enter で改行。"
             : "Ctrl+Enter（⌘+Enter）で送信、Enter で改行。スマホ向け。"}
         </p>
+      </section>
+
+      <section className="ds-group">
+        <h4 className="ds-title">朗読ビュー</h4>
+        <Row label="フォント">
+          <FontSelect value={s.readerFont} onChange={(v) => setSetting("readerFont", v)} fonts={READER_FONTS} stack={readerFontStack} />
+        </Row>
+        <Row label="文字サイズ">
+          <Stepper value={s.readerSize} onChange={(v) => setSetting("readerSize", v)} />
+        </Row>
       </section>
 
       <section className="ds-group">
