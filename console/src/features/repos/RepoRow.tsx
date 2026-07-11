@@ -25,7 +25,6 @@ const PROVIDER_LABEL: Record<string, string> = {
   gitlab: "GitLab",
 };
 const providerLabel = (p: string) => PROVIDER_LABEL[p] || p;
-const providerIcon = (p: string): string | null => (p === "github" ? "github" : null);
 
 export interface RepoRowProps {
   r: Repo;
@@ -33,6 +32,10 @@ export interface RepoRowProps {
   running?: boolean;
   active?: boolean;
   selected?: boolean;
+  /** Session tally shown as a compact badge: green ●n while any are alive, else a
+   * muted count of stopped ones. The caller decides the scope (own folder while
+   * the node is open; descendants folded in while collapsed). */
+  sess?: { alive: number; total: number };
   onOpen: (e?: RMouseEvent) => void;
   /** Plain click on the card toggles the node's fold (SCM moved to the right-click
    * menu). Ctrl/⌘/middle-click still opens Source Control in a split. */
@@ -48,7 +51,7 @@ export interface RepoRowProps {
   onFocusPane?: (id: string) => void;
 }
 
-export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected, onOpen, onToggle, onOpenFolder, onOpenChanges, onFF, onDelete, onLaunch, onStartWork, onBranchChanged, opens, onFocusPane }: RepoRowProps) {
+export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected, sess, onOpen, onToggle, onOpenFolder, onOpenChanges, onFF, onDelete, onLaunch, onStartWork, onBranchChanged, opens, onFocusPane }: RepoRowProps) {
   const [showLaunch, setShowLaunch] = useState(false);
   const [launchModal, setLaunchModal] = useState(false);
   // Agent kinds only — shell/ssm have no model/prompt, so the modal excludes
@@ -94,7 +97,11 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
     >
       <div
         className={"repo-card" + (running ? "" : " disabled")}
-        title={(running ? "クリックで開閉 / Ctrl・中クリックでソース管理を新ペイン\n" : "クリックで開閉\n") + (r.path || "")}
+        title={
+          (running ? "クリックで開閉 / Ctrl・中クリックでソース管理を新ペイン\n" : "クリックで開閉\n") +
+          (r.path || "") +
+          (r.provider ? `\nリモート: ${r.remote || providerLabel(r.provider)}` : "")
+        }
         // Plain click folds/unfolds the node (SCM is on the right-click menu now).
         // Ctrl/⌘ still opens Source Control in a split (a power gesture).
         onClick={(e) => {
@@ -108,12 +115,20 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
         onAuxClick={(e) => e.button === 1 && running && onOpen(e)}
       >
         <div className="repo-info">
-          {/* Worktree rows collapse to one line: the BRANCH is the identity, and the
-              provider/remote is identical to the parent — so show the branch here and
-              drop the meta line below. Base clones keep name + branch/provider. */}
-          <span className="repo-name" title={r.worktree ? r.name : undefined}>
-            <Icon name={r.worktree ? "repo-forked" : "repo"} />
-            {r.worktree ? r.branch || r.name : r.name}
+          {/* One line for every row. Worktrees: the BRANCH is the identity (the
+              provider/remote is identical to the parent). Base clones: name, with
+              the current branch inline in muted small type — the old second meta
+              line (branch + provider) is gone; the provider lives in the tooltip. */}
+          <span className="repo-id">
+            <span className="repo-name" title={r.worktree ? r.name : undefined}>
+              <Icon name={r.worktree ? "repo-forked" : "repo"} />
+              {r.worktree ? r.branch || r.name : r.name}
+            </span>
+            {!r.worktree && r.branch && (
+              <span className="repo-branch-inline" title={"現在のブランチ: " + r.branch}>
+                {r.branch}
+              </span>
+            )}
           </span>
           {(r.dirty || ((r.ahead || r.behind) ?? 0) > 0) && (
             <span className="repo-state">
@@ -144,6 +159,18 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
               )}
             </span>
           )}
+          {/* Session tally: alive count (green) wins; otherwise stopped count in
+              muted — so a folded project still shows what's running inside. */}
+          {sess && sess.alive > 0 && (
+            <span className="repo-sess-badge run" title={`稼働中のセッション ${sess.alive} 件`}>
+              ●{sess.alive}
+            </span>
+          )}
+          {sess && sess.alive === 0 && sess.total > 0 && (
+            <span className="repo-sess-badge" title={`停止中のセッション ${sess.total} 件`}>
+              {sess.total}
+            </span>
+          )}
           {opens && opens.length > 0 && (
             <span className="sess-ords repo-ords">
               {opens.map((o) => (
@@ -162,7 +189,9 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
               ))}
             </span>
           )}
-          <div className="launch-wrap" ref={wrapRef} onClick={(e) => e.stopPropagation()}>
+          {/* Hidden until the row is hovered/focused (kept while the quick menu is
+              open); touch devices show it always — see repos.css. */}
+          <div className={"launch-wrap" + (showLaunch ? " open" : "")} ref={wrapRef} onClick={(e) => e.stopPropagation()}>
             {/* Split button: 起動 opens the modal; the ▼ caret opens the quick
                 per-kind dropdown (instant launch, no prompt). */}
             <div className="launch-split">
@@ -219,25 +248,6 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
             )}
           </div>
         </div>
-        {/* Meta line (base clones only): current branch (left) + git provider (right).
-            Worktrees are single-line — their branch is shown as the name above and the
-            provider is the same as the parent. */}
-        {!r.worktree && (r.branch || r.provider) && (
-          <div className="repo-meta">
-            {r.branch && (
-              <span className="repo-branch" title={"現在のブランチ: " + r.branch}>
-                <Icon name="git-branch" />
-                <span className="repo-branch-name">{r.branch}</span>
-              </span>
-            )}
-            {r.provider && (
-              <span className="repo-provider" title={"リモート: " + (r.remote || r.provider)}>
-                {providerIcon(r.provider) && <Icon name={providerIcon(r.provider) as string} />}
-                {providerLabel(r.provider)}
-              </span>
-            )}
-          </div>
-        )}
       </div>
 
       {menu && (

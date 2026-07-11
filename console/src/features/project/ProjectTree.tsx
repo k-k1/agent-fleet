@@ -1,12 +1,11 @@
-// ProjectTree — the rail's main block: working copies as collapsible nodes,
-// clustered into project groups (a base clone + its worktrees) so each project
-// reads as one visual unit, separated from the next. Replaces the flat Sessions +
-// Repos sections. The block header carries repo actions (clone / 更新) plus the
-// global session-maintenance actions (整理 / アーカイブ) that used to float on the
-// orphan section's header.
+// ProjectTree — the rail's main block: repos laid out directly (no "プロジェクト"
+// section frame, no group bands). Each base clone is a top-level collapsible node
+// and its worktrees nest as child nodes inside it, so a project reads as real
+// hierarchy instead of a decorated flat list — and folding the base folds the
+// whole project. A slim toolbar row carries the repo actions (clone / 更新) and
+// the session-maintenance actions (整理 / アーカイブ).
 import { useEffect, useState } from "react";
 import { apiJSON, errText } from "../../core/api/client.ts";
-import { Section } from "../../ui/Section.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { Button, IconButton } from "../../ui/Button.tsx";
 import { EmptyState } from "../../ui/EmptyState.tsx";
@@ -18,7 +17,8 @@ import { useRepoRailContext } from "../repos/useRepoRail.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 import { useSessionUI } from "../sessions/ui.ts";
 import { useSessionActions } from "../sessions/useSessionActions.tsx";
-import { groupedRepos } from "../../lib/project.ts";
+import { groupedRepos, sessionsInFolder } from "../../lib/project.ts";
+import { useProjectFilter, normQuery, repoMatches, sessionMatches } from "./filter.ts";
 import { RepoNode } from "./RepoNode.tsx";
 
 // guessRepoName derives a display name from a clone URL for the in-progress
@@ -40,12 +40,22 @@ export function ProjectTree() {
 
   const [showClone, setShowClone] = useState(false);
   const [cloning, setCloning] = useState<{ name: string } | null>(null);
+  const q = useProjectFilter((f) => f.q);
+  const setQ = useProjectFilter((f) => f.setQ);
+  const nq = normQuery(q);
 
   useEffect(() => {
     void refreshRepos();
   }, [refreshRepos]);
 
-  const groups = groupedRepos(repos);
+  // Filtering: a working copy is visible when it matches itself or hosts a
+  // matching session; a base also stays as the anchor of a matching worktree.
+  // While filtering, only the visible worktrees are passed down as children.
+  const visible = (r: (typeof repos)[number]) =>
+    repoMatches(r, nq) || sessionsInFolder(sessions, r.name).some((s) => sessionMatches(s, nq));
+  const groups = groupedRepos(repos)
+    .filter((g) => !nq || g.some(visible))
+    .map((g) => (nq ? [g[0], ...g.slice(1).filter(visible)] : g));
 
   const doClone = async ({ remote_url, branch, name, new_branch }: { remote_url: string; branch: string; name: string; new_branch?: string }) => {
     // Snapshot the existing folders so we can tell an actually-new working copy
@@ -80,35 +90,50 @@ export function ProjectTree() {
   };
 
   return (
-    <Section
-      id="projects"
-      title="プロジェクト"
-      icon="repo"
-      count={repos.length}
-      actions={
-        <>
-          <Button
-            small
-            variant="ghost"
-            icon="add"
-            title={running ? "clone" : "clone（ワークスペース停止中）"}
-            disabled={!!cloning || !running}
-            onClick={() => setShowClone((s) => !s)}
-          >
-            クローン
-          </Button>
-          <IconButton icon="refresh" label="更新" onClick={() => void refreshRepos()} />
-          <span className="proj-head-sep" aria-hidden="true" />
-          <IconButton
-            icon="clear-all"
-            label="停止中をまとめてアーカイブ（shell/ssm は削除）"
-            disabled={!sessions.some((s) => !s.alive)}
-            onClick={actions.clearStopped}
-          />
-          <IconButton icon="archive" label="アーカイブを開く（復帰）" onClick={openArchived} />
-        </>
-      }
-    >
+    <div className="proj-block">
+      {/* Slim toolbar (replaces the old section header): repo ops | session upkeep. */}
+      <div className="proj-toolbar">
+        <span className="proj-toolbar-title">
+          <Icon name="repo" /> リポジトリ
+        </span>
+        <span className="proj-toolbar-sp" aria-hidden="true" />
+        <Button
+          small
+          variant="ghost"
+          icon="add"
+          title={running ? "clone" : "clone（ワークスペース停止中）"}
+          disabled={!!cloning || !running}
+          onClick={() => setShowClone((s) => !s)}
+        >
+          クローン
+        </Button>
+        <IconButton icon="refresh" label="更新" onClick={() => void refreshRepos()} />
+        <span className="proj-head-sep" aria-hidden="true" />
+        <IconButton
+          icon="clear-all"
+          label="停止中をまとめてアーカイブ（shell/ssm は削除）"
+          disabled={!sessions.some((s) => !s.alive)}
+          onClick={actions.clearStopped}
+        />
+        <IconButton icon="archive" label="アーカイブを開く（復帰）" onClick={openArchived} />
+      </div>
+      {/* Quick filter: narrows repos + sessions (この木 and その他のセッション).
+          Escape clears. Files are untouched — the tree below is lazy-loaded. */}
+      <div className="proj-filter">
+        <Icon name="search" />
+        <input
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          onKeyDown={(e) => e.key === "Escape" && setQ("")}
+          placeholder="絞り込み（リポ / セッション）"
+          aria-label="リポジトリとセッションを絞り込み"
+        />
+        {q && (
+          <button type="button" className="proj-filter-clear" title="クリア" onClick={() => setQ("")}>
+            <Icon name="close" />
+          </button>
+        )}
+      </div>
       {showClone && <NewRepoModal onClose={() => setShowClone(false)} onClone={doClone} repos={repos} />}
       <ul className="sess-list proj-tree">
         {cloning && (
@@ -117,24 +142,24 @@ export function ProjectTree() {
           </li>
         )}
         {groups.length === 0 && !cloning && (
-          <EmptyState icon="repo" title="リポジトリがありません" hint="clone するとここに並びます">
-            {running && (
-              <Button small variant="primary" icon="add" onClick={() => setShowClone(true)}>
-                クローン
-              </Button>
-            )}
-          </EmptyState>
+          nq ? (
+            <li className="proj-sub-empty">「{q.trim()}」に一致するリポ・セッションはありません</li>
+          ) : (
+            <EmptyState icon="repo" title="リポジトリがありません" hint="clone するとここに並びます">
+              {running && (
+                <Button small variant="primary" icon="add" onClick={() => setShowClone(true)}>
+                  クローン
+                </Button>
+              )}
+            </EmptyState>
+          )
         )}
-        {groups.map((members, i) => (
-          <li key={members[0].name} className={i % 2 === 1 ? "proj-group alt" : "proj-group"}>
-            <ul className="proj-group-list">
-              {members.map((r) => (
-                <RepoNode key={r.name} r={r} ctx={ctx} actions={actions} />
-              ))}
-            </ul>
-          </li>
+        {/* One top-level node per base clone; its worktrees nest inside as child
+            nodes (an orphaned worktree group has the worktree itself at [0]). */}
+        {groups.map((members) => (
+          <RepoNode key={members[0].name} r={members[0]} childRepos={members.slice(1)} ctx={ctx} actions={actions} />
         ))}
       </ul>
-    </Section>
+    </div>
   );
 }

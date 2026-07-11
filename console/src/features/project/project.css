@@ -1,55 +1,101 @@
-/* Project tree (left rail): working copies clustered into project groups (a base
-   clone + its worktrees), each node a caret + repo-row header and a nested body
-   (sessions + files). Reuses .sess-list / .repo-row / .sess-group-btn from
-   sessions.css + repos.css; the grouping / node scaffolding is here. */
+/* Project tree (left rail): repos laid out directly — each base clone is a
+   top-level collapsible node, its worktrees nest inside as child nodes. Reuses
+   .sess-list / .repo-row from sessions.css + repos.css; the toolbar / node
+   scaffolding is here. (The old section frame + group bands are gone: hierarchy
+   is drawn by indentation, not decoration.) */
 
 .proj-tree {
-  gap: 0;
-  padding-top: 4px;
+  gap: 1px;
+  padding-top: 2px;
 }
 
-/* One project group = base + its worktrees. Every other group gets a faint band
-   (.alt, assigned in repo order by ProjectTree) so the project boundaries read at
-   a glance — the band replaces the old border-top separator. */
-.proj-group {
-  list-style: none;
-  padding: 4px 3px;
-  border-radius: 6px;
-}
-.proj-group + .proj-group {
-  margin-top: 4px;
-}
-.proj-group.alt {
-  background: color-mix(in srgb, var(--fg) 4%, transparent);
-}
-.proj-group-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
+/* Slim toolbar (replaces the old section header): title, then repo ops (clone /
+   更新) | session upkeep (整理 / アーカイブ). */
+.proj-toolbar {
   display: flex;
-  flex-direction: column;
-  gap: 1px;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px 2px 10px;
+}
+.proj-toolbar-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+}
+.proj-toolbar-sp {
+  flex: 1;
+}
+/* Separator between the repo ops and the session maintenance actions. */
+.proj-head-sep {
+  flex: none;
+  width: 1px;
+  align-self: stretch;
+  margin: 3px 3px;
+  background: var(--border);
+}
+
+/* Quick filter box (repos + sessions, incl. その他のセッション). */
+.proj-filter {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 3px 8px 2px;
+  padding: 2px 8px;
+  background: var(--panel2);
+  border: 1px solid var(--btn-border);
+  border-radius: 5px;
+  color: var(--muted);
+}
+.proj-filter:focus-within {
+  border-color: var(--lp-accent, var(--accent));
+}
+.proj-filter .codicon {
+  font-size: 12px;
+  flex: none;
+}
+.proj-filter input {
+  flex: 1;
+  min-width: 0;
+  background: none;
+  border: none;
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+  padding: 2px 0;
+  outline: none;
+}
+.proj-filter-clear {
+  flex: none;
+  display: inline-flex;
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 1px 2px;
+  border-radius: 3px;
+}
+.proj-filter-clear:hover {
+  color: var(--fg);
+  background: var(--btn);
 }
 
 /* A node (one working copy). */
 .proj-node {
   display: flex;
   flex-direction: column;
+  list-style: none;
 }
-/* Within a group, alternate nodes too (base + worktrees, in order). The overlay is
-   translucent so it stays visible stacked on an .alt group's band (4% → ~8%). */
-.proj-group-list > .proj-node:nth-child(even) {
-  background: color-mix(in srgb, var(--fg) 4%, transparent);
-  border-radius: 6px;
-}
-/* The base (parent) clone's name is bold — it anchors the project group. */
-.proj-node.base .repo-name {
+/* The base (parent) clone's name is bold — it anchors its project. */
+.proj-node.base > .proj-node-head .repo-name {
   font-weight: 700;
 }
 
-/* Worktrees hang off their base: the accent spine alone does the binding (≈2px
-   indent, no extra margin/padding). The spine follows the left-pane surface accent
-   so it matches the theme instead of the fixed app blue. */
+/* Worktree child nodes: the accent spine binds them to their base. The spine
+   follows the left-pane surface accent so it matches the theme instead of the
+   fixed app blue. */
 .proj-node.wt {
   border-left: 2px solid color-mix(in srgb, var(--lp-accent, var(--accent)) 45%, transparent);
 }
@@ -76,7 +122,7 @@
 .proj-node-caret:hover {
   color: var(--fg);
 }
-/* The repo row fills the rest; kill the list's own padding (the group already pads). */
+/* The repo row fills the rest; kill the list's own padding. */
 .proj-node-repo {
   flex: 1;
   min-width: 0;
@@ -84,8 +130,8 @@
   gap: 0;
 }
 
-/* Node body: sessions + files, indented under the repo with a guide line so the
-   nesting is obvious. */
+/* Node body: sessions + files + child worktrees, indented under the repo with a
+   guide line so the nesting is obvious. */
 .proj-node-body {
   margin: 1px 0 3px 9px;
   padding-left: 8px;
@@ -95,40 +141,48 @@
   gap: 1px;
 }
 
-/* Sub-section header (セッション / ファイル): a banded, bolder header so it reads
-   as a collapsible divider — not another content row that the list buries. */
-.proj-sub-btn {
-  border-radius: 5px;
-  padding: 4px 6px 4px 3px;
-  color: var(--fg);
-  font-weight: 600;
-  background: color-mix(in srgb, var(--fg) 5%, transparent);
-}
-.proj-sub-btn:hover {
-  background: color-mix(in srgb, var(--fg) 9%, transparent);
-}
-
-/* ファイル sub-header row: the collapse button + a ツリー/変更 view toggle. */
-.proj-sub-head {
+/* Child worktree nodes' list. */
+.proj-children {
+  list-style: none;
+  margin: 1px 0 0;
+  padding: 0;
   display: flex;
-  align-items: center;
-  gap: 4px;
-}
-.proj-sub-head .proj-sub-btn {
-  flex: 1;
-  min-width: 0;
-}
-.proj-file-view {
-  flex: none;
-  margin-right: 2px;
-  /* ツリー/変更 lives in the left pane, so its selected segment follows the left-pane
-     accent rather than the top bar's. */
-  --sel-accent: var(--lp-accent, var(--topbar-accent));
+  flex-direction: column;
+  gap: 2px;
 }
 
-/* Nested session/file list under a sub-section: no extra outer padding. */
+/* Nested session list under a node: no extra outer padding. */
 .proj-sub-list {
   padding: 1px 0 2px;
+}
+
+/* 停止中 disclosure: a quiet one-liner that tucks the stopped sessions away so
+   the alive ones own the space. */
+.sess-stopped {
+  list-style: none;
+}
+.sess-stopped-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  min-width: 0;
+  background: none;
+  border: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 11px;
+  text-align: left;
+  padding: 3px 6px 3px 8px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+.sess-stopped-btn:hover {
+  color: var(--fg);
+  background: var(--lp-hover-bg, var(--hover-bg));
+}
+.sess-stopped-btn .codicon {
+  font-size: 11px;
 }
 .proj-sub-empty {
   color: var(--muted);
@@ -136,24 +190,12 @@
   padding: 3px 4px 4px 22px;
 }
 
-/* Separator in the プロジェクト header, between repo actions and the session
-   maintenance actions (整理 / アーカイブ). */
-.proj-head-sep {
-  flex: none;
-  width: 1px;
-  align-self: stretch;
-  margin: 3px 3px;
-  background: var(--border);
-}
-
-/* Per-node file subtree: the shared .fstree/.fsrow styles apply; drop the tree's
-   own outer padding since the node body already indents, and cap its height so a
-   big repo doesn't push the rest of the tree off-screen. */
+/* Rail-bottom ファイル section's tree (FilesSection → ProjectFiles). The shared
+   .fstree/.fsrow styles apply; no height cap — the rail itself scrolls (the old
+   per-node 240px scrollbox is gone). */
 .proj-files {
   position: relative;
 }
 .proj-fstree {
   padding: 1px 0 2px;
-  max-height: 240px;
-  overflow-y: auto;
 }

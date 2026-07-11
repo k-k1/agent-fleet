@@ -1,11 +1,12 @@
 // RepoNode — one working-copy node in the project tree: a collapsible node whose
 // header is the repo row (RepoRowConnected: launch / SCM / branch / delete) and
-// whose body nests the sessions running in that folder and the folder's file
-// subtree. Collapsing a node hides its sessions/files — that's how you focus on one
-// working copy ("畳む＝擬似集中"). Node + sub open states persist per folder
-// (af-proj-<repo> / -ses / -files). A reveal targeting this folder (a clone just
-// landed / フォルダを開く) auto-opens the node and its ファイル sub.
-import { useEffect, useState } from "react";
+// whose body nests the sessions running in that folder (directly — no
+// "セッション" sub-header: it only duplicated the node's own fold) and, for a
+// base clone, its worktrees as child nodes. Collapsing a node hides the whole
+// project — that's how you focus on one ("畳む＝擬似集中"). The open state
+// persists per folder (af-proj-<repo>). File browsing lives in the rail-bottom
+// ファイル section (FilesSection), not inside the node.
+import { useState } from "react";
 import { Icon } from "../../ui/Icon.tsx";
 import { useSessionsStore } from "../sessions/store.ts";
 import { SessionRow } from "../sessions/SessionRow.tsx";
@@ -13,19 +14,24 @@ import type { SessionActions } from "../sessions/useSessionActions.tsx";
 import { RepoRowConnected } from "../repos/RepoRowConnected.tsx";
 import type { RepoRailContext } from "../repos/useRepoRail.ts";
 import type { Repo } from "../repos/store.ts";
-import { useFilesStore } from "../files/store.ts";
+import type { Session } from "../../types/session.ts";
 import { sessionsInFolder } from "../../lib/project.ts";
-import { ProjectFiles } from "./ProjectFiles.tsx";
+import { useProjectFilter, normQuery, sessionMatches } from "./filter.ts";
 
-// A collapse flag persisted under `key` (default open). Mirrors ui/Section's
-// localStorage convention so a folded node/sub stays folded across reloads.
+// A collapse flag persisted under `key`. While nothing is stored yet the flag
+// FOLLOWS `dflt` live (it's derived, not snapshotted) — so a node whose default
+// depends on data that loads async (has sessions → open) settles correctly, and
+// launching a session into a folded-by-default empty repo pops it open. The
+// first explicit toggle pins the choice. Mirrors ui/Section's localStorage
+// convention so a folded node stays folded across reloads.
 function usePersistedOpen(key: string, dflt = true) {
-  const [open, setOpenState] = useState(() => {
+  const [stored, setStored] = useState<boolean | null>(() => {
     const v = localStorage.getItem(key);
-    return v === null ? dflt : v === "1";
+    return v === null ? null : v === "1";
   });
+  const open = stored === null ? dflt : stored;
   const set = (v: boolean) => {
-    setOpenState(v);
+    setStored(v);
     try {
       localStorage.setItem(key, v ? "1" : "0");
     } catch {}
@@ -33,122 +39,112 @@ function usePersistedOpen(key: string, dflt = true) {
   return { open, toggle: () => set(!open), set };
 }
 
-// A small persisted string choice (the ファイル view: tree / changes).
-function usePersistedStr(key: string, dflt: string): readonly [string, (v: string) => void] {
-  const [v, setV] = useState(() => localStorage.getItem(key) ?? dflt);
-  const set = (nv: string) => {
-    setV(nv);
-    try {
-      localStorage.setItem(key, nv);
-    } catch {}
-  };
-  return [v, set] as const;
-}
-
 interface RepoNodeProps {
   r: Repo;
+  /** This base clone's worktrees — rendered as nested child nodes, so folding the
+   * base folds the whole project. Absent/empty for worktree nodes themselves. */
+  childRepos?: Repo[];
   ctx: RepoRailContext;
   actions: SessionActions;
 }
 
-export function RepoNode({ r, ctx, actions }: RepoNodeProps) {
+export function RepoNode({ r, childRepos, ctx, actions }: RepoNodeProps) {
   const sessions = useSessionsStore((s) => s.sessions);
-  const reveal = useFilesStore((s) => s.reveal);
+  const nq = normQuery(useProjectFilter((f) => f.q));
   const mine = sessionsInFolder(sessions, r.name);
-  const node = usePersistedOpen(`af-proj-${r.name}`);
-  const ses = usePersistedOpen(`af-proj-${r.name}-ses`);
-  // Files default COLLAPSED: a repo's whole tree expanded on load buried everything
-  // below it. Open on demand (and auto-open on a reveal into this folder).
-  const files = usePersistedOpen(`af-proj-${r.name}-files`, false);
-  const [filesView, setFilesView] = usePersistedStr(`af-proj-${r.name}-fview`, "tree");
-  const rootPath = "repos/" + r.name;
-
-  // A reveal into this working copy (clone landed here / フォルダを開く) surfaces it:
-  // open the node and its ファイル sub so ProjectFiles can expand + select the path.
-  const nodeSet = node.set;
-  const filesSet = files.set;
-  useEffect(() => {
-    const p = reveal.path;
-    if (!p || (p !== rootPath && !p.startsWith(rootPath + "/"))) return;
-    nodeSet(true);
-    filesSet(true);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [reveal.n]);
-
+  // Empty repos (no sessions anywhere under them, worktrees included) default
+  // folded — an unused clone shouldn't take up rail space. The default is live
+  // until the user pins a choice (see usePersistedOpen).
+  const subtreeTotal =
+    mine.length + (childRepos ?? []).reduce((n, c) => n + sessionsInFolder(sessions, c.name).length, 0);
+  const node = usePersistedOpen(`af-proj-${r.name}`, subtreeTotal > 0);
+  // While filtering, every visible node is forced open (the parent already
+  // pruned the tree to matches) and only matching sessions render.
+  const open = nq ? true : node.open;
+  const shownSessions = nq ? mine.filter((s) => sessionMatches(s, nq)) : mine;
+  // Stopped sessions tuck behind a "停止中 n" disclosure (alive ones always
+  // show) — but one that's active in a pane must stay visible, and a filter
+  // shows its matches directly.
+  const alive = shownSessions.filter((s) => s.alive);
+  const stopped = shownSessions.filter((s) => !s.alive);
+  const [stoppedOpen, setStoppedOpen] = useState(false);
+  const showStopped = !!nq || stoppedOpen || stopped.some((s) => s.name === ctx.activeSession);
+  // Session tally for the repo row's badge — real counts, not the filtered view:
+  // own folder while open (the rows are visible right below); the worktrees'
+  // sessions fold in while collapsed, so a folded project still shows what's
+  // running inside.
+  let sessAlive = mine.filter((s) => s.alive).length;
+  let sessTotal = mine.length;
+  if (!open && childRepos) {
+    for (const c of childRepos) {
+      const cs = sessionsInFolder(sessions, c.name);
+      sessAlive += cs.filter((s) => s.alive).length;
+      sessTotal += cs.length;
+    }
+  }
+  const row = (s: Session) => (
+    <SessionRow
+      key={s.name}
+      s={s}
+      selected={ctx.activeSession === s.name}
+      opens={ctx.sPanes?.get(s.name) || []}
+      multi={ctx.multiPane}
+      running={ctx.running}
+      actions={actions}
+    />
+  );
   return (
-    <li className={"proj-node" + (node.open ? "" : " collapsed") + (r.worktree ? " wt" : " base")}>
+    <li className={"proj-node" + (open ? "" : " collapsed") + (r.worktree ? " wt" : " base")}>
       <div className="proj-node-head">
         <button
           type="button"
           className="proj-node-caret"
           onClick={node.toggle}
-          aria-expanded={node.open}
-          title={node.open ? "折りたたむ" : "展開"}
+          aria-expanded={open}
+          title={open ? "折りたたむ" : "展開"}
         >
-          <Icon name={node.open ? "chevron-down" : "chevron-right"} />
+          <Icon name={open ? "chevron-down" : "chevron-right"} />
         </button>
         <ul className="sess-list proj-node-repo">
-          <RepoRowConnected r={r} ctx={ctx} onToggle={node.toggle} />
+          <RepoRowConnected r={r} ctx={ctx} onToggle={node.toggle} sess={{ alive: sessAlive, total: sessTotal }} />
         </ul>
       </div>
-      {node.open && (
+      {open && (
         <div className="proj-node-body">
-          <button type="button" className="sess-group-btn proj-sub-btn" onClick={ses.toggle}>
-            <Icon name={ses.open ? "chevron-down" : "chevron-right"} />
-            <Icon name="terminal" />
-            <span className="sess-group-name">セッション</span>
-            <span className="sess-group-count">{mine.length}</span>
-          </button>
-          {ses.open && (
+          {/* Sessions sit directly under the repo row — no sub-header, no empty
+              placeholder: a repo with none simply shows nothing here. Alive rows
+              always; stopped ones behind the 停止中 disclosure. */}
+          {shownSessions.length > 0 && (
             <ul className="sess-list proj-sub-list">
-              {mine.length === 0 ? (
-                <li className="proj-sub-empty">セッションなし</li>
-              ) : (
-                mine.map((s) => (
-                  <SessionRow
-                    key={s.name}
-                    s={s}
-                    selected={ctx.activeSession === s.name}
-                    opens={ctx.sPanes?.get(s.name) || []}
-                    multi={ctx.multiPane}
-                    running={ctx.running}
-                    actions={actions}
-                  />
-                ))
+              {alive.map(row)}
+              {!nq && stopped.length > 0 && (
+                <li className="sess-stopped">
+                  <button
+                    type="button"
+                    className="sess-stopped-btn"
+                    onClick={() => setStoppedOpen((v) => !v)}
+                    aria-expanded={showStopped}
+                    title={showStopped ? "停止中のセッションを隠す" : "停止中のセッションを表示"}
+                  >
+                    <Icon name={showStopped ? "chevron-down" : "chevron-right"} />
+                    <Icon name="debug-pause" /> 停止中
+                    <span className="sess-group-count">{stopped.length}</span>
+                  </button>
+                </li>
               )}
+              {showStopped && stopped.map(row)}
             </ul>
           )}
 
-          <div className="proj-sub-head">
-            <button type="button" className="sess-group-btn proj-sub-btn" onClick={files.toggle}>
-              <Icon name={files.open ? "chevron-down" : "chevron-right"} />
-              <Icon name="files" />
-              <span className="sess-group-name">ファイル</span>
-            </button>
-            {/* Tree vs this working copy's git changes. Shown only while the sub is open. */}
-            {files.open && (
-              <span className="ui-seg sm proj-file-view">
-                <button
-                  type="button"
-                  className={"seg-btn" + (filesView === "tree" ? " active" : "")}
-                  title="ツリー"
-                  onClick={() => setFilesView("tree")}
-                >
-                  <Icon name="list-tree" /> ツリー
-                </button>
-                <button
-                  type="button"
-                  className={"seg-btn" + (filesView === "changes" ? " active" : "")}
-                  title="変更ファイルのみ"
-                  onClick={() => setFilesView("changes")}
-                >
-                  <Icon name="git-compare" /> 変更
-                </button>
-              </span>
-            )}
-          </div>
-          {/* Lazy: fetch only once the ファイル sub is open. */}
-          {files.open && <ProjectFiles root={rootPath} repo={r.name} view={filesView as "tree" | "changes"} />}
+          {/* Worktrees as real child nodes — indentation says "belongs to this
+              base" (the old peer-row + group band is gone). */}
+          {childRepos && childRepos.length > 0 && (
+            <ul className="proj-children">
+              {childRepos.map((c) => (
+                <RepoNode key={c.name} r={c} ctx={ctx} actions={actions} />
+              ))}
+            </ul>
+          )}
         </div>
       )}
     </li>
