@@ -12,7 +12,8 @@ workspace/agent/agent
 **/*.db-shm
 
 # Not needed to build the CP image.
-docs
+# (docs/ IS needed: the CP bakes it and stages a role-scoped subset into each
+# Workspace container at start — see control-plane/workspace_docs.go.)
 phase0
 workspace
 

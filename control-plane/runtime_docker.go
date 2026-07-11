@@ -135,6 +135,13 @@ func (d *dockerRuntime) Start(ctx context.Context) error {
 	if jvm := os.Getenv("WS_JVM_DIR"); jvm != "" {
 		args = append(args, "-v", jvm+":/usr/lib/jvm:ro")
 	}
+	// Role-scoped agent-fleet docs, staged per-start by the CP into <dataDir>/docs
+	// (stageWorkspaceDocs) — mounted read-only at the shared path the entrypoint
+	// already uses for baked assets. Absent when nothing was staged (no baked docs,
+	// or a role/deploy without docs), so the mount is conditional.
+	if docs := filepath.Join(d.dataDir, "docs"); isDirPath(docs) {
+		args = append(args, "-v", docs+":/usr/local/share/agent-fleet/docs:ro")
+	}
 	if d.network != "" {
 		args = append(args, "--network", d.network)
 	}
