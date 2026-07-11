@@ -145,9 +145,10 @@ jobs:
       - name: guard secret
         env:
           KEY: ${{ secrets.E2E_ANTHROPIC_API_KEY }}
+          TOKEN: ${{ secrets.E2E_CLAUDE_OAUTH_TOKEN }}
         run: |
-          if [ -z "$KEY" ]; then
-            echo "::error::secrets.E2E_ANTHROPIC_API_KEY が未設定です（リポジトリ Settings > Secrets に登録）"
+          if [ -z "$KEY" ] && [ -z "$TOKEN" ]; then
+            echo "::error::secrets.E2E_ANTHROPIC_API_KEY（API キー）か secrets.E2E_CLAUDE_OAUTH_TOKEN（claude setup-token の OAuth トークン）のどちらかを登録してください"
             exit 1
           fi
       - name: claude live smoke (L4)
@@ -155,4 +156,5 @@ jobs:
         env:
           E2E_REQUIRE: "1"
           E2E_ANTHROPIC_API_KEY: ${{ secrets.E2E_ANTHROPIC_API_KEY }}
+          E2E_CLAUDE_OAUTH_TOKEN: ${{ secrets.E2E_CLAUDE_OAUTH_TOKEN }}
         run: go test -v -tags e2e -timeout 15m -run TestClaudeLive ./...
