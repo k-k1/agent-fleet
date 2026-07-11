@@ -14,17 +14,23 @@ import type { SessionActions } from "../sessions/useSessionActions.tsx";
 import { RepoRowConnected } from "../repos/RepoRowConnected.tsx";
 import type { RepoRailContext } from "../repos/useRepoRail.ts";
 import type { Repo } from "../repos/store.ts";
+import type { Session } from "../../types/session.ts";
 import { sessionsInFolder } from "../../lib/project.ts";
 
-// A collapse flag persisted under `key` (default open). Mirrors ui/Section's
-// localStorage convention so a folded node/sub stays folded across reloads.
+// A collapse flag persisted under `key`. While nothing is stored yet the flag
+// FOLLOWS `dflt` live (it's derived, not snapshotted) — so a node whose default
+// depends on data that loads async (has sessions → open) settles correctly, and
+// launching a session into a folded-by-default empty repo pops it open. The
+// first explicit toggle pins the choice. Mirrors ui/Section's localStorage
+// convention so a folded node stays folded across reloads.
 function usePersistedOpen(key: string, dflt = true) {
-  const [open, setOpenState] = useState(() => {
+  const [stored, setStored] = useState<boolean | null>(() => {
     const v = localStorage.getItem(key);
-    return v === null ? dflt : v === "1";
+    return v === null ? null : v === "1";
   });
+  const open = stored === null ? dflt : stored;
   const set = (v: boolean) => {
-    setOpenState(v);
+    setStored(v);
     try {
       localStorage.setItem(key, v ? "1" : "0");
     } catch {}
@@ -44,11 +50,22 @@ interface RepoNodeProps {
 export function RepoNode({ r, childRepos, ctx, actions }: RepoNodeProps) {
   const sessions = useSessionsStore((s) => s.sessions);
   const mine = sessionsInFolder(sessions, r.name);
-  const node = usePersistedOpen(`af-proj-${r.name}`);
+  // Empty repos (no sessions anywhere under them, worktrees included) default
+  // folded — an unused clone shouldn't take up rail space. The default is live
+  // until the user pins a choice (see usePersistedOpen).
+  const subtreeTotal =
+    mine.length + (childRepos ?? []).reduce((n, c) => n + sessionsInFolder(sessions, c.name).length, 0);
+  const node = usePersistedOpen(`af-proj-${r.name}`, subtreeTotal > 0);
+  // Stopped sessions tuck behind a "停止中 n" disclosure (alive ones always
+  // show) — but one that's active in a pane must stay visible.
+  const alive = mine.filter((s) => s.alive);
+  const stopped = mine.filter((s) => !s.alive);
+  const [stoppedOpen, setStoppedOpen] = useState(false);
+  const showStopped = stoppedOpen || stopped.some((s) => s.name === ctx.activeSession);
   // Session tally for the repo row's badge: own folder while open (the rows are
   // visible right below); the worktrees' sessions fold in while collapsed, so a
   // folded project still shows what's running inside.
-  let sessAlive = mine.filter((s) => s.alive).length;
+  let sessAlive = alive.length;
   let sessTotal = mine.length;
   if (!node.open && childRepos) {
     for (const c of childRepos) {
@@ -57,6 +74,17 @@ export function RepoNode({ r, childRepos, ctx, actions }: RepoNodeProps) {
       sessTotal += cs.length;
     }
   }
+  const row = (s: Session) => (
+    <SessionRow
+      key={s.name}
+      s={s}
+      selected={ctx.activeSession === s.name}
+      opens={ctx.sPanes?.get(s.name) || []}
+      multi={ctx.multiPane}
+      running={ctx.running}
+      actions={actions}
+    />
+  );
   return (
     <li className={"proj-node" + (node.open ? "" : " collapsed") + (r.worktree ? " wt" : " base")}>
       <div className="proj-node-head">
@@ -76,20 +104,27 @@ export function RepoNode({ r, childRepos, ctx, actions }: RepoNodeProps) {
       {node.open && (
         <div className="proj-node-body">
           {/* Sessions sit directly under the repo row — no sub-header, no empty
-              placeholder: a repo with none simply shows nothing here. */}
+              placeholder: a repo with none simply shows nothing here. Alive rows
+              always; stopped ones behind the 停止中 disclosure. */}
           {mine.length > 0 && (
             <ul className="sess-list proj-sub-list">
-              {mine.map((s) => (
-                <SessionRow
-                  key={s.name}
-                  s={s}
-                  selected={ctx.activeSession === s.name}
-                  opens={ctx.sPanes?.get(s.name) || []}
-                  multi={ctx.multiPane}
-                  running={ctx.running}
-                  actions={actions}
-                />
-              ))}
+              {alive.map(row)}
+              {stopped.length > 0 && (
+                <li className="sess-stopped">
+                  <button
+                    type="button"
+                    className="sess-stopped-btn"
+                    onClick={() => setStoppedOpen((v) => !v)}
+                    aria-expanded={showStopped}
+                    title={showStopped ? "停止中のセッションを隠す" : "停止中のセッションを表示"}
+                  >
+                    <Icon name={showStopped ? "chevron-down" : "chevron-right"} />
+                    <Icon name="debug-pause" /> 停止中
+                    <span className="sess-group-count">{stopped.length}</span>
+                  </button>
+                </li>
+              )}
+              {showStopped && stopped.map(row)}
             </ul>
           )}
 
