@@ -1546,6 +1546,30 @@ function spendOf(g: Group): number {
   return g.inTok + g.cacheCreate + g.outTok;
 }
 
+// ctxSizeOf is a turn's total prompt size (reused-cache + newly-cached + fresh input) —
+// i.e. how much context that turn carried. 0 for turns with no recorded usage.
+function ctxSizeOf(g: Group): number {
+  return g.cacheRead + g.cacheCreate + g.inTok;
+}
+
+// ctxSizeBefore / ctxSizeAfter bracket a compaction: the prompt size of the nearest
+// assistant turn with usage before the compact block (the context that had piled up and
+// triggered compaction) and after it (the compacted context). Return 0 when no such turn
+// exists yet — before the post-compaction turn lands, or a resume with no prior turn —
+// so CompactBlock can hide the effect line until both numbers are real.
+function ctxSizeBefore(groups: Group[], i: number): number {
+  for (let j = i - 1; j >= 0; j--) {
+    if (groups[j].role === "assistant" && ctxSizeOf(groups[j]) > 0) return ctxSizeOf(groups[j]);
+  }
+  return 0;
+}
+function ctxSizeAfter(groups: Group[], i: number): number {
+  for (let j = i + 1; j < groups.length; j++) {
+    if (groups[j].role === "assistant" && ctxSizeOf(groups[j]) > 0) return ctxSizeOf(groups[j]);
+  }
+  return 0;
+}
+
 function renderGroups(
   groups: Group[],
   onAnswer: (t: string) => void,
@@ -1560,7 +1584,8 @@ function renderGroups(
 ) {
   const els = [];
   let prevCtx = "";
-  for (const g of groups) {
+  for (let i = 0; i < groups.length; i++) {
+    const g = groups[i];
     const ctx = g.branch || g.cwd ? (g.branch || "") + " " + (g.cwd || "") : "";
     if (ctx && ctx !== prevCtx) {
       els.push(<ContextLine key={"ctx-" + g.idx} branch={g.branch} cwd={g.cwd} />);
@@ -1568,7 +1593,7 @@ function renderGroups(
     if (ctx) prevCtx = ctx;
     els.push(
       g.compact ? (
-        <CompactBlock key={g.idx} turn={g} />
+        <CompactBlock key={g.idx} turn={g} before={ctxSizeBefore(groups, i)} after={ctxSizeAfter(groups, i)} />
       ) : (
         <Turn
           key={g.idx}
@@ -1635,15 +1660,44 @@ function TaskChecklist({ tasks }: { tasks: TaskItem[] }) {
 // CompactBlock renders claude's auto-compaction summary as a collapsed disclosure —
 // "コンテキストが圧縮されました" — rather than a giant user turn. Closed by default
 // (native <details>); expand to read the summary that replaced the earlier context.
-function CompactBlock({ turn }: { turn: Group }) {
+function CompactBlock({ turn, before, after }: { turn: Group; before?: number; after?: number }) {
+  // Show the reduction only once both sides are real: `after` is 0 until the first
+  // post-compaction turn's usage lands, so the effect appears a beat after 圧縮完了.
+  const hasEffect = !!before && !!after && before > after;
+  const cut = hasEffect ? before! - after! : 0;
+  const pct = hasEffect ? Math.round((cut / before!) * 100) : 0;
   return (
     <details className="mirror-compact">
       <summary className="mirror-compact-head">
         <Icon name="archive" />
         <span className="mc-title">コンテキストが圧縮されました</span>
+        {hasEffect && (
+          <span className="mc-effect" title={`${before!.toLocaleString()} → ${after!.toLocaleString()} トークン`}>
+            {fmtTok(before!)} → {fmtTok(after!)}
+            <span className="mc-effect-pct">−{pct}%</span>
+          </span>
+        )}
         {turn.ts && <span className="mc-time muted">{formatTS(turn.ts)}</span>}
       </summary>
       <div className="mirror-compact-body">
+        {hasEffect && (
+          <div className="mc-bars" aria-hidden="true">
+            <div className="mc-bar-row">
+              <span className="mc-bar-lbl">圧縮前</span>
+              <span className="mc-bar-track">
+                <span className="mc-bar-fill before" style={{ width: "100%" }} />
+              </span>
+              <span className="mc-bar-val">{fmtTok(before!)}</span>
+            </div>
+            <div className="mc-bar-row">
+              <span className="mc-bar-lbl">圧縮後</span>
+              <span className="mc-bar-track">
+                <span className="mc-bar-fill after" style={{ width: Math.max(2, (after! / before!) * 100) + "%" }} />
+              </span>
+              <span className="mc-bar-val">{fmtTok(after!)}</span>
+            </div>
+          </div>
+        )}
         <MarkdownView source={turn.text} />
       </div>
     </details>
