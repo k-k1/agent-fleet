@@ -298,8 +298,8 @@ func (codexChat) send(ctx context.Context, c *chatConversation, prompt string) (
 		args = append(args, "resume", c.CodexSessionID)
 	}
 	args = append(args, "-") // read the prompt from stdin (personas can exceed argv comfort)
-	cmd := exec.CommandContext(ctx, "codex", args...)
-	cmd.Dir = chatWorkdir()
+	cmd := chatCodexCmd(ctx, args...)
+	defer func() { _, _ = chatCodexHome() }() // fold a rotated token back to shared (see chatCodexHome)
 	cmd.Stdin = strings.NewReader(headlessPrompt(c.personaOf(), c.knowledgeDirs(), prompt))
 	out, err := cmd.Output()
 	if err != nil {
@@ -316,6 +316,37 @@ func (codexChat) send(ctx context.Context, c *chatConversation, prompt string) (
 		return "", errors.New("codex から応答が得られませんでした")
 	}
 	return reply, nil
+}
+
+// chatCodexHome prepares the chat-only CODEX_HOME — the codex analog of claude's
+// chat-only CLAUDE_CONFIG_DIR (docs/19 Q3): an isolated sessions/config tree so the
+// headless chat's `codex exec` neither pollutes ~/.codex (its threads would appear in
+// the interactive `codex resume` picker / history) nor loads the user's config.toml
+// (their own MCP servers must not spawn on every chat turn; the chat attaches only
+// the af server via -c). ONLY the login is shared: auth.json is symlinked to
+// ~/.codex/auth.json with the same copy-back reconcile as claude's credentials
+// (codex also rewrites auth.json via tmp+rename on a ChatGPT token refresh, which
+// would replace the symlink with a diverging real file). Call again after each exec
+// to fold a rotated token back into the shared file.
+func chatCodexHome() (string, error) {
+	dir := filepath.Join(homeDir(), ".config", "agent-fleet", "chat-codex")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	reconcileChatCreds(filepath.Join(homeDir(), ".codex", "auth.json"), filepath.Join(dir, "auth.json"))
+	return dir, nil
+}
+
+// chatCodexCmd builds a codex exec configured for the chat: run in chatWorkdir with
+// the chat-only CODEX_HOME (shared login). Falls back to the inherited env (the real
+// ~/.codex) if the isolated home can't be prepared.
+func chatCodexCmd(ctx context.Context, args ...string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, "codex", args...)
+	cmd.Dir = chatWorkdir()
+	if home, err := chatCodexHome(); err == nil {
+		cmd.Env = envWith("CODEX_HOME=" + home)
+	}
+	return cmd
 }
 
 // codexMCPArgs attaches the local Agent Fleet stdio MCP server to a codex exec via
@@ -526,13 +557,15 @@ func headlessPrompt(persona string, knowledge []string, prompt string) string {
 func oneShotHeadless(ctx context.Context, persona, prompt, claudeModel string) (string, error) {
 	switch preferredHeadlessAgent() {
 	case session.KindCodex:
-		args := []string{"exec", "--json", "--skip-git-repo-check", "--color", "never", "-C", chatWorkdir()}
+		// --ephemeral: a one-shot never needs resume, so don't persist a thread even
+		// into the chat-only CODEX_HOME.
+		args := []string{"exec", "--json", "--skip-git-repo-check", "--ephemeral", "--color", "never", "-C", chatWorkdir()}
 		if m := os.Getenv("AF_TITLE_MODEL_CODEX"); m != "" {
 			args = append(args, "-m", m)
 		}
 		args = append(args, "-")
-		cmd := exec.CommandContext(ctx, "codex", args...)
-		cmd.Dir = chatWorkdir()
+		cmd := chatCodexCmd(ctx, args...)
+		defer func() { _, _ = chatCodexHome() }()
 		cmd.Stdin = strings.NewReader(headlessPrompt(persona, nil, prompt))
 		out, err := cmd.Output()
 		if err != nil {
@@ -556,7 +589,18 @@ func oneShotHeadless(ctx context.Context, persona, prompt, claudeModel string) (
 		if err != nil {
 			return "", fmt.Errorf("opencode 実行に失敗しました: %s", cliErr(err))
 		}
-		reply, _ := parseOpencodeRunEvents(out)
+		reply, sesID := parseOpencodeRunEvents(out)
+		// opencode has no ephemeral mode — delete the throwaway session so one-shots
+		// don't pile "New session…" rows into the shared store. Best-effort, detached
+		// from ctx (the reply is already in hand; cleanup shouldn't be cancelled).
+		if sesID != "" {
+			go func() {
+				cl := exec.Command("opencode", "session", "delete", sesID)
+				cl.Dir = chatWorkdir()
+				cl.Env = envWith(opencode.Env()...)
+				_ = cl.Run()
+			}()
+		}
 		return reply, nil
 	}
 	// claude (default): the historical path, kept native.
