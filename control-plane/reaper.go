@@ -243,21 +243,30 @@ func (rp *reaper) sweepWorkspace(ctx context.Context, ws Workspace, sessTO time.
 	if conns > 0 || busy {
 		return // being watched or actively working
 	}
-	// Idle base = latest of: in-memory last request, DB last_active_at, and the
-	// reaper boot time (so a CP restart grants a fresh grace window instead of
-	// stopping everything that looks stale).
+	base := rp.idleBase(seen, lastSeen, ws.LastActiveAt)
+	if now.Sub(base) >= wsTO {
+		rp.stopWorkspace(ctx, rt, ws)
+	}
+}
+
+// idleBase is the tier-2 idle clock's start: the LATEST of the three activity
+// signals — the reaper boot time (a CP restart grants a fresh grace window
+// instead of reaping everything that looks stale), the in-memory last request
+// (proxy/preview/chat traffic), and the DB last_active_at (bumped on every
+// explicit start/stop). All three are considered unconditionally: an earlier
+// version only consulted the DB when there was NO in-memory record, so a stale
+// in-memory lastSeen (from an old terminal, hours ago) masked the fresh
+// last_active_at written by a just-issued Start — and the reaper stopped the
+// workspace within one sweep of it coming up (a manual start looked "cold").
+func (rp *reaper) idleBase(seen bool, lastSeen time.Time, dbLastActive string) time.Time {
 	base := rp.bootTime
 	if seen && lastSeen.After(base) {
 		base = lastSeen
 	}
-	if !seen {
-		if dbTS, err := time.Parse(time.RFC3339, ws.LastActiveAt); err == nil && dbTS.After(base) {
-			base = dbTS
-		}
+	if dbTS, err := time.Parse(time.RFC3339, dbLastActive); err == nil && dbTS.After(base) {
+		base = dbTS
 	}
-	if now.Sub(base) >= wsTO {
-		rp.stopWorkspace(ctx, rt, ws)
-	}
+	return base
 }
 
 // haltSession halts one idle claude session (Agent POST /sessions/{name}/halt).
