@@ -83,8 +83,10 @@ workspace-notes を参照）。gofmt + `go vet` clean・`npm run build` clean �
   観測（xterm は canvas 描画で DOM から文字が読めないため）。CP・コンテナの起動は
   global-setup が行う（L2 の Node 版。DEV_USER=e2e-ui で分離）。
 - **L4**: shell セッション内で `claude -p`（headless、TUI オンボーディング非依存）を実行し、
-  焼き込み CLI が実際に Anthropic API と会話できることを確認。**課金があるため自動トリガに
-  載せない** — `E2E_ANTHROPIC_API_KEY` がある時だけ動く。
+  焼き込み CLI が実際に Anthropic と会話できることを確認。**課金/サブスク枠を伴うため自動
+  トリガに載せない** — `E2E_ANTHROPIC_API_KEY`（API キー・従量課金）か
+  `E2E_CLAUDE_OAUTH_TOKEN`（`claude setup-token` の OAuth トークン・Max/Pro 枠）の
+  どちらかがある時だけ動く。
 
 ```bash
 cd e2e && WS_IMAGE=agent-fleet/workspace:dev go test -v -tags e2e -timeout 15m   # L2（+L4 は key があれば）
@@ -99,7 +101,7 @@ cd console-e2e && npm ci && npx playwright test                                 
 - CI は `.github/workflows/e2e.yml`: workspace/CP/console/e2e の変更時 + **週次 cron**（コード
   無変更でも上流 CLI・base image の破壊を検出）+ 手動。`e2e` ジョブ（L1→L2）と `ui-e2e` ジョブ
   （L3、失敗時は trace/CP ログを artifact 保存）が並列、`live-smoke`（L4）は workflow_dispatch の
-  `live` 入力 + `secrets.E2E_ANTHROPIC_API_KEY` で明示 opt-in。
+  `live` 入力 + secret（`E2E_ANTHROPIC_API_KEY` または `E2E_CLAUDE_OAUTH_TOKEN`）で明示 opt-in。
   rtk は git-ignored のホスト vendor 品のため CI は「rtk なし」パスの検証になる（rtk 込みは
   ホストで run-dev.sh / 本テストを回して確認）。
 
