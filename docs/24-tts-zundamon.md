@@ -131,10 +131,11 @@ var ttsProviders = map[string]ttsProvider{ "voicevox": ..., "polly": ... }
 - 言語判定は既存 `outputLanguage`（`workspace/agent/ui_prefs.go:55` `chatOutputLanguage()`）を再利用し、
   新規の言語検出器は持たない（混在時は文単位でヒューリスティック）。
 
-## 設定（`console/src/lib/settings.ts` + `AgentsTab.tsx`）
+## 設定（`console/src/lib/settings.ts` + `TtsTab.tsx`）
 
-`AgentsTab.tsx:76-97`「セッション」セクションに、既存 `outputLanguage`（`:85-91`）と同じ
-`OnOff`/`Choice`（`./controls.tsx`）定型で追加。localStorage（`af-display-settings`）＋
+設定モーダルの専用タブ「**読み上げ**」（`TtsTab.tsx`、2026-07-11 に AgentsTab の「セッション」
+セクションから分離 — 項目が増えて他のエージェント設定を圧迫したため。`ttsSessionNotify` も同居）。
+`OnOff`/`Choice`（`./controls.tsx`）定型。localStorage（`af-display-settings`）＋
 `PUT /api/env/ui-prefs` サーバミラー（`workspace/agent/ui_prefs.go`）に自動追随。
 
 - `ttsEnabled`（bool, 既定 false）
@@ -246,6 +247,33 @@ TTS 設定画面かフッターに小さく常時表示する。Polly は AWS �
   英字読み止まり）」だった語を洗い出し、一般的な開発語・外部プロダクト名・小文字略語（config/grep/
   tmux/worktree/opencode/codex/voicevox/mcp/css/svg 等 約50語）を `enkana_dict.go` に追加。突合は
   使い捨ての scan テストで実施（コミット対象外）。`TestCorpusTerms` で回帰を固定。
+- **Phase 1.8（ミラーのカラオケ朗読・P1）** ✅ 実装済み（2026-07-11）: MirrorView（チャット）の
+  各 assistant ターンをカラオケ・ハイライト付きで朗読する。ミラーの回答はポーリングで
+  **完結したターンが丸ごと**届く（ストリーミングでない）ため、ChatView の delta 逐次型
+  （`startTts`）ではなく ReaderView と同じ `startNarration` 型を採用。新規
+  `features/mirror/turnTts.ts`: MarkdownView が innerHTML 描画した**レンダ済み DOM** から
+  ブロック（p/h1-h6/li/blockquote 内の段落）を文書順に収集（`collectBlocks`。thinking/ツール/
+  plan/question・pre/table/mermaid は対象外）、`textContent` を文分割（`ttsText.ts` の純関数
+  `splitSentences`・テスト有り）して朗読。**音声の単位＝文・ハイライトの単位＝ブロック**
+  （`.tts-active` クラス＋`scrollIntoView` 追従。文単位ハイライトはレンダ済み HTML のテキスト
+  ノード分断で複雑になるため見送り）。ソース（Markdown 文字列）側で分割しないのは marked
+  トークン↔DOM の対応維持が脆いため。フッターの読み上げボタンはミラーでは本方式に差し替え
+  （`TurnTtsButtons`: 読み上げ中は**一時停止/再開・停止**に切り替わる）。**選択位置から再開**＝
+  assistant ターン本文の選択で「ここから読み上げ」ピル（ReaderView と同パターン、選択ブロックの
+  先頭文から）。グローバル 1 本再生・TopBar 停止・合成キャッシュと相乗り。クライアント完結
+  （CP 変更なし）。実機の音・ハイライト追従は未確認。
+  **P2 自動読み上げ（2026-07-11）** ✅: 新しい assistant ターンが届いたら自動でカラオケ朗読。
+  設定 `ttsAutoReadMirror`（既定 OFF、AgentsTab「新しい回答を自動で読み上げ」）。
+  **アクティブなペインのセッションのみ**（`active` prop でゲート。見ていないセッションの
+  `ttsSessionNotify`＝名前の短い告知と完全に相補で二重発声しない）。発火＝ポーリング append の
+  検出（`turns` effect で基準 idx より新しい assistant ターンを抽出。初回 tail ロード・
+  transcript リセット・セッション切替は基準を取り直すだけで履歴は読まない。sidechain/compact
+  除外）。**直列キュー**＝グループ idx 単位で重複なく積み、何か再生中（チャット読み上げ・
+  アナウンス・自分）なら `useTtsStore.speaking` の解放か読み上げ終了で次を読む。連続 assistant
+  ターンは同じグループに折り畳まれて**育つ**ため、グループごとに読み上げ済みブロック数を持ち
+  **増えた分だけ**読む（回答が届くたび続きから）。溜まりすぎ（>4 回答）は古い方から捨てる。
+  明示停止（フッター停止・TopBar・他の再生への置き換え）はキューも破棄（`startNarration` の
+  `onUnit(null, reason)` に done/stopped を追加して判別、後方互換）。自然終了なら次へ。
 - **Phase 2（AWS）** ✅ 実装済み（2026-07-10）: 3 点セットを CP に実装。
   - **Polly プロバイダ**（`control-plane/tts_polly.go`）: SDK 既定チェーン（IAM ロール、鍵保存ゼロ）。
     出力 MP3（フロントの `decodeAudioData` がそのまま復号するので UI 変更不要）、速度は SSML
