@@ -136,9 +136,11 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     // Chat mirror lit up (段1): turns come from codex's rollout JSONL, normalized by the
     // Agent's transcript() and windowed by the generic /messages handler. No fork (codex
     // has no --session-id pin); the context gauge works — codex logs token counts too.
-    // Plan mode + inline request_user_input questions are supported.
+    // Plan mode + inline request_user_input questions are supported. headlessChat via
+    // `codex exec --json` (assistant chat / title suggestion backend).
     caps: caps({
       chat: true,
+      headlessChat: true,
       transcript: true,
       contextBar: true,
       planMode: true,
@@ -162,8 +164,10 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     // Chat mirror lit up (段2): turns come from opencode's SQLite store (message+part),
     // normalized by the Agent's transcript() and windowed by the generic /messages
     // handler. Context gauge works (per-message tokens); plan mode + inline question tool.
+    // headlessChat via `opencode run --format json` (assistant chat / title backend).
     caps: caps({
       chat: true,
+      headlessChat: true,
       transcript: true,
       contextBar: true,
       planMode: true,

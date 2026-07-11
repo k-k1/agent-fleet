@@ -25,7 +25,6 @@ import (
 	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
 // Tool grants an assistant can hold. af_read attaches the local read-only stdio MCP
@@ -58,9 +57,9 @@ type assistant struct {
 	// Voice is the Console-side TTS voice override ("vv:<speaker>" / "polly:<VoiceId>").
 	// "" = auto (the Console assigns one from the user's character pool). The agent only
 	// stores and echoes it — synthesis and resolution are entirely client-side (docs/24).
-	Voice string `json:"voice,omitempty"`
-	CreatedAt   int64    `json:"created_at,omitempty"`
-	UpdatedAt   int64    `json:"updated_at,omitempty"`
+	Voice     string `json:"voice,omitempty"`
+	CreatedAt int64  `json:"created_at,omitempty"`
+	UpdatedAt int64  `json:"updated_at,omitempty"`
 }
 
 // --- builtin knowledge (embedded, materialized to a runtime dir) ---
@@ -125,36 +124,39 @@ const translatePersona = "あなたは翻訳アシスタントです。" +
 const afAssistantID = "af"
 
 // builtinAssistants returns the code-injected assistants, freshly materializing any
-// embedded knowledge. Order here is the display order (flagship first).
+// embedded knowledge. Order here is the display order (flagship first). The agent
+// backend is the preferred AVAILABLE one (claude → codex → opencode), so a workspace
+// without a claude login still gets working builtin assistants; a conversation
+// snapshots the value at creation as before.
 func builtinAssistants() []assistant {
 	know := ensureBuiltinKnowledge()
 	return []assistant{
 		{
 			ID: afAssistantID, Name: "Agent Fleet アシスタント", Icon: "rocket",
 			Description: "こんにちは。Agent Fleet の使い方を案内します。操作手順や、今のワークスペースの状態（動いているセッションなど）を実際に確認しながらお答えします。",
-			Builtin:     true, Agent: session.KindClaude, Persona: afAssistantPersona,
+			Builtin:     true, Agent: preferredHeadlessAgent(), Persona: afAssistantPersona,
 			Tools: toolsAFRead, Knowledge: []string{know},
 		},
 		{
 			ID: "operator", Name: "フリート・オペレーター", Icon: "broadcast",
 			Description: "フリートの司令塔です。走っているセッションを俯瞰し、必要ならセッションに指示を出したり新しいセッションを起こして作業を進めます（引き継ぎ・壁打ちからのタスク開始も可）。メモキューの確認・追加・一括送信もできます。専門的な判断は他のアシスタントにも相談します。実行前に内容を確認します。",
-			Builtin:     true, Agent: session.KindClaude, Persona: operatorPersona,
+			Builtin:     true, Agent: preferredHeadlessAgent(), Persona: operatorPersona,
 			Tools: toolsAFWrite, Knowledge: []string{know},
 		},
 		{
 			ID: "integrity", Name: "整合性チェッカー", Icon: "checklist",
 			Description: "整合性チェッカーです。ファイルやディレクトリを渡してください。ドキュメントと実装の食い違い、用語・表記のゆれ、（物語なら）設定の矛盾や伏線の抜けを洗い出します。",
-			Builtin:     true, Agent: session.KindClaude, Persona: integrityPersona, Tools: toolsNone,
+			Builtin:     true, Agent: preferredHeadlessAgent(), Persona: integrityPersona, Tools: toolsNone,
 		},
 		{
 			ID: "general", Name: "汎用アシスタント", Icon: "comment-discussion",
 			Description: "汎用アシスタントです。翻訳・要約・質問への回答など、幅広くお手伝いします。何でも聞いてください。",
-			Builtin:     true, Agent: session.KindClaude, Persona: chatPersona, Tools: toolsNone,
+			Builtin:     true, Agent: preferredHeadlessAgent(), Persona: chatPersona, Tools: toolsNone,
 		},
 		{
 			ID: "translate", Name: "翻訳アシスタント", Icon: "globe",
 			Description: "翻訳アシスタントです。文章を渡してください。日本語↔英語を自動判定して翻訳します（訳文だけを返します）。",
-			Builtin:     true, Agent: session.KindClaude, Persona: translatePersona, Tools: toolsNone,
+			Builtin:     true, Agent: preferredHeadlessAgent(), Persona: translatePersona, Tools: toolsNone,
 		},
 	}
 }

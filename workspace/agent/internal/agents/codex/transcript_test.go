@@ -1,6 +1,8 @@
 package codex
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
@@ -178,4 +180,94 @@ func TestCodexParseRolloutEmpty(t *testing.T) {
 	if turns, _ := parseRollout(only); len(turns) != 0 {
 		t.Fatalf("system-only rollout -> %d turns, want 0", len(turns))
 	}
+}
+
+func TestCodexApplyPatch(t *testing.T) {
+	patch := "*** Begin Patch\n*** Add File: docs/new.md\n+# hi\n+body\n*** Update File: main.go\n@@ func x\n ctx\n-old line\n+new line\n*** Delete File: gone.txt\n*** End Patch\n"
+	lines := [][]byte{
+		[]byte(`{"timestamp":"2026-06-29T00:00:00Z","type":"response_item","payload":{"type":"custom_tool_call","name":"apply_patch","call_id":"c1","input":` + string(mustJSON(patch)) + `}}`),
+		[]byte(`{"type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"c1","output":"Success. Updated the following files:\nA docs/new.md"}}`),
+	}
+	turns, _ := parseRollout(lines)
+	if len(turns) != 1 {
+		t.Fatalf("want 1 turn, got %d: %+v", len(turns), turns)
+	}
+	ps := turns[0].Parts
+	if len(ps) != 3 {
+		t.Fatalf("want 3 parts (add/update/delete), got %d: %+v", len(ps), ps)
+	}
+	if ps[0].File != "docs/new.md" || len(ps[0].Edits) != 1 || ps[0].Edits[0].Old != "" || ps[0].Edits[0].New != "# hi\nbody" {
+		t.Fatalf("add part = %+v", ps[0])
+	}
+	if ps[1].File != "main.go" || len(ps[1].Edits) != 1 ||
+		ps[1].Edits[0].Old != "ctx\nold line" || ps[1].Edits[0].New != "ctx\nnew line" {
+		t.Fatalf("update part = %+v", ps[1])
+	}
+	if ps[2].Info != "delete gone.txt" || len(ps[2].Edits) != 0 {
+		t.Fatalf("delete part = %+v", ps[2])
+	}
+	// The custom_tool_call_output attaches to the call's first part.
+	if !strings.HasPrefix(ps[0].Output, "Success.") {
+		t.Fatalf("output not attached: %+v", ps[0])
+	}
+}
+
+func TestCodexApplyPatchFunctionCall(t *testing.T) {
+	// apply_patch can also arrive as a function_call with {"input": patch} arguments.
+	patch := "*** Begin Patch\n*** Update File: a.txt\n-x\n+y\n*** End Patch"
+	args := string(mustJSON(`{"input":` + string(mustJSON(patch)) + `}`))
+	lines := [][]byte{
+		[]byte(`{"type":"response_item","payload":{"type":"function_call","name":"apply_patch","call_id":"c2","arguments":` + args + `}}`),
+	}
+	turns, _ := parseRollout(lines)
+	if len(turns) != 1 || len(turns[0].Parts) != 1 {
+		t.Fatalf("turns = %+v", turns)
+	}
+	p := turns[0].Parts[0]
+	if p.File != "a.txt" || len(p.Edits) != 1 || p.Edits[0].Old != "x" || p.Edits[0].New != "y" {
+		t.Fatalf("part = %+v", p)
+	}
+}
+
+func TestCodexCompacted(t *testing.T) {
+	lines := [][]byte{
+		[]byte(`{"timestamp":"2026-06-29T00:00:00Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]}}`),
+		[]byte(`{"timestamp":"2026-06-29T00:00:01Z","type":"compacted","payload":{"message":"summary of earlier context"}}`),
+		[]byte(`{"type":"event_msg","payload":{"type":"context_compacted"}}`), // same compaction's event — deduped
+	}
+	turns, _ := parseRollout(lines)
+	if len(turns) != 2 {
+		t.Fatalf("want 2 turns (user + ONE compact block), got %d: %+v", len(turns), turns)
+	}
+	c := turns[1]
+	if !c.Compact || c.Text != "summary of earlier context" {
+		t.Fatalf("compact turn = %+v", c)
+	}
+	// An event_msg WITHOUT a preceding compacted line still yields a marker.
+	only := [][]byte{
+		[]byte(`{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]}}`),
+		[]byte(`{"type":"event_msg","payload":{"type":"context_compacted"}}`),
+	}
+	turns, _ = parseRollout(only)
+	if len(turns) != 2 || !turns[1].Compact {
+		t.Fatalf("event-only compaction -> %+v", turns)
+	}
+}
+
+func TestCodexCompactedReplacementHistory(t *testing.T) {
+	lines := [][]byte{
+		[]byte(`{"type":"compacted","payload":{"replacement_history":[{"role":"user","content":[{"type":"input_text","text":"<user_instructions>x</user_instructions>"}]},{"role":"user","content":[{"type":"input_text","text":"the summary"}]}]}}`),
+	}
+	turns, _ := parseRollout(lines)
+	if len(turns) != 1 || !turns[0].Compact || turns[0].Text != "the summary" {
+		t.Fatalf("turns = %+v, want one compact turn with 'the summary' (wrapper dropped)", turns)
+	}
+}
+
+func mustJSON(v string) []byte {
+	b, err := json.Marshal(v)
+	if err != nil {
+		panic(err)
+	}
+	return b
 }
