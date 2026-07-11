@@ -152,6 +152,13 @@ CP には interval ジョブの基盤（reaper / usage サンプラー等）が�
 | Phase | 内容 | 新規実装 | 規模感 |
 |---|---|---|---|
 | **0. PoC（実装ゼロ）** | workspace の対話セッションで `claude mcp add` + トークン手貼りし、PagerDuty/Grafana/CloudWatch MCP で UC1/UC2 を実地検証。guide/ に手順メモ | なし（docs のみ） | 数時間〜。**まずこれで価値を確かめる** |
+
+Phase 0 は 2026-07-12 に着手済み。手順は [guide/member/10-ops-mcp-poc.md](guide/member/10-ops-mcp-poc.md)。dev コンテナでの事前検証結果:
+- mcp-grafana v0.17.1（Go 単一バイナリ 49MB）は Grafana 未接続・ダミートークンでも起動し tools/list 応答（遅延接続）。既定 65 ツール、`-disable-write -disable-admin` で 52 ツール・create/update/delete/install 系ゼロを実測。Grafana データソース経由の CloudWatch/Athena クエリツールも同梱（カテゴリ別 disable 可）。
+- PagerDuty 公式 self-host は PyPI `pagerduty-mcp`（`uvx pagerduty-mcp`、env `PAGERDUTY_USER_API_KEY`）で**既定 read-only**、write は `--enable-write-tools` 明示。hosted（mcp.pagerduty.com）は既定で write も出るため PoC では非推奨。
+- awslabs CloudWatch は `uvx awslabs.cloudwatch-mcp-server@latest` + `AWS_PROFILE`（SSO チェーン = 既存 ssm 接続と同じ資格で追加秘密なし）。
+- initMAX zabbix は systemd 常駐のチーム共有型（remote HTTP + config.toml の `read_only = true`）で個人 PoC には重い。stdio の軽量版で雰囲気確認 → 本採用評価時に initMAX。
+- 残タスク = 実トークンでの UC1/UC2 実地検証（実 workspace + 実監視環境が必要。dev コンテナは PyPI 遮断のため uvx 系は実 workspace で確認）。
 | **1. 最小の製品化** | Connections に ops kind 追加 + テナント MCP カタログ + `chatMCPArgs` のカタログ駆動化 + ビルトイン SRE アシスタント + §4.5 の権限明文化 | Agent: connections/chat_providers/assistants、CP: カタログ CRUD、Console: 設定 UI | 中。既存 seam に沿う |
 | **2. 通知と導線** | Slack outbound（CP-native、セッション状態通知含む）+ インシデント起点の会話テンプレ | CP: notify、Console: 導線 | 小〜中 |
 | **3. イベント駆動** | webhook ingress（PagerDuty v3 署名）→ memo キュー + 通知。自動初動は ops ボット identity の ADR 決着後に | CP: /hooks、脅威モデル追記 | 中〜大（身元問題込み） |
