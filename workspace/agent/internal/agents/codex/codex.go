@@ -5,6 +5,7 @@
 package codex
 
 import (
+	"errors"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
@@ -29,9 +30,20 @@ type agentImpl struct{}
 func (agentImpl) Kind() string { return session.KindCodex }
 
 // CanTranscript lights up the Console chat mirror for codex; its turns come from the
-// rollout JSONL via Transcript() (readTranscript), windowed by the generic
-// /messages handler. No fork/label (codex has no --session-id pin nor --name).
-func (agentImpl) Caps() agents.Caps { return agents.Caps{CanTranscript: true} }
+// rollout JSONL via Transcript() (readTranscript), windowed by the generic /messages
+// handler. CanFork: the conversation forks via `codex fork <id>` (ForkSource /
+// BuildLaunch). No label (codex has no --name).
+func (agentImpl) Caps() agents.Caps { return agents.Caps{CanTranscript: true, CanFork: true} }
+
+// ForkSource resolves this session's codex conversation id as the fork source —
+// the hook-captured per-slot id, provided its rollout actually exists on disk.
+func (agentImpl) ForkSource(m session.Meta) (string, error) {
+	id := sids.Read(session.UUID(m.Dir, m.Name))
+	if id == "" || rolloutPath(id) == "" {
+		return "", errors.New("分岐できる会話がまだありません")
+	}
+	return id, nil
+}
 
 func (agentImpl) Transcript(m session.Meta) (agents.TranscriptData, bool) {
 	return readTranscript(m)
@@ -50,7 +62,14 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 	// codex hooks injected on the command line (-c), keyed by our deterministic slot
 	// sid — see buildProgram.
 	cxSid := session.UUID(m.Dir, m.Name)
-	return agents.LaunchPlan{Program: buildProgram(m.Model, cxSid, sids.Read(cxSid)), Cwd: m.Dir}, nil
+	// First launch of a forked slot: no own captured session yet — fork the source
+	// conversation (`codex fork <id>`). The injected hooks record the fork's own id
+	// on the first prompt, so later launches resume it and ForkFrom is ignored.
+	forkFrom := ""
+	if sids.Read(cxSid) == "" {
+		forkFrom = m.ForkFrom
+	}
+	return agents.LaunchPlan{Program: buildProgram(m.Model, cxSid, sids.Read(cxSid), forkFrom), Cwd: m.Dir}, nil
 }
 
 func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {

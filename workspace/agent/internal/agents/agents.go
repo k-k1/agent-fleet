@@ -111,6 +111,15 @@ type TranscriptData struct {
 	Compacting bool
 }
 
+// Forker is the optional fork capability behind Caps().CanFork: ForkSource resolves
+// the source session's provider-native conversation id (claude sid / opencode ses_… /
+// codex session uuid) for the new session's ForkFrom, or an error when there is no
+// forkable conversation yet. The fork itself happens on the new session's first
+// launch (each kind's BuildLaunch turns ForkFrom into its CLI's fork invocation).
+type Forker interface {
+	ForkSource(m session.Meta) (string, error)
+}
+
 // NoGenericTranscript is the Transcript() default for agents that either have no
 // readable transcript (shell/ssm) or use their own path (claude). Embedding it keeps
 // the interface satisfied without a per-agent stub.

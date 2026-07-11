@@ -50,24 +50,47 @@ func openRO() (*sql.DB, bool) {
 	return db, true
 }
 
-// activeSession resolves the slot's CURRENT opencode conversation from the store
-// itself — the newest ROOT session (parent_id null, i.e. not a subagent child) in the
-// slot's working dir, by most-recent message. This is plugin-independent: opencode can
-// create/switch sessions at runtime, and its status plugin may not be firing, so we don't
-// trust the captured sid alone — we read what opencode is actually using. Falls back to
-// the captured sid only when the query can't run. (Caveat: two opencode slots in the SAME
-// dir resolve to the same session — the pre-existing multi-slot-same-dir limitation.)
+// activeSession resolves the slot's CURRENT opencode conversation. Per-slot truth
+// first: the id the bundled plugin captured for THIS slot (it re-records on every
+// event, so runtime session switches track too — claude/codex と同じスロット単位の
+// 対応付け). When no mapping exists (plugin not firing), fall back to the store —
+// but ONLY to a root conversation created AFTER the slot itself, i.e. one this slot
+// must have opened. The previous unbounded by-dir lookup made a brand-new session
+// hijack (and resume) the dir's most recent OLD conversation — 実例: 新規スロット
+// szyyh2f が ~/repos/temp の9日前の会話を --session で引き継いでしまった。
 func activeSession(db *sql.DB, m session.Meta) string {
+	if id := sids.Read(session.UUID(m.Dir, m.Name)); id != "" && sessionExists(db, id) {
+		return id
+	}
 	var id string
 	_ = db.QueryRow(
 		`SELECT s.id FROM session s JOIN message msg ON msg.session_id = s.id
 		 WHERE s.directory = ? AND (s.parent_id IS NULL OR s.parent_id = '')
-		 GROUP BY s.id ORDER BY MAX(msg.time_created) DESC LIMIT 1`, m.Dir,
+		   AND s.time_created >= ?
+		 GROUP BY s.id ORDER BY MAX(msg.time_created) DESC LIMIT 1`, m.Dir, metaCreatedMs(m),
 	).Scan(&id)
-	if id == "" {
-		return sids.Read(session.UUID(m.Dir, m.Name))
-	}
 	return id
+}
+
+// sessionExists guards a stale plugin mapping (a deleted/imported-away session id)
+// from shadowing the store-derived fallback.
+func sessionExists(db *sql.DB, id string) bool {
+	var n int
+	return db.QueryRow(`SELECT count(*) FROM session WHERE id = ?`, id).Scan(&n) == nil && n > 0
+}
+
+// metaCreatedMs is the slot's creation time as epoch millis (opencode's time unit).
+// A missing/unparsable CreatedAt yields 0 — the permissive pre-fix behavior — so a
+// legacy meta without the field keeps its conversation rather than losing it.
+func metaCreatedMs(m session.Meta) int64 {
+	if m.CreatedAt == "" {
+		return 0
+	}
+	t, err := time.Parse(time.RFC3339, m.CreatedAt)
+	if err != nil {
+		return 0
+	}
+	return t.UnixMilli()
 }
 
 // LiveState derives opencode's working/idle/question state from the store (robust —

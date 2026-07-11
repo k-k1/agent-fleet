@@ -22,7 +22,7 @@ func envOr(key, def string) string {
 // continue). Auth is the user's own `opencode auth login` (persisted in home), so
 // there's no token to inject. Caveat: multiple opencode slots in the SAME dir share
 // --continue's "most recent" target.
-func buildProgram(model string, envs []string, ocid string) string {
+func buildProgram(model string, envs []string, ocid string, fork bool) string {
 	// Prefix env assignments onto the command so the opencode process actually
 	// receives them (NAME='value' … opencode). Values are shell-quoted; names are
 	// trusted (our sid + validated ALL_CAPS provider env names).
@@ -49,6 +49,12 @@ func buildProgram(model string, envs []string, ocid string) string {
 	// the same dir would collide on one shared conversation.
 	if ocid != "" {
 		parts = append(parts, "--session", session.ShellQuote(ocid))
+		if fork {
+			// Fork launch: copy ocid's conversation into a NEW session and diverge
+			// (the opencode analog of claude's --fork-session). First launch only —
+			// once the fork exists the caller resumes it without --fork.
+			parts = append(parts, "--fork")
+		}
 	}
 	if model != "" {
 		// opencode expects provider/model (e.g. anthropic/claude-...); passed through
