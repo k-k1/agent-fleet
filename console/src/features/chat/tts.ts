@@ -61,11 +61,10 @@ export interface TtsController {
 // 同一文言＋同一合成条件の復号済み AudioBuffer をメモリ内 LRU で持ち、再読み上げ
 // （同じ回答の読み上げボタン再押下、定型 announce、朗読のやり直し等）を合成・
 // ネットワークなしで即再生する。AudioBuffer は再生ごとに AudioBufferSourceNode を
-// 作り直すので使い回して安全。上限は合計再生秒数で管理する（VOICEVOX 24kHz mono
-// float32 の PCM で約 0.1MB/秒 — 300 秒 ≒ 30MB）。リロードで消える（永続化しない）。
+// 作り直すので使い回して安全。上限は合計再生秒数（設定 ttsCacheSec、0=無効）で管理する
+// （VOICEVOX 24kHz mono float32 の PCM で約 0.1MB/秒）。リロードで消える（永続化しない）。
 
-const SYNTH_CACHE_MAX_SEC = 300;
-const synthCache = makeAudioLru<AudioBuffer>(SYNTH_CACHE_MAX_SEC);
+const synthCache = makeAudioLru<AudioBuffer>(() => getSettings().ttsCacheSec);
 
 // キーは合成条件＋テキスト。区切りはテキストに現れない NUL。provider は設定値
 // （auto 含む）で持つため、auto のルーティング先が変わった直後は旧エンジンの声が

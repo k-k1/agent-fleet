@@ -88,7 +88,7 @@ describe("makeAudioLru (合成キャッシュの LRU)", () => {
   const buf = (duration: number) => ({ duration });
 
   it("put/get の基本と、無いキーは undefined", () => {
-    const c = makeAudioLru<{ duration: number }>(10);
+    const c = makeAudioLru<{ duration: number }>(() => 10);
     const a = buf(3);
     c.put("a", a);
     expect(c.get("a")).toBe(a);
@@ -97,7 +97,7 @@ describe("makeAudioLru (合成キャッシュの LRU)", () => {
   });
 
   it("合計秒数が上限を超えたら古いものからエビクト", () => {
-    const c = makeAudioLru<{ duration: number }>(10);
+    const c = makeAudioLru<{ duration: number }>(() => 10);
     c.put("a", buf(4));
     c.put("b", buf(4));
     c.put("c", buf(4)); // 12 > 10 → a を捨てて 8
@@ -107,7 +107,7 @@ describe("makeAudioLru (合成キャッシュの LRU)", () => {
   });
 
   it("get で触ったエントリは最新扱いになり、エビクトを免れる", () => {
-    const c = makeAudioLru<{ duration: number }>(10);
+    const c = makeAudioLru<{ duration: number }>(() => 10);
     c.put("a", buf(4));
     c.put("b", buf(4));
     c.get("a"); // a を末尾へ
@@ -118,7 +118,7 @@ describe("makeAudioLru (合成キャッシュの LRU)", () => {
   });
 
   it("単体で上限を超える値と重複キーは入れない", () => {
-    const c = makeAudioLru<{ duration: number }>(10);
+    const c = makeAudioLru<{ duration: number }>(() => 10);
     c.put("big", buf(11));
     expect(c.get("big")).toBeUndefined();
     const first = buf(2);
@@ -126,6 +126,21 @@ describe("makeAudioLru (合成キャッシュの LRU)", () => {
     c.put("dup", buf(3)); // 二重 put は無視（合計秒数を壊さない）
     expect(c.get("dup")).toBe(first);
     expect(c.size()).toBe(1);
+  });
+
+  it("上限の変更に追随する（下げたら put 時に縮小、0 で無効化＋破棄）", () => {
+    let max = 10;
+    const c = makeAudioLru<{ duration: number }>(() => max);
+    c.put("a", buf(4));
+    c.put("b", buf(4));
+    max = 4; // 設定を下げる → 次の put で合計 4 まで縮む
+    c.put("c", buf(4)); // c 自体は入り、a/b が捨てられる
+    expect(c.get("a")).toBeUndefined();
+    expect(c.get("b")).toBeUndefined();
+    expect(c.get("c")).toBeDefined();
+    max = 0; // 無効化 → get は必ずミスし保持分も手放す
+    expect(c.get("c")).toBeUndefined();
+    expect(c.size()).toBe(0);
   });
 });
 
