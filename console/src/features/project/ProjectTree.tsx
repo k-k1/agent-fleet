@@ -1,11 +1,13 @@
-// ProjectTree — the rail's main block: repos laid out directly (no "プロジェクト"
-// section frame, no group bands). Each base clone is a top-level collapsible node
-// and its worktrees nest as child nodes inside it, so a project reads as real
-// hierarchy instead of a decorated flat list — and folding the base folds the
-// whole project. A slim toolbar row carries the repo actions (clone / 更新) and
-// the session-maintenance actions (整理 / アーカイブ).
+// ProjectTree — the rail's main block: the リポジトリ section (same header band
+// as アシスタント / ファイル), whose body lays repos out directly (no group
+// bands). Each base clone is a top-level collapsible node and its worktrees nest
+// as child nodes inside it, so a project reads as real hierarchy instead of a
+// decorated flat list — and folding the base folds the whole project. The
+// section header carries the repo actions (clone / 更新) and the
+// session-maintenance actions (整理 / アーカイブ).
 import { useEffect, useState } from "react";
 import { apiJSON, errText } from "../../core/api/client.ts";
+import { Section } from "../../ui/Section.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { Button, IconButton } from "../../ui/Button.tsx";
 import { EmptyState } from "../../ui/EmptyState.tsx";
@@ -90,33 +92,35 @@ export function ProjectTree() {
   };
 
   return (
-    <div className="proj-block">
-      {/* Slim toolbar (replaces the old section header): repo ops | session upkeep. */}
-      <div className="proj-toolbar">
-        <span className="proj-toolbar-title">
-          <Icon name="repo" /> リポジトリ
-        </span>
-        <span className="proj-toolbar-sp" aria-hidden="true" />
-        <Button
-          small
-          variant="ghost"
-          icon="add"
-          title={running ? "clone" : "clone（ワークスペース停止中）"}
-          disabled={!!cloning || !running}
-          onClick={() => setShowClone((s) => !s)}
-        >
-          クローン
-        </Button>
-        <IconButton icon="refresh" label="更新" onClick={() => void refreshRepos()} />
-        <span className="proj-head-sep" aria-hidden="true" />
-        <IconButton
-          icon="clear-all"
-          label="停止中をまとめてアーカイブ（shell/ssm は削除）"
-          disabled={!sessions.some((s) => !s.alive)}
-          onClick={actions.clearStopped}
-        />
-        <IconButton icon="archive" label="アーカイブを開く（復帰）" onClick={openArchived} />
-      </div>
+    <Section
+      id="repos"
+      title="リポジトリ"
+      icon="repo"
+      count={repos.length}
+      actions={
+        <>
+          <Button
+            small
+            variant="ghost"
+            icon="add"
+            title={running ? "clone" : "clone（ワークスペース停止中）"}
+            disabled={!!cloning || !running}
+            onClick={() => setShowClone((s) => !s)}
+          >
+            クローン
+          </Button>
+          <IconButton icon="refresh" label="更新" onClick={() => void refreshRepos()} />
+          <span className="proj-head-sep" aria-hidden="true" />
+          <IconButton
+            icon="clear-all"
+            label="停止中をまとめてアーカイブ（shell/ssm は削除）"
+            disabled={!sessions.some((s) => !s.alive)}
+            onClick={actions.clearStopped}
+          />
+          <IconButton icon="archive" label="アーカイブを開く（復帰）" onClick={openArchived} />
+        </>
+      }
+    >
       {/* Quick filter: narrows repos + sessions (この木 and その他のセッション).
           Escape clears. Files are untouched — the tree below is lazy-loaded. */}
       <div className="proj-filter">
@@ -160,6 +164,6 @@ export function ProjectTree() {
           <RepoNode key={members[0].name} r={members[0]} childRepos={members.slice(1)} ctx={ctx} actions={actions} />
         ))}
       </ul>
-    </div>
+    </Section>
   );
 }
