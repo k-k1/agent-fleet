@@ -447,13 +447,39 @@ let saveTimer: ReturnType<typeof setTimeout> | null = null;
 function scheduleServerSave(): void {
   if (saveTimer) clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
-    apiJSON("api/env/ui-prefs", "PUT", state).catch(() => {});
+    // 端末ローカルキーはサーバへ送らない（この端末の外へ出さない）。
+    apiJSON("api/env/ui-prefs", "PUT", serverPrefs(state)).catch(() => {});
   }, 600);
+}
+
+// 端末ローカル設定 — localStorage にだけ持ち、サーバへは送らず・サーバからも復元しない。
+// 「この端末で音を鳴らすか」「この画面をどう見せるか」は使う場所（オフィス/自宅、明るさ、
+// ヘッドホン有無）で変わる環境依存の設定なので、ユーザ単位で全端末に追従させると邪魔になる。
+// 声・速度・辞書・フォント等の“好み”は従来どおりクロスデバイス同期のまま（DEVICE_LOCAL 外）。
+// これにより「サーバ優先＋保存デバウンス取りこぼしで OFF が復活」する経路もこれらのキーでは消える。
+const DEVICE_LOCAL = new Set<keyof Settings>([
+  "ttsEnabled", // 音声読み上げ ON/OFF
+  "ttsSessionNotify", // 音声通知 ON/OFF
+  "theme", // ダーク/ライト
+  "topbarColor", // 外観の配色（サーフェス色）
+  "leftpaneColor",
+  "viewerColor",
+  "chatColor",
+]);
+
+// serverPrefs は端末ローカルキーを除いた、サーバへ保存してよい設定だけの浅いコピー。
+function serverPrefs(s: Settings): Partial<Settings> {
+  const out: Partial<Settings> = {};
+  for (const k of Object.keys(s) as (keyof Settings)[]) {
+    if (!DEVICE_LOCAL.has(k)) (out as any)[k] = s[k];
+  }
+  return out;
 }
 
 // hydrateUIPrefs pulls the server-stored prefs (if any) and merges the known keys
 // over the local state, so a fresh browser inherits the user's settings. Called once
-// at boot after the tenant is resolved (state.jsx). Server wins over localStorage.
+// at boot after the tenant is resolved (state.jsx). Server wins over localStorage —
+// EXCEPT DEVICE_LOCAL keys, which stay whatever this browser's localStorage holds.
 export async function hydrateUIPrefs(): Promise<void> {
   let srv: any;
   try {
@@ -465,6 +491,7 @@ export async function hydrateUIPrefs(): Promise<void> {
   let changed = false;
   const merged: Settings = { ...state };
   for (const k of Object.keys(DEFAULTS)) {
+    if (DEVICE_LOCAL.has(k as keyof Settings)) continue; // 端末ローカルは復元しない
     if (k in srv && srv[k] !== (merged as any)[k]) {
       (merged as any)[k] = srv[k];
       changed = true;
