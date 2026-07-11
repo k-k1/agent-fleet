@@ -5,6 +5,7 @@ import {
   firstChunkCut,
   parseUserDict,
   applyUserDict,
+  mergeDicts,
   splitSentences,
   abbrevCode,
 } from "./ttsText.ts";
@@ -89,6 +90,26 @@ describe("firstChunkCut (最初の発話の早出し)", () => {
   it("閉じ括弧類も早出しの区切りになる", () => {
     const s = "設定（詳しくは後述）を開きます";
     expect(firstChunkCut(s)).toBe(s.indexOf("）") + 1);
+  });
+});
+
+describe("mergeDicts (ユーザー辞書＋テナント共通辞書の合成)", () => {
+  it("同じ表記はユーザー辞書が勝つ（読み飛ばし上書きも含む）", () => {
+    const user = parseUserDict("神=かみ\n(社外秘)=");
+    const tenant = parseUserDict("神=しん\n(社外秘)=しゃがいひ\nagent-fleet=エージェントフリート");
+    const m = mergeDicts(user, tenant);
+    expect(applyUserDict("神は(社外秘)のagent-fleet", m)).toBe("かみはのエージェントフリート");
+  });
+
+  it("合成後も長い表記から当たる（テナント側の長い表記が部分一致に食われない）", () => {
+    const user = parseUserDict("AB=エービー");
+    const tenant = parseUserDict("ABC=エービーシー");
+    expect(applyUserDict("ABC", mergeDicts(user, tenant))).toBe("エービーシー");
+  });
+
+  it("テナント辞書が空ならユーザー辞書そのまま", () => {
+    const user = parseUserDict("神=かみ");
+    expect(mergeDicts(user, [])).toBe(user);
   });
 });
 

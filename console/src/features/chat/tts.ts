@@ -12,7 +12,8 @@
 import { rel } from "../../core/api/client.ts";
 import { getSettings } from "../../lib/settings.ts";
 import { useTtsStore } from "../../core/store/tts.ts";
-import { plainify, plainifyStreaming, firstChunkCut, parseUserDict, applyUserDict } from "./ttsText.ts";
+import { plainify, plainifyStreaming, firstChunkCut, applyUserDict } from "./ttsText.ts";
+import { effectiveDict } from "./ttsDict.ts";
 import { makeAudioLru } from "./ttsCache.ts";
 
 export interface TtsOptions {
@@ -131,11 +132,10 @@ function audioCtx(): AudioContext | null {
 // ("stopped")のどちらでも 1 回だけ呼ばれる（アナウンスキューの直列制御に使う）。
 export function startTts(opts: TtsOptions, source = "", onEnd?: (reason: "done" | "stopped") => void): TtsController {
   useTtsStore.getState().active?.stop(); // 直前の再生を停止（グローバル 1 本）
-  // ユーザー読み仮名辞書はターン開始時に一度だけ読む（opts の provider/voice とは独立した
-  // テキスト処理なので、全呼び出し元で opts に載せ替えず getSettings から取る）。
-  const st = getSettings();
-  const userDict = parseUserDict(st.ttsUserDict);
-  const codeOpts = { abbrev: st.ttsAbbrevCode, dict: userDict }; // インラインコードの省略読み
+  // 読み仮名辞書（ユーザー＋テナント共通の合成・ユーザー優先）はターン開始時に一度だけ
+  // 組む（opts の provider/voice とは独立したテキスト処理なので opts には載せない）。
+  const userDict = effectiveDict();
+  const codeOpts = { abbrev: getSettings().ttsAbbrevCode, dict: userDict }; // インラインコードの省略読み
   const ctx = audioCtx();
   let buf = ""; // 未確定バッファ（文の途中）
   let pending = ""; // MIN_CHUNK 未満で持ち越し中の短い断片
@@ -400,7 +400,7 @@ export function startNarration(
   const ctx = audioCtx();
   const s = getSettings();
   const opts = ttsOptsFromSettings(s);
-  const userDict = parseUserDict(s.ttsUserDict);
+  const userDict = effectiveDict(); // ユーザー＋テナント共通辞書（ユーザー優先）
 
   // 各 unit を読み上げ用にクリーン化（Markdown 記法/URL 除去 + コード片の省略読み +
   // ユーザー辞書）。空になった unit（コード等）は "" のまま残し、原 index を保つ

@@ -8,7 +8,8 @@
 // ターンは完結してから届く（ポーリング）ので、抽出は読み上げ開始時の 1 回で安定する。
 
 import { startNarration } from "../chat/tts.ts";
-import { splitSentences, abbrevCode, parseUserDict, type CodeReadOpts } from "../chat/ttsText.ts";
+import { splitSentences, abbrevCode, type CodeReadOpts } from "../chat/ttsText.ts";
+import { effectiveDict } from "../chat/ttsDict.ts";
 import { getSettings } from "../../lib/settings.ts";
 
 // 読み上げ対象のリーフブロック。ul/ol は li 単位（入れ子リストは別ブロック）、blockquote は
@@ -96,8 +97,7 @@ export function readTurn(
   fromBlock: number,
   onEnd: (stopped: boolean) => void,
 ): TurnReadHandle | null {
-  const st = getSettings();
-  const code: CodeReadOpts = { abbrev: st.ttsAbbrevCode, dict: parseUserDict(st.ttsUserDict) };
+  const code: CodeReadOpts = { abbrev: getSettings().ttsAbbrevCode, dict: effectiveDict() };
   const blocks = collectBlocks(body);
   const texts: string[] = [];
   const blockOf: number[] = [];

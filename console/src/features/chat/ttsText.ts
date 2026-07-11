@@ -36,6 +36,17 @@ export function applyUserDict(text: string, dict: [string, string][]): string {
   return out;
 }
 
+// mergeDicts はユーザー辞書とテナント共通辞書を合成する。同じ表記はユーザー側が勝つ
+// （上書き。読みを空にして「読み飛ばす」上書きも効く）。返りは表記長の降順に並べ直し、
+// applyUserDict / abbrevCode の「長い表記から当てる」前提を保つ。
+export function mergeDicts(user: [string, string][], tenant: [string, string][]): [string, string][] {
+  if (!tenant.length) return user;
+  const seen = new Set(user.map(([from]) => from));
+  const out = [...user, ...tenant.filter(([from]) => !seen.has(from))];
+  out.sort((a, b) => b[0].length - a[0].length);
+  return out;
+}
+
 // --- 開始レイテンシ短縮（最初の 1 文だけ早出し） --------------------------------
 // 長い第 1 文が句点で終わるまで待つと発話開始が遅い。**最初の発話に限り**句点を待たず、
 // 読点などの軽い区切り（十分な長さがあれば）か、区切りが来なくても一定長で切り出して
