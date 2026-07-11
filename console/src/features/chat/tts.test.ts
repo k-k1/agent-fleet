@@ -8,6 +8,7 @@ import {
   mergeDicts,
   splitSentences,
   abbrevCode,
+  emotionOf,
 } from "./ttsText.ts";
 import { makeAudioLru } from "./ttsCache.ts";
 
@@ -90,6 +91,24 @@ describe("firstChunkCut (最初の発話の早出し)", () => {
   it("閉じ括弧類も早出しの区切りになる", () => {
     const s = "設定（詳しくは後述）を開きます";
     expect(firstChunkCut(s)).toBe(s.indexOf("）") + 1);
+  });
+});
+
+describe("emotionOf (文の感情推定)", () => {
+  it("エラー・失敗系は angry", () => {
+    expect(emotionOf("テストが失敗しました。")).toBe("angry");
+    expect(emotionOf("ビルドでエラーが出ています。")).toBe("angry");
+    expect(emotionOf("3 tests FAILED")).toBe("angry"); // 英語は小文字化して判定
+  });
+
+  it("成功・完了系は happy", () => {
+    expect(emotionOf("マージが完了しました。")).toBe("happy");
+    expect(emotionOf("テストは全部 green です。")).toBe("happy");
+  });
+
+  it("混在は angry 優先、どちらも無ければ null", () => {
+    expect(emotionOf("修正は完了しましたがテストが失敗しています。")).toBe("angry");
+    expect(emotionOf("次にドキュメントを更新します。")).toBeNull();
   });
 });
 

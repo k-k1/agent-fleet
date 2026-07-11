@@ -165,6 +165,10 @@ export interface Settings {
   // 読み上げとセッション音声通知に適用（どのセッションの回答かを声で判別できる）。
   // チャットタブ・朗読ビューは選択した話者のまま。
   ttsVoicePerSession: boolean;
+  // 文の内容で感情スタイルを切り替える（features/chat/tts.ts の emotionOpts）。エラー・
+  // 失敗系の文はツンツン系、成功・完了系はあまあま系スタイルで読む。スタイル variant を
+  // 持つ話者（ずんだもん・四国めたん・九州そら）のときだけ効く。
+  ttsEmotion: boolean;
   // インラインコード（`…`）を省略して読む（features/chat/ttsText.ts の abbrevCode）。
   // ハッシュ等は頭 2 文字＋フィラー語（なんとか 等）、camelCase/パスは頭一語＋フィラー
   // （3 語以上は＋末尾一語）。短い語・空白入り・日本語入り・読み仮名辞書に掛かる表記はそのまま。
@@ -213,6 +217,7 @@ const DEFAULTS: Settings = {
   ttsCacheSec: 300,
   ttsAutoReadMirror: false,
   ttsVoicePerSession: false,
+  ttsEmotion: false,
   ttsAbbrevCode: true,
   readerVertical: false,
 };
