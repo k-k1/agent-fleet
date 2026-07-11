@@ -179,6 +179,15 @@ func handleSessionMessages(w http.ResponseWriter, r *http.Request) {
 	if tasks := claude.CollectTasks(lines); len(tasks) > 0 {
 		resp["tasks"] = tasks
 	}
+	// Prompts queued into the running turn (typed mid-run, not yet injected) so the
+	// mirror can badge them キュー済み like the terminal does. The queue only exists
+	// while a turn runs, so gate on working — this also hides stale leftovers from a
+	// run that died with items still queued.
+	if alive && state == "working" {
+		if q := claude.CollectQueued(lines); len(q) > 0 {
+			resp["queuedPrompts"] = q
+		}
+	}
 	// Surface terminal-only states (startup resume menu / auto-compaction) the chat
 	// can't otherwise see, so the Console can prompt the user or show a 圧縮中 badge.
 	if alive {
