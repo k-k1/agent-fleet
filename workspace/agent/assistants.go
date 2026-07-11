@@ -58,9 +58,9 @@ type assistant struct {
 	// Voice is the Console-side TTS voice override ("vv:<speaker>" / "polly:<VoiceId>").
 	// "" = auto (the Console assigns one from the user's character pool). The agent only
 	// stores and echoes it — synthesis and resolution are entirely client-side (docs/24).
-	Voice string `json:"voice,omitempty"`
-	CreatedAt   int64    `json:"created_at,omitempty"`
-	UpdatedAt   int64    `json:"updated_at,omitempty"`
+	Voice     string `json:"voice,omitempty"`
+	CreatedAt int64  `json:"created_at,omitempty"`
+	UpdatedAt int64  `json:"updated_at,omitempty"`
 }
 
 // --- builtin knowledge (embedded, materialized to a runtime dir) ---
