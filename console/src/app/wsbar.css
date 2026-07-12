@@ -171,6 +171,12 @@ button.ws-usage-btn:hover {
 .ws-usage-nums {
   font-variant-numeric: tabular-nums;
 }
+/* Max付近: チップが % ではなくリセット時刻を出しているとき、その値を crit 色にして
+   「詰まっている」ことを一目で示す（枠色のアイコンはそのまま）。 */
+.ws-usage-nums.crit {
+  color: var(--del);
+  font-weight: 600;
+}
 .ws-usage-btn .codicon {
   font-size: 11px;
 }
