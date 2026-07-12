@@ -47,6 +47,17 @@ claude mcp add -s user grafana \
   -- ~/.local/bin/mcp-grafana -disable-write -disable-admin
 ```
 
+**Amazon Managed Grafana（AMG）の場合**も同じ手順で繋がる（認証はセルフホストと同じサービスアカウントトークン。IAM/SigV4 は不要）。違いは 2 点だけ:
+
+- `GRAFANA_URL` は workspace endpoint（`https://g-xxxxxxxxxx.grafana-workspace.<region>.amazonaws.com`）。
+- トークンは AMG の Grafana 管理画面（Administration → Service accounts、要 admin）か、IAM 権限があれば AWS CLI でも発行できる（**最長 30 日**で失効するので期限管理に注意）:
+
+```bash
+aws grafana create-workspace-service-account-token \
+  --workspace-id g-xxxxxxxxxx --service-account-id <sa-id> \
+  --name poc-$(date +%Y%m%d) --seconds-to-live 604800   # 7日。応答の key がトークン（再表示不可）
+```
+
 ## 2. PagerDuty（インシデント・オンコール）
 
 公式 self-host 版（Python / PyPI `pagerduty-mcp`）。**既定で read-only**、write 系は `--enable-write-tools` を付けない限り出ない。トークンは PagerDuty の User API Token（My Profile → User Settings）。
