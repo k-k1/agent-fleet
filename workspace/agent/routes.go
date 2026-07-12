@@ -152,6 +152,8 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("POST /connections/codex/device/start", codex.HandleDeviceStart)
 	mux.HandleFunc("POST /connections/codex/device/poll", codex.HandleDevicePoll)
 	mux.HandleFunc("DELETE /connections/codex", codex.HandleDisconnect)
+	mux.HandleFunc("PUT /connections/pagerduty", handlePutPagerDutyConn)
+	mux.HandleFunc("DELETE /connections/pagerduty", handleDeletePagerDutyConn)
 
 	return mux
 }

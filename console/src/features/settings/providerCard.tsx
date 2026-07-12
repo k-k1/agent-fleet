@@ -14,6 +14,7 @@ export const BADGE_SHORT: Record<string, string> = {
   opencode: "oc",
   github: "gh",
   bitbucket: "bb",
+  pagerduty: "pd",
 };
 
 // CopyCode renders a one-time auth code that copies to the clipboard on click. The

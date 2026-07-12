@@ -15,6 +15,7 @@ import { AgentsTab } from "./AgentsTab.tsx";
 import { TtsTab } from "./TtsTab.tsx";
 import { GitTab } from "./GitTab.tsx";
 import { SsmTab } from "./SsmTab.tsx";
+import { OpsTab } from "./OpsTab.tsx";
 import { TokensTab } from "./TokensTab.tsx";
 
 export function SettingsDialog() {
@@ -29,6 +30,7 @@ export function SettingsDialog() {
     ["tts", "読み上げ"],
     ["git", "Git"],
     ["ssm", "AWS SSM"],
+    ["ops", "運用"],
     ["tokens", "MCP"],
   ];
 
@@ -82,6 +84,7 @@ export function SettingsDialog() {
           {section === "git" && <GitTab />}
           {section === "env" && <EnvTab />}
           {section === "ssm" && <SsmTab />}
+          {section === "ops" && <OpsTab />}
           {section === "tokens" && <TokensTab />}
           {section === "display" && <DisplayTab />}
         </div>

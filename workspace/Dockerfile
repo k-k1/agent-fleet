@@ -35,6 +35,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # --user <pkg>` lands in the persistent home (~/.local, on PATH). venvs work as usual.
 RUN printf '[global]\nbreak-system-packages = true\n' > /etc/pip.conf
 
+# uv/uvx (Astral) baked as a baseline tool: it is the launcher for the ops MCP
+# servers the SRE assistant uses (docs/25 — `workspace-agent mcp-run pagerduty`
+# execs `uvx pagerduty-mcp`). Installed to /usr/local/bin so it's on PATH for
+# every user without a per-home setup step; uvx caches fetched servers under the
+# persistent ~/.cache after first run.
+RUN pip install --no-cache-dir uv \
+    && uv --version && uvx --version
+
 # Headless-browser verification support: the shared libraries Chromium needs at
 # runtime, plus fonts (DejaVu + Noto CJK so the Console's Japanese UI renders in
 # screenshots instead of tofu). The browser binary itself is NOT baked — this
