@@ -1129,8 +1129,12 @@ export function MirrorView({
     setHistIdx(null);
     setDraft("");
     clearAttachments();
+    // On touch devices, drop focus so the soft keyboard (GBoard) retracts once the
+    // turn is sent — the reply is what the user wants to read, not keep typing. Desktop
+    // keeps focus (and refocuses below) so typing the next turn needs no extra click.
+    if (coarsePointer()) inputRef.current?.blur();
     await sendPrompt(prompt);
-    inputRef.current?.focus();
+    if (!coarsePointer()) inputRef.current?.focus();
   };
 
   // Open a plan's Markdown in its own pane (manual — via a button, not automatic).
