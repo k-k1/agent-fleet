@@ -97,10 +97,11 @@ const mapPanes = (l: Layout, fn: (p: Pane) => Pane): Column[] =>
   l.cols.map((c) => ({ ...c, panes: c.panes.map(fn) }));
 
 /** openActive opens the target in the active pane. When split and ANOTHER pane
- * already shows exactly that target, patching would duplicate it — instead the
- * two panes swap payloads (the target slides to the active side), keeping ids +
- * which side is active. For a terminal target the incoming chat intent wins
- * (clicking a session open as chat elsewhere must land on its terminal). */
+ * already shows exactly that target, patching would duplicate it — instead we
+ * just focus that pane where it sits (no swap into the active side), so a click
+ * on an already-open session activates its pane rather than shuffling panes
+ * around. For a terminal target the incoming chat intent still wins (clicking a
+ * session open as chat elsewhere flips that pane to its terminal), then focuses. */
 export function openActive(l: Layout, target: OpenTarget): Layout {
   const active = activePane(l);
   if (!active) return l;
@@ -110,21 +111,15 @@ export function openActive(l: Layout, target: OpenTarget): Layout {
       target.content.kind === "terminal" && other.content.kind === "terminal"
         ? target.content.chat
         : undefined;
-    const cols = mapPanes(l, (p) =>
-      p.id === active.id
-        ? {
-            ...other,
-            id: active.id,
-            content:
-              chat !== undefined && other.content.kind === "terminal"
-                ? { ...other.content, chat }
-                : other.content,
-          }
-        : p.id === other.id
-          ? { ...active, id: other.id }
-          : p,
-    );
-    return { ...l, cols };
+    const cols =
+      chat !== undefined
+        ? mapPanes(l, (p) =>
+            p.id === other.id && p.content.kind === "terminal"
+              ? { ...p, content: { ...p.content, chat } }
+              : p,
+          )
+        : l.cols;
+    return { ...l, cols, activeId: other.id };
   }
   const cols = mapPanes(l, (p) => (p.id === l.activeId ? applyTarget(p, target) : p));
   return { ...l, cols };
