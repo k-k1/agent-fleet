@@ -159,9 +159,13 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
     if (active && !coarsePointer() && (conversationId || draftAssistantId)) inputRef.current?.focus();
   }, [active, conversationId, draftAssistantId]);
 
-  // Image attach rides claude's Read-tool flow (saved path referenced in the prompt),
-  // so it's offered only for claude-agent chats (codex has no image-read path here).
-  const canAttach = (conv?.agent || draftAsst?.agent) === "claude";
+  // Image attach = upload + saved path referenced in the prompt. Offered where the
+  // headless backend can actually open the path — claude (`-p`, Read tool) and codex
+  // (`codex exec`, view_image; live-verified). opencode is excluded on purpose:
+  // `opencode run` declines image input on non-vision models (big-pickle, live-verified),
+  // and the chat can't know the model is vision-capable.
+  const chatAgent = conv?.agent || draftAsst?.agent || "";
+  const canAttach = chatAgent === "claude" || chatAgent === "codex";
 
   // Ensure a real conversation exists (approach A): a draft is created + promoted before
   // the first upload or send, so image attachments have a conversation id to post to.
@@ -266,9 +270,10 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
       }
     }
 
-    // Append the machine-facing image instruction + paths for claude's Read tool. The
-    // bubble strips it back out (splitPastedImages) and shows thumbnails instead.
-    const prompt = buildImagePrompt(text, paths);
+    // Append the machine-facing image instruction + paths (kind-appropriate wording:
+    // Read tool for claude, tool-neutral for codex). The bubble strips it back out
+    // (splitPastedImages) and shows thumbnails instead.
+    const prompt = buildImagePrompt(text, paths, chatAgent);
     // Optimistically show the user's turn (full prompt so pasted-image thumbnails render
     // immediately); the server echoes the full conversation on done.
     const userMsg: ChatMessage = { role: "user", content: prompt, ts: Date.now() };
