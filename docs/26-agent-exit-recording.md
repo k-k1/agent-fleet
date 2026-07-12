@@ -1,6 +1,11 @@
 # 26. エージェントプロセスの終了理由記録（OOM / signal / crash） — 設計
 
-**Status: 📋 設計（実装未着手）** — 2026-07-12 起草
+**Status: 🚧 Phase 1 + Phase 2 実装済み（要再ビルド／実機目視・per-container UI は残）** — 2026-07-12 起草・同日実装
+
+> 実装サマリ（2026-07-12）:
+> - **Phase 2（agent）**: pane ラッパー方式で per-session の終了理由を記録。`record_exit.go`（record-exit サブコマンド＋`exitReason` 解釈＋自 cgroup `memory.events` の `oom_kill` をセッション開始時ベースラインと比較して OOM 確定）、`status.ExitInfo` ストア、`startSessionTmux` のラッパー付与＋ベースライン記録、`wireSession` の終了理由付与、Stop/Archive/Recreate のクリーンアップ。Console は `exitReason/exitCode/exitSignal` を左ペインに反映（異常終了は warn チップ＋ツールチップ）。単体テスト＋実バイナリでのケース検証済み。**「意図的停止フラグ」は実証の結果不要と判明**（§4.2 追記）。
+> - **Phase 1（control-plane）**: `metrics.go` に `memory.events` の `oom_kill` 追跡（`oomTracker`、ポーリング跨ぎで `oom_recent`）と停止コンテナの docker `.State.OOMKilled/.ExitCode` を追加。`/api/workspace/stats` に `oom_kill_total`/`oom_recent`/`oom_killed`/`exit_code` を露出。単体テスト済み。
+> - **残**: 実フリート再ビルド反映と実機目視、Phase 1 データの WsBar チップ表示（バックエンドは出力済み・UI 未配線）、`docs/dev/05-api-contracts.md` の stats 契約追記、ADR 起票（任意）。
 
 コンテナ内で動くエージェントプロセス（claude / codex / opencode の各セッション）が **なぜ終了したか**（正常終了 / OOM kill / その他 signal / クラッシュ / 意図的停止）を捕捉して記録し、Console に事実ベースで提示するための設計。現状は「tmux セッションが消えた＝停止」しか見ておらず、終了理由の情報はゼロ。
 
@@ -115,7 +120,7 @@ args := []string{"new-session", "-d", "-s", session.TmuxName(m.Name), "-c", plan
 
 - `<program>` が抜けると `$?` に exit code（signal kill は `128+N`）が入り、`record-exit` サブコマンドが `Meta` に `ExitCode`/`ExitSignal`/`ExitAt` を書く。
 - **既存の「セッション消滅＝停止」検知はそのまま**動く（ラッパーのシェルが抜ければセッションは消える）。追加記録が乗るだけで挙動非破壊。
-- **解釈層で意図的停止と区別。** Stop/Halt/Archive（`session_handlers.go` の各ハンドラ）は `tmux kill-session` する前に「意図的停止フラグ」を立てておき、`record-exit`／後段の解釈でそれを見て `ExitReason=stopped` に倒す。フラグが無い exit だけを crash/oom/killed 判定に回す。
+- **意図的停止フラグは実証の結果「不要」と判明（実装では省略）。** 当初は Stop/Halt/Archive が kill する前にフラグを立てる設計を想定したが、tmux 3.3a 実機検証で **`tmux kill-session` はラッパーのシェルごと SIGHUP で落とすため `record-exit` が走らない**ことを確認（内側プロセスの SIGKILL では 137 が記録される）。よって意図的停止は原理的に記録されず、フラグは不要。加えて graceful signal（SIGINT/TERM/HUP=130/143/129）は `exitReason` で `stopped` に倒すので二重に安全。
 - **OOM 確定はクロスチェック。** `ExitCode==137` かつ Phase 1 の `oom_kill` 差分（同一ウィンドウ）あり → `ExitReason=oom`。137 だが oom_kill 差分なし → `killed`（ホスト OOM の可能性込み）。
 
 **代替案（tmux フック方式）:** `set remain-on-exit on` ＋ `pane-died` フックで `#{pane_dead_status}`／`#{pane_dead_signal}`（tmux ≥3.4）を読む。program 文字列を汚さず signal を直接取れる利点があるが、セッション自動破棄が止まるので後始末（dead pane/session の明示 kill）を自前で行い、現行の消滅検知ウィンドウと噛み合わせる必要があり複雑。**まずはラッパー方式を推奨**（簡単・移植性高・tmux バージョン非依存）。実装リスクは §6。
