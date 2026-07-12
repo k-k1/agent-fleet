@@ -193,3 +193,35 @@ func (m *manager) workspaceExtraEnv(ctx context.Context, ws Workspace) []string 
 	}
 	return env
 }
+
+// memFloorBytes is the smallest RAM a workspace may be sized to. An explicit per-user
+// value below this is raised to it so a fat-finger can't starve a container into an
+// unusable state; an unset value (0) is untouched and falls back to the default.
+const memFloorBytes = 256 * mib
+
+// resolveWorkspaceMemBytes returns the RAM cap (bytes) for ws's NEXT container start,
+// or 0 to mean "use the runtime's deployment default" (WS_MEMORY / AF_ECS_TASK_MEMORY).
+// A tenant_admin's per-user mem_limit is honored but clamped to the per-tenant cap
+// (tenantLimits.MaxWorkspaceMem) and the deployment hard ceiling (memMaxBytes), then
+// floored — so the shared host stays protected regardless of what was entered. Unset
+// per-user (0) returns 0 so the operator's default applies unchanged. Best-effort: a
+// store error falls back to the default (0) rather than guessing a value.
+func (m *manager) resolveWorkspaceMemBytes(ctx context.Context, ws Workspace) int64 {
+	ul, ok, err := m.store.GetUserLimit(ctx, ws.MembershipID)
+	if err != nil || !ok || ul.MemLimit <= 0 {
+		return 0 // unset → deployment default
+	}
+	v := ul.MemLimit
+	if t, err := m.store.GetTenant(ctx, ws.TenantID); err == nil {
+		if cap := parseLimits(t.Limits).MaxWorkspaceMem; cap > 0 && v > cap {
+			v = cap
+		}
+	}
+	if m.memMaxBytes > 0 && v > m.memMaxBytes {
+		v = m.memMaxBytes
+	}
+	if v < memFloorBytes {
+		v = memFloorBytes
+	}
+	return v
+}

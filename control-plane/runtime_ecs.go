@@ -62,6 +62,10 @@ type ecsRuntime struct {
 	token        string // CP↔Agent bearer (Workspace.AgentToken)
 	secretKey    string // per-workspace at-rest DEK (hex); "" in dev
 	extraEnv     []string
+	// cpu / memory are the Fargate task size for THIS workspace: the cfg defaults,
+	// or a size snapped up to hold the per-workspace RAM cap (fargateSize) when one is
+	// set. registerTaskDef stamps them into the task definition revision.
+	cpu, memory string
 	// waitReady polls the Agent /healthz through Endpoint(); a field so tests can
 	// stub it out (real path hits HTTP, unavailable in unit tests).
 	waitReady func(ctx context.Context, endpoint string, timeout time.Duration) error
@@ -100,6 +104,13 @@ type ecsFactory struct {
 }
 
 func (f *ecsFactory) New(ws Workspace, secretKey string, extraEnv []string) Runtime {
+	// Default to the deployment task size; when a per-workspace RAM cap is set, snap
+	// onto the smallest VALID Fargate (cpu, memory) pair that holds it — Fargate only
+	// accepts specific combinations, so a memory bump may raise CPU too.
+	cpu, memory := f.cfg.cpu, f.cfg.memory
+	if ws.MemBytes > 0 {
+		cpu, memory = fargateSize(ws.MemBytes, f.cfg.cpu)
+	}
 	return &ecsRuntime{
 		cfg:          f.cfg,
 		ecs:          f.ecs,
@@ -110,6 +121,8 @@ func (f *ecsFactory) New(ws Workspace, secretKey string, extraEnv []string) Runt
 		token:        ws.AgentToken,
 		secretKey:    secretKey,
 		extraEnv:     extraEnv,
+		cpu:          cpu,
+		memory:       memory,
 		waitReady:    httpHealthz,
 	}
 }
@@ -398,8 +411,8 @@ func (e *ecsRuntime) registerTaskDef(ctx context.Context, homeAP, claudeAP strin
 		Family:                  aws.String(e.name),
 		RequiresCompatibilities: []ecstypes.Compatibility{ecstypes.CompatibilityFargate},
 		NetworkMode:             ecstypes.NetworkModeAwsvpc,
-		Cpu:                     aws.String(e.cfg.cpu),
-		Memory:                  aws.String(e.cfg.memory),
+		Cpu:                     aws.String(e.cpu),
+		Memory:                  aws.String(e.memory),
 		ExecutionRoleArn:        strOrNil(e.cfg.execRole),
 		TaskRoleArn:             strOrNil(e.cfg.taskRole),
 		ContainerDefinitions:    []ecstypes.ContainerDefinition{container},

@@ -32,7 +32,12 @@ type Membership struct {
 type UserLimit struct {
 	MembershipID        string
 	MaxSessions, DiskGB int
-	CreatedAt           string
+	// MemLimit is the per-workspace RAM cap in BYTES (0 = unset → deployment default
+	// WS_MEMORY / AF_ECS_TASK_MEMORY). A tenant_admin sets it within the tenant cap
+	// (tenantLimits.MaxWorkspaceMem); resolveWorkspaceMemBytes clamps and applies it at
+	// container start (docker --memory / ECS task size). See docs/26 / roadmap P3-4.
+	MemLimit  int64
+	CreatedAt string
 }
 
 // MembershipView is a membership enriched with its tenant's slug/name, for the
@@ -125,6 +130,12 @@ type Workspace struct {
 	ContainerName, Network, DataDir string
 	AgentPort, AgentToken, State    string
 	CreatedAt, LastActiveAt         string
+	// MemBytes is the RESOLVED per-workspace RAM cap in bytes for the NEXT container
+	// start (0 = use the runtime's deployment default). It is NOT a persisted column:
+	// buildResolved fills it via resolveWorkspaceMemBytes before the runtime is built,
+	// and the factory (docker --memory / ECS task size) honors it when >0. Read/stop
+	// call sites leave it 0, which never needs a memory value.
+	MemBytes int64
 }
 
 // SessionRow mirrors one Agent session into the CP DB so the session list can be
@@ -228,7 +239,7 @@ type WorkspaceStore interface {
 // QuotaStore is the per-membership quota override (docs/16 P3-4).
 type QuotaStore interface {
 	GetUserLimit(ctx context.Context, membershipID string) (UserLimit, bool, error)
-	PutUserLimit(ctx context.Context, membershipID string, maxSessions, diskGB int) error
+	PutUserLimit(ctx context.Context, membershipID string, maxSessions, diskGB int, memLimit int64) error
 }
 
 // DEKStore holds the envelope-encrypted per-workspace DEK (docs/15 P3-3).

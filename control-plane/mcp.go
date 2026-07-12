@@ -677,13 +677,14 @@ func adminTools() []mcpTool {
 		},
 		{
 			name: "set_user_quota", minScope: scopeWrite, admin: true,
-			desc: "Set a member's per-user quota within the tenant (admin): max_sessions and disk_gb (0 = unset).",
+			desc: "Set a member's per-user quota within the tenant (admin): max_sessions, disk_gb, and mem_mib (workspace RAM cap in MiB). 0 = unset. mem_mib is clamped to the tenant cap + host ceiling and applied at the next container start.",
 			schema: userKeyArg(map[string]any{
 				"max_sessions": map[string]any{"type": "integer", "description": "max concurrent sessions (0 = unset)"},
 				"disk_gb":      map[string]any{"type": "integer", "description": "disk quota in GiB (0 = unset)"},
+				"mem_mib":      map[string]any{"type": "integer", "description": "workspace RAM cap in MiB (0 = unset → deployment default); applied at next container start"},
 			}, "user_key"),
 			runAdmin: func(ctx context.Context, a mcpAPI, ac *adminCtx, args map[string]any) (string, error) {
-				return a.mcpSetUserQuota(ctx, ac, argStr(args, "user_key"), argInt(args, "max_sessions"), argInt(args, "disk_gb"))
+				return a.mcpSetUserQuota(ctx, ac, argStr(args, "user_key"), argInt(args, "max_sessions"), argInt(args, "disk_gb"), int64(argInt(args, "mem_mib"))*mib)
 			},
 		},
 		// --- egress review (docs/20 M4: agent 壁打ち) ---------------------------
@@ -992,16 +993,25 @@ func (a mcpAPI) mcpStopSession(ctx context.Context, ac *adminCtx, userKey, name 
 	return text, nil
 }
 
-func (a mcpAPI) mcpSetUserQuota(ctx context.Context, ac *adminCtx, userKey string, maxSessions, diskGB int) (string, error) {
+func (a mcpAPI) mcpSetUserQuota(ctx context.Context, ac *adminCtx, userKey string, maxSessions, diskGB int, memBytes int64) (string, error) {
 	mem, _, _, err := a.mcpResolveMember(ctx, ac.tenant.ID, userKey)
 	if err != nil {
 		return "", err
 	}
-	if err := a.mgr.store.PutUserLimit(ctx, mem.ID, maxSessions, diskGB); err != nil {
+	if err := a.mgr.store.PutUserLimit(ctx, mem.ID, maxSessions, diskGB, memBytes); err != nil {
 		return "", err
 	}
-	a.mcpAudit(ctx, ac, "set_user_quota", userKey, fmt.Sprintf("max_sessions=%d disk_gb=%d", maxSessions, diskGB))
-	return jsonText(map[string]any{"user_key": userKey, "tenant": ac.tenant.Slug, "max_sessions": maxSessions, "disk_gb": diskGB})
+	// Memory feeds the built runtime, so drop the cached one → applied at next start.
+	a.mgr.evictMembershipCache(mem.ID)
+	effMem := memBytes
+	if effMem > 0 {
+		effMem = a.mgr.resolveWorkspaceMemBytes(ctx, Workspace{MembershipID: mem.ID, TenantID: ac.tenant.ID})
+	}
+	a.mcpAudit(ctx, ac, "set_user_quota", userKey, fmt.Sprintf("max_sessions=%d disk_gb=%d mem=%s", maxSessions, diskGB, formatMemHuman(effMem)))
+	return jsonText(map[string]any{
+		"user_key": userKey, "tenant": ac.tenant.Slug, "max_sessions": maxSessions, "disk_gb": diskGB,
+		"mem_mib": memBytes / mib, "mem_effective_mib": effMem / mib,
+	})
 }
 
 // agentText performs an authenticated CP→Agent request and returns the body as
