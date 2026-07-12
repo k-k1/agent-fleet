@@ -2,16 +2,20 @@ import { useEffect, useState, type ReactNode } from "react";
 import {
   useSettings,
   setSetting,
+  setSettings,
   VOICEVOX_ZUNDAMON,
   TTS_SPEEDS,
   TTS_CACHE_SIZES,
   TTS_PROVIDERS,
   TTS_POLLY_VOICES,
+  TTS_RESET,
   type TtsCharConf,
 } from "../../lib/settings.ts";
 import { voiceCharacters, isDefaultVoice, previewVoice } from "../chat/tts.ts";
 import { loadSpeakers, speakersCatalog } from "../chat/ttsSpeakers.ts";
 import { Icon } from "../../ui/Icon.tsx";
+import { Button } from "../../ui/Button.tsx";
+import { useConfirm } from "../../ui/ConfirmProvider.tsx";
 import { Choice, OnOff } from "./controls.tsx";
 
 // TtsTab — 音声読み上げ（TTS, docs/24 + ADR0013）の設定タブ。もとは AgentsTab から分離した
@@ -22,6 +26,23 @@ import { Choice, OnOff } from "./controls.tsx";
 // 「音声通知」だけは読み上げ本体（ttsEnabled）と独立に効くため、トグルの外＝最後に置く。
 export function TtsTab() {
   const s = useSettings();
+  const confirm = useConfirm();
+  // リセット＝音声読み上げ設定を「初期状態」(TTS_RESET) に戻す。キャラクターの「全てチェック」は
+  // カタログ依存なので、いま分かっているキャラ全員を use:true にしたプールを組んで一緒に書き戻す
+  // （エンジンが停止中でも静的フォールバックの標準キャラ全員がチェックされる）。読み仮名辞書は
+  // ユーザーが打ち込んだ内容なので消さない（TTS_RESET に含めていない）。多数のキーを一度に書くため
+  // setSettings（バッチ）で 1 レンダー・1 保存にまとめる。
+  const resetTts = async () => {
+    if (!(await confirm({
+      title: "音声読み上げ設定をリセット",
+      body: "音声読み上げのすべての設定を初期状態に戻します（読み仮名辞書は残ります）。よろしいですか？",
+      confirmLabel: "リセット",
+    }))) return;
+    await loadSpeakers(); // 全キャラをチェックするため実カタログを取れるだけ取ってから組み立てる
+    const pool: Record<string, TtsCharConf> = {};
+    for (const c of voiceCharacters()) pool[c.name] = { use: true };
+    setSettings({ ...TTS_RESET, ttsVoicePool: pool });
+  };
   return (
     <div className="display-settings">
       <section className="ds-group">
@@ -210,6 +231,15 @@ export function TtsTab() {
           バックグラウンドのセッションが回答／確認を返したら、セッション名を添えて短く音声でお知らせします
           （複数同時でも順番に読み上げ）。ブラウザ通知に音声を足すもので、Console のタブが見えている間だけ有効です。
           上の「音声読み上げ」がオフでも独立して使えます（声・速度などの設定は共通）。
+        </p>
+      </section>
+      <section className="ds-group ds-reset">
+        <Button variant="ghost" icon="discard" onClick={resetTts}>
+          設定を初期状態にリセット
+        </Button>
+        <p className="muted ds-note">
+          このタブの音声読み上げ設定をすべて初期状態（音声読み上げ・音声通知はオフ、ほかはおすすめの
+          初期値）に戻します。読み仮名辞書は消えません。
         </p>
       </section>
     </div>
