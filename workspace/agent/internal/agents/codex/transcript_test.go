@@ -304,6 +304,85 @@ func TestCodexQuestionAnswerFromRollout(t *testing.T) {
 	}
 }
 
+func TestCodexExecScriptParts(t *testing.T) {
+	// codex 0.144+ "exec" tool: a JS snippet that applies a patch and runs a command.
+	js := `const patch = "*** Begin Patch\n*** Update File: /p/README.md\n@@\n old line\n+new line\n*** End Patch";
+const a = await tools.apply_patch(patch);
+const r = await tools.exec_command({cmd:"ls -la && echo done","workdir":"/p","yield_time_ms":10000}); text(r.output)`
+	parts := execScriptParts(js)
+	if len(parts) < 2 {
+		t.Fatalf("execScriptParts = %+v, want an exec_command trace + a diff part", parts)
+	}
+	if parts[0].Kind != "tool" || parts[0].Tool != "exec_command" || parts[0].Info != "ls -la && echo done" {
+		t.Errorf("parts[0] = %+v, want exec_command trace with the shell command", parts[0])
+	}
+	var diff *transcript.Part
+	for i := range parts {
+		if parts[i].Tool == "apply_patch" || parts[i].File != "" {
+			diff = &parts[i]
+		}
+	}
+	if diff == nil || diff.File == "" || len(diff.Edits) == 0 {
+		t.Fatalf("no apply_patch diff part with File+Edits in %+v", parts)
+	}
+	if !strings.Contains(diff.File, "README.md") {
+		t.Errorf("diff.File = %q, want the patched path", diff.File)
+	}
+}
+
+func TestCodexExecScriptCommandOnly(t *testing.T) {
+	js := `const r = await tools.exec_command({cmd:"rtk git status --short","workdir":"/p"}); text(r.output)`
+	parts := execScriptParts(js)
+	if len(parts) != 1 || parts[0].Tool != "exec_command" || parts[0].Info != "rtk git status --short" {
+		t.Fatalf("execScriptParts = %+v, want a single exec_command trace", parts)
+	}
+	if isExecScript(`*** Begin Patch\n…`) {
+		t.Errorf("a bare patch envelope must not be treated as a JS exec script")
+	}
+}
+
+// TestCodexCustomToolCallExec runs the end-to-end path for codex 0.144+: a custom_tool_call
+// name=exec + its array-shaped output resolve to a clean command trace + diff with output.
+func TestCodexCustomToolCallExec(t *testing.T) {
+	input := `const r = await tools.exec_command({cmd:"echo hi","workdir":"/p"}); text(r.output)`
+	call := map[string]any{"type": "custom_tool_call", "name": "exec", "call_id": "c1", "input": input}
+	// output is codex 0.144's [{type:input_text,text}] array
+	outBlocks := []map[string]string{{"type": "input_text", "text": "Script completed\nOutput:\n"}, {"type": "input_text", "text": "hi\n"}}
+	callOut := map[string]any{"type": "custom_tool_call_output", "call_id": "c1", "output": outBlocks}
+	lines := [][]byte{
+		wrapItem(t, call),
+		wrapItem(t, callOut),
+	}
+	turns, _ := parseRollout(lines)
+	var got *transcript.Part
+	for i := range turns {
+		for j := range turns[i].Parts {
+			if turns[i].Parts[j].Tool == "exec_command" {
+				got = &turns[i].Parts[j]
+			}
+		}
+	}
+	if got == nil {
+		t.Fatalf("no exec_command part in %+v", turns)
+	}
+	if got.Info != "echo hi" {
+		t.Errorf("info = %q, want the shell command", got.Info)
+	}
+	if !strings.Contains(got.Output, "hi") || strings.Contains(got.Output, "input_text") {
+		t.Errorf("output = %q, want the concatenated command text, not the raw array", got.Output)
+	}
+}
+
+// wrapItem marshals a response_item payload line for parseRollout.
+func wrapItem(t *testing.T, payload map[string]any) []byte {
+	t.Helper()
+	b, err := json.Marshal(map[string]any{"type": "response_item", "payload": payload})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
 func mustJSON(v string) []byte {
 	b, err := json.Marshal(v)
 	if err != nil {

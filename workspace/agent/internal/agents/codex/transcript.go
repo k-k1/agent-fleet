@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -307,10 +308,14 @@ func parseResponseItem(payload json.RawMessage, ts string, idx int, cwd, branch 
 	}
 	switch p.Type {
 	case "custom_tool_call":
-		// A freeform tool call — in practice apply_patch (codex's edit tool, invoked with
-		// the raw patch envelope as `input`). Parsed into per-file before/after parts so
-		// the trace opens as a diff pane, like claude's Edit/Write. Other custom tools
-		// fall back to a plain trace. Output attaches when custom_tool_call_output lands.
+		// A freeform tool call. Two shapes seen:
+		//   - codex ≤0.143: name=apply_patch, `input` = the raw patch envelope.
+		//   - codex 0.144+: name=exec, `input` = a JS snippet driving tools.exec_command /
+		//     tools.apply_patch (unified "exec" tool). We destructure the JS to recover the
+		//     command + patch so the trace still shows a clean command and opens a diff pane.
+		// Either way it's parsed into per-file before/after parts (diff pane, like claude's
+		// Edit/Write) when a patch is present, else a plain trace. Output attaches when
+		// custom_tool_call_output lands.
 		var ct struct {
 			Name   string `json:"name"`
 			CallID string `json:"call_id"`
@@ -323,7 +328,12 @@ func parseResponseItem(payload json.RawMessage, ts string, idx int, cwd, branch 
 		if name == "" {
 			name = "tool"
 		}
-		parts := patchParts(name, ct.Input)
+		var parts []transcript.Part
+		if isExecScript(ct.Input) {
+			parts = execScriptParts(ct.Input)
+		} else {
+			parts = patchParts(name, ct.Input)
+		}
 		if len(parts) == 0 {
 			parts = []transcript.Part{{Kind: "tool", Tool: name, Info: transcript.Clip(ct.Input)}}
 		}
@@ -445,7 +455,11 @@ func reasoningText(payload json.RawMessage) string {
 
 // parseCallOutput returns a function_call_output's / custom_tool_call_output's call_id
 // and its (truncated) output text, or "","" for other payloads. The output is codex's
-// tool result; the JSON shape varies (string, or {output:...}) so we best-effort stringify.
+// tool result; the JSON shape varies so we best-effort stringify:
+//   - a bare string
+//   - {output|content: "…"}
+//   - codex 0.144+: an array of {type:"input_text",text:"…"} blocks (unified exec) — we
+//     concatenate their text.
 func parseCallOutput(payload json.RawMessage) (callID, output string) {
 	var p struct {
 		Type   string          `json:"type"`
@@ -458,9 +472,24 @@ func parseCallOutput(payload json.RawMessage) (callID, output string) {
 	}
 	out := ""
 	if len(p.Output) > 0 {
-		if p.Output[0] == '"' {
+		switch p.Output[0] {
+		case '"':
 			_ = json.Unmarshal(p.Output, &out)
-		} else {
+		case '[':
+			var blocks []struct {
+				Text string `json:"text"`
+			}
+			if json.Unmarshal(p.Output, &blocks) == nil {
+				var sb strings.Builder
+				for _, b := range blocks {
+					sb.WriteString(b.Text)
+				}
+				out = sb.String()
+			}
+			if out == "" {
+				out = string(p.Output)
+			}
+		default:
 			// {output:"...", ...} or a structured result — pull a text field if present.
 			var m map[string]any
 			if json.Unmarshal(p.Output, &m) == nil {
@@ -604,6 +633,69 @@ func applyPatchInput(payload json.RawMessage) string {
 		return ""
 	}
 	return args.Input
+}
+
+// codex 0.144+ packs its unified "exec" custom tool as a JS snippet, e.g.
+//
+//	const patch = "*** Begin Patch\n*** Update File: /p\n@@\n a\n+b\n*** End Patch";
+//	const a = await tools.apply_patch(patch);
+//	const r = await tools.exec_command({cmd:"ls -la","workdir":"/p",…}); text(r.output)
+//
+// jsCmdRe pulls the shell command out of exec_command({cmd:"…"}); the patch is found by
+// scanning string literals for the "Begin Patch" marker (see extractExecScript).
+var (
+	jsCmdRe = regexp.MustCompile(`\bcmd\s*:\s*"((?:[^"\\]|\\.)*)"`)
+	jsStrRe = regexp.MustCompile(`"((?:[^"\\]|\\.)*)"`)
+)
+
+// isExecScript reports whether a custom_tool_call input is the codex 0.144+ JS "exec"
+// snippet (drives tools.exec_command / tools.apply_patch) rather than a bare patch
+// envelope.
+func isExecScript(input string) bool {
+	return strings.Contains(input, "tools.exec_command") || strings.Contains(input, "tools.apply_patch")
+}
+
+// execScriptParts destructures a codex 0.144+ JS "exec" snippet into display parts: the
+// shell command as a tool trace (Output attaches here — it's Parts[0]) and, when the
+// snippet applies a patch, the per-file diff parts after it. Returns nil when nothing is
+// recoverable, so the caller can fall back to a raw trace.
+func execScriptParts(input string) []transcript.Part {
+	cmd, patch := extractExecScript(input)
+	var parts []transcript.Part
+	if cmd != "" {
+		parts = append(parts, transcript.Part{Kind: "tool", Tool: "exec_command", Info: transcript.Clip(cmd)})
+	}
+	if patch != "" {
+		parts = append(parts, patchParts("apply_patch", patch)...)
+	}
+	return parts
+}
+
+// extractExecScript recovers the exec_command shell command and the apply_patch envelope
+// from a JS "exec" snippet. Both are JS double-quoted string literals whose escapes are
+// JSON-compatible, so unescapeJS decodes them.
+func extractExecScript(input string) (cmd, patch string) {
+	if m := jsCmdRe.FindStringSubmatch(input); m != nil {
+		cmd = unescapeJS(m[1])
+	}
+	for _, m := range jsStrRe.FindAllStringSubmatch(input, -1) {
+		if strings.Contains(m[1], "Begin Patch") {
+			patch = unescapeJS(m[1])
+			break
+		}
+	}
+	return cmd, patch
+}
+
+// unescapeJS decodes a JS double-quoted string literal body (\n, \", \\, \uXXXX, …) by
+// round-tripping it through a JSON string, whose escape grammar these payloads share.
+// Falls back to the raw body when it isn't valid JSON.
+func unescapeJS(body string) string {
+	var s string
+	if json.Unmarshal([]byte(`"`+body+`"`), &s) == nil {
+		return s
+	}
+	return body
 }
 
 // patchParts parses an apply_patch envelope ("*** Begin Patch" … "*** End Patch")
