@@ -218,6 +218,25 @@ function whenText(iso: string) {
   return `${d.getMonth() + 1}/${d.getDate()} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
+// resetChipText: reset instant → the compact form shown ON the chip when a window is
+// Max付近. Same-day resets drop the date (just HH:MM); a later day keeps M/D so the
+// day is unambiguous.
+function resetChipText(iso: string) {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  const p = (n: number) => String(n).padStart(2, "0");
+  const now = new Date();
+  const sameDay =
+    d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
+  const hm = `${p(d.getHours())}:${p(d.getMinutes())}`;
+  return sameDay ? hm : `${d.getMonth() + 1}/${d.getDate()} ${hm}`;
+}
+
+// Max付近しきい値: 枠の利用率がこの値以上なら、チップを「N% / M%」からその枠のリセット時刻
+// 表示へ切り替える（あと僅かで詰まる／既に詰まっている＝「いつ解放されるか」の方が有用）。
+// ドロップダウンの crit 着色境界（95%）と揃える。
+const NEAR_MAX_PCT = 95;
+
 // A usage source = one agent's subscription-limit chip (Claude / Codex). Both endpoints
 // return the same {ok, fiveHour, sevenDay, ageSec} shape (codex reads its rate_limits
 // straight from the rollout — no network), so one chip component renders either.
@@ -288,7 +307,25 @@ function UsageChip({ src, tenant }: { src: UsageSource; tenant: string | null })
   const uh = usage && usage.fiveHour && win(usage.fiveHour);
   const uw = usage && usage.sevenDay && win(usage.sevenDay);
   if (!uh && !uw) return null; // no reading yet → hide the chip entirely
-  const label = [uh && `${uh.pct}%`, uw && `${uw.pct}%`].filter(Boolean).join(" / ");
+
+  // Max付近（利用率 ≥ NEAR_MAX_PCT）の枠があれば、% ではなく「いつ解放されるか」を出す。候補は
+  // Max付近の枠だけ、その中で最も早くリセットする枠（＝最初に解放される時刻）を 1 つだけ。両枠
+  // とも Max付近なら近い方（通常は5時間枠）になる。詳細（どの枠か・%・相対）はツールチップへ。
+  const nearMax: { label: string; pct: number; resetsAt: string }[] = [];
+  if (usage.fiveHour && usage.fiveHour.pct >= NEAR_MAX_PCT && usage.fiveHour.resetsAt)
+    nearMax.push({ label: src.fiveLabel, ...usage.fiveHour });
+  if (usage.sevenDay && usage.sevenDay.pct >= NEAR_MAX_PCT && usage.sevenDay.resetsAt)
+    nearMax.push({ label: src.weekLabel, ...usage.sevenDay });
+  const bind = nearMax.length
+    ? nearMax.reduce((a, b) => (new Date(a.resetsAt).getTime() <= new Date(b.resetsAt).getTime() ? a : b))
+    : null;
+
+  const label = bind
+    ? resetChipText(bind.resetsAt)
+    : [uh && `${uh.pct}%`, uw && `${uw.pct}%`].filter(Boolean).join(" / ");
+  const chipTitle = bind
+    ? `${src.name}・${bind.label} ${Math.round(bind.pct)}% — ${untilText(bind.resetsAt)}でリセット（${whenText(bind.resetsAt)}）`
+    : src.title;
 
   return (
     <div className="ws-usage-wrap" ref={ref}>
@@ -297,12 +334,12 @@ function UsageChip({ src, tenant }: { src: UsageSource; tenant: string | null })
       <button
         type="button"
         className={"kind-tag " + src.cls + " ws-usage-btn"}
-        title={src.title}
+        title={chipTitle}
         aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
       >
         <Icon name={src.icon} />
-        <span className="ws-usage-nums">{label}</span>
+        <span className={"ws-usage-nums" + (bind ? " crit" : "")}>{label}</span>
         <Icon name="chevron-down" />
       </button>
       {open && (
