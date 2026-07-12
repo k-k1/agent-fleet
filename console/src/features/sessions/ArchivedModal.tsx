@@ -1,6 +1,6 @@
 // ArchivedModal — archived sessions (hidden from the list but kept on disk):
 // restore (back as a stopped session) or delete permanently. Grouped by working
-// dir, filterable, bulk-prunable by age (>30 days).
+// dir, filterable, bulk-prunable by age (>7 days).
 import { useEffect, useMemo, useState } from "react";
 import { Modal } from "../../ui/Modal.tsx";
 import { Button, IconButton } from "../../ui/Button.tsx";
@@ -30,7 +30,7 @@ const groupLabel = (dir: string, head?: ArchivedSession) => {
 };
 
 // "Old" cutoff for bulk-prune. No createdAt = never pruned by age.
-const OLD_DAYS = 30;
+const OLD_DAYS = 7;
 const isOld = (s: ArchivedSession, now: number) => {
   if (!s.createdAt) return false;
   const t = new Date(s.createdAt).getTime();
