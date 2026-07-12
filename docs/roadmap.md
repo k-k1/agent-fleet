@@ -203,11 +203,11 @@ Deployment ルート鍵 / Tenant KEK   ← custodian が保護。AWS=KMS CMK、�
 |------|--------------------------|----------------------------|--------------|
 | Workspace 数 | max_workspaces（≒同時稼働ユーザー）| 1 user = 1 workspace（既定）| Workspace.Start |
 | セッション数 | max_sessions（テナント合計）| max_sessions/user | Session.Create |
-| メモリ/CPU | allocated_mem ≤ tenant cap | workspace の mem/cpu サイズ | Start（`--memory`/ECS task size）|
+| メモリ/CPU | allocated_mem ≤ tenant cap ✅（メモリ）| workspace の mem サイズ ✅ / cpu は後続 | Start（`--memory`/ECS task size）|
 | ディスク | total_disk_gb | disk_gb/user | clone / 定期計測 |
 
 - **強制方式（小規模）**: **ハードクォータ**。超過は `429` + 明示メッセージ。外部課金が無いので overage は社内配分の調整事項。
-- **メモリ/CPU**: 既に `--memory`（docker, 既定 `WS_MEMORY=1g`）/ ECS task size で実装可能。テナント合計 ≤ cap を Start 時に検査。
+- **メモリ/CPU**: ✅ メモリは per-workspace で実装済み。2 段クォータ（super_admin が `tenant.limits.max_workspace_mem` cap、tenant_admin が `user_limit.mem_limit`）を Start 時に `[床/テナントcap/ホスト天井 AF_MAX_WORKSPACE_MEM]` へクランプし、docker `--memory` / ECS task size（`fargateSize` で有効な Fargate 組へスナップ）に反映。未設定は既定 `WS_MEMORY`。CPU の per-workspace 化とテナント合計 ≤ cap の 429 は後続。
 - **ディスククォータは正直に難しい**（明示）:
   - local bind mount: XFS project quota / `--storage-opt size=`（overlay2+xfs）が要る。MVP は **計測（du）して clone 時/定期に soft-block**。
   - EFS: per-AP ハードクォータが無い。同様に **meter-and-block**。ハード FS クォータは後付け。

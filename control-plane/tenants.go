@@ -94,6 +94,7 @@ func (a adminAPI) listTenants(w http.ResponseWriter, r *http.Request, ident Iden
 			"max_workspaces": lim.MaxWorkspaces, "max_sessions": lim.MaxSessions,
 			"max_git_repos":        lim.MaxGitRepos,
 			"max_lfs_bytes":        lim.MaxLFSBytes,
+			"max_workspace_mem":    lim.MaxWorkspaceMem,
 			"session_idle_timeout": lim.SessionIdleTimeout, "ws_idle_timeout": lim.WSIdleTimeout,
 			"allow_agent_self_update": lim.AllowAgentSelfUpdate,
 		})
@@ -122,6 +123,7 @@ func (a adminAPI) listMembers(w http.ResponseWriter, r *http.Request) {
 		}
 		if ul, ok, _ := a.mgr.store.GetUserLimit(r.Context(), m.MembershipID); ok {
 			row["max_sessions"] = ul.MaxSessions
+			row["mem_limit"] = ul.MemLimit
 		}
 		out = append(out, row)
 	}
