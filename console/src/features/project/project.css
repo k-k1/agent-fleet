@@ -19,12 +19,26 @@
   background: var(--border);
 }
 
+/* Sticky band that carries the 絞り込み box: pins right under the section header
+   (--sec-head-h, published by Section) so it stays put like the header while the
+   rows scroll. Opaque (rail surface) full-width so scrolled rows don't show
+   through the box's margins; below the header band (z:3), above the rows. */
+.proj-filter-bar {
+  position: sticky;
+  top: var(--sec-head-h, 34px);
+  z-index: 2;
+  background: var(--leftpane-bg);
+  /* Own the box's vertical spacing here (padding, not the child's margin) so it
+     can't margin-collapse through this sticky band and open a gap when pinned. */
+  padding: 3px 0 2px;
+}
+
 /* Quick filter box (repos + sessions, incl. その他のセッション). */
 .proj-filter {
   display: flex;
   align-items: center;
   gap: 6px;
-  margin: 3px 8px 2px;
+  margin: 0 8px;
   padding: 2px 8px;
   background: var(--panel2);
   border: 1px solid var(--btn-border);
