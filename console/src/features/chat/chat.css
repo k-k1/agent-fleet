@@ -235,6 +235,7 @@
    tinted icon square (.chat-kic follows the left-pane accent, since assistants
    have no agent kind) + title + muted count + icon-only state chip. */
 .chat-row {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 2px;
@@ -271,11 +272,31 @@
   font-size: 11px;
   color: var(--muted);
 }
+/* Edit/delete overlay the row's right edge (absolute) instead of reserving a
+   trailing column — a resting row spends that width on the title and the count +
+   state chip sit flush right. Revealed on hover; hidden they take no clicks. */
+.chat-actions {
+  position: absolute;
+  right: 4px;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
 .chat-row .chat-del {
   opacity: 0;
+  pointer-events: none;
 }
 .chat-row:hover .chat-del {
   opacity: 1;
+  pointer-events: auto;
+}
+/* Hand the right edge over to the action buttons on hover so they don't stack
+   on top of the count / state chip. */
+.chat-row:hover .chat-open-meta,
+.chat-row:hover .chat-open .session-state {
+  opacity: 0;
 }
 
 /* Assistant templates (Q2): the ＋新規 picker popover + rows in the left rail. */
