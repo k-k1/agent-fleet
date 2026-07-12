@@ -59,11 +59,11 @@ export function useSessionNotifications(): void {
           // 声はセッション単位で固定（sessionVoiceOpts）。表示名でなくセッション名で引く
           // （リネームで声が変わらないように）。
           if (speak && !(mirrored && st.ttsAutoReadMirror))
-            announce(`${displayName(s)} の回答が返りました。`, displayName(s), sessionVoiceOpts(s.name));
+            announce(`${displayName(s)} の回答が返りました。`, displayName(s), sessionVoiceOpts(s.name), s.name);
         } else if (s.state === "question") {
           notify("質問が来ています", displayName(s));
           if (speak && !(mirrored && st.ttsReadPending))
-            announce(`${displayName(s)} が確認を求めています。`, displayName(s), sessionVoiceOpts(s.name));
+            announce(`${displayName(s)} が確認を求めています。`, displayName(s), sessionVoiceOpts(s.name), s.name);
         }
       }
       prev[s.name] = s.state;
