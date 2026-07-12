@@ -9,6 +9,12 @@ package main
 
 var techKana = map[string]string{
 	// --- 開発ジャルゴン / 一般 ---
+	"agent":      "エージェント", // CMUdict は "エイジャント" 寄りに誤読（実機フィードバック）
+	"manage":     "マネージ",   // manage 系は CMUdict だと "マナジ..." になる（長音が落ちる）
+	"managed":    "マネージド",  // 実機フィードバック（例: "マネージドサービス"）
+	"manager":    "マネージャー",
+	"managers":   "マネージャーズ",
+	"management": "マネジメント", // この語だけ慣用的に長音無し（マネージメントでなく）
 	"dao":        "ダオ",
 	"json":       "ジェイソン",
 	"yaml":       "ヤムル",
