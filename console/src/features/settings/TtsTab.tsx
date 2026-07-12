@@ -27,9 +27,8 @@ import { Choice, OnOff } from "./controls.tsx";
 export function TtsTab() {
   const s = useSettings();
   const confirm = useConfirm();
-  // リセット＝音声読み上げ設定を「初期状態」(TTS_RESET) に戻す。キャラクターの「全てチェック」は
-  // カタログ依存なので、いま分かっているキャラ全員を use:true にしたプールを組んで一緒に書き戻す
-  // （エンジンが停止中でも静的フォールバックの標準キャラ全員がチェックされる）。読み仮名辞書は
+  // リセット＝音声読み上げ設定を「初期状態」(TTS_RESET = DEFAULTS の TTS キー) に戻す。キャラは
+  // ttsVoicePool: {} ＝標準 14 キャラのスタートで、新規ユーザーの初期状態と揃う。読み仮名辞書は
   // ユーザーが打ち込んだ内容なので消さない（TTS_RESET に含めていない）。多数のキーを一度に書くため
   // setSettings（バッチ）で 1 レンダー・1 保存にまとめる。
   const resetTts = async () => {
@@ -38,10 +37,7 @@ export function TtsTab() {
       body: "音声読み上げのすべての設定を初期状態に戻します（読み仮名辞書は残ります）。よろしいですか？",
       confirmLabel: "リセット",
     }))) return;
-    await loadSpeakers(); // 全キャラをチェックするため実カタログを取れるだけ取ってから組み立てる
-    const pool: Record<string, TtsCharConf> = {};
-    for (const c of voiceCharacters()) pool[c.name] = { use: true };
-    setSettings({ ...TTS_RESET, ttsVoicePool: pool });
+    setSettings(TTS_RESET);
   };
   return (
     <div className="display-settings">

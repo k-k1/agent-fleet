@@ -257,9 +257,9 @@ const DEFAULTS: Settings = {
   ttsAutoReadMirror: true,
   ttsAutoReadAllPanes: true,
   ttsVoicePerSession: true,
-  // {} = 標準 14 キャラ（tts.ts の SESSION_VOICES）がセッション割り当て対象。静的な既定には
-  // 「エンジンの全キャラ」を焼き込めない（全一覧は実行時にしか分からない）ため、標準 14 人を
-  // 既定チェックとする。それを超える追加キャラまで全部チェックするのは明示リセット時のみ。
+  // {} = 標準 14 キャラ（tts.ts の SESSION_VOICES）がセッション割り当て対象。新規ユーザーも
+  // リセットもこの状態から始まる（キャラは標準 14 人スタートで統一）。エンジンに追加キャラが
+  // いても、使いたければキャラクター一覧で個別にチェックする運用。
   ttsVoicePool: {},
   ttsEmotion: false,
   ttsReadPending: true,
@@ -304,9 +304,9 @@ export const TTS_CACHE_SIZES: [number, string][] = [
 
 // 音声読み上げ設定の「初期状態」（設定タブのリセットボタンが書き戻す値）。DEFAULTS の TTS 関連
 // キーだけを抜き出したもので、新規ユーザーの初期値と常に一致する（DEFAULTS を単一の真実源に
-// することでドリフトを防ぐ）。キャラクターの「全てチェック」はカタログ依存なので TtsTab 側で
-// ttsVoicePool を組み立てて足す（ここには含めない）。読み仮名辞書（ttsUserDict）はユーザーが
-// 打ち込んだ内容なのでリセットでは消さない（含めない）。
+// することでドリフトを防ぐ）。ttsVoicePool は {}（= tts.ts の標準 14 キャラがチェック済み）で、
+// リセットも新規ユーザーもキャラは標準 14 人からのスタートで揃う。読み仮名辞書（ttsUserDict）は
+// ユーザーが打ち込んだ内容なのでリセットでは消さない（含めない）。
 const TTS_RESET_KEYS = [
   "ttsEnabled",
   "ttsSessionNotify",
@@ -314,6 +314,7 @@ const TTS_RESET_KEYS = [
   "ttsVoiceVoicevox",
   "ttsVoicePolly",
   "ttsVoicePerSession",
+  "ttsVoicePool",
   "ttsEmotion",
   "ttsSpeed",
   "ttsAutoReadMirror",
