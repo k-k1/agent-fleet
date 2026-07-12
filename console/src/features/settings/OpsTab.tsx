@@ -5,6 +5,7 @@ import { useWorkspaceStore, wsStartBusy } from "../../core/store/workspace.ts";
 import { EmptyState } from "../../ui/EmptyState.tsx";
 import { Button } from "../../ui/Button.tsx";
 import { useConnections } from "./useConnections.ts";
+import { OnOff } from "./controls.tsx";
 import { ProviderCard, StatusPill, Hint, DisconnectButton } from "./providerCard.tsx";
 
 // OpsTab is the home for service-operations connections (docs/25 Phase 1): external
@@ -111,10 +112,15 @@ function PagerDutyCard({ st, reload }: { st: any; reload: () => void }) {
               接続
             </button>
           </div>
-          <label className="ds-check">
-            <input type="checkbox" checked={eu} onChange={(e) => setEu(e.target.checked)} />
-            <span>EU アカウント（api.eu.pagerduty.com）</span>
-          </label>
+          <div className="ps-row">
+            <span className="ps-label">
+              EU リージョン
+              <span className="sub">
+                PagerDuty に app.eu.pagerduty.com でログインしている場合のみオン（通常はオフのまま）
+              </span>
+            </span>
+            <OnOff value={eu} onChange={setEu} />
+          </div>
           <Hint>
             読み取り専用キーを推奨します（PagerDuty の Integrations &gt; API Access Keys で「Read-only」を選択）。
             キーはワークスペース内に暗号化保存され、MCP サーバの起動時にだけ渡されます。書き込み操作（ack/resolve
