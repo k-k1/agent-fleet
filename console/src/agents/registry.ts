@@ -138,10 +138,12 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     // gauge works — codex logs token counts too. Plan mode + inline request_user_input
     // questions are supported. headlessChat via `codex exec --json` (assistant chat /
     // title suggestion backend); fork via `codex fork <id>` (server ForkSource).
+    // model: launch-time only, fixed catalog (CODEX_MODELS) → `codex -m`.
     caps: caps({
       chat: true,
       headlessChat: true,
       transcript: true,
+      model: true,
       fork: true,
       contextBar: true,
       planMode: true,
@@ -167,10 +169,13 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     // handler. Context gauge works (per-message tokens); plan mode + inline question tool.
     // headlessChat via `opencode run --format json` (assistant chat / title backend);
     // fork via `opencode --session <id> --fork` (server ForkSource).
+    // model: launch-time only, live catalog (api/agents/opencode/models — reflects the
+    // user's connected providers) → `opencode --model provider/model`.
     caps: caps({
       chat: true,
       headlessChat: true,
       transcript: true,
+      model: true,
       fork: true,
       contextBar: true,
       planMode: true,
