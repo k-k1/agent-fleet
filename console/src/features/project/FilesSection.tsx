@@ -103,28 +103,30 @@ export function FilesSection() {
         <FilesChanges />
       ) : (
         <>
-          <div className="proj-filter">
-            <Icon name="search" />
-            <input
-              ref={filterRef}
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Escape") setQ("");
-                // Enter hands focus to the tree (its keydown then drives selection).
-                else if (e.key === "Enter") {
-                  e.preventDefault();
-                  focusTree();
-                }
-              }}
-              placeholder="絞り込み（ファイル）"
-              aria-label="ファイルを絞り込み"
-            />
-            {q && (
-              <button type="button" className="proj-filter-clear" title="クリア" onClick={() => setQ("")}>
-                <Icon name="close" />
-              </button>
-            )}
+          <div className="proj-filter-bar">
+            <div className="proj-filter">
+              <Icon name="search" />
+              <input
+                ref={filterRef}
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") setQ("");
+                  // Enter hands focus to the tree (its keydown then drives selection).
+                  else if (e.key === "Enter") {
+                    e.preventDefault();
+                    focusTree();
+                  }
+                }}
+                placeholder="絞り込み（ファイル）"
+                aria-label="ファイルを絞り込み"
+              />
+              {q && (
+                <button type="button" className="proj-filter-clear" title="クリア" onClick={() => setQ("")}>
+                  <Icon name="close" />
+                </button>
+              )}
+            </div>
           </div>
           <ProjectFiles root="repos" markRepos />
           {/* home: the rest of ~ (repos/ shows again inside — harmless). Lazy:
