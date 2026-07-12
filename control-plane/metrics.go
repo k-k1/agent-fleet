@@ -142,6 +142,89 @@ func readCgroupUint(path string) (uint64, bool) {
 	return v, err == nil
 }
 
+// readCgroupKV reads one "key value" line from a flat cgroup file (e.g. memory.events,
+// whose lines are "oom_kill 3"). Reports !ok when the file or key is absent.
+func readCgroupKV(path, key string) (uint64, bool) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return 0, false
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		f := strings.Fields(line)
+		if len(f) == 2 && f[0] == key {
+			v, err := strconv.ParseUint(f[1], 10, 64)
+			return v, err == nil
+		}
+	}
+	return 0, false
+}
+
+// --- OOM detection ---
+//
+// memory.events' oom_kill is the cumulative count of processes the memory cgroup has
+// OOM-killed in this container. The container can survive that (its init lives on while
+// a heavy child — a build, an agent — is reaped), so this is the ONLY container-level
+// signal for an in-container OOM: docker's .State.OOMKilled flips only when the init
+// itself dies. We track the counter per container id and flag oom_recent while a NEW
+// kill is within oomRecentWindow, so the WsBar chip can warn right after an OOM even
+// though the poll that saw the increment has passed.
+
+const oomRecentWindow = 5 * time.Minute
+
+type oomState struct {
+	total  uint64
+	lastAt time.Time
+}
+
+// oomTracker remembers each container's cumulative oom_kill so a rise can be detected
+// across polls. Keyed by id (a recreate = new id starts fresh); entries are tiny and
+// few, so like cpuTracker they are not pruned.
+type oomTracker struct {
+	mu sync.Mutex
+	m  map[string]oomState
+}
+
+// observe records total for id and reports whether a NEW kill landed within the recent
+// window. The FIRST sample for an id only establishes a baseline (a pre-existing count
+// from before the CP started, or from a prior poll gap, is not news), so it is never
+// "recent".
+func (t *oomTracker) observe(id string, total uint64, now time.Time) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	st, had := t.m[id]
+	if had && total > st.total {
+		st.lastAt = now
+	}
+	st.total = total
+	t.m[id] = st
+	return had && !st.lastAt.IsZero() && now.Sub(st.lastAt) < oomRecentWindow
+}
+
+var oomKills = &oomTracker{m: map[string]oomState{}}
+
+// stoppedState is a container's exit disposition, read once it is no longer running.
+type stoppedState struct {
+	oomKilled bool
+	exitCode  int
+}
+
+// dockerStoppedState inspects a non-running container for whether the kernel OOM-killed
+// it and its exit code — the "the whole workspace died from OOM" signal (distinct from
+// an in-container child OOM, which oom_kill above catches while the container lives).
+func dockerStoppedState(ctx context.Context, name string) stoppedState {
+	out, err := exec.CommandContext(ctx, "docker", "inspect", "-f", "{{.State.OOMKilled}} {{.State.ExitCode}}", name).Output()
+	if err != nil {
+		return stoppedState{}
+	}
+	f := strings.Fields(string(out))
+	if len(f) < 2 {
+		return stoppedState{}
+	}
+	st := stoppedState{oomKilled: f[0] == "true"}
+	st.exitCode, _ = strconv.Atoi(f[1])
+	return st
+}
+
 func readUsageUsec(scope string) (uint64, bool) {
 	b, err := os.ReadFile(scope + "/cpu.stat")
 	if err != nil {
@@ -176,7 +259,16 @@ func containerCPUPct(id, scope string) (float64, bool) {
 func containerStats(ctx context.Context, name string) map[string]any {
 	id := dockerContainerID(ctx, name)
 	if id == "" {
-		return map[string]any{"running": false}
+		// Stopped: surface an OOM-kill of the container itself so the Console can say
+		// WHY it went down (crash / OOM) instead of guessing from the bare state.
+		out := map[string]any{"running": false}
+		if st := dockerStoppedState(ctx, name); st.oomKilled || st.exitCode != 0 {
+			if st.oomKilled {
+				out["oom_killed"] = true
+			}
+			out["exit_code"] = st.exitCode
+		}
+		return out
 	}
 	scope := cgroupScope(id)
 	memUsed, okMem := readCgroupUint(scope + "/memory.current")
@@ -191,6 +283,14 @@ func containerStats(ctx context.Context, name string) map[string]any {
 	}
 	if pct, ok := containerCPUPct(id, scope); ok {
 		out["cpu_pct"] = pct
+	}
+	// In-container OOM: a heavy child (build / agent) was memory-killed while the
+	// container lived on. oom_kill_total is cumulative; oom_recent flags a fresh kill.
+	if total, ok := readCgroupKV(scope+"/memory.events", "oom_kill"); ok {
+		out["oom_kill_total"] = total
+		if oomKills.observe(id, total, time.Now()) {
+			out["oom_recent"] = true
+		}
 	}
 	return out
 }
