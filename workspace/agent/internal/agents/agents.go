@@ -87,6 +87,14 @@ type Agent interface {
 	Transcript(m session.Meta) (TranscriptData, bool)
 }
 
+// ModelChoice is one launch-time model option for the Console's model picker:
+// ID is what the launch command receives (`codex -m` / `opencode --model`),
+// Label what the picker shows. Served by GET /agents/{kind}/models.
+type ModelChoice struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
+}
+
 // TranscriptData is what a non-claude agent's Transcript() yields: the full
 // chronological turns, the source path (diagnostics), and the current ToDo list
 // (reconstructed from the agent's plan/todo state; nil when none).
