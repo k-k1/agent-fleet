@@ -289,6 +289,9 @@ func (a adminAPI) setTenantLimits(w http.ResponseWriter, r *http.Request, _ Iden
 		MaxSessions   int   `json:"max_sessions"`
 		MaxGitRepos   int   `json:"max_git_repos"` // internal git repo cap (P2); 0 = unlimited
 		MaxLFSBytes   int64 `json:"max_lfs_bytes"` // internal git LFS byte cap (P3); 0 = unlimited
+		// Per-workspace RAM cap in BYTES (roadmap P3-4); 0 = no tenant cap. Bounds a
+		// tenant_admin's per-user mem_limit at container start.
+		MaxWorkspaceMem int64 `json:"max_workspace_mem"`
 		// P3-9 idle-stop: duration strings ("30m"); "" => deployment default,
 		// "0" => disabled for this tenant.
 		SessionIdleTimeout string `json:"session_idle_timeout"`
@@ -323,6 +326,7 @@ func (a adminAPI) setTenantLimits(w http.ResponseWriter, r *http.Request, _ Iden
 		MaxSessions:          body.MaxSessions,
 		MaxGitRepos:          body.MaxGitRepos,
 		MaxLFSBytes:          body.MaxLFSBytes,
+		MaxWorkspaceMem:      body.MaxWorkspaceMem,
 		SessionIdleTimeout:   body.SessionIdleTimeout,
 		WSIdleTimeout:        body.WSIdleTimeout,
 		AllowAgentSelfUpdate: body.AllowAgentSelfUpdate,
@@ -336,6 +340,7 @@ func (a adminAPI) setTenantLimits(w http.ResponseWriter, r *http.Request, _ Iden
 	a.mgr.evictTenantCache(t.ID)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"tenant": t.Slug, "max_workspaces": body.MaxWorkspaces, "max_sessions": body.MaxSessions,
+		"max_workspace_mem":    body.MaxWorkspaceMem,
 		"session_idle_timeout": body.SessionIdleTimeout, "ws_idle_timeout": body.WSIdleTimeout,
 		"allow_agent_self_update": body.AllowAgentSelfUpdate,
 	})
@@ -349,6 +354,10 @@ func (a adminAPI) setUserLimit(w http.ResponseWriter, r *http.Request) {
 		TenantSlug  string `json:"tenant_slug"`
 		MaxSessions int    `json:"max_sessions"`
 		DiskGB      int    `json:"disk_gb"`
+		// MemLimit is the per-workspace RAM cap in BYTES (0 = unset → deployment
+		// default). Clamped to the tenant cap + host ceiling at container start; the
+		// response echoes the effective (post-clamp) value so the admin sees it.
+		MemLimit int64 `json:"mem_limit"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid json"})
@@ -380,11 +389,22 @@ func (a adminAPI) setUserLimit(w http.ResponseWriter, r *http.Request) {
 		writeAPIErr(w, &apiError{http.StatusNotFound, "no_membership", "user is not a member of " + t.Slug})
 		return
 	}
-	if err := a.mgr.store.PutUserLimit(r.Context(), mem.ID, body.MaxSessions, body.DiskGB); err != nil {
+	if err := a.mgr.store.PutUserLimit(r.Context(), mem.ID, body.MaxSessions, body.DiskGB, body.MemLimit); err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"user_key": key, "tenant": t.Slug, "max_sessions": body.MaxSessions, "disk_gb": body.DiskGB})
+	// Memory feeds the built runtime (docker --memory / ECS task size), so drop the
+	// cached runtime — the new cap reaches the next container start. Also compute the
+	// effective post-clamp value so the caller sees what will actually be applied.
+	a.mgr.evictMembershipCache(mem.ID)
+	effMem := body.MemLimit
+	if effMem > 0 {
+		effMem = a.mgr.resolveWorkspaceMemBytes(r.Context(), Workspace{MembershipID: mem.ID, TenantID: t.ID})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"user_key": key, "tenant": t.Slug, "max_sessions": body.MaxSessions, "disk_gb": body.DiskGB,
+		"mem_limit": body.MemLimit, "mem_effective": effMem,
+	})
 }
 
 // setMembershipRole (PUT /api/admin/membership-role
