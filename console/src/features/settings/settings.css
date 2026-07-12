@@ -707,12 +707,6 @@
 .p-badge.pb-github { background: #c9d1d9; }
 .p-badge.pb-bitbucket { background: #4a90e2; }
 .p-badge.pb-pagerduty { background: #06ac38; }
-.p-check {
-  display: block;
-  font-size: 12px;
-  color: var(--muted, #8b949e);
-  margin: 6px 0 2px;
-}
 .p-name {
   font-weight: 600;
   font-size: 14px;

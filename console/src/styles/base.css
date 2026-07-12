@@ -58,6 +58,13 @@ body {
   }
 }
 
+/* Native checkboxes / radios follow the theme accent instead of the browser
+   default blue, matching the segmented controls (settings 運用タブほか全所)。 */
+input[type="checkbox"],
+input[type="radio"] {
+  accent-color: var(--accent);
+}
+
 /* Text utilities shared app-wide (old styles.css globals — the verbatim-ported
    components use them as-is). */
 .muted {
