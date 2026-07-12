@@ -163,6 +163,12 @@ export interface Settings {
   // 自動読み上げ(ttsEnabled)とは別軸。名前前置きの短い告知を直列キューで読む。タブが見えている
   // 間のみ（セッション監視は document.hidden で止まるため）。
   ttsSessionNotify: boolean;
+  // サブスク利用制限（5時間 / 週次）の窓が、制限に当たっていた状態からリセットされたら通知する
+  // （app/usageResetNotify.ts）。WsBar の使用状況チップが持つ resetsAt を使い、ブラウザ通知＋
+  // （音声読み上げ ON 時は）短い音声で「利用を再開できます」と知らせる。制限に当たっていない
+  // 通常のリセットでは鳴らさない（スパム防止）。Console のタブが開いている間に確実に検知し、
+  // 閉じている間のリセットは次に開いたとき 1 度だけ通知する。
+  usageResetNotify: boolean;
   // 英単語をカタカナ英語に変換してから VOICEVOX に読ませる（docs/24, CP の enkana 前処理）。
   // ずんだもんの声のまま英語を "それっぽく"（日本語アクセントで）読む。CMU 発音辞書ベースの
   // 音写なので、定着した和製カタカナ（コーヒー等）ではなく音写（カフィー等）になる。
@@ -263,6 +269,7 @@ const DEFAULTS: Settings = {
   ttsVoicePolly: "Takumi",
   ttsSpeed: 1.0,
   ttsSessionNotify: false,
+  usageResetNotify: true,
   ttsEnglishKana: false,
   ttsUserDict: "",
   ttsCacheSec: 300,
@@ -477,6 +484,7 @@ function scheduleServerSave(): void {
 const DEVICE_LOCAL = new Set<keyof Settings>([
   "ttsEnabled", // 音声読み上げ ON/OFF
   "ttsSessionNotify", // 音声通知 ON/OFF
+  "usageResetNotify", // 制限リセット通知 ON/OFF（この端末で鳴らすか）
   "theme", // ダーク/ライト
   "topbarColor", // 外観の配色（サーフェス色）
   "leftpaneColor",

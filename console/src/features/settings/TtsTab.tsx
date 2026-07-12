@@ -211,6 +211,15 @@ export function TtsTab() {
           （複数同時でも順番に読み上げ）。ブラウザ通知に音声を足すもので、Console のタブが見えている間だけ有効です。
           上の「音声読み上げ」がオフでも独立して使えます（声・速度などの設定は共通）。
         </p>
+        <Row label="制限リセットの通知">
+          <OnOff value={s.usageResetNotify} onChange={(v) => setSetting("usageResetNotify", v)} />
+        </Row>
+        <p className="muted ds-note">
+          Claude／Codex の利用制限（5時間・週次）に当たっていた枠がリセットされたら、「利用を再開できます」と
+          ブラウザ通知でお知らせします（「音声読み上げ」がオンなら音声も）。制限に当たっていない通常のリセットでは
+          鳴りません。WsBar の使用状況チップが取得している値を使うので、Console を開いている間に検知します
+          （閉じている間に起きたリセットは、次に開いたとき 1 度だけ通知）。
+        </p>
       </section>
     </div>
   );
