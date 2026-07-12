@@ -4,7 +4,7 @@ import (
 	"net/http"
 )
 
-const gib = 1024 * 1024 * 1024
+// gib / mib / kib are defined in mem.go (package-wide 1024-based size constants).
 
 // resolveMember maps a {slug, user_key} pair to its membership and (if one
 // exists) its workspace record — the shared lookup for the admin per-member

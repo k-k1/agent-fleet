@@ -62,6 +62,8 @@ func main() {
 		dataRoot:    envOr("WS_DATA", "/tmp/af-data"),
 		agentHost:   envOr("WS_AGENT_HOST", "127.0.0.1"),
 		memory:      envOr("WS_MEMORY", "1g"),
+		memMaxBytes: mustMemBytes(os.Getenv("AF_MAX_WORKSPACE_MEM")), // 0 = no extra hard ceiling
+
 		sessionCmd:  os.Getenv("WS_SESSION_CMD"),   // empty => claude
 		extraEnv:    splitCSV(os.Getenv("WS_ENV")), // KEY=VAL,KEY=VAL -> container -e
 		portBase:    portBase,

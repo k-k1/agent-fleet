@@ -49,6 +49,12 @@ func (f *dockerFactory) New(ws Workspace, secretKey string, extraEnv []string) R
 	// Shared template env first, then the per-workspace extras (copied so we never
 	// mutate the factory's slice).
 	env := append(append([]string(nil), f.extraEnv...), extraEnv...)
+	// Per-workspace RAM cap (resolveWorkspaceMemBytes) overrides the shared WS_MEMORY
+	// default when set; docker --memory accepts a raw byte count. 0 => the default.
+	memory := f.memory
+	if ws.MemBytes > 0 {
+		memory = strconv.FormatInt(ws.MemBytes, 10)
+	}
 	return &dockerRuntime{
 		image:      f.image,
 		name:       ws.ContainerName,
@@ -58,7 +64,7 @@ func (f *dockerFactory) New(ws Workspace, secretKey string, extraEnv []string) R
 		agentPort:  ws.AgentPort,
 		token:      ws.AgentToken,
 		secretKey:  secretKey,
-		memory:     f.memory,
+		memory:     memory,
 		sessionCmd: f.sessionCmd,
 		extraEnv:   env,
 	}

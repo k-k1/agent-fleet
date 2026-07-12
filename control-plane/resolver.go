@@ -174,6 +174,9 @@ func (m *manager) buildResolved(ctx context.Context, ident Identity, mv Membersh
 	if err != nil {
 		return nil, internalErr(err)
 	}
+	// Resolve the per-workspace RAM cap (0 = deployment default) so the factory can
+	// size the next container start; the built runtime captures it by value.
+	ws.MemBytes = m.resolveWorkspaceMemBytes(ctx, ws)
 	rt := m.runtimeFor(ws, dekHex, m.workspaceExtraEnv(ctx, ws)...)
 	m.mu.Lock()
 	m.rts[mv.MembershipID] = cachedRT{rt: rt, ws: ws}

@@ -21,6 +21,7 @@ interface Tenant {
   max_sessions?: number;
   max_git_repos?: number;
   max_lfs_bytes?: number;
+  max_workspace_mem?: number; // per-workspace RAM cap in bytes (0 = no tenant cap)
   session_idle_timeout?: string;
   ws_idle_timeout?: string;
   allow_agent_self_update?: boolean;
@@ -32,6 +33,7 @@ interface Member {
   super_admin?: boolean;
   state?: string;
   max_sessions?: number | null;
+  mem_limit?: number | null; // per-workspace RAM cap in bytes (0/undefined = unset)
 }
 // Drill-down location: stage plus (optionally) the tenant slug / member being viewed.
 interface View {
@@ -50,6 +52,11 @@ interface View {
 const ADMIN_MODES = ["manage", "sessions", "usage", "audit", "egress", "tts"]; // swipe order for the mode tabs
 const fmtG = (b: number) => fmtGiB(b) + "G";
 const fmtPct = (n: number | null | undefined) => (n == null ? "–" : Math.round(n) + "%");
+// MB → a "N GiB" hint for the memory input (whole number when clean, else 1 decimal).
+const fmtGbHint = (mb: number) => {
+  const gb = mb / 1024;
+  return (Number.isInteger(gb) ? String(gb) : gb.toFixed(1)) + " GiB";
+};
 
 export function AdminTab() {
   // shared with the settings store so closeAdmin can pop all drill levels at once
@@ -1067,6 +1074,8 @@ function TenantView({
   const [maxRepos, setMaxRepos] = useState<number | string>(tenant?.max_git_repos || 0);
   // LFS cap is stored in bytes but edited in MB for usability.
   const [maxLfsMb, setMaxLfsMb] = useState<number | string>(Math.round((tenant?.max_lfs_bytes || 0) / 1048576));
+  // Per-workspace RAM cap: stored in bytes, edited in MB.
+  const [maxWsMemMb, setMaxWsMemMb] = useState<number | string>(Math.round((tenant?.max_workspace_mem || 0) / 1048576));
   const [sessIdle, setSessIdle] = useState(tenant?.session_idle_timeout || "");
   const [wsIdle, setWsIdle] = useState(tenant?.ws_idle_timeout || "");
   const [allowUpd, setAllowUpd] = useState(!!tenant?.allow_agent_self_update);
@@ -1079,6 +1088,7 @@ function TenantView({
     setMaxSs(tenant?.max_sessions || 0);
     setMaxRepos(tenant?.max_git_repos || 0);
     setMaxLfsMb(Math.round((tenant?.max_lfs_bytes || 0) / 1048576));
+    setMaxWsMemMb(Math.round((tenant?.max_workspace_mem || 0) / 1048576));
     setSessIdle(tenant?.session_idle_timeout || "");
     setWsIdle(tenant?.ws_idle_timeout || "");
     setAllowUpd(!!tenant?.allow_agent_self_update);
@@ -1103,6 +1113,7 @@ function TenantView({
       max_sessions: +maxSs || 0,
       max_git_repos: +maxRepos || 0,
       max_lfs_bytes: Math.round(+maxLfsMb || 0) * 1048576,
+      max_workspace_mem: Math.round(+maxWsMemMb || 0) * 1048576,
       session_idle_timeout: sessIdle.trim(),
       ws_idle_timeout: wsIdle.trim(),
       allow_agent_self_update: allowUpd,
@@ -1138,7 +1149,14 @@ function TenantView({
               最大 LFS 容量 (MB)
               <input type="number" min="0" value={maxLfsMb} onChange={(e) => setMaxLfsMb(e.target.value)} />
             </label>
+            <label>
+              Workspace 毎メモリ上限 (MB)
+              <input type="number" min="0" step="256" value={maxWsMemMb} onChange={(e) => setMaxWsMemMb(e.target.value)} />
+            </label>
           </div>
+          <p className="muted" style={{ margin: "0 0 8px" }}>
+            「Workspace 毎メモリ上限」は 1 コンテナに割り当て可能なメモリの天井（テナント内の各ユーザー設定はこの範囲にクランプ）。0 = テナント上限なし（デプロイ既定 <code>WS_MEMORY</code> と、あればホスト天井 <code>AF_MAX_WORKSPACE_MEM</code> のみ）。個々の割当はメンバー詳細で設定し、<b>次回のコンテナ起動／作り直しで反映</b>されます。
+          </p>
           <h4>アイドル自動停止（空=無効 / デプロイ既定に従う）</h4>
           <div className="form-row">
             <label>
@@ -1259,6 +1277,8 @@ function MemberView({
   const [busy, setBusy] = useState(false);
   const [limitOpen, setLimitOpen] = useState(false);
   const [limit, setLimit] = useState<number | string>(member.max_sessions ?? 0);
+  // Per-workspace RAM cap, stored in bytes, edited in MB (0 = unset → deployment default).
+  const [memMb, setMemMb] = useState<number | string>(member.mem_limit ? Math.round(member.mem_limit / 1048576) : 0);
   const [role, setMemberRole] = useState(member.role); // tenant-scoped role, live-updated on grant/revoke
   const timer = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
   // Only setState on an actual change so an unchanged 4s poll doesn't re-render
@@ -1326,8 +1346,14 @@ function MemberView({
     }
   };
   const saveLimit = async () => {
-    await apiJSON("api/admin/user-limits", "PUT", { user_key: key, tenant_slug: slug, max_sessions: +limit || 0 });
+    await apiJSON("api/admin/user-limits", "PUT", {
+      user_key: key,
+      tenant_slug: slug,
+      max_sessions: +limit || 0,
+      mem_limit: Math.round(+memMb || 0) * 1048576,
+    });
     setLimitOpen(false);
+    poll(); // mem_max reflects the new cap after the next start; refresh sessions/stats
     onChanged();
   };
   const setRoleTo = async (newRole: string) => {
@@ -1453,8 +1479,8 @@ function MemberView({
           <button className="danger-btn" disabled={!running} onClick={() => setConfirmStop(true)}>
             <Icon name="debug-stop" /> Workspace を強制停止
           </button>
-          <button onClick={() => { setLimit(member.max_sessions ?? 0); setLimitOpen(true); }}>
-            <Icon name="settings" /> セッション上限を設定
+          <button onClick={() => { setLimit(member.max_sessions ?? 0); setMemMb(member.mem_limit ? Math.round(member.mem_limit / 1048576) : 0); setLimitOpen(true); }}>
+            <Icon name="settings" /> 上限を設定
           </button>
           {isSuper && (
             <button className="danger-btn" onClick={() => setConfirmClean(true)}>
@@ -1464,12 +1490,29 @@ function MemberView({
         </div>
         {limitOpen && (
           <div className="limit-edit">
-            <label>
-              最大セッション数（0 = 無制限）
-              <input type="number" min="0" value={limit} onChange={(e) => setLimit(e.target.value)} autoFocus />
-            </label>
-            <button className="primary" onClick={saveLimit}>保存</button>
-            <button className="ghost" onClick={() => setLimitOpen(false)}>キャンセル</button>
+            <div className="le-head">上限の設定</div>
+            <div className="le-fields">
+              <label className="le-field">
+                <span className="le-cap">最大セッション数</span>
+                <input type="number" min="0" value={limit} onChange={(e) => setLimit(e.target.value)} autoFocus />
+                <span className="le-unit">0 = 無制限</span>
+              </label>
+              <label className="le-field">
+                <span className="le-cap">Workspace メモリ</span>
+                <span className="le-inputwrap">
+                  <input type="number" min="0" step="256" value={memMb} onChange={(e) => setMemMb(e.target.value)} />
+                  <span className="le-suffix">MB</span>
+                </span>
+                <span className="le-unit">{+memMb > 0 ? `= ${fmtGbHint(+memMb)}` : "0 = デプロイ既定"}</span>
+              </label>
+            </div>
+            <p className="le-note">
+              メモリはテナント上限にクランプされ、<b>次回のコンテナ起動／作り直しで反映</b>されます（実行中コンテナには即時反映されません）。
+            </p>
+            <div className="le-actions">
+              <button className="primary" onClick={saveLimit}>保存</button>
+              <button className="ghost" onClick={() => setLimitOpen(false)}>キャンセル</button>
+            </div>
           </div>
         )}
       </section>
