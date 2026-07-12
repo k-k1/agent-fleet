@@ -19,6 +19,7 @@
 - [23-go-refactor.md](23-go-refactor.md) — Go バックエンド内部リファクタ（CP / Agent、機能不変・ワイヤ互換。残=④契約の型化のみ）
 - [24-tts-zundamon.md](24-tts-zundamon.md) — エージェント回答の音声読み上げ（VOICEVOX/ずんだもん・Polly、CP-native・未着手）
 - [25-ops-monitoring.md](25-ops-monitoring.md) — サービス運用（監視・インシデント対応）向け拡張（📋 構想検討・意思決定前）
+- [26-agent-exit-recording.md](26-agent-exit-recording.md) — エージェントプロセスの終了理由記録（OOM / signal / crash）（📋 設計・実装未着手）
 
 > 完了した機能設計は history/ へ移動: [19 assistant-chat](history/19-assistant-chat.md) /
 > [21 memo-queue](history/21-memo-queue.md) / [22 console-rebuild](history/22-console-rebuild.md)。

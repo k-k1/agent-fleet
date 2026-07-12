@@ -15,6 +15,9 @@ var techKana = map[string]string{
 	"manager":    "マネージャー",
 	"managers":   "マネージャーズ",
 	"management": "マネジメント", // この語だけ慣用的に長音無し（マネージメントでなく）
+	"image":      "イメージ",   // CMUdict は "イマジ" と誤読（実機フィードバック）
+	"images":     "イメージズ",  // Docker images 等
+	"imaging":    "イメージング",
 	"dao":        "ダオ",
 	"json":       "ジェイソン",
 	"yaml":       "ヤムル",

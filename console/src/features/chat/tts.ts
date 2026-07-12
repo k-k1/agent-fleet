@@ -396,7 +396,12 @@ function notifyStopped(): void {
 // 既存の再生中セッションがあれば止めてから始め、グローバルストアに自分を active として登録する。
 // source は TopBar の「読み上げ中・〇〇」表示に使うラベル。onEnd は自然終了("done")／停止
 // ("stopped")のどちらでも 1 回だけ呼ばれる（アナウンスキューの直列制御に使う）。
-export function startTts(opts: TtsOptions, source = "", onEnd?: (reason: "done" | "stopped") => void): TtsController {
+export function startTts(
+  opts: TtsOptions,
+  source = "",
+  onEnd?: (reason: "done" | "stopped") => void,
+  sessionName = "", // 発生元セッション名（左ペインの再生中アイコン用。非セッションは ""）
+): TtsController {
   preemptActive(); // 直前の再生を停止（グローバル 1 本・キューは温存）
   // 読み仮名辞書（ユーザー＋テナント共通の合成・ユーザー優先）はターン開始時に一度だけ
   // 組む（opts の provider/voice とは独立したテキスト処理なので opts には載せない）。
@@ -620,21 +625,22 @@ export function startTts(opts: TtsOptions, source = "", onEnd?: (reason: "done" 
       notifyStopped(); // 明示停止 → 待機中のキューも捨てる（プリエンプト時は no-op）
     },
   };
-  useTtsStore.getState().setActive(controller, source, voiceCharName(opts));
+  useTtsStore.getState().setActive(controller, source, voiceCharName(opts), sessionName);
   return controller;
 }
 
 // --- アナウンス直列キュー（docs/24 Tier1: バックグラウンドのセッション通知など） ------------
 // 短い告知を「1 本ずつ・割り込まず」読み上げる。何か再生中（チャット読み上げ等）なら終わるのを
 // 待ってから。溜まりすぎ（>4 件）は古いものから捨てる（席を外した間の洪水を防ぐ）。
-const announceQueue: { text: string; source: string; voice?: Partial<TtsOptions> }[] = [];
+const announceQueue: { text: string; source: string; voice?: Partial<TtsOptions>; sessionName?: string }[] = [];
 let announcing = false;
 
 // voice はセッションごとの声（sessionVoiceOpts）等の上書き。未指定は設定の話者。
-export function announce(text: string, source = "", voice?: Partial<TtsOptions>): void {
+// sessionName は発生元セッション名（左ペインの再生中アイコン用。非セッション告知は省略）。
+export function announce(text: string, source = "", voice?: Partial<TtsOptions>, sessionName = ""): void {
   const t = text.trim();
   if (!t) return;
-  announceQueue.push({ text: t, source, voice });
+  announceQueue.push({ text: t, source, voice, sessionName });
   while (announceQueue.length > 4) announceQueue.shift();
   pumpAnnounce();
 }
@@ -656,6 +662,7 @@ function pumpAnnounce(): void {
       if (reason === "stopped") announceQueue.length = 0; // 全体停止でキューも破棄
       else pumpAnnounce();
     },
+    next.sessionName ?? "",
   );
   c.push(next.text);
   c.flush();
@@ -672,7 +679,9 @@ useTtsStore.subscribe((st, prev) => {
 // 長い朗読（ファイル・長文ターン）が終わるまでセッション通知を待たせない（docs/24）。
 // pumpAnnounce は何か再生中（active あり）は動かないので、再生中の取り出しはここだけ
 // ＝二重再生にはならない。
-function takeAnnounce(): { text: string; source: string; voice?: Partial<TtsOptions> } | undefined {
+function takeAnnounce():
+  | { text: string; source: string; voice?: Partial<TtsOptions>; sessionName?: string }
+  | undefined {
   return announceQueue.shift();
 }
 
@@ -713,6 +722,8 @@ export function startNarration(
   // unit ごとの前拍（秒）。リスト項目・段落頭など「新しいブロックの最初の文」に BLOCK_BEAT を
   // 渡すと、読む前に一拍おく（先頭 unit の前拍は開始遅延になるだけなので無視する）。
   preGaps?: number[],
+  // 発生元セッション名（左ペインの再生中アイコン用。非セッションの朗読は ""）。
+  sessionName = "",
 ): NarrationHandle {
   preemptActive(); // グローバル 1 本（既存の再生を止める・キューは温存）
   const ctx = audioCtx();
@@ -801,7 +812,7 @@ export function startNarration(
     buffers.clear();
     synthAt = cursor;
     const st = useTtsStore.getState();
-    if (st.active === adapter) st.setActive(adapter, source, voiceCharName(opts)); // TopBar の声表示を更新
+    if (st.active === adapter) st.setActive(adapter, source, voiceCharName(opts), sessionName); // TopBar の声表示を更新
     pump();
     tryPlay(); // 再生が追いついて待っていた場合に備える
   };
@@ -810,7 +821,7 @@ export function startNarration(
   // ユニット境界で announce キューから 1 件取り出し、次のユニットの前にその場で読む。再生中は
   // TopBar のラベル/声を告知側に差し替え、終わったら朗読のものへ戻す。停止・一時停止は朗読と
   // 一体（同じ ctx・同じ adapter）。
-  const playInterlude = (a: { text: string; source: string; voice?: Partial<TtsOptions> }) => {
+  const playInterlude = (a: { text: string; source: string; voice?: Partial<TtsOptions>; sessionName?: string }) => {
     let t = plainify(a.text, codeOpts).trim();
     if (t) t = applyReadings(t, userDict, getSettings().ttsParticlePause);
     if (!t) {
@@ -821,8 +832,8 @@ export function startNarration(
     const label = (on: boolean) => {
       const st = useTtsStore.getState();
       if (st.active !== adapter) return;
-      if (on) st.setActive(adapter, a.source, voiceCharName(aopts));
-      else st.setActive(adapter, source, voiceCharName(opts));
+      if (on) st.setActive(adapter, a.source, voiceCharName(aopts), a.sessionName ?? "");
+      else st.setActive(adapter, source, voiceCharName(opts), sessionName);
     };
     // 長い告知（要約など）も合成用に分割して順に鳴らす（1 回の合成が重いと無音の待ちになる）。
     const pieces = splitLongSentence(t);
@@ -937,7 +948,7 @@ export function startNarration(
     notifyStopped(); // 明示停止 → 待機中のキューも捨てる（プリエンプト時は no-op）
   };
 
-  useTtsStore.getState().setActive(adapter, source, voiceCharName(opts));
+  useTtsStore.getState().setActive(adapter, source, voiceCharName(opts), sessionName);
   // 初回キックは microtask に回す。呼び手（FileView）が返り値の handle と自分の state を
   // 確定してから onUnit が走るようにするため（空/エンジン無しで finish が同期発火すると、
   // beginNarration のセットアップ前に onUnit(null) が来て状態が不整合になるのを防ぐ）。

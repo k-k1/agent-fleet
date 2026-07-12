@@ -2,16 +2,20 @@ import { useEffect, useState, type ReactNode } from "react";
 import {
   useSettings,
   setSetting,
+  setSettings,
   VOICEVOX_ZUNDAMON,
   TTS_SPEEDS,
   TTS_CACHE_SIZES,
   TTS_PROVIDERS,
   TTS_POLLY_VOICES,
+  TTS_RESET,
   type TtsCharConf,
 } from "../../lib/settings.ts";
 import { voiceCharacters, isDefaultVoice, previewVoice } from "../chat/tts.ts";
 import { loadSpeakers, speakersCatalog } from "../chat/ttsSpeakers.ts";
 import { Icon } from "../../ui/Icon.tsx";
+import { Button } from "../../ui/Button.tsx";
+import { useConfirm } from "../../ui/ConfirmProvider.tsx";
 import { Choice, OnOff } from "./controls.tsx";
 
 // TtsTab — 音声読み上げ（TTS, docs/24 + ADR0013）の設定タブ。もとは AgentsTab から分離した
@@ -22,6 +26,19 @@ import { Choice, OnOff } from "./controls.tsx";
 // 「音声通知」だけは読み上げ本体（ttsEnabled）と独立に効くため、トグルの外＝最後に置く。
 export function TtsTab() {
   const s = useSettings();
+  const confirm = useConfirm();
+  // リセット＝音声読み上げ設定を「初期状態」(TTS_RESET = DEFAULTS の TTS キー) に戻す。キャラは
+  // ttsVoicePool: {} ＝標準 14 キャラのスタートで、新規ユーザーの初期状態と揃う。読み仮名辞書は
+  // ユーザーが打ち込んだ内容なので消さない（TTS_RESET に含めていない）。多数のキーを一度に書くため
+  // setSettings（バッチ）で 1 レンダー・1 保存にまとめる。
+  const resetTts = async () => {
+    if (!(await confirm({
+      title: "音声読み上げ設定をリセット",
+      body: "音声読み上げのすべての設定を初期状態に戻します（読み仮名辞書は残ります）。よろしいですか？",
+      confirmLabel: "リセット",
+    }))) return;
+    setSettings(TTS_RESET);
+  };
   return (
     <div className="display-settings">
       <section className="ds-group">
@@ -219,6 +236,15 @@ export function TtsTab() {
           ブラウザ通知でお知らせします（「音声読み上げ」がオンなら音声も）。制限に当たっていない通常のリセットでは
           鳴りません。WsBar の使用状況チップが取得している値を使うので、Console を開いている間に検知します
           （閉じている間に起きたリセットは、次に開いたとき 1 度だけ通知）。
+        </p>
+      </section>
+      <section className="ds-group ds-reset">
+        <Button variant="ghost" icon="discard" onClick={resetTts}>
+          設定を初期状態にリセット
+        </Button>
+        <p className="muted ds-note">
+          このタブの音声読み上げ設定をすべて初期状態（音声読み上げ・音声通知はオフ、ほかはおすすめの
+          初期値）に戻します。読み仮名辞書は消えません。
         </p>
       </section>
     </div>

@@ -139,6 +139,7 @@ export function readTurn(
   fromBlock: number,
   onEnd: (stopped: boolean) => void,
   voice?: Partial<TtsOptions>, // セッションごとの声（sessionVoiceOpts）等の上書き
+  sessionName = "", // 発生元セッション名（左ペインの再生中アイコン用）
 ): TurnReadHandle | null {
   const code: CodeReadOpts = { abbrev: getSettings().ttsAbbrevCode, dict: effectiveDict() };
   const blocks = collectBlocks(body);
@@ -187,6 +188,7 @@ export function readTurn(
     },
     voice,
     preGaps,
+    sessionName,
   );
   return { pause: h.pause, resume: h.resume, stop: h.stop };
 }

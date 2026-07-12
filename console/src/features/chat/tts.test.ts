@@ -265,6 +265,25 @@ describe("applyBuiltinReadings / applyReadings (組み込みの読み補正)", (
     expect(applyBuiltinReadings("AgentFleetを使う")).toBe("エージェントフリートを使う");
   });
 
+  it("範囲の波ダッシュ（単独）は「から」と読む", () => {
+    expect(applyBuiltinReadings("通常の3〜5倍速です")).toBe("通常の3から5倍速です");
+    expect(applyBuiltinReadings("月〜金曜日")).toBe("月から金曜日");
+    expect(applyBuiltinReadings("1～3個")).toBe("1から3個"); // 全角チルダ（U+FF5E）も同一視
+    expect(applyBuiltinReadings("3〜5〜7")).toBe("3から5から7"); // 連鎖レンジ
+  });
+
+  it("波ダッシュの連続（省略・言いよどみ用法）は「ほにゃらら」と読む", () => {
+    expect(applyBuiltinReadings("詳細は～～～省略します")).toBe("詳細はほにゃらら省略します");
+    expect(applyBuiltinReadings("あとは〜〜適当に")).toBe("あとはほにゃらら適当に"); // 2個でも対象
+    expect(applyBuiltinReadings("混在～〜～も1個として畳む")).toBe("混在ほにゃららも1個として畳む");
+  });
+
+  it("語尾の伸ばし（文末・句読点・空白の前）の単独波ダッシュは触らない", () => {
+    expect(applyBuiltinReadings("そうだね〜")).toBe("そうだね〜");
+    expect(applyBuiltinReadings("そうだね〜。")).toBe("そうだね〜。");
+    expect(applyBuiltinReadings("うんうん〜 まあいいか")).toBe("うんうん〜 まあいいか");
+  });
+
   it("ユーザー辞書が先に当たれば組み込みより優先される", () => {
     const dict = parseUserDict("空レポ=そらレポ");
     expect(applyReadings("空レポです", dict, false)).toBe("そらレポです");
