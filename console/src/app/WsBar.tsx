@@ -448,7 +448,7 @@ export function WsBar() {
   const splitDown = useLayoutStore((s) => s.splitDown);
   const resetToTerminal = useLayoutStore((s) => s.resetToTerminal);
   const activePaneId = layout.activeId;
-  const openNewSession = useSessionsStore((s) => s.openNewSession);
+  const openStart = useSessionsStore((s) => s.openStart);
   const askConfirm = useConfirm();
   const { wsStats, wsHist, hostStats, hostHist } = useWsResourceChips(tenant, superAdmin);
   const isMobile = useIsMobile();
@@ -701,17 +701,17 @@ export function WsBar() {
       >
         {wsLabel(wsState)}
       </span>
-      {/* Second entry point to the New Session dialog (the Sessions-list ＋新規 stays as
-          is): handy when the left pane is scrolled / collapsed. Opens the same global
-          dialog via openNewSession; disabled while the workspace is stopped. */}
+      {/* はじめる — the single "start anything" entry (起動導線 Ph2): opens the
+          StartModal hub (chat / repo / clone / home / その他). Disabled while the
+          workspace is stopped. */}
       <button
         className="ghost ws-split ws-newsession"
-        title={running ? "新規セッション" : "新規セッション（ワークスペース停止中）"}
+        title={running ? "はじめる（チャット / リポジトリ / clone / shell）" : "はじめる（ワークスペース停止中）"}
         disabled={!running}
-        onClick={openNewSession}
+        onClick={openStart}
       >
         <Icon name="add" />
-        <span className="lbl">新規</span>
+        <span className="lbl">はじめる</span>
       </button>
       <button
         className="ghost ws-split"

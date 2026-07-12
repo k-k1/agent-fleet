@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import type { MutableRefObject } from "react";
 
 // useBackClose — close-on-back for overlays (modals). Mounting pushes a throwaway
 // history entry; the device/browser back button (or a back gesture) pops it and
@@ -10,9 +11,39 @@ import { useEffect, useRef } from "react";
 // one. `onClose` is read through a ref so a parent re-render with a fresh inline
 // callback doesn't re-register the layer; only `active` toggling joins/leaves.
 //
+// The cleanup's own history.back() also fires a popstate — asynchronously, after
+// the stack has already been updated. Untracked, that echo was indistinguishable
+// from a user back-press and hit whatever layer was on top by then: UI-closing
+// the top of a STACKED pair cascaded into the one below, and SWAPPING modals in
+// one commit closed the incoming modal right after it opened (起動導線 Ph2 hub →
+// 作業を始める). `suppress` counts those self-inflicted pops so the shared
+// listener swallows exactly that many popstates before treating one as the user's.
+//
 // The guard entry carries { afModal: true }; App's drawer popstate logic keys off
 // { drawer: true }, so the two histories don't collide.
-const stack: object[] = [];
+interface Layer {
+  cb: MutableRefObject<(() => void) | undefined>;
+  closedByBack: boolean;
+}
+
+const stack: Layer[] = [];
+let suppress = 0;
+let wired = false;
+
+function wire(): void {
+  if (wired || typeof window === "undefined") return;
+  wired = true;
+  window.addEventListener("popstate", () => {
+    if (suppress > 0) {
+      suppress--; // echo of a cleanup's history.back(), not a user back-press
+      return;
+    }
+    const top = stack[stack.length - 1];
+    if (!top) return;
+    top.closedByBack = true; // the browser already popped this layer's entry
+    top.cb.current?.();
+  });
+}
 
 export function useBackClose(onClose: (() => void) | undefined, active = true): void {
   const cb = useRef(onClose);
@@ -20,29 +51,25 @@ export function useBackClose(onClose: (() => void) | undefined, active = true): 
   const on = active && !!onClose;
   useEffect(() => {
     if (!on) return;
-    const token = {};
-    stack.push(token);
+    wire();
+    const layer: Layer = { cb, closedByBack: false };
+    stack.push(layer);
     try {
       history.pushState({ __af: true, afModal: true }, "");
     } catch {}
-    let closedByBack = false;
-    const onPop = () => {
-      // Only the topmost overlay reacts; the browser already popped our entry.
-      if (stack[stack.length - 1] !== token) return;
-      closedByBack = true;
-      cb.current?.();
-    };
-    window.addEventListener("popstate", onPop);
     return () => {
-      const i = stack.lastIndexOf(token);
+      const i = stack.lastIndexOf(layer);
       if (i >= 0) stack.splice(i, 1);
-      window.removeEventListener("popstate", onPop);
       // Closed by UI (Esc / backdrop / button), not by back: consume the guard
-      // entry we pushed so we don't leave a dead step in the history.
-      if (!closedByBack && history.state && history.state.afModal) {
+      // entry we pushed so we don't leave a dead step in the history — and mark
+      // the resulting popstate as ours (see `suppress` above).
+      if (!layer.closedByBack && history.state && history.state.afModal) {
+        suppress++;
         try {
           history.back();
-        } catch {}
+        } catch {
+          suppress--;
+        }
       }
     };
   }, [on]);

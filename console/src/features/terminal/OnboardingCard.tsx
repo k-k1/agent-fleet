@@ -35,7 +35,7 @@ interface GuideState {
   agentOk: boolean;
   conns: ConnectionsStatus | null; // null = still probing
   startWs(): Promise<void> | void;
-  openNewSession(): void;
+  openStart(): void;
   openSettings(section?: string): void;
 }
 
@@ -44,7 +44,7 @@ interface GuideState {
 function useGuideState(): GuideState {
   const wsState = useWorkspaceStore((s) => s.state);
   const startWs = useWorkspaceStore((s) => s.start);
-  const openNewSession = useSessionsStore((s) => s.openNewSession);
+  const openStart = useSessionsStore((s) => s.openStart);
   const openSettings = useSettingsUI((s) => s.openSettings);
   const connKey = useSettingsUI((s) => s.connTick);
   const [conns, setConns] = useState<ConnectionsStatus | null>(null);
@@ -70,7 +70,7 @@ function useGuideState(): GuideState {
     ),
     conns,
     startWs,
-    openNewSession,
+    openStart,
     openSettings,
   };
 }
@@ -178,8 +178,8 @@ function GuideBody({ g, onNavigate }: { g: GuideState; onNavigate?: () => void }
     {
       done: false, // done = the card itself disappears (a session exists)
       label: "リポジトリを clone してセッション開始",
-      hint: "clone と起動は「新規セッション」からまとめて行えます",
-      cta: { text: "新規セッション", icon: "add", disabled: !g.running, title: wsFirst, on: after(g.openNewSession) },
+      hint: "clone と起動は「はじめる」からまとめて行えます",
+      cta: { text: "はじめる", icon: "rocket", disabled: !g.running, title: wsFirst, on: after(g.openStart) },
     },
   ];
 

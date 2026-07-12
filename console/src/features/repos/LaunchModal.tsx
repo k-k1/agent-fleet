@@ -50,10 +50,12 @@ interface LaunchModalProps {
    * are created from the base clone. */
   allowWorktree?: boolean;
   onClose: () => void;
+  /** Present when opened from the はじめる hub: 場所を変更 returns to it. */
+  onBack?: () => void;
   onLaunch: (opts: LaunchOpts) => Promise<LaunchResult>;
 }
 
-export function LaunchModal({ repo, branch, path, kinds, allowWorktree = true, onClose, onLaunch }: LaunchModalProps) {
+export function LaunchModal({ repo, branch, path, kinds, allowWorktree = true, onClose, onBack, onLaunch }: LaunchModalProps) {
   const settings = useSettings();
   const last = readRepoLast(repo);
   // Default to the last agent used in this repo when still available, else the first.
@@ -372,6 +374,11 @@ export function LaunchModal({ repo, branch, path, kinds, allowWorktree = true, o
       </div>
 
       <footer className="ui-modal-foot">
+        {onBack && (
+          <Button variant="ghost" className="launch-back" icon="arrow-left" onClick={onBack} disabled={busy}>
+            場所を変更
+          </Button>
+        )}
         <Button variant="ghost" onClick={onClose} disabled={busy}>
           キャンセル
         </Button>
