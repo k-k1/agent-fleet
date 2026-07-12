@@ -178,9 +178,16 @@ const NUMERONYMS: [RegExp, string][] = [
 // なので触らない（enkana の辞書はキーを小文字化するため大小を区別できず、ここで扱う）。
 const UPPER_ACRONYMS: [RegExp, string][] = [[/\bIT\b/g, "アイティー"]];
 
+// プロダクト名（このリポジトリ自身）。"Agent-Fleet"/"Agent fleet"/"AgentFleet" のように
+// ハイフン・空白・詰めて書くの表記ゆれがあり、enkana（CP 側）に渡すとハイフンがそのまま
+// 残って発話が途切れる／"agent" 単体が CMUdict で "エイジャント" に誤読される（実機
+// フィードバック）。enkana より前でカタカナへ確定させて表記ゆれごと吸収する。
+const PRODUCT_NAMES: [RegExp, string][] = [[/agent[\s-]?fleet/gi, "エージェントフリート"]];
+
 export function applyBuiltinReadings(text: string): string {
   let t = text.replace(KARA_KATAKANA, "から");
   for (const [re, to] of NUMERONYMS) t = t.replace(re, to);
+  for (const [re, to] of PRODUCT_NAMES) t = t.replace(re, to);
   for (const [re, to] of UPPER_ACRONYMS) t = t.replace(re, to);
   return applyUserDict(t, BUILTIN_READINGS);
 }

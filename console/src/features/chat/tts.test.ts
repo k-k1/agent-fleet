@@ -259,6 +259,12 @@ describe("applyBuiltinReadings / applyReadings (組み込みの読み補正)", (
     expect(applyBuiltinReadings("GITHUB")).toBe("GITHUB"); // 語中は触らない
   });
 
+  it("プロダクト名 agent-fleet は表記ゆれ込みでエージェントフリートに確定", () => {
+    expect(applyBuiltinReadings("Agent-Fleetの機能")).toBe("エージェントフリートの機能");
+    expect(applyBuiltinReadings("Agent fleetはCP-native")).toBe("エージェントフリートはCP-native");
+    expect(applyBuiltinReadings("AgentFleetを使う")).toBe("エージェントフリートを使う");
+  });
+
   it("ユーザー辞書が先に当たれば組み込みより優先される", () => {
     const dict = parseUserDict("空レポ=そらレポ");
     expect(applyReadings("空レポです", dict, false)).toBe("そらレポです");

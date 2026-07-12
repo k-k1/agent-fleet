@@ -153,6 +153,12 @@ func convertWord(word string) string {
 	if k, ok := techKana[lower]; ok { // AWS/開発ジャルゴンのオーバーライド優先
 		return k
 	}
+	// 単独の大文字 1 文字（案A・パターンB 等のラベル）は CMUdict の実在語（a/i/o が
+	// 冠詞・代名詞として載っている）に化けて誤読される（例: "A"→"ア"）ため、CMUdict より
+	// 先に英字名読みで確定させる。小文字（英文中の a 等）は対象外＝そのまま自然文として扱う。
+	if len(word) == 1 && isAllUpper(word) {
+		return spellLetters(word)
+	}
 	if arpa, ok := cmuMap[lower]; ok {
 		return arpabetToKana(arpa)
 	}

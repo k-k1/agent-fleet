@@ -165,6 +165,46 @@ func TestCompanyAndToolNames(t *testing.T) {
 	}
 }
 
+func TestSingleUpperLetter(t *testing.T) {
+	// 単独の大文字 1 文字（案A・パターンB 等）は CMUdict の実在語（a/i/o が冠詞・代名詞
+	// として載っている）に化けて誤読される（例: "A"→"ア"）ため、英字名読みに固定する。
+	// 実機フィードバックで "案A" が「あんあ」と読まれる不具合として発覚。
+	want := map[string]string{
+		"A": "エー",
+		"B": "ビー",
+		"I": "アイ",
+		"O": "オー",
+	}
+	for in, exp := range want {
+		if got := englishToKana(in); got != exp {
+			t.Errorf("%q -> %q, want %q", in, got, exp)
+		}
+	}
+	// 小文字の単独文字（英文中の "a" 等）は対象外＝CMUdict の英単語読みのまま
+	// （文字名読みに変わらないことを確認）。
+	if got := englishToKana("a"); got == "エー" {
+		t.Errorf("小文字 a が文字名読みになった: %q", got)
+	}
+}
+
+func TestAgentManageFamily(t *testing.T) {
+	// 実機フィードバック: "agent"/"managed" が CMUdict のまま (エイジャント/マナジド) で
+	// 誤読されるため上書き。同根の manage 系も併せて確認。
+	want := map[string]string{
+		"agent":      "エージェント",
+		"Agent":      "エージェント",
+		"managed":    "マネージド",
+		"manage":     "マネージ",
+		"manager":    "マネージャー",
+		"management": "マネジメント",
+	}
+	for in, exp := range want {
+		if got := englishToKana(in); got != exp {
+			t.Errorf("%q -> %q, want %q", in, got, exp)
+		}
+	}
+}
+
 func containsASCIILetters(s string) bool {
 	for _, r := range s {
 		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {
