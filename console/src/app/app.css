@@ -3,7 +3,12 @@
 .app-shell {
   display: flex;
   flex-direction: column;
-  height: 100%;
+  /* --app-h (set by wireViewport() in viewport.ts) fits the frame to the
+     visual viewport while the mobile keyboard is up, on any device where the
+     layout viewport doesn't shrink on its own (interactive-widget=resizes-
+     content isn't honored, or a WebView ignores it). Falls back to 100% the
+     rest of the time — the var is removed as soon as the keyboard closes. */
+  height: var(--app-h, 100%);
 }
 
 .app-body {
