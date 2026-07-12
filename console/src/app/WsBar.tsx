@@ -17,6 +17,7 @@ import { useConfirm } from "../ui/ConfirmProvider.tsx";
 import { useIsMobile } from "../lib/device.ts";
 import { useDismiss } from "../lib/useDismiss.ts";
 import { fmtGiB as fg } from "../lib/bytes.ts";
+import { useUsageResetNotify } from "./usageResetNotify.ts";
 
 const HIST_N = 60; // sparkline ring buffer: ~4 min at the 4s poll cadence
 
@@ -222,6 +223,7 @@ function whenText(iso: string) {
 // straight from the rollout — no network), so one chip component renders either.
 interface UsageSource {
   endpoint: string;
+  name: string; // agent short name ("Claude" / "Codex") — used in reset notifications
   icon: string; // codicon glyph
   cls: string; // kind color class (kind-claude / kind-codex)
   title: string; // chip hover title
@@ -233,11 +235,15 @@ interface UsageSource {
   // manual refresh; a note explains it instead.
   live: boolean;
   note?: string;
+  // manageURL = the agent vendor's own usage/limits page (opened in a new tab from the
+  // dropdown), so the user can jump to the authoritative source for the exact numbers.
+  manageURL?: string;
 }
 
 const USAGE_SOURCES: UsageSource[] = [
   {
     endpoint: "api/claude/usage",
+    name: "Claude",
     icon: "sparkle",
     cls: "kind-claude",
     title: "Claude 使用状況（5時間 / 週次）",
@@ -245,9 +251,11 @@ const USAGE_SOURCES: UsageSource[] = [
     fiveLabel: "5時間制限",
     weekLabel: "週次・全モデル",
     live: true,
+    manageURL: "https://claude.ai/new#settings/usage",
   },
   {
     endpoint: "api/codex/usage",
+    name: "Codex",
     icon: "rocket",
     cls: "kind-codex",
     title: "Codex 使用状況（5時間 / 週次）",
@@ -256,6 +264,7 @@ const USAGE_SOURCES: UsageSource[] = [
     weekLabel: "週次",
     live: false,
     note: "codex が記録した最後の値です（この時点のスナップショット）。次に codex を実行すると更新されます。",
+    manageURL: "https://chatgpt.com/#settings/Usage",
   },
 ];
 
@@ -267,6 +276,9 @@ function UsageChip({ src, tenant }: { src: UsageSource; tenant: string | null })
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   useDismiss(ref, open, () => setOpen(false));
+  // Notify when a constrained limit window resets (5-hour / weekly). Runs whether or
+  // not the dropdown is open — the chip stays mounted while the workspace is up.
+  useUsageResetNotify(src, usage, src.fiveLabel, src.weekLabel, refresh);
 
   const win = (w: { pct: number; resetsAt: string }) => ({
     pct: Math.round(w.pct),
@@ -307,6 +319,11 @@ function UsageChip({ src, tenant }: { src: UsageSource; tenant: string | null })
             )}
           </div>
           {!src.live && src.note && <div className="wu-note muted">{src.note}</div>}
+          {src.manageURL && (
+            <a className="wu-manage" href={src.manageURL} target="_blank" rel="noopener">
+              <Icon name="link-external" /> 使用状況ページを開く
+            </a>
+          )}
         </div>
       )}
     </div>

@@ -260,6 +260,20 @@ button.wu-reload {
   font-size: 11px;
   line-height: 1.5;
 }
+/* Link out to the vendor's own usage page (claude.ai / chatgpt.com) for the
+   authoritative numbers. Sits under the note as a quiet full-width row. */
+.wu-manage {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--accent);
+  text-decoration: none;
+}
+.wu-manage:hover {
+  text-decoration: underline;
+}
 /* In the mobile ⋯ popover the tiles stack, so the group divider is horizontal. */
 .ws-more-stats .ws-graph-sep {
   width: 100%;
