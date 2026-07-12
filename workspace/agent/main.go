@@ -27,6 +27,12 @@ func main() {
 		runSessionStatusHook(os.Args[2:])
 		return
 	}
+	// Pane exit recorder: `workspace-agent record-exit <name> <code>`, appended after
+	// the agent CLI by startSessionTmux, records why a session terminated (crash / OOM).
+	if len(os.Args) > 1 && os.Args[1] == "record-exit" {
+		runRecordExit(os.Args[2:])
+		return
+	}
 	// Local stdio MCP server for the assistant chat (docs/19 Q1): read-only Agent
 	// Fleet tools over JSON-RPC on stdio, spawned by claude's --mcp-config.
 	if len(os.Args) > 1 && os.Args[1] == "mcp-stdio" {
