@@ -327,6 +327,7 @@ export function MirrorView({
         else ttsAutoPumpRef.current();
       },
       sessionVoiceOpts(session), // セッションごとの声（設定 OFF なら undefined）
+      session, // 左ペインの再生中アイコン用
     );
     if (!h) return; // 読み上げられる本文が無い（ツールだけのターン等）
     ttsHandleRef.current = h;
@@ -351,7 +352,7 @@ export function MirrorView({
         new Promise<never>((_, rej) => setTimeout(() => rej(new Error("timeout")), 30000)),
       ]);
       const reply = (r?.reply || "").trim();
-      if (!r?.error && reply) announce("要約。" + reply, label, sessionVoiceOpts(session));
+      if (!r?.error && reply) announce("要約。" + reply, label, sessionVoiceOpts(session), session);
       else ttsStart(gi, body, fromBlock); // 要約が得られない → 全文読み
     } catch {
       ttsStart(gi, body, fromBlock); // ワークスペース停止・タイムアウト等 → 全文読み
