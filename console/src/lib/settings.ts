@@ -356,20 +356,6 @@ export const CLAUDE_MODELS: [string, string][] = [
   ["haiku", "Haiku"],
 ];
 
-// Codex model choices (the 0.144 catalog, `codex -m`). Unlike claude there are no tier
-// aliases — these are concrete ids a CLI update can deprecate — so 既定("") defers to
-// codex's own current default and is the safe initial choice; the ids are offered for
-// explicit pinning. Update alongside the baked-in codex CLI version.
-export const CODEX_MODELS: [string, string][] = [
-  ["", "既定"],
-  ["gpt-5.6-sol", "5.6 Sol"],
-  ["gpt-5.6-terra", "5.6 Terra"],
-  ["gpt-5.6-luna", "5.6 Luna"],
-  ["gpt-5.5", "5.5"],
-  ["gpt-5.4", "5.4"],
-  ["gpt-5.4-mini", "5.4 mini"],
-];
-
 // Build a CSS font-family stack for a chosen family, with CJK + generic fallbacks.
 export function fontStack(name: string): string {
   if (!name || name === "システム等幅") {

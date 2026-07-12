@@ -138,7 +138,8 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     // gauge works — codex logs token counts too. Plan mode + inline request_user_input
     // questions are supported. headlessChat via `codex exec --json` (assistant chat /
     // title suggestion backend); fork via `codex fork <id>` (server ForkSource).
-    // model: launch-time only, fixed catalog (CODEX_MODELS) → `codex -m`.
+    // model: launch-time only, live catalog (api/agents/codex/models = `codex debug
+    // models` under codex's own subscription auth) → `codex -m`.
     caps: caps({
       chat: true,
       headlessChat: true,
