@@ -178,7 +178,17 @@ Phase 1 の判断材料は Phase 0 の実地検証。**Phase 0 は現行 main �
 - **イメージ**: `uv`/`uvx` を `/usr/local/bin` にベイク（Dockerfile）。要**再ビルド**。
 - **反映タイミング**: 接続の有効化に**ワークスペース再起動は不要**。チャットは毎ターン `claude -p` を起こし直し、`mcp-run` が起動時にストアを読むため、**次のチャット送信**から反映。対話セッション（tmux claude）側は従来どおり Phase 0 手順（`claude mcp add`）で、こちらは新セッションが必要。
 - **検証済み（2026-07-12, dev コンテナ）**: 実キーで `mcp-run pagerduty` 経由の end-to-end 疎通（`list_incidents` 実データ取得）、資格なし/不明プロバイダの安全な失敗、Go build/vet/test（99 passed）・gofmt・Console tsc（0 errors）。
-- **残**: 実 workspace（再ビルド後）での UI→チャットの通し確認。カスタムアシスタント編集 UI（AssistantModal）への integrations ピッカー追加（現状は組み込み SRE のみ integrations 保持）。Grafana/CloudWatch を同じ枠（opsIntegrations 追加 + mcp-run provider 追加）で拡張（Grafana/AMG は次節で検討済み）。
+- **残**: 実 workspace（再ビルド後）での UI→チャットの通し確認。カスタムアシスタント編集 UI（AssistantModal）への integrations ピッカー追加（現状は組み込み SRE のみ integrations 保持）。CloudWatch を同じ枠（opsIntegrations 追加 + mcp-run provider 追加）で拡張。
+
+#### Grafana 拡張 — 2026-07-12 実装（案A: 静的トークン）
+
+次節の AMG 検討の結論（案A）どおり、PagerDuty と同じ 5 seam で Grafana を追加した:
+
+- **接続**: 運用タブに Grafana カード（URL + サービスアカウントトークンの 2 入力）。`secrets.enc` の `GrafanaCreds{url, token}` に保存、status は接続有無と URL のみ返す（トークンは返さない）。`PUT/DELETE /api/connections/grafana`。
+- **注入**: `mcp-run grafana` が復号した URL/トークンを `GRAFANA_URL` / `GRAFANA_SERVICE_ACCOUNT_TOKEN` として子 env にのみ入れ、焼き込み済み `mcp-grafana` バイナリを exec。**read-only フラグ（`-disable-write -disable-admin`）は MCP 設定側でなくラッパーが常時前置**するので、設定側から write を有効化する経路がない。
+- **アシスタント**: `opsIntegrations` に `grafana` を追加し、SRE アシスタントの integrations を `[pagerduty, grafana]` に。persona にも Grafana ツール（ダッシュボード検索・Prometheus/Loki クエリ・アラート参照）の利用を明記。未接続なら従来どおり黙って外れる。
+- **イメージ**: mcp-grafana v0.17.1（Go 単一バイナリ）を `/usr/local/bin` にベイク（`ARG MCP_GRAFANA_VERSION` ピン、arch 対応）。dev フォールバックは `~/.local/bin/mcp-grafana`（Phase 0 手順の置き場）。要**再ビルド**。
+- **検証済み（2026-07-12, dev コンテナ）**: `mcp-run grafana` 経由で JSON-RPC initialize + tools/list 疎通、**read-only 52 ツール**（Phase 0 実測と同数・create/update/delete/install 系ゼロ）、資格未設定時の安全な失敗（exit 1）。Go build/vet/test（agent/CP とも green）・gofmt・Console tsc 通過。セルフホスト/Grafana Cloud/AMG は同一実装（URL とトークンの取り方が違うだけ）。実 Grafana への実データ疎通と AMG での `/api/ds/query` 系ツール動作は実環境待ち。
 
 未決論点（§8）のうち **③チャットの組み込みツール権限**は本実装で前提を確認済み: チャットは `chatToolLimits()` で Bash/Edit/Write/MultiEdit/NotebookEdit と Agent/Task/Workflow を `--disallowedTools` で禁止（`--dangerously-skip-permissions` 下でも deny は有効）。ops MCP は read-only ツールのみを広告するため、read-only 統制は「MCP 集合」「組み込みツール」の両方で閉じている。
 
