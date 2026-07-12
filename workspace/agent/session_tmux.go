@@ -13,6 +13,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 )
 
@@ -29,10 +30,22 @@ func startSessionTmux(m session.Meta, ssmForce bool) error {
 	// change applies to this freshly-launched session without a Stop→Start. tmux
 	// runs the pane command via /bin/sh -c, so the export prefix takes effect.
 	program := toolchainShellPrefix() + plan.Program
+	// Append an exit recorder so we capture WHY a session ends (normal / crash / OOM).
+	// The pane's shell outlives the agent CLI, so $? here is the CLI's wait status
+	// (128+signal on a kill → OOM SIGKILL shows as 137). A deliberate `tmux
+	// kill-session` kills this shell too, so it records nothing — intentional stops are
+	// never mislabeled as crashes (see record_exit.go). m.Name is a validated slug, so
+	// it needs no shell escaping beyond the single quotes.
+	program += "; __af_ec=$?; workspace-agent record-exit '" + m.Name + "' \"$__af_ec\""
 	args := []string{"new-session", "-d", "-s", session.TmuxName(m.Name), "-c", plan.Cwd, program}
 	if out, err := exec.Command("tmux", args...).CombinedOutput(); err != nil {
 		return fmt.Errorf("%v: %s", err, out)
 	}
+	// Baseline the container's oom_kill counter so a later crash is attributed to an OOM
+	// only when the counter advanced during THIS session. Writing it also clears any
+	// prior death record for this name, so a resumed session starts clean.
+	base, _ := containerOOMKill()
+	status.PersistExit(m.Name, status.ExitInfo{OOMBase: base})
 	return nil
 }
 

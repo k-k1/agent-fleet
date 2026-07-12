@@ -332,6 +332,7 @@ func handleStopSession(w http.ResponseWriter, r *http.Request) {
 	}
 	if hadMeta {
 		status.Remove(session.UUID(meta.Dir, name))
+		status.RemoveExit(name)
 	}
 	if live {
 		if out, err := exec.Command("tmux", "kill-session", "-t", session.ExactTarget(tn)).CombinedOutput(); err != nil {
@@ -404,6 +405,7 @@ func handleArchiveSession(w http.ResponseWriter, r *http.Request) {
 		_ = exec.Command("tmux", "kill-session", "-t", session.ExactTarget(tn)).Run()
 	}
 	status.Remove(session.UUID(m.Dir, name))
+	status.RemoveExit(name)
 	m.Archived = true
 	session.WriteMeta(m)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"archived": name})
@@ -466,6 +468,7 @@ func handleRecreateSession(w http.ResponseWriter, r *http.Request) {
 		_ = exec.Command("tmux", "kill-session", "-t", session.ExactTarget(tn)).Run()
 	}
 	status.Remove(session.UUID(m.Dir, m.Name))
+	status.RemoveExit(m.Name)
 	m.Archived = true
 	session.WriteMeta(m)
 

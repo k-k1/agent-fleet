@@ -66,6 +66,15 @@ type Session struct {
 	// branch rename (deferred naming) only for these, since renaming a standalone
 	// clone's branch is a different, rarer intent.
 	Worktree bool `json:"worktree,omitempty"`
+	// ExitReason explains why a STOPPED session's agent process terminated, when the
+	// pane exit recorder caught an abnormal end: "oom" (memory-killed), "killed"
+	// (SIGKILL, non-OOM), or "crashed" (fault / non-zero exit). Empty for live sessions,
+	// clean quits, and deliberate stops — those show the plain 停止中 chip. ExitCode is
+	// the raw pane wait status (128+signal on a kill; 137 = OOM SIGKILL) and ExitSignal
+	// the derived signal number, both surfaced in the row tooltip.
+	ExitReason string `json:"exitReason,omitempty"`
+	ExitCode   int    `json:"exitCode,omitempty"`
+	ExitSignal int    `json:"exitSignal,omitempty"`
 }
 
 // ContextUsage is a claude session's current context fill — the newest assistant
