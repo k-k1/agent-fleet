@@ -33,3 +33,13 @@ export const coarsePointer = (): boolean =>
       "ontouchstart" in window ||
       (navigator.maxTouchPoints || 0) > 0,
   );
+
+// isStandalonePWA detects the installed-app display mode (no browser chrome, so no
+// native reload button) — iOS Safari exposes this only via navigator.standalone,
+// everyone else via the display-mode media query.
+export const isStandalonePWA = (): boolean =>
+  typeof window !== "undefined" &&
+  Boolean(
+    window.matchMedia?.("(display-mode: standalone)")?.matches ||
+      (navigator as unknown as { standalone?: boolean }).standalone === true,
+  );
