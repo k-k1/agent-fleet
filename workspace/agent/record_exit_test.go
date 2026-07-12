@@ -10,14 +10,14 @@ func TestExitReason(t *testing.T) {
 		want string
 	}{
 		{"normal quit", 0, false, "exited"},
-		{"oom kill", 137, true, "oom"},        // SIGKILL + oom_kill advanced this session
+		{"oom kill", 137, true, "oom"},           // SIGKILL + oom_kill advanced this session
 		{"sigkill no oom", 137, false, "killed"}, // SIGKILL but the counter didn't move → not an OOM
-		{"segfault", 139, false, "crashed"},   // SIGSEGV = application fault
-		{"abort", 134, false, "crashed"},      // SIGABRT
-		{"nonzero exit", 1, false, "crashed"}, // CLI exited non-zero (no signal)
-		{"sigterm", 143, false, "stopped"},    // graceful termination
-		{"sigint", 130, false, "stopped"},     // Ctrl-C
-		{"sighup", 129, false, "stopped"},     // hangup
+		{"segfault", 139, false, "crashed"},      // SIGSEGV = application fault
+		{"abort", 134, false, "crashed"},         // SIGABRT
+		{"nonzero exit", 1, false, "crashed"},    // CLI exited non-zero (no signal)
+		{"sigterm", 143, false, "stopped"},       // graceful termination
+		{"sigint", 130, false, "stopped"},        // Ctrl-C
+		{"sighup", 129, false, "stopped"},        // hangup
 	}
 	for _, c := range cases {
 		sig := 0

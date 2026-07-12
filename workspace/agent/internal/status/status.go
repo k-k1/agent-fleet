@@ -33,10 +33,10 @@ type SessionStatus struct {
 // container oom_kill) which doubles as clearing any prior death record — so a resumed
 // session starts clean. record-exit then overwrites it with the interpreted Reason.
 type ExitInfo struct {
-	Reason  string `json:"reason,omitempty"` // exited|crashed|killed|oom|stopped ; "" = running/baseline
-	Code    int    `json:"code,omitempty"`   // raw pane wait status ($?); 128+N on a signal kill
-	Signal  int    `json:"signal,omitempty"` // N when Code>=128 (SIGKILL=9 → Code 137), else 0
-	At      string `json:"at,omitempty"`     // RFC3339, when the exit was recorded
+	Reason  string `json:"reason,omitempty"`  // exited|crashed|killed|oom|stopped ; "" = running/baseline
+	Code    int    `json:"code,omitempty"`    // raw pane wait status ($?); 128+N on a signal kill
+	Signal  int    `json:"signal,omitempty"`  // N when Code>=128 (SIGKILL=9 → Code 137), else 0
+	At      string `json:"at,omitempty"`      // RFC3339, when the exit was recorded
 	OOMBase uint64 `json:"oomBase,omitempty"` // container oom_kill counter captured at session start
 }
 
@@ -55,7 +55,7 @@ var (
 
 // PersistExit / ReadExit / RemoveExit manage the per-session exit record (keyed by
 // session name). PersistExit is called both at launch (baseline) and at exit (result).
-func PersistExit(name string, e ExitInfo) { _ = exitFiles.Write(name, e) }
+func PersistExit(name string, e ExitInfo)   { _ = exitFiles.Write(name, e) }
 func ReadExit(name string) (ExitInfo, bool) { return exitFiles.Read(name) }
 func RemoveExit(name string)                { exitFiles.Remove(name) }
 
