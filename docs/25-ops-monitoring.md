@@ -61,7 +61,7 @@ UC1/UC2 が本命（既存資産でほぼ届く）。UC3 は面白いがアー�
 | ツール | MCP サーバ | 提供元 | 形態 | 備考 |
 |---|---|---|---|---|
 | PagerDuty | [pagerduty-mcp-server](https://github.com/PagerDuty/pagerduty-mcp-server) | **公式** | hosted（`mcp.pagerduty.com/mcp`）と self-host OSS の両方 | インシデント/サービス/スケジュール/オンコール/エスカレーション。read+write。hosted は既定で write も出す点に注意 |
-| Grafana | [grafana/mcp-grafana](https://github.com/grafana/mcp-grafana) | **公式** | **Go 単一バイナリ** / Docker | ダッシュボード・データソース（Prometheus/Loki）クエリ・アラートルール・**Grafana Incident / OnCall / Sift**（エラーパターン検出）まで。運用系で最も充実 |
+| Grafana | [grafana/mcp-grafana](https://github.com/grafana/mcp-grafana) | **公式** | **Go 単一バイナリ** / Docker | ダッシュボード・データソース（Prometheus/Loki）クエリ・アラートルール・**Grafana Incident / OnCall / Sift**（エラーパターン検出）まで。運用系で最も充実。**Amazon Managed Grafana（AMG）もサービスアカウントトークンで同経路**（§6 AMG 検討） |
 | CloudWatch | [awslabs cloudwatch-mcp-server](https://awslabs.github.io/mcp/servers/cloudwatch-mcp-server) | **AWS 公式（awslabs）** | Python / uvx | アラーム起点トラブルシュート・ログ異常分析・アラーム推奨。既存 SSO 資格チェーンをそのまま読む |
 | Athena | [awslabs aws-dataprocessing-mcp-server](https://awslabs.github.io/mcp/servers/aws-dataprocessing-mcp-server)（or 汎用 [aws-api-mcp-server](https://awslabs.github.io/mcp/servers/aws-api-mcp-server)） | **AWS 公式（awslabs）** | Python / uvx | Athena クエリ実行・Glue カタログ。※セッション（tmux）側は焼き込み済み aws CLI で今日でも可能 |
 | Zabbix | [initMAX/zabbix-mcp-server](https://github.com/initMAX/zabbix-mcp-server) | 事実上標準の OSS（Zabbix 社公式ではない） | self-host、OAuth2.1/bearer | 全 58 API 群 237 ツール、**read-only モード既定**、Zabbix 5.0〜8.0。代替: Zabbix API は素の JSON-RPC で薄く、最悪自前ツール化も容易 |
@@ -178,9 +178,41 @@ Phase 1 の判断材料は Phase 0 の実地検証。**Phase 0 は現行 main �
 - **イメージ**: `uv`/`uvx` を `/usr/local/bin` にベイク（Dockerfile）。要**再ビルド**。
 - **反映タイミング**: 接続の有効化に**ワークスペース再起動は不要**。チャットは毎ターン `claude -p` を起こし直し、`mcp-run` が起動時にストアを読むため、**次のチャット送信**から反映。対話セッション（tmux claude）側は従来どおり Phase 0 手順（`claude mcp add`）で、こちらは新セッションが必要。
 - **検証済み（2026-07-12, dev コンテナ）**: 実キーで `mcp-run pagerduty` 経由の end-to-end 疎通（`list_incidents` 実データ取得）、資格なし/不明プロバイダの安全な失敗、Go build/vet/test（99 passed）・gofmt・Console tsc（0 errors）。
-- **残**: 実 workspace（再ビルド後）での UI→チャットの通し確認。カスタムアシスタント編集 UI（AssistantModal）への integrations ピッカー追加（現状は組み込み SRE のみ integrations 保持）。Grafana/CloudWatch を同じ枠（opsIntegrations 追加 + mcp-run provider 追加）で拡張。
+- **残**: 実 workspace（再ビルド後）での UI→チャットの通し確認。カスタムアシスタント編集 UI（AssistantModal）への integrations ピッカー追加（現状は組み込み SRE のみ integrations 保持）。Grafana/CloudWatch を同じ枠（opsIntegrations 追加 + mcp-run provider 追加）で拡張（Grafana/AMG は次節で検討済み）。
 
 未決論点（§8）のうち **③チャットの組み込みツール権限**は本実装で前提を確認済み: チャットは `chatToolLimits()` で Bash/Edit/Write/MultiEdit/NotebookEdit と Agent/Task/Workflow を `--disallowedTools` で禁止（`--dangerously-skip-permissions` 下でも deny は有効）。ops MCP は read-only ツールのみを広告するため、read-only 統制は「MCP 集合」「組み込みツール」の両方で閉じている。
+
+### Amazon Managed Grafana（AMG）接続の検討 — 2026-07-12 Web 裏取り済み
+
+Phase 0 で検証した mcp-grafana は汎用 Grafana API（URL + トークン）前提のため、「AMG は認証方式が違うのでは（IAM Identity Center / SigV4 / 独自キー発行）」を AWS 公式ドキュメントで裏取りした。
+
+**結論: AMG でも mcp-grafana はそのまま使える見込み。** 認証レイヤの分担が肝で、
+
+- **IAM Identity Center / SAML** はブラウザの**人間ログイン専用**。Grafana HTTP API のプログラムアクセスには関与しない。
+- **SigV4（IAM 資格）**が要るのは AWS 側の **workspace 管理 API**（`aws grafana …`）だけ。Grafana HTTP API 本体は署名不要。
+- プログラムアクセスは Grafana ネイティブの**サービスアカウントトークン**（`Authorization: Bearer`）で、mcp-grafana の推奨認証（env `GRAFANA_URL` + `GRAFANA_SERVICE_ACCOUNT_TOKEN`）とそのまま一致する。エンドポイントは `https://g-xxxxxxxxxx.grafana-workspace.<region>.amazonaws.com`。
+
+**AMG 特有の事実（セルフホストとの差分）**:
+
+| 項目 | AMG の仕様 | 含意 |
+|---|---|---|
+| トークン発行 | Grafana UI（org admin）**または AWS API** `CreateWorkspaceServiceAccount(Token)`（SigV4。CLI: `aws grafana create-workspace-service-account-token`） | AWS API 経由なら **IAM 資格から Grafana トークンを動的発行**できる（案B の根拠） |
+| トークン寿命 | **最長 30 日**（`secondsToLive` 1〜2,592,000 秒）。無期限不可 | セルフホストとの最大の違い。静的トークン運用は**月次ローテーションが必須** |
+| キーの再表示 | 発行応答でのみ取得可・再表示不可 | 貼付前提の UI で問題なし |
+| トークンクォータ | 上限あり、**期限切れも算入**（削除するまで） | 動的発行するなら削除/掃除の設計が必要 |
+| API キー | deprecated。**Grafana v12 workspace では廃止済み**（サービスアカウントへ移行） | `GRAFANA_API_KEY`（mcp-grafana 側でも deprecated）は使わない |
+| 課金 | サービスアカウントは**課金上 1 ユーザー扱い** | チームで Viewer SA を 1 つ共有し、トークンを複数発行（用途別監査）が経済的 |
+| API サブセット | AMG は Grafana HTTP API の**サブセット**を公開（v10/v12 でリスト提供: dashboard / datasource / folder / search / annotations 等） | `/api/ds/query`（データソースクエリ実行）が明示されておらず、**mcp-grafana の Prometheus/Loki クエリ系ツールが AMG で全部通るかは実機検証項目** |
+
+**接続パターン 2 案**:
+
+- **案A: 静的トークン（PagerDuty 同型・推奨初手）** — 運用タブに Grafana カード（URL + SA トークン）→ `secrets.enc`（`GrafanaCreds{url, token}`）→ `mcp-run grafana` が env 注入して焼き込み済み `mcp-grafana -disable-write -disable-admin` を exec。**セルフホスト / Grafana Cloud / AMG を同一 kind で吸収**でき、実装は PagerDuty 縦切りの写経（下記差分箇所）。AMG の場合だけ 30 日で失効するので、失効時に UI で貼り直し（401 をカード上で分かるようにする程度の配慮）。
+- **案B: AMG 専用・IAM 動的発行（秘密レス）** — 接続情報は region / workspaceId / serviceAccountId のみで**長寿命秘密ゼロ**。`mcp-run` が既存 AWS SSO 資格チェーン（ssm 接続と同じ、コンテナ内完結）で `CreateWorkspaceServiceAccountToken`（短命 TTL、例 8h）を発行して env 注入 → exec。ローテーション不要が利点。考慮点: ① SSO ロールに `grafana:CreateWorkspaceServiceAccountToken` / `Delete…` / `List…` の IAM 権限が要る（インフラ側整備）、② exec モデルでは終了時削除ができないため、起動時に自分の名前プレフィックス（例 `af-<user>-`）の**期限切れトークンを List + Delete で掃除**してクォータ堆積を防ぐ、③ mcp-grafana の `GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE`（リクエスト毎に再読込）を使えば TTL 越えの長寿命セッションでも親常駐なしで更新余地あり。
+- **推奨**: 案A で開始し（全 Grafana 系を 1 kind でカバー、AMG は「トークンの取り方が違うだけ」として guide に記載）、AMG 利用が定着して 30 日ローテーションが痛くなったら、案B を `grafana` 接続の認証モード（`token` / `amg-iam`）として追加する。UI・opsIntegrations・アシスタント側は案A/B で共通（違いは `mcp-run grafana` の資格取得部のみ）なので、後付けで両立できる。
+
+**案A の実装差分（PagerDuty 実装との対応）**: `secrets.go` に `GrafanaCreds`、`connections.go` + agent `routes.go` + CP `routes.go` に `/connections/grafana`、`mcp_run.go` に `case "grafana"`（uvx ではなく焼き込みバイナリを exec、`-disable-write -disable-admin` 固定）、`assistants.go` に `integrationGrafana`（opsIntegrations 1 行 + integrationReady case + SRE アシスタントへ追加）、Console `OpsTab.tsx` に GrafanaCard（URL + トークンの 2 入力）、Dockerfile に mcp-grafana バイナリ（49MB、リリース tarball）をベイク。
+
+**egress**: AMG の workspace endpoint は公開 HTTPS（`*.grafana-workspace.<region>.amazonaws.com`）。テナント allowlist の対象に追加。VPC 限定（プライベート接続）構成のテナントではコンテナからの経路確認が別途必要。
 
 ---
 
