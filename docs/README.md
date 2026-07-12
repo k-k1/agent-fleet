@@ -55,6 +55,7 @@
 - [0011-console-rebuild.md](decisions/0011-console-rebuild.md) — Console リビルド：並行エントリ・zustand・旧側凍結（設計 [22](history/22-console-rebuild.md)）
 - [0012-go-internal-refactor.md](decisions/0012-go-internal-refactor.md) — Go バックエンド内部リファクタ：internal 層化・2 バイナリ維持・共有モジュール見送り（設計 [23](23-go-refactor.md)）
 - [0013-tts-zundamon.md](decisions/0013-tts-zundamon.md) — 回答の音声読み上げ：CP-native TTS・プロバイダ抽象・ずんだもん主役/Polly 受け皿・ECS オンデマンド（設計 [24](24-tts-zundamon.md)）
+- [0014-agent-exit-recording.md](decisions/0014-agent-exit-recording.md) — エージェント終了理由記録：pane ラッパーで exit code 捕捉・自 cgroup で OOM 帰属・意図停止フラグ不要・CP は cgroup 直読み（設計 [26](26-agent-exit-recording.md)）
 
 ## history/ — 使い終わった実装プラン（P3-6 は ◐ 段1 完了・admin 残）
 

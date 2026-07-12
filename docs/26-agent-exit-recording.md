@@ -1,11 +1,12 @@
 # 26. エージェントプロセスの終了理由記録（OOM / signal / crash） — 設計
 
-**Status: 🚧 Phase 1 + Phase 2 実装済み（要再ビルド／実機目視・per-container UI は残）** — 2026-07-12 起草・同日実装
+**Status: 🚧 Phase 1 + Phase 2 実装済み（残=実フリート再ビルド反映＋実機目視のみ）** — 2026-07-12 起草・同日実装
 
 > 実装サマリ（2026-07-12）:
 > - **Phase 2（agent）**: pane ラッパー方式で per-session の終了理由を記録。`record_exit.go`（record-exit サブコマンド＋`exitReason` 解釈＋自 cgroup `memory.events` の `oom_kill` をセッション開始時ベースラインと比較して OOM 確定）、`status.ExitInfo` ストア、`startSessionTmux` のラッパー付与＋ベースライン記録、`wireSession` の終了理由付与、Stop/Archive/Recreate のクリーンアップ。Console は `exitReason/exitCode/exitSignal` を左ペインに反映（異常終了は warn チップ＋ツールチップ）。単体テスト＋実バイナリでのケース検証済み。**「意図的停止フラグ」は実証の結果不要と判明**（§4.2 追記）。
 > - **Phase 1（control-plane）**: `metrics.go` に `memory.events` の `oom_kill` 追跡（`oomTracker`、ポーリング跨ぎで `oom_recent`）と停止コンテナの docker `.State.OOMKilled/.ExitCode` を追加。`/api/workspace/stats` に `oom_kill_total`/`oom_recent`/`oom_killed`/`exit_code` を露出。単体テスト済み。
-> - **残**: 実フリート再ビルド反映と実機目視、Phase 1 データの WsBar チップ表示（バックエンドは出力済み・UI 未配線）、`docs/dev/05-api-contracts.md` の stats 契約追記、ADR 起票（任意）。
+> - **UI/契約/ADR 完了**: WsBar に OOM 表示（メモリタイル crit＋状態チップ warn、`0e65a32`）、`docs/dev/05-api-contracts.md` に stats 契約追記、[decisions/0014](decisions/0014-agent-exit-recording.md) 起票。
+> - **残**: 実フリート再ビルド反映と実機目視のみ（agent はイメージ焼き込みのため要再ビルド）。
 
 コンテナ内で動くエージェントプロセス（claude / codex / opencode の各セッション）が **なぜ終了したか**（正常終了 / OOM kill / その他 signal / クラッシュ / 意図的停止）を捕捉して記録し、Console に事実ベースで提示するための設計。現状は「tmux セッションが消えた＝停止」しか見ておらず、終了理由の情報はゼロ。
 
@@ -163,7 +164,7 @@ args := []string{"new-session", "-d", "-s", session.TmuxName(m.Name), "-c", plan
 5. **ラッパー方式 vs tmux フック方式**: §4.2。→ ラッパー第一候補。
 6. **意図的停止フラグの実装**: 既存の `status.Remove` / Meta 更新の流れ（`session_handlers.go`）にフラグを相乗りさせるか、別ストアにするか。
 
-意思決定は ADR 化（`docs/decisions/0014-agent-exit-recording.md` 想定）してから個別プランに落とす。
+意思決定は ADR 化済み: [decisions/0014-agent-exit-recording.md](decisions/0014-agent-exit-recording.md)（実装で確定した §7 の各決定を記録）。
 
 ---
 
