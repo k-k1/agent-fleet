@@ -3,22 +3,20 @@
 // copy appears (the flat Repos list, each node of the project tree). All the launch
 // / clone-target / delete / fast-forward / open-SCM logic that used to live inline
 // in ReposSection lives here once.
-import { apiJSON, raw, errText, pasteImage } from "../../core/api/client.ts";
-import { buildImagePrompt } from "../../lib/pastedImages.ts";
+import { apiJSON, raw, errText } from "../../core/api/client.ts";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { useConfirm } from "../../ui/ConfirmProvider.tsx";
 import { agentOf } from "../../agents/registry.ts";
 import { writeRepoLast, resolveModel } from "../../lib/repoLast.ts";
-import { pushPromptHistory } from "../../lib/promptHistory.ts";
 import { useSettings } from "../../lib/settings.ts";
-import { setLaunchSeed } from "../../lib/launchSeed.ts";
 import { useLayoutStore } from "../../layout/store.ts";
 import { useReposStore } from "./store.ts";
 import type { Repo } from "./store.ts";
 import { useFilesStore } from "../files/store.ts";
 import { useSessionsStore } from "../sessions/store.ts";
-import { openSessionTerminal, openSessionTerminalSplit, openSessionChat, openSessionChatSplit, sendPromptWhenAlive } from "../sessions/open.ts";
+import { openSessionTerminal, openSessionTerminalSplit, openSessionChat, openSessionChatSplit } from "../sessions/open.ts";
 import { RepoRow } from "./RepoRow.tsx";
+import { useStartWork } from "./useStartWork.ts";
 import type { RepoRailContext } from "./useRepoRail.ts";
 
 interface RepoRowConnectedProps {
@@ -39,6 +37,7 @@ export function RepoRowConnected({ r, ctx, onToggle, sess }: RepoRowConnectedPro
   const setActive = useLayoutStore((s) => s.setActive);
   const refreshRepos = useReposStore((s) => s.refresh);
   const refreshSessions = useSessionsStore((s) => s.refresh);
+  const startWork = useStartWork();
 
   return (
     <RepoRow
@@ -124,58 +123,8 @@ export function RepoRowConnected({ r, ctx, onToggle, sess }: RepoRowConnectedPro
           : split ? openSessionTerminalSplit : openSessionTerminal)(res.name);
       }}
       // 作業を始める: worktree (default) or in-place, with an optional first prompt
-      // auto-sent once the session is alive.
-      onStartWork={async ({ kind, model, prompt, images, worktree, base, newBranch, useExisting }) => {
-        const hasModel = agentOf(kind).caps.model;
-        const body: Record<string, unknown> = { dir: r.path, kind };
-        if (hasModel && model) body.model = model;
-        if (worktree) {
-          body.worktree = true;
-          body.branch = base;
-          body.new_branch = newBranch;
-          if (useExisting) body.use_existing = true;
-        }
-        const res = await apiJSON("api/sessions", "POST", body);
-        if (res && res.error) {
-          const code = typeof res.error === "object" ? res.error.code : "";
-          if (code === "branch_exists") return { ok: false, conflict: "local" as const };
-          if (code === "branch_exists_remote") return { ok: false, conflict: "remote" as const };
-          toast((worktree ? "worktree 起動に失敗: " : "起動に失敗: ") + errText(res.error));
-          return { ok: false };
-        }
-        writeRepoLast(r.name, kind, hasModel ? model : undefined);
-        const chat = agentOf(kind).caps.chat;
-        // Now that the session exists, upload any pasted images to it and fold their
-        // saved paths into the first prompt (claude opens them with its Read tool).
-        let seed = prompt;
-        if (images?.length && agentOf(kind).caps.imagePaste) {
-          const paths: string[] = [];
-          for (const f of images) {
-            try {
-              const up = await pasteImage(res.name, f);
-              if (up.status < 300 && up.path) paths.push(up.path);
-              else toast("画像のアップロードに失敗しました: " + (up.error ? errText(up.error) : ""));
-            } catch {
-              toast("画像のアップロードに失敗しました（通信エラー）");
-            }
-          }
-          seed = buildImagePrompt(prompt, paths, kind);
-        }
-        if (seed) {
-          // Chat-capable: stash as a launch seed — MirrorView auto-sends it once the
-          // session is alive. Other kinds: paste once the PTY is up.
-          if (chat) setLaunchSeed(res.name, seed);
-          else sendPromptWhenAlive(res.name, seed);
-          if (prompt) pushPromptHistory(r.name, prompt);
-        }
-        if (worktree) {
-          void refreshRepos();
-          useFilesStore.getState().bump();
-        }
-        void refreshSessions();
-        (chat ? openSessionChat : openSessionTerminal)(res.name);
-        return { ok: true };
-      }}
+      // auto-sent once the session is alive. Shared with the はじめる hub (useStartWork).
+      onStartWork={(opts) => startWork({ dir: r.path || "", repo: r.name }, opts)}
       onBranchChanged={() => {
         // A checkout / new branch changed HEAD and the working tree.
         void refreshRepos();

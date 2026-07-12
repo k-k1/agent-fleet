@@ -16,6 +16,11 @@ interface SessionsStore {
    * its fixed positioning). */
   newSessionTick: number;
   openNewSession(): void;
+  /** Global "open the はじめる hub" signal (起動導線 Ph2): WS bar はじめる /
+   * onboarding bump this; StartHost — which owns the StartModal — watches it.
+   * openNewSession stays as the SSM/legacy path (hub その他 → 新しいセッション). */
+  startTick: number;
+  openStart(): void;
   refresh(): Promise<void>;
   /** Resume/launch a stopped session (POST start). The caller re-attaches. */
   start(name: string): Promise<void>;
@@ -27,6 +32,8 @@ export const useSessionsStore = create<SessionsStore>((set) => ({
   sessions: [],
   newSessionTick: 0,
   openNewSession: () => set((s) => ({ newSessionTick: s.newSessionTick + 1 })),
+  startTick: 0,
+  openStart: () => set((s) => ({ startTick: s.startTick + 1 })),
 
   async refresh() {
     try {
