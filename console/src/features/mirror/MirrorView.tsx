@@ -1120,6 +1120,11 @@ export function MirrorView({
     if (composerLocked) return;
     const text = draft.trim();
     if (!text && !attachments.length) return;
+    // このセッションを読み上げている最中にコンポーサーから送信したら、その読み上げを止める。
+    // 割り込み・追撃の意思なので、今さら古い回答（カラオケ・要約アナウンス）を聞かされても
+    // 混乱するだけ。sessionName で判定し、他セッション由来の再生（不一致）はそのまま流す。
+    const ts = useTtsStore.getState();
+    if (ts.active && ts.sessionName === session) ts.stop();
     const paths = attachments.map((a) => a.path);
     const prompt = buildImagePrompt(text, paths);
     setHistIdx(null);
