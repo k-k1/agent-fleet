@@ -1,21 +1,23 @@
 # 10. 運用ツール連携（MCP でインシデント壁打ち）🧪
 
-## PagerDuty は「運用」タブから接続できます（推奨）
+## PagerDuty / Grafana は「運用」タブから接続できます（推奨）
 
-**PagerDuty は製品機能として組み込み済み**です（docs/25 Phase 1、要イメージ再ビルド）。手作業の PoC 手順（後述）より、まずこちらを使ってください。
+**PagerDuty と Grafana は製品機能として組み込み済み**です（docs/25 Phase 1、要イメージ再ビルド）。手作業の PoC 手順（後述）より、まずこちらを使ってください。
 
-1. **設定 > 運用** タブを開き、PagerDuty カードに API キーを貼って「接続」。**読み取り専用キー**を推奨します（PagerDuty の Integrations > API Access Keys で「Read-only」を選択）。EU アカウントはチェックボックスを入れてください。
-2. キーはワークスペース内に暗号化保存され、MCP サーバの起動時にだけ渡されます（設定ファイルや平文には残りません）。
-3. チャットで **「SRE アシスタント」** を選んで新しい会話を開始。「今開いている PagerDuty のインシデントを一覧して経緯をまとめて」のように聞くと、実データを確認しながら状況整理・原因の仮説出し・対外報告の草稿を手伝います（読み取り専用。ack/resolve はしません）。
+1. **設定 > 運用** タブを開き、各カードに資格情報を貼って「接続」:
+   - **PagerDuty**: API キー。**読み取り専用キー**を推奨します（PagerDuty の Integrations > API Access Keys で「Read-only」を選択）。EU アカウントはチェックボックスを入れてください。
+   - **Grafana**: インスタンス URL と**サービスアカウントトークン**（Viewer 権限を推奨）。セルフホスト / Grafana Cloud / **Amazon Managed Grafana** のいずれも可（AMG は URL に workspace endpoint を指定。トークンの発行方法と 30 日期限は後述の AMG 節を参照）。
+2. 資格情報はワークスペース内に暗号化保存され、MCP サーバの起動時にだけ渡されます（設定ファイルや平文には残りません）。Grafana の MCP は書き込み・管理ツール無効で起動します。
+3. チャットで **「SRE アシスタント」** を選んで新しい会話を開始。「今開いている PagerDuty のインシデントを一覧して経緯をまとめて」「このサービスの直近 1 時間のエラーレートを Grafana で見て」のように聞くと、実データを確認しながら状況整理・原因の仮説出し・対外報告の草稿を手伝います（読み取り専用。ack/resolve はしません）。
 4. 接続の変更は**次のチャット送信から反映**されます（ワークスペースの再起動は不要）。
 
-Grafana / CloudWatch など他ツールは、下の PoC 手順で手動接続できます（順次「運用」タブに取り込み予定）。
+CloudWatch など他ツールは、下の PoC 手順で手動接続できます（順次「運用」タブに取り込み予定）。
 
 ---
 
 ## （PoC）その他ツールを手動で繋ぐ 🧪
 
-**実験的な手順です**（[docs/25 サービス運用向け拡張](../../25-ops-monitoring.md) の Phase 0）。まだ「運用」タブに無いツール（Grafana / CloudWatch など）を、現行の Workspace のまま手作業で claude の**対話セッション**に繋ぐための手順です。
+**実験的な手順です**（[docs/25 サービス運用向け拡張](../../25-ops-monitoring.md) の Phase 0）。まだ「運用」タブに無いツール（CloudWatch / Zabbix など）や、チャットではなく**対話セッション**（tmux の claude）に繋ぎたい場合の手作業手順です。
 
 - 対象: 対話セッション（tmux の claude）。**チャット（アシスタント）には現状 MCP を足せません**（Phase 1 で対応予定）。
 - 前提: Workspace から各監視ツールのエンドポイントへ outbound が通ること。PyPI 系は `uvx` の初回取得で必要。
@@ -45,6 +47,17 @@ claude mcp add -s user grafana \
   -e GRAFANA_URL=https://grafana.example.com \
   -e GRAFANA_SERVICE_ACCOUNT_TOKEN=<viewer-sa-token> \
   -- ~/.local/bin/mcp-grafana -disable-write -disable-admin
+```
+
+**Amazon Managed Grafana（AMG）の場合**も同じ手順で繋がる（認証はセルフホストと同じサービスアカウントトークン。IAM/SigV4 は不要）。違いは 2 点だけ:
+
+- `GRAFANA_URL` は workspace endpoint（`https://g-xxxxxxxxxx.grafana-workspace.<region>.amazonaws.com`）。
+- トークンは AMG の Grafana 管理画面（Administration → Service accounts、要 admin）か、IAM 権限があれば AWS CLI でも発行できる（**最長 30 日**で失効するので期限管理に注意）:
+
+```bash
+aws grafana create-workspace-service-account-token \
+  --workspace-id g-xxxxxxxxxx --service-account-id <sa-id> \
+  --name poc-$(date +%Y%m%d) --seconds-to-live 604800   # 7日。応答の key がトークン（再表示不可）
 ```
 
 ## 2. PagerDuty（インシデント・オンコール）

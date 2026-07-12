@@ -43,6 +43,21 @@ RUN printf '[global]\nbreak-system-packages = true\n' > /etc/pip.conf
 RUN pip install --no-cache-dir uv \
     && uv --version && uvx --version
 
+# mcp-grafana (official Grafana MCP server, Go single binary) baked for the ops
+# integrations (docs/25 — `workspace-agent mcp-run grafana` execs it with the
+# stored URL + service-account token and -disable-write -disable-admin). Works
+# against self-hosted / Grafana Cloud / Amazon Managed Grafana. Bump
+# MCP_GRAFANA_VERSION to upgrade (ARG pin busts the cache; same idiom as GH_VERSION).
+ARG MCP_GRAFANA_VERSION=0.17.1
+RUN set -eux; \
+    arch="$(dpkg --print-architecture)"; \
+    case "$arch" in amd64) mgarch=x86_64 ;; arm64) mgarch=arm64 ;; *) echo "unsupported arch: $arch" >&2; exit 1 ;; esac; \
+    curl -fsSL "https://github.com/grafana/mcp-grafana/releases/download/v${MCP_GRAFANA_VERSION}/mcp-grafana_Linux_${mgarch}.tar.gz" -o /tmp/mcp-grafana.tgz; \
+    tar -C /tmp -xzf /tmp/mcp-grafana.tgz mcp-grafana; \
+    install -m 0755 /tmp/mcp-grafana /usr/local/bin/mcp-grafana; \
+    rm -f /tmp/mcp-grafana.tgz /tmp/mcp-grafana; \
+    mcp-grafana --version
+
 # Headless-browser verification support: the shared libraries Chromium needs at
 # runtime, plus fonts (DejaVu + Noto CJK so the Console's Japanese UI renders in
 # screenshots instead of tofu). The browser binary itself is NOT baked — this

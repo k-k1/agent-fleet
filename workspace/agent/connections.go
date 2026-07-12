@@ -43,6 +43,7 @@ func handleConnectionsGet(w http.ResponseWriter, r *http.Request) {
 		"opencode":  opencode.Status(s),
 		"codex":     codex.Status(),
 		"pagerduty": pagerdutyStatus(s),
+		"grafana":   grafanaStatus(s),
 	})
 }
 
@@ -103,6 +104,68 @@ func handleDeletePagerDutyConn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"disconnected": "pagerduty"})
+}
+
+// grafanaStatus reports whether a Grafana connection is stored, plus the
+// non-secret instance URL so the UI can show which Grafana it points at
+// (self-hosted / Cloud / AMG workspace endpoint). Never the token.
+func grafanaStatus(s *secrets.Data) map[string]any {
+	if s.Grafana == nil || s.Grafana.URL == "" || s.Grafana.Token == "" {
+		return map[string]any{"connected": false}
+	}
+	return map[string]any{"connected": true, "url": s.Grafana.URL}
+}
+
+type grafanaConnReq struct {
+	URL   string `json:"url"`
+	Token string `json:"token"`
+}
+
+// handlePutGrafanaConn stores the user's Grafana URL + service-account token in
+// the encrypted store (docs/25). The token is consumed only by `mcp-run grafana`,
+// which injects it as env into mcp-grafana at spawn (read-only flags enforced
+// there). A Viewer-permission service account is recommended; for Amazon Managed
+// Grafana the token expires after at most 30 days and must be re-pasted.
+func handlePutGrafanaConn(w http.ResponseWriter, r *http.Request) {
+	var req grafanaConnReq
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	url := strings.TrimRight(strings.TrimSpace(req.URL), "/")
+	token := strings.TrimSpace(req.Token)
+	if url == "" || token == "" {
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_token", "Grafana の URL とサービスアカウントトークンを入力してください")
+		return
+	}
+	if !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://") {
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_url", "URL は http(s):// で始めてください")
+		return
+	}
+	s, err := secrets.Load()
+	if err != nil {
+		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
+		return
+	}
+	s.Grafana = &secrets.GrafanaCreds{URL: url, Token: token}
+	if err := s.Save(); err != nil {
+		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, grafanaStatus(s))
+}
+
+func handleDeleteGrafanaConn(w http.ResponseWriter, r *http.Request) {
+	s, err := secrets.Load()
+	if err != nil {
+		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
+		return
+	}
+	s.Grafana = nil
+	if err := s.Save(); err != nil {
+		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"disconnected": "grafana"})
 }
 
 // internalGitStatus reports the tenant's self-hosted git provider (docs/reference/
