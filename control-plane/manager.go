@@ -38,8 +38,13 @@ type manager struct {
 	defaultTenantID string
 	agentHost       string
 	memory          string
-	sessionCmd      string
-	extraEnv        []string
+	// memMaxBytes is the deployment-wide HARD ceiling for a per-workspace RAM cap
+	// (AF_MAX_WORKSPACE_MEM, bytes; 0 = no extra ceiling). It bounds a tenant_admin's
+	// per-user mem_limit on top of the per-tenant cap so no single workspace can be
+	// sized past what the shared host can bear. See resolveWorkspaceMemBytes.
+	memMaxBytes int64
+	sessionCmd  string
+	extraEnv    []string
 
 	portBase int
 
