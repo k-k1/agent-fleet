@@ -40,6 +40,13 @@ export interface Session {
   currentBranch?: string; // working copy's branch now, set only when it differs from `branch`
   branchDrift?: boolean; // true = the working tree was switched off `branch` under the session
   worktree?: boolean; // session runs in a linked git worktree (offers branch rename)
+  // Why a STOPPED session's agent process ended, when it ended abnormally: "oom"
+  // (memory-killed), "killed" (SIGKILL, non-OOM) or "crashed" (fault / non-zero exit).
+  // Absent for live sessions, clean quits, and deliberate stops. exitCode is the raw
+  // pane wait status (137 = OOM SIGKILL); exitSignal the derived signal number.
+  exitReason?: "oom" | "killed" | "crashed" | string;
+  exitCode?: number;
+  exitSignal?: number;
 }
 
 // Provider connection status for one agent, from GET /api/connections.

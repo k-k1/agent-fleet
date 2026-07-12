@@ -25,11 +25,42 @@ export const displayName = (s: Session): string => {
   return `${s.repo || s.name} @${stamp(s.createdAt)}`;
 };
 
+// exitLabel describes why a stopped session's agent process died, when the pane
+// recorder caught an abnormal end. Returns null for a clean quit or a deliberate stop
+// (no reason recorded) — those keep the plain 停止中 chip.
+export const exitLabel = (s: Session): { text: string; hint: string } | null => {
+  switch (s.exitReason) {
+    case "oom":
+      return {
+        text: "メモリ不足で終了",
+        hint: `メモリ不足でプロセスが強制終了されました（OOM kill / exit ${s.exitCode ?? 137}）。ワークスペースのメモリ上限に達した可能性があります。`,
+      };
+    case "killed":
+      return {
+        text: "強制終了",
+        hint: `プロセスが SIGKILL で強制終了されました（signal ${s.exitSignal ?? 9}）。ホスト全体のメモリ逼迫などが原因の可能性があります。`,
+      };
+    case "crashed":
+      return {
+        text: "異常終了",
+        hint: s.exitSignal
+          ? `プロセスが signal ${s.exitSignal} で異常終了しました。`
+          : `プロセスが異常終了しました（exit code ${s.exitCode ?? "?"}）。`,
+      };
+    default:
+      return null;
+  }
+};
+
 // stateInfo maps a session to its status chip (codicon + label + color class).
 export const stateInfo = (s: Session): StateInfo => {
   if (!s.alive) {
     // A stopped claude whose working dir was deleted can't be resumed (archive only).
     if (s.resumable === false) return { cls: "off dead", icon: "circle-slash", text: "フォルダ無し — 再開不可" };
+    // An abnormal end (crash / OOM) gets a warning chip so the row stands out from a
+    // clean 停止中; the reason detail rides the row tooltip.
+    const ex = exitLabel(s);
+    if (ex) return { cls: "off warn", icon: "warning", text: ex.text };
     return { cls: "off", icon: "debug-pause", text: "停止中" };
   }
   // shell has no working/idle state model — alive means it's running.
