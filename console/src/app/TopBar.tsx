@@ -7,7 +7,7 @@ import { useTtsStore } from "../core/store/tts.ts";
 import { useSettingsUI } from "../features/settings/store.ts";
 import { rel } from "../core/api/client.ts";
 import { useSettings, setSetting, THEMES, SURFACE_TARGETS } from "../lib/settings.ts";
-import { useIsMobile } from "../lib/device.ts";
+import { useIsMobile, isStandalonePWA } from "../lib/device.ts";
 import { Icon } from "../ui/Icon.tsx";
 import { SwatchGrid } from "../ui/SwatchGrid.tsx";
 import { useDismiss } from "../lib/useDismiss.ts";
@@ -151,6 +151,12 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
         >
           <Icon name={fullscreen ? "screen-normal" : "screen-full"} />
         </button>
+        {/* PWA (standalone) 起動時はブラウザの再読み込みUIが無いので、代替のリロードボタンを出す。 */}
+        {isStandalonePWA() && (
+          <button className="gear reload-toggle" title="再読み込み" onClick={() => window.location.reload()}>
+            <Icon name="refresh" />
+          </button>
+        )}
         {/* 外観: a light popover so colors preview live on the panes behind it. */}
         <div className="acct appr" ref={apprRef}>
           <button
