@@ -34,6 +34,11 @@ L1 認証（authGate）通過後に到達。認可は「自分のリソースの
 
 - 旧 `/agent-fleet` プレフィクスは**廃止**（ルート配信）。`/agent-fleet*` は互換リダイレクトのみ。
 - 非同期操作（起動・clone）は**同期 + ポーリング**で運用（`/jobs` 構想は未採用）。
+- `GET /api/workspace/stats` の応答は CP がホストから cgroup v2 を直読みして組む（`metrics.go`）:
+  稼働時 `{running:true, mem_used, mem_max?, cpu_pct?, oom_kill_total?, oom_recent?}`、
+  停止時 `{running:false, oom_killed?, exit_code?}`。`oom_recent`/`oom_killed` は OOM 検知
+  （コンテナ内子プロセスの OOM kill／コンテナ丸ごとの OOM 落ち）で、設計は [26](../26-agent-exit-recording.md)。
+  セッション単位の終了理由（`exitReason`/`exitCode`/`exitSignal`）は `GET /api/sessions` の各要素に載る（同 docs/26 Phase 2）。
 
 ## 5.2 内部面（CP ↔ Agent）
 

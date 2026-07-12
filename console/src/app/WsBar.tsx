@@ -58,7 +58,10 @@ function useWsResourceChips(tenant: string | null, superAdmin: boolean) {
           // shows, so an idle workspace produces the same key and no re-render.
           const memPct = running && d.mem_max ? Math.round((d.mem_used / d.mem_max) * 100) : -1;
           const cpuPct = running && d.cpu_pct != null ? Math.round(d.cpu_pct) : -1;
-          const key = ok ? `${!!(d && d.running)}|${memPct}|${cpuPct}` : "off";
+          // OOM flags are part of the key so a fresh in-container OOM (oom_recent) or a
+          // stopped-from-OOM container (oom_killed) repaints even at a steady mem/cpu.
+          const oom = `${d.oom_recent ? 1 : 0}|${d.oom_killed ? 1 : 0}|${d.exit_code ?? ""}`;
+          const key = ok ? `${!!(d && d.running)}|${memPct}|${cpuPct}|${oom}` : "off";
           if (key === wsKey.current) return;
           wsKey.current = key;
           setWsStats(ok ? d : null);
@@ -514,6 +517,10 @@ export function WsBar() {
   // Container (own workspace): memory fill (vs quota) + CPU%. Shown to everyone.
   const hasWs = wsStats && wsStats.running && wsStats.mem_used != null;
   const memRatio = hasWs && wsStats.mem_max ? wsStats.mem_used / wsStats.mem_max : null;
+  // A process in this container was OOM-killed within the last few minutes (the
+  // container itself survived). Flag the memory tile crit so it's noticed even after
+  // usage falls back — a build/agent likely just died. (metrics.go oom_recent.)
+  const oomRecent = !!(hasWs && wsStats.oom_recent);
   const containerTiles = hasWs && (
     <>
       {tile({
@@ -522,8 +529,10 @@ export function WsBar() {
         max: 1,
         track: true,
         value: memRatio != null ? `${Math.round(memRatio * 100)}%` : `${fg(wsStats.mem_used)}G`,
-        level: lvl(memRatio, 0.75, 0.9),
-        title: `ワークスペースのメモリ: ${fg(wsStats.mem_used)}${wsStats.mem_max ? "/" + fg(wsStats.mem_max) : ""}G`,
+        level: oomRecent ? 2 : lvl(memRatio, 0.75, 0.9),
+        title: oomRecent
+          ? `ワークスペースのメモリ: ${fg(wsStats.mem_used)}${wsStats.mem_max ? "/" + fg(wsStats.mem_max) : ""}G\n⚠ 直近数分以内にコンテナ内でプロセスが OOM kill されました（メモリ上限到達。ビルド/エージェントが強制終了された可能性）`
+          : `ワークスペースのメモリ: ${fg(wsStats.mem_used)}${wsStats.mem_max ? "/" + fg(wsStats.mem_max) : ""}G`,
       })}
       {tile({
         k: "cpu",
@@ -675,12 +684,16 @@ export function WsBar() {
       </button>
       <span className={"ws-dot " + (running ? "on" : "off")}>●</span>
       <span
-        className="ws-state"
+        className={"ws-state" + (wsState === "stopped" && wsStats?.oom_killed ? " warn" : "")}
         title={
           wsState === "none"
             ? "停止（コンテナなし — Stop で削除済み。データは保持、Start で再作成）"
             : wsState === "stopped"
-              ? "停止（コンテナが自走終了 — クラッシュ / OOM の可能性）"
+              ? wsStats?.oom_killed
+                ? `停止（コンテナがメモリ不足で強制終了 — OOM kill、exit ${wsStats.exit_code ?? "?"}）。メモリ上限に達しました。`
+                : wsStats?.exit_code
+                  ? `停止（コンテナが自走終了 — exit code ${wsStats.exit_code}。クラッシュの可能性）`
+                  : "停止（コンテナが自走終了 — クラッシュ / OOM の可能性）"
               : wsState === "starting"
                 ? "起動中（初回はイメージ取得のため数分かかることがあります。完了すると自動で稼働中になります）"
                 : `状態: ${wsState}`
