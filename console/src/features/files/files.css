@@ -52,6 +52,18 @@
 .fs-file.active {
   color: var(--lp-accent, var(--accent));
 }
+/* Search-result rows: filename first, then its dir path muted (VS Code style).
+   The wrapper truncates so a long path trims from the right, keeping the name. */
+.fs-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fs-sub {
+  color: var(--muted);
+  font-size: 11px;
+}
 .fs-chev {
   width: 12px;
   flex: none;

@@ -256,6 +256,16 @@ export const fsRename = (from: string, to: string) =>
   fsWrite(`api/fs/rename?from=${q(from)}&to=${q(to)}`, { method: "POST" });
 export const fsDelete = (path: string) => fsWrite(`api/fs/delete?path=${q(path)}`, { method: "DELETE" });
 
+// Recursive filename search under a home-relative root (rg-backed). Returns
+// home-relative file paths whose path (relative to root) matches the query,
+// plus `truncated` when the result cap was hit. Never rejects — a proxy/agent
+// error folds into an empty result so the tree filter degrades gracefully.
+export const fsSearch = (root: string, query: string): Promise<{ results: string[]; truncated: boolean }> =>
+  api(`api/fs/search?path=${q(root)}&q=${q(query)}`).then((r) => ({
+    results: Array.isArray(r?.results) ? (r.results as string[]) : [],
+    truncated: !!r?.truncated,
+  }));
+
 // --- assistant chat (docs/19) ---
 // Headless-CLI LLM chat/translation. Thin wrappers over the /api/chat/* endpoints;
 // callers own the response shape (Conversation / ConversationMeta in types/chat).

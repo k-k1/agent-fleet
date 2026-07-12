@@ -101,6 +101,7 @@ func buildMux() *http.ServeMux {
 	// File browser (docs/17 P3-5 段2 + FILES 改善): read tree/file, download raw,
 	// upload into a dir, git-changes filter + viewer line marks.
 	mux.HandleFunc("GET /fs/tree", handleFSTree)
+	mux.HandleFunc("GET /fs/search", handleFSSearch)
 	mux.HandleFunc("GET /fs/file", handleFSFile)
 	mux.HandleFunc("GET /fs/download", handleFSDownload)
 	mux.HandleFunc("POST /fs/upload", handleFSUpload)
