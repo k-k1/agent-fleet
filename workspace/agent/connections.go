@@ -42,7 +42,67 @@ func handleConnectionsGet(w http.ResponseWriter, r *http.Request) {
 		"internal":  internalGitStatus(s),
 		"opencode":  opencode.Status(s),
 		"codex":     codex.Status(),
+		"pagerduty": pagerdutyStatus(s),
 	})
+}
+
+// pagerdutyStatus reports whether a PagerDuty API key is stored (never the key
+// itself), plus the non-secret host override so the UI can show EU vs global.
+func pagerdutyStatus(s *secrets.Data) map[string]any {
+	if s.PagerDuty == nil || s.PagerDuty.APIKey == "" {
+		return map[string]any{"connected": false}
+	}
+	m := map[string]any{"connected": true}
+	if s.PagerDuty.Host != "" {
+		m["host"] = s.PagerDuty.Host
+	}
+	return m
+}
+
+type pagerdutyConnReq struct {
+	APIKey string `json:"apiKey"`
+	Host   string `json:"host"`
+}
+
+// handlePutPagerDutyConn stores the user's PagerDuty API key in the encrypted
+// store (docs/25 Phase 1). The key is consumed only by `mcp-run pagerduty`,
+// which injects it as env into `uvx pagerduty-mcp` at spawn — it never lands in
+// any MCP config file. A read-only PagerDuty key is recommended (see guide).
+func handlePutPagerDutyConn(w http.ResponseWriter, r *http.Request) {
+	var req pagerdutyConnReq
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	key := strings.TrimSpace(req.APIKey)
+	if key == "" {
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_token", "API キーを入力してください")
+		return
+	}
+	s, err := secrets.Load()
+	if err != nil {
+		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
+		return
+	}
+	s.PagerDuty = &secrets.PagerDutyCreds{APIKey: key, Host: strings.TrimSpace(req.Host)}
+	if err := s.Save(); err != nil {
+		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, pagerdutyStatus(s))
+}
+
+func handleDeletePagerDutyConn(w http.ResponseWriter, r *http.Request) {
+	s, err := secrets.Load()
+	if err != nil {
+		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
+		return
+	}
+	s.PagerDuty = nil
+	if err := s.Save(); err != nil {
+		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"disconnected": "pagerduty"})
 }
 
 // internalGitStatus reports the tenant's self-hosted git provider (docs/reference/
