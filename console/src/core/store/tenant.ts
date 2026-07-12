@@ -6,7 +6,7 @@
 // still valid, else the first membership. The chosen slug is persisted via
 // core/api setTenant() so the global fetch wrapper stamps X-AF-Tenant.
 import { create } from "zustand";
-import { api, getTenant, setTenant } from "../api/client.ts";
+import { api, getTenant, setTenant, setUser } from "../api/client.ts";
 import type { Whoami, Tenant } from "../../types/app.ts";
 
 interface TenantStore {
@@ -32,7 +32,13 @@ export const useTenantStore = create<TenantStore>((set) => ({
 
   async init() {
     try {
-      set({ whoami: await api("api/whoami") });
+      const who = await api("api/whoami");
+      set({ whoami: who });
+      // Scope the persisted layout to this identity (email preferred, user as
+      // fallback) so the next account on this browser gets a clean layout. Resolved
+      // before load() runs (init awaits here → App sets booted → load), so the key
+      // is user-scoped from the first read/write.
+      setUser(who?.email || who?.user || "");
     } catch {
       /* whoami is display-only — keep going */
     }

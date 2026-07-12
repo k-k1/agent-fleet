@@ -23,6 +23,18 @@ export function setTenant(slug: string | null | undefined): void {
   localStorage.setItem("af-tenant", selectedTenant);
 }
 
+// --- signed-in user (layout scoping) ---
+// The pane layout is persisted per (user, tenant) so a different account logging
+// in from the same browser never restores the prior user's session panes (the
+// stale right-pane-session bug). Held in memory only — re-resolved from
+// GET /api/whoami on every boot (tenant.init) and never written to localStorage,
+// so the identity itself cannot leak across accounts. Empty in dev/no-auth.
+let currentUser = "";
+export const getUser = (): string => currentUser;
+export function setUser(id: string | null | undefined): void {
+  currentUser = id || "";
+}
+
 const _fetch = window.fetch.bind(window);
 // When AUTH=oauth the Control Plane gates every request on a verified Google
 // session and answers an expired/absent one with 401 on XHR. Bounce the whole
