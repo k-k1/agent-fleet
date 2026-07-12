@@ -1,10 +1,11 @@
-// StartModal —「はじめる」hub (起動導線 Ph2): the WS bar's single entry point for
-// starting anything. Place-first: chat (assistants, repo-less), an existing
+// StartModal —「はじめる」hub (起動導線 Ph2/Ph3): the WS bar's single entry point
+// for starting anything. Place-first: chat (assistants, repo-less), an existing
 // working copy (→ the per-repo 作業を始める dialog), clone-and-continue, a home
-// (repo-less) agent session, and the folded その他 track (shell direct / SSM via
-// the legacy 新しいセッション dialog). Entry points that already know the place
-// (repo row 起動) skip this hub and open LaunchModal directly.
+// (repo-less) agent session, and the folded その他 track (shell direct / SSM —
+// its host picker lives here since NewSessionModal was retired in Ph3). Entry
+// points that already know the place (repo row 起動) skip this hub.
 import { useEffect, useState } from "react";
+import { api, apiJSON, errText } from "../../core/api/client.ts";
 import { Modal } from "../../ui/Modal.tsx";
 import { Button } from "../../ui/Button.tsx";
 import { Icon } from "../../ui/Icon.tsx";
@@ -14,6 +15,8 @@ import { resolveModel } from "../../lib/repoLast.ts";
 import { useSettings } from "../../lib/settings.ts";
 import { ModelPicker } from "../../ui/ModelPicker.tsx";
 import { groupedRepos } from "../../lib/project.ts";
+import { hostColorBase } from "../../lib/termcolor.ts";
+import { useSettingsUI } from "../settings/store.ts";
 import { useReposStore } from "./store.ts";
 import type { Repo } from "./store.ts";
 import { CloneForm } from "./CloneForm.tsx";
@@ -21,9 +24,12 @@ import type { CloneSource } from "./CloneForm.tsx";
 import { cloneRepo } from "./clone.ts";
 import { useStartWork } from "./useStartWork.ts";
 import { useSessionsStore } from "../sessions/store.ts";
+import { openSessionTerminal } from "../sessions/open.ts";
+import { SsmLoginModal } from "../sessions/SsmLoginModal.tsx";
 import { assistantList } from "../chat/api.ts";
 import { openAssistantDraft } from "../chat/open.ts";
 import type { Assistant } from "../../types/assistant.ts";
+import type { SsmHost } from "../../types/session.ts";
 import { deriveRepoName } from "../../lib/reponame.ts";
 
 interface StartModalProps {
@@ -35,13 +41,13 @@ interface StartModalProps {
   onPickRepo: (r: Repo) => void;
 }
 
-type Stage = "place" | "clone" | "home";
+type Stage = "place" | "clone" | "home" | "ssm";
 
 export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
   const toast = useToast();
   const settings = useSettings();
   const repos = useReposStore((s) => s.repos);
-  const openNewSession = useSessionsStore((s) => s.openNewSession);
+  const refreshSessions = useSessionsStore((s) => s.refresh);
   const startWork = useStartWork();
 
   const [stage, setStage] = useState<Stage>("place");
@@ -88,6 +94,39 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
     } else onClose(); // clone landed but the fresh list hasn't caught up — the tree has it
   };
 
+  // --- ssm: host picker + SSO handshake (NewSessionModal の SSM 面を移設, Ph3) ---
+  const [ssmHosts, setSsmHosts] = useState<SsmHost[] | null>(null); // null = not fetched yet
+  const [ssmHostId, setSsmHostId] = useState("");
+  const [ssmForce, setSsmForce] = useState(false);
+  // After creating a kind=ssm session: the created name while the SSO handshake runs.
+  const [ssmLogin, setSsmLogin] = useState<string | null>(null);
+  useEffect(() => {
+    if (stage !== "ssm" || ssmHosts !== null) return;
+    let alive = true;
+    api("api/ssm/hosts")
+      .then((hosts) => alive && setSsmHosts(Array.isArray(hosts) ? hosts : []))
+      .catch(() => alive && setSsmHosts([]));
+    return () => {
+      alive = false;
+    };
+  }, [stage, ssmHosts]);
+  const startSsm = async () => {
+    if (!ssmHostId || busy) return;
+    setBusy(true);
+    const res = await apiJSON("api/sessions", "POST", {
+      kind: "ssm",
+      ssm_host_id: ssmHostId,
+      ssm_force_login: ssmForce,
+      color: hostColorBase(settings.ssmHostColors?.[ssmHostId], ssmHostId),
+    });
+    setBusy(false);
+    if (res && res.error) {
+      toast("作成に失敗: " + errText(res.error));
+      return;
+    }
+    setSsmLogin((res && res.name) || "");
+  };
+
   // --- home: repo-less agent session (kind / model / first prompt) ---
   const [kind, setKind] = useState(kinds[0] || "claude");
   const [model, setModel] = useState(() => resolveModel(kinds[0] || "claude", "", settings.defaultModel));
@@ -102,6 +141,22 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
     setBusy(false);
     if (r.ok) onClose();
   };
+
+  // SSO handshake takes over the dialog (modal swap — safe since backClose
+  // suppresses its own history echoes).
+  if (ssmLogin != null) {
+    return (
+      <SsmLoginModal
+        name={ssmLogin}
+        onReady={(n) => {
+          void refreshSessions();
+          openSessionTerminal(n);
+          onClose();
+        }}
+        onCancel={onClose}
+      />
+    );
+  }
 
   return (
     <Modal
@@ -186,19 +241,13 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
                   <span className="start-row-desc">通常のシェル (bash) をすぐ開きます</span>
                 </span>
               </button>
-              <button
-                type="button"
-                className="start-row"
-                onClick={() => {
-                  onClose();
-                  openNewSession();
-                }}
-              >
+              <button type="button" className="start-row" onClick={() => setStage("ssm")}>
                 <Icon name="vm" className="start-row-ic" />
                 <span className="start-row-body">
                   <span className="start-row-title">SSM — 別ホストへログイン</span>
-                  <span className="start-row-desc">「新しいセッション」画面でホストを選びます</span>
+                  <span className="start-row-desc">AWS EC2 に SSM でログインします</span>
                 </span>
+                <Icon name="chevron-right" className="start-row-chev" />
               </button>
             </div>
           )}
@@ -308,6 +357,59 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
             </Button>
             <Button variant="primary" onClick={() => void startHome()} disabled={busy}>
               {busy ? "起動中…" : "起動"}
+            </Button>
+          </footer>
+        </>
+      )}
+
+      {stage === "ssm" && (
+        <>
+          <div className="ui-modal-body">
+            <div className="ui-field">
+              <span className="ui-field-label">ログイン先ホスト</span>
+              {ssmHosts === null ? (
+                <p className="sm-muted">読み込み中…</p>
+              ) : ssmHosts.length === 0 ? (
+                <span className="ui-field-hint">
+                  登録済みのホストがありません。
+                  <button type="button" className="linklike" onClick={() => useSettingsUI.getState().openSettings("ssm")}>
+                    設定 → SSM
+                  </button>
+                  で登録してください。
+                </span>
+              ) : (
+                <>
+                  <select value={ssmHostId} onChange={(e) => setSsmHostId(e.target.value)}>
+                    <option value="">— ホストを選択 —</option>
+                    {ssmHosts.map((h) => (
+                      <option key={h.id} value={h.id}>
+                        {h.alias}
+                        {h.accountId ? ` (acct ${h.accountId})` : ""}
+                      </option>
+                    ))}
+                  </select>
+                  <label className="ssm-check">
+                    <input type="checkbox" checked={ssmForce} onChange={(e) => setSsmForce(e.target.checked)} />
+                    強制的に再ログイン（キャッシュ済みでも aws sso logout → login）
+                  </label>
+                  <span className="ui-field-hint">
+                    接続後、認証が必要ならモーダルに <code>aws sso login</code> の URL が出ます。別タブで承認すると
+                    接続します（AWS の秘密情報は Agent Fleet に保存されません）。
+                    <br />⚠ <b>自分で開始したこのログインのみ承認してください</b>（身に覚えのないコード/URL は入力しない）。
+                  </span>
+                </>
+              )}
+            </div>
+          </div>
+          <footer className="ui-modal-foot">
+            <Button variant="ghost" className="launch-back" icon="arrow-left" onClick={() => setStage("place")} disabled={busy}>
+              場所を変更
+            </Button>
+            <Button variant="ghost" onClick={onClose} disabled={busy}>
+              キャンセル
+            </Button>
+            <Button variant="primary" onClick={() => void startSsm()} disabled={!ssmHostId || busy}>
+              {busy ? "作成中…" : "接続"}
             </Button>
           </footer>
         </>

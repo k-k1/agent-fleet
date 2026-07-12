@@ -235,15 +235,6 @@ export function App() {
     void useSessionsStore.getState().refresh();
   }, [booted, tenant]);
 
-  // openNewSession signal (WS bar 新規 / onboarding): the dialog mounts inside the
-  // left rail — on mobile that's an off-canvas drawer whose CSS transform would
-  // offset the modal's fixed positioning, so raise the drawer first (no-op on
-  // desktop, where the rail is in flow).
-  const newSessionTick = useSessionsStore((s) => s.newSessionTick);
-  useEffect(() => {
-    if (newSessionTick > 0 && window.matchMedia(MOBILE_QUERY).matches) setNavOpen(true);
-  }, [newSessionTick]);
-
   // Desktop notifications on claude state arrivals — lives at the shell now that
   // the flat Sessions section no longer owns the rail.
   useSessionNotifications();

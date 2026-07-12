@@ -11,7 +11,7 @@ import { Icon } from "../../ui/Icon.tsx";
 import { Button, IconButton } from "../../ui/Button.tsx";
 import { EmptyState } from "../../ui/EmptyState.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
-import { useReposStore } from "../repos/store.ts";
+import { useReposStore, useLaunchTarget } from "../repos/store.ts";
 import { NewRepoModal } from "../repos/NewRepoModal.tsx";
 import { cloneRepo } from "../repos/clone.ts";
 import type { CloneRequest } from "../repos/clone.ts";
@@ -62,7 +62,21 @@ export function ProjectTree() {
   const doClone = async (req: CloneRequest) => {
     setCloning({ name: req.name || guessRepoName(req.remote_url) });
     try {
-      await cloneRepo(req, toast); // proxy-timeout re-check + reveal live in clone.ts
+      const res = await cloneRepo(req, toast); // proxy-timeout re-check + reveal live in clone.ts
+      // clone-only path: bridge straight into 作業を始める (起動導線 Ph3) so
+      // "clone してから起動" doesn't require hunting for the row's 起動 button.
+      const repo = res.ok && res.name ? useReposStore.getState().repos.find((r) => r.name === res.name) : undefined;
+      if (repo) {
+        toast(
+          <span className="clone-done-toast">
+            {repo.name} を clone しました
+            <Button small icon="play" onClick={() => useLaunchTarget.getState().open(repo)}>
+              このまま はじめる
+            </Button>
+          </span>,
+          { kind: "success", duration: 10000 },
+        );
+      }
     } finally {
       setCloning(null);
     }

@@ -252,8 +252,4 @@ export function availableKinds(ctx: AvailCtx): Record<SessionKind, boolean> {
 // carry the launchableFromRepo cap (asserted below); the order is presentational.
 export const repoLaunchKinds: SessionKind[] = ["claude", "opencode", "codex", "shell"];
 
-// Kinds offered in the New Session dialog, in display order (shell is the default,
-// left-most; the rest appear when available). Adding an agent here surfaces it.
-export const newSessionKinds: SessionKind[] = ["shell", "claude", "opencode", "codex", "ssm"];
-
 export type { SsmHost };

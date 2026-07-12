@@ -547,3 +547,10 @@
 .launch-back {
   margin-right: auto;
 }
+
+/* clone 完了トーストの「このまま はじめる」ブリッジ（Ph3）。 */
+.clone-done-toast {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}

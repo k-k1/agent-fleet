@@ -478,6 +478,33 @@ export function WsBar() {
   const canSplitRight = !isMobile && layout.cols.length < 4;
   const canSplitDown = isMobile ? totalPanes < 2 : (activeCol ? activeCol.panes.length : totalPanes) < 2;
 
+  // はじめる while stopped: don't dead-end (起動導線 Ph3) — confirm, start the
+  // workspace, and open the hub once the 4s poll reports running. startQueued
+  // survives the whole starting window; a second click while queued re-confirms
+  // harmlessly (startWs is only re-fired from a genuinely stopped state).
+  const [startQueued, setStartQueued] = useState(false);
+  useEffect(() => {
+    if (startQueued && running) {
+      setStartQueued(false);
+      openStart();
+    }
+  }, [startQueued, running, openStart]);
+  const onStart = async () => {
+    if (running) {
+      openStart();
+      return;
+    }
+    const ok = await askConfirm({
+      title: "ワークスペースを起動してはじめる",
+      body: "ワークスペースが停止中です。起動して、準備ができたら「はじめる」を開きます。",
+      confirmLabel: busy ? "待機する" : "起動する",
+      danger: false,
+    });
+    if (!ok) return;
+    setStartQueued(true);
+    if (!busy) void startWs();
+  };
+
   // Start is immediate; Stop is confirmed — it docker-removes the container, so
   // running sessions drop to 停止 (resumable) and opencode web / preview disconnect.
   // Reversible (Start recreates; data persists in the bind mount), so it's a caution,
@@ -702,15 +729,20 @@ export function WsBar() {
         {wsLabel(wsState)}
       </span>
       {/* はじめる — the single "start anything" entry (起動導線 Ph2): opens the
-          StartModal hub (chat / repo / clone / home / その他). Disabled while the
-          workspace is stopped. */}
+          StartModal hub (chat / repo / clone / home / その他). While the workspace
+          is stopped it offers to start it and opens the hub when ready (Ph3). */}
       <button
         className="ghost ws-split ws-newsession"
-        title={running ? "はじめる（チャット / リポジトリ / clone / shell）" : "はじめる（ワークスペース停止中）"}
-        disabled={!running}
-        onClick={openStart}
+        title={
+          running
+            ? "はじめる（チャット / リポジトリ / clone / shell）"
+            : startQueued
+              ? "起動中 — 準備ができたら開きます"
+              : "はじめる（ワークスペースを起動して開始）"
+        }
+        onClick={() => void onStart()}
       >
-        <Icon name="add" />
+        <Icon name={startQueued ? "loading" : "add"} spin={startQueued} />
         <span className="lbl">はじめる</span>
       </button>
       <button
