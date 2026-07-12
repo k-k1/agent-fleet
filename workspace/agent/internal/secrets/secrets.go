@@ -66,6 +66,16 @@ type PagerDutyCreds struct {
 	Host   string `json:"host,omitempty"`
 }
 
+// GrafanaCreds is the user's Grafana connection (docs/25). URL is the instance
+// base (self-hosted, Grafana Cloud, or an Amazon Managed Grafana workspace
+// endpoint — AMG uses the same service-account token auth, just with a max
+// 30-day token life). Token is a service-account token (Viewer recommended),
+// injected into mcp-grafana at spawn by `mcp-run grafana`.
+type GrafanaCreds struct {
+	URL   string `json:"url"`
+	Token string `json:"token"`
+}
+
 type Data struct {
 	Git         map[string]GitEntry    `json:"git"`                   // host -> https cred
 	GitIdentity map[string]GitIdentity `json:"gitIdentity,omitempty"` // host -> explicit commit identity
@@ -73,6 +83,7 @@ type Data struct {
 	Bitbucket   *BitbucketCreds        `json:"bitbucket"`             // OAuth refresh creds (bitbucket.org)
 	Opencode    map[string]string      `json:"opencode"`              // provider env var name -> API key (injected for opencode sessions)
 	PagerDuty   *PagerDutyCreds        `json:"pagerduty,omitempty"`   // ops MCP credential (docs/25)
+	Grafana     *GrafanaCreds          `json:"grafana,omitempty"`     // ops MCP credential (docs/25)
 }
 
 // agentSecretKey returns the 32-byte per-user key from AF_SECRET_KEY (hex), or
