@@ -1495,12 +1495,75 @@ button.mt-bash-toggle:hover {
   font-size: 12px;
   color: var(--muted);
 }
+/* Non-image attachment chip (drag&drop / ＋): icon + name instead of a thumbnail. */
+.ma-chip.ma-file {
+  width: auto;
+  max-width: 240px;
+  height: auto;
+  padding: 6px 26px 6px 8px; /* right pad clears the ✕ */
+}
+.ma-fname {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  min-width: 0;
+}
+.ma-fname-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* ＋ attach button, left of the composer (all pointer types — phones foremost). */
+.mirror-attach-btn {
+  flex: none;
+  align-self: stretch;
+  width: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.mirror-attach-btn:disabled {
+  opacity: 0.4;
+}
+/* OS file drag hovering the pane: highlight the composer as the drop target. */
+.mirrorview.dragging .mirror-compose {
+  outline: 2px dashed var(--accent);
+  outline-offset: 2px;
+  border-radius: 8px;
+}
 /* In-chat pasted-image thumbnails (user turn) + click-to-enlarge lightbox. */
 .mt-imgs {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
   margin-top: 4px;
+}
+/* In-chat non-image attachment chips (user turn). */
+.mt-attach-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+.mt-attach-file {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 280px;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  font-size: 12px;
+  color: var(--muted);
+}
+.mt-attach-file-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .mt-img {
   display: inline-flex;

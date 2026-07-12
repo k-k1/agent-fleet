@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import type { CSSProperties, KeyboardEvent as RKeyboardEvent, ClipboardEvent as RClipboardEvent, RefObject } from "react";
+import type { CSSProperties, KeyboardEvent as RKeyboardEvent, ClipboardEvent as RClipboardEvent, DragEvent as RDragEvent, RefObject } from "react";
 import { api, apiJSON, raw, errText, pasteImage } from "../../core/api/client.ts";
 import { splitPastedImages, buildImagePrompt } from "../../lib/pastedImages.ts";
 import { useSettings, chatFontStack } from "../../lib/settings.ts";
@@ -250,8 +250,11 @@ export function MirrorView({
   const [sending, setSending] = useState(false);
   // Pasted images awaiting send: {path} is the session-saved absolute path (referenced in
   // the prompt), {url} an object URL for the local chip preview, {name} the basename.
-  const [attachments, setAttachments] = useState<{ path: string; name: string; url: string }[]>([]);
-  const [pasting, setPasting] = useState(false); // an image upload is in flight
+  const [attachments, setAttachments] = useState<{ path: string; name: string; url: string; image: boolean }[]>([]);
+  const [pasting, setPasting] = useState(false); // an attachment upload is in flight
+  const [dragging, setDragging] = useState(false); // an OS file drag is hovering the pane
+  const dragDepth = useRef(0); // dragenter/leave nesting counter (leave fires per child)
+  const filePickRef = useRef<HTMLInputElement>(null); // the ＋ button's hidden picker
   const [lightbox, setLightbox] = useState<string | null>(null); // enlarged image (blob URL) or null
   const [histIdx, setHistIdx] = useState<number | null>(null); // position in composer history, or null
   const cursorRef = useRef(0);
@@ -1054,24 +1057,11 @@ export function MirrorView({
     setTimeout(() => tickRef.current?.(), 400);
   };
 
-  // Paste image(s) from the clipboard into the composer: upload each to the session and
-  // hold it as an attachment chip. Non-image pastes fall through to the default (text).
-  const onPaste = async (e: RClipboardEvent<HTMLTextAreaElement>) => {
-    // Image paste = upload + saved path referenced in the prompt (kind-worded by
-    // buildImagePrompt); agents without the cap let the paste fall through as text.
-    if (!canPasteImage) return;
-    const items = e.clipboardData?.items;
-    if (!items) return;
-    const files: File[] = [];
-    for (let i = 0; i < items.length; i++) {
-      const it = items[i];
-      if (it.kind === "file" && it.type.startsWith("image/")) {
-        const f = it.getAsFile();
-        if (f) files.push(f);
-      }
-    }
-    if (!files.length) return; // ordinary text paste — let it happen
-    e.preventDefault();
+  // addFiles uploads files to the session and holds each as an attachment chip —
+  // shared by clipboard paste, drag&drop onto the pane, and the ＋ picker. Upload +
+  // saved path referenced in the prompt (kind-worded by buildImagePrompt).
+  const addFiles = async (files: File[]) => {
+    if (!files.length) return;
     setPasting(true);
     for (const f of files) {
       try {
@@ -1079,17 +1069,38 @@ export function MirrorView({
         if (res.status < 300 && res.path && res.name) {
           const path = res.path;
           const nm = res.name;
-          const url = URL.createObjectURL(f);
-          setAttachments((a) => [...a, { path, name: nm, url }]);
+          const image = f.type.startsWith("image/");
+          // Non-images get no preview URL — the chip shows an icon + name instead.
+          const url = image ? URL.createObjectURL(f) : "";
+          setAttachments((a) => [...a, { path, name: nm, url, image }]);
         } else {
-          toast(res.error ? errText(res.error) : "画像の貼り付けに失敗しました");
+          toast(res.error ? errText(res.error) : "ファイルの添付に失敗しました");
         }
       } catch {
-        toast("画像の貼り付けに失敗しました（通信エラー）");
+        toast("ファイルの添付に失敗しました（通信エラー）");
       }
     }
     setPasting(false);
     inputRef.current?.focus();
+  };
+
+  // Paste file(s) from the clipboard into the composer. Non-file pastes fall through
+  // to the default (text). Agents without the cap let everything fall through.
+  const onPaste = async (e: RClipboardEvent<HTMLTextAreaElement>) => {
+    if (!canPasteImage) return;
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    const files: File[] = [];
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i];
+      if (it.kind === "file") {
+        const f = it.getAsFile();
+        if (f) files.push(f);
+      }
+    }
+    if (!files.length) return; // ordinary text paste — let it happen
+    e.preventDefault();
+    await addFiles(files);
   };
 
   const removeAttachment = (i: number) => {
@@ -1119,6 +1130,38 @@ export function MirrorView({
   // the composer AND the mode chip while one is pending; act via the card's buttons.
   const decisionPending = !!pendingPlan || !!pendingPerm;
   const composerLocked = auqLocksComposer || decisionPending;
+
+  // OS drag&drop anywhere on the pane attaches the dropped files (the composer is a
+  // small target — the whole chat area accepts). dragenter/leave nest per child, so a
+  // depth counter drives the highlight; drop is ignored while the composer is hidden
+  // (read-only history) or locked.
+  const canDropFiles = canPasteImage && !readOnly && !composerLocked;
+  const onDragEnter = (e: RDragEvent) => {
+    if (!canDropFiles || !e.dataTransfer?.types?.includes("Files")) return;
+    e.preventDefault();
+    dragDepth.current++;
+    setDragging(true);
+  };
+  const onDragOver = (e: RDragEvent) => {
+    if (!canDropFiles || !e.dataTransfer?.types?.includes("Files")) return;
+    e.preventDefault();
+  };
+  const onDragLeave = (e: RDragEvent) => {
+    if (!canDropFiles) return;
+    e.preventDefault();
+    if (--dragDepth.current <= 0) {
+      dragDepth.current = 0;
+      setDragging(false);
+    }
+  };
+  const onDrop = async (e: RDragEvent) => {
+    if (!canDropFiles) return;
+    e.preventDefault();
+    dragDepth.current = 0;
+    setDragging(false);
+    const files = Array.from(e.dataTransfer?.files || []);
+    await addFiles(files);
+  };
 
   const send = async () => {
     if (composerLocked) return;
@@ -1362,8 +1405,12 @@ export function MirrorView({
 
   return (
     <div
-      className="mirrorview"
+      className={"mirrorview" + (dragging ? " dragging" : "")}
       style={{ "--chat-font": chatFontStack(settings.chatFont), "--chat-size": settings.chatSize + "px" } as CSSProperties}
+      onDragEnter={onDragEnter}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
     >
       <header className="view-head">
         {sessionMeta ? (
@@ -1661,8 +1708,15 @@ export function MirrorView({
           {(attachments.length > 0 || pasting) && (
             <div className="mirror-attach">
               {attachments.map((a, i) => (
-                <div className="ma-chip" key={a.path}>
-                  <img className="ma-thumb" src={a.url} alt="" />
+                <div className={"ma-chip" + (a.image ? "" : " ma-file")} key={a.path}>
+                  {a.image ? (
+                    <img className="ma-thumb" src={a.url} alt="" />
+                  ) : (
+                    <span className="ma-fname" title={a.name}>
+                      <FileIcon name={a.name} />
+                      <span className="ma-fname-text">{a.name}</span>
+                    </span>
+                  )}
                   <button type="button" className="ma-del" title="削除" onClick={() => removeAttachment(i)}>
                     <Icon name="close" />
                   </button>
@@ -1696,6 +1750,32 @@ export function MirrorView({
               <Icon name="chevron-down" />
             </button>
           </div>
+          {/* ＋ attach: the drag&drop-less path (phones foremost, handy everywhere).
+              Any file type; the same addFiles upload the paste/drop paths use. */}
+          {canPasteImage && (
+            <>
+              <input
+                ref={filePickRef}
+                type="file"
+                multiple
+                hidden
+                onChange={(e) => {
+                  const files = Array.from(e.target.files || []);
+                  e.target.value = ""; // allow re-picking the same file
+                  void addFiles(files);
+                }}
+              />
+              <button
+                type="button"
+                className="ghost mirror-attach-btn"
+                title="ファイルを添付（ドラッグ&ドロップも可）"
+                disabled={composerLocked || pasting}
+                onClick={() => filePickRef.current?.click()}
+              >
+                <Icon name="add" />
+              </button>
+            </>
+          )}
           <textarea
             ref={inputRef}
             className="mirror-input"
@@ -2311,7 +2391,7 @@ function Turn({
           (() => {
             // Split off any pasted-image references so the bubble shows the user's words
             // plus clickable thumbnails, not the machine-facing paths.
-            const { text, images } = splitPastedImages(turn.text || "");
+            const { text, images, files } = splitPastedImages(turn.text || "");
             return (
               <>
                 {text && <MarkdownView source={text} breaks />}
@@ -2319,6 +2399,18 @@ function Turn({
                   <div className="mt-imgs">
                     {images.map((nm) => (
                       <PastedThumb key={nm} session={session} name={nm} onOpen={onOpenImage} />
+                    ))}
+                  </div>
+                )}
+                {files.length > 0 && (
+                  // Non-image attachments (drag&drop / ＋): a name chip — the file itself
+                  // lives under the session's pasted dir for the agent to read.
+                  <div className="mt-attach-files">
+                    {files.map((nm) => (
+                      <span className="mt-attach-file" key={nm} title={nm}>
+                        <FileIcon name={nm} />
+                        <span className="mt-attach-file-name">{nm}</span>
+                      </span>
                     ))}
                   </div>
                 )}

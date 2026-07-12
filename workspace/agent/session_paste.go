@@ -67,7 +67,10 @@ func imageMime(ext string) string {
 
 // savePastedImageTo reads the "file" multipart part and stores it under dir, writing the
 // {path, name} response (201) or an error. Shared by the session and chat paste endpoints
-// — only the target dir (and the caller's own validation) differ.
+// — only the target dir (and the caller's own validation) differ. Any file type is
+// accepted (drag&drop / the ＋ picker attach logs, PDFs, sources, …): an image keeps the
+// bare paste-<n>.<ext> form (the bubble thumbnails key off it), any other file carries a
+// sanitized copy of its original name so the agent sees a meaningful filename.
 func savePastedImageTo(w http.ResponseWriter, r *http.Request, dir string) {
 	mr, err := r.MultipartReader()
 	if err != nil {
@@ -87,10 +90,11 @@ func savePastedImageTo(w http.ResponseWriter, r *http.Request, dir string) {
 		if part.FormName() != "file" {
 			continue
 		}
-		ext, ok := imageExt(part.Header.Get("Content-Type"), part.FileName())
-		if !ok {
-			httpx.WriteErr(w, http.StatusUnsupportedMediaType, "not_image", "画像ファイルのみ対応しています")
-			return
+		suffix := ""
+		if ext, ok := imageExt(part.Header.Get("Content-Type"), part.FileName()); ok {
+			suffix = ext
+		} else {
+			suffix = "-" + sanitizeUploadName(part.FileName())
 		}
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			httpx.WriteErr(w, http.StatusInternalServerError, "mkdir_failed", err.Error())
@@ -106,13 +110,13 @@ func savePastedImageTo(w http.ResponseWriter, r *http.Request, dir string) {
 		if err != nil || n > max {
 			_ = os.Remove(tmp.Name())
 			if n > max {
-				httpx.WriteErr(w, http.StatusRequestEntityTooLarge, "too_large", "画像が大きすぎます")
+				httpx.WriteErr(w, http.StatusRequestEntityTooLarge, "too_large", "ファイルが大きすぎます")
 			} else {
 				httpx.WriteErr(w, http.StatusInternalServerError, "write_failed", "upload failed")
 			}
 			return
 		}
-		fname := fmt.Sprintf("paste-%d%s", time.Now().UnixNano(), ext)
+		fname := fmt.Sprintf("paste-%d%s", time.Now().UnixNano(), suffix)
 		dest := filepath.Join(dir, fname)
 		if err := os.Rename(tmp.Name(), dest); err != nil {
 			_ = os.Remove(tmp.Name())
@@ -123,6 +127,35 @@ func savePastedImageTo(w http.ResponseWriter, r *http.Request, dir string) {
 		return
 	}
 	httpx.WriteErr(w, http.StatusBadRequest, "no_file", "no file part")
+}
+
+// sanitizeUploadName reduces an uploaded file's client-supplied name to a safe basename
+// fragment for the paste-<n>-<name> form: base only, [A-Za-z0-9._-] kept (runs of
+// anything else collapse to "-"), no leading dots, capped at 48 runes. The result is
+// display/meaning only — uniqueness comes from the paste-<n> prefix.
+func sanitizeUploadName(name string) string {
+	base := filepath.Base(strings.ReplaceAll(name, "\\", "/"))
+	var b strings.Builder
+	dash := false
+	for _, r := range base {
+		ok := (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '.' || r == '_' || r == '-'
+		if ok {
+			b.WriteRune(r)
+			dash = false
+		} else if !dash {
+			b.WriteRune('-')
+			dash = true
+		}
+	}
+	s := strings.TrimLeft(b.String(), ".-")
+	if r := []rune(s); len(r) > 48 {
+		s = string(r[len(r)-48:]) // keep the tail — the extension matters most
+		s = strings.TrimLeft(s, ".-")
+	}
+	if s == "" {
+		return "file.bin"
+	}
+	return s
 }
 
 // servePastedImageFrom serves a stored image by basename (GET) from dir, for the Console's
