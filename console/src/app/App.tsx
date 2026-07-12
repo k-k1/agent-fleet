@@ -30,6 +30,7 @@ import { TopBar } from "./TopBar.tsx";
 import { useSettingsUI, wireSettingsHistory } from "../features/settings/store.ts";
 import { SettingsDialog } from "../features/settings/SettingsDialog.tsx";
 import { AdminDialog } from "../features/settings/AdminDialog.tsx";
+import { GuideModal } from "../features/terminal/OnboardingCard.tsx";
 
 // Refresh FILES (and repos/sessions/chat list on start) whenever the workspace
 // actually flips running↔stopped — including external changes the 4s sync catches
@@ -62,6 +63,7 @@ export function App() {
   const layout = useLayoutStore((s) => s.layout);
   const settingsOpen = useSettingsUI((s) => s.settingsOpen);
   const adminOpen = useSettingsUI((s) => s.adminOpen);
+  const guideOpen = useSettingsUI((s) => s.guideOpen);
   const [booted, setBooted] = useState(false);
 
   // Left rail visibility. Desktop: leftOpen (persisted) + leftMode "push" (docks,
@@ -286,6 +288,7 @@ export function App() {
       </div>
       {settingsOpen && <SettingsDialog />}
       {adminOpen && <AdminDialog />}
+      {guideOpen && <GuideModal />}
       <SessionModals />
     </div>
   );
