@@ -240,21 +240,29 @@ const DEFAULTS: Settings = {
   autoTitleSuggest: true,
   outputLanguage: "auto",
   ssmHostColors: {},
+  // 音声読み上げの初期値＝おすすめ設定。設定タブの「リセット」ボタンが戻す値（TTS_RESET）と
+  // 同じで、新規ユーザー（と未設定の既存ユーザー）はこの状態から始まる。読み上げ本体・音声通知
+  // だけは OFF スタート、ほかは ON にしたとき快適な既定（セッションごとに声を変える／はやめ／
+  // 自動読み上げ・全ペイン・確認質問・カタカナ読み ON／キャッシュ 15 分）。TTS_RESET はこの
+  // DEFAULTS から TTS 関連キーだけ抜き出して定義しているので、両者は常に一致する。
   ttsEnabled: false,
   ttsProvider: "auto",
-  ttsVoiceVoicevox: "3",
+  ttsVoiceVoicevox: "3", // ノーマル
   ttsVoicePolly: "Takumi",
-  ttsSpeed: 1.0,
+  ttsSpeed: 1.25, // はやめ
   ttsSessionNotify: false,
-  ttsEnglishKana: false,
+  ttsEnglishKana: true,
   ttsUserDict: "",
-  ttsCacheSec: 300,
-  ttsAutoReadMirror: false,
-  ttsAutoReadAllPanes: false,
-  ttsVoicePerSession: false,
+  ttsCacheSec: 900, // 15分
+  ttsAutoReadMirror: true,
+  ttsAutoReadAllPanes: true,
+  ttsVoicePerSession: true,
+  // {} = 標準 14 キャラ（tts.ts の SESSION_VOICES）がセッション割り当て対象。静的な既定には
+  // 「エンジンの全キャラ」を焼き込めない（全一覧は実行時にしか分からない）ため、標準 14 人を
+  // 既定チェックとする。それを超える追加キャラまで全部チェックするのは明示リセット時のみ。
   ttsVoicePool: {},
   ttsEmotion: false,
-  ttsReadPending: false,
+  ttsReadPending: true,
   ttsSummaryRead: false,
   ttsAbbrevCode: true,
   ttsParticlePause: true,
@@ -294,29 +302,32 @@ export const TTS_CACHE_SIZES: [number, string][] = [
   [1800, "30分（約180MB）"],
 ];
 
-// 音声読み上げ設定の「初期状態」（設定タブのリセットボタンが書き戻す値）。DEFAULTS とは別で、
-// ユーザーが選んだ推奨初期値（ON にしたときの快適な既定 = セッションごとに声を変える／はやめ／
-// 自動読み上げ・全ペイン・確認質問・カタカナ読み ON／キャッシュ 15 分 など）を持つ。キャラクター
-// の「全てチェック」はカタログ依存なので TtsTab 側で ttsVoicePool を組み立てて足す。読み仮名辞書
-// （ttsUserDict）はユーザーが打ち込んだ内容なのでリセットでは消さない。
-export const TTS_RESET: Partial<Settings> = {
-  ttsEnabled: false,
-  ttsSessionNotify: false,
-  ttsProvider: "auto",
-  ttsVoiceVoicevox: "3", // ノーマル
-  ttsVoicePolly: "Takumi",
-  ttsVoicePerSession: true,
-  ttsEmotion: false,
-  ttsSpeed: 1.25, // はやめ
-  ttsAutoReadMirror: true,
-  ttsAutoReadAllPanes: true,
-  ttsSummaryRead: false,
-  ttsReadPending: true,
-  ttsAbbrevCode: true,
-  ttsParticlePause: true,
-  ttsEnglishKana: true,
-  ttsCacheSec: 900, // 15分
-};
+// 音声読み上げ設定の「初期状態」（設定タブのリセットボタンが書き戻す値）。DEFAULTS の TTS 関連
+// キーだけを抜き出したもので、新規ユーザーの初期値と常に一致する（DEFAULTS を単一の真実源に
+// することでドリフトを防ぐ）。キャラクターの「全てチェック」はカタログ依存なので TtsTab 側で
+// ttsVoicePool を組み立てて足す（ここには含めない）。読み仮名辞書（ttsUserDict）はユーザーが
+// 打ち込んだ内容なのでリセットでは消さない（含めない）。
+const TTS_RESET_KEYS = [
+  "ttsEnabled",
+  "ttsSessionNotify",
+  "ttsProvider",
+  "ttsVoiceVoicevox",
+  "ttsVoicePolly",
+  "ttsVoicePerSession",
+  "ttsEmotion",
+  "ttsSpeed",
+  "ttsAutoReadMirror",
+  "ttsAutoReadAllPanes",
+  "ttsSummaryRead",
+  "ttsReadPending",
+  "ttsAbbrevCode",
+  "ttsParticlePause",
+  "ttsEnglishKana",
+  "ttsCacheSec",
+] as const;
+export const TTS_RESET: Partial<Settings> = Object.fromEntries(
+  TTS_RESET_KEYS.map((k) => [k, DEFAULTS[k]]),
+) as Partial<Settings>;
 
 // 読み上げ速度（speedScale）。
 export const TTS_SPEEDS: [number, string][] = [
