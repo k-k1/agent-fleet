@@ -1057,8 +1057,8 @@ export function MirrorView({
   // Paste image(s) from the clipboard into the composer: upload each to the session and
   // hold it as an attachment chip. Non-image pastes fall through to the default (text).
   const onPaste = async (e: RClipboardEvent<HTMLTextAreaElement>) => {
-    // Image paste rides claude's Read-tool flow (saved path referenced in the prompt);
-    // agents without that cap let the paste fall through as ordinary text.
+    // Image paste = upload + saved path referenced in the prompt (kind-worded by
+    // buildImagePrompt); agents without the cap let the paste fall through as text.
     if (!canPasteImage) return;
     const items = e.clipboardData?.items;
     if (!items) return;
@@ -1125,7 +1125,7 @@ export function MirrorView({
     const text = draft.trim();
     if (!text && !attachments.length) return;
     const paths = attachments.map((a) => a.path);
-    const prompt = buildImagePrompt(text, paths);
+    const prompt = buildImagePrompt(text, paths, agent.id);
     setHistIdx(null);
     setDraft("");
     clearAttachments();

@@ -159,7 +159,7 @@ export function RepoRowConnected({ r, ctx, onToggle, sess }: RepoRowConnectedPro
               toast("画像のアップロードに失敗しました（通信エラー）");
             }
           }
-          seed = buildImagePrompt(prompt, paths);
+          seed = buildImagePrompt(prompt, paths, kind);
         }
         if (seed) {
           // Chat-capable: stash as a launch seed — MirrorView auto-sends it once the

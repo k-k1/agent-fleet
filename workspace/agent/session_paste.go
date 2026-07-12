@@ -151,7 +151,8 @@ func servePastedImageFrom(w http.ResponseWriter, dir, file string) {
 
 // handlePasteImage saves one pasted image (multipart, field "file") under the session's
 // pasted dir and returns {path, name}. The path is absolute so the prompt can reference
-// it and claude's Read tool can open it regardless of cwd.
+// it and the agent can open it regardless of cwd (claude: Read tool / codex: view_image /
+// opencode: its own tools — vision is model-dependent there).
 func handlePasteImage(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	meta, ok := session.ReadMeta(name)
@@ -160,7 +161,7 @@ func handlePasteImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !agentOf(meta.Kind).Caps().CanTranscript {
-		httpx.WriteErr(w, http.StatusBadRequest, "not_claude", "画像を渡せるのは claude セッションのみです")
+		httpx.WriteErr(w, http.StatusBadRequest, "unsupported_kind", "このセッション種別には画像を渡せません")
 		return
 	}
 	savePastedImageTo(w, r, pastedDir(session.UUID(meta.Dir, name)))
@@ -182,8 +183,10 @@ func handlePastedImage(w http.ResponseWriter, r *http.Request) {
 func chatPastedDir(convID string) string { return pastedDir("chat-" + convID) }
 
 // handleChatPasteImage saves a pasted image for an assistant chat (docs/19). Same flow as
-// the session endpoint: the chat's claude (`-p`, Read tool) opens the returned absolute
-// path. claude-agent chats only — codex has no image-read path here.
+// the session endpoint: the chat's headless agent opens the returned absolute path —
+// claude via its Read tool (`-p`), codex via view_image (`codex exec`, live-verified).
+// opencode is excluded on purpose: `opencode run` declines image input on non-vision
+// models (big-pickle, live-verified), and the chat can't know the model sees images.
 func handleChatPasteImage(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	c, err := loadConv(id)
@@ -191,8 +194,8 @@ func handleChatPasteImage(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusNotFound, "no_conversation", "conversation not found: "+id)
 		return
 	}
-	if c.Agent != session.KindClaude {
-		httpx.WriteErr(w, http.StatusBadRequest, "not_claude", "画像を渡せるのは claude のアシスタントのみです")
+	if c.Agent != session.KindClaude && c.Agent != session.KindCodex {
+		httpx.WriteErr(w, http.StatusBadRequest, "unsupported_agent", "画像を渡せるのは claude / codex のアシスタントのみです")
 		return
 	}
 	savePastedImageTo(w, r, chatPastedDir(id))

@@ -65,7 +65,7 @@ export function LaunchModal({ repo, branch, path, kinds, allowWorktree = true, o
   const [prompt, setPrompt] = useState("");
   // Pasted images awaiting the launch: raw File + an object URL for the chip preview.
   // Uploaded only after the session is minted (in onStartWork), then referenced in the
-  // first prompt. Non-claude agents lack the imagePaste cap, so paste is a no-op there.
+  // first prompt. Agents without the imagePaste cap (shell/ssm) make paste a no-op.
   const [images, setImages] = useState<{ file: File; url: string }[]>([]);
   const imagesRef = useRef(images);
   imagesRef.current = images;
