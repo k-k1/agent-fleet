@@ -2,7 +2,8 @@
 // sessions store's startTick (WS bar はじめる / onboarding) and owns the hand-off
 // from the hub to the per-repo 作業を始める dialog (existing copy picked, or a
 // clone-and-continue), so both stages share the LaunchModal + useStartWork pair
-// the repo rows already use.
+// the repo rows already use. The launch target lives in a store (useLaunchTarget)
+// so the clone-only toast's このまま はじめる (Ph3) can land here without the hub.
 import { useEffect, useRef, useState } from "react";
 import { agentOf } from "../../agents/registry.ts";
 import { useSessionsStore } from "../sessions/store.ts";
@@ -10,44 +11,47 @@ import { useRepoRailContext } from "./useRepoRail.ts";
 import { useStartWork } from "./useStartWork.ts";
 import { StartModal } from "./StartModal.tsx";
 import { LaunchModal } from "./LaunchModal.tsx";
-import type { Repo } from "./store.ts";
+import { useLaunchTarget } from "./store.ts";
 
 export function StartHost() {
   const startTick = useSessionsStore((s) => s.startTick);
   const [show, setShow] = useState(false);
-  const [launch, setLaunch] = useState<Repo | null>(null);
+  const launch = useLaunchTarget((s) => s.target);
+  const openLaunch = useLaunchTarget((s) => s.open);
+  const clearLaunch = useLaunchTarget((s) => s.clear);
   // Open the hub whenever the global tick changes (skip the mount value).
   const lastTickRef = useRef(startTick);
   useEffect(() => {
     if (startTick !== lastTickRef.current) {
       lastTickRef.current = startTick;
-      setLaunch(null);
+      clearLaunch();
       setShow(true);
     }
-  }, [startTick]);
+  }, [startTick, clearLaunch]);
 
   const ctx = useRepoRailContext(); // connection-gated kinds, like the repo rows
   const startWork = useStartWork();
   const agentKinds = ctx.launchKinds.filter((k) => agentOf(k).caps.chat);
 
-  // The per-repo stage STACKS on the hub (like NewSessionModal → SsmLoginModal)
-  // instead of replacing it: swapping modals in one commit trips useBackClose —
-  // the outgoing modal's cleanup history.back() lands AFTER the incoming modal
-  // pushed its guard entry and immediately closes it. Stacked, dismissing the
-  // top stage (場所を変更 / Esc / ✕ / browser back) peels back to the hub; only
-  // a successful launch closes the whole stack.
+  // The per-repo stage STACKS on the hub instead of replacing it: swapping
+  // modals in one commit trips useBackClose — the outgoing modal's cleanup
+  // history.back() lands AFTER the incoming modal pushed its guard entry and
+  // immediately closes it. Stacked, dismissing the top stage (場所を変更 / Esc /
+  // ✕ / browser back) peels back to the hub; only a successful launch closes
+  // the whole stack. Via the clone-toast (hub closed) there is nothing to peel
+  // to, so 場所を変更 is offered only while the hub is open.
   return (
     <>
-      {show && <StartModal kinds={agentKinds} onClose={() => setShow(false)} onPickRepo={setLaunch} />}
-      {show && launch && (
+      {show && <StartModal kinds={agentKinds} onClose={() => setShow(false)} onPickRepo={openLaunch} />}
+      {launch && (
         <LaunchModal
           repo={launch.name}
           branch={launch.branch}
           path={launch.path}
           kinds={agentKinds}
           allowWorktree={!launch.worktree}
-          onClose={() => setLaunch(null)}
-          onBack={() => setLaunch(null)}
+          onClose={clearLaunch}
+          onBack={show ? clearLaunch : undefined}
           onLaunch={async (o) => {
             const r = await startWork({ dir: launch.path || "", repo: launch.name }, o);
             if (r.ok) setShow(false); // launched — drop the hub underneath too
