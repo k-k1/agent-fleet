@@ -32,7 +32,7 @@ import type { Session } from "../../types/session.ts";
 
 // Brand artwork shown over an unattached terminal so a freshly split (or initial)
 // pane isn't a bare black rectangle. Resolved against baseURI (path-strip proxy).
-const IDLE_ARTWORK = Array.from({ length: 7 }, (_, i) => rel(`brand/idle-${i + 1}.png`));
+const IDLE_ARTWORK = Array.from({ length: 7 }, (_, i) => rel(`brand/idle-${i + 1}.webp`));
 
 interface TerminalViewProps {
   paneId: string;
