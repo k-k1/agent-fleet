@@ -138,12 +138,18 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     // gauge works — codex logs token counts too. Plan mode + inline request_user_input
     // questions are supported. headlessChat via `codex exec --json` (assistant chat /
     // title suggestion backend); fork via `codex fork <id>` (server ForkSource).
+    // model: launch-time only, live catalog (api/agents/codex/models = `codex debug
+    // models` under codex's own subscription auth) → `codex -m`.
+    // imagePaste: upload + path-in-prompt (claude's flow); codex's view_image fires on
+    // a plain path mention — live-verified for both the TUI and `codex exec`.
     caps: caps({
       chat: true,
       headlessChat: true,
       transcript: true,
+      model: true,
       fork: true,
       contextBar: true,
+      imagePaste: true,
       planMode: true,
       runsInDir: true,
       launchableFromRepo: true,
@@ -167,12 +173,19 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     // handler. Context gauge works (per-message tokens); plan mode + inline question tool.
     // headlessChat via `opencode run --format json` (assistant chat / title backend);
     // fork via `opencode --session <id> --fork` (server ForkSource).
+    // model: launch-time only, live catalog (api/agents/opencode/models — reflects the
+    // user's connected providers) → `opencode --model provider/model`.
+    // imagePaste: upload + path-in-prompt. Vision is model-dependent: a vision model
+    // reads it directly; big-pickle (free tier) either inspects it agentically (TUI,
+    // live-verified) or declines honestly — never a silent failure.
     caps: caps({
       chat: true,
       headlessChat: true,
       transcript: true,
+      model: true,
       fork: true,
       contextBar: true,
+      imagePaste: true,
       planMode: true,
       runsInDir: true,
       launchableFromRepo: true,

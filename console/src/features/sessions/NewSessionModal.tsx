@@ -19,8 +19,9 @@ import { useSettingsUI } from "../settings/store.ts";
 import { readKindAvail, writeKindAvail } from "../../lib/kindavail.ts";
 import { deriveRepoName, sanitizeSeg, uniqueRepoName, repoNameRe } from "../../lib/reponame.ts";
 import { agentOf, availableKinds, newSessionKinds } from "../../agents/registry.ts";
-import { useSettings, CLAUDE_MODELS } from "../../lib/settings.ts";
+import { useSettings } from "../../lib/settings.ts";
 import { resolveModel } from "../../lib/repoLast.ts";
+import { ModelPicker } from "../../ui/ModelPicker.tsx";
 import { hostColorBase } from "../../lib/termcolor.ts";
 import type { SsmHost } from "../../types/session.ts";
 
@@ -54,10 +55,11 @@ export function NewSessionModal({ onClose, onCreated }: NewSessionModalProps) {
   // Kind availability, seeded from the cache so buttons render instantly.
   const [avail, setAvail] = useState(readKindAvail);
   const [loaded, setLoaded] = useState(false);
-  // Initial model via the shared chain (repoLast.ts resolveModel). This modal targets a
-  // not-yet-chosen repo, so the repo last-used tier doesn't apply — it resolves to the
-  // global default, coerced to a concrete tier (a legacy "" default becomes DEFAULT_MODEL).
-  const [model, setModel] = useState(() => resolveModel("", settings.defaultModel));
+  // Initial model via the shared per-kind chain (repoLast.ts resolveModel). This modal
+  // targets a not-yet-chosen repo, so the repo last-used value doesn't apply — claude
+  // resolves to the global default (coerced to a concrete tier) and codex/opencode to
+  // 既定(""). Re-resolved on every kind switch, so a claude tier never leaks elsewhere.
+  const [model, setModel] = useState(() => resolveModel("shell", "", settings.defaultModel));
   const [source, setSource] = useState<Source>("dir");
   const [sourceTouched, setSourceTouched] = useState(false);
   const [sel, setSel] = useState<RepoSelection | null>(null);
@@ -219,7 +221,10 @@ export function NewSessionModal({ onClose, onCreated }: NewSessionModalProps) {
                   key={k}
                   type="button"
                   className={"seg-btn kind-" + a.cssClass + (kind === k ? " active" : "")}
-                  onClick={() => setKind(k)}
+                  onClick={() => {
+                    setKind(k);
+                    setModel(resolveModel(k, "", settings.defaultModel));
+                  }}
                 >
                   <Icon name={a.icon} className="seg-ic" />
                   {a.label}
@@ -239,22 +244,11 @@ export function NewSessionModal({ onClose, onCreated }: NewSessionModalProps) {
           )}
         </div>
 
-        {/* モデル（claude のみ） */}
+        {/* モデル（caps.model の kind: claude / codex / opencode） */}
         {hasModel && (
           <div className="ui-field">
             <span className="ui-field-label">モデル</span>
-            <div className="ui-seg">
-              {CLAUDE_MODELS.map(([v, label]) => (
-                <button
-                  key={v || "default"}
-                  type="button"
-                  className={"seg-btn" + (model === v ? " active" : "")}
-                  onClick={() => setModel(v)}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
+            <ModelPicker kind={kind} model={model} onChange={setModel} />
           </div>
         )}
 
