@@ -1793,13 +1793,15 @@
   width: 100%;
   box-sizing: border-box;
 }
-/* Hide the native number spinners — cleaner fields; keyboard ↑/↓ + step still work. */
-.admin-fld input[type="number"] {
+/* Plain numeric fields keep the native spinner — it now follows the theme via
+   color-scheme (tokens.css). Only suffix fields (.af-inputwrap, e.g. "MB") hide it,
+   since the spinner would overlap the unit label; keyboard ↑/↓ + step still work. */
+.af-inputwrap input[type="number"] {
   -moz-appearance: textfield;
   appearance: textfield;
 }
-.admin-fld input[type="number"]::-webkit-outer-spin-button,
-.admin-fld input[type="number"]::-webkit-inner-spin-button {
+.af-inputwrap input[type="number"]::-webkit-outer-spin-button,
+.af-inputwrap input[type="number"]::-webkit-inner-spin-button {
   -webkit-appearance: none;
   margin: 0;
 }
