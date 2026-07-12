@@ -106,6 +106,65 @@ func TestCorpusTerms(t *testing.T) {
 	}
 }
 
+func TestProtocolAndBizAcronyms(t *testing.T) {
+	// ネットワーク・開発/ビジネス略語の追加分。CMUdict に実在語として載っていて誤読される
+	// もの（nat/sap/roi/seo 等）が上書きで正しく読めているかも確認する。
+	want := map[string]string{
+		"https":  "エイチティーティーピーエス",
+		"tcp":    "ティーシーピー",
+		"vpn":    "ブイピーエヌ",
+		"nat":    "エヌエーティー",
+		"sap":    "エスエーピー",
+		"sip":    "エスアイピー",
+		"arp":    "エーアールピー",
+		"roi":    "アールオーアイ",
+		"seo":    "エスイーオー",
+		"devops": "デブオプス",
+		"saas":   "サース",
+		"ci":     "シーアイ",
+	}
+	for in, exp := range want {
+		if got := englishToKana(in); got != exp {
+			t.Errorf("%q -> %q, want %q", in, got, exp)
+		}
+	}
+}
+
+func TestNumeronymLikeCombos(t *testing.T) {
+	// 略語＋数字のトークン全体一致（EC2/route53 と同じ扱い）。
+	want := map[string]string{
+		"b2b":  "ビーツービー",
+		"p2p":  "ピーツーピー",
+		"web3": "ウェブスリー",
+		"gpt4": "ジーピーティーフォー",
+	}
+	for in, exp := range want {
+		if got := englishToKana(in); got != exp {
+			t.Errorf("%q -> %q, want %q", in, got, exp)
+		}
+	}
+}
+
+func TestCompanyAndToolNames(t *testing.T) {
+	// 企業名・クラウド/インフラツール・言語フレームワークの追加分。
+	want := map[string]string{
+		"salesforce":  "セールスフォース",
+		"ubuntu":      "ウブントゥ",
+		"mercari":     "メルカリ",
+		"paypay":      "ペイペイ",
+		"jaeger":      "イェーガー",
+		"circleci":    "サークルシーアイ",
+		"django":      "ジャンゴ",
+		"webassembly": "ウェブアセンブリ",
+		"wasm":        "ワズム",
+	}
+	for in, exp := range want {
+		if got := englishToKana(in); got != exp {
+			t.Errorf("%q -> %q, want %q", in, got, exp)
+		}
+	}
+}
+
 func containsASCIILetters(s string) bool {
 	for _, r := range s {
 		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {
