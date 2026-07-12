@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { apiJSON, raw } from "../../core/api/client.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
@@ -15,6 +15,13 @@ export function OpsTab() {
   const running = wsState === "running";
   const startWs = useWorkspaceStore((s) => s.start);
   const { conns, reload } = useConnections();
+
+  // (Re)load when the workspace is running — including a stopped→running
+  // transition while the dialog is open (same pattern as AgentsTab). Without
+  // this initial kick, useConnections stays null (読み込み中) forever.
+  useEffect(() => {
+    if (running) reload();
+  }, [running, reload]);
 
   if (!running) {
     return (
