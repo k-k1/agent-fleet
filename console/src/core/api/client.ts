@@ -35,6 +35,28 @@ export function setUser(id: string | null | undefined): void {
   currentUser = id || "";
 }
 
+// clearLocalState wipes every Console-owned localStorage entry — all keys carry an
+// `af` prefix (tenant selection, per-(user,tenant) layouts, composer drafts, display
+// settings, section fold states, caches, …). Called on logout so the next account on
+// this browser starts clean and nothing of the prior user survives (the layout is
+// already user-scoped, but this also clears the stale tenant selection, drafts and
+// misc UI state). In-memory tenant/user are reset too, though logout navigates away
+// immediately after.
+export function clearLocalState(): void {
+  try {
+    const keys: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith("af")) keys.push(k);
+    }
+    for (const k of keys) localStorage.removeItem(k);
+  } catch {
+    /* private-mode / quota — best effort */
+  }
+  selectedTenant = "";
+  currentUser = "";
+}
+
 const _fetch = window.fetch.bind(window);
 // When AUTH=oauth the Control Plane gates every request on a verified Google
 // session and answers an expired/absent one with 401 on XHR. Bounce the whole
