@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { apiJSON, raw } from "../../core/api/client.ts";
-import { useWorkspaceStore } from "../../core/store/workspace.ts";
+import { useWorkspaceStore, wsStartBusy } from "../../core/store/workspace.ts";
+import { EmptyState } from "../../ui/EmptyState.tsx";
+import { Button } from "../../ui/Button.tsx";
 import { useConnections } from "./useConnections.ts";
 import { ProviderCard, StatusPill, Hint, DisconnectButton } from "./providerCard.tsx";
 
@@ -23,24 +25,30 @@ export function OpsTab() {
     if (running) reload();
   }, [running, reload]);
 
-  if (!running) {
-    return (
-      <div className="conns">
-        <p className="muted pad">
-          運用ツールの接続はワークスペース内に保存されるため、ワークスペースの起動が必要です。
-        </p>
-        <button onClick={() => startWs()}>ワークスペースを起動</button>
-      </div>
-    );
-  }
-  if (!conns) return <p className="muted pad">読み込み中…</p>;
-
   return (
     <div className="conns">
-      <p className="muted ds-note">
-        インシデント対応・監視運用の連携です。接続すると「SRE アシスタント」がこれらを読み取り専用で参照して壁打ちに使います。接続の変更は次のチャット送信から反映されます（ワークスペースの再起動は不要）。
-      </p>
-      <PagerDutyCard st={conns.pagerduty} reload={reload} />
+      {!running ? (
+        <EmptyState
+          icon="debug-disconnect"
+          title="運用ツールの接続はワークスペース内で実行されます"
+          hint="API キーはコンテナ内の Agent が暗号化保存するため、ワークスペースの起動が必要です。"
+        >
+          <Button icon="play" disabled={wsStartBusy(wsState)} onClick={() => void startWs()}>
+            {wsStartBusy(wsState) ? "起動中…" : "ワークスペースを起動"}
+          </Button>
+        </EmptyState>
+      ) : !conns ? (
+        <p className="muted pad">読み込み中…</p>
+      ) : (
+        <>
+          <p className="muted ds-note">
+            インシデント対応・監視運用の連携です。接続すると「SRE
+            アシスタント」がこれらを読み取り専用で参照して壁打ちに使います。接続の変更は次のチャット送信から反映されます（ワークスペースの再起動は不要）。
+          </p>
+          <div className="conn-cat">インシデント管理</div>
+          <PagerDutyCard st={conns.pagerduty} reload={reload} />
+        </>
+      )}
     </div>
   );
 }
@@ -98,15 +106,14 @@ function PagerDutyCard({ st, reload }: { st: any; reload: () => void }) {
               placeholder="PagerDuty API キー"
               value={key}
               onChange={(e) => setKey(e.target.value)}
-              autoFocus
             />
             <button disabled={busy || !key.trim()} onClick={save}>
               接続
             </button>
           </div>
-          <label className="p-check">
-            <input type="checkbox" checked={eu} onChange={(e) => setEu(e.target.checked)} />{" "}
-            EU アカウント（api.eu.pagerduty.com）
+          <label className="ds-check">
+            <input type="checkbox" checked={eu} onChange={(e) => setEu(e.target.checked)} />
+            <span>EU アカウント（api.eu.pagerduty.com）</span>
           </label>
           <Hint>
             読み取り専用キーを推奨します（PagerDuty の Integrations &gt; API Access Keys で「Read-only」を選択）。
