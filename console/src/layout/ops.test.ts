@@ -46,17 +46,17 @@ describe("openActive", () => {
     l = openActive(l, { content: { kind: "terminal", chat: false } });
     expect(allPanes(l)[0].session).toBe("s1"); // revealed, not re-bound
   });
-  it("swaps payloads (keeping ids) when the other pane already shows the target", () => {
-    let l = grown(1); // p0=s0 active would be the new pane; find ids
+  it("focuses the other pane (no swap) when it already shows the target", () => {
+    let l = grown(1); // p0=s0, p1=s1
     const [a, b] = allPanes(l);
     l = setActive(l, a.id);
     const l2 = openActive(l, term(b.session!));
     const [a2, b2] = allPanes(l2);
     expect(a2.id).toBe(a.id); // ids stay in place (paneId contract)
     expect(b2.id).toBe(b.id);
-    expect(a2.session).toBe(b.session); // payloads swapped
-    expect(b2.session).toBe(a.session);
-    expect(l2.activeId).toBe(a.id);
+    expect(a2.session).toBe(a.session); // payloads unchanged — no swap
+    expect(b2.session).toBe(b.session);
+    expect(l2.activeId).toBe(b.id); // the pane already showing it becomes active
   });
 });
 
@@ -142,9 +142,9 @@ describe("closePane", () => {
 describe("closeSessionPanes", () => {
   it("removes every pane showing the session in one step", () => {
     let l = grown(2);
-    // Bind pane 3 to the same session as pane 1 (force split then swap in s0).
-    l = openActive(l, term("s0")); // active pane (third) now shows s0 → swap-dedup…
-    // After the swap, exactly one pane shows s0. Bind another explicitly:
+    // Clicking s0 while it's already open just focuses that pane (no dup).
+    l = openActive(l, term("s0")); // active moves to the pane already showing s0
+    // Still exactly one pane shows s0. Bind another explicitly:
     l = openInNew(l, term("s0x"), { force: true });
     const before = allPanes(l).length;
     const hits = allPanes(l).filter((p) => p.session === "s0").length;
