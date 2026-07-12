@@ -7,7 +7,7 @@
 // SCM pane, not here. Mounted only while its section is open, so the fetch is lazy.
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent as RMouseEvent, DragEvent as RDragEvent, KeyboardEvent as RKeyboardEvent } from "react";
-import { api, uploadFiles, downloadURL, fsMkdir, fsNewFile, fsRename, fsDelete } from "../../core/api/client.ts";
+import { api, uploadFiles, downloadURL, fsMkdir, fsNewFile, fsRename, fsDelete, fsSearch } from "../../core/api/client.ts";
 import FileIcon, { DirIcon } from "../../ui/FileIcon.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { EmptyState } from "../../ui/EmptyState.tsx";
@@ -32,6 +32,9 @@ interface Row {
   type: string;
   depth: number;
   segPaths: string[];
+  /** Search results only: the directory prefix (relative to the tree root),
+   * shown muted before the filename so a flat match keeps its context. */
+  sub?: string;
 }
 interface Menu {
   x: number;
@@ -61,9 +64,14 @@ interface ProjectFilesProps {
    * the リポジトリ section rows) instead of the plain folder — for the tree
    * rooted at "repos", whose depth-0 dirs ARE the working copies. */
   markRepos?: boolean;
+  /** When set, a non-empty 絞り込み query switches this tree to a flat, recursive
+   * filename search over the whole subtree (rg-backed) instead of filtering only
+   * the loaded rows. Enabled for the repos tree; the home tree keeps the cheap
+   * visible-row filter. */
+  searchable?: boolean;
 }
 
-export function ProjectFiles({ root, markRepos }: ProjectFilesProps) {
+export function ProjectFiles({ root, markRepos, searchable }: ProjectFilesProps) {
   const repos = useReposStore((s) => s.repos);
   const layout = useLayoutStore((s) => s.layout);
   const openTarget = useLayoutStore((s) => s.openTarget);
@@ -87,6 +95,11 @@ export function ProjectFiles({ root, markRepos }: ProjectFilesProps) {
   const [selected, setSelected] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<string | null>(null);
   const [menu, setMenu] = useState<Menu | null>(null);
+  // Recursive-search state (searchable trees, query active): rows are flat file
+  // hits; null = not searching / no fetch yet.
+  const [searchRows, setSearchRows] = useState<Row[] | null>(null);
+  const [searchTrunc, setSearchTrunc] = useState(false);
+  const [searching, setSearching] = useState(false);
   const menuRef = useRef<HTMLUListElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const treeRef = useRef<HTMLUListElement>(null);
@@ -210,6 +223,44 @@ export function ProjectFiles({ root, markRepos }: ProjectFilesProps) {
     return rows.filter((_, i) => keep[i]);
   }, [rows, nq]);
 
+  // Recursive search (searchable tree + active query): fetch the whole-subtree
+  // matches from the backend (debounced), turned into flat file rows. The tree
+  // filter above still runs but is bypassed for display in this mode.
+  const searchMode = !!searchable && !!nq;
+  useEffect(() => {
+    if (!searchMode) {
+      setSearchRows(null);
+      setSearchTrunc(false);
+      setSearching(false);
+      return;
+    }
+    let alive = true;
+    setSearching(true);
+    const t = setTimeout(async () => {
+      const { results, truncated } = await fsSearch(root, q);
+      if (!alive) return;
+      const prefix = root ? root + "/" : "";
+      const rows: Row[] = results.map((p) => {
+        const relp = p.startsWith(prefix) ? p.slice(prefix.length) : p;
+        const name = relp.split("/").pop() || relp;
+        // dir prefix without the trailing slash — shown muted after the filename.
+        return { path: p, name, type: "file", depth: 0, segPaths: [p], sub: relp.slice(0, Math.max(0, relp.length - name.length - 1)) };
+      });
+      setSearchRows(rows);
+      setSearchTrunc(truncated);
+      setSearching(false);
+    }, 160);
+    return () => {
+      alive = false;
+      clearTimeout(t);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchMode, q, root, filesTick]);
+
+  // The rows actually shown / navigated: flat search hits in search mode, else
+  // the (tree-)filtered rows.
+  const displayRows = searchMode ? searchRows ?? [] : filteredRows;
+
   // Prefetch entries for visible dirs whose children we don't have yet.
   useEffect(() => {
     need.forEach((p) => void fetchInto(p));
@@ -248,7 +299,7 @@ export function ProjectFiles({ root, markRepos }: ProjectFilesProps) {
         return;
       }
       if (menu) return; // let the context menu own the keyboard while it's open
-      const list = filteredRows;
+      const list = displayRows;
       if (!list.length) return;
       const idx = list.findIndex((r) => r.path === selected);
       const pick = (to: number) => {
@@ -310,7 +361,7 @@ export function ProjectFiles({ root, markRepos }: ProjectFilesProps) {
         }
       }
     },
-    [filteredRows, selected, open, menu, expand, collapse, showFile, showFileSplit, focusInput, scrollRowIntoView],
+    [displayRows, selected, open, menu, expand, collapse, showFile, showFileSplit, focusInput, scrollRowIntoView],
   );
 
   // Enter in the filter box (repos tree only — it's the primary) hands focus here:
@@ -319,8 +370,8 @@ export function ProjectFiles({ root, markRepos }: ProjectFilesProps) {
     if (!focusTreeN || !markRepos) return;
     treeRef.current?.focus();
     setSelected((cur) => {
-      if (cur && filteredRows.some((r) => r.path === cur)) return cur;
-      const first = filteredRows[0];
+      if (cur && displayRows.some((r) => r.path === cur)) return cur;
+      const first = displayRows[0];
       if (first) scrollRowIntoView(first.path);
       return first ? first.path : cur;
     });
@@ -529,7 +580,7 @@ export function ProjectFiles({ root, markRepos }: ProjectFilesProps) {
         aria-label="ファイル"
         tabIndex={0}
         aria-activedescendant={(() => {
-          const i = filteredRows.findIndex((r) => r.path === selected);
+          const i = displayRows.findIndex((r) => r.path === selected);
           return i >= 0 ? `${uid}-${i}` : undefined;
         })()}
         onKeyDown={onTreeKeyDown}
@@ -540,14 +591,20 @@ export function ProjectFiles({ root, markRepos }: ProjectFilesProps) {
       >
         {!running ? (
           <EmptyState icon="debug-disconnect" title="ワークスペース停止中" />
+        ) : searchMode ? (
+          searching && !searchRows ? (
+            <EmptyState icon="loading" title="検索中…" />
+          ) : displayRows.length === 0 ? (
+            <li className="proj-sub-empty">「{q.trim()}」に一致するファイルはありません</li>
+          ) : null
         ) : entries === null ? (
           <EmptyState icon="loading" title="読み込み中…" />
         ) : entries.length === 0 ? (
           <li className="proj-sub-empty">ファイルなし（ここにドロップでアップロード）</li>
-        ) : nq && filteredRows.length === 0 ? (
+        ) : nq && displayRows.length === 0 ? (
           <li className="proj-sub-empty">「{q.trim()}」に一致するファイルはありません</li>
         ) : null}
-        {filteredRows.map((r, i) => {
+        {displayRows.map((r, i) => {
           const isOpen = r.type === "dir" && open.has(r.path);
           const isSel = r.path === selected;
           const isActiveFile = r.type === "file" && activeFile === r.path;
@@ -595,11 +652,17 @@ export function ProjectFiles({ root, markRepos }: ProjectFilesProps) {
                     return <DirIcon open={isOpen} />;
                   })()}
                 </span>
-                {r.name}
+                <span className="fs-name">
+                  {r.name}
+                  {r.sub ? <span className="fs-sub"> {r.sub}</span> : null}
+                </span>
               </span>
             </li>
           );
         })}
+        {searchMode && searchTrunc && displayRows.length > 0 && (
+          <li className="proj-sub-empty">上限に達しました。絞り込みを追加してください</li>
+        )}
       </ul>
       {menu && (
         <ul className="ui-menu files-ctxmenu" ref={menuRef} style={{ left: menu.x, top: menu.y }} role="menu" onMouseDown={(e) => e.stopPropagation()}>

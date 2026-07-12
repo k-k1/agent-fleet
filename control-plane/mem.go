@@ -77,7 +77,7 @@ func formatMemHuman(b int64) string {
 // The step within a tier is 1024 MiB up to 4 vCPU and coarser above, per the AWS
 // Fargate task-size matrix; snapping up to a 1024 multiple stays valid in every tier.
 type fargateTier struct {
-	cpu           string
+	cpu            string
 	minMiB, maxMiB int64
 }
 

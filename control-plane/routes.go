@@ -295,6 +295,7 @@ func registerRepoFSRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("PUT /api/git/identity", rest)
 	// File browser (docs/17 P3-5 段2) — proxied to the Agent.
 	mux.HandleFunc("GET /api/fs/tree", rest)
+	mux.HandleFunc("GET /api/fs/search", rest)
 	mux.HandleFunc("GET /api/fs/file", rest)
 	mux.HandleFunc("GET /api/fs/download", rest)
 	mux.HandleFunc("POST /api/fs/upload", rest)

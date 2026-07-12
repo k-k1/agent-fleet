@@ -128,20 +128,26 @@ export function FilesSection() {
               )}
             </div>
           </div>
-          <ProjectFiles root="repos" markRepos />
+          <ProjectFiles root="repos" markRepos searchable />
           {/* home: the rest of ~ (repos/ shows again inside — harmless). Lazy:
-              mounted only while open. */}
-          <button
-            type="button"
-            className="files-home-btn"
-            onClick={() => setHome(!homeOpen)}
-            aria-expanded={homeOpen}
-            title={homeOpen ? "home を折りたたむ" : "home を展開（~ 全体をブラウズ）"}
-          >
-            <Icon name={homeOpen ? "chevron-down" : "chevron-right"} />
-            <Icon name="vm" /> home
-          </button>
-          {homeOpen && <ProjectFiles root="" />}
+              mounted only while open. Hidden while a query is active — search
+              covers all working copies as a flat list, so the home tree (which
+              would only visible-row-filter) would just be a confusing dupe. */}
+          {!q && (
+            <>
+              <button
+                type="button"
+                className="files-home-btn"
+                onClick={() => setHome(!homeOpen)}
+                aria-expanded={homeOpen}
+                title={homeOpen ? "home を折りたたむ" : "home を展開（~ 全体をブラウズ）"}
+              >
+                <Icon name={homeOpen ? "chevron-down" : "chevron-right"} />
+                <Icon name="vm" /> home
+              </button>
+              {homeOpen && <ProjectFiles root="" />}
+            </>
+          )}
         </>
       )}
     </Section>
