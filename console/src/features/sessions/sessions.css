@@ -119,6 +119,13 @@
 .sess-row .session-state.mini {
   padding: 1px 4px;
 }
+/* On hover/active the ⋯ button overlays the row's right edge (see .sess-menu-wrap),
+   so fade the state chip out to hand that spot over instead of stacking two icons. */
+.sess-row:hover .session-state,
+.sess-row.hover .session-state,
+.sess-row.active .session-state {
+  opacity: 0;
+}
 .sess-drift {
   flex: none;
   display: inline-flex;
@@ -138,6 +145,11 @@
   gap: 3px;
   padding: 0 2px 0 0;
 }
+/* Reserve room on their right so the overlaid ⋯ button (position:absolute)
+   doesn't land on top of them while split. */
+.sess-row .sess-ords {
+  margin-right: 22px;
+}
 .rail-ord {
   flex: none;
   min-width: 18px;
@@ -155,12 +167,16 @@
   padding: 0 3px;
 }
 
-/* ⋯ menu. */
+/* ⋯ menu — overlaid on the row's right edge (absolute) rather than reserving a
+   trailing column, so a resting row spends that width on content and the state
+   chip sits flush right. Revealed on hover/active; hidden it takes no clicks so
+   the row's right edge still opens the session. */
 .sess-menu-wrap {
-  position: relative;
+  position: absolute;
+  right: 4px;
+  top: 0;
+  bottom: 0;
   flex: none;
-  padding: 0 4px 0 0;
-  align-self: stretch;
   display: flex;
   align-items: center;
 }
@@ -172,11 +188,13 @@
   padding: 2px 4px;
   border-radius: 4px;
   opacity: 0;
+  pointer-events: none;
 }
 .sess-row:hover .sess-menu-btn,
 .sess-menu-btn:focus-visible,
 .sess-row.active .sess-menu-btn {
   opacity: 1;
+  pointer-events: auto;
 }
 .sess-menu-btn:hover {
   background: var(--btn);
