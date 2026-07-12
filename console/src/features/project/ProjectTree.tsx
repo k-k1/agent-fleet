@@ -123,20 +123,22 @@ export function ProjectTree() {
     >
       {/* Quick filter: narrows repos + sessions (この木 and その他のセッション).
           Escape clears. Files are untouched — the tree below is lazy-loaded. */}
-      <div className="proj-filter">
-        <Icon name="search" />
-        <input
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          onKeyDown={(e) => e.key === "Escape" && setQ("")}
-          placeholder="絞り込み（リポ / セッション）"
-          aria-label="リポジトリとセッションを絞り込み"
-        />
-        {q && (
-          <button type="button" className="proj-filter-clear" title="クリア" onClick={() => setQ("")}>
-            <Icon name="close" />
-          </button>
-        )}
+      <div className="proj-filter-bar">
+        <div className="proj-filter">
+          <Icon name="search" />
+          <input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            onKeyDown={(e) => e.key === "Escape" && setQ("")}
+            placeholder="絞り込み（リポ / セッション）"
+            aria-label="リポジトリとセッションを絞り込み"
+          />
+          {q && (
+            <button type="button" className="proj-filter-clear" title="クリア" onClick={() => setQ("")}>
+              <Icon name="close" />
+            </button>
+          )}
+        </div>
       </div>
       {showClone && <NewRepoModal onClose={() => setShowClone(false)} onClone={doClone} repos={repos} />}
       <ul className="sess-list proj-tree">

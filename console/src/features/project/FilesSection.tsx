@@ -7,11 +7,12 @@
 // フォルダを開く) opens the section so the target is visible — hence the
 // controlled Section + own persistence (the old console's af-section-files key,
 // so an existing collapse choice carries over).
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Section } from "../../ui/Section.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { IconButton } from "../../ui/Button.tsx";
 import { useFilesStore } from "../files/store.ts";
+import { useFilesFilter } from "./filesFilter.ts";
 import { ProjectFiles } from "./ProjectFiles.tsx";
 import { FilesChanges } from "./FilesChanges.tsx";
 
@@ -22,6 +23,11 @@ const VIEW_KEY = "af-files-view"; // the old console's tree/changes choice carri
 export function FilesSection() {
   const reveal = useFilesStore((s) => s.reveal);
   const bump = useFilesStore((s) => s.bump);
+  const q = useFilesFilter((s) => s.q);
+  const setQ = useFilesFilter((s) => s.setQ);
+  const focusTree = useFilesFilter((s) => s.focusTree);
+  const focusInputN = useFilesFilter((s) => s.focusInputN);
+  const filterRef = useRef<HTMLInputElement>(null);
   const [open, setOpen] = useState(() => localStorage.getItem(KEY) === "1");
   const set = (v: boolean) => {
     setOpen(v);
@@ -51,6 +57,16 @@ export function FilesSection() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reveal.n]);
+
+  // Ctrl+F in the tree asks for the box: open the section + tree view (so the
+  // box is mounted), then focus and select it.
+  useEffect(() => {
+    if (!focusInputN) return;
+    set(true);
+    setView("tree");
+    requestAnimationFrame(() => filterRef.current?.select());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusInputN]);
 
   return (
     <Section
@@ -87,6 +103,31 @@ export function FilesSection() {
         <FilesChanges />
       ) : (
         <>
+          <div className="proj-filter-bar">
+            <div className="proj-filter">
+              <Icon name="search" />
+              <input
+                ref={filterRef}
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") setQ("");
+                  // Enter hands focus to the tree (its keydown then drives selection).
+                  else if (e.key === "Enter") {
+                    e.preventDefault();
+                    focusTree();
+                  }
+                }}
+                placeholder="絞り込み（ファイル）"
+                aria-label="ファイルを絞り込み"
+              />
+              {q && (
+                <button type="button" className="proj-filter-clear" title="クリア" onClick={() => setQ("")}>
+                  <Icon name="close" />
+                </button>
+              )}
+            </div>
+          </div>
           <ProjectFiles root="repos" markRepos />
           {/* home: the rest of ~ (repos/ shows again inside — harmless). Lazy:
               mounted only while open. */}

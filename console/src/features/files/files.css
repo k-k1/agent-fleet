@@ -29,6 +29,13 @@
 .fsrow.selected {
   background: var(--lp-active-bg, var(--active-bg));
 }
+/* Keyboard nav: the tree carries an aria-activedescendant selection, so while the
+   tree itself holds focus, ring the selected row (not the <ul>) to show the caret. */
+.fstree:focus-visible .fsrow.selected,
+.fstree:focus .fsrow.selected {
+  outline: 2px solid var(--lp-accent, var(--accent));
+  outline-offset: -2px;
+}
 .fsrow.drop-hover {
   outline: 2px dashed var(--accent);
   outline-offset: -2px;

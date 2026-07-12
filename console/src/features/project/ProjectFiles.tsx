@@ -5,8 +5,8 @@
 // the core file ops. It reuses the shared primitives (api fs endpoints,
 // FileIcon/DirIcon, the .fstree/.fsrow classes); per-copy git changes live in the
 // SCM pane, not here. Mounted only while its section is open, so the fetch is lazy.
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { MouseEvent as RMouseEvent, DragEvent as RDragEvent } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import type { MouseEvent as RMouseEvent, DragEvent as RDragEvent, KeyboardEvent as RKeyboardEvent } from "react";
 import { api, uploadFiles, downloadURL, fsMkdir, fsNewFile, fsRename, fsDelete } from "../../core/api/client.ts";
 import FileIcon, { DirIcon } from "../../ui/FileIcon.tsx";
 import { Icon } from "../../ui/Icon.tsx";
@@ -19,6 +19,8 @@ import { activePane } from "../../layout/ops.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { useFilesStore } from "../files/store.ts";
 import { useReposStore } from "../repos/store.ts";
+import { useFilesFilter } from "./filesFilter.ts";
+import { normQuery } from "./filter.ts";
 
 interface Entry {
   name: string;
@@ -69,6 +71,10 @@ export function ProjectFiles({ root, markRepos }: ProjectFilesProps) {
   const running = useWorkspaceStore((s) => s.state) === "running";
   const reveal = useFilesStore((s) => s.reveal);
   const filesTick = useFilesStore((s) => s.tick);
+  const q = useFilesFilter((s) => s.q);
+  const nq = normQuery(q);
+  const focusInput = useFilesFilter((s) => s.focusInput);
+  const focusTreeN = useFilesFilter((s) => s.focusTreeN);
   const askConfirm = useConfirm();
   const toast = useToast();
 
@@ -83,6 +89,8 @@ export function ProjectFiles({ root, markRepos }: ProjectFilesProps) {
   const [menu, setMenu] = useState<Menu | null>(null);
   const menuRef = useRef<HTMLUListElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const treeRef = useRef<HTMLUListElement>(null);
+  const uid = useId();
 
   const showFile = useCallback((p: string) => openTarget({ content: { kind: "file", filePath: p } }), [openTarget]);
   const showFileSplit = useCallback((p: string) => openTargetInNew({ content: { kind: "file", filePath: p } }), [openTargetInNew]);
@@ -181,6 +189,27 @@ export function ProjectFiles({ root, markRepos }: ProjectFilesProps) {
     return { rows: out, need };
   }, [entries, open, cache, root]);
 
+  // Quick filter: keep rows whose displayed name matches, plus the ancestor dirs
+  // that lead to them (so the match keeps its place in the tree). Rows are
+  // pre-order with a depth, so an ancestor stack resolves lineage in one pass.
+  // It filters the rows currently shown (loaded / expanded) — the same scope as
+  // the リポジトリ filter.
+  const filteredRows = useMemo(() => {
+    if (!nq) return rows;
+    const keep = new Array<boolean>(rows.length).fill(false);
+    const stack: number[] = [];
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      while (stack.length && rows[stack[stack.length - 1]].depth >= r.depth) stack.pop();
+      if (r.name.toLowerCase().includes(nq)) {
+        keep[i] = true;
+        for (const idx of stack) keep[idx] = true;
+      }
+      if (r.type === "dir") stack.push(i);
+    }
+    return rows.filter((_, i) => keep[i]);
+  }, [rows, nq]);
+
   // Prefetch entries for visible dirs whose children we don't have yet.
   useEffect(() => {
     need.forEach((p) => void fetchInto(p));
@@ -201,6 +230,102 @@ export function ProjectFiles({ root, markRepos }: ProjectFilesProps) {
     },
     [open, collapse, expand, showFile],
   );
+
+  // Keep the selected row in view when moving through it by keyboard.
+  const scrollRowIntoView = useCallback((path: string) => {
+    treeRef.current?.querySelector<HTMLElement>(`li[data-path="${CSS.escape(path)}"]`)?.scrollIntoView({ block: "nearest" });
+  }, []);
+
+  // Keyboard navigation over the visible (filtered) rows: ↑↓ move the selection,
+  // →← open/close a folder (or step into / out to the parent), Enter opens a file
+  // (Ctrl/⌘+Enter in a new pane) or toggles a folder, and Ctrl/⌘+F jumps to the
+  // filter box.
+  const onTreeKeyDown = useCallback(
+    (e: RKeyboardEvent<HTMLUListElement>) => {
+      if ((e.ctrlKey || e.metaKey) && (e.key === "f" || e.key === "F")) {
+        e.preventDefault();
+        focusInput();
+        return;
+      }
+      if (menu) return; // let the context menu own the keyboard while it's open
+      const list = filteredRows;
+      if (!list.length) return;
+      const idx = list.findIndex((r) => r.path === selected);
+      const pick = (to: number) => {
+        const r = list[Math.max(0, Math.min(to, list.length - 1))];
+        if (r) {
+          setSelected(r.path);
+          scrollRowIntoView(r.path);
+        }
+      };
+      switch (e.key) {
+        case "ArrowDown":
+          e.preventDefault();
+          pick(idx < 0 ? 0 : idx + 1);
+          break;
+        case "ArrowUp":
+          e.preventDefault();
+          pick(idx < 0 ? 0 : idx - 1);
+          break;
+        case "ArrowRight": {
+          e.preventDefault();
+          const r = list[idx];
+          if (!r) return pick(0);
+          if (r.type !== "dir") return;
+          if (!open.has(r.path)) void expand(r.path).then((deep) => setSelected(deep));
+          else pick(idx + 1); // already open → step into the first child
+          break;
+        }
+        case "ArrowLeft": {
+          e.preventDefault();
+          const r = list[idx];
+          if (!r) return;
+          if (r.type === "dir" && open.has(r.path)) {
+            collapse(r.segPaths);
+            return;
+          }
+          // else step out to the nearest shallower row (the parent).
+          for (let j = idx - 1; j >= 0; j--) {
+            if (list[j].depth < r.depth) {
+              pick(j);
+              break;
+            }
+          }
+          break;
+        }
+        case "Enter": {
+          e.preventDefault();
+          const r = list[idx];
+          if (!r) return;
+          if (r.type === "file") {
+            setSelected(r.path);
+            if (e.ctrlKey || e.metaKey) showFileSplit(r.path);
+            else showFile(r.path);
+          } else if (open.has(r.path)) {
+            collapse(r.segPaths);
+          } else {
+            void expand(r.path).then((deep) => setSelected(deep));
+          }
+          break;
+        }
+      }
+    },
+    [filteredRows, selected, open, menu, expand, collapse, showFile, showFileSplit, focusInput, scrollRowIntoView],
+  );
+
+  // Enter in the filter box (repos tree only — it's the primary) hands focus here:
+  // focus the tree and land the selection on the first visible row if it's astray.
+  useEffect(() => {
+    if (!focusTreeN || !markRepos) return;
+    treeRef.current?.focus();
+    setSelected((cur) => {
+      if (cur && filteredRows.some((r) => r.path === cur)) return cur;
+      const first = filteredRows[0];
+      if (first) scrollRowIntoView(first.path);
+      return first ? first.path : cur;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusTreeN]);
 
   // Reveal: when something requests a path under the root (a clone just landed,
   // or a repo row's フォルダを開く), expand its ancestor chain — and the target
@@ -398,9 +523,17 @@ export function ProjectFiles({ root, markRepos }: ProjectFilesProps) {
         }}
       />
       <ul
+        ref={treeRef}
         className={"fstree proj-fstree" + (dropTarget === root ? " drop-root" : "")}
         role="tree"
         aria-label="ファイル"
+        tabIndex={0}
+        aria-activedescendant={(() => {
+          const i = filteredRows.findIndex((r) => r.path === selected);
+          return i >= 0 ? `${uid}-${i}` : undefined;
+        })()}
+        onKeyDown={onTreeKeyDown}
+        onMouseDown={() => treeRef.current?.focus({ preventScroll: true })}
         onDragOver={onDragOverTo(root)}
         onDragLeave={() => setDropTarget(null)}
         onDrop={onDropTo(root)}
@@ -411,8 +544,10 @@ export function ProjectFiles({ root, markRepos }: ProjectFilesProps) {
           <EmptyState icon="loading" title="読み込み中…" />
         ) : entries.length === 0 ? (
           <li className="proj-sub-empty">ファイルなし（ここにドロップでアップロード）</li>
+        ) : nq && filteredRows.length === 0 ? (
+          <li className="proj-sub-empty">「{q.trim()}」に一致するファイルはありません</li>
         ) : null}
-        {rows.map((r) => {
+        {filteredRows.map((r, i) => {
           const isOpen = r.type === "dir" && open.has(r.path);
           const isSel = r.path === selected;
           const isActiveFile = r.type === "file" && activeFile === r.path;
@@ -420,7 +555,11 @@ export function ProjectFiles({ root, markRepos }: ProjectFilesProps) {
           return (
             <li
               key={r.path}
+              id={`${uid}-${i}`}
               data-path={r.path}
+              role="treeitem"
+              aria-selected={isSel}
+              {...(isDir ? { "aria-expanded": isOpen } : {})}
               className={"fsrow" + (isSel ? " selected" : "") + (isDir && dropTarget === r.path ? " drop-hover" : "")}
               style={{ paddingLeft: 4 + r.depth * 14 }}
               title={isDir ? undefined : "Ctrl/中クリックで新ペインに開く"}
