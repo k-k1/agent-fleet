@@ -154,6 +154,8 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("DELETE /connections/codex", codex.HandleDisconnect)
 	mux.HandleFunc("PUT /connections/pagerduty", handlePutPagerDutyConn)
 	mux.HandleFunc("DELETE /connections/pagerduty", handleDeletePagerDutyConn)
+	mux.HandleFunc("PUT /connections/grafana", handlePutGrafanaConn)
+	mux.HandleFunc("DELETE /connections/grafana", handleDeleteGrafanaConn)
 
 	return mux
 }

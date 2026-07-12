@@ -6,10 +6,10 @@ import { useConnections } from "./useConnections.ts";
 import { ProviderCard, StatusPill, Hint, DisconnectButton } from "./providerCard.tsx";
 
 // OpsTab is the home for service-operations connections (docs/25 Phase 1): external
-// monitoring / incident tools the SRE assistant talks to over MCP. Today: PagerDuty.
-// The API key is stored container-side (encrypted secrets) and injected into the
-// PagerDuty MCP at spawn by `workspace-agent mcp-run` — it never reaches the CP.
-// Grafana / CloudWatch land here later as sibling cards.
+// monitoring / incident tools the SRE assistant talks to over MCP. Today: PagerDuty
+// and Grafana. Credentials are stored container-side (encrypted secrets) and injected
+// into the MCP server at spawn by `workspace-agent mcp-run` — they never reach the CP.
+// CloudWatch lands here later as a sibling card.
 export function OpsTab() {
   const wsState = useWorkspaceStore((s) => s.state);
   const running = wsState === "running";
@@ -34,6 +34,7 @@ export function OpsTab() {
         インシデント対応・監視運用の連携です。接続すると「SRE アシスタント」がこれらを読み取り専用で参照して壁打ちに使います。接続の変更は次のチャット送信から反映されます（ワークスペースの再起動は不要）。
       </p>
       <PagerDutyCard st={conns.pagerduty} reload={reload} />
+      <GrafanaCard st={conns.grafana} reload={reload} />
     </div>
   );
 }
@@ -105,6 +106,87 @@ function PagerDutyCard({ st, reload }: { st: any; reload: () => void }) {
             読み取り専用キーを推奨します（PagerDuty の Integrations &gt; API Access Keys で「Read-only」を選択）。
             キーはワークスペース内に暗号化保存され、MCP サーバの起動時にだけ渡されます。書き込み操作（ack/resolve
             など）は有効化しません。
+          </Hint>
+        </div>
+      )}
+    </ProviderCard>
+  );
+}
+
+// GrafanaCard: paste a Grafana instance URL + service-account token (Viewer role
+// recommended). Works for self-hosted / Grafana Cloud / Amazon Managed Grafana —
+// for AMG the URL is the workspace endpoint (https://g-xxxx.grafana-workspace.
+// <region>.amazonaws.com) and tokens expire after at most 30 days (re-paste here).
+function GrafanaCard({ st, reload }: { st: any; reload: () => void }) {
+  const toast = useToast();
+  const [url, setUrl] = useState("");
+  const [token, setToken] = useState("");
+  const [busy, setBusy] = useState(false);
+  const ok = url.trim() !== "" && token.trim() !== "";
+
+  const save = async () => {
+    if (!ok) return;
+    setBusy(true);
+    try {
+      const res = await apiJSON("api/connections/grafana", "PUT", {
+        url: url.trim(),
+        token: token.trim(),
+      });
+      if (res && res.error) {
+        toast("接続に失敗: " + (res.error.message || res.error));
+        return;
+      }
+      setUrl("");
+      setToken("");
+      reload();
+    } finally {
+      setBusy(false);
+    }
+  };
+  const disconnect = async () => {
+    await raw("api/connections/grafana", { method: "DELETE" });
+    reload();
+  };
+
+  return (
+    <ProviderCard
+      id="grafana"
+      name="Grafana"
+      status={<StatusPill on={st?.connected}>{st?.connected ? "接続済み" : "未接続"}</StatusPill>}
+    >
+      {st?.connected ? (
+        <div className="p-who">
+          <span className="p-em">{st.url || "接続設定済み"}</span>
+          <DisconnectButton onClick={disconnect} />
+        </div>
+      ) : (
+        <div className="p-body">
+          <div className="flow">
+            <input
+              className="cinput"
+              type="text"
+              placeholder="Grafana URL（https://grafana.example.com）"
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+            />
+          </div>
+          <div className="flow">
+            <input
+              className="cinput"
+              type="password"
+              placeholder="サービスアカウントトークン"
+              value={token}
+              onChange={(e) => setToken(e.target.value)}
+            />
+            <button disabled={busy || !ok} onClick={save}>
+              接続
+            </button>
+          </div>
+          <Hint>
+            Viewer 権限のサービスアカウントトークンを推奨します。トークンはワークスペース内に暗号化保存され、MCP
+            サーバの起動時にだけ渡されます（書き込み・管理ツールは無効で起動）。Amazon Managed Grafana の場合は
+            URL に workspace endpoint（g-xxxx.grafana-workspace.リージョン.amazonaws.com）を指定してください
+            （トークンは最長30日で失効するため、失効したら貼り直します）。
           </Hint>
         </div>
       )}

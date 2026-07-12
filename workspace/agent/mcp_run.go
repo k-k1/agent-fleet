@@ -30,6 +30,8 @@ func runMCPRun(args []string) {
 	switch provider {
 	case "pagerduty":
 		runPagerDutyMCP(extra)
+	case "grafana":
+		runGrafanaMCP(extra)
 	default:
 		fmt.Fprintf(os.Stderr, "mcp-run: unknown provider %q\n", provider)
 		os.Exit(2)
@@ -65,6 +67,53 @@ func runPagerDutyMCP(extra []string) {
 		fmt.Fprintf(os.Stderr, "mcp-run pagerduty: exec %s: %v\n", uvx, err)
 		os.Exit(1)
 	}
+}
+
+// runGrafanaMCP execs the mcp-grafana binary (baked into the image) with the
+// stored URL + service-account token injected as env. Read-only is enforced
+// here, not in the MCP config: -disable-write -disable-admin are always
+// prepended, so the config's wrapper reference alone can never yield write
+// tools. Works unchanged for self-hosted / Grafana Cloud / Amazon Managed
+// Grafana — AMG auth is the same Bearer service-account token (docs/25 AMG 検討).
+func runGrafanaMCP(extra []string) {
+	s, err := secrets.Load()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "mcp-run grafana: load secrets: %v\n", err)
+		os.Exit(1)
+	}
+	if s.Grafana == nil || s.Grafana.URL == "" || s.Grafana.Token == "" {
+		fmt.Fprintln(os.Stderr, "mcp-run grafana: no Grafana connection configured")
+		os.Exit(1)
+	}
+	env := append(os.Environ(),
+		"GRAFANA_URL="+s.Grafana.URL,
+		"GRAFANA_SERVICE_ACCOUNT_TOKEN="+s.Grafana.Token,
+	)
+	bin, err := grafanaMCPPath()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "mcp-run grafana: %v\n", err)
+		os.Exit(1)
+	}
+	argv := append([]string{bin, "-disable-write", "-disable-admin"}, extra...)
+	if err := syscall.Exec(bin, argv, env); err != nil {
+		fmt.Fprintf(os.Stderr, "mcp-run grafana: exec %s: %v\n", bin, err)
+		os.Exit(1)
+	}
+}
+
+// grafanaMCPPath resolves the mcp-grafana binary: PATH (the image bakes it into
+// /usr/local/bin) first, then the per-user Phase 0 install under ~/.local/bin.
+func grafanaMCPPath() (string, error) {
+	if p, err := exec.LookPath("mcp-grafana"); err == nil {
+		return p, nil
+	}
+	if home := homeDir(); home != "" {
+		p := filepath.Join(home, ".local", "bin", "mcp-grafana")
+		if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
+			return p, nil
+		}
+	}
+	return "", fmt.Errorf("mcp-grafana not found (baked into newer images; or install to ~/.local/bin)")
 }
 
 // uvxPath resolves the uvx launcher: PATH first, then the per-user install under
