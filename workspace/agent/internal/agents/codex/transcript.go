@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -162,7 +163,7 @@ func parseRolloutFull(lines [][]byte) ([]transcript.Turn, []transcript.Task, []t
 				answered[id] = true
 				if ti, okk := callTurn[id]; okk && len(turns[ti].Parts) > 0 && out != "" {
 					if turns[ti].Parts[0].Kind == "question" {
-						turns[ti].Parts[0].Answer = out
+						turns[ti].Parts[0].Answer = answerText(out)
 					} else {
 						turns[ti].Parts[0].Output = out
 					}
@@ -475,6 +476,41 @@ func parseCallOutput(payload json.RawMessage) (callID, output string) {
 		}
 	}
 	return p.CallID, transcript.CapOutput(out)
+}
+
+// answerText renders a request_user_input function_call_output into the chosen answer
+// label(s) for display — matching claude's clean "label, label" form so the mirror's
+// QuestionBlock highlights the picked options instead of dumping raw JSON. codex wraps
+// the reply as {"answers":{"<questionId>":{"answers":["label",…]}}}; we flatten every
+// question's answer array (keys sorted for a stable order). Falls back to the raw output
+// when the shape doesn't match (e.g. a free-text reply stored differently), so the
+// answer is never lost.
+func answerText(out string) string {
+	var env struct {
+		Answers map[string]struct {
+			Answers []string `json:"answers"`
+		} `json:"answers"`
+	}
+	if json.Unmarshal([]byte(out), &env) != nil || len(env.Answers) == 0 {
+		return out
+	}
+	keys := make([]string, 0, len(env.Answers))
+	for k := range env.Answers {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var labels []string
+	for _, k := range keys {
+		for _, s := range env.Answers[k].Answers {
+			if s = strings.TrimSpace(s); s != "" {
+				labels = append(labels, s)
+			}
+		}
+	}
+	if len(labels) == 0 {
+		return out
+	}
+	return strings.Join(labels, ", ")
 }
 
 // parsePlan turns an update_plan function_call into the current ToDo list. codex

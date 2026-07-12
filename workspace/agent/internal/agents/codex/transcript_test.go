@@ -264,6 +264,46 @@ func TestCodexCompactedReplacementHistory(t *testing.T) {
 	}
 }
 
+func TestCodexAnswerText(t *testing.T) {
+	cases := []struct{ in, want string }{
+		// single-question select: the label, not the raw envelope
+		{`{"answers":{"ask_user_test":{"answers":["質問だけ確認 (Recommended)"]}}}`, "質問だけ確認 (Recommended)"},
+		// multi-select within one question: joined labels
+		{`{"answers":{"q":{"answers":["AWS","セルフホスト"]}}}`, "AWS, セルフホスト"},
+		// multiple questions: flattened, keys sorted for a stable order
+		{`{"answers":{"b":{"answers":["Two"]},"a":{"answers":["One"]}}}`, "One, Two"},
+		// unknown shape falls back to the raw output (answer never lost)
+		{`plain free text`, "plain free text"},
+		{`{"answers":{}}`, `{"answers":{}}`},
+	}
+	for _, c := range cases {
+		if got := answerText(c.in); got != c.want {
+			t.Errorf("answerText(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+// TestCodexQuestionAnswerFromRollout checks the end-to-end path: a request_user_input
+// call + its envelope output resolve to the clean chosen label on the question part.
+func TestCodexQuestionAnswerFromRollout(t *testing.T) {
+	lines := [][]byte{
+		[]byte(`{"type":"response_item","payload":{"type":"function_call","call_id":"c1","name":"request_user_input","arguments":"{\"questions\":[{\"header\":\"H\",\"question\":\"Q?\",\"options\":[{\"label\":\"Yes\"},{\"label\":\"No\"}]}]}"}}`),
+		[]byte(`{"type":"response_item","payload":{"type":"function_call_output","call_id":"c1","output":"{\"answers\":{\"q\":{\"answers\":[\"Yes\"]}}}"}}`),
+	}
+	turns, _ := parseRollout(lines)
+	var got string
+	for _, tn := range turns {
+		for _, p := range tn.Parts {
+			if p.Kind == "question" {
+				got = p.Answer
+			}
+		}
+	}
+	if got != "Yes" {
+		t.Fatalf("question answer = %q, want %q", got, "Yes")
+	}
+}
+
 func mustJSON(v string) []byte {
 	b, err := json.Marshal(v)
 	if err != nil {
