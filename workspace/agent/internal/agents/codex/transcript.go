@@ -160,13 +160,20 @@ func parseRolloutFull(lines [][]byte) ([]transcript.Turn, []transcript.Task, []t
 			if pt := parsePlan(ev.Payload); pt != nil {
 				tasks = pt // update_plan resends the whole list
 			}
-			if id, out := parseCallOutput(ev.Payload); id != "" {
+			if id, out, gen := parseCallOutput(ev.Payload); id != "" {
 				answered[id] = true
 				if ti, okk := callTurn[id]; okk && len(turns[ti].Parts) > 0 && out != "" {
 					if turns[ti].Parts[0].Kind == "question" {
 						turns[ti].Parts[0].Answer = answerText(out)
 					} else {
 						turns[ti].Parts[0].Output = out
+					}
+					// A generated image (imagegen): surface its saved file as a userfile
+					// part — the same 共有ファイル panel claude's SendUserFile gets, so the
+					// user can open the image from the chat instead of digging the path out
+					// of a tool trace.
+					if len(gen) > 0 {
+						turns[ti].Parts = append(turns[ti].Parts, transcript.Part{Kind: "userfile", Files: gen})
 					}
 				}
 			}
@@ -453,14 +460,18 @@ func reasoningText(payload json.RawMessage) string {
 	return strings.TrimSpace(sb.String())
 }
 
-// parseCallOutput returns a function_call_output's / custom_tool_call_output's call_id
-// and its (truncated) output text, or "","" for other payloads. The output is codex's
-// tool result; the JSON shape varies so we best-effort stringify:
+// parseCallOutput returns a function_call_output's / custom_tool_call_output's call_id,
+// its (truncated) output text, and any generated-image paths announced in it, or
+// "","",nil for other payloads. The output is codex's tool result; the JSON shape
+// varies so we best-effort stringify:
 //   - a bare string
 //   - {output|content: "…"}
 //   - codex 0.144+: an array of {type:"input_text",text:"…"} blocks (unified exec) — we
-//     concatenate their text.
-func parseCallOutput(payload json.RawMessage) (callID, output string) {
+//     concatenate their text. An image_gen result also carries the raw image as an
+//     input_image data URL plus a text block that re-embeds it as JSON — pure noise for
+//     a text trace, so those are dropped (the image itself reaches the user as the
+//     userfile part synthesized from genImages).
+func parseCallOutput(payload json.RawMessage) (callID, output string, genImages []string) {
 	var p struct {
 		Type   string          `json:"type"`
 		CallID string          `json:"call_id"`
@@ -468,7 +479,7 @@ func parseCallOutput(payload json.RawMessage) (callID, output string) {
 	}
 	if json.Unmarshal(payload, &p) != nil ||
 		(p.Type != "function_call_output" && p.Type != "custom_tool_call_output") {
-		return "", ""
+		return "", "", nil
 	}
 	out := ""
 	if len(p.Output) > 0 {
@@ -482,6 +493,10 @@ func parseCallOutput(payload json.RawMessage) (callID, output string) {
 			if json.Unmarshal(p.Output, &blocks) == nil {
 				var sb strings.Builder
 				for _, b := range blocks {
+					t := strings.TrimSpace(b.Text)
+					if strings.HasPrefix(t, `{"image_url":"data:image`) || strings.HasPrefix(t, "data:image") {
+						continue // base64 image re-embedded as text — noise
+					}
 					sb.WriteString(b.Text)
 				}
 				out = sb.String()
@@ -504,7 +519,26 @@ func parseCallOutput(payload json.RawMessage) (callID, output string) {
 			}
 		}
 	}
-	return p.CallID, transcript.CapOutput(out)
+	return p.CallID, transcript.CapOutput(out), genImagePaths(out)
+}
+
+// genImageRe matches the imagegen harness's completion notice ("Generated images are
+// saved to <dir> as <path> by default."), the only place the saved file's concrete
+// path appears in the rollout (image_generation_end carries the bytes but no path).
+var genImageRe = regexp.MustCompile(`Generated images are saved to \S+ as (\S+?\.(?:png|jpe?g|webp|gif))`)
+
+// genImagePaths extracts the generated-image file paths announced in a tool output,
+// deduped in order of appearance.
+func genImagePaths(out string) []string {
+	var paths []string
+	seen := map[string]bool{}
+	for _, m := range genImageRe.FindAllStringSubmatch(out, -1) {
+		if !seen[m[1]] {
+			seen[m[1]] = true
+			paths = append(paths, m[1])
+		}
+	}
+	return paths
 }
 
 // answerText renders a request_user_input function_call_output into the chosen answer
@@ -643,27 +677,55 @@ func applyPatchInput(payload json.RawMessage) string {
 //
 // jsCmdRe pulls the shell command out of exec_command({cmd:"…"}); the patch is found by
 // scanning string literals for the "Begin Patch" marker (see extractExecScript).
+// jsPromptTickRe/jsPromptStrRe pull the image_gen prompt (a backtick template literal
+// in observed rollouts, double-quoted as a fallback); jsPathRe the view_image path.
 var (
-	jsCmdRe = regexp.MustCompile(`\bcmd\s*:\s*"((?:[^"\\]|\\.)*)"`)
-	jsStrRe = regexp.MustCompile(`"((?:[^"\\]|\\.)*)"`)
+	jsCmdRe        = regexp.MustCompile(`\bcmd\s*:\s*"((?:[^"\\]|\\.)*)"`)
+	jsStrRe        = regexp.MustCompile(`"((?:[^"\\]|\\.)*)"`)
+	jsPromptTickRe = regexp.MustCompile("\\bprompt\\s*:\\s*`([^`]*)`")
+	jsPromptStrRe  = regexp.MustCompile(`\bprompt\s*:\s*"((?:[^"\\]|\\.)*)"`)
+	jsPathRe       = regexp.MustCompile(`\bpath\s*:\s*"((?:[^"\\]|\\.)*)"`)
 )
 
 // isExecScript reports whether a custom_tool_call input is the codex 0.144+ JS "exec"
-// snippet (drives tools.exec_command / tools.apply_patch) rather than a bare patch
-// envelope.
+// snippet (drives tools.exec_command / tools.apply_patch / tools.image_gen__* /
+// tools.view_image) rather than a bare patch envelope.
 func isExecScript(input string) bool {
-	return strings.Contains(input, "tools.exec_command") || strings.Contains(input, "tools.apply_patch")
+	return strings.Contains(input, "await tools.") ||
+		strings.Contains(input, "tools.exec_command") || strings.Contains(input, "tools.apply_patch")
 }
 
 // execScriptParts destructures a codex 0.144+ JS "exec" snippet into display parts: the
-// shell command as a tool trace (Output attaches here — it's Parts[0]) and, when the
-// snippet applies a patch, the per-file diff parts after it. Returns nil when nothing is
-// recoverable, so the caller can fall back to a raw trace.
+// shell command as a tool trace (Output attaches here — it's Parts[0]), an image_gen /
+// view_image trace with its prompt / path as the info, and, when the snippet applies a
+// patch, the per-file diff parts after it. Returns nil when nothing is recoverable, so
+// the caller can fall back to a raw trace.
 func execScriptParts(input string) []transcript.Part {
 	cmd, patch := extractExecScript(input)
 	var parts []transcript.Part
 	if cmd != "" {
 		parts = append(parts, transcript.Part{Kind: "tool", Tool: "exec_command", Info: transcript.Clip(cmd)})
+	}
+	if strings.Contains(input, "tools.image_gen") {
+		// The built-in image generation (imagegen skill). The saved file arrives later, in
+		// the wait call's output (see the userfile synthesis in parseRolloutFull). The
+		// prompt is a structured multi-line block; flatten it so Clip's one-line summary
+		// shows more than its first field.
+		info := ""
+		if m := jsPromptTickRe.FindStringSubmatch(input); m != nil {
+			info = m[1]
+		} else if m := jsPromptStrRe.FindStringSubmatch(input); m != nil {
+			info = unescapeJS(m[1])
+		}
+		info = strings.Join(strings.Fields(info), " ")
+		parts = append(parts, transcript.Part{Kind: "tool", Tool: "image_gen", Info: transcript.Clip(info)})
+	}
+	if strings.Contains(input, "tools.view_image") {
+		info := ""
+		if m := jsPathRe.FindStringSubmatch(input); m != nil {
+			info = unescapeJS(m[1])
+		}
+		parts = append(parts, transcript.Part{Kind: "tool", Tool: "view_image", Info: transcript.Clip(info)})
 	}
 	if patch != "" {
 		parts = append(parts, patchParts("apply_patch", patch)...)

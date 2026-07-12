@@ -373,6 +373,85 @@ func TestCodexCustomToolCallExec(t *testing.T) {
 	}
 }
 
+func TestCodexExecScriptImageGen(t *testing.T) {
+	// The imagegen skill's built-in call: prompt as a backtick template literal.
+	js := "const r = await tools.image_gen__imagegen({prompt: `Use case: logo\nPrimary request: red circle`});\nimage(r.image_url);"
+	parts := execScriptParts(js)
+	if len(parts) != 1 || parts[0].Tool != "image_gen" {
+		t.Fatalf("execScriptParts = %+v, want a single image_gen trace", parts)
+	}
+	if !strings.Contains(parts[0].Info, "red circle") {
+		t.Errorf("info = %q, want the generation prompt", parts[0].Info)
+	}
+}
+
+func TestCodexExecScriptViewImage(t *testing.T) {
+	js := `const r = await tools.view_image({path:"/home/u/assets/red.png",detail:"original"});
+image(r.image_url);`
+	parts := execScriptParts(js)
+	if len(parts) != 1 || parts[0].Tool != "view_image" || parts[0].Info != "/home/u/assets/red.png" {
+		t.Fatalf("execScriptParts = %+v, want a single view_image trace with the path", parts)
+	}
+}
+
+// TestCodexImageGenUserFile runs the end-to-end imagegen shape from a real 0.144.1
+// rollout: the exec(image_gen) call, then the wait call whose output announces the
+// saved file and re-embeds the image as base64 noise. The saved path must surface as
+// a userfile part (the Console's 共有ファイル panel) and the noise must not leak into
+// the wait trace's output.
+func TestCodexImageGenUserFile(t *testing.T) {
+	genPath := "/home/u/.codex/generated_images/abc/exec-123.png"
+	lines := [][]byte{
+		wrapItem(t, map[string]any{
+			"type": "custom_tool_call", "name": "exec", "call_id": "c1",
+			"input": "const r = await tools.image_gen__imagegen({prompt: `red circle`});",
+		}),
+		wrapItem(t, map[string]any{
+			"type": "custom_tool_call_output", "call_id": "c1",
+			"output": []map[string]string{{"type": "input_text", "text": "Script running with cell ID 1\n"}},
+		}),
+		wrapItem(t, map[string]any{
+			"type": "function_call", "name": "wait", "call_id": "c2",
+			"arguments": `{"cell_id":"1"}`,
+		}),
+		wrapItem(t, map[string]any{
+			"type": "function_call_output", "call_id": "c2",
+			"output": []map[string]string{
+				{"type": "input_text", "text": "Script completed\nOutput:\n"},
+				{"type": "input_image", "image_url": "data:image/png;base64,AAAA"},
+				{"type": "input_text", "text": "Generated images are saved to /home/u/.codex/generated_images/abc as " + genPath + " by default.\n"},
+				{"type": "input_text", "text": `{"image_url":"data:image/png;base64,AAAA","output_hint":"Generated images are saved to /home/u/.codex/generated_images/abc as ` + genPath + ` by default."}`},
+			},
+		}),
+	}
+	turns, _ := parseRollout(lines)
+	var gen, wait, files *transcript.Part
+	for i := range turns {
+		for j := range turns[i].Parts {
+			switch {
+			case turns[i].Parts[j].Tool == "image_gen":
+				gen = &turns[i].Parts[j]
+			case turns[i].Parts[j].Tool == "wait":
+				wait = &turns[i].Parts[j]
+			case turns[i].Parts[j].Kind == "userfile":
+				files = &turns[i].Parts[j]
+			}
+		}
+	}
+	if gen == nil || gen.Info != "red circle" {
+		t.Fatalf("no image_gen trace with the prompt in %+v", turns)
+	}
+	if wait == nil || !strings.Contains(wait.Output, "Generated images are saved") {
+		t.Fatalf("no wait trace carrying the completion notice in %+v", turns)
+	}
+	if strings.Contains(wait.Output, "data:image") {
+		t.Errorf("wait output leaks base64 noise: %q", wait.Output)
+	}
+	if files == nil || len(files.Files) != 1 || files.Files[0] != genPath {
+		t.Fatalf("userfile part = %+v, want exactly [%s]", files, genPath)
+	}
+}
+
 // wrapItem marshals a response_item payload line for parseRollout.
 func wrapItem(t *testing.T, payload map[string]any) []byte {
 	t.Helper()

@@ -271,6 +271,9 @@ func handleGenericMessages(w http.ResponseWriter, r *http.Request, meta session.
 	if lo < hi {
 		turns = capTurnsNewest(all[lo:hi])
 	}
+	// userfile parts exist here too (codex imagegen's generated file) — map their
+	// paths browse-root-relative so the Console's 共有ファイル panel can open them.
+	resolveUserFiles(turns)
 	resp := map[string]any{
 		"name": meta.Name, "messages": turns, "cursor": cursor,
 		"status": state, "alive": alive, "reset": reset,
