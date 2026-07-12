@@ -335,6 +335,7 @@ export function MirrorView({
         else ttsAutoPumpRef.current();
       },
       sessionVoiceOpts(session), // セッションごとの声（設定 OFF なら undefined）
+      session, // 左ペインの再生中アイコン用
     );
     if (!h) return; // 読み上げられる本文が無い（ツールだけのターン等）
     ttsHandleRef.current = h;
@@ -359,7 +360,7 @@ export function MirrorView({
         new Promise<never>((_, rej) => setTimeout(() => rej(new Error("timeout")), 30000)),
       ]);
       const reply = (r?.reply || "").trim();
-      if (!r?.error && reply) announce("要約。" + reply, label, sessionVoiceOpts(session));
+      if (!r?.error && reply) announce("要約。" + reply, label, sessionVoiceOpts(session), session);
       else ttsStart(gi, body, fromBlock); // 要約が得られない → 全文読み
     } catch {
       ttsStart(gi, body, fromBlock); // ワークスペース停止・タイムアウト等 → 全文読み
@@ -1167,6 +1168,11 @@ export function MirrorView({
     if (composerLocked) return;
     const text = draft.trim();
     if (!text && !attachments.length) return;
+    // このセッションを読み上げている最中にコンポーサーから送信したら、その読み上げを止める。
+    // 割り込み・追撃の意思なので、今さら古い回答（カラオケ・要約アナウンス）を聞かされても
+    // 混乱するだけ。sessionName で判定し、他セッション由来の再生（不一致）はそのまま流す。
+    const ts = useTtsStore.getState();
+    if (ts.active && ts.sessionName === session) ts.stop();
     const paths = attachments.map((a) => a.path);
     const prompt = buildImagePrompt(text, paths, agent.id);
     setHistIdx(null);
@@ -2107,7 +2113,7 @@ function renderGroups(
   let prevCtx = "";
   for (let i = 0; i < groups.length; i++) {
     const g = groups[i];
-    const ctx = g.branch || g.cwd ? (g.branch || "") + " " + (g.cwd || "") : "";
+    const ctx = g.branch || g.cwd ? (g.branch || "") + "\x1f" + (g.cwd || "") : "";
     if (ctx && ctx !== prevCtx) {
       els.push(<ContextLine key={"ctx-" + g.idx} branch={g.branch} cwd={g.cwd} />);
     }

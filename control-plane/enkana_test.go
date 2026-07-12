@@ -197,6 +197,9 @@ func TestAgentManageFamily(t *testing.T) {
 		"manage":     "マネージ",
 		"manager":    "マネージャー",
 		"management": "マネジメント",
+		"image":      "イメージ",
+		"images":     "イメージズ",
+		"Image":      "イメージ",
 	}
 	for in, exp := range want {
 		if got := englishToKana(in); got != exp {

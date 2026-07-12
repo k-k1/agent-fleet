@@ -138,6 +138,14 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* Speaking indicator — this session's reply is being read aloud (TTS). Pulses in the
+   accent color next to the kind badge. Shares the af-pulse keyframe with the state chip. */
+.sess-speaking {
+  flex: none;
+  color: var(--accent);
+  font-size: 12px;
+  animation: af-pulse 1.4s ease-in-out infinite;
+}
 
 /* Ordinal badges (right side, shown while split). */
 .sess-ords {

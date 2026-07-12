@@ -9,8 +9,8 @@ import { errText, raw } from "../../core/api/client.ts";
 import { takeChatSeed } from "../../lib/chatSeed.ts";
 import { coarsePointer } from "../../lib/device.ts";
 import { useSettings } from "../../lib/settings.ts";
-import { startTts, ttsOptsFromSettings, assistantVoiceOpts, type TtsController } from "./tts.ts";
-import { TtsReadButton } from "./TtsReadButton.tsx";
+import { startTts, ttsOptsFromSettings, assistantVoiceOpts, type TtsController, type TtsOptions } from "./tts.ts";
+import { readTurn, collectBlocks, blockIndexAt, type TurnReadHandle } from "../mirror/turnTts.ts";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { splitPastedImages, buildImagePrompt } from "../../lib/pastedImages.ts";
 import { agentOf } from "../../agents/registry.ts";
@@ -416,16 +416,27 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
           </div>
         )}
         {conv?.messages.map((m, i) => {
+          // Assistant replies render through AssistantTurn, which owns the bubble ref so
+          // its footer can karaoke-read the rendered Markdown (docs/24).
+          if (m.role === "assistant") {
+            return (
+              <div key={i} className="chat-msg role-assistant">
+                <AssistantTurn
+                  text={m.content}
+                  ts={m.ts}
+                  agentName={agent?.assistantName || "アシスタント"}
+                  voice={assistantVoiceOpts(assistId, assistVoice)}
+                />
+              </div>
+            );
+          }
           // Split off any pasted-image references so a user bubble shows the user's
           // words + clickable thumbnails, not the machine-facing paths — and so the
           // copy button copies the words, not the image instruction.
-          const { text, images } =
-            m.role === "user" ? splitPastedImages(m.content) : { text: m.content, images: [] as string[] };
+          const { text, images } = splitPastedImages(m.content);
           return (
-            <div key={i} className={"chat-msg role-" + m.role}>
-              <div className="chat-role">
-                {m.role === "user" ? "あなた" : agent?.assistantName || "アシスタント"}
-              </div>
+            <div key={i} className="chat-msg role-user">
+              <div className="chat-role">あなた</div>
               <div className="chat-body">
                 {/* Both roles render as Markdown; `breaks` keeps plain newlines as
                     line breaks (mirrors MirrorView's user turns). */}
@@ -441,7 +452,6 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
               {/* Footer under the bubble — time + copy, mirroring MirrorView's turn foot. */}
               <div className="chat-msg-foot">
                 {m.ts > 0 && <span className="cm-time">{formatMsgTS(m.ts)}</span>}
-                {m.role === "assistant" && <TtsReadButton text={text} voice={assistantVoiceOpts(assistId, assistVoice)} />}
                 <ChatCopyButton text={text} />
               </div>
             </div>
@@ -560,6 +570,141 @@ function StreamingMarkdown({ text }: { text: string }) {
     [],
   );
   return <MarkdownView source={shown} breaks streaming />;
+}
+
+// AssistantTurn renders one completed assistant reply and its footer. It owns a ref to the
+// bubble body so the footer's read control can karaoke-read the RENDERED Markdown (docs/24):
+// readTurn (features/mirror/turnTts) walks the .markdown DOM into blocks, speaks it sentence
+// by sentence, and highlights the block whose sentence is playing (.tts-active) with scroll
+// follow — the same engine the mirror/ReaderView use. Live streaming stays plain (the bubble
+// re-renders every ~120ms, which would wipe any DOM highlight); karaoke is offered only once
+// the turn is complete, i.e. here.
+function AssistantTurn({
+  text,
+  ts,
+  agentName,
+  voice,
+}: {
+  text: string;
+  ts: number;
+  agentName: string;
+  voice?: Partial<TtsOptions>;
+}) {
+  const ttsEnabled = useSettings().ttsEnabled;
+  const bodyRef = useRef<HTMLDivElement | null>(null);
+  const handleRef = useRef<TurnReadHandle | null>(null);
+  const [state, setState] = useState<"idle" | "playing" | "paused">("idle");
+  // Floating "ここから読み上げ" pill anchored to a mouse selection inside the bubble.
+  const [selPill, setSelPill] = useState<{ x: number; y: number; block: number } | null>(null);
+
+  // Stop this bubble's reading if the pane/component goes away mid-read.
+  useEffect(() => () => handleRef.current?.stop(), []);
+
+  const start = (fromBlock: number) => {
+    const body = bodyRef.current;
+    if (!body) return;
+    handleRef.current?.stop();
+    // onEnd fires once on natural end AND on preemption (TopBar stop / another playback),
+    // so the footer always falls back to the idle "読み上げ" state.
+    const h = readTurn(body, "チャット", fromBlock, () => {
+      handleRef.current = null;
+      setState("idle");
+    }, voice);
+    if (h) {
+      handleRef.current = h;
+      setState("playing");
+    }
+  };
+  const pause = () => {
+    handleRef.current?.pause();
+    setState("paused");
+  };
+  const resume = () => {
+    handleRef.current?.resume();
+    setState("playing");
+  };
+  const stop = () => {
+    handleRef.current?.stop();
+    handleRef.current = null;
+    setState("idle");
+  };
+
+  // After a mouse selection inside the bubble, surface a "ここから読み上げ" pill at the
+  // selection head — reading (re)starts from the block the selection begins in. Desktop
+  // mouse only (touch selection emits no mouseup); the footer button still reads from top.
+  const onMouseUp = () => {
+    const body = bodyRef.current;
+    const sel = window.getSelection();
+    if (!ttsEnabled || !body || !sel || sel.isCollapsed || sel.rangeCount === 0) {
+      setSelPill(null);
+      return;
+    }
+    const range = sel.getRangeAt(0);
+    if (!body.contains(range.startContainer)) {
+      setSelPill(null);
+      return;
+    }
+    const idx = blockIndexAt(collectBlocks(body), range.startContainer);
+    if (idx < 0) {
+      setSelPill(null);
+      return;
+    }
+    const rect = range.getBoundingClientRect();
+    setSelPill({ x: Math.round(rect.left), y: Math.round(rect.top - 34), block: idx });
+  };
+  const startFromSelection = () => {
+    if (!selPill) return;
+    start(selPill.block);
+    setSelPill(null);
+    window.getSelection()?.removeAllRanges();
+  };
+
+  return (
+    <>
+      <div className="chat-role">{agentName}</div>
+      <div className="chat-body" ref={bodyRef} onMouseUp={onMouseUp}>
+        {text && <MarkdownView source={text} breaks />}
+      </div>
+      {selPill && (
+        <div className="sel-pill-group" style={{ left: selPill.x, top: Math.max(4, selPill.y) }}>
+          <button
+            type="button"
+            className="sel-send-pill"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={startFromSelection}
+          >
+            <Icon name="unmute" /> ここから読み上げ
+          </button>
+        </div>
+      )}
+      <div className="chat-msg-foot">
+        {ts > 0 && <span className="cm-time">{formatMsgTS(ts)}</span>}
+        {ttsEnabled && text.trim() && (
+          state === "idle" ? (
+            <button type="button" className="ghost cm-copy" title="カラオケ読み上げ" onClick={() => start(0)}>
+              <Icon name="unmute" /> 読み上げ
+            </button>
+          ) : (
+            <>
+              {state === "playing" ? (
+                <button type="button" className="ghost cm-copy" title="一時停止" onClick={pause}>
+                  <Icon name="debug-pause" /> 一時停止
+                </button>
+              ) : (
+                <button type="button" className="ghost cm-copy" title="再開" onClick={resume}>
+                  <Icon name="play" /> 再開
+                </button>
+              )}
+              <button type="button" className="ghost cm-copy" title="停止" onClick={stop}>
+                <Icon name="debug-stop" /> 停止
+              </button>
+            </>
+          )
+        )}
+        <ChatCopyButton text={text} />
+      </div>
+    </>
+  );
 }
 
 // formatMsgTS renders a unix-millis timestamp as local "MM/DD HH:MM" — same shape as

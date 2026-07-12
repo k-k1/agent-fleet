@@ -263,22 +263,30 @@ const DEFAULTS: Settings = {
   outputLanguage: "auto",
   assistantAgent: "auto",
   ssmHostColors: {},
+  // 音声読み上げの初期値＝おすすめ設定。設定タブの「リセット」ボタンが戻す値（TTS_RESET）と
+  // 同じで、新規ユーザー（と未設定の既存ユーザー）はこの状態から始まる。読み上げ本体・音声通知
+  // だけは OFF スタート、ほかは ON にしたとき快適な既定（セッションごとに声を変える／はやめ／
+  // 自動読み上げ・全ペイン・確認質問・カタカナ読み ON／キャッシュ 15 分）。TTS_RESET はこの
+  // DEFAULTS から TTS 関連キーだけ抜き出して定義しているので、両者は常に一致する。
   ttsEnabled: false,
   ttsProvider: "auto",
-  ttsVoiceVoicevox: "3",
+  ttsVoiceVoicevox: "3", // ノーマル
   ttsVoicePolly: "Takumi",
-  ttsSpeed: 1.0,
+  ttsSpeed: 1.25, // はやめ
   ttsSessionNotify: false,
   usageResetNotify: true,
-  ttsEnglishKana: false,
+  ttsEnglishKana: true,
   ttsUserDict: "",
-  ttsCacheSec: 300,
-  ttsAutoReadMirror: false,
-  ttsAutoReadAllPanes: false,
-  ttsVoicePerSession: false,
+  ttsCacheSec: 900, // 15分
+  ttsAutoReadMirror: true,
+  ttsAutoReadAllPanes: true,
+  ttsVoicePerSession: true,
+  // {} = 標準 14 キャラ（tts.ts の SESSION_VOICES）がセッション割り当て対象。新規ユーザーも
+  // リセットもこの状態から始まる（キャラは標準 14 人スタートで統一）。エンジンに追加キャラが
+  // いても、使いたければキャラクター一覧で個別にチェックする運用。
   ttsVoicePool: {},
   ttsEmotion: false,
-  ttsReadPending: false,
+  ttsReadPending: true,
   ttsSummaryRead: false,
   ttsAbbrevCode: true,
   ttsParticlePause: true,
@@ -319,6 +327,34 @@ export const TTS_CACHE_SIZES: [number, string][] = [
   [900, "15分（約90MB）"],
   [1800, "30分（約180MB）"],
 ];
+
+// 音声読み上げ設定の「初期状態」（設定タブのリセットボタンが書き戻す値）。DEFAULTS の TTS 関連
+// キーだけを抜き出したもので、新規ユーザーの初期値と常に一致する（DEFAULTS を単一の真実源に
+// することでドリフトを防ぐ）。ttsVoicePool は {}（= tts.ts の標準 14 キャラがチェック済み）で、
+// リセットも新規ユーザーもキャラは標準 14 人からのスタートで揃う。読み仮名辞書（ttsUserDict）は
+// ユーザーが打ち込んだ内容なのでリセットでは消さない（含めない）。
+const TTS_RESET_KEYS = [
+  "ttsEnabled",
+  "ttsSessionNotify",
+  "ttsProvider",
+  "ttsVoiceVoicevox",
+  "ttsVoicePolly",
+  "ttsVoicePerSession",
+  "ttsVoicePool",
+  "ttsEmotion",
+  "ttsSpeed",
+  "ttsAutoReadMirror",
+  "ttsAutoReadAllPanes",
+  "ttsSummaryRead",
+  "ttsReadPending",
+  "ttsAbbrevCode",
+  "ttsParticlePause",
+  "ttsEnglishKana",
+  "ttsCacheSec",
+] as const;
+export const TTS_RESET: Partial<Settings> = Object.fromEntries(
+  TTS_RESET_KEYS.map((k) => [k, DEFAULTS[k]]),
+) as Partial<Settings>;
 
 // 読み上げ速度（speedScale）。
 export const TTS_SPEEDS: [number, string][] = [
@@ -532,7 +568,14 @@ export async function hydrateUIPrefs(): Promise<void> {
 }
 
 export function setSetting(key: keyof Settings, value: Settings[keyof Settings]): void {
-  state = { ...state, [key]: value };
+  setSettings({ [key]: value } as Partial<Settings>);
+}
+
+// setSettings — 複数キーを 1 回で更新する（1 レンダー・1 サーバー保存にまとめる）。
+// リセットのように多数のキーをまとめて書き換える用途で使う（setSetting を 17 回呼ぶと
+// その回数だけ再レンダーとデバウンス保存が走るため）。
+export function setSettings(patch: Partial<Settings>): void {
+  state = { ...state, ...patch };
   try {
     localStorage.setItem(KEY, JSON.stringify(state));
   } catch {}

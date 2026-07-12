@@ -184,8 +184,28 @@ const UPPER_ACRONYMS: [RegExp, string][] = [[/\bIT\b/g, "アイティー"]];
 // フィードバック）。enkana より前でカタカナへ確定させて表記ゆれごと吸収する。
 const PRODUCT_NAMES: [RegExp, string][] = [[/agent[\s-]?fleet/gi, "エージェントフリート"]];
 
+// --- 波ダッシュ（〜/～）の読み分け -------------------------------------------------
+// 「3〜5倍速」のような範囲指定は「3から5倍速」と読ませたい一方、「〜〜〜」のように連続
+// させる使い方は文章の省略・言いよどみ（「詳細はほにゃらら〜〜〜」等）を表すので、両者を
+// 区別する。ワイド版（～ U+FF5E）と JIS 版（〜 U+301C）は入力元（OS/IME）でどちらでも
+// 来うるので同一視する。
+//  1. まず連続（2 個以上）を先に「ほにゃらら」へ潰す（範囲ルールより先に処理しないと
+//     1 個ずつ「から」に化けてしまうため順序が重要）。
+//  2. 残った単独の波ダッシュは、**直後に空白・句読点・文末以外の文字が続く**（＝範囲の
+//     区切りとして 2 つの値の間に挟まれている）場合だけ「から」に変換する。「そうだね〜」
+//     「〜。」のような語尾の伸ばし・カジュアルな用法（直後が文末/句読点/空白）は対象外＝
+//     そのまま残す（VOICEVOX の既定の挙動に委ねる）。
+const TILDE = "〜～";
+const TILDE_RUN = new RegExp(`[${TILDE}]{2,}`, "g");
+const TILDE_RANGE = new RegExp(`([^\\s${TILDE}])[${TILDE}](?=[^\\s${TILDE}。、！？!?，,])`, "g");
+
+function applyTildeReadings(text: string): string {
+  return text.replace(TILDE_RUN, "ほにゃらら").replace(TILDE_RANGE, "$1から");
+}
+
 export function applyBuiltinReadings(text: string): string {
   let t = text.replace(KARA_KATAKANA, "から");
+  t = applyTildeReadings(t);
   for (const [re, to] of NUMERONYMS) t = t.replace(re, to);
   for (const [re, to] of PRODUCT_NAMES) t = t.replace(re, to);
   for (const [re, to] of UPPER_ACRONYMS) t = t.replace(re, to);

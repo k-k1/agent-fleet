@@ -19,6 +19,7 @@ import { displayName, stateInfo } from "../../lib/sessionview.ts";
 import { agentOf } from "../../agents/registry.ts";
 import { useLayoutStore } from "../../layout/store.ts";
 import { ordClass } from "../../layout/badges.ts";
+import { useTtsStore } from "../../core/store/tts.ts";
 import {
   openSessionTerminal,
   openSessionTerminalSplit,
@@ -77,6 +78,9 @@ export function SessionRow({ s, selected, opens, multi, running, actions }: Sess
   // question/plan/permission want the user — keep their text. Everything else
   // (入力待ち/進行中/停止中…) collapses to an icon-only chip; the text moves to title.
   const loud = st.cls.includes("question");
+  // このセッションの回答を音声読み上げ中か（ミラー朗読・要約・セッション通知いずれも
+  // 発生元セッション名を tts ストアへ載せている）。合成待ち（preparing）も含めて示す。
+  const speaking = useTtsStore((t) => t.sessionName === s.name && (t.speaking || t.preparing));
 
   return (
     <li
@@ -147,6 +151,9 @@ export function SessionRow({ s, selected, opens, multi, running, actions }: Sess
           >
             <Icon name="warning" /> {s.currentBranch}
           </span>
+        )}
+        {speaking && (
+          <Icon name="unmute" className="sess-speaking" title="このセッションの回答を読み上げ中" />
         )}
         <span className={"session-state " + st.cls + (loud ? "" : " mini")} title={st.text}>
           <Icon name={st.icon} spin={st.spin} />
