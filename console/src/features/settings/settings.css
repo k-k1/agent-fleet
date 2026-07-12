@@ -2262,9 +2262,67 @@
 }
 .limit-edit {
   display: flex;
-  align-items: flex-end;
-  gap: 8px;
+  flex-direction: column;
+  gap: 10px;
   margin-top: 12px;
+  padding: 12px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.limit-edit .le-head {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fg);
+}
+.limit-edit .le-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.limit-edit .le-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1 1 160px;
+  min-width: 0;
+}
+.limit-edit .le-cap {
+  font-size: 11.5px;
+  color: var(--fg);
+}
+.limit-edit .le-field input {
+  width: 100%;
+}
+.limit-edit .le-inputwrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.limit-edit .le-inputwrap input {
+  padding-right: 32px;
+}
+.limit-edit .le-suffix {
+  position: absolute;
+  right: 9px;
+  font-size: 11px;
+  color: var(--muted);
+  pointer-events: none;
+}
+.limit-edit .le-unit {
+  font-size: 11px;
+  color: var(--muted);
+  min-height: 13px;
+}
+.limit-edit .le-note {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+.limit-edit .le-actions {
+  display: flex;
+  gap: 8px;
 }
 .role-now {
   display: inline-flex;
@@ -2348,12 +2406,11 @@
     flex: 1 1 100%;
     justify-content: center;
   }
-  .limit-edit {
-    flex-direction: column;
-    align-items: stretch;
+  .limit-edit .le-field {
+    flex-basis: 100%;
   }
-  .limit-edit button {
-    width: 100%;
+  .limit-edit .le-actions button {
+    flex: 1 1 0;
   }
 }
 

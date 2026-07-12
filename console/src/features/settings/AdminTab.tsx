@@ -52,6 +52,11 @@ interface View {
 const ADMIN_MODES = ["manage", "sessions", "usage", "audit", "egress", "tts"]; // swipe order for the mode tabs
 const fmtG = (b: number) => fmtGiB(b) + "G";
 const fmtPct = (n: number | null | undefined) => (n == null ? "–" : Math.round(n) + "%");
+// MB → a "N GiB" hint for the memory input (whole number when clean, else 1 decimal).
+const fmtGbHint = (mb: number) => {
+  const gb = mb / 1024;
+  return (Number.isInteger(gb) ? String(gb) : gb.toFixed(1)) + " GiB";
+};
 
 export function AdminTab() {
   // shared with the settings store so closeAdmin can pop all drill levels at once
@@ -1485,19 +1490,29 @@ function MemberView({
         </div>
         {limitOpen && (
           <div className="limit-edit">
-            <label>
-              最大セッション数（0 = 無制限）
-              <input type="number" min="0" value={limit} onChange={(e) => setLimit(e.target.value)} autoFocus />
-            </label>
-            <label>
-              Workspace メモリ (MB)（0 = 既定）
-              <input type="number" min="0" step="256" value={memMb} onChange={(e) => setMemMb(e.target.value)} />
-            </label>
-            <button className="primary" onClick={saveLimit}>保存</button>
-            <button className="ghost" onClick={() => setLimitOpen(false)}>キャンセル</button>
-            <p className="muted" style={{ flexBasis: "100%", margin: "4px 0 0" }}>
-              メモリはテナント上限にクランプされ、<b>次回のコンテナ起動／作り直しで反映</b>されます（実行中コンテナには即時反映されません）。0 でデプロイ既定に戻ります。
+            <div className="le-head">上限の設定</div>
+            <div className="le-fields">
+              <label className="le-field">
+                <span className="le-cap">最大セッション数</span>
+                <input type="number" min="0" value={limit} onChange={(e) => setLimit(e.target.value)} autoFocus />
+                <span className="le-unit">0 = 無制限</span>
+              </label>
+              <label className="le-field">
+                <span className="le-cap">Workspace メモリ</span>
+                <span className="le-inputwrap">
+                  <input type="number" min="0" step="256" value={memMb} onChange={(e) => setMemMb(e.target.value)} />
+                  <span className="le-suffix">MB</span>
+                </span>
+                <span className="le-unit">{+memMb > 0 ? `= ${fmtGbHint(+memMb)}` : "0 = デプロイ既定"}</span>
+              </label>
+            </div>
+            <p className="le-note">
+              メモリはテナント上限にクランプされ、<b>次回のコンテナ起動／作り直しで反映</b>されます（実行中コンテナには即時反映されません）。
             </p>
+            <div className="le-actions">
+              <button className="primary" onClick={saveLimit}>保存</button>
+              <button className="ghost" onClick={() => setLimitOpen(false)}>キャンセル</button>
+            </div>
           </div>
         )}
       </section>
