@@ -1942,7 +1942,7 @@ function renderGroups(
   let prevCtx = "";
   for (let i = 0; i < groups.length; i++) {
     const g = groups[i];
-    const ctx = g.branch || g.cwd ? (g.branch || "") + " " + (g.cwd || "") : "";
+    const ctx = g.branch || g.cwd ? (g.branch || "") + "\x1f" + (g.cwd || "") : "";
     if (ctx && ctx !== prevCtx) {
       els.push(<ContextLine key={"ctx-" + g.idx} branch={g.branch} cwd={g.cwd} />);
     }
