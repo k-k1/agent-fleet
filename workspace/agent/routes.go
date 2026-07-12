@@ -122,6 +122,8 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("PUT /agents/rtk", handleAgentRTKPut)
 	// rtk token-savings history (rtk gain) for the WsBar "rtk 効果" chip.
 	mux.HandleFunc("GET /agents/rtk/gain", handleAgentRTKGain)
+	// opencode model catalog (live, reflects connected providers) — launch picker.
+	mux.HandleFunc("GET /agents/opencode/models", handleOpencodeModels)
 
 	// Toolchain selection (node via nvm / java via pre-baked Temurin) — Console.
 	mux.HandleFunc("GET /env/toolchains", handleToolchainsGet)

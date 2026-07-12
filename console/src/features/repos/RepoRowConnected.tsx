@@ -107,8 +107,8 @@ export function RepoRowConnected({ r, ctx, onToggle, sess }: RepoRowConnectedPro
       // Quick launch (▼ / right-click): no prompt, straight to a session.
       onLaunch={async (kind, split) => {
         const hasModel = agentOf(kind).caps.model;
-        // Shared priority chain: repo last-used → global default → "" (claude's own).
-        const model = hasModel ? resolveModel(r.name, settings.defaultModel) : "";
+        // Shared per-kind chain: repo last-used → kind default (repoLast.ts resolveModel).
+        const model = hasModel ? resolveModel(kind, r.name, settings.defaultModel) : "";
         const body: Record<string, unknown> = { dir: r.path, kind };
         if (model) body.model = model;
         const res = await apiJSON("api/sessions", "POST", body);
