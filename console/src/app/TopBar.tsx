@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { useTenantStore } from "../core/store/tenant.ts";
 import { useTtsStore } from "../core/store/tts.ts";
 import { useSettingsUI } from "../features/settings/store.ts";
-import { rel } from "../core/api/client.ts";
+import { rel, clearLocalState } from "../core/api/client.ts";
 import { useSettings, setSetting, THEMES, SURFACE_TARGETS } from "../lib/settings.ts";
 import { useIsMobile, isStandalonePWA } from "../lib/device.ts";
 import { Icon } from "../ui/Icon.tsx";
@@ -225,9 +225,19 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
                 {canLogout && (
                   <>
                     <div className="acct-sep" />
-                    <a className="acct-item" role="menuitem" href={rel("oauth2/logout")}>
+                    <button
+                      className="acct-item"
+                      role="menuitem"
+                      onClick={() => {
+                        // Drop all client-side state BEFORE bouncing to the CP logout,
+                        // so a different account on this browser can't see the prior
+                        // user's layout / drafts / tenant selection.
+                        clearLocalState();
+                        location.assign(rel("oauth2/logout"));
+                      }}
+                    >
                       <Icon name="sign-out" /> ログアウト
-                    </a>
+                    </button>
                   </>
                 )}
               </div>
