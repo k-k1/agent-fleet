@@ -217,6 +217,8 @@
    its selected segment follows the left-pane accent rather than the top bar's. */
 .files-view {
   flex: none;
+  /* Needs the sel-scope class on the element (FilesSection.tsx) — rebinding
+     --sel-accent alone can't reach the :root-derived --sel-bg/--sel-fg (tokens.css). */
   --sel-accent: var(--lp-accent, var(--topbar-accent));
 }
 

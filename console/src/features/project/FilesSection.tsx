@@ -93,7 +93,7 @@ export function FilesSection() {
       actions={
         <>
           {/* Tree vs every working copy's git changes (cross-repo). */}
-          <span className="ui-seg sm files-view">
+          <span className="ui-seg sm files-view sel-scope">
             <button
               type="button"
               className={"seg-btn" + (view === "tree" ? " active" : "")}
