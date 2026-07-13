@@ -156,9 +156,12 @@ cd console-e2e && npm ci && npx playwright test                                 
 
 ## 10.5 コミット規約・ブランチ運用
 
-[CONTRIBUTING](../../CONTRIBUTING.md) が正。要点:
+[CONTRIBUTING](../../CONTRIBUTING.md#commits--prs) が正（形式・帰属トレーラの詳細はそちら）。要点:
 
-- 小さく焦点の合ったコミット。メッセージは日本語で運用している（英語も可）。
+- 小さく焦点の合ったコミット。形式は `<type>(<scope>): 要約`（Conventional Commits）で
+  **subject も body も日本語**（英語で書き始めたら書き直す）。
+- エージェントのコミットは末尾に**実行モデル名**の `Co-Authored-By:` を付ける（Claude/Codex/
+  opencode 併用のため CLI 名でなくモデルで帰属）。旧 `Claude-Session:` 行は廃止。
 - **秘密をコミットしない**: `deploy/compose/.env`・`deploy/local/oauth.env`・`allowed-emails.txt` は
   git-ignored。コミット前に diff を確認。
 - **コアを deploy 非依存に保つ**: Docker/compose 前提を CP コアに焼き込まず、ポート
