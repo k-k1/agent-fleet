@@ -19,7 +19,7 @@ import {
   emotionOf,
   pendingSpeech,
   startsBlock,
-  startsDash,
+  startsTame,
 } from "./ttsText.ts";
 import { makeAudioLru } from "./ttsCache.ts";
 
@@ -38,9 +38,11 @@ describe("plainify (読み上げ用プレーン化)", () => {
     expect(plainify("> 引用文")).toBe("引用文");
   });
 
-  it("行頭の溜めダッシュ（――等）はマーカーとして読み上げから除く", () => {
+  it("行頭の溜め（――等・……等）はマーカーとして読み上げから除く", () => {
     expect(plainify("————また、イく。")).toBe("また、イく。"); // 実機報告
     expect(plainify("——イって、る。")).toBe("イって、る。");
+    expect(plainify("……一日中、って。")).toBe("一日中、って。"); // 実機報告（三点リーダ）
+    expect(plainify("...本当に？")).toBe("本当に？"); // 半角三点リーダ連続
     expect(plainify("普通の文の中の—区切り")).toBe("普通の文の中の—区切り"); // 行頭以外は触らない
   });
 
@@ -127,19 +129,25 @@ describe("startsBlock (ブロック頭の判定 = 前拍を置く合図)", () =>
   });
 });
 
-describe("startsDash (溜めダッシュの判定 = 長めの前拍を置く合図)", () => {
+describe("startsTame (溜めの判定 = 長めの前拍を置く合図)", () => {
   it("行頭のダッシュ連続（――/——/―― 等）に一致する", () => {
-    expect(startsDash("――また、行く。")).toBe(true);
-    expect(startsDash("————また、イく。")).toBe(true); // em dash 連続
-    expect(startsDash("——イって、る。")).toBe(true);
-    expect(startsDash("―行く。")).toBe(true); // 1 個でも対象
+    expect(startsTame("――また、行く。")).toBe(true);
+    expect(startsTame("————また、イく。")).toBe(true); // em dash 連続
+    expect(startsTame("——イって、る。")).toBe(true);
+    expect(startsTame("―行く。")).toBe(true); // 1 個でも対象
+  });
+
+  it("行頭の三点リーダ連続（……/... 等）にも一致する", () => {
+    expect(startsTame("……一日中、って。")).toBe(true); // 実機報告
+    expect(startsTame("...本当に？")).toBe(true); // 半角三点リーダ連続
+    expect(startsTame("…")).toBe(false); // 直後が無い（行末）
   });
 
   it("語尾の伸ばし（直後が空白・行末）やハイフンだけの語には一致しない", () => {
-    expect(startsDash("普通の文です。")).toBe(false);
-    expect(startsDash("-1 が返ります")).toBe(false); // 半角ハイフンは対象外（BLOCK_HEAD と衝突回避）
-    expect(startsDash("―― ")).toBe(false); // 直後が空白/行末
-    expect(startsDash("")).toBe(false);
+    expect(startsTame("普通の文です。")).toBe(false);
+    expect(startsTame("-1 が返ります")).toBe(false); // 半角ハイフンは対象外（BLOCK_HEAD と衝突回避）
+    expect(startsTame("―― ")).toBe(false); // 直後が空白/行末
+    expect(startsTame("")).toBe(false);
   });
 });
 
@@ -401,6 +409,19 @@ describe("applyBuiltinReadings / applyReadings (組み込みの読み補正)", (
     // 放つ（解き放つ）の可能性が残る単独形は触らない＝はなって のまま委ねる
     expect(applyBuiltinReadings("光を放って輝いた")).toBe("光を放って輝いた");
     expect(applyBuiltinReadings("矢を放って命中した")).toBe("矢を放って命中した");
+  });
+
+  it("文中の溜め（――・……）は読点に変えて間を作る（行頭は startsTame/plainify が別処理）", () => {
+    expect(applyBuiltinReadings("……一日中、って。")).toBe("、一日中、って。"); // 実機報告
+    expect(applyBuiltinReadings("そして――彼は言った。")).toBe("そして、彼は言った。");
+    expect(applyBuiltinReadings("分かった…でも心配だ")).toBe("分かった、でも心配だ");
+    expect(applyBuiltinReadings("待って...本当に？")).toBe("待って、本当に？"); // 半角三点リーダ連続も対象
+  });
+
+  it("溜めマークの直後が句読点・文末ならさらに読点を重ねない", () => {
+    expect(applyBuiltinReadings("え……。")).toBe("え。");
+    expect(applyBuiltinReadings("そう……")).toBe("そう");
+    expect(applyBuiltinReadings("待って――」と叫んだ")).toBe("待って」と叫んだ");
   });
 
   it("ユーザー辞書が先に当たれば組み込みより優先される", () => {

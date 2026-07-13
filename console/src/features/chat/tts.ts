@@ -20,7 +20,7 @@ import {
   splitLongSentence,
   emotionOf,
   startsBlock,
-  startsDash,
+  startsTame,
 } from "./ttsText.ts";
 import { effectiveDict } from "./ttsDict.ts";
 import { makeAudioLru } from "./ttsCache.ts";
@@ -283,9 +283,9 @@ export const SENT_BEAT = 0.15;
 // 読まないので、構造の切れ目を間で表す。ストリーミング（startTts）は通常の間に加算、
 // 朗読（startNarration）は preGaps として呼び手（turnTts / ReaderView）が渡す。
 export const BLOCK_BEAT = 0.3;
-// 行頭の溜めダッシュ（――等・startsDash）の前拍。「一拍おいてから話す」演出なので通常の
+// 行頭の溜め（――・……等・startsTame）の前拍。「一拍おいてから話す」演出なので通常の
 // ブロック頭（BLOCK_BEAT）より長く、はっきり間が空いたと感じる長さにする（実機報告）。
-export const DASH_BEAT = 0.6;
+export const TAME_BEAT = 0.6;
 // これ未満の断片は次の文とまとめてから読む（細切れ再生を避ける）。改行/文末では強制フラッシュ。
 const MIN_CHUNK = 6;
 
@@ -420,7 +420,7 @@ export function startTts(
   const ctx = audioCtx();
   let buf = ""; // 未確定バッファ（文の途中）
   let pending = ""; // MIN_CHUNK 未満で持ち越し中の短い断片
-  let pendingPre = 0; // 持ち越し断片の前拍（秒。ブロック頭=BLOCK_BEAT / 溜めダッシュ=DASH_BEAT / 無し=0）
+  let pendingPre = 0; // 持ち越し断片の前拍（秒。ブロック頭=BLOCK_BEAT / 溜め=TAME_BEAT / 無し=0）
   let inFence = false; // ```code``` の内側か（読み飛ばす）
   let seq = 0; // 投入した文の連番
   let inflight = 0;
@@ -502,8 +502,8 @@ export function startTts(
   };
 
   // チャンク開始片の頭で判定する前拍（秒）。ブロック頭（リスト・見出し・引用）は BLOCK_BEAT、
-  // 溜めダッシュ（――等）は DASH_BEAT、どちらでもなければ 0（前拍無し）。
-  const preBeatOf = (s: string): number => (startsBlock(s) ? BLOCK_BEAT : startsDash(s) ? DASH_BEAT : 0);
+  // 溜め（――・……等）は TAME_BEAT、どちらでもなければ 0（前拍無し）。
+  const preBeatOf = (s: string): number => (startsBlock(s) ? BLOCK_BEAT : startsTame(s) ? TAME_BEAT : 0);
 
   const enqueuePiece = (piece: string, hard: boolean, gap = SENTENCE_GAP) => {
     const pre = pending ? pendingPre : preBeatOf(piece);
@@ -545,7 +545,7 @@ export function startTts(
     const pieces = splitLongSentence(t);
     for (let i = 0; i < pieces.length; i++) {
       gaps.set(seq, i === pieces.length - 1 ? gap : CLAUSE_GAP);
-      if (pre && i === 0) preGaps.set(seq, pre); // リスト・見出し等の頭/溜めダッシュ → 読む前に一拍
+      if (pre && i === 0) preGaps.set(seq, pre); // リスト・見出し等の頭/溜め → 読む前に一拍
       if (onPiece && i === 0) displays.set(seq, display); // 文頭片が鳴る瞬間にこの文を通知
       jobs.push({ seq: seq++, text: pieces[i] });
     }
