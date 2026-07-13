@@ -111,7 +111,6 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
         </div>
       </div>
       <div className="topbar-right">
-        <NotificationCenter />
         <button
           className={"tts-status" + (ttsBusy ? " speaking" : s.ttsEnabled ? "" : " off")}
           title={
@@ -199,6 +198,7 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
             </div>
           )}
         </div>
+        <NotificationCenter />
         {me ? (
           <div className="acct" ref={acctRef}>
             <button className="whoami acct-btn" title={me} onClick={() => setMenuOpen((o) => !o)}>
