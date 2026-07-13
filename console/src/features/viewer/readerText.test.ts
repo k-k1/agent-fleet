@@ -74,10 +74,10 @@ describe("buildReadUnits (原文忠実＋文/行区切り)", () => {
   });
 });
 
-describe("readPreGaps (前拍: 溜めダッシュ > 段落 > 句点 > ハードラップ)", () => {
+describe("readPreGaps (前拍: 溜め > 段落 > 句点 > ハードラップ)", () => {
   const B = 0.3; // blockBeat
   const S = 0.15; // sentBeat
-  const D = 0.6; // dashBeat
+  const D = 0.6; // tameBeat
 
   it("行内の文境界（。区切り）は短い一拍、行の切れ目（文が終わった後の改行）は一拍", () => {
     const units = buildReadUnits("一文目。二文目。\n次の行。", false);
@@ -105,10 +105,16 @@ describe("readPreGaps (前拍: 溜めダッシュ > 段落 > 句点 > ハード�
     expect(readPreGaps(units, B, S, D)).toEqual([0]);
   });
 
-  it("溜めダッシュ（――等）で始まる行は dashBeat（マーカー行より長い前拍）", () => {
+  it("溜め（――等）で始まる行は tameBeat（マーカー行より長い前拍）", () => {
     const units = buildReadUnits("何する？\n――また、行く。\n――行ってる。", false);
     expect(readPreGaps(units, B, S, D)).toEqual([0, D, D]);
     // マーカー自体は表示に残るが読み上げからは落ちる
     expect(units[1].spoken).toBe("また、行く。");
+  });
+
+  it("三点リーダ（……等）で始まる行も tameBeat", () => {
+    const units = buildReadUnits("何する？\n……一日中、って。", false);
+    expect(readPreGaps(units, B, S, D)).toEqual([0, D]);
+    expect(units[1].spoken).toBe("一日中、って。");
   });
 });

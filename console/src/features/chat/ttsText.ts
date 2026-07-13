@@ -316,6 +316,7 @@ function applyTildeReadings(text: string): string {
 
 export function applyBuiltinReadings(text: string): string {
   let t = shortenSlashPause(text);
+  t = tameMidToPause(t); // 文中の溜め（――・……。行頭は plainify が既に処理済み）
   t = t.replace(KARA_KATAKANA, "から");
   t = applyTildeReadings(t);
   for (const [re, to] of NUMERONYMS) t = t.replace(re, to);
@@ -361,19 +362,39 @@ export function startsBlock(s: string): boolean {
   return BLOCK_HEAD.test(s);
 }
 
-// --- ダッシュの溜め（言いよどみ・間の演出） ---------------------------------------
-// 「――また、行く。」のように行頭がダッシュの連続（――/——/―― 等）で始まる表現は、小説・
-// 台詞回しで「一拍おいてから話す」溜めの合図（実機報告）。マーカー自体は読まず（下の plainify
-// のストリップ）、代わりに通常のブロック頭より長い前拍（DASH_BEAT。tts.ts/readerText.ts が値を
-// 持つ）を置いて溜めを再現する。全角ダッシュ系（— em/– en/― 横棒）のみ対象 — 通常のハイフン
-// "-" は箇条書きマーカー（BLOCK_HEAD）と衝突するため含めない。直後が空白/行末なら（語尾の
-// 伸ばし等）対象外＝文字が続く場合だけ「溜めてから話す」用法とみなす。
-// 末尾の lookahead は「ダッシュでも空白でもない文字」を要求する — 素の \S だと "―― "（2 個
-// 目のダッシュ自身が非空白）にマッチしてしまい、ダッシュだけの行を誤検知する。
-const DASH_LEAD = /^\s*[—–―]+(?=[^\s—–―])/;
+// --- 溜め（言いよどみ・間の演出） -------------------------------------------------
+// 「――また、行く。」「……一日中、って。」のように行頭がダッシュ連続（――/——/―― 等）や
+// 三点リーダ連続（……/... 等）で始まる表現は、小説・台詞回しで「一拍おいてから話す」溜めの
+// 合図（実機報告）。マーカー自体は読まず（下の plainify のストリップ）、代わりに通常の
+// ブロック頭より長い前拍（TAME_BEAT。tts.ts/readerText.ts が値を持つ）を置いて溜めを再現する。
+// ダッシュは全角系（— em/– en/― 横棒）のみ対象 — 通常のハイフン "-" は箇条書きマーカー
+// （BLOCK_HEAD）と衝突するため含めない。三点リーダは全角（… U+2026）・半角連続（... 3 個以上）
+// どちらも対象。直後が空白/行末なら（語尾の伸ばし等）対象外＝文字が続く場合だけ「溜めてから
+// 話す」用法とみなす。末尾の lookahead は「マーカー文字でも空白でもない文字」を要求する —
+// 素の \S だと "―― "（2 個目のダッシュ自身が非空白）にマッチしてしまい、マーカーだけの行を
+// 誤検知する。
+const TAME_LEAD = /^\s*(?:[—–―]+|\.{3,}|…+)(?=[^\s—–―.…])/;
 
-export function startsDash(s: string): boolean {
-  return DASH_LEAD.test(s);
+export function startsTame(s: string): boolean {
+  return TAME_LEAD.test(s);
+}
+
+// 文中の溜め（――・……）: 行頭以外に出るダッシュ連続・三点リーダ連続（例:「……一日中、って。」
+// 「そして――彼は言った。」）は行頭のような「合成の前」ではなく 1 回の合成の内側なので、
+// 前拍（TAME_BEAT）を挟む再生スケジュールの間では作れない（助詞の小休止と同じ制約。
+// pauseParticles 参照）。読点（VOICEVOX の句点より短いポーズ）へ差し替えて、テキスト側で
+// 「一拍おいて話す」間を作る。行頭のダッシュは plainify が既にマーカーごと消している
+// （TAME_LEAD・TAME_BEAT の前拍で表現）ので、ここに残るのは行頭以外の出現だけになる。
+// 三点リーダは全角（… U+2026）・半角連続（... 3 個以上）どちらも対象、直後に読点/句点/
+// 文末が続く場合は二重の間になるので追加しない。
+const TAME_MID = /[—–―]+|(?:\.{3,}|…+)/g;
+const TAME_FOLLOWED_BY_PAUSE = /^[、。．！？!?」』）】\s]|^$/;
+
+function tameMidToPause(t: string): string {
+  return t.replace(TAME_MID, (m, offset: number, s: string) => {
+    const rest = s.slice(offset + m.length);
+    return TAME_FOLLOWED_BY_PAUSE.test(rest) ? "" : "、";
+  });
 }
 
 // --- 保留中の質問（AskUserQuestion）の読み上げ文 ---------------------------------
@@ -516,8 +537,8 @@ export function plainify(s: string, code?: CodeReadOpts): string {
       .replace(BARE_HASH_RE, (m) => (code?.abbrev && isBareHash(m) ? abbrevCode(m, code.dict) : m))
       // 行頭の見出し/引用/リストマーカー
       .replace(/^\s{0,3}(#{1,6}\s+|>\s+|[-*+]\s+|\d+\.\s+)/gm, "")
-      // 行頭の溜めダッシュ（――等）はマーカーなので読まない（間は preGaps 側の DASH_BEAT で表現）
-      .replace(/^\s*[—–―]+(?=[^\s—–―])/gm, "")
+      // 行頭の溜め（――・……等）はマーカーなので読まない（間は preGaps 側の TAME_BEAT で表現）
+      .replace(/^\s*(?:[—–―]+|\.{3,}|…+)(?=[^\s—–―.…])/gm, "")
       // 強調・打ち消し
       .replace(/(\*\*|__|~~|\*|_)(.*?)\1/g, "$2")
       // 水平線

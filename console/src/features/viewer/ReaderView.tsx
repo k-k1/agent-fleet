@@ -13,7 +13,7 @@ import { baseName, langFor } from "../../lib/filemeta.ts";
 import FileIcon from "../../ui/FileIcon.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { useSettings, setSetting, READER_FONTS, readerFontStack } from "../../lib/settings.ts";
-import { startNarration, BLOCK_BEAT, SENT_BEAT, DASH_BEAT, readerVoiceChoices, voiceChoiceOpts, type NarrationHandle } from "../chat/tts.ts";
+import { startNarration, BLOCK_BEAT, SENT_BEAT, TAME_BEAT, readerVoiceChoices, voiceChoiceOpts, type NarrationHandle } from "../chat/tts.ts";
 import { effectiveDict } from "../chat/ttsDict.ts";
 import { loadSpeakers } from "../chat/ttsSpeakers.ts";
 import { splitLongSentence } from "../chat/ttsText.ts";
@@ -97,7 +97,7 @@ export function ReaderView({ filePath }: { filePath: string }) {
   const flat = useMemo(() => units.filter((u) => u.spoken).map((u) => u.spoken), [units]);
   // 読み上げ単位ごとの前拍（段落・マーカー行の頭は一拍、行内の句点は短い一拍、ハードラップは
   // 間なし）。flat と同じ並び。
-  const flatPre = useMemo(() => readPreGaps(units, BLOCK_BEAT, SENT_BEAT, DASH_BEAT), [units]);
+  const flatPre = useMemo(() => readPreGaps(units, BLOCK_BEAT, SENT_BEAT, TAME_BEAT), [units]);
   // 長い 1 文は合成用にさらに分割（合成の待ちで無音にならないように）。origOf で元の
   // 読み上げ単位（ハイライト単位）へ戻す。head=文の先頭の片（前拍はここだけ）。
   const split = useMemo(() => {

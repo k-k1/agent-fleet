@@ -2,7 +2,7 @@
 // ttsText の plainify のみ）。**原文の改行・行頭スペースを保持**しつつ、**なろう形式のルビ**を
 // 解釈して表示用セグメントに割り、読み上げ用テキスト（ルビは読みを採用）を作る。
 // カラオケ・ハイライトの単位＝「行内は文（句点区切り）、行末で区切り」。node の vitest でテスト可。
-import { plainify, startsBlock, startsDash, type CodeReadOpts } from "../chat/ttsText.ts";
+import { plainify, startsBlock, startsTame, type CodeReadOpts } from "../chat/ttsText.ts";
 
 // RubySeg は表示の 1 かたまり。ruby があれば <ruby>base<rt>ruby</rt></ruby>、無ければ素の base。
 // base には空白・改行をそのまま含める（原文忠実表示のため）。
@@ -14,15 +14,15 @@ export interface RubySeg {
 // ReadUnit はカラオケ 1 単位。segs=表示（原文の空白/改行/ルビを保持）、spoken=読み上げ
 // テキスト（ルビは読みを採用・plainify 済み・trim）。spoken==="" の単位は表示のみ（読まない）。
 // preBeat=リスト・見出し・引用など「新しいブロックの頭」の最初の文（読む前に一拍おく合図。
-// マーカー記号は読まないぶん、構造の切れ目を間で表す）。dashBeat=行頭が溜めダッシュ（――等）
-// の最初の文（preBeat より長い前拍で「一拍おいてから話す」演出を再現。startsDash 参照）。
+// マーカー記号は読まないぶん、構造の切れ目を間で表す）。tameBeat=行頭が溜め（――・……等）
+// の最初の文（preBeat より長い前拍で「一拍おいてから話す」演出を再現。startsTame 参照）。
 // lineHead=原文の新しい行の最初の読み上げ単位（readPreGaps が段落の切れ目とハードラップを
 // 見分けるのに使う）。
 export interface ReadUnit {
   segs: RubySeg[];
   spoken: string;
   preBeat?: boolean;
-  dashBeat?: boolean;
+  tameBeat?: boolean;
   lineHead?: boolean;
 }
 
@@ -133,8 +133,8 @@ export function buildReadUnits(content: string, isMarkdown: boolean, code?: Code
     const skipSpoken = isMarkdown && (inFence || fenceMarker); // フェンス行は読まない
     // ブロック頭の行（リスト・見出し・引用）: この行から生まれる最初の読み上げ単位に前拍を付ける。
     let linePre = isMarkdown && !skipSpoken && startsBlock(line);
-    // 溜めダッシュ（――等）で始まる行: markdown 記法ではなく地の文の演出なので isMarkdown は問わない。
-    let lineDash = !skipSpoken && startsDash(line);
+    // 溜め（――・……等）で始まる行: markdown 記法ではなく地の文の演出なので isMarkdown は問わない。
+    let lineTame = !skipSpoken && startsTame(line);
     // この行の最初の読み上げ単位に「新しい行の頭」の印を付ける（先頭行は除く）。
     let lineHeadPending = li > 0;
 
@@ -157,11 +157,11 @@ export function buildReadUnits(content: string, isMarkdown: boolean, code?: Code
       if (spoken && !hasSpeakable(spoken)) spoken = ""; // 記号だけ（＊/◇/--- 等の区切り）は読まない
       const preBeat = !!spoken && linePre; // 行の最初の読み上げ単位にだけ付ける
       if (preBeat) linePre = false;
-      const dashBeat = !!spoken && lineDash;
-      if (dashBeat) lineDash = false;
+      const tameBeat = !!spoken && lineTame;
+      if (tameBeat) lineTame = false;
       const lineHead = !!spoken && lineHeadPending;
       if (lineHead) lineHeadPending = false;
-      units.push({ segs: disp, spoken, preBeat, dashBeat, lineHead });
+      units.push({ segs: disp, spoken, preBeat, tameBeat, lineHead });
     };
 
     for (const seg of parseRuby(line)) {
@@ -190,15 +190,15 @@ export function buildReadUnits(content: string, isMarkdown: boolean, code?: Code
 const SENT_ENDED = /[。．！？!?][」』）)】]*$/;
 
 // readPreGaps は読み上げ単位（spoken 非空のみ、buildReadUnits の出力順）ごとの前拍（秒）を
-// 返す。段階: 溜めダッシュ行（dashBeat）が最優先で dashBeat 秒、マーカー行（preBeat）と
+// 返す。段階: 溜め行（tameBeat）が最優先で tameBeat 秒、マーカー行（preBeat）と
 // 「文が終わったあとの新しい行」（段落・行の切れ目）は blockBeat、行内の文境界（。区切り）は
 // 短い sentBeat、文の途中の改行（ハードラップされた散文）は 0（間を入れると文が途切れて
 // 聞こえる）。ReaderView が startNarration の preGaps に渡す。
-export function readPreGaps(units: ReadUnit[], blockBeat: number, sentBeat: number, dashBeat: number): number[] {
+export function readPreGaps(units: ReadUnit[], blockBeat: number, sentBeat: number, tameBeat: number): number[] {
   const spoken = units.filter((u) => u.spoken);
   return spoken.map((u, i) => {
     if (i === 0) return 0; // 先頭の前拍は開始遅延になるだけ
-    if (u.dashBeat) return dashBeat;
+    if (u.tameBeat) return tameBeat;
     if (u.preBeat) return blockBeat;
     const prevEnded = SENT_ENDED.test(spoken[i - 1].spoken);
     if (u.lineHead) return prevEnded ? blockBeat : 0;
