@@ -104,12 +104,15 @@
   --del: #c0392b;
   --active-bg: #d7e6fb;
   --hover-bg: #eaf1fb;
-  /* Light: soft tint + accent-colored text (a solid fill reads too heavy). Same
-     --sel-accent mechanism so region rebinds apply in light too; for the default top-bar
-     accent this stays visually identical to the prior fixed --active-bg / --accent pair. */
+  /* Light: soft tint + accent-tinted text (a solid fill reads too heavy). Same
+     --sel-accent mechanism so region rebinds apply in light too. The text is the accent
+     darkened toward --fg, NOT the raw accent: surface accents are tuned for dark
+     backgrounds (green #2fb872, warm #e0964a …) and read ~2:1 on the pale --sel-bg tint —
+     the 起動/クローン modal segs were illegible. 55% accent / 45% fg keeps the hue and
+     puts every surface accent ≥4.8:1 on its own tint. */
   --sel-accent: var(--topbar-accent);
   --sel-bg: color-mix(in srgb, var(--sel-accent) 16%, var(--bg));
-  --sel-fg: var(--sel-accent);
+  --sel-fg: color-mix(in srgb, var(--sel-accent) 55%, var(--fg));
   /* highlight.js syntax palette (GitHub Light). */
   --hl-fg: #24292f;
   --hl-comment: #6e7781;
