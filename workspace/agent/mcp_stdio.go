@@ -170,6 +170,7 @@ var mcpStdioWriteTools = []map[string]any{
 	{
 		"name": "create_session",
 		"description": "新しいコーディングセッションを起こす。dir（作業ディレクトリ）で指定したリポジトリで claude 等を起動する。" +
+			"worktree=true なら dir のリポジトリから新しい独立 worktree を作って起動する（branch は基点、省略時は現在の HEAD。new_branch は新規ブランチ名、省略時は仮ブランチを自動生成）。" +
 			"initial_prompt を渡すと、起動後に最初のタスクとして自動で送信される（別コールの send_to_session は不要）。" +
 			"用途例：あるセッションの内容を引き継いで別セッションで続ける（先に get_session_output で文脈を読み、要約を initial_prompt に入れる）／壁打ちで固めた作業を新規セッションで開始する。" +
 			"dir は list_my_sessions の dir（走っているセッションと同じ場所）か list_repos の path から選ぶ。新規セッションはリソースを消費するので、起こす前に利用者へ一言確認すること。作成後は返る name を使って get_session_status / get_session_output で進行を確認する。",
@@ -181,6 +182,9 @@ var mcpStdioWriteTools = []map[string]any{
 				"kind":           map[string]any{"type": "string", "description": "エージェント種別（任意）。claude（既定）| codex | opencode | shell。"},
 				"model":          map[string]any{"type": "string", "description": "モデル上書き（任意）。"},
 				"initial_prompt": map[string]any{"type": "string", "description": "起動後に自動送信する最初のタスク/引き継ぎ文（任意）。"},
+				"worktree":       map[string]any{"type": "boolean", "description": "dir から新しい独立 worktree を作成して起動する（任意、既定 false）。"},
+				"branch":         map[string]any{"type": "string", "description": "worktree の基点ブランチ（任意、省略時は現在の HEAD）。"},
+				"new_branch":     map[string]any{"type": "string", "description": "worktree に作る新規ブランチ名（任意、省略時は仮ブランチを自動生成）。"},
 			},
 		},
 	},
@@ -284,6 +288,9 @@ func mcpStdioCall(req mcpReq) []byte {
 		Kind          string `json:"kind"`
 		Model         string `json:"model"`
 		InitialPrompt string `json:"initial_prompt"`
+		Worktree      bool   `json:"worktree"`
+		Branch        string `json:"branch"`
+		NewBranch     string `json:"new_branch"`
 		// memo args (id in the path; the rest are forwarded verbatim via p.Args)
 		ID string `json:"id"`
 	}
@@ -350,12 +357,15 @@ func mcpStdioCall(req mcpReq) []byte {
 		if !mcpWriteEnabled {
 			return mcpToolErr(req.ID, "このアシスタントはセッションの作成を許可されていません")
 		}
-		reqBody, _ := json.Marshal(map[string]string{
+		reqBody, _ := json.Marshal(map[string]any{
 			"dir":            a.Dir,
 			"title":          a.Title,
 			"kind":           a.Kind,
 			"model":          a.Model,
 			"initial_prompt": a.InitialPrompt,
+			"worktree":       a.Worktree,
+			"branch":         a.Branch,
+			"new_branch":     a.NewBranch,
 		})
 		out, err := agentPOST("/sessions", reqBody)
 		if err != nil {
