@@ -394,6 +394,15 @@ describe("applyBuiltinReadings / applyReadings (組み込みの読み補正)", (
     expect(applyBuiltinReadings("身体を動かす")).toBe("からだを動かす"); // 実機報告
   });
 
+  it("放ってお（放置の慣用句）→ほうってお。単独の放っては触らない（放つ＝はなつ と区別）", () => {
+    expect(applyBuiltinReadings("放っておく")).toBe("ほうっておく"); // 実機報告
+    expect(applyBuiltinReadings("放っておかれる子供")).toBe("ほうっておかれる子供");
+    expect(applyBuiltinReadings("放っておいた")).toBe("ほうっておいた");
+    // 放つ（解き放つ）の可能性が残る単独形は触らない＝はなって のまま委ねる
+    expect(applyBuiltinReadings("光を放って輝いた")).toBe("光を放って輝いた");
+    expect(applyBuiltinReadings("矢を放って命中した")).toBe("矢を放って命中した");
+  });
+
   it("ユーザー辞書が先に当たれば組み込みより優先される", () => {
     const dict = parseUserDict("空レポ=そらレポ");
     expect(applyReadings("空レポです", dict, false)).toBe("そらレポです");
