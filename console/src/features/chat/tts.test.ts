@@ -424,6 +424,16 @@ describe("applyBuiltinReadings / applyReadings (組み込みの読み補正)", (
     expect(applyBuiltinReadings("それは要らない")).toBe("それは要らない");
   });
 
+  it("この/その/あの/どの＋様な・様に→よう。あり様→ありよう", () => {
+    expect(applyBuiltinReadings("その様な問題")).toBe("そのような問題"); // 実機報告
+    expect(applyBuiltinReadings("この様に考える")).toBe("このように考える");
+    expect(applyBuiltinReadings("あの様なミス")).toBe("あのようなミス");
+    expect(applyBuiltinReadings("どの様に進める？")).toBe("どのように進める？");
+    expect(applyBuiltinReadings("あり様を見直す")).toBe("ありようを見直す"); // 実機報告
+    // 複合語（様子・様々）は直後が な/に ではないので対象外
+    expect(applyBuiltinReadings("その様子と様々な意見")).toBe("その様子と様々な意見");
+  });
+
   it("文中の溜め（――・……）は読点に変えて間を作る（行頭は startsTame/plainify が別処理）", () => {
     expect(applyBuiltinReadings("……一日中、って。")).toBe("、一日中、って。"); // 実機報告
     expect(applyBuiltinReadings("そして――彼は言った。")).toBe("そして、彼は言った。");
