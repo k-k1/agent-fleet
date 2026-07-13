@@ -56,6 +56,20 @@ type Repo struct {
 	// main working copy it hangs off (for a tooltip). Both empty/false for a plain clone.
 	Worktree bool   `json:"worktree,omitempty"`
 	Parent   string `json:"parent,omitempty"`
+	// Integration describes the linked worktree's commit relationship to the
+	// parent working copy's current HEAD. It is deliberately separate from
+	// Ahead/Behind above, which describe the branch's configured upstream.
+	Integration *RepoIntegration `json:"integration,omitempty"`
+}
+
+// RepoIntegration is a local-only comparison; it never fetches. TargetUnique is
+// the number of commits reachable only from the parent HEAD, while WorktreeUnique
+// is the number reachable only from the linked worktree HEAD.
+type RepoIntegration struct {
+	TargetBranch   string `json:"targetBranch,omitempty"`
+	TargetUnique   int    `json:"targetUnique"`
+	WorktreeUnique int    `json:"worktreeUnique"`
+	Relation       string `json:"relation"` // same | contained | unmerged | diverged | unknown
 }
 
 // gitProviderHost derives (provider slug, host) from an origin remote URL. Known SaaS
@@ -152,6 +166,48 @@ func gitStatus(dir string) (RepoStatus, error) {
 	return s, nil
 }
 
+// gitWorktreeIntegration compares two worktree-local HEADs by object ID. A plain
+// "HEAD...HEAD" invocation from one directory would resolve both names to that
+// directory's HEAD, because linked worktrees share refs but have separate HEADs.
+func gitWorktreeIntegration(parentDir, worktreeDir, targetBranch string) RepoIntegration {
+	r := RepoIntegration{TargetBranch: targetBranch, Relation: "unknown"}
+	parentHead, err := gitx.Run(parentDir, "rev-parse", "--verify", "HEAD")
+	if err != nil {
+		return r
+	}
+	worktreeHead, err := gitx.Run(worktreeDir, "rev-parse", "--verify", "HEAD")
+	if err != nil {
+		return r
+	}
+	out, err := gitx.Run(worktreeDir, "rev-list", "--left-right", "--count", parentHead+"..."+worktreeHead)
+	if err != nil {
+		return r
+	}
+	fields := strings.Fields(out)
+	if len(fields) != 2 {
+		return r
+	}
+	r.TargetUnique, err = strconv.Atoi(fields[0])
+	if err != nil {
+		return r
+	}
+	r.WorktreeUnique, err = strconv.Atoi(fields[1])
+	if err != nil {
+		return r
+	}
+	switch {
+	case r.TargetUnique == 0 && r.WorktreeUnique == 0:
+		r.Relation = "same"
+	case r.WorktreeUnique == 0:
+		r.Relation = "contained"
+	case r.TargetUnique == 0:
+		r.Relation = "unmerged"
+	default:
+		r.Relation = "diverged"
+	}
+	return r
+}
+
 func handleListRepos(w http.ResponseWriter, r *http.Request) {
 	repos := []Repo{}
 	entries, _ := os.ReadDir(reposRoot()) // missing root => empty list
@@ -179,6 +235,25 @@ func handleListRepos(w http.ResponseWriter, r *http.Request) {
 			Provider: provider, Remote: host,
 			Worktree: wt, Parent: parent,
 		})
+	}
+	// Compare linked worktrees only after the full list is available, so the
+	// target label comes from the already-read parent status. The actual commit
+	// comparison uses the parent path reported by Git rather than trusting names.
+	byName := make(map[string]Repo, len(repos))
+	for _, repo := range repos {
+		byName[repo.Name] = repo
+	}
+	for i := range repos {
+		if !repos[i].Worktree {
+			continue
+		}
+		parentDir := worktreeParent(repos[i].Path)
+		targetBranch := ""
+		if parent, ok := byName[repos[i].Parent]; ok {
+			targetBranch = parent.Branch
+		}
+		integration := gitWorktreeIntegration(parentDir, repos[i].Path, targetBranch)
+		repos[i].Integration = &integration
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"repos": repos})
 }

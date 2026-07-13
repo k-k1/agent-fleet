@@ -72,6 +72,9 @@ func TestWorktreeGuardDriftFlow(t *testing.T) {
 	if wtRepo == nil || !wtRepo.Worktree || wtRepo.Parent != "app" {
 		t.Fatalf("repo list worktree flag = %+v, want worktree=true parent=app", wtRepo)
 	}
+	if wtRepo.Integration == nil || wtRepo.Integration.Relation != "same" || wtRepo.Integration.TargetBranch != "main" {
+		t.Fatalf("repo list integration = %+v, want same against main", wtRepo.Integration)
+	}
 
 	// Name-collision guard: a second worktree whose new branch clashes with the now-
 	// existing local feat-x is refused (409) before anything is created — no silently
