@@ -243,19 +243,11 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 			"a question is awaiting an answer; answer it via keys/seq (the question card), not free text")
 		return
 	}
-	// Send the prompt literally (-l: no key-name interpretation), then Enter to submit.
-	if out, err := exec.Command("tmux", "send-keys", "-t", pane, "-l", body.Prompt).CombinedOutput(); err != nil {
-		httpx.WriteErr(w, http.StatusInternalServerError, "tmux_failed", string(out))
-		return
-	}
-	// Pause before Enter so the TUI finishes ingesting the pasted text first. codex's
-	// (and opencode's) input widget can drop an Enter that arrives while it's still
-	// consuming the paste — the symptom being a prompt that sits in the composer until
-	// the user presses Enter again in the terminal. claude tolerates back-to-back, but a
-	// short beat is harmless there too.
-	time.Sleep(inputSubmitDelay(name))
-	if out, err := exec.Command("tmux", "send-keys", "-t", pane, "Enter").CombinedOutput(); err != nil {
-		httpx.WriteErr(w, http.StatusInternalServerError, "tmux_failed", string(out))
+	// Use the same type-and-submit primitive as server-side initial prompts. In
+	// particular, Codex/OpenCode need bracketed paste so a long prompt's trailing Enter
+	// is not swallowed while their input widget is still consuming the paste.
+	if err := typeLineAndSubmit(name, pane, body.Prompt); err != nil {
+		httpx.WriteErr(w, http.StatusInternalServerError, "tmux_failed", err.Error())
 		return
 	}
 	// A slash command (/plan, /model, …) isn't a turn — don't optimistically mark the
