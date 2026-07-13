@@ -411,6 +411,7 @@ export function startTts(
   // onPiece(spoken): その文が実際に鳴り始める瞬間に、読み補正前の表示テキストを通知する
   // （ライブ配信カラオケ用・docs/19）。未指定なら一切コストは掛からない。
   onPiece?: (spoken: string) => void,
+  purpose: "reading" | "session-notification" | "usage-notification" | "manual" = "reading",
 ): TtsController {
   preemptActive(); // 直前の再生を停止（グローバル 1 本・キューは温存）
   // 読み仮名辞書（ユーザー＋テナント共通の合成・ユーザー優先）はターン開始時に一度だけ
@@ -659,22 +660,22 @@ export function startTts(
       notifyStopped(); // 明示停止 → 待機中のキューも捨てる（プリエンプト時は no-op）
     },
   };
-  useTtsStore.getState().setActive(controller, source, voiceCharName(opts), sessionName);
+  useTtsStore.getState().setActive(controller, source, voiceCharName(opts), sessionName, purpose);
   return controller;
 }
 
 // --- アナウンス直列キュー（docs/24 Tier1: バックグラウンドのセッション通知など） ------------
 // 短い告知を「1 本ずつ・割り込まず」読み上げる。何か再生中（チャット読み上げ等）なら終わるのを
 // 待ってから。溜まりすぎ（>4 件）は古いものから捨てる（席を外した間の洪水を防ぐ）。
-const announceQueue: { text: string; source: string; voice?: Partial<TtsOptions>; sessionName?: string }[] = [];
+const announceQueue: { text: string; source: string; voice?: Partial<TtsOptions>; sessionName?: string; purpose?: "reading" | "session-notification" | "usage-notification" | "manual" }[] = [];
 let announcing = false;
 
 // voice はセッションごとの声（sessionVoiceOpts）等の上書き。未指定は設定の話者。
 // sessionName は発生元セッション名（左ペインの再生中アイコン用。非セッション告知は省略）。
-export function announce(text: string, source = "", voice?: Partial<TtsOptions>, sessionName = ""): void {
+export function announce(text: string, source = "", voice?: Partial<TtsOptions>, sessionName = "", purpose: "reading" | "session-notification" | "usage-notification" | "manual" = "reading"): void {
   const t = text.trim();
   if (!t) return;
-  announceQueue.push({ text: t, source, voice, sessionName });
+  announceQueue.push({ text: t, source, voice, sessionName, purpose });
   while (announceQueue.length > 4) announceQueue.shift();
   pumpAnnounce();
 }
@@ -697,6 +698,8 @@ function pumpAnnounce(): void {
       else pumpAnnounce();
     },
     next.sessionName ?? "",
+    undefined,
+    next.purpose ?? "reading",
   );
   c.push(next.text);
   c.flush();
@@ -714,7 +717,7 @@ useTtsStore.subscribe((st, prev) => {
 // pumpAnnounce は何か再生中（active あり）は動かないので、再生中の取り出しはここだけ
 // ＝二重再生にはならない。
 function takeAnnounce():
-  | { text: string; source: string; voice?: Partial<TtsOptions>; sessionName?: string }
+  | { text: string; source: string; voice?: Partial<TtsOptions>; sessionName?: string; purpose?: "reading" | "session-notification" | "usage-notification" | "manual" }
   | undefined {
   return announceQueue.shift();
 }
@@ -725,7 +728,7 @@ function takeAnnounce():
 export function speakText(text: string, source = "", voice?: Partial<TtsOptions>): void {
   const t = text.trim();
   if (!t) return;
-  const c = startTts({ ...ttsOptsFromSettings(), ...voice }, source);
+  const c = startTts({ ...ttsOptsFromSettings(), ...voice }, source, undefined, "", undefined, "manual");
   c.push(t);
   c.flush();
 }
@@ -855,7 +858,7 @@ export function startNarration(
   // ユニット境界で announce キューから 1 件取り出し、次のユニットの前にその場で読む。再生中は
   // TopBar のラベル/声を告知側に差し替え、終わったら朗読のものへ戻す。停止・一時停止は朗読と
   // 一体（同じ ctx・同じ adapter）。
-  const playInterlude = (a: { text: string; source: string; voice?: Partial<TtsOptions>; sessionName?: string }) => {
+  const playInterlude = (a: { text: string; source: string; voice?: Partial<TtsOptions>; sessionName?: string; purpose?: "reading" | "session-notification" | "usage-notification" | "manual" }) => {
     let t = plainify(a.text, codeOpts).trim();
     if (t) t = applyReadings(t, userDict, getSettings().ttsParticlePause);
     if (!t) {
@@ -866,7 +869,7 @@ export function startNarration(
     const label = (on: boolean) => {
       const st = useTtsStore.getState();
       if (st.active !== adapter) return;
-      if (on) st.setActive(adapter, a.source, voiceCharName(aopts), a.sessionName ?? "");
+      if (on) st.setActive(adapter, a.source, voiceCharName(aopts), a.sessionName ?? "", a.purpose ?? "reading");
       else st.setActive(adapter, source, voiceCharName(opts), sessionName);
     };
     // 長い告知（要約など）も合成用に分割して順に鳴らす（1 回の合成が重いと無音の待ちになる）。

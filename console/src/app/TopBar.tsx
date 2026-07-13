@@ -11,6 +11,7 @@ import { useIsMobile, isStandalonePWA } from "../lib/device.ts";
 import { Icon } from "../ui/Icon.tsx";
 import { SwatchGrid } from "../ui/SwatchGrid.tsx";
 import { useDismiss } from "../lib/useDismiss.ts";
+import { NotificationCenter } from "../features/notifications/NotificationCenter.tsx";
 
 interface TopBarProps {
   toggleNav: () => void;
@@ -38,6 +39,7 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
   const ttsPreparing = useTtsStore((st) => st.preparing);
   const ttsSource = useTtsStore((st) => st.source);
   const ttsVoice = useTtsStore((st) => st.voice);
+  const ttsPurpose = useTtsStore((st) => st.purpose);
   const ttsBusy = ttsSpeaking || ttsPreparing; // 生成中（最初の音の前）もピルは再生扱い
   // Hamburger: single-click toggles the left pane open/closed; double-click toggles
   // its desktop display mode (Push ⇄ overlay). We debounce the single action so a
@@ -109,6 +111,7 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
         </div>
       </div>
       <div className="topbar-right">
+        <NotificationCenter />
         <button
           className={"tts-status" + (ttsBusy ? " speaking" : s.ttsEnabled ? "" : " off")}
           title={
@@ -123,7 +126,13 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
             // で ttsEnabled が ON のまま残り、次の新規セッションの回答でまた自動再生された
             // （＝「OFF にしたのに勝手に ON」の主因）。喋っている最中に押す＝黙らせたい意思、
             // として停止＋OFF をひとまとめにする。ON へ戻すのはアイドル時のクリック。
-            if (ttsBusy) useTtsStore.getState().stop();
+            if (ttsBusy) {
+              useTtsStore.getState().stop();
+              if (ttsPurpose === "session-notification") setSetting("ttsSessionNotify", false);
+              else if (ttsPurpose === "usage-notification") setSetting("usageResetNotify", false);
+              else if (ttsPurpose !== "manual") setSetting("ttsEnabled", false);
+              return;
+            }
             if (s.ttsEnabled) setSetting("ttsEnabled", false);
             else if (!ttsBusy) setSetting("ttsEnabled", true);
           }}

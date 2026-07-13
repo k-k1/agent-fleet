@@ -22,21 +22,15 @@ const notify = (title: string, body: string) => {
   }
 };
 
-export function useSessionNotifications(): void {
+export function useSessionNotifications(enabled = true): void {
   const sessions = useSessionsStore((s) => s.sessions);
   const layout = useLayoutStore((s) => s.layout);
   const activeSession = activePane(layout)?.session ?? null;
   const prevStates = useRef<Record<string, string | undefined>>({});
 
-  // Ask once for notification permission (best-effort).
-  useEffect(() => {
-    if ("Notification" in window && Notification.permission === "default") {
-      Notification.requestPermission().catch(() => {});
-    }
-  }, []);
-
   // Notify on claude state arrivals (skip the session being viewed).
   useEffect(() => {
+    if (!enabled) return;
     const prev = prevStates.current;
     const seen: Record<string, boolean> = {};
     for (const s of sessions) {
@@ -59,15 +53,15 @@ export function useSessionNotifications(): void {
           // 声はセッション単位で固定（sessionVoiceOpts）。表示名でなくセッション名で引く
           // （リネームで声が変わらないように）。
           if (speak && !(mirrored && st.ttsAutoReadMirror))
-            announce(`${displayName(s)} の回答が返りました。`, displayName(s), sessionVoiceOpts(s.name), s.name);
+            announce(`${displayName(s)} の回答が返りました。`, displayName(s), sessionVoiceOpts(s.name), s.name, "session-notification");
         } else if (s.state === "question") {
           notify("質問が来ています", displayName(s));
           if (speak && !(mirrored && st.ttsReadPending))
-            announce(`${displayName(s)} が確認を求めています。`, displayName(s), sessionVoiceOpts(s.name), s.name);
+            announce(`${displayName(s)} が確認を求めています。`, displayName(s), sessionVoiceOpts(s.name), s.name, "session-notification");
         }
       }
       prev[s.name] = s.state;
     }
     for (const n of Object.keys(prev)) if (!seen[n]) delete prev[n];
-  }, [sessions, activeSession]);
+  }, [sessions, activeSession, enabled]);
 }
