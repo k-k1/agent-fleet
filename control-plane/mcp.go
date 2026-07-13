@@ -268,7 +268,7 @@ func memberTools() []mcpTool {
 		},
 		{
 			name: "create_session", minScope: scopeWrite,
-			desc: "Start a NEW coding session in your Workspace. `dir` selects the repo to launch in (a `dir` from list_my_sessions or a `path` from list_repos; omitted = home). If `initial_prompt` is set it is delivered as the session's first task once its CLI boots (no separate send_to_session needed) — use it to hand off context from another session (read it first with get_session_output) or to kick off a task decided in chat. Returns the new session; drive it with get_session_status / get_session_output by the returned `name`.",
+			desc: "Start a NEW coding session in your Workspace. `dir` selects the repo to launch in (a `dir` from list_my_sessions or a `path` from list_repos; omitted = home). Set `worktree=true` to create an isolated git worktree from that repo before launch; `branch` optionally selects its base and `new_branch` optionally names the new branch (omitted = server-generated temporary branch). If `initial_prompt` is set it is delivered as the session's first task once its CLI boots (no separate send_to_session needed) — use it to hand off context from another session (read it first with get_session_output) or to kick off a task decided in chat. Returns the new session; drive it with get_session_status / get_session_output by the returned `name`.",
 			schema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -277,15 +277,21 @@ func memberTools() []mcpTool {
 					"kind":           map[string]any{"type": "string", "description": "agent kind: claude (default) | codex | opencode | shell"},
 					"model":          map[string]any{"type": "string", "description": "model override (optional)"},
 					"initial_prompt": map[string]any{"type": "string", "description": "first task/hand-off text, auto-sent after boot (optional)"},
+					"worktree":       map[string]any{"type": "boolean", "description": "create a new isolated worktree from dir before launch (optional; default false)"},
+					"branch":         map[string]any{"type": "string", "description": "base branch for the new worktree (optional; default current HEAD)"},
+					"new_branch":     map[string]any{"type": "string", "description": "branch to create in the new worktree (optional; omitted = temporary branch)"},
 				},
 			},
 			run: func(ctx context.Context, a mcpAPI, res *resolved, args map[string]any) (string, error) {
-				body, _ := json.Marshal(map[string]string{
+				body, _ := json.Marshal(map[string]any{
 					"dir":            argStr(args, "dir"),
 					"title":          argStr(args, "title"),
 					"kind":           argStr(args, "kind"),
 					"model":          argStr(args, "model"),
 					"initial_prompt": argStr(args, "initial_prompt"),
+					"worktree":       argBool(args, "worktree"),
+					"branch":         argStr(args, "branch"),
+					"new_branch":     argStr(args, "new_branch"),
 				})
 				return agentText(ctx, res.rt, "POST", "/sessions", body)
 			},
@@ -509,6 +515,14 @@ func argInt(a map[string]any, k string) int {
 		return n
 	}
 	return 0
+}
+
+func argBool(a map[string]any, k string) bool {
+	if a == nil {
+		return false
+	}
+	v, _ := a[k].(bool)
+	return v
 }
 
 // argStrPtr / argIntPtr return a pointer only when the key is present with the right
