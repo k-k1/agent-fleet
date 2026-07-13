@@ -32,7 +32,7 @@ import { SettingsDialog } from "../features/settings/SettingsDialog.tsx";
 import { AdminDialog } from "../features/settings/AdminDialog.tsx";
 import { GuideModal } from "../features/terminal/OnboardingCard.tsx";
 import { StartHost } from "../features/repos/StartHost.tsx";
-import { startNotificationPolling, useNotificationStore } from "../features/notifications/store.ts";
+import { startNotificationPolling, useNotificationStore, wireNotificationReadOnActiveSession } from "../features/notifications/store.ts";
 
 // Refresh FILES (and repos/sessions/chat list on start) whenever the workspace
 // actually flips running↔stopped — including external changes the 4s sync catches
@@ -212,6 +212,7 @@ export function App() {
     const stopSessPoll = startSessionsPolling();
     const stopReposPoll = startReposPolling();
     const stopNotificationPoll = startNotificationPolling();
+    const unNotificationRead = wireNotificationReadOnActiveSession();
     void (async () => {
       await useTenantStore.getState().init();
       void hydrateUIPrefs();
@@ -226,6 +227,7 @@ export function App() {
       stopSessPoll();
       stopReposPoll();
       stopNotificationPoll();
+      unNotificationRead();
     };
   }, []);
 
