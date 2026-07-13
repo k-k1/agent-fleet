@@ -5,9 +5,9 @@
 // the core file ops. It reuses the shared primitives (api fs endpoints,
 // FileIcon/DirIcon, the .fstree/.fsrow classes); per-copy git changes live in the
 // SCM pane, not here. Mounted only while its section is open, so the fetch is lazy.
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { MouseEvent as RMouseEvent, DragEvent as RDragEvent } from "react";
-import { api, uploadFiles, downloadURL, fsMkdir, fsNewFile, fsRename, fsDelete } from "../../core/api/client.ts";
+import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import type { MouseEvent as RMouseEvent, DragEvent as RDragEvent, KeyboardEvent as RKeyboardEvent } from "react";
+import { api, uploadFiles, downloadURL, fsMkdir, fsNewFile, fsRename, fsDelete, fsSearch } from "../../core/api/client.ts";
 import FileIcon, { DirIcon } from "../../ui/FileIcon.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { EmptyState } from "../../ui/EmptyState.tsx";
@@ -19,6 +19,8 @@ import { activePane } from "../../layout/ops.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { useFilesStore } from "../files/store.ts";
 import { useReposStore } from "../repos/store.ts";
+import { useFilesFilter } from "./filesFilter.ts";
+import { normQuery } from "./filter.ts";
 
 interface Entry {
   name: string;
@@ -30,6 +32,9 @@ interface Row {
   type: string;
   depth: number;
   segPaths: string[];
+  /** Search results only: the directory prefix (relative to the tree root),
+   * shown muted before the filename so a flat match keeps its context. */
+  sub?: string;
 }
 interface Menu {
   x: number;
@@ -43,6 +48,7 @@ const parentOf = (p: string) => {
   return i < 0 ? "" : p.slice(0, i);
 };
 const baseName = (p: string) => p.split("/").pop() || p;
+const repoOf = (p: string) => (p.startsWith("repos/") ? p.slice(6).split("/")[0] : "");
 
 // A directory is a "passthrough" link when its sole entry is one subdirectory —
 // folded into one row (a/b/c) so deep single-child paths don't waste space.
@@ -59,9 +65,16 @@ interface ProjectFilesProps {
    * the リポジトリ section rows) instead of the plain folder — for the tree
    * rooted at "repos", whose depth-0 dirs ARE the working copies. */
   markRepos?: boolean;
+  /** When set, a non-empty 絞り込み query switches this tree to a flat, recursive
+   * filename search over the whole subtree (rg-backed) instead of filtering only
+   * the loaded rows. Enabled for the repos tree; the home tree keeps the cheap
+   * visible-row filter. */
+  searchable?: boolean;
+  /** Add non-interactive working-copy headings to recursive repos results. */
+  groupByRepo?: boolean;
 }
 
-export function ProjectFiles({ root, markRepos }: ProjectFilesProps) {
+export function ProjectFiles({ root, markRepos, searchable, groupByRepo }: ProjectFilesProps) {
   const repos = useReposStore((s) => s.repos);
   const layout = useLayoutStore((s) => s.layout);
   const openTarget = useLayoutStore((s) => s.openTarget);
@@ -69,6 +82,10 @@ export function ProjectFiles({ root, markRepos }: ProjectFilesProps) {
   const running = useWorkspaceStore((s) => s.state) === "running";
   const reveal = useFilesStore((s) => s.reveal);
   const filesTick = useFilesStore((s) => s.tick);
+  const q = useFilesFilter((s) => s.q);
+  const nq = normQuery(q);
+  const focusInput = useFilesFilter((s) => s.focusInput);
+  const focusTreeN = useFilesFilter((s) => s.focusTreeN);
   const askConfirm = useConfirm();
   const toast = useToast();
 
@@ -81,8 +98,16 @@ export function ProjectFiles({ root, markRepos }: ProjectFilesProps) {
   const [selected, setSelected] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<string | null>(null);
   const [menu, setMenu] = useState<Menu | null>(null);
+  // Recursive-search state (searchable trees, query active): rows are flat file
+  // hits; null = not searching / no fetch yet.
+  const [searchRows, setSearchRows] = useState<Row[] | null>(null);
+  const [searchTrunc, setSearchTrunc] = useState(false);
+  const [searching, setSearching] = useState(false);
+  const [collapsedRepos, setCollapsedRepos] = useState<Set<string>>(() => new Set());
   const menuRef = useRef<HTMLUListElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const treeRef = useRef<HTMLUListElement>(null);
+  const uid = useId();
 
   const showFile = useCallback((p: string) => openTarget({ content: { kind: "file", filePath: p } }), [openTarget]);
   const showFileSplit = useCallback((p: string) => openTargetInNew({ content: { kind: "file", filePath: p } }), [openTargetInNew]);
@@ -181,6 +206,79 @@ export function ProjectFiles({ root, markRepos }: ProjectFilesProps) {
     return { rows: out, need };
   }, [entries, open, cache, root]);
 
+  // Quick filter: keep rows whose displayed name matches, plus the ancestor dirs
+  // that lead to them (so the match keeps its place in the tree). Rows are
+  // pre-order with a depth, so an ancestor stack resolves lineage in one pass.
+  // It filters the rows currently shown (loaded / expanded) — the same scope as
+  // the リポジトリ filter.
+  const filteredRows = useMemo(() => {
+    if (!nq) return rows;
+    const keep = new Array<boolean>(rows.length).fill(false);
+    const stack: number[] = [];
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      while (stack.length && rows[stack[stack.length - 1]].depth >= r.depth) stack.pop();
+      if (r.name.toLowerCase().includes(nq)) {
+        keep[i] = true;
+        for (const idx of stack) keep[idx] = true;
+      }
+      if (r.type === "dir") stack.push(i);
+    }
+    return rows.filter((_, i) => keep[i]);
+  }, [rows, nq]);
+
+  // Recursive search (searchable tree + active query): fetch the whole-subtree
+  // matches from the backend (debounced), turned into flat file rows. The tree
+  // filter above still runs but is bypassed for display in this mode.
+  const searchMode = !!searchable && !!nq;
+  useEffect(() => {
+    if (!searchMode) {
+      setSearchRows(null);
+      setSearchTrunc(false);
+      setSearching(false);
+      return;
+    }
+    let alive = true;
+    setSearching(true);
+    const t = setTimeout(async () => {
+      const { results, truncated } = await fsSearch(root, q);
+      if (!alive) return;
+      const prefix = root ? root + "/" : "";
+      const rows: Row[] = results.map((p) => {
+        const relp = p.startsWith(prefix) ? p.slice(prefix.length) : p;
+        const name = relp.split("/").pop() || relp;
+        // dir prefix without the trailing slash — shown muted after the filename.
+        return { path: p, name, type: "file", depth: 0, segPaths: [p], sub: relp.slice(0, Math.max(0, relp.length - name.length - 1)) };
+      });
+      setSearchRows(rows);
+      setSearchTrunc(truncated);
+      setSearching(false);
+    }, 160);
+    return () => {
+      alive = false;
+      clearTimeout(t);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchMode, q, root, filesTick]);
+
+  // The rows actually shown / navigated: flat search hits in search mode, else
+  // the (tree-)filtered rows.
+  const displayRows = searchMode ? searchRows ?? [] : filteredRows;
+  const navigationRows = useMemo(
+    () => (searchMode && groupByRepo ? displayRows.filter((r) => !collapsedRepos.has(repoOf(r.path))) : displayRows),
+    [searchMode, groupByRepo, displayRows, collapsedRepos],
+  );
+  const repoResultCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    if (searchMode && groupByRepo) {
+      for (const row of displayRows) {
+        const repo = repoOf(row.path);
+        counts.set(repo, (counts.get(repo) || 0) + 1);
+      }
+    }
+    return counts;
+  }, [searchMode, groupByRepo, displayRows]);
+
   // Prefetch entries for visible dirs whose children we don't have yet.
   useEffect(() => {
     need.forEach((p) => void fetchInto(p));
@@ -201,6 +299,103 @@ export function ProjectFiles({ root, markRepos }: ProjectFilesProps) {
     },
     [open, collapse, expand, showFile],
   );
+
+  // Keep the selected row in view when moving through it by keyboard.
+  const scrollRowIntoView = useCallback((path: string) => {
+    treeRef.current?.querySelector<HTMLElement>(`li[data-path="${CSS.escape(path)}"]`)?.scrollIntoView({ block: "nearest" });
+  }, []);
+
+  // Keyboard navigation over the visible (filtered) rows: ↑↓ move the selection,
+  // →← open/close a folder (or step into / out to the parent), Enter opens a file
+  // (Ctrl/⌘+Enter in a new pane) or toggles a folder, and Ctrl/⌘+F jumps to the
+  // filter box.
+  const onTreeKeyDown = useCallback(
+    (e: RKeyboardEvent<HTMLUListElement>) => {
+      if ((e.target as HTMLElement).closest(".files-search-group-toggle")) return;
+      if ((e.ctrlKey || e.metaKey) && (e.key === "f" || e.key === "F")) {
+        e.preventDefault();
+        focusInput();
+        return;
+      }
+      if (menu) return; // let the context menu own the keyboard while it's open
+      const list = navigationRows;
+      if (!list.length) return;
+      const idx = list.findIndex((r) => r.path === selected);
+      const pick = (to: number) => {
+        const r = list[Math.max(0, Math.min(to, list.length - 1))];
+        if (r) {
+          setSelected(r.path);
+          scrollRowIntoView(r.path);
+        }
+      };
+      switch (e.key) {
+        case "ArrowDown":
+          e.preventDefault();
+          pick(idx < 0 ? 0 : idx + 1);
+          break;
+        case "ArrowUp":
+          e.preventDefault();
+          pick(idx < 0 ? 0 : idx - 1);
+          break;
+        case "ArrowRight": {
+          e.preventDefault();
+          const r = list[idx];
+          if (!r) return pick(0);
+          if (r.type !== "dir") return;
+          if (!open.has(r.path)) void expand(r.path).then((deep) => setSelected(deep));
+          else pick(idx + 1); // already open → step into the first child
+          break;
+        }
+        case "ArrowLeft": {
+          e.preventDefault();
+          const r = list[idx];
+          if (!r) return;
+          if (r.type === "dir" && open.has(r.path)) {
+            collapse(r.segPaths);
+            return;
+          }
+          // else step out to the nearest shallower row (the parent).
+          for (let j = idx - 1; j >= 0; j--) {
+            if (list[j].depth < r.depth) {
+              pick(j);
+              break;
+            }
+          }
+          break;
+        }
+        case "Enter": {
+          e.preventDefault();
+          const r = list[idx];
+          if (!r) return;
+          if (r.type === "file") {
+            setSelected(r.path);
+            if (e.ctrlKey || e.metaKey) showFileSplit(r.path);
+            else showFile(r.path);
+          } else if (open.has(r.path)) {
+            collapse(r.segPaths);
+          } else {
+            void expand(r.path).then((deep) => setSelected(deep));
+          }
+          break;
+        }
+      }
+    },
+    [navigationRows, selected, open, menu, expand, collapse, showFile, showFileSplit, focusInput, scrollRowIntoView],
+  );
+
+  // Enter in the filter box hands focus to the active searchable tree:
+  // focus the tree and land the selection on the first visible row if it's astray.
+  useEffect(() => {
+    if (!focusTreeN || !searchable) return;
+    treeRef.current?.focus();
+    setSelected((cur) => {
+      if (cur && navigationRows.some((r) => r.path === cur)) return cur;
+      const first = navigationRows[0];
+      if (first) scrollRowIntoView(first.path);
+      return first ? first.path : cur;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusTreeN]);
 
   // Reveal: when something requests a path under the root (a clone just landed,
   // or a repo row's フォルダを開く), expand its ancestor chain — and the target
@@ -398,29 +593,75 @@ export function ProjectFiles({ root, markRepos }: ProjectFilesProps) {
         }}
       />
       <ul
+        ref={treeRef}
         className={"fstree proj-fstree" + (dropTarget === root ? " drop-root" : "")}
         role="tree"
         aria-label="ファイル"
+        tabIndex={0}
+        aria-activedescendant={(() => {
+          const i = displayRows.findIndex((r) => r.path === selected && navigationRows.includes(r));
+          return i >= 0 ? `${uid}-${i}` : undefined;
+        })()}
+        onKeyDown={onTreeKeyDown}
+        onMouseDown={() => treeRef.current?.focus({ preventScroll: true })}
         onDragOver={onDragOverTo(root)}
         onDragLeave={() => setDropTarget(null)}
         onDrop={onDropTo(root)}
       >
         {!running ? (
           <EmptyState icon="debug-disconnect" title="ワークスペース停止中" />
+        ) : searchMode ? (
+          searching && !searchRows ? (
+            <EmptyState icon="loading" title="検索中…" />
+          ) : displayRows.length === 0 ? (
+            <li className="proj-sub-empty">「{q.trim()}」に一致するファイルはありません</li>
+          ) : null
         ) : entries === null ? (
           <EmptyState icon="loading" title="読み込み中…" />
         ) : entries.length === 0 ? (
           <li className="proj-sub-empty">ファイルなし（ここにドロップでアップロード）</li>
+        ) : nq && displayRows.length === 0 ? (
+          <li className="proj-sub-empty">「{q.trim()}」に一致するファイルはありません</li>
         ) : null}
-        {rows.map((r) => {
+        {displayRows.map((r, i) => {
           const isOpen = r.type === "dir" && open.has(r.path);
           const isSel = r.path === selected;
           const isActiveFile = r.type === "file" && activeFile === r.path;
           const isDir = r.type === "dir";
           return (
+            <Fragment key={r.path}>
+            {searchMode && groupByRepo && (i === 0 || repoOf(displayRows[i - 1].path) !== repoOf(r.path)) && (
+              <li className="files-search-group" role="presentation">
+                <button
+                  type="button"
+                  className="files-search-group-toggle"
+                  aria-expanded={!collapsedRepos.has(repoOf(r.path))}
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onClick={() => {
+                    const repo = repoOf(r.path);
+                    setCollapsedRepos((current) => {
+                      const next = new Set(current);
+                      if (next.has(repo)) next.delete(repo);
+                      else next.add(repo);
+                      return next;
+                    });
+                    if (selected && repoOf(selected) === repo) setSelected(null);
+                  }}
+                >
+                  <Icon name={collapsedRepos.has(repoOf(r.path)) ? "chevron-right" : "chevron-down"} />
+                  <Icon name="root-folder" />
+                  <span>{repoOf(r.path)}</span>
+                  <span className="files-search-group-count">{repoResultCounts.get(repoOf(r.path))}</span>
+                </button>
+              </li>
+            )}
+            {!collapsedRepos.has(repoOf(r.path)) && (
             <li
-              key={r.path}
+              id={`${uid}-${i}`}
               data-path={r.path}
+              role="treeitem"
+              aria-selected={isSel}
+              {...(isDir ? { "aria-expanded": isOpen } : {})}
               className={"fsrow" + (isSel ? " selected" : "") + (isDir && dropTarget === r.path ? " drop-hover" : "")}
               style={{ paddingLeft: 4 + r.depth * 14 }}
               title={isDir ? undefined : "Ctrl/中クリックで新ペインに開く"}
@@ -456,11 +697,19 @@ export function ProjectFiles({ root, markRepos }: ProjectFilesProps) {
                     return <DirIcon open={isOpen} />;
                   })()}
                 </span>
-                {r.name}
+                <span className="fs-name">
+                  {r.name}
+                  {r.sub ? <span className="fs-sub"> {r.sub}</span> : null}
+                </span>
               </span>
             </li>
+            )}
+            </Fragment>
           );
         })}
+        {searchMode && searchTrunc && displayRows.length > 0 && (
+          <li className="proj-sub-empty">上限に達しました。絞り込みを追加してください</li>
+        )}
       </ul>
       {menu && (
         <ul className="ui-menu files-ctxmenu" ref={menuRef} style={{ left: menu.x, top: menu.y }} role="menu" onMouseDown={(e) => e.stopPropagation()}>

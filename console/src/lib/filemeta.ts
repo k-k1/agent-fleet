@@ -57,6 +57,73 @@ export function joinPath(baseDir: string, rel: string): string {
   return out.join("/");
 }
 
+export interface MarkdownFileTarget {
+  path: string;
+  line?: number;
+  column?: number;
+}
+
+// Resolve file references emitted in Markdown replies. Agents commonly cite source as
+// `/home/dev/repos/project/file.ts:123` while repository docs use relative links or a
+// leading slash meaning "from this repository's root". The fs API/viewer use paths
+// relative to the workspace home, except for explicitly allowed scratch paths.
+export function resolveMarkdownFileTarget(
+  ref: string,
+  basePath = "",
+  baseDir = "",
+): MarkdownFileTarget | null {
+  if (!ref || isExternalUrl(ref) || ref.startsWith("#")) return null;
+
+  let hashLine: number | undefined;
+  const hash = ref.match(/#L(\d+)(?:C(\d+))?$/i);
+  if (hash) {
+    hashLine = Number(hash[1]);
+    ref = ref.slice(0, hash.index);
+  } else {
+    ref = ref.split("#")[0];
+  }
+  ref = ref.split("?")[0];
+  try {
+    ref = decodeURIComponent(ref);
+  } catch {}
+
+  let line = hashLine;
+  let column: number | undefined = hash?.[2] ? Number(hash[2]) : undefined;
+  const suffix = ref.match(/:(\d+)(?::(\d+))?$/);
+  if (suffix) {
+    line = Number(suffix[1]);
+    column = suffix[2] ? Number(suffix[2]) : undefined;
+    ref = ref.slice(0, -suffix[0].length);
+  }
+  if (!ref) return null;
+
+  // Paths under the workspace home become the home-relative form used by FileView.
+  // Keep /tmp absolute: the backend permits only its dedicated scratch root.
+  const home = ref.match(/^\/home\/[^/]+\/(.+)$/);
+  const homeRelative = !!home || ref.startsWith("~/") || ref.startsWith("repos/");
+  if (home) ref = home[1];
+  else if (ref.startsWith("~/")) ref = ref.slice(2);
+
+  const normalizedBasePath = basePath.replace(/^\/home\/[^/]+\//, "").replace(/^~\//, "");
+  const normalizedBaseDir = baseDir.replace(/^\/home\/[^/]+\//, "").replace(/^~\//, "");
+  const repo = (normalizedBasePath || normalizedBaseDir).match(/^(repos\/[^/]+)(?:\/|$)/)?.[1] || "";
+
+  let path: string;
+  if (ref.startsWith("/tmp/")) {
+    path = "/" + joinPath("", ref);
+  } else if (homeRelative) {
+    path = joinPath("", ref);
+  } else if (ref.startsWith("/")) {
+    // In repository Markdown, `/docs/x.md` means repo-root-relative.
+    path = joinPath(repo, ref.replace(/^\/+/, ""));
+  } else {
+    const dir = normalizedBaseDir || dirName(normalizedBasePath);
+    path = joinPath(dir, ref);
+  }
+  if (!path) return null;
+  return { path, ...(line && line > 0 ? { line } : {}), ...(column && column > 0 ? { column } : {}) };
+}
+
 // A URL is "external" when it carries a scheme (http:, mailto:, …) or is protocol-
 // relative (//host). Everything else is treated as a path inside the workspace.
 export function isExternalUrl(href: string): boolean {

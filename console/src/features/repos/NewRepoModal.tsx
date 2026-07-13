@@ -1,25 +1,17 @@
-// NewRepoModal — clone a repository into ~/repos. Provider picker or URL; the
-// clone itself runs in the parent (spinner row in the rail) so the user isn't
-// trapped in a busy dialog. Port of the old components/NewRepoModal.
+// NewRepoModal — clone a repository into ~/repos. Source picking lives in the
+// shared CloneForm (起動導線 Ph2); this dialog adds the clone-only extras — fork a
+// new branch and pick a distinct folder name on demand. The clone itself runs in
+// the parent (spinner row in the rail) so the user isn't trapped in a busy dialog.
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { Modal } from "../../ui/Modal.tsx";
 import { Button } from "../../ui/Button.tsx";
-import { RepoPicker } from "./RepoPicker.tsx";
-import type { RepoSelection } from "./RepoPicker.tsx";
+import { CloneForm } from "./CloneForm.tsx";
+import type { CloneSource } from "./CloneForm.tsx";
+import type { CloneRequest } from "./clone.ts";
 import { deriveRepoName, sanitizeSeg, uniqueRepoName, repoNameRe } from "../../lib/reponame.ts";
 
-const SOURCE_HELP: Record<string, string> = {
-  picker: "接続済みの GitHub / Bitbucket からリポジトリとブランチを選んで clone します。",
-  url: "clone URL を手入力します（接続していないリポジトリ向け）。",
-};
-
-export interface CloneRequest {
-  remote_url: string;
-  branch: string;
-  name: string;
-  new_branch: string;
-}
+export type { CloneRequest };
 
 interface NewRepoModalProps {
   onClose?: () => void;
@@ -28,16 +20,13 @@ interface NewRepoModalProps {
 }
 
 export function NewRepoModal({ onClose, onClone, repos = [] }: NewRepoModalProps) {
-  const [source, setSource] = useState<"picker" | "url">("picker");
-  const [sel, setSel] = useState<RepoSelection | null>(null);
-  const [url, setUrl] = useState("");
-  const [branch, setBranch] = useState("");
+  const [src, setSrc] = useState<CloneSource>({ cloneUrl: "", branch: "" });
   const [newBranch, setNewBranch] = useState("");
   const [name, setName] = useState("");
   const [nameEdited, setNameEdited] = useState(false);
 
-  const cloneUrl = source === "picker" ? sel?.cloneUrl : url.trim();
-  const cloneBranch = source === "picker" ? sel?.branch || "" : branch.trim();
+  const cloneUrl = src.cloneUrl;
+  const cloneBranch = src.branch;
   const cloneNewBranch = cloneUrl ? newBranch.trim() : "";
   const targetBranch = cloneNewBranch || cloneBranch;
 
@@ -61,7 +50,7 @@ export function NewRepoModal({ onClose, onClone, repos = [] }: NewRepoModalProps
     e.preventDefault();
     if (!canSubmit) return;
     onClone({
-      remote_url: cloneUrl || "",
+      remote_url: cloneUrl,
       branch: cloneBranch,
       new_branch: cloneNewBranch,
       name: wantName ? name.trim() : "",
@@ -72,42 +61,7 @@ export function NewRepoModal({ onClose, onClone, repos = [] }: NewRepoModalProps
   return (
     <Modal title="リポジトリを clone" onClose={onClose} as="form" onSubmit={submit}>
       <div className="ui-modal-body">
-        <div className="ui-field">
-          <span className="ui-field-label">取得元</span>
-          <div className="ui-seg">
-            {(
-              [
-                ["picker", "接続から選ぶ"],
-                ["url", "URL 手入力"],
-              ] as const
-            ).map(([v, label]) => (
-              <button
-                key={v}
-                type="button"
-                className={"seg-btn" + (source === v ? " active" : "")}
-                onClick={() => setSource(v)}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-          <span className="ui-field-hint">{SOURCE_HELP[source]}</span>
-
-          {source === "picker" ? (
-            <RepoPicker onChange={setSel} />
-          ) : (
-            <>
-              <label className="ui-field">
-                <span className="ui-field-label">clone URL</span>
-                <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://… / git@…" />
-              </label>
-              <label className="ui-field">
-                <span className="ui-field-label">ブランチ（任意）</span>
-                <input value={branch} onChange={(e) => setBranch(e.target.value)} placeholder="既定ブランチ" />
-              </label>
-            </>
-          )}
-        </div>
+        <CloneForm onChange={setSrc} />
 
         {!!cloneUrl && (
           <div className="ui-field">

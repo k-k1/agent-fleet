@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 )
 
 // セッションのワイヤ変換とタイトル/ラベル導出。モデル・メタ永続化・UUID は
@@ -25,13 +26,24 @@ func wireSession(m session.Meta, alive bool) session.Session {
 	// The live-dependent fields (state / remote URL / context / resumable / bg-busy)
 	// diverge by kind — the agent computes them (see WireLive per implementation).
 	li := agentOf(m.Kind).WireLive(m, alive)
-	return session.Session{
+	s := session.Session{
 		Name: m.Name, Tmux: session.TmuxName(m.Name), Dir: m.Dir, Kind: m.Kind,
 		Repo: m.Repo, Title: m.Title, Display: session.Display(m), Color: m.Color, Label: m.Label,
 		Started: started, CreatedAt: m.CreatedAt, Branch: m.Branch,
 		RemoteUrl: li.RemoteURL, State: li.State, Alive: alive, Resumable: li.Resumable,
 		BackgroundBusy: li.BackgroundBusy, Context: li.Context,
 	}
+	// For a stopped session, surface WHY it ended (crash / OOM) if the pane recorder
+	// captured a cause. A clean quit (exited) or a deliberate stop (empty reason) leaves
+	// the fields unset so the row shows the plain 停止中 chip.
+	if !alive {
+		if e, ok := status.ReadExit(m.Name); ok && e.Reason != "" && e.Reason != "exited" && e.Reason != "stopped" {
+			s.ExitReason = e.Reason
+			s.ExitCode = e.Code
+			s.ExitSignal = e.Signal
+		}
+	}
+	return s
 }
 
 // remoteSessionURL（claude.ai Remote Control URL の導出）は internal/agents/claude

@@ -72,6 +72,12 @@
   color: var(--accent);
   min-width: 70px;
 }
+/* Stopped because the container was OOM-killed: flag the state chip so it stands out
+   from a plain 停止 (detail rides the tooltip). */
+.ws-state.warn {
+  color: var(--warn);
+  font-weight: 600;
+}
 .wsbar button {
   padding: 3px 12px;
 }
@@ -171,6 +177,12 @@ button.ws-usage-btn:hover {
 .ws-usage-nums {
   font-variant-numeric: tabular-nums;
 }
+/* Max付近: チップが % ではなくリセット時刻を出しているとき、その値を crit 色にして
+   「詰まっている」ことを一目で示す（枠色のアイコンはそのまま）。 */
+.ws-usage-nums.crit {
+  color: var(--del);
+  font-weight: 600;
+}
 .ws-usage-btn .codicon {
   font-size: 11px;
 }
@@ -259,6 +271,20 @@ button.wu-reload {
   margin-top: 8px;
   font-size: 11px;
   line-height: 1.5;
+}
+/* Link out to the vendor's own usage page (claude.ai / chatgpt.com) for the
+   authoritative numbers. Sits under the note as a quiet full-width row. */
+.wu-manage {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--accent);
+  text-decoration: none;
+}
+.wu-manage:hover {
+  text-decoration: underline;
 }
 /* In the mobile ⋯ popover the tiles stack, so the group divider is horizontal. */
 .ws-more-stats .ws-graph-sep {

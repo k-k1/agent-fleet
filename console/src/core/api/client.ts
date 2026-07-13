@@ -23,6 +23,40 @@ export function setTenant(slug: string | null | undefined): void {
   localStorage.setItem("af-tenant", selectedTenant);
 }
 
+// --- signed-in user (layout scoping) ---
+// The pane layout is persisted per (user, tenant) so a different account logging
+// in from the same browser never restores the prior user's session panes (the
+// stale right-pane-session bug). Held in memory only — re-resolved from
+// GET /api/whoami on every boot (tenant.init) and never written to localStorage,
+// so the identity itself cannot leak across accounts. Empty in dev/no-auth.
+let currentUser = "";
+export const getUser = (): string => currentUser;
+export function setUser(id: string | null | undefined): void {
+  currentUser = id || "";
+}
+
+// clearLocalState wipes every Console-owned localStorage entry — all keys carry an
+// `af` prefix (tenant selection, per-(user,tenant) layouts, composer drafts, display
+// settings, section fold states, caches, …). Called on logout so the next account on
+// this browser starts clean and nothing of the prior user survives (the layout is
+// already user-scoped, but this also clears the stale tenant selection, drafts and
+// misc UI state). In-memory tenant/user are reset too, though logout navigates away
+// immediately after.
+export function clearLocalState(): void {
+  try {
+    const keys: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith("af")) keys.push(k);
+    }
+    for (const k of keys) localStorage.removeItem(k);
+  } catch {
+    /* private-mode / quota — best effort */
+  }
+  selectedTenant = "";
+  currentUser = "";
+}
+
 const _fetch = window.fetch.bind(window);
 // When AUTH=oauth the Control Plane gates every request on a verified Google
 // session and answers an expired/absent one with 401 on XHR. Bounce the whole
@@ -222,10 +256,20 @@ export const fsRename = (from: string, to: string) =>
   fsWrite(`api/fs/rename?from=${q(from)}&to=${q(to)}`, { method: "POST" });
 export const fsDelete = (path: string) => fsWrite(`api/fs/delete?path=${q(path)}`, { method: "DELETE" });
 
+// Recursive filename search under a home-relative root (rg-backed). Returns
+// home-relative file paths whose path (relative to root) matches the query,
+// plus `truncated` when the result cap was hit. Never rejects — a proxy/agent
+// error folds into an empty result so the tree filter degrades gracefully.
+export const fsSearch = (root: string, query: string): Promise<{ results: string[]; truncated: boolean }> =>
+  api(`api/fs/search?path=${q(root)}&q=${q(query)}`).then((r) => ({
+    results: Array.isArray(r?.results) ? (r.results as string[]) : [],
+    truncated: !!r?.truncated,
+  }));
+
 // --- assistant chat (docs/19) ---
 // Headless-CLI LLM chat/translation. Thin wrappers over the /api/chat/* endpoints;
 // callers own the response shape (Conversation / ConversationMeta in types/chat).
-import type { Conversation, ConversationMeta } from "../../types/chat.ts";
+import type { Conversation, ConversationMeta, ChatStep } from "../../types/chat.ts";
 import type { Assistant, AssistantInput } from "../../types/assistant.ts";
 
 export const chatList = (): Promise<{ conversations: ConversationMeta[] }> =>
@@ -269,6 +313,7 @@ export const chatSend = (
 // the final saved conversation; onError with a message. Resolves when the stream ends.
 export interface ChatStreamHandlers {
   onDelta?: (text: string) => void;
+  onStep?: (step: ChatStep) => void; // a completed 作業過程 item (narration + tools before a tool call)
   onDone?: (conv: Conversation | undefined) => void;
   onError?: (msg: string) => void;
 }
@@ -312,13 +357,20 @@ export async function chatStream(
       buf = buf.slice(idx + 2);
       const line = frame.startsWith("data:") ? frame.slice(5).trim() : frame.trim();
       if (!line) continue;
-      let obj: { delta?: string; error?: unknown; done?: boolean; conversation?: Conversation };
+      let obj: {
+        delta?: string;
+        step?: ChatStep;
+        error?: unknown;
+        done?: boolean;
+        conversation?: Conversation;
+      };
       try {
         obj = JSON.parse(line);
       } catch {
         continue;
       }
       if (typeof obj.delta === "string") h.onDelta?.(obj.delta);
+      else if (obj.step) h.onStep?.(obj.step);
       else if (obj.error != null) h.onError?.(errText(obj.error as ApiError) || String(obj.error));
       else if (obj.done) h.onDone?.(obj.conversation);
     }

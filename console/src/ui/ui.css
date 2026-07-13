@@ -440,6 +440,11 @@
   color: inherit;
   opacity: 0.75;
 }
+/* Light: the 10px sub sits on the pale --sel-bg tint — 0.75 of the (already softened)
+   --sel-fg drops under 3:1 there; 0.9 keeps it secondary but legible. Dark keeps 0.75. */
+[data-theme="light"] .ui-seg .seg-btn.active .seg-sub {
+  opacity: 0.9;
+}
 .ui-seg.big .seg-btn {
   min-width: 88px;
   padding: 8px 10px;

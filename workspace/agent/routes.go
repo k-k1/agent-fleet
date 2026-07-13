@@ -16,6 +16,8 @@ func buildMux() *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", handleHealth)
 	mux.HandleFunc("GET /sessions", handleListSessions)
+	mux.HandleFunc("GET /notifications", handleNotifications)
+	mux.HandleFunc("POST /notifications/ack", handleNotificationsAck)
 	mux.HandleFunc("POST /sessions", handleCreateSession)
 	mux.HandleFunc("POST /sessions/{name}/fork", handleForkSession)
 	mux.HandleFunc("POST /sessions/{name}/stop", handleStopSession)
@@ -38,7 +40,6 @@ func buildMux() *http.ServeMux {
 	// dismiss discards it — either way it's never offered again for this session.
 	mux.HandleFunc("POST /sessions/{name}/title/accept", handleAcceptSuggestedTitle)
 	mux.HandleFunc("POST /sessions/{name}/title/dismiss", handleDismissSuggestedTitle)
-	mux.HandleFunc("POST /sessions/{name}/title/regenerate", handleRegenerateSuggestedTitle)
 	mux.HandleFunc("POST /sessions/{name}/title/suggest", handleSuggestTitle)
 	mux.HandleFunc("POST /sessions/{name}/title/set", handleSetTitle)
 	mux.HandleFunc("POST /sessions/{name}/suggest-branch", handleSessionSuggestBranch)
@@ -101,6 +102,7 @@ func buildMux() *http.ServeMux {
 	// File browser (docs/17 P3-5 段2 + FILES 改善): read tree/file, download raw,
 	// upload into a dir, git-changes filter + viewer line marks.
 	mux.HandleFunc("GET /fs/tree", handleFSTree)
+	mux.HandleFunc("GET /fs/search", handleFSSearch)
 	mux.HandleFunc("GET /fs/file", handleFSFile)
 	mux.HandleFunc("GET /fs/download", handleFSDownload)
 	mux.HandleFunc("POST /fs/upload", handleFSUpload)
@@ -122,6 +124,9 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("PUT /agents/rtk", handleAgentRTKPut)
 	// rtk token-savings history (rtk gain) for the WsBar "rtk 効果" chip.
 	mux.HandleFunc("GET /agents/rtk/gain", handleAgentRTKGain)
+	// Live model catalogs (codex: `codex debug models` / opencode: `opencode models`)
+	// for the Console's launch model picker.
+	mux.HandleFunc("GET /agents/{kind}/models", handleAgentModels)
 
 	// Toolchain selection (node via nvm / java via pre-baked Temurin) — Console.
 	mux.HandleFunc("GET /env/toolchains", handleToolchainsGet)

@@ -19,12 +19,56 @@
   background: var(--border);
 }
 
+/* Sticky band that carries the 絞り込み box: pins right under the section header
+   (--sec-head-h, published by Section) so it stays put like the header while the
+   rows scroll. Opaque (rail surface) full-width so scrolled rows don't show
+   through the box's margins; below the header band (z:3), above the rows. */
+.proj-filter-bar {
+  position: sticky;
+  top: var(--sec-head-h, 34px);
+  z-index: 2;
+  background: var(--leftpane-bg);
+  /* Own the box's vertical spacing here (padding, not the child's margin) so it
+     can't margin-collapse through this sticky band and open a gap when pinned. */
+  padding: 3px 0 2px;
+}
+
+/* Icon-only file-search scope, inline at the input's right edge. */
+.files-search-scope {
+  flex: none;
+  display: flex;
+  gap: 2px;
+  padding-left: 5px;
+  border-left: 1px solid var(--btn-border);
+}
+.files-search-scope button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 4px;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.files-search-scope button:hover {
+  color: var(--fg);
+  background: var(--hover-bg);
+}
+.files-search-scope button.active {
+  color: var(--fg);
+  background: color-mix(in srgb, var(--lp-accent, var(--accent)) 18%, transparent);
+}
+
 /* Quick filter box (repos + sessions, incl. その他のセッション). */
 .proj-filter {
   display: flex;
   align-items: center;
   gap: 6px;
-  margin: 3px 8px 2px;
+  margin: 0 8px;
   padding: 2px 8px;
   background: var(--panel2);
   border: 1px solid var(--btn-border);
@@ -156,10 +200,49 @@
   padding: 1px 0 2px;
 }
 
+.files-search-group {
+  position: sticky;
+  top: calc(var(--sec-head-h, 34px) + 34px);
+  z-index: 1;
+  border-bottom: 1px solid var(--border2);
+  background: var(--leftpane-bg);
+}
+.files-search-group-toggle {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  padding: 4px 8px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+.files-search-group-toggle:hover,
+.files-search-group-toggle:focus-visible {
+  color: var(--fg);
+  background: var(--hover-bg);
+  outline: none;
+}
+.files-search-group-toggle .codicon {
+  font-size: 12px;
+}
+.files-search-group-count {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+  font-weight: 400;
+}
+
 /* ツリー/変更 toggle in the ファイル section header. Lives in the left pane, so
    its selected segment follows the left-pane accent rather than the top bar's. */
 .files-view {
   flex: none;
+  /* Needs the sel-scope class on the element (FilesSection.tsx) — rebinding
+     --sel-accent alone can't reach the :root-derived --sel-bg/--sel-fg (tokens.css). */
   --sel-accent: var(--lp-accent, var(--topbar-accent));
 }
 

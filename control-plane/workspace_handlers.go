@@ -130,6 +130,11 @@ func (a workspaceAPI) ensureWorkspaceStarted(ctx context.Context, res *resolved)
 		return internalErr(err)
 	}
 	_ = a.mgr.store.SetWorkspaceState(ctx, res.ws.ID, "running")
+	// A start IS activity: reset the in-memory idle clock too (SetWorkspaceState
+	// already bumped DB last_active_at). Without this the reaper could stop the
+	// freshly-started workspace on its next sweep off a stale in-memory lastSeen
+	// (P3-9; see reaper.idleBase).
+	a.mgr.conns.touch(res.ws.ID)
 	return nil
 }
 

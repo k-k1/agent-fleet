@@ -64,6 +64,23 @@
   align-items: center;
   gap: 12px;
 }
+.notification-wrap { position: relative; }
+.notification-btn { position: relative; padding: 4px 7px; }
+.notification-badge { position: absolute; top: -6px; right: -7px; min-width: 16px; height: 16px; padding: 0 3px; border-radius: 9px; background: var(--danger, #d95763); color: white; font-size: 10px; line-height: 16px; text-align: center; }
+.notification-panel { position: absolute; z-index: 70; top: calc(100% + 7px); right: 0; width: min(380px, calc(100vw - 20px)); max-height: min(560px, calc(100vh - 64px)); display: flex; flex-direction: column; background: var(--panel2, var(--panel)); border: 1px solid var(--border2, var(--border)); border-radius: 10px; box-shadow: 0 12px 36px rgba(0,0,0,.45); overflow: hidden; }
+.notification-panel > header { display: flex; align-items: baseline; justify-content: space-between; padding: 12px 14px; border-bottom: 1px solid var(--border); }
+.notification-panel > header span { color: var(--muted); font-size: 11px; }
+.notification-permission { margin: 8px 10px 2px; }
+.notification-list { overflow-y: auto; padding: 5px; }
+.notification-row { display: flex; align-items: center; border-radius: 4px; }
+.notification-row.unread { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+:where(.topbar) .notification-item { min-width: 0; flex: 1; display: flex; align-items: flex-start; gap: 10px; padding: 10px; border: 0; background: transparent; text-align: left; }
+:where(.topbar) .notification-replay { flex: 0 0 auto; margin-right: 5px; padding: 6px; border: 0; background: transparent; color: var(--muted); }
+.notification-item > .codicon { margin-top: 2px; color: var(--accent); }
+.notification-item span { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.notification-item b { font-size: 12px; font-weight: 600; }
+.notification-item small { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.notification-empty { padding: 24px; color: var(--muted); text-align: center; }
 
 /* 音声読み上げピル（docs/24）。常時表示：再生中=停止ボタン（パルス＋ラベル）、
    アイドル=設定 ttsEnabled の ON/OFF トグル（OFF はグレー）。 */
@@ -282,6 +299,7 @@
   .whoami {
     max-width: 96px;
   }
+  .notification-panel { position: fixed; top: 48px; right: 8px; }
   /* 外観 popover: the paint button sits mid-bar, so the default right:0 anchoring
      (relative to the button) pushes its fixed 232px menu off-screen on a phone. Pin
      it to the viewport top-right and clamp its width/height instead. */
@@ -295,4 +313,9 @@
     overflow-y: auto;
   }
 
+}
+
+@media (max-width: 480px) {
+  .acct-name, .acct-caret { display: none; }
+  .fs-toggle, .topbar-right > .appr { display: none; }
 }

@@ -21,16 +21,43 @@ type SessionStatus struct {
 	TS    string `json:"ts"`    // RFC3339
 }
 
+// ExitInfo records WHY a session's agent process terminated, so the sessions list can
+// tell a normal quit apart from a crash or an OOM kill. Written by the pane exit
+// recorder (`workspace-agent record-exit`, wired by startSessionTmux) once the agent
+// CLI exits; keyed by session NAME (not sid) since that's what the pane wrapper carries.
+// It is a SEPARATE per-session file from Meta on purpose — record-exit and the API
+// handlers both write session state, and Meta is a single JSON blob they'd clobber;
+// a dedicated store sidesteps that race (same reasoning as SessionStatus above).
+//
+// At launch startSessionTmux writes a baseline row (Reason=="" , OOMBase=current
+// container oom_kill) which doubles as clearing any prior death record — so a resumed
+// session starts clean. record-exit then overwrites it with the interpreted Reason.
+type ExitInfo struct {
+	Reason  string `json:"reason,omitempty"`  // exited|crashed|killed|oom|stopped ; "" = running/baseline
+	Code    int    `json:"code,omitempty"`    // raw pane wait status ($?); 128+N on a signal kill
+	Signal  int    `json:"signal,omitempty"`  // N when Code>=128 (SIGKILL=9 → Code 137), else 0
+	At      string `json:"at,omitempty"`      // RFC3339, when the exit was recorded
+	OOMBase uint64 `json:"oomBase,omitempty"` // container oom_kill counter captured at session start
+}
+
 // Per-sid file stores (internal/fstore). pending-question holds the raw tool_input
-// payload; last-tool shares pending-perm's dir under a different extension.
+// payload; last-tool shares pending-perm's dir under a different extension. exitFiles
+// is keyed by session NAME (see ExitInfo), the others by sid.
 var (
 	statusFiles      = fstore.JSON[SessionStatus](paths.AgentConfigDir, "session-status", ".json")
+	exitFiles        = fstore.JSON[ExitInfo](paths.AgentConfigDir, "session-exit", ".json")
 	pendingQuestions = fstore.Raw(paths.AgentConfigDir, "pending-question", ".json")
 	pendingPlans     = fstore.Strings(paths.AgentConfigDir, "pending-plan", ".md")
 	pendingPerms     = fstore.Strings(paths.AgentConfigDir, "pending-perm", ".txt")
 	lastTools        = fstore.Strings(paths.AgentConfigDir, "pending-perm", ".tool")
 	pendingTexts     = fstore.Strings(paths.AgentConfigDir, "pending-text", ".txt")
 )
+
+// PersistExit / ReadExit / RemoveExit manage the per-session exit record (keyed by
+// session name). PersistExit is called both at launch (baseline) and at exit (result).
+func PersistExit(name string, e ExitInfo)   { _ = exitFiles.Write(name, e) }
+func ReadExit(name string) (ExitInfo, bool) { return exitFiles.Read(name) }
+func RemoveExit(name string)                { exitFiles.Remove(name) }
 
 // Persist writes {state, ts} keyed by sid. Errors are logged (not
 // swallowed): a failed write leaves the Console's 進行中/応答あり badge silently

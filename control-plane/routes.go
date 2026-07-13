@@ -24,6 +24,7 @@ func buildMux(cfg config) *http.ServeMux {
 	registerTTSRoutes(mux, cfg)
 	registerSSMRoutes(mux, cfg)
 	registerMemoRoutes(mux, cfg)
+	registerNotificationRoutes(mux, cfg)
 	registerRepoFSRoutes(mux, cfg)
 	registerAgentEnvRoutes(mux, cfg)
 	registerConnectionRoutes(mux, cfg)
@@ -32,6 +33,13 @@ func buildMux(cfg config) *http.ServeMux {
 	registerLegacyRedirect(mux)
 	registerStatic(mux, cfg)
 	return mux
+}
+
+func registerNotificationRoutes(mux *http.ServeMux, cfg config) {
+	n := newNotificationAPI(cfg.mgr)
+	mux.HandleFunc("GET /api/notifications", n.withResolved(n.list))
+	mux.HandleFunc("POST /api/notifications/seen", n.withMembership(n.seen))
+	mux.HandleFunc("POST /api/notifications/usage-observations", n.withMembership(n.observeUsage))
 }
 
 // --- authGate 除外レジストリ（docs/23 P2-W1） -------------------------------
@@ -193,7 +201,6 @@ func registerSessionRoutes(mux *http.ServeMux, cfg config) {
 	// Auto session-title suggestion accept/dismiss (session_title.go, Agent-side).
 	mux.HandleFunc("POST /api/sessions/{name}/title/accept", rest)
 	mux.HandleFunc("POST /api/sessions/{name}/title/dismiss", rest)
-	mux.HandleFunc("POST /api/sessions/{name}/title/regenerate", rest)
 	mux.HandleFunc("POST /api/sessions/{name}/title/suggest", rest)
 	mux.HandleFunc("POST /api/sessions/{name}/title/set", rest)
 	mux.HandleFunc("POST /api/sessions/{name}/suggest-branch", rest) // LLM branch-name suggestion (this session's convo)
@@ -295,6 +302,7 @@ func registerRepoFSRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("PUT /api/git/identity", rest)
 	// File browser (docs/17 P3-5 段2) — proxied to the Agent.
 	mux.HandleFunc("GET /api/fs/tree", rest)
+	mux.HandleFunc("GET /api/fs/search", rest)
 	mux.HandleFunc("GET /api/fs/file", rest)
 	mux.HandleFunc("GET /api/fs/download", rest)
 	mux.HandleFunc("POST /api/fs/upload", rest)
@@ -321,6 +329,8 @@ func registerAgentEnvRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("PUT /api/agents/rtk", rest)
 	// rtk token-savings history (WsBar "rtk 効果" chip) — proxied to the Agent.
 	mux.HandleFunc("GET /api/agents/rtk/gain", rest)
+	// codex / opencode model catalogs (launch model picker) — proxied to the Agent.
+	mux.HandleFunc("GET /api/agents/{kind}/models", rest)
 	// Toolchain selection (node / java) — proxied to the Agent.
 	mux.HandleFunc("GET /api/env/toolchains", rest)
 	mux.HandleFunc("PUT /api/env/toolchains", rest)

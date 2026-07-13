@@ -32,7 +32,12 @@ type Membership struct {
 type UserLimit struct {
 	MembershipID        string
 	MaxSessions, DiskGB int
-	CreatedAt           string
+	// MemLimit is the per-workspace RAM cap in BYTES (0 = unset → deployment default
+	// WS_MEMORY / AF_ECS_TASK_MEMORY). A tenant_admin sets it within the tenant cap
+	// (tenantLimits.MaxWorkspaceMem); resolveWorkspaceMemBytes clamps and applies it at
+	// container start (docker --memory / ECS task size). See docs/26 / roadmap P3-4.
+	MemLimit  int64
+	CreatedAt string
 }
 
 // MembershipView is a membership enriched with its tenant's slug/name, for the
@@ -119,12 +124,32 @@ type Memo struct {
 	CreatedAt, SentAt                string
 }
 
+// Notification is a membership-scoped, content-free activity record shared by
+// every browser the member uses. Payload contains only structured metadata; chat
+// answer/question text is deliberately never persisted here.
+type Notification struct {
+	Seq                                                           int64
+	EventID, MembershipID, Kind, TargetType, TargetID, TargetKind string
+	DisplayName, Payload, CreatedAt, SeenAt                       string
+}
+
+type UsageNotificationState struct {
+	MembershipID, Source, WindowKey, ResetsAt string
+	Armed                                     int
+}
+
 // Workspace is one container per Membership (= identity × tenant).
 type Workspace struct {
 	ID, TenantID, MembershipID      string
 	ContainerName, Network, DataDir string
 	AgentPort, AgentToken, State    string
 	CreatedAt, LastActiveAt         string
+	// MemBytes is the RESOLVED per-workspace RAM cap in bytes for the NEXT container
+	// start (0 = use the runtime's deployment default). It is NOT a persisted column:
+	// buildResolved fills it via resolveWorkspaceMemBytes before the runtime is built,
+	// and the factory (docker --memory / ECS task size) honors it when >0. Read/stop
+	// call sites leave it 0, which never needs a memory value.
+	MemBytes int64
 }
 
 // SessionRow mirrors one Agent session into the CP DB so the session list can be
@@ -171,6 +196,7 @@ type Store interface {
 	UsageStore
 	SSMStore
 	MemoStore
+	NotificationStore
 
 	Close() error
 }
@@ -228,7 +254,7 @@ type WorkspaceStore interface {
 // QuotaStore is the per-membership quota override (docs/16 P3-4).
 type QuotaStore interface {
 	GetUserLimit(ctx context.Context, membershipID string) (UserLimit, bool, error)
-	PutUserLimit(ctx context.Context, membershipID string, maxSessions, diskGB int) error
+	PutUserLimit(ctx context.Context, membershipID string, maxSessions, diskGB int, memLimit int64) error
 }
 
 // DEKStore holds the envelope-encrypted per-workspace DEK (docs/15 P3-3).
@@ -370,6 +396,17 @@ type MemoStore interface {
 	DeleteMemo(ctx context.Context, id, membershipID string) error
 	MarkMemosSent(ctx context.Context, membershipID string, ids []string, sentAt string) error
 	SweepSentMemos(ctx context.Context, retainBefore string) error
+}
+
+type NotificationStore interface {
+	InsertNotification(ctx context.Context, n Notification) error
+	ListNotifications(ctx context.Context, membershipID, retainAfter string, limit int) ([]Notification, error)
+	CountUnseenNotifications(ctx context.Context, membershipID, retainAfter string) (int, error)
+	MarkNotificationsSeenThrough(ctx context.Context, membershipID string, seq int64, seenAt string) error
+	MarkNotificationsSeen(ctx context.Context, membershipID string, eventIDs []string, seenAt string) error
+	SweepNotifications(ctx context.Context, retainBefore string) error
+	GetUsageNotificationState(ctx context.Context, membershipID, source, windowKey string) (UsageNotificationState, bool, error)
+	PutUsageNotificationState(ctx context.Context, state UsageNotificationState) error
 }
 
 // newID mints an opaque record id (not a strict UUID; sufficient for keys).

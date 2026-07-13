@@ -21,11 +21,24 @@ import (
 	"time"
 )
 
+// chatStep is one "作業過程" item of an assistant turn (docs/19): the narration the model
+// emitted right before it called a tool. On a tool-using answer claude produces several
+// assistant messages — each ending in a tool call (stop_reason=tool_use) is a working step,
+// and only the last (stop_reason=end_turn) is the final answer. We keep the steps so the UI
+// can show the process separately from — but alongside — the final reply (保持).
+type chatStep struct {
+	Text  string   `json:"text,omitempty"`  // narration before the tool call(s)
+	Tools []string `json:"tools,omitempty"` // tool name(s) invoked in this step
+}
+
 // chatMessage is one turn in a conversation.
 type chatMessage struct {
 	Role    string `json:"role"` // "user" | "assistant"
 	Content string `json:"content"`
 	TS      int64  `json:"ts"` // unix millis
+	// Steps is the assistant turn's working process (narration before each tool call),
+	// separated from Content (the final answer). Empty for user turns and tool-less replies.
+	Steps []chatStep `json:"steps,omitempty"`
 }
 
 // chatConversation is the persisted record (one JSON file per conversation).
@@ -39,8 +52,9 @@ type chatConversation struct {
 	Messages  []chatMessage `json:"messages"`
 	// Provider-native resume handles so each turn continues the CLI's own
 	// conversation (context + caching) instead of re-feeding the whole history.
-	ClaudeSessionID string `json:"claude_session_id,omitempty"`
-	CodexSessionID  string `json:"codex_session_id,omitempty"`
+	ClaudeSessionID   string `json:"claude_session_id,omitempty"`
+	CodexSessionID    string `json:"codex_session_id,omitempty"`
+	OpencodeSessionID string `json:"opencode_session_id,omitempty"`
 	// AFTools attaches the local Agent Fleet MCP tools (read-only) to this chat's
 	// claude so it can inspect the user's workspace (docs/19 Q1). Legacy field kept for
 	// conversations created before assistants (Q2); new conversations drive tools via the
@@ -132,17 +146,28 @@ func (c *chatConversation) personaOf() string {
 // knowledgeArgs returns --add-dir flags for each knowledge dir that currently exists.
 // Builtin knowledge is re-materialized first so a container rebuild self-heals.
 func (c *chatConversation) knowledgeArgs() []string {
+	var args []string
+	for _, d := range c.knowledgeDirs() {
+		args = append(args, "--add-dir", d)
+	}
+	return args
+}
+
+// knowledgeDirs returns the existing knowledge dirs (re-materializing builtin
+// knowledge first). claude passes them as --add-dir; codex/opencode get them listed
+// in the prompt preamble (their read tools can open the paths directly).
+func (c *chatConversation) knowledgeDirs() []string {
 	if len(c.Knowledge) == 0 {
 		return nil
 	}
 	_ = ensureBuiltinKnowledge()
-	var args []string
+	var dirs []string
 	for _, d := range c.Knowledge {
 		if fi, err := os.Stat(d); err == nil && fi.IsDir() {
-			args = append(args, "--add-dir", d)
+			dirs = append(dirs, d)
 		}
 	}
-	return args
+	return dirs
 }
 
 // chatMeta is the light shape returned by the list endpoint (no message bodies).

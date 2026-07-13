@@ -5,12 +5,13 @@ import { useEffect, useRef, useState } from "react";
 import { useTenantStore } from "../core/store/tenant.ts";
 import { useTtsStore } from "../core/store/tts.ts";
 import { useSettingsUI } from "../features/settings/store.ts";
-import { rel } from "../core/api/client.ts";
+import { rel, clearLocalState } from "../core/api/client.ts";
 import { useSettings, setSetting, THEMES, SURFACE_TARGETS } from "../lib/settings.ts";
-import { useIsMobile } from "../lib/device.ts";
+import { useIsMobile, isStandalonePWA } from "../lib/device.ts";
 import { Icon } from "../ui/Icon.tsx";
 import { SwatchGrid } from "../ui/SwatchGrid.tsx";
 import { useDismiss } from "../lib/useDismiss.ts";
+import { NotificationCenter } from "../features/notifications/NotificationCenter.tsx";
 
 interface TopBarProps {
   toggleNav: () => void;
@@ -38,6 +39,7 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
   const ttsPreparing = useTtsStore((st) => st.preparing);
   const ttsSource = useTtsStore((st) => st.source);
   const ttsVoice = useTtsStore((st) => st.voice);
+  const ttsPurpose = useTtsStore((st) => st.purpose);
   const ttsBusy = ttsSpeaking || ttsPreparing; // 生成中（最初の音の前）もピルは再生扱い
   // Hamburger: single-click toggles the left pane open/closed; double-click toggles
   // its desktop display mode (Push ⇄ overlay). We debounce the single action so a
@@ -88,6 +90,7 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
 
   const openSettings = useSettingsUI((st) => st.openSettings);
   const openAdmin = useSettingsUI((st) => st.openAdmin);
+  const openGuide = useSettingsUI((st) => st.openGuide);
   const run = (fn: () => void) => {
     setMenuOpen(false);
     fn();
@@ -112,14 +115,25 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
           className={"tts-status" + (ttsBusy ? " speaking" : s.ttsEnabled ? "" : " off")}
           title={
             ttsBusy
-              ? "読み上げを停止"
+              ? "読み上げを停止して OFF"
               : s.ttsEnabled
                 ? "音声読み上げ: ON（クリックで OFF）"
                 : "音声読み上げ: OFF（クリックで ON）"
           }
           onClick={() => {
-            if (ttsBusy) useTtsStore.getState().stop();
-            else setSetting("ttsEnabled", !s.ttsEnabled);
+            // 再生中のクリックは「今の1本を止める」だけでなく設定も OFF にする。以前は停止のみ
+            // で ttsEnabled が ON のまま残り、次の新規セッションの回答でまた自動再生された
+            // （＝「OFF にしたのに勝手に ON」の主因）。喋っている最中に押す＝黙らせたい意思、
+            // として停止＋OFF をひとまとめにする。ON へ戻すのはアイドル時のクリック。
+            if (ttsBusy) {
+              useTtsStore.getState().stop();
+              if (ttsPurpose === "session-notification") setSetting("ttsSessionNotify", false);
+              else if (ttsPurpose === "usage-notification") setSetting("usageResetNotify", false);
+              else if (ttsPurpose !== "manual") setSetting("ttsEnabled", false);
+              return;
+            }
+            if (s.ttsEnabled) setSetting("ttsEnabled", false);
+            else if (!ttsBusy) setSetting("ttsEnabled", true);
           }}
         >
           {/* 最初の音が鳴る前（合成待ち）はぐるぐるで「生成中」を示す */}
@@ -146,6 +160,12 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
         >
           <Icon name={fullscreen ? "screen-normal" : "screen-full"} />
         </button>
+        {/* PWA (standalone) 起動時はブラウザの再読み込みUIが無いので、代替のリロードボタンを出す。 */}
+        {isStandalonePWA() && (
+          <button className="gear reload-toggle" title="再読み込み" onClick={() => window.location.reload()}>
+            <Icon name="refresh" />
+          </button>
+        )}
         {/* 外観: a light popover so colors preview live on the panes behind it. */}
         <div className="acct appr" ref={apprRef}>
           <button
@@ -178,6 +198,7 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
             </div>
           )}
         </div>
+        <NotificationCenter />
         {me ? (
           <div className="acct" ref={acctRef}>
             <button className="whoami acct-btn" title={me} onClick={() => setMenuOpen((o) => !o)}>
@@ -203,6 +224,10 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
                     <div className="acct-sep" />
                   </>
                 )}
+                {/* 初回カードを「あとで」で閉じたあとの再入口（起動導線 Ph1）。 */}
+                <button className="acct-item" role="menuitem" onClick={() => run(openGuide)}>
+                  <Icon name="rocket" /> はじめかたガイド
+                </button>
                 <button className="acct-item" role="menuitem" onClick={() => run(() => openSettings())}>
                   <Icon name="gear" /> 設定
                 </button>
@@ -214,9 +239,19 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
                 {canLogout && (
                   <>
                     <div className="acct-sep" />
-                    <a className="acct-item" role="menuitem" href={rel("oauth2/logout")}>
+                    <button
+                      className="acct-item"
+                      role="menuitem"
+                      onClick={() => {
+                        // Drop all client-side state BEFORE bouncing to the CP logout,
+                        // so a different account on this browser can't see the prior
+                        // user's layout / drafts / tenant selection.
+                        clearLocalState();
+                        location.assign(rel("oauth2/logout"));
+                      }}
+                    >
                       <Icon name="sign-out" /> ログアウト
-                    </a>
+                    </button>
                   </>
                 )}
               </div>

@@ -22,7 +22,11 @@ function contentFromFlat(p: any): PaneContent {
       return { kind: "terminal", chat: p.chat === true };
     case "file": {
       const filePath = str(p.filePath);
-      return filePath ? { kind: "file", filePath } : { kind: "terminal", chat: false };
+      const targetLine = typeof p.targetLine === "number" && p.targetLine > 0 ? Math.floor(p.targetLine) : undefined;
+      const targetColumn = typeof p.targetColumn === "number" && p.targetColumn > 0 ? Math.floor(p.targetColumn) : undefined;
+      return filePath
+        ? { kind: "file", filePath, ...(targetLine ? { targetLine } : {}), ...(targetColumn ? { targetColumn } : {}) }
+        : { kind: "terminal", chat: false };
     }
     case "read": {
       const filePath = str(p.filePath);
@@ -132,23 +136,27 @@ export function normalizeStored(raw: unknown): Layout | null {
   return { cols, colRatios, activeId };
 }
 
-/** Storage keys: new console writes layout2; the old console's layout is the
- * migration source (read-only from here — the frozen console still owns it). */
-export const LKEY_NEW = (slug: string): string => "af.layout2." + (slug || "");
-export const LKEY_OLD = (slug: string): string => "af.layout." + (slug || "");
+/** Storage key: the pane layout is persisted per (user, tenant) so a different
+ * account logging in from the same browser can't restore the prior user's session
+ * panes (the stale right-pane-session bug). Empty `user` (dev/no-auth) degrades to
+ * a per-tenant key. No migration from the old unscoped `af.layout2.<slug>` /
+ * `af.layout.<slug>` keys: switching to the user-scoped scheme intentionally
+ * resets the layout once rather than attributing a shared layout to whoever logs
+ * in first. */
+export const LKEY_NEW = (user: string, slug: string): string =>
+  "af.layout2." + (user || "") + "." + (slug || "");
 
-/** loadStoredLayout reads (and if needed migrates) the persisted layout for a
- * tenant. Returns null when nothing usable is stored. */
-export function loadStoredLayout(slug: string): Layout | null {
-  for (const key of [LKEY_NEW(slug), LKEY_OLD(slug)]) {
-    try {
-      const s = localStorage.getItem(key);
-      if (!s) continue;
+/** loadStoredLayout reads the persisted layout for a (user, tenant). Returns null
+ * when nothing usable is stored. */
+export function loadStoredLayout(user: string, slug: string): Layout | null {
+  try {
+    const s = localStorage.getItem(LKEY_NEW(user, slug));
+    if (s) {
       const l = normalizeStored(JSON.parse(s));
       if (l) return l;
-    } catch {
-      /* corrupted entry — try the next source */
     }
+  } catch {
+    /* corrupted entry — fall through to a fresh layout */
   }
   return null;
 }

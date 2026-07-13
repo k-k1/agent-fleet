@@ -17,6 +17,7 @@ import { useConfirm } from "../ui/ConfirmProvider.tsx";
 import { useIsMobile } from "../lib/device.ts";
 import { useDismiss } from "../lib/useDismiss.ts";
 import { fmtGiB as fg } from "../lib/bytes.ts";
+import { useUsageResetNotify } from "./usageResetNotify.ts";
 
 const HIST_N = 60; // sparkline ring buffer: ~4 min at the 4s poll cadence
 
@@ -57,7 +58,10 @@ function useWsResourceChips(tenant: string | null, superAdmin: boolean) {
           // shows, so an idle workspace produces the same key and no re-render.
           const memPct = running && d.mem_max ? Math.round((d.mem_used / d.mem_max) * 100) : -1;
           const cpuPct = running && d.cpu_pct != null ? Math.round(d.cpu_pct) : -1;
-          const key = ok ? `${!!(d && d.running)}|${memPct}|${cpuPct}` : "off";
+          // OOM flags are part of the key so a fresh in-container OOM (oom_recent) or a
+          // stopped-from-OOM container (oom_killed) repaints even at a steady mem/cpu.
+          const oom = `${d.oom_recent ? 1 : 0}|${d.oom_killed ? 1 : 0}|${d.exit_code ?? ""}`;
+          const key = ok ? `${!!(d && d.running)}|${memPct}|${cpuPct}|${oom}` : "off";
           if (key === wsKey.current) return;
           wsKey.current = key;
           setWsStats(ok ? d : null);
@@ -217,11 +221,31 @@ function whenText(iso: string) {
   return `${d.getMonth() + 1}/${d.getDate()} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
+// resetChipText: reset instant → the compact form shown ON the chip when a window is
+// Max付近. Same-day resets drop the date (just HH:MM); a later day keeps M/D so the
+// day is unambiguous.
+function resetChipText(iso: string) {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return "";
+  const p = (n: number) => String(n).padStart(2, "0");
+  const now = new Date();
+  const sameDay =
+    d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
+  const hm = `${p(d.getHours())}:${p(d.getMinutes())}`;
+  return sameDay ? hm : `${d.getMonth() + 1}/${d.getDate()} ${hm}`;
+}
+
+// Max付近しきい値: 枠の利用率がこの値以上なら、チップを「N% / M%」からその枠のリセット時刻
+// 表示へ切り替える（あと僅かで詰まる／既に詰まっている＝「いつ解放されるか」の方が有用）。
+// ドロップダウンの crit 着色境界（95%）と揃える。
+const NEAR_MAX_PCT = 95;
+
 // A usage source = one agent's subscription-limit chip (Claude / Codex). Both endpoints
 // return the same {ok, fiveHour, sevenDay, ageSec} shape (codex reads its rate_limits
 // straight from the rollout — no network), so one chip component renders either.
 interface UsageSource {
   endpoint: string;
+  name: string; // agent short name ("Claude" / "Codex") — used in reset notifications
   icon: string; // codicon glyph
   cls: string; // kind color class (kind-claude / kind-codex)
   title: string; // chip hover title
@@ -233,11 +257,15 @@ interface UsageSource {
   // manual refresh; a note explains it instead.
   live: boolean;
   note?: string;
+  // manageURL = the agent vendor's own usage/limits page (opened in a new tab from the
+  // dropdown), so the user can jump to the authoritative source for the exact numbers.
+  manageURL?: string;
 }
 
 const USAGE_SOURCES: UsageSource[] = [
   {
     endpoint: "api/claude/usage",
+    name: "Claude",
     icon: "sparkle",
     cls: "kind-claude",
     title: "Claude 使用状況（5時間 / 週次）",
@@ -245,9 +273,11 @@ const USAGE_SOURCES: UsageSource[] = [
     fiveLabel: "5時間制限",
     weekLabel: "週次・全モデル",
     live: true,
+    manageURL: "https://claude.ai/new#settings/usage",
   },
   {
     endpoint: "api/codex/usage",
+    name: "Codex",
     icon: "rocket",
     cls: "kind-codex",
     title: "Codex 使用状況（5時間 / 週次）",
@@ -256,6 +286,7 @@ const USAGE_SOURCES: UsageSource[] = [
     weekLabel: "週次",
     live: false,
     note: "codex が記録した最後の値です（この時点のスナップショット）。次に codex を実行すると更新されます。",
+    manageURL: "https://chatgpt.com/codex/settings/usage",
   },
 ];
 
@@ -267,6 +298,9 @@ function UsageChip({ src, tenant }: { src: UsageSource; tenant: string | null })
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   useDismiss(ref, open, () => setOpen(false));
+  // Notify when a constrained limit window resets (5-hour / weekly). Runs whether or
+  // not the dropdown is open — the chip stays mounted while the workspace is up.
+  useUsageResetNotify(src, usage, src.fiveLabel, src.weekLabel, refresh);
 
   const win = (w: { pct: number; resetsAt: string }) => ({
     pct: Math.round(w.pct),
@@ -276,7 +310,25 @@ function UsageChip({ src, tenant }: { src: UsageSource; tenant: string | null })
   const uh = usage && usage.fiveHour && win(usage.fiveHour);
   const uw = usage && usage.sevenDay && win(usage.sevenDay);
   if (!uh && !uw) return null; // no reading yet → hide the chip entirely
-  const label = [uh && `${uh.pct}%`, uw && `${uw.pct}%`].filter(Boolean).join(" / ");
+
+  // Max付近（利用率 ≥ NEAR_MAX_PCT）の枠があれば、% ではなく「いつ解放されるか」を出す。候補は
+  // Max付近の枠だけ、その中で最も早くリセットする枠（＝最初に解放される時刻）を 1 つだけ。両枠
+  // とも Max付近なら近い方（通常は5時間枠）になる。詳細（どの枠か・%・相対）はツールチップへ。
+  const nearMax: { label: string; pct: number; resetsAt: string }[] = [];
+  if (usage.fiveHour && usage.fiveHour.pct >= NEAR_MAX_PCT && usage.fiveHour.resetsAt)
+    nearMax.push({ label: src.fiveLabel, ...usage.fiveHour });
+  if (usage.sevenDay && usage.sevenDay.pct >= NEAR_MAX_PCT && usage.sevenDay.resetsAt)
+    nearMax.push({ label: src.weekLabel, ...usage.sevenDay });
+  const bind = nearMax.length
+    ? nearMax.reduce((a, b) => (new Date(a.resetsAt).getTime() <= new Date(b.resetsAt).getTime() ? a : b))
+    : null;
+
+  const label = bind
+    ? resetChipText(bind.resetsAt)
+    : [uh && `${uh.pct}%`, uw && `${uw.pct}%`].filter(Boolean).join(" / ");
+  const chipTitle = bind
+    ? `${src.name}・${bind.label} ${Math.round(bind.pct)}% — ${untilText(bind.resetsAt)}でリセット（${whenText(bind.resetsAt)}）`
+    : src.title;
 
   return (
     <div className="ws-usage-wrap" ref={ref}>
@@ -285,12 +337,12 @@ function UsageChip({ src, tenant }: { src: UsageSource; tenant: string | null })
       <button
         type="button"
         className={"kind-tag " + src.cls + " ws-usage-btn"}
-        title={src.title}
+        title={chipTitle}
         aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
       >
         <Icon name={src.icon} />
-        <span className="ws-usage-nums">{label}</span>
+        <span className={"ws-usage-nums" + (bind ? " crit" : "")}>{label}</span>
         <Icon name="chevron-down" />
       </button>
       {open && (
@@ -307,6 +359,11 @@ function UsageChip({ src, tenant }: { src: UsageSource; tenant: string | null })
             )}
           </div>
           {!src.live && src.note && <div className="wu-note muted">{src.note}</div>}
+          {src.manageURL && (
+            <a className="wu-manage" href={src.manageURL} target="_blank" rel="noopener">
+              <Icon name="link-external" /> 使用状況ページを開く
+            </a>
+          )}
         </div>
       )}
     </div>
@@ -391,7 +448,7 @@ export function WsBar() {
   const splitDown = useLayoutStore((s) => s.splitDown);
   const resetToTerminal = useLayoutStore((s) => s.resetToTerminal);
   const activePaneId = layout.activeId;
-  const openNewSession = useSessionsStore((s) => s.openNewSession);
+  const openStart = useSessionsStore((s) => s.openStart);
   const askConfirm = useConfirm();
   const { wsStats, wsHist, hostStats, hostHist } = useWsResourceChips(tenant, superAdmin);
   const isMobile = useIsMobile();
@@ -420,6 +477,33 @@ export function WsBar() {
   const activeCol = layout.cols.find((c) => c.panes.some((p) => p.id === activePaneId));
   const canSplitRight = !isMobile && layout.cols.length < 4;
   const canSplitDown = isMobile ? totalPanes < 2 : (activeCol ? activeCol.panes.length : totalPanes) < 2;
+
+  // はじめる while stopped: don't dead-end (起動導線 Ph3) — confirm, start the
+  // workspace, and open the hub once the 4s poll reports running. startQueued
+  // survives the whole starting window; a second click while queued re-confirms
+  // harmlessly (startWs is only re-fired from a genuinely stopped state).
+  const [startQueued, setStartQueued] = useState(false);
+  useEffect(() => {
+    if (startQueued && running) {
+      setStartQueued(false);
+      openStart();
+    }
+  }, [startQueued, running, openStart]);
+  const onStart = async () => {
+    if (running) {
+      openStart();
+      return;
+    }
+    const ok = await askConfirm({
+      title: "ワークスペースを起動してはじめる",
+      body: "ワークスペースが停止中です。起動して、準備ができたら「はじめる」を開きます。",
+      confirmLabel: busy ? "待機する" : "起動する",
+      danger: false,
+    });
+    if (!ok) return;
+    setStartQueued(true);
+    if (!busy) void startWs();
+  };
 
   // Start is immediate; Stop is confirmed — it docker-removes the container, so
   // running sessions drop to 停止 (resumable) and opencode web / preview disconnect.
@@ -460,6 +544,10 @@ export function WsBar() {
   // Container (own workspace): memory fill (vs quota) + CPU%. Shown to everyone.
   const hasWs = wsStats && wsStats.running && wsStats.mem_used != null;
   const memRatio = hasWs && wsStats.mem_max ? wsStats.mem_used / wsStats.mem_max : null;
+  // A process in this container was OOM-killed within the last few minutes (the
+  // container itself survived). Flag the memory tile crit so it's noticed even after
+  // usage falls back — a build/agent likely just died. (metrics.go oom_recent.)
+  const oomRecent = !!(hasWs && wsStats.oom_recent);
   const containerTiles = hasWs && (
     <>
       {tile({
@@ -468,8 +556,10 @@ export function WsBar() {
         max: 1,
         track: true,
         value: memRatio != null ? `${Math.round(memRatio * 100)}%` : `${fg(wsStats.mem_used)}G`,
-        level: lvl(memRatio, 0.75, 0.9),
-        title: `ワークスペースのメモリ: ${fg(wsStats.mem_used)}${wsStats.mem_max ? "/" + fg(wsStats.mem_max) : ""}G`,
+        level: oomRecent ? 2 : lvl(memRatio, 0.75, 0.9),
+        title: oomRecent
+          ? `ワークスペースのメモリ: ${fg(wsStats.mem_used)}${wsStats.mem_max ? "/" + fg(wsStats.mem_max) : ""}G\n⚠ 直近数分以内にコンテナ内でプロセスが OOM kill されました（メモリ上限到達。ビルド/エージェントが強制終了された可能性）`
+          : `ワークスペースのメモリ: ${fg(wsStats.mem_used)}${wsStats.mem_max ? "/" + fg(wsStats.mem_max) : ""}G`,
       })}
       {tile({
         k: "cpu",
@@ -621,12 +711,16 @@ export function WsBar() {
       </button>
       <span className={"ws-dot " + (running ? "on" : "off")}>●</span>
       <span
-        className="ws-state"
+        className={"ws-state" + (wsState === "stopped" && wsStats?.oom_killed ? " warn" : "")}
         title={
           wsState === "none"
             ? "停止（コンテナなし — Stop で削除済み。データは保持、Start で再作成）"
             : wsState === "stopped"
-              ? "停止（コンテナが自走終了 — クラッシュ / OOM の可能性）"
+              ? wsStats?.oom_killed
+                ? `停止（コンテナがメモリ不足で強制終了 — OOM kill、exit ${wsStats.exit_code ?? "?"}）。メモリ上限に達しました。`
+                : wsStats?.exit_code
+                  ? `停止（コンテナが自走終了 — exit code ${wsStats.exit_code}。クラッシュの可能性）`
+                  : "停止（コンテナが自走終了 — クラッシュ / OOM の可能性）"
               : wsState === "starting"
                 ? "起動中（初回はイメージ取得のため数分かかることがあります。完了すると自動で稼働中になります）"
                 : `状態: ${wsState}`
@@ -634,17 +728,22 @@ export function WsBar() {
       >
         {wsLabel(wsState)}
       </span>
-      {/* Second entry point to the New Session dialog (the Sessions-list ＋新規 stays as
-          is): handy when the left pane is scrolled / collapsed. Opens the same global
-          dialog via openNewSession; disabled while the workspace is stopped. */}
+      {/* はじめる — the single "start anything" entry (起動導線 Ph2): opens the
+          StartModal hub (chat / repo / clone / home / その他). While the workspace
+          is stopped it offers to start it and opens the hub when ready (Ph3). */}
       <button
         className="ghost ws-split ws-newsession"
-        title={running ? "新規セッション" : "新規セッション（ワークスペース停止中）"}
-        disabled={!running}
-        onClick={openNewSession}
+        title={
+          running
+            ? "はじめる（チャット / リポジトリ / clone / shell）"
+            : startQueued
+              ? "起動中 — 準備ができたら開きます"
+              : "はじめる（ワークスペースを起動して開始）"
+        }
+        onClick={() => void onStart()}
       >
-        <Icon name="add" />
-        <span className="lbl">新規</span>
+        <Icon name={startQueued ? "loading" : "add"} spin={startQueued} />
+        <span className="lbl">はじめる</span>
       </button>
       <button
         className="ghost ws-split"

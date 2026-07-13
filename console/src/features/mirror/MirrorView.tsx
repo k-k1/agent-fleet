@@ -1,9 +1,9 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import type { CSSProperties, KeyboardEvent as RKeyboardEvent, ClipboardEvent as RClipboardEvent, RefObject } from "react";
+import type { CSSProperties, KeyboardEvent as RKeyboardEvent, ClipboardEvent as RClipboardEvent, DragEvent as RDragEvent, RefObject } from "react";
 import { api, apiJSON, raw, errText, pasteImage } from "../../core/api/client.ts";
 import { splitPastedImages, buildImagePrompt } from "../../lib/pastedImages.ts";
-import { useSettings, chatFontStack } from "../../lib/settings.ts";
+import { useSettings, chatFontStack, surfaceBg, surfaceAccent, effectiveTheme } from "../../lib/settings.ts";
 import { useLayoutStore } from "../../layout/store.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { useSessionsStore } from "../sessions/store.ts";
@@ -14,6 +14,7 @@ import { MarkdownView } from "../viewer/MarkdownView.tsx";
 import {
   readTurn,
   collectBlocks,
+  finalAnswerStart,
   blockIndexAt,
   turnSpokenText,
   claimTurnReader,
@@ -65,6 +66,10 @@ interface Part {
   tool?: string;
   info?: string;
   output?: string;
+  prompt?: string; // kind=delegation: full instruction sent to the child
+  agentType?: string; // kind=delegation: Explore/general-purpose/task name
+  status?: string; // kind=delegation: requested/running/completed/failed
+  model?: string; // kind=delegation: explicitly selected child model
   file?: string;
   edits?: any[];
   questions?: Question[];
@@ -72,6 +77,7 @@ interface Part {
   plan?: string;
   files?: string[]; // kind=userfile: SendUserFile paths (browse-root-relative)
   caption?: string; // kind=userfile: optional caption
+  stderr?: string; // kind=bash: the ! command's stderr (output field holds stdout)
 }
 // A raw transcript turn (GET …/messages) and a grouped block (groupTurns output).
 interface Turn {
@@ -84,6 +90,8 @@ interface Turn {
   parts?: Part[];
   sidechain?: boolean;
   compact?: boolean;
+  bash?: boolean; // a `!`-run shell command block (coalesceUserActions), rendered as a terminal block
+  cmd?: boolean; // a `/`-run slash command / skill invocation, rendered as a compact chip
   model?: string;
   effort?: string;
   ctxWindow?: number;
@@ -98,6 +106,8 @@ interface Group {
   role: string;
   sidechain: boolean;
   compact: boolean;
+  bash: boolean; // a `!` shell-command block — render as a terminal block, never merged
+  cmd: boolean; // a `/` slash-command / skill chip — standalone, never merged
   parts: Part[];
   text: string;
   model: string;
@@ -245,8 +255,11 @@ export function MirrorView({
   const [sending, setSending] = useState(false);
   // Pasted images awaiting send: {path} is the session-saved absolute path (referenced in
   // the prompt), {url} an object URL for the local chip preview, {name} the basename.
-  const [attachments, setAttachments] = useState<{ path: string; name: string; url: string }[]>([]);
-  const [pasting, setPasting] = useState(false); // an image upload is in flight
+  const [attachments, setAttachments] = useState<{ path: string; name: string; url: string; image: boolean }[]>([]);
+  const [pasting, setPasting] = useState(false); // an attachment upload is in flight
+  const [dragging, setDragging] = useState(false); // an OS file drag is hovering the pane
+  const dragDepth = useRef(0); // dragenter/leave nesting counter (leave fires per child)
+  const filePickRef = useRef<HTMLInputElement>(null); // the ＋ button's hidden picker
   const [lightbox, setLightbox] = useState<string | null>(null); // enlarged image (blob URL) or null
   const [histIdx, setHistIdx] = useState<number | null>(null); // position in composer history, or null
   const cursorRef = useRef(0);
@@ -327,6 +340,7 @@ export function MirrorView({
         else ttsAutoPumpRef.current();
       },
       sessionVoiceOpts(session), // セッションごとの声（設定 OFF なら undefined）
+      session, // 左ペインの再生中アイコン用
     );
     if (!h) return; // 読み上げられる本文が無い（ツールだけのターン等）
     ttsHandleRef.current = h;
@@ -351,7 +365,7 @@ export function MirrorView({
         new Promise<never>((_, rej) => setTimeout(() => rej(new Error("timeout")), 30000)),
       ]);
       const reply = (r?.reply || "").trim();
-      if (!r?.error && reply) announce("要約。" + reply, label, sessionVoiceOpts(session));
+      if (!r?.error && reply) announce("要約。" + reply, label, sessionVoiceOpts(session), session);
       else ttsStart(gi, body, fromBlock); // 要約が得られない → 全文読み
     } catch {
       ttsStart(gi, body, fromBlock); // ワークスペース停止・タイムアウト等 → 全文読み
@@ -382,15 +396,21 @@ export function MirrorView({
       const total = collectBlocks(body).length;
       ttsAutoDoneRef.current.set(gi, total);
       if (total <= done) continue; // 増分なし（ツールだけの追記等）
+      // 過程スキップ（chat の分離と同趣・docs/19）: ツール前ナレーションを飛ばし、最後のツール
+      // 以降の本文（＝最終回答）から自動読み上げする。ポールが本文＋ツールをまとめて届ける
+      // 速いツール応答では過程が綺麗に飛ぶ（ナレーションが 1 ポール先行した時だけ読まれる）。
+      // 手動の「読み上げ」ボタン／選択朗読は従来どおり全文（意図的に読ませているため触らない）。
+      const from = Math.max(done, finalAnswerStart(body));
+      if (total <= from) continue; // 読むべき最終回答ブロックがまだ無い（過程だけの追記）
       if (settings.ttsSummaryRead) {
-        const text = turnSpokenText(body, done);
+        const text = turnSpokenText(body, from);
         if (text.length > TTS_SUMMARY_MIN) {
           ttsSummaryBusyRef.current = true;
-          void ttsSummarize(gi, body, done, text);
+          void ttsSummarize(gi, body, from, text);
           return;
         }
       }
-      ttsStart(gi, body, done);
+      ttsStart(gi, body, from);
       if (ttsHandleRef.current) return; // 読み始めた（読める文が無ければ次の候補へ）
     }
   };
@@ -1049,24 +1069,11 @@ export function MirrorView({
     setTimeout(() => tickRef.current?.(), 400);
   };
 
-  // Paste image(s) from the clipboard into the composer: upload each to the session and
-  // hold it as an attachment chip. Non-image pastes fall through to the default (text).
-  const onPaste = async (e: RClipboardEvent<HTMLTextAreaElement>) => {
-    // Image paste rides claude's Read-tool flow (saved path referenced in the prompt);
-    // agents without that cap let the paste fall through as ordinary text.
-    if (!canPasteImage) return;
-    const items = e.clipboardData?.items;
-    if (!items) return;
-    const files: File[] = [];
-    for (let i = 0; i < items.length; i++) {
-      const it = items[i];
-      if (it.kind === "file" && it.type.startsWith("image/")) {
-        const f = it.getAsFile();
-        if (f) files.push(f);
-      }
-    }
-    if (!files.length) return; // ordinary text paste — let it happen
-    e.preventDefault();
+  // addFiles uploads files to the session and holds each as an attachment chip —
+  // shared by clipboard paste, drag&drop onto the pane, and the ＋ picker. Upload +
+  // saved path referenced in the prompt (kind-worded by buildImagePrompt).
+  const addFiles = async (files: File[]) => {
+    if (!files.length) return;
     setPasting(true);
     for (const f of files) {
       try {
@@ -1074,17 +1081,38 @@ export function MirrorView({
         if (res.status < 300 && res.path && res.name) {
           const path = res.path;
           const nm = res.name;
-          const url = URL.createObjectURL(f);
-          setAttachments((a) => [...a, { path, name: nm, url }]);
+          const image = f.type.startsWith("image/");
+          // Non-images get no preview URL — the chip shows an icon + name instead.
+          const url = image ? URL.createObjectURL(f) : "";
+          setAttachments((a) => [...a, { path, name: nm, url, image }]);
         } else {
-          toast(res.error ? errText(res.error) : "画像の貼り付けに失敗しました");
+          toast(res.error ? errText(res.error) : "ファイルの添付に失敗しました");
         }
       } catch {
-        toast("画像の貼り付けに失敗しました（通信エラー）");
+        toast("ファイルの添付に失敗しました（通信エラー）");
       }
     }
     setPasting(false);
     inputRef.current?.focus();
+  };
+
+  // Paste file(s) from the clipboard into the composer. Non-file pastes fall through
+  // to the default (text). Agents without the cap let everything fall through.
+  const onPaste = async (e: RClipboardEvent<HTMLTextAreaElement>) => {
+    if (!canPasteImage) return;
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    const files: File[] = [];
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i];
+      if (it.kind === "file") {
+        const f = it.getAsFile();
+        if (f) files.push(f);
+      }
+    }
+    if (!files.length) return; // ordinary text paste — let it happen
+    e.preventDefault();
+    await addFiles(files);
   };
 
   const removeAttachment = (i: number) => {
@@ -1115,24 +1143,69 @@ export function MirrorView({
   const decisionPending = !!pendingPlan || !!pendingPerm;
   const composerLocked = auqLocksComposer || decisionPending;
 
+  // OS drag&drop anywhere on the pane attaches the dropped files (the composer is a
+  // small target — the whole chat area accepts). dragenter/leave nest per child, so a
+  // depth counter drives the highlight; drop is ignored while the composer is hidden
+  // (read-only history) or locked.
+  const canDropFiles = canPasteImage && !readOnly && !composerLocked;
+  const onDragEnter = (e: RDragEvent) => {
+    if (!canDropFiles || !e.dataTransfer?.types?.includes("Files")) return;
+    e.preventDefault();
+    dragDepth.current++;
+    setDragging(true);
+  };
+  const onDragOver = (e: RDragEvent) => {
+    if (!canDropFiles || !e.dataTransfer?.types?.includes("Files")) return;
+    e.preventDefault();
+  };
+  const onDragLeave = (e: RDragEvent) => {
+    if (!canDropFiles) return;
+    e.preventDefault();
+    if (--dragDepth.current <= 0) {
+      dragDepth.current = 0;
+      setDragging(false);
+    }
+  };
+  const onDrop = async (e: RDragEvent) => {
+    if (!canDropFiles) return;
+    e.preventDefault();
+    dragDepth.current = 0;
+    setDragging(false);
+    const files = Array.from(e.dataTransfer?.files || []);
+    await addFiles(files);
+  };
+
   const send = async () => {
     if (composerLocked) return;
     const text = draft.trim();
     if (!text && !attachments.length) return;
+    // このセッションを読み上げている最中にコンポーサーから送信したら、その読み上げを止める。
+    // 割り込み・追撃の意思なので、今さら古い回答（カラオケ・要約アナウンス）を聞かされても
+    // 混乱するだけ。sessionName で判定し、他セッション由来の再生（不一致）はそのまま流す。
+    const ts = useTtsStore.getState();
+    if (ts.active && ts.sessionName === session) ts.stop();
     const paths = attachments.map((a) => a.path);
-    const prompt = buildImagePrompt(text, paths);
+    const prompt = buildImagePrompt(text, paths, agent.id);
     setHistIdx(null);
     setDraft("");
     clearAttachments();
+    // On touch devices, drop focus so the soft keyboard (GBoard) retracts once the
+    // turn is sent — the reply is what the user wants to read, not keep typing. Desktop
+    // keeps focus (and refocuses below) so typing the next turn needs no extra click.
+    if (coarsePointer()) inputRef.current?.blur();
     await sendPrompt(prompt);
-    inputRef.current?.focus();
+    if (!coarsePointer()) inputRef.current?.focus();
   };
 
   // Open a plan's Markdown in its own pane (manual — via a button, not automatic).
   const openPlan = (plan: string) => showDoc(planTitle(plan), plan);
 
   // Open a SendUserFile entry in its own split pane (same as the file tree's split-open).
-  const openFile = (path: string) => openTargetInNew({ content: { kind: "file", filePath: path } });
+  const openFile = (path: string, line?: number, column?: number) =>
+    openTargetInNew(
+      { content: { kind: "file", filePath: path, targetLine: line, targetColumn: column } },
+      true,
+    );
 
   // Auto-suggested title (session_title.go): 採用 promotes it to the session's real
   // title (bumpSessions so the left-pane label updates without waiting for its own
@@ -1164,27 +1237,6 @@ export function MirrorView({
       setTitleActing(false);
     }
   };
-  // Manual re-ask (header button): unlike the automatic trigger, this ignores any
-  // prior dismissal/idle-turn gating and runs synchronously — the server call itself
-  // takes a few seconds (headless LLM), so this can be slower than accept/dismiss.
-  const regenerateTitle = async () => {
-    if (!session || titleActing) return;
-    setTitleActing(true);
-    try {
-      const res = await raw(`api/sessions/${q(session)}/title/regenerate`, { method: "POST" });
-      const j = await res.json().catch(() => ({}));
-      if (res.ok && typeof j.suggestedTitle === "string") {
-        setSuggestedTitle(j.suggestedTitle);
-      } else if (!res.ok) {
-        toast(j.error ? errText(j.error) : `タイトル案の生成に失敗しました (${res.status})`);
-      }
-    } catch {
-      toast("タイトル案の生成に失敗しました（通信エラー）");
-    } finally {
-      setTitleActing(false);
-    }
-  };
-
   const openDiff = (p: Part) => showDiff(p.file || "", p.edits, p.tool || "");
 
   // Composer history = the user's own prompts in this conversation (so ↑ works even
@@ -1281,7 +1333,8 @@ export function MirrorView({
     queued: true,
   }));
   const extras = [...queuedTurns, ...echoTurns];
-  const groups = groupTurns(extras.length ? [...turns, ...extras] : turns);
+  const baseTurns = coalesceUserActions(turns);
+  const groups = groupTurns(extras.length ? [...baseTurns, ...extras] : baseTurns);
 
   // 新しい回答の自動読み上げ（P2）: ポーリングで append された新規 assistant ターンを
   // 朗読キューへ（通常はアクティブなペインのみ、ttsAutoReadAllPanes なら開いている全ペイン。
@@ -1350,10 +1403,32 @@ export function MirrorView({
       ? stateInfo(sessionMeta)
       : null;
 
+  // Region theme + surface color for the session mirror: data-theme scopes the base
+  // tokens (tokens.css), and --chat-bg/--chat-accent are derived for the mirror's own
+  // effective theme so a flipped mirror doesn't inherit the app-theme surface tint. The
+  // accent falls back through the other surfaces (viewer/leftpane/topbar) as before.
+  const mirrorEff = effectiveTheme(settings.mirrorTheme, settings.theme);
+  const mirrorBg = surfaceBg(settings.chatColor, mirrorEff);
+  const mirrorAccent =
+    surfaceAccent(settings.chatColor) ||
+    surfaceAccent(settings.viewerColor) ||
+    surfaceAccent(settings.leftpaneColor) ||
+    surfaceAccent(settings.topbarColor);
+
   return (
     <div
-      className="mirrorview"
-      style={{ "--chat-font": chatFontStack(settings.chatFont), "--chat-size": settings.chatSize + "px" } as CSSProperties}
+      className={"mirrorview" + (dragging ? " dragging" : "")}
+      data-theme={settings.mirrorTheme !== "inherit" ? settings.mirrorTheme : undefined}
+      style={{
+        "--chat-font": chatFontStack(settings.chatFont),
+        "--chat-size": settings.chatSize + "px",
+        ...(mirrorBg ? { "--chat-bg": mirrorBg } : {}),
+        ...(mirrorAccent ? { "--chat-accent": mirrorAccent } : {}),
+      } as CSSProperties}
+      onDragEnter={onDragEnter}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
     >
       <header className="view-head">
         {sessionMeta ? (
@@ -1373,21 +1448,6 @@ export function MirrorView({
           </span>
         ) : (
           <span className="view-title">セッション</span>
-        )}
-        {sessionMeta?.kind === "claude" && settings.autoTitleSuggest && (
-          <button
-            type="button"
-            className="icon title-suggest-btn"
-            title={
-              sessionMeta?.title
-                ? "タイトルを再提案（現時点までの会話から作り直します。採用するまで今のタイトルは変わりません）"
-                : "タイトルを提案してもらう（現時点までの会話から作成します）"
-            }
-            onClick={regenerateTitle}
-            disabled={titleActing}
-          >
-            <Icon name={titleActing ? "loading" : "lightbulb"} spin={titleActing} />
-          </button>
         )}
         <MirrorToggle mirror={!!mirror} onToggle={onToggleMirror} running={running} />
       </header>
@@ -1574,7 +1634,7 @@ export function MirrorView({
               <span className="mt-model muted">質問中</span>
             </div>
             <div className="mirror-turn-body">
-              {pendingText && <MarkdownView source={pendingText} />}
+              {pendingText && <MarkdownView source={pendingText} onOpenFile={openFile} />}
               <PendingQuestions
                 key={"pq-" + (pending[0]?.question || "")}
                 questions={pending}
@@ -1651,8 +1711,15 @@ export function MirrorView({
           {(attachments.length > 0 || pasting) && (
             <div className="mirror-attach">
               {attachments.map((a, i) => (
-                <div className="ma-chip" key={a.path}>
-                  <img className="ma-thumb" src={a.url} alt="" />
+                <div className={"ma-chip" + (a.image ? "" : " ma-file")} key={a.path}>
+                  {a.image ? (
+                    <img className="ma-thumb" src={a.url} alt="" />
+                  ) : (
+                    <span className="ma-fname" title={a.name}>
+                      <FileIcon name={a.name} />
+                      <span className="ma-fname-text">{a.name}</span>
+                    </span>
+                  )}
                   <button type="button" className="ma-del" title="削除" onClick={() => removeAttachment(i)}>
                     <Icon name="close" />
                   </button>
@@ -1686,6 +1753,32 @@ export function MirrorView({
               <Icon name="chevron-down" />
             </button>
           </div>
+          {/* ＋ attach: the drag&drop-less path (phones foremost, handy everywhere).
+              Any file type; the same addFiles upload the paste/drop paths use. */}
+          {canPasteImage && (
+            <>
+              <input
+                ref={filePickRef}
+                type="file"
+                multiple
+                hidden
+                onChange={(e) => {
+                  const files = Array.from(e.target.files || []);
+                  e.target.value = ""; // allow re-picking the same file
+                  void addFiles(files);
+                }}
+              />
+              <button
+                type="button"
+                className="ghost mirror-attach-btn"
+                title="ファイルを添付（ドラッグ&ドロップも可）"
+                disabled={composerLocked || pasting}
+                onClick={() => filePickRef.current?.click()}
+              >
+                <Icon name="add" />
+              </button>
+            </>
+          )}
           <textarea
             ref={inputRef}
             className="mirror-input"
@@ -1798,6 +1891,73 @@ function isNoise(t: Turn): boolean {
   return SYS_PREFIXES.some((p) => s.startsWith(p));
 }
 
+// A `!`-run shell command is logged by Claude as a user turn `<bash-input>cmd</bash-input>`,
+// its result as the next user turn `<bash-stdout>…</bash-stdout><bash-stderr>…</bash-stderr>`.
+// These are hidden by isNoise; parseBashInput/parseBashOutput recover the command + result
+// so coalesceBash can surface them as a terminal block instead of dropping them entirely.
+const BASH_IN_RE = /^\s*<bash-input>([\s\S]*?)<\/bash-input>\s*$/;
+function parseBashInput(t: Turn): string | null {
+  if (t.role !== "user") return null;
+  const m = (t.text || "").match(BASH_IN_RE);
+  return m ? m[1].trim() : null;
+}
+function parseBashOutput(t: Turn): { stdout: string; stderr: string } | null {
+  if (t.role !== "user") return null;
+  const s = (t.text || "").replace(/^\s+/, "");
+  if (!s.startsWith("<bash-stdout>")) return null;
+  const out = s.match(/<bash-stdout>([\s\S]*?)<\/bash-stdout>/);
+  const err = s.match(/<bash-stderr>([\s\S]*?)<\/bash-stderr>/);
+  return { stdout: out ? out[1] : "", stderr: err ? err[1] : "" };
+}
+
+// A `/`-run slash command or skill is logged as a user turn
+// `<command-name>/foo</command-name><command-message>…</command-message><command-args>…</command-args>`.
+// It's hidden by isNoise; parseCommand recovers the name + args so it can surface as a chip.
+function parseCommand(t: Turn): { name: string; args: string } | null {
+  if (t.role !== "user") return null;
+  const s = (t.text || "").replace(/^\s+/, "");
+  if (!s.startsWith("<command-name>")) return null;
+  const name = s.match(/<command-name>([\s\S]*?)<\/command-name>/);
+  if (!name || !name[1].trim()) return null;
+  const args = s.match(/<command-args>([\s\S]*?)<\/command-args>/);
+  return { name: name[1].trim(), args: args ? args[1].trim() : "" };
+}
+
+// coalesceUserActions surfaces user actions that Claude logs as system-tagged user turns and
+// isNoise would otherwise drop: a `!` shell command (`<bash-input>` + the paired `<bash-stdout>`
+// result turn) becomes a kind="bash" terminal block; a `/` slash command / skill invocation
+// (`<command-name>`) becomes a kind="cmd" chip. groupTurns keeps each as its own standalone
+// block. Untouched turns pass through; an orphan bash-output turn stays and is dropped by isNoise.
+function coalesceUserActions(turns: Turn[]): Turn[] {
+  const out: Turn[] = [];
+  for (let i = 0; i < turns.length; i++) {
+    const shell = parseBashInput(turns[i]);
+    if (shell !== null) {
+      const paired = i + 1 < turns.length ? parseBashOutput(turns[i + 1]) : null;
+      if (paired) i++; // consume the result turn
+      out.push({
+        ...turns[i - (paired ? 1 : 0)],
+        bash: true,
+        text: "$ " + shell, // plain form used for copy
+        parts: [{ kind: "bash", text: shell, output: paired?.stdout || "", stderr: paired?.stderr || "" }],
+      });
+      continue;
+    }
+    const slash = parseCommand(turns[i]);
+    if (slash) {
+      out.push({
+        ...turns[i],
+        cmd: true,
+        text: slash.name + (slash.args ? " " + slash.args : ""), // plain form used for copy
+        parts: [{ kind: "cmd", text: slash.name, info: slash.args }],
+      });
+      continue;
+    }
+    out.push(turns[i]);
+  }
+  return out;
+}
+
 // echoLanded reports whether an optimistic echo's real user turn has appeared in the
 // transcript: a non-noise user turn past the echo's anchor idx with the same text. Used
 // both to hide a landed echo at render time (no 1-frame double) and to prune it from state.
@@ -1827,13 +1987,29 @@ function partsOf(t: Turn): Part[] {
 function groupTurns(turns: Turn[]): Group[] {
   const out: Group[] = [];
   for (const t of turns) {
-    if (isNoise(t)) continue;
+    // A child agent's raw prompt, reasoning, chatter and tool log are implementation
+    // detail. The parent Agent/Task/spawn_agent call is rendered as one delegation card
+    // instead, keeping the main conversation readable without hiding that delegation
+    // happened.
+    if (isNoise(t) || t.sidechain) continue;
     const parts = partsOf(t);
     if (!parts.length) continue;
     const last = out[out.length - 1];
     // A compaction summary is its own standalone block — never merge it into an
     // adjacent user turn (nor merge a normal turn into it).
-    if (last && last.role === t.role && last.sidechain === !!t.sidechain && !last.compact && !t.compact) {
+    // A compaction summary, a `!` bash-command block, and a `/` command chip are each
+    // standalone — never merged into an adjacent turn (nor a normal turn into them).
+    if (
+      last &&
+      last.role === t.role &&
+      last.sidechain === !!t.sidechain &&
+      !last.compact &&
+      !t.compact &&
+      !last.bash &&
+      !t.bash &&
+      !last.cmd &&
+      !t.cmd
+    ) {
       last.parts.push(...parts);
       if (t.pending) last.pending = true;
       if (t.queued) last.queued = true;
@@ -1852,6 +2028,8 @@ function groupTurns(turns: Turn[]): Group[] {
         role: t.role,
         sidechain: !!t.sidechain,
         compact: !!t.compact,
+        bash: !!t.bash,
+        cmd: !!t.cmd,
         parts: [...parts],
         text: t.text || "",
         model: t.model || "",
@@ -1924,7 +2102,7 @@ function renderGroups(
   onAnswer: (t: string) => void,
   onOpenPlan: (plan: string) => void,
   onOpenDiff: (p: Part) => void,
-  onOpenFile: (path: string) => void,
+  onOpenFile: (path: string, line?: number, column?: number) => void,
   maxSpend: number,
   session: string,
   onOpenImage: (url: string) => void,
@@ -1936,14 +2114,20 @@ function renderGroups(
   let prevCtx = "";
   for (let i = 0; i < groups.length; i++) {
     const g = groups[i];
-    const ctx = g.branch || g.cwd ? (g.branch || "") + " " + (g.cwd || "") : "";
+    const ctx = g.branch || g.cwd ? (g.branch || "") + "\x1f" + (g.cwd || "") : "";
     if (ctx && ctx !== prevCtx) {
       els.push(<ContextLine key={"ctx-" + g.idx} branch={g.branch} cwd={g.cwd} />);
     }
     if (ctx) prevCtx = ctx;
     els.push(
       g.compact ? (
-        <CompactBlock key={g.idx} turn={g} before={ctxSizeBefore(groups, i)} after={ctxSizeAfter(groups, i)} />
+        <CompactBlock
+          key={g.idx}
+          turn={g}
+          before={ctxSizeBefore(groups, i)}
+          after={ctxSizeAfter(groups, i)}
+          onOpenFile={onOpenFile}
+        />
       ) : (
         <Turn
           key={g.idx}
@@ -2011,7 +2195,17 @@ function TaskChecklist({ tasks }: { tasks: TaskItem[] }) {
 // CompactBlock renders claude's auto-compaction summary as a collapsed disclosure —
 // "コンテキストが圧縮されました" — rather than a giant user turn. Closed by default
 // (native <details>); expand to read the summary that replaced the earlier context.
-function CompactBlock({ turn, before, after }: { turn: Group; before?: number; after?: number }) {
+function CompactBlock({
+  turn,
+  before,
+  after,
+  onOpenFile,
+}: {
+  turn: Group;
+  before?: number;
+  after?: number;
+  onOpenFile: (path: string, line?: number, column?: number) => void;
+}) {
   // Show the reduction only once both sides are real: `after` is 0 until the first
   // post-compaction turn's usage lands, so the effect appears a beat after 圧縮完了.
   const hasEffect = !!before && !!after && before > after;
@@ -2049,7 +2243,7 @@ function CompactBlock({ turn, before, after }: { turn: Group; before?: number; a
             </div>
           </div>
         )}
-        <MarkdownView source={turn.text} />
+        <MarkdownView source={turn.text} baseDir={turn.cwd} onOpenFile={onOpenFile} />
       </div>
     </details>
   );
@@ -2058,7 +2252,15 @@ function CompactBlock({ turn, before, after }: { turn: Group; before?: number; a
 // ThinkingBlock renders an agent's chain-of-thought (codex/opencode reasoning) as a
 // collapsed disclosure — "思考" — so it's available without crowding the answer. Closed
 // by default (native <details>); expand to read the reasoning.
-function ThinkingBlock({ text }: { text?: string }) {
+function ThinkingBlock({
+  text,
+  baseDir,
+  onOpenFile,
+}: {
+  text?: string;
+  baseDir?: string;
+  onOpenFile?: (path: string, line?: number, column?: number) => void;
+}) {
   if (!text) return null;
   return (
     <details className="mirror-thinking">
@@ -2067,9 +2269,67 @@ function ThinkingBlock({ text }: { text?: string }) {
         <span className="mth-title">思考</span>
       </summary>
       <div className="mirror-thinking-body">
-        <MarkdownView source={text} />
+        <MarkdownView source={text} baseDir={baseDir} onOpenFile={onOpenFile} />
       </div>
     </details>
+  );
+}
+
+// stripAnsi removes SGR color/style escape sequences so shell output renders as plain text.
+function stripAnsi(s: string): string {
+  // eslint-disable-next-line no-control-regex
+  return s.replace(/\x1b\[[0-9;]*m/g, "");
+}
+
+// BashBlock renders a `!`-run shell command as a terminal block: the command line always
+// shown ("$ cmd"), its stdout/stderr collapsed by default behind a "出力 (N 行)" toggle
+// (matching the tool-run disclosure). stderr is tinted; an empty result shows no toggle.
+function BashBlock({ command, stdout, stderr }: { command?: string; stdout?: string; stderr?: string }) {
+  const [open, setOpen] = useState(false);
+  const out = stripAnsi(stdout || "").replace(/\s+$/, "");
+  const err = stripAnsi(stderr || "").replace(/\s+$/, "");
+  const hasOut = !!(out || err);
+  const lines = (out ? out.split("\n").length : 0) + (err ? err.split("\n").length : 0);
+  return (
+    <div className={"mt-bash" + (open ? " open" : "")}>
+      <div className="mt-bash-cmd">
+        <span className="mt-bash-prompt">$</span>
+        <code className="mt-bash-code">{command}</code>
+      </div>
+      {hasOut && (
+        <>
+          <button
+            type="button"
+            className="mt-bash-toggle"
+            onClick={() => setOpen((o) => !o)}
+            aria-expanded={open}
+            title={open ? "出力をたたむ" : "出力を表示"}
+          >
+            <Icon name={open ? "chevron-down" : "chevron-right"} />
+            <span>出力 ({lines} 行)</span>
+          </button>
+          {open && (
+            <pre className="mt-bash-output">
+              {out}
+              {err && <span className="mt-bash-err">{(out ? "\n" : "") + err}</span>}
+            </pre>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+// CmdChip renders a `/`-run slash command / skill invocation as a compact chip — the
+// command name with its arguments — marking that the user triggered it. The command's
+// effect (a skill's work) shows as the following turns; builtins' terminal feedback stays hidden.
+function CmdChip({ name, args }: { name?: string; args?: string }) {
+  return (
+    <div className="mt-cmd">
+      <Icon name="play" />
+      <code className="mt-cmd-name">{name}</code>
+      {args && <span className="mt-cmd-args">{args}</span>}
+    </div>
   );
 }
 
@@ -2110,7 +2370,7 @@ function Turn({
   onAnswer: (t: string) => void;
   onOpenPlan: (plan: string) => void;
   onOpenDiff: (p: Part) => void;
-  onOpenFile: (path: string) => void;
+  onOpenFile: (path: string, line?: number, column?: number) => void;
   agentName: string;
   tts: TurnTtsWiring;
   isRejectedPlan: (plan: string) => boolean;
@@ -2149,18 +2409,39 @@ function Turn({
         )}
       </div>
       <div className="mirror-turn-body" ref={bodyEl}>
-        {isUser ? (
+        {isUser && turn.bash ? (
+          // A `!`-run shell command (coalesceUserActions): render each as a terminal block
+          // with the command line and its collapsed output, rather than hiding it as noise.
+          turn.parts.map((p, i) => (
+            <BashBlock key={i} command={p.text} stdout={p.output} stderr={p.stderr} />
+          ))
+        ) : isUser && turn.cmd ? (
+          // A `/`-run slash command / skill invocation: a compact chip marking the action.
+          turn.parts.map((p, i) => <CmdChip key={i} name={p.text} args={p.info} />)
+        ) : isUser ? (
           (() => {
             // Split off any pasted-image references so the bubble shows the user's words
             // plus clickable thumbnails, not the machine-facing paths.
-            const { text, images } = splitPastedImages(turn.text || "");
+            const { text, images, files } = splitPastedImages(turn.text || "");
             return (
               <>
-                {text && <MarkdownView source={text} breaks />}
+                {text && <MarkdownView source={text} breaks baseDir={turn.cwd} onOpenFile={onOpenFile} />}
                 {images.length > 0 && (
                   <div className="mt-imgs">
                     {images.map((nm) => (
                       <PastedThumb key={nm} session={session} name={nm} onOpen={onOpenImage} />
+                    ))}
+                  </div>
+                )}
+                {files.length > 0 && (
+                  // Non-image attachments (drag&drop / ＋): a name chip — the file itself
+                  // lives under the session's pasted dir for the agent to read.
+                  <div className="mt-attach-files">
+                    {files.map((nm) => (
+                      <span className="mt-attach-file" key={nm} title={nm}>
+                        <FileIcon name={nm} />
+                        <span className="mt-attach-file-name">{nm}</span>
+                      </span>
                     ))}
                   </div>
                 )}
@@ -2193,9 +2474,11 @@ function Turn({
             ) : item.p.kind === "thinking" ? (
               // The agent's chain-of-thought (codex reasoning / opencode reasoning),
               // collapsed by default so it doesn't crowd the answer.
-              <ThinkingBlock key={item.i} text={item.p.text} />
+              <ThinkingBlock key={item.i} text={item.p.text} baseDir={turn.cwd} onOpenFile={onOpenFile} />
+            ) : item.p.kind === "delegation" ? (
+              <DelegationCard key={item.i} p={item.p} agentName={agentName} />
             ) : (
-              <MarkdownView key={item.i} source={item.p.text} />
+              <MarkdownView key={item.i} source={item.p.text} baseDir={turn.cwd} onOpenFile={onOpenFile} />
             ),
           )
         )}
@@ -2213,6 +2496,53 @@ function Turn({
         {!isUser && <TurnTtsButtons turn={turn} tts={tts} body={bodyEl} />}
         <CopyButton text={turn.text} />
       </div>
+    </div>
+  );
+}
+
+// DelegationCard keeps orchestration visible without dumping the child agent's private
+// working transcript into the main conversation. The full instruction and final result
+// (when the provider records one) remain available on demand.
+function DelegationCard({ p, agentName }: { p: Part; agentName: string }) {
+  const status = p.status || "requested";
+  const statusLabel: Record<string, string> = {
+    requested: "依頼済み",
+    running: "進行中",
+    completed: "完了",
+    failed: "失敗",
+  };
+  const detail = !!(p.prompt || p.output);
+  return (
+    <div className="mt-delegation">
+      <div className="mt-delegation-head">
+        <Icon name="repo-forked" />
+        <span className="mt-delegation-title">{agentName}サブエージェントに依頼</span>
+        <span className={"mt-delegation-status " + status}>{statusLabel[status] || status}</span>
+      </div>
+      {(p.info || p.agentType || p.model) && (
+        <div className="mt-delegation-meta">
+          {p.info && <span className="mt-delegation-label">{p.info}</span>}
+          {p.agentType && p.agentType !== p.info && <code>{p.agentType}</code>}
+          {p.model && <code>{prettyModel(p.model)}</code>}
+        </div>
+      )}
+      {detail && (
+        <details className="mt-delegation-detail">
+          <summary>詳細</summary>
+          {p.prompt && (
+            <div className="mt-delegation-section">
+              <div className="muted">委譲した指示</div>
+              <pre>{p.prompt}</pre>
+            </div>
+          )}
+          {p.output && (
+            <div className="mt-delegation-section">
+              <div className="muted">結果</div>
+              <pre>{p.output}</pre>
+            </div>
+          )}
+        </details>
+      )}
     </div>
   );
 }

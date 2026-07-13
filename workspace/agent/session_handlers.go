@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
@@ -268,12 +268,12 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusCreated, wireSession(meta, true))
 }
 
-// handleForkSession forks a claude session's conversation into a NEW session
-// (POST /sessions/{name}/fork). The fork shares the source's history up to now but
-// then diverges independently — the official `claude --fork-session` copies the
-// transcript, leaving the source running/intact. Only claude sessions carry a
-// resumable jsonl to fork; the fork's first launch (via ForkFrom) materializes its
-// own jsonl (see claude 縦割りの buildProgram), so restarts resume it normally.
+// handleForkSession forks a session's conversation into a NEW session of the same
+// kind (POST /sessions/{name}/fork). The fork shares the source's history up to now
+// but then diverges independently — each CLI's native fork copies the conversation,
+// leaving the source running/intact (claude --fork-session / opencode --session
+// --fork / codex fork). The per-kind source id comes from agents.Forker; the fork's
+// first launch (via ForkFrom) materializes the copy, and later launches resume it.
 func handleForkSession(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	src, ok := session.ReadMeta(name)
@@ -281,26 +281,31 @@ func handleForkSession(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusNotFound, "no_session", "session not found: "+name)
 		return
 	}
-	if !agentOf(src.Kind).Caps().CanFork {
-		httpx.WriteErr(w, http.StatusBadRequest, "not_claude", "分岐できるのは claude セッションのみです")
+	ag := agentOf(src.Kind)
+	forker, canFork := ag.(agents.Forker)
+	if !canFork || !ag.Caps().CanFork {
+		httpx.WriteErr(w, http.StatusBadRequest, "unsupported_kind", "このセッション種別は分岐に対応していません")
 		return
 	}
 	if !session.DirExists(src.Dir) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_dir", "作業フォルダが存在しないため分岐できません")
 		return
 	}
-	srcSid := session.UUID(src.Dir, name)
-	if !claude.JSONLResumable(srcSid) {
-		httpx.WriteErr(w, http.StatusBadRequest, "not_resumable", "分岐できる会話がまだありません")
+	forkFrom, err := forker.ForkSource(src)
+	if err != nil {
+		httpx.WriteErr(w, http.StatusBadRequest, "not_resumable", err.Error())
 		return
 	}
 	forkName := allocSessionName(src.Dir)
 	title, _ := cleanTitle(forkTitle(src))
 	meta := session.Meta{
-		Name: forkName, Dir: src.Dir, Model: src.Model, Kind: session.KindClaude, Title: title,
-		Label: sessionLabelFor(src.Dir, title), Repo: filepath.Base(src.Dir),
+		Name: forkName, Dir: src.Dir, Model: src.Model, Kind: src.Kind, Title: title,
+		Repo:      filepath.Base(src.Dir),
 		Branch:    gitCurrentBranch(src.Dir),
-		CreatedAt: time.Now().Format(time.RFC3339), ForkFrom: srcSid,
+		CreatedAt: time.Now().Format(time.RFC3339), ForkFrom: forkFrom,
+	}
+	if ag.Caps().UsesLabel {
+		meta.Label = sessionLabelFor(src.Dir, title)
 	}
 	if err := startSessionTmux(meta, false); err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "tmux_failed", err.Error())
@@ -327,6 +332,7 @@ func handleStopSession(w http.ResponseWriter, r *http.Request) {
 	}
 	if hadMeta {
 		status.Remove(session.UUID(meta.Dir, name))
+		status.RemoveExit(name)
 	}
 	if live {
 		if out, err := exec.Command("tmux", "kill-session", "-t", session.ExactTarget(tn)).CombinedOutput(); err != nil {
@@ -399,6 +405,7 @@ func handleArchiveSession(w http.ResponseWriter, r *http.Request) {
 		_ = exec.Command("tmux", "kill-session", "-t", session.ExactTarget(tn)).Run()
 	}
 	status.Remove(session.UUID(m.Dir, name))
+	status.RemoveExit(name)
 	m.Archived = true
 	session.WriteMeta(m)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"archived": name})
@@ -461,6 +468,7 @@ func handleRecreateSession(w http.ResponseWriter, r *http.Request) {
 		_ = exec.Command("tmux", "kill-session", "-t", session.ExactTarget(tn)).Run()
 	}
 	status.Remove(session.UUID(m.Dir, m.Name))
+	status.RemoveExit(m.Name)
 	m.Archived = true
 	session.WriteMeta(m)
 

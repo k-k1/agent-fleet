@@ -1,5 +1,5 @@
 // LaunchModal（作業を始める）— the repo row's primary 起動 action: agent + model
-// (claude only) + optional first prompt (typed or from a template), and WHERE —
+// (kinds with caps.model) + optional first prompt (typed or from a template), and WHERE —
 // a new isolated worktree (default; unnamed = a server-minted provisional branch
 // temp/<slug> in a wip-<slug> folder) or in-place on the current checkout.
 // Port of the old components/LaunchModal.
@@ -11,7 +11,8 @@ import { Icon } from "../../ui/Icon.tsx";
 import { agentOf } from "../../agents/registry.ts";
 import { readRepoLast, resolveModel } from "../../lib/repoLast.ts";
 import { readPromptHistory } from "../../lib/promptHistory.ts";
-import { useSettings, CLAUDE_MODELS } from "../../lib/settings.ts";
+import { useSettings } from "../../lib/settings.ts";
+import { ModelPicker } from "../../ui/ModelPicker.tsx";
 import { repoPromptTemplates } from "./api.ts";
 import type { PromptTemplateGroup } from "./api.ts";
 import { sanitizeSeg } from "../../lib/reponame.ts";
@@ -49,21 +50,24 @@ interface LaunchModalProps {
    * are created from the base clone. */
   allowWorktree?: boolean;
   onClose: () => void;
+  /** Present when opened from the はじめる hub: 場所を変更 returns to it. */
+  onBack?: () => void;
   onLaunch: (opts: LaunchOpts) => Promise<LaunchResult>;
 }
 
-export function LaunchModal({ repo, branch, path, kinds, allowWorktree = true, onClose, onLaunch }: LaunchModalProps) {
+export function LaunchModal({ repo, branch, path, kinds, allowWorktree = true, onClose, onBack, onLaunch }: LaunchModalProps) {
   const settings = useSettings();
   const last = readRepoLast(repo);
   // Default to the last agent used in this repo when still available, else the first.
   const initialKind = last.kind && kinds.includes(last.kind) ? last.kind : kinds[0] || "claude";
   const [kind, setKind] = useState(initialKind);
-  // Shared priority chain: repo last-used → global default → "" (claude's own).
-  const [model, setModel] = useState(() => resolveModel(repo, settings.defaultModel));
+  // Shared per-kind priority chain (repoLast.ts resolveModel); re-resolved on a kind
+  // switch so a claude tier never leaks into a codex/opencode launch (and vice versa).
+  const [model, setModel] = useState(() => resolveModel(initialKind, repo, settings.defaultModel));
   const [prompt, setPrompt] = useState("");
   // Pasted images awaiting the launch: raw File + an object URL for the chip preview.
   // Uploaded only after the session is minted (in onStartWork), then referenced in the
-  // first prompt. Non-claude agents lack the imagePaste cap, so paste is a no-op there.
+  // first prompt. Agents without the imagePaste cap (shell/ssm) make paste a no-op.
   const [images, setImages] = useState<{ file: File; url: string }[]>([]);
   const imagesRef = useRef(images);
   imagesRef.current = images;
@@ -211,7 +215,10 @@ export function LaunchModal({ repo, branch, path, kinds, allowWorktree = true, o
                   key={k}
                   type="button"
                   className={"seg-btn kind-" + a.cssClass + (kind === k ? " active" : "")}
-                  onClick={() => setKind(k)}
+                  onClick={() => {
+                    setKind(k);
+                    setModel(resolveModel(k, repo, settings.defaultModel));
+                  }}
                 >
                   <Icon name={a.icon} className="seg-ic" />
                   {a.label}
@@ -225,18 +232,7 @@ export function LaunchModal({ repo, branch, path, kinds, allowWorktree = true, o
         {hasModel && (
           <div className="ui-field">
             <span className="ui-field-label">モデル</span>
-            <div className="ui-seg">
-              {CLAUDE_MODELS.map(([v, label]) => (
-                <button
-                  key={v || "default"}
-                  type="button"
-                  className={"seg-btn" + (model === v ? " active" : "")}
-                  onClick={() => setModel(v)}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
+            <ModelPicker kind={kind} model={model} onChange={setModel} />
           </div>
         )}
 
@@ -378,6 +374,11 @@ export function LaunchModal({ repo, branch, path, kinds, allowWorktree = true, o
       </div>
 
       <footer className="ui-modal-foot">
+        {onBack && (
+          <Button variant="ghost" className="launch-back" icon="arrow-left" onClick={onBack} disabled={busy}>
+            場所を変更
+          </Button>
+        )}
         <Button variant="ghost" onClick={onClose} disabled={busy}>
           キャンセル
         </Button>

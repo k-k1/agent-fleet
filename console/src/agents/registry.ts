@@ -134,13 +134,22 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     planEnterCmd: "/plan", // codex also has /plan ("switch to Plan mode")
     defaultModeLabel: "Default",
     // Chat mirror lit up (段1): turns come from codex's rollout JSONL, normalized by the
-    // Agent's transcript() and windowed by the generic /messages handler. No fork (codex
-    // has no --session-id pin); the context gauge works — codex logs token counts too.
-    // Plan mode + inline request_user_input questions are supported.
+    // Agent's transcript() and windowed by the generic /messages handler. The context
+    // gauge works — codex logs token counts too. Plan mode + inline request_user_input
+    // questions are supported. headlessChat via `codex exec --json` (assistant chat /
+    // title suggestion backend); fork via `codex fork <id>` (server ForkSource).
+    // model: launch-time only, live catalog (api/agents/codex/models = `codex debug
+    // models` under codex's own subscription auth) → `codex -m`.
+    // imagePaste: upload + path-in-prompt (claude's flow); codex's view_image fires on
+    // a plain path mention — live-verified for both the TUI and `codex exec`.
     caps: caps({
       chat: true,
+      headlessChat: true,
       transcript: true,
+      model: true,
+      fork: true,
       contextBar: true,
+      imagePaste: true,
       planMode: true,
       runsInDir: true,
       launchableFromRepo: true,
@@ -162,10 +171,21 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     // Chat mirror lit up (段2): turns come from opencode's SQLite store (message+part),
     // normalized by the Agent's transcript() and windowed by the generic /messages
     // handler. Context gauge works (per-message tokens); plan mode + inline question tool.
+    // headlessChat via `opencode run --format json` (assistant chat / title backend);
+    // fork via `opencode --session <id> --fork` (server ForkSource).
+    // model: launch-time only, live catalog (api/agents/opencode/models — reflects the
+    // user's connected providers) → `opencode --model provider/model`.
+    // imagePaste: upload + path-in-prompt. Vision is model-dependent: a vision model
+    // reads it directly; big-pickle (free tier) either inspects it agentically (TUI,
+    // live-verified) or declines honestly — never a silent failure.
     caps: caps({
       chat: true,
+      headlessChat: true,
       transcript: true,
+      model: true,
+      fork: true,
       contextBar: true,
+      imagePaste: true,
       planMode: true,
       runsInDir: true,
       launchableFromRepo: true,
@@ -231,9 +251,5 @@ export function availableKinds(ctx: AvailCtx): Record<SessionKind, boolean> {
 // Kinds offered in a repo row's launch menu, in display order. Every entry must
 // carry the launchableFromRepo cap (asserted below); the order is presentational.
 export const repoLaunchKinds: SessionKind[] = ["claude", "opencode", "codex", "shell"];
-
-// Kinds offered in the New Session dialog, in display order (shell is the default,
-// left-most; the rest appear when available). Adding an agent here surfaces it.
-export const newSessionKinds: SessionKind[] = ["shell", "claude", "opencode", "codex", "ssm"];
 
 export type { SsmHost };

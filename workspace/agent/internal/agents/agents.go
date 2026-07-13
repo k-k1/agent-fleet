@@ -87,6 +87,14 @@ type Agent interface {
 	Transcript(m session.Meta) (TranscriptData, bool)
 }
 
+// ModelChoice is one launch-time model option for the Console's model picker:
+// ID is what the launch command receives (`codex -m` / `opencode --model`),
+// Label what the picker shows. Served by GET /agents/{kind}/models.
+type ModelChoice struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
+}
+
 // TranscriptData is what a non-claude agent's Transcript() yields: the full
 // chronological turns, the source path (diagnostics), and the current ToDo list
 // (reconstructed from the agent's plan/todo state; nil when none).
@@ -102,6 +110,22 @@ type TranscriptData struct {
 	// request_user_input / opencode question tool), or nil. Surfaced like claude's
 	// pending questions so the Console can render it interactively.
 	Pending []transcript.Question
+	// Queued are prompts typed into the RUNNING turn but not yet injected as a user
+	// message (opencode's session_input rows awaiting promotion) — surfaced as the
+	// mirror's キュー済み badge, like claude's queue-operation reconstruction.
+	Queued []string
+	// Compacting reports the agent is compacting its conversation right now
+	// (opencode session.time_compacting) — surfaced as the mirror's 圧縮中 badge.
+	Compacting bool
+}
+
+// Forker is the optional fork capability behind Caps().CanFork: ForkSource resolves
+// the source session's provider-native conversation id (claude sid / opencode ses_… /
+// codex session uuid) for the new session's ForkFrom, or an error when there is no
+// forkable conversation yet. The fork itself happens on the new session's first
+// launch (each kind's BuildLaunch turns ForkFrom into its CLI's fork invocation).
+type Forker interface {
+	ForkSource(m session.Meta) (string, error)
 }
 
 // NoGenericTranscript is the Transcript() default for agents that either have no

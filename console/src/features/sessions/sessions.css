@@ -119,6 +119,13 @@
 .sess-row .session-state.mini {
   padding: 1px 4px;
 }
+/* On hover/active the ⋯ button overlays the row's right edge (see .sess-menu-wrap),
+   so fade the state chip out to hand that spot over instead of stacking two icons. */
+.sess-row:hover .session-state,
+.sess-row.hover .session-state,
+.sess-row.active .session-state {
+  opacity: 0;
+}
 .sess-drift {
   flex: none;
   display: inline-flex;
@@ -131,12 +138,25 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* Speaking indicator — this session's reply is being read aloud (TTS). Pulses in the
+   accent color next to the kind badge. Shares the af-pulse keyframe with the state chip. */
+.sess-speaking {
+  flex: none;
+  color: var(--accent);
+  font-size: 12px;
+  animation: af-pulse 1.4s ease-in-out infinite;
+}
 
 /* Ordinal badges (right side, shown while split). */
 .sess-ords {
   display: flex;
   gap: 3px;
   padding: 0 2px 0 0;
+}
+/* Reserve room on their right so the overlaid ⋯ button (position:absolute)
+   doesn't land on top of them while split. */
+.sess-row .sess-ords {
+  margin-right: 22px;
 }
 .rail-ord {
   flex: none;
@@ -155,12 +175,16 @@
   padding: 0 3px;
 }
 
-/* ⋯ menu. */
+/* ⋯ menu — overlaid on the row's right edge (absolute) rather than reserving a
+   trailing column, so a resting row spends that width on content and the state
+   chip sits flush right. Revealed on hover/active; hidden it takes no clicks so
+   the row's right edge still opens the session. */
 .sess-menu-wrap {
-  position: relative;
+  position: absolute;
+  right: 4px;
+  top: 0;
+  bottom: 0;
   flex: none;
-  padding: 0 4px 0 0;
-  align-self: stretch;
   display: flex;
   align-items: center;
 }
@@ -172,11 +196,13 @@
   padding: 2px 4px;
   border-radius: 4px;
   opacity: 0;
+  pointer-events: none;
 }
 .sess-row:hover .sess-menu-btn,
 .sess-menu-btn:focus-visible,
 .sess-row.active .sess-menu-btn {
   opacity: 1;
+  pointer-events: auto;
 }
 .sess-menu-btn:hover {
   background: var(--btn);
@@ -277,6 +303,21 @@
   font: inherit;
   outline: none;
 }
+/* Populated archive list: pin the panel to a stable height and let only the list
+   scroll, so filtering doesn't resize/recenter the modal on each keystroke. The
+   search toolbar stays put; the panel still clamps to the viewport on short screens. */
+.arch-modal-tall.ui-modal {
+  height: min(88dvh, 820px);
+}
+.arch-modal-tall .ui-modal-body {
+  min-height: 0;
+  overflow: hidden;
+}
+.arch-modal-tall .arch-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
 .arch-list {
   list-style: none;
   margin: 0;
@@ -346,6 +387,13 @@
 .session-state.off {
   color: var(--muted);
   border-color: var(--border2);
+}
+/* Abnormal end (crash / OOM): unlike a plain stop this IS worth flagging, so it takes
+   the warn tint (overriding the muted .off above) to stand out in the stopped list. */
+.session-state.off.warn {
+  color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+  border-color: color-mix(in srgb, var(--warn) 38%, transparent);
 }
 /* dir-gone, can't be resumed: muted (the row itself is struck through / disabled). */
 .session-state.dead {

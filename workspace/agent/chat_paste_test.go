@@ -12,10 +12,12 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
-// The assistant chat's image attach rides the same save→Read flow as a terminal session
-// (docs/19): upload to a conversation-scoped dir, then reference the returned absolute
-// path so the chat's claude opens it with Read. Drive the two endpoints end-to-end over a
-// mux (so PathValue routing is real) to prove the wiring, the claude-only gate, and the
+// The assistant chat's image attach rides the same save→reference flow as a terminal
+// session (docs/19): upload to a conversation-scoped dir, then reference the returned
+// absolute path so the chat's headless agent opens it (claude: Read tool / codex:
+// view_image — both live-verified). Drive the two endpoints end-to-end over a mux (so
+// PathValue routing is real) to prove the wiring, the agent gate (claude/codex allowed,
+// opencode rejected — `opencode run` declines images on non-vision models), and the
 // save→serve roundtrip.
 func TestChatPasteImageRoundtrip(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
@@ -78,13 +80,24 @@ func TestChatPasteImageRoundtrip(t *testing.T) {
 		t.Fatalf("preview content-type = %q, want image/png", ct)
 	}
 
-	// A codex conversation is rejected (no image-read path there).
+	// A codex conversation accepts the upload too (codex exec opens the path via
+	// view_image — live-verified when the gate was widened).
 	codexID := "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
 	if err := saveConv(&chatConversation{ID: codexID, Agent: session.KindCodex}); err != nil {
 		t.Fatal(err)
 	}
-	if res := upload(t, codexID); res.StatusCode != http.StatusBadRequest {
-		t.Fatalf("codex upload status = %d, want 400", res.StatusCode)
+	if res := upload(t, codexID); res.StatusCode != http.StatusCreated {
+		t.Fatalf("codex upload status = %d, want 201", res.StatusCode)
+	}
+
+	// An opencode conversation is rejected: `opencode run` declines image input on
+	// non-vision models, and the chat can't know the model sees images.
+	ocID := "dddddddd-dddd-dddd-dddd-dddddddddddd"
+	if err := saveConv(&chatConversation{ID: ocID, Agent: session.KindOpencode}); err != nil {
+		t.Fatal(err)
+	}
+	if res := upload(t, ocID); res.StatusCode != http.StatusBadRequest {
+		t.Fatalf("opencode upload status = %d, want 400", res.StatusCode)
 	}
 
 	// An unknown conversation is a 404.

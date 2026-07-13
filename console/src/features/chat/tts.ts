@@ -20,6 +20,7 @@ import {
   splitLongSentence,
   emotionOf,
   startsBlock,
+  startsTame,
 } from "./ttsText.ts";
 import { effectiveDict } from "./ttsDict.ts";
 import { makeAudioLru } from "./ttsCache.ts";
@@ -32,6 +33,7 @@ export interface TtsOptions {
   enkana?: boolean; // 英語をカタカナ英語に前処理して読ませる（CP の enkana。voicevox 時のみ効く）
   pollyVoice?: string; // Polly の VoiceId（auto のフォールバック先でも使う）
   lang?: string; // 言語ヒント（設定 outputLanguage を再利用）: "auto" | "ja" | "en"
+  particlePause?: boolean; // 設定 ttsParticlePause。CP 側で読点ポーズを詰める（voicevox のみ）
 }
 
 // settings から TtsOptions を組む共通処理（announce / speakText / startNarration / ChatView）。
@@ -43,6 +45,7 @@ export function ttsOptsFromSettings(s = getSettings()): TtsOptions {
     enkana: s.ttsEnglishKana,
     pollyVoice: s.ttsVoicePolly,
     lang: s.outputLanguage,
+    particlePause: s.ttsParticlePause,
   };
 }
 
@@ -280,6 +283,9 @@ export const SENT_BEAT = 0.15;
 // 読まないので、構造の切れ目を間で表す。ストリーミング（startTts）は通常の間に加算、
 // 朗読（startNarration）は preGaps として呼び手（turnTts / ReaderView）が渡す。
 export const BLOCK_BEAT = 0.3;
+// 行頭の溜め（――・……等・startsTame）の前拍。「一拍おいてから話す」演出なので通常の
+// ブロック頭（BLOCK_BEAT）より長く、はっきり間が空いたと感じる長さにする（実機報告）。
+export const TAME_BEAT = 0.6;
 // これ未満の断片は次の文とまとめてから読む（細切れ再生を避ける）。改行/文末では強制フラッシュ。
 const MIN_CHUNK = 6;
 
@@ -307,7 +313,7 @@ const synthCache = makeAudioLru<AudioBuffer>(() => getSettings().ttsCacheSec);
 // （auto 含む）で持つため、auto のルーティング先が変わった直後は旧エンジンの声が
 // 再生されうる（エビクトで解消する程度の割り切り）。
 function synthCacheKey(text: string, opts: TtsOptions): string {
-  return [opts.provider, opts.voice, opts.speed, opts.enkana ? 1 : 0, opts.pollyVoice ?? "", opts.lang ?? "", text].join(
+  return [opts.provider, opts.voice, opts.speed, opts.enkana ? 1 : 0, opts.pollyVoice ?? "", opts.lang ?? "", opts.particlePause ? 1 : 0, text].join(
     "\u0000",
   );
 }
@@ -337,6 +343,7 @@ async function synthToBuffer(
         enkana: opts.enkana ?? false,
         pollyVoice: opts.pollyVoice ?? "",
         lang: opts.lang ?? "",
+        particlePause: opts.particlePause ?? false,
       }),
       signal,
     });
@@ -396,7 +403,16 @@ function notifyStopped(): void {
 // 既存の再生中セッションがあれば止めてから始め、グローバルストアに自分を active として登録する。
 // source は TopBar の「読み上げ中・〇〇」表示に使うラベル。onEnd は自然終了("done")／停止
 // ("stopped")のどちらでも 1 回だけ呼ばれる（アナウンスキューの直列制御に使う）。
-export function startTts(opts: TtsOptions, source = "", onEnd?: (reason: "done" | "stopped") => void): TtsController {
+export function startTts(
+  opts: TtsOptions,
+  source = "",
+  onEnd?: (reason: "done" | "stopped") => void,
+  sessionName = "", // 発生元セッション名（左ペインの再生中アイコン用。非セッションは ""）
+  // onPiece(spoken): その文が実際に鳴り始める瞬間に、読み補正前の表示テキストを通知する
+  // （ライブ配信カラオケ用・docs/19）。未指定なら一切コストは掛からない。
+  onPiece?: (spoken: string) => void,
+  purpose: "reading" | "session-notification" | "usage-notification" | "manual" = "reading",
+): TtsController {
   preemptActive(); // 直前の再生を停止（グローバル 1 本・キューは温存）
   // 読み仮名辞書（ユーザー＋テナント共通の合成・ユーザー優先）はターン開始時に一度だけ
   // 組む（opts の provider/voice とは独立したテキスト処理なので opts には載せない）。
@@ -405,7 +421,7 @@ export function startTts(opts: TtsOptions, source = "", onEnd?: (reason: "done" 
   const ctx = audioCtx();
   let buf = ""; // 未確定バッファ（文の途中）
   let pending = ""; // MIN_CHUNK 未満で持ち越し中の短い断片
-  let pendingPre = false; // 持ち越し断片がブロック頭（リスト等）で始まっていたか
+  let pendingPre = 0; // 持ち越し断片の前拍（秒。ブロック頭=BLOCK_BEAT / 溜め=TAME_BEAT / 無し=0）
   let inFence = false; // ```code``` の内側か（読み飛ばす）
   let seq = 0; // 投入した文の連番
   let inflight = 0;
@@ -413,6 +429,8 @@ export function startTts(opts: TtsOptions, source = "", onEnd?: (reason: "done" 
   const buffers = new Map<number, AudioBuffer | null>(); // seq → 復号済み（null=失敗/スキップ）
   const gaps = new Map<number, number>(); // seq → そのチャンクの後に挟む間（秒）
   const preGaps = new Map<number, number>(); // seq → そのチャンクの前に足す前拍（ブロック頭）
+  const displays = new Map<number, string>(); // seq(文頭片) → 読み補正前の表示テキスト（onPiece 用）
+  const pieceTimers = new Set<number>(); // onPiece の発火予約（stop で解除）
   let playCursor = 0; // 次に鳴らす seq
   const srcs = new Set<AudioBufferSourceNode>(); // 再生中＋先行スケジュール済みのノード
   let nextStartAt = 0; // 次のバッファを開始する AudioContext 時刻
@@ -473,19 +491,23 @@ export function startTts(opts: TtsOptions, source = "", onEnd?: (reason: "done" 
     }
     if (force) {
       // 末尾の未確定分 + 持ち越しをすべて読み上げる。fence 状態は引き回す。
-      const tailPre = !pending && startsBlock(buf); // 持ち越しが無ければ末尾片の頭で判定
+      const tailPre = !pending ? preBeatOf(buf) : 0; // 持ち越しが無ければ末尾片の頭で判定
       const spokenTail = plainifyStreaming(buf, { get: () => inFence, set: (v) => (inFence = v) }, codeOpts);
       buf = "";
       const combined = (pending + spokenTail).trim();
       const pre = pending ? pendingPre : tailPre;
       pending = "";
-      pendingPre = false;
+      pendingPre = 0;
       if (combined) submit(combined, SENTENCE_GAP, pre);
     }
   };
 
+  // チャンク開始片の頭で判定する前拍（秒）。ブロック頭（リスト・見出し・引用）は BLOCK_BEAT、
+  // 溜め（――・……等）は TAME_BEAT、どちらでもなければ 0（前拍無し）。
+  const preBeatOf = (s: string): number => (startsBlock(s) ? BLOCK_BEAT : startsTame(s) ? TAME_BEAT : 0);
+
   const enqueuePiece = (piece: string, hard: boolean, gap = SENTENCE_GAP) => {
-    const pre = pending ? pendingPre : startsBlock(piece); // チャンク開始片の頭で判定
+    const pre = pending ? pendingPre : preBeatOf(piece);
     const spoken = plainifyStreaming(
       piece,
       {
@@ -508,13 +530,14 @@ export function startTts(opts: TtsOptions, source = "", onEnd?: (reason: "done" 
       return;
     }
     pending = "";
-    pendingPre = false;
+    pendingPre = 0;
     submit(combined, gap, pre);
   };
 
-  const submit = (text: string, gap = SENTENCE_GAP, pre = false) => {
+  const submit = (text: string, gap = SENTENCE_GAP, pre = 0) => {
     let t = text.trim();
     if (!t) return;
+    const display = t; // カラオケ用の表示テキスト（読み補正・分割の前・onPiece で通知）
     // 読みの整形: ユーザー/テナント辞書 → 組み込み読み補正 → 助詞の小休止（enkana は CP 側で後段）。
     t = applyReadings(t, userDict, getSettings().ttsParticlePause);
     if (!t) return;
@@ -523,7 +546,8 @@ export function startTts(opts: TtsOptions, source = "", onEnd?: (reason: "done" 
     const pieces = splitLongSentence(t);
     for (let i = 0; i < pieces.length; i++) {
       gaps.set(seq, i === pieces.length - 1 ? gap : CLAUSE_GAP);
-      if (pre && i === 0) preGaps.set(seq, BLOCK_BEAT); // リスト・見出し等の頭 → 読む前に一拍
+      if (pre && i === 0) preGaps.set(seq, pre); // リスト・見出し等の頭/溜め → 読む前に一拍
+      if (onPiece && i === 0) displays.set(seq, display); // 文頭片が鳴る瞬間にこの文を通知
       jobs.push({ seq: seq++, text: pieces[i] });
     }
     if (!startedAudio) useTtsStore.getState().setPreparing(true); // 最初の音まで「生成中」
@@ -587,6 +611,20 @@ export function startTts(opts: TtsOptions, source = "", onEnd?: (reason: "done" 
       let at = Math.max(ctx.currentTime, nextStartAt);
       if (sq > 0) at += pre; // ブロック頭の前拍（先頭チャンクは開始を遅らせない）
       src.start(at);
+      // ライブ配信カラオケ: この文が実際に鳴り始める時刻（先行予約ぶん先）に onPiece を発火。
+      // バッファは先読みでまとめて予約されるため、start 時ではなく再生開始時刻に合わせる。
+      if (onPiece) {
+        const d = displays.get(sq);
+        displays.delete(sq);
+        if (d) {
+          const delayMs = Math.max(0, (at - ctx.currentTime) * 1000);
+          const tm = window.setTimeout(() => {
+            pieceTimers.delete(tm);
+            if (!stopped) onPiece(d);
+          }, delayMs);
+          pieceTimers.add(tm);
+        }
+      }
       useTtsStore.getState().setPreparing(false); // 最初の音がスケジュールされた → 生成中を解除
       nextStartAt = at + ab.duration + gap;
     }
@@ -608,6 +646,8 @@ export function startTts(opts: TtsOptions, source = "", onEnd?: (reason: "done" 
       if (stopped) return;
       stopped = true;
       jobs.length = 0;
+      pieceTimers.forEach((t) => clearTimeout(t)); // 予約済みの onPiece 発火を取り消す
+      pieceTimers.clear();
       acs.forEach((a) => a.abort());
       acs.clear();
       srcs.forEach((s) => {
@@ -620,21 +660,22 @@ export function startTts(opts: TtsOptions, source = "", onEnd?: (reason: "done" 
       notifyStopped(); // 明示停止 → 待機中のキューも捨てる（プリエンプト時は no-op）
     },
   };
-  useTtsStore.getState().setActive(controller, source, voiceCharName(opts));
+  useTtsStore.getState().setActive(controller, source, voiceCharName(opts), sessionName, purpose);
   return controller;
 }
 
 // --- アナウンス直列キュー（docs/24 Tier1: バックグラウンドのセッション通知など） ------------
 // 短い告知を「1 本ずつ・割り込まず」読み上げる。何か再生中（チャット読み上げ等）なら終わるのを
 // 待ってから。溜まりすぎ（>4 件）は古いものから捨てる（席を外した間の洪水を防ぐ）。
-const announceQueue: { text: string; source: string; voice?: Partial<TtsOptions> }[] = [];
+const announceQueue: { text: string; source: string; voice?: Partial<TtsOptions>; sessionName?: string; purpose?: "reading" | "session-notification" | "usage-notification" | "manual" }[] = [];
 let announcing = false;
 
 // voice はセッションごとの声（sessionVoiceOpts）等の上書き。未指定は設定の話者。
-export function announce(text: string, source = "", voice?: Partial<TtsOptions>): void {
+// sessionName は発生元セッション名（左ペインの再生中アイコン用。非セッション告知は省略）。
+export function announce(text: string, source = "", voice?: Partial<TtsOptions>, sessionName = "", purpose: "reading" | "session-notification" | "usage-notification" | "manual" = "reading"): void {
   const t = text.trim();
   if (!t) return;
-  announceQueue.push({ text: t, source, voice });
+  announceQueue.push({ text: t, source, voice, sessionName, purpose });
   while (announceQueue.length > 4) announceQueue.shift();
   pumpAnnounce();
 }
@@ -656,6 +697,9 @@ function pumpAnnounce(): void {
       if (reason === "stopped") announceQueue.length = 0; // 全体停止でキューも破棄
       else pumpAnnounce();
     },
+    next.sessionName ?? "",
+    undefined,
+    next.purpose ?? "reading",
   );
   c.push(next.text);
   c.flush();
@@ -672,7 +716,9 @@ useTtsStore.subscribe((st, prev) => {
 // 長い朗読（ファイル・長文ターン）が終わるまでセッション通知を待たせない（docs/24）。
 // pumpAnnounce は何か再生中（active あり）は動かないので、再生中の取り出しはここだけ
 // ＝二重再生にはならない。
-function takeAnnounce(): { text: string; source: string; voice?: Partial<TtsOptions> } | undefined {
+function takeAnnounce():
+  | { text: string; source: string; voice?: Partial<TtsOptions>; sessionName?: string; purpose?: "reading" | "session-notification" | "usage-notification" | "manual" }
+  | undefined {
   return announceQueue.shift();
 }
 
@@ -682,7 +728,7 @@ function takeAnnounce(): { text: string; source: string; voice?: Partial<TtsOpti
 export function speakText(text: string, source = "", voice?: Partial<TtsOptions>): void {
   const t = text.trim();
   if (!t) return;
-  const c = startTts({ ...ttsOptsFromSettings(), ...voice }, source);
+  const c = startTts({ ...ttsOptsFromSettings(), ...voice }, source, undefined, "", undefined, "manual");
   c.push(t);
   c.flush();
 }
@@ -713,6 +759,8 @@ export function startNarration(
   // unit ごとの前拍（秒）。リスト項目・段落頭など「新しいブロックの最初の文」に BLOCK_BEAT を
   // 渡すと、読む前に一拍おく（先頭 unit の前拍は開始遅延になるだけなので無視する）。
   preGaps?: number[],
+  // 発生元セッション名（左ペインの再生中アイコン用。非セッションの朗読は ""）。
+  sessionName = "",
 ): NarrationHandle {
   preemptActive(); // グローバル 1 本（既存の再生を止める・キューは温存）
   const ctx = audioCtx();
@@ -801,7 +849,7 @@ export function startNarration(
     buffers.clear();
     synthAt = cursor;
     const st = useTtsStore.getState();
-    if (st.active === adapter) st.setActive(adapter, source, voiceCharName(opts)); // TopBar の声表示を更新
+    if (st.active === adapter) st.setActive(adapter, source, voiceCharName(opts), sessionName); // TopBar の声表示を更新
     pump();
     tryPlay(); // 再生が追いついて待っていた場合に備える
   };
@@ -810,7 +858,7 @@ export function startNarration(
   // ユニット境界で announce キューから 1 件取り出し、次のユニットの前にその場で読む。再生中は
   // TopBar のラベル/声を告知側に差し替え、終わったら朗読のものへ戻す。停止・一時停止は朗読と
   // 一体（同じ ctx・同じ adapter）。
-  const playInterlude = (a: { text: string; source: string; voice?: Partial<TtsOptions> }) => {
+  const playInterlude = (a: { text: string; source: string; voice?: Partial<TtsOptions>; sessionName?: string; purpose?: "reading" | "session-notification" | "usage-notification" | "manual" }) => {
     let t = plainify(a.text, codeOpts).trim();
     if (t) t = applyReadings(t, userDict, getSettings().ttsParticlePause);
     if (!t) {
@@ -821,8 +869,8 @@ export function startNarration(
     const label = (on: boolean) => {
       const st = useTtsStore.getState();
       if (st.active !== adapter) return;
-      if (on) st.setActive(adapter, a.source, voiceCharName(aopts));
-      else st.setActive(adapter, source, voiceCharName(opts));
+      if (on) st.setActive(adapter, a.source, voiceCharName(aopts), a.sessionName ?? "", a.purpose ?? "reading");
+      else st.setActive(adapter, source, voiceCharName(opts), sessionName);
     };
     // 長い告知（要約など）も合成用に分割して順に鳴らす（1 回の合成が重いと無音の待ちになる）。
     const pieces = splitLongSentence(t);
@@ -937,7 +985,7 @@ export function startNarration(
     notifyStopped(); // 明示停止 → 待機中のキューも捨てる（プリエンプト時は no-op）
   };
 
-  useTtsStore.getState().setActive(adapter, source, voiceCharName(opts));
+  useTtsStore.getState().setActive(adapter, source, voiceCharName(opts), sessionName);
   // 初回キックは microtask に回す。呼び手（FileView）が返り値の handle と自分の state を
   // 確定してから onUnit が走るようにするため（空/エンジン無しで finish が同期発火すると、
   // beginNarration のセットアップ前に onUnit(null) が来て状態が不整合になるのを防ぐ）。

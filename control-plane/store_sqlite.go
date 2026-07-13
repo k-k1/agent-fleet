@@ -447,8 +447,8 @@ func (s *sqlStore) SetMembershipRole(ctx context.Context, membershipID, role str
 func (s *sqlStore) GetUserLimit(ctx context.Context, membershipID string) (UserLimit, bool, error) {
 	var u UserLimit
 	err := s.db.QueryRowContext(ctx,
-		`SELECT membership_id, max_sessions, disk_gb, created_at FROM user_limit WHERE membership_id=?`, membershipID).
-		Scan(&u.MembershipID, &u.MaxSessions, &u.DiskGB, &u.CreatedAt)
+		`SELECT membership_id, max_sessions, disk_gb, mem_limit, created_at FROM user_limit WHERE membership_id=?`, membershipID).
+		Scan(&u.MembershipID, &u.MaxSessions, &u.DiskGB, &u.MemLimit, &u.CreatedAt)
 	if err == sql.ErrNoRows {
 		return UserLimit{}, false, nil
 	}
@@ -458,12 +458,12 @@ func (s *sqlStore) GetUserLimit(ctx context.Context, membershipID string) (UserL
 	return u, true, nil
 }
 
-func (s *sqlStore) PutUserLimit(ctx context.Context, membershipID string, maxSessions, diskGB int) error {
+func (s *sqlStore) PutUserLimit(ctx context.Context, membershipID string, maxSessions, diskGB int, memLimit int64) error {
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO user_limit(membership_id, max_sessions, disk_gb, created_at)
-		 VALUES(?, ?, ?, ?)
-		 ON CONFLICT(membership_id) DO UPDATE SET max_sessions=excluded.max_sessions, disk_gb=excluded.disk_gb`,
-		membershipID, maxSessions, diskGB, nowTS())
+		`INSERT INTO user_limit(membership_id, max_sessions, disk_gb, mem_limit, created_at)
+		 VALUES(?, ?, ?, ?, ?)
+		 ON CONFLICT(membership_id) DO UPDATE SET max_sessions=excluded.max_sessions, disk_gb=excluded.disk_gb, mem_limit=excluded.mem_limit`,
+		membershipID, maxSessions, diskGB, memLimit, nowTS())
 	return err
 }
 
@@ -1324,5 +1324,87 @@ func (s *sqlStore) MarkMemosSent(ctx context.Context, membershipID string, ids [
 func (s *sqlStore) SweepSentMemos(ctx context.Context, retainBefore string) error {
 	_, err := s.db.ExecContext(ctx,
 		`DELETE FROM memo WHERE sent_at!='' AND sent_at<?`, retainBefore)
+	return err
+}
+
+// --- Notification center -------------------------------------------------------
+
+const notificationCols = `SELECT seq, event_id, membership_id, kind, target_type, target_id, target_kind, display_name, payload, created_at, seen_at FROM notification`
+
+func scanNotification(row scanner) (Notification, error) {
+	var n Notification
+	err := row.Scan(&n.Seq, &n.EventID, &n.MembershipID, &n.Kind, &n.TargetType,
+		&n.TargetID, &n.TargetKind, &n.DisplayName, &n.Payload, &n.CreatedAt, &n.SeenAt)
+	return n, err
+}
+
+func (s *sqlStore) InsertNotification(ctx context.Context, n Notification) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO notification(event_id, membership_id, kind, target_type, target_id, target_kind, display_name, payload, created_at, seen_at)
+		VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(event_id) DO NOTHING`, n.EventID, n.MembershipID,
+		n.Kind, n.TargetType, n.TargetID, n.TargetKind, n.DisplayName, n.Payload, n.CreatedAt, n.SeenAt)
+	return err
+}
+
+func (s *sqlStore) ListNotifications(ctx context.Context, membershipID, retainAfter string, limit int) ([]Notification, error) {
+	rows, err := s.db.QueryContext(ctx, notificationCols+` WHERE membership_id=? AND created_at>=? ORDER BY seq DESC LIMIT ?`, membershipID, retainAfter, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Notification
+	for rows.Next() {
+		n, err := scanNotification(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, n)
+	}
+	return out, rows.Err()
+}
+
+func (s *sqlStore) CountUnseenNotifications(ctx context.Context, membershipID, retainAfter string) (int, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM notification WHERE membership_id=? AND created_at>=? AND seen_at=''`, membershipID, retainAfter).Scan(&n)
+	return n, err
+}
+
+func (s *sqlStore) MarkNotificationsSeenThrough(ctx context.Context, membershipID string, seq int64, seenAt string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE notification SET seen_at=? WHERE membership_id=? AND seq<=? AND seen_at=''`, seenAt, membershipID, seq)
+	return err
+}
+
+func (s *sqlStore) MarkNotificationsSeen(ctx context.Context, membershipID string, eventIDs []string, seenAt string) error {
+	if len(eventIDs) == 0 {
+		return nil
+	}
+	ph := make([]string, len(eventIDs))
+	args := []any{seenAt, membershipID}
+	for i, id := range eventIDs {
+		ph[i] = "?"
+		args = append(args, id)
+	}
+	_, err := s.db.ExecContext(ctx, `UPDATE notification SET seen_at=? WHERE membership_id=? AND event_id IN (`+strings.Join(ph, ",")+`)`, args...)
+	return err
+}
+
+func (s *sqlStore) SweepNotifications(ctx context.Context, retainBefore string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM notification WHERE created_at<?`, retainBefore)
+	return err
+}
+
+func (s *sqlStore) GetUsageNotificationState(ctx context.Context, membershipID, source, windowKey string) (UsageNotificationState, bool, error) {
+	var st UsageNotificationState
+	err := s.db.QueryRowContext(ctx, `SELECT membership_id, source, window_key, resets_at, armed FROM notification_usage_state WHERE membership_id=? AND source=? AND window_key=?`, membershipID, source, windowKey).
+		Scan(&st.MembershipID, &st.Source, &st.WindowKey, &st.ResetsAt, &st.Armed)
+	if err == sql.ErrNoRows {
+		return UsageNotificationState{}, false, nil
+	}
+	return st, err == nil, err
+}
+
+func (s *sqlStore) PutUsageNotificationState(ctx context.Context, st UsageNotificationState) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO notification_usage_state(membership_id, source, window_key, resets_at, armed) VALUES(?,?,?,?,?)
+		ON CONFLICT(membership_id, source, window_key) DO UPDATE SET resets_at=excluded.resets_at, armed=excluded.armed`,
+		st.MembershipID, st.Source, st.WindowKey, st.ResetsAt, st.Armed)
 	return err
 }

@@ -106,6 +106,173 @@ func TestCorpusTerms(t *testing.T) {
 	}
 }
 
+func TestProtocolAndBizAcronyms(t *testing.T) {
+	// ネットワーク・開発/ビジネス略語の追加分。CMUdict に実在語として載っていて誤読される
+	// もの（nat/sap/roi/seo 等）が上書きで正しく読めているかも確認する。
+	want := map[string]string{
+		"https":  "エイチティーティーピーエス",
+		"tcp":    "ティーシーピー",
+		"vpn":    "ブイピーエヌ",
+		"nat":    "エヌエーティー",
+		"sap":    "エスエーピー",
+		"sip":    "エスアイピー",
+		"arp":    "エーアールピー",
+		"roi":    "アールオーアイ",
+		"seo":    "エスイーオー",
+		"devops": "デブオプス",
+		"saas":   "サース",
+		"ci":     "シーアイ",
+	}
+	for in, exp := range want {
+		if got := englishToKana(in); got != exp {
+			t.Errorf("%q -> %q, want %q", in, got, exp)
+		}
+	}
+}
+
+func TestNumeronymLikeCombos(t *testing.T) {
+	// 略語＋数字のトークン全体一致（EC2/route53 と同じ扱い）。
+	want := map[string]string{
+		"b2b":  "ビーツービー",
+		"p2p":  "ピーツーピー",
+		"web3": "ウェブスリー",
+		"gpt4": "ジーピーティーフォー",
+	}
+	for in, exp := range want {
+		if got := englishToKana(in); got != exp {
+			t.Errorf("%q -> %q, want %q", in, got, exp)
+		}
+	}
+}
+
+func TestCompanyAndToolNames(t *testing.T) {
+	// 企業名・クラウド/インフラツール・言語フレームワークの追加分。
+	want := map[string]string{
+		"salesforce":  "セールスフォース",
+		"ubuntu":      "ウブントゥ",
+		"mercari":     "メルカリ",
+		"paypay":      "ペイペイ",
+		"jaeger":      "イェーガー",
+		"circleci":    "サークルシーアイ",
+		"django":      "ジャンゴ",
+		"webassembly": "ウェブアセンブリ",
+		"wasm":        "ワズム",
+	}
+	for in, exp := range want {
+		if got := englishToKana(in); got != exp {
+			t.Errorf("%q -> %q, want %q", in, got, exp)
+		}
+	}
+}
+
+func TestSingleUpperLetter(t *testing.T) {
+	// 単独の大文字 1 文字（案A・パターンB 等）は CMUdict の実在語（a/i/o が冠詞・代名詞
+	// として載っている）に化けて誤読される（例: "A"→"ア"）ため、英字名読みに固定する。
+	// 実機フィードバックで "案A" が「あんあ」と読まれる不具合として発覚。
+	want := map[string]string{
+		"A": "エー",
+		"B": "ビー",
+		"I": "アイ",
+		"O": "オー",
+	}
+	for in, exp := range want {
+		if got := englishToKana(in); got != exp {
+			t.Errorf("%q -> %q, want %q", in, got, exp)
+		}
+	}
+	// 小文字の単独文字（英文中の "a" 等）は対象外＝CMUdict の英単語読みのまま
+	// （文字名読みに変わらないことを確認）。
+	if got := englishToKana("a"); got == "エー" {
+		t.Errorf("小文字 a が文字名読みになった: %q", got)
+	}
+}
+
+func TestAgentManageFamily(t *testing.T) {
+	// 実機フィードバック: "agent"/"managed" が CMUdict のまま (エイジャント/マナジド) で
+	// 誤読されるため上書き。同根の manage 系も併せて確認。
+	want := map[string]string{
+		"agent":      "エージェント",
+		"Agent":      "エージェント",
+		"managed":    "マネージド",
+		"manage":     "マネージ",
+		"manager":    "マネージャー",
+		"management": "マネジメント",
+		"image":      "イメージ",
+		"images":     "イメージズ",
+		"Image":      "イメージ",
+	}
+	for in, exp := range want {
+		if got := englishToKana(in); got != exp {
+			t.Errorf("%q -> %q, want %q", in, got, exp)
+		}
+	}
+}
+
+func TestReadingOverrides(t *testing.T) {
+	// 実機フィードバックの誤読修正。DOM は CMUdict 実在語 dom→ダム に化けるので慣用読み、
+	// good は末尾 D が促音化せず グド になるので固定、well は変異形 "ウェルル" 対策。
+	want := map[string]string{
+		"DOM":  "ドム",
+		"dom":  "ドム",
+		"Dom":  "ドム",
+		"good": "グッド",
+		"Good": "グッド",
+		"well": "ウェル",
+		"Well": "ウェル",
+	}
+	for in, exp := range want {
+		if got := englishToKana(in); got != exp {
+			t.Errorf("%q -> %q, want %q", in, got, exp)
+		}
+	}
+	// "dom" は完全トークン一致のみ（部分一致で kingdom/random/freedom を壊さない）。
+	for _, w := range []string{"kingdom", "random", "freedom"} {
+		if got := englishToKana(w); got == "ドム" || containsASCIILetters(got) {
+			t.Errorf("%q が誤変換された: %q", w, got)
+		}
+	}
+}
+
+func TestContractions(t *testing.T) {
+	// アポストロフィ入りの短縮形。従来は ' で語が分断され "イット'エス" 等に誤読されていた。
+	// ASCII(') とタイプグラフィ(’) の両方を同一視する。
+	want := map[string]string{
+		"It's":     "イッツ",
+		"it's":     "イッツ",
+		"It’s":     "イッツ", // U+2019
+		"don't":    "ドント",
+		"can't":    "キャント",
+		"won't":    "ウォント",
+		"isn't":    "イズント",
+		"doesn't":  "ダズント",
+		"I'm":      "アイム",
+		"let's":    "レッツ",
+		"that's":   "ザッツ",
+		"we'll":    "ウィール",
+		"wouldn't": "ウドゥント",
+	}
+	for in, exp := range want {
+		if got := englishToKana(in); got != exp {
+			t.Errorf("%q -> %q, want %q", in, got, exp)
+		}
+	}
+	// 所有格 's は「元の語＋ズ」でフォールバック（辞書 techKana も経由する）。
+	poss := map[string]string{
+		"React's": "リアクトズ",
+		"user's":  "ユーザーズ",
+		"API's":   "エーピーアイズ", // API=エーピーアイ(techKana) + ズ
+	}
+	for in, exp := range poss {
+		if got := englishToKana(in); got != exp {
+			t.Errorf("possessive %q -> %q, want %q", in, got, exp)
+		}
+	}
+	// 文中でも分断されず、周囲の語・句読点は保たれる。
+	if got := englishToKana("It's good, don't worry."); containsASCIILetters(got) {
+		t.Errorf("英字が残った: %q", got)
+	}
+}
+
 func containsASCIILetters(s string) bool {
 	for _, r := range s {
 		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {

@@ -1,6 +1,8 @@
 package codex
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
@@ -102,6 +104,22 @@ func TestCodexReasoningPlanOutput(t *testing.T) {
 	}
 }
 
+func TestCodexDelegationPart(t *testing.T) {
+	lines := [][]byte{
+		[]byte(`{"type":"response_item","payload":{"type":"function_call","name":"spawn_agent","call_id":"s1","arguments":"{\"task_name\":\"audit_ui\",\"message\":\"Inspect the mirror UI\",\"fork_turns\":\"all\"}"}}`),
+		[]byte(`{"type":"response_item","payload":{"type":"function_call_output","call_id":"s1","output":"agent started"}}`),
+	}
+	turns, _ := parseRollout(lines)
+	if len(turns) != 1 || len(turns[0].Parts) != 1 {
+		t.Fatalf("turns = %+v, want one delegation turn", turns)
+	}
+	p := turns[0].Parts[0]
+	if p.Kind != "delegation" || p.Tool != "spawn_agent" || p.Info != "audit_ui" ||
+		p.AgentType != "audit_ui" || p.Prompt != "Inspect the mirror UI" || p.Status != "requested" {
+		t.Fatalf("delegation = %+v", p)
+	}
+}
+
 func TestCodexQuestion(t *testing.T) {
 	// An answered request_user_input, then a pending one (no output yet).
 	answered := [][]byte{
@@ -178,4 +196,292 @@ func TestCodexParseRolloutEmpty(t *testing.T) {
 	if turns, _ := parseRollout(only); len(turns) != 0 {
 		t.Fatalf("system-only rollout -> %d turns, want 0", len(turns))
 	}
+}
+
+func TestCodexApplyPatch(t *testing.T) {
+	patch := "*** Begin Patch\n*** Add File: docs/new.md\n+# hi\n+body\n*** Update File: main.go\n@@ func x\n ctx\n-old line\n+new line\n*** Delete File: gone.txt\n*** End Patch\n"
+	lines := [][]byte{
+		[]byte(`{"timestamp":"2026-06-29T00:00:00Z","type":"response_item","payload":{"type":"custom_tool_call","name":"apply_patch","call_id":"c1","input":` + string(mustJSON(patch)) + `}}`),
+		[]byte(`{"type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"c1","output":"Success. Updated the following files:\nA docs/new.md"}}`),
+	}
+	turns, _ := parseRollout(lines)
+	if len(turns) != 1 {
+		t.Fatalf("want 1 turn, got %d: %+v", len(turns), turns)
+	}
+	ps := turns[0].Parts
+	if len(ps) != 3 {
+		t.Fatalf("want 3 parts (add/update/delete), got %d: %+v", len(ps), ps)
+	}
+	if ps[0].File != "docs/new.md" || len(ps[0].Edits) != 1 || ps[0].Edits[0].Old != "" || ps[0].Edits[0].New != "# hi\nbody" {
+		t.Fatalf("add part = %+v", ps[0])
+	}
+	if ps[1].File != "main.go" || len(ps[1].Edits) != 1 ||
+		ps[1].Edits[0].Old != "ctx\nold line" || ps[1].Edits[0].New != "ctx\nnew line" {
+		t.Fatalf("update part = %+v", ps[1])
+	}
+	if ps[2].Info != "delete gone.txt" || len(ps[2].Edits) != 0 {
+		t.Fatalf("delete part = %+v", ps[2])
+	}
+	// The custom_tool_call_output attaches to the call's first part.
+	if !strings.HasPrefix(ps[0].Output, "Success.") {
+		t.Fatalf("output not attached: %+v", ps[0])
+	}
+}
+
+func TestCodexApplyPatchFunctionCall(t *testing.T) {
+	// apply_patch can also arrive as a function_call with {"input": patch} arguments.
+	patch := "*** Begin Patch\n*** Update File: a.txt\n-x\n+y\n*** End Patch"
+	args := string(mustJSON(`{"input":` + string(mustJSON(patch)) + `}`))
+	lines := [][]byte{
+		[]byte(`{"type":"response_item","payload":{"type":"function_call","name":"apply_patch","call_id":"c2","arguments":` + args + `}}`),
+	}
+	turns, _ := parseRollout(lines)
+	if len(turns) != 1 || len(turns[0].Parts) != 1 {
+		t.Fatalf("turns = %+v", turns)
+	}
+	p := turns[0].Parts[0]
+	if p.File != "a.txt" || len(p.Edits) != 1 || p.Edits[0].Old != "x" || p.Edits[0].New != "y" {
+		t.Fatalf("part = %+v", p)
+	}
+}
+
+func TestCodexCompacted(t *testing.T) {
+	lines := [][]byte{
+		[]byte(`{"timestamp":"2026-06-29T00:00:00Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]}}`),
+		[]byte(`{"timestamp":"2026-06-29T00:00:01Z","type":"compacted","payload":{"message":"summary of earlier context"}}`),
+		[]byte(`{"type":"event_msg","payload":{"type":"context_compacted"}}`), // same compaction's event — deduped
+	}
+	turns, _ := parseRollout(lines)
+	if len(turns) != 2 {
+		t.Fatalf("want 2 turns (user + ONE compact block), got %d: %+v", len(turns), turns)
+	}
+	c := turns[1]
+	if !c.Compact || c.Text != "summary of earlier context" {
+		t.Fatalf("compact turn = %+v", c)
+	}
+	// An event_msg WITHOUT a preceding compacted line still yields a marker.
+	only := [][]byte{
+		[]byte(`{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]}}`),
+		[]byte(`{"type":"event_msg","payload":{"type":"context_compacted"}}`),
+	}
+	turns, _ = parseRollout(only)
+	if len(turns) != 2 || !turns[1].Compact {
+		t.Fatalf("event-only compaction -> %+v", turns)
+	}
+}
+
+func TestCodexCompactedReplacementHistory(t *testing.T) {
+	lines := [][]byte{
+		[]byte(`{"type":"compacted","payload":{"replacement_history":[{"role":"user","content":[{"type":"input_text","text":"<user_instructions>x</user_instructions>"}]},{"role":"user","content":[{"type":"input_text","text":"the summary"}]}]}}`),
+	}
+	turns, _ := parseRollout(lines)
+	if len(turns) != 1 || !turns[0].Compact || turns[0].Text != "the summary" {
+		t.Fatalf("turns = %+v, want one compact turn with 'the summary' (wrapper dropped)", turns)
+	}
+}
+
+func TestCodexAnswerText(t *testing.T) {
+	cases := []struct{ in, want string }{
+		// single-question select: the label, not the raw envelope
+		{`{"answers":{"ask_user_test":{"answers":["質問だけ確認 (Recommended)"]}}}`, "質問だけ確認 (Recommended)"},
+		// multi-select within one question: joined labels
+		{`{"answers":{"q":{"answers":["AWS","セルフホスト"]}}}`, "AWS, セルフホスト"},
+		// multiple questions: flattened, keys sorted for a stable order
+		{`{"answers":{"b":{"answers":["Two"]},"a":{"answers":["One"]}}}`, "One, Two"},
+		// unknown shape falls back to the raw output (answer never lost)
+		{`plain free text`, "plain free text"},
+		{`{"answers":{}}`, `{"answers":{}}`},
+	}
+	for _, c := range cases {
+		if got := answerText(c.in); got != c.want {
+			t.Errorf("answerText(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+// TestCodexQuestionAnswerFromRollout checks the end-to-end path: a request_user_input
+// call + its envelope output resolve to the clean chosen label on the question part.
+func TestCodexQuestionAnswerFromRollout(t *testing.T) {
+	lines := [][]byte{
+		[]byte(`{"type":"response_item","payload":{"type":"function_call","call_id":"c1","name":"request_user_input","arguments":"{\"questions\":[{\"header\":\"H\",\"question\":\"Q?\",\"options\":[{\"label\":\"Yes\"},{\"label\":\"No\"}]}]}"}}`),
+		[]byte(`{"type":"response_item","payload":{"type":"function_call_output","call_id":"c1","output":"{\"answers\":{\"q\":{\"answers\":[\"Yes\"]}}}"}}`),
+	}
+	turns, _ := parseRollout(lines)
+	var got string
+	for _, tn := range turns {
+		for _, p := range tn.Parts {
+			if p.Kind == "question" {
+				got = p.Answer
+			}
+		}
+	}
+	if got != "Yes" {
+		t.Fatalf("question answer = %q, want %q", got, "Yes")
+	}
+}
+
+func TestCodexExecScriptParts(t *testing.T) {
+	// codex 0.144+ "exec" tool: a JS snippet that applies a patch and runs a command.
+	js := `const patch = "*** Begin Patch\n*** Update File: /p/README.md\n@@\n old line\n+new line\n*** End Patch";
+const a = await tools.apply_patch(patch);
+const r = await tools.exec_command({cmd:"ls -la && echo done","workdir":"/p","yield_time_ms":10000}); text(r.output)`
+	parts := execScriptParts(js)
+	if len(parts) < 2 {
+		t.Fatalf("execScriptParts = %+v, want an exec_command trace + a diff part", parts)
+	}
+	if parts[0].Kind != "tool" || parts[0].Tool != "exec_command" || parts[0].Info != "ls -la && echo done" {
+		t.Errorf("parts[0] = %+v, want exec_command trace with the shell command", parts[0])
+	}
+	var diff *transcript.Part
+	for i := range parts {
+		if parts[i].Tool == "apply_patch" || parts[i].File != "" {
+			diff = &parts[i]
+		}
+	}
+	if diff == nil || diff.File == "" || len(diff.Edits) == 0 {
+		t.Fatalf("no apply_patch diff part with File+Edits in %+v", parts)
+	}
+	if !strings.Contains(diff.File, "README.md") {
+		t.Errorf("diff.File = %q, want the patched path", diff.File)
+	}
+}
+
+func TestCodexExecScriptCommandOnly(t *testing.T) {
+	js := `const r = await tools.exec_command({cmd:"rtk git status --short","workdir":"/p"}); text(r.output)`
+	parts := execScriptParts(js)
+	if len(parts) != 1 || parts[0].Tool != "exec_command" || parts[0].Info != "rtk git status --short" {
+		t.Fatalf("execScriptParts = %+v, want a single exec_command trace", parts)
+	}
+	if isExecScript(`*** Begin Patch\n…`) {
+		t.Errorf("a bare patch envelope must not be treated as a JS exec script")
+	}
+}
+
+// TestCodexCustomToolCallExec runs the end-to-end path for codex 0.144+: a custom_tool_call
+// name=exec + its array-shaped output resolve to a clean command trace + diff with output.
+func TestCodexCustomToolCallExec(t *testing.T) {
+	input := `const r = await tools.exec_command({cmd:"echo hi","workdir":"/p"}); text(r.output)`
+	call := map[string]any{"type": "custom_tool_call", "name": "exec", "call_id": "c1", "input": input}
+	// output is codex 0.144's [{type:input_text,text}] array
+	outBlocks := []map[string]string{{"type": "input_text", "text": "Script completed\nOutput:\n"}, {"type": "input_text", "text": "hi\n"}}
+	callOut := map[string]any{"type": "custom_tool_call_output", "call_id": "c1", "output": outBlocks}
+	lines := [][]byte{
+		wrapItem(t, call),
+		wrapItem(t, callOut),
+	}
+	turns, _ := parseRollout(lines)
+	var got *transcript.Part
+	for i := range turns {
+		for j := range turns[i].Parts {
+			if turns[i].Parts[j].Tool == "exec_command" {
+				got = &turns[i].Parts[j]
+			}
+		}
+	}
+	if got == nil {
+		t.Fatalf("no exec_command part in %+v", turns)
+	}
+	if got.Info != "echo hi" {
+		t.Errorf("info = %q, want the shell command", got.Info)
+	}
+	if !strings.Contains(got.Output, "hi") || strings.Contains(got.Output, "input_text") {
+		t.Errorf("output = %q, want the concatenated command text, not the raw array", got.Output)
+	}
+}
+
+func TestCodexExecScriptImageGen(t *testing.T) {
+	// The imagegen skill's built-in call: prompt as a backtick template literal.
+	js := "const r = await tools.image_gen__imagegen({prompt: `Use case: logo\nPrimary request: red circle`});\nimage(r.image_url);"
+	parts := execScriptParts(js)
+	if len(parts) != 1 || parts[0].Tool != "image_gen" {
+		t.Fatalf("execScriptParts = %+v, want a single image_gen trace", parts)
+	}
+	if !strings.Contains(parts[0].Info, "red circle") {
+		t.Errorf("info = %q, want the generation prompt", parts[0].Info)
+	}
+}
+
+func TestCodexExecScriptViewImage(t *testing.T) {
+	js := `const r = await tools.view_image({path:"/home/u/assets/red.png",detail:"original"});
+image(r.image_url);`
+	parts := execScriptParts(js)
+	if len(parts) != 1 || parts[0].Tool != "view_image" || parts[0].Info != "/home/u/assets/red.png" {
+		t.Fatalf("execScriptParts = %+v, want a single view_image trace with the path", parts)
+	}
+}
+
+// TestCodexImageGenUserFile runs the end-to-end imagegen shape from a real 0.144.1
+// rollout: the exec(image_gen) call, then the wait call whose output announces the
+// saved file and re-embeds the image as base64 noise. The saved path must surface as
+// a userfile part (the Console's 共有ファイル panel) and the noise must not leak into
+// the wait trace's output.
+func TestCodexImageGenUserFile(t *testing.T) {
+	genPath := "/home/u/.codex/generated_images/abc/exec-123.png"
+	lines := [][]byte{
+		wrapItem(t, map[string]any{
+			"type": "custom_tool_call", "name": "exec", "call_id": "c1",
+			"input": "const r = await tools.image_gen__imagegen({prompt: `red circle`});",
+		}),
+		wrapItem(t, map[string]any{
+			"type": "custom_tool_call_output", "call_id": "c1",
+			"output": []map[string]string{{"type": "input_text", "text": "Script running with cell ID 1\n"}},
+		}),
+		wrapItem(t, map[string]any{
+			"type": "function_call", "name": "wait", "call_id": "c2",
+			"arguments": `{"cell_id":"1"}`,
+		}),
+		wrapItem(t, map[string]any{
+			"type": "function_call_output", "call_id": "c2",
+			"output": []map[string]string{
+				{"type": "input_text", "text": "Script completed\nOutput:\n"},
+				{"type": "input_image", "image_url": "data:image/png;base64,AAAA"},
+				{"type": "input_text", "text": "Generated images are saved to /home/u/.codex/generated_images/abc as " + genPath + " by default.\n"},
+				{"type": "input_text", "text": `{"image_url":"data:image/png;base64,AAAA","output_hint":"Generated images are saved to /home/u/.codex/generated_images/abc as ` + genPath + ` by default."}`},
+			},
+		}),
+	}
+	turns, _ := parseRollout(lines)
+	var gen, wait, files *transcript.Part
+	for i := range turns {
+		for j := range turns[i].Parts {
+			switch {
+			case turns[i].Parts[j].Tool == "image_gen":
+				gen = &turns[i].Parts[j]
+			case turns[i].Parts[j].Tool == "wait":
+				wait = &turns[i].Parts[j]
+			case turns[i].Parts[j].Kind == "userfile":
+				files = &turns[i].Parts[j]
+			}
+		}
+	}
+	if gen == nil || gen.Info != "red circle" {
+		t.Fatalf("no image_gen trace with the prompt in %+v", turns)
+	}
+	if wait == nil || !strings.Contains(wait.Output, "Generated images are saved") {
+		t.Fatalf("no wait trace carrying the completion notice in %+v", turns)
+	}
+	if strings.Contains(wait.Output, "data:image") {
+		t.Errorf("wait output leaks base64 noise: %q", wait.Output)
+	}
+	if files == nil || len(files.Files) != 1 || files.Files[0] != genPath {
+		t.Fatalf("userfile part = %+v, want exactly [%s]", files, genPath)
+	}
+}
+
+// wrapItem marshals a response_item payload line for parseRollout.
+func wrapItem(t *testing.T, payload map[string]any) []byte {
+	t.Helper()
+	b, err := json.Marshal(map[string]any{"type": "response_item", "payload": payload})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+func mustJSON(v string) []byte {
+	b, err := json.Marshal(v)
+	if err != nil {
+		panic(err)
+	}
+	return b
 }
