@@ -33,6 +33,31 @@
   padding: 3px 0 2px;
 }
 
+/* File search adds an explicit scope without squeezing it into the input. */
+.files-search-scope {
+  display: flex;
+  gap: 2px;
+  margin: 2px 8px 0 26px;
+}
+.files-search-scope button {
+  border: 0;
+  border-radius: 4px;
+  padding: 2px 7px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.files-search-scope button:hover {
+  color: var(--fg);
+  background: var(--hover-bg);
+}
+.files-search-scope button.active {
+  color: var(--fg);
+  background: color-mix(in srgb, var(--lp-accent, var(--accent)) 18%, transparent);
+}
+
 /* Quick filter box (repos + sessions, incl. その他のセッション). */
 .proj-filter {
   display: flex;
@@ -168,6 +193,24 @@
 }
 .proj-fstree {
   padding: 1px 0 2px;
+}
+
+.files-search-group {
+  position: sticky;
+  top: calc(var(--sec-head-h, 34px) + 56px);
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border2);
+  background: var(--leftpane-bg);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+.files-search-group .codicon {
+  font-size: 12px;
 }
 
 /* ツリー/変更 toggle in the ファイル section header. Lives in the left pane, so

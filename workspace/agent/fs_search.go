@@ -63,7 +63,16 @@ func handleFSSearch(w http.ResponseWriter, r *http.Request) {
 	// --files: list files, honouring .gitignore per repo. --sort path: deterministic
 	// order so the capped slice is the alphabetically-first matches. -g '!.git':
 	// never descend into git internals (still shown by --hidden otherwise).
-	cmd := exec.CommandContext(ctx, "rg", "--files", "--hidden", "--sort", "path", "-g", "!.git")
+	args := []string{"--files", "--hidden", "--sort", "path", "-g", "!.git"}
+	if rel == "" {
+		// Home search is intentionally the non-working-copy scope. Avoid the
+		// large package/cache trees that are useful on disk but noisy in a file
+		// picker; repos has its own explicit search scope in the Console.
+		for _, glob := range []string{"!repos", "!.cache", "!.local", "!.npm", "!.gradle", "!.cargo/registry", "!.rustup"} {
+			args = append(args, "-g", glob)
+		}
+	}
+	cmd := exec.CommandContext(ctx, "rg", args...)
 	cmd.Dir = full
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
