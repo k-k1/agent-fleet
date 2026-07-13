@@ -55,7 +55,7 @@ export function ReaderView({ filePath }: { filePath: string }) {
   useEffect(() => {
     if (!filePath) return;
     let alive = true;
-    handleRef.current?.stop();
+    handleRef.current?.stop("replaced");
     setData(null);
     setErr("");
     setActive(null);
@@ -146,7 +146,7 @@ export function ReaderView({ filePath }: { filePath: string }) {
   }, [active]);
 
   // アンマウントで朗読停止（別ファイルを開く等で本文 DOM が消えるため）。
-  useEffect(() => () => handleRef.current?.stop(), []);
+  useEffect(() => () => handleRef.current?.stop("replaced"), []);
 
   // from 番目の読み上げ単位から（再）開始。合成は分割済みテキスト（split）で行い、
   // ハイライトは origOf で元の読み上げ単位へ戻す。
@@ -157,7 +157,7 @@ export function ReaderView({ filePath }: { filePath: string }) {
     if (!slice.length) return;
     // 前拍: 文の先頭の片は元の単位の前拍、合成分割の続き片は間なし。
     const pres = slice.map((_, k) => (split.head[start + k] ? flatPre[split.origOf[start + k]] : 0));
-    handleRef.current?.stop();
+    handleRef.current?.stop("replaced");
     const h = startNarration(
       slice,
       baseName(filePath),

@@ -25,6 +25,9 @@ import {
 import { effectiveDict } from "./ttsDict.ts";
 import { makeAudioLru } from "./ttsCache.ts";
 import { speakersCatalog, type Speaker, type SpeakerStyle } from "./ttsSpeakers.ts";
+import { type TtsController, type TtsEndReason, type TtsStopReason } from "./ttsControl.ts";
+export { stopTtsForReplacement } from "./ttsControl.ts";
+export type { TtsController, TtsEndReason, TtsStopReason } from "./ttsControl.ts";
 
 export interface TtsOptions {
   provider: string; // "auto" | "voicevox" | "polly"
@@ -294,12 +297,6 @@ const SENTENCE_END = /[。．！？!?\n]/;
 
 // 単一チャットターンの読み上げを司るコントローラ。send() 開始時に start し、onDelta で
 // push、onDone で flush、stop() で中断する。
-export interface TtsController {
-  push(delta: string): void;
-  flush(): void;
-  stop(): void;
-}
-
 // --- 合成キャッシュ ------------------------------------------------------------
 // 同一文言＋同一合成条件の復号済み AudioBuffer をメモリ内 LRU で持ち、再読み上げ
 // （同じ回答の読み上げボタン再押下、定型 announce、朗読のやり直し等）を合成・
@@ -373,17 +370,12 @@ function audioCtx(): AudioContext | null {
 // stop には 2 種類ある。(1) 明示的な停止（TopBar・ターンフッターの停止ボタン等）＝「静かに
 // して」の意思なので、待機中のアナウンスキューと各ミラーペインの自動読み上げキューもまとめて
 // 捨てる。(2) 新しい再生開始に伴う置き換え（プリエンプト、グローバル 1 本再生の維持）＝停止
-// ではないので何も捨てない。preemptActive() 経由の stop だけを (2) として除外する。
-let preempting = false;
+// ではないので何も捨てない。stop(reason) で理由を明示し、非同期・再入可能な再生処理でも
+// 一時的なグローバルフラグに依存しない。
 function preemptActive(): void {
   const st = useTtsStore.getState();
   if (!st.active) return;
-  preempting = true;
-  try {
-    st.active.stop();
-  } finally {
-    preempting = false;
-  }
+  st.active.stop("replaced");
 }
 // onTtsStop は明示停止の購読（ミラーの自動読み上げキュー破棄用）。解除関数を返す。
 const stopSubs = new Set<() => void>();
@@ -394,7 +386,6 @@ export function onTtsStop(fn: () => void): () => void {
   };
 }
 function notifyStopped(): void {
-  if (preempting) return;
   announceQueue.length = 0;
   stopSubs.forEach((f) => f());
 }
@@ -402,11 +393,11 @@ function notifyStopped(): void {
 // startTts は 1 つの読み上げセッションを開始する。アプリ全体で再生は 1 本に集約するため、
 // 既存の再生中セッションがあれば止めてから始め、グローバルストアに自分を active として登録する。
 // source は TopBar の「読み上げ中・〇〇」表示に使うラベル。onEnd は自然終了("done")／停止
-// ("stopped")のどちらでも 1 回だけ呼ばれる（アナウンスキューの直列制御に使う）。
+// ("explicit" / "replaced")のいずれでも 1 回だけ呼ばれる（アナウンスキューの直列制御に使う）。
 export function startTts(
   opts: TtsOptions,
   source = "",
-  onEnd?: (reason: "done" | "stopped") => void,
+  onEnd?: (reason: TtsEndReason) => void,
   sessionName = "", // 発生元セッション名（左ペインの再生中アイコン用。非セッションは ""）
   // onPiece(spoken): その文が実際に鳴り始める瞬間に、読み補正前の表示テキストを通知する
   // （ライブ配信カラオケ用・docs/19）。未指定なら一切コストは掛からない。
@@ -439,7 +430,7 @@ export function startTts(
   let ended = false; // onEnd を 1 回だけ呼ぶためのガード
   const acs = new Set<AbortController>();
 
-  const finish = (reason: "done" | "stopped") => {
+  const finish = (reason: TtsEndReason) => {
     if (ended) return;
     ended = true;
     // 自分がまだ active なら登録を外す（自然終了でも外す — 残すと「準備中の再生あり」と
@@ -641,8 +632,10 @@ export function startTts(
       drain(true);
       notify();
     },
-    stop() {
-      if (stopped) return;
+    stop(reason = "explicit") {
+      // Natural completion leaves callers holding a harmless stale controller. A later
+      // lifecycle cleanup must not turn that old handle into a new global stop event.
+      if (stopped || ended) return;
       stopped = true;
       jobs.length = 0;
       pieceTimers.forEach((t) => clearTimeout(t)); // 予約済みの onPiece 発火を取り消す
@@ -655,8 +648,8 @@ export function startTts(
         } catch {}
       });
       srcs.clear();
-      finish("stopped"); // ストアの後片づけ（active/speaking 解除）は finish が行う
-      notifyStopped(); // 明示停止 → 待機中のキューも捨てる（プリエンプト時は no-op）
+      finish(reason); // ストアの後片づけ（active/speaking 解除）は finish が行う
+      if (reason === "explicit") notifyStopped(); // ユーザー停止だけ待機キューも捨てる
     },
   };
   useTtsStore.getState().setActive(controller, source, voiceCharName(opts), sessionName);
@@ -693,7 +686,7 @@ function pumpAnnounce(): void {
     next.source,
     (reason) => {
       announcing = false;
-      if (reason === "stopped") announceQueue.length = 0; // 全体停止でキューも破棄
+      if (reason === "explicit") announceQueue.length = 0; // 全体停止でキューも破棄
       else pumpAnnounce();
     },
     next.sessionName ?? "",
@@ -739,7 +732,7 @@ export function speakText(text: string, source = "", voice?: Partial<TtsOptions>
 export interface NarrationHandle {
   pause(): void;
   resume(): void;
-  stop(): void;
+  stop(reason?: TtsStopReason): void;
   isPaused(): boolean;
   // 声の即時切替（朗読ビューのセレクト）。いま鳴っている文はそのまま、次の文から新しい声。
   setVoice(voice?: Partial<TtsOptions>): void;
@@ -749,8 +742,9 @@ export function startNarration(
   units: string[],
   source: string,
   // onUnit(i) = i 番目の unit の再生を開始。onUnit(null, reason) = 終了（done=自然終了 /
-  // stopped=停止・他の再生への置き換え。ミラーの自動読み上げキューが継続可否の判断に使う）。
-  onUnit: (i: number | null, endReason?: "done" | "stopped") => void,
+  // explicit=明示停止、replaced=他の再生への置き換え。ミラーの自動読み上げキューが
+  // 継続可否の判断に使う）。
+  onUnit: (i: number | null, endReason?: TtsEndReason) => void,
   // 声の上書き（セッションごとの声 sessionVoiceOpts 等）。未指定は設定の話者。
   voice?: Partial<TtsOptions>,
   // unit ごとの前拍（秒）。リスト項目・段落頭など「新しいブロックの最初の文」に BLOCK_BEAT を
@@ -787,7 +781,7 @@ export function startNarration(
   let stopped = false;
   let ended = false;
 
-  const finish = (reason: "done" | "stopped") => {
+  const finish = (reason: TtsEndReason) => {
     if (ended) return;
     ended = true;
     onUnit(null, reason);
@@ -952,7 +946,7 @@ export function startNarration(
     maybeDone();
   };
 
-  const adapter: TtsController = { push() {}, flush() {}, stop: () => stop() };
+  const adapter: TtsController = { push() {}, flush() {}, stop: (reason) => stop(reason) };
 
   const pause = () => {
     if (stopped || paused) return;
@@ -965,8 +959,8 @@ export function startNarration(
     if (ctx) void ctx.resume();
     tryPlay(); // 一時停止が「文の切れ目」だった場合に備え、再生を促す
   };
-  const stop = () => {
-    if (stopped) return;
+  const stop = (reason: TtsStopReason = "explicit") => {
+    if (stopped || ended) return;
     stopped = true;
     acs.forEach((a) => a.abort());
     acs.clear();
@@ -978,8 +972,8 @@ export function startNarration(
     }
     playing = false;
     if (ctx && ctx.state === "suspended") void ctx.resume(); // 次の再生のため戻しておく
-    finish("stopped");
-    notifyStopped(); // 明示停止 → 待機中のキューも捨てる（プリエンプト時は no-op）
+    finish(reason);
+    if (reason === "explicit") notifyStopped(); // ユーザー停止だけ待機キューも捨てる
   };
 
   useTtsStore.getState().setActive(adapter, source, voiceCharName(opts), sessionName);

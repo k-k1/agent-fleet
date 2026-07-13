@@ -22,6 +22,23 @@ import {
   startsTame,
 } from "./ttsText.ts";
 import { makeAudioLru } from "./ttsCache.ts";
+import { stopTtsForReplacement, type TtsController } from "./ttsControl.ts";
+
+describe("TTS controller replacement", () => {
+  it("内部的な再生置換は明示停止ではなく replaced を渡す", () => {
+    const reasons: Array<string | undefined> = [];
+    const controller: TtsController = {
+      push() {},
+      flush() {},
+      stop: (reason) => reasons.push(reason),
+    };
+
+    stopTtsForReplacement(controller);
+    stopTtsForReplacement(null);
+
+    expect(reasons).toEqual(["replaced"]);
+  });
+});
 
 describe("plainify (読み上げ用プレーン化)", () => {
   it("インラインコード/リンク/URL/強調を落とす", () => {
