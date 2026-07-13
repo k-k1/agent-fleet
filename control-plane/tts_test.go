@@ -23,7 +23,16 @@ func fakeVoicevox(t *testing.T) (*httptest.Server, *string) {
 			http.Error(w, "no text", http.StatusBadRequest)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"speedScale": 1.0, "kana": "テスト"})
+		// accent_phrases に pause_mora を 1 つ含める（読点相当）ので scalePauseMoras の
+		// 注入をテストできる。null の pause_mora（区切りなし）も混ぜて無視されることを見る。
+		writeJSON(w, http.StatusOK, map[string]any{
+			"speedScale": 1.0,
+			"kana":       "テスト",
+			"accent_phrases": []map[string]any{
+				{"pause_mora": nil},
+				{"pause_mora": map[string]any{"text": "、", "vowel": "pau", "vowel_length": 0.2}},
+			},
+		})
 	})
 	mux.HandleFunc("POST /synthesis", func(w http.ResponseWriter, r *http.Request) {
 		var m map[string]any
@@ -31,9 +40,19 @@ func fakeVoicevox(t *testing.T) (*httptest.Server, *string) {
 		ss, _ := m["speedScale"].(float64)
 		pre, _ := m["prePhonemeLength"].(float64)
 		post, _ := m["postPhonemeLength"].(float64)
+		pauseLen := -1.0 // -1 = pause_mora が見当たらない（テスト用の番兵）
+		if phrases, ok := m["accent_phrases"].([]any); ok {
+			for _, p := range phrases {
+				if phrase, ok := p.(map[string]any); ok {
+					if pause, ok := phrase["pause_mora"].(map[string]any); ok {
+						pauseLen, _ = pause["vowel_length"].(float64)
+					}
+				}
+			}
+		}
 		w.Header().Set("Content-Type", "audio/wav")
 		// Encode the overridden params back into the "WAV" so the caller can verify injection.
-		_, _ = w.Write([]byte("WAVspeed=" + trimFloat(ss) + ",pre=" + trimFloat(pre) + ",post=" + trimFloat(post)))
+		_, _ = w.Write([]byte("WAVspeed=" + trimFloat(ss) + ",pre=" + trimFloat(pre) + ",post=" + trimFloat(post) + ",pause=" + trimFloat(pauseLen)))
 	})
 	mux.HandleFunc("GET /version", func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte("0.14.0"))
@@ -63,7 +82,7 @@ func clearTTSEnv(t *testing.T) {
 func TestVoicevoxSynthesize(t *testing.T) {
 	srv, gotSpeaker := fakeVoicevox(t)
 
-	wav, aerr := voicevoxSynthesize(t.Context(), srv.URL, "こんにちは。", "3", 1.25)
+	wav, aerr := voicevoxSynthesize(t.Context(), srv.URL, "こんにちは。", "3", 1.25, false)
 	if aerr != nil {
 		t.Fatalf("synthesize: %+v", aerr)
 	}
@@ -71,21 +90,31 @@ func TestVoicevoxSynthesize(t *testing.T) {
 		t.Errorf("speaker = %q, want 3", *gotSpeaker)
 	}
 	// speedScale の注入と、前後無音の短縮（文間の待機対策）の両方が synthesis へ届くこと。
-	if got := string(wav); got != "WAVspeed=1.25,pre=0.02,post=0.05" {
-		t.Errorf("wav = %q, want WAVspeed=1.25,pre=0.02,post=0.05 (param override not injected?)", got)
+	// particlePause=false なので pause_mora.vowel_length はエンジンの値（0.2）のまま。
+	if got := string(wav); got != "WAVspeed=1.25,pre=0.02,post=0.05,pause=0.2" {
+		t.Errorf("wav = %q, want WAVspeed=1.25,pre=0.02,post=0.05,pause=0.2 (param override not injected?)", got)
 	}
 
 	// Empty voice defaults to ずんだもん (speaker 3); speed 0 keeps speedScale=1
 	// while the silence trim still applies.
-	wav, aerr = voicevoxSynthesize(t.Context(), srv.URL, "テスト。", "", 0)
+	wav, aerr = voicevoxSynthesize(t.Context(), srv.URL, "テスト。", "", 0, false)
 	if aerr != nil {
 		t.Fatalf("default-voice synthesize: %+v", aerr)
 	}
 	if *gotSpeaker != "3" {
 		t.Errorf("default speaker = %q, want 3", *gotSpeaker)
 	}
-	if got := string(wav); got != "WAVspeed=1,pre=0.02,post=0.05" {
-		t.Errorf("wav = %q, want WAVspeed=1,pre=0.02,post=0.05", got)
+	if got := string(wav); got != "WAVspeed=1,pre=0.02,post=0.05,pause=0.2" {
+		t.Errorf("wav = %q, want WAVspeed=1,pre=0.02,post=0.05,pause=0.2", got)
+	}
+
+	// particlePause=true → pause_mora.vowel_length は particlePauseScale (0.6) 倍に詰まる。
+	wav, aerr = voicevoxSynthesize(t.Context(), srv.URL, "神は細部に。", "3", 1, true)
+	if aerr != nil {
+		t.Fatalf("particle-pause synthesize: %+v", aerr)
+	}
+	if got := string(wav); got != "WAVspeed=1,pre=0.02,post=0.05,pause=0.12" {
+		t.Errorf("wav = %q, want WAVspeed=1,pre=0.02,post=0.05,pause=0.12 (pause scale not injected?)", got)
 	}
 }
 
@@ -111,7 +140,7 @@ func TestCollapseJaSpaces(t *testing.T) {
 
 func TestVoicevoxUnreachable(t *testing.T) {
 	// A closed port → BadGateway with the engine-unreachable code, not a panic.
-	_, aerr := voicevoxSynthesize(t.Context(), "http://127.0.0.1:1", "x。", "3", 1)
+	_, aerr := voicevoxSynthesize(t.Context(), "http://127.0.0.1:1", "x。", "3", 1, false)
 	if aerr == nil || aerr.status != http.StatusBadGateway {
 		t.Fatalf("want 502, got %+v", aerr)
 	}
