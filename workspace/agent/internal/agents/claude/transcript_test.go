@@ -116,6 +116,31 @@ func TestSendUserFilePart(t *testing.T) {
 	}
 }
 
+func TestClaudeDelegationPart(t *testing.T) {
+	lines := [][]byte{
+		[]byte(`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"a1","name":"Agent","input":{"description":"調査する","prompt":"詳しく調べて","subagent_type":"Explore","model":"haiku"}}]}}`),
+		[]byte(`{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"a1","content":"調査結果です"}]}}`),
+	}
+	turns := CollectTurns(lines, 0, len(lines))
+	if len(turns) != 1 || len(turns[0].Parts) != 1 {
+		t.Fatalf("turns = %+v, want one delegation turn", turns)
+	}
+	p := turns[0].Parts[0]
+	if p.Kind != "delegation" || p.Info != "調査する" || p.Prompt != "詳しく調べて" ||
+		p.AgentType != "Explore" || p.Model != "haiku" || p.Status != "completed" || p.Output != "調査結果です" {
+		t.Fatalf("delegation = %+v", p)
+	}
+
+	background := [][]byte{
+		[]byte(`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"bg1","name":"Agent","input":{"description":"並列調査","prompt":"調べて","subagent_type":"Explore","run_in_background":true}}]}}`),
+		[]byte(`{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"bg1","content":"agent launched"}]}}`),
+	}
+	bg := CollectTurns(background, 0, len(background))[0].Parts[0]
+	if bg.Status != "requested" || bg.Output != "" {
+		t.Fatalf("background delegation = %+v, want requested without launch acknowledgement", bg)
+	}
+}
+
 // TestQueuedCommandTurn checks that a mid-run steering prompt — logged only as an
 // attachment/queued_command event, never as a user line (claude ≥2.1.207) — parses
 // into a plain user turn, and that non-human / non-queued attachments stay invisible.
