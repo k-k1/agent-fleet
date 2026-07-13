@@ -381,6 +381,46 @@
 .mirror-turn-body {
   padding-left: 15px;
 }
+/* Completed tool-using replies keep the final answer visible and fold everything before
+   the last work boundary into one disclosure. While the session is working the parts stay
+   flat; this row appears only at completion, avoiding a moving boundary during polling. */
+.mt-work {
+  margin: 2px 0 7px;
+  border: 1px solid color-mix(in srgb, var(--fg) 10%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--fg) 2%, transparent);
+}
+.mt-work-head {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 7px;
+  cursor: pointer;
+  list-style: none;
+  opacity: 0.68;
+}
+.mt-work-head::-webkit-details-marker {
+  display: none;
+}
+.mt-work-head:hover,
+.mt-work[open] .mt-work-head {
+  opacity: 0.9;
+}
+.mt-work-head .codicon {
+  font-size: 12px;
+}
+.mt-work-title {
+  font-size: 12px;
+  font-weight: 600;
+}
+.mt-work-count {
+  font-size: 11px;
+}
+.mt-work-body {
+  padding: 2px 9px 7px 20px;
+  border-top: 1px solid color-mix(in srgb, var(--fg) 7%, transparent);
+  opacity: 0.82;
+}
 /* Timestamp + copy sit together at the bottom-right of the turn. */
 .mirror-turn-foot {
   display: flex;
