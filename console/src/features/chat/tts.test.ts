@@ -366,6 +366,11 @@ describe("applyBuiltinReadings / applyReadings (組み込みの読み補正)", (
     expect(applyBuiltinReadings("TypeScript型チェック")).toBe("TypeScriptかたチェック"); // 実機報告（英字は CP 側 enkana）
   });
 
+  it("言って→いって（文末誤読対策）/ 身体→からだ", () => {
+    expect(applyBuiltinReadings("何する？　言って。")).toBe("何する？　いって。"); // 実機報告
+    expect(applyBuiltinReadings("身体を動かす")).toBe("からだを動かす"); // 実機報告
+  });
+
   it("ユーザー辞書が先に当たれば組み込みより優先される", () => {
     const dict = parseUserDict("空レポ=そらレポ");
     expect(applyReadings("空レポです", dict, false)).toBe("そらレポです");
