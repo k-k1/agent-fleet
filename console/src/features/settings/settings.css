@@ -1617,6 +1617,7 @@
 }
 .admin-surface-body {
   flex: 1;
+  min-width: 0;
   min-height: 0;
   overflow: auto;
   padding: 16px;
@@ -1625,6 +1626,7 @@
   display: flex;
   flex-direction: column;
   gap: 16px;
+  min-width: 0;
   min-height: 0;
 }
 
@@ -2342,14 +2344,29 @@
    tap-target back button. Scoped to .admin* so global form-row etc. are untouched. */
 @media (max-width: 760px) {
   .admin-surface {
-    width: 100vw;
-    height: 100dvh;
-    max-width: none;
-    border: none;
-    border-radius: 0;
+    /* Match the settings modal: stay inside the backdrop's phone-sized content
+       box instead of forcing a 100vw child into a padded backdrop. */
+    width: 100%;
+    max-width: 100%;
+    height: min(900px, 88dvh);
+    max-height: 88dvh;
   }
   .admin-surface-body {
     padding: 12px;
+    /* Wide controls own their horizontal scrolling; the entire modal must not. */
+    overflow-x: hidden;
+  }
+  .admin-modes {
+    display: flex;
+    width: 100%;
+    max-width: 100%;
+    align-self: stretch;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+  }
+  .admin-modes::-webkit-scrollbar {
+    display: none;
   }
   .admin-back {
     padding: 8px 14px;
