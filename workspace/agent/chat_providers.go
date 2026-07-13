@@ -249,9 +249,16 @@ func (claudeChat) sendStream(ctx context.Context, c *chatConversation, prompt st
 	if resultErr {
 		return "", fmt.Errorf("claude がエラーを返しました: %s", result)
 	}
-	final := result
-	if final == "" {
-		final = acc.String()
+	// Persist exactly what we streamed. The live view shows `acc` (the text_delta stream);
+	// claude's `result` event carries only the FINAL turn's text, so on a tool-using,
+	// multi-turn answer (e.g. an MCP query then the reply) result != acc. Returning result
+	// here made the saved/`done` bubble differ from what streamed live, so at end-of-turn
+	// the reply was wiped and re-rendered as different content — the "打ち消し→書き換え" the
+	// user reported. Keep the streamed accumulation; fall back to result only when nothing
+	// streamed (a provider that emitted no text_delta).
+	final := acc.String()
+	if strings.TrimSpace(final) == "" {
+		final = result
 	}
 	return strings.TrimRight(final, "\n"), nil
 }
