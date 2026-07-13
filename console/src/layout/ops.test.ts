@@ -68,6 +68,15 @@ describe("openInNew", () => {
     expect(l2.cols).toBe(l.cols); // no structural change
     expect(l2.activeId).toBe(first.id);
   });
+  it("treats different source lines as distinct file targets", () => {
+    let l = openActive(freshLayout(), { content: { kind: "file", filePath: "a.ts", targetLine: 10 } });
+    l = openInNew(l, { content: { kind: "file", filePath: "a.ts", targetLine: 20 } });
+    expect(allPanes(l)).toHaveLength(2);
+    expect(allPanes(l).map((p) => p.content)).toEqual([
+      { kind: "file", filePath: "a.ts", targetLine: 10 },
+      { kind: "file", filePath: "a.ts", targetLine: 20 },
+    ]);
+  });
   it("fills a blank pane before growing the layout", () => {
     let l = grown(1);
     const second = allPanes(l)[1];
@@ -98,6 +107,15 @@ describe("openInNew", () => {
     // Third open: column full → falls back to openActive on the active pane.
     const l2 = openInNew(l, term("s2"), { mobile: true });
     expect(allPanes(l2)).toHaveLength(2);
+  });
+  it("mobile: a forced open reuses the other row instead of replacing the source pane", () => {
+    let l = openActive(freshLayout(), file("source.md"));
+    l = openInNew(l, file("first.ts"), { mobile: true, force: true });
+    const source = allPanes(l).find((p) => p.content.kind === "file" && p.content.filePath === "source.md")!;
+    l = setActive(l, source.id);
+    const l2 = openInNew(l, file("linked.ts"), { mobile: true, force: true });
+    expect(allPanes(l2).some((p) => p.id === source.id && p.content.kind === "file" && p.content.filePath === "source.md")).toBe(true);
+    expect(allPanes(l2).some((p) => p.content.kind === "file" && p.content.filePath === "linked.ts")).toBe(true);
   });
   it("allocates ids past history maxima (no reuse after close)", () => {
     let l = grown(2); // p0,p1,p2
@@ -246,6 +264,19 @@ describe("normalizeStored (migration)", () => {
     const l = grown(1);
     const back = normalizeStored(JSON.parse(JSON.stringify(l)))!;
     expect(back).toEqual(l);
+  });
+  it("keeps a persisted file source location", () => {
+    const l = normalizeStored({
+      cols: [{ id: "c0", panes: [{ id: "p0", content: { kind: "file", filePath: "a.ts", targetLine: 12, targetColumn: 3 } }] }],
+      colRatios: [1],
+      activeId: "p0",
+    })!;
+    expect(l.cols[0].panes[0].content).toEqual({
+      kind: "file",
+      filePath: "a.ts",
+      targetLine: 12,
+      targetColumn: 3,
+    });
   });
   it("rejects garbage and repairs bad ratios / activeId", () => {
     expect(normalizeStored(null)).toBeNull();

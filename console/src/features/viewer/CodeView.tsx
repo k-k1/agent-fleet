@@ -66,6 +66,8 @@ interface CodeViewProps {
   wrap?: boolean;
   minimap?: boolean;
   marks?: LineMarks | null;
+  targetLine?: number;
+  targetColumn?: number;
 }
 
 // Memoised: FileView re-renders on every text-selection change (to position the 送る/
@@ -73,7 +75,7 @@ interface CodeViewProps {
 // across those renders. Without memo, each Shift+↓ rebuilt all N line rows and forced the
 // browser to re-evaluate the live selection inside the contentEditable — so holding the
 // key got progressively slower. memo skips the grid entirely when only `sel` changed.
-export const CodeView = memo(function CodeView({ html, lines, lineNumbers, wrap, minimap, marks }: CodeViewProps) {
+export const CodeView = memo(function CodeView({ html, lines, lineNumbers, wrap, minimap, marks, targetLine }: CodeViewProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const miniInnerRef = useRef<HTMLDivElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
@@ -256,6 +258,16 @@ export const CodeView = memo(function CodeView({ html, lines, lineNumbers, wrap,
   const n = Math.max(lines, 1);
   const lineHtmls = useMemo(() => splitHighlightedLines(html), [html]);
 
+  // Source citations open with the referenced row centered. useLayoutEffect runs after
+  // the line grid exists but before paint, avoiding a visible jump from the first line.
+  useLayoutEffect(() => {
+    if (!targetLine) return;
+    scrollRef.current
+      ?.querySelector<HTMLElement>(`.cl-code[data-ln="${targetLine}"]`)
+      ?.closest<HTMLElement>(".cl-row")
+      ?.scrollIntoView({ block: "center" });
+  }, [html, targetLine]);
+
   // The code area is contentEditable so it gets a real, keyboard-movable caret (arrow
   // keys, Home/End, Shift-select, Ctrl+A, copy) for reading — but it must stay strictly
   // read-only, so every mutation path is blocked: beforeinput covers typing/delete/IME,
@@ -289,7 +301,7 @@ export const CodeView = memo(function CodeView({ html, lines, lineNumbers, wrap,
               if (changes.del.has(ln)) gutCls += " cb-del";
             }
             return (
-              <div className="cl-row" key={i}>
+              <div className={"cl-row" + (ln === targetLine ? " target-line" : "")} key={i}>
                 {showGutter && (
                   <div className={"cl-gutter" + gutCls} contentEditable={false} aria-hidden="true">
                     {lineNumbers ? ln : ""}

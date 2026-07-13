@@ -1190,7 +1190,11 @@ export function MirrorView({
   const openPlan = (plan: string) => showDoc(planTitle(plan), plan);
 
   // Open a SendUserFile entry in its own split pane (same as the file tree's split-open).
-  const openFile = (path: string) => openTargetInNew({ content: { kind: "file", filePath: path } });
+  const openFile = (path: string, line?: number, column?: number) =>
+    openTargetInNew(
+      { content: { kind: "file", filePath: path, targetLine: line, targetColumn: column } },
+      true,
+    );
 
   // Auto-suggested title (session_title.go): 採用 promotes it to the session's real
   // title (bumpSessions so the left-pane label updates without waiting for its own
@@ -1637,7 +1641,7 @@ export function MirrorView({
               <span className="mt-model muted">質問中</span>
             </div>
             <div className="mirror-turn-body">
-              {pendingText && <MarkdownView source={pendingText} />}
+              {pendingText && <MarkdownView source={pendingText} onOpenFile={openFile} />}
               <PendingQuestions
                 key={"pq-" + (pending[0]?.question || "")}
                 questions={pending}
@@ -2101,7 +2105,7 @@ function renderGroups(
   onAnswer: (t: string) => void,
   onOpenPlan: (plan: string) => void,
   onOpenDiff: (p: Part) => void,
-  onOpenFile: (path: string) => void,
+  onOpenFile: (path: string, line?: number, column?: number) => void,
   maxSpend: number,
   session: string,
   onOpenImage: (url: string) => void,
@@ -2120,7 +2124,13 @@ function renderGroups(
     if (ctx) prevCtx = ctx;
     els.push(
       g.compact ? (
-        <CompactBlock key={g.idx} turn={g} before={ctxSizeBefore(groups, i)} after={ctxSizeAfter(groups, i)} />
+        <CompactBlock
+          key={g.idx}
+          turn={g}
+          before={ctxSizeBefore(groups, i)}
+          after={ctxSizeAfter(groups, i)}
+          onOpenFile={onOpenFile}
+        />
       ) : (
         <Turn
           key={g.idx}
@@ -2188,7 +2198,17 @@ function TaskChecklist({ tasks }: { tasks: TaskItem[] }) {
 // CompactBlock renders claude's auto-compaction summary as a collapsed disclosure —
 // "コンテキストが圧縮されました" — rather than a giant user turn. Closed by default
 // (native <details>); expand to read the summary that replaced the earlier context.
-function CompactBlock({ turn, before, after }: { turn: Group; before?: number; after?: number }) {
+function CompactBlock({
+  turn,
+  before,
+  after,
+  onOpenFile,
+}: {
+  turn: Group;
+  before?: number;
+  after?: number;
+  onOpenFile: (path: string, line?: number, column?: number) => void;
+}) {
   // Show the reduction only once both sides are real: `after` is 0 until the first
   // post-compaction turn's usage lands, so the effect appears a beat after 圧縮完了.
   const hasEffect = !!before && !!after && before > after;
@@ -2226,7 +2246,7 @@ function CompactBlock({ turn, before, after }: { turn: Group; before?: number; a
             </div>
           </div>
         )}
-        <MarkdownView source={turn.text} />
+        <MarkdownView source={turn.text} baseDir={turn.cwd} onOpenFile={onOpenFile} />
       </div>
     </details>
   );
@@ -2235,7 +2255,15 @@ function CompactBlock({ turn, before, after }: { turn: Group; before?: number; a
 // ThinkingBlock renders an agent's chain-of-thought (codex/opencode reasoning) as a
 // collapsed disclosure — "思考" — so it's available without crowding the answer. Closed
 // by default (native <details>); expand to read the reasoning.
-function ThinkingBlock({ text }: { text?: string }) {
+function ThinkingBlock({
+  text,
+  baseDir,
+  onOpenFile,
+}: {
+  text?: string;
+  baseDir?: string;
+  onOpenFile?: (path: string, line?: number, column?: number) => void;
+}) {
   if (!text) return null;
   return (
     <details className="mirror-thinking">
@@ -2244,7 +2272,7 @@ function ThinkingBlock({ text }: { text?: string }) {
         <span className="mth-title">思考</span>
       </summary>
       <div className="mirror-thinking-body">
-        <MarkdownView source={text} />
+        <MarkdownView source={text} baseDir={baseDir} onOpenFile={onOpenFile} />
       </div>
     </details>
   );
@@ -2345,7 +2373,7 @@ function Turn({
   onAnswer: (t: string) => void;
   onOpenPlan: (plan: string) => void;
   onOpenDiff: (p: Part) => void;
-  onOpenFile: (path: string) => void;
+  onOpenFile: (path: string, line?: number, column?: number) => void;
   agentName: string;
   tts: TurnTtsWiring;
   isRejectedPlan: (plan: string) => boolean;
@@ -2400,7 +2428,7 @@ function Turn({
             const { text, images, files } = splitPastedImages(turn.text || "");
             return (
               <>
-                {text && <MarkdownView source={text} breaks />}
+                {text && <MarkdownView source={text} breaks baseDir={turn.cwd} onOpenFile={onOpenFile} />}
                 {images.length > 0 && (
                   <div className="mt-imgs">
                     {images.map((nm) => (
@@ -2449,9 +2477,9 @@ function Turn({
             ) : item.p.kind === "thinking" ? (
               // The agent's chain-of-thought (codex reasoning / opencode reasoning),
               // collapsed by default so it doesn't crowd the answer.
-              <ThinkingBlock key={item.i} text={item.p.text} />
+              <ThinkingBlock key={item.i} text={item.p.text} baseDir={turn.cwd} onOpenFile={onOpenFile} />
             ) : (
-              <MarkdownView key={item.i} source={item.p.text} />
+              <MarkdownView key={item.i} source={item.p.text} baseDir={turn.cwd} onOpenFile={onOpenFile} />
             ),
           )
         )}
