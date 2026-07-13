@@ -9,7 +9,14 @@ import { errText, raw } from "../../core/api/client.ts";
 import { takeChatSeed } from "../../lib/chatSeed.ts";
 import { coarsePointer } from "../../lib/device.ts";
 import { useSettings, surfaceBg, surfaceAccent, effectiveTheme } from "../../lib/settings.ts";
-import { startTts, ttsOptsFromSettings, assistantVoiceOpts, type TtsController, type TtsOptions } from "./tts.ts";
+import {
+  startTts,
+  stopTtsForReplacement,
+  ttsOptsFromSettings,
+  assistantVoiceOpts,
+  type TtsController,
+  type TtsOptions,
+} from "./tts.ts";
 import { readTurn, collectBlocks, blockIndexAt, type TurnReadHandle } from "../mirror/turnTts.ts";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { splitPastedImages, buildImagePrompt } from "../../lib/pastedImages.ts";
@@ -319,7 +326,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
             (t) => setKaraoke(t),
           )
         : null;
-    ttsRef.current?.stop();
+    stopTtsForReplacement(ttsRef.current);
     ttsRef.current = makeTts();
     markChatBusy(target.id, true); // publish 進行中 to the rail
     // Mirror the live reply + working steps + final conversation into the store so a pane
@@ -362,7 +369,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
           setLive(convId, { text: "", steps: [...steps] });
           // 音声: 途中まで読んでいた作業過程の再生をスキップし、最終回答用に読み直す
           // （stop→作り直しの合成待ちが「一拍」になり、過程を読み切らず本回答へ移る）。
-          ttsRef.current?.stop();
+          stopTtsForReplacement(ttsRef.current);
           ttsRef.current = makeTts();
         },
         onError: (m) => setError(m),
@@ -392,7 +399,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
   };
 
   // ペインを閉じる/アンマウント時は読み上げを止める（音声が居残らないように）。
-  useEffect(() => () => ttsRef.current?.stop(), []);
+  useEffect(() => () => stopTtsForReplacement(ttsRef.current), []);
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     // Don't intercept Enter while an IME candidate window is open (JP/CJK input).
@@ -755,12 +762,12 @@ function AssistantTurn({
   const [selPill, setSelPill] = useState<{ x: number; y: number; block: number } | null>(null);
 
   // Stop this bubble's reading if the pane/component goes away mid-read.
-  useEffect(() => () => handleRef.current?.stop(), []);
+  useEffect(() => () => handleRef.current?.stop("replaced"), []);
 
   const start = (fromBlock: number) => {
     const body = bodyRef.current;
     if (!body) return;
-    handleRef.current?.stop();
+    handleRef.current?.stop("replaced");
     // onEnd fires once on natural end AND on preemption (TopBar stop / another playback),
     // so the footer always falls back to the idle "読み上げ" state.
     const h = readTurn(body, "チャット", fromBlock, () => {

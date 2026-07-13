@@ -322,18 +322,18 @@ export function MirrorView({
     [],
   );
   const ttsStart = (idx: number, body: HTMLElement, fromBlock = 0) => {
-    ttsHandleRef.current?.stop(); // 自分の再生を先に止める（他の再生は startNarration が止める）
+    ttsHandleRef.current?.stop("replaced"); // 内部置換なので自動読み上げキューは温存
     const h = readTurn(
       body,
       sessionMeta ? displayName(sessionMeta) : "セッション",
       fromBlock,
-      (stopped) => {
+      (reason) => {
         ttsHandleRef.current = null;
         setTtsReading((cur) => (cur?.idx === idx ? null : cur));
-        // 明示的な停止（TopBar・フッター・他の再生への置き換え）は自動読み上げキューも黙らせる。
-        // 自然終了なら待っていた次の回答を続けて読む。
-        if (stopped) ttsAutoQueueRef.current.length = 0;
-        else ttsAutoPumpRef.current();
+        // ユーザーの明示停止だけキューを捨てる。他再生への置換はキューを温存し、置換先が
+        // active に登録された後の状態を見るため microtask から再開判定する。
+        if (reason === "explicit") ttsAutoQueueRef.current.length = 0;
+        else queueMicrotask(() => ttsAutoPumpRef.current());
       },
       sessionVoiceOpts(session), // セッションごとの声（設定 OFF なら undefined）
       session, // 左ペインの再生中アイコン用
@@ -378,6 +378,10 @@ export function MirrorView({
       ttsAutoQueueRef.current.length = 0;
       return;
     }
+    // ポーリング途中の本文だけを見て最終回答か判定すると、ナレーションがツール表示より
+    // 1 ポール先行した場合だけ作業過程を読み始めてしまう。作業完了まではキューに貯め、
+    // status が working を抜けた時点の完成 DOM から最後のツール以降だけを読む。
+    if (statusRef.current === "working") return;
     if (ttsSummaryBusyRef.current) return; // 要約の生成中 → 終わってから順に
     // 何か再生中/準備中なら待つ。speaking だけだと合成待ち（登録済みで最初の音がまだ）の
     // 再生へ割り込むため active も見る（全ペイン読みでは他ペインのポンプと直列になる要）。
@@ -392,9 +396,8 @@ export function MirrorView({
       const total = collectBlocks(body).length;
       ttsAutoDoneRef.current.set(gi, total);
       if (total <= done) continue; // 増分なし（ツールだけの追記等）
-      // 過程スキップ（chat の分離と同趣・docs/19）: ツール前ナレーションを飛ばし、最後のツール
-      // 以降の本文（＝最終回答）から自動読み上げする。ポールが本文＋ツールをまとめて届ける
-      // 速いツール応答では過程が綺麗に飛ぶ（ナレーションが 1 ポール先行した時だけ読まれる）。
+      // 過程スキップ（chat の分離と同趣・docs/19）: 完成した本文からツール前ナレーションを
+      // 飛ばし、最後のツール以降の本文（＝最終回答）だけを自動読み上げする。
       // 手動の「読み上げ」ボタン／選択朗読は従来どおり全文（意図的に読ませているため触らない）。
       const from = Math.max(done, finalAnswerStart(body));
       if (total <= from) continue; // 読むべき最終回答ブロックがまだ無い（過程だけの追記）
@@ -478,7 +481,7 @@ export function MirrorView({
   useEffect(() => {
     if (ttsSessionRef.current === session) return;
     ttsSessionRef.current = session;
-    ttsHandleRef.current?.stop();
+    ttsHandleRef.current?.stop("replaced");
   }, [session]);
 
   // 本文内でテキスト選択が確定したら「ここから読み上げ」ピルを出す（assistant ターン内のみ）。
@@ -614,7 +617,7 @@ export function MirrorView({
             setTurns(Array.isArray(d.messages) ? d.messages : []);
             firstLineRef.current = 0; // reset re-sends from the top: nothing older to page
             setHasMore(false);
-            ttsHandleRef.current?.stop(); // 読み上げ中の本文 DOM ごと入れ替わる
+            ttsHandleRef.current?.stop("replaced"); // 本文 DOM の入れ替え。全体停止にはしない
             ttsAutoSeenRef.current = null; // idx が振り直されるので基準も取り直す
             ttsAutoQueueRef.current.length = 0;
             ttsAutoDoneRef.current.clear();
@@ -710,7 +713,7 @@ export function MirrorView({
       return next.length === prev.length ? prev : next;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [turns]);
+  }, [turns, status]);
 
   // Keep the conversation in view as it grows — but ONLY when the user is at the bottom
   // (atBottomRef, set on scroll). If they've scrolled up to read, we never move them; the

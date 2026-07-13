@@ -7,7 +7,14 @@
 // 対応維持が脆いため — textContent なら記法は既に落ちており、リンクは表示テキストだけが残る。
 // ターンは完結してから届く（ポーリング）ので、抽出は読み上げ開始時の 1 回で安定する。
 
-import { startNarration, BLOCK_BEAT, SENT_BEAT, type TtsOptions } from "../chat/tts.ts";
+import {
+  startNarration,
+  BLOCK_BEAT,
+  SENT_BEAT,
+  type TtsEndReason,
+  type TtsOptions,
+  type TtsStopReason,
+} from "../chat/tts.ts";
 import { splitSentences, splitLongSentence, abbrevCode, type CodeReadOpts } from "../chat/ttsText.ts";
 import { effectiveDict } from "../chat/ttsDict.ts";
 import { getSettings } from "../../lib/settings.ts";
@@ -144,20 +151,20 @@ export function hasTurnReader(session: string): boolean {
 export interface TurnReadHandle {
   pause(): void;
   resume(): void;
-  stop(): void;
+  stop(reason?: TtsStopReason): void;
 }
 
 const ACTIVE = "tts-active";
 
 // readTurn は body の fromBlock 番目のブロック以降を朗読する。再生を開始した文が属する
-// ブロックへカラオケ・ハイライト＋追従スクロール。onEnd は自然終了（stopped=false）・停止
-// （TopBar 停止や他の再生開始を含む。stopped=true）のどちらでも 1 回だけ呼ばれる。読み上げる
+// ブロックへカラオケ・ハイライト＋追従スクロール。onEnd は自然終了・明示停止・他再生への
+// 置換のいずれでも理由付きで 1 回だけ呼ばれる。読み上げる
 // 文が無ければ null を返し、onEnd は呼ばれない。
 export function readTurn(
   body: HTMLElement,
   source: string,
   fromBlock: number,
-  onEnd: (stopped: boolean) => void,
+  onEnd: (reason: TtsEndReason) => void,
   voice?: Partial<TtsOptions>, // セッションごとの声（sessionVoiceOpts）等の上書き
   sessionName = "", // 発生元セッション名（左ペインの再生中アイコン用）
 ): TurnReadHandle | null {
@@ -203,7 +210,7 @@ export function readTurn(
     (i, endReason) => {
       if (i == null) {
         light(null);
-        onEnd(endReason === "stopped");
+        onEnd(endReason ?? "done");
       } else light(blocks[blockOf[i]]);
     },
     voice,
