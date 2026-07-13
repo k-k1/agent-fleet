@@ -177,6 +177,7 @@ function readDraft(key: string | null): string {
 // not token-by-token. Prompts typed in the raw terminal DO appear (they're logged as
 // user turns), just at the next poll.
 export function MirrorView({
+  paneId,
   session,
   sessionMeta,
   active,
@@ -185,6 +186,7 @@ export function MirrorView({
   readOnly = false,
   onResume,
 }: {
+  paneId: string;
   session: string;
   sessionMeta?: any;
   active?: boolean;
@@ -351,7 +353,7 @@ export function MirrorView({
         if (reason === "explicit") ttsAutoQueueRef.current.length = 0;
         else queueMicrotask(() => ttsAutoPumpRef.current());
       },
-      sessionVoiceOpts(session), // セッションごとの声（設定 OFF なら undefined）
+      { ...(sessionVoiceOpts(session) ?? {}), paneId }, // セッション声＋発生元ペインのステレオ位置
       session, // 左ペインの再生中アイコン用
     );
     if (!h) return; // 読み上げられる本文が無い（ツールだけのターン等）
@@ -377,7 +379,8 @@ export function MirrorView({
         new Promise<never>((_, rej) => setTimeout(() => rej(new Error("timeout")), 30000)),
       ]);
       const reply = (r?.reply || "").trim();
-      if (!r?.error && reply) announce("要約。" + reply, label, sessionVoiceOpts(session), session);
+      if (!r?.error && reply)
+        announce("要約。" + reply, label, { ...(sessionVoiceOpts(session) ?? {}), paneId }, session);
       else ttsStart(gi, body, fromBlock); // 要約が得られない → 全文読み
     } catch {
       ttsStart(gi, body, fromBlock); // ワークスペース停止・タイムアウト等 → 全文読み
@@ -441,7 +444,7 @@ export function MirrorView({
     if (st.active || st.speaking) return; // 最終回答・告知など重要な再生へ割り込まない
     const text = ttsWorkQueueRef.current.shift();
     if (!text) return;
-    const voice = sessionVoiceOpts(session);
+    const voice = { ...(sessionVoiceOpts(session) ?? {}), paneId };
     const c = startTts(
       { ...ttsOptsFromSettings(settings), ...voice, ...workVoiceOpts(voice, settings.ttsWorkRead) },
       (sessionMeta ? displayName(sessionMeta) : "セッション") + "・作業過程",
@@ -504,7 +507,7 @@ export function MirrorView({
       : pendingPlan
         ? "プランができました。承認待ちです。"
         : "許可待ちです。" + (pendingPerm || "").slice(0, 100);
-    announce(text, label, sessionVoiceOpts(session));
+    announce(text, label, { ...(sessionVoiceOpts(session) ?? {}), paneId });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loaded, pending, pendingPlan, pendingPerm]);
   const ttsWiring: TurnTtsWiring = {

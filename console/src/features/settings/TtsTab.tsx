@@ -60,6 +60,13 @@ export function TtsTab() {
           別タブへ切り替えたときやブラウザを最小化したとき、読み上げ音量を55%へ下げます。
           Console が見える状態へ戻ると通常音量へ滑らかに戻ります。
         </p>
+        <Row label="ペイン位置に合わせて左右へ振る">
+          <OnOff value={s.ttsStereoByPane} onChange={(v) => setSetting("ttsStereoByPane", v)} />
+        </Row>
+        <p className="muted ds-note">
+          読み上げ音声をペインの横位置に合わせてステレオ配置します。左右端でも音は片側へ振り切らず、
+          通知やファイル朗読などペインに属さない音声は中央で再生します。
+        </p>
       </section>
       {s.ttsEnabled && (
         <>
