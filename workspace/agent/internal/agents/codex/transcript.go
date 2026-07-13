@@ -301,11 +301,12 @@ func turnModel(payload json.RawMessage) (model, effort string) {
 // injected-context user turn); those are handled by the caller (plan / call output).
 func parseResponseItem(payload json.RawMessage, ts string, idx int, cwd, branch string) (transcript.Turn, string, bool) {
 	var p struct {
-		Type    string `json:"type"`
-		Role    string `json:"role"`
-		Name    string `json:"name"`
-		CallID  string `json:"call_id"`
-		Content []struct {
+		Type      string `json:"type"`
+		Role      string `json:"role"`
+		Name      string `json:"name"`
+		CallID    string `json:"call_id"`
+		Arguments string `json:"arguments"`
+		Content   []struct {
 			Type string `json:"type"`
 			Text string `json:"text"`
 		} `json:"content"`
@@ -395,6 +396,30 @@ func parseResponseItem(payload json.RawMessage, ts string, idx int, cwd, branch 
 			if qs := parseQuestions(payload); len(qs) > 0 {
 				return transcript.Turn{
 					Role: "assistant", Parts: []transcript.Part{{Kind: "question", Tool: "request_user_input", Questions: qs}},
+					Idx: idx, TS: ts, Cwd: cwd, Branch: branch,
+				}, p.CallID, true
+			}
+		}
+		// Codex collaboration tools launch or re-task a child agent. They are a
+		// user-relevant orchestration event, not an ordinary low-level tool trace.
+		spawn := p.Name == "spawn_agent" || strings.HasSuffix(p.Name, "__spawn_agent") || strings.HasSuffix(p.Name, ".spawn_agent")
+		followup := p.Name == "followup_task" || strings.HasSuffix(p.Name, "__followup_task") || strings.HasSuffix(p.Name, ".followup_task")
+		if spawn || followup {
+			var args struct {
+				TaskName string `json:"task_name"`
+				Message  string `json:"message"`
+				Target   string `json:"target"`
+			}
+			if json.Unmarshal([]byte(p.Arguments), &args) == nil {
+				label := strings.TrimSpace(args.TaskName)
+				if label == "" {
+					label = strings.TrimSpace(args.Target)
+				}
+				return transcript.Turn{
+					Role: "assistant", Parts: []transcript.Part{{
+						Kind: "delegation", Tool: p.Name, Info: label,
+						Prompt: strings.TrimSpace(args.Message), AgentType: label, Status: "requested",
+					}},
 					Idx: idx, TS: ts, Cwd: cwd, Branch: branch,
 				}, p.CallID, true
 			}
