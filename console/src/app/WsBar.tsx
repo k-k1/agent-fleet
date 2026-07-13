@@ -283,7 +283,7 @@ const USAGE_SOURCES: UsageSource[] = [
     weekLabel: "週次",
     live: false,
     note: "codex が記録した最後の値です（この時点のスナップショット）。次に codex を実行すると更新されます。",
-    manageURL: "https://chatgpt.com/#settings/Usage",
+    manageURL: "https://chatgpt.com/codex/settings/usage",
   },
 ];
 
