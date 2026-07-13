@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { KeyboardEvent, ClipboardEvent } from "react";
+import type { CSSProperties, KeyboardEvent, ClipboardEvent } from "react";
 import { MarkdownView } from "../viewer/MarkdownView.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { useLayoutStore } from "../../layout/store.ts";
@@ -8,7 +8,7 @@ import { chatGet, chatStream, chatCreate, assistantGet, chatPasteImage } from ".
 import { errText, raw } from "../../core/api/client.ts";
 import { takeChatSeed } from "../../lib/chatSeed.ts";
 import { coarsePointer } from "../../lib/device.ts";
-import { useSettings } from "../../lib/settings.ts";
+import { useSettings, surfaceBg, surfaceAccent, effectiveTheme } from "../../lib/settings.ts";
 import { startTts, ttsOptsFromSettings, assistantVoiceOpts, type TtsController, type TtsOptions } from "./tts.ts";
 import { readTurn, collectBlocks, blockIndexAt, type TurnReadHandle } from "../mirror/turnTts.ts";
 import { useToast } from "../../ui/ToastProvider.tsx";
@@ -422,8 +422,23 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
     ? { cls: "working", icon: "loading", spin: true, text: "進行中" }
     : { cls: "on", icon: "check", text: "待機中" };
 
+  // assistantTheme scopes the base tokens (tokens.css) via data-theme; assistantColor gives
+  // the assistant chat its own surface bg/accent (--chat-bg/--chat-accent, shared contract
+  // with the mirror). Both derived for the chat's own effective theme. "inherit"/"default"
+  // leave them unset so the chat follows the app theme.
+  const asstEff = effectiveTheme(settings.assistantTheme, settings.theme);
+  const asstBg = surfaceBg(settings.assistantColor, asstEff);
+  const asstAccent = surfaceAccent(settings.assistantColor);
+
   return (
-    <div className="chatview">
+    <div
+      className="chatview"
+      data-theme={settings.assistantTheme !== "inherit" ? settings.assistantTheme : undefined}
+      style={{
+        ...(asstBg ? { "--chat-bg": asstBg } : {}),
+        ...(asstAccent ? { "--chat-accent": asstAccent } : {}),
+      } as CSSProperties}
+    >
       <header className="view-head fileinfo">
         <span className="fi-name">
           <Icon name={draftAsst?.icon || "comment-discussion"} /> {title}
