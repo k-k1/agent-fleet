@@ -19,6 +19,7 @@ import {
   emotionOf,
   pendingSpeech,
   startsBlock,
+  startsDash,
 } from "./ttsText.ts";
 import { makeAudioLru } from "./ttsCache.ts";
 
@@ -35,6 +36,12 @@ describe("plainify (読み上げ用プレーン化)", () => {
     expect(plainify("## 見出し")).toBe("見出し");
     expect(plainify("- 項目A")).toBe("項目A");
     expect(plainify("> 引用文")).toBe("引用文");
+  });
+
+  it("行頭の溜めダッシュ（――等）はマーカーとして読み上げから除く", () => {
+    expect(plainify("————また、イく。")).toBe("また、イく。"); // 実機報告
+    expect(plainify("——イって、る。")).toBe("イって、る。");
+    expect(plainify("普通の文の中の—区切り")).toBe("普通の文の中の—区切り"); // 行頭以外は触らない
   });
 
   it("画像を落とす", () => {
@@ -117,6 +124,22 @@ describe("startsBlock (ブロック頭の判定 = 前拍を置く合図)", () =>
     expect(startsBlock("次の手順です。")).toBe(false);
     expect(startsBlock("-1 が返ります")).toBe(false);
     expect(startsBlock("run-dev.sh を実行")).toBe(false);
+  });
+});
+
+describe("startsDash (溜めダッシュの判定 = 長めの前拍を置く合図)", () => {
+  it("行頭のダッシュ連続（――/——/―― 等）に一致する", () => {
+    expect(startsDash("――また、行く。")).toBe(true);
+    expect(startsDash("————また、イく。")).toBe(true); // em dash 連続
+    expect(startsDash("——イって、る。")).toBe(true);
+    expect(startsDash("―行く。")).toBe(true); // 1 個でも対象
+  });
+
+  it("語尾の伸ばし（直後が空白・行末）やハイフンだけの語には一致しない", () => {
+    expect(startsDash("普通の文です。")).toBe(false);
+    expect(startsDash("-1 が返ります")).toBe(false); // 半角ハイフンは対象外（BLOCK_HEAD と衝突回避）
+    expect(startsDash("―― ")).toBe(false); // 直後が空白/行末
+    expect(startsDash("")).toBe(false);
   });
 });
 
