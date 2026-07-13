@@ -82,9 +82,10 @@ curl -s http://127.0.0.1:8099/api/workspace            # {"state":"running"|"sto
 
 ## 6. コミット規約
 
-main 直 push 可。コミット末尾に:
-```
-Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
-Claude-Session: <自分のセッションURL>
-```
-GitHub: `git@github.com:k-k1/agent-fleet.git`。
+**正は [CONTRIBUTING.md](../CONTRIBUTING.md#commits--prs)**（形式・日本語・帰属トレーラ）。
+このホスト固有の要点だけ:
+
+- `main` 直 push で運用。GitHub リモート = `git@github.com:k-k1/agent-fleet.git`。
+- コミットは `<type>(<scope>): 日本語要約` ＋末尾に**実行モデル名**の共同著者を付ける
+  （Claude Code は `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>` 等、版に合わせる。
+  Codex/opencode は実行モデルで帰属）。旧 `Claude-Session:` 行は廃止。

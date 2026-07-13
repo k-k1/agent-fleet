@@ -5,6 +5,7 @@
 package opencode
 
 import (
+	"errors"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
@@ -24,9 +25,29 @@ type agentImpl struct{}
 func (agentImpl) Kind() string { return session.KindOpencode }
 
 // CanTranscript lights up the Console chat mirror for opencode; its turns come from the
-// SQLite store via Transcript() (readTranscript), windowed by the generic
-// /messages handler. No fork/label/inline-questions (those are claude-specific).
-func (agentImpl) Caps() agents.Caps { return agents.Caps{CanTranscript: true} }
+// SQLite store via Transcript() (readTranscript), windowed by the generic /messages
+// handler. CanFork: the conversation forks via `opencode --session <src> --fork`
+// (ForkSource / BuildLaunch), aligning the fork affordance with claude.
+func (agentImpl) Caps() agents.Caps { return agents.Caps{CanTranscript: true, CanFork: true} }
+
+// ForkSource resolves this session's current opencode conversation as the fork
+// source. An interrupted conversation is refused: opencode re-runs the incomplete
+// turn on resume/fork, which is never what a fork should do.
+func (agentImpl) ForkSource(m session.Meta) (string, error) {
+	db, ok := openRO()
+	if !ok {
+		return "", errors.New("opencode の会話ストアを読めません")
+	}
+	ses := activeSession(db, m)
+	db.Close()
+	if ses == "" {
+		return "", errors.New("分岐できる会話がまだありません")
+	}
+	if !sessionResumable(ses) {
+		return "", errors.New("中断中の会話は分岐できません（一度セッションを再開してから分岐してください）")
+	}
+	return ses, nil
+}
 
 func (agentImpl) Transcript(m session.Meta) (agents.TranscriptData, bool) {
 	return readTranscript(m)
@@ -45,23 +66,31 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 	// session environment and does NOT reach the pane's process).
 	ocSid := session.UUID(m.Dir, m.Name)
 	envs := append([]string{"AF_SESSION_SID=" + ocSid}, env()...)
-	// Resume the slot's current opencode conversation, resolved from the store itself
-	// (plugin-independent — see activeSession), UNLESS its last turn was
-	// interrupted (incomplete). opencode continues an incomplete turn on resume, re-running
-	// the pending work (e.g. an Explore subagent the user stopped); starting fresh avoids
-	// that. The interrupted conversation stays in the store, just not auto-resumed.
+	// Resume the slot's OWN opencode conversation (activeSession: the plugin-captured
+	// per-slot id, else a store-derived conversation this slot itself opened — never an
+	// older one from the same dir), UNLESS its last turn was interrupted (incomplete).
+	// opencode continues an incomplete turn on resume, re-running the pending work
+	// (e.g. an Explore subagent the user stopped); starting fresh avoids that. The
+	// interrupted conversation stays in the store, just not auto-resumed.
 	resume := ""
 	if db, ok := openRO(); ok {
 		resume = activeSession(db, m)
 		db.Close()
-	}
-	if resume == "" {
-		resume = sids.Read(ocSid) // fallback when the store can't be read
+	} else {
+		resume = sids.Read(ocSid) // store unreadable — the captured mapping is all we have
 	}
 	if resume != "" && !sessionResumable(resume) {
 		resume = ""
 	}
-	return agents.LaunchPlan{Program: buildProgram(m.Model, envs, resume), Cwd: m.Dir}, nil
+	// First launch of a forked slot: no own conversation yet — copy the source and
+	// diverge (`--session <src> --fork`). opencode materializes the fork as a NEW
+	// session at boot; the plugin records its id for this slot, so later launches
+	// resume the fork normally (ForkFrom is then ignored, like claude's).
+	fork := false
+	if resume == "" && m.ForkFrom != "" {
+		resume, fork = m.ForkFrom, true
+	}
+	return agents.LaunchPlan{Program: buildProgram(m.Model, envs, resume, fork), Cwd: m.Dir}, nil
 }
 
 func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {

@@ -296,12 +296,14 @@ export function AssistantSection() {
                       ))}
                     </span>
                   ) : null}
-                  <button type="button" className="ui-btn ui-btn-ghost ui-iconbtn chat-del" title="表示名を変更" onClick={() => void renameConv(c)}>
-                    <Icon name="edit" />
-                  </button>
-                  <button type="button" className="ui-btn ui-btn-ghost ui-iconbtn chat-del" title="このチャットを削除" onClick={() => void removeConv(c.id)}>
-                    <Icon name="trash" />
-                  </button>
+                  <span className="chat-actions">
+                    <button type="button" className="ui-btn ui-btn-ghost ui-iconbtn chat-del" title="表示名を変更" onClick={() => void renameConv(c)}>
+                      <Icon name="edit" />
+                    </button>
+                    <button type="button" className="ui-btn ui-btn-ghost ui-iconbtn chat-del" title="このチャットを削除" onClick={() => void removeConv(c.id)}>
+                      <Icon name="trash" />
+                    </button>
+                  </span>
                 </li>
               );
             })}

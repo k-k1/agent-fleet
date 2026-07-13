@@ -44,6 +44,26 @@ function walkList(list: HTMLElement, out: HTMLElement[]): void {
   }
 }
 
+// finalAnswerStart は「最後のツール実行より後の本文」が始まるブロック index を返す（index は
+// collectBlocks と同じブロック順）。ツールが無ければ 0。ミラー自動読み上げが、ツール前の
+// ナレーション（＝作業過程）を飛ばして最終回答だけ読むために使う（chat の分離と同趣・docs/19）。
+// 本文パートは body 直下の .markdown、ツール実行は mt-tool* クラスの直下要素として並ぶので、
+// 直下要素を文書順に走査し、直近のツール直後までに数えたブロック数を返す。
+export function finalAnswerStart(body: HTMLElement): number {
+  let count = 0; // ここまでに数えた読み上げブロック数
+  let afterLastTool = 0; // 直近のツール実行の直後のブロック数
+  for (const el of Array.from(body.children) as HTMLElement[]) {
+    if (el.classList.contains("markdown")) {
+      const blocks: HTMLElement[] = [];
+      walk(el, blocks);
+      count += blocks.length;
+    } else if (Array.from(el.classList).some((c) => c.startsWith("mt-tool"))) {
+      afterLastTool = count; // このツール以前の本文は作業過程
+    }
+  }
+  return afterLastTool;
+}
+
 // blockText はブロック自身の読み上げテキスト。li は入れ子リスト（別ブロックとして読む）と
 // コードブロック・表・mermaid（div）を除いた自前のテキストだけを返す。インライン要素は
 // 再帰で降り、<code>（バッククォート由来）は省略読み（abbrevCode）を当てる — レンダ済み
@@ -139,6 +159,7 @@ export function readTurn(
   fromBlock: number,
   onEnd: (stopped: boolean) => void,
   voice?: Partial<TtsOptions>, // セッションごとの声（sessionVoiceOpts）等の上書き
+  sessionName = "", // 発生元セッション名（左ペインの再生中アイコン用）
 ): TurnReadHandle | null {
   const code: CodeReadOpts = { abbrev: getSettings().ttsAbbrevCode, dict: effectiveDict() };
   const blocks = collectBlocks(body);
@@ -187,6 +208,7 @@ export function readTurn(
     },
     voice,
     preGaps,
+    sessionName,
   );
   return { pause: h.pause, resume: h.resume, stop: h.stop };
 }

@@ -32,6 +32,10 @@ import (
 
 // --- status ------------------------------------------------------------------------
 
+// LoggedIn is the exported form of loggedIn for cross-package availability checks
+// (the assistant chat / title suggestion pick the first authenticated backend).
+func LoggedIn() bool { return loggedIn() }
+
 // loggedIn reports whether codex has stored credentials, via `codex login
 // status` (prints "Not logged in" when logged out; anything else => connected).
 func loggedIn() bool {

@@ -30,6 +30,9 @@ import { TopBar } from "./TopBar.tsx";
 import { useSettingsUI, wireSettingsHistory } from "../features/settings/store.ts";
 import { SettingsDialog } from "../features/settings/SettingsDialog.tsx";
 import { AdminDialog } from "../features/settings/AdminDialog.tsx";
+import { GuideModal } from "../features/terminal/OnboardingCard.tsx";
+import { StartHost } from "../features/repos/StartHost.tsx";
+import { startNotificationPolling, useNotificationStore, wireNotificationReadOnActiveSession } from "../features/notifications/store.ts";
 
 // Refresh FILES (and repos/sessions/chat list on start) whenever the workspace
 // actually flips running↔stopped — including external changes the 4s sync catches
@@ -62,7 +65,9 @@ export function App() {
   const layout = useLayoutStore((s) => s.layout);
   const settingsOpen = useSettingsUI((s) => s.settingsOpen);
   const adminOpen = useSettingsUI((s) => s.adminOpen);
+  const guideOpen = useSettingsUI((s) => s.guideOpen);
   const [booted, setBooted] = useState(false);
+  const notificationSource = useNotificationStore((s) => s.sourceState);
 
   // Left rail visibility. Desktop: leftOpen (persisted) + leftMode "push" (docks,
   // main reflows) / "overlay" (floats above main). Mobile (≤760px): the rail is an
@@ -206,6 +211,8 @@ export function App() {
     const stopWsPoll = startWorkspacePolling();
     const stopSessPoll = startSessionsPolling();
     const stopReposPoll = startReposPolling();
+    const stopNotificationPoll = startNotificationPolling();
+    const unNotificationRead = wireNotificationReadOnActiveSession();
     void (async () => {
       await useTenantStore.getState().init();
       void hydrateUIPrefs();
@@ -219,6 +226,8 @@ export function App() {
       stopWsPoll();
       stopSessPoll();
       stopReposPoll();
+      stopNotificationPoll();
+      unNotificationRead();
     };
   }, []);
 
@@ -227,23 +236,16 @@ export function App() {
   // and refetch tenant-scoped data.
   useEffect(() => {
     if (!booted) return;
+    useNotificationStore.getState().reset();
+    void useNotificationStore.getState().refresh();
     useLayoutStore.getState().load(tenant);
     void useWorkspaceStore.getState().refresh();
     void useSessionsStore.getState().refresh();
   }, [booted, tenant]);
 
-  // openNewSession signal (WS bar 新規 / onboarding): the dialog mounts inside the
-  // left rail — on mobile that's an off-canvas drawer whose CSS transform would
-  // offset the modal's fixed positioning, so raise the drawer first (no-op on
-  // desktop, where the rail is in flow).
-  const newSessionTick = useSessionsStore((s) => s.newSessionTick);
-  useEffect(() => {
-    if (newSessionTick > 0 && window.matchMedia(MOBILE_QUERY).matches) setNavOpen(true);
-  }, [newSessionTick]);
-
   // Desktop notifications on claude state arrivals — lives at the shell now that
   // the flat Sessions section no longer owns the rail.
-  useSessionNotifications();
+  useSessionNotifications(notificationSource === "unsupported");
 
   return (
     <div
@@ -286,6 +288,8 @@ export function App() {
       </div>
       {settingsOpen && <SettingsDialog />}
       {adminOpen && <AdminDialog />}
+      {guideOpen && <GuideModal />}
+      <StartHost />
       <SessionModals />
     </div>
   );

@@ -167,11 +167,7 @@ func handleChatAsk(w http.ResponseWriter, r *http.Request) {
 		ID: randUUID(), Agent: a.Agent, Model: a.Model,
 		Persona: a.Persona, Tools: toolsNone, Knowledge: a.Knowledge,
 	}
-	prov, ok := chatProviders[c.Agent]
-	if !ok {
-		httpx.WriteErr(w, http.StatusBadRequest, "bad_agent", "未対応のエージェントです")
-		return
-	}
+	prov := chatProviderFor(c) // pinned agent, or the available fallback (claude-less WS)
 	ctx, cancel := context.WithTimeout(r.Context(), chatTimeout)
 	defer cancel()
 	reply, err := prov.send(ctx, c, prompt)
@@ -261,11 +257,7 @@ func handleChatSend(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "会話が見つかりません")
 		return
 	}
-	prov, ok := chatProviders[c.Agent]
-	if !ok {
-		httpx.WriteErr(w, http.StatusBadRequest, "bad_agent", "未対応のエージェントです")
-		return
-	}
+	prov := chatProviderFor(c) // pinned agent, or the available fallback (claude-less WS)
 
 	c.Messages = append(c.Messages, chatMessage{Role: "user", Content: content, TS: nowMs()})
 
@@ -318,11 +310,7 @@ func handleChatStream(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "会話が見つかりません")
 		return
 	}
-	prov, ok := chatProviders[c.Agent]
-	if !ok {
-		httpx.WriteErr(w, http.StatusBadRequest, "bad_agent", "未対応のエージェントです")
-		return
-	}
+	prov := chatProviderFor(c) // pinned agent, or the available fallback (claude-less WS)
 
 	c.Messages = append(c.Messages, chatMessage{Role: "user", Content: content, TS: nowMs()})
 
@@ -343,8 +331,15 @@ func handleChatStream(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	var reply string
+	var steps []chatStep
 	if sp, ok := prov.(streamingProvider); ok {
-		reply, err = sp.sendStream(ctx, c, content, func(d string) { emit(map[string]string{"delta": d}) })
+		reply, steps, err = sp.sendStream(ctx, c, content, func(ev chatStreamEvent) {
+			if ev.Step != nil {
+				emit(map[string]any{"step": ev.Step}) // a completed 作業過程 item
+			} else if ev.Delta != "" {
+				emit(map[string]string{"delta": ev.Delta})
+			}
+		})
 	} else {
 		reply, err = prov.send(ctx, c, content)
 		if err == nil {
@@ -358,7 +353,7 @@ func handleChatStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	assistant := chatMessage{Role: "assistant", Content: reply, TS: nowMs()}
+	assistant := chatMessage{Role: "assistant", Content: reply, Steps: steps, TS: nowMs()}
 	c.Messages = append(c.Messages, assistant)
 	c.UpdatedAt = nowMs()
 	_ = saveConv(c)

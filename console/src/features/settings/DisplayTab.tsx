@@ -10,6 +10,7 @@ import {
   readerFontStack,
   ICON_SETS,
   THEMES,
+  REGION_THEMES,
   SURFACE_TARGETS,
   MIRROR_SEND_MODES,
 } from "../../lib/settings.ts";
@@ -34,6 +35,23 @@ export function DisplayTab() {
             onChange={(v) => setSetting("theme", v)}
           />
         </Row>
+        <Row label="セッションのテーマ">
+          <Choice
+            value={s.mirrorTheme}
+            options={REGION_THEMES.map((t) => [t.id, t.label])}
+            onChange={(v) => setSetting("mirrorTheme", v)}
+          />
+        </Row>
+        <Row label="アシスタントのテーマ">
+          <Choice
+            value={s.assistantTheme}
+            options={REGION_THEMES.map((t) => [t.id, t.label])}
+            onChange={(v) => setSetting("assistantTheme", v)}
+          />
+        </Row>
+        <p className="muted ds-note">
+          セッション（ミラー）とアシスタントチャットは、アプリ本体とは別のテーマ（ダーク／ライト）で表示できます（「アプリに合わせる」で本体に追従）。背景色も下でそれぞれ指定できます。
+        </p>
         {SURFACE_TARGETS.map((t) => (
           <Row key={t.key} label={t.long}>
             <SwatchGrid theme={s.theme} value={s[t.key]} onChange={(v) => setSetting(t.key, v)} />
@@ -74,7 +92,7 @@ export function DisplayTab() {
       </section>
 
       <section className="ds-group">
-        <h4 className="ds-title">チャット（Markdownビュー）</h4>
+        <h4 className="ds-title">セッション（Markdownミラー）</h4>
         <Row label="フォント">
           <FontSelect value={s.chatFont} onChange={(v) => setSetting("chatFont", v)} fonts={CHAT_FONTS} stack={chatFontStack} />
         </Row>

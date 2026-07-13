@@ -139,6 +139,16 @@
 .ds-group {
   margin-bottom: 22px;
 }
+/* Reset section (TTS tab bottom): a separator above the lone リセット button so it
+   reads as a distinct, less-prominent action rather than another settings row. */
+.ds-reset {
+  margin-top: 4px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border2);
+}
+.ds-reset .ds-note {
+  margin-top: 8px;
+}
 
 /* rtk 効果 panel (agents tab): workspace-level token-savings summary, moved here from
    the WsBar. Reuses the .wu-* meter + .ws-rtk-stats rows (globally bundled from
@@ -707,12 +717,6 @@
 .p-badge.pb-github { background: #c9d1d9; }
 .p-badge.pb-bitbucket { background: #4a90e2; }
 .p-badge.pb-pagerduty { background: #06ac38; }
-.p-check {
-  display: block;
-  font-size: 12px;
-  color: var(--muted, #8b949e);
-  margin: 6px 0 2px;
-}
 .p-name {
   font-weight: 600;
   font-size: 14px;
@@ -1613,6 +1617,7 @@
 }
 .admin-surface-body {
   flex: 1;
+  min-width: 0;
   min-height: 0;
   overflow: auto;
   padding: 16px;
@@ -1621,6 +1626,7 @@
   display: flex;
   flex-direction: column;
   gap: 16px;
+  min-width: 0;
   min-height: 0;
 }
 
@@ -1754,6 +1760,97 @@
 }
 .admin-panel h4 {
   margin: 0 0 10px;
+}
+.admin-panel h4 .af-note {
+  margin-left: 8px;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--muted);
+}
+
+/* Admin form fields — caption above input, responsive grid. Mirrors the settings
+   modal's .ssm-fld / .ssm-fgrid so every admin form reads as one system. */
+.admin-fgroup {
+  margin-bottom: 18px;
+}
+.admin-fgroup:last-of-type {
+  margin-bottom: 0;
+}
+.admin-fgrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+}
+.admin-fld {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+.admin-fld .af-cap {
+  font-size: 11.5px;
+  color: var(--fg);
+}
+.admin-fld input {
+  width: 100%;
+  box-sizing: border-box;
+}
+/* Plain numeric fields keep the native spinner — it now follows the theme via
+   color-scheme (tokens.css). Only suffix fields (.af-inputwrap, e.g. "MB") hide it,
+   since the spinner would overlap the unit label; keyboard ↑/↓ + step still work. */
+.af-inputwrap input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+.af-inputwrap input[type="number"]::-webkit-outer-spin-button,
+.af-inputwrap input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.af-inputwrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.af-inputwrap input {
+  padding-right: 34px;
+}
+.af-suffix {
+  position: absolute;
+  right: 10px;
+  font-size: 11px;
+  color: var(--muted);
+  pointer-events: none;
+}
+.af-unit {
+  font-size: 11px;
+  color: var(--muted);
+  min-height: 13px;
+}
+.admin-hint {
+  margin: 9px 0 0;
+  font-size: 11px;
+  line-height: 1.55;
+  color: var(--muted);
+}
+.admin-hint code {
+  font-family: var(--mono);
+  color: var(--muted);
+}
+.admin-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 16px;
+}
+.admin-check {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12.5px;
+}
+.admin-check input {
+  flex: none;
 }
 
 /* top-level admin mode toggle (テナント管理 / 使用量) */
@@ -2258,9 +2355,26 @@
 }
 .limit-edit {
   display: flex;
-  align-items: flex-end;
-  gap: 8px;
+  flex-direction: column;
+  gap: 10px;
   margin-top: 12px;
+  padding: 12px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.limit-edit .le-head {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fg);
+}
+/* Fields reuse the shared .admin-fgrid / .admin-fld / .af-* system (one form language). */
+.limit-edit .admin-hint {
+  margin: 0;
+}
+.limit-edit .le-actions {
+  display: flex;
+  gap: 8px;
 }
 .role-now {
   display: inline-flex;
@@ -2280,14 +2394,29 @@
    tap-target back button. Scoped to .admin* so global form-row etc. are untouched. */
 @media (max-width: 760px) {
   .admin-surface {
-    width: 100vw;
-    height: 100dvh;
-    max-width: none;
-    border: none;
-    border-radius: 0;
+    /* Match the settings modal: stay inside the backdrop's phone-sized content
+       box instead of forcing a 100vw child into a padded backdrop. */
+    width: 100%;
+    max-width: 100%;
+    height: min(900px, 88dvh);
+    max-height: 88dvh;
   }
   .admin-surface-body {
     padding: 12px;
+    /* Wide controls own their horizontal scrolling; the entire modal must not. */
+    overflow-x: hidden;
+  }
+  .admin-modes {
+    display: flex;
+    width: 100%;
+    max-width: 100%;
+    align-self: stretch;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+  }
+  .admin-modes::-webkit-scrollbar {
+    display: none;
   }
   .admin-back {
     padding: 8px 14px;
@@ -2344,12 +2473,8 @@
     flex: 1 1 100%;
     justify-content: center;
   }
-  .limit-edit {
-    flex-direction: column;
-    align-items: stretch;
-  }
-  .limit-edit button {
-    width: 100%;
+  .limit-edit .le-actions button {
+    flex: 1 1 0;
   }
 }
 

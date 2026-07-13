@@ -7,11 +7,12 @@
 // フォルダを開く) opens the section so the target is visible — hence the
 // controlled Section + own persistence (the old console's af-section-files key,
 // so an existing collapse choice carries over).
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Section } from "../../ui/Section.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { IconButton } from "../../ui/Button.tsx";
 import { useFilesStore } from "../files/store.ts";
+import { useFilesFilter } from "./filesFilter.ts";
 import { ProjectFiles } from "./ProjectFiles.tsx";
 import { FilesChanges } from "./FilesChanges.tsx";
 
@@ -22,6 +23,15 @@ const VIEW_KEY = "af-files-view"; // the old console's tree/changes choice carri
 export function FilesSection() {
   const reveal = useFilesStore((s) => s.reveal);
   const bump = useFilesStore((s) => s.bump);
+  const q = useFilesFilter((s) => s.q);
+  const setQ = useFilesFilter((s) => s.setQ);
+  const scope = useFilesFilter((s) => s.scope);
+  const setScope = useFilesFilter((s) => s.setScope);
+  const focusTree = useFilesFilter((s) => s.focusTree);
+  const focusInputN = useFilesFilter((s) => s.focusInputN);
+  const filterRef = useRef<HTMLInputElement>(null);
+  const sectionBodyRef = useRef<HTMLDivElement>(null);
+  const wasSearchingRef = useRef(false);
   const [open, setOpen] = useState(() => localStorage.getItem(KEY) === "1");
   const set = (v: boolean) => {
     setOpen(v);
@@ -43,6 +53,7 @@ export function FilesSection() {
       localStorage.setItem(VIEW_KEY, v);
     } catch {}
   };
+  const searchRoot = q.trim() && scope === "home" ? "" : "repos";
 
   useEffect(() => {
     if (reveal.path) {
@@ -51,6 +62,27 @@ export function FilesSection() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reveal.n]);
+
+  // Ctrl+F in the tree asks for the box: open the section + tree view (so the
+  // box is mounted), then focus and select it.
+  useEffect(() => {
+    if (!focusInputN) return;
+    set(true);
+    setView("tree");
+    requestAnimationFrame(() => filterRef.current?.select());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusInputN]);
+
+  // Replacing a tall expanded tree with a short result list leaves the rail's
+  // old scrollTop behind. Bring this section back to the viewport when a search
+  // starts so its results do not end up below the visible area.
+  useLayoutEffect(() => {
+    const searching = !!q.trim();
+    if (searching && !wasSearchingRef.current) {
+      sectionBodyRef.current?.closest(".ui-section")?.scrollIntoView({ block: "start" });
+    }
+    wasSearchingRef.current = searching;
+  }, [q]);
 
   return (
     <Section
@@ -61,7 +93,7 @@ export function FilesSection() {
       actions={
         <>
           {/* Tree vs every working copy's git changes (cross-repo). */}
-          <span className="ui-seg sm files-view">
+          <span className="ui-seg sm files-view sel-scope">
             <button
               type="button"
               className={"seg-btn" + (view === "tree" ? " active" : "")}
@@ -86,22 +118,73 @@ export function FilesSection() {
       {view === "changes" ? (
         <FilesChanges />
       ) : (
-        <>
-          <ProjectFiles root="repos" markRepos />
-          {/* home: the rest of ~ (repos/ shows again inside — harmless). Lazy:
-              mounted only while open. */}
-          <button
-            type="button"
-            className="files-home-btn"
-            onClick={() => setHome(!homeOpen)}
-            aria-expanded={homeOpen}
-            title={homeOpen ? "home を折りたたむ" : "home を展開（~ 全体をブラウズ）"}
-          >
-            <Icon name={homeOpen ? "chevron-down" : "chevron-right"} />
-            <Icon name="vm" /> home
-          </button>
-          {homeOpen && <ProjectFiles root="" />}
-        </>
+        <div ref={sectionBodyRef} className={q.trim() ? "files-search-active" : undefined}>
+          <div className="proj-filter-bar">
+            <div className="proj-filter">
+              <Icon name="search" />
+              <input
+                ref={filterRef}
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") setQ("");
+                  // Enter hands focus to the tree (its keydown then drives selection).
+                  else if (e.key === "Enter") {
+                    e.preventDefault();
+                    focusTree();
+                  }
+                }}
+                placeholder="絞り込み（ファイル）"
+                aria-label="ファイルを絞り込み"
+              />
+              <span className="files-search-scope" role="group" aria-label="検索範囲">
+                <button
+                  type="button"
+                  className={scope === "repos" ? "active" : ""}
+                  aria-pressed={scope === "repos"}
+                  title="リポジトリから検索"
+                  aria-label="リポジトリから検索"
+                  onClick={() => setScope("repos")}
+                >
+                  <Icon name="root-folder" />
+                </button>
+                <button
+                  type="button"
+                  className={scope === "home" ? "active" : ""}
+                  aria-pressed={scope === "home"}
+                  title="home から検索"
+                  aria-label="home から検索"
+                  onClick={() => setScope("home")}
+                >
+                  <Icon name="vm" />
+                </button>
+              </span>
+              {q && (
+                <button type="button" className="proj-filter-clear" title="クリア" onClick={() => setQ("")}>
+                  <Icon name="close" />
+                </button>
+              )}
+            </div>
+          </div>
+          <ProjectFiles root={searchRoot} markRepos={searchRoot === "repos"} searchable groupByRepo={scope === "repos"} />
+          {/* Browsing shortcut for home while the repos scope is selected. Lazy:
+              mounted only while open and hidden during a recursive search. */}
+          {!q && (
+            <>
+              <button
+                type="button"
+                className="files-home-btn"
+                onClick={() => setHome(!homeOpen)}
+                aria-expanded={homeOpen}
+                title={homeOpen ? "home を折りたたむ" : "home を展開（~ 全体をブラウズ）"}
+              >
+                <Icon name={homeOpen ? "chevron-down" : "chevron-right"} />
+                <Icon name="vm" /> home
+              </button>
+              {homeOpen && <ProjectFiles root="" />}
+            </>
+          )}
+        </div>
       )}
     </Section>
   );

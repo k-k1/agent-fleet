@@ -5,7 +5,10 @@
   flex-direction: column;
   height: 100%;
   min-height: 0;
-  background: var(--bg);
+  /* --chat-bg (assistantColor surface) set inline on .chatview per its own theme; falls
+     back to the theme --bg when no surface color is chosen. Shared var contract with the
+     session mirror (.mirrorview) — each container sets its own value. */
+  background: var(--chat-bg, var(--bg));
 }
 /* Legacy control styles (old styles.css element globals), scoped to the chat view —
    the verbatim-ported ChatView's raw buttons (送信 / 停止) relied on them. Same
@@ -51,30 +54,119 @@
   flex-direction: column;
   gap: 3px;
 }
+/* User turns shrink-wrap to their content (left-aligned), so both the bubble and its footer
+   share one column width — the footer's right edge then lands on the bubble's right edge
+   instead of the pane's. Assistant turns keep the default stretch (full pane width). */
+.chat-msg.role-user {
+  align-self: flex-start;
+  max-width: 100%;
+}
 .chat-role {
   font-size: 11px;
   font-weight: 600;
   color: var(--muted);
 }
 .chat-msg.role-user .chat-role {
-  color: var(--accent);
+  color: var(--chat-accent, var(--accent));
 }
 .chat-body {
   border-radius: 8px;
   padding: 8px 11px;
   background: var(--panel);
   border: 1px solid var(--border);
-  /* Cap line length for readability, but `ch` is the half-width "0" advance — Japanese
-     (full-width) text fits only ~half that per line, so a tight cap wastes a wide pane.
-     Grow to fill a narrow pane (100%) and allow a generous cap on a wide one. */
-  max-width: min(96ch, 100%);
+  /* Fill the pane width: the bubble follows the pane (widen the pane → wider reply) rather
+     than sitting at a fixed cap that wastes a wide pane. `ch` is the half-width "0" advance
+     and Japanese (full-width) text fits only ~half that per line, so a ch-based cap felt
+     narrow on wide panes; letting it grow to 100% is what users want here. */
+  max-width: 100%;
 }
 .chat-msg.role-user .chat-body {
-  background: color-mix(in srgb, var(--accent) 12%, var(--panel));
-  align-self: flex-start;
+  background: color-mix(in srgb, var(--chat-accent, var(--accent)) 12%, var(--panel));
 }
-/* Timestamp + copy under an assistant reply — mirrors .mirror-turn-foot. Capped to the
-   same width as the bubble so the button hugs its right edge, not the pane's. */
+/* 作業過程（docs/19 分離）: ツール応答でモデルがツール呼び出し前に述べたナレーションを、
+   最終回答とは別に折りたたんで表示する。淡色・控えめ（本文より一段落ちる副次情報）。 */
+.chat-steps {
+  align-self: stretch;
+  max-width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel) 50%, transparent);
+  overflow: hidden;
+}
+.chat-steps-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 5px 9px;
+  background: none;
+  border: 0;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.chat-steps-head:hover {
+  background: var(--hover-bg, var(--btn));
+}
+.chat-steps-label {
+  font-weight: 600;
+}
+.chat-steps-count {
+  flex: 0 0 auto;
+  min-width: 16px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  border-radius: 8px;
+  padding: 0 5px;
+  background: color-mix(in srgb, var(--fg) 10%, transparent);
+}
+.chat-steps-tools {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0.85;
+}
+.chat-steps-body {
+  padding: 4px 10px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-top: 1px solid var(--border);
+}
+.chat-step {
+  font-size: 13px;
+  color: var(--muted);
+}
+.chat-step-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+.chat-step-tool {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0 5px;
+  color: var(--fg);
+  background: var(--panel);
+}
+/* カラオケ読み上げ（AssistantTurn / turnTts, docs/24）: いま読んでいる文が属するブロックを
+   ハイライトし、scrollIntoView(nearest) で追従する。ミラーの .mirror-turn-body .tts-active と
+   同趣。ブロック（p/見出し/li/blockquote 内段落）に付く。 */
+.chat-body .tts-active {
+  background: color-mix(in srgb, var(--chat-accent, var(--accent)) 14%, transparent);
+  border-radius: 4px;
+  scroll-margin: 64px; /* ヘッダ等に隠れない余白 */
+}
+/* Timestamp + copy under an assistant reply — mirrors .mirror-turn-foot. Same width as the
+   bubble (now full pane width) so the button hugs the bubble's right edge. */
 .chat-msg-foot {
   display: flex;
   justify-content: flex-end;
@@ -82,7 +174,7 @@
   gap: 8px;
   font-size: 12px;
   color: var(--muted);
-  max-width: min(96ch, 100%);
+  max-width: 100%;
 }
 .cm-time {
   font-variant-numeric: tabular-nums;
@@ -209,7 +301,11 @@
 }
 .chat-input {
   flex: 1 1 auto;
-  resize: vertical;
+  /* Height is driven by content (auto-grow in ChatView); cap via max-height, then scroll.
+     border-box so the JS-set height (from scrollHeight, which includes padding) matches. */
+  resize: none;
+  box-sizing: border-box;
+  overflow-y: auto;
   min-height: 38px;
   max-height: 40vh;
   padding: 8px 10px;
@@ -235,6 +331,7 @@
    tinted icon square (.chat-kic follows the left-pane accent, since assistants
    have no agent kind) + title + muted count + icon-only state chip. */
 .chat-row {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 2px;
@@ -271,11 +368,31 @@
   font-size: 11px;
   color: var(--muted);
 }
+/* Edit/delete overlay the row's right edge (absolute) instead of reserving a
+   trailing column — a resting row spends that width on the title and the count +
+   state chip sit flush right. Revealed on hover; hidden they take no clicks. */
+.chat-actions {
+  position: absolute;
+  right: 4px;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
 .chat-row .chat-del {
   opacity: 0;
+  pointer-events: none;
 }
 .chat-row:hover .chat-del {
   opacity: 1;
+  pointer-events: auto;
+}
+/* Hand the right edge over to the action buttons on hover so they don't stack
+   on top of the count / state chip. */
+.chat-row:hover .chat-open-meta,
+.chat-row:hover .chat-open .session-state {
+  opacity: 0;
 }
 
 /* Assistant templates (Q2): the ＋新規 picker popover + rows in the left rail. */

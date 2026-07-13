@@ -26,7 +26,6 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
 // Tool grants an assistant can hold. af_read attaches the local read-only stdio MCP
@@ -147,7 +146,7 @@ const operatorPersona = "あなたは Agent Fleet のフリート・オペレー
 	"利用者のワークスペースで走っている複数のコーディングセッションを俯瞰し、必要に応じて指示を出したり新しいセッションを起こして作業を進めます。" +
 	"まず list_my_sessions / get_session_status / get_session_output で実際の状態と出力を確認し、推測で判断しないこと。" +
 	"セッションに作業を依頼・修正指示する時は send_to_session で該当セッションにプロンプトを送ります。送る前に『どのセッションに何を送るか』を一言添えてから送ってください。" +
-	"新しいセッションを起こす時は create_session を使います。dir は list_my_sessions の dir か list_repos の path から選び、initial_prompt に最初のタスクを渡すと起動後に自動送信されます。" +
+	"新しいセッションを起こす時は create_session を使います。dir は list_my_sessions の dir か list_repos の path から選び、独立した作業コピーが必要なら worktree=true（必要に応じて branch/new_branch）を指定します。initial_prompt に最初のタスクを渡すと起動後に自動送信されます。" +
 	"あるセッションの内容を別セッションへ引き継ぐ時は、まず元セッションの get_session_output で文脈を読み、要点を要約して create_session の initial_prompt に入れて渡します（会話の丸ごと複製ではなく、必要な文脈を絞って渡すこと）。壁打ちで固まった作業を始める時も同様に create_session で起こします。" +
 	"判断に専門知識が要る時は、list_assistants で相手を選び ask_assistant で他の専門アシスタント（例：整合性チェッカー）に助言を求めてから動いてください（相手は助言を返すだけで作業はしません）。" +
 	"メモキュー（溜めて一括でセッションへ渡すメモ）も扱えます。list_memos で溜まっているメモを確認し、チャット中に出た TODO や後で渡したい対象は add_memo で溜め、update_memo/delete_memo で整理します。まとめて渡す時は flush_memos で選んだメモ（ids）を1メッセージに連結して対象セッションへ1回で送ります（どのセッションに何件送るかを一言添えてから）。" +
@@ -181,42 +180,45 @@ const translatePersona = "あなたは翻訳アシスタントです。" +
 const afAssistantID = "af"
 
 // builtinAssistants returns the code-injected assistants, freshly materializing any
-// embedded knowledge. Order here is the display order (flagship first).
+// embedded knowledge. Order here is the display order (flagship first). The agent
+// backend is the preferred AVAILABLE one (claude → codex → opencode), so a workspace
+// without a claude login still gets working builtin assistants; a conversation
+// snapshots the value at creation as before.
 func builtinAssistants() []assistant {
 	know := ensureBuiltinKnowledge()
 	return []assistant{
 		{
 			ID: afAssistantID, Name: "Agent Fleet アシスタント", Icon: "rocket",
 			Description: "こんにちは。Agent Fleet の使い方を案内します。操作手順や、今のワークスペースの状態（動いているセッションなど）を実際に確認しながらお答えします。",
-			Builtin:     true, Agent: session.KindClaude, Persona: afAssistantPersona,
+			Builtin:     true, Agent: preferredHeadlessAgent(), Persona: afAssistantPersona,
 			Tools: toolsAFRead, Knowledge: []string{know},
 		},
 		{
 			ID: "operator", Name: "フリート・オペレーター", Icon: "broadcast",
 			Description: "フリートの司令塔です。走っているセッションを俯瞰し、必要ならセッションに指示を出したり新しいセッションを起こして作業を進めます（引き継ぎ・壁打ちからのタスク開始も可）。メモキューの確認・追加・一括送信もできます。専門的な判断は他のアシスタントにも相談します。実行前に内容を確認します。",
-			Builtin:     true, Agent: session.KindClaude, Persona: operatorPersona,
+			Builtin:     true, Agent: preferredHeadlessAgent(), Persona: operatorPersona,
 			Tools: toolsAFWrite, Knowledge: []string{know},
 		},
 		{
 			ID: "sre", Name: "SRE アシスタント", Icon: "pulse",
 			Description: "インシデント対応・監視運用の相談相手です（読み取り専用）。PagerDuty や Grafana を接続しておくと、開いているインシデントやメトリクス・ログを実際に確認しながら、状況整理・原因の仮説出し・対外報告の草稿を手伝います。",
-			Builtin:     true, Agent: session.KindClaude, Persona: srePersona,
+			Builtin:     true, Agent: preferredHeadlessAgent(), Persona: srePersona,
 			Tools: toolsAFRead, Integrations: []string{integrationPagerDuty, integrationGrafana}, Knowledge: []string{know},
 		},
 		{
 			ID: "integrity", Name: "整合性チェッカー", Icon: "checklist",
 			Description: "整合性チェッカーです。ファイルやディレクトリを渡してください。ドキュメントと実装の食い違い、用語・表記のゆれ、（物語なら）設定の矛盾や伏線の抜けを洗い出します。",
-			Builtin:     true, Agent: session.KindClaude, Persona: integrityPersona, Tools: toolsNone,
+			Builtin:     true, Agent: preferredHeadlessAgent(), Persona: integrityPersona, Tools: toolsNone,
 		},
 		{
 			ID: "general", Name: "汎用アシスタント", Icon: "comment-discussion",
 			Description: "汎用アシスタントです。翻訳・要約・質問への回答など、幅広くお手伝いします。何でも聞いてください。",
-			Builtin:     true, Agent: session.KindClaude, Persona: chatPersona, Tools: toolsNone,
+			Builtin:     true, Agent: preferredHeadlessAgent(), Persona: chatPersona, Tools: toolsNone,
 		},
 		{
 			ID: "translate", Name: "翻訳アシスタント", Icon: "globe",
 			Description: "翻訳アシスタントです。文章を渡してください。日本語↔英語を自動判定して翻訳します（訳文だけを返します）。",
-			Builtin:     true, Agent: session.KindClaude, Persona: translatePersona, Tools: toolsNone,
+			Builtin:     true, Agent: preferredHeadlessAgent(), Persona: translatePersona, Tools: toolsNone,
 		},
 	}
 }

@@ -15,10 +15,11 @@ import { copyText } from "../../lib/clipboard.ts";
 import { placeFixed } from "../../lib/placeFixed.ts";
 import { usePaneHover } from "../../lib/panehover.tsx";
 import { kindIcon, kindLabel, kindClass } from "../../lib/sessionkind.ts";
-import { displayName, stateInfo } from "../../lib/sessionview.ts";
+import { displayName, stateInfo, exitLabel } from "../../lib/sessionview.ts";
 import { agentOf } from "../../agents/registry.ts";
 import { useLayoutStore } from "../../layout/store.ts";
 import { ordClass } from "../../layout/badges.ts";
+import { useTtsStore } from "../../core/store/tts.ts";
 import {
   openSessionTerminal,
   openSessionTerminalSplit,
@@ -74,9 +75,15 @@ export function SessionRow({ s, selected, opens, multi, running, actions }: Sess
   const open = opens.length > 0;
   const hl = open && hover?.session === s.name;
   const st = stateInfo(s);
+  // For a stopped session that ended abnormally, the reason detail (OOM / crash) rides
+  // the row tooltip alongside the resume hint.
+  const ex = !s.alive ? exitLabel(s) : null;
   // question/plan/permission want the user — keep their text. Everything else
   // (入力待ち/進行中/停止中…) collapses to an icon-only chip; the text moves to title.
   const loud = st.cls.includes("question");
+  // このセッションの回答を音声読み上げ中か（ミラー朗読・要約・セッション通知いずれも
+  // 発生元セッション名を tts ストアへ載せている）。合成待ち（preparing）も含めて示す。
+  const speaking = useTtsStore((t) => t.sessionName === s.name && (t.speaking || t.preparing));
 
   return (
     <li
@@ -103,7 +110,7 @@ export function SessionRow({ s, selected, opens, multi, running, actions }: Sess
           (dead
             ? "作業フォルダが存在しないため再開できません"
             : !s.alive
-              ? "停止中（クリックで開いて再開ボタン / Ctrl・中クリックで新ペイン）"
+              ? (ex ? ex.hint + "\n" : "") + "停止中（クリックで開いて再開ボタン / Ctrl・中クリックで新ペイン）"
               : (s.dir || "") + "（Ctrl/中クリックで新ペインに開く）") +
           `\n${kindLabel(s.kind)} · ${st.text}\nID: ${s.name}`
         }
@@ -147,6 +154,9 @@ export function SessionRow({ s, selected, opens, multi, running, actions }: Sess
           >
             <Icon name="warning" /> {s.currentBranch}
           </span>
+        )}
+        {speaking && (
+          <Icon name="unmute" className="sess-speaking" title="このセッションの回答を読み上げ中" />
         )}
         <span className={"session-state " + st.cls + (loud ? "" : " mini")} title={st.text}>
           <Icon name={st.icon} spin={st.spin} />

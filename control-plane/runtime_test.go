@@ -43,6 +43,30 @@ func TestNewRuntimeFactory(t *testing.T) {
 	}
 }
 
+// A resolved per-workspace RAM cap (Workspace.MemBytes) must reach the concrete
+// adapter: docker as a raw --memory byte count, ECS as a valid Fargate task size
+// (snapped up, CPU bumped when needed). MemBytes 0 falls back to the deployment
+// default the factory captured.
+func TestFactoryMemoryOverride(t *testing.T) {
+	m := &manager{image: "img", agentHost: "127.0.0.1", memory: "1g", dataRoot: "/srv/data"}
+
+	dockerF, _ := newRuntimeFactory("local", m)
+	if d := dockerF.New(Workspace{ContainerName: "c", MemBytes: 2 * gib}, "", nil).(*dockerRuntime); d.memory != "2147483648" {
+		t.Errorf("docker override: memory=%q, want 2147483648", d.memory)
+	}
+	if d := dockerF.New(Workspace{ContainerName: "c"}, "", nil).(*dockerRuntime); d.memory != "1g" {
+		t.Errorf("docker default: memory=%q, want 1g", d.memory)
+	}
+
+	ecsF, _ := newRuntimeFactory("ecs", m) // cfg defaults: cpu 1024 / memory 2048
+	if e := ecsF.New(Workspace{ContainerName: "c", MemBytes: 10 * gib}, "", nil).(*ecsRuntime); e.cpu != "2048" || e.memory != "10240" {
+		t.Errorf("ecs override: cpu=%q memory=%q, want 2048/10240", e.cpu, e.memory)
+	}
+	if e := ecsF.New(Workspace{ContainerName: "c"}, "", nil).(*ecsRuntime); e.cpu != "1024" || e.memory != "2048" {
+		t.Errorf("ecs default: cpu=%q memory=%q, want 1024/2048", e.cpu, e.memory)
+	}
+}
+
 // The stop grace drives docker stop -t AND the ECS stopTimeout from one env knob;
 // the Agent budget must stay under it (safety margin) so the in-container graceful
 // shutdown finishes before the runtime's SIGKILL. Clamps: >=1, <=120 (Fargate

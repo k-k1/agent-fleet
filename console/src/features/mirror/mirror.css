@@ -77,18 +77,10 @@
 .mirror-toggle {
   margin-left: auto;
   /* The チャット/ターミナル switch lives on the terminal (and chat) surface, so its
-     selected segment follows the viewer/terminal accent rather than the top bar's. */
+     selected segment follows the viewer/terminal accent rather than the top bar's.
+     Needs the sel-scope class on the element (MirrorToggle.tsx) — rebinding
+     --sel-accent alone can't reach the :root-derived --sel-bg/--sel-fg (tokens.css). */
   --sel-accent: var(--viewer-accent, var(--topbar-accent));
-}
-/* The title-suggest button sits at the right of the chat head, just left of the
-   ターミナル⇄チャット switch. It takes the auto-margin so the pair groups on the
-   right; the toggle then only needs a fixed gap (its own auto-margin would split
-   the space). */
-.title-suggest-btn {
-  margin-left: auto;
-}
-.title-suggest-btn + .mirror-toggle {
-  margin-left: 8px;
 }
 /* Each ターミナル/チャット segment is an icon + label; center them with a small gap
    so the button reads well both with the label and (on narrow panes) icon-only. */
@@ -326,6 +318,86 @@
 }
 .mirror-turn.sidechain .mt-who {
   color: color-mix(in srgb, var(--chat-accent) 65%, var(--fg));
+}
+
+/* Subagent orchestration: one compact, provider-neutral event in the parent timeline.
+   Raw sidechain turns stay out of the normal conversation; prompt/result are opt-in. */
+.mt-delegation {
+  margin: 8px 0;
+  padding: 9px 11px;
+  border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--border));
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--accent) 5%, transparent);
+  font-size: 12px;
+}
+.mt-delegation-head,
+.mt-delegation-meta {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+.mt-delegation-head .codicon {
+  color: var(--accent);
+}
+.mt-delegation-title {
+  font-weight: 600;
+}
+.mt-delegation-status {
+  margin-left: auto;
+  padding: 1px 6px;
+  border-radius: 999px;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--fg) 7%, transparent);
+  white-space: nowrap;
+}
+.mt-delegation-status.running {
+  color: var(--accent);
+}
+.mt-delegation-status.completed {
+  color: var(--success, #4ec97a);
+}
+.mt-delegation-status.failed {
+  color: var(--danger, #e36d6d);
+}
+.mt-delegation-meta {
+  margin-top: 5px;
+  color: var(--muted);
+  flex-wrap: wrap;
+}
+.mt-delegation-label {
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mt-delegation-meta code {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--fg) 7%, transparent);
+}
+.mt-delegation-detail {
+  margin-top: 6px;
+}
+.mt-delegation-detail summary {
+  width: max-content;
+  color: var(--muted);
+  cursor: pointer;
+  user-select: none;
+}
+.mt-delegation-section {
+  margin-top: 8px;
+}
+.mt-delegation-section pre {
+  margin: 3px 0 0;
+  padding: 8px;
+  max-height: 280px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+  font: inherit;
 }
 /* Header carries only the speaker; the timestamp + copy move to a footer row. */
 .mirror-turn-head {
@@ -1137,6 +1209,109 @@ button.mt-toolrun-head:hover {
   background: color-mix(in srgb, var(--chat-accent) 12%, transparent);
 }
 
+/* A `!`-run shell command (BashBlock): a terminal-flavored block — the command line is
+   always shown; its output collapses behind a toggle, styled like the tool-output row. */
+.mt-bash {
+  margin: 0.3em 0;
+  border: 1px solid var(--border);
+  border-left: 3px solid color-mix(in srgb, var(--chat-accent) 55%, var(--border));
+  border-radius: 6px;
+  background: var(--surface-2, rgba(127, 127, 127, 0.08));
+  overflow: hidden;
+}
+.mt-bash-cmd {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 10px;
+  font-family: var(--viewer-font, var(--mono));
+  font-size: 12px;
+  line-height: 1.4;
+}
+.mt-bash-prompt {
+  flex: none;
+  font-weight: 700;
+  color: color-mix(in srgb, var(--chat-accent) 75%, var(--fg));
+  user-select: none;
+}
+.mt-bash-code {
+  font-family: inherit;
+  white-space: pre-wrap;
+  word-break: break-word;
+  min-width: 0;
+}
+button.mt-bash-toggle {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  margin: 0;
+  padding: 3px 10px;
+  border: 0;
+  border-top: 1px solid var(--border);
+  background: none;
+  color: inherit;
+  text-align: left;
+  font-size: 11px;
+  cursor: pointer;
+  opacity: 0.65;
+  transition: opacity 0.12s, background 0.12s;
+}
+button.mt-bash-toggle:hover {
+  opacity: 1;
+  background: color-mix(in srgb, var(--chat-accent) 10%, transparent);
+}
+.mt-bash-output {
+  margin: 0;
+  padding: 6px 10px;
+  max-height: 320px;
+  overflow: auto;
+  font-family: var(--viewer-font, var(--mono));
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  border-top: 1px solid var(--border);
+}
+.mt-bash-err {
+  color: var(--danger, #e5534b);
+}
+
+/* A `/`-run slash command / skill invocation (CmdChip): a compact inline chip — the
+   command name (monospace, accent) with any arguments — marking a user action. */
+.mt-cmd {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  margin: 0.2em 0;
+  padding: 2px 9px;
+  border: 1px solid color-mix(in srgb, var(--chat-accent) 35%, var(--border));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--chat-accent) 8%, var(--bg));
+  font-size: 12px;
+  line-height: 1.5;
+  max-width: 100%;
+}
+.mt-cmd .codicon {
+  font-size: 11px;
+  align-self: center;
+  color: color-mix(in srgb, var(--chat-accent) 75%, var(--fg));
+}
+.mt-cmd-name {
+  font-family: var(--viewer-font, var(--mono));
+  font-weight: 600;
+  color: color-mix(in srgb, var(--chat-accent) 80%, var(--fg));
+  white-space: nowrap;
+}
+.mt-cmd-args {
+  font-family: var(--viewer-font, var(--mono));
+  opacity: 0.75;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
 /* AskUserQuestion: a prominent, answerable block (not a faint trace). */
 .mt-question {
   margin: 0.5em 0;
@@ -1392,12 +1567,75 @@ button.mt-toolrun-head:hover {
   font-size: 12px;
   color: var(--muted);
 }
+/* Non-image attachment chip (drag&drop / ＋): icon + name instead of a thumbnail. */
+.ma-chip.ma-file {
+  width: auto;
+  max-width: 240px;
+  height: auto;
+  padding: 6px 26px 6px 8px; /* right pad clears the ✕ */
+}
+.ma-fname {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  min-width: 0;
+}
+.ma-fname-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* ＋ attach button, left of the composer (all pointer types — phones foremost). */
+.mirror-attach-btn {
+  flex: none;
+  align-self: stretch;
+  width: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.mirror-attach-btn:disabled {
+  opacity: 0.4;
+}
+/* OS file drag hovering the pane: highlight the composer as the drop target. */
+.mirrorview.dragging .mirror-compose {
+  outline: 2px dashed var(--accent);
+  outline-offset: 2px;
+  border-radius: 8px;
+}
 /* In-chat pasted-image thumbnails (user turn) + click-to-enlarge lightbox. */
 .mt-imgs {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
   margin-top: 4px;
+}
+/* In-chat non-image attachment chips (user turn). */
+.mt-attach-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+.mt-attach-file {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 280px;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  font-size: 12px;
+  color: var(--muted);
+}
+.mt-attach-file-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .mt-img {
   display: inline-flex;

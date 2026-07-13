@@ -46,17 +46,17 @@ describe("openActive", () => {
     l = openActive(l, { content: { kind: "terminal", chat: false } });
     expect(allPanes(l)[0].session).toBe("s1"); // revealed, not re-bound
   });
-  it("swaps payloads (keeping ids) when the other pane already shows the target", () => {
-    let l = grown(1); // p0=s0 active would be the new pane; find ids
+  it("focuses the other pane (no swap) when it already shows the target", () => {
+    let l = grown(1); // p0=s0, p1=s1
     const [a, b] = allPanes(l);
     l = setActive(l, a.id);
     const l2 = openActive(l, term(b.session!));
     const [a2, b2] = allPanes(l2);
     expect(a2.id).toBe(a.id); // ids stay in place (paneId contract)
     expect(b2.id).toBe(b.id);
-    expect(a2.session).toBe(b.session); // payloads swapped
-    expect(b2.session).toBe(a.session);
-    expect(l2.activeId).toBe(a.id);
+    expect(a2.session).toBe(a.session); // payloads unchanged — no swap
+    expect(b2.session).toBe(b.session);
+    expect(l2.activeId).toBe(b.id); // the pane already showing it becomes active
   });
 });
 
@@ -67,6 +67,15 @@ describe("openInNew", () => {
     const l2 = openInNew(l, term(first.session!));
     expect(l2.cols).toBe(l.cols); // no structural change
     expect(l2.activeId).toBe(first.id);
+  });
+  it("treats different source lines as distinct file targets", () => {
+    let l = openActive(freshLayout(), { content: { kind: "file", filePath: "a.ts", targetLine: 10 } });
+    l = openInNew(l, { content: { kind: "file", filePath: "a.ts", targetLine: 20 } });
+    expect(allPanes(l)).toHaveLength(2);
+    expect(allPanes(l).map((p) => p.content)).toEqual([
+      { kind: "file", filePath: "a.ts", targetLine: 10 },
+      { kind: "file", filePath: "a.ts", targetLine: 20 },
+    ]);
   });
   it("fills a blank pane before growing the layout", () => {
     let l = grown(1);
@@ -98,6 +107,15 @@ describe("openInNew", () => {
     // Third open: column full → falls back to openActive on the active pane.
     const l2 = openInNew(l, term("s2"), { mobile: true });
     expect(allPanes(l2)).toHaveLength(2);
+  });
+  it("mobile: a forced open reuses the other row instead of replacing the source pane", () => {
+    let l = openActive(freshLayout(), file("source.md"));
+    l = openInNew(l, file("first.ts"), { mobile: true, force: true });
+    const source = allPanes(l).find((p) => p.content.kind === "file" && p.content.filePath === "source.md")!;
+    l = setActive(l, source.id);
+    const l2 = openInNew(l, file("linked.ts"), { mobile: true, force: true });
+    expect(allPanes(l2).some((p) => p.id === source.id && p.content.kind === "file" && p.content.filePath === "source.md")).toBe(true);
+    expect(allPanes(l2).some((p) => p.content.kind === "file" && p.content.filePath === "linked.ts")).toBe(true);
   });
   it("allocates ids past history maxima (no reuse after close)", () => {
     let l = grown(2); // p0,p1,p2
@@ -142,9 +160,9 @@ describe("closePane", () => {
 describe("closeSessionPanes", () => {
   it("removes every pane showing the session in one step", () => {
     let l = grown(2);
-    // Bind pane 3 to the same session as pane 1 (force split then swap in s0).
-    l = openActive(l, term("s0")); // active pane (third) now shows s0 → swap-dedup…
-    // After the swap, exactly one pane shows s0. Bind another explicitly:
+    // Clicking s0 while it's already open just focuses that pane (no dup).
+    l = openActive(l, term("s0")); // active moves to the pane already showing s0
+    // Still exactly one pane shows s0. Bind another explicitly:
     l = openInNew(l, term("s0x"), { force: true });
     const before = allPanes(l).length;
     const hits = allPanes(l).filter((p) => p.session === "s0").length;
@@ -246,6 +264,19 @@ describe("normalizeStored (migration)", () => {
     const l = grown(1);
     const back = normalizeStored(JSON.parse(JSON.stringify(l)))!;
     expect(back).toEqual(l);
+  });
+  it("keeps a persisted file source location", () => {
+    const l = normalizeStored({
+      cols: [{ id: "c0", panes: [{ id: "p0", content: { kind: "file", filePath: "a.ts", targetLine: 12, targetColumn: 3 } }] }],
+      colRatios: [1],
+      activeId: "p0",
+    })!;
+    expect(l.cols[0].panes[0].content).toEqual({
+      kind: "file",
+      filePath: "a.ts",
+      targetLine: 12,
+      targetColumn: 3,
+    });
   });
   it("rejects garbage and repairs bad ratios / activeId", () => {
     expect(normalizeStored(null)).toBeNull();

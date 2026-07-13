@@ -63,7 +63,7 @@ func loadCmudict() {
 // englishToKana は文中の英数字トークン（英字で始まる [A-Za-z0-9] の連なり）をカタカナに
 // 変換し、それ以外（日本語・記号・単独の数字・空白）はそのまま通す。英字始まりに限るので
 // 単独の数字（"3個" の 3）は日本語読みのまま残る。EC2 / iPhone15 のような英字＋数字は
-// 1 トークンとして拾う。
+// 1 トークンとして拾う。語中のアポストロフィ（it's / don't）は語に含める（下の isApostrophe）。
 func englishToKana(text string) string {
 	cmuOnce.Do(loadCmudict)
 	var b strings.Builder
@@ -71,8 +71,18 @@ func englishToKana(text string) string {
 	for i := 0; i < len(runes); {
 		if isAsciiLetter(runes[i]) {
 			j := i
-			for j < len(runes) && (isAsciiLetter(runes[j]) || isAsciiDigit(runes[j])) {
-				j++
+			for j < len(runes) {
+				if isAsciiLetter(runes[j]) || isAsciiDigit(runes[j]) {
+					j++
+					continue
+				}
+				// 語中のアポストロフィ（it's, don't, we'll, User's）は語に含める。次が英字の
+				// ときだけ＝末尾の所有格 devs' や引用符の閉じ 'foo' は含めない。
+				if isApostrophe(runes[j]) && j+1 < len(runes) && isAsciiLetter(runes[j+1]) {
+					j++
+					continue
+				}
+				break
 			}
 			b.WriteString(convertToken(string(runes[i:j])))
 			i = j
@@ -87,6 +97,9 @@ func englishToKana(text string) string {
 func isAsciiLetter(r rune) bool {
 	return (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z')
 }
+
+// isApostrophe は ASCII アポストロフィ(') とタイプグラフィ版(’ U+2019) を同一視する。
+func isApostrophe(r rune) bool { return r == '\'' || r == '’' }
 
 func isAsciiDigit(r rune) bool { return r >= '0' && r <= '9' }
 
@@ -107,8 +120,12 @@ var digitKana = map[rune]string{
 }
 
 // convertToken は 1 英数字トークンを変換する。まずトークン全体をオーバーライド辞書で引き、
-// 数字を含むなら英字塊/数字塊に割って変換、英字のみなら convertWord。
+// 数字を含むなら英字塊/数字塊に割って変換、英字のみなら convertWord。語中にアポストロフィを
+// 含むトークン（短縮形・所有格）は convertContraction へ。
 func convertToken(tok string) string {
+	if strings.ContainsRune(tok, '\'') || strings.ContainsRune(tok, '’') {
+		return convertContraction(tok)
+	}
 	if k, ok := techKana[strings.ToLower(tok)]; ok {
 		return k
 	}
@@ -116,6 +133,21 @@ func convertToken(tok string) string {
 		return convertAlnum(tok)
 	}
 	return convertWord(tok)
+}
+
+// convertContraction は語中にアポストロフィを含むトークン（it's / don't / User's）を変換する。
+// CMUdict はこれらを分断読みしてしまう（"it's"→"イット'エス"）ため、頻出の短縮形は
+// contractionKana で読みを固定し、所有格 's は「元の語＋ズ」、その他は ' を除いて通常変換へ。
+func convertContraction(tok string) string {
+	norm := strings.ReplaceAll(tok, "’", "'")
+	lower := strings.ToLower(norm)
+	if k, ok := contractionKana[lower]; ok {
+		return k
+	}
+	if strings.HasSuffix(lower, "'s") { // 所有格: React's → リアクトズ, user's → ユーザーズ
+		return convertToken(norm[:len(norm)-2]) + "ズ"
+	}
+	return convertToken(strings.ReplaceAll(norm, "'", "")) // 未知の短縮形は ' を落として読む
 }
 
 // convertAlnum は英字塊・数字塊が混じるトークン（EC2, iPhone15, utf8）を変換する。数字塊は
@@ -152,6 +184,12 @@ func convertWord(word string) string {
 	lower := strings.ToLower(word)
 	if k, ok := techKana[lower]; ok { // AWS/開発ジャルゴンのオーバーライド優先
 		return k
+	}
+	// 単独の大文字 1 文字（案A・パターンB 等のラベル）は CMUdict の実在語（a/i/o が
+	// 冠詞・代名詞として載っている）に化けて誤読される（例: "A"→"ア"）ため、CMUdict より
+	// 先に英字名読みで確定させる。小文字（英文中の a 等）は対象外＝そのまま自然文として扱う。
+	if len(word) == 1 && isAllUpper(word) {
+		return spellLetters(word)
 	}
 	if arpa, ok := cmuMap[lower]; ok {
 		return arpabetToKana(arpa)

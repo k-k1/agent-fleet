@@ -42,10 +42,51 @@ neither on the host — only Docker.
 
 ## Commits & PRs
 
-- Small, focused commits with a clear message (Japanese is fine — the codebase
-  uses it).
-- Note any schema migration (`control-plane/migrations/`) and confirm it is
-  forward-compatible: the embedded migrator applies on CP start, and downgrades
-  are not supported.
-- Describe how you verified the change (tests, and for behavior changes, a real
-  run — this project is verified against a live fleet, not just unit tests).
+`main` への直 push で運用（単独メンテナ・レビュー gate なし）。自分からブランチを
+切らない — worktree セッションは Console が専用ブランチで払い出す。GitHub リモートは
+`git@github.com:k-k1/agent-fleet.git`。
+
+小さく焦点の合ったコミットを心がけ、下記の形式に従う。
+
+### コミットメッセージの形式
+
+Conventional Commits に**日本語の subject** を組み合わせる。**subject も body も日本語で
+書く**（このリポジトリは日本語で統一している。英語で書き始めたら書き直す）。
+
+```
+<type>(<scope>): <日本語の要約>     ← 1 行目。句点なし・要約/命令形・50 字目安
+
+<本文>                              ← 空行を 1 つ挟む。何を・なぜ変えたか。挙動変更は
+                                       真因→直し方→検証まで。折返し ~72 字。
+
+Co-Authored-By: <実行モデル名> <noreply@<提供元>>   ← 末尾トレーラ（空行で分離）
+```
+
+- **type**: `feat` / `fix` / `docs` / `style`（整形のみ・挙動不変）/ `refactor` / `perf` /
+  `test` / `build`（焼き込み CLI・依存の版上げ等）/ `chore` / `ci`。
+- **scope**: 変更の主対象。実例 = `console` `chat` `cp`（= control-plane）`agent` `mirror`
+  `tts` `workspace` `deploy`、ドキュメントは `docs(NN)`（章番号）。付けられるなら付ける。
+- **body**: バグ修正・挙動変更は「真因 → 直し方 → 検証（どう確かめたか）」まで書き残す
+  — このプロジェクトは実フリートで検証する前提で、コミット履歴が唯一の設計記録になる。
+- **migration**: スキーマ変更（`control-plane/migrations/`）は前方互換を確認し body に明記
+  （埋め込み migrator が CP 起動時に自動適用・ダウングレード非対応）。
+
+### 帰属（Co-Authored-By トレーラ）
+
+このプロジェクトは Claude Code / Codex / opencode を併用する。エージェントが書いた
+コミットは末尾に空行を挟み、**実際に生成したモデル名**で共同著者を記す（CLI 名ではなく
+モデルで帰属する）。
+
+| 実行環境 | Co-Authored-By 例 |
+|----------|-------------------|
+| Claude Code | `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>`（版により `Claude Fable 5` 等） |
+| Codex | `Co-Authored-By: GPT-5.6 <noreply@openai.com>` |
+| opencode | 実行モデルで帰属（Claude 系 → `@anthropic.com` / GPT 系 → `@openai.com`） |
+
+- メール部は提供元ドメインの `noreply@`（Anthropic = anthropic.com / OpenAI = openai.com /
+  その他はモデル提供元のドメイン）。モデル名は実行版に合わせる（固定しない）。
+- **session URL 行は付けない**（旧 `Claude-Session:` トレーラは廃止）。ただし Claude Code は
+  Remote Control 接続時に `Claude-Session:` 行を CLI が自動付与する — これは無害なので許容
+  （抑止は agent-fleet 側でなく Claude Code の設定で行う）。
+- **`Co-Authored-By:` は必ず付ける**（エージェントが関与したコミットは 1 行以上を必須と
+  する）。複数のモデル／人が関与したら複数行並べる。純粋に人間だけのコミットのときだけ省略可。

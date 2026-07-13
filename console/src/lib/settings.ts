@@ -42,6 +42,22 @@ export const THEMES = [
   { id: "light", label: "ライト" },
 ];
 
+// Per-region theme choices (session mirror / assistant chat). "inherit" = follow the app
+// theme above; "dark"/"light" give that region its own base theme, independent of the rest
+// of the Console — applied by scoping data-theme onto the region container (.mirrorview /
+// .chatview; see tokens.css scoped token blocks + effectiveTheme).
+export const REGION_THEMES = [
+  { id: "inherit", label: "アプリに合わせる" },
+  { id: "dark", label: "ダーク" },
+  { id: "light", label: "ライト" },
+];
+
+// Resolve a per-region theme preference against the app theme, to a concrete "light"/"dark".
+export function effectiveTheme(pref: string, base: string): "light" | "dark" {
+  if (pref === "dark" || pref === "light") return pref;
+  return base === "light" ? "light" : "dark";
+}
+
 // Surface (top bar / left pane) background choices. Each color has a per-theme tint
 // so it always contrasts with the theme's text color. "default" = theme default.
 export const SURFACE_COLORS = [
@@ -56,11 +72,16 @@ export const SURFACE_COLORS = [
 // The four themeable surfaces (settings key + labels). Shared by DisplayTab and the
 // TopBar 外観 popover so "which surfaces are colorable" is defined once — `short` for
 // the compact popover rows, `long` for the settings-tab rows.
-export const SURFACE_TARGETS: { key: "topbarColor" | "leftpaneColor" | "viewerColor" | "chatColor"; short: string; long: string }[] = [
+export const SURFACE_TARGETS: { key: "topbarColor" | "leftpaneColor" | "viewerColor" | "chatColor" | "assistantColor"; short: string; long: string }[] = [
   { key: "topbarColor", short: "上部バー", long: "上部バーの背景" },
   { key: "leftpaneColor", short: "左ペイン", long: "左ペインの背景" },
   { key: "viewerColor", short: "ビュアー", long: "ファイルビュアーの背景" },
-  { key: "chatColor", short: "チャット", long: "チャットの背景" },
+  // chatColor drives the session mirror's (.mirrorview) --chat-bg / --chat-accent; labelled
+  // セッション so it isn't confused with the assistant chat. Key kept as chatColor for
+  // backward-compat with persisted prefs.
+  { key: "chatColor", short: "セッション", long: "セッションの背景" },
+  // assistantColor is the same surface mechanism for the assistant chat (.chatview).
+  { key: "assistantColor", short: "アシスタント", long: "アシスタントの背景" },
 ];
 
 // Resolve a surface color id to its value for the active theme (null = no override).
@@ -84,6 +105,16 @@ function mixHex(from: string, to: string, t: number): string {
   const b = p(to);
   const c = a.map((v, i) => Math.round(v + (b[i] - v) * t));
   return "#" + c.map((v) => v.toString(16).padStart(2, "0")).join("");
+}
+
+// Derive a region's surface background from a chosen surface color, for the given
+// (region-effective) theme: lighten toward white in light, darken toward black in dark.
+// null (default color) => no override, so the region falls back to the theme --bg in CSS.
+// Used for the file viewer (applyTheme) and, per region theme, the mirror / assistant chat.
+export function surfaceBg(id: string, theme: string): string | null {
+  const c = surfaceValue(id, theme);
+  if (!c) return null;
+  return theme === "light" ? mixHex(c, "#ffffff", 0.45) : mixHex(c, "#000000", 0.34);
 }
 
 // Default row highlight per theme — mirrors --active-bg / --hover-bg in styles.css
@@ -123,10 +154,17 @@ export interface Settings {
   minimap: boolean;
   iconSet: string;
   theme: string;
+  // Per-region base theme, independent of `theme`: "inherit" (default, follow the app),
+  // "dark", or "light". Applied by scoping data-theme onto the region container.
+  // mirrorTheme → .mirrorview (session mirror); assistantTheme → .chatview (assistant chat).
+  mirrorTheme: string;
+  assistantTheme: string;
   topbarColor: string;
   leftpaneColor: string;
   viewerColor: string;
+  // Surface color for the session mirror (chatColor) and the assistant chat (assistantColor).
   chatColor: string;
+  assistantColor: string;
   mirrorSend: string;
   // Default claude model for new sessions (launch dialog + repo 起動). Always a concrete
   // tier alias (opus/sonnet/haiku) — the alias tracks the newest model in that tier, but
@@ -140,6 +178,12 @@ export interface Settings {
   // content). The Agent reads this key from ui-prefs and injects a language rule into the
   // chat system prompt (translate assistant is exempt). See docs/19.
   outputLanguage: string;
+  // Assistant-chat backend: "auto" = the first connected of claude → codex → opencode
+  // (the Agent's preferredHeadlessAgent), or a fixed kind. Applies to builtin
+  // assistants' NEW conversations and one-shot calls (title/branch suggestions); the
+  // Agent reads this key from ui-prefs live. User-defined assistants keep their own
+  // per-assistant agent choice.
+  assistantAgent: string;
   // Per-SSM-host terminal color: host id → color id (see lib/termcolor SSM_HOST_COLORS).
   // Applied to a session's terminal background when it's created (sent as its color).
   ssmHostColors: Record<string, string>;
@@ -157,6 +201,12 @@ export interface Settings {
   // 自動読み上げ(ttsEnabled)とは別軸。名前前置きの短い告知を直列キューで読む。タブが見えている
   // 間のみ（セッション監視は document.hidden で止まるため）。
   ttsSessionNotify: boolean;
+  // サブスク利用制限（5時間 / 週次）の窓が、制限に当たっていた状態からリセットされたら通知する
+  // （app/usageResetNotify.ts）。WsBar の使用状況チップが持つ resetsAt を使い、ブラウザ通知＋
+  // （音声読み上げ ON 時は）短い音声で「利用を再開できます」と知らせる。制限に当たっていない
+  // 通常のリセットでは鳴らさない（スパム防止）。Console のタブが開いている間に確実に検知し、
+  // 閉じている間のリセットは次に開いたとき 1 度だけ通知する。
+  usageResetNotify: boolean;
   // 英単語をカタカナ英語に変換してから VOICEVOX に読ませる（docs/24, CP の enkana 前処理）。
   // ずんだもんの声のまま英語を "それっぽく"（日本語アクセントで）読む。CMU 発音辞書ベースの
   // 音写なので、定着した和製カタカナ（コーヒー等）ではなく音写（カフィー等）になる。
@@ -239,32 +289,45 @@ const DEFAULTS: Settings = {
   minimap: true,
   iconSet: "vscode",
   theme: "dark",
+  mirrorTheme: "inherit",
+  assistantTheme: "inherit",
   topbarColor: "default",
   leftpaneColor: "default",
   viewerColor: "default",
   chatColor: "default",
+  assistantColor: "default",
   // Markdown mirror composer: "mod-enter" = Ctrl/⌘+Enter submits, Enter inserts a
   // newline (phone-friendly default); "enter" = Enter submits, Shift+Enter newline.
   mirrorSend: "mod-enter",
   defaultModel: DEFAULT_MODEL, // concrete tier (avoids claude's release-varying own pick)
   autoTitleSuggest: true,
   outputLanguage: "auto",
+  assistantAgent: "auto",
   ssmHostColors: {},
+  // 音声読み上げの初期値＝おすすめ設定。設定タブの「リセット」ボタンが戻す値（TTS_RESET）と
+  // 同じで、新規ユーザー（と未設定の既存ユーザー）はこの状態から始まる。読み上げ本体・音声通知
+  // だけは OFF スタート、ほかは ON にしたとき快適な既定（セッションごとに声を変える／はやめ／
+  // 自動読み上げ・全ペイン・確認質問・カタカナ読み ON／キャッシュ 15 分）。TTS_RESET はこの
+  // DEFAULTS から TTS 関連キーだけ抜き出して定義しているので、両者は常に一致する。
   ttsEnabled: false,
   ttsProvider: "auto",
-  ttsVoiceVoicevox: "3",
+  ttsVoiceVoicevox: "3", // ノーマル
   ttsVoicePolly: "Takumi",
-  ttsSpeed: 1.0,
+  ttsSpeed: 1.25, // はやめ
   ttsSessionNotify: false,
-  ttsEnglishKana: false,
+  usageResetNotify: true,
+  ttsEnglishKana: true,
   ttsUserDict: "",
-  ttsCacheSec: 300,
-  ttsAutoReadMirror: false,
-  ttsAutoReadAllPanes: false,
-  ttsVoicePerSession: false,
+  ttsCacheSec: 900, // 15分
+  ttsAutoReadMirror: true,
+  ttsAutoReadAllPanes: true,
+  ttsVoicePerSession: true,
+  // {} = 標準 14 キャラ（tts.ts の SESSION_VOICES）がセッション割り当て対象。新規ユーザーも
+  // リセットもこの状態から始まる（キャラは標準 14 人スタートで統一）。エンジンに追加キャラが
+  // いても、使いたければキャラクター一覧で個別にチェックする運用。
   ttsVoicePool: {},
   ttsEmotion: false,
-  ttsReadPending: false,
+  ttsReadPending: true,
   ttsSummaryRead: false,
   ttsAbbrevCode: true,
   ttsParticlePause: true,
@@ -306,6 +369,34 @@ export const TTS_CACHE_SIZES: [number, string][] = [
   [1800, "30分（約180MB）"],
 ];
 
+// 音声読み上げ設定の「初期状態」（設定タブのリセットボタンが書き戻す値）。DEFAULTS の TTS 関連
+// キーだけを抜き出したもので、新規ユーザーの初期値と常に一致する（DEFAULTS を単一の真実源に
+// することでドリフトを防ぐ）。ttsVoicePool は {}（= tts.ts の標準 14 キャラがチェック済み）で、
+// リセットも新規ユーザーもキャラは標準 14 人からのスタートで揃う。読み仮名辞書（ttsUserDict）は
+// ユーザーが打ち込んだ内容なのでリセットでは消さない（含めない）。
+const TTS_RESET_KEYS = [
+  "ttsEnabled",
+  "ttsSessionNotify",
+  "ttsProvider",
+  "ttsVoiceVoicevox",
+  "ttsVoicePolly",
+  "ttsVoicePerSession",
+  "ttsVoicePool",
+  "ttsEmotion",
+  "ttsSpeed",
+  "ttsAutoReadMirror",
+  "ttsAutoReadAllPanes",
+  "ttsSummaryRead",
+  "ttsReadPending",
+  "ttsAbbrevCode",
+  "ttsParticlePause",
+  "ttsEnglishKana",
+  "ttsCacheSec",
+] as const;
+export const TTS_RESET: Partial<Settings> = Object.fromEntries(
+  TTS_RESET_KEYS.map((k) => [k, DEFAULTS[k]]),
+) as Partial<Settings>;
+
 // 読み上げ速度（speedScale）。
 export const TTS_SPEEDS: [number, string][] = [
   [0.75, "ゆっくり"],
@@ -320,6 +411,16 @@ export const OUTPUT_LANGUAGES: [string, string][] = [
   ["auto", "入力に合わせる"],
   ["ja", "日本語"],
   ["en", "English"],
+];
+
+// Assistant-chat backend choices (AgentsTab). "auto" picks the first CONNECTED of
+// claude → codex → opencode; a fixed choice falls back to auto when that CLI isn't
+// connected (opencode is always usable — its free tier needs no login).
+export const ASSISTANT_AGENTS: [string, string][] = [
+  ["auto", "自動（接続済みを優先）"],
+  ["claude", "Claude"],
+  ["codex", "Codex"],
+  ["opencode", "opencode"],
 ];
 
 // Mirror composer submit-key options, shared by the settings UI.
@@ -414,26 +515,14 @@ export function applyTheme(s: Settings): void {
   // File viewer background, derived from the chosen surface: lighter than the
   // surfaces in light theme (toward white), darker in dark theme (toward black).
   // Unset => theme --bg.
-  const vw = surfaceValue(s.viewerColor, theme);
-  setVar("--viewer-bg", vw ? (theme === "light" ? mixHex(vw, "#ffffff", 0.45) : mixHex(vw, "#000000", 0.34)) : null);
-  // Viewer surface accent — the terminal pane shares --viewer-bg, so the チャット/ターミナル
+  setVar("--viewer-bg", surfaceBg(s.viewerColor, theme));
+  // Viewer surface accent — the terminal pane shares --viewer-bg, so the ターミナル/チャット
   // toggle rebinds --sel-accent to this. Null (no viewer color) → CSS falls back to topbar.
   setVar("--viewer-accent", surfaceAccent(s.viewerColor));
-  // Chat surface (the Markdown mirror) is independent of the file viewer: its own
-  // background, derived the same way. Unset => falls back to the viewer surface (then
-  // the theme --bg) in CSS, preserving the prior "chat sits on the viewer" behavior.
-  const cw = surfaceValue(s.chatColor, theme);
-  setVar("--chat-bg", cw ? (theme === "light" ? mixHex(cw, "#ffffff", 0.45) : mixHex(cw, "#000000", 0.34)) : null);
-  // Chat highlights (question options, "あなた" block, gauge…) follow the chat's own
-  // surface accent first, then the viewer / left pane / top bar; null falls back to
-  // the CSS default (--accent, the app blue).
-  setVar(
-    "--chat-accent",
-    surfaceAccent(s.chatColor) ||
-      surfaceAccent(s.viewerColor) ||
-      surfaceAccent(s.leftpaneColor) ||
-      surfaceAccent(s.topbarColor),
-  );
+  // NOTE: the session mirror's --chat-bg/--chat-accent and the assistant chat's surface are
+  // NOT set here anymore — each region owns them per its own theme (mirrorTheme/assistantTheme)
+  // as inline vars on .mirrorview / .chatview, since those regions can differ from the app
+  // theme. See MirrorView.tsx / ChatView.tsx (surfaceBg + surfaceAccent + effectiveTheme).
 }
 applyTheme(state);
 
@@ -447,13 +536,43 @@ let saveTimer: ReturnType<typeof setTimeout> | null = null;
 function scheduleServerSave(): void {
   if (saveTimer) clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
-    apiJSON("api/env/ui-prefs", "PUT", state).catch(() => {});
+    // 端末ローカルキーはサーバへ送らない（この端末の外へ出さない）。
+    apiJSON("api/env/ui-prefs", "PUT", serverPrefs(state)).catch(() => {});
   }, 600);
+}
+
+// 端末ローカル設定 — localStorage にだけ持ち、サーバへは送らず・サーバからも復元しない。
+// 「この端末で音を鳴らすか」「この画面をどう見せるか」は使う場所（オフィス/自宅、明るさ、
+// ヘッドホン有無）で変わる環境依存の設定なので、ユーザ単位で全端末に追従させると邪魔になる。
+// 声・速度・辞書・フォント等の“好み”は従来どおりクロスデバイス同期のまま（DEVICE_LOCAL 外）。
+// これにより「サーバ優先＋保存デバウンス取りこぼしで OFF が復活」する経路もこれらのキーでは消える。
+const DEVICE_LOCAL = new Set<keyof Settings>([
+  "ttsEnabled", // 音声読み上げ ON/OFF
+  "ttsSessionNotify", // 音声通知 ON/OFF
+  "usageResetNotify", // 制限リセット通知 ON/OFF（この端末で鳴らすか）
+  "theme", // ダーク/ライト
+  "mirrorTheme", // セッションミラーのテーマ（端末ごとの見せ方）
+  "assistantTheme", // アシスタントチャットのテーマ（端末ごとの見せ方）
+  "topbarColor", // 外観の配色（サーフェス色）
+  "leftpaneColor",
+  "viewerColor",
+  "chatColor",
+  "assistantColor",
+]);
+
+// serverPrefs は端末ローカルキーを除いた、サーバへ保存してよい設定だけの浅いコピー。
+function serverPrefs(s: Settings): Partial<Settings> {
+  const out: Partial<Settings> = {};
+  for (const k of Object.keys(s) as (keyof Settings)[]) {
+    if (!DEVICE_LOCAL.has(k)) (out as any)[k] = s[k];
+  }
+  return out;
 }
 
 // hydrateUIPrefs pulls the server-stored prefs (if any) and merges the known keys
 // over the local state, so a fresh browser inherits the user's settings. Called once
-// at boot after the tenant is resolved (state.jsx). Server wins over localStorage.
+// at boot after the tenant is resolved (state.jsx). Server wins over localStorage —
+// EXCEPT DEVICE_LOCAL keys, which stay whatever this browser's localStorage holds.
 export async function hydrateUIPrefs(): Promise<void> {
   let srv: any;
   try {
@@ -465,6 +584,7 @@ export async function hydrateUIPrefs(): Promise<void> {
   let changed = false;
   const merged: Settings = { ...state };
   for (const k of Object.keys(DEFAULTS)) {
+    if (DEVICE_LOCAL.has(k as keyof Settings)) continue; // 端末ローカルは復元しない
     if (k in srv && srv[k] !== (merged as any)[k]) {
       (merged as any)[k] = srv[k];
       changed = true;
@@ -480,7 +600,14 @@ export async function hydrateUIPrefs(): Promise<void> {
 }
 
 export function setSetting(key: keyof Settings, value: Settings[keyof Settings]): void {
-  state = { ...state, [key]: value };
+  setSettings({ [key]: value } as Partial<Settings>);
+}
+
+// setSettings — 複数キーを 1 回で更新する（1 レンダー・1 サーバー保存にまとめる）。
+// リセットのように多数のキーをまとめて書き換える用途で使う（setSetting を 17 回呼ぶと
+// その回数だけ再レンダーとデバウンス保存が走るため）。
+export function setSettings(patch: Partial<Settings>): void {
+  state = { ...state, ...patch };
   try {
     localStorage.setItem(KEY, JSON.stringify(state));
   } catch {}

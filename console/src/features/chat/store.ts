@@ -10,17 +10,24 @@
 // re-opened on the same conversation re-attach to the live turn and pick up the final
 // answer instead of a stale pre-turn snapshot (docs/19: "close pane mid-stream" fix).
 import { create } from "zustand";
-import type { Conversation } from "../../types/chat.ts";
+import type { Conversation, ChatStep } from "../../types/chat.ts";
+
+// Live in-flight turn state: the tentative answer text plus the working steps committed so
+// far (docs/19 分離), so a re-opened pane re-attaches to both the process and the answer.
+export interface LiveTurn {
+  text: string;
+  steps: ChatStep[];
+}
 
 interface ChatStore {
   listTick: number;
   bumpList(): void;
   busy: Record<string, boolean>;
   markBusy(id: string, busy: boolean): void;
-  // Accumulating assistant reply of an in-flight turn, so a re-opened pane can show the
-  // live answer rather than an empty spinner.
-  live: Record<string, string>;
-  setLive(id: string, text: string): void;
+  // Accumulating assistant reply + working steps of an in-flight turn, so a re-opened pane
+  // can show the live answer/process rather than an empty spinner.
+  live: Record<string, LiveTurn>;
+  setLive(id: string, turn: LiveTurn): void;
   clearLive(id: string): void;
   // Latest conversation after a turn completes. Published even when the ChatView that ran
   // the turn is gone, so any pane still showing this conversation picks up the final answer.
@@ -41,7 +48,7 @@ export const useChatStore = create<ChatStore>((set) => ({
       return { busy: n };
     }),
   live: {},
-  setLive: (id, text) => set((s) => ({ live: { ...s.live, [id]: text } })),
+  setLive: (id, turn) => set((s) => ({ live: { ...s.live, [id]: turn } })),
   clearLive: (id) =>
     set((s) => {
       if (!(id in s.live)) return s;

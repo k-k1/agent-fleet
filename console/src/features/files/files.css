@@ -29,6 +29,13 @@
 .fsrow.selected {
   background: var(--lp-active-bg, var(--active-bg));
 }
+/* Keyboard nav: the tree carries an aria-activedescendant selection, so while the
+   tree itself holds focus, ring the selected row (not the <ul>) to show the caret. */
+.fstree:focus-visible .fsrow.selected,
+.fstree:focus .fsrow.selected {
+  outline: 2px solid var(--lp-accent, var(--accent));
+  outline-offset: -2px;
+}
 .fsrow.drop-hover {
   outline: 2px dashed var(--accent);
   outline-offset: -2px;
@@ -44,6 +51,18 @@
 }
 .fs-file.active {
   color: var(--lp-accent, var(--accent));
+}
+/* Search-result rows: filename first, then its dir path muted (VS Code style).
+   The wrapper truncates so a long path trims from the right, keeping the name. */
+.fs-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fs-sub {
+  color: var(--muted);
+  font-size: 11px;
 }
 .fs-chev {
   width: 12px;

@@ -324,6 +324,25 @@
 .repo-chip.dirty .codicon {
   font-size: 7px;
 }
+/* Linked worktree HEAD vs its parent working copy's current HEAD. Kept apart
+   from .ab because that chip is relative to the configured remote upstream. */
+.repo-chip.integration.same,
+.repo-chip.integration.unknown {
+  color: var(--muted);
+  background: color-mix(in srgb, var(--muted) 10%, transparent);
+}
+.repo-chip.integration.contained {
+  color: var(--ok);
+  background: color-mix(in srgb, var(--ok) 14%, transparent);
+}
+.repo-chip.integration.unmerged {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+.repo-chip.integration.diverged {
+  color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 14%, transparent);
+}
 .repo-chip.ab {
   color: var(--accent);
   background: color-mix(in srgb, var(--accent) 14%, transparent);
@@ -453,4 +472,104 @@
   padding: 2px 6px;
   font: inherit;
   font-size: 12px;
+}
+
+/* ---- はじめる hub (StartModal, 起動導線 Ph2) ---- */
+.start-list {
+  border: 1px solid var(--border2, var(--border));
+  border-radius: 8px;
+  overflow: hidden;
+}
+.start-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 12px;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--border2, var(--border));
+  color: var(--fg);
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+}
+.start-row:last-child {
+  border-bottom: 0;
+}
+.start-row:hover:not(:disabled) {
+  background: var(--btn);
+}
+.start-row:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.start-row-ic {
+  color: var(--accent);
+  flex: none;
+}
+.start-row-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.start-row-title {
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.start-row.action .start-row-title {
+  color: var(--accent);
+}
+.start-row-desc {
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.start-row-meta {
+  font-size: 11px;
+  color: var(--muted);
+  flex: none;
+}
+.start-row-chev {
+  color: var(--muted);
+  flex: none;
+}
+/* Assistant sub-rows nested under the チャット row. */
+.start-row.start-sub {
+  padding-left: 34px;
+}
+/* Folded その他 (shell / SSM) toggle under the main list. */
+.start-other {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: transparent;
+  border: 0;
+  padding: 2px 0;
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  align-self: flex-start;
+}
+.start-other:hover {
+  color: var(--fg);
+}
+/* 場所を変更 — pinned left in the modal footer (hub back-navigation). */
+.launch-back {
+  margin-right: auto;
+}
+
+/* clone 完了トーストの「このまま はじめる」ブリッジ（Ph3）。 */
+.clone-done-toast {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
 }

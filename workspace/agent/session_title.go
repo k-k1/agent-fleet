@@ -145,22 +145,13 @@ const titleSuggestPersona = "あなたはセッションの会話ログを読み
 func titleModel() string { return envOr("AF_TITLE_MODEL", "haiku") }
 
 func runTitleSuggestLLM(ctx context.Context, turns []transcript.Turn) (string, error) {
-	args := []string{"-p", "--output-format", "json", "--dangerously-skip-permissions",
-		"--append-system-prompt", titleSuggestPersona, "--model", titleModel()}
-	args = append(args, chatToolLimits()...) // no subagents/file/bash — pure text in/out
-	cmd := chatClaudeCmd(ctx, args...)
-	defer func() { _, _ = ensureChatClaudeConfig() }() // reconcile any credential refresh (chat.go pattern)
-	cmd.Stdin = strings.NewReader(titleSuggestPrompt(turns))
-
-	out, err := cmd.Output()
+	// Backend-agnostic one-shot (oneShotHeadless): runs on the first available of
+	// claude → codex → opencode, so claude-less workspaces get suggestions too.
+	reply, err := oneShotHeadless(ctx, titleSuggestPersona, titleSuggestPrompt(turns), titleModel())
 	if err != nil {
-		return "", fmt.Errorf("title generation failed: %s", cliErr(err))
+		return "", fmt.Errorf("title generation failed: %w", err)
 	}
-	var r claudeResult
-	if json.Unmarshal(out, &r) != nil || r.IsError {
-		return "", fmt.Errorf("title generation: bad/error response")
-	}
-	return cleanSuggestedTitle(r.Result), nil
+	return cleanSuggestedTitle(reply), nil
 }
 
 const (
@@ -342,59 +333,12 @@ func writeTitleGenErr(w http.ResponseWriter, err error) {
 	}
 }
 
-// handleRegenerateSuggestedTitle lets the user explicitly ask for a fresh title
-// suggestion at any time (a button in the chat header) — including for a session
-// that already has a title, since the point is offering a better one as the
-// conversation moves on; the banner's 採用/× still requires an explicit click
-// before anything is overwritten. Bypasses the automatic trigger's turn-count/idle
-// gating and any prior dismissal — the automatic path still only offers once, but
-// the user can always ask again manually. Runs synchronously so the response
-// carries the new suggestion directly; this is a rare, user-initiated action
-// (unlike the poll-driven automatic path), so blocking the request on the LLM call
-// is fine. Persists into SuggestedTitle (so it also surfaces as the header banner)
-// — for a preview that doesn't touch session.Meta, see handleSuggestTitle.
-func handleRegenerateSuggestedTitle(w http.ResponseWriter, r *http.Request) {
-	name := r.PathValue("name")
-	if !session.ValidName(name) {
-		httpx.WriteErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
-		return
-	}
-	if !autoTitleSuggestEnabled() {
-		httpx.WriteErr(w, http.StatusBadRequest, "feature_disabled", "auto title suggestion is turned off")
-		return
-	}
-	m, found := session.ReadMeta(name)
-	if !found {
-		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
-		return
-	}
-	ctx, cancel := context.WithTimeout(r.Context(), titleSuggestTimeout)
-	defer cancel()
-	title, err := generateTitleNow(ctx, name, sessionTitleTurns(m))
-	if err != nil {
-		writeTitleGenErr(w, err)
-		return
-	}
-
-	// Re-read: the LLM call can take tens of seconds, during which the session
-	// could have been archived/removed.
-	m, found = session.ReadMeta(name)
-	if !found {
-		httpx.WriteErr(w, http.StatusConflict, "conflict", "session changed while generating")
-		return
-	}
-	m.SuggestedTitle = title
-	m.SuggestedTitleDismissed = false // an explicit re-ask overrides any earlier dismissal
-	session.WriteMeta(m)
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"suggestedTitle": title})
-}
-
 // handleSuggestTitle previews a title suggestion WITHOUT touching session.Meta —
 // used by the manual rename dialog's "AIに提案してもらう" button, which just fills
-// the text field for the user to edit/accept themselves. Unlike
-// handleRegenerateSuggestedTitle, this works even when the session already has a
-// title (renaming is exactly the case where one already exists) and never drives
-// the accept/dismiss banner flow.
+// the text field for the user to edit/accept themselves. Works even when the
+// session already has a title (renaming is exactly the case where one already
+// exists) and never drives the accept/dismiss banner flow — the banner is offered
+// only by the automatic trigger (maybeSuggestTitle).
 func handleSuggestTitle(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if !session.ValidName(name) {
@@ -471,22 +415,11 @@ const branchSuggestPersona = "You name git branches. Read the conversation log a
 // conversation, then hard-sanitizes the reply so a chatty model can't produce an
 // invalid ref/folder segment.
 func runBranchSuggestLLM(ctx context.Context, turns []transcript.Turn) (string, error) {
-	args := []string{"-p", "--output-format", "json", "--dangerously-skip-permissions",
-		"--append-system-prompt", branchSuggestPersona, "--model", titleModel()}
-	args = append(args, chatToolLimits()...)
-	cmd := chatClaudeCmd(ctx, args...)
-	defer func() { _, _ = ensureChatClaudeConfig() }()
-	cmd.Stdin = strings.NewReader(branchSuggestPrompt(turns))
-
-	out, err := cmd.Output()
+	reply, err := oneShotHeadless(ctx, branchSuggestPersona, branchSuggestPrompt(turns), titleModel())
 	if err != nil {
-		return "", fmt.Errorf("branch suggestion failed: %s", cliErr(err))
+		return "", fmt.Errorf("branch suggestion failed: %w", err)
 	}
-	var r claudeResult
-	if json.Unmarshal(out, &r) != nil || r.IsError {
-		return "", fmt.Errorf("branch suggestion: bad/error response")
-	}
-	return cleanBranchName(r.Result), nil
+	return cleanBranchName(reply), nil
 }
 
 // cleanBranchName reduces an LLM reply to a git-safe kebab-case name: first line,
@@ -609,7 +542,7 @@ func handleSessionRenameBranch(w http.ResponseWriter, r *http.Request) {
 }
 
 // sessionTitleTurns fetches the full turn list for a session regardless of kind,
-// for the manual regenerate action (which needs the whole conversation, not a
+// for the manual suggest action (which needs the whole conversation, not a
 // poll window).
 func sessionTitleTurns(m session.Meta) []transcript.Turn {
 	if m.Kind == session.KindClaude {

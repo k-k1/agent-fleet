@@ -19,6 +19,11 @@ type tenantLimits struct {
 	MaxGitRepos int `json:"max_git_repos,omitempty"`
 	// MaxLFSBytes caps the tenant's total stored Git LFS bytes (P3). 0 = unlimited.
 	MaxLFSBytes int64 `json:"max_lfs_bytes,omitempty"`
+	// MaxWorkspaceMem caps a single workspace's RAM allocation in BYTES (roadmap P3-4;
+	// super_admin-set). A tenant_admin's per-user mem_limit is clamped to this at
+	// container start (resolveWorkspaceMemBytes). 0 = no tenant cap (a per-user value is
+	// still bounded by the deployment hard ceiling AF_MAX_WORKSPACE_MEM and the floor).
+	MaxWorkspaceMem int64 `json:"max_workspace_mem,omitempty"`
 	// P3-9 idle-stop (docs/19): per-tenant, super_admin-editable.
 	SessionIdleTimeout string `json:"session_idle_timeout,omitempty"` // tier-1: idle claude -> halt
 	WSIdleTimeout      string `json:"ws_idle_timeout,omitempty"`      // tier-2: cold workspace -> docker stop

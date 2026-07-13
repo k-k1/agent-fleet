@@ -143,6 +143,10 @@ func awaitLogin(f *agents.Flow, timeout time.Duration) (ok bool, oauthErr string
 	return false, ""
 }
 
+// LoggedIn is the exported form of loggedIn for cross-package availability checks
+// (the assistant chat / title suggestion pick the first authenticated backend).
+func LoggedIn() bool { return loggedIn() }
+
 // loggedIn reports whether claude has valid credentials, via `claude auth
 // status` (JSON: {"loggedIn": bool, …}). This reads the same CLAUDE_CONFIG_DIR the
 // sessions use, so it reflects the interactive TUI's auth state.

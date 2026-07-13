@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { KeyboardEvent, ClipboardEvent } from "react";
+import type { CSSProperties, KeyboardEvent, ClipboardEvent } from "react";
 import { MarkdownView } from "../viewer/MarkdownView.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { useLayoutStore } from "../../layout/store.ts";
@@ -8,14 +8,14 @@ import { chatGet, chatStream, chatCreate, assistantGet, chatPasteImage } from ".
 import { errText, raw } from "../../core/api/client.ts";
 import { takeChatSeed } from "../../lib/chatSeed.ts";
 import { coarsePointer } from "../../lib/device.ts";
-import { useSettings } from "../../lib/settings.ts";
-import { startTts, ttsOptsFromSettings, assistantVoiceOpts, type TtsController } from "./tts.ts";
-import { TtsReadButton } from "./TtsReadButton.tsx";
+import { useSettings, surfaceBg, surfaceAccent, effectiveTheme } from "../../lib/settings.ts";
+import { startTts, ttsOptsFromSettings, assistantVoiceOpts, type TtsController, type TtsOptions } from "./tts.ts";
+import { readTurn, collectBlocks, blockIndexAt, type TurnReadHandle } from "../mirror/turnTts.ts";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { splitPastedImages, buildImagePrompt } from "../../lib/pastedImages.ts";
 import { agentOf } from "../../agents/registry.ts";
 import { kindClass } from "../../lib/sessionkind.ts";
-import type { Conversation, ChatMessage } from "../../types/chat.ts";
+import type { Conversation, ChatMessage, ChatStep } from "../../types/chat.ts";
 import type { Assistant } from "../../types/assistant.ts";
 
 // ChatView renders one assistant-chat conversation (docs/19) — a headless-CLI LLM
@@ -47,7 +47,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
   const clearLive = useChatStore((s) => s.clearLive);
   const publishSnapshot = useChatStore((s) => s.publishSnapshot);
   const storeBusy = useChatStore((s) => (conversationId ? !!s.busy[conversationId] : false));
-  const liveText = useChatStore((s) => (conversationId ? s.live[conversationId] : undefined));
+  const liveTurn = useChatStore((s) => (conversationId ? s.live[conversationId] : undefined));
   const snapshot = useChatStore((s) => (conversationId ? s.snapshots[conversationId] : undefined));
   const settings = useSettings();
   const toast = useToast();
@@ -61,7 +61,9 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
   const [attachments, setAttachments] = useState<{ path: string; name: string; url: string }[]>([]);
   const [pasting, setPasting] = useState(false); // an image upload is in flight
   const [sending, setSending] = useState(false);
-  const [streamText, setStreamText] = useState(""); // live-accumulating assistant reply
+  const [streamText, setStreamText] = useState(""); // live-accumulating (tentative) answer
+  const [streamSteps, setStreamSteps] = useState<ChatStep[]>([]); // working steps committed this turn (分離)
+  const [karaoke, setKaraoke] = useState<string | null>(null); // 読み上げ中の文（ライブ配信カラオケ・docs/19）
   const [error, setError] = useState("");
   const [loadError, setLoadError] = useState("");
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -146,11 +148,24 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
     applyConv(snapshot);
   }, [snapshot, conversationId]);
 
-  // Keep the transcript pinned to the newest turn (and to the thinking indicator).
+  // Keep the transcript pinned to the newest turn (and to the thinking indicator). While
+  // live karaoke is following the spoken sentence, defer to its scrollIntoView instead —
+  // otherwise bottom-pin and the karaoke follow fight over the scroll position.
   useEffect(() => {
+    if (karaoke) return;
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [conv?.messages.length, sending, streamText, liveText]);
+  }, [conv?.messages.length, sending, streamText, streamSteps, liveTurn, karaoke]);
+
+  // Auto-grow the composer to fit its content (up to the CSS max-height, then it scrolls),
+  // same as MirrorView's composer. Reset to auto first so it also shrinks when text is
+  // deleted; runs on every input change (including a seed prefill / cleared-on-send).
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = el.scrollHeight + "px";
+  }, [input]);
 
   // Focus the composer when this pane becomes the active chat (opening a conversation or
   // an assistant draft) — but NOT on touch devices, where auto-focus would pop the
@@ -159,9 +174,13 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
     if (active && !coarsePointer() && (conversationId || draftAssistantId)) inputRef.current?.focus();
   }, [active, conversationId, draftAssistantId]);
 
-  // Image attach rides claude's Read-tool flow (saved path referenced in the prompt),
-  // so it's offered only for claude-agent chats (codex has no image-read path here).
-  const canAttach = (conv?.agent || draftAsst?.agent) === "claude";
+  // Image attach = upload + saved path referenced in the prompt. Offered where the
+  // headless backend can actually open the path — claude (`-p`, Read tool) and codex
+  // (`codex exec`, view_image; live-verified). opencode is excluded on purpose:
+  // `opencode run` declines image input on non-vision models (big-pickle, live-verified),
+  // and the chat can't know the model is vision-capable.
+  const chatAgent = conv?.agent || draftAsst?.agent || "";
+  const canAttach = chatAgent === "claude" || chatAgent === "codex";
 
   // Ensure a real conversation exists (approach A): a draft is created + promoted before
   // the first upload or send, so image attachments have a conversation id to post to.
@@ -266,9 +285,10 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
       }
     }
 
-    // Append the machine-facing image instruction + paths for claude's Read tool. The
-    // bubble strips it back out (splitPastedImages) and shows thumbnails instead.
-    const prompt = buildImagePrompt(text, paths);
+    // Append the machine-facing image instruction + paths (kind-appropriate wording:
+    // Read tool for claude, tool-neutral for codex). The bubble strips it back out
+    // (splitPastedImages) and shows thumbnails instead.
+    const prompt = buildImagePrompt(text, paths, chatAgent);
     // Optimistically show the user's turn (full prompt so pasted-image thumbnails render
     // immediately); the server echoes the full conversation on done.
     const userMsg: ChatMessage = { role: "user", content: prompt, ts: Date.now() };
@@ -280,25 +300,47 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
     if (coarsePointer()) inputRef.current?.blur();
     const ac = new AbortController();
     abortRef.current = ac;
-    // 音声読み上げ（docs/24）: 有効時のみコントローラを起こし、delta を句点区切りで逐次合成。
-    // 直前のターンが残っていれば止めてから。
+    // 音声読み上げ（docs/24 + 分離）: 有効時のみコントローラを起こし、delta を句点区切りで
+    // 逐次合成。作業過程（ツール前ナレーション）は「読み始めても step 確定でスキップ」する
+    // ため、step ごとに作り直せるよう makeTts で生成する。直前のターンが残っていれば止めてから。
+    const makeTts = () =>
+      settings.ttsEnabled
+        ? startTts(
+            {
+              ...ttsOptsFromSettings(settings),
+              // アシスタントの声: 明示指定 > プール割り当て（セッションごとに声 ON 時）> 設定の話者
+              ...assistantVoiceOpts(target.assistant_id || draftAssistantId || undefined, assistVoice),
+            },
+            "チャット",
+            undefined,
+            "",
+            // ライブ配信カラオケ: 読み上げ中の文を通知し、ストリーミングバブルの該当ブロックを
+            // ハイライトする（StreamingMarkdown が highlight から DOM ブロックを探して光らせる）。
+            (t) => setKaraoke(t),
+          )
+        : null;
     ttsRef.current?.stop();
-    ttsRef.current = settings.ttsEnabled
-      ? startTts(
-          {
-            ...ttsOptsFromSettings(settings),
-            // アシスタントの声: 明示指定 > プール割り当て（セッションごとに声 ON 時）> 設定の話者
-            ...assistantVoiceOpts(target.assistant_id || draftAssistantId || undefined, assistVoice),
-          },
-          "チャット",
-        )
-      : null;
+    ttsRef.current = makeTts();
     markChatBusy(target.id, true); // publish 進行中 to the rail
-    // Mirror the live reply + final conversation into the store so a pane re-opened on this
-    // conversation mid-stream re-attaches and picks up the answer even if THIS pane (and
-    // component) is gone by the time the turn finishes.
+    // Mirror the live reply + working steps + final conversation into the store so a pane
+    // re-opened on this conversation mid-stream re-attaches and picks up the answer even if
+    // THIS pane (and component) is gone by the time the turn finishes.
     const convId = target.id;
-    let acc = "";
+    let acc = ""; // current (tentative) answer text
+    const steps: ChatStep[] = []; // working steps committed so far this turn
+    // Tear the streaming turn down in one batched render: applying the final conversation
+    // (which now ends with the assistant reply) and removing the still-streaming bubble must
+    // happen together. If the teardown runs only AFTER `await chatStream` resolves, a frame
+    // slips in where BOTH show — the completed reply plus the slightly-behind (throttled)
+    // streaming copy — which reads as the answer being erased and rewritten (打ち消し→再描画).
+    const teardown = () => {
+      clearLive(convId);
+      markChatBusy(convId, false);
+      setStreamText("");
+      setStreamSteps([]);
+      setKaraoke(null);
+      setSending(false);
+    };
     await chatStream(
       convId,
       prompt,
@@ -306,8 +348,22 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
         onDelta: (t) => {
           acc += t;
           setStreamText(acc);
-          setLive(convId, acc);
+          setLive(convId, { text: acc, steps }); // steps only change in onStep
           ttsRef.current?.push(t);
+        },
+        onStep: (step) => {
+          // A tool-using message finished: its narration becomes a working step and the
+          // tentative answer resets, so the next message streams as a fresh answer.
+          steps.push(step);
+          acc = "";
+          setStreamText("");
+          setStreamSteps([...steps]);
+          setKaraoke(null); // 過程の読み上げをスキップ → ハイライトも一旦解除
+          setLive(convId, { text: "", steps: [...steps] });
+          // 音声: 途中まで読んでいた作業過程の再生をスキップし、最終回答用に読み直す
+          // （stop→作り直しの合成待ちが「一拍」になり、過程を読み切らず本回答へ移る）。
+          ttsRef.current?.stop();
+          ttsRef.current = makeTts();
         },
         onError: (m) => setError(m),
         onDone: (updated) => {
@@ -315,16 +371,16 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
             applyConv(updated);
             publishSnapshot(updated); // reaches any live pane, even after this one unmounts
           }
+          teardown(); // same synchronous batch as applyConv → no duplicate-bubble frame
           ttsRef.current?.flush();
         },
       },
       ac.signal,
     );
-    clearLive(convId);
+    // Abort/error paths emit no done event, so clear the streaming state here too. teardown is
+    // idempotent — after a normal completion this re-run is a harmless no-op.
     abortRef.current = null;
-    markChatBusy(convId, false);
-    setStreamText("");
-    setSending(false);
+    teardown();
     bumpChatList(); // a new/updated thread should surface in the rail list
   };
 
@@ -358,15 +414,31 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
   // A turn may be in flight because THIS pane is sending, or because a background turn on
   // this conversation (started before the pane was closed + re-opened) is still running.
   const showStreaming = sending || storeBusy;
-  const streamBody = sending ? streamText : (liveText ?? "");
+  const streamBody = sending ? streamText : (liveTurn?.text ?? "");
+  const liveSteps = sending ? streamSteps : (liveTurn?.steps ?? []);
   const empty = (!conv || conv.messages.length === 0) && !loadError && !showStreaming;
   // Status chip like the Sessions list / MirrorView header: 進行中 while streaming, else 待機中.
   const stateChip = showStreaming
     ? { cls: "working", icon: "loading", spin: true, text: "進行中" }
     : { cls: "on", icon: "check", text: "待機中" };
 
+  // assistantTheme scopes the base tokens (tokens.css) via data-theme; assistantColor gives
+  // the assistant chat its own surface bg/accent (--chat-bg/--chat-accent, shared contract
+  // with the mirror). Both derived for the chat's own effective theme. "inherit"/"default"
+  // leave them unset so the chat follows the app theme.
+  const asstEff = effectiveTheme(settings.assistantTheme, settings.theme);
+  const asstBg = surfaceBg(settings.assistantColor, asstEff);
+  const asstAccent = surfaceAccent(settings.assistantColor);
+
   return (
-    <div className="chatview">
+    <div
+      className="chatview"
+      data-theme={settings.assistantTheme !== "inherit" ? settings.assistantTheme : undefined}
+      style={{
+        ...(asstBg ? { "--chat-bg": asstBg } : {}),
+        ...(asstAccent ? { "--chat-accent": asstAccent } : {}),
+      } as CSSProperties}
+    >
       <header className="view-head fileinfo">
         <span className="fi-name">
           <Icon name={draftAsst?.icon || "comment-discussion"} /> {title}
@@ -398,7 +470,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
             </div>
             <div className="chat-greeting-body">
               {draftAsst.description ? (
-                <MarkdownView source={draftAsst.description} breaks />
+                <ChatMarkdown source={draftAsst.description} breaks />
               ) : (
                 "メッセージを送って会話を始めましょう。"
               )}
@@ -411,20 +483,32 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
           </div>
         )}
         {conv?.messages.map((m, i) => {
+          // Assistant replies render through AssistantTurn, which owns the bubble ref so
+          // its footer can karaoke-read the rendered Markdown (docs/24).
+          if (m.role === "assistant") {
+            return (
+              <div key={i} className="chat-msg role-assistant">
+                <AssistantTurn
+                  text={m.content}
+                  steps={m.steps}
+                  ts={m.ts}
+                  agentName={agent?.assistantName || "アシスタント"}
+                  voice={assistantVoiceOpts(assistId, assistVoice)}
+                />
+              </div>
+            );
+          }
           // Split off any pasted-image references so a user bubble shows the user's
           // words + clickable thumbnails, not the machine-facing paths — and so the
           // copy button copies the words, not the image instruction.
-          const { text, images } =
-            m.role === "user" ? splitPastedImages(m.content) : { text: m.content, images: [] as string[] };
+          const { text, images } = splitPastedImages(m.content);
           return (
-            <div key={i} className={"chat-msg role-" + m.role}>
-              <div className="chat-role">
-                {m.role === "user" ? "あなた" : agent?.assistantName || "アシスタント"}
-              </div>
+            <div key={i} className="chat-msg role-user">
+              <div className="chat-role">あなた</div>
               <div className="chat-body">
                 {/* Both roles render as Markdown; `breaks` keeps plain newlines as
                     line breaks (mirrors MirrorView's user turns). */}
-                {text && <MarkdownView source={text} breaks />}
+                {text && <ChatMarkdown source={text} breaks />}
                 {images.length > 0 && conv && (
                   <div className="chat-imgs">
                     {images.map((nm) => (
@@ -436,7 +520,6 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
               {/* Footer under the bubble — time + copy, mirroring MirrorView's turn foot. */}
               <div className="chat-msg-foot">
                 {m.ts > 0 && <span className="cm-time">{formatMsgTS(m.ts)}</span>}
-                {m.role === "assistant" && <TtsReadButton text={text} voice={assistantVoiceOpts(assistId, assistVoice)} />}
                 <ChatCopyButton text={text} />
               </div>
             </div>
@@ -445,15 +528,26 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
         {showStreaming && (
           <div className="chat-msg role-assistant">
             <div className="chat-role">{agent?.assistantName || "アシスタント"}</div>
-            <div className="chat-body">
-              {streamBody ? (
-                <StreamingMarkdown text={streamBody} />
-              ) : (
+            {/* Working steps stream in above the answer, open so progress is visible. */}
+            {liveSteps.length > 0 && <ChatSteps steps={liveSteps} defaultOpen live />}
+            {streamBody ? (
+              <div className="chat-body">
+                <StreamingMarkdown text={streamBody} highlight={karaoke} />
+              </div>
+            ) : liveSteps.length > 0 ? (
+              // A step just committed; the next answer hasn't started streaming yet.
+              <div className="chat-body">
+                <span className="chat-thinking">
+                  <Icon name="loading" spin /> 作業中…
+                </span>
+              </div>
+            ) : (
+              <div className="chat-body">
                 <span className="chat-thinking">
                   <Icon name="loading" spin /> 考え中…
                 </span>
-              )}
-            </div>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -528,12 +622,15 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
 // every SSE chunk (killing text selection, wasting CPU). Trailing updates are always
 // flushed, so the shown text never lags more than one window behind the stream.
 const STREAM_RENDER_MS = 120;
-function StreamingMarkdown({ text }: { text: string }) {
+function StreamingMarkdown({ text, highlight }: { text: string; highlight?: string | null }) {
   const [shown, setShown] = useState(text);
   const lastRef = useRef(0); // when we last flushed
   const timerRef = useRef<number | null>(null);
   const textRef = useRef(text); // latest text, for the trailing flush
   textRef.current = text;
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+  const litRef = useRef<HTMLElement | null>(null);
+  const litNeedleRef = useRef(""); // last highlighted sentence, so we scroll only when it changes
   useEffect(() => {
     const due = lastRef.current + STREAM_RENDER_MS;
     const now = Date.now();
@@ -554,7 +651,233 @@ function StreamingMarkdown({ text }: { text: string }) {
     },
     [],
   );
-  return <MarkdownView source={shown} breaks streaming />;
+  // Live karaoke (docs/19): each ~120ms re-render rebuilds the bubble DOM and wipes any
+  // highlight, so we (re)apply .tts-active after every render, driven by `highlight` (the
+  // sentence the TTS just started). We locate the sentence's block by matching its
+  // (whitespace-stripped) text against the rendered blocks — the same block set the
+  // completed-turn karaoke walks (collectBlocks). Not found → keep the current highlight
+  // (avoids flicker at sentence boundaries); no highlight → clear.
+  useEffect(() => {
+    const wrap = wrapRef.current;
+    if (!wrap) return;
+    if (!highlight) {
+      litRef.current?.classList.remove("tts-active");
+      litRef.current = null;
+      litNeedleRef.current = "";
+      return;
+    }
+    const norm = (s: string) => s.replace(/\s+/g, "");
+    const needle = norm(highlight).slice(0, 16);
+    if (!needle) return;
+    const target = collectBlocks(wrap).find((b) => norm(b.textContent || "").includes(needle));
+    if (!target) return; // not found → keep the current highlight (no flicker at boundaries)
+    // Re-apply the class every render (the DOM was rebuilt), but only scroll when the spoken
+    // sentence actually changed — otherwise the ~120ms re-renders would spam smooth-scroll.
+    if (litRef.current && litRef.current !== target) litRef.current.classList.remove("tts-active");
+    target.classList.add("tts-active");
+    litRef.current = target;
+    if (litNeedleRef.current !== needle) {
+      litNeedleRef.current = needle;
+      target.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    }
+  }, [shown, highlight]);
+  useEffect(() => () => litRef.current?.classList.remove("tts-active"), []);
+  return (
+    <div ref={wrapRef}>
+      <ChatMarkdown source={shown} breaks streaming />
+    </div>
+  );
+}
+
+function ChatMarkdown({ source, breaks, streaming }: { source: string; breaks?: boolean; streaming?: boolean }) {
+  const openTargetInNew = useLayoutStore((s) => s.openTargetInNew);
+  return (
+    <MarkdownView
+      source={source}
+      breaks={breaks}
+      streaming={streaming}
+      onOpenFile={(path, line, column) =>
+        openTargetInNew({ content: { kind: "file", filePath: path, targetLine: line, targetColumn: column } }, true)
+      }
+    />
+  );
+}
+
+// ChatSteps renders an assistant turn's 作業過程 (docs/19 分離): the narration the model
+// emitted before each tool call, kept separate from — but alongside — the final answer.
+// Collapsible; open while streaming so progress is visible, collapsed once the turn is done.
+function ChatSteps({ steps, defaultOpen, live }: { steps: ChatStep[]; defaultOpen?: boolean; live?: boolean }) {
+  const [open, setOpen] = useState(!!defaultOpen);
+  if (!steps.length) return null;
+  const tools = [...new Set(steps.flatMap((s) => s.tools ?? []))];
+  return (
+    <div className={"chat-steps" + (live ? " live" : "")}>
+      <button type="button" className="chat-steps-head" onClick={() => setOpen((o) => !o)}>
+        <Icon name={open ? "chevron-down" : "chevron-right"} />
+        {live && <Icon name="loading" spin />}
+        <span className="chat-steps-label">作業過程</span>
+        <span className="chat-steps-count">{steps.length}</span>
+        {tools.length > 0 && <span className="chat-steps-tools">{tools.join(" · ")}</span>}
+      </button>
+      {open && (
+        <div className="chat-steps-body">
+          {steps.map((s, i) => (
+            <div key={i} className="chat-step">
+              {s.text && <ChatMarkdown source={s.text} breaks />}
+              {s.tools && s.tools.length > 0 && (
+                <div className="chat-step-tools">
+                  {s.tools.map((t, j) => (
+                    <span key={j} className="chat-step-tool">
+                      <Icon name="tools" /> {t}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// AssistantTurn renders one completed assistant reply and its footer. It owns a ref to the
+// bubble body so the footer's read control can karaoke-read the RENDERED Markdown (docs/24):
+// readTurn (features/mirror/turnTts) walks the .markdown DOM into blocks, speaks it sentence
+// by sentence, and highlights the block whose sentence is playing (.tts-active) with scroll
+// follow — the same engine the mirror/ReaderView use. Live streaming stays plain (the bubble
+// re-renders every ~120ms, which would wipe any DOM highlight); karaoke is offered only once
+// the turn is complete, i.e. here.
+function AssistantTurn({
+  text,
+  steps,
+  ts,
+  agentName,
+  voice,
+}: {
+  text: string;
+  steps?: ChatStep[];
+  ts: number;
+  agentName: string;
+  voice?: Partial<TtsOptions>;
+}) {
+  const ttsEnabled = useSettings().ttsEnabled;
+  const bodyRef = useRef<HTMLDivElement | null>(null);
+  const handleRef = useRef<TurnReadHandle | null>(null);
+  const [state, setState] = useState<"idle" | "playing" | "paused">("idle");
+  // Floating "ここから読み上げ" pill anchored to a mouse selection inside the bubble.
+  const [selPill, setSelPill] = useState<{ x: number; y: number; block: number } | null>(null);
+
+  // Stop this bubble's reading if the pane/component goes away mid-read.
+  useEffect(() => () => handleRef.current?.stop(), []);
+
+  const start = (fromBlock: number) => {
+    const body = bodyRef.current;
+    if (!body) return;
+    handleRef.current?.stop();
+    // onEnd fires once on natural end AND on preemption (TopBar stop / another playback),
+    // so the footer always falls back to the idle "読み上げ" state.
+    const h = readTurn(body, "チャット", fromBlock, () => {
+      handleRef.current = null;
+      setState("idle");
+    }, voice);
+    if (h) {
+      handleRef.current = h;
+      setState("playing");
+    }
+  };
+  const pause = () => {
+    handleRef.current?.pause();
+    setState("paused");
+  };
+  const resume = () => {
+    handleRef.current?.resume();
+    setState("playing");
+  };
+  const stop = () => {
+    handleRef.current?.stop();
+    handleRef.current = null;
+    setState("idle");
+  };
+
+  // After a mouse selection inside the bubble, surface a "ここから読み上げ" pill at the
+  // selection head — reading (re)starts from the block the selection begins in. Desktop
+  // mouse only (touch selection emits no mouseup); the footer button still reads from top.
+  const onMouseUp = () => {
+    const body = bodyRef.current;
+    const sel = window.getSelection();
+    if (!ttsEnabled || !body || !sel || sel.isCollapsed || sel.rangeCount === 0) {
+      setSelPill(null);
+      return;
+    }
+    const range = sel.getRangeAt(0);
+    if (!body.contains(range.startContainer)) {
+      setSelPill(null);
+      return;
+    }
+    const idx = blockIndexAt(collectBlocks(body), range.startContainer);
+    if (idx < 0) {
+      setSelPill(null);
+      return;
+    }
+    const rect = range.getBoundingClientRect();
+    setSelPill({ x: Math.round(rect.left), y: Math.round(rect.top - 34), block: idx });
+  };
+  const startFromSelection = () => {
+    if (!selPill) return;
+    start(selPill.block);
+    setSelPill(null);
+    window.getSelection()?.removeAllRanges();
+  };
+
+  return (
+    <>
+      <div className="chat-role">{agentName}</div>
+      {/* 作業過程（ツール応答）は最終回答の上に折りたたんで表示（既定は畳む・保持）。 */}
+      {steps && steps.length > 0 && <ChatSteps steps={steps} />}
+      <div className="chat-body" ref={bodyRef} onMouseUp={onMouseUp}>
+        {text && <ChatMarkdown source={text} breaks />}
+      </div>
+      {selPill && (
+        <div className="sel-pill-group" style={{ left: selPill.x, top: Math.max(4, selPill.y) }}>
+          <button
+            type="button"
+            className="sel-send-pill"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={startFromSelection}
+          >
+            <Icon name="unmute" /> ここから読み上げ
+          </button>
+        </div>
+      )}
+      <div className="chat-msg-foot">
+        {ts > 0 && <span className="cm-time">{formatMsgTS(ts)}</span>}
+        {ttsEnabled && text.trim() && (
+          state === "idle" ? (
+            <button type="button" className="ghost cm-copy" title="カラオケ読み上げ" onClick={() => start(0)}>
+              <Icon name="unmute" /> 読み上げ
+            </button>
+          ) : (
+            <>
+              {state === "playing" ? (
+                <button type="button" className="ghost cm-copy" title="一時停止" onClick={pause}>
+                  <Icon name="debug-pause" /> 一時停止
+                </button>
+              ) : (
+                <button type="button" className="ghost cm-copy" title="再開" onClick={resume}>
+                  <Icon name="play" /> 再開
+                </button>
+              )}
+              <button type="button" className="ghost cm-copy" title="停止" onClick={stop}>
+                <Icon name="debug-stop" /> 停止
+              </button>
+            </>
+          )
+        )}
+        <ChatCopyButton text={text} />
+      </div>
+    </>
+  );
 }
 
 // formatMsgTS renders a unix-millis timestamp as local "MM/DD HH:MM" — same shape as

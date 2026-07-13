@@ -369,7 +369,7 @@ body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;
  border:1px solid rgba(220,68,68,.4);color:#ffb4b4;font-size:14px;text-align:left}
 </style></head><body>
 <main class="card">
- <img class="hero" src="/brand/agent-fleet-banner.png" alt="Agent Fleet — Deploy. Connect. Scale."
+ <img class="hero" src="/brand/agent-fleet-banner.webp" alt="Agent Fleet — Deploy. Connect. Scale."
   onerror="this.style.display='none';document.getElementById('wm').style.display='block';document.getElementById('tg').style.display='block'">
  <div class="body">
   <div id="wm" class="wordmark">Agent <b>Fleet</b></div>

@@ -10,7 +10,7 @@ import { create } from "zustand";
 import type { Layout, OpenTarget } from "./types.ts";
 import * as ops from "./ops.ts";
 import { loadStoredLayout, LKEY_NEW } from "./migrate.ts";
-import { getTenant } from "../core/api/client.ts";
+import { getTenant, getUser } from "../core/api/client.ts";
 import { mobileMatches } from "../lib/device.ts";
 
 interface LayoutStore {
@@ -43,7 +43,7 @@ interface LayoutStore {
 
 function persist(layout: Layout): void {
   try {
-    localStorage.setItem(LKEY_NEW(getTenant()), JSON.stringify(layout));
+    localStorage.setItem(LKEY_NEW(getUser(), getTenant()), JSON.stringify(layout));
   } catch {}
 }
 
@@ -67,7 +67,7 @@ export const useLayoutStore = create<LayoutStore>((set, get) => {
     commit,
 
     load(slug: string) {
-      const l = loadStoredLayout(slug) || ops.freshLayout();
+      const l = loadStoredLayout(getUser(), slug) || ops.freshLayout();
       set({ layout: l, hydrated: true });
       persist(l);
       try {

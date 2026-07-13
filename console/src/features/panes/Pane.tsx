@@ -253,7 +253,14 @@ export function Pane({
           wrap={wrapOn}
         />
       )}
-      {pane.content.kind === "file" && <FileView filePath={pane.content.filePath} wrap={pane.wrap} />}
+      {pane.content.kind === "file" && (
+        <FileView
+          filePath={pane.content.filePath}
+          targetLine={pane.content.targetLine}
+          targetColumn={pane.content.targetColumn}
+          wrap={pane.wrap}
+        />
+      )}
       {pane.content.kind === "read" && <ReaderView filePath={pane.content.filePath} />}
       {pane.content.kind === "doc" && <DocView title={pane.content.docTitle} content={pane.content.docContent} />}
       {pane.content.kind === "diff" && (

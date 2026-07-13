@@ -58,7 +58,7 @@ export function sameTarget(pane: Pane, target: OpenTarget): boolean {
     case "terminal":
       return target.session != null && pane.session === target.session;
     case "file":
-      return c.kind === "file" && c.filePath === t.filePath;
+      return c.kind === "file" && c.filePath === t.filePath && c.targetLine === t.targetLine && c.targetColumn === t.targetColumn;
     case "read":
       return c.kind === "read" && c.filePath === t.filePath;
     case "scm":
@@ -97,10 +97,11 @@ const mapPanes = (l: Layout, fn: (p: Pane) => Pane): Column[] =>
   l.cols.map((c) => ({ ...c, panes: c.panes.map(fn) }));
 
 /** openActive opens the target in the active pane. When split and ANOTHER pane
- * already shows exactly that target, patching would duplicate it — instead the
- * two panes swap payloads (the target slides to the active side), keeping ids +
- * which side is active. For a terminal target the incoming chat intent wins
- * (clicking a session open as chat elsewhere must land on its terminal). */
+ * already shows exactly that target, patching would duplicate it — instead we
+ * just focus that pane where it sits (no swap into the active side), so a click
+ * on an already-open session activates its pane rather than shuffling panes
+ * around. For a terminal target the incoming chat intent still wins (clicking a
+ * session open as chat elsewhere flips that pane to its terminal), then focuses. */
 export function openActive(l: Layout, target: OpenTarget): Layout {
   const active = activePane(l);
   if (!active) return l;
@@ -110,21 +111,15 @@ export function openActive(l: Layout, target: OpenTarget): Layout {
       target.content.kind === "terminal" && other.content.kind === "terminal"
         ? target.content.chat
         : undefined;
-    const cols = mapPanes(l, (p) =>
-      p.id === active.id
-        ? {
-            ...other,
-            id: active.id,
-            content:
-              chat !== undefined && other.content.kind === "terminal"
-                ? { ...other.content, chat }
-                : other.content,
-          }
-        : p.id === other.id
-          ? { ...active, id: other.id }
-          : p,
-    );
-    return { ...l, cols };
+    const cols =
+      chat !== undefined
+        ? mapPanes(l, (p) =>
+            p.id === other.id && p.content.kind === "terminal"
+              ? { ...p, content: { ...p.content, chat } }
+              : p,
+          )
+        : l.cols;
+    return { ...l, cols, activeId: other.id };
   }
   const cols = mapPanes(l, (p) => (p.id === l.activeId ? applyTarget(p, target) : p));
   return { ...l, cols };
@@ -140,7 +135,7 @@ export interface OpenInNewOpts {
 /** openInNew opens the target in a fresh pane (made active), in a single new
  * layout. Growth order: focus an existing pane already showing the target →
  * fill a blank pane → add a right column (≤4) → split a single-pane column →
- * overwrite the last pane once all 8 slots are used. */
+ * reuse a non-active pane once all 8 slots are used (preserving the source pane). */
 export function openInNew(l: Layout, target: OpenTarget, opts: OpenInNewOpts = {}): Layout {
   const alloc = idAlloc(l);
   if (!opts.force) {
@@ -158,6 +153,11 @@ export function openInNew(l: Layout, target: OpenTarget, opts: OpenInNewOpts = {
     }
   }
   const fresh = (id: string) => applyTarget(blankPane(id), target);
+  const replacePane = (pane: Pane): Layout => ({
+    ...l,
+    cols: mapPanes(l, (p) => (p.id === pane.id ? fresh(pane.id) : p)),
+    activeId: pane.id,
+  });
   const splitColOf = (col: Column): Layout => {
     const id = alloc.nextPane();
     const cols = l.cols.map((c) =>
@@ -169,6 +169,12 @@ export function openInNew(l: Layout, target: OpenTarget, opts: OpenInNewOpts = {
   if (opts.mobile) {
     const col = l.cols.find((c) => c.panes.some((p) => p.id === l.activeId)) || l.cols[0];
     if (col && col.panes.length < 2) return splitColOf(col);
+    if (opts.force) {
+      // An explicit separate-pane open must not replace the pane containing the clicked
+      // link. At the phone's two-pane cap, reuse the other row instead.
+      const other = allPanes(l).find((p) => p.id !== l.activeId);
+      if (other) return replacePane(other);
+    }
     return openActive(l, target);
   }
 
@@ -184,14 +190,9 @@ export function openInNew(l: Layout, target: OpenTarget, opts: OpenInNewOpts = {
   if (targetCol) return splitColOf(targetCol);
 
   // All 8 slots full — overwrite the last pane (bottom of the rightmost column).
-  const lastCol = l.cols[l.cols.length - 1];
-  const last = lastCol.panes[lastCol.panes.length - 1];
-  const cols = l.cols.map((c) =>
-    c.id === lastCol.id
-      ? { ...c, panes: c.panes.map((p) => (p.id === last.id ? fresh(last.id) : p)) }
-      : c,
-  );
-  return { ...l, cols, activeId: last.id };
+  const panes = allPanes(l);
+  const replacement = [...panes].reverse().find((p) => p.id !== l.activeId) || panes[panes.length - 1];
+  return replacement ? replacePane(replacement) : l;
 }
 
 /** Replace one pane's content by id (not "active") — e.g. a chat draft pane
