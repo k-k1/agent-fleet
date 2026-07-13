@@ -7,6 +7,7 @@ import { announce, sessionVoiceOpts } from "../chat/tts.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 import { agentOf } from "../../agents/registry.ts";
 import { openSessionChat, openSessionChatSplit, openSessionTerminal, openSessionTerminalSplit } from "../sessions/open.ts";
+import { unseenSessionEventIDs } from "./read.ts";
 
 export type NotificationSourceState = "unknown" | "ready" | "offline" | "unsupported";
 export interface FleetNotification {
@@ -57,7 +58,6 @@ async function deliver(n: FleetNotification): Promise<void> {
   if (n.seen) return;
   const active = activePane(useLayoutStore.getState().layout)?.session;
   if (n.target.type === "session" && active === n.target.id) {
-    await useNotificationStore.getState().markSeen(undefined, [n.id]);
     return;
   }
   const text = wording(n);
@@ -125,15 +125,52 @@ export const useNotificationStore = create<NotificationState>((set, get) => ({
     } catch {}
   },
   async markSeen(throughSeq, eventIds) {
-    const result = await apiJSON("api/notifications/seen", "POST", { throughSeq, eventIds });
+    let result;
+    try {
+      result = await apiJSON("api/notifications/seen", "POST", { throughSeq, eventIds });
+    } catch {
+      return;
+    }
     if (result.error) return;
     const ids = new Set(eventIds || []);
-    set((s) => ({
-      items: s.items.map((n) => ((throughSeq && n.seq <= throughSeq) || ids.has(n.id) ? { ...n, seen: true } : n)),
-      unseenCount: s.items.filter((n) => !((throughSeq && n.seq <= throughSeq) || ids.has(n.id)) && !n.seen).length,
-    }));
+    set((s) => {
+      const matches = (n: FleetNotification) => !!(throughSeq && n.seq <= throughSeq) || ids.has(n.id);
+      const markedLoaded = s.items.filter((n) => !n.seen && matches(n)).length;
+      return {
+        items: s.items.map((n) => (matches(n) ? { ...n, seen: true } : n)),
+        // A throughSeq at the newest loaded row clears every older server row too.
+        // Event-id marks only decrement the rows actually acknowledged.
+        unseenCount: throughSeq && throughSeq >= s.maxSeq ? 0 : Math.max(0, s.unseenCount - markedLoaded),
+      };
+    });
   },
 }));
+
+// Opening a session is an explicit acknowledgement of every pending event for that
+// session. Watch both sides: layout changes catch navigation/history, notification
+// changes catch an event that arrives while its session is already active.
+export function wireNotificationReadOnActiveSession(): () => void {
+  const pending = new Set<string>();
+  const sync = () => {
+    const sessionName = activePane(useLayoutStore.getState().layout)?.session || "";
+    const ids = unseenSessionEventIDs(useNotificationStore.getState().items, sessionName)
+      .filter((id) => !pending.has(id));
+    if (!ids.length) return;
+    ids.forEach((id) => pending.add(id));
+    void useNotificationStore.getState().markSeen(undefined, ids).finally(() => {
+      ids.forEach((id) => pending.delete(id));
+    });
+  };
+  const unLayout = useLayoutStore.subscribe(sync);
+  const unNotifications = useNotificationStore.subscribe((state, previous) => {
+    if (state.items !== previous.items) sync();
+  });
+  sync();
+  return () => {
+    unLayout();
+    unNotifications();
+  };
+}
 
 export function startNotificationPolling(): () => void {
   let stopped = false;
