@@ -55,6 +55,8 @@ function lineNoOf(node: Node, root: Element): number | null {
 
 interface FileViewProps {
   filePath: string;
+  targetLine?: number;
+  targetColumn?: number;
   wrap?: boolean | null;
 }
 
@@ -67,8 +69,9 @@ interface FileData {
   lfs?: boolean;
 }
 
-export function FileView({ filePath, wrap }: FileViewProps) {
+export function FileView({ filePath, targetLine, targetColumn, wrap }: FileViewProps) {
   const openTarget = useLayoutStore((s) => s.openTarget);
+  const openTargetInNew = useLayoutStore((s) => s.openTargetInNew);
   const revealInFiles = useFilesStore((s) => s.revealInFiles);
   const settings = useSettings();
   // wrap is the per-pane override; fall back to the global setting.
@@ -83,7 +86,11 @@ export function FileView({ filePath, wrap }: FileViewProps) {
   const [sel, setSel] = useState<{ quote: string; startLine: number; endLine: number; x: number; y: number } | null>(null);
   const [sendOpen, setSendOpen] = useState(false);
 
-  const showFile = (path: string) => openTarget({ content: { kind: "file", filePath: path } });
+  const showFile = (path: string, line?: number, column?: number) =>
+    openTargetInNew(
+      { content: { kind: "file", filePath: path, targetLine: line, targetColumn: column } },
+      true,
+    );
 
   const imgFmt = imageFormat(filePath);
   const isImage = !!imgFmt;
@@ -143,10 +150,11 @@ export function FileView({ filePath, wrap }: FileViewProps) {
   const isMarkdown = isText && !huge && langFor(filePath) === "markdown";
   const isMarp = isMarkdown && isMarpDoc(data!.content);
 
-  // A freshly opened Marp deck defaults to slides; other markdown to preview.
+  // A line citation always opens Markdown as source so the referenced source row exists.
+  // Otherwise a freshly opened Marp deck defaults to slides and other Markdown to preview.
   useEffect(() => {
-    if (isText) setMdMode(isMarp ? "slides" : "preview");
-  }, [data, isMarp, isText]);
+    if (isText) setMdMode(targetLine ? "source" : isMarp ? "slides" : "preview");
+  }, [data, isMarp, isText, targetLine]);
 
   const showSlides = isMarp && mdMode === "slides";
   const showPreview = isMarkdown && mdMode === "preview";
@@ -307,7 +315,16 @@ export function FileView({ filePath, wrap }: FileViewProps) {
           <MarkdownView source={data.content} basePath={filePath} onOpenFile={showFile} onOpenDir={revealInFiles} />
         </div>
       ) : (
-        <CodeView html={html} lines={lines} lineNumbers={settings.lineNumbers} wrap={wrapOn} minimap={settings.minimap} marks={marks} />
+        <CodeView
+          html={html}
+          lines={lines}
+          lineNumbers={settings.lineNumbers}
+          wrap={wrapOn}
+          minimap={settings.minimap}
+          marks={marks}
+          targetLine={targetLine}
+          targetColumn={targetColumn}
+        />
       )}
 
       {/* Portal to <body>: .fileview is a CSS container (container-type), which makes it

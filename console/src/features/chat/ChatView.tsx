@@ -403,7 +403,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
             </div>
             <div className="chat-greeting-body">
               {draftAsst.description ? (
-                <MarkdownView source={draftAsst.description} breaks />
+                <ChatMarkdown source={draftAsst.description} breaks />
               ) : (
                 "メッセージを送って会話を始めましょう。"
               )}
@@ -440,7 +440,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
               <div className="chat-body">
                 {/* Both roles render as Markdown; `breaks` keeps plain newlines as
                     line breaks (mirrors MirrorView's user turns). */}
-                {text && <MarkdownView source={text} breaks />}
+                {text && <ChatMarkdown source={text} breaks />}
                 {images.length > 0 && conv && (
                   <div className="chat-imgs">
                     {images.map((nm) => (
@@ -569,7 +569,21 @@ function StreamingMarkdown({ text }: { text: string }) {
     },
     [],
   );
-  return <MarkdownView source={shown} breaks streaming />;
+  return <ChatMarkdown source={shown} breaks streaming />;
+}
+
+function ChatMarkdown({ source, breaks, streaming }: { source: string; breaks?: boolean; streaming?: boolean }) {
+  const openTargetInNew = useLayoutStore((s) => s.openTargetInNew);
+  return (
+    <MarkdownView
+      source={source}
+      breaks={breaks}
+      streaming={streaming}
+      onOpenFile={(path, line, column) =>
+        openTargetInNew({ content: { kind: "file", filePath: path, targetLine: line, targetColumn: column } }, true)
+      }
+    />
+  );
 }
 
 // AssistantTurn renders one completed assistant reply and its footer. It owns a ref to the
@@ -663,7 +677,7 @@ function AssistantTurn({
     <>
       <div className="chat-role">{agentName}</div>
       <div className="chat-body" ref={bodyRef} onMouseUp={onMouseUp}>
-        {text && <MarkdownView source={text} breaks />}
+        {text && <ChatMarkdown source={text} breaks />}
       </div>
       {selPill && (
         <div className="sel-pill-group" style={{ left: selPill.x, top: Math.max(4, selPill.y) }}>

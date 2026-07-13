@@ -24,7 +24,7 @@
  * read-mostly Markdown mirror instead of the raw PTY). */
 export type PaneContent =
   | { kind: "terminal"; chat: boolean }
-  | { kind: "file"; filePath: string }
+  | { kind: "file"; filePath: string; targetLine?: number; targetColumn?: number }
   | { kind: "read"; filePath: string } // 朗読ビュー（docs/24）: 本文を順次読み上げ＋縦書き閲覧
   | { kind: "scm"; scmRepo: string }
   | { kind: "changes"; scmRepo: string }
