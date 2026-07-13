@@ -5,7 +5,7 @@
 // the core file ops. It reuses the shared primitives (api fs endpoints,
 // FileIcon/DirIcon, the .fstree/.fsrow classes); per-copy git changes live in the
 // SCM pane, not here. Mounted only while its section is open, so the fetch is lazy.
-import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent as RMouseEvent, DragEvent as RDragEvent, KeyboardEvent as RKeyboardEvent } from "react";
 import { api, uploadFiles, downloadURL, fsMkdir, fsNewFile, fsRename, fsDelete, fsSearch } from "../../core/api/client.ts";
 import FileIcon, { DirIcon } from "../../ui/FileIcon.tsx";
@@ -48,6 +48,7 @@ const parentOf = (p: string) => {
   return i < 0 ? "" : p.slice(0, i);
 };
 const baseName = (p: string) => p.split("/").pop() || p;
+const repoOf = (p: string) => (p.startsWith("repos/") ? p.slice(6).split("/")[0] : "");
 
 // A directory is a "passthrough" link when its sole entry is one subdirectory —
 // folded into one row (a/b/c) so deep single-child paths don't waste space.
@@ -69,9 +70,11 @@ interface ProjectFilesProps {
    * the loaded rows. Enabled for the repos tree; the home tree keeps the cheap
    * visible-row filter. */
   searchable?: boolean;
+  /** Add non-interactive working-copy headings to recursive repos results. */
+  groupByRepo?: boolean;
 }
 
-export function ProjectFiles({ root, markRepos, searchable }: ProjectFilesProps) {
+export function ProjectFiles({ root, markRepos, searchable, groupByRepo }: ProjectFilesProps) {
   const repos = useReposStore((s) => s.repos);
   const layout = useLayoutStore((s) => s.layout);
   const openTarget = useLayoutStore((s) => s.openTarget);
@@ -364,10 +367,10 @@ export function ProjectFiles({ root, markRepos, searchable }: ProjectFilesProps)
     [displayRows, selected, open, menu, expand, collapse, showFile, showFileSplit, focusInput, scrollRowIntoView],
   );
 
-  // Enter in the filter box (repos tree only — it's the primary) hands focus here:
+  // Enter in the filter box hands focus to the active searchable tree:
   // focus the tree and land the selection on the first visible row if it's astray.
   useEffect(() => {
-    if (!focusTreeN || !markRepos) return;
+    if (!focusTreeN || !searchable) return;
     treeRef.current?.focus();
     setSelected((cur) => {
       if (cur && displayRows.some((r) => r.path === cur)) return cur;
@@ -610,8 +613,13 @@ export function ProjectFiles({ root, markRepos, searchable }: ProjectFilesProps)
           const isActiveFile = r.type === "file" && activeFile === r.path;
           const isDir = r.type === "dir";
           return (
+            <Fragment key={r.path}>
+            {searchMode && groupByRepo && (i === 0 || repoOf(displayRows[i - 1].path) !== repoOf(r.path)) && (
+              <li className="files-search-group" role="presentation">
+                <Icon name="root-folder" /> {repoOf(r.path)}
+              </li>
+            )}
             <li
-              key={r.path}
               id={`${uid}-${i}`}
               data-path={r.path}
               role="treeitem"
@@ -658,6 +666,7 @@ export function ProjectFiles({ root, markRepos, searchable }: ProjectFilesProps)
                 </span>
               </span>
             </li>
+            </Fragment>
           );
         })}
         {searchMode && searchTrunc && displayRows.length > 0 && (
