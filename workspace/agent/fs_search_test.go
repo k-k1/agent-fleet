@@ -29,6 +29,9 @@ func TestHandleFSSearch(t *testing.T) {
 	// a denylisted path under home (searched only when root=="")
 	mustMkdir(t, filepath.Join(home, ".codex"))
 	mustWrite(t, filepath.Join(home, ".codex", "index.ts"), "secret")
+	mustMkdir(t, filepath.Join(home, ".cache"))
+	mustWrite(t, filepath.Join(home, ".cache", "index.ts"), "cache")
+	mustWrite(t, filepath.Join(home, "notes-index.txt"), "note")
 
 	// rg honours .gitignore only inside a git repo.
 	run(t, repo, "git", "init", "-q")
@@ -72,6 +75,11 @@ func TestHandleFSSearch(t *testing.T) {
 	// denylist: searching home root must never surface .codex/index.ts.
 	if got, _ := search("", "index"); has(got, ".codex/index.ts") {
 		t.Errorf("denylisted path surfaced: %v", got)
+	}
+	if got, _ := search("", "index"); has(got, ".cache/index.ts") || has(got, "repos/myrepo/src/index.ts") {
+		t.Errorf("home search surfaced excluded cache or repos: %v", got)
+	} else if !has(got, "notes-index.txt") {
+		t.Errorf("home search missed ordinary file: %v", got)
 	}
 
 	// empty query → empty results, no error.
