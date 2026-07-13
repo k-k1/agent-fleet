@@ -310,7 +310,10 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
     abortRef.current = ac;
     // 小声読みが OFF のときは従来どおり delta をライブ再生。ON のときは、途中テキストを
     // onStep で「作業過程」と確定してから小声で読み、onDone の最終回答を通常声で読む。
-    const baseVoice = assistantVoiceOpts(target.assistant_id || draftAssistantId || undefined, assistVoice);
+    const baseVoice = {
+      ...(assistantVoiceOpts(target.assistant_id || draftAssistantId || undefined, assistVoice) ?? {}),
+      paneId,
+    };
     const workMode = settings.ttsWorkRead;
     const makeTts = (work = false) =>
       settings.ttsEnabled
@@ -520,7 +523,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
                   steps={m.steps}
                   ts={m.ts}
                   agentName={agent?.assistantName || "アシスタント"}
-                  voice={assistantVoiceOpts(assistId, assistVoice)}
+                  voice={{ ...(assistantVoiceOpts(assistId, assistVoice) ?? {}), paneId }}
                 />
               </div>
             );

@@ -12,6 +12,7 @@
 import { rel } from "../../core/api/client.ts";
 import { getSettings, subscribe as subscribeSettings } from "../../lib/settings.ts";
 import { useTtsStore } from "../../core/store/tts.ts";
+import { useLayoutStore } from "../../layout/store.ts";
 import {
   plainify,
   plainifyStreaming,
@@ -25,7 +26,7 @@ import {
 import { effectiveDict } from "./ttsDict.ts";
 import { makeAudioLru } from "./ttsCache.ts";
 import { speakersCatalog, type Speaker, type SpeakerStyle } from "./ttsSpeakers.ts";
-import { ttsMasterGain, type TtsController, type TtsEndReason, type TtsStopReason } from "./ttsControl.ts";
+import { ttsMasterGain, ttsPanePan, type TtsController, type TtsEndReason, type TtsStopReason } from "./ttsControl.ts";
 export { stopTtsForReplacement } from "./ttsControl.ts";
 export type { TtsController, TtsEndReason, TtsStopReason } from "./ttsControl.ts";
 
@@ -38,6 +39,7 @@ export interface TtsOptions {
   lang?: string; // 言語ヒント（設定 outputLanguage を再利用）: "auto" | "ja" | "en"
   particlePause?: boolean; // 設定 ttsParticlePause。CP 側で読点ポーズを詰める（voicevox のみ）
   volume?: number; // 再生音量（0..1）。合成条件ではなく Web Audio の出力ゲイン
+  paneId?: string; // 発生元ペイン。設定ON時、現在の列位置からステレオのパンを決める
 }
 
 // settings から TtsOptions を組む共通処理（announce / speakText / startNarration / ChatView）。
@@ -420,16 +422,24 @@ function audioCtx(): AudioContext | null {
   }
 }
 
-function connectOutput(ctx: AudioContext, src: AudioBufferSourceNode, volume = 1): void {
+function connectOutput(ctx: AudioContext, src: AudioBufferSourceNode, volume = 1, paneId?: string): void {
   const destination: AudioNode = masterGain ?? ctx.destination;
-  if (volume >= 0.999) {
-    src.connect(destination);
-    return;
+  let output: AudioNode = src;
+  if (volume < 0.999) {
+    const gain = ctx.createGain();
+    gain.gain.value = Math.max(0, Math.min(1, volume));
+    output.connect(gain);
+    output = gain;
   }
-  const gain = ctx.createGain();
-  gain.gain.value = Math.max(0, Math.min(1, volume));
-  src.connect(gain);
-  gain.connect(destination);
+  const s = getSettings();
+  const pan = ttsPanePan(s.ttsStereoByPane, useLayoutStore.getState().layout, paneId);
+  if (Math.abs(pan) > 0.001 && typeof ctx.createStereoPanner === "function") {
+    const panner = ctx.createStereoPanner();
+    panner.pan.value = pan;
+    output.connect(panner);
+    output = panner;
+  }
+  output.connect(destination);
 }
 
 // 設定画面で切り替えた瞬間にも、再生中の音へ反映する。サーバー同期で設定が更新された場合も
@@ -662,7 +672,7 @@ export function startTts(
       if (!ab) continue; // 失敗文はスキップして次へ
       const src = ctx.createBufferSource();
       src.buffer = ab;
-      connectOutput(ctx, src, opts.volume);
+      connectOutput(ctx, src, opts.volume, opts.paneId);
       src.onended = () => {
         srcs.delete(src);
         notify();
@@ -962,7 +972,7 @@ export function startNarration(
         label(true);
         const src = ctx!.createBufferSource();
         src.buffer = ab;
-        connectOutput(ctx!, src, aopts.volume);
+        connectOutput(ctx!, src, aopts.volume, aopts.paneId);
         src.onended = () => {
           cur = null;
           playNext();
@@ -998,7 +1008,7 @@ export function startNarration(
       useTtsStore.getState().setPreparing(false); // 音が出はじめた → 生成中を解除
       const src = ctx.createBufferSource();
       src.buffer = ab;
-      connectOutput(ctx, src, opts.volume);
+      connectOutput(ctx, src, opts.volume, opts.paneId);
       src.onended = () => {
         playing = false;
         cur = null;

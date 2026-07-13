@@ -200,6 +200,9 @@ export interface Settings {
   // Console が背景タブ／最小化（document.hidden）の間、全TTS出力のマスター音量を55%へ下げる。
   // window blur は対象外（画面分割や別ウィンドウ操作中でも見えていれば通常音量）。
   ttsQuietWhenHidden: boolean;
+  // ペインに属する読み上げを、現在の横方向の列位置に合わせてステレオ配置する。
+  // 左右端でも完全には振り切らず、聞きやすさのため最大 ±70% に留める。
+  ttsStereoByPane: boolean;
   // バックグラウンドのセッションが回答/質問を返したら音声で知らせる（docs/24 Tier1）。チャットの
   // 自動読み上げ(ttsEnabled)とは別軸。名前前置きの短い告知を直列キューで読む。タブが見えている
   // 間のみ（セッション監視は document.hidden で止まるため）。
@@ -321,6 +324,7 @@ const DEFAULTS: Settings = {
   ttsVoicePolly: "Takumi",
   ttsSpeed: 1.25, // はやめ
   ttsQuietWhenHidden: false,
+  ttsStereoByPane: false,
   ttsSessionNotify: false,
   usageResetNotify: true,
   ttsEnglishKana: true,
@@ -393,6 +397,7 @@ const TTS_RESET_KEYS = [
   "ttsEmotion",
   "ttsSpeed",
   "ttsQuietWhenHidden",
+  "ttsStereoByPane",
   "ttsAutoReadMirror",
   "ttsAutoReadAllPanes",
   "ttsWorkRead",
