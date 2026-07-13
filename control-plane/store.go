@@ -124,6 +124,20 @@ type Memo struct {
 	CreatedAt, SentAt                string
 }
 
+// Notification is a membership-scoped, content-free activity record shared by
+// every browser the member uses. Payload contains only structured metadata; chat
+// answer/question text is deliberately never persisted here.
+type Notification struct {
+	Seq                                                           int64
+	EventID, MembershipID, Kind, TargetType, TargetID, TargetKind string
+	DisplayName, Payload, CreatedAt, SeenAt                       string
+}
+
+type UsageNotificationState struct {
+	MembershipID, Source, WindowKey, ResetsAt string
+	Armed                                     int
+}
+
 // Workspace is one container per Membership (= identity × tenant).
 type Workspace struct {
 	ID, TenantID, MembershipID      string
@@ -182,6 +196,7 @@ type Store interface {
 	UsageStore
 	SSMStore
 	MemoStore
+	NotificationStore
 
 	Close() error
 }
@@ -381,6 +396,17 @@ type MemoStore interface {
 	DeleteMemo(ctx context.Context, id, membershipID string) error
 	MarkMemosSent(ctx context.Context, membershipID string, ids []string, sentAt string) error
 	SweepSentMemos(ctx context.Context, retainBefore string) error
+}
+
+type NotificationStore interface {
+	InsertNotification(ctx context.Context, n Notification) error
+	ListNotifications(ctx context.Context, membershipID, retainAfter string, limit int) ([]Notification, error)
+	CountUnseenNotifications(ctx context.Context, membershipID, retainAfter string) (int, error)
+	MarkNotificationsSeenThrough(ctx context.Context, membershipID string, seq int64, seenAt string) error
+	MarkNotificationsSeen(ctx context.Context, membershipID string, eventIDs []string, seenAt string) error
+	SweepNotifications(ctx context.Context, retainBefore string) error
+	GetUsageNotificationState(ctx context.Context, membershipID, source, windowKey string) (UsageNotificationState, bool, error)
+	PutUsageNotificationState(ctx context.Context, state UsageNotificationState) error
 }
 
 // newID mints an opaque record id (not a strict UUID; sufficient for keys).

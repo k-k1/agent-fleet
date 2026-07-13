@@ -16,6 +16,8 @@ func buildMux() *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", handleHealth)
 	mux.HandleFunc("GET /sessions", handleListSessions)
+	mux.HandleFunc("GET /notifications", handleNotifications)
+	mux.HandleFunc("POST /notifications/ack", handleNotificationsAck)
 	mux.HandleFunc("POST /sessions", handleCreateSession)
 	mux.HandleFunc("POST /sessions/{name}/fork", handleForkSession)
 	mux.HandleFunc("POST /sessions/{name}/stop", handleStopSession)

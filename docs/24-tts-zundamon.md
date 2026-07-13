@@ -236,6 +236,11 @@ TTS 設定画面かフッターに小さく常時表示する。Polly は AWS �
   （app 常駐・全セッションの状態を 4s ポーリングし working→idle / →question を検知）に接続。
   多セッション衝突は tts.ts の**アナウンス直列キュー**（`announce()`, 何か再生中なら待つ、
   溜まりすぎは古いものを捨てる）で解消。設定「セッションの音声通知」(`ttsSessionNotify`)。
+  現在は通知センターへ統合済み。履歴・既読・利用量リセット判定は membership 単位で
+  Control Plane に保存し、OS/TTS の配信設定だけを端末ローカルに残す。再生目的も
+  `reading` / `session-notification` / `usage-notification` / `manual` に分け、TOPバーの
+  停止操作が該当チャネルだけを OFF にする。全体設計は
+  [通知センター](reference/notification-center.md) を参照。
   制約: Console タブが可視の間のみ（状態ポーリングが `document.hidden` で止まるため）。
   未採用: 全セッションの回答**本文**の読み上げ（直列音声＋長文で遅延・混線するため、
   必要なら将来 Tier2=単一セッションのチューニング全文で対応）。実機確認は未。
