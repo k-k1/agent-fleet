@@ -199,18 +199,37 @@
   position: sticky;
   top: calc(var(--sec-head-h, 34px) + 56px);
   z-index: 1;
+  border-bottom: 1px solid var(--border2);
+  background: var(--leftpane-bg);
+}
+.files-search-group-toggle {
   display: flex;
   align-items: center;
   gap: 5px;
+  width: 100%;
   padding: 4px 8px;
-  border-bottom: 1px solid var(--border2);
-  background: var(--leftpane-bg);
+  border: 0;
+  background: transparent;
   color: var(--muted);
+  font: inherit;
   font-size: 11px;
   font-weight: 600;
+  text-align: left;
+  cursor: pointer;
 }
-.files-search-group .codicon {
+.files-search-group-toggle:hover,
+.files-search-group-toggle:focus-visible {
+  color: var(--fg);
+  background: var(--hover-bg);
+  outline: none;
+}
+.files-search-group-toggle .codicon {
   font-size: 12px;
+}
+.files-search-group-count {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+  font-weight: 400;
 }
 
 /* ツリー/変更 toggle in the ファイル section header. Lives in the left pane, so

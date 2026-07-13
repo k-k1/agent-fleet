@@ -103,6 +103,7 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo }: Proje
   const [searchRows, setSearchRows] = useState<Row[] | null>(null);
   const [searchTrunc, setSearchTrunc] = useState(false);
   const [searching, setSearching] = useState(false);
+  const [collapsedRepos, setCollapsedRepos] = useState<Set<string>>(() => new Set());
   const menuRef = useRef<HTMLUListElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const treeRef = useRef<HTMLUListElement>(null);
@@ -263,6 +264,20 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo }: Proje
   // The rows actually shown / navigated: flat search hits in search mode, else
   // the (tree-)filtered rows.
   const displayRows = searchMode ? searchRows ?? [] : filteredRows;
+  const navigationRows = useMemo(
+    () => (searchMode && groupByRepo ? displayRows.filter((r) => !collapsedRepos.has(repoOf(r.path))) : displayRows),
+    [searchMode, groupByRepo, displayRows, collapsedRepos],
+  );
+  const repoResultCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    if (searchMode && groupByRepo) {
+      for (const row of displayRows) {
+        const repo = repoOf(row.path);
+        counts.set(repo, (counts.get(repo) || 0) + 1);
+      }
+    }
+    return counts;
+  }, [searchMode, groupByRepo, displayRows]);
 
   // Prefetch entries for visible dirs whose children we don't have yet.
   useEffect(() => {
@@ -296,13 +311,14 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo }: Proje
   // filter box.
   const onTreeKeyDown = useCallback(
     (e: RKeyboardEvent<HTMLUListElement>) => {
+      if ((e.target as HTMLElement).closest(".files-search-group-toggle")) return;
       if ((e.ctrlKey || e.metaKey) && (e.key === "f" || e.key === "F")) {
         e.preventDefault();
         focusInput();
         return;
       }
       if (menu) return; // let the context menu own the keyboard while it's open
-      const list = displayRows;
+      const list = navigationRows;
       if (!list.length) return;
       const idx = list.findIndex((r) => r.path === selected);
       const pick = (to: number) => {
@@ -364,7 +380,7 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo }: Proje
         }
       }
     },
-    [displayRows, selected, open, menu, expand, collapse, showFile, showFileSplit, focusInput, scrollRowIntoView],
+    [navigationRows, selected, open, menu, expand, collapse, showFile, showFileSplit, focusInput, scrollRowIntoView],
   );
 
   // Enter in the filter box hands focus to the active searchable tree:
@@ -373,8 +389,8 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo }: Proje
     if (!focusTreeN || !searchable) return;
     treeRef.current?.focus();
     setSelected((cur) => {
-      if (cur && displayRows.some((r) => r.path === cur)) return cur;
-      const first = displayRows[0];
+      if (cur && navigationRows.some((r) => r.path === cur)) return cur;
+      const first = navigationRows[0];
       if (first) scrollRowIntoView(first.path);
       return first ? first.path : cur;
     });
@@ -583,7 +599,7 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo }: Proje
         aria-label="ファイル"
         tabIndex={0}
         aria-activedescendant={(() => {
-          const i = displayRows.findIndex((r) => r.path === selected);
+          const i = displayRows.findIndex((r) => r.path === selected && navigationRows.includes(r));
           return i >= 0 ? `${uid}-${i}` : undefined;
         })()}
         onKeyDown={onTreeKeyDown}
@@ -616,9 +632,30 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo }: Proje
             <Fragment key={r.path}>
             {searchMode && groupByRepo && (i === 0 || repoOf(displayRows[i - 1].path) !== repoOf(r.path)) && (
               <li className="files-search-group" role="presentation">
-                <Icon name="root-folder" /> {repoOf(r.path)}
+                <button
+                  type="button"
+                  className="files-search-group-toggle"
+                  aria-expanded={!collapsedRepos.has(repoOf(r.path))}
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onClick={() => {
+                    const repo = repoOf(r.path);
+                    setCollapsedRepos((current) => {
+                      const next = new Set(current);
+                      if (next.has(repo)) next.delete(repo);
+                      else next.add(repo);
+                      return next;
+                    });
+                    if (selected && repoOf(selected) === repo) setSelected(null);
+                  }}
+                >
+                  <Icon name={collapsedRepos.has(repoOf(r.path)) ? "chevron-right" : "chevron-down"} />
+                  <Icon name="root-folder" />
+                  <span>{repoOf(r.path)}</span>
+                  <span className="files-search-group-count">{repoResultCounts.get(repoOf(r.path))}</span>
+                </button>
               </li>
             )}
+            {!collapsedRepos.has(repoOf(r.path)) && (
             <li
               id={`${uid}-${i}`}
               data-path={r.path}
@@ -666,6 +703,7 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo }: Proje
                 </span>
               </span>
             </li>
+            )}
             </Fragment>
           );
         })}
