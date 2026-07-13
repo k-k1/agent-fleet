@@ -32,6 +32,7 @@ export interface TtsOptions {
   enkana?: boolean; // 英語をカタカナ英語に前処理して読ませる（CP の enkana。voicevox 時のみ効く）
   pollyVoice?: string; // Polly の VoiceId（auto のフォールバック先でも使う）
   lang?: string; // 言語ヒント（設定 outputLanguage を再利用）: "auto" | "ja" | "en"
+  particlePause?: boolean; // 設定 ttsParticlePause。CP 側で読点ポーズを詰める（voicevox のみ）
 }
 
 // settings から TtsOptions を組む共通処理（announce / speakText / startNarration / ChatView）。
@@ -43,6 +44,7 @@ export function ttsOptsFromSettings(s = getSettings()): TtsOptions {
     enkana: s.ttsEnglishKana,
     pollyVoice: s.ttsVoicePolly,
     lang: s.outputLanguage,
+    particlePause: s.ttsParticlePause,
   };
 }
 
@@ -307,7 +309,7 @@ const synthCache = makeAudioLru<AudioBuffer>(() => getSettings().ttsCacheSec);
 // （auto 含む）で持つため、auto のルーティング先が変わった直後は旧エンジンの声が
 // 再生されうる（エビクトで解消する程度の割り切り）。
 function synthCacheKey(text: string, opts: TtsOptions): string {
-  return [opts.provider, opts.voice, opts.speed, opts.enkana ? 1 : 0, opts.pollyVoice ?? "", opts.lang ?? "", text].join(
+  return [opts.provider, opts.voice, opts.speed, opts.enkana ? 1 : 0, opts.pollyVoice ?? "", opts.lang ?? "", opts.particlePause ? 1 : 0, text].join(
     "\u0000",
   );
 }
@@ -337,6 +339,7 @@ async function synthToBuffer(
         enkana: opts.enkana ?? false,
         pollyVoice: opts.pollyVoice ?? "",
         lang: opts.lang ?? "",
+        particlePause: opts.particlePause ?? false,
       }),
       signal,
     });
