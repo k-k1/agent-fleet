@@ -75,7 +75,32 @@ claude mcp add -s user pagerduty \
 
 ## 3. CloudWatch（アラーム起点調査・ログ分析）
 
-AWS 公式（awslabs）。資格は焼き込み済み aws CLI と同じチェーンを読むので、**SSM 接続で使っている SSO プロファイルがあれば追加の秘密は不要**。
+### 3a. まずは MCP なしで: aws CLI で直接ログを見る（最速）
+
+対話セッション（tmux の claude）は Bash が使えるので、**MCP を繋がなくても焼き込み済みの aws CLI でログ確認の壁打ちができます**。SSM 接続で使っている SSO プロファイルでログインしてあれば追加設定ゼロです。claude に「`<ロググループ>` の直近 1 時間の ERROR を見て」と頼めば、以下のようなコマンドを自分で叩いて調べてくれます。
+
+```bash
+aws sso login --profile <sso-profile>          # オンコール開始時に済ませておく
+export AWS_PROFILE=<sso-profile> AWS_REGION=ap-northeast-1
+
+aws logs describe-log-groups --log-group-name-prefix /aws/   # ロググループ探し
+aws logs tail /aws/ecs/my-service --since 1h                 # 直近ログ（--follow で追尾）
+aws logs filter-log-events --log-group-name /aws/ecs/my-service \
+  --start-time $(date -d '1 hour ago' +%s)000 --filter-pattern ERROR
+
+# 集計や横断は Logs Insights（start-query → get-query-results の 2 段）
+qid=$(aws logs start-query --log-group-name /aws/ecs/my-service \
+  --start-time $(date -d '3 hours ago' +%s) --end-time $(date +%s) \
+  --query-string 'filter @message like /ERROR/ | stats count(*) by bin(5m)' \
+  --query queryId --output text)
+aws logs get-query-results --query-id $qid
+```
+
+必要な IAM は読み取りのみ（`CloudWatchLogsReadOnlyAccess` 相当: DescribeLogGroups / FilterLogEvents / GetLogEvents / StartQuery / GetQueryResults）。
+
+### 3b. MCP で繋ぐ（アラーム分析・異常検知ツールが欲しいとき）
+
+AWS 公式（awslabs）。資格は焼き込み済み aws CLI と同じチェーンを読むので、**SSO プロファイルがあれば追加の秘密は不要**。全ツール read-only（メトリクス取得・アラーム履歴・ロググループの異常パターン分析・Logs Insights クエリなど）。
 
 ```bash
 # 事前にコンテナ内で aws sso login 済みであること（SSM セッションと同じ流儀）
@@ -84,6 +109,8 @@ claude mcp add -s user cloudwatch \
   -e FASTMCP_LOG_LEVEL=ERROR \
   -- ~/.local/bin/uvx awslabs.cloudwatch-mcp-server@latest
 ```
+
+※ チャットの SRE アシスタントで CloudWatch を使えるようにする組み込み（運用タブへの追加）は検討済み・未実装です（docs/25 の CloudWatch 節）。
 
 Athena は (a) まず素の aws CLI（追加設定ゼロ、claude が Bash で叩ける）、(b) 本格的には `uvx awslabs.aws-dataprocessing-mcp-server@latest`。PoC では (a) で十分なことが多い。
 
