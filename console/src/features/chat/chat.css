@@ -224,7 +224,11 @@
 }
 .chat-input {
   flex: 1 1 auto;
-  resize: vertical;
+  /* Height is driven by content (auto-grow in ChatView); cap via max-height, then scroll.
+     border-box so the JS-set height (from scrollHeight, which includes padding) matches. */
+  resize: none;
+  box-sizing: border-box;
+  overflow-y: auto;
   min-height: 38px;
   max-height: 40vh;
   padding: 8px 10px;

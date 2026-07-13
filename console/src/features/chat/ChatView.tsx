@@ -152,6 +152,16 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
     if (el) el.scrollTop = el.scrollHeight;
   }, [conv?.messages.length, sending, streamText, liveText]);
 
+  // Auto-grow the composer to fit its content (up to the CSS max-height, then it scrolls),
+  // same as MirrorView's composer. Reset to auto first so it also shrinks when text is
+  // deleted; runs on every input change (including a seed prefill / cleared-on-send).
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = el.scrollHeight + "px";
+  }, [input]);
+
   // Focus the composer when this pane becomes the active chat (opening a conversation or
   // an assistant draft) — but NOT on touch devices, where auto-focus would pop the
   // on-screen keyboard just from opening the chat to read it (mirrors MirrorView).
