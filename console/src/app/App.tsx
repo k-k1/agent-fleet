@@ -30,6 +30,8 @@ import { TopBar } from "./TopBar.tsx";
 import { useSettingsUI, wireSettingsHistory } from "../features/settings/store.ts";
 import { SettingsDialog } from "../features/settings/SettingsDialog.tsx";
 import { AdminDialog } from "../features/settings/AdminDialog.tsx";
+import { GuideModal } from "../features/terminal/OnboardingCard.tsx";
+import { StartHost } from "../features/repos/StartHost.tsx";
 
 // Refresh FILES (and repos/sessions/chat list on start) whenever the workspace
 // actually flips running↔stopped — including external changes the 4s sync catches
@@ -62,6 +64,7 @@ export function App() {
   const layout = useLayoutStore((s) => s.layout);
   const settingsOpen = useSettingsUI((s) => s.settingsOpen);
   const adminOpen = useSettingsUI((s) => s.adminOpen);
+  const guideOpen = useSettingsUI((s) => s.guideOpen);
   const [booted, setBooted] = useState(false);
 
   // Left rail visibility. Desktop: leftOpen (persisted) + leftMode "push" (docks,
@@ -232,15 +235,6 @@ export function App() {
     void useSessionsStore.getState().refresh();
   }, [booted, tenant]);
 
-  // openNewSession signal (WS bar 新規 / onboarding): the dialog mounts inside the
-  // left rail — on mobile that's an off-canvas drawer whose CSS transform would
-  // offset the modal's fixed positioning, so raise the drawer first (no-op on
-  // desktop, where the rail is in flow).
-  const newSessionTick = useSessionsStore((s) => s.newSessionTick);
-  useEffect(() => {
-    if (newSessionTick > 0 && window.matchMedia(MOBILE_QUERY).matches) setNavOpen(true);
-  }, [newSessionTick]);
-
   // Desktop notifications on claude state arrivals — lives at the shell now that
   // the flat Sessions section no longer owns the rail.
   useSessionNotifications();
@@ -286,6 +280,8 @@ export function App() {
       </div>
       {settingsOpen && <SettingsDialog />}
       {adminOpen && <AdminDialog />}
+      {guideOpen && <GuideModal />}
+      <StartHost />
       <SessionModals />
     </div>
   );

@@ -331,8 +331,15 @@ func handleChatStream(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	var reply string
+	var steps []chatStep
 	if sp, ok := prov.(streamingProvider); ok {
-		reply, err = sp.sendStream(ctx, c, content, func(d string) { emit(map[string]string{"delta": d}) })
+		reply, steps, err = sp.sendStream(ctx, c, content, func(ev chatStreamEvent) {
+			if ev.Step != nil {
+				emit(map[string]any{"step": ev.Step}) // a completed 作業過程 item
+			} else if ev.Delta != "" {
+				emit(map[string]string{"delta": ev.Delta})
+			}
+		})
 	} else {
 		reply, err = prov.send(ctx, c, content)
 		if err == nil {
@@ -346,7 +353,7 @@ func handleChatStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	assistant := chatMessage{Role: "assistant", Content: reply, TS: nowMs()}
+	assistant := chatMessage{Role: "assistant", Content: reply, Steps: steps, TS: nowMs()}
 	c.Messages = append(c.Messages, assistant)
 	c.UpdatedAt = nowMs()
 	_ = saveConv(c)

@@ -157,6 +157,13 @@ func CollectTurns(lines [][]byte, lo, hi int) []transcript.Turn {
 			if (t.Parts[pi].Kind == "question" || t.Parts[pi].Kind == "plan") && t.Parts[pi].QID != "" {
 				t.Parts[pi].Answer = answers[t.Parts[pi].QID]
 			}
+			if t.Parts[pi].Kind == "delegation" && t.Parts[pi].QID != "" {
+				if result := answers[t.Parts[pi].QID]; result != "" {
+					t.Parts[pi].Output = transcript.CapOutput(result)
+					// Only foreground delegations retain QID; their tool_result is final.
+					t.Parts[pi].Status = "completed"
+				}
+			}
 		}
 		turns = append(turns, t)
 		if budget += len(t.Text); budget > 1<<20 { // cap a single response at 1 MiB (newest kept)
@@ -285,6 +292,32 @@ func assistantParts(raw json.RawMessage) (parts []transcript.Part, text string) 
 			}
 			sb.WriteString(b.Text)
 		case "tool_use":
+			// Agent (Task in older Claude releases) delegates work to a sidechain.
+			// Surface the delegation itself as a compact card; the child's raw
+			// isSidechain turns are hidden by the Console's normal timeline.
+			if b.Name == "Agent" || b.Name == "Task" {
+				var in struct {
+					Description     string `json:"description"`
+					Prompt          string `json:"prompt"`
+					SubagentType    string `json:"subagent_type"`
+					Model           string `json:"model"`
+					RunInBackground bool   `json:"run_in_background"`
+				}
+				if json.Unmarshal(b.Input, &in) == nil && (in.Description != "" || in.Prompt != "") {
+					qid := b.ID
+					if in.RunInBackground {
+						// Claude returns a launch acknowledgement immediately, not the final
+						// report. Do not mislabel that acknowledgement as completion.
+						qid = ""
+					}
+					parts = append(parts, transcript.Part{
+						Kind: "delegation", Tool: b.Name, Info: strings.TrimSpace(in.Description),
+						Prompt: strings.TrimSpace(in.Prompt), AgentType: in.SubagentType,
+						Model: in.Model, Status: "requested", QID: qid,
+					})
+					continue
+				}
+			}
 			// AskUserQuestion becomes an answerable question block, not a faint trace.
 			if b.Name == "AskUserQuestion" {
 				if qs := parseQuestions(b.Input); len(qs) > 0 {

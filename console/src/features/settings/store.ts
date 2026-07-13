@@ -16,10 +16,14 @@ interface SettingsUIStore {
   /** Initial tab when opened ("display" | "env" | "agents" | "git" | "ssm" | "tokens"). */
   settingsSection: string;
   adminOpen: boolean;
+  /** はじめかたガイド modal (re-openable first-run checklist — GuideModal). */
+  guideOpen: boolean;
   openSettings(section?: string): void;
   closeSettings(): void;
   openAdmin(): void;
   closeAdmin(): void;
+  openGuide(): void;
+  closeGuide(): void;
   /** Connections change tick (old connKey): bump after a connect/disconnect so
    * consumers (OnboardingCard, useConnections) refetch. */
   connTick: number;
@@ -42,6 +46,7 @@ export const useSettingsUI = create<SettingsUIStore>((set) => ({
   settingsOpen: false,
   settingsSection: "agents",
   adminOpen: false,
+  guideOpen: false,
 
   openSettings(section?: string) {
     // "connections" is a legacy alias for the merged エージェント tab (the old 接続
@@ -65,6 +70,10 @@ export const useSettingsUI = create<SettingsUIStore>((set) => ({
       history.go(-(adminDepthRef.current + 1));
     } else set({ adminOpen: false });
   },
+
+  // Close-on-back comes from ui/Modal (useBackClose), like the settings dialog.
+  openGuide: () => set({ guideOpen: true }),
+  closeGuide: () => set({ guideOpen: false }),
 
   connTick: 0,
   bumpConn: () => set((s) => ({ connTick: s.connTick + 1 })),

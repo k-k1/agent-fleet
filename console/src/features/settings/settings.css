@@ -1761,6 +1761,97 @@
 .admin-panel h4 {
   margin: 0 0 10px;
 }
+.admin-panel h4 .af-note {
+  margin-left: 8px;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--muted);
+}
+
+/* Admin form fields — caption above input, responsive grid. Mirrors the settings
+   modal's .ssm-fld / .ssm-fgrid so every admin form reads as one system. */
+.admin-fgroup {
+  margin-bottom: 18px;
+}
+.admin-fgroup:last-of-type {
+  margin-bottom: 0;
+}
+.admin-fgrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+}
+.admin-fld {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+.admin-fld .af-cap {
+  font-size: 11.5px;
+  color: var(--fg);
+}
+.admin-fld input {
+  width: 100%;
+  box-sizing: border-box;
+}
+/* Plain numeric fields keep the native spinner — it now follows the theme via
+   color-scheme (tokens.css). Only suffix fields (.af-inputwrap, e.g. "MB") hide it,
+   since the spinner would overlap the unit label; keyboard ↑/↓ + step still work. */
+.af-inputwrap input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+.af-inputwrap input[type="number"]::-webkit-outer-spin-button,
+.af-inputwrap input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.af-inputwrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.af-inputwrap input {
+  padding-right: 34px;
+}
+.af-suffix {
+  position: absolute;
+  right: 10px;
+  font-size: 11px;
+  color: var(--muted);
+  pointer-events: none;
+}
+.af-unit {
+  font-size: 11px;
+  color: var(--muted);
+  min-height: 13px;
+}
+.admin-hint {
+  margin: 9px 0 0;
+  font-size: 11px;
+  line-height: 1.55;
+  color: var(--muted);
+}
+.admin-hint code {
+  font-family: var(--mono);
+  color: var(--muted);
+}
+.admin-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 16px;
+}
+.admin-check {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12.5px;
+}
+.admin-check input {
+  flex: none;
+}
 
 /* top-level admin mode toggle (テナント管理 / 使用量) */
 .admin-modes {
@@ -2277,50 +2368,9 @@
   font-weight: 600;
   color: var(--fg);
 }
-.limit-edit .le-fields {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-}
-.limit-edit .le-field {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  flex: 1 1 160px;
-  min-width: 0;
-}
-.limit-edit .le-cap {
-  font-size: 11.5px;
-  color: var(--fg);
-}
-.limit-edit .le-field input {
-  width: 100%;
-}
-.limit-edit .le-inputwrap {
-  position: relative;
-  display: flex;
-  align-items: center;
-}
-.limit-edit .le-inputwrap input {
-  padding-right: 32px;
-}
-.limit-edit .le-suffix {
-  position: absolute;
-  right: 9px;
-  font-size: 11px;
-  color: var(--muted);
-  pointer-events: none;
-}
-.limit-edit .le-unit {
-  font-size: 11px;
-  color: var(--muted);
-  min-height: 13px;
-}
-.limit-edit .le-note {
+/* Fields reuse the shared .admin-fgrid / .admin-fld / .af-* system (one form language). */
+.limit-edit .admin-hint {
   margin: 0;
-  font-size: 11px;
-  line-height: 1.5;
-  color: var(--muted);
 }
 .limit-edit .le-actions {
   display: flex;
@@ -2422,9 +2472,6 @@
   .member-actions button {
     flex: 1 1 100%;
     justify-content: center;
-  }
-  .limit-edit .le-field {
-    flex-basis: 100%;
   }
   .limit-edit .le-actions button {
     flex: 1 1 0;

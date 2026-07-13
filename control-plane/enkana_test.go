@@ -208,6 +208,71 @@ func TestAgentManageFamily(t *testing.T) {
 	}
 }
 
+func TestReadingOverrides(t *testing.T) {
+	// 実機フィードバックの誤読修正。DOM は CMUdict 実在語 dom→ダム に化けるので慣用読み、
+	// good は末尾 D が促音化せず グド になるので固定、well は変異形 "ウェルル" 対策。
+	want := map[string]string{
+		"DOM":  "ドム",
+		"dom":  "ドム",
+		"Dom":  "ドム",
+		"good": "グッド",
+		"Good": "グッド",
+		"well": "ウェル",
+		"Well": "ウェル",
+	}
+	for in, exp := range want {
+		if got := englishToKana(in); got != exp {
+			t.Errorf("%q -> %q, want %q", in, got, exp)
+		}
+	}
+	// "dom" は完全トークン一致のみ（部分一致で kingdom/random/freedom を壊さない）。
+	for _, w := range []string{"kingdom", "random", "freedom"} {
+		if got := englishToKana(w); got == "ドム" || containsASCIILetters(got) {
+			t.Errorf("%q が誤変換された: %q", w, got)
+		}
+	}
+}
+
+func TestContractions(t *testing.T) {
+	// アポストロフィ入りの短縮形。従来は ' で語が分断され "イット'エス" 等に誤読されていた。
+	// ASCII(') とタイプグラフィ(’) の両方を同一視する。
+	want := map[string]string{
+		"It's":     "イッツ",
+		"it's":     "イッツ",
+		"It’s":     "イッツ", // U+2019
+		"don't":    "ドント",
+		"can't":    "キャント",
+		"won't":    "ウォント",
+		"isn't":    "イズント",
+		"doesn't":  "ダズント",
+		"I'm":      "アイム",
+		"let's":    "レッツ",
+		"that's":   "ザッツ",
+		"we'll":    "ウィール",
+		"wouldn't": "ウドゥント",
+	}
+	for in, exp := range want {
+		if got := englishToKana(in); got != exp {
+			t.Errorf("%q -> %q, want %q", in, got, exp)
+		}
+	}
+	// 所有格 's は「元の語＋ズ」でフォールバック（辞書 techKana も経由する）。
+	poss := map[string]string{
+		"React's": "リアクトズ",
+		"user's":  "ユーザーズ",
+		"API's":   "エーピーアイズ", // API=エーピーアイ(techKana) + ズ
+	}
+	for in, exp := range poss {
+		if got := englishToKana(in); got != exp {
+			t.Errorf("possessive %q -> %q, want %q", in, got, exp)
+		}
+	}
+	// 文中でも分断されず、周囲の語・句読点は保たれる。
+	if got := englishToKana("It's good, don't worry."); containsASCIILetters(got) {
+		t.Errorf("英字が残った: %q", got)
+	}
+}
+
 func containsASCIILetters(s string) bool {
 	for _, r := range s {
 		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {

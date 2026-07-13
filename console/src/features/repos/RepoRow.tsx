@@ -28,6 +28,34 @@ const PROVIDER_LABEL: Record<string, string> = {
 };
 const providerLabel = (p: string) => PROVIDER_LABEL[p] || p;
 
+type Integration = NonNullable<Repo["integration"]>;
+
+function integrationLabel(i: Integration): string {
+  switch (i.relation) {
+    case "same": return "親=";
+    case "contained": return "取込済";
+    case "unmerged": return `未取込 ${i.worktreeUnique}`;
+    case "diverged": return `分岐 ${i.worktreeUnique}↕${i.targetUnique}`;
+    case "unknown": return "比較不可";
+  }
+}
+
+function integrationTitle(i: Integration): string {
+  const target = i.targetBranch || "親のHEAD";
+  switch (i.relation) {
+    case "same":
+      return `比較先: ${target}\n親とWTは同じコミットです`;
+    case "contained":
+      return `比較先: ${target}\nWTのHEADはGit履歴上、親に含まれています（親固有 ${i.targetUnique}コミット）`;
+    case "unmerged":
+      return `比較先: ${target}\n親に含まれないWT固有コミットが ${i.worktreeUnique} 件あります`;
+    case "diverged":
+      return `比較先: ${target}\nWT固有 ${i.worktreeUnique} / 親固有 ${i.targetUnique} コミット。マージかリベースが必要です`;
+    case "unknown":
+      return `比較先: ${target}\nコミット関係を判定できません`;
+  }
+}
+
 export interface RepoRowProps {
   r: Repo;
   kinds?: string[];
@@ -153,11 +181,19 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
               </span>
             )}
           </span>
-          {(r.dirty || ((r.ahead || r.behind) ?? 0) > 0) && (
+          {(r.dirty || r.integration || ((r.ahead || r.behind) ?? 0) > 0) && (
             <span className="repo-state">
               {r.dirty && (
                 <span className="repo-chip dirty" title="未コミット変更あり">
                   <Icon name="circle-filled" /> 未コミット
+                </span>
+              )}
+              {r.integration && (
+                <span
+                  className={`repo-chip integration ${r.integration.relation}`}
+                  title={integrationTitle(r.integration)}
+                >
+                  {integrationLabel(r.integration)}
                 </span>
               )}
               {/* origin との差分: behind のみ = クリーンに FF 可能 / 両方 = 分岐して

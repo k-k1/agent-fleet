@@ -160,33 +160,47 @@ func (claudeChat) send(ctx context.Context, c *chatConversation, prompt string) 
 	return strings.TrimRight(r.Result, "\n"), nil
 }
 
-// streamingProvider is the optional token-streaming variant of chatProvider. emit
-// is called with each incremental text delta; the returned string is the full reply.
-// A provider that doesn't implement it falls back to send() (one emit of the whole
-// result) in handleChatStream, so every agent works through the stream endpoint.
-type streamingProvider interface {
-	sendStream(ctx context.Context, c *chatConversation, prompt string, emit func(delta string)) (string, error)
+// chatStreamEvent is one incremental event a streamingProvider emits: either a text Delta
+// for the current (tentative) answer, or a completed Step (the model finished a working
+// message that ended in a tool call). Exactly one field is set per emit.
+type chatStreamEvent struct {
+	Delta string    // incremental text of the current answer
+	Step  *chatStep // a just-completed working step (narration + tool names)
 }
 
-// streamLine is one JSONL event from `claude --output-format stream-json`. We read
-// the incremental text_delta events (with --include-partial-messages) for live
-// display, capture the session id for resume, and take the final `result` as the
-// authoritative reply text.
+// streamingProvider is the optional token-streaming variant of chatProvider. emit is called
+// per incremental event; the returned string is the final answer and the []chatStep are the
+// working steps (docs/19). A provider that doesn't implement it falls back to send() (one
+// emit of the whole result) in handleChatStream, so every agent works through the stream.
+type streamingProvider interface {
+	sendStream(ctx context.Context, c *chatConversation, prompt string, emit func(chatStreamEvent)) (string, []chatStep, error)
+}
+
+// streamLine is one JSONL event from `claude --output-format stream-json`. We read the
+// incremental text_delta events (with --include-partial-messages) for live display, watch
+// content_block_start/message_delta to split working steps (tool_use) from the final answer
+// (end_turn), capture the session id for resume, and take `result` as the authoritative
+// fallback text. (Verified live against claude-code 2.1.207.)
 type streamLine struct {
 	Type      string `json:"type"`
 	SessionID string `json:"session_id"`
 	Result    string `json:"result"`
 	IsError   bool   `json:"is_error"`
 	Event     struct {
-		Type  string `json:"type"`
+		Type         string `json:"type"`
+		ContentBlock struct {
+			Type string `json:"type"` // "text" | "thinking" | "tool_use"
+			Name string `json:"name"` // tool name when Type=="tool_use"
+		} `json:"content_block"`
 		Delta struct {
-			Type string `json:"type"`
-			Text string `json:"text"`
+			Type       string `json:"type"`
+			Text       string `json:"text"`
+			StopReason string `json:"stop_reason"` // on message_delta: "tool_use" | "end_turn" | …
 		} `json:"delta"`
 	} `json:"event"`
 }
 
-func (claudeChat) sendStream(ctx context.Context, c *chatConversation, prompt string, emit func(string)) (string, error) {
+func (claudeChat) sendStream(ctx context.Context, c *chatConversation, prompt string, emit func(chatStreamEvent)) (string, []chatStep, error) {
 	// stream-json requires --verbose with -p; --include-partial-messages adds the
 	// per-token text_delta events we forward for live display.
 	args := []string{"-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
@@ -208,14 +222,22 @@ func (claudeChat) sendStream(ctx context.Context, c *chatConversation, prompt st
 	cmd.Stderr = &stderr
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return "", fmt.Errorf("claude 起動に失敗しました: %v", err)
+		return "", nil, fmt.Errorf("claude 起動に失敗しました: %v", err)
 	}
 	if err := cmd.Start(); err != nil {
-		return "", fmt.Errorf("claude 起動に失敗しました: %v", err)
+		return "", nil, fmt.Errorf("claude 起動に失敗しました: %v", err)
 	}
 
-	var acc strings.Builder // accumulated deltas (fallback if result is empty)
-	var result string       // authoritative final text from the result event
+	// Split the run into working steps and a final answer (docs/19). claude emits one
+	// assistant message per turn: a message that ends in stop_reason=tool_use was narration
+	// before a tool call (a working step); the message that ends in end_turn is the final
+	// answer. We accumulate the current message's text_delta into `cur`; on a tool_use turn
+	// boundary we flush `cur` (+ the tool names seen) as a step and reset. Whatever remains in
+	// `cur` at the end is the final answer.
+	var cur strings.Builder // current message's text (tentative answer)
+	var curTools []string   // tool names invoked in the current message
+	var steps []chatStep    // completed working steps
+	var result string       // authoritative final text (fallback / error text)
 	var resultErr bool
 	reader := bufio.NewReaderSize(stdout, 1<<20)
 	for {
@@ -228,10 +250,28 @@ func (claudeChat) sendStream(ctx context.Context, c *chatConversation, prompt st
 				}
 				switch sl.Type {
 				case "stream_event":
-					if sl.Event.Type == "content_block_delta" &&
-						sl.Event.Delta.Type == "text_delta" && sl.Event.Delta.Text != "" {
-						acc.WriteString(sl.Event.Delta.Text)
-						emit(sl.Event.Delta.Text)
+					switch sl.Event.Type {
+					case "content_block_start":
+						if sl.Event.ContentBlock.Type == "tool_use" && sl.Event.ContentBlock.Name != "" {
+							curTools = append(curTools, sl.Event.ContentBlock.Name)
+						}
+					case "content_block_delta":
+						if sl.Event.Delta.Type == "text_delta" && sl.Event.Delta.Text != "" {
+							cur.WriteString(sl.Event.Delta.Text)
+							emit(chatStreamEvent{Delta: sl.Event.Delta.Text})
+						}
+					case "message_delta":
+						// A message that stops to call a tool is a working step; flush it and
+						// reset so the next message accumulates as a fresh (tentative) answer.
+						if sl.Event.Delta.StopReason == "tool_use" {
+							step := chatStep{Text: strings.TrimSpace(cur.String()), Tools: curTools}
+							if step.Text != "" || len(step.Tools) > 0 {
+								steps = append(steps, step)
+								emit(chatStreamEvent{Step: &step})
+							}
+							cur.Reset()
+							curTools = nil
+						}
 					}
 				case "result":
 					result = sl.Result
@@ -244,16 +284,19 @@ func (claudeChat) sendStream(ctx context.Context, c *chatConversation, prompt st
 		}
 	}
 	if err := cmd.Wait(); err != nil {
-		return "", fmt.Errorf("claude 実行に失敗しました: %s", stderrOr(err, &stderr))
+		return "", nil, fmt.Errorf("claude 実行に失敗しました: %s", stderrOr(err, &stderr))
 	}
 	if resultErr {
-		return "", fmt.Errorf("claude がエラーを返しました: %s", result)
+		return "", nil, fmt.Errorf("claude がエラーを返しました: %s", result)
 	}
-	final := result
+	// The final answer is what streamed into the last (end_turn) message — this is exactly
+	// what the answer bubble displayed live, so the saved/`done` content matches it (no
+	// end-of-turn swap). Fall back to `result` only if nothing streamed there.
+	final := strings.TrimSpace(cur.String())
 	if final == "" {
-		final = acc.String()
+		final = strings.TrimSpace(result)
 	}
-	return strings.TrimRight(final, "\n"), nil
+	return strings.TrimRight(final, "\n"), steps, nil
 }
 
 // stderrOr renders an exec error, preferring captured stderr.
