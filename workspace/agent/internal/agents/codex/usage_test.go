@@ -10,6 +10,9 @@ import (
 // A real token_count line captured from a live codex rollout (2026-07-04).
 const codexRateLimitLine = `{"timestamp":"2026-07-04T03:10:38.864Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":297059,"cached_input_tokens":226304,"output_tokens":3320,"reasoning_output_tokens":867,"total_tokens":300379},"last_token_usage":{"input_tokens":38619,"cached_input_tokens":24448,"output_tokens":540,"reasoning_output_tokens":84,"total_tokens":39159},"model_context_window":258400},"rate_limits":{"limit_id":"codex","limit_name":null,"primary":{"used_percent":3.0,"window_minutes":300,"resets_at":1783142674},"secondary":{"used_percent":0.0,"window_minutes":10080,"resets_at":1783729474},"credits":null,"individual_limit":null,"plan_type":"plus","rate_limit_reached_type":null}}}`
 
+// Newer unified agentic-usage accounts can expose only a weekly window, in primary.
+const codexWeeklyPrimaryLine = `{"timestamp":"2026-07-13T11:18:00Z","type":"event_msg","payload":{"type":"token_count","info":{"model_context_window":258400},"rate_limits":{"limit_id":"codex","primary":{"used_percent":12.0,"window_minutes":10080,"resets_at":1893456000},"secondary":null,"plan_type":"plus"}}}`
+
 func TestCodexRateLimits(t *testing.T) {
 	// Parse via the same path HandleUsage uses. The recorded %s are time-adjusted
 	// (see TestCodexAdjustWindow), so here we only assert the shape parses.
@@ -25,6 +28,28 @@ func TestCodexRateLimits(t *testing.T) {
 	}
 	if u.FiveHour.ResetsAt == "" {
 		t.Fatalf("fiveHour.ResetsAt empty")
+	}
+}
+
+func TestCodexWeeklyWindowInPrimary(t *testing.T) {
+	u, ok := usageFromRolloutBytes([]byte(codexWeeklyPrimaryLine))
+	if !ok || !u.OK {
+		t.Fatalf("expected a usage reading, got ok=%v u=%+v", ok, u)
+	}
+	if u.FiveHour != nil {
+		t.Fatalf("fiveHour = %+v, want nil", u.FiveHour)
+	}
+	if u.SevenDay == nil || u.SevenDay.Pct != 12.0 {
+		t.Fatalf("sevenDay = %+v, want 12%%", u.SevenDay)
+	}
+}
+
+func TestCodexWindowClassificationTolerance(t *testing.T) {
+	if !isApproxWindow(304, 300) {
+		t.Fatal("304 minutes should classify as an approximately 5h window")
+	}
+	if isApproxWindow(360, 300) {
+		t.Fatal("360 minutes must not classify as an approximately 5h window")
 	}
 }
 

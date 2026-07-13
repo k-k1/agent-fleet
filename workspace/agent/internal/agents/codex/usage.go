@@ -26,13 +26,21 @@ import (
 //   "rate_limits":{"primary":{"used_percent":3.0,"window_minutes":300,"resets_at":<epoch>},
 //                  "secondary":{"used_percent":0.0,"window_minutes":10080,"resets_at":<epoch>},
 //                  "plan_type":"plus"}
-// primary = the ~5h window, secondary = the weekly (10080 min = 7d) window.
+// Do not infer the window from primary/secondary: newer account-limit configurations
+// can put the weekly window in primary and omit the 5h window. window_minutes is the
+// semantic discriminator (300 = ~5h, 10080 = ~7d).
 
 // usageWindow は internal/agents/claude（usage.go）の同名 struct の複製（極小の
 // ため共有せず重複を許容）: percent used (0–100) + the ISO reset instant.
 type usageWindow struct {
 	Pct      float64 `json:"pct"`
 	ResetsAt string  `json:"resetsAt"`
+}
+
+type recordedWindow struct {
+	UsedPercent   float64 `json:"used_percent"`
+	WindowMinutes int     `json:"window_minutes"`
+	ResetsAt      int64   `json:"resets_at"` // unix epoch seconds
 }
 
 // HandleUsage serves GET /codex/usage for the Console's WsBar chip.
@@ -119,17 +127,12 @@ func usageFromRolloutBytes(b []byte) (usage, bool) {
 // parseRateLimits parses the rate_limits from a token_count payload into the shared
 // usageWindow shape. ok is false for payloads without a rate_limits block.
 func parseRateLimits(payload json.RawMessage) (usage, bool) {
-	type win struct {
-		UsedPercent   float64 `json:"used_percent"`
-		WindowMinutes int     `json:"window_minutes"`
-		ResetsAt      int64   `json:"resets_at"` // unix epoch seconds
-	}
 	var p struct {
 		Type       string `json:"type"`
 		RateLimits *struct {
-			Primary   *win   `json:"primary"`
-			Secondary *win   `json:"secondary"`
-			PlanType  string `json:"plan_type"`
+			Primary   *recordedWindow `json:"primary"`
+			Secondary *recordedWindow `json:"secondary"`
+			PlanType  string          `json:"plan_type"`
 		} `json:"rate_limits"`
 	}
 	if json.Unmarshal(payload, &p) != nil || p.Type != "token_count" || p.RateLimits == nil {
@@ -142,15 +145,74 @@ func parseRateLimits(payload json.RawMessage) (usage, bool) {
 	}
 	u := usage{OK: true, PlanType: rl.PlanType, AgeSec: -1}
 	now := time.Now().UTC()
-	toWin := func(x *win) *usageWindow {
+	toWin := func(x *recordedWindow) *usageWindow {
 		if x == nil {
 			return nil
 		}
 		return adjustWindow(x.UsedPercent, x.WindowMinutes, x.ResetsAt, now)
 	}
-	u.FiveHour = toWin(rl.Primary)
-	u.SevenDay = toWin(rl.Secondary)
+	// Classify by duration first. primary/secondary are ordering slots, not stable
+	// names: the backend may return a weekly-only limit in primary. Keep a positional
+	// fallback for old or unusual payloads that omit/introduce an unknown duration.
+	type candidate struct {
+		window   *usageWindow
+		minutes  int
+		primary  bool
+		assigned bool
+	}
+	candidates := []candidate{
+		{window: toWin(rl.Primary), minutes: windowMinutes(rl.Primary), primary: true},
+		{window: toWin(rl.Secondary), minutes: windowMinutes(rl.Secondary)},
+	}
+	for i := range candidates {
+		c := &candidates[i]
+		if c.window == nil {
+			c.assigned = true
+			continue
+		}
+		switch {
+		case isApproxWindow(c.minutes, 5*60) && u.FiveHour == nil:
+			u.FiveHour, c.assigned = c.window, true
+		case isApproxWindow(c.minutes, 7*24*60) && u.SevenDay == nil:
+			u.SevenDay, c.assigned = c.window, true
+		}
+	}
+	for i := range candidates {
+		c := &candidates[i]
+		if c.assigned {
+			continue
+		}
+		if c.primary && u.FiveHour == nil {
+			u.FiveHour = c.window
+		} else if !c.primary && u.SevenDay == nil {
+			u.SevenDay = c.window
+		} else if u.FiveHour == nil {
+			u.FiveHour = c.window
+		} else if u.SevenDay == nil {
+			u.SevenDay = c.window
+		}
+	}
 	return u, true
+}
+
+func windowMinutes(w *recordedWindow) int {
+	if w == nil {
+		return 0
+	}
+	return w.WindowMinutes
+}
+
+// isApproxWindow matches Codex's own display tolerance: window durations within
+// 5% of a known duration receive that label.
+func isApproxWindow(minutes, expected int) bool {
+	if minutes <= 0 || expected <= 0 {
+		return false
+	}
+	diff := minutes - expected
+	if diff < 0 {
+		diff = -diff
+	}
+	return diff*20 <= expected
 }
 
 // adjustWindow maps one recorded rate-limit window onto a usageWindow, correcting
