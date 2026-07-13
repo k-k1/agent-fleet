@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import type { CSSProperties, KeyboardEvent as RKeyboardEvent, ClipboardEvent as RClipboardEvent, DragEvent as RDragEvent, RefObject } from "react";
+import type { CSSProperties, KeyboardEvent as RKeyboardEvent, ClipboardEvent as RClipboardEvent, DragEvent as RDragEvent, RefObject, ReactNode } from "react";
 import { api, apiJSON, raw, errText, pasteImage } from "../../core/api/client.ts";
 import { splitPastedImages, buildImagePrompt } from "../../lib/pastedImages.ts";
 import { useSettings, chatFontStack, surfaceBg, surfaceAccent, effectiveTheme } from "../../lib/settings.ts";
@@ -33,6 +33,7 @@ import { kindIcon, kindLabel, kindShort, kindClass } from "../../lib/sessionkind
 import { agentOf } from "../../agents/registry.ts";
 import { hasLaunchSeed, takeLaunchSeed } from "../../lib/launchSeed.ts";
 import { displayName, stateInfo } from "../../lib/sessionview.ts";
+import { textOfParts, workSplit } from "./mirrorParts.ts";
 import { coarsePointer } from "../../lib/device.ts";
 
 const q = encodeURIComponent;
@@ -398,7 +399,7 @@ export function MirrorView({
       if (total <= done) continue; // 増分なし（ツールだけの追記等）
       // 過程スキップ（chat の分離と同趣・docs/19）: 完成した本文からツール前ナレーションを
       // 飛ばし、最後のツール以降の本文（＝最終回答）だけを自動読み上げする。
-      // 手動の「読み上げ」ボタン／選択朗読は従来どおり全文（意図的に読ませているため触らない）。
+      // 完了後の作業過程は disclosure 内へ移るため、DOM 直下を読む手動朗読も最終回答に揃う。
       const from = Math.max(done, finalAnswerStart(body));
       if (total <= from) continue; // 読むべき最終回答ブロックがまだ無い（過程だけの追記）
       if (settings.ttsSummaryRead) {
@@ -495,6 +496,12 @@ export function MirrorView({
     const range = sel.getRangeAt(0);
     const node = range.startContainer;
     const el = node.nodeType === Node.TEXT_NODE ? node.parentElement : (node as HTMLElement);
+    // 完了後に畳んだ作業過程は自動・フッター朗読の対象外。展開中の選択から最終回答へ
+    // 飛ぶピルを出すと誤解を招くので、disclosure 内の選択には操作を出さない。
+    if (el?.closest(".mt-work")) {
+      setTtsPill(null);
+      return;
+    }
     const turnEl = root.contains(node) ? el?.closest<HTMLElement>(".mirror-turn.assistant") : null;
     const turnBody = turnEl ? el?.closest<HTMLElement>(".mirror-turn-body") : null;
     const idx = turnEl?.dataset.turnIdx;
@@ -1582,7 +1589,21 @@ export function MirrorView({
               : "まだ会話はありません。下の欄からプロンプトを送るか、ターミナルで対話すると、ここに ターンごとの Markdown で表示されます。"}
           </div>
         ) : (
-          renderGroups(groups, sendPrompt, openPlan, openDiff, openFile, maxSpend, session, setLightbox, agentName, ttsWiring, (p) => rejectedPlansRef.current.has(p.trim()))
+          renderGroups(
+            groups,
+            sendPrompt,
+            openPlan,
+            openDiff,
+            openFile,
+            maxSpend,
+            session,
+            setLightbox,
+            agentName,
+            ttsWiring,
+            status === "working",
+            atBottomRef.current,
+            (p) => rejectedPlansRef.current.has(p.trim()),
+          )
         )}
         {pendingPlan && (
           <div className="mirror-turn assistant">
@@ -2135,10 +2156,19 @@ function renderGroups(
   onOpenImage: (url: string) => void,
   agentName: string,
   tts: TurnTtsWiring,
+  working: boolean,
+  autoCollapseWork: boolean,
   isRejectedPlan: (plan: string) => boolean,
 ) {
   const els = [];
   let prevCtx = "";
+  let lastUser = -1;
+  for (let i = groups.length - 1; i >= 0; i--) {
+    if (groups[i].role === "user" && !groups[i].pending && !groups[i].queued) {
+      lastUser = i;
+      break;
+    }
+  }
   for (let i = 0; i < groups.length; i++) {
     const g = groups[i];
     const ctx = g.branch || g.cwd ? (g.branch || "") + "\x1f" + (g.cwd || "") : "";
@@ -2162,6 +2192,8 @@ function renderGroups(
           onOpenFile={onOpenFile}
           agentName={agentName}
           tts={tts}
+          foldWork={!working || i < lastUser}
+          defaultWorkOpen={!autoCollapseWork}
           isRejectedPlan={isRejectedPlan}
         />
       ),
@@ -2350,6 +2382,39 @@ function ContextLine({ branch, cwd }: { branch?: string; cwd?: string }) {
   );
 }
 
+// WorkDisclosure appears only once a response is complete and a final text exists after
+// tool activity. It therefore mounts at the completion boundary: users following the tail
+// get a closed summary, while someone who scrolled up to read the process keeps it open.
+function WorkDisclosure({
+  tools,
+  responses,
+  defaultOpen,
+  children,
+}: {
+  tools: number;
+  responses: number;
+  defaultOpen: boolean;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <details
+      className="mt-work"
+      open={open}
+      onToggle={(e) => setOpen((e.currentTarget as HTMLDetailsElement).open)}
+    >
+      <summary className="mt-work-head">
+        <Icon name={open ? "chevron-down" : "chevron-right"} />
+        <span className="mt-work-title">作業過程</span>
+        <span className="mt-work-count muted">
+          ツール {tools}件{responses > 0 ? `・途中応答 ${responses}件` : ""}
+        </span>
+      </summary>
+      <div className="mt-work-body">{children}</div>
+    </details>
+  );
+}
+
 // Turn renders one conversation block: a header (who + model), the body (user prompt
 // as text, assistant reply as Markdown with faint tool traces), and a footer (time +
 // token usage + copy). Subagent (sidechain) turns get a distinct label and tint.
@@ -2364,6 +2429,8 @@ function Turn({
   onOpenFile,
   agentName,
   tts,
+  foldWork,
+  defaultWorkOpen,
   isRejectedPlan,
 }: {
   turn: Group;
@@ -2376,6 +2443,8 @@ function Turn({
   onOpenFile: (path: string) => void;
   agentName: string;
   tts: TurnTtsWiring;
+  foldWork: boolean;
+  defaultWorkOpen: boolean;
   isRejectedPlan: (plan: string) => boolean;
 }) {
   const isUser = turn.role === "user";
@@ -2383,6 +2452,39 @@ function Turn({
   const ctxTok = turn.inTok + turn.cacheRead + turn.cacheCreate;
   const spend = spendOf(turn);
   const bodyEl = useRef<HTMLDivElement>(null); // カラオケ朗読（turnTts）の本文 DOM
+  const split = !isUser && foldWork ? workSplit(turn.parts) : null;
+  const copyText = split ? textOfParts(turn.parts.slice(split.at)) : turn.text;
+  const renderAssistantParts = (parts: Part[]) =>
+    foldParts(parts).map((item) =>
+      // Consecutive tool traces collapse into one foldable row (Edit/Write bursts
+      // between paragraphs). A lone tool renders inline (ToolRun handles length 1).
+      item.kind === "toolrun" ? (
+        <ToolRun key={"tr" + item.tools[0].i} tools={item.tools} onOpenDiff={onOpenDiff} />
+      ) : item.p.kind === "question" ? (
+        // A question from the transcript is already answered (claude writes the
+        // tool_use only after the answer) — show it resolved, not clickable.
+        <QuestionBlock key={item.i} questions={item.p.questions} answered answer={item.p.answer} />
+      ) : item.p.kind === "plan" ? (
+        // A historical plan (already decided) — show the outcome, open in a pane.
+        <PlanBlock
+          key={item.i}
+          plan={item.p.plan}
+          answered
+          outcome={item.p.answer}
+          forceRejected={isRejectedPlan(item.p.plan || "")}
+          onOpen={() => onOpenPlan && onOpenPlan(item.p.plan || "")}
+        />
+      ) : item.p.kind === "userfile" ? (
+        // Files the agent shared via SendUserFile — a panel; each opens in a pane.
+        <UserFileBlock key={item.i} files={item.p.files} caption={item.p.caption} onOpen={onOpenFile} />
+      ) : item.p.kind === "thinking" ? (
+        // The agent's chain-of-thought (codex reasoning / opencode reasoning),
+        // collapsed by default so it doesn't crowd the answer.
+        <ThinkingBlock key={item.i} text={item.p.text} />
+      ) : (
+        <MarkdownView key={item.i} source={item.p.text} />
+      ),
+    );
   return (
     <div
       className={"mirror-turn " + (isUser ? "user" : "assistant") + (turn.sidechain ? " sidechain" : "")}
@@ -2451,37 +2553,15 @@ function Turn({
               </>
             );
           })()
+        ) : split ? (
+          <>
+            <WorkDisclosure tools={split.tools} responses={split.responses} defaultOpen={defaultWorkOpen}>
+              {renderAssistantParts(turn.parts.slice(0, split.at))}
+            </WorkDisclosure>
+            {renderAssistantParts(turn.parts.slice(split.at))}
+          </>
         ) : (
-          foldParts(turn.parts).map((item) =>
-            // Consecutive tool traces collapse into one foldable row (Edit/Write bursts
-            // between paragraphs). A lone tool renders inline (ToolRun handles length 1).
-            item.kind === "toolrun" ? (
-              <ToolRun key={"tr" + item.tools[0].i} tools={item.tools} onOpenDiff={onOpenDiff} />
-            ) : item.p.kind === "question" ? (
-              // A question from the transcript is already answered (claude writes the
-              // tool_use only after the answer) — show it resolved, not clickable.
-              <QuestionBlock key={item.i} questions={item.p.questions} answered answer={item.p.answer} />
-            ) : item.p.kind === "plan" ? (
-              // A historical plan (already decided) — show the outcome, open in a pane.
-              <PlanBlock
-                key={item.i}
-                plan={item.p.plan}
-                answered
-                outcome={item.p.answer}
-                forceRejected={isRejectedPlan(item.p.plan || "")}
-                onOpen={() => onOpenPlan && onOpenPlan(item.p.plan || "")}
-              />
-            ) : item.p.kind === "userfile" ? (
-              // Files the agent shared via SendUserFile — a panel; each opens in a pane.
-              <UserFileBlock key={item.i} files={item.p.files} caption={item.p.caption} onOpen={onOpenFile} />
-            ) : item.p.kind === "thinking" ? (
-              // The agent's chain-of-thought (codex reasoning / opencode reasoning),
-              // collapsed by default so it doesn't crowd the answer.
-              <ThinkingBlock key={item.i} text={item.p.text} />
-            ) : (
-              <MarkdownView key={item.i} source={item.p.text} />
-            ),
-          )
+          renderAssistantParts(turn.parts)
         )}
       </div>
       <div className="mirror-turn-foot">
@@ -2495,7 +2575,7 @@ function Turn({
           <TurnSpendBar fresh={turn.inTok} create={turn.cacheCreate} out={turn.outTok} max={maxSpend} />
         )}
         {!isUser && <TurnTtsButtons turn={turn} tts={tts} body={bodyEl} />}
-        <CopyButton text={turn.text} />
+        <CopyButton text={copyText} />
       </div>
     </div>
   );
