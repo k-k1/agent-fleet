@@ -18,7 +18,7 @@ interface MirrorToggleProps {
 
 export function MirrorToggle({ mirror, onToggle, running = true }: MirrorToggleProps) {
   return (
-    <span className="ui-seg sm md-toggle mirror-toggle">
+    <span className="ui-seg sm md-toggle mirror-toggle sel-scope">
       <button
         type="button"
         className={"seg-btn" + (mirror ? " active" : "")}
