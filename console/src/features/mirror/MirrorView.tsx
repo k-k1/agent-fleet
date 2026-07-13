@@ -21,7 +21,16 @@ import {
   isTurnReader,
   type TurnReadHandle,
 } from "./turnTts.ts";
-import { sessionVoiceOpts, announce, onTtsStop } from "../chat/tts.ts";
+import {
+  sessionVoiceOpts,
+  announce,
+  onTtsStop,
+  startTts,
+  stopTtsForReplacement,
+  ttsOptsFromSettings,
+  workVoiceOpts,
+  type TtsController,
+} from "../chat/tts.ts";
 import { pendingSpeech } from "../chat/ttsText.ts";
 import { askAssistant } from "../chat/api.ts";
 import { useTtsStore } from "../../core/store/tts.ts";
@@ -33,7 +42,7 @@ import { kindIcon, kindLabel, kindShort, kindClass } from "../../lib/sessionkind
 import { agentOf } from "../../agents/registry.ts";
 import { hasLaunchSeed, takeLaunchSeed } from "../../lib/launchSeed.ts";
 import { displayName, stateInfo } from "../../lib/sessionview.ts";
-import { textOfParts, workSplit } from "./mirrorParts.ts";
+import { confirmedWorkEnd, textOfParts, workSplit } from "./mirrorParts.ts";
 import { coarsePointer } from "../../lib/device.ts";
 
 const q = encodeURIComponent;
@@ -306,6 +315,11 @@ export function MirrorView({
   const ttsAutoSeenRef = useRef<number | null>(null);
   const ttsAutoQueueRef = useRef<number[]>([]);
   const ttsAutoDoneRef = useRef(new Map<number, number>());
+  // 確定済み作業過程の小声読み。part index で既読を持ち、最後の tool/question/plan までに
+  // 確定した text だけを読む。最終回答（idle）到着時はキューごと破棄して通常朗読へ譲る。
+  const ttsWorkRef = useRef<TtsController | null>(null);
+  const ttsWorkQueueRef = useRef<string[]>([]);
+  const ttsWorkDoneRef = useRef(new Map<number, number>());
   // 読み上げ担当の登録（turnTts.ts）。同じセッションを複数ペインで開いても読むのは先着の
   // 1 ペインだけ。readOnly（未アタッチ）ペインは読まないので登録しない。
   const ttsTokenRef = useRef(Symbol("ttsReader"));
@@ -319,6 +333,7 @@ export function MirrorView({
     () =>
       onTtsStop(() => {
         ttsAutoQueueRef.current.length = 0;
+        ttsWorkQueueRef.current.length = 0;
       }),
     [],
   );
@@ -416,12 +431,43 @@ export function MirrorView({
   };
   const ttsAutoPumpRef = useRef(ttsAutoPump);
   ttsAutoPumpRef.current = ttsAutoPump;
+  const ttsWorkPump = () => {
+    if (!settings.ttsEnabled || !settings.ttsAutoReadMirror || settings.ttsWorkRead === "off") {
+      ttsWorkQueueRef.current.length = 0;
+      return;
+    }
+    if (statusRef.current !== "working" || ttsWorkRef.current) return;
+    const st = useTtsStore.getState();
+    if (st.active || st.speaking) return; // 最終回答・告知など重要な再生へ割り込まない
+    const text = ttsWorkQueueRef.current.shift();
+    if (!text) return;
+    const voice = sessionVoiceOpts(session);
+    const c = startTts(
+      { ...ttsOptsFromSettings(settings), ...voice, ...workVoiceOpts(voice, settings.ttsWorkRead) },
+      (sessionMeta ? displayName(sessionMeta) : "セッション") + "・作業過程",
+      (reason) => {
+        ttsWorkRef.current = null;
+        if (reason === "explicit") ttsWorkQueueRef.current.length = 0;
+        else queueMicrotask(() => ttsWorkPumpRef.current());
+      },
+      session,
+    );
+    ttsWorkRef.current = c;
+    c.push(text);
+    c.flush();
+  };
+  const ttsWorkPumpRef = useRef(ttsWorkPump);
+  ttsWorkPumpRef.current = ttsWorkPump;
   // 他の再生が終わって音声が空いたら、待たせていた自動読み上げを再開する。zustand の
   // subscribe は setState 中に同期で呼ばれ、プリエンプト（旧再生 stop → 新再生の登録）の
   // 途中は active が一瞬 null になるため、microtask に逃がして置き換え完了後の状態で判定する。
   useEffect(() => {
     return useTtsStore.subscribe((st, prev) => {
-      if (prev.speaking && !st.speaking) queueMicrotask(() => ttsAutoPumpRef.current());
+      if (prev.speaking && !st.speaking)
+        queueMicrotask(() => {
+          ttsWorkPumpRef.current();
+          ttsAutoPumpRef.current();
+        });
     });
   }, []);
 
@@ -574,6 +620,10 @@ export function MirrorView({
     ttsAutoSeenRef.current = null; // 自動読み上げの基準も取り直す（履歴は読まない）
     ttsAutoQueueRef.current.length = 0;
     ttsAutoDoneRef.current.clear();
+    stopTtsForReplacement(ttsWorkRef.current);
+    ttsWorkRef.current = null;
+    ttsWorkQueueRef.current.length = 0;
+    ttsWorkDoneRef.current.clear();
     ttsPendingInitRef.current = false; // 確認読み上げの基準も取り直す
     ttsPendingSigRef.current = "";
   }, [session]);
@@ -628,6 +678,10 @@ export function MirrorView({
             ttsAutoSeenRef.current = null; // idx が振り直されるので基準も取り直す
             ttsAutoQueueRef.current.length = 0;
             ttsAutoDoneRef.current.clear();
+            stopTtsForReplacement(ttsWorkRef.current);
+            ttsWorkRef.current = null;
+            ttsWorkQueueRef.current.length = 0;
+            ttsWorkDoneRef.current.clear();
           } else if (Array.isArray(d.messages) && d.messages.length) {
             // Idempotent append: keep only turns past the newest `idx` (jsonl line) we
             // already hold. A quick re-poll (after sending) racing the in-flight poll can
@@ -1374,34 +1428,71 @@ export function MirrorView({
         break;
       }
     }
-    if (newest < 0) return; // まだ何も届いていない
+    if (newest < 0) return;
     const seen = ttsAutoSeenRef.current;
-    ttsAutoSeenRef.current = newest;
-    if (seen === null || newest <= seen) return; // 初回/巻き戻り→基準のみ更新。増分なしも何もしない
-    if (readOnly) return;
-    // 読むペイン: 通常はアクティブなペインだけ（他は ttsSessionNotify の領分）。全ペイン読み
-    // （ttsAutoReadAllPanes）では開いている全ペインが対象 — ただし同じセッションを複数ペインで
-    // 開いているときは担当（先着）ペインだけが読む（二重読み防止）。
-    if (settings.ttsAutoReadAllPanes ? !isTurnReader(session, ttsTokenRef.current) : !active) return;
-    if (!settings.ttsEnabled || !settings.ttsAutoReadMirror) return;
-    const q = ttsAutoQueueRef.current;
-    for (const t of turns) {
-      if (t.idx === undefined || t.idx <= seen) continue;
-      if (t.role !== "assistant" || t.sidechain || t.compact) continue;
-      // このターンが属するグループ＝idx が t.idx 以下で最後のグループ（グループは先頭ターンの idx を持つ）
-      let g: Group | null = null;
-      for (const gg of groups) {
-        if (gg.idx === undefined) continue;
-        if (gg.idx <= t.idx) g = gg;
-        else break;
+    ttsAutoSeenRef.current = newest; // 非対象ペインでも履歴を飲み込み、後から一括再読しない
+    const canRead =
+      !readOnly &&
+      settings.ttsEnabled &&
+      settings.ttsAutoReadMirror &&
+      (settings.ttsAutoReadAllPanes ? isTurnReader(session, ttsTokenRef.current) : active);
+
+    if (status === "working" && settings.ttsWorkRead !== "off") {
+      // 現在のユーザープロンプト以後だけを見る。初回ロードした履歴や、末尾のキュー済み
+      // synthetic user turn は作業過程として再読しない。
+      let lastUser = -1;
+      for (let i = groups.length - 1; i >= 0; i--) {
+        const g = groups[i];
+        if (g.role === "user" && !g.pending && !g.queued) {
+          lastUser = i;
+          break;
+        }
       }
-      if (!g || g.idx === undefined || g.role !== "assistant" || g.sidechain || g.compact) continue;
-      if (!q.includes(g.idx)) q.push(g.idx);
+      for (let i = lastUser + 1; i < groups.length; i++) {
+        const g = groups[i];
+        if (g.role !== "assistant" || g.sidechain || g.compact || g.idx === undefined) continue;
+        const end = confirmedWorkEnd(g.parts);
+        const done = ttsWorkDoneRef.current.get(g.idx) ?? 0;
+        if (end <= done) continue;
+        ttsWorkDoneRef.current.set(g.idx, end);
+        const text = textOfParts(g.parts.slice(done, end));
+        if (canRead && seen !== null && text) ttsWorkQueueRef.current.push(text);
+      }
+      while (ttsWorkQueueRef.current.length > 4) ttsWorkQueueRef.current.shift();
+      if (canRead) ttsWorkPumpRef.current();
+    } else {
+      // idle = 最終回答が確定。残っている小声を置換停止し、通常の最終回答朗読へ譲る。
+      stopTtsForReplacement(ttsWorkRef.current);
+      ttsWorkRef.current = null;
+      ttsWorkQueueRef.current.length = 0;
+      ttsWorkDoneRef.current.clear();
     }
-    while (q.length > 4) q.shift(); // 席を外した間の洪水は古い回答から捨てる（announce と同じ思想）
+    if (!canRead) {
+      stopTtsForReplacement(ttsWorkRef.current);
+      ttsWorkRef.current = null;
+      ttsWorkQueueRef.current.length = 0;
+      return;
+    }
+    if (seen !== null && newest > seen) {
+      const q = ttsAutoQueueRef.current;
+      for (const t of turns) {
+        if (t.idx === undefined || t.idx <= seen) continue;
+        if (t.role !== "assistant" || t.sidechain || t.compact) continue;
+        // このターンが属するグループ＝idx が t.idx 以下で最後のグループ
+        let g: Group | null = null;
+        for (const gg of groups) {
+          if (gg.idx === undefined) continue;
+          if (gg.idx <= t.idx) g = gg;
+          else break;
+        }
+        if (!g || g.idx === undefined || g.role !== "assistant" || g.sidechain || g.compact) continue;
+        if (!q.includes(g.idx)) q.push(g.idx);
+      }
+      while (q.length > 4) q.shift();
+    }
     ttsAutoPumpRef.current();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [turns]);
+  }, [turns, status, active, readOnly, settings.ttsEnabled, settings.ttsAutoReadMirror, settings.ttsAutoReadAllPanes, settings.ttsWorkRead]);
 
   // A /context-like gauge: the newest assistant turn's prompt size (input + cache) is
   // the current context fill. The per-category split (/context) is computed inside

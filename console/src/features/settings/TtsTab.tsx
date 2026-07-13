@@ -8,6 +8,7 @@ import {
   TTS_CACHE_SIZES,
   TTS_PROVIDERS,
   TTS_POLLY_VOICES,
+  TTS_WORK_READ_MODES,
   TTS_RESET,
   type TtsCharConf,
 } from "../../lib/settings.ts";
@@ -132,6 +133,17 @@ export function TtsTab() {
             </p>
             {s.ttsAutoReadMirror && (
               <>
+                <Row label="作業過程を小声で読む">
+                  <Choice
+                    value={s.ttsWorkRead}
+                    options={TTS_WORK_READ_MODES}
+                    onChange={(v) => setSetting("ttsWorkRead", v)}
+                  />
+                </Row>
+                <p className="muted ds-note">
+                  ツール実行で途中経過と確定した応答だけを小声で読み、最終回答は通常の声へ戻します。
+                  同じキャラに対応スタイルが無い場合や Polly では、同じ声の音量を下げて読みます。
+                </p>
                 <Row label="開いている全ペインで読む">
                   <OnOff value={s.ttsAutoReadAllPanes} onChange={(v) => setSetting("ttsAutoReadAllPanes", v)} />
                 </Row>

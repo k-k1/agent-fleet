@@ -227,6 +227,9 @@ export interface Settings {
   // ペインで開いていても読むのは 1 ペインだけ（features/mirror/turnTts.ts の担当登録）。
   // セッションごとの声（ttsVoicePerSession）と併用すると、どのペインの回答かを声で判別できる。
   ttsAutoReadAllPanes: boolean;
+  // 確定した作業過程（最終回答より前のナレーション）を小声で読む。off=読まない、
+  // whisper=ささやき、hushed=ヒソヒソ。対応スタイルが無い話者/Polly は同じ声の音量を下げる。
+  ttsWorkRead: string; // "off" | "whisper" | "hushed"
   // セッションごとに声を変える（features/chat/tts.ts の sessionVoiceOpts）。セッション名の
   // ハッシュで話者プール（VOICEVOX 標準キャラ / Polly 3 声）から決定的に割り当て、ミラーの
   // 読み上げとセッション音声通知に適用（どのセッションの回答かを声で判別できる）。
@@ -321,6 +324,7 @@ const DEFAULTS: Settings = {
   ttsCacheSec: 900, // 15分
   ttsAutoReadMirror: true,
   ttsAutoReadAllPanes: true,
+  ttsWorkRead: "off",
   ttsVoicePerSession: true,
   // {} = 標準 14 キャラ（tts.ts の SESSION_VOICES）がセッション割り当て対象。新規ユーザーも
   // リセットもこの状態から始まる（キャラは標準 14 人スタートで統一）。エンジンに追加キャラが
@@ -386,6 +390,7 @@ const TTS_RESET_KEYS = [
   "ttsSpeed",
   "ttsAutoReadMirror",
   "ttsAutoReadAllPanes",
+  "ttsWorkRead",
   "ttsSummaryRead",
   "ttsReadPending",
   "ttsAbbrevCode",
@@ -403,6 +408,12 @@ export const TTS_SPEEDS: [number, string][] = [
   [1.0, "標準"],
   [1.25, "はやめ"],
   [1.5, "はやい"],
+];
+
+export const TTS_WORK_READ_MODES: [string, string][] = [
+  ["off", "読まない"],
+  ["whisper", "ささやき"],
+  ["hushed", "ヒソヒソ"],
 ];
 
 // Assistant-chat output-language choices, shared by the settings UI. "auto" leaves the

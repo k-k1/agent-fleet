@@ -14,6 +14,7 @@ import {
   stopTtsForReplacement,
   ttsOptsFromSettings,
   assistantVoiceOpts,
+  workVoiceOpts,
   type TtsController,
   type TtsOptions,
 } from "./tts.ts";
@@ -307,27 +308,29 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
     if (coarsePointer()) inputRef.current?.blur();
     const ac = new AbortController();
     abortRef.current = ac;
-    // 音声読み上げ（docs/24 + 分離）: 有効時のみコントローラを起こし、delta を句点区切りで
-    // 逐次合成。作業過程（ツール前ナレーション）は「読み始めても step 確定でスキップ」する
-    // ため、step ごとに作り直せるよう makeTts で生成する。直前のターンが残っていれば止めてから。
-    const makeTts = () =>
+    // 小声読みが OFF のときは従来どおり delta をライブ再生。ON のときは、途中テキストを
+    // onStep で「作業過程」と確定してから小声で読み、onDone の最終回答を通常声で読む。
+    const baseVoice = assistantVoiceOpts(target.assistant_id || draftAssistantId || undefined, assistVoice);
+    const workMode = settings.ttsWorkRead;
+    const makeTts = (work = false) =>
       settings.ttsEnabled
         ? startTts(
             {
               ...ttsOptsFromSettings(settings),
               // アシスタントの声: 明示指定 > プール割り当て（セッションごとに声 ON 時）> 設定の話者
-              ...assistantVoiceOpts(target.assistant_id || draftAssistantId || undefined, assistVoice),
+              ...baseVoice,
+              ...(work ? workVoiceOpts(baseVoice, workMode) : undefined),
             },
-            "チャット",
+            work ? "チャット・作業過程" : "チャット",
             undefined,
             "",
             // ライブ配信カラオケ: 読み上げ中の文を通知し、ストリーミングバブルの該当ブロックを
             // ハイライトする（StreamingMarkdown が highlight から DOM ブロックを探して光らせる）。
-            (t) => setKaraoke(t),
+            !work && workMode === "off" ? (t) => setKaraoke(t) : undefined,
           )
         : null;
     stopTtsForReplacement(ttsRef.current);
-    ttsRef.current = makeTts();
+    ttsRef.current = workMode === "off" ? makeTts() : null;
     markChatBusy(target.id, true); // publish 進行中 to the rail
     // Mirror the live reply + working steps + final conversation into the store so a pane
     // re-opened on this conversation mid-stream re-attaches and picks up the answer even if
@@ -356,7 +359,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
           acc += t;
           setStreamText(acc);
           setLive(convId, { text: acc, steps }); // steps only change in onStep
-          ttsRef.current?.push(t);
+          if (workMode === "off") ttsRef.current?.push(t);
         },
         onStep: (step) => {
           // A tool-using message finished: its narration becomes a working step and the
@@ -365,12 +368,19 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
           acc = "";
           setStreamText("");
           setStreamSteps([...steps]);
-          setKaraoke(null); // 過程の読み上げをスキップ → ハイライトも一旦解除
+          setKaraoke(null);
           setLive(convId, { text: "", steps: [...steps] });
-          // 音声: 途中まで読んでいた作業過程の再生をスキップし、最終回答用に読み直す
-          // （stop→作り直しの合成待ちが「一拍」になり、過程を読み切らず本回答へ移る）。
           stopTtsForReplacement(ttsRef.current);
-          ttsRef.current = makeTts();
+          if (workMode === "off") {
+            ttsRef.current = makeTts(); // 従来動作: 次の tentative message をライブ再生
+          } else if (step.text?.trim()) {
+            const c = makeTts(true);
+            ttsRef.current = c;
+            c?.push(step.text);
+            c?.flush();
+          } else {
+            ttsRef.current = null;
+          }
         },
         onError: (m) => setError(m),
         onDone: (updated) => {
@@ -379,7 +389,17 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
             publishSnapshot(updated); // reaches any live pane, even after this one unmounts
           }
           teardown(); // same synchronous batch as applyConv → no duplicate-bubble frame
-          ttsRef.current?.flush();
+          if (workMode === "off") {
+            ttsRef.current?.flush();
+          } else {
+            // 最終回答の到着で、残っている小声再生を置換して通常声へ戻す。
+            stopTtsForReplacement(ttsRef.current);
+            const finalText = acc.trim() || updated?.messages.at(-1)?.content || "";
+            const c = finalText ? makeTts() : null;
+            ttsRef.current = c;
+            c?.push(finalText);
+            c?.flush();
+          }
         },
       },
       ac.signal,

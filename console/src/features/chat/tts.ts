@@ -37,6 +37,7 @@ export interface TtsOptions {
   pollyVoice?: string; // Polly の VoiceId（auto のフォールバック先でも使う）
   lang?: string; // 言語ヒント（設定 outputLanguage を再利用）: "auto" | "ja" | "en"
   particlePause?: boolean; // 設定 ttsParticlePause。CP 側で読点ポーズを詰める（voicevox のみ）
+  volume?: number; // 再生音量（0..1）。合成条件ではなく Web Audio の出力ゲイン
 }
 
 // settings から TtsOptions を組む共通処理（announce / speakText / startNarration / ChatView）。
@@ -219,6 +220,28 @@ export function assistantVoiceOpts(assistantId?: string, explicit?: string): Par
   return voicePoolOpts("assistant:" + assistantId);
 }
 
+// workVoiceOpts は確定済みの作業過程を小声で読むための上書き。現在の VOICEVOX 話者と
+// 同じキャラに対象スタイルがあればそれを使い、無ければ音量だけを下げる。Polly への
+// フォールバックでも volume はクライアント再生に効くため、通常声との区別は維持される。
+export function workVoiceOpts(
+  base?: Partial<TtsOptions>,
+  mode = getSettings().ttsWorkRead,
+): Partial<TtsOptions> | undefined {
+  if (mode === "off") return undefined;
+  const volume = mode === "hushed" ? 0.42 : 0.58;
+  const voice = base?.voice || getSettings().ttsVoiceVoicevox;
+  const wanted = mode === "hushed" ? ["ヒソヒソ"] : ["ささやき", "囁き"];
+  const cat = speakersCatalog();
+  if (cat) {
+    const speaker = cat.find((sp) => sp.styles.some((st) => st.id === voice));
+    const style = speaker?.styles.find((st) => wanted.some((w) => st.name.includes(w)));
+    if (style) return { voice: style.id, volume };
+  }
+  // カタログ取得前でも、同梱設定で番号が確定しているずんだもんはスタイルを使える。
+  if (VV_CHAR_NAMES[voice] === "ずんだもん") return { voice: mode === "hushed" ? "38" : "22", volume };
+  return { volume };
+}
+
 // --- 朗読ビューの声選択（docs/24） -----------------------------------------------
 // ReaderView ヘッダーの「声」セレクト用。"" = 設定の話者のまま。"vv:<speaker>" は VOICEVOX
 // のキャラ（provider は auto に上げる — エンジン不在時は Polly が代読し、復帰したら選んだ
@@ -364,6 +387,17 @@ function audioCtx(): AudioContext | null {
   } catch {
     return null;
   }
+}
+
+function connectOutput(ctx: AudioContext, src: AudioBufferSourceNode, volume = 1): void {
+  if (volume >= 0.999) {
+    src.connect(ctx.destination);
+    return;
+  }
+  const gain = ctx.createGain();
+  gain.gain.value = Math.max(0, Math.min(1, volume));
+  src.connect(gain);
+  gain.connect(ctx.destination);
 }
 
 // --- グローバル停止の伝播 --------------------------------------------------------
@@ -592,7 +626,7 @@ export function startTts(
       if (!ab) continue; // 失敗文はスキップして次へ
       const src = ctx.createBufferSource();
       src.buffer = ab;
-      src.connect(ctx.destination);
+      connectOutput(ctx, src, opts.volume);
       src.onended = () => {
         srcs.delete(src);
         notify();
@@ -892,7 +926,7 @@ export function startNarration(
         label(true);
         const src = ctx!.createBufferSource();
         src.buffer = ab;
-        src.connect(ctx!.destination);
+        connectOutput(ctx!, src, aopts.volume);
         src.onended = () => {
           cur = null;
           playNext();
@@ -928,7 +962,7 @@ export function startNarration(
       useTtsStore.getState().setPreparing(false); // 音が出はじめた → 生成中を解除
       const src = ctx.createBufferSource();
       src.buffer = ab;
-      src.connect(ctx.destination);
+      connectOutput(ctx, src, opts.volume);
       src.onended = () => {
         playing = false;
         cur = null;
