@@ -12,16 +12,20 @@ export interface WorkSplit {
   responses: number;
 }
 
-// Split only when a real final text exists after the last work boundary. Questions and
-// plans are tool interactions represented by dedicated part kinds; userfile is deliberately
-// not a boundary because a shared file is a final deliverable and should remain visible.
-export function workSplit(parts: MirrorPartLike[]): WorkSplit | null {
+export function confirmedWorkEnd(parts: MirrorPartLike[]): number {
   let boundary = -1;
   for (let i = 0; i < parts.length; i++) {
     if (parts[i].kind === "tool" || parts[i].kind === "question" || parts[i].kind === "plan") boundary = i;
   }
-  if (boundary < 0) return null;
-  const at = boundary + 1;
+  return boundary + 1;
+}
+
+// Split only when a real final text exists after the last work boundary. Questions and
+// plans are tool interactions represented by dedicated part kinds; userfile is deliberately
+// not a boundary because a shared file is a final deliverable and should remain visible.
+export function workSplit(parts: MirrorPartLike[]): WorkSplit | null {
+  const at = confirmedWorkEnd(parts);
+  if (at === 0) return null;
   if (!parts.slice(at).some((p) => p.kind === "text" && !!p.text?.trim())) return null;
   const work = parts.slice(0, at);
   return {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { textOfParts, workSplit } from "./mirrorParts.ts";
+import { confirmedWorkEnd, textOfParts, workSplit } from "./mirrorParts.ts";
 
 describe("workSplit", () => {
   it("最後のツール以前を作業過程、以後を最終回答に分ける", () => {
@@ -28,5 +28,10 @@ describe("workSplit", () => {
     expect(workSplit([{ kind: "text", text: "通常回答" }])).toBeNull();
     expect(workSplit([{ kind: "text", text: "確認中" }, { kind: "tool" }])).toBeNull();
     expect(workSplit([{ kind: "tool" }, { kind: "thinking", text: "推論" }])).toBeNull();
+  });
+
+  it("最終回答を待たず、ツール到着時点までを確定済み作業過程として返す", () => {
+    expect(confirmedWorkEnd([{ kind: "text" }, { kind: "tool" }, { kind: "text" }])).toBe(2);
+    expect(confirmedWorkEnd([{ kind: "text" }])).toBe(0);
   });
 });
