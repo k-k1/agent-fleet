@@ -14,6 +14,7 @@ import { MarkdownView } from "../viewer/MarkdownView.tsx";
 import {
   readTurn,
   collectBlocks,
+  finalAnswerStart,
   blockIndexAt,
   turnSpokenText,
   claimTurnReader,
@@ -391,15 +392,21 @@ export function MirrorView({
       const total = collectBlocks(body).length;
       ttsAutoDoneRef.current.set(gi, total);
       if (total <= done) continue; // 増分なし（ツールだけの追記等）
+      // 過程スキップ（chat の分離と同趣・docs/19）: ツール前ナレーションを飛ばし、最後のツール
+      // 以降の本文（＝最終回答）から自動読み上げする。ポールが本文＋ツールをまとめて届ける
+      // 速いツール応答では過程が綺麗に飛ぶ（ナレーションが 1 ポール先行した時だけ読まれる）。
+      // 手動の「読み上げ」ボタン／選択朗読は従来どおり全文（意図的に読ませているため触らない）。
+      const from = Math.max(done, finalAnswerStart(body));
+      if (total <= from) continue; // 読むべき最終回答ブロックがまだ無い（過程だけの追記）
       if (settings.ttsSummaryRead) {
-        const text = turnSpokenText(body, done);
+        const text = turnSpokenText(body, from);
         if (text.length > TTS_SUMMARY_MIN) {
           ttsSummaryBusyRef.current = true;
-          void ttsSummarize(gi, body, done, text);
+          void ttsSummarize(gi, body, from, text);
           return;
         }
       }
-      ttsStart(gi, body, done);
+      ttsStart(gi, body, from);
       if (ttsHandleRef.current) return; // 読み始めた（読める文が無ければ次の候補へ）
     }
   };
