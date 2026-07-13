@@ -28,13 +28,14 @@ import (
 var ttsHTTP = &http.Client{Timeout: 30 * time.Second}
 
 type ttsSynthReq struct {
-	Text       string  `json:"text"`
-	Provider   string  `json:"provider"`   // "" | "auto" | "voicevox" | "polly"
-	Voice      string  `json:"voice"`      // voicevox の speaker 番号（例 "3"=ずんだもん）
-	PollyVoice string  `json:"pollyVoice"` // Polly の VoiceId（例 "Takumi"）。auto で Polly に落ちた時も使う
-	Speed      float64 `json:"speed"`      // 0.5〜2.0（voicevox speedScale / Polly prosody rate）。0/未指定=1.0
-	Lang       string  `json:"lang"`       // 言語ヒント: "auto" | "ja" | "en"（設定 outputLanguage を再利用）
-	EnKana     bool    `json:"enkana"`     // 英単語をカタカナ英語に前処理してから合成（voicevox のみ, enkana.go）
+	Text          string  `json:"text"`
+	Provider      string  `json:"provider"`      // "" | "auto" | "voicevox" | "polly"
+	Voice         string  `json:"voice"`         // voicevox の speaker 番号（例 "3"=ずんだもん）
+	PollyVoice    string  `json:"pollyVoice"`    // Polly の VoiceId（例 "Takumi"）。auto で Polly に落ちた時も使う
+	Speed         float64 `json:"speed"`         // 0.5〜2.0（voicevox speedScale / Polly prosody rate）。0/未指定=1.0
+	Lang          string  `json:"lang"`          // 言語ヒント: "auto" | "ja" | "en"（設定 outputLanguage を再利用）
+	EnKana        bool    `json:"enkana"`        // 英単語をカタカナ英語に前処理してから合成（voicevox のみ, enkana.go）
+	ParticlePause bool    `json:"particlePause"` // 設定 ttsParticlePause（クライアントが挿入した読点の間を詰める。voicevox のみ）
 }
 
 // ttsProvider は合成エンジンのプロバイダ抽象（docs/24）。chat_providers.go の
@@ -48,9 +49,10 @@ type ttsProvider interface {
 }
 
 type voiceOpts struct {
-	voice string  // プロバイダ固有の話者 ID
-	speed float64 // 0.5〜2.0。0/未指定 = 1.0
-	lang  string  // "auto" | "ja" | "en"
+	voice         string  // プロバイダ固有の話者 ID
+	speed         float64 // 0.5〜2.0。0/未指定 = 1.0
+	lang          string  // "auto" | "ja" | "en"
+	particlePause bool    // 助詞の小休止（voicevox のみ）の間を詰める
 }
 
 // chooseTTSProvider は auto（既定）の使い分けを決める純関数（docs/24 の表）。
@@ -131,7 +133,7 @@ func registerTTSRoutes(mux *http.ServeMux, cfg config) {
 		if name == "" || name == "auto" {
 			name = chooseTTSProvider(req.Provider, req.Lang, engineOff(r.Context()), vv.Ready(r.Context()), pl.Ready(r.Context()))
 		}
-		o := voiceOpts{voice: req.Voice, speed: req.Speed, lang: req.Lang}
+		o := voiceOpts{voice: req.Voice, speed: req.Speed, lang: req.Lang, particlePause: req.ParticlePause}
 		if name == "voicevox" {
 			// 英語をカタカナ英語に前処理（VOICEVOX は英語綴りを読めないため）。Polly は
 			// 英語をそのまま読めるので、voicevox に決まったときだけ適用する。docs/24。
@@ -250,7 +252,7 @@ func (v *voicevoxProvider) Ready(ctx context.Context) bool {
 }
 
 func (v *voicevoxProvider) Synthesize(ctx context.Context, text string, o voiceOpts) ([]byte, string, *apiError) {
-	wav, aerr := voicevoxSynthesize(ctx, v.base, text, o.voice, o.speed)
+	wav, aerr := voicevoxSynthesize(ctx, v.base, text, o.voice, o.speed, o.particlePause)
 	if aerr != nil {
 		return nil, "", aerr
 	}
@@ -299,9 +301,38 @@ func isJaRune(r rune) bool {
 	return false
 }
 
+// particlePauseScale は「助詞のあとで一呼吸」(ttsParticlePause) ON 時に読点ポーズ
+// （pause_mora.vowel_length）へ掛ける係数。挿入頻度が高い（を・は・で・に・と＋漢字の
+// 境界ごと）ため、句点相当の間だと文全体がもたつく — 6 割程度に詰めて「軽い息継ぎ」に
+// 近づける。地の文にもとから含まれる読点も同じ間になるが、ON 時は全体を詰める方向で
+// 一貫させる（クライアントは区別せずテキストへ「、」を挿し込んでいるため）。
+const particlePauseScale = 0.6
+
+// scalePauseMoras は audio_query の accent_phrases[].pause_mora.vowel_length を
+// scale 倍する（in-place）。pause_mora は読点等の直後にだけ存在する（null のことが多い）。
+func scalePauseMoras(m map[string]any, scale float64) {
+	phrases, ok := m["accent_phrases"].([]any)
+	if !ok {
+		return
+	}
+	for _, p := range phrases {
+		phrase, ok := p.(map[string]any)
+		if !ok {
+			continue
+		}
+		pause, ok := phrase["pause_mora"].(map[string]any)
+		if !ok {
+			continue
+		}
+		if vl, ok := pause["vowel_length"].(float64); ok {
+			pause["vowel_length"] = vl * scale
+		}
+	}
+}
+
 // voicevoxSynthesize は VOICEVOX の 2 段 API（audio_query → synthesis）で WAV を得る。
 // speaker=3 がずんだもん・ノーマル。speed は audio_query の speedScale を上書きする。
-func voicevoxSynthesize(ctx context.Context, base, text, voice string, speed float64) ([]byte, *apiError) {
+func voicevoxSynthesize(ctx context.Context, base, text, voice string, speed float64, particlePause bool) ([]byte, *apiError) {
 	base = strings.TrimRight(base, "/")
 	text = collapseJaSpaces(text)
 	speaker := strings.TrimSpace(voice)
@@ -334,6 +365,9 @@ func voicevoxSynthesize(ctx context.Context, base, text, voice string, speed flo
 		m["postPhonemeLength"] = 0.05
 		if speed > 0 {
 			m["speedScale"] = clampSpeed(speed)
+		}
+		if particlePause {
+			scalePauseMoras(m, particlePauseScale)
 		}
 		if nb, e := json.Marshal(m); e == nil {
 			aqBody = nb
