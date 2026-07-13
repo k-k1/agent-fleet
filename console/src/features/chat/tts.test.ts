@@ -411,6 +411,19 @@ describe("applyBuiltinReadings / applyReadings (組み込みの読み補正)", (
     expect(applyBuiltinReadings("矢を放って命中した")).toBe("矢を放って命中した");
   });
 
+  it("が/は/も＋要（文末・句読点・です/だ）→かなめ。複合語・要る は触らない", () => {
+    expect(applyBuiltinReadings("ここが要")).toBe("ここがかなめ"); // 実機報告
+    expect(applyBuiltinReadings("ここが要です")).toBe("ここがかなめです");
+    expect(applyBuiltinReadings("そこが要だ。")).toBe("そこがかなめだ。");
+    expect(applyBuiltinReadings("そこは要、次も要")).toBe("そこはかなめ、次もかなめ");
+    // 複合語（よう）は直後が漢字なので対象外
+    expect(applyBuiltinReadings("そこが要注意")).toBe("そこが要注意");
+    expect(applyBuiltinReadings("それが要素です")).toBe("それが要素です");
+    // 要る（いる＝必要）は活用語尾が続くので対象外
+    expect(applyBuiltinReadings("許可が要る")).toBe("許可が要る");
+    expect(applyBuiltinReadings("それは要らない")).toBe("それは要らない");
+  });
+
   it("文中の溜め（――・……）は読点に変えて間を作る（行頭は startsTame/plainify が別処理）", () => {
     expect(applyBuiltinReadings("……一日中、って。")).toBe("、一日中、って。"); // 実機報告
     expect(applyBuiltinReadings("そして――彼は言った。")).toBe("そして、彼は言った。");
