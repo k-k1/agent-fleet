@@ -338,8 +338,15 @@ describe("applyBuiltinReadings / applyReadings (組み込みの読み補正)", (
   });
 
   it("「判定」は はんてい に固定（誤判定→ごはんてい 相当）", () => {
-    expect(applyBuiltinReadings("誤判定を修正")).toBe("誤はんていを修正");
+    expect(applyBuiltinReadings("誤判定を修正")).toBe("ごはんていを修正"); // 誤→ご も同時に効く
     expect(applyBuiltinReadings("空判定と判定結果")).toBe("からはんていとはんてい結果");
+  });
+
+  it("接頭辞「誤」＋漢字は「ご」（誤表示→ごひょうじ）。送りがな 誤る/誤り は あやま のまま", () => {
+    expect(applyBuiltinReadings("「5時間制限」と誤表示")).toBe("「5時間制限」とご表示"); // 実機報告
+    expect(applyBuiltinReadings("誤検知と誤動作と誤操作")).toBe("ご検知とご動作とご操作");
+    // 送りがな（訓読み あやま）は触らない
+    expect(applyBuiltinReadings("設定を誤ると誤りが出る")).toBe("設定を誤ると誤りが出る");
   });
 
   it("ユーザー辞書が先に当たれば組み込みより優先される", () => {
