@@ -42,6 +42,22 @@ export const THEMES = [
   { id: "light", label: "ライト" },
 ];
 
+// Per-region theme choices (session mirror / assistant chat). "inherit" = follow the app
+// theme above; "dark"/"light" give that region its own base theme, independent of the rest
+// of the Console — applied by scoping data-theme onto the region container (.mirrorview /
+// .chatview; see tokens.css scoped token blocks + effectiveTheme).
+export const REGION_THEMES = [
+  { id: "inherit", label: "アプリに合わせる" },
+  { id: "dark", label: "ダーク" },
+  { id: "light", label: "ライト" },
+];
+
+// Resolve a per-region theme preference against the app theme, to a concrete "light"/"dark".
+export function effectiveTheme(pref: string, base: string): "light" | "dark" {
+  if (pref === "dark" || pref === "light") return pref;
+  return base === "light" ? "light" : "dark";
+}
+
 // Surface (top bar / left pane) background choices. Each color has a per-theme tint
 // so it always contrasts with the theme's text color. "default" = theme default.
 export const SURFACE_COLORS = [
@@ -56,11 +72,16 @@ export const SURFACE_COLORS = [
 // The four themeable surfaces (settings key + labels). Shared by DisplayTab and the
 // TopBar 外観 popover so "which surfaces are colorable" is defined once — `short` for
 // the compact popover rows, `long` for the settings-tab rows.
-export const SURFACE_TARGETS: { key: "topbarColor" | "leftpaneColor" | "viewerColor" | "chatColor"; short: string; long: string }[] = [
+export const SURFACE_TARGETS: { key: "topbarColor" | "leftpaneColor" | "viewerColor" | "chatColor" | "assistantColor"; short: string; long: string }[] = [
   { key: "topbarColor", short: "上部バー", long: "上部バーの背景" },
   { key: "leftpaneColor", short: "左ペイン", long: "左ペインの背景" },
   { key: "viewerColor", short: "ビュアー", long: "ファイルビュアーの背景" },
-  { key: "chatColor", short: "チャット", long: "チャットの背景" },
+  // chatColor drives the session mirror's (.mirrorview) --chat-bg / --chat-accent; labelled
+  // セッション so it isn't confused with the assistant chat. Key kept as chatColor for
+  // backward-compat with persisted prefs.
+  { key: "chatColor", short: "セッション", long: "セッションの背景" },
+  // assistantColor is the same surface mechanism for the assistant chat (.chatview).
+  { key: "assistantColor", short: "アシスタント", long: "アシスタントの背景" },
 ];
 
 // Resolve a surface color id to its value for the active theme (null = no override).
@@ -84,6 +105,16 @@ function mixHex(from: string, to: string, t: number): string {
   const b = p(to);
   const c = a.map((v, i) => Math.round(v + (b[i] - v) * t));
   return "#" + c.map((v) => v.toString(16).padStart(2, "0")).join("");
+}
+
+// Derive a region's surface background from a chosen surface color, for the given
+// (region-effective) theme: lighten toward white in light, darken toward black in dark.
+// null (default color) => no override, so the region falls back to the theme --bg in CSS.
+// Used for the file viewer (applyTheme) and, per region theme, the mirror / assistant chat.
+export function surfaceBg(id: string, theme: string): string | null {
+  const c = surfaceValue(id, theme);
+  if (!c) return null;
+  return theme === "light" ? mixHex(c, "#ffffff", 0.45) : mixHex(c, "#000000", 0.34);
 }
 
 // Default row highlight per theme — mirrors --active-bg / --hover-bg in styles.css
@@ -123,10 +154,17 @@ export interface Settings {
   minimap: boolean;
   iconSet: string;
   theme: string;
+  // Per-region base theme, independent of `theme`: "inherit" (default, follow the app),
+  // "dark", or "light". Applied by scoping data-theme onto the region container.
+  // mirrorTheme → .mirrorview (session mirror); assistantTheme → .chatview (assistant chat).
+  mirrorTheme: string;
+  assistantTheme: string;
   topbarColor: string;
   leftpaneColor: string;
   viewerColor: string;
+  // Surface color for the session mirror (chatColor) and the assistant chat (assistantColor).
   chatColor: string;
+  assistantColor: string;
   mirrorSend: string;
   // Default claude model for new sessions (launch dialog + repo 起動). Always a concrete
   // tier alias (opus/sonnet/haiku) — the alias tracks the newest model in that tier, but
@@ -251,10 +289,13 @@ const DEFAULTS: Settings = {
   minimap: true,
   iconSet: "vscode",
   theme: "dark",
+  mirrorTheme: "inherit",
+  assistantTheme: "inherit",
   topbarColor: "default",
   leftpaneColor: "default",
   viewerColor: "default",
   chatColor: "default",
+  assistantColor: "default",
   // Markdown mirror composer: "mod-enter" = Ctrl/⌘+Enter submits, Enter inserts a
   // newline (phone-friendly default); "enter" = Enter submits, Shift+Enter newline.
   mirrorSend: "mod-enter",
@@ -474,26 +515,14 @@ export function applyTheme(s: Settings): void {
   // File viewer background, derived from the chosen surface: lighter than the
   // surfaces in light theme (toward white), darker in dark theme (toward black).
   // Unset => theme --bg.
-  const vw = surfaceValue(s.viewerColor, theme);
-  setVar("--viewer-bg", vw ? (theme === "light" ? mixHex(vw, "#ffffff", 0.45) : mixHex(vw, "#000000", 0.34)) : null);
-  // Viewer surface accent — the terminal pane shares --viewer-bg, so the チャット/ターミナル
+  setVar("--viewer-bg", surfaceBg(s.viewerColor, theme));
+  // Viewer surface accent — the terminal pane shares --viewer-bg, so the ターミナル/チャット
   // toggle rebinds --sel-accent to this. Null (no viewer color) → CSS falls back to topbar.
   setVar("--viewer-accent", surfaceAccent(s.viewerColor));
-  // Chat surface (the Markdown mirror) is independent of the file viewer: its own
-  // background, derived the same way. Unset => falls back to the viewer surface (then
-  // the theme --bg) in CSS, preserving the prior "chat sits on the viewer" behavior.
-  const cw = surfaceValue(s.chatColor, theme);
-  setVar("--chat-bg", cw ? (theme === "light" ? mixHex(cw, "#ffffff", 0.45) : mixHex(cw, "#000000", 0.34)) : null);
-  // Chat highlights (question options, "あなた" block, gauge…) follow the chat's own
-  // surface accent first, then the viewer / left pane / top bar; null falls back to
-  // the CSS default (--accent, the app blue).
-  setVar(
-    "--chat-accent",
-    surfaceAccent(s.chatColor) ||
-      surfaceAccent(s.viewerColor) ||
-      surfaceAccent(s.leftpaneColor) ||
-      surfaceAccent(s.topbarColor),
-  );
+  // NOTE: the session mirror's --chat-bg/--chat-accent and the assistant chat's surface are
+  // NOT set here anymore — each region owns them per its own theme (mirrorTheme/assistantTheme)
+  // as inline vars on .mirrorview / .chatview, since those regions can differ from the app
+  // theme. See MirrorView.tsx / ChatView.tsx (surfaceBg + surfaceAccent + effectiveTheme).
 }
 applyTheme(state);
 
@@ -522,10 +551,13 @@ const DEVICE_LOCAL = new Set<keyof Settings>([
   "ttsSessionNotify", // 音声通知 ON/OFF
   "usageResetNotify", // 制限リセット通知 ON/OFF（この端末で鳴らすか）
   "theme", // ダーク/ライト
+  "mirrorTheme", // セッションミラーのテーマ（端末ごとの見せ方）
+  "assistantTheme", // アシスタントチャットのテーマ（端末ごとの見せ方）
   "topbarColor", // 外観の配色（サーフェス色）
   "leftpaneColor",
   "viewerColor",
   "chatColor",
+  "assistantColor",
 ]);
 
 // serverPrefs は端末ローカルキーを除いた、サーバへ保存してよい設定だけの浅いコピー。
