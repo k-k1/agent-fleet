@@ -64,10 +64,11 @@
   padding: 8px 11px;
   background: var(--panel);
   border: 1px solid var(--border);
-  /* Cap line length for readability, but `ch` is the half-width "0" advance — Japanese
-     (full-width) text fits only ~half that per line, so a tight cap wastes a wide pane.
-     Grow to fill a narrow pane (100%) and allow a generous cap on a wide one. */
-  max-width: min(96ch, 100%);
+  /* Fill the pane width: the bubble follows the pane (widen the pane → wider reply) rather
+     than sitting at a fixed cap that wastes a wide pane. `ch` is the half-width "0" advance
+     and Japanese (full-width) text fits only ~half that per line, so a ch-based cap felt
+     narrow on wide panes; letting it grow to 100% is what users want here. */
+  max-width: 100%;
 }
 .chat-msg.role-user .chat-body {
   background: color-mix(in srgb, var(--accent) 12%, var(--panel));
@@ -81,8 +82,8 @@
   border-radius: 4px;
   scroll-margin: 64px; /* ヘッダ等に隠れない余白 */
 }
-/* Timestamp + copy under an assistant reply — mirrors .mirror-turn-foot. Capped to the
-   same width as the bubble so the button hugs its right edge, not the pane's. */
+/* Timestamp + copy under an assistant reply — mirrors .mirror-turn-foot. Same width as the
+   bubble (now full pane width) so the button hugs the bubble's right edge. */
 .chat-msg-foot {
   display: flex;
   justify-content: flex-end;
@@ -90,7 +91,7 @@
   gap: 8px;
   font-size: 12px;
   color: var(--muted);
-  max-width: min(96ch, 100%);
+  max-width: 100%;
 }
 .cm-time {
   font-variant-numeric: tabular-nums;
