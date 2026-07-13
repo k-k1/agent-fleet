@@ -51,6 +51,13 @@
   flex-direction: column;
   gap: 3px;
 }
+/* User turns shrink-wrap to their content (left-aligned), so both the bubble and its footer
+   share one column width — the footer's right edge then lands on the bubble's right edge
+   instead of the pane's. Assistant turns keep the default stretch (full pane width). */
+.chat-msg.role-user {
+  align-self: flex-start;
+  max-width: 100%;
+}
 .chat-role {
   font-size: 11px;
   font-weight: 600;
@@ -72,7 +79,6 @@
 }
 .chat-msg.role-user .chat-body {
   background: color-mix(in srgb, var(--accent) 12%, var(--panel));
-  align-self: flex-start;
 }
 /* カラオケ読み上げ（AssistantTurn / turnTts, docs/24）: いま読んでいる文が属するブロックを
    ハイライトし、scrollIntoView(nearest) で追従する。ミラーの .mirror-turn-body .tts-active と
