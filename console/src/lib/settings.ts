@@ -197,6 +197,12 @@ export interface Settings {
   ttsVoiceVoicevox: string; // VOICEVOX の speaker 番号（"3"=ずんだもん・ノーマル）
   ttsVoicePolly: string; // Polly の VoiceId（"Takumi" 等）。auto のフォールバック時も使う
   ttsSpeed: number; // 0.5〜2.0（speedScale）
+  // Console が背景タブ／最小化（document.hidden）の間、全TTS出力のマスター音量を55%へ下げる。
+  // window blur は対象外（画面分割や別ウィンドウ操作中でも見えていれば通常音量）。
+  ttsQuietWhenHidden: boolean;
+  // ペインに属する読み上げを、現在の横方向の列位置に合わせてステレオ配置する。
+  // 左右端でも完全には振り切らず、聞きやすさのため最大 ±70% に留める。
+  ttsStereoByPane: boolean;
   // バックグラウンドのセッションが回答/質問を返したら音声で知らせる（docs/24 Tier1）。チャットの
   // 自動読み上げ(ttsEnabled)とは別軸。名前前置きの短い告知を直列キューで読む。タブが見えている
   // 間のみ（セッション監視は document.hidden で止まるため）。
@@ -227,6 +233,9 @@ export interface Settings {
   // ペインで開いていても読むのは 1 ペインだけ（features/mirror/turnTts.ts の担当登録）。
   // セッションごとの声（ttsVoicePerSession）と併用すると、どのペインの回答かを声で判別できる。
   ttsAutoReadAllPanes: boolean;
+  // 確定した作業過程（最終回答より前のナレーション）を小声で読む。off=読まない、
+  // whisper=ささやき、hushed=ヒソヒソ。対応スタイルが無い話者/Polly は同じ声の音量を下げる。
+  ttsWorkRead: string; // "off" | "whisper" | "hushed"
   // セッションごとに声を変える（features/chat/tts.ts の sessionVoiceOpts）。セッション名の
   // ハッシュで話者プール（VOICEVOX 標準キャラ / Polly 3 声）から決定的に割り当て、ミラーの
   // 読み上げとセッション音声通知に適用（どのセッションの回答かを声で判別できる）。
@@ -314,6 +323,8 @@ const DEFAULTS: Settings = {
   ttsVoiceVoicevox: "3", // ノーマル
   ttsVoicePolly: "Takumi",
   ttsSpeed: 1.25, // はやめ
+  ttsQuietWhenHidden: false,
+  ttsStereoByPane: false,
   ttsSessionNotify: false,
   usageResetNotify: true,
   ttsEnglishKana: true,
@@ -321,6 +332,7 @@ const DEFAULTS: Settings = {
   ttsCacheSec: 900, // 15分
   ttsAutoReadMirror: true,
   ttsAutoReadAllPanes: true,
+  ttsWorkRead: "off",
   ttsVoicePerSession: true,
   // {} = 標準 14 キャラ（tts.ts の SESSION_VOICES）がセッション割り当て対象。新規ユーザーも
   // リセットもこの状態から始まる（キャラは標準 14 人スタートで統一）。エンジンに追加キャラが
@@ -384,8 +396,11 @@ const TTS_RESET_KEYS = [
   "ttsVoicePool",
   "ttsEmotion",
   "ttsSpeed",
+  "ttsQuietWhenHidden",
+  "ttsStereoByPane",
   "ttsAutoReadMirror",
   "ttsAutoReadAllPanes",
+  "ttsWorkRead",
   "ttsSummaryRead",
   "ttsReadPending",
   "ttsAbbrevCode",
@@ -403,6 +418,12 @@ export const TTS_SPEEDS: [number, string][] = [
   [1.0, "標準"],
   [1.25, "はやめ"],
   [1.5, "はやい"],
+];
+
+export const TTS_WORK_READ_MODES: [string, string][] = [
+  ["off", "読まない"],
+  ["whisper", "ささやき"],
+  ["hushed", "ヒソヒソ"],
 ];
 
 // Assistant-chat output-language choices, shared by the settings UI. "auto" leaves the

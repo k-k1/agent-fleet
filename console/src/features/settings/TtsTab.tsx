@@ -8,6 +8,7 @@ import {
   TTS_CACHE_SIZES,
   TTS_PROVIDERS,
   TTS_POLLY_VOICES,
+  TTS_WORK_READ_MODES,
   TTS_RESET,
   type TtsCharConf,
 } from "../../lib/settings.ts";
@@ -51,6 +52,20 @@ export function TtsTab() {
           ずんだもんの合成には VOICEVOX エンジンが必要です（未起動のときは Polly があれば代読、
           どちらも無ければ無音になります）。
           {s.ttsEnabled && <> 音声引用：VOICEVOX：ずんだもん。</>}
+        </p>
+        <Row label="バックグラウンドでは音量を下げる">
+          <OnOff value={s.ttsQuietWhenHidden} onChange={(v) => setSetting("ttsQuietWhenHidden", v)} />
+        </Row>
+        <p className="muted ds-note">
+          別タブへ切り替えたときやブラウザを最小化したとき、読み上げ音量を55%へ下げます。
+          Console が見える状態へ戻ると通常音量へ滑らかに戻ります。
+        </p>
+        <Row label="ペイン位置に合わせて左右へ振る">
+          <OnOff value={s.ttsStereoByPane} onChange={(v) => setSetting("ttsStereoByPane", v)} />
+        </Row>
+        <p className="muted ds-note">
+          読み上げ音声をペインの横位置に合わせてステレオ配置します。左右端でも音は片側へ振り切らず、
+          通知やファイル朗読などペインに属さない音声は中央で再生します。
         </p>
       </section>
       {s.ttsEnabled && (
@@ -132,6 +147,17 @@ export function TtsTab() {
             </p>
             {s.ttsAutoReadMirror && (
               <>
+                <Row label="作業過程を小声で読む">
+                  <Choice
+                    value={s.ttsWorkRead}
+                    options={TTS_WORK_READ_MODES}
+                    onChange={(v) => setSetting("ttsWorkRead", v)}
+                  />
+                </Row>
+                <p className="muted ds-note">
+                  ツール実行で途中経過と確定した応答だけを小声で読み、最終回答は通常の声へ戻します。
+                  同じキャラに対応スタイルが無い場合や Polly では、同じ声の音量を下げて読みます。
+                </p>
                 <Row label="開いている全ペインで読む">
                   <OnOff value={s.ttsAutoReadAllPanes} onChange={(v) => setSetting("ttsAutoReadAllPanes", v)} />
                 </Row>
