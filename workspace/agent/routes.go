@@ -38,7 +38,6 @@ func buildMux() *http.ServeMux {
 	// dismiss discards it — either way it's never offered again for this session.
 	mux.HandleFunc("POST /sessions/{name}/title/accept", handleAcceptSuggestedTitle)
 	mux.HandleFunc("POST /sessions/{name}/title/dismiss", handleDismissSuggestedTitle)
-	mux.HandleFunc("POST /sessions/{name}/title/regenerate", handleRegenerateSuggestedTitle)
 	mux.HandleFunc("POST /sessions/{name}/title/suggest", handleSuggestTitle)
 	mux.HandleFunc("POST /sessions/{name}/title/set", handleSetTitle)
 	mux.HandleFunc("POST /sessions/{name}/suggest-branch", handleSessionSuggestBranch)

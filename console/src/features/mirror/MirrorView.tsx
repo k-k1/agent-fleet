@@ -1229,27 +1229,6 @@ export function MirrorView({
       setTitleActing(false);
     }
   };
-  // Manual re-ask (header button): unlike the automatic trigger, this ignores any
-  // prior dismissal/idle-turn gating and runs synchronously — the server call itself
-  // takes a few seconds (headless LLM), so this can be slower than accept/dismiss.
-  const regenerateTitle = async () => {
-    if (!session || titleActing) return;
-    setTitleActing(true);
-    try {
-      const res = await raw(`api/sessions/${q(session)}/title/regenerate`, { method: "POST" });
-      const j = await res.json().catch(() => ({}));
-      if (res.ok && typeof j.suggestedTitle === "string") {
-        setSuggestedTitle(j.suggestedTitle);
-      } else if (!res.ok) {
-        toast(j.error ? errText(j.error) : `タイトル案の生成に失敗しました (${res.status})`);
-      }
-    } catch {
-      toast("タイトル案の生成に失敗しました（通信エラー）");
-    } finally {
-      setTitleActing(false);
-    }
-  };
-
   const openDiff = (p: Part) => showDiff(p.file || "", p.edits, p.tool || "");
 
   // Composer history = the user's own prompts in this conversation (so ↑ works even
@@ -1461,21 +1440,6 @@ export function MirrorView({
           </span>
         ) : (
           <span className="view-title">セッション</span>
-        )}
-        {sessionMeta?.kind === "claude" && settings.autoTitleSuggest && (
-          <button
-            type="button"
-            className="icon title-suggest-btn"
-            title={
-              sessionMeta?.title
-                ? "タイトルを再提案（現時点までの会話から作り直します。採用するまで今のタイトルは変わりません）"
-                : "タイトルを提案してもらう（現時点までの会話から作成します）"
-            }
-            onClick={regenerateTitle}
-            disabled={titleActing}
-          >
-            <Icon name={titleActing ? "loading" : "lightbulb"} spin={titleActing} />
-          </button>
         )}
         <MirrorToggle mirror={!!mirror} onToggle={onToggleMirror} running={running} />
       </header>
