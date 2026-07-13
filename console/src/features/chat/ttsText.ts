@@ -217,6 +217,13 @@ function fixGyoLine(t: string): string {
   return t.replace(GYO_LINE, (m, prev: string) => (GYO_KO_COMPOUNDS.has(prev + "行") ? m : prev + "ぎょう"));
 }
 
+// GO_PREFIX — 接頭辞「誤」= 音読み「ご」（誤表示・誤判定・誤検知・誤動作・誤操作・誤入力…）。
+// OpenJTalk は文脈で訓読み「あやま」に化ける（「誤表示」→「あやまひょうじ」の実機報告）。「誤＋
+// 漢字」の複合語は必ず音読み ご なので固定する。送りがなを伴う動詞・名詞（誤る・誤り・誤って）は
+// 直後がひらがななので対象外＝「あやま」のまま残す。BUILTIN_READINGS（判定→はんてい 等）より
+// 先に適用し、後段の複合語変換に載せる（誤判定 → ご判定 → ごはんてい）。
+const GO_PREFIX = /誤(?=[一-鿿々])/g;
+
 // ヌメロニム（i18n = internationalization 等の中抜き略語）。数字は「省略した文字数」で
 // 数ではないので、数字読みさせず元の語の慣用カタカナに展開する。単語境界つき・大文字
 // 小文字は不問（I18n / A11Y 等も拾う）。一覧は ja.wikipedia の「ヌメロニム」の IT 系＋
@@ -276,6 +283,7 @@ export function applyBuiltinReadings(text: string): string {
   for (const [re, to] of NUMERONYMS) t = t.replace(re, to);
   for (const [re, to] of PRODUCT_NAMES) t = t.replace(re, to);
   for (const [re, to] of UPPER_ACRONYMS) t = t.replace(re, to);
+  t = t.replace(GO_PREFIX, "ご"); // 接頭辞「誤」= ご（誤表示/誤判定… 判定変換より前に）
   t = applyUserDict(t, BUILTIN_READINGS); // 行目/判定 等の複合語（fixGyoLine より先に固定）
   t = fixGyoLine(t); // 残りの「行」= line/row を既定 ぎょう に
   return t;
