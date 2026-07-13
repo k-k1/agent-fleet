@@ -106,6 +106,11 @@ function CommitRow({
     const passThrough = lanesAbove[j] === sha && j !== nodeLane;
     if (passThrough) {
       segs.push(<line key={"b" + j} x1={laneX(j)} y1={cy} x2={laneX(j)} y2={ROW_H} stroke={color} strokeWidth={2} strokeLinecap="round" />);
+      // A pass-through lane can still be one of THIS merge's parents (the parent already
+      // had an active lane, so layout assigned it no new one) — join the node into it.
+      if (commit.parents.includes(sha)) {
+        segs.push(<line key={"m" + j} x1={nodeX} y1={cy} x2={laneX(j)} y2={ROW_H} stroke={color} strokeWidth={2} strokeLinecap="round" />);
+      }
     } else {
       segs.push(<line key={"b" + j} x1={nodeX} y1={cy} x2={laneX(j)} y2={ROW_H} stroke={color} strokeWidth={2} strokeLinecap="round" />);
     }
