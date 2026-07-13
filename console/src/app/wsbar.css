@@ -49,9 +49,7 @@
   align-items: center;
   gap: 8px;
   padding: 6px 14px;
-  /* TOP バーと同じ地色（--topbar-bg）でひと続きのクロームに見せる。
-     旧 --panel2 は本文側と同化して TOP バーとの境界が浮いていた。 */
-  background: var(--topbar-bg);
+  background: var(--panel2);
   border-bottom: 1px solid var(--border);
   font-size: 13px;
 }
