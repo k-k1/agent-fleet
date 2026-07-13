@@ -82,16 +82,6 @@
      --sel-accent alone can't reach the :root-derived --sel-bg/--sel-fg (tokens.css). */
   --sel-accent: var(--viewer-accent, var(--topbar-accent));
 }
-/* The title-suggest button sits at the right of the chat head, just left of the
-   ターミナル⇄チャット switch. It takes the auto-margin so the pair groups on the
-   right; the toggle then only needs a fixed gap (its own auto-margin would split
-   the space). */
-.title-suggest-btn {
-  margin-left: auto;
-}
-.title-suggest-btn + .mirror-toggle {
-  margin-left: 8px;
-}
 /* Each ターミナル/チャット segment is an icon + label; center them with a small gap
    so the button reads well both with the label and (on narrow panes) icon-only. */
 .mirror-toggle .seg-btn {
