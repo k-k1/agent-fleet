@@ -9,6 +9,9 @@ package main
 
 var techKana = map[string]string{
 	// --- 開発ジャルゴン / 一般 ---
+	"dom":        "ドム",     // CMUdict は実在語 dom→"ダム"。DOM(Document Object Model) は慣用でドム
+	"good":       "グッド",    // CMUdict は末尾 D が促音化せず "グド" になる（実機フィードバック）
+	"well":       "ウェル",    // 変異形で "ウェルル" になるとの報告あり。慣用読みに固定
 	"agent":      "エージェント", // CMUdict は "エイジャント" 寄りに誤読（実機フィードバック）
 	"manage":     "マネージ",   // manage 系は CMUdict だと "マナジ..." になる（長音が落ちる）
 	"managed":    "マネージド",  // 実機フィードバック（例: "マネージドサービス"）
@@ -385,4 +388,57 @@ var techKana = map[string]string{
 	"xamarin":     "ザマリン",
 	"webassembly": "ウェブアセンブリ",
 	"wasm":        "ワズム",
+}
+
+// contractionKana は英語の短縮形（アポストロフィ入り）の読み。CMUdict はこれらを分断読み
+// してしまう（"it's"→"イット'エス"、"don't"→"ダン'ティー"）ため、頻出形を慣用カタカナで固定
+// する。キーは小文字・ASCII アポストロフィ。ここに無い短縮形/所有格は convertContraction が
+// 「元の語＋ズ」や「' 除去」でフォールバックする。**足りない形はここに 1 行足すだけで拡張可。**
+var contractionKana = map[string]string{
+	// be/have/is の縮約
+	"it's":    "イッツ",
+	"that's":  "ザッツ",
+	"what's":  "ワッツ",
+	"let's":   "レッツ",
+	"here's":  "ヒアーズ",
+	"there's": "ゼアーズ",
+	"he's":    "ヒーズ",
+	"she's":   "シーズ",
+	"who's":   "フーズ",
+	"i'm":     "アイム",
+	"i've":    "アイブ",
+	"i'll":    "アイル",
+	"i'd":     "アイド",
+	"you're":  "ユア",
+	"you've":  "ユーブ",
+	"you'll":  "ユール",
+	"you'd":   "ユード",
+	"we're":   "ウィアー",
+	"we've":   "ウィーブ",
+	"we'll":   "ウィール",
+	"we'd":    "ウィード",
+	"they're": "ゼイアー",
+	"they've": "ゼイブ",
+	"they'll": "ゼイル",
+	"they'd":  "ゼイド",
+	"it'll":   "イトゥル",
+	"it'd":    "イトゥド",
+	// not の縮約
+	"don't":     "ドント",
+	"can't":     "キャント",
+	"won't":     "ウォント",
+	"isn't":     "イズント",
+	"aren't":    "アーント",
+	"wasn't":    "ワズント",
+	"weren't":   "ワーント",
+	"doesn't":   "ダズント",
+	"didn't":    "ディドント",
+	"hasn't":    "ハズント",
+	"haven't":   "ハブント",
+	"hadn't":    "ハドント",
+	"wouldn't":  "ウドゥント",
+	"couldn't":  "クドゥント",
+	"shouldn't": "シュドゥント",
+	"mustn't":   "マスント",
+	"needn't":   "ニードント",
 }
