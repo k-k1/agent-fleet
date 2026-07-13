@@ -192,6 +192,24 @@ Phase 1 の判断材料は Phase 0 の実地検証。**Phase 0 は現行 main �
 
 未決論点（§8）のうち **③チャットの組み込みツール権限**は本実装で前提を確認済み: チャットは `chatToolLimits()` で Bash/Edit/Write/MultiEdit/NotebookEdit と Agent/Task/Workflow を `--disallowedTools` で禁止（`--dangerously-skip-permissions` 下でも deny は有効）。ops MCP は read-only ツールのみを広告するため、read-only 統制は「MCP 集合」「組み込みツール」の両方で閉じている。
 
+#### CloudWatch 連携の検討 — 2026-07-14
+
+CloudWatch のログ・メトリクス確認は**2 本立て**で考える。①は実装ゼロで今日から使える。
+
+1. **対話セッション（tmux claude）= aws CLI 直接**。イメージに aws CLI v2 焼き込み済み・SSM 接続の SSO ログインで資格もコンテナ内にあるため、対話セッションの claude は `aws logs tail / filter-log-events / start-query`（Logs Insights）を**自分で叩ける**。MCP 不要でログ壁打ちが成立する（手順は guide/member/10 に追記）。
+2. **チャット（SRE アシスタント）= awslabs cloudwatch-mcp-server**。チャットは Bash 禁止（§Phase 1 の chatToolLimits）なので CLI は使えず、MCP 経由が必要。PagerDuty/Grafana と同じ枠で第 3 の integration にする。
+
+awslabs cloudwatch-mcp-server の裏取り（2026-07-14, 公式 docs）: **全ツール read-only**（metrics: get_metric_data/analyze_metric、PromQL、alarms: get_active_alarms/get_alarm_history、logs: describe_log_groups/analyze_log_group/execute_log_insights_query 等）。認証は **AWS 資格チェーン（`AWS_PROFILE`）で秘密の保存が一切不要**。起動は `uvx awslabs.cloudwatch-mcp-server`。
+
+`mcp-run cloudwatch` の設計（実装時）:
+
+- **秘密ゼロの integration**: ストアに増えるのは非秘密の設定（プロファイル名・リージョン）のみ。`mcp-run cloudwatch` は復号ではなく `AWS_PROFILE` / `AWS_REGION` を env に載せて `uvx awslabs.cloudwatch-mcp-server` を exec するだけ。read-only はサーバ自体が write ツールを持たないことで担保（+ IAM 側も ReadOnly 推奨）。
+- **運用タブ**: CloudWatch カード（プロファイル名・リージョンの 2 入力。SSM 接続で使っている SSO プロファイルをそのまま指定）。integrationReady = 設定レコード有無。
+- **SSO 切れの UX**: 資格が切れているとツールがエラーになるだけなので、「aws sso login してください」への誘導（カードの状態表示 or ツールエラー文言）が必要。CloudWatch は本人の AWS 資格で読む建て付け（原則: AWS の秘密は CP に保存も到達もしない）なので、Grafana の共有接続案のような SSO 非依存化はできない。オンコール開始時に `aws sso login` を済ませる運用を guide に明記する。
+- **メモリ/起動コスト**: uvx Python 系は Go 単一バイナリより重い。イメージビルド時に uv キャッシュを温める（§5-5 (d)）＋ `@latest` でなくバージョンピン（ARG idiom）で初回取得と版ブレを避ける。
+
+**実装済み（2026-07-14, 上記設計どおり）**: `CloudWatchConn{profile, region}`（**秘密なし**）を store に追加、`PUT/DELETE /connections/cloudwatch`＋CP proxy、`mcp-run cloudwatch` が `AWS_PROFILE`/`AWS_REGION` を env に載せて焼き込み済みエントリポイントを exec（フォールバック uvx）、SRE アシスタントの integrations を `[pagerduty, grafana, cloudwatch]` に拡張、運用タブに CloudWatch カード（プロファイル＋リージョンの 2 入力）。イメージは `uv tool install awslabs.cloudwatch-mcp-server==0.1.4`（ARG ピン）で `/usr/local` にベイク — **`UV_PYTHON_DOWNLOADS=never` + `--python /usr/bin/python3` が必須**（無いと managed Python が root の home に落ちて実行ユーザーから見えない。dev 実測で確認）。検証: v0.1.4 は資格が無効でも起動し **read-only 19 ツール**（logs/metrics/PromQL/alarms、write 系ゼロ）、`mcp-run cloudwatch` 経由の JSON-RPC 通し・未設定時の安全な失敗・build/vet/test/tsc 通過。※FastMCP は stdin 一括書き込み＋即 EOF だと応答前に終了する（検証スクリプトは応答待ち駆動にすること）。
+
 ### Amazon Managed Grafana（AMG）接続の検討 — 2026-07-12 Web 裏取り済み
 
 Phase 0 で検証した mcp-grafana は汎用 Grafana API（URL + トークン）前提のため、「AMG は認証方式が違うのでは（IAM Identity Center / SigV4 / 独自キー発行）」を AWS 公式ドキュメントで裏取りした。
@@ -219,6 +237,8 @@ Phase 0 で検証した mcp-grafana は汎用 Grafana API（URL + トークン�
 - **案A: 静的トークン（PagerDuty 同型・推奨初手）** — 運用タブに Grafana カード（URL + SA トークン）→ `secrets.enc`（`GrafanaCreds{url, token}`）→ `mcp-run grafana` が env 注入して焼き込み済み `mcp-grafana -disable-write -disable-admin` を exec。**セルフホスト / Grafana Cloud / AMG を同一 kind で吸収**でき、実装は PagerDuty 縦切りの写経（下記差分箇所）。AMG の場合だけ 30 日で失効するので、失効時に UI で貼り直し（401 をカード上で分かるようにする程度の配慮）。
 - **案B: AMG 専用・IAM 動的発行（秘密レス）** — 接続情報は region / workspaceId / serviceAccountId のみで**長寿命秘密ゼロ**。`mcp-run` が既存 AWS SSO 資格チェーン（ssm 接続と同じ、コンテナ内完結）で `CreateWorkspaceServiceAccountToken`（短命 TTL、例 8h）を発行して env 注入 → exec。ローテーション不要が利点。考慮点: ① SSO ロールに `grafana:CreateWorkspaceServiceAccountToken` / `Delete…` / `List…` の IAM 権限が要る（インフラ側整備）、② exec モデルでは終了時削除ができないため、起動時に自分の名前プレフィックス（例 `af-<user>-`）の**期限切れトークンを List + Delete で掃除**してクォータ堆積を防ぐ、③ mcp-grafana の `GRAFANA_SERVICE_ACCOUNT_TOKEN_FILE`（リクエスト毎に再読込）を使えば TTL 越えの長寿命セッションでも親常駐なしで更新余地あり。
 - **推奨**: 案A で開始し（全 Grafana 系を 1 kind でカバー、AMG は「トークンの取り方が違うだけ」として guide に記載）、AMG 利用が定着して 30 日ローテーションが痛くなったら、案B を `grafana` 接続の認証モード（`token` / `amg-iam`）として追加する。UI・opsIntegrations・アシスタント側は案A/B で共通（違いは `mcp-run grafana` の資格取得部のみ）なので、後付けで両立できる。
+- **案B の弱点と代替（案C、2026-07-14 議論）**: 案B は「本人の SSO セッションが生きている」前提になり、深夜のインシデント時に切れている可能性が高い（インシデント対応ツールとして急所）＋全メンバーの Permission Set に発行権限を配る infra 負担がある。代替は **案C: CP タスクロールが発行主体**になる形 — C-1) 管理者が手動ローテートして共有トークンをテナント設定に保存、C-2) CP が共有トークンを自動ローテート（CP が秘密を保存＝原則衝突）、**C-3) CP がユーザー毎トークン（`af-<user>`）を発行し、既存 CP→Agent API で各人の `secrets.enc` へ素通し配布・CP は token ID と期限（非秘密）のみ保持**。C-3 なら SSO 非依存・手作業ゼロ・Grafana 側監査の個人分離・「CP は秘密を保存しない」原則を維持できる（発行**能力**を CP に置くことは §8-1 の ADR で線引きが必要）。トークンクォータは **100/workspace（期限切れも算入・引き上げ不可）**なので、どの案でも入れ替わり削除が必須。
+- **運用状況（2026-07-14）**: 実環境で案A の接続確認済み。**当面は案A（ユーザー毎トークンの手動ローテート）で運用**し、案B/C は保留（利用が定着しローテーションが痛くなった時点で C-3 を第一候補に ADR 化）。
 
 **案A の実装差分（PagerDuty 実装との対応）**: `secrets.go` に `GrafanaCreds`、`connections.go` + agent `routes.go` + CP `routes.go` に `/connections/grafana`、`mcp_run.go` に `case "grafana"`（uvx ではなく焼き込みバイナリを exec、`-disable-write -disable-admin` 固定）、`assistants.go` に `integrationGrafana`（opsIntegrations 1 行 + integrationReady case + SRE アシスタントへ追加）、Console `OpsTab.tsx` に GrafanaCard（URL + トークンの 2 入力）、Dockerfile に mcp-grafana バイナリ（49MB、リリース tarball）をベイク。
 

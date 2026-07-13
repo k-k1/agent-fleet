@@ -76,6 +76,15 @@ type GrafanaCreds struct {
 	Token string `json:"token"`
 }
 
+// CloudWatchConn is the user's CloudWatch connection settings (docs/25). Unlike
+// the other ops integrations it holds NO secret: auth is the AWS credential
+// chain already in the container (the user's SSO login, same as ssm sessions).
+// Profile selects the ~/.aws profile; Region optionally overrides its region.
+type CloudWatchConn struct {
+	Profile string `json:"profile"`
+	Region  string `json:"region,omitempty"`
+}
+
 type Data struct {
 	Git         map[string]GitEntry    `json:"git"`                   // host -> https cred
 	GitIdentity map[string]GitIdentity `json:"gitIdentity,omitempty"` // host -> explicit commit identity
@@ -84,6 +93,7 @@ type Data struct {
 	Opencode    map[string]string      `json:"opencode"`              // provider env var name -> API key (injected for opencode sessions)
 	PagerDuty   *PagerDutyCreds        `json:"pagerduty,omitempty"`   // ops MCP credential (docs/25)
 	Grafana     *GrafanaCreds          `json:"grafana,omitempty"`     // ops MCP credential (docs/25)
+	CloudWatch  *CloudWatchConn        `json:"cloudwatch,omitempty"`  // ops MCP settings (docs/25; no secret — AWS cred chain)
 }
 
 // agentSecretKey returns the 32-byte per-user key from AF_SECRET_KEY (hex), or

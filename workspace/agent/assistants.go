@@ -44,8 +44,9 @@ func validToolGrant(t string) bool {
 // Ops integration ids (docs/25 Phase 1). Each maps to an external MCP server the
 // chat attaches read-only via `workspace-agent mcp-run <id>`.
 const (
-	integrationPagerDuty = "pagerduty"
-	integrationGrafana   = "grafana"
+	integrationPagerDuty  = "pagerduty"
+	integrationGrafana    = "grafana"
+	integrationCloudWatch = "cloudwatch"
 )
 
 // opsIntegration describes how one integration's MCP server is launched. runArgs
@@ -57,8 +58,9 @@ type opsIntegration struct {
 // opsIntegrations is the catalog of supported external ops MCP servers. Adding
 // Grafana / CloudWatch later is a new entry here plus a mcp-run provider case.
 var opsIntegrations = map[string]opsIntegration{
-	integrationPagerDuty: {runArgs: []string{"mcp-run", "pagerduty"}},
-	integrationGrafana:   {runArgs: []string{"mcp-run", "grafana"}},
+	integrationPagerDuty:  {runArgs: []string{"mcp-run", "pagerduty"}},
+	integrationGrafana:    {runArgs: []string{"mcp-run", "grafana"}},
+	integrationCloudWatch: {runArgs: []string{"mcp-run", "cloudwatch"}},
 }
 
 func validIntegration(id string) bool {
@@ -77,6 +79,9 @@ func integrationReady(id string) bool {
 	case integrationGrafana:
 		s, err := secrets.Load()
 		return err == nil && s.Grafana != nil && s.Grafana.URL != "" && s.Grafana.Token != ""
+	case integrationCloudWatch:
+		s, err := secrets.Load()
+		return err == nil && s.CloudWatch != nil && s.CloudWatch.Profile != ""
 	}
 	return false
 }
@@ -165,7 +170,7 @@ const integrityPersona = "あなたは整合性チェッカーです。" +
 // guessing, separates fact from hypothesis, and helps draft status updates.
 const srePersona = "あなたは SRE / オンコール担当の相談相手（壁打ち役）です。読み取り専用で、対応の判断は人間が行います。" +
 	"インシデントについて聞かれたら推測せず、PagerDuty のツール（list_incidents / get_incident / list_incident_notes / list_oncalls など）で実際の状態を確認してから答えてください。" +
-	"メトリクスやログ、アラートの状態は Grafana のツール（ダッシュボード検索、Prometheus / Loki クエリ、アラートルール参照など）が使えるなら実データを確認してから答えてください。" +
+	"メトリクスやログ、アラートの状態は Grafana のツール（ダッシュボード検索、Prometheus / Loki クエリ、アラートルール参照など）や CloudWatch のツール（ロググループ分析、Logs Insights クエリ、アラーム履歴、メトリクス分析など）が使えるなら実データを確認してから答えてください。" +
 	"回答は『事実（メトリクス・アラート・ログで確認できたこと）』と『推測（仮説）』を明確に分け、影響範囲 → 原因の仮説 → 次に取るべきアクション、の順で構造化します。" +
 	"対外報告やポストモーテムの草稿を頼まれたら、時系列を整理して簡潔にまとめます。" +
 	"インシデントの ack / resolve やスケジュール変更などの書き込み操作は行いません（ツールは読み取り専用です）。復旧オペレーションが必要なときは、手順を提示するに留め、実行は担当者に委ねてください。"
@@ -201,9 +206,9 @@ func builtinAssistants() []assistant {
 		},
 		{
 			ID: "sre", Name: "SRE アシスタント", Icon: "pulse",
-			Description: "インシデント対応・監視運用の相談相手です（読み取り専用）。PagerDuty や Grafana を接続しておくと、開いているインシデントやメトリクス・ログを実際に確認しながら、状況整理・原因の仮説出し・対外報告の草稿を手伝います。",
+			Description: "インシデント対応・監視運用の相談相手です（読み取り専用）。PagerDuty・Grafana・CloudWatch を接続しておくと、開いているインシデントやメトリクス・ログを実際に確認しながら、状況整理・原因の仮説出し・対外報告の草稿を手伝います。",
 			Builtin:     true, Agent: preferredHeadlessAgent(), Persona: srePersona,
-			Tools: toolsAFRead, Integrations: []string{integrationPagerDuty, integrationGrafana}, Knowledge: []string{know},
+			Tools: toolsAFRead, Integrations: []string{integrationPagerDuty, integrationGrafana, integrationCloudWatch}, Knowledge: []string{know},
 		},
 		{
 			ID: "integrity", Name: "整合性チェッカー", Icon: "checklist",
