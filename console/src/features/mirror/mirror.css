@@ -77,7 +77,9 @@
 .mirror-toggle {
   margin-left: auto;
   /* The チャット/ターミナル switch lives on the terminal (and chat) surface, so its
-     selected segment follows the viewer/terminal accent rather than the top bar's. */
+     selected segment follows the viewer/terminal accent rather than the top bar's.
+     Needs the sel-scope class on the element (MirrorToggle.tsx) — rebinding
+     --sel-accent alone can't reach the :root-derived --sel-bg/--sel-fg (tokens.css). */
   --sel-accent: var(--viewer-accent, var(--topbar-accent));
 }
 /* The title-suggest button sits at the right of the chat head, just left of the
