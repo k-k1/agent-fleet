@@ -324,6 +324,25 @@
 .repo-chip.dirty .codicon {
   font-size: 7px;
 }
+/* Linked worktree HEAD vs its parent working copy's current HEAD. Kept apart
+   from .ab because that chip is relative to the configured remote upstream. */
+.repo-chip.integration.same,
+.repo-chip.integration.unknown {
+  color: var(--muted);
+  background: color-mix(in srgb, var(--muted) 10%, transparent);
+}
+.repo-chip.integration.contained {
+  color: var(--ok);
+  background: color-mix(in srgb, var(--ok) 14%, transparent);
+}
+.repo-chip.integration.unmerged {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+.repo-chip.integration.diverged {
+  color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 14%, transparent);
+}
 .repo-chip.ab {
   color: var(--accent);
   background: color-mix(in srgb, var(--accent) 14%, transparent);

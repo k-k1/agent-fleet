@@ -15,6 +15,14 @@ export interface Repo {
   remote?: string; // origin host (tooltip)
   worktree?: boolean; // linked git worktree (not a standalone clone)
   parent?: string; // for a worktree, the parent working copy's folder name
+  /** Commit relationship to the parent working copy's current HEAD. This is
+   * independent of ahead/behind above, which are relative to the upstream. */
+  integration?: {
+    targetBranch?: string;
+    targetUnique: number;
+    worktreeUnique: number;
+    relation: "same" | "contained" | "unmerged" | "diverged" | "unknown";
+  };
 }
 
 interface ReposStore {
