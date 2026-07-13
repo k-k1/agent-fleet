@@ -58,6 +58,19 @@ RUN set -eux; \
     rm -f /tmp/mcp-grafana.tgz /tmp/mcp-grafana; \
     mcp-grafana --version
 
+# awslabs CloudWatch MCP server (Python) baked as a uv tool so `workspace-agent
+# mcp-run cloudwatch` starts instantly with no PyPI fetch at runtime (docs/25
+# §5-5 (d)). UV_PYTHON_DOWNLOADS=never + --python pin the SYSTEM python: without
+# them uv drops a managed interpreter into root's home, unreadable by the
+# runtime user. The venv + entrypoint under /usr/local are root-owned and
+# world-readable, which is all the runtime user needs.
+ARG CLOUDWATCH_MCP_VERSION=0.1.4
+RUN set -eux; \
+    UV_TOOL_DIR=/usr/local/share/uv/tools UV_TOOL_BIN_DIR=/usr/local/bin \
+    UV_PYTHON_DOWNLOADS=never UV_NO_CACHE=1 \
+    uv tool install --python /usr/bin/python3 "awslabs.cloudwatch-mcp-server==${CLOUDWATCH_MCP_VERSION}"; \
+    test -x /usr/local/bin/awslabs.cloudwatch-mcp-server
+
 # Headless-browser verification support: the shared libraries Chromium needs at
 # runtime, plus fonts (DejaVu + Noto CJK so the Console's Japanese UI renders in
 # screenshots instead of tofu). The browser binary itself is NOT baked — this

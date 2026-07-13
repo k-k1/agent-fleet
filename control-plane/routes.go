@@ -378,6 +378,8 @@ func registerConnectionRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("DELETE /api/connections/pagerduty", rest)
 	mux.HandleFunc("PUT /api/connections/grafana", rest)
 	mux.HandleFunc("DELETE /api/connections/grafana", rest)
+	mux.HandleFunc("PUT /api/connections/cloudwatch", rest)
+	mux.HandleFunc("DELETE /api/connections/cloudwatch", rest)
 }
 
 // Internal git provider (docs/reference/internal-git-provider, ADR 0010).
