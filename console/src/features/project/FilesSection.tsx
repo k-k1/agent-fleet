@@ -7,7 +7,7 @@
 // フォルダを開く) opens the section so the target is visible — hence the
 // controlled Section + own persistence (the old console's af-section-files key,
 // so an existing collapse choice carries over).
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Section } from "../../ui/Section.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { IconButton } from "../../ui/Button.tsx";
@@ -25,9 +25,13 @@ export function FilesSection() {
   const bump = useFilesStore((s) => s.bump);
   const q = useFilesFilter((s) => s.q);
   const setQ = useFilesFilter((s) => s.setQ);
+  const scope = useFilesFilter((s) => s.scope);
+  const setScope = useFilesFilter((s) => s.setScope);
   const focusTree = useFilesFilter((s) => s.focusTree);
   const focusInputN = useFilesFilter((s) => s.focusInputN);
   const filterRef = useRef<HTMLInputElement>(null);
+  const sectionBodyRef = useRef<HTMLDivElement>(null);
+  const wasSearchingRef = useRef(false);
   const [open, setOpen] = useState(() => localStorage.getItem(KEY) === "1");
   const set = (v: boolean) => {
     setOpen(v);
@@ -49,6 +53,7 @@ export function FilesSection() {
       localStorage.setItem(VIEW_KEY, v);
     } catch {}
   };
+  const searchRoot = q.trim() && scope === "home" ? "" : "repos";
 
   useEffect(() => {
     if (reveal.path) {
@@ -67,6 +72,17 @@ export function FilesSection() {
     requestAnimationFrame(() => filterRef.current?.select());
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusInputN]);
+
+  // Replacing a tall expanded tree with a short result list leaves the rail's
+  // old scrollTop behind. Bring this section back to the viewport when a search
+  // starts so its results do not end up below the visible area.
+  useLayoutEffect(() => {
+    const searching = !!q.trim();
+    if (searching && !wasSearchingRef.current) {
+      sectionBodyRef.current?.closest(".ui-section")?.scrollIntoView({ block: "start" });
+    }
+    wasSearchingRef.current = searching;
+  }, [q]);
 
   return (
     <Section
@@ -102,7 +118,7 @@ export function FilesSection() {
       {view === "changes" ? (
         <FilesChanges />
       ) : (
-        <>
+        <div ref={sectionBodyRef} className={q.trim() ? "files-search-active" : undefined}>
           <div className="proj-filter-bar">
             <div className="proj-filter">
               <Icon name="search" />
@@ -127,12 +143,18 @@ export function FilesSection() {
                 </button>
               )}
             </div>
+            <div className="files-search-scope" role="group" aria-label="検索範囲">
+              <button type="button" className={scope === "repos" ? "active" : ""} onClick={() => setScope("repos")}>
+                リポジトリ
+              </button>
+              <button type="button" className={scope === "home" ? "active" : ""} onClick={() => setScope("home")}>
+                home
+              </button>
+            </div>
           </div>
-          <ProjectFiles root="repos" markRepos searchable />
-          {/* home: the rest of ~ (repos/ shows again inside — harmless). Lazy:
-              mounted only while open. Hidden while a query is active — search
-              covers all working copies as a flat list, so the home tree (which
-              would only visible-row-filter) would just be a confusing dupe. */}
+          <ProjectFiles root={searchRoot} markRepos={searchRoot === "repos"} searchable groupByRepo={scope === "repos"} />
+          {/* Browsing shortcut for home while the repos scope is selected. Lazy:
+              mounted only while open and hidden during a recursive search. */}
           {!q && (
             <>
               <button
@@ -148,7 +170,7 @@ export function FilesSection() {
               {homeOpen && <ProjectFiles root="" />}
             </>
           )}
-        </>
+        </div>
       )}
     </Section>
   );
