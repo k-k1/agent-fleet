@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import type { CSSProperties, KeyboardEvent as RKeyboardEvent, ClipboardEvent as RClipboardEvent, DragEvent as RDragEvent, RefObject } from "react";
 import { api, apiJSON, raw, errText, pasteImage } from "../../core/api/client.ts";
 import { splitPastedImages, buildImagePrompt } from "../../lib/pastedImages.ts";
-import { useSettings, chatFontStack } from "../../lib/settings.ts";
+import { useSettings, chatFontStack, surfaceBg, surfaceAccent, effectiveTheme } from "../../lib/settings.ts";
 import { useLayoutStore } from "../../layout/store.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { useSessionsStore } from "../sessions/store.ts";
@@ -1416,10 +1416,28 @@ export function MirrorView({
       ? stateInfo(sessionMeta)
       : null;
 
+  // Region theme + surface color for the session mirror: data-theme scopes the base
+  // tokens (tokens.css), and --chat-bg/--chat-accent are derived for the mirror's own
+  // effective theme so a flipped mirror doesn't inherit the app-theme surface tint. The
+  // accent falls back through the other surfaces (viewer/leftpane/topbar) as before.
+  const mirrorEff = effectiveTheme(settings.mirrorTheme, settings.theme);
+  const mirrorBg = surfaceBg(settings.chatColor, mirrorEff);
+  const mirrorAccent =
+    surfaceAccent(settings.chatColor) ||
+    surfaceAccent(settings.viewerColor) ||
+    surfaceAccent(settings.leftpaneColor) ||
+    surfaceAccent(settings.topbarColor);
+
   return (
     <div
       className={"mirrorview" + (dragging ? " dragging" : "")}
-      style={{ "--chat-font": chatFontStack(settings.chatFont), "--chat-size": settings.chatSize + "px" } as CSSProperties}
+      data-theme={settings.mirrorTheme !== "inherit" ? settings.mirrorTheme : undefined}
+      style={{
+        "--chat-font": chatFontStack(settings.chatFont),
+        "--chat-size": settings.chatSize + "px",
+        ...(mirrorBg ? { "--chat-bg": mirrorBg } : {}),
+        ...(mirrorAccent ? { "--chat-accent": mirrorAccent } : {}),
+      } as CSSProperties}
       onDragEnter={onDragEnter}
       onDragOver={onDragOver}
       onDragLeave={onDragLeave}
