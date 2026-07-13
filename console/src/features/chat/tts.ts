@@ -401,6 +401,9 @@ export function startTts(
   source = "",
   onEnd?: (reason: "done" | "stopped") => void,
   sessionName = "", // 発生元セッション名（左ペインの再生中アイコン用。非セッションは ""）
+  // onPiece(spoken): その文が実際に鳴り始める瞬間に、読み補正前の表示テキストを通知する
+  // （ライブ配信カラオケ用・docs/19）。未指定なら一切コストは掛からない。
+  onPiece?: (spoken: string) => void,
 ): TtsController {
   preemptActive(); // 直前の再生を停止（グローバル 1 本・キューは温存）
   // 読み仮名辞書（ユーザー＋テナント共通の合成・ユーザー優先）はターン開始時に一度だけ
@@ -418,6 +421,8 @@ export function startTts(
   const buffers = new Map<number, AudioBuffer | null>(); // seq → 復号済み（null=失敗/スキップ）
   const gaps = new Map<number, number>(); // seq → そのチャンクの後に挟む間（秒）
   const preGaps = new Map<number, number>(); // seq → そのチャンクの前に足す前拍（ブロック頭）
+  const displays = new Map<number, string>(); // seq(文頭片) → 読み補正前の表示テキスト（onPiece 用）
+  const pieceTimers = new Set<number>(); // onPiece の発火予約（stop で解除）
   let playCursor = 0; // 次に鳴らす seq
   const srcs = new Set<AudioBufferSourceNode>(); // 再生中＋先行スケジュール済みのノード
   let nextStartAt = 0; // 次のバッファを開始する AudioContext 時刻
@@ -520,6 +525,7 @@ export function startTts(
   const submit = (text: string, gap = SENTENCE_GAP, pre = false) => {
     let t = text.trim();
     if (!t) return;
+    const display = t; // カラオケ用の表示テキスト（読み補正・分割の前・onPiece で通知）
     // 読みの整形: ユーザー/テナント辞書 → 組み込み読み補正 → 助詞の小休止（enkana は CP 側で後段）。
     t = applyReadings(t, userDict, getSettings().ttsParticlePause);
     if (!t) return;
@@ -529,6 +535,7 @@ export function startTts(
     for (let i = 0; i < pieces.length; i++) {
       gaps.set(seq, i === pieces.length - 1 ? gap : CLAUSE_GAP);
       if (pre && i === 0) preGaps.set(seq, BLOCK_BEAT); // リスト・見出し等の頭 → 読む前に一拍
+      if (onPiece && i === 0) displays.set(seq, display); // 文頭片が鳴る瞬間にこの文を通知
       jobs.push({ seq: seq++, text: pieces[i] });
     }
     if (!startedAudio) useTtsStore.getState().setPreparing(true); // 最初の音まで「生成中」
@@ -592,6 +599,20 @@ export function startTts(
       let at = Math.max(ctx.currentTime, nextStartAt);
       if (sq > 0) at += pre; // ブロック頭の前拍（先頭チャンクは開始を遅らせない）
       src.start(at);
+      // ライブ配信カラオケ: この文が実際に鳴り始める時刻（先行予約ぶん先）に onPiece を発火。
+      // バッファは先読みでまとめて予約されるため、start 時ではなく再生開始時刻に合わせる。
+      if (onPiece) {
+        const d = displays.get(sq);
+        displays.delete(sq);
+        if (d) {
+          const delayMs = Math.max(0, (at - ctx.currentTime) * 1000);
+          const tm = window.setTimeout(() => {
+            pieceTimers.delete(tm);
+            if (!stopped) onPiece(d);
+          }, delayMs);
+          pieceTimers.add(tm);
+        }
+      }
       useTtsStore.getState().setPreparing(false); // 最初の音がスケジュールされた → 生成中を解除
       nextStartAt = at + ab.duration + gap;
     }
@@ -613,6 +634,8 @@ export function startTts(
       if (stopped) return;
       stopped = true;
       jobs.length = 0;
+      pieceTimers.forEach((t) => clearTimeout(t)); // 予約済みの onPiece 発火を取り消す
+      pieceTimers.clear();
       acs.forEach((a) => a.abort());
       acs.clear();
       srcs.forEach((s) => {

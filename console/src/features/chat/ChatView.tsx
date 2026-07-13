@@ -63,6 +63,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
   const [sending, setSending] = useState(false);
   const [streamText, setStreamText] = useState(""); // live-accumulating (tentative) answer
   const [streamSteps, setStreamSteps] = useState<ChatStep[]>([]); // working steps committed this turn (分離)
+  const [karaoke, setKaraoke] = useState<string | null>(null); // 読み上げ中の文（ライブ配信カラオケ・docs/19）
   const [error, setError] = useState("");
   const [loadError, setLoadError] = useState("");
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -147,11 +148,14 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
     applyConv(snapshot);
   }, [snapshot, conversationId]);
 
-  // Keep the transcript pinned to the newest turn (and to the thinking indicator).
+  // Keep the transcript pinned to the newest turn (and to the thinking indicator). While
+  // live karaoke is following the spoken sentence, defer to its scrollIntoView instead —
+  // otherwise bottom-pin and the karaoke follow fight over the scroll position.
   useEffect(() => {
+    if (karaoke) return;
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [conv?.messages.length, sending, streamText, streamSteps, liveTurn]);
+  }, [conv?.messages.length, sending, streamText, streamSteps, liveTurn, karaoke]);
 
   // Auto-grow the composer to fit its content (up to the CSS max-height, then it scrolls),
   // same as MirrorView's composer. Reset to auto first so it also shrinks when text is
@@ -308,6 +312,11 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
               ...assistantVoiceOpts(target.assistant_id || draftAssistantId || undefined, assistVoice),
             },
             "チャット",
+            undefined,
+            "",
+            // ライブ配信カラオケ: 読み上げ中の文を通知し、ストリーミングバブルの該当ブロックを
+            // ハイライトする（StreamingMarkdown が highlight から DOM ブロックを探して光らせる）。
+            (t) => setKaraoke(t),
           )
         : null;
     ttsRef.current?.stop();
@@ -329,6 +338,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
       markChatBusy(convId, false);
       setStreamText("");
       setStreamSteps([]);
+      setKaraoke(null);
       setSending(false);
     };
     await chatStream(
@@ -348,6 +358,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
           acc = "";
           setStreamText("");
           setStreamSteps([...steps]);
+          setKaraoke(null); // 過程の読み上げをスキップ → ハイライトも一旦解除
           setLive(convId, { text: "", steps: [...steps] });
           // 音声: 途中まで読んでいた作業過程の再生をスキップし、最終回答用に読み直す
           // （stop→作り直しの合成待ちが「一拍」になり、過程を読み切らず本回答へ移る）。
@@ -506,7 +517,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
             {liveSteps.length > 0 && <ChatSteps steps={liveSteps} defaultOpen live />}
             {streamBody ? (
               <div className="chat-body">
-                <StreamingMarkdown text={streamBody} />
+                <StreamingMarkdown text={streamBody} highlight={karaoke} />
               </div>
             ) : liveSteps.length > 0 ? (
               // A step just committed; the next answer hasn't started streaming yet.
@@ -596,12 +607,15 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
 // every SSE chunk (killing text selection, wasting CPU). Trailing updates are always
 // flushed, so the shown text never lags more than one window behind the stream.
 const STREAM_RENDER_MS = 120;
-function StreamingMarkdown({ text }: { text: string }) {
+function StreamingMarkdown({ text, highlight }: { text: string; highlight?: string | null }) {
   const [shown, setShown] = useState(text);
   const lastRef = useRef(0); // when we last flushed
   const timerRef = useRef<number | null>(null);
   const textRef = useRef(text); // latest text, for the trailing flush
   textRef.current = text;
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+  const litRef = useRef<HTMLElement | null>(null);
+  const litNeedleRef = useRef(""); // last highlighted sentence, so we scroll only when it changes
   useEffect(() => {
     const due = lastRef.current + STREAM_RENDER_MS;
     const now = Date.now();
@@ -622,7 +636,42 @@ function StreamingMarkdown({ text }: { text: string }) {
     },
     [],
   );
-  return <MarkdownView source={shown} breaks streaming />;
+  // Live karaoke (docs/19): each ~120ms re-render rebuilds the bubble DOM and wipes any
+  // highlight, so we (re)apply .tts-active after every render, driven by `highlight` (the
+  // sentence the TTS just started). We locate the sentence's block by matching its
+  // (whitespace-stripped) text against the rendered blocks — the same block set the
+  // completed-turn karaoke walks (collectBlocks). Not found → keep the current highlight
+  // (avoids flicker at sentence boundaries); no highlight → clear.
+  useEffect(() => {
+    const wrap = wrapRef.current;
+    if (!wrap) return;
+    if (!highlight) {
+      litRef.current?.classList.remove("tts-active");
+      litRef.current = null;
+      litNeedleRef.current = "";
+      return;
+    }
+    const norm = (s: string) => s.replace(/\s+/g, "");
+    const needle = norm(highlight).slice(0, 16);
+    if (!needle) return;
+    const target = collectBlocks(wrap).find((b) => norm(b.textContent || "").includes(needle));
+    if (!target) return; // not found → keep the current highlight (no flicker at boundaries)
+    // Re-apply the class every render (the DOM was rebuilt), but only scroll when the spoken
+    // sentence actually changed — otherwise the ~120ms re-renders would spam smooth-scroll.
+    if (litRef.current && litRef.current !== target) litRef.current.classList.remove("tts-active");
+    target.classList.add("tts-active");
+    litRef.current = target;
+    if (litNeedleRef.current !== needle) {
+      litNeedleRef.current = needle;
+      target.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    }
+  }, [shown, highlight]);
+  useEffect(() => () => litRef.current?.classList.remove("tts-active"), []);
+  return (
+    <div ref={wrapRef}>
+      <MarkdownView source={shown} breaks streaming />
+    </div>
+  );
 }
 
 // ChatSteps renders an assistant turn's 作業過程 (docs/19 分離): the narration the model
