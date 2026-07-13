@@ -49,8 +49,15 @@
      REBOUND per region (left pane → --lp-accent, terminal/chat toggle → --viewer-accent)
      so a control's selection tracks the theme of the region it lives in. */
   --sel-accent: var(--topbar-accent);
-  --sel-bg: color-mix(in srgb, var(--sel-accent) 30%, var(--bg));
-  --sel-fg: var(--fg);
+  /* The mix knobs are the only per-theme part of the --sel-* derivation, so the
+     formulas below stay byte-identical across the theme blocks and .sel-scope
+     (end of file) — and a .sel-scope element inside a nested data-theme container
+     picks up the NEAREST theme's knobs by plain inheritance. Dark: 30% tint,
+     text = plain --fg (0% accent). */
+  --sel-bg-mix: 30%;
+  --sel-fg-mix: 0%;
+  --sel-bg: color-mix(in srgb, var(--sel-accent) var(--sel-bg-mix), var(--bg));
+  --sel-fg: color-mix(in srgb, var(--sel-accent) var(--sel-fg-mix), var(--fg));
   /* highlight.js syntax palette (GitHub Dark) — themed via vars so the file viewer
      follows light/dark instead of the dark-only github-dark.css import. */
   --hl-fg: #c9d1d9;
@@ -106,14 +113,17 @@
   --hover-bg: #eaf1fb;
   /* Light: soft tint + accent-tinted text (a solid fill reads too heavy). Same
      --sel-accent mechanism so region rebinds apply in light too. The text is the accent
-     darkened toward --fg, NOT the raw accent: surface accents are tuned for dark
-     backgrounds (green #2fb872, warm #e0964a …) and read ~2:1 on the pale --sel-bg tint —
-     the 起動/クローン modal segs were illegible. 55% accent / 45% fg keeps the hue and
-     puts every surface accent ≥4.8:1 on its own tint. */
+     darkened toward --fg (55%/45%), NOT the raw accent: surface accents are tuned for
+     dark backgrounds (green #2fb872, warm #e0964a …) and read ~2:1 on the pale --sel-bg
+     tint — the 起動/クローン modal segs were illegible. 55% keeps the hue and puts every
+     surface accent ≥4.8:1 on its own tint. */
   --sel-accent: var(--topbar-accent);
-  --sel-bg: color-mix(in srgb, var(--sel-accent) 16%, var(--bg));
-  --sel-fg: color-mix(in srgb, var(--sel-accent) 55%, var(--fg));
-  /* highlight.js syntax palette (GitHub Light). */
+  --sel-bg-mix: 16%;
+  --sel-fg-mix: 55%;
+  --sel-bg: color-mix(in srgb, var(--sel-accent) var(--sel-bg-mix), var(--bg));
+  --sel-fg: color-mix(in srgb, var(--sel-accent) var(--sel-fg-mix), var(--fg));
+  /* highlight.js syntax palette (GitHub Light). (--sel-* re-derivation for rebound
+     regions lives in the .sel-scope blocks at the end of this file.) */
   --hl-fg: #24292f;
   --hl-comment: #6e7781;
   --hl-keyword: #cf222e;
@@ -126,4 +136,20 @@
   --hl-add-bg: #dafbe1;
   --hl-del-fg: #82071e;
   --hl-del-bg: #ffebe9;
+}
+
+/* --sel-* re-derivation for regions that rebind --sel-accent (.mirror-toggle →
+   --viewer-accent, .files-view → --lp-accent). Rebinding --sel-accent alone does
+   NOT update --sel-bg/--sel-fg for that element: an inherited custom property's
+   var()s are substituted at the element that DECLARES it, so the :root-declared
+   pair inherits down with :root's accent already baked in. Any element that
+   rebinds --sel-accent must also carry the sel-scope class (in its markup) so the
+   pair is re-declared — and thus re-derived — on that element. The formulas are
+   byte-identical to the theme blocks above; the per-theme numbers come in via the
+   inherited --sel-*-mix knobs, so this needs no [data-theme] selector — which is
+   what makes it follow the NEAREST theme container (the mirror toggle can sit in
+   a mirrorTheme-scoped .mirrorview whose theme differs from the app's). */
+.sel-scope {
+  --sel-bg: color-mix(in srgb, var(--sel-accent) var(--sel-bg-mix), var(--bg));
+  --sel-fg: color-mix(in srgb, var(--sel-accent) var(--sel-fg-mix), var(--fg));
 }
