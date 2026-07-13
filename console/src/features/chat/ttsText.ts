@@ -263,6 +263,25 @@ const UPPER_ACRONYMS: [RegExp, string][] = [[/\bIT\b/g, "アイティー"]];
 // フィードバック）。enkana より前でカタカナへ確定させて表記ゆれごと吸収する。
 const PRODUCT_NAMES: [RegExp, string][] = [[/agent[\s-]?fleet/gi, "エージェントフリート"]];
 
+// --- 裸のスラッシュ区切り（コード外）の間つめ ------------------------------------
+// "origin/main"・"on/off"・"read/write" のような裸（バッククォート無し）のスラッシュ区切りは
+// VOICEVOX(OpenJTalk) が "/" を記号扱いしてポーズを挟むため、地の文で読むと間が長く感じる
+// （実機報告）。列挙・二択の慣用表現として自然な中黒（・、ほぼ無音の区切り）に差し替える。
+// 3 セグメント以上（2 個以上の "/"）は plainify の PATH_RE/abbrevPath が先に「頭、フィラー、
+// 末尾」へ畳むので対象外（ttsAbbrevCode が OFF でそこを通らなかった残りもここで拾う）。日付・
+// 分数・除算（2024/01/02, 1/2 等）は両辺が数字のみのときだけ除外し、そのまま残す。文字クラスは
+// 英数字・カタカナ・長音符だけに絞る（ひらがな/漢字を含めると「確率は1/2です」のように地の文
+// が数字トークンへ食い込み、数字のみ判定が effectively 効かなくなるため）。
+const SLASH_CHAIN = /[A-Za-z0-9ァ-ヶー]+(?:\/[A-Za-z0-9ァ-ヶー]+)+/g;
+
+function shortenSlashPause(t: string): string {
+  return t.replace(SLASH_CHAIN, (m) => {
+    const segs = m.split("/");
+    if (segs.every((s) => /^\d+$/.test(s))) return m; // 日付・分数・除算は触らない
+    return segs.join("・");
+  });
+}
+
 // --- 波ダッシュ（〜/～）の読み分け -------------------------------------------------
 // 「3〜5倍速」のような範囲指定は「3から5倍速」と読ませたい一方、「〜〜〜」のように連続
 // させる使い方は文章の省略・言いよどみ（「詳細はほにゃらら〜〜〜」等）を表すので、両者を
@@ -283,7 +302,8 @@ function applyTildeReadings(text: string): string {
 }
 
 export function applyBuiltinReadings(text: string): string {
-  let t = text.replace(KARA_KATAKANA, "から");
+  let t = shortenSlashPause(text);
+  t = t.replace(KARA_KATAKANA, "から");
   t = applyTildeReadings(t);
   for (const [re, to] of NUMERONYMS) t = t.replace(re, to);
   for (const [re, to] of PRODUCT_NAMES) t = t.replace(re, to);
