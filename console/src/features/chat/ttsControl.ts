@@ -16,3 +16,8 @@ export interface TtsController {
 export function stopTtsForReplacement(c: TtsController | null | undefined): void {
   c?.stop("replaced");
 }
+
+export const HIDDEN_TTS_GAIN = 0.55;
+export function ttsMasterGain(quietWhenHidden: boolean, hidden: boolean): number {
+  return quietWhenHidden && hidden ? HIDDEN_TTS_GAIN : 1;
+}

@@ -10,7 +10,7 @@
 // Markdown/コードブロック/URL は読み上げ用にプレーン化して除く（plainify）。
 
 import { rel } from "../../core/api/client.ts";
-import { getSettings } from "../../lib/settings.ts";
+import { getSettings, subscribe as subscribeSettings } from "../../lib/settings.ts";
 import { useTtsStore } from "../../core/store/tts.ts";
 import {
   plainify,
@@ -25,7 +25,7 @@ import {
 import { effectiveDict } from "./ttsDict.ts";
 import { makeAudioLru } from "./ttsCache.ts";
 import { speakersCatalog, type Speaker, type SpeakerStyle } from "./ttsSpeakers.ts";
-import { type TtsController, type TtsEndReason, type TtsStopReason } from "./ttsControl.ts";
+import { ttsMasterGain, type TtsController, type TtsEndReason, type TtsStopReason } from "./ttsControl.ts";
 export { stopTtsForReplacement } from "./ttsControl.ts";
 export type { TtsController, TtsEndReason, TtsStopReason } from "./ttsControl.ts";
 
@@ -377,11 +377,42 @@ async function synthToBuffer(
   }
 }
 
-// AudioContext は 1 つを使い回す（ユーザー操作＝送信起点で resume できる）。
+// AudioContext と最終出力の master gain は 1 つを使い回す。各再生の volume（作業過程の
+// 小声等）を掛けた後、master で背景タブ時の音量を全再生まとめて滑らかに変更する。
 let sharedCtx: AudioContext | null = null;
+let masterGain: GainNode | null = null;
+let visibilityWired = false;
+function masterTarget(): number {
+  return ttsMasterGain(getSettings().ttsQuietWhenHidden, typeof document !== "undefined" && document.hidden);
+}
+
+function syncMasterGain(immediate = false): void {
+  if (!sharedCtx || !masterGain) return;
+  const gain = masterGain.gain;
+  const now = sharedCtx.currentTime;
+  const target = masterTarget();
+  gain.cancelScheduledValues(now);
+  if (immediate) {
+    gain.setValueAtTime(target, now);
+    return;
+  }
+  // 約150msで目標の95%へ到達。瞬時変更によるクリックノイズを避ける。
+  gain.setValueAtTime(gain.value, now);
+  gain.setTargetAtTime(target, now, 0.05);
+}
+
 function audioCtx(): AudioContext | null {
   try {
-    if (!sharedCtx) sharedCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+    if (!sharedCtx) {
+      sharedCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      masterGain = sharedCtx.createGain();
+      masterGain.connect(sharedCtx.destination);
+      syncMasterGain(true);
+    }
+    if (!visibilityWired && typeof document !== "undefined") {
+      visibilityWired = true;
+      document.addEventListener("visibilitychange", () => syncMasterGain());
+    }
     if (sharedCtx.state === "suspended") void sharedCtx.resume();
     return sharedCtx;
   } catch {
@@ -390,15 +421,20 @@ function audioCtx(): AudioContext | null {
 }
 
 function connectOutput(ctx: AudioContext, src: AudioBufferSourceNode, volume = 1): void {
+  const destination: AudioNode = masterGain ?? ctx.destination;
   if (volume >= 0.999) {
-    src.connect(ctx.destination);
+    src.connect(destination);
     return;
   }
   const gain = ctx.createGain();
   gain.gain.value = Math.max(0, Math.min(1, volume));
   src.connect(gain);
-  gain.connect(ctx.destination);
+  gain.connect(destination);
 }
+
+// 設定画面で切り替えた瞬間にも、再生中の音へ反映する。サーバー同期で設定が更新された場合も
+// 同じ settings subscription を通るため、次の visibilitychange を待たない。
+subscribeSettings(() => syncMasterGain());
 
 // --- グローバル停止の伝播 --------------------------------------------------------
 // stop には 2 種類ある。(1) 明示的な停止（TopBar・ターンフッターの停止ボタン等）＝「静かに
