@@ -53,6 +53,13 @@ export function TtsTab() {
           どちらも無ければ無音になります）。
           {s.ttsEnabled && <> 音声引用：VOICEVOX：ずんだもん。</>}
         </p>
+        <Row label="バックグラウンドでは音量を下げる">
+          <OnOff value={s.ttsQuietWhenHidden} onChange={(v) => setSetting("ttsQuietWhenHidden", v)} />
+        </Row>
+        <p className="muted ds-note">
+          別タブへ切り替えたときやブラウザを最小化したとき、読み上げ音量を55%へ下げます。
+          Console が見える状態へ戻ると通常音量へ滑らかに戻ります。
+        </p>
       </section>
       {s.ttsEnabled && (
         <>

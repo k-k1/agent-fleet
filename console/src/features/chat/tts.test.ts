@@ -22,7 +22,7 @@ import {
   startsTame,
 } from "./ttsText.ts";
 import { makeAudioLru } from "./ttsCache.ts";
-import { stopTtsForReplacement, type TtsController } from "./ttsControl.ts";
+import { HIDDEN_TTS_GAIN, stopTtsForReplacement, ttsMasterGain, type TtsController } from "./ttsControl.ts";
 
 describe("TTS controller replacement", () => {
   it("内部的な再生置換は明示停止ではなく replaced を渡す", () => {
@@ -37,6 +37,14 @@ describe("TTS controller replacement", () => {
     stopTtsForReplacement(null);
 
     expect(reasons).toEqual(["replaced"]);
+  });
+});
+
+describe("TTS master gain", () => {
+  it("設定ONかつ背景時だけ音量を下げる", () => {
+    expect(ttsMasterGain(true, true)).toBe(HIDDEN_TTS_GAIN);
+    expect(ttsMasterGain(true, false)).toBe(1);
+    expect(ttsMasterGain(false, true)).toBe(1);
   });
 });
 

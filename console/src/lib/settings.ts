@@ -197,6 +197,9 @@ export interface Settings {
   ttsVoiceVoicevox: string; // VOICEVOX の speaker 番号（"3"=ずんだもん・ノーマル）
   ttsVoicePolly: string; // Polly の VoiceId（"Takumi" 等）。auto のフォールバック時も使う
   ttsSpeed: number; // 0.5〜2.0（speedScale）
+  // Console が背景タブ／最小化（document.hidden）の間、全TTS出力のマスター音量を55%へ下げる。
+  // window blur は対象外（画面分割や別ウィンドウ操作中でも見えていれば通常音量）。
+  ttsQuietWhenHidden: boolean;
   // バックグラウンドのセッションが回答/質問を返したら音声で知らせる（docs/24 Tier1）。チャットの
   // 自動読み上げ(ttsEnabled)とは別軸。名前前置きの短い告知を直列キューで読む。タブが見えている
   // 間のみ（セッション監視は document.hidden で止まるため）。
@@ -317,6 +320,7 @@ const DEFAULTS: Settings = {
   ttsVoiceVoicevox: "3", // ノーマル
   ttsVoicePolly: "Takumi",
   ttsSpeed: 1.25, // はやめ
+  ttsQuietWhenHidden: false,
   ttsSessionNotify: false,
   usageResetNotify: true,
   ttsEnglishKana: true,
@@ -388,6 +392,7 @@ const TTS_RESET_KEYS = [
   "ttsVoicePool",
   "ttsEmotion",
   "ttsSpeed",
+  "ttsQuietWhenHidden",
   "ttsAutoReadMirror",
   "ttsAutoReadAllPanes",
   "ttsWorkRead",
