@@ -137,19 +137,33 @@ export function FilesSection() {
                 placeholder="絞り込み（ファイル）"
                 aria-label="ファイルを絞り込み"
               />
+              <span className="files-search-scope" role="group" aria-label="検索範囲">
+                <button
+                  type="button"
+                  className={scope === "repos" ? "active" : ""}
+                  aria-pressed={scope === "repos"}
+                  title="リポジトリから検索"
+                  aria-label="リポジトリから検索"
+                  onClick={() => setScope("repos")}
+                >
+                  <Icon name="root-folder" />
+                </button>
+                <button
+                  type="button"
+                  className={scope === "home" ? "active" : ""}
+                  aria-pressed={scope === "home"}
+                  title="home から検索"
+                  aria-label="home から検索"
+                  onClick={() => setScope("home")}
+                >
+                  <Icon name="vm" />
+                </button>
+              </span>
               {q && (
                 <button type="button" className="proj-filter-clear" title="クリア" onClick={() => setQ("")}>
                   <Icon name="close" />
                 </button>
               )}
-            </div>
-            <div className="files-search-scope" role="group" aria-label="検索範囲">
-              <button type="button" className={scope === "repos" ? "active" : ""} onClick={() => setScope("repos")}>
-                リポジトリ
-              </button>
-              <button type="button" className={scope === "home" ? "active" : ""} onClick={() => setScope("home")}>
-                home
-              </button>
             </div>
           </div>
           <ProjectFiles root={searchRoot} markRepos={searchRoot === "repos"} searchable groupByRepo={scope === "repos"} />
