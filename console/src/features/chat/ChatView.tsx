@@ -15,7 +15,7 @@ import { useToast } from "../../ui/ToastProvider.tsx";
 import { splitPastedImages, buildImagePrompt } from "../../lib/pastedImages.ts";
 import { agentOf } from "../../agents/registry.ts";
 import { kindClass } from "../../lib/sessionkind.ts";
-import type { Conversation, ChatMessage } from "../../types/chat.ts";
+import type { Conversation, ChatMessage, ChatStep } from "../../types/chat.ts";
 import type { Assistant } from "../../types/assistant.ts";
 
 // ChatView renders one assistant-chat conversation (docs/19) — a headless-CLI LLM
@@ -47,7 +47,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
   const clearLive = useChatStore((s) => s.clearLive);
   const publishSnapshot = useChatStore((s) => s.publishSnapshot);
   const storeBusy = useChatStore((s) => (conversationId ? !!s.busy[conversationId] : false));
-  const liveText = useChatStore((s) => (conversationId ? s.live[conversationId] : undefined));
+  const liveTurn = useChatStore((s) => (conversationId ? s.live[conversationId] : undefined));
   const snapshot = useChatStore((s) => (conversationId ? s.snapshots[conversationId] : undefined));
   const settings = useSettings();
   const toast = useToast();
@@ -61,7 +61,8 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
   const [attachments, setAttachments] = useState<{ path: string; name: string; url: string }[]>([]);
   const [pasting, setPasting] = useState(false); // an image upload is in flight
   const [sending, setSending] = useState(false);
-  const [streamText, setStreamText] = useState(""); // live-accumulating assistant reply
+  const [streamText, setStreamText] = useState(""); // live-accumulating (tentative) answer
+  const [streamSteps, setStreamSteps] = useState<ChatStep[]>([]); // working steps committed this turn (分離)
   const [error, setError] = useState("");
   const [loadError, setLoadError] = useState("");
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -150,7 +151,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
   useEffect(() => {
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [conv?.messages.length, sending, streamText, liveText]);
+  }, [conv?.messages.length, sending, streamText, streamSteps, liveTurn]);
 
   // Auto-grow the composer to fit its content (up to the CSS max-height, then it scrolls),
   // same as MirrorView's composer. Reset to auto first so it also shrinks when text is
@@ -295,25 +296,29 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
     if (coarsePointer()) inputRef.current?.blur();
     const ac = new AbortController();
     abortRef.current = ac;
-    // 音声読み上げ（docs/24）: 有効時のみコントローラを起こし、delta を句点区切りで逐次合成。
-    // 直前のターンが残っていれば止めてから。
+    // 音声読み上げ（docs/24 + 分離）: 有効時のみコントローラを起こし、delta を句点区切りで
+    // 逐次合成。作業過程（ツール前ナレーション）は「読み始めても step 確定でスキップ」する
+    // ため、step ごとに作り直せるよう makeTts で生成する。直前のターンが残っていれば止めてから。
+    const makeTts = () =>
+      settings.ttsEnabled
+        ? startTts(
+            {
+              ...ttsOptsFromSettings(settings),
+              // アシスタントの声: 明示指定 > プール割り当て（セッションごとに声 ON 時）> 設定の話者
+              ...assistantVoiceOpts(target.assistant_id || draftAssistantId || undefined, assistVoice),
+            },
+            "チャット",
+          )
+        : null;
     ttsRef.current?.stop();
-    ttsRef.current = settings.ttsEnabled
-      ? startTts(
-          {
-            ...ttsOptsFromSettings(settings),
-            // アシスタントの声: 明示指定 > プール割り当て（セッションごとに声 ON 時）> 設定の話者
-            ...assistantVoiceOpts(target.assistant_id || draftAssistantId || undefined, assistVoice),
-          },
-          "チャット",
-        )
-      : null;
+    ttsRef.current = makeTts();
     markChatBusy(target.id, true); // publish 進行中 to the rail
-    // Mirror the live reply + final conversation into the store so a pane re-opened on this
-    // conversation mid-stream re-attaches and picks up the answer even if THIS pane (and
-    // component) is gone by the time the turn finishes.
+    // Mirror the live reply + working steps + final conversation into the store so a pane
+    // re-opened on this conversation mid-stream re-attaches and picks up the answer even if
+    // THIS pane (and component) is gone by the time the turn finishes.
     const convId = target.id;
-    let acc = "";
+    let acc = ""; // current (tentative) answer text
+    const steps: ChatStep[] = []; // working steps committed so far this turn
     // Tear the streaming turn down in one batched render: applying the final conversation
     // (which now ends with the assistant reply) and removing the still-streaming bubble must
     // happen together. If the teardown runs only AFTER `await chatStream` resolves, a frame
@@ -323,6 +328,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
       clearLive(convId);
       markChatBusy(convId, false);
       setStreamText("");
+      setStreamSteps([]);
       setSending(false);
     };
     await chatStream(
@@ -332,8 +338,21 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
         onDelta: (t) => {
           acc += t;
           setStreamText(acc);
-          setLive(convId, acc);
+          setLive(convId, { text: acc, steps }); // steps only change in onStep
           ttsRef.current?.push(t);
+        },
+        onStep: (step) => {
+          // A tool-using message finished: its narration becomes a working step and the
+          // tentative answer resets, so the next message streams as a fresh answer.
+          steps.push(step);
+          acc = "";
+          setStreamText("");
+          setStreamSteps([...steps]);
+          setLive(convId, { text: "", steps: [...steps] });
+          // 音声: 途中まで読んでいた作業過程の再生をスキップし、最終回答用に読み直す
+          // （stop→作り直しの合成待ちが「一拍」になり、過程を読み切らず本回答へ移る）。
+          ttsRef.current?.stop();
+          ttsRef.current = makeTts();
         },
         onError: (m) => setError(m),
         onDone: (updated) => {
@@ -384,7 +403,8 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
   // A turn may be in flight because THIS pane is sending, or because a background turn on
   // this conversation (started before the pane was closed + re-opened) is still running.
   const showStreaming = sending || storeBusy;
-  const streamBody = sending ? streamText : (liveText ?? "");
+  const streamBody = sending ? streamText : (liveTurn?.text ?? "");
+  const liveSteps = sending ? streamSteps : (liveTurn?.steps ?? []);
   const empty = (!conv || conv.messages.length === 0) && !loadError && !showStreaming;
   // Status chip like the Sessions list / MirrorView header: 進行中 while streaming, else 待機中.
   const stateChip = showStreaming
@@ -444,6 +464,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
               <div key={i} className="chat-msg role-assistant">
                 <AssistantTurn
                   text={m.content}
+                  steps={m.steps}
                   ts={m.ts}
                   agentName={agent?.assistantName || "アシスタント"}
                   voice={assistantVoiceOpts(assistId, assistVoice)}
@@ -481,15 +502,26 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
         {showStreaming && (
           <div className="chat-msg role-assistant">
             <div className="chat-role">{agent?.assistantName || "アシスタント"}</div>
-            <div className="chat-body">
-              {streamBody ? (
+            {/* Working steps stream in above the answer, open so progress is visible. */}
+            {liveSteps.length > 0 && <ChatSteps steps={liveSteps} defaultOpen live />}
+            {streamBody ? (
+              <div className="chat-body">
                 <StreamingMarkdown text={streamBody} />
-              ) : (
+              </div>
+            ) : liveSteps.length > 0 ? (
+              // A step just committed; the next answer hasn't started streaming yet.
+              <div className="chat-body">
+                <span className="chat-thinking">
+                  <Icon name="loading" spin /> 作業中…
+                </span>
+              </div>
+            ) : (
+              <div className="chat-body">
                 <span className="chat-thinking">
                   <Icon name="loading" spin /> 考え中…
                 </span>
-              )}
-            </div>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -593,6 +625,44 @@ function StreamingMarkdown({ text }: { text: string }) {
   return <MarkdownView source={shown} breaks streaming />;
 }
 
+// ChatSteps renders an assistant turn's 作業過程 (docs/19 分離): the narration the model
+// emitted before each tool call, kept separate from — but alongside — the final answer.
+// Collapsible; open while streaming so progress is visible, collapsed once the turn is done.
+function ChatSteps({ steps, defaultOpen, live }: { steps: ChatStep[]; defaultOpen?: boolean; live?: boolean }) {
+  const [open, setOpen] = useState(!!defaultOpen);
+  if (!steps.length) return null;
+  const tools = [...new Set(steps.flatMap((s) => s.tools ?? []))];
+  return (
+    <div className={"chat-steps" + (live ? " live" : "")}>
+      <button type="button" className="chat-steps-head" onClick={() => setOpen((o) => !o)}>
+        <Icon name={open ? "chevron-down" : "chevron-right"} />
+        {live && <Icon name="loading" spin />}
+        <span className="chat-steps-label">作業過程</span>
+        <span className="chat-steps-count">{steps.length}</span>
+        {tools.length > 0 && <span className="chat-steps-tools">{tools.join(" · ")}</span>}
+      </button>
+      {open && (
+        <div className="chat-steps-body">
+          {steps.map((s, i) => (
+            <div key={i} className="chat-step">
+              {s.text && <MarkdownView source={s.text} breaks />}
+              {s.tools && s.tools.length > 0 && (
+                <div className="chat-step-tools">
+                  {s.tools.map((t, j) => (
+                    <span key={j} className="chat-step-tool">
+                      <Icon name="tools" /> {t}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // AssistantTurn renders one completed assistant reply and its footer. It owns a ref to the
 // bubble body so the footer's read control can karaoke-read the RENDERED Markdown (docs/24):
 // readTurn (features/mirror/turnTts) walks the .markdown DOM into blocks, speaks it sentence
@@ -602,11 +672,13 @@ function StreamingMarkdown({ text }: { text: string }) {
 // the turn is complete, i.e. here.
 function AssistantTurn({
   text,
+  steps,
   ts,
   agentName,
   voice,
 }: {
   text: string;
+  steps?: ChatStep[];
   ts: number;
   agentName: string;
   voice?: Partial<TtsOptions>;
@@ -683,6 +755,8 @@ function AssistantTurn({
   return (
     <>
       <div className="chat-role">{agentName}</div>
+      {/* 作業過程（ツール応答）は最終回答の上に折りたたんで表示（既定は畳む・保持）。 */}
+      {steps && steps.length > 0 && <ChatSteps steps={steps} />}
       <div className="chat-body" ref={bodyRef} onMouseUp={onMouseUp}>
         {text && <MarkdownView source={text} breaks />}
       </div>

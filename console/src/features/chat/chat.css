@@ -80,6 +80,80 @@
 .chat-msg.role-user .chat-body {
   background: color-mix(in srgb, var(--accent) 12%, var(--panel));
 }
+/* 作業過程（docs/19 分離）: ツール応答でモデルがツール呼び出し前に述べたナレーションを、
+   最終回答とは別に折りたたんで表示する。淡色・控えめ（本文より一段落ちる副次情報）。 */
+.chat-steps {
+  align-self: stretch;
+  max-width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--panel) 50%, transparent);
+  overflow: hidden;
+}
+.chat-steps-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 5px 9px;
+  background: none;
+  border: 0;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.chat-steps-head:hover {
+  background: var(--hover-bg, var(--btn));
+}
+.chat-steps-label {
+  font-weight: 600;
+}
+.chat-steps-count {
+  flex: 0 0 auto;
+  min-width: 16px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  border-radius: 8px;
+  padding: 0 5px;
+  background: color-mix(in srgb, var(--fg) 10%, transparent);
+}
+.chat-steps-tools {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0.85;
+}
+.chat-steps-body {
+  padding: 4px 10px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-top: 1px solid var(--border);
+}
+.chat-step {
+  font-size: 13px;
+  color: var(--muted);
+}
+.chat-step-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+.chat-step-tool {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0 5px;
+  color: var(--fg);
+  background: var(--panel);
+}
 /* カラオケ読み上げ（AssistantTurn / turnTts, docs/24）: いま読んでいる文が属するブロックを
    ハイライトし、scrollIntoView(nearest) で追従する。ミラーの .mirror-turn-body .tts-active と
    同趣。ブロック（p/見出し/li/blockquote 内段落）に付く。 */

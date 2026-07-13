@@ -4,10 +4,19 @@
 
 import type { SessionKind } from "./session.ts";
 
+// One "作業過程" item of an assistant turn (docs/19): the narration the model emitted
+// right before it called a tool. Kept alongside the final answer so the UI can show the
+// process separately (保持). Empty for tool-less replies.
+export interface ChatStep {
+  text?: string; // narration before the tool call(s)
+  tools?: string[]; // tool name(s) invoked in this step
+}
+
 export interface ChatMessage {
   role: "user" | "assistant";
   content: string;
   ts: number; // unix millis
+  steps?: ChatStep[]; // assistant working process, separated from the final content
 }
 
 // Light shape from GET /api/chat/conversations (no message bodies).
