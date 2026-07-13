@@ -208,6 +208,8 @@ awslabs cloudwatch-mcp-server の裏取り（2026-07-14, 公式 docs）: **全�
 - **SSO 切れの UX**: 資格が切れているとツールがエラーになるだけなので、「aws sso login してください」への誘導（カードの状態表示 or ツールエラー文言）が必要。CloudWatch は本人の AWS 資格で読む建て付け（原則: AWS の秘密は CP に保存も到達もしない）なので、Grafana の共有接続案のような SSO 非依存化はできない。オンコール開始時に `aws sso login` を済ませる運用を guide に明記する。
 - **メモリ/起動コスト**: uvx Python 系は Go 単一バイナリより重い。イメージビルド時に uv キャッシュを温める（§5-5 (d)）＋ `@latest` でなくバージョンピン（ARG idiom）で初回取得と版ブレを避ける。
 
+**実装済み（2026-07-14, 上記設計どおり）**: `CloudWatchConn{profile, region}`（**秘密なし**）を store に追加、`PUT/DELETE /connections/cloudwatch`＋CP proxy、`mcp-run cloudwatch` が `AWS_PROFILE`/`AWS_REGION` を env に載せて焼き込み済みエントリポイントを exec（フォールバック uvx）、SRE アシスタントの integrations を `[pagerduty, grafana, cloudwatch]` に拡張、運用タブに CloudWatch カード（プロファイル＋リージョンの 2 入力）。イメージは `uv tool install awslabs.cloudwatch-mcp-server==0.1.4`（ARG ピン）で `/usr/local` にベイク — **`UV_PYTHON_DOWNLOADS=never` + `--python /usr/bin/python3` が必須**（無いと managed Python が root の home に落ちて実行ユーザーから見えない。dev 実測で確認）。検証: v0.1.4 は資格が無効でも起動し **read-only 19 ツール**（logs/metrics/PromQL/alarms、write 系ゼロ）、`mcp-run cloudwatch` 経由の JSON-RPC 通し・未設定時の安全な失敗・build/vet/test/tsc 通過。※FastMCP は stdin 一括書き込み＋即 EOF だと応答前に終了する（検証スクリプトは応答待ち駆動にすること）。
+
 ### Amazon Managed Grafana（AMG）接続の検討 — 2026-07-12 Web 裏取り済み
 
 Phase 0 で検証した mcp-grafana は汎用 Grafana API（URL + トークン）前提のため、「AMG は認証方式が違うのでは（IAM Identity Center / SigV4 / 独自キー発行）」を AWS 公式ドキュメントで裏取りした。

@@ -32,6 +32,8 @@ func runMCPRun(args []string) {
 		runPagerDutyMCP(extra)
 	case "grafana":
 		runGrafanaMCP(extra)
+	case "cloudwatch":
+		runCloudWatchMCP(extra)
 	default:
 		fmt.Fprintf(os.Stderr, "mcp-run: unknown provider %q\n", provider)
 		os.Exit(2)
@@ -97,6 +99,50 @@ func runGrafanaMCP(extra []string) {
 	argv := append([]string{bin, "-disable-write", "-disable-admin"}, extra...)
 	if err := syscall.Exec(bin, argv, env); err != nil {
 		fmt.Fprintf(os.Stderr, "mcp-run grafana: exec %s: %v\n", bin, err)
+		os.Exit(1)
+	}
+}
+
+// runCloudWatchMCP execs the awslabs CloudWatch MCP server with the stored AWS
+// profile/region set as env. No secret is injected — the server reads the AWS
+// credential chain (the user's SSO login, same as ssm sessions), so an expired
+// SSO session surfaces as per-tool errors and the fix is `aws sso login`. The
+// server is read-only by design (all tools are read/analyze; verified v0.1.4),
+// so no disable flags are needed.
+func runCloudWatchMCP(extra []string) {
+	s, err := secrets.Load()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "mcp-run cloudwatch: load secrets: %v\n", err)
+		os.Exit(1)
+	}
+	if s.CloudWatch == nil || s.CloudWatch.Profile == "" {
+		fmt.Fprintln(os.Stderr, "mcp-run cloudwatch: no CloudWatch connection configured")
+		os.Exit(1)
+	}
+	env := append(os.Environ(), "AWS_PROFILE="+s.CloudWatch.Profile)
+	if s.CloudWatch.Region != "" {
+		env = append(env, "AWS_REGION="+s.CloudWatch.Region, "AWS_DEFAULT_REGION="+s.CloudWatch.Region)
+	}
+	if os.Getenv("FASTMCP_LOG_LEVEL") == "" {
+		env = append(env, "FASTMCP_LOG_LEVEL=ERROR")
+	}
+	// Baked entrypoint first (uv tool install in the image); uvx as the dev /
+	// old-image fallback (fetches from PyPI on first run).
+	if p, err := exec.LookPath("awslabs.cloudwatch-mcp-server"); err == nil {
+		argv := append([]string{p}, extra...)
+		if err := syscall.Exec(p, argv, env); err != nil {
+			fmt.Fprintf(os.Stderr, "mcp-run cloudwatch: exec %s: %v\n", p, err)
+			os.Exit(1)
+		}
+	}
+	uvx, err := uvxPath()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "mcp-run cloudwatch: %v\n", err)
+		os.Exit(1)
+	}
+	argv := append([]string{uvx, "awslabs.cloudwatch-mcp-server"}, extra...)
+	if err := syscall.Exec(uvx, argv, env); err != nil {
+		fmt.Fprintf(os.Stderr, "mcp-run cloudwatch: exec %s: %v\n", uvx, err)
 		os.Exit(1)
 	}
 }

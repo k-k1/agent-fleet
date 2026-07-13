@@ -36,14 +36,15 @@ func handleConnectionsGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{
-		"claude":    claude.Status(),
-		"github":    gitConnStatus(s, "github.com"),
-		"bitbucket": bitbucketStatus(s),
-		"internal":  internalGitStatus(s),
-		"opencode":  opencode.Status(s),
-		"codex":     codex.Status(),
-		"pagerduty": pagerdutyStatus(s),
-		"grafana":   grafanaStatus(s),
+		"claude":     claude.Status(),
+		"github":     gitConnStatus(s, "github.com"),
+		"bitbucket":  bitbucketStatus(s),
+		"internal":   internalGitStatus(s),
+		"opencode":   opencode.Status(s),
+		"codex":      codex.Status(),
+		"pagerduty":  pagerdutyStatus(s),
+		"grafana":    grafanaStatus(s),
+		"cloudwatch": cloudwatchStatus(s),
 	})
 }
 
@@ -166,6 +167,68 @@ func handleDeleteGrafanaConn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"disconnected": "grafana"})
+}
+
+// cloudwatchStatus reports the stored CloudWatch settings. Nothing here is
+// secret (profile/region select the AWS credential chain, they don't hold it),
+// so the status can echo both for the UI.
+func cloudwatchStatus(s *secrets.Data) map[string]any {
+	if s.CloudWatch == nil || s.CloudWatch.Profile == "" {
+		return map[string]any{"connected": false}
+	}
+	m := map[string]any{"connected": true, "profile": s.CloudWatch.Profile}
+	if s.CloudWatch.Region != "" {
+		m["region"] = s.CloudWatch.Region
+	}
+	return m
+}
+
+type cloudwatchConnReq struct {
+	Profile string `json:"profile"`
+	Region  string `json:"region"`
+}
+
+// handlePutCloudWatchConn stores the AWS profile (+ optional region) the
+// CloudWatch MCP should use (docs/25). No secret is stored: auth is the AWS
+// credential chain (the user's `aws sso login`, same as ssm sessions). The
+// profile must exist in ~/.aws and hold read permissions (CloudWatch/Logs
+// ReadOnly 相当); an expired SSO session just makes the tools error until the
+// user logs in again.
+func handlePutCloudWatchConn(w http.ResponseWriter, r *http.Request) {
+	var req cloudwatchConnReq
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	profile := strings.TrimSpace(req.Profile)
+	if profile == "" {
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_profile", "AWS プロファイル名を入力してください")
+		return
+	}
+	s, err := secrets.Load()
+	if err != nil {
+		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
+		return
+	}
+	s.CloudWatch = &secrets.CloudWatchConn{Profile: profile, Region: strings.TrimSpace(req.Region)}
+	if err := s.Save(); err != nil {
+		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, cloudwatchStatus(s))
+}
+
+func handleDeleteCloudWatchConn(w http.ResponseWriter, r *http.Request) {
+	s, err := secrets.Load()
+	if err != nil {
+		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
+		return
+	}
+	s.CloudWatch = nil
+	if err := s.Save(); err != nil {
+		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"disconnected": "cloudwatch"})
 }
 
 // internalGitStatus reports the tenant's self-hosted git provider (docs/reference/
