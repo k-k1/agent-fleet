@@ -164,7 +164,7 @@ RUN set -eux; \
 # ままになる罠があった（ピン止めなら ARG 変更が確実にキャッシュを破る）。
 ARG CLAUDE_CODE_VERSION=2.1.207
 ARG OPENCODE_VERSION=1.17.18
-ARG CODEX_VERSION=0.144.1
+ARG CODEX_VERSION=0.144.3
 RUN npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
       "opencode-ai@${OPENCODE_VERSION}" \
       "@openai/codex@${CODEX_VERSION}" \
