@@ -291,7 +291,7 @@ func TestOpencodeSidechain(t *testing.T) {
 	insMsg(t, db, "m1", ses, 1000, `{"role":"user","time":{"created":1000}}`)
 	insPart(t, db, "p1", "m1", ses, 1, `{"type":"text","text":"do it"}`)
 	insMsg(t, db, "m2", ses, 2000, `{"role":"assistant","modelID":"m","time":{"created":2000}}`)
-	insPart(t, db, "p2", "m2", ses, 1, `{"type":"tool","tool":"task","state":{"input":{"description":"explore stuff","prompt":"..."}}}`)
+	insPart(t, db, "p2", "m2", ses, 1, `{"type":"tool","tool":"task","state":{"status":"completed","input":{"description":"explore stuff","prompt":"inspect files","subagent_type":"Explore"},"output":"findings"}}`)
 	insMsg(t, db, "c1", "ses_child", 3000, `{"role":"assistant","modelID":"m","time":{"created":3000}}`)
 	insPart(t, db, "pc1", "c1", "ses_child", 1, `{"type":"text","text":"subagent findings"}`)
 	insMsg(t, db, "m3", ses, 4000, `{"role":"assistant","modelID":"m","time":{"created":4000}}`)
@@ -307,9 +307,12 @@ func TestOpencodeSidechain(t *testing.T) {
 	if turns[1].Sidechain || turns[0].Sidechain || turns[3].Sidechain {
 		t.Fatalf("parent turns must not be sidechain: %+v", turns)
 	}
-	// The task tool trace shows its description as the info line.
-	if turns[1].Parts[0].Tool != "task" || turns[1].Parts[0].Info != "explore stuff" {
-		t.Fatalf("task part = %+v, want info 'explore stuff'", turns[1].Parts[0])
+	// The parent task becomes one compact delegation event; the child turns remain
+	// sidechain data for optional diagnostics and are hidden by the normal Console view.
+	p := turns[1].Parts[0]
+	if p.Kind != "delegation" || p.Tool != "task" || p.Info != "explore stuff" ||
+		p.Prompt != "inspect files" || p.AgentType != "Explore" || p.Status != "completed" || p.Output != "findings" {
+		t.Fatalf("task delegation = %+v", p)
 	}
 	c := turns[2]
 	if !c.Sidechain || c.Text != "subagent findings" {

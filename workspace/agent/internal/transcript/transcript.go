@@ -2,14 +2,19 @@
 // (docs/23 P1-W5)。JSONタグは Console の型と対 — 変更禁止。
 package transcript
 
-// Part is one ordered piece of a turn: rendered text, a faint tool trace, an
-// AskUserQuestion the user can answer inline, or an ExitPlanMode plan.
+// Part is one ordered piece of a turn: rendered text, a faint tool trace, a
+// subagent delegation, an AskUserQuestion the user can answer inline, or an
+// ExitPlanMode plan.
 type Part struct {
-	Kind      string     `json:"kind"`                // "text" | "thinking" | "tool" | "question" | "plan" | "userfile"
+	Kind      string     `json:"kind"`                // "text" | "thinking" | "tool" | "delegation" | "question" | "plan" | "userfile"
 	Text      string     `json:"text,omitempty"`      // kind=text/thinking: Markdown
-	Tool      string     `json:"tool,omitempty"`      // kind=tool/question/plan/userfile: tool name
-	Info      string     `json:"info,omitempty"`      // kind=tool: short arg summary
-	Output    string     `json:"output,omitempty"`    // kind=tool: the tool's output/result (codex/opencode), truncated
+	Tool      string     `json:"tool,omitempty"`      // kind=tool/delegation/question/plan/userfile: tool name
+	Info      string     `json:"info,omitempty"`      // kind=tool/delegation: short human-facing label
+	Output    string     `json:"output,omitempty"`    // kind=tool/delegation: output/final result, truncated
+	Prompt    string     `json:"prompt,omitempty"`    // kind=delegation: full instruction sent to the child
+	AgentType string     `json:"agentType,omitempty"` // kind=delegation: Explore/general-purpose/task name
+	Status    string     `json:"status,omitempty"`    // kind=delegation: requested/running/completed/failed
+	Model     string     `json:"model,omitempty"`     // kind=delegation: explicitly selected child model
 	Questions []Question `json:"questions,omitempty"` // kind=question: AskUserQuestion
 	Answer    string     `json:"answer,omitempty"`    // kind=question: the chosen answer text
 	Plan      string     `json:"plan,omitempty"`      // kind=plan: ExitPlanMode plan Markdown
