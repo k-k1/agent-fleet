@@ -5,7 +5,10 @@
   flex-direction: column;
   height: 100%;
   min-height: 0;
-  background: var(--bg);
+  /* --chat-bg (assistantColor surface) set inline on .chatview per its own theme; falls
+     back to the theme --bg when no surface color is chosen. Shared var contract with the
+     session mirror (.mirrorview) — each container sets its own value. */
+  background: var(--chat-bg, var(--bg));
 }
 /* Legacy control styles (old styles.css element globals), scoped to the chat view —
    the verbatim-ported ChatView's raw buttons (送信 / 停止) relied on them. Same
@@ -57,7 +60,7 @@
   color: var(--muted);
 }
 .chat-msg.role-user .chat-role {
-  color: var(--accent);
+  color: var(--chat-accent, var(--accent));
 }
 .chat-body {
   border-radius: 8px;
@@ -70,14 +73,14 @@
   max-width: min(96ch, 100%);
 }
 .chat-msg.role-user .chat-body {
-  background: color-mix(in srgb, var(--accent) 12%, var(--panel));
+  background: color-mix(in srgb, var(--chat-accent, var(--accent)) 12%, var(--panel));
   align-self: flex-start;
 }
 /* カラオケ読み上げ（AssistantTurn / turnTts, docs/24）: いま読んでいる文が属するブロックを
    ハイライトし、scrollIntoView(nearest) で追従する。ミラーの .mirror-turn-body .tts-active と
    同趣。ブロック（p/見出し/li/blockquote 内段落）に付く。 */
 .chat-body .tts-active {
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  background: color-mix(in srgb, var(--chat-accent, var(--accent)) 14%, transparent);
   border-radius: 4px;
   scroll-margin: 64px; /* ヘッダ等に隠れない余白 */
 }
