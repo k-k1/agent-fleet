@@ -66,6 +66,10 @@ interface Part {
   tool?: string;
   info?: string;
   output?: string;
+  prompt?: string; // kind=delegation: full instruction sent to the child
+  agentType?: string; // kind=delegation: Explore/general-purpose/task name
+  status?: string; // kind=delegation: requested/running/completed/failed
+  model?: string; // kind=delegation: explicitly selected child model
   file?: string;
   edits?: any[];
   questions?: Question[];
@@ -2015,7 +2019,11 @@ function partsOf(t: Turn): Part[] {
 function groupTurns(turns: Turn[]): Group[] {
   const out: Group[] = [];
   for (const t of turns) {
-    if (isNoise(t)) continue;
+    // A child agent's raw prompt, reasoning, chatter and tool log are implementation
+    // detail. The parent Agent/Task/spawn_agent call is rendered as one delegation card
+    // instead, keeping the main conversation readable without hiding that delegation
+    // happened.
+    if (isNoise(t) || t.sidechain) continue;
     const parts = partsOf(t);
     if (!parts.length) continue;
     const last = out[out.length - 1];
@@ -2475,6 +2483,8 @@ function Turn({
               // The agent's chain-of-thought (codex reasoning / opencode reasoning),
               // collapsed by default so it doesn't crowd the answer.
               <ThinkingBlock key={item.i} text={item.p.text} />
+            ) : item.p.kind === "delegation" ? (
+              <DelegationCard key={item.i} p={item.p} agentName={agentName} />
             ) : (
               <MarkdownView key={item.i} source={item.p.text} />
             ),
@@ -2494,6 +2504,53 @@ function Turn({
         {!isUser && <TurnTtsButtons turn={turn} tts={tts} body={bodyEl} />}
         <CopyButton text={turn.text} />
       </div>
+    </div>
+  );
+}
+
+// DelegationCard keeps orchestration visible without dumping the child agent's private
+// working transcript into the main conversation. The full instruction and final result
+// (when the provider records one) remain available on demand.
+function DelegationCard({ p, agentName }: { p: Part; agentName: string }) {
+  const status = p.status || "requested";
+  const statusLabel: Record<string, string> = {
+    requested: "依頼済み",
+    running: "進行中",
+    completed: "完了",
+    failed: "失敗",
+  };
+  const detail = !!(p.prompt || p.output);
+  return (
+    <div className="mt-delegation">
+      <div className="mt-delegation-head">
+        <Icon name="repo-forked" />
+        <span className="mt-delegation-title">{agentName}サブエージェントに依頼</span>
+        <span className={"mt-delegation-status " + status}>{statusLabel[status] || status}</span>
+      </div>
+      {(p.info || p.agentType || p.model) && (
+        <div className="mt-delegation-meta">
+          {p.info && <span className="mt-delegation-label">{p.info}</span>}
+          {p.agentType && p.agentType !== p.info && <code>{p.agentType}</code>}
+          {p.model && <code>{prettyModel(p.model)}</code>}
+        </div>
+      )}
+      {detail && (
+        <details className="mt-delegation-detail">
+          <summary>詳細</summary>
+          {p.prompt && (
+            <div className="mt-delegation-section">
+              <div className="muted">委譲した指示</div>
+              <pre>{p.prompt}</pre>
+            </div>
+          )}
+          {p.output && (
+            <div className="mt-delegation-section">
+              <div className="muted">結果</div>
+              <pre>{p.output}</pre>
+            </div>
+          )}
+        </details>
+      )}
     </div>
   );
 }

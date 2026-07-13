@@ -104,6 +104,22 @@ func TestCodexReasoningPlanOutput(t *testing.T) {
 	}
 }
 
+func TestCodexDelegationPart(t *testing.T) {
+	lines := [][]byte{
+		[]byte(`{"type":"response_item","payload":{"type":"function_call","name":"spawn_agent","call_id":"s1","arguments":"{\"task_name\":\"audit_ui\",\"message\":\"Inspect the mirror UI\",\"fork_turns\":\"all\"}"}}`),
+		[]byte(`{"type":"response_item","payload":{"type":"function_call_output","call_id":"s1","output":"agent started"}}`),
+	}
+	turns, _ := parseRollout(lines)
+	if len(turns) != 1 || len(turns[0].Parts) != 1 {
+		t.Fatalf("turns = %+v, want one delegation turn", turns)
+	}
+	p := turns[0].Parts[0]
+	if p.Kind != "delegation" || p.Tool != "spawn_agent" || p.Info != "audit_ui" ||
+		p.AgentType != "audit_ui" || p.Prompt != "Inspect the mirror UI" || p.Status != "requested" {
+		t.Fatalf("delegation = %+v", p)
+	}
+}
+
 func TestCodexQuestion(t *testing.T) {
 	// An answered request_user_input, then a pending one (no output yet).
 	answered := [][]byte{
