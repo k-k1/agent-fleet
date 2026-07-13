@@ -1,17 +1,18 @@
 # 10. 運用ツール連携（MCP でインシデント壁打ち）🧪
 
-## PagerDuty / Grafana は「運用」タブから接続できます（推奨）
+## PagerDuty / Grafana / CloudWatch は「運用」タブから接続できます（推奨）
 
-**PagerDuty と Grafana は製品機能として組み込み済み**です（docs/25 Phase 1、要イメージ再ビルド）。手作業の PoC 手順（後述）より、まずこちらを使ってください。
+**PagerDuty・Grafana・CloudWatch は製品機能として組み込み済み**です（docs/25 Phase 1、要イメージ再ビルド）。手作業の PoC 手順（後述）より、まずこちらを使ってください。
 
-1. **設定 > 運用** タブを開き、各カードに資格情報を貼って「接続」:
-   - **PagerDuty**: API キー。**読み取り専用キー**を推奨します（PagerDuty の Integrations > API Access Keys で「Read-only」を選択）。EU アカウントはチェックボックスを入れてください。
+1. **設定 > 運用** タブを開き、各カードに接続情報を入れて「接続」:
+   - **PagerDuty**: API キー。**読み取り専用キー**を推奨します（PagerDuty の Integrations > API Access Keys で「Read-only」を選択）。EU アカウントはトグルをオンにしてください。
    - **Grafana**: インスタンス URL と**サービスアカウントトークン**（Viewer 権限を推奨）。セルフホスト / Grafana Cloud / **Amazon Managed Grafana** のいずれも可（AMG は URL に workspace endpoint を指定。トークンの発行方法と 30 日期限は後述の AMG 節を参照）。
-2. 資格情報はワークスペース内に暗号化保存され、MCP サーバの起動時にだけ渡されます（設定ファイルや平文には残りません）。Grafana の MCP は書き込み・管理ツール無効で起動します。
-3. チャットで **「SRE アシスタント」** を選んで新しい会話を開始。「今開いている PagerDuty のインシデントを一覧して経緯をまとめて」「このサービスの直近 1 時間のエラーレートを Grafana で見て」のように聞くと、実データを確認しながら状況整理・原因の仮説出し・対外報告の草稿を手伝います（読み取り専用。ack/resolve はしません）。
+   - **CloudWatch**: AWS プロファイル名（SSM 接続で使っている SSO プロファイル）とリージョン（任意）。**秘密の入力はありません** — コンテナ内の AWS 資格（`aws sso login` 済み）をそのまま読みます。SSO セッションが切れているとツールがエラーになるので、その場合はセッションで `aws sso login` してください。
+2. 資格情報はワークスペース内に暗号化保存され、MCP サーバの起動時にだけ渡されます（設定ファイルや平文には残りません）。Grafana は書き込み・管理ツール無効で起動、CloudWatch はサーバ自体が読み取り専用ツールのみです。
+3. チャットで **「SRE アシスタント」** を選んで新しい会話を開始。「今開いている PagerDuty のインシデントを一覧して経緯をまとめて」「このサービスの直近 1 時間のエラーレートを Grafana で見て」「CloudWatch でこのロググループの ERROR を分析して」のように聞くと、実データを確認しながら状況整理・原因の仮説出し・対外報告の草稿を手伝います（読み取り専用。ack/resolve はしません）。
 4. 接続の変更は**次のチャット送信から反映**されます（ワークスペースの再起動は不要）。
 
-CloudWatch など他ツールは、下の PoC 手順で手動接続できます（順次「運用」タブに取り込み予定）。
+Zabbix など他ツールは、下の PoC 手順で手動接続できます（順次「運用」タブに取り込み予定）。
 
 ---
 
@@ -110,7 +111,7 @@ claude mcp add -s user cloudwatch \
   -- ~/.local/bin/uvx awslabs.cloudwatch-mcp-server@latest
 ```
 
-※ チャットの SRE アシスタントで CloudWatch を使えるようにする組み込み（運用タブへの追加）は検討済み・未実装です（docs/25 の CloudWatch 節）。
+※ チャットの SRE アシスタントで使うだけなら、この手順は不要です（冒頭の「運用」タブから接続してください）。この手順は対話セッション（tmux の claude）に繋ぎたい場合用です。
 
 Athena は (a) まず素の aws CLI（追加設定ゼロ、claude が Bash で叩ける）、(b) 本格的には `uvx awslabs.aws-dataprocessing-mcp-server@latest`。PoC では (a) で十分なことが多い。
 

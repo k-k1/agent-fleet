@@ -9,10 +9,10 @@ import { OnOff } from "./controls.tsx";
 import { ProviderCard, StatusPill, Hint, DisconnectButton } from "./providerCard.tsx";
 
 // OpsTab is the home for service-operations connections (docs/25 Phase 1): external
-// monitoring / incident tools the SRE assistant talks to over MCP. Today: PagerDuty
-// and Grafana. Credentials are stored container-side (encrypted secrets) and injected
-// into the MCP server at spawn by `workspace-agent mcp-run` — they never reach the CP.
-// CloudWatch lands here later as a sibling card.
+// monitoring / incident tools the SRE assistant talks to over MCP. Today: PagerDuty,
+// Grafana and CloudWatch. Credentials are stored container-side (encrypted secrets)
+// and injected into the MCP server at spawn by `workspace-agent mcp-run` — they never
+// reach the CP. (CloudWatch stores no secret at all: it rides the AWS cred chain.)
 export function OpsTab() {
   const wsState = useWorkspaceStore((s) => s.state);
   const running = wsState === "running";
@@ -50,6 +50,7 @@ export function OpsTab() {
           <PagerDutyCard st={conns.pagerduty} reload={reload} />
           <div className="conn-cat">監視 / メトリクス</div>
           <GrafanaCard st={conns.grafana} reload={reload} />
+          <CloudWatchCard st={conns.cloudwatch} reload={reload} />
         </>
       )}
     </div>
@@ -208,6 +209,85 @@ function GrafanaCard({ st, reload }: { st: any; reload: () => void }) {
             サーバの起動時にだけ渡されます（書き込み・管理ツールは無効で起動）。Amazon Managed Grafana の場合は
             URL に workspace endpoint（g-xxxx.grafana-workspace.リージョン.amazonaws.com）を指定してください
             （トークンは最長30日で失効するため、失効したら貼り直します）。
+          </Hint>
+        </div>
+      )}
+    </ProviderCard>
+  );
+}
+
+// CloudWatchCard: point the CloudWatch MCP at an AWS profile (+ optional region).
+// No secret is stored — auth is the AWS credential chain (the user's `aws sso
+// login`, same as ssm sessions), so an expired SSO session just makes the tools
+// error until the user logs in again.
+function CloudWatchCard({ st, reload }: { st: any; reload: () => void }) {
+  const toast = useToast();
+  const [profile, setProfile] = useState("");
+  const [region, setRegion] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const save = async () => {
+    if (!profile.trim()) return;
+    setBusy(true);
+    try {
+      const res = await apiJSON("api/connections/cloudwatch", "PUT", {
+        profile: profile.trim(),
+        region: region.trim(),
+      });
+      if (res && res.error) {
+        toast("接続に失敗: " + (res.error.message || res.error));
+        return;
+      }
+      setProfile("");
+      setRegion("");
+      reload();
+    } finally {
+      setBusy(false);
+    }
+  };
+  const disconnect = async () => {
+    await raw("api/connections/cloudwatch", { method: "DELETE" });
+    reload();
+  };
+
+  return (
+    <ProviderCard
+      id="cloudwatch"
+      name="Amazon CloudWatch"
+      status={<StatusPill on={st?.connected}>{st?.connected ? "接続済み" : "未接続"}</StatusPill>}
+    >
+      {st?.connected ? (
+        <div className="p-who">
+          <span className="p-em">{st.profile}</span>
+          {st.region && <span className="p-pl">{st.region}</span>}
+          <DisconnectButton onClick={disconnect} />
+        </div>
+      ) : (
+        <div className="p-body">
+          <div className="flow">
+            <input
+              className="cinput"
+              type="text"
+              placeholder="AWS プロファイル名（SSM 接続と同じ SSO プロファイル）"
+              value={profile}
+              onChange={(e) => setProfile(e.target.value)}
+            />
+            <input
+              className="cinput"
+              type="text"
+              placeholder="リージョン（任意）"
+              value={region}
+              onChange={(e) => setRegion(e.target.value)}
+              style={{ maxWidth: "12em" }}
+            />
+            <button disabled={busy || !profile.trim()} onClick={save}>
+              接続
+            </button>
+          </div>
+          <Hint>
+            秘密は保存しません。ワークスペース内の AWS 資格（`aws sso
+            login`済みのプロファイル）をそのまま読みます。ログの検索・アラーム履歴・メトリクス分析など読み取り専用ツールのみです。SSO
+            セッションが切れているとツールがエラーになるので、その場合はセッションで `aws sso login` してください。
           </Hint>
         </div>
       )}
