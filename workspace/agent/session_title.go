@@ -333,59 +333,12 @@ func writeTitleGenErr(w http.ResponseWriter, err error) {
 	}
 }
 
-// handleRegenerateSuggestedTitle lets the user explicitly ask for a fresh title
-// suggestion at any time (a button in the chat header) — including for a session
-// that already has a title, since the point is offering a better one as the
-// conversation moves on; the banner's 採用/× still requires an explicit click
-// before anything is overwritten. Bypasses the automatic trigger's turn-count/idle
-// gating and any prior dismissal — the automatic path still only offers once, but
-// the user can always ask again manually. Runs synchronously so the response
-// carries the new suggestion directly; this is a rare, user-initiated action
-// (unlike the poll-driven automatic path), so blocking the request on the LLM call
-// is fine. Persists into SuggestedTitle (so it also surfaces as the header banner)
-// — for a preview that doesn't touch session.Meta, see handleSuggestTitle.
-func handleRegenerateSuggestedTitle(w http.ResponseWriter, r *http.Request) {
-	name := r.PathValue("name")
-	if !session.ValidName(name) {
-		httpx.WriteErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
-		return
-	}
-	if !autoTitleSuggestEnabled() {
-		httpx.WriteErr(w, http.StatusBadRequest, "feature_disabled", "auto title suggestion is turned off")
-		return
-	}
-	m, found := session.ReadMeta(name)
-	if !found {
-		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
-		return
-	}
-	ctx, cancel := context.WithTimeout(r.Context(), titleSuggestTimeout)
-	defer cancel()
-	title, err := generateTitleNow(ctx, name, sessionTitleTurns(m))
-	if err != nil {
-		writeTitleGenErr(w, err)
-		return
-	}
-
-	// Re-read: the LLM call can take tens of seconds, during which the session
-	// could have been archived/removed.
-	m, found = session.ReadMeta(name)
-	if !found {
-		httpx.WriteErr(w, http.StatusConflict, "conflict", "session changed while generating")
-		return
-	}
-	m.SuggestedTitle = title
-	m.SuggestedTitleDismissed = false // an explicit re-ask overrides any earlier dismissal
-	session.WriteMeta(m)
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"suggestedTitle": title})
-}
-
 // handleSuggestTitle previews a title suggestion WITHOUT touching session.Meta —
 // used by the manual rename dialog's "AIに提案してもらう" button, which just fills
-// the text field for the user to edit/accept themselves. Unlike
-// handleRegenerateSuggestedTitle, this works even when the session already has a
-// title (renaming is exactly the case where one already exists) and never drives
-// the accept/dismiss banner flow.
+// the text field for the user to edit/accept themselves. Works even when the
+// session already has a title (renaming is exactly the case where one already
+// exists) and never drives the accept/dismiss banner flow — the banner is offered
+// only by the automatic trigger (maybeSuggestTitle).
 func handleSuggestTitle(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if !session.ValidName(name) {
@@ -589,7 +542,7 @@ func handleSessionRenameBranch(w http.ResponseWriter, r *http.Request) {
 }
 
 // sessionTitleTurns fetches the full turn list for a session regardless of kind,
-// for the manual regenerate action (which needs the whole conversation, not a
+// for the manual suggest action (which needs the whole conversation, not a
 // poll window).
 func sessionTitleTurns(m session.Meta) []transcript.Turn {
 	if m.Kind == session.KindClaude {
