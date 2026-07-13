@@ -193,7 +193,6 @@ func registerSessionRoutes(mux *http.ServeMux, cfg config) {
 	// Auto session-title suggestion accept/dismiss (session_title.go, Agent-side).
 	mux.HandleFunc("POST /api/sessions/{name}/title/accept", rest)
 	mux.HandleFunc("POST /api/sessions/{name}/title/dismiss", rest)
-	mux.HandleFunc("POST /api/sessions/{name}/title/regenerate", rest)
 	mux.HandleFunc("POST /api/sessions/{name}/title/suggest", rest)
 	mux.HandleFunc("POST /api/sessions/{name}/title/set", rest)
 	mux.HandleFunc("POST /api/sessions/{name}/suggest-branch", rest) // LLM branch-name suggestion (this session's convo)
