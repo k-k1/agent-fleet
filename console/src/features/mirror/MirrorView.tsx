@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import type { CSSProperties, KeyboardEvent as RKeyboardEvent, ClipboardEvent as RClipboardEvent, DragEvent as RDragEvent, RefObject } from "react";
+import type { CSSProperties, KeyboardEvent as RKeyboardEvent, ClipboardEvent as RClipboardEvent, DragEvent as RDragEvent, RefObject, ReactNode } from "react";
 import { api, apiJSON, raw, errText, pasteImage } from "../../core/api/client.ts";
 import { splitPastedImages, buildImagePrompt } from "../../lib/pastedImages.ts";
 import { useSettings, chatFontStack, surfaceBg, surfaceAccent, effectiveTheme } from "../../lib/settings.ts";
@@ -21,7 +21,16 @@ import {
   isTurnReader,
   type TurnReadHandle,
 } from "./turnTts.ts";
-import { sessionVoiceOpts, announce, onTtsStop } from "../chat/tts.ts";
+import {
+  sessionVoiceOpts,
+  announce,
+  onTtsStop,
+  startTts,
+  stopTtsForReplacement,
+  ttsOptsFromSettings,
+  workVoiceOpts,
+  type TtsController,
+} from "../chat/tts.ts";
 import { pendingSpeech } from "../chat/ttsText.ts";
 import { askAssistant } from "../chat/api.ts";
 import { useTtsStore } from "../../core/store/tts.ts";
@@ -33,6 +42,7 @@ import { kindIcon, kindLabel, kindShort, kindClass } from "../../lib/sessionkind
 import { agentOf } from "../../agents/registry.ts";
 import { hasLaunchSeed, takeLaunchSeed } from "../../lib/launchSeed.ts";
 import { displayName, stateInfo } from "../../lib/sessionview.ts";
+import { confirmedWorkEnd, textOfParts, workSplit } from "./mirrorParts.ts";
 import { coarsePointer } from "../../lib/device.ts";
 
 const q = encodeURIComponent;
@@ -171,6 +181,7 @@ function readDraft(key: string | null): string {
 // not token-by-token. Prompts typed in the raw terminal DO appear (they're logged as
 // user turns), just at the next poll.
 export function MirrorView({
+  paneId,
   session,
   sessionMeta,
   active,
@@ -179,6 +190,7 @@ export function MirrorView({
   readOnly = false,
   onResume,
 }: {
+  paneId: string;
   session: string;
   sessionMeta?: any;
   active?: boolean;
@@ -309,6 +321,11 @@ export function MirrorView({
   const ttsAutoSeenRef = useRef<number | null>(null);
   const ttsAutoQueueRef = useRef<number[]>([]);
   const ttsAutoDoneRef = useRef(new Map<number, number>());
+  // 確定済み作業過程の小声読み。part index で既読を持ち、最後の tool/question/plan までに
+  // 確定した text だけを読む。最終回答（idle）到着時はキューごと破棄して通常朗読へ譲る。
+  const ttsWorkRef = useRef<TtsController | null>(null);
+  const ttsWorkQueueRef = useRef<string[]>([]);
+  const ttsWorkDoneRef = useRef(new Map<number, number>());
   // 読み上げ担当の登録（turnTts.ts）。同じセッションを複数ペインで開いても読むのは先着の
   // 1 ペインだけ。readOnly（未アタッチ）ペインは読まないので登録しない。
   const ttsTokenRef = useRef(Symbol("ttsReader"));
@@ -322,24 +339,25 @@ export function MirrorView({
     () =>
       onTtsStop(() => {
         ttsAutoQueueRef.current.length = 0;
+        ttsWorkQueueRef.current.length = 0;
       }),
     [],
   );
   const ttsStart = (idx: number, body: HTMLElement, fromBlock = 0) => {
-    ttsHandleRef.current?.stop(); // 自分の再生を先に止める（他の再生は startNarration が止める）
+    ttsHandleRef.current?.stop("replaced"); // 内部置換なので自動読み上げキューは温存
     const h = readTurn(
       body,
       sessionMeta ? displayName(sessionMeta) : "セッション",
       fromBlock,
-      (stopped) => {
+      (reason) => {
         ttsHandleRef.current = null;
         setTtsReading((cur) => (cur?.idx === idx ? null : cur));
-        // 明示的な停止（TopBar・フッター・他の再生への置き換え）は自動読み上げキューも黙らせる。
-        // 自然終了なら待っていた次の回答を続けて読む。
-        if (stopped) ttsAutoQueueRef.current.length = 0;
-        else ttsAutoPumpRef.current();
+        // ユーザーの明示停止だけキューを捨てる。他再生への置換はキューを温存し、置換先が
+        // active に登録された後の状態を見るため microtask から再開判定する。
+        if (reason === "explicit") ttsAutoQueueRef.current.length = 0;
+        else queueMicrotask(() => ttsAutoPumpRef.current());
       },
-      sessionVoiceOpts(session), // セッションごとの声（設定 OFF なら undefined）
+      { ...(sessionVoiceOpts(session) ?? {}), paneId }, // セッション声＋発生元ペインのステレオ位置
       session, // 左ペインの再生中アイコン用
     );
     if (!h) return; // 読み上げられる本文が無い（ツールだけのターン等）
@@ -365,7 +383,8 @@ export function MirrorView({
         new Promise<never>((_, rej) => setTimeout(() => rej(new Error("timeout")), 30000)),
       ]);
       const reply = (r?.reply || "").trim();
-      if (!r?.error && reply) announce("要約。" + reply, label, sessionVoiceOpts(session), session);
+      if (!r?.error && reply)
+        announce("要約。" + reply, label, { ...(sessionVoiceOpts(session) ?? {}), paneId }, session);
       else ttsStart(gi, body, fromBlock); // 要約が得られない → 全文読み
     } catch {
       ttsStart(gi, body, fromBlock); // ワークスペース停止・タイムアウト等 → 全文読み
@@ -382,6 +401,10 @@ export function MirrorView({
       ttsAutoQueueRef.current.length = 0;
       return;
     }
+    // ポーリング途中の本文だけを見て最終回答か判定すると、ナレーションがツール表示より
+    // 1 ポール先行した場合だけ作業過程を読み始めてしまう。作業完了まではキューに貯め、
+    // status が working を抜けた時点の完成 DOM から最後のツール以降だけを読む。
+    if (statusRef.current === "working") return;
     if (ttsSummaryBusyRef.current) return; // 要約の生成中 → 終わってから順に
     // 何か再生中/準備中なら待つ。speaking だけだと合成待ち（登録済みで最初の音がまだ）の
     // 再生へ割り込むため active も見る（全ペイン読みでは他ペインのポンプと直列になる要）。
@@ -396,10 +419,9 @@ export function MirrorView({
       const total = collectBlocks(body).length;
       ttsAutoDoneRef.current.set(gi, total);
       if (total <= done) continue; // 増分なし（ツールだけの追記等）
-      // 過程スキップ（chat の分離と同趣・docs/19）: ツール前ナレーションを飛ばし、最後のツール
-      // 以降の本文（＝最終回答）から自動読み上げする。ポールが本文＋ツールをまとめて届ける
-      // 速いツール応答では過程が綺麗に飛ぶ（ナレーションが 1 ポール先行した時だけ読まれる）。
-      // 手動の「読み上げ」ボタン／選択朗読は従来どおり全文（意図的に読ませているため触らない）。
+      // 過程スキップ（chat の分離と同趣・docs/19）: 完成した本文からツール前ナレーションを
+      // 飛ばし、最後のツール以降の本文（＝最終回答）だけを自動読み上げする。
+      // 完了後の作業過程は disclosure 内へ移るため、DOM 直下を読む手動朗読も最終回答に揃う。
       const from = Math.max(done, finalAnswerStart(body));
       if (total <= from) continue; // 読むべき最終回答ブロックがまだ無い（過程だけの追記）
       if (settings.ttsSummaryRead) {
@@ -416,12 +438,43 @@ export function MirrorView({
   };
   const ttsAutoPumpRef = useRef(ttsAutoPump);
   ttsAutoPumpRef.current = ttsAutoPump;
+  const ttsWorkPump = () => {
+    if (!settings.ttsEnabled || !settings.ttsAutoReadMirror || settings.ttsWorkRead === "off") {
+      ttsWorkQueueRef.current.length = 0;
+      return;
+    }
+    if (statusRef.current !== "working" || ttsWorkRef.current) return;
+    const st = useTtsStore.getState();
+    if (st.active || st.speaking) return; // 最終回答・告知など重要な再生へ割り込まない
+    const text = ttsWorkQueueRef.current.shift();
+    if (!text) return;
+    const voice = { ...(sessionVoiceOpts(session) ?? {}), paneId };
+    const c = startTts(
+      { ...ttsOptsFromSettings(settings), ...voice, ...workVoiceOpts(voice, settings.ttsWorkRead) },
+      (sessionMeta ? displayName(sessionMeta) : "セッション") + "・作業過程",
+      (reason) => {
+        ttsWorkRef.current = null;
+        if (reason === "explicit") ttsWorkQueueRef.current.length = 0;
+        else queueMicrotask(() => ttsWorkPumpRef.current());
+      },
+      session,
+    );
+    ttsWorkRef.current = c;
+    c.push(text);
+    c.flush();
+  };
+  const ttsWorkPumpRef = useRef(ttsWorkPump);
+  ttsWorkPumpRef.current = ttsWorkPump;
   // 他の再生が終わって音声が空いたら、待たせていた自動読み上げを再開する。zustand の
   // subscribe は setState 中に同期で呼ばれ、プリエンプト（旧再生 stop → 新再生の登録）の
   // 途中は active が一瞬 null になるため、microtask に逃がして置き換え完了後の状態で判定する。
   useEffect(() => {
     return useTtsStore.subscribe((st, prev) => {
-      if (prev.speaking && !st.speaking) queueMicrotask(() => ttsAutoPumpRef.current());
+      if (prev.speaking && !st.speaking)
+        queueMicrotask(() => {
+          ttsWorkPumpRef.current();
+          ttsAutoPumpRef.current();
+        });
     });
   }, []);
 
@@ -458,7 +511,7 @@ export function MirrorView({
       : pendingPlan
         ? "プランができました。承認待ちです。"
         : "許可待ちです。" + (pendingPerm || "").slice(0, 100);
-    announce(text, label, sessionVoiceOpts(session));
+    announce(text, label, { ...(sessionVoiceOpts(session) ?? {}), paneId });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loaded, pending, pendingPlan, pendingPerm]);
   const ttsWiring: TurnTtsWiring = {
@@ -482,7 +535,7 @@ export function MirrorView({
   useEffect(() => {
     if (ttsSessionRef.current === session) return;
     ttsSessionRef.current = session;
-    ttsHandleRef.current?.stop();
+    ttsHandleRef.current?.stop("replaced");
   }, [session]);
 
   // 本文内でテキスト選択が確定したら「ここから読み上げ」ピルを出す（assistant ターン内のみ）。
@@ -496,6 +549,12 @@ export function MirrorView({
     const range = sel.getRangeAt(0);
     const node = range.startContainer;
     const el = node.nodeType === Node.TEXT_NODE ? node.parentElement : (node as HTMLElement);
+    // 完了後に畳んだ作業過程は自動・フッター朗読の対象外。展開中の選択から最終回答へ
+    // 飛ぶピルを出すと誤解を招くので、disclosure 内の選択には操作を出さない。
+    if (el?.closest(".mt-work")) {
+      setTtsPill(null);
+      return;
+    }
     const turnEl = root.contains(node) ? el?.closest<HTMLElement>(".mirror-turn.assistant") : null;
     const turnBody = turnEl ? el?.closest<HTMLElement>(".mirror-turn-body") : null;
     const idx = turnEl?.dataset.turnIdx;
@@ -568,6 +627,10 @@ export function MirrorView({
     ttsAutoSeenRef.current = null; // 自動読み上げの基準も取り直す（履歴は読まない）
     ttsAutoQueueRef.current.length = 0;
     ttsAutoDoneRef.current.clear();
+    stopTtsForReplacement(ttsWorkRef.current);
+    ttsWorkRef.current = null;
+    ttsWorkQueueRef.current.length = 0;
+    ttsWorkDoneRef.current.clear();
     ttsPendingInitRef.current = false; // 確認読み上げの基準も取り直す
     ttsPendingSigRef.current = "";
   }, [session]);
@@ -618,10 +681,14 @@ export function MirrorView({
             setTurns(Array.isArray(d.messages) ? d.messages : []);
             firstLineRef.current = 0; // reset re-sends from the top: nothing older to page
             setHasMore(false);
-            ttsHandleRef.current?.stop(); // 読み上げ中の本文 DOM ごと入れ替わる
+            ttsHandleRef.current?.stop("replaced"); // 本文 DOM の入れ替え。全体停止にはしない
             ttsAutoSeenRef.current = null; // idx が振り直されるので基準も取り直す
             ttsAutoQueueRef.current.length = 0;
             ttsAutoDoneRef.current.clear();
+            stopTtsForReplacement(ttsWorkRef.current);
+            ttsWorkRef.current = null;
+            ttsWorkQueueRef.current.length = 0;
+            ttsWorkDoneRef.current.clear();
           } else if (Array.isArray(d.messages) && d.messages.length) {
             // Idempotent append: keep only turns past the newest `idx` (jsonl line) we
             // already hold. A quick re-poll (after sending) racing the in-flight poll can
@@ -714,7 +781,7 @@ export function MirrorView({
       return next.length === prev.length ? prev : next;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [turns]);
+  }, [turns, status]);
 
   // Keep the conversation in view as it grows — but ONLY when the user is at the bottom
   // (atBottomRef, set on scroll). If they've scrolled up to read, we never move them; the
@@ -1351,34 +1418,71 @@ export function MirrorView({
         break;
       }
     }
-    if (newest < 0) return; // まだ何も届いていない
+    if (newest < 0) return;
     const seen = ttsAutoSeenRef.current;
-    ttsAutoSeenRef.current = newest;
-    if (seen === null || newest <= seen) return; // 初回/巻き戻り→基準のみ更新。増分なしも何もしない
-    if (readOnly) return;
-    // 読むペイン: 通常はアクティブなペインだけ（他は ttsSessionNotify の領分）。全ペイン読み
-    // （ttsAutoReadAllPanes）では開いている全ペインが対象 — ただし同じセッションを複数ペインで
-    // 開いているときは担当（先着）ペインだけが読む（二重読み防止）。
-    if (settings.ttsAutoReadAllPanes ? !isTurnReader(session, ttsTokenRef.current) : !active) return;
-    if (!settings.ttsEnabled || !settings.ttsAutoReadMirror) return;
-    const q = ttsAutoQueueRef.current;
-    for (const t of turns) {
-      if (t.idx === undefined || t.idx <= seen) continue;
-      if (t.role !== "assistant" || t.sidechain || t.compact) continue;
-      // このターンが属するグループ＝idx が t.idx 以下で最後のグループ（グループは先頭ターンの idx を持つ）
-      let g: Group | null = null;
-      for (const gg of groups) {
-        if (gg.idx === undefined) continue;
-        if (gg.idx <= t.idx) g = gg;
-        else break;
+    ttsAutoSeenRef.current = newest; // 非対象ペインでも履歴を飲み込み、後から一括再読しない
+    const canRead =
+      !readOnly &&
+      settings.ttsEnabled &&
+      settings.ttsAutoReadMirror &&
+      (settings.ttsAutoReadAllPanes ? isTurnReader(session, ttsTokenRef.current) : active);
+
+    if (status === "working" && settings.ttsWorkRead !== "off") {
+      // 現在のユーザープロンプト以後だけを見る。初回ロードした履歴や、末尾のキュー済み
+      // synthetic user turn は作業過程として再読しない。
+      let lastUser = -1;
+      for (let i = groups.length - 1; i >= 0; i--) {
+        const g = groups[i];
+        if (g.role === "user" && !g.pending && !g.queued) {
+          lastUser = i;
+          break;
+        }
       }
-      if (!g || g.idx === undefined || g.role !== "assistant" || g.sidechain || g.compact) continue;
-      if (!q.includes(g.idx)) q.push(g.idx);
+      for (let i = lastUser + 1; i < groups.length; i++) {
+        const g = groups[i];
+        if (g.role !== "assistant" || g.sidechain || g.compact || g.idx === undefined) continue;
+        const end = confirmedWorkEnd(g.parts);
+        const done = ttsWorkDoneRef.current.get(g.idx) ?? 0;
+        if (end <= done) continue;
+        ttsWorkDoneRef.current.set(g.idx, end);
+        const text = textOfParts(g.parts.slice(done, end));
+        if (canRead && seen !== null && text) ttsWorkQueueRef.current.push(text);
+      }
+      while (ttsWorkQueueRef.current.length > 4) ttsWorkQueueRef.current.shift();
+      if (canRead) ttsWorkPumpRef.current();
+    } else {
+      // idle = 最終回答が確定。残っている小声を置換停止し、通常の最終回答朗読へ譲る。
+      stopTtsForReplacement(ttsWorkRef.current);
+      ttsWorkRef.current = null;
+      ttsWorkQueueRef.current.length = 0;
+      ttsWorkDoneRef.current.clear();
     }
-    while (q.length > 4) q.shift(); // 席を外した間の洪水は古い回答から捨てる（announce と同じ思想）
+    if (!canRead) {
+      stopTtsForReplacement(ttsWorkRef.current);
+      ttsWorkRef.current = null;
+      ttsWorkQueueRef.current.length = 0;
+      return;
+    }
+    if (seen !== null && newest > seen) {
+      const q = ttsAutoQueueRef.current;
+      for (const t of turns) {
+        if (t.idx === undefined || t.idx <= seen) continue;
+        if (t.role !== "assistant" || t.sidechain || t.compact) continue;
+        // このターンが属するグループ＝idx が t.idx 以下で最後のグループ
+        let g: Group | null = null;
+        for (const gg of groups) {
+          if (gg.idx === undefined) continue;
+          if (gg.idx <= t.idx) g = gg;
+          else break;
+        }
+        if (!g || g.idx === undefined || g.role !== "assistant" || g.sidechain || g.compact) continue;
+        if (!q.includes(g.idx)) q.push(g.idx);
+      }
+      while (q.length > 4) q.shift();
+    }
     ttsAutoPumpRef.current();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [turns]);
+  }, [turns, status, active, readOnly, settings.ttsEnabled, settings.ttsAutoReadMirror, settings.ttsAutoReadAllPanes, settings.ttsWorkRead]);
 
   // A /context-like gauge: the newest assistant turn's prompt size (input + cache) is
   // the current context fill. The per-category split (/context) is computed inside
@@ -1551,7 +1655,21 @@ export function MirrorView({
               : "まだ会話はありません。下の欄からプロンプトを送るか、ターミナルで対話すると、ここに ターンごとの Markdown で表示されます。"}
           </div>
         ) : (
-          renderGroups(groups, sendPrompt, openPlan, openDiff, openFile, maxSpend, session, setLightbox, agentName, ttsWiring, (p) => rejectedPlansRef.current.has(p.trim()))
+          renderGroups(
+            groups,
+            sendPrompt,
+            openPlan,
+            openDiff,
+            openFile,
+            maxSpend,
+            session,
+            setLightbox,
+            agentName,
+            ttsWiring,
+            status === "working",
+            atBottomRef.current,
+            (p) => rejectedPlansRef.current.has(p.trim()),
+          )
         )}
         {pendingPlan && (
           <div className="mirror-turn assistant">
@@ -2108,10 +2226,19 @@ function renderGroups(
   onOpenImage: (url: string) => void,
   agentName: string,
   tts: TurnTtsWiring,
+  working: boolean,
+  autoCollapseWork: boolean,
   isRejectedPlan: (plan: string) => boolean,
 ) {
   const els = [];
   let prevCtx = "";
+  let lastUser = -1;
+  for (let i = groups.length - 1; i >= 0; i--) {
+    if (groups[i].role === "user" && !groups[i].pending && !groups[i].queued) {
+      lastUser = i;
+      break;
+    }
+  }
   for (let i = 0; i < groups.length; i++) {
     const g = groups[i];
     const ctx = g.branch || g.cwd ? (g.branch || "") + "\x1f" + (g.cwd || "") : "";
@@ -2141,6 +2268,8 @@ function renderGroups(
           onOpenFile={onOpenFile}
           agentName={agentName}
           tts={tts}
+          foldWork={!working || i < lastUser}
+          defaultWorkOpen={!autoCollapseWork}
           isRejectedPlan={isRejectedPlan}
         />
       ),
@@ -2347,6 +2476,39 @@ function ContextLine({ branch, cwd }: { branch?: string; cwd?: string }) {
   );
 }
 
+// WorkDisclosure appears only once a response is complete and a final text exists after
+// tool activity. It therefore mounts at the completion boundary: users following the tail
+// get a closed summary, while someone who scrolled up to read the process keeps it open.
+function WorkDisclosure({
+  tools,
+  responses,
+  defaultOpen,
+  children,
+}: {
+  tools: number;
+  responses: number;
+  defaultOpen: boolean;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <details
+      className="mt-work"
+      open={open}
+      onToggle={(e) => setOpen((e.currentTarget as HTMLDetailsElement).open)}
+    >
+      <summary className="mt-work-head">
+        <Icon name={open ? "chevron-down" : "chevron-right"} />
+        <span className="mt-work-title">作業過程</span>
+        <span className="mt-work-count muted">
+          ツール {tools}件{responses > 0 ? `・途中応答 ${responses}件` : ""}
+        </span>
+      </summary>
+      <div className="mt-work-body">{children}</div>
+    </details>
+  );
+}
+
 // Turn renders one conversation block: a header (who + model), the body (user prompt
 // as text, assistant reply as Markdown with faint tool traces), and a footer (time +
 // token usage + copy). Subagent (sidechain) turns get a distinct label and tint.
@@ -2361,6 +2523,8 @@ function Turn({
   onOpenFile,
   agentName,
   tts,
+  foldWork,
+  defaultWorkOpen,
   isRejectedPlan,
 }: {
   turn: Group;
@@ -2373,6 +2537,8 @@ function Turn({
   onOpenFile: (path: string, line?: number, column?: number) => void;
   agentName: string;
   tts: TurnTtsWiring;
+  foldWork: boolean;
+  defaultWorkOpen: boolean;
   isRejectedPlan: (plan: string) => boolean;
 }) {
   const isUser = turn.role === "user";
@@ -2380,6 +2546,41 @@ function Turn({
   const ctxTok = turn.inTok + turn.cacheRead + turn.cacheCreate;
   const spend = spendOf(turn);
   const bodyEl = useRef<HTMLDivElement>(null); // カラオケ朗読（turnTts）の本文 DOM
+  const split = !isUser && foldWork ? workSplit(turn.parts) : null;
+  const copyText = split ? textOfParts(turn.parts.slice(split.at)) : turn.text;
+  const renderAssistantParts = (parts: Part[]) =>
+    foldParts(parts).map((item) =>
+      // Consecutive tool traces collapse into one foldable row (Edit/Write bursts
+      // between paragraphs). A lone tool renders inline (ToolRun handles length 1).
+      item.kind === "toolrun" ? (
+        <ToolRun key={"tr" + item.tools[0].i} tools={item.tools} onOpenDiff={onOpenDiff} />
+      ) : item.p.kind === "question" ? (
+        // A question from the transcript is already answered (claude writes the
+        // tool_use only after the answer) — show it resolved, not clickable.
+        <QuestionBlock key={item.i} questions={item.p.questions} answered answer={item.p.answer} />
+      ) : item.p.kind === "plan" ? (
+        // A historical plan (already decided) — show the outcome, open in a pane.
+        <PlanBlock
+          key={item.i}
+          plan={item.p.plan}
+          answered
+          outcome={item.p.answer}
+          forceRejected={isRejectedPlan(item.p.plan || "")}
+          onOpen={() => onOpenPlan && onOpenPlan(item.p.plan || "")}
+        />
+      ) : item.p.kind === "userfile" ? (
+        // Files the agent shared via SendUserFile — a panel; each opens in a pane.
+        <UserFileBlock key={item.i} files={item.p.files} caption={item.p.caption} onOpen={onOpenFile} />
+      ) : item.p.kind === "thinking" ? (
+        // The agent's chain-of-thought (codex reasoning / opencode reasoning),
+        // collapsed by default so it doesn't crowd the answer.
+        <ThinkingBlock key={item.i} text={item.p.text} baseDir={turn.cwd} onOpenFile={onOpenFile} />
+      ) : item.p.kind === "delegation" ? (
+        <DelegationCard key={item.i} p={item.p} agentName={agentName} />
+      ) : (
+        <MarkdownView key={item.i} source={item.p.text} baseDir={turn.cwd} onOpenFile={onOpenFile} />
+      ),
+    );
   return (
     <div
       className={"mirror-turn " + (isUser ? "user" : "assistant") + (turn.sidechain ? " sidechain" : "")}
@@ -2448,39 +2649,15 @@ function Turn({
               </>
             );
           })()
+        ) : split ? (
+          <>
+            <WorkDisclosure tools={split.tools} responses={split.responses} defaultOpen={defaultWorkOpen}>
+              {renderAssistantParts(turn.parts.slice(0, split.at))}
+            </WorkDisclosure>
+            {renderAssistantParts(turn.parts.slice(split.at))}
+          </>
         ) : (
-          foldParts(turn.parts).map((item) =>
-            // Consecutive tool traces collapse into one foldable row (Edit/Write bursts
-            // between paragraphs). A lone tool renders inline (ToolRun handles length 1).
-            item.kind === "toolrun" ? (
-              <ToolRun key={"tr" + item.tools[0].i} tools={item.tools} onOpenDiff={onOpenDiff} />
-            ) : item.p.kind === "question" ? (
-              // A question from the transcript is already answered (claude writes the
-              // tool_use only after the answer) — show it resolved, not clickable.
-              <QuestionBlock key={item.i} questions={item.p.questions} answered answer={item.p.answer} />
-            ) : item.p.kind === "plan" ? (
-              // A historical plan (already decided) — show the outcome, open in a pane.
-              <PlanBlock
-                key={item.i}
-                plan={item.p.plan}
-                answered
-                outcome={item.p.answer}
-                forceRejected={isRejectedPlan(item.p.plan || "")}
-                onOpen={() => onOpenPlan && onOpenPlan(item.p.plan || "")}
-              />
-            ) : item.p.kind === "userfile" ? (
-              // Files the agent shared via SendUserFile — a panel; each opens in a pane.
-              <UserFileBlock key={item.i} files={item.p.files} caption={item.p.caption} onOpen={onOpenFile} />
-            ) : item.p.kind === "thinking" ? (
-              // The agent's chain-of-thought (codex reasoning / opencode reasoning),
-              // collapsed by default so it doesn't crowd the answer.
-              <ThinkingBlock key={item.i} text={item.p.text} baseDir={turn.cwd} onOpenFile={onOpenFile} />
-            ) : item.p.kind === "delegation" ? (
-              <DelegationCard key={item.i} p={item.p} agentName={agentName} />
-            ) : (
-              <MarkdownView key={item.i} source={item.p.text} baseDir={turn.cwd} onOpenFile={onOpenFile} />
-            ),
-          )
+          renderAssistantParts(turn.parts)
         )}
       </div>
       <div className="mirror-turn-foot">
@@ -2494,7 +2671,7 @@ function Turn({
           <TurnSpendBar fresh={turn.inTok} create={turn.cacheCreate} out={turn.outTok} max={maxSpend} />
         )}
         {!isUser && <TurnTtsButtons turn={turn} tts={tts} body={bodyEl} />}
-        <CopyButton text={turn.text} />
+        <CopyButton text={copyText} />
       </div>
     </div>
   );

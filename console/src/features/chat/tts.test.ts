@@ -22,6 +22,72 @@ import {
   startsTame,
 } from "./ttsText.ts";
 import { makeAudioLru } from "./ttsCache.ts";
+import {
+  HIDDEN_TTS_GAIN,
+  MAX_PANE_PAN,
+  stopTtsForReplacement,
+  ttsMasterGain,
+  ttsPanePan,
+  type TtsController,
+} from "./ttsControl.ts";
+import type { Layout, Pane } from "../../layout/types.ts";
+
+describe("TTS controller replacement", () => {
+  it("内部的な再生置換は明示停止ではなく replaced を渡す", () => {
+    const reasons: Array<string | undefined> = [];
+    const controller: TtsController = {
+      push() {},
+      flush() {},
+      stop: (reason) => reasons.push(reason),
+    };
+
+    stopTtsForReplacement(controller);
+    stopTtsForReplacement(null);
+
+    expect(reasons).toEqual(["replaced"]);
+  });
+});
+
+describe("TTS master gain", () => {
+  it("設定ONかつ背景時だけ音量を下げる", () => {
+    expect(ttsMasterGain(true, true)).toBe(HIDDEN_TTS_GAIN);
+    expect(ttsMasterGain(true, false)).toBe(1);
+    expect(ttsMasterGain(false, true)).toBe(1);
+  });
+});
+
+describe("TTS pane stereo pan", () => {
+  const pane = (id: string): Pane => ({
+    id,
+    session: null,
+    content: { kind: "terminal", chat: false },
+    wrap: null,
+  });
+  const layout: Layout = {
+    cols: [
+      { id: "left-col", rowRatio: 0.5, panes: [pane("left-top"), pane("left-bottom")] },
+      { id: "center-col", rowRatio: 0.5, panes: [pane("center")] },
+      { id: "right-col", rowRatio: 0.5, panes: [pane("right")] },
+    ],
+    colRatios: [0.25, 0.5, 0.25],
+    activeId: "center",
+  };
+
+  it("左右端を最大パン、中央列を中央へ配置する", () => {
+    expect(ttsPanePan(true, layout, "left-top")).toBe(-MAX_PANE_PAN);
+    expect(ttsPanePan(true, layout, "left-bottom")).toBe(-MAX_PANE_PAN);
+    expect(ttsPanePan(true, layout, "center")).toBeCloseTo(0);
+    expect(ttsPanePan(true, layout, "right")).toBe(MAX_PANE_PAN);
+  });
+
+  it("設定OFF・ペイン外・単一列は中央で再生する", () => {
+    expect(ttsPanePan(false, layout, "left-top")).toBe(0);
+    expect(ttsPanePan(true, layout, "missing")).toBe(0);
+    expect(
+      ttsPanePan(true, { ...layout, cols: [layout.cols[0]], colRatios: [1] }, "left-top"),
+    ).toBe(0);
+  });
+});
 
 describe("plainify (読み上げ用プレーン化)", () => {
   it("インラインコード/リンク/URL/強調を落とす", () => {
