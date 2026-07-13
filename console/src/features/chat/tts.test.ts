@@ -9,6 +9,9 @@ import {
   splitSentences,
   splitLongSentence,
   abbrevCode,
+  abbrevPath,
+  CODE_FILLERS,
+  PATH_FILLERS,
   isBareHash,
   pauseParticles,
   applyBuiltinReadings,
@@ -184,7 +187,7 @@ describe("mergeDicts (ユーザー辞書＋テナント共通辞書の合成)", 
 });
 
 describe("abbrevCode (インラインコードの省略読み)", () => {
-  const F = "(なんとか|ふがふが|むにゅむにゅ)";
+  const F = `(${CODE_FILLERS.join("|")})`;
 
   it("語が無いハッシュ等は頭 2 文字＋フィラー", () => {
     expect(abbrevCode("e79853e")).toMatch(new RegExp(`^e7 ${F}$`));
@@ -228,6 +231,36 @@ describe("abbrevCode (インラインコードの省略読み)", () => {
     );
     expect(plainify("コミット `e79853e` を見て")).toBe("コミット e79853e を見て");
     expect(plainify("`e79853e` は", { abbrev: false, dict: [] })).toBe("e79853e は");
+  });
+});
+
+describe("abbrevPath (裸のパスの省略読み)", () => {
+  const F = `(${PATH_FILLERS.join("|")})`;
+
+  it("3 セグメント以上のパスは頭、フィラー、末尾（ファイル名）に読点で畳む", () => {
+    expect(abbrevPath("console/src/features/chat/tts.ts")).toMatch(new RegExp(`^console、${F}、tts.ts$`));
+    expect(abbrevPath("/home/dev/repos/agent-fleet/tts.go")).toMatch(new RegExp(`^home、${F}、tts.go$`));
+    expect(abbrevPath("./src/features/store.ts")).toMatch(new RegExp(`^src、${F}、store.ts$`));
+    expect(abbrevPath("../a/b/c")).toMatch(new RegExp(`^a、${F}、c$`));
+  });
+
+  it("2 セグメント以下・数値列（日付）は畳まない", () => {
+    expect(abbrevPath("src/main.ts")).toBe("src/main.ts");
+    expect(abbrevPath("2024/01/02")).toBe("2024/01/02");
+  });
+
+  it("フィラーはパスから決定的に選ぶ（毎回同じ）", () => {
+    expect(abbrevPath("a/b/c/d")).toBe(abbrevPath("a/b/c/d"));
+  });
+
+  it("plainify に組み込み（abbrev 有効時のみ・裸パス）", () => {
+    expect(plainify("編集は /home/dev/repos/agent-fleet/tts.go です", { abbrev: true, dict: [] })).toMatch(
+      new RegExp(`^編集は home、${F}、tts.go です$`),
+    );
+    // 2 セグメント（TCP/IP 等）・日付は畳まれない
+    expect(plainify("2024/01/02 の変更", { abbrev: true, dict: [] })).toBe("2024/01/02 の変更");
+    // abbrev 無効時はそのまま
+    expect(plainify("a/b/c/d.ts を見て", { abbrev: false, dict: [] })).toBe("a/b/c/d.ts を見て");
   });
 });
 
@@ -284,6 +317,31 @@ describe("applyBuiltinReadings / applyReadings (組み込みの読み補正)", (
     expect(applyBuiltinReadings("うんうん〜 まあいいか")).toBe("うんうん〜 まあいいか");
   });
 
+  it("「行」= line/row は既定で「ぎょう」（くだり不要）。行サフィックス・数字＋行・行＋助詞を拾う", () => {
+    expect(applyBuiltinReadings("3行目のバグ")).toBe("3ぎょうめのバグ");
+    expect(applyBuiltinReadings("42行を削除")).toBe("42ぎょうを削除");
+    expect(applyBuiltinReadings("行数と行末と行頭")).toBe("ぎょうすうとぎょうまつとぎょうとう");
+    expect(applyBuiltinReadings("１０行目")).toBe("１０ぎょうめ"); // 全角数字
+    expect(applyBuiltinReadings("集計行と統計行")).toBe("集計ぎょうと統計ぎょう"); // 漢字＋行サフィックス
+    expect(applyBuiltinReadings("WT 行を確認")).toBe("WT ぎょうを確認"); // 実機報告の "WT 行"
+    expect(applyBuiltinReadings("この行が長い")).toBe("このぎょうが長い"); // 行＋助詞
+    expect(applyBuiltinReadings("先頭行と最終行")).toBe("先頭ぎょうと最終ぎょう");
+  });
+
+  it("「行」でも こう熟語・行動・行く/行う は壊さない（既定 ぎょう の除外）", () => {
+    // 直後が漢字（行動・行政）＝ OpenJTalk に委ねる
+    expect(applyBuiltinReadings("行動と行政")).toBe("行動と行政");
+    // 送りがな（行く・行う）
+    expect(applyBuiltinReadings("現場に行く、処理を行う")).toBe("現場に行く、処理を行う");
+    // こう熟語のブロックリスト（実行・銀行・移行・並行…）
+    expect(applyBuiltinReadings("銀行で実行し移行を並行する")).toBe("銀行で実行し移行を並行する");
+  });
+
+  it("「判定」は はんてい に固定（誤判定→ごはんてい 相当）", () => {
+    expect(applyBuiltinReadings("誤判定を修正")).toBe("誤はんていを修正");
+    expect(applyBuiltinReadings("空判定と判定結果")).toBe("からはんていとはんてい結果");
+  });
+
   it("ユーザー辞書が先に当たれば組み込みより優先される", () => {
     const dict = parseUserDict("空レポ=そらレポ");
     expect(applyReadings("空レポです", dict, false)).toBe("そらレポです");
@@ -309,7 +367,7 @@ describe("pauseParticles (助詞＋漢字の小休止)", () => {
 });
 
 describe("isBareHash / 裸のハッシュの省略読み", () => {
-  const F = "(なんとか|ふがふが|むにゅむにゅ)";
+  const F = `(${CODE_FILLERS.join("|")})`;
 
   it("16 進ハッシュにしか見えないトークンだけを真にする", () => {
     expect(isBareHash("f437e17")).toBe(true); // git 短縮ハッシュ
