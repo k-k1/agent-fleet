@@ -304,6 +304,17 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
     // component) is gone by the time the turn finishes.
     const convId = target.id;
     let acc = "";
+    // Tear the streaming turn down in one batched render: applying the final conversation
+    // (which now ends with the assistant reply) and removing the still-streaming bubble must
+    // happen together. If the teardown runs only AFTER `await chatStream` resolves, a frame
+    // slips in where BOTH show — the completed reply plus the slightly-behind (throttled)
+    // streaming copy — which reads as the answer being erased and rewritten (打ち消し→再描画).
+    const teardown = () => {
+      clearLive(convId);
+      markChatBusy(convId, false);
+      setStreamText("");
+      setSending(false);
+    };
     await chatStream(
       convId,
       prompt,
@@ -320,16 +331,16 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
             applyConv(updated);
             publishSnapshot(updated); // reaches any live pane, even after this one unmounts
           }
+          teardown(); // same synchronous batch as applyConv → no duplicate-bubble frame
           ttsRef.current?.flush();
         },
       },
       ac.signal,
     );
-    clearLive(convId);
+    // Abort/error paths emit no done event, so clear the streaming state here too. teardown is
+    // idempotent — after a normal completion this re-run is a harmless no-op.
     abortRef.current = null;
-    markChatBusy(convId, false);
-    setStreamText("");
-    setSending(false);
+    teardown();
     bumpChatList(); // a new/updated thread should surface in the rail list
   };
 
