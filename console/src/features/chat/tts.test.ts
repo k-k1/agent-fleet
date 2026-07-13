@@ -276,6 +276,17 @@ describe("applyBuiltinReadings / applyReadings (組み込みの読み補正)", (
     expect(applyBuiltinReadings("航空券と空港と空白")).toBe("航空券と空港と空白");
   });
 
+  it("裸のスラッシュ区切り（コード外）は中黒に変えて間を詰める", () => {
+    expect(applyBuiltinReadings("origin/main のブランチ")).toBe("origin・main のブランチ");
+    expect(applyBuiltinReadings("on/off と read/write")).toBe("on・off と read・write");
+    expect(applyBuiltinReadings("a/b/c の階層")).toBe("a・b・c の階層"); // チェーンも一括
+  });
+
+  it("日付・分数・除算（両辺とも数字のみ）は触らない", () => {
+    expect(applyBuiltinReadings("2024/01/02 の変更")).toBe("2024/01/02 の変更");
+    expect(applyBuiltinReadings("確率は1/2です")).toBe("確率は1/2です");
+  });
+
   it("ヌメロニム（i18n 等）は元の語の慣用カタカナで読む（大文字小文字不問・単語境界）", () => {
     expect(applyBuiltinReadings("I18n対応とa11yの改善")).toBe("インターナショナリゼーション対応とアクセシビリティの改善");
     expect(applyBuiltinReadings("l10n と e2e テスト")).toBe("ローカリゼーション と エンドツーエンド テスト");
