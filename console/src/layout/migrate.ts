@@ -22,7 +22,11 @@ function contentFromFlat(p: any): PaneContent {
       return { kind: "terminal", chat: p.chat === true };
     case "file": {
       const filePath = str(p.filePath);
-      return filePath ? { kind: "file", filePath } : { kind: "terminal", chat: false };
+      const targetLine = typeof p.targetLine === "number" && p.targetLine > 0 ? Math.floor(p.targetLine) : undefined;
+      const targetColumn = typeof p.targetColumn === "number" && p.targetColumn > 0 ? Math.floor(p.targetColumn) : undefined;
+      return filePath
+        ? { kind: "file", filePath, ...(targetLine ? { targetLine } : {}), ...(targetColumn ? { targetColumn } : {}) }
+        : { kind: "terminal", chat: false };
     }
     case "read": {
       const filePath = str(p.filePath);

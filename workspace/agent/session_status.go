@@ -6,6 +6,8 @@ import (
 	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/notice"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 )
 
@@ -75,8 +77,41 @@ func runSessionStatusHook(args []string) {
 	if state == "permission" && h.ntype != "permission_prompt" {
 		return
 	}
+	previous, _ := status.Read(sid)
 	status.Persist(sid, state)
 	applyPendingPayloads(sid, state, h)
+	recordSessionNotification(sid, previous.State, state)
+}
+
+func recordSessionNotification(sid, previous, state string) {
+	kind := ""
+	switch {
+	case state == "idle" && previous == "working":
+		kind = "answer-ready"
+	case state == "question" && previous != "question":
+		kind = "question"
+	case state == "plan" && previous != "plan":
+		kind = "plan-approval"
+	case state == "permission" && previous != "permission":
+		// AskUserQuestion/ExitPlanMode may emit an intermediate permission hook.
+		if _, ok := status.ReadPendingQuestion(sid); ok {
+			return
+		}
+		if _, ok := status.ReadPendingPlan(sid); ok {
+			return
+		}
+		kind = "permission-request"
+	}
+	if kind == "" {
+		return
+	}
+	for _, m := range session.ListMetas() {
+		if session.UUID(m.Dir, m.Name) != sid {
+			continue
+		}
+		_ = notice.Put(notice.New(kind, m.Name, m.Kind, session.Display(m)))
+		return
+	}
 }
 
 // parseStatusHookArgs decodes the `session-status <state> [sid] [codex]` positional

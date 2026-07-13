@@ -2,9 +2,10 @@ import { useEffect, useRef } from "react";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
 import hljs from "highlight.js/lib/common";
-import { dirName, baseName, joinPath, isExternalUrl, slug } from "../../lib/filemeta.ts";
+import { dirName, baseName, isExternalUrl, resolveMarkdownFileTarget, slug } from "../../lib/filemeta.ts";
 import { api, downloadURL } from "../../core/api/client.ts";
 import { useSettings } from "../../lib/settings.ts";
+import { useToast } from "../../ui/ToastProvider.tsx";
 
 // MarkdownView renders Markdown to sanitized HTML, highlights fenced code blocks,
 // turns ```mermaid blocks into rendered diagrams (lazy-loaded), and wires links:
@@ -15,6 +16,7 @@ let mermaidSeq = 0;
 interface MarkdownViewProps {
   source?: string;
   basePath?: string;
+  baseDir?: string; // cwd for an agent reply; relative file citations resolve from here
   breaks?: boolean; // treat a single newline as <br> (chat prompts keep their line breaks)
   // Lightweight mode for a live-accumulating source (a streaming chat reply): the effect
   // re-runs on every delta, so only parse + sanitize + highlight run — mermaid (would
@@ -22,19 +24,21 @@ interface MarkdownViewProps {
   // buttons are skipped; the finished message re-renders through the full path anyway.
   // A blinking caret marks the tail of the last block.
   streaming?: boolean;
-  onOpenFile?: (path: string) => void;
+  onOpenFile?: (path: string, line?: number, column?: number) => void;
   onOpenDir?: (path: string) => void; // a relative link to a directory → reveal in FILES
 }
 
 export function MarkdownView({
   source,
   basePath = "",
+  baseDir = "",
   breaks = false,
   streaming = false,
   onOpenFile,
   onOpenDir,
 }: MarkdownViewProps) {
   const ref = useRef<HTMLDivElement>(null);
+  const toast = useToast();
   // Follow the app theme so mermaid diagrams re-render in matching colors.
   const theme = useSettings().theme === "light" ? "light" : "dark";
   // Callers pass inline arrow callbacks (new identity every render), and panes
@@ -78,8 +82,10 @@ export function MarkdownView({
     wireLinks(
       el,
       basePath,
-      (p) => onOpenFileRef.current?.(p),
+      baseDir,
+      (p, line, column) => onOpenFileRef.current?.(p, line, column),
       (p) => onOpenDirRef.current?.(p),
+      (message) => toast(message),
     );
     wireImages(el, basePath);
 
@@ -132,7 +138,7 @@ export function MarkdownView({
       alive = false;
       stickyCleanup();
     };
-  }, [source, basePath, breaks, streaming, theme]);
+  }, [source, basePath, baseDir, breaks, streaming, theme, toast]);
 
   return <div className="markdown" ref={ref} />;
 }
@@ -305,16 +311,7 @@ function addCopyButton(code: HTMLElement) {
 // resolve; a literal-% name that isn't valid encoding falls back to the raw string.
 // A leading "/" resolves from the repo root, everything else from the file's own dir.
 function resolveRelPath(ref: string, basePath: string): string {
-  const m = basePath.match(/^(repos\/[^/]+)\//);
-  const repoRoot = m ? m[1] : dirName(basePath);
-  const fileDir = dirName(basePath);
-  let p = ref.split("#")[0].split("?")[0];
-  if (!p) return "";
-  try {
-    p = decodeURIComponent(p);
-  } catch {}
-  const base = p.startsWith("/") ? repoRoot : fileDir;
-  return joinPath(base, p.replace(/^\/+/, ""));
+  return resolveMarkdownFileTarget(ref, basePath)?.path || "";
 }
 
 // wireImages rewrites relative <img src> to the file-download endpoint so repo-local
@@ -331,32 +328,39 @@ function wireImages(el: HTMLElement, basePath: string) {
 }
 
 // openRepoTarget resolves a repo-internal path to a file (open in viewer) or directory
-// (reveal in FILES), or silently ignores it when it doesn't exist — mirroring CodeLeaf's
-// RepoLinkResolver. One listing of the parent tells file vs dir vs missing in a single
-// request (missing entries include denylisted paths, which we also ignore).
+// (reveal in FILES). One listing of the parent tells file vs dir vs missing in a single
+// request; missing, denied, and unreachable targets are reported instead of doing nothing.
 async function openRepoTarget(
-  target: string,
-  onOpenFile?: (p: string) => void,
+  target: { path: string; line?: number; column?: number },
+  onOpenFile?: (p: string, line?: number, column?: number) => void,
   onOpenDir?: (p: string) => void,
+  onError?: (message: string) => void,
 ) {
   let d: { entries?: { name: string; type: string }[] } | null = null;
   try {
-    d = await api(`api/fs/tree?path=${encodeURIComponent(dirName(target))}`);
+    d = await api(`api/fs/tree?path=${encodeURIComponent(dirName(target.path))}`);
   } catch {
+    onError?.(`ファイルを確認できません: ${target.path}`);
     return;
   }
-  const entry = (d?.entries || []).find((e) => e.name === baseName(target));
-  if (!entry) return; // nonexistent / denylisted → ignore (no error toast)
-  if (entry.type === "dir") onOpenDir?.(target);
-  else onOpenFile?.(target);
+  const entry = (d?.entries || []).find((e) => e.name === baseName(target.path));
+  if (!entry) {
+    onError?.(`ファイルが見つかりません: ${target.path}`);
+    return;
+  }
+  if (entry.type === "dir") onOpenDir?.(target.path);
+  else if (onOpenFile) onOpenFile(target.path, target.line, target.column);
+  else onError?.(`この画面からファイルを開けません: ${target.path}`);
 }
 
 // wireLinks classifies and rewires every <a> in the rendered markdown.
 function wireLinks(
   el: HTMLElement,
   basePath: string,
-  onOpenFile?: (path: string) => void,
+  baseDir: string,
+  onOpenFile?: (path: string, line?: number, column?: number) => void,
   onOpenDir?: (path: string) => void,
+  onError?: (message: string) => void,
 ) {
   el.querySelectorAll<HTMLAnchorElement>("a[href]").forEach((a) => {
     const href = a.getAttribute("href") || "";
@@ -385,10 +389,16 @@ function wireLinks(
     // Repo-internal relative link → open a file in the viewer or reveal a directory in
     // FILES (path decoded + resolved by the shared helper, so Japanese names work).
     a.classList.add("repo-link");
+    const target = resolveMarkdownFileTarget(href, basePath, baseDir);
+    if (target) {
+      a.title = target.line ? `${target.path}:${target.line} を別ペインで開く` : `${target.path} を別ペインで開く`;
+      a.setAttribute("aria-label", `${a.textContent || target.path}を別ペインで開く`);
+    }
     a.addEventListener("click", (e) => {
       e.preventDefault();
-      const target = resolveRelPath(href, basePath);
-      if (target) openRepoTarget(target, onOpenFile, onOpenDir);
+      const resolved = resolveMarkdownFileTarget(href, basePath, baseDir);
+      if (resolved) openRepoTarget(resolved, onOpenFile, onOpenDir, onError);
+      else onError?.(`リンク先を解決できません: ${href}`);
     });
   });
 }

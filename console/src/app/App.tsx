@@ -32,6 +32,7 @@ import { SettingsDialog } from "../features/settings/SettingsDialog.tsx";
 import { AdminDialog } from "../features/settings/AdminDialog.tsx";
 import { GuideModal } from "../features/terminal/OnboardingCard.tsx";
 import { StartHost } from "../features/repos/StartHost.tsx";
+import { startNotificationPolling, useNotificationStore } from "../features/notifications/store.ts";
 
 // Refresh FILES (and repos/sessions/chat list on start) whenever the workspace
 // actually flips running↔stopped — including external changes the 4s sync catches
@@ -66,6 +67,7 @@ export function App() {
   const adminOpen = useSettingsUI((s) => s.adminOpen);
   const guideOpen = useSettingsUI((s) => s.guideOpen);
   const [booted, setBooted] = useState(false);
+  const notificationSource = useNotificationStore((s) => s.sourceState);
 
   // Left rail visibility. Desktop: leftOpen (persisted) + leftMode "push" (docks,
   // main reflows) / "overlay" (floats above main). Mobile (≤760px): the rail is an
@@ -209,6 +211,7 @@ export function App() {
     const stopWsPoll = startWorkspacePolling();
     const stopSessPoll = startSessionsPolling();
     const stopReposPoll = startReposPolling();
+    const stopNotificationPoll = startNotificationPolling();
     void (async () => {
       await useTenantStore.getState().init();
       void hydrateUIPrefs();
@@ -222,6 +225,7 @@ export function App() {
       stopWsPoll();
       stopSessPoll();
       stopReposPoll();
+      stopNotificationPoll();
     };
   }, []);
 
@@ -230,6 +234,8 @@ export function App() {
   // and refetch tenant-scoped data.
   useEffect(() => {
     if (!booted) return;
+    useNotificationStore.getState().reset();
+    void useNotificationStore.getState().refresh();
     useLayoutStore.getState().load(tenant);
     void useWorkspaceStore.getState().refresh();
     void useSessionsStore.getState().refresh();
@@ -237,7 +243,7 @@ export function App() {
 
   // Desktop notifications on claude state arrivals — lives at the shell now that
   // the flat Sessions section no longer owns the rail.
-  useSessionNotifications();
+  useSessionNotifications(notificationSource === "unsupported");
 
   return (
     <div

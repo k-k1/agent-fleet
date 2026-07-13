@@ -934,14 +934,18 @@ func tokenUsage(payload json.RawMessage) (in, out, read, window int, ok bool) {
 // codex's injected hooks can't report (no notification hook fires for it). Light
 // tail probe: only the last chunk of the rollout is scanned, so it stays cheap on
 // the sessions-list poll even for a long conversation.
-func HasPendingQuestion(m session.Meta) bool {
+func HasPendingQuestion(m session.Meta) bool { return PendingQuestionID(m) != "" }
+
+// PendingQuestionID returns the stable request_user_input call id, used by the
+// durable notification outbox to deduplicate a prompt even after its event is acked.
+func PendingQuestionID(m session.Meta) string {
 	path := rolloutPath(sids.Read(session.UUID(m.Dir, m.Name)))
 	if path == "" {
-		return false
+		return ""
 	}
 	f, err := os.Open(path)
 	if err != nil {
-		return false
+		return ""
 	}
 	defer f.Close()
 	const tail = 256 << 10
@@ -981,7 +985,10 @@ func HasPendingQuestion(m session.Meta) bool {
 			delete(pendingCalls, ev.Payload.CallID)
 		}
 	}
-	return len(pendingCalls) > 0
+	for id := range pendingCalls {
+		return id
+	}
+	return ""
 }
 
 // readTranscript reads a codex session's normalized chat turns plus the rollout
