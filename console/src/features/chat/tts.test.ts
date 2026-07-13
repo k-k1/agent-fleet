@@ -9,6 +9,9 @@ import {
   splitSentences,
   splitLongSentence,
   abbrevCode,
+  abbrevPath,
+  CODE_FILLERS,
+  PATH_FILLERS,
   isBareHash,
   pauseParticles,
   applyBuiltinReadings,
@@ -16,6 +19,7 @@ import {
   emotionOf,
   pendingSpeech,
   startsBlock,
+  startsTame,
 } from "./ttsText.ts";
 import { makeAudioLru } from "./ttsCache.ts";
 
@@ -32,6 +36,14 @@ describe("plainify (読み上げ用プレーン化)", () => {
     expect(plainify("## 見出し")).toBe("見出し");
     expect(plainify("- 項目A")).toBe("項目A");
     expect(plainify("> 引用文")).toBe("引用文");
+  });
+
+  it("行頭の溜め（――等・……等）はマーカーとして読み上げから除く", () => {
+    expect(plainify("————また、イく。")).toBe("また、イく。"); // 実機報告
+    expect(plainify("——イって、る。")).toBe("イって、る。");
+    expect(plainify("……一日中、って。")).toBe("一日中、って。"); // 実機報告（三点リーダ）
+    expect(plainify("...本当に？")).toBe("本当に？"); // 半角三点リーダ連続
+    expect(plainify("普通の文の中の—区切り")).toBe("普通の文の中の—区切り"); // 行頭以外は触らない
   });
 
   it("画像を落とす", () => {
@@ -117,6 +129,28 @@ describe("startsBlock (ブロック頭の判定 = 前拍を置く合図)", () =>
   });
 });
 
+describe("startsTame (溜めの判定 = 長めの前拍を置く合図)", () => {
+  it("行頭のダッシュ連続（――/——/―― 等）に一致する", () => {
+    expect(startsTame("――また、行く。")).toBe(true);
+    expect(startsTame("————また、イく。")).toBe(true); // em dash 連続
+    expect(startsTame("——イって、る。")).toBe(true);
+    expect(startsTame("―行く。")).toBe(true); // 1 個でも対象
+  });
+
+  it("行頭の三点リーダ連続（……/... 等）にも一致する", () => {
+    expect(startsTame("……一日中、って。")).toBe(true); // 実機報告
+    expect(startsTame("...本当に？")).toBe(true); // 半角三点リーダ連続
+    expect(startsTame("…")).toBe(false); // 直後が無い（行末）
+  });
+
+  it("語尾の伸ばし（直後が空白・行末）やハイフンだけの語には一致しない", () => {
+    expect(startsTame("普通の文です。")).toBe(false);
+    expect(startsTame("-1 が返ります")).toBe(false); // 半角ハイフンは対象外（BLOCK_HEAD と衝突回避）
+    expect(startsTame("―― ")).toBe(false); // 直後が空白/行末
+    expect(startsTame("")).toBe(false);
+  });
+});
+
 describe("pendingSpeech (保留中の質問の読み上げ文)", () => {
   it("質問文＋選択肢（説明文優先）を番号つきで読む", () => {
     const t = pendingSpeech([
@@ -184,7 +218,7 @@ describe("mergeDicts (ユーザー辞書＋テナント共通辞書の合成)", 
 });
 
 describe("abbrevCode (インラインコードの省略読み)", () => {
-  const F = "(なんとか|ふがふが|むにゅむにゅ)";
+  const F = `(${CODE_FILLERS.join("|")})`;
 
   it("語が無いハッシュ等は頭 2 文字＋フィラー", () => {
     expect(abbrevCode("e79853e")).toMatch(new RegExp(`^e7 ${F}$`));
@@ -231,6 +265,36 @@ describe("abbrevCode (インラインコードの省略読み)", () => {
   });
 });
 
+describe("abbrevPath (裸のパスの省略読み)", () => {
+  const F = `(${PATH_FILLERS.join("|")})`;
+
+  it("3 セグメント以上のパスは頭、フィラー、末尾（ファイル名）に読点で畳む", () => {
+    expect(abbrevPath("console/src/features/chat/tts.ts")).toMatch(new RegExp(`^console、${F}、tts.ts$`));
+    expect(abbrevPath("/home/dev/repos/agent-fleet/tts.go")).toMatch(new RegExp(`^home、${F}、tts.go$`));
+    expect(abbrevPath("./src/features/store.ts")).toMatch(new RegExp(`^src、${F}、store.ts$`));
+    expect(abbrevPath("../a/b/c")).toMatch(new RegExp(`^a、${F}、c$`));
+  });
+
+  it("2 セグメント以下・数値列（日付）は畳まない", () => {
+    expect(abbrevPath("src/main.ts")).toBe("src/main.ts");
+    expect(abbrevPath("2024/01/02")).toBe("2024/01/02");
+  });
+
+  it("フィラーはパスから決定的に選ぶ（毎回同じ）", () => {
+    expect(abbrevPath("a/b/c/d")).toBe(abbrevPath("a/b/c/d"));
+  });
+
+  it("plainify に組み込み（abbrev 有効時のみ・裸パス）", () => {
+    expect(plainify("編集は /home/dev/repos/agent-fleet/tts.go です", { abbrev: true, dict: [] })).toMatch(
+      new RegExp(`^編集は home、${F}、tts.go です$`),
+    );
+    // 2 セグメント（TCP/IP 等）・日付は畳まれない
+    expect(plainify("2024/01/02 の変更", { abbrev: true, dict: [] })).toBe("2024/01/02 の変更");
+    // abbrev 無効時はそのまま
+    expect(plainify("a/b/c/d.ts を見て", { abbrev: false, dict: [] })).toBe("a/b/c/d.ts を見て");
+  });
+});
+
 describe("applyBuiltinReadings / applyReadings (組み込みの読み補正)", () => {
   it("空＋カタカナ語・空文字列などは「から」で読む", () => {
     expect(applyBuiltinReadings("空レポを作成")).toBe("からレポを作成");
@@ -241,6 +305,17 @@ describe("applyBuiltinReadings / applyReadings (組み込みの読み補正)", (
   it("熟語・ひらがな続きの空は触らない", () => {
     expect(applyBuiltinReadings("空が青い")).toBe("空が青い");
     expect(applyBuiltinReadings("航空券と空港と空白")).toBe("航空券と空港と空白");
+  });
+
+  it("裸のスラッシュ区切り（コード外）は中黒に変えて間を詰める", () => {
+    expect(applyBuiltinReadings("origin/main のブランチ")).toBe("origin・main のブランチ");
+    expect(applyBuiltinReadings("on/off と read/write")).toBe("on・off と read・write");
+    expect(applyBuiltinReadings("a/b/c の階層")).toBe("a・b・c の階層"); // チェーンも一括
+  });
+
+  it("日付・分数・除算（両辺とも数字のみ）は触らない", () => {
+    expect(applyBuiltinReadings("2024/01/02 の変更")).toBe("2024/01/02 の変更");
+    expect(applyBuiltinReadings("確率は1/2です")).toBe("確率は1/2です");
   });
 
   it("ヌメロニム（i18n 等）は元の語の慣用カタカナで読む（大文字小文字不問・単語境界）", () => {
@@ -284,6 +359,94 @@ describe("applyBuiltinReadings / applyReadings (組み込みの読み補正)", (
     expect(applyBuiltinReadings("うんうん〜 まあいいか")).toBe("うんうん〜 まあいいか");
   });
 
+  it("「行」= line/row は既定で「ぎょう」（くだり不要）。行サフィックス・数字＋行・行＋助詞を拾う", () => {
+    expect(applyBuiltinReadings("3行目のバグ")).toBe("3ぎょうめのバグ");
+    expect(applyBuiltinReadings("42行を削除")).toBe("42ぎょうを削除");
+    expect(applyBuiltinReadings("行数と行末と行頭")).toBe("ぎょうすうとぎょうまつとぎょうとう");
+    expect(applyBuiltinReadings("１０行目")).toBe("１０ぎょうめ"); // 全角数字
+    expect(applyBuiltinReadings("集計行と統計行")).toBe("集計ぎょうと統計ぎょう"); // 漢字＋行サフィックス
+    expect(applyBuiltinReadings("WT 行を確認")).toBe("WT ぎょうを確認"); // 実機報告の "WT 行"
+    expect(applyBuiltinReadings("この行が長い")).toBe("このぎょうが長い"); // 行＋助詞
+    expect(applyBuiltinReadings("先頭行と最終行")).toBe("先頭ぎょうと最終ぎょう");
+  });
+
+  it("「行」でも こう熟語・行動・行く/行う は壊さない（既定 ぎょう の除外）", () => {
+    // 直後が漢字（行動・行政）＝ OpenJTalk に委ねる
+    expect(applyBuiltinReadings("行動と行政")).toBe("行動と行政");
+    // 送りがな（行く・行う）
+    expect(applyBuiltinReadings("現場に行く、処理を行う")).toBe("現場に行く、処理を行う");
+    // こう熟語のブロックリスト（実行・銀行・移行・並行…）
+    expect(applyBuiltinReadings("銀行で実行し移行を並行する")).toBe("銀行で実行し移行を並行する");
+  });
+
+  it("「判定」は はんてい に固定（誤判定→ごはんてい 相当）", () => {
+    expect(applyBuiltinReadings("誤判定を修正")).toBe("ごはんていを修正"); // 誤→ご も同時に効く
+    expect(applyBuiltinReadings("空判定と判定結果")).toBe("からはんていとはんてい結果");
+  });
+
+  it("接頭辞「誤」＋漢字は「ご」（誤表示→ごひょうじ）。送りがな 誤る/誤り は あやま のまま", () => {
+    expect(applyBuiltinReadings("「5時間制限」と誤表示")).toBe("「5時間制限」とご表示"); // 実機報告
+    expect(applyBuiltinReadings("誤検知と誤動作と誤操作")).toBe("ご検知とご動作とご操作");
+    // 送りがな（訓読み あやま）は触らない
+    expect(applyBuiltinReadings("設定を誤ると誤りが出る")).toBe("設定を誤ると誤りが出る");
+  });
+
+  it("濁り誤読の固定: 貼り付け→はりつけ / 型チェック→かたチェック", () => {
+    expect(applyBuiltinReadings("画像貼り付け")).toBe("画像はりつけ"); // 実機報告
+    expect(applyBuiltinReadings("ここに貼り付けると貼り付けた")).toBe("ここにはりつけるとはりつけた"); // 前方一致
+    expect(applyBuiltinReadings("TypeScript型チェック")).toBe("TypeScriptかたチェック"); // 実機報告（英字は CP 側 enkana）
+  });
+
+  it("言って→いって（文末誤読対策）/ 身体→からだ", () => {
+    expect(applyBuiltinReadings("何する？　言って。")).toBe("何する？　いって。"); // 実機報告
+    expect(applyBuiltinReadings("身体を動かす")).toBe("からだを動かす"); // 実機報告
+  });
+
+  it("放ってお（放置の慣用句）→ほうってお。単独の放っては触らない（放つ＝はなつ と区別）", () => {
+    expect(applyBuiltinReadings("放っておく")).toBe("ほうっておく"); // 実機報告
+    expect(applyBuiltinReadings("放っておかれる子供")).toBe("ほうっておかれる子供");
+    expect(applyBuiltinReadings("放っておいた")).toBe("ほうっておいた");
+    // 放つ（解き放つ）の可能性が残る単独形は触らない＝はなって のまま委ねる
+    expect(applyBuiltinReadings("光を放って輝いた")).toBe("光を放って輝いた");
+    expect(applyBuiltinReadings("矢を放って命中した")).toBe("矢を放って命中した");
+  });
+
+  it("が/は/も＋要（文末・句読点・です/だ）→かなめ。複合語・要る は触らない", () => {
+    expect(applyBuiltinReadings("ここが要")).toBe("ここがかなめ"); // 実機報告
+    expect(applyBuiltinReadings("ここが要です")).toBe("ここがかなめです");
+    expect(applyBuiltinReadings("そこが要だ。")).toBe("そこがかなめだ。");
+    expect(applyBuiltinReadings("そこは要、次も要")).toBe("そこはかなめ、次もかなめ");
+    // 複合語（よう）は直後が漢字なので対象外
+    expect(applyBuiltinReadings("そこが要注意")).toBe("そこが要注意");
+    expect(applyBuiltinReadings("それが要素です")).toBe("それが要素です");
+    // 要る（いる＝必要）は活用語尾が続くので対象外
+    expect(applyBuiltinReadings("許可が要る")).toBe("許可が要る");
+    expect(applyBuiltinReadings("それは要らない")).toBe("それは要らない");
+  });
+
+  it("この/その/あの/どの＋様な・様に→よう。あり様→ありよう", () => {
+    expect(applyBuiltinReadings("その様な問題")).toBe("そのような問題"); // 実機報告
+    expect(applyBuiltinReadings("この様に考える")).toBe("このように考える");
+    expect(applyBuiltinReadings("あの様なミス")).toBe("あのようなミス");
+    expect(applyBuiltinReadings("どの様に進める？")).toBe("どのように進める？");
+    expect(applyBuiltinReadings("あり様を見直す")).toBe("ありようを見直す"); // 実機報告
+    // 複合語（様子・様々）は直後が な/に ではないので対象外
+    expect(applyBuiltinReadings("その様子と様々な意見")).toBe("その様子と様々な意見");
+  });
+
+  it("文中の溜め（――・……）は読点に変えて間を作る（行頭は startsTame/plainify が別処理）", () => {
+    expect(applyBuiltinReadings("……一日中、って。")).toBe("、一日中、って。"); // 実機報告
+    expect(applyBuiltinReadings("そして――彼は言った。")).toBe("そして、彼は言った。");
+    expect(applyBuiltinReadings("分かった…でも心配だ")).toBe("分かった、でも心配だ");
+    expect(applyBuiltinReadings("待って...本当に？")).toBe("待って、本当に？"); // 半角三点リーダ連続も対象
+  });
+
+  it("溜めマークの直後が句読点・文末ならさらに読点を重ねない", () => {
+    expect(applyBuiltinReadings("え……。")).toBe("え。");
+    expect(applyBuiltinReadings("そう……")).toBe("そう");
+    expect(applyBuiltinReadings("待って――」と叫んだ")).toBe("待って」と叫んだ");
+  });
+
   it("ユーザー辞書が先に当たれば組み込みより優先される", () => {
     const dict = parseUserDict("空レポ=そらレポ");
     expect(applyReadings("空レポです", dict, false)).toBe("そらレポです");
@@ -309,7 +472,7 @@ describe("pauseParticles (助詞＋漢字の小休止)", () => {
 });
 
 describe("isBareHash / 裸のハッシュの省略読み", () => {
-  const F = "(なんとか|ふがふが|むにゅむにゅ)";
+  const F = `(${CODE_FILLERS.join("|")})`;
 
   it("16 進ハッシュにしか見えないトークンだけを真にする", () => {
     expect(isBareHash("f437e17")).toBe(true); // git 短縮ハッシュ

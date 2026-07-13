@@ -286,7 +286,7 @@ const USAGE_SOURCES: UsageSource[] = [
     weekLabel: "週次",
     live: false,
     note: "codex が記録した最後の値です（この時点のスナップショット）。次に codex を実行すると更新されます。",
-    manageURL: "https://chatgpt.com/#settings/Usage",
+    manageURL: "https://chatgpt.com/codex/settings/usage",
   },
 ];
 
@@ -448,7 +448,7 @@ export function WsBar() {
   const splitDown = useLayoutStore((s) => s.splitDown);
   const resetToTerminal = useLayoutStore((s) => s.resetToTerminal);
   const activePaneId = layout.activeId;
-  const openNewSession = useSessionsStore((s) => s.openNewSession);
+  const openStart = useSessionsStore((s) => s.openStart);
   const askConfirm = useConfirm();
   const { wsStats, wsHist, hostStats, hostHist } = useWsResourceChips(tenant, superAdmin);
   const isMobile = useIsMobile();
@@ -477,6 +477,33 @@ export function WsBar() {
   const activeCol = layout.cols.find((c) => c.panes.some((p) => p.id === activePaneId));
   const canSplitRight = !isMobile && layout.cols.length < 4;
   const canSplitDown = isMobile ? totalPanes < 2 : (activeCol ? activeCol.panes.length : totalPanes) < 2;
+
+  // はじめる while stopped: don't dead-end (起動導線 Ph3) — confirm, start the
+  // workspace, and open the hub once the 4s poll reports running. startQueued
+  // survives the whole starting window; a second click while queued re-confirms
+  // harmlessly (startWs is only re-fired from a genuinely stopped state).
+  const [startQueued, setStartQueued] = useState(false);
+  useEffect(() => {
+    if (startQueued && running) {
+      setStartQueued(false);
+      openStart();
+    }
+  }, [startQueued, running, openStart]);
+  const onStart = async () => {
+    if (running) {
+      openStart();
+      return;
+    }
+    const ok = await askConfirm({
+      title: "ワークスペースを起動してはじめる",
+      body: "ワークスペースが停止中です。起動して、準備ができたら「はじめる」を開きます。",
+      confirmLabel: busy ? "待機する" : "起動する",
+      danger: false,
+    });
+    if (!ok) return;
+    setStartQueued(true);
+    if (!busy) void startWs();
+  };
 
   // Start is immediate; Stop is confirmed — it docker-removes the container, so
   // running sessions drop to 停止 (resumable) and opencode web / preview disconnect.
@@ -701,17 +728,22 @@ export function WsBar() {
       >
         {wsLabel(wsState)}
       </span>
-      {/* Second entry point to the New Session dialog (the Sessions-list ＋新規 stays as
-          is): handy when the left pane is scrolled / collapsed. Opens the same global
-          dialog via openNewSession; disabled while the workspace is stopped. */}
+      {/* はじめる — the single "start anything" entry (起動導線 Ph2): opens the
+          StartModal hub (chat / repo / clone / home / その他). While the workspace
+          is stopped it offers to start it and opens the hub when ready (Ph3). */}
       <button
         className="ghost ws-split ws-newsession"
-        title={running ? "新規セッション" : "新規セッション（ワークスペース停止中）"}
-        disabled={!running}
-        onClick={openNewSession}
+        title={
+          running
+            ? "はじめる（チャット / リポジトリ / clone / shell）"
+            : startQueued
+              ? "起動中 — 準備ができたら開きます"
+              : "はじめる（ワークスペースを起動して開始）"
+        }
+        onClick={() => void onStart()}
       >
-        <Icon name="add" />
-        <span className="lbl">新規</span>
+        <Icon name={startQueued ? "loading" : "add"} spin={startQueued} />
+        <span className="lbl">はじめる</span>
       </button>
       <button
         className="ghost ws-split"

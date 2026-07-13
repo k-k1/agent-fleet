@@ -327,6 +327,86 @@
 .mirror-turn.sidechain .mt-who {
   color: color-mix(in srgb, var(--chat-accent) 65%, var(--fg));
 }
+
+/* Subagent orchestration: one compact, provider-neutral event in the parent timeline.
+   Raw sidechain turns stay out of the normal conversation; prompt/result are opt-in. */
+.mt-delegation {
+  margin: 8px 0;
+  padding: 9px 11px;
+  border: 1px solid color-mix(in srgb, var(--accent) 24%, var(--border));
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--accent) 5%, transparent);
+  font-size: 12px;
+}
+.mt-delegation-head,
+.mt-delegation-meta {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+.mt-delegation-head .codicon {
+  color: var(--accent);
+}
+.mt-delegation-title {
+  font-weight: 600;
+}
+.mt-delegation-status {
+  margin-left: auto;
+  padding: 1px 6px;
+  border-radius: 999px;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--fg) 7%, transparent);
+  white-space: nowrap;
+}
+.mt-delegation-status.running {
+  color: var(--accent);
+}
+.mt-delegation-status.completed {
+  color: var(--success, #4ec97a);
+}
+.mt-delegation-status.failed {
+  color: var(--danger, #e36d6d);
+}
+.mt-delegation-meta {
+  margin-top: 5px;
+  color: var(--muted);
+  flex-wrap: wrap;
+}
+.mt-delegation-label {
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mt-delegation-meta code {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--fg) 7%, transparent);
+}
+.mt-delegation-detail {
+  margin-top: 6px;
+}
+.mt-delegation-detail summary {
+  width: max-content;
+  color: var(--muted);
+  cursor: pointer;
+  user-select: none;
+}
+.mt-delegation-section {
+  margin-top: 8px;
+}
+.mt-delegation-section pre {
+  margin: 3px 0 0;
+  padding: 8px;
+  max-height: 280px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--fg) 5%, transparent);
+  font: inherit;
+}
 /* Header carries only the speaker; the timestamp + copy move to a footer row. */
 .mirror-turn-head {
   font-size: 12px;

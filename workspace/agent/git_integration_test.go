@@ -1,0 +1,64 @@
+package main
+
+import (
+	"os"
+	"os/exec"
+	"path/filepath"
+	"testing"
+)
+
+func runIntegrationGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	cmd.Env = append(os.Environ(),
+		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
+		"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v: %v: %s", args, err, out)
+	}
+}
+
+func commitIntegrationFile(t *testing.T, dir, name string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(name), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runIntegrationGit(t, dir, "add", name)
+	runIntegrationGit(t, dir, "commit", "-m", name)
+}
+
+func TestGitWorktreeIntegrationRelations(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	parent := filepath.Join(t.TempDir(), "app")
+	gitInit(t, parent)
+	worktree, err := ensureWorktree(parent, "main", "feature-wt", "")
+	if err != nil {
+		t.Fatalf("ensureWorktree: %v", err)
+	}
+
+	assertRelation := func(want string, targetUnique, worktreeUnique int) {
+		t.Helper()
+		got := gitWorktreeIntegration(parent, worktree, "main")
+		if got.Relation != want || got.TargetUnique != targetUnique || got.WorktreeUnique != worktreeUnique {
+			t.Fatalf("integration = %+v, want relation=%s target=%d worktree=%d", got, want, targetUnique, worktreeUnique)
+		}
+	}
+
+	assertRelation("same", 0, 0)
+	commitIntegrationFile(t, worktree, "worktree-change")
+	assertRelation("unmerged", 0, 1)
+	commitIntegrationFile(t, parent, "parent-change")
+	assertRelation("diverged", 1, 1)
+	runIntegrationGit(t, parent, "merge", "--no-ff", "feature-wt", "-m", "merge feature")
+	got := gitWorktreeIntegration(parent, worktree, "main")
+	if got.Relation != "contained" || got.TargetUnique == 0 || got.WorktreeUnique != 0 {
+		t.Fatalf("integration after merge = %+v, want contained with parent-only commits", got)
+	}
+
+	unknown := gitWorktreeIntegration(filepath.Join(t.TempDir(), "missing"), worktree, "main")
+	if unknown.Relation != "unknown" {
+		t.Fatalf("missing parent relation = %q, want unknown", unknown.Relation)
+	}
+}

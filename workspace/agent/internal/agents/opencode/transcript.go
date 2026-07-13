@@ -575,6 +575,34 @@ func readParts(db *sql.DB, msgID string) ([]transcript.Part, string) {
 				}
 				continue
 			}
+			if name == "task" {
+				var in struct {
+					Description  string `json:"description"`
+					Prompt       string `json:"prompt"`
+					SubagentType string `json:"subagent_type"`
+					Model        string `json:"model"`
+				}
+				if json.Unmarshal(p.State.Input, &in) == nil {
+					status := strings.ToLower(strings.TrimSpace(p.State.Status))
+					switch status {
+					case "pending", "queued":
+						status = "requested"
+					case "in_progress":
+						status = "running"
+					case "error", "cancelled":
+						status = "failed"
+					case "completed", "running":
+					default:
+						status = "requested"
+					}
+					parts = append(parts, transcript.Part{
+						Kind: "delegation", Tool: name, Info: strings.TrimSpace(in.Description),
+						Prompt: strings.TrimSpace(in.Prompt), AgentType: in.SubagentType,
+						Model: in.Model, Status: status, Output: transcript.CapOutput(p.State.Output),
+					})
+					continue
+				}
+			}
 			part := transcript.Part{Kind: "tool", Tool: name, Info: toolInfo(p.State.Input), Output: transcript.CapOutput(p.State.Output)}
 			// Edit-family tools carry before/after so the trace opens as a diff pane.
 			if f, es := toolEdits(name, p.State.Input); len(es) > 0 {

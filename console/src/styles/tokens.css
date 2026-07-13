@@ -9,7 +9,15 @@
  * Component styles do NOT belong here — they live co-located next to their
  * component (ui/ui.css, app/app.css, features/<x>/<x>.css).
  */
-:root {
+/* Dark theme (the default). The bare [data-theme="dark"] selector — in addition to
+   :root — lets a nested container opt into dark independently of the app root: the
+   assistant ChatView sets data-theme on its own element (assistantTheme, docs/19). */
+:root,
+[data-theme="dark"] {
+  /* Tell the UA to render native controls (number-input spinners, scrollbars,
+     selects, date pickers) in the matching scheme so they follow the app theme
+     instead of defaulting to light. Overridden per theme below. */
+  color-scheme: dark;
   --bg: #1e1e1e;
   --panel: #181818;
   --panel2: #141414;
@@ -65,8 +73,12 @@
     "Noto Sans Mono CJK JP", monospace;
 }
 
-/* Light theme — applied via document.documentElement[data-theme="light"]. */
-:root[data-theme="light"] {
+/* Light theme — applied via document.documentElement[data-theme="light"]. The bare
+   [data-theme="light"] selector also lets a nested container (the assistant ChatView)
+   opt into light independently of the app root (assistantTheme, docs/19). */
+:root[data-theme="light"],
+[data-theme="light"] {
+  color-scheme: light;
   --bg: #ffffff;
   --panel: #f4f5f7;
   --panel2: #eaecef;
@@ -74,8 +86,13 @@
   --border: #d2d6dc;
   --border2: #e6e8ec;
   --fg: #1c2024;
-  --muted: #6b7280;
-  --muted2: #828a94;
+  /* Secondary/tertiary text. Darkened from #6b7280 / #828a94: on the modal panel
+     (#f4f5f7) those read ~4.4:1 / ~3.3:1 — below WCAG AA for the 12px labels used
+     in modals (clone dialog etc.) and the mirror AUQ panels. gray-600 / (old
+     --muted) lift these to ~6.9:1 / ~4.4:1 while keeping the fg→muted→muted2
+     hierarchy legible. */
+  --muted: #4b5563;
+  --muted2: #6b7280;
   --accent: #2563eb;
   --on-accent: #ffffff; /* light theme: white text on the saturated blue accent */
   --topbar-accent: #2563eb; /* light-theme default for the admin accent (see :root) */

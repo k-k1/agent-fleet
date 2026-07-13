@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import type { CSSProperties, KeyboardEvent as RKeyboardEvent, ClipboardEvent as RClipboardEvent, DragEvent as RDragEvent, RefObject } from "react";
 import { api, apiJSON, raw, errText, pasteImage } from "../../core/api/client.ts";
 import { splitPastedImages, buildImagePrompt } from "../../lib/pastedImages.ts";
-import { useSettings, chatFontStack } from "../../lib/settings.ts";
+import { useSettings, chatFontStack, surfaceBg, surfaceAccent, effectiveTheme } from "../../lib/settings.ts";
 import { useLayoutStore } from "../../layout/store.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { useSessionsStore } from "../sessions/store.ts";
@@ -14,6 +14,7 @@ import { MarkdownView } from "../viewer/MarkdownView.tsx";
 import {
   readTurn,
   collectBlocks,
+  finalAnswerStart,
   blockIndexAt,
   turnSpokenText,
   claimTurnReader,
@@ -65,6 +66,10 @@ interface Part {
   tool?: string;
   info?: string;
   output?: string;
+  prompt?: string; // kind=delegation: full instruction sent to the child
+  agentType?: string; // kind=delegation: Explore/general-purpose/task name
+  status?: string; // kind=delegation: requested/running/completed/failed
+  model?: string; // kind=delegation: explicitly selected child model
   file?: string;
   edits?: any[];
   questions?: Question[];
@@ -391,15 +396,21 @@ export function MirrorView({
       const total = collectBlocks(body).length;
       ttsAutoDoneRef.current.set(gi, total);
       if (total <= done) continue; // 増分なし（ツールだけの追記等）
+      // 過程スキップ（chat の分離と同趣・docs/19）: ツール前ナレーションを飛ばし、最後のツール
+      // 以降の本文（＝最終回答）から自動読み上げする。ポールが本文＋ツールをまとめて届ける
+      // 速いツール応答では過程が綺麗に飛ぶ（ナレーションが 1 ポール先行した時だけ読まれる）。
+      // 手動の「読み上げ」ボタン／選択朗読は従来どおり全文（意図的に読ませているため触らない）。
+      const from = Math.max(done, finalAnswerStart(body));
+      if (total <= from) continue; // 読むべき最終回答ブロックがまだ無い（過程だけの追記）
       if (settings.ttsSummaryRead) {
-        const text = turnSpokenText(body, done);
+        const text = turnSpokenText(body, from);
         if (text.length > TTS_SUMMARY_MIN) {
           ttsSummaryBusyRef.current = true;
-          void ttsSummarize(gi, body, done, text);
+          void ttsSummarize(gi, body, from, text);
           return;
         }
       }
-      ttsStart(gi, body, done);
+      ttsStart(gi, body, from);
       if (ttsHandleRef.current) return; // 読み始めた（読める文が無ければ次の候補へ）
     }
   };
@@ -1413,10 +1424,28 @@ export function MirrorView({
       ? stateInfo(sessionMeta)
       : null;
 
+  // Region theme + surface color for the session mirror: data-theme scopes the base
+  // tokens (tokens.css), and --chat-bg/--chat-accent are derived for the mirror's own
+  // effective theme so a flipped mirror doesn't inherit the app-theme surface tint. The
+  // accent falls back through the other surfaces (viewer/leftpane/topbar) as before.
+  const mirrorEff = effectiveTheme(settings.mirrorTheme, settings.theme);
+  const mirrorBg = surfaceBg(settings.chatColor, mirrorEff);
+  const mirrorAccent =
+    surfaceAccent(settings.chatColor) ||
+    surfaceAccent(settings.viewerColor) ||
+    surfaceAccent(settings.leftpaneColor) ||
+    surfaceAccent(settings.topbarColor);
+
   return (
     <div
       className={"mirrorview" + (dragging ? " dragging" : "")}
-      style={{ "--chat-font": chatFontStack(settings.chatFont), "--chat-size": settings.chatSize + "px" } as CSSProperties}
+      data-theme={settings.mirrorTheme !== "inherit" ? settings.mirrorTheme : undefined}
+      style={{
+        "--chat-font": chatFontStack(settings.chatFont),
+        "--chat-size": settings.chatSize + "px",
+        ...(mirrorBg ? { "--chat-bg": mirrorBg } : {}),
+        ...(mirrorAccent ? { "--chat-accent": mirrorAccent } : {}),
+      } as CSSProperties}
       onDragEnter={onDragEnter}
       onDragOver={onDragOver}
       onDragLeave={onDragLeave}
@@ -1994,7 +2023,11 @@ function partsOf(t: Turn): Part[] {
 function groupTurns(turns: Turn[]): Group[] {
   const out: Group[] = [];
   for (const t of turns) {
-    if (isNoise(t)) continue;
+    // A child agent's raw prompt, reasoning, chatter and tool log are implementation
+    // detail. The parent Agent/Task/spawn_agent call is rendered as one delegation card
+    // instead, keeping the main conversation readable without hiding that delegation
+    // happened.
+    if (isNoise(t) || t.sidechain) continue;
     const parts = partsOf(t);
     if (!parts.length) continue;
     const last = out[out.length - 1];
@@ -2478,6 +2511,8 @@ function Turn({
               // The agent's chain-of-thought (codex reasoning / opencode reasoning),
               // collapsed by default so it doesn't crowd the answer.
               <ThinkingBlock key={item.i} text={item.p.text} baseDir={turn.cwd} onOpenFile={onOpenFile} />
+            ) : item.p.kind === "delegation" ? (
+              <DelegationCard key={item.i} p={item.p} agentName={agentName} />
             ) : (
               <MarkdownView key={item.i} source={item.p.text} baseDir={turn.cwd} onOpenFile={onOpenFile} />
             ),
@@ -2497,6 +2532,53 @@ function Turn({
         {!isUser && <TurnTtsButtons turn={turn} tts={tts} body={bodyEl} />}
         <CopyButton text={turn.text} />
       </div>
+    </div>
+  );
+}
+
+// DelegationCard keeps orchestration visible without dumping the child agent's private
+// working transcript into the main conversation. The full instruction and final result
+// (when the provider records one) remain available on demand.
+function DelegationCard({ p, agentName }: { p: Part; agentName: string }) {
+  const status = p.status || "requested";
+  const statusLabel: Record<string, string> = {
+    requested: "依頼済み",
+    running: "進行中",
+    completed: "完了",
+    failed: "失敗",
+  };
+  const detail = !!(p.prompt || p.output);
+  return (
+    <div className="mt-delegation">
+      <div className="mt-delegation-head">
+        <Icon name="repo-forked" />
+        <span className="mt-delegation-title">{agentName}サブエージェントに依頼</span>
+        <span className={"mt-delegation-status " + status}>{statusLabel[status] || status}</span>
+      </div>
+      {(p.info || p.agentType || p.model) && (
+        <div className="mt-delegation-meta">
+          {p.info && <span className="mt-delegation-label">{p.info}</span>}
+          {p.agentType && p.agentType !== p.info && <code>{p.agentType}</code>}
+          {p.model && <code>{prettyModel(p.model)}</code>}
+        </div>
+      )}
+      {detail && (
+        <details className="mt-delegation-detail">
+          <summary>詳細</summary>
+          {p.prompt && (
+            <div className="mt-delegation-section">
+              <div className="muted">委譲した指示</div>
+              <pre>{p.prompt}</pre>
+            </div>
+          )}
+          {p.output && (
+            <div className="mt-delegation-section">
+              <div className="muted">結果</div>
+              <pre>{p.output}</pre>
+            </div>
+          )}
+        </details>
+      )}
     </div>
   );
 }

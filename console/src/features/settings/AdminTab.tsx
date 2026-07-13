@@ -1131,55 +1131,71 @@ function TenantView({
     <div className="admin-stage">
       {isSuper && (
         <section className="admin-panel">
-          <h4>上限（0 = 無制限）</h4>
-          <div className="form-row">
-            <label>
-              最大 Workspace
-              <input type="number" min="0" value={maxWs} onChange={(e) => setMaxWs(e.target.value)} />
-            </label>
-            <label>
-              最大 Session
-              <input type="number" min="0" value={maxSs} onChange={(e) => setMaxSs(e.target.value)} />
-            </label>
-            <label>
-              最大 内部リポジトリ
-              <input type="number" min="0" value={maxRepos} onChange={(e) => setMaxRepos(e.target.value)} />
-            </label>
-            <label>
-              最大 LFS 容量 (MB)
-              <input type="number" min="0" value={maxLfsMb} onChange={(e) => setMaxLfsMb(e.target.value)} />
-            </label>
-            <label>
-              Workspace 毎メモリ上限 (MB)
-              <input type="number" min="0" step="256" value={maxWsMemMb} onChange={(e) => setMaxWsMemMb(e.target.value)} />
-            </label>
+          <div className="admin-fgroup">
+            <h4>上限<span className="af-note">0 = 無制限</span></h4>
+            <div className="admin-fgrid">
+              <label className="admin-fld">
+                <span className="af-cap">最大 Workspace</span>
+                <input type="number" min="0" value={maxWs} onChange={(e) => setMaxWs(e.target.value)} />
+              </label>
+              <label className="admin-fld">
+                <span className="af-cap">最大 Session</span>
+                <input type="number" min="0" value={maxSs} onChange={(e) => setMaxSs(e.target.value)} />
+              </label>
+              <label className="admin-fld">
+                <span className="af-cap">最大 内部リポジトリ</span>
+                <input type="number" min="0" value={maxRepos} onChange={(e) => setMaxRepos(e.target.value)} />
+              </label>
+              <label className="admin-fld">
+                <span className="af-cap">最大 LFS 容量</span>
+                <span className="af-inputwrap">
+                  <input type="number" min="0" value={maxLfsMb} onChange={(e) => setMaxLfsMb(e.target.value)} />
+                  <span className="af-suffix">MB</span>
+                </span>
+              </label>
+              <label className="admin-fld">
+                <span className="af-cap">Workspace 毎メモリ上限</span>
+                <span className="af-inputwrap">
+                  <input type="number" min="0" step="256" value={maxWsMemMb} onChange={(e) => setMaxWsMemMb(e.target.value)} />
+                  <span className="af-suffix">MB</span>
+                </span>
+                <span className="af-unit">{+maxWsMemMb > 0 ? `= ${fmtGbHint(+maxWsMemMb)}／1 コンテナ` : "0 = テナント上限なし"}</span>
+              </label>
+            </div>
+            <p className="admin-hint">
+              「Workspace 毎メモリ上限」は 1 コンテナに割り当て可能なメモリの天井（テナント内の各ユーザー設定はこの範囲にクランプ）。0 = テナント上限なし（デプロイ既定 <code>WS_MEMORY</code> と、あればホスト天井 <code>AF_MAX_WORKSPACE_MEM</code> のみ）。個々の割当はメンバー詳細で設定し、<b>次回のコンテナ起動／作り直しで反映</b>されます。
+            </p>
           </div>
-          <p className="muted" style={{ margin: "0 0 8px" }}>
-            「Workspace 毎メモリ上限」は 1 コンテナに割り当て可能なメモリの天井（テナント内の各ユーザー設定はこの範囲にクランプ）。0 = テナント上限なし（デプロイ既定 <code>WS_MEMORY</code> と、あればホスト天井 <code>AF_MAX_WORKSPACE_MEM</code> のみ）。個々の割当はメンバー詳細で設定し、<b>次回のコンテナ起動／作り直しで反映</b>されます。
-          </p>
-          <h4>アイドル自動停止（空=無効 / デプロイ既定に従う）</h4>
-          <div className="form-row">
-            <label>
-              Session halt まで
-              <input type="text" placeholder="例 30m（空=無効）" value={sessIdle} onChange={(e) => setSessIdle(e.target.value)} />
-            </label>
-            <label>
-              Workspace 停止まで
-              <input type="text" placeholder="例 60m（空=無効）" value={wsIdle} onChange={(e) => setWsIdle(e.target.value)} />
-            </label>
+
+          <div className="admin-fgroup">
+            <h4>アイドル自動停止<span className="af-note">空 = デプロイ既定に従う</span></h4>
+            <div className="admin-fgrid">
+              <label className="admin-fld">
+                <span className="af-cap">Session halt まで</span>
+                <input type="text" placeholder="例 30m（空=無効）" value={sessIdle} onChange={(e) => setSessIdle(e.target.value)} />
+              </label>
+              <label className="admin-fld">
+                <span className="af-cap">Workspace 停止まで</span>
+                <input type="text" placeholder="例 60m（空=無効）" value={wsIdle} onChange={(e) => setWsIdle(e.target.value)} />
+              </label>
+            </div>
+            <p className="admin-hint">
+              放置された claude セッションは Session halt まで で停止中（再開可）に畳まれ、接続も稼働も無い Workspace は Workspace 停止まで で docker 停止します。書式は <code>30m</code> / <code>2h</code> / <code>90s</code>。空欄はデプロイ既定（既定は無効）に従い、<code>0</code> で明示的に無効化します。
+            </p>
           </div>
-          <p className="muted" style={{ margin: "0 0 8px" }}>
-            放置された claude セッションは Session halt まで で停止中（再開可）に畳まれ、接続も稼働も無い Workspace は Workspace 停止まで で docker 停止します。書式は <code>30m</code> / <code>2h</code> / <code>90s</code>。空欄はデプロイ既定（既定は無効）に従い、<code>0</code> で明示的に無効化します。
-          </p>
-          <h4>エージェント CLI の更新</h4>
-          <label className="admin-check">
-            <input type="checkbox" checked={allowUpd} onChange={(e) => setAllowUpd(e.target.checked)} />
-            <span>メンバーが claude / opencode / codex を自分で最新へ更新するのを許可</span>
-          </label>
-          <p className="muted" style={{ margin: "0 0 8px" }}>
-            OFF（既定）は全員がこのデプロイのイメージ版で固定。ON にすると各メンバーが自分の設定で「起動時に最新へ更新」を選べます（コンテナ内 in-place 更新・Stop → Start で反映／戻せます）。
-          </p>
-          <div className="form-row">
+
+          <div className="admin-fgroup">
+            <h4>エージェント CLI の更新</h4>
+            <label className="admin-check">
+              <input type="checkbox" checked={allowUpd} onChange={(e) => setAllowUpd(e.target.checked)} />
+              <span>メンバーが claude / opencode / codex を自分で最新へ更新するのを許可</span>
+            </label>
+            <p className="admin-hint">
+              OFF（既定）は全員がこのデプロイのイメージ版で固定。ON にすると各メンバーが自分の設定で「起動時に最新へ更新」を選べます（コンテナ内 in-place 更新・Stop → Start で反映／戻せます）。
+            </p>
+          </div>
+
+          <div className="admin-actions">
             <button onClick={saveLimits} className="primary">保存</button>
             {saved && <span className="saved-note"><Icon name="check" /> 保存しました</span>}
           </div>
@@ -1491,22 +1507,22 @@ function MemberView({
         {limitOpen && (
           <div className="limit-edit">
             <div className="le-head">上限の設定</div>
-            <div className="le-fields">
-              <label className="le-field">
-                <span className="le-cap">最大セッション数</span>
+            <div className="admin-fgrid">
+              <label className="admin-fld">
+                <span className="af-cap">最大セッション数</span>
                 <input type="number" min="0" value={limit} onChange={(e) => setLimit(e.target.value)} autoFocus />
-                <span className="le-unit">0 = 無制限</span>
+                <span className="af-unit">0 = 無制限</span>
               </label>
-              <label className="le-field">
-                <span className="le-cap">Workspace メモリ</span>
-                <span className="le-inputwrap">
+              <label className="admin-fld">
+                <span className="af-cap">Workspace メモリ</span>
+                <span className="af-inputwrap">
                   <input type="number" min="0" step="256" value={memMb} onChange={(e) => setMemMb(e.target.value)} />
-                  <span className="le-suffix">MB</span>
+                  <span className="af-suffix">MB</span>
                 </span>
-                <span className="le-unit">{+memMb > 0 ? `= ${fmtGbHint(+memMb)}` : "0 = デプロイ既定"}</span>
+                <span className="af-unit">{+memMb > 0 ? `= ${fmtGbHint(+memMb)}` : "0 = デプロイ既定"}</span>
               </label>
             </div>
-            <p className="le-note">
+            <p className="admin-hint">
               メモリはテナント上限にクランプされ、<b>次回のコンテナ起動／作り直しで反映</b>されます（実行中コンテナには即時反映されません）。
             </p>
             <div className="le-actions">

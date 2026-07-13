@@ -21,11 +21,24 @@ import (
 	"time"
 )
 
+// chatStep is one "作業過程" item of an assistant turn (docs/19): the narration the model
+// emitted right before it called a tool. On a tool-using answer claude produces several
+// assistant messages — each ending in a tool call (stop_reason=tool_use) is a working step,
+// and only the last (stop_reason=end_turn) is the final answer. We keep the steps so the UI
+// can show the process separately from — but alongside — the final reply (保持).
+type chatStep struct {
+	Text  string   `json:"text,omitempty"`  // narration before the tool call(s)
+	Tools []string `json:"tools,omitempty"` // tool name(s) invoked in this step
+}
+
 // chatMessage is one turn in a conversation.
 type chatMessage struct {
 	Role    string `json:"role"` // "user" | "assistant"
 	Content string `json:"content"`
 	TS      int64  `json:"ts"` // unix millis
+	// Steps is the assistant turn's working process (narration before each tool call),
+	// separated from Content (the final answer). Empty for user turns and tool-less replies.
+	Steps []chatStep `json:"steps,omitempty"`
 }
 
 // chatConversation is the persisted record (one JSON file per conversation).

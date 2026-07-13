@@ -88,6 +88,7 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
 
   const openSettings = useSettingsUI((st) => st.openSettings);
   const openAdmin = useSettingsUI((st) => st.openAdmin);
+  const openGuide = useSettingsUI((st) => st.openGuide);
   const run = (fn: () => void) => {
     setMenuOpen(false);
     fn();
@@ -214,6 +215,10 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
                     <div className="acct-sep" />
                   </>
                 )}
+                {/* 初回カードを「あとで」で閉じたあとの再入口（起動導線 Ph1）。 */}
+                <button className="acct-item" role="menuitem" onClick={() => run(openGuide)}>
+                  <Icon name="rocket" /> はじめかたガイド
+                </button>
                 <button className="acct-item" role="menuitem" onClick={() => run(() => openSettings())}>
                   <Icon name="gear" /> 設定
                 </button>
