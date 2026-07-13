@@ -242,6 +242,14 @@ function fixGyoLine(t: string): string {
 // 先に適用し、後段の複合語変換に載せる（誤判定 → ご判定 → ごはんてい）。
 const GO_PREFIX = /誤(?=[一-鿿々])/g;
 
+// KANAME — 「が/は/も＋要」が独立した名詞（かなめ＝要点・急所）として文を終える形だけを
+// 「かなめ」に固定する（「ここが要」の実機報告）。「要」は よう（必要・要素・重要…複合語）・
+// いる（要る＝必要とする、要らない等）・かなめ の 3 通りで読みが割れるため、複合語や動詞
+// 「要る」の活用（要ら/要り/要る/要れ/要ろ…）を巻き込まないよう、直後が漢字・「る」を含む
+// 活用語尾に続かない場合（句読点・文末・「です/だ」の直前）だけに絞る。「が要注意/が要素/
+// が要る」はこの条件で除外され、よう/いる のまま残る。
+const KANAME = /([がはも])要(?=[。、！？」』）\s]|です|だ|$)/g;
+
 // ヌメロニム（i18n = internationalization 等の中抜き略語）。数字は「省略した文字数」で
 // 数ではないので、数字読みさせず元の語の慣用カタカナに展開する。単語境界つき・大文字
 // 小文字は不問（I18n / A11Y 等も拾う）。一覧は ja.wikipedia の「ヌメロニム」の IT 系＋
@@ -323,6 +331,7 @@ export function applyBuiltinReadings(text: string): string {
   for (const [re, to] of PRODUCT_NAMES) t = t.replace(re, to);
   for (const [re, to] of UPPER_ACRONYMS) t = t.replace(re, to);
   t = t.replace(GO_PREFIX, "ご"); // 接頭辞「誤」= ご（誤表示/誤判定… 判定変換より前に）
+  t = t.replace(KANAME, "$1かなめ"); // が/は/も＋要（文末・句読点・です/だ 直前）= かなめ
   t = applyUserDict(t, BUILTIN_READINGS); // 行目/判定 等の複合語（fixGyoLine より先に固定）
   t = fixGyoLine(t); // 残りの「行」= line/row を既定 ぎょう に
   return t;
