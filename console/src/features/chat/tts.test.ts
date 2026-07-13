@@ -349,6 +349,12 @@ describe("applyBuiltinReadings / applyReadings (組み込みの読み補正)", (
     expect(applyBuiltinReadings("設定を誤ると誤りが出る")).toBe("設定を誤ると誤りが出る");
   });
 
+  it("濁り誤読の固定: 貼り付け→はりつけ / 型チェック→かたチェック", () => {
+    expect(applyBuiltinReadings("画像貼り付け")).toBe("画像はりつけ"); // 実機報告
+    expect(applyBuiltinReadings("ここに貼り付けると貼り付けた")).toBe("ここにはりつけるとはりつけた"); // 前方一致
+    expect(applyBuiltinReadings("TypeScript型チェック")).toBe("TypeScriptかたチェック"); // 実機報告（英字は CP 側 enkana）
+  });
+
   it("ユーザー辞書が先に当たれば組み込みより優先される", () => {
     const dict = parseUserDict("空レポ=そらレポ");
     expect(applyReadings("空レポです", dict, false)).toBe("そらレポです");
