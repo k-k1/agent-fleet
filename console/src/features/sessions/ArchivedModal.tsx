@@ -178,7 +178,6 @@ export function ArchivedModal({ onClose, onRestored }: ArchivedModalProps) {
                   placeholder="タイトル / フォルダ / 種別で絞り込み"
                   value={q}
                   onChange={(e) => setQ(e.target.value)}
-                  autoFocus
                 />
               </div>
               <Button
