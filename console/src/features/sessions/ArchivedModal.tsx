@@ -157,6 +157,37 @@ export function ArchivedModal({ onClose, onRestored }: ArchivedModalProps) {
     return (items || []).filter((s) => isOld(s, now)).length;
   }, [items]);
 
+  const restorable = useMemo(() => (items || []).filter((s) => s.resumable !== false), [items]);
+
+  const restoreAll = async () => {
+    if (restorable.length === 0) return;
+    setBusy(true);
+    let restored = 0;
+    let failed = 0;
+    try {
+      // Restore sequentially: this can cover many archived sessions, and there is
+      // no benefit in sending a burst of mutations to the workspace Agent.
+      for (const s of restorable) {
+        try {
+          const res = await raw(`api/sessions/${encodeURIComponent(s.name)}/restore`, { method: "POST" });
+          if (res.ok) restored += 1;
+          else failed += 1;
+        } catch {
+          failed += 1;
+        }
+      }
+      await load();
+      if (restored > 0) onRestored?.();
+      if (failed > 0) {
+        toast(`${restored} 件を復帰しました。${failed} 件は復帰できませんでした。`);
+      } else {
+        toast(`${restored} 件を復帰しました`, { kind: "success" });
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const total = items?.length ?? 0;
 
   // Once there are enough rows to fill the panel, pin the panel height so typing
@@ -178,7 +209,6 @@ export function ArchivedModal({ onClose, onRestored }: ArchivedModalProps) {
                   placeholder="タイトル / フォルダ / 種別で絞り込み"
                   value={q}
                   onChange={(e) => setQ(e.target.value)}
-                  autoFocus
                 />
               </div>
               <Button
@@ -255,6 +285,15 @@ export function ArchivedModal({ onClose, onRestored }: ArchivedModalProps) {
         )}
       </div>
       <footer className="ui-modal-foot">
+        <Button
+          variant="primary"
+          icon="debug-restart"
+          disabled={busy || restorable.length === 0}
+          title={restorable.length ? `フォルダが存在する ${restorable.length} 件をすべて復帰` : "復帰できるアーカイブはありません"}
+          onClick={restoreAll}
+        >
+          すべて復帰{restorable.length ? `（${restorable.length}）` : ""}
+        </Button>
         <Button variant="ghost" onClick={onClose}>
           閉じる
         </Button>

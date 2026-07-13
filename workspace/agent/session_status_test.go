@@ -4,6 +4,8 @@ import (
 	"os"
 	"testing"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/notice"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 )
 
@@ -24,6 +26,19 @@ func feedStatusHook(t *testing.T, state, stdinJSON string) {
 	defer func() { os.Stdin = orig }()
 	runSessionStatusHook([]string{state})
 	_ = r.Close()
+}
+
+func TestWorkingToIdleQueuesDurableNotification(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	m := session.Meta{Name: "s1", Dir: t.TempDir(), Kind: session.KindClaude, Title: "Project"}
+	session.WriteMeta(m)
+	sid := session.UUID(m.Dir, m.Name)
+	status.Persist(sid, "working")
+	runSessionStatusHook([]string{"idle", sid})
+	events := notice.List()
+	if len(events) != 1 || events[0].Kind != "answer-ready" || events[0].SessionName != "s1" || events[0].DisplayName != "Project" {
+		t.Fatalf("events=%+v", events)
+	}
 }
 
 // A permission prompt for AskUserQuestion fires between that tool's PreToolUse and

@@ -11,8 +11,9 @@ interface TtsStore {
   source: string; // 何を読み上げているかのラベル（"チャット" / "選択範囲" 等）
   voice: string; // 読んでいる声のキャラ名（"ずんだもん" 等。セッション別の声の判別用。"" = 非表示）
   sessionName: string; // 読み上げの発生元セッション名（ID）。左ペインの行アイコン判定用。"" = 非セッション（チャット/選択範囲等）
+  purpose: "reading" | "session-notification" | "usage-notification" | "manual";
   active: TtsController | null; // 現在の再生コントローラ（内部管理・購読対象外）
-  setActive(c: TtsController | null, source: string, voice?: string, sessionName?: string): void;
+  setActive(c: TtsController | null, source: string, voice?: string, sessionName?: string, purpose?: TtsStore["purpose"]): void;
   setSpeaking(v: boolean): void;
   setPreparing(v: boolean): void;
   stop(): void;
@@ -24,8 +25,9 @@ export const useTtsStore = create<TtsStore>((set, get) => ({
   source: "",
   voice: "",
   sessionName: "",
+  purpose: "reading",
   active: null,
-  setActive: (c, source, voice = "", sessionName = "") => set({ active: c, source, voice, sessionName }),
+  setActive: (c, source, voice = "", sessionName = "", purpose = "reading") => set({ active: c, source, voice, sessionName, purpose }),
   setSpeaking: (v) => set((s) => (s.speaking === v ? s : { speaking: v })),
   setPreparing: (v) => set((s) => (s.preparing === v ? s : { preparing: v })),
   stop: () => get().active?.stop(),

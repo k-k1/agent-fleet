@@ -470,7 +470,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
             </div>
             <div className="chat-greeting-body">
               {draftAsst.description ? (
-                <MarkdownView source={draftAsst.description} breaks />
+                <ChatMarkdown source={draftAsst.description} breaks />
               ) : (
                 "メッセージを送って会話を始めましょう。"
               )}
@@ -508,7 +508,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
               <div className="chat-body">
                 {/* Both roles render as Markdown; `breaks` keeps plain newlines as
                     line breaks (mirrors MirrorView's user turns). */}
-                {text && <MarkdownView source={text} breaks />}
+                {text && <ChatMarkdown source={text} breaks />}
                 {images.length > 0 && conv && (
                   <div className="chat-imgs">
                     {images.map((nm) => (
@@ -684,8 +684,22 @@ function StreamingMarkdown({ text, highlight }: { text: string; highlight?: stri
   useEffect(() => () => litRef.current?.classList.remove("tts-active"), []);
   return (
     <div ref={wrapRef}>
-      <MarkdownView source={shown} breaks streaming />
+      <ChatMarkdown source={shown} breaks streaming />
     </div>
+  );
+}
+
+function ChatMarkdown({ source, breaks, streaming }: { source: string; breaks?: boolean; streaming?: boolean }) {
+  const openTargetInNew = useLayoutStore((s) => s.openTargetInNew);
+  return (
+    <MarkdownView
+      source={source}
+      breaks={breaks}
+      streaming={streaming}
+      onOpenFile={(path, line, column) =>
+        openTargetInNew({ content: { kind: "file", filePath: path, targetLine: line, targetColumn: column } }, true)
+      }
+    />
   );
 }
 
@@ -709,7 +723,7 @@ function ChatSteps({ steps, defaultOpen, live }: { steps: ChatStep[]; defaultOpe
         <div className="chat-steps-body">
           {steps.map((s, i) => (
             <div key={i} className="chat-step">
-              {s.text && <MarkdownView source={s.text} breaks />}
+              {s.text && <ChatMarkdown source={s.text} breaks />}
               {s.tools && s.tools.length > 0 && (
                 <div className="chat-step-tools">
                   {s.tools.map((t, j) => (
@@ -822,7 +836,7 @@ function AssistantTurn({
       {/* 作業過程（ツール応答）は最終回答の上に折りたたんで表示（既定は畳む・保持）。 */}
       {steps && steps.length > 0 && <ChatSteps steps={steps} />}
       <div className="chat-body" ref={bodyRef} onMouseUp={onMouseUp}>
-        {text && <MarkdownView source={text} breaks />}
+        {text && <ChatMarkdown source={text} breaks />}
       </div>
       {selPill && (
         <div className="sel-pill-group" style={{ left: selPill.x, top: Math.max(4, selPill.y) }}>

@@ -308,6 +308,13 @@
   color: var(--hl-fg);
   background: transparent;
 }
+.codegrid .cl-row.target-line .cl-gutter,
+.codegrid .cl-row.target-line .cl-code {
+  background: color-mix(in srgb, var(--accent) 18%, var(--panel2));
+}
+.codegrid .cl-row.target-line .cl-code {
+  box-shadow: inset 3px 0 0 var(--accent);
+}
 .codeview.wrap .codegrid .cl-code {
   white-space: pre-wrap;
   word-break: break-word;
@@ -640,12 +647,26 @@
 .markdown a.repo-link {
   color: #7fd6a6;
   text-decoration: underline;
-  text-decoration-style: dotted;
+  text-decoration-style: solid;
+  text-decoration-thickness: 1px;
   text-underline-offset: 2px;
   cursor: pointer;
+  border-radius: 3px;
 }
 .markdown a.repo-link:hover {
   color: #a6e8c4;
+  background: color-mix(in srgb, currentColor 12%, transparent);
+}
+.markdown a.repo-link:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
+:root[data-theme="light"] .markdown a.repo-link {
+  color: #166534;
+}
+:root[data-theme="light"] .markdown a.repo-link:hover {
+  color: #14532d;
+  background: #dcfce7;
 }
 .markdown a.anchor-link {
   color: var(--accent);

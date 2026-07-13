@@ -24,6 +24,7 @@ func buildMux(cfg config) *http.ServeMux {
 	registerTTSRoutes(mux, cfg)
 	registerSSMRoutes(mux, cfg)
 	registerMemoRoutes(mux, cfg)
+	registerNotificationRoutes(mux, cfg)
 	registerRepoFSRoutes(mux, cfg)
 	registerAgentEnvRoutes(mux, cfg)
 	registerConnectionRoutes(mux, cfg)
@@ -32,6 +33,13 @@ func buildMux(cfg config) *http.ServeMux {
 	registerLegacyRedirect(mux)
 	registerStatic(mux, cfg)
 	return mux
+}
+
+func registerNotificationRoutes(mux *http.ServeMux, cfg config) {
+	n := newNotificationAPI(cfg.mgr)
+	mux.HandleFunc("GET /api/notifications", n.withResolved(n.list))
+	mux.HandleFunc("POST /api/notifications/seen", n.withMembership(n.seen))
+	mux.HandleFunc("POST /api/notifications/usage-observations", n.withMembership(n.observeUsage))
 }
 
 // --- authGate 除外レジストリ（docs/23 P2-W1） -------------------------------
