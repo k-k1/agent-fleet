@@ -593,8 +593,10 @@ function CodexCard({
                   onChange={(v) => updateCodex({ rate_limit_model_nudge: v })}
                 />
               </SettingRow>
-              <p className="ps-note">
-                オフにすると、利用制限が近いときに軽量モデルへの切替を勧める Codex の案内を表示しません。
+              <p className={`ps-note${codex.rate_limit_model_nudge ? " ps-note-warn" : ""}`}>
+                {codex.rate_limit_model_nudge
+                  ? "⚠ オンの場合、利用制限が近づくと Codex の案内が表示され、軽量モデルへ切り替わる可能性があります。"
+                  : "オフの場合、利用制限が近いときに軽量モデルへの切替を勧める Codex の案内を表示しません。"}
               </p>
             </>
           )}
