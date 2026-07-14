@@ -237,7 +237,7 @@ export function MirrorView({
       return next;
     });
   const [loaded, setLoaded] = useState(false); // false until the first transcript fetch returns
-  const [termState, setTermState] = useState(""); // terminal-only state: "resume" | "compacting" | ""
+  const [termState, setTermState] = useState(""); // terminal-only state: "resume" | "compacting" | "update" | ""
   // Compaction progress (parsed from the pane) so the 圧縮中 block shows a bar, not just a spinner.
   const [compactProg, setCompactProg] = useState<{ pct: number; elapsed?: string } | null>(null);
   const [status, setStatus] = useState("");
@@ -1578,6 +1578,29 @@ export function MirrorView({
           </button>
         </div>
       )}
+      {termState === "update" && (
+        // codex's startup update menu is showing in the terminal (invisible from chat).
+        // "1. Update now" exits the process and the tmux session dies with it — CLI
+        // updates belong to the image pin — so the offered action is skip. The digit
+        // key alone selects and confirms (verified on 0.144.3), hence a single "2".
+        <div className="mirror-attention">
+          <Icon name="warning" />
+          <span className="ma-text">
+            codex のアップデート確認待ちです。「1. Update now」を選ぶとプロセスが終了し
+            セッションが切れるため、スキップを推奨します（更新はイメージ再ビルドで反映）。
+          </span>
+          <button
+            type="button"
+            className="btn primary ma-btn"
+            onClick={() => {
+              postKeys(["2"]);
+              setTimeout(() => tickRef.current?.(), 500);
+            }}
+          >
+            スキップして続行
+          </button>
+        </div>
+      )}
       {termState === "compacting" && (
         <div className="mirror-compacting">
           <div className="mc-head">
@@ -1816,6 +1839,33 @@ export function MirrorView({
             <Icon name="terminal" /> ターミナルで選択
           </button>
           <span className="muted mirror-resume-hint">再開方法の選択待ち（コンテキスト維持は「2」）</span>
+        </div>
+      ) : termState === "update" ? (
+        // codex's update menu is up: block the composer (typed digits would pick menu
+        // entries) and offer the two skip choices directly — each digit key selects and
+        // confirms on its own, so one key dismisses the menu.
+        <div className="mirror-compose mirror-compose-resume">
+          <button
+            type="button"
+            className="btn primary mirror-resume"
+            onClick={() => {
+              postKeys(["2"]);
+              setTimeout(() => tickRef.current?.(), 500);
+            }}
+          >
+            スキップして続行
+          </button>
+          <button
+            type="button"
+            className="btn mirror-resume"
+            onClick={() => {
+              postKeys(["3"]);
+              setTimeout(() => tickRef.current?.(), 500);
+            }}
+          >
+            次の版までスキップ
+          </button>
+          <span className="muted mirror-resume-hint">アップデート確認の選択待ち</span>
         </div>
       ) : !alive ? (
         // Attached but the session is still coming up (resume in flight).

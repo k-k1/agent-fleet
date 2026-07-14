@@ -309,6 +309,15 @@ func handleGenericMessages(w http.ResponseWriter, r *http.Request, meta session.
 	if alive && td.Compacting {
 		resp["terminalState"] = "compacting"
 	}
+	// codex's startup update menu is terminal-only (no transcript event) and eats
+	// keystrokes — and its "Update now" exits the process, killing the tmux session.
+	// Surface it so the mirror blocks the composer and offers the skip choices,
+	// the same treatment as claude's startup resume menu.
+	if alive && meta.Kind == session.KindCodex {
+		if ts := codexTerminalState(meta.Name); ts != "" {
+			resp["terminalState"] = ts
+		}
+	}
 	// Current mode (plan / normal) so the Console shows the plan indicator and toggle.
 	// Read it ONLY from the live terminal — a stopped session isn't "in plan mode", and
 	// the rollout's per-turn mode is a stale snapshot (the last turn's), which made a
