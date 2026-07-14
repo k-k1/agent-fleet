@@ -107,6 +107,10 @@
   z-index: 120;
 }
 .ui-modal {
+  /* Modal copy is compact (mostly 11–12px), so the app-wide muted colors are
+     too faint here in both themes. Pull secondary text toward the foreground
+     while preserving hierarchy beneath normal --fg text. */
+  --modal-muted: color-mix(in srgb, var(--muted) 68%, var(--fg));
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -124,6 +128,20 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+.ui-modal .ui-field-label,
+.ui-modal .ui-field-hint,
+.ui-modal .ssm-check,
+.ui-modal .sm-muted,
+.ui-modal .start-row-desc,
+.ui-modal .start-row-meta,
+.ui-modal .start-row-chev,
+.ui-modal .ui-btn-ghost {
+  color: var(--modal-muted);
+}
+.ui-modal ::placeholder {
+  color: var(--modal-muted);
+  opacity: 1;
 }
 .ui-modal-head {
   display: flex;
@@ -372,6 +390,7 @@
   color: var(--muted);
 }
 .ui-field input[type="text"],
+.ui-field input[type="search"],
 .ui-field input[type="password"],
 .ui-field textarea,
 .ui-field select {
