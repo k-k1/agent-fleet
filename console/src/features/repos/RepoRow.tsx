@@ -5,7 +5,8 @@
 // tree (see RepoRowConnected, which wires the handlers from the stores).
 // `active` = open in the SCM pane; `selected` = the attached session's repo — both
 // just highlight in place (no reordering).
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { useLayoutEffect, useRef, useState } from "react";
 import type { MouseEvent as RMouseEvent } from "react";
 import { Icon } from "../../ui/Icon.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
@@ -104,7 +105,7 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
   // the raw cursor coords as inline style on re-renders, undoing a one-shot clamp.
   useLayoutEffect(() => {
     if (menu && menuRef.current)
-      placeFixed(menuRef.current, menu.x, menu.y, menuRef.current.closest<HTMLElement>(".app-rail"));
+      placeFixed(menuRef.current, menu.x, menu.y, wrapRef.current?.closest<HTMLElement>(".app-rail"));
   });
   // The 起動 ▼ quick menu is position:fixed (an absolute dropdown under a row
   // near the rail's foot ran off-screen) — anchor it under the split button,
@@ -115,25 +116,12 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
     const anchor = wrapRef.current;
     if (!showLaunch || !el || !anchor) return;
     const a = anchor.getBoundingClientRect();
-    placeFixed(el, a.right - el.offsetWidth, a.bottom + 2, el.closest<HTMLElement>(".app-rail"));
+    placeFixed(el, a.right - el.offsetWidth, a.bottom + 2, wrapRef.current?.closest<HTMLElement>(".app-rail"));
   });
-  useEffect(() => {
-    if (!menu) return;
-    const close = () => setMenu(null);
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && close();
-    document.addEventListener("mousedown", close);
-    document.addEventListener("keydown", onKey);
-    window.addEventListener("blur", close);
-    return () => {
-      document.removeEventListener("mousedown", close);
-      document.removeEventListener("keydown", onKey);
-      window.removeEventListener("blur", close);
-    };
-  }, [menu]);
-
   // Close the launch dropdown on outside click (containment check, so opening
   // another menu closes this one).
-  useDismiss(wrapRef, showLaunch, () => setShowLaunch(false));
+  useDismiss([wrapRef, launchMenuRef], showLaunch, () => setShowLaunch(false));
+  useDismiss([wrapRef, menuRef], !!menu, () => setMenu(null));
 
   return (
     <li
@@ -279,96 +267,100 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
                 <Icon name="chevron-down" />
               </button>
             </div>
-            {showLaunch && (
-              <div className="ui-menu launch-menu" ref={launchMenuRef}>
-                {kinds.map((k) => (
-                  <button
-                    key={k}
-                    type="button"
-                    className="ui-menu-item"
-                    title="Ctrl/中クリックで新ペインに起動"
-                    onClick={(e) => {
-                      setShowLaunch(false);
-                      onLaunch(k, e.ctrlKey || e.metaKey);
-                    }}
-                    onMouseDown={(e) => e.button === 1 && e.preventDefault()}
-                    onAuxClick={(e) => {
-                      if (e.button === 1) {
-                        e.preventDefault();
+            {showLaunch &&
+              createPortal(
+                <div className="ui-menu launch-menu" ref={launchMenuRef} onMouseDown={(e) => e.stopPropagation()}>
+                  {kinds.map((k) => (
+                    <button
+                      key={k}
+                      type="button"
+                      className="ui-menu-item"
+                      title="Ctrl/中クリックで新ペインに起動"
+                      onClick={(e) => {
                         setShowLaunch(false);
-                        onLaunch(k, true);
-                      }
-                    }}
-                  >
-                    <Icon name={kindIcon(k)} /> {kindLabel(k)}
-                  </button>
-                ))}
-              </div>
-            )}
+                        onLaunch(k, e.ctrlKey || e.metaKey);
+                      }}
+                      onMouseDown={(e) => e.button === 1 && e.preventDefault()}
+                      onAuxClick={(e) => {
+                        if (e.button === 1) {
+                          e.preventDefault();
+                          setShowLaunch(false);
+                          onLaunch(k, true);
+                        }
+                      }}
+                    >
+                      <Icon name={kindIcon(k)} /> {kindLabel(k)}
+                    </button>
+                  ))}
+                </div>,
+                document.body,
+              )}
           </div>
         </div>
       </div>
 
-      {menu && (
-        <ul className="ui-menu repo-ctxmenu" ref={menuRef} style={{ left: menu.x, top: menu.y }} role="menu" onMouseDown={(e) => e.stopPropagation()}>
-          <li>
-            <button type="button" className="ui-menu-item" onClick={() => { setMenu(null); onOpen(); }}>
-              <Icon name="source-control" /> ソース管理を開く
-            </button>
-          </li>
-          {onOpenFolder && (
+      {menu &&
+        createPortal(
+          <ul className="ui-menu repo-ctxmenu" ref={menuRef} style={{ left: menu.x, top: menu.y }} role="menu" onMouseDown={(e) => e.stopPropagation()}>
             <li>
-              <button type="button" className="ui-menu-item" onClick={() => { setMenu(null); onOpenFolder(); }}>
-                <Icon name="folder-opened" /> フォルダを開く
+              <button type="button" className="ui-menu-item" onClick={() => { setMenu(null); onOpen(); }}>
+                <Icon name="source-control" /> ソース管理を開く
               </button>
             </li>
-          )}
-          {onOpenChanges && (
-            <li>
-              <button type="button" className="ui-menu-item" onClick={() => { setMenu(null); onOpenChanges(); }}>
-                <Icon name="git-commit" /> 変更をコミット
-              </button>
-            </li>
-          )}
-          <li>
-            <button type="button" className="ui-menu-item" onClick={() => { setMenu(null); setBranchOpen(true); }}>
-              <Icon name="git-branch" /> ブランチ切替
-            </button>
-          </li>
-          {r.branch && (
-            <li>
-              <button type="button" className="ui-menu-item" onClick={() => { setMenu(null); copyBranch(); }}>
-                <Icon name="copy" /> ブランチ名をコピー
-              </button>
-            </li>
-          )}
-          {onFF && (
-            <li>
-              <button type="button" className="ui-menu-item" onClick={() => { setMenu(null); onFF(); }}>
-                <Icon name="arrow-down" /> Fast-Forward
-              </button>
-            </li>
-          )}
-          <li className="ui-menu-sep" role="separator" />
-          {kinds.map((k) => (
-            <li key={k}>
-              <button type="button" className="ui-menu-item" onClick={() => { setMenu(null); onLaunch(k, false); }}>
-                <Icon name={kindIcon(k)} /> {kindLabel(k)} を起動
-              </button>
-            </li>
-          ))}
-          {onDelete && (
-            <>
-              <li className="ui-menu-sep" role="separator" />
+            {onOpenFolder && (
               <li>
-                <button type="button" className="ui-menu-item danger" onClick={() => { setMenu(null); onDelete(); }}>
-                  <Icon name="trash" /> ワーキングコピーを削除
+                <button type="button" className="ui-menu-item" onClick={() => { setMenu(null); onOpenFolder(); }}>
+                  <Icon name="folder-opened" /> フォルダを開く
                 </button>
               </li>
-            </>
-          )}
-        </ul>
-      )}
+            )}
+            {onOpenChanges && (
+              <li>
+                <button type="button" className="ui-menu-item" onClick={() => { setMenu(null); onOpenChanges(); }}>
+                  <Icon name="git-commit" /> 変更をコミット
+                </button>
+              </li>
+            )}
+            <li>
+              <button type="button" className="ui-menu-item" onClick={() => { setMenu(null); setBranchOpen(true); }}>
+                <Icon name="git-branch" /> ブランチ切替
+              </button>
+            </li>
+            {r.branch && (
+              <li>
+                <button type="button" className="ui-menu-item" onClick={() => { setMenu(null); copyBranch(); }}>
+                  <Icon name="copy" /> ブランチ名をコピー
+                </button>
+              </li>
+            )}
+            {onFF && (
+              <li>
+                <button type="button" className="ui-menu-item" onClick={() => { setMenu(null); onFF(); }}>
+                  <Icon name="arrow-down" /> Fast-Forward
+                </button>
+              </li>
+            )}
+            <li className="ui-menu-sep" role="separator" />
+            {kinds.map((k) => (
+              <li key={k}>
+                <button type="button" className="ui-menu-item" onClick={() => { setMenu(null); onLaunch(k, false); }}>
+                  <Icon name={kindIcon(k)} /> {kindLabel(k)} を起動
+                </button>
+              </li>
+            ))}
+            {onDelete && (
+              <>
+                <li className="ui-menu-sep" role="separator" />
+                <li>
+                  <button type="button" className="ui-menu-item danger" onClick={() => { setMenu(null); onDelete(); }}>
+                    <Icon name="trash" /> ワーキングコピーを削除
+                  </button>
+                </li>
+              </>
+            )}
+          </ul>,
+          document.body,
+        )}
       {branchOpen && (
         <BranchModal
           repoName={r.name}
