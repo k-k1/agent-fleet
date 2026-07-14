@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useToast } from "../../ui/ToastProvider.tsx";
-import { apiJSON, raw } from "../../core/api/client.ts";
+import { api, apiJSON, raw } from "../../core/api/client.ts";
 import { useWorkspaceStore, wsStartBusy } from "../../core/store/workspace.ts";
 import { EmptyState } from "../../ui/EmptyState.tsx";
 import { Button } from "../../ui/Button.tsx";
@@ -216,29 +216,60 @@ function GrafanaCard({ st, reload }: { st: any; reload: () => void }) {
   );
 }
 
-// CloudWatchCard: point the CloudWatch MCP at an AWS profile (+ optional region).
-// No secret is stored — auth is the AWS credential chain (the user's `aws sso
-// login`, same as ssm sessions), so an expired SSO session just makes the tools
-// error until the user logs in again.
+// CloudWatchCard: point the CloudWatch MCP at an AWS SSO profile. The picker
+// lists the user's SSM connection profiles (GET /api/ssm/profiles) and sends
+// their non-secret SSO meta along — SSM profiles live in per-session isolated
+// aws configs, so the agent generates a durable ops config from the meta
+// (~/.aws/af-ops/cloudwatch.config) instead of relying on ~/.aws/config. A
+// manual entry remains for members who maintain their own ~/.aws. No secret is
+// stored either way; an expired SSO session just makes the tools error.
 function CloudWatchCard({ st, reload }: { st: any; reload: () => void }) {
   const toast = useToast();
-  const [profile, setProfile] = useState("");
+  const [profiles, setProfiles] = useState<any[] | null>(null);
+  const [sel, setSel] = useState(""); // profile id, or "manual"
+  const [manualProfile, setManualProfile] = useState("");
   const [region, setRegion] = useState("");
   const [busy, setBusy] = useState(false);
 
+  const connected = !!st?.connected;
+  useEffect(() => {
+    if (connected) return;
+    api("api/ssm/profiles")
+      .then((d) => setProfiles(Array.isArray(d) ? d : []))
+      .catch(() => setProfiles([]));
+  }, [connected]);
+
+  const picked = sel && sel !== "manual" ? profiles?.find((p) => p.id === sel) : null;
+  const manual = sel === "manual" || (profiles !== null && profiles.length === 0);
+  const ok = manual ? manualProfile.trim() !== "" : !!picked;
+
+  const pick = (id: string) => {
+    setSel(id);
+    const p = id !== "manual" ? profiles?.find((x) => x.id === id) : null;
+    setRegion(p?.region || "");
+  };
+
   const save = async () => {
-    if (!profile.trim()) return;
+    if (!ok) return;
     setBusy(true);
     try {
-      const res = await apiJSON("api/connections/cloudwatch", "PUT", {
-        profile: profile.trim(),
-        region: region.trim(),
-      });
+      const body = manual
+        ? { profile: manualProfile.trim(), region: region.trim() }
+        : {
+            profile: picked.label,
+            region: region.trim(),
+            startUrl: picked.startUrl || "",
+            ssoRegion: picked.ssoRegion || "",
+            accountId: picked.accountId || "",
+            roleName: picked.roleName || "",
+          };
+      const res = await apiJSON("api/connections/cloudwatch", "PUT", body);
       if (res && res.error) {
         toast("接続に失敗: " + (res.error.message || res.error));
         return;
       }
-      setProfile("");
+      setSel("");
+      setManualProfile("");
       setRegion("");
       reload();
     } finally {
@@ -260,18 +291,35 @@ function CloudWatchCard({ st, reload }: { st: any; reload: () => void }) {
         <div className="p-who">
           <span className="p-em">{st.profile}</span>
           {st.region && <span className="p-pl">{st.region}</span>}
+          {st.sso && <span className="p-pl">SSO</span>}
           <DisconnectButton onClick={disconnect} />
         </div>
+      ) : profiles === null ? (
+        <p className="muted pad">読み込み中…</p>
       ) : (
         <div className="p-body">
           <div className="flow">
-            <input
-              className="cinput"
-              type="text"
-              placeholder="AWS プロファイル名（SSM 接続と同じ SSO プロファイル）"
-              value={profile}
-              onChange={(e) => setProfile(e.target.value)}
-            />
+            {profiles.length > 0 && (
+              <select className="cinput" value={sel} onChange={(e) => pick(e.target.value)}>
+                <option value="">プロファイルを選択…</option>
+                {profiles.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.label}
+                    {p.accountId ? `（${p.accountId}${p.roleName ? " / " + p.roleName : ""}）` : ""}
+                  </option>
+                ))}
+                <option value="manual">手動入力（自分の ~/.aws のプロファイル）</option>
+              </select>
+            )}
+            {manual && (
+              <input
+                className="cinput"
+                type="text"
+                placeholder="~/.aws のプロファイル名"
+                value={manualProfile}
+                onChange={(e) => setManualProfile(e.target.value)}
+              />
+            )}
             <input
               className="cinput"
               type="text"
@@ -280,14 +328,16 @@ function CloudWatchCard({ st, reload }: { st: any; reload: () => void }) {
               onChange={(e) => setRegion(e.target.value)}
               style={{ maxWidth: "12em" }}
             />
-            <button disabled={busy || !profile.trim()} onClick={save}>
+            <button disabled={busy || !ok} onClick={save}>
               接続
             </button>
           </div>
           <Hint>
-            秘密は保存しません。ワークスペース内の AWS 資格（`aws sso
-            login`済みのプロファイル）をそのまま読みます。ログの検索・アラーム履歴・メトリクス分析など読み取り専用ツールのみです。SSO
-            セッションが切れているとツールがエラーになるので、その場合はセッションで `aws sso login` してください。
+            秘密は保存しません。SSM 接続のプロファイルを選ぶと、その SSO
+            設定（非秘密）から専用の設定ファイルを生成して使います。ログの検索・アラーム履歴・メトリクス分析など読み取り専用ツールのみです。SSO
+            ログインがまだ（または期限切れ）の場合は、該当の SSM セッションを一度開くか、ターミナルで
+            `AWS_CONFIG_FILE=~/.aws/af-ops/cloudwatch.config aws sso login --profile
+            プロファイル名` を実行してください。
           </Hint>
         </div>
       )}

@@ -79,10 +79,22 @@ type GrafanaCreds struct {
 // CloudWatchConn is the user's CloudWatch connection settings (docs/25). Unlike
 // the other ops integrations it holds NO secret: auth is the AWS credential
 // chain already in the container (the user's SSO login, same as ssm sessions).
-// Profile selects the ~/.aws profile; Region optionally overrides its region.
+// Profile selects the profile; Region optionally overrides its region.
+//
+// The SSO fields mirror session.SSMMeta: SSM profiles live in per-session
+// isolated config files (~/.aws/af-sessions/*.config), NOT in ~/.aws/config, so
+// a bare AWS_PROFILE is invisible to boto3. When StartURL is set, mcp-run
+// regenerates a durable ops config (~/.aws/af-ops/cloudwatch.config) from these
+// fields at every spawn (idempotent; self-heals after clean-home) and points
+// AWS_CONFIG_FILE at it. When StartURL is empty the profile is assumed to exist
+// in the member's own ~/.aws (manual setups).
 type CloudWatchConn struct {
-	Profile string `json:"profile"`
-	Region  string `json:"region,omitempty"`
+	Profile   string `json:"profile"`
+	Region    string `json:"region,omitempty"`
+	StartURL  string `json:"startUrl,omitempty"`  // SSO access-portal start URL
+	SSORegion string `json:"ssoRegion,omitempty"` // SSO region
+	AccountID string `json:"accountId,omitempty"` // SSO account id
+	RoleName  string `json:"roleName,omitempty"`  // SSO permission-set role name
 }
 
 type Data struct {
