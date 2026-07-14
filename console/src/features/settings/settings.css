@@ -132,7 +132,7 @@
 .settings-content .muted,
 .settings-content .ds-hint,
 .settings-content .pat-tmpl-head {
-  color: color-mix(in srgb, var(--fg) 62%, var(--muted));
+  color: var(--dialog-muted);
 }
 
 /* display settings tab */
@@ -1532,7 +1532,7 @@
 :where(.admin-surface) button.ghost {
   background: transparent;
   border-color: transparent;
-  color: var(--muted);
+  color: var(--dialog-muted);
   padding: 2px 6px;
 }
 :where(.admin-surface) button.ghost:hover:not(:disabled) {
@@ -1836,6 +1836,14 @@
 .admin-hint code {
   font-family: var(--mono);
   color: var(--muted);
+}
+.admin-surface .tc-slug,
+.admin-surface .admin-panel h4 .af-note,
+.admin-surface .af-suffix,
+.admin-surface .af-unit,
+.admin-surface .admin-hint,
+.admin-surface .admin-hint code {
+  color: var(--dialog-muted);
 }
 .admin-actions {
   display: flex;

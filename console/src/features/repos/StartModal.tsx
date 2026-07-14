@@ -50,6 +50,7 @@ interface SsmProfile {
 
 interface SsmInstance {
   instanceId: string;
+  name?: string;
   computerName?: string;
   ipAddress?: string;
   platformName?: string;
@@ -127,7 +128,9 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
   const [ssmQuery, setSsmQuery] = useState("");
   const [ssmProfileId, setSsmProfileId] = useState("");
   const [ssmInstances, setSsmInstances] = useState<SsmInstance[] | null>(null);
+  const [ssmInstanceQuery, setSsmInstanceQuery] = useState("");
   const [ssmSearching, setSsmSearching] = useState(false);
+  const [ssmSearchError, setSsmSearchError] = useState("");
   const [ssmForce, setSsmForce] = useState(false);
   // After creating a kind=ssm session: the created name while the SSO handshake runs.
   const [ssmLogin, setSsmLogin] = useState<string | null>(null);
@@ -148,21 +151,29 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
   const searchSsmInstances = async () => {
     const profileId = ssmProfileId || ssmProfiles?.[0]?.id || "";
     if (!profileId || ssmSearching) return;
+    setSsmSearchError("");
     setSsmSearching(true);
     const res = await apiJSON("api/ssm/instances", "POST", { profileId });
     setSsmSearching(false);
     if (res?.error) {
-      toast("AWSの検索に失敗: " + errText(res.error));
+      const message = errText(res.error);
+      setSsmSearchError(message);
+      if (res.error.code !== "ssm_search_forbidden") toast("AWSの検索に失敗: " + message);
       return;
     }
     setSsmInstances(Array.isArray(res?.instances) ? res.instances : []);
   };
+  const visibleSsmInstances = (ssmInstances || []).filter((instance) => {
+    const q = ssmInstanceQuery.trim().toLocaleLowerCase();
+    return !q || [instance.name, instance.instanceId, instance.computerName, instance.ipAddress]
+      .some((value) => value?.toLocaleLowerCase().includes(q));
+  });
   const registerSsmInstance = async (instance: SsmInstance) => {
     const profileId = ssmProfileId || ssmProfiles?.[0]?.id || "";
     if (!profileId || busy) return;
     setBusy(true);
     const res = await apiJSON("api/ssm/hosts", "POST", {
-      alias: instance.computerName || instance.instanceId,
+      alias: instance.name || instance.computerName || instance.instanceId,
       profileId,
       region: "",
       instanceId: instance.instanceId,
@@ -284,24 +295,20 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
                   <span className="start-row-desc">通常のシェル (bash) をすぐ開きます</span>
                 </span>
               </button>
-              <button type="button" className="start-row" onClick={() => setStage("home")}>
-                <Icon name="home" className="start-row-ic" />
-                <span className="start-row-body">
-                  <span className="start-row-title">ホームで起動（リポジトリなし）</span>
-                  <span className="start-row-desc">~ でエージェントを走らせる・下書きや調べもの向け</span>
-                </span>
-                <Icon name="chevron-right" className="start-row-chev" />
-              </button>
-              <button type="button" className="start-row action" onClick={() => setStage("clone")}>
-                <Icon name="add" className="start-row-ic" />
-                <span className="start-row-body">
-                  <span className="start-row-title">新しいリポジトリを clone…</span>
-                </span>
-              </button>
+              {kinds.length > 0 && (
+                <button type="button" className="start-row" onClick={() => setStage("home")}>
+                  <Icon name="home" className="start-row-ic" />
+                  <span className="start-row-body">
+                    <span className="start-row-title">ホームでエージェントを起動</span>
+                    <span className="start-row-desc">~ でエージェントを走らせる・下書きや調べもの向け</span>
+                  </span>
+                  <Icon name="chevron-right" className="start-row-chev" />
+                </button>
+              )}
             </div>
           </div>
           <div className="ui-field start-repos">
-            <label className="ui-field-label" htmlFor="start-repo-search">リポジトリ</label>
+            <label className="ui-field-label" htmlFor="start-repo-search">リポジトリでエージェントを起動</label>
             <input
               id="start-repo-search"
               type="search"
@@ -325,6 +332,14 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
               ))}
               {visibleBases.length === 0 && <span className="start-empty">該当するリポジトリはありません</span>}
             </div>
+            <div className="start-list start-clone-action">
+              <button type="button" className="start-row action" onClick={() => setStage("clone")}>
+                <Icon name="add" className="start-row-ic" />
+                <span className="start-row-body">
+                  <span className="start-row-title">新しいリポジトリをクローン…</span>
+                </span>
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -336,7 +351,7 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
             {already && (
               <div className="ui-field">
                 <span className="ui-field-hint">
-                  「{already.name}」は clone 済みです。別コピーが必要なら Repos の「クローン」からフォルダ名を分けて clone してください。
+                  「{already.name}」はクローン済みです。別コピーが必要なら「クローン」からフォルダ名を分けてクローンしてください。
                 </span>
                 <Button
                   small
@@ -351,7 +366,7 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
               </div>
             )}
             <span className="ui-field-hint">
-              新規ブランチやフォルダ名は、clone 後の「作業を始める」（worktree）で決められます。
+              新規ブランチやフォルダ名は、クローン後の「作業を始める」（worktree）で決められます。
             </span>
           </div>
           <footer className="ui-modal-foot">
@@ -362,7 +377,7 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
               キャンセル
             </Button>
             <Button variant="primary" onClick={() => void doClone()} disabled={!src.cloneUrl || !!already || busy}>
-              {busy ? "Cloning…" : "clone して続行"}
+              {busy ? "クローン中…" : "クローンして続行"}
             </Button>
           </footer>
         </>
@@ -492,12 +507,24 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
               <Button small icon="search" onClick={() => void searchSsmInstances()} disabled={ssmSearching}>
                 {ssmSearching ? "検索中…" : "AWSから検索"}
               </Button>
-              {ssmInstances?.map((instance) => (
+              {ssmSearchError && <span role="alert" className="start-search-error">{ssmSearchError}</span>}
+              {ssmInstances !== null && ssmInstances.length > 0 && (
+                <input
+                  type="search"
+                  value={ssmInstanceQuery}
+                  onChange={(e) => setSsmInstanceQuery(e.target.value)}
+                  placeholder="Name・インスタンスID・ホスト名・IPで絞り込み…"
+                />
+              )}
+              {visibleSsmInstances.map((instance) => (
                 <div key={instance.instanceId} className="ssm-instance-row">
                   <span className="start-row-body">
-                    <span className="start-row-title">{instance.computerName || instance.instanceId}</span>
+                    <span className="start-row-title">{instance.name || instance.computerName || instance.instanceId}</span>
                     <span className="start-row-desc">
-                      {instance.instanceId}{instance.ipAddress ? ` · ${instance.ipAddress}` : ""}{instance.platformName ? ` · ${instance.platformName}` : ""}
+                      {instance.instanceId}
+                      {instance.name && instance.computerName ? ` · ${instance.computerName}` : ""}
+                      {instance.ipAddress ? ` · ${instance.ipAddress}` : ""}
+                      {instance.platformName ? ` · ${instance.platformName}` : ""}
                     </span>
                   </span>
                   <Button small variant="ghost" onClick={() => void registerSsmInstance(instance)} disabled={busy}>
@@ -506,6 +533,9 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
                 </div>
               ))}
               {ssmInstances?.length === 0 && <span className="ui-field-hint">オンラインのEC2インスタンスは見つかりませんでした。</span>}
+              {ssmInstances !== null && ssmInstances.length > 0 && visibleSsmInstances.length === 0 && (
+                <span className="ui-field-hint">絞り込みに一致するインスタンスはありません。</span>
+              )}
               <span className="ui-field-hint">SSOの有効期限が切れている場合は、登録済みホストへ一度接続して認証を更新してください。</span>
             </div>
           </div>

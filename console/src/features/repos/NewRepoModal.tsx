@@ -59,7 +59,7 @@ export function NewRepoModal({ onClose, onClone, repos = [] }: NewRepoModalProps
   };
 
   return (
-    <Modal title="リポジトリを clone" onClose={onClose} as="form" onSubmit={submit}>
+    <Modal title="リポジトリをクローン" onClose={onClose} as="form" onSubmit={submit}>
       <div className="ui-modal-body">
         <CloneForm onChange={setSrc} />
 
@@ -83,10 +83,10 @@ export function NewRepoModal({ onClose, onClone, repos = [] }: NewRepoModalProps
             <span className="ui-field-hint">
               {cloneNewBranch ? (
                 <>
-                  新規ブランチ <code>{cloneNewBranch}</code> の作業コピーを別フォルダへ clone します。
+                  新規ブランチ <code>{cloneNewBranch}</code> の作業コピーを別フォルダへクローンします。
                 </>
               ) : (
-                <>作業コピー「{derivedRepo}」は既にあります。別の作業コピーとして clone するためフォルダ名を分けます。</>
+                <>作業コピー「{derivedRepo}」は既にあります。別の作業コピーとしてクローンするためフォルダ名を分けます。</>
               )}
             </span>
             <input
@@ -109,7 +109,7 @@ export function NewRepoModal({ onClose, onClone, repos = [] }: NewRepoModalProps
           キャンセル
         </Button>
         <Button variant="primary" type="submit" disabled={!canSubmit}>
-          Clone
+          クローン
         </Button>
       </footer>
     </Modal>

@@ -8,8 +8,8 @@ import { RepoPicker } from "./RepoPicker.tsx";
 import type { RepoSelection } from "./RepoPicker.tsx";
 
 const SOURCE_HELP: Record<string, string> = {
-  picker: "接続済みの GitHub / Bitbucket からリポジトリとブランチを選んで clone します。",
-  url: "clone URL を手入力します（接続していないリポジトリ向け）。",
+  picker: "接続済みの GitHub / Bitbucket からリポジトリとブランチを選んでクローンします。",
+  url: "クローンURLを手入力します（接続していないリポジトリ向け）。",
 };
 
 export interface CloneSource {
@@ -64,7 +64,7 @@ export function CloneForm({ onChange }: CloneFormProps) {
       ) : (
         <>
           <label className="ui-field">
-            <span className="ui-field-label">clone URL</span>
+            <span className="ui-field-label">クローンURL</span>
             <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://… / git@…" />
           </label>
           <label className="ui-field">

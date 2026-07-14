@@ -106,6 +106,19 @@
 .ui-confirm-backdrop {
   z-index: 120;
 }
+/* Dialog surfaces share a stronger secondary-text token. Compact dialog copy is
+   mostly 10–13px, where the app-wide navigation-oriented muted colors are too
+   faint. Custom surfaces inherit the same contract without pretending to be a
+   standard .ui-modal. */
+.ui-modal,
+.ui-confirm,
+.confirm,
+.admin-surface {
+  --dialog-muted: color-mix(in srgb, var(--muted) 68%, var(--fg));
+}
+.dialog-secondary {
+  color: var(--dialog-muted, var(--muted));
+}
 .ui-modal {
   background: var(--panel);
   border: 1px solid var(--border);
@@ -124,6 +137,21 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+.ui-modal .ui-field-label,
+.ui-modal .ui-field-hint,
+.ui-modal .muted,
+.ui-modal .ssm-check,
+.ui-modal .sm-muted,
+.ui-modal .start-row-desc,
+.ui-modal .start-row-meta,
+.ui-modal .start-row-chev,
+.ui-modal .ui-btn-ghost {
+  color: var(--dialog-muted);
+}
+.ui-modal ::placeholder {
+  color: var(--dialog-muted);
+  opacity: 1;
 }
 .ui-modal-head {
   display: flex;
@@ -172,9 +200,13 @@
   font-size: 14px;
 }
 .ui-confirm-body {
-  color: var(--muted);
+  color: var(--dialog-muted);
   font-size: 13px;
   white-space: pre-wrap;
+}
+.ui-confirm .ui-btn-ghost,
+.confirm .ui-btn-ghost {
+  color: var(--dialog-muted);
 }
 .ui-confirm-actions {
   display: flex;
@@ -372,6 +404,7 @@
   color: var(--muted);
 }
 .ui-field input[type="text"],
+.ui-field input[type="search"],
 .ui-field input[type="password"],
 .ui-field textarea,
 .ui-field select {

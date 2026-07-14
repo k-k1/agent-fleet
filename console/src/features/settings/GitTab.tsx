@@ -135,7 +135,7 @@ function InternalRepos() {
 
   const copyUrl = (url: string) => {
     navigator.clipboard?.writeText(url).then(
-      () => toast("clone URL をコピーしました"),
+      () => toast("クローンURLをコピーしました"),
       () => {},
     );
   };
@@ -150,7 +150,7 @@ function InternalRepos() {
         status={<StatusPill on>{count ? `${count} 個` : "利用可"}</StatusPill>}
       >
         <div className="p-desc">
-          外部アカウント不要。テナント内でリポジトリを共有できます（clone / push 可）。認証は自動注入されるトークンで透過。
+          外部アカウント不要。テナント内でリポジトリを共有できます（クローン / push 可）。認証は自動注入されるトークンで透過。
         </div>
         <div className="p-body">
           <div className="flow">
@@ -360,10 +360,10 @@ function InternalRepoRow({
       <span className="ir-name" title={repo.name}>
         {repo.name}
       </span>
-      <button type="button" className="ir-url" title="clone URL をコピー" onClick={onCopy}>
+      <button type="button" className="ir-url" title="クローンURLをコピー" onClick={onCopy}>
         <code>{repo.clone_url}</code>
       </button>
-      <button type="button" className="ghost" title="参照（clone 不要）" onClick={onBrowse}>
+      <button type="button" className="ghost" title="参照（クローン不要）" onClick={onBrowse}>
         参照
       </button>
       <button type="button" className="ghost" title="リネーム" onClick={() => setEditing(true)}>

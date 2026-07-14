@@ -69,7 +69,7 @@ export function ProjectTree() {
       if (repo) {
         toast(
           <span className="clone-done-toast">
-            {repo.name} を clone しました
+            {repo.name} をクローンしました
             <Button small icon="play" onClick={() => useLaunchTarget.getState().open(repo)}>
               このまま はじめる
             </Button>
@@ -94,7 +94,7 @@ export function ProjectTree() {
             small
             variant="ghost"
             icon="add"
-            title={running ? "clone" : "clone（ワークスペース停止中）"}
+            title={running ? "クローン" : "クローン（ワークスペース停止中）"}
             disabled={!!cloning || !running}
             onClick={() => setShowClone((s) => !s)}
           >
@@ -135,14 +135,14 @@ export function ProjectTree() {
       <ul className="sess-list proj-tree">
         {cloning && (
           <li className="repo-cloning">
-            <Icon name="loading" spin /> Cloning {cloning.name}…
+            <Icon name="loading" spin /> {cloning.name} をクローン中…
           </li>
         )}
         {groups.length === 0 && !cloning && (
           nq ? (
             <li className="proj-sub-empty">「{q.trim()}」に一致するリポ・セッションはありません</li>
           ) : (
-            <EmptyState icon="repo" title="リポジトリがありません" hint="clone するとここに並びます">
+            <EmptyState icon="repo" title="リポジトリがありません" hint="クローンするとここに並びます">
               {running && (
                 <Button small variant="primary" icon="add" onClick={() => setShowClone(true)}>
                   クローン

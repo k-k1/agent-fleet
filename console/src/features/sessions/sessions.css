@@ -309,7 +309,7 @@
   border: 1px solid var(--btn-border);
   border-radius: 4px;
   padding: 4px 8px;
-  color: var(--muted);
+  color: var(--dialog-muted, var(--muted));
 }
 .arch-search input {
   flex: 1;
@@ -367,7 +367,7 @@
   white-space: nowrap;
 }
 .arch-sub {
-  color: var(--muted);
+  color: var(--dialog-muted, var(--muted));
   font-size: 11px;
   display: flex;
   align-items: center;
