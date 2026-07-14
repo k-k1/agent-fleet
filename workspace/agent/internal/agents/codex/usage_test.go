@@ -1,6 +1,9 @@
 package codex
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -41,6 +44,25 @@ func TestCodexWeeklyWindowInPrimary(t *testing.T) {
 	}
 	if u.SevenDay == nil || u.SevenDay.Pct != 12.0 {
 		t.Fatalf("sevenDay = %+v, want 12%%", u.SevenDay)
+	}
+}
+
+func TestCodexFullResetExpiries(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer token" || r.Header.Get("ChatGPT-Account-Id") != "acct" {
+			t.Fatal("missing ChatGPT authentication headers")
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"available_count":3,"credits":[{"expires_at":"2026-07-18T00:00:00Z"},{"expires_at":null}]}`))
+	}))
+	defer srv.Close()
+
+	resets, ok := getResetCredits(context.Background(), srv.Client(), srv.URL, "token", "acct")
+	if !ok || resets.AvailableCount != 3 || len(resets.Credits) != 1 {
+		t.Fatalf("reset credits = %+v, ok=%v", resets, ok)
+	}
+	if got := resets.Credits[0].ExpiresAt; got != "2026-07-18T00:00:00Z" {
+		t.Fatalf("expiresAt = %q", got)
 	}
 }
 
