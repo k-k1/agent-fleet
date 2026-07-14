@@ -210,6 +210,13 @@ awslabs cloudwatch-mcp-server の裏取り（2026-07-14, 公式 docs）: **全�
 
 **実装済み（2026-07-14, 上記設計どおり）**: `CloudWatchConn{profile, region}`（**秘密なし**）を store に追加、`PUT/DELETE /connections/cloudwatch`＋CP proxy、`mcp-run cloudwatch` が `AWS_PROFILE`/`AWS_REGION` を env に載せて焼き込み済みエントリポイントを exec（フォールバック uvx）、SRE アシスタントの integrations を `[pagerduty, grafana, cloudwatch]` に拡張、運用タブに CloudWatch カード（プロファイル＋リージョンの 2 入力）。イメージは `uv tool install awslabs.cloudwatch-mcp-server==0.1.4`（ARG ピン）で `/usr/local` にベイク — **`UV_PYTHON_DOWNLOADS=never` + `--python /usr/bin/python3` が必須**（無いと managed Python が root の home に落ちて実行ユーザーから見えない。dev 実測で確認）。検証: v0.1.4 は資格が無効でも起動し **read-only 19 ツール**（logs/metrics/PromQL/alarms、write 系ゼロ）、`mcp-run cloudwatch` 経由の JSON-RPC 通し・未設定時の安全な失敗・build/vet/test/tsc 通過。※FastMCP は stdin 一括書き込み＋即 EOF だと応答前に終了する（検証スクリプトは応答待ち駆動にすること）。
 
+**実機バグと恒久修正（2026-07-14）**: 初版の「プロファイル名を手入力」は実環境で `The config profile (…) could not be found` で失敗した。**SSM 接続のプロファイルは標準 `~/.aws/config` ではなくセッション毎の隔離ファイル（`~/.aws/af-sessions/<セッション名>.config`、`AWS_CONFIG_FILE` はその SSM ペイン内のみ）に書かれる**ため、素の `AWS_PROFILE` では boto3 から不可視だった（session_ssm.go の並行セッション隔離設計）。恒久修正:
+
+- 運用タブの CloudWatch カードを **SSM プロファイルのピッカー**に変更（`GET /api/ssm/profiles` は SSO メタ一式 — startUrl/ssoRegion/accountId/roleName/region — を返すのでそのまま送れる）。自前 `~/.aws` 運用者向けに手動入力も残す。
+- `CloudWatchConn` に SSO メタ（非秘密）を保持し、**接続時と `mcp-run` の毎 spawn 時に永続 ops config（`~/.aws/af-ops/cloudwatch.config`）を冪等再生成**（`writeSSMConfig` を再利用・clean home 後も自己修復）して `AWS_CONFIG_FILE` を向ける。プロファイル名は CP の `ssmProfileName` と同じサニタイズ。
+- SSO トークンキャッシュ（`~/.aws/sso/cache`）は隔離されておらず共有なので、SSM セッションでのログインがそのまま効く。未ログイン時は該当 SSM セッションを開くか `AWS_CONFIG_FILE=~/.aws/af-ops/cloudwatch.config aws sso login --profile <名前>`。
+- 検証: SSO メタ→config 生成→`AWS_CONFIG_FILE`→19 ツールの通し、接続時の config 即時生成・sanitize・ssoRegion 欠落 400（httptest）、build/vet/test/tsc。副産物: `TestGitWorktreeIntegrationRelations` が実 HOME の `~/repos` に worktree を残し /tmp 掃除後に dangling で落ちるテスト衛生バグを発見・修正（HOME 隔離）。
+
 ### Amazon Managed Grafana（AMG）接続の検討 — 2026-07-12 Web 裏取り済み
 
 Phase 0 で検証した mcp-grafana は汎用 Grafana API（URL + トークン）前提のため、「AMG は認証方式が違うのでは（IAM Identity Center / SigV4 / 独自キー発行）」を AWS 公式ドキュメントで裏取りした。

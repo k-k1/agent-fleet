@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"net/http"
+	"regexp"
 	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
@@ -171,7 +172,8 @@ func handleDeleteGrafanaConn(w http.ResponseWriter, r *http.Request) {
 
 // cloudwatchStatus reports the stored CloudWatch settings. Nothing here is
 // secret (profile/region select the AWS credential chain, they don't hold it),
-// so the status can echo both for the UI.
+// so the status can echo both for the UI. sso=true marks an SSM-linked profile
+// (the ops aws config is generated from the stored SSO meta).
 func cloudwatchStatus(s *secrets.Data) map[string]any {
 	if s.CloudWatch == nil || s.CloudWatch.Profile == "" {
 		return map[string]any{"connected": false}
@@ -180,28 +182,48 @@ func cloudwatchStatus(s *secrets.Data) map[string]any {
 	if s.CloudWatch.Region != "" {
 		m["region"] = s.CloudWatch.Region
 	}
+	if s.CloudWatch.StartURL != "" {
+		m["sso"] = true
+	}
 	return m
 }
 
 type cloudwatchConnReq struct {
-	Profile string `json:"profile"`
-	Region  string `json:"region"`
+	Profile   string `json:"profile"`
+	Region    string `json:"region"`
+	StartURL  string `json:"startUrl"`
+	SSORegion string `json:"ssoRegion"`
+	AccountID string `json:"accountId"`
+	RoleName  string `json:"roleName"`
 }
 
-// handlePutCloudWatchConn stores the AWS profile (+ optional region) the
-// CloudWatch MCP should use (docs/25). No secret is stored: auth is the AWS
-// credential chain (the user's `aws sso login`, same as ssm sessions). The
-// profile must exist in ~/.aws and hold read permissions (CloudWatch/Logs
-// ReadOnly 相当); an expired SSO session just makes the tools error until the
-// user logs in again.
+// cloudwatchProfileRe strips characters unsafe for an ~/.aws/config profile
+// header — the same sanitization as the CP's ssmProfileName (control-plane/
+// ssm.go), so an SSM profile label yields the same profile name here as in an
+// SSM session's config.
+var cloudwatchProfileRe = regexp.MustCompile(`[^A-Za-z0-9._@-]+`)
+
+// handlePutCloudWatchConn stores the AWS profile the CloudWatch MCP should use
+// (docs/25). No secret is stored: auth is the AWS credential chain (the user's
+// `aws sso login`, same as ssm sessions). Two shapes:
+//   - SSO meta present (startUrl 等 — Console の SSM プロファイルピッカー経由):
+//     a durable ops aws config is generated from the meta (SSM profiles live in
+//     per-session isolated configs, invisible to a bare AWS_PROFILE), here at
+//     connect time and again at every mcp-run spawn.
+//   - Profile name only: assumed to exist in the member's own ~/.aws.
 func handlePutCloudWatchConn(w http.ResponseWriter, r *http.Request) {
 	var req cloudwatchConnReq
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
-	profile := strings.TrimSpace(req.Profile)
-	if profile == "" {
-		httpx.WriteErr(w, http.StatusBadRequest, "bad_profile", "AWS プロファイル名を入力してください")
+	profile := cloudwatchProfileRe.ReplaceAllString(strings.TrimSpace(req.Profile), "-")
+	if profile == "" || profile == "-" {
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_profile", "AWS プロファイルを指定してください")
+		return
+	}
+	startURL := strings.TrimSpace(req.StartURL)
+	if startURL != "" && strings.TrimSpace(req.SSORegion) == "" {
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_sso", "SSO リージョンがありません（SSM プロファイルの設定を確認してください）")
 		return
 	}
 	s, err := secrets.Load()
@@ -209,7 +231,22 @@ func handlePutCloudWatchConn(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
 		return
 	}
-	s.CloudWatch = &secrets.CloudWatchConn{Profile: profile, Region: strings.TrimSpace(req.Region)}
+	s.CloudWatch = &secrets.CloudWatchConn{
+		Profile:   profile,
+		Region:    strings.TrimSpace(req.Region),
+		StartURL:  startURL,
+		SSORegion: strings.TrimSpace(req.SSORegion),
+		AccountID: strings.TrimSpace(req.AccountID),
+		RoleName:  strings.TrimSpace(req.RoleName),
+	}
+	// Materialize the ops config now (mcp-run also regenerates it per spawn) so
+	// the user can `aws sso login` against it before the first chat turn.
+	if startURL != "" {
+		if err := writeCloudWatchOpsConfig(s.CloudWatch); err != nil {
+			httpx.WriteErr(w, http.StatusInternalServerError, "config_failed", err.Error())
+			return
+		}
+	}
 	if err := s.Save(); err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
 		return
