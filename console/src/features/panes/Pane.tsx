@@ -241,10 +241,10 @@ export function Pane({
           onResume={onResume}
         />
       )}
-      {pane.content.kind === "scm" && <SourceControlView repo={pane.content.scmRepo} />}
+      {pane.content.kind === "scm" && <SourceControlView repo={pane.content.scmRepo} path={pane.content.scmPath} />}
       {pane.content.kind === "changes" && <ChangesView repo={pane.content.scmRepo} />}
       {pane.content.kind === "commit" && (
-        <CommitDetailView repo={pane.content.scmRepo} sha={pane.content.commitSha} wrap={wrapOn} />
+        <CommitDetailView repo={pane.content.scmRepo} path={pane.content.scmPath} sha={pane.content.commitSha} wrap={wrapOn} />
       )}
       {pane.content.kind === "wtdiff" && (
         <WorkingDiffView

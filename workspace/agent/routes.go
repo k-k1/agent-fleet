@@ -90,6 +90,7 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("GET /repos/{name}/diff", handleRepoDiff)
 	mux.HandleFunc("GET /repos/{name}/log", handleRepoLog)
 	mux.HandleFunc("GET /repos/{name}/graph", handleRepoGraph)
+	mux.HandleFunc("GET /repos/{name}/submodules", handleRepoSubmodules)
 	mux.HandleFunc("GET /repos/{name}/show", handleRepoShow)
 	mux.HandleFunc("POST /repos/{name}/stage", handleRepoStage)
 	mux.HandleFunc("POST /repos/{name}/unstage", handleRepoUnstage)

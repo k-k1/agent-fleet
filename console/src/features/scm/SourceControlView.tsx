@@ -17,6 +17,7 @@ import { CommitGraph } from "./CommitGraph.tsx";
 import { openCommit, openCommitSplit, openChanges } from "./open.ts";
 import { useReposStore } from "../repos/store.ts";
 import { useFilesStore } from "../files/store.ts";
+import { useLayoutStore } from "../../layout/store.ts";
 import type { GraphCommit } from "../../lib/gitgraph.ts";
 
 interface ScmStatus {
@@ -25,11 +26,14 @@ interface ScmStatus {
   behind?: number;
 }
 
-export function SourceControlView({ repo }: { repo: string }) {
+interface SubmoduleInfo { name: string; path: string; initialized: boolean; sha?: string }
+
+export function SourceControlView({ repo, path = "" }: { repo: string; path?: string }) {
   const askConfirm = useConfirm();
   const toast = useToast();
   const refreshRepos = useReposStore((s) => s.refresh);
   const bumpFiles = useFilesStore((s) => s.bump);
+  const openTarget = useLayoutStore((s) => s.openTarget);
   const enc = encodeURIComponent(repo || "");
   const [status, setStatus] = useState<ScmStatus | null>(null);
   const [commits, setCommits] = useState<GraphCommit[]>([]);
@@ -42,6 +46,7 @@ export function SourceControlView({ repo }: { repo: string }) {
   const [nbAt, setNbAt] = useState<string | null>(null); // "new branch from this commit"
   const [nbName, setNbName] = useState("");
   const [moreOpen, setMoreOpen] = useState(false); // narrow-pane overflow (⋯)
+  const [submodules, setSubmodules] = useState<SubmoduleInfo[]>([]);
   const moreRef = useRef<HTMLDivElement>(null);
   useDismiss(moreRef, moreOpen, () => setMoreOpen(false));
 
@@ -65,10 +70,10 @@ export function SourceControlView({ repo }: { repo: string }) {
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      setStatus(await api(`api/repos/${enc}/status`));
+      setStatus(await api(`api/repos/${enc}/status${path ? `?path=${encodeURIComponent(path)}` : ""}`));
     } catch {}
     try {
-      const d = await api(`api/repos/${enc}/graph?limit=300`);
+      const d = await api(`api/repos/${enc}/graph?limit=300${path ? `&path=${encodeURIComponent(path)}` : ""}`);
       setCommits(d.commits || []);
       setCurrent(d.current || "");
     } catch {
@@ -76,6 +81,12 @@ export function SourceControlView({ repo }: { repo: string }) {
     } finally {
       setLoading(false);
     }
+  }, [enc, path]);
+
+  useEffect(() => {
+    api(`api/repos/${enc}/submodules`)
+      .then((d) => setSubmodules(d.submodules || []))
+      .catch(() => setSubmodules([]));
   }, [enc]);
 
   useEffect(() => {
@@ -90,8 +101,8 @@ export function SourceControlView({ repo }: { repo: string }) {
   const onOpen = (sha: string, newPane: boolean) => {
     setSelected(sha);
     if (!repo) return;
-    if (newPane) openCommitSplit(repo, sha);
-    else openCommit(repo, sha);
+    if (newPane) openCommitSplit(repo, sha, path || undefined);
+    else openCommit(repo, sha, path || undefined);
   };
 
   const onKey = (e: RKeyboardEvent) => {
@@ -180,16 +191,32 @@ export function SourceControlView({ repo }: { repo: string }) {
     { key: "fetch", icon: "cloud-download", label: "fetch", title: "git fetch --prune", onClick: () => void fetchRepo() },
     { key: "ff", icon: "arrow-down", label: "Fast-Forward", title: "現在のブランチを upstream に fast-forward（pull --ff-only）", onClick: () => void doFF() },
     { key: "refresh", icon: "refresh", label: "更新", title: "更新", onClick: () => void refresh() },
-  ];
+  ].filter((a) => !path || a.key === "refresh");
 
   return (
     <div className="scmview">
       <header className="view-head">
         <span className="view-title">
-          <Icon name="repo" /> {repo}
+          <Icon name={path ? "repo-forked" : "repo"} /> {repo}{path ? ` / ${path}` : ""}
         </span>
-        <button className="scm-branch" type="button" title="ブランチ切替" onClick={() => setShowBranch(true)}>
-          <Icon name="git-branch" /> {status?.branch || current || "?"} <Icon name="chevron-down" />
+        {submodules.length > 0 && (
+          <select
+            className="scm-target"
+            aria-label="SCMの対象"
+            title="親リポジトリまたはsubmoduleのコミットグラフを表示"
+            value={path}
+            onChange={(e) => openTarget({ content: { kind: "scm", scmRepo: repo, scmPath: e.target.value || undefined } })}
+          >
+            <option value="">親リポジトリ</option>
+            {submodules.map((sm) => (
+              <option key={sm.path} value={sm.path} disabled={!sm.initialized}>
+                submodule: {sm.path}{sm.initialized ? "" : "（未取得）"}
+              </option>
+            ))}
+          </select>
+        )}
+        <button className="scm-branch" type="button" title={path ? "submoduleの現在ブランチ（閲覧専用）" : "ブランチ切替"} onClick={() => !path && setShowBranch(true)}>
+          <Icon name="git-branch" /> {status?.branch || current || "?"} {!path && <Icon name="chevron-down" />}
         </button>
         {status && (status.ahead || status.behind) ? (
           <span className="repo-chip ab" title={`リモートに対して 先行 ${status.ahead ?? 0} / 遅延 ${status.behind ?? 0}`}>
@@ -260,13 +287,13 @@ export function SourceControlView({ repo }: { repo: string }) {
               onClick={() => {
                 const s = menu.commit.sha;
                 setMenu(null);
-                openCommit(repo, s);
+                openCommit(repo, s, path || undefined);
               }}
             >
               <Icon name="git-commit" /> 詳細を表示
             </button>
           </li>
-          {menu.commit.refs.filter((rf) => rf.type === "head").length > 0 ? (
+          {!path && (menu.commit.refs.filter((rf) => rf.type === "head").length > 0 ? (
             menu.commit.refs
               .filter((rf) => rf.type === "head")
               .map((rf) => (
@@ -282,8 +309,8 @@ export function SourceControlView({ repo }: { repo: string }) {
                 <Icon name="git-branch" /> チェックアウト（detached HEAD）
               </button>
             </li>
-          )}
-          <li>
+          ))}
+          {!path && <li>
             <button
               type="button"
               className="ui-menu-item"
@@ -296,7 +323,7 @@ export function SourceControlView({ repo }: { repo: string }) {
             >
               <Icon name="git-branch" /> このコミットから新規ブランチ…
             </button>
-          </li>
+          </li>}
         </ul>
       )}
       {nbAt && (
@@ -317,7 +344,7 @@ export function SourceControlView({ repo }: { repo: string }) {
           </footer>
         </Modal>
       )}
-      {showBranch && (
+      {showBranch && !path && (
         <BranchModal
           repoName={repo}
           onClose={() => setShowBranch(false)}
