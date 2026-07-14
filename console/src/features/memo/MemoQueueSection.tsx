@@ -13,6 +13,7 @@ import { memoList, memoCreate, memoDelete, memoFlush } from "./api.ts";
 import { useMemoStore } from "./store.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 import { useTenantStore } from "../../core/store/tenant.ts";
+import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { agentOf } from "../../agents/registry.ts";
 import { displayName, stateInfo } from "../../lib/sessionview.ts";
 import type { Memo } from "../../types/memo.ts";
@@ -59,6 +60,7 @@ const repoLabel = (repo: string) => repo || "共通";
 const catLabel = (cat: string) => cat || "未分類";
 
 export function MemoQueueSection() {
+  const workspaceRunning = useWorkspaceStore((s) => s.state) === "running";
   const sessions = useSessionsStore((s) => s.sessions);
   const tenant = useTenantStore((s) => s.tenant);
   const memosKey = useMemoStore((s) => s.tick);
@@ -186,8 +188,8 @@ export function MemoQueueSection() {
       small
       variant="ghost"
       icon="sparkle"
-      title="選択したメモをアシスタントで整理"
-      disabled={selectedIds.length === 0}
+      title={workspaceRunning ? "選択したメモをアシスタントで整理" : "整理にはワークスペースの起動が必要です"}
+      disabled={!workspaceRunning || selectedIds.length === 0}
       onClick={() => openTidy(selectedIds)}
     />
   );
