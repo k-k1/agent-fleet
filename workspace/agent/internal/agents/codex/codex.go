@@ -9,6 +9,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
+	"time"
 )
 
 // sids maps our deterministic slot sid to codex's own session id: written by the
@@ -77,7 +78,21 @@ func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 	// store; no idle-heal, no background-busy). Resumable unless the working dir is gone.
 	li := agents.LiveInfo{Resumable: true}
 	if alive {
-		li.State = status.LiveState(session.UUID(m.Dir, m.Name))
+		sid := session.UUID(m.Dir, m.Name)
+		st, hasStatus := status.Read(sid)
+		li.State = "idle"
+		if hasStatus {
+			li.State = st.State
+		}
+		// A missed Stop hook otherwise leaves Codex on 進行中 forever even after its
+		// TUI has returned to the composer. Heal it from the rollout's independent
+		// task_complete event, but only when it belongs to this working interval.
+		if li.State == "working" {
+			workingSince, _ := time.Parse(time.RFC3339, st.TS)
+			if rolloutCompletedAfter(m, workingSince) {
+				li.State = "idle"
+			}
+		}
 		// The hooks report only working/idle — a request_user_input dialog keeps the
 		// turn "working" forever. Probe the rollout tail so the sessions list shows
 		// 質問あり (and notifies) like claude; only while working, to keep the probe
