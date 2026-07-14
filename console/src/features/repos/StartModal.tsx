@@ -130,6 +130,7 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
   const [ssmInstances, setSsmInstances] = useState<SsmInstance[] | null>(null);
   const [ssmInstanceQuery, setSsmInstanceQuery] = useState("");
   const [ssmSearching, setSsmSearching] = useState(false);
+  const [ssmSearchError, setSsmSearchError] = useState("");
   const [ssmForce, setSsmForce] = useState(false);
   // After creating a kind=ssm session: the created name while the SSO handshake runs.
   const [ssmLogin, setSsmLogin] = useState<string | null>(null);
@@ -150,11 +151,14 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
   const searchSsmInstances = async () => {
     const profileId = ssmProfileId || ssmProfiles?.[0]?.id || "";
     if (!profileId || ssmSearching) return;
+    setSsmSearchError("");
     setSsmSearching(true);
     const res = await apiJSON("api/ssm/instances", "POST", { profileId });
     setSsmSearching(false);
     if (res?.error) {
-      toast("AWSの検索に失敗: " + errText(res.error));
+      const message = errText(res.error);
+      setSsmSearchError(message);
+      if (res.error.code !== "ssm_search_forbidden") toast("AWSの検索に失敗: " + message);
       return;
     }
     setSsmInstances(Array.isArray(res?.instances) ? res.instances : []);
@@ -501,6 +505,7 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
               <Button small icon="search" onClick={() => void searchSsmInstances()} disabled={ssmSearching}>
                 {ssmSearching ? "検索中…" : "AWSから検索"}
               </Button>
+              {ssmSearchError && <span role="alert" className="start-search-error">{ssmSearchError}</span>}
               {ssmInstances !== null && ssmInstances.length > 0 && (
                 <input
                   type="search"

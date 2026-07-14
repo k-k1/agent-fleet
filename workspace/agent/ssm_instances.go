@@ -56,6 +56,11 @@ func handleSSMInstances(w http.ResponseWriter, r *http.Request) {
 		if msg == "" {
 			msg = err.Error()
 		}
+		if isAWSAccessDenied(msg) {
+			httpx.WriteErr(w, http.StatusForbidden, "ssm_search_forbidden",
+				"ssm:DescribeInstanceInformation permission is required")
+			return
+		}
 		httpx.WriteErr(w, http.StatusBadGateway, "aws_search_failed", msg)
 		return
 	}
@@ -85,6 +90,10 @@ func handleSSMInstances(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"instances": items})
+}
+
+func isAWSAccessDenied(message string) bool {
+	return strings.Contains(message, "AccessDenied") || strings.Contains(message, "UnauthorizedOperation")
 }
 
 // describeEC2Names resolves the optional EC2 Name tag in bounded batches. Any

@@ -570,6 +570,15 @@
   border: 1px solid var(--border2, var(--border));
   border-radius: 6px;
 }
+.start-search-error {
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--del) 45%, var(--border));
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--del) 8%, transparent);
+  color: var(--fg);
+  font-size: 12px;
+  line-height: 1.5;
+}
 /* 場所を変更 — pinned left in the modal footer (hub back-navigation). */
 .launch-back {
   margin-right: auto;
