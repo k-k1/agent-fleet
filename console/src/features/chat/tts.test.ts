@@ -395,9 +395,28 @@ describe("applyBuiltinReadings / applyReadings (組み込みの読み補正)", (
     expect(applyBuiltinReadings("a/b/c の階層")).toBe("a・b・c の階層"); // チェーンも一括
   });
 
-  it("日付・分数・除算（両辺とも数字のみ）は触らない", () => {
-    expect(applyBuiltinReadings("2024/01/02 の変更")).toBe("2024/01/02 の変更");
+  it("年付き日付は変換し、明確な分数文脈は保護する", () => {
+    expect(applyBuiltinReadings("2024/01/02 の変更")).toBe("2024年1月2日 の変更");
     expect(applyBuiltinReadings("確率は1/2です")).toBe("確率は1/2です");
+  });
+
+  it("日付を年月日の日本語読みへ展開する", () => {
+    expect(applyBuiltinReadings("2024-09-20 と2024/09/20、7/2")).toBe(
+      "2024年9月20日 と2024年9月20日、7月2日",
+    );
+    expect(applyBuiltinReadings("2024-02-29")).toBe("2024年2月29日");
+  });
+
+  it("存在しない日付と明確な分数・計算文脈は変換しない", () => {
+    expect(applyBuiltinReadings("2023-02-29、2023/02/29、2024/13/01、4/31")).toBe(
+      "2023-02-29、2023/02/29、2024/13/01、4/31",
+    );
+    expect(applyBuiltinReadings("確率は1/2で、7/2倍、9/3を計算")).toBe("確率は1/2で、7/2倍、9/3を計算");
+  });
+
+  it("時刻を時分秒の日本語読みへ展開する", () => {
+    expect(applyBuiltinReadings("12:34:56 と12:34、00:05")).toBe("12時34分56秒 と12時34分、0時5分");
+    expect(applyBuiltinReadings("24:00、12:60、12:34:60")).toBe("24:00、12:60、12:34:60");
   });
 
   it("ヌメロニム（i18n 等）は元の語の慣用カタカナで読む（大文字小文字不問・単語境界）", () => {
@@ -479,9 +498,18 @@ describe("applyBuiltinReadings / applyReadings (組み込みの読み補正)", (
     expect(applyBuiltinReadings("TypeScript型チェック")).toBe("TypeScriptかたチェック"); // 実機報告（英字は CP 側 enkana）
   });
 
-  it("言って→いって（文末誤読対策）/ 身体→からだ", () => {
+  it("言って→いって（文末誤読対策）/ 単独の身体→からだ", () => {
     expect(applyBuiltinReadings("何する？　言って。")).toBe("何する？　いって。"); // 実機報告
     expect(applyBuiltinReadings("身体を動かす")).toBe("からだを動かす"); // 実機報告
+    expect(applyBuiltinReadings("身体が資本で、身体そのものを鍛える")).toBe(
+      "からだが資本で、からだそのものを鍛える",
+    );
+  });
+
+  it("身体＋漢字の音読み複合語は「からだ」に壊さない", () => {
+    expect(applyBuiltinReadings("身体検査と身体能力と身体機能")).toBe(
+      "身体検査と身体能力と身体機能",
+    );
   });
 
   it("放ってお（放置の慣用句）→ほうってお。単独の放っては触らない（放つ＝はなつ と区別）", () => {

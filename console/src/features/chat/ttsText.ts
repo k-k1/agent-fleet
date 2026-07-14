@@ -175,6 +175,10 @@ export function abbrevPath(path: string): string {
 // 「から」に、漢字が続く複合語は個別エントリで持つ。航空券・空港などの熟語や
 // 「空が青い」（ひらがな続き）は触らない。
 const KARA_KATAKANA = /空(?=[ァ-ヶー])/g;
+// 「身体」は単独・助詞続き・和語続きでは「からだ」が自然だが、漢字が続く
+// 音読み複合語（身体検査・身体能力・身体機能等）は「しんたい」。複合語は原文を残して
+// OpenJTalk の辞書に任せ、後続が漢字でない場合だけ訓読みへ固定する。
+const KARADA_BODY = /身体(?![一-鿿㐀-䶿豈-﫿々])/g;
 const BUILTIN_READINGS: [string, string][] = [
   ["空文字", "から文字"], // 空文字列も前方一致で拾う
   ["空配列", "から配列"],
@@ -197,9 +201,6 @@ const BUILTIN_READINGS: [string, string][] = [
   // 言って（言う のて形）が文末・区切り直後の短い呼びかけ文脈で「げいって」に誤読される実機
   // 報告。言って は常に いって（他の読みを持つ語ではない）なので固定して安全。
   ["言って", "いって"],
-  // 身体 は しんたい（医学・格式張った文脈の読み）に化けやすいが、地の文では からだ が自然
-  // （実機報告）。
-  ["身体", "からだ"],
   // 放って は 2 通りの動詞のて形で読みが割れる同形異音語: 放る(ほうる)＝ほうって（「放って
   // おく/おかれる」＝放置する慣用句）と、放つ(はなつ)＝はなって（光・矢・声など「放つ＝
   // 解き放つ」の意）。VOICEVOX は後者（はなって）に倒れがち（実機報告）。「放ってお」
@@ -312,6 +313,53 @@ function shortenSlashPause(t: string): string {
   });
 }
 
+// --- 日付・時刻の日本語読み -------------------------------------------------
+// 記号区切りの数値をそのまま音声エンジンへ渡すと、ハイフン・スラッシュ・
+// コロンを記号として読む。実在する範囲の日付/時刻だけ「年月日・時分秒」へ展開する。
+// M/D は分数・除算と曖昧なため日付を優先しつつ、明確な数式文脈だけ保護する。
+const FULL_DATE = /(^|[^0-9A-Za-z])(\d{4})([-/])(\d{1,2})\3(\d{1,2})(?![0-9A-Za-z])/g;
+const SHORT_DATE = /(^|[^0-9A-Za-z/])(\d{1,2})\/(\d{1,2})(?![0-9A-Za-z/])/g;
+const CLOCK_TIME = /(^|[^\d])(\d{1,2}):(\d{2})(?::(\d{2}))?(?!\d)/g;
+const FRACTION_BEFORE = /(?:確率|割合|比率|分数|計算|除算|商)(?:は|が|を|の)?\s*$/;
+const FRACTION_AFTER = /^\s*(?:倍|を\s*(?:計算|求め|割る)|[=+×÷*\-])/;
+
+function leapYear(year: number): boolean {
+  return year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+}
+
+function validDate(year: number | null, month: number, day: number): boolean {
+  if ((year != null && year < 1) || month < 1 || month > 12 || day < 1) return false;
+  const feb = year == null || leapYear(year) ? 29 : 28;
+  const days = [31, feb, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  return day <= days[month - 1];
+}
+
+function applyDateTimeReadings(text: string): string {
+  let t = text.replace(FULL_DATE, (whole, lead: string, ys: string, _sep: string, ms: string, ds: string) => {
+    const year = Number(ys);
+    const month = Number(ms);
+    const day = Number(ds);
+    return validDate(year, month, day) ? `${lead}${year}年${month}月${day}日` : whole;
+  });
+  t = t.replace(SHORT_DATE, (whole, lead: string, ms: string, ds: string, offset: number, source: string) => {
+    const month = Number(ms);
+    const day = Number(ds);
+    if (!validDate(null, month, day)) return whole;
+    const numberAt = offset + lead.length;
+    const before = source.slice(Math.max(0, numberAt - 12), numberAt);
+    const after = source.slice(offset + whole.length, offset + whole.length + 12);
+    if (FRACTION_BEFORE.test(before) || FRACTION_AFTER.test(after)) return whole;
+    return `${lead}${month}月${day}日`;
+  });
+  return t.replace(CLOCK_TIME, (whole, lead: string, hs: string, ms: string, ss?: string) => {
+    const hour = Number(hs);
+    const minute = Number(ms);
+    const second = ss == null ? null : Number(ss);
+    if (hour > 23 || minute > 59 || (second != null && second > 59)) return whole;
+    return `${lead}${hour}時${minute}分${second == null ? "" : `${second}秒`}`;
+  });
+}
+
 // --- 波ダッシュ（〜/～）の読み分け -------------------------------------------------
 // 「3〜5倍速」のような範囲指定は「3から5倍速」と読ませたい一方、「〜〜〜」のように連続
 // させる使い方は文章の省略・言いよどみ（「詳細はほにゃらら〜〜〜」等）を表すので、両者を
@@ -332,7 +380,8 @@ function applyTildeReadings(text: string): string {
 }
 
 export function applyBuiltinReadings(text: string): string {
-  let t = shortenSlashPause(text);
+  let t = applyDateTimeReadings(text);
+  t = shortenSlashPause(t);
   t = tameMidToPause(t); // 文中の溜め（――・……。行頭は plainify が既に処理済み）
   t = t.replace(KARA_KATAKANA, "から");
   t = applyTildeReadings(t);
@@ -342,6 +391,7 @@ export function applyBuiltinReadings(text: string): string {
   t = t.replace(GO_PREFIX, "ご"); // 接頭辞「誤」= ご（誤表示/誤判定… 判定変換より前に）
   t = t.replace(KANAME, "$1かなめ"); // が/は/も＋要（文末・句読点・です/だ 直前）= かなめ
   t = t.replace(KONO_YOU_NA, "$1よう"); // この/その/あの/どの＋様な・様に = よう
+  t = t.replace(KARADA_BODY, "からだ"); // 訓読みの身体だけ固定し、漢語複合語は保護
   t = applyUserDict(t, BUILTIN_READINGS); // 行目/判定 等の複合語（fixGyoLine より先に固定）
   t = fixGyoLine(t); // 残りの「行」= line/row を既定 ぎょう に
   return t;
