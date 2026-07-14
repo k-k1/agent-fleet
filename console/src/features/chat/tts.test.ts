@@ -479,9 +479,18 @@ describe("applyBuiltinReadings / applyReadings (組み込みの読み補正)", (
     expect(applyBuiltinReadings("TypeScript型チェック")).toBe("TypeScriptかたチェック"); // 実機報告（英字は CP 側 enkana）
   });
 
-  it("言って→いって（文末誤読対策）/ 身体→からだ", () => {
+  it("言って→いって（文末誤読対策）/ 単独の身体→からだ", () => {
     expect(applyBuiltinReadings("何する？　言って。")).toBe("何する？　いって。"); // 実機報告
     expect(applyBuiltinReadings("身体を動かす")).toBe("からだを動かす"); // 実機報告
+    expect(applyBuiltinReadings("身体が資本で、身体そのものを鍛える")).toBe(
+      "からだが資本で、からだそのものを鍛える",
+    );
+  });
+
+  it("身体＋漢字の音読み複合語は「からだ」に壊さない", () => {
+    expect(applyBuiltinReadings("身体検査と身体能力と身体機能")).toBe(
+      "身体検査と身体能力と身体機能",
+    );
   });
 
   it("放ってお（放置の慣用句）→ほうってお。単独の放っては触らない（放つ＝はなつ と区別）", () => {
