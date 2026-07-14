@@ -562,6 +562,14 @@
   font-size: 12px;
   text-align: center;
 }
+.ssm-instance-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border2, var(--border));
+  border-radius: 6px;
+}
 /* 場所を変更 — pinned left in the modal footer (hub back-navigation). */
 .launch-back {
   margin-right: auto;
