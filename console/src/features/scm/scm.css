@@ -82,7 +82,8 @@
   background: var(--btn-h);
 }
 
-/* Wide pane: inline action row; narrow pane: ⋯ overflow menu. */
+/* SCM actions collapse in three stages:
+   labels + icons -> icons only -> ⋯ overflow menu. */
 .scm-more {
   position: relative;
   display: none;
@@ -92,7 +93,7 @@
   right: 0;
   top: 26px;
 }
-@container (max-width: 560px) {
+@container (max-width: 440px) {
   .scm-acts {
     display: none;
   }
