@@ -46,6 +46,7 @@ export function AgentsTab() {
   // null = loading/unavailable, object = ready. agents: null = loading, false =
   // endpoint missing (older image), object = ready.
   const [claude, setClaude] = useState<any>(null);
+  const [codex, setCodex] = useState<any>(null);
   const [agents, setAgents] = useState<any>(null);
   // rtk 効果（トークン節約の累積履歴）: rtk gain のワークスペース集計。WsBar から移設
   // したもので、コンテナ内 Agent が `rtk gain --format json` を叩いた結果。
@@ -56,6 +57,9 @@ export function AgentsTab() {
     api("api/claude/settings")
       .then((c) => setClaude(c && !c.error ? c : null))
       .catch(() => setClaude(null));
+    api("api/codex/settings")
+      .then((c) => setCodex(c && !c.error ? c : null))
+      .catch(() => setCodex(null));
     api("api/agents/rtk")
       .then((a) => setAgents(a && !a.error ? a : false))
       .catch(() => setAgents(false));
@@ -84,6 +88,7 @@ export function AgentsTab() {
       setState(d);
     };
   const updateClaude = mkUpdate("api/claude/settings", setClaude);
+  const updateCodex = mkUpdate("api/codex/settings", setCodex);
   const updateAgents = mkUpdate("api/agents/rtk", setAgents);
 
   // Session prefs render in every state (stopped / loading / running) since they're
@@ -155,7 +160,14 @@ export function AgentsTab() {
         接続の変更は即時、挙動設定は各エージェントの新しいセッションから反映されます。
       </p>
       <ClaudeCard st={conns.claude} reload={reload} claude={claude} updateClaude={updateClaude} />
-      <CodexCard st={conns.codex} reload={reload} agents={agents} updateAgents={updateAgents} />
+      <CodexCard
+        st={conns.codex}
+        reload={reload}
+        codex={codex}
+        updateCodex={updateCodex}
+        agents={agents}
+        updateAgents={updateAgents}
+      />
       <OpencodeCard
         st={conns.opencode}
         reload={reload}
@@ -422,11 +434,15 @@ function ClaudeCard({
 function CodexCard({
   st,
   reload,
+  codex,
+  updateCodex,
   agents,
   updateAgents,
 }: {
   st: any;
   reload: () => void;
+  codex: any;
+  updateCodex: (patch: unknown) => void;
   agents: any;
   updateAgents: (patch: unknown) => void;
 }) {
@@ -492,7 +508,7 @@ function CodexCard({
     reload();
   };
 
-  const rtkReady = agents && agents !== false;
+  const settingsReady = (agents && agents !== false) || codex;
   return (
     <ProviderCard
       id="codex"
@@ -566,17 +582,34 @@ function CodexCard({
         </>
       )}
       {/* RTK is a workspace-level flag (independent of Codex auth) — pre-settable. */}
-      {rtkReady && (
+      {settingsReady && (
         <div className="p-settings">
           <div className="ps-title">設定</div>
-          <RtkRow
-            available={agents.rtk_available}
-            value={agents.codex_rtk}
-            onChange={(v) => updateAgents({ codex_rtk: v })}
-          />
-          <p className="ps-note">
-            codex はコマンド書換フックを持たないため指示ベース（ベストエフォート）。AGENTS.md で rtk 利用を促すだけで、強制ではありません。
-          </p>
+          {codex && (
+            <>
+              <SettingRow label="利用制限時のモデル切替案内">
+                <OnOff
+                  value={codex.rate_limit_model_nudge}
+                  onChange={(v) => updateCodex({ rate_limit_model_nudge: v })}
+                />
+              </SettingRow>
+              <p className="ps-note">
+                オフにすると、利用制限が近いときに軽量モデルへの切替を勧める Codex の案内を表示しません。
+              </p>
+            </>
+          )}
+          {agents && agents !== false && (
+            <>
+              <RtkRow
+                available={agents.rtk_available}
+                value={agents.codex_rtk}
+                onChange={(v) => updateAgents({ codex_rtk: v })}
+              />
+              <p className="ps-note">
+                codex はコマンド書換フックを持たないため指示ベース（ベストエフォート）。AGENTS.md で rtk 利用を促すだけで、強制ではありません。
+              </p>
+            </>
+          )}
         </div>
       )}
     </ProviderCard>

@@ -121,6 +121,8 @@ func buildMux() *http.ServeMux {
 	// Claude subscription usage (5-hour + weekly bars) for the WsBar chip.
 	mux.HandleFunc("GET /claude/usage", claude.HandleUsage)
 	mux.HandleFunc("GET /codex/usage", codex.HandleUsage)
+	mux.HandleFunc("GET /codex/settings", codex.HandleSettingsGet)
+	mux.HandleFunc("PUT /codex/settings", codex.HandleSettingsPut)
 	// codex / opencode rtk toggle (durable pref → on-disk artifacts) — Console.
 	mux.HandleFunc("GET /agents/rtk", handleAgentRTKGet)
 	mux.HandleFunc("PUT /agents/rtk", handleAgentRTKPut)
