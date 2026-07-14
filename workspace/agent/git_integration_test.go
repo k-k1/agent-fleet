@@ -31,7 +31,13 @@ func TestGitWorktreeIntegrationRelations(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
 	}
-	parent := filepath.Join(t.TempDir(), "app")
+	// Isolate HOME (like TestEnsureWorktree): ensureWorktree materializes under
+	// ~/repos, and a worktree left in the REAL home outlives its temp parent —
+	// once the tmp cleaner removes the parent, later runs see a dangling
+	// worktree and fail with relation=unknown.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	parent := filepath.Join(home, "repos", "app")
 	gitInit(t, parent)
 	worktree, err := ensureWorktree(parent, "main", "feature-wt", "")
 	if err != nil {
