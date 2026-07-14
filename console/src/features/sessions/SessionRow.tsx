@@ -7,6 +7,7 @@
 // Lifecycle ops come from useSessionActions; the three modal triggers (rename,
 // branch-rename, SSM resume) are lifted to the parent via callbacks since their
 // dialogs render at section level.
+import { createPortal } from "react-dom";
 import { useLayoutEffect, useRef, useState } from "react";
 import { Icon } from "../../ui/Icon.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
@@ -54,7 +55,7 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
   const menuElRef = useRef<HTMLDivElement>(null);
   const menuBtnRef = useRef<HTMLButtonElement>(null);
   const [menuOpen, setMenuOpen] = useState(false);
-  useDismiss(menuRef, menuOpen, () => setMenuOpen(false));
+  useDismiss([menuRef, menuElRef], menuOpen, () => setMenuOpen(false));
   // The dropdown is position:fixed, anchored under the ⋯ button and clamped
   // on-screen every render — a row near the rail's foot must not push its menu
   // below the viewport (the old absolute top:26px did).
@@ -63,7 +64,7 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
     const anchor = menuBtnRef.current;
     if (!menuOpen || !el || !anchor) return;
     const a = anchor.getBoundingClientRect();
-    placeFixed(el, a.right - el.offsetWidth, a.bottom + 2, el.closest<HTMLElement>(".app-rail"));
+    placeFixed(el, a.right - el.offsetWidth, a.bottom + 2, menuBtnRef.current?.closest<HTMLElement>(".app-rail"));
   });
   // The session's immutable id (e.g. "sk7f3q9") — the thing shown as ID in the
   // row tooltip. The menu label shows the concrete value, not jargon ("slug").
@@ -196,142 +197,144 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
           <button type="button" className="sess-menu-btn" title="メニュー" ref={menuBtnRef} onClick={() => setMenuOpen((v) => !v)}>
             <Icon name="ellipsis" />
           </button>
-          {menuOpen && (
-            <div className="ui-menu sess-menu" ref={menuElRef}>
-            {/* Resume — kinds with no in-chat resume. SSM resumes through the login
-                modal (SSO handshake before attach). */}
-            {!s.alive && !dead && running && !agentOf(s.kind).caps.chat && (
-              <button
-                type="button"
-                className="ui-menu-item"
-                onClick={() => {
-                  setMenuOpen(false);
-                  if (s.kind === "ssm") openSsmResume(s.name, false);
-                  else openSessionTerminal(s.name);
-                }}
-              >
-                <Icon name="play" /> 再開する
-              </button>
+          {menuOpen &&
+            createPortal(
+              <div className="ui-menu sess-menu" ref={menuElRef} onMouseDown={(e) => e.stopPropagation()}>
+                {/* Resume — kinds with no in-chat resume. SSM resumes through the login
+                    modal (SSO handshake before attach). */}
+                {!s.alive && !dead && running && !agentOf(s.kind).caps.chat && (
+                  <button
+                    type="button"
+                    className="ui-menu-item"
+                    onClick={() => {
+                      setMenuOpen(false);
+                      if (s.kind === "ssm") openSsmResume(s.name, false);
+                      else openSessionTerminal(s.name);
+                    }}
+                  >
+                    <Icon name="play" /> 再開する
+                  </button>
+                )}
+                {!s.alive && !dead && running && s.kind === "ssm" && (
+                  <button
+                    type="button"
+                    className="ui-menu-item"
+                    onClick={() => {
+                      setMenuOpen(false);
+                      openSsmResume(s.name, true);
+                    }}
+                  >
+                    <Icon name="key" /> 再ログインして再開
+                  </button>
+                )}
+                {s.alive && (
+                  <button
+                    type="button"
+                    className="ui-menu-item"
+                    onClick={() => {
+                      setMenuOpen(false);
+                      void actions.halt(s.name, displayName(s));
+                    }}
+                  >
+                    <Icon name="debug-stop" /> 停止する（あとで再開できる）
+                  </button>
+                )}
+                {s.remoteUrl && (
+                  <button
+                    type="button"
+                    className="ui-menu-item"
+                    onClick={() => {
+                      setMenuOpen(false);
+                      window.open(s.remoteUrl, "_blank", "noopener");
+                    }}
+                  >
+                    <Icon name="link-external" /> リモートセッションを開く
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="ui-menu-item"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    copyId();
+                  }}
+                >
+                  <Icon name="copy" /> ID（{s.name}）をコピー
+                </button>
+                <button
+                  type="button"
+                  className="ui-menu-item"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    openRename(s);
+                  }}
+                >
+                  <Icon name="edit" /> タイトルを変更
+                </button>
+                {/* Worktree sessions only: rename the worktree's branch (deferred
+                    naming); AI suggestion uses THIS session. */}
+                {s.worktree && (
+                  <button
+                    type="button"
+                    className="ui-menu-item"
+                    onClick={() => {
+                      setMenuOpen(false);
+                      openBranchRename(s);
+                    }}
+                  >
+                    <Icon name="repo-forked" /> ブランチ名を変更
+                  </button>
+                )}
+                {agentOf(s.kind).caps.fork && !dead && running && (
+                  <button
+                    type="button"
+                    className="ui-menu-item"
+                    onClick={() => {
+                      setMenuOpen(false);
+                      void actions.fork(s.name);
+                    }}
+                  >
+                    <Icon name="git-branch" /> 分岐（会話を引き継いで新規）
+                  </button>
+                )}
+                {agentOf(s.kind).caps.ephemeral ? (
+                  <button
+                    type="button"
+                    className="ui-menu-item danger"
+                    onClick={() => {
+                      setMenuOpen(false);
+                      void actions.deleteSession(s);
+                    }}
+                  >
+                    <Icon name="trash" /> 削除する
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="ui-menu-item"
+                    onClick={() => {
+                      setMenuOpen(false);
+                      void actions.archive(s);
+                    }}
+                  >
+                    <Icon name="archive" /> アーカイブする（一覧から消す）
+                  </button>
+                )}
+                {!dead && (
+                  <button
+                    type="button"
+                    className="ui-menu-item"
+                    onClick={() => {
+                      setMenuOpen(false);
+                      void actions.recreate(s.name, displayName(s));
+                    }}
+                  >
+                    <Icon name="refresh" /> 作り直す（今の会話はアーカイブへ）
+                  </button>
+                )}
+              </div>,
+              document.body,
             )}
-            {!s.alive && !dead && running && s.kind === "ssm" && (
-              <button
-                type="button"
-                className="ui-menu-item"
-                onClick={() => {
-                  setMenuOpen(false);
-                  openSsmResume(s.name, true);
-                }}
-              >
-                <Icon name="key" /> 再ログインして再開
-              </button>
-            )}
-            {s.alive && (
-              <button
-                type="button"
-                className="ui-menu-item"
-                onClick={() => {
-                  setMenuOpen(false);
-                  void actions.halt(s.name, displayName(s));
-                }}
-              >
-                <Icon name="debug-stop" /> 停止する（あとで再開できる）
-              </button>
-            )}
-            {s.remoteUrl && (
-              <button
-                type="button"
-                className="ui-menu-item"
-                onClick={() => {
-                  setMenuOpen(false);
-                  window.open(s.remoteUrl, "_blank", "noopener");
-                }}
-              >
-                <Icon name="link-external" /> リモートセッションを開く
-              </button>
-            )}
-            <button
-              type="button"
-              className="ui-menu-item"
-              onClick={() => {
-                setMenuOpen(false);
-                copyId();
-              }}
-            >
-              <Icon name="copy" /> ID（{s.name}）をコピー
-            </button>
-            <button
-              type="button"
-              className="ui-menu-item"
-              onClick={() => {
-                setMenuOpen(false);
-                openRename(s);
-              }}
-            >
-              <Icon name="edit" /> タイトルを変更
-            </button>
-            {/* Worktree sessions only: rename the worktree's branch (deferred
-                naming); AI suggestion uses THIS session. */}
-            {s.worktree && (
-              <button
-                type="button"
-                className="ui-menu-item"
-                onClick={() => {
-                  setMenuOpen(false);
-                  openBranchRename(s);
-                }}
-              >
-                <Icon name="repo-forked" /> ブランチ名を変更
-              </button>
-            )}
-            {agentOf(s.kind).caps.fork && !dead && running && (
-              <button
-                type="button"
-                className="ui-menu-item"
-                onClick={() => {
-                  setMenuOpen(false);
-                  void actions.fork(s.name);
-                }}
-              >
-                <Icon name="git-branch" /> 分岐（会話を引き継いで新規）
-              </button>
-            )}
-            {agentOf(s.kind).caps.ephemeral ? (
-              <button
-                type="button"
-                className="ui-menu-item danger"
-                onClick={() => {
-                  setMenuOpen(false);
-                  void actions.deleteSession(s);
-                }}
-              >
-                <Icon name="trash" /> 削除する
-              </button>
-            ) : (
-              <button
-                type="button"
-                className="ui-menu-item"
-                onClick={() => {
-                  setMenuOpen(false);
-                  void actions.archive(s);
-                }}
-              >
-                <Icon name="archive" /> アーカイブする（一覧から消す）
-              </button>
-            )}
-            {!dead && (
-              <button
-                type="button"
-                className="ui-menu-item"
-                onClick={() => {
-                  setMenuOpen(false);
-                  void actions.recreate(s.name, displayName(s));
-                }}
-              >
-                <Icon name="refresh" /> 作り直す（今の会話はアーカイブへ）
-              </button>
-            )}
-            </div>
-          )}
         </div>
       )}
     </li>

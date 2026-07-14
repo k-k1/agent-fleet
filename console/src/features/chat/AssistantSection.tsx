@@ -2,6 +2,7 @@
 // assistant picker popover (templates stay out of the rail) over the
 // conversation history list. Picking an assistant opens a DRAFT — nothing is
 // persisted until the first message. Port onto the zustand stores.
+import { createPortal } from "react-dom";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent as RMouseEvent } from "react";
 import { Section } from "../../ui/Section.tsx";
@@ -59,7 +60,7 @@ export function AssistantSection() {
     refresh();
   }, [refresh, chatListTick]); // tick bumps when a draft becomes a real thread
 
-  useDismiss(pickerRef, pickerOpen, () => setPickerOpen(false));
+  useDismiss([pickerRef, pickerMenuRef], pickerOpen, () => setPickerOpen(false));
   // Anchor the popover below the ＋ button, viewport-clamped.
   useLayoutEffect(() => {
     const el = pickerMenuRef.current;
@@ -68,7 +69,7 @@ export function AssistantSection() {
     el.style.position = "fixed";
     el.style.right = "auto";
     const a = anchor.getBoundingClientRect();
-    placeFixed(el, a.right - el.offsetWidth, a.bottom + 4);
+    placeFixed(el, a.right - el.offsetWidth, a.bottom + 4, pickerRef.current?.closest<HTMLElement>(".app-rail"));
   }, [pickerOpen]);
 
   const openMenu = (e: RMouseEvent, a: Assistant) => {
@@ -77,19 +78,7 @@ export function AssistantSection() {
     setPickerOpen(false);
     setMenu({ x: e.clientX, y: e.clientY, a });
   };
-  useEffect(() => {
-    if (!menu) return;
-    const close = () => setMenu(null);
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && close();
-    document.addEventListener("mousedown", close);
-    document.addEventListener("keydown", onKey);
-    window.addEventListener("blur", close);
-    return () => {
-      document.removeEventListener("mousedown", close);
-      document.removeEventListener("keydown", onKey);
-      window.removeEventListener("blur", close);
-    };
-  }, [menu]);
+  useDismiss(menuRef, !!menu, () => setMenu(null));
   // Clamped every render (no deps): the JSX re-applies the raw cursor coords as
   // inline style on re-renders, which would undo a one-shot clamp near the
   // viewport edge.
@@ -170,75 +159,77 @@ export function AssistantSection() {
       >
         <Icon name="add" />
       </button>
-      {pickerOpen && (
-        <div className="ui-menu assistant-picker" ref={pickerMenuRef} role="menu">
-          <div className="assistant-picker-label">新規チャット</div>
-          {assistants.map((a) => (
-            <div key={a.id} className="assistant-picker-row">
-              <button
-                type="button"
-                className="ui-menu-item assistant-picker-open"
-                title={a.description || a.name}
-                onClick={(e) => {
-                  setPickerOpen(false);
-                  if (e.ctrlKey || e.metaKey) openTargetInNew(draftTarget(a.id));
-                  else startChat(a);
-                }}
-                onMouseDown={(e) => e.button === 1 && e.preventDefault()}
-                onAuxClick={(e) => {
-                  if (e.button === 1) {
+      {pickerOpen &&
+        createPortal(
+          <div className="ui-menu assistant-picker" ref={pickerMenuRef} role="menu" onMouseDown={(e) => e.stopPropagation()}>
+            <div className="assistant-picker-label">新規チャット</div>
+            {assistants.map((a) => (
+              <div key={a.id} className="assistant-picker-row">
+                <button
+                  type="button"
+                  className="ui-menu-item assistant-picker-open"
+                  title={a.description || a.name}
+                  onClick={(e) => {
                     setPickerOpen(false);
-                    openTargetInNew(draftTarget(a.id));
-                  }
-                }}
-                onContextMenu={(e) => openMenu(e, a)}
-              >
-                <Icon name={a.icon || "comment-discussion"} className="assistant-ic" />
-                <span className="chat-open-title">{a.name}</span>
-                {a.builtin && <span className="assistant-badge">常設</span>}
-              </button>
-              {!a.builtin && (
-                <>
-                  <button
-                    type="button"
-                    className="ui-btn ui-btn-ghost ui-iconbtn"
-                    title="編集"
-                    onClick={() => {
+                    if (e.ctrlKey || e.metaKey) openTargetInNew(draftTarget(a.id));
+                    else startChat(a);
+                  }}
+                  onMouseDown={(e) => e.button === 1 && e.preventDefault()}
+                  onAuxClick={(e) => {
+                    if (e.button === 1) {
                       setPickerOpen(false);
-                      setEditing(a);
-                    }}
-                  >
-                    <Icon name="edit" />
-                  </button>
-                  <button
-                    type="button"
-                    className="ui-btn ui-btn-ghost ui-iconbtn"
-                    title="削除"
-                    onClick={() => {
-                      setPickerOpen(false);
-                      void deleteAssistant(a);
-                    }}
-                  >
-                    <Icon name="trash" />
-                  </button>
-                </>
-              )}
-            </div>
-          ))}
-          <div className="ui-menu-sep" aria-hidden="true" />
-          <button
-            type="button"
-            className="ui-menu-item assistant-picker-open"
-            onClick={() => {
-              setPickerOpen(false);
-              setCreating(true);
-            }}
-          >
-            <Icon name="add" className="assistant-ic" />
-            <span className="chat-open-title">アシスタントを作成</span>
-          </button>
-        </div>
-      )}
+                      openTargetInNew(draftTarget(a.id));
+                    }
+                  }}
+                  onContextMenu={(e) => openMenu(e, a)}
+                >
+                  <Icon name={a.icon || "comment-discussion"} className="assistant-ic" />
+                  <span className="chat-open-title">{a.name}</span>
+                  {a.builtin && <span className="assistant-badge">常設</span>}
+                </button>
+                {!a.builtin && (
+                  <>
+                    <button
+                      type="button"
+                      className="ui-btn ui-btn-ghost ui-iconbtn"
+                      title="編集"
+                      onClick={() => {
+                        setPickerOpen(false);
+                        setEditing(a);
+                      }}
+                    >
+                      <Icon name="edit" />
+                    </button>
+                    <button
+                      type="button"
+                      className="ui-btn ui-btn-ghost ui-iconbtn"
+                      title="削除"
+                      onClick={() => {
+                        setPickerOpen(false);
+                        void deleteAssistant(a);
+                      }}
+                    >
+                      <Icon name="trash" />
+                    </button>
+                  </>
+                )}
+              </div>
+            ))}
+            <div className="ui-menu-sep" aria-hidden="true" />
+            <button
+              type="button"
+              className="ui-menu-item assistant-picker-open"
+              onClick={() => {
+                setPickerOpen(false);
+                setCreating(true);
+              }}
+            >
+              <Icon name="add" className="assistant-ic" />
+              <span className="chat-open-title">アシスタントを作成</span>
+            </button>
+          </div>,
+          document.body,
+        )}
     </div>
   );
 
@@ -309,35 +300,37 @@ export function AssistantSection() {
             })}
           </ul>
         )}
-        {menu && (
-          <ul className="ui-menu" ref={menuRef} style={{ left: menu.x, top: menu.y }} role="menu" onMouseDown={(e) => e.stopPropagation()}>
-            <li>
-              <button type="button" className="ui-menu-item" onClick={() => runMenu(() => startChat(menu.a))}>
-                <Icon name="comment" /> 新規チャット
-              </button>
-            </li>
-            <li>
-              <button type="button" className="ui-menu-item" onClick={() => runMenu(() => openTargetInNew(draftTarget(menu.a.id), true))}>
-                <Icon name="split-horizontal" /> 新しいペインで開く
-              </button>
-            </li>
-            {!menu.a.builtin && (
-              <>
-                <li className="ui-menu-sep" aria-hidden="true" />
-                <li>
-                  <button type="button" className="ui-menu-item" onClick={() => runMenu(() => setEditing(menu.a))}>
-                    <Icon name="edit" /> 編集
-                  </button>
-                </li>
-                <li>
-                  <button type="button" className="ui-menu-item danger" onClick={() => runMenu(() => void deleteAssistant(menu.a))}>
-                    <Icon name="trash" /> 削除
-                  </button>
-                </li>
-              </>
-            )}
-          </ul>
-        )}
+        {menu &&
+          createPortal(
+            <ul className="ui-menu" ref={menuRef} style={{ left: menu.x, top: menu.y }} role="menu" onMouseDown={(e) => e.stopPropagation()}>
+              <li>
+                <button type="button" className="ui-menu-item" onClick={() => runMenu(() => startChat(menu.a))}>
+                  <Icon name="comment" /> 新規チャット
+                </button>
+              </li>
+              <li>
+                <button type="button" className="ui-menu-item" onClick={() => runMenu(() => openTargetInNew(draftTarget(menu.a.id), true))}>
+                  <Icon name="split-horizontal" /> 新しいペインで開く
+                </button>
+              </li>
+              {!menu.a.builtin && (
+                <>
+                  <li className="ui-menu-sep" aria-hidden="true" />
+                  <li>
+                    <button type="button" className="ui-menu-item" onClick={() => runMenu(() => setEditing(menu.a))}>
+                      <Icon name="edit" /> 編集
+                    </button>
+                  </li>
+                  <li>
+                    <button type="button" className="ui-menu-item danger" onClick={() => runMenu(() => void deleteAssistant(menu.a))}>
+                      <Icon name="trash" /> 削除
+                    </button>
+                  </li>
+                </>
+              )}
+            </ul>,
+            document.body,
+          )}
       </Section>
 
       {(creating || editing) && (
