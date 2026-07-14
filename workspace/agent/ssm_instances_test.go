@@ -24,3 +24,17 @@ func TestEC2NamesFromJSONRejectsInvalidJSON(t *testing.T) {
 		t.Fatal("invalid JSON accepted")
 	}
 }
+
+func TestIsAWSAccessDenied(t *testing.T) {
+	for _, message := range []string{
+		"An error occurred (AccessDeniedException) when calling DescribeInstanceInformation",
+		"An error occurred (UnauthorizedOperation) when calling DescribeInstances",
+	} {
+		if !isAWSAccessDenied(message) {
+			t.Fatalf("access denial not detected: %s", message)
+		}
+	}
+	if isAWSAccessDenied("RequestExpired: request has expired") {
+		t.Fatal("unrelated AWS error detected as access denial")
+	}
+}
