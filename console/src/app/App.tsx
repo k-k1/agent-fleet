@@ -153,12 +153,24 @@ export function App() {
   useEffect(() => {
     const mq = window.matchMedia(MOBILE_QUERY);
     const DIST = 50;
+    // A drawer gesture is a quick swipe.  Cancelling the candidate after the
+    // browser's long-press window keeps text selection (notably in the mirror)
+    // from turning a later selection-handle drag into an edge swipe.
+    const LONG_PRESS_MS = 500;
     let sx = 0,
       sy = 0,
-      mode: "open" | "close" | null = null;
+      mode: "open" | "close" | null = null,
+      longPressTimer: number | null = null;
+    const cancelGesture = () => {
+      mode = null;
+      if (longPressTimer !== null) {
+        window.clearTimeout(longPressTimer);
+        longPressTimer = null;
+      }
+    };
     const onStart = (e: TouchEvent) => {
       const t = e.touches[0];
-      mode = null;
+      cancelGesture();
       // While a modal is up, don't let an edge swipe open the drawer behind it (the
       // settings modal also uses horizontal swipes for its own tabs).
       const { settingsOpen, adminOpen } = useSettingsUI.getState();
@@ -169,6 +181,9 @@ export function App() {
       if (t) {
         sx = t.clientX;
         sy = t.clientY;
+        if (mode) {
+          longPressTimer = window.setTimeout(cancelGesture, LONG_PRESS_MS);
+        }
       }
     };
     const onMove = (e: TouchEvent) => {
@@ -180,15 +195,13 @@ export function App() {
       if (Math.abs(dx) <= Math.abs(dy)) return;
       if (mode === "open" && dx > DIST) {
         setNavOpen(true);
-        mode = null;
+        cancelGesture();
       } else if (mode === "close" && dx < -DIST) {
         setNavOpen(false);
-        mode = null;
+        cancelGesture();
       }
     };
-    const onEnd = () => {
-      mode = null;
-    };
+    const onEnd = cancelGesture;
     window.addEventListener("touchstart", onStart, { passive: true });
     window.addEventListener("touchmove", onMove, { passive: true });
     window.addEventListener("touchend", onEnd, { passive: true });
@@ -198,6 +211,7 @@ export function App() {
       window.removeEventListener("touchmove", onMove);
       window.removeEventListener("touchend", onEnd);
       window.removeEventListener("touchcancel", onEnd);
+      cancelGesture();
     };
   }, []);
 
