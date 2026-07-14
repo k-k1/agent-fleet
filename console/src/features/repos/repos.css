@@ -545,22 +545,22 @@
 .start-row.start-sub {
   padding-left: 34px;
 }
-/* Folded その他 (shell / SSM) toggle under the main list. */
-.start-other {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  background: transparent;
-  border: 0;
-  padding: 2px 0;
-  color: var(--muted);
-  cursor: pointer;
-  font: inherit;
-  font-size: 12px;
-  align-self: flex-start;
+.start-primary-place {
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
 }
-.start-other:hover {
-  color: var(--fg);
+.start-repos {
+  min-height: 0;
+}
+.start-repo-list {
+  max-height: min(310px, 38dvh);
+  overflow-y: auto;
+}
+.start-empty {
+  display: block;
+  padding: 18px 12px;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
 }
 /* 場所を変更 — pinned left in the modal footer (hub back-navigation). */
 .launch-back {
