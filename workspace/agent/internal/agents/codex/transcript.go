@@ -997,13 +997,14 @@ func PendingQuestionID(m session.Meta) string {
 func readTranscript(m session.Meta) (agents.TranscriptData, bool) {
 	slot := session.UUID(m.Dir, m.Name)
 	cxid := sids.Read(slot)
+	compacting := isCompacting(m)
 	path := rolloutPath(cxid)
 	if path == "" {
-		return agents.TranscriptData{}, true
+		return agents.TranscriptData{Compacting: compacting}, true
 	}
 	b, err := os.ReadFile(path)
 	if err != nil {
-		return agents.TranscriptData{Path: path}, true
+		return agents.TranscriptData{Path: path, Compacting: compacting}, true
 	}
 	var lines [][]byte
 	for _, ln := range strings.Split(string(b), "\n") {
@@ -1012,7 +1013,7 @@ func readTranscript(m session.Meta) (agents.TranscriptData, bool) {
 		}
 	}
 	turns, tasks, pending, mode := parseRolloutFull(lines)
-	return agents.TranscriptData{Turns: turns, Path: path, Tasks: tasks, Pending: pending, Mode: mode}, true
+	return agents.TranscriptData{Turns: turns, Path: path, Tasks: tasks, Pending: pending, Mode: mode, Compacting: compacting}, true
 }
 
 // rolloutCompletedAfter reports whether codex recorded completion of the current

@@ -70,6 +70,8 @@ export const stateInfo = (s: Session): StateInfo => {
   // unanswered request_user_input in the rollout tail) also derive "question".
   // An empty state = idle.
   switch (s.state) {
+    case "compacting":
+      return { cls: "working", icon: "loading", spin: true, text: "圧縮中…" };
     case "working":
       return { cls: "working", icon: "loading", spin: true, text: "進行中…" };
     case "question":

@@ -65,6 +65,9 @@ func main() {
 	// handled separately via its settings.json hook.
 	reconcileAgentRTK()
 	startTerminalHistoryJanitor()
+	// Codex TUI sessions use a shared local app-server when available. AF observes
+	// its item lifecycle to distinguish context compaction from ordinary work.
+	startCodexAppServer()
 
 	addr := envOr("AGENT_ADDR", ":7700")
 
