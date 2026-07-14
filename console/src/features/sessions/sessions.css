@@ -33,6 +33,20 @@
   white-space: nowrap;
   font-weight: 600;
 }
+/* Worktree group heading: base repo prefix + "/" + branch, so a bare "temp/…"
+   branch reads under the repo it belongs to. */
+.sess-group-repo {
+  font-weight: 400;
+  opacity: 0.7;
+}
+.sess-group-repo::after {
+  content: "/";
+  margin: 0 4px;
+  opacity: 0.6;
+}
+.sess-group-branch {
+  color: var(--fg);
+}
 .sess-group-count {
   flex: none;
   font-size: 11px;
@@ -282,9 +296,12 @@
   display: flex;
   align-items: center;
   gap: 8px;
+  /* On a narrow modal the two action buttons drop below the search box instead of
+     overflowing the panel edge. */
+  flex-wrap: wrap;
 }
 .arch-search {
-  flex: 1;
+  flex: 1 1 180px;
   display: flex;
   align-items: center;
   gap: 6px;
