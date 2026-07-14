@@ -197,8 +197,8 @@ export interface Settings {
   ttsVoiceVoicevox: string; // VOICEVOX の speaker 番号（"3"=ずんだもん・ノーマル）
   ttsVoicePolly: string; // Polly の VoiceId（"Takumi" 等）。auto のフォールバック時も使う
   ttsSpeed: number; // 0.5〜2.0（speedScale）
-  // Console が背景タブ／最小化（document.hidden）の間、全TTS出力のマスター音量を35%へ下げる。
-  // window blur は対象外（画面分割や別ウィンドウ操作中でも見えていれば通常音量）。
+  // Console が背景タブ／最小化（document.hidden）、または別ウィンドウへフォーカスが移った間、
+  // 全TTS出力のマスター音量を35%へ下げる。
   ttsQuietWhenHidden: boolean;
   // ペインに属する読み上げを、現在の横方向の列位置に合わせてステレオ配置する。
   // 左右端でも完全には振り切らず、聞きやすさのため最大 ±70% に留める。

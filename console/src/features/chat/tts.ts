@@ -26,7 +26,7 @@ import {
 import { effectiveDict } from "./ttsDict.ts";
 import { makeAudioLru } from "./ttsCache.ts";
 import { speakersCatalog, type Speaker, type SpeakerStyle } from "./ttsSpeakers.ts";
-import { ttsMasterGain, ttsPanePan, ttsWorkGain, type TtsController, type TtsEndReason, type TtsStopReason } from "./ttsControl.ts";
+import { ttsIsBackground, ttsMasterGain, ttsPanePan, ttsWorkGain, type TtsController, type TtsEndReason, type TtsStopReason } from "./ttsControl.ts";
 export { stopTtsForReplacement } from "./ttsControl.ts";
 export type { TtsController, TtsEndReason, TtsStopReason } from "./ttsControl.ts";
 
@@ -382,12 +382,14 @@ async function synthToBuffer(
 }
 
 // AudioContext と最終出力の master gain は 1 つを使い回す。各再生の volume（作業過程の
-// 小声等）を掛けた後、master で背景タブ時の音量を全再生まとめて滑らかに変更する。
+// 小声等）を掛けた後、master で背景時の音量を全再生まとめて滑らかに変更する。
 let sharedCtx: AudioContext | null = null;
 let masterGain: GainNode | null = null;
-let visibilityWired = false;
+let backgroundEventsWired = false;
 function masterTarget(): number {
-  return ttsMasterGain(getSettings().ttsQuietWhenHidden, typeof document !== "undefined" && document.hidden);
+  const hidden = typeof document !== "undefined" && document.hidden;
+  const focused = typeof document === "undefined" || document.hasFocus();
+  return ttsMasterGain(getSettings().ttsQuietWhenHidden, ttsIsBackground(hidden, focused));
 }
 
 function syncMasterGain(immediate = false): void {
@@ -413,9 +415,11 @@ function audioCtx(): AudioContext | null {
       masterGain.connect(sharedCtx.destination);
       syncMasterGain(true);
     }
-    if (!visibilityWired && typeof document !== "undefined") {
-      visibilityWired = true;
+    if (!backgroundEventsWired && typeof document !== "undefined" && typeof window !== "undefined") {
+      backgroundEventsWired = true;
       document.addEventListener("visibilitychange", () => syncMasterGain());
+      window.addEventListener("blur", () => syncMasterGain());
+      window.addEventListener("focus", () => syncMasterGain());
     }
     if (sharedCtx.state === "suspended") void sharedCtx.resume();
     return sharedCtx;
@@ -445,7 +449,7 @@ function connectOutput(ctx: AudioContext, src: AudioBufferSourceNode, volume = 1
 }
 
 // 設定画面で切り替えた瞬間にも、再生中の音へ反映する。サーバー同期で設定が更新された場合も
-// 同じ settings subscription を通るため、次の visibilitychange を待たない。
+// 同じ settings subscription を通るため、次の visibilitychange / focus を待たない。
 subscribeSettings(() => syncMasterGain());
 
 // --- グローバル停止の伝播 --------------------------------------------------------
