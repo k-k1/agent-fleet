@@ -50,6 +50,7 @@ interface SsmProfile {
 
 interface SsmInstance {
   instanceId: string;
+  name?: string;
   computerName?: string;
   ipAddress?: string;
   platformName?: string;
@@ -127,6 +128,7 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
   const [ssmQuery, setSsmQuery] = useState("");
   const [ssmProfileId, setSsmProfileId] = useState("");
   const [ssmInstances, setSsmInstances] = useState<SsmInstance[] | null>(null);
+  const [ssmInstanceQuery, setSsmInstanceQuery] = useState("");
   const [ssmSearching, setSsmSearching] = useState(false);
   const [ssmForce, setSsmForce] = useState(false);
   // After creating a kind=ssm session: the created name while the SSO handshake runs.
@@ -157,12 +159,17 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
     }
     setSsmInstances(Array.isArray(res?.instances) ? res.instances : []);
   };
+  const visibleSsmInstances = (ssmInstances || []).filter((instance) => {
+    const q = ssmInstanceQuery.trim().toLocaleLowerCase();
+    return !q || [instance.name, instance.instanceId, instance.computerName, instance.ipAddress]
+      .some((value) => value?.toLocaleLowerCase().includes(q));
+  });
   const registerSsmInstance = async (instance: SsmInstance) => {
     const profileId = ssmProfileId || ssmProfiles?.[0]?.id || "";
     if (!profileId || busy) return;
     setBusy(true);
     const res = await apiJSON("api/ssm/hosts", "POST", {
-      alias: instance.computerName || instance.instanceId,
+      alias: instance.name || instance.computerName || instance.instanceId,
       profileId,
       region: "",
       instanceId: instance.instanceId,
@@ -494,12 +501,23 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
               <Button small icon="search" onClick={() => void searchSsmInstances()} disabled={ssmSearching}>
                 {ssmSearching ? "検索中…" : "AWSから検索"}
               </Button>
-              {ssmInstances?.map((instance) => (
+              {ssmInstances !== null && ssmInstances.length > 0 && (
+                <input
+                  type="search"
+                  value={ssmInstanceQuery}
+                  onChange={(e) => setSsmInstanceQuery(e.target.value)}
+                  placeholder="Name・インスタンスID・ホスト名・IPで絞り込み…"
+                />
+              )}
+              {visibleSsmInstances.map((instance) => (
                 <div key={instance.instanceId} className="ssm-instance-row">
                   <span className="start-row-body">
-                    <span className="start-row-title">{instance.computerName || instance.instanceId}</span>
+                    <span className="start-row-title">{instance.name || instance.computerName || instance.instanceId}</span>
                     <span className="start-row-desc">
-                      {instance.instanceId}{instance.ipAddress ? ` · ${instance.ipAddress}` : ""}{instance.platformName ? ` · ${instance.platformName}` : ""}
+                      {instance.instanceId}
+                      {instance.name && instance.computerName ? ` · ${instance.computerName}` : ""}
+                      {instance.ipAddress ? ` · ${instance.ipAddress}` : ""}
+                      {instance.platformName ? ` · ${instance.platformName}` : ""}
                     </span>
                   </span>
                   <Button small variant="ghost" onClick={() => void registerSsmInstance(instance)} disabled={busy}>
@@ -508,6 +526,9 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
                 </div>
               ))}
               {ssmInstances?.length === 0 && <span className="ui-field-hint">オンラインのEC2インスタンスは見つかりませんでした。</span>}
+              {ssmInstances !== null && ssmInstances.length > 0 && visibleSsmInstances.length === 0 && (
+                <span className="ui-field-hint">絞り込みに一致するインスタンスはありません。</span>
+              )}
               <span className="ui-field-hint">SSOの有効期限が切れている場合は、登録済みホストへ一度接続して認証を更新してください。</span>
             </div>
           </div>
