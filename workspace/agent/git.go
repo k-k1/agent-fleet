@@ -765,7 +765,7 @@ func repoDirFromPath(w http.ResponseWriter, r *http.Request) (string, bool) {
 }
 
 func handleRepoStatus(w http.ResponseWriter, r *http.Request) {
-	dir, ok := repoDirFromPath(w, r)
+	dir, ok := repoViewDir(w, r)
 	if !ok {
 		return
 	}
