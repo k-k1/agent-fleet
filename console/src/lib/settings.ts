@@ -197,9 +197,9 @@ export interface Settings {
   ttsVoiceVoicevox: string; // VOICEVOX の speaker 番号（"3"=ずんだもん・ノーマル）
   ttsVoicePolly: string; // Polly の VoiceId（"Takumi" 等）。auto のフォールバック時も使う
   ttsSpeed: number; // 0.5〜2.0（speedScale）
-  // Console が背景タブ／最小化（document.hidden）、または別ウィンドウへフォーカスが移った間、
-  // 全TTS出力のマスター音量を35%へ下げる。
-  ttsQuietWhenHidden: boolean;
+  // Console が背景タブ／最小化（document.hidden）、または別ウィンドウへフォーカスが移った間の
+  // 再生方法。mute=無音、quiet=マスター音量35%、normal=通常音量。
+  ttsBackgroundPlayback: "mute" | "quiet" | "normal";
   // ペインに属する読み上げを、現在の横方向の列位置に合わせてステレオ配置する。
   // 左右端でも完全には振り切らず、聞きやすさのため最大 ±70% に留める。
   ttsStereoByPane: boolean;
@@ -323,8 +323,8 @@ const DEFAULTS: Settings = {
   ttsVoiceVoicevox: "3", // ノーマル
   ttsVoicePolly: "Takumi",
   ttsSpeed: 1.25, // はやめ
-  ttsQuietWhenHidden: false,
-  ttsStereoByPane: false,
+  ttsBackgroundPlayback: "quiet",
+  ttsStereoByPane: true,
   ttsSessionNotify: false,
   usageResetNotify: true,
   ttsEnglishKana: true,
@@ -396,7 +396,7 @@ const TTS_RESET_KEYS = [
   "ttsVoicePool",
   "ttsEmotion",
   "ttsSpeed",
-  "ttsQuietWhenHidden",
+  "ttsBackgroundPlayback",
   "ttsStereoByPane",
   "ttsAutoReadMirror",
   "ttsAutoReadAllPanes",
@@ -424,6 +424,12 @@ export const TTS_WORK_READ_MODES: [string, string][] = [
   ["off", "読まない"],
   ["whisper", "ささやき"],
   ["hushed", "ヒソヒソ"],
+];
+
+export const TTS_BACKGROUND_PLAYBACK_MODES: [string, string][] = [
+  ["mute", "再生しない"],
+  ["quiet", "音量を下げる"],
+  ["normal", "通常再生"],
 ];
 
 // Assistant-chat output-language choices, shared by the settings UI. "auto" leaves the
@@ -493,7 +499,13 @@ export function readerFontStack(name: string): string {
 
 function load(): Settings {
   try {
-    return { ...DEFAULTS, ...JSON.parse(localStorage.getItem(KEY) || "{}") };
+    const saved = JSON.parse(localStorage.getItem(KEY) || "{}");
+    // 旧ON/OFF設定を3択へ移行する。明示済みの新設定があればそちらを優先する。
+    if (!("ttsBackgroundPlayback" in saved) && typeof saved.ttsQuietWhenHidden === "boolean") {
+      saved.ttsBackgroundPlayback = saved.ttsQuietWhenHidden ? "quiet" : "normal";
+    }
+    delete saved.ttsQuietWhenHidden;
+    return { ...DEFAULTS, ...saved };
   } catch {
     return { ...DEFAULTS };
   }
@@ -602,6 +614,10 @@ export async function hydrateUIPrefs(): Promise<void> {
     return;
   }
   if (!srv || typeof srv !== "object" || srv.error) return;
+  // サーバーに旧booleanだけが残るユーザーも、新しい3択へ一度だけ移行する。
+  if (!("ttsBackgroundPlayback" in srv) && typeof srv.ttsQuietWhenHidden === "boolean") {
+    srv.ttsBackgroundPlayback = srv.ttsQuietWhenHidden ? "quiet" : "normal";
+  }
   let changed = false;
   const merged: Settings = { ...state };
   for (const k of Object.keys(DEFAULTS)) {
