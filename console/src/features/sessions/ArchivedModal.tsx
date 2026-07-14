@@ -19,14 +19,20 @@ interface ArchivedModalProps {
   onRestored?: () => void;
 }
 
-// Group heading. A worktree's folder is "<repo>@<seg>", so for those show the
-// newest session's recorded branch instead of the folder name. The archived
-// endpoint never sends the `worktree` flag, so the "@" is the only wt signal.
-const groupLabel = (dir: string, head?: ArchivedSession) => {
+// Group heading, split into the base repo (a prefix) and a branch/folder label.
+// A worktree's folder is "<repo>@<seg>", so for those show the base repo before
+// the "@" plus the newest session's recorded branch — otherwise every worktree
+// reads as a bare "temp/…" branch with no hint of which repo it belongs to. The
+// archived endpoint never sends the `worktree` flag, so the "@" is the only wt
+// signal. A plain clone has no repo prefix — just its folder name.
+const groupHeading = (dir: string, head?: ArchivedSession): { repo?: string; label: string } => {
   const seg = dir ? dir.split("/").filter(Boolean).pop() || dir : "";
-  if (!seg) return "その他";
-  if (seg.includes("@")) return head?.branch || seg.slice(seg.indexOf("@") + 1) || seg;
-  return seg;
+  if (!seg) return { label: "その他" };
+  const at = seg.indexOf("@");
+  if (at >= 0) {
+    return { repo: seg.slice(0, at) || undefined, label: head?.branch || seg.slice(at + 1) || seg };
+  }
+  return { label: seg };
 };
 
 // "Old" cutoff for bulk-prune. No createdAt = never pruned by age.
@@ -74,12 +80,14 @@ export function ArchivedModal({ onClose, onRestored }: ArchivedModalProps) {
     const arr = [...by.entries()].map(([dir, list]) => {
       list.sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
       const head = list[0];
+      const heading = groupHeading(dir, head);
       return {
         dir,
         list,
         newest: head?.createdAt || "",
-        label: groupLabel(dir, head),
-        repoKey: head?.repo || groupLabel(dir),
+        repo: heading.repo,
+        label: heading.label,
+        repoKey: head?.repo || heading.label,
       };
     });
     arr.sort((a, b) => a.repoKey.localeCompare(b.repoKey) || b.newest.localeCompare(a.newest));
@@ -247,7 +255,10 @@ export function ArchivedModal({ onClose, onRestored }: ArchivedModalProps) {
                     >
                       <Icon name={isCollapsed ? "chevron-right" : "chevron-down"} />
                       <Icon name="folder" />
-                      <span className="sess-group-name">{g.label}</span>
+                      <span className="sess-group-name">
+                        {g.repo && <span className="sess-group-repo">{g.repo}</span>}
+                        <span className="sess-group-branch">{g.label}</span>
+                      </span>
                       <span className="sess-group-count">{g.list.length}</span>
                     </button>
                     {!isCollapsed &&
