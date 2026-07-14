@@ -95,6 +95,8 @@ export type FsResult = { status: number } & Record<string, unknown>;
 // Go 側の対は control-plane/errcodes.go / workspace/agent/errcodes.go（docs/23 P0-3）—
 // キーを増減・変更するときは必ず両側同時に。
 const ERR_TEXT: Record<string, string> = {
+  ssm_search_forbidden:
+    "AWS上のインスタンスを検索する権限がありません。AWS管理者に ssm:DescribeInstanceInformation の付与を依頼してください。",
   quota_sessions:
     "同時に稼働できるセッション数の上限に達しています。稼働中のセッションをどれか停止してから作成してください。",
   sessions_running:
