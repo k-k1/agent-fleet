@@ -395,9 +395,28 @@ describe("applyBuiltinReadings / applyReadings (組み込みの読み補正)", (
     expect(applyBuiltinReadings("a/b/c の階層")).toBe("a・b・c の階層"); // チェーンも一括
   });
 
-  it("日付・分数・除算（両辺とも数字のみ）は触らない", () => {
-    expect(applyBuiltinReadings("2024/01/02 の変更")).toBe("2024/01/02 の変更");
+  it("年付き日付は変換し、明確な分数文脈は保護する", () => {
+    expect(applyBuiltinReadings("2024/01/02 の変更")).toBe("2024年1月2日 の変更");
     expect(applyBuiltinReadings("確率は1/2です")).toBe("確率は1/2です");
+  });
+
+  it("日付を年月日の日本語読みへ展開する", () => {
+    expect(applyBuiltinReadings("2024-09-20 と2024/09/20、7/2")).toBe(
+      "2024年9月20日 と2024年9月20日、7月2日",
+    );
+    expect(applyBuiltinReadings("2024-02-29")).toBe("2024年2月29日");
+  });
+
+  it("存在しない日付と明確な分数・計算文脈は変換しない", () => {
+    expect(applyBuiltinReadings("2023-02-29、2023/02/29、2024/13/01、4/31")).toBe(
+      "2023-02-29、2023/02/29、2024/13/01、4/31",
+    );
+    expect(applyBuiltinReadings("確率は1/2で、7/2倍、9/3を計算")).toBe("確率は1/2で、7/2倍、9/3を計算");
+  });
+
+  it("時刻を時分秒の日本語読みへ展開する", () => {
+    expect(applyBuiltinReadings("12:34:56 と12:34、00:05")).toBe("12時34分56秒 と12時34分、0時5分");
+    expect(applyBuiltinReadings("24:00、12:60、12:34:60")).toBe("24:00、12:60、12:34:60");
   });
 
   it("ヌメロニム（i18n 等）は元の語の慣用カタカナで読む（大文字小文字不問・単語境界）", () => {
