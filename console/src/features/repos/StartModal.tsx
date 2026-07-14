@@ -284,14 +284,16 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
                   <span className="start-row-desc">通常のシェル (bash) をすぐ開きます</span>
                 </span>
               </button>
-              <button type="button" className="start-row" onClick={() => setStage("home")}>
-                <Icon name="home" className="start-row-ic" />
-                <span className="start-row-body">
-                  <span className="start-row-title">ホームで起動（リポジトリなし）</span>
-                  <span className="start-row-desc">~ でエージェントを走らせる・下書きや調べもの向け</span>
-                </span>
-                <Icon name="chevron-right" className="start-row-chev" />
-              </button>
+              {kinds.length > 0 && (
+                <button type="button" className="start-row" onClick={() => setStage("home")}>
+                  <Icon name="home" className="start-row-ic" />
+                  <span className="start-row-body">
+                    <span className="start-row-title">ホームでエージェントを起動</span>
+                    <span className="start-row-desc">~ でエージェントを走らせる・下書きや調べもの向け</span>
+                  </span>
+                  <Icon name="chevron-right" className="start-row-chev" />
+                </button>
+              )}
               <button type="button" className="start-row action" onClick={() => setStage("clone")}>
                 <Icon name="add" className="start-row-ic" />
                 <span className="start-row-body">
