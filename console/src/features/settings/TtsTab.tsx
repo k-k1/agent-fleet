@@ -9,6 +9,7 @@ import {
   TTS_PROVIDERS,
   TTS_POLLY_VOICES,
   TTS_WORK_READ_MODES,
+  TTS_BACKGROUND_PLAYBACK_MODES,
   TTS_RESET,
   type TtsCharConf,
 } from "../../lib/settings.ts";
@@ -53,12 +54,16 @@ export function TtsTab() {
           どちらも無ければ無音になります）。
           {s.ttsEnabled && <> 音声引用：VOICEVOX：ずんだもん。</>}
         </p>
-        <Row label="非アクティブ時は音量を下げる">
-          <OnOff value={s.ttsQuietWhenHidden} onChange={(v) => setSetting("ttsQuietWhenHidden", v)} />
+        <Row label="バックグラウンドでの再生">
+          <Choice
+            value={s.ttsBackgroundPlayback}
+            options={TTS_BACKGROUND_PLAYBACK_MODES}
+            onChange={(v) => setSetting("ttsBackgroundPlayback", v as "mute" | "quiet" | "normal")}
+          />
         </Row>
         <p className="muted ds-note">
-          別タブへの切り替え、ブラウザの最小化、別ウィンドウでの作業中は、読み上げ音量を35%へ下げます。
-          Console に戻ると通常音量へ滑らかに戻ります。
+          別タブへの切り替え、ブラウザの最小化、別ウィンドウでの作業中の再生方法を選びます。
+          「音量を下げる」は35%で再生し、Console に戻ると通常音量へ滑らかに戻ります。
         </p>
         <Row label="ペイン位置に合わせて左右へ振る">
           <OnOff value={s.ttsStereoByPane} onChange={(v) => setSetting("ttsStereoByPane", v)} />

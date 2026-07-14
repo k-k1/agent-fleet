@@ -20,11 +20,13 @@ export function stopTtsForReplacement(c: TtsController | null | undefined): void
 }
 
 export const HIDDEN_TTS_GAIN = 0.35;
+export type TtsBackgroundMode = "mute" | "quiet" | "normal";
 export function ttsIsBackground(hidden: boolean, focused: boolean): boolean {
   return hidden || !focused;
 }
-export function ttsMasterGain(quietWhenBackground: boolean, background: boolean): number {
-  return quietWhenBackground && background ? HIDDEN_TTS_GAIN : 1;
+export function ttsMasterGain(mode: TtsBackgroundMode, background: boolean): number {
+  if (!background || mode === "normal") return 1;
+  return mode === "mute" ? 0 : HIDDEN_TTS_GAIN;
 }
 
 export const WORK_HUSHED_GAIN = 0.3;
