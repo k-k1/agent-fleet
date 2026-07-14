@@ -742,7 +742,14 @@ export function ensureAttached(paneId: string, session: string) {
     (it.ws.readyState === WebSocket.CONNECTING ||
       (it.ws.readyState === WebSocket.OPEN && it.rx === true));
   if (live) {
-    fitInst(it); // connected → just size the grid to the visible container
+    // Receiving PTY bytes proves the socket side is healthy, but it does NOT prove
+    // those bytes reached the screen. In particular Chrome can leave xterm's WebGL
+    // renderer with a live-looking context that never paints; this presents as a
+    // completely black shell/SSM pane while reload (which creates a new renderer)
+    // immediately fixes it. The attach retry ladder is also our startup-render
+    // watchdog, so rebuild the visible renderer and repaint from xterm's buffer.
+    // redrawVisible is a no-op for a hidden mirror pane.
+    redrawVisible(it);
     return;
   }
   attach(paneId, session);
