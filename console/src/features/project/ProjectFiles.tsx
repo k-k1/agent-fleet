@@ -5,6 +5,7 @@
 // the core file ops. It reuses the shared primitives (api fs endpoints,
 // FileIcon/DirIcon, the .fstree/.fsrow classes); per-copy git changes live in the
 // SCM pane, not here. Mounted only while its section is open, so the fetch is lazy.
+import { createPortal } from "react-dom";
 import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent as RMouseEvent, DragEvent as RDragEvent, KeyboardEvent as RKeyboardEvent } from "react";
 import { api, uploadFiles, downloadURL, fsMkdir, fsNewFile, fsRename, fsDelete, fsSearch } from "../../core/api/client.ts";
@@ -632,7 +633,7 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo }: Proje
   // while the menu is open), which would undo a one-shot clamp and push a menu
   // opened near the rail's foot back off-screen.
   useLayoutEffect(() => {
-    if (menu && menuRef.current) placeFixed(menuRef.current, menu.x, menu.y, menuRef.current.closest<HTMLElement>(".app-rail"));
+    if (menu && menuRef.current) placeFixed(menuRef.current, menu.x, menu.y, wrapRef.current?.closest<HTMLElement>(".app-rail"));
   });
   const runMenu = (fn: () => void) => {
     setMenu(null);
@@ -802,58 +803,60 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo }: Proje
           })}
         </div>
       )}
-      {menu && (
-        <ul className="ui-menu files-ctxmenu" ref={menuRef} style={{ left: menu.x, top: menu.y }} role="menu" onMouseDown={(e) => e.stopPropagation()}>
-          <li>
-            <button type="button" className="ui-menu-item" onClick={() => runMenu(() => void newFile(menuDir))}>
-              <Icon name="new-file" /> 新規ファイル
-            </button>
-          </li>
-          <li>
-            <button type="button" className="ui-menu-item" onClick={() => runMenu(() => void newFolder(menuDir))}>
-              <Icon name="new-folder" /> 新規フォルダ
-            </button>
-          </li>
-          <li>
-            <button type="button" className="ui-menu-item" onClick={() => runMenu(() => copyText(baseName(menu.row.path), "名前"))}>
-              <Icon name="copy" /> 名前をコピー
-            </button>
-          </li>
-          <li>
-            <button type="button" className="ui-menu-item" onClick={() => runMenu(() => copyText(menu.row.path, "相対パス"))}>
-              <Icon name="copy" /> 相対パスをコピー
-            </button>
-          </li>
-          {menu.row.type === "file" && (
+      {menu &&
+        createPortal(
+          <ul className="ui-menu files-ctxmenu" ref={menuRef} style={{ left: menu.x, top: menu.y }} role="menu" onMouseDown={(e) => e.stopPropagation()}>
             <li>
-              <button
-                type="button"
-                className="ui-menu-item"
-                onClick={() => runMenu(() => openTarget({ content: { kind: "read", filePath: menu.row.path } }))}
-              >
-                <Icon name="book" /> 朗読で開く
+              <button type="button" className="ui-menu-item" onClick={() => runMenu(() => void newFile(menuDir))}>
+                <Icon name="new-file" /> 新規ファイル
               </button>
             </li>
-          )}
-          {menu.row.type === "file" && (
             <li>
-              <a className="ui-menu-item files-ctx-a" href={downloadURL(menu.row.path)} download onClick={() => setMenu(null)}>
-                <Icon name="cloud-download" /> ダウンロード
-              </a>
+              <button type="button" className="ui-menu-item" onClick={() => runMenu(() => void newFolder(menuDir))}>
+                <Icon name="new-folder" /> 新規フォルダ
+              </button>
             </li>
-          )}
-          <li>
-            <button type="button" className="ui-menu-item" onClick={() => runMenu(() => void renameRow(menu.row))}>
-              <Icon name="edit" /> 名前を変更
-            </button>
-          </li>
-          <li>
-            <button type="button" className="ui-menu-item danger" onClick={() => runMenu(() => void deleteRow(menu.row))}>
-              <Icon name="trash" /> 削除
-            </button>
-          </li>
-        </ul>
-      )}
+            <li>
+              <button type="button" className="ui-menu-item" onClick={() => runMenu(() => copyText(baseName(menu.row.path), "名前"))}>
+                <Icon name="copy" /> 名前をコピー
+              </button>
+            </li>
+            <li>
+              <button type="button" className="ui-menu-item" onClick={() => runMenu(() => copyText(menu.row.path, "相対パス"))}>
+                <Icon name="copy" /> 相対パスをコピー
+              </button>
+            </li>
+            {menu.row.type === "file" && (
+              <li>
+                <button
+                  type="button"
+                  className="ui-menu-item"
+                  onClick={() => runMenu(() => openTarget({ content: { kind: "read", filePath: menu.row.path } }))}
+                >
+                  <Icon name="book" /> 朗読で開く
+                </button>
+              </li>
+            )}
+            {menu.row.type === "file" && (
+              <li>
+                <a className="ui-menu-item files-ctx-a" href={downloadURL(menu.row.path)} download onClick={() => setMenu(null)}>
+                  <Icon name="cloud-download" /> ダウンロード
+                </a>
+              </li>
+            )}
+            <li>
+              <button type="button" className="ui-menu-item" onClick={() => runMenu(() => void renameRow(menu.row))}>
+                <Icon name="edit" /> 名前を変更
+              </button>
+            </li>
+            <li>
+              <button type="button" className="ui-menu-item danger" onClick={() => runMenu(() => void deleteRow(menu.row))}>
+                <Icon name="trash" /> 削除
+              </button>
+            </li>
+          </ul>,
+          document.body,
+        )}
     </div>
   );
 }
