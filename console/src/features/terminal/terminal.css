@@ -234,7 +234,7 @@
 }
 .onboard-sub {
   margin-top: 2px;
-  color: var(--muted);
+  color: var(--dialog-muted, var(--muted));
   font-size: 12px;
 }
 .onboard-steps {
@@ -285,7 +285,7 @@
 }
 .onboard-hint {
   font-size: 11px;
-  color: var(--muted);
+  color: var(--dialog-muted, var(--muted));
 }
 .onboard-cta {
   flex-shrink: 0;
@@ -317,7 +317,7 @@
   align-items: center;
   gap: 10px;
   margin: 14px 0 10px;
-  color: var(--muted);
+  color: var(--dialog-muted, var(--muted));
   font-size: 11px;
   white-space: nowrap;
 }
@@ -365,7 +365,7 @@
 }
 .onboard-tile-desc {
   font-size: 11px;
-  color: var(--muted);
+  color: var(--dialog-muted, var(--muted));
   line-height: 1.5;
   flex: 1;
 }
@@ -374,7 +374,7 @@
 }
 .onboard-opt {
   font-size: 10px;
-  color: var(--muted);
+  color: var(--dialog-muted, var(--muted));
   border: 1px solid var(--border2, var(--border));
   border-radius: 99px;
   padding: 0 6px;
