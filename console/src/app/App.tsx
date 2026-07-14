@@ -24,7 +24,9 @@ import { AssistantSection } from "../features/chat/AssistantSection.tsx";
 import { MemoQueueSection } from "../features/memo/MemoQueueSection.tsx";
 import { ProjectTree } from "../features/project/ProjectTree.tsx";
 import { OtherSessionsSection } from "../features/project/OtherSessionsSection.tsx";
+import { StoppedSessionsSection } from "../features/project/StoppedSessionsSection.tsx";
 import { FilesSection } from "../features/project/FilesSection.tsx";
+import { Section } from "../ui/Section.tsx";
 import { WsBar } from "./WsBar.tsx";
 import { TopBar } from "./TopBar.tsx";
 import { useSettingsUI, wireSettingsHistory } from "../features/settings/store.ts";
@@ -68,6 +70,7 @@ export function App() {
   const guideOpen = useSettingsUI((s) => s.guideOpen);
   const [booted, setBooted] = useState(false);
   const notificationSource = useNotificationStore((s) => s.sourceState);
+  const workspaceRunning = useWorkspaceStore((s) => s.state) === "running";
 
   // Left rail visibility. Desktop: leftOpen (persisted) + leftMode "push" (docks,
   // main reflows) / "overlay" (floats above main). Mobile (≤760px): the rail is an
@@ -280,11 +283,23 @@ export function App() {
               the repo-less session catch-all, and the global file browser at the
               foot (default collapsed; a reveal opens it). */}
           <div className="app-rail-scroll">
-            <AssistantSection />
-            <MemoQueueSection />
-            <ProjectTree />
-            <OtherSessionsSection />
-            <FilesSection />
+            {workspaceRunning ? (
+              <>
+                <AssistantSection />
+                <MemoQueueSection />
+                <ProjectTree />
+                <OtherSessionsSection />
+                <FilesSection />
+              </>
+            ) : (
+              <>
+                <StoppedRailSection id="assistant" title="アシスタント" icon="comment-discussion" />
+                <MemoQueueSection />
+                <StoppedRailSection id="repos" title="リポジトリ" icon="repo" />
+                <StoppedSessionsSection />
+                <StoppedRailSection id="files" title="ファイル" icon="files" defaultOpen={false} />
+              </>
+            )}
           </div>
         </nav>
         {/* Dims the main area and dismisses the pane: the mobile drawer, and the
@@ -306,5 +321,23 @@ export function App() {
       <StartHost />
       <SessionModals />
     </div>
+  );
+}
+
+function StoppedRailSection({
+  id,
+  title,
+  icon,
+  defaultOpen = true,
+}: {
+  id: string;
+  title: string;
+  icon: string;
+  defaultOpen?: boolean;
+}) {
+  return (
+    <Section id={id} title={title} icon={icon} defaultOpen={defaultOpen}>
+      <div className="section-empty">ワークスペースを起動すると表示されます。</div>
+    </Section>
   );
 }

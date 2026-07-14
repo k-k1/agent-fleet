@@ -38,10 +38,12 @@ interface SessionRowProps {
   /** True when the layout is split (badges/cross-highlight are dormant otherwise). */
   multi: boolean;
   running: boolean;
-  actions: SessionActions;
+  actions?: SessionActions;
+  /** History-only rail used while the workspace agent is unavailable. */
+  readOnly?: boolean;
 }
 
-export function SessionRow({ s, selected, opens, multi, running, actions }: SessionRowProps) {
+export function SessionRow({ s, selected, opens, multi, running, actions, readOnly = false }: SessionRowProps) {
   const setActive = useLayoutStore((st) => st.setActive);
   const openRename = useSessionUI((u) => u.openRename);
   const openBranchRename = useSessionUI((u) => u.openBranchRename);
@@ -99,6 +101,7 @@ export function SessionRow({ s, selected, opens, multi, running, actions }: Sess
       // Right-click opens the same ⋯ menu (open on the trailing contextMenu event
       // so the outside-click listener doesn't immediately close it).
       onContextMenu={(e) => {
+        if (readOnly) return;
         e.preventDefault();
         setMenuOpen(true);
       }}
@@ -110,7 +113,10 @@ export function SessionRow({ s, selected, opens, multi, running, actions }: Sess
           (dead
             ? "作業フォルダが存在しないため再開できません"
             : !s.alive
-              ? (ex ? ex.hint + "\n" : "") + "停止中（クリックで開いて再開ボタン / Ctrl・中クリックで新ペイン）"
+              ? (ex ? ex.hint + "\n" : "") +
+                (running
+                  ? "停止中（クリックで開いて再開ボタン / Ctrl・中クリックで新ペイン）"
+                  : "停止中（クリックで履歴を閲覧 / Ctrl・中クリックで新ペイン）")
               : (s.dir || "") + "（Ctrl/中クリックで新ペインに開く）") +
           `\n${kindLabel(s.kind)} · ${st.text}\nID: ${s.name}`
         }
@@ -185,12 +191,13 @@ export function SessionRow({ s, selected, opens, multi, running, actions }: Sess
           ))}
         </div>
       )}
-      <div className="sess-menu-wrap" ref={menuOpen ? menuRef : undefined}>
-        <button type="button" className="sess-menu-btn" title="メニュー" ref={menuBtnRef} onClick={() => setMenuOpen((v) => !v)}>
-          <Icon name="ellipsis" />
-        </button>
-        {menuOpen && (
-          <div className="ui-menu sess-menu" ref={menuElRef}>
+      {!readOnly && actions && (
+        <div className="sess-menu-wrap" ref={menuOpen ? menuRef : undefined}>
+          <button type="button" className="sess-menu-btn" title="メニュー" ref={menuBtnRef} onClick={() => setMenuOpen((v) => !v)}>
+            <Icon name="ellipsis" />
+          </button>
+          {menuOpen && (
+            <div className="ui-menu sess-menu" ref={menuElRef}>
             {/* Resume — kinds with no in-chat resume. SSM resumes through the login
                 modal (SSO handshake before attach). */}
             {!s.alive && !dead && running && !agentOf(s.kind).caps.chat && (
@@ -323,9 +330,10 @@ export function SessionRow({ s, selected, opens, multi, running, actions }: Sess
                 <Icon name="refresh" /> 作り直す（今の会話はアーカイブへ）
               </button>
             )}
-          </div>
-        )}
-      </div>
+            </div>
+          )}
+        </div>
+      )}
     </li>
   );
 }
