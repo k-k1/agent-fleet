@@ -693,7 +693,14 @@ export function attach(paneId: string, session: string) {
   };
   // An unexpected server-side drop (intentional switches/detach null this handler
   // first). Flag it so refocusing the pane reconnects — see reconnect().
-  ws.onclose = () => {
+  ws.onclose = (ev) => {
+    // A finite history replay closes normally after its last frame. Keep the
+    // rendered scrollback and do not label that expected EOF as a disconnection.
+    if (ev.code === 1000) {
+      clearHeartbeat(it);
+      setSoftKeyboard(it, false);
+      return;
+    }
     it.dropped = true;
     clearHeartbeat(it); // socket gone → stop pinging
     setSoftKeyboard(it, false); // no live PTY → don't summon the keyboard on focus

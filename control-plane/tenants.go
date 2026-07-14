@@ -96,7 +96,8 @@ func (a adminAPI) listTenants(w http.ResponseWriter, r *http.Request, ident Iden
 			"max_lfs_bytes":        lim.MaxLFSBytes,
 			"max_workspace_mem":    lim.MaxWorkspaceMem,
 			"session_idle_timeout": lim.SessionIdleTimeout, "ws_idle_timeout": lim.WSIdleTimeout,
-			"allow_agent_self_update": lim.AllowAgentSelfUpdate,
+			"allow_agent_self_update":         lim.AllowAgentSelfUpdate,
+			"terminal_history_retention_days": lim.TerminalHistoryRetentionDays,
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"tenants": out, "super_admin": isSuper})
@@ -299,10 +300,15 @@ func (a adminAPI) setTenantLimits(w http.ResponseWriter, r *http.Request, _ Iden
 		SessionIdleTimeout string `json:"session_idle_timeout"`
 		WSIdleTimeout      string `json:"ws_idle_timeout"`
 		// Operator gate for member CLI self-update (claude/opencode/codex).
-		AllowAgentSelfUpdate bool `json:"allow_agent_self_update"`
+		AllowAgentSelfUpdate         bool `json:"allow_agent_self_update"`
+		TerminalHistoryRetentionDays int  `json:"terminal_history_retention_days"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid json"})
+		return
+	}
+	if d := body.TerminalHistoryRetentionDays; d != 0 && d != 1 && d != 7 && d != 30 {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_retention", "terminal history retention must be 0, 1, 7, or 30 days"})
 		return
 	}
 	// Reject unparseable durations up front (empty stays empty = use default).
@@ -324,14 +330,15 @@ func (a adminAPI) setTenantLimits(w http.ResponseWriter, r *http.Request, _ Iden
 		return
 	}
 	lj, _ := json.Marshal(tenantLimits{
-		MaxWorkspaces:        body.MaxWorkspaces,
-		MaxSessions:          body.MaxSessions,
-		MaxGitRepos:          body.MaxGitRepos,
-		MaxLFSBytes:          body.MaxLFSBytes,
-		MaxWorkspaceMem:      body.MaxWorkspaceMem,
-		SessionIdleTimeout:   body.SessionIdleTimeout,
-		WSIdleTimeout:        body.WSIdleTimeout,
-		AllowAgentSelfUpdate: body.AllowAgentSelfUpdate,
+		MaxWorkspaces:                body.MaxWorkspaces,
+		MaxSessions:                  body.MaxSessions,
+		MaxGitRepos:                  body.MaxGitRepos,
+		MaxLFSBytes:                  body.MaxLFSBytes,
+		MaxWorkspaceMem:              body.MaxWorkspaceMem,
+		SessionIdleTimeout:           body.SessionIdleTimeout,
+		WSIdleTimeout:                body.WSIdleTimeout,
+		AllowAgentSelfUpdate:         body.AllowAgentSelfUpdate,
+		TerminalHistoryRetentionDays: body.TerminalHistoryRetentionDays,
 	})
 	if err := a.mgr.store.SetTenantLimits(r.Context(), t.ID, string(lj)); err != nil {
 		writeAPIErr(w, internalErr(err))
@@ -344,7 +351,8 @@ func (a adminAPI) setTenantLimits(w http.ResponseWriter, r *http.Request, _ Iden
 		"tenant": t.Slug, "max_workspaces": body.MaxWorkspaces, "max_sessions": body.MaxSessions,
 		"max_workspace_mem":    body.MaxWorkspaceMem,
 		"session_idle_timeout": body.SessionIdleTimeout, "ws_idle_timeout": body.WSIdleTimeout,
-		"allow_agent_self_update": body.AllowAgentSelfUpdate,
+		"allow_agent_self_update":         body.AllowAgentSelfUpdate,
+		"terminal_history_retention_days": body.TerminalHistoryRetentionDays,
 	})
 }
 

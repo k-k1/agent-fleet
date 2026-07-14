@@ -172,6 +172,9 @@ func (m *manager) workspaceExtraEnv(ctx context.Context, ws Workspace) []string 
 	if allowUpd && st.AgentUpdate {
 		env = append(env, "AF_AGENT_SELF_UPDATE=1")
 	}
+	if days := parseLimits(t.Limits).TerminalHistoryRetentionDays; days > 0 {
+		env = append(env, "AF_TERMINAL_HISTORY_RETENTION_DAYS="+strconv.Itoa(days))
+	}
 	// Internal git provider: inject the host + this membership's deterministic git
 	// token so the Agent seeds its cred store (secrets.go seedInternalGit) and
 	// clone/push authenticate transparently. Deterministic, so re-injection on

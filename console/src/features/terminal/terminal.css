@@ -157,6 +157,17 @@
   align-items: center;
   gap: 6px;
 }
+.term-history-actions {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  display: flex;
+  align-items: center;
+  padding: 8px;
+  border-radius: 8px;
+  background: color-mix(in srgb, #000 72%, transparent);
+  box-shadow: 0 2px 12px #0008;
+}
 
 /* Mobile control-key strip (hidden on desktop). */
 .termkeys {

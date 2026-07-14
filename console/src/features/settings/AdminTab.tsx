@@ -25,6 +25,7 @@ interface Tenant {
   session_idle_timeout?: string;
   ws_idle_timeout?: string;
   allow_agent_self_update?: boolean;
+  terminal_history_retention_days?: number;
 }
 interface Member {
   user_key: string;
@@ -1079,6 +1080,7 @@ function TenantView({
   const [sessIdle, setSessIdle] = useState(tenant?.session_idle_timeout || "");
   const [wsIdle, setWsIdle] = useState(tenant?.ws_idle_timeout || "");
   const [allowUpd, setAllowUpd] = useState(!!tenant?.allow_agent_self_update);
+  const [termRetention, setTermRetention] = useState(tenant?.terminal_history_retention_days || 0);
   const [saved, setSaved] = useState(false);
   const toast = useToast();
   const [members, setMembers] = useState<Member[] | null>(null);
@@ -1092,6 +1094,7 @@ function TenantView({
     setSessIdle(tenant?.session_idle_timeout || "");
     setWsIdle(tenant?.ws_idle_timeout || "");
     setAllowUpd(!!tenant?.allow_agent_self_update);
+    setTermRetention(tenant?.terminal_history_retention_days || 0);
   }, [slug, tenant]);
 
   const loadMembers = useCallback(async () => {
@@ -1117,6 +1120,7 @@ function TenantView({
       session_idle_timeout: sessIdle.trim(),
       ws_idle_timeout: wsIdle.trim(),
       allow_agent_self_update: allowUpd,
+      terminal_history_retention_days: termRetention,
     });
     if (res?.error) {
       toast(errText(res.error));
@@ -1181,6 +1185,22 @@ function TenantView({
             </div>
             <p className="admin-hint">
               放置された claude セッションは Session halt まで で停止中（再開可）に畳まれ、接続も稼働も無い Workspace は Workspace 停止まで で docker 停止します。書式は <code>30m</code> / <code>2h</code> / <code>90s</code>。空欄はデプロイ既定（既定は無効）に従い、<code>0</code> で明示的に無効化します。
+            </p>
+          </div>
+
+          <div className="admin-fgroup">
+            <h4>ターミナルログの保存</h4>
+            <label className="admin-fld">
+              <span className="af-cap">保持期間</span>
+              <select value={termRetention} onChange={(e) => setTermRetention(Number(e.target.value))}>
+                <option value={0}>無効（標準の短命履歴のみ）</option>
+                <option value={1}>1日</option>
+                <option value={7}>7日</option>
+                <option value={30}>30日</option>
+              </select>
+            </label>
+            <p className="admin-hint">
+              有効にすると、端末に表示された出力をWorkspaceの永続領域へ保存します。入力操作そのものは記録しませんが、コマンド出力に機密情報が含まれる可能性があります。変更は次回のWorkspace起動から反映されます。
             </p>
           </div>
 
