@@ -68,5 +68,9 @@ export interface ConnectionsStatus {
 export interface SsmHost {
   id: string;
   alias: string;
+  profileId: string;
+  region: string;
+  instanceId: string;
+  documentName: string;
   accountId?: string;
 }
