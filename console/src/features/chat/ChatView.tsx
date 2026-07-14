@@ -327,11 +327,14 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
               ...(work ? workVoiceOpts(baseVoice, workMode) : undefined),
             },
             work ? "チャット・作業過程" : "チャット",
-            onEnd,
+            (reason) => {
+              if (!work) setKaraoke(null);
+              onEnd?.(reason);
+            },
             "",
-            // ライブ配信カラオケ: 読み上げ中の文を通知し、ストリーミングバブルの該当ブロックを
-            // ハイライトする（StreamingMarkdown が highlight から DOM ブロックを探して光らせる）。
-            !work && workMode === "off" ? (t) => setKaraoke(t) : undefined,
+            // 通常声はライブ中も最終回答確定後もカラオケ表示する。
+            // 作業過程の小声再生だけは disclosure 内なのでハイライトしない。
+            !work ? (t) => setKaraoke(t) : undefined,
           )
         : null;
     stopTtsForReplacement(ttsRef.current);
@@ -573,6 +576,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
                   ts={m.ts}
                   agentName={agent?.assistantName || "アシスタント"}
                   voice={{ ...(assistantVoiceOpts(assistId, assistVoice) ?? {}), paneId }}
+                  highlight={i === conv.messages.length - 1 ? karaoke : null}
                 />
               </div>
             );
@@ -833,12 +837,14 @@ function AssistantTurn({
   ts,
   agentName,
   voice,
+  highlight,
 }: {
   text: string;
   steps?: ChatStep[];
   ts: number;
   agentName: string;
   voice?: Partial<TtsOptions>;
+  highlight?: string | null;
 }) {
   const ttsEnabled = useSettings().ttsEnabled;
   const bodyRef = useRef<HTMLDivElement | null>(null);
@@ -846,6 +852,28 @@ function AssistantTurn({
   const [state, setState] = useState<"idle" | "playing" | "paused">("idle");
   // Floating "ここから読み上げ" pill anchored to a mouse selection inside the bubble.
   const [selPill, setSelPill] = useState<{ x: number; y: number; block: number } | null>(null);
+  const autoLitRef = useRef<HTMLElement | null>(null);
+
+  // 自動読み上げは最終回答の確定後にこの完成済み DOM へ移るため、
+  // startTts から通知された文を本文ブロックへ対応付けて光らせる。
+  useEffect(() => {
+    const body = bodyRef.current;
+    if (!body || !highlight) {
+      autoLitRef.current?.classList.remove("tts-active");
+      autoLitRef.current = null;
+      return;
+    }
+    const norm = (s: string) => s.replace(/\s+/g, "");
+    const needle = norm(highlight).slice(0, 16);
+    if (!needle) return;
+    const target = collectBlocks(body).find((b) => norm(b.textContent || "").includes(needle));
+    if (!target) return;
+    if (autoLitRef.current && autoLitRef.current !== target) autoLitRef.current.classList.remove("tts-active");
+    target.classList.add("tts-active");
+    autoLitRef.current = target;
+    target.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [highlight]);
+  useEffect(() => () => autoLitRef.current?.classList.remove("tts-active"), []);
 
   // Stop this bubble's reading if the pane/component goes away mid-read.
   useEffect(() => () => handleRef.current?.stop("replaced"), []);
