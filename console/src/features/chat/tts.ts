@@ -389,7 +389,7 @@ let backgroundEventsWired = false;
 function masterTarget(): number {
   const hidden = typeof document !== "undefined" && document.hidden;
   const focused = typeof document === "undefined" || document.hasFocus();
-  return ttsMasterGain(getSettings().ttsQuietWhenHidden, ttsIsBackground(hidden, focused));
+  return ttsMasterGain(getSettings().ttsBackgroundPlayback, ttsIsBackground(hidden, focused));
 }
 
 function syncMasterGain(immediate = false): void {
