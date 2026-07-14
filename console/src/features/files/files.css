@@ -87,9 +87,26 @@
   background: var(--leftpane-bg);
   border-bottom: 1px solid var(--border2);
   box-shadow: 0 2px 6px color-mix(in srgb, #000 18%, transparent);
+  overflow: hidden;
 }
 .fs-sticky-row {
   background: inherit;
+}
+.fs-sticky-caret {
+  width: 12px;
+  flex: none;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+}
+.fs-sticky-caret:hover,
+.fs-sticky-caret:focus-visible {
+  color: var(--fg);
+  outline: none;
 }
 
 /* Changes view. */

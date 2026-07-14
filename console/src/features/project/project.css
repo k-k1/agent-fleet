@@ -132,6 +132,21 @@
   align-items: flex-start;
   gap: 2px;
 }
+/* Keep the current project context visible while its sessions scroll. A node's
+   sticky header is constrained by that node's <li>, so the next base/WT pushes
+   it away naturally. Worktrees pin one row below their parent base. */
+.proj-tree > .proj-node > .proj-node-head {
+  position: sticky;
+  top: calc(var(--sec-head-h, 34px) + 33px);
+  z-index: 2;
+  background: var(--leftpane-bg);
+}
+.proj-node.wt > .proj-node-head {
+  position: sticky;
+  top: calc(var(--sec-head-h, 34px) + 33px + 36px);
+  z-index: 2;
+  background: var(--leftpane-bg);
+}
 .proj-node-caret {
   flex: none;
   width: 18px;
