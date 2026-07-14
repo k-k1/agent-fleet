@@ -3,6 +3,7 @@ import type { CSSProperties, KeyboardEvent, ClipboardEvent } from "react";
 import { MarkdownView } from "../viewer/MarkdownView.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { useLayoutStore } from "../../layout/store.ts";
+import { useTtsStore } from "../../core/store/tts.ts";
 import { useChatStore } from "./store.ts";
 import { chatGet, chatStream, chatCreate, assistantGet, chatPasteImage } from "./api.ts";
 import { errText, raw } from "../../core/api/client.ts";
@@ -16,6 +17,7 @@ import {
   assistantVoiceOpts,
   workVoiceOpts,
   type TtsController,
+  type TtsEndReason,
   type TtsOptions,
 } from "./tts.ts";
 import { readTurn, collectBlocks, blockIndexAt, type TurnReadHandle } from "../mirror/turnTts.ts";
@@ -315,7 +317,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
       paneId,
     };
     const workMode = settings.ttsWorkRead;
-    const makeTts = (work = false) =>
+    const makeTts = (work = false, onEnd?: (reason: TtsEndReason) => void) =>
       settings.ttsEnabled
         ? startTts(
             {
@@ -325,15 +327,66 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
               ...(work ? workVoiceOpts(baseVoice, workMode) : undefined),
             },
             work ? "チャット・作業過程" : "チャット",
-            undefined,
+            (reason) => {
+              if (!work) setKaraoke(null);
+              onEnd?.(reason);
+            },
             "",
-            // ライブ配信カラオケ: 読み上げ中の文を通知し、ストリーミングバブルの該当ブロックを
-            // ハイライトする（StreamingMarkdown が highlight から DOM ブロックを探して光らせる）。
-            !work && workMode === "off" ? (t) => setKaraoke(t) : undefined,
+            // 通常声はライブ中も最終回答確定後もカラオケ表示する。
+            // 作業過程の小声再生だけは disclosure 内なのでハイライトしない。
+            !work ? (t) => setKaraoke(t) : undefined,
           )
         : null;
     stopTtsForReplacement(ttsRef.current);
     ttsRef.current = workMode === "off" ? makeTts() : null;
+
+    // 作業過程は確定順に 1 本ずつ読む。次の step が来ても再生中の step は止めず、
+    // 最終回答が来た時点でだけ再生中・未再生をまとめて破棄して通常声へ譲る。
+    // 他の読み上げに置換された場合も、それを即座に置換し返さず、グローバル再生が
+    // 空いてから続きを再開する。
+    const workQueue: string[] = [];
+    let workCurrent: TtsController | null = null;
+    let workClosed = false;
+    let unsubscribeWork = () => {};
+    let pumpWork = () => {};
+    pumpWork = () => {
+      if (workMode === "off" || workClosed || workCurrent || !workQueue.length) return;
+      const st = useTtsStore.getState();
+      if (st.active || st.speaking) return;
+      const text = workQueue.shift()!;
+      const c = makeTts(true, (reason) => {
+        if (workCurrent === c) workCurrent = null;
+        if (ttsRef.current === c) ttsRef.current = null;
+        if (reason === "explicit") {
+          workClosed = true;
+          workQueue.length = 0;
+          unsubscribeWork();
+        } else {
+          queueMicrotask(pumpWork);
+        }
+      });
+      if (!c) return;
+      workCurrent = c;
+      ttsRef.current = c;
+      c.push(text);
+      c.flush();
+    };
+    unsubscribeWork =
+      workMode === "off"
+        ? () => {}
+        : useTtsStore.subscribe(() => {
+            queueMicrotask(pumpWork);
+          });
+    const closeWork = () => {
+      unsubscribeWork();
+      if (workClosed) return;
+      workClosed = true;
+      workQueue.length = 0;
+      stopTtsForReplacement(workCurrent);
+      if (ttsRef.current === workCurrent) ttsRef.current = null;
+      workCurrent = null;
+    };
+    let streamDone = false;
     markChatBusy(target.id, true); // publish 進行中 to the rail
     // Mirror the live reply + working steps + final conversation into the store so a pane
     // re-opened on this conversation mid-stream re-attaches and picks up the answer even if
@@ -373,20 +426,17 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
           setStreamSteps([...steps]);
           setKaraoke(null);
           setLive(convId, { text: "", steps: [...steps] });
-          stopTtsForReplacement(ttsRef.current);
           if (workMode === "off") {
+            stopTtsForReplacement(ttsRef.current);
             ttsRef.current = makeTts(); // 従来動作: 次の tentative message をライブ再生
           } else if (step.text?.trim()) {
-            const c = makeTts(true);
-            ttsRef.current = c;
-            c?.push(step.text);
-            c?.flush();
-          } else {
-            ttsRef.current = null;
+            workQueue.push(step.text);
+            pumpWork();
           }
         },
         onError: (m) => setError(m),
         onDone: (updated) => {
+          streamDone = true;
           if (updated) {
             applyConv(updated);
             publishSnapshot(updated); // reaches any live pane, even after this one unmounts
@@ -396,7 +446,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
             ttsRef.current?.flush();
           } else {
             // 最終回答の到着で、残っている小声再生を置換して通常声へ戻す。
-            stopTtsForReplacement(ttsRef.current);
+            closeWork();
             const finalText = acc.trim() || updated?.messages.at(-1)?.content || "";
             const c = finalText ? makeTts() : null;
             ttsRef.current = c;
@@ -407,6 +457,8 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
       },
       ac.signal,
     );
+    // Abort/error paths emit no done event. Work playback must not outlive the turn.
+    if (!streamDone) closeWork();
     // Abort/error paths emit no done event, so clear the streaming state here too. teardown is
     // idempotent — after a normal completion this re-run is a harmless no-op.
     abortRef.current = null;
@@ -524,6 +576,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
                   ts={m.ts}
                   agentName={agent?.assistantName || "アシスタント"}
                   voice={{ ...(assistantVoiceOpts(assistId, assistVoice) ?? {}), paneId }}
+                  highlight={i === conv.messages.length - 1 ? karaoke : null}
                 />
               </div>
             );
@@ -784,12 +837,14 @@ function AssistantTurn({
   ts,
   agentName,
   voice,
+  highlight,
 }: {
   text: string;
   steps?: ChatStep[];
   ts: number;
   agentName: string;
   voice?: Partial<TtsOptions>;
+  highlight?: string | null;
 }) {
   const ttsEnabled = useSettings().ttsEnabled;
   const bodyRef = useRef<HTMLDivElement | null>(null);
@@ -797,6 +852,28 @@ function AssistantTurn({
   const [state, setState] = useState<"idle" | "playing" | "paused">("idle");
   // Floating "ここから読み上げ" pill anchored to a mouse selection inside the bubble.
   const [selPill, setSelPill] = useState<{ x: number; y: number; block: number } | null>(null);
+  const autoLitRef = useRef<HTMLElement | null>(null);
+
+  // 自動読み上げは最終回答の確定後にこの完成済み DOM へ移るため、
+  // startTts から通知された文を本文ブロックへ対応付けて光らせる。
+  useEffect(() => {
+    const body = bodyRef.current;
+    if (!body || !highlight) {
+      autoLitRef.current?.classList.remove("tts-active");
+      autoLitRef.current = null;
+      return;
+    }
+    const norm = (s: string) => s.replace(/\s+/g, "");
+    const needle = norm(highlight).slice(0, 16);
+    if (!needle) return;
+    const target = collectBlocks(body).find((b) => norm(b.textContent || "").includes(needle));
+    if (!target) return;
+    if (autoLitRef.current && autoLitRef.current !== target) autoLitRef.current.classList.remove("tts-active");
+    target.classList.add("tts-active");
+    autoLitRef.current = target;
+    target.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [highlight]);
+  useEffect(() => () => autoLitRef.current?.classList.remove("tts-active"), []);
 
   // Stop this bubble's reading if the pane/component goes away mid-read.
   useEffect(() => () => handleRef.current?.stop("replaced"), []);
