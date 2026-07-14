@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
@@ -195,6 +196,24 @@ func TestCodexParseRolloutEmpty(t *testing.T) {
 	}
 	if turns, _ := parseRollout(only); len(turns) != 0 {
 		t.Fatalf("system-only rollout -> %d turns, want 0", len(turns))
+	}
+}
+
+func TestLatestRolloutLifecycle(t *testing.T) {
+	lines := []string{
+		`{"timestamp":"2026-07-14T18:00:00Z","type":"event_msg","payload":{"type":"task_complete"}}`,
+		`{"timestamp":"2026-07-14T18:01:00Z","type":"event_msg","payload":{"type":"task_started"}}`,
+		`{"type":"response_item","payload":{"type":"message"}}`,
+	}
+	state, at := latestRolloutLifecycle(lines)
+	if state != "task_started" || !at.Equal(time.Date(2026, 7, 14, 18, 1, 0, 0, time.UTC)) {
+		t.Fatalf("lifecycle = %q %v, want latest task_started", state, at)
+	}
+
+	lines = append(lines, `{"timestamp":"2026-07-14T18:02:00.123Z","type":"event_msg","payload":{"type":"task_complete"}}`)
+	state, at = latestRolloutLifecycle(lines)
+	if state != "task_complete" || at.Nanosecond() != 123000000 {
+		t.Fatalf("lifecycle = %q %v, want fractional task_complete", state, at)
 	}
 }
 
