@@ -6,16 +6,45 @@ package codex
 
 import (
 	"errors"
+	"sync"
+	"time"
+
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
-	"time"
 )
 
 // sids maps our deterministic slot sid to codex's own session id: written by the
 // session-status hook (RememberSid — codex has no --session-id flag to pin), read
 // for `codex resume <id>`.
 var sids = agents.NewSidStore("codex-sid")
+
+// compacting is keyed by Codex's native thread id and fed by app-server
+// contextCompaction item lifecycle events (see package main/codex_appserver.go).
+var compacting sync.Map
+
+func SetCompacting(threadID string, active bool) {
+	if threadID == "" {
+		return
+	}
+	if active {
+		compacting.Store(threadID, true)
+	} else {
+		compacting.Delete(threadID)
+	}
+}
+
+func ClearCompacting() { compacting.Range(func(k, _ any) bool { compacting.Delete(k); return true }) }
+
+func IsCompactingThread(threadID string) bool {
+	_, ok := compacting.Load(threadID)
+	return ok
+}
+
+func isCompacting(m session.Meta) bool {
+	threadID := sids.Read(session.UUID(m.Dir, m.Name))
+	return IsCompactingThread(threadID)
+}
 
 // RememberSid records the slot sid → codex session id mapping. Called from the
 // session-status hook entrypoint in package main when codex's hook JSON carries
@@ -92,6 +121,9 @@ func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 			if rolloutCompletedAfter(m, workingSince) {
 				li.State = "idle"
 			}
+		}
+		if isCompacting(m) {
+			li.State = "compacting"
 		}
 		// The hooks report only working/idle — a request_user_input dialog keeps the
 		// turn "working" forever. Probe the rollout tail so the sessions list shows

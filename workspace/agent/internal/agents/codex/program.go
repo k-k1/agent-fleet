@@ -48,6 +48,11 @@ func buildProgram(model, slotSid, codexResumeID, forkFrom string) string {
 		return "-c " + session.ShellQuote(val)
 	}
 	parts := []string{"codex"}
+	if addr := os.Getenv("AF_CODEX_APP_SERVER_ADDR"); addr != "" {
+		// Global options must precede resume/fork. The TUI remains interactive; only
+		// its backend moves behind the local app-server observed by Agent Fleet.
+		parts = append(parts, "--remote", session.ShellQuote(addr))
+	}
 	switch {
 	case codexResumeID != "":
 		parts = append(parts, "resume", session.ShellQuote(codexResumeID))
