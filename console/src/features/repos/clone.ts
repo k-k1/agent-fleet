@@ -37,7 +37,7 @@ export async function cloneRepo(
       await refreshRepos();
       const added = useReposStore.getState().repos.find((r) => !beforeNames.has(r.name));
       if (!added) {
-        toast("clone に失敗: " + errText(res.error));
+        toast("クローンに失敗: " + errText(res.error));
         return { ok: false, name: "" };
       }
       useFilesStore.getState().revealInFiles("repos/" + added.name);
@@ -48,7 +48,7 @@ export async function cloneRepo(
     else useFilesStore.getState().bump();
     return { ok: true, name: res?.name || "" };
   } catch (e) {
-    toast("clone に失敗: " + e);
+    toast("クローンに失敗: " + e);
     return { ok: false, name: "" };
   }
 }

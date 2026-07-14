@@ -170,15 +170,15 @@ function GuideBody({ g, onNavigate }: { g: GuideState; onNavigate?: () => void }
           git プロバイダを接続<span className="onboard-opt">任意</span>
         </>
       ),
-      hint: "private リポジトリを clone / push するなら接続します",
+      hint: "private リポジトリをクローン / push するなら接続します",
       cta: g.gitOk
         ? null
         : { text: "接続する", icon: "plug", disabled: !g.running, title: wsFirst, on: after(() => g.openSettings("git")) },
     },
     {
       done: false, // done = the card itself disappears (a session exists)
-      label: "リポジトリを clone してセッション開始",
-      hint: "clone と起動は「はじめる」からまとめて行えます",
+      label: "リポジトリをクローンしてセッション開始",
+      hint: "クローンと起動は「はじめる」からまとめて行えます",
       cta: { text: "はじめる", icon: "rocket", disabled: !g.running, title: wsFirst, on: after(g.openStart) },
     },
   ];
@@ -218,7 +218,7 @@ function GuideBody({ g, onNavigate }: { g: GuideState; onNavigate?: () => void }
             <Icon name="repo" />
           </span>
           <span className="onboard-tile-title">リポジトリで開発する</span>
-          <span className="onboard-tile-desc">git を接続し、リポジトリを clone して AI セッションを起動します。</span>
+          <span className="onboard-tile-desc">git を接続し、リポジトリをクローンして AI セッションを起動します。</span>
           <button className="onboard-cta" onClick={() => chooseDev(track !== "dev")}>
             <Icon name={track === "dev" ? "chevron-up" : "chevron-down"} /> {track === "dev" ? "手順をたたむ" : "開発のセットアップへ"}
           </button>

@@ -326,7 +326,7 @@ function WorkspaceDangerZone() {
             <li className="keep"><Icon name="check" /> ログイン・接続（GitHub / Bitbucket / Claude）は保持されます</li>
             <li className="keep"><Icon name="check" /> <code>~/repos</code> 以外のホーム（<code>~/.local</code> など）は残ります</li>
             <li className="lose"><Icon name="close" /> 実行中のセッションは失われます</li>
-            <li className="lose"><Icon name="close" /> clone 済みリポジトリ（未コミット変更を含む）は削除されます</li>
+            <li className="lose"><Icon name="close" /> クローン済みリポジトリ（未コミット変更を含む）は削除されます</li>
           </ul>
         </ConfirmDialog>
       )}
@@ -342,7 +342,7 @@ function WorkspaceDangerZone() {
           <ul className="confirm-list">
             <li className="keep"><Icon name="check" /> ログイン・接続（GitHub / Bitbucket / Claude）は保持されます</li>
             <li className="lose"><Icon name="close" /> 実行中のセッションは失われます</li>
-            <li className="lose"><Icon name="close" /> clone 済みリポジトリ（未コミット変更を含む）は削除されます</li>
+            <li className="lose"><Icon name="close" /> クローン済みリポジトリ（未コミット変更を含む）は削除されます</li>
             <li className="lose"><Icon name="close" /> <code>~/.local</code>・キャッシュ・設定など、ホームのその他はすべて削除されます</li>
           </ul>
         </ConfirmDialog>

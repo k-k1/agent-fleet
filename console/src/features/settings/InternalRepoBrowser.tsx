@@ -159,9 +159,9 @@ export function InternalRepoBrowser({ name, onClose }: { name: string; onClose: 
             ) : blob === null ? (
               <p className="muted pad">読み込み中…</p>
             ) : blob.too_large ? (
-              <p className="muted pad">プレビューには大きすぎます（{fmtSize(blob.size)}）。clone して参照してください。</p>
+              <p className="muted pad">プレビューには大きすぎます（{fmtSize(blob.size)}）。クローンして参照してください。</p>
             ) : blob.lfs ? (
-              <p className="muted pad">Git LFS オブジェクト{blob.lfs_oid ? `（sha256:${blob.lfs_oid.slice(0, 12)}…）` : ""}。clone して取得してください。</p>
+              <p className="muted pad">Git LFS オブジェクト{blob.lfs_oid ? `（sha256:${blob.lfs_oid.slice(0, 12)}…）` : ""}。クローンして取得してください。</p>
             ) : blob.binary ? (
               <p className="muted pad">バイナリファイル（{fmtSize(blob.size)}）はプレビューできません。</p>
             ) : (
