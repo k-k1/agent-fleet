@@ -792,35 +792,35 @@ function ChatMarkdown({ source, breaks, streaming }: { source: string; breaks?: 
 function ChatSteps({ steps, defaultOpen, live }: { steps: ChatStep[]; defaultOpen?: boolean; live?: boolean }) {
   const [open, setOpen] = useState(!!defaultOpen);
   if (!steps.length) return null;
-  const tools = [...new Set(steps.flatMap((s) => s.tools ?? []))];
+  const toolCount = steps.reduce((n, step) => n + (step.tools?.length ?? 0), 0);
   return (
-    <div className={"chat-steps" + (live ? " live" : "")}>
-      <button type="button" className="chat-steps-head" onClick={() => setOpen((o) => !o)}>
+    <details
+      className={"mt-work chat-steps" + (live ? " live" : "")}
+      open={open}
+      onToggle={(e) => setOpen(e.currentTarget.open)}
+    >
+      <summary className="mt-work-head">
         <Icon name={open ? "chevron-down" : "chevron-right"} />
         {live && <Icon name="loading" spin />}
-        <span className="chat-steps-label">作業過程</span>
-        <span className="chat-steps-count">{steps.length}</span>
-        {tools.length > 0 && <span className="chat-steps-tools">{tools.join(" · ")}</span>}
-      </button>
-      {open && (
-        <div className="chat-steps-body">
-          {steps.map((s, i) => (
-            <div key={i} className="chat-step">
-              {s.text && <ChatMarkdown source={s.text} breaks />}
-              {s.tools && s.tools.length > 0 && (
-                <div className="chat-step-tools">
-                  {s.tools.map((t, j) => (
-                    <span key={j} className="chat-step-tool">
-                      <Icon name="tools" /> {t}
-                    </span>
-                  ))}
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
+        <span className="mt-work-title">作業過程</span>
+        <span className="mt-work-count muted">
+          ツール {toolCount}件{steps.length > 0 ? `・途中応答 ${steps.length}件` : ""}
+        </span>
+      </summary>
+      <div className="mt-work-body">
+        {steps.map((s, i) => (
+          <div key={i} className="chat-step">
+            {s.text && <ChatMarkdown source={s.text} breaks />}
+            {s.tools?.map((tool, j) => (
+              <div key={j} className="mt-tool">
+                <Icon name="tools" />
+                <span className="mt-tool-name">{tool}</span>
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
+    </details>
   );
 }
 
