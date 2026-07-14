@@ -70,7 +70,10 @@
   background: var(--lp-active-bg, var(--active-bg));
   box-shadow: inset 2px 0 0 var(--lp-accent, var(--accent));
 }
-.sess-row.dead {
+/* Keep the context menu outside the dead-row opacity. Applying opacity to the
+   row itself creates a stacking context, which traps the fixed menu below
+   later sticky section headers regardless of the menu's own z-index. */
+.sess-row.dead > :not(.sess-menu-wrap) {
   opacity: 0.55;
 }
 .sess-btn {
