@@ -57,7 +57,7 @@ export function TtsTab() {
           <OnOff value={s.ttsQuietWhenHidden} onChange={(v) => setSetting("ttsQuietWhenHidden", v)} />
         </Row>
         <p className="muted ds-note">
-          別タブへ切り替えたときやブラウザを最小化したとき、読み上げ音量を55%へ下げます。
+          別タブへ切り替えたときやブラウザを最小化したとき、読み上げ音量を35%へ下げます。
           Console が見える状態へ戻ると通常音量へ滑らかに戻ります。
         </p>
         <Row label="ペイン位置に合わせて左右へ振る">

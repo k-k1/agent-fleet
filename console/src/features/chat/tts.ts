@@ -26,7 +26,7 @@ import {
 import { effectiveDict } from "./ttsDict.ts";
 import { makeAudioLru } from "./ttsCache.ts";
 import { speakersCatalog, type Speaker, type SpeakerStyle } from "./ttsSpeakers.ts";
-import { ttsMasterGain, ttsPanePan, type TtsController, type TtsEndReason, type TtsStopReason } from "./ttsControl.ts";
+import { ttsMasterGain, ttsPanePan, ttsWorkGain, type TtsController, type TtsEndReason, type TtsStopReason } from "./ttsControl.ts";
 export { stopTtsForReplacement } from "./ttsControl.ts";
 export type { TtsController, TtsEndReason, TtsStopReason } from "./ttsControl.ts";
 
@@ -230,7 +230,9 @@ export function workVoiceOpts(
   mode = getSettings().ttsWorkRead,
 ): Partial<TtsOptions> | undefined {
   if (mode === "off") return undefined;
-  const volume = mode === "hushed" ? 0.42 : 0.58;
+  // ヒソヒソは話者スタイル自体の演技に加えて、出力ゲインも明確に下げる。
+  // スタイルによって素の音圧が高い場合でも、最終回答より小さく聞こえる値にする。
+  const volume = ttsWorkGain(mode);
   const voice = base?.voice || getSettings().ttsVoiceVoicevox;
   const wanted = mode === "hushed" ? ["ヒソヒソ"] : ["ささやき", "囁き"];
   const cat = speakersCatalog();

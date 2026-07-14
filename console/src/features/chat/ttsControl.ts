@@ -19,9 +19,15 @@ export function stopTtsForReplacement(c: TtsController | null | undefined): void
   c?.stop("replaced");
 }
 
-export const HIDDEN_TTS_GAIN = 0.55;
+export const HIDDEN_TTS_GAIN = 0.35;
 export function ttsMasterGain(quietWhenHidden: boolean, hidden: boolean): number {
   return quietWhenHidden && hidden ? HIDDEN_TTS_GAIN : 1;
+}
+
+export const WORK_HUSHED_GAIN = 0.3;
+export const WORK_WHISPER_GAIN = 0.58;
+export function ttsWorkGain(mode: string): number {
+  return mode === "hushed" ? WORK_HUSHED_GAIN : WORK_WHISPER_GAIN;
 }
 
 export const MAX_PANE_PAN = 0.7;
