@@ -62,6 +62,10 @@ export function TerminalView({
   // Session is stopped while shown here → mask the disconnected terminal with an
   // in-place 再開 (resume is explicit; auto-resume is abolished).
   const stopped = !!session && sessionMeta != null && sessionMeta.alive === false;
+  // Plain shells expect command input, so entering one with a Japanese IME still
+  // active is almost always accidental. The class applies `ime-mode: disabled`
+  // to xterm's helper textarea; agent chat terminals keep normal IME behaviour.
+  const disableIme = sessionMeta?.kind === "shell" || sessionMeta?.kind === "ssm";
 
   // One idle image per mounted pane, stable across re-renders.
   const idleSrc = useMemo(() => IDLE_ARTWORK[Math.floor(Math.random() * IDLE_ARTWORK.length)], []);
@@ -182,7 +186,7 @@ export function TerminalView({
       </header>
       {ctxUsage && <ContextBar {...(ctxUsage as { read: number; create: number; fresh: number; model?: string; window?: number })} />}
       <div className="term-body">
-        <div className="terminal" ref={ref} />
+        <div className={"terminal" + (disableIme ? " terminal-ime-disabled" : "")} ref={ref} />
         {!session && (
           <div className="term-empty">
             <img className="term-empty-img" src={idleSrc} alt="Agent Fleet" />
