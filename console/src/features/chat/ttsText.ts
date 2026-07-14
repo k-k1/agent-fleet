@@ -313,6 +313,53 @@ function shortenSlashPause(t: string): string {
   });
 }
 
+// --- 日付・時刻の日本語読み -------------------------------------------------
+// 記号区切りの数値をそのまま音声エンジンへ渡すと、ハイフン・スラッシュ・
+// コロンを記号として読む。実在する範囲の日付/時刻だけ「年月日・時分秒」へ展開する。
+// M/D は分数・除算と曖昧なため日付を優先しつつ、明確な数式文脈だけ保護する。
+const FULL_DATE = /(^|[^0-9A-Za-z])(\d{4})([-/])(\d{1,2})\3(\d{1,2})(?![0-9A-Za-z])/g;
+const SHORT_DATE = /(^|[^0-9A-Za-z/])(\d{1,2})\/(\d{1,2})(?![0-9A-Za-z/])/g;
+const CLOCK_TIME = /(^|[^\d])(\d{1,2}):(\d{2})(?::(\d{2}))?(?!\d)/g;
+const FRACTION_BEFORE = /(?:確率|割合|比率|分数|計算|除算|商)(?:は|が|を|の)?\s*$/;
+const FRACTION_AFTER = /^\s*(?:倍|を\s*(?:計算|求め|割る)|[=+×÷*\-])/;
+
+function leapYear(year: number): boolean {
+  return year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+}
+
+function validDate(year: number | null, month: number, day: number): boolean {
+  if ((year != null && year < 1) || month < 1 || month > 12 || day < 1) return false;
+  const feb = year == null || leapYear(year) ? 29 : 28;
+  const days = [31, feb, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  return day <= days[month - 1];
+}
+
+function applyDateTimeReadings(text: string): string {
+  let t = text.replace(FULL_DATE, (whole, lead: string, ys: string, _sep: string, ms: string, ds: string) => {
+    const year = Number(ys);
+    const month = Number(ms);
+    const day = Number(ds);
+    return validDate(year, month, day) ? `${lead}${year}年${month}月${day}日` : whole;
+  });
+  t = t.replace(SHORT_DATE, (whole, lead: string, ms: string, ds: string, offset: number, source: string) => {
+    const month = Number(ms);
+    const day = Number(ds);
+    if (!validDate(null, month, day)) return whole;
+    const numberAt = offset + lead.length;
+    const before = source.slice(Math.max(0, numberAt - 12), numberAt);
+    const after = source.slice(offset + whole.length, offset + whole.length + 12);
+    if (FRACTION_BEFORE.test(before) || FRACTION_AFTER.test(after)) return whole;
+    return `${lead}${month}月${day}日`;
+  });
+  return t.replace(CLOCK_TIME, (whole, lead: string, hs: string, ms: string, ss?: string) => {
+    const hour = Number(hs);
+    const minute = Number(ms);
+    const second = ss == null ? null : Number(ss);
+    if (hour > 23 || minute > 59 || (second != null && second > 59)) return whole;
+    return `${lead}${hour}時${minute}分${second == null ? "" : `${second}秒`}`;
+  });
+}
+
 // --- 波ダッシュ（〜/～）の読み分け -------------------------------------------------
 // 「3〜5倍速」のような範囲指定は「3から5倍速」と読ませたい一方、「〜〜〜」のように連続
 // させる使い方は文章の省略・言いよどみ（「詳細はほにゃらら〜〜〜」等）を表すので、両者を
@@ -333,7 +380,8 @@ function applyTildeReadings(text: string): string {
 }
 
 export function applyBuiltinReadings(text: string): string {
-  let t = shortenSlashPause(text);
+  let t = applyDateTimeReadings(text);
+  t = shortenSlashPause(t);
   t = tameMidToPause(t); // 文中の溜め（――・……。行頭は plainify が既に処理済み）
   t = t.replace(KARA_KATAKANA, "から");
   t = applyTildeReadings(t);
