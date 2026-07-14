@@ -325,6 +325,8 @@ func registerAgentEnvRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("PUT /api/claude/settings", rest)
 	mux.HandleFunc("GET /api/claude/usage", rest)
 	mux.HandleFunc("GET /api/codex/usage", rest)
+	mux.HandleFunc("GET /api/codex/settings", rest)
+	mux.HandleFunc("PUT /api/codex/settings", rest)
 	// codex / opencode rtk toggle — proxied to the Agent.
 	mux.HandleFunc("GET /api/agents/rtk", rest)
 	mux.HandleFunc("PUT /api/agents/rtk", rest)
