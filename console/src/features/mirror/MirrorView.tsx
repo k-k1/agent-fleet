@@ -42,7 +42,7 @@ import { kindIcon, kindLabel, kindShort, kindClass } from "../../lib/sessionkind
 import { agentOf } from "../../agents/registry.ts";
 import { hasLaunchSeed, takeLaunchSeed } from "../../lib/launchSeed.ts";
 import { displayName, stateInfo } from "../../lib/sessionview.ts";
-import { confirmedWorkEnd, textOfParts, workSplit } from "./mirrorParts.ts";
+import { confirmedWorkEnd, latestWorkPromptIndex, textOfParts, workSplit } from "./mirrorParts.ts";
 import { coarsePointer } from "../../lib/device.ts";
 
 const q = encodeURIComponent;
@@ -1428,16 +1428,10 @@ export function MirrorView({
       (settings.ttsAutoReadAllPanes ? isTurnReader(session, ttsTokenRef.current) : active);
 
     if (status === "working" && settings.ttsWorkRead !== "off") {
-      // 現在のユーザープロンプト以後だけを見る。初回ロードした履歴や、末尾のキュー済み
-      // synthetic user turn は作業過程として再読しない。
-      let lastUser = -1;
-      for (let i = groups.length - 1; i >= 0; i--) {
-        const g = groups[i];
-        if (g.role === "user" && !g.pending && !g.queued) {
-          lastUser = i;
-          break;
-        }
-      }
+      // 現在のユーザープロンプト以後だけを見る。送信直後の pending echo も境界に含め、
+      // 実ターンが履歴へ着地するまでの間に一つ前の作業過程へ巻き戻らないようにする。
+      // まだ実行されていない queued prompt は現在の作業境界にはしない。
+      const lastUser = latestWorkPromptIndex(groups);
       for (let i = lastUser + 1; i < groups.length; i++) {
         const g = groups[i];
         if (g.role !== "assistant" || g.sidechain || g.compact || g.idx === undefined) continue;
