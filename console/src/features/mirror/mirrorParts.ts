@@ -12,6 +12,20 @@ export interface WorkSplit {
   responses: number;
 }
 
+export interface PromptBoundaryLike {
+  role: string;
+  queued?: boolean;
+}
+
+// 作業過程を探索し始める直前のユーザーターン。送信直後の optimistic echo（pending）も
+// 今回の作業境界だが、まだ実行されていない queued prompt は境界にしない。
+export function latestWorkPromptIndex(groups: PromptBoundaryLike[]): number {
+  for (let i = groups.length - 1; i >= 0; i--) {
+    if (groups[i].role === "user" && !groups[i].queued) return i;
+  }
+  return -1;
+}
+
 export function confirmedWorkEnd(parts: MirrorPartLike[]): number {
   let boundary = -1;
   for (let i = 0; i < parts.length; i++) {
