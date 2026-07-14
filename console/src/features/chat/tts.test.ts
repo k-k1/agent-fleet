@@ -58,9 +58,10 @@ describe("TTS master gain", () => {
   });
 
   it("設定ONかつ背景時だけ音量を下げる", () => {
-    expect(ttsMasterGain(true, true)).toBe(HIDDEN_TTS_GAIN);
-    expect(ttsMasterGain(true, false)).toBe(1);
-    expect(ttsMasterGain(false, true)).toBe(1);
+    expect(ttsMasterGain("quiet", true)).toBe(HIDDEN_TTS_GAIN);
+    expect(ttsMasterGain("quiet", false)).toBe(1);
+    expect(ttsMasterGain("normal", true)).toBe(1);
+    expect(ttsMasterGain("mute", true)).toBe(0);
   });
 });
 
