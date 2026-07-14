@@ -1783,6 +1783,7 @@ export function MirrorView({
                 onSubmitKeys={sendKeys}
                 onSubmitSeq={sendSeq}
                 answerMode={sessionMeta?.kind === "claude" ? "claude" : "menu"}
+                multiPage={sessionMeta?.kind === "codex"}
               />
             </div>
           </div>
@@ -3014,6 +3015,7 @@ function PendingQuestions({
   onSubmitSeq,
   sending,
   answerMode = "claude",
+  multiPage = false,
 }: {
   questions: Question[];
   onSubmitKeys: (keys: string[]) => void;
@@ -3021,9 +3023,15 @@ function PendingQuestions({
   sending: boolean;
   // "claude": AskUserQuestion's tabbed modal (free-text single / Down-Enter-Right multi).
   // "menu": codex/opencode ask via a simple option menu — a single-select question is
-  // answered by moving Down to the option index and pressing Enter. Multi-select /
-  // multi-question menus aren't driven from chat (answered in the terminal).
+  // answered by moving Down to the option index and pressing Enter.
   answerMode?: "claude" | "menu";
+  // multiPage (codex): the menu pages through a multi-question form one question at a
+  // time — each page is answered by Down×i + Enter, which submits the page, advances
+  // to the next and resets the cursor to the top (verified on codex 0.144.3). So a
+  // multi-question menu IS drivable: build a selection here, then send the pages'
+  // sequences in one go. opencode's dialog has no verified paging keys, so it stays
+  // single-question-only (multiPage=false → terminal hint for multi).
+  multiPage?: boolean;
 }) {
   const qs = questions || [];
   const [sel, setSel] = useState<string[][]>(() => qs.map(() => []));
@@ -3032,9 +3040,11 @@ function PendingQuestions({
   const [freeText, setFreeText] = useState<string[]>(() => qs.map(() => ""));
   const single = qs.length === 1 && !qs[0]?.multiSelect;
   const menu = answerMode === "menu";
-  // In menu mode we can only drive a single-select single question; anything else is
-  // shown read-only with a hint to answer in the terminal.
-  const menuDrivable = menu && single;
+  // What a menu can drive: a single-select single question always; a multi-question
+  // form only when the dialog pages (multiPage) and no question is multi-select (the
+  // codex dialog is one choice per page). Anything else is shown read-only with a
+  // hint to answer in the terminal.
+  const menuDrivable = menu && (single || (multiPage && qs.length > 1 && qs.every((q) => !q.multiSelect)));
 
   const clearFree = (qi: number) =>
     setFreeText((prev) => (prev[qi] ? prev.map((v, i) => (i === qi ? "" : v)) : prev));
@@ -3073,6 +3083,24 @@ function PendingQuestions({
   //                  choice, Right advances to the next tab.
   // After all questions we land on the Submit tab (Review page); a final Enter
   // activates "Submit answers".
+  // Drive codex's paged menu: per question Down×i to the picked option, then Enter —
+  // submits the page, auto-advances to the next question and resets the cursor to the
+  // top, so the pages' sequences simply concatenate. The trailing page's Enter
+  // completes the whole form (no review page, unlike claude's modal).
+  const submitMenu = () => {
+    const seq: Array<{ k?: string; t?: string }> = [];
+    qs.forEach((q, qi) => {
+      const opts = q.options || [];
+      const ci = Math.max(
+        0,
+        opts.findIndex((o) => o.label === (sel[qi] || [])[0]),
+      );
+      for (let k = 0; k < ci; k++) seq.push({ k: "Down" });
+      seq.push({ k: "Enter" });
+    });
+    onSubmitSeq(seq);
+  };
+
   const submit = () => {
     const seq: Array<{ k?: string; t?: string }> = [];
     qs.forEach((q, qi) => {
@@ -3199,8 +3227,23 @@ function PendingQuestions({
           </button>
         </div>
       )}
+      {menu && menuDrivable && !single && (
+        // A paged multi-question menu (codex): pick an option per question above, then
+        // submit all pages' key sequences at once.
+        <div className="mq-submit-row">
+          <button
+            type="button"
+            className="btn primary mq-submit"
+            disabled={sending || !canSubmit}
+            onClick={submitMenu}
+          >
+            回答を送信
+          </button>
+        </div>
+      )}
       {menu && !menuDrivable && (
-        // A multi-select / multi-question menu we can't reliably drive from chat.
+        // A multi-select menu (or a multi-question one on a dialog whose paging keys
+        // aren't verified) we can't reliably drive from chat.
         <div className="mq-submit-row muted mq-terminal-hint">
           この形式の質問はターミナルで回答してください
         </div>
