@@ -1014,3 +1014,45 @@ func readTranscript(m session.Meta) (agents.TranscriptData, bool) {
 	turns, tasks, pending, mode := parseRolloutFull(lines)
 	return agents.TranscriptData{Turns: turns, Path: path, Tasks: tasks, Pending: pending, Mode: mode}, true
 }
+
+// rolloutCompletedAfter reports whether codex recorded completion of the current
+// turn after the status store was optimistically moved to working. Stop hooks are
+// the primary state source, but some codex versions occasionally leave that hook
+// unfired even though the TUI has returned to its composer. The rollout lifecycle
+// is an independent, append-only completion signal we can use to heal that stale
+// working state. Requiring a timestamp at/after workingSince prevents the previous
+// turn's task_complete from making a newly-submitted prompt look idle.
+func rolloutCompletedAfter(m session.Meta, workingSince time.Time) bool {
+	path := rolloutPath(sids.Read(session.UUID(m.Dir, m.Name)))
+	if path == "" || workingSince.IsZero() {
+		return false
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	state, at := latestRolloutLifecycle(strings.Split(string(b), "\n"))
+	return state == "task_complete" && !at.IsZero() && !at.Before(workingSince)
+}
+
+// latestRolloutLifecycle returns the final task_started/task_complete event. Codex
+// writes both as event_msg payload types; malformed/truncated JSONL tail lines are
+// ignored, as they are by the transcript parser.
+func latestRolloutLifecycle(lines []string) (string, time.Time) {
+	for i := len(lines) - 1; i >= 0; i-- {
+		var ev struct {
+			Timestamp string `json:"timestamp"`
+			Type      string `json:"type"`
+			Payload   struct {
+				Type string `json:"type"`
+			} `json:"payload"`
+		}
+		if json.Unmarshal([]byte(lines[i]), &ev) != nil || ev.Type != "event_msg" ||
+			(ev.Payload.Type != "task_started" && ev.Payload.Type != "task_complete") {
+			continue
+		}
+		at, _ := time.Parse(time.RFC3339Nano, ev.Timestamp)
+		return ev.Payload.Type, at
+	}
+	return "", time.Time{}
+}
