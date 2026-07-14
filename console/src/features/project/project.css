@@ -147,13 +147,6 @@
   z-index: 2;
   background: var(--leftpane-bg);
 }
-/* Every sticky repo header is its own stacking context. A menu's z-index only
-   applies inside that context, so later repo headers otherwise paint over an
-   earlier header's context/dropdown menu. Lift the owning header while either
-   the right-click menu or the launch dropdown is open. */
-.proj-tree .proj-node-head:has(.ui-menu) {
-  z-index: 4;
-}
 .proj-node-caret {
   flex: none;
   width: 18px;

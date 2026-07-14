@@ -12,22 +12,26 @@ import { useEscLayer } from "./escLayer.ts";
 //
 // onClose is read through a ref so the effect only re-subscribes when `open` toggles,
 // not on every render (callers can pass an inline `() => setOpen(false)` safely).
-export function useDismiss<T extends HTMLElement>(
-  ref: RefObject<T | null>,
+export function useDismiss(
+  ref: RefObject<HTMLElement | null> | Array<RefObject<HTMLElement | null>>,
   open: boolean,
   onClose: () => void,
 ): void {
   const cb = useRef(onClose);
+  const refs = useRef(ref);
   cb.current = onClose;
+  refs.current = ref;
   // Escape goes through the shared layer stack so a popover open above a modal
   // closes alone — the modal's own Esc handler stays quiet until the next press.
   useEscLayer(() => cb.current(), open);
   useEffect(() => {
     if (!open) return;
     const onDown = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) cb.current();
+      const target = e.target as Node;
+      const current = Array.isArray(refs.current) ? refs.current : [refs.current];
+      if (!current.some((r) => r.current && r.current.contains(target))) cb.current();
     };
     document.addEventListener("mousedown", onDown);
     return () => document.removeEventListener("mousedown", onDown);
-  }, [ref, open]);
+  }, [open]);
 }
