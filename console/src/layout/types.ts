@@ -26,9 +26,9 @@ export type PaneContent =
   | { kind: "terminal"; chat: boolean }
   | { kind: "file"; filePath: string; targetLine?: number; targetColumn?: number }
   | { kind: "read"; filePath: string } // 朗読ビュー（docs/24）: 本文を順次読み上げ＋縦書き閲覧
-  | { kind: "scm"; scmRepo: string }
+  | { kind: "scm"; scmRepo: string; scmPath?: string }
   | { kind: "changes"; scmRepo: string }
-  | { kind: "commit"; scmRepo: string; commitSha: string }
+  | { kind: "commit"; scmRepo: string; scmPath?: string; commitSha: string }
   | { kind: "wtdiff"; scmRepo: string; filePath: string; diffStaged: boolean }
   | { kind: "doc"; docTitle: string; docContent: string }
   | { kind: "diff"; docTitle: string; diffTool: string; diffEdits: unknown }

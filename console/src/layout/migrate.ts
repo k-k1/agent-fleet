@@ -34,7 +34,8 @@ function contentFromFlat(p: any): PaneContent {
     }
     case "scm": {
       const scmRepo = str(p.scmRepo);
-      return scmRepo ? { kind: "scm", scmRepo } : { kind: "terminal", chat: false };
+      const scmPath = str(p.scmPath);
+      return scmRepo ? { kind: "scm", scmRepo, ...(scmPath ? { scmPath } : {}) } : { kind: "terminal", chat: false };
     }
     case "changes": {
       const scmRepo = str(p.scmRepo);
@@ -42,9 +43,10 @@ function contentFromFlat(p: any): PaneContent {
     }
     case "commit": {
       const scmRepo = str(p.scmRepo);
+      const scmPath = str(p.scmPath);
       const commitSha = str(p.commitSha);
       return scmRepo && commitSha
-        ? { kind: "commit", scmRepo, commitSha }
+        ? { kind: "commit", scmRepo, ...(scmPath ? { scmPath } : {}), commitSha }
         : { kind: "terminal", chat: false };
     }
     case "wtdiff": {

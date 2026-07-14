@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"net/http"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -11,6 +12,84 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 )
+
+// repoViewDir resolves the optional read-only SCM target below a top-level
+// working copy. It lets the Console inspect an initialized submodule without
+// pretending that the nested checkout is another ~/repos entry.
+func repoViewDir(w http.ResponseWriter, r *http.Request) (string, bool) {
+	dir, ok := repoDirFromPath(w, r)
+	if !ok {
+		return "", false
+	}
+	p := r.URL.Query().Get("path")
+	if p == "" {
+		return dir, true
+	}
+	rel, ok := relRepoPath(dir, p)
+	if !ok {
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_path", "invalid submodule path")
+		return "", false
+	}
+	// Only a gitlink declared by the parent may be selected. Merely finding an
+	// embedded .git directory is not enough: that would turn this read endpoint
+	// into a generic nested-repository browser.
+	stage, err := gitx.Run(dir, "ls-files", "--stage", "--", rel)
+	if err != nil || !strings.HasPrefix(stage, "160000 ") {
+		httpx.WriteErr(w, http.StatusBadRequest, "not_submodule", "path is not a submodule: "+rel)
+		return "", false
+	}
+	target := filepath.Join(dir, rel)
+	if !isGitRepo(target) {
+		httpx.WriteErr(w, http.StatusNotFound, "submodule_unavailable", "submodule is not initialized: "+rel)
+		return "", false
+	}
+	return target, true
+}
+
+type submoduleView struct {
+	Name        string `json:"name"`
+	Path        string `json:"path"`
+	Initialized bool   `json:"initialized"`
+	SHA         string `json:"sha,omitempty"`
+}
+
+// handleRepoSubmodules detects submodules from .gitmodules. Initialized nested
+// checkouts become selectable SCM graph targets; missing ones remain visible so
+// the UI can explain why their history cannot be opened.
+func handleRepoSubmodules(w http.ResponseWriter, r *http.Request) {
+	dir, ok := repoDirFromPath(w, r)
+	if !ok {
+		return
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".gitmodules")); err != nil {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"submodules": []submoduleView{}})
+		return
+	}
+	out, err := gitx.Run(dir, "config", "--file", ".gitmodules", "--get-regexp", `^submodule\..*\.path$`)
+	if err != nil && strings.TrimSpace(out) == "" {
+		httpx.WriteJSON(w, http.StatusOK, map[string]any{"submodules": []submoduleView{}})
+		return
+	}
+	items := []submoduleView{}
+	for _, line := range strings.Split(out, "\n") {
+		key, path, found := strings.Cut(strings.TrimSpace(line), " ")
+		path = strings.TrimSpace(path)
+		if !found || path == "" {
+			continue
+		}
+		name := strings.TrimSuffix(strings.TrimPrefix(key, "submodule."), ".path")
+		rel, valid := relRepoPath(dir, path)
+		if !valid {
+			continue
+		}
+		sm := submoduleView{Name: name, Path: rel, Initialized: isGitRepo(filepath.Join(dir, rel))}
+		if sm.Initialized {
+			sm.SHA, _ = gitx.Run(filepath.Join(dir, rel), "rev-parse", "--short", "HEAD")
+		}
+		items = append(items, sm)
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"submodules": items})
+}
 
 // git view/edit endpoints for the Console source-control panel (docs/17 P3-5).
 // All operate on a working copy under ~/repos/<name>; paths are resolved within
@@ -220,7 +299,7 @@ func parseDecorate(d string) ([]graphRef, string) {
 // refs as roots, topo + date ordered, newest-first, each with parents + decorating
 // refs, plus reachability-from-HEAD so the Console can dim off-branch commits.
 func handleRepoGraph(w http.ResponseWriter, r *http.Request) {
-	dir, ok := repoDirFromPath(w, r)
+	dir, ok := repoViewDir(w, r)
 	if !ok {
 		return
 	}
@@ -283,7 +362,7 @@ type commitFile struct {
 // CommitDetail style): header (subject/body/author/date/sha), the changed-file list,
 // and the full colored patch. Diff is size-capped like handleRepoDiff.
 func handleRepoShow(w http.ResponseWriter, r *http.Request) {
-	dir, ok := repoDirFromPath(w, r)
+	dir, ok := repoViewDir(w, r)
 	if !ok {
 		return
 	}
