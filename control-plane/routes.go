@@ -196,6 +196,7 @@ func registerSessionRoutes(mux *http.ServeMux, cfg config) {
 	// — surfaces the device-auth URL and the "ready" transition without attaching yet.
 	mux.HandleFunc("GET /api/sessions/{name}/ssm-login", rest)
 	mux.HandleFunc("POST /api/sessions/{name}/start", ws.withResolved(ws.sessionStart))
+	mux.HandleFunc("POST /api/ssm/instances", ws.withResolved(ws.ssmInstances))
 	// Structured transcript for the Console chat view (case-A).
 	mux.HandleFunc("GET /api/sessions/{name}/messages", rest)
 	// Auto session-title suggestion accept/dismiss (session_title.go, Agent-side).

@@ -3,12 +3,17 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -298,6 +303,41 @@ func (a workspaceAPI) sessionStart(w http.ResponseWriter, r *http.Request, res *
 			return
 		}
 	}
+	a.proxy.rest(w, r, res)
+}
+
+// ssmInstances resolves a member-owned SSO profile and proxies an online-node
+// lookup to the workspace. AWS credentials never pass through the Control Plane.
+func (a workspaceAPI) ssmInstances(w http.ResponseWriter, r *http.Request, res *resolved) {
+	var in struct {
+		ProfileID string `json:"profileId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid JSON body"})
+		return
+	}
+	p, found, err := a.mgr.store.GetSSMProfile(r.Context(), strings.TrimSpace(in.ProfileID))
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	if !found || p.MembershipID != res.mv.MembershipID {
+		writeAPIErr(w, &apiError{http.StatusNotFound, "not_found", "SSM profile not found"})
+		return
+	}
+	if a.autostart {
+		if aerr := a.ensureWorkspaceStarted(r.Context(), res); aerr != nil {
+			writeAPIErr(w, aerr)
+			return
+		}
+	}
+	body, _ := json.Marshal(map[string]string{
+		"Profile": ssmProfileName(p.Label), "Region": p.Region, "StartURL": p.StartURL,
+		"SSORegion": p.SSORegion, "AccountID": p.AccountID, "RoleName": p.RoleName,
+	})
+	r.Body = io.NopCloser(bytes.NewReader(body))
+	r.ContentLength = int64(len(body))
+	r.Header.Set("Content-Length", strconv.Itoa(len(body)))
 	a.proxy.rest(w, r, res)
 }
 
