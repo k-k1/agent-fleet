@@ -183,6 +183,17 @@ button.ws-usage-btn:hover {
   color: var(--del);
   font-weight: 600;
 }
+.ws-reset-count {
+  padding: 0 4px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  font-size: 10px;
+  font-weight: 600;
+}
+.ws-reset-count.warn {
+  color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 18%, transparent);
+}
 .ws-usage-btn .codicon {
   font-size: 11px;
 }
@@ -211,6 +222,18 @@ button.ws-usage-btn:hover {
 .wu-row + .wu-row {
   margin-top: 12px;
 }
+.wu-full-resets {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border2, var(--border));
+  font-size: 12px;
+}
+.wu-expiry {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 6px;
+}
+.wu-expiry .warn { color: var(--warn); font-weight: 600; }
 .wu-row-head {
   display: flex;
   justify-content: space-between;

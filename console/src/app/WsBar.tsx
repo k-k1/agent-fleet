@@ -221,6 +221,14 @@ function whenText(iso: string) {
   return `${d.getMonth() + 1}/${d.getDate()} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
+function expiryText(iso: string) {
+  const t = new Date(iso).getTime();
+  if (isNaN(t)) return "";
+  const days = Math.ceil((t - Date.now()) / 86400000);
+  if (days <= 0) return "本日まで";
+  return days === 1 ? "明日まで" : `あと${days}日`;
+}
+
 // resetChipText: reset instant → the compact form shown ON the chip when a window is
 // Max付近. Same-day resets drop the date (just HH:MM); a later day keeps M/D so the
 // day is unambiguous.
@@ -286,7 +294,7 @@ const USAGE_SOURCES: UsageSource[] = [
     weekLabel: "週次",
     live: false,
     note: "codex が記録した最後の値です（この時点のスナップショット）。次に codex を実行すると更新されます。",
-    manageURL: "https://chatgpt.com/codex/settings/usage",
+    manageURL: "https://chatgpt.com/#settings/Usage",
   },
 ];
 
@@ -309,7 +317,11 @@ function UsageChip({ src, tenant }: { src: UsageSource; tenant: string | null })
   });
   const uh = usage && usage.fiveHour && win(usage.fiveHour);
   const uw = usage && usage.sevenDay && win(usage.sevenDay);
-  if (!uh && !uw) return null; // no reading yet → hide the chip entirely
+  const resetCount = usage?.resetCredits?.availableCount || 0;
+  const fullResets = (usage?.resetCredits?.credits || [])
+    .filter((r: any) => r?.expiresAt && !isNaN(new Date(r.expiresAt).getTime()))
+    .sort((a: any, b: any) => new Date(a.expiresAt).getTime() - new Date(b.expiresAt).getTime());
+  if (!uh && !uw && !resetCount) return null; // no reading yet → hide the chip entirely
 
   // Max付近（利用率 ≥ NEAR_MAX_PCT）の枠があれば、% ではなく「いつ解放されるか」を出す。候補は
   // Max付近の枠だけ、その中で最も早くリセットする枠（＝最初に解放される時刻）を 1 つだけ。両枠
@@ -343,6 +355,12 @@ function UsageChip({ src, tenant }: { src: UsageSource; tenant: string | null })
       >
         <Icon name={src.icon} />
         <span className={"ws-usage-nums" + (bind ? " crit" : "")}>{label}</span>
+        {!!resetCount && (
+          <span className={"ws-reset-count" + (fullResets.length && new Date(fullResets[0].expiresAt).getTime() - Date.now() <= 7 * 86400000 ? " warn" : "")}
+            title={`Full reset ${resetCount}件${fullResets.length ? `・最短 ${whenText(fullResets[0].expiresAt)}まで` : ""}`}>
+            +{resetCount}
+          </span>
+        )}
         <Icon name="chevron-down" />
       </button>
       {open && (
@@ -350,6 +368,17 @@ function UsageChip({ src, tenant }: { src: UsageSource; tenant: string | null })
           <div className="wu-title">{src.popTitle}</div>
           {uh && <UsageRow label={src.fiveLabel} w={uh} />}
           {uw && <UsageRow label={src.weekLabel} w={uw} />}
+          {!!resetCount && (
+            <div className="wu-full-resets">
+              <div className="wu-row-head"><span className="wu-label">Full reset</span><span>{resetCount}件</span></div>
+              {fullResets.map((reset: any, i: number) => (
+                <div className="wu-expiry" key={`${reset.expiresAt}-${i}`}>
+                  <span>有効期限 {whenText(reset.expiresAt).split(" ")[0]}</span>
+                  <span className={new Date(reset.expiresAt).getTime() - Date.now() <= 7 * 86400000 ? "warn" : "muted"}>{expiryText(reset.expiresAt)}</span>
+                </div>
+              ))}
+            </div>
+          )}
           <div className="wu-foot">
             <span className="wu-ago muted">取得 {agoText(usage.ageSec)}</span>
             {src.live && (
