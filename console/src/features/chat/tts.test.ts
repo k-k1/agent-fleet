@@ -28,6 +28,7 @@ import {
   stopTtsForReplacement,
   ttsMasterGain,
   ttsPanePan,
+  ttsWorkGain,
   type TtsController,
 } from "./ttsControl.ts";
 import type { Layout, Pane } from "../../layout/types.ts";
@@ -53,6 +54,13 @@ describe("TTS master gain", () => {
     expect(ttsMasterGain(true, true)).toBe(HIDDEN_TTS_GAIN);
     expect(ttsMasterGain(true, false)).toBe(1);
     expect(ttsMasterGain(false, true)).toBe(1);
+  });
+});
+
+describe("workVoiceOpts", () => {
+  it("ヒソヒソの作業過程はスタイルとは別に出力音量も下げる", () => {
+    expect(ttsWorkGain("hushed")).toBe(0.3);
+    expect(ttsWorkGain("whisper")).toBe(0.58);
   });
 });
 
