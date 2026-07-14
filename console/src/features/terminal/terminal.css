@@ -10,6 +10,13 @@
   container: paneview / inline-size;
 }
 
+/* shell / ssm are command-entry terminals. On browsers that expose IME control
+   (notably Firefox), focusing xterm's hidden textarea switches IME off. This is
+   deliberately scoped by TerminalView so agent prompts retain Japanese input. */
+.terminal-ime-disabled .xterm-helper-textarea {
+  ime-mode: disabled;
+}
+
 /* Pane header: kind badge + session name + state pill. Leaves room for the
    grip (left) and the control cluster (right), which float above it. */
 .pane-head {
