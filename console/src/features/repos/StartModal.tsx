@@ -305,16 +305,10 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
                   <Icon name="chevron-right" className="start-row-chev" />
                 </button>
               )}
-              <button type="button" className="start-row action" onClick={() => setStage("clone")}>
-                <Icon name="add" className="start-row-ic" />
-                <span className="start-row-body">
-                  <span className="start-row-title">新しいリポジトリを clone…</span>
-                </span>
-              </button>
             </div>
           </div>
           <div className="ui-field start-repos">
-            <label className="ui-field-label" htmlFor="start-repo-search">リポジトリ</label>
+            <label className="ui-field-label" htmlFor="start-repo-search">リポジトリでエージェントを起動</label>
             <input
               id="start-repo-search"
               type="search"
@@ -338,6 +332,14 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
               ))}
               {visibleBases.length === 0 && <span className="start-empty">該当するリポジトリはありません</span>}
             </div>
+            <div className="start-list start-clone-action">
+              <button type="button" className="start-row action" onClick={() => setStage("clone")}>
+                <Icon name="add" className="start-row-ic" />
+                <span className="start-row-body">
+                  <span className="start-row-title">新しいリポジトリをクローン…</span>
+                </span>
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -349,7 +351,7 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
             {already && (
               <div className="ui-field">
                 <span className="ui-field-hint">
-                  「{already.name}」は clone 済みです。別コピーが必要なら Repos の「クローン」からフォルダ名を分けて clone してください。
+                  「{already.name}」はクローン済みです。別コピーが必要なら「クローン」からフォルダ名を分けてクローンしてください。
                 </span>
                 <Button
                   small
@@ -364,7 +366,7 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
               </div>
             )}
             <span className="ui-field-hint">
-              新規ブランチやフォルダ名は、clone 後の「作業を始める」（worktree）で決められます。
+              新規ブランチやフォルダ名は、クローン後の「作業を始める」（worktree）で決められます。
             </span>
           </div>
           <footer className="ui-modal-foot">
@@ -375,7 +377,7 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
               キャンセル
             </Button>
             <Button variant="primary" onClick={() => void doClone()} disabled={!src.cloneUrl || !!already || busy}>
-              {busy ? "Cloning…" : "clone して続行"}
+              {busy ? "クローン中…" : "クローンして続行"}
             </Button>
           </footer>
         </>

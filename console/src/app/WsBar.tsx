@@ -764,7 +764,7 @@ export function WsBar() {
         className="ghost ws-split ws-newsession"
         title={
           running
-            ? "はじめる（チャット / リポジトリ / clone / shell）"
+            ? "はじめる（チャット / リポジトリ / クローン / shell）"
             : startQueued
               ? "起動中 — 準備ができたら開きます"
               : "はじめる（ワークスペースを起動して開始）"

@@ -555,6 +555,10 @@
   max-height: min(310px, 38dvh);
   overflow-y: auto;
 }
+.start-clone-action {
+  flex: none;
+  margin-top: 2px;
+}
 .start-empty {
   display: block;
   padding: 18px 12px;
