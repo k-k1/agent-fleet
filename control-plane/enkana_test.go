@@ -233,6 +233,25 @@ func TestReadingOverrides(t *testing.T) {
 	}
 }
 
+func TestReportedWebTermReadings(t *testing.T) {
+	// 実機メモで報告された Web/API 用語の慣用読みを固定する。
+	want := map[string]string{
+		"body":      "ボディ",
+		"query":     "クエリ",
+		"parameter": "パラメータ",
+		"iframe":    "アイフレーム",
+		"preview":   "プレビュー",
+		"origin":    "オリジン",
+		"cookie":    "クッキー",
+		"httpapi":   "エイチティーティーピーエーピーアイ",
+	}
+	for in, exp := range want {
+		if got := englishToKana(in); got != exp {
+			t.Errorf("%q -> %q, want %q", in, got, exp)
+		}
+	}
+}
+
 func TestContractions(t *testing.T) {
 	// アポストロフィ入りの短縮形。従来は ' で語が分断され "イット'エス" 等に誤読されていた。
 	// ASCII(') とタイプグラフィ(’) の両方を同一視する。
