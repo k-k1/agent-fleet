@@ -153,12 +153,18 @@ let globalReconnectWired = false;
 function wireGlobalReconnect() {
   if (globalReconnectWired) return;
   globalReconnectWired = true;
-  const recoverAll = () => {
+  const recoverAll = (redraw = false) => {
     for (const id of insts.keys()) reconnect(id);
+    // Mobile browsers may reclaim a background tab's WebGL context without
+    // dispatching webglcontextlost. The PTY then remains connected while its
+    // canvas stays black, so socket reconnection alone cannot recover it.
+    if (redraw) {
+      for (const it of insts.values()) redrawVisible(it);
+    }
   };
-  window.addEventListener("focus", recoverAll);
+  window.addEventListener("focus", () => recoverAll());
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible") recoverAll();
+    if (document.visibilityState === "visible") recoverAll(true);
   });
 }
 
@@ -496,6 +502,20 @@ function dropWebgl(it: Inst) {
   } catch {}
 }
 
+// Force a visible terminal onto a fresh renderer and repaint its full buffer.
+// Do not create WebGL contexts for display:none mirror panes: besides being
+// useless, hidden contexts increase mobile browsers' reclamation pressure.
+function redrawVisible(it: Inst) {
+  const el = it.term?.element;
+  if (!el || !el.isConnected || el.getClientRects().length === 0) return;
+  dropWebgl(it);
+  loadWebgl(it);
+  fitInst(it);
+  try {
+    it.term!.refresh(0, it.term!.rows - 1);
+  } catch {}
+}
+
 // hideTerm releases a pane's GPU resources while its container is display:none
 // (the mirror/chat is shown in front). A hidden WebGL canvas is exactly what
 // browsers silently reclaim under GPU pressure — and a reclaim that never fires
@@ -735,7 +755,13 @@ export function ensureAttached(paneId: string, session: string) {
 export function reconnectSession(name: string) {
   if (!name) return;
   for (const [id, it] of insts) {
-    if (it && it.session === name) reconnect(id);
+    if (it && it.session === name) {
+      reconnect(id);
+      // Re-clicking an open session is an explicit recovery gesture. A mobile
+      // WebGL canvas can be black while its PTY socket is still healthy, so the
+      // renderer must be recovered independently of reconnect().
+      redrawVisible(it);
+    }
   }
 }
 
