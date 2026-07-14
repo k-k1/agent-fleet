@@ -1,7 +1,7 @@
 /* Repo/branch/dir pickers (shared by New Session / Repos flows) — co-located. */
 
 .pick-muted {
-  color: var(--muted);
+  color: var(--dialog-muted, var(--muted));
   margin: 4px 0;
   font-size: 12px;
 }

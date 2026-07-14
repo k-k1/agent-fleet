@@ -232,7 +232,7 @@
   font-size: 12px;
 }
 .memo-tidy-before {
-  color: var(--muted);
+  color: var(--dialog-muted, var(--muted));
   text-decoration: line-through;
   text-decoration-color: color-mix(in srgb, var(--muted) 50%, transparent);
   word-break: break-word;

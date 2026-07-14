@@ -106,11 +106,20 @@
 .ui-confirm-backdrop {
   z-index: 120;
 }
+/* Dialog surfaces share a stronger secondary-text token. Compact dialog copy is
+   mostly 10–13px, where the app-wide navigation-oriented muted colors are too
+   faint. Custom surfaces inherit the same contract without pretending to be a
+   standard .ui-modal. */
+.ui-modal,
+.ui-confirm,
+.confirm,
+.admin-surface {
+  --dialog-muted: color-mix(in srgb, var(--muted) 68%, var(--fg));
+}
+.dialog-secondary {
+  color: var(--dialog-muted, var(--muted));
+}
 .ui-modal {
-  /* Modal copy is compact (mostly 11–12px), so the app-wide muted colors are
-     too faint here in both themes. Pull secondary text toward the foreground
-     while preserving hierarchy beneath normal --fg text. */
-  --modal-muted: color-mix(in srgb, var(--muted) 68%, var(--fg));
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -131,16 +140,17 @@
 }
 .ui-modal .ui-field-label,
 .ui-modal .ui-field-hint,
+.ui-modal .muted,
 .ui-modal .ssm-check,
 .ui-modal .sm-muted,
 .ui-modal .start-row-desc,
 .ui-modal .start-row-meta,
 .ui-modal .start-row-chev,
 .ui-modal .ui-btn-ghost {
-  color: var(--modal-muted);
+  color: var(--dialog-muted);
 }
 .ui-modal ::placeholder {
-  color: var(--modal-muted);
+  color: var(--dialog-muted);
   opacity: 1;
 }
 .ui-modal-head {
@@ -190,9 +200,13 @@
   font-size: 14px;
 }
 .ui-confirm-body {
-  color: var(--muted);
+  color: var(--dialog-muted);
   font-size: 13px;
   white-space: pre-wrap;
+}
+.ui-confirm .ui-btn-ghost,
+.confirm .ui-btn-ghost {
+  color: var(--dialog-muted);
 }
 .ui-confirm-actions {
   display: flex;
