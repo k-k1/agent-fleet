@@ -33,6 +33,7 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("GET /sessions/{name}/status", handleSessionStatus)
 	mux.HandleFunc("GET /sessions/{name}/output", handleSessionOutput)
 	mux.HandleFunc("GET /sessions/{name}/ssm-login", handleSSMLoginStatus)
+	mux.HandleFunc("POST /ssm/instances", handleSSMInstances)
 	mux.HandleFunc("POST /sessions/{name}/start", handleStartSession)
 	// Structured transcript (role + text + timestamp) for the Console chat view.
 	mux.HandleFunc("GET /sessions/{name}/messages", handleSessionMessages)

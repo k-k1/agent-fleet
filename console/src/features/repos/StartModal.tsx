@@ -43,6 +43,19 @@ interface StartModalProps {
 
 type Stage = "place" | "clone" | "home" | "ssm";
 
+interface SsmProfile {
+  id: string;
+  label: string;
+}
+
+interface SsmInstance {
+  instanceId: string;
+  computerName?: string;
+  ipAddress?: string;
+  platformName?: string;
+  pingStatus: string;
+}
+
 export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
   const toast = useToast();
   const settings = useSettings();
@@ -55,7 +68,8 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
 
   // --- place: chat (assistants inline), repos, +clone, home, その他 ---
   const [chatOpen, setChatOpen] = useState(false);
-  const [otherOpen, setOtherOpen] = useState(false);
+  const [repoQuery, setRepoQuery] = useState("");
+  const [ssmProfiles, setSsmProfiles] = useState<SsmProfile[] | null>(null);
   const [assistants, setAssistants] = useState<Assistant[]>([]);
   useEffect(() => {
     let alive = true;
@@ -66,8 +80,21 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
       alive = false;
     };
   }, []);
+  useEffect(() => {
+    let alive = true;
+    api("api/ssm/profiles")
+      .then((rows) => alive && setSsmProfiles(Array.isArray(rows) ? rows : []))
+      .catch(() => alive && setSsmProfiles([]));
+    return () => {
+      alive = false;
+    };
+  }, []);
   // Base clones only — worktrees are task copies, launched from their tree rows.
   const bases = groupedRepos(repos).map((g) => g[0]);
+  const visibleBases = bases.filter((r) => {
+    const q = repoQuery.trim().toLocaleLowerCase();
+    return !q || r.name.toLocaleLowerCase().includes(q) || (r.branch || "").toLocaleLowerCase().includes(q);
+  });
 
   const startShell = async () => {
     if (busy) return;
@@ -97,6 +124,10 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
   // --- ssm: host picker + SSO handshake (NewSessionModal の SSM 面を移設, Ph3) ---
   const [ssmHosts, setSsmHosts] = useState<SsmHost[] | null>(null); // null = not fetched yet
   const [ssmHostId, setSsmHostId] = useState("");
+  const [ssmQuery, setSsmQuery] = useState("");
+  const [ssmProfileId, setSsmProfileId] = useState("");
+  const [ssmInstances, setSsmInstances] = useState<SsmInstance[] | null>(null);
+  const [ssmSearching, setSsmSearching] = useState(false);
   const [ssmForce, setSsmForce] = useState(false);
   // After creating a kind=ssm session: the created name while the SSO handshake runs.
   const [ssmLogin, setSsmLogin] = useState<string | null>(null);
@@ -110,6 +141,42 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
       alive = false;
     };
   }, [stage, ssmHosts]);
+  const visibleSsmHosts = (ssmHosts || []).filter((h) => {
+    const q = ssmQuery.trim().toLocaleLowerCase();
+    return !q || h.alias.toLocaleLowerCase().includes(q) || h.instanceId.toLocaleLowerCase().includes(q);
+  });
+  const searchSsmInstances = async () => {
+    const profileId = ssmProfileId || ssmProfiles?.[0]?.id || "";
+    if (!profileId || ssmSearching) return;
+    setSsmSearching(true);
+    const res = await apiJSON("api/ssm/instances", "POST", { profileId });
+    setSsmSearching(false);
+    if (res?.error) {
+      toast("AWSの検索に失敗: " + errText(res.error));
+      return;
+    }
+    setSsmInstances(Array.isArray(res?.instances) ? res.instances : []);
+  };
+  const registerSsmInstance = async (instance: SsmInstance) => {
+    const profileId = ssmProfileId || ssmProfiles?.[0]?.id || "";
+    if (!profileId || busy) return;
+    setBusy(true);
+    const res = await apiJSON("api/ssm/hosts", "POST", {
+      alias: instance.computerName || instance.instanceId,
+      profileId,
+      region: "",
+      instanceId: instance.instanceId,
+      documentName: "",
+    });
+    setBusy(false);
+    if (res?.error) {
+      toast("ホストの登録に失敗: " + errText(res.error));
+      return;
+    }
+    setSsmHosts((cur) => [...(cur || []), res as SsmHost]);
+    setSsmHostId(res.id);
+    toast(`${instance.instanceId} を登録しました`);
+  };
   const startSsm = async () => {
     if (!ssmHostId || busy) return;
     setBusy(true);
@@ -200,7 +267,50 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
                     {a.builtin && <span className="start-row-meta">常設</span>}
                   </button>
                 ))}
-              {bases.map((r) => (
+              {ssmProfiles != null && ssmProfiles.length > 0 && (
+                <button type="button" className="start-row start-primary-place" onClick={() => setStage("ssm")}>
+                  <Icon name="vm" className="start-row-ic" />
+                  <span className="start-row-body">
+                    <span className="start-row-title">SSM — 別ホストへログイン</span>
+                    <span className="start-row-desc">AWS EC2 に SSM でログインします</span>
+                  </span>
+                  <Icon name="chevron-right" className="start-row-chev" />
+                </button>
+              )}
+              <button type="button" className="start-row" disabled={busy} onClick={() => void startShell()}>
+                <Icon name="terminal" className="start-row-ic" />
+                <span className="start-row-body">
+                  <span className="start-row-title">shell</span>
+                  <span className="start-row-desc">通常のシェル (bash) をすぐ開きます</span>
+                </span>
+              </button>
+              <button type="button" className="start-row" onClick={() => setStage("home")}>
+                <Icon name="home" className="start-row-ic" />
+                <span className="start-row-body">
+                  <span className="start-row-title">ホームで起動（リポジトリなし）</span>
+                  <span className="start-row-desc">~ でエージェントを走らせる・下書きや調べもの向け</span>
+                </span>
+                <Icon name="chevron-right" className="start-row-chev" />
+              </button>
+              <button type="button" className="start-row action" onClick={() => setStage("clone")}>
+                <Icon name="add" className="start-row-ic" />
+                <span className="start-row-body">
+                  <span className="start-row-title">新しいリポジトリを clone…</span>
+                </span>
+              </button>
+            </div>
+          </div>
+          <div className="ui-field start-repos">
+            <label className="ui-field-label" htmlFor="start-repo-search">リポジトリ</label>
+            <input
+              id="start-repo-search"
+              type="search"
+              value={repoQuery}
+              onChange={(e) => setRepoQuery(e.target.value)}
+              placeholder="リポジトリ名・ブランチ名で検索…"
+            />
+            <div className="start-list start-repo-list">
+              {visibleBases.map((r) => (
                 <button key={r.name} type="button" className="start-row" onClick={() => onPickRepo(r)}>
                   <Icon name="repo" className="start-row-ic" />
                   <span className="start-row-body">
@@ -213,44 +323,9 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
                   <Icon name="chevron-right" className="start-row-chev" />
                 </button>
               ))}
-              <button type="button" className="start-row action" onClick={() => setStage("clone")}>
-                <Icon name="add" className="start-row-ic" />
-                <span className="start-row-body">
-                  <span className="start-row-title">新しいリポジトリを clone…</span>
-                </span>
-              </button>
-              <button type="button" className="start-row" onClick={() => setStage("home")}>
-                <Icon name="home" className="start-row-ic" />
-                <span className="start-row-body">
-                  <span className="start-row-title">ホームで起動（リポジトリなし）</span>
-                  <span className="start-row-desc">~ でエージェントを走らせる・下書きや調べもの向け</span>
-                </span>
-                <Icon name="chevron-right" className="start-row-chev" />
-              </button>
+              {visibleBases.length === 0 && <span className="start-empty">該当するリポジトリはありません</span>}
             </div>
           </div>
-          <button type="button" className="start-other" onClick={() => setOtherOpen((o) => !o)}>
-            <Icon name={otherOpen ? "chevron-down" : "chevron-right"} /> その他 — shell / SSM
-          </button>
-          {otherOpen && (
-            <div className="start-list">
-              <button type="button" className="start-row" disabled={busy} onClick={() => void startShell()}>
-                <Icon name="terminal" className="start-row-ic" />
-                <span className="start-row-body">
-                  <span className="start-row-title">shell</span>
-                  <span className="start-row-desc">通常のシェル (bash) をすぐ開きます</span>
-                </span>
-              </button>
-              <button type="button" className="start-row" onClick={() => setStage("ssm")}>
-                <Icon name="vm" className="start-row-ic" />
-                <span className="start-row-body">
-                  <span className="start-row-title">SSM — 別ホストへログイン</span>
-                  <span className="start-row-desc">AWS EC2 に SSM でログインします</span>
-                </span>
-                <Icon name="chevron-right" className="start-row-chev" />
-              </button>
-            </div>
-          )}
         </div>
       )}
 
@@ -379,15 +454,22 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
                 </span>
               ) : (
                 <>
+                  <input
+                    type="search"
+                    value={ssmQuery}
+                    onChange={(e) => setSsmQuery(e.target.value)}
+                    placeholder="ホスト名・インスタンスIDで検索…"
+                  />
                   <select value={ssmHostId} onChange={(e) => setSsmHostId(e.target.value)}>
                     <option value="">— ホストを選択 —</option>
-                    {ssmHosts.map((h) => (
+                    {visibleSsmHosts.map((h) => (
                       <option key={h.id} value={h.id}>
-                        {h.alias}
+                        {h.alias} — {h.instanceId}
                         {h.accountId ? ` (acct ${h.accountId})` : ""}
                       </option>
                     ))}
                   </select>
+                  {visibleSsmHosts.length === 0 && <span className="ui-field-hint">該当する登録済みホストはありません。</span>}
                   <label className="ssm-check">
                     <input type="checkbox" checked={ssmForce} onChange={(e) => setSsmForce(e.target.checked)} />
                     強制的に再ログイン（キャッシュ済みでも aws sso logout → login）
@@ -399,6 +481,32 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
                   </span>
                 </>
               )}
+            </div>
+            <div className="ui-field">
+              <span className="ui-field-label">AWS上のオンラインインスタンス</span>
+              {ssmProfiles && ssmProfiles.length > 1 && (
+                <select value={ssmProfileId} onChange={(e) => setSsmProfileId(e.target.value)}>
+                  {ssmProfiles.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
+                </select>
+              )}
+              <Button small icon="search" onClick={() => void searchSsmInstances()} disabled={ssmSearching}>
+                {ssmSearching ? "検索中…" : "AWSから検索"}
+              </Button>
+              {ssmInstances?.map((instance) => (
+                <div key={instance.instanceId} className="ssm-instance-row">
+                  <span className="start-row-body">
+                    <span className="start-row-title">{instance.computerName || instance.instanceId}</span>
+                    <span className="start-row-desc">
+                      {instance.instanceId}{instance.ipAddress ? ` · ${instance.ipAddress}` : ""}{instance.platformName ? ` · ${instance.platformName}` : ""}
+                    </span>
+                  </span>
+                  <Button small variant="ghost" onClick={() => void registerSsmInstance(instance)} disabled={busy}>
+                    登録
+                  </Button>
+                </div>
+              ))}
+              {ssmInstances?.length === 0 && <span className="ui-field-hint">オンラインのEC2インスタンスは見つかりませんでした。</span>}
+              <span className="ui-field-hint">SSOの有効期限が切れている場合は、登録済みホストへ一度接続して認証を更新してください。</span>
             </div>
           </div>
           <footer className="ui-modal-foot">
