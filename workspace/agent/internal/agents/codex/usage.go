@@ -2,6 +2,7 @@ package codex
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"os"
@@ -16,11 +17,10 @@ import (
 // Codex subscription usage (the 5-hour + weekly rate-limit bars) surfaced for the
 // Console's WsBar, mirroring the Claude usage chip. Unlike Claude — which needs an
 // undocumented network call — codex records its own rate limits INTO the rollout
-// JSONL: every `token_count` event carries a `rate_limits` block. So we just read the
-// newest rollout, take the last rate_limits reading, and map it onto the same
-// {ok, fiveHour, sevenDay} shape the Claude endpoint returns (so the Console renders
-// both chips with one code path). No token, no network, best-effort — any miss returns
-// {ok:false} and the Console hides the chip.
+// JSONL: every `token_count` event carries a `rate_limits` block. We read the newest
+// rollout for the quota windows. Earned Full reset credits are not recorded there, so
+// HandleUsage also makes the same authenticated, read-only request as Codex's account
+// rate-limits view. Tokens remain local and only the count/expiry dates are returned.
 //
 // rate_limits shape (verified against real rollouts):
 //   "rate_limits":{"primary":{"used_percent":3.0,"window_minutes":300,"resets_at":<epoch>},
@@ -43,10 +43,24 @@ type recordedWindow struct {
 	ResetsAt      int64   `json:"resets_at"` // unix epoch seconds
 }
 
+type resetCredit struct {
+	ExpiresAt string `json:"expiresAt,omitempty"`
+}
+
+type resetCredits struct {
+	AvailableCount int           `json:"availableCount"`
+	Credits        []resetCredit `json:"credits,omitempty"`
+}
+
 // HandleUsage serves GET /codex/usage for the Console's WsBar chip.
-func HandleUsage(w http.ResponseWriter, _ *http.Request) {
+func HandleUsage(w http.ResponseWriter, r *http.Request) {
 	u := readUsage()
 	out := map[string]any{"ok": u.OK, "fiveHour": u.FiveHour, "sevenDay": u.SevenDay}
+	if resets, ok := fetchResetCredits(r.Context()); ok {
+		out["resetCredits"] = resets
+		// Reset credits alone are enough to keep the Codex WS-bar chip visible.
+		out["ok"] = true
+	}
 	if u.PlanType != "" {
 		out["planType"] = u.PlanType
 	}
@@ -62,6 +76,63 @@ type usage struct {
 	SevenDay *usageWindow
 	PlanType string
 	AgeSec   int
+}
+
+const resetCreditsURL = "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits"
+
+func fetchResetCredits(ctx context.Context) (resetCredits, bool) {
+	b, err := os.ReadFile(filepath.Join(paths.HomeDir(), ".codex", "auth.json"))
+	if err != nil {
+		return resetCredits{}, false
+	}
+	var auth struct {
+		AuthMode string `json:"auth_mode"`
+		Tokens   struct {
+			AccessToken string `json:"access_token"`
+			AccountID   string `json:"account_id"`
+		} `json:"tokens"`
+	}
+	if json.Unmarshal(b, &auth) != nil || auth.AuthMode != "chatgpt" || auth.Tokens.AccessToken == "" {
+		return resetCredits{}, false
+	}
+	return getResetCredits(ctx, http.DefaultClient, resetCreditsURL, auth.Tokens.AccessToken, auth.Tokens.AccountID)
+}
+
+func getResetCredits(ctx context.Context, client *http.Client, url, token, accountID string) (resetCredits, bool) {
+	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return resetCredits{}, false
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	if accountID != "" {
+		req.Header.Set("ChatGPT-Account-Id", accountID)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return resetCredits{}, false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return resetCredits{}, false
+	}
+	var raw struct {
+		Credits []struct {
+			ExpiresAt *string `json:"expires_at"`
+		} `json:"credits"`
+		AvailableCount int `json:"available_count"`
+	}
+	if json.NewDecoder(resp.Body).Decode(&raw) != nil {
+		return resetCredits{}, false
+	}
+	out := resetCredits{AvailableCount: raw.AvailableCount}
+	for _, credit := range raw.Credits {
+		if credit.ExpiresAt != nil {
+			out.Credits = append(out.Credits, resetCredit{ExpiresAt: *credit.ExpiresAt})
+		}
+	}
+	return out, true
 }
 
 // readUsage finds the freshest rate_limits across codex rollouts. rate_limits are
