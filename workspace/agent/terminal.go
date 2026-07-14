@@ -55,7 +55,21 @@ func handlePTY(w http.ResponseWriter, r *http.Request) {
 		// Start) used to auto-relaunch it via ensureSessionTmux; resuming is now explicit
 		// (POST /sessions/{name}/start, driven by 再開して続ける / the ターミナル toggle).
 		if !tmuxx.HasSession(session.TmuxName(name)) {
-			http.Error(w, "session not running", http.StatusConflict)
+			// A finished session remains viewable without resuming it. This is a
+			// finite, read-only replay; no PTY process is created.
+			history, ok := readTerminalHistory(name)
+			if !ok {
+				http.Error(w, "session not running and no terminal history", http.StatusConflict)
+				return
+			}
+			conn, err := upgrader.Upgrade(w, r, nil)
+			if err != nil {
+				return
+			}
+			defer conn.Close()
+			_ = conn.WriteMessage(websocket.BinaryMessage, history)
+			_ = conn.WriteMessage(websocket.CloseMessage,
+				websocket.FormatCloseMessage(websocket.CloseNormalClosure, "history complete"))
 			return
 		}
 		// new-session -A attaches (the session exists per the check above).
@@ -79,6 +93,17 @@ func handlePTY(w http.ResponseWriter, r *http.Request) {
 		return // upgrader already wrote the error
 	}
 	defer conn.Close()
+
+	// Repaint the bounded scrollback before live PTY bytes. tmux attach redraws
+	// only its current screen; without this prelude a browser reload would erase
+	// everything above that screen even though the session kept running.
+	if name != "" {
+		if history, ok := readTerminalHistory(name); ok {
+			if err := conn.WriteMessage(websocket.BinaryMessage, history); err != nil {
+				return
+			}
+		}
+	}
 
 	// The PTY-output goroutine and the ping responder below both write to conn, so
 	// guard every write — gorilla forbids concurrent WriteMessage on one connection.

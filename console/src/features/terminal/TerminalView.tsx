@@ -83,7 +83,7 @@ export function TerminalView({
   // AND the workspace is running — opening /ws/pty is what the CP treats as
   // intent-to-work (auto-start), so a click while stopped must not boot the WS.
   useEffect(() => {
-    if (session && attached && running) {
+    if (session && running && (attached || stopped)) {
       attach(paneId, session);
       // A session opened right after creation (repo 起動 / worktree launch) can
       // race its own bring-up: the first PTY connect may fail or die while the
@@ -100,7 +100,7 @@ export function TerminalView({
     // a session this reused xterm previously showed. A stopped session keeps
     // its `session` set, so its read-only history isn't cleared here.
     if (!session) clearTerm(paneId);
-  }, [paneId, session, attached, running]);
+  }, [paneId, session, attached, running, stopped]);
 
   // Guard against accidentally closing/reloading the tab while a session is attached.
   useEffect(() => {
@@ -196,7 +196,7 @@ export function TerminalView({
           </div>
         )}
         {stopped && (
-          <div className="term-mask">
+          <div className="term-history-actions">
             {attached && running ? (
               <span className="term-mask-msg">
                 <span className="codicon codicon-loading codicon-spin" aria-hidden="true" /> 再開中…

@@ -115,9 +115,7 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
             ? "作業フォルダが存在しないため再開できません"
             : !s.alive
               ? (ex ? ex.hint + "\n" : "") +
-                (running
-                  ? "停止中（クリックで開いて再開ボタン / Ctrl・中クリックで新ペイン）"
-                  : "停止中（クリックで履歴を閲覧 / Ctrl・中クリックで新ペイン）")
+                "停止中（クリックで履歴を閲覧 / Ctrl・中クリックで新ペイン）"
               : (s.dir || "") + "（Ctrl/中クリックで新ペインに開く）") +
           `\n${kindLabel(s.kind)} · ${st.text}\nID: ${s.name}`
         }
@@ -129,6 +127,10 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
             // resume happens inside the chat). Other kinds: ⋯ menu.
             if (!dead && agentOf(s.kind).caps.transcript) {
               (split ? openSessionChatSplit : openSessionChat)(s.name);
+            } else if (!dead && running) {
+              // Shell/SSM have a bounded terminal replay instead of a structured
+              // transcript. Opening it never resumes the stopped session.
+              (split ? openSessionTerminalSplit : openSessionTerminal)(s.name);
             }
             return;
           }
@@ -145,6 +147,7 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
           e.preventDefault();
           if (s.alive) (agentOf(s.kind).caps.chat ? openSessionChatSplit : openSessionTerminalSplit)(s.name);
           else if (agentOf(s.kind).caps.transcript) openSessionChatSplit(s.name);
+          else if (running) openSessionTerminalSplit(s.name);
         }}
       >
         {/* Leading kind icon: color says claude/codex/… so the text tag is gone. */}
