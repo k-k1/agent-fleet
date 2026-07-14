@@ -26,8 +26,10 @@ import {
   HIDDEN_TTS_GAIN,
   MAX_PANE_PAN,
   stopTtsForReplacement,
+  ttsIsBackground,
   ttsMasterGain,
   ttsPanePan,
+  ttsWorkGain,
   type TtsController,
 } from "./ttsControl.ts";
 import type { Layout, Pane } from "../../layout/types.ts";
@@ -49,10 +51,23 @@ describe("TTS controller replacement", () => {
 });
 
 describe("TTS master gain", () => {
+  it("非表示またはフォーカス外を背景として扱う", () => {
+    expect(ttsIsBackground(true, true)).toBe(true);
+    expect(ttsIsBackground(false, false)).toBe(true);
+    expect(ttsIsBackground(false, true)).toBe(false);
+  });
+
   it("設定ONかつ背景時だけ音量を下げる", () => {
     expect(ttsMasterGain(true, true)).toBe(HIDDEN_TTS_GAIN);
     expect(ttsMasterGain(true, false)).toBe(1);
     expect(ttsMasterGain(false, true)).toBe(1);
+  });
+});
+
+describe("workVoiceOpts", () => {
+  it("ヒソヒソの作業過程はスタイルとは別に出力音量も下げる", () => {
+    expect(ttsWorkGain("hushed")).toBe(0.3);
+    expect(ttsWorkGain("whisper")).toBe(0.58);
   });
 });
 
