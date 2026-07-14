@@ -464,6 +464,7 @@ describe("applyBuiltinReadings / applyReadings (組み込みの読み補正)", (
     expect(applyBuiltinReadings("3行目のバグ")).toBe("3ぎょうめのバグ");
     expect(applyBuiltinReadings("42行を削除")).toBe("42ぎょうを削除");
     expect(applyBuiltinReadings("行数と行末と行頭")).toBe("ぎょうすうとぎょうまつとぎょうとう");
+    expect(applyBuiltinReadings("行全体を選択")).toBe("ぎょうぜんたいを選択");
     expect(applyBuiltinReadings("１０行目")).toBe("１０ぎょうめ"); // 全角数字
     expect(applyBuiltinReadings("集計行と統計行")).toBe("集計ぎょうと統計ぎょう"); // 漢字＋行サフィックス
     expect(applyBuiltinReadings("WT 行を確認")).toBe("WT ぎょうを確認"); // 実機報告の "WT 行"
