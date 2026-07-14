@@ -341,6 +341,7 @@ func handleStopSession(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	session.RemoveMeta(name)
+	removeTerminalHistory(name)
 	// Stopping forgets the session; if it was the last one in a worktree and that
 	// worktree is clean, auto-remove it so worktrees don't pile up (no-op otherwise).
 	if hadMeta {

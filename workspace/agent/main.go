@@ -33,6 +33,11 @@ func main() {
 		runRecordExit(os.Args[2:])
 		return
 	}
+	// Bounded terminal-output sink, fed by tmux pipe-pane.
+	if len(os.Args) > 1 && os.Args[1] == "record-terminal" {
+		runRecordTerminal(os.Args[2:])
+		return
+	}
 	// Local stdio MCP server for the assistant chat (docs/19 Q1): read-only Agent
 	// Fleet tools over JSON-RPC on stdio, spawned by claude's --mcp-config.
 	if len(os.Args) > 1 && os.Args[1] == "mcp-stdio" {
@@ -59,6 +64,7 @@ func main() {
 	// reseeded the base AGENTS.md / status plugin just before us). claude's rtk is
 	// handled separately via its settings.json hook.
 	reconcileAgentRTK()
+	startTerminalHistoryJanitor()
 
 	addr := envOr("AGENT_ADDR", ":7700")
 

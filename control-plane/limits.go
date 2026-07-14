@@ -35,6 +35,10 @@ type tenantLimits struct {
 	// editing toolchains.json can't bypass. Stop→Start recreates from the image, so
 	// turning the toggle off reverts to the baked versions.
 	AllowAgentSelfUpdate bool `json:"allow_agent_self_update,omitempty"`
+	// TerminalHistoryRetentionDays promotes the default container-local terminal
+	// history into the workspace home volume for this many days. 0 keeps the
+	// standard short-lived /tmp history only.
+	TerminalHistoryRetentionDays int `json:"terminal_history_retention_days,omitempty"`
 }
 
 func parseLimits(s string) tenantLimits {
