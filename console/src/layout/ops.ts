@@ -62,11 +62,11 @@ export function sameTarget(pane: Pane, target: OpenTarget): boolean {
     case "read":
       return c.kind === "read" && c.filePath === t.filePath;
     case "scm":
-      return c.kind === "scm" && c.scmRepo === t.scmRepo;
+      return c.kind === "scm" && c.scmRepo === t.scmRepo && c.scmPath === t.scmPath;
     case "changes":
       return c.kind === "changes" && c.scmRepo === t.scmRepo;
     case "commit":
-      return c.kind === "commit" && c.scmRepo === t.scmRepo && c.commitSha === t.commitSha;
+      return c.kind === "commit" && c.scmRepo === t.scmRepo && c.scmPath === t.scmPath && c.commitSha === t.commitSha;
     case "wtdiff":
       return c.kind === "wtdiff" && c.scmRepo === t.scmRepo && c.filePath === t.filePath;
     case "doc":

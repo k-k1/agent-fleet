@@ -1,5 +1,16 @@
 /* SCM views (graph / changes / commit detail / working diff) — co-located. */
 
+.scm-target {
+  min-width: 9rem;
+  max-width: 18rem;
+  height: 28px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg);
+  color: var(--fg);
+  padding: 0 6px;
+}
+
 .scmview {
   display: flex;
   flex-direction: column;

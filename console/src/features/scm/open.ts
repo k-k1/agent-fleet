@@ -17,11 +17,11 @@ function openReusing(kind: "commit" | "wtdiff", content: PaneContent): void {
   st.openTargetInNew({ content });
 }
 
-export const openCommit = (repo: string, sha: string): void =>
-  openReusing("commit", { kind: "commit", scmRepo: repo, commitSha: sha });
+export const openCommit = (repo: string, sha: string, path?: string): void =>
+  openReusing("commit", { kind: "commit", scmRepo: repo, scmPath: path, commitSha: sha });
 
-export const openCommitSplit = (repo: string, sha: string): void =>
-  useLayoutStore.getState().openTargetInNew({ content: { kind: "commit", scmRepo: repo, commitSha: sha } }, true);
+export const openCommitSplit = (repo: string, sha: string, path?: string): void =>
+  useLayoutStore.getState().openTargetInNew({ content: { kind: "commit", scmRepo: repo, scmPath: path, commitSha: sha } }, true);
 
 export const openFileDiff = (repo: string, path: string, staged: boolean): void =>
   openReusing("wtdiff", { kind: "wtdiff", scmRepo: repo, filePath: path, diffStaged: staged });

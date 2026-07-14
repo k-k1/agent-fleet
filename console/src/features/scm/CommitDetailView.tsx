@@ -7,7 +7,7 @@ import { EmptyState } from "../../ui/EmptyState.tsx";
 import { CommitDetail } from "./GitDiff.tsx";
 import type { CommitData, FoldSignal } from "./GitDiff.tsx";
 
-export function CommitDetailView({ repo, sha, wrap }: { repo: string; sha: string; wrap?: boolean }) {
+export function CommitDetailView({ repo, path, sha, wrap }: { repo: string; path?: string; sha: string; wrap?: boolean }) {
   const enc = encodeURIComponent(repo || "");
   const [commit, setCommit] = useState<CommitData | null>(null);
   const [localWrap, setLocalWrap] = useState<boolean | null>(null);
@@ -22,13 +22,13 @@ export function CommitDetailView({ repo, sha, wrap }: { repo: string; sha: strin
     }
     let alive = true;
     setCommit(null);
-    api(`api/repos/${enc}/show?sha=${encodeURIComponent(sha)}`)
+    api(`api/repos/${enc}/show?sha=${encodeURIComponent(sha)}${path ? `&path=${encodeURIComponent(path)}` : ""}`)
       .then((d) => alive && setCommit(d))
       .catch(() => alive && setCommit({ error: true }));
     return () => {
       alive = false;
     };
-  }, [enc, sha, repo]);
+  }, [enc, sha, repo, path]);
 
   if (!sha) {
     return (
@@ -41,7 +41,7 @@ export function CommitDetailView({ repo, sha, wrap }: { repo: string; sha: strin
     <div className="scmview">
       <header className="view-head">
         <span className="view-title" title={repo || ""}>
-          <Icon name="git-commit" /> {repo} · {(sha || "").slice(0, 10)}
+          <Icon name="git-commit" /> {repo}{path ? ` / ${path}` : ""} · {(sha || "").slice(0, 10)}
         </span>
         <span className="view-spacer" />
         <button type="button" className="ui-btn ui-btn-ghost ui-btn-sm" title="全ての diff を開く" onClick={() => foldAll(true)}>
