@@ -366,7 +366,7 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
               </div>
             )}
             <span className="ui-field-hint">
-              新規ブランチやフォルダ名は、クローン後の「作業を始める」（worktree）で決められます。
+              新規ブランチは、クローン後の「作業を始める」で指定できます。worktreeのフォルダ名はブランチ名から自動で決まります。
             </span>
           </div>
           <footer className="ui-modal-foot">
