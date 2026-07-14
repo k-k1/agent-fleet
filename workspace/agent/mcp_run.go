@@ -8,6 +8,7 @@ import (
 	"syscall"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
 // mcp-run is the credential-injecting launcher for external ops MCP servers
@@ -123,6 +124,16 @@ func runCloudWatchMCP(extra []string) {
 	if s.CloudWatch.Region != "" {
 		env = append(env, "AWS_REGION="+s.CloudWatch.Region, "AWS_DEFAULT_REGION="+s.CloudWatch.Region)
 	}
+	// SSM-linked profiles live in per-session isolated configs, not ~/.aws/config
+	// (session_ssm.go), so regenerate a durable ops config from the stored SSO
+	// meta and point boto3 at it. Idempotent per spawn — survives clean-home.
+	if s.CloudWatch.StartURL != "" {
+		if err := writeCloudWatchOpsConfig(s.CloudWatch); err != nil {
+			fmt.Fprintf(os.Stderr, "mcp-run cloudwatch: write aws config: %v\n", err)
+			os.Exit(1)
+		}
+		env = append(env, "AWS_CONFIG_FILE="+opsAWSConfigPath())
+	}
 	if os.Getenv("FASTMCP_LOG_LEVEL") == "" {
 		env = append(env, "FASTMCP_LOG_LEVEL=ERROR")
 	}
@@ -145,6 +156,29 @@ func runCloudWatchMCP(extra []string) {
 		fmt.Fprintf(os.Stderr, "mcp-run cloudwatch: exec %s: %v\n", uvx, err)
 		os.Exit(1)
 	}
+}
+
+// opsAWSConfigPath is the durable aws config generated for the CloudWatch ops
+// integration — a sibling of the per-session ~/.aws/af-sessions/*.config files,
+// but persistent and session-independent. The SSO token cache stays in the
+// shared ~/.aws/sso/cache, so a login done in an SSM session (or via
+// `AWS_CONFIG_FILE=<this> aws sso login`) is reused here.
+func opsAWSConfigPath() string {
+	return filepath.Join(homeDir(), ".aws", "af-ops", "cloudwatch.config")
+}
+
+// writeCloudWatchOpsConfig (re)generates the durable ops aws config from the
+// stored SSO meta. Idempotent; called at connect time (connections.go) and at
+// every mcp-run spawn so it self-heals after a clean-home.
+func writeCloudWatchOpsConfig(c *secrets.CloudWatchConn) error {
+	return writeSSMConfig(opsAWSConfigPath(), session.SSMMeta{
+		Profile:   c.Profile,
+		StartURL:  c.StartURL,
+		SSORegion: c.SSORegion,
+		AccountID: c.AccountID,
+		RoleName:  c.RoleName,
+		Region:    c.Region,
+	})
 }
 
 // grafanaMCPPath resolves the mcp-grafana binary: PATH (the image bakes it into
