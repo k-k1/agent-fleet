@@ -21,6 +21,7 @@ import { useFilesStore } from "../files/store.ts";
 import { useReposStore } from "../repos/store.ts";
 import { useFilesFilter } from "./filesFilter.ts";
 import { normQuery } from "./filter.ts";
+import { stickyAncestors } from "./stickyTree.ts";
 
 interface Entry {
   name: string;
@@ -107,7 +108,9 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo }: Proje
   const menuRef = useRef<HTMLUListElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const treeRef = useRef<HTMLUListElement>(null);
+  const wrapRef = useRef<HTMLDivElement>(null);
   const uid = useId();
+  const [sticky, setSticky] = useState<{ rows: Row[]; top: number }>({ rows: [], top: 0 });
 
   const showFile = useCallback((p: string) => openTarget({ content: { kind: "file", filePath: p } }), [openTarget]);
   const showFileSplit = useCallback((p: string) => openTargetInNew({ content: { kind: "file", filePath: p } }), [openTargetInNew]);
@@ -278,6 +281,63 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo }: Proje
     }
     return counts;
   }, [searchMode, groupByRepo, displayRows]);
+
+  // The rail, rather than this tree, owns scrolling. Mirror the directory
+  // lineage at the visible edge into an overlay beneath the sticky section and
+  // filter headers. Search results are flat, so they deliberately opt out.
+  useLayoutEffect(() => {
+    const wrap = wrapRef.current;
+    const tree = treeRef.current;
+    const scroller = wrap?.closest<HTMLElement>(".app-rail-scroll");
+    if (!wrap || !tree || !scroller || searchMode) {
+      setSticky({ rows: [], top: 0 });
+      return;
+    }
+    let frame = 0;
+    const update = () => {
+      frame = 0;
+      const wrapRect = wrap.getBoundingClientRect();
+      const scrollRect = scroller.getBoundingClientRect();
+      const section = wrap.closest<HTMLElement>(".ui-section");
+      const headBottom = section?.querySelector<HTMLElement>(":scope > .ui-section-head")?.getBoundingClientRect().bottom ?? scrollRect.top;
+      const filterBottom = section?.querySelector<HTMLElement>(".proj-filter-bar")?.getBoundingClientRect().bottom ?? headBottom;
+      const edge = Math.max(scrollRect.top, headBottom, filterBottom);
+      if (wrapRect.top >= edge || wrapRect.bottom <= edge) {
+        setSticky((old) => (old.rows.length ? { rows: [], top: 0 } : old));
+        return;
+      }
+      const elements = tree.querySelectorAll<HTMLElement>(":scope > li[data-path]");
+      let through = -1;
+      for (const el of elements) {
+        if (el.getBoundingClientRect().top > edge + 0.5) break;
+        const idx = Number(el.dataset.rowIndex);
+        if (Number.isFinite(idx)) through = idx;
+      }
+      const limit = Math.min(7, Math.max(1, Math.floor((scrollRect.height * 0.4) / 22)));
+      const nextRows = stickyAncestors(displayRows, through, limit);
+      // Clamp to the tree's foot so the overlay is pushed away before the next
+      // tree/section begins, matching native sticky containment.
+      const top = Math.max(0, Math.min(edge - wrapRect.top, wrapRect.height - nextRows.length * 22));
+      setSticky((old) =>
+        old.top === top && old.rows.length === nextRows.length && old.rows.every((r, i) => r.path === nextRows[i].path)
+          ? old
+          : { rows: nextRows, top },
+      );
+    };
+    const schedule = () => {
+      if (!frame) frame = requestAnimationFrame(update);
+    };
+    update();
+    scroller.addEventListener("scroll", schedule, { passive: true });
+    const ro = new ResizeObserver(schedule);
+    ro.observe(scroller);
+    ro.observe(wrap);
+    return () => {
+      scroller.removeEventListener("scroll", schedule);
+      ro.disconnect();
+      if (frame) cancelAnimationFrame(frame);
+    };
+  }, [displayRows, searchMode]);
 
   // Prefetch entries for visible dirs whose children we don't have yet.
   useEffect(() => {
@@ -581,7 +641,7 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo }: Proje
   const menuDir = menu ? (menu.row.type === "dir" ? menu.row.path : parentOf(menu.row.path)) : root;
 
   return (
-    <div className="proj-files">
+    <div ref={wrapRef} className="proj-files fstree-wrap">
       <input
         ref={fileInputRef}
         type="file"
@@ -659,6 +719,7 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo }: Proje
             <li
               id={`${uid}-${i}`}
               data-path={r.path}
+              data-row-index={i}
               role="treeitem"
               aria-selected={isSel}
               {...(isDir ? { "aria-expanded": isOpen } : {})}
@@ -711,6 +772,36 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo }: Proje
           <li className="proj-sub-empty">上限に達しました。絞り込みを追加してください</li>
         )}
       </ul>
+      {sticky.rows.length > 0 && (
+        <div className="fstree-sticky" style={{ top: sticky.top }} role="presentation">
+          {sticky.rows.map((r) => {
+            const isOpen = open.has(r.path);
+            return (
+              <div
+                key={r.path}
+                className="fsrow fs-sticky-row"
+                style={{ paddingLeft: 4 + r.depth * 14 }}
+                title={r.path}
+                onClick={() => treeRef.current?.querySelector<HTMLElement>(`li[data-path="${CSS.escape(r.path)}"]`)?.scrollIntoView({ block: "center" })}
+              >
+                <button
+                  type="button"
+                  className="fs-sticky-caret"
+                  aria-label={`${r.name}を折りたたむ`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    collapse(r.segPaths);
+                  }}
+                >
+                  {isOpen ? "▾" : "▸"}
+                </button>
+                <span className="fs-ic"><DirIcon open={isOpen} /></span>
+                <span className="fs-name">{r.name}</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
       {menu && (
         <ul className="ui-menu files-ctxmenu" ref={menuRef} style={{ left: menu.x, top: menu.y }} role="menu" onMouseDown={(e) => e.stopPropagation()}>
           <li>
