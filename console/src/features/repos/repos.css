@@ -265,6 +265,7 @@
   opacity: 0.6;
 }
 .repo-info {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -388,6 +389,11 @@
 }
 @media (hover: hover) {
   .repo-row .launch-wrap {
+    position: absolute;
+    top: 50%;
+    right: 0;
+    z-index: 1;
+    transform: translateY(-50%);
     opacity: 0;
     pointer-events: none;
     transition: opacity 0.1s;
