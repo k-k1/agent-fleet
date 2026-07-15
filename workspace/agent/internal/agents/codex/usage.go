@@ -159,12 +159,23 @@ var observedRateLimits struct {
 // SetObservedRateLimits records an account/rateLimits/updated push from the
 // app-server observer. Not cleared on observer disconnect: readUsage compares
 // ages, so a stale observation simply loses to a fresher rollout reading.
+//
+// The push is a SPARSE rolling update（0.144.4 スキーマの記述どおり、nullable は
+// 「変化なし」であって「消えた」ではない）: 欠けた窓・plan は前回観測値を保持し、
+// non-nil だけ取り込む。丸ごと上書きすると primary だけの push が weekly 窓と
+// planType を消し、WsBar の 7d バーが次のフル読みまで欠ける。
 func SetObservedRateLimits(primary, secondary *RateLimitWindow, planType string) {
 	observedRateLimits.Lock()
 	defer observedRateLimits.Unlock()
-	observedRateLimits.primary = primary
-	observedRateLimits.secondary = secondary
-	observedRateLimits.planType = planType
+	if primary != nil {
+		observedRateLimits.primary = primary
+	}
+	if secondary != nil {
+		observedRateLimits.secondary = secondary
+	}
+	if planType != "" {
+		observedRateLimits.planType = planType
+	}
 	observedRateLimits.at = time.Now()
 }
 
@@ -190,11 +201,19 @@ func observedUsage() (usage, bool) {
 	return u, true
 }
 
+// observedFreshSkipSec: push がこれより新しければ rollout の glob/スキャンを丸ごと
+// 省く。両ソースは同一口座の同一値なので、この窓内に rollout がより新しい読みを
+// 持っていても実質同値 — チップのポーリング毎に全 rollout を stat する必要はない。
+const observedFreshSkipSec = 10
+
 // readUsage returns the fresher of the two sources of the same account-wide
 // reading: the app-server push and the newest rollout-recorded snapshot.
 func readUsage() usage {
-	rollout := rolloutUsage()
 	observed, ok := observedUsage()
+	if ok && observed.AgeSec <= observedFreshSkipSec {
+		return observed
+	}
+	rollout := rolloutUsage()
 	if !ok {
 		return rollout
 	}
