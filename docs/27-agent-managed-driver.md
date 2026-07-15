@@ -1,9 +1,10 @@
 # 27. エージェント制御の Managed Driver 化（TUI スクレイプ → 共有 runtime＋構造化 RPC） — 設計
 
-**Status: 📋 設計確定・P1 実装済み（2026-07-15）** — 2026-07-15 起草。並行設計セッション（sol=A / fable=B）の成果を比較し、
+**Status: 📋 設計確定・P1/P1.5 実装済み（2026-07-15）** — 2026-07-15 起草。並行設計セッション（sol=A / fable=B）の成果を比較し、
 B の骨格に A の部品を移植する形でユーザー裁定により統合・確定した（経緯は [decisions/0015](decisions/0015-agent-managed-driver.md)）。
 P1（Codex 観測拡張）実装時の実測で判明した事実は §12.1 に記録（**通知はスレッドアタッチ必須**という
 発見により、P1 は「switch への 5 イベント追加」から「observer のアタッチ機構＋5 イベント」に拡大した）。
+P1.5（Console managed セッション UI の受け皿）の実装記録は §10.1、pane 前提機能の棚卸しと置き換え設計は §10.2。
 
 > 発端は Codex TUI のモデル勝手切替バグ（週次利用率 93〜99% で `ThreadSettings` が 3 件連続送信され
 > `gpt-5.6-sol` → `gpt-5.4-mini` へ意図せず切替→直後にコンテキスト圧縮。複数セッションで再現）。
@@ -138,13 +139,13 @@ type Driver interface {
 }
 
 type ThreadHandle interface {
-    Send(prompt string, clientMessageID string) error   // 重複送信防止（§4）
-    Steer(prompt string) error
+    Send(in TurnInput) error   // turn/start 相当。TurnInput = Prompt＋Attachments＋ClientMessageID（§4・§10.2-3）
+    Steer(in TurnInput) error  // turn/steer 相当（実行中 turn への追撃入力）
     Interrupt() error
-    UpdateSettings(s ThreadSettings) error               // モデル / effort / mode
-    Respond(interactionID string, d Decision, s Scope) error  // §5
+    UpdateSettings(s ThreadSettings) error   // モデル / effort / mode
+    Respond(reply InteractionReply) error    // §5
     Events() <-chan Event
-    Snapshot() (ThreadSnapshot, error)                   // reconciliation 用（§6）
+    Snapshot() (ThreadSnapshot, error)       // reconciliation 用（§6）
 }
 
 type RuntimeSupervisor interface {
@@ -200,10 +201,16 @@ queued → starting → running ⇄ waiting_interaction
 ## 5. Interaction — 承認・質問・plan 確認の一般化（A④）
 
 ```go
-type Interaction struct { ID, Kind, Prompt string; Options []Option }
+type Interaction struct { ID, Kind, Prompt string; Questions []transcript.Question }
 type Decision string  // allow | deny | cancel | answer
 type Scope    string  // once | turn | thread
+type InteractionAnswer struct { Text string; Options []int }  // 質問 1 つ分の回答
+type InteractionReply  struct { ID string; Decision Decision; Scope Scope; Answers []InteractionAnswer }
 ```
+
+P1.5 での精緻化: 当初案の単一 `Options` でなく `Questions []transcript.Question` を持つ
+（claude の AskUserQuestion は複数質問を 1 モーダルで出すため、応答も質問ごとの
+`Answers` 列で返す）。既存 Pending UI のデータ形をそのまま流用できる。
 
 **初期実装スコープは question 系のみ**: Codex `request_user_input` / OpenCode question tool /
 Claude AskUserQuestion 系。3 者とも承認は自動化済み（`--dangerously-bypass-approvals-and-sandbox` /
@@ -312,25 +319,80 @@ generation 履歴。イベント欠落は §6 の手順で回復する。
 
 ## 10. Console への影響 — paneless セッション（クリティカルパス）
 
-managed が既定になるため、**ミラーが「読むだけ」から主 UI に昇格する**。P2 より前に必要（P1.5）:
-
-- プロンプト送信を `turn/start` / `turn/steer` へ、中断ボタンを `turn/interrupt` へ接続
-- Interaction（question）応答 UI——既存 Pending UI の流用
-- モデル / effort 切替を `thread/settings/update` へ（Capabilities で出し分け）
-- 添付（画像 / ファイル）を tmux 貼り付けから API 添付へ
-- exit recording（docs/26 の pane ラッパー方式）の supervisor 移設
-- ターミナルビュー / ターミナル履歴の扱い（managed セッションには無い）と「pane なしセッション」の見え方
-
+managed が既定になるため、**ミラーが「読むだけ」から主 UI に昇格する**。P2 より前に必要（P1.5）。
 承認 UI の新設は不要（§5——3 者とも bypass 運転で、扱うのは質問のみ）。CLI ルートのセッションは
 既存のチャット⇔ターミナルがそのまま残る。
+
+### 10.1 P1.5 実装記録（2026-07-15）
+
+Console 側の受け皿・ワイヤ・Driver 層 IF を先行して確定した。**managed セッションは
+まだ作れない**（作成 API は `driver:"managed"` を明示拒否し、P2 で解禁）。検証台は
+OpenCode——といっても managed 接続はまだ無いので、実態は「意味論エンドポイントを
+tui 委譲で 3 kind の実運用トラフィックに載せ、P2 が driver を差し込む前に型を枯らす」
+という形。tui 委譲は kind 非依存なので claude / codex にも同じ経路が効いている。
+
+- **Driver 層の型**（`internal/agents/driver.go`）: `Driver` / `ThreadHandle` /
+  `Capabilities` / `TurnInput` / `ThreadSettings` / `Interaction` / `InteractionReply` /
+  `TurnState` / `Event` / `ThreadSnapshot`。§3〜§5 からの精緻化は 2 点——`Send/Steer` が
+  `TurnInput`（Prompt＋Attachments＋ClientMessageID）を取ること、`Interaction` が
+  `Questions []transcript.Question` を持つこと（§5 追記）。`Event`/`ThreadSnapshot` は
+  P2 の購読実装と同時に語彙を確定するため包括形に留めた。TUI ルートは ThreadHandle を
+  **実装しない**（Events/Snapshot を持てない TUI に IF を無理に着せず、/turn ハンドラが
+  tmux 経路へ直接委譲する）。
+- **意味論エンドポイント**（`session_turn.go`）: `POST /sessions/{name}/turn`
+  （op = start | steer | interrupt）と `POST /sessions/{name}/respond`（Interaction 応答）。
+  per-agent REST は増やさず（§3.2）汎用 /sessions 面に追加、CP は素通しプロキシ。
+  tui セッションは既存 tmux 経路（type+submit / Escape。opencode サブエージェント
+  ビューの Up+Escape 特例含む）へ委譲し、ガード（not_running / question_pending /
+  slash コマンドは working を付けない）は /input と同一に保つ。managed セッションは
+  driver 未登録の間 501 `driver_unavailable` で正直に落ちる（P2 で `driverOf` に
+  opencode を登録すると ThreadHandle へ流れる）。**/input（生 keys/seq）は CLI ルートの
+  TUI モーダル駆動用として恒久に残る**——/turn = 意味論、/input = 生 TUI 駆動、という
+  役割分担。
+- **driver 軸のワイヤ化**: `session.Meta.Driver`（"" = tui。omitempty で既存メタと
+  ディスク上バイト同一）→ wire `Session.driver` → Console `isManagedSession()`。
+  作成 API に `driver` パラメータ（tui に正規化 / managed は `driver_unsupported` 拒否 /
+  未知値は `bad_driver`）。`transcript.Question` に `id`（省略可）を追加——managed の
+  pending question が応答先 Interaction id を運ぶ（tui 由来は空のまま＝従来動作不変）。
+- **Console**: 送信を start / steer（送信時の実状態が working なら steer）に、停止
+  ボタンを interrupt に接続（`core/api/client.ts` の `sessionTurn`）。**旧 Agent には
+  /input へフォールバック**——フリート再ビルドのラグで新 Console↔旧 Agent の併存が
+  実際に起きるため（404/405 時のみ legacy body で再送）。managed セッションでは
+  Pane が TerminalView をマウントせず（存在しない PTY への WS を開かない）、ミラーを
+  常時主 UI に、チャット⇔ターミナルのトグルは非表示。PendingQuestions に `onRespond`
+  （semantic 経路）を追加——id 付き質問は keys/seq の TUI キー駆動を一切通らず
+  /respond の構造化回答（質問ごとに text / options index）で答える。TUI モーダル由来の
+  制約（multiPage 非対応 opencode の複数質問フォーム等）も semantic では消える。
+
+### 10.2 pane 前提機能の棚卸しと置き換え設計
+
+managed セッションに tmux pane は無い。pane に依存する機能の全量と置き換え:
+
+| # | 機能（現状の pane 依存） | managed での置き換え | フェーズ |
+|---|---|---|---|
+| 1 | ターミナルビュー / ターミナル履歴（`/ws/pty`・`pipe-pane`→record-terminal のリング履歴） | 存在しない——ミラーが主 UI（Pane の非マウント化・トグル非表示は実装済み）。緊急の生操作は codex = CLI ルートへ排他切替（P3）/ opencode = TUIAttach（P2、無停止） | P1.5 ✅ |
+| 2 | exit recording（docs/26・ADR 0014 の pane ラッパー `record-exit`。`$?` を wait status として解釈） | **supervisor 移設**: RuntimeSupervisor は daemon を自分の子プロセスに持つので `cmd.Wait()` の wait status が直接取れ、ラッパー自体が不要。daemon 死は kind 全体に波及するため記録は二層——(a) daemon レベル: wait status＋cgroup OOM 帰属（既存 `containerOOMKill` の baseline 比較を流用）を generation 履歴（§9.5）に、(b) thread レベル: `thread/status/changed` の `systemError` を該当セッションに。書き先は既存 `status.PersistExit`（session-exit ストア・reason enum 共用）のままにし、wire/Console（ExitReason chip）は不変 | P2 |
+| 3 | 画像・ファイル添付（paste-image で保存→絶対パスを tmux 貼付） | 保存側（`~/.cache/agent-fleet/pasted/`）は pane 非依存で温存。**貼付だけ API 化**: `TurnInput.Attachments` で driver へ渡し、codex は `turn/start` の input items、opencode は serve API の添付形（§12-10 と併せて確認）。tui は従来どおり Console がプロンプトへパスを織り込む（受け口は実装済み・ワイヤの `attachments` は managed だけが解釈） | 受け口 ✅ / 実装 P2/P3 |
+| 4 | TTS（ずんだもん/Polly のカラオケ朗読） | **置き換え不要**——トリガは転写ポーリング＋描画 DOM（turnTts）で pane 非依存。managed でもそのまま動く | — |
+| 5 | mode chip（`paneMode` の capture-pane スクレイプ） | `thread/settings/updated`（P1 で観測済み）＋settings read からの射影。切替は `thread/settings/update`（§9.4-3。codex は experimentalApi 必須、§12.1-4） | P2/P3 |
+| 6 | terminal-state（claude resume メニュー / 圧縮進捗バー / codex update メニューの capture-pane 検出） | managed では**発生しない**: resume = `thread/resume` RPC（メニューを出す TUI がいない）、圧縮 = item イベント（P1 観測済み）、update = supervisor の generation 更新（§7）に吸収 | 自然消滅 |
+| 7 | status 自己治癒（`AtIdlePrompt` の capture-pane heal・`rolloutCompletedAfter`） | turn 状態機械（§4）が正になり不要化。切断時は unknown → reconciliation（§6） | P2 |
+| 8 | graceful shutdown（`shutdown.go` が各 pane へ C-c） | ThreadHandle.Interrupt → daemon drain（§7）へ | P2 |
+| 9 | 初回プロンプト配送（`deliverInitialPrompt` の composer 描画待ちスクレイプ＋二重 Enter） | 不要化——thread/start 直後に turn/start を投げられる（boot 画面に食われる readiness 問題が存在しない）。`ClientMessageID` で冪等 | P2 |
+| 10 | queued steering の可視化（opencode session_input / claude queue-operation の再構成） | turn 状態機械の `queued`＋ClientMessageID 台帳（§9.5 の運用メタデータ）が正 | P2 |
+| 11 | SSM ログイン検出（capture-pane 全 scrollback の regex） | 対象外——shell / ssm は pane 前提のまま（managed 化しない） | — |
+| 12 | セッション開始・停止（tmux new-session / kill-session、Console の 再開して続ける → /start） | Driver.Resume / supervisor 経由の thread 管理へ。managed の /start・/stop・halt は P2 で driver 分岐を足す | P2 |
+
+切り分け: **実装まで必要**（managed セッションが動く条件、P2）= 2・5・7・8・9・10・12。
+**インターフェース整備で足りた**（P1.5 完了）= 1・3。**無変更で成立** = 4・11。**自然消滅** = 6。
 
 ## 11. フェーズ計画
 
 | フェーズ | 内容 | リスク |
 |---|---|---|
 | **P1 ✅** | **Codex 観測拡張（read-only）済（2026-07-15）**: 既存 observer（`handleCodexAppServerEvent`）に `account/rateLimits/updated`・`model/rerouted`・`thread/settings/updated`・`warning`・`thread/status/changed` を追加（key=value の構造化ログ・連続重複抑止）。rate limits は `/codex/usage` が rollout 読みと鮮度比較して新しい方を採用。**追加で必要になったもの**: thread スコープ通知はアタッチ必須（§12.1-1）のため、observer が `thread/resume` でアタッチする `codexObserver`（thread/started・thread/status/changed・30 秒毎 `thread/loaded/list` sweep がトリガ）。発端バグの「TUI 層ナッジ vs サーバ側 reroute」を切り分ける（切り分け規準は §12.1-2）。CLI ルートにもそのまま効く | ゼロ（制御なし。observer の thread/resume は rollout 不変を実測確認） |
-| **P1.5** | **Console managed セッション UI**（§10）。OpenCode を検証台に | UI のみ |
-| **P2** | **OpenCode managed 化**: Driver＋Supervisor＋turn 状態機械＋reconciliation＋`ClientMessageID`＋Interaction(question)＋generation の初出。serve は TUI 併用可＝最も安全に「AF が書く」を実証できる。CLI ルートの serve アタッチ化も同時（TUI 併用の実証を兼ねる） | 低（排他不要） |
+| **P1.5 ✅** | **Console managed セッション UI の受け皿**（§10.1）済（2026-07-15）: Driver 層 IF（`internal/agents/driver.go`）＋意味論エンドポイント `/turn`・`/respond`（tui は tmux 経路へ委譲・managed は driver 登録まで 501）＋driver 軸のワイヤ化（Meta/wire/作成 API、managed 作成は P2 まで拒否）＋Console の paneless 描画（TerminalView 非マウント・トグル非表示）と送信 start/steer・停止 interrupt・質問 onRespond 導線（旧 Agent へは /input フォールバック）。pane 前提機能の棚卸しと置き換え設計は §10.2 | UI のみ（tui は既存経路へ委譲、挙動不変） |
+| **P2** | **OpenCode managed 化**: Driver＋Supervisor＋turn 状態機械＋reconciliation＋`ClientMessageID`＋Interaction(question)＋generation の初出。serve は TUI 併用可＝最も安全に「AF が書く」を実証できる。CLI ルートの serve アタッチ化も同時（TUI 併用の実証を兼ねる）。§10.2 の 2・5・7〜10・12（exit recording の supervisor 移設、mode 射影、初回プロンプト、queued、開始/停止の driver 分岐）と managed 作成の解禁・ドライバ選択 UI（メモリコスト表示）もここ | 低（排他不要） |
 | **P3** | **Codex managed 化**: 新規既定→ドライバ選択 UI＋既存セッションの排他切替。Driver 第 2 実装で型の妥当性検証。daemon drain 実装 | 中（単一 writer 排他） |
 | （凍結） | Claude Session Manager（付録 A）。CLI 必須の運用が解消されたら再訪 | — |
 
@@ -379,6 +441,8 @@ P1 の実装前検証（`codex app-server generate-json-schema` スキーマ突�
    （usage.go が既に警告していた新型口座構成の実例）。`rateLimitReachedType`・`credits`・`planType` 付き。
    read 応答には `rateLimitResetCredits`（Full reset クレジット）も含まれる——将来 usage.go の
    chatgpt.com backend 直叩き（`fetchResetCredits`）を app-server 経由に置換できる候補。
+   なお `account/rateLimits/updated` は**スパースな rolling update**（スキーマ明記: nullable は
+   「変化なし」）なので、観測値は丸ごと上書きでなく non-nil マージで保持する（P1.5 レビューで修正）。
 4. **`thread/settings/update`（write）は experimentalApi capability 必須**（initialize の
    `capabilities.experimentalApi: true` がないと -32600）。base スキーマ外（`--experimental` でのみ生成）。
    P3 の write 実装はこの capability を前提にする。`turn/start`・`turn/steer`・`turn/interrupt`・

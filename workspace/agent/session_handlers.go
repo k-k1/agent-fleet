@@ -96,6 +96,10 @@ type createReq struct {
 	Dir   string `json:"dir"`
 	Model string `json:"model"`
 	Kind  string `json:"kind"` // "claude" (default) | "opencode" | "codex" | "shell"
+	// Driver selects the control route（docs/27 §9.2）: "" | "tui"（従来の tmux 内
+	// TUI、既定）| "managed"（共有 runtime＋構造化 RPC・pane なし）。managed の起動は
+	// P2（opencode serve）で解禁する — それまでは受け口だけ在り、明示的に拒否する。
+	Driver string `json:"driver"`
 	// InitialPrompt, when set, is typed into the session once its agent CLI has booted
 	// and then submitted (deliverInitialPrompt) — the server-side launch-task delivery an
 	// orchestrator (フリート・オペレーター / create_session MCP tool) uses to spawn a session
@@ -150,6 +154,22 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	title, ok := cleanTitle(req.Title)
 	if !ok {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_title", "title is too long (max 80) or contains control characters")
+		return
+	}
+	// Driver validation up-front（副作用 — clone / worktree — より前に落とす）。既定の
+	// tui は "" へ正規化して永続化し、既存メタとバイト同一を保つ。
+	driver := strings.TrimSpace(req.Driver)
+	switch driver {
+	case "", session.DriverTUI:
+		driver = ""
+	case session.DriverManaged:
+		// docs/27 P1.5: ワイヤの受け口だけ先行。managed セッションの起動（thread/start
+		// と supervisor 管理）は P2 の opencode driver 実装で解禁する。
+		httpx.WriteErr(w, http.StatusBadRequest, "driver_unsupported",
+			"managed ドライバはまだ利用できません（P2 で opencode から対応予定）")
+		return
+	default:
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_driver", "unknown driver: "+req.Driver)
 		return
 	}
 	// Worktree-then-start: spin a git worktree off an existing working copy (req.Dir =
@@ -249,7 +269,7 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	meta := session.Meta{
-		Name: name, Dir: req.Dir, Model: req.Model, Kind: kind, Title: title, Color: req.Color, Label: label,
+		Name: name, Dir: req.Dir, Model: req.Model, Kind: kind, Driver: driver, Title: title, Color: req.Color, Label: label,
 		Repo: filepath.Base(req.Dir), Branch: gitCurrentBranch(req.Dir),
 		CreatedAt: time.Now().Format(time.RFC3339), SSM: ssm,
 	}

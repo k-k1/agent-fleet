@@ -27,7 +27,7 @@ func wireSession(m session.Meta, alive bool) session.Session {
 	// diverge by kind — the agent computes them (see WireLive per implementation).
 	li := agentOf(m.Kind).WireLive(m, alive)
 	s := session.Session{
-		Name: m.Name, Tmux: session.TmuxName(m.Name), Dir: m.Dir, Kind: m.Kind,
+		Name: m.Name, Tmux: session.TmuxName(m.Name), Dir: m.Dir, Kind: m.Kind, Driver: m.Driver,
 		Repo: m.Repo, Title: m.Title, Display: session.Display(m), Color: m.Color, Label: m.Label,
 		Started: started, CreatedAt: m.CreatedAt, Branch: m.Branch,
 		RemoteUrl: li.RemoteURL, State: li.State, Alive: alive, Resumable: li.Resumable,

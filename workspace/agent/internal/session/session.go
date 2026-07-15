@@ -22,6 +22,16 @@ const (
 	KindSSM      = "ssm"
 )
 
+// Driver 方式（docs/27 §2・§9.2、ADR 0015）: セッションの制御経路。tui は従来の
+// tmux 内 TUI（AF は send-keys で書き・スクレイプ/hooks で読む）。managed は共有
+// runtime＋構造化 RPC — AF が唯一の writer で、tmux pane を持たない（P2 で opencode、
+// P3 で codex）。kind は分けない — transcript / settings / auth / models を tui と
+// 共有するため、driver は Meta のフィールドで持つ（ADR 0015-決定 9.2）。
+const (
+	DriverTUI     = "tui"
+	DriverManaged = "managed"
+)
+
 // tmux session naming: friendly name "slot01" <-> tmux "claude_slot01".
 const TmuxPrefix = "claude_"
 
@@ -32,10 +42,14 @@ func ValidName(s string) bool { return nameRe.MatchString(s) }
 
 // Session is the wire representation of a Claude session (one tmux session).
 type Session struct {
-	Name      string `json:"name"`
-	Tmux      string `json:"tmux"`
-	Dir       string `json:"dir"`
-	Kind      string `json:"kind"`      // "claude" | "opencode" | "codex" | "shell"
+	Name string `json:"name"`
+	Tmux string `json:"tmux"`
+	Dir  string `json:"dir"`
+	Kind string `json:"kind"` // "claude" | "opencode" | "codex" | "shell"
+	// Driver mirrors Meta.Driver on the wire（"" = tui）。managed のセッションは
+	// tmux pane を持たないので、Console はこれを見てターミナルビューを出さず
+	// ミラー（チャット）を主 UI として描画する（docs/27 §10）。
+	Driver    string `json:"driver,omitempty"`
 	Repo      string `json:"repo"`      // working dir basename (display)
 	Title     string `json:"title"`     // user-supplied display title (optional, any kind)
 	Display   string `json:"display"`   // human-readable name (title → claude label → repo@time); never the slug alone
@@ -111,7 +125,11 @@ type Meta struct {
 	Dir   string `json:"dir"`
 	Model string `json:"model"`
 	Kind  string `json:"kind"`
-	Title string `json:"title"` // user-supplied display title (optional); "" = auto
+	// Driver selects the control route（docs/27）: "" | "tui" = tmux 内 TUI（従来）、
+	// "managed" = 共有 runtime＋構造化 RPC（pane なし。P2 で opencode から解禁）。
+	// 既定の tui は "" で永続化し、既存メタとディスク上バイト同一を保つ。
+	Driver string `json:"driver,omitempty"`
+	Title  string `json:"title"` // user-supplied display title (optional); "" = auto
 	// SuggestedTitle is a headless-LLM-generated candidate the Console offers via a
 	// dismissible banner once the session has had a couple of exchanges and has no
 	// user title yet. "" = none pending (not generated yet, already accepted into
@@ -160,6 +178,15 @@ type SSMMeta struct {
 	SSORegion string `json:"ssoRegion"` // SSO region
 	AccountID string `json:"accountId"` // SSO account id
 	RoleName  string `json:"roleName"`  // SSO permission-set role name
+}
+
+// DriverKind normalizes Meta.Driver（"" → tui）。分岐は必ずこれを介す — 生の
+// Meta.Driver 比較だと既定（空文字）の扱いが呼び出し毎にぶれる。
+func (m Meta) DriverKind() string {
+	if m.Driver == "" {
+		return DriverTUI
+	}
+	return m.Driver
 }
 
 // StoppedTTL is how long a stopped (exited) session stays listed/resumable before

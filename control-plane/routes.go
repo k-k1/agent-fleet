@@ -188,6 +188,9 @@ func registerSessionRoutes(mux *http.ServeMux, cfg config) {
 	// Programmatic drive I/O (docs/0006 P3-6 E) — proxied to the Agent. Also used
 	// by the MCP tools, which call the Agent directly via the resolved runtime.
 	mux.HandleFunc("POST /api/sessions/{name}/input", rest)
+	// Semantic turn ops + Interaction reply (docs/27 P1.5) — proxied verbatim.
+	mux.HandleFunc("POST /api/sessions/{name}/turn", rest)
+	mux.HandleFunc("POST /api/sessions/{name}/respond", rest)
 	mux.HandleFunc("POST /api/sessions/{name}/paste-image", rest)
 	mux.HandleFunc("GET /api/sessions/{name}/pasted/{file}", rest)
 	mux.HandleFunc("GET /api/sessions/{name}/status", rest)

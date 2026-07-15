@@ -24,6 +24,7 @@ import { ChatView } from "../chat/ChatView.tsx";
 import { useSettings } from "../../lib/settings.ts";
 import { IconButton } from "../../ui/Button.tsx";
 import { cx } from "../../ui/cx.ts";
+import { isManagedSession } from "../../types/session.ts";
 import type { Session } from "../../types/session.ts";
 
 // Drag payload MIME — identifies a pane-to-pane drag (vs any other drag).
@@ -92,10 +93,13 @@ export function Pane({
     if (sessionMeta?.alive === true) setAttached(true);
     else if (sessionMeta?.alive === false) setAttached(false);
   }, [sessionMeta?.alive]);
+  // Managed（paneless）セッション（docs/27 §10）: tmux pane が存在しないので
+  // ターミナルはマウントせず、ミラー（チャット）を常時の主 UI にする。
+  const managed = isManagedSession(sessionMeta);
   // The mirror is offered only for agents with the `chat` capability (claude —
   // /messages is claude-only). Guard on loaded sessionMeta.
   const canMirror = isTerm && !!pane.session && !!sessionMeta && agentOf(sessionMeta.kind).caps.chat;
-  const showMirror = canMirror && mirror;
+  const showMirror = canMirror && (mirror || managed);
   // The ターミナル toggle also resumes a stopped session (attach is explicit).
   const onToggleMirror = (toChat: boolean) => {
     if (toChat) setMirror(true);
@@ -213,8 +217,12 @@ export function Pane({
           the pane's xterm warm in the service (not mounted) until their view
           port lands. */}
       {/* The terminal stays MOUNTED (hidden) while the mirror shows, so the PTY
-          socket + scrollback survive the toggle. */}
-      {isTerm && (
+          socket + scrollback survive the toggle. Managed sessions have no PTY at
+          all — mounting the terminal would just open a dead WS, so skip it. While
+          the meta is still loading we can't know the driver yet: a pane opened AS
+          CHAT waits for the meta (今日でもターミナルが一瞬素通しになるだけの区間)
+          instead of flashing a terminal that a managed session doesn't have. */}
+      {isTerm && !managed && !(chat && !sessionMeta) && (
         <div className="view" hidden={showMirror}>
           <TerminalView
             paneId={pane.id}

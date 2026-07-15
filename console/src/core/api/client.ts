@@ -108,6 +108,10 @@ const ERR_TEXT: Record<string, string> = {
   has_worktrees:
     "この作業コピーには派生した worktree がぶら下がっています。先に worktree 側を削除してください。",
   worktree_remove_failed: "worktree の削除に失敗しました。",
+  question_pending:
+    "エージェントが質問への回答を待っています。質問カードから回答してから送信してください。",
+  not_running: "セッションが停止しています。再開してから送信してください。",
+  driver_unavailable: "この操作は managed ドライバの実装（P2）後に利用できます。",
 };
 
 // errText turns a `res.error` ({code, message}) into a user-facing string.
@@ -201,6 +205,61 @@ export function uploadFiles(
       .catch(() => ({ status: r.status })),
   );
 }
+
+// --- semantic session turn ops (docs/27 P1.5) ---
+// The chat mirror's send / steer / interrupt go through POST /turn, which the
+// Agent adapts to the session's driver: tui = the same tmux typing as before,
+// managed = turn/start・turn/steer・turn/interrupt RPC（P2/P3）. Returns ok.
+// Falls back to the legacy /input body when the Agent predates /turn（フリート
+// 再ビルドのラグで新 Console↔旧 Agent の版ずれが実際に起きる）.
+export type TurnOp = "start" | "steer" | "interrupt";
+// TurnResult: ok=false のとき message はユーザーに見せられる却下理由（question_pending
+// 等）。呼び出し側はこれをトーストし、消した楽観 echo / 下書きの復元を判断する —
+// 却下を握りつぶすと「送れたように見えて消えた」になる。
+export interface TurnResult {
+  ok: boolean;
+  message?: string;
+}
+export async function sessionTurn(session: string, op: TurnOp, prompt?: string): Promise<TurnResult> {
+  const fail = (e: unknown): TurnResult => ({ ok: false, message: errText(e as ApiError) || "送信に失敗しました" });
+  const r = await apiJSON(
+    `api/sessions/${encodeURIComponent(session)}/turn`,
+    "POST",
+    op === "interrupt" ? { op } : { op, prompt },
+  ).catch(() => ({ error: { message: "通信エラー" } }));
+  const err = r?.error as ApiError | undefined;
+  if (!err) return { ok: true };
+  const code = String(err.code || "");
+  if (code === "http_404" || code === "http_405") {
+    const legacy = op === "interrupt" ? { keys: ["Escape"] } : { prompt };
+    const r2 = await apiJSON(`api/sessions/${encodeURIComponent(session)}/input`, "POST", legacy).catch(
+      () => ({ error: { message: "通信エラー" } }),
+    );
+    return r2?.error ? fail(r2.error) : { ok: true };
+  }
+  return fail(err);
+}
+
+// One question's structured answer inside an Interaction reply (docs/27 §5).
+// A multi-question form replies with one entry per question, in order.
+export interface InteractionAnswer {
+  text?: string; // 自由入力
+  options?: number[]; // 選択肢 index（複数選択は複数個）
+}
+
+// sessionRespond answers a MANAGED session's pending question by interaction id.
+// TUI sessions keep the keys/seq path — their modal is driven by navigation and
+// has no "answer by id" surface (the Agent answers respond_unsupported for them).
+export const sessionRespond = (
+  session: string,
+  id: string,
+  answers: InteractionAnswer[],
+): Promise<boolean> =>
+  apiJSON(`api/sessions/${encodeURIComponent(session)}/respond`, "POST", {
+    id,
+    decision: "answer",
+    answers,
+  }).then((r) => !r?.error);
 
 // Upload one pasted image to a session (multipart, field "file"). Returns the saved
 // absolute path + basename so the composer can reference it in the prompt (claude reads
