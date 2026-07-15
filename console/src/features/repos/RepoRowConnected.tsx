@@ -101,7 +101,7 @@ export function RepoRowConnected({ r, ctx, onToggle, sess }: RepoRowConnectedPro
         }
         void refreshRepos();
         useFilesStore.getState().bump();
-        toast(`${r.name} を削除しました`, { kind: "success" });
+        toast(`${r.name} を削除しました`, { kind: "success", persist: true });
       }}
       // Quick launch (▼ / right-click): no prompt, straight to a session.
       onLaunch={async (kind, split) => {

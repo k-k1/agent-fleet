@@ -83,8 +83,14 @@
 .notification-row.unread { background: color-mix(in srgb, var(--accent) 14%, transparent); }
 .notification-row.unread .notification-dot { background: var(--accent); }
 :where(.topbar) .notification-item { min-width: 0; flex: 1; display: flex; align-items: flex-start; gap: 10px; padding: 10px 10px 10px 8px; border: 0; background: transparent; text-align: left; }
-:where(.topbar) .notification-replay { flex: 0 0 auto; margin-right: 5px; padding: 6px; border: 0; background: transparent; color: var(--muted); }
+:where(.topbar) .notification-replay, :where(.topbar) .notification-dismiss { flex: 0 0 auto; margin-right: 5px; padding: 6px; border: 0; background: transparent; color: var(--muted); }
 .notification-item > .codicon { margin-top: 2px; color: var(--accent); }
+/* Persisted-toast (log) rows are informational — no pointer — and color the leading icon by toast kind. */
+.notification-log { cursor: default; }
+.notification-row .notification-log.k-error > .codicon { color: var(--del); }
+.notification-row .notification-log.k-warn > .codicon { color: var(--warn); }
+.notification-row .notification-log.k-success > .codicon { color: var(--ok); }
+.notification-row .notification-log.k-info > .codicon { color: var(--accent); }
 /* Read rows recede — muted icon + lighter title — so unread ones read at a glance. */
 .notification-row:not(.unread) .notification-item > .codicon { color: var(--muted); }
 .notification-row:not(.unread) .notification-item b { font-weight: 500; color: var(--muted); }
