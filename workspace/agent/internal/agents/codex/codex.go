@@ -99,7 +99,7 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 	if sids.Read(cxSid) == "" {
 		forkFrom = m.ForkFrom
 	}
-	return agents.LaunchPlan{Program: buildProgram(m.Model, cxSid, sids.Read(cxSid), forkFrom), Cwd: m.Dir}, nil
+	return agents.LaunchPlan{Program: buildProgram(m.Model, m.Effort, cxSid, sids.Read(cxSid), forkFrom), Cwd: m.Dir}, nil
 }
 
 func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {

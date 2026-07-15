@@ -62,6 +62,7 @@ function fetchModels(kind: string): Promise<ModelOption[]> {
 }
 
 const FALLBACK_EFFORTS: Record<string, string[]> = {
+  claude: ["low", "medium", "high", "xhigh", "max"],
   codex: ["minimal", "low", "medium", "high", "xhigh"],
   opencode: ["low", "medium", "high", "max"],
 };
@@ -82,7 +83,9 @@ export function useEffortOptions(kind: string, model: string): EffortOption[] {
   void version;
   const rows = descriptors.get(kind) || [];
   const selected = rows.find((m) => m.id === model);
-  const efforts = selected?.efforts.length
+  const efforts = kind === "claude" && model === "haiku"
+    ? []
+    : selected?.efforts.length
     ? selected.efforts
     : [...new Set(rows.flatMap((m) => m.efforts))].length
       ? [...new Set(rows.flatMap((m) => m.efforts))]

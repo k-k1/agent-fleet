@@ -23,6 +23,7 @@ export function ManagedSettingsModal({ session, kind, working, onApplied, onClos
   const [initial, setInitial] = useState<ManagedThreadSettings | null>(null);
   const [model, setModel] = useState("");
   const [effort, setEffort] = useState("");
+  const [mode, setMode] = useState<"plan" | "normal">("normal");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -46,6 +47,7 @@ export function ManagedSettingsModal({ session, kind, working, onApplied, onClos
         setInitial(current);
         setModel(current.model);
         setEffort(current.effort);
+        setMode(current.mode === "plan" ? "plan" : "normal");
       })
       .catch(() => alive && setError("設定を読み込めませんでした（通信エラー）"));
     return () => {
@@ -53,7 +55,9 @@ export function ManagedSettingsModal({ session, kind, working, onApplied, onClos
     };
   }, [session]);
 
-  const changed = !!initial && (model !== initial.model || effort !== initial.effort);
+  const changed = !!initial && (
+    model !== initial.model || effort !== initial.effort || mode !== (initial.mode || "normal")
+  );
   const apply = async () => {
     if (!initial || !changed || busy) return;
     setBusy(true);
@@ -67,14 +71,15 @@ export function ManagedSettingsModal({ session, kind, working, onApplied, onClos
       if (effort) patch.effort = effort;
       else patch.clearEffort = true;
     }
+    if (mode !== (initial.mode || "normal")) patch.mode = mode;
     const res = await sessionSettings(session, patch);
     setBusy(false);
     if (!res.ok) {
       setError(res.message || "設定を変更できませんでした");
       return;
     }
-    const next = res.settings || { ...initial, model, effort };
-    onApplied({ ...initial, ...next, model, effort });
+    const next = res.settings || { ...initial, model, effort, mode };
+    onApplied({ ...initial, ...next, model, effort, mode });
     toast("実行設定を更新しました", { kind: "success" });
     onClose();
   };
@@ -86,22 +91,35 @@ export function ManagedSettingsModal({ session, kind, working, onApplied, onClos
         {error && <div className="managed-settings-error" role="alert">{error}</div>}
         {initial && (
           <>
-            <div className="ui-field">
-              <span className="ui-field-label">モデル</span>
-              <ModelPicker
-                kind={kind}
-                model={model}
-                onChange={(next) => {
-                  setModel(next);
-                  setEffort("");
-                }}
-              />
-            </div>
-            <div className="ui-field">
-              <span className="ui-field-label">推論 effort</span>
-              <EffortPicker kind={kind} model={model} effort={effort} onChange={setEffort} />
-              <span className="ui-field-hint">既定を選ぶと、選択モデルの標準推論量へ戻します。</span>
-            </div>
+            {initial.dynamicModel !== false && (
+              <div className="ui-field">
+                <span className="ui-field-label">モデル</span>
+                <ModelPicker
+                  kind={kind}
+                  model={model}
+                  onChange={(next) => {
+                    setModel(next);
+                    setEffort("");
+                  }}
+                />
+              </div>
+            )}
+            {initial.dynamicEffort !== false && (
+              <div className="ui-field">
+                <span className="ui-field-label">推論 effort</span>
+                <EffortPicker kind={kind} model={model} effort={effort} onChange={setEffort} />
+                <span className="ui-field-hint">既定を選ぶと、選択モデルの標準推論量へ戻します。</span>
+              </div>
+            )}
+            {initial.dynamicMode !== false && (
+              <div className="ui-field">
+                <span className="ui-field-label">モード</span>
+                <select className="cinput" value={mode} onChange={(e) => setMode(e.target.value === "plan" ? "plan" : "normal")}>
+                  <option value="normal">通常（実装）</option>
+                  <option value="plan">Plan</option>
+                </select>
+              </div>
+            )}
             {working && <div className="ui-field-hint"><Icon name="info" /> 変更は次のターンから反映されます。</div>}
           </>
         )}

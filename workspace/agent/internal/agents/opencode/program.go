@@ -22,7 +22,7 @@ func envOr(key, def string) string {
 // continue). Auth is the user's own `opencode auth login` (persisted in home), so
 // there's no token to inject. Caveat: multiple opencode slots in the SAME dir share
 // --continue's "most recent" target.
-func buildProgram(model string, envs []string, ocid string, fork bool) string {
+func buildProgram(model, mode string, envs []string, ocid string, fork bool) string {
 	// Prefix env assignments onto the command so the opencode process actually
 	// receives them (NAME='value' … opencode). Values are shell-quoted; names are
 	// trusted (our sid + validated ALL_CAPS provider env names).
@@ -60,6 +60,13 @@ func buildProgram(model string, envs []string, ocid string, fork bool) string {
 		// opencode expects provider/model (e.g. anthropic/claude-...); passed through
 		// verbatim. The Console only sends this for opencode when explicitly chosen.
 		parts = append(parts, "--model", session.ShellQuote(model))
+	}
+	if mode == "plan" || mode == "normal" {
+		agent := "build"
+		if mode == "plan" {
+			agent = "plan"
+		}
+		parts = append(parts, "--agent", agent)
 	}
 	return prefix + strings.Join(parts, " ")
 }

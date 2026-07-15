@@ -29,12 +29,13 @@ export function useStartWork(): (target: StartTarget, opts: LaunchOpts) => Promi
   const refreshRepos = useReposStore((s) => s.refresh);
   const refreshSessions = useSessionsStore((s) => s.refresh);
 
-  return async ({ dir, repo }, { kind, driver, model, effort, prompt, images, worktree, base, newBranch, useExisting }) => {
+  return async ({ dir, repo }, { kind, driver, model, effort, startMode, prompt, images, worktree, base, newBranch, useExisting }) => {
     const hasModel = agentOf(kind).caps.model;
     const body: Record<string, unknown> = { dir, kind };
     if (driver) body.driver = driver;
     if (hasModel && model) body.model = model;
-    if (driver === "managed" && effort) body.effort = effort;
+    if (effort) body.effort = effort;
+    if (startMode) body.mode = startMode;
     if (worktree) {
       body.worktree = true;
       body.branch = base;
@@ -48,7 +49,8 @@ export function useStartWork(): (target: StartTarget, opts: LaunchOpts) => Promi
     if (res?.error && driver === "managed" && (res.error as { code?: string }).code === "driver_unsupported") {
       toast("この環境は managed 未対応のため CLI (TUI) で起動します");
       delete body.driver;
-      delete body.effort;
+      if (!agentOf(kind).caps.tuiEffort) delete body.effort;
+      if (!agentOf(kind).caps.tuiStartMode) delete body.mode;
       res = await apiJSON("api/sessions", "POST", body);
     }
     if (res && res.error) {
@@ -58,7 +60,7 @@ export function useStartWork(): (target: StartTarget, opts: LaunchOpts) => Promi
       toast((worktree ? "worktree 起動に失敗: " : "起動に失敗: ") + errText(res.error));
       return { ok: false };
     }
-    if (repo) writeRepoLast(repo, kind, hasModel ? model : undefined, driver === "managed" ? effort : undefined);
+    if (repo) writeRepoLast(repo, kind, hasModel ? model : undefined, effort, startMode);
     const chat = agentOf(kind).caps.chat;
     // Now that the session exists, upload any pasted images to it and fold their
     // saved paths into the first prompt (claude opens them with its Read tool).

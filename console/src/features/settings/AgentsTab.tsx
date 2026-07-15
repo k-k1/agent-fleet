@@ -8,12 +8,15 @@ import { Sparkline } from "../../ui/Sparkline.tsx";
 import { fmtTok } from "../../lib/fmttok.ts";
 import { Choice, OnOff } from "./controls.tsx";
 import {
+  agentLaunchDefault,
   useSettings,
   setSetting,
-  CLAUDE_MODELS,
+  setSettings,
   OUTPUT_LANGUAGES,
   ASSISTANT_AGENTS,
 } from "../../lib/settings.ts";
+import { useEffortOptions, useModelOptions } from "../../lib/agentModels.ts";
+import { agentOf } from "../../agents/registry.ts";
 import { useConnections } from "./useConnections.ts";
 import { useWorkspaceStore, wsStartBusy } from "../../core/store/workspace.ts";
 import { usePolling } from "./usePolling.ts";
@@ -260,6 +263,48 @@ function SettingRow({ label, sub, children }: { label: ReactNode; sub?: ReactNod
   );
 }
 
+// LaunchDefaults: the common, per-agent starting point. A repo's last-used values
+// still win in the launch dialog, so these are useful global defaults without
+// repeatedly overwriting deliberate per-repo choices.
+function LaunchDefaults({ kind }: { kind: "claude" | "codex" | "opencode" }) {
+  const s = useSettings();
+  const desc = agentOf(kind);
+  const row = agentLaunchDefault(s, kind);
+  const models = useModelOptions(kind) || [["", "既定"]] as [string, string][];
+  const efforts = useEffortOptions(kind, row.model);
+  const update = (patch: Partial<typeof row>) => {
+    const next = { ...row, ...patch };
+    setSettings({
+      agentLaunchDefaults: { ...s.agentLaunchDefaults, [kind]: next },
+      // Keep the legacy key in sync while older Console images may still read it.
+      ...(kind === "claude" ? { defaultModel: next.model } : {}),
+    });
+  };
+  return (
+    <>
+      <SettingRow label="既定モデル">
+        <Choice value={row.model} options={models} onChange={(model) => update({ model, effort: "" })} />
+      </SettingRow>
+      <SettingRow label="既定 effort">
+        <Choice value={row.effort} options={efforts} onChange={(effort) => update({ effort })} />
+      </SettingRow>
+      {desc.caps.planMode && (
+        <SettingRow label="開始モード">
+          <Choice
+            value={row.startMode}
+            options={[["normal", desc.defaultModeLabel || "通常"], ["plan", "Plan"]]}
+            onChange={(startMode) => update({ startMode: startMode === "plan" ? "plan" : "normal" })}
+          />
+        </SettingRow>
+      )}
+      <p className="ps-note">
+        新しいセッションの初期値です。リポジトリで前回使った設定があれば、そちらを優先します。
+        ドライバが対応しない項目は起動時に適用されません。
+      </p>
+    </>
+  );
+}
+
 // RtkRow: the shared "RTK（トークン節約）" settings row — a toggle when the workspace
 // has rtk, else an "unavailable" note. Used by all three agent cards.
 function RtkRow({
@@ -296,8 +341,6 @@ function ClaudeCard({
   updateClaude: (patch: unknown) => void;
 }) {
   const toast = useToast();
-  // 既定モデルは claude 起動時の初期モデル（クライアント側設定）。この card 内に置く。
-  const s = useSettings();
   const [flow, setFlow] = useState<any>(null); // { url, flow_id }
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
@@ -388,18 +431,7 @@ function ClaudeCard({
       )}
       <div className="p-settings">
         <div className="ps-title">設定</div>
-        {/* 既定モデルはクライアント側設定なので claude 認証・設定の読み込み状態に依らず表示。 */}
-        <SettingRow label="既定モデル">
-          <Choice
-            value={s.defaultModel}
-            options={CLAUDE_MODELS}
-            onChange={(v) => setSetting("defaultModel", v)}
-          />
-        </SettingRow>
-        <p className="ps-note">
-          claude セッションを起動するとき（作成ダイアログ・リポジトリの起動）このモデルを初期選択にします。
-          リポジトリで前回使ったモデルがあればそちらを優先します。
-        </p>
+        <LaunchDefaults kind="claude" />
         {/* Remote Control / 通知 / RTK are workspace-level files (independent of Claude
             auth) — pre-settable, but need the api/claude/settings endpoint loaded. */}
         {claude && (
@@ -508,7 +540,6 @@ function CodexCard({
     reload();
   };
 
-  const settingsReady = (agents && agents !== false) || codex;
   return (
     <ProviderCard
       id="codex"
@@ -582,10 +613,10 @@ function CodexCard({
         </>
       )}
       {/* RTK is a workspace-level flag (independent of Codex auth) — pre-settable. */}
-      {settingsReady && (
-        <div className="p-settings">
-          <div className="ps-title">設定</div>
-          {codex && (
+      <div className="p-settings">
+        <div className="ps-title">設定</div>
+        <LaunchDefaults kind="codex" />
+        {codex && (
             <>
               <SettingRow label="利用制限時のモデル切替案内">
                 <OnOff
@@ -599,8 +630,8 @@ function CodexCard({
                   : "オフの場合、利用制限が近いときに軽量モデルへの切替を勧める Codex の案内を表示しません。"}
               </p>
             </>
-          )}
-          {agents && agents !== false && (
+        )}
+        {agents && agents !== false && (
             <>
               <RtkRow
                 available={agents.rtk_available}
@@ -611,9 +642,8 @@ function CodexCard({
                 codex はコマンド書換フックを持たないため指示ベース（ベストエフォート）。AGENTS.md で rtk 利用を促すだけで、強制ではありません。
               </p>
             </>
-          )}
-        </div>
-      )}
+        )}
+      </div>
     </ProviderCard>
   );
 }
@@ -670,7 +700,6 @@ function OpencodeCard({
     reload();
   };
 
-  const rtkReady = agents && agents !== false;
   return (
     <ProviderCard
       id="opencode"
@@ -727,16 +756,17 @@ function OpencodeCard({
           </button>
         </div>
       </div>
-      {rtkReady && (
-        <div className="p-settings">
-          <div className="ps-title">設定</div>
+      <div className="p-settings">
+        <div className="ps-title">設定</div>
+        <LaunchDefaults kind="opencode" />
+        {agents && agents !== false && (
           <RtkRow
             available={agents.rtk_available}
             value={agents.opencode_rtk}
             onChange={(v) => updateAgents({ opencode_rtk: v })}
           />
-        </div>
-      )}
+        )}
+      </div>
     </ProviderCard>
   );
 }

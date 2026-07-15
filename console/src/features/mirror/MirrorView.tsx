@@ -1616,12 +1616,13 @@ export function MirrorView({
             type="button"
             className="ghost managed-settings-btn"
             disabled={!alive || readOnly}
-            title={alive && !readOnly ? "モデルと推論 effort を変更" : "再開後に実行設定を変更できます"}
+            title={alive && !readOnly ? "モデル・推論 effort・モードを変更" : "再開後に実行設定を変更できます"}
             onClick={() => setManagedSettingsOpen(true)}
           >
             <Icon name="gear" />
             {managedSettings?.model ? prettyModel(managedSettings.model) : "実行設定"}
             {managedSettings?.effort && <span> · {managedSettings.effort}</span>}
+            {managedSettings?.mode === "plan" && <span> · Plan</span>}
           </button>
         )}
         {/* Managed（paneless）セッションにはターミナルが無い — トグル自体を出さない。 */}
