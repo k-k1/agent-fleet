@@ -42,9 +42,15 @@ interface LayoutStore {
 }
 
 function persist(layout: Layout): void {
-  try {
-    localStorage.setItem(LKEY_NEW(getUser(), getTenant()), JSON.stringify(layout));
-  } catch {}
+  const key = LKEY_NEW(getUser(), getTenant());
+  const json = JSON.stringify(layout);
+  // Per-tab copy: sessionStorage survives this tab's reloads but is private to the
+  // tab and GC'd on close, so two tabs of the same account keep different layouts.
+  // Shared copy: localStorage is the cross-tab / legacy seed a fresh tab restores
+  // from (it holds whatever layout was last active in any tab). loadStoredLayout
+  // reads the per-tab copy first, then this one.
+  try { sessionStorage.setItem(key, json); } catch {}
+  try { localStorage.setItem(key, json); } catch {}
 }
 
 export const useLayoutStore = create<LayoutStore>((set, get) => {

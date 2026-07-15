@@ -149,18 +149,47 @@ export const LKEY_NEW = (user: string, slug: string): string =>
   "af.layout2." + (user || "") + "." + (slug || "");
 
 /** loadStoredLayout reads the persisted layout for a (user, tenant). Returns null
- * when nothing usable is stored. */
+ * when nothing usable is stored.
+ *
+ * Per-tab first: the tab's own arrangement lives in sessionStorage, which survives
+ * a reload but is unique per browser tab and auto-dropped when the tab closes — so
+ * several tabs of the same account keep independent pane layouts (open one session
+ * per tab and work in parallel). Only when this tab has no copy of its own do we
+ * fall back to the shared localStorage entry, which every tab also updates: that
+ * seeds a brand-new tab (and an upgrading single-tab user) from the most recently
+ * active layout instead of a blank one. Both stores use the same (user, tenant) key. */
 export function loadStoredLayout(user: string, slug: string): Layout | null {
-  try {
-    const s = localStorage.getItem(LKEY_NEW(user, slug));
-    if (s) {
-      const l = normalizeStored(JSON.parse(s));
-      if (l) return l;
+  const key = LKEY_NEW(user, slug);
+  for (const store of [safeSession(), localStorageOr(null)]) {
+    if (!store) continue;
+    try {
+      const s = store.getItem(key);
+      if (s) {
+        const l = normalizeStored(JSON.parse(s));
+        if (l) return l;
+      }
+    } catch {
+      /* corrupted entry — fall through to the next store / a fresh layout */
     }
-  } catch {
-    /* corrupted entry — fall through to a fresh layout */
   }
   return null;
+}
+
+/** sessionStorage guarded for environments (SSR/tests/locked-down browsers) where
+ * accessing it throws. Returns null when unavailable. */
+function safeSession(): Storage | null {
+  try {
+    return typeof sessionStorage !== "undefined" ? sessionStorage : null;
+  } catch {
+    return null;
+  }
+}
+function localStorageOr(fallback: Storage | null): Storage | null {
+  try {
+    return typeof localStorage !== "undefined" ? localStorage : fallback;
+  } catch {
+    return fallback;
+  }
 }
 
 // blankPane is re-exported for tests that build expectations around fallbacks.
