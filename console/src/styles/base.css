@@ -23,6 +23,15 @@ body {
   background: var(--bg);
 }
 
+/* Keyboard focus ring — shown only for keyboard focus (not mouse clicks), app-wide.
+   The keyboard system (lib/keys) relies on this being visible so pane/rail/region
+   focus is legible. The outline follows each element's own border-radius in modern
+   engines, so no per-element radius is set here. */
+:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
 /* Thin scrollbars app-wide. The standard properties (Chrome 121+ / Firefox /
    Safari 18.2+) take precedence; the ::-webkit-scrollbar rules only kick in on
    older WebKit engines that ignore scrollbar-width. */

@@ -9,6 +9,8 @@ import { useEffect, useRef, useState } from "react";
 import { useTenantStore } from "../core/store/tenant.ts";
 import { useWorkspaceStore, startWorkspacePolling } from "../core/store/workspace.ts";
 import { useLayoutStore, wireLayoutHistory } from "../layout/store.ts";
+import { wireKeys } from "../features/keys/dispatcher.ts";
+import { useLeftRail } from "../core/store/leftRail.ts";
 import { wireTerminalReconcile } from "../terminal/service.ts";
 import { useSessionsStore, startSessionsPolling } from "../features/sessions/store.ts";
 import { SessionModals } from "../features/sessions/SessionModals.tsx";
@@ -36,6 +38,8 @@ import { AdminDialog } from "../features/settings/AdminDialog.tsx";
 import { GuideModal } from "../features/terminal/OnboardingCard.tsx";
 import { StartHost } from "../features/repos/StartHost.tsx";
 import { startNotificationPolling, useNotificationStore, wireNotificationReadOnActiveSession } from "../features/notifications/store.ts";
+import { WhichKey } from "../features/keys/WhichKey.tsx";
+import { CommandPalette } from "../features/keys/CommandPalette.tsx";
 
 // Refresh FILES (and repos/sessions/chat list on start) whenever the workspace
 // actually flips running↔stopped — including external changes the 4s sync catches
@@ -79,28 +83,14 @@ export function App() {
   const [navOpen, setNavOpen] = useState(false);
   const navOpenRef = useRef(navOpen);
   navOpenRef.current = navOpen;
-  const [leftOpen, setLeftOpen] = useState<boolean>(() => localStorage.getItem("af-left-open") !== "0");
-  const [leftMode, setLeftMode] = useState<string>(() =>
-    localStorage.getItem("af-left-mode") === "overlay" ? "overlay" : "push",
-  );
+  // Desktop rail dock/collapse + push/overlay mode now live in a store so the Ctrl+B
+  // keyboard command can drive them from outside React (core/store/leftRail).
+  const leftOpen = useLeftRail((s) => s.open);
+  const leftMode = useLeftRail((s) => s.mode);
+  const toggleLeft = useLeftRail((s) => s.toggle);
+  const closeLeft = useLeftRail((s) => s.close);
+  const toggleLeftMode = useLeftRail((s) => s.toggleMode);
   const toggleNav = () => setNavOpen((o) => !o);
-  // Desktop-only (TopBar routes mobile taps to toggleNav itself).
-  const toggleLeft = () =>
-    setLeftOpen((o) => {
-      const n = !o;
-      localStorage.setItem("af-left-open", n ? "1" : "0");
-      return n;
-    });
-  const closeLeft = () => {
-    setLeftOpen(false);
-    localStorage.setItem("af-left-open", "0");
-  };
-  const toggleLeftMode = () =>
-    setLeftMode((m) => {
-      const n = m === "push" ? "overlay" : "push";
-      localStorage.setItem("af-left-mode", n);
-      return n;
-    });
 
   // Any navigation (layout change) closes the mobile drawer so the main area
   // comes forward — covers every open-path without threading closeNav around.
@@ -224,6 +214,7 @@ export function App() {
   useEffect(() => {
     const unHistory = wireLayoutHistory();
     const unModalHistory = wireSettingsHistory();
+    const unKeys = wireKeys();
     const unReconcile = wireTerminalReconcile();
     const unWsRefresh = wireWorkspaceRefresh();
     const stopWsPoll = startWorkspacePolling();
@@ -239,6 +230,7 @@ export function App() {
     return () => {
       unHistory();
       unModalHistory();
+      unKeys();
       unReconcile();
       unWsRefresh();
       stopWsPoll();
@@ -322,6 +314,8 @@ export function App() {
       <StartHost />
       <SessionModals />
       <AuthExpiredModal />
+      <WhichKey />
+      <CommandPalette />
     </div>
   );
 }
