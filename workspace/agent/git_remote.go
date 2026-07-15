@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -86,6 +87,18 @@ func handleListRemoteRepos(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		repos, err := bitbucketListRepos(auth)
+		if errors.Is(err, errBitbucketUnauthorized) && s.Bitbucket != nil {
+			// bitbucketAuthHeader only refreshes within 2 min of expiry, and silently keeps a
+			// stale token if that refresh failed transiently — so the first listing can 401
+			// even though a reconnect isn't actually needed. Force one refresh and retry: this
+			// is the failure behind "select GitHub, switch back to Bitbucket, and it works".
+			if nc, rerr := refreshBitbucket(*s.Bitbucket); rerr == nil {
+				c := nc
+				s.Bitbucket = &c
+				_ = s.Save()
+				repos, err = bitbucketListRepos("Bearer " + c.AccessToken)
+			}
+		}
 		if err != nil {
 			httpx.WriteErr(w, http.StatusBadGateway, "provider_error", err.Error())
 			return
@@ -380,31 +393,63 @@ func bitbucketAuthHeader(s *secrets.Data) (string, error) {
 	return "", fmt.Errorf("Bitbucket is not connected")
 }
 
-// bitbucketGet does an authorized GET and returns the body, mapping common errors.
+// errBitbucketUnauthorized marks a 401 from Bitbucket (token stale/rejected). A caller
+// holding OAuth creds can force a token refresh and retry once (see handleListRemoteRepos);
+// a token-paste (Basic) connection surfaces it to the user as a reconnect prompt.
+var errBitbucketUnauthorized = errors.New("bitbucket token rejected (re-connect Bitbucket)")
+
+// bitbucketGet does an authorized GET and returns the body, mapping common errors. Transient
+// failures — a transport error, HTTP 429, or a 5xx — are retried a few times with a short
+// backoff. Without this, the Console's repo/branch pickers surface an intermittent
+// "取得に失敗" that a manual re-open (or switching provider away and back) merely papers over.
 func bitbucketGet(client *http.Client, auth, url string) ([]byte, error) {
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Authorization", auth)
-	req.Header.Set("Accept", "application/json")
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if resp.StatusCode != http.StatusOK {
+	const attempts = 3
+	var lastErr error
+	for i := 0; i < attempts; i++ {
+		if i > 0 {
+			time.Sleep(retryBackoff(i))
+		}
+		req, err := http.NewRequest("GET", url, nil)
+		if err != nil {
+			return nil, err // malformed request URL: not retriable
+		}
+		req.Header.Set("Authorization", auth)
+		req.Header.Set("Accept", "application/json")
+		resp, err := client.Do(req)
+		if err != nil {
+			lastErr = err // transport error (timeout / reset / DNS): retry
+			continue
+		}
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		resp.Body.Close()
+		if resp.StatusCode == http.StatusOK {
+			return body, nil
+		}
 		if resp.StatusCode == http.StatusUnauthorized {
-			return nil, fmt.Errorf("bitbucket token rejected (re-connect Bitbucket)")
+			return nil, errBitbucketUnauthorized // let the caller refresh + retry, don't spin here
 		}
 		msg := strings.TrimSpace(string(body))
 		if len(msg) > 300 {
 			msg = msg[:300]
 		}
-		return nil, fmt.Errorf("bitbucket %d: %s", resp.StatusCode, msg)
+		lastErr = fmt.Errorf("bitbucket %d: %s", resp.StatusCode, msg)
+		if resp.StatusCode != http.StatusTooManyRequests && resp.StatusCode < 500 {
+			return nil, lastErr // other 4xx: permanent, don't retry
+		}
+		// 429 / 5xx: transient — fall through to the next attempt
 	}
-	return body, nil
+	return nil, lastErr
+}
+
+// retryBackoff is the pause before retry attempt i (1-based): a short, linearly growing wait
+// (300ms, 600ms, …) capped at 2s, so a flaky provider call gets a few quick chances without
+// stalling the picker.
+func retryBackoff(i int) time.Duration {
+	d := time.Duration(i) * 300 * time.Millisecond
+	if d > 2*time.Second {
+		d = 2 * time.Second
+	}
+	return d
 }
 
 // bitbucketListRepos enumerates clonable repos. The cross-workspace listing

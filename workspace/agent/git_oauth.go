@@ -240,11 +240,17 @@ func refreshBitbucket(c secrets.BitbucketCreds) (secrets.BitbucketCreds, error) 
 	}
 	req.SetBasicAuth(c.Key, c.Secret)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	resp, err := http.DefaultClient.Do(req)
+	// A bounded timeout (http.DefaultClient has none) so a hung refresh can't stall the whole
+	// repo-listing request; a non-200 is a real failure, not a body to decode as success.
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Do(req)
 	if err != nil {
 		return c, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return c, fmt.Errorf("bitbucket refresh failed: %d", resp.StatusCode)
+	}
 	var out struct {
 		AccessToken  string `json:"access_token"`
 		RefreshToken string `json:"refresh_token"`
