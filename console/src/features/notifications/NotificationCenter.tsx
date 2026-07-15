@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import { Icon } from "../../ui/Icon.tsx";
 import { useDismiss } from "../../lib/useDismiss.ts";
 import { useToast } from "../../ui/ToastProvider.tsx";
+import { setSetting, useSettings } from "../../lib/settings.ts";
 import { openNotificationTarget, replayNotification, useNotificationStore, type FleetNotification } from "./store.ts";
 
 const labels: Record<string, string> = {
@@ -20,6 +21,7 @@ export function NotificationCenter() {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const toast = useToast();
+  const s = useSettings();
   const { items, unseenCount, maxSeq } = useNotificationStore();
   useDismiss(ref, open, () => setOpen(false));
   const show = () => {
@@ -36,12 +38,23 @@ export function NotificationCenter() {
       <Icon name="bell" />{unseenCount > 0 && <span className="notification-badge">{unseenCount > 9 ? "9+" : unseenCount}</span>}
     </button>
     {open && <section className="notification-panel" role="dialog" aria-label="通知センター">
-      <header><strong>通知</strong><span>過去7日間</span></header>
+      <header>
+        <div className="notification-titles"><strong>通知</strong><span>過去7日間</span></div>
+        <button type="button" className={"notification-mute" + (s.ttsSessionNotify ? " on" : "")}
+          title={s.ttsSessionNotify ? "音声通知：オン（クリックでオフ）" : "音声通知：オフ（クリックでオン）"}
+          aria-label="セッションの音声通知" aria-pressed={s.ttsSessionNotify}
+          onClick={() => setSetting("ttsSessionNotify", !s.ttsSessionNotify)}>
+          <Icon name={s.ttsSessionNotify ? "unmute" : "mute"} /><span>音声通知</span>
+        </button>
+      </header>
       {"Notification" in window && Notification.permission === "default" &&
         <button className="notification-permission" onClick={() => void Notification.requestPermission()}>デスクトップ通知を許可</button>}
       <div className="notification-list">
         {items.length === 0 ? <p className="notification-empty">通知はありません</p> : items.map((n) =>
           <div key={n.id} className={"notification-row" + (n.seen ? "" : " unread")}>
+            {n.seen
+              ? <span className="notification-dot" aria-hidden="true" />
+              : <span className="notification-dot" role="img" aria-label="未読" />}
             <button className="notification-item"
               onClick={(e) => void activate(n, e.ctrlKey || e.metaKey)}
               onMouseDown={(e) => e.button === 1 && e.preventDefault()}
