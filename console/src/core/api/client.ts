@@ -273,9 +273,8 @@ export const sessionRespond = (
   }).then((r) => !r?.error);
 
 // sessionSettings updates a MANAGED session's dynamic thread settings（docs/27
-// §9.4-3: 稼働中セッションのモデル / effort / モード変更 — managed で初めて可能に
-// なる）。空フィールドは「変更しない」。tui セッションのモード切替は従来どおり
-// /input のキー操作（planCycleKey）なので、ここは managed だけが呼ぶ。
+// §9.4-3: 稼働中セッションのモデル / effort / モード変更）。空フィールドは
+// 「変更しない」。TUI セッションはそれぞれの CLI 内の設定操作を使う。
 export interface ManagedThreadSettings {
   model: string;
   effort: string;

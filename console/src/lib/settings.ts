@@ -141,6 +141,14 @@ export interface TtsCharConf {
   speed?: number;
 }
 
+export interface AgentLaunchDefault {
+  model: string;
+  effort: string;
+  startMode: "normal" | "plan";
+}
+
+export type AgentLaunchDefaults = Record<string, AgentLaunchDefault>;
+
 export interface Settings {
   termFont: string;
   termSize: number;
@@ -170,6 +178,9 @@ export interface Settings {
   // tier alias (opus/sonnet/haiku) — the alias tracks the newest model in that tier, but
   // the tier itself is pinned, so cost/behavior never shift under you between releases.
   defaultModel: string;
+  // Per-agent launch defaults. defaultModel remains as a migration mirror for older
+  // Console/server prefs; new code reads this map for all three agent kinds.
+  agentLaunchDefaults: AgentLaunchDefaults;
   // Global ON/OFF for the auto session-title-suggestion feature (DisplayTab セッション).
   // Default true so existing users get it without an explicit opt-in.
   autoTitleSuggest: boolean;
@@ -285,6 +296,12 @@ export interface Settings {
 // own release-varying default. Change here to move everyone's baseline tier.
 export const DEFAULT_MODEL = "sonnet";
 
+const DEFAULT_AGENT_LAUNCH: AgentLaunchDefaults = {
+  claude: { model: DEFAULT_MODEL, effort: "", startMode: "normal" },
+  codex: { model: "", effort: "", startMode: "normal" },
+  opencode: { model: "", effort: "", startMode: "normal" },
+};
+
 const DEFAULTS: Settings = {
   termFont: "Source Code Pro",
   termSize: 13,
@@ -309,6 +326,7 @@ const DEFAULTS: Settings = {
   // newline (phone-friendly default); "enter" = Enter submits, Shift+Enter newline.
   mirrorSend: "mod-enter",
   defaultModel: DEFAULT_MODEL, // concrete tier (avoids claude's release-varying own pick)
+  agentLaunchDefaults: DEFAULT_AGENT_LAUNCH,
   autoTitleSuggest: true,
   outputLanguage: "auto",
   assistantAgent: "auto",
@@ -505,10 +523,37 @@ function load(): Settings {
       saved.ttsBackgroundPlayback = saved.ttsQuietWhenHidden ? "quiet" : "normal";
     }
     delete saved.ttsQuietWhenHidden;
-    return { ...DEFAULTS, ...saved };
+    const legacyClaudeModel = typeof saved.defaultModel === "string" ? saved.defaultModel : DEFAULT_MODEL;
+    const rows = saved.agentLaunchDefaults && typeof saved.agentLaunchDefaults === "object"
+      ? saved.agentLaunchDefaults
+      : {};
+    return {
+      ...DEFAULTS,
+      ...saved,
+      agentLaunchDefaults: normalizeAgentLaunchDefaults(rows, legacyClaudeModel),
+    };
   } catch {
     return { ...DEFAULTS };
   }
+}
+
+function normalizeAgentLaunchDefaults(rows: unknown, legacyClaudeModel = DEFAULT_MODEL): AgentLaunchDefaults {
+  const src = rows && typeof rows === "object" ? rows as Record<string, Partial<AgentLaunchDefault>> : {};
+  const out: AgentLaunchDefaults = {};
+  for (const kind of ["claude", "codex", "opencode"]) {
+    const base = DEFAULT_AGENT_LAUNCH[kind];
+    const row = src[kind] || {};
+    out[kind] = {
+      model: typeof row.model === "string" ? row.model : kind === "claude" ? legacyClaudeModel : base.model,
+      effort: typeof row.effort === "string" ? row.effort : base.effort,
+      startMode: row.startMode === "plan" ? "plan" : "normal",
+    };
+  }
+  return out;
+}
+
+export function agentLaunchDefault(s: Settings, kind: string): AgentLaunchDefault {
+  return s.agentLaunchDefaults[kind] || { model: "", effort: "", startMode: "normal" };
 }
 
 let state = load();
@@ -626,6 +671,22 @@ export async function hydrateUIPrefs(): Promise<void> {
       (merged as any)[k] = srv[k];
       changed = true;
     }
+  }
+  const serverRows = srv.agentLaunchDefaults;
+  const legacyClaudeModel = typeof srv.defaultModel === "string" ? srv.defaultModel : merged.defaultModel;
+  // A server written by an older Console has only defaultModel. Do not let the
+  // already-normalized local map mask that server-side value during migration.
+  // Once the new map exists on the server it is authoritative for every agent.
+  const rows = serverRows && typeof serverRows === "object"
+    ? serverRows
+    : {
+        ...merged.agentLaunchDefaults,
+        claude: { ...merged.agentLaunchDefaults.claude, model: legacyClaudeModel },
+      };
+  const normalized = normalizeAgentLaunchDefaults(rows, legacyClaudeModel);
+  if (JSON.stringify(normalized) !== JSON.stringify(merged.agentLaunchDefaults)) {
+    merged.agentLaunchDefaults = normalized;
+    changed = true;
   }
   if (!changed) return;
   state = merged;

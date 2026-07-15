@@ -7,8 +7,8 @@ import { apiJSON, raw, errText } from "../../core/api/client.ts";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { useConfirm } from "../../ui/ConfirmProvider.tsx";
 import { agentOf } from "../../agents/registry.ts";
-import { resolveEffort, writeRepoLast, resolveModel } from "../../lib/repoLast.ts";
-import { useSettings } from "../../lib/settings.ts";
+import { resolveEffort, writeRepoLast, resolveModel, resolveStartMode } from "../../lib/repoLast.ts";
+import { agentLaunchDefault, useSettings } from "../../lib/settings.ts";
 import { useLayoutStore } from "../../layout/store.ts";
 import { useReposStore } from "./store.ts";
 import type { Repo } from "./store.ts";
@@ -106,27 +106,31 @@ export function RepoRowConnected({ r, ctx, onToggle, sess }: RepoRowConnectedPro
       // Quick launch (▼ / right-click): no prompt, straight to a session.
       onLaunch={async (kind, split) => {
         const hasModel = agentOf(kind).caps.model;
+        const defaults = agentLaunchDefault(settings, kind);
         // Shared per-kind chain: repo last-used → kind default (repoLast.ts resolveModel).
-        const model = hasModel ? resolveModel(kind, r.name, settings.defaultModel) : "";
-        const effort = agentOf(kind).managedDriver ? resolveEffort(kind, r.name) : "";
+        const model = hasModel ? resolveModel(kind, r.name, defaults.model) : "";
+        const effort = agentOf(kind).caps.effort ? resolveEffort(kind, r.name, defaults.effort) : "";
+        const startMode = agentOf(kind).caps.planMode ? resolveStartMode(kind, r.name, defaults.startMode) : "normal";
         const body: Record<string, unknown> = { dir: r.path, kind };
         // クイック起動も新規の既定は managed（docs/27 §9.2 — opencode）。CLI が
         // 欲しいときは 作業を始める モーダルのドライバ選択から。
         if (agentOf(kind).managedDriver) body.driver = "managed";
         if (model) body.model = model;
         if (effort) body.effort = effort;
+        body.mode = startMode;
         let res = await apiJSON("api/sessions", "POST", body);
         // 旧 Agent（P1.5 世代）は managed を明示拒否する — tui で立て直す。
         if (res?.error && body.driver === "managed" && (res.error as { code?: string }).code === "driver_unsupported") {
           delete body.driver;
-          delete body.effort;
+          if (!agentOf(kind).caps.tuiEffort) delete body.effort;
+          if (!agentOf(kind).caps.tuiStartMode) delete body.mode;
           res = await apiJSON("api/sessions", "POST", body);
         }
         if (res && res.error) {
           toast("起動に失敗: " + errText(res.error));
           return;
         }
-        writeRepoLast(r.name, kind, hasModel ? model : undefined, agentOf(kind).managedDriver ? effort : undefined);
+        writeRepoLast(r.name, kind, hasModel ? model : undefined, effort, startMode);
         void refreshSessions();
         const chat = agentOf(kind).caps.chat;
         (chat

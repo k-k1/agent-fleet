@@ -13,15 +13,28 @@ import (
 func TestBuildProgramFork(t *testing.T) {
 	os.Unsetenv("AGENT_SESSION_CMD")
 	// A random sid has no jsonl on disk, so we hit the first-launch branch.
-	got := buildProgram("00000000-0000-4000-8000-0000000000fk", "", "", "11111111-1111-4111-8111-111111111src")
+	got := buildProgram("00000000-0000-4000-8000-0000000000fk", "", "", "", "", "11111111-1111-4111-8111-111111111src")
 	want := "--resume 11111111-1111-4111-8111-111111111src --fork-session --session-id 00000000-0000-4000-8000-0000000000fk"
 	if !strings.Contains(got, want) {
 		t.Fatalf("fork program = %q, want it to contain %q", got, want)
 	}
 
 	// No forkFrom + no jsonl → plain new session, never --fork-session.
-	plain := buildProgram("22222222-2222-4222-8222-222222222new", "", "", "")
+	plain := buildProgram("22222222-2222-4222-8222-222222222new", "", "", "", "", "")
 	if !strings.Contains(plain, "--session-id 22222222-2222-4222-8222-222222222new") || strings.Contains(plain, "--fork-session") {
 		t.Fatalf("new-session program = %q, want --session-id and no --fork-session", plain)
+	}
+}
+
+func TestBuildProgramEffortAndPlanMode(t *testing.T) {
+	os.Unsetenv("AGENT_SESSION_CMD")
+	got := buildProgram("33333333-3333-4333-8333-333333333new", "sonnet", "high", "plan", "", "")
+	for _, want := range []string{"--model 'sonnet'", "--effort 'high'", "--permission-mode plan", "--allow-dangerously-skip-permissions"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected %q in %q", want, got)
+		}
+	}
+	if strings.Contains(got, " --dangerously-skip-permissions") {
+		t.Fatalf("plan launch must not force bypass mode: %q", got)
 	}
 }

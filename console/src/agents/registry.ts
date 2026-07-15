@@ -21,6 +21,9 @@ export interface AgentCaps {
   headlessChat: boolean; // can back an assistant-chat conversation via a headless CLI (docs/19)
   transcript: boolean; // stopped session opens a read-only chat history
   model: boolean; // offers a model selector at launch
+  effort: boolean; // offers a reasoning-effort selector when the chosen driver supports it
+  tuiEffort: boolean; // the TUI launch command can pin effort (managed uses Driver capabilities)
+  tuiStartMode: boolean; // the TUI launch command can start deterministically in plan/normal
   fork: boolean; // supports fork-session from the chat (claude --fork-session)
   contextBar: boolean; // shows the context-window token gauge
   imagePaste: boolean; // chat composer accepts pasted images (claude Read-tool flow)
@@ -88,6 +91,9 @@ function caps(overrides: Partial<AgentCaps>): AgentCaps {
     headlessChat: false,
     transcript: false,
     model: false,
+    effort: false,
+    tuiEffort: false,
+    tuiStartMode: false,
     fork: false,
     contextBar: false,
     imagePaste: false,
@@ -121,6 +127,9 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
       headlessChat: true, // Phase A: claude -p backs assistant chat (docs/19)
       transcript: true,
       model: true,
+      effort: true,
+      tuiEffort: true, // claude --effort
+      tuiStartMode: true, // --permission-mode plan / bypassPermissions
       fork: true,
       contextBar: true,
       imagePaste: true,
@@ -158,6 +167,8 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
       headlessChat: true,
       transcript: true,
       model: true,
+      effort: true,
+      tuiEffort: true, // -c model_reasoning_effort=…
       fork: true,
       contextBar: true,
       imagePaste: true,
@@ -196,6 +207,8 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
       headlessChat: true,
       transcript: true,
       model: true,
+      effort: true,
+      tuiStartMode: true, // --agent plan|build
       fork: true,
       contextBar: true,
       imagePaste: true,

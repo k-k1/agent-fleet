@@ -9,9 +9,9 @@ import { Modal } from "../../ui/Modal.tsx";
 import { Button } from "../../ui/Button.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { agentOf } from "../../agents/registry.ts";
-import { readRepoLast, resolveEffort, resolveModel } from "../../lib/repoLast.ts";
+import { readRepoLast, resolveEffort, resolveModel, resolveStartMode } from "../../lib/repoLast.ts";
 import { readPromptHistory } from "../../lib/promptHistory.ts";
-import { useSettings } from "../../lib/settings.ts";
+import { agentLaunchDefault, useSettings } from "../../lib/settings.ts";
 import { EffortPicker, ModelPicker } from "../../ui/ModelPicker.tsx";
 import { repoPromptTemplates } from "./api.ts";
 import type { PromptTemplateGroup } from "./api.ts";
@@ -27,6 +27,7 @@ export interface LaunchOpts {
   driver: string;
   model: string;
   effort: string;
+  startMode: "normal" | "plan";
   prompt: string;
   // Pasted images awaiting upload. Held as raw Files (not yet uploaded) because no
   // session exists at compose time — the caller uploads them once the session is
@@ -64,11 +65,13 @@ export function LaunchModal({ repo, branch, path, kinds, allowWorktree = true, o
   const last = readRepoLast(repo);
   // Default to the last agent used in this repo when still available, else the first.
   const initialKind = last.kind && kinds.includes(last.kind) ? last.kind : kinds[0] || "claude";
+  const initialDefault = agentLaunchDefault(settings, initialKind);
   const [kind, setKind] = useState(initialKind);
   // Shared per-kind priority chain (repoLast.ts resolveModel); re-resolved on a kind
   // switch so a claude tier never leaks into a codex/opencode launch (and vice versa).
-  const [model, setModel] = useState(() => resolveModel(initialKind, repo, settings.defaultModel));
-  const [effort, setEffort] = useState(() => resolveEffort(initialKind, repo));
+  const [model, setModel] = useState(() => resolveModel(initialKind, repo, initialDefault.model));
+  const [effort, setEffort] = useState(() => resolveEffort(initialKind, repo, initialDefault.effort));
+  const [startMode, setStartMode] = useState(() => resolveStartMode(initialKind, repo, initialDefault.startMode));
   // ドライバ（docs/27 P2/P3）: managed 対応 kind は managed が既定（§9.2）。
   // CLI(TUI) はユーザーの明示的な選択 — セッション毎に TUI プロセス分のメモリを払う。
   const [driver, setDriver] = useState(agentOf(initialKind).managedDriver ? "managed" : "");
@@ -109,6 +112,9 @@ export function LaunchModal({ repo, branch, path, kinds, allowWorktree = true, o
   }, [repo]);
 
   const hasModel = agentOf(kind).caps.model;
+  const driverManaged = driver === "managed";
+  const hasEffort = agentOf(kind).caps.effort && (driverManaged || agentOf(kind).caps.tuiEffort);
+  const hasStartMode = agentOf(kind).caps.planMode && (driverManaged || agentOf(kind).caps.tuiStartMode);
   const canPasteImage = agentOf(kind).caps.imagePaste;
 
   // Revoke every held preview URL when the modal unmounts (avoids leaking object URLs).
@@ -179,7 +185,8 @@ export function LaunchModal({ repo, branch, path, kinds, allowWorktree = true, o
       kind,
       driver: agentOf(kind).managedDriver ? driver : "",
       model: hasModel ? model : "",
-      effort: driver === "managed" ? effort : "",
+      effort: hasEffort ? effort : "",
+      startMode: hasStartMode ? startMode : "normal",
       prompt: prompt.trim(),
       images: canPasteImage ? images.map((x) => x.file) : [],
       worktree,
@@ -226,9 +233,11 @@ export function LaunchModal({ repo, branch, path, kinds, allowWorktree = true, o
                   type="button"
                   className={"seg-btn kind-" + a.cssClass + (kind === k ? " active" : "")}
                   onClick={() => {
+                    const defaults = agentLaunchDefault(settings, k);
                     setKind(k);
-                    setModel(resolveModel(k, repo, settings.defaultModel));
-                    setEffort(resolveEffort(k, repo));
+                    setModel(resolveModel(k, repo, defaults.model));
+                    setEffort(resolveEffort(k, repo, defaults.effort));
+                    setStartMode(resolveStartMode(k, repo, defaults.startMode));
                     setDriver(a.managedDriver ? "managed" : "");
                   }}
                 >
@@ -255,11 +264,22 @@ export function LaunchModal({ repo, branch, path, kinds, allowWorktree = true, o
           </div>
         )}
 
-        {driver === "managed" && agentOf(kind).managedDriver && (
+        {hasEffort && (
           <div className="ui-field">
             <span className="ui-field-label">推論 effort</span>
             <EffortPicker kind={kind} model={model} effort={effort} onChange={setEffort} />
             <span className="ui-field-hint">モデルが使う推論量。未指定ならモデル既定値を使用します。</span>
+          </div>
+        )}
+
+        {hasStartMode && (
+          <div className="ui-field">
+            <span className="ui-field-label">開始モード</span>
+            <select value={startMode} onChange={(e) => setStartMode(e.target.value === "plan" ? "plan" : "normal")}>
+              <option value="normal">{agentOf(kind).defaultModeLabel || "通常"}</option>
+              <option value="plan">Plan</option>
+            </select>
+            <span className="ui-field-hint">Planで開始すると、最初のターンは調査と計画に専念します。</span>
           </div>
         )}
 

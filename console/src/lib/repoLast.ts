@@ -12,6 +12,10 @@ const KIND_KEY = (repo: string) => "af.repo-lastkind." + repo;
 const MODEL_KEY = (repo: string, kind: string) =>
   kind === "claude" ? "af.repo-model." + repo : `af.repo-model.${kind}.` + repo;
 const EFFORT_KEY = (repo: string, kind: string) => `af.repo-effort.${kind}.` + repo;
+const MODE_KEY = (repo: string, kind: string) => `af.repo-startmode.${kind}.` + repo;
+// Empty string is a real selection (CLI/model default or standard effort). Keep a
+// sentinel so it remains distinguishable from "this repo has no remembered value".
+const DEFAULT_VALUE = "@af:default";
 
 export interface RepoLast {
   kind?: string;
@@ -26,12 +30,13 @@ export function readRepoLast(repo: string): RepoLast {
   }
 }
 
-function readRepoModel(repo: string, kind: string): string {
-  if (!repo) return "";
+function readRemembered(key: string): { found: boolean; value: string } {
   try {
-    return localStorage.getItem(MODEL_KEY(repo, kind)) || "";
+    const raw = localStorage.getItem(key);
+    if (raw === null) return { found: false, value: "" };
+    return { found: true, value: raw === DEFAULT_VALUE ? "" : raw };
   } catch {
-    return "";
+    return { found: false, value: "" };
   }
 }
 
@@ -49,34 +54,44 @@ function readRepoModel(repo: string, kind: string): string {
 // ABOVE this — they overwrite whatever this returns — so this only computes the initial
 // default. Only meaningful for kinds with caps.model.
 export function resolveModel(kind: string, repo: string, defaultModel: string): string {
-  const last = readRepoModel(repo, kind);
-  if (kind === "claude") return last || defaultModel || DEFAULT_MODEL;
-  return last;
+  const last = repo ? readRemembered(MODEL_KEY(repo, kind)) : { found: false, value: "" };
+  if (last.found) return last.value;
+  if (kind === "claude") return defaultModel || DEFAULT_MODEL;
+  return defaultModel;
 }
 
-export function resolveEffort(kind: string, repo: string): string {
-  if (!repo || (kind !== "codex" && kind !== "opencode")) return "";
+export function resolveEffort(kind: string, repo: string, defaultEffort = ""): string {
+  if (!repo) return defaultEffort;
+  const last = readRemembered(EFFORT_KEY(repo, kind));
+  return last.found ? last.value : defaultEffort;
+}
+
+export function resolveStartMode(kind: string, repo: string, defaultMode: string): "normal" | "plan" {
+  if (!repo) return defaultMode === "plan" ? "plan" : "normal";
   try {
-    return localStorage.getItem(EFFORT_KEY(repo, kind)) || "";
+    const saved = localStorage.getItem(MODE_KEY(repo, kind));
+    if (saved === "plan" || saved === "normal") return saved;
+    return defaultMode === "plan" ? "plan" : "normal";
   } catch {
-    return "";
+    return defaultMode === "plan" ? "plan" : "normal";
   }
 }
 
 // writeRepoLast records the kind, and (when provided) the model under that kind's
 // slot — callers pass model only for kinds with caps.model; "" clears the stored model
 // (the next launch then falls back to the kind's default via resolveModel).
-export function writeRepoLast(repo: string, kind: string, model?: string, effort?: string): void {
+export function writeRepoLast(repo: string, kind: string, model?: string, effort?: string, startMode?: string): void {
   if (!repo || !kind) return;
   try {
     localStorage.setItem(KIND_KEY(repo), kind);
     if (model !== undefined) {
-      if (model) localStorage.setItem(MODEL_KEY(repo, kind), model);
-      else localStorage.removeItem(MODEL_KEY(repo, kind));
+      localStorage.setItem(MODEL_KEY(repo, kind), model || DEFAULT_VALUE);
     }
     if (effort !== undefined) {
-      if (effort) localStorage.setItem(EFFORT_KEY(repo, kind), effort);
-      else localStorage.removeItem(EFFORT_KEY(repo, kind));
+      localStorage.setItem(EFFORT_KEY(repo, kind), effort || DEFAULT_VALUE);
+    }
+    if (startMode !== undefined) {
+      localStorage.setItem(MODE_KEY(repo, kind), startMode === "plan" ? "plan" : "normal");
     }
   } catch {
     /* private mode / quota — the default just falls back to the first agent */

@@ -11,8 +11,8 @@ import { Button } from "../../ui/Button.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { agentOf } from "../../agents/registry.ts";
-import { resolveEffort, resolveModel } from "../../lib/repoLast.ts";
-import { useSettings } from "../../lib/settings.ts";
+import { resolveEffort, resolveModel, resolveStartMode } from "../../lib/repoLast.ts";
+import { agentLaunchDefault, useSettings } from "../../lib/settings.ts";
 import { EffortPicker, ModelPicker } from "../../ui/ModelPicker.tsx";
 import { groupedRepos } from "../../lib/project.ts";
 import { hostColorBase } from "../../lib/termcolor.ts";
@@ -100,7 +100,7 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
   const startShell = async () => {
     if (busy) return;
     setBusy(true);
-    const r = await startWork({ dir: "", repo: "" }, { kind: "shell", driver: "", model: "", effort: "", prompt: "", images: [], worktree: false, base: "", newBranch: "" });
+    const r = await startWork({ dir: "", repo: "" }, { kind: "shell", driver: "", model: "", effort: "", startMode: "normal", prompt: "", images: [], worktree: false, base: "", newBranch: "" });
     setBusy(false);
     if (r.ok) onClose();
   };
@@ -207,8 +207,10 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
 
   // --- home: repo-less agent session (kind / model / first prompt) ---
   const [kind, setKind] = useState(kinds[0] || "claude");
-  const [model, setModel] = useState(() => resolveModel(kinds[0] || "claude", "", settings.defaultModel));
-  const [effort, setEffort] = useState(() => resolveEffort(kinds[0] || "claude", ""));
+  const initialDefault = agentLaunchDefault(settings, kinds[0] || "claude");
+  const [model, setModel] = useState(() => resolveModel(kinds[0] || "claude", "", initialDefault.model));
+  const [effort, setEffort] = useState(() => resolveEffort(kinds[0] || "claude", "", initialDefault.effort));
+  const [startMode, setStartMode] = useState(() => resolveStartMode(kinds[0] || "claude", "", initialDefault.startMode));
   const [prompt, setPrompt] = useState("");
   const startHome = async () => {
     if (busy) return;
@@ -220,7 +222,8 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
         // 起動ハブの repo-less 起動も新規の既定は managed（docs/27 §9.2 — opencode）。
         driver: agentOf(kind).managedDriver ? "managed" : "",
         model: agentOf(kind).caps.model ? model : "",
-        effort: agentOf(kind).managedDriver ? effort : "",
+        effort: agentOf(kind).managedDriver || agentOf(kind).caps.tuiEffort ? effort : "",
+        startMode: agentOf(kind).managedDriver || agentOf(kind).caps.tuiStartMode ? startMode : "normal",
         prompt: prompt.trim(),
         images: [],
         worktree: false,
@@ -409,9 +412,11 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
                       type="button"
                       className={"seg-btn kind-" + a.cssClass + (kind === k ? " active" : "")}
                       onClick={() => {
+                        const defaults = agentLaunchDefault(settings, k);
                         setKind(k);
-                        setModel(resolveModel(k, "", settings.defaultModel));
-                        setEffort(resolveEffort(k, ""));
+                        setModel(resolveModel(k, "", defaults.model));
+                        setEffort(resolveEffort(k, "", defaults.effort));
+                        setStartMode(resolveStartMode(k, "", defaults.startMode));
                       }}
                     >
                       <Icon name={a.icon} className="seg-ic" />
@@ -435,11 +440,20 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
                 />
               </div>
             )}
-            {agentOf(kind).managedDriver && (
+            {agentOf(kind).caps.effort && (agentOf(kind).managedDriver || agentOf(kind).caps.tuiEffort) && (
               <div className="ui-field">
                 <span className="ui-field-label">推論 effort</span>
                 <EffortPicker kind={kind} model={model} effort={effort} onChange={setEffort} />
                 <span className="ui-field-hint">未指定ならモデル既定値を使用します。</span>
+              </div>
+            )}
+            {agentOf(kind).caps.planMode && (agentOf(kind).managedDriver || agentOf(kind).caps.tuiStartMode) && (
+              <div className="ui-field">
+                <span className="ui-field-label">開始モード</span>
+                <select value={startMode} onChange={(e) => setStartMode(e.target.value === "plan" ? "plan" : "normal")}>
+                  <option value="normal">{agentOf(kind).defaultModeLabel || "通常"}</option>
+                  <option value="plan">Plan</option>
+                </select>
               </div>
             )}
             <div className="ui-field">

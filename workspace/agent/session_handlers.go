@@ -155,6 +155,7 @@ type createReq struct {
 	Dir    string `json:"dir"`
 	Model  string `json:"model"`
 	Effort string `json:"effort"`
+	Mode   string `json:"mode"` // "plan" | "normal"
 	Kind   string `json:"kind"` // "claude" (default) | "opencode" | "codex" | "shell"
 	// Driver selects the control route（docs/27 §9.2）: "" | "tui"（従来の tmux 内
 	// TUI、既定）| "managed"（共有 runtime＋構造化 RPC・pane なし）。managed の起動は
@@ -214,6 +215,10 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	title, ok := cleanTitle(req.Title)
 	if !ok {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_title", "title is too long (max 80) or contains control characters")
+		return
+	}
+	if req.Mode != "" && req.Mode != "normal" && req.Mode != "plan" {
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_mode", `mode must be "plan" or "normal"`)
 		return
 	}
 	// Driver validation up-front（副作用 — clone / worktree — より前に落とす）。既定の
@@ -333,7 +338,7 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	meta := session.Meta{
-		Name: name, Dir: req.Dir, Model: req.Model, Effort: req.Effort, Kind: kind, Driver: driver, Title: title, Color: req.Color, Label: label,
+		Name: name, Dir: req.Dir, Model: req.Model, Effort: req.Effort, Mode: req.Mode, Kind: kind, Driver: driver, Title: title, Color: req.Color, Label: label,
 		Repo: filepath.Base(req.Dir), Branch: gitCurrentBranch(req.Dir),
 		CreatedAt: time.Now().Format(time.RFC3339), SSM: ssm,
 	}

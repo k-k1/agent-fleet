@@ -25,13 +25,23 @@ func envOr(key, def string) string {
 // Otherwise it resumes when a session jsonl already exists, else starts new.
 // label, when non-empty, becomes claude's --name (display name shown in the
 // Remote Control picker and terminal title), e.g. "[AF] agent-fleet @0627-2115".
-func buildProgram(sid, model, label, forkFrom string) string {
+func buildProgram(sid, model, effort, mode, label, forkFrom string) string {
 	if override := os.Getenv("AGENT_SESSION_CMD"); override != "" {
 		return override
 	}
 	flags := envOr("AGENT_CLAUDE_FLAGS", "--dangerously-skip-permissions")
+	if mode == "plan" {
+		// --dangerously-skip-permissions forces bypass mode and conflicts with a
+		// Plan start. Keep bypass available to the in-session mode cycle, but start
+		// deterministically in Plan through Claude's native permission-mode flag.
+		flags = strings.ReplaceAll(flags, "--dangerously-skip-permissions", "--allow-dangerously-skip-permissions")
+		flags += " --permission-mode plan"
+	}
 	if model != "" {
 		flags += " --model " + session.ShellQuote(model)
+	}
+	if effort != "" {
+		flags += " --effort " + session.ShellQuote(effort)
 	}
 	if label != "" {
 		flags += " --name " + session.ShellQuote(label)

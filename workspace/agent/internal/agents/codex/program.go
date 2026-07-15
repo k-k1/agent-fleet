@@ -30,7 +30,7 @@ func envOr(key, def string) string {
 // The bypass flags make codex run unattended like claude's --dangerously-skip-
 // permissions: the container IS the sandbox, and we author the injected hooks so
 // hook-trust is bypassed too (otherwise the status hooks wouldn't fire).
-func buildProgram(model, slotSid, codexResumeID, forkFrom string) string {
+func buildProgram(model, effort, slotSid, codexResumeID, forkFrom string) string {
 	if override := os.Getenv("AGENT_CODEX_CMD"); override != "" {
 		return override
 	}
@@ -66,6 +66,10 @@ func buildProgram(model, slotSid, codexResumeID, forkFrom string) string {
 	parts = append(parts, hookFlag("Stop", "idle"))
 	if model != "" {
 		parts = append(parts, "-m", session.ShellQuote(model))
+	}
+	if effort != "" {
+		val := "model_reasoning_effort=" + tomlString(effort)
+		parts = append(parts, "-c", session.ShellQuote(val))
 	}
 	return strings.Join(parts, " ")
 }
