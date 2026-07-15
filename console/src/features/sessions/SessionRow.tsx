@@ -111,6 +111,9 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
         type="button"
         className="sess-btn"
         title={
+          // Full display name first — the row ellipsizes it in the narrow rail.
+          displayName(s) +
+          "\n" +
           (dead
             ? "作業フォルダが存在しないため再開できません"
             : !s.alive

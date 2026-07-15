@@ -29,7 +29,6 @@ import {
   ttsIsBackground,
   ttsMasterGain,
   ttsPanePan,
-  ttsWorkGain,
   type TtsController,
 } from "./ttsControl.ts";
 import type { Layout, Pane } from "../../layout/types.ts";
@@ -63,12 +62,14 @@ describe("TTS master gain", () => {
     expect(ttsMasterGain("normal", true)).toBe(1);
     expect(ttsMasterGain("mute", true)).toBe(0);
   });
-});
 
-describe("workVoiceOpts", () => {
-  it("ヒソヒソの作業過程はスタイルとは別に出力音量も下げる", () => {
-    expect(ttsWorkGain("hushed")).toBe(0.3);
-    expect(ttsWorkGain("whisper")).toBe(0.58);
+  it("quiet の音量はスライダー値（ttsBackgroundVolume）で調整でき、mute/normal には効かない", () => {
+    expect(ttsMasterGain("quiet", true, 0.6)).toBe(0.6);
+    expect(ttsMasterGain("quiet", true, 0)).toBe(0); // 実質ミュート
+    expect(ttsMasterGain("quiet", true, 5)).toBe(1); // 0..1 にクランプ
+    expect(ttsMasterGain("mute", true, 0.6)).toBe(0); // mute は常に無音
+    expect(ttsMasterGain("normal", true, 0.6)).toBe(1); // normal は常に通常
+    expect(ttsMasterGain("quiet", false, 0.6)).toBe(1); // 非背景は常に通常
   });
 });
 
@@ -387,6 +388,28 @@ describe("applyBuiltinReadings / applyReadings (組み込みの読み補正)", (
   it("熟語・ひらがな続きの空は触らない", () => {
     expect(applyBuiltinReadings("空が青い")).toBe("空が青い");
     expect(applyBuiltinReadings("航空券と空港と空白")).toBe("航空券と空港と空白");
+  });
+
+  it("セクション記号 § は「セクション」に読み、番号はそのまま残す", () => {
+    expect(applyBuiltinReadings("§3 を参照")).toBe("セクション3 を参照");
+    expect(applyBuiltinReadings("§§ に記載")).toBe("セクション に記載");
+  });
+
+  it("ピリオドを跨ぐ定型トークン（init.d / cron.d / resolv.conf 等）はカタカナに確定する", () => {
+    expect(applyBuiltinReadings("init.d に配置")).toBe("イニットドットディー に配置");
+    expect(applyBuiltinReadings("cron.d と rc.d と conf.d")).toBe(
+      "クロンドットディー と アールシードットディー と コンフドットディー",
+    );
+    expect(applyBuiltinReadings("resolv.conf を編集")).toBe("リゾルブドットコンフ を編集");
+    expect(applyBuiltinReadings("sudoers.d に置く")).toBe("スードゥアーズドットディー に置く");
+    // 単語境界つきなので cron.daily の一部（cron.d）は誤って置換しない
+    expect(applyBuiltinReadings("cron.daily")).toBe("cron.daily");
+  });
+
+  it("開発現場の漢語は IT の慣用読みに固定する", () => {
+    expect(applyBuiltinReadings("引数と添字")).toBe("ひきすうとそえじ");
+    expect(applyBuiltinReadings("閾値を超えたら相殺")).toBe("しきいちを超えたらそうさい");
+    expect(applyBuiltinReadings("脆弱性と端数と冪等")).toBe("ぜいじゃくせいとはすうとべきとう");
   });
 
   it("裸のスラッシュ区切り（コード外）は中黒に変えて間を詰める", () => {

@@ -64,6 +64,36 @@ describe("groupedRepos", () => {
       ["orphan@wt"],
     ]);
   });
+
+  it("orders a base's worktrees by createdAt (oldest first), ignoring slug order", () => {
+    const repos = [
+      repo("agent-fleet"),
+      // Slug order (name) would be b, c, z; creation order is z (oldest) → b → c.
+      wt("af@wip-c", "agent-fleet", { createdAt: "2026-07-15T05:00:00Z" }),
+      wt("af@wip-z", "agent-fleet", { createdAt: "2026-07-15T03:00:00Z" }),
+      wt("af@wip-b", "agent-fleet", { createdAt: "2026-07-15T04:00:00Z" }),
+    ];
+    expect(groupedRepos(repos)[0].map((r) => r.name)).toEqual([
+      "agent-fleet",
+      "af@wip-z",
+      "af@wip-b",
+      "af@wip-c",
+    ]);
+  });
+
+  it("falls back to name when a worktree has no createdAt", () => {
+    const repos = [
+      repo("agent-fleet"),
+      wt("af@wip-b", "agent-fleet"),
+      wt("af@wip-a", "agent-fleet", { createdAt: "2026-07-15T09:00:00Z" }),
+    ];
+    // The timestamped one sorts among the untimed by name (deterministic).
+    expect(groupedRepos(repos)[0].map((r) => r.name)).toEqual([
+      "agent-fleet",
+      "af@wip-a",
+      "af@wip-b",
+    ]);
+  });
 });
 
 describe("sessionsInFolder", () => {

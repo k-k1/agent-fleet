@@ -24,15 +24,11 @@ export type TtsBackgroundMode = "mute" | "quiet" | "normal";
 export function ttsIsBackground(hidden: boolean, focused: boolean): boolean {
   return hidden || !focused;
 }
-export function ttsMasterGain(mode: TtsBackgroundMode, background: boolean): number {
+// quietGain は "quiet" 時のマスター音量倍率（設定 ttsBackgroundVolume でスライダー調整）。
+// 未指定は従来の固定値 HIDDEN_TTS_GAIN。mute は常に 0、normal・非背景は常に 1。
+export function ttsMasterGain(mode: TtsBackgroundMode, background: boolean, quietGain = HIDDEN_TTS_GAIN): number {
   if (!background || mode === "normal") return 1;
-  return mode === "mute" ? 0 : HIDDEN_TTS_GAIN;
-}
-
-export const WORK_HUSHED_GAIN = 0.3;
-export const WORK_WHISPER_GAIN = 0.58;
-export function ttsWorkGain(mode: string): number {
-  return mode === "hushed" ? WORK_HUSHED_GAIN : WORK_WHISPER_GAIN;
+  return mode === "mute" ? 0 : Math.max(0, Math.min(1, quietGain));
 }
 
 export const MAX_PANE_PAN = 0.7;

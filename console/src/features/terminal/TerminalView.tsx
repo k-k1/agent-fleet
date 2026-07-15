@@ -168,7 +168,8 @@ export function TerminalView({
     <div className="termview">
       <header className="pane-head">
         {session && sessionMeta ? (
-          <span className="pane-session" title={"ID: " + sessionMeta.name}>
+          // The display name ellipsizes in a narrow pane — the hover tip carries it in full.
+          <span className="pane-session" title={displayName(sessionMeta) + "\nID: " + sessionMeta.name}>
             <span className={"kind-tag kind-" + kindClass(sessionMeta.kind)}>
               <span className={`codicon codicon-${kindIcon(sessionMeta.kind)}`} aria-hidden="true" />
               <span className="kt-full">{kindLabel(sessionMeta.kind)}</span>

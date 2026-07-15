@@ -6,6 +6,7 @@
 // NewSessionModal.
 import { useSessionsStore } from "./store.ts";
 import { useSessionUI } from "./ui.ts";
+import { displayName } from "../../lib/sessionview.ts";
 import { openSessionTerminal } from "./open.ts";
 import { ArchivedModal } from "./ArchivedModal.tsx";
 import { SsmLoginModal } from "./SsmLoginModal.tsx";
@@ -41,10 +42,13 @@ export function SessionModals() {
       )}
       {archivedOpen && <ArchivedModal onClose={close} onRestored={() => void refreshSessions()} />}
       {rename && (
+        // Prefill with the name as displayed (manual title, or the derived label /
+        // repo@time for auto-named sessions) so editing starts from the current title
+        // instead of an empty field. Clearing it still reverts to auto naming.
         <SessionTitleModal
           name={rename.name}
           kind={rename.kind}
-          title={rename.title || ""}
+          title={displayName(rename)}
           onClose={close}
           onSaved={() => void refreshSessions()}
         />

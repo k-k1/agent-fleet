@@ -257,6 +257,25 @@
 .ds-row input[type="number"] {
   font-size: 13px;
 }
+/* 音量スライダー（docs/24）: レンジ入力＋現在値のパーセント表示。アクセントで塗る。 */
+.ds-slider {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.ds-slider input[type="range"] {
+  width: 160px;
+  max-width: 46vw;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.ds-slider-val {
+  min-width: 40px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted, var(--fg));
+}
 .ds-note {
   margin-top: 8px;
 }

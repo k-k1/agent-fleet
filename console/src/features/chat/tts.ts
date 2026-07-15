@@ -26,7 +26,7 @@ import {
 import { effectiveDict } from "./ttsDict.ts";
 import { makeAudioLru } from "./ttsCache.ts";
 import { speakersCatalog, type Speaker, type SpeakerStyle } from "./ttsSpeakers.ts";
-import { ttsIsBackground, ttsMasterGain, ttsPanePan, ttsWorkGain, type TtsController, type TtsEndReason, type TtsStopReason } from "./ttsControl.ts";
+import { ttsIsBackground, ttsMasterGain, ttsPanePan, type TtsController, type TtsEndReason, type TtsStopReason } from "./ttsControl.ts";
 export { stopTtsForReplacement } from "./ttsControl.ts";
 export type { TtsController, TtsEndReason, TtsStopReason } from "./ttsControl.ts";
 
@@ -230,9 +230,10 @@ export function workVoiceOpts(
   mode = getSettings().ttsWorkRead,
 ): Partial<TtsOptions> | undefined {
   if (mode === "off") return undefined;
-  // ヒソヒソは話者スタイル自体の演技に加えて、出力ゲインも明確に下げる。
-  // スタイルによって素の音圧が高い場合でも、最終回答より小さく聞こえる値にする。
-  const volume = ttsWorkGain(mode);
+  // ヒソヒソ/ささやきは話者スタイル自体の演技に加えて、出力ゲインも明確に下げる。
+  // 下げ幅はユーザーがスライダーで調整する（ttsWorkVolume）。スタイルによって素の音圧が
+  // 高い場合でも、最終回答より小さく聞こえる値にする。
+  const volume = Math.max(0, Math.min(1, getSettings().ttsWorkVolume));
   const voice = base?.voice || getSettings().ttsVoiceVoicevox;
   const wanted = mode === "hushed" ? ["ヒソヒソ"] : ["ささやき", "囁き"];
   const cat = speakersCatalog();
@@ -389,7 +390,20 @@ let backgroundEventsWired = false;
 function masterTarget(): number {
   const hidden = typeof document !== "undefined" && document.hidden;
   const focused = typeof document === "undefined" || document.hasFocus();
-  return ttsMasterGain(getSettings().ttsBackgroundPlayback, ttsIsBackground(hidden, focused));
+  return ttsMasterGain(getSettings().ttsBackgroundPlayback, ttsIsBackground(hidden, focused), getSettings().ttsBackgroundVolume);
+}
+
+// voiceLoudness は声ごとの出力音量倍率。ずんだもんは他キャラより素の音圧が高いため、設定
+// ttsZundamonVolume で少し下げて他の声・通知音と揃える（実機フィードバック）。Polly や他キャラは 1。
+function voiceLoudness(opts: TtsOptions): number {
+  if (voiceCharName(opts) === "ずんだもん") return Math.max(0, Math.min(1, getSettings().ttsZundamonVolume));
+  return 1;
+}
+
+// outputVolume は連結する再生ゲイン = 呼び手が指定した volume（作業過程の小声等）× 声ごとの
+// 音量倍率。3 つの connectOutput 呼び出し（ストリーム/朗読/告知）が共通で使う。
+function outputVolume(opts: TtsOptions): number {
+  return (opts.volume ?? 1) * voiceLoudness(opts);
 }
 
 function syncMasterGain(immediate = false): void {
@@ -679,7 +693,7 @@ export function startTts(
       if (!ab) continue; // 失敗文はスキップして次へ
       const src = ctx.createBufferSource();
       src.buffer = ab;
-      connectOutput(ctx, src, opts.volume, opts.paneId);
+      connectOutput(ctx, src, outputVolume(opts), opts.paneId);
       src.onended = () => {
         srcs.delete(src);
         notify();
@@ -981,7 +995,7 @@ export function startNarration(
         label(true);
         const src = ctx!.createBufferSource();
         src.buffer = ab;
-        connectOutput(ctx!, src, aopts.volume, aopts.paneId);
+        connectOutput(ctx!, src, outputVolume(aopts), aopts.paneId);
         src.onended = () => {
           cur = null;
           playNext();
@@ -1017,7 +1031,7 @@ export function startNarration(
       useTtsStore.getState().setPreparing(false); // 音が出はじめた → 生成中を解除
       const src = ctx.createBufferSource();
       src.buffer = ab;
-      connectOutput(ctx, src, opts.volume, opts.paneId);
+      connectOutput(ctx, src, outputVolume(opts), opts.paneId);
       src.onended = () => {
         playing = false;
         cur = null;
