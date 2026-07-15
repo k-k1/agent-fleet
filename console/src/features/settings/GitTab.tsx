@@ -116,7 +116,7 @@ function InternalRepos() {
       toast("削除に失敗しました");
       return;
     }
-    toast(`「${rn}」を削除しました`);
+    toast(`「${rn}」を削除しました`, { kind: "success", persist: true });
     load();
   };
 
