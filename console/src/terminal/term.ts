@@ -11,7 +11,8 @@ import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { coarsePointer } from "../lib/device.ts";
 import { WebglAddon } from "@xterm/addon-webgl";
 import "@xterm/xterm/css/xterm.css";
-import { wsURL } from "../core/api/client.ts";
+import { wsURL, rel } from "../core/api/client.ts";
+import { isAuthExpired } from "../core/auth/authExpired.ts";
 import { getSettings, subscribe as subscribeSettings, fontStack } from "../lib/settings.ts";
 import { askConfirm } from "../ui/confirmBridge.ts";
 
@@ -705,6 +706,12 @@ export function attach(paneId: string, session: string) {
     clearHeartbeat(it); // socket gone → stop pinging
     setSoftKeyboard(it, false); // no live PTY → don't summon the keyboard on focus
     it.term!.write("\r\n[disconnected]\r\n");
+    // The raw WebSocket bypasses the fetch wrapper, so an auth-expiry drop (401 on the
+    // upgrade) is indistinguishable from an ordinary network drop here. Probe a cheap
+    // API call once: a 401 trips the wrapper's auth-expired latch (→ re-login dialog),
+    // so a terminal-only view prompts re-login instead of sitting on [disconnected];
+    // any other outcome is a plain drop that reconnect-on-focus already handles.
+    if (!isAuthExpired()) void fetch(rel("api/whoami")).catch(() => {});
   };
   // Focus after the next paint, by when the pane has been un-hidden (the caller
   // flips state in the same React batch). So the user can type immediately after
