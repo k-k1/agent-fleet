@@ -319,6 +319,12 @@ export function MirrorView({
   // 自動読み上げ（P2）: 基準 idx（これ以前の履歴は読まない）／読むべきグループ idx のキュー／
   // グループごとの読み上げ済みブロック数（グループは追記で育つので、増えた分だけ読む）。
   const ttsAutoSeenRef = useRef<number | null>(null);
+  // seen 基準（上記）が属するセッション。基準は裸の jsonl 行番号なので、セッションが変わると
+  // 意味を失う。ペイン D&D の swap は同一インスタンスのまま session prop だけ差し替える
+  // （＋ドロップ先を active 化する）ため、前セッションの turns が残ったまま自動読み上げ effect が
+  // 走り、その行番号で seen を作ってしまう→新セッションの本文が「新着」に見えて最後の最終回答を
+  // 勝手に読み上げる。session 一致を確認するまで基準を取り直しに留めるためのガード。
+  const ttsAutoSessionRef = useRef(session);
   const ttsAutoQueueRef = useRef<number[]>([]);
   const ttsAutoDoneRef = useRef(new Map<number, number>());
   // 確定済み作業過程の小声読み。part index で既読を持ち、最後の tool/question/plan までに
@@ -1410,6 +1416,15 @@ export function MirrorView({
   // 育つので、キューはグループ idx 単位（重複なし）に持ち、pump が増えたブロックだけ読む。
   // DOM は commit 後（この effect 実行時）に描画済み。
   useEffect(() => {
+    // セッションが変わった直後は、まだ前セッションの turns が残ったまま（swap は同一インスタンスの
+    // まま session prop だけ差し替え、ドロップ先を active 化する）この effect が active 変化で走る
+    // ことがある。その turns の idx で seen を作ると新セッションの本文を誤読するので、session が
+    // 揃うまでは基準を捨てて何も読まない（新セッションの turns が届いた回で改めて基準化する）。
+    if (ttsAutoSessionRef.current !== session) {
+      ttsAutoSessionRef.current = session;
+      ttsAutoSeenRef.current = null;
+      return;
+    }
     let newest = -1;
     for (let i = turns.length - 1; i >= 0; i--) {
       const x = turns[i].idx;
@@ -1476,7 +1491,7 @@ export function MirrorView({
     }
     ttsAutoPumpRef.current();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [turns, status, active, readOnly, settings.ttsEnabled, settings.ttsAutoReadMirror, settings.ttsAutoReadAllPanes, settings.ttsWorkRead]);
+  }, [turns, status, active, readOnly, session, settings.ttsEnabled, settings.ttsAutoReadMirror, settings.ttsAutoReadAllPanes, settings.ttsWorkRead]);
 
   // A /context-like gauge: the newest assistant turn's prompt size (input + cache) is
   // the current context fill. The per-category split (/context) is computed inside
