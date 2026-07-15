@@ -6,7 +6,8 @@ import { useTenantStore } from "../core/store/tenant.ts";
 import { useTtsStore } from "../core/store/tts.ts";
 import { useSettingsUI } from "../features/settings/store.ts";
 import { rel, clearLocalState } from "../core/api/client.ts";
-import { useSettings, setSetting, THEMES, SURFACE_TARGETS } from "../lib/settings.ts";
+import { useSettings, setSetting, THEMES, SURFACE_TARGETS, LOCALES } from "../lib/settings.ts";
+import { useT } from "../lib/i18n/index.ts";
 import { useIsMobile, isStandalonePWA } from "../lib/device.ts";
 import { Icon } from "../ui/Icon.tsx";
 import { SwatchGrid } from "../ui/SwatchGrid.tsx";
@@ -31,6 +32,7 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
   const selectTenant = useTenantStore((s) => s.select);
   const superAdmin = useTenantStore((s) => s.superAdmin);
   const s = useSettings();
+  const tr = useT();
   const isMobile = useIsMobile();
   // 音声読み上げ（docs/24）: ピルは常時表示。再生中は「読み上げ中＋停止」（クリックで全体
   // 1 本の再生を止める）、アイドル時は設定 ttsEnabled の ON/OFF トグルとして働く。
@@ -180,6 +182,18 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
               <div className="acct-email">外観</div>
               <div className="acct-theme">
                 <div className="ui-seg choice-seg acct-theme-seg">
+                  {LOCALES.map((l) => (
+                    <button
+                      key={l.id}
+                      type="button"
+                      className={"seg-btn" + (s.locale === l.id ? " active" : "")}
+                      onClick={() => setSetting("locale", l.id)}
+                    >
+                      {l.label}
+                    </button>
+                  ))}
+                </div>
+                <div className="ui-seg choice-seg acct-theme-seg">
                   {THEMES.map((t) => (
                     <button
                       key={t.id}
@@ -187,7 +201,7 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
                       className={"seg-btn" + (s.theme === t.id ? " active" : "")}
                       onClick={() => setSetting("theme", t.id)}
                     >
-                      {t.label}
+                      {tr(t.labelKey)}
                     </button>
                   ))}
                 </div>

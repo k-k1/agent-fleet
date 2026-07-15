@@ -1,5 +1,7 @@
 import { useSyncExternalStore } from "react";
 import { api, apiJSON } from "../core/api/client.ts";
+import { setLocale } from "./i18n/index.ts";
+import type { MsgKey } from "./i18n/index.ts";
 
 // Display settings (theme / fonts / file-viewer options / icon set). Persisted in
 // localStorage for instant load + offline, AND mirrored to the server per-user
@@ -36,20 +38,27 @@ export const ICON_SETS = [
   { id: "seti", label: "Seti（単色・タイプ別着色）" },
 ];
 
-// Base UI theme.
-export const THEMES = [
-  { id: "dark", label: "ダーク" },
-  { id: "light", label: "ライト" },
+// Base UI theme. label は i18n キー（DisplayTab / TopBar が t() で解決）。
+export const THEMES: { id: string; labelKey: MsgKey }[] = [
+  { id: "dark", labelKey: "theme.dark" },
+  { id: "light", labelKey: "theme.light" },
+];
+
+// UI 表示言語（docs/28 / ADR 0016）。ラベルは各言語の自称なので翻訳しない（どの言語で見ても
+// 母語名で並ぶ）。id は i18n カタログ／SUPPORTED_LOCALES と一致させる。
+export const LOCALES = [
+  { id: "ja", label: "日本語" },
+  { id: "en", label: "English" },
 ];
 
 // Per-region theme choices (session mirror / assistant chat). "inherit" = follow the app
 // theme above; "dark"/"light" give that region its own base theme, independent of the rest
 // of the Console — applied by scoping data-theme onto the region container (.mirrorview /
 // .chatview; see tokens.css scoped token blocks + effectiveTheme).
-export const REGION_THEMES = [
-  { id: "inherit", label: "アプリに合わせる" },
-  { id: "dark", label: "ダーク" },
-  { id: "light", label: "ライト" },
+export const REGION_THEMES: { id: string; labelKey: MsgKey }[] = [
+  { id: "inherit", labelKey: "region_theme.inherit" },
+  { id: "dark", labelKey: "theme.dark" },
+  { id: "light", labelKey: "theme.light" },
 ];
 
 // Resolve a per-region theme preference against the app theme, to a concrete "light"/"dark".
@@ -162,6 +171,9 @@ export interface Settings {
   minimap: boolean;
   iconSet: string;
   theme: string;
+  // UI 表示言語（docs/28 / ADR 0016）。"ja" | "en"。theme と違い端末ローカルにせずサーバ同期し、
+  // 言語は人単位で全端末に追従させる。既定はブラウザ言語判定→日本語フォールバック（detectLocale）。
+  locale: string;
   // Per-region base theme, independent of `theme`: "inherit" (default, follow the app),
   // "dark", or "light". Applied by scoping data-theme onto the region container.
   // mirrorTheme → .mirrorview (session mirror); assistantTheme → .chatview (assistant chat).
@@ -326,6 +338,7 @@ const DEFAULTS: Settings = {
   minimap: true,
   iconSet: "vscode",
   theme: "dark",
+  locale: detectLocale(),
   mirrorTheme: "inherit",
   assistantTheme: "inherit",
   topbarColor: "default",
@@ -619,7 +632,26 @@ export function applyTheme(s: Settings): void {
   // as inline vars on .mirrorview / .chatview, since those regions can differ from the app
   // theme. See MirrorView.tsx / ChatView.tsx (surfaceBg + surfaceAccent + effectiveTheme).
 }
+
+// detectLocale — 保存済み locale が無いときの初期 UI 言語。ブラウザ言語から解決し、未対応/不明は
+// 日本語へフォールバック（既存ユーザーの挙動を変えない）。DEFAULTS 評価時に一度だけ走る。
+function detectLocale(): string {
+  try {
+    if ((navigator.language || "").toLowerCase().startsWith("en")) return "en";
+  } catch {
+    /* navigator 不在 */
+  }
+  return "ja";
+}
+
+// applyLocale — i18n ランタイムへ現ロケールを push し、<html lang> を実行時更新する。applyTheme と
+// 同じ 3 箇所（初回描画前・変更時・サーバ hydrate 時）で呼ぶ。
+export function applyLocale(s: Settings): void {
+  setLocale(s.locale);
+  if (typeof document !== "undefined") document.documentElement.lang = s.locale;
+}
 applyTheme(state);
+applyLocale(state);
 
 export function getSettings(): Settings {
   return state;
@@ -711,6 +743,7 @@ export async function hydrateUIPrefs(): Promise<void> {
     localStorage.setItem(KEY, JSON.stringify(state));
   } catch {}
   applyTheme(state);
+  applyLocale(state);
   subs.forEach((fn) => fn());
 }
 
@@ -727,6 +760,7 @@ export function setSettings(patch: Partial<Settings>): void {
     localStorage.setItem(KEY, JSON.stringify(state));
   } catch {}
   applyTheme(state);
+  applyLocale(state);
   scheduleServerSave();
   subs.forEach((fn) => fn());
 }

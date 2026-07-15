@@ -13,7 +13,9 @@ import {
   REGION_THEMES,
   SURFACE_TARGETS,
   MIRROR_SEND_MODES,
+  LOCALES,
 } from "../../lib/settings.ts";
+import { useT } from "../../lib/i18n/index.ts";
 import FileIcon from "../../ui/FileIcon.tsx";
 import { SwatchGrid } from "../../ui/SwatchGrid.tsx";
 import { Choice, OnOff } from "./controls.tsx";
@@ -24,28 +26,38 @@ import type { ChoiceProps } from "./controls.tsx";
 // chips / stepper) for a consistent feel. Terminal and viewer fonts are separate.
 export function DisplayTab() {
   const s = useSettings();
+  const tr = useT();
   return (
     <div className="display-settings">
+      <section className="ds-group">
+        <Row label={tr("settings.language")}>
+          <Choice
+            value={s.locale}
+            options={LOCALES.map((l) => [l.id, l.label])}
+            onChange={(v) => setSetting("locale", v)}
+          />
+        </Row>
+      </section>
       <section className="ds-group">
         <h4 className="ds-title">カラーテーマ</h4>
         <Row label="テーマ">
           <Choice
             value={s.theme}
-            options={THEMES.map((t) => [t.id, t.label])}
+            options={THEMES.map((x) => [x.id, tr(x.labelKey)])}
             onChange={(v) => setSetting("theme", v)}
           />
         </Row>
         <Row label="セッションのテーマ">
           <Choice
             value={s.mirrorTheme}
-            options={REGION_THEMES.map((t) => [t.id, t.label])}
+            options={REGION_THEMES.map((x) => [x.id, tr(x.labelKey)])}
             onChange={(v) => setSetting("mirrorTheme", v)}
           />
         </Row>
         <Row label="アシスタントのテーマ">
           <Choice
             value={s.assistantTheme}
-            options={REGION_THEMES.map((t) => [t.id, t.label])}
+            options={REGION_THEMES.map((x) => [x.id, tr(x.labelKey)])}
             onChange={(v) => setSetting("assistantTheme", v)}
           />
         </Row>
