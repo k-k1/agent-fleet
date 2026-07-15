@@ -24,7 +24,6 @@ type manager struct {
 	buildLocks map[string]*sync.Mutex // per-membership first-resolve serialization
 	store      Store
 	conns      *connRegistry // P3-9: live activity/attachment tracking for idle-stop
-	authReg    *authRegistry // per-identity observed cookie expiry; the reaper spares a locked-out owner's sessions
 
 	// rtFactory is the profile-selected Runtime adapter builder (Docker locally,
 	// ECS on AWS; P3-7). Every runtime is constructed through it — see runtimeFor.
