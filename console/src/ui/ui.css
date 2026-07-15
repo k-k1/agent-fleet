@@ -638,3 +638,24 @@
   color: var(--sel-fg);
   font-weight: 600;
 }
+
+/* ---- Kbd (keycap chips for shortcut hints — which-key / palette / cheat-sheet) ---- */
+.ui-kbd {
+  display: inline-flex;
+  gap: 3px;
+  align-items: center;
+  vertical-align: middle;
+}
+.ui-kbd kbd {
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1;
+  min-width: 1.4em;
+  padding: 3px 5px 4px;
+  text-align: center;
+  color: var(--fg);
+  background: var(--btn);
+  border: 1px solid var(--btn-border);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+}

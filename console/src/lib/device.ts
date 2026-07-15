@@ -43,3 +43,16 @@ export const isStandalonePWA = (): boolean =>
     window.matchMedia?.("(display-mode: standalone)")?.matches ||
       (navigator as unknown as { standalone?: boolean }).standalone === true,
   );
+
+// isMac drives DISPLAY only — whether a shortcut label shows ⌘/⌥ or Ctrl/Alt. Key
+// MATCHING stays platform-agnostic (chords treat Ctrl and ⌘ as one "mod"), so this
+// never affects which keys fire, only how they read. Prefers the modern
+// userAgentData.platform, falling back to the legacy platform / UA string.
+export const isMac = (): boolean =>
+  typeof navigator !== "undefined" &&
+  /mac|iphone|ipad|ipod/i.test(
+    (navigator as unknown as { userAgentData?: { platform?: string } }).userAgentData?.platform ||
+      navigator.platform ||
+      navigator.userAgent ||
+      "",
+  );
