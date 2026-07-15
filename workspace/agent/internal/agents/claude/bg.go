@@ -167,3 +167,47 @@ func isClaudeProc(pid int) bool {
 	cl := strings.ReplaceAll(string(b), "\x00", " ")
 	return strings.Contains(cl, "claude") || strings.Contains(cl, "workspace-agent")
 }
+
+// In-process background agents — a run_in_background subagent (Task/Explore/…) or a
+// Workflow agent — are invisible to BackgroundBusy: they run INSIDE the main
+// claude(node) process and spawn NO worker under the tmux pane, so the /proc tree
+// shows nothing to flag. claude also fires no hook when one finishes, so the recorded
+// state stays idle and the Console shows a bare 入力待ち while work is ongoing. Their
+// only live signal is transcript freshness: while such an agent runs, claude appends
+// to its per-agent jsonl every few seconds. We flag the session busy when any such
+// log was touched recently, and — like BackgroundBusy — self-clear once they go stale
+// (there is no completion marker to key off).
+
+// subagentFreshTTL bounds how recently a subagent/Workflow transcript must have been
+// appended to count as "still running". A window shorter than the gap between an
+// agent's writes (a long tool call or think) would flap the badge off mid-run; 90s
+// bridges those gaps while still clearing soon after the agent stops writing.
+const subagentFreshTTL = 90 * time.Second
+
+// SubagentBusy reports whether the session (keyed by its deterministic sid) has an
+// in-process background subagent or Workflow agent still working. claude writes each
+// agent's turns to ConfigDir()/projects/*/<sid>/subagents/agent-*.jsonl (regular
+// subagents) or subagents/workflows/wf_*/agent-*.jsonl (Workflow agents); a
+// recently-appended log means one is live. Complements BackgroundBusy, which covers
+// the process-tree case it structurally cannot see.
+func SubagentBusy(sid string) bool {
+	if sid == "" {
+		return false
+	}
+	base := filepath.Join(ConfigDir(), "projects", "*", sid, "subagents")
+	cutoff := time.Now().Add(-subagentFreshTTL)
+	// Regular subagents sit directly under subagents/; Workflow agents nest under
+	// subagents/workflows/wf_*/. Check both, returning on the first fresh log.
+	for _, pat := range []string{
+		filepath.Join(base, "agent-*.jsonl"),
+		filepath.Join(base, "workflows", "wf_*", "agent-*.jsonl"),
+	} {
+		logs, _ := filepath.Glob(pat)
+		for _, p := range logs {
+			if fi, err := os.Stat(p); err == nil && fi.ModTime().After(cutoff) {
+				return true
+			}
+		}
+	}
+	return false
+}
