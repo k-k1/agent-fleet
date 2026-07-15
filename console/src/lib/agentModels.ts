@@ -3,10 +3,11 @@
 // track releases, so it can't go stale); codex and opencode have LIVE catalogs
 // served by the Agent (GET /agents/{kind}/models — codex: `codex debug models`
 // under its own subscription auth, opencode: `opencode models` reflecting the
-// user's connected providers), fetched once per Console load and cached
-// module-level (the Agent caches the CLI call too). Until the fetch lands (or
-// when it fails) the picker offers only 既定, which launches the CLI on its own
-// default model.
+// user's connected providers). Codex is cached once per Console load. OpenCode
+// is refetched on each picker mount because its provider connections can change
+// from Settings during the same Console load (the Agent cheaply caches the CLI
+// call). Until the fetch lands (or when it fails) the picker offers only 既定,
+// which launches the CLI on its own default model.
 import { useEffect, useState } from "react";
 import { api } from "../core/api/client.ts";
 import { CLAUDE_MODELS } from "./settings.ts";
@@ -19,7 +20,8 @@ const cache = new Map<string, ModelOption[]>();
 const inflight = new Map<string, Promise<ModelOption[]>>();
 
 function fetchModels(kind: string): Promise<ModelOption[]> {
-  const hit = cache.get(kind);
+  const cacheable = kind !== "opencode";
+  const hit = cacheable ? cache.get(kind) : undefined;
   if (hit) return Promise.resolve(hit);
   let p = inflight.get(kind);
   if (!p) {
@@ -31,7 +33,8 @@ function fetchModels(kind: string): Promise<ModelOption[]> {
           .map((m): ModelOption => [m.id!, m.label || m.id!]);
         if (!opts.length) throw new Error("empty"); // workspace stopped / CLI absent — retry next open
         const full = [...DEFAULT_ONLY, ...opts];
-        cache.set(kind, full);
+        if (cacheable) cache.set(kind, full);
+        else inflight.delete(kind);
         return full;
       })
       .catch(() => {

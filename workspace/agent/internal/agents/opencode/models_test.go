@@ -31,3 +31,19 @@ func TestParseModelsEmpty(t *testing.T) {
 		t.Fatalf("parseModels(empty) = %v, want []", got)
 	}
 }
+
+func TestMergeCommandEnv(t *testing.T) {
+	got := mergeCommandEnv(
+		[]string{"PATH=/usr/bin", "OPENCODE_API_KEY=old", "KEEP=yes"},
+		[]string{"OPENCODE_API_KEY=stored", "ANTHROPIC_API_KEY=anthropic", "invalid"},
+	)
+	want := []string{
+		"PATH=/usr/bin",
+		"OPENCODE_API_KEY=stored",
+		"KEEP=yes",
+		"ANTHROPIC_API_KEY=anthropic",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("mergeCommandEnv = %v, want %v", got, want)
+	}
+}
