@@ -440,22 +440,32 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
                 />
               </div>
             )}
-            {agentOf(kind).caps.effort && (agentOf(kind).managedDriver || agentOf(kind).caps.tuiEffort) && (
-              <div className="ui-field">
-                <span className="ui-field-label">推論 effort</span>
-                <EffortPicker kind={kind} model={model} effort={effort} onChange={setEffort} />
-                <span className="ui-field-hint">未指定ならモデル既定値を使用します。</span>
-              </div>
-            )}
-            {agentOf(kind).caps.planMode && (agentOf(kind).managedDriver || agentOf(kind).caps.tuiStartMode) && (
-              <div className="ui-field">
-                <span className="ui-field-label">開始モード</span>
-                <select value={startMode} onChange={(e) => setStartMode(e.target.value === "plan" ? "plan" : "normal")}>
-                  <option value="normal">{agentOf(kind).defaultModeLabel || "通常"}</option>
-                  <option value="plan">Plan</option>
-                </select>
-              </div>
-            )}
+            {(() => {
+              const a = agentOf(kind);
+              const showEffort = a.caps.effort && (a.managedDriver || a.caps.tuiEffort);
+              const showStartMode = a.caps.planMode && (a.managedDriver || a.caps.tuiStartMode);
+              if (!showEffort && !showStartMode) return null;
+              return (
+                <div className="ui-field-row">
+                  {showEffort && (
+                    <div className="ui-field">
+                      <span className="ui-field-label">推論 effort</span>
+                      <EffortPicker kind={kind} model={model} effort={effort} onChange={setEffort} />
+                      <span className="ui-field-hint">未指定はモデル既定値。</span>
+                    </div>
+                  )}
+                  {showStartMode && (
+                    <div className="ui-field">
+                      <span className="ui-field-label">開始モード</span>
+                      <select value={startMode} onChange={(e) => setStartMode(e.target.value === "plan" ? "plan" : "normal")}>
+                        <option value="normal">{a.defaultModeLabel || "通常"}</option>
+                        <option value="plan">Plan</option>
+                      </select>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
             <div className="ui-field">
               <span className="ui-field-label">場所</span>
               <span className="ui-field-hint">

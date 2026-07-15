@@ -421,6 +421,17 @@
   font-size: 11px;
   color: var(--muted2);
 }
+/* Lay short fields (e.g. effort + start mode selects) on one row to save vertical
+   space; each grows to full width when it's the only one shown. */
+.ui-field-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.ui-field-row > .ui-field {
+  flex: 1 1 180px;
+  min-width: 0;
+}
 .model-picker-dynamic {
   display: flex;
   flex-direction: column;

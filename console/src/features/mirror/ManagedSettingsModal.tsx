@@ -104,20 +104,24 @@ export function ManagedSettingsModal({ session, kind, working, onApplied, onClos
                 />
               </div>
             )}
-            {initial.dynamicEffort !== false && (
-              <div className="ui-field">
-                <span className="ui-field-label">推論 effort</span>
-                <EffortPicker kind={kind} model={model} effort={effort} onChange={setEffort} />
-                <span className="ui-field-hint">既定を選ぶと、選択モデルの標準推論量へ戻します。</span>
-              </div>
-            )}
-            {initial.dynamicMode !== false && (
-              <div className="ui-field">
-                <span className="ui-field-label">モード</span>
-                <select className="cinput" value={mode} onChange={(e) => setMode(e.target.value === "plan" ? "plan" : "normal")}>
-                  <option value="normal">通常（実装）</option>
-                  <option value="plan">Plan</option>
-                </select>
+            {(initial.dynamicEffort !== false || initial.dynamicMode !== false) && (
+              <div className="ui-field-row">
+                {initial.dynamicEffort !== false && (
+                  <div className="ui-field">
+                    <span className="ui-field-label">推論 effort</span>
+                    <EffortPicker kind={kind} model={model} effort={effort} onChange={setEffort} />
+                    <span className="ui-field-hint">既定は標準推論量へ戻します。</span>
+                  </div>
+                )}
+                {initial.dynamicMode !== false && (
+                  <div className="ui-field">
+                    <span className="ui-field-label">モード</span>
+                    <select className="cinput" value={mode} onChange={(e) => setMode(e.target.value === "plan" ? "plan" : "normal")}>
+                      <option value="normal">通常（実装）</option>
+                      <option value="plan">Plan</option>
+                    </select>
+                  </div>
+                )}
               </div>
             )}
             {working && <div className="ui-field-hint"><Icon name="info" /> 変更は次のターンから反映されます。</div>}
