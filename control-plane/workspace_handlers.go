@@ -182,8 +182,12 @@ type sessionWire struct {
 	// で見るが、この struct に無かった頃は中継で silently drop されていた（claude 系は
 	// label にも title が埋まるため露見せず、label を使わない shell/ssm だけ表示名が
 	// フォールバックに落ちるバグ）。DB ミラー（停止中の再配信）には列が無いので載らない。
-	Title     string `json:"title,omitempty"`
-	Display   string `json:"display"` // human-readable name from the Agent (title → label → repo@time)
+	Title   string `json:"title,omitempty"`
+	Display string `json:"display"` // human-readable name from the Agent (title → label → repo@time)
+	// Color: terminal background hue (hex; SSM sessions carry their host color).
+	// この struct に無かった頃は中継で drop され、CP 経由では SSM の背景色が
+	// 常に既定色だった。DB ミラーには列が無いので停止中は載らない。
+	Color     string `json:"color,omitempty"`
 	Label     string `json:"label"`
 	Started   string `json:"started"`
 	CreatedAt string `json:"createdAt"`
@@ -195,6 +199,10 @@ type sessionWire struct {
 	// still running" flag so the Console can badge it. Not persisted to the DB mirror
 	// (a stopped workspace has no live background work).
 	BackgroundBusy bool `json:"backgroundBusy"`
+	// Context: claude のコンテキスト残量（ContextBar の元データ）。shape は Agent と
+	// Console（chat view）が所有し CP は解釈しないので RawMessage で素通しする。
+	// この struct に無かった頃は中継で drop され、CP 経由では ContextBar が出なかった。
+	Context json.RawMessage `json:"context,omitempty"`
 	// Branch/worktree metadata passed through from the Agent (this struct decodes the
 	// Agent's /sessions response and is re-emitted to the Console, so any field absent
 	// here is silently dropped). Drives the branch-drift badge and the worktree branch-
@@ -203,6 +211,18 @@ type sessionWire struct {
 	CurrentBranch string `json:"currentBranch,omitempty"`
 	BranchDrift   bool   `json:"branchDrift,omitempty"`
 	Worktree      bool   `json:"worktree,omitempty"`
+	// Exit cause of a STOPPED session (docs/26): "oom" | "killed" | "crashed"、
+	// クリーン終了・意図停止では空。ExitCode は pane の生 wait status（137 = OOM
+	// SIGKILL）、ExitSignal は導出シグナル番号。この struct に無かった頃は中継で
+	// drop され、docs/26 の exit chip（OOM/クラッシュ表示）が CP 経由では一度も
+	// 表示されなかった。DB ミラーには列が無いので停止中の再配信には載らない
+	// （exit を持つのは停止セッションなので、Agent 停止中は chip も消える点は既知の割り切り）。
+	// NOTE: Agent の wire にはこの他に tmux（"claude_"+name、Console 未使用・導出可能）
+	// があるが、これは意図して中継しない。新 field を Agent 側 wire（internal/session
+	// の Session）に足すときは、ここへの追加漏れ＝silent drop になることに注意。
+	ExitReason string `json:"exitReason,omitempty"`
+	ExitCode   int    `json:"exitCode,omitempty"`
+	ExitSignal int    `json:"exitSignal,omitempty"`
 }
 
 func fmtStarted(createdAt string) string {
