@@ -9,6 +9,8 @@ import { useEffect, useRef, useState } from "react";
 import { useTenantStore } from "../core/store/tenant.ts";
 import { useWorkspaceStore, startWorkspacePolling } from "../core/store/workspace.ts";
 import { useLayoutStore, wireLayoutHistory } from "../layout/store.ts";
+import { wireKeys } from "../features/keys/dispatcher.ts";
+import { useLeftRail } from "../core/store/leftRail.ts";
 import { wireTerminalReconcile } from "../terminal/service.ts";
 import { useSessionsStore, startSessionsPolling } from "../features/sessions/store.ts";
 import { SessionModals } from "../features/sessions/SessionModals.tsx";
@@ -18,7 +20,7 @@ import { useReposStore, startReposPolling } from "../features/repos/store.ts";
 import { useFilesStore } from "../features/files/store.ts";
 import { useChatStore } from "../features/chat/store.ts";
 import { hydrateUIPrefs } from "../lib/settings.ts";
-import { MOBILE_QUERY } from "../lib/device.ts";
+import { MOBILE_QUERY, coarsePointer } from "../lib/device.ts";
 import { PaneHost } from "../features/panes/PaneHost.tsx";
 import { LayoutMap } from "../features/panes/LayoutMap.tsx";
 import { AssistantSection } from "../features/chat/AssistantSection.tsx";
@@ -36,6 +38,8 @@ import { AdminDialog } from "../features/settings/AdminDialog.tsx";
 import { GuideModal } from "../features/terminal/OnboardingCard.tsx";
 import { StartHost } from "../features/repos/StartHost.tsx";
 import { startNotificationPolling, useNotificationStore, wireNotificationReadOnActiveSession } from "../features/notifications/store.ts";
+import { WhichKey } from "../features/keys/WhichKey.tsx";
+import { CommandPalette } from "../features/keys/CommandPalette.tsx";
 
 // Refresh FILES (and repos/sessions/chat list on start) whenever the workspace
 // actually flips running↔stopped — including external changes the 4s sync catches
@@ -79,28 +83,17 @@ export function App() {
   const [navOpen, setNavOpen] = useState(false);
   const navOpenRef = useRef(navOpen);
   navOpenRef.current = navOpen;
-  const [leftOpen, setLeftOpen] = useState<boolean>(() => localStorage.getItem("af-left-open") !== "0");
-  const [leftMode, setLeftMode] = useState<string>(() =>
-    localStorage.getItem("af-left-mode") === "overlay" ? "overlay" : "push",
-  );
+  // Desktop rail dock/collapse + push/overlay mode now live in a store so the Ctrl+B
+  // keyboard command can drive them from outside React (core/store/leftRail). The
+  // tablet edge-swipe's transient "float as overlay" flag (swipeOverlay) lives there
+  // too, so open/close from any path (swipe / hamburger / Ctrl+B) stays consistent.
+  const leftOpen = useLeftRail((s) => s.open);
+  const leftMode = useLeftRail((s) => s.mode);
+  const swipeOverlay = useLeftRail((s) => s.swipeOverlay);
+  const toggleLeft = useLeftRail((s) => s.toggle);
+  const closeLeft = useLeftRail((s) => s.close);
+  const toggleLeftMode = useLeftRail((s) => s.toggleMode);
   const toggleNav = () => setNavOpen((o) => !o);
-  // Desktop-only (TopBar routes mobile taps to toggleNav itself).
-  const toggleLeft = () =>
-    setLeftOpen((o) => {
-      const n = !o;
-      localStorage.setItem("af-left-open", n ? "1" : "0");
-      return n;
-    });
-  const closeLeft = () => {
-    setLeftOpen(false);
-    localStorage.setItem("af-left-open", "0");
-  };
-  const toggleLeftMode = () =>
-    setLeftMode((m) => {
-      const n = m === "push" ? "overlay" : "push";
-      localStorage.setItem("af-left-mode", n);
-      return n;
-    });
 
   // Any navigation (layout change) closes the mobile drawer so the main area
   // comes forward — covers every open-path without threading closeNav around.
@@ -152,8 +145,11 @@ export function App() {
     return () => window.removeEventListener("popstate", onPop);
   }, []);
 
-  // Mobile: swipe right (from the left third) opens the drawer; swipe left
-  // closes it. Passive listeners; vertical drags are left for scrolling.
+  // Edge swipe reveals the left rail. Phone (≤760px): drives the off-canvas
+  // drawer (navOpen). Tablet (>760px, touch): drives the desktop rail (leftOpen),
+  // floated as an overlay for that reveal (see leftRail.openOverlay). Swipe right from
+  // the left third opens; swipe left closes. Mouse desktops never fire TouchEvent,
+  // so they're inert. Passive listeners; vertical drags are left for scrolling.
   useEffect(() => {
     const mq = window.matchMedia(MOBILE_QUERY);
     const DIST = 50;
@@ -164,6 +160,9 @@ export function App() {
     let sx = 0,
       sy = 0,
       mode: "open" | "close" | null = null,
+      // Which surface this gesture drives, latched at touchstart: the phone
+      // drawer (navOpen) vs. the tablet desktop rail (leftOpen overlay).
+      drawer = false,
       longPressTimer: number | null = null;
     const cancelGesture = () => {
       mode = null;
@@ -175,11 +174,17 @@ export function App() {
     const onStart = (e: TouchEvent) => {
       const t = e.touches[0];
       cancelGesture();
-      // While a modal is up, don't let an edge swipe open the drawer behind it (the
+      const phone = mq.matches;
+      // Above the phone breakpoint, only enable the gesture on touch devices
+      // (tablets) — a mouse desktop shouldn't get an edge-swipe rail.
+      const tablet = !phone && coarsePointer();
+      drawer = phone;
+      // While a modal is up, don't let an edge swipe open the rail behind it (the
       // settings modal also uses horizontal swipes for its own tabs).
       const { settingsOpen, adminOpen } = useSettingsUI.getState();
-      if (t && mq.matches && !settingsOpen && !adminOpen) {
-        if (navOpenRef.current) mode = "close";
+      if (t && (phone || tablet) && !settingsOpen && !adminOpen) {
+        const isOpen = phone ? navOpenRef.current : useLeftRail.getState().open;
+        if (isOpen) mode = "close";
         else if (t.clientX < Math.min(window.innerWidth * 0.33, 160)) mode = "open";
       }
       if (t) {
@@ -198,10 +203,12 @@ export function App() {
       const dy = t.clientY - sy;
       if (Math.abs(dx) <= Math.abs(dy)) return;
       if (mode === "open" && dx > DIST) {
-        setNavOpen(true);
+        if (drawer) setNavOpen(true);
+        else useLeftRail.getState().openOverlay();
         cancelGesture();
       } else if (mode === "close" && dx < -DIST) {
-        setNavOpen(false);
+        if (drawer) setNavOpen(false);
+        else useLeftRail.getState().close();
         cancelGesture();
       }
     };
@@ -224,6 +231,7 @@ export function App() {
   useEffect(() => {
     const unHistory = wireLayoutHistory();
     const unModalHistory = wireSettingsHistory();
+    const unKeys = wireKeys();
     const unReconcile = wireTerminalReconcile();
     const unWsRefresh = wireWorkspaceRefresh();
     const stopWsPoll = startWorkspacePolling();
@@ -239,6 +247,7 @@ export function App() {
     return () => {
       unHistory();
       unModalHistory();
+      unKeys();
       unReconcile();
       unWsRefresh();
       stopWsPoll();
@@ -270,7 +279,7 @@ export function App() {
       className={
         "app-shell" +
         (leftOpen ? "" : " left-collapsed") +
-        (leftMode === "overlay" ? " left-overlay" : "") +
+        (leftMode === "overlay" || swipeOverlay ? " left-overlay" : "") +
         (navOpen ? " nav-open" : "")
       }
     >
@@ -322,6 +331,8 @@ export function App() {
       <StartHost />
       <SessionModals />
       <AuthExpiredModal />
+      <WhichKey />
+      <CommandPalette />
     </div>
   );
 }

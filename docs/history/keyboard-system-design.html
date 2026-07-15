@@ -1,0 +1,646 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Console キーボード体系 再編案</title>
+<style>
+:root {
+  /* Neutrals — cool slate, biased toward the cyan accent (chosen, not defaulted) */
+  --bg:        #eef2f5;
+  --panel:     #ffffff;
+  --panel-2:   #f5f8fa;
+  --ink:       #101922;
+  --ink-soft:  #40505f;
+  --ink-faint: #6b7c8c;
+  --line:      #d7e0e7;
+  --line-soft: #e6edf1;
+  /* Accent — terminal phosphor cyan; leader gets its own amber keycap */
+  --acc:       #0b8ea3;
+  --acc-ink:   #06515e;
+  --acc-wash:  #dcf0f3;
+  --lead:      #b9791a;
+  --lead-wash: #f6e9cf;
+  /* Semantic (state of an operation — separate from accent) */
+  --ok:        #2f8f57;   --ok-wash:   #dcefe2;
+  --warn:      #9a6b12;   --warn-wash: #f3e8cf;
+  --crit:      #b23b39;   --crit-wash: #f4dcdb;
+  /* Pane ordinal 8-hue (mirrors the app's real pane-ord palette) */
+  --o1:#0b8ea3; --o2:#2f6bd6; --o3:#7a51d1; --o4:#c0439a;
+  --o5:#c2503a; --o6:#b9791a; --o7:#2f8f57; --o8:#1f9c93;
+
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Code", Menlo, Consolas, monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", "Hiragino Kaku Gothic ProN", "Noto Sans JP", Meiryo, sans-serif;
+  --r: 10px;
+  --shadow: 0 1px 2px rgba(16,25,34,.06), 0 6px 20px -12px rgba(16,25,34,.18);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg:#0c1219; --panel:#121b25; --panel-2:#0f1720; --ink:#dce6f0; --ink-soft:#9fb0c0;
+    --ink-faint:#6d7f90; --line:#243342; --line-soft:#1a2733;
+    --acc:#3ec6da; --acc-ink:#8fe3ef; --acc-wash:#0f2b32; --lead:#e6ad4e; --lead-wash:#332612;
+    --ok:#57c98a; --ok-wash:#12291d; --warn:#d9a648; --warn-wash:#2c2411; --crit:#ea6f6a; --crit-wash:#2e1817;
+    --o1:#3ec6da; --o2:#5b8cf0; --o3:#a583ee; --o4:#e072bd;
+    --o5:#e77a63; --o6:#e6ad4e; --o7:#57c98a; --o8:#43c4b8;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 10px 28px -14px rgba(0,0,0,.6);
+  }
+}
+:root[data-theme="light"] {
+  --bg:#eef2f5; --panel:#ffffff; --panel-2:#f5f8fa; --ink:#101922; --ink-soft:#40505f;
+  --ink-faint:#6b7c8c; --line:#d7e0e7; --line-soft:#e6edf1;
+  --acc:#0b8ea3; --acc-ink:#06515e; --acc-wash:#dcf0f3; --lead:#b9791a; --lead-wash:#f6e9cf;
+  --ok:#2f8f57; --ok-wash:#dcefe2; --warn:#9a6b12; --warn-wash:#f3e8cf; --crit:#b23b39; --crit-wash:#f4dcdb;
+  --o1:#0b8ea3; --o2:#2f6bd6; --o3:#7a51d1; --o4:#c0439a;
+  --o5:#c2503a; --o6:#b9791a; --o7:#2f8f57; --o8:#1f9c93;
+  --shadow: 0 1px 2px rgba(16,25,34,.06), 0 6px 20px -12px rgba(16,25,34,.18);
+}
+:root[data-theme="dark"] {
+  --bg:#0c1219; --panel:#121b25; --panel-2:#0f1720; --ink:#dce6f0; --ink-soft:#9fb0c0;
+  --ink-faint:#6d7f90; --line:#243342; --line-soft:#1a2733;
+  --acc:#3ec6da; --acc-ink:#8fe3ef; --acc-wash:#0f2b32; --lead:#e6ad4e; --lead-wash:#332612;
+  --ok:#57c98a; --ok-wash:#12291d; --warn:#d9a648; --warn-wash:#2c2411; --crit:#ea6f6a; --crit-wash:#2e1817;
+  --o1:#3ec6da; --o2:#5b8cf0; --o3:#a583ee; --o4:#e072bd;
+  --o5:#e77a63; --o6:#e6ad4e; --o7:#57c98a; --o8:#43c4b8;
+  --shadow: 0 1px 2px rgba(0,0,0,.3), 0 10px 28px -14px rgba(0,0,0,.6);
+}
+
+* { box-sizing: border-box; }
+body { margin:0; background:var(--bg); color:var(--ink); font-family:var(--sans);
+  font-size:15px; line-height:1.62; -webkit-font-smoothing:antialiased; }
+.wrap { max-width:1140px; margin:0 auto; padding:0 24px 96px; }
+p { margin:0 0 .8em; }
+a { color:var(--acc); text-underline-offset:2px; }
+:focus-visible { outline:2px solid var(--acc); outline-offset:2px; border-radius:3px; }
+
+/* ---- Keycap: the page's core material ---- */
+.kbd { font-family:var(--mono); font-size:.82em; font-weight:600; line-height:1;
+  display:inline-flex; align-items:center; gap:.15em; padding:.34em .5em .4em;
+  background:var(--panel); color:var(--ink); border:1px solid var(--line);
+  border-bottom-width:2px; border-radius:6px; white-space:nowrap;
+  box-shadow:0 1px 0 var(--line-soft); }
+.kbd.lead { background:var(--lead-wash); border-color:var(--lead); color:var(--lead); }
+.kbd.acc { background:var(--acc-wash); border-color:var(--acc); color:var(--acc-ink); }
+.chord { display:inline-flex; align-items:center; gap:.28em; white-space:nowrap; }
+.chord .pls { color:var(--ink-faint); font-family:var(--mono); font-size:.78em; }
+.chord .then { color:var(--ink-faint); font-size:.72em; letter-spacing:.06em; padding:0 .15em; }
+
+/* ---- Status pill ---- */
+.pill { font-family:var(--mono); font-size:.68rem; font-weight:700; letter-spacing:.04em;
+  padding:.2em .5em; border-radius:999px; text-transform:uppercase; white-space:nowrap;
+  border:1px solid transparent; }
+.pill.kb    { background:var(--ok-wash);   color:var(--ok);   border-color:color-mix(in srgb,var(--ok) 30%,transparent); }
+.pill.tab   { background:var(--warn-wash); color:var(--warn); border-color:color-mix(in srgb,var(--warn) 30%,transparent); }
+.pill.mouse { background:var(--crit-wash); color:var(--crit); border-color:color-mix(in srgb,var(--crit) 30%,transparent); }
+
+/* ---- Hero ---- */
+.hero { padding:64px 0 30px; border-bottom:1px solid var(--line); margin-bottom:44px; }
+.eyebrow { font-family:var(--mono); font-size:.74rem; letter-spacing:.22em; text-transform:uppercase;
+  color:var(--acc); margin:0 0 18px; display:flex; align-items:center; gap:.7em; }
+.eyebrow::before { content:""; width:26px; height:2px; background:var(--acc); display:inline-block; }
+.hero h1 { font-family:var(--mono); font-weight:700; font-size:clamp(1.9rem,4.4vw,3rem);
+  line-height:1.08; letter-spacing:-.01em; margin:0 0 20px; text-wrap:balance; }
+.hero h1 .caret { color:var(--acc); }
+.lede { font-size:clamp(1.02rem,1.6vw,1.22rem); color:var(--ink-soft); max-width:64ch; margin:0; }
+.lede b { color:var(--ink); font-weight:600; }
+.ship-banner { display:flex; gap:11px; align-items:flex-start; margin-top:24px; padding:14px 18px;
+  background:color-mix(in srgb, var(--ok) 9%, var(--panel)); border:1px solid color-mix(in srgb, var(--ok) 35%, var(--line));
+  border-radius:10px; font-size:.92rem; color:var(--ink-soft); max-width:78ch; }
+.ship-banner b { color:var(--ink); }
+.ship-banner code { font-family:var(--mono); font-size:.85em; background:var(--panel-2); padding:.1em .4em; border-radius:4px; color:var(--acc-ink); }
+.ship-dot { width:9px; height:9px; border-radius:50%; background:var(--ok); margin-top:.45em; flex:none;
+  box-shadow:0 0 0 3px color-mix(in srgb, var(--ok) 22%, transparent); }
+.phase.done .pid { background:var(--ok); }
+.done-tag { font-family:var(--mono); font-size:.66rem; font-weight:700; letter-spacing:.04em; color:var(--ok);
+  background:color-mix(in srgb, var(--ok) 14%, transparent); border:1px solid color-mix(in srgb, var(--ok) 34%, transparent);
+  padding:.16em .5em; border-radius:5px; margin-left:.6em; vertical-align:middle; white-space:nowrap; }
+
+/* ---- Section scaffolding ---- */
+section { margin:0 0 58px; scroll-margin-top:24px; }
+.sec-head { display:flex; align-items:baseline; gap:.8em; margin:0 0 6px; }
+.sec-num { font-family:var(--mono); font-size:.8rem; color:var(--acc); font-weight:700; letter-spacing:.05em; }
+h2 { font-family:var(--mono); font-size:clamp(1.25rem,2.4vw,1.6rem); font-weight:700; letter-spacing:-.01em;
+  margin:0; text-wrap:balance; }
+.sec-sub { color:var(--ink-soft); max-width:70ch; margin:.5em 0 26px; }
+h3.mini { font-family:var(--mono); font-size:.95rem; letter-spacing:.01em; margin:30px 0 12px;
+  color:var(--ink); display:flex; align-items:center; gap:.5em; }
+h3.mini::before { content:"▸"; color:var(--acc); font-size:.85em; }
+
+/* ---- Generic card ---- */
+.card { background:var(--panel); border:1px solid var(--line); border-radius:var(--r);
+  padding:22px 24px; box-shadow:var(--shadow); }
+.cards { display:grid; gap:16px; }
+.note { border-left:3px solid var(--acc); background:var(--panel-2); padding:14px 18px;
+  border-radius:0 8px 8px 0; color:var(--ink-soft); font-size:.94rem; }
+.note b { color:var(--ink); }
+.note.warn { border-left-color:var(--warn); }
+
+/* ---- Constraint diagram ---- */
+.flow { display:grid; grid-template-columns:1fr; gap:12px; }
+@media (min-width:720px){ .flow { grid-template-columns:1.1fr auto 1fr; align-items:center; } }
+.flow .box { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:16px 18px; }
+.flow .box h4 { margin:0 0 6px; font-family:var(--mono); font-size:.9rem; }
+.flow .box p { margin:0; font-size:.9rem; color:var(--ink-soft); }
+.flow .arrow { text-align:center; color:var(--acc); font-family:var(--mono); font-weight:700; font-size:1.1rem; }
+.flow .box.bad { border-color:color-mix(in srgb,var(--crit) 45%,var(--line)); }
+.flow .box.good { border-color:color-mix(in srgb,var(--ok) 45%,var(--line)); }
+
+/* ---- Layer stack (architecture) ---- */
+.layers { display:grid; gap:10px; counter-reset:layer; }
+.layer { display:grid; grid-template-columns:auto 1fr; gap:16px; align-items:start;
+  background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:16px 18px; }
+.layer .tag { font-family:var(--mono); font-size:.72rem; font-weight:700; color:var(--acc);
+  background:var(--acc-wash); border:1px solid color-mix(in srgb,var(--acc) 30%,transparent);
+  padding:.35em .55em; border-radius:6px; white-space:nowrap; height:fit-content; letter-spacing:.03em; }
+.layer h4 { margin:0 0 4px; font-size:1rem; font-family:var(--mono); }
+.layer p { margin:0; color:var(--ink-soft); font-size:.92rem; }
+.layer code { font-family:var(--mono); font-size:.85em; background:var(--panel-2); padding:.1em .4em; border-radius:4px; color:var(--acc-ink); }
+
+/* ---- Which-key grid ---- */
+.wkgrid { display:grid; grid-template-columns:repeat(auto-fill,minmax(268px,1fr)); gap:14px; }
+.wk { background:var(--panel); border:1px solid var(--line); border-radius:10px; overflow:hidden; }
+.wk > header { display:flex; align-items:center; gap:.55em; padding:12px 14px;
+  background:var(--panel-2); border-bottom:1px solid var(--line-soft); }
+.wk > header .lbl { font-weight:600; font-size:.95rem; }
+.wk > header .cnt { margin-left:auto; font-family:var(--mono); font-size:.72rem; color:var(--ink-faint); }
+.wk ul { list-style:none; margin:0; padding:8px 6px; display:grid; gap:1px; }
+.wk li { display:grid; grid-template-columns:minmax(52px,auto) 1fr; gap:12px; align-items:center;
+  padding:5px 8px; border-radius:6px; }
+.wk li:hover { background:var(--panel-2); }
+.wk li .k { display:flex; }
+.wk li .d { font-size:.9rem; color:var(--ink-soft); }
+.wk li .d b { color:var(--ink); font-weight:600; }
+.wk li.head-hint { grid-template-columns:1fr; }
+.wk li.head-hint .d { font-size:.8rem; color:var(--ink-faint); font-style:italic; }
+
+/* ---- Pane grid diagram ---- */
+.panedemo { display:grid; gap:18px; }
+@media (min-width:820px){ .panedemo { grid-template-columns:minmax(0,1.15fr) minmax(0,1fr); align-items:start; } }
+.pgrid { display:grid; grid-template-columns:repeat(4,1fr); grid-auto-rows:64px; gap:8px;
+  background:var(--panel-2); border:1px solid var(--line); border-radius:12px; padding:10px; }
+.pane { border:1.5px solid var(--line); border-radius:8px; background:var(--panel); position:relative;
+  display:flex; align-items:center; justify-content:center; }
+.pane .ord { position:absolute; top:6px; left:6px; width:19px; height:19px; border-radius:5px;
+  font-family:var(--mono); font-size:.72rem; font-weight:700; color:#fff; display:flex;
+  align-items:center; justify-content:center; }
+.pane.active { border-color:var(--acc); box-shadow:0 0 0 2px var(--acc-wash), inset 0 0 0 1px var(--acc); }
+.pane .role { font-family:var(--mono); font-size:.68rem; color:var(--ink-faint); }
+.o1{background:var(--o1)} .o2{background:var(--o2)} .o3{background:var(--o3)} .o4{background:var(--o4)}
+.o5{background:var(--o5)} .o6{background:var(--o6)} .o7{background:var(--o7)} .o8{background:var(--o8)}
+.navkeys { display:grid; gap:10px; }
+.navkeys .nk { display:grid; grid-template-columns:auto 1fr; gap:12px; align-items:center;
+  padding:9px 12px; background:var(--panel); border:1px solid var(--line); border-radius:8px; }
+.navkeys .nk .d { font-size:.9rem; color:var(--ink-soft); }
+.navkeys .nk .d b { color:var(--ink); }
+
+/* ---- Tables ---- */
+.tblwrap { overflow-x:auto; border:1px solid var(--line); border-radius:10px; }
+table { width:100%; border-collapse:collapse; font-size:.9rem; min-width:560px; }
+thead th { text-align:left; font-family:var(--mono); font-size:.72rem; letter-spacing:.06em;
+  text-transform:uppercase; color:var(--ink-faint); font-weight:700; padding:11px 14px;
+  background:var(--panel-2); border-bottom:1px solid var(--line); white-space:nowrap; }
+tbody td { padding:11px 14px; border-bottom:1px solid var(--line-soft); vertical-align:top; color:var(--ink-soft); }
+tbody tr:last-child td { border-bottom:0; }
+tbody td b { color:var(--ink); font-weight:600; }
+tbody td:first-child { white-space:nowrap; }
+
+/* ---- Phases ---- */
+.phases { display:grid; gap:12px; counter-reset:ph; }
+.phase { display:grid; grid-template-columns:auto 1fr; gap:18px; background:var(--panel);
+  border:1px solid var(--line); border-radius:10px; padding:18px 20px; align-items:start; }
+.phase .pid { font-family:var(--mono); font-weight:700; font-size:1.05rem; color:var(--panel);
+  background:var(--acc); width:46px; height:46px; border-radius:9px; display:flex; align-items:center;
+  justify-content:center; letter-spacing:.02em; }
+.phase h4 { margin:0 0 5px; font-size:1.02rem; }
+.phase p { margin:0 0 8px; color:var(--ink-soft); font-size:.92rem; }
+.phase .out { font-family:var(--mono); font-size:.78rem; color:var(--acc-ink); background:var(--acc-wash);
+  display:inline-block; padding:.25em .6em; border-radius:6px; }
+.phase.ship .pid { background:var(--lead); }
+
+/* ---- Decisions ---- */
+.dec { display:grid; gap:14px; }
+.dopt { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:18px 20px; }
+.dopt h4 { margin:0 0 8px; font-size:1rem; display:flex; align-items:center; gap:.6em; flex-wrap:wrap; }
+.dopt .rec { font-family:var(--mono); font-size:.66rem; font-weight:700; letter-spacing:.05em;
+  text-transform:uppercase; color:var(--ok); background:var(--ok-wash); padding:.25em .55em; border-radius:5px;
+  border:1px solid color-mix(in srgb,var(--ok) 30%,transparent); }
+.dopt ul { margin:.4em 0 0; padding-left:1.1em; color:var(--ink-soft); font-size:.92rem; }
+.dopt ul li { margin:.25em 0; }
+
+.legend { display:flex; flex-wrap:wrap; gap:10px 22px; align-items:center; padding:14px 18px;
+  background:var(--panel-2); border:1px dashed var(--line); border-radius:10px; margin-bottom:22px; }
+.legend .li { display:flex; align-items:center; gap:.5em; font-size:.86rem; color:var(--ink-soft); }
+
+footer { border-top:1px solid var(--line); padding-top:24px; color:var(--ink-faint); font-size:.85rem; }
+footer .mono { font-family:var(--mono); }
+
+@media (prefers-reduced-motion:no-preference){
+  .kbd,.wk li,.dopt,.phase { transition:background .15s ease, border-color .15s ease, transform .15s ease; }
+  .dopt:hover { transform:translateY(-1px); border-color:color-mix(in srgb,var(--acc) 40%,var(--line)); }
+}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+
+<header class="hero">
+  <p class="eyebrow">agent-fleet console · 設計提案</p>
+  <h1><span class="caret">⌨</span> キーボード体系 再編案<br>すべての操作を、キーだけで直感的に</h1>
+  <p class="lede">現状の Console にはショートカット・レジストリもコマンドパレットも存在せず、操作の大半は「マウスで押すボタン」です。本案は<b>端末（xterm）がほぼ全キーを飲み込む</b>という根本制約を正面から扱い、<b>単一の capture-phase ディスパッチャ＋リーダーキー＋コマンドパレット</b>を軸に、全操作をキーボードで到達可能かつ発見可能にします。</p>
+  <div class="ship-banner">
+    <span class="ship-dot"></span>
+    <span><b>P0–P2 実装済・push 済</b>（<code>temp/slbkq45</code> / d88c81d）— capture-phase ディスパッチャ、Leader <span class="kbd lead">Ctrl</span><span style="color:var(--ink-faint)">+</span><span class="kbd lead">K</span>＋which-key、コマンドパレット <span class="kbd acc">Ctrl</span><span style="color:var(--ink-faint)">+</span><span class="kbd acc">P</span>、Alt 系ペイン移動、フォーカスリング。型 / vitest 229 / build / headless 検証済。残は P3–P5。</span>
+  </div>
+</header>
+
+<main>
+
+<!-- 1. CONSTRAINT -->
+<section id="constraint">
+  <div class="sec-head"><span class="sec-num">01</span><h2>なぜ「普通の Ctrl+文字」では作れないのか</h2></div>
+  <p class="sec-sub">設計判断はすべて 1 つの事実から出発します。端末にフォーカスがある間、アプリに届くキーは実質 2 種類しかありません。</p>
+
+  <div class="flow">
+    <div class="box bad">
+      <h4>端末はキーの吸い込み口</h4>
+      <p><code>term.ts</code> の <code>attachCustomKeyEventHandler</code> が <b>Ctrl+ほぼ全キー・F1〜F10</b> を PTY へ転送。全画面時は Keyboard&nbsp;Lock で <span class="kbd">W</span> <span class="kbd">T</span> <span class="kbd">N</span> <span class="kbd">R</span> <span class="kbd">L</span> <span class="kbd">S</span> <span class="kbd">P</span> まで奪う。</p>
+    </div>
+    <div class="arrow">→</div>
+    <div class="box good">
+      <h4>唯一の抜け道</h4>
+      <p><b>① Escape</b>（端末が握らず document へ伝播）と <b>② window の capture-phase</b> で握って <code>preventDefault + stopPropagation</code> したキー。既存の Ctrl+F がこの方式。</p>
+    </div>
+  </div>
+
+  <div class="note warn" style="margin-top:18px">
+    <b>帰結：</b>アプリが横取りしたキーは、その分シェルから奪う。だから「直接 Ctrl+文字」を大量に割り当てるのは、端末ヘビーな本アプリでは筋が悪い。<b>横取りするキーは最小限に絞り、残りはリーダー経由で到達する</b>——これが全体設計の背骨になります。加えて Mac の <span class="kbd">⌘</span> は端末が使わないため、Mac では素の ⌘ 系が安全地帯。IME 変換中（<code>isComposing</code>）は一切発火させない（日本語入力の死守）。
+  </div>
+</section>
+
+<!-- 2. ARCHITECTURE -->
+<section id="arch">
+  <div class="sec-head"><span class="sec-num">02</span><h2>アーキテクチャ — 単一レジストリと 4 つの層</h2></div>
+  <p class="sec-sub">現状のアドホックな keydown ハンドラ（escLayer / PaneFind / 各コンポーネント）を、1 本のディスパッチャと 1 つのコマンド・レジストリに統合します。レジストリが<b>唯一の真実源</b>となり、パレット・which-key・チートシート・ツールチップ・設定画面はすべてそこから生成されるため、表示と実体がずれません。</p>
+
+  <div class="layers">
+    <div class="layer">
+      <span class="tag">層 0</span>
+      <div><h4>Command Registry ＋ Dispatcher</h4>
+      <p><code>src/lib/keys/</code> を新設（escLayer の隣）。各コマンドは <code>{ id, keys, when(ctx), run, group, title }</code>。<code>window</code> の <b>capture-phase</b> keydown で、コンテキスト（アクティブ領域・フォーカス要素・開いている overlay・リーダー待機中か）に照らして最初にマッチしたコマンドだけを握る。未登録キーは素通り＝端末・入力欄は無傷。</p></div>
+    </div>
+    <div class="layer">
+      <span class="tag">層 1</span>
+      <div><h4>Focus / Region モデル</h4>
+      <p>今ある <code>activeId</code>（アクティブ・ペイン 1 個）を土台に、<b>領域（左レール／メイン／バー）</b>の概念と、ペインのキーボード移動（方向・序数・巡回）を追加。アクティブ化に合わせて中身へ DOM フォーカスを渡し、<b>可視フォーカスリング</b>（新 <code>--focus-ring</code> トークン）を出す。</p></div>
+    </div>
+    <div class="layer">
+      <span class="tag">層 2</span>
+      <div><h4>Leader ＋ which-key ＋ Command Palette</h4>
+      <p>リーダー → グループ → アクションの<b>ニーモニック木</b>と、全コマンドを曖昧検索する<b>パレット</b>（完全性の担保）。which-key オーバーレイが次に押せるキーを常に提示＝暗記不要。</p></div>
+    </div>
+    <div class="layer">
+      <span class="tag">層 3</span>
+      <div><h4>List / Menu / Modal のキーボード化</h4>
+      <p>ファイルツリーで実証済みの ARIA-tree roving を<b>レール全体・右クリックメニュー</b>へ展開。モーダルに<b>フォーカストラップ＋<code>role=dialog</code></b>。コンテキストメニューを <span class="kbd">Shift+F10</span>/<span class="kbd">Menu</span> で開けるようにし、ポインタ専用の穴を塞ぐ。</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- 3. GRAMMAR -->
+<section id="grammar">
+  <div class="sec-head"><span class="sec-num">03</span><h2>修飾キーの文法</h2></div>
+  <p class="sec-sub">4 つの入口だけ覚えれば、あとは画面が教えてくれる。プラットフォーム差は「同じ論理キー」を <span class="kbd">Ctrl</span>↔<span class="kbd">⌘</span> で読み替えるだけ（既存コードも <code>Ctrl≡⌘</code>）。</p>
+
+  <div class="cards" style="grid-template-columns:repeat(auto-fit,minmax(240px,1fr))">
+    <div class="card">
+      <h3 class="mini" style="margin-top:0">Leader（背骨）</h3>
+      <p style="margin:0 0 10px"><span class="chord"><span class="kbd lead">Ctrl</span><span class="pls">+</span><span class="kbd lead">K</span></span> <span style="color:var(--ink-faint)">/ Mac <span class="chord"><span class="kbd lead">⌘</span><span class="pls">+</span><span class="kbd lead">K</span></span></span></p>
+      <p style="font-size:.9rem;color:var(--ink-soft);margin:0">押すと which-key が開く。続けて<b>修飾なしのキー</b>でグループ→アクション。端末から奪うのは<b>この 1 キーだけ</b>で全機能に到達。再割当可。</p>
+    </div>
+    <div class="card">
+      <h3 class="mini" style="margin-top:0">Palette（完全性）</h3>
+      <p style="margin:0 0 10px"><span class="chord"><span class="kbd acc">Ctrl</span><span class="pls">+</span><span class="kbd acc">P</span></span> <span style="color:var(--ink-faint)">又は Leader 後にそのまま入力</span></p>
+      <p style="font-size:.9rem;color:var(--ink-soft);margin:0">コマンド・セッション・ファイル・repo を横断曖昧検索。<b>アプリにある操作は必ずここに載る</b>＝暗記ゼロで全操作到達の保証。</p>
+    </div>
+    <div class="card">
+      <h3 class="mini" style="margin-top:0">Accelerators（速度）</h3>
+      <p style="margin:0 0 10px"><span class="chord"><span class="kbd">Alt</span><span class="pls">+</span><span class="kbd">1…8</span></span> <span style="color:var(--ink-faint)">等・厳選 ~20 個</span></p>
+      <p style="font-size:.9rem;color:var(--ink-soft);margin:0">高頻度操作の直行便。端末と衝突しない修飾（既定 <span class="kbd">Alt</span>）で、リーダーを介さず一発。全て再割当可。</p>
+    </div>
+    <div class="card">
+      <h3 class="mini" style="margin-top:0">Escape（撤退）</h3>
+      <p style="margin:0 0 10px"><span class="kbd">Esc</span> <span style="color:var(--ink-faint)">段階的に 1 枚ずつ剥がす</span></p>
+      <p style="font-size:.9rem;color:var(--ink-soft);margin:0">overlay を剥がす → which-key/パレットを閉じる → ペイン中身のフォーカスをペイン枠へ戻す → フィルタを消す。既存 escLayer を拡張。</p>
+    </div>
+  </div>
+</section>
+
+<!-- 4. KEYMAP -->
+<section id="keymap">
+  <div class="sec-head"><span class="sec-num">04</span><h2>全キーマップ（which-key ツリー）</h2></div>
+  <p class="sec-sub">リーダー <span class="chord"><span class="kbd lead">Ctrl</span><span class="pls">+</span><span class="kbd lead">K</span></span> の後に、下のグループ頭文字 → アクション。すべてニーモニック（<b>p</b>ane / <b>s</b>ession / <b>g</b>it / <b>f</b>ile …）。押すたび which-key が次候補を提示するので、丸暗記は不要です。</p>
+
+  <div class="wkgrid">
+
+    <div class="wk">
+      <header><span class="kbd lead">K</span><span class="then" style="color:var(--ink-faint)">then</span><span class="kbd">p</span><span class="lbl">ペイン / レイアウト</span><span class="cnt">14</span></header>
+      <ul>
+        <li><span class="k"><span class="kbd">1</span>–<span class="kbd">8</span></span><span class="d"><b>ペイン N</b> へフォーカス（序数）</span></li>
+        <li><span class="k"><span class="kbd">h</span><span class="kbd">j</span><span class="kbd">k</span><span class="kbd">l</span></span><span class="d">左/下/上/右の隣ペインへ</span></li>
+        <li><span class="k"><span class="kbd">H</span><span class="kbd">J</span><span class="kbd">K</span><span class="kbd">L</span></span><span class="d">ペインを<b>移動/入替</b>（drag 相当）</span></li>
+        <li><span class="k"><span class="kbd">r</span></span><span class="d">右に<b>分割</b></span></li>
+        <li><span class="k"><span class="kbd">d</span></span><span class="d">下に<b>分割</b></span></li>
+        <li><span class="k"><span class="kbd">w</span></span><span class="d">ペインを<b>閉じる</b></span></li>
+        <li><span class="k"><span class="kbd">o</span></span><span class="d">他ペインを閉じる</span></li>
+        <li><span class="k"><span class="kbd">z</span></span><span class="d">最大化トグル（zoom）</span></li>
+        <li><span class="k"><span class="kbd">=</span></span><span class="d">幅/高さを均等化</span></li>
+        <li><span class="k"><span class="kbd">&lt;</span><span class="kbd">&gt;</span></span><span class="d">分割線リサイズ（divider 相当）</span></li>
+        <li><span class="k"><span class="kbd">\</span></span><span class="d">行折り返しトグル</span></li>
+      </ul>
+    </div>
+
+    <div class="wk">
+      <header><span class="kbd lead">K</span><span class="then" style="color:var(--ink-faint)">then</span><span class="kbd">s</span><span class="lbl">セッション</span><span class="cnt">11</span></header>
+      <ul>
+        <li><span class="k"><span class="kbd">n</span></span><span class="d"><b>新規</b>セッション（起動モーダル）</span></li>
+        <li><span class="k"><span class="kbd">s</span></span><span class="d">セッション<b>切替</b>（パレット）</span></li>
+        <li><span class="k"><span class="kbd">t</span></span><span class="d">チャット⇄端末ミラー切替</span></li>
+        <li><span class="k"><span class="kbd">R</span></span><span class="d">再開（resume）</span></li>
+        <li><span class="k"><span class="kbd">x</span></span><span class="d">停止（halt）</span></li>
+        <li><span class="k"><span class="kbd">a</span></span><span class="d">アーカイブ / 削除</span></li>
+        <li><span class="k"><span class="kbd">r</span></span><span class="d">タイトル改名</span></li>
+        <li><span class="k"><span class="kbd">b</span></span><span class="d">ブランチ改名</span></li>
+        <li><span class="k"><span class="kbd">f</span></span><span class="d">fork</span></li>
+        <li><span class="k"><span class="kbd">d</span></span><span class="d">driver 切替（Managed⇄TUI）</span></li>
+        <li><span class="k"><span class="kbd">c</span></span><span class="d">ID コピー</span></li>
+      </ul>
+    </div>
+
+    <div class="wk">
+      <header><span class="kbd lead">K</span><span class="then" style="color:var(--ink-faint)">then</span><span class="kbd">g</span><span class="lbl">Git / SCM</span><span class="cnt">8</span></header>
+      <ul>
+        <li><span class="k"><span class="kbd">s</span></span><span class="d"><b>Source Control</b> を開く</span></li>
+        <li><span class="k"><span class="kbd">c</span></span><span class="d">コミット（メッセージ欄へ）</span></li>
+        <li><span class="k"><span class="kbd">l</span></span><span class="d">コミットグラフ / log</span></li>
+        <li><span class="k"><span class="kbd">d</span></span><span class="d">作業ツリー diff</span></li>
+        <li><span class="k"><span class="kbd">b</span></span><span class="d">ブランチ切替</span></li>
+        <li><span class="k"><span class="kbd">f</span></span><span class="d">fetch</span></li>
+        <li><span class="k"><span class="kbd">F</span></span><span class="d">fast-forward</span></li>
+        <li><span class="k"><span class="kbd">r</span></span><span class="d">更新（refresh）</span></li>
+      </ul>
+    </div>
+
+    <div class="wk">
+      <header><span class="kbd lead">K</span><span class="then" style="color:var(--ink-faint)">then</span><span class="kbd">f</span><span class="lbl">ファイル</span><span class="cnt">7</span></header>
+      <ul>
+        <li><span class="k"><span class="kbd">f</span></span><span class="d">ファイル<b>クイックオープン</b>（パレット）</span></li>
+        <li><span class="k"><span class="kbd">t</span></span><span class="d">ファイルツリー表示トグル</span></li>
+        <li><span class="k"><span class="kbd">n</span></span><span class="d">新規ファイル</span></li>
+        <li><span class="k"><span class="kbd">N</span></span><span class="d">新規フォルダ</span></li>
+        <li><span class="k"><span class="kbd">r</span></span><span class="d">改名</span></li>
+        <li><span class="k"><span class="kbd">d</span></span><span class="d">削除</span></li>
+        <li><span class="k"><span class="kbd">e</span></span><span class="d">エクスプローラで表示</span></li>
+      </ul>
+    </div>
+
+    <div class="wk">
+      <header><span class="kbd lead">K</span><span class="then" style="color:var(--ink-faint)">then</span><span class="kbd">a</span><span class="lbl">アシスタント / チャット</span><span class="cnt">4</span></header>
+      <ul>
+        <li><span class="k"><span class="kbd">a</span></span><span class="d">新規チャット</span></li>
+        <li><span class="k"><span class="kbd">s</span></span><span class="d">会話切替（パレット）</span></li>
+        <li><span class="k"><span class="kbd">r</span></span><span class="d">改名</span></li>
+        <li><span class="k"><span class="kbd">n</span></span><span class="d">アシスタント新規作成</span></li>
+      </ul>
+    </div>
+
+    <div class="wk">
+      <header><span class="kbd lead">K</span><span class="then" style="color:var(--ink-faint)">then</span><span class="kbd">m</span><span class="lbl">メモキュー</span><span class="cnt">3</span></header>
+      <ul>
+        <li><span class="k"><span class="kbd">a</span></span><span class="d">メモ追加（入力へ）</span></li>
+        <li><span class="k"><span class="kbd">s</span></span><span class="d">選択メモを送信</span></li>
+        <li><span class="k"><span class="kbd">t</span></span><span class="d">AI で整理（tidy）</span></li>
+      </ul>
+    </div>
+
+    <div class="wk">
+      <header><span class="kbd lead">K</span><span class="then" style="color:var(--ink-faint)">then</span><span class="kbd">v</span><span class="lbl">ビュー / ビューア</span><span class="cnt">6</span></header>
+      <ul>
+        <li><span class="k"><span class="kbd">w</span></span><span class="d">折り返しトグル</span></li>
+        <li><span class="k"><span class="kbd">n</span></span><span class="d">行番号トグル</span></li>
+        <li><span class="k"><span class="kbd">+</span><span class="kbd">-</span></span><span class="d">フォントサイズ</span></li>
+        <li><span class="k"><span class="kbd">s</span></span><span class="d">スライド / プレビュー切替</span></li>
+        <li><span class="k"><span class="kbd">R</span></span><span class="d">朗読（Reader）</span></li>
+        <li><span class="k"><span class="kbd">f</span></span><span class="d">ペイン全画面</span></li>
+      </ul>
+    </div>
+
+    <div class="wk">
+      <header><span class="kbd lead">K</span><span class="then" style="color:var(--ink-faint)">then</span><span class="kbd">w</span><span class="lbl">ワークスペース</span><span class="cnt">6</span></header>
+      <ul>
+        <li><span class="k"><span class="kbd">s</span></span><span class="d">Start / Stop</span></li>
+        <li><span class="k"><span class="kbd">p</span></span><span class="d">ポートプレビュー</span></li>
+        <li><span class="k"><span class="kbd">r</span></span><span class="d">リソース表示</span></li>
+        <li><span class="k"><span class="kbd">b</span></span><span class="d">左レール トグル</span></li>
+        <li><span class="k"><span class="kbd">f</span></span><span class="d">アプリ全画面</span></li>
+        <li><span class="k"><span class="kbd">u</span></span><span class="d">使用量（Claude/Codex）</span></li>
+      </ul>
+    </div>
+
+    <div class="wk">
+      <header><span class="kbd lead">K</span><span class="then" style="color:var(--ink-faint)">then</span><span class="kbd">.</span><span class="lbl">その他</span><span class="cnt">5</span></header>
+      <ul>
+        <li><span class="k"><span class="kbd">,</span></span><span class="d">設定を開く</span></li>
+        <li><span class="k"><span class="kbd">n</span></span><span class="d">通知センター</span></li>
+        <li><span class="k"><span class="kbd">g</span></span><span class="d">ガイド / オンボーディング</span></li>
+        <li><span class="k"><span class="kbd">?</span></span><span class="d">チートシート全表示</span></li>
+        <li><span class="k"><span class="kbd">t</span></span><span class="d">テーマ切替（dark/light）</span></li>
+      </ul>
+    </div>
+
+  </div>
+</section>
+
+<!-- 5. FOCUS MODEL -->
+<section id="focus">
+  <div class="sec-head"><span class="sec-num">05</span><h2>フォーカス / 領域モデル — ペイン間移動</h2></div>
+  <p class="sec-sub">既存の <code>badges.ts</code> が全ペインに <b>1〜8 の安定した序数（列 L→R・行 上→下）と 8 色</b>を割当済み。この序数と <code>{col,row}</code> をそのまま「N へジャンプ」「方向移動」に使えます。角チップ・レール・ミニマップに<b>すでに表示されている色番号がそのままキー</b>になるので直感的です。</p>
+
+  <div class="panedemo">
+    <div>
+      <div class="pgrid" role="img" aria-label="4列×2行のペイングリッド。各ペインに序数1〜8。ペイン1がアクティブ。">
+        <div class="pane active"><span class="ord o1">1</span><span class="role">claude</span></div>
+        <div class="pane"><span class="ord o3">3</span><span class="role">diff</span></div>
+        <div class="pane"><span class="ord o5">5</span><span class="role">codex</span></div>
+        <div class="pane"><span class="ord o7">7</span><span class="role">files</span></div>
+        <div class="pane"><span class="ord o2">2</span><span class="role">shell</span></div>
+        <div class="pane"><span class="ord o4">4</span><span class="role">scm</span></div>
+        <div class="pane"><span class="ord o6">6</span><span class="role">chat</span></div>
+        <div class="pane"><span class="ord o8">8</span><span class="role">doc</span></div>
+      </div>
+      <p style="font-size:.82rem;color:var(--ink-faint);margin:10px 2px 0">最大 4 列 × 2 行 = 8 ペイン。序数は視覚上の読み順で安定。</p>
+    </div>
+    <div class="navkeys">
+      <div class="nk"><span class="chord"><span class="kbd">Alt</span><span class="pls">+</span><span class="kbd">1</span>…<span class="kbd">8</span></span><span class="d"><b>ペイン N へ直行</b>（色番号 = キー）</span></div>
+      <div class="nk"><span class="chord"><span class="kbd lead">K</span><span class="then">→</span><span class="kbd">p</span><span class="then">→</span><span class="kbd">h/j/k/l</span></span><span class="d">方向で隣ペインへ（vim 流）</span></div>
+      <div class="nk"><span class="chord"><span class="kbd">Alt</span><span class="pls">+</span><span class="kbd">[</span></span><span class="d">前のペインへ巡回</span></div>
+      <div class="nk"><span class="chord"><span class="kbd">Alt</span><span class="pls">+</span><span class="kbd">]</span></span><span class="d">次のペインへ巡回</span></div>
+      <div class="nk"><span class="chord"><span class="kbd">F6</span></span><span class="d">領域を巡回（左レール ⇄ メイン ⇄ バー）</span></div>
+      <div class="nk"><span class="chord"><span class="kbd">Esc</span></span><span class="d">ペイン中身のフォーカス → ペイン枠へ戻す</span></div>
+    </div>
+  </div>
+
+  <div class="note" style="margin-top:20px">
+    <b>左レール（プロジェクトツリー）</b>は現状キーボード非対応。<code>ProjectFiles</code> で実証済みの ARIA-tree roving（<span class="kbd">↑</span><span class="kbd">↓</span> 移動・<span class="kbd">→</span><span class="kbd">←</span> 展開/畳み・<span class="kbd">Enter</span> 開く・<span class="chord"><span class="kbd">Ctrl</span><span class="pls">+</span><span class="kbd">Enter</span></span> <b>分割で開く</b>・文字でフィルタ）を repo/セッション行にも展開して統一します。
+  </div>
+</section>
+
+<!-- 6. GAPS -->
+<section id="gaps">
+  <div class="sec-head"><span class="sec-num">06</span><h2>ポインタ専用だった操作を、キーで塞ぐ</h2></div>
+  <p class="sec-sub">棚卸しで洗い出した「キーボード経路が全く無い操作」への対応。<span class="pill mouse">mouse</span> = 現状ポインタ専用 / <span class="pill tab">tab</span> = Tab 到達可だが専用キー無し / <span class="pill kb">kb</span> = 既にキー有り。</p>
+
+  <div class="legend">
+    <span class="li"><span class="pill kb">kb</span> 既にキーボード経路あり</span>
+    <span class="li"><span class="pill tab">tab</span> Tab で到達可・専用ショートカット無し</span>
+    <span class="li"><span class="pill mouse">mouse</span> ポインタ専用・経路なし</span>
+  </div>
+
+  <div class="tblwrap">
+    <table>
+      <thead><tr><th>現状</th><th>操作</th><th>新しいキー経路</th></tr></thead>
+      <tbody>
+        <tr><td><span class="pill mouse">mouse</span></td><td><b>ペインの drag-swap / drag-split</b></td><td><span class="chord"><span class="kbd lead">K</span><span class="then">p</span><span class="kbd">H/J/K/L</span></span> で方向に移動・入替</td></tr>
+        <tr><td><span class="pill mouse">mouse</span></td><td><b>分割線リサイズ</b></td><td><span class="chord"><span class="kbd lead">K</span><span class="then">p</span><span class="kbd">&lt;</span>/<span class="kbd">&gt;</span></span>・<span class="kbd">=</span> で均等化</td></tr>
+        <tr><td><span class="pill mouse">mouse</span></td><td><b>右クリックメニュー</b>（ファイルツリー・コミットグラフ — ボタン代替なし）</td><td>行フォーカス中に <span class="kbd">Shift+F10</span> / <span class="kbd">Menu</span>。メニュー自体も <span class="kbd">↑</span><span class="kbd">↓</span> roving 化</td></tr>
+        <tr><td><span class="pill mouse">mouse</span></td><td><b>「分割で開く」</b>（Ctrl/中クリックのみ）</td><td>全リストで <span class="chord"><span class="kbd">Ctrl</span><span class="pls">+</span><span class="kbd">Enter</span></span> を「分割で開く」に統一（ツリーは既に実装）</td></tr>
+        <tr><td><span class="pill mouse">mouse</span></td><td><b>drag-drop アップロード</b></td><td>ツリー/ミラーに「アップロード」コマンド（ファイル選択ダイアログ起動）</td></tr>
+        <tr><td><span class="pill mouse">mouse</span></td><td><b>画像ズーム/パン・minimap・wheel ページング</b></td><td>ビューアペイン・フォーカス時に <span class="kbd">+</span><span class="kbd">-</span><span class="kbd">0</span> と <span class="kbd">↑</span><span class="kbd">↓</span><span class="kbd">←</span><span class="kbd">→</span></td></tr>
+        <tr><td><span class="pill mouse">mouse</span></td><td><b>選択 → 送る / 読み上げ pill</b>（要マウス選択）</td><td>読取ビューはフォーカス可＝キャレット選択可。「現在ビュー/選択を送る・読む」コマンドを追加（部分対応は明記）</td></tr>
+        <tr><td><span class="pill tab">tab</span></td><td>WsBar 分割/閉じる/Start・ミラーの plan/permission/interrupt・SCM stage/commit 等 <b>大量のボタン</b></td><td>Leader グループ＋パレットで全て到達（§04）。高頻度はアクセラレータ（§07）</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- 7. DISCOVERABILITY + ACCELERATORS -->
+<section id="discover">
+  <div class="sec-head"><span class="sec-num">07</span><h2>発見性と直接アクセラレータ</h2></div>
+  <p class="sec-sub">「直感的」の正体は<b>発見性</b>。覚えていなくても画面が導く 4 つの仕掛けと、覚えたら速い直行便。すべて 1 つのレジストリから生成＝ズレない。</p>
+
+  <div class="cards" style="grid-template-columns:repeat(auto-fit,minmax(220px,1fr));margin-bottom:26px">
+    <div class="card"><h3 class="mini" style="margin-top:0">which-key</h3><p style="margin:0;font-size:.9rem;color:var(--ink-soft)">リーダー後 ~300ms で次候補パネルを表示。グループの頭文字と説明を全部見せる。</p></div>
+    <div class="card"><h3 class="mini" style="margin-top:0">Command Palette</h3><p style="margin:0;font-size:.9rem;color:var(--ink-soft)">全操作を曖昧検索。各行に対応ショートカットを併記＝使いながら覚える。</p></div>
+    <div class="card"><h3 class="mini" style="margin-top:0">チートシート <span class="kbd">?</span></h3><p style="margin:0;font-size:.9rem;color:var(--ink-soft)">入力欄外で <span class="kbd">?</span>。領域別の全一覧を検索可能に表示。</p></div>
+    <div class="card"><h3 class="mini" style="margin-top:0">インライン <span class="kbd">kbd</span> ヒント</h3><p style="margin:0;font-size:.9rem;color:var(--ink-soft)">ボタン/メニュー項目に対応キーを併記。ツールチップも同源。</p></div>
+  </div>
+
+  <h3 class="mini">厳選アクセラレータ（既定・すべて再割当可）</h3>
+  <div class="tblwrap">
+    <table>
+      <thead><tr><th>キー</th><th>動作</th><th>備考</th></tr></thead>
+      <tbody>
+        <tr><td><span class="chord"><span class="kbd lead">Ctrl</span><span class="pls">+</span><span class="kbd lead">K</span></span></td><td><b>Leader</b>（コマンド木を開く）</td><td>端末から奪う唯一の必須キー。Firefox の検索バー干渉に留意＝再割当可</td></tr>
+        <tr><td><span class="chord"><span class="kbd acc">Ctrl</span><span class="pls">+</span><span class="kbd acc">P</span></span></td><td>クイックオープン / パレット</td><td>セッション・ファイル・コマンド横断</td></tr>
+        <tr><td><span class="chord"><span class="kbd">Alt</span><span class="pls">+</span><span class="kbd">1…8</span></span></td><td>ペイン N へフォーカス</td><td>可視の序数＝キー</td></tr>
+        <tr><td><span class="chord"><span class="kbd">Alt</span><span class="pls">+</span><span class="kbd">[</span></span> <span class="chord"><span class="kbd">Alt</span><span class="pls">+</span><span class="kbd">]</span></span></td><td>前 / 次のペインへ巡回</td><td>—</td></tr>
+        <tr><td><span class="chord"><span class="kbd">Ctrl</span><span class="pls">+</span><span class="kbd">B</span></span></td><td>左レール トグル</td><td>VS Code 慣習。端末上は Leader 経由も可</td></tr>
+        <tr><td><span class="chord"><span class="kbd">Ctrl</span><span class="pls">+</span><span class="kbd">F</span></span></td><td>ペイン内検索</td><td>既存を踏襲</td></tr>
+        <tr><td><span class="chord"><span class="kbd">Ctrl</span><span class="pls">+</span><span class="kbd">Enter</span></span></td><td>送信 / 分割で開く</td><td>既存の送信を踏襲・リストで「分割」に統一</td></tr>
+        <tr><td><span class="kbd">F6</span> / <span class="chord"><span class="kbd">Shift</span><span class="pls">+</span><span class="kbd">F6</span></span></td><td>領域を巡回（次 / 前）</td><td>ブラウザ/VS Code 慣習</td></tr>
+        <tr><td><span class="kbd">?</span></td><td>チートシート</td><td>入力欄外のみ</td></tr>
+        <tr><td><span class="kbd">Esc</span></td><td>撤退（段階的）</td><td>escLayer 拡張</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- 8. PLAN -->
+<section id="plan">
+  <div class="sec-head"><span class="sec-num">08</span><h2>段階計画</h2></div>
+  <p class="sec-sub">各フェーズ単独で価値が出る順序。層 0 を土台に、上へ積む。P0–P1 だけでも「ペインがキーボードで回る」状態になります。</p>
+
+  <div class="phases">
+    <div class="phase done"><div class="pid">P0</div><div>
+      <h4>基盤 — レジストリ＋ディスパッチャ<span class="done-tag">✓ 実装済</span></h4>
+      <p>capture-phase ディスパッチャ、コマンド・レジストリ、context/when、<code>kbd</code> プリミティブ、<code>--focus-ring</code> トークン、IME ガード。escLayer を協調（or 吸収）。既存挙動はパリティ維持。</p>
+      <span class="out">出力：新規ショートカットは無いが、全ての土台が載る</span>
+    </div></div>
+    <div class="phase done"><div class="pid">P1</div><div>
+      <h4>ナビ骨格 — 領域とペイン移動<span class="done-tag">✓ 実装済</span></h4>
+      <p>領域モデル、ペイン方向/序数/巡回フォーカス、可視フォーカスリング、アクティブ化→中身フォーカスを全 content 種へ拡張。</p>
+      <span class="out">出力：マウス無しでペイン間を移動できる</span>
+    </div></div>
+    <div class="phase done"><div class="pid">P2</div><div>
+      <h4>Leader ＋ which-key ＋ Palette<span class="done-tag">✓ 実装済</span></h4>
+      <p>発見可能なコマンド木と、完全性を担保するパレット。上位 ~40 コマンドを結線。</p>
+      <span class="out">出力：暗記ゼロで全操作に到達できる</span>
+    </div></div>
+    <div class="phase"><div class="pid">P3</div><div>
+      <h4>List / Menu / Modal のキーボード化</h4>
+      <p>レールの roving tree、メニューの roving＋<span class="kbd">Shift+F10</span>、モーダルのフォーカストラップ＋aria。ポインタ専用の穴を塞ぐ。</p>
+      <span class="out">出力：右クリック/ドラッグ依存が消える</span>
+    </div></div>
+    <div class="phase"><div class="pid">P4</div><div>
+      <h4>アクセラレータ＋インライン kbd＋チートシート</h4>
+      <p>厳選直行便、ボタン/メニューへのキー併記、<span class="kbd">?</span> オーバーレイ。</p>
+      <span class="out">出力：速く、かつ覚えやすい</span>
+    </div></div>
+    <div class="phase ship"><div class="pid">P5</div><div>
+      <h4>設定→キーボード（再割当）＋ docs/ADR</h4>
+      <p>再割当 UI（ui-prefs でサーバ同期）、端末優先トグル（commandsToSkipShell 相当）、docs ページ＋ADR、目視 QA。</p>
+      <span class="out">出力：ユーザーが自分の指に合わせられる</span>
+    </div></div>
+  </div>
+</section>
+
+<!-- 9. DECISIONS -->
+<section id="decisions">
+  <div class="sec-head"><span class="sec-num">09</span><h2>あなたに決めてほしいこと</h2></div>
+  <p class="sec-sub">下記は本当に好みが割れる分岐です。推奨は付けていますが、ここが決まると実装計画が確定します。</p>
+
+  <div class="dec">
+    <div class="dopt">
+      <h4>① リーダーキー <span class="rec">推奨 Ctrl/⌘+K</span></h4>
+      <ul>
+        <li><b>Ctrl/⌘+K</b> — 現代的な「コマンド」筋肉記憶（VS Code/Slack/Linear/GitHub）。ただし Firefox は検索バー、シェルは kill-line と競合 → 再割当で回避。</li>
+        <li><b>Ctrl/⌘+;</b> — readline 非衝突・ブラウザほぼ未使用。地味だが安全。</li>
+        <li><b>Ctrl/⌘+J</b> — 空きが多い。ただしブラウザのダウンロード（一部）と競合しうる。</li>
+      </ul>
+    </div>
+    <div class="dopt">
+      <h4>② スタイルの比重 <span class="rec">推奨 ハイブリッド</span></h4>
+      <ul>
+        <li><b>ハイブリッド</b> — Leader（網羅・学習）＋パレット（完全性）＋少数アクセラレータ（速度）。本案の既定。</li>
+        <li><b>Leader 一本</b> — 直接chordを持たず衝突を最小化。最も端末に優しいが高頻度操作が 2 打鍵。</li>
+        <li><b>chord 厚め</b> — VS Code 風に直接chordを多用。速いが端末からキーを多く奪う。</li>
+      </ul>
+    </div>
+    <div class="dopt">
+      <h4>③ 直接アクセラレータの修飾キー <span class="rec">推奨 Alt（⌥）</span></h4>
+      <ul>
+        <li><b>Alt / ⌥</b> — 端末衝突は readline の Meta 語移動のみ（軽微）。ただし EU 配列の AltGr に注意（JIS は無問題）。</li>
+        <li><b>Ctrl+Alt</b> — さらに衝突が少ないが、一部配列で AltGr＝Ctrl+Alt と衝突。</li>
+      </ul>
+    </div>
+    <div class="dopt">
+      <h4>④ 最初に出す範囲 <span class="rec">推奨 P0–P2</span></h4>
+      <ul>
+        <li><b>P0–P2</b> — 基盤＋ペイン移動＋Leader/パレットまで一気に。「キーだけで回る」体感が最短で立つ。</li>
+        <li><b>P0–P1</b> — まず土台とペイン移動だけ堅くして目視確認、その後 Leader。</li>
+        <li><b>全部（P0–P5）</b> — 通しで作り切る。</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer>
+  <p class="mono">agent-fleet console · keyboard system proposal · 現状調査（4系統）に基づく設計 — 実装前のレビュー用</p>
+  <p>根拠：<span class="mono">term.ts</span>（端末キー捕捉）・<span class="mono">layout/ops.ts, badges.ts</span>（ペイン/序数）・<span class="mono">escLayer.ts</span>（Esc スタック）・<span class="mono">ProjectFiles.tsx</span>（唯一の ARIA-tree）・全操作棚卸し。数値・file:line は調査ログに保持。</p>
+</footer>
+
+</div>
+
+</body>
+</html>
