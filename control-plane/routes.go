@@ -193,6 +193,8 @@ func registerSessionRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("POST /api/sessions/{name}/respond", rest)
 	// managed セッションの ThreadSettings 動的更新（docs/27 P2 §9.4-3）— proxied verbatim.
 	mux.HandleFunc("POST /api/sessions/{name}/settings", rest)
+	// ドライバ排他切替（docs/27 P3 §2: tui ⇄ managed）— proxied verbatim.
+	mux.HandleFunc("POST /api/sessions/{name}/driver", rest)
 	mux.HandleFunc("POST /api/sessions/{name}/paste-image", rest)
 	mux.HandleFunc("GET /api/sessions/{name}/pasted/{file}", rest)
 	mux.HandleFunc("GET /api/sessions/{name}/status", rest)

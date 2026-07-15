@@ -1,12 +1,14 @@
 # 27. エージェント制御の Managed Driver 化（TUI スクレイプ → 共有 runtime＋構造化 RPC） — 設計
 
-**Status: 📋 設計確定・P1/P1.5/P2 実装済み（2026-07-15）** — 2026-07-15 起草。並行設計セッション（sol=A / fable=B）の成果を比較し、
+**Status: ✅ 設計確定・P1/P1.5/P2/P3 実装済み（2026-07-15）** — 2026-07-15 起草。並行設計セッション（sol=A / fable=B）の成果を比較し、
 B の骨格に A の部品を移植する形でユーザー裁定により統合・確定した（経緯は [decisions/0015](decisions/0015-agent-managed-driver.md)）。
 P1（Codex 観測拡張）実装時の実測で判明した事実は §12.1 に記録（**通知はスレッドアタッチ必須**という
 発見により、P1 は「switch への 5 イベント追加」から「observer のアタッチ機構＋5 イベント」に拡大した）。
 P1.5（Console managed セッション UI の受け皿）の実装記録は §10.1、pane 前提機能の棚卸しと置き換え設計は §10.2。
 P2（OpenCode managed 化 — Driver/Supervisor/turn 状態機械/Interaction/reconciliation の初出）の実装記録と
 実測事実は §12.2（**opencode の v1/v2 二重 API と directory スコープ**という 2 つの発見が実装を規定した）。
+P3（Codex managed 化 — 第2 Driver、daemon drain、双方向排他切替）の実装記録と実測事実は §12.3
+（**質問requestの再配送、resume後のpolicy再表明、server作成threadのTUI互換**が実装を規定した）。
 
 > 発端は Codex TUI のモデル勝手切替バグ（週次利用率 93〜99% で `ThreadSettings` が 3 件連続送信され
 > `gpt-5.6-sol` → `gpt-5.4-mini` へ意図せず切替→直後にコンテキスト圧縮。複数セッションで再現）。
@@ -400,7 +402,7 @@ v1 file part）。**無変更で成立** = 4・11。**自然消滅** = 6。
 | **P1 ✅** | **Codex 観測拡張（read-only）済（2026-07-15）**: 既存 observer（`handleCodexAppServerEvent`）に `account/rateLimits/updated`・`model/rerouted`・`thread/settings/updated`・`warning`・`thread/status/changed` を追加（key=value の構造化ログ・連続重複抑止）。rate limits は `/codex/usage` が rollout 読みと鮮度比較して新しい方を採用。**追加で必要になったもの**: thread スコープ通知はアタッチ必須（§12.1-1）のため、observer が `thread/resume` でアタッチする `codexObserver`（thread/started・thread/status/changed・30 秒毎 `thread/loaded/list` sweep がトリガ）。発端バグの「TUI 層ナッジ vs サーバ側 reroute」を切り分ける（切り分け規準は §12.1-2）。CLI ルートにもそのまま効く | ゼロ（制御なし。observer の thread/resume は rollout 不変を実測確認） |
 | **P1.5 ✅** | **Console managed セッション UI の受け皿**（§10.1）済（2026-07-15）: Driver 層 IF（`internal/agents/driver.go`）＋意味論エンドポイント `/turn`・`/respond`（tui は tmux 経路へ委譲・managed は driver 登録まで 501）＋driver 軸のワイヤ化（Meta/wire/作成 API、managed 作成は P2 まで拒否）＋Console の paneless 描画（TerminalView 非マウント・トグル非表示）と送信 start/steer・停止 interrupt・質問 onRespond 導線（旧 Agent へは /input フォールバック）。pane 前提機能の棚卸しと置き換え設計は §10.2 | UI のみ（tui は既存経路へ委譲、挙動不変） |
 | **P2 ✅** | **OpenCode managed 化** 済（2026-07-15、§12.2）: Driver＋RuntimeSupervisor（`internal/agents/opencode` の driver.go / serve.go）＋turn 状態機械＋reconciliation＋`ClientMessageID` 台帳＋Interaction(question)＋generation の初出。§10.2 の 2・3・5・7〜10・12 と managed 作成の解禁・ドライバ選択 UI（opencode の新規既定 = managed、CLI はメモリコスト表示付きの明示選択）。E2E 実機検証済み: 作成→初回プロンプト→question（id 付き）→/respond→steer キュー→interrupt→halt/start→daemon SIGKILL→exit 記録(137)→自動 reconcile(gen++)。**TUI 併用は attach 実験で安全性実証**（§12.2-9）したが、**CLI ルートの serve アタッチ化自体は見送り P3 へ**（§12.2-11: plugin の sid 捕捉が attach では serve プロセス側で走り壊れる・attach に --model が無い、の 2 点の解決が先） | 低（排他不要） |
-| **P3** | **Codex managed 化**: 新規既定→ドライバ選択 UI＋既存セッションの排他切替。Driver 第 2 実装で型の妥当性検証。daemon drain 実装 | 中（単一 writer 排他） |
+| **P3 ✅** | **Codex managed 化** 済（2026-07-15、§12.3）: app-server writer Driver＋RuntimeSupervisor（daemon所有・generation・drain・exit記録・自動reconcile）、native steer / interrupt / settings / Interaction(question)、kind共通の永続 `ClientMessageID` 台帳。Codex新規既定=managed、CLIメモリコスト表示、既存セッションの `POST /sessions/{name}/driver` 双方向排他切替（busy 409、stop→resume）。実バイナリE2Eで managed作成→settings→halt/start→managed⇄TUI→turn/interrupt→busy切替拒否→daemon SIGKILL→exit 137→gen++ reconcile を確認 | 中→解消（単一 writer排他と実機互換を実証） |
 | （凍結） | Claude Session Manager（付録 A）。CLI 必須の運用が解消されたら再訪 | — |
 
 TUI 経路（send-keys / hooks / probe）の**撤去はしない**——CLI ルートの実装として保守対象で残る
@@ -409,17 +411,20 @@ TUI 経路（send-keys / hooks / probe）の**撤去はしない**——CLI ル�
 ## 12. 要検証項目（実装前・CLI 0.144.3）
 
 1. **server 経由で作成した thread を TUI で `codex resume` できるか**——双方向排他切替の成立条件（筆頭）。
-   不可なら縮退案「managed 作成セッションは managed 固定、CLI 作成のみ双方向」
+   **P3 で成立を実証（§12.3-2）**。managed 作成 thread と旧 TUI rollout の双方で双方向に継続できる。
 2. **TUI でしか起きない対話の棚卸し**: ログイン失効・アップデート案内・確認プロンプト等を列挙し、
    app-server / serve での対応物（イベント化 / 発生しない / auth エラー化）を確認。対応物なしの発見時の
    保険が CLI ルート（Codex）/ TUIAttach（OpenCode）
 3. `--remote` 接続時の TUI クライアントの実 RSS（現状 A 構成の実コスト）
-4. 旧 TUI rollout の `thread/resume` 互換（履歴互換の実証）
+4. 旧 TUI rollout の `thread/resume` 互換（履歴互換の実証）——**P3 で実証（§12.3-2）**
 5. daemon の auth.json / config.toml 読み直しタイミング（ホットリロード可否。§7 の設計は可否に依存しないが最適化余地）
-6. `thread/start` で承認バイパス相当ポリシー・モデル・workdir を指定できる範囲
+6. `thread/start` で承認バイパス相当ポリシー・モデル・workdir を指定できる範囲——
+   **P3 で実証（§12.3-1・5）**。cwd/model/approvalPolicy/sandboxPolicy は指定可能。ただし resume 後は
+   policy の再表明が必要。
 7. `model/rerouted` が managed でも発生するか（ナッジ根治の裏付け）——§12.1-2 で部分回答:
    0.144.4 に rate limit 起因の reroute はそもそも存在しない
-8. daemon kill→再起動→`thread/resume` で実行中 turn がどうなるか（§6 の実挙動）
+8. daemon kill→再起動→`thread/resume` で実行中 turn がどうなるか（§6 の実挙動）——
+   **P3 で実証（§12.3-6）**。実行中 turn は interrupted で確定し、同じ thread を resume して継続可能。
 9. `codex fork` 相当の RPC 有無（`Caps.CanFork` 維持）——回答: `thread/fork` が base スキーマに存在（0.144.4）
 10. opencode serve のローカル API 認証有無・TUI アタッチの起動形態（フラグ・tmux 内挙動）・serve 障害時の
     スタンドアロン TUI フォールバック判定 —— **P2 で回答済み（§12.2-1・§12.2-9）**: 認証は
@@ -487,8 +492,9 @@ P2 の実装前プローブ（隔離 XDG ホームで `opencode serve` を起動
    依存する**こと: 既存 id より辞書順で小さい messageID の user message は「処理済み」扱いになる。
    クライアント採番の `msg_af...` は serve 採番の `msg_f6...` より小さいため常に無視される
    （blocking でも同じ id を渡すと /message が返らなくなる — E2E で実証）。
-   → **messageID は serve 採番に任せ、`ClientMessageID` の冪等化は driver の台帳（in-memory、
-   handle 生存中）だけで行う**。§9.5 の台帳永続化（プロセス跨ぎ）は将来課題として残る。
+   → **messageID は serve 採番に任せ、`ClientMessageID` の冪等化は driver の台帳で行う**。P2 時点では
+   handle 生存中の in-memory 台帳だったが、P3 で kind 共通 `agents.MsgLedger`（セッション別・上限200件の
+   ファイル台帳）へ移し、Agent / daemon 再起動を跨ぐ §9.5 の永続化まで完了した。
 4. **v2 の `delivery:"steer"` は実行中の v1 turn に注入されない**（session_input に admit された後、
    v2 側で独自の turn を開始し session_message に書く — 実測）。v1 に mid-turn steer の口は無い。
    → **Steer は driver 内キュー**（実行中 turn の完走後に次 turn として投入 — §4 の queued 状態
@@ -531,6 +537,53 @@ P2 の実装前プローブ（隔離 XDG ホームで `opencode serve` を起動
     **daemon SIGKILL → supervisor が exit 記録（code 137/sig 9・cgroup OOM 帰属判定つき）→ 自動
     reconcile（gen++・セッション復活）**。serve のコールドブート直後は最初の session create が
     10 秒を超えることがある（bun 起動・カタログ初期化）— 作成 API は 502 を返し、リトライで成功する。
+
+### 12.3 P3 実装時の実測事実（2026-07-15、Codex CLI 0.144.4）
+
+P3 の実装前に、隔離 `CODEX_HOME` へ実アカウントの auth だけを渡した app-server と専用プローブで
+write 面・切断回復・TUI 互換を検証した。会話正本は実 rollout JSONL を使い、ダミー応答ではなく実モデルの
+turn 完走まで確認した。以下が `internal/agents/codex` の Driver/Supervisor と排他切替の根拠である。
+
+1. **write 面は構造化 RPC だけで完結する**: `thread/start` → `turn/start` で実 turn が完走し、応答は
+   turn id を即返した後、`turn/started` / `turn/completed` 通知で状態が確定する。`turn/steer` は
+   `expectedTurnId` が必須で、実行中の同一 turn へ追撃を注入する native mid-turn steer（別 turn 化しない）。
+   `turn/interrupt {threadId,turnId}` は `turn/completed.status=interrupted` に確定する。
+   `thread/settings/update` は initialize の `capabilities.experimentalApi=true` が必須で、無い接続では
+   JSON-RPC -32600。宣言した接続では model / effort の動的変更が動作した。
+2. **双方向の排他切替が成立する（§12-1 の筆頭条件を解消）**: app-server で作成・駆動した thread を
+   TUI の `codex --remote <addr> resume <threadId>` で開くと全履歴が表示され、その TUI から次 turn を実行できた。
+   TUI を停止した後、managed 接続で同じ thread を resume し次 turn を継続できた。逆方向も同じ正本を保つため、
+   「managed → TUI → managed」の stop→resume 排他切替を実装可能。既存フリートの旧 TUI rollout
+   （約199 KiB の実会話）も app-server の `thread/resume` と TUI `--remote resume` の双方で全履歴を読み、
+   新しい turn を継続できた——read 正本を動かさない履歴互換が実証された。
+3. **質問は server→client JSON-RPC request**: method は `item/tool/requestUserInput`、params は
+   `threadId` / `turnId` / `itemId` / `questions[{id,header,question,isOther,options[]}]`。client は同じ request id へ
+   `{answers:{<questionId>:{answers:[<label or free text>,…]}}}` を返すと turn が続行する。ただし app-server thread
+   では request_user_input が既定無効で、`thread/start` / `thread/resume` の thread 単位 config に
+   `features.default_mode_request_user_input=true` が必要（無い場合は tool が unavailable）。
+4. **未応答質問の reconciliation は runtime 自身で成立する**: 質問 request を未応答のまま writer 接続を
+   切り、別接続から同じ thread を feature config 付きで resume すると、未解決の request が新しい接続へ
+   再配送された。AF 側で質問イベントを journal/replay する必要はなく、Interaction id は安定した `itemId`、
+   JSON-RPC request id は接続世代ごとの値として持てばよい。回答済みになると `serverRequest/resolved` も届く。
+5. **resume のたびに sandbox / approval policy を再表明する必要がある**: `dangerFullAccess` で作成した thread が、
+   別接続からの resume 後に `readOnly` 相当へ落ちる例を実測した。`thread/resume` だけを信用せず、直後に
+   `thread/settings/update {approvalPolicy:"never", sandboxPolicy:{type:"dangerFullAccess"}}` を送り直すと書き込みが
+   再び通る。managed driver は start 時の指定に加え、全 resume / reconciliation でこの再表明を行う。
+6. **daemon kill 後は曖昧な実行中 turn が残らない**: 実 turn 中の app-server を SIGKILL し、daemon を再起動して
+   同じ thread を resume すると、kill 時の turn は rollout 上 `interrupted` に確定しており、thread は次 turn を
+   受け付けた。したがって Supervisor は exit code 137 / signal 9 を記録し generation を進め、handle を一度
+   `unknown` に落としてから resume snapshot で回復できる。会話の鋳直しや二重投入は不要。
+7. **実装後の実バイナリE2E**: 隔離 HOME / `CODEX_HOME` と専用portの workspace-agent＋実 app-server で、
+   managed作成 → effort / plan settings更新 → halt→start → managed→TUI→managed（tmux writerが排他的に消える）→
+   turn/startの同一`ClientMessageID`再送dedupe → interruptでidle復帰 → 実行中のdriver切替が409 `busy_switch` →
+   daemon SIGKILLで一時 exit code 137 / signal 9記録 → writer gen 2接続＋managed session自動復帰、を通した。
+   この縦串は認証領域を読まない隔離環境なのでturnは401警告後にinterruptしたが、実モデル完走・質問応答・
+   native steerは同じ0.144.4の認証付き事前プローブ（本節1〜4）で別途成立済み。検証後はAgent/app-server/tmuxを
+   すべて停止・削除し、常駐プロセスを残していない。
+
+実装上の帰結: Codex managed は app-server 接続を唯一の writer とし、TUI と同時駆動しない。既存セッションの
+切替 API は実行中/queue 中を 409 で拒否し、旧 writer の stop→新 driver の resume の順を強制する。writer と
+P1 observer は別 WebSocket のままにし、後者は CLI ルートを含む read-only 観測を継続する。
 
 ---
 

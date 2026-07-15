@@ -10,10 +10,12 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -21,10 +23,11 @@ import (
 )
 
 // managedDrivers is the kind → managed Driver registry（docs/27 §3）。P2 で opencode
-// が初出、P3 で codex が加わる。tui ドライバはここに載らない（ThreadHandle を実装
+// が初出、P3 で codex が加わった。tui ドライバはここに載らない（ThreadHandle を実装
 // しない — /turn ハンドラが tmux 経路へ直接委譲する）。
 var managedDrivers = map[string]agents.Driver{
 	session.KindOpencode: opencode.NewDriver(),
+	session.KindCodex:    codex.NewDriver(),
 }
 
 // driverOf resolves the managed driver for a session's kind.
@@ -148,9 +151,9 @@ func handleManagedTurn(w http.ResponseWriter, meta session.Meta, req turnReq) {
 			err = h.Send(in)
 		}
 		if err != nil {
-			if opencode.ErrQuestionPending(err) {
+			if errors.Is(err, agents.ErrQuestionPending) {
 				// tui の submitPromptTUI と同じワイヤ契約（Console はこの code で
-				// 楽観 echo を取り消し質問カードへ誘導する）。
+				// 楽観 echo を取り消し質問カードへ誘導する）— sentinel は driver 共通。
 				httpx.WriteErr(w, http.StatusConflict, "question_pending",
 					"a question is awaiting an answer; answer it via the question card, not free text")
 				return

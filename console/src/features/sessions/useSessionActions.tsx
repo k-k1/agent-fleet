@@ -25,6 +25,8 @@ export interface SessionActions {
   recreate(name: string, display: string): Promise<void>;
   /** Branch a claude conversation into a NEW session (source kept); open the fork. */
   fork(name: string): Promise<void>;
+  /** ドライバ排他切替（docs/27 P3 §2）: tui ⇄ managed を stop→drain→resume で。 */
+  switchDriver(s: Session): Promise<void>;
 }
 
 export function useSessionActions(): SessionActions {
@@ -146,6 +148,54 @@ export function useSessionActions(): SessionActions {
     setTimeout(() => void refreshSessions(), 1200);
   };
 
+  const switchDriver = async (s: Session) => {
+    const toManaged = s.driver !== "managed";
+    const target = toManaged ? "managed" : "tui";
+    const tuiMemoryCost = agentOf(s.kind).tuiMemoryCost;
+    if (
+      !(await askConfirm({
+        title: toManaged ? "Managed ドライバに切り替え" : "CLI (TUI) ドライバに切り替え",
+        body: toManaged ? (
+          <>
+            「{displayName(s)}」を共有ランタイム駆動（チャット専用・省メモリ）へ切り替えます。
+            <br />
+            会話は引き継がれます。ターミナル画面は使えなくなります。
+          </>
+        ) : (
+          <>
+            「{displayName(s)}」をターミナル（TUI）駆動へ切り替えます。
+            <br />
+            会話は引き継がれます。セッション毎に TUI プロセス分のメモリ
+            {tuiMemoryCost ? `（+${tuiMemoryCost}）` : ""}を消費します。
+          </>
+        ),
+        confirmLabel: "切り替える",
+        danger: false,
+      }))
+    )
+      return;
+    const res = await raw(`api/sessions/${encodeURIComponent(s.name)}/driver`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ driver: target }),
+    });
+    if (!res.ok) {
+      const j = await res.json().catch(() => null);
+      const code = j?.error?.code;
+      toast(
+        code === "busy_switch"
+          ? "実行中のターンがあります。完了を待つか停止してから切り替えてください"
+          : j?.error?.message || "ドライバの切り替えに失敗しました",
+      );
+      return;
+    }
+    // 旧ドライバのペイン（managed 化ならターミナル）は無効になる — 開き直す。
+    closeSessionPanes(s.name);
+    openSessionChat(s.name);
+    void refreshSessions();
+    setTimeout(() => void refreshSessions(), 1200);
+  };
+
   const fork = async (name: string) => {
     const res = await raw(`api/sessions/${encodeURIComponent(name)}/fork`, { method: "POST" });
     const j = await res.json().catch(() => ({}) as any);
@@ -158,5 +208,5 @@ export function useSessionActions(): SessionActions {
     setTimeout(() => void refreshSessions(), 1200);
   };
 
-  return { archive, deleteSession, clearStopped, halt, recreate, fork };
+  return { archive, deleteSession, clearStopped, halt, recreate, fork, switchDriver };
 }

@@ -112,7 +112,7 @@ const ERR_TEXT: Record<string, string> = {
     "エージェントが質問への回答を待っています。質問カードから回答してから送信してください。",
   not_running: "セッションが停止しています。再開してから送信してください。",
   driver_unavailable: "このエージェント種別ではまだ managed ドライバを利用できません。",
-  runtime_failed: "エージェントの runtime（opencode serve）に接続できませんでした。",
+  runtime_failed: "エージェントの共有 runtime に接続できませんでした。",
 };
 
 // errText turns a `res.error` ({code, message}) into a user-facing string.
