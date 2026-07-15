@@ -30,6 +30,8 @@ interface Inst {
   hb?: ReturnType<typeof setInterval>; // heartbeat timer (see startHeartbeat)
   lastPong?: number; // ms of the last pong seen on the current socket
   rx?: boolean; // any PTY byte received on the CURRENT socket (see ensureAttached)
+  connAt?: number; // ms when the CURRENT socket began connecting (stall watchdog — see ensureAttached)
+  connWd?: ReturnType<typeof setTimeout>; // connect-stall watchdog timer (see attach)
   webgl?: WebglAddon | null; // live WebGL renderer addon (dropped while hidden — see hideTerm)
 }
 const insts = new Map<string, Inst>();
@@ -612,10 +614,38 @@ export function focusTerm(paneId: string) {
 const HB_INTERVAL = 15000; // ping cadence
 const HB_TIMEOUT = 45000; // no pong for this long ⇒ dead → re-attach
 
+// A PTY upgrade still in CONNECTING this long after we opened it is wedged, not
+// in-flight — the CP accepted the socket while the session was still booting but
+// never completed the /ws/pty handshake, and CONNECTING never fires onclose/onerror.
+// Past this window we stop trusting it and re-attach (see connStalled / reconnect /
+// ensureAttached). A normal connect reaches OPEN well under a second, so this only
+// ever trips on a genuinely stuck one.
+const CONNECT_STALL = 3000;
+
+// connStalled reports a socket wedged in CONNECTING past CONNECT_STALL — the
+// "起動直後の黒ターミナル" that no drop/heartbeat path catches (no close frame ever
+// arrives). Both the focus/active reconnect and the reveal retry ladder use it to
+// decide a hung connect must be torn down and re-opened.
+function connStalled(it: Inst | null | undefined) {
+  return (
+    !!it &&
+    !!it.ws &&
+    it.ws.readyState === WebSocket.CONNECTING &&
+    Date.now() - (it.connAt ?? 0) >= CONNECT_STALL
+  );
+}
+
 function clearHeartbeat(it: Inst) {
   if (it.hb !== undefined) {
     clearInterval(it.hb);
     it.hb = undefined;
+  }
+}
+
+function clearConnWd(it: Inst) {
+  if (it.connWd !== undefined) {
+    clearTimeout(it.connWd);
+    it.connWd = undefined;
   }
 }
 
@@ -658,6 +688,7 @@ export function attach(paneId: string, session: string) {
     it.ws.close();
   }
   clearHeartbeat(it); // stop the old socket's heartbeat before opening the new one
+  clearConnWd(it); // and the old socket's connect-stall watchdog
   it.term.reset();
   setSession(it, session);
   it.dropped = false; // fresh socket: clear any prior unexpected-drop flag
@@ -665,8 +696,23 @@ export function attach(paneId: string, session: string) {
   setSoftKeyboard(it, false); // keep the keyboard down until the PTY is live
   const ws = new WebSocket(wsURL(session));
   it.ws = ws;
+  it.connAt = Date.now();
   ws.binaryType = "arraybuffer";
+  // Connect-stall watchdog. A PTY upgrade that never completes stays CONNECTING with
+  // no close frame — onopen/onclose/onerror and the heartbeat all never fire — so an
+  // idle/off-screen pane (whose focus/active reconnect never triggers) would sit black
+  // forever. If this socket is still CONNECTING past CONNECT_STALL, tear it down and
+  // re-attach: a fresh connect, by when the session has finished booting, completes and
+  // draws. attach() schedules a new watchdog, so it keeps retrying until the PTY opens.
+  // A healthy connect reaches onopen first and clears this.
+  it.connWd = setTimeout(() => {
+    const cur = inst(paneId);
+    if (cur && cur.ws === ws && ws.readyState === WebSocket.CONNECTING && cur.session) {
+      attach(paneId, cur.session);
+    }
+  }, CONNECT_STALL + 500);
   ws.onopen = () => {
+    clearConnWd(it); // connected → the stall watchdog is done
     fitInst(it);
     setSoftKeyboard(it, true); // PTY connected → allow the soft keyboard for input
     ws.send(JSON.stringify({ type: "resize", cols: it.term!.cols, rows: it.term!.rows }));
@@ -695,6 +741,7 @@ export function attach(paneId: string, session: string) {
   // An unexpected server-side drop (intentional switches/detach null this handler
   // first). Flag it so refocusing the pane reconnects — see reconnect().
   ws.onclose = (ev) => {
+    clearConnWd(it); // socket resolved (closed) → the connect-stall watchdog is moot
     // A finite history replay closes normally after its last frame. Keep the
     // rendered scrollback and do not label that expected EOF as a disconnection.
     if (ev.code === 1000) {
@@ -719,16 +766,23 @@ export function attach(paneId: string, session: string) {
   requestAnimationFrame(() => focusTerm(paneId));
 }
 
-// reconnect re-opens a pane's PTY socket if it dropped unexpectedly. No-op when the
-// pane has no session, is already connecting/open, or wasn't dropped (e.g. an
-// intentional detach). Wired to the terminal's focus so returning to a dead pane —
-// by clicking it or making it the active pane — brings the session back. We do this
-// on focus rather than instantly so a dropped pane stays put (and its
-// "[disconnected]" notice readable) until the user comes back to it.
+// reconnect re-opens a pane's PTY socket if it dropped unexpectedly OR wedged in a
+// stalled CONNECTING (see connStalled). No-op when the pane has no session, or holds
+// a healthy socket (open, or an in-flight connect still within the stall window).
+// Wired to the terminal's focus so returning to a dead/black pane — by clicking it or
+// making it the active pane, and via the global focus/visibility recovery — brings the
+// session back. For a genuine unexpected drop we do this on focus rather than instantly
+// so the pane stays put (and its "[disconnected]" notice readable) until the user comes
+// back to it; a stalled connect shows no notice, so recovering it is pure upside.
 export function reconnect(paneId: string) {
   const it = inst(paneId);
-  if (!it || !it.term || !it.session || !it.dropped) return;
-  if (it.ws && (it.ws.readyState === WebSocket.CONNECTING || it.ws.readyState === WebSocket.OPEN)) return;
+  if (!it || !it.term || !it.session) return;
+  const stalled = connStalled(it);
+  // Nothing to recover unless the socket dropped or its connect has wedged.
+  if (!it.dropped && !stalled) return;
+  // Leave a still-healthy socket alone — but a stalled CONNECTING is NOT healthy, so
+  // it falls through to a fresh attach even though its readyState is CONNECTING.
+  if (!stalled && it.ws && (it.ws.readyState === WebSocket.CONNECTING || it.ws.readyState === WebSocket.OPEN)) return;
   attach(paneId, it.session);
 }
 
@@ -742,19 +796,27 @@ export function reconnect(paneId: string) {
 export function ensureAttached(paneId: string, session: string) {
   const it = inst(paneId);
   if (!it || !it.term || !session) return;
-  // A socket wedged OPEN but with no PTY byte ever received is the "起動直後の黒
+  // A socket wedged OPEN but with no PTY byte ever received is one "起動直後の黒
   // ターミナル": the fresh attach raced the session bring-up and produced no draw,
   // yet the socket looks healthy (heartbeat pongs keep flowing regardless of PTY
   // output), so neither the drop-flag reconnect nor the zombie heartbeat fires and
   // it sits blank until a full reload. Treat OPEN-but-never-drew as NOT live so the
-  // retry re-attaches and repaints. A CONNECTING socket is left alone (an in-flight
-  // connect will draw shortly); by the first retry (1.5s) a healthy attach has long
-  // since received tmux's initial redraw, so rx===false here reliably means blank.
+  // retry re-attaches and repaints.
+  //
+  // A CONNECTING socket is normally left alone — a genuinely in-flight connect will
+  // draw shortly. But right after a session launches, the PTY upgrade can hang in
+  // CONNECTING (the CP accepts the socket while the agent/tmux is still coming up but
+  // never completes the /ws/pty handshake). That is the OTHER "起動直後の黒" and the
+  // nastier one: CONNECTING never fires onclose/onerror, so the drop-flag reconnect
+  // and heartbeat never trip, and — if we blindly trust CONNECTING — every retry rung
+  // (and the reveal re-check) skips it, leaving the pane black until a focus tap or
+  // reload. So only a FRESH connect (CONNECTING within CONNECT_STALL) counts as live;
+  // a stalled one is re-attached (a new connect, by when the agent is up, draws).
+  const rs = it.ws && it.ws.readyState;
   const live =
     it.session === session &&
-    it.ws &&
-    (it.ws.readyState === WebSocket.CONNECTING ||
-      (it.ws.readyState === WebSocket.OPEN && it.rx === true));
+    !!it.ws &&
+    ((rs === WebSocket.CONNECTING && !connStalled(it)) || (rs === WebSocket.OPEN && it.rx === true));
   if (live) {
     // Receiving PTY bytes proves the socket side is healthy, but it does NOT prove
     // those bytes reached the screen. In particular Chrome can leave xterm's WebGL
@@ -790,6 +852,7 @@ export function detach(paneId: string) {
   const it = inst(paneId);
   if (!it) return;
   clearHeartbeat(it);
+  clearConnWd(it);
   if (it.ws) {
     try {
       it.ws.onclose = null; // intentional detach — don't print "[disconnected]"
@@ -821,6 +884,7 @@ export function disposeTerm(paneId: string) {
   const it = inst(paneId);
   if (!it) return;
   clearHeartbeat(it);
+  clearConnWd(it);
   if (it.ws) {
     try {
       it.ws.onclose = null;
