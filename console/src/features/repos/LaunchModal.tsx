@@ -22,6 +22,9 @@ import { sanitizeSeg } from "../../lib/reponame.ts";
 // mints a provisional temp/<slug> the user renames later).
 export interface LaunchOpts {
   kind: string;
+  // driver（docs/27 P2）: "managed"（共有 runtime・paneless、opencode の既定）|
+  // ""（tui、従来）。managedDriver を持たない kind では常に ""。
+  driver: string;
   model: string;
   prompt: string;
   // Pasted images awaiting upload. Held as raw Files (not yet uploaded) because no
@@ -64,6 +67,9 @@ export function LaunchModal({ repo, branch, path, kinds, allowWorktree = true, o
   // Shared per-kind priority chain (repoLast.ts resolveModel); re-resolved on a kind
   // switch so a claude tier never leaks into a codex/opencode launch (and vice versa).
   const [model, setModel] = useState(() => resolveModel(initialKind, repo, settings.defaultModel));
+  // ドライバ（docs/27 P2）: managed 対応 kind（opencode）は managed が既定（§9.2）。
+  // CLI(TUI) はユーザーの明示的な選択 — セッション毎に TUI プロセス分のメモリを払う。
+  const [driver, setDriver] = useState(agentOf(initialKind).managedDriver ? "managed" : "");
   const [prompt, setPrompt] = useState("");
   // Pasted images awaiting the launch: raw File + an object URL for the chip preview.
   // Uploaded only after the session is minted (in onStartWork), then referenced in the
@@ -169,6 +175,7 @@ export function LaunchModal({ repo, branch, path, kinds, allowWorktree = true, o
     setConflict(null);
     const r = await onLaunch({
       kind,
+      driver: agentOf(kind).managedDriver ? driver : "",
       model: hasModel ? model : "",
       prompt: prompt.trim(),
       images: canPasteImage ? images.map((x) => x.file) : [],
@@ -218,6 +225,7 @@ export function LaunchModal({ repo, branch, path, kinds, allowWorktree = true, o
                   onClick={() => {
                     setKind(k);
                     setModel(resolveModel(k, repo, settings.defaultModel));
+                    setDriver(a.managedDriver ? "managed" : "");
                   }}
                 >
                   <Icon name={a.icon} className="seg-ic" />
@@ -233,6 +241,33 @@ export function LaunchModal({ repo, branch, path, kinds, allowWorktree = true, o
           <div className="ui-field">
             <span className="ui-field-label">モデル</span>
             <ModelPicker kind={kind} model={model} onChange={setModel} />
+          </div>
+        )}
+
+        {/* ドライバ（docs/27 P2）: managed 対応 kind（opencode）だけに出す。既定は
+            managed（共有 runtime・paneless・省メモリ）。CLI(TUI) はターミナル操作が
+            必要な人向けの明示的なメモリトレードオフ（セッション毎に TUI プロセス分）。 */}
+        {agentOf(kind).managedDriver && (
+          <div className="ui-field">
+            <span className="ui-field-label">ドライバ</span>
+            <div className="ui-seg">
+              <button
+                type="button"
+                className={"seg-btn" + (driver === "managed" ? " active" : "")}
+                onClick={() => setDriver("managed")}
+              >
+                <Icon name="server-process" /> Managed
+                <span className="seg-sub">共有ランタイム・チャット専用・省メモリ</span>
+              </button>
+              <button
+                type="button"
+                className={"seg-btn" + (driver !== "managed" ? " active" : "")}
+                onClick={() => setDriver("")}
+              >
+                <Icon name="terminal" /> CLI (TUI)
+                <span className="seg-sub">ターミナル操作可・メモリ +約300MiB</span>
+              </button>
+            </div>
           </div>
         )}
 

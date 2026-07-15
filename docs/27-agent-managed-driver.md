@@ -1,10 +1,12 @@
 # 27. エージェント制御の Managed Driver 化（TUI スクレイプ → 共有 runtime＋構造化 RPC） — 設計
 
-**Status: 📋 設計確定・P1/P1.5 実装済み（2026-07-15）** — 2026-07-15 起草。並行設計セッション（sol=A / fable=B）の成果を比較し、
+**Status: 📋 設計確定・P1/P1.5/P2 実装済み（2026-07-15）** — 2026-07-15 起草。並行設計セッション（sol=A / fable=B）の成果を比較し、
 B の骨格に A の部品を移植する形でユーザー裁定により統合・確定した（経緯は [decisions/0015](decisions/0015-agent-managed-driver.md)）。
 P1（Codex 観測拡張）実装時の実測で判明した事実は §12.1 に記録（**通知はスレッドアタッチ必須**という
 発見により、P1 は「switch への 5 イベント追加」から「observer のアタッチ機構＋5 イベント」に拡大した）。
 P1.5（Console managed セッション UI の受け皿）の実装記録は §10.1、pane 前提機能の棚卸しと置き換え設計は §10.2。
+P2（OpenCode managed 化 — Driver/Supervisor/turn 状態機械/Interaction/reconciliation の初出）の実装記録と
+実測事実は §12.2（**opencode の v1/v2 二重 API と directory スコープ**という 2 つの発見が実装を規定した）。
 
 > 発端は Codex TUI のモデル勝手切替バグ（週次利用率 93〜99% で `ThreadSettings` が 3 件連続送信され
 > `gpt-5.6-sol` → `gpt-5.4-mini` へ意図せず切替→直後にコンテキスト圧縮。複数セッションで再現）。
@@ -383,8 +385,13 @@ managed セッションに tmux pane は無い。pane に依存する機能の�
 | 11 | SSM ログイン検出（capture-pane 全 scrollback の regex） | 対象外——shell / ssm は pane 前提のまま（managed 化しない） | — |
 | 12 | セッション開始・停止（tmux new-session / kill-session、Console の 再開して続ける → /start） | Driver.Resume / supervisor 経由の thread 管理へ。managed の /start・/stop・halt は P2 で driver 分岐を足す | P2 |
 
-切り分け: **実装まで必要**（managed セッションが動く条件、P2）= 2・5・7・8・9・10・12。
-**インターフェース整備で足りた**（P1.5 完了）= 1・3。**無変更で成立** = 4・11。**自然消滅** = 6。
+切り分け: **実装まで必要**（managed セッションが動く条件、P2）= 2・5・7・8・9・10・12 — **P2 で全て実装済み**
+（2 = supervisor の cmd.Wait ＋ daemon 死時の per-session PersistExit、5 = TranscriptData.Mode 射影＋
+POST /sessions/{name}/settings、7 = turn 状態機械が正・unknown→reconcile、8 = AbortManaged＋
+Supervisor.Shutdown、9 = 作成ハンドラが handle.Send を直接呼ぶ、10 = driver 内キューを Queued へ合流、
+12 = create/start/stop/halt/archive/recreate/fork/list の driver 分岐）。
+**インターフェース整備で足りた**（P1.5 完了）= 1・3（3 の実装も P2 で完了 — TurnInput.Attachments →
+v1 file part）。**無変更で成立** = 4・11。**自然消滅** = 6。
 
 ## 11. フェーズ計画
 
@@ -392,7 +399,7 @@ managed セッションに tmux pane は無い。pane に依存する機能の�
 |---|---|---|
 | **P1 ✅** | **Codex 観測拡張（read-only）済（2026-07-15）**: 既存 observer（`handleCodexAppServerEvent`）に `account/rateLimits/updated`・`model/rerouted`・`thread/settings/updated`・`warning`・`thread/status/changed` を追加（key=value の構造化ログ・連続重複抑止）。rate limits は `/codex/usage` が rollout 読みと鮮度比較して新しい方を採用。**追加で必要になったもの**: thread スコープ通知はアタッチ必須（§12.1-1）のため、observer が `thread/resume` でアタッチする `codexObserver`（thread/started・thread/status/changed・30 秒毎 `thread/loaded/list` sweep がトリガ）。発端バグの「TUI 層ナッジ vs サーバ側 reroute」を切り分ける（切り分け規準は §12.1-2）。CLI ルートにもそのまま効く | ゼロ（制御なし。observer の thread/resume は rollout 不変を実測確認） |
 | **P1.5 ✅** | **Console managed セッション UI の受け皿**（§10.1）済（2026-07-15）: Driver 層 IF（`internal/agents/driver.go`）＋意味論エンドポイント `/turn`・`/respond`（tui は tmux 経路へ委譲・managed は driver 登録まで 501）＋driver 軸のワイヤ化（Meta/wire/作成 API、managed 作成は P2 まで拒否）＋Console の paneless 描画（TerminalView 非マウント・トグル非表示）と送信 start/steer・停止 interrupt・質問 onRespond 導線（旧 Agent へは /input フォールバック）。pane 前提機能の棚卸しと置き換え設計は §10.2 | UI のみ（tui は既存経路へ委譲、挙動不変） |
-| **P2** | **OpenCode managed 化**: Driver＋Supervisor＋turn 状態機械＋reconciliation＋`ClientMessageID`＋Interaction(question)＋generation の初出。serve は TUI 併用可＝最も安全に「AF が書く」を実証できる。CLI ルートの serve アタッチ化も同時（TUI 併用の実証を兼ねる）。§10.2 の 2・5・7〜10・12（exit recording の supervisor 移設、mode 射影、初回プロンプト、queued、開始/停止の driver 分岐）と managed 作成の解禁・ドライバ選択 UI（メモリコスト表示）もここ | 低（排他不要） |
+| **P2 ✅** | **OpenCode managed 化** 済（2026-07-15、§12.2）: Driver＋RuntimeSupervisor（`internal/agents/opencode` の driver.go / serve.go）＋turn 状態機械＋reconciliation＋`ClientMessageID` 台帳＋Interaction(question)＋generation の初出。§10.2 の 2・3・5・7〜10・12 と managed 作成の解禁・ドライバ選択 UI（opencode の新規既定 = managed、CLI はメモリコスト表示付きの明示選択）。E2E 実機検証済み: 作成→初回プロンプト→question（id 付き）→/respond→steer キュー→interrupt→halt/start→daemon SIGKILL→exit 記録(137)→自動 reconcile(gen++)。**TUI 併用は attach 実験で安全性実証**（§12.2-9）したが、**CLI ルートの serve アタッチ化自体は見送り P3 へ**（§12.2-11: plugin の sid 捕捉が attach では serve プロセス側で走り壊れる・attach に --model が無い、の 2 点の解決が先） | 低（排他不要） |
 | **P3** | **Codex managed 化**: 新規既定→ドライバ選択 UI＋既存セッションの排他切替。Driver 第 2 実装で型の妥当性検証。daemon drain 実装 | 中（単一 writer 排他） |
 | （凍結） | Claude Session Manager（付録 A）。CLI 必須の運用が解消されたら再訪 | — |
 
@@ -415,7 +422,10 @@ TUI 経路（send-keys / hooks / probe）の**撤去はしない**——CLI ル�
 8. daemon kill→再起動→`thread/resume` で実行中 turn がどうなるか（§6 の実挙動）
 9. `codex fork` 相当の RPC 有無（`Caps.CanFork` 維持）——回答: `thread/fork` が base スキーマに存在（0.144.4）
 10. opencode serve のローカル API 認証有無・TUI アタッチの起動形態（フラグ・tmux 内挙動）・serve 障害時の
-    スタンドアロン TUI フォールバック判定
+    スタンドアロン TUI フォールバック判定 —— **P2 で回答済み（§12.2-1・§12.2-9）**: 認証は
+    `OPENCODE_SERVER_PASSWORD`（未設定＝無認証・loopback 運用）、アタッチは
+    `opencode attach <url> --session <id> --dir <dir>`（tmux 内で正常動作・履歴完全描画）。
+    フォールバック判定は CLI ルートのアタッチ化と併せて P3 送り（§12.2-11）
 
 ### 12.1 P1 実装時の実測事実（2026-07-15、CLI 0.144.3 / 0.144.4 両方で確認）
 
@@ -455,6 +465,72 @@ P1 の実装前検証（`codex app-server generate-json-schema` スキーマ突�
 7. **未確認のまま残るもの**: `account/rateLimits/updated` が観測接続（turn を駆動していない接続）にも
    配送されるか——実 turn 消費なしでは検証できず、実フリートのログで確認する。届かない場合も
    `/codex/usage` は rollout 読みへ自然にフォールバックする（鮮度比較）。
+
+### 12.2 P2 実装時の実測事実（2026-07-15、opencode 1.17.18）
+
+P2 の実装前プローブ（隔離 XDG ホームで `opencode serve` を起動し OpenAPI spec `GET /doc` と
+実呼び出しで確認）と、実装後の実バイナリ E2E（隔離 HOME の workspace-agent＋実 serve＋zero-auth
+フリーティア実 turn）で判明した事実。**driver 実装（`internal/agents/opencode/driver.go`・`serve.go`）
+の API 選定はすべてここに根拠がある。**
+
+1. **serve の認証は `OPENCODE_SERVER_PASSWORD`**（basic auth）。未設定なら無認証で、起動ログに
+   "server is unsecured" 警告が出る。コンテナ network namespace 内 loopback のみなので §9.1 の判断
+   （codex :7798 と同じ）どおり無認証で運用。`opencode attach` も同じ資格（`-p` / env）で接続する。
+2. **API は二世代が併存する（最重要）**: v1（`/session/...`）と v2（`/api/...`、`session.next` 系）。
+   **v2 は新ストア（`session_message` / `session_input` テーブル）に書き、read 層の正本
+   （`message` / `part`）には書かない**。TUI（1.17.18、attach 経由含む・実測）は v1 で `message`/`part`
+   に書く。実フリートの opencode.db も message=多数/最新 vs session_message=残骸 2 行で一致。
+   → **AF driver は v1 系で駆動する**（read 層温存の唯一の選択肢）。
+3. **turn 駆動は blocking `POST /session/{id}/message` が唯一の口**。応答は AssistantMessage＋parts
+   （完走まで返らない — driver は goroutine で包む）。`prompt_async` は user message を書くだけで
+   turn が始まらない（loop step=0 で即 exit、実測）— **真因は turn ループが message id の辞書順に
+   依存する**こと: 既存 id より辞書順で小さい messageID の user message は「処理済み」扱いになる。
+   クライアント採番の `msg_af...` は serve 採番の `msg_f6...` より小さいため常に無視される
+   （blocking でも同じ id を渡すと /message が返らなくなる — E2E で実証）。
+   → **messageID は serve 採番に任せ、`ClientMessageID` の冪等化は driver の台帳（in-memory、
+   handle 生存中）だけで行う**。§9.5 の台帳永続化（プロセス跨ぎ）は将来課題として残る。
+4. **v2 の `delivery:"steer"` は実行中の v1 turn に注入されない**（session_input に admit された後、
+   v2 側で独自の turn を開始し session_message に書く — 実測）。v1 に mid-turn steer の口は無い。
+   → **Steer は driver 内キュー**（実行中 turn の完走後に次 turn として投入 — §4 の queued 状態
+   そのもの）で実装。キューは `TranscriptData.Queued` に合流し キュー済み バッジに出る。
+   interrupt はキューも破棄する（停止の意思はキューに及ぶ）。
+5. **interrupt = `POST /session/{id}/abort`**: blocking /message は 200＋部分結果で返り、assistant
+   message に `time.completed`＋error が刻まれる → `sessionResumable` は真に戻る（resume 安全）。
+   `session.error`＋`session.idle` イベントが飛ぶ。
+6. **question 系は完全に構造化**: `question.asked/replied/rejected` イベント＋`GET /question`
+   （QuestionRequest: id=`que_*`・questions[]{question,header,options{label,description},multiple,custom}）
+   ＋`POST /question/{id}/reply {answers:[[label,…]]}`（**回答はラベル文字列**、index ではない —
+   driver が InteractionAnswer の index→label 変換を持つ）/`{id}/reject`。実行中の question tool は
+   part（state=running）として `message`/`part` にも見える → 既存 pending() reader がそのまま動き、
+   Interaction id は driver が SSE から補完する（`transcript.Question.ID`）。reply 後 turn は続行。
+7. **session/question/status/event 面はプロジェクト（directory）スコープ（第 2 の最重要事実）**:
+   serve の cwd と別ディレクトリのセッションは、`?directory=<dir>` を付けないと `GET /question`・
+   `GET /session/status` に載らず、素の `GET /event` にはそのセッションのイベントが届かない。
+   → driver は全呼び出しに directory を併送し、**SSE はプロジェクト横断の `GET /global/event`**
+   （イベントを `{"payload": {...}}` に包んで全プロジェクト分配信）を購読する。
+   `/session/status` は idle のセッションを省略する（載っている＝busy/retry）。
+8. **添付は v1 file part** `{type:"file", mime, url:"file:///abs"}` で動く（実測: モデルが添付
+   ファイルの中身を読んで回答）。`TurnInput.Attachments` → file part 変換（§10.2-3 の実装）。
+9. **TUI アタッチ（TUIAttach cap）実証**: `opencode attach http://127.0.0.1:7799 --session <id>
+   --dir <dir>` で AF 駆動の会話が完全描画され、attach TUI からの送信も v1（message/part）に書く
+   — **managed セッションと TUI の併用は安全**（相互に全ターンが見える）。RSS 実測: serve 本体
+   557 MiB（共有・1 プロセス）、attach TUI 約 304 MiB（3 MiB ラッパー＋301 MiB 子）。
+   managed セッション自体は per-session プロセス 0。
+10. **permission**: serve 既定（1.17.18）では bash 実行も permission prompt なしで通った。保険として
+    driver は `permission.asked` イベントへ `{"reply":"always"}` を自動応答する（ユーザー config が
+    ask を足しても managed セッションが黙って固まらない — bypass 運転の維持、§5）。
+11. **CLI ルートの serve アタッチ化は P2 では見送り**（P3 で再訪）: (a) AF_SESSION_SID による
+    per-slot sid 捕捉は plugin が **serve プロセス側**で走るため attach では機能しない（AF が
+    session を API で先に作り `--session` を渡せば解決可能 — 設計余地）、(b) `opencode attach` に
+    `--model` フラグが無い（session 作成時の model 指定で代替できるかは未検証）。スタンドアロン
+    TUI は従来どおり動くので可用性の後退は無い。
+12. **E2E 検証済みフロー**（実バイナリ・実 serve・実 turn）: managed 作成（POST /sessions
+    driver=managed）→ 初回プロンプト直接 Send（§10.2-9、boot 待ちなし）→ ミラー転写（message/part
+    経由）→ question（id 付き pendingQuestions）→ /respond 構造化回答 → turn 続行 → steer の
+    キュー可視化と完走後投入 → interrupt（idle 復帰・resume 安全）→ halt→stopped / start→alive →
+    **daemon SIGKILL → supervisor が exit 記録（code 137/sig 9・cgroup OOM 帰属判定つき）→ 自動
+    reconcile（gen++・セッション復活）**。serve のコールドブート直後は最初の session create が
+    10 秒を超えることがある（bun 起動・カタログ初期化）— 作成 API は 502 を返し、リトライで成功する。
 
 ---
 

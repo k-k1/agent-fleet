@@ -10,6 +10,8 @@ import (
 	"encoding/json"
 	"log"
 	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fstore"
@@ -58,6 +60,61 @@ var (
 func PersistExit(name string, e ExitInfo)   { _ = exitFiles.Write(name, e) }
 func ReadExit(name string) (ExitInfo, bool) { return exitFiles.Read(name) }
 func RemoveExit(name string)                { exitFiles.Remove(name) }
+
+// cgroupDir is the container's own cgroup v2 root. Overridable for tests.
+func cgroupDir() string {
+	if v := os.Getenv("AF_CGROUP_DIR"); v != "" {
+		return v
+	}
+	return "/sys/fs/cgroup"
+}
+
+// OOMKillCount reads the cumulative oom_kill counter from the container's own
+// cgroup v2 memory.events. From inside the container /sys/fs/cgroup is
+// cgroup-namespaced to this container, so this is our own count. Reports !ok when
+// unreadable (a non cgroup-v2 host, a different layout, etc.) so callers degrade
+// instead of guessing OOM.（record_exit.go の containerOOMKill を移設 — docs/27
+// §10.2-2 で opencode supervisor も使うため package main から下ろした。）
+func OOMKillCount() (uint64, bool) {
+	b, err := os.ReadFile(cgroupDir() + "/memory.events")
+	if err != nil {
+		return 0, false
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		f := strings.Fields(line)
+		if len(f) == 2 && f[0] == "oom_kill" {
+			v, err := strconv.ParseUint(f[1], 10, 64)
+			return v, err == nil
+		}
+	}
+	return 0, false
+}
+
+// ExitReasonFor interprets a wait status into a cause the Console can show
+// （record_exit.go の exitReason を移設・共用化 — pane ラッパー（tui）と daemon
+// supervisor（managed、docs/27 §10.2-2）が同じ reason enum を書くため）:
+//   - 0                       → exited  (normal quit)
+//   - SIGKILL(9) + OOM        → oom     (memory cgroup / host OOM killer)
+//   - SIGKILL(9) no OOM       → killed  (a SIGKILL from something other than an OOM)
+//   - SIGHUP/INT/TERM(1/2/15) → stopped (graceful signals: quit, shutdown, a kill leak)
+//   - other signal            → crashed (SIGSEGV/ABRT/… = an application fault)
+//   - other non-zero (<128)   → crashed (the CLI itself exited non-zero)
+func ExitReasonFor(code, sig int, oom bool) string {
+	if code == 0 {
+		return "exited"
+	}
+	if sig == 9 {
+		if oom {
+			return "oom"
+		}
+		return "killed"
+	}
+	switch sig {
+	case 1, 2, 15: // SIGHUP, SIGINT, SIGTERM
+		return "stopped"
+	}
+	return "crashed"
+}
 
 // Persist writes {state, ts} keyed by sid. Errors are logged (not
 // swallowed): a failed write leaves the Console's 進行中/応答あり badge silently

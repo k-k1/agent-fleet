@@ -502,7 +502,7 @@ func handleSessionStatus(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
 		return
 	}
-	alive := tmuxx.HasSession(session.TmuxName(name))
+	alive := sessionAlive(meta)
 	state := driveState(meta, alive, true)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"name": name, "kind": meta.Kind, "alive": alive, "status": state})
 }
@@ -522,7 +522,7 @@ func handleSessionOutput(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
 		return
 	}
-	alive := tmuxx.HasSession(session.TmuxName(name))
+	alive := sessionAlive(meta)
 	// /output opts out of the idle-heal (heal=false) to preserve its historical behavior.
 	state := driveState(meta, alive, false)
 	if !agentOf(meta.Kind).Caps().CanTranscript {

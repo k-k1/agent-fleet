@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { CSSProperties, KeyboardEvent as RKeyboardEvent, ClipboardEvent as RClipboardEvent, DragEvent as RDragEvent, RefObject, ReactNode } from "react";
-import { api, apiJSON, raw, errText, pasteImage, sessionTurn, sessionRespond } from "../../core/api/client.ts";
+import { api, apiJSON, raw, errText, pasteImage, sessionTurn, sessionRespond, sessionSettings } from "../../core/api/client.ts";
 import type { InteractionAnswer, TurnResult } from "../../core/api/client.ts";
 import { isManagedSession } from "../../types/session.ts";
 import { splitPastedImages, buildImagePrompt } from "../../lib/pastedImages.ts";
@@ -989,8 +989,9 @@ export function MirrorView({
   // tmux typing as before (sessionTurn falls back to /input against an old Agent),
   // managed = the turn/start・turn/steer RPC (P2). The result carries the rejection
   // reason so the caller can drop its optimistic echo AND tell the user why.
-  const postInput = (text: string, op: "start" | "steer"): Promise<TurnResult> =>
-    sessionTurn(session, op, text);
+  // attachments は managed だけが渡す（driver が API 添付へ変換、docs/27 §10.2-3）。
+  const postInput = (text: string, op: "start" | "steer", attachments?: string[]): Promise<TurnResult> =>
+    sessionTurn(session, op, text, attachments);
 
   // Low-level: send named keys with NO "working" status and NO quick re-poll — used by
   // the plan-mode toggle, which isn't a turn. (The quick re-poll of sendKeys/sendPrompt
@@ -1015,9 +1016,10 @@ export function MirrorView({
 
   // sendPrompt submits one prompt (the composer). Never used to answer an AUQ —
   // the modal ignores typed text, so a text send would confirm option 1 (docs/dev/92).
-  const sendPrompt = async (text: string) => {
+  // attachments は managed セッションの API 添付（send() が織り込みと使い分ける）。
+  const sendPrompt = async (text: string, attachments?: string[]) => {
     const t = (text || "").trim();
-    if (!t || sending) return;
+    if ((!t && !attachments?.length) || sending) return;
     setSending(true);
     // start = 新しい turn / steer = 実行中 turn への追撃 — 楽観的に working へ倒す前の
     // 実状態で決める。tui では同じ型付けに落ちるが、managed の turn/start・turn/steer
@@ -1029,7 +1031,7 @@ export function MirrorView({
     // is busy — reconciled away once its real user turn appears in the transcript.
     const echoId = ++echoSeqCounter;
     applyEchoes((p) => [...p, { id: echoId, text: t, sinceIdx: newestIdx() }]);
-    const res = await postInput(t, op);
+    const res = await postInput(t, op, attachments);
     if (!res.ok) {
       // 送信は受理されていない: echo を残すと「送れたように見える」ので消し、理由を
       // トーストで示し、（send() が既に消した）下書きを書き戻す。ユーザーが打ち直しを
@@ -1102,6 +1104,15 @@ export function MirrorView({
   useEffect(() => {
     if (seededRef.current || readOnly || !alive || termState || sending) return;
     if (!hasLaunchSeed(session)) return;
+    // managed（docs/27 §10.2-9）: boot 画面が存在しないので readiness スクレイプも
+    // 二重 Enter も不要 — /turn の start をそのまま投げる（駄目でも駄目と返る）。
+    if (managed) {
+      const seed = takeLaunchSeed(session);
+      if (!seed) return;
+      seededRef.current = true;
+      void sendPrompt(seed);
+      return;
+    }
     if (!mode && !seedForce) {
       if (seedForceTimer.current == null) {
         seedForceTimer.current = window.setTimeout(() => setSeedForce(true), 15000);
@@ -1113,7 +1124,7 @@ export function MirrorView({
     seededRef.current = true;
     seedSubmit(seed);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [alive, termState, session, readOnly, mode, seedForce]);
+  }, [alive, termState, session, readOnly, mode, seedForce, managed]);
 
   // sendKeys drives the AskUserQuestion modal via named keys (Down/Space/Enter), the
   // only way to answer multi-select / multi-question forms (free text can't).
@@ -1298,7 +1309,9 @@ export function MirrorView({
     const ts = useTtsStore.getState();
     if (ts.active && ts.sessionName === session) ts.stop();
     const paths = attachments.map((a) => a.path);
-    const prompt = buildImagePrompt(text, paths, agent.id);
+    // managed はワイヤの attachments で渡し（driver が API 添付へ変換、docs/27
+    // §10.2-3）、tui は従来どおりプロンプト本文へパスを織り込む。
+    const prompt = managed ? text : buildImagePrompt(text, paths, agent.id);
     setHistIdx(null);
     setDraft("");
     clearAttachments();
@@ -1306,7 +1319,7 @@ export function MirrorView({
     // turn is sent — the reply is what the user wants to read, not keep typing. Desktop
     // keeps focus (and refocuses below) so typing the next turn needs no extra click.
     if (coarsePointer()) inputRef.current?.blur();
-    await sendPrompt(prompt);
+    await sendPrompt(prompt, managed ? paths : undefined);
     if (!coarsePointer()) inputRef.current?.focus();
   };
 
@@ -2035,11 +2048,17 @@ export function MirrorView({
                   // Optimistic label (codex/opencode only report the new mode after a turn);
                   // the poll reconciles from the terminal via paneMode.
                   setMode(toPlan ? "Plan" : agent.defaultModeLabel);
+                  // managed のモード切替は ThreadSettings の更新（POST /settings →
+                  // UpdateSettings、docs/27 §9.4-3）— 次 turn の agent/mode に効く。
+                  // tui は従来どおりキー駆動（planEnterCmd / planCycleKey）。
+                  if (managed) {
+                    void sessionSettings(session, { mode: toPlan ? "plan" : "normal" });
+                    return;
+                  }
                   // Low-level sends (no working status / no quick re-poll) so the optimistic
                   // label holds until the regular poll reads the real mode.
                   // スラッシュコマンドは turn を始めない（サーバ側 slashCmdRe が
-                  // working を付けない）— op は形式上 start で送る。managed のモード
-                  // 切替は thread/settings/update へ（P2/P3、docs/27 §9.4）。
+                  // working を付けない）— op は形式上 start で送る。
                   if (toPlan && agent.planEnterCmd) postInput(agent.planEnterCmd, "start");
                   else postKeys([agent.planCycleKey]);
                 }}

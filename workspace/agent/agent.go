@@ -44,6 +44,17 @@ func normalizeKind(kind string) string {
 
 // --- shared live-state helpers -------------------------------------------------
 
+// sessionAlive is the driver-aware liveness test: tui = the tmux session exists,
+// managed = a live runtime handle exists（docs/27 P2）。wireSession の alive 引数を
+// 埋める全ハンドラはこれを使う（tmuxx.HasSession 直叩きは managed を常に停止扱い
+// にしてしまう）。
+func sessionAlive(m session.Meta) bool {
+	if m.DriverKind() == session.DriverManaged {
+		return managedAlive(m)
+	}
+	return tmuxx.HasSession(session.TmuxName(m.Name))
+}
+
 // driveState is the live state for the drive endpoints (status/output/messages):
 // "stopped" when not alive, else idle-or-recorded. heal self-corrects a stale
 // non-idle cache when the claude pane is back at its ready prompt (killed+resumed,

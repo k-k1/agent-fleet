@@ -69,6 +69,11 @@ export interface AgentDescriptor {
   // plan (the real label follows from the next poll). claude "Bypass", codex "Default",
   // opencode "Build". "" for agents without a mode chip.
   defaultModeLabel: string;
+  // managed driver（docs/27 P2）: この kind が共有 runtime 駆動（paneless）のセッション
+  // 作成に対応しているか。true の kind は起動 UI にドライバ選択が出て、既定が managed
+  // になる（§9.2 — CLI(TUI) はユーザーの明示的なメモリトレードオフ）。P2: opencode、
+  // P3 で codex が true になる予定。
+  managedDriver: boolean;
   caps: AgentCaps;
   // whether this kind is currently launchable given connections / SSM hosts
   available(ctx: AvailCtx): boolean;
@@ -107,6 +112,7 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     planCycleKey: "BTab", // Shift+Tab cycles normal / auto-accept / plan (used to exit)
     planEnterCmd: "/plan", // claude has a direct command to enter plan mode
     defaultModeLabel: "Bypass",
+    managedDriver: false,
     caps: caps({
       chat: true,
       headlessChat: true, // Phase A: claude -p backs assistant chat (docs/19)
@@ -142,6 +148,7 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     // models` under codex's own subscription auth) → `codex -m`.
     // imagePaste: upload + path-in-prompt (claude's flow); codex's view_image fires on
     // a plain path mention — live-verified for both the TUI and `codex exec`.
+    managedDriver: false,
     caps: caps({
       chat: true,
       headlessChat: true,
@@ -178,6 +185,7 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     // imagePaste: upload + path-in-prompt. Vision is model-dependent: a vision model
     // reads it directly; big-pickle (free tier) either inspects it agentically (TUI,
     // live-verified) or declines honestly — never a silent failure.
+    managedDriver: true,
     caps: caps({
       chat: true,
       headlessChat: true,
@@ -207,6 +215,7 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     planCycleKey: "",
     planEnterCmd: "",
     defaultModeLabel: "",
+    managedDriver: false,
     caps: caps({
       ephemeral: true,
       launchableFromRepo: true,
@@ -229,6 +238,7 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     defaultModeLabel: "",
     // Like shell: a plain login shell with no working/idle model, so its liveness is a
     // fixed 起動中 chip (not 入力待ち) and it raises no answer/question notifications.
+    managedDriver: false,
     caps: caps({ ephemeral: true, fixedAliveChip: true }),
     available: (c) => (c.ssmHostCount ?? 0) > 0,
   },

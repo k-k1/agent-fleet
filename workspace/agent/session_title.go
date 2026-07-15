@@ -22,7 +22,6 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
 
@@ -289,7 +288,7 @@ func handleAcceptSuggestedTitle(w http.ResponseWriter, r *http.Request) {
 		m.Label = sessionLabelFor(m.Dir, m.Title)
 	}
 	session.WriteMeta(m)
-	httpx.WriteJSON(w, http.StatusOK, wireSession(m, tmuxx.HasSession(session.TmuxName(name))))
+	httpx.WriteJSON(w, http.StatusOK, wireSession(m, sessionAlive(m)))
 }
 
 // errNoTitleContent/errTitleGenBusy are sentinels generateTitleNow returns so
@@ -399,7 +398,7 @@ func handleSetTitle(w http.ResponseWriter, r *http.Request) {
 		m.Label = sessionLabelFor(m.Dir, m.Title)
 	}
 	session.WriteMeta(m)
-	httpx.WriteJSON(w, http.StatusOK, wireSession(m, tmuxx.HasSession(session.TmuxName(name))))
+	httpx.WriteJSON(w, http.StatusOK, wireSession(m, sessionAlive(m)))
 }
 
 // branchSuggestPersona pins the headless call to emit a git branch name, NOT a
@@ -538,7 +537,7 @@ func handleSessionRenameBranch(w http.ResponseWriter, r *http.Request) {
 	}
 	session.UpdateStartBranch(dir, newName)
 	m, _ = session.ReadMeta(name)
-	httpx.WriteJSON(w, http.StatusOK, wireSession(m, tmuxx.HasSession(session.TmuxName(name))))
+	httpx.WriteJSON(w, http.StatusOK, wireSession(m, sessionAlive(m)))
 }
 
 // sessionTitleTurns fetches the full turn list for a session regardless of kind,
@@ -573,5 +572,5 @@ func handleDismissSuggestedTitle(w http.ResponseWriter, r *http.Request) {
 	m.SuggestedTitle = ""
 	m.SuggestedTitleDismissed = true
 	session.WriteMeta(m)
-	httpx.WriteJSON(w, http.StatusOK, wireSession(m, tmuxx.HasSession(session.TmuxName(name))))
+	httpx.WriteJSON(w, http.StatusOK, wireSession(m, sessionAlive(m)))
 }

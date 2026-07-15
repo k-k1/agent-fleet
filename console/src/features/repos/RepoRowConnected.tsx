@@ -109,8 +109,16 @@ export function RepoRowConnected({ r, ctx, onToggle, sess }: RepoRowConnectedPro
         // Shared per-kind chain: repo last-used → kind default (repoLast.ts resolveModel).
         const model = hasModel ? resolveModel(kind, r.name, settings.defaultModel) : "";
         const body: Record<string, unknown> = { dir: r.path, kind };
+        // クイック起動も新規の既定は managed（docs/27 §9.2 — opencode）。CLI が
+        // 欲しいときは 作業を始める モーダルのドライバ選択から。
+        if (agentOf(kind).managedDriver) body.driver = "managed";
         if (model) body.model = model;
-        const res = await apiJSON("api/sessions", "POST", body);
+        let res = await apiJSON("api/sessions", "POST", body);
+        // 旧 Agent（P1.5 世代）は managed を明示拒否する — tui で立て直す。
+        if (res?.error && body.driver === "managed" && (res.error as { code?: string }).code === "driver_unsupported") {
+          delete body.driver;
+          res = await apiJSON("api/sessions", "POST", body);
+        }
         if (res && res.error) {
           toast("起動に失敗: " + errText(res.error));
           return;

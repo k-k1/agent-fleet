@@ -29,9 +29,10 @@ export function useStartWork(): (target: StartTarget, opts: LaunchOpts) => Promi
   const refreshRepos = useReposStore((s) => s.refresh);
   const refreshSessions = useSessionsStore((s) => s.refresh);
 
-  return async ({ dir, repo }, { kind, model, prompt, images, worktree, base, newBranch, useExisting }) => {
+  return async ({ dir, repo }, { kind, driver, model, prompt, images, worktree, base, newBranch, useExisting }) => {
     const hasModel = agentOf(kind).caps.model;
     const body: Record<string, unknown> = { dir, kind };
+    if (driver) body.driver = driver;
     if (hasModel && model) body.model = model;
     if (worktree) {
       body.worktree = true;
@@ -39,7 +40,15 @@ export function useStartWork(): (target: StartTarget, opts: LaunchOpts) => Promi
       body.new_branch = newBranch;
       if (useExisting) body.use_existing = true;
     }
-    const res = await apiJSON("api/sessions", "POST", body);
+    let res = await apiJSON("api/sessions", "POST", body);
+    // フリート再ビルドのラグ: P1.5 世代の Agent は driver:"managed" を明示拒否する
+    // （driver_unsupported）。managed で立てられないなら tui で立てて動く方が親切 —
+    // 1 回だけ落として再送し、その旨をトーストする。
+    if (res?.error && driver === "managed" && (res.error as { code?: string }).code === "driver_unsupported") {
+      toast("この環境は managed 未対応のため CLI (TUI) で起動します");
+      delete body.driver;
+      res = await apiJSON("api/sessions", "POST", body);
+    }
     if (res && res.error) {
       const code = typeof res.error === "object" ? res.error.code : "";
       if (code === "branch_exists") return { ok: false, conflict: "local" as const };

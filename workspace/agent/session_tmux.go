@@ -6,6 +6,7 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"sort"
@@ -50,7 +51,7 @@ func startSessionTmux(m session.Meta, ssmForce bool) error {
 	// Baseline the container's oom_kill counter so a later crash is attributed to an OOM
 	// only when the counter advanced during THIS session. Writing it also clears any
 	// prior death record for this name, so a resumed session starts clean.
-	base, _ := containerOOMKill()
+	base, _ := status.OOMKillCount()
 	status.PersistExit(m.Name, status.ExitInfo{OOMBase: base})
 	return nil
 }
@@ -58,11 +59,33 @@ func startSessionTmux(m session.Meta, ssmForce bool) error {
 // ensureSessionTmux (re)creates the tmux session from its recorded meta when it is
 // not currently alive — used on attach so a clicked-but-exited session relaunches
 // claude rather than the default shell. Reports whether a meta was found.
+// managed セッション（docs/27 P2）は tmux でなく driver.Resume（runtime handle の
+// 再接続＝§6 の reconciliation）で「起動」する — /start の意味論は両ドライバで同じ。
 func ensureSessionTmux(name string, ssmForce bool) bool {
+	m, ok := session.ReadMeta(name)
+	if ok && m.DriverKind() == session.DriverManaged {
+		if managedAlive(m) {
+			return true
+		}
+		d, dok := driverOf(m)
+		if !dok {
+			return false
+		}
+		if _, err := d.Resume(m); err != nil {
+			log.Printf("managed resume %s: %v", name, err)
+			return false
+		}
+		// 再開＝停止扱いの解除。次の一覧ポーリングでも clear されるが、/start 応答の
+		// 直後に halt 直前の StoppedAt が残っていると紛らわしいのでここで消す。
+		if m.StoppedAt != "" {
+			m.StoppedAt = ""
+			session.WriteMeta(m)
+		}
+		return true
+	}
 	if tmuxx.HasSession(session.TmuxName(name)) {
 		return true
 	}
-	m, ok := session.ReadMeta(name)
 	if !ok {
 		return false
 	}

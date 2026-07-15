@@ -28,10 +28,13 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("POST /sessions/{name}/restore", handleRestoreSession)
 	// Programmatic drive I/O for the MCP tools (docs/0006 P3-6 E).
 	mux.HandleFunc("POST /sessions/{name}/input", handleSessionInput)
-	// Semantic turn ops + Interaction 応答（docs/27 P1.5）— driver 抽象の受け口。
-	// tui は tmux 経路へ委譲、managed は P2/P3 で ThreadHandle へ接続。
+	// Semantic turn ops + Interaction 応答（docs/27 P1.5/P2）— driver 抽象の受け口。
+	// tui は tmux 経路へ委譲、managed は ThreadHandle へ（P2: opencode / P3: codex）。
 	mux.HandleFunc("POST /sessions/{name}/turn", handleSessionTurn)
 	mux.HandleFunc("POST /sessions/{name}/respond", handleSessionRespond)
+	// ThreadSettings の動的更新（docs/27 §9.4-3、managed 専用 — 稼働中セッションの
+	// モデル/effort/モード変更）。tui は従来どおり /input のキー操作。
+	mux.HandleFunc("POST /sessions/{name}/settings", handleSessionSettings)
 	mux.HandleFunc("POST /sessions/{name}/paste-image", handlePasteImage)
 	mux.HandleFunc("GET /sessions/{name}/pasted/{file}", handlePastedImage)
 	mux.HandleFunc("GET /sessions/{name}/status", handleSessionStatus)
