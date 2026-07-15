@@ -211,6 +211,15 @@ const BUILTIN_READINGS: [string, string][] = [
   ["放ってお", "ほうってお"],
   // あり様 は ありよう（本来あるべき姿・状態。「〜のありよう」）に固定する（実機報告）。
   ["あり様", "ありよう"],
+  // --- 開発現場で使う漢語のうち、OpenJTalk が慣用（IT 分野）の読みから外しやすいもの。
+  //     いずれも IT 文脈では読みが一意なので固定して安全（一般語の別読みと衝突しない）。 ---
+  ["引数", "ひきすう"], // いんすう に化けやすい
+  ["添字", "そえじ"], // てんじ に化けやすい
+  ["閾値", "しきいち"], // いきち とも読むが IT 分野の慣用は しきいち
+  ["相殺", "そうさい"], // そうさつ と誤読されやすい
+  ["脆弱性", "ぜいじゃくせい"], // 脆 が落ちて きじゃく 等に化けやすい
+  ["端数", "はすう"], // たんすう と誤読されやすい
+  ["冪等", "べきとう"], // 冪 は常用外で読めないことがある
 ];
 
 // GYO_KO_COMPOUNDS — 末尾が「行」でも「ぎょう」と読まない漢語（こう/他）。fixGyoLine の
@@ -294,6 +303,18 @@ const UPPER_ACRONYMS: [RegExp, string][] = [[/\bIT\b/g, "アイティー"]];
 // 残って発話が途切れる／"agent" 単体が CMUdict で "エイジャント" に誤読される（実機
 // フィードバック）。enkana より前でカタカナへ確定させて表記ゆれごと吸収する。
 const PRODUCT_NAMES: [RegExp, string][] = [[/agent[\s-]?fleet/gi, "エージェントフリート"]];
+
+// ピリオドを跨ぐ定型トークンは enkana（CP・英数字トークン単位）では 1 語にまとまらず
+// "." で分断されるので、ここでカタカナに確定させる。init.d 等の "*.d" ディレクトリや
+// resolv.conf のような設定ファイル名。単語境界 \b 付きなので cron.daily 等の別語は誤爆しない。
+const DOTTED_TERMS: [RegExp, string][] = [
+  [/\binit\.d\b/gi, "イニットドットディー"],
+  [/\bcron\.d\b/gi, "クロンドットディー"],
+  [/\brc\.d\b/gi, "アールシードットディー"],
+  [/\bconf\.d\b/gi, "コンフドットディー"],
+  [/\bsudoers\.d\b/gi, "スードゥアーズドットディー"],
+  [/\bresolv\.conf\b/gi, "リゾルブドットコンフ"],
+];
 
 // --- 裸のスラッシュ区切り（コード外）の間つめ ------------------------------------
 // "origin/main"・"on/off"・"read/write" のような裸（バッククォート無し）のスラッシュ区切りは
@@ -380,14 +401,20 @@ function applyTildeReadings(text: string): string {
   return text.replace(TILDE_RUN, "ほにゃらら").replace(TILDE_RANGE, "$1から");
 }
 
+// セクション記号 §（と連続 §§）は OpenJTalk が読み飛ばす/記号読みするので「セクション」に。
+// 「§3」→「セクション3」のように直後の番号はそのまま数として読ませる。
+const SECTION_SIGN = /§+/g;
+
 export function applyBuiltinReadings(text: string): string {
   let t = applyDateTimeReadings(text);
+  t = t.replace(SECTION_SIGN, "セクション");
   t = shortenSlashPause(t);
   t = tameMidToPause(t); // 文中の溜め（――・……。行頭は plainify が既に処理済み）
   t = t.replace(KARA_KATAKANA, "から");
   t = applyTildeReadings(t);
   for (const [re, to] of NUMERONYMS) t = t.replace(re, to);
   for (const [re, to] of PRODUCT_NAMES) t = t.replace(re, to);
+  for (const [re, to] of DOTTED_TERMS) t = t.replace(re, to);
   for (const [re, to] of UPPER_ACRONYMS) t = t.replace(re, to);
   t = t.replace(GO_PREFIX, "ご"); // 接頭辞「誤」= ご（誤表示/誤判定… 判定変換より前に）
   t = t.replace(KANAME, "$1かなめ"); // が/は/も＋要（文末・句読点・です/だ 直前）= かなめ

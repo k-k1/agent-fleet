@@ -165,6 +165,79 @@ func TestCompanyAndToolNames(t *testing.T) {
 	}
 }
 
+func TestGeneralDevWords(t *testing.T) {
+	// 実機フィードバックの読み希望（version/message/session/setting/status/daemon/console 等）。
+	// CMUdict の音写が慣用カタカナから外れる語を慣用読みで固定できているか。
+	want := map[string]string{
+		"version":  "バージョン",
+		"revision": "リビジョン",
+		"minor":    "マイナー",
+		"major":    "メジャー",
+		"thread":   "スレッド",
+		"messages": "メッセージズ",
+		"session":  "セッション",
+		"settings": "セッティングス",
+		"status":   "ステータス",
+		"daemon":   "デーモン",
+		"resume":   "レジューム",
+		"docs":     "ドックス",
+		"approval": "アプルーバル",
+		"tests":    "テスツ",
+		"console":  "コンソール",
+		"httptest": "エイチティーティーピーテスト",
+	}
+	for in, exp := range want {
+		if got := englishToKana(in); got != exp {
+			t.Errorf("%q -> %q, want %q", in, got, exp)
+		}
+	}
+}
+
+func TestUnitsAndSignals(t *testing.T) {
+	// 容量単位（二進 MiB / 十進 MB）とシグナル名。キーは小文字化されるので大文字表記でも引く。
+	want := map[string]string{
+		"MiB":     "メビバイト",
+		"GiB":     "ギビバイト",
+		"MB":      "メガバイト",
+		"GB":      "ギガバイト",
+		"sigkill": "シグキル",
+		"sigterm": "シグターム",
+		"sigint":  "シグイント",
+		"SIGKILL": "シグキル",
+		"sigusr1": "シグユーザーワン",
+	}
+	for in, exp := range want {
+		if got := englishToKana(in); got != exp {
+			t.Errorf("%q -> %q, want %q", in, got, exp)
+		}
+	}
+}
+
+func TestUnixOperatorTerms(t *testing.T) {
+	// UNIX コマンド / オペレータ用語（提案分）。慣用の発音で固定できているか。
+	want := map[string]string{
+		"chmod":     "チェンジモッド",
+		"chown":     "チャウン",
+		"sudo":      "スードゥー",
+		"sudoers":   "スードゥアーズ",
+		"bashrc":    "バッシュアールシー",
+		"awk":       "オーク",
+		"sed":       "セド",
+		"curl":      "カール",
+		"rsync":     "アールシンク",
+		"systemctl": "システムコントロール",
+		"mkdir":     "メイクディレクトリ",
+		"rmdir":     "アールエムディーアイアール",
+		"init":      "イニット",
+		"ripgrep":   "リップグレップ",
+	}
+	for in, exp := range want {
+		if got := englishToKana(in); got != exp {
+			t.Errorf("%q -> %q, want %q", in, got, exp)
+		}
+	}
+}
+
 func TestSingleUpperLetter(t *testing.T) {
 	// 単独の大文字 1 文字（案A・パターンB 等）は CMUdict の実在語（a/i/o が冠詞・代名詞
 	// として載っている）に化けて誤読される（例: "A"→"ア"）ため、英字名読みに固定する。
