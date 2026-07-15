@@ -12,6 +12,7 @@ import { useLayoutStore, wireLayoutHistory } from "../layout/store.ts";
 import { wireTerminalReconcile } from "../terminal/service.ts";
 import { useSessionsStore, startSessionsPolling } from "../features/sessions/store.ts";
 import { SessionModals } from "../features/sessions/SessionModals.tsx";
+import { AuthExpiredModal } from "../features/auth/AuthExpiredModal.tsx";
 import { useSessionNotifications } from "../features/sessions/useSessionNotifications.ts";
 import { useReposStore, startReposPolling } from "../features/repos/store.ts";
 import { useFilesStore } from "../features/files/store.ts";
@@ -320,6 +321,7 @@ export function App() {
       {guideOpen && <GuideModal />}
       <StartHost />
       <SessionModals />
+      <AuthExpiredModal />
     </div>
   );
 }

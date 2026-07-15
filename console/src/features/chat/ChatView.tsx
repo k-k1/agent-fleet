@@ -8,6 +8,7 @@ import { useChatStore } from "./store.ts";
 import { chatGet, chatStream, chatCreate, assistantGet, chatPasteImage } from "./api.ts";
 import { errText, raw } from "../../core/api/client.ts";
 import { takeChatSeed } from "../../lib/chatSeed.ts";
+import { useDraft, moveDraft, clearDraft } from "../../lib/draft.ts";
 import { coarsePointer } from "../../lib/device.ts";
 import { useSettings, surfaceBg, surfaceAccent, effectiveTheme } from "../../lib/settings.ts";
 import {
@@ -43,6 +44,8 @@ interface ChatViewProps {
   active?: boolean;
 }
 
+const chatDraftKey = (conversationId: string) => "af.chat-draft." + conversationId;
+
 export function ChatView({ conversationId, draftAssistantId, paneId, active }: ChatViewProps) {
   // Store bridge (old context values): promote a draft pane to its real
   // conversation id; bump the rail list; publish the busy chip.
@@ -67,7 +70,14 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
   const modSend = settings.mirrorSend !== "enter";
   const [conv, setConv] = useState<Conversation | null>(null);
   const [draftAsst, setDraftAsst] = useState<Assistant | null>(null); // greeting source in draft mode
-  const [input, setInput] = useState("");
+  // Composer draft, persisted per conversation (draft panes key by assistant) so a
+  // reload — or the browser dying — keeps what you were typing (mirrors MirrorView).
+  const draftKey = conversationId
+    ? chatDraftKey(conversationId)
+    : draftAssistantId
+      ? "af.chat-draft.asst." + draftAssistantId
+      : null;
+  const [input, setInput] = useDraft(draftKey);
   const [attachments, setAttachments] = useState<{ path: string; name: string; url: string }[]>([]);
   const [pasting, setPasting] = useState(false); // an image upload is in flight
   const [sending, setSending] = useState(false);
@@ -120,7 +130,10 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
       if (convRef.current?.id === conversationId) return; // already have it (e.g. just promoted)
       applyConv(null);
       setDraftAsst(null);
-      setInput(takeChatSeed(conversationId) ?? ""); // one-shot composer prefill (Phase C)
+      // One-shot composer prefill (Phase C); with no seed the persisted draft (which
+      // useDraft reloads on the key change) is left standing.
+      const seed = takeChatSeed(conversationId);
+      if (seed !== undefined) setInput(seed);
       chatGet(conversationId)
         .then((c) => {
           if (cancelled) return;
@@ -132,7 +145,6 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
         });
     } else if (draftAssistantId) {
       applyConv(null);
-      setInput("");
       setDraftAsst(null);
       assistantGet(draftAssistantId)
         .then((a) => {
@@ -200,6 +212,10 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
     const title = input.trim().slice(0, 40) || "新しいチャット";
     const created = await chatCreate(draftAssistantId, title);
     if (!created || !created.id) return null;
+    // Re-key the persisted composer draft to the real conversation, so the promotion's
+    // key flip (useDraft reloads from storage) doesn't wipe the text mid-composition
+    // (paste path: the user is still typing when this runs).
+    moveDraft(draftKey, chatDraftKey(created.id));
     applyConv(created);
     promoteDraft(paneId, created.id);
     setDraftAsst(null);
@@ -304,6 +320,9 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
     const userMsg: ChatMessage = { role: "user", content: prompt, ts: Date.now() };
     setConv((c) => (c ? { ...c, messages: [...c.messages, userMsg] } : c));
     setInput("");
+    // Drop the stored draft synchronously: on a just-promoted first turn the key flip
+    // makes useDraft reload from storage, which would resurrect the moved (now sent) text.
+    clearDraft(chatDraftKey(target.id));
     clearAttachments();
     // On touch devices, drop focus so the soft keyboard (GBoard) retracts once the
     // turn is sent — the reply is what the user wants to read, not keep typing.

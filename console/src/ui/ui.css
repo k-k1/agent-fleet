@@ -421,6 +421,17 @@
   font-size: 11px;
   color: var(--muted2);
 }
+.model-picker-dynamic {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.model-picker-dynamic input,
+.model-picker-dynamic select {
+  width: 100%;
+  min-width: 0;
+}
 
 /* ---- Segmented control (kind/model/source pickers) ----
    Joined bar, matching the old console's .seg: shared border, squared buttons,

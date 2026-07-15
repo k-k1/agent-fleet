@@ -15,6 +15,8 @@ export interface Repo {
   remote?: string; // origin host (tooltip)
   worktree?: boolean; // linked git worktree (not a standalone clone)
   parent?: string; // for a worktree, the parent working copy's folder name
+  createdAt?: string; // for a worktree, its creation time (RFC3339); orders worktrees under a base
+
   /** Commit relationship to the parent working copy's current HEAD. This is
    * independent of ahead/behind above, which are relative to the upstream. */
   integration?: {

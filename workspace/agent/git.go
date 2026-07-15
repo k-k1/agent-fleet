@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
@@ -56,6 +57,13 @@ type Repo struct {
 	// main working copy it hangs off (for a tooltip). Both empty/false for a plain clone.
 	Worktree bool   `json:"worktree,omitempty"`
 	Parent   string `json:"parent,omitempty"`
+	// CreatedAt is the linked worktree's creation time (RFC3339), taken from the
+	// mtime of its `.git` gitfile — written once by `git worktree add` and left
+	// untouched by ordinary work, so it is a stable creation-order key. The Console
+	// orders a base's worktrees by it (folder/slug order was effectively random for
+	// temp/<slug> worktrees). Empty for plain clones (their `.git` is a directory
+	// whose mtime churns) and when the stat fails.
+	CreatedAt string `json:"createdAt,omitempty"`
 	// Integration describes the linked worktree's commit relationship to the
 	// parent working copy's current HEAD. It is deliberately separate from
 	// Ahead/Behind above, which describe the branch's configured upstream.
@@ -224,16 +232,17 @@ func handleListRepos(w http.ResponseWriter, r *http.Request) {
 		if origin, ok := gitOriginURL(dir); ok {
 			provider, host = gitProviderHost(origin)
 		}
-		var parent string
+		var parent, createdAt string
 		wt := isLinkedWorktree(dir)
 		if wt {
 			parent = filepath.Base(worktreeParent(dir))
+			createdAt = worktreeCreatedAt(dir)
 		}
 		repos = append(repos, Repo{
 			Name: e.Name(), Path: dir, Branch: st.Branch,
 			Dirty: st.Dirty, Ahead: st.Ahead, Behind: st.Behind,
 			Provider: provider, Remote: host,
-			Worktree: wt, Parent: parent,
+			Worktree: wt, Parent: parent, CreatedAt: createdAt,
 		})
 	}
 	// Compare linked worktrees only after the full list is available, so the
@@ -393,6 +402,19 @@ func isLinkedWorktree(dir string) bool {
 		return false
 	}
 	return strings.Contains(filepath.ToSlash(out), "/.git/worktrees/")
+}
+
+// worktreeCreatedAt returns a linked worktree's creation time (RFC3339) from the
+// mtime of its `.git` gitfile. `git worktree add` writes that file once and normal
+// work never rewrites it, so its mtime is a stable creation-order key — unlike the
+// folder name (a temp/<slug> worktree sorts randomly) or the working dir's own mtime
+// (which churns on every checkout/write). Returns "" if the file can't be stat'd.
+func worktreeCreatedAt(dir string) string {
+	fi, err := os.Stat(filepath.Join(dir, ".git"))
+	if err != nil {
+		return ""
+	}
+	return fi.ModTime().UTC().Format(time.RFC3339)
 }
 
 // worktreeParent returns the main working copy a linked worktree belongs to (the

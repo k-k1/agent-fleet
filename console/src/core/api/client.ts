@@ -4,6 +4,8 @@
 // Shared API layer, originally ported from the Phase 1 Console — the behavioral
 // contract is unchanged; only the packaging moved to modules.
 
+import { signalAuthExpired } from "../auth/authExpired.ts";
+
 // Resolve URLs relative to where the Console is mounted, so it works both at the
 // host root (http://localhost:8099/) and behind a path-stripping proxy (Tailscale
 // Funnel + Caddy at /agent-fleet/). Uses the trailing-slash baseURI.
@@ -59,10 +61,11 @@ export function clearLocalState(): void {
 
 const _fetch = window.fetch.bind(window);
 // When AUTH=oauth the Control Plane gates every request on a verified Google
-// session and answers an expired/absent one with 401 on XHR. Bounce the whole
-// page to the login landing so the user can re-authenticate (a top-level nav,
-// which the CP turns into the Google redirect). Guarded so we redirect once.
-let _authRedirecting = false;
+// session and answers an expired/absent one with 401 on XHR. Rather than silently
+// bouncing the whole page to /login (which also tears down live terminals), latch
+// the expiry so the app surfaces a re-login dialog (AuthExpiredModal) that reassures
+// the user their running sessions keep working and offers an explicit re-login. The
+// latch is idempotent, so firing it on every subsequent 401 is harmless.
 window.fetch = (input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> => {
   if (selectedTenant) {
     const h = new Headers(init.headers || {});
@@ -70,11 +73,7 @@ window.fetch = (input: RequestInfo | URL, init: RequestInit = {}): Promise<Respo
     init = { ...init, headers: h };
   }
   return _fetch(input, init).then((res) => {
-    if (res.status === 401 && !_authRedirecting) {
-      _authRedirecting = true;
-      const next = encodeURIComponent(location.pathname + location.search);
-      location.assign(rel("login") + "?next=" + next);
-    }
+    if (res.status === 401) signalAuthExpired();
     return res;
   });
 };

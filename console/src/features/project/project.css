@@ -26,7 +26,11 @@
 .proj-filter-bar {
   position: sticky;
   top: var(--sec-head-h, 34px);
-  z-index: 2;
+  /* Nested sticky headers need a descending z-index by depth (outer wins) so an
+     inner header pushed up into an outer one's band slides UNDER it, not over.
+     絞り込み(3) > 親レポ base 見出し(2) > wt 見出し(1) > 行(0). Section 見出しは
+     3 のままだが top:0 帯なのでこの帯(top:34-)と重ならず競合しない。 */
+  z-index: 3;
   background: var(--leftpane-bg);
   /* Own the box's vertical spacing here (padding, not the child's margin) so it
      can't margin-collapse through this sticky band and open a gap when pinned. */
@@ -144,7 +148,9 @@
 .proj-node.wt > .proj-node-head {
   position: sticky;
   top: calc(var(--sec-head-h, 34px) + 33px + 36px);
-  z-index: 2;
+  /* One tier below the base header so a worktree header slides under its parent
+     repo header (and under 絞り込み) instead of covering them when scrolled. */
+  z-index: 1;
   background: var(--leftpane-bg);
 }
 .proj-node-caret {

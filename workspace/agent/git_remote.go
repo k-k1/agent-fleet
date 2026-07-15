@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -58,6 +59,27 @@ func firstLine(s string) string {
 	return s
 }
 
+// refreshBitbucketAndRetry handles the "stale token despite the near-expiry pre-check" case:
+// bitbucketAuthHeader only refreshes within 2 min of expiry and silently keeps the old token
+// if that refresh failed transiently, so the first API call can 401 even when a reconnect
+// isn't actually needed (the symptom users hit as "pick GitHub, switch back, and it works").
+// When err is that unauthorized and OAuth creds exist, force one refresh and re-run `retry`
+// with the fresh token; otherwise return err untouched. Token-paste (Basic) has no refresh, so
+// its 401 passes through as a genuine reconnect prompt.
+func refreshBitbucketAndRetry(s *secrets.Data, err error, retry func(auth string) error) error {
+	if !errors.Is(err, errBitbucketUnauthorized) || s.Bitbucket == nil {
+		return err
+	}
+	nc, rerr := refreshBitbucket(*s.Bitbucket)
+	if rerr != nil {
+		return err // keep the original unauthorized (a failed refresh means reconnect)
+	}
+	c := nc
+	s.Bitbucket = &c
+	_ = s.Save()
+	return retry("Bearer " + c.AccessToken)
+}
+
 // GET /connections/git/{host}/repos
 func handleListRemoteRepos(w http.ResponseWriter, r *http.Request) {
 	host := r.PathValue("host")
@@ -86,6 +108,11 @@ func handleListRemoteRepos(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		repos, err := bitbucketListRepos(auth)
+		err = refreshBitbucketAndRetry(s, err, func(a string) error {
+			var e error
+			repos, e = bitbucketListRepos(a)
+			return e
+		})
 		if err != nil {
 			httpx.WriteErr(w, http.StatusBadGateway, "provider_error", err.Error())
 			return
@@ -131,6 +158,11 @@ func handleListRemoteBranches(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		branches, def, err := bitbucketListBranchesRich(auth, repo)
+		err = refreshBitbucketAndRetry(s, err, func(a string) error {
+			var e error
+			branches, def, e = bitbucketListBranchesRich(a, repo)
+			return e
+		})
 		if err != nil {
 			httpx.WriteErr(w, http.StatusBadGateway, "provider_error", err.Error())
 			return
@@ -380,31 +412,63 @@ func bitbucketAuthHeader(s *secrets.Data) (string, error) {
 	return "", fmt.Errorf("Bitbucket is not connected")
 }
 
-// bitbucketGet does an authorized GET and returns the body, mapping common errors.
+// errBitbucketUnauthorized marks a 401 from Bitbucket (token stale/rejected). A caller
+// holding OAuth creds can force a token refresh and retry once (see handleListRemoteRepos);
+// a token-paste (Basic) connection surfaces it to the user as a reconnect prompt.
+var errBitbucketUnauthorized = errors.New("bitbucket token rejected (re-connect Bitbucket)")
+
+// bitbucketGet does an authorized GET and returns the body, mapping common errors. Transient
+// failures — a transport error, HTTP 429, or a 5xx — are retried a few times with a short
+// backoff. Without this, the Console's repo/branch pickers surface an intermittent
+// "取得に失敗" that a manual re-open (or switching provider away and back) merely papers over.
 func bitbucketGet(client *http.Client, auth, url string) ([]byte, error) {
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Authorization", auth)
-	req.Header.Set("Accept", "application/json")
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if resp.StatusCode != http.StatusOK {
+	const attempts = 3
+	var lastErr error
+	for i := 0; i < attempts; i++ {
+		if i > 0 {
+			time.Sleep(retryBackoff(i))
+		}
+		req, err := http.NewRequest("GET", url, nil)
+		if err != nil {
+			return nil, err // malformed request URL: not retriable
+		}
+		req.Header.Set("Authorization", auth)
+		req.Header.Set("Accept", "application/json")
+		resp, err := client.Do(req)
+		if err != nil {
+			lastErr = err // transport error (timeout / reset / DNS): retry
+			continue
+		}
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		resp.Body.Close()
+		if resp.StatusCode == http.StatusOK {
+			return body, nil
+		}
 		if resp.StatusCode == http.StatusUnauthorized {
-			return nil, fmt.Errorf("bitbucket token rejected (re-connect Bitbucket)")
+			return nil, errBitbucketUnauthorized // let the caller refresh + retry, don't spin here
 		}
 		msg := strings.TrimSpace(string(body))
 		if len(msg) > 300 {
 			msg = msg[:300]
 		}
-		return nil, fmt.Errorf("bitbucket %d: %s", resp.StatusCode, msg)
+		lastErr = fmt.Errorf("bitbucket %d: %s", resp.StatusCode, msg)
+		if resp.StatusCode != http.StatusTooManyRequests && resp.StatusCode < 500 {
+			return nil, lastErr // other 4xx: permanent, don't retry
+		}
+		// 429 / 5xx: transient — fall through to the next attempt
 	}
-	return body, nil
+	return nil, lastErr
+}
+
+// retryBackoff is the pause before retry attempt i (1-based): a short, linearly growing wait
+// (300ms, 600ms, …) capped at 2s, so a flaky provider call gets a few quick chances without
+// stalling the picker.
+func retryBackoff(i int) time.Duration {
+	d := time.Duration(i) * 300 * time.Millisecond
+	if d > 2*time.Second {
+		d = 2 * time.Second
+	}
+	return d
 }
 
 // bitbucketListRepos enumerates clonable repos. The cross-workspace listing

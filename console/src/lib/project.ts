@@ -22,12 +22,24 @@ export function sessionFolder(s: Session): string {
 
 // groupedRepos partitions working copies into PROJECT GROUPS: each group is a base
 // clone followed by its worktrees (parent === base.name), e.g. [base, wt-a, wt-b].
-// Bases sort by name; worktrees by name within their base. A worktree whose parent
-// is unknown (its base was deleted) becomes its own single-member trailing group so
-// it never disappears. The rail renders one visual cluster per group so a base and
-// its worktrees read as one project, separated from the next.
+// Bases sort by name; worktrees by CREATION TIME (oldest first) within their base —
+// their folder names are temp/<slug> so a name sort is effectively random and reads
+// as unstable; chronological order keeps existing worktrees put and appends new ones
+// at the end. A worktree missing createdAt (or tying) falls back to name so the order
+// stays deterministic. A worktree whose parent is unknown (its base was deleted)
+// becomes its own single-member trailing group so it never disappears. The rail
+// renders one visual cluster per group so a base and its worktrees read as one
+// project, separated from the next.
 export function groupedRepos(repos: Repo[]): Repo[][] {
   const byName = (a: Repo, b: Repo) => a.name.localeCompare(b.name);
+  // Worktree order: createdAt ascending (RFC3339 UTC sorts chronologically as a
+  // string), then name as a stable tie-break / fallback when a timestamp is absent.
+  const byCreated = (a: Repo, b: Repo) => {
+    const ca = a.createdAt || "";
+    const cb = b.createdAt || "";
+    if (ca && cb && ca !== cb) return ca.localeCompare(cb);
+    return byName(a, b);
+  };
   const bases = repos.filter((r) => r.worktree !== true).sort(byName);
   const baseNames = new Set(bases.map((r) => r.name));
   const worktreesByParent = new Map<string, Repo[]>();
@@ -43,8 +55,8 @@ export function groupedRepos(repos: Repo[]): Repo[][] {
     }
   }
   const groups: Repo[][] = [];
-  for (const base of bases) groups.push([base, ...(worktreesByParent.get(base.name) || []).sort(byName)]);
-  for (const o of orphanWorktrees.sort(byName)) groups.push([o]);
+  for (const base of bases) groups.push([base, ...(worktreesByParent.get(base.name) || []).sort(byCreated)]);
+  for (const o of orphanWorktrees.sort(byCreated)) groups.push([o]);
   return groups;
 }
 
