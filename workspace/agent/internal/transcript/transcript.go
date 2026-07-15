@@ -34,6 +34,12 @@ type Edit struct {
 
 // Question mirrors one AskUserQuestion entry (header + prompt + options).
 type Question struct {
+	// ID identifies the runtime-side Interaction this pending question belongs to
+	// (docs/27 §5) — managed driver のセッションだけが埋め、Console は id 付きの質問を
+	// POST /respond の構造化回答で返す。TUI 由来（hooks/probe/rollout）の質問は空の
+	// まま＝従来どおり keys/seq で TUI モーダルを駆動する。省略可の追加フィールド
+	// なので既存ワイヤと互換（タグ変更ではない）。
+	ID          string   `json:"id,omitempty"`
 	Header      string   `json:"header,omitempty"`
 	Question    string   `json:"question"`
 	MultiSelect bool     `json:"multiSelect,omitempty"`

@@ -172,14 +172,9 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		for i, k := range keys {
-			if out, err := exec.Command("tmux", "send-keys", "-t", pane, k).CombinedOutput(); err != nil {
-				httpx.WriteErr(w, http.StatusInternalServerError, "tmux_failed", string(out))
-				return
-			}
-			if i < len(keys)-1 {
-				time.Sleep(90 * time.Millisecond)
-			}
+		if err := sendNamedKeys(pane, keys); err != nil {
+			httpx.WriteErr(w, http.StatusInternalServerError, "tmux_failed", err.Error())
+			return
 		}
 		// Only a submit (a key sequence containing Enter — answering a question) starts a
 		// turn; pure navigation / mode-cycle (BTab, Tab) / stop (Escape) must NOT mark the
@@ -233,30 +228,40 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"sent": name})
 		return
 	}
+	if !submitPromptTUI(w, name, pane, body.Prompt) {
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"sent": name})
+}
+
+// submitPromptTUI is the shared {prompt}→TUI delivery behind /input's {prompt} path
+// and /turn's tui start/steer route. Guards, types + submits, and marks working;
+// on failure the HTTP error is already written and false is returned.
+func submitPromptTUI(w http.ResponseWriter, name, pane, prompt string) bool {
 	// While an AskUserQuestion is awaiting an answer, the TUI modal IGNORES typed text
 	// on option rows and the trailing Enter confirms the highlighted FIRST option — a
-	// {prompt} here silently answers the wrong choice (v2.1.204 実測, docs/dev/92).
-	// Reject it for every {prompt} sender (Console composer, MCP drive tools); answers
-	// must go through {keys}/{seq}, which stay allowed above.
+	// prompt here silently answers the wrong choice (v2.1.204 実測, docs/dev/92).
+	// Reject it for every prompt sender (Console composer, MCP drive tools); answers
+	// must go through {keys}/{seq} (tui) or /respond (managed).
 	if questionPending(name) {
 		httpx.WriteErr(w, http.StatusConflict, "question_pending",
-			"a question is awaiting an answer; answer it via keys/seq (the question card), not free text")
-		return
+			"a question is awaiting an answer; answer it via the question card, not free text")
+		return false
 	}
 	// Use the same type-and-submit primitive as server-side initial prompts. In
 	// particular, Codex/OpenCode need bracketed paste so a long prompt's trailing Enter
 	// is not swallowed while their input widget is still consuming the paste.
-	if err := typeLineAndSubmit(name, pane, body.Prompt); err != nil {
+	if err := typeLineAndSubmit(name, pane, prompt); err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "tmux_failed", err.Error())
-		return
+		return false
 	}
 	// A slash command (/plan, /model, …) isn't a turn — don't optimistically mark the
 	// session working, or codex sticks on 進行中 (no Stop hook fires to clear it). Real
 	// prompts still mark working so the chip reacts before the agent's own hook.
-	if !slashCmdRe.MatchString(strings.TrimSpace(body.Prompt)) {
+	if !slashCmdRe.MatchString(strings.TrimSpace(prompt)) {
 		markSessionWorking(name)
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"sent": name})
+	return true
 }
 
 // slashCmdRe matches a single-token slash command like "/plan" or "/model foo" (but not a
@@ -425,6 +430,21 @@ func inputSubmitDelay(name string) time.Duration {
 		}
 	}
 	return time.Duration(ms) * time.Millisecond
+}
+
+// sendNamedKeys sends named tmux keys to pane one at a time, with a small gap so
+// the TUI can re-render between keys (e.g. after Enter advances to the next
+// question page). Shared by the /input {keys} path and /turn's tui interrupt.
+func sendNamedKeys(pane string, keys []string) error {
+	for i, k := range keys {
+		if out, err := exec.Command("tmux", "send-keys", "-t", pane, k).CombinedOutput(); err != nil {
+			return fmt.Errorf("%v: %s", err, out)
+		}
+		if i < len(keys)-1 {
+			time.Sleep(90 * time.Millisecond)
+		}
+	}
+	return nil
 }
 
 // opencodeInSubagentView reports whether the pane is currently showing opencode's

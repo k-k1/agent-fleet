@@ -1,7 +1,9 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { CSSProperties, KeyboardEvent as RKeyboardEvent, ClipboardEvent as RClipboardEvent, DragEvent as RDragEvent, RefObject, ReactNode } from "react";
-import { api, apiJSON, raw, errText, pasteImage } from "../../core/api/client.ts";
+import { api, apiJSON, raw, errText, pasteImage, sessionTurn, sessionRespond } from "../../core/api/client.ts";
+import type { InteractionAnswer, TurnResult } from "../../core/api/client.ts";
+import { isManagedSession } from "../../types/session.ts";
 import { splitPastedImages, buildImagePrompt } from "../../lib/pastedImages.ts";
 import { useSettings, chatFontStack, surfaceBg, surfaceAccent, effectiveTheme } from "../../lib/settings.ts";
 import { useLayoutStore } from "../../layout/store.ts";
@@ -57,6 +59,7 @@ interface QuestionOption {
   description?: string;
 }
 interface Question {
+  id?: string; // managed: 応答先 Interaction の id（docs/27 §5）。tui 由来は空
   header?: string;
   question?: string;
   multiSelect?: boolean;
@@ -204,6 +207,9 @@ export function MirrorView({
   // chat affordances (image paste, …) it supports. Defaults to claude for a not-yet
   // loaded meta. codex/opencode reuse the same chat; only these bits differ.
   const agent = agentOf(sessionMeta?.kind);
+  // Managed（paneless）セッション: ターミナルが存在しないので、ミラーが主 UI。
+  // トグルを出さず、質問応答は keys/seq でなく Interaction 応答（/respond）で送る。
+  const managed = isManagedSession(sessionMeta);
   const agentName = agent.assistantName;
   const canPasteImage = agent.caps.imagePaste;
   // Store bridge (old context values): plans open as doc panes, edit-diffs as
@@ -978,17 +984,13 @@ export function MirrorView({
     }
   }, [readOnly, alive, termState]);
 
-  // Low-level: type one prompt into the session (tmux send-keys). No state/guard.
-  // Returns whether the POST succeeded so the caller can drop an optimistic echo on
-  // outright failure (the Agent also marks working; the next poll reconciles real state).
-  const postInput = async (text: string): Promise<boolean> => {
-    try {
-      await apiJSON(`api/sessions/${q(session)}/input`, "POST", { prompt: text });
-      return true;
-    } catch {
-      return false;
-    }
-  };
+  // Low-level: submit one prompt as a semantic turn op — start when idle, steer when a
+  // turn is already running (docs/27 §4). The Agent adapts it per driver: tui = the same
+  // tmux typing as before (sessionTurn falls back to /input against an old Agent),
+  // managed = the turn/start・turn/steer RPC (P2). The result carries the rejection
+  // reason so the caller can drop its optimistic echo AND tell the user why.
+  const postInput = (text: string, op: "start" | "steer"): Promise<TurnResult> =>
+    sessionTurn(session, op, text);
 
   // Low-level: send named keys with NO "working" status and NO quick re-poll — used by
   // the plan-mode toggle, which isn't a turn. (The quick re-poll of sendKeys/sendPrompt
@@ -1017,14 +1019,25 @@ export function MirrorView({
     const t = (text || "").trim();
     if (!t || sending) return;
     setSending(true);
+    // start = 新しい turn / steer = 実行中 turn への追撃 — 楽観的に working へ倒す前の
+    // 実状態で決める。tui では同じ型付けに落ちるが、managed の turn/start・turn/steer
+    // （P2）にはこの区別がそのまま効く。
+    const op = statusRef.current === "working" ? "steer" : "start";
     statusRef.current = "working";
     setStatus("working");
     // Show the message immediately (optimistic echo) so it never looks lost while claude
     // is busy — reconciled away once its real user turn appears in the transcript.
     const echoId = ++echoSeqCounter;
     applyEchoes((p) => [...p, { id: echoId, text: t, sinceIdx: newestIdx() }]);
-    const ok = await postInput(t);
-    if (!ok) applyEchoes((p) => p.filter((e) => e.id !== echoId)); // send failed → drop it
+    const res = await postInput(t, op);
+    if (!res.ok) {
+      // 送信は受理されていない: echo を残すと「送れたように見える」ので消し、理由を
+      // トーストで示し、（send() が既に消した）下書きを書き戻す。ユーザーが打ち直しを
+      // 始めていたらそれを潰さない。
+      applyEchoes((p) => p.filter((e) => e.id !== echoId));
+      toast(res.message || "送信できませんでした");
+      setDraft((d) => d || t);
+    }
     setSending(false);
     // Pick up the just-logged user turn quickly rather than waiting a full interval.
     setTimeout(() => tickRef.current?.(), 250);
@@ -1131,6 +1144,39 @@ export function MirrorView({
       await apiJSON(`api/sessions/${q(session)}/input`, "POST", { seq });
     } catch {
       /* next poll reconciles */
+    }
+    setSending(false);
+    setTimeout(() => tickRef.current?.(), 400);
+  };
+
+  // sendInterrupt stops the running turn — turn/interrupt 相当。tui では Escape に
+  // 落ちる（opencode のサブエージェント詳細ビュー特例は /turn のサーバ側が面倒を
+  // 見る）。停止ボタンは working 中しか出ないので楽観的な状態変更は不要。
+  const sendInterrupt = async () => {
+    if (sending) return;
+    setSending(true);
+    const res = await sessionTurn(session, "interrupt");
+    if (!res.ok) toast(res.message || "停止できませんでした");
+    setSending(false);
+    setTimeout(() => tickRef.current?.(), 400);
+  };
+
+  // sendRespond answers a MANAGED session's pending question by interaction id —
+  // 構造化回答（docs/27 §5）。tui の質問は従来どおり sendKeys/sendSeq で TUI モーダル
+  // をナビゲーション駆動する（サーバも tui への /respond は受け付けない）。
+  const sendRespond = async (id: string, answers: InteractionAnswer[]) => {
+    if (sending) return;
+    setSending(true);
+    const prev = statusRef.current;
+    statusRef.current = "working";
+    setStatus("working");
+    const ok = await sessionRespond(session, id, answers).catch(() => false);
+    if (!ok) {
+      // 却下（id 不明・driver 未実装・通信断）を握りつぶさない: 状態を戻して質問
+      // カードを生かしたまま、理由を示す。次ポーリングが実状態へ再同期する。
+      statusRef.current = prev;
+      setStatus(prev);
+      toast("回答を送信できませんでした");
     }
     setSending(false);
     setTimeout(() => tickRef.current?.(), 400);
@@ -1547,7 +1593,8 @@ export function MirrorView({
         ) : (
           <span className="view-title">セッション</span>
         )}
-        <MirrorToggle mirror={!!mirror} onToggle={onToggleMirror} running={running} />
+        {/* Managed（paneless）セッションにはターミナルが無い — トグル自体を出さない。 */}
+        {!managed && <MirrorToggle mirror={!!mirror} onToggle={onToggleMirror} running={running} />}
       </header>
 
       {ctxUsage && <ContextBar {...ctxUsage} spends={spends} maxSpend={maxSpend} />}
@@ -1776,6 +1823,13 @@ export function MirrorView({
                 sending={sending}
                 onSubmitKeys={sendKeys}
                 onSubmitSeq={sendSeq}
+                onRespond={
+                  // managed は id の有無に関わらず semantic 経路に固定する — keys/seq へ
+                  // 落とすと存在しない tmux pane を叩きに行く。id を欠く質問（P2 まで
+                  // の過渡・再同期待ち）はサーバが bad_interaction で却下し、sendRespond
+                  // がトーストで知らせる。
+                  managed ? (answers) => void sendRespond(pending[0]?.id || "", answers) : undefined
+                }
                 answerMode={sessionMeta?.kind === "claude" ? "claude" : "menu"}
                 multiPage={sessionMeta?.kind === "codex"}
               />
@@ -1797,7 +1851,7 @@ export function MirrorView({
               className="ghost mirror-stop"
               disabled={sending}
               title="実行を停止（Esc）"
-              onClick={() => sendKeys(["Escape"])}
+              onClick={() => void sendInterrupt()}
             >
               <Icon name="debug-stop" /> 停止
             </button>
@@ -1983,7 +2037,10 @@ export function MirrorView({
                   setMode(toPlan ? "Plan" : agent.defaultModeLabel);
                   // Low-level sends (no working status / no quick re-poll) so the optimistic
                   // label holds until the regular poll reads the real mode.
-                  if (toPlan && agent.planEnterCmd) postInput(agent.planEnterCmd);
+                  // スラッシュコマンドは turn を始めない（サーバ側 slashCmdRe が
+                  // working を付けない）— op は形式上 start で送る。managed のモード
+                  // 切替は thread/settings/update へ（P2/P3、docs/27 §9.4）。
+                  if (toPlan && agent.planEnterCmd) postInput(agent.planEnterCmd, "start");
                   else postKeys([agent.planCycleKey]);
                 }}
               >
@@ -3007,6 +3064,7 @@ function PendingQuestions({
   questions,
   onSubmitKeys,
   onSubmitSeq,
+  onRespond,
   sending,
   answerMode = "claude",
   multiPage = false,
@@ -3014,6 +3072,10 @@ function PendingQuestions({
   questions: Question[];
   onSubmitKeys: (keys: string[]) => void;
   onSubmitSeq: (seq: Array<{ k?: string; t?: string }>) => void;
+  // onRespond (managed セッション): pending Interaction への構造化回答（docs/27 §5、
+  // 質問ごとに 1 エントリ・順序どおり）。渡されたら全経路が semantic 応答になり、
+  // 下の TUI キー駆動（モーダルの挙動に縛られたシーケンス組み立て）は一切通らない。
+  onRespond?: (answers: InteractionAnswer[]) => void;
   sending: boolean;
   // "claude": AskUserQuestion's tabbed modal (free-text single / Down-Enter-Right multi).
   // "menu": codex/opencode ask via a simple option menu — a single-select question is
@@ -3034,11 +3096,14 @@ function PendingQuestions({
   const [freeText, setFreeText] = useState<string[]>(() => qs.map(() => ""));
   const single = qs.length === 1 && !qs[0]?.multiSelect;
   const menu = answerMode === "menu";
+  const semantic = !!onRespond;
   // What a menu can drive: a single-select single question always; a multi-question
   // form only when the dialog pages (multiPage) and no question is multi-select (the
   // codex dialog is one choice per page). Anything else is shown read-only with a
-  // hint to answer in the terminal.
-  const menuDrivable = menu && (single || (multiPage && qs.length > 1 && qs.every((q) => !q.multiSelect)));
+  // hint to answer in the terminal. Semantic (managed) answers aren't bound by the
+  // TUI modal's key behavior, so every form is drivable.
+  const menuDrivable =
+    semantic || (menu && (single || (multiPage && qs.length > 1 && qs.every((q) => !q.multiSelect))));
 
   const clearFree = (qi: number) =>
     setFreeText((prev) => (prev[qi] ? prev.map((v, i) => (i === qi ? "" : v)) : prev));
@@ -3081,7 +3146,27 @@ function PendingQuestions({
   // submits the page, auto-advances to the next question and resets the cursor to the
   // top, so the pages' sequences simply concatenate. The trailing page's Enter
   // completes the whole form (no review page, unlike claude's modal).
+  // Semantic submit (managed): translate the built selection / free text into
+  // structured per-question answers — no TUI key encoding, no modal quirks.
+  const submitRespond = () => {
+    onRespond!(
+      qs.map((q, qi) => {
+        const opts = q.options || [];
+        const ft = (freeText[qi] || "").trim();
+        const idx = (sel[qi] || [])
+          .map((l) => opts.findIndex((o) => o.label === l))
+          .filter((i) => i >= 0)
+          .sort((a, b) => a - b);
+        const a: InteractionAnswer = {};
+        if (idx.length) a.options = idx;
+        if (ft) a.text = ft;
+        return a;
+      }),
+    );
+  };
+
   const submitMenu = () => {
+    if (semantic) return submitRespond();
     const seq: Array<{ k?: string; t?: string }> = [];
     qs.forEach((q, qi) => {
       const opts = q.options || [];
@@ -3096,6 +3181,7 @@ function PendingQuestions({
   };
 
   const submit = () => {
+    if (semantic) return submitRespond();
     const seq: Array<{ k?: string; t?: string }> = [];
     qs.forEach((q, qi) => {
       const opts = q.options || [];
@@ -3167,8 +3253,11 @@ function PendingQuestions({
               const checked = (sel[qi] || []).includes(o.label);
               // Single-select single question (claude and menu alike): key-drive the
               // modal — Down to this option's index, then Enter (selects + submits).
+              // Managed answers by option index instead (no modal to navigate).
               const pick = single
-                ? () => onSubmitKeys([...Array(oi).fill("Down"), "Enter"])
+                ? semantic
+                  ? () => onRespond!([{ options: [oi] }])
+                  : () => onSubmitKeys([...Array(oi).fill("Down"), "Enter"])
                 : () => toggle(qi, o.label, qn.multiSelect);
               return (
                 <button

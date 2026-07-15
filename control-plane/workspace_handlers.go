@@ -169,8 +169,15 @@ func (a workspaceAPI) stop(w http.ResponseWriter, r *http.Request, res *resolved
 type sessionWire struct {
 	Name string `json:"name"`
 	Kind string `json:"kind"`
-	Dir  string `json:"dir"`
-	Repo string `json:"repo"`
+	// Driver（docs/27 P1.5）: "managed" = 共有 runtime 駆動の paneless セッション。
+	// この struct は Agent 応答を decode→再 emit する中継なので、ここに無い field は
+	// silently drop される（下の Title の前科と同型）— 載せ忘れると Console の
+	// isManagedSession が一生 false になり managed UI が起動しない。DB ミラー
+	// （停止中の再配信）には列が無いので載らず、停止中は tui 扱いで表示され、
+	// 再開後の次ポーリングで正しい driver に戻る。
+	Driver string `json:"driver,omitempty"`
+	Dir    string `json:"dir"`
+	Repo   string `json:"repo"`
 	// Title: the user-supplied display title. Console の displayName は title を最優先
 	// で見るが、この struct に無かった頃は中継で silently drop されていた（claude 系は
 	// label にも title が埋まるため露見せず、label を使わない shell/ssm だけ表示名が

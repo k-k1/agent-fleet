@@ -21,6 +21,10 @@ export type SessionState = "" | "working" | "idle" | "question" | "plan" | "perm
 export interface Session {
   name: string; // auto-allocated unique slug ("s7") — the session's immutable identity
   kind: SessionKind;
+  // Control route (docs/27): "managed" = 共有 runtime＋構造化 RPC（AF が唯一の
+  // writer・tmux pane なし）。absent/"tui" = 従来の tmux 内 TUI。pane の有無は kind
+  // でなくこの軸で決まる — 分岐は必ず isManagedSession() を介す。
+  driver?: "tui" | "managed" | string;
   title?: string; // user-supplied display title (optional, any kind); "" = auto
   color?: string; // terminal background hue (hex); SSM sessions carry their host color
   label?: string; // claude --name (with an "[AF] " tag); absent for shell
@@ -48,6 +52,12 @@ export interface Session {
   exitCode?: number;
   exitSignal?: number;
 }
+
+// isManagedSession: a managed (paneless) session has no tmux pane — the chat
+// mirror is its primary UI, no terminal view exists, and its inputs go through
+// the semantic /turn・/respond ops instead of TUI key driving (docs/27 §10).
+export const isManagedSession = (s?: { driver?: string } | null): boolean =>
+  s?.driver === "managed";
 
 // Provider connection status for one agent, from GET /api/connections.
 export interface ProviderConn {
