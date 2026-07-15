@@ -1,9 +1,50 @@
 package main
 
 import (
+	"context"
 	"testing"
 	"time"
 )
+
+// TestOwnerLoginExpired exercises the reaper's per-workspace "spare a locked-out
+// owner" decision through its cached membership->email path (pre-seeding ownerEmail
+// avoids a store, and matches steady state after the first resolve). It must return
+// true only when the owner's observed cookie has lapsed, and never touch the store
+// for an empty membership id.
+func TestOwnerLoginExpired(t *testing.T) {
+	const now int64 = 1_000_000
+	reg := newAuthRegistry()
+	reg.observe("expired@x.com", now-1) // lapsed
+	reg.observe("valid@x.com", now+3600)
+	// "unknown@x.com" is cached as an owner but never observed by authReg.
+
+	rp := &reaper{
+		mgr: &manager{authReg: reg},
+		ownerEmail: map[string]string{
+			"m-expired": "expired@x.com",
+			"m-valid":   "valid@x.com",
+			"m-unknown": "unknown@x.com",
+		},
+	}
+	at := time.Unix(now, 0)
+	ctx := context.Background()
+
+	cases := []struct {
+		membership string
+		want       bool
+	}{
+		{"m-expired", true},  // owner locked out -> spare
+		{"m-valid", false},   // owner still authenticated -> normal idle-stop
+		{"m-unknown", false}, // owner never observed -> don't protect a mystery
+		{"", false},          // no owner -> false without touching the (nil) store
+	}
+	for _, tc := range cases {
+		got := rp.ownerLoginExpired(ctx, Workspace{ID: "w", MembershipID: tc.membership}, at)
+		if got != tc.want {
+			t.Fatalf("ownerLoginExpired(membership=%q) = %v, want %v", tc.membership, got, tc.want)
+		}
+	}
+}
 
 // TestIdleBase pins the tier-2 idle clock's start to the LATEST of the three
 // activity signals (boot time / in-memory lastSeen / DB last_active_at). The
