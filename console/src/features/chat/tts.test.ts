@@ -395,8 +395,14 @@ describe("applyBuiltinReadings / applyReadings (組み込みの読み補正)", (
     expect(applyBuiltinReadings("§§ に記載")).toBe("セクション に記載");
   });
 
-  it("ピリオドを跨ぐ定型トークン（init.d）はカタカナに確定する", () => {
-    expect(applyBuiltinReadings("init.d に配置")).toBe("イニットディー に配置");
+  it("ピリオドを跨ぐ定型トークン（init.d / cron.d / resolv.conf 等）はカタカナに確定する", () => {
+    expect(applyBuiltinReadings("init.d に配置")).toBe("イニットドットディー に配置");
+    expect(applyBuiltinReadings("cron.d と rc.d と conf.d")).toBe(
+      "クロンドットディー と アールシードットディー と コンフドットディー",
+    );
+    expect(applyBuiltinReadings("resolv.conf を編集")).toBe("リゾルブドットコンフ を編集");
+    // 単語境界つきなので cron.daily の一部（cron.d）は誤って置換しない
+    expect(applyBuiltinReadings("cron.daily")).toBe("cron.daily");
   });
 
   it("開発現場の漢語は IT の慣用読みに固定する", () => {
