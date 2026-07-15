@@ -231,45 +231,63 @@ func removeBitbucketOAuth() {
 	_ = s.Save()
 }
 
-// refreshBitbucket exchanges the refresh_token for a fresh access token.
+// refreshBitbucket exchanges the refresh_token for a fresh access token. Transient failures
+// (transport error / 429 / 5xx) are retried a few times with a short backoff — this refresh
+// backs the repo/branch pickers AND the git credential helper (clone/fetch/push in sessions),
+// so a single blip here otherwise surfaces as an intermittent 401 that a manual retry hides.
+// A 4xx like invalid_grant is permanent (the refresh token was revoked) and returns at once.
 func refreshBitbucket(c secrets.BitbucketCreds) (secrets.BitbucketCreds, error) {
 	form := url.Values{"grant_type": {"refresh_token"}, "refresh_token": {c.RefreshToken}}
-	req, err := http.NewRequest("POST", bbTokenURL, strings.NewReader(form.Encode()))
-	if err != nil {
-		return c, err
-	}
-	req.SetBasicAuth(c.Key, c.Secret)
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	// A bounded timeout (http.DefaultClient has none) so a hung refresh can't stall the whole
-	// repo-listing request; a non-200 is a real failure, not a body to decode as success.
+	// A bounded timeout (http.DefaultClient has none) so a hung refresh can't stall its caller.
 	client := &http.Client{Timeout: 15 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return c, err
+	const attempts = 3
+	var lastErr error
+	for i := 0; i < attempts; i++ {
+		if i > 0 {
+			time.Sleep(retryBackoff(i))
+		}
+		req, err := http.NewRequest("POST", bbTokenURL, strings.NewReader(form.Encode()))
+		if err != nil {
+			return c, err
+		}
+		req.SetBasicAuth(c.Key, c.Secret)
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		resp, err := client.Do(req)
+		if err != nil {
+			lastErr = err // transport error: retry
+			continue
+		}
+		if resp.StatusCode != http.StatusOK {
+			resp.Body.Close()
+			lastErr = fmt.Errorf("bitbucket refresh failed: %d", resp.StatusCode)
+			if resp.StatusCode != http.StatusTooManyRequests && resp.StatusCode < 500 {
+				return c, lastErr // 4xx (e.g. invalid_grant): permanent, don't retry
+			}
+			continue // 429 / 5xx: transient
+		}
+		var out struct {
+			AccessToken  string `json:"access_token"`
+			RefreshToken string `json:"refresh_token"`
+			ExpiresIn    int64  `json:"expires_in"`
+		}
+		derr := json.NewDecoder(resp.Body).Decode(&out)
+		resp.Body.Close()
+		if derr != nil {
+			return c, derr
+		}
+		if out.AccessToken == "" {
+			return c, fmt.Errorf("refresh returned no access_token")
+		}
+		c.AccessToken = out.AccessToken
+		if out.RefreshToken != "" {
+			c.RefreshToken = out.RefreshToken
+		}
+		exp := out.ExpiresIn
+		if exp == 0 {
+			exp = 7200
+		}
+		c.Expiry = time.Now().Unix() + exp
+		return c, nil
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return c, fmt.Errorf("bitbucket refresh failed: %d", resp.StatusCode)
-	}
-	var out struct {
-		AccessToken  string `json:"access_token"`
-		RefreshToken string `json:"refresh_token"`
-		ExpiresIn    int64  `json:"expires_in"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return c, err
-	}
-	if out.AccessToken == "" {
-		return c, fmt.Errorf("refresh returned no access_token")
-	}
-	c.AccessToken = out.AccessToken
-	if out.RefreshToken != "" {
-		c.RefreshToken = out.RefreshToken
-	}
-	exp := out.ExpiresIn
-	if exp == 0 {
-		exp = 7200
-	}
-	c.Expiry = time.Now().Unix() + exp
-	return c, nil
+	return c, lastErr
 }
