@@ -59,6 +59,27 @@ func firstLine(s string) string {
 	return s
 }
 
+// refreshBitbucketAndRetry handles the "stale token despite the near-expiry pre-check" case:
+// bitbucketAuthHeader only refreshes within 2 min of expiry and silently keeps the old token
+// if that refresh failed transiently, so the first API call can 401 even when a reconnect
+// isn't actually needed (the symptom users hit as "pick GitHub, switch back, and it works").
+// When err is that unauthorized and OAuth creds exist, force one refresh and re-run `retry`
+// with the fresh token; otherwise return err untouched. Token-paste (Basic) has no refresh, so
+// its 401 passes through as a genuine reconnect prompt.
+func refreshBitbucketAndRetry(s *secrets.Data, err error, retry func(auth string) error) error {
+	if !errors.Is(err, errBitbucketUnauthorized) || s.Bitbucket == nil {
+		return err
+	}
+	nc, rerr := refreshBitbucket(*s.Bitbucket)
+	if rerr != nil {
+		return err // keep the original unauthorized (a failed refresh means reconnect)
+	}
+	c := nc
+	s.Bitbucket = &c
+	_ = s.Save()
+	return retry("Bearer " + c.AccessToken)
+}
+
 // GET /connections/git/{host}/repos
 func handleListRemoteRepos(w http.ResponseWriter, r *http.Request) {
 	host := r.PathValue("host")
@@ -87,18 +108,11 @@ func handleListRemoteRepos(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		repos, err := bitbucketListRepos(auth)
-		if errors.Is(err, errBitbucketUnauthorized) && s.Bitbucket != nil {
-			// bitbucketAuthHeader only refreshes within 2 min of expiry, and silently keeps a
-			// stale token if that refresh failed transiently — so the first listing can 401
-			// even though a reconnect isn't actually needed. Force one refresh and retry: this
-			// is the failure behind "select GitHub, switch back to Bitbucket, and it works".
-			if nc, rerr := refreshBitbucket(*s.Bitbucket); rerr == nil {
-				c := nc
-				s.Bitbucket = &c
-				_ = s.Save()
-				repos, err = bitbucketListRepos("Bearer " + c.AccessToken)
-			}
-		}
+		err = refreshBitbucketAndRetry(s, err, func(a string) error {
+			var e error
+			repos, e = bitbucketListRepos(a)
+			return e
+		})
 		if err != nil {
 			httpx.WriteErr(w, http.StatusBadGateway, "provider_error", err.Error())
 			return
@@ -144,6 +158,11 @@ func handleListRemoteBranches(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		branches, def, err := bitbucketListBranchesRich(auth, repo)
+		err = refreshBitbucketAndRetry(s, err, func(a string) error {
+			var e error
+			branches, def, e = bitbucketListBranchesRich(a, repo)
+			return e
+		})
 		if err != nil {
 			httpx.WriteErr(w, http.StatusBadGateway, "provider_error", err.Error())
 			return
