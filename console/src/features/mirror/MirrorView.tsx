@@ -288,6 +288,12 @@ export function MirrorView({
   // reply is anchored there once (so the user reads it from its first line) and then left
   // alone as it streams; this remembers which reply we've already anchored.
   const anchoredIdxRef = useRef<number | undefined>(undefined);
+  // The idx of the reply whose FINAL ANSWER top we've already brought to the viewport top.
+  // On completion a following pane collapses the 作業過程 into a disclosure, so the reply's
+  // top becomes that collapsed row; we then re-anchor once to the final answer's first line
+  // (docs/24). Kept separate from anchoredIdxRef so the top-anchor and the answer-anchor each
+  // fire exactly once per reply.
+  const answerAnchoredRef = useRef<number | undefined>(undefined);
   // Set just before we scroll the body ourselves so the scroll handler can tell our own
   // programmatic scroll apart from a real user scroll (and not mistake anchoring-to-top
   // for the user scrolling up to read history).
@@ -309,6 +315,12 @@ export function MirrorView({
   // 自動読み上げ（P2）: 基準 idx（これ以前の履歴は読まない）／読むべきグループ idx のキュー／
   // グループごとの読み上げ済みブロック数（グループは追記で育つので、増えた分だけ読む）。
   const ttsAutoSeenRef = useRef<number | null>(null);
+  // seen 基準（上記）が属するセッション。基準は裸の jsonl 行番号なので、セッションが変わると
+  // 意味を失う。ペイン D&D の swap は同一インスタンスのまま session prop だけ差し替える
+  // （＋ドロップ先を active 化する）ため、前セッションの turns が残ったまま自動読み上げ effect が
+  // 走り、その行番号で seen を作ってしまう→新セッションの本文が「新着」に見えて最後の最終回答を
+  // 勝手に読み上げる。session 一致を確認するまで基準を取り直しに留めるためのガード。
+  const ttsAutoSessionRef = useRef(session);
   const ttsAutoQueueRef = useRef<number[]>([]);
   const ttsAutoDoneRef = useRef(new Map<number, number>());
   // 確定済み作業過程の小声読み。part index で既読を持ち、最後の tool/question/plan までに
@@ -613,6 +625,7 @@ export function MirrorView({
     });
     atBottomRef.current = true; // a freshly opened session starts pinned to the bottom
     anchoredIdxRef.current = undefined; // no reply anchored yet in the new session
+    answerAnchoredRef.current = undefined; // …nor its final answer
     didInitRef.current = false; // re-run the "land at bottom on open" settle for this session
     ttsAutoSeenRef.current = null; // 自動読み上げの基準も取り直す（履歴は読まない）
     ttsAutoQueueRef.current.length = 0;
@@ -798,6 +811,7 @@ export function MirrorView({
       if (groups.length || loaded) {
         didInitRef.current = true;
         anchoredIdxRef.current = replyIdx;
+        answerAnchoredRef.current = replyIdx; // a reply already present at open isn't re-anchored
       }
       toBottom();
       return;
@@ -810,6 +824,7 @@ export function MirrorView({
         // it streams. Guard the scroll handler so this upward move isn't misread as the
         // user scrolling up off the bottom.
         anchoredIdxRef.current = replyIdx;
+        answerAnchoredRef.current = undefined; // this reply's final answer hasn't been anchored yet
         const node = el.querySelector<HTMLElement>(`[data-turn-idx="${replyIdx}"]`);
         if (node) {
           const top = el.scrollTop + (node.getBoundingClientRect().top - el.getBoundingClientRect().top) - 12;
@@ -818,8 +833,28 @@ export function MirrorView({
             el.scrollTop = Math.max(0, top);
           }
         }
+        return;
       }
-      // Otherwise we've already anchored this reply — it's streaming; leave the position be.
+      // Already anchored this reply's top. Once it completes, a following pane collapses the
+      // 作業過程 into a disclosure (defaultWorkOpen=!atBottom) and the reply's top becomes that
+      // collapsed row — so re-anchor once to the FINAL ANSWER's first line at the viewport top.
+      // Only when work was actually folded; a reply with no foldable work already sits with its
+      // answer at the top, so just mark it done.
+      if (status !== "working" && answerAnchoredRef.current !== replyIdx) {
+        const body = el.querySelector<HTMLElement>(`[data-turn-idx="${replyIdx}"] .mirror-turn-body`);
+        const work = body?.querySelector<HTMLElement>(":scope > .mt-work");
+        const answer = work?.nextElementSibling as HTMLElement | null;
+        if (work && answer) {
+          answerAnchoredRef.current = replyIdx;
+          const top = el.scrollTop + (answer.getBoundingClientRect().top - el.getBoundingClientRect().top) - 12;
+          if (Math.abs(el.scrollTop - top) >= 1) {
+            selfScrollRef.current = true;
+            el.scrollTop = Math.max(0, top);
+          }
+        } else if (body && !work) {
+          answerAnchoredRef.current = replyIdx; // nothing folded — top already is the answer
+        }
+      }
       return;
     }
 
@@ -1381,6 +1416,15 @@ export function MirrorView({
   // 育つので、キューはグループ idx 単位（重複なし）に持ち、pump が増えたブロックだけ読む。
   // DOM は commit 後（この effect 実行時）に描画済み。
   useEffect(() => {
+    // セッションが変わった直後は、まだ前セッションの turns が残ったまま（swap は同一インスタンスの
+    // まま session prop だけ差し替え、ドロップ先を active 化する）この effect が active 変化で走る
+    // ことがある。その turns の idx で seen を作ると新セッションの本文を誤読するので、session が
+    // 揃うまでは基準を捨てて何も読まない（新セッションの turns が届いた回で改めて基準化する）。
+    if (ttsAutoSessionRef.current !== session) {
+      ttsAutoSessionRef.current = session;
+      ttsAutoSeenRef.current = null;
+      return;
+    }
     let newest = -1;
     for (let i = turns.length - 1; i >= 0; i--) {
       const x = turns[i].idx;
@@ -1447,7 +1491,7 @@ export function MirrorView({
     }
     ttsAutoPumpRef.current();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [turns, status, active, readOnly, settings.ttsEnabled, settings.ttsAutoReadMirror, settings.ttsAutoReadAllPanes, settings.ttsWorkRead]);
+  }, [turns, status, active, readOnly, session, settings.ttsEnabled, settings.ttsAutoReadMirror, settings.ttsAutoReadAllPanes, settings.ttsWorkRead]);
 
   // A /context-like gauge: the newest assistant turn's prompt size (input + cache) is
   // the current context fill. The per-category split (/context) is computed inside
