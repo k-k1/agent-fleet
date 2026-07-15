@@ -305,8 +305,15 @@ const UPPER_ACRONYMS: [RegExp, string][] = [[/\bIT\b/g, "アイティー"]];
 const PRODUCT_NAMES: [RegExp, string][] = [[/agent[\s-]?fleet/gi, "エージェントフリート"]];
 
 // ピリオドを跨ぐ定型トークンは enkana（CP・英数字トークン単位）では 1 語にまとまらず
-// "." で分断されるので、ここでカタカナに確定させる。init.d（SysV 初期化スクリプト置き場）等。
-const DOTTED_TERMS: [RegExp, string][] = [[/\binit\.d\b/gi, "イニットディー"]];
+// "." で分断されるので、ここでカタカナに確定させる。init.d 等の "*.d" ディレクトリや
+// resolv.conf のような設定ファイル名。単語境界 \b 付きなので cron.daily 等の別語は誤爆しない。
+const DOTTED_TERMS: [RegExp, string][] = [
+  [/\binit\.d\b/gi, "イニットドットディー"],
+  [/\bcron\.d\b/gi, "クロンドットディー"],
+  [/\brc\.d\b/gi, "アールシードットディー"],
+  [/\bconf\.d\b/gi, "コンフドットディー"],
+  [/\bresolv\.conf\b/gi, "リゾルブドットコンフ"],
+];
 
 // --- 裸のスラッシュ区切り（コード外）の間つめ ------------------------------------
 // "origin/main"・"on/off"・"read/write" のような裸（バッククォート無し）のスラッシュ区切りは
