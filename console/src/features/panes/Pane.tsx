@@ -1,7 +1,7 @@
 // Pane — one slot of the main-area layout. The terminal stays mounted (just
 // hidden) while the pane shows another view, so the PTY socket and scrollback
 // survive switching kinds. Ported from the old console onto the content union.
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { CSSProperties, DragEvent as RDragEvent } from "react";
 import type { Pane as PaneT } from "../../layout/types.ts";
 import { ordClass } from "../../layout/badges.ts";
@@ -25,6 +25,7 @@ import { useSettings } from "../../lib/settings.ts";
 import { IconButton } from "../../ui/Button.tsx";
 import { cx } from "../../ui/cx.ts";
 import type { Session } from "../../types/session.ts";
+import { PaneFind } from "./PaneFind.tsx";
 
 // Drag payload MIME — identifies a pane-to-pane drag (vs any other drag).
 const DND = "application/x-af-pane";
@@ -63,6 +64,7 @@ export function Pane({
   sessionMeta,
   ordinal,
 }: PaneProps) {
+  const paneRef = useRef<HTMLDivElement>(null);
   const isTerm = pane.content.kind === "terminal";
   // Cross-highlight: glow this pane while its rail row / mini-map cell is
   // hovered (and vice-versa). Keyed by pane id or a shared session name.
@@ -158,6 +160,7 @@ export function Pane({
 
   return (
     <div
+      ref={paneRef}
       className={cx("pane", active && "active", zone && "droptarget", hovered && "pane-hover", ordCls)}
       style={style}
       onMouseDownCapture={() => onActivate(pane.id)}
@@ -208,6 +211,10 @@ export function Pane({
 
       {/* Drop hint while dragging a pane over this one. */}
       {zone && <div className={"drop-indicator zone-" + zone} />}
+
+      {/* Browser find searches the whole page. Keep Ctrl-F scoped to the active
+          read-oriented pane instead; raw terminals continue to receive Ctrl-F. */}
+      <PaneFind rootRef={paneRef} active={!!(single || active)} enabled={!isTerm || showMirror} />
 
       {/* The terminal stays mounted for any terminal-kind pane; other kinds keep
           the pane's xterm warm in the service (not mounted) until their view
