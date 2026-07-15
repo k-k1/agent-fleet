@@ -463,7 +463,8 @@ var techKana = map[string]string{
 	"chmod":      "チェンジモッド",
 	"chown":      "チャウン",
 	"chgrp":      "チェンジグループ",
-	"sudo":       "スードゥー",
+	"sudo":       "スードゥー", // 語として読む（su を綴る エスユードゥー ではない）
+	"sudoers":    "スードゥアーズ",
 	"umask":      "ユーマスク",
 	"awk":        "オーク",
 	"gawk":       "ゴーク",
@@ -516,6 +517,7 @@ var techKana = map[string]string{
 	"neovim":     "ネオヴィム",
 	"emacs":      "イーマックス",
 	"bash":       "バッシュ",
+	"bashrc":     "バッシュアールシー", // .bashrc もトークンは bashrc なので拾える
 	"zsh":        "ゼットエスエイチ",
 	"apt":        "アプト",
 	"yum":        "ヤム",
