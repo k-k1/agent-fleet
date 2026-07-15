@@ -9,10 +9,10 @@ import { Modal } from "../../ui/Modal.tsx";
 import { Button } from "../../ui/Button.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { agentOf } from "../../agents/registry.ts";
-import { readRepoLast, resolveModel } from "../../lib/repoLast.ts";
+import { readRepoLast, resolveEffort, resolveModel } from "../../lib/repoLast.ts";
 import { readPromptHistory } from "../../lib/promptHistory.ts";
 import { useSettings } from "../../lib/settings.ts";
-import { ModelPicker } from "../../ui/ModelPicker.tsx";
+import { EffortPicker, ModelPicker } from "../../ui/ModelPicker.tsx";
 import { repoPromptTemplates } from "./api.ts";
 import type { PromptTemplateGroup } from "./api.ts";
 import { sanitizeSeg } from "../../lib/reponame.ts";
@@ -26,6 +26,7 @@ export interface LaunchOpts {
   // ""（tui、従来）。managedDriver を持たない kind では常に ""。
   driver: string;
   model: string;
+  effort: string;
   prompt: string;
   // Pasted images awaiting upload. Held as raw Files (not yet uploaded) because no
   // session exists at compose time — the caller uploads them once the session is
@@ -67,6 +68,7 @@ export function LaunchModal({ repo, branch, path, kinds, allowWorktree = true, o
   // Shared per-kind priority chain (repoLast.ts resolveModel); re-resolved on a kind
   // switch so a claude tier never leaks into a codex/opencode launch (and vice versa).
   const [model, setModel] = useState(() => resolveModel(initialKind, repo, settings.defaultModel));
+  const [effort, setEffort] = useState(() => resolveEffort(initialKind, repo));
   // ドライバ（docs/27 P2/P3）: managed 対応 kind は managed が既定（§9.2）。
   // CLI(TUI) はユーザーの明示的な選択 — セッション毎に TUI プロセス分のメモリを払う。
   const [driver, setDriver] = useState(agentOf(initialKind).managedDriver ? "managed" : "");
@@ -177,6 +179,7 @@ export function LaunchModal({ repo, branch, path, kinds, allowWorktree = true, o
       kind,
       driver: agentOf(kind).managedDriver ? driver : "",
       model: hasModel ? model : "",
+      effort: driver === "managed" ? effort : "",
       prompt: prompt.trim(),
       images: canPasteImage ? images.map((x) => x.file) : [],
       worktree,
@@ -225,6 +228,7 @@ export function LaunchModal({ repo, branch, path, kinds, allowWorktree = true, o
                   onClick={() => {
                     setKind(k);
                     setModel(resolveModel(k, repo, settings.defaultModel));
+                    setEffort(resolveEffort(k, repo));
                     setDriver(a.managedDriver ? "managed" : "");
                   }}
                 >
@@ -240,7 +244,22 @@ export function LaunchModal({ repo, branch, path, kinds, allowWorktree = true, o
         {hasModel && (
           <div className="ui-field">
             <span className="ui-field-label">モデル</span>
-            <ModelPicker kind={kind} model={model} onChange={setModel} />
+            <ModelPicker
+              kind={kind}
+              model={model}
+              onChange={(next) => {
+                setModel(next);
+                setEffort("");
+              }}
+            />
+          </div>
+        )}
+
+        {driver === "managed" && agentOf(kind).managedDriver && (
+          <div className="ui-field">
+            <span className="ui-field-label">推論 effort</span>
+            <EffortPicker kind={kind} model={model} effort={effort} onChange={setEffort} />
+            <span className="ui-field-hint">モデルが使う推論量。未指定ならモデル既定値を使用します。</span>
           </div>
         )}
 

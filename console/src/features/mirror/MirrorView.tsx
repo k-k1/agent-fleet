@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { CSSProperties, KeyboardEvent as RKeyboardEvent, ClipboardEvent as RClipboardEvent, DragEvent as RDragEvent, RefObject, ReactNode } from "react";
 import { api, apiJSON, raw, errText, pasteImage, sessionTurn, sessionRespond, sessionSettings } from "../../core/api/client.ts";
-import type { InteractionAnswer, TurnResult } from "../../core/api/client.ts";
+import type { InteractionAnswer, ManagedThreadSettings, TurnResult } from "../../core/api/client.ts";
 import { isManagedSession } from "../../types/session.ts";
 import { splitPastedImages, buildImagePrompt, samePastedPrompt } from "../../lib/pastedImages.ts";
 import { useSettings, chatFontStack, surfaceBg, surfaceAccent, effectiveTheme } from "../../lib/settings.ts";
@@ -46,6 +46,7 @@ import { hasLaunchSeed, takeLaunchSeed } from "../../lib/launchSeed.ts";
 import { displayName, stateInfo } from "../../lib/sessionview.ts";
 import { confirmedWorkEnd, latestWorkPromptIndex, textOfParts, workSplit } from "./mirrorParts.ts";
 import { coarsePointer } from "../../lib/device.ts";
+import { ManagedSettingsModal } from "./ManagedSettingsModal.tsx";
 
 const q = encodeURIComponent;
 
@@ -265,6 +266,8 @@ export function MirrorView({
   const [mode, setMode] = useState(""); // session permission mode ("plan" | …)
   const [suggestedTitle, setSuggestedTitle] = useState(""); // headless-LLM title candidate, "" = none
   const [titleActing, setTitleActing] = useState(false); // accept/dismiss request in flight
+  const [managedSettingsOpen, setManagedSettingsOpen] = useState(false);
+  const [managedSettings, setManagedSettings] = useState<ManagedThreadSettings | null>(null);
   // Composer draft, persisted per session so switching ターミナル⇄チャット (which
   // unmounts this view) — or a reload — keeps what you were typing. Key by session.
   const draftKey = session ? "af.mirror-draft." + session : null;
@@ -620,6 +623,8 @@ export function MirrorView({
     setMode("");
     setSuggestedTitle("");
     setTitleActing(false);
+    setManagedSettingsOpen(false);
+    setManagedSettings(null);
     setHistIdx(null);
     setPasting(false);
     setLightbox(null);
@@ -1606,6 +1611,19 @@ export function MirrorView({
         ) : (
           <span className="view-title">セッション</span>
         )}
+        {managed && (
+          <button
+            type="button"
+            className="ghost managed-settings-btn"
+            disabled={!alive || readOnly}
+            title={alive && !readOnly ? "モデルと推論 effort を変更" : "再開後に実行設定を変更できます"}
+            onClick={() => setManagedSettingsOpen(true)}
+          >
+            <Icon name="gear" />
+            {managedSettings?.model ? prettyModel(managedSettings.model) : "実行設定"}
+            {managedSettings?.effort && <span> · {managedSettings.effort}</span>}
+          </button>
+        )}
         {/* Managed（paneless）セッションにはターミナルが無い — トグル自体を出さない。 */}
         {!managed && <MirrorToggle mirror={!!mirror} onToggle={onToggleMirror} running={running} />}
       </header>
@@ -2082,6 +2100,15 @@ export function MirrorView({
         <div className="mirror-lightbox" onClick={() => setLightbox(null)} role="presentation">
           <img src={lightbox} alt="貼り付け画像（拡大）" />
         </div>
+      )}
+      {managedSettingsOpen && (
+        <ManagedSettingsModal
+          session={session}
+          kind={sessionMeta?.kind || "codex"}
+          working={status === "working"}
+          onApplied={setManagedSettings}
+          onClose={() => setManagedSettingsOpen(false)}
+        />
       )}
       {ttsPill &&
         createPortal(

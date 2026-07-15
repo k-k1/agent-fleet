@@ -1818,3 +1818,26 @@ button.mt-bash-toggle:hover {
 .mirrorview .view-head {
   padding-right: 40px;
 }
+
+.managed-settings-btn {
+  margin-left: auto;
+  min-width: 0;
+  max-width: 220px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.managed-settings-btn:hover:not(:disabled) {
+  color: var(--fg);
+}
+.managed-settings-error {
+  padding: 9px 11px;
+  border: 1px solid color-mix(in srgb, var(--del) 45%, var(--border));
+  border-radius: 6px;
+  color: var(--del);
+  background: color-mix(in srgb, var(--del) 8%, transparent);
+}

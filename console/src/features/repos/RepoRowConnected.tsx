@@ -7,7 +7,7 @@ import { apiJSON, raw, errText } from "../../core/api/client.ts";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { useConfirm } from "../../ui/ConfirmProvider.tsx";
 import { agentOf } from "../../agents/registry.ts";
-import { writeRepoLast, resolveModel } from "../../lib/repoLast.ts";
+import { resolveEffort, writeRepoLast, resolveModel } from "../../lib/repoLast.ts";
 import { useSettings } from "../../lib/settings.ts";
 import { useLayoutStore } from "../../layout/store.ts";
 import { useReposStore } from "./store.ts";
@@ -108,22 +108,25 @@ export function RepoRowConnected({ r, ctx, onToggle, sess }: RepoRowConnectedPro
         const hasModel = agentOf(kind).caps.model;
         // Shared per-kind chain: repo last-used → kind default (repoLast.ts resolveModel).
         const model = hasModel ? resolveModel(kind, r.name, settings.defaultModel) : "";
+        const effort = agentOf(kind).managedDriver ? resolveEffort(kind, r.name) : "";
         const body: Record<string, unknown> = { dir: r.path, kind };
         // クイック起動も新規の既定は managed（docs/27 §9.2 — opencode）。CLI が
         // 欲しいときは 作業を始める モーダルのドライバ選択から。
         if (agentOf(kind).managedDriver) body.driver = "managed";
         if (model) body.model = model;
+        if (effort) body.effort = effort;
         let res = await apiJSON("api/sessions", "POST", body);
         // 旧 Agent（P1.5 世代）は managed を明示拒否する — tui で立て直す。
         if (res?.error && body.driver === "managed" && (res.error as { code?: string }).code === "driver_unsupported") {
           delete body.driver;
+          delete body.effort;
           res = await apiJSON("api/sessions", "POST", body);
         }
         if (res && res.error) {
           toast("起動に失敗: " + errText(res.error));
           return;
         }
-        writeRepoLast(r.name, kind, hasModel ? model : undefined);
+        writeRepoLast(r.name, kind, hasModel ? model : undefined, agentOf(kind).managedDriver ? effort : undefined);
         void refreshSessions();
         const chat = agentOf(kind).caps.chat;
         (chat

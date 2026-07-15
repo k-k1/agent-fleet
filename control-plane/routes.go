@@ -191,7 +191,8 @@ func registerSessionRoutes(mux *http.ServeMux, cfg config) {
 	// Semantic turn ops + Interaction reply (docs/27 P1.5) — proxied verbatim.
 	mux.HandleFunc("POST /api/sessions/{name}/turn", rest)
 	mux.HandleFunc("POST /api/sessions/{name}/respond", rest)
-	// managed セッションの ThreadSettings 動的更新（docs/27 P2 §9.4-3）— proxied verbatim.
+	// managed セッションの ThreadSettings 取得・動的更新（docs/27 P2 §9.4-3）— proxied verbatim.
+	mux.HandleFunc("GET /api/sessions/{name}/settings", rest)
 	mux.HandleFunc("POST /api/sessions/{name}/settings", rest)
 	// ドライバ排他切替（docs/27 P3 §2: tui ⇄ managed）— proxied verbatim.
 	mux.HandleFunc("POST /api/sessions/{name}/driver", rest)

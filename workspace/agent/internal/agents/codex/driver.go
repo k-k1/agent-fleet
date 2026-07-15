@@ -117,6 +117,12 @@ func (managedDriver) Resume(m session.Meta) (agents.ThreadHandle, error) {
 	if h.settings.Model == "" {
 		h.settings.Model = m.Model // 起動時既定（動的変更は UpdateSettings が上書き）
 	}
+	if h.settings.Effort == "" {
+		h.settings.Effort = m.Effort
+	}
+	if h.settings.Mode == "" {
+		h.settings.Mode = m.Mode
+	}
 	tid := h.tid
 	h.mu.Unlock()
 
@@ -161,6 +167,9 @@ func (managedDriver) Resume(m session.Meta) (agents.ThreadHandle, error) {
 	h.client, h.gen, h.tid, h.alive = cl, gen, tid, true
 	if st.model != "" {
 		h.curModel = st.model
+		if h.settings.Model == "" {
+			h.settings.Model = st.model // GET /settings に実効値を返す
+		}
 	}
 	// reconcile（§6-4）: resume が返した server 側状態を正とする。実行中 turn が
 	// 残っていれば（前 Agent プロセスが投げたもの）その turnId を引き継ぎ、
@@ -179,6 +188,20 @@ func (managedDriver) Resume(m session.Meta) (agents.ThreadHandle, error) {
 		h.inter = nil
 	}
 	h.mu.Unlock()
+
+	// thread/start は model しか受け取らず、effort / collaboration mode は
+	// thread/settings/update の管轄。作成 UI で選んだ値と Meta に永続化した動的設定を、
+	// 初回 turn より前（および daemon 再接続・fork 後）に native thread へ再適用する。
+	// ここを best-effort にすると UI 上の選択と実際の推論設定が黙って食い違うため、
+	// ユーザー指定がある場合の失敗は Resume の失敗として返す。
+	if m.Model != "" || m.Effort != "" || m.Mode != "" {
+		if err := h.UpdateSettings(agents.ThreadSettings{Model: m.Model, Effort: m.Effort, Mode: m.Mode}); err != nil {
+			h.mu.Lock()
+			h.alive = false // 次回 Resume で設定適用を再試行する
+			h.mu.Unlock()
+			return nil, fmt.Errorf("codex thread の実行設定を反映できませんでした: %w", err)
+		}
+	}
 
 	// exit recording の baseline（opencode driver / tui startSessionTmux と同じ役割）。
 	base, _ := status.OOMKillCount()
@@ -683,10 +706,14 @@ func (h *threadHandle) UpdateSettings(s agents.ThreadSettings) error {
 	h.mu.Lock()
 	cl, tid := h.client, h.tid
 	next := h.settings
-	if s.Model != "" {
+	if s.ClearModel {
+		next.Model = ""
+	} else if s.Model != "" {
 		next.Model = s.Model
 	}
-	if s.Effort != "" {
+	if s.ClearEffort {
+		next.Effort = ""
+	} else if s.Effort != "" {
 		next.Effort = s.Effort
 	}
 	if s.Mode != "" {
@@ -699,10 +726,14 @@ func (h *threadHandle) UpdateSettings(s agents.ThreadSettings) error {
 		return errors.New("runtime が停止しています（再開してください）")
 	}
 	params := map[string]any{"threadId": tid}
-	if s.Model != "" {
+	if s.ClearModel {
+		params["model"] = nil
+	} else if s.Model != "" {
 		params["model"] = s.Model
 	}
-	if s.Effort != "" {
+	if s.ClearEffort {
+		params["effort"] = nil
+	} else if s.Effort != "" {
 		params["effort"] = s.Effort
 	}
 	if s.Mode != "" {
@@ -727,10 +758,14 @@ func (h *threadHandle) UpdateSettings(s agents.ThreadSettings) error {
 	// RPC 成功後にだけローカル snapshot を進める。失敗時に mode chip が実 runtime
 	// より先行したまま残らないようにする。
 	h.mu.Lock()
-	if s.Model != "" {
+	if s.ClearModel {
+		h.settings.Model = ""
+	} else if s.Model != "" {
 		h.settings.Model = s.Model
 	}
-	if s.Effort != "" {
+	if s.ClearEffort {
+		h.settings.Effort = ""
+	} else if s.Effort != "" {
 		h.settings.Effort = s.Effort
 	}
 	if s.Mode != "" {

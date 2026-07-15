@@ -11,9 +11,9 @@ import { Button } from "../../ui/Button.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { agentOf } from "../../agents/registry.ts";
-import { resolveModel } from "../../lib/repoLast.ts";
+import { resolveEffort, resolveModel } from "../../lib/repoLast.ts";
 import { useSettings } from "../../lib/settings.ts";
-import { ModelPicker } from "../../ui/ModelPicker.tsx";
+import { EffortPicker, ModelPicker } from "../../ui/ModelPicker.tsx";
 import { groupedRepos } from "../../lib/project.ts";
 import { hostColorBase } from "../../lib/termcolor.ts";
 import { useSettingsUI } from "../settings/store.ts";
@@ -100,7 +100,7 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
   const startShell = async () => {
     if (busy) return;
     setBusy(true);
-    const r = await startWork({ dir: "", repo: "" }, { kind: "shell", driver: "", model: "", prompt: "", images: [], worktree: false, base: "", newBranch: "" });
+    const r = await startWork({ dir: "", repo: "" }, { kind: "shell", driver: "", model: "", effort: "", prompt: "", images: [], worktree: false, base: "", newBranch: "" });
     setBusy(false);
     if (r.ok) onClose();
   };
@@ -208,6 +208,7 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
   // --- home: repo-less agent session (kind / model / first prompt) ---
   const [kind, setKind] = useState(kinds[0] || "claude");
   const [model, setModel] = useState(() => resolveModel(kinds[0] || "claude", "", settings.defaultModel));
+  const [effort, setEffort] = useState(() => resolveEffort(kinds[0] || "claude", ""));
   const [prompt, setPrompt] = useState("");
   const startHome = async () => {
     if (busy) return;
@@ -219,6 +220,7 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
         // 起動ハブの repo-less 起動も新規の既定は managed（docs/27 §9.2 — opencode）。
         driver: agentOf(kind).managedDriver ? "managed" : "",
         model: agentOf(kind).caps.model ? model : "",
+        effort: agentOf(kind).managedDriver ? effort : "",
         prompt: prompt.trim(),
         images: [],
         worktree: false,
@@ -409,6 +411,7 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
                       onClick={() => {
                         setKind(k);
                         setModel(resolveModel(k, "", settings.defaultModel));
+                        setEffort(resolveEffort(k, ""));
                       }}
                     >
                       <Icon name={a.icon} className="seg-ic" />
@@ -422,7 +425,21 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
             {agentOf(kind).caps.model && (
               <div className="ui-field">
                 <span className="ui-field-label">モデル</span>
-                <ModelPicker kind={kind} model={model} onChange={setModel} />
+                <ModelPicker
+                  kind={kind}
+                  model={model}
+                  onChange={(next) => {
+                    setModel(next);
+                    setEffort("");
+                  }}
+                />
+              </div>
+            )}
+            {agentOf(kind).managedDriver && (
+              <div className="ui-field">
+                <span className="ui-field-label">推論 effort</span>
+                <EffortPicker kind={kind} model={model} effort={effort} onChange={setEffort} />
+                <span className="ui-field-hint">未指定ならモデル既定値を使用します。</span>
               </div>
             )}
             <div className="ui-field">

@@ -91,8 +91,10 @@ type Agent interface {
 // ID is what the launch command receives (`codex -m` / `opencode --model`),
 // Label what the picker shows. Served by GET /agents/{kind}/models.
 type ModelChoice struct {
-	ID    string `json:"id"`
-	Label string `json:"label"`
+	ID            string   `json:"id"`
+	Label         string   `json:"label"`
+	Efforts       []string `json:"efforts,omitempty"`
+	DefaultEffort string   `json:"defaultEffort,omitempty"`
 }
 
 // TranscriptData is what a non-claude agent's Transcript() yields: the full

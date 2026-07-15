@@ -5,6 +5,7 @@
 // length. Callers gate on caps.model and re-resolve the value when the kind
 // changes (resolveModel), so this only renders and reports picks.
 import { useModelOptions } from "../lib/agentModels.ts";
+import { useEffortOptions } from "../lib/agentModels.ts";
 import type { ModelOption } from "../lib/agentModels.ts";
 
 interface ModelPickerProps {
@@ -46,5 +47,26 @@ export function ModelPicker({ kind, model, onChange }: ModelPickerProps) {
         </button>
       ))}
     </div>
+  );
+}
+
+interface EffortPickerProps {
+  kind: string;
+  model: string;
+  effort: string;
+  onChange: (effort: string) => void;
+}
+
+export function EffortPicker({ kind, model, effort, onChange }: EffortPickerProps) {
+  const options = useEffortOptions(kind, model);
+  const opts = options.some(([v]) => v === effort) ? options : [...options, [effort, effort] as [string, string]];
+  return (
+    <select value={effort} onChange={(e) => onChange(e.target.value)}>
+      {opts.map(([v, label]) => (
+        <option key={v || "default"} value={v}>
+          {label}
+        </option>
+      ))}
+    </select>
   );
 }
