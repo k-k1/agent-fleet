@@ -11,6 +11,7 @@ import type { MouseEvent as RMouseEvent } from "react";
 import { Icon } from "../../ui/Icon.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { useDismiss } from "../../lib/useDismiss.ts";
+import { useMenuRoving } from "../../lib/useMenuRoving.ts";
 import { copyText } from "../../lib/clipboard.ts";
 import { placeFixed } from "../../lib/placeFixed.ts";
 import { kindIcon, kindLabel } from "../../lib/sessionkind.ts";
@@ -122,6 +123,7 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
   // another menu closes this one).
   useDismiss([wrapRef, launchMenuRef], showLaunch, () => setShowLaunch(false));
   useDismiss([wrapRef, menuRef], !!menu, () => setMenu(null));
+  useMenuRoving(menuRef, !!menu);
 
   return (
     <li

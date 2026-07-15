@@ -3,12 +3,13 @@
 // The provider mounts a single dialog and resolves the pending promise when the
 // user chooses. Port of the old ConfirmProvider + ConfirmDialog (merged — the
 // standalone dialog had no other consumer).
-import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { ReactNode, MouseEvent } from "react";
 import { Button } from "./Button.tsx";
 import { useEscLayer } from "../lib/escLayer.ts";
 import { useBackClose } from "../lib/backClose.ts";
+import { useFocusTrap } from "../lib/focusTrap.ts";
 import { registerConfirm } from "./confirmBridge.ts";
 
 export interface ConfirmOptions {
@@ -52,6 +53,10 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
   // Back button / back-swipe also cancels, and peels the confirm before the
   // modal beneath it (both push a layered history guard).
   useBackClose(() => finish(false), !!req);
+  // Trap Tab within the confirm while it's open; restore focus to the opener on close.
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useFocusTrap(dialogRef, !!req);
+  const titleId = useId();
 
   // Expose this provider imperatively so non-React code (terminal/term.ts) can confirm.
   useEffect(() => {
@@ -69,8 +74,8 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
         // painting it BEHIND the modal.
         createPortal(
           <div className="ui-modal-backdrop ui-confirm-backdrop" onClick={() => finish(false)}>
-            <div className="ui-confirm" onClick={(e: MouseEvent) => e.stopPropagation()}>
-              <h3 className="ui-confirm-title">{req.title}</h3>
+            <div className="ui-confirm" ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby={titleId} onClick={(e: MouseEvent) => e.stopPropagation()}>
+              <h3 className="ui-confirm-title" id={titleId}>{req.title}</h3>
               <div className="ui-confirm-body">{req.body}</div>
               <div className="ui-confirm-actions">
                 <Button variant="ghost" onClick={() => finish(false)}>
