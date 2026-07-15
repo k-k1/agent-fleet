@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildImagePrompt,
+  samePastedPrompt,
   splitPastedImages,
   FILE_PROMPT,
   FILE_PROMPT_GENERIC,
@@ -46,5 +47,18 @@ describe("splitPastedImages", () => {
   });
   it("plain text passes through", () => {
     expect(splitPastedImages("画像なし")).toEqual({ text: "画像なし", images: [], files: [] });
+  });
+  it("strips Codex localImage markers while retaining thumbnails", () => {
+    const raw = `確認して <image name=[Image #1] path="${P1}"> <image name=[Image #2] path="${P2}">`;
+    expect(splitPastedImages(raw)).toEqual({
+      text: "確認して",
+      images: ["paste-1.png", "paste-2.jpg"],
+      files: [],
+    });
+  });
+  it("matches a Codex image-bearing rollout turn to its optimistic echo", () => {
+    const landed = `確認して <image name=[Image #1] path="${P1}">`;
+    expect(samePastedPrompt(landed, "確認して")).toBe(true);
+    expect(samePastedPrompt(landed, "別の依頼")).toBe(false);
   });
 });

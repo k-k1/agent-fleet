@@ -184,6 +184,35 @@ func TestCodexIsWrapper(t *testing.T) {
 	}
 }
 
+func TestCodexCleanUserTextKeepsPromptAfterStartupContext(t *testing.T) {
+	raw := `<recommended_plugins>
+Here is a list of plugins that are available but not installed.
+</recommended_plugins>
+# AGENTS.md instructions for /home/dev/repos/x
+<INSTRUCTIONS>
+# Workspace Guide
+internal policy
+</INSTRUCTIONS>
+<environment_context>
+  <cwd>/home/dev/repos/x</cwd>
+  <shell>bash</shell>
+</environment_context>
+メモからセッションへ送れない <image name=[Image #1] path="/home/dev/.cache/agent-fleet/pasted/a/paste-1.png">`
+	want := `メモからセッションへ送れない <image name=[Image #1] path="/home/dev/.cache/agent-fleet/pasted/a/paste-1.png">`
+	if got := cleanUserText(raw); got != want {
+		t.Fatalf("cleanUserText = %q, want %q", got, want)
+	}
+
+	item := wrapItem(t, map[string]any{
+		"type": "message", "role": "user",
+		"content": []map[string]string{{"type": "input_text", "text": raw}},
+	})
+	turns, _ := parseRollout([][]byte{item})
+	if len(turns) != 1 || turns[0].Text != want {
+		t.Fatalf("turns = %+v, want one clean user prompt", turns)
+	}
+}
+
 func TestCodexParseRolloutEmpty(t *testing.T) {
 	if turns, _ := parseRollout(nil); len(turns) != 0 {
 		t.Fatalf("empty rollout -> %d turns, want 0", len(turns))

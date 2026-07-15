@@ -23,6 +23,9 @@ const ATTACH_PROMPTS = [FILE_PROMPT, FILE_PROMPT_GENERIC, IMG_PROMPT, IMG_PROMPT
 // capturing the basename. Images keep the bare paste-<n>.<ext> form; other files
 // carry a sanitized copy of their original name for the agent's benefit.
 export const PASTE_PATH_RE = /\S*\/pasted\/[^\s/]+\/(paste-\d+[\w.-]*)/g;
+// Codex app-server serializes a localImage input back into the rollout as a textual
+// marker alongside the image item. It is transport metadata, not user-authored text.
+const CODEX_IMAGE_TAG_RE = /<image\b[^>]*\bpath="[^"]+"[^>]*>/gi;
 
 // isImageName reports whether a pasted basename is a thumbnail-able image.
 export function isImageName(name: string): boolean {
@@ -43,8 +46,17 @@ export function splitPastedImages(text: string): { text: string; images: string[
   // Trim the instruction (any known wording) plus the trailing paths; fall back to
   // stripping the paths alone.
   const idx = ATTACH_PROMPTS.map((p) => text.indexOf(p)).filter((i) => i >= 0)[0] ?? -1;
-  const cleaned = (idx >= 0 ? text.slice(0, idx) : text.replace(PASTE_PATH_RE, "")).trim();
+  const cleaned = (
+    idx >= 0 ? text.slice(0, idx) : text.replace(CODEX_IMAGE_TAG_RE, "").replace(PASTE_PATH_RE, "")
+  ).trim();
   return { text: cleaned, images, files };
+}
+
+// samePastedPrompt compares the user-authored portion of two prompt renderings.
+// Codex's rollout adds <image …> transport markers that the optimistic Console
+// echo does not contain; ignoring those markers lets the real turn replace the echo.
+export function samePastedPrompt(a: string, b: string): boolean {
+  return splitPastedImages(a).text.trim() === splitPastedImages(b).text.trim();
 }
 
 // buildImagePrompt composes the sent prompt: the user's words + the kind's instruction +
