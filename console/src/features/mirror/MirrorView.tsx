@@ -4,7 +4,7 @@ import type { CSSProperties, KeyboardEvent as RKeyboardEvent, ClipboardEvent as 
 import { api, apiJSON, raw, errText, pasteImage, sessionTurn, sessionRespond, sessionSettings } from "../../core/api/client.ts";
 import type { InteractionAnswer, TurnResult } from "../../core/api/client.ts";
 import { isManagedSession } from "../../types/session.ts";
-import { splitPastedImages, buildImagePrompt } from "../../lib/pastedImages.ts";
+import { splitPastedImages, buildImagePrompt, samePastedPrompt } from "../../lib/pastedImages.ts";
 import { useSettings, chatFontStack, surfaceBg, surfaceAccent, effectiveTheme } from "../../lib/settings.ts";
 import { useLayoutStore } from "../../layout/store.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
@@ -2207,7 +2207,7 @@ function echoLanded(e: { text: string; sinceIdx: number }, turns: Turn[]): boole
       t.idx !== undefined &&
       (t.idx as number) > e.sinceIdx &&
       !isNoise(t) &&
-      (t.text || "").trim() === e.text,
+      samePastedPrompt(t.text || "", e.text),
   );
 }
 

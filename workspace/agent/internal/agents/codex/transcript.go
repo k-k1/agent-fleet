@@ -69,20 +69,18 @@ func rolloutPath(codexID string) string {
 	return best
 }
 
-// wrapperTags marks a codex user message that is really injected context, not a
-// human prompt (environment snapshot, instructions, mode banner). A user turn whose
-// text is entirely such a wrapper is dropped from the chat.
-var wrapperTags = []string{
-	"<environment_context>",
-	"<user_instructions>",
-	"<permissions instructions>",
-	"<collaboration_mode>",
-	"<skills_instructions>",
-	// codex injects each AGENTS.md (our workspace-notes.md, plus project AGENTS.md) as a
-	// user message headed "# AGENTS.md instructions" and wrapped in <INSTRUCTIONS>…; both
-	// are injected context, not a human prompt.
-	"# AGENTS.md instructions",
-	"<INSTRUCTIONS>",
+// wrapperPairs are injected context blocks that Codex may record with role=user.
+// Newer app-server versions can concatenate several of these blocks and the actual
+// prompt into ONE response_item, so parseResponseItem strips leading complete blocks
+// instead of dropping the whole item merely because it starts with one.
+var wrapperPairs = [][2]string{
+	{"<recommended_plugins>", "</recommended_plugins>"},
+	{"<environment_context>", "</environment_context>"},
+	{"<user_instructions>", "</user_instructions>"},
+	{"<permissions instructions>", "</permissions instructions>"},
+	{"<collaboration_mode>", "</collaboration_mode>"},
+	{"<skills_instructions>", "</skills_instructions>"},
+	{"<INSTRUCTIONS>", "</INSTRUCTIONS>"},
 }
 
 // parseRollout normalizes a codex rollout's lines into ordered transcript.Turns. Each
@@ -365,8 +363,11 @@ func parseResponseItem(payload json.RawMessage, ts string, idx int, cwd, branch 
 		if text == "" {
 			return transcript.Turn{}, "", false
 		}
-		if p.Role == "user" && isWrapper(text) {
-			return transcript.Turn{}, "", false // an injected-context user turn, not a prompt
+		if p.Role == "user" {
+			text = cleanUserText(text)
+			if text == "" {
+				return transcript.Turn{}, "", false // injected context only, not a prompt
+			}
 		}
 		return transcript.Turn{
 			Role: p.Role, Parts: []transcript.Part{{Kind: "text", Text: text}}, Text: text,
@@ -633,16 +634,51 @@ func parsePlan(payload json.RawMessage) []transcript.Task {
 	return out
 }
 
-// isWrapper reports whether a codex user message is entirely an injected-context
-// wrapper (environment/instructions/mode) rather than a human prompt.
-func isWrapper(text string) bool {
+// cleanUserText removes only LEADING injected context blocks from a Codex user
+// response_item and returns the real prompt that follows. It deliberately does not
+// search inside ordinary text, so a human discussing one of these tags is untouched.
+func cleanUserText(text string) string {
 	s := strings.TrimSpace(text)
-	for _, tag := range wrapperTags {
-		if strings.HasPrefix(s, tag) {
-			return true
+	for s != "" {
+		removed := false
+		for _, pair := range wrapperPairs {
+			if !strings.HasPrefix(s, pair[0]) {
+				continue
+			}
+			end := strings.Index(s[len(pair[0]):], pair[1])
+			if end < 0 {
+				return "" // legacy/truncated wrapper-only item
+			}
+			s = strings.TrimSpace(s[len(pair[0])+end+len(pair[1]):])
+			removed = true
+			break
 		}
+		if removed {
+			continue
+		}
+		// AGENTS.md is preceded by a human-readable heading, then a single
+		// <INSTRUCTIONS> wrapper containing the workspace + project policies.
+		if strings.HasPrefix(s, "# AGENTS.md instructions") {
+			open := strings.Index(s, "<INSTRUCTIONS>")
+			if open < 0 {
+				return ""
+			}
+			body := s[open+len("<INSTRUCTIONS>"):]
+			end := strings.Index(body, "</INSTRUCTIONS>")
+			if end < 0 {
+				return ""
+			}
+			s = strings.TrimSpace(body[end+len("</INSTRUCTIONS>"):])
+			continue
+		}
+		break
 	}
-	return false
+	return s
+}
+
+// isWrapper is retained as the narrow predicate used by compacted-history parsing.
+func isWrapper(text string) bool {
+	return strings.TrimSpace(text) != "" && cleanUserText(text) == ""
 }
 
 // toolInfo renders a short one-line summary of a function_call for the trace: the
