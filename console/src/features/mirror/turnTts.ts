@@ -51,24 +51,28 @@ function walkList(list: HTMLElement, out: HTMLElement[]): void {
   }
 }
 
-// finalAnswerStart は「最後のツール実行より後の本文」が始まるブロック index を返す（index は
-// collectBlocks と同じブロック順）。ツールが無ければ 0。ミラー自動読み上げが、ツール前の
-// ナレーション（＝作業過程）を飛ばして最終回答だけ読むために使う（chat の分離と同趣・docs/19）。
-// 本文パートは body 直下の .markdown、ツール実行は mt-tool* クラスの直下要素として並ぶので、
-// 直下要素を文書順に走査し、直近のツール直後までに数えたブロック数を返す。
+// finalAnswerStart は「最終回答の本文」が始まるブロック index を返す（index は collectBlocks と
+// 同じブロック順）。ツールが無ければ 0。ミラー自動読み上げが、最終回答より前の作業ナレーションを
+// 飛ばして最終回答だけ読むために使う（chat の分離と同趣・docs/19）。
+// 本文パートは body 直下の .markdown、ツール実行は mt-tool* クラスの直下要素として並ぶ。飛ばすのは
+// 「最初の最終回答本文が現れる前」の作業ツールだけ。最終回答の後ろに来るツール（メモ書き込み等の
+// 後始末）以降は最終回答の一部なので飛ばさない — 完了ターンでは workSplit が作業過程を disclosure へ
+// 畳むので、直下に残るツールは後始末だけ。ここで飛ばすと続きの一言しか読まない不具合になる。
 export function finalAnswerStart(body: HTMLElement): number {
   let count = 0; // ここまでに数えた読み上げブロック数
-  let afterLastTool = 0; // 直近のツール実行の直後のブロック数
+  let boundary = 0; // 最終回答本文が始まるブロック数
+  let sawAnswer = false; // 最終回答の本文ブロックを既に見たか
   for (const el of Array.from(body.children) as HTMLElement[]) {
     if (el.classList.contains("markdown")) {
       const blocks: HTMLElement[] = [];
       walk(el, blocks);
+      if (blocks.length) sawAnswer = true;
       count += blocks.length;
-    } else if (Array.from(el.classList).some((c) => c.startsWith("mt-tool"))) {
-      afterLastTool = count; // このツール以前の本文は作業過程
+    } else if (!sawAnswer && Array.from(el.classList).some((c) => c.startsWith("mt-tool"))) {
+      boundary = count; // 最終回答本文が現れる前のツール＝作業過程なので飛ばす
     }
   }
-  return afterLastTool;
+  return boundary;
 }
 
 // blockText はブロック自身の読み上げテキスト。li は入れ子リスト（別ブロックとして読む）と
