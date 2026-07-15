@@ -1052,7 +1052,20 @@ func agentText(ctx context.Context, rt Runtime, method, path string, body []byte
 	defer resp.Body.Close()
 	b, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode >= 400 {
-		return "", fmt.Errorf("agent %d: %s", resp.StatusCode, strings.TrimSpace(string(b)))
+		return "", &agentHTTPError{status: resp.StatusCode, body: strings.TrimSpace(string(b))}
 	}
 	return string(b), nil
+}
+
+// agentHTTPError keeps the Agent's status/body inspectable by callers that need
+// protocol-level fallback or want to preserve a stable Agent error code. Error()
+// intentionally retains agentText's former text so existing MCP responses do not
+// change merely because the error became typed.
+type agentHTTPError struct {
+	status int
+	body   string
+}
+
+func (e *agentHTTPError) Error() string {
+	return fmt.Sprintf("agent %d: %s", e.status, e.body)
 }

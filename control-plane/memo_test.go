@@ -1,6 +1,10 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -34,6 +38,82 @@ func TestBuildFlushMessage(t *testing.T) {
 	// The api heading restarts numbering at 1 (not continuing frontend's count).
 	if strings.Contains(got, "3. エラーハンドリング追加") {
 		t.Fatalf("numbering did not restart per category\n%s", got)
+	}
+}
+
+func TestSendMemoPromptUsesSemanticTurn(t *testing.T) {
+	const prompt = "まとめたメモ"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/sessions/codex_one/turn" {
+			t.Errorf("path = %q, want semantic /turn", r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer tok" {
+			t.Errorf("Authorization = %q", got)
+		}
+		var body map[string]string
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if body["op"] != "start" || body["prompt"] != prompt {
+			t.Errorf("body = %#v", body)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"sent":"codex_one","op":"start"}`))
+	}))
+	defer srv.Close()
+
+	rt := stubRuntime{endpoint: srv.URL, token: "tok"}
+	if aerr := sendMemoPrompt(context.Background(), rt, "codex_one", prompt); aerr != nil {
+		t.Fatalf("sendMemoPrompt: %v", aerr)
+	}
+}
+
+func TestSendMemoPromptFallsBackForOldAgent(t *testing.T) {
+	var paths []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		switch r.URL.Path {
+		case "/sessions/s1/turn":
+			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		case "/sessions/s1/input":
+			var body map[string]string
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			if body["prompt"] != "memo" || body["op"] != "" {
+				t.Errorf("legacy body = %#v", body)
+			}
+			_, _ = w.Write([]byte(`{"sent":"s1"}`))
+		default:
+			t.Errorf("unexpected path %q", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	if aerr := sendMemoPrompt(context.Background(), stubRuntime{endpoint: srv.URL}, "s1", "memo"); aerr != nil {
+		t.Fatalf("sendMemoPrompt: %v", aerr)
+	}
+	if got := strings.Join(paths, ","); got != "/sessions/s1/turn,/sessions/s1/input" {
+		t.Fatalf("paths = %q", got)
+	}
+}
+
+func TestSendMemoPromptPreservesStructuredAgentError(t *testing.T) {
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		_, _ = w.Write([]byte(`{"error":{"code":"question_pending","message":"answer first"}}`))
+	}))
+	defer srv.Close()
+
+	aerr := sendMemoPrompt(context.Background(), stubRuntime{endpoint: srv.URL}, "s1", "memo")
+	if aerr == nil || aerr.status != http.StatusConflict || aerr.code != "question_pending" {
+		t.Fatalf("error = %#v", aerr)
+	}
+	if calls != 1 {
+		t.Fatalf("structured error unexpectedly fell back: calls = %d", calls)
 	}
 }
 

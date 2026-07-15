@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -291,10 +292,8 @@ func memoFlushFor(ctx context.Context, store MemoStore, rt Runtime, membershipID
 	// Group by category (stable within-category order preserved from ListMemos).
 	sort.SliceStable(memos, func(i, j int) bool { return memos[i].Category < memos[j].Category })
 
-	payload, _ := json.Marshal(map[string]string{"prompt": buildFlushMessage(memos)})
-	if _, err := agentText(ctx, rt,
-		"POST", "/sessions/"+url.PathEscape(sessionName)+"/input", payload); err != nil {
-		return nil, &apiError{http.StatusBadGateway, "flush_failed", err.Error()}
+	if aerr := sendMemoPrompt(ctx, rt, sessionName, buildFlushMessage(memos)); aerr != nil {
+		return nil, aerr
 	}
 
 	sentIDs := make([]string, len(memos))
@@ -306,4 +305,59 @@ func memoFlushFor(ctx context.Context, store MemoStore, rt Runtime, membershipID
 		return nil, internalErr(err)
 	}
 	return map[string]any{"sent": len(sentIDs), "sentAt": sentAt, "ids": sentIDs}, nil
+}
+
+// sendMemoPrompt uses the same semantic turn endpoint as Console chat. /input is
+// deliberately TUI-only now; managed sessions have no tmux process, so sending a
+// memo there incorrectly reports not_running. Old workspace images can briefly lag
+// the Control Plane during a rollout, hence the narrow fallback when /turn itself is
+// absent (a plain 404/405 rather than a structured Agent error).
+func sendMemoPrompt(ctx context.Context, rt Runtime, sessionName, prompt string) *apiError {
+	path := "/sessions/" + url.PathEscape(sessionName)
+	payload, _ := json.Marshal(map[string]string{"op": "start", "prompt": prompt})
+	if _, err := agentText(ctx, rt, http.MethodPost, path+"/turn", payload); err == nil {
+		return nil
+	} else if !agentEndpointMissing(err) {
+		return memoAgentError(err)
+	}
+
+	legacy, _ := json.Marshal(map[string]string{"prompt": prompt})
+	if _, err := agentText(ctx, rt, http.MethodPost, path+"/input", legacy); err != nil {
+		return memoAgentError(err)
+	}
+	return nil
+}
+
+// agentEndpointMissing distinguishes an old Agent with no /turn route from a real
+// structured 404/405 (for example, an unknown session), which must reach the user.
+func agentEndpointMissing(err error) bool {
+	var he *agentHTTPError
+	if !errors.As(err, &he) || (he.status != http.StatusNotFound && he.status != http.StatusMethodNotAllowed) {
+		return false
+	}
+	var envelope struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	return json.Unmarshal([]byte(he.body), &envelope) != nil || envelope.Error.Code == ""
+}
+
+// memoAgentError preserves the Agent's stable error code so the Console can show
+// its localized message (question_pending, not_running, runtime_failed, ...).
+// Transport and non-JSON failures retain the memo-specific gateway fallback.
+func memoAgentError(err error) *apiError {
+	var he *agentHTTPError
+	if errors.As(err, &he) {
+		var envelope struct {
+			Error struct {
+				Code    string `json:"code"`
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		if json.Unmarshal([]byte(he.body), &envelope) == nil && envelope.Error.Code != "" {
+			return &apiError{he.status, envelope.Error.Code, envelope.Error.Message}
+		}
+	}
+	return &apiError{http.StatusBadGateway, "flush_failed", err.Error()}
 }
