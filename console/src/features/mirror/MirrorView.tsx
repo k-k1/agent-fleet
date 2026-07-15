@@ -298,6 +298,12 @@ export function MirrorView({
   // reply is anchored there once (so the user reads it from its first line) and then left
   // alone as it streams; this remembers which reply we've already anchored.
   const anchoredIdxRef = useRef<number | undefined>(undefined);
+  // The idx of the reply whose FINAL ANSWER top we've already brought to the viewport top.
+  // On completion a following pane collapses the 作業過程 into a disclosure, so the reply's
+  // top becomes that collapsed row; we then re-anchor once to the final answer's first line
+  // (docs/24). Kept separate from anchoredIdxRef so the top-anchor and the answer-anchor each
+  // fire exactly once per reply.
+  const answerAnchoredRef = useRef<number | undefined>(undefined);
   // Set just before we scroll the body ourselves so the scroll handler can tell our own
   // programmatic scroll apart from a real user scroll (and not mistake anchoring-to-top
   // for the user scrolling up to read history).
@@ -629,6 +635,7 @@ export function MirrorView({
     });
     atBottomRef.current = true; // a freshly opened session starts pinned to the bottom
     anchoredIdxRef.current = undefined; // no reply anchored yet in the new session
+    answerAnchoredRef.current = undefined; // …nor its final answer
     didInitRef.current = false; // re-run the "land at bottom on open" settle for this session
     ttsAutoSeenRef.current = null; // 自動読み上げの基準も取り直す（履歴は読まない）
     ttsAutoQueueRef.current.length = 0;
@@ -833,6 +840,7 @@ export function MirrorView({
       if (groups.length || loaded) {
         didInitRef.current = true;
         anchoredIdxRef.current = replyIdx;
+        answerAnchoredRef.current = replyIdx; // a reply already present at open isn't re-anchored
       }
       toBottom();
       return;
@@ -845,6 +853,7 @@ export function MirrorView({
         // it streams. Guard the scroll handler so this upward move isn't misread as the
         // user scrolling up off the bottom.
         anchoredIdxRef.current = replyIdx;
+        answerAnchoredRef.current = undefined; // this reply's final answer hasn't been anchored yet
         const node = el.querySelector<HTMLElement>(`[data-turn-idx="${replyIdx}"]`);
         if (node) {
           const top = el.scrollTop + (node.getBoundingClientRect().top - el.getBoundingClientRect().top) - 12;
@@ -853,8 +862,28 @@ export function MirrorView({
             el.scrollTop = Math.max(0, top);
           }
         }
+        return;
       }
-      // Otherwise we've already anchored this reply — it's streaming; leave the position be.
+      // Already anchored this reply's top. Once it completes, a following pane collapses the
+      // 作業過程 into a disclosure (defaultWorkOpen=!atBottom) and the reply's top becomes that
+      // collapsed row — so re-anchor once to the FINAL ANSWER's first line at the viewport top.
+      // Only when work was actually folded; a reply with no foldable work already sits with its
+      // answer at the top, so just mark it done.
+      if (status !== "working" && answerAnchoredRef.current !== replyIdx) {
+        const body = el.querySelector<HTMLElement>(`[data-turn-idx="${replyIdx}"] .mirror-turn-body`);
+        const work = body?.querySelector<HTMLElement>(":scope > .mt-work");
+        const answer = work?.nextElementSibling as HTMLElement | null;
+        if (work && answer) {
+          answerAnchoredRef.current = replyIdx;
+          const top = el.scrollTop + (answer.getBoundingClientRect().top - el.getBoundingClientRect().top) - 12;
+          if (Math.abs(el.scrollTop - top) >= 1) {
+            selfScrollRef.current = true;
+            el.scrollTop = Math.max(0, top);
+          }
+        } else if (body && !work) {
+          answerAnchoredRef.current = replyIdx; // nothing folded — top already is the answer
+        }
+      }
       return;
     }
 
