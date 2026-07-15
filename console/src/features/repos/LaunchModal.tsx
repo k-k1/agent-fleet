@@ -264,22 +264,25 @@ export function LaunchModal({ repo, branch, path, kinds, allowWorktree = true, o
           </div>
         )}
 
-        {hasEffort && (
-          <div className="ui-field">
-            <span className="ui-field-label">推論 effort</span>
-            <EffortPicker kind={kind} model={model} effort={effort} onChange={setEffort} />
-            <span className="ui-field-hint">モデルが使う推論量。未指定ならモデル既定値を使用します。</span>
-          </div>
-        )}
-
-        {hasStartMode && (
-          <div className="ui-field">
-            <span className="ui-field-label">開始モード</span>
-            <select value={startMode} onChange={(e) => setStartMode(e.target.value === "plan" ? "plan" : "normal")}>
-              <option value="normal">{agentOf(kind).defaultModeLabel || "通常"}</option>
-              <option value="plan">Plan</option>
-            </select>
-            <span className="ui-field-hint">Planで開始すると、最初のターンは調査と計画に専念します。</span>
+        {(hasEffort || hasStartMode) && (
+          <div className="ui-field-row">
+            {hasEffort && (
+              <div className="ui-field">
+                <span className="ui-field-label">推論 effort</span>
+                <EffortPicker kind={kind} model={model} effort={effort} onChange={setEffort} />
+                <span className="ui-field-hint">未指定はモデル既定値。</span>
+              </div>
+            )}
+            {hasStartMode && (
+              <div className="ui-field">
+                <span className="ui-field-label">開始モード</span>
+                <select value={startMode} onChange={(e) => setStartMode(e.target.value === "plan" ? "plan" : "normal")}>
+                  <option value="normal">{agentOf(kind).defaultModeLabel || "通常"}</option>
+                  <option value="plan">Plan</option>
+                </select>
+                <span className="ui-field-hint">Plan は最初のターンを調査・計画に専念。</span>
+              </div>
+            )}
           </div>
         )}
 
