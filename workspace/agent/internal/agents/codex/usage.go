@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
@@ -135,10 +136,78 @@ func getResetCredits(ctx context.Context, client *http.Client, url, token, accou
 	return out, true
 }
 
-// readUsage finds the freshest rate_limits across codex rollouts. rate_limits are
+// RateLimitWindow is one rate-limit window as pushed by the shared app-server's
+// account/rateLimits/updated notification (package main, codex_appserver.go). The
+// json tags follow the app-server wire names; ResetsAt is unix epoch seconds
+// (verified live against `account/rateLimits/read`, CLI 0.144.4).
+type RateLimitWindow struct {
+	UsedPercent   float64 `json:"usedPercent"`
+	WindowMinutes int     `json:"windowDurationMins"`
+	ResetsAt      int64   `json:"resetsAt"`
+}
+
+// observedRateLimits holds the latest app-server push. The rollout snapshot is
+// only as fresh as the last recorded turn event; the push arrives the moment the
+// backend reports a new reading, so it wins whenever it is the newer of the two.
+var observedRateLimits struct {
+	sync.Mutex
+	primary, secondary *RateLimitWindow
+	planType           string
+	at                 time.Time
+}
+
+// SetObservedRateLimits records an account/rateLimits/updated push from the
+// app-server observer. Not cleared on observer disconnect: readUsage compares
+// ages, so a stale observation simply loses to a fresher rollout reading.
+func SetObservedRateLimits(primary, secondary *RateLimitWindow, planType string) {
+	observedRateLimits.Lock()
+	defer observedRateLimits.Unlock()
+	observedRateLimits.primary = primary
+	observedRateLimits.secondary = secondary
+	observedRateLimits.planType = planType
+	observedRateLimits.at = time.Now()
+}
+
+func observedUsage() (usage, bool) {
+	observedRateLimits.Lock()
+	p, s := observedRateLimits.primary, observedRateLimits.secondary
+	plan, at := observedRateLimits.planType, observedRateLimits.at
+	observedRateLimits.Unlock()
+	if at.IsZero() {
+		return usage{}, false
+	}
+	conv := func(w *RateLimitWindow) *recordedWindow {
+		if w == nil {
+			return nil
+		}
+		return &recordedWindow{UsedPercent: w.UsedPercent, WindowMinutes: w.WindowMinutes, ResetsAt: w.ResetsAt}
+	}
+	u, ok := classifyWindows(conv(p), conv(s), plan)
+	if !ok {
+		return usage{}, false
+	}
+	u.AgeSec = int(time.Since(at).Seconds())
+	return u, true
+}
+
+// readUsage returns the fresher of the two sources of the same account-wide
+// reading: the app-server push and the newest rollout-recorded snapshot.
+func readUsage() usage {
+	rollout := rolloutUsage()
+	observed, ok := observedUsage()
+	if !ok {
+		return rollout
+	}
+	if !rollout.OK || rollout.AgeSec < 0 || observed.AgeSec <= rollout.AgeSec {
+		return observed
+	}
+	return rollout
+}
+
+// rolloutUsage finds the freshest rate_limits across codex rollouts. rate_limits are
 // account-wide, so the most recently written rollout that carries one wins — we iterate
 // rollout files newest-first and return the first reading found.
-func readUsage() usage {
+func rolloutUsage() usage {
 	root := filepath.Join(paths.HomeDir(), ".codex", "sessions")
 	matches, err := filepath.Glob(filepath.Join(root, "*", "*", "*", "rollout-*.jsonl"))
 	if err != nil || len(matches) == 0 {
@@ -210,11 +279,18 @@ func parseRateLimits(payload json.RawMessage) (usage, bool) {
 		return usage{}, false
 	}
 	rl := p.RateLimits
+	return classifyWindows(rl.Primary, rl.Secondary, rl.PlanType)
+}
+
+// classifyWindows maps a primary/secondary rate-limit pair onto the 5h/weekly
+// usage slots. Shared by the rollout parse and the app-server push, which carry
+// the same reading under different field spellings.
+func classifyWindows(primary, secondary *recordedWindow, planType string) (usage, bool) {
 	// Both windows can be absent very early; require at least one to call it a reading.
-	if rl.Primary == nil && rl.Secondary == nil {
+	if primary == nil && secondary == nil {
 		return usage{}, false
 	}
-	u := usage{OK: true, PlanType: rl.PlanType, AgeSec: -1}
+	u := usage{OK: true, PlanType: planType, AgeSec: -1}
 	now := time.Now().UTC()
 	toWin := func(x *recordedWindow) *usageWindow {
 		if x == nil {
@@ -232,8 +308,8 @@ func parseRateLimits(payload json.RawMessage) (usage, bool) {
 		assigned bool
 	}
 	candidates := []candidate{
-		{window: toWin(rl.Primary), minutes: windowMinutes(rl.Primary), primary: true},
-		{window: toWin(rl.Secondary), minutes: windowMinutes(rl.Secondary)},
+		{window: toWin(primary), minutes: windowMinutes(primary), primary: true},
+		{window: toWin(secondary), minutes: windowMinutes(secondary)},
 	}
 	for i := range candidates {
 		c := &candidates[i]

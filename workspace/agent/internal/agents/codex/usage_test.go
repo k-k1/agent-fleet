@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -102,6 +103,87 @@ func TestCodexRateLimitsAbsent(t *testing.T) {
 	line := `{"timestamp":"2026-07-04T03:10:38.864Z","type":"event_msg","payload":{"type":"token_count","info":{"model_context_window":258400}}}`
 	if _, ok := usageFromRolloutBytes([]byte(line)); ok {
 		t.Fatalf("expected no reading for a rate_limits-free line")
+	}
+}
+
+func resetObservedRateLimits() {
+	observedRateLimits.Lock()
+	defer observedRateLimits.Unlock()
+	observedRateLimits.primary, observedRateLimits.secondary = nil, nil
+	observedRateLimits.planType = ""
+	observedRateLimits.at = time.Time{}
+}
+
+// A fresh app-server push must beat the rollout snapshot recorded on a past turn.
+func TestCodexObservedRateLimitsBeatOlderRollout(t *testing.T) {
+	resetObservedRateLimits()
+	t.Cleanup(resetObservedRateLimits)
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	roll := filepath.Join(dir, ".codex", "sessions", "2026", "07", "04")
+	if err := os.MkdirAll(roll, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// codexRateLimitLine's timestamp is days old; the push below is seconds old.
+	if err := os.WriteFile(filepath.Join(roll, "rollout-2026-07-04T09-24-19-abc.jsonl"), []byte(codexRateLimitLine+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	SetObservedRateLimits(&RateLimitWindow{
+		UsedPercent: 93, WindowMinutes: 10080, ResetsAt: time.Now().Add(48 * time.Hour).Unix(),
+	}, nil, "plus")
+
+	u := readUsage()
+	if !u.OK || u.SevenDay == nil || u.SevenDay.Pct != 93 {
+		t.Fatalf("readUsage = %+v, want the observed 93%% weekly reading", u)
+	}
+	if u.FiveHour != nil {
+		t.Fatalf("fiveHour = %+v, want nil (weekly-only push)", u.FiveHour)
+	}
+	if u.PlanType != "plus" || u.AgeSec < 0 {
+		t.Fatalf("planType=%q ageSec=%d, want plus with a non-negative age", u.PlanType, u.AgeSec)
+	}
+}
+
+// A push observed before the newest rollout reading must lose to the rollout.
+func TestCodexObservedRateLimitsStaleLosesToRollout(t *testing.T) {
+	resetObservedRateLimits()
+	t.Cleanup(resetObservedRateLimits)
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	roll := filepath.Join(dir, ".codex", "sessions", "2026", "07", "15")
+	if err := os.MkdirAll(roll, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	line := `{"timestamp":"` + now.Format(time.RFC3339) + `","type":"event_msg","payload":{"type":"token_count","info":{},"rate_limits":{"primary":{"used_percent":3.0,"window_minutes":300,"resets_at":` +
+		strconv.FormatInt(now.Add(2*time.Hour).Unix(), 10) + `},"secondary":null,"plan_type":"plus"}}}`
+	if err := os.WriteFile(filepath.Join(roll, "rollout-2026-07-15T00-00-00-abc.jsonl"), []byte(line+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	SetObservedRateLimits(&RateLimitWindow{
+		UsedPercent: 93, WindowMinutes: 10080, ResetsAt: now.Add(48 * time.Hour).Unix(),
+	}, nil, "plus")
+	observedRateLimits.Lock()
+	observedRateLimits.at = time.Now().Add(-time.Hour)
+	observedRateLimits.Unlock()
+
+	u := readUsage()
+	if !u.OK || u.FiveHour == nil || u.FiveHour.Pct != 3.0 {
+		t.Fatalf("readUsage = %+v, want the rollout 3%% five-hour reading", u)
+	}
+}
+
+// With no rollout reading at all, even an old push is better than nothing.
+func TestCodexObservedRateLimitsUsedWithoutRollout(t *testing.T) {
+	resetObservedRateLimits()
+	t.Cleanup(resetObservedRateLimits)
+	t.Setenv("HOME", t.TempDir())
+	SetObservedRateLimits(&RateLimitWindow{
+		UsedPercent: 42, WindowMinutes: 300, ResetsAt: time.Now().Add(time.Hour).Unix(),
+	}, nil, "plus")
+	u := readUsage()
+	if !u.OK || u.FiveHour == nil || u.FiveHour.Pct != 42 {
+		t.Fatalf("readUsage = %+v, want the observed 42%% five-hour reading", u)
 	}
 }
 
