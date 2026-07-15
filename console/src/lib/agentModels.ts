@@ -93,8 +93,16 @@ export function useEffortOptions(kind: string, model: string): EffortOption[] {
     : [...new Set(rows.flatMap((m) => m.efforts))].length
       ? [...new Set(rows.flatMap((m) => m.efforts))]
       : FALLBACK_EFFORTS[kind] || [];
+  // claude は CLI から per-model の既定 effort を取得できない（catalog を持たない）。
+  // 未指定時は Claude Code の CLI 既定（xhigh）に落ちるので、それを注記する。
+  // codex/opencode はカタログの defaultEffort をそのまま「既定（medium）」等で表示。
   const def = selected?.defaultEffort || "";
-  return [["", def ? `既定（${def}）` : "既定"], ...efforts.map((e): EffortOption => [e, e])];
+  const defaultLabel = def
+    ? `既定（${def}）`
+    : kind === "claude" && efforts.length
+      ? "既定（Claude Code = xhigh）"
+      : "既定";
+  return [["", defaultLabel], ...efforts.map((e): EffortOption => [e, e])];
 }
 
 // useModelOptions returns the launch model choices for `kind` — null when the kind
