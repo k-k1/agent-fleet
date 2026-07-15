@@ -37,6 +37,13 @@ describe("resolveLeader / isLeaderPrefix", () => {
     expect(isLeaderPrefix(CMDS, ["p"], ctx)).toBe(true);
     expect(isLeaderPrefix(CMDS, ["z"], ctx)).toBe(false);
   });
+  it("runs the resolved command", () => {
+    ran = "";
+    resolveLeader(CMDS, ["p", "r"], ctx)?.run(ctx);
+    expect(ran).toBe("p.right");
+    matchDirect(CMDS, "alt+1", ctx)?.run(ctx);
+    expect(ran).toBe("p.focus1");
+  });
 });
 
 describe("leaderChildren", () => {

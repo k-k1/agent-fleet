@@ -12,6 +12,7 @@ import { useLayoutEffect, useRef, useState } from "react";
 import { Icon } from "../../ui/Icon.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { useDismiss } from "../../lib/useDismiss.ts";
+import { useMenuRoving } from "../../lib/useMenuRoving.ts";
 import { copyText } from "../../lib/clipboard.ts";
 import { placeFixed } from "../../lib/placeFixed.ts";
 import { usePaneHover } from "../../lib/panehover.tsx";
@@ -56,6 +57,7 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
   const menuBtnRef = useRef<HTMLButtonElement>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   useDismiss([menuRef, menuElRef], menuOpen, () => setMenuOpen(false));
+  useMenuRoving(menuElRef, menuOpen);
   // The dropdown is position:fixed, anchored under the ⋯ button and clamped
   // on-screen every render — a row near the rail's foot must not push its menu
   // below the viewport (the old absolute top:26px did).
