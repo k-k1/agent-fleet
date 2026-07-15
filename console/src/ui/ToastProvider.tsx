@@ -1,17 +1,22 @@
 // Transient-notification stack replacing the blocking native window.alert():
 //   const toast = useToast();
-//   toast("clone に失敗: …");                 // defaults to a STICKY error toast
-//   toast("保存しました", { kind: "success" }); // auto-dismisses
-// Port of the old ToastProvider (errors sticky + role=alert; others polite).
+//   toast("clone に失敗: …");                 // error: auto-dismiss + kept in 通知センター
+//   toast("保存しました", { kind: "success" }); // auto-dismisses, not kept
+//   toast("削除しました", { kind: "success", persist: true }); // kept in 通知センター
+// Errors (role=alert) and any { persist:true } toast are logged to the notification center
+// via toastLog so they can be reviewed after leaving the screen; trivial toasts (copy 等)
+// stay purely ephemeral. Errors used to be sticky; they now auto-dismiss but persist.
 import { createContext, useCallback, useContext, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { Icon } from "./Icon.tsx";
+import { pushToastLog } from "../lib/toastLog.ts";
 
 export type ToastKind = "error" | "warn" | "info" | "success";
 
 export interface ToastOptions {
   kind?: ToastKind;
   duration?: number; // ms; 0 = sticky (manual close only)
+  persist?: boolean; // also keep in the 通知センター after dismiss (default: errors)
 }
 
 interface ToastItem {
@@ -30,7 +35,7 @@ export function useToast(): ToastFn {
   return fn;
 }
 
-const ICONS: Record<ToastKind, string> = {
+export const TOAST_ICONS: Record<ToastKind, string> = {
   error: "error",
   warn: "warning",
   info: "info",
@@ -50,8 +55,11 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       const kind = opts?.kind ?? "error";
       const id = ++seq.current;
       setItems((xs) => [...xs, { id, message, kind }]);
-      // Errors are sticky so a failure can't be missed; others auto-dismiss.
-      const duration = opts?.duration ?? (kind === "error" ? 0 : 4000);
+      // Errors (and any opt-in persist) are recorded in the 通知センター so a failure that
+      // scrolled away can still be reviewed. Only string messages can be logged.
+      if ((opts?.persist ?? kind === "error") && typeof message === "string") pushToastLog(kind, message);
+      // Errors used to be sticky (0); now they auto-dismiss but remain in the 通知センター.
+      const duration = opts?.duration ?? (kind === "error" ? 8000 : 4000);
       if (duration > 0) setTimeout(() => remove(id), duration);
     },
     [remove],
@@ -69,7 +77,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
               role={t.kind === "error" ? "alert" : "status"}
               aria-live={t.kind === "error" ? "assertive" : "polite"}
             >
-              <Icon name={ICONS[t.kind]} />
+              <Icon name={TOAST_ICONS[t.kind]} />
               <span className="ui-toast-msg">{t.message}</span>
               <button type="button" className="ui-toast-x" title="閉じる" onClick={() => remove(t.id)}>
                 <Icon name="close" />
