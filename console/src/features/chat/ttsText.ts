@@ -211,6 +211,15 @@ const BUILTIN_READINGS: [string, string][] = [
   ["放ってお", "ほうってお"],
   // あり様 は ありよう（本来あるべき姿・状態。「〜のありよう」）に固定する（実機報告）。
   ["あり様", "ありよう"],
+  // --- 開発現場で使う漢語のうち、OpenJTalk が慣用（IT 分野）の読みから外しやすいもの。
+  //     いずれも IT 文脈では読みが一意なので固定して安全（一般語の別読みと衝突しない）。 ---
+  ["引数", "ひきすう"], // いんすう に化けやすい
+  ["添字", "そえじ"], // てんじ に化けやすい
+  ["閾値", "しきいち"], // いきち とも読むが IT 分野の慣用は しきいち
+  ["相殺", "そうさい"], // そうさつ と誤読されやすい
+  ["脆弱性", "ぜいじゃくせい"], // 脆 が落ちて きじゃく 等に化けやすい
+  ["端数", "はすう"], // たんすう と誤読されやすい
+  ["冪等", "べきとう"], // 冪 は常用外で読めないことがある
 ];
 
 // GYO_KO_COMPOUNDS — 末尾が「行」でも「ぎょう」と読まない漢語（こう/他）。fixGyoLine の
@@ -380,8 +389,13 @@ function applyTildeReadings(text: string): string {
   return text.replace(TILDE_RUN, "ほにゃらら").replace(TILDE_RANGE, "$1から");
 }
 
+// セクション記号 §（と連続 §§）は OpenJTalk が読み飛ばす/記号読みするので「セクション」に。
+// 「§3」→「セクション3」のように直後の番号はそのまま数として読ませる。
+const SECTION_SIGN = /§+/g;
+
 export function applyBuiltinReadings(text: string): string {
   let t = applyDateTimeReadings(text);
+  t = t.replace(SECTION_SIGN, "セクション");
   t = shortenSlashPause(t);
   t = tameMidToPause(t); // 文中の溜め（――・……。行頭は plainify が既に処理済み）
   t = t.replace(KARA_KATAKANA, "から");

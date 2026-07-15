@@ -197,9 +197,17 @@ export interface Settings {
   ttsVoiceVoicevox: string; // VOICEVOX の speaker 番号（"3"=ずんだもん・ノーマル）
   ttsVoicePolly: string; // Polly の VoiceId（"Takumi" 等）。auto のフォールバック時も使う
   ttsSpeed: number; // 0.5〜2.0（speedScale）
+  // ずんだもん（VOICEVOX）の出力音量倍率（0〜1）。ずんだもんは他キャラより素の音圧が高いため、
+  // 少し下げて他の声・通知音と揃える。ずんだもんの声（VV_CHAR_NAMES がずんだもんの speaker）で
+  // 再生するときだけ、再生時の出力ゲインに掛ける（合成条件ではないのでキャッシュは無効化しない）。
+  ttsZundamonVolume: number;
   // Console が背景タブ／最小化（document.hidden）、または別ウィンドウへフォーカスが移った間の
-  // 再生方法。mute=無音、quiet=マスター音量35%、normal=通常音量。
+  // 再生方法。mute=無音、quiet=マスター音量を下げる（既定 35%・ttsBackgroundVolume で調整）、
+  // normal=通常音量。
   ttsBackgroundPlayback: "mute" | "quiet" | "normal";
+  // バックグラウンド再生（ttsBackgroundPlayback="quiet"）時のマスター音量倍率（0〜1）。スライダーで
+  // 調整。Console に戻ると通常音量へ滑らかに戻る（ttsControl.ts の ttsMasterGain）。
+  ttsBackgroundVolume: number;
   // ペインに属する読み上げを、現在の横方向の列位置に合わせてステレオ配置する。
   // 左右端でも完全には振り切らず、聞きやすさのため最大 ±70% に留める。
   ttsStereoByPane: boolean;
@@ -236,6 +244,9 @@ export interface Settings {
   // 確定した作業過程（最終回答より前のナレーション）を小声で読む。off=読まない、
   // whisper=ささやき、hushed=ヒソヒソ。対応スタイルが無い話者/Polly は同じ声の音量を下げる。
   ttsWorkRead: string; // "off" | "whisper" | "hushed"
+  // 作業過程を小声で読むとき（ttsWorkRead≠off）の出力音量倍率（0〜1）。スライダーで調整。
+  // スタイル（ささやき／ヒソヒソ）とは別に、最終回答より小さく聞こえる出力ゲインを与える。
+  ttsWorkVolume: number;
   // セッションごとに声を変える（features/chat/tts.ts の sessionVoiceOpts）。セッション名の
   // ハッシュで話者プール（VOICEVOX 標準キャラ / Polly 3 声）から決定的に割り当て、ミラーの
   // 読み上げとセッション音声通知に適用（どのセッションの回答かを声で判別できる）。
@@ -323,7 +334,9 @@ const DEFAULTS: Settings = {
   ttsVoiceVoicevox: "3", // ノーマル
   ttsVoicePolly: "Takumi",
   ttsSpeed: 1.25, // はやめ
+  ttsZundamonVolume: 0.85, // ずんだもんは少し下げて他の声と揃える
   ttsBackgroundPlayback: "quiet",
+  ttsBackgroundVolume: 0.35, // 背景時 35%（従来の固定値 HIDDEN_TTS_GAIN と同値）
   ttsStereoByPane: true,
   ttsSessionNotify: false,
   usageResetNotify: true,
@@ -333,6 +346,7 @@ const DEFAULTS: Settings = {
   ttsAutoReadMirror: true,
   ttsAutoReadAllPanes: true,
   ttsWorkRead: "off",
+  ttsWorkVolume: 0.5, // 作業過程の小声（従来の ささやき 0.58 / ヒソヒソ 0.3 の中間）
   ttsVoicePerSession: true,
   // {} = 標準 14 キャラ（tts.ts の SESSION_VOICES）がセッション割り当て対象。新規ユーザーも
   // リセットもこの状態から始まる（キャラは標準 14 人スタートで統一）。エンジンに追加キャラが
@@ -396,11 +410,14 @@ const TTS_RESET_KEYS = [
   "ttsVoicePool",
   "ttsEmotion",
   "ttsSpeed",
+  "ttsZundamonVolume",
   "ttsBackgroundPlayback",
+  "ttsBackgroundVolume",
   "ttsStereoByPane",
   "ttsAutoReadMirror",
   "ttsAutoReadAllPanes",
   "ttsWorkRead",
+  "ttsWorkVolume",
   "ttsSummaryRead",
   "ttsReadPending",
   "ttsAbbrevCode",

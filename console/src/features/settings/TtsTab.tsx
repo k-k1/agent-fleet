@@ -18,7 +18,7 @@ import { loadSpeakers, speakersCatalog } from "../chat/ttsSpeakers.ts";
 import { Icon } from "../../ui/Icon.tsx";
 import { Button } from "../../ui/Button.tsx";
 import { useConfirm } from "../../ui/ConfirmProvider.tsx";
-import { Choice, OnOff } from "./controls.tsx";
+import { Choice, OnOff, Slider } from "./controls.tsx";
 
 // TtsTab — 音声読み上げ（TTS, docs/24 + ADR0013）の設定タブ。もとは AgentsTab から分離した
 // 1 セクションだったが、項目が増えて関心事（声の選択・読むタイミング・テキスト加工・性能）が
@@ -63,8 +63,13 @@ export function TtsTab() {
         </Row>
         <p className="muted ds-note">
           別タブへの切り替え、ブラウザの最小化、別ウィンドウでの作業中の再生方法を選びます。
-          「音量を下げる」は35%で再生し、Console に戻ると通常音量へ滑らかに戻ります。
+          「音量を下げる」を選ぶと下のスライダーの音量で再生し、Console に戻ると通常音量へ滑らかに戻ります。
         </p>
+        {s.ttsBackgroundPlayback === "quiet" && (
+          <Row label="バックグラウンドの音量">
+            <Slider value={s.ttsBackgroundVolume} onChange={(v) => setSetting("ttsBackgroundVolume", v)} />
+          </Row>
+        )}
         <Row label="ペイン位置に合わせて左右へ振る">
           <OnOff value={s.ttsStereoByPane} onChange={(v) => setSetting("ttsStereoByPane", v)} />
         </Row>
@@ -89,13 +94,22 @@ export function TtsTab() {
               AWS Polly に自動で切り替えます（次の文からずんだもんに復帰）。「Polly」は常に Polly で読みます。
             </p>
             {s.ttsProvider !== "polly" && (
-              <Row label="話者（ずんだもん）">
-                <Choice
-                  value={s.ttsVoiceVoicevox}
-                  options={VOICEVOX_ZUNDAMON}
-                  onChange={(v) => setSetting("ttsVoiceVoicevox", v)}
-                />
-              </Row>
+              <>
+                <Row label="話者（ずんだもん）">
+                  <Choice
+                    value={s.ttsVoiceVoicevox}
+                    options={VOICEVOX_ZUNDAMON}
+                    onChange={(v) => setSetting("ttsVoiceVoicevox", v)}
+                  />
+                </Row>
+                <Row label="ずんだもんの音量">
+                  <Slider value={s.ttsZundamonVolume} onChange={(v) => setSetting("ttsZundamonVolume", v)} />
+                </Row>
+                <p className="muted ds-note">
+                  ずんだもんは他のキャラより声が大きめなので、少し下げて他の声や通知音と音量を揃えられます。
+                  ずんだもんの声で読むときだけ効きます。
+                </p>
+              </>
             )}
             {s.ttsProvider !== "voicevox" && (
               <Row label="話者（Polly）">
@@ -163,6 +177,11 @@ export function TtsTab() {
                   ツール実行で途中経過と確定した応答だけを小声で読み、最終回答は通常の声へ戻します。
                   同じキャラに対応スタイルが無い場合や Polly では、同じ声の音量を下げて読みます。
                 </p>
+                {s.ttsWorkRead !== "off" && (
+                  <Row label="作業過程の音量">
+                    <Slider value={s.ttsWorkVolume} onChange={(v) => setSetting("ttsWorkVolume", v)} />
+                  </Row>
+                )}
                 <Row label="開いている全ペインで読む">
                   <OnOff value={s.ttsAutoReadAllPanes} onChange={(v) => setSetting("ttsAutoReadAllPanes", v)} />
                 </Row>
