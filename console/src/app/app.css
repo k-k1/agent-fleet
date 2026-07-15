@@ -89,6 +89,14 @@
   min-height: 0;
   display: flex;
   padding: 6px;
+  /* Confine every pane-internal z-index (e.g. .term-empty z-index:20, pane
+     controls/dividers) to this subtree. Without it, since neither .app-body nor
+     .panehost establishes a stacking context, those z-indexes leak into the root
+     context and tie/beat the overlay rail (.app-rail z-index:20) — and being
+     later in the DOM, the pane content then paints OVER the double-click overlay
+     left pane. Isolating here keeps main content strictly below the shell chrome
+     (overlay rail + backdrop). */
+  isolation: isolate;
 }
 
 /* Mobile: the rail is an off-canvas drawer (hamburger / edge swipe). Overrides
