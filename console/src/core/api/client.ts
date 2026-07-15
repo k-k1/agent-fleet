@@ -111,7 +111,8 @@ const ERR_TEXT: Record<string, string> = {
   question_pending:
     "エージェントが質問への回答を待っています。質問カードから回答してから送信してください。",
   not_running: "セッションが停止しています。再開してから送信してください。",
-  driver_unavailable: "この操作は managed ドライバの実装（P2）後に利用できます。",
+  driver_unavailable: "このエージェント種別ではまだ managed ドライバを利用できません。",
+  runtime_failed: "エージェントの runtime（opencode serve）に接続できませんでした。",
 };
 
 // errText turns a `res.error` ({code, message}) into a user-facing string.
@@ -220,12 +221,22 @@ export interface TurnResult {
   ok: boolean;
   message?: string;
 }
-export async function sessionTurn(session: string, op: TurnOp, prompt?: string): Promise<TurnResult> {
+export async function sessionTurn(
+  session: string,
+  op: TurnOp,
+  prompt?: string,
+  // attachments: managed セッション専用のファイル添付（保存済み絶対パス）。driver が
+  // API 添付（opencode は v1 file part）へ変換する（docs/27 §10.2-3）。tui では
+  // Console が従来どおりパスをプロンプト本文へ織り込むので渡さない。
+  attachments?: string[],
+): Promise<TurnResult> {
   const fail = (e: unknown): TurnResult => ({ ok: false, message: errText(e as ApiError) || "送信に失敗しました" });
+  const body: Record<string, unknown> = op === "interrupt" ? { op } : { op, prompt };
+  if (op !== "interrupt" && attachments?.length) body.attachments = attachments;
   const r = await apiJSON(
     `api/sessions/${encodeURIComponent(session)}/turn`,
     "POST",
-    op === "interrupt" ? { op } : { op, prompt },
+    body,
   ).catch(() => ({ error: { message: "通信エラー" } }));
   const err = r?.error as ApiError | undefined;
   if (!err) return { ok: true };
@@ -260,6 +271,16 @@ export const sessionRespond = (
     decision: "answer",
     answers,
   }).then((r) => !r?.error);
+
+// sessionSettings updates a MANAGED session's dynamic thread settings（docs/27
+// §9.4-3: 稼働中セッションのモデル / effort / モード変更 — managed で初めて可能に
+// なる）。空フィールドは「変更しない」。tui セッションのモード切替は従来どおり
+// /input のキー操作（planCycleKey）なので、ここは managed だけが呼ぶ。
+export const sessionSettings = (
+  session: string,
+  s: { model?: string; effort?: string; mode?: "plan" | "normal" },
+): Promise<boolean> =>
+  apiJSON(`api/sessions/${encodeURIComponent(session)}/settings`, "POST", s).then((r) => !r?.error);
 
 // Upload one pasted image to a session (multipart, field "file"). Returns the saved
 // absolute path + basename so the composer can reference it in the prompt (claude reads

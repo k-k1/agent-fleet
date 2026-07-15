@@ -12,7 +12,6 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
 
@@ -58,7 +57,7 @@ func handleSessionMessages(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
 		return
 	}
-	alive := tmuxx.HasSession(session.TmuxName(name))
+	alive := sessionAlive(meta)
 	// heal=true: self-correct a stale waiting/working cache when the pane is back at
 	// the ready prompt (rejected permission, abandoned question, killed+resumed).
 	state := driveState(meta, alive, true)
@@ -323,8 +322,21 @@ func handleGenericMessages(w http.ResponseWriter, r *http.Request, meta session.
 	// the rollout's per-turn mode is a stale snapshot (the last turn's), which made a
 	// stopped codex show 計画モードON. When not alive, or the composer isn't drawn yet,
 	// report no mode (the Console shows the default, normal).
+	// managed（docs/27 §10.2-5）: pane が無いので TranscriptData.Mode（driver 設定 ＝
+	// 次 turn が使う値、無ければ db の最後の turn の agent）からの射影で供給する。
 	if alive {
-		if pm := paneMode(meta.Kind, session.TmuxName(meta.Name)); pm != "" {
+		if meta.DriverKind() == session.DriverManaged {
+			switch td.Mode {
+			case "plan":
+				resp["mode"] = "Plan"
+			case "normal":
+				if meta.Kind == session.KindOpencode {
+					resp["mode"] = "Build" // opencode の非 plan agent 名（Console の defaultModeLabel と同語彙）
+				} else {
+					resp["mode"] = "Default"
+				}
+			}
+		} else if pm := paneMode(meta.Kind, session.TmuxName(meta.Name)); pm != "" {
 			resp["mode"] = pm
 		}
 	}

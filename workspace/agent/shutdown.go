@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
@@ -59,7 +60,12 @@ func stopGraceBudget() time.Duration {
 func gracefulShutdown(budget time.Duration) {
 	deadline := time.Now().Add(budget)
 	live := tmuxx.LiveSessionNames()
+	// managed セッション（docs/27 §10.2-8）: pane の C-c に相当する abort を配る。
+	// turn goroutine が cancelled を刻み status ストアが idle へ戻るので、下の
+	// anySessionWorking 待ちが tui と同じ条件で解ける。
+	opencode.AbortManaged()
 	if len(live) == 0 {
+		opencode.Serve().Shutdown()
 		_ = exec.Command("tmux", "kill-server").Run()
 		return
 	}
@@ -83,6 +89,8 @@ func gracefulShutdown(budget time.Duration) {
 	// Short settle for panes without status hooks (shells, builds) so their
 	// foreground processes can run SIGINT handlers before the server goes away.
 	time.Sleep(time.Second)
+	// serve daemon は abort が済んだ後なので drain は即座に抜ける（SIGTERM で終了）。
+	opencode.Serve().Shutdown()
 	_ = exec.Command("tmux", "kill-server").Run()
 }
 

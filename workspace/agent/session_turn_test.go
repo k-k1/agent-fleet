@@ -115,11 +115,14 @@ func TestHandleSessionTurnQuestionPendingGate(t *testing.T) {
 	}
 }
 
-// managed セッションへの /turn・/respond は driver 登録（P2）まで正直に 501。
+// driver 未登録の kind（P2 時点では claude/codex）の managed セッションへの
+// /turn・/respond は正直に 501。opencode は登録済みなので runtime（serve）が
+// 使えない環境では 502 runtime_failed に落ちる — 無効化フラグで決定的に再現する。
 func TestHandleSessionTurnManagedUnavailable(t *testing.T) {
 	fakeTmux(t)
 	const name = "turn_managed"
-	session.WriteMeta(session.Meta{Name: name, Dir: t.TempDir(), Kind: session.KindOpencode, Driver: session.DriverManaged})
+	// claude に managed driver は無い（ADR 0015 — 対象外）→ 501。
+	session.WriteMeta(session.Meta{Name: name, Dir: t.TempDir(), Kind: session.KindClaude, Driver: session.DriverManaged})
 
 	rec := postTurn(t, name, `{"op":"start","prompt":"x"}`)
 	if rec.Code != http.StatusNotImplemented || !strings.Contains(rec.Body.String(), "driver_unavailable") {
@@ -133,6 +136,20 @@ func TestHandleSessionTurnManagedUnavailable(t *testing.T) {
 	handleSessionRespond(rec, req)
 	if rec.Code != http.StatusNotImplemented || !strings.Contains(rec.Body.String(), "driver_unavailable") {
 		t.Fatalf("respond status = %d, body = %s, want 501 driver_unavailable", rec.Code, rec.Body.String())
+	}
+}
+
+// opencode の managed は P2 で解禁済み — /turn は ThreadHandle へ向かい、runtime が
+// 起こせない環境では 502 runtime_failed で正直に落ちる（501 ではない）。
+func TestHandleSessionTurnManagedOpencodeNeedsRuntime(t *testing.T) {
+	fakeTmux(t)
+	t.Setenv("AF_OPENCODE_SERVE_DISABLE", "1")
+	const name = "turn_mng_oc"
+	session.WriteMeta(session.Meta{Name: name, Dir: t.TempDir(), Kind: session.KindOpencode, Driver: session.DriverManaged})
+
+	rec := postTurn(t, name, `{"op":"start","prompt":"x"}`)
+	if rec.Code != http.StatusBadGateway || !strings.Contains(rec.Body.String(), "runtime_failed") {
+		t.Fatalf("status = %d, body = %s, want 502 runtime_failed", rec.Code, rec.Body.String())
 	}
 }
 
@@ -169,16 +186,47 @@ func TestHandleSessionTurnValidation(t *testing.T) {
 	}
 }
 
-// 作成 API は managed を受けたら（P2 で解禁するまで）副作用より前に明示拒否。
-// 既定（"" / "tui"）は Driver を空で永続化する — 既存メタとバイト同一。
-func TestCreateSessionRejectsManagedDriver(t *testing.T) {
-	fakeTmux(t)
+// 作成 API の driver バリデーション（docs/27 P2）: managed は driver 登録済みの
+// kind（opencode）だけ受理し、未登録 kind（claude 等）は副作用より前に明示拒否。
+// 未知値は bad_driver。受理された managed 作成は runtime 不可の環境では 502 で
+// 落ちる（tmux セッションは一切作らない）。
+func TestCreateSessionManagedDriverGate(t *testing.T) {
+	logPath := fakeTmux(t)
+	// allocSessionName は tmux の has-session で名前占有を見る — 既定スタブは常に
+	// exit 0（=どの名前も使用中）で無限ループするので、無し（exit 1）に差し替える。
+	script := `#!/bin/sh
+printf '%s\n' "$*" >> "$TMUX_TEST_LOG"
+case "$1" in
+  has-session) exit 1 ;;
+  list-panes) printf '1 %%7\n' ;;
+  load-buffer) /bin/cat > /dev/null ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(filepath.Dir(logPath), "tmux"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AF_OPENCODE_SERVE_DISABLE", "1")
+
+	// claude は managed 対象外（ADR 0015）→ 400 driver_unsupported。
 	req := httptest.NewRequest(http.MethodPost, "/sessions",
-		strings.NewReader(`{"kind":"opencode","driver":"managed"}`))
+		strings.NewReader(`{"kind":"claude","driver":"managed"}`))
 	rec := httptest.NewRecorder()
 	handleCreateSession(rec, req)
 	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "driver_unsupported") {
-		t.Fatalf("status = %d, body = %s, want 400 driver_unsupported", rec.Code, rec.Body.String())
+		t.Fatalf("claude managed: status = %d, body = %s, want 400 driver_unsupported", rec.Code, rec.Body.String())
+	}
+
+	// opencode は解禁済み — バリデーションは通り、runtime が無効なので 502 になる。
+	req = httptest.NewRequest(http.MethodPost, "/sessions",
+		strings.NewReader(`{"kind":"opencode","driver":"managed"}`))
+	rec = httptest.NewRecorder()
+	handleCreateSession(rec, req)
+	if rec.Code != http.StatusBadGateway || !strings.Contains(rec.Body.String(), "runtime_failed") {
+		t.Fatalf("opencode managed: status = %d, body = %s, want 502 runtime_failed", rec.Code, rec.Body.String())
+	}
+	// tmux セッションを作っていない（managed は pane を持たない）。
+	if got, _ := os.ReadFile(logPath); strings.Contains(string(got), "new-session") {
+		t.Fatalf("managed create must not spawn tmux, log = %q", got)
 	}
 
 	req = httptest.NewRequest(http.MethodPost, "/sessions",

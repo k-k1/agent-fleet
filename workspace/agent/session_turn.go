@@ -1,11 +1,11 @@
 package main
 
-// docs/27 P1.5: セッション操作の意味論エンドポイント。Console のチャット送信・追撃・
+// docs/27 P1.5/P2: セッション操作の意味論エンドポイント。Console のチャット送信・追撃・
 // 中断を turn/start・turn/steer・turn/interrupt 相当の操作として受け、質問応答を
 // Interaction 応答（§5）として受ける。managed driver のセッションは driverOf →
 // ThreadHandle へ落ち（P2: opencode serve / P3: codex app-server）、tui（従来）の
 // セッションは既存の tmux 経路へ委譲する — Console はドライバの別を知らずに同じ
-// 呼び出しで済む。/input（生の keys/seq 駆動）は CLI ルートの TUI モーダル操作用に
+// 呼び出しで済む。/input（生 keys/seq 駆動）は CLI ルートの TUI モーダル操作用に
 // 従来どおり残る（両者の役割分担: /turn = 意味論、/input = 生 TUI 駆動）。
 
 import (
@@ -14,17 +14,23 @@ import (
 	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 )
 
-// driverOf resolves the managed driver for a session's kind. P1.5 では登録はまだ
-// 無い（P2 で opencode が初出）— Console/ワイヤ側の受け皿を先に確定するため、
-// seam だけ切っておく。登録が入るまで managed セッションへの /turn・/respond は
-// driver_unavailable で正直に落ちる。
+// managedDrivers is the kind → managed Driver registry（docs/27 §3）。P2 で opencode
+// が初出、P3 で codex が加わる。tui ドライバはここに載らない（ThreadHandle を実装
+// しない — /turn ハンドラが tmux 経路へ直接委譲する）。
+var managedDrivers = map[string]agents.Driver{
+	session.KindOpencode: opencode.NewDriver(),
+}
+
+// driverOf resolves the managed driver for a session's kind.
 func driverOf(m session.Meta) (agents.Driver, bool) {
-	return nil, false
+	d, ok := managedDrivers[m.Kind]
+	return d, ok
 }
 
 // turnReq is the wire body of POST /sessions/{name}/turn.
@@ -32,18 +38,18 @@ type turnReq struct {
 	Op     string `json:"op"` // "start" | "steer" | "interrupt"
 	Prompt string `json:"prompt"`
 	// Attachments: この turn に添付するファイルの絶対パス（docs/27 §10）。managed
-	// driver だけが解釈する（P2/P3 で API 添付へ）。tui では Console が従来どおり
-	// プロンプト本文へパスを織り込むため、ここでは受けるだけで使わない。
+	// driver だけが解釈する（TurnInput.Attachments → API 添付）。tui では Console が
+	// 従来どおりプロンプト本文へパスを織り込むため、ここでは受けるだけで使わない。
 	Attachments []string `json:"attachments"`
-	// ClientMessageID: AF 採番の冪等キー（docs/27 §4）。台帳は P2 の turn 状態機械と
-	// 同時に導入するため、P1.5 では受けて応答へ返すだけ。
+	// ClientMessageID: AF 採番の冪等キー（docs/27 §4）。managed driver の台帳が再送を
+	// 冪等化する。空なら driver が採番する。
 	ClientMessageID string `json:"clientMessageID"`
 }
 
 // handleSessionTurn (POST /sessions/{name}/turn) applies a semantic turn operation
 // to a session. start と steer は tui では同じ type+submit に落ちる（実行中 turn への
-// 入力は TUI 自身がキューする）が、Console が意味を区別して送ることで managed の
-// turn/start・turn/steer（P2/P3）へそのまま接続できる。
+// 入力は TUI 自身がキューする）が、managed では ThreadHandle.Send / Steer に接続する
+// （opencode は driver 内キュー — 完走後に次 turn として投入）。
 func handleSessionTurn(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if !session.ValidName(name) {
@@ -65,14 +71,7 @@ func handleSessionTurn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if meta.DriverKind() == session.DriverManaged {
-		if _, ok := driverOf(meta); !ok {
-			httpx.WriteErr(w, http.StatusNotImplemented, "driver_unavailable",
-				"managed driver はこの kind ではまだ利用できません")
-			return
-		}
-		// P2: ThreadHandle.Send/Steer/Interrupt へ接続（TurnInput{Prompt, Attachments,
-		// ClientMessageID}）。driverOf が常に false を返す間はここへ到達しない。
-		httpx.WriteErr(w, http.StatusNotImplemented, "driver_unavailable", "managed driver は未実装です")
+		handleManagedTurn(w, meta, req)
 		return
 	}
 	// tui ルート: 既存の tmux 経路へ委譲。ガード（not_running / no_pane /
@@ -116,6 +115,55 @@ func handleSessionTurn(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"sent": name, "op": req.Op})
 }
 
+// handleManagedTurn routes a turn op to the session's ThreadHandle（docs/27 P2）。
+// Resume は冪等（生きた handle があればそれを返す）なので毎回呼んでよく、halted →
+// 送信 の流れでも runtime が立ち上がる。
+func handleManagedTurn(w http.ResponseWriter, meta session.Meta, req turnReq) {
+	d, ok := driverOf(meta)
+	if !ok {
+		httpx.WriteErr(w, http.StatusNotImplemented, "driver_unavailable",
+			"managed driver はこの kind ではまだ利用できません")
+		return
+	}
+	h, err := d.Resume(meta)
+	if err != nil {
+		httpx.WriteErr(w, http.StatusBadGateway, "runtime_failed", err.Error())
+		return
+	}
+	switch req.Op {
+	case "interrupt":
+		if err := h.Interrupt(); err != nil {
+			httpx.WriteErr(w, http.StatusBadGateway, "runtime_failed", err.Error())
+			return
+		}
+	default: // start / steer
+		if strings.TrimSpace(req.Prompt) == "" && len(req.Attachments) == 0 {
+			httpx.WriteErr(w, http.StatusBadRequest, "empty_prompt", "prompt is required for start/steer")
+			return
+		}
+		in := agents.TurnInput{Prompt: req.Prompt, Attachments: req.Attachments, ClientMessageID: req.ClientMessageID}
+		if req.Op == "steer" {
+			err = h.Steer(in)
+		} else {
+			err = h.Send(in)
+		}
+		if err != nil {
+			if opencode.ErrQuestionPending(err) {
+				// tui の submitPromptTUI と同じワイヤ契約（Console はこの code で
+				// 楽観 echo を取り消し質問カードへ誘導する）。
+				httpx.WriteErr(w, http.StatusConflict, "question_pending",
+					"a question is awaiting an answer; answer it via the question card, not free text")
+				return
+			}
+			httpx.WriteErr(w, http.StatusBadGateway, "runtime_failed", err.Error())
+			return
+		}
+		// 楽観 working は tui と同じ動機（送信直後のポーリングが古い idle を読まない）。
+		markSessionWorking(meta.Name)
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"sent": meta.Name, "op": req.Op})
+}
+
 // handleSessionRespond (POST /sessions/{name}/respond) answers a pending
 // Interaction（docs/27 §5 — 承認/質問の一般形）by id. managed driver 専用の意味論
 // 経路で、tui セッションの質問応答は従来どおり /input の keys/seq（Console が TUI
@@ -151,11 +199,81 @@ func handleSessionRespond(w http.ResponseWriter, r *http.Request) {
 			"tui セッションの質問は keys/seq（/input）で TUI モーダルを駆動して答えます")
 		return
 	}
-	if _, ok := driverOf(meta); !ok {
+	d, ok := driverOf(meta)
+	if !ok {
 		httpx.WriteErr(w, http.StatusNotImplemented, "driver_unavailable",
 			"managed driver はこの kind ではまだ利用できません")
 		return
 	}
-	// P2: ThreadHandle.Respond(reply) へ接続。driverOf が常に false の間は到達しない。
-	httpx.WriteErr(w, http.StatusNotImplemented, "driver_unavailable", "managed driver は未実装です")
+	h, err := d.Resume(meta)
+	if err != nil {
+		httpx.WriteErr(w, http.StatusBadGateway, "runtime_failed", err.Error())
+		return
+	}
+	if err := h.Respond(reply); err != nil {
+		httpx.WriteErr(w, http.StatusConflict, "respond_failed", err.Error())
+		return
+	}
+	// 回答は turn を続行させる — 楽観 working は tui の keys 送信（Enter）と同じ動機。
+	markSessionWorking(name)
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"responded": name, "id": reply.ID})
+}
+
+// settingsReq is the wire body of POST /sessions/{name}/settings — ThreadSettings
+// の動的更新（docs/27 §9.4-3、managed 専用）。空フィールドは「変更しない」。tui の
+// モード切替は従来どおり /input のキー（planCycleKey）で行う。
+type settingsReq struct {
+	Model  string `json:"model"`
+	Effort string `json:"effort"`
+	Mode   string `json:"mode"` // "plan" | "normal"
+}
+
+// handleSessionSettings (POST /sessions/{name}/settings) updates a managed
+// session's dynamic thread settings（稼働中セッションのモデル/effort/モード変更 —
+// managed で初めて可能になる純粋な改善、§9.4-3）。
+func handleSessionSettings(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if !session.ValidName(name) {
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
+		return
+	}
+	var req settingsReq
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_body", "invalid JSON body")
+		return
+	}
+	if req.Mode != "" && req.Mode != "plan" && req.Mode != "normal" {
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_mode", `mode must be "plan" or "normal"`)
+		return
+	}
+	if req.Model == "" && req.Effort == "" && req.Mode == "" {
+		httpx.WriteErr(w, http.StatusBadRequest, "empty_settings", "nothing to update")
+		return
+	}
+	meta, ok := session.ReadMeta(name)
+	if !ok {
+		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
+		return
+	}
+	if meta.DriverKind() != session.DriverManaged {
+		httpx.WriteErr(w, http.StatusNotImplemented, "settings_unsupported",
+			"tui セッションの設定はターミナル（/input のキー操作）で切り替えます")
+		return
+	}
+	d, ok := driverOf(meta)
+	if !ok {
+		httpx.WriteErr(w, http.StatusNotImplemented, "driver_unavailable",
+			"managed driver はこの kind ではまだ利用できません")
+		return
+	}
+	h, err := d.Resume(meta)
+	if err != nil {
+		httpx.WriteErr(w, http.StatusBadGateway, "runtime_failed", err.Error())
+		return
+	}
+	if err := h.UpdateSettings(agents.ThreadSettings{Model: req.Model, Effort: req.Effort, Mode: req.Mode}); err != nil {
+		httpx.WriteErr(w, http.StatusBadGateway, "runtime_failed", err.Error())
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"updated": name})
 }

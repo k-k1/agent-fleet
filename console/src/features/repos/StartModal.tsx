@@ -100,7 +100,7 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
   const startShell = async () => {
     if (busy) return;
     setBusy(true);
-    const r = await startWork({ dir: "", repo: "" }, { kind: "shell", model: "", prompt: "", images: [], worktree: false, base: "", newBranch: "" });
+    const r = await startWork({ dir: "", repo: "" }, { kind: "shell", driver: "", model: "", prompt: "", images: [], worktree: false, base: "", newBranch: "" });
     setBusy(false);
     if (r.ok) onClose();
   };
@@ -214,7 +214,17 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
     setBusy(true);
     const r = await startWork(
       { dir: "", repo: "" },
-      { kind, model: agentOf(kind).caps.model ? model : "", prompt: prompt.trim(), images: [], worktree: false, base: "", newBranch: "" },
+      {
+        kind,
+        // 起動ハブの repo-less 起動も新規の既定は managed（docs/27 §9.2 — opencode）。
+        driver: agentOf(kind).managedDriver ? "managed" : "",
+        model: agentOf(kind).caps.model ? model : "",
+        prompt: prompt.trim(),
+        images: [],
+        worktree: false,
+        base: "",
+        newBranch: "",
+      },
     );
     setBusy(false);
     if (r.ok) onClose();

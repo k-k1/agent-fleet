@@ -1,6 +1,10 @@
 package main
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
+)
 
 func TestExitReason(t *testing.T) {
 	cases := []struct {
@@ -24,8 +28,8 @@ func TestExitReason(t *testing.T) {
 		if c.code >= 128 {
 			sig = c.code - 128
 		}
-		if got := exitReason(c.code, sig, c.oom); got != c.want {
-			t.Errorf("%s: exitReason(%d, %d, %v) = %q, want %q", c.name, c.code, sig, c.oom, got, c.want)
+		if got := status.ExitReasonFor(c.code, sig, c.oom); got != c.want {
+			t.Errorf("%s: status.ExitReasonFor(%d, %d, %v) = %q, want %q", c.name, c.code, sig, c.oom, got, c.want)
 		}
 	}
 }
@@ -33,10 +37,10 @@ func TestExitReason(t *testing.T) {
 // An OOM claim requires the SIGKILL signal, not just the oom flag — a process that
 // exits some other way while the container happens to have OOMed elsewhere is not "oom".
 func TestExitReasonOOMNeedsSigkill(t *testing.T) {
-	if got := exitReason(1, 0, true); got != "crashed" {
+	if got := status.ExitReasonFor(1, 0, true); got != "crashed" {
 		t.Errorf("nonzero exit with oom flag = %q, want crashed", got)
 	}
-	if got := exitReason(139, 11, true); got != "crashed" {
+	if got := status.ExitReasonFor(139, 11, true); got != "crashed" {
 		t.Errorf("segfault with oom flag = %q, want crashed", got)
 	}
 }

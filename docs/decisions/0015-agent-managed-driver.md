@@ -1,6 +1,8 @@
 # 0015. エージェント制御の Managed Driver 化 — 共有 runtime＋構造化 RPC を既定・read 層温存・CLI ルート常設
 
-- 状態: 確定（2026-07-15）・実装中——P1（Codex 観測拡張）・P1.5（Console 受け皿＋Driver 層 IF）済み、次は P2（OpenCode managed 化）
+- 状態: 確定（2026-07-15）・実装中——P1（Codex 観測拡張）・P1.5（Console 受け皿＋Driver 層 IF）・
+  P2（OpenCode managed 化 — Driver/RuntimeSupervisor/turn 状態機械/Interaction/reconciliation の初出、
+  managed 作成解禁・opencode 新規既定＝managed。実測記録は docs/27 §12.2）済み、次は P3（Codex managed 化）
 - 関連: [27-agent-managed-driver.md](../27-agent-managed-driver.md)（設計本体）/
   [0012-go-internal-refactor.md](0012-go-internal-refactor.md)（`internal/agents` の Agent IF——本決定が増築する read 層）/
   [0014-agent-exit-recording.md](0014-agent-exit-recording.md)（pane ラッパー——managed 化で supervisor へ移設）

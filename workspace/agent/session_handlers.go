@@ -5,6 +5,7 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
@@ -14,11 +15,30 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 )
+
+// managedAlive reports a managed session's liveness — the runtime-handle
+// counterpart of tmuxx.HasSession（docs/27 P2。kind ごとの実装は各縦割りパッケージ）。
+func managedAlive(m session.Meta) bool {
+	if m.Kind == session.KindOpencode {
+		return opencode.ManagedAlive(m.Name)
+	}
+	return false
+}
+
+// dropManagedRuntime detaches a managed session from its runtime (stop / halt /
+// archive / recreate の tmux kill-session に相当): 実行中 turn を abort し handle を
+// 忘れる。会話の正本（SQLite）はそのまま残り、再開（Resume）で再接続できる。
+func dropManagedRuntime(m session.Meta) {
+	if m.Kind == session.KindOpencode {
+		opencode.DropHandle(m.Name)
+	}
+}
 
 // handleListSessions returns the live claude_* tmux sessions.
 // We query names and each session's cwd separately rather than packing both
@@ -31,6 +51,14 @@ func handleListSessions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	live := tmuxx.LiveSessionNames()
+	// managed セッション（docs/27 P2）は tmux を持たない — 生存は runtime handle が
+	// 基準（daemon 死や Agent 再起動で handle が落ちれば 停止中 に見え、reconcile /
+	// 再開クリックで復帰する。tui の「tmux がある＝生きている」と同型の規約）。
+	for name, m := range metas {
+		if m.DriverKind() == session.DriverManaged && managedAlive(m) {
+			live[name] = true
+		}
+	}
 
 	now := time.Now()
 	ttl := session.StoppedTTL()
@@ -163,11 +191,15 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	case "", session.DriverTUI:
 		driver = ""
 	case session.DriverManaged:
-		// docs/27 P1.5: ワイヤの受け口だけ先行。managed セッションの起動（thread/start
-		// と supervisor 管理）は P2 の opencode driver 実装で解禁する。
-		httpx.WriteErr(w, http.StatusBadRequest, "driver_unsupported",
-			"managed ドライバはまだ利用できません（P2 で opencode から対応予定）")
-		return
+		// docs/27 P2: opencode から解禁（driverOf に登録済みの kind だけ）。codex は
+		// P3、claude は対象外（ADR 0015）。kind はこの後 normalizeKind で claude に
+		// 化け得るので、正規化後の値でなく生の req.Kind で判定してはいけない —
+		// ここで normalize して以降もその値を使う。
+		if _, ok := managedDrivers[normalizeKind(req.Kind)]; !ok {
+			httpx.WriteErr(w, http.StatusBadRequest, "driver_unsupported",
+				"managed ドライバはこの kind ではまだ利用できません（P2: opencode のみ）")
+			return
+		}
 	default:
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_driver", "unknown driver: "+req.Driver)
 		return
@@ -273,6 +305,27 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		Repo: filepath.Base(req.Dir), Branch: gitCurrentBranch(req.Dir),
 		CreatedAt: time.Now().Format(time.RFC3339), SSM: ssm,
 	}
+	if meta.DriverKind() == session.DriverManaged {
+		// managed（docs/27 P2）: tmux pane を作らず、driver が共有 runtime に thread
+		// を起こす。初回プロンプトは boot 画面スクレイプ不要でそのまま Send できる
+		// （§10.2-9 — ClientMessageID で冪等）。
+		d, _ := driverOf(meta)
+		h, err := d.Resume(meta)
+		if err != nil {
+			httpx.WriteErr(w, http.StatusBadGateway, "runtime_failed", err.Error())
+			return
+		}
+		session.WriteMeta(meta)
+		if p := strings.TrimSpace(req.InitialPrompt); p != "" {
+			if err := h.Send(agents.TurnInput{Prompt: p}); err != nil {
+				log.Printf("managed initial prompt %s: %v", name, err)
+			} else {
+				markSessionWorking(name)
+			}
+		}
+		httpx.WriteJSON(w, http.StatusCreated, wireSession(meta, true))
+		return
+	}
 	if err := startSessionTmux(meta, req.SSMForceLogin); err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "tmux_failed", err.Error())
 		return
@@ -318,14 +371,31 @@ func handleForkSession(w http.ResponseWriter, r *http.Request) {
 	}
 	forkName := allocSessionName(src.Dir)
 	title, _ := cleanTitle(forkTitle(src))
+	// Driver は継承する — managed セッションの分岐は managed のまま（runtime の
+	// fork API で複製、docs/27 P2）。tui は従来の CLI fork 起動。
 	meta := session.Meta{
-		Name: forkName, Dir: src.Dir, Model: src.Model, Kind: src.Kind, Title: title,
+		Name: forkName, Dir: src.Dir, Model: src.Model, Kind: src.Kind, Driver: src.Driver, Title: title,
 		Repo:      filepath.Base(src.Dir),
 		Branch:    gitCurrentBranch(src.Dir),
 		CreatedAt: time.Now().Format(time.RFC3339), ForkFrom: forkFrom,
 	}
 	if ag.Caps().UsesLabel {
 		meta.Label = sessionLabelFor(src.Dir, title)
+	}
+	if meta.DriverKind() == session.DriverManaged {
+		d, ok := driverOf(meta)
+		if !ok {
+			httpx.WriteErr(w, http.StatusNotImplemented, "driver_unavailable",
+				"managed driver はこの kind ではまだ利用できません")
+			return
+		}
+		if _, err := d.Resume(meta); err != nil {
+			httpx.WriteErr(w, http.StatusBadGateway, "runtime_failed", err.Error())
+			return
+		}
+		session.WriteMeta(meta)
+		httpx.WriteJSON(w, http.StatusCreated, wireSession(meta, true))
+		return
 	}
 	if err := startSessionTmux(meta, false); err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "tmux_failed", err.Error())
@@ -353,6 +423,7 @@ func handleStopSession(w http.ResponseWriter, r *http.Request) {
 	if hadMeta {
 		status.Remove(session.UUID(meta.Dir, name))
 		status.RemoveExit(name)
+		dropManagedRuntime(meta) // managed: 実行中 turn を abort し handle を忘れる
 	}
 	if live {
 		if out, err := exec.Command("tmux", "kill-session", "-t", session.ExactTarget(tn)).CombinedOutput(); err != nil {
@@ -384,6 +455,17 @@ func handleHaltSession(w http.ResponseWriter, r *http.Request) {
 	m, ok := session.ReadMeta(name)
 	if !ok {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
+		return
+	}
+	if m.DriverKind() == session.DriverManaged {
+		// managed の halt = runtime handle を落とす（daemon は共有なので止めない）。
+		// メタは残るので row は 停止中（再開可能）になる — tui の kill-session と同じ
+		// 意味論。実行中 turn は DropHandle が abort する。
+		dropManagedRuntime(m)
+		status.Remove(session.UUID(m.Dir, name))
+		m.StoppedAt = time.Now().Format(time.RFC3339)
+		session.WriteMeta(m)
+		httpx.WriteJSON(w, http.StatusOK, wireSession(m, false))
 		return
 	}
 	tn := session.TmuxName(name)
@@ -425,6 +507,7 @@ func handleArchiveSession(w http.ResponseWriter, r *http.Request) {
 	if tn := session.TmuxName(name); tmuxx.HasSession(tn) {
 		_ = exec.Command("tmux", "kill-session", "-t", session.ExactTarget(tn)).Run()
 	}
+	dropManagedRuntime(m) // managed: pane の代わりに runtime handle を落とす
 	status.Remove(session.UUID(m.Dir, name))
 	status.RemoveExit(name)
 	m.Archived = true
@@ -488,20 +571,35 @@ func handleRecreateSession(w http.ResponseWriter, r *http.Request) {
 	if tn := session.TmuxName(name); tmuxx.HasSession(tn) {
 		_ = exec.Command("tmux", "kill-session", "-t", session.ExactTarget(tn)).Run()
 	}
+	dropManagedRuntime(m) // managed: pane の代わりに runtime handle を落とす
 	status.Remove(session.UUID(m.Dir, m.Name))
 	status.RemoveExit(m.Name)
 	m.Archived = true
 	session.WriteMeta(m)
 
 	// Fresh identity, same slot. No ForkFrom — recreate means "start empty", not
-	// "re-copy the fork source".
+	// "re-copy the fork source". Driver は引き継ぐ（managed で作った枠は managed の
+	// まま作り直す — docs/27 P2）。
 	newMeta := session.Meta{
-		Name: allocSessionName(m.Dir), Dir: m.Dir, Model: m.Model, Kind: m.Kind,
+		Name: allocSessionName(m.Dir), Dir: m.Dir, Model: m.Model, Kind: m.Kind, Driver: m.Driver,
 		Title: m.Title, Color: m.Color, Repo: m.Repo, Branch: gitCurrentBranch(m.Dir),
 		CreatedAt: time.Now().Format(time.RFC3339), SSM: m.SSM,
 	}
 	if agentOf(newMeta.Kind).Caps().UsesLabel {
 		newMeta.Label = sessionLabelFor(newMeta.Dir, newMeta.Title)
+	}
+	if newMeta.DriverKind() == session.DriverManaged {
+		if d, ok := driverOf(newMeta); ok {
+			if _, err := d.Resume(newMeta); err != nil {
+				m.Archived = false
+				session.WriteMeta(m)
+				httpx.WriteErr(w, http.StatusBadGateway, "runtime_failed", err.Error())
+				return
+			}
+		}
+		session.WriteMeta(newMeta)
+		httpx.WriteJSON(w, http.StatusOK, wireSession(newMeta, true))
+		return
 	}
 	if err := startSessionTmux(newMeta, false); err != nil {
 		// Un-archive the old session so a launch failure doesn't silently drop it from

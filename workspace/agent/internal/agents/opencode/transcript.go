@@ -144,9 +144,11 @@ func readTranscript(m session.Meta) (agents.TranscriptData, bool) {
 	path := dbPath()
 	ses := activeSession(db, m)
 	if ses == "" {
-		return agents.TranscriptData{Path: path}, true
+		td := agents.TranscriptData{Path: path}
+		managedEnrich(m, &td)
+		return td, true
 	}
-	return agents.TranscriptData{
+	td := agents.TranscriptData{
 		Turns:      readSession(db, ses),
 		Path:       path,
 		Tasks:      tasks(db, ses),
@@ -154,7 +156,11 @@ func readTranscript(m session.Meta) (agents.TranscriptData, bool) {
 		Mode:       mode(db, ses),
 		Queued:     queued(db, ses),
 		Compacting: compacting(db, ses),
-	}, true
+	}
+	// managed セッション（docs/27 P2）: driver の runtime 状態を合流 — pending 質問へ
+	// Interaction id（/respond の宛先）、driver 内キューを キュー済み へ。
+	managedEnrich(m, &td)
+	return td, true
 }
 
 // queued returns the prompts sitting in opencode's mid-run input queue — typed while a
