@@ -10,6 +10,7 @@ import (
 	"os"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 )
@@ -66,14 +67,17 @@ func main() {
 	// handled separately via its settings.json hook.
 	reconcileAgentRTK()
 	startTerminalHistoryJanitor()
-	// Codex TUI sessions use a shared local app-server when available. AF attaches
+	// Codex sessions use a shared local app-server when available（P3 からは
+	// codex.Serve() の RuntimeSupervisor が daemon を所有する）。AF attaches
 	// a read-only observer per loaded thread: compaction state, rate limits, and
 	// the model-switch observation log (docs/27 P1).
 	startCodexAppServer()
-	// managed opencode セッション（docs/27 P2）を再接続する — Agent 再起動を挟んでも
-	// tmux の tui セッションが生き残るのと同じ体感にする（§6 の reconciliation）。
-	// serve daemon が必要なら Ensure が起こす。managed メタが無ければ即 no-op。
+	// managed セッション（docs/27 P2: opencode / P3: codex）を再接続する — Agent
+	// 再起動を挟んでも tmux の tui セッションが生き残るのと同じ体感にする（§6 の
+	// reconciliation）。runtime が必要なら Ensure が起こす。managed メタが無ければ
+	// 即 no-op。
 	go opencode.ReconcileManaged("agent boot")
+	go codex.ReconcileManaged("agent boot")
 
 	addr := envOr("AGENT_ADDR", ":7700")
 

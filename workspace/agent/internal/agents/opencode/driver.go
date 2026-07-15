@@ -55,6 +55,10 @@ import (
 // runs for minutes/hours. Interrupt (abort) or daemon death unblocks it.
 var turnClient = &http.Client{}
 
+// ledger は ClientMessageID の永続台帳（§9.5 のプロセス跨ぎ永続化 — §12.2-3 の
+// 将来課題を P3 で解消。in-memory 台帳は Agent 再起動を跨ぐ再送に効かなかった）。
+var ledger = agents.NewMsgLedger("opencode-msgledger")
+
 // NewDriver returns the managed opencode Driver（driverOf が /turn・/respond から
 // 引く）。read 層は agentImpl をそのまま埋め込んで温存する。
 func NewDriver() agents.Driver { return managedDriver{} }
@@ -98,7 +102,6 @@ func (managedDriver) Resume(m session.Meta) (agents.ThreadHandle, error) {
 			dir:    m.Dir,
 			ocSid:  ocSid,
 			events: make(chan agents.Event, 64),
-			ledger: map[string]bool{},
 		}
 		handles[m.Name] = h
 	}
@@ -197,6 +200,10 @@ func DropHandle(name string) {
 	}
 }
 
+// RemoveLedger drops a session's ClientMessageID ledger（/stop — スロットの
+// アイデンティティごと破棄する時だけ。halt/archive は再開があるので残す）。
+func RemoveLedger(name string) { ledger.Remove(name) }
+
 // ManagedAlive reports whether the session has a live runtime handle — the
 // managed counterpart of tmuxx.HasSession for the sessions list.
 func ManagedAlive(name string) bool {
@@ -273,7 +280,6 @@ type threadHandle struct {
 	running  bool // a turn goroutine is in flight (pump busy)
 	pumping  bool
 	queue    []agents.TurnInput
-	ledger   map[string]bool // ClientMessageID 台帳（§9.5）— submit 済み
 	settings agents.ThreadSettings
 	inter    *agents.Interaction // pending question（waiting_interaction の中身）
 	events   chan agents.Event
@@ -361,11 +367,10 @@ func (h *threadHandle) accept(in agents.TurnInput) error {
 		h.mu.Unlock()
 		return errQuestionPending
 	}
-	if h.ledger[in.ClientMessageID] {
+	if ledger.SeenOrRecord(h.name, in.ClientMessageID) {
 		h.mu.Unlock()
-		return nil // 再送 — 台帳が冪等化（§4）
+		return nil // 再送 — 台帳（永続、プロセス跨ぎ）が冪等化（§4）
 	}
-	h.ledger[in.ClientMessageID] = true
 	h.queue = append(h.queue, in)
 	start := !h.pumping
 	if start {
@@ -382,8 +387,9 @@ func (h *threadHandle) accept(in agents.TurnInput) error {
 }
 
 // errQuestionPending is matched by the /turn handler to return the same
-// question_pending wire error the tui route uses.
-var errQuestionPending = errors.New("question pending")
+// question_pending wire error the tui route uses（P3 で kind 非依存の sentinel へ
+// 一本化 — codex driver も同じ値を返す）。
+var errQuestionPending error = agents.ErrQuestionPending
 
 // ErrQuestionPending reports whether err is the "answer the question first" guard.
 func ErrQuestionPending(err error) bool { return errors.Is(err, errQuestionPending) }
@@ -392,14 +398,12 @@ func ErrQuestionPending(err error) bool { return errors.Is(err, errQuestionPendi
 // user may be running their own turn — serve 側の直列化に賭けず自前で待つ), run the
 // blocking turn, repeat.
 func (h *threadHandle) pump() {
-	defer func() {
-		h.mu.Lock()
-		h.pumping = false
-		h.mu.Unlock()
-	}()
 	for {
 		h.mu.Lock()
 		if len(h.queue) == 0 || !h.alive {
+			// accept と同じ lock 内で停止を確定する。空判定後〜defer の隙間を
+			// 作ると、その間の入力が pumping=true を見て起動されず stranded になる。
+			h.pumping = false
 			h.mu.Unlock()
 			return
 		}

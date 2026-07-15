@@ -1,8 +1,9 @@
 # 0015. エージェント制御の Managed Driver 化 — 共有 runtime＋構造化 RPC を既定・read 層温存・CLI ルート常設
 
-- 状態: 確定（2026-07-15）・実装中——P1（Codex 観測拡張）・P1.5（Console 受け皿＋Driver 層 IF）・
+- 状態: 確定・P1〜P3 実装済み（2026-07-15）——P1（Codex 観測拡張）・P1.5（Console 受け皿＋Driver 層 IF）・
   P2（OpenCode managed 化 — Driver/RuntimeSupervisor/turn 状態機械/Interaction/reconciliation の初出、
-  managed 作成解禁・opencode 新規既定＝managed。実測記録は docs/27 §12.2）済み、次は P3（Codex managed 化）
+  managed 作成解禁・opencode 新規既定＝managed。実測記録は docs/27 §12.2）、P3（Codex managed 化 —
+  第2 Driver・daemon drain・新規既定・双方向排他切替。実測記録は docs/27 §12.3）まで完了
 - 関連: [27-agent-managed-driver.md](../27-agent-managed-driver.md)（設計本体）/
   [0012-go-internal-refactor.md](0012-go-internal-refactor.md)（`internal/agents` の Agent IF——本決定が増築する read 層）/
   [0014-agent-exit-recording.md](0014-agent-exit-recording.md)（pane ラッパー——managed 化で supervisor へ移設）
@@ -82,5 +83,6 @@ Remote Control は公開ローカル API なし）。
   managed でイベント駆動に置換。CLI ルート分と Claude 分は保守対象として残る。
 - Console paneless 対応（ミラー主 UI・Interaction 応答・API 添付・exit recording の supervisor 移設）が
   P2 前のクリティカルパス。
-- 実装前の筆頭検証: server 経由作成 thread の TUI resume 可否（双方向切替の成立条件。不可なら
-  「managed 作成は managed 固定」へ縮退）、TUI でしか起きない対話の棚卸し（docs/27 §12）。
+- 実装前の筆頭検証だった server 経由作成 thread の TUI resume は成立し、managed→TUI→managed の
+  双方向切替と旧TUI rollout互換を実証した。質問requestの再配送、resume後のpolicy再表明、daemon kill後の
+  interrupted確定を含む実測とE2Eは docs/27 §12.3 に記録。

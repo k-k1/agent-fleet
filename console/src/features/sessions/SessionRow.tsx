@@ -242,6 +242,19 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
                     <Icon name="debug-stop" /> 停止する（あとで再開できる）
                   </button>
                 )}
+                {!dead && running && agentOf(s.kind).managedDriver && (
+                  <button
+                    type="button"
+                    className="ui-menu-item"
+                    onClick={() => {
+                      setMenuOpen(false);
+                      void actions.switchDriver(s);
+                    }}
+                  >
+                    <Icon name={s.driver === "managed" ? "terminal" : "server-process"} />
+                    {s.driver === "managed" ? "CLI (TUI) ドライバに切り替え" : "Managed ドライバに切り替え"}
+                  </button>
+                )}
                 {s.remoteUrl && (
                   <button
                     type="button"

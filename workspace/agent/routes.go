@@ -35,6 +35,8 @@ func buildMux() *http.ServeMux {
 	// ThreadSettings の動的更新（docs/27 §9.4-3、managed 専用 — 稼働中セッションの
 	// モデル/effort/モード変更）。tui は従来どおり /input のキー操作。
 	mux.HandleFunc("POST /sessions/{name}/settings", handleSessionSettings)
+	// ドライバ排他切替（docs/27 P3 §2: tui ⇄ managed、stop→drain→resume 経由）。
+	mux.HandleFunc("POST /sessions/{name}/driver", handleSessionDriver)
 	mux.HandleFunc("POST /sessions/{name}/paste-image", handlePasteImage)
 	mux.HandleFunc("GET /sessions/{name}/pasted/{file}", handlePastedImage)
 	mux.HandleFunc("GET /sessions/{name}/status", handleSessionStatus)

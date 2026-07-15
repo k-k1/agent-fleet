@@ -33,7 +33,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"strings"
 	"sync"
 	"time"
@@ -142,60 +141,30 @@ func orDash(s string) string {
 	return s
 }
 
-// startCodexAppServer starts the shared local server and its AF observer. Failure is
-// deliberately non-fatal: buildProgram sees no env and launches the traditional
-// direct TUI, preserving Codex availability at the cost of live compaction state.
+// startCodexAppServer ensures the shared local server (owned by the codex
+// RuntimeSupervisor since P3 — daemon 起動・generation・exit recording は
+// codex.Serve() 側、docs/27 §10.2-2) and connects the AF read-only observer.
+// Failure is deliberately non-fatal: buildProgram sees no env and launches the
+// traditional direct TUI, preserving Codex availability at the cost of live
+// compaction state; managed codex sessions then fail Resume with runtime_failed.
 func startCodexAppServer() {
-	if os.Getenv("AF_CODEX_APP_SERVER_DISABLE") == "1" {
+	if codex.Serve().Disabled() {
 		_ = os.Unsetenv(codexAppServerEnv)
 		return
 	}
-	addr := os.Getenv(codexAppServerEnv)
-	if addr == "" {
-		// Custom Unix listeners are supported by Codex, but are denied by the
-		// Workspace runtime's current syscall policy. A fixed loopback-only port is
-		// private to this container's network namespace and needs no bearer token.
-		addr = defaultCodexAppServerAddr
+	// Ensure spawns (or adopts) the daemon, exports AF_CODEX_APP_SERVER_ADDR and
+	// holds the managed writer connection. The observer below is a SEPARATE
+	// read-only socket: thread-scoped notifications are per-connection (docs/27
+	// §12.1-1), and the writer only sees threads it started/resumed itself — the
+	// observer keeps covering the TUI (CLI-route) threads.
+	if _, _, err := codex.Serve().Ensure(); err != nil {
+		log.Printf("codex app-server unavailable; using direct TUI: %v", err)
+		return
 	}
-
+	addr := codex.Serve().Addr()
 	conn, err := connectCodexAppServer(addr)
 	if err != nil {
-		if strings.HasPrefix(addr, "unix://") {
-			path := strings.TrimPrefix(addr, "unix://")
-			_ = os.Remove(path) // stale socket from an unclean Agent/app-server exit
-		}
-		cmd := exec.Command("codex", "app-server", "--listen", addr)
-		if err := cmd.Start(); err != nil {
-			_ = os.Unsetenv(codexAppServerEnv)
-			log.Printf("codex app-server unavailable; using direct TUI: %v", err)
-			return
-		}
-		go func() {
-			if err := cmd.Wait(); err != nil {
-				log.Printf("codex app-server exited: %v", err)
-			}
-			codex.ClearCompacting()
-			if os.Getenv(codexAppServerEnv) == addr {
-				_ = os.Unsetenv(codexAppServerEnv) // future sessions fall back to direct TUI
-			}
-		}()
-		deadline := time.Now().Add(4 * time.Second)
-		for time.Now().Before(deadline) {
-			time.Sleep(50 * time.Millisecond)
-			conn, err = connectCodexAppServer(addr)
-			if err == nil {
-				break
-			}
-		}
-		if err != nil {
-			_ = cmd.Process.Kill()
-			_ = os.Unsetenv(codexAppServerEnv)
-			log.Printf("codex app-server did not become ready; using direct TUI: %v", err)
-			return
-		}
-	}
-	if err := os.Setenv(codexAppServerEnv, addr); err != nil {
-		_ = conn.Close()
+		log.Printf("codex app-server observer connect failed (daemon stays up): %v", err)
 		return
 	}
 	go monitorCodexAppServer(conn, addr)

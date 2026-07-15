@@ -22,7 +22,7 @@ import { sanitizeSeg } from "../../lib/reponame.ts";
 // mints a provisional temp/<slug> the user renames later).
 export interface LaunchOpts {
   kind: string;
-  // driver（docs/27 P2）: "managed"（共有 runtime・paneless、opencode の既定）|
+  // driver（docs/27 P2/P3）: "managed"（共有 runtime・paneless、対応 kind の既定）|
   // ""（tui、従来）。managedDriver を持たない kind では常に ""。
   driver: string;
   model: string;
@@ -67,7 +67,7 @@ export function LaunchModal({ repo, branch, path, kinds, allowWorktree = true, o
   // Shared per-kind priority chain (repoLast.ts resolveModel); re-resolved on a kind
   // switch so a claude tier never leaks into a codex/opencode launch (and vice versa).
   const [model, setModel] = useState(() => resolveModel(initialKind, repo, settings.defaultModel));
-  // ドライバ（docs/27 P2）: managed 対応 kind（opencode）は managed が既定（§9.2）。
+  // ドライバ（docs/27 P2/P3）: managed 対応 kind は managed が既定（§9.2）。
   // CLI(TUI) はユーザーの明示的な選択 — セッション毎に TUI プロセス分のメモリを払う。
   const [driver, setDriver] = useState(agentOf(initialKind).managedDriver ? "managed" : "");
   const [prompt, setPrompt] = useState("");
@@ -244,7 +244,7 @@ export function LaunchModal({ repo, branch, path, kinds, allowWorktree = true, o
           </div>
         )}
 
-        {/* ドライバ（docs/27 P2）: managed 対応 kind（opencode）だけに出す。既定は
+        {/* ドライバ（docs/27 P2/P3）: managed 対応 kind だけに出す。既定は
             managed（共有 runtime・paneless・省メモリ）。CLI(TUI) はターミナル操作が
             必要な人向けの明示的なメモリトレードオフ（セッション毎に TUI プロセス分）。 */}
         {agentOf(kind).managedDriver && (
@@ -265,7 +265,9 @@ export function LaunchModal({ repo, branch, path, kinds, allowWorktree = true, o
                 onClick={() => setDriver("")}
               >
                 <Icon name="terminal" /> CLI (TUI)
-                <span className="seg-sub">ターミナル操作可・メモリ +約300MiB</span>
+                <span className="seg-sub">
+                  ターミナル操作可・メモリ +{agentOf(kind).tuiMemoryCost}
+                </span>
               </button>
             </div>
           </div>

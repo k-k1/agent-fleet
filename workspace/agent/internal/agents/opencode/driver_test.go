@@ -206,7 +206,6 @@ func newTestHandle(t *testing.T, srv *httptest.Server) *threadHandle {
 	return &threadHandle{
 		name: "slot-test", dir: "/tmp", ocSid: "sid-test",
 		addr: srv.URL, ses: "ses_test", alive: true, gen: 1,
-		ledger: map[string]bool{},
 		events: make(chan agents.Event, 64),
 	}
 }

@@ -105,6 +105,8 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 	// State comes from codex's -c-injected status hooks keyed by our sid (the status
 	// store; no idle-heal, no background-busy). Resumable unless the working dir is gone.
+	// managed（docs/27 P3）はhooks不在の代わりに driver が同じ status ストアへ turn
+	// 境界（turn/started・turn/completed 通知）を書く — 読み側はほぼ共通で済む。
 	li := agents.LiveInfo{Resumable: true}
 	if alive {
 		sid := session.UUID(m.Dir, m.Name)
@@ -116,6 +118,7 @@ func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 		// A missed Stop hook otherwise leaves Codex on 進行中 forever even after its
 		// TUI has returned to the composer. Heal it from the rollout's independent
 		// task_complete event, but only when it belongs to this working interval.
+		// （managed はイベント駆動なので原則不要だが、無害な保険として共用する。）
 		if li.State == "working" {
 			workingSince, _ := time.Parse(time.RFC3339, st.TS)
 			if rolloutCompletedAfter(m, workingSince) {
@@ -125,11 +128,17 @@ func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 		if isCompacting(m) {
 			li.State = "compacting"
 		}
-		// The hooks report only working/idle — a request_user_input dialog keeps the
-		// turn "working" forever. Probe the rollout tail so the sessions list shows
-		// 質問あり (and notifies) like claude; only while working, to keep the probe
-		// off the common idle path.
-		if li.State == "working" && HasPendingQuestion(m) {
+		if m.DriverKind() == session.DriverManaged {
+			// managed の質問は handle の Interaction が正（server request の再配送で
+			// 回復する、§12.3）— rollout tail probe より正確で安い。
+			if h := handleFor(m.Name); h != nil && h.hasQuestion() {
+				li.State = "question"
+			}
+		} else if li.State == "working" && HasPendingQuestion(m) {
+			// The hooks report only working/idle — a request_user_input dialog keeps
+			// the turn "working" forever. Probe the rollout tail so the sessions list
+			// shows 質問あり (and notifies) like claude; only while working, to keep
+			// the probe off the common idle path.
 			li.State = "question"
 		}
 	} else if !session.DirExists(m.Dir) {

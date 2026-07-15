@@ -115,8 +115,8 @@ func TestHandleSessionTurnQuestionPendingGate(t *testing.T) {
 	}
 }
 
-// driver 未登録の kind（P2 時点では claude/codex）の managed セッションへの
-// /turn・/respond は正直に 501。opencode は登録済みなので runtime（serve）が
+// driver 未登録の kind（claude）の managed セッションへの /turn・/respond は
+// 正直に 501。opencode/codex は登録済みなので runtime が
 // 使えない環境では 502 runtime_failed に落ちる — 無効化フラグで決定的に再現する。
 func TestHandleSessionTurnManagedUnavailable(t *testing.T) {
 	fakeTmux(t)
@@ -186,8 +186,8 @@ func TestHandleSessionTurnValidation(t *testing.T) {
 	}
 }
 
-// 作成 API の driver バリデーション（docs/27 P2）: managed は driver 登録済みの
-// kind（opencode）だけ受理し、未登録 kind（claude 等）は副作用より前に明示拒否。
+// 作成 API の driver バリデーション（docs/27 P2/P3）: managed は driver 登録済みの
+// kind（opencode/codex）だけ受理し、未登録 kind（claude 等）は副作用より前に明示拒否。
 // 未知値は bad_driver。受理された managed 作成は runtime 不可の環境では 502 で
 // 落ちる（tmux セッションは一切作らない）。
 func TestCreateSessionManagedDriverGate(t *testing.T) {

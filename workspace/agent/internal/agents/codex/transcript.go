@@ -1000,11 +1000,15 @@ func readTranscript(m session.Meta) (agents.TranscriptData, bool) {
 	compacting := isCompacting(m)
 	path := rolloutPath(cxid)
 	if path == "" {
-		return agents.TranscriptData{Compacting: compacting}, true
+		td := agents.TranscriptData{Compacting: compacting}
+		managedEnrich(m, &td)
+		return td, true
 	}
 	b, err := os.ReadFile(path)
 	if err != nil {
-		return agents.TranscriptData{Path: path, Compacting: compacting}, true
+		td := agents.TranscriptData{Path: path, Compacting: compacting}
+		managedEnrich(m, &td)
+		return td, true
 	}
 	var lines [][]byte
 	for _, ln := range strings.Split(string(b), "\n") {
@@ -1013,7 +1017,9 @@ func readTranscript(m session.Meta) (agents.TranscriptData, bool) {
 		}
 	}
 	turns, tasks, pending, mode := parseRolloutFull(lines)
-	return agents.TranscriptData{Turns: turns, Path: path, Tasks: tasks, Pending: pending, Mode: mode, Compacting: compacting}, true
+	td := agents.TranscriptData{Turns: turns, Path: path, Tasks: tasks, Pending: pending, Mode: mode, Compacting: compacting}
+	managedEnrich(m, &td)
+	return td, true
 }
 
 // rolloutCompletedAfter reports whether codex recorded completion of the current

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -23,20 +24,50 @@ import (
 )
 
 // managedAlive reports a managed session's liveness — the runtime-handle
-// counterpart of tmuxx.HasSession（docs/27 P2。kind ごとの実装は各縦割りパッケージ）。
+// counterpart of tmuxx.HasSession（docs/27 P2/P3。kind ごとの実装は各縦割りパッケージ）。
 func managedAlive(m session.Meta) bool {
-	if m.Kind == session.KindOpencode {
+	switch m.Kind {
+	case session.KindOpencode:
 		return opencode.ManagedAlive(m.Name)
+	case session.KindCodex:
+		return codex.ManagedAlive(m.Name)
+	}
+	return false
+}
+
+// managedBusy reports a managed session has a turn running or queued — 排他切替
+// （/driver）の拒否条件（docs/27 §2: 切替は必ず stop→drain→resume 経由。busy の
+// 間は切り替えない＝drain を「idle まで待つのはユーザー」に倒した最小形）。
+func managedBusy(m session.Meta) bool {
+	switch m.Kind {
+	case session.KindOpencode:
+		return opencode.ManagedBusy(m.Name)
+	case session.KindCodex:
+		return codex.ManagedBusy(m.Name)
 	}
 	return false
 }
 
 // dropManagedRuntime detaches a managed session from its runtime (stop / halt /
 // archive / recreate の tmux kill-session に相当): 実行中 turn を abort し handle を
-// 忘れる。会話の正本（SQLite）はそのまま残り、再開（Resume）で再接続できる。
+// 忘れる。会話の正本（SQLite / rollout）はそのまま残り、再開（Resume）で再接続できる。
 func dropManagedRuntime(m session.Meta) {
-	if m.Kind == session.KindOpencode {
+	switch m.Kind {
+	case session.KindOpencode:
 		opencode.DropHandle(m.Name)
+	case session.KindCodex:
+		codex.DropHandle(m.Name)
+	}
+}
+
+// removeManagedLedger drops the ClientMessageID ledger on /stop（スロットの
+// アイデンティティごと破棄 — halt/archive は再開があるので呼ばない）。
+func removeManagedLedger(m session.Meta) {
+	switch m.Kind {
+	case session.KindOpencode:
+		opencode.RemoveLedger(m.Name)
+	case session.KindCodex:
+		codex.RemoveLedger(m.Name)
 	}
 }
 
@@ -126,7 +157,7 @@ type createReq struct {
 	Kind  string `json:"kind"` // "claude" (default) | "opencode" | "codex" | "shell"
 	// Driver selects the control route（docs/27 §9.2）: "" | "tui"（従来の tmux 内
 	// TUI、既定）| "managed"（共有 runtime＋構造化 RPC・pane なし）。managed の起動は
-	// P2（opencode serve）で解禁する — それまでは受け口だけ在り、明示的に拒否する。
+	// P2（opencode serve）/ P3（codex app-server）で解禁。未対応 kind は明示拒否する。
 	Driver string `json:"driver"`
 	// InitialPrompt, when set, is typed into the session once its agent CLI has booted
 	// and then submitted (deliverInitialPrompt) — the server-side launch-task delivery an
@@ -191,13 +222,13 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	case "", session.DriverTUI:
 		driver = ""
 	case session.DriverManaged:
-		// docs/27 P2: opencode から解禁（driverOf に登録済みの kind だけ）。codex は
-		// P3、claude は対象外（ADR 0015）。kind はこの後 normalizeKind で claude に
+		// docs/27 P2/P3: driverOf に登録済みの kind（opencode / codex）だけ。
+		// claude は対象外（ADR 0015）。kind はこの後 normalizeKind で claude に
 		// 化け得るので、正規化後の値でなく生の req.Kind で判定してはいけない —
 		// ここで normalize して以降もその値を使う。
 		if _, ok := managedDrivers[normalizeKind(req.Kind)]; !ok {
 			httpx.WriteErr(w, http.StatusBadRequest, "driver_unsupported",
-				"managed ドライバはこの kind ではまだ利用できません（P2: opencode のみ）")
+				"managed ドライバはこの kind では利用できません")
 			return
 		}
 	default:
@@ -424,6 +455,7 @@ func handleStopSession(w http.ResponseWriter, r *http.Request) {
 		status.Remove(session.UUID(meta.Dir, name))
 		status.RemoveExit(name)
 		dropManagedRuntime(meta) // managed: 実行中 turn を abort し handle を忘れる
+		removeManagedLedger(meta)
 	}
 	if live {
 		if out, err := exec.Command("tmux", "kill-session", "-t", session.ExactTarget(tn)).CombinedOutput(); err != nil {
