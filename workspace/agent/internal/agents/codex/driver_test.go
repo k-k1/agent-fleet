@@ -448,6 +448,18 @@ func TestUpdateSettingsAndNotification(t *testing.T) {
 	if snap.Settings.Model != "gpt-next" || snap.Settings.Effort != "low" || snap.Settings.Mode != "normal" {
 		t.Fatalf("notification settings snapshot = %+v", snap.Settings)
 	}
+
+	if err := h.UpdateSettings(agents.ThreadSettings{ClearModel: true, ClearEffort: true}); err != nil {
+		t.Fatal(err)
+	}
+	raw, ok = m.lastCall("thread/settings/update")
+	if !ok || !strings.Contains(string(raw), `"model":null`) || !strings.Contains(string(raw), `"effort":null`) {
+		t.Fatalf("clear settings params = %s", raw)
+	}
+	snap, _ = h.Snapshot()
+	if snap.Settings.Model != "" || snap.Settings.Effort != "" || snap.Settings.Mode != "normal" {
+		t.Fatalf("cleared settings snapshot = %+v", snap.Settings)
+	}
 }
 
 func TestQuestionFlowAndCancel(t *testing.T) {

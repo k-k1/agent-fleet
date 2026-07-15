@@ -32,9 +32,11 @@ type TurnInput struct {
 // ThreadSettings is a dynamic settings update（§9.4-3: 稼働中セッションのモデル/effort
 // 変更が managed で初めて可能になる）。空フィールドは「変更しない」。
 type ThreadSettings struct {
-	Model  string
-	Effort string
-	Mode   string // "plan" | "normal"（TranscriptData.Mode と同語彙）
+	Model       string
+	Effort      string
+	Mode        string // "plan" | "normal"（TranscriptData.Mode と同語彙）
+	ClearModel  bool   // explicit reset to the runtime/provider default
+	ClearEffort bool   // explicit reset to the selected model's default
 }
 
 // Interaction は承認・質問・plan 確認の一般化（§5）。初期実装スコープは question 系

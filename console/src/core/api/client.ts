@@ -276,11 +276,47 @@ export const sessionRespond = (
 // §9.4-3: 稼働中セッションのモデル / effort / モード変更 — managed で初めて可能に
 // なる）。空フィールドは「変更しない」。tui セッションのモード切替は従来どおり
 // /input のキー操作（planCycleKey）なので、ここは managed だけが呼ぶ。
-export const sessionSettings = (
+export interface ManagedThreadSettings {
+  model: string;
+  effort: string;
+  mode: "plan" | "normal" | "";
+  dynamicModel?: boolean;
+  dynamicEffort?: boolean;
+  dynamicMode?: boolean;
+}
+
+export const sessionSettingsGet = (session: string): Promise<ManagedThreadSettings & { error?: ApiError }> =>
+  api(`api/sessions/${encodeURIComponent(session)}/settings`);
+
+export interface SettingsResult {
+  ok: boolean;
+  message?: string;
+  settings?: ManagedThreadSettings;
+}
+
+export const sessionSettings = async (
   session: string,
-  s: { model?: string; effort?: string; mode?: "plan" | "normal" },
-): Promise<boolean> =>
-  apiJSON(`api/sessions/${encodeURIComponent(session)}/settings`, "POST", s).then((r) => !r?.error);
+  s: {
+    model?: string;
+    effort?: string;
+    mode?: "plan" | "normal";
+    clearModel?: boolean;
+    clearEffort?: boolean;
+  },
+): Promise<SettingsResult> => {
+  const r = await apiJSON(`api/sessions/${encodeURIComponent(session)}/settings`, "POST", s).catch(() => ({
+    error: { message: "通信エラー" },
+  }));
+  if (r?.error) return { ok: false, message: errText(r.error) || "設定を変更できませんでした" };
+  return {
+    ok: true,
+    settings: {
+      model: typeof r.model === "string" ? r.model : "",
+      effort: typeof r.effort === "string" ? r.effort : "",
+      mode: r.mode === "plan" || r.mode === "normal" ? r.mode : "",
+    },
+  };
+};
 
 // Upload one pasted image to a session (multipart, field "file"). Returns the saved
 // absolute path + basename so the composer can reference it in the prompt (claude reads

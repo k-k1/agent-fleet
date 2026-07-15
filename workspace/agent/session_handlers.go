@@ -149,12 +149,13 @@ type createReq struct {
 	// Name is IGNORED: the server auto-allocates a unique slug as the session's
 	// identity. Kept in the wire struct only so older clients that still send it
 	// don't error. Title is the optional user-facing display name (→ claude --name).
-	Name  string `json:"name"`
-	Title string `json:"title"`
-	Color string `json:"color"` // terminal background hue (hex); SSM host color, else empty
-	Dir   string `json:"dir"`
-	Model string `json:"model"`
-	Kind  string `json:"kind"` // "claude" (default) | "opencode" | "codex" | "shell"
+	Name   string `json:"name"`
+	Title  string `json:"title"`
+	Color  string `json:"color"` // terminal background hue (hex); SSM host color, else empty
+	Dir    string `json:"dir"`
+	Model  string `json:"model"`
+	Effort string `json:"effort"`
+	Kind   string `json:"kind"` // "claude" (default) | "opencode" | "codex" | "shell"
 	// Driver selects the control route（docs/27 §9.2）: "" | "tui"（従来の tmux 内
 	// TUI、既定）| "managed"（共有 runtime＋構造化 RPC・pane なし）。managed の起動は
 	// P2（opencode serve）/ P3（codex app-server）で解禁。未対応 kind は明示拒否する。
@@ -332,7 +333,7 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	meta := session.Meta{
-		Name: name, Dir: req.Dir, Model: req.Model, Kind: kind, Driver: driver, Title: title, Color: req.Color, Label: label,
+		Name: name, Dir: req.Dir, Model: req.Model, Effort: req.Effort, Kind: kind, Driver: driver, Title: title, Color: req.Color, Label: label,
 		Repo: filepath.Base(req.Dir), Branch: gitCurrentBranch(req.Dir),
 		CreatedAt: time.Now().Format(time.RFC3339), SSM: ssm,
 	}
@@ -405,7 +406,8 @@ func handleForkSession(w http.ResponseWriter, r *http.Request) {
 	// Driver は継承する — managed セッションの分岐は managed のまま（runtime の
 	// fork API で複製、docs/27 P2）。tui は従来の CLI fork 起動。
 	meta := session.Meta{
-		Name: forkName, Dir: src.Dir, Model: src.Model, Kind: src.Kind, Driver: src.Driver, Title: title,
+		Name: forkName, Dir: src.Dir, Model: src.Model, Effort: src.Effort, Mode: src.Mode,
+		Kind: src.Kind, Driver: src.Driver, Title: title,
 		Repo:      filepath.Base(src.Dir),
 		Branch:    gitCurrentBranch(src.Dir),
 		CreatedAt: time.Now().Format(time.RFC3339), ForkFrom: forkFrom,
@@ -613,7 +615,8 @@ func handleRecreateSession(w http.ResponseWriter, r *http.Request) {
 	// "re-copy the fork source". Driver は引き継ぐ（managed で作った枠は managed の
 	// まま作り直す — docs/27 P2）。
 	newMeta := session.Meta{
-		Name: allocSessionName(m.Dir), Dir: m.Dir, Model: m.Model, Kind: m.Kind, Driver: m.Driver,
+		Name: allocSessionName(m.Dir), Dir: m.Dir, Model: m.Model, Effort: m.Effort, Mode: m.Mode,
+		Kind: m.Kind, Driver: m.Driver,
 		Title: m.Title, Color: m.Color, Repo: m.Repo, Branch: gitCurrentBranch(m.Dir),
 		CreatedAt: time.Now().Format(time.RFC3339), SSM: m.SSM,
 	}

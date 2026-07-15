@@ -54,6 +54,25 @@ func TestAgentForMode(t *testing.T) {
 	}
 }
 
+func TestUpdateSettingsAndClear(t *testing.T) {
+	_, srv := newMockServe(t)
+	h := newTestHandle(t, srv)
+	if err := h.UpdateSettings(agents.ThreadSettings{Model: "openai/gpt-test", Effort: "high", Mode: "plan"}); err != nil {
+		t.Fatal(err)
+	}
+	snap, _ := h.Snapshot()
+	if snap.Settings.Model != "openai/gpt-test" || snap.Settings.Effort != "high" || snap.Settings.Mode != "plan" {
+		t.Fatalf("settings snapshot = %+v", snap.Settings)
+	}
+	if err := h.UpdateSettings(agents.ThreadSettings{ClearModel: true, ClearEffort: true}); err != nil {
+		t.Fatal(err)
+	}
+	snap, _ = h.Snapshot()
+	if snap.Settings.Model != "" || snap.Settings.Effort != "" || snap.Settings.Mode != "plan" {
+		t.Fatalf("cleared settings snapshot = %+v", snap.Settings)
+	}
+}
+
 func TestBuildParts(t *testing.T) {
 	parts := buildParts(agents.TurnInput{Prompt: "hello", Attachments: []string{"/tmp/x.png", "/tmp/no-ext"}})
 	if len(parts) != 3 {

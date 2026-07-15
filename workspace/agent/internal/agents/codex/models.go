@@ -54,10 +54,14 @@ func Models() []agents.ModelChoice {
 func parseCatalog(b []byte) ([]agents.ModelChoice, error) {
 	var doc struct {
 		Models []struct {
-			Slug        string `json:"slug"`
-			DisplayName string `json:"display_name"`
-			Visibility  string `json:"visibility"`
-			Priority    int    `json:"priority"`
+			Slug                      string          `json:"slug"`
+			DisplayName               string          `json:"display_name"`
+			Visibility                string          `json:"visibility"`
+			Priority                  int             `json:"priority"`
+			DefaultReasoningEffort    string          `json:"default_reasoning_effort"`
+			DefaultReasoningLevel     string          `json:"default_reasoning_level"`
+			SupportedReasoningEfforts json.RawMessage `json:"supported_reasoning_efforts"`
+			SupportedReasoningLevels  json.RawMessage `json:"supported_reasoning_levels"`
 		} `json:"models"`
 	}
 	if err := json.Unmarshal(b, &doc); err != nil {
@@ -76,7 +80,17 @@ func parseCatalog(b []byte) ([]agents.ModelChoice, error) {
 		if label == "" {
 			label = m.Slug
 		}
-		rows = append(rows, row{agents.ModelChoice{ID: m.Slug, Label: label}, m.Priority})
+		efforts := parseEffortList(m.SupportedReasoningEfforts)
+		if len(efforts) == 0 {
+			efforts = parseEffortList(m.SupportedReasoningLevels)
+		}
+		def := m.DefaultReasoningEffort
+		if def == "" {
+			def = m.DefaultReasoningLevel
+		}
+		rows = append(rows, row{agents.ModelChoice{
+			ID: m.Slug, Label: label, Efforts: efforts, DefaultEffort: def,
+		}, m.Priority})
 	}
 	sort.SliceStable(rows, func(i, j int) bool { return rows[i].prio < rows[j].prio })
 	list := make([]agents.ModelChoice, len(rows))
@@ -84,4 +98,45 @@ func parseCatalog(b []byte) ([]agents.ModelChoice, error) {
 		list[i] = r.ModelChoice
 	}
 	return list, nil
+}
+
+// parseEffortList accepts both catalog shapes seen across Codex releases:
+// ["low","medium"] and [{"effort":"low"}, ...]. Unknown shapes degrade to
+// no metadata; the Console can still offer a small compatibility fallback.
+func parseEffortList(raw json.RawMessage) []string {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+	var strs []string
+	if json.Unmarshal(raw, &strs) == nil {
+		return compactStrings(strs)
+	}
+	var rows []struct {
+		Effort string `json:"effort"`
+		Level  string `json:"level"`
+	}
+	if json.Unmarshal(raw, &rows) != nil {
+		return nil
+	}
+	vals := make([]string, 0, len(rows))
+	for _, r := range rows {
+		if r.Effort != "" {
+			vals = append(vals, r.Effort)
+		} else {
+			vals = append(vals, r.Level)
+		}
+	}
+	return compactStrings(vals)
+}
+
+func compactStrings(in []string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(in))
+	for _, s := range in {
+		if s != "" && !seen[s] {
+			seen[s] = true
+			out = append(out, s)
+		}
+	}
+	return out
 }

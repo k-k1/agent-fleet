@@ -116,6 +116,12 @@ func (managedDriver) Resume(m session.Meta) (agents.ThreadHandle, error) {
 	if h.settings.Model == "" {
 		h.settings.Model = m.Model
 	}
+	if h.settings.Effort == "" {
+		h.settings.Effort = m.Effort
+	}
+	if h.settings.Mode == "" {
+		h.settings.Mode = m.Mode
+	}
 	ses := h.ses
 	h.mu.Unlock()
 
@@ -516,10 +522,14 @@ func (h *threadHandle) Interrupt() error {
 // 更新 RPC は無いので、driver が設定の持ち主になる。
 func (h *threadHandle) UpdateSettings(s agents.ThreadSettings) error {
 	h.mu.Lock()
-	if s.Model != "" {
+	if s.ClearModel {
+		h.settings.Model = ""
+	} else if s.Model != "" {
 		h.settings.Model = s.Model
 	}
-	if s.Effort != "" {
+	if s.ClearEffort {
+		h.settings.Effort = ""
+	} else if s.Effort != "" {
 		h.settings.Effort = s.Effort
 	}
 	if s.Mode != "" {

@@ -226,9 +226,53 @@ func handleSessionRespond(w http.ResponseWriter, r *http.Request) {
 // の動的更新（docs/27 §9.4-3、managed 専用）。空フィールドは「変更しない」。tui の
 // モード切替は従来どおり /input のキー（planCycleKey）で行う。
 type settingsReq struct {
-	Model  string `json:"model"`
-	Effort string `json:"effort"`
-	Mode   string `json:"mode"` // "plan" | "normal"
+	Model       string `json:"model"`
+	Effort      string `json:"effort"`
+	Mode        string `json:"mode"` // "plan" | "normal"
+	ClearModel  bool   `json:"clearModel"`
+	ClearEffort bool   `json:"clearEffort"`
+}
+
+// handleSessionSettingsGet reports the settings that the managed driver will use
+// for the next turn. Reading the latest transcript turn is insufficient: it is stale
+// immediately after a settings change and empty before the first prompt.
+func handleSessionSettingsGet(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	if !session.ValidName(name) {
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
+		return
+	}
+	meta, ok := session.ReadMeta(name)
+	if !ok {
+		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
+		return
+	}
+	if meta.DriverKind() != session.DriverManaged {
+		httpx.WriteErr(w, http.StatusNotImplemented, "settings_unsupported",
+			"tui セッションの設定はターミナルで変更します")
+		return
+	}
+	d, ok := driverOf(meta)
+	if !ok {
+		httpx.WriteErr(w, http.StatusNotImplemented, "driver_unavailable",
+			"managed driver はこの kind ではまだ利用できません")
+		return
+	}
+	h, err := d.Resume(meta)
+	if err != nil {
+		httpx.WriteErr(w, http.StatusBadGateway, "runtime_failed", err.Error())
+		return
+	}
+	snap, err := h.Snapshot()
+	if err != nil {
+		httpx.WriteErr(w, http.StatusBadGateway, "runtime_failed", err.Error())
+		return
+	}
+	caps := d.Capabilities()
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"model": snap.Settings.Model, "effort": snap.Settings.Effort, "mode": snap.Settings.Mode,
+		"dynamicModel": caps.DynamicModel, "dynamicEffort": caps.DynamicEffort, "dynamicMode": caps.DynamicMode,
+	})
 }
 
 // handleSessionSettings (POST /sessions/{name}/settings) updates a managed
@@ -249,7 +293,7 @@ func handleSessionSettings(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_mode", `mode must be "plan" or "normal"`)
 		return
 	}
-	if req.Model == "" && req.Effort == "" && req.Mode == "" {
+	if req.Model == "" && req.Effort == "" && req.Mode == "" && !req.ClearModel && !req.ClearEffort {
 		httpx.WriteErr(w, http.StatusBadRequest, "empty_settings", "nothing to update")
 		return
 	}
@@ -274,9 +318,33 @@ func handleSessionSettings(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadGateway, "runtime_failed", err.Error())
 		return
 	}
-	if err := h.UpdateSettings(agents.ThreadSettings{Model: req.Model, Effort: req.Effort, Mode: req.Mode}); err != nil {
+	patch := agents.ThreadSettings{
+		Model: req.Model, Effort: req.Effort, Mode: req.Mode,
+		ClearModel: req.ClearModel, ClearEffort: req.ClearEffort,
+	}
+	if err := h.UpdateSettings(patch); err != nil {
 		httpx.WriteErr(w, http.StatusBadGateway, "runtime_failed", err.Error())
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"updated": name})
+	// Persist the desired next-turn settings only after the native update succeeds.
+	// This is especially important for opencode, whose driver owns variant/model state
+	// in memory because serve has no thread-settings persistence endpoint.
+	if req.ClearModel {
+		meta.Model = ""
+	} else if req.Model != "" {
+		meta.Model = req.Model
+	}
+	if req.ClearEffort {
+		meta.Effort = ""
+	} else if req.Effort != "" {
+		meta.Effort = req.Effort
+	}
+	if req.Mode != "" {
+		meta.Mode = req.Mode
+	}
+	session.WriteMeta(meta)
+	snap, _ := h.Snapshot()
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{
+		"updated": name, "model": snap.Settings.Model, "effort": snap.Settings.Effort, "mode": snap.Settings.Mode,
+	})
 }

@@ -124,7 +124,12 @@ type Meta struct {
 	Name  string `json:"name"`
 	Dir   string `json:"dir"`
 	Model string `json:"model"`
-	Kind  string `json:"kind"`
+	// Effort / Mode are the desired managed-thread settings. They live beside Model
+	// so a successful dynamic change survives Agent/workspace restarts and is inherited
+	// by fork/recreate. TUI sessions leave both empty.
+	Effort string `json:"effort,omitempty"`
+	Mode   string `json:"mode,omitempty"`
+	Kind   string `json:"kind"`
 	// Driver selects the control route（docs/27）: "" | "tui" = tmux 内 TUI（従来）、
 	// "managed" = 共有 runtime＋構造化 RPC（pane なし。P2 で opencode から解禁）。
 	// 既定の tui は "" で永続化し、既存メタとディスク上バイト同一を保つ。

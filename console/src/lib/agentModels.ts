@@ -12,10 +12,19 @@ import { api } from "../core/api/client.ts";
 import { CLAUDE_MODELS } from "./settings.ts";
 
 export type ModelOption = [string, string]; // [value sent as `model`, display label]
+export type EffortOption = [string, string];
+
+interface ModelDescriptor {
+  id: string;
+  label: string;
+  efforts: string[];
+  defaultEffort: string;
+}
 
 const DEFAULT_ONLY: ModelOption[] = [["", "既定"]];
 const isDynamic = (kind: string) => kind === "codex" || kind === "opencode";
 const cache = new Map<string, ModelOption[]>();
+const descriptors = new Map<string, ModelDescriptor[]>();
 const inflight = new Map<string, Promise<ModelOption[]>>();
 
 function fetchModels(kind: string): Promise<ModelOption[]> {
@@ -25,12 +34,21 @@ function fetchModels(kind: string): Promise<ModelOption[]> {
   if (!p) {
     p = api(`api/agents/${kind}/models`)
       .then((d) => {
-        const items: { id?: string; label?: string }[] = Array.isArray(d?.models) ? d.models : [];
-        const opts = items
+        const items: { id?: string; label?: string; efforts?: unknown; defaultEffort?: unknown }[] = Array.isArray(d?.models)
+          ? d.models
+          : [];
+        const desc = items
           .filter((m) => m && typeof m.id === "string" && m.id)
-          .map((m): ModelOption => [m.id!, m.label || m.id!]);
+          .map((m): ModelDescriptor => ({
+            id: m.id!,
+            label: m.label || m.id!,
+            efforts: Array.isArray(m.efforts) ? m.efforts.filter((x): x is string => typeof x === "string" && !!x) : [],
+            defaultEffort: typeof m.defaultEffort === "string" ? m.defaultEffort : "",
+          }));
+        const opts = desc.map((m): ModelOption => [m.id, m.label]);
         if (!opts.length) throw new Error("empty"); // workspace stopped / CLI absent — retry next open
         const full = [...DEFAULT_ONLY, ...opts];
+        descriptors.set(kind, desc);
         cache.set(kind, full);
         return full;
       })
@@ -41,6 +59,36 @@ function fetchModels(kind: string): Promise<ModelOption[]> {
     inflight.set(kind, p);
   }
   return p;
+}
+
+const FALLBACK_EFFORTS: Record<string, string[]> = {
+  codex: ["minimal", "low", "medium", "high", "xhigh"],
+  opencode: ["low", "medium", "high", "max"],
+};
+
+// useEffortOptions returns model-aware effort choices when the live Codex catalog
+// provides them. Older Codex/OpenCode catalogs lack metadata, so a compatibility
+// list remains available rather than making the managed UI unusable.
+export function useEffortOptions(kind: string, model: string): EffortOption[] {
+  const [version, setVersion] = useState(0);
+  useEffect(() => {
+    if (!isDynamic(kind)) return;
+    let alive = true;
+    void fetchModels(kind).then(() => alive && setVersion((v) => v + 1));
+    return () => {
+      alive = false;
+    };
+  }, [kind]);
+  void version;
+  const rows = descriptors.get(kind) || [];
+  const selected = rows.find((m) => m.id === model);
+  const efforts = selected?.efforts.length
+    ? selected.efforts
+    : [...new Set(rows.flatMap((m) => m.efforts))].length
+      ? [...new Set(rows.flatMap((m) => m.efforts))]
+      : FALLBACK_EFFORTS[kind] || [];
+  const def = selected?.defaultEffort || "";
+  return [["", def ? `既定（${def}）` : "既定"], ...efforts.map((e): EffortOption => [e, e])];
 }
 
 // useModelOptions returns the launch model choices for `kind` — null when the kind

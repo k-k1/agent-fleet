@@ -11,6 +11,7 @@ const KIND_KEY = (repo: string) => "af.repo-lastkind." + repo;
 // existing stored defaults survive this change.
 const MODEL_KEY = (repo: string, kind: string) =>
   kind === "claude" ? "af.repo-model." + repo : `af.repo-model.${kind}.` + repo;
+const EFFORT_KEY = (repo: string, kind: string) => `af.repo-effort.${kind}.` + repo;
 
 export interface RepoLast {
   kind?: string;
@@ -53,16 +54,29 @@ export function resolveModel(kind: string, repo: string, defaultModel: string): 
   return last;
 }
 
+export function resolveEffort(kind: string, repo: string): string {
+  if (!repo || (kind !== "codex" && kind !== "opencode")) return "";
+  try {
+    return localStorage.getItem(EFFORT_KEY(repo, kind)) || "";
+  } catch {
+    return "";
+  }
+}
+
 // writeRepoLast records the kind, and (when provided) the model under that kind's
 // slot — callers pass model only for kinds with caps.model; "" clears the stored model
 // (the next launch then falls back to the kind's default via resolveModel).
-export function writeRepoLast(repo: string, kind: string, model?: string): void {
+export function writeRepoLast(repo: string, kind: string, model?: string, effort?: string): void {
   if (!repo || !kind) return;
   try {
     localStorage.setItem(KIND_KEY(repo), kind);
     if (model !== undefined) {
       if (model) localStorage.setItem(MODEL_KEY(repo, kind), model);
       else localStorage.removeItem(MODEL_KEY(repo, kind));
+    }
+    if (effort !== undefined) {
+      if (effort) localStorage.setItem(EFFORT_KEY(repo, kind), effort);
+      else localStorage.removeItem(EFFORT_KEY(repo, kind));
     }
   } catch {
     /* private mode / quota — the default just falls back to the first agent */
