@@ -1,7 +1,9 @@
 # 27. エージェント制御の Managed Driver 化（TUI スクレイプ → 共有 runtime＋構造化 RPC） — 設計
 
-**Status: 📋 設計確定・実装未着手** — 2026-07-15 起草。並行設計セッション（sol=A / fable=B）の成果を比較し、
+**Status: 📋 設計確定・P1 実装済み（2026-07-15）** — 2026-07-15 起草。並行設計セッション（sol=A / fable=B）の成果を比較し、
 B の骨格に A の部品を移植する形でユーザー裁定により統合・確定した（経緯は [decisions/0015](decisions/0015-agent-managed-driver.md)）。
+P1（Codex 観測拡張）実装時の実測で判明した事実は §12.1 に記録（**通知はスレッドアタッチ必須**という
+発見により、P1 は「switch への 5 イベント追加」から「observer のアタッチ機構＋5 イベント」に拡大した）。
 
 > 発端は Codex TUI のモデル勝手切替バグ（週次利用率 93〜99% で `ThreadSettings` が 3 件連続送信され
 > `gpt-5.6-sol` → `gpt-5.4-mini` へ意図せず切替→直後にコンテキスト圧縮。複数セッションで再現）。
@@ -52,9 +54,15 @@ write（制御）と subscribe（イベント）を足すこと**であり、rea
 
 `workspace/agent/codex_appserver.go:52` `startCodexAppServer` が Workspace Agent 起動時に
 `codex app-server --listen ws://127.0.0.1:7798` を 1 プロセス起動する。TUI は `--remote` でそこに接続し
-（`program.go:51-54`）、AF は第 2 の WebSocket 接続で **read-only オブザーバ**として `contextCompaction` の
-item lifecycle のみ検知する（`a6db76c`）。書き手は TUI だけなので競合はない。app-server 起動失敗時は
-従来の直接 TUI へフォールバックする（可用性優先）。
+（`program.go:51-54`）、AF は第 2 の WebSocket 接続で **read-only オブザーバ**として観測する。
+書き手は TUI だけなので競合はない。app-server 起動失敗時は従来の直接 TUI へフォールバックする（可用性優先）。
+
+P1 実装（2026-07-15）で観測対象を `contextCompaction` の item lifecycle（`a6db76c`）から
+`account/rateLimits/updated`・`model/rerouted`・`thread/settings/updated`・`warning`・
+`thread/status/changed` へ拡張した。その際、**thread スコープ通知はスレッドをロードした接続にしか
+配送されない**（§12.1-1）と判明したため、observer が `thread/resume` で各スレッドに read-only
+アタッチする `codexObserver` を追加した——**a6db76c の圧縮検知はアタッチなしでは本番で発火しない
+実装だった**（P1 で修正）。
 
 ### 1.3 何が限界か
 
@@ -320,7 +328,7 @@ managed が既定になるため、**ミラーが「読むだけ」から主 UI 
 
 | フェーズ | 内容 | リスク |
 |---|---|---|
-| **P1** | **Codex 観測拡張（read-only）**: 既存 observer（`handleCodexAppServerEvent`）に `account/rateLimits/updated`・`model/rerouted`・`thread/settings/updated`・`warning`・`thread/status/changed` を追加。発端バグの「TUI 層ナッジ vs サーバ側 reroute」を切り分ける。CLI ルートにもそのまま効く | ゼロ（書き込みなし） |
+| **P1 ✅** | **Codex 観測拡張（read-only）済（2026-07-15）**: 既存 observer（`handleCodexAppServerEvent`）に `account/rateLimits/updated`・`model/rerouted`・`thread/settings/updated`・`warning`・`thread/status/changed` を追加（key=value の構造化ログ・連続重複抑止）。rate limits は `/codex/usage` が rollout 読みと鮮度比較して新しい方を採用。**追加で必要になったもの**: thread スコープ通知はアタッチ必須（§12.1-1）のため、observer が `thread/resume` でアタッチする `codexObserver`（thread/started・thread/status/changed・30 秒毎 `thread/loaded/list` sweep がトリガ）。発端バグの「TUI 層ナッジ vs サーバ側 reroute」を切り分ける（切り分け規準は §12.1-2）。CLI ルートにもそのまま効く | ゼロ（制御なし。observer の thread/resume は rollout 不変を実測確認） |
 | **P1.5** | **Console managed セッション UI**（§10）。OpenCode を検証台に | UI のみ |
 | **P2** | **OpenCode managed 化**: Driver＋Supervisor＋turn 状態機械＋reconciliation＋`ClientMessageID`＋Interaction(question)＋generation の初出。serve は TUI 併用可＝最も安全に「AF が書く」を実証できる。CLI ルートの serve アタッチ化も同時（TUI 併用の実証を兼ねる） | 低（排他不要） |
 | **P3** | **Codex managed 化**: 新規既定→ドライバ選択 UI＋既存セッションの排他切替。Driver 第 2 実装で型の妥当性検証。daemon drain 実装 | 中（単一 writer 排他） |
@@ -340,11 +348,49 @@ TUI 経路（send-keys / hooks / probe）の**撤去はしない**——CLI ル�
 4. 旧 TUI rollout の `thread/resume` 互換（履歴互換の実証）
 5. daemon の auth.json / config.toml 読み直しタイミング（ホットリロード可否。§7 の設計は可否に依存しないが最適化余地）
 6. `thread/start` で承認バイパス相当ポリシー・モデル・workdir を指定できる範囲
-7. `model/rerouted` が managed でも発生するか（ナッジ根治の裏付け）
+7. `model/rerouted` が managed でも発生するか（ナッジ根治の裏付け）——§12.1-2 で部分回答:
+   0.144.4 に rate limit 起因の reroute はそもそも存在しない
 8. daemon kill→再起動→`thread/resume` で実行中 turn がどうなるか（§6 の実挙動）
-9. `codex fork` 相当の RPC 有無（`Caps.CanFork` 維持）
+9. `codex fork` 相当の RPC 有無（`Caps.CanFork` 維持）——回答: `thread/fork` が base スキーマに存在（0.144.4）
 10. opencode serve のローカル API 認証有無・TUI アタッチの起動形態（フラグ・tmux 内挙動）・serve 障害時の
     スタンドアロン TUI フォールバック判定
+
+### 12.1 P1 実装時の実測事実（2026-07-15、CLI 0.144.3 / 0.144.4 両方で確認）
+
+P1 の実装前検証（`codex app-server generate-json-schema` スキーマ突き合わせ＋隔離 CODEX_HOME での
+実 app-server プローブ）で判明した事実。**0.144.3 と 0.144.4 で配信規則・対象イベント名に差分はない**
+（両バージョン実測。なお image は 0.144.3 焼き込みだが entrypoint が起動毎に latest へ更新するため、
+実フリートは常に最新で動く）。
+
+1. **thread スコープ通知はアタッチ必須（本設計全体に効く最重要事実）**。`item/*`・`turn/*`・
+   `thread/settings/updated`・thread 宛 `warning` は「そのスレッドをロードした接続」にのみ配送され、
+   受動的な接続に届く broadcast は `thread/started`（新規作成時のみ。**resume によるロードでは発火しない**）と
+   `thread/status/changed`（ロード時 notLoaded→idle 等）程度。観測には observer 自身の `thread/resume` が
+   必要で、実行中スレッドへの resume は in-memory インスタンスへの合流＝**rollout を変更しない**
+   （sha256 実測）。TUI との二重アタッチも互いに影響しない（両接続が全通知を受信）。
+   帰結: a6db76c の圧縮検知はアタッチなしでは不発だった（P1 で修正）。P2/P3 の Driver 購読も
+   「resume＝subscribe」を前提にできる。
+2. **発端バグの切り分け規準**: `ModelRerouteReason` は 0.144.4 でも enum `highRiskCyberActivity` のみ＝
+   **rate limit 起因のサーバ側 reroute は存在しない**。したがって利用率 93〜99% で起きた発端バグは
+   TUI 層ナッジでほぼ確定で、再発時は観測ログの「`thread/settings/updated` の model 変化あり＋直前に
+   `model/rerouted` なし」で確証が取れる。
+3. **rate limits の実データ形**（実 auth で `account/rateLimits/read` 実照会）: `resetsAt` は epoch 秒・
+   `usedPercent` は整数・現アカウントは weekly ウィンドウが `primary` に入り `secondary: null`
+   （usage.go が既に警告していた新型口座構成の実例）。`rateLimitReachedType`・`credits`・`planType` 付き。
+   read 応答には `rateLimitResetCredits`（Full reset クレジット）も含まれる——将来 usage.go の
+   chatgpt.com backend 直叩き（`fetchResetCredits`）を app-server 経由に置換できる候補。
+4. **`thread/settings/update`（write）は experimentalApi capability 必須**（initialize の
+   `capabilities.experimentalApi: true` がないと -32600）。base スキーマ外（`--experimental` でのみ生成）。
+   P3 の write 実装はこの capability を前提にする。`turn/start`・`turn/steer`・`turn/interrupt`・
+   `thread/compact/start` は base に存在。
+5. **rollout はスレッドの初回 turn まで書かれない**: 作成直後のスレッドへの `thread/resume` は
+   "no rollout found" で失敗する。observer は sweep（30 秒毎 `thread/loaded/list`）でリトライして拾う。
+6. **`ThreadStatus` の語彙**: `notLoaded | idle | systemError | active{activeFlags:
+   [waitingOnApproval|waitingOnUserInput]}`。§9.5 の hooks 置換（working/idle/question）は
+   `active`/`idle`/`activeFlags=waitingOnUserInput` からの射影で成立する見込み。
+7. **未確認のまま残るもの**: `account/rateLimits/updated` が観測接続（turn を駆動していない接続）にも
+   配送されるか——実 turn 消費なしでは検証できず、実フリートのログで確認する。届かない場合も
+   `/codex/usage` は rollout 読みへ自然にフォールバックする（鮮度比較）。
 
 ---
 
