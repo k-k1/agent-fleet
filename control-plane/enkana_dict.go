@@ -494,7 +494,8 @@ var techKana = map[string]string{
 	"ln":         "エルエヌ",
 	"pwd":        "ピーダブリューディー",
 	"mkdir":      "メイクディレクトリ",
-	"rmdir":      "リムディレクトリ",
+	"rmdir":      "アールエムディーアイアール", // 綴り読み（ユーザー希望）
+	"init":       "イニット",              // init.d は "." を跨ぐので ttsText 側で別処理
 	"df":         "ディーエフ",
 	"du":         "ディーユー",
 	"ps":         "ピーエス",
@@ -508,8 +509,8 @@ var techKana = map[string]string{
 	"umount":     "アンマウント",
 	"uname":      "ユーネーム",
 	"systemd":    "システムディー",
-	"systemctl":  "システムシーティーエル",
-	"journalctl": "ジャーナルシーティーエル",
+	"systemctl":  "システムコントロール", // ctl = control（ユーザー希望）
+	"journalctl": "ジャーナルコントロール", // systemctl に合わせる
 	"dmesg":      "ディーメッセージ",
 	"vim":        "ヴィム",
 	"neovim":     "ネオヴィム",

@@ -223,8 +223,10 @@ func TestUnixOperatorTerms(t *testing.T) {
 		"sed":       "セド",
 		"curl":      "カール",
 		"rsync":     "アールシンク",
-		"systemctl": "システムシーティーエル",
+		"systemctl": "システムコントロール",
 		"mkdir":     "メイクディレクトリ",
+		"rmdir":     "アールエムディーアイアール",
+		"init":      "イニット",
 		"ripgrep":   "リップグレップ",
 	}
 	for in, exp := range want {
