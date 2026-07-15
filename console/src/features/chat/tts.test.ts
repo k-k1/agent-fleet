@@ -395,6 +395,10 @@ describe("applyBuiltinReadings / applyReadings (組み込みの読み補正)", (
     expect(applyBuiltinReadings("§§ に記載")).toBe("セクション に記載");
   });
 
+  it("ピリオドを跨ぐ定型トークン（init.d）はカタカナに確定する", () => {
+    expect(applyBuiltinReadings("init.d に配置")).toBe("イニットディー に配置");
+  });
+
   it("開発現場の漢語は IT の慣用読みに固定する", () => {
     expect(applyBuiltinReadings("引数と添字")).toBe("ひきすうとそえじ");
     expect(applyBuiltinReadings("閾値を超えたら相殺")).toBe("しきいちを超えたらそうさい");

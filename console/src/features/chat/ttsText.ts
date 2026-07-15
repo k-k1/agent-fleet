@@ -304,6 +304,10 @@ const UPPER_ACRONYMS: [RegExp, string][] = [[/\bIT\b/g, "アイティー"]];
 // フィードバック）。enkana より前でカタカナへ確定させて表記ゆれごと吸収する。
 const PRODUCT_NAMES: [RegExp, string][] = [[/agent[\s-]?fleet/gi, "エージェントフリート"]];
 
+// ピリオドを跨ぐ定型トークンは enkana（CP・英数字トークン単位）では 1 語にまとまらず
+// "." で分断されるので、ここでカタカナに確定させる。init.d（SysV 初期化スクリプト置き場）等。
+const DOTTED_TERMS: [RegExp, string][] = [[/\binit\.d\b/gi, "イニットディー"]];
+
 // --- 裸のスラッシュ区切り（コード外）の間つめ ------------------------------------
 // "origin/main"・"on/off"・"read/write" のような裸（バッククォート無し）のスラッシュ区切りは
 // VOICEVOX(OpenJTalk) が "/" を記号扱いしてポーズを挟むため、地の文で読むと間が長く感じる
@@ -402,6 +406,7 @@ export function applyBuiltinReadings(text: string): string {
   t = applyTildeReadings(t);
   for (const [re, to] of NUMERONYMS) t = t.replace(re, to);
   for (const [re, to] of PRODUCT_NAMES) t = t.replace(re, to);
+  for (const [re, to] of DOTTED_TERMS) t = t.replace(re, to);
   for (const [re, to] of UPPER_ACRONYMS) t = t.replace(re, to);
   t = t.replace(GO_PREFIX, "ご"); // 接頭辞「誤」= ご（誤表示/誤判定… 判定変換より前に）
   t = t.replace(KANAME, "$1かなめ"); // が/は/も＋要（文末・句読点・です/だ 直前）= かなめ
