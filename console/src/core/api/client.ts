@@ -5,6 +5,7 @@
 // contract is unchanged; only the packaging moved to modules.
 
 import { signalAuthExpired } from "../auth/authExpired.ts";
+import { t, tMaybe } from "../../lib/i18n/index.ts";
 
 // Resolve URLs relative to where the Console is mounted, so it works both at the
 // host root (http://localhost:8099/) and behind a path-stripping proxy (Tailscale
@@ -88,37 +89,19 @@ export interface ApiError {
 // endpoint returned (conflicts, error, etc.). Callers branch on `status`.
 export type FsResult = { status: number } & Record<string, unknown>;
 
-// Server error messages are language-neutral developer fallbacks. The user-facing
-// text is localized here, keyed by the stable error `code`. Add a locale layer over
-// this map when i18n lands; unknown codes fall back to the server's message.
-// Go 側の対は control-plane/errcodes.go / workspace/agent/errcodes.go（docs/23 P0-3）—
-// キーを増減・変更するときは必ず両側同時に。
-const ERR_TEXT: Record<string, string> = {
-  ssm_search_forbidden:
-    "AWS上のインスタンスを検索する権限がありません。AWS管理者に ssm:DescribeInstanceInformation の付与を依頼してください。",
-  quota_sessions:
-    "同時に稼働できるセッション数の上限に達しています。稼働中のセッションをどれか停止してから作成してください。",
-  sessions_running:
-    "この作業コピーでは稼働中のセッションがあります。切り替えると足元の作業ツリーが入れ替わり壊れるため、ここでは切り替えできません。ブランチは別の作業コピーとして開いてください。",
-  sessions_running_delete:
-    "この作業コピーでは稼働中のセッションがあります。削除すると足元の作業ディレクトリが消えて壊れるため、先にそれらのセッションを停止してください。",
-  worktree_dirty:
-    "この worktree には未コミット/未pushの変更があります。強制削除すると失われます。",
-  has_worktrees:
-    "この作業コピーには派生した worktree がぶら下がっています。先に worktree 側を削除してください。",
-  worktree_remove_failed: "worktree の削除に失敗しました。",
-  question_pending:
-    "エージェントが質問への回答を待っています。質問カードから回答してから送信してください。",
-  not_running: "セッションが停止しています。再開してから送信してください。",
-  driver_unavailable: "このエージェント種別ではまだ managed ドライバを利用できません。",
-  runtime_failed: "エージェントの共有 runtime に接続できませんでした。",
-};
-
+// Server error messages are language-neutral developer fallbacks. The user-facing text
+// is localized via the i18n catalog under the "err.<code>" key (docs/28 / ADR 0016);
+// an unmapped code falls back to the server's message. Go 側の対は
+// control-plane/errcodes.go / workspace/agent/errcodes.go（docs/23 P0-3）— コードを増減・
+// 変更するときは必ず両側同時に、対応する "err.<code>" キーを i18n カタログにも足す。
 // errText turns a `res.error` ({code, message}) into a user-facing string.
-export const errText = (error: ApiError | string | null | undefined): string =>
-  (error && typeof error === "object" && error.code && ERR_TEXT[error.code]) ||
-  (error && typeof error === "object" && error.message) ||
-  String(error ?? "");
+export const errText = (error: ApiError | string | null | undefined): string => {
+  if (error && typeof error === "object") {
+    const localized = error.code ? tMaybe("err." + error.code) : undefined;
+    return localized ?? error.message ?? String(error ?? "");
+  }
+  return String(error ?? "");
+};
 
 // api() resolves the path against baseURI and parses JSON. Mirrors the legacy
 // helper: callers handle `res.error` shapes themselves. Returns `any` on purpose —
@@ -229,21 +212,21 @@ export async function sessionTurn(
   // Console が従来どおりパスをプロンプト本文へ織り込むので渡さない。
   attachments?: string[],
 ): Promise<TurnResult> {
-  const fail = (e: unknown): TurnResult => ({ ok: false, message: errText(e as ApiError) || "送信に失敗しました" });
+  const fail = (e: unknown): TurnResult => ({ ok: false, message: errText(e as ApiError) || t("err.send_failed") });
   const body: Record<string, unknown> = op === "interrupt" ? { op } : { op, prompt };
   if (op !== "interrupt" && attachments?.length) body.attachments = attachments;
   const r = await apiJSON(
     `api/sessions/${encodeURIComponent(session)}/turn`,
     "POST",
     body,
-  ).catch(() => ({ error: { message: "通信エラー" } }));
+  ).catch(() => ({ error: { message: t("err.network") } }));
   const err = r?.error as ApiError | undefined;
   if (!err) return { ok: true };
   const code = String(err.code || "");
   if (code === "http_404" || code === "http_405") {
     const legacy = op === "interrupt" ? { keys: ["Escape"] } : { prompt };
     const r2 = await apiJSON(`api/sessions/${encodeURIComponent(session)}/input`, "POST", legacy).catch(
-      () => ({ error: { message: "通信エラー" } }),
+      () => ({ error: { message: t("err.network") } }),
     );
     return r2?.error ? fail(r2.error) : { ok: true };
   }
@@ -303,9 +286,9 @@ export const sessionSettings = async (
   },
 ): Promise<SettingsResult> => {
   const r = await apiJSON(`api/sessions/${encodeURIComponent(session)}/settings`, "POST", s).catch(() => ({
-    error: { message: "通信エラー" },
+    error: { message: t("err.network") },
   }));
-  if (r?.error) return { ok: false, message: errText(r.error) || "設定を変更できませんでした" };
+  if (r?.error) return { ok: false, message: errText(r.error) || t("err.settings_change_failed") };
   return {
     ok: true,
     settings: {
@@ -449,11 +432,11 @@ export async function chatStream(
     });
   } catch {
     if (signal?.aborted) return; // user stopped the turn — not an error
-    h.onError?.("送信に失敗しました");
+    h.onError?.(t("err.send_failed"));
     return;
   }
   if (!res.ok || !res.body) {
-    let msg = "送信に失敗しました";
+    let msg = t("err.send_failed");
     try {
       const j = await res.json();
       msg = errText(j?.error) || msg;
