@@ -20,7 +20,7 @@
 - [24-tts-zundamon.md](24-tts-zundamon.md) — エージェント回答の音声読み上げ（VOICEVOX/ずんだもん・Polly、CP-native・未着手）
 - [25-ops-monitoring.md](25-ops-monitoring.md) — サービス運用（監視・インシデント対応）向け拡張（📋 構想検討・意思決定前）
 - [26-agent-exit-recording.md](26-agent-exit-recording.md) — エージェントプロセスの終了理由記録（OOM / signal / crash）（📋 設計・実装未着手）
-- [27-agent-managed-driver.md](27-agent-managed-driver.md) — エージェント制御の Managed Driver 化（TUI スクレイプ → 共有 runtime＋構造化 RPC）（📋 設計確定・実装未着手）
+- [27-agent-managed-driver.md](27-agent-managed-driver.md) — エージェント制御の Managed Driver 化（TUI スクレイプ → 共有 runtime＋構造化 RPC）（🚧 P1 Codex 観測拡張＋P1.5 Console 受け皿/Driver 層 IF 実装済み・次 = P2 OpenCode managed 化）
 
 > 完了した機能設計は history/ へ移動: [19 assistant-chat](history/19-assistant-chat.md) /
 > [21 memo-queue](history/21-memo-queue.md) / [22 console-rebuild](history/22-console-rebuild.md)。
