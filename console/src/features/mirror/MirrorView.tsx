@@ -1501,8 +1501,9 @@ export function MirrorView({
     >
       <header className="view-head">
         {sessionMeta ? (
-          // Slug hidden (internal id) → title tooltip; the display title is the name.
-          <span className="pane-session" title={"ID: " + sessionMeta.name}>
+          // The display name ellipsizes in a narrow pane and the slug stays hidden
+          // (internal id) — hovering the header shows both in full.
+          <span className="pane-session" title={displayName(sessionMeta) + "\nID: " + sessionMeta.name}>
             <span className={"kind-tag kind-" + kindClass(sessionMeta.kind)}>
               <Icon name={kindIcon(sessionMeta.kind)} />
               <span className="kt-label kt-full">{kindLabel(sessionMeta.kind)}</span>
