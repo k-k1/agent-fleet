@@ -92,29 +92,20 @@ func (c config) issueSession(w http.ResponseWriter, email string) {
 	c.setCookie(w, sessionCookie, c.signCookie(b), int(c.sessionTTL.Seconds()))
 }
 
-// parseSessionCookie verifies the cookie SIGNATURE and decodes the claims, WITHOUT
-// enforcing expiry. ok means the cookie is authentic and carries an email (so its
-// claims — including a possibly-lapsed Exp — can be trusted for bookkeeping like
-// authReg.observe). Callers that gate access must still check Exp (see sessionEmail).
-func (c config) parseSessionCookie(r *http.Request) (sessionClaims, bool) {
+func (c config) sessionEmail(r *http.Request) (string, bool) {
 	ck, err := r.Cookie(sessionCookie)
 	if err != nil {
-		return sessionClaims{}, false
+		return "", false
 	}
 	payload, ok := c.verifyCookie(ck.Value)
 	if !ok {
-		return sessionClaims{}, false
+		return "", false
 	}
 	var claims sessionClaims
-	if json.Unmarshal(payload, &claims) != nil || claims.Email == "" {
-		return sessionClaims{}, false
+	if json.Unmarshal(payload, &claims) != nil {
+		return "", false
 	}
-	return claims, true
-}
-
-func (c config) sessionEmail(r *http.Request) (string, bool) {
-	claims, ok := c.parseSessionCookie(r)
-	if !ok || time.Now().Unix() > claims.Exp {
+	if claims.Email == "" || time.Now().Unix() > claims.Exp {
 		return "", false
 	}
 	return claims.Email, true
@@ -289,12 +280,6 @@ func (c config) authGate(next http.Handler) http.Handler {
 		if isAuthExempt(r.URL.Path) {
 			next.ServeHTTP(w, r)
 			return
-		}
-		// Record the expiry of any authentic cookie (valid OR just-lapsed) before
-		// enforcing it, so the reaper can tell when this owner's login has expired and
-		// spare their sessions — an expired login can't re-attach to keep them warm.
-		if claims, sigOK := c.parseSessionCookie(r); sigOK {
-			c.mgr.authReg.observe(sanitizeUser(claims.Email), claims.Exp)
 		}
 		email, ok := c.sessionEmail(r)
 		if !ok {
