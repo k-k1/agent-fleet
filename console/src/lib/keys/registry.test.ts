@@ -9,15 +9,14 @@ const GROUPS: Group[] = [
   { id: "w", title: "ワークスペース" },
 ];
 
-let ran = "";
 const CMDS: Command[] = [
-  { id: "p.right", title: "右に分割", seq: "p r", run: () => (ran = "p.right") },
-  { id: "p.down", title: "下に分割", seq: "p d", run: () => (ran = "p.down") },
-  { id: "p.focus1", title: "ペイン1", seq: "p 1", keys: ["alt+1"], run: () => (ran = "p.focus1") },
-  { id: "w.theme", title: "テーマ", seq: "w t", run: () => (ran = "w.theme") },
-  { id: "settings", title: "設定", seq: ",", run: () => (ran = "settings") },
+  { id: "p.right", title: "右に分割", seq: "p r", run: () => {} },
+  { id: "p.down", title: "下に分割", seq: "p d", run: () => {} },
+  { id: "p.focus1", title: "ペイン1", seq: "p 1", keys: ["alt+1"], run: () => {} },
+  { id: "w.theme", title: "テーマ", seq: "w t", run: () => {} },
+  { id: "settings", title: "設定", seq: ",", run: () => {} },
   // Only available when a terminal pane is active — proves `when` filtering.
-  { id: "gated", title: "端末専用", keys: ["alt+9"], when: (c) => c.activePaneKind === "terminal", run: () => (ran = "gated") },
+  { id: "gated", title: "端末専用", keys: ["alt+9"], when: (c) => c.activePaneKind === "terminal", run: () => {} },
 ];
 
 describe("matchDirect", () => {
