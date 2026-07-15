@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 )
@@ -134,6 +135,13 @@ type reaper struct {
 	// idle-and-unattached. Reset when it goes busy/attached/away. Reaper is the
 	// only writer (single goroutine) so no lock needed.
 	idleSince map[string]time.Time // workspaceID|session -> first idle
+
+	// ownerEmail caches a workspace membership's owning identity email (immutable),
+	// so the per-sweep "is the owner locked out?" check needs no repeated DB joins.
+	ownerEmail map[string]string // membershipID -> lowercased email
+	// spared remembers which workspaces are currently skipped for an expired owner
+	// login, so the "sparing" log line is emitted once per episode, not every sweep.
+	spared map[string]bool // workspaceID -> currently spared
 }
 
 func newReaper(mgr *manager, interval, sessionDef, wsDef time.Duration) *reaper {
@@ -144,7 +152,35 @@ func newReaper(mgr *manager, interval, sessionDef, wsDef time.Duration) *reaper 
 		wsDef:      wsDef,
 		bootTime:   time.Now(),
 		idleSince:  map[string]time.Time{},
+		ownerEmail: map[string]string{},
+		spared:     map[string]bool{},
 	}
+}
+
+// ownerLoginExpired reports whether the workspace's owning identity's login has
+// expired — the reaper then spares the workspace (a locked-out owner can't
+// re-attach to keep a session warm, so reaping would destroy live work). Unknown
+// owners (unresolvable membership, or never-observed cookie) are treated as NOT
+// expired, so the reaper falls back to normal idle-stop rather than protecting a
+// workspace it can't reason about. The membership->email map is cached (immutable).
+func (rp *reaper) ownerLoginExpired(ctx context.Context, ws Workspace, now time.Time) bool {
+	email, ok := rp.ownerEmail[ws.MembershipID]
+	if !ok {
+		if ws.MembershipID == "" {
+			return false
+		}
+		idID, found, err := rp.mgr.store.IdentityIDForMembership(ctx, ws.MembershipID)
+		if err != nil || !found {
+			return false // transient/unknown — don't cache, retry next sweep
+		}
+		idn, found, err := rp.mgr.store.GetIdentityByID(ctx, idID)
+		if err != nil || !found {
+			return false
+		}
+		email = strings.ToLower(idn.Email)
+		rp.ownerEmail[ws.MembershipID] = email
+	}
+	return rp.mgr.authReg.loginExpired(email, now.Unix())
 }
 
 func (rp *reaper) run(ctx context.Context) {
@@ -203,6 +239,24 @@ func (rp *reaper) sweepWorkspace(ctx context.Context, ws Workspace, sessTO time.
 		return
 	}
 	now := time.Now()
+
+	// Spare a workspace whose owner's login has expired: they are locked out and
+	// cannot re-attach a terminal to keep a session "watched", so neither tier-1
+	// (halt an idle session) nor tier-2 (stop the workspace) may fire — that would
+	// destroy live work the user has no way to defend. Protection lifts on re-auth
+	// (a fresh cookie flips loginExpired back to false). The trade-off is deliberate
+	// (unbounded): an abandoned expired workspace keeps holding RAM until re-login.
+	if rp.ownerLoginExpired(ctx, ws, now) {
+		if !rp.spared[ws.ID] {
+			rp.spared[ws.ID] = true
+			log.Printf("idle-stop: sparing %s — owner login expired (locked out; not reaped until re-login)", ws.ContainerName)
+		}
+		return
+	}
+	if rp.spared[ws.ID] {
+		delete(rp.spared, ws.ID)
+		log.Printf("idle-stop: resuming normal idle-stop for %s — owner re-authenticated", ws.ContainerName)
+	}
 
 	// Ask the Agent for the live session list once; drives both tiers.
 	sessions, err := rp.mgr.agentSessions(ctx, rt)

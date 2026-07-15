@@ -75,6 +75,9 @@ func main() {
 		superAdmins:   emailSet(os.Getenv("SUPER_ADMIN_EMAILS")),
 		// P3-9: live activity tracking for idle-stop.
 		conns: newConnRegistry(),
+		// Per-identity observed cookie expiry: lets the reaper spare a workspace whose
+		// owner's login has expired (they can't re-attach to keep it warm).
+		authReg: newAuthRegistry(),
 	}
 	// OAuth App client_id (non-secret) for the GitHub device flow — injected into
 	// the Workspace so the Agent can run the flow. Reuses the extraEnv -> -e path.
