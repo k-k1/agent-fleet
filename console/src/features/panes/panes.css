@@ -150,6 +150,67 @@ body.row-resizing {
   background: color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
+/* Ctrl-F search scoped to one active, non-terminal pane. It floats below the pane
+   header controls so it works uniformly for File/Diff/Mirror/Doc/Chat views without
+   forcing each view to reserve a separate toolbar row. */
+.pane-find {
+  position: absolute;
+  z-index: 8;
+  top: 32px;
+  right: 8px;
+  width: min(330px, calc(100% - 16px));
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px;
+  color: var(--fg);
+  background: var(--panel);
+  border: 1px solid var(--border2);
+  border-radius: 7px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.28);
+}
+.pane-find input {
+  flex: 1;
+  min-width: 0;
+  height: 24px;
+  padding: 2px 7px;
+  color: var(--fg);
+  background: var(--input-bg, var(--bg));
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  outline: none;
+  font: 12px/1.4 var(--sans);
+}
+.pane-find input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+.pane-find-count {
+  flex: none;
+  width: 48px;
+  color: var(--muted);
+  text-align: center;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.pane-find .ui-iconbtn {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  padding: 2px;
+}
+
+::highlight(pane-find-match) {
+  color: inherit;
+  background: color-mix(in srgb, #ffd33d 65%, transparent);
+}
+::highlight(pane-find-current) {
+  color: inherit;
+  background: #ff9f1c;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, #000 60%, transparent);
+}
+
 /* Drop hint while dragging a pane over this one: full ring for a swap, a
    half-pane box on the edge where the new split would land. */
 .drop-indicator {
