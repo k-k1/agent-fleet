@@ -401,6 +401,7 @@ describe("applyBuiltinReadings / applyReadings (組み込みの読み補正)", (
       "クロンドットディー と アールシードットディー と コンフドットディー",
     );
     expect(applyBuiltinReadings("resolv.conf を編集")).toBe("リゾルブドットコンフ を編集");
+    expect(applyBuiltinReadings("sudoers.d に置く")).toBe("スードゥアーズドットディー に置く");
     // 単語境界つきなので cron.daily の一部（cron.d）は誤って置換しない
     expect(applyBuiltinReadings("cron.daily")).toBe("cron.daily");
   });

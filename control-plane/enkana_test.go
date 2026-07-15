@@ -219,6 +219,8 @@ func TestUnixOperatorTerms(t *testing.T) {
 		"chmod":     "チェンジモッド",
 		"chown":     "チャウン",
 		"sudo":      "スードゥー",
+		"sudoers":   "スードゥアーズ",
+		"bashrc":    "バッシュアールシー",
 		"awk":       "オーク",
 		"sed":       "セド",
 		"curl":      "カール",

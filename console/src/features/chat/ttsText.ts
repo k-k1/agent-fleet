@@ -312,6 +312,7 @@ const DOTTED_TERMS: [RegExp, string][] = [
   [/\bcron\.d\b/gi, "クロンドットディー"],
   [/\brc\.d\b/gi, "アールシードットディー"],
   [/\bconf\.d\b/gi, "コンフドットディー"],
+  [/\bsudoers\.d\b/gi, "スードゥアーズドットディー"],
   [/\bresolv\.conf\b/gi, "リゾルブドットコンフ"],
 ];
 
