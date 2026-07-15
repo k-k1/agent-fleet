@@ -12,6 +12,14 @@ import { useEffect, useRef } from "react";
 // of the stack); only `active` toggling joins/leaves.
 const stack: object[] = [];
 
+// hasOpenOverlay reports whether any Esc-dismissable surface (modal / confirm / menu /
+// popover) is currently open. The key dispatcher reads this to stay inert while an
+// overlay owns the keyboard — so a leader chord or accelerator can't fire behind an
+// open modal. (which-key / palette join this stack too, so it also covers those.)
+export function hasOpenOverlay(): boolean {
+  return stack.length > 0;
+}
+
 export function useEscLayer(onEsc: (() => void) | undefined, active = true): void {
   const cb = useRef(onEsc);
   cb.current = onEsc;

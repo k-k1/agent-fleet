@@ -29,6 +29,7 @@
   --muted2: #777;
   --accent: #6cf;
   --on-accent: #06222e; /* text/icon on an accent-filled button (dark theme: dark on light cyan) */
+  --focus-ring: #79c0ff; /* keyboard focus ring — base.css :focus-visible (keyboard system) */
   --chat-accent: var(--accent); /* chat highlights follow the chosen surface color (overridden in applyTheme) */
   /* Accent for the admin modal, following the chosen top-bar surface. Concrete (not
      var(--accent)) so .admin-surface can rebind --accent to it without a cycle; set to
@@ -102,6 +103,7 @@
   --muted2: #6b7280;
   --accent: #2563eb;
   --on-accent: #ffffff; /* light theme: white text on the saturated blue accent */
+  --focus-ring: #1d4ed8; /* keyboard focus ring — base.css :focus-visible (keyboard system) */
   --topbar-accent: #2563eb; /* light-theme default for the admin accent (see :root) */
   --btn: #e8eaee;
   --btn-h: #dcdfe5;

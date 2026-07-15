@@ -25,6 +25,7 @@ import "../features/chat/chat.css";
 import "../features/mirror/mirror.css";
 import "../features/memo/memo.css";
 import "../features/settings/settings.css";
+import "../features/keys/keys.css";
 
 // Pin the frame's bars above the mobile soft keyboard (iOS visual-viewport fit).
 wireViewport();

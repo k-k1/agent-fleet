@@ -167,6 +167,7 @@ export function Pane({
       ref={paneRef}
       className={cx("pane", active && "active", zone && "droptarget", hovered && "pane-hover", ordCls)}
       style={style}
+      data-pane-id={pane.id}
       onMouseDownCapture={() => onActivate(pane.id)}
       onMouseEnter={() => setHover({ session: pane.session || null, paneId: pane.id })}
       onMouseLeave={() => setHover(null)}

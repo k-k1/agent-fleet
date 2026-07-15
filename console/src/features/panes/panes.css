@@ -19,6 +19,9 @@
 }
 .pane.active {
   border-color: color-mix(in srgb, var(--accent) 55%, var(--border2));
+  /* Keyboard-navigation focus ring — makes the active pane obvious when moving by
+     Alt+N / F6 (keyboard system). Inset so it never bleeds into a neighbor pane. */
+  box-shadow: inset 0 0 0 1.5px var(--focus-ring);
 }
 .pane.droptarget {
   border-color: var(--accent);
