@@ -10,6 +10,7 @@ import { useSessionsStore } from "../sessions/store.ts";
 import { Icon } from "../../ui/Icon.tsx";
 import FileIcon from "../../ui/FileIcon.tsx";
 import { baseName } from "../../lib/filemeta.ts";
+import { useDraft } from "../../lib/draft.ts";
 import { MarkdownView } from "../viewer/MarkdownView.tsx";
 import {
   readTurn,
@@ -160,16 +161,6 @@ type SendEcho = { id: number; text: string; sinceIdx: number };
 const echoStore = new Map<string, SendEcho[]>();
 let echoSeqCounter = 0;
 
-// readDraft loads a session's persisted composer draft ("" when none / unavailable).
-function readDraft(key: string | null): string {
-  if (!key) return "";
-  try {
-    return localStorage.getItem(key) || "";
-  } catch {
-    return "";
-  }
-}
-
 // MirrorView (user-facing: チャット) is a read-mostly Markdown view of a claude
 // session, built on the same Agent endpoints the MCP drive tools use: GET
 // /sessions/{name}/messages?since=<cursor> (the jsonl transcript as structured turns
@@ -262,8 +253,7 @@ export function MirrorView({
   // Composer draft, persisted per session so switching ターミナル⇄チャット (which
   // unmounts this view) — or a reload — keeps what you were typing. Key by session.
   const draftKey = session ? "af.mirror-draft." + session : null;
-  const [draft, setDraft] = useState(() => readDraft(draftKey));
-  const draftKeyRef = useRef<string | null>(draftKey);
+  const [draft, setDraft] = useDraft(draftKey);
   const [sending, setSending] = useState(false);
   // Pasted images awaiting send: {path} is the session-saved absolute path (referenced in
   // the prompt), {url} an object URL for the local chip preview, {name} the basename.
@@ -634,25 +624,6 @@ export function MirrorView({
     ttsPendingInitRef.current = false; // 確認読み上げの基準も取り直す
     ttsPendingSigRef.current = "";
   }, [session]);
-
-  // Persist the draft per session, and reload it when the session changes (so the old
-  // session's draft isn't clobbered under the new key). Runs on every draft edit.
-  useEffect(() => {
-    if (draftKeyRef.current !== draftKey) {
-      // Session switched under a mounted view — load the new session's draft instead
-      // of saving the old one here.
-      draftKeyRef.current = draftKey;
-      setDraft(readDraft(draftKey));
-      return;
-    }
-    if (!draftKey) return;
-    try {
-      if (draft) localStorage.setItem(draftKey, draft);
-      else localStorage.removeItem(draftKey);
-    } catch {
-      /* storage unavailable (private mode) — draft just won't persist */
-    }
-  }, [draft, draftKey]);
 
   // Poll the transcript since our cursor while this view is mounted (Pane only mounts
   // it while visible). Faster while claude is working, slower at rest. New turns are

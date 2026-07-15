@@ -15,6 +15,7 @@ import { useSessionsStore } from "../sessions/store.ts";
 import { useTenantStore } from "../../core/store/tenant.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { agentOf } from "../../agents/registry.ts";
+import { useDraft } from "../../lib/draft.ts";
 import { displayName, stateInfo } from "../../lib/sessionview.ts";
 import type { Memo } from "../../types/memo.ts";
 import type { Session } from "../../types/session.ts";
@@ -69,8 +70,10 @@ export function MemoQueueSection() {
   const [memos, setMemos] = useState<Memo[]>([]);
   const [sel, setSel] = useState<Record<string, boolean>>({});
   const [target, setTarget] = useState(""); // session name to flush to
-  const [newText, setNewText] = useState("");
-  const [newCat, setNewCat] = useState("");
+  // The in-progress memo (text + category) persists in localStorage, so a reload — or
+  // the browser dying — doesn't lose a note that was being typed.
+  const [newText, setNewText] = useDraft("af.memo-draft");
+  const [newCat, setNewCat] = useDraft("af.memo-draft-cat");
   const [busy, setBusy] = useState(false);
   const [tidy, setTidy] = useState<Memo[] | null>(null); // memos handed to the tidy modal
   const serRef = useRef("");
