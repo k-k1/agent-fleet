@@ -397,8 +397,15 @@ func (o *codexObserver) observeThreadLifecycle(msg codexAppServerMessage) {
 			return
 		}
 		// Never attach on notLoaded: resuming would make the observer LOAD the
-		// thread from disk, keeping it in server memory for no reader.
-		if p.Status.Type != "" && p.Status.Type != "notLoaded" {
+		// thread from disk, keeping it in server memory for no reader. Also forget
+		// it — アンロードは thread/closed を伴わない（TUI 切断・アイドル退避）ため、
+		// requested を残すと再ロード時に attach が早期 return し続け、そのスレッドの
+		// 観測（圧縮検知等）が観測ソケットの再接続まで復活しない。
+		if p.Status.Type == "notLoaded" {
+			o.forget(p.ThreadID)
+			return
+		}
+		if p.Status.Type != "" {
 			o.attach(p.ThreadID)
 		}
 	case "thread/closed", "thread/deleted":

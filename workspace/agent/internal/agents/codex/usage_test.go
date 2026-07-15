@@ -203,3 +203,31 @@ func TestReadCodexUsageFromDir(t *testing.T) {
 		t.Fatalf("readUsage = %+v, want ok with both windows", u)
 	}
 }
+
+// account/rateLimits/updated はスパースな rolling update — primary だけの push が
+// 直前に観測した weekly 窓や planType を消してはならない（欠けた field は「変化なし」）。
+func TestCodexObservedRateLimitsSparseMerge(t *testing.T) {
+	resetObservedRateLimits()
+	t.Cleanup(resetObservedRateLimits)
+	t.Setenv("HOME", t.TempDir())
+	now := time.Now()
+	SetObservedRateLimits(
+		&RateLimitWindow{UsedPercent: 10, WindowMinutes: 300, ResetsAt: now.Add(time.Hour).Unix()},
+		&RateLimitWindow{UsedPercent: 40, WindowMinutes: 10080, ResetsAt: now.Add(48 * time.Hour).Unix()},
+		"plus")
+	// 5h 窓だけのスパース push（secondary / planType は届かない＝変化なし）。
+	SetObservedRateLimits(&RateLimitWindow{
+		UsedPercent: 12, WindowMinutes: 300, ResetsAt: now.Add(time.Hour).Unix(),
+	}, nil, "")
+
+	u := readUsage()
+	if !u.OK || u.FiveHour == nil || u.FiveHour.Pct != 12 {
+		t.Fatalf("readUsage = %+v, want the updated 12%% five-hour window", u)
+	}
+	if u.SevenDay == nil || u.SevenDay.Pct != 40 {
+		t.Fatalf("sevenDay = %+v, want the retained 40%% weekly window", u.SevenDay)
+	}
+	if u.PlanType != "plus" {
+		t.Fatalf("planType = %q, want the retained \"plus\"", u.PlanType)
+	}
+}
