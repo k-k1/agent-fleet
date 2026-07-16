@@ -1296,6 +1296,11 @@ export const ja = {
   "sess.cleanup_title": "停止中のセッションを整理",
   "sess.cleanup_body": "{parts}します。",
   "sess.cleanup_confirm": "整理する",
+  "sess.tidy_orphans_title": "その他のセッションを整理",
+  "sess.tidy_orphans_body": "作業コピーのないセッションを整理します（{parts}）。",
+  "sess.tidy_orphans_alive": "実行中 {count} 件を含みます。",
+  "sess.tidy_orphans_restore": "アーカイブ分は会話を保持し、あとで<0>復帰できます</0>。",
+  "sess.tidy_orphans_irreversible": "shell/ssm の削除は取り消せません。",
   "sess.stop_title": "セッションを停止",
   "sess.stop_body": "「{name}」を停止します。会話は保持され、あとで再開できます。",
   "sess.stop_confirm": "停止する",
@@ -1704,6 +1709,7 @@ export const ja = {
   "pj.collapse": "折りたたむ",
   "pj.expand": "展開",
   "pj.other_sessions": "その他のセッション",
+  "pj.tidy_other_sessions": "その他のセッションを整理（アーカイブ退避・shell/ssm は削除）",
   "pj.session_history": "セッション履歴",
 
   // === P5 リポジトリ（RepoPicker/NewRepoModal/CloneForm/DirPicker/Branch* ほか） ===

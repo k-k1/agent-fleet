@@ -105,13 +105,21 @@ export function RepoNode({ r, childRepos, ctx, actions }: RepoNodeProps) {
         </ul>
       </div>
       {open && (
-        <div className="proj-node-body">
+        <>
           {/* Sessions sit directly under the repo row — no sub-header, no empty
-              placeholder: a repo with none simply shows nothing here. */}
-          {shownSessions.length > 0 && <ul className="sess-list proj-sub-list">{shownSessions.map(row)}</ul>}
+              placeholder: a repo with none simply shows nothing here. Only the
+              base's own direct sessions get the gray guide line (they have no
+              accent spine of their own). */}
+          {shownSessions.length > 0 && (
+            <div className="proj-node-body">
+              <ul className="sess-list proj-sub-list">{shownSessions.map(row)}</ul>
+            </div>
+          )}
 
-          {/* Worktrees as real child nodes — indentation says "belongs to this
-              base" (the old peer-row + group band is gone). */}
+          {/* Worktrees as real child nodes — each carries its own accent spine,
+              so they hang directly off the node (NOT wrapped in the bordered
+              body) to avoid a second, redundant gray guide left of the spine.
+              The spine is indented to sit where that guide used to be. */}
           {childRepos && childRepos.length > 0 && (
             <ul className="proj-children">
               {childRepos.map((c) => (
@@ -119,7 +127,7 @@ export function RepoNode({ r, childRepos, ctx, actions }: RepoNodeProps) {
               ))}
             </ul>
           )}
-        </div>
+        </>
       )}
     </li>
   );
