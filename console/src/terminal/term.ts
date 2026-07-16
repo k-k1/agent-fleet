@@ -173,7 +173,46 @@ function wireGlobalReconnect() {
 
 function fitInst(it: Inst | null | undefined) {
   try {
-    it && it.fitAddon && it.fitAddon.fit();
+    if (!it || !it.fitAddon || !it.term) return;
+    // FitAddon.fit() bails (proposeDimensions returns nothing) whenever the cached
+    // character cell is 0×0 — the state a terminal is left in when it's open()ed into
+    // a pane that has no laid-out size yet. xterm only re-measures the cell lazily
+    // (some render/resize paths, gated on hasValidSize), and a paused/off-screen pane
+    // can miss all of them, so the grid stays pinned at the 80×24 default and never
+    // recovers on its own. When the cached size is invalid, force a re-measure first so
+    // this fit can actually size the grid. Cheap: it only runs in the broken state
+    // (a healthy pane has hasValidSize === true and this is skipped).
+    /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
+    const cs = (it.term as any)._core?._charSizeService;
+    if (cs && !cs.hasValidSize && typeof cs.measure === "function") cs.measure();
+    it.fitAddon.fit();
+  } catch {}
+}
+
+// forceFit re-syncs a visible pane's grid AND forces a full renderer repaint. Use it on
+// reveal / re-open / re-attach / mount-settle, where the pane can be the right grid shape
+// yet never have painted (a split-pane mount race, or a canvas whose atlas/context went
+// stale while hidden). fitInst() re-measures + refits, which repaints on its own WHEN the
+// settled size yields a different grid — but fit() is a NO-OP when the proposed grid equals
+// the current one, so an unchanged-but-unpainted pane stays black. That is why "moving the
+// pane fixes it": the size change forces a full renderer clear+repaint. Do that clear+
+// repaint unconditionally here (via the same _renderService.clear() that fit() uses on a
+// resize, plus clearTextureAtlas() for the canvas renderer's glyph cache), so a reveal
+// never leaves a black pane waiting on a size change that may never come. All the reach-ins
+// are private xterm internals (like FitAddon's own _core reach-in) and guarded, so a
+// version bump just makes them no-op rather than throw.
+function forceFit(it: Inst | null | undefined) {
+  if (!it || !it.term) return;
+  const el = it.term.element;
+  if (!el || !el.isConnected || el.getClientRects().length === 0) return;
+  fitInst(it);
+  try {
+    /* eslint-disable @typescript-eslint/no-explicit-any */
+    const core = (it.term as any)._core;
+    core?._renderService?.clear?.();
+    (it.term as any).clearTextureAtlas?.();
+    /* eslint-enable @typescript-eslint/no-explicit-any */
+    it.term.refresh(0, it.term.rows - 1);
   } catch {}
 }
 
@@ -231,10 +270,7 @@ export function ensureTerm(paneId: string, el: HTMLElement) {
     // trusting the canvas (same contract as revealTerm).
     if (el && it.term.element?.parentElement !== el) it.term.open(el);
     observe(it, el);
-    fitInst(it);
-    try {
-      it.term.refresh(0, it.term.rows - 1);
-    } catch {}
+    forceFit(it);
     return it.term;
   }
   // May already hold a placeholder from an early onSession() subscription.
@@ -359,12 +395,7 @@ export function ensureTerm(paneId: string, el: HTMLElement) {
   loadWebgl(it);
   // The web font loads async — refit/redraw once ready so metrics are right.
   if (document.fonts && document.fonts.ready) {
-    document.fonts.ready.then(() => {
-      try {
-        fitAddon.fit();
-        term.refresh(0, term.rows - 1);
-      } catch {}
-    });
+    document.fonts.ready.then(() => forceFit(it));
   }
   // Keep terminal-relevant shortcuts inside the PTY rather than the browser while
   // the terminal is focused. We preventDefault the browser action and return true so
@@ -458,6 +489,13 @@ export function ensureTerm(paneId: string, el: HTMLElement) {
   term.onData((d) => it.ws && it.ws.readyState === 1 && it.ws.send(JSON.stringify({ type: "input", data: d })));
   term.onResize(({ cols, rows }) => it.ws && it.ws.readyState === 1 && it.ws.send(JSON.stringify({ type: "resize", cols, rows })));
   observe(it, el);
+  // Split-pane mount race: this terminal is created/opened synchronously in a mount
+  // effect, before the pane's flex/grid cell has necessarily reached its final size.
+  // The fit above then measures a not-yet-settled box, and if the resulting grid equals
+  // the settled one, no later fit()/ResizeObserver tick is non-no-op to force a repaint —
+  // the pane sits black until it's moved. Force one clear+repaint after layout settles
+  // (double rAF: past this frame's paint) to close that window at creation time.
+  requestAnimationFrame(() => requestAnimationFrame(() => forceFit(it)));
   return term;
 }
 
@@ -528,10 +566,9 @@ function redrawVisible(it: Inst) {
   if (!el || !el.isConnected || el.getClientRects().length === 0) return;
   dropWebgl(it);
   loadWebgl(it);
-  fitInst(it);
-  try {
-    it.term!.refresh(0, it.term!.rows - 1);
-  } catch {}
+  // Force a clear+repaint even when the grid shape is unchanged: the renderer may have
+  // sat hidden/stale and fit() alone would no-op, leaving the pane black.
+  forceFit(it);
 }
 
 // hideTerm releases a pane's GPU resources while its container is display:none
@@ -565,10 +602,9 @@ export function revealTerm(paneId: string) {
     if (gl?.isContextLost?.()) dropWebgl(it);
   } catch {}
   loadWebgl(it);
-  fitInst(it);
-  try {
-    it.term.refresh(0, it.term.rows - 1);
-  } catch {}
+  // Unconditional clear+repaint (not just fit+refresh): a reveal whose grid is already
+  // the right shape must still force the renderer to redraw, or it stays black.
+  forceFit(it);
 }
 
 // observe attaches a ResizeObserver to the pane container so the grid refits when
@@ -728,10 +764,14 @@ export function attach(paneId: string, session: string) {
   }, CONNECT_STALL + 500);
   ws.onopen = () => {
     clearConnWd(it); // connected → the stall watchdog is done
-    fitInst(it);
+    fitInst(it); // size the grid before reporting it to the PTY (next line)
     setSoftKeyboard(it, true); // PTY connected → allow the soft keyboard for input
     ws.send(JSON.stringify({ type: "resize", cols: it.term!.cols, rows: it.term!.rows }));
     startHeartbeat(paneId, ws); // begin liveness pinging on this socket
+    // A fresh attach into a split pane can win the race against the pane's layout, so
+    // the tmux replay paints into a grid that's the right shape but never repainted —
+    // a black pane no reconnect fixes. Force a clear+repaint after layout settles.
+    requestAnimationFrame(() => forceFit(it));
   };
   ws.onmessage = (ev) => {
     const d = ev.data;
