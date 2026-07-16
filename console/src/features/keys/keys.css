@@ -231,6 +231,10 @@
   align-items: center;
   flex-wrap: wrap;
 }
+/* An app chord the user cleared in Settings → shown as a dash, not an empty keycap. */
+.cheat-unbound {
+  color: var(--muted);
+}
 .cheat-row-title {
   font-size: 13px;
   color: var(--fg);

@@ -2555,3 +2555,65 @@
   font-size: 11.5px;
   padding: 2px 10px;
 }
+
+/* Keyboard settings (KeysTab, docs/29) — rebind rows + the key-capture recorder. */
+.keys-settings .kb-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.kb-reset-all {
+  font-size: 12px;
+  white-space: nowrap;
+}
+.kb-sec {
+  margin-top: 14px;
+}
+.kb-sec-title {
+  margin: 0 0 4px;
+  font-size: 12px;
+  color: var(--muted);
+  font-weight: 500;
+}
+.kb-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--btn-border);
+}
+.kb-label {
+  font-size: 13px;
+}
+.kb-chord {
+  justify-self: end;
+  min-width: 92px;
+  text-align: right;
+}
+.kb-unbound {
+  font-size: 12px;
+  color: var(--muted);
+}
+.kb-actions {
+  display: flex;
+  gap: 6px;
+}
+.kb-actions button {
+  font-size: 12px;
+  padding: 3px 8px;
+}
+.kb-capture {
+  font-size: 12px;
+  color: var(--accent);
+  border: 1px dashed var(--accent);
+  border-radius: 5px;
+  padding: 2px 8px;
+  white-space: nowrap;
+}
+.kb-conflict {
+  grid-column: 1 / -1;
+  font-size: 12px;
+  color: var(--del, #e57373);
+}

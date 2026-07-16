@@ -101,3 +101,16 @@ export function isLeaderPrefix(commands: Command[], path: string[], ctx: KeyCont
 export function paletteCommands(commands: Command[], ctx: KeyContext): Command[] {
   return commands.filter((c) => ok(c, ctx));
 }
+
+/** Apply user key overrides (commandId → chord string; "" = explicitly unbound) onto a
+ * command list, returning a new list the dispatcher / overlays can consume unchanged.
+ * Only commands that already carry a direct accelerator (`keys`) are overridable — leader
+ * SEQUENCES are structural navigation and are left untouched (P5 scope decision, see
+ * ADR-0017). Pure: the store read lives in features/keys/bindings.ts. */
+export function applyOverrides(commands: Command[], overrides: Record<string, string>): Command[] {
+  return commands.map((c) => {
+    const o = overrides[c.id];
+    if (o === undefined || !c.keys) return c; // no override, or a leader-only command
+    return { ...c, keys: o ? [o] : [] }; // "" clears the accelerator (kept reachable via leader)
+  });
+}

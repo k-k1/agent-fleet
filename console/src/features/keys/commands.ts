@@ -118,6 +118,10 @@ export const ALL_COMMANDS: Command[] = [
 
   // ---- Top-level leader actions ----
   { id: "settings.open", title: "設定を開く", seq: ",", run: () => useSettingsUI.getState().openSettings() },
+  // Palette is normally on its own accelerator (Ctrl/⌘+P), but a leader path keeps it
+  // reachable when terminal-input priority suppresses that accelerator in the terminal —
+  // the leader is the one chord that still escapes. Also makes it discoverable in which-key.
+  { id: "palette.open", title: "コマンドパレット", seq: ";", run: () => useKeysStore.getState().openPalette() },
   { id: "guide.open", title: "はじめかたガイド", seq: "w g", run: () => useSettingsUI.getState().openGuide() },
   // The "?" cheat-sheet. Also opens on a bare "?" when not typing (handled directly in
   // the dispatcher so it stays out of the terminal/inputs); this leader entry makes it

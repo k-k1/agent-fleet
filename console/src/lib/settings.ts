@@ -300,6 +300,16 @@ export interface Settings {
   readerFont: string;
   // 朗読ビューの本文文字サイズ（px）。ReaderView が --reader-size として本文へ渡す。
   readerSize: number;
+  // キーボードショートカットのユーザー再割当（docs/29 + ADR-0017）。キー＝コマンド id、または
+  // アプリ予約キーの合成 id（app.leader / app.palette / app.cheatsheet）。値＝上書きするコード
+  // （chords.ts の正規形文字列。""＝明示的に無効化）。未登録キーは既定のまま。直接アクセラレータと
+  // 予約キーのみ再割当可（リーダー配下のシーケンス p r 等は構造なので固定）。features/keys/bindings.ts
+  // の effectiveCommands / boundChord が解決する。クロスデバイス同期（DEVICE_LOCAL 外）。
+  keybindings: Record<string, string>;
+  // 端末入力優先（docs/29）。ON のとき、端末（xterm）にフォーカスがある間はアプリのグローバル
+  // ショートカットを抑止して端末へ素通しする（Ctrl 系を端末に渡す）。唯一 Leader（既定 Ctrl/⌘+K・
+  // 再割当可）だけは残し、そこから which-key／パレットで全コマンドに到達できる。既定 OFF（capture 優先）。
+  terminalPriority: boolean;
 }
 
 // The pinned fallback model. Used as the seeded global default and as resolveModel's
@@ -379,6 +389,8 @@ const DEFAULTS: Settings = {
   readerVoice: "",
   readerFont: "明朝",
   readerSize: 17,
+  keybindings: {},
+  terminalPriority: false,
 };
 
 // VOICEVOX ずんだもんのスタイル（speaker 番号 → ラベル）。設定 UI の話者選択に使う。
