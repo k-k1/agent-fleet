@@ -21,6 +21,9 @@ export interface SessionActions {
   deleteSession(s: Session): Promise<void>;
   /** Clear all stopped: agent sessions archive (restorable), shell/ssm delete. */
   clearStopped(): Promise<void>;
+  /** Bulk-clear every "その他のセッション" (orphan whose working copy is gone),
+   * same split as clearStopped: agent sessions archive (restorable), shell/ssm delete. */
+  clearOrphans(orphans: Session[]): Promise<void>;
   /** Halt a live session into 停止中 (resumable): kills tmux, keeps the meta. */
   halt(name: string, display: string): Promise<void>;
   /** Mint a NEW live session (fresh slug, same title/dir/model), archive the old. */
@@ -93,6 +96,48 @@ export function useSessionActions(): SessionActions {
       ),
     ]);
     for (const s of stopped) closeSessionPanes(s.name);
+    void refreshSessions();
+  };
+
+  const clearOrphans = async (orphans: Session[]) => {
+    if (orphans.length === 0) return;
+    // Same split as clearStopped: agent sessions archive (conversation kept,
+    // restorable); shell/ssm have no conversation worth keeping, so they delete.
+    const ephemeral = orphans.filter((s) => agentOf(s.kind).caps.ephemeral);
+    const keepable = orphans.filter((s) => !agentOf(s.kind).caps.ephemeral);
+    const alive = orphans.filter((s) => s.alive).length;
+    const parts: string[] = [];
+    if (keepable.length) parts.push(t("sess.cleanup_archive_n", { count: keepable.length }));
+    if (ephemeral.length) parts.push(t("sess.cleanup_delete_n", { count: ephemeral.length }));
+    if (
+      !(await askConfirm({
+        title: tr("sess.tidy_orphans_title"),
+        body: (
+          <>
+            {tr("sess.tidy_orphans_body", { parts: parts.join(tr("common.list_sep")) })}
+            {alive > 0 ? <> {tr("sess.tidy_orphans_alive", { count: alive })}</> : null}
+            <br />
+            <Trans k="sess.tidy_orphans_restore" components={[<strong />]} />
+            {ephemeral.length > 0 ? <> {tr("sess.tidy_orphans_irreversible")}</> : null}
+          </>
+        ),
+        confirmLabel: tr("sess.cleanup_confirm"),
+        danger: ephemeral.length > 0,
+      }))
+    )
+      return;
+    // /archive hides but KEEPS the meta/jsonl (restorable); /stop forgets it
+    // (shell/ssm delete). Best-effort per session so one failure doesn't abort
+    // the rest — mirrors the per-row アーカイブ / 削除.
+    await Promise.all([
+      ...keepable.map((s) =>
+        raw(`api/sessions/${encodeURIComponent(s.name)}/archive`, { method: "POST" }).catch(() => {}),
+      ),
+      ...ephemeral.map((s) =>
+        raw(`api/sessions/${encodeURIComponent(s.name)}/stop`, { method: "POST" }).catch(() => {}),
+      ),
+    ]);
+    for (const s of orphans) closeSessionPanes(s.name);
     void refreshSessions();
   };
 
@@ -200,5 +245,5 @@ export function useSessionActions(): SessionActions {
     setTimeout(() => void refreshSessions(), 1200);
   };
 
-  return { archive, deleteSession, clearStopped, halt, recreate, fork, switchDriver };
+  return { archive, deleteSession, clearStopped, clearOrphans, halt, recreate, fork, switchDriver };
 }

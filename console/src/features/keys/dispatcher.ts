@@ -13,7 +13,7 @@ import { useLayoutStore } from "../../layout/store.ts";
 import { activePane } from "../../layout/ops.ts";
 import { hasOpenOverlay } from "../../lib/escLayer.ts";
 import { getSettings } from "../../lib/settings.ts";
-import { eventChordString, shouldIgnore } from "../../lib/keys/chords.ts";
+import { eventChordString } from "../../lib/keys/chords.ts";
 import { matchDirect, resolveLeader, isLeaderPrefix } from "../../lib/keys/registry.ts";
 import type { KeyContext } from "../../lib/keys/registry.ts";
 import { useKeysStore } from "./store.ts";
@@ -36,6 +36,18 @@ function focusedKind(): KeyContext["focusedKind"] {
   return "other";
 }
 
+// The currently-focused element an IME could compose into (a text field or the terminal's
+// helper textarea), or null if focus is somewhere inert. Blurring it on leader entry is how
+// we "turn IME off" for the sequence — see dropIME() below. SELECT is excluded (no IME).
+function imeTarget(): HTMLElement | null {
+  const el = document.activeElement as HTMLElement | null;
+  if (!el || el === document.body) return null;
+  if (typeof el.closest === "function" && el.closest(".xterm")) return el; // terminal textarea
+  const tag = el.tagName;
+  if (tag === "INPUT" || tag === "TEXTAREA" || el.isContentEditable) return el;
+  return null;
+}
+
 export function buildContext(): KeyContext {
   const ap = activePane(useLayoutStore.getState().layout);
   const ks = useKeysStore.getState();
@@ -50,6 +62,30 @@ export function buildContext(): KeyContext {
 export function wireKeys(): () => void {
   let leaderTimer: number | null = null;
   let whichKeyTimer: number | null = null;
+  // The editable element we blurred to drop IME when the leader was pressed, so we can hand
+  // focus (and its IME) back if the sequence is cancelled or ends on a command that doesn't
+  // move focus itself.
+  let savedFocus: HTMLElement | null = null;
+
+  // "Turn IME off" for the leader sequence. An active IME (e.g. Japanese 変換) would compose
+  // the follow-up keys (p, r, …) into the focused field/terminal, and shouldIgnore() would
+  // then swallow them — the sequence breaks and stray characters can leak in. Web pages can't
+  // toggle the OS IME, but blurring the compose target ends any composition and parks focus on
+  // <body>, where keys arrive as plain keydowns the dispatcher reads cleanly.
+  const dropIME = () => {
+    const el = imeTarget();
+    if (el) {
+      savedFocus = el;
+      el.blur();
+    }
+  };
+  // Return focus (and thus IME) to whatever we blurred. A focus-moving command re-focuses on
+  // its own (often via rAF, which lands after this), so calling this on a completed command is
+  // safe — the command's own focus wins; a no-op command keeps its terminal focused.
+  const restoreFocus = () => {
+    if (savedFocus && document.contains(savedFocus)) savedFocus.focus();
+    savedFocus = null;
+  };
 
   const clearTimers = () => {
     if (leaderTimer != null) window.clearTimeout(leaderTimer);
@@ -59,6 +95,7 @@ export function wireKeys(): () => void {
   const cancelLeader = () => {
     clearTimers();
     useKeysStore.getState().setLeader(null);
+    restoreFocus();
   };
   const enterLeader = (path: string[]) => {
     clearTimers();
@@ -73,9 +110,11 @@ export function wireKeys(): () => void {
   };
 
   const onKeyDown = (e: KeyboardEvent) => {
-    if (shouldIgnore(e)) return; // IME composition / auto-repeat
-    const chord = eventChordString(e);
+    if (e.repeat) return; // never fire a shortcut on auto-repeat (a held-down key)
+    const chord = eventChordString(e); // from e.code — valid even while an IME composes
     if (chord == null) return; // modifier-only keydown — keep waiting
+    // An IME is mid-composition (Japanese 変換 reports isComposing / keyCode 229).
+    const composing = e.isComposing === true || e.keyCode === 229;
 
     // Live-resolved reserved chords (respect user rebinds; "" = unbound → never matched,
     // since a real chord is always non-empty).
@@ -86,7 +125,9 @@ export function wireKeys(): () => void {
 
     const ks = useKeysStore.getState();
 
-    // --- Leader pending: the next key advances or resolves the sequence (swallowed) ---
+    // --- Leader pending: the next key advances or resolves the sequence (swallowed). We
+    // blurred the compose target on entry, so these keys arrive un-composed; process them
+    // regardless of `composing` so the sequence can never be stranded by a stray IME state. ---
     if (ks.leaderPending) {
       if (chord === "escape" || chord === LEADER) {
         consume(e);
@@ -98,7 +139,7 @@ export function wireKeys(): () => void {
       const cmd = resolveLeader(commands, nextPath, ctx);
       if (cmd) {
         consume(e);
-        cancelLeader();
+        cancelLeader(); // hands focus back; a focus-moving command overrides it next
         cmd.run(ctx);
         return;
       }
@@ -113,7 +154,19 @@ export function wireKeys(): () => void {
       return;
     }
 
-    // --- Not in leader mode. A modal/menu/palette owning the keyboard wins. ---
+    // --- Not in leader mode. While an IME is composing, defer to it — EXCEPT the leader
+    // chord, which drops IME and opens command mode even mid-変換 (Ctrl+K is never part of a
+    // composition). Every other key flows to the IME untouched. ---
+    if (composing) {
+      if (chord === LEADER && !hasOpenOverlay()) {
+        consume(e);
+        dropIME();
+        enterLeader([]);
+      }
+      return;
+    }
+
+    // A modal/menu/palette owning the keyboard wins.
     if (hasOpenOverlay()) return;
 
     const ctx = buildContext();
@@ -128,6 +181,7 @@ export function wireKeys(): () => void {
 
     if (chord === LEADER) {
       consume(e);
+      dropIME(); // turn IME off for the sequence the moment the leader is pressed
       enterLeader([]);
       return;
     }

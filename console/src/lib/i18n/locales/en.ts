@@ -1262,6 +1262,11 @@ export const en: Record<keyof typeof ja, string> = {
   "sess.cleanup_title": "Clean up stopped sessions",
   "sess.cleanup_body": "Will {parts}.",
   "sess.cleanup_confirm": "Clean up",
+  "sess.tidy_orphans_title": "Tidy other sessions",
+  "sess.tidy_orphans_body": "Tidies sessions with no working copy ({parts}).",
+  "sess.tidy_orphans_alive": "Includes {count} running.",
+  "sess.tidy_orphans_restore": "Archived ones keep their conversation and can be <0>restored</0> later.",
+  "sess.tidy_orphans_irreversible": "Deleting shell/ssm cannot be undone.",
   "sess.stop_title": "Stop session",
   "sess.stop_body": "Stop “{name}”. The conversation is kept and can be resumed later.",
   "sess.stop_confirm": "Stop",
@@ -1670,6 +1675,7 @@ export const en: Record<keyof typeof ja, string> = {
   "pj.collapse": "Collapse",
   "pj.expand": "Expand",
   "pj.other_sessions": "Other sessions",
+  "pj.tidy_other_sessions": "Tidy other sessions (archive; shell/ssm are deleted)",
   "pj.session_history": "Session history",
 
   // === P5 リポジトリ（RepoPicker/NewRepoModal/CloneForm/DirPicker/Branch* ほか） ===
