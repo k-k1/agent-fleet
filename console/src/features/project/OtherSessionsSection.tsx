@@ -34,9 +34,9 @@ export function OtherSessionsSection() {
       count={orphans.length}
       actions={
         <IconButton
-          icon="trash"
-          label="その他のセッションをすべて削除"
-          onClick={() => void actions.deleteOrphans(orphans)}
+          icon="archive"
+          label="その他のセッションをすべてアーカイブ"
+          onClick={() => void actions.archiveOrphans(orphans)}
         />
       }
     >
