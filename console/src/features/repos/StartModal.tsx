@@ -29,6 +29,7 @@ import { useSessionsStore } from "../sessions/store.ts";
 import { openSessionTerminal } from "../sessions/open.ts";
 import { SsmLoginModal } from "../sessions/SsmLoginModal.tsx";
 import { assistantList } from "../chat/api.ts";
+import { assistantName, assistantDesc } from "../chat/assistantI18n.ts";
 import { openAssistantDraft } from "../chat/open.ts";
 import type { Assistant } from "../../types/assistant.ts";
 import type { SsmHost } from "../../types/session.ts";
@@ -283,7 +284,7 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
                     key={a.id}
                     type="button"
                     className="start-row start-sub"
-                    title={a.description || a.name}
+                    title={assistantDesc(a) || assistantName(a)}
                     onClick={() => {
                       openAssistantDraft(a.id);
                       onClose();
@@ -291,7 +292,7 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
                   >
                     <Icon name={a.icon || "comment"} className="start-row-ic" />
                     <span className="start-row-body">
-                      <span className="start-row-title">{a.name}</span>
+                      <span className="start-row-title">{assistantName(a)}</span>
                     </span>
                     {a.builtin && <span className="start-row-meta">{tr("start.builtin")}</span>}
                   </button>

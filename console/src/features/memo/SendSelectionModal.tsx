@@ -15,6 +15,7 @@ import { useToast } from "../../ui/ToastProvider.tsx";
 import { t, useT } from "../../lib/i18n/index.ts";
 import { apiJSON, errText } from "../../core/api/client.ts";
 import { chatCreate, assistantList } from "../chat/api.ts";
+import { assistantName } from "../chat/assistantI18n.ts";
 import { openChat } from "../chat/open.ts";
 import { memoCreate, memoList } from "./api.ts";
 import { useMemoStore } from "./store.ts";
@@ -234,7 +235,7 @@ export function SendSelectionModal({ filePath, quote, startLine, endLine, onClos
                 <optgroup label={tr("send.optgroup_assistant")}>
                   {assistants.map((a) => (
                     <option key={a.id} value={`assistant:${a.id}`}>
-                      {a.name}
+                      {assistantName(a)}
                     </option>
                   ))}
                 </optgroup>

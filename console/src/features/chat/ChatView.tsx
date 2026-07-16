@@ -27,6 +27,7 @@ import { readTurn, collectBlocks, blockIndexAt, type TurnReadHandle } from "../m
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { splitPastedImages, buildImagePrompt } from "../../lib/pastedImages.ts";
 import { agentOf } from "../../agents/registry.ts";
+import { assistantName, assistantDesc } from "./assistantI18n.ts";
 import { kindClass } from "../../lib/sessionkind.ts";
 import type { Conversation, ChatMessage, ChatStep } from "../../types/chat.ts";
 import type { Assistant } from "../../types/assistant.ts";
@@ -513,7 +514,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
   // Header/badge come from the live conversation, or the draft assistant while composing.
   const agentKind = conv?.agent || draftAsst?.agent || null;
   const agent = agentKind ? agentOf(agentKind) : null;
-  const title = conv?.title || draftAsst?.name || t("chat.label");
+  const title = conv?.title || (draftAsst && assistantName(draftAsst)) || t("chat.label");
   const isDraft = !conversationId && !!draftAssistantId;
   // A turn may be in flight because THIS pane is sending, or because a background turn on
   // this conversation (started before the pane was closed + re-opened) is still running.
@@ -570,11 +571,11 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
           <div className="chat-greeting">
             <div className="chat-greeting-head">
               <Icon name={draftAsst.icon || "comment-discussion"} className="chat-greeting-ic" />
-              <span className="chat-greeting-name">{draftAsst.name}</span>
+              <span className="chat-greeting-name">{assistantName(draftAsst)}</span>
             </div>
             <div className="chat-greeting-body">
-              {draftAsst.description ? (
-                <ChatMarkdown source={draftAsst.description} breaks />
+              {assistantDesc(draftAsst) ? (
+                <ChatMarkdown source={assistantDesc(draftAsst)!} breaks />
               ) : (
                 tr("chat.greeting_empty")
               )}

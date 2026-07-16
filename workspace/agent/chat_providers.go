@@ -145,17 +145,17 @@ func (claudeChat) send(ctx context.Context, c *chatConversation, prompt string) 
 	cmd.Stdin = strings.NewReader(prompt)
 	out, err := cmd.Output()
 	if err != nil {
-		return "", fmt.Errorf("claude 実行に失敗しました: %s", cliErr(err))
+		return "", fmt.Errorf("claude execution failed: %s", cliErr(err))
 	}
 	var r claudeResult
 	if err := json.Unmarshal(out, &r); err != nil {
-		return "", fmt.Errorf("claude 応答の解析に失敗しました: %v", err)
+		return "", fmt.Errorf("failed to parse claude response: %v", err)
 	}
 	if r.SessionID != "" {
 		c.ClaudeSessionID = r.SessionID
 	}
 	if r.IsError {
-		return "", fmt.Errorf("claude がエラーを返しました: %s", r.Result)
+		return "", fmt.Errorf("claude returned an error: %s", r.Result)
 	}
 	return strings.TrimRight(r.Result, "\n"), nil
 }
@@ -222,10 +222,10 @@ func (claudeChat) sendStream(ctx context.Context, c *chatConversation, prompt st
 	cmd.Stderr = &stderr
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return "", nil, fmt.Errorf("claude 起動に失敗しました: %v", err)
+		return "", nil, fmt.Errorf("failed to start claude: %v", err)
 	}
 	if err := cmd.Start(); err != nil {
-		return "", nil, fmt.Errorf("claude 起動に失敗しました: %v", err)
+		return "", nil, fmt.Errorf("failed to start claude: %v", err)
 	}
 
 	// Split the run into working steps and a final answer (docs/19). claude emits one
@@ -284,10 +284,10 @@ func (claudeChat) sendStream(ctx context.Context, c *chatConversation, prompt st
 		}
 	}
 	if err := cmd.Wait(); err != nil {
-		return "", nil, fmt.Errorf("claude 実行に失敗しました: %s", stderrOr(err, &stderr))
+		return "", nil, fmt.Errorf("claude execution failed: %s", stderrOr(err, &stderr))
 	}
 	if resultErr {
-		return "", nil, fmt.Errorf("claude がエラーを返しました: %s", result)
+		return "", nil, fmt.Errorf("claude returned an error: %s", result)
 	}
 	// The final answer is what streamed into the last (end_turn) message — this is exactly
 	// what the answer bubble displayed live, so the saved/`done` content matches it (no
@@ -342,17 +342,17 @@ func (codexChat) send(ctx context.Context, c *chatConversation, prompt string) (
 	cmd.Stdin = strings.NewReader(headlessPrompt(c.personaOf(), c.knowledgeDirs(), prompt))
 	out, err := cmd.Output()
 	if err != nil {
-		return "", fmt.Errorf("codex 実行に失敗しました: %s", cliErr(err))
+		return "", fmt.Errorf("codex execution failed: %s", cliErr(err))
 	}
 	reply, threadID, execErr := parseCodexExecEvents(out)
 	if threadID != "" {
 		c.CodexSessionID = threadID
 	}
 	if execErr != "" {
-		return "", fmt.Errorf("codex がエラーを返しました: %s", execErr)
+		return "", fmt.Errorf("codex returned an error: %s", execErr)
 	}
 	if reply == "" {
-		return "", errors.New("codex から応答が得られませんでした")
+		return "", errors.New("no response from codex")
 	}
 	return reply, nil
 }
@@ -477,14 +477,14 @@ func (opencodeChat) send(ctx context.Context, c *chatConversation, prompt string
 	cmd.Env = envWith(opencode.Env()...)
 	out, err := cmd.Output()
 	if err != nil {
-		return "", fmt.Errorf("opencode 実行に失敗しました: %s", cliErr(err))
+		return "", fmt.Errorf("opencode execution failed: %s", cliErr(err))
 	}
 	reply, sesID := parseOpencodeRunEvents(out)
 	if sesID != "" {
 		c.OpencodeSessionID = sesID
 	}
 	if reply == "" {
-		return "", errors.New("opencode から応答が得られませんでした")
+		return "", errors.New("no response from opencode")
 	}
 	return reply, nil
 }
@@ -608,7 +608,7 @@ func oneShotHeadless(ctx context.Context, persona, prompt, claudeModel string) (
 		cmd.Stdin = strings.NewReader(headlessPrompt(persona, nil, prompt))
 		out, err := cmd.Output()
 		if err != nil {
-			return "", fmt.Errorf("codex 実行に失敗しました: %s", cliErr(err))
+			return "", fmt.Errorf("codex execution failed: %s", cliErr(err))
 		}
 		reply, _, execErr := parseCodexExecEvents(out)
 		if execErr != "" {
@@ -626,7 +626,7 @@ func oneShotHeadless(ctx context.Context, persona, prompt, claudeModel string) (
 		cmd.Env = envWith(opencode.Env()...)
 		out, err := cmd.Output()
 		if err != nil {
-			return "", fmt.Errorf("opencode 実行に失敗しました: %s", cliErr(err))
+			return "", fmt.Errorf("opencode execution failed: %s", cliErr(err))
 		}
 		reply, sesID := parseOpencodeRunEvents(out)
 		// opencode has no ephemeral mode — delete the throwaway session so one-shots
@@ -653,11 +653,11 @@ func oneShotHeadless(ctx context.Context, persona, prompt, claudeModel string) (
 	cmd.Stdin = strings.NewReader(prompt)
 	out, err := cmd.Output()
 	if err != nil {
-		return "", fmt.Errorf("claude 実行に失敗しました: %s", cliErr(err))
+		return "", fmt.Errorf("claude execution failed: %s", cliErr(err))
 	}
 	var r claudeResult
 	if json.Unmarshal(out, &r) != nil || r.IsError {
-		return "", errors.New("claude が不正な応答/エラーを返しました")
+		return "", errors.New("claude returned an invalid response/error")
 	}
 	return strings.TrimRight(r.Result, "\n"), nil
 }
