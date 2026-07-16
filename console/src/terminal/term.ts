@@ -642,6 +642,16 @@ export function setTermBackground(paneId: string, bg: string) {
   it.term.options.theme = { ...cur, background: bg };
 }
 
+// isEditable reports whether an element is a text-entry field the user could be
+// typing into (a chat composer, a rename input, …). Used to keep the terminal's
+// auto-focus from yanking focus out from under active input.
+function isEditable(el: Element | null): boolean {
+  if (!el) return false;
+  const tag = el.tagName;
+  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
+  return (el as HTMLElement).isContentEditable === true;
+}
+
 // focusTerm moves keyboard focus into a pane's terminal so the user can type right
 // after launching/attaching a session without clicking first. On touch devices this
 // is a no-op: auto-focusing xterm's textarea would pop the on-screen keyboard just
@@ -650,6 +660,14 @@ export function setTermBackground(paneId: string, bg: string) {
 export function focusTerm(paneId: string) {
   if (coarsePointer()) return;
   const it = inst(paneId);
+  // Never steal focus away from another editable element the user is typing in
+  // (a chat composer, a rename field). Auto-focus is only a convenience for
+  // "type right after launch" — a redundant attach/re-render (e.g. the 4s sessions
+  // poll) must not interrupt input elsewhere. Re-focusing THIS terminal's own
+  // textarea is fine (it's already where the user is), so only bail for a
+  // DIFFERENT editable element.
+  const ae = document.activeElement;
+  if (ae && ae !== it?.term?.textarea && isEditable(ae)) return;
   try {
     it && it.term && it.term.focus();
   } catch {}
@@ -874,13 +892,18 @@ export function ensureAttached(paneId: string, session: string) {
     ((rs === WebSocket.CONNECTING && !connStalled(it)) || (rs === WebSocket.OPEN && it.rx === true));
   if (live) {
     // Receiving PTY bytes proves the socket side is healthy, but it does NOT prove
-    // those bytes reached the screen. In particular Chrome can leave xterm's WebGL
-    // renderer with a live-looking context that never paints; this presents as a
-    // completely black shell/SSM pane while reload (which creates a new renderer)
-    // immediately fixes it. The attach retry ladder is also our startup-render
-    // watchdog, so rebuild the visible renderer and repaint from xterm's buffer.
-    // redrawVisible is a no-op for a hidden mirror pane.
-    redrawVisible(it);
+    // those bytes reached the screen (a split-pane mount race can leave the grid
+    // shaped right yet never painted, and a stale glyph atlas can garble it). The
+    // attach retry ladder doubles as the startup-render watchdog, so repaint the
+    // buffer via forceFit (grid re-sync + atlas rebuild + full refresh). We do NOT
+    // rebuild the WebGL renderer here: this path also runs on every routine re-verify
+    // (incl. a redundant re-render from the 4s sessions poll), and a renderer swap
+    // each time is a visible flicker. A genuinely dead-but-not-lost WebGL context
+    // (rare; the "black until reload" case) is rebuilt on the explicit recovery
+    // gestures instead — reconnectSession (re-clicking the session) and the
+    // visibility/focus recovery — via redrawVisible. forceFit no-ops on a hidden
+    // mirror pane (zero client rects), same as redrawVisible.
+    forceFit(it);
     return;
   }
   attach(paneId, session);
