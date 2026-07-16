@@ -313,6 +313,7 @@ export function Pane({
       )}
       {pane.content.kind === "file" && (
         <FileView
+          paneId={pane.id}
           filePath={pane.content.filePath}
           targetLine={pane.content.targetLine}
           targetColumn={pane.content.targetColumn}

@@ -26,6 +26,8 @@ import { getSettings, setSetting } from "../../lib/settings.ts";
 import { useKeysStore } from "./store.ts";
 import { useUiOpen } from "../../core/store/uiOpen.ts";
 import { toggleTtsPlayback } from "../../core/store/tts.ts";
+import { paneViewActions } from "../viewer/paneViewActions.ts";
+import { langFor, imageFormat } from "../../lib/filemeta.ts";
 import { focusPaneContent, focusRegion } from "./focus.ts";
 
 const getLayout = () => useLayoutStore.getState().layout;
@@ -56,6 +58,33 @@ function toggleWrap(): void {
   const on = p.wrap ?? getSettings().wrap;
   layoutStore().setPaneWrap(p.id, !on);
 }
+// Cycle the active Markdown file's preview/source (Marp: slides too) toggle. Drives
+// FileView's local mode via the pane-view action registry; no-ops on non-Markdown.
+function toggleMarkdownMode(): void {
+  const p = activePane(getLayout());
+  if (p) paneViewActions(p.id)?.toggleMdMode?.();
+}
+// A markdown file is showing in the active pane (gates the preview/source toggle).
+function activeIsMarkdown(): boolean {
+  const c = activePane(getLayout())?.content;
+  return !!c && c.kind === "file" && langFor(c.filePath) === "markdown";
+}
+// The active pane can switch between the normal file view and the read-aloud view
+// (docs/24) — a text file, or one already in the reader.
+function activeCanRead(): boolean {
+  const c = activePane(getLayout())?.content;
+  if (!c) return false;
+  if (c.kind === "read") return true;
+  return c.kind === "file" && !imageFormat(c.filePath);
+}
+// Toggle the active pane in place between the file view and the read-aloud view,
+// keeping the same file (docs/24). Replaces the active pane's content (openTarget).
+function toggleReader(): void {
+  const c = activePane(getLayout())?.content;
+  if (!c) return;
+  if (c.kind === "read") layoutStore().openTarget({ content: { kind: "file", filePath: c.filePath } });
+  else if (c.kind === "file") layoutStore().openTarget({ content: { kind: "read", filePath: c.filePath } });
+}
 function toggleWorkspace(): void {
   const ws = useWorkspaceStore.getState();
   if (ws.state === "running") void ws.stop();
@@ -76,6 +105,7 @@ export const GROUPS: Group[] = [
   { id: "s", title: "keys.grp.session" },
   { id: "w", title: "keys.grp.workspace" },
   { id: "g", title: "keys.grp.open" },
+  { id: "v", title: "keys.grp.view" },
 ];
 
 // Alt+1..8 → focus pane N (also under leader: p 1..8). Matches the visible ordinal chip.
@@ -144,4 +174,17 @@ export const ALL_COMMANDS: Command[] = [
 
   // ---- Media: toggle voice read-aloud (mnemonic m = mute). Shares TopBar's stop+OFF logic. ----
   { id: "tts.toggle", title: "keys.cmd.ttsToggle", seq: "m", run: toggleTtsPlayback },
+
+  // ---- View / viewer (leader v, + Alt accelerators) — act on the active pane's
+  // read-oriented view. Direct keys use Alt (not Ctrl): Ctrl+<letter> are the terminal's
+  // control codes and the browser's own reserved chords (Ctrl+W/R/S/P…), so Alt is the safe
+  // accelerator namespace here (matches Alt+1..8 / Alt+[ ] and VS Code's Alt+Z for wrap). ----
+  // Markdown preview ⇄ source (Marp cycles slides too); only active on a Markdown file.
+  { id: "viewer.mdMode", title: "keys.cmd.mdMode", keys: ["alt+m"], seq: "v p", when: activeIsMarkdown, run: toggleMarkdownMode },
+  // 朗読モード（縦書き閲覧＋読み上げ）へ切替／解除。テキストファイルまたは朗読ビューで有効。
+  { id: "viewer.reader", title: "keys.cmd.reader", keys: ["alt+r"], seq: "v r", when: activeCanRead, run: toggleReader },
+  // Line-wrap toggle — the same action as `p \`, mirrored into the view group (so every
+  // per-view toggle lives under one leader) with a direct Alt+Z (VS Code parity). Unified
+  // across every text view.
+  { id: "viewer.wrap", title: "keys.cmd.wrap", keys: ["alt+z"], seq: "v w", run: toggleWrap },
 ];
