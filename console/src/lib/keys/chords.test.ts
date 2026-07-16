@@ -1,5 +1,13 @@
 import { describe, it, expect } from "vitest";
-import { codeToKey, eventToChord, formatChord, canonical, eventChordString, shouldIgnore } from "./chords.ts";
+import {
+  codeToKey,
+  eventToChord,
+  formatChord,
+  canonical,
+  eventChordString,
+  eventKeyChordString,
+  shouldIgnore,
+} from "./chords.ts";
 
 // Minimal KeyboardEvent stand-in: the chord functions only read these fields, so a
 // plain object cast to KeyboardEvent is enough (node env, no DOM).
@@ -53,6 +61,28 @@ describe("formatChord / parseChord / canonical", () => {
   it("round-trips a live event through the same canonical form as its binding", () => {
     expect(eventChordString(ev("KeyK", { ctrlKey: true }))).toBe(canonical("mod+k"));
     expect(eventChordString(ev("KeyP", { metaKey: true }))).toBe(canonical("Cmd+P"));
+  });
+});
+
+describe("eventKeyChordString (layout fallback)", () => {
+  // JIS keyboard: Alt+] reports .code "Backslash" (US-keycap naming) but .key stays "]".
+  // The primary .code chord misses; the .key fallback recovers the intended "alt+]".
+  it("recovers a JIS Alt+] from e.key when .code disagrees", () => {
+    const e = ev("Backslash", { altKey: true, key: "]" } as Partial<KeyboardEvent>);
+    expect(eventChordString(e)).toBe("alt+\\"); // primary (.code) — would not match "alt+]"
+    expect(eventKeyChordString(e)).toBe("alt+]"); // fallback (.key) — matches the binding
+  });
+  it("recovers Alt+[ likewise", () => {
+    const e = ev("BracketRight", { altKey: true, key: "[" } as Partial<KeyboardEvent>);
+    expect(eventKeyChordString(e)).toBe("alt+[");
+  });
+  it("ignores letters/digits (already layout-stable via .code)", () => {
+    expect(eventKeyChordString(ev("KeyK", { key: "k" } as Partial<KeyboardEvent>))).toBeNull();
+    expect(eventKeyChordString(ev("Digit1", { altKey: true, key: "1" } as Partial<KeyboardEvent>))).toBeNull();
+  });
+  it("ignores named (multi-char) keys and modifier-only events", () => {
+    expect(eventKeyChordString(ev("Enter", { key: "Enter" } as Partial<KeyboardEvent>))).toBeNull();
+    expect(eventKeyChordString(ev("AltLeft", { altKey: true, key: "Alt" } as Partial<KeyboardEvent>))).toBeNull();
   });
 });
 

@@ -13,7 +13,7 @@ import { useLayoutStore } from "../../layout/store.ts";
 import { activePane } from "../../layout/ops.ts";
 import { hasOpenOverlay } from "../../lib/escLayer.ts";
 import { getSettings } from "../../lib/settings.ts";
-import { eventChordString } from "../../lib/keys/chords.ts";
+import { eventChordString, eventKeyChordString } from "../../lib/keys/chords.ts";
 import { matchDirect, resolveLeader, isLeaderPrefix } from "../../lib/keys/registry.ts";
 import type { KeyContext } from "../../lib/keys/registry.ts";
 import { useKeysStore } from "./store.ts";
@@ -197,11 +197,23 @@ export function wireKeys(): () => void {
       useKeysStore.getState().openCheat();
       return;
     }
-    const cmd = matchDirect(commands, chord, ctx);
-    if (cmd) {
-      consume(e);
-      cmd.run(ctx);
-      return;
+    // Direct accelerators. Punctuation keys (only Alt+[ / Alt+] today) are matched by
+    // .key FIRST, then .code; every other key uses .code only (eventKeyChordString returns
+    // null for letters/digits/named keys). A key's physical POSITION varies by layout, and
+    // our .code map uses US-keycap naming: on a JIS keyboard the [ key reports .code
+    // "BracketRight" and the ] key reports .code "Backslash", so by .code the [ key would
+    // wrongly fire pane.next and the ] key nothing. .key ("[" / "]") is what the user
+    // actually pressed, so trying it first makes the LABELED key win; .code stays the
+    // fallback for OSes/layouts where a modifier mutates .key (e.g. macOS ⌥ → "‘").
+    const kchord = eventKeyChordString(e);
+    const candidates = kchord && kchord !== chord ? [kchord, chord] : [chord];
+    for (const c of candidates) {
+      const cmd = matchDirect(commands, c, ctx);
+      if (cmd) {
+        consume(e);
+        cmd.run(ctx);
+        return;
+      }
     }
     // No match → let the key flow to the terminal / inputs untouched.
   };
