@@ -561,9 +561,9 @@ export function MemoQueueSection() {
         {selectedIds.length > 0 && (
           <div className="memo-selbar">
             <span className="memo-selbar-n">{tr("memo.selected_n", { count: selectedIds.length })}</span>
-            <button type="button" className="linkish sm" onClick={() => setSel({})}>
+            <Button small variant="ghost" className="memo-selbar-clear" onClick={() => setSel({})}>
               {tr("memo.clear_selection")}
-            </button>
+            </Button>
             <Button small variant="primary" onClick={() => setSendOpen(true)}>
               {tr("memo.open_send")}
             </Button>

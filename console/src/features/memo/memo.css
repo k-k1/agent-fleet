@@ -356,12 +356,12 @@
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--lp-accent, var(--accent)) 45%, transparent);
   border-radius: 8px;
 }
-/* ＋カテゴリ pill. */
+/* ＋カテゴリ pill. Tight vertical margins so it sits close under the last category. */
 .memo-addcat {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  margin: 6px 2px 2px;
+  margin: 0 2px 1px;
   padding: 3px 9px 3px 6px;
   font: inherit;
   font-size: 11.5px;
@@ -374,6 +374,25 @@
 .memo-addcat:hover {
   color: var(--fg);
   border-color: var(--muted);
+}
+/* Pull the pill up close under the last category group. */
+.memo-repo:last-of-type {
+  margin-bottom: 2px;
+}
+/* Memo primary actions (composer 追加 / inline 保存 / selection 送信…) follow the
+   left-pane accent so they match the themed checkboxes/spine instead of the app blue. */
+.memo-add .ui-btn-primary,
+.memo-edit-row .ui-btn-primary,
+.memo-selbar .ui-btn-primary {
+  background: var(--lp-accent, var(--accent));
+  border-color: transparent;
+}
+/* "選択を解除" as a quiet ghost, not a loud accent link. */
+.memo-selbar-clear {
+  color: var(--muted);
+}
+.memo-selbar-clear:hover {
+  color: var(--fg);
 }
 /* Memo row: selected gets an lp-accent spine (matches sessions/repos rows). */
 .memo-row.sel {
@@ -461,7 +480,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  margin: 8px -2px 0;
+  margin: 4px -2px 0;
   padding: 8px 4px 4px;
   background: linear-gradient(to top, var(--leftpane-bg, var(--panel)) 78%, transparent);
 }
