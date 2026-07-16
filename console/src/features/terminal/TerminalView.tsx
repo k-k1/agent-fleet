@@ -106,6 +106,8 @@ export function TerminalView({
   useEffect(() => {
     if (!session) return;
     const handler = (e: BeforeUnloadEvent) => {
+      // A version-update reload (reloadForUpdate) is intentional — don't block it.
+      if ((window as unknown as { __afUpdating?: boolean }).__afUpdating) return;
       e.preventDefault();
       e.returnValue = "";
     };
