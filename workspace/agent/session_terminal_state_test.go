@@ -60,7 +60,7 @@ func TestClassifyClaudePane(t *testing.T) {
 		},
 		{
 			name:      "resume menu",
-			pane:      "Resume from summary\nResume full session\nDon't ask me again\n",
+			pane:      "❯ 1. Resume from summary (recommended)\n  2. Resume full session as-is\n  3. Start fresh\n",
 			wantState: "resume",
 		},
 		{
@@ -69,6 +69,22 @@ func TestClassifyClaudePane(t *testing.T) {
 			// "Compacting" used to match; the full CLI phrase does not).
 			name:      "i18n catalog value is not compaction",
 			pane:      "845 +  \"state.compacting\": \"Compacting…\",\n846 +  \"state.working\": \"Working…\",\n",
+			wantState: "",
+		},
+		{
+			// Regression: MirrorView.tsx quotes the menu's option 2 verbatim ("2. Resume
+			// full session as-is"). An agent editing that file (e.g. i18n work) must NOT
+			// be flagged as parked at the resume menu — the bare "Resume full session"
+			// substring used to trip it; the numbered option-1 anchor does not.
+			name:      "console source quoting option 2 is not the menu",
+			pane:      "            「2. Resume full session as-is」を選んでください。\n",
+			wantState: "",
+		},
+		{
+			// Regression: this detector's own doc comment lists both phrases inline
+			// ("Resume from summary / Resume full session") with no numeric prefix.
+			name:      "prose listing both phrases is not the menu",
+			pane:      "//  \"resume\" — parked at \"Resume from summary / Resume full session / ...\"\n",
 			wantState: "",
 		},
 		{
