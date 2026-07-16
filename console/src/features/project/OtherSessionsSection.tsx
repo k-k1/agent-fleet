@@ -10,6 +10,7 @@ import { useReposStore } from "../repos/store.ts";
 import { useRepoRailContext } from "../repos/useRepoRail.ts";
 import { orphanSessions } from "../../lib/project.ts";
 import { useProjectFilter, normQuery, sessionMatches } from "./filter.ts";
+import { useRailRoving } from "./useRailRoving.ts";
 
 export function OtherSessionsSection() {
   const sessions = useSessionsStore((s) => s.sessions);
@@ -17,6 +18,7 @@ export function OtherSessionsSection() {
   const ctx = useRepoRailContext();
   const actions = useSessionActions();
   const nq = normQuery(useProjectFilter((f) => f.q));
+  const rail = useRailRoving();
   // The rail filter (the ProjectTree search box) narrows this list too.
   const orphans = orphanSessions(sessions, repos).filter((s) => sessionMatches(s, nq));
 
@@ -25,7 +27,7 @@ export function OtherSessionsSection() {
 
   return (
     <Section id="other-sessions" title="その他のセッション" icon="terminal" count={orphans.length}>
-      <ul className="sess-list">
+      <ul className="sess-list" ref={rail.ref} role="tree" onKeyDown={rail.onKeyDown}>
         {orphans.map((s) => (
           <SessionRow
             key={s.name}
