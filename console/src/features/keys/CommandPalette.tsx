@@ -15,12 +15,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Kbd } from "../../ui/Kbd.tsx";
 import { paletteCommands } from "../../lib/keys/registry.ts";
+import type { Command } from "../../lib/keys/registry.ts";
 import { useEscLayer } from "../../lib/escLayer.ts";
 import { useBackClose } from "../../lib/backClose.ts";
 import { t, useLocale } from "../../lib/i18n/index.ts";
 import { coarsePointer } from "../../lib/device.ts";
 import { useKeysStore } from "./store.ts";
-import { useEffectiveCommands } from "./bindings.ts";
+import { useEffectiveCommands, boundChord, APP_LEADER } from "./bindings.ts";
 import { cmdLabel, cmdSearch } from "./labels.ts";
 import { buildContext } from "./dispatcher.ts";
 import { useSessionsStore } from "../sessions/store.ts";
@@ -33,8 +34,21 @@ interface Item {
   sub: string;
   /** All-locale text the fuzzy filter matches against (kept apart from the display title). */
   search: string;
-  kbd?: string;
+  /** The effective shortcut as a chord sequence, rendered as keycaps on the right. A
+   * direct accelerator is one chord (["alt+1"]); a leader command is the leader plus each
+   * step (["mod+k","p","r"]). Empty when the command has no key (or a session row). */
+  keys: string[];
   run: () => void;
+}
+
+// The shortcut a palette row advertises: the command's direct accelerator if it has one
+// (already reflecting the user's rebind — applyOverrides rewrote `keys`), otherwise the
+// leader chord followed by its sequence keys. Mirrors the cheat-sheet's rendering so the
+// two never disagree. `leader` is the live-bound leader ("" only if the user cleared it).
+function shortcutChords(c: Command, leader: string): string[] {
+  if (c.keys && c.keys.length) return [c.keys[0]];
+  if (c.seq) return leader ? [leader, ...c.seq.split(" ")] : c.seq.split(" ");
+  return [];
 }
 
 // Subsequence match: every character of the query appears in order in the text.
@@ -82,12 +96,13 @@ export function CommandPalette() {
     if (!open) return [];
     void locale; // dep: recompute labels/search when the language changes
     const ctx = buildContext();
+    const leader = boundChord(APP_LEADER) || "mod+k";
     const cmds: Item[] = paletteCommands(commands, ctx).map((c) => ({
       id: c.id,
       title: cmdLabel(c.title),
       sub: t("keys.item.command"),
       search: cmdSearch(c.title),
-      kbd: c.keys?.[0],
+      keys: shortcutChords(c, leader),
       run: () => c.run(ctx),
     }));
     const sess: Item[] = sessions.map((s) => {
@@ -97,6 +112,7 @@ export function CommandPalette() {
         title,
         sub: t("keys.item.session"),
         search: title,
+        keys: [],
         run: () => (agentOf(s.kind).caps.chat ? openSessionChat : openSessionTerminal)(s.name),
       };
     });
@@ -163,7 +179,13 @@ export function CommandPalette() {
             >
               <span className="cp-title">{it.title}</span>
               <span className="cp-sub">{it.sub}</span>
-              {it.kbd && <Kbd chord={it.kbd} className="cp-kbd" />}
+              {it.keys.length > 0 && (
+                <span className="cp-kbd">
+                  {it.keys.map((ch, k) => (
+                    <Kbd key={k} chord={ch} />
+                  ))}
+                </span>
+              )}
             </div>
           ))}
         </div>
