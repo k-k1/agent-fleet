@@ -21,14 +21,19 @@ function keyLabel(key: string): string {
   return key.length === 1 ? key.toUpperCase() : key;
 }
 
+// Punctuation whose shifted form reads clearer as a single cap than "Shift + X"
+// (e.g. Shift+/ = ?). Rendered as one keycap without a separate Shift chip.
+const SHIFT_SYMBOL: Record<string, string> = { "/": "?" };
+
 export function Kbd({ chord, className }: { chord: string; className?: string }) {
   const mac = isMac();
   const c = parseChord(chord);
+  const shifted = c.shift ? SHIFT_SYMBOL[c.key] : undefined;
   const caps: string[] = [];
   if (c.mod) caps.push(mac ? "⌘" : "Ctrl");
   if (c.alt) caps.push(mac ? "⌥" : "Alt");
-  if (c.shift) caps.push(mac ? "⇧" : "Shift");
-  if (c.key) caps.push(keyLabel(c.key));
+  if (c.shift && !shifted) caps.push(mac ? "⇧" : "Shift");
+  if (c.key) caps.push(shifted ?? keyLabel(c.key));
   return (
     <span className={"ui-kbd" + (className ? " " + className : "")} aria-hidden="true">
       {caps.map((k, i) => (

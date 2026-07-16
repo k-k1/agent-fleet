@@ -11,6 +11,7 @@ import { EmptyState } from "../../ui/EmptyState.tsx";
 import { useConfirm } from "../../ui/ConfirmProvider.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { useDismiss } from "../../lib/useDismiss.ts";
+import { useMenuRoving } from "../../lib/useMenuRoving.ts";
 import { placeFixed } from "../../lib/placeFixed.ts";
 import { BranchModal } from "../repos/BranchModal.tsx";
 import { CommitGraph } from "./CommitGraph.tsx";
@@ -49,6 +50,7 @@ export function SourceControlView({ repo, path = "" }: { repo: string; path?: st
   const [submodules, setSubmodules] = useState<SubmoduleInfo[]>([]);
   const moreRef = useRef<HTMLDivElement>(null);
   useDismiss(moreRef, moreOpen, () => setMoreOpen(false));
+  useMenuRoving(moreRef, moreOpen);
 
   useLayoutEffect(() => {
     if (menu && menuRef.current) placeFixed(menuRef.current, menu.x, menu.y);

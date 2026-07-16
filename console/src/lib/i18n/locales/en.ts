@@ -1,0 +1,121 @@
+// English catalog. Typed as Record<keyof typeof ja, string> so tsc fails the build on any
+// missing OR extra key — this is our completeness guard in place of a library's tooling.
+import type { ja } from "./ja.ts";
+
+export const en: Record<keyof typeof ja, string> = {
+  // --- common / settings labels ---
+  "common.just_now": "just now",
+  "settings.language": "Language",
+  "theme.dark": "Dark",
+  "theme.light": "Light",
+  "region_theme.inherit": "Match app",
+
+  // --- API errors (mirror of ERR_TEXT + inline fallbacks) ---
+  "err.ssm_search_forbidden":
+    "You don't have permission to search AWS instances. Ask your AWS administrator to grant ssm:DescribeInstanceInformation.",
+  "err.quota_sessions":
+    "You've reached the limit on concurrently running sessions. Stop one of the running sessions before creating another.",
+  "err.sessions_running":
+    "This working copy has running sessions. Switching would swap and break the working tree underfoot, so it's blocked here. Open the branch as a separate working copy instead.",
+  "err.sessions_running_delete":
+    "This working copy has running sessions. Deleting would remove the working directory underfoot and break them, so stop those sessions first.",
+  "err.worktree_dirty":
+    "This worktree has uncommitted/unpushed changes. Force-deleting it will lose them.",
+  "err.has_worktrees":
+    "This working copy has derived worktrees attached to it. Delete the worktrees first.",
+  "err.worktree_remove_failed": "Failed to remove the worktree.",
+  "err.question_pending":
+    "The agent is waiting for an answer to its question. Answer it from the question card before sending.",
+  "err.not_running": "The session is stopped. Resume it before sending.",
+  "err.driver_unavailable": "The managed driver isn't available yet for this agent type.",
+  "err.runtime_failed": "Couldn't connect to the agent's shared runtime.",
+  "err.send_failed": "Failed to send.",
+  "err.network": "Network error",
+  "err.settings_change_failed": "Couldn't change the setting.",
+
+  // --- notifications (speech is the spoken variant read by TTS) ---
+  "notif.default_name": "Session",
+  "notif.answer_ready.title": "A reply is ready",
+  "notif.answer_ready.speech": "{name} has replied.",
+  "notif.question.title": "A question is waiting",
+  "notif.question.speech": "{name} is asking for confirmation.",
+  "notif.plan_approval.title": "A plan is awaiting approval",
+  "notif.plan_approval.speech": "{name} is asking you to approve a plan.",
+  "notif.permission_request.title": "Permission needed",
+  "notif.permission_request.speech": "{name} is asking for permission.",
+  "notif.usage_reset.title": "{source} limit has reset",
+  "notif.usage_reset.body": "The {window} has reset.",
+  "notif.usage_reset.speech": "{source}'s {window} has reset.",
+  "notif.window.5h": "5-hour window",
+  "notif.window.week": "weekly window",
+
+  // --- keyboard system (features/keys · docs/29). Command/group names drive both the
+  // display and the command palette's bilingual match. {n} is the pane ordinal. ---
+  "keys.grp.pane": "Panes / layout",
+  "keys.grp.session": "Session",
+  "keys.grp.workspace": "Workspace",
+  "keys.app.leader": "Leader (command menu)",
+  "keys.app.palette": "Command palette",
+  "keys.app.cheatsheet": "Shortcut list",
+  "keys.cmd.paneFocus": "Focus pane {n}",
+  "keys.cmd.splitRight": "Split right",
+  "keys.cmd.splitDown": "Split down",
+  "keys.cmd.close": "Close pane",
+  "keys.cmd.closeAll": "Close all panes",
+  "keys.cmd.wrap": "Toggle line wrap",
+  "keys.cmd.focusLeft": "Focus pane left",
+  "keys.cmd.focusDown": "Focus pane down",
+  "keys.cmd.focusUp": "Focus pane up",
+  "keys.cmd.focusRight": "Focus pane right",
+  "keys.cmd.next": "Next pane",
+  "keys.cmd.prev": "Previous pane",
+  "keys.cmd.regionNext": "Next region (rail / main / bars)",
+  "keys.cmd.regionPrev": "Previous region",
+  "keys.cmd.sessionNew": "New session (launch)",
+  "keys.cmd.workspaceToggle": "Start / stop workspace",
+  "keys.cmd.toggleRail": "Toggle left rail",
+  "keys.cmd.railMode": "Toggle left rail display mode",
+  "keys.cmd.fullscreen": "Toggle app fullscreen",
+  "keys.cmd.theme": "Toggle theme (dark / light)",
+  "keys.cmd.settingsOpen": "Open settings",
+  "keys.cmd.paletteOpen": "Command palette",
+  "keys.cmd.guideOpen": "Getting-started guide",
+  "keys.cmd.cheatsheet": "Keyboard shortcut list",
+  "keys.palette.placeholder": "Search commands and sessions…",
+  "keys.palette.aria": "Search commands and sessions",
+  "keys.palette.empty": "No matches",
+  "keys.item.command": "Command",
+  "keys.item.session": "Session",
+  "keys.cheat.title": "Keyboard shortcuts",
+  "keys.cheat.filter": "Filter…",
+  "keys.cheat.filterAria": "Filter shortcuts",
+  "keys.cheat.empty": "No matches",
+  "keys.cheat.aria": "Keyboard shortcut list",
+  "keys.cheat.secBasics": "Basics",
+  "keys.cheat.secLeader": "Other (leader)",
+  "keys.cheat.secDirect": "Accelerators (direct keys)",
+  "keys.cheat.whichkey": "Command menu (which-key)",
+  "keys.cheat.palette": "Command palette",
+  "keys.cheat.cheatsheet": "This shortcut list",
+  "keys.cheat.region": "Move between regions (rail / main / bars)",
+  "keys.cheat.close": "Close / back",
+  "keys.kt.termPrioTitle": "Terminal input priority",
+  "keys.kt.termPrioLabel": "Prefer the terminal over the app while the terminal is focused",
+  "keys.kt.termPrioNote":
+    "When on, every Ctrl-key goes to the terminal (shell) while it has focus. Only the leader (rebindable under “App-wide” below) stays live, and from it the command menu / palette reach every action. Handy when using tmux or an editor inside the terminal.",
+  "keys.kt.assignTitle": "Shortcut assignments",
+  "keys.kt.resetAll": "Reset all to defaults",
+  "keys.kt.assignNote":
+    "Leader sequences (e.g. leader → p → r) are structural and can't be changed. Here you can rebind direct keys (like Alt+1) and the three app-wide keys. Press “?” for the shortcut list.",
+  "keys.kt.secApp": "App-wide",
+  "keys.kt.secRegion": "Regions",
+  "keys.kt.secOther": "Other",
+  "keys.kt.change": "Change",
+  "keys.kt.clear": "Unbind",
+  "keys.kt.default": "Default",
+  "keys.kt.cancel": "Cancel",
+  "keys.kt.capture": "Press a key…",
+  "keys.kt.captureHint": "(Esc to cancel)",
+  "keys.kt.unset": "Unbound",
+  "keys.kt.conflict": "Conflicts with {names}",
+};

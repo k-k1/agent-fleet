@@ -4,8 +4,9 @@
 //
 // Each command may carry direct-accelerator `keys` (e.g. Alt+1) and/or a leader `seq`
 // (e.g. "p r" = leader → p → r). The which-key overlay and command palette both render
-// from this list. User-facing strings are Japanese literals for now; when
-// console-i18n's lib/i18n lands on main, route them through it (one central place).
+// from this list. `title` is an i18n message key (lib/i18n, docs/28) — resolve for display
+// with cmdLabel() and search across all locales with cmdSearch() (labels.ts), so the
+// command palette matches whether the user types Japanese or English.
 //
 // Scope note: only GLOBALLY-invocable actions live here (pane/layout, workspace,
 // new-session hub). Row/pane-target actions (git stage, session archive, open a
@@ -66,19 +67,21 @@ function toggleTheme(): void {
   setSetting("theme", getSettings().theme === "light" ? "dark" : "light");
 }
 
-// Leader groups (Leader → group key → action). Titles show in the which-key overlay.
+// Leader groups (Leader → group key → action). `title` is an i18n key (resolved for
+// display by cmdLabel; see labels.ts). Titles show in the which-key overlay.
 export const GROUPS: Group[] = [
-  { id: "p", title: "ペイン / レイアウト" },
-  { id: "s", title: "セッション" },
-  { id: "w", title: "ワークスペース" },
+  { id: "p", title: "keys.grp.pane" },
+  { id: "s", title: "keys.grp.session" },
+  { id: "w", title: "keys.grp.workspace" },
 ];
 
 // Alt+1..8 → focus pane N (also under leader: p 1..8). Matches the visible ordinal chip.
+// title carries {n} via the "|n=" vars suffix labels.ts understands.
 const paneOrdinalCommands: Command[] = Array.from({ length: PANE_ORD_COUNT }, (_, i) => {
   const n = i + 1;
   return {
     id: `pane.focus.${n}`,
-    title: `ペイン ${n} へフォーカス`,
+    title: `keys.cmd.paneFocus|n=${n}`,
     keys: [`alt+${n}`],
     seq: `p ${n}`,
     // Only claim the direct key when that pane exists — else Alt+N flows to the terminal.
@@ -89,34 +92,42 @@ const paneOrdinalCommands: Command[] = Array.from({ length: PANE_ORD_COUNT }, (_
 
 export const ALL_COMMANDS: Command[] = [
   // ---- Pane / layout (leader p, + Alt accelerators) ----
-  { id: "pane.splitRight", title: "右に分割", seq: "p r", run: () => layoutStore().splitRight() },
-  { id: "pane.splitDown", title: "下に分割", seq: "p d", run: () => layoutStore().splitDown(getLayout().activeId) },
-  { id: "pane.close", title: "ペインを閉じる", seq: "p w", run: () => layoutStore().closePane(getLayout().activeId) },
-  { id: "pane.closeAll", title: "全ペインを閉じる", seq: "p a", run: () => layoutStore().resetToTerminal() },
-  { id: "pane.wrap", title: "行の折り返しを切替", seq: "p \\", run: toggleWrap },
-  { id: "pane.focusLeft", title: "左のペインへ", seq: "p h", run: () => focusDir("left") },
-  { id: "pane.focusDown", title: "下のペインへ", seq: "p j", run: () => focusDir("down") },
-  { id: "pane.focusUp", title: "上のペインへ", seq: "p k", run: () => focusDir("up") },
-  { id: "pane.focusRight", title: "右のペインへ", seq: "p l", run: () => focusDir("right") },
+  { id: "pane.splitRight", title: "keys.cmd.splitRight", seq: "p r", run: () => layoutStore().splitRight() },
+  { id: "pane.splitDown", title: "keys.cmd.splitDown", seq: "p d", run: () => layoutStore().splitDown(getLayout().activeId) },
+  { id: "pane.close", title: "keys.cmd.close", seq: "p w", run: () => layoutStore().closePane(getLayout().activeId) },
+  { id: "pane.closeAll", title: "keys.cmd.closeAll", seq: "p a", run: () => layoutStore().resetToTerminal() },
+  { id: "pane.wrap", title: "keys.cmd.wrap", seq: "p \\", run: toggleWrap },
+  { id: "pane.focusLeft", title: "keys.cmd.focusLeft", seq: "p h", run: () => focusDir("left") },
+  { id: "pane.focusDown", title: "keys.cmd.focusDown", seq: "p j", run: () => focusDir("down") },
+  { id: "pane.focusUp", title: "keys.cmd.focusUp", seq: "p k", run: () => focusDir("up") },
+  { id: "pane.focusRight", title: "keys.cmd.focusRight", seq: "p l", run: () => focusDir("right") },
   ...paneOrdinalCommands,
-  { id: "pane.next", title: "次のペインへ", keys: ["alt+]"], seq: "p ]", run: () => focusPane(cyclePane(getLayout(), 1)) },
-  { id: "pane.prev", title: "前のペインへ", keys: ["alt+["], seq: "p [", run: () => focusPane(cyclePane(getLayout(), -1)) },
+  { id: "pane.next", title: "keys.cmd.next", keys: ["alt+]"], seq: "p ]", run: () => focusPane(cyclePane(getLayout(), 1)) },
+  { id: "pane.prev", title: "keys.cmd.prev", keys: ["alt+["], seq: "p [", run: () => focusPane(cyclePane(getLayout(), -1)) },
 
   // ---- Region focus (direct only) ----
-  { id: "region.next", title: "次の領域へ（レール / メイン / バー）", keys: ["f6"], run: () => cycleRegion(1) },
-  { id: "region.prev", title: "前の領域へ", keys: ["shift+f6"], run: () => cycleRegion(-1) },
+  { id: "region.next", title: "keys.cmd.regionNext", keys: ["f6"], run: () => cycleRegion(1) },
+  { id: "region.prev", title: "keys.cmd.regionPrev", keys: ["shift+f6"], run: () => cycleRegion(-1) },
 
   // ---- Session (leader s) ----
-  { id: "session.new", title: "新規セッション（起動）", seq: "s n", run: () => useSessionsStore.getState().openStart() },
+  { id: "session.new", title: "keys.cmd.sessionNew", seq: "s n", run: () => useSessionsStore.getState().openStart() },
 
   // ---- Workspace (leader w) ----
-  { id: "workspace.toggle", title: "ワークスペース 起動 / 停止", seq: "w s", run: toggleWorkspace },
-  { id: "workspace.toggleRail", title: "左レールの表示切替", keys: ["mod+b"], seq: "w b", run: () => useLeftRail.getState().toggle() },
-  { id: "workspace.railMode", title: "左レールの表示モード切替", seq: "w m", run: () => useLeftRail.getState().toggleMode() },
-  { id: "workspace.fullscreen", title: "アプリ全画面の切替", seq: "w f", run: toggleFullscreen },
-  { id: "workspace.theme", title: "テーマ切替（ダーク / ライト）", seq: "w t", run: toggleTheme },
+  { id: "workspace.toggle", title: "keys.cmd.workspaceToggle", seq: "w s", run: toggleWorkspace },
+  { id: "workspace.toggleRail", title: "keys.cmd.toggleRail", keys: ["mod+b"], seq: "w b", run: () => useLeftRail.getState().toggle() },
+  { id: "workspace.railMode", title: "keys.cmd.railMode", seq: "w m", run: () => useLeftRail.getState().toggleMode() },
+  { id: "workspace.fullscreen", title: "keys.cmd.fullscreen", seq: "w f", run: toggleFullscreen },
+  { id: "workspace.theme", title: "keys.cmd.theme", seq: "w t", run: toggleTheme },
 
   // ---- Top-level leader actions ----
-  { id: "settings.open", title: "設定を開く", seq: ",", run: () => useSettingsUI.getState().openSettings() },
-  { id: "guide.open", title: "はじめかたガイド", seq: "w g", run: () => useSettingsUI.getState().openGuide() },
+  { id: "settings.open", title: "keys.cmd.settingsOpen", seq: ",", run: () => useSettingsUI.getState().openSettings() },
+  // Palette is normally on its own accelerator (Ctrl/⌘+P), but a leader path keeps it
+  // reachable when terminal-input priority suppresses that accelerator in the terminal —
+  // the leader is the one chord that still escapes. Also makes it discoverable in which-key.
+  { id: "palette.open", title: "keys.cmd.paletteOpen", seq: ";", run: () => useKeysStore.getState().openPalette() },
+  { id: "guide.open", title: "keys.cmd.guideOpen", seq: "w g", run: () => useSettingsUI.getState().openGuide() },
+  // The "?" cheat-sheet. Also opens on a bare "?" when not typing (handled directly in
+  // the dispatcher so it stays out of the terminal/inputs); this leader entry makes it
+  // discoverable in which-key.
+  { id: "help.cheatsheet", title: "keys.cmd.cheatsheet", seq: "shift+/", run: () => useKeysStore.getState().openCheat() },
 ];

@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { api, apiJSON } from "../../core/api/client.ts";
 import { getSettings } from "../../lib/settings.ts";
+import { t } from "../../lib/i18n/index.ts";
 import { activePane } from "../../layout/ops.ts";
 import { useLayoutStore } from "../../layout/store.ts";
 import { announce, sessionVoiceOpts } from "../chat/tts.ts";
@@ -37,15 +38,15 @@ let requestSeq = 0;
 let appliedSeq = 0;
 
 function wording(n: FleetNotification): { title: string; body: string; speech: string } {
-  const name = n.displayName || "セッション";
-  if (n.kind === "answer-ready") return { title: "回答が返ってきました", body: name, speech: `${name} の回答が返りました。` };
-  if (n.kind === "question") return { title: "質問が来ています", body: name, speech: `${name} が確認を求めています。` };
-  if (n.kind === "plan-approval") return { title: "プランの承認待ちです", body: name, speech: `${name} がプランの承認を求めています。` };
-  if (n.kind === "permission-request") return { title: "権限の確認が必要です", body: name, speech: `${name} が権限の確認を求めています。` };
+  const name = n.displayName || t("notif.default_name");
+  if (n.kind === "answer-ready") return { title: t("notif.answer_ready.title"), body: name, speech: t("notif.answer_ready.speech", { name }) };
+  if (n.kind === "question") return { title: t("notif.question.title"), body: name, speech: t("notif.question.speech", { name }) };
+  if (n.kind === "plan-approval") return { title: t("notif.plan_approval.title"), body: name, speech: t("notif.plan_approval.speech", { name }) };
+  if (n.kind === "permission-request") return { title: t("notif.permission_request.title"), body: name, speech: t("notif.permission_request.speech", { name }) };
   const rawSource = String(n.payload.source || n.displayName || "AI");
   const source = rawSource === "claude" ? "Claude" : rawSource === "codex" ? "Codex" : rawSource;
-  const win = n.payload.windowKey === "5h" ? "5時間枠" : "週間枠";
-  return { title: `${source} の制限がリセットされました`, body: `${win}がリセットされました。`, speech: `${source}の${win}がリセットされました。` };
+  const win = n.payload.windowKey === "5h" ? t("notif.window.5h") : t("notif.window.week");
+  return { title: t("notif.usage_reset.title", { source }), body: t("notif.usage_reset.body", { window: win }), speech: t("notif.usage_reset.speech", { source, window: win }) };
 }
 
 export function replayNotification(n: FleetNotification): void {

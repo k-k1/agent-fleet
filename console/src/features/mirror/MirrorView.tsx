@@ -13,6 +13,7 @@ import { Icon } from "../../ui/Icon.tsx";
 import FileIcon from "../../ui/FileIcon.tsx";
 import { baseName } from "../../lib/filemeta.ts";
 import { useDraft } from "../../lib/draft.ts";
+import { fmtDateTime } from "../../lib/intl.ts";
 import { MarkdownView } from "../viewer/MarkdownView.tsx";
 import {
   readTurn,
@@ -3648,9 +3649,4 @@ function prettyCwd(p: string) {
 
 // formatTS renders an RFC3339 timestamp as local "MM/DD HH:MM" (date kept so a long
 // session that spans days stays unambiguous).
-function formatTS(iso: string) {
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return "";
-  const p = (n: number) => String(n).padStart(2, "0");
-  return `${p(d.getMonth() + 1)}/${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
-}
+const formatTS = (iso: string) => fmtDateTime(iso);

@@ -9,6 +9,7 @@ import { chatGet, chatStream, chatCreate, assistantGet, chatPasteImage } from ".
 import { errText, raw } from "../../core/api/client.ts";
 import { takeChatSeed } from "../../lib/chatSeed.ts";
 import { useDraft, moveDraft, clearDraft } from "../../lib/draft.ts";
+import { fmtDateTime } from "../../lib/intl.ts";
 import { coarsePointer } from "../../lib/device.ts";
 import { useSettings, surfaceBg, surfaceAccent, effectiveTheme } from "../../lib/settings.ts";
 import {
@@ -1008,12 +1009,7 @@ function AssistantTurn({
 
 // formatMsgTS renders a unix-millis timestamp as local "MM/DD HH:MM" — same shape as
 // MirrorView's turn footer (date kept so a thread that spans days stays unambiguous).
-function formatMsgTS(ms: number) {
-  const d = new Date(ms);
-  if (isNaN(d.getTime())) return "";
-  const p = (n: number) => String(n).padStart(2, "0");
-  return `${p(d.getMonth() + 1)}/${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
-}
+const formatMsgTS = (ms: number) => fmtDateTime(ms);
 
 // ChatCopyButton copies the reply's RAW Markdown (not the rendered HTML) to the
 // clipboard — same behavior as MirrorView's CopyButton.

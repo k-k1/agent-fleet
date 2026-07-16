@@ -1,7 +1,9 @@
+import { useId, useRef } from "react";
 import { createPortal } from "react-dom";
 import type { ReactNode, MouseEvent } from "react";
 import { Button } from "./Button.tsx";
 import { useEscLayer } from "../lib/escLayer.ts";
+import { useFocusTrap } from "../lib/focusTrap.ts";
 
 // ConfirmDialog: a small modal for confirming destructive actions (old
 // components/ConfirmDialog). Renders a title, a body (string or nodes), and
@@ -30,14 +32,19 @@ export function ConfirmDialog({
   // Escape cancels (unless the operation is running) — layered, so the dialog
   // this confirm was opened from stays open.
   useEscLayer(onCancel, !busy);
+  // Trap Tab within the confirm; focus lands on キャンセル first (the safe default for
+  // a destructive action), and returns to the opener on close.
+  const ref = useRef<HTMLDivElement>(null);
+  useFocusTrap(ref, true);
+  const titleId = useId();
 
   // Portal to <body> + ui-confirm-backdrop (higher z-index): callers render this
   // from inside a settings/admin dialog, so an in-tree overlay at the modal
   // z-index could paint behind the dialog it should cover.
   return createPortal(
     <div className="ui-modal-backdrop ui-confirm-backdrop" onClick={busy ? undefined : onCancel}>
-      <div className="confirm" onClick={(e: MouseEvent) => e.stopPropagation()}>
-        <h3 className="confirm-title">{title}</h3>
+      <div className="confirm" ref={ref} role="dialog" aria-modal="true" aria-labelledby={titleId} onClick={(e: MouseEvent) => e.stopPropagation()}>
+        <h3 className="confirm-title" id={titleId}>{title}</h3>
         <div className="confirm-body">{children}</div>
         <div className="confirm-actions">
           <Button variant="ghost" onClick={onCancel} disabled={busy}>

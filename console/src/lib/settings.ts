@@ -1,5 +1,7 @@
 import { useSyncExternalStore } from "react";
 import { api, apiJSON } from "../core/api/client.ts";
+import { setLocale } from "./i18n/index.ts";
+import type { MsgKey } from "./i18n/index.ts";
 
 // Display settings (theme / fonts / file-viewer options / icon set). Persisted in
 // localStorage for instant load + offline, AND mirrored to the server per-user
@@ -36,20 +38,27 @@ export const ICON_SETS = [
   { id: "seti", label: "Seti（単色・タイプ別着色）" },
 ];
 
-// Base UI theme.
-export const THEMES = [
-  { id: "dark", label: "ダーク" },
-  { id: "light", label: "ライト" },
+// Base UI theme. label は i18n キー（DisplayTab / TopBar が t() で解決）。
+export const THEMES: { id: string; labelKey: MsgKey }[] = [
+  { id: "dark", labelKey: "theme.dark" },
+  { id: "light", labelKey: "theme.light" },
+];
+
+// UI 表示言語（docs/28 / ADR 0016）。ラベルは各言語の自称なので翻訳しない（どの言語で見ても
+// 母語名で並ぶ）。id は i18n カタログ／SUPPORTED_LOCALES と一致させる。
+export const LOCALES = [
+  { id: "ja", label: "日本語" },
+  { id: "en", label: "English" },
 ];
 
 // Per-region theme choices (session mirror / assistant chat). "inherit" = follow the app
 // theme above; "dark"/"light" give that region its own base theme, independent of the rest
 // of the Console — applied by scoping data-theme onto the region container (.mirrorview /
 // .chatview; see tokens.css scoped token blocks + effectiveTheme).
-export const REGION_THEMES = [
-  { id: "inherit", label: "アプリに合わせる" },
-  { id: "dark", label: "ダーク" },
-  { id: "light", label: "ライト" },
+export const REGION_THEMES: { id: string; labelKey: MsgKey }[] = [
+  { id: "inherit", labelKey: "region_theme.inherit" },
+  { id: "dark", labelKey: "theme.dark" },
+  { id: "light", labelKey: "theme.light" },
 ];
 
 // Resolve a per-region theme preference against the app theme, to a concrete "light"/"dark".
@@ -162,6 +171,9 @@ export interface Settings {
   minimap: boolean;
   iconSet: string;
   theme: string;
+  // UI 表示言語（docs/28 / ADR 0016）。"ja" | "en"。theme と違い端末ローカルにせずサーバ同期し、
+  // 言語は人単位で全端末に追従させる。既定はブラウザ言語判定→日本語フォールバック（detectLocale）。
+  locale: string;
   // Per-region base theme, independent of `theme`: "inherit" (default, follow the app),
   // "dark", or "light". Applied by scoping data-theme onto the region container.
   // mirrorTheme → .mirrorview (session mirror); assistantTheme → .chatview (assistant chat).
@@ -300,6 +312,16 @@ export interface Settings {
   readerFont: string;
   // 朗読ビューの本文文字サイズ（px）。ReaderView が --reader-size として本文へ渡す。
   readerSize: number;
+  // キーボードショートカットのユーザー再割当（docs/29 + ADR-0017）。キー＝コマンド id、または
+  // アプリ予約キーの合成 id（app.leader / app.palette / app.cheatsheet）。値＝上書きするコード
+  // （chords.ts の正規形文字列。""＝明示的に無効化）。未登録キーは既定のまま。直接アクセラレータと
+  // 予約キーのみ再割当可（リーダー配下のシーケンス p r 等は構造なので固定）。features/keys/bindings.ts
+  // の effectiveCommands / boundChord が解決する。クロスデバイス同期（DEVICE_LOCAL 外）。
+  keybindings: Record<string, string>;
+  // 端末入力優先（docs/29）。ON のとき、端末（xterm）にフォーカスがある間はアプリのグローバル
+  // ショートカットを抑止して端末へ素通しする（Ctrl 系を端末に渡す）。唯一 Leader（既定 Ctrl/⌘+K・
+  // 再割当可）だけは残し、そこから which-key／パレットで全コマンドに到達できる。既定 OFF（capture 優先）。
+  terminalPriority: boolean;
 }
 
 // The pinned fallback model. Used as the seeded global default and as resolveModel's
@@ -326,6 +348,7 @@ const DEFAULTS: Settings = {
   minimap: true,
   iconSet: "vscode",
   theme: "dark",
+  locale: detectLocale(),
   mirrorTheme: "inherit",
   assistantTheme: "inherit",
   topbarColor: "default",
@@ -379,6 +402,8 @@ const DEFAULTS: Settings = {
   readerVoice: "",
   readerFont: "明朝",
   readerSize: 17,
+  keybindings: {},
+  terminalPriority: false,
 };
 
 // VOICEVOX ずんだもんのスタイル（speaker 番号 → ラベル）。設定 UI の話者選択に使う。
@@ -619,7 +644,26 @@ export function applyTheme(s: Settings): void {
   // as inline vars on .mirrorview / .chatview, since those regions can differ from the app
   // theme. See MirrorView.tsx / ChatView.tsx (surfaceBg + surfaceAccent + effectiveTheme).
 }
+
+// detectLocale — 保存済み locale が無いときの初期 UI 言語。ブラウザ言語から解決し、未対応/不明は
+// 日本語へフォールバック（既存ユーザーの挙動を変えない）。DEFAULTS 評価時に一度だけ走る。
+function detectLocale(): string {
+  try {
+    if ((navigator.language || "").toLowerCase().startsWith("en")) return "en";
+  } catch {
+    /* navigator 不在 */
+  }
+  return "ja";
+}
+
+// applyLocale — i18n ランタイムへ現ロケールを push し、<html lang> を実行時更新する。applyTheme と
+// 同じ 3 箇所（初回描画前・変更時・サーバ hydrate 時）で呼ぶ。
+export function applyLocale(s: Settings): void {
+  setLocale(s.locale);
+  if (typeof document !== "undefined") document.documentElement.lang = s.locale;
+}
 applyTheme(state);
+applyLocale(state);
 
 export function getSettings(): Settings {
   return state;
@@ -711,6 +755,7 @@ export async function hydrateUIPrefs(): Promise<void> {
     localStorage.setItem(KEY, JSON.stringify(state));
   } catch {}
   applyTheme(state);
+  applyLocale(state);
   subs.forEach((fn) => fn());
 }
 
@@ -727,6 +772,7 @@ export function setSettings(patch: Partial<Settings>): void {
     localStorage.setItem(KEY, JSON.stringify(state));
   } catch {}
   applyTheme(state);
+  applyLocale(state);
   scheduleServerSave();
   subs.forEach((fn) => fn());
 }
