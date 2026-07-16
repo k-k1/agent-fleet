@@ -13,7 +13,7 @@ import { Icon } from "../../ui/Icon.tsx";
 import FileIcon from "../../ui/FileIcon.tsx";
 import { baseName, imageFormat } from "../../lib/filemeta.ts";
 import { useDraft } from "../../lib/draft.ts";
-import { scrollComposerViewport } from "../../lib/composerScroll.ts";
+import { scrollComposerViewport } from "../../lib/keyScroll.ts";
 import { fmtDateTime, fmtNum } from "../../lib/intl.ts";
 import { MarkdownView } from "../viewer/MarkdownView.tsx";
 import {
