@@ -5,6 +5,7 @@ import { TOAST_ICONS, useToast } from "../../ui/ToastProvider.tsx";
 import { setSetting, useSettings } from "../../lib/settings.ts";
 import { useToastLog, type ToastLogItem } from "../../lib/toastLog.ts";
 import { openNotificationTarget, replayNotification, useNotificationStore, type FleetNotification } from "./store.ts";
+import { useOpenSignal } from "../../core/store/uiOpen.ts";
 import { relTime } from "../../lib/intl.ts";
 import { useT, type MsgKey } from "../../lib/i18n/index.ts";
 
@@ -33,6 +34,8 @@ export function NotificationCenter() {
       useToastLog.getState().markAllSeen();
     }
   };
+  // Keyboard: Ctrl/⌘+K g n toggles the center just like clicking the bell.
+  useOpenSignal("notifications", show);
   const activate = async (n: FleetNotification, split: boolean) => {
     if (!(await openNotificationTarget(n, split))) toast(tr("noti.session_not_in_list"), { kind: "warn" });
     else setOpen(false);

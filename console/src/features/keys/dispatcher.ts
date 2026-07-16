@@ -18,13 +18,23 @@ import { matchDirect, resolveLeader, isLeaderPrefix } from "../../lib/keys/regis
 import type { KeyContext } from "../../lib/keys/registry.ts";
 import { useKeysStore } from "./store.ts";
 import { effectiveCommands, boundChord, APP_LEADER, APP_PALETTE, APP_CHEAT } from "./bindings.ts";
+import { isScrollGesture, findScroller, scrollComposerViewport } from "../../lib/keyScroll.ts";
 
 // The reserved app chords are read LIVE from the keybinding store (boundChord) on each
 // keydown, so a rebind in Settings takes effect immediately without re-wiring. "" means
 // the user unbound it (e.g. freed the leader for a pure terminal) — never matched.
 
-const LEADER_TIMEOUT = 3000; // ms: a dangling leader auto-cancels
+const LEADER_TIMEOUT = 3000; // ms: a dangling leader (overlay not yet shown) auto-cancels
+// Once the which-key overlay is actually visible the user is reading it, so a stray-press
+// guard no longer applies — give them a generous window to find the key before auto-cancel,
+// while still recovering if they walk away (never a permanently stuck overlay).
+const LEADER_TIMEOUT_OPEN = 15000;
 const WHICHKEY_DELAY = 350; // ms before the which-key overlay reveals
+
+// Pane kinds whose body is read-only scrollable content, so the keyboard-scroll gesture
+// (Shift/Ctrl+↑/↓) drives them. Terminal panes own their arrows (xterm / the CLI); chat &
+// mirror scroll from their own composer handlers instead.
+const SCROLLABLE_KINDS = new Set(["file", "diff", "wtdiff", "scm", "changes", "commit", "read", "doc"]);
 
 function focusedKind(): KeyContext["focusedKind"] {
   const el = document.activeElement as HTMLElement | null;
@@ -101,7 +111,13 @@ export function wireKeys(): () => void {
     clearTimers();
     useKeysStore.getState().setLeader(path);
     // Delay the overlay so a fast two-key sequence (e.g. leader p r) doesn't flash it.
-    whichKeyTimer = window.setTimeout(() => useKeysStore.getState().setWhichKey(true), WHICHKEY_DELAY);
+    whichKeyTimer = window.setTimeout(() => {
+      useKeysStore.getState().setWhichKey(true);
+      // The overlay is now on screen and the user is scanning it — swap the short stray-press
+      // guard for the longer reading window so the hint doesn't vanish mid-search.
+      if (leaderTimer != null) window.clearTimeout(leaderTimer);
+      leaderTimer = window.setTimeout(cancelLeader, LEADER_TIMEOUT_OPEN);
+    }, WHICHKEY_DELAY);
     leaderTimer = window.setTimeout(cancelLeader, LEADER_TIMEOUT);
   };
   const consume = (e: KeyboardEvent) => {
@@ -109,7 +125,27 @@ export function wireKeys(): () => void {
     e.stopPropagation(); // NOT stopImmediatePropagation — sibling window-capture listeners (PaneFind) stay live
   };
 
+  // Keyboard-scroll the ACTIVE read-only viewer pane (file / diff / scm / …). Keyed off the
+  // active pane rather than DOM focus, so it works whether or not the pane's body is focused;
+  // its own scroller is located by geometry (findScroller), so every viewer kind works without
+  // per-view wiring. Bails out when typing (input/terminal), during a leader sequence, or with
+  // an overlay open — those keep the arrows. Returns true once it has handled + consumed.
+  const maybeScrollActivePane = (e: KeyboardEvent): boolean => {
+    if (!isScrollGesture(e) || e.isComposing || hasOpenOverlay()) return false;
+    if (useKeysStore.getState().leaderPending) return false;
+    if (focusedKind() !== "other") return false; // an input/terminal owns its arrows
+    const ap = activePane(useLayoutStore.getState().layout);
+    if (!ap || !SCROLLABLE_KINDS.has(ap.content.kind)) return false;
+    const paneEl = document.querySelector<HTMLElement>(`.pane[data-pane-id="${CSS.escape(ap.id)}"]`);
+    if (!scrollComposerViewport(e, findScroller(paneEl))) return false;
+    consume(e);
+    return true;
+  };
+
   const onKeyDown = (e: KeyboardEvent) => {
+    // Scroll the active viewer pane. Handled before the auto-repeat guard so holding the key
+    // keeps scrolling (unlike one-shot shortcuts, which must not fire on auto-repeat).
+    if (maybeScrollActivePane(e)) return;
     if (e.repeat) return; // never fire a shortcut on auto-repeat (a held-down key)
     const chord = eventChordString(e); // from e.code — valid even while an IME composes
     if (chord == null) return; // modifier-only keydown — keep waiting

@@ -13,6 +13,7 @@ import { Icon } from "../../ui/Icon.tsx";
 import FileIcon from "../../ui/FileIcon.tsx";
 import { baseName, imageFormat } from "../../lib/filemeta.ts";
 import { useDraft } from "../../lib/draft.ts";
+import { scrollComposerViewport } from "../../lib/keyScroll.ts";
 import { fmtDateTime, fmtNum } from "../../lib/intl.ts";
 import { MarkdownView } from "../viewer/MarkdownView.tsx";
 import {
@@ -1411,6 +1412,10 @@ export function MirrorView({
   };
 
   const onKeyDown = (e: RKeyboardEvent) => {
+    // Scroll the transcript without leaving the composer: Shift+↑/↓ nudges, Ctrl/⌘+↑/↓
+    // and Ctrl/⌘+[ / ] page. Checked before history recall so the modified arrows don't
+    // get swallowed by the ↑/↓ recall path below.
+    if (!e.nativeEvent.isComposing && scrollComposerViewport(e, bodyRef.current)) return;
     // Shell-style history: ↑/↓ recall past prompts when the field is empty (or once
     // recall is underway). With text present, arrows move the caret as usual.
     if ((e.key === "ArrowUp" || e.key === "ArrowDown") && !e.nativeEvent.isComposing) {
