@@ -136,6 +136,9 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
     >
       <div
         className={"repo-card" + (running ? "" : " disabled")}
+        data-rail-row=""
+        role="treeitem"
+        tabIndex={-1}
         title={
           (running ? "クリックで開閉 / Ctrl・中クリックでソース管理を新ペイン\n" : "クリックで開閉\n") +
           (r.path || "") +

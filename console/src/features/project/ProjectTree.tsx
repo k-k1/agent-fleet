@@ -22,6 +22,7 @@ import { useSessionActions } from "../sessions/useSessionActions.tsx";
 import { groupedRepos, sessionsInFolder } from "../../lib/project.ts";
 import { useProjectFilter, normQuery, repoMatches, sessionMatches } from "./filter.ts";
 import { RepoNode } from "./RepoNode.tsx";
+import { useRailRoving } from "./useRailRoving.ts";
 
 // guessRepoName derives a display name from a clone URL for the in-progress
 // spinner row, before the server reports the real name.
@@ -45,6 +46,7 @@ export function ProjectTree() {
   const q = useProjectFilter((f) => f.q);
   const setQ = useProjectFilter((f) => f.setQ);
   const nq = normQuery(q);
+  const rail = useRailRoving();
 
   useEffect(() => {
     void refreshRepos();
@@ -120,7 +122,13 @@ export function ProjectTree() {
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            onKeyDown={(e) => e.key === "Escape" && setQ("")}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") setQ("");
+              else if (e.key === "Enter") {
+                e.preventDefault();
+                rail.focusFirst();
+              }
+            }}
             placeholder="絞り込み（リポ / セッション）"
             aria-label="リポジトリとセッションを絞り込み"
           />
@@ -132,7 +140,7 @@ export function ProjectTree() {
         </div>
       </div>
       {showClone && <NewRepoModal onClose={() => setShowClone(false)} onClone={doClone} repos={repos} />}
-      <ul className="sess-list proj-tree">
+      <ul className="sess-list proj-tree" ref={rail.ref} role="tree" onKeyDown={rail.onKeyDown}>
         {cloning && (
           <li className="repo-cloning">
             <Icon name="loading" spin /> {cloning.name} をクローン中…
