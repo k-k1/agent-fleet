@@ -494,20 +494,20 @@ export const TTS_BACKGROUND_PLAYBACK_MODES: [string, MsgKey][] = [
 
 // Assistant-chat output-language choices, shared by the settings UI. "auto" leaves the
 // language to the user's input; "ja"/"en" force the reply language.
-export const OUTPUT_LANGUAGES: [string, string][] = [
-  ["auto", "入力に合わせる"],
-  ["ja", "日本語"],
-  ["en", "English"],
+export const OUTPUT_LANGUAGES: [string, MsgKey][] = [
+  ["auto", "out_lang.auto"],
+  ["ja", "out_lang.ja"],
+  ["en", "out_lang.en"],
 ];
 
 // Assistant-chat backend choices (AgentsTab). "auto" picks the first CONNECTED of
 // claude → codex → opencode; a fixed choice falls back to auto when that CLI isn't
 // connected (opencode is always usable — its free tier needs no login).
-export const ASSISTANT_AGENTS: [string, string][] = [
-  ["auto", "自動（接続済みを優先）"],
-  ["claude", "Claude"],
-  ["codex", "Codex"],
-  ["opencode", "opencode"],
+export const ASSISTANT_AGENTS: [string, MsgKey][] = [
+  ["auto", "asst_agent.auto"],
+  ["claude", "asst_agent.claude"],
+  ["codex", "asst_agent.codex"],
+  ["opencode", "asst_agent.opencode"],
 ];
 
 // Mirror composer submit-key options, shared by the settings UI.

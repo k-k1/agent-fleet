@@ -9,6 +9,7 @@ import { Button } from "../../ui/Button.tsx";
 import { InternalRepoBrowser } from "./InternalRepoBrowser.tsx";
 import { useConnections } from "./useConnections.ts";
 import { ProviderCard, StatusPill, DeviceSteps, DisconnectButton } from "./providerCard.tsx";
+import { useT } from "../../lib/i18n/index.ts";
 
 interface RowProps {
   st: any;
@@ -23,6 +24,7 @@ interface RowProps {
 // here — each provider card will gain a settings group like the agent cards. It needs
 // a new Agent endpoint (workspace/agent git identity), so it lands once that exists.
 export function GitTab() {
+  const tr = useT();
   const wsState = useWorkspaceStore((s) => s.state);
   const startWs = useWorkspaceStore((s) => s.start);
   // git-hosting auth is agent-proxied (proxyAgentREST → 502 while stopped), so the
@@ -42,18 +44,18 @@ export function GitTab() {
       {!running ? (
         <EmptyState
           icon="debug-disconnect"
-          title="外部 Git 接続はワークスペース内で実行されます"
-          hint="外部プロバイダの認証はコンテナ内の Agent を経由するため、ワークスペースの起動が必要です。"
+          title={tr("git.ws_required_title")}
+          hint={tr("git.ws_required_hint")}
         >
           <Button icon="play" disabled={wsStartBusy(wsState)} onClick={() => void startWs()}>
-            {wsStartBusy(wsState) ? "起動中…" : "ワークスペースを起動"}
+            {wsStartBusy(wsState) ? tr("common.starting") : tr("ops.start_ws")}
           </Button>
         </EmptyState>
       ) : !conns ? (
-        <p className="muted pad">読み込み中…</p>
+        <p className="muted pad">{tr("common.loading")}</p>
       ) : (
         <>
-          <div className="conn-cat">git ホスティング</div>
+          <div className="conn-cat">{tr("git.cat_hosting")}</div>
           <GithubRow st={conns.github} reload={reload} />
           <BitbucketRow st={conns.bitbucket} reload={reload} />
           <GlobalIdentity />
@@ -77,6 +79,7 @@ interface InternalRepo {
 // account, and work while the workspace is stopped. Clone URLs authenticate via the
 // CP-injected token, so no connect step is required.
 function InternalRepos() {
+  const tr = useT();
   const toast = useToast();
   const [repos, setRepos] = useState<InternalRepo[] | null>(null);
   const [name, setName] = useState("");
@@ -98,10 +101,10 @@ function InternalRepos() {
     try {
       const res = await apiJSON("api/internal-git/repos", "POST", { name: n });
       if (res && res.error) {
-        toast("作成に失敗: " + (res.error.message || res.error.code || ""));
+        toast(tr("git.create_failed", { msg: res.error.message || res.error.code || "" }));
         return;
       }
-      toast(`内部リポジトリ「${res.name}」を作成しました`);
+      toast(tr("git.created", { name: res.name }));
       setName("");
       load();
     } finally {
@@ -110,13 +113,13 @@ function InternalRepos() {
   };
 
   const remove = async (rn: string) => {
-    if (!confirm(`内部リポジトリ「${rn}」を削除します。取り消せません。よろしいですか？`)) return;
+    if (!confirm(tr("git.internal_delete_confirm", { name: rn }))) return;
     const res = await raw(`api/internal-git/repos/${encodeURIComponent(rn)}`, { method: "DELETE" });
     if (!res.ok) {
-      toast("削除に失敗しました");
+      toast(tr("git.delete_failed"));
       return;
     }
-    toast(`「${rn}」を削除しました`, { kind: "success", persist: true });
+    toast(tr("git.deleted", { name: rn }), { kind: "success", persist: true });
     load();
   };
 
@@ -125,17 +128,17 @@ function InternalRepos() {
       new_name: newName,
     });
     if (res && res.error) {
-      toast("リネームに失敗: " + (res.error.message || res.error.code || ""));
+      toast(tr("git.rename_failed", { msg: res.error.message || res.error.code || "" }));
       return false;
     }
-    toast(`「${oldName}」→「${res.name}」にリネームしました`);
+    toast(tr("git.renamed", { old: oldName, new: res.name }));
     load();
     return true;
   };
 
   const copyUrl = (url: string) => {
     navigator.clipboard?.writeText(url).then(
-      () => toast("クローンURLをコピーしました"),
+      () => toast(tr("git.clone_url_copied")),
       () => {},
     );
   };
@@ -143,32 +146,30 @@ function InternalRepos() {
   const count = repos?.length ?? 0;
   return (
     <>
-      <div className="conn-cat">内部リポジトリ（フリート内）</div>
+      <div className="conn-cat">{tr("git.cat_internal")}</div>
       <ProviderCard
         id="internal"
-        name="内部 Git"
-        status={<StatusPill on>{count ? `${count} 個` : "利用可"}</StatusPill>}
+        name={tr("git.internal_name")}
+        status={<StatusPill on>{count ? tr("git.count", { count }) : tr("git.available")}</StatusPill>}
       >
-        <div className="p-desc">
-          外部アカウント不要。テナント内でリポジトリを共有できます（クローン / push 可）。認証は自動注入されるトークンで透過。
-        </div>
+        <div className="p-desc">{tr("git.internal_desc")}</div>
         <div className="p-body">
           <div className="flow">
             <input
               className="cinput"
-              placeholder="リポジトリ名（例: my-repo）"
+              placeholder={tr("git.repo_name_placeholder")}
               value={name}
               onChange={(e) => setName(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && create()}
             />
             <button disabled={busy || !name.trim()} onClick={create}>
-              作成
+              {tr("git.create")}
             </button>
           </div>
           {repos === null ? (
-            <p className="muted pad">読み込み中…</p>
+            <p className="muted pad">{tr("common.loading")}</p>
           ) : repos.length === 0 ? (
-            <p className="muted pad">リポジトリはまだありません。上で作成してください。</p>
+            <p className="muted pad">{tr("git.internal_empty")}</p>
           ) : (
             <ul className="internal-repo-list">
               {repos.map((r) => (
@@ -195,6 +196,7 @@ function InternalRepos() {
 // commit path (terminal / claude / Console), and each repo can still override it.
 // Empty = use the connected account (auto-seeded).
 function IdentityFields({ host, name0, email0 }: { host: string; name0?: string; email0?: string }) {
+  const tr = useT();
   const toast = useToast();
   const [name, setName] = useState(name0 || "");
   const [email, setEmail] = useState(email0 || "");
@@ -211,27 +213,25 @@ function IdentityFields({ host, name0, email0 }: { host: string; name0?: string;
         email: email.trim(),
       });
       if (res && res.error) {
-        toast("保存に失敗: " + (res.error.message || res.error));
+        toast(tr("common.save_failed_msg", { msg: String(res.error.message || res.error) }));
         return;
       }
-      toast("コミット identity を保存しました");
+      toast(tr("git.identity_saved"));
     } finally {
       setBusy(false);
     }
   };
   return (
     <div className="git-identity">
-      <div className="gi-title">コミット identity（このプロバイダの既定）</div>
+      <div className="gi-title">{tr("git.identity_title")}</div>
       <div className="gi-row">
-        <input className="cinput" placeholder="name（例: 山田太郎）" value={name} onChange={(e) => setName(e.target.value)} />
+        <input className="cinput" placeholder={tr("git.name_placeholder_ex")} value={name} onChange={(e) => setName(e.target.value)} />
         <input className="cinput" placeholder="email" value={email} onChange={(e) => setEmail(e.target.value)} />
         <button disabled={busy} onClick={save}>
-          保存
+          {tr("common.save")}
         </button>
       </div>
-      <div className="field-help">
-        空欄なら接続アカウントを使用。端末 / claude のコミットにも適用され、リポジトリごとに上書きできます。
-      </div>
+      <div className="field-help">{tr("git.identity_help")}</div>
     </div>
   );
 }
@@ -239,6 +239,7 @@ function IdentityFields({ host, name0, email0 }: { host: string; name0?: string;
 // GlobalIdentity edits the ~/.gitconfig default identity — used for repos that match no
 // connected provider (no remote / direct-dir sessions).
 function GlobalIdentity() {
+  const tr = useT();
   const toast = useToast();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -258,29 +259,26 @@ function GlobalIdentity() {
     try {
       const res = await apiJSON("api/git/identity", "PUT", { name: name.trim(), email: email.trim() });
       if (res && res.error) {
-        toast("保存に失敗: " + (res.error.message || res.error));
+        toast(tr("common.save_failed_msg", { msg: String(res.error.message || res.error) }));
         return;
       }
-      toast("既定 identity を保存しました");
+      toast(tr("git.global_identity_saved"));
     } finally {
       setBusy(false);
     }
   };
   return (
     <>
-      <div className="conn-cat">既定のコミット identity（すべての git）</div>
+      <div className="conn-cat">{tr("git.global_identity_cat")}</div>
       <div className="git-identity solo">
         <div className="gi-row">
           <input className="cinput" placeholder="name" value={name} onChange={(e) => setName(e.target.value)} />
           <input className="cinput" placeholder="email" value={email} onChange={(e) => setEmail(e.target.value)} />
           <button disabled={busy} onClick={save}>
-            保存
+            {tr("common.save")}
           </button>
         </div>
-        <div className="field-help">
-          どのプロバイダにも紐づかないリポジトリ（remote 無し等）で使う ~/.gitconfig の既定値。
-          解決順は「リポ上書き ＞ プロバイダ ＞ この既定」。
-        </div>
+        <div className="field-help">{tr("git.global_identity_help")}</div>
       </div>
     </>
   );
@@ -301,6 +299,7 @@ function InternalRepoRow({
   onRename: (oldName: string, newName: string) => Promise<boolean>;
   onRemove: () => void;
 }) {
+  const tr = useT();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(repo.name);
   const [busy, setBusy] = useState(false);
@@ -339,7 +338,7 @@ function InternalRepoRow({
           }}
         />
         <button type="button" disabled={busy} onClick={commit}>
-          保存
+          {tr("common.save")}
         </button>
         <button
           type="button"
@@ -350,7 +349,7 @@ function InternalRepoRow({
             setDraft(repo.name);
           }}
         >
-          取消
+          {tr("git.rename_cancel")}
         </button>
       </li>
     );
@@ -360,23 +359,24 @@ function InternalRepoRow({
       <span className="ir-name" title={repo.name}>
         {repo.name}
       </span>
-      <button type="button" className="ir-url" title="クローンURLをコピー" onClick={onCopy}>
+      <button type="button" className="ir-url" title={tr("git.copy_clone_url")} onClick={onCopy}>
         <code>{repo.clone_url}</code>
       </button>
-      <button type="button" className="ghost" title="参照（クローン不要）" onClick={onBrowse}>
-        参照
+      <button type="button" className="ghost" title={tr("git.browse_title")} onClick={onBrowse}>
+        {tr("git.browse")}
       </button>
-      <button type="button" className="ghost" title="リネーム" onClick={() => setEditing(true)}>
-        リネーム
+      <button type="button" className="ghost" title={tr("git.rename")} onClick={() => setEditing(true)}>
+        {tr("git.rename")}
       </button>
-      <button type="button" className="ghost danger conn-disconnect" title="削除" onClick={onRemove}>
-        削除
+      <button type="button" className="ghost danger conn-disconnect" title={tr("common.delete")} onClick={onRemove}>
+        {tr("common.delete")}
       </button>
     </li>
   );
 }
 
 function GithubRow({ st, reload }: RowProps) {
+  const tr = useT();
   const toast = useToast();
   const poll = usePolling();
   const [mode, setMode] = useState("idle"); // idle | oauth | token
@@ -387,17 +387,17 @@ function GithubRow({ st, reload }: RowProps) {
     const res = await api("api/connections/git/github/oauth/start", { method: "POST" });
     if (!res || res.error) {
       if (res?.error?.code === "not_configured")
-        toast("GitHub OAuth は未設定です（client_id）。「token」から貼付を使ってください。", { kind: "warn" });
-      else toast("OAuth 開始に失敗: " + (res?.error?.message || ""));
+        toast(tr("git.github_oauth_unconfigured"), { kind: "warn" });
+      else toast(tr("git.oauth_start_failed", { msg: res?.error?.message || "" }));
       return;
     }
     setMode("oauth");
-    setOauth({ user_code: res.user_code, verification_uri: res.verification_uri, status: "承認待ち…" });
+    setOauth({ user_code: res.user_code, verification_uri: res.verification_uri, status: tr("git.oauth_waiting") });
     let iv = (res.interval || 5) * 1000;
     poll({
       deadlineMs: (res.expires_in || 900) * 1000,
       firstDelayMs: iv,
-      onExpire: () => setOauth((o: any) => ({ ...o, status: "期限切れ。やり直してください" })),
+      onExpire: () => setOauth((o: any) => ({ ...o, status: tr("git.oauth_expired") })),
       step: async () => {
         let p;
         try {
@@ -411,7 +411,7 @@ function GithubRow({ st, reload }: RowProps) {
           return { stop: true };
         }
         if (p && p.error) {
-          setOauth((o: any) => ({ ...o, status: "失敗: " + (p.error.message || p.error.code || "") }));
+          setOauth((o: any) => ({ ...o, status: tr("git.oauth_failed", { msg: p.error.message || p.error.code || "" }) }));
           return { stop: true };
         }
         if (p && p.interval) iv = p.interval * 1000;
@@ -424,7 +424,7 @@ function GithubRow({ st, reload }: RowProps) {
     if (!token.trim()) return;
     const res = await apiJSON("api/connections/git/github.com", "PUT", { token: token.trim() });
     if (res && res.error) {
-      toast("接続に失敗: " + (res.error.message || res.error));
+      toast(tr("conn.connect_failed", { msg: String(res.error.message || res.error) }));
       return;
     }
     setToken("");
@@ -440,7 +440,7 @@ function GithubRow({ st, reload }: RowProps) {
     <ProviderCard
       id="github"
       name="GitHub"
-      status={<StatusPill on={st?.connected}>{st?.connected ? "接続済み" : "未接続"}</StatusPill>}
+      status={<StatusPill on={st?.connected}>{st?.connected ? tr("conn.connected") : tr("conn.disconnected")}</StatusPill>}
     >
       {st?.connected ? (
         <>
@@ -468,26 +468,26 @@ function GithubRow({ st, reload }: RowProps) {
               onChange={(e) => setToken(e.target.value)}
               autoFocus
             />
-            <button onClick={saveToken}>接続</button>
+            <button onClick={saveToken}>{tr("conn.connect")}</button>
             <button className="ghost" onClick={() => setMode("idle")}>
-              戻る
+              {tr("common.back")}
             </button>
           </div>
         </div>
       ) : (
         <>
-          <div className="p-desc">OAuth（デバイスフロー）か Personal Access Token で接続。</div>
+          <div className="p-desc">{tr("git.github_desc")}</div>
           <div className="p-body">
             <div className="p-opts">
               <button type="button" className="p-opt" onClick={startOAuth}>
                 <span className="p-opt-t">
-                  OAuth で接続 <span className="p-rec">推奨</span>
+                  {tr("git.connect_oauth")} <span className="p-rec">{tr("git.recommended")}</span>
                 </span>
-                <span className="p-opt-s">ブラウザで承認するデバイスフロー。</span>
+                <span className="p-opt-s">{tr("git.github_oauth_sub")}</span>
               </button>
               <button type="button" className="p-opt" onClick={() => setMode("token")}>
-                <span className="p-opt-t">アクセストークンで接続</span>
-                <span className="p-opt-s">Personal Access Token を貼り付け。</span>
+                <span className="p-opt-t">{tr("git.connect_token")}</span>
+                <span className="p-opt-s">{tr("git.github_token_sub")}</span>
               </button>
             </div>
           </div>
@@ -498,6 +498,7 @@ function GithubRow({ st, reload }: RowProps) {
 }
 
 function BitbucketRow({ st, reload }: RowProps) {
+  const tr = useT();
   const toast = useToast();
   const poll = usePolling();
   const [mode, setMode] = useState("idle"); // idle | oauth | token
@@ -509,17 +510,17 @@ function BitbucketRow({ st, reload }: RowProps) {
     const res = await api("api/connections/git/bitbucket/oauth/start");
     if (!res || res.error || !res.authorize_url) {
       if (res?.error?.code === "not_configured")
-        toast("Bitbucket OAuth は未設定です（key/secret）。「token」から貼付を使ってください。", { kind: "warn" });
-      else toast("OAuth 開始に失敗: " + (res?.error?.message || ""));
+        toast(tr("git.bitbucket_oauth_unconfigured"), { kind: "warn" });
+      else toast(tr("git.oauth_start_failed", { msg: res?.error?.message || "" }));
       return;
     }
     window.open(res.authorize_url, "_blank", "noopener");
     setMode("oauth");
-    setStatus("別タブで承認してください…");
+    setStatus(tr("git.bb_waiting"));
     poll({
       deadlineMs: 5 * 60 * 1000,
       firstDelayMs: 2500,
-      onExpire: () => setStatus("タイムアウト。やり直してください"),
+      onExpire: () => setStatus(tr("git.bb_timeout")),
       step: async () => {
         let d;
         try {
@@ -544,7 +545,7 @@ function BitbucketRow({ st, reload }: RowProps) {
       token: token.trim(),
     });
     if (res && res.error) {
-      toast("接続に失敗: " + (res.error.message || res.error));
+      toast(tr("conn.connect_failed", { msg: String(res.error.message || res.error) }));
       return;
     }
     setToken("");
@@ -561,7 +562,7 @@ function BitbucketRow({ st, reload }: RowProps) {
     <ProviderCard
       id="bitbucket"
       name="Bitbucket"
-      status={<StatusPill on={st?.connected}>{st?.connected ? "接続済み" : "未接続"}</StatusPill>}
+      status={<StatusPill on={st?.connected}>{st?.connected ? tr("conn.connected") : tr("conn.disconnected")}</StatusPill>}
     >
       {st?.connected ? (
         <>
@@ -596,26 +597,26 @@ function BitbucketRow({ st, reload }: RowProps) {
               value={token}
               onChange={(e) => setToken(e.target.value)}
             />
-            <button onClick={saveToken}>接続</button>
+            <button onClick={saveToken}>{tr("conn.connect")}</button>
             <button className="ghost" onClick={() => setMode("idle")}>
-              戻る
+              {tr("common.back")}
             </button>
           </div>
         </div>
       ) : (
         <>
-          <div className="p-desc">OAuth（コードグラント）か メール＋アプリトークンで接続。</div>
+          <div className="p-desc">{tr("git.bitbucket_desc")}</div>
           <div className="p-body">
             <div className="p-opts">
               <button type="button" className="p-opt" onClick={startOAuth}>
                 <span className="p-opt-t">
-                  OAuth で接続 <span className="p-rec">推奨</span>
+                  {tr("git.connect_oauth")} <span className="p-rec">{tr("git.recommended")}</span>
                 </span>
-                <span className="p-opt-s">別タブで承認するコードグラント。</span>
+                <span className="p-opt-s">{tr("git.bb_oauth_sub")}</span>
               </button>
               <button type="button" className="p-opt" onClick={() => setMode("token")}>
-                <span className="p-opt-t">アプリトークンで接続</span>
-                <span className="p-opt-s">Atlassian メール＋API トークン。</span>
+                <span className="p-opt-t">{tr("git.connect_apptoken")}</span>
+                <span className="p-opt-s">{tr("git.bb_token_sub")}</span>
               </button>
             </div>
           </div>

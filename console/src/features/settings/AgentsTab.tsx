@@ -22,6 +22,7 @@ import { useConnections } from "./useConnections.ts";
 import { useWorkspaceStore, wsStartBusy } from "../../core/store/workspace.ts";
 import { usePolling } from "./usePolling.ts";
 import { ProviderCard, StatusPill, Hint, DeviceSteps, DisconnectButton } from "./providerCard.tsx";
+import { useT } from "../../lib/i18n/index.ts";
 
 // AgentsTab is the per-agent home: for Claude / Codex / opencode it combines the
 // CONNECTION (auth flow + status) and the BEHAVIOR settings (Remote Control / 通知 /
@@ -30,6 +31,7 @@ import { ProviderCard, StatusPill, Hint, DeviceSteps, DisconnectButton } from ".
 // (secrets stored container-side); behavior settings via api/claude/settings +
 // api/agents/rtk and apply to NEW sessions. Both need the workspace running.
 export function AgentsTab() {
+  const tr = useT();
   const toast = useToast();
   // Client-side session pref (タイトル自動提案) — persisted in the local settings
   // store, so it shows regardless of workspace state (unlike the agent behavior
@@ -86,7 +88,7 @@ export function AgentsTab() {
     (path: string, setState: (d: any) => void) => async (patch: unknown) => {
       const d = await apiJSON(path, "PUT", patch);
       if (d && d.error) {
-        toast("保存に失敗: " + (d.error.message || ""));
+        toast(tr("common.save_failed_msg", { msg: d.error.message || "" }));
         return;
       }
       setState(d);
@@ -99,36 +101,27 @@ export function AgentsTab() {
   // local, not container-backed.
   const sessionSettings = (
     <section className="ds-group">
-      <h4 className="ds-title">セッション</h4>
-      <Row label="タイトル自動提案">
+      <h4 className="ds-title">{tr("agents.session")}</h4>
+      <Row label={tr("agents.auto_title")}>
         <OnOff value={s.autoTitleSuggest} onChange={(v) => setSetting("autoTitleSuggest", v)} />
       </Row>
-      <p className="muted ds-note">
-        タイトル未設定のセッションで数回やり取りしたら、AIが短いタイトル案をチャット上部に表示します。
-      </p>
-      <Row label="アシスタントの回答言語">
+      <p className="muted ds-note">{tr("agents.note_auto_title")}</p>
+      <Row label={tr("agents.output_language")}>
         <Choice
           value={s.outputLanguage}
-          options={OUTPUT_LANGUAGES}
+          options={OUTPUT_LANGUAGES.map(([id, k]) => [id, tr(k)])}
           onChange={(v) => setSetting("outputLanguage", v)}
         />
       </Row>
-      <p className="muted ds-note">
-        アシスタント・チャットの回答言語です。「入力に合わせる」は、渡した文章や質問の言語に合わせて返します。
-        日本語／English を選ぶと、他言語の文章でもその言語で回答します（翻訳アシスタントは対象外）。
-      </p>
-      <Row label="アシスタントのエージェント">
+      <p className="muted ds-note">{tr("agents.note_output_language")}</p>
+      <Row label={tr("agents.assistant_agent")}>
         <Choice
           value={s.assistantAgent}
-          options={ASSISTANT_AGENTS}
+          options={ASSISTANT_AGENTS.map(([id, k]) => [id, tr(k)])}
           onChange={(v) => setSetting("assistantAgent", v)}
         />
       </Row>
-      <p className="muted ds-note">
-        アシスタント・チャットとタイトル案の生成を動かす CLI です。「自動」は接続済みのものを Claude → Codex →
-        opencode の順で選びます。固定した CLI が未接続のときは自動選択に戻ります。反映はビルトインアシスタントの
-        新しい会話から（カスタムアシスタントは各自のエージェント設定が優先）。
-      </p>
+      <p className="muted ds-note">{tr("agents.note_assistant_agent")}</p>
     </section>
   );
 
@@ -138,11 +131,11 @@ export function AgentsTab() {
         {sessionSettings}
         <EmptyState
           icon="debug-disconnect"
-          title="設定はワークスペース内で実行されます"
-          hint="接続とエージェント設定はコンテナ内の Agent / CLI を経由するため、ワークスペースの起動が必要です。"
+          title={tr("agents.ws_required_title")}
+          hint={tr("agents.ws_required_hint")}
         >
           <Button icon="play" disabled={wsStartBusy(wsState)} onClick={() => void startWs()}>
-            {wsStartBusy(wsState) ? "起動中…" : "ワークスペースを起動"}
+            {wsStartBusy(wsState) ? tr("common.starting") : tr("ops.start_ws")}
           </Button>
         </EmptyState>
       </>
@@ -152,7 +145,7 @@ export function AgentsTab() {
     return (
       <>
         {sessionSettings}
-        <p className="muted pad">読み込み中…</p>
+        <p className="muted pad">{tr("common.loading")}</p>
       </>
     );
 
@@ -160,9 +153,7 @@ export function AgentsTab() {
     <div className="conns">
       {sessionSettings}
       {gain && <RtkGainPanel gain={gain} />}
-      <p className="muted ds-note">
-        接続の変更は即時、挙動設定は各エージェントの新しいセッションから反映されます。
-      </p>
+      <p className="muted ds-note">{tr("agents.note_apply")}</p>
       <ClaudeCard st={conns.claude} reload={reload} claude={claude} updateClaude={updateClaude} />
       <CodexCard
         st={conns.codex}
@@ -178,11 +169,7 @@ export function AgentsTab() {
         agents={agents}
         updateAgents={updateAgents}
       />
-      {agents === false && (
-        <p className="ps-note">
-          このワークスペースのイメージはエージェント設定 API（rtk）に未対応です。イメージを再ビルドして「作り直す」と有効になります。
-        </p>
-      )}
+      {agents === false && <p className="ps-note">{tr("agents.rtk_unsupported")}</p>}
     </div>
   );
 }
@@ -197,6 +184,7 @@ const RTK_HIST_N = 30; // sparkline shows ~the last month of daily savings
 // until gain reads back with something actually saved. Savings read as positive, so the
 // sparkline / meter use the ok color (green), not the resource warn/crit scale.
 function RtkGainPanel({ gain }: { gain: any }) {
+  const tr = useT();
   const s = gain?.summary;
   const saved = s?.total_saved || 0;
   if (!s || saved <= 0) return null;
@@ -204,17 +192,17 @@ function RtkGainPanel({ gain }: { gain: any }) {
   const series = (gain.daily || []).slice(-RTK_HIST_N).map((d: any) => d.saved_tokens);
   return (
     <section className="ds-group rtk-gain">
-      <h4 className="ds-title">rtk 効果（トークン節約）</h4>
+      <h4 className="ds-title">{tr("agents.rtk_gain_title")}</h4>
       <div className="rtk-gain-head">
         <Sparkline data={series} width={80} height={30} />
         <div className="rtk-gain-headline">
           <b>{fmtTok(saved)}</b>
-          <span className="muted"> 累計節約</span>
+          <span className="muted">{tr("agents.rtk_cumulative")}</span>
         </div>
       </div>
       <div className="rtk-gain-meter">
         <div className="wu-row-head">
-          <span className="muted">平均節約率</span>
+          <span className="muted">{tr("agents.rtk_avg_pct")}</span>
           <span className="wu-pct">{pct}%</span>
         </div>
         <div className="wu-bar">
@@ -223,20 +211,17 @@ function RtkGainPanel({ gain }: { gain: any }) {
       </div>
       <div className="ws-rtk-stats">
         <div className="ws-rtk-stat">
-          <span className="muted">入力 → 出力</span>
+          <span className="muted">{tr("agents.rtk_in_out")}</span>
           <b>
             {fmtTok(s.total_input)} → {fmtTok(s.total_output)}
           </b>
         </div>
         <div className="ws-rtk-stat">
-          <span className="muted">実行コマンド</span>
+          <span className="muted">{tr("agents.rtk_commands")}</span>
           <b>{fmtNum(s.total_commands || 0)}</b>
         </div>
       </div>
-      <p className="muted ds-note">
-        rtk がコマンド出力を圧縮して節約したトークン量です（直近 {RTK_HIST_N} 日の推移）。
-        計上範囲は各エージェントの rtk 設定（下記）により変わります。
-      </p>
+      <p className="muted ds-note">{tr("agents.note_rtk_gain", { n: RTK_HIST_N })}</p>
     </section>
   );
 }
@@ -269,9 +254,10 @@ function SettingRow({ label, sub, children }: { label: ReactNode; sub?: ReactNod
 // repeatedly overwriting deliberate per-repo choices.
 function LaunchDefaults({ kind }: { kind: "claude" | "codex" | "opencode" }) {
   const s = useSettings();
+  const tr = useT();
   const desc = agentOf(kind);
   const row = agentLaunchDefault(s, kind);
-  const models = useModelOptions(kind) || [["", "既定"]] as [string, string][];
+  const models = useModelOptions(kind) || [["", tr("common.default")]] as [string, string][];
   const efforts = useEffortOptions(kind, row.model);
   const update = (patch: Partial<typeof row>) => {
     const next = { ...row, ...patch };
@@ -283,7 +269,7 @@ function LaunchDefaults({ kind }: { kind: "claude" | "codex" | "opencode" }) {
   };
   return (
     <>
-      <SettingRow label="既定モデル">
+      <SettingRow label={tr("agents.default_model")}>
         {/* opencode は候補が数十個になりセグメントだと敷き詰まるため、長いリストは Select に。 */}
         {models.length > 8 ? (
           <Select value={row.model} options={models} onChange={(model) => update({ model, effort: "" })} />
@@ -291,22 +277,19 @@ function LaunchDefaults({ kind }: { kind: "claude" | "codex" | "opencode" }) {
           <Choice value={row.model} options={models} onChange={(model) => update({ model, effort: "" })} />
         )}
       </SettingRow>
-      <SettingRow label="既定 effort">
+      <SettingRow label={tr("agents.default_effort")}>
         <Choice value={row.effort} options={efforts} onChange={(effort) => update({ effort })} />
       </SettingRow>
       {desc.caps.planMode && (
-        <SettingRow label="開始モード">
+        <SettingRow label={tr("agents.start_mode")}>
           <Choice
             value={row.startMode}
-            options={[["normal", desc.defaultModeLabel || "通常"], ["plan", "Plan"]]}
+            options={[["normal", desc.defaultModeLabel || tr("agents.mode_normal")], ["plan", "Plan"]]}
             onChange={(startMode) => update({ startMode: startMode === "plan" ? "plan" : "normal" })}
           />
         </SettingRow>
       )}
-      <p className="ps-note">
-        新しいセッションの初期値です。リポジトリで前回使った設定があれば、そちらを優先します。
-        ドライバが対応しない項目は起動時に適用されません。
-      </p>
+      <p className="ps-note">{tr("agents.note_launch_defaults")}</p>
     </>
   );
 }
@@ -322,12 +305,13 @@ function RtkRow({
   value?: boolean;
   onChange: (v: boolean) => void;
 }) {
+  const tr = useT();
   return (
-    <SettingRow label="RTK（トークン節約）">
+    <SettingRow label={tr("agents.rtk_row")}>
       {available ? (
         <OnOff value={value} onChange={onChange} />
       ) : (
-        <span className="muted">この workspace に rtk がありません</span>
+        <span className="muted">{tr("agents.rtk_unavailable")}</span>
       )}
     </SettingRow>
   );
@@ -346,6 +330,7 @@ function ClaudeCard({
   claude: any;
   updateClaude: (patch: unknown) => void;
 }) {
+  const tr = useT();
   const toast = useToast();
   const [flow, setFlow] = useState<any>(null); // { url, flow_id }
   const [code, setCode] = useState("");
@@ -356,7 +341,7 @@ function ClaudeCard({
     try {
       const res = await api("api/connections/claude/start", { method: "POST" });
       if (!res || res.error || !res.url) {
-        toast("Claude 認証開始に失敗: " + (res?.error?.message || ""));
+        toast(tr("agents.claude_auth_failed", { msg: res?.error?.message || "" }));
         return;
       }
       window.open(res.url, "_blank", "noopener");
@@ -371,7 +356,7 @@ function ClaudeCard({
     try {
       const r = await apiJSON("api/connections/claude/complete", "POST", { flow_id: flow.flow_id, code: code.trim() });
       if (r && r.error) {
-        toast("接続に失敗: " + (r.error.message || r.error));
+        toast(tr("conn.connect_failed", { msg: String(r.error.message || r.error) }));
         return;
       }
       setFlow(null);
@@ -390,7 +375,7 @@ function ClaudeCard({
     <ProviderCard
       id="claude"
       name="Claude"
-      status={<StatusPill on={st?.connected}>{st?.connected ? "接続済み" : "未接続"}</StatusPill>}
+      status={<StatusPill on={st?.connected}>{st?.connected ? tr("conn.connected") : tr("conn.disconnected")}</StatusPill>}
     >
       {st?.connected ? (
         <div className="p-who">
@@ -402,53 +387,53 @@ function ClaudeCard({
         </div>
       ) : flow ? (
         <>
-          <div className="p-desc">Claude Code の OAuth 接続。サインインは新しいタブで開きます。</div>
+          <div className="p-desc">{tr("agents.claude_desc_flow")}</div>
           <div className="p-body">
             <Hint>
-              タブが自動で開かない場合は{" "}
+              {tr("agents.claude_hint_1")}
               <a href={flow.url} target="_blank" rel="noopener" className="flow-link">
-                サインインリンク ↗
-              </a>{" "}
-              から。承認後にコードを貼り付けます。
+                {tr("agents.claude_signin_link")}
+              </a>
+              {tr("agents.claude_hint_2")}
             </Hint>
             <div className="flow">
               <input
                 className="cinput"
-                placeholder="コードを貼付"
+                placeholder={tr("agents.paste_code")}
                 value={code}
                 onChange={(e) => setCode(e.target.value)}
                 autoFocus
               />
               <button disabled={busy} onClick={complete}>
-                完了
+                {tr("agents.complete")}
               </button>
             </div>
           </div>
         </>
       ) : (
         <>
-          <div className="p-desc">Claude Code の OAuth 接続。承認後にコードを貼り付けて完了します。</div>
+          <div className="p-desc">{tr("agents.claude_desc")}</div>
           <div className="p-body">
             <button disabled={busy} onClick={start}>
-              OAuth 接続
+              {tr("agents.oauth_connect")}
             </button>
           </div>
         </>
       )}
       <div className="p-settings">
-        <div className="ps-title">設定</div>
+        <div className="ps-title">{tr("agents.settings")}</div>
         <LaunchDefaults kind="claude" />
         {/* Remote Control / 通知 / RTK are workspace-level files (independent of Claude
             auth) — pre-settable, but need the api/claude/settings endpoint loaded. */}
         {claude && (
           <>
-            <SettingRow label="リモートコントロール">
+            <SettingRow label={tr("agents.remote_control")}>
               <OnOff
                 value={claude.remoteControlAtStartup}
                 onChange={(v) => updateClaude({ remoteControlAtStartup: v })}
               />
             </SettingRow>
-            <SettingRow label="通知">
+            <SettingRow label={tr("agents.notifications")}>
               <OnOff
                 value={claude.agentPushNotifEnabled}
                 onChange={(v) => updateClaude({ agentPushNotifEnabled: v })}
@@ -484,6 +469,7 @@ function CodexCard({
   agents: any;
   updateAgents: (patch: unknown) => void;
 }) {
+  const tr = useT();
   const toast = useToast();
   const poll = usePolling();
   const [mode, setMode] = useState("idle"); // idle | device | key
@@ -496,15 +482,15 @@ function CodexCard({
     try {
       const res = await api("api/connections/codex/device/start", { method: "POST" });
       if (!res || res.error || !res.url) {
-        toast("Codex 認証開始に失敗: " + (res?.error?.message || "device code ログインが無効かもしれません"));
+        toast(tr("agents.codex_auth_failed", { msg: res?.error?.message || tr("agents.codex_device_disabled") }));
         return;
       }
       setMode("device");
-      setDev({ user_code: res.user_code, url: res.url, flow_id: res.flow_id, status: "承認待ち…" });
+      setDev({ user_code: res.user_code, url: res.url, flow_id: res.flow_id, status: tr("git.oauth_waiting") });
       poll({
         deadlineMs: 15 * 60 * 1000,
         firstDelayMs: 3000,
-        onExpire: () => setDev((d: any) => ({ ...d, status: "期限切れ。やり直してください" })),
+        onExpire: () => setDev((d: any) => ({ ...d, status: tr("git.oauth_expired") })),
         step: async () => {
           let p;
           try {
@@ -531,7 +517,7 @@ function CodexCard({
     try {
       const res = await apiJSON("api/connections/codex/api-key", "POST", { key: key.trim() });
       if (res && res.error) {
-        toast("接続に失敗: " + (res.error.message || res.error));
+        toast(tr("conn.connect_failed", { msg: String(res.error.message || res.error) }));
         return;
       }
       setKey("");
@@ -550,12 +536,12 @@ function CodexCard({
     <ProviderCard
       id="codex"
       name="Codex"
-      status={<StatusPill on={st?.connected}>{st?.connected ? "接続済み" : "未接続"}</StatusPill>}
+      status={<StatusPill on={st?.connected}>{st?.connected ? tr("conn.connected") : tr("conn.disconnected")}</StatusPill>}
     >
       {st?.connected ? (
         <div className="p-who">
           <span className="p-em" title={st.email || ""}>
-            {st.email || (st.method === "apikey" ? "API キー" : "ChatGPT")}
+            {st.email || (st.method === "apikey" ? tr("agents.codex_apikey_label") : "ChatGPT")}
           </span>
           {st.plan && <span className="p-pl">{st.plan}</span>}
           <DisconnectButton onClick={disconnect} />
@@ -564,11 +550,11 @@ function CodexCard({
         <div className="p-body">
           <DeviceSteps code={dev.user_code} url={dev.url} status={dev.status} />
           <Hint>
-            承認しても進まない場合は、ChatGPT の{" "}
+            {tr("agents.codex_hint1_1")}
             <a href="https://chatgpt.com/#settings/Security" target="_blank" rel="noopener" className="flow-link">
-              設定 &gt; セキュリティ
-            </a>{" "}
-            で「Codex に対してデバイスコード認証を有効にする」がオンか確認してください。
+              {tr("agents.codex_settings_security")}
+            </a>
+            {tr("agents.codex_hint1_2")}
           </Hint>
         </div>
       ) : mode === "key" ? (
@@ -577,63 +563,59 @@ function CodexCard({
             <input
               className="cinput"
               type="password"
-              placeholder="OpenAI API キー (sk-…)"
+              placeholder={tr("agents.openai_key_placeholder")}
               value={key}
               onChange={(e) => setKey(e.target.value)}
               autoFocus
             />
             <button disabled={busy || !key.trim()} onClick={saveKey}>
-              接続
+              {tr("conn.connect")}
             </button>
             <button className="ghost" onClick={() => setMode("idle")}>
-              戻る
+              {tr("common.back")}
             </button>
           </div>
         </div>
       ) : (
         <>
-          <div className="p-desc">
-            ChatGPT サブスク（推奨）か OpenAI API キーで接続。
-          </div>
+          <div className="p-desc">{tr("agents.codex_desc")}</div>
           <div className="p-body">
             <div className="p-opts">
               <button type="button" className="p-opt" disabled={busy} onClick={startDevice}>
                 <span className="p-opt-t">
-                  ChatGPT サブスクで接続 <span className="p-rec">推奨</span>
+                  {tr("agents.codex_connect_sub")} <span className="p-rec">{tr("git.recommended")}</span>
                 </span>
-                <span className="p-opt-s">Plus / Pro の枠を使用。追加課金なし。</span>
+                <span className="p-opt-s">{tr("agents.codex_sub_note")}</span>
               </button>
               <button type="button" className="p-opt" onClick={() => setMode("key")}>
-                <span className="p-opt-t">API キーで接続</span>
-                <span className="p-opt-s">OpenAI API の従量課金（sk-…）。</span>
+                <span className="p-opt-t">{tr("agents.codex_connect_key")}</span>
+                <span className="p-opt-s">{tr("agents.codex_key_note")}</span>
               </button>
             </div>
             <Hint>
-              ChatGPT サブスクで接続するには、先に ChatGPT の{" "}
+              {tr("agents.codex_hint2_1")}
               <a href="https://chatgpt.com/#settings/Security" target="_blank" rel="noopener" className="flow-link">
-                設定 &gt; セキュリティ
-              </a>{" "}
-              で「Codex に対してデバイスコード認証を有効にする」をオンにしてください。
+                {tr("agents.codex_settings_security")}
+              </a>
+              {tr("agents.codex_hint2_2")}
             </Hint>
           </div>
         </>
       )}
       {/* RTK is a workspace-level flag (independent of Codex auth) — pre-settable. */}
       <div className="p-settings">
-        <div className="ps-title">設定</div>
+        <div className="ps-title">{tr("agents.settings")}</div>
         <LaunchDefaults kind="codex" />
         {codex && (
             <>
-              <SettingRow label="利用制限時のモデル切替案内">
+              <SettingRow label={tr("agents.codex_nudge")}>
                 <OnOff
                   value={codex.rate_limit_model_nudge}
                   onChange={(v) => updateCodex({ rate_limit_model_nudge: v })}
                 />
               </SettingRow>
               <p className={`ps-note${codex.rate_limit_model_nudge ? " ps-note-warn" : ""}`}>
-                {codex.rate_limit_model_nudge
-                  ? "⚠ オンの場合、利用制限が近づくと Codex の案内が表示され、軽量モデルへ切り替わる可能性があります。"
-                  : "オフの場合、利用制限が近いときに軽量モデルへの切替を勧める Codex の案内を表示しません。"}
+                {codex.rate_limit_model_nudge ? tr("agents.codex_nudge_on") : tr("agents.codex_nudge_off")}
               </p>
             </>
         )}
@@ -644,9 +626,7 @@ function CodexCard({
                 value={agents.codex_rtk}
                 onChange={(v) => updateAgents({ codex_rtk: v })}
               />
-              <p className="ps-note">
-                codex はコマンド書換フックを持たないため指示ベース（ベストエフォート）。AGENTS.md で rtk 利用を促すだけで、強制ではありません。
-              </p>
+              <p className="ps-note">{tr("agents.codex_rtk_note")}</p>
             </>
         )}
       </div>
@@ -662,7 +642,7 @@ const OC_PRESETS = [
   ["openai", "OpenAI", "OPENAI_API_KEY"],
   ["openrouter", "OpenRouter", "OPENROUTER_API_KEY"],
   ["google", "Google Gemini", "GEMINI_API_KEY"],
-  ["custom", "カスタム…", ""],
+  ["custom", "", ""], // label resolved via i18n (agents.oc_custom) at render
 ];
 
 function OpencodeCard({
@@ -676,6 +656,7 @@ function OpencodeCard({
   agents: any;
   updateAgents: (patch: unknown) => void;
 }) {
+  const tr = useT();
   const toast = useToast();
   const [preset, setPreset] = useState("go");
   const [customEnv, setCustomEnv] = useState("");
@@ -691,7 +672,7 @@ function OpencodeCard({
     try {
       const res = await apiJSON("api/connections/opencode", "PUT", { env: envName, key: key.trim() });
       if (res && res.error) {
-        toast("保存に失敗: " + (res.error.message || res.error));
+        toast(tr("common.save_failed_msg", { msg: String(res.error.message || res.error) }));
         return;
       }
       setKey("");
@@ -710,16 +691,16 @@ function OpencodeCard({
     <ProviderCard
       id="opencode"
       name="opencode"
-      status={<StatusPill on={envs.length > 0}>{envs.length > 0 ? `${envs.length} キー` : "未接続"}</StatusPill>}
+      status={<StatusPill on={envs.length > 0}>{envs.length > 0 ? tr("agents.oc_key_count", { count: envs.length }) : tr("conn.disconnected")}</StatusPill>}
     >
-      <div className="p-desc">複数プロバイダの API キーを保存し、opencode 起動時に env として注入します。</div>
+      <div className="p-desc">{tr("agents.oc_desc")}</div>
       <div className="p-body">
         {preset === "go" && (
           <Hint>
             <a href="https://opencode.ai/auth" target="_blank" rel="noopener" className="flow-link">
               opencode.ai/auth
-            </a>{" "}
-            でサインイン → 課金設定 → API キーを発行して貼り付け（同じキーで Zen も利用可）。
+            </a>
+            {tr("agents.oc_hint")}
           </Hint>
         )}
         {envs.length > 0 && (
@@ -727,7 +708,7 @@ function OpencodeCard({
             {envs.map((e: string) => (
               <li key={e}>
                 <code>{e}</code>
-                <button className="icon danger" title="削除" onClick={() => remove(e)}>
+                <button className="icon danger" title={tr("common.delete")} onClick={() => remove(e)}>
                   ✕
                 </button>
               </li>
@@ -738,14 +719,14 @@ function OpencodeCard({
           <select className="cinput" value={preset} onChange={(e) => setPreset(e.target.value)}>
             {OC_PRESETS.map(([v, label]) => (
               <option key={v} value={v}>
-                {label}
+                {v === "custom" ? tr("agents.oc_custom") : label}
               </option>
             ))}
           </select>
           {preset === "custom" && (
             <input
               className="cinput"
-              placeholder="ENV 名 (例 GROQ_API_KEY)"
+              placeholder={tr("agents.oc_env_placeholder")}
               value={customEnv}
               onChange={(e) => setCustomEnv(e.target.value)}
             />
@@ -753,17 +734,17 @@ function OpencodeCard({
           <input
             className="cinput"
             type="password"
-            placeholder={envName ? envName + " の値" : "API キー"}
+            placeholder={envName ? tr("agents.oc_key_value", { env: envName }) : tr("agents.oc_key_fallback")}
             value={key}
             onChange={(e) => setKey(e.target.value)}
           />
           <button disabled={busy || !envName || !key.trim()} onClick={add}>
-            接続
+            {tr("conn.connect")}
           </button>
         </div>
       </div>
       <div className="p-settings">
-        <div className="ps-title">設定</div>
+        <div className="ps-title">{tr("agents.settings")}</div>
         <LaunchDefaults kind="opencode" />
         {agents && agents !== false && (
           <RtkRow
