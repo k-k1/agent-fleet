@@ -868,4 +868,94 @@ export const ja = {
   "exit.crashed.text": "異常終了",
   "exit.crashed.hint_signal": "プロセスが signal {signal} で異常終了しました。",
   "exit.crashed.hint_code": "プロセスが異常終了しました（exit code {code}）。",
+
+  // === P2 WsBar（app/WsBar.tsx）===
+  // 相対時刻（agoText。ja は単一形）
+  "wsbar.ago_hour_one": "{count}時間前",
+  "wsbar.ago_hour_other": "{count}時間前",
+  "wsbar.ago_min_one": "{count}分前",
+  "wsbar.ago_min_other": "{count}分前",
+  "wsbar.ago_sec_one": "{count}秒前",
+  "wsbar.ago_sec_other": "{count}秒前",
+  // リセットまで（untilText。日は common.days_left を再利用）
+  "wsbar.until_hour_one": "あと{count}時間",
+  "wsbar.until_hour_other": "あと{count}時間",
+  "wsbar.until_min_one": "あと{count}分",
+  "wsbar.until_min_other": "あと{count}分",
+  // Full reset の有効期限まで（expiryText。日は common.days_left）
+  "wsbar.expiry_today": "本日まで",
+  "wsbar.expiry_tomorrow": "明日まで",
+  // ワークスペース状態ラベル（wsLabel）
+  "wsbar.state.running": "稼働中",
+  "wsbar.state.starting": "起動中…",
+  "wsbar.state.stopped": "停止",
+  "wsbar.state.stopping": "停止中…",
+  "wsbar.state.recreating": "再作成中…",
+  "wsbar.state.unknown": "不明",
+  // 使用状況チップ／ドロップダウン（UsageChip / UsageRow / USAGE_SOURCES）
+  "wsbar.usage.title": "{name} 使用状況（5時間 / 週次）",
+  "wsbar.usage.pop_title": "{name} 使用状況",
+  "wsbar.usage.reset_at": "{until}でリセット（{when}）",
+  "wsbar.usage.chip_bind_title": "{name}・{label} {pct}% — {until}でリセット（{when}）",
+  "wsbar.usage.claude.five": "5時間制限",
+  "wsbar.usage.claude.week": "週次・全モデル",
+  "wsbar.usage.codex.five": "5時間",
+  "wsbar.usage.codex.week": "週次",
+  "wsbar.usage.codex.note":
+    "codex が記録した最後の値です（この時点のスナップショット）。次に codex を実行すると更新されます。",
+  "wsbar.usage.full_reset_one": "Full reset {count}件",
+  "wsbar.usage.full_reset_other": "Full reset {count}件",
+  "wsbar.usage.full_reset_soonest": "・最短 {when}まで",
+  "wsbar.usage.full_reset_label": "Full reset",
+  "wsbar.usage.count_ken": "{count}件",
+  "wsbar.usage.expires": "有効期限 {date}",
+  "wsbar.usage.fetched": "取得 {ago}",
+  "wsbar.usage.refresh": "更新",
+  "wsbar.usage.open_page": "使用状況ページを開く",
+  // 電源トグル／状態チップのツールチップ
+  "wsbar.stop_ws": "ワークスペースを停止",
+  "wsbar.start_ws": "ワークスペースを起動",
+  "wsbar.state_title.none": "停止（コンテナなし — Stop で削除済み。データは保持、Start で再作成）",
+  "wsbar.state_title.oom":
+    "停止（コンテナがメモリ不足で強制終了 — OOM kill、exit {code}）。メモリ上限に達しました。",
+  "wsbar.state_title.exited": "停止（コンテナが自走終了 — exit code {code}。クラッシュの可能性）",
+  "wsbar.state_title.stopped": "停止（コンテナが自走終了 — クラッシュ / OOM の可能性）",
+  "wsbar.state_title.starting":
+    "起動中（初回はイメージ取得のため数分かかることがあります。完了すると自動で稼働中になります）",
+  "wsbar.state_title.other": "状態: {state}",
+  // 「はじめる」／分割／全て閉じる
+  "wsbar.start_here": "はじめる",
+  "wsbar.start_here.running": "はじめる（チャット / リポジトリ / クローン / shell）",
+  "wsbar.start_here.queued": "起動中 — 準備ができたら開きます",
+  "wsbar.start_here.stopped": "はじめる（ワークスペースを起動して開始）",
+  "wsbar.split_right": "右に分割",
+  "wsbar.split_down": "下に分割",
+  "wsbar.split_down_title": "上下に分割（アクティブなペイン）",
+  "wsbar.close_all": "全て閉じる",
+  "wsbar.close_all_title": "全ペインを閉じる",
+  // オーバーフロー／プレビュー／リソース
+  "wsbar.more_title": "リソース情報 / opencode web / プレビュー",
+  "wsbar.preview": "プレビュー",
+  "wsbar.preview_title": "opencode web / コンテナ内サービスを開く",
+  "wsbar.resources": "リソース",
+  "wsbar.resources_title": "リソース使用状況",
+  "wsbar.preview.port_label": "ポートを指定して開く",
+  "wsbar.preview.port_hint": "コンテナ内で起動したサービスのポート（例: 8080）",
+  "wsbar.preview.open": "開く",
+  "wsbar.preview.hint": "コンテナ内で起動したサービスのポート（例: 8080）を新しいタブで開きます。",
+  // リソースタイル（tile のツールチップ）
+  "wsbar.tile.ws_mem": "ワークスペースのメモリ: {mem}G",
+  "wsbar.tile.ws_mem_oom_note":
+    "⚠ 直近数分以内にコンテナ内でプロセスが OOM kill されました（メモリ上限到達。ビルド/エージェントが強制終了された可能性）",
+  "wsbar.tile.ws_cpu": "ワークスペースの CPU 使用率（1コア = 100%）",
+  "wsbar.tile.host_load": "ホスト ロードアベレージ(1分): {load} / {ncpu}コア（管理者のみ）",
+  "wsbar.tile.host_mem": "ホスト メモリ: {mem}G（管理者のみ）",
+  // 確認ダイアログ（起動 / 停止）
+  "wsbar.confirm.start.title": "ワークスペースを起動してはじめる",
+  "wsbar.confirm.start.body": "ワークスペースが停止中です。起動して、準備ができたら「はじめる」を開きます。",
+  "wsbar.confirm.start.wait": "待機する",
+  "wsbar.confirm.start.go": "起動する",
+  "wsbar.confirm.stop.body":
+    "コンテナを停止します。実行中のセッションは停止（あとで再開可）になり、opencode web / プレビューは切断されます。ファイルは保持されます。",
+  "wsbar.confirm.stop.go": "停止する",
 };
