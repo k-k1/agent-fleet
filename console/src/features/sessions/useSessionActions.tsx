@@ -10,6 +10,8 @@ import { displayName } from "../../lib/sessionview.ts";
 import { agentOf } from "../../agents/registry.ts";
 import { useSessionsStore } from "./store.ts";
 import { openSessionChat, openSessionChatSplit, openSessionTerminal } from "./open.ts";
+import { t, useT } from "../../lib/i18n/index.ts";
+import { Trans } from "../../lib/i18n/Trans.tsx";
 import type { Session } from "../../types/session.ts";
 
 export interface SessionActions {
@@ -32,13 +34,14 @@ export interface SessionActions {
 export function useSessionActions(): SessionActions {
   const askConfirm = useConfirm();
   const toast = useToast();
+  const tr = useT();
   const closeSessionPanes = useLayoutStore((s) => s.closeSessionPanes);
   const refreshSessions = useSessionsStore((s) => s.refresh);
 
   const archive = async (s: Session) => {
     const res = await raw(`api/sessions/${encodeURIComponent(s.name)}/archive`, { method: "POST" });
     if (!res.ok) {
-      toast("アーカイブに失敗しました");
+      toast(t("sess.archive_failed"));
       return;
     }
     closeSessionPanes(s.name);
@@ -48,16 +51,16 @@ export function useSessionActions(): SessionActions {
   const deleteSession = async (s: Session) => {
     if (
       !(await askConfirm({
-        title: "セッションを削除",
-        body: `「${displayName(s)}」を削除します。この操作は取り消せません。`,
-        confirmLabel: "削除する",
+        title: tr("sess.delete_title"),
+        body: tr("sess.delete_body", { name: displayName(s) }),
+        confirmLabel: tr("common.delete_do"),
         danger: true,
       }))
     )
       return;
     const res = await raw(`api/sessions/${encodeURIComponent(s.name)}/stop`, { method: "POST" });
     if (!res.ok) {
-      toast("削除に失敗しました");
+      toast(t("common.delete_failed"));
       return;
     }
     closeSessionPanes(s.name);
@@ -70,13 +73,13 @@ export function useSessionActions(): SessionActions {
     const ephemeral = stopped.filter((s) => agentOf(s.kind).caps.ephemeral);
     const keepable = stopped.filter((s) => !agentOf(s.kind).caps.ephemeral);
     const parts = [];
-    if (keepable.length) parts.push(`${keepable.length} 件をアーカイブ`);
-    if (ephemeral.length) parts.push(`shell/ssm ${ephemeral.length} 件を削除`);
+    if (keepable.length) parts.push(t("sess.cleanup_archive_n", { count: keepable.length }));
+    if (ephemeral.length) parts.push(t("sess.cleanup_delete_n", { count: ephemeral.length }));
     if (
       !(await askConfirm({
-        title: "停止中のセッションを整理",
-        body: `${parts.join("・")}します。`,
-        confirmLabel: "整理する",
+        title: tr("sess.cleanup_title"),
+        body: tr("sess.cleanup_body", { parts: parts.join(tr("common.list_sep")) }),
+        confirmLabel: tr("sess.cleanup_confirm"),
         danger: ephemeral.length > 0,
       }))
     )
@@ -96,16 +99,16 @@ export function useSessionActions(): SessionActions {
   const halt = async (name: string, display: string) => {
     if (
       !(await askConfirm({
-        title: "セッションを停止",
-        body: `「${display}」を停止します。会話は保持され、あとで再開できます。`,
-        confirmLabel: "停止する",
+        title: tr("sess.stop_title"),
+        body: tr("sess.stop_body", { name: display }),
+        confirmLabel: tr("sess.stop_confirm"),
         danger: false,
       }))
     )
       return;
     const res = await raw(`api/sessions/${encodeURIComponent(name)}/halt`, { method: "POST" });
     if (!res.ok) {
-      toast("停止に失敗しました");
+      toast(t("sess.stop_failed"));
       return;
     }
     void refreshSessions();
@@ -115,22 +118,16 @@ export function useSessionActions(): SessionActions {
   const recreate = async (name: string, display: string) => {
     if (
       !(await askConfirm({
-        title: "新しい会話で作り直す",
-        body: (
-          <>
-            「{display}」を新しいセッションで開始します。
-            <br />
-            今の会話は<strong>アーカイブに退避</strong>し、あとで復帰できます。
-          </>
-        ),
-        confirmLabel: "作り直す",
+        title: tr("sess.recreate_title"),
+        body: <Trans k="session.recreate_body" vars={{ name: display }} components={[<br />, <strong />]} />,
+        confirmLabel: tr("sess.recreate_confirm"),
         danger: false,
       }))
     )
       return;
     const res = await raw(`api/sessions/${encodeURIComponent(name)}/recreate`, { method: "POST" });
     if (!res.ok) {
-      let msg = "作り直しに失敗しました";
+      let msg = t("sess.recreate_failed");
       try {
         const j = await res.json();
         if (j?.error?.message) msg += "：" + j.error.message;
@@ -154,22 +151,17 @@ export function useSessionActions(): SessionActions {
     const tuiMemoryCost = agentOf(s.kind).tuiMemoryCost;
     if (
       !(await askConfirm({
-        title: toManaged ? "Managed ドライバに切り替え" : "CLI (TUI) ドライバに切り替え",
+        title: toManaged ? tr("sess.switch_to_managed") : tr("sess.switch_to_tui"),
         body: toManaged ? (
-          <>
-            「{displayName(s)}」を共有ランタイム駆動（チャット専用・省メモリ）へ切り替えます。
-            <br />
-            会話は引き継がれます。ターミナル画面は使えなくなります。
-          </>
+          <Trans k="sess.switch_managed_body" vars={{ name: displayName(s) }} components={[<br />]} />
         ) : (
-          <>
-            「{displayName(s)}」をターミナル（TUI）駆動へ切り替えます。
-            <br />
-            会話は引き継がれます。セッション毎に TUI プロセス分のメモリ
-            {tuiMemoryCost ? `（+${tuiMemoryCost}）` : ""}を消費します。
-          </>
+          <Trans
+            k="sess.switch_tui_body"
+            vars={{ name: displayName(s), cost: tuiMemoryCost ? `（+${tr("common.approx", { v: tuiMemoryCost })}）` : "" }}
+            components={[<br />]}
+          />
         ),
-        confirmLabel: "切り替える",
+        confirmLabel: tr("sess.switch_confirm"),
         danger: false,
       }))
     )
@@ -184,8 +176,8 @@ export function useSessionActions(): SessionActions {
       const code = j?.error?.code;
       toast(
         code === "busy_switch"
-          ? "実行中のターンがあります。完了を待つか停止してから切り替えてください"
-          : j?.error?.message || "ドライバの切り替えに失敗しました",
+          ? t("sess.switch_busy")
+          : j?.error?.message || t("sess.switch_failed"),
       );
       return;
     }
@@ -200,7 +192,7 @@ export function useSessionActions(): SessionActions {
     const res = await raw(`api/sessions/${encodeURIComponent(name)}/fork`, { method: "POST" });
     const j = await res.json().catch(() => ({}) as any);
     if (!res.ok || !j.name) {
-      toast(j?.error?.message || j?.error || "分岐に失敗しました");
+      toast(j?.error?.message || j?.error || t("sess.fork_failed"));
       return;
     }
     void refreshSessions();

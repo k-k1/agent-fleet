@@ -162,7 +162,7 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     // imagePaste: upload + path-in-prompt (claude's flow); codex's view_image fires on
     // a plain path mention — live-verified for both the TUI and `codex exec`.
     managedDriver: true,
-    tuiMemoryCost: "約230MiB",
+    tuiMemoryCost: "230MiB",
     caps: caps({
       chat: true,
       headlessChat: true,
@@ -202,7 +202,7 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     // reads it directly; big-pickle (free tier) either inspects it agentically (TUI,
     // live-verified) or declines honestly — never a silent failure.
     managedDriver: true,
-    tuiMemoryCost: "約300MiB",
+    tuiMemoryCost: "300MiB",
     caps: caps({
       chat: true,
       headlessChat: true,

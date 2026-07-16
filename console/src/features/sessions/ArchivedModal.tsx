@@ -10,6 +10,7 @@ import { useToast } from "../../ui/ToastProvider.tsx";
 import { api, raw } from "../../core/api/client.ts";
 import { kindIcon, kindLabel, kindClass } from "../../lib/sessionkind.ts";
 import { displayName } from "../../lib/sessionview.ts";
+import { t, useT } from "../../lib/i18n/index.ts";
 import type { Session } from "../../types/session.ts";
 
 type ArchivedSession = Session & { started?: string };
@@ -27,7 +28,7 @@ interface ArchivedModalProps {
 // signal. A plain clone has no repo prefix — just its folder name.
 const groupHeading = (dir: string, head?: ArchivedSession): { repo?: string; label: string } => {
   const seg = dir ? dir.split("/").filter(Boolean).pop() || dir : "";
-  if (!seg) return { label: "その他" };
+  if (!seg) return { label: t("arch.other") };
   const at = seg.indexOf("@");
   if (at >= 0) {
     return { repo: seg.slice(0, at) || undefined, label: head?.branch || seg.slice(at + 1) || seg };
@@ -50,6 +51,7 @@ export function ArchivedModal({ onClose, onRestored }: ArchivedModalProps) {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const askConfirm = useConfirm();
   const toast = useToast();
+  const tr = useT();
 
   const load = () =>
     api("api/sessions/archived")
@@ -111,7 +113,7 @@ export function ArchivedModal({ onClose, onRestored }: ArchivedModalProps) {
     try {
       const res = await raw(`api/sessions/${encodeURIComponent(name)}/restore`, { method: "POST" });
       if (!res.ok) {
-        toast("復帰に失敗しました");
+        toast(t("arch.restore_failed"));
         return;
       }
       await load();
@@ -123,9 +125,9 @@ export function ArchivedModal({ onClose, onRestored }: ArchivedModalProps) {
 
   const del = async (name: string, display: string) => {
     const ok = await askConfirm({
-      title: "アーカイブを完全に削除",
-      body: `「${display}」を一覧から完全に削除します。会話ログのファイルは残ります。`,
-      confirmLabel: "削除する",
+      title: tr("arch.delete_title"),
+      body: tr("arch.delete_body", { name: display }),
+      confirmLabel: tr("common.delete_do"),
       danger: true,
     });
     if (!ok) return;
@@ -143,9 +145,9 @@ export function ArchivedModal({ onClose, onRestored }: ArchivedModalProps) {
     const old = (items || []).filter((s) => isOld(s, now));
     if (old.length === 0) return;
     const ok = await askConfirm({
-      title: "古いアーカイブを一括削除",
-      body: `${OLD_DAYS} 日以上前のアーカイブ ${old.length} 件を一覧から削除します。会話ログのファイルは残ります。`,
-      confirmLabel: `${old.length} 件を削除`,
+      title: tr("arch.bulk_title"),
+      body: tr("arch.bulk_body", { days: OLD_DAYS, count: old.length }),
+      confirmLabel: tr("arch.bulk_confirm", { count: old.length }),
       danger: true,
     });
     if (!ok) return;
@@ -187,9 +189,9 @@ export function ArchivedModal({ onClose, onRestored }: ArchivedModalProps) {
       await load();
       if (restored > 0) onRestored?.();
       if (failed > 0) {
-        toast(`${restored} 件を復帰しました。${failed} 件は復帰できませんでした。`);
+        toast(t("arch.restored_some", { restored, failed }));
       } else {
-        toast(`${restored} 件を復帰しました`, { kind: "success" });
+        toast(t("arch.restored_n", { restored }), { kind: "success" });
       }
     } finally {
       setBusy(false);
@@ -203,10 +205,10 @@ export function ArchivedModal({ onClose, onRestored }: ArchivedModalProps) {
   const tall = total > 6;
 
   return (
-    <Modal title="アーカイブ済みセッション" onClose={onClose} className={tall ? "arch-modal arch-modal-tall" : "arch-modal"}>
+    <Modal title={tr("arch.title")} onClose={onClose} className={tall ? "arch-modal arch-modal-tall" : "arch-modal"}>
       <div className="ui-modal-body">
-        {items === null && <p className="sm-muted">読み込み中…</p>}
-        {items && total === 0 && <p className="sm-muted">アーカイブはありません。</p>}
+        {items === null && <p className="sm-muted">{tr("chat.ph_loading")}</p>}
+        {items && total === 0 && <p className="sm-muted">{tr("arch.empty")}</p>}
         {items && total > 0 && (
           <>
             <div className="arch-toolbar">
@@ -214,7 +216,7 @@ export function ArchivedModal({ onClose, onRestored }: ArchivedModalProps) {
                 <Icon name="search" />
                 <input
                   type="search"
-                  placeholder="タイトル / フォルダ / 種別で絞り込み"
+                  placeholder={tr("arch.filter_ph")}
                   value={q}
                   onChange={(e) => setQ(e.target.value)}
                 />
@@ -224,24 +226,24 @@ export function ArchivedModal({ onClose, onRestored }: ArchivedModalProps) {
                 variant="ghost"
                 icon={allCollapsed ? "expand-all" : "collapse-all"}
                 disabled={groups.length === 0}
-                title={allCollapsed ? "すべてのグループを開く" : "すべてのグループを閉じる"}
+                title={allCollapsed ? tr("arch.expand_all") : tr("arch.collapse_all")}
                 onClick={toggleAll}
               >
-                {allCollapsed ? "すべて開く" : "すべて閉じる"}
+                {allCollapsed ? tr("arch.expand_all_short") : tr("arch.collapse_all_short")}
               </Button>
               <Button
                 small
                 variant="danger"
                 icon="clear-all"
                 disabled={busy || oldCount === 0}
-                title={oldCount ? `${OLD_DAYS}日以上前の ${oldCount} 件を削除` : `${OLD_DAYS}日以上前のアーカイブはありません`}
+                title={oldCount ? tr("arch.delete_old_title", { days: OLD_DAYS, count: oldCount }) : tr("arch.no_old", { days: OLD_DAYS })}
                 onClick={delOld}
               >
-                古いものを削除{oldCount ? `（${oldCount}）` : ""}
+                {tr("arch.delete_old")}{oldCount ? `（${oldCount}）` : ""}
               </Button>
             </div>
 
-            {groups.length === 0 && <p className="sm-muted">一致するアーカイブはありません。</p>}
+            {groups.length === 0 && <p className="sm-muted">{tr("arch.no_match")}</p>}
             <ul className="arch-list">
               {groups.map((g) => {
                 const isCollapsed = collapsed.has(g.dir);
@@ -251,7 +253,7 @@ export function ArchivedModal({ onClose, onRestored }: ArchivedModalProps) {
                       type="button"
                       className="sess-group-btn"
                       onClick={() => toggleGroup(g.dir)}
-                      title={g.dir || "作業ディレクトリなし"}
+                      title={g.dir || tr("arch.no_workdir")}
                     >
                       <Icon name={isCollapsed ? "chevron-right" : "chevron-down"} />
                       <Icon name="folder" />
@@ -271,16 +273,16 @@ export function ArchivedModal({ onClose, onRestored }: ArchivedModalProps) {
                                 <Icon name={kindIcon(s.kind)} /> {kindLabel(s.kind)}
                               </span>
                               {s.started ? " · " + s.started : ""}
-                              {s.resumable === false ? " · フォルダ無し" : ""}
+                              {s.resumable === false ? tr("arch.folder_missing_suffix") : ""}
                             </span>
                           </div>
                           <div className="arch-actions">
                             <Button small disabled={busy} onClick={() => restore(s.name)}>
-                              復帰
+                              {tr("arch.restore")}
                             </Button>
                             <IconButton
                               icon="trash"
-                              label="完全に削除"
+                              label={tr("arch.delete_perm")}
                               variant="danger"
                               disabled={busy}
                               onClick={() => del(s.name, displayName(s))}
@@ -300,13 +302,13 @@ export function ArchivedModal({ onClose, onRestored }: ArchivedModalProps) {
           variant="primary"
           icon="debug-restart"
           disabled={busy || restorable.length === 0}
-          title={restorable.length ? `フォルダが存在する ${restorable.length} 件をすべて復帰` : "復帰できるアーカイブはありません"}
+          title={restorable.length ? tr("arch.restore_all_title", { count: restorable.length }) : tr("arch.no_restorable")}
           onClick={restoreAll}
         >
-          すべて復帰{restorable.length ? `（${restorable.length}）` : ""}
+          {tr("arch.restore_all")}{restorable.length ? `（${restorable.length}）` : ""}
         </Button>
         <Button variant="ghost" onClick={onClose}>
-          閉じる
+          {tr("common.close")}
         </Button>
       </footer>
     </Modal>
