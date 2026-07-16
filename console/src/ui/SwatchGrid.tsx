@@ -1,4 +1,5 @@
 import { SURFACE_COLORS, surfaceValue } from "../lib/settings.ts";
+import { useT } from "../lib/i18n/index.ts";
 
 // SwatchGrid: the surface-color picker grid. Each swatch previews the color as it'll
 // look in the active theme; "デフォルト" (no color) shows a slashed neutral chip; the
@@ -13,6 +14,7 @@ export function SwatchGrid({
   value: string;
   onChange: (v: string) => void;
 }) {
+  const tr = useT();
   return (
     <div className="swatch-row">
       {SURFACE_COLORS.map((c) => {
@@ -21,7 +23,7 @@ export function SwatchGrid({
           <button
             key={c.id}
             type="button"
-            title={c.label}
+            title={tr(c.labelKey)}
             className={"swatch" + (c.id === value ? " active" : "") + (col ? "" : " swatch-default")}
             style={col ? { background: col } : undefined}
             onClick={() => onChange(c.id)}

@@ -16,6 +16,7 @@ import {
   LOCALES,
 } from "../../lib/settings.ts";
 import { useT } from "../../lib/i18n/index.ts";
+import type { MsgKey } from "../../lib/i18n/index.ts";
 import FileIcon from "../../ui/FileIcon.tsx";
 import { SwatchGrid } from "../../ui/SwatchGrid.tsx";
 import { Choice, OnOff } from "./controls.tsx";
@@ -39,112 +40,108 @@ export function DisplayTab() {
         </Row>
       </section>
       <section className="ds-group">
-        <h4 className="ds-title">カラーテーマ</h4>
-        <Row label="テーマ">
+        <h4 className="ds-title">{tr("display.color_theme")}</h4>
+        <Row label={tr("display.theme")}>
           <Choice
             value={s.theme}
             options={THEMES.map((x) => [x.id, tr(x.labelKey)])}
             onChange={(v) => setSetting("theme", v)}
           />
         </Row>
-        <Row label="セッションのテーマ">
+        <Row label={tr("display.session_theme")}>
           <Choice
             value={s.mirrorTheme}
             options={REGION_THEMES.map((x) => [x.id, tr(x.labelKey)])}
             onChange={(v) => setSetting("mirrorTheme", v)}
           />
         </Row>
-        <Row label="アシスタントのテーマ">
+        <Row label={tr("display.assistant_theme")}>
           <Choice
             value={s.assistantTheme}
             options={REGION_THEMES.map((x) => [x.id, tr(x.labelKey)])}
             onChange={(v) => setSetting("assistantTheme", v)}
           />
         </Row>
-        <p className="muted ds-note">
-          セッション（ミラー）とアシスタントチャットは、アプリ本体とは別のテーマ（ダーク／ライト）で表示できます（「アプリに合わせる」で本体に追従）。背景色も下でそれぞれ指定できます。
-        </p>
+        <p className="muted ds-note">{tr("display.region_theme_note")}</p>
         {SURFACE_TARGETS.map((t) => (
-          <Row key={t.key} label={t.long}>
+          <Row key={t.key} label={tr(t.longKey)}>
             <SwatchGrid theme={s.theme} value={s[t.key]} onChange={(v) => setSetting(t.key, v)} />
           </Row>
         ))}
       </section>
 
       <section className="ds-group">
-        <h4 className="ds-title">ターミナル</h4>
-        <Row label="フォント">
+        <h4 className="ds-title">{tr("display.terminal")}</h4>
+        <Row label={tr("display.font")}>
           <FontSelect value={s.termFont} onChange={(v) => setSetting("termFont", v)} />
         </Row>
-        <Row label="文字サイズ">
+        <Row label={tr("display.font_size")}>
           <Stepper value={s.termSize} onChange={(v) => setSetting("termSize", v)} />
         </Row>
       </section>
 
       <section className="ds-group">
-        <h4 className="ds-title">ファイルビュアー</h4>
-        <Row label="フォント">
+        <h4 className="ds-title">{tr("display.file_viewer")}</h4>
+        <Row label={tr("display.font")}>
           <FontSelect value={s.viewerFont} onChange={(v) => setSetting("viewerFont", v)} />
         </Row>
-        <Row label="文字サイズ">
+        <Row label={tr("display.font_size")}>
           <Stepper value={s.viewerSize} onChange={(v) => setSetting("viewerSize", v)} />
         </Row>
-        <Row label="タブ幅">
+        <Row label={tr("display.tab_width")}>
           <Choice value={s.tabSize} options={[[2, "2"], [4, "4"], [8, "8"]]} onChange={(v) => setSetting("tabSize", v)} />
         </Row>
-        <Row label="行番号">
+        <Row label={tr("display.line_numbers")}>
           <OnOff value={s.lineNumbers} onChange={(v) => setSetting("lineNumbers", v)} />
         </Row>
-        <Row label="折り返し">
+        <Row label={tr("display.wrap")}>
           <OnOff value={s.wrap} onChange={(v) => setSetting("wrap", v)} />
         </Row>
-        <Row label="ミニマップ">
+        <Row label={tr("display.minimap")}>
           <OnOff value={s.minimap} onChange={(v) => setSetting("minimap", v)} />
         </Row>
       </section>
 
       <section className="ds-group">
-        <h4 className="ds-title">セッション（Markdownミラー）</h4>
-        <Row label="フォント">
+        <h4 className="ds-title">{tr("display.session_mirror")}</h4>
+        <Row label={tr("display.font")}>
           <FontSelect value={s.chatFont} onChange={(v) => setSetting("chatFont", v)} fonts={CHAT_FONTS} stack={chatFontStack} />
         </Row>
-        <Row label="文字サイズ">
+        <Row label={tr("display.font_size")}>
           <Stepper value={s.chatSize} onChange={(v) => setSetting("chatSize", v)} />
         </Row>
-        <Row label="送信キー">
+        <Row label={tr("display.send_key")}>
           <Choice
             value={s.mirrorSend}
-            options={MIRROR_SEND_MODES.map((m) => [m.id, m.label])}
+            options={MIRROR_SEND_MODES.map((m) => [m.id, tr(m.labelKey)])}
             onChange={(v) => setSetting("mirrorSend", v)}
           />
         </Row>
         <p className="muted ds-note">
-          {s.mirrorSend === "enter"
-            ? "Enter で送信、Shift+Enter で改行。"
-            : "Ctrl+Enter（⌘+Enter）で送信、Enter で改行。スマホ向け。"}
+          {s.mirrorSend === "enter" ? tr("display.send_note_enter") : tr("display.send_note_mod")}
         </p>
       </section>
 
       <section className="ds-group">
-        <h4 className="ds-title">朗読ビュー</h4>
-        <Row label="フォント">
+        <h4 className="ds-title">{tr("display.reader_view")}</h4>
+        <Row label={tr("display.font")}>
           <FontSelect value={s.readerFont} onChange={(v) => setSetting("readerFont", v)} fonts={READER_FONTS} stack={readerFontStack} />
         </Row>
-        <Row label="文字サイズ">
+        <Row label={tr("display.font_size")}>
           <Stepper value={s.readerSize} onChange={(v) => setSetting("readerSize", v)} />
         </Row>
       </section>
 
       <section className="ds-group">
-        <h4 className="ds-title">ファイルアイコン</h4>
-        <Row label="アイコンセット">
+        <h4 className="ds-title">{tr("display.file_icons")}</h4>
+        <Row label={tr("display.icon_set")}>
           <ChipChoice
             value={s.iconSet}
-            options={ICON_SETS.map((x) => [x.id, x.label])}
+            options={ICON_SETS.map((x) => [x.id, tr(x.labelKey)])}
             onChange={(v) => setSetting("iconSet", v)}
           />
         </Row>
-        <Row label="プレビュー">
+        <Row label={tr("display.preview")}>
           <span className="icon-preview">
             {["main.py", "lib.rs", "App.tsx", "style.css", "Dockerfile", "main.go", "data.json", "README.md"].map((n) => (
               <span key={n} className="icon-preview-item" title={n}>
@@ -156,11 +153,21 @@ export function DisplayTab() {
       </section>
 
       <p className="muted ds-note">
-        プレビュー: <span style={{ fontFamily: fontStack(s.viewerFont) }}>const x = (a) =&gt; a !== 0;</span>
+        {tr("display.preview")}: <span style={{ fontFamily: fontStack(s.viewerFont) }}>const x = (a) =&gt; a !== 0;</span>
       </p>
     </div>
   );
 }
+
+// Generic font names carry a translated display label; brand names (Source Code Pro …)
+// pass through. The stored value stays the raw name so fontStack() keeps matching.
+const FONT_LABEL_KEYS: Record<string, MsgKey> = {
+  "システム等幅": "font.sys_mono",
+  "システム": "font.sys",
+  "セリフ": "font.serif",
+  "明朝": "font.mincho",
+  "ゴシック": "font.gothic",
+};
 
 function Row({ label, children }: { label: ReactNode; children?: ReactNode }) {
   return (
@@ -184,6 +191,7 @@ function FontSelect({
   fonts?: string[];
   stack?: (f: string) => string;
 }) {
+  const tr = useT();
   return (
     <div className="font-choices">
       {fonts.map((f) => (
@@ -194,7 +202,7 @@ function FontSelect({
           style={{ fontFamily: stack(f) }}
           onClick={() => onChange(f)}
         >
-          {f}
+          {FONT_LABEL_KEYS[f] ? tr(FONT_LABEL_KEYS[f]) : f}
         </button>
       ))}
     </div>
@@ -232,14 +240,15 @@ function Stepper({
   min?: number;
   max?: number;
 }) {
+  const tr = useT();
   const set = (n: number) => onChange(Math.min(max, Math.max(min, n)));
   return (
     <div className="stepper">
-      <button type="button" onClick={() => set(value - 1)} disabled={value <= min} aria-label="小さく">
+      <button type="button" onClick={() => set(value - 1)} disabled={value <= min} aria-label={tr("display.smaller")}>
         −
       </button>
       <span className="stepper-val">{value}px</span>
-      <button type="button" onClick={() => set(value + 1)} disabled={value >= max} aria-label="大きく">
+      <button type="button" onClick={() => set(value + 1)} disabled={value >= max} aria-label={tr("display.larger")}>
         ＋
       </button>
     </div>
