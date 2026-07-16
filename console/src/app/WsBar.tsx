@@ -18,6 +18,8 @@ import { useConfirm } from "../ui/ConfirmProvider.tsx";
 import { useIsMobile } from "../lib/device.ts";
 import { useDismiss } from "../lib/useDismiss.ts";
 import { fmtDateTime, TIME_HM } from "../lib/intl.ts";
+import { t, tCount, useT } from "../lib/i18n/index.ts";
+import type { MsgKey } from "../lib/i18n/index.ts";
 import { fmtGiB as fg } from "../lib/bytes.ts";
 import { useUsageResetNotify } from "./usageResetNotify.ts";
 
@@ -180,9 +182,9 @@ function useUsage(tenant: string | null, endpoint: string) {
 // agoText: seconds since the usage was fetched → "N秒/分/時間前" (freshness label).
 function agoText(sec: number | null | undefined) {
   if (sec == null) return "";
-  if (sec >= 3600) return `${Math.round(sec / 3600)}時間前`;
-  if (sec >= 60) return `${Math.round(sec / 60)}分前`;
-  return `${Math.max(0, sec)}秒前`;
+  if (sec >= 3600) return tCount("wsbar.ago_hour", Math.round(sec / 3600));
+  if (sec >= 60) return tCount("wsbar.ago_min", Math.round(sec / 60));
+  return tCount("wsbar.ago_sec", Math.max(0, sec));
 }
 
 // UsageRow: one limit window in the usage dropdown — label + percent, a fill bar, and
@@ -198,9 +200,7 @@ function UsageRow({ label, w }: { label: string; w: { pct: number; until: string
       <div className="wu-bar">
         <span className={"wu-bar-fill" + level} style={{ width: Math.min(100, w.pct) + "%" }} />
       </div>
-      <div className="wu-reset muted">
-        {w.until}でリセット（{w.when}）
-      </div>
+      <div className="wu-reset muted">{t("wsbar.usage.reset_at", { until: w.until, when: w.when })}</div>
     </div>
   );
 }
@@ -209,21 +209,21 @@ function UsageRow({ label, w }: { label: string; w: { pct: number; until: string
 // the app shows is hard to read; relative is glanceable, the absolute date-time goes
 // in the tooltip). whenText: the absolute local "M/D HH:MM".
 function untilText(iso: string) {
-  const t = new Date(iso).getTime();
-  if (isNaN(t)) return "";
-  const min = Math.max(0, Math.round((t - Date.now()) / 60000));
-  if (min >= 1440) return `あと${Math.round(min / 1440)}日`;
-  if (min >= 60) return `あと${Math.round(min / 60)}時間`;
-  return `あと${min}分`;
+  const ms = new Date(iso).getTime();
+  if (isNaN(ms)) return "";
+  const min = Math.max(0, Math.round((ms - Date.now()) / 60000));
+  if (min >= 1440) return tCount("common.days_left", Math.round(min / 1440));
+  if (min >= 60) return tCount("wsbar.until_hour", Math.round(min / 60));
+  return tCount("wsbar.until_min", min);
 }
 const whenText = (iso: string) => fmtDateTime(iso);
 
 function expiryText(iso: string) {
-  const t = new Date(iso).getTime();
-  if (isNaN(t)) return "";
-  const days = Math.ceil((t - Date.now()) / 86400000);
-  if (days <= 0) return "本日まで";
-  return days === 1 ? "明日まで" : `あと${days}日`;
+  const ms = new Date(iso).getTime();
+  if (isNaN(ms)) return "";
+  const days = Math.ceil((ms - Date.now()) / 86400000);
+  if (days <= 0) return t("wsbar.expiry_today");
+  return days === 1 ? t("wsbar.expiry_tomorrow") : tCount("common.days_left", days);
 }
 
 // resetChipText: reset instant → the compact form shown ON the chip when a window is
@@ -251,15 +251,13 @@ interface UsageSource {
   name: string; // agent short name ("Claude" / "Codex") — used in reset notifications
   icon: string; // codicon glyph
   cls: string; // kind color class (kind-claude / kind-codex)
-  title: string; // chip hover title
-  popTitle: string; // dropdown heading
-  fiveLabel: string; // 5-hour window label
-  weekLabel: string; // weekly window label
+  fiveLabelKey: MsgKey; // 5-hour window label (i18n key)
+  weekLabelKey: MsgKey; // weekly window label (i18n key)
   // live = the endpoint queries the current usage (claude), so a 更新 button makes
   // sense. When false (codex), the reading is a snapshot from the last turn — no
   // manual refresh; a note explains it instead.
   live: boolean;
-  note?: string;
+  noteKey?: MsgKey;
   // manageURL = the agent vendor's own usage/limits page (opened in a new tab from the
   // dropdown), so the user can jump to the authoritative source for the exact numbers.
   manageURL?: string;
@@ -271,10 +269,8 @@ const USAGE_SOURCES: UsageSource[] = [
     name: "Claude",
     icon: "sparkle",
     cls: "kind-claude",
-    title: "Claude 使用状況（5時間 / 週次）",
-    popTitle: "Claude 使用状況",
-    fiveLabel: "5時間制限",
-    weekLabel: "週次・全モデル",
+    fiveLabelKey: "wsbar.usage.claude.five",
+    weekLabelKey: "wsbar.usage.claude.week",
     live: true,
     manageURL: "https://claude.ai/new#settings/usage",
   },
@@ -283,12 +279,10 @@ const USAGE_SOURCES: UsageSource[] = [
     name: "Codex",
     icon: "rocket",
     cls: "kind-codex",
-    title: "Codex 使用状況（5時間 / 週次）",
-    popTitle: "Codex 使用状況",
-    fiveLabel: "5時間",
-    weekLabel: "週次",
+    fiveLabelKey: "wsbar.usage.codex.five",
+    weekLabelKey: "wsbar.usage.codex.week",
     live: false,
-    note: "codex が記録した最後の値です（この時点のスナップショット）。次に codex を実行すると更新されます。",
+    noteKey: "wsbar.usage.codex.note",
     manageURL: "https://chatgpt.com/#settings/Usage",
   },
 ];
@@ -297,13 +291,16 @@ const USAGE_SOURCES: UsageSource[] = [
 // opens a dropdown with each window's bar + reset + a reload. Renders null until the
 // agent's endpoint answers with data, so it self-hides for agents the user doesn't use.
 function UsageChip({ src, tenant }: { src: UsageSource; tenant: string | null }) {
+  const tr = useT();
+  const fiveLabel = tr(src.fiveLabelKey);
+  const weekLabel = tr(src.weekLabelKey);
   const { usage, refreshing, refresh } = useUsage(tenant, src.endpoint);
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   useDismiss(ref, open, () => setOpen(false));
   // Notify when a constrained limit window resets (5-hour / weekly). Runs whether or
   // not the dropdown is open — the chip stays mounted while the workspace is up.
-  useUsageResetNotify(src, usage, src.fiveLabel, src.weekLabel, refresh);
+  useUsageResetNotify(src, usage, fiveLabel, weekLabel, refresh);
 
   const win = (w: { pct: number; resetsAt: string }) => ({
     pct: Math.round(w.pct),
@@ -323,9 +320,9 @@ function UsageChip({ src, tenant }: { src: UsageSource; tenant: string | null })
   // とも Max付近なら近い方（通常は5時間枠）になる。詳細（どの枠か・%・相対）はツールチップへ。
   const nearMax: { label: string; pct: number; resetsAt: string }[] = [];
   if (usage.fiveHour && usage.fiveHour.pct >= NEAR_MAX_PCT && usage.fiveHour.resetsAt)
-    nearMax.push({ label: src.fiveLabel, ...usage.fiveHour });
+    nearMax.push({ label: fiveLabel, ...usage.fiveHour });
   if (usage.sevenDay && usage.sevenDay.pct >= NEAR_MAX_PCT && usage.sevenDay.resetsAt)
-    nearMax.push({ label: src.weekLabel, ...usage.sevenDay });
+    nearMax.push({ label: weekLabel, ...usage.sevenDay });
   const bind = nearMax.length
     ? nearMax.reduce((a, b) => (new Date(a.resetsAt).getTime() <= new Date(b.resetsAt).getTime() ? a : b))
     : null;
@@ -334,8 +331,14 @@ function UsageChip({ src, tenant }: { src: UsageSource; tenant: string | null })
     ? resetChipText(bind.resetsAt)
     : [uh && `${uh.pct}%`, uw && `${uw.pct}%`].filter(Boolean).join(" / ");
   const chipTitle = bind
-    ? `${src.name}・${bind.label} ${Math.round(bind.pct)}% — ${untilText(bind.resetsAt)}でリセット（${whenText(bind.resetsAt)}）`
-    : src.title;
+    ? tr("wsbar.usage.chip_bind_title", {
+        name: src.name,
+        label: bind.label,
+        pct: Math.round(bind.pct),
+        until: untilText(bind.resetsAt),
+        when: whenText(bind.resetsAt),
+      })
+    : tr("wsbar.usage.title", { name: src.name });
 
   return (
     <div className="ws-usage-wrap" ref={ref}>
@@ -352,7 +355,7 @@ function UsageChip({ src, tenant }: { src: UsageSource; tenant: string | null })
         <span className={"ws-usage-nums" + (bind ? " crit" : "")}>{label}</span>
         {!!resetCount && (
           <span className={"ws-reset-count" + (fullResets.length && new Date(fullResets[0].expiresAt).getTime() - Date.now() <= 7 * 86400000 ? " warn" : "")}
-            title={`Full reset ${resetCount}件${fullResets.length ? `・最短 ${whenText(fullResets[0].expiresAt)}まで` : ""}`}>
+            title={tCount("wsbar.usage.full_reset", resetCount) + (fullResets.length ? tr("wsbar.usage.full_reset_soonest", { when: whenText(fullResets[0].expiresAt) }) : "")}>
             +{resetCount}
           </span>
         )}
@@ -360,32 +363,32 @@ function UsageChip({ src, tenant }: { src: UsageSource; tenant: string | null })
       </button>
       {open && (
         <div className="ws-usage-pop">
-          <div className="wu-title">{src.popTitle}</div>
-          {uh && <UsageRow label={src.fiveLabel} w={uh} />}
-          {uw && <UsageRow label={src.weekLabel} w={uw} />}
+          <div className="wu-title">{tr("wsbar.usage.pop_title", { name: src.name })}</div>
+          {uh && <UsageRow label={fiveLabel} w={uh} />}
+          {uw && <UsageRow label={weekLabel} w={uw} />}
           {!!resetCount && (
             <div className="wu-full-resets">
-              <div className="wu-row-head"><span className="wu-label">Full reset</span><span>{resetCount}件</span></div>
+              <div className="wu-row-head"><span className="wu-label">{tr("wsbar.usage.full_reset_label")}</span><span>{tr("wsbar.usage.count_ken", { count: resetCount })}</span></div>
               {fullResets.map((reset: any, i: number) => (
                 <div className="wu-expiry" key={`${reset.expiresAt}-${i}`}>
-                  <span>有効期限 {whenText(reset.expiresAt).split(" ")[0]}</span>
+                  <span>{tr("wsbar.usage.expires", { date: whenText(reset.expiresAt).split(" ")[0] })}</span>
                   <span className={new Date(reset.expiresAt).getTime() - Date.now() <= 7 * 86400000 ? "warn" : "muted"}>{expiryText(reset.expiresAt)}</span>
                 </div>
               ))}
             </div>
           )}
           <div className="wu-foot">
-            <span className="wu-ago muted">取得 {agoText(usage.ageSec)}</span>
+            <span className="wu-ago muted">{tr("wsbar.usage.fetched", { ago: agoText(usage.ageSec) })}</span>
             {src.live && (
               <button type="button" className="ghost wu-reload" onClick={refresh} disabled={refreshing}>
-                <Icon name="refresh" spin={refreshing} /> 更新
+                <Icon name="refresh" spin={refreshing} /> {tr("wsbar.usage.refresh")}
               </button>
             )}
           </div>
-          {!src.live && src.note && <div className="wu-note muted">{src.note}</div>}
+          {!src.live && src.noteKey && <div className="wu-note muted">{tr(src.noteKey)}</div>}
           {src.manageURL && (
             <a className="wu-manage" href={src.manageURL} target="_blank" rel="noopener">
-              <Icon name="link-external" /> 使用状況ページを開く
+              <Icon name="link-external" /> {tr("wsbar.usage.open_page")}
             </a>
           )}
         </div>
@@ -413,20 +416,20 @@ function UsageChip({ src, tenant }: { src: UsageSource; tenant: string | null })
 function wsLabel(s: string): string {
   switch (s) {
     case "running":
-      return "稼働中";
+      return t("wsbar.state.running");
     case "starting":
-      return "起動中…";
+      return t("wsbar.state.starting");
     case "none":
     case "stopped":
-      return "停止";
+      return t("wsbar.state.stopped");
     case "starting…":
-      return "起動中…";
+      return t("wsbar.state.starting");
     case "stopping…":
-      return "停止中…";
+      return t("wsbar.state.stopping");
     case "recreating…":
-      return "再作成中…";
+      return t("wsbar.state.recreating");
     case "unknown":
-      return "不明";
+      return t("wsbar.state.unknown");
     default:
       return s; // "…" initial, or any future state
   }
@@ -474,6 +477,7 @@ export function WsBar() {
   const activePaneId = layout.activeId;
   const openStart = useSessionsStore((s) => s.openStart);
   const askConfirm = useConfirm();
+  const tr = useT();
   const { wsStats, wsHist, hostStats, hostHist } = useWsResourceChips(tenant, superAdmin);
   const isMobile = useIsMobile();
   const [port, setPort] = useState("");
@@ -519,9 +523,9 @@ export function WsBar() {
       return;
     }
     const ok = await askConfirm({
-      title: "ワークスペースを起動してはじめる",
-      body: "ワークスペースが停止中です。起動して、準備ができたら「はじめる」を開きます。",
-      confirmLabel: busy ? "待機する" : "起動する",
+      title: tr("wsbar.confirm.start.title"),
+      body: tr("wsbar.confirm.start.body"),
+      confirmLabel: busy ? tr("wsbar.confirm.start.wait") : tr("wsbar.confirm.start.go"),
       danger: false,
     });
     if (!ok) return;
@@ -539,9 +543,9 @@ export function WsBar() {
       return;
     }
     const ok = await askConfirm({
-      title: "ワークスペースを停止",
-      body: "コンテナを停止します。実行中のセッションは停止（あとで再開可）になり、opencode web / プレビューは切断されます。ファイルは保持されます。",
-      confirmLabel: "停止する",
+      title: tr("wsbar.stop_ws"),
+      body: tr("wsbar.confirm.stop.body"),
+      confirmLabel: tr("wsbar.confirm.stop.go"),
       danger: false,
     });
     if (ok) void stopWs();
@@ -582,15 +586,17 @@ export function WsBar() {
         value: memRatio != null ? `${Math.round(memRatio * 100)}%` : `${fg(wsStats.mem_used)}G`,
         level: oomRecent ? 2 : lvl(memRatio, 0.75, 0.9),
         title: oomRecent
-          ? `ワークスペースのメモリ: ${fg(wsStats.mem_used)}${wsStats.mem_max ? "/" + fg(wsStats.mem_max) : ""}G\n⚠ 直近数分以内にコンテナ内でプロセスが OOM kill されました（メモリ上限到達。ビルド/エージェントが強制終了された可能性）`
-          : `ワークスペースのメモリ: ${fg(wsStats.mem_used)}${wsStats.mem_max ? "/" + fg(wsStats.mem_max) : ""}G`,
+          ? tr("wsbar.tile.ws_mem", { mem: `${fg(wsStats.mem_used)}${wsStats.mem_max ? "/" + fg(wsStats.mem_max) : ""}` }) +
+            "\n" +
+            tr("wsbar.tile.ws_mem_oom_note")
+          : tr("wsbar.tile.ws_mem", { mem: `${fg(wsStats.mem_used)}${wsStats.mem_max ? "/" + fg(wsStats.mem_max) : ""}` }),
       })}
       {tile({
         k: "cpu",
         series: wsHist.map((p) => p.cpu),
         value: wsStats.cpu_pct != null ? `${Math.round(wsStats.cpu_pct)}%` : "–",
         level: lvl(wsStats.cpu_pct, 60, 90),
-        title: "ワークスペースの CPU 使用率（1コア = 100%）",
+        title: tr("wsbar.tile.ws_cpu"),
       })}
     </>
   );
@@ -608,7 +614,7 @@ export function WsBar() {
         track: true,
         value: Number(hostStats.load1).toFixed(2),
         level: lvl(loadNorm, 0.7, 1),
-        title: `ホスト ロードアベレージ(1分): ${Number(hostStats.load1).toFixed(2)} / ${hostStats.ncpu}コア（管理者のみ）`,
+        title: tr("wsbar.tile.host_load", { load: Number(hostStats.load1).toFixed(2), ncpu: hostStats.ncpu }),
       })}
       {tile({
         k: "mem",
@@ -617,7 +623,7 @@ export function WsBar() {
         track: true,
         value: hostMemRatio != null ? `${Math.round(hostMemRatio * 100)}%` : "",
         level: lvl(hostMemRatio, 0.8, 0.92),
-        title: `ホスト メモリ: ${fg(hostStats.mem_used)}/${fg(hostStats.mem_total)}G（管理者のみ）`,
+        title: tr("wsbar.tile.host_mem", { mem: `${fg(hostStats.mem_used)}/${fg(hostStats.mem_total)}` }),
       })}
     </>
   );
@@ -645,12 +651,12 @@ export function WsBar() {
       <button
         type="button"
         className="ghost ws-res-btn"
-        title="リソース使用状況"
+        title={tr("wsbar.resources_title")}
         aria-expanded={resOpen}
         onClick={() => setResOpen((o) => !o)}
       >
         <Icon name="pulse" />
-        <span className="ws-res-sum">{resSummary || "リソース"}</span>
+        <span className="ws-res-sum">{resSummary || tr("wsbar.resources")}</span>
         <Icon name="chevron-down" />
       </button>
       {resOpen && <div className="ws-res-pop">{graphs}</div>}
@@ -672,7 +678,7 @@ export function WsBar() {
   const previewPop = (
     <>
       <div className="pv-section">
-        <label className="pv-label">ポートを指定して開く</label>
+        <label className="pv-label">{tr("wsbar.preview.port_label")}</label>
         <div className="pv-row">
           <input
             className="preview-port"
@@ -683,13 +689,13 @@ export function WsBar() {
             value={port}
             onChange={(e) => setPort(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && openPreview()}
-            title="コンテナ内で起動したサービスのポート（例: 8080）"
+            title={tr("wsbar.preview.port_hint")}
           />
           <button onClick={openPreview} disabled={!port.trim()}>
-            開く
+            {tr("wsbar.preview.open")}
           </button>
         </div>
-        <div className="pv-hint">コンテナ内で起動したサービスのポート（例: 8080）を新しいタブで開きます。</div>
+        <div className="pv-hint">{tr("wsbar.preview.hint")}</div>
       </div>
     </>
   );
@@ -707,8 +713,8 @@ export function WsBar() {
         className={"ws-power " + (running ? "on" : "off")}
         onClick={onToggle}
         disabled={busy}
-        title={running ? "ワークスペースを停止" : "ワークスペースを起動"}
-        aria-label={running ? "ワークスペースを停止" : "ワークスペースを起動"}
+        title={running ? tr("wsbar.stop_ws") : tr("wsbar.start_ws")}
+        aria-label={running ? tr("wsbar.stop_ws") : tr("wsbar.start_ws")}
       >
         {busy ? (
           <Icon name="loading" spin />
@@ -738,16 +744,16 @@ export function WsBar() {
         className={"ws-state" + (wsState === "stopped" && wsStats?.oom_killed ? " warn" : "")}
         title={
           wsState === "none"
-            ? "停止（コンテナなし — Stop で削除済み。データは保持、Start で再作成）"
+            ? tr("wsbar.state_title.none")
             : wsState === "stopped"
               ? wsStats?.oom_killed
-                ? `停止（コンテナがメモリ不足で強制終了 — OOM kill、exit ${wsStats.exit_code ?? "?"}）。メモリ上限に達しました。`
+                ? tr("wsbar.state_title.oom", { code: wsStats.exit_code ?? "?" })
                 : wsStats?.exit_code
-                  ? `停止（コンテナが自走終了 — exit code ${wsStats.exit_code}。クラッシュの可能性）`
-                  : "停止（コンテナが自走終了 — クラッシュ / OOM の可能性）"
+                  ? tr("wsbar.state_title.exited", { code: wsStats.exit_code })
+                  : tr("wsbar.state_title.stopped")
               : wsState === "starting"
-                ? "起動中（初回はイメージ取得のため数分かかることがあります。完了すると自動で稼働中になります）"
-                : `状態: ${wsState}`
+                ? tr("wsbar.state_title.starting")
+                : tr("wsbar.state_title.other", { state: wsState })
         }
       >
         {wsLabel(wsState)}
@@ -759,42 +765,42 @@ export function WsBar() {
         className="ghost ws-split ws-newsession"
         title={
           running
-            ? "はじめる（チャット / リポジトリ / クローン / shell）" + hintSuffix("session.new")
+            ? tr("wsbar.start_here.running") + hintSuffix("session.new")
             : startQueued
-              ? "起動中 — 準備ができたら開きます"
-              : "はじめる（ワークスペースを起動して開始）"
+              ? tr("wsbar.start_here.queued")
+              : tr("wsbar.start_here.stopped")
         }
         onClick={() => void onStart()}
       >
         <Icon name={startQueued ? "loading" : "add"} spin={startQueued} />
-        <span className="lbl">はじめる</span>
+        <span className="lbl">{tr("wsbar.start_here")}</span>
       </button>
       <button
         className="ghost ws-split"
-        title={"右に分割" + hintSuffix("pane.splitRight")}
+        title={tr("wsbar.split_right") + hintSuffix("pane.splitRight")}
         disabled={!canSplitRight}
         onClick={() => splitRight()}
       >
         <Icon name="split-horizontal" />
-        <span className="lbl">右に分割</span>
+        <span className="lbl">{tr("wsbar.split_right")}</span>
       </button>
       <button
         className="ghost ws-split"
-        title={"上下に分割（アクティブなペイン）" + hintSuffix("pane.splitDown")}
+        title={tr("wsbar.split_down_title") + hintSuffix("pane.splitDown")}
         disabled={!canSplitDown}
         onClick={() => activePaneId && splitDown(activePaneId)}
       >
         <Icon name="split-vertical" />
-        <span className="lbl">下に分割</span>
+        <span className="lbl">{tr("wsbar.split_down")}</span>
       </button>
       <button
         className="ghost ws-closeall"
-        title={"全ペインを閉じる" + hintSuffix("pane.closeAll")}
+        title={tr("wsbar.close_all_title") + hintSuffix("pane.closeAll")}
         disabled={!canCloseAll}
         onClick={() => resetToTerminal()}
       >
         <Icon name="close-all" />
-        <span className="lbl">全て閉じる</span>
+        <span className="lbl">{tr("wsbar.close_all")}</span>
       </button>
 
       <span className="ws-spacer" />
@@ -803,7 +809,7 @@ export function WsBar() {
         <div className="ws-more" ref={moreRef}>
           <button
             className="ghost ws-more-btn"
-            title="リソース情報 / opencode web / プレビュー"
+            title={tr("wsbar.more_title")}
             onClick={() => setMoreOpen((o) => !o)}
           >
             <Icon name="ellipsis" />
@@ -823,11 +829,11 @@ export function WsBar() {
             <button
               className="ghost ws-preview-btn"
               disabled={!running}
-              title="opencode web / コンテナ内サービスを開く"
+              title={tr("wsbar.preview_title")}
               aria-expanded={pvOpen}
               onClick={() => setPvOpen((o) => !o)}
             >
-              <Icon name="globe" /> プレビュー <Icon name="chevron-down" />
+              <Icon name="globe" /> {tr("wsbar.preview")} <Icon name="chevron-down" />
             </button>
             {pvOpen && <div className="ws-preview-pop">{previewPop}</div>}
           </div>
