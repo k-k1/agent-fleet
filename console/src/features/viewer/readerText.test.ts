@@ -48,6 +48,14 @@ describe("buildReadUnits (原文忠実＋文/行区切り)", () => {
     expect(units[0].spoken).toBe("とうきょうタワー。");
   });
 
+  it("ruby=false（非 ja ロケール）はルビ解釈を無効化し 《》｜ を素の文字として扱う", () => {
+    const units = buildReadUnits("｜東京《とうきょう》タワー。", false, undefined, false);
+    expect(units).toHaveLength(1);
+    // ルビセグメント（{base, ruby}）は生まれず、原文がそのまま base に載る。
+    expect(units[0].segs.every((s) => s.ruby === undefined)).toBe(true);
+    expect(units[0].segs.map((s) => s.base).join("")).toBe("｜東京《とうきょう》タワー。");
+  });
+
   it("空行は表示に残す（改行として保持）が読み上げ対象にしない", () => {
     const units = buildReadUnits("一行目。\n\n三行目。", false);
     expect(units.map(disp).join("")).toBe("一行目。\n\n三行目。"); // 空行の改行を保持

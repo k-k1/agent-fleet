@@ -11,6 +11,7 @@
 
 import { rel } from "../../core/api/client.ts";
 import { getSettings, subscribe as subscribeSettings } from "../../lib/settings.ts";
+import { getLocale } from "../../lib/i18n/index.ts";
 import { useTtsStore } from "../../core/store/tts.ts";
 import { useLayoutStore } from "../../layout/store.ts";
 import {
@@ -44,15 +45,24 @@ export interface TtsOptions {
 
 // settings から TtsOptions を組む共通処理（announce / speakText / startNarration / ChatView）。
 export function ttsOptsFromSettings(s = getSettings()): TtsOptions {
+  // 日本語専用の読み整形（enkana カタカナ英語・助詞ポーズ）は UI ロケールが ja のときだけ
+  // 効かせる（英語 UI では素の音声へ流し、かなパイプラインをスキップ・docs/28 §2.4）。
+  const ja = getLocale() === "ja";
   return {
     provider: s.ttsProvider,
     voice: s.ttsVoiceVoicevox,
     speed: s.ttsSpeed,
-    enkana: s.ttsEnglishKana,
+    enkana: ja && s.ttsEnglishKana,
     pollyVoice: s.ttsVoicePolly,
     lang: s.outputLanguage,
-    particlePause: s.ttsParticlePause,
+    particlePause: ja && s.ttsParticlePause,
   };
+}
+
+// applyReadings（辞書 → 組み込み読み補正 → 助詞ポーズ）は日本語の発音整形なので UI ロケールが
+// ja のときだけ適用する。非 ja では素のテキストをそのまま返す（既に trim 済みの前提・docs/28 §2.4）。
+function localizedReadings(t: string, dict: [string, string][], particlePause: boolean): string {
+  return getLocale() === "ja" ? applyReadings(t, dict, particlePause) : t;
 }
 
 // --- セッションごとの声（docs/24） ----------------------------------------------
@@ -289,6 +299,7 @@ function emotionProfile(voice: string): VoiceProfile | undefined {
 }
 
 function emotionOpts(text: string, base: TtsOptions): TtsOptions {
+  if (getLocale() !== "ja") return base; // 感情スタイルは日本語の語彙判定なので ja 限定（docs/28 §2.4）
   if (!getSettings().ttsEmotion) return base;
   const prof = emotionProfile(base.voice);
   if (!prof) return base;
@@ -630,7 +641,7 @@ export function startTts(
     if (!t) return;
     const display = t; // カラオケ用の表示テキスト（読み補正・分割の前・onPiece で通知）
     // 読みの整形: ユーザー/テナント辞書 → 組み込み読み補正 → 助詞の小休止（enkana は CP 側で後段）。
-    t = applyReadings(t, userDict, getSettings().ttsParticlePause);
+    t = localizedReadings(t, userDict, getSettings().ttsParticlePause);
     if (!t) return;
     // 長い 1 文は合成用に分割（1 回の合成が重いと先読みが息切れして無音になる）。途中の片は
     // 読点相当に詰め、本来の間は最後の片の後だけ。前拍（ブロック頭）は先頭の片だけ。
@@ -868,7 +879,7 @@ export function startNarration(
   const codeOpts = { abbrev: s.ttsAbbrevCode, dict: userDict };
   const texts = units.map((u) => {
     let t = plainify(u, codeOpts).trim();
-    if (t) t = applyReadings(t, userDict, s.ttsParticlePause); // 辞書 → 読み補正 → 助詞の小休止
+    if (t) t = localizedReadings(t, userDict, s.ttsParticlePause); // 辞書 → 読み補正 → 助詞の小休止
     return t;
   });
 
@@ -954,7 +965,7 @@ export function startNarration(
   // 一体（同じ ctx・同じ adapter）。
   const playInterlude = (a: { text: string; source: string; voice?: Partial<TtsOptions>; sessionName?: string; purpose?: "reading" | "session-notification" | "usage-notification" | "manual" }) => {
     let t = plainify(a.text, codeOpts).trim();
-    if (t) t = applyReadings(t, userDict, getSettings().ttsParticlePause);
+    if (t) t = localizedReadings(t, userDict, getSettings().ttsParticlePause);
     if (!t) {
       tryPlay();
       return;
