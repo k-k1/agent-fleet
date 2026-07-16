@@ -152,7 +152,8 @@
 
 /* rtk 効果 panel (agents tab): workspace-level token-savings summary, moved here from
    the WsBar. Reuses the .wu-* meter + .ws-rtk-stats rows (globally bundled from
-   wsbar.css). Savings are positive, so the sparkline/meter are tinted with --ok. */
+   wsbar.css). Sparkline/meter follow the Top バー（外観）の色（--topbar-accent、未選択時は
+   --accent 既定へフォールバック）— 音量スライダー等の他アクセントと揃える。 */
 .rtk-gain-head {
   display: flex;
   align-items: center;
@@ -160,7 +161,7 @@
   margin-bottom: 12px;
 }
 .rtk-gain .spark {
-  color: var(--ok, #3fb950);
+  color: var(--topbar-accent, var(--accent));
   flex-shrink: 0;
 }
 .rtk-gain-headline {
@@ -176,7 +177,7 @@
   margin-bottom: 12px;
 }
 .rtk-gain .wu-bar-fill {
-  background: var(--ok, #3fb950);
+  background: var(--topbar-accent, var(--accent));
 }
 .rtk-gain .ws-rtk-stats {
   font-size: 12.5px;
@@ -256,6 +257,14 @@
 .ds-row select,
 .ds-row input[type="number"] {
   font-size: 13px;
+}
+/* ds-select: 候補が多い設定（opencode の既定モデル等）はセグメントの代わりに素の
+   <select>。settings-modal の select 見た目を継ぎつつ、行内で広がり過ぎない幅に抑える。 */
+.ds-select {
+  font-size: 13px;
+  min-width: 200px;
+  max-width: min(320px, 60vw);
+  cursor: pointer;
 }
 /* 音量スライダー（docs/24）: レンジ入力＋現在値のパーセント表示。アクセントで塗る。 */
 .ds-slider {
