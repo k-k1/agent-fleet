@@ -8,6 +8,7 @@ import type { FormEvent } from "react";
 import { Modal } from "../../ui/Modal.tsx";
 import { Button } from "../../ui/Button.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
+import { useT } from "../../lib/i18n/index.ts";
 import { apiJSON, errText } from "../../core/api/client.ts";
 import { agentOf } from "../../agents/registry.ts";
 
@@ -26,6 +27,7 @@ export function SessionTitleModal({ name, kind, title, onClose, onSaved }: Sessi
   const [suggesting, setSuggesting] = useState(false);
   const [proposal, setProposal] = useState("");
   const toast = useToast();
+  const tr = useT();
   const busy = saving || suggesting;
 
   const submit = async (e: FormEvent) => {
@@ -43,7 +45,7 @@ export function SessionTitleModal({ name, kind, title, onClose, onSaved }: Sessi
       onSaved();
       onClose();
     } catch {
-      toast("保存に失敗しました（通信エラー）");
+      toast(tr("sx.save_failed"));
     } finally {
       setSaving(false);
     }
@@ -60,38 +62,38 @@ export function SessionTitleModal({ name, kind, title, onClose, onSaved }: Sessi
       }
       if (typeof j.suggestedTitle === "string" && j.suggestedTitle) setProposal(j.suggestedTitle);
     } catch {
-      toast("提案の取得に失敗しました（通信エラー）");
+      toast(tr("sx.suggest_fetch_failed"));
     } finally {
       setSuggesting(false);
     }
   };
 
   return (
-    <Modal title="タイトルを変更" onClose={onClose} as="form" onSubmit={submit} lockClose={saving}>
+    <Modal title={tr("sx.title_rename_title")} onClose={onClose} as="form" onSubmit={submit} lockClose={saving}>
       <div className="ui-modal-body">
         <label className="ui-field">
-          <span className="ui-field-label">タイトル</span>
+          <span className="ui-field-label">{tr("sx.title_label")}</span>
           <input
             type="text"
             value={value}
             onChange={(e) => setValue(e.target.value)}
             onFocus={(e) => e.target.select()}
-            placeholder="例: セッションタイトルの自動提案"
+            placeholder={tr("sx.title_ph")}
             maxLength={80}
             autoFocus
           />
-          <span className="ui-field-hint">未入力のまま保存すると自動命名（リポジトリ名＋日時）に戻ります。</span>
+          <span className="ui-field-hint">{tr("sx.title_hint")}</span>
         </label>
         {canSuggest && (
           <div>
             <Button icon={suggesting ? "loading" : "lightbulb"} onClick={suggest} disabled={busy}>
-              AIに提案してもらう
+              {tr("sx.ai_suggest")}
             </Button>
           </div>
         )}
         {proposal && (
           <div className="sm-proposal">
-            <span className="sm-proposal-label">提案</span>
+            <span className="sm-proposal-label">{tr("sx.proposal")}</span>
             <span className="sm-proposal-text">{proposal}</span>
             <Button
               small
@@ -102,17 +104,17 @@ export function SessionTitleModal({ name, kind, title, onClose, onSaved }: Sessi
                 setProposal("");
               }}
             >
-              この案にする
+              {tr("sx.adopt")}
             </Button>
           </div>
         )}
       </div>
       <footer className="ui-modal-foot">
         <Button variant="ghost" onClick={onClose} disabled={saving}>
-          キャンセル
+          {tr("sx.cancel")}
         </Button>
         <Button variant="primary" type="submit" disabled={saving}>
-          保存
+          {tr("sx.save")}
         </Button>
       </footer>
     </Modal>

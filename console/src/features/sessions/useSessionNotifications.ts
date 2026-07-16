@@ -4,6 +4,7 @@
 // polled session flips working→idle ("回答が返ってきました") or reaches "question",
 // skipping the session currently on the active pane. Reads the shared stores itself.
 import { useEffect, useRef } from "react";
+import { t } from "../../lib/i18n/index.ts";
 import { displayName } from "../../lib/sessionview.ts";
 import { agentOf } from "../../agents/registry.ts";
 import { useLayoutStore } from "../../layout/store.ts";
@@ -49,15 +50,15 @@ export function useSessionNotifications(enabled = true): void {
         const speak = st.ttsSessionNotify;
         const mirrored = st.ttsEnabled && st.ttsAutoReadAllPanes && hasTurnReader(s.name);
         if (s.state === "idle" && before === "working") {
-          notify("回答が返ってきました", displayName(s));
+          notify(t("sx.notify_answered_title"), displayName(s));
           // 声はセッション単位で固定（sessionVoiceOpts）。表示名でなくセッション名で引く
           // （リネームで声が変わらないように）。
           if (speak && !(mirrored && st.ttsAutoReadMirror))
-            announce(`${displayName(s)} の回答が返りました。`, displayName(s), sessionVoiceOpts(s.name), s.name, "session-notification");
+            announce(t("sx.notify_answered_body", { name: displayName(s) }), displayName(s), sessionVoiceOpts(s.name), s.name, "session-notification");
         } else if (s.state === "question") {
-          notify("質問が来ています", displayName(s));
+          notify(t("sx.notify_question_title"), displayName(s));
           if (speak && !(mirrored && st.ttsReadPending))
-            announce(`${displayName(s)} が確認を求めています。`, displayName(s), sessionVoiceOpts(s.name), s.name, "session-notification");
+            announce(t("sx.notify_question_body", { name: displayName(s) }), displayName(s), sessionVoiceOpts(s.name), s.name, "session-notification");
         }
       }
       prev[s.name] = s.state;

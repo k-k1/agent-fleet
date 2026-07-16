@@ -7,6 +7,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../../core/api/client.ts";
 import { Icon } from "../../ui/Icon.tsx";
+import { useT } from "../../lib/i18n/index.ts";
 
 interface Entry {
   name: string;
@@ -28,6 +29,7 @@ export function DirPicker({
   onChange: (p: string) => void;
   repos?: RepoLite[];
 }) {
+  const tr = useT();
   const [entries, setEntries] = useState<Entry[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState(false);
@@ -60,7 +62,7 @@ export function DirPicker({
   return (
     <div className="dirpick">
       <div className="dirpick-crumbs">
-        <button type="button" className="dirpick-crumb" onClick={() => onChange("")} title="ホーム">
+        <button type="button" className="dirpick-crumb" onClick={() => onChange("")} title={tr("rp.home")}>
           <Icon name="home" /> ~
         </button>
         {segs.map((s, i) => (
@@ -75,7 +77,7 @@ export function DirPicker({
       <div className="dirpick-list">
         {isHome && baseRepos.length > 0 && (
           <>
-            <div className="dirpick-head">リポジトリ</div>
+            <div className="dirpick-head">{tr("rp.repositories")}</div>
             {baseRepos.map((r) => (
               <button
                 key={"repo-" + r.name}
@@ -89,17 +91,17 @@ export function DirPicker({
                 <Icon name="chevron-right" className="dirpick-go" />
               </button>
             ))}
-            <div className="dirpick-head">フォルダ</div>
+            <div className="dirpick-head">{tr("rp.folders")}</div>
           </>
         )}
         {loading ? (
           <div className="dirpick-empty">
-            <Icon name="loading" spin /> 読み込み中…
+            <Icon name="loading" spin /> {tr("rp.loading")}
           </div>
         ) : err ? (
-          <div className="dirpick-empty">読み込めませんでした</div>
+          <div className="dirpick-empty">{tr("rp.load_failed")}</div>
         ) : entries.length === 0 ? (
-          <div className="dirpick-empty">サブフォルダはありません</div>
+          <div className="dirpick-empty">{tr("rp.no_subfolders")}</div>
         ) : (
           entries.map((e) => {
             const branch = repoBranch.get(full(e.name)); // defined ⇒ a working copy
@@ -115,7 +117,7 @@ export function DirPicker({
         )}
       </div>
       <div className="dirpick-cur">
-        ここで起動: <code>~{path ? "/" + path : ""}</code>
+        {tr("rp.launch_here")} <code>~{path ? "/" + path : ""}</code>
       </div>
     </div>
   );

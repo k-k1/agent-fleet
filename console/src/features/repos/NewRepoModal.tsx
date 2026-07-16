@@ -10,6 +10,7 @@ import { CloneForm } from "./CloneForm.tsx";
 import type { CloneSource } from "./CloneForm.tsx";
 import type { CloneRequest } from "./clone.ts";
 import { deriveRepoName, sanitizeSeg, uniqueRepoName, repoNameRe } from "../../lib/reponame.ts";
+import { useT } from "../../lib/i18n/index.ts";
 
 export type { CloneRequest };
 
@@ -20,6 +21,7 @@ interface NewRepoModalProps {
 }
 
 export function NewRepoModal({ onClose, onClone, repos = [] }: NewRepoModalProps) {
+  const tr = useT();
   const [src, setSrc] = useState<CloneSource>({ cloneUrl: "", branch: "" });
   const [newBranch, setNewBranch] = useState("");
   const [name, setName] = useState("");
@@ -59,34 +61,34 @@ export function NewRepoModal({ onClose, onClone, repos = [] }: NewRepoModalProps
   };
 
   return (
-    <Modal title="リポジトリをクローン" onClose={onClose} as="form" onSubmit={submit}>
+    <Modal title={tr("rp.clone_repo_title")} onClose={onClose} as="form" onSubmit={submit}>
       <div className="ui-modal-body">
         <CloneForm onChange={setSrc} />
 
         {!!cloneUrl && (
           <div className="ui-field">
-            <span className="ui-field-label">新規ブランチ（任意）</span>
+            <span className="ui-field-label">{tr("rp.new_branch_optional")}</span>
             <input
               value={newBranch}
               onChange={(e) => setNewBranch(e.target.value)}
-              placeholder={`${cloneBranch || "既定ブランチ"} から作成`}
+              placeholder={tr("rp.create_from", { branch: cloneBranch || tr("rp.default_branch") })}
             />
             <span className="ui-field-hint">
-              指定すると <code>{cloneBranch || "既定ブランチ"}</code> を基点に新しいブランチを作成して切り替えます。空なら基点ブランチのまま。
+              {tr("rp.new_branch_hint_pre")} <code>{cloneBranch || tr("rp.default_branch")}</code> {tr("rp.new_branch_hint_post")}
             </span>
           </div>
         )}
 
         {wantName && (
           <div className="ui-field">
-            <span className="ui-field-label">フォルダ名</span>
+            <span className="ui-field-label">{tr("rp.folder_name")}</span>
             <span className="ui-field-hint">
               {cloneNewBranch ? (
                 <>
-                  新規ブランチ <code>{cloneNewBranch}</code> の作業コピーを別フォルダへクローンします。
+                  {tr("rp.workcopy_newbranch_pre")} <code>{cloneNewBranch}</code> {tr("rp.workcopy_newbranch_post")}
                 </>
               ) : (
-                <>作業コピー「{derivedRepo}」は既にあります。別の作業コピーとしてクローンするためフォルダ名を分けます。</>
+                tr("rp.workcopy_exists", { name: derivedRepo })
               )}
             </span>
             <input
@@ -98,7 +100,7 @@ export function NewRepoModal({ onClose, onClone, repos = [] }: NewRepoModalProps
               placeholder={suggestedName}
             />
             {!nameOk && (
-              <span className="ui-field-hint">英数字始まりの一意な名前にしてください（既存の作業コピーと重複不可）。</span>
+              <span className="ui-field-hint">{tr("rp.name_rule_hint")}</span>
             )}
           </div>
         )}
@@ -106,10 +108,10 @@ export function NewRepoModal({ onClose, onClone, repos = [] }: NewRepoModalProps
 
       <footer className="ui-modal-foot">
         <Button variant="ghost" onClick={onClose}>
-          キャンセル
+          {tr("rp.cancel")}
         </Button>
         <Button variant="primary" type="submit" disabled={!canSubmit}>
-          クローン
+          {tr("rp.clone")}
         </Button>
       </footer>
     </Modal>

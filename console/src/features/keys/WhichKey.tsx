@@ -7,13 +7,14 @@ import { useKeysStore } from "./store.ts";
 import { GROUPS } from "./commands.ts";
 import { useEffectiveCommands, boundChord, APP_LEADER } from "./bindings.ts";
 import { cmdLabel } from "./labels.ts";
-import { useLocale } from "../../lib/i18n/index.ts";
+import { useLocale, useT } from "../../lib/i18n/index.ts";
 import { buildContext } from "./dispatcher.ts";
 
 export function WhichKey() {
   const open = useKeysStore((s) => s.whichKeyOpen);
   const path = useKeysStore((s) => s.leaderPath);
   const commands = useEffectiveCommands();
+  const tr = useT();
   useLocale(); // re-render on language change
   if (!open) return null;
   const children = leaderChildren(commands, GROUPS, path, buildContext());
@@ -27,7 +28,7 @@ export function WhichKey() {
               <Kbd key={i} chord={k} />
             ))}
           </span>
-          <span className="wk-hint">次のキー</span>
+          <span className="wk-hint">{tr("ui.next_key")}</span>
         </div>
         <div className="wk-grid">
           {children.map((c) => (

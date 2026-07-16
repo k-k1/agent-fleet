@@ -11,6 +11,7 @@ import { EmptyState } from "../../ui/EmptyState.tsx";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { useFilesStore } from "../files/store.ts";
 import { openFileDiff } from "../scm/open.ts";
+import { useT, type MsgKey } from "../../lib/i18n/index.ts";
 
 // A git working-tree change (porcelain XY + repo), as api/fs/changes reports it.
 interface FsChange {
@@ -21,17 +22,18 @@ interface FsChange {
   worktree?: string;
 }
 
-// Porcelain XY → a JP label + color class.
-function changeBadge(c: FsChange) {
-  if (c.untracked) return { cls: "st-add", label: "未追跡" };
+// Porcelain XY → a label key + color class (translated at render time).
+function changeBadge(c: FsChange): { cls: string; label: MsgKey } {
+  if (c.untracked) return { cls: "st-add", label: "pj.st_untracked" };
   const code = c.worktree !== " " && c.worktree !== "" ? c.worktree : c.index;
-  if (code === "D") return { cls: "st-del", label: "削除" };
-  if (code === "A") return { cls: "st-add", label: "追加" };
-  if (code === "R" || code === "C") return { cls: "st-mod", label: "改名" };
-  return { cls: "st-mod", label: "変更" };
+  if (code === "D") return { cls: "st-del", label: "pj.st_deleted" };
+  if (code === "A") return { cls: "st-add", label: "pj.st_added" };
+  if (code === "R" || code === "C") return { cls: "st-mod", label: "pj.st_renamed" };
+  return { cls: "st-mod", label: "pj.st_modified" };
 }
 
 export function FilesChanges() {
+  const tr = useT();
   const running = useWorkspaceStore((s) => s.state) === "running";
   const filesTick = useFilesStore((s) => s.tick);
   const [changes, setChanges] = useState<FsChange[] | null>(null);
@@ -48,9 +50,9 @@ export function FilesChanges() {
     };
   }, [running, filesTick]);
 
-  if (!running) return <EmptyState icon="debug-disconnect" title="ワークスペース停止中" />;
-  if (changes === null) return <EmptyState icon="loading" title="読み込み中…" />;
-  if (changes.length === 0) return <EmptyState icon="check" title="変更はありません" />;
+  if (!running) return <EmptyState icon="debug-disconnect" title={tr("pj.ws_stopped")} />;
+  if (changes === null) return <EmptyState icon="loading" title={tr("pj.loading")} />;
+  if (changes.length === 0) return <EmptyState icon="check" title={tr("pj.no_changes")} />;
 
   const byRepo = changes.reduce((acc: Record<string, FsChange[]>, c) => {
     (acc[c.repo] = acc[c.repo] || []).push(c);
@@ -58,7 +60,7 @@ export function FilesChanges() {
   }, {});
 
   return (
-    <ul className="fstree changeslist" role="list" aria-label="変更ファイル">
+    <ul className="fstree changeslist" role="list" aria-label={tr("pj.changed_files")}>
       {Object.entries(byRepo).map(([repo, list]) => (
         <li key={repo} className="chg-group">
           <div className="chg-repo">{repo}</div>
@@ -71,11 +73,11 @@ export function FilesChanges() {
                 <li
                   key={c.path + (c.untracked ? "?" : "")}
                   className="fsrow chg-row"
-                  title={c.path + "（クリックで作業差分を開く）"}
+                  title={c.path + tr("pj.click_open_diff")}
                   onClick={() => openFileDiff(repo, rel, staged)}
                 >
                   <span className="fs-file">
-                    <span className={"chg-badge " + b.cls}>{b.label}</span>
+                    <span className={"chg-badge " + b.cls}>{tr(b.label)}</span>
                     <span className="fs-ic">
                       <FileIcon name={rel.split("/").pop() || ""} />
                     </span>

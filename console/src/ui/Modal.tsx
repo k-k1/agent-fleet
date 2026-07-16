@@ -7,6 +7,7 @@ import { createPortal } from "react-dom";
 import type { ReactNode, MouseEvent, FormEvent } from "react";
 import { Icon } from "./Icon.tsx";
 import { IconButton } from "./Button.tsx";
+import { useT } from "../lib/i18n/index.ts";
 import { coarsePointer } from "../lib/device.ts";
 import { useEscLayer } from "../lib/escLayer.ts";
 import { useBackClose } from "../lib/backClose.ts";
@@ -31,6 +32,7 @@ export function Modal({
   lockClose = false,
   children,
 }: ModalProps) {
+  const tr = useT();
   // Esc closes (unless an operation is in flight) — layered, so with a confirm
   // dialog open above this modal, Esc peels the confirm first, not both at once.
   useEscLayer(onClose, !lockClose);
@@ -87,9 +89,9 @@ export function Modal({
         <header className="ui-modal-head">
           <h3 className="ui-modal-title" id={titleId}>{title}</h3>
           {lockClose ? (
-            <Icon name="loading" spin title="処理中…" />
+            <Icon name="loading" spin title={tr("ui.processing")} />
           ) : (
-            <IconButton icon="close" label="閉じる" onClick={onClose} />
+            <IconButton icon="close" label={tr("ui.close")} onClick={onClose} />
           )}
         </header>
         {children}

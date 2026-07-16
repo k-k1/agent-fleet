@@ -6,6 +6,7 @@ import { Icon } from "../../ui/Icon.tsx";
 import { useSettings, fontStack } from "../../lib/settings.ts";
 import { useLayoutStore } from "../../layout/store.ts";
 import { useFilesStore } from "../files/store.ts";
+import { useT } from "../../lib/i18n/index.ts";
 
 interface DocViewProps {
   title?: string;
@@ -13,6 +14,7 @@ interface DocViewProps {
 }
 
 export function DocView({ title, content }: DocViewProps) {
+  const tr = useT();
   const openTargetInNew = useLayoutStore((s) => s.openTargetInNew);
   const revealInFiles = useFilesStore((s) => s.revealInFiles);
   const settings = useSettings();
@@ -24,7 +26,7 @@ export function DocView({ title, content }: DocViewProps) {
     <div className="fileview docview" style={viewerStyle}>
       <header className="view-head fileinfo">
         <span className="fi-name mono">
-          <Icon name="checklist" /> {title || "ドキュメント"}
+          <Icon name="checklist" /> {title || tr("view.document")}
         </span>
         <span className="fi-tag">Markdown</span>
       </header>

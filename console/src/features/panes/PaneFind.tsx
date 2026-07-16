@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { RefObject } from "react";
 import { IconButton } from "../../ui/Button.tsx";
+import { useT } from "../../lib/i18n/index.ts";
 
 const MATCH_HIGHLIGHT = "pane-find-match";
 const CURRENT_HIGHLIGHT = "pane-find-current";
@@ -126,6 +127,7 @@ export function PaneFind({
   active: boolean;
   enabled: boolean;
 }) {
+  const tr = useT();
   const inputRef = useRef<HTMLInputElement>(null);
   const restoreFocusRef = useRef<HTMLElement | null>(null);
   const ownerRef = useRef(Symbol("paneFind"));
@@ -286,8 +288,8 @@ export function PaneFind({
             close(true);
           }
         }}
-        placeholder="ペイン内を検索"
-        aria-label="ペイン内を検索"
+        placeholder={tr("ui.find_in_pane")}
+        aria-label={tr("ui.find_in_pane")}
         autoComplete="off"
         spellCheck={false}
       />
@@ -296,21 +298,21 @@ export function PaneFind({
       </span>
       <IconButton
         icon="chevron-up"
-        label="前の一致（Shift+Enter）"
+        label={tr("ui.find_prev")}
         disabled={!count}
         onMouseDown={(event) => event.preventDefault()}
         onClick={() => move(-1)}
       />
       <IconButton
         icon="chevron-down"
-        label="次の一致（Enter）"
+        label={tr("ui.find_next")}
         disabled={!count}
         onMouseDown={(event) => event.preventDefault()}
         onClick={() => move(1)}
       />
       <IconButton
         icon="close"
-        label="検索を閉じる（Esc）"
+        label={tr("ui.close_find")}
         onMouseDown={(event) => event.preventDefault()}
         onClick={() => close(true)}
       />

@@ -17,6 +17,7 @@ import type { Repo } from "../repos/store.ts";
 import type { Session } from "../../types/session.ts";
 import { sessionsInFolder } from "../../lib/project.ts";
 import { useProjectFilter, normQuery, sessionMatches } from "./filter.ts";
+import { useT } from "../../lib/i18n/index.ts";
 
 // A collapse flag persisted under `key`. While nothing is stored yet the flag
 // FOLLOWS `dflt` live (it's derived, not snapshotted) — so a node whose default
@@ -49,6 +50,7 @@ interface RepoNodeProps {
 }
 
 export function RepoNode({ r, childRepos, ctx, actions }: RepoNodeProps) {
+  const tr = useT();
   const sessions = useSessionsStore((s) => s.sessions);
   const nq = normQuery(useProjectFilter((f) => f.q));
   const mine = sessionsInFolder(sessions, r.name);
@@ -94,7 +96,7 @@ export function RepoNode({ r, childRepos, ctx, actions }: RepoNodeProps) {
           className="proj-node-caret"
           onClick={node.toggle}
           aria-expanded={open}
-          title={open ? "折りたたむ" : "展開"}
+          title={open ? tr("pj.collapse") : tr("pj.expand")}
         >
           <Icon name={open ? "chevron-down" : "chevron-right"} />
         </button>

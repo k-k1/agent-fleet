@@ -17,17 +17,19 @@ export const CODE_FONTS = [
   "JetBrains Mono",
   "Fira Code",
   "IBM Plex Mono",
-  "システム等幅",
+  "システム等幅", // i18n-exempt: fontStack 突合用の生フォント値（表示は font.* で翻訳）
 ];
 
 // Chat fonts: unlike the code viewer, the chat reads as prose, so proportional
 // families are offered first ("システム" = system sans, "セリフ" = serif), with the
 // monospace code fonts still available for anyone who prefers them.
+// i18n-exempt: fontStack 突合用の生フォント値（表示は font.* で翻訳・docs/28 §2.4）
 export const CHAT_FONTS = ["システム", "セリフ", "Source Code Pro", "JetBrains Mono", "Fira Code", "IBM Plex Mono"];
 
 // Reader (朗読ビュー) fonts: the reader is Japanese prose, so it offers the two
 // families that matter for reading — 明朝 (serif, the default) and ゴシック (sans) —
 // each resolved with CJK fallbacks in readerFontStack.
+// i18n-exempt: fontStack 突合用の生フォント値（表示は font.* で翻訳・docs/28 §2.4）
 export const READER_FONTS = ["明朝", "ゴシック"];
 
 // File-icon sets (brand SVGs under assets/fileicons/<id>/). value = asset subdir.
@@ -47,7 +49,7 @@ export const THEMES: { id: string; labelKey: MsgKey }[] = [
 // UI 表示言語（docs/28 / ADR 0016）。ラベルは各言語の自称なので翻訳しない（どの言語で見ても
 // 母語名で並ぶ）。id は i18n カタログ／SUPPORTED_LOCALES と一致させる。
 export const LOCALES = [
-  { id: "ja", label: "日本語" },
+  { id: "ja", label: "日本語" }, // i18n-exempt: 言語の自称（どの UI 言語でも母語名で表示）
   { id: "en", label: "English" },
 ];
 
@@ -340,7 +342,7 @@ const DEFAULTS: Settings = {
   termSize: 13,
   viewerFont: "JetBrains Mono",
   viewerSize: 13,
-  chatFont: "システム",
+  chatFont: "システム", // i18n-exempt: fontStack 突合用の生フォント値
   chatSize: 14,
   lineNumbers: true,
   wrap: false,
@@ -400,7 +402,7 @@ const DEFAULTS: Settings = {
   ttsParticlePause: true,
   readerVertical: false,
   readerVoice: "",
-  readerFont: "明朝",
+  readerFont: "明朝", // i18n-exempt: fontStack 突合用の生フォント値
   readerSize: 17,
   keybindings: {},
   terminalPriority: false,
@@ -531,7 +533,7 @@ export const CLAUDE_MODELS: [string, string][] = [
 
 // Build a CSS font-family stack for a chosen family, with CJK + generic fallbacks.
 export function fontStack(name: string): string {
-  if (!name || name === "システム等幅") {
+  if (!name || name === "システム等幅") { // i18n-exempt: fontStack 突合用の生フォント値
     return 'ui-monospace, SFMono-Regular, Menlo, Consolas, "DejaVu Sans Mono", "Noto Sans Mono CJK JP", monospace';
   }
   return `"${name}", "Noto Sans Mono CJK JP", ui-monospace, Menlo, Consolas, monospace`;
@@ -540,10 +542,10 @@ export function fontStack(name: string): string {
 // Chat font stack — proportional by default. "システム"/"セリフ" map to sans/serif
 // system stacks (with CJK fallbacks); any other name is a code font (monospace).
 export function chatFontStack(name: string): string {
-  if (!name || name === "システム") {
+  if (!name || name === "システム") { // i18n-exempt: fontStack 突合用の生フォント値
     return 'system-ui, -apple-system, "Hiragino Kaku Gothic ProN", "Noto Sans CJK JP", sans-serif';
   }
-  if (name === "セリフ") {
+  if (name === "セリフ") { // i18n-exempt: fontStack 突合用の生フォント値
     return 'Georgia, "Times New Roman", "Hiragino Mincho ProN", "Noto Serif CJK JP", serif';
   }
   return fontStack(name);
@@ -553,7 +555,7 @@ export function chatFontStack(name: string): string {
 // (default "明朝") = serif (mincho). Both list CJK families first with generic
 // fallbacks so they render correctly where the OS lacks Hiragino/Yu.
 export function readerFontStack(name: string): string {
-  if (name === "ゴシック") {
+  if (name === "ゴシック") { // i18n-exempt: fontStack 突合用の生フォント値
     return '"Hiragino Kaku Gothic ProN", "Yu Gothic", "Noto Sans JP", "Noto Sans CJK JP", system-ui, sans-serif';
   }
   return '"Hiragino Mincho ProN", "Yu Mincho", "Noto Serif JP", "Noto Serif CJK JP", "Noto Serif", serif';

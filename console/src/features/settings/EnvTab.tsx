@@ -313,7 +313,9 @@ function WorkspaceDangerZone() {
           <strong>{tr("env.cleanhome_head")}</strong>
           <span className="muted">
             {tr("env.cleanhome_desc_1")}
-            <code>~/repos</code>・<code>~/.local</code>
+            <code>~/repos</code>
+            {tr("common.mid_dot")}
+            <code>~/.local</code>
             {tr("env.cleanhome_desc_2")}
           </span>
         </div>

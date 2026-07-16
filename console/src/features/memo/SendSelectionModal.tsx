@@ -225,7 +225,7 @@ export function SendSelectionModal({ filePath, quote, startLine, endLine, onClos
                 <optgroup label={tr("send.optgroup_session")}>
                   {sortedSessions.map((s) => (
                     <option key={s.name} value={`session:${s.name}`}>
-                      {displayName(s)}（{s.name}・{stateInfo(s).text}
+                      {displayName(s)}（{s.name}{tr("sx.sep")}{stateInfo(s).text}
                       {fileRepo && s.repo === fileRepo ? tr("send.same_repo") : ""}）
                     </option>
                   ))}

@@ -8,6 +8,7 @@
 // once per app session to avoid nagging.
 import { useEffect, useRef } from "react";
 import { useToast } from "../ui/ToastProvider.tsx";
+import { useT } from "./i18n/index.ts";
 import { buildInfo, fetchServerBuild, hasNewBuild, reloadForUpdate } from "./version.ts";
 
 const CHECK_INTERVAL_MS = 5 * 60 * 1000;
@@ -15,6 +16,7 @@ const FIRST_CHECK_DELAY_MS = 4000; // let the first paint settle before hitting 
 
 export function useUpdateCheck(): void {
   const toast = useToast();
+  const tr = useT();
   const notified = useRef(false);
 
   useEffect(() => {
@@ -29,9 +31,9 @@ export function useUpdateCheck(): void {
       notified.current = true;
       toast(
         <span className="update-toast">
-          新しいバージョンがあります
+          {tr("ui.new_version_available")}
           <button type="button" className="update-toast-btn" onClick={() => reloadForUpdate(server!)}>
-            更新
+            {tr("ui.update")}
           </button>
         </span>,
         { kind: "info", duration: 0 },
@@ -55,5 +57,5 @@ export function useUpdateCheck(): void {
       document.removeEventListener("visibilitychange", onVisible);
       window.removeEventListener("focus", onFocus);
     };
-  }, [toast]);
+  }, [toast, tr]);
 }

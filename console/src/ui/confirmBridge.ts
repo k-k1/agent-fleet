@@ -4,6 +4,7 @@
 // routes to it. Before the provider has mounted we fall back to the native confirm() so
 // a call is never silently lost (only string title/body survive that fallback).
 import type { ConfirmOptions } from "./ConfirmProvider.tsx";
+import { t } from "../lib/i18n/index.ts";
 
 type ConfirmFn = (opts: ConfirmOptions) => Promise<boolean>;
 
@@ -16,5 +17,5 @@ export function registerConfirm(fn: ConfirmFn | null): void {
 export function askConfirm(opts: ConfirmOptions): Promise<boolean> {
   if (impl) return impl(opts);
   const parts = [opts.title, opts.body].filter((x): x is string => typeof x === "string");
-  return Promise.resolve(window.confirm(parts.join("\n\n") || "続行しますか？"));
+  return Promise.resolve(window.confirm(parts.join("\n\n") || t("ui.confirm_continue")));
 }

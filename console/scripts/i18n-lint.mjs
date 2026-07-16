@@ -130,6 +130,12 @@ if (process.argv.includes("--pending")) {
 const blocking = findings.filter((f) => !pending.has(f.rel));
 const backlog = findings.filter((f) => pending.has(f.rel));
 
+// --all: pending 状態に関係なく全違反を line:col で出力（移行作業のブリーフィング用）。
+if (process.argv.includes("--all")) {
+  for (const f of findings) console.log(`${f.rel}:${f.line}:${f.col}  [${f.kind}]  ${f.snippet}`);
+  process.exit(0);
+}
+
 if (process.argv.includes("--list")) {
   const byFile = new Map();
   for (const f of findings) byFile.set(f.rel, (byFile.get(f.rel) || 0) + 1);

@@ -9,6 +9,7 @@
 // treat it as busy and keep their hands off).
 import { create } from "zustand";
 import { api } from "../api/client.ts";
+import { t } from "../../lib/i18n/index.ts";
 
 interface WorkspaceStore {
   state: string;
@@ -74,7 +75,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       const res = await api("api/workspace/recreate", { method: "POST" });
       if (res && res.error) err = res.error.message || String(res.error);
     } catch {
-      err = "作り直しに失敗しました";
+      err = t("ui.recreate_failed");
     }
     await get().refresh();
     return err;
@@ -87,7 +88,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
       const res = await api("api/workspace/clean-home", { method: "POST" });
       if (res && res.error) err = res.error.message || String(res.error);
     } catch {
-      err = "掃除に失敗しました";
+      err = t("ui.cleanup_failed");
     }
     await get().refresh();
     return err;

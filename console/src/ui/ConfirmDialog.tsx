@@ -2,6 +2,7 @@ import { useId, useRef } from "react";
 import { createPortal } from "react-dom";
 import type { ReactNode, MouseEvent } from "react";
 import { Button } from "./Button.tsx";
+import { useT } from "../lib/i18n/index.ts";
 import { useEscLayer } from "../lib/escLayer.ts";
 import { useFocusTrap } from "../lib/focusTrap.ts";
 
@@ -23,12 +24,13 @@ interface ConfirmDialogProps {
 export function ConfirmDialog({
   title,
   children,
-  confirmLabel = "実行",
+  confirmLabel,
   danger = true,
   busy = false,
   onConfirm,
   onCancel,
 }: ConfirmDialogProps) {
+  const tr = useT();
   // Escape cancels (unless the operation is running) — layered, so the dialog
   // this confirm was opened from stays open.
   useEscLayer(onCancel, !busy);
@@ -48,10 +50,10 @@ export function ConfirmDialog({
         <div className="confirm-body">{children}</div>
         <div className="confirm-actions">
           <Button variant="ghost" onClick={onCancel} disabled={busy}>
-            キャンセル
+            {tr("ui.cancel")}
           </Button>
           <Button variant={danger ? "danger" : "default"} onClick={onConfirm} disabled={busy}>
-            {busy ? "実行中…" : confirmLabel}
+            {busy ? tr("ui.running") : confirmLabel ?? tr("ui.run")}
           </Button>
         </div>
       </div>

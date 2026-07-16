@@ -150,7 +150,7 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
             <>
               <span className="tts-status-lbl">
                 {ttsPreparing ? tr("topbar.tts.generating") : tr("topbar.tts.speaking")}
-                {ttsSource ? `・${ttsSource}` : ""}
+                {ttsSource ? `${tr("ui.sep")}${ttsSource}` : ""}
                 {ttsVoice ? `（${ttsVoice}）` : ""}
               </span>
               <Icon name="debug-stop" />

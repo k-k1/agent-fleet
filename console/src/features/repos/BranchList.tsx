@@ -2,6 +2,7 @@
 // branch-switch modal (local, checkout on pick) and the new-session repo picker
 // (remote, select on pick). Port of the old components/BranchList.
 import { useMemo, useState } from "react";
+import { useT } from "../../lib/i18n/index.ts";
 import { relTime as intlRelTime } from "../../lib/intl.ts";
 
 // relTime renders a unix-seconds timestamp as a short locale-aware "… ago" label.
@@ -29,6 +30,7 @@ interface BranchListProps {
 }
 
 export function BranchList({ branches, selected, onPick, busy, disableActive, autoFocus }: BranchListProps) {
+  const tr = useT();
   const [filter, setFilter] = useState("");
 
   const shown = useMemo(() => {
@@ -45,14 +47,14 @@ export function BranchList({ branches, selected, onPick, busy, disableActive, au
       <input
         className="branch-filter"
         autoFocus={autoFocus}
-        placeholder="フィルタ（ブランチ名 / コミット）"
+        placeholder={tr("rp.filter_branches")}
         value={filter}
         onChange={(e) => setFilter(e.target.value)}
       />
       {branches === null ? (
-        <p className="pick-muted">読み込み中…</p>
+        <p className="pick-muted">{tr("rp.loading")}</p>
       ) : shown.length === 0 ? (
-        <p className="pick-muted">該当するブランチがありません</p>
+        <p className="pick-muted">{tr("rp.no_branches")}</p>
       ) : (
         <ul className="branch-list">
           {shown.map((b) => {
