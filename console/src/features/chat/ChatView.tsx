@@ -831,7 +831,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
           ) : (
             <button
               type="button"
-              className="btn chat-send"
+              className="btn primary chat-send"
               disabled={(!conv && !isDraft) || showStreaming || (!input.trim() && !attachments.length)}
               onClick={() => void send()}
               title={tr("chat.send")}
