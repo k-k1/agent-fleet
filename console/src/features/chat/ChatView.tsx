@@ -9,6 +9,7 @@ import { chatGet, chatStream, chatCreate, assistantGet, chatPasteImage } from ".
 import { errText, raw } from "../../core/api/client.ts";
 import { takeChatSeed } from "../../lib/chatSeed.ts";
 import { useDraft, moveDraft, clearDraft } from "../../lib/draft.ts";
+import { scrollComposerViewport } from "../../lib/composerScroll.ts";
 import { fmtDateTime } from "../../lib/intl.ts";
 import { t, tCount, useT } from "../../lib/i18n/index.ts";
 import { coarsePointer } from "../../lib/device.ts";
@@ -500,6 +501,9 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
   useEffect(() => () => stopTtsForReplacement(ttsRef.current), []);
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    // Scroll the message list without leaving the composer: Shift+↑/↓ nudges, Ctrl/⌘+↑/↓
+    // and Ctrl/⌘+[ / ] page.
+    if (!e.nativeEvent.isComposing && scrollComposerViewport(e, scrollRef.current)) return;
     // Don't intercept Enter while an IME candidate window is open (JP/CJK input).
     if (e.key !== "Enter" || e.nativeEvent.isComposing) return;
     const mod = e.ctrlKey || e.metaKey;
