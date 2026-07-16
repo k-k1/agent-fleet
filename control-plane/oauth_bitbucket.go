@@ -99,14 +99,15 @@ func (c config) handleBitbucketOAuthStart(w http.ResponseWriter, r *http.Request
 func (c config) handleBitbucketOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	code := r.URL.Query().Get("code")
 	state := r.URL.Query().Get("state")
+	t := bbText[preferredUILang(r)] // docs/28 P3: Accept-Language で ja/en
 
 	st, ok := bbFlows.take(state)
 	if !ok {
-		bbCallbackPage(w, "認証エラー: state が一致しません。Console からやり直してください。")
+		bbCallbackPage(w, t.stateMismatch)
 		return
 	}
 	if code == "" {
-		bbCallbackPage(w, "認証エラー: code がありません（承認が拒否された可能性）。")
+		bbCallbackPage(w, t.noCode)
 		return
 	}
 
@@ -117,7 +118,7 @@ func (c config) handleBitbucketOAuthCallback(w http.ResponseWriter, r *http.Requ
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		bbCallbackPage(w, "トークン交換に失敗: "+err.Error())
+		bbCallbackPage(w, t.tokenExchangeFailed+err.Error())
 		return
 	}
 	defer resp.Body.Close()
@@ -131,7 +132,7 @@ func (c config) handleBitbucketOAuthCallback(w http.ResponseWriter, r *http.Requ
 	}
 	_ = json.Unmarshal(body, &tok)
 	if tok.AccessToken == "" {
-		bbCallbackPage(w, "トークン交換に失敗: "+tok.Error+" "+tok.ErrorDesc)
+		bbCallbackPage(w, t.tokenExchangeFailed+tok.Error+" "+tok.ErrorDesc)
 		return
 	}
 
@@ -142,7 +143,7 @@ func (c config) handleBitbucketOAuthCallback(w http.ResponseWriter, r *http.Requ
 	})
 	rt, aerr := c.mgr.resolve(r.Context(), st.user, "", st.tenant)
 	if aerr != nil {
-		bbCallbackPage(w, "Workspace の解決に失敗しました: "+aerr.message)
+		bbCallbackPage(w, t.workspaceResolveFailed+aerr.message)
 		return
 	}
 	areq, _ := http.NewRequest("PUT", rt.Endpoint()+"/connections/git/bitbucket/oauth", strings.NewReader(string(payload)))
@@ -152,16 +153,47 @@ func (c config) handleBitbucketOAuthCallback(w http.ResponseWriter, r *http.Requ
 	}
 	aresp, err := http.DefaultClient.Do(areq)
 	if err != nil {
-		bbCallbackPage(w, "保存に失敗（Workspace Agent に到達できません。Workspace は起動していますか）: "+err.Error())
+		bbCallbackPage(w, t.saveUnreachable+err.Error())
 		return
 	}
 	defer aresp.Body.Close()
 	if aresp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(aresp.Body)
-		bbCallbackPage(w, "保存に失敗: "+string(b))
+		bbCallbackPage(w, t.saveFailed+string(b))
 		return
 	}
-	bbCallbackPage(w, "Bitbucket 接続が完了しました。このタブを閉じて Console に戻ってください。")
+	bbCallbackPage(w, t.success)
+}
+
+// bbText holds the localized strings for the CP-rendered Bitbucket OAuth callback
+// page (docs/28 P3). The detail-bearing entries are prefixes; the underlying error
+// detail is appended verbatim. ja is the default; en is served when Accept-Language
+// prefers English (preferredUILang, defined in oauth_google.go).
+type bbStrings struct {
+	stateMismatch, noCode                                                    string
+	tokenExchangeFailed, workspaceResolveFailed, saveUnreachable, saveFailed string
+	success                                                                  string
+}
+
+var bbText = map[string]bbStrings{
+	"ja": {
+		stateMismatch:          "認証エラー: state が一致しません。Console からやり直してください。",
+		noCode:                 "認証エラー: code がありません（承認が拒否された可能性）。",
+		tokenExchangeFailed:    "トークン交換に失敗: ",
+		workspaceResolveFailed: "Workspace の解決に失敗しました: ",
+		saveUnreachable:        "保存に失敗（Workspace Agent に到達できません。Workspace は起動していますか）: ",
+		saveFailed:             "保存に失敗: ",
+		success:                "Bitbucket 接続が完了しました。このタブを閉じて Console に戻ってください。",
+	},
+	"en": {
+		stateMismatch:          "Authentication error: state mismatch. Please retry from the Console.",
+		noCode:                 "Authentication error: no code (authorization may have been denied).",
+		tokenExchangeFailed:    "Token exchange failed: ",
+		workspaceResolveFailed: "Failed to resolve the workspace: ",
+		saveUnreachable:        "Save failed (can't reach the Workspace Agent — is the Workspace running?): ",
+		saveFailed:             "Save failed: ",
+		success:                "Bitbucket connection complete. Close this tab and return to the Console.",
+	},
 }
 
 func bbCallbackPage(w http.ResponseWriter, msg string) {

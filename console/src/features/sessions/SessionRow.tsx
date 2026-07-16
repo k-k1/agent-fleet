@@ -17,6 +17,7 @@ import { copyText } from "../../lib/clipboard.ts";
 import { placeFixed } from "../../lib/placeFixed.ts";
 import { usePaneHover } from "../../lib/panehover.tsx";
 import { kindIcon, kindLabel, kindClass } from "../../lib/sessionkind.ts";
+import { useT } from "../../lib/i18n/index.ts";
 import { displayName, stateInfo, exitLabel } from "../../lib/sessionview.ts";
 import { agentOf } from "../../agents/registry.ts";
 import { useLayoutStore } from "../../layout/store.ts";
@@ -52,6 +53,7 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
   const openSsmResume = useSessionUI((u) => u.openSsmResume);
   const { hover, setHover } = usePaneHover();
   const toast = useToast();
+  const tr = useT();
   const menuRef = useRef<HTMLDivElement>(null);
   const menuElRef = useRef<HTMLDivElement>(null);
   const menuBtnRef = useRef<HTMLButtonElement>(null);
@@ -72,7 +74,7 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
   // row tooltip. The menu label shows the concrete value, not jargon ("slug").
   const copyId = () => {
     void copyText(s.name).then((ok) =>
-      ok ? toast(`IDをコピーしました: ${s.name}`, { kind: "success" }) : toast("コピーに失敗しました"),
+      ok ? toast(tr("srow.id_copied", { name: s.name }), { kind: "success" }) : toast(tr("common.copy_failed")),
     );
   };
 
@@ -119,11 +121,11 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
           displayName(s) +
           "\n" +
           (dead
-            ? "作業フォルダが存在しないため再開できません"
+            ? tr("srow.cant_resume")
             : !s.alive
               ? (ex ? ex.hint + "\n" : "") +
-                "停止中（クリックで履歴を閲覧 / Ctrl・中クリックで新ペイン）"
-              : (s.dir || "") + "（Ctrl/中クリックで新ペインに開く）") +
+                tr("srow.stopped_hint")
+              : (s.dir || "") + tr("srow.open_pane_suffix")) +
           `\n${kindLabel(s.kind)} · ${st.text}\nID: ${s.name}`
         }
         aria-disabled={dead || undefined}
@@ -167,13 +169,13 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
         {s.branchDrift && (
           <span
             className="sess-drift"
-            title={`このセッションの作業コピーは起動時のブランチ「${s.branch}」から「${s.currentBranch}」へ切り替わっています。稼働中エージェントの作業ツリーが入れ替わり、編集や差分が食い違っている可能性があります。`}
+            title={tr("srow.branch_switched", { from: s.branch ?? "", to: s.currentBranch ?? "" })}
           >
             <Icon name="warning" /> {s.currentBranch}
           </span>
         )}
         {speaking && (
-          <Icon name="unmute" className="sess-speaking" title="このセッションの回答を読み上げ中" />
+          <Icon name="unmute" className="sess-speaking" title={tr("srow.speaking")} />
         )}
         <span className={"session-state " + st.cls + (loud ? "" : " mini")} title={st.text}>
           <Icon name={st.icon} spin={st.spin} />
@@ -189,7 +191,7 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
               key={o.id}
               type="button"
               className={"rail-ord " + ordClass(o.ordinal)}
-              title={`ペイン${o.ordinal}にフォーカス`}
+              title={tr("common.focus_pane", { ordinal: o.ordinal })}
               onClick={(e) => {
                 e.stopPropagation();
                 setActive(o.id);
@@ -204,7 +206,7 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
       )}
       {!readOnly && actions && (
         <div className="sess-menu-wrap" ref={menuOpen ? menuRef : undefined}>
-          <button type="button" className="sess-menu-btn" title="メニュー" ref={menuBtnRef} onClick={() => setMenuOpen((v) => !v)}>
+          <button type="button" className="sess-menu-btn" title={tr("srow.menu")} ref={menuBtnRef} onClick={() => setMenuOpen((v) => !v)}>
             <Icon name="ellipsis" />
           </button>
           {menuOpen &&
@@ -222,7 +224,7 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
                       else openSessionTerminal(s.name);
                     }}
                   >
-                    <Icon name="play" /> 再開する
+                    <Icon name="play" /> {tr("srow.resume")}
                   </button>
                 )}
                 {!s.alive && !dead && running && s.kind === "ssm" && (
@@ -234,7 +236,7 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
                       openSsmResume(s.name, true);
                     }}
                   >
-                    <Icon name="key" /> 再ログインして再開
+                    <Icon name="key" /> {tr("srow.relogin_resume")}
                   </button>
                 )}
                 {s.alive && (
@@ -246,7 +248,7 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
                       void actions.halt(s.name, displayName(s));
                     }}
                   >
-                    <Icon name="debug-stop" /> 停止する（あとで再開できる）
+                    <Icon name="debug-stop" /> {tr("srow.stop")}
                   </button>
                 )}
                 {!dead && running && agentOf(s.kind).managedDriver && (
@@ -259,7 +261,7 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
                     }}
                   >
                     <Icon name={s.driver === "managed" ? "terminal" : "server-process"} />
-                    {s.driver === "managed" ? "CLI (TUI) ドライバに切り替え" : "Managed ドライバに切り替え"}
+                    {s.driver === "managed" ? tr("sess.switch_to_tui") : tr("sess.switch_to_managed")}
                   </button>
                 )}
                 {s.remoteUrl && (
@@ -271,7 +273,7 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
                       window.open(s.remoteUrl, "_blank", "noopener");
                     }}
                   >
-                    <Icon name="link-external" /> リモートセッションを開く
+                    <Icon name="link-external" /> {tr("srow.open_remote")}
                   </button>
                 )}
                 <button
@@ -282,7 +284,7 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
                     copyId();
                   }}
                 >
-                  <Icon name="copy" /> ID（{s.name}）をコピー
+                  <Icon name="copy" /> {tr("srow.copy_id", { name: s.name })}
                 </button>
                 <button
                   type="button"
@@ -292,7 +294,7 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
                     openRename(s);
                   }}
                 >
-                  <Icon name="edit" /> タイトルを変更
+                  <Icon name="edit" /> {tr("srow.rename")}
                 </button>
                 {/* Worktree sessions only: rename the worktree's branch (deferred
                     naming); AI suggestion uses THIS session. */}
@@ -305,7 +307,7 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
                       openBranchRename(s);
                     }}
                   >
-                    <Icon name="repo-forked" /> ブランチ名を変更
+                    <Icon name="repo-forked" /> {tr("srow.rename_branch")}
                   </button>
                 )}
                 {agentOf(s.kind).caps.fork && !dead && running && (
@@ -317,7 +319,7 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
                       void actions.fork(s.name);
                     }}
                   >
-                    <Icon name="git-branch" /> 分岐（会話を引き継いで新規）
+                    <Icon name="git-branch" /> {tr("srow.fork")}
                   </button>
                 )}
                 {agentOf(s.kind).caps.ephemeral ? (
@@ -329,7 +331,7 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
                       void actions.deleteSession(s);
                     }}
                   >
-                    <Icon name="trash" /> 削除する
+                    <Icon name="trash" /> {tr("common.delete_do")}
                   </button>
                 ) : (
                   <button
@@ -340,7 +342,7 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
                       void actions.archive(s);
                     }}
                   >
-                    <Icon name="archive" /> アーカイブする（一覧から消す）
+                    <Icon name="archive" /> {tr("srow.archive")}
                   </button>
                 )}
                 {!dead && (
@@ -352,7 +354,7 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
                       void actions.recreate(s.name, displayName(s));
                     }}
                   >
-                    <Icon name="refresh" /> 作り直す（今の会話はアーカイブへ）
+                    <Icon name="refresh" /> {tr("srow.recreate")}
                   </button>
                 )}
               </div>,

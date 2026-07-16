@@ -9,6 +9,7 @@
 import { createContext, useCallback, useContext, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { Icon } from "./Icon.tsx";
+import { useT } from "../lib/i18n/index.ts";
 import { pushToastLog } from "../lib/toastLog.ts";
 
 export type ToastKind = "error" | "warn" | "info" | "success";
@@ -43,6 +44,7 @@ export const TOAST_ICONS: Record<ToastKind, string> = {
 };
 
 export function ToastProvider({ children }: { children: ReactNode }) {
+  const tr = useT();
   const [items, setItems] = useState<ToastItem[]>([]);
   const seq = useRef(0);
 
@@ -79,7 +81,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
             >
               <Icon name={TOAST_ICONS[t.kind]} />
               <span className="ui-toast-msg">{t.message}</span>
-              <button type="button" className="ui-toast-x" title="閉じる" onClick={() => remove(t.id)}>
+              <button type="button" className="ui-toast-x" title={tr("ui.close")} onClick={() => remove(t.id)}>
                 <Icon name="close" />
               </button>
             </div>

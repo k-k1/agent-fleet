@@ -334,7 +334,7 @@ func handleAssistantsList(w http.ResponseWriter, r *http.Request) {
 func handleAssistantGet(w http.ResponseWriter, r *http.Request) {
 	a, err := getAssistant(r.PathValue("id"))
 	if err != nil {
-		httpx.WriteErr(w, http.StatusNotFound, "not_found", "アシスタントが見つかりません")
+		httpx.WriteErr(w, http.StatusNotFound, errCodeAssistantNotFound, "assistant not found")
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, a)
@@ -415,12 +415,12 @@ func handleAssistantCreate(w http.ResponseWriter, r *http.Request) {
 func handleAssistantUpdate(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if isBuiltinID(id) {
-		httpx.WriteErr(w, http.StatusForbidden, "builtin", "ビルトインは編集できません")
+		httpx.WriteErr(w, http.StatusForbidden, errCodeAssistantBuiltinEdit, "builtin assistants cannot be edited")
 		return
 	}
 	a, err := loadUserAssistant(id)
 	if err != nil {
-		httpx.WriteErr(w, http.StatusNotFound, "not_found", "アシスタントが見つかりません")
+		httpx.WriteErr(w, http.StatusNotFound, errCodeAssistantNotFound, "assistant not found")
 		return
 	}
 	var in assistantInput
@@ -442,7 +442,7 @@ func handleAssistantUpdate(w http.ResponseWriter, r *http.Request) {
 func handleAssistantDelete(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if isBuiltinID(id) {
-		httpx.WriteErr(w, http.StatusForbidden, "builtin", "ビルトインは削除できません")
+		httpx.WriteErr(w, http.StatusForbidden, errCodeAssistantBuiltinDelete, "builtin assistants cannot be deleted")
 		return
 	}
 	if !validConvID(id) {

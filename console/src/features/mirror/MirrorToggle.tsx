@@ -1,4 +1,5 @@
 import { Icon } from "../../ui/Icon.tsx";
+import { useT } from "../../lib/i18n/index.ts";
 
 // Segmented ターミナル/チャット switch, shared by the terminal pane header and the
 // mirror header so the control looks identical in both (like FileView's md-toggle).
@@ -17,16 +18,17 @@ interface MirrorToggleProps {
 }
 
 export function MirrorToggle({ mirror, onToggle, running = true }: MirrorToggleProps) {
+  const tr = useT();
   return (
     <span className="ui-seg sm md-toggle mirror-toggle sel-scope">
       <button
         type="button"
         className={"seg-btn" + (mirror ? " active" : "")}
-        title="チャット"
+        title={tr("mgr.chat")}
         onClick={() => onToggle?.(true)}
       >
         <Icon name="comment-discussion" />
-        <span className="seg-label">チャット</span>
+        <span className="seg-label">{tr("mgr.chat")}</span>
       </button>
       <button
         type="button"
@@ -34,12 +36,12 @@ export function MirrorToggle({ mirror, onToggle, running = true }: MirrorToggleP
         // Switching to the terminal attaches (resumes) the session, which needs the
         // workspace running. While it's stopped, disable it — otherwise the resume
         // mask would spin "再開中…" forever (attach is gated on running).
-        title={running ? "ターミナル" : "ターミナル（ワークスペース停止中）"}
+        title={running ? tr("mgr.terminal") : tr("mgr.terminal_stopped")}
         disabled={!running}
         onClick={() => onToggle?.(false)}
       >
         <Icon name="terminal" />
-        <span className="seg-label">ターミナル</span>
+        <span className="seg-label">{tr("mgr.terminal")}</span>
       </button>
     </span>
   );

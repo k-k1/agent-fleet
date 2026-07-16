@@ -7,6 +7,7 @@
 // sessions polling. History (back/forward) traverses layout states.
 import { useEffect, useRef, useState } from "react";
 import { useTenantStore } from "../core/store/tenant.ts";
+import { useT } from "../lib/i18n/index.ts";
 import { useWorkspaceStore, startWorkspacePolling } from "../core/store/workspace.ts";
 import { useLayoutStore, wireLayoutHistory } from "../layout/store.ts";
 import { wireKeys } from "../features/keys/dispatcher.ts";
@@ -70,6 +71,7 @@ function wireWorkspaceRefresh(): () => void {
 }
 
 export function App() {
+  const tr = useT();
   const tenant = useTenantStore((s) => s.tenant);
   const layout = useLayoutStore((s) => s.layout);
   const settingsOpen = useSettingsUI((s) => s.settingsOpen);
@@ -308,11 +310,11 @@ export function App() {
               </>
             ) : (
               <>
-                <StoppedRailSection id="assistant" title="アシスタント" icon="comment-discussion" />
+                <StoppedRailSection id="assistant" title={tr("ui.assistant")} icon="comment-discussion" />
                 <MemoQueueSection />
-                <StoppedRailSection id="repos" title="リポジトリ" icon="repo" />
+                <StoppedRailSection id="repos" title={tr("ui.repositories")} icon="repo" />
                 <StoppedSessionsSection />
-                <StoppedRailSection id="files" title="ファイル" icon="files" defaultOpen={false} />
+                <StoppedRailSection id="files" title={tr("ui.files")} icon="files" defaultOpen={false} />
               </>
             )}
           </div>
@@ -354,9 +356,10 @@ function StoppedRailSection({
   icon: string;
   defaultOpen?: boolean;
 }) {
+  const tr = useT();
   return (
     <Section id={id} title={title} icon={icon} defaultOpen={defaultOpen}>
-      <div className="section-empty">ワークスペースを起動すると表示されます。</div>
+      <div className="section-empty">{tr("ui.starts_when_workspace_running")}</div>
     </Section>
   );
 }

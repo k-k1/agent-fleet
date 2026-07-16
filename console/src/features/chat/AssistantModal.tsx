@@ -8,6 +8,7 @@ import type { SessionKind } from "../../types/session.ts";
 import type { Assistant, AssistantInput, ToolGrant } from "../../types/assistant.ts";
 import { readerVoiceChoices } from "./tts.ts";
 import { loadSpeakers } from "./ttsSpeakers.ts";
+import { useT, type MsgKey } from "../../lib/i18n/index.ts";
 
 // AssistantModal creates or edits a user-defined assistant template (docs/19 Q2):
 // name, backend agent, optional model, a persona (system prompt), a tool grant, and
@@ -21,18 +22,10 @@ const chatKinds: SessionKind[] = SESSION_KINDS.filter((k) => AGENTS[k].caps.head
 // A small palette of codicons a user can tag an assistant with (kept short on purpose).
 const ICONS = ["comment-discussion", "sparkle", "rocket", "globe", "book", "beaker", "heart", "star-full"];
 
-const TOOLS: { value: ToolGrant; label: string; help: string }[] = [
-  { value: "none", label: "なし", help: "外部ツールなし。チャットで直接回答します。" },
-  {
-    value: "af_read",
-    label: "AF 読み取り",
-    help: "自分のワークスペースのセッション一覧・状態・出力を読み取れます（書き込みは不可）。",
-  },
-  {
-    value: "af_write",
-    label: "AF 書き込み",
-    help: "読み取りに加え、セッションへプロンプトを送信できます（作業の代行）。信頼できる用途にのみ許可してください。",
-  },
+const TOOLS: { value: ToolGrant; labelKey: MsgKey; helpKey: MsgKey }[] = [
+  { value: "none", labelKey: "asst.tool_none", helpKey: "asst.tool_none_help" },
+  { value: "af_read", labelKey: "asst.tool_read", helpKey: "asst.tool_read_help" },
+  { value: "af_write", labelKey: "asst.tool_write", helpKey: "asst.tool_write_help" },
 ];
 
 interface AssistantModalProps {
@@ -42,6 +35,7 @@ interface AssistantModalProps {
 }
 
 export function AssistantModal({ initial, onClose, onSave }: AssistantModalProps) {
+  const tr = useT();
   const [name, setName] = useState(initial?.name ?? "");
   const [description, setDescription] = useState(initial?.description ?? "");
   const [icon, setIcon] = useState(initial?.icon ?? ICONS[0]);
@@ -62,7 +56,7 @@ export function AssistantModal({ initial, onClose, onSave }: AssistantModalProps
     };
   }, []);
   // 先頭の「設定の話者」を「自動」に読み替える（アシスタントの "" = プールから自動割り当て）。
-  const voiceChoices: [string, string][] = [["", "自動（キャラプールから）"], ...readerVoiceChoices().slice(1)];
+  const voiceChoices: [string, string][] = [["", tr("asst.voice_auto")], ...readerVoiceChoices().slice(1)];
   if (voice && !voiceChoices.some(([v]) => v === voice)) voiceChoices.push([voice, voice]); // プール外の保存値も表示
 
   const canSubmit = name.trim().length > 0 && !busy;
@@ -94,7 +88,7 @@ export function AssistantModal({ initial, onClose, onSave }: AssistantModalProps
 
   return (
     <Modal
-      title={initial ? "アシスタントを編集" : "アシスタントを作成"}
+      title={initial ? tr("asst.edit_assistant") : tr("asst.create_assistant")}
       onClose={onClose}
       className="session-modal"
       as="form"
@@ -103,28 +97,28 @@ export function AssistantModal({ initial, onClose, onSave }: AssistantModalProps
     >
       <div className="ui-modal-body">
         <div className="ui-field">
-          <div className="ui-field-label">名前</div>
+          <div className="ui-field-label">{tr("asst.name")}</div>
           <label className="ui-field">
-            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="例: リリースノート翻訳" autoFocus />
+            <input value={name} onChange={(e) => setName(e.target.value)} placeholder={tr("asst.name_ph")} autoFocus />
           </label>
         </div>
 
         <div className="ui-field">
-          <div className="ui-field-label">説明（会話開始時の挨拶）</div>
-          <div className="ui-field-hint">会話を始める前に表示される自己紹介です。何ができるかを一言で。</div>
+          <div className="ui-field-label">{tr("asst.desc_label")}</div>
+          <div className="ui-field-hint">{tr("asst.desc_hint")}</div>
           <label className="ui-field">
             <textarea
               className="assistant-persona"
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               rows={2}
-              placeholder="例: 文章を渡してください。日本語↔英語を翻訳します。"
+              placeholder={tr("asst.desc_ph")}
             />
           </label>
         </div>
 
         <div className="ui-field">
-          <div className="ui-field-label">アイコン</div>
+          <div className="ui-field-label">{tr("asst.icon")}</div>
           <div className="assistant-icon-pick">
             {ICONS.map((ic) => (
               <button
@@ -142,7 +136,7 @@ export function AssistantModal({ initial, onClose, onSave }: AssistantModalProps
 
         {chatKinds.length > 1 && (
           <div className="ui-field">
-            <div className="ui-field-label">エージェント</div>
+            <div className="ui-field-label">{tr("asst.agent")}</div>
             <div className="ui-seg">
               {chatKinds.map((k) => (
                 <button
@@ -159,18 +153,15 @@ export function AssistantModal({ initial, onClose, onSave }: AssistantModalProps
         )}
 
         <div className="ui-field">
-          <div className="ui-field-label">モデル（任意）</div>
+          <div className="ui-field-label">{tr("asst.model")}</div>
           <label className="ui-field">
-            <input value={model} onChange={(e) => setModel(e.target.value)} placeholder="既定モデル" />
+            <input value={model} onChange={(e) => setModel(e.target.value)} placeholder={tr("asst.model_ph")} />
           </label>
         </div>
 
         <div className="ui-field">
-          <div className="ui-field-label">読み上げの声（任意）</div>
-          <div className="ui-field-hint">
-            このアシスタントの回答を読み上げるときの声。「自動」は読み上げ設定のキャラプールから固定で
-            割り当てます（「セッションごとに声を変える」が ON のとき。OFF なら設定の話者）。
-          </div>
+          <div className="ui-field-label">{tr("asst.voice_label")}</div>
+          <div className="ui-field-hint">{tr("asst.voice_hint")}</div>
           <label className="ui-field">
             <select value={voice} onChange={(e) => setVoice(e.target.value)}>
               {voiceChoices.map(([v, label]) => (
@@ -183,21 +174,21 @@ export function AssistantModal({ initial, onClose, onSave }: AssistantModalProps
         </div>
 
         <div className="ui-field">
-          <div className="ui-field-label">ペルソナ（システムプロンプト）</div>
-          <div className="ui-field-hint">アシスタントの役割・口調・制約を書きます。空欄なら汎用アシスタントとして動きます。</div>
+          <div className="ui-field-label">{tr("asst.persona_label")}</div>
+          <div className="ui-field-hint">{tr("asst.persona_hint")}</div>
           <label className="ui-field">
             <textarea
               className="assistant-persona"
               value={persona}
               onChange={(e) => setPersona(e.target.value)}
               rows={5}
-              placeholder="例: あなたは技術文書の翻訳者です。訳文のみを返してください。"
+              placeholder={tr("asst.persona_ph")}
             />
           </label>
         </div>
 
         <div className="ui-field">
-          <div className="ui-field-label">ツール許可</div>
+          <div className="ui-field-label">{tr("asst.tools_label")}</div>
           <div className="ui-seg">
             {TOOLS.map((t) => (
               <button
@@ -206,18 +197,16 @@ export function AssistantModal({ initial, onClose, onSave }: AssistantModalProps
                 className={"seg-btn" + (tools === t.value ? " active" : "")}
                 onClick={() => setTools(t.value)}
               >
-                {t.label}
+                {tr(t.labelKey)}
               </button>
             ))}
           </div>
-          <div className="ui-field-hint">{TOOLS.find((t) => t.value === tools)?.help}</div>
+          <div className="ui-field-hint">{tr(TOOLS.find((t) => t.value === tools)?.helpKey ?? "asst.tool_none_help")}</div>
         </div>
 
         <div className="ui-field">
-          <div className="ui-field-label">知識ディレクトリ（任意・1行に1つ）</div>
-          <div className="ui-field-hint">
-            参照させたいドキュメントのあるディレクトリ（コンテナ内の絶対パス）を指定すると、会話で読み取れます。
-          </div>
+          <div className="ui-field-label">{tr("asst.knowledge_label")}</div>
+          <div className="ui-field-hint">{tr("asst.knowledge_hint")}</div>
           <label className="ui-field">
             <textarea
               className="assistant-knowledge"
@@ -232,10 +221,10 @@ export function AssistantModal({ initial, onClose, onSave }: AssistantModalProps
 
       <footer className="ui-modal-foot">
         <button type="button" className="ui-btn ui-btn-ghost" onClick={onClose}>
-          キャンセル
+          {tr("asst.cancel")}
         </button>
         <button type="submit" className="ui-btn ui-btn-primary" disabled={!canSubmit}>
-          {initial ? "保存" : "作成"}
+          {initial ? tr("asst.save") : tr("asst.create")}
         </button>
       </footer>
     </Modal>

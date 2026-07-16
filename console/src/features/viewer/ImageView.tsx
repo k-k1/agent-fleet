@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { WheelEvent as RWheelEvent, MouseEvent as RMouseEvent, PointerEvent as RPointerEvent } from "react";
+import { useT } from "../../lib/i18n/index.ts";
 
 // ImageView previews a single image (CodeLeaf-style affordances): the image is
 // fit to the viewport, the wheel / pinch zooms (anchored at the pointer), drag
@@ -23,6 +24,7 @@ interface ImageViewProps {
 type ClientPoint = { clientX: number; clientY: number };
 
 export function ImageView({ src, alt, onLoad }: ImageViewProps) {
+  const tr = useT();
   const boxRef = useRef<HTMLDivElement>(null);
   const [scale, setScale] = useState(1);
   const [tx, setTx] = useState(0);
@@ -136,7 +138,7 @@ export function ImageView({ src, alt, onLoad }: ImageViewProps) {
     setTy(0);
   };
 
-  if (broken) return <div className="imgview muted">(画像を表示できません)</div>;
+  if (broken) return <div className="imgview muted">{tr("view.cannot_show_image")}</div>;
 
   return (
     <div
@@ -159,7 +161,7 @@ export function ImageView({ src, alt, onLoad }: ImageViewProps) {
         style={{ transform: `translate(${tx}px, ${ty}px) scale(${scale})` }}
       />
       {scale > 1 && (
-        <button type="button" className="imgview-zoom" onClick={reset} title="フィットに戻す">
+        <button type="button" className="imgview-zoom" onClick={reset} title={tr("view.reset_to_fit")}>
           {Math.round(scale * 100)}%
         </button>
       )}

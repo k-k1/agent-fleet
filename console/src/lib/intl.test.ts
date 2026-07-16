@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { relTime, fmtDateTime, fmtNum, TIME_HM } from "./intl.ts";
+import { relTime, fmtDateTime, fmtNum, compareText, TIME_HM } from "./intl.ts";
 import { setLocale } from "./i18n/index.ts";
 
 const NOW = 1_700_000_000_000; // 固定基準（テスト決定性のため relTime に now を渡す）
@@ -58,5 +58,20 @@ describe("intl.fmtNum", () => {
     expect(fmtNum(1234567)).toBe("1,234,567");
     setLocale("en");
     expect(fmtNum(1234567)).toBe("1,234,567");
+  });
+});
+
+describe("intl.compareText", () => {
+  beforeEach(() => setLocale("en"));
+  it("orders digit runs numerically (repo2 < repo10)", () => {
+    expect(compareText("repo2", "repo10")).toBeLessThan(0);
+    const arr = ["repo10", "repo2", "repo1"].sort(compareText);
+    expect(arr).toEqual(["repo1", "repo2", "repo10"]);
+  });
+  it("is case/accent-insensitive for a stable name order", () => {
+    expect(compareText("Alpha", "alpha")).toBe(0);
+  });
+  it("keeps RFC3339 timestamps in chronological order", () => {
+    expect(compareText("2026-07-16T09:00:00Z", "2026-07-16T10:00:00Z")).toBeLessThan(0);
   });
 });

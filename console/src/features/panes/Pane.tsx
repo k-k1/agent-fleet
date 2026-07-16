@@ -22,6 +22,7 @@ import { DiffView } from "../viewer/DiffView.tsx";
 import type { DiffEdit } from "../viewer/DiffView.tsx";
 import { ChatView } from "../chat/ChatView.tsx";
 import { useSettings } from "../../lib/settings.ts";
+import { useT } from "../../lib/i18n/index.ts";
 import { IconButton } from "../../ui/Button.tsx";
 import { cx } from "../../ui/cx.ts";
 import { isManagedSession } from "../../types/session.ts";
@@ -65,6 +66,7 @@ export function Pane({
   sessionMeta,
   ordinal,
 }: PaneProps) {
+  const tr = useT();
   const paneRef = useRef<HTMLDivElement>(null);
   const isTerm = pane.content.kind === "terminal";
   // Cross-highlight: glow this pane while its rail row / mini-map cell is
@@ -181,7 +183,7 @@ export function Pane({
         <button
           type="button"
           className={cx("pane-grip", ordinal ? "pane-ord " + ordCls : "")}
-          title={ordinal ? `ペイン${ordinal} — ドラッグして他のペインと入れ替え` : "ドラッグして入れ替え"}
+          title={ordinal ? tr("ui.pane_swap_hint", { ordinal }) : tr("ui.drag_to_swap")}
           draggable
           onDragStart={onDragStart}
         >
@@ -192,7 +194,7 @@ export function Pane({
         {canWrap && (
           <IconButton
             icon="word-wrap"
-            label={wrapOn ? "折り返しを解除" : "行を折り返す"}
+            label={wrapOn ? tr("ui.unwrap_lines") : tr("ui.wrap_lines")}
             className={wrapOn ? "on" : ""}
             onClick={() => setPaneWrap(pane.id, !wrapOn)}
           />
@@ -200,7 +202,7 @@ export function Pane({
         {canClose && (
           <IconButton
             icon="close"
-            label="このペインを閉じる（中クリック / Ctrl+クリックで直接閉じる）"
+            label={tr("ui.close_pane_hint")}
             className="pane-close"
             onMouseDown={(e) => e.button === 1 && e.preventDefault()}
             onAuxClick={(e) => {

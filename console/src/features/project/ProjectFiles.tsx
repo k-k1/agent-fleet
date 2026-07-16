@@ -13,6 +13,7 @@ import FileIcon, { DirIcon } from "../../ui/FileIcon.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { EmptyState } from "../../ui/EmptyState.tsx";
 import { useConfirm } from "../../ui/ConfirmProvider.tsx";
+import { t, useT } from "../../lib/i18n/index.ts";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { placeFixed } from "../../lib/placeFixed.ts";
 import { useLayoutStore } from "../../layout/store.ts";
@@ -89,6 +90,7 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo }: Proje
   const focusInput = useFilesFilter((s) => s.focusInput);
   const focusTreeN = useFilesFilter((s) => s.focusTreeN);
   const askConfirm = useConfirm();
+  const tr = useT();
   const toast = useToast();
 
   const ac = activePane(layout)?.content;
@@ -488,6 +490,17 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo }: Proje
         if (!alive) return;
       }
       setSelected(p);
+      // Selecting isn't enough — bring the revealed row into view. The row only
+      // mounts after the ancestor-expand re-render commits, so retry across a few
+      // frames until its <li> exists, then scroll it into the middle of the tree.
+      let tries = 0;
+      const scrollToRow = () => {
+        if (!alive) return;
+        const el = treeRef.current?.querySelector<HTMLElement>(`li[data-path="${CSS.escape(p)}"]`);
+        if (el) el.scrollIntoView({ block: "center" });
+        else if (tries++ < 10) requestAnimationFrame(scrollToRow);
+      };
+      requestAnimationFrame(scrollToRow);
     })();
     return () => {
       alive = false;
@@ -527,14 +540,14 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo }: Proje
       let res = await uploadFiles(dir, files);
       if (res.status === 409 && Array.isArray(res.conflicts) && (res.conflicts as string[]).length) {
         const ok = await askConfirm({
-          title: "ファイルを上書き",
-          body: `${(res.conflicts as string[]).join(", ")} は既に存在します。上書きしますか？`,
-          confirmLabel: "上書きする",
+          title: t("proj.overwrite_title"),
+          body: t("proj.overwrite_body", { names: (res.conflicts as string[]).join(", ") }),
+          confirmLabel: t("proj.overwrite_confirm"),
           danger: true,
         });
         if (ok) res = await uploadFiles(dir, files, { overwrite: true });
       }
-      if (res.error) toast("アップロード失敗: " + ((res.error as { message?: string }).message || res.error));
+      if (res.error) toast(t("proj.upload_failed", { msg: (res.error as { message?: string }).message || String(res.error) }));
       await refreshDir(dir);
       setDropTarget(null);
     },
@@ -563,55 +576,55 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo }: Proje
 
   // --- file ops (right-click menu) ---
   const newFolder = async (parent: string) => {
-    const name = window.prompt(`新しいフォルダ名（作成先: ${baseName(parent)}）`, "");
+    const name = window.prompt(t("proj.new_folder_prompt", { parent: baseName(parent) }), "");
     if (!name || !name.trim()) return;
     const p = joinPath(parent, name.trim());
     const res = await fsMkdir(p);
-    if (res.error) return toast("作成失敗: " + ((res.error as { message?: string }).message || res.error));
+    if (res.error) return toast(t("proj.create_failed", { msg: (res.error as { message?: string }).message || String(res.error) }));
     await refreshDir(parent);
     setSelected(p);
   };
   const newFile = async (parent: string) => {
-    const name = window.prompt(`新しいファイル名（作成先: ${baseName(parent)}）`, "");
+    const name = window.prompt(t("proj.new_file_prompt", { parent: baseName(parent) }), "");
     if (!name || !name.trim()) return;
     const p = joinPath(parent, name.trim());
     const res = await fsNewFile(p);
-    if (res.error) return toast("作成失敗: " + ((res.error as { message?: string }).message || res.error));
+    if (res.error) return toast(t("proj.create_failed", { msg: (res.error as { message?: string }).message || String(res.error) }));
     await refreshDir(parent);
     setSelected(p);
     showFile(p);
   };
   const renameRow = async (row: Row) => {
     const base = baseName(row.path);
-    const name = window.prompt("名前を変更", base);
+    const name = window.prompt(t("proj.rename_prompt"), base);
     if (!name || !name.trim() || name.trim() === base) return;
     const parent = parentOf(row.path);
     const to = joinPath(parent, name.trim());
     const res = await fsRename(row.path, to);
-    if (res.error) return toast("変更失敗: " + ((res.error as { message?: string }).message || res.error));
+    if (res.error) return toast(t("proj.rename_failed", { msg: (res.error as { message?: string }).message || String(res.error) }));
     await refreshDir(parent);
     setSelected(to);
   };
   const deleteRow = async (row: Row) => {
     const ok = await askConfirm({
-      title: "削除",
-      body: `${row.path} を削除します。${row.type === "dir" ? "フォルダの中身ごと削除されます。" : ""}`,
-      confirmLabel: "削除する",
+      title: t("proj.delete_title"),
+      body: t("proj.delete_body", { path: row.path, dirNote: row.type === "dir" ? t("proj.delete_dir_note") : "" }),
+      confirmLabel: t("common.delete_do"),
       danger: true,
     });
     if (!ok) return;
     const res = await fsDelete(row.path);
-    if (res.error) return toast("削除失敗: " + ((res.error as { message?: string }).message || res.error));
+    if (res.error) return toast(t("proj.delete_failed", { msg: (res.error as { message?: string }).message || String(res.error) }));
     await refreshDir(parentOf(row.path));
     setSelected(parentOf(row.path) || null);
   };
   const copyText = (text: string, label: string) => {
     if (navigator.clipboard?.writeText)
       navigator.clipboard.writeText(text).then(
-        () => toast(`${label}をコピーしました`, { kind: "success" }),
-        () => toast("コピーに失敗しました"),
+        () => toast(t("proj.copied", { label }), { kind: "success" }),
+        () => toast(t("common.copy_failed")),
       );
-    else toast("コピーに失敗しました");
+    else toast(t("common.copy_failed"));
   };
 
   // Context menu: open at the cursor; close on outside click / Escape / blur.
@@ -657,7 +670,7 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo }: Proje
         ref={treeRef}
         className={"fstree proj-fstree" + (dropTarget === root ? " drop-root" : "")}
         role="tree"
-        aria-label="ファイル"
+        aria-label={tr("proj.files_aria")}
         tabIndex={0}
         aria-activedescendant={(() => {
           const i = displayRows.findIndex((r) => r.path === selected && navigationRows.includes(r));
@@ -670,19 +683,19 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo }: Proje
         onDrop={onDropTo(root)}
       >
         {!running ? (
-          <EmptyState icon="debug-disconnect" title="ワークスペース停止中" />
+          <EmptyState icon="debug-disconnect" title={tr("mirror.ws_stopped")} />
         ) : searchMode ? (
           searching && !searchRows ? (
-            <EmptyState icon="loading" title="検索中…" />
+            <EmptyState icon="loading" title={tr("start.searching")} />
           ) : displayRows.length === 0 ? (
-            <li className="proj-sub-empty">「{q.trim()}」に一致するファイルはありません</li>
+            <li className="proj-sub-empty">{tr("proj.no_match", { q: q.trim() })}</li>
           ) : null
         ) : entries === null ? (
-          <EmptyState icon="loading" title="読み込み中…" />
+          <EmptyState icon="loading" title={tr("chat.ph_loading")} />
         ) : entries.length === 0 ? (
-          <li className="proj-sub-empty">ファイルなし（ここにドロップでアップロード）</li>
+          <li className="proj-sub-empty">{tr("proj.empty")}</li>
         ) : nq && displayRows.length === 0 ? (
-          <li className="proj-sub-empty">「{q.trim()}」に一致するファイルはありません</li>
+          <li className="proj-sub-empty">{tr("proj.no_match", { q: q.trim() })}</li>
         ) : null}
         {displayRows.map((r, i) => {
           const isOpen = r.type === "dir" && open.has(r.path);
@@ -726,7 +739,7 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo }: Proje
               {...(isDir ? { "aria-expanded": isOpen } : {})}
               className={"fsrow" + (isSel ? " selected" : "") + (isDir && dropTarget === r.path ? " drop-hover" : "")}
               style={{ paddingLeft: 4 + r.depth * 14 }}
-              title={isDir ? undefined : "Ctrl/中クリックで新ペインに開く"}
+              title={isDir ? undefined : tr("proj.open_new_pane")}
               onClick={(e) => {
                 if (!isDir && (e.ctrlKey || e.metaKey)) {
                   setSelected(r.path);
@@ -770,7 +783,7 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo }: Proje
           );
         })}
         {searchMode && searchTrunc && displayRows.length > 0 && (
-          <li className="proj-sub-empty">上限に達しました。絞り込みを追加してください</li>
+          <li className="proj-sub-empty">{tr("proj.limit_reached")}</li>
         )}
       </ul>
       {sticky.rows.length > 0 && (
@@ -788,7 +801,7 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo }: Proje
                 <button
                   type="button"
                   className="fs-sticky-caret"
-                  aria-label={`${r.name}を折りたたむ`}
+                  aria-label={tr("proj.collapse", { name: r.name })}
                   onClick={(e) => {
                     e.stopPropagation();
                     collapse(r.segPaths);
@@ -808,22 +821,22 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo }: Proje
           <ul className="ui-menu files-ctxmenu" ref={menuRef} style={{ left: menu.x, top: menu.y }} role="menu" onMouseDown={(e) => e.stopPropagation()}>
             <li>
               <button type="button" className="ui-menu-item" onClick={() => runMenu(() => void newFile(menuDir))}>
-                <Icon name="new-file" /> 新規ファイル
+                <Icon name="new-file" /> {tr("proj.new_file")}
               </button>
             </li>
             <li>
               <button type="button" className="ui-menu-item" onClick={() => runMenu(() => void newFolder(menuDir))}>
-                <Icon name="new-folder" /> 新規フォルダ
+                <Icon name="new-folder" /> {tr("proj.new_folder")}
               </button>
             </li>
             <li>
-              <button type="button" className="ui-menu-item" onClick={() => runMenu(() => copyText(baseName(menu.row.path), "名前"))}>
-                <Icon name="copy" /> 名前をコピー
+              <button type="button" className="ui-menu-item" onClick={() => runMenu(() => copyText(baseName(menu.row.path), t("proj.name")))}>
+                <Icon name="copy" /> {tr("proj.copy_name")}
               </button>
             </li>
             <li>
-              <button type="button" className="ui-menu-item" onClick={() => runMenu(() => copyText(menu.row.path, "相対パス"))}>
-                <Icon name="copy" /> 相対パスをコピー
+              <button type="button" className="ui-menu-item" onClick={() => runMenu(() => copyText(menu.row.path, t("proj.rel_path")))}>
+                <Icon name="copy" /> {tr("proj.copy_rel_path")}
               </button>
             </li>
             {menu.row.type === "file" && (
@@ -833,25 +846,25 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo }: Proje
                   className="ui-menu-item"
                   onClick={() => runMenu(() => openTarget({ content: { kind: "read", filePath: menu.row.path } }))}
                 >
-                  <Icon name="book" /> 朗読で開く
+                  <Icon name="book" /> {tr("proj.open_reader")}
                 </button>
               </li>
             )}
             {menu.row.type === "file" && (
               <li>
                 <a className="ui-menu-item files-ctx-a" href={downloadURL(menu.row.path)} download onClick={() => setMenu(null)}>
-                  <Icon name="cloud-download" /> ダウンロード
+                  <Icon name="cloud-download" /> {tr("proj.download")}
                 </a>
               </li>
             )}
             <li>
               <button type="button" className="ui-menu-item" onClick={() => runMenu(() => void renameRow(menu.row))}>
-                <Icon name="edit" /> 名前を変更
+                <Icon name="edit" /> {tr("proj.rename")}
               </button>
             </li>
             <li>
               <button type="button" className="ui-menu-item danger" onClick={() => runMenu(() => void deleteRow(menu.row))}>
-                <Icon name="trash" /> 削除
+                <Icon name="trash" /> {tr("common.delete")}
               </button>
             </li>
           </ul>,

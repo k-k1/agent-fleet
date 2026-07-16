@@ -105,7 +105,7 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
       <div className="topbar-left">
         <button
           className="nav-toggle"
-          title={"左パネル: クリックで開閉 / ダブルクリックで表示切替（Push⇄オーバーレイ）" + hintSuffix("workspace.toggleRail")}
+          title={tr("topbar.nav_toggle") + hintSuffix("workspace.toggleRail")}
           onClick={onHamburger}
         >
           <Icon name="menu" />
@@ -119,10 +119,10 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
           className={"tts-status" + (ttsBusy ? " speaking" : s.ttsEnabled ? "" : " off")}
           title={
             ttsBusy
-              ? "読み上げを停止して OFF"
+              ? tr("topbar.tts.stop_off")
               : s.ttsEnabled
-                ? "音声読み上げ: ON（クリックで OFF）"
-                : "音声読み上げ: OFF（クリックで ON）"
+                ? tr("topbar.tts.on")
+                : tr("topbar.tts.off")
           }
           onClick={() => {
             // 再生中のクリックは「今の1本を止める」だけでなく設定も OFF にする。以前は停止のみ
@@ -149,8 +149,8 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
           {ttsBusy && (
             <>
               <span className="tts-status-lbl">
-                {ttsPreparing ? "音声を生成中" : "読み上げ中"}
-                {ttsSource ? `・${ttsSource}` : ""}
+                {ttsPreparing ? tr("topbar.tts.generating") : tr("topbar.tts.speaking")}
+                {ttsSource ? `${tr("ui.sep")}${ttsSource}` : ""}
                 {ttsVoice ? `（${ttsVoice}）` : ""}
               </span>
               <Icon name="debug-stop" />
@@ -159,14 +159,14 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
         </button>
         <button
           className="gear fs-toggle"
-          title={fullscreen ? "全画面解除" : "全画面表示"}
+          title={fullscreen ? tr("topbar.fullscreen_exit") : tr("topbar.fullscreen_enter")}
           onClick={toggleFullscreen}
         >
           <Icon name={fullscreen ? "screen-normal" : "screen-full"} />
         </button>
         {/* PWA (standalone) 起動時はブラウザの再読み込みUIが無いので、代替のリロードボタンを出す。 */}
         {isStandalonePWA() && (
-          <button className="gear reload-toggle" title="再読み込み" onClick={() => window.location.reload()}>
+          <button className="gear reload-toggle" title={tr("topbar.reload")} onClick={() => window.location.reload()}>
             <Icon name="refresh" />
           </button>
         )}
@@ -174,14 +174,14 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
         <div className="acct appr" ref={apprRef}>
           <button
             className="gear appr-btn"
-            title="外観（テーマ・配色）"
+            title={tr("topbar.appearance_title")}
             onClick={() => setApprOpen((o) => !o)}
           >
             <Icon name="paintcan" />
           </button>
           {apprOpen && (
             <div className="acct-menu appr-menu" role="menu">
-              <div className="acct-email">外観</div>
+              <div className="acct-email">{tr("topbar.appearance")}</div>
               <div className="acct-theme">
                 <div className="ui-seg choice-seg acct-theme-seg">
                   {LOCALES.map((l) => (
@@ -208,7 +208,7 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
                   ))}
                 </div>
                 {SURFACE_TARGETS.map((t) => (
-                  <SwatchRow key={t.key} label={t.short} theme={s.theme} value={s[t.key]} onPick={(v) => setSetting(t.key, v)} />
+                  <SwatchRow key={t.key} label={tr(t.shortKey)} theme={s.theme} value={s[t.key]} onPick={(v) => setSetting(t.key, v)} />
                 ))}
               </div>
             </div>
@@ -228,7 +228,7 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
                 {showPicker && (
                   <>
                     <label className="acct-tenant">
-                      <span className="acct-tenant-lbl">テナント</span>
+                      <span className="acct-tenant-lbl">{tr("topbar.tenant")}</span>
                       <select value={tenant} onChange={(e) => selectTenant(e.target.value)}>
                         {tenants.map((t) => (
                           <option key={t.slug} value={t.slug}>
@@ -242,14 +242,14 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
                 )}
                 {/* 初回カードを「あとで」で閉じたあとの再入口（起動導線 Ph1）。 */}
                 <button className="acct-item" role="menuitem" onClick={() => run(openGuide)}>
-                  <Icon name="rocket" /> はじめかたガイド
+                  <Icon name="rocket" /> {tr("topbar.guide")}
                 </button>
                 <button className="acct-item" role="menuitem" onClick={() => run(() => openSettings())}>
-                  <Icon name="gear" /> 設定
+                  <Icon name="gear" /> {tr("topbar.settings")}
                 </button>
                 {(superAdmin || tenants?.some((t) => t.role === "tenant_admin")) && (
                   <button className="acct-item" role="menuitem" onClick={() => run(openAdmin)}>
-                    <Icon name="shield" /> 管理
+                    <Icon name="shield" /> {tr("topbar.admin")}
                   </button>
                 )}
                 {canLogout && (
@@ -266,7 +266,7 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
                         location.assign(rel("oauth2/logout"));
                       }}
                     >
-                      <Icon name="sign-out" /> ログアウト
+                      <Icon name="sign-out" /> {tr("topbar.logout")}
                     </button>
                   </>
                 )}
@@ -274,14 +274,14 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
                     guessing which build a phone is on). Selectable for easy reporting. */}
                 <div className="acct-sep" />
                 <div className="acct-build" title={buildInfo.sha ? `commit ${buildInfo.sha}` : undefined}>
-                  <Icon name="tag" /> ビルド {buildLabel()}
+                  <Icon name="tag" /> {tr("topbar.build", { label: buildLabel() })}
                 </div>
               </div>
             )}
           </div>
         ) : (
-          <button className="gear" title="設定（表示 / ワークスペース / エージェント / Git / AWS SSM / MCP）" onClick={() => openSettings()}>
-            <Icon name="gear" /> 設定
+          <button className="gear" title={tr("topbar.settings_title")} onClick={() => openSettings()}>
+            <Icon name="gear" /> {tr("topbar.settings")}
           </button>
         )}
       </div>

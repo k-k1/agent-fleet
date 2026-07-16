@@ -3,6 +3,7 @@
 // clone-and-continue stage (起動導線 Ph2). Refreshes the repo store and reveals
 // the new working copy in Files; returns its folder name ("" when unknown).
 import { apiJSON, errText } from "../../core/api/client.ts";
+import { t } from "../../lib/i18n/index.ts";
 import { useReposStore } from "./store.ts";
 import { useFilesStore } from "../files/store.ts";
 
@@ -37,7 +38,7 @@ export async function cloneRepo(
       await refreshRepos();
       const added = useReposStore.getState().repos.find((r) => !beforeNames.has(r.name));
       if (!added) {
-        toast("クローンに失敗: " + errText(res.error));
+        toast(t("rp.clone_failed", { err: errText(res.error) }));
         return { ok: false, name: "" };
       }
       useFilesStore.getState().revealInFiles("repos/" + added.name);
@@ -48,7 +49,7 @@ export async function cloneRepo(
     else useFilesStore.getState().bump();
     return { ok: true, name: res?.name || "" };
   } catch (e) {
-    toast("クローンに失敗: " + e);
+    toast(t("rp.clone_failed", { err: String(e) }));
     return { ok: false, name: "" };
   }
 }

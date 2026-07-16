@@ -15,6 +15,7 @@ import { wsURL, rel } from "../core/api/client.ts";
 import { isAuthExpired } from "../core/auth/authExpired.ts";
 import { getSettings, subscribe as subscribeSettings, fontStack } from "../lib/settings.ts";
 import { askConfirm } from "../ui/confirmBridge.ts";
+import { t as tr } from "../lib/i18n/index.ts";
 
 // One entry per pane. { term, fitAddon, ws, session, sessionListeners, ro }.
 // A placeholder (from an early onSession) may hold only session + sessionListeners,
@@ -94,13 +95,13 @@ function pasteClipboard(term: Terminal) {
       }
       const lines = t.split(/\r\n|[\r\n]/).length;
       askConfirm({
-        title: "ターミナルに貼り付けますか？",
+        title: tr("onb.paste_confirm_title"),
         body:
-          `クリップボードの ${t.length} 文字` +
-          (newline ? `（${lines} 行）` : "") +
-          " を貼り付けます。" +
-          (newline ? "改行を含むため、シェルではそのまま実行される場合があります。" : ""),
-        confirmLabel: "貼り付け",
+          tr("onb.paste_chars", { count: t.length }) +
+          (newline ? tr("onb.paste_lines", { lines }) : "") +
+          tr("onb.paste_suffix") +
+          (newline ? tr("onb.paste_newline_warn") : ""),
+        confirmLabel: tr("onb.paste_confirm"),
         danger: true,
       }).then((ok) => {
         if (ok) term.paste(t);

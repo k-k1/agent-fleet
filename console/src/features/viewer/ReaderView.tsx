@@ -13,6 +13,7 @@ import { baseName, langFor } from "../../lib/filemeta.ts";
 import FileIcon from "../../ui/FileIcon.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { useSettings, setSetting, READER_FONTS, readerFontStack } from "../../lib/settings.ts";
+import { useLocale, useT } from "../../lib/i18n/index.ts";
 import { startNarration, BLOCK_BEAT, SENT_BEAT, TAME_BEAT, readerVoiceChoices, voiceChoiceOpts, type NarrationHandle } from "../chat/tts.ts";
 import { effectiveDict } from "../chat/ttsDict.ts";
 import { loadSpeakers } from "../chat/ttsSpeakers.ts";
@@ -26,7 +27,11 @@ interface FileData {
 }
 
 export function ReaderView({ filePath }: { filePath: string }) {
+  const tr = useT();
   const settings = useSettings();
+  // なろう形式ルビ・縦書きは日本語専用機能なので UI ロケールが ja のときだけ有効化する
+  // （非 ja ではルビ解釈を無効化し縦書きトグルも隠す・docs/28 §2.4）。
+  const ja = useLocale() === "ja";
   const [data, setData] = useState<FileData | null>(null);
   const [err, setErr] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -65,10 +70,10 @@ export function ReaderView({ filePath }: { filePath: string }) {
     api(`api/fs/file?path=${encodeURIComponent(filePath)}`)
       .then((d) => {
         if (!alive) return;
-        if (d && d.error) setErr(d.error.message || "読み込めません");
+        if (d && d.error) setErr(d.error.message || tr("view.cannot_load"));
         else setData(d);
       })
-      .catch(() => alive && setErr("読み込めません"));
+      .catch(() => alive && setErr(tr("view.cannot_load")));
     return () => {
       alive = false;
     };
@@ -84,8 +89,8 @@ export function ReaderView({ filePath }: { filePath: string }) {
     [settings.ttsAbbrevCode, settings.ttsUserDict],
   );
   const units = useMemo(
-    () => (isText ? buildReadUnits(data!.content!, isMarkdown, codeOpts) : []),
-    [isText, data, isMarkdown, codeOpts],
+    () => (isText ? buildReadUnits(data!.content!, isMarkdown, codeOpts, ja) : []),
+    [isText, data, isMarkdown, codeOpts, ja],
   );
   // 読み上げ対象（spoken 非空）の単位に連番を振る。data-si=その連番、active と一致でハイライト。
   const spokenIdx = useMemo(() => {
@@ -114,7 +119,7 @@ export function ReaderView({ filePath }: { filePath: string }) {
     return { texts, origOf, head };
   }, [flat]);
 
-  const vertical = settings.readerVertical;
+  const vertical = ja && settings.readerVertical; // 縦書きは ja 限定（非 ja では常に横書き）
   const ttsOn = settings.ttsEnabled;
   const verticalRef = useRef(vertical);
   verticalRef.current = vertical;
@@ -262,7 +267,7 @@ export function ReaderView({ filePath }: { filePath: string }) {
         <span className="fi-name mono">
           <FileIcon name={baseName(filePath)} /> {baseName(filePath)}
         </span>
-        {isText && <span className="fi-meta muted">{flat.length} 文</span>}
+        {isText && <span className="fi-meta muted">{flat.length} {tr("view.sentences")}</span>}
         {isText && (
           <span className="ui-seg sm md-toggle">
             {!reading ? (
@@ -271,17 +276,17 @@ export function ReaderView({ filePath }: { filePath: string }) {
                 className="seg-btn"
                 onClick={start}
                 disabled={!ttsOn || !flat.length}
-                title={ttsOn ? "冒頭から朗読" : "設定で音声読み上げを有効にしてください"}
+                title={ttsOn ? tr("view.read_from_start") : tr("view.enable_tts_tip")}
               >
-                <Icon name="unmute" /> 朗読
+                <Icon name="unmute" /> {tr("view.read_aloud")}
               </button>
             ) : (
               <>
-                <button type="button" className="seg-btn" onClick={togglePause} title={paused ? "再開" : "一時停止"}>
-                  <Icon name={paused ? "play" : "debug-pause"} /> {paused ? "再開" : "一時停止"}
+                <button type="button" className="seg-btn" onClick={togglePause} title={paused ? tr("view.resume") : tr("view.pause")}>
+                  <Icon name={paused ? "play" : "debug-pause"} /> {paused ? tr("view.resume") : tr("view.pause")}
                 </button>
-                <button type="button" className="seg-btn active" onClick={stop} title="朗読を停止">
-                  <Icon name="debug-stop" /> 停止
+                <button type="button" className="seg-btn active" onClick={stop} title={tr("view.stop_reading")}>
+                  <Icon name="debug-stop" /> {tr("view.stop")}
                 </button>
               </>
             )}
@@ -298,7 +303,7 @@ export function ReaderView({ filePath }: { filePath: string }) {
               handleRef.current?.setVoice(voiceChoiceOpts(v));
             }}
             disabled={!ttsOn}
-            title={ttsOn ? "朗読の声（朗読中に変えると次の文から切り替え）" : "設定で音声読み上げを有効にしてください"}
+            title={ttsOn ? tr("view.reader_voice_tip") : tr("view.enable_tts_tip")}
           >
             {voiceChoices.map(([v, label]) => (
               <option key={v} value={v}>
@@ -307,21 +312,23 @@ export function ReaderView({ filePath }: { filePath: string }) {
             ))}
           </select>
         )}
-        <span className="ui-seg sm md-toggle">
-          <button
-            type="button"
-            className={"seg-btn" + (vertical ? " active" : "")}
-            onClick={() => setSetting("readerVertical", !vertical)}
-            title={vertical ? "横書きに切り替え" : "縦書きに切り替え"}
-          >
-            <Icon name="book" /> {vertical ? "横書き" : "縦書き"}
-          </button>
-        </span>
+        {ja && (
+          <span className="ui-seg sm md-toggle">
+            <button
+              type="button"
+              className={"seg-btn" + (vertical ? " active" : "")}
+              onClick={() => setSetting("readerVertical", !vertical)}
+              title={vertical ? tr("view.switch_horizontal") : tr("view.switch_vertical")}
+            >
+              <Icon name="book" /> {vertical ? tr("view.horizontal") : tr("view.vertical")}
+            </button>
+          </span>
+        )}
         <select
           className="reader-voice reader-font"
           value={settings.readerFont}
           onChange={(e) => setSetting("readerFont", e.target.value)}
-          title="本文フォント"
+          title={tr("view.body_font")}
           style={{ fontFamily: readerFontStack(settings.readerFont) }}
         >
           {READER_FONTS.map((f) => (
@@ -336,11 +343,11 @@ export function ReaderView({ filePath }: { filePath: string }) {
             className="seg-btn"
             onClick={() => setSetting("readerSize", Math.max(9, settings.readerSize - 1))}
             disabled={settings.readerSize <= 9}
-            title="文字を小さく"
+            title={tr("view.smaller_text")}
           >
             <Icon name="dash" />
           </button>
-          <span className="seg-btn reader-size-val" title="本文の文字サイズ">
+          <span className="seg-btn reader-size-val" title={tr("view.body_font_size")}>
             {settings.readerSize}
           </span>
           <button
@@ -348,7 +355,7 @@ export function ReaderView({ filePath }: { filePath: string }) {
             className="seg-btn"
             onClick={() => setSetting("readerSize", Math.min(28, settings.readerSize + 1))}
             disabled={settings.readerSize >= 28}
-            title="文字を大きく"
+            title={tr("view.larger_text")}
           >
             <Icon name="add" />
           </button>
@@ -363,9 +370,9 @@ export function ReaderView({ filePath }: { filePath: string }) {
       ) : data == null ? (
         <pre className="filebody muted">…</pre>
       ) : !isText ? (
-        <pre className="filebody muted">(このファイルは朗読できません)</pre>
+        <pre className="filebody muted">{tr("view.cannot_read_file")}</pre>
       ) : !flat.length ? (
-        <pre className="filebody muted">(読み上げる本文がありません)</pre>
+        <pre className="filebody muted">{tr("view.no_text_to_read")}</pre>
       ) : (
         <div className={"reader-body" + (vertical ? " vertical" : "")} ref={scrollRef} onMouseUp={captureSelection}>
           {units.map((u, ui) => {
@@ -395,7 +402,7 @@ export function ReaderView({ filePath }: { filePath: string }) {
         createPortal(
           <div className="sel-pill-group" style={{ left: selPill.x, top: Math.max(4, selPill.y) }}>
             <button type="button" className="sel-send-pill" onMouseDown={(e) => e.preventDefault()} onClick={startFromSelection}>
-              <Icon name="unmute" /> ここから朗読
+              <Icon name="unmute" /> {tr("view.read_from_here")}
             </button>
           </div>,
           document.body,

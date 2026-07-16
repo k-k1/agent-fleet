@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { useT } from "../../lib/i18n/index.ts";
 
 // Shared settings-tab controls, so the segmented Choice / オン・オフ toggle is defined
 // once instead of copied between DisplayTab and AgentsTab (they drift otherwise).
@@ -82,12 +83,13 @@ export function Select({ value, options, onChange }: ChoiceProps) {
 
 // OnOff: an オン / オフ toggle built on Choice (value may be undefined = オフ).
 export function OnOff({ value, onChange }: { value?: boolean; onChange: (v: boolean) => void }) {
+  const tr = useT();
   return (
     <Choice
       value={!!value}
       options={[
-        [true, "オン"],
-        [false, "オフ"],
+        [true, tr("common.on")],
+        [false, tr("common.off")],
       ]}
       onChange={onChange}
     />

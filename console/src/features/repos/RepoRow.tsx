@@ -16,6 +16,7 @@ import { copyText } from "../../lib/clipboard.ts";
 import { placeFixed } from "../../lib/placeFixed.ts";
 import { kindIcon, kindLabel } from "../../lib/sessionkind.ts";
 import { agentOf, repoLaunchKinds } from "../../agents/registry.ts";
+import { t, useT } from "../../lib/i18n/index.ts";
 import { ordClass } from "../../layout/badges.ts";
 import { BranchModal } from "./BranchModal.tsx";
 import { LaunchModal } from "./LaunchModal.tsx";
@@ -34,27 +35,27 @@ type Integration = NonNullable<Repo["integration"]>;
 
 function integrationLabel(i: Integration): string {
   switch (i.relation) {
-    case "same": return "親=";
-    case "contained": return "取込済";
-    case "unmerged": return `未取込 ${i.worktreeUnique}`;
-    case "diverged": return `分岐 ${i.worktreeUnique}↕${i.targetUnique}`;
-    case "unknown": return "比較不可";
+    case "same": return t("repo.sync.same");
+    case "contained": return t("repo.sync.contained");
+    case "unmerged": return t("repo.sync.unmerged", { n: i.worktreeUnique });
+    case "diverged": return t("repo.sync.diverged", { a: i.worktreeUnique, b: i.targetUnique });
+    case "unknown": return t("repo.sync.unknown");
   }
 }
 
 function integrationTitle(i: Integration): string {
-  const target = i.targetBranch || "親のHEAD";
+  const target = i.targetBranch || t("repo.parent_head");
   switch (i.relation) {
     case "same":
-      return `比較先: ${target}\n親とWTは同じコミットです`;
+      return t("repo.sync_title.same", { target });
     case "contained":
-      return `比較先: ${target}\nWTのHEADはGit履歴上、親に含まれています（親固有 ${i.targetUnique}コミット）`;
+      return t("repo.sync_title.contained", { target, n: i.targetUnique });
     case "unmerged":
-      return `比較先: ${target}\n親に含まれないWT固有コミットが ${i.worktreeUnique} 件あります`;
+      return t("repo.sync_title.unmerged", { target, n: i.worktreeUnique });
     case "diverged":
-      return `比較先: ${target}\nWT固有 ${i.worktreeUnique} / 親固有 ${i.targetUnique} コミット。マージかリベースが必要です`;
+      return t("repo.sync_title.diverged", { target, w: i.worktreeUnique, t: i.targetUnique });
     case "unknown":
-      return `比較先: ${target}\nコミット関係を判定できません`;
+      return t("repo.sync_title.unknown", { target });
   }
 }
 
@@ -94,10 +95,11 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
   const [branchOpen, setBranchOpen] = useState(false);
   const menuRef = useRef<HTMLUListElement>(null);
   const toast = useToast();
+  const tr = useT();
   const copyBranch = () => {
     const b = r.branch || "";
     void copyText(b).then((ok) =>
-      ok ? toast(`ブランチ名をコピーしました: ${b}`, { kind: "success" }) : toast("コピーに失敗しました"),
+      ok ? toast(tr("repo.branch_copied", { branch: b }), { kind: "success" }) : toast(tr("common.copy_failed")),
     );
   };
 
@@ -140,9 +142,9 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
         role="treeitem"
         tabIndex={-1}
         title={
-          (running ? "クリックで開閉 / Ctrl・中クリックでソース管理を新ペイン\n" : "クリックで開閉\n") +
+          (running ? tr("repo.row_title_running") + "\n" : tr("repo.row_title") + "\n") +
           (r.path || "") +
-          (r.provider ? `\nリモート: ${r.remote || providerLabel(r.provider)}` : "")
+          (r.provider ? "\n" + tr("repo.remote_line", { remote: r.remote || providerLabel(r.provider) }) : "")
         }
         // Plain click folds/unfolds the node (SCM is on the right-click menu now).
         // Ctrl/⌘ still opens Source Control in a split (a power gesture).
@@ -169,7 +171,7 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
               {r.worktree ? r.branch || r.name : r.name}
             </span>
             {!r.worktree && r.branch && (
-              <span className="repo-branch-inline" title={"現在のブランチ: " + r.branch}>
+              <span className="repo-branch-inline" title={tr("repo.current_branch", { branch: r.branch })}>
                 {r.branch}
               </span>
             )}
@@ -177,8 +179,8 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
           {(r.dirty || r.integration || ((r.ahead || r.behind) ?? 0) > 0) && (
             <span className="repo-state">
               {r.dirty && (
-                <span className="repo-chip dirty" title="未コミット変更あり">
-                  <Icon name="circle-filled" /> 未コミット
+                <span className="repo-chip dirty" title={tr("repo.uncommitted_title")}>
+                  <Icon name="circle-filled" /> {tr("repo.uncommitted")}
                 </span>
               )}
               {r.integration && (
@@ -198,15 +200,15 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
                   title={
                     r.behind
                       ? r.ahead
-                        ? `origin と分岐しています（先行 ${r.ahead} / 遅延 ${r.behind}）。fast-forward 不可 — マージかリベースが必要です`
-                        : `origin が ${r.behind} コミット先行。クリーンに fast-forward できます（ソース管理 → Fast-Forward）`
-                      : `origin より ${r.ahead} コミット先行（未 push）`
+                        ? tr("repo.origin.diverged", { ahead: r.ahead ?? 0, behind: r.behind ?? 0 })
+                        : tr("repo.origin.behind", { behind: r.behind ?? 0 })
+                      : tr("repo.origin.ahead", { ahead: r.ahead ?? 0 })
                   }
                 >
                   {r.ahead ? `↑${r.ahead}` : ""}
                   {r.ahead && r.behind ? " " : ""}
                   {r.behind ? `↓${r.behind}` : ""}
-                  {r.behind ? (r.ahead ? " 要マージ" : " FF可") : ""}
+                  {r.behind ? (r.ahead ? tr("repo.need_merge") : tr("repo.ff_ok")) : ""}
                 </span>
               )}
             </span>
@@ -214,12 +216,12 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
           {/* Session tally: alive count (green) wins; otherwise stopped count in
               muted — so a folded project still shows what's running inside. */}
           {sess && sess.alive > 0 && (
-            <span className="repo-sess-badge run" title={`稼働中のセッション ${sess.alive} 件`}>
+            <span className="repo-sess-badge run" title={tr("repo.sess_running", { n: sess.alive })}>
               ●{sess.alive}
             </span>
           )}
           {sess && sess.alive === 0 && sess.total > 0 && (
-            <span className="repo-sess-badge" title={`停止中のセッション ${sess.total} 件`}>
+            <span className="repo-sess-badge" title={tr("repo.sess_stopped", { n: sess.total })}>
               {sess.total}
             </span>
           )}
@@ -230,7 +232,7 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
                   key={o.id}
                   type="button"
                   className={"rail-ord " + ordClass(o.ordinal)}
-                  title={`ペイン${o.ordinal}にフォーカス`}
+                  title={tr("common.focus_pane", { ordinal: o.ordinal })}
                   onClick={(e) => {
                     e.stopPropagation();
                     onFocusPane?.(o.id);
@@ -253,19 +255,19 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
                 title={
                   running
                     ? agentKinds.length
-                      ? "作業を始める（既定は隔離 worktree・エージェント/モデル/最初の指示）"
-                      : "利用可能なエージェントがありません"
-                    : "ワークスペース停止中"
+                      ? tr("repo.launch_title")
+                      : tr("repo.no_agents")
+                    : tr("mirror.ws_stopped")
                 }
                 disabled={!running || !agentKinds.length}
                 onClick={() => setLaunchModal(true)}
               >
-                <Icon name="play" /> 起動
+                <Icon name="play" /> {tr("launch.launch")}
               </button>
               <button
                 type="button"
                 className="launch-caret"
-                title={running ? "種別を選んで即起動（プロンプト無し）" : "ワークスペース停止中"}
+                title={running ? tr("repo.quick_launch") : tr("mirror.ws_stopped")}
                 disabled={!running}
                 onClick={() => setShowLaunch((v) => !v)}
               >
@@ -280,7 +282,7 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
                       key={k}
                       type="button"
                       className="ui-menu-item"
-                      title="Ctrl/中クリックで新ペインに起動"
+                      title={tr("repo.launch_new_pane")}
                       onClick={(e) => {
                         setShowLaunch(false);
                         onLaunch(k, e.ctrlKey || e.metaKey);
@@ -309,32 +311,32 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
           <ul className="ui-menu repo-ctxmenu" ref={menuRef} style={{ left: menu.x, top: menu.y }} role="menu" onMouseDown={(e) => e.stopPropagation()}>
             <li>
               <button type="button" className="ui-menu-item" onClick={() => { setMenu(null); onOpen(); }}>
-                <Icon name="source-control" /> ソース管理を開く
+                <Icon name="source-control" /> {tr("repo.open_scm")}
               </button>
             </li>
             {onOpenFolder && (
               <li>
                 <button type="button" className="ui-menu-item" onClick={() => { setMenu(null); onOpenFolder(); }}>
-                  <Icon name="folder-opened" /> フォルダを開く
+                  <Icon name="folder-opened" /> {tr("repo.open_folder")}
                 </button>
               </li>
             )}
             {onOpenChanges && (
               <li>
                 <button type="button" className="ui-menu-item" onClick={() => { setMenu(null); onOpenChanges(); }}>
-                  <Icon name="git-commit" /> 変更をコミット
+                  <Icon name="git-commit" /> {tr("repo.commit_changes")}
                 </button>
               </li>
             )}
             <li>
               <button type="button" className="ui-menu-item" onClick={() => { setMenu(null); setBranchOpen(true); }}>
-                <Icon name="git-branch" /> ブランチ切替
+                <Icon name="git-branch" /> {tr("repo.switch_branch")}
               </button>
             </li>
             {r.branch && (
               <li>
                 <button type="button" className="ui-menu-item" onClick={() => { setMenu(null); copyBranch(); }}>
-                  <Icon name="copy" /> ブランチ名をコピー
+                  <Icon name="copy" /> {tr("repo.copy_branch")}
                 </button>
               </li>
             )}
@@ -349,7 +351,7 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
             {kinds.map((k) => (
               <li key={k}>
                 <button type="button" className="ui-menu-item" onClick={() => { setMenu(null); onLaunch(k, false); }}>
-                  <Icon name={kindIcon(k)} /> {kindLabel(k)} を起動
+                  <Icon name={kindIcon(k)} /> {tr("repo.launch_kind", { label: kindLabel(k) })}
                 </button>
               </li>
             ))}
@@ -358,7 +360,7 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
                 <li className="ui-menu-sep" role="separator" />
                 <li>
                   <button type="button" className="ui-menu-item danger" onClick={() => { setMenu(null); onDelete(); }}>
-                    <Icon name="trash" /> ワーキングコピーを削除
+                    <Icon name="trash" /> {tr("repo.delete_wc")}
                   </button>
                 </li>
               </>

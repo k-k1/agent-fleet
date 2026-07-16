@@ -19,6 +19,7 @@ import {
   sessionOf,
 } from "../../terminal/service.ts";
 import { termBackground } from "../../lib/termcolor.ts";
+import { useT } from "../../lib/i18n/index.ts";
 import { rel } from "../../core/api/client.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { kindIcon, kindLabel, kindShort, kindClass } from "../../lib/sessionkind.ts";
@@ -58,6 +59,7 @@ export function TerminalView({
   onToggleMirror,
   onResume,
 }: TerminalViewProps) {
+  const tr = useT();
   const ref = useRef<HTMLDivElement>(null);
   const running = useWorkspaceStore((s) => s.state) === "running";
   // Session is stopped while shown here → mask the disconnected terminal with an
@@ -191,7 +193,7 @@ export function TerminalView({
             </span>
           </span>
         ) : (
-          <span className="pane-head-title">{session ? "セッション" : "セッション未接続"}</span>
+          <span className="pane-head-title">{session ? tr("onb.session") : tr("onb.session_disconnected")}</span>
         )}
         {canMirror && <MirrorToggle mirror={mirror} onToggle={onToggleMirror} running={running} />}
       </header>
@@ -210,17 +212,17 @@ export function TerminalView({
           <div className="term-history-actions">
             {attached && running ? (
               <span className="term-mask-msg">
-                <span className="codicon codicon-loading codicon-spin" aria-hidden="true" /> 再開中…
+                <span className="codicon codicon-loading codicon-spin" aria-hidden="true" /> {tr("onb.resuming")}
               </span>
             ) : (
               <Button
                 variant="primary"
                 icon="play"
                 disabled={!running}
-                title={running ? "このセッションを再開" : "ワークスペース停止中"}
+                title={running ? tr("onb.resume_this_session") : tr("onb.ws_stopped")}
                 onClick={() => onResume?.()}
               >
-                再開
+                {tr("onb.resume")}
               </Button>
             )}
           </div>

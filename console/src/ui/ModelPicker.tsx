@@ -5,6 +5,7 @@
 // length. Callers gate on caps.model and re-resolve the value when the kind
 // changes (resolveModel), so this only renders and reports picks.
 import { useEffect, useMemo, useState } from "react";
+import { useT } from "../lib/i18n/index.ts";
 import { useModelOptions } from "../lib/agentModels.ts";
 import { useEffortOptions } from "../lib/agentModels.ts";
 import type { ModelOption } from "../lib/agentModels.ts";
@@ -17,6 +18,7 @@ interface ModelPickerProps {
 }
 
 export function ModelPicker({ kind, model, onChange }: ModelPickerProps) {
+  const tr = useT();
   const options = useModelOptions(kind);
   const [query, setQuery] = useState("");
   useEffect(() => setQuery(""), [kind]);
@@ -43,18 +45,18 @@ export function ModelPicker({ kind, model, onChange }: ModelPickerProps) {
           type="search"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="モデルを絞り込み…"
-          aria-label={`${kind} のモデルを絞り込み`}
+          placeholder={tr("ui.filter_models")}
+          aria-label={tr("ui.filter_kind_models", { kind })}
         />
         <select
           value={selectValue}
           disabled={filtered.length === 0}
           onChange={(e) => onChange(e.target.value)}
-          aria-label={`${kind} のモデル`}
+          aria-label={tr("ui.kind_model", { kind })}
         >
           {!selectedVisible && (
             <option value="__filtered_selection__" disabled>
-              {filtered.length ? `${filtered.length} 件から選択` : "一致するモデルなし"}
+              {filtered.length ? tr("ui.select_from_count", { count: filtered.length }) : tr("ui.no_matching_models")}
             </option>
           )}
           {filtered.map(([v, label]) => (
@@ -63,7 +65,7 @@ export function ModelPicker({ kind, model, onChange }: ModelPickerProps) {
             </option>
           ))}
         </select>
-        {query.trim() && <span className="ui-field-hint">{filtered.length} 件</span>}
+        {query.trim() && <span className="ui-field-hint">{tr("ui.count_items", { count: filtered.length })}</span>}
       </div>
     );
   }

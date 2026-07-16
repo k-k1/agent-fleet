@@ -101,3 +101,11 @@ export function fmtDateTime(when: string | number | Date, opts: Intl.DateTimeFor
 export function fmtNum(n: number, opts?: Intl.NumberFormatOptions): string {
   return nf(opts).format(n);
 }
+
+// compareText — 名前・キーのソート用のロケール対応文字列比較。素の a.localeCompare(b) は暗黙の
+// ブラウザ既定ロケールに依存するため、明示的にアプリロケール（getLocale）で比較する。
+// numeric:true で "repo2 < repo10"（数字を数値として）、sensitivity:"base" で大文字小文字/
+// アクセント差を無視した安定した並び。日付文字列（ISO）にも順序は変わらず安全に使える。
+export function compareText(a: string, b: string): number {
+  return a.localeCompare(b, getLocale(), { numeric: true, sensitivity: "base" });
+}

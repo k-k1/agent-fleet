@@ -12,8 +12,10 @@ import { useRepoRailContext } from "../repos/useRepoRail.ts";
 import { orphanSessions } from "../../lib/project.ts";
 import { useProjectFilter, normQuery, sessionMatches } from "./filter.ts";
 import { useRailRoving } from "./useRailRoving.ts";
+import { useT } from "../../lib/i18n/index.ts";
 
 export function OtherSessionsSection() {
+  const tr = useT();
   const sessions = useSessionsStore((s) => s.sessions);
   const repos = useReposStore((s) => s.repos);
   const ctx = useRepoRailContext();
@@ -29,13 +31,13 @@ export function OtherSessionsSection() {
   return (
     <Section
       id="other-sessions"
-      title="その他のセッション"
+      title={tr("pj.other_sessions")}
       icon="terminal"
       count={orphans.length}
       actions={
         <IconButton
           icon="archive"
-          label="その他のセッションを整理（アーカイブ退避・shell/ssm は削除）"
+          label={tr("pj.tidy_other_sessions")}
           onClick={() => void actions.clearOrphans(orphans)}
         />
       }

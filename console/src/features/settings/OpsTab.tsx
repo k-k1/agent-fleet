@@ -7,6 +7,7 @@ import { Button } from "../../ui/Button.tsx";
 import { useConnections } from "./useConnections.ts";
 import { OnOff } from "./controls.tsx";
 import { ProviderCard, StatusPill, Hint, DisconnectButton } from "./providerCard.tsx";
+import { useT } from "../../lib/i18n/index.ts";
 
 // OpsTab is the home for service-operations connections (docs/25 Phase 1): external
 // monitoring / incident tools the SRE assistant talks to over MCP. Today: PagerDuty,
@@ -14,6 +15,7 @@ import { ProviderCard, StatusPill, Hint, DisconnectButton } from "./providerCard
 // and injected into the MCP server at spawn by `workspace-agent mcp-run` — they never
 // reach the CP. (CloudWatch stores no secret at all: it rides the AWS cred chain.)
 export function OpsTab() {
+  const tr = useT();
   const wsState = useWorkspaceStore((s) => s.state);
   const running = wsState === "running";
   const startWs = useWorkspaceStore((s) => s.start);
@@ -31,24 +33,21 @@ export function OpsTab() {
       {!running ? (
         <EmptyState
           icon="debug-disconnect"
-          title="運用ツールの接続はワークスペース内で実行されます"
-          hint="API キーはコンテナ内の Agent が暗号化保存するため、ワークスペースの起動が必要です。"
+          title={tr("ops.ws_required_title")}
+          hint={tr("ops.ws_required_hint")}
         >
           <Button icon="play" disabled={wsStartBusy(wsState)} onClick={() => void startWs()}>
-            {wsStartBusy(wsState) ? "起動中…" : "ワークスペースを起動"}
+            {wsStartBusy(wsState) ? tr("common.starting") : tr("ops.start_ws")}
           </Button>
         </EmptyState>
       ) : !conns ? (
-        <p className="muted pad">読み込み中…</p>
+        <p className="muted pad">{tr("common.loading")}</p>
       ) : (
         <>
-          <p className="muted ds-note">
-            インシデント対応・監視運用の連携です。接続すると「SRE
-            アシスタント」がこれらを読み取り専用で参照して壁打ちに使います。接続の変更は次のチャット送信から反映されます（ワークスペースの再起動は不要）。
-          </p>
-          <div className="conn-cat">インシデント管理</div>
+          <p className="muted ds-note">{tr("ops.intro")}</p>
+          <div className="conn-cat">{tr("ops.cat_incident")}</div>
           <PagerDutyCard st={conns.pagerduty} reload={reload} />
-          <div className="conn-cat">監視 / メトリクス</div>
+          <div className="conn-cat">{tr("ops.cat_monitoring")}</div>
           <GrafanaCard st={conns.grafana} reload={reload} />
           <CloudWatchCard st={conns.cloudwatch} reload={reload} />
         </>
@@ -61,6 +60,7 @@ export function OpsTab() {
 // host override. On connect the key is stored encrypted; the SRE assistant then gets
 // PagerDuty tools on its next message.
 function PagerDutyCard({ st, reload }: { st: any; reload: () => void }) {
+  const tr = useT();
   const toast = useToast();
   const [key, setKey] = useState("");
   const [eu, setEu] = useState(false);
@@ -75,7 +75,7 @@ function PagerDutyCard({ st, reload }: { st: any; reload: () => void }) {
         host: eu ? "https://api.eu.pagerduty.com" : "",
       });
       if (res && res.error) {
-        toast("接続に失敗: " + (res.error.message || res.error));
+        toast(tr("conn.connect_failed", { msg: String(res.error.message || res.error) }));
         return;
       }
       setKey("");
@@ -93,11 +93,11 @@ function PagerDutyCard({ st, reload }: { st: any; reload: () => void }) {
     <ProviderCard
       id="pagerduty"
       name="PagerDuty"
-      status={<StatusPill on={st?.connected}>{st?.connected ? "接続済み" : "未接続"}</StatusPill>}
+      status={<StatusPill on={st?.connected}>{st?.connected ? tr("conn.connected") : tr("conn.disconnected")}</StatusPill>}
     >
       {st?.connected ? (
         <div className="p-who">
-          <span className="p-em">API キー設定済み</span>
+          <span className="p-em">{tr("ops.pd_api_key_set")}</span>
           {st.host && <span className="p-pl">EU</span>}
           <DisconnectButton onClick={disconnect} />
         </div>
@@ -107,28 +107,22 @@ function PagerDutyCard({ st, reload }: { st: any; reload: () => void }) {
             <input
               className="cinput"
               type="password"
-              placeholder="PagerDuty API キー"
+              placeholder={tr("ops.pd_api_key_placeholder")}
               value={key}
               onChange={(e) => setKey(e.target.value)}
             />
             <button disabled={busy || !key.trim()} onClick={save}>
-              接続
+              {tr("conn.connect")}
             </button>
           </div>
           <div className="ps-row">
             <span className="ps-label">
-              EU リージョン
-              <span className="sub">
-                PagerDuty に app.eu.pagerduty.com でログインしている場合のみオン（通常はオフのまま）
-              </span>
+              {tr("ops.pd_eu_region")}
+              <span className="sub">{tr("ops.pd_eu_sub")}</span>
             </span>
             <OnOff value={eu} onChange={setEu} />
           </div>
-          <Hint>
-            読み取り専用キーを推奨します（PagerDuty の Integrations &gt; API Access Keys で「Read-only」を選択）。
-            キーはワークスペース内に暗号化保存され、MCP サーバの起動時にだけ渡されます。書き込み操作（ack/resolve
-            など）は有効化しません。
-          </Hint>
+          <Hint>{tr("ops.pd_hint")}</Hint>
         </div>
       )}
     </ProviderCard>
@@ -140,6 +134,7 @@ function PagerDutyCard({ st, reload }: { st: any; reload: () => void }) {
 // for AMG the URL is the workspace endpoint (https://g-xxxx.grafana-workspace.
 // <region>.amazonaws.com) and tokens expire after at most 30 days (re-paste here).
 function GrafanaCard({ st, reload }: { st: any; reload: () => void }) {
+  const tr = useT();
   const toast = useToast();
   const [url, setUrl] = useState("");
   const [token, setToken] = useState("");
@@ -155,7 +150,7 @@ function GrafanaCard({ st, reload }: { st: any; reload: () => void }) {
         token: token.trim(),
       });
       if (res && res.error) {
-        toast("接続に失敗: " + (res.error.message || res.error));
+        toast(tr("conn.connect_failed", { msg: String(res.error.message || res.error) }));
         return;
       }
       setUrl("");
@@ -174,11 +169,11 @@ function GrafanaCard({ st, reload }: { st: any; reload: () => void }) {
     <ProviderCard
       id="grafana"
       name="Grafana"
-      status={<StatusPill on={st?.connected}>{st?.connected ? "接続済み" : "未接続"}</StatusPill>}
+      status={<StatusPill on={st?.connected}>{st?.connected ? tr("conn.connected") : tr("conn.disconnected")}</StatusPill>}
     >
       {st?.connected ? (
         <div className="p-who">
-          <span className="p-em">{st.url || "接続設定済み"}</span>
+          <span className="p-em">{st.url || tr("ops.grafana_connected_fallback")}</span>
           <DisconnectButton onClick={disconnect} />
         </div>
       ) : (
@@ -187,7 +182,7 @@ function GrafanaCard({ st, reload }: { st: any; reload: () => void }) {
             <input
               className="cinput"
               type="text"
-              placeholder="Grafana URL（https://grafana.example.com）"
+              placeholder={tr("ops.grafana_url_placeholder")}
               value={url}
               onChange={(e) => setUrl(e.target.value)}
             />
@@ -196,20 +191,15 @@ function GrafanaCard({ st, reload }: { st: any; reload: () => void }) {
             <input
               className="cinput"
               type="password"
-              placeholder="サービスアカウントトークン"
+              placeholder={tr("ops.grafana_token_placeholder")}
               value={token}
               onChange={(e) => setToken(e.target.value)}
             />
             <button disabled={busy || !ok} onClick={save}>
-              接続
+              {tr("conn.connect")}
             </button>
           </div>
-          <Hint>
-            Viewer 権限のサービスアカウントトークンを推奨します。トークンはワークスペース内に暗号化保存され、MCP
-            サーバの起動時にだけ渡されます（書き込み・管理ツールは無効で起動）。Amazon Managed Grafana の場合は
-            URL に workspace endpoint（g-xxxx.grafana-workspace.リージョン.amazonaws.com）を指定してください
-            （トークンは最長30日で失効するため、失効したら貼り直します）。
-          </Hint>
+          <Hint>{tr("ops.grafana_hint")}</Hint>
         </div>
       )}
     </ProviderCard>
@@ -224,6 +214,7 @@ function GrafanaCard({ st, reload }: { st: any; reload: () => void }) {
 // manual entry remains for members who maintain their own ~/.aws. No secret is
 // stored either way; an expired SSO session just makes the tools error.
 function CloudWatchCard({ st, reload }: { st: any; reload: () => void }) {
+  const tr = useT();
   const toast = useToast();
   const [profiles, setProfiles] = useState<any[] | null>(null);
   const [sel, setSel] = useState(""); // profile id, or "manual"
@@ -265,7 +256,7 @@ function CloudWatchCard({ st, reload }: { st: any; reload: () => void }) {
           };
       const res = await apiJSON("api/connections/cloudwatch", "PUT", body);
       if (res && res.error) {
-        toast("接続に失敗: " + (res.error.message || res.error));
+        toast(tr("conn.connect_failed", { msg: String(res.error.message || res.error) }));
         return;
       }
       setSel("");
@@ -285,7 +276,7 @@ function CloudWatchCard({ st, reload }: { st: any; reload: () => void }) {
     <ProviderCard
       id="cloudwatch"
       name="Amazon CloudWatch"
-      status={<StatusPill on={st?.connected}>{st?.connected ? "接続済み" : "未接続"}</StatusPill>}
+      status={<StatusPill on={st?.connected}>{st?.connected ? tr("conn.connected") : tr("conn.disconnected")}</StatusPill>}
     >
       {st?.connected ? (
         <div className="p-who">
@@ -295,27 +286,27 @@ function CloudWatchCard({ st, reload }: { st: any; reload: () => void }) {
           <DisconnectButton onClick={disconnect} />
         </div>
       ) : profiles === null ? (
-        <p className="muted pad">読み込み中…</p>
+        <p className="muted pad">{tr("common.loading")}</p>
       ) : (
         <div className="p-body">
           <div className="flow">
             {profiles.length > 0 && (
               <select className="cinput" value={sel} onChange={(e) => pick(e.target.value)}>
-                <option value="">プロファイルを選択…</option>
+                <option value="">{tr("ops.cw_profile_select")}</option>
                 {profiles.map((p) => (
                   <option key={p.id} value={p.id}>
                     {p.label}
                     {p.accountId ? `（${p.accountId}${p.roleName ? " / " + p.roleName : ""}）` : ""}
                   </option>
                 ))}
-                <option value="manual">手動入力（自分の ~/.aws のプロファイル）</option>
+                <option value="manual">{tr("ops.cw_manual_option")}</option>
               </select>
             )}
             {manual && (
               <input
                 className="cinput"
                 type="text"
-                placeholder="~/.aws のプロファイル名"
+                placeholder={tr("ops.cw_manual_placeholder")}
                 value={manualProfile}
                 onChange={(e) => setManualProfile(e.target.value)}
               />
@@ -323,22 +314,16 @@ function CloudWatchCard({ st, reload }: { st: any; reload: () => void }) {
             <input
               className="cinput"
               type="text"
-              placeholder="リージョン（任意）"
+              placeholder={tr("ops.cw_region_placeholder")}
               value={region}
               onChange={(e) => setRegion(e.target.value)}
               style={{ maxWidth: "12em" }}
             />
             <button disabled={busy || !ok} onClick={save}>
-              接続
+              {tr("conn.connect")}
             </button>
           </div>
-          <Hint>
-            秘密は保存しません。SSM 接続のプロファイルを選ぶと、その SSO
-            設定（非秘密）から専用の設定ファイルを生成して使います。ログの検索・アラーム履歴・メトリクス分析など読み取り専用ツールのみです。SSO
-            ログインがまだ（または期限切れ）の場合は、該当の SSM セッションを一度開くか、ターミナルで
-            `AWS_CONFIG_FILE=~/.aws/af-ops/cloudwatch.config aws sso login --profile
-            プロファイル名` を実行してください。
-          </Hint>
+          <Hint>{tr("ops.cw_hint")}</Hint>
         </div>
       )}
     </ProviderCard>

@@ -460,7 +460,7 @@ func handleSessionSuggestBranch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !autoTitleSuggestEnabled() {
-		httpx.WriteErr(w, http.StatusBadRequest, "feature_disabled", "AI 提案が無効です（表示設定のタイトル自動提案をオンに）")
+		httpx.WriteErr(w, http.StatusBadRequest, errCodeTitleFeatureDisabled, "AI suggestions are disabled (enable title auto-suggestion in display settings)")
 		return
 	}
 	m, ok := session.ReadMeta(name)
@@ -470,7 +470,7 @@ func handleSessionSuggestBranch(w http.ResponseWriter, r *http.Request) {
 	}
 	turns := sessionTitleTurns(m)
 	if len(turns) == 0 {
-		httpx.WriteErr(w, http.StatusBadRequest, "no_content", "会話がまだ足りません（数往復してから試してください）")
+		httpx.WriteErr(w, http.StatusBadRequest, errCodeTitleNoContent, "not enough conversation yet (try after a few exchanges)")
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), titleSuggestTimeout)
@@ -478,7 +478,9 @@ func handleSessionSuggestBranch(w http.ResponseWriter, r *http.Request) {
 	branch, err := runBranchSuggestLLM(ctx, turns)
 	if err != nil {
 		// Surface the underlying reason (auth/CLI/timeout) instead of a generic string.
-		httpx.WriteErr(w, http.StatusBadGateway, "generation_failed", "AI 提案に失敗しました: "+err.Error())
+		// 例外的にカタログ化しない: detail（err）を保持したいため developer message を
+		// そのまま表示する（"generation_failed" キーを i18n に足さない）。
+		httpx.WriteErr(w, http.StatusBadGateway, "generation_failed", "AI title suggestion failed: "+err.Error())
 		return
 	}
 	if branch == "" {

@@ -17,25 +17,27 @@ export const CODE_FONTS = [
   "JetBrains Mono",
   "Fira Code",
   "IBM Plex Mono",
-  "システム等幅",
+  "システム等幅", // i18n-exempt: fontStack 突合用の生フォント値（表示は font.* で翻訳）
 ];
 
 // Chat fonts: unlike the code viewer, the chat reads as prose, so proportional
 // families are offered first ("システム" = system sans, "セリフ" = serif), with the
 // monospace code fonts still available for anyone who prefers them.
+// i18n-exempt: fontStack 突合用の生フォント値（表示は font.* で翻訳・docs/28 §2.4）
 export const CHAT_FONTS = ["システム", "セリフ", "Source Code Pro", "JetBrains Mono", "Fira Code", "IBM Plex Mono"];
 
 // Reader (朗読ビュー) fonts: the reader is Japanese prose, so it offers the two
 // families that matter for reading — 明朝 (serif, the default) and ゴシック (sans) —
 // each resolved with CJK fallbacks in readerFontStack.
+// i18n-exempt: fontStack 突合用の生フォント値（表示は font.* で翻訳・docs/28 §2.4）
 export const READER_FONTS = ["明朝", "ゴシック"];
 
 // File-icon sets (brand SVGs under assets/fileicons/<id>/). value = asset subdir.
-export const ICON_SETS = [
-  { id: "vscode", label: "VS Code Icons（カラー）" },
-  { id: "material", label: "Material（カラー）" },
-  { id: "devicon", label: "Devicon（カラー）" },
-  { id: "seti", label: "Seti（単色・タイプ別着色）" },
+export const ICON_SETS: { id: string; labelKey: MsgKey }[] = [
+  { id: "vscode", labelKey: "iconset.vscode" },
+  { id: "material", labelKey: "iconset.material" },
+  { id: "devicon", labelKey: "iconset.devicon" },
+  { id: "seti", labelKey: "iconset.seti" },
 ];
 
 // Base UI theme. label は i18n キー（DisplayTab / TopBar が t() で解決）。
@@ -47,7 +49,7 @@ export const THEMES: { id: string; labelKey: MsgKey }[] = [
 // UI 表示言語（docs/28 / ADR 0016）。ラベルは各言語の自称なので翻訳しない（どの言語で見ても
 // 母語名で並ぶ）。id は i18n カタログ／SUPPORTED_LOCALES と一致させる。
 export const LOCALES = [
-  { id: "ja", label: "日本語" },
+  { id: "ja", label: "日本語" }, // i18n-exempt: 言語の自称（どの UI 言語でも母語名で表示）
   { id: "en", label: "English" },
 ];
 
@@ -69,28 +71,28 @@ export function effectiveTheme(pref: string, base: string): "light" | "dark" {
 
 // Surface (top bar / left pane) background choices. Each color has a per-theme tint
 // so it always contrasts with the theme's text color. "default" = theme default.
-export const SURFACE_COLORS = [
-  { id: "default", label: "デフォルト", dark: null, light: null, accent: null },
-  { id: "slate", label: "スレート", dark: "#1b2733", light: "#e2e8f0", accent: "#6b8fc4" },
-  { id: "blue", label: "ブルー", dark: "#16263f", light: "#dbe7fb", accent: "#3b82f6" },
-  { id: "green", label: "グリーン", dark: "#15291f", light: "#dcefe0", accent: "#2fb872" },
-  { id: "purple", label: "パープル", dark: "#241a33", light: "#ece0fb", accent: "#a875f5" },
-  { id: "warm", label: "ウォーム", dark: "#2a1f17", light: "#f6e8da", accent: "#e0964a" },
+export const SURFACE_COLORS: { id: string; labelKey: MsgKey; dark: string | null; light: string | null; accent: string | null }[] = [
+  { id: "default", labelKey: "surface_color.default", dark: null, light: null, accent: null },
+  { id: "slate", labelKey: "surface_color.slate", dark: "#1b2733", light: "#e2e8f0", accent: "#6b8fc4" },
+  { id: "blue", labelKey: "surface_color.blue", dark: "#16263f", light: "#dbe7fb", accent: "#3b82f6" },
+  { id: "green", labelKey: "surface_color.green", dark: "#15291f", light: "#dcefe0", accent: "#2fb872" },
+  { id: "purple", labelKey: "surface_color.purple", dark: "#241a33", light: "#ece0fb", accent: "#a875f5" },
+  { id: "warm", labelKey: "surface_color.warm", dark: "#2a1f17", light: "#f6e8da", accent: "#e0964a" },
 ];
 
 // The four themeable surfaces (settings key + labels). Shared by DisplayTab and the
 // TopBar 外観 popover so "which surfaces are colorable" is defined once — `short` for
 // the compact popover rows, `long` for the settings-tab rows.
-export const SURFACE_TARGETS: { key: "topbarColor" | "leftpaneColor" | "viewerColor" | "chatColor" | "assistantColor"; short: string; long: string }[] = [
-  { key: "topbarColor", short: "上部バー", long: "上部バーの背景" },
-  { key: "leftpaneColor", short: "左ペイン", long: "左ペインの背景" },
-  { key: "viewerColor", short: "ビュアー", long: "ファイルビュアーの背景" },
+export const SURFACE_TARGETS: { key: "topbarColor" | "leftpaneColor" | "viewerColor" | "chatColor" | "assistantColor"; shortKey: MsgKey; longKey: MsgKey }[] = [
+  { key: "topbarColor", shortKey: "surface.topbar.short", longKey: "surface.topbar.long" },
+  { key: "leftpaneColor", shortKey: "surface.leftpane.short", longKey: "surface.leftpane.long" },
+  { key: "viewerColor", shortKey: "surface.viewer.short", longKey: "surface.viewer.long" },
   // chatColor drives the session mirror's (.mirrorview) --chat-bg / --chat-accent; labelled
   // セッション so it isn't confused with the assistant chat. Key kept as chatColor for
   // backward-compat with persisted prefs.
-  { key: "chatColor", short: "セッション", long: "セッションの背景" },
+  { key: "chatColor", shortKey: "surface.session.short", longKey: "surface.session.long" },
   // assistantColor is the same surface mechanism for the assistant chat (.chatview).
-  { key: "assistantColor", short: "アシスタント", long: "アシスタントの背景" },
+  { key: "assistantColor", shortKey: "surface.assistant.short", longKey: "surface.assistant.long" },
 ];
 
 // Resolve a surface color id to its value for the active theme (null = no override).
@@ -340,7 +342,7 @@ const DEFAULTS: Settings = {
   termSize: 13,
   viewerFont: "JetBrains Mono",
   viewerSize: 13,
-  chatFont: "システム",
+  chatFont: "システム", // i18n-exempt: fontStack 突合用の生フォント値
   chatSize: 14,
   lineNumbers: true,
   wrap: false,
@@ -400,13 +402,14 @@ const DEFAULTS: Settings = {
   ttsParticlePause: true,
   readerVertical: false,
   readerVoice: "",
-  readerFont: "明朝",
+  readerFont: "明朝", // i18n-exempt: fontStack 突合用の生フォント値
   readerSize: 17,
   keybindings: {},
   terminalPriority: false,
 };
 
 // VOICEVOX ずんだもんのスタイル（speaker 番号 → ラベル）。設定 UI の話者選択に使う。
+// i18n-exempt-start: VOICEVOX スタイル名は固有名詞として未翻訳（docs/28 §6.4）
 export const VOICEVOX_ZUNDAMON: [string, string][] = [
   ["3", "ノーマル"],
   ["1", "あまあま"],
@@ -415,27 +418,28 @@ export const VOICEVOX_ZUNDAMON: [string, string][] = [
   ["22", "ささやき"],
   ["38", "ヒソヒソ"],
 ];
+// i18n-exempt-end
 
-// TTS プロバイダ（docs/24 Phase 2）。auto の使い分けは CP が決める。
-export const TTS_PROVIDERS: [string, string][] = [
-  ["auto", "自動"],
-  ["voicevox", "ずんだもん"],
-  ["polly", "Polly"],
+// TTS プロバイダ（docs/24 Phase 2）。auto の使い分けは CP が決める。ラベルは i18n キー。
+export const TTS_PROVIDERS: [string, MsgKey][] = [
+  ["auto", "tts.provider_auto"],
+  ["voicevox", "tts.provider_voicevox"],
+  ["polly", "tts.provider_polly"],
 ];
 
-// Polly の日本語ニューラル話者（VoiceId → ラベル）。
-export const TTS_POLLY_VOICES: [string, string][] = [
-  ["Takumi", "Takumi（男性）"],
-  ["Kazuha", "Kazuha（女性）"],
-  ["Tomoko", "Tomoko（女性）"],
+// Polly の日本語ニューラル話者（VoiceId → i18n キー）。
+export const TTS_POLLY_VOICES: [string, MsgKey][] = [
+  ["Takumi", "tts.polly_takumi"],
+  ["Kazuha", "tts.polly_kazuha"],
+  ["Tomoko", "tts.polly_tomoko"],
 ];
 
-// 合成キャッシュの上限（合計再生秒数 → ラベル）。メモリ消費は PCM で約 0.1MB/秒。
-export const TTS_CACHE_SIZES: [number, string][] = [
-  [0, "なし"],
-  [300, "5分（約30MB）"],
-  [900, "15分（約90MB）"],
-  [1800, "30分（約180MB）"],
+// 合成キャッシュの上限（合計再生秒数 → i18n キー）。メモリ消費は PCM で約 0.1MB/秒。
+export const TTS_CACHE_SIZES: [number, MsgKey][] = [
+  [0, "tts.cache_none"],
+  [300, "tts.cache_5m"],
+  [900, "tts.cache_15m"],
+  [1800, "tts.cache_30m"],
 ];
 
 // 音声読み上げ設定の「初期状態」（設定タブのリセットボタンが書き戻す値）。DEFAULTS の TTS 関連
@@ -472,48 +476,48 @@ export const TTS_RESET: Partial<Settings> = Object.fromEntries(
   TTS_RESET_KEYS.map((k) => [k, DEFAULTS[k]]),
 ) as Partial<Settings>;
 
-// 読み上げ速度（speedScale）。
-export const TTS_SPEEDS: [number, string][] = [
-  [0.75, "ゆっくり"],
-  [1.0, "標準"],
-  [1.25, "はやめ"],
-  [1.5, "はやい"],
+// 読み上げ速度（speedScale）。ラベルは i18n キー。
+export const TTS_SPEEDS: [number, MsgKey][] = [
+  [0.75, "tts.speed_slow"],
+  [1.0, "tts.speed_normal"],
+  [1.25, "tts.speed_fast"],
+  [1.5, "tts.speed_faster"],
 ];
 
-export const TTS_WORK_READ_MODES: [string, string][] = [
-  ["off", "読まない"],
-  ["whisper", "ささやき"],
-  ["hushed", "ヒソヒソ"],
+export const TTS_WORK_READ_MODES: [string, MsgKey][] = [
+  ["off", "tts.work_off"],
+  ["whisper", "tts.work_whisper"],
+  ["hushed", "tts.work_hushed"],
 ];
 
-export const TTS_BACKGROUND_PLAYBACK_MODES: [string, string][] = [
-  ["mute", "再生しない"],
-  ["quiet", "音量を下げる"],
-  ["normal", "通常再生"],
+export const TTS_BACKGROUND_PLAYBACK_MODES: [string, MsgKey][] = [
+  ["mute", "tts.bg_mute"],
+  ["quiet", "tts.bg_quiet"],
+  ["normal", "tts.bg_normal"],
 ];
 
 // Assistant-chat output-language choices, shared by the settings UI. "auto" leaves the
 // language to the user's input; "ja"/"en" force the reply language.
-export const OUTPUT_LANGUAGES: [string, string][] = [
-  ["auto", "入力に合わせる"],
-  ["ja", "日本語"],
-  ["en", "English"],
+export const OUTPUT_LANGUAGES: [string, MsgKey][] = [
+  ["auto", "out_lang.auto"],
+  ["ja", "out_lang.ja"],
+  ["en", "out_lang.en"],
 ];
 
 // Assistant-chat backend choices (AgentsTab). "auto" picks the first CONNECTED of
 // claude → codex → opencode; a fixed choice falls back to auto when that CLI isn't
 // connected (opencode is always usable — its free tier needs no login).
-export const ASSISTANT_AGENTS: [string, string][] = [
-  ["auto", "自動（接続済みを優先）"],
-  ["claude", "Claude"],
-  ["codex", "Codex"],
-  ["opencode", "opencode"],
+export const ASSISTANT_AGENTS: [string, MsgKey][] = [
+  ["auto", "asst_agent.auto"],
+  ["claude", "asst_agent.claude"],
+  ["codex", "asst_agent.codex"],
+  ["opencode", "asst_agent.opencode"],
 ];
 
 // Mirror composer submit-key options, shared by the settings UI.
-export const MIRROR_SEND_MODES = [
-  { id: "mod-enter", label: "Ctrl+Enter で送信" },
-  { id: "enter", label: "Enter で送信" },
+export const MIRROR_SEND_MODES: { id: string; labelKey: MsgKey }[] = [
+  { id: "mod-enter", labelKey: "mirror_send.mod_enter" },
+  { id: "enter", labelKey: "mirror_send.enter" },
 ];
 
 // Claude model choices, shared by the launch dialog and the default-model setting. Only
@@ -529,7 +533,7 @@ export const CLAUDE_MODELS: [string, string][] = [
 
 // Build a CSS font-family stack for a chosen family, with CJK + generic fallbacks.
 export function fontStack(name: string): string {
-  if (!name || name === "システム等幅") {
+  if (!name || name === "システム等幅") { // i18n-exempt: fontStack 突合用の生フォント値
     return 'ui-monospace, SFMono-Regular, Menlo, Consolas, "DejaVu Sans Mono", "Noto Sans Mono CJK JP", monospace';
   }
   return `"${name}", "Noto Sans Mono CJK JP", ui-monospace, Menlo, Consolas, monospace`;
@@ -538,10 +542,10 @@ export function fontStack(name: string): string {
 // Chat font stack — proportional by default. "システム"/"セリフ" map to sans/serif
 // system stacks (with CJK fallbacks); any other name is a code font (monospace).
 export function chatFontStack(name: string): string {
-  if (!name || name === "システム") {
+  if (!name || name === "システム") { // i18n-exempt: fontStack 突合用の生フォント値
     return 'system-ui, -apple-system, "Hiragino Kaku Gothic ProN", "Noto Sans CJK JP", sans-serif';
   }
-  if (name === "セリフ") {
+  if (name === "セリフ") { // i18n-exempt: fontStack 突合用の生フォント値
     return 'Georgia, "Times New Roman", "Hiragino Mincho ProN", "Noto Serif CJK JP", serif';
   }
   return fontStack(name);
@@ -551,7 +555,7 @@ export function chatFontStack(name: string): string {
 // (default "明朝") = serif (mincho). Both list CJK families first with generic
 // fallbacks so they render correctly where the OS lacks Hiragino/Yu.
 export function readerFontStack(name: string): string {
-  if (name === "ゴシック") {
+  if (name === "ゴシック") { // i18n-exempt: fontStack 突合用の生フォント値
     return '"Hiragino Kaku Gothic ProN", "Yu Gothic", "Noto Sans JP", "Noto Sans CJK JP", system-ui, sans-serif';
   }
   return '"Hiragino Mincho ProN", "Yu Mincho", "Noto Serif JP", "Noto Serif CJK JP", "Noto Serif", serif';
