@@ -61,7 +61,9 @@ export function ContextBar({ read, create, fresh, model, window: windowOverride,
           <div className="cb-seg cb-fresh" style={{ width: w(fresh) }} />
         </div>
         <span className="cb-label">
-          {level && <Icon name="warning" />} {fmtTok(used)} / {fmtTok(window)}・{pct.toFixed(0)}%
+          {level && <Icon name="warning" />} {fmtTok(used)} / {fmtTok(window)}
+          {tr("common.mid_dot")}
+          {pct.toFixed(0)}%
         </span>
       </div>
       {spends && spends.length >= 2 && (

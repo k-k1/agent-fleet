@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useT } from "../../lib/i18n/index.ts";
 
 // Custom Marp themes live as CSS files (each with a `/* @theme name */` header) in
 // ../marp-themes and are registered with the renderer so decks can select them via
@@ -62,6 +63,7 @@ function fitSection(section: HTMLElement | null) {
 }
 
 export function MarpView({ source }: { source?: string }) {
+  const tr = useT();
   const hostRef = useRef<HTMLDivElement>(null); // shadow host element
   const stageRef = useRef<HTMLDivElement>(null); // fullscreen target (wraps the host)
   const shadowRef = useRef<ShadowRoot | null>(null);
@@ -104,7 +106,7 @@ export function MarpView({ source }: { source?: string }) {
           }
           out = marp.render(source ?? "");
         } catch {
-          setErr("スライドの描画に失敗しました");
+          setErr(tr("view.slide_render_failed"));
           return;
         }
         if (!alive) return;
@@ -116,7 +118,7 @@ export function MarpView({ source }: { source?: string }) {
         slidesRef.current = slides;
         setCount(slides.length);
       })
-      .catch(() => alive && setErr("Marp の読み込みに失敗しました"));
+      .catch(() => alive && setErr(tr("view.marp_load_failed")));
 
     return () => {
       alive = false;
@@ -194,7 +196,7 @@ export function MarpView({ source }: { source?: string }) {
   return (
     <div className="marp-wrap">
       <div className="marp-toolbar">
-        <button type="button" className="seg-btn" onClick={() => go((c) => c - 1)} disabled={cur <= 0} title="前のスライド (←)">
+        <button type="button" className="seg-btn" onClick={() => go((c) => c - 1)} disabled={cur <= 0} title={tr("view.prev_slide_key")}>
           ◀
         </button>
         <span className="marp-counter mono">
@@ -205,11 +207,11 @@ export function MarpView({ source }: { source?: string }) {
           className="seg-btn"
           onClick={() => go((c) => c + 1)}
           disabled={count === 0 || cur >= count - 1}
-          title="次のスライド (→)"
+          title={tr("view.next_slide_key")}
         >
           ▶
         </button>
-        <button type="button" className="seg-btn marp-fs" onClick={toggleFs} title="全画面">
+        <button type="button" className="seg-btn marp-fs" onClick={toggleFs} title={tr("view.fullscreen")}>
           ⤢
         </button>
       </div>
@@ -220,9 +222,9 @@ export function MarpView({ source }: { source?: string }) {
           <>
             {/* Left / right click zones page back / forward; the cursor turns into a
                 ←/→ arrow over them (see styles.css). The middle is inert. */}
-            <div className="marp-nav left" onClick={() => go((c) => c - 1)} title="前のスライド" />
+            <div className="marp-nav left" onClick={() => go((c) => c - 1)} title={tr("view.prev_slide")} />
             <div className="marp-host" ref={hostRef} />
-            <div className="marp-nav right" onClick={() => go((c) => c + 1)} title="次のスライド" />
+            <div className="marp-nav right" onClick={() => go((c) => c + 1)} title={tr("view.next_slide")} />
           </>
         )}
       </div>

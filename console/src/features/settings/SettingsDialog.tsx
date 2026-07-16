@@ -6,6 +6,7 @@
 //
 import { useEffect, useRef, useState } from "react";
 import type { TouchEvent as RTouchEvent } from "react";
+import { useT } from "../../lib/i18n/index.ts";
 import { useSettingsUI } from "./store.ts";
 import { mobileMatches } from "../../lib/device.ts";
 import { Modal } from "../../ui/Modal.tsx";
@@ -20,20 +21,21 @@ import { OpsTab } from "./OpsTab.tsx";
 import { TokensTab } from "./TokensTab.tsx";
 
 export function SettingsDialog() {
+  const tr = useT();
   const closeSettings = useSettingsUI((s) => s.closeSettings);
   const settingsSection = useSettingsUI((s) => s.settingsSection);
   const [section, setSection] = useState(settingsSection || "agents");
 
-  const sections = [
-    ["display", "表示"],
-    ["keys", "キー操作"],
-    ["env", "ワークスペース"],
-    ["agents", "エージェント"],
-    ["tts", "読み上げ"],
-    ["git", "Git"],
-    ["ssm", "AWS SSM"],
-    ["ops", "運用"],
-    ["tokens", "MCP"],
+  const sections: [string, string][] = [
+    ["display", "set.tab_display"],
+    ["keys", "set.tab_keys"],
+    ["env", "set.tab_env"],
+    ["agents", "set.tab_agents"],
+    ["tts", "set.tab_tts"],
+    ["git", "set.tab_git"],
+    ["ssm", "set.tab_ssm"],
+    ["ops", "set.tab_ops"],
+    ["tokens", "set.tab_tokens"],
   ];
 
   // Keep the active tab visible in the (mobile-scrollable) tab bar as it changes
@@ -66,7 +68,7 @@ export function SettingsDialog() {
   };
 
   return (
-    <Modal title="設定" onClose={closeSettings} className="settings-modal">
+    <Modal title={tr("set.title")} onClose={closeSettings} className="settings-modal">
       <div className="ui-modal-body" onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
         <div className="seg settings-seg" ref={segRef}>
           {sections.map(([key, label]) => (
@@ -76,7 +78,7 @@ export function SettingsDialog() {
               className={"seg-btn" + (section === key ? " active" : "")}
               onClick={() => setSection(key)}
             >
-              {label}
+              {tr(label as Parameters<typeof tr>[0])}
             </button>
           ))}
         </div>

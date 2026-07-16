@@ -8,6 +8,7 @@ import type { FormEvent } from "react";
 import { Modal } from "../../ui/Modal.tsx";
 import { Button } from "../../ui/Button.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
+import { useT } from "../../lib/i18n/index.ts";
 import { apiJSON, errText } from "../../core/api/client.ts";
 
 const PREFIXES = ["feat/", "fix/", "refactor/", "chore/", "docs/"];
@@ -32,6 +33,7 @@ export function BranchRenameModal({ name, branch, onClose, onSaved }: BranchRena
   const [suggesting, setSuggesting] = useState(false);
   const [proposal, setProposal] = useState("");
   const toast = useToast();
+  const tr = useT();
   const busy = saving || suggesting;
 
   const submit = async (e: FormEvent) => {
@@ -52,7 +54,7 @@ export function BranchRenameModal({ name, branch, onClose, onSaved }: BranchRena
       onSaved();
       onClose();
     } catch {
-      toast("ブランチ名の変更に失敗しました（通信エラー）");
+      toast(tr("sx.branch_rename_failed"));
     } finally {
       setSaving(false);
     }
@@ -69,7 +71,7 @@ export function BranchRenameModal({ name, branch, onClose, onSaved }: BranchRena
       }
       if (typeof j.branch === "string" && j.branch) setProposal(j.branch);
     } catch {
-      toast("AI 提案の取得に失敗しました（通信エラー）");
+      toast(tr("sx.ai_suggest_failed"));
     } finally {
       setSuggesting(false);
     }
@@ -89,20 +91,20 @@ export function BranchRenameModal({ name, branch, onClose, onSaved }: BranchRena
   };
 
   return (
-    <Modal title="ブランチ名を変更" onClose={onClose} as="form" onSubmit={submit} lockClose={saving}>
+    <Modal title={tr("sx.branch_rename_title")} onClose={onClose} as="form" onSubmit={submit} lockClose={saving}>
       <div className="ui-modal-body">
         <label className="ui-field">
-          <span className="ui-field-label">ブランチ名</span>
+          <span className="ui-field-label">{tr("sx.branch_label")}</span>
           <input
             type="text"
             value={value}
             onChange={(e) => setValue(e.target.value)}
             onFocus={(e) => e.target.select()}
-            placeholder="例: feat/login-redirect"
+            placeholder={tr("sx.branch_ph")}
             autoFocus
           />
           <span className="ui-field-hint">
-            この worktree のブランチを <code>git branch -m</code> で改名します（フォルダ＝セッションはそのまま）。
+            {tr("sx.branch_hint_pre")}<code>git branch -m</code>{tr("sx.branch_hint_post")}
           </span>
         </label>
         <div className="sm-prefix-row">
@@ -120,12 +122,12 @@ export function BranchRenameModal({ name, branch, onClose, onSaved }: BranchRena
         </div>
         <div>
           <Button icon={suggesting ? "loading" : "sparkle"} onClick={suggest} disabled={busy}>
-            AIに提案してもらう
+            {tr("sx.ai_suggest")}
           </Button>
         </div>
         {proposal && (
           <div className="sm-proposal">
-            <span className="sm-proposal-label">提案</span>
+            <span className="sm-proposal-label">{tr("sx.proposal")}</span>
             <span className="sm-proposal-text">{proposal}</span>
             <Button
               small
@@ -133,17 +135,17 @@ export function BranchRenameModal({ name, branch, onClose, onSaved }: BranchRena
               disabled={busy}
               onClick={adoptProposal}
             >
-              この案にする
+              {tr("sx.adopt")}
             </Button>
           </div>
         )}
       </div>
       <footer className="ui-modal-foot">
         <Button variant="ghost" onClick={onClose} disabled={saving}>
-          キャンセル
+          {tr("sx.cancel")}
         </Button>
         <Button variant="primary" type="submit" disabled={saving}>
-          保存
+          {tr("sx.save")}
         </Button>
       </footer>
     </Modal>

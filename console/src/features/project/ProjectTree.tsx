@@ -23,6 +23,7 @@ import { groupedRepos, sessionsInFolder } from "../../lib/project.ts";
 import { useProjectFilter, normQuery, repoMatches, sessionMatches } from "./filter.ts";
 import { RepoNode } from "./RepoNode.tsx";
 import { useRailRoving } from "./useRailRoving.ts";
+import { useT } from "../../lib/i18n/index.ts";
 
 // guessRepoName derives a display name from a clone URL for the in-progress
 // spinner row, before the server reports the real name.
@@ -32,6 +33,7 @@ const guessRepoName = (u: string | null | undefined) => {
 };
 
 export function ProjectTree() {
+  const tr = useT();
   const repos = useReposStore((s) => s.repos);
   const refreshRepos = useReposStore((s) => s.refresh);
   const sessions = useSessionsStore((s) => s.sessions);
@@ -71,9 +73,9 @@ export function ProjectTree() {
       if (repo) {
         toast(
           <span className="clone-done-toast">
-            {repo.name} をクローンしました
+            {tr("pj.cloned", { name: repo.name })}
             <Button small icon="play" onClick={() => useLaunchTarget.getState().open(repo)}>
-              このまま はじめる
+              {tr("pj.start_now")}
             </Button>
           </span>,
           { kind: "success", duration: 10000 },
@@ -87,7 +89,7 @@ export function ProjectTree() {
   return (
     <Section
       id="repos"
-      title="リポジトリ"
+      title={tr("pj.repos")}
       icon="repo"
       count={repos.length}
       actions={
@@ -96,21 +98,21 @@ export function ProjectTree() {
             small
             variant="ghost"
             icon="add"
-            title={running ? "クローン" : "クローン（ワークスペース停止中）"}
+            title={running ? tr("pj.clone") : tr("pj.clone_ws_stopped")}
             disabled={!!cloning || !running}
             onClick={() => setShowClone((s) => !s)}
           >
-            クローン
+            {tr("pj.clone")}
           </Button>
-          <IconButton icon="refresh" label="更新" onClick={() => void refreshRepos()} />
+          <IconButton icon="refresh" label={tr("pj.refresh")} onClick={() => void refreshRepos()} />
           <span className="proj-head-sep" aria-hidden="true" />
           <IconButton
             icon="clear-all"
-            label="停止中をまとめてアーカイブ（shell/ssm は削除）"
+            label={tr("pj.archive_stopped")}
             disabled={!sessions.some((s) => !s.alive)}
             onClick={actions.clearStopped}
           />
-          <IconButton icon="archive" label="アーカイブを開く（復帰）" onClick={openArchived} />
+          <IconButton icon="archive" label={tr("pj.open_archive")} onClick={openArchived} />
         </>
       }
     >
@@ -129,11 +131,11 @@ export function ProjectTree() {
                 rail.focusFirst();
               }
             }}
-            placeholder="絞り込み（リポ / セッション）"
-            aria-label="リポジトリとセッションを絞り込み"
+            placeholder={tr("pj.filter_repos_ph")}
+            aria-label={tr("pj.filter_repos_aria")}
           />
           {q && (
-            <button type="button" className="proj-filter-clear" title="クリア" onClick={() => setQ("")}>
+            <button type="button" className="proj-filter-clear" title={tr("pj.clear")} onClick={() => setQ("")}>
               <Icon name="close" />
             </button>
           )}
@@ -143,17 +145,17 @@ export function ProjectTree() {
       <ul className="sess-list proj-tree" ref={rail.ref} role="tree" onKeyDown={rail.onKeyDown}>
         {cloning && (
           <li className="repo-cloning">
-            <Icon name="loading" spin /> {cloning.name} をクローン中…
+            <Icon name="loading" spin /> {tr("pj.cloning", { name: cloning.name })}
           </li>
         )}
         {groups.length === 0 && !cloning && (
           nq ? (
-            <li className="proj-sub-empty">「{q.trim()}」に一致するリポ・セッションはありません</li>
+            <li className="proj-sub-empty">{tr("pj.no_match", { q: q.trim() })}</li>
           ) : (
-            <EmptyState icon="repo" title="リポジトリがありません" hint="クローンするとここに並びます">
+            <EmptyState icon="repo" title={tr("pj.no_repos")} hint={tr("pj.no_repos_hint")}>
               {running && (
                 <Button small variant="primary" icon="add" onClick={() => setShowClone(true)}>
-                  クローン
+                  {tr("pj.clone")}
                 </Button>
               )}
             </EmptyState>

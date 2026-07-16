@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Icon } from "../../ui/Icon.tsx";
+import { useT } from "../../lib/i18n/index.ts";
 
 // A fold broadcast: bump `n` (a nonce) to force every FileDiff block to `open`. Lets a
 // parent add 全て開く / 全て閉じる controls without lifting each file's fold state.
@@ -151,10 +152,11 @@ export function Diff({
   wrap?: boolean;
   fold?: FoldSignal;
 }) {
+  const tr = useT();
   // Real diffs carry an @@ hunk or a `diff --git` header; anything else (placeholder
   // "(差分なし)", error strings, empty) is shown as a plain message, not parsed.
   if (!text || !/(^|\n)(@@ |diff --(git|cc) )/.test(text)) {
-    const msg = text && text.trim() ? text : embedded ? "(差分なし)" : "ファイルまたはコミットを選ぶと差分を表示";
+    const msg = text && text.trim() ? text : embedded ? tr("scm.no_diff") : tr("scm.diff_placeholder");
     return <pre className="diff muted">{msg}</pre>;
   }
   const files = splitDiffFiles(text);
@@ -163,7 +165,7 @@ export function Diff({
       {files.map((f, i) => (
         <FileDiff key={(f.path || "") + i} file={f} fold={fold} />
       ))}
-      {truncated && <div className="diff-trunc">…（差分が大きいため省略）</div>}
+      {truncated && <div className="diff-trunc">{tr("scm.diff_truncated")}</div>}
     </div>
   );
 }
@@ -207,9 +209,10 @@ function FileDiff({ file, fold }: { file: DiffFile; fold?: FoldSignal }) {
 // CommitDetail renders one commit (codeleaf style): header (subject/body/meta), then
 // the full colored patch (the diff below already lists every file).
 export function CommitDetail({ commit, wrap, fold }: { commit: CommitData | null; wrap?: boolean; fold?: FoldSignal }) {
+  const tr = useT();
   const [bodyOpen, setBodyOpen] = useState(false);
-  if (!commit) return <pre className="diff muted">読み込み中…</pre>;
-  if (commit.error) return <pre className="diff muted">(コミット取得失敗)</pre>;
+  if (!commit) return <pre className="diff muted">{tr("scm.loading")}</pre>;
+  if (commit.error) return <pre className="diff muted">{tr("scm.commit_load_failed")}</pre>;
   // Show the first 5 lines of the message body; the rest folds behind "さらに表示".
   const bodyLines = commit.body ? commit.body.split("\n") : [];
   const clampBody = bodyLines.length > 5 && !bodyOpen;
@@ -225,7 +228,7 @@ export function CommitDetail({ commit, wrap, fold }: { commit: CommitData | null
         )}
         {bodyLines.length > 5 && (
           <button type="button" className="cd-more" onClick={() => setBodyOpen((o) => !o)}>
-            {bodyOpen ? "折りたたむ" : `さらに表示（残り ${bodyLines.length - 5} 行）`}
+            {bodyOpen ? tr("scm.collapse") : tr("scm.show_more", { n: bodyLines.length - 5 })}
           </button>
         )}
       </div>

@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../../core/api/client.ts";
 import { Icon } from "../../ui/Icon.tsx";
+import { useT } from "../../lib/i18n/index.ts";
 import { Diff } from "./GitDiff.tsx";
 
 export function WorkingDiffView({
@@ -16,6 +17,7 @@ export function WorkingDiffView({
   staged?: boolean | null;
   wrap?: boolean;
 }) {
+  const tr = useT();
   const [diff, setDiff] = useState("");
   useEffect(() => {
     if (!repo || !path) {
@@ -27,10 +29,10 @@ export function WorkingDiffView({
     api(`api/repos/${encodeURIComponent(repo)}/diff?${q}`)
       .then((d) => {
         if (!alive) return;
-        setDiff(d.diff && d.diff.length ? d.diff : "(差分なし)");
+        setDiff(d.diff && d.diff.length ? d.diff : tr("scm.no_diff"));
       })
       .catch(() => {
-        if (alive) setDiff("(diff 取得失敗)");
+        if (alive) setDiff(tr("scm.diff_load_failed"));
       });
     return () => {
       alive = false;
@@ -41,7 +43,7 @@ export function WorkingDiffView({
     <div className="scmview">
       <header className="view-head">
         <span className="view-title" title={path || ""}>
-          <Icon name="git-compare" /> {path || "(ファイル未選択)"}
+          <Icon name="git-compare" /> {path || tr("scm.no_file_selected")}
         </span>
         <span className="view-spacer" />
         {staged ? <span className="scm-staged-tag">staged</span> : null}

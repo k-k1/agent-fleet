@@ -161,6 +161,7 @@ export function DisplayTab() {
 
 // Generic font names carry a translated display label; brand names (Source Code Pro …)
 // pass through. The stored value stays the raw name so fontStack() keeps matching.
+// i18n-exempt-start: キーは fontStack 突合用の生フォント値（表示は font.* で翻訳・docs/28 §2.4）
 const FONT_LABEL_KEYS: Record<string, MsgKey> = {
   "システム等幅": "font.sys_mono",
   "システム": "font.sys",
@@ -168,6 +169,7 @@ const FONT_LABEL_KEYS: Record<string, MsgKey> = {
   "明朝": "font.mincho",
   "ゴシック": "font.gothic",
 };
+// i18n-exempt-end
 
 function Row({ label, children }: { label: ReactNode; children?: ReactNode }) {
   return (

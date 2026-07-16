@@ -7,6 +7,7 @@ import { Modal } from "../../ui/Modal.tsx";
 import { BranchList } from "./BranchList.tsx";
 import type { Branch } from "./BranchList.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
+import { useT } from "../../lib/i18n/index.ts";
 
 interface BranchModalProps {
   repoName: string;
@@ -16,6 +17,7 @@ interface BranchModalProps {
 
 export function BranchModal({ repoName, onClose, onChecked }: BranchModalProps) {
   const toast = useToast();
+  const tr = useT();
   const [branches, setBranches] = useState<Branch[] | null>(null);
   const [current, setCurrent] = useState("");
   const [err, setErr] = useState("");
@@ -27,7 +29,7 @@ export function BranchModal({ repoName, onClose, onChecked }: BranchModalProps) 
       .then((d) => {
         if (!alive) return;
         if (d && d.error) {
-          setErr(d.error.message || d.error.code || "取得に失敗しました");
+          setErr(d.error.message || d.error.code || tr("rp.fetch_failed"));
           setBranches([]);
         } else {
           setBranches(d.branches || []);
@@ -36,7 +38,7 @@ export function BranchModal({ repoName, onClose, onChecked }: BranchModalProps) 
       })
       .catch(() => {
         if (!alive) return;
-        setErr("ブランチを取得できませんでした");
+        setErr(tr("rp.branches_fetch_failed"));
         setBranches([]);
       });
     return () => {
@@ -50,7 +52,7 @@ export function BranchModal({ repoName, onClose, onChecked }: BranchModalProps) 
     try {
       const res = await apiJSON(`api/repos/${encodeURIComponent(repoName)}/checkout`, "POST", { branch: name });
       if (res && res.error) {
-        toast("ブランチ切替に失敗: " + errText(res.error));
+        toast(tr("rp.checkout_failed", { err: errText(res.error) }));
         return;
       }
       onChecked();
@@ -60,7 +62,7 @@ export function BranchModal({ repoName, onClose, onChecked }: BranchModalProps) 
   };
 
   return (
-    <Modal title={`ブランチ切替 — ${repoName}`} onClose={onClose} lockClose={!!busy}>
+    <Modal title={tr("rp.branch_switch_title", { repo: repoName })} onClose={onClose} lockClose={!!busy}>
       <div className="ui-modal-body">
         {err ? (
           <p className="pick-muted">{err}</p>

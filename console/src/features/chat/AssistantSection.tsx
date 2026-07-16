@@ -41,7 +41,7 @@ export function AssistantSection() {
   const cPanes = multiPane ? chatPanes(layout) : null;
   const toast = useToast();
   const askConfirm = useConfirm();
-  useT(); // docs/28 P3: re-render builtin assistant names/descriptions on locale switch
+  const tr = useT(); // docs/28 P3: re-render builtin assistant names/descriptions on locale switch
   const [convs, setConvs] = useState<ConversationMeta[]>([]);
   const [assistants, setAssistants] = useState<Assistant[]>([]);
   const [editing, setEditing] = useState<Assistant | null>(null);
@@ -112,15 +112,15 @@ export function AssistantSection() {
       else await assistantCreate(input);
       refresh();
     } catch {
-      toast(editing ? "アシスタントの更新に失敗しました" : "アシスタントの作成に失敗しました");
+      toast(editing ? tr("asst.update_failed") : tr("asst.create_failed"));
     }
   };
 
   const deleteAssistant = async (a: Assistant) => {
     const ok = await askConfirm({
-      title: "アシスタントを削除",
-      body: `「${a.name}」を削除します。作成済みの会話は残ります。`,
-      confirmLabel: "削除",
+      title: tr("asst.delete_assistant"),
+      body: tr("asst.delete_confirm", { name: a.name }),
+      confirmLabel: tr("asst.delete"),
       danger: true,
     });
     if (!ok) return;
@@ -128,7 +128,7 @@ export function AssistantSection() {
       await assistantDelete(a.id);
       refresh();
     } catch {
-      toast("アシスタントの削除に失敗しました");
+      toast(tr("asst.delete_failed"));
     }
   };
 
@@ -137,12 +137,12 @@ export function AssistantSection() {
       await chatDelete(id);
       refresh();
     } catch {
-      toast("削除に失敗しました");
+      toast(tr("asst.remove_failed"));
     }
   };
 
   const renameConv = async (c: ConversationMeta) => {
-    const name = window.prompt("表示名を変更", c.title);
+    const name = window.prompt(tr("asst.rename"), c.title);
     if (name == null) return;
     const t = name.trim();
     if (!t || t === c.title) return;
@@ -150,7 +150,7 @@ export function AssistantSection() {
       await chatRename(c.id, t);
       refresh();
     } catch {
-      toast("名前の変更に失敗しました");
+      toast(tr("asst.rename_failed"));
     }
   };
 
@@ -159,7 +159,7 @@ export function AssistantSection() {
       <button
         type="button"
         className="ui-btn ui-btn-ghost ui-iconbtn"
-        title="新規チャット"
+        title={tr("asst.new_chat")}
         onClick={() => setPickerOpen((o) => !o)}
       >
         <Icon name="add" />
@@ -167,7 +167,7 @@ export function AssistantSection() {
       {pickerOpen &&
         createPortal(
           <div className="ui-menu assistant-picker" ref={pickerMenuRef} role="menu" onMouseDown={(e) => e.stopPropagation()}>
-            <div className="assistant-picker-label">新規チャット</div>
+            <div className="assistant-picker-label">{tr("asst.new_chat")}</div>
             {assistants.map((a) => (
               <div key={a.id} className="assistant-picker-row">
                 <button
@@ -190,14 +190,14 @@ export function AssistantSection() {
                 >
                   <Icon name={a.icon || "comment-discussion"} className="assistant-ic" />
                   <span className="chat-open-title">{assistantName(a)}</span>
-                  {a.builtin && <span className="assistant-badge">常設</span>}
+                  {a.builtin && <span className="assistant-badge">{tr("asst.builtin_badge")}</span>}
                 </button>
                 {!a.builtin && (
                   <>
                     <button
                       type="button"
                       className="ui-btn ui-btn-ghost ui-iconbtn"
-                      title="編集"
+                      title={tr("asst.edit")}
                       onClick={() => {
                         setPickerOpen(false);
                         setEditing(a);
@@ -208,7 +208,7 @@ export function AssistantSection() {
                     <button
                       type="button"
                       className="ui-btn ui-btn-ghost ui-iconbtn"
-                      title="削除"
+                      title={tr("asst.delete")}
                       onClick={() => {
                         setPickerOpen(false);
                         void deleteAssistant(a);
@@ -230,7 +230,7 @@ export function AssistantSection() {
               }}
             >
               <Icon name="add" className="assistant-ic" />
-              <span className="chat-open-title">アシスタントを作成</span>
+              <span className="chat-open-title">{tr("asst.create_assistant")}</span>
             </button>
           </div>,
           document.body,
@@ -240,9 +240,9 @@ export function AssistantSection() {
 
   return (
     <>
-      <Section id="assistant" icon="comment-discussion" title="アシスタント" count={startedConvs.length} actions={actions}>
+      <Section id="assistant" icon="comment-discussion" title={tr("asst.section_title")} count={startedConvs.length} actions={actions}>
         {startedConvs.length === 0 ? (
-          <div className="section-empty">チャットはまだありません。＋ から開始できます。</div>
+          <div className="section-empty">{tr("asst.empty")}</div>
         ) : (
           <ul className="sess-list">
             {startedConvs.map((c) => {
@@ -265,11 +265,11 @@ export function AssistantSection() {
                     <span className="chat-open-title">{c.title}</span>
                     {c.message_count > 0 && <span className="chat-open-meta">{c.message_count}</span>}
                     {chatBusy[c.id] ? (
-                      <span className="session-state working mini" title="進行中">
+                      <span className="session-state working mini" title={tr("asst.in_progress")}>
                         <Icon name="loading" spin />
                       </span>
                     ) : (
-                      <span className="session-state on mini" title="待機中">
+                      <span className="session-state on mini" title={tr("asst.waiting")}>
                         <Icon name="check" />
                       </span>
                     )}
@@ -281,7 +281,7 @@ export function AssistantSection() {
                           key={o.id}
                           type="button"
                           className={"rail-ord " + ordClass(o.ordinal)}
-                          title={`ペイン${o.ordinal}にフォーカス`}
+                          title={tr("asst.focus_pane", { n: o.ordinal })}
                           onClick={(e) => {
                             e.stopPropagation();
                             setActive(o.id);
@@ -293,10 +293,10 @@ export function AssistantSection() {
                     </span>
                   ) : null}
                   <span className="chat-actions">
-                    <button type="button" className="ui-btn ui-btn-ghost ui-iconbtn chat-del" title="表示名を変更" onClick={() => void renameConv(c)}>
+                    <button type="button" className="ui-btn ui-btn-ghost ui-iconbtn chat-del" title={tr("asst.rename")} onClick={() => void renameConv(c)}>
                       <Icon name="edit" />
                     </button>
-                    <button type="button" className="ui-btn ui-btn-ghost ui-iconbtn chat-del" title="このチャットを削除" onClick={() => void removeConv(c.id)}>
+                    <button type="button" className="ui-btn ui-btn-ghost ui-iconbtn chat-del" title={tr("asst.delete_chat")} onClick={() => void removeConv(c.id)}>
                       <Icon name="trash" />
                     </button>
                   </span>
@@ -310,12 +310,12 @@ export function AssistantSection() {
             <ul className="ui-menu" ref={menuRef} style={{ left: menu.x, top: menu.y }} role="menu" onMouseDown={(e) => e.stopPropagation()}>
               <li>
                 <button type="button" className="ui-menu-item" onClick={() => runMenu(() => startChat(menu.a))}>
-                  <Icon name="comment" /> 新規チャット
+                  <Icon name="comment" /> {tr("asst.new_chat")}
                 </button>
               </li>
               <li>
                 <button type="button" className="ui-menu-item" onClick={() => runMenu(() => openTargetInNew(draftTarget(menu.a.id), true))}>
-                  <Icon name="split-horizontal" /> 新しいペインで開く
+                  <Icon name="split-horizontal" /> {tr("asst.open_new_pane")}
                 </button>
               </li>
               {!menu.a.builtin && (
@@ -323,12 +323,12 @@ export function AssistantSection() {
                   <li className="ui-menu-sep" aria-hidden="true" />
                   <li>
                     <button type="button" className="ui-menu-item" onClick={() => runMenu(() => setEditing(menu.a))}>
-                      <Icon name="edit" /> 編集
+                      <Icon name="edit" /> {tr("asst.edit")}
                     </button>
                   </li>
                   <li>
                     <button type="button" className="ui-menu-item danger" onClick={() => runMenu(() => void deleteAssistant(menu.a))}>
-                      <Icon name="trash" /> 削除
+                      <Icon name="trash" /> {tr("asst.delete")}
                     </button>
                   </li>
                 </>

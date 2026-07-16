@@ -11,6 +11,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../core/api/client.ts";
 import { CLAUDE_MODELS } from "./settings.ts";
+import { t } from "./i18n/index.ts";
 
 export type ModelOption = [string, string]; // [value sent as `model`, display label]
 export type EffortOption = [string, string];
@@ -22,7 +23,9 @@ interface ModelDescriptor {
   defaultEffort: string;
 }
 
-const DEFAULT_ONLY: ModelOption[] = [["", "既定"]];
+// Resolved lazily (not a module-level constant) so the "既定" label reflects the
+// current locale and updates on language switch.
+const defaultOnly = (): ModelOption[] => [["", t("ui.default")]];
 const isDynamic = (kind: string) => kind === "codex" || kind === "opencode";
 const cache = new Map<string, ModelOption[]>();
 const descriptors = new Map<string, ModelDescriptor[]>();
@@ -49,7 +52,7 @@ function fetchModels(kind: string): Promise<ModelOption[]> {
           }));
         const opts = desc.map((m): ModelOption => [m.id, m.label]);
         if (!opts.length) throw new Error("empty"); // workspace stopped / CLI absent — retry next open
-        const full = [...DEFAULT_ONLY, ...opts];
+        const full = [...defaultOnly(), ...opts];
         descriptors.set(kind, desc);
         if (cacheable) cache.set(kind, full);
         else inflight.delete(kind);
@@ -57,7 +60,7 @@ function fetchModels(kind: string): Promise<ModelOption[]> {
       })
       .catch(() => {
         inflight.delete(kind);
-        return DEFAULT_ONLY;
+        return defaultOnly();
       });
     inflight.set(kind, p);
   }
@@ -98,10 +101,10 @@ export function useEffortOptions(kind: string, model: string): EffortOption[] {
   // codex/opencode はカタログの defaultEffort をそのまま「既定（medium）」等で表示。
   const def = selected?.defaultEffort || "";
   const defaultLabel = def
-    ? `既定（${def}）`
+    ? t("ui.default_with", { effort: def })
     : kind === "claude" && efforts.length
-      ? "既定（Claude Code = xhigh）"
-      : "既定";
+      ? t("ui.default_claude_xhigh")
+      : t("ui.default");
   return [["", defaultLabel], ...efforts.map((e): EffortOption => [e, e])];
 }
 
@@ -109,11 +112,11 @@ export function useEffortOptions(kind: string, model: string): EffortOption[] {
 // has no picker (caps.model false). Dynamic kinds resolve asynchronously: 既定-only
 // first, the full list once fetched.
 export function useModelOptions(kind: string): ModelOption[] | null {
-  const [opts, setOpts] = useState<ModelOption[]>(() => cache.get(kind) || DEFAULT_ONLY);
+  const [opts, setOpts] = useState<ModelOption[]>(() => cache.get(kind) || defaultOnly());
   useEffect(() => {
     if (!isDynamic(kind)) return;
     let alive = true;
-    setOpts(cache.get(kind) || DEFAULT_ONLY); // reset stale options from a previous kind
+    setOpts(cache.get(kind) || defaultOnly()); // reset stale options from a previous kind
     void fetchModels(kind).then((l) => alive && setOpts(l));
     return () => {
       alive = false;

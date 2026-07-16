@@ -4,10 +4,12 @@ import { useEffect, useState } from "react";
 import { api } from "../../core/api/client.ts";
 import { Icon } from "../../ui/Icon.tsx";
 import { EmptyState } from "../../ui/EmptyState.tsx";
+import { useT } from "../../lib/i18n/index.ts";
 import { CommitDetail } from "./GitDiff.tsx";
 import type { CommitData, FoldSignal } from "./GitDiff.tsx";
 
 export function CommitDetailView({ repo, path, sha, wrap }: { repo: string; path?: string; sha: string; wrap?: boolean }) {
+  const tr = useT();
   const enc = encodeURIComponent(repo || "");
   const [commit, setCommit] = useState<CommitData | null>(null);
   const [localWrap, setLocalWrap] = useState<boolean | null>(null);
@@ -33,7 +35,7 @@ export function CommitDetailView({ repo, path, sha, wrap }: { repo: string; path
   if (!sha) {
     return (
       <div className="scmview">
-        <EmptyState icon="git-commit" title="コミットを選択" hint="グラフでコミットをクリックすると詳細を表示します" />
+        <EmptyState icon="git-commit" title={tr("scm.select_commit")} hint={tr("scm.select_commit_hint")} />
       </div>
     );
   }
@@ -44,20 +46,20 @@ export function CommitDetailView({ repo, path, sha, wrap }: { repo: string; path
           <Icon name="git-commit" /> {repo}{path ? ` / ${path}` : ""} · {(sha || "").slice(0, 10)}
         </span>
         <span className="view-spacer" />
-        <button type="button" className="ui-btn ui-btn-ghost ui-btn-sm" title="全ての diff を開く" onClick={() => foldAll(true)}>
-          <Icon name="expand-all" /> <span className="lbl">全て開く</span>
+        <button type="button" className="ui-btn ui-btn-ghost ui-btn-sm" title={tr("scm.expand_all_diffs")} onClick={() => foldAll(true)}>
+          <Icon name="expand-all" /> <span className="lbl">{tr("scm.expand_all")}</span>
         </button>
-        <button type="button" className="ui-btn ui-btn-ghost ui-btn-sm" title="全ての diff を閉じる" onClick={() => foldAll(false)}>
-          <Icon name="collapse-all" /> <span className="lbl">全て閉じる</span>
+        <button type="button" className="ui-btn ui-btn-ghost ui-btn-sm" title={tr("scm.collapse_all_diffs")} onClick={() => foldAll(false)}>
+          <Icon name="collapse-all" /> <span className="lbl">{tr("scm.collapse_all")}</span>
         </button>
         <button
           type="button"
           className={"ui-btn ui-btn-ghost ui-btn-sm" + (effWrap ? " on" : "")}
-          title="行を折り返す"
+          title={tr("scm.word_wrap")}
           aria-pressed={effWrap}
           onClick={() => setLocalWrap(!effWrap)}
         >
-          <Icon name="word-wrap" /> <span className="lbl">折り返し</span>
+          <Icon name="word-wrap" /> <span className="lbl">{tr("scm.wrap")}</span>
         </button>
       </header>
       <div className="scm-scroll">

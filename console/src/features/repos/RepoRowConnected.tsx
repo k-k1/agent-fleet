@@ -4,6 +4,7 @@
 // / clone-target / delete / fast-forward / open-SCM logic that used to live inline
 // in ReposSection lives here once.
 import { apiJSON, raw, errText } from "../../core/api/client.ts";
+import { useT } from "../../lib/i18n/index.ts";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { useConfirm } from "../../ui/ConfirmProvider.tsx";
 import { agentOf } from "../../agents/registry.ts";
@@ -30,6 +31,7 @@ interface RepoRowConnectedProps {
 
 export function RepoRowConnected({ r, ctx, onToggle, sess }: RepoRowConnectedProps) {
   const settings = useSettings(); // default model for claude 起動
+  const tr = useT();
   const toast = useToast();
   const askConfirm = useConfirm();
   const openTarget = useLayoutStore((s) => s.openTarget);
@@ -62,17 +64,17 @@ export function RepoRowConnected({ r, ctx, onToggle, sess }: RepoRowConnectedPro
       onFF={async () => {
         const res = await apiJSON(`api/repos/${encodeURIComponent(r.name)}/ff`, "POST", {});
         if (res && res.error) {
-          toast("ff 失敗: " + errText(res.error));
+          toast(tr("rp.ff_failed", { err: errText(res.error) }));
           return;
         }
         void refreshRepos();
-        toast(`${r.name}: fast-forward しました`, { kind: "success" });
+        toast(tr("rp.ff_success", { name: r.name }), { kind: "success" });
       }}
       onDelete={async () => {
         const ok = await askConfirm({
-          title: "ワーキングコピーを削除",
-          body: `"${r.name}" のローカル作業コピーを削除します。履歴・リモートはそのまま残ります。`,
-          confirmLabel: "削除する",
+          title: tr("rp.delete_workcopy_title"),
+          body: tr("rp.delete_workcopy_body", { name: r.name }),
+          confirmLabel: tr("rp.delete_confirm"),
           danger: true,
         });
         if (!ok) return;
@@ -85,9 +87,9 @@ export function RepoRowConnected({ r, ctx, onToggle, sess }: RepoRowConnectedPro
           const code = j?.error && typeof j.error === "object" ? j.error.code : "";
           if (code === "worktree_dirty") {
             const force = await askConfirm({
-              title: "未保存の変更があります",
-              body: `"${r.name}" には未コミット/未pushの変更があります。強制的に削除すると失われます。続けますか？`,
-              confirmLabel: "強制削除",
+              title: tr("rp.unsaved_changes_title"),
+              body: tr("rp.unsaved_changes_body", { name: r.name }),
+              confirmLabel: tr("rp.force_delete"),
               danger: true,
             });
             if (!force) return;
@@ -96,12 +98,12 @@ export function RepoRowConnected({ r, ctx, onToggle, sess }: RepoRowConnectedPro
         }
         if (!res.ok) {
           const j = await res.json().catch(() => null);
-          toast(j?.error ? "削除に失敗: " + errText(j.error) : "削除に失敗しました");
+          toast(j?.error ? tr("rp.delete_failed", { err: errText(j.error) }) : tr("rp.delete_failed_generic"));
           return;
         }
         void refreshRepos();
         useFilesStore.getState().bump();
-        toast(`${r.name} を削除しました`, { kind: "success", persist: true });
+        toast(tr("rp.delete_success", { name: r.name }), { kind: "success", persist: true });
       }}
       // Quick launch (▼ / right-click): no prompt, straight to a session.
       onLaunch={async (kind, split) => {
@@ -127,7 +129,7 @@ export function RepoRowConnected({ r, ctx, onToggle, sess }: RepoRowConnectedPro
           res = await apiJSON("api/sessions", "POST", body);
         }
         if (res && res.error) {
-          toast("起動に失敗: " + errText(res.error));
+          toast(tr("rp.launch_failed", { err: errText(res.error) }));
           return;
         }
         writeRepoLast(r.name, kind, hasModel ? model : undefined, effort, startMode);

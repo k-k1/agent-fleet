@@ -5,6 +5,7 @@
 // `dir: ""` launches in the home directory (repo-less session) — worktree options
 // and repo-scoped bookkeeping (repoLast / prompt history) are skipped there.
 import { apiJSON, errText, pasteImage } from "../../core/api/client.ts";
+import { t } from "../../lib/i18n/index.ts";
 import { buildImagePrompt } from "../../lib/pastedImages.ts";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { agentOf } from "../../agents/registry.ts";
@@ -47,7 +48,7 @@ export function useStartWork(): (target: StartTarget, opts: LaunchOpts) => Promi
     // （driver_unsupported）。managed で立てられないなら tui で立てて動く方が親切 —
     // 1 回だけ落として再送し、その旨をトーストする。
     if (res?.error && driver === "managed" && (res.error as { code?: string }).code === "driver_unsupported") {
-      toast("この環境は managed 未対応のため CLI (TUI) で起動します");
+      toast(t("rp.managed_unsupported"));
       delete body.driver;
       if (!agentOf(kind).caps.tuiEffort) delete body.effort;
       if (!agentOf(kind).caps.tuiStartMode) delete body.mode;
@@ -57,7 +58,11 @@ export function useStartWork(): (target: StartTarget, opts: LaunchOpts) => Promi
       const code = typeof res.error === "object" ? res.error.code : "";
       if (code === "branch_exists") return { ok: false, conflict: "local" as const };
       if (code === "branch_exists_remote") return { ok: false, conflict: "remote" as const };
-      toast((worktree ? "worktree 起動に失敗: " : "起動に失敗: ") + errText(res.error));
+      toast(
+        worktree
+          ? t("rp.worktree_launch_failed", { err: errText(res.error) })
+          : t("rp.launch_failed", { err: errText(res.error) }),
+      );
       return { ok: false };
     }
     if (repo) writeRepoLast(repo, kind, hasModel ? model : undefined, effort, startMode);
@@ -71,9 +76,9 @@ export function useStartWork(): (target: StartTarget, opts: LaunchOpts) => Promi
         try {
           const up = await pasteImage(res.name, f);
           if (up.status < 300 && up.path) paths.push(up.path);
-          else toast("画像のアップロードに失敗しました: " + (up.error ? errText(up.error) : ""));
+          else toast(t("rp.image_upload_failed", { err: up.error ? errText(up.error) : "" }));
         } catch {
-          toast("画像のアップロードに失敗しました（通信エラー）");
+          toast(t("rp.image_upload_failed_network"));
         }
       }
       seed = buildImagePrompt(prompt, paths, kind);

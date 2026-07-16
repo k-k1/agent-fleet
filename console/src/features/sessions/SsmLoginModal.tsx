@@ -10,6 +10,7 @@
 import { useEffect, useState } from "react";
 import { Modal } from "../../ui/Modal.tsx";
 import { Button } from "../../ui/Button.tsx";
+import { useT } from "../../lib/i18n/index.ts";
 import { api, raw, rawJSON } from "../../core/api/client.ts";
 
 interface SsmLoginModalProps {
@@ -25,6 +26,7 @@ export function SsmLoginModal({ name, start = false, force = false, onReady, onC
   const [url, setUrl] = useState("");
   const [code, setCode] = useState("");
   const [error, setError] = useState("");
+  const tr = useT();
 
   useEffect(() => {
     let alive = true;
@@ -81,19 +83,18 @@ export function SsmLoginModal({ name, start = false, force = false, onReady, onC
   };
 
   return (
-    <Modal title={`SSM ログイン（${name}）`} onClose={cancel}>
+    <Modal title={tr("sx.ssm_title", { name })} onClose={cancel}>
       <div className="ui-modal-body">
         {phase === "error" ? (
-          <p className="ssm-error">ログインに失敗しました。{error ? " " + error : ""}</p>
+          <p className="ssm-error">{tr("sx.ssm_login_failed")}{error ? " " + error : ""}</p>
         ) : phase === "authorize" ? (
           <>
             <p className="ui-field-hint">
-              下の認証コードを確認し、「サインインして承認」を押してください。開いたページに表示されるコードが
-              一致することを確かめてから承認してください。承認後、自動で接続します。
+              {tr("sx.ssm_verify_hint")}
             </p>
             {code && (
               <div className="ssm-code-row">
-                <span className="ui-field-label">認証コード</span>
+                <span className="ui-field-label">{tr("sx.ssm_code_label")}</span>
                 <span className="ssm-code">{code}</span>
               </div>
             )}
@@ -104,20 +105,20 @@ export function SsmLoginModal({ name, start = false, force = false, onReady, onC
                 disabled={!url}
                 onClick={() => url && window.open(url, "_blank", "noopener")}
               >
-                サインインして承認
+                {tr("sx.ssm_sign_in")}
               </Button>
             </div>
             <p className="ui-field-hint">
-              ⚠ 自分で開始したこのログインのみ承認してください（コードが一致しない場合は承認しない）。
+              {tr("sx.ssm_warn")}
             </p>
           </>
         ) : (
-          <p className="ui-field-hint">接続中… しばらくお待ちください（認証が必要な場合はここに URL が表示されます）。</p>
+          <p className="ui-field-hint">{tr("sx.ssm_connecting")}</p>
         )}
       </div>
       <footer className="ui-modal-foot">
         <Button variant="ghost" onClick={cancel}>
-          キャンセル
+          {tr("sx.cancel")}
         </Button>
       </footer>
     </Modal>

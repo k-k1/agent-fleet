@@ -15,12 +15,14 @@ import { useFilesStore } from "../files/store.ts";
 import { useFilesFilter } from "./filesFilter.ts";
 import { ProjectFiles } from "./ProjectFiles.tsx";
 import { FilesChanges } from "./FilesChanges.tsx";
+import { useT } from "../../lib/i18n/index.ts";
 
 const KEY = "af-section-files";
 const HOME_KEY = "af-files-home";
 const VIEW_KEY = "af-files-view"; // the old console's tree/changes choice carries over
 
 export function FilesSection() {
+  const tr = useT();
   const reveal = useFilesStore((s) => s.reveal);
   const bump = useFilesStore((s) => s.bump);
   const q = useFilesFilter((s) => s.q);
@@ -86,7 +88,7 @@ export function FilesSection() {
 
   return (
     <Section
-      title="ファイル"
+      title={tr("pj.files")}
       icon="files"
       open={open}
       onToggle={() => set(!open)}
@@ -97,21 +99,21 @@ export function FilesSection() {
             <button
               type="button"
               className={"seg-btn" + (view === "tree" ? " active" : "")}
-              title="ツリー"
+              title={tr("pj.tree")}
               onClick={() => setViewPersist("tree")}
             >
-              <Icon name="list-tree" /> ツリー
+              <Icon name="list-tree" /> {tr("pj.tree")}
             </button>
             <button
               type="button"
               className={"seg-btn" + (view === "changes" ? " active" : "")}
-              title="変更ファイルのみ（全作業コピー）"
+              title={tr("pj.changes_only")}
               onClick={() => setViewPersist("changes")}
             >
-              <Icon name="git-compare" /> 変更
+              <Icon name="git-compare" /> {tr("pj.changes")}
             </button>
           </span>
-          <IconButton icon="refresh" label="更新" onClick={bump} />
+          <IconButton icon="refresh" label={tr("pj.refresh")} onClick={bump} />
         </>
       }
     >
@@ -134,16 +136,16 @@ export function FilesSection() {
                     focusTree();
                   }
                 }}
-                placeholder="絞り込み（ファイル）"
-                aria-label="ファイルを絞り込み"
+                placeholder={tr("pj.filter_files_ph")}
+                aria-label={tr("pj.filter_files_aria")}
               />
-              <span className="files-search-scope" role="group" aria-label="検索範囲">
+              <span className="files-search-scope" role="group" aria-label={tr("pj.search_scope")}>
                 <button
                   type="button"
                   className={scope === "repos" ? "active" : ""}
                   aria-pressed={scope === "repos"}
-                  title="リポジトリから検索"
-                  aria-label="リポジトリから検索"
+                  title={tr("pj.search_from_repos")}
+                  aria-label={tr("pj.search_from_repos")}
                   onClick={() => setScope("repos")}
                 >
                   <Icon name="root-folder" />
@@ -152,15 +154,15 @@ export function FilesSection() {
                   type="button"
                   className={scope === "home" ? "active" : ""}
                   aria-pressed={scope === "home"}
-                  title="home から検索"
-                  aria-label="home から検索"
+                  title={tr("pj.search_from_home")}
+                  aria-label={tr("pj.search_from_home")}
                   onClick={() => setScope("home")}
                 >
                   <Icon name="vm" />
                 </button>
               </span>
               {q && (
-                <button type="button" className="proj-filter-clear" title="クリア" onClick={() => setQ("")}>
+                <button type="button" className="proj-filter-clear" title={tr("pj.clear")} onClick={() => setQ("")}>
                   <Icon name="close" />
                 </button>
               )}
@@ -176,7 +178,7 @@ export function FilesSection() {
                 className="files-home-btn"
                 onClick={() => setHome(!homeOpen)}
                 aria-expanded={homeOpen}
-                title={homeOpen ? "home を折りたたむ" : "home を展開（~ 全体をブラウズ）"}
+                title={homeOpen ? tr("pj.home_collapse") : tr("pj.home_expand")}
               >
                 <Icon name={homeOpen ? "chevron-down" : "chevron-right"} />
                 <Icon name="vm" /> home
