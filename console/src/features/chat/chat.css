@@ -145,13 +145,17 @@
 .chat-error {
   color: var(--del);
 }
+/* Mirrors MirrorView's .mirror-compose so a chat pane and a mirror pane sit side by
+   side with identical composer bars (padding, background, input + send sizing, focus
+   border). The only intended differences are MirrorView's mode chip and ＋ attach. */
 .chat-composer {
   flex: 0 0 auto;
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 10px 12px;
+  padding: 8px 12px;
   border-top: 1px solid var(--border);
+  background: var(--bar);
 }
 /* The input + send button sit on one row; the attachment strip (if any) stacks above. */
 .chat-composer-row {
@@ -247,21 +251,50 @@
   box-sizing: border-box;
   overflow-y: auto;
   min-height: 38px;
-  max-height: 40vh;
+  max-height: calc(14em + 18px);
   padding: 8px 10px;
   border-radius: 8px;
-  border: 1px solid var(--btn-border);
-  background: var(--panel);
+  border: 1px solid var(--border);
+  background: var(--bg);
   color: var(--fg);
-  font: inherit;
+  font-family: var(--chat-font, system-ui, sans-serif);
+  font-size: var(--chat-size, 14px);
+  line-height: 1.4;
+}
+/* Match MirrorView's focus treatment (accent border, no default outline) so the chat
+   input doesn't fall back to the browser's heavy blue focus ring. */
+.chat-input:focus {
+  outline: none;
+  border-color: var(--chat-accent);
 }
 .chat-send {
   flex: 0 0 auto;
-  align-self: stretch;
+  height: 31px;
+  padding: 0 16px;
 }
 /* Stop button (while a turn streams): same shape as send, danger-tinted. */
 .chat-stop {
   color: var(--danger, #e05a5a);
+}
+/* Composer history nav (↑/↓ recall) — for phones, which have no arrow keys. Hidden on
+   wider screens (where ArrowUp/ArrowDown drive the same recallPrev/recallNext). Mirrors
+   MirrorView's .mirror-hist. */
+.chat-hist {
+  display: none;
+  flex-direction: column;
+  gap: 2px;
+  flex: 0 0 auto;
+  align-self: stretch;
+}
+.chat-hist-btn {
+  flex: 1;
+  width: 34px;
+  padding: 0;
+}
+@media (max-width: 760px) {
+  .chat-hist {
+    display: flex;
+  }
 }
 /* Conversation-row status chip: compact, sits after the count (not far-right auto). */
 .chat-open .session-state {

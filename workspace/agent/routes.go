@@ -66,6 +66,7 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("DELETE /chat/conversations/{id}", handleChatDelete)
 	mux.HandleFunc("POST /chat/conversations/{id}/messages", handleChatSend)
 	mux.HandleFunc("POST /chat/conversations/{id}/stream", handleChatStream) // SSE (Phase B)
+	mux.HandleFunc("POST /chat/conversations/{id}/stop", handleChatStop)     // cancel a detached in-flight turn
 	mux.HandleFunc("POST /chat/conversations/{id}/paste-image", handleChatPasteImage)
 	mux.HandleFunc("GET /chat/conversations/{id}/pasted/{file}", handleChatPastedImage)
 	// Assistant-to-assistant consult (docs/19): af_write orchestrators' ask_assistant tool

@@ -179,12 +179,28 @@ func handleChatAsk(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleChatGet(w http.ResponseWriter, r *http.Request) {
-	c, err := loadConv(r.PathValue("id"))
+	id := r.PathValue("id")
+	c, err := loadConv(id)
 	if err != nil {
 		httpx.WriteErr(w, http.StatusNotFound, errCodeChatConversationNotFnd, "conversation not found")
 		return
 	}
+	c.InProgress = turnInFlight(id) // transient: lets a reloaded client poll for a still-running reply
 	httpx.WriteJSON(w, http.StatusOK, c)
+}
+
+// handleChatStop cancels a conversation's in-flight assistant turn (the Stop button).
+// The streaming turn is detached from its request connection, so aborting the SSE fetch
+// no longer stops it — this explicit cancel does. Idempotent: reports whether a running
+// turn was found, but always succeeds.
+func handleChatStop(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if !validConvID(id) {
+		httpx.WriteErr(w, http.StatusBadRequest, errCodeChatConversationNotFnd, "invalid conversation id")
+		return
+	}
+	stopped := cancelLiveTurn(id)
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"stopped": stopped})
 }
 
 type chatRenameReq struct {
@@ -327,8 +343,15 @@ func handleChatStream(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), chatTimeout)
+	// Detach the turn from the request context (WithoutCancel) so a browser reload —
+	// which aborts this SSE request — doesn't cancel the provider or lose the reply:
+	// the turn keeps running, saves below, and a reconnecting client re-attaches via
+	// in_progress polling. An EXPLICIT stop still cancels it through the registered
+	// cancel func (handleChatStop); the bounded chatTimeout caps a runaway turn.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), chatTimeout)
 	defer cancel()
+	deregister := registerLiveTurn(id, cancel)
+	defer deregister()
 
 	var reply string
 	var steps []chatStep
