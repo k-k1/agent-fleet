@@ -49,11 +49,19 @@ func sessionTerminalState(name string) (string, *compactProgress) {
 	if err != nil {
 		return "", nil
 	}
-	s := string(out)
+	return classifyClaudePane(string(out))
+}
+
+// classifyClaudePane is the pure pane-text classifier behind sessionTerminalState,
+// split out so it can be unit-tested without tmux. The "Compacting conversation"
+// match is deliberately the full CLI phrase, not a bare "Compacting": an agent
+// editing text that merely contains the word (e.g. an i18n catalog value
+// "state.compacting": "Compacting…") would otherwise trip a false compacting state.
+func classifyClaudePane(s string) (string, *compactProgress) {
 	switch {
 	case strings.Contains(s, "Resume from summary") || strings.Contains(s, "Resume full session"):
 		return "resume", nil
-	case strings.Contains(s, "Compacting"):
+	case strings.Contains(s, "Compacting conversation"):
 		return "compacting", parseCompactProgress(s)
 	default:
 		return "", nil
