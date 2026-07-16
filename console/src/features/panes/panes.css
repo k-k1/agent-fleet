@@ -17,11 +17,32 @@
   border-radius: 4px;
   overflow: hidden;
 }
+.pane {
+  transition:
+    opacity 0.12s ease,
+    filter 0.12s ease,
+    box-shadow 0.12s ease;
+}
 .pane.active {
-  border-color: color-mix(in srgb, var(--accent) 55%, var(--border2));
   /* Keyboard-navigation focus ring — makes the active pane obvious when moving by
-     Alt+N / F6 (keyboard system). Inset so it never bleeds into a neighbor pane. */
-  box-shadow: inset 0 0 0 1.5px var(--focus-ring);
+     Alt+N / F6 (keyboard system). The ring + border take the pane's OWN ordinal color
+     (--ord, matching its rail row / mini-map chip), so it both stands out and says
+     WHICH pane; falls back to the neutral focus-ring / accent for panes past the 8
+     ordinal slots. 2px inset so it reads clearly and never bleeds into a neighbor. */
+  border-color: var(--ord, var(--accent));
+  box-shadow: inset 0 0 0 2px var(--ord, var(--focus-ring));
+}
+/* Dim the OTHER panes so the focused one pops by contrast. Gated on :has(.active) so it
+   only kicks in with 2+ panes — a lone pane never gets .active (PaneHost: total > 1), so
+   without this guard the single pane would match :not(.active) and dim itself. Hovering
+   an inactive pane lifts the dim so the pointer can peek at its content. */
+.panehost:has(> .pane.active) .pane:not(.active) {
+  opacity: 0.55;
+  filter: saturate(0.85);
+}
+.panehost:has(> .pane.active) .pane:not(.active):hover {
+  opacity: 1;
+  filter: none;
 }
 .pane.droptarget {
   border-color: var(--accent);
