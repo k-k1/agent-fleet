@@ -65,7 +65,12 @@
 /* Only the HEAD bar takes the top bar's surface (follows the 外観 top-bar color /
    theme) as an accent tying it to the same chrome; the body stays neutral (--bg, like
    any other modal) so a strong custom top-bar color doesn't flood the whole dialog. */
-.modal.settings-modal {
+/* Modal.tsx が付ける実クラスは `ui-modal settings-modal`（`.modal` は付かない）。
+   旧 `.modal.settings-modal` は Console リビルドのクラス改名で空振りしており、
+   primary ボタン／フォーカスリング（var(--accent) 直参照）が Top 色に追従して
+   いなかった。`.settings-modal` に直して retint を復活させる。アクティブタブ／
+   選択セグメントは元々 --sel-*（--sel-accent: --topbar-accent）で追従済みなので変化なし。 */
+.settings-modal {
   background: var(--bg);
   /* Retint accents (buttons, active tabs, …) to the top-bar surface, like the admin
      modal — --topbar-accent is concrete so rebinding --accent here can't cycle. */
