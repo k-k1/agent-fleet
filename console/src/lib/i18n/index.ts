@@ -64,3 +64,9 @@ export function useT(): typeof t {
   useSyncExternalStore(subscribeLocale, getLocale, getLocale);
   return t;
 }
+
+// useLocale — 現ロケール文字列そのものを購読する（変更で再レンダー）。native <input type="date">
+// の lang など、翻訳ではなくロケール値が要る箇所で使う。
+export function useLocale(): string {
+  return useSyncExternalStore(subscribeLocale, getLocale, getLocale);
+}

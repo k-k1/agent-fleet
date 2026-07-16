@@ -8,6 +8,7 @@ import { ConfirmDialog } from "../../ui/ConfirmDialog.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { kindLabel, kindClass, kindIcon } from "../../lib/sessionkind.ts";
 import { fmtDateTime, DATETIME_FULL } from "../../lib/intl.ts";
+import { useLocale } from "../../lib/i18n/index.ts";
 import { fmtGiB } from "../../lib/bytes.ts";
 import { stateInfo } from "../../lib/sessionview.ts";
 import { setTenantDict } from "../chat/ttsDict.ts";
@@ -845,6 +846,9 @@ function TtsAdminView() {
 const fmtHrs = (secs: number) => (secs / 3600).toFixed(secs < 3600 ? 2 : 1) + " h";
 
 function UsageView({ tenants, isSuper }: { tenants: Tenant[]; isSuper: boolean }) {
+  // native <input type="date"> の表示形式を、ブラウザ言語ではなくアプリのロケールに追従させる
+  // （lang を尊重する Chrome/Safari で有効。Firefox は OS ロケール依存で不変＝ブラウザ側の制約）。
+  const locale = useLocale();
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   // Non-super callers must scope to a tenant they administer (the API rejects the
@@ -912,11 +916,11 @@ function UsageView({ tenants, isSuper }: { tenants: Tenant[]; isSuper: boolean }
         <div className="usage-toolbar">
           <label>
             開始
-            <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+            <input type="date" lang={locale} value={from} onChange={(e) => setFrom(e.target.value)} />
           </label>
           <label>
             終了
-            <input type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+            <input type="date" lang={locale} value={to} onChange={(e) => setTo(e.target.value)} />
           </label>
           {isSuper && (
             <label>
