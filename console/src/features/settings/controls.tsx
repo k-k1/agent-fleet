@@ -58,6 +58,28 @@ export function Slider({
   );
 }
 
+// Select: a native dropdown sharing Choice's [value, label] options, for lists too long
+// for a segmented control (e.g. opencode の ~50 モデル). Values round-trip through the
+// original option (String() のみ表示用に使い、onChange は元の型の値を返す)。
+export function Select({ value, options, onChange }: ChoiceProps) {
+  return (
+    <select
+      className="ds-select"
+      value={String(value)}
+      onChange={(e) => {
+        const hit = options.find(([v]) => String(v) === e.target.value);
+        onChange(hit ? hit[0] : e.target.value);
+      }}
+    >
+      {options.map(([v, label]) => (
+        <option key={String(v)} value={String(v)}>
+          {label as string}
+        </option>
+      ))}
+    </select>
+  );
+}
+
 // OnOff: an オン / オフ toggle built on Choice (value may be undefined = オフ).
 export function OnOff({ value, onChange }: { value?: boolean; onChange: (v: boolean) => void }) {
   return (

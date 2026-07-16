@@ -6,7 +6,7 @@ import { EmptyState } from "../../ui/EmptyState.tsx";
 import { Button } from "../../ui/Button.tsx";
 import { Sparkline } from "../../ui/Sparkline.tsx";
 import { fmtTok } from "../../lib/fmttok.ts";
-import { Choice, OnOff } from "./controls.tsx";
+import { Choice, OnOff, Select } from "./controls.tsx";
 import {
   agentLaunchDefault,
   useSettings,
@@ -283,7 +283,12 @@ function LaunchDefaults({ kind }: { kind: "claude" | "codex" | "opencode" }) {
   return (
     <>
       <SettingRow label="既定モデル">
-        <Choice value={row.model} options={models} onChange={(model) => update({ model, effort: "" })} />
+        {/* opencode は候補が数十個になりセグメントだと敷き詰まるため、長いリストは Select に。 */}
+        {models.length > 8 ? (
+          <Select value={row.model} options={models} onChange={(model) => update({ model, effort: "" })} />
+        ) : (
+          <Choice value={row.model} options={models} onChange={(model) => update({ model, effort: "" })} />
+        )}
       </SettingRow>
       <SettingRow label="既定 effort">
         <Choice value={row.effort} options={efforts} onChange={(effort) => update({ effort })} />
