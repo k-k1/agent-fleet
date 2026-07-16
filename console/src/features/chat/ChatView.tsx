@@ -10,6 +10,7 @@ import { errText, raw } from "../../core/api/client.ts";
 import { takeChatSeed } from "../../lib/chatSeed.ts";
 import { useDraft, moveDraft, clearDraft } from "../../lib/draft.ts";
 import { fmtDateTime } from "../../lib/intl.ts";
+import { t, tCount, useT } from "../../lib/i18n/index.ts";
 import { coarsePointer } from "../../lib/device.ts";
 import { useSettings, surfaceBg, surfaceAccent, effectiveTheme } from "../../lib/settings.ts";
 import {
@@ -65,6 +66,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
   const snapshot = useChatStore((s) => (conversationId ? s.snapshots[conversationId] : undefined));
   const settings = useSettings();
   const toast = useToast();
+  const tr = useT();
   // Send key follows the user's global preference (shared with the Markdown mirror
   // composer): "mod-enter" = Ctrl/⌘+Enter submits, plain Enter newlines (phone-safe);
   // "enter" = Enter submits, Shift+Enter newlines.
@@ -139,10 +141,10 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
         .then((c) => {
           if (cancelled) return;
           if (c && c.id) applyConv(c);
-          else setLoadError("会話が見つかりません");
+          else setLoadError(t("chat.not_found"));
         })
         .catch(() => {
-          if (!cancelled) setLoadError("会話の読み込みに失敗しました");
+          if (!cancelled) setLoadError(t("chat.load_failed"));
         });
     } else if (draftAssistantId) {
       applyConv(null);
@@ -210,7 +212,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
   const ensureConv = async (): Promise<Conversation | null> => {
     if (convRef.current) return convRef.current;
     if (!draftAssistantId) return null;
-    const title = input.trim().slice(0, 40) || "新しいチャット";
+    const title = input.trim().slice(0, 40) || t("chat.new_title");
     const created = await chatCreate(draftAssistantId, title);
     if (!created || !created.id) return null;
     // Re-key the persisted composer draft to the real conversation, so the promotion's
@@ -264,7 +266,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
     }
     if (!target) {
       setPasting(false);
-      toast("会話の作成に失敗しました");
+      toast(t("chat.create_failed"));
       return;
     }
     for (const f of files) {
@@ -276,10 +278,10 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
           const url = URL.createObjectURL(f);
           setAttachments((a) => [...a, { path, name: nm, url }]);
         } else {
-          toast(res.error ? errText(res.error) : "画像の貼り付けに失敗しました");
+          toast(res.error ? errText(res.error) : t("chat.image_paste_failed"));
         }
       } catch {
-        toast("画像の貼り付けに失敗しました（通信エラー）");
+        toast(t("chat.image_paste_failed_net"));
       }
     }
     setPasting(false);
@@ -306,7 +308,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
         target = null;
       }
       if (!target) {
-        setError("会話の作成に失敗しました");
+        setError(t("chat.create_failed"));
         setSending(false);
         return;
       }
@@ -346,7 +348,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
               ...baseVoice,
               ...(work ? workVoiceOpts(baseVoice, workMode) : undefined),
             },
-            work ? "チャット・作業過程" : "チャット",
+            work ? t("chat.tts_source_work") : t("chat.label"),
             (reason) => {
               if (!work) setKaraoke(null);
               onEnd?.(reason);
@@ -511,7 +513,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
   // Header/badge come from the live conversation, or the draft assistant while composing.
   const agentKind = conv?.agent || draftAsst?.agent || null;
   const agent = agentKind ? agentOf(agentKind) : null;
-  const title = conv?.title || draftAsst?.name || "チャット";
+  const title = conv?.title || draftAsst?.name || t("chat.label");
   const isDraft = !conversationId && !!draftAssistantId;
   // A turn may be in flight because THIS pane is sending, or because a background turn on
   // this conversation (started before the pane was closed + re-opened) is still running.
@@ -521,8 +523,8 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
   const empty = (!conv || conv.messages.length === 0) && !loadError && !showStreaming;
   // Status chip like the Sessions list / MirrorView header: 進行中 while streaming, else 待機中.
   const stateChip = showStreaming
-    ? { cls: "working", icon: "loading", spin: true, text: "進行中" }
-    : { cls: "on", icon: "check", text: "待機中" };
+    ? { cls: "working", icon: "loading", spin: true, text: tr("chat.state_running") }
+    : { cls: "on", icon: "check", text: tr("chat.state_idle") };
 
   // assistantTheme scopes the base tokens (tokens.css) via data-theme; assistantColor gives
   // the assistant chat its own surface bg/accent (--chat-bg/--chat-accent, shared contract
@@ -574,15 +576,13 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
               {draftAsst.description ? (
                 <ChatMarkdown source={draftAsst.description} breaks />
               ) : (
-                "メッセージを送って会話を始めましょう。"
+                tr("chat.greeting_empty")
               )}
             </div>
           </div>
         )}
         {empty && !draftAsst && !isDraft && (
-          <div className="chat-empty">
-            メッセージを送って会話を始めましょう。Markdown 文書の翻訳や要約、質問への回答などを依頼できます。
-          </div>
+          <div className="chat-empty">{tr("chat.empty_hint")}</div>
         )}
         {conv?.messages.map((m, i) => {
           // Assistant replies render through AssistantTurn, which owns the bubble ref so
@@ -594,7 +594,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
                   text={m.content}
                   steps={m.steps}
                   ts={m.ts}
-                  agentName={agent?.assistantName || "アシスタント"}
+                  agentName={agent?.assistantName || tr("chat.assistant_fallback")}
                   voice={{ ...(assistantVoiceOpts(assistId, assistVoice) ?? {}), paneId }}
                   highlight={i === conv.messages.length - 1 ? karaoke : null}
                 />
@@ -607,7 +607,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
           const { text, images } = splitPastedImages(m.content);
           return (
             <div key={i} className="chat-msg role-user">
-              <div className="chat-role">あなた</div>
+              <div className="chat-role">{tr("chat.you")}</div>
               <div className="chat-body">
                 {/* Both roles render as Markdown; `breaks` keeps plain newlines as
                     line breaks (mirrors MirrorView's user turns). */}
@@ -630,7 +630,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
         })}
         {showStreaming && (
           <div className="chat-msg role-assistant">
-            <div className="chat-role">{agent?.assistantName || "アシスタント"}</div>
+            <div className="chat-role">{agent?.assistantName || tr("chat.assistant_fallback")}</div>
             {/* Working steps stream in above the answer, open so progress is visible. */}
             {liveSteps.length > 0 && <ChatSteps steps={liveSteps} defaultOpen live />}
             {streamBody ? (
@@ -641,13 +641,13 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
               // A step just committed; the next answer hasn't started streaming yet.
               <div className="chat-body">
                 <span className="chat-thinking">
-                  <Icon name="loading" spin /> 作業中…
+                  <Icon name="loading" spin /> {tr("chat.working")}
                 </span>
               </div>
             ) : (
               <div className="chat-body">
                 <span className="chat-thinking">
-                  <Icon name="loading" spin /> 考え中…
+                  <Icon name="loading" spin /> {tr("chat.thinking")}
                 </span>
               </div>
             )}
@@ -665,14 +665,14 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
             {attachments.map((a, i) => (
               <div className="ca-chip" key={a.path}>
                 <img className="ca-thumb" src={a.url} alt="" />
-                <button type="button" className="ca-del" title="削除" onClick={() => removeAttachment(i)}>
+                <button type="button" className="ca-del" title={tr("chat.remove")} onClick={() => removeAttachment(i)}>
                   <Icon name="close" />
                 </button>
               </div>
             ))}
             {pasting && (
               <span className="ca-loading">
-                <Icon name="loading" spin /> アップロード中…
+                <Icon name="loading" spin /> {tr("chat.uploading")}
               </span>
             )}
           </div>
@@ -686,12 +686,12 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
               conv || isDraft
                 ? canAttach
                   ? modSend
-                    ? "メッセージを入力（Ctrl+Enter で送信 / Enter で改行 / 画像は貼り付け）"
-                    : "メッセージを入力（Enter で送信 / Shift+Enter で改行 / 画像は貼り付け）"
+                    ? tr("chat.ph_mod_img")
+                    : tr("chat.ph_enter_img")
                   : modSend
-                    ? "メッセージを入力（Ctrl+Enter で送信 / Enter で改行）"
-                    : "メッセージを入力（Enter で送信 / Shift+Enter で改行）"
-                : "読み込み中…"
+                    ? tr("chat.ph_mod")
+                    : tr("chat.ph_enter")
+                : tr("chat.ph_loading")
             }
             disabled={(!conv && !isDraft) || showStreaming}
             onChange={(e) => setInput(e.target.value)}
@@ -700,7 +700,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
             rows={2}
           />
           {sending ? (
-            <button type="button" className="btn chat-send chat-stop" onClick={stop} title="停止">
+            <button type="button" className="btn chat-send chat-stop" onClick={stop} title={tr("chat.stop")}>
               <Icon name="debug-stop" />
             </button>
           ) : (
@@ -709,7 +709,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
               className="btn chat-send"
               disabled={(!conv && !isDraft) || showStreaming || (!input.trim() && !attachments.length)}
               onClick={() => void send()}
-              title="送信"
+              title={tr("chat.send")}
             >
               <Icon name="send" />
             </button>
@@ -810,6 +810,7 @@ function ChatMarkdown({ source, breaks, streaming }: { source: string; breaks?: 
 // emitted before each tool call, kept separate from — but alongside — the final answer.
 // Collapsible; open while streaming so progress is visible, collapsed once the turn is done.
 function ChatSteps({ steps, defaultOpen, live }: { steps: ChatStep[]; defaultOpen?: boolean; live?: boolean }) {
+  const tr = useT();
   const [open, setOpen] = useState(!!defaultOpen);
   if (!steps.length) return null;
   const toolCount = steps.reduce((n, step) => n + (step.tools?.length ?? 0), 0);
@@ -822,9 +823,10 @@ function ChatSteps({ steps, defaultOpen, live }: { steps: ChatStep[]; defaultOpe
       <summary className="mt-work-head">
         <Icon name={open ? "chevron-down" : "chevron-right"} />
         {live && <Icon name="loading" spin />}
-        <span className="mt-work-title">作業過程</span>
+        <span className="mt-work-title">{tr("chat.work_process")}</span>
         <span className="mt-work-count muted">
-          ツール {toolCount}件{steps.length > 0 ? `・途中応答 ${steps.length}件` : ""}
+          {tCount("chat.tool_count", toolCount)}
+          {steps.length > 0 ? tCount("chat.interim_count", steps.length) : ""}
         </span>
       </summary>
       <div className="mt-work-body">
@@ -867,6 +869,7 @@ function AssistantTurn({
   highlight?: string | null;
 }) {
   const ttsEnabled = useSettings().ttsEnabled;
+  const tr = useT();
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const handleRef = useRef<TurnReadHandle | null>(null);
   const [state, setState] = useState<"idle" | "playing" | "paused">("idle");
@@ -904,7 +907,7 @@ function AssistantTurn({
     handleRef.current?.stop("replaced");
     // onEnd fires once on natural end AND on preemption (TopBar stop / another playback),
     // so the footer always falls back to the idle "読み上げ" state.
-    const h = readTurn(body, "チャット", fromBlock, () => {
+    const h = readTurn(body, t("chat.label"), fromBlock, () => {
       handleRef.current = null;
       setState("idle");
     }, voice);
@@ -973,7 +976,7 @@ function AssistantTurn({
             onMouseDown={(e) => e.preventDefault()}
             onClick={startFromSelection}
           >
-            <Icon name="unmute" /> ここから読み上げ
+            <Icon name="unmute" /> {tr("chat.read_from_here")}
           </button>
         </div>
       )}
@@ -981,22 +984,22 @@ function AssistantTurn({
         {ts > 0 && <span className="cm-time">{formatMsgTS(ts)}</span>}
         {ttsEnabled && text.trim() && (
           state === "idle" ? (
-            <button type="button" className="ghost cm-copy" title="カラオケ読み上げ" onClick={() => start(0)}>
-              <Icon name="unmute" /> 読み上げ
+            <button type="button" className="ghost cm-copy" title={tr("chat.read_title")} onClick={() => start(0)}>
+              <Icon name="unmute" /> {tr("chat.read")}
             </button>
           ) : (
             <>
               {state === "playing" ? (
-                <button type="button" className="ghost cm-copy" title="一時停止" onClick={pause}>
-                  <Icon name="debug-pause" /> 一時停止
+                <button type="button" className="ghost cm-copy" title={tr("chat.pause")} onClick={pause}>
+                  <Icon name="debug-pause" /> {tr("chat.pause")}
                 </button>
               ) : (
-                <button type="button" className="ghost cm-copy" title="再開" onClick={resume}>
-                  <Icon name="play" /> 再開
+                <button type="button" className="ghost cm-copy" title={tr("chat.resume")} onClick={resume}>
+                  <Icon name="play" /> {tr("chat.resume")}
                 </button>
               )}
-              <button type="button" className="ghost cm-copy" title="停止" onClick={stop}>
-                <Icon name="debug-stop" /> 停止
+              <button type="button" className="ghost cm-copy" title={tr("chat.stop")} onClick={stop}>
+                <Icon name="debug-stop" /> {tr("chat.stop")}
               </button>
             </>
           )
@@ -1014,6 +1017,7 @@ const formatMsgTS = (ms: number) => fmtDateTime(ms);
 // ChatCopyButton copies the reply's RAW Markdown (not the rendered HTML) to the
 // clipboard — same behavior as MirrorView's CopyButton.
 function ChatCopyButton({ text }: { text: string }) {
+  const tr = useT();
   const [done, setDone] = useState(false);
   const copy = async () => {
     try {
@@ -1025,8 +1029,8 @@ function ChatCopyButton({ text }: { text: string }) {
     }
   };
   return (
-    <button type="button" className="ghost cm-copy" title="Markdown をコピー" onClick={copy}>
-      <Icon name={done ? "check" : "copy"} /> {done ? "コピー済" : "コピー"}
+    <button type="button" className="ghost cm-copy" title={tr("chat.copy_md_title")} onClick={copy}>
+      <Icon name={done ? "check" : "copy"} /> {done ? tr("chat.copied") : tr("chat.copy")}
     </button>
   );
 }
@@ -1035,6 +1039,7 @@ function ChatCopyButton({ text }: { text: string }) {
 // through the authenticated API wrapper (an <img src> can't carry the tenant header) into
 // an object URL; clicking opens the full image in a new tab.
 function ChatPastedThumb({ convId, name }: { convId: string; name: string }) {
+  const tr = useT();
   const [url, setUrl] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
   useEffect(() => {
@@ -1061,7 +1066,7 @@ function ChatPastedThumb({ convId, name }: { convId: string; name: string }) {
   }, [convId, name]);
   if (failed) {
     return (
-      <span className="chat-img chat-img-loading" title="プレビューを取得できませんでした">
+      <span className="chat-img chat-img-loading" title={tr("chat.preview_failed")}>
         <Icon name="file-media" />
       </span>
     );
@@ -1074,8 +1079,8 @@ function ChatPastedThumb({ convId, name }: { convId: string; name: string }) {
     );
   }
   return (
-    <button type="button" className="chat-img" title="クリックで拡大" onClick={() => window.open(url, "_blank", "noopener")}>
-      <img src={url} alt="貼り付け画像" />
+    <button type="button" className="chat-img" title={tr("chat.click_to_zoom")} onClick={() => window.open(url, "_blank", "noopener")}>
+      <img src={url} alt={tr("chat.pasted_image_alt")} />
     </button>
   );
 }
