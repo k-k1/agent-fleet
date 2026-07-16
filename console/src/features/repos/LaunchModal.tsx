@@ -8,6 +8,7 @@ import type { KeyboardEvent, ClipboardEvent } from "react";
 import { Modal } from "../../ui/Modal.tsx";
 import { Button } from "../../ui/Button.tsx";
 import { Icon } from "../../ui/Icon.tsx";
+import { useT } from "../../lib/i18n/index.ts";
 import { agentOf } from "../../agents/registry.ts";
 import { readRepoLast, resolveEffort, resolveModel, resolveStartMode } from "../../lib/repoLast.ts";
 import { readPromptHistory } from "../../lib/promptHistory.ts";
@@ -67,6 +68,7 @@ export function LaunchModal({ repo, branch, path, kinds, allowWorktree = true, o
   const initialKind = last.kind && kinds.includes(last.kind) ? last.kind : kinds[0] || "claude";
   const initialDefault = agentLaunchDefault(settings, initialKind);
   const [kind, setKind] = useState(initialKind);
+  const tr = useT();
   // Shared per-kind priority chain (repoLast.ts resolveModel); re-resolved on a kind
   // switch so a claude tier never leaks into a codex/opencode launch (and vice versa).
   const [model, setModel] = useState(() => resolveModel(initialKind, repo, initialDefault.model));
@@ -243,7 +245,7 @@ export function LaunchModal({ repo, branch, path, kinds, allowWorktree = true, o
                 >
                   <Icon name={a.icon} className="seg-ic" />
                   {a.label}
-                  <span className="seg-sub">{a.launchHint}</span>
+                  <span className="seg-sub">{tr(a.launchHintKey)}</span>
                 </button>
               );
             })}

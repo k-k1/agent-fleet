@@ -6,6 +6,7 @@
 import { agentOf } from "../agents/registry.ts";
 import type { StateInfo } from "../agents/registry.ts";
 import type { Session } from "../types/session.ts";
+import { t } from "./i18n/index.ts";
 
 // stamp formats a timestamp as MMDD-HHMM (matching the agent's claude --name), so
 // shell rows show a launch time consistent with claude rows.
@@ -32,20 +33,20 @@ export const exitLabel = (s: Session): { text: string; hint: string } | null => 
   switch (s.exitReason) {
     case "oom":
       return {
-        text: "メモリ不足で終了",
-        hint: `メモリ不足でプロセスが強制終了されました（OOM kill / exit ${s.exitCode ?? 137}）。ワークスペースのメモリ上限に達した可能性があります。`,
+        text: t("exit.oom.text"),
+        hint: t("exit.oom.hint", { code: s.exitCode ?? 137 }),
       };
     case "killed":
       return {
-        text: "強制終了",
-        hint: `プロセスが SIGKILL で強制終了されました（signal ${s.exitSignal ?? 9}）。ホスト全体のメモリ逼迫などが原因の可能性があります。`,
+        text: t("exit.killed.text"),
+        hint: t("exit.killed.hint", { signal: s.exitSignal ?? 9 }),
       };
     case "crashed":
       return {
-        text: "異常終了",
+        text: t("exit.crashed.text"),
         hint: s.exitSignal
-          ? `プロセスが signal ${s.exitSignal} で異常終了しました。`
-          : `プロセスが異常終了しました（exit code ${s.exitCode ?? "?"}）。`,
+          ? t("exit.crashed.hint_signal", { signal: s.exitSignal })
+          : t("exit.crashed.hint_code", { code: s.exitCode ?? "?" }),
       };
     default:
       return null;
@@ -56,34 +57,34 @@ export const exitLabel = (s: Session): { text: string; hint: string } | null => 
 export const stateInfo = (s: Session): StateInfo => {
   if (!s.alive) {
     // A stopped claude whose working dir was deleted can't be resumed (archive only).
-    if (s.resumable === false) return { cls: "off dead", icon: "circle-slash", text: "フォルダ無し — 再開不可" };
+    if (s.resumable === false) return { cls: "off dead", icon: "circle-slash", text: t("state.folder_missing") };
     // An abnormal end (crash / OOM) gets a warning chip so the row stands out from a
     // clean 停止中; the reason detail rides the row tooltip.
     const ex = exitLabel(s);
     if (ex) return { cls: "off warn", icon: "warning", text: ex.text };
-    return { cls: "off", icon: "debug-pause", text: "停止中" };
+    return { cls: "off", icon: "debug-pause", text: t("state.stopped") };
   }
   // shell has no working/idle state model — alive means it's running.
-  if (agentOf(s.kind).caps.fixedAliveChip) return { cls: "on", icon: "pulse", text: "起動中" };
+  if (agentOf(s.kind).caps.fixedAliveChip) return { cls: "on", icon: "pulse", text: t("state.running") };
   // claude (hooks), opencode (plugin) and codex (injected hooks) all report
   // working/idle. opencode (a running question tool in its store) and codex (an
   // unanswered request_user_input in the rollout tail) also derive "question".
   // An empty state = idle.
   switch (s.state) {
     case "compacting":
-      return { cls: "working", icon: "loading", spin: true, text: "圧縮中…" };
+      return { cls: "working", icon: "loading", spin: true, text: t("state.compacting") };
     case "working":
-      return { cls: "working", icon: "loading", spin: true, text: "進行中…" };
+      return { cls: "working", icon: "loading", spin: true, text: t("state.working") };
     case "question":
-      return { cls: "question", icon: "question", text: "質問あり" };
+      return { cls: "question", icon: "question", text: t("state.question") };
     case "plan":
-      return { cls: "question", icon: "checklist", text: "プランあり" };
+      return { cls: "question", icon: "checklist", text: t("state.plan") };
     case "permission":
-      return { cls: "question", icon: "shield", text: "許可待ち" };
+      return { cls: "question", icon: "shield", text: t("state.permission") };
     default:
       // Idle by hook, but a run_in_background task is still running under the pane:
       // show it's not actually done (spinner + "BG実行中" alongside 入力待ち).
-      if (s.backgroundBusy) return { cls: "bg", icon: "loading", spin: true, text: "入力待ち · BG実行中" };
-      return { cls: "on", icon: "check", text: "入力待ち" };
+      if (s.backgroundBusy) return { cls: "bg", icon: "loading", spin: true, text: t("state.idle_bg") };
+      return { cls: "on", icon: "check", text: t("state.idle") };
   }
 };

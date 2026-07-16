@@ -9,6 +9,7 @@ import { api, apiJSON, errText } from "../../core/api/client.ts";
 import { Modal } from "../../ui/Modal.tsx";
 import { Button } from "../../ui/Button.tsx";
 import { Icon } from "../../ui/Icon.tsx";
+import { useT } from "../../lib/i18n/index.ts";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { agentOf } from "../../agents/registry.ts";
 import { resolveEffort, resolveModel, resolveStartMode } from "../../lib/repoLast.ts";
@@ -59,6 +60,7 @@ interface SsmInstance {
 
 export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
   const toast = useToast();
+  const tr = useT();
   const settings = useSettings();
   const repos = useReposStore((s) => s.repos);
   const refreshSessions = useSessionsStore((s) => s.refresh);
@@ -421,7 +423,7 @@ export function StartModal({ kinds, onClose, onPickRepo }: StartModalProps) {
                     >
                       <Icon name={a.icon} className="seg-ic" />
                       {a.label}
-                      <span className="seg-sub">{a.launchHint}</span>
+                      <span className="seg-sub">{tr(a.launchHintKey)}</span>
                     </button>
                   );
                 })}

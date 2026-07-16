@@ -832,4 +832,35 @@ export const en: Record<keyof typeof ja, string> = {
   // <Trans>: <0/>=line break, <1>…</1>=emphasis. Consumed by the session modals (P2).
   "session.recreate_body":
     "Starting “{name}” as a new session.<0/>The current conversation is <1>moved to the archive</1> and can be restored later.",
+
+  // === P2 shared: per-kind launch hint (agents/registry.ts launchHintKey). ===
+  // kindLabel values (claude/codex/opencode/shell/ssm) stay untranslated (proper nouns).
+  "agent.launch_hint.claude": "Launch Claude Code",
+  "agent.launch_hint.codex": "Launch Codex CLI",
+  "agent.launch_hint.opencode": "Launch opencode",
+  "agent.launch_hint.shell": "Plain shell (bash)",
+  "agent.launch_hint.ssm": "SSM login to an AWS EC2 host",
+
+  // === P2 shared: session status chip (lib/sessionview.ts stateInfo). ===
+  "state.folder_missing": "Folder missing — can't resume",
+  "state.stopped": "Stopped",
+  "state.running": "Running",
+  "state.compacting": "Compacting…",
+  "state.working": "Working…",
+  "state.question": "Question",
+  "state.plan": "Plan ready",
+  "state.permission": "Awaiting approval",
+  "state.idle_bg": "Ready · running in background",
+  "state.idle": "Ready",
+
+  // === P2 shared: abnormal-exit label (lib/sessionview.ts exitLabel; hint = tooltip). ===
+  "exit.oom.text": "Ended (out of memory)",
+  "exit.oom.hint":
+    "The process was killed for running out of memory (OOM kill / exit {code}). The workspace may have hit its memory limit.",
+  "exit.killed.text": "Force-killed",
+  "exit.killed.hint":
+    "The process was force-killed with SIGKILL (signal {signal}). Host-wide memory pressure may be the cause.",
+  "exit.crashed.text": "Crashed",
+  "exit.crashed.hint_signal": "The process crashed on signal {signal}.",
+  "exit.crashed.hint_code": "The process exited abnormally (exit code {code}).",
 };
