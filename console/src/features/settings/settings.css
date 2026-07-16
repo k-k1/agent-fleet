@@ -267,7 +267,9 @@
 .ds-slider input[type="range"] {
   width: 160px;
   max-width: 46vw;
-  accent-color: var(--accent);
+  /* Top バー（外観）の色に追従。--topbar-accent は applyTheme が概ね常に定義（未選択でも
+     :root 既定へフォールバック）。--accent へ退避するのは念のため。 */
+  accent-color: var(--topbar-accent, var(--accent));
   cursor: pointer;
 }
 .ds-slider-val {
