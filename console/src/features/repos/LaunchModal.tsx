@@ -9,6 +9,7 @@ import { Modal } from "../../ui/Modal.tsx";
 import { Button } from "../../ui/Button.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { useT } from "../../lib/i18n/index.ts";
+import { Trans } from "../../lib/i18n/Trans.tsx";
 import { agentOf } from "../../agents/registry.ts";
 import { readRepoLast, resolveEffort, resolveModel, resolveStartMode } from "../../lib/repoLast.ts";
 import { readPromptHistory } from "../../lib/promptHistory.ts";
@@ -165,7 +166,7 @@ export function LaunchModal({ repo, branch, path, kinds, allowWorktree = true, o
   const history = readPromptHistory(repo);
   const groups: PromptTemplateGroup[] = [
     ...(history.length
-      ? [{ source: "history", label: "履歴", items: history.map((h, i) => ({ id: "h" + i, label: h, body: h })) }]
+      ? [{ source: "history", label: tr("launch.history"), items: history.map((h, i) => ({ id: "h" + i, label: h, body: h })) }]
       : []),
     ...srvGroups.filter((g) => kind === "claude" || (g.source !== "command" && g.source !== "skill")),
   ];
@@ -217,7 +218,7 @@ export function LaunchModal({ repo, branch, path, kinds, allowWorktree = true, o
     <Modal
       title={
         <>
-          <Icon name="play" /> 作業を始める: {repo}
+          <Icon name="play" /> {tr("launch.title", { repo })}
         </>
       }
       onClose={onClose}
@@ -225,7 +226,7 @@ export function LaunchModal({ repo, branch, path, kinds, allowWorktree = true, o
     >
       <div className="ui-modal-body">
         <div className="ui-field">
-          <span className="ui-field-label">エージェント</span>
+          <span className="ui-field-label">{tr("launch.field.agent")}</span>
           <div className="ui-seg big">
             {kinds.map((k) => {
               const a = agentOf(k);
@@ -254,7 +255,7 @@ export function LaunchModal({ repo, branch, path, kinds, allowWorktree = true, o
 
         {hasModel && (
           <div className="ui-field">
-            <span className="ui-field-label">モデル</span>
+            <span className="ui-field-label">{tr("launch.field.model")}</span>
             <ModelPicker
               kind={kind}
               model={model}
@@ -270,19 +271,19 @@ export function LaunchModal({ repo, branch, path, kinds, allowWorktree = true, o
           <div className="ui-field-row">
             {hasEffort && (
               <div className="ui-field">
-                <span className="ui-field-label">推論 effort</span>
+                <span className="ui-field-label">{tr("launch.field.effort")}</span>
                 <EffortPicker kind={kind} model={model} effort={effort} onChange={setEffort} />
-                <span className="ui-field-hint">未指定はモデル既定値。</span>
+                <span className="ui-field-hint">{tr("launch.field.effort_hint")}</span>
               </div>
             )}
             {hasStartMode && (
               <div className="ui-field">
-                <span className="ui-field-label">開始モード</span>
+                <span className="ui-field-label">{tr("launch.field.start_mode")}</span>
                 <select value={startMode} onChange={(e) => setStartMode(e.target.value === "plan" ? "plan" : "normal")}>
-                  <option value="normal">{agentOf(kind).defaultModeLabel || "通常"}</option>
+                  <option value="normal">{agentOf(kind).defaultModeLabel || tr("launch.mode_normal")}</option>
                   <option value="plan">Plan</option>
                 </select>
-                <span className="ui-field-hint">Plan は最初のターンを調査・計画に専念。</span>
+                <span className="ui-field-hint">{tr("launch.plan_hint")}</span>
               </div>
             )}
           </div>
@@ -293,7 +294,7 @@ export function LaunchModal({ repo, branch, path, kinds, allowWorktree = true, o
             必要な人向けの明示的なメモリトレードオフ（セッション毎に TUI プロセス分）。 */}
         {agentOf(kind).managedDriver && (
           <div className="ui-field">
-            <span className="ui-field-label">ドライバ</span>
+            <span className="ui-field-label">{tr("launch.field.driver")}</span>
             <div className="ui-seg">
               <button
                 type="button"
@@ -301,7 +302,7 @@ export function LaunchModal({ repo, branch, path, kinds, allowWorktree = true, o
                 onClick={() => setDriver("managed")}
               >
                 <Icon name="server-process" /> Managed
-                <span className="seg-sub">共有ランタイム・チャット専用・省メモリ</span>
+                <span className="seg-sub">{tr("launch.driver_managed_sub")}</span>
               </button>
               <button
                 type="button"
@@ -310,7 +311,7 @@ export function LaunchModal({ repo, branch, path, kinds, allowWorktree = true, o
               >
                 <Icon name="terminal" /> CLI (TUI)
                 <span className="seg-sub">
-                  ターミナル操作可・メモリ +{tr("common.approx", { v: agentOf(kind).tuiMemoryCost })}
+                  {tr("launch.tui_note", { cost: tr("common.approx", { v: agentOf(kind).tuiMemoryCost }) })}
                 </span>
               </button>
             </div>
@@ -321,66 +322,62 @@ export function LaunchModal({ repo, branch, path, kinds, allowWorktree = true, o
             なし（この worktree 内で直接起動）。 */}
         {!allowWorktree ? (
           <div className="ui-field">
-            <span className="ui-field-label">場所</span>
+            <span className="ui-field-label">{tr("launch.field.location")}</span>
             <span className="ui-field-hint">
-              この worktree（<code>{branch || "現在の作業コピー"}</code>）で直接起動します。新しい worktree
-              はベースのリポジトリから作成してください。
+              <Trans k="launch.worktree_direct_note" vars={{ branch: branch || tr("launch.current_wc") }} components={[<code />]} />
             </span>
           </div>
         ) : (
         <div className="ui-field">
-          <span className="ui-field-label">場所</span>
+          <span className="ui-field-label">{tr("launch.field.location")}</span>
           <div className="ui-seg">
             <button type="button" className={"seg-btn" + (worktree ? " active" : "")} onClick={() => setWorktree(true)}>
-              <Icon name="repo-forked" /> 新しい worktree
-              <span className="seg-sub">隔離・ブランチ切替から安全</span>
+              <Icon name="repo-forked" /> {tr("launch.new_worktree")}
+              <span className="seg-sub">{tr("launch.new_worktree_sub")}</span>
             </button>
             <button type="button" className={"seg-btn" + (!worktree ? " active" : "")} onClick={() => setWorktree(false)}>
-              <Icon name="repo" /> このコピーで直接
-              <span className="seg-sub">現在の {branch || "作業コピー"} で作業</span>
+              <Icon name="repo" /> {tr("launch.direct_here")}
+              <span className="seg-sub">{tr("launch.direct_here_sub", { branch: branch || tr("launch.wc") })}</span>
             </button>
           </div>
           {worktree && (
             <>
               <label className="ui-field">
-                <span className="ui-field-label">基点ブランチ</span>
-                <input value={base} onChange={(e) => setBase(e.target.value)} placeholder={branch || "既定"} />
+                <span className="ui-field-label">{tr("launch.base_branch")}</span>
+                <input value={base} onChange={(e) => setBase(e.target.value)} placeholder={branch || tr("launch.base_default")} />
               </label>
               <label className="ui-field">
-                <span className="ui-field-label">ブランチ名（任意）</span>
+                <span className="ui-field-label">{tr("launch.branch_name")}</span>
                 <input
                   value={branchName}
                   onChange={(e) => {
                     setBranchName(e.target.value);
                     setConflict(null);
                   }}
-                  placeholder="自動（暫定名 temp/…）"
+                  placeholder={tr("launch.branch_ph")}
                 />
               </label>
               <span className="ui-field-hint">
                 {folder ? (
-                  <>
-                    作業コピーは <code>{folder}</code> に作成します。後でブランチ名は変更できます。
-                  </>
+                  <Trans k="launch.wc_created_note" vars={{ folder }} components={[<code />]} />
                 ) : (
-                  <>空なら暫定名（temp/…）で始めます。ブランチ名は後で変更できます。</>
+                  tr("launch.branch_empty_note")
                 )}
               </span>
               {conflict && (
                 <div className="launch-conflict">
                   {conflict === "local" ? (
                     <span>
-                      同名のローカルブランチ <code>{newBranch}</code> が既にあります。別の名前にしてください。
+                      <Trans k="launch.local_branch_exists" vars={{ branch: newBranch }} components={[<code />]} />
                     </span>
                   ) : (
                     <span>
-                      リモートに同名ブランチ <code>{newBranch}</code> があります（過去のブランチ）。別名にするか、
-                      その既存ブランチで作業できます。
+                      <Trans k="launch.remote_branch_exists" vars={{ branch: newBranch }} components={[<code />]} />
                     </span>
                   )}
                   {conflict === "remote" && (
                     <Button small icon="git-branch" disabled={busy} onClick={() => void start(true)}>
-                      その既存ブランチで作業
+                      {tr("launch.work_existing_branch")}
                     </Button>
                   )}
                 </div>
@@ -393,19 +390,19 @@ export function LaunchModal({ repo, branch, path, kinds, allowWorktree = true, o
         {/* 最初のプロンプト（任意） */}
         <div className="ui-field">
           <span className="ui-field-label launch-prompt-label">
-            <span>最初のプロンプト（任意）</span>
+            <span>{tr("launch.first_prompt")}</span>
             {hasTemplates && (
               <select
                 className="launch-tmpl-select"
                 value=""
-                title="テンプレートから最初のプロンプトを挿入"
+                title={tr("launch.template_insert_title")}
                 onChange={(e) => {
                   if (e.target.value === "") return;
                   const i = Number(e.target.value);
                   if (Number.isInteger(i) && flatItems[i] !== undefined) pick(flatItems[i]);
                 }}
               >
-                <option value="">テンプレートから挿入…</option>
+                <option value="">{tr("launch.template_insert")}</option>
                 {(() => {
                   let idx = 0;
                   return groups.map((g) => {
@@ -430,7 +427,7 @@ export function LaunchModal({ repo, branch, path, kinds, allowWorktree = true, o
               {images.map((im, i) => (
                 <div className="ma-chip" key={im.url}>
                   <img className="ma-thumb" src={im.url} alt="" />
-                  <button type="button" className="ma-del" title="削除" onClick={() => removeImage(i)}>
+                  <button type="button" className="ma-del" title={tr("common.delete")} onClick={() => removeImage(i)}>
                     <Icon name="close" />
                   </button>
                 </div>
@@ -445,11 +442,11 @@ export function LaunchModal({ repo, branch, path, kinds, allowWorktree = true, o
             onPaste={onPaste}
             rows={4}
             autoFocus
-            placeholder="起動後にこのプロンプトを送信します。空なら送信せず開くだけ。"
+            placeholder={tr("launch.first_prompt_ph")}
           />
           <span className="ui-field-hint">
-            セッション起動後、準備でき次第この内容を1回だけ自動送信します（⌘/Ctrl+Enter で起動）。
-            {canPasteImage && "画像はここに貼り付けられます。"}
+            {tr("launch.first_prompt_note")}
+            {canPasteImage && tr("launch.image_paste_note")}
           </span>
         </div>
       </div>
@@ -457,14 +454,14 @@ export function LaunchModal({ repo, branch, path, kinds, allowWorktree = true, o
       <footer className="ui-modal-foot">
         {onBack && (
           <Button variant="ghost" className="launch-back" icon="arrow-left" onClick={onBack} disabled={busy}>
-            場所を変更
+            {tr("launch.change_location")}
           </Button>
         )}
         <Button variant="ghost" onClick={onClose} disabled={busy}>
-          キャンセル
+          {tr("common.cancel")}
         </Button>
         <Button variant="primary" onClick={submit} disabled={busy}>
-          {busy ? "起動中…" : worktree ? "worktree で始める" : "起動"}
+          {busy ? tr("launch.launching") : worktree ? tr("launch.start_worktree") : tr("launch.launch")}
         </Button>
       </footer>
     </Modal>
