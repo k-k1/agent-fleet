@@ -1,5 +1,8 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { t, tMaybe, setLocale, getLocale, SUPPORTED_LOCALES, DEFAULT_LOCALE } from "./index.ts";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { t, tCount, tMaybe, setLocale, getLocale, SUPPORTED_LOCALES, DEFAULT_LOCALE } from "./index.ts";
+import { Trans } from "./Trans.tsx";
 import { ja } from "./locales/ja.ts";
 import { en } from "./locales/en.ts";
 
@@ -44,5 +47,57 @@ describe("i18n runtime", () => {
 
   it("en covers every ja key and adds none (completeness guard at runtime too)", () => {
     expect(Object.keys(en).sort()).toEqual(Object.keys(ja).sort());
+  });
+});
+
+describe("tCount (plurals)", () => {
+  beforeEach(() => setLocale("ja"));
+
+  it("ja is single-form: 1 and 2 both use _other", () => {
+    expect(tCount("common.count_ken", 1)).toBe("1件");
+    expect(tCount("common.count_ken", 2)).toBe("2件");
+  });
+
+  it("en selects one/other by Intl.PluralRules", () => {
+    setLocale("en");
+    expect(tCount("common.count_ken", 1)).toBe("1 item");
+    expect(tCount("common.count_ken", 2)).toBe("2 items");
+    expect(tCount("common.days_left", 1)).toBe("1 day left");
+    expect(tCount("common.days_left", 3)).toBe("3 days left");
+  });
+
+  it("count is auto-injected into vars", () => {
+    setLocale("ja");
+    expect(tCount("common.days_left", 5)).toBe("あと5日");
+  });
+});
+
+describe("<Trans> (markup interpolation)", () => {
+  beforeEach(() => setLocale("ja"));
+
+  it("fills numbered slots (self-closing + paired) and {vars}", () => {
+    const html = renderToStaticMarkup(
+      createElement(Trans, {
+        k: "session.recreate_body",
+        vars: { name: "sol" },
+        components: [createElement("br"), createElement("strong")],
+      }),
+    );
+    expect(html).toContain("「sol」を新しいセッションで開始します。");
+    expect(html).toContain("<br/>");
+    expect(html).toContain("<strong>アーカイブに退避</strong>");
+  });
+
+  it("renders the en variant when locale switches", () => {
+    setLocale("en");
+    const html = renderToStaticMarkup(
+      createElement(Trans, {
+        k: "session.recreate_body",
+        vars: { name: "sol" },
+        components: [createElement("br"), createElement("strong")],
+      }),
+    );
+    expect(html).toContain("Starting “sol” as a new session.");
+    expect(html).toContain("<strong>moved to the archive</strong>");
   });
 });

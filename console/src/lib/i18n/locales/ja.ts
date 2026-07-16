@@ -828,4 +828,13 @@ export const ja = {
   "keys.kt.captureHint": "(Esc で取消)",
   "keys.kt.unset": "未設定",
   "keys.kt.conflict": "{names} と重複",
+
+  // === P2: 複数形インフラの例（tCount）＋ <Trans> の例。ja は単一形なので _one/_other は同値。===
+  "common.days_left_one": "あと{count}日",
+  "common.days_left_other": "あと{count}日",
+  "common.count_ken_one": "{count}件",
+  "common.count_ken_other": "{count}件",
+  // <Trans>: <0/>=改行, <1>…</1>=強調。session モーダル（P2 モーダル群）で消費。
+  "session.recreate_body":
+    "「{name}」を新しいセッションで開始します。<0/>今の会話は<1>アーカイブに退避</1>し、あとで復帰できます。",
 };

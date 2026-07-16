@@ -10,6 +10,12 @@ import { en } from "./locales/en.ts";
 // ja を正本に全キーを型化。t() はこの union のみ受け付け、未知キーは tMaybe() を使う。
 export type MsgKey = keyof typeof ja;
 
+// 複数形キーの「基底」＝ `_other` バリアントを持つキーから接尾辞を除いた名前。tCount() は
+// この基底のみ受け付け、`${base}_${category}`（Intl.PluralRules で選ぶ one/other/…）を引く。
+// ja/en とも `_other` は必須（`_one` 等も両ロケールに置く＝完全性ガードで tsc が担保）。
+type PluralBaseOf<K> = K extends `${infer B}_other` ? B : never;
+export type PluralKey = PluralBaseOf<MsgKey>;
+
 const CATALOGS: Record<string, Record<string, string>> = { ja, en };
 
 // 対応ロケール（カタログを持つもの）。settings 既定値の解決やピッカーの妥当性判定に使う。
@@ -57,6 +63,27 @@ export function t(key: MsgKey, vars?: Record<string, string | number>): string {
 export function tMaybe(key: string, vars?: Record<string, string | number>): string | undefined {
   const s = lookup(key);
   return s === undefined ? undefined : interpolate(s, vars);
+}
+
+// Intl.PluralRules は現ロケール単位でメモ化（切替時は別ロケールで作り直す）。
+const prCache = new Map<string, Intl.PluralRules>();
+function pluralRules(): Intl.PluralRules {
+  const loc = currentLocale;
+  let p = prCache.get(loc);
+  if (!p) {
+    p = new Intl.PluralRules(loc);
+    prCache.set(loc, p);
+  }
+  return p;
+}
+
+// tCount — 複数形。count に応じ `${base}_${category}`（en は one/other、ja は常に other）を引く。
+// count は自動で vars に混ぜるので、カタログ値では {count} をそのまま使える。カテゴリ欠落時は
+// `_other` へフォールバック（日本語は単一形＝常に _other で足りる）。
+export function tCount(base: PluralKey, count: number, vars?: Record<string, string | number>): string {
+  const category = pluralRules().select(count);
+  const s = lookup(`${base}_${category}`) ?? lookup(`${base}_other`) ?? base;
+  return interpolate(s, { count, ...vars });
 }
 
 // tLocales — あるキーの「全ロケール分の訳」を配列で返す（重複除去）。現ロケールに依存せず
