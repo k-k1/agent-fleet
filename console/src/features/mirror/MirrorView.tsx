@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { CSSProperties, KeyboardEvent as RKeyboardEvent, ClipboardEvent as RClipboardEvent, DragEvent as RDragEvent, RefObject, ReactNode } from "react";
-import { api, apiJSON, raw, errText, pasteImage, sessionTurn, sessionRespond, sessionSettings } from "../../core/api/client.ts";
+import { api, apiJSON, raw, errText, pasteImage, sessionTurn, sessionRespond, sessionSettings, downloadURL } from "../../core/api/client.ts";
 import type { InteractionAnswer, ManagedThreadSettings, TurnResult } from "../../core/api/client.ts";
 import { isManagedSession } from "../../types/session.ts";
 import { splitPastedImages, buildImagePrompt, samePastedPrompt } from "../../lib/pastedImages.ts";
@@ -11,7 +11,7 @@ import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 import { Icon } from "../../ui/Icon.tsx";
 import FileIcon from "../../ui/FileIcon.tsx";
-import { baseName } from "../../lib/filemeta.ts";
+import { baseName, imageFormat } from "../../lib/filemeta.ts";
 import { useDraft } from "../../lib/draft.ts";
 import { fmtDateTime } from "../../lib/intl.ts";
 import { MarkdownView } from "../viewer/MarkdownView.tsx";
@@ -3553,10 +3553,27 @@ function PlanBlock({
   );
 }
 
+// FileThumb renders an inline preview of an image a card lists. The bytes come from
+// the download endpoint (downloadURL carries the tenant as a query param, so a plain
+// <img src> works — no blob dance like PastedThumb, whose endpoint needs a header).
+// If the fetch fails (e.g. the path isn't under a servable root), it hides itself so
+// the card falls back to the icon+name row rather than showing a broken image.
+function FileThumb({ path }: { path: string }) {
+  const [failed, setFailed] = useState(false);
+  if (failed) return null;
+  return (
+    <span className="mt-file-thumb">
+      <img src={downloadURL(path)} alt={baseName(path)} loading="lazy" onError={() => setFailed(true)} />
+    </span>
+  );
+}
+
 // UserFileBlock shows the files an agent shared via SendUserFile as a compact panel:
 // an optional caption and one clickable row per file (icon + name + path), each opening
-// the file in its own split pane. Paths are browse-root-relative (resolved server-side);
-// a file outside the browse root still lists here but will report an error on open.
+// the file in its own split pane. Image files also get an inline thumbnail so the user
+// sees the picture in the mirror without opening it; clicking still opens the full
+// FileView. Paths are browse-root-relative (resolved server-side); a file outside the
+// browse root still lists here but will report an error on open (and its thumb hides).
 function UserFileBlock({ files, caption, onOpen }: { files?: string[]; caption?: string; onOpen: (path: string) => void }) {
   const list = files || [];
   if (list.length === 0) return null;
@@ -3571,6 +3588,7 @@ function UserFileBlock({ files, caption, onOpen }: { files?: string[]; caption?:
       <div className={"mt-files-list" + (list.length > 1 ? " grid" : "")}>
         {list.map((p, i) => (
           <button key={p + i} type="button" className="mt-file-item" title={"別ペインで開く: " + p} onClick={() => onOpen(p)}>
+            {imageFormat(p) && <FileThumb path={p} />}
             <span className="mt-file-top">
               <FileIcon name={baseName(p)} />
               <span className="mt-file-name">{baseName(p)}</span>
