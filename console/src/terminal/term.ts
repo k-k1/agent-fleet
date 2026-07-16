@@ -8,7 +8,7 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
-import { coarsePointer, mobileMatches } from "../lib/device.ts";
+import { coarsePointer } from "../lib/device.ts";
 import { WebglAddon } from "@xterm/addon-webgl";
 import "@xterm/xterm/css/xterm.css";
 import { wsURL, rel } from "../core/api/client.ts";
@@ -475,18 +475,21 @@ export function ensureTerm(paneId: string, el: HTMLElement) {
 function loadWebgl(it: Inst) {
   const term = it.term;
   if (!term || it.webgl) return;
-  // Never use the WebGL renderer on a phone. The context lifecycle this file relies
-  // on — drop-while-hidden (hideTerm) + rebuild-on-reveal (revealTerm/redrawVisible),
-  // added in the mirror-toggle fix so a hidden canvas the browser silently reclaims
-  // can't leave a dead renderer — is exactly what phone GPUs choke on: the INITIAL
-  // context paints (so the terminal "used to work" before that churn existed), but a
-  // REBUILT context renders all-black with NO webglcontextlost event, so the DOM
-  // fallback never engages and no reconnect/reveal ever recovers it. Desktops and
-  // tablets rebuild WebGL fine, so gate on the phone breakpoint only (coarse pointer
-  // AND ≤760px — a tablet, or a narrow desktop window, keeps WebGL). xterm's built-in
-  // DOM renderer has no GPU context to lose or rebuild, so it cannot go black and is
-  // plenty fast for a phone terminal.
-  if (coarsePointer() && mobileMatches()) return;
+  // Never use the WebGL renderer on a touch device. The context lifecycle this file
+  // relies on — drop-while-hidden (hideTerm) + rebuild-on-reveal (revealTerm/
+  // redrawVisible), added in the mirror-toggle fix so a hidden canvas the browser
+  // silently reclaims can't leave a dead renderer — is what mobile GPUs choke on: the
+  // INITIAL context paints (so the terminal "used to work" before that churn existed),
+  // but a REBUILT context renders all-black with NO webglcontextlost event, so the DOM
+  // fallback never engages and no reconnect/reveal ever recovers it.
+  //
+  // Gate on coarse pointer (any phone/tablet), NOT a viewport-width phone check: the
+  // width test (≤760px) let WebGL back in the moment the phone rotated to landscape
+  // (>760px) and it went black again. A black terminal is far worse than losing GPU
+  // acceleration on a tablet/touch-laptop — xterm's built-in DOM renderer holds no GPU
+  // context (so nothing to lose or rebuild, and it cannot go black) and is plenty fast
+  // for a terminal. Desktops (fine pointer) keep WebGL.
+  if (coarsePointer()) return;
   try {
     const webgl = new WebglAddon();
     webgl.onContextLoss(() => {
