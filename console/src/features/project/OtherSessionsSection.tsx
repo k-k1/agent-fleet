@@ -35,8 +35,8 @@ export function OtherSessionsSection() {
       actions={
         <IconButton
           icon="archive"
-          label="その他のセッションをすべてアーカイブ"
-          onClick={() => void actions.archiveOrphans(orphans)}
+          label="その他のセッションを整理（アーカイブ退避・shell/ssm は削除）"
+          onClick={() => void actions.clearOrphans(orphans)}
         />
       }
     >
