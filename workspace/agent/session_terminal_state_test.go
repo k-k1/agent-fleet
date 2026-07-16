@@ -47,6 +47,46 @@ func TestParseCompactProgress(t *testing.T) {
 	}
 }
 
+func TestClassifyClaudePane(t *testing.T) {
+	cases := []struct {
+		name      string
+		pane      string
+		wantState string
+	}{
+		{
+			name:      "real compaction line",
+			pane:      "✳ Compacting conversation… (2m 3s)\n  ▐███████░░░░░ 74%\n",
+			wantState: "compacting",
+		},
+		{
+			name:      "resume menu",
+			pane:      "Resume from summary\nResume full session\nDon't ask me again\n",
+			wantState: "resume",
+		},
+		{
+			// Regression: an agent editing an i18n catalog whose value happens to be
+			// "Compacting…" must NOT be mistaken for auto-compaction (the bare word
+			// "Compacting" used to match; the full CLI phrase does not).
+			name:      "i18n catalog value is not compaction",
+			pane:      "845 +  \"state.compacting\": \"Compacting…\",\n846 +  \"state.working\": \"Working…\",\n",
+			wantState: "",
+		},
+		{
+			name:      "ordinary working pane",
+			pane:      "Now update the two launchHint consumers. Let me look at LaunchModal.\n",
+			wantState: "",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, _ := classifyClaudePane(c.pane)
+			if got != c.wantState {
+				t.Errorf("state = %q, want %q", got, c.wantState)
+			}
+		})
+	}
+}
+
 func TestIsCodexUpdateMenu(t *testing.T) {
 	// Both fixtures are real codex 0.144.3 pane captures (2026-07-14).
 	menu := "  ✨ Update available! 0.144.3 -> 0.999.0\n" +
