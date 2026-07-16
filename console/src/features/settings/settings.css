@@ -2633,3 +2633,37 @@
   font-size: 12px;
   color: var(--del, #e57373);
 }
+/* Phone: the 3-column row (label · chord · up-to-3 action buttons) can't fit a
+   narrow modal — the last button ("既定"/"Default") gets clipped off the right
+   edge and the label wraps to 3–4 lines. Below ~520px stack the label on its own
+   line and put the chord + actions on the next, so nothing overflows and the label
+   reads on one line. (Matches the settings dialog's own mobile handling.) */
+@media (max-width: 520px) {
+  .kb-row {
+    grid-template-columns: auto 1fr;
+    grid-template-areas:
+      "label label"
+      "chord actions"
+      "conflict conflict";
+    row-gap: 4px;
+    column-gap: 8px;
+  }
+  .kb-label {
+    grid-area: label;
+  }
+  .kb-chord {
+    grid-area: chord;
+    justify-self: start;
+    text-align: left;
+    min-width: 0;
+  }
+  .kb-actions {
+    grid-area: actions;
+    justify-self: end;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+  .kb-conflict {
+    grid-area: conflict;
+  }
+}
