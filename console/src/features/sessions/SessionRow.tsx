@@ -112,6 +112,8 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
       <button
         type="button"
         className="sess-btn"
+        data-rail-row=""
+        role="treeitem"
         title={
           // Full display name first — the row ellipsizes it in the narrow rail.
           displayName(s) +
