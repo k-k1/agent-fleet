@@ -1,4 +1,5 @@
 import { fileURLToPath } from "node:url";
+import { execSync } from "node:child_process";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
@@ -7,6 +8,38 @@ import react from "@vitejs/plugin-react";
 // touched at runtime in that mode, so we alias them to a tiny stub to keep them
 // out of the bundle — otherwise the production build hangs at minification.
 const mathStub = fileURLToPath(new URL("./marp-math-stub.js", import.meta.url));
+
+// Build stamp injected into the client (see src/lib/version.ts). The ISO timestamp is
+// always available and is the canonical build id the running app compares against
+// dist/version.json to detect a newer deploy and offer a reload; the short git SHA is
+// best-effort for display (empty if the image build context has no .git — harmless).
+function afBuildStamp() {
+  const time = new Date().toISOString();
+  let sha = process.env.AF_BUILD_SHA || "";
+  if (!sha) {
+    try {
+      sha = execSync("git rev-parse --short HEAD", { stdio: ["ignore", "pipe", "ignore"] })
+        .toString()
+        .trim();
+    } catch {
+      /* no git in the build context — the timestamp alone identifies the build */
+    }
+  }
+  return { time, sha };
+}
+const AF_BUILD = afBuildStamp();
+
+// Emit dist/version.json (stable, unhashed path) so the running client can poll the
+// server's current build id with cache:'no-store' and prompt a reload when it moves —
+// the fix for a phone PWA that kept running old code after a deploy.
+function afVersionManifest(build) {
+  return {
+    name: "af-version-manifest",
+    generateBundle() {
+      this.emitFile({ type: "asset", fileName: "version.json", source: JSON.stringify(build) });
+    },
+  };
+}
 
 // The Console is served as static files by the Control Plane and may live behind
 // a path-stripping proxy (Tailscale Funnel + Caddy strips /agent-fleet). All asset
@@ -19,7 +52,9 @@ const mathStub = fileURLToPath(new URL("./marp-math-stub.js", import.meta.url));
 // oauth2-proxy / tenant-header chain behaves exactly as in production.
 export default defineConfig({
   base: "./",
-  plugins: [react()],
+  // Build id available to the client as a compile-time constant (src/lib/version.ts).
+  define: { __AF_BUILD__: JSON.stringify(AF_BUILD) },
+  plugins: [react(), afVersionManifest(AF_BUILD)],
   resolve: {
     alias: [
       { find: /^mathjax-full(\/.*)?$/, replacement: mathStub },
