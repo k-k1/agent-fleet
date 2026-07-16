@@ -3,7 +3,7 @@
 // App) and openSettings/openAdmin (→ features/settings/store).
 import { useEffect, useRef, useState } from "react";
 import { useTenantStore } from "../core/store/tenant.ts";
-import { useTtsStore } from "../core/store/tts.ts";
+import { useTtsStore, toggleTtsPlayback } from "../core/store/tts.ts";
 import { useSettingsUI } from "../features/settings/store.ts";
 import { rel, clearLocalState } from "../core/api/client.ts";
 import { useSettings, setSetting, THEMES, SURFACE_TARGETS, LOCALES } from "../lib/settings.ts";
@@ -43,7 +43,6 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
   const ttsPreparing = useTtsStore((st) => st.preparing);
   const ttsSource = useTtsStore((st) => st.source);
   const ttsVoice = useTtsStore((st) => st.voice);
-  const ttsPurpose = useTtsStore((st) => st.purpose);
   const ttsBusy = ttsSpeaking || ttsPreparing; // 生成中（最初の音の前）もピルは再生扱い
   // Hamburger: single-click toggles the left pane open/closed; double-click toggles
   // its desktop display mode (Push ⇄ overlay). We debounce the single action so a
@@ -124,21 +123,8 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
                 ? tr("topbar.tts.on")
                 : tr("topbar.tts.off")
           }
-          onClick={() => {
-            // 再生中のクリックは「今の1本を止める」だけでなく設定も OFF にする。以前は停止のみ
-            // で ttsEnabled が ON のまま残り、次の新規セッションの回答でまた自動再生された
-            // （＝「OFF にしたのに勝手に ON」の主因）。喋っている最中に押す＝黙らせたい意思、
-            // として停止＋OFF をひとまとめにする。ON へ戻すのはアイドル時のクリック。
-            if (ttsBusy) {
-              useTtsStore.getState().stop();
-              if (ttsPurpose === "session-notification") setSetting("ttsSessionNotify", false);
-              else if (ttsPurpose === "usage-notification") setSetting("usageResetNotify", false);
-              else if (ttsPurpose !== "manual") setSetting("ttsEnabled", false);
-              return;
-            }
-            if (s.ttsEnabled) setSetting("ttsEnabled", false);
-            else if (!ttsBusy) setSetting("ttsEnabled", true);
-          }}
+          // 停止＋OFF の一体化ロジックはキーボードコマンドと共有（core/store/tts）。
+          onClick={toggleTtsPlayback}
         >
           {/* 最初の音が鳴る前（合成待ち）はぐるぐるで「生成中」を示す */}
           <Icon

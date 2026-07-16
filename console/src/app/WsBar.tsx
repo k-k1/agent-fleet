@@ -17,6 +17,7 @@ import { Sparkline } from "../ui/Sparkline.tsx";
 import { useConfirm } from "../ui/ConfirmProvider.tsx";
 import { useIsMobile } from "../lib/device.ts";
 import { useDismiss } from "../lib/useDismiss.ts";
+import { useOpenSignal, type OpenTarget } from "../core/store/uiOpen.ts";
 import { fmtDateTime, TIME_HM } from "../lib/intl.ts";
 import { t, tCount, useT } from "../lib/i18n/index.ts";
 import type { MsgKey } from "../lib/i18n/index.ts";
@@ -248,6 +249,7 @@ const NEAR_MAX_PCT = 95;
 // straight from the rollout — no network), so one chip component renders either.
 interface UsageSource {
   endpoint: string;
+  key: OpenTarget; // keyboard-open target id (uiOpen signal)
   name: string; // agent short name ("Claude" / "Codex") — used in reset notifications
   icon: string; // codicon glyph
   cls: string; // kind color class (kind-claude / kind-codex)
@@ -266,6 +268,7 @@ interface UsageSource {
 const USAGE_SOURCES: UsageSource[] = [
   {
     endpoint: "api/claude/usage",
+    key: "usage-claude",
     name: "Claude",
     icon: "sparkle",
     cls: "kind-claude",
@@ -276,6 +279,7 @@ const USAGE_SOURCES: UsageSource[] = [
   },
   {
     endpoint: "api/codex/usage",
+    key: "usage-codex",
     name: "Codex",
     icon: "rocket",
     cls: "kind-codex",
@@ -298,6 +302,8 @@ function UsageChip({ src, tenant }: { src: UsageSource; tenant: string | null })
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   useDismiss(ref, open, () => setOpen(false));
+  // Keyboard: Ctrl/⌘+K g c / g x toggles this agent's usage popover.
+  useOpenSignal(src.key, () => setOpen((o) => !o));
   // Notify when a constrained limit window resets (5-hour / weekly). Runs whether or
   // not the dropdown is open — the chip stays mounted while the workspace is up.
   useUsageResetNotify(src, usage, fiveLabel, weekLabel, refresh);
@@ -484,6 +490,8 @@ export function WsBar() {
   const [pvOpen, setPvOpen] = useState(false); // desktop port-preview popover
   const [moreOpen, setMoreOpen] = useState(false); // mobile overflow popover
   const [resOpen, setResOpen] = useState(false); // desktop resource-tiles popover
+  // Keyboard: Ctrl/⌘+K g r toggles the resource-tiles popover (desktop).
+  useOpenSignal("resources", () => setResOpen((o) => !o));
   const pvRef = useRef<HTMLDivElement>(null);
   const moreRef = useRef<HTMLDivElement>(null);
   const resRef = useRef<HTMLDivElement>(null);

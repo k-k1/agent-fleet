@@ -4,6 +4,7 @@
 // 非 React から setActive/setSpeaking を呼ぶ。
 import { create } from "zustand";
 import type { TtsController } from "../../features/chat/tts.ts";
+import { getSettings, setSetting } from "../../lib/settings.ts";
 
 interface TtsStore {
   speaking: boolean; // 音声を再生中/合成キューに積んでいる間 true
@@ -32,3 +33,20 @@ export const useTtsStore = create<TtsStore>((set, get) => ({
   setPreparing: (v) => set((s) => (s.preparing === v ? s : { preparing: v })),
   stop: () => get().active?.stop(),
 }));
+
+// 読み上げ ON/OFF トグル（TopBar のスピーカーボタンとキーボードコマンドで共有）。
+// 再生中に押す＝黙らせたい意思として、停止＋その発生源フラグを OFF にする（停止だけだと
+// ttsEnabled が ON のまま残り次の回答でまた鳴る、という主因を避ける）。アイドル時は素直に
+// ttsEnabled をトグル。挙動は TopBar の元 onClick と同一。
+export function toggleTtsPlayback(): void {
+  const st = useTtsStore.getState();
+  const busy = st.speaking || st.preparing;
+  if (busy) {
+    st.stop();
+    if (st.purpose === "session-notification") setSetting("ttsSessionNotify", false);
+    else if (st.purpose === "usage-notification") setSetting("usageResetNotify", false);
+    else if (st.purpose !== "manual") setSetting("ttsEnabled", false);
+    return;
+  }
+  setSetting("ttsEnabled", !getSettings().ttsEnabled);
+}
