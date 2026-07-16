@@ -68,15 +68,32 @@
 .notification-btn { position: relative; padding: 4px 7px; }
 .notification-badge { position: absolute; top: -6px; right: -7px; min-width: 16px; height: 16px; padding: 0 3px; border-radius: 9px; background: var(--danger, #d95763); color: white; font-size: 10px; line-height: 16px; text-align: center; }
 .notification-panel { position: absolute; z-index: 70; top: calc(100% + 7px); right: 0; width: min(380px, calc(100vw - 20px)); max-height: min(560px, calc(100vh - 64px)); display: flex; flex-direction: column; background: var(--panel2, var(--panel)); border: 1px solid var(--border2, var(--border)); border-radius: 10px; box-shadow: 0 12px 36px rgba(0,0,0,.45); overflow: hidden; }
-.notification-panel > header { display: flex; align-items: baseline; justify-content: space-between; padding: 12px 14px; border-bottom: 1px solid var(--border); }
-.notification-panel > header span { color: var(--muted); font-size: 11px; }
+.notification-panel > header { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--border); }
+.notification-titles { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.notification-titles span { color: var(--muted); font-size: 11px; }
+/* Audio-notification (ttsSessionNotify) quick toggle — mirrors the setting in 設定›音声読み上げ. */
+.notification-mute { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 6px; padding: 4px 9px; border: 1px solid var(--border2, var(--border)); border-radius: 999px; background: transparent; color: var(--muted); font-size: 11px; cursor: pointer; }
+.notification-mute .codicon { font-size: 13px; }
+.notification-mute.on { border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
 .notification-permission { margin: 8px 10px 2px; }
 .notification-list { overflow-y: auto; padding: 5px; }
 .notification-row { display: flex; align-items: center; border-radius: 4px; }
-.notification-row.unread { background: color-mix(in srgb, var(--accent) 12%, transparent); }
-:where(.topbar) .notification-item { min-width: 0; flex: 1; display: flex; align-items: flex-start; gap: 10px; padding: 10px; border: 0; background: transparent; text-align: left; }
-:where(.topbar) .notification-replay { flex: 0 0 auto; margin-right: 5px; padding: 6px; border: 0; background: transparent; color: var(--muted); }
+/* Unread marker: filled accent dot in a reserved column so read/unread rows stay aligned. */
+.notification-dot { flex: 0 0 auto; width: 7px; height: 7px; margin-left: 9px; border-radius: 50%; background: transparent; }
+.notification-row.unread { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.notification-row.unread .notification-dot { background: var(--accent); }
+:where(.topbar) .notification-item { min-width: 0; flex: 1; display: flex; align-items: flex-start; gap: 10px; padding: 10px 10px 10px 8px; border: 0; background: transparent; text-align: left; }
+:where(.topbar) .notification-replay, :where(.topbar) .notification-dismiss { flex: 0 0 auto; margin-right: 5px; padding: 6px; border: 0; background: transparent; color: var(--muted); }
 .notification-item > .codicon { margin-top: 2px; color: var(--accent); }
+/* Persisted-toast (log) rows are informational — no pointer — and color the leading icon by toast kind. */
+.notification-log { cursor: default; }
+.notification-row .notification-log.k-error > .codicon { color: var(--del); }
+.notification-row .notification-log.k-warn > .codicon { color: var(--warn); }
+.notification-row .notification-log.k-success > .codicon { color: var(--ok); }
+.notification-row .notification-log.k-info > .codicon { color: var(--accent); }
+/* Read rows recede — muted icon + lighter title — so unread ones read at a glance. */
+.notification-row:not(.unread) .notification-item > .codicon { color: var(--muted); }
+.notification-row:not(.unread) .notification-item b { font-weight: 500; color: var(--muted); }
 .notification-item span { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .notification-item b { font-size: 12px; font-weight: 600; }
 .notification-item small { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

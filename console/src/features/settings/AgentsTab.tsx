@@ -6,7 +6,8 @@ import { EmptyState } from "../../ui/EmptyState.tsx";
 import { Button } from "../../ui/Button.tsx";
 import { Sparkline } from "../../ui/Sparkline.tsx";
 import { fmtTok } from "../../lib/fmttok.ts";
-import { Choice, OnOff } from "./controls.tsx";
+import { fmtNum } from "../../lib/intl.ts";
+import { Choice, OnOff, Select } from "./controls.tsx";
 import {
   agentLaunchDefault,
   useSettings,
@@ -229,7 +230,7 @@ function RtkGainPanel({ gain }: { gain: any }) {
         </div>
         <div className="ws-rtk-stat">
           <span className="muted">実行コマンド</span>
-          <b>{(s.total_commands || 0).toLocaleString()}</b>
+          <b>{fmtNum(s.total_commands || 0)}</b>
         </div>
       </div>
       <p className="muted ds-note">
@@ -283,7 +284,12 @@ function LaunchDefaults({ kind }: { kind: "claude" | "codex" | "opencode" }) {
   return (
     <>
       <SettingRow label="既定モデル">
-        <Choice value={row.model} options={models} onChange={(model) => update({ model, effort: "" })} />
+        {/* opencode は候補が数十個になりセグメントだと敷き詰まるため、長いリストは Select に。 */}
+        {models.length > 8 ? (
+          <Select value={row.model} options={models} onChange={(model) => update({ model, effort: "" })} />
+        ) : (
+          <Choice value={row.model} options={models} onChange={(model) => update({ model, effort: "" })} />
+        )}
       </SettingRow>
       <SettingRow label="既定 effort">
         <Choice value={row.effort} options={efforts} onChange={(effort) => update({ effort })} />
@@ -360,10 +366,15 @@ function ClaudeCard({
     }
   };
   const complete = async () => {
-    if (!code.trim()) return;
+    // OAuth コードは code#state 形式。オートフィル等でコード末尾に URL が
+    // 連結されてしまった場合に備え、http(s):// 以降を切り落としてから送る。
+    let c = code.trim();
+    const u = c.search(/https?:\/\//i);
+    if (u > 0) c = c.slice(0, u).trim();
+    if (!c) return;
     setBusy(true);
     try {
-      const r = await apiJSON("api/connections/claude/complete", "POST", { flow_id: flow.flow_id, code: code.trim() });
+      const r = await apiJSON("api/connections/claude/complete", "POST", { flow_id: flow.flow_id, code: c });
       if (r && r.error) {
         toast("接続に失敗: " + (r.error.message || r.error));
         return;
@@ -406,11 +417,23 @@ function ClaudeCard({
               から。承認後にコードを貼り付けます。
             </Hint>
             <div className="flow">
+              {/* 素の <input> だとパスワードマネージャ/ブラウザのオートフィルが働き、
+                  貼り付けた OAuth コード（code#state 形式）の末尾に claude.com の URL を
+                  差し込んで壊す事例がある。オートフィルを全面的に無効化しておく。 */}
               <input
                 className="cinput"
+                type="text"
+                name="claude-oauth-code"
                 placeholder="コードを貼付"
                 value={code}
                 onChange={(e) => setCode(e.target.value)}
+                autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="off"
+                spellCheck={false}
+                data-1p-ignore
+                data-lpignore="true"
+                data-form-type="other"
                 autoFocus
               />
               <button disabled={busy} onClick={complete}>

@@ -10,6 +10,7 @@ import { useSettingsUI } from "./store.ts";
 import { mobileMatches } from "../../lib/device.ts";
 import { Modal } from "../../ui/Modal.tsx";
 import { DisplayTab } from "./DisplayTab.tsx";
+import { KeysTab } from "./KeysTab.tsx";
 import { EnvTab } from "./EnvTab.tsx";
 import { AgentsTab } from "./AgentsTab.tsx";
 import { TtsTab } from "./TtsTab.tsx";
@@ -25,6 +26,7 @@ export function SettingsDialog() {
 
   const sections = [
     ["display", "表示"],
+    ["keys", "キー操作"],
     ["env", "ワークスペース"],
     ["agents", "エージェント"],
     ["tts", "読み上げ"],
@@ -87,6 +89,7 @@ export function SettingsDialog() {
           {section === "ops" && <OpsTab />}
           {section === "tokens" && <TokensTab />}
           {section === "display" && <DisplayTab />}
+          {section === "keys" && <KeysTab />}
         </div>
       </div>
     </Modal>
