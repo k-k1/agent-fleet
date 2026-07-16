@@ -528,7 +528,7 @@ export const repoPromptTemplates = (name: string): Promise<{ groups: PromptTempl
 // Per-membership notes accumulated across devices, then flushed to a session as one
 // message. Persisted in the Control Plane (membership-scoped), so they sync between
 // devices; there is no server push, so callers refetch on open + poll while open.
-import type { Memo, MemoInput, MemoPatch } from "../../types/memo.ts";
+import type { Memo, MemoInput, MemoPatch, MemoCategory, MemoCategoryInput, MemoCategoryPatch } from "../../types/memo.ts";
 
 export const memoList = (): Promise<Memo[]> => api("api/memos");
 export const memoCreate = (input: MemoInput): Promise<Memo> =>
@@ -538,12 +538,25 @@ export const memoUpdate = (id: string, patch: MemoPatch): Promise<Memo> =>
 export const memoDelete = (id: string): Promise<Response> =>
   raw(`api/memos/${encodeURIComponent(id)}`, { method: "DELETE" });
 // Flush concatenates the selected memos (by id) into one message, sends it once to
-// the session, and stamps them sent. Returns {sent, sentAt, ids} or {error}.
+// the session, and stamps them sent. `text`, when given, is sent verbatim instead of the
+// server-composed message (the send modal lets the user edit it first). Returns
+// {sent, sentAt, ids} or {error}.
 export const memoFlush = (
   sessionName: string,
   ids: string[],
+  text?: string,
 ): Promise<{ sent?: number; sentAt?: string; ids?: string[]; error?: ApiError }> =>
-  apiJSON("api/memos/flush", "POST", { sessionName, ids });
+  apiJSON("api/memos/flush", "POST", { sessionName, ids, ...(text ? { text } : {}) });
+
+// First-class categories (docs/21 UI刷新): add empty, rename (cascades onto memos),
+// reorder by drag. Membership-scoped like the memos.
+export const memoCategoryList = (): Promise<MemoCategory[]> => api("api/memo-categories");
+export const memoCategoryCreate = (input: MemoCategoryInput): Promise<MemoCategory> =>
+  apiJSON("api/memo-categories", "POST", input);
+export const memoCategoryUpdate = (id: string, patch: MemoCategoryPatch): Promise<MemoCategory> =>
+  apiJSON(`api/memo-categories/${encodeURIComponent(id)}`, "PATCH", patch);
+export const memoCategoryDelete = (id: string): Promise<Response> =>
+  raw(`api/memo-categories/${encodeURIComponent(id)}`, { method: "DELETE" });
 
 // --- assistant one-shot ask (docs/21 メモ整理) ---
 // Stateless advisory turn (tools off) used to tidy up + auto-categorize memos. The

@@ -59,10 +59,13 @@ interface LaunchModalProps {
   onClose: () => void;
   /** Present when opened from the はじめる hub: 場所を変更 returns to it. */
   onBack?: () => void;
+  /** Seed for the first-prompt field (docs/21 UI刷新): the memo send modal launches a
+   * new session with the composed memo text prefilled here. */
+  initialPrompt?: string;
   onLaunch: (opts: LaunchOpts) => Promise<LaunchResult>;
 }
 
-export function LaunchModal({ repo, branch, path, kinds, allowWorktree = true, onClose, onBack, onLaunch }: LaunchModalProps) {
+export function LaunchModal({ repo, branch, path, kinds, allowWorktree = true, onClose, onBack, initialPrompt, onLaunch }: LaunchModalProps) {
   const settings = useSettings();
   const last = readRepoLast(repo);
   // Default to the last agent used in this repo when still available, else the first.
@@ -78,7 +81,7 @@ export function LaunchModal({ repo, branch, path, kinds, allowWorktree = true, o
   // ドライバ（docs/27 P2/P3）: managed 対応 kind は managed が既定（§9.2）。
   // CLI(TUI) はユーザーの明示的な選択 — セッション毎に TUI プロセス分のメモリを払う。
   const [driver, setDriver] = useState(agentOf(initialKind).managedDriver ? "managed" : "");
-  const [prompt, setPrompt] = useState("");
+  const [prompt, setPrompt] = useState(initialPrompt ?? "");
   // Pasted images awaiting the launch: raw File + an object URL for the chip preview.
   // Uploaded only after the session is minted (in onStartWork), then referenced in the
   // first prompt. Agents without the imagePaste cap (shell/ssm) make paste a no-op.

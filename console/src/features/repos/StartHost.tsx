@@ -11,7 +11,7 @@ import { useRepoRailContext } from "./useRepoRail.ts";
 import { useStartWork } from "./useStartWork.ts";
 import { StartModal } from "./StartModal.tsx";
 import { LaunchModal } from "./LaunchModal.tsx";
-import { useLaunchTarget } from "./store.ts";
+import { useLaunchTarget, useLaunchSeed } from "./store.ts";
 
 export function StartHost() {
   const startTick = useSessionsStore((s) => s.startTick);
@@ -19,6 +19,10 @@ export function StartHost() {
   const launch = useLaunchTarget((s) => s.target);
   const openLaunch = useLaunchTarget((s) => s.open);
   const clearLaunch = useLaunchTarget((s) => s.clear);
+  // First-prompt seed (memo send modal → 新規セッションを起動). Read once into the
+  // LaunchModal below; cleared when the whole launch stack closes.
+  const seedPrompt = useLaunchSeed((s) => s.prompt);
+  const clearSeed = useLaunchSeed((s) => s.clear);
   // Open the hub whenever the global tick changes (skip the mount value).
   const lastTickRef = useRef(startTick);
   useEffect(() => {
@@ -42,7 +46,16 @@ export function StartHost() {
   // to, so 場所を変更 is offered only while the hub is open.
   return (
     <>
-      {show && <StartModal kinds={agentKinds} onClose={() => setShow(false)} onPickRepo={openLaunch} />}
+      {show && (
+        <StartModal
+          kinds={agentKinds}
+          onClose={() => {
+            setShow(false);
+            clearSeed();
+          }}
+          onPickRepo={openLaunch}
+        />
+      )}
       {launch && (
         <LaunchModal
           repo={launch.name}
@@ -50,11 +63,18 @@ export function StartHost() {
           path={launch.path}
           kinds={agentKinds}
           allowWorktree={!launch.worktree}
-          onClose={clearLaunch}
+          initialPrompt={seedPrompt || undefined}
+          onClose={() => {
+            clearLaunch();
+            clearSeed();
+          }}
           onBack={show ? clearLaunch : undefined}
           onLaunch={async (o) => {
             const r = await startWork({ dir: launch.path || "", repo: launch.name }, o);
-            if (r.ok) setShow(false); // launched — drop the hub underneath too
+            if (r.ok) {
+              setShow(false); // launched — drop the hub underneath too
+              clearSeed();
+            }
             return r;
           }}
         />

@@ -35,3 +35,27 @@ export interface MemoPatch {
   refPath?: string;
   position?: number;
 }
+
+// A first-class category (docs/21 UI刷新): created ahead of any memo, reordered by drag,
+// kept while empty. name is unique within a (repo) bucket and stays the grouping key that
+// Memo.category references — so a rename cascades onto the memos.
+export interface MemoCategory {
+  id: string;
+  repo: string; // "" = common bucket, mirrors Memo.repo
+  name: string;
+  position: number; // order within the repo bucket
+  createdAt: string; // RFC3339
+}
+
+// Body sent to POST /api/memo-categories.
+export interface MemoCategoryInput {
+  repo?: string;
+  name: string;
+}
+
+// Partial edit sent to PATCH /api/memo-categories/{id}; omitted fields are unchanged.
+// A name change cascades onto the memos (and merges into a same-name category).
+export interface MemoCategoryPatch {
+  name?: string;
+  position?: number;
+}

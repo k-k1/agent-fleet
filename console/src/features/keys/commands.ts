@@ -21,6 +21,7 @@ import type { Dir } from "../../layout/nav.ts";
 import { useLeftRail } from "../../core/store/leftRail.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { useSessionsStore } from "../sessions/store.ts";
+import { useMemoStore } from "../memo/store.ts";
 import { useSettingsUI } from "../settings/store.ts";
 import { getSettings, setSetting } from "../../lib/settings.ts";
 import { useKeysStore } from "./store.ts";
@@ -111,6 +112,19 @@ export const ALL_COMMANDS: Command[] = [
 
   // ---- Session (leader s) ----
   { id: "session.new", title: "keys.cmd.sessionNew", seq: "s n", run: () => useSessionsStore.getState().openStart() },
+
+  // ---- Memo (top-level leader m) ----
+  // Reveal the rail + memo composer for a quick note. A single leader key (not a group)
+  // because it's a one-shot action, mirroring "," (settings) / ";" (palette).
+  {
+    id: "memo.add",
+    title: "keys.cmd.memoAdd",
+    seq: "m",
+    run: () => {
+      if (!useLeftRail.getState().open) useLeftRail.getState().toggle();
+      useMemoStore.getState().requestCompose();
+    },
+  },
 
   // ---- Workspace (leader w) ----
   { id: "workspace.toggle", title: "keys.cmd.workspaceToggle", seq: "w s", run: toggleWorkspace },
