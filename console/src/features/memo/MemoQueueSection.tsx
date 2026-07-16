@@ -8,6 +8,7 @@ import { Section } from "../../ui/Section.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { Button } from "../../ui/Button.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
+import { t, useT } from "../../lib/i18n/index.ts";
 import { errText } from "../../core/api/client.ts";
 import { memoList, memoCreate, memoDelete, memoFlush } from "./api.ts";
 import { useMemoStore } from "./store.ts";
@@ -57,8 +58,8 @@ function groupMemos(memos: Memo[]): RepoGroup[] {
   return repos;
 }
 
-const repoLabel = (repo: string) => repo || "共通";
-const catLabel = (cat: string) => cat || "未分類";
+const repoLabel = (repo: string) => repo || t("memo.common");
+const catLabel = (cat: string) => cat || t("memo.uncategorized");
 
 export function MemoQueueSection() {
   const workspaceRunning = useWorkspaceStore((s) => s.state) === "running";
@@ -67,6 +68,7 @@ export function MemoQueueSection() {
   const memosKey = useMemoStore((s) => s.tick);
   const bumpMemos = useMemoStore((s) => s.bump);
   const toast = useToast();
+  const tr = useT();
   const [memos, setMemos] = useState<Memo[]>([]);
   const [sel, setSel] = useState<Record<string, boolean>>({});
   const [target, setTarget] = useState(""); // session name to flush to
@@ -123,22 +125,22 @@ export function MemoQueueSection() {
   const flush = async (ids: string[]) => {
     if (ids.length === 0) return;
     if (!target) {
-      toast("送信先の稼働セッションがありません。セッションを起動してください。", { kind: "warn" });
+      toast(t("memo.no_running"), { kind: "warn" });
       return;
     }
     setBusy(true);
     try {
       const res = await memoFlush(target, ids);
       if (res.error) {
-        toast(errText(res.error) || "送信に失敗しました");
+        toast(errText(res.error) || t("common.send_failed"));
         return;
       }
       const s = sessions.find((x) => x.name === target);
-      toast(`${res.sent ?? ids.length} 件を ${s ? displayName(s) : target} に送信しました`, { kind: "success" });
+      toast(t("memo.sent_n", { count: res.sent ?? ids.length, target: s ? displayName(s) : target }), { kind: "success" });
       setSel({});
       bumpMemos();
     } catch {
-      toast("送信に失敗しました");
+      toast(t("common.send_failed"));
     } finally {
       setBusy(false);
     }
@@ -151,13 +153,13 @@ export function MemoQueueSection() {
     try {
       const res = await memoCreate({ kind: "text", body, category: newCat.trim() });
       if ((res as { error?: unknown }).error) {
-        toast("メモの追加に失敗しました");
+        toast(t("memo.add_failed"));
         return;
       }
       setNewText("");
       bumpMemos();
     } catch {
-      toast("メモの追加に失敗しました");
+      toast(t("memo.add_failed"));
     } finally {
       setBusy(false);
     }
@@ -173,14 +175,14 @@ export function MemoQueueSection() {
       });
       bumpMemos();
     } catch {
-      toast("削除に失敗しました");
+      toast(t("common.delete_failed"));
     }
   };
 
   const openTidy = (ids: string[]) => {
     const picked = memos.filter((m) => ids.includes(m.id));
     if (picked.length === 0) {
-      toast("整理するメモを選択してください", { kind: "warn" });
+      toast(t("memo.select_to_organize"), { kind: "warn" });
       return;
     }
     setTidy(picked);
@@ -191,7 +193,7 @@ export function MemoQueueSection() {
       small
       variant="ghost"
       icon="sparkle"
-      title={workspaceRunning ? "選択したメモをアシスタントで整理" : "整理にはワークスペースの起動が必要です"}
+      title={workspaceRunning ? tr("memo.organize_title") : tr("memo.organize_needs_ws")}
       disabled={!workspaceRunning || selectedIds.length === 0}
       onClick={() => openTidy(selectedIds)}
     />
@@ -199,13 +201,13 @@ export function MemoQueueSection() {
 
   return (
     <>
-      <Section id="memos" title="メモキュー" icon="checklist" count={unsent.length} actions={actions}>
+      <Section id="memos" title={tr("memo.title")} icon="checklist" count={unsent.length} actions={actions}>
         <div className="memo-add">
           <textarea
             className="memo-add-text"
             value={newText}
             rows={2}
-            placeholder="走り書きメモを追加…（後でまとめて送信）"
+            placeholder={tr("memo.add_ph")}
             onChange={(e) => setNewText(e.target.value)}
             onKeyDown={(e) => {
               if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
@@ -219,11 +221,11 @@ export function MemoQueueSection() {
               className="memo-add-cat"
               list="memo-cat-suggest"
               value={newCat}
-              placeholder="カテゴリ（任意）"
+              placeholder={tr("memo.category_ph")}
               onChange={(e) => setNewCat(e.target.value)}
             />
             <Button small variant="ghost" disabled={!newText.trim() || busy} onClick={() => void addMemo()}>
-              追加
+              {tr("memo.add")}
             </Button>
           </div>
           <datalist id="memo-cat-suggest">
@@ -234,13 +236,13 @@ export function MemoQueueSection() {
         </div>
 
         {memos.length === 0 ? (
-          <div className="pane-empty">メモはまだありません。ファイルの右クリックや上の入力から溜められます。</div>
+          <div className="pane-empty">{tr("memo.empty")}</div>
         ) : (
           <>
             <div className="memo-flush-bar">
               <select value={target} onChange={(e) => setTarget(e.target.value)} disabled={aliveSessions.length === 0}>
                 {aliveSessions.length === 0 ? (
-                  <option value="">稼働セッションなし</option>
+                  <option value="">{tr("memo.no_running_session")}</option>
                 ) : (
                   aliveSessions.map((s) => (
                     <option key={s.name} value={s.name}>
@@ -255,7 +257,7 @@ export function MemoQueueSection() {
                 disabled={selectedIds.length === 0 || busy || !target}
                 onClick={() => void flush(selectedIds)}
               >
-                選択を送信{selectedIds.length > 0 ? `（${selectedIds.length}）` : ""}
+                {tr("memo.send_selected")}{selectedIds.length > 0 ? `（${selectedIds.length}）` : ""}
               </Button>
             </div>
 
@@ -289,11 +291,11 @@ export function MemoQueueSection() {
                         <button
                           type="button"
                           className="linkish sm"
-                          title="このカテゴリをまとめて送信"
+                          title={tr("memo.send_category")}
                           disabled={busy || !target}
                           onClick={() => void flush(ids)}
                         >
-                          送信
+                          {tr("common.send")}
                         </button>
                       </div>
                       {cg.memos.map((m) => (
@@ -308,9 +310,9 @@ export function MemoQueueSection() {
                             ) : (
                               <div className="memo-text">{m.body}</div>
                             )}
-                            {m.sentAt && <span className="memo-sent-tag">送信済み</span>}
+                            {m.sentAt && <span className="memo-sent-tag">{tr("memo.sent_tag")}</span>}
                           </div>
-                          <button type="button" className="memo-del" title="削除" onClick={() => void remove(m.id)}>
+                          <button type="button" className="memo-del" title={tr("common.delete")} onClick={() => void remove(m.id)}>
                             <Icon name="trash" />
                           </button>
                         </div>
