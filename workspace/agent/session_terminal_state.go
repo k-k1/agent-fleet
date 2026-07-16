@@ -25,6 +25,15 @@ type compactProgress struct {
 var (
 	compactPctRe     = regexp.MustCompile(`(\d{1,3})%`)
 	compactElapsedRe = regexp.MustCompile(`Compacting[^\n(]*\((\d+m \d+s|\d+m|\d+s)\)`)
+
+	// resumeMenuRe matches the startup resume selector by its numbered option-1 line
+	// ("1. Resume from summary"), not a bare "Resume full session" substring. This repo's
+	// own source documents the menu wording — MirrorView.tsx quotes "2. Resume full session
+	// as-is" and this file's doc comment lists both phrases — so a substring match would
+	// flag an agent merely editing those files as parked at the menu. The numbered option-1
+	// line appears in the live menu but in none of that prose (the FE quotes only option 2;
+	// the comment has no numeric prefix).
+	resumeMenuRe = regexp.MustCompile(`\d+\.\s+Resume from summary`)
 )
 
 // sessionTerminalState detects claude terminal-only states that the chat view can't
@@ -53,13 +62,15 @@ func sessionTerminalState(name string) (string, *compactProgress) {
 }
 
 // classifyClaudePane is the pure pane-text classifier behind sessionTerminalState,
-// split out so it can be unit-tested without tmux. The "Compacting conversation"
-// match is deliberately the full CLI phrase, not a bare "Compacting": an agent
-// editing text that merely contains the word (e.g. an i18n catalog value
-// "state.compacting": "Compacting…") would otherwise trip a false compacting state.
+// split out so it can be unit-tested without tmux. Both matches are deliberately
+// narrow so an agent editing text that merely contains the words is not mistaken for
+// a live menu: "Compacting conversation" is the full CLI phrase (not a bare
+// "Compacting", which an i18n value "state.compacting" contains), and the resume menu
+// is keyed on its numbered option-1 line (see resumeMenuRe) rather than a bare
+// "Resume full session" (which this repo's own Console/Go source quotes verbatim).
 func classifyClaudePane(s string) (string, *compactProgress) {
 	switch {
-	case strings.Contains(s, "Resume from summary") || strings.Contains(s, "Resume full session"):
+	case resumeMenuRe.MatchString(s):
 		return "resume", nil
 	case strings.Contains(s, "Compacting conversation"):
 		return "compacting", parseCompactProgress(s)
