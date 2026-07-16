@@ -49,4 +49,69 @@ export const ja = {
   "notif.usage_reset.speech": "{source}の{window}がリセットされました。",
   "notif.window.5h": "5時間枠",
   "notif.window.week": "週間枠",
+
+  // --- 共通トグル / フォント名（controls.tsx / lib/settings.ts のフォント配列）---
+  "common.on": "オン",
+  "common.off": "オフ",
+  "font.sys_mono": "システム等幅",
+  "font.sys": "システム",
+  "font.serif": "セリフ",
+  "font.mincho": "明朝",
+  "font.gothic": "ゴシック",
+
+  // --- アイコンセット（lib/settings.ts ICON_SETS）---
+  "iconset.vscode": "VS Code Icons（カラー）",
+  "iconset.material": "Material（カラー）",
+  "iconset.devicon": "Devicon（カラー）",
+  "iconset.seti": "Seti（単色・タイプ別着色）",
+
+  // --- サーフェス色（lib/settings.ts SURFACE_COLORS）---
+  "surface_color.default": "デフォルト",
+  "surface_color.slate": "スレート",
+  "surface_color.blue": "ブルー",
+  "surface_color.green": "グリーン",
+  "surface_color.purple": "パープル",
+  "surface_color.warm": "ウォーム",
+
+  // --- サーフェス対象（lib/settings.ts SURFACE_TARGETS。short=外観ポップ, long=設定行）---
+  "surface.topbar.short": "上部バー",
+  "surface.topbar.long": "上部バーの背景",
+  "surface.leftpane.short": "左ペイン",
+  "surface.leftpane.long": "左ペインの背景",
+  "surface.viewer.short": "ビュアー",
+  "surface.viewer.long": "ファイルビュアーの背景",
+  "surface.session.short": "セッション",
+  "surface.session.long": "セッションの背景",
+  "surface.assistant.short": "アシスタント",
+  "surface.assistant.long": "アシスタントの背景",
+
+  // --- ミラー送信キー（lib/settings.ts MIRROR_SEND_MODES）---
+  "mirror_send.mod_enter": "Ctrl+Enter で送信",
+  "mirror_send.enter": "Enter で送信",
+
+  // --- 表示設定（features/settings/DisplayTab.tsx）---
+  "display.color_theme": "カラーテーマ",
+  "display.theme": "テーマ",
+  "display.session_theme": "セッションのテーマ",
+  "display.assistant_theme": "アシスタントのテーマ",
+  "display.region_theme_note":
+    "セッション（ミラー）とアシスタントチャットは、アプリ本体とは別のテーマ（ダーク／ライト）で表示できます（「アプリに合わせる」で本体に追従）。背景色も下でそれぞれ指定できます。",
+  "display.terminal": "ターミナル",
+  "display.font": "フォント",
+  "display.font_size": "文字サイズ",
+  "display.file_viewer": "ファイルビュアー",
+  "display.tab_width": "タブ幅",
+  "display.line_numbers": "行番号",
+  "display.wrap": "折り返し",
+  "display.minimap": "ミニマップ",
+  "display.session_mirror": "セッション（Markdownミラー）",
+  "display.send_key": "送信キー",
+  "display.send_note_enter": "Enter で送信、Shift+Enter で改行。",
+  "display.send_note_mod": "Ctrl+Enter（⌘+Enter）で送信、Enter で改行。スマホ向け。",
+  "display.reader_view": "朗読ビュー",
+  "display.file_icons": "ファイルアイコン",
+  "display.icon_set": "アイコンセット",
+  "display.preview": "プレビュー",
+  "display.smaller": "小さく",
+  "display.larger": "大きく",
 };

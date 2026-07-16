@@ -48,4 +48,69 @@ export const en: Record<keyof typeof ja, string> = {
   "notif.usage_reset.speech": "{source}'s {window} has reset.",
   "notif.window.5h": "5-hour window",
   "notif.window.week": "weekly window",
+
+  // --- shared toggles / font names ---
+  "common.on": "On",
+  "common.off": "Off",
+  "font.sys_mono": "System mono",
+  "font.sys": "System",
+  "font.serif": "Serif",
+  "font.mincho": "Mincho (serif)",
+  "font.gothic": "Gothic (sans)",
+
+  // --- icon sets ---
+  "iconset.vscode": "VS Code Icons (color)",
+  "iconset.material": "Material (color)",
+  "iconset.devicon": "Devicon (color)",
+  "iconset.seti": "Seti (monochrome, tinted by type)",
+
+  // --- surface colors ---
+  "surface_color.default": "Default",
+  "surface_color.slate": "Slate",
+  "surface_color.blue": "Blue",
+  "surface_color.green": "Green",
+  "surface_color.purple": "Purple",
+  "surface_color.warm": "Warm",
+
+  // --- surface targets (short = 外観 popover, long = settings row) ---
+  "surface.topbar.short": "Top bar",
+  "surface.topbar.long": "Top bar background",
+  "surface.leftpane.short": "Left pane",
+  "surface.leftpane.long": "Left pane background",
+  "surface.viewer.short": "Viewer",
+  "surface.viewer.long": "File viewer background",
+  "surface.session.short": "Session",
+  "surface.session.long": "Session background",
+  "surface.assistant.short": "Assistant",
+  "surface.assistant.long": "Assistant background",
+
+  // --- mirror send key ---
+  "mirror_send.mod_enter": "Send with Ctrl+Enter",
+  "mirror_send.enter": "Send with Enter",
+
+  // --- display settings ---
+  "display.color_theme": "Color theme",
+  "display.theme": "Theme",
+  "display.session_theme": "Session theme",
+  "display.assistant_theme": "Assistant theme",
+  "display.region_theme_note":
+    "The session (mirror) and the assistant chat can use their own theme (dark/light), separate from the app itself (“Match app” follows the app). You can also set each one's background color below.",
+  "display.terminal": "Terminal",
+  "display.font": "Font",
+  "display.font_size": "Font size",
+  "display.file_viewer": "File viewer",
+  "display.tab_width": "Tab width",
+  "display.line_numbers": "Line numbers",
+  "display.wrap": "Wrap",
+  "display.minimap": "Minimap",
+  "display.session_mirror": "Session (Markdown mirror)",
+  "display.send_key": "Send key",
+  "display.send_note_enter": "Enter sends, Shift+Enter for a newline.",
+  "display.send_note_mod": "Ctrl+Enter (⌘+Enter) sends, Enter for a newline. For phones.",
+  "display.reader_view": "Reader view",
+  "display.file_icons": "File icons",
+  "display.icon_set": "Icon set",
+  "display.preview": "Preview",
+  "display.smaller": "Smaller",
+  "display.larger": "Larger",
 };

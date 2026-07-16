@@ -31,11 +31,11 @@ export const CHAT_FONTS = ["システム", "セリフ", "Source Code Pro", "JetB
 export const READER_FONTS = ["明朝", "ゴシック"];
 
 // File-icon sets (brand SVGs under assets/fileicons/<id>/). value = asset subdir.
-export const ICON_SETS = [
-  { id: "vscode", label: "VS Code Icons（カラー）" },
-  { id: "material", label: "Material（カラー）" },
-  { id: "devicon", label: "Devicon（カラー）" },
-  { id: "seti", label: "Seti（単色・タイプ別着色）" },
+export const ICON_SETS: { id: string; labelKey: MsgKey }[] = [
+  { id: "vscode", labelKey: "iconset.vscode" },
+  { id: "material", labelKey: "iconset.material" },
+  { id: "devicon", labelKey: "iconset.devicon" },
+  { id: "seti", labelKey: "iconset.seti" },
 ];
 
 // Base UI theme. label は i18n キー（DisplayTab / TopBar が t() で解決）。
@@ -69,28 +69,28 @@ export function effectiveTheme(pref: string, base: string): "light" | "dark" {
 
 // Surface (top bar / left pane) background choices. Each color has a per-theme tint
 // so it always contrasts with the theme's text color. "default" = theme default.
-export const SURFACE_COLORS = [
-  { id: "default", label: "デフォルト", dark: null, light: null, accent: null },
-  { id: "slate", label: "スレート", dark: "#1b2733", light: "#e2e8f0", accent: "#6b8fc4" },
-  { id: "blue", label: "ブルー", dark: "#16263f", light: "#dbe7fb", accent: "#3b82f6" },
-  { id: "green", label: "グリーン", dark: "#15291f", light: "#dcefe0", accent: "#2fb872" },
-  { id: "purple", label: "パープル", dark: "#241a33", light: "#ece0fb", accent: "#a875f5" },
-  { id: "warm", label: "ウォーム", dark: "#2a1f17", light: "#f6e8da", accent: "#e0964a" },
+export const SURFACE_COLORS: { id: string; labelKey: MsgKey; dark: string | null; light: string | null; accent: string | null }[] = [
+  { id: "default", labelKey: "surface_color.default", dark: null, light: null, accent: null },
+  { id: "slate", labelKey: "surface_color.slate", dark: "#1b2733", light: "#e2e8f0", accent: "#6b8fc4" },
+  { id: "blue", labelKey: "surface_color.blue", dark: "#16263f", light: "#dbe7fb", accent: "#3b82f6" },
+  { id: "green", labelKey: "surface_color.green", dark: "#15291f", light: "#dcefe0", accent: "#2fb872" },
+  { id: "purple", labelKey: "surface_color.purple", dark: "#241a33", light: "#ece0fb", accent: "#a875f5" },
+  { id: "warm", labelKey: "surface_color.warm", dark: "#2a1f17", light: "#f6e8da", accent: "#e0964a" },
 ];
 
 // The four themeable surfaces (settings key + labels). Shared by DisplayTab and the
 // TopBar 外観 popover so "which surfaces are colorable" is defined once — `short` for
 // the compact popover rows, `long` for the settings-tab rows.
-export const SURFACE_TARGETS: { key: "topbarColor" | "leftpaneColor" | "viewerColor" | "chatColor" | "assistantColor"; short: string; long: string }[] = [
-  { key: "topbarColor", short: "上部バー", long: "上部バーの背景" },
-  { key: "leftpaneColor", short: "左ペイン", long: "左ペインの背景" },
-  { key: "viewerColor", short: "ビュアー", long: "ファイルビュアーの背景" },
+export const SURFACE_TARGETS: { key: "topbarColor" | "leftpaneColor" | "viewerColor" | "chatColor" | "assistantColor"; shortKey: MsgKey; longKey: MsgKey }[] = [
+  { key: "topbarColor", shortKey: "surface.topbar.short", longKey: "surface.topbar.long" },
+  { key: "leftpaneColor", shortKey: "surface.leftpane.short", longKey: "surface.leftpane.long" },
+  { key: "viewerColor", shortKey: "surface.viewer.short", longKey: "surface.viewer.long" },
   // chatColor drives the session mirror's (.mirrorview) --chat-bg / --chat-accent; labelled
   // セッション so it isn't confused with the assistant chat. Key kept as chatColor for
   // backward-compat with persisted prefs.
-  { key: "chatColor", short: "セッション", long: "セッションの背景" },
+  { key: "chatColor", shortKey: "surface.session.short", longKey: "surface.session.long" },
   // assistantColor is the same surface mechanism for the assistant chat (.chatview).
-  { key: "assistantColor", short: "アシスタント", long: "アシスタントの背景" },
+  { key: "assistantColor", shortKey: "surface.assistant.short", longKey: "surface.assistant.long" },
 ];
 
 // Resolve a surface color id to its value for the active theme (null = no override).
@@ -511,9 +511,9 @@ export const ASSISTANT_AGENTS: [string, string][] = [
 ];
 
 // Mirror composer submit-key options, shared by the settings UI.
-export const MIRROR_SEND_MODES = [
-  { id: "mod-enter", label: "Ctrl+Enter で送信" },
-  { id: "enter", label: "Enter で送信" },
+export const MIRROR_SEND_MODES: { id: string; labelKey: MsgKey }[] = [
+  { id: "mod-enter", labelKey: "mirror_send.mod_enter" },
+  { id: "enter", labelKey: "mirror_send.enter" },
 ];
 
 // Claude model choices, shared by the launch dialog and the default-model setting. Only

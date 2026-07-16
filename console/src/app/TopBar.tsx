@@ -207,7 +207,7 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
                   ))}
                 </div>
                 {SURFACE_TARGETS.map((t) => (
-                  <SwatchRow key={t.key} label={t.short} theme={s.theme} value={s[t.key]} onPick={(v) => setSetting(t.key, v)} />
+                  <SwatchRow key={t.key} label={tr(t.shortKey)} theme={s.theme} value={s[t.key]} onPick={(v) => setSetting(t.key, v)} />
                 ))}
               </div>
             </div>
