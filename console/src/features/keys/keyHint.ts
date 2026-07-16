@@ -4,7 +4,7 @@
 // hintSuffix wraps it in the parenthesized form apps append to a title string.
 import { isMac } from "../../lib/device.ts";
 import { parseChord } from "../../lib/keys/chords.ts";
-import { ALL_COMMANDS } from "./commands.ts";
+import { effectiveCommands, boundChord, APP_LEADER } from "./bindings.ts";
 
 function chordText(chord: string): string {
   const c = parseChord(chord);
@@ -19,11 +19,14 @@ function chordText(chord: string): string {
 }
 
 export function keyHint(id: string): string | null {
-  const c = ALL_COMMANDS.find((x) => x.id === id);
+  const c = effectiveCommands().find((x) => x.id === id);
   if (!c) return null;
   if (c.keys && c.keys.length) return chordText(c.keys[0]);
-  if (c.seq) return [chordText("mod+k"), ...c.seq.split(" ").map(chordText)].join(" ");
-  return null;
+  if (c.seq) {
+    const leader = boundChord(APP_LEADER) || "mod+k";
+    return [chordText(leader), ...c.seq.split(" ").map(chordText)].join(" ");
+  }
+  return null; // no direct key and (if it had one) the user unbound it
 }
 
 /** "（<hint>）" for appending to a button title, or "" when the command has no key. */

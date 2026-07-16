@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { Command, Group, KeyContext } from "./registry.ts";
-import { matchDirect, resolveLeader, isLeaderPrefix, leaderChildren, paletteCommands } from "./registry.ts";
+import { matchDirect, resolveLeader, isLeaderPrefix, leaderChildren, paletteCommands, applyOverrides } from "./registry.ts";
 
 const ctx: KeyContext = { region: "main", focusedKind: "other", leaderPending: false, activePaneKind: null };
 
@@ -64,5 +64,27 @@ describe("paletteCommands", () => {
   it("returns only currently-available commands", () => {
     expect(paletteCommands(CMDS, ctx).some((c) => c.id === "gated")).toBe(false);
     expect(paletteCommands(CMDS, { ...ctx, activePaneKind: "terminal" }).some((c) => c.id === "gated")).toBe(true);
+  });
+});
+
+describe("applyOverrides", () => {
+  it("rebinds a direct accelerator so matchDirect follows the override", () => {
+    const over = applyOverrides(CMDS, { "p.focus1": "alt+5" });
+    expect(matchDirect(over, "alt+1", ctx)).toBeUndefined(); // old key no longer bound
+    expect(matchDirect(over, "alt+5", ctx)?.id).toBe("p.focus1");
+    expect(over.find((c) => c.id === "p.focus1")?.seq).toBe("p 1"); // leader seq untouched
+  });
+  it("clears an accelerator with an empty string but keeps the command", () => {
+    const over = applyOverrides(CMDS, { "gated": "" });
+    expect(matchDirect(over, "alt+9", { ...ctx, activePaneKind: "terminal" })).toBeUndefined();
+    expect(over.some((c) => c.id === "gated")).toBe(true); // still runnable via palette / leader
+  });
+  it("ignores overrides for leader-only commands and unknown ids", () => {
+    const over = applyOverrides(CMDS, { "p.right": "alt+3", "nope": "alt+4" });
+    expect(over.find((c) => c.id === "p.right")?.keys).toBeUndefined(); // no accelerator to override
+    expect(matchDirect(over, "alt+3", ctx)).toBeUndefined();
+  });
+  it("returns the list unchanged when there are no overrides", () => {
+    expect(applyOverrides(CMDS, {})).toEqual(CMDS);
   });
 });

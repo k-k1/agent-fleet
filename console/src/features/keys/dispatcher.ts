@@ -12,16 +12,16 @@
 import { useLayoutStore } from "../../layout/store.ts";
 import { activePane } from "../../layout/ops.ts";
 import { hasOpenOverlay } from "../../lib/escLayer.ts";
-import { eventChordString, shouldIgnore, canonical } from "../../lib/keys/chords.ts";
+import { getSettings } from "../../lib/settings.ts";
+import { eventChordString, shouldIgnore } from "../../lib/keys/chords.ts";
 import { matchDirect, resolveLeader, isLeaderPrefix } from "../../lib/keys/registry.ts";
 import type { KeyContext } from "../../lib/keys/registry.ts";
 import { useKeysStore } from "./store.ts";
-import { ALL_COMMANDS } from "./commands.ts";
+import { effectiveCommands, boundChord, APP_LEADER, APP_PALETTE, APP_CHEAT } from "./bindings.ts";
 
-// Reserved app chords (rebindable in P5). Canonicalized so comparisons are exact.
-const LEADER = canonical("mod+k");
-const PALETTE = canonical("mod+p");
-const CHEAT = canonical("shift+/"); // "?" — the shortcut cheat-sheet
+// The reserved app chords are read LIVE from the keybinding store (boundChord) on each
+// keydown, so a rebind in Settings takes effect immediately without re-wiring. "" means
+// the user unbound it (e.g. freed the leader for a pure terminal) — never matched.
 
 const LEADER_TIMEOUT = 3000; // ms: a dangling leader auto-cancels
 const WHICHKEY_DELAY = 350; // ms before the which-key overlay reveals
@@ -77,6 +77,13 @@ export function wireKeys(): () => void {
     const chord = eventChordString(e);
     if (chord == null) return; // modifier-only keydown — keep waiting
 
+    // Live-resolved reserved chords (respect user rebinds; "" = unbound → never matched,
+    // since a real chord is always non-empty).
+    const LEADER = boundChord(APP_LEADER);
+    const PALETTE = boundChord(APP_PALETTE);
+    const CHEAT = boundChord(APP_CHEAT);
+    const commands = effectiveCommands();
+
     const ks = useKeysStore.getState();
 
     // --- Leader pending: the next key advances or resolves the sequence (swallowed) ---
@@ -88,14 +95,14 @@ export function wireKeys(): () => void {
       }
       const nextPath = [...ks.leaderPath, chord];
       const ctx = buildContext();
-      const cmd = resolveLeader(ALL_COMMANDS, nextPath, ctx);
+      const cmd = resolveLeader(commands, nextPath, ctx);
       if (cmd) {
         consume(e);
         cancelLeader();
         cmd.run(ctx);
         return;
       }
-      if (isLeaderPrefix(ALL_COMMANDS, nextPath, ctx)) {
+      if (isLeaderPrefix(commands, nextPath, ctx)) {
         consume(e);
         enterLeader(nextPath);
         return;
@@ -109,6 +116,16 @@ export function wireKeys(): () => void {
     // --- Not in leader mode. A modal/menu/palette owning the keyboard wins. ---
     if (hasOpenOverlay()) return;
 
+    const ctx = buildContext();
+
+    // Terminal-input priority (Settings): while a terminal is focused, yield every app
+    // chord to xterm EXCEPT the leader — the single guaranteed gateway to which-key /
+    // palette. An in-progress leader sequence is handled above, so it always completes.
+    // With the leader itself unbound, nothing escapes → a fully pure terminal, by choice.
+    if (getSettings().terminalPriority && ctx.focusedKind === "terminal" && chord !== LEADER) {
+      return;
+    }
+
     if (chord === LEADER) {
       consume(e);
       enterLeader([]);
@@ -119,8 +136,6 @@ export function wireKeys(): () => void {
       useKeysStore.getState().openPalette();
       return;
     }
-
-    const ctx = buildContext();
     // "?" opens the cheat-sheet, but only when not typing — in a terminal/input it's a
     // literal question mark. (The leader → ? path stays available regardless.)
     if (chord === CHEAT && ctx.focusedKind !== "input" && ctx.focusedKind !== "terminal") {
@@ -128,7 +143,7 @@ export function wireKeys(): () => void {
       useKeysStore.getState().openCheat();
       return;
     }
-    const cmd = matchDirect(ALL_COMMANDS, chord, ctx);
+    const cmd = matchDirect(commands, chord, ctx);
     if (cmd) {
       consume(e);
       cmd.run(ctx);
