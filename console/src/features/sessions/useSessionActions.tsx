@@ -19,6 +19,9 @@ export interface SessionActions {
   deleteSession(s: Session): Promise<void>;
   /** Clear all stopped: agent sessions archive (restorable), shell/ssm delete. */
   clearStopped(): Promise<void>;
+  /** Bulk-forget every "その他のセッション" (orphan whose working copy is gone).
+   * Irreversible — /stop forgets the meta, like the per-row 削除. */
+  deleteOrphans(orphans: Session[]): Promise<void>;
   /** Halt a live session into 停止中 (resumable): kills tmux, keeps the meta. */
   halt(name: string, display: string): Promise<void>;
   /** Mint a NEW live session (fresh slug, same title/dir/model), archive the old. */
@@ -90,6 +93,35 @@ export function useSessionActions(): SessionActions {
       ),
     ]);
     for (const s of stopped) closeSessionPanes(s.name);
+    void refreshSessions();
+  };
+
+  const deleteOrphans = async (orphans: Session[]) => {
+    if (orphans.length === 0) return;
+    const alive = orphans.filter((s) => s.alive).length;
+    if (
+      !(await askConfirm({
+        title: "その他のセッションを削除",
+        body: (
+          <>
+            作業コピーのない <strong>{orphans.length} 件</strong> のセッションを削除します
+            {alive > 0 ? <>（実行中 {alive} 件を含む）</> : null}。
+            <br />
+            会話履歴ごと忘れ、この操作は<strong>取り消せません</strong>。
+          </>
+        ),
+        confirmLabel: "すべて削除",
+        danger: true,
+      }))
+    )
+      return;
+    // /stop forgets the meta (and prunes a now-empty worktree) for any kind — the
+    // same call the per-row 削除 uses. Best-effort per session so one failure
+    // doesn't abort the rest.
+    await Promise.all(
+      orphans.map((s) => raw(`api/sessions/${encodeURIComponent(s.name)}/stop`, { method: "POST" }).catch(() => {})),
+    );
+    for (const s of orphans) closeSessionPanes(s.name);
     void refreshSessions();
   };
 
@@ -208,5 +240,5 @@ export function useSessionActions(): SessionActions {
     setTimeout(() => void refreshSessions(), 1200);
   };
 
-  return { archive, deleteSession, clearStopped, halt, recreate, fork, switchDriver };
+  return { archive, deleteSession, clearStopped, deleteOrphans, halt, recreate, fork, switchDriver };
 }
