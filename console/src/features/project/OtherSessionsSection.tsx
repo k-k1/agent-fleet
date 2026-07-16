@@ -3,6 +3,7 @@
 // there are none, so it doesn't float empty at the foot of the rail. The global
 // session-maintenance actions (整理 / アーカイブ) moved to the プロジェクト header.
 import { Section } from "../../ui/Section.tsx";
+import { IconButton } from "../../ui/Button.tsx";
 import { useSessionsStore } from "../sessions/store.ts";
 import { useSessionActions } from "../sessions/useSessionActions.tsx";
 import { SessionRow } from "../sessions/SessionRow.tsx";
@@ -26,7 +27,19 @@ export function OtherSessionsSection() {
   if (orphans.length === 0) return null;
 
   return (
-    <Section id="other-sessions" title="その他のセッション" icon="terminal" count={orphans.length}>
+    <Section
+      id="other-sessions"
+      title="その他のセッション"
+      icon="terminal"
+      count={orphans.length}
+      actions={
+        <IconButton
+          icon="archive"
+          label="その他のセッションを整理（アーカイブ退避・shell/ssm は削除）"
+          onClick={() => void actions.clearOrphans(orphans)}
+        />
+      }
+    >
       <ul className="sess-list" ref={rail.ref} role="tree" onKeyDown={rail.onKeyDown}>
         {orphans.map((s) => (
           <SessionRow

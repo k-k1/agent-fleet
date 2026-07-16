@@ -16,6 +16,7 @@ import {
   clearTerm,
   hideTerm,
   revealTerm,
+  sessionOf,
 } from "../../terminal/service.ts";
 import { termBackground } from "../../lib/termcolor.ts";
 import { rel } from "../../core/api/client.ts";
@@ -84,7 +85,14 @@ export function TerminalView({
   // intent-to-work (auto-start), so a click while stopped must not boot the WS.
   useEffect(() => {
     if (session && running && (attached || stopped)) {
-      attach(paneId, session);
+      // Only open a FRESH socket (which resets the terminal + steals focus) when
+      // this pane isn't already on this session. A redundant effect re-run — e.g.
+      // the 4s sessions poll re-publishing the list re-renders this pane — must not
+      // reset() the grid (wiping the visible history) or yank focus every tick. When
+      // already on this session, ensureAttached recovers a dead socket but no-ops
+      // (just refits) on a live one, so it's non-disruptive.
+      if (sessionOf(paneId) !== session) attach(paneId, session);
+      else ensureAttached(paneId, session);
       // A session opened right after creation (repo 起動 / worktree launch) can
       // race its own bring-up: the first PTY connect may fail or die while the
       // agent is still starting, and the focus-reconnect path only fires on a

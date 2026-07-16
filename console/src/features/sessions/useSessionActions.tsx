@@ -19,6 +19,9 @@ export interface SessionActions {
   deleteSession(s: Session): Promise<void>;
   /** Clear all stopped: agent sessions archive (restorable), shell/ssm delete. */
   clearStopped(): Promise<void>;
+  /** Bulk-clear every "その他のセッション" (orphan whose working copy is gone),
+   * same split as clearStopped: agent sessions archive (restorable), shell/ssm delete. */
+  clearOrphans(orphans: Session[]): Promise<void>;
   /** Halt a live session into 停止中 (resumable): kills tmux, keeps the meta. */
   halt(name: string, display: string): Promise<void>;
   /** Mint a NEW live session (fresh slug, same title/dir/model), archive the old. */
@@ -90,6 +93,48 @@ export function useSessionActions(): SessionActions {
       ),
     ]);
     for (const s of stopped) closeSessionPanes(s.name);
+    void refreshSessions();
+  };
+
+  const clearOrphans = async (orphans: Session[]) => {
+    if (orphans.length === 0) return;
+    // Same split as clearStopped: agent sessions archive (conversation kept,
+    // restorable); shell/ssm have no conversation worth keeping, so they delete.
+    const ephemeral = orphans.filter((s) => agentOf(s.kind).caps.ephemeral);
+    const keepable = orphans.filter((s) => !agentOf(s.kind).caps.ephemeral);
+    const alive = orphans.filter((s) => s.alive).length;
+    const parts: string[] = [];
+    if (keepable.length) parts.push(`${keepable.length} 件をアーカイブへ退避`);
+    if (ephemeral.length) parts.push(`shell/ssm ${ephemeral.length} 件を削除`);
+    if (
+      !(await askConfirm({
+        title: "その他のセッションを整理",
+        body: (
+          <>
+            作業コピーのないセッションを整理します（{parts.join("・")}）
+            {alive > 0 ? <>（実行中 {alive} 件を含む）</> : null}。
+            <br />
+            アーカイブ分は会話を保持し、あとで<strong>復帰できます</strong>。
+            {ephemeral.length > 0 ? <>shell/ssm の削除は取り消せません。</> : null}
+          </>
+        ),
+        confirmLabel: "整理する",
+        danger: ephemeral.length > 0,
+      }))
+    )
+      return;
+    // /archive hides but KEEPS the meta/jsonl (restorable); /stop forgets it
+    // (shell/ssm delete). Best-effort per session so one failure doesn't abort
+    // the rest — mirrors the per-row アーカイブ / 削除.
+    await Promise.all([
+      ...keepable.map((s) =>
+        raw(`api/sessions/${encodeURIComponent(s.name)}/archive`, { method: "POST" }).catch(() => {}),
+      ),
+      ...ephemeral.map((s) =>
+        raw(`api/sessions/${encodeURIComponent(s.name)}/stop`, { method: "POST" }).catch(() => {}),
+      ),
+    ]);
+    for (const s of orphans) closeSessionPanes(s.name);
     void refreshSessions();
   };
 
@@ -208,5 +253,5 @@ export function useSessionActions(): SessionActions {
     setTimeout(() => void refreshSessions(), 1200);
   };
 
-  return { archive, deleteSession, clearStopped, halt, recreate, fork, switchDriver };
+  return { archive, deleteSession, clearStopped, clearOrphans, halt, recreate, fork, switchDriver };
 }
