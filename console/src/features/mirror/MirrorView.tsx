@@ -41,6 +41,8 @@ import { useTtsStore } from "../../core/store/tts.ts";
 import { MirrorToggle } from "./MirrorToggle.tsx";
 import { ContextBar } from "./ContextBar.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
+import { t as tr, tCount, useT } from "../../lib/i18n/index.ts";
+import { Trans } from "../../lib/i18n/Trans.tsx";
 import { fmtTok } from "../../lib/fmttok.ts";
 import { kindIcon, kindLabel, kindShort, kindClass } from "../../lib/sessionkind.ts";
 import { agentOf } from "../../agents/registry.ts";
@@ -216,6 +218,7 @@ export function MirrorView({
   const bumpSessions = () => void refreshSessions();
   const wsState = useWorkspaceStore((s) => s.state);
   const toast = useToast();
+  useT(); // subscribe: a locale change re-renders MirrorView and its (unmemoized) turn subtree
   const running = wsState === "running"; // WS down → resume is inert, mirror the terminal 再開
   // "mod-enter" (default): Ctrl/⌘+Enter submits, plain Enter newlines (phone-safe).
   // "enter": Enter submits, Shift+Enter newlines.
@@ -359,7 +362,7 @@ export function MirrorView({
     ttsHandleRef.current?.stop("replaced"); // 内部置換なので自動読み上げキューは温存
     const h = readTurn(
       body,
-      sessionMeta ? displayName(sessionMeta) : "セッション",
+      sessionMeta ? displayName(sessionMeta) : tr("mirror.session_fallback"),
       fromBlock,
       (reason) => {
         ttsHandleRef.current = null;
@@ -388,7 +391,7 @@ export function MirrorView({
   // 読む。カラオケ・ハイライトは付けない（要約文は画面に無いため）— フル本文はフッターの
   // 読み上げボタンでいつでもカラオケ再生できる。失敗・タイムアウトは全文読みへフォールバック。
   const ttsSummarize = async (gi: number, body: HTMLElement, fromBlock: number, text: string) => {
-    const label = (sessionMeta ? displayName(sessionMeta) : "セッション") + "・要約";
+    const label = (sessionMeta ? displayName(sessionMeta) : tr("mirror.session_fallback")) + tr("mirror.tts.summary_suffix");
     try {
       const r = await Promise.race([
         askAssistant(TTS_SUMMARY_PROMPT + text.slice(0, 6000)),
@@ -396,7 +399,7 @@ export function MirrorView({
       ]);
       const reply = (r?.reply || "").trim();
       if (!r?.error && reply)
-        announce("要約。" + reply, label, { ...(sessionVoiceOpts(session) ?? {}), paneId }, session);
+        announce(tr("mirror.tts.summary_prefix") + reply, label, { ...(sessionVoiceOpts(session) ?? {}), paneId }, session);
       else ttsStart(gi, body, fromBlock); // 要約が得られない → 全文読み
     } catch {
       ttsStart(gi, body, fromBlock); // ワークスペース停止・タイムアウト等 → 全文読み
@@ -463,7 +466,7 @@ export function MirrorView({
     const voice = { ...(sessionVoiceOpts(session) ?? {}), paneId };
     const c = startTts(
       { ...ttsOptsFromSettings(settings), ...voice, ...workVoiceOpts(voice, settings.ttsWorkRead) },
-      (sessionMeta ? displayName(sessionMeta) : "セッション") + "・作業過程",
+      (sessionMeta ? displayName(sessionMeta) : tr("mirror.session_fallback")) + tr("mirror.tts.work_suffix"),
       (reason) => {
         ttsWorkRef.current = null;
         if (reason === "explicit") ttsWorkQueueRef.current.length = 0;
@@ -517,12 +520,12 @@ export function MirrorView({
     // 対象ペインは自動読み上げと同じ規則（アクティブのみ／全ペイン読みなら担当ペイン）。
     if (settings.ttsAutoReadAllPanes ? !isTurnReader(session, ttsTokenRef.current) : !active) return;
     if (!settings.ttsEnabled || !settings.ttsReadPending) return;
-    const label = (sessionMeta ? displayName(sessionMeta) : "セッション") + "・確認";
+    const label = (sessionMeta ? displayName(sessionMeta) : tr("mirror.session_fallback")) + tr("mirror.tts.confirm_suffix");
     const text = pending
       ? pendingSpeech(pending)
       : pendingPlan
-        ? "プランができました。承認待ちです。"
-        : "許可待ちです。" + (pendingPerm || "").slice(0, 100);
+        ? tr("mirror.tts.plan_ready")
+        : tr("mirror.tts.permission_wait") + (pendingPerm || "").slice(0, 100);
     announce(text, label, { ...(sessionVoiceOpts(session) ?? {}), paneId });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loaded, pending, pendingPlan, pendingPerm]);
@@ -1045,7 +1048,7 @@ export function MirrorView({
       // トーストで示し、（send() が既に消した）下書きを書き戻す。ユーザーが打ち直しを
       // 始めていたらそれを潰さない。
       applyEchoes((p) => p.filter((e) => e.id !== echoId));
-      toast(res.message || "送信できませんでした");
+      toast(res.message || tr("mirror.send_failed"));
       setDraft((d) => d || t);
     }
     setSending(false);
@@ -1175,7 +1178,7 @@ export function MirrorView({
     if (sending) return;
     setSending(true);
     const res = await sessionTurn(session, "interrupt");
-    if (!res.ok) toast(res.message || "停止できませんでした");
+    if (!res.ok) toast(res.message || tr("mirror.stop_failed"));
     setSending(false);
     setTimeout(() => tickRef.current?.(), 400);
   };
@@ -1195,7 +1198,7 @@ export function MirrorView({
       // カードを生かしたまま、理由を示す。次ポーリングが実状態へ再同期する。
       statusRef.current = prev;
       setStatus(prev);
-      toast("回答を送信できませんでした");
+      toast(tr("mirror.answer_send_failed"));
     }
     setSending(false);
     setTimeout(() => tickRef.current?.(), 400);
@@ -1218,10 +1221,10 @@ export function MirrorView({
           const url = image ? URL.createObjectURL(f) : "";
           setAttachments((a) => [...a, { path, name: nm, url, image }]);
         } else {
-          toast(res.error ? errText(res.error) : "ファイルの添付に失敗しました");
+          toast(res.error ? errText(res.error) : tr("mirror.attach_failed"));
         }
       } catch {
-        toast("ファイルの添付に失敗しました（通信エラー）");
+        toast(tr("mirror.attach_failed_net"));
       }
     }
     setPasting(false);
@@ -1622,18 +1625,18 @@ export function MirrorView({
             )}
           </span>
         ) : (
-          <span className="view-title">セッション</span>
+          <span className="view-title">{tr("mirror.session_fallback")}</span>
         )}
         {managed && (
           <button
             type="button"
             className="ghost managed-settings-btn"
             disabled={!alive || readOnly}
-            title={alive && !readOnly ? "モデル・推論 effort・モードを変更" : "再開後に実行設定を変更できます"}
+            title={alive && !readOnly ? tr("mirror.exec_settings_edit") : tr("mirror.exec_settings_after_resume")}
             onClick={() => setManagedSettingsOpen(true)}
           >
             <Icon name="gear" />
-            {managedSettings?.model ? prettyModel(managedSettings.model) : "実行設定"}
+            {managedSettings?.model ? prettyModel(managedSettings.model) : tr("mirror.exec_settings")}
             {managedSettings?.effort && <span> · {managedSettings.effort}</span>}
             {managedSettings?.mode === "plan" && <span> · Plan</span>}
           </button>
@@ -1646,7 +1649,7 @@ export function MirrorView({
       {tasks.length > 0 && <TaskChecklist tasks={tasks} />}
       {isPlan && (
         <div className="mirror-planmode">
-          <Icon name="debug-pause" /> Plan モード — 承認するまで実装しません
+          <Icon name="debug-pause" /> {tr("mirror.plan_mode_note")}
         </div>
       )}
       {termState === "resume" && (
@@ -1655,12 +1658,9 @@ export function MirrorView({
         // context; the recommended summary option would drop it.
         <div className="mirror-attention">
           <Icon name="warning" />
-          <span className="ma-text">
-            ターミナルで再開方法の選択待ちです。コンテキストをそのまま維持するには
-            「2. Resume full session as-is」を選んでください。
-          </span>
+          <span className="ma-text">{tr("mirror.resume_choice_note")}</span>
           <button type="button" className="btn primary ma-btn" onClick={() => onToggleMirror(false)}>
-            <Icon name="terminal" /> ターミナルを開く
+            <Icon name="terminal" /> {tr("mirror.open_terminal")}
           </button>
         </div>
       )}
@@ -1671,10 +1671,7 @@ export function MirrorView({
         // key alone selects and confirms (verified on 0.144.3), hence a single "2".
         <div className="mirror-attention">
           <Icon name="warning" />
-          <span className="ma-text">
-            codex のアップデート確認待ちです。「1. Update now」を選ぶとプロセスが終了し
-            セッションが切れるため、スキップを推奨します（更新はイメージ再ビルドで反映）。
-          </span>
+          <span className="ma-text">{tr("mirror.codex_update_note")}</span>
           <button
             type="button"
             className="btn primary ma-btn"
@@ -1683,14 +1680,14 @@ export function MirrorView({
               setTimeout(() => tickRef.current?.(), 500);
             }}
           >
-            スキップして続行
+            {tr("mirror.skip_continue")}
           </button>
         </div>
       )}
       {termState === "compacting" && (
         <div className="mirror-compacting">
           <div className="mc-head">
-            <Icon name="loading" spin /> コンテキストを圧縮中…
+            <Icon name="loading" spin /> {tr("mirror.compacting")}
             {compactProg?.elapsed && <span className="mc-elapsed">{compactProg.elapsed}</span>}
             {compactProg && compactProg.pct >= 0 && <span className="mc-pct">{compactProg.pct}%</span>}
           </div>
@@ -1705,17 +1702,17 @@ export function MirrorView({
         <div className="mirror-title-suggest">
           <Icon name="lightbulb" />
           <span className="mts-text">
-            タイトル案: <strong>{suggestedTitle}</strong>
+            <Trans k="mirror.title_suggestion" vars={{ title: suggestedTitle }} components={[<strong />]} />
           </span>
           <button type="button" className="btn primary mts-btn" disabled={titleActing} onClick={acceptTitle}>
-            <Icon name={titleActing ? "loading" : "check"} spin={titleActing} /> 採用
+            <Icon name={titleActing ? "loading" : "check"} spin={titleActing} /> {tr("mirror.adopt")}
           </button>
           <button
             type="button"
             className="icon mts-dismiss"
             disabled={titleActing}
             onClick={dismissTitle}
-            title="この提案を今後表示しません"
+            title={tr("mirror.dismiss_suggestion")}
           >
             <Icon name="close" />
           </button>
@@ -1733,11 +1730,11 @@ export function MirrorView({
             >
               {loadingOlder ? (
                 <>
-                  <Icon name="loading" spin /> 読み込み中…
+                  <Icon name="loading" spin /> {tr("chat.ph_loading")}
                 </>
               ) : (
                 <>
-                  <Icon name="chevron-up" /> 以前の会話を読み込む
+                  <Icon name="chevron-up" /> {tr("mirror.load_earlier")}
                 </>
               )}
             </button>
@@ -1748,20 +1745,20 @@ export function MirrorView({
             // First fetch in flight (opening a session, or switching ターミナル→チャット):
             // show a spinner instead of flashing the "no conversation yet" text.
             <div className="mirror-empty muted mirror-loading">
-              <Icon name="loading" spin /> 読み込み中…
+              <Icon name="loading" spin /> {tr("chat.ph_loading")}
             </div>
           ) : (
             // Workspace stopped: the transcript can't be fetched (the Agent is down), so
             // never spin forever — say so and point at the explicit Start.
             <div className="mirror-empty muted">
-              ワークスペースが停止しています。上部の Start で起動すると履歴を表示できます。
+              {tr("mirror.ws_stopped_history")}
             </div>
           )
         ) : groups.length === 0 && !pending && !pendingPlan && !pendingPerm ? (
           <div className="mirror-empty muted">
             {readOnly
-              ? "この会話に表示できる履歴はありません。"
-              : "まだ会話はありません。下の欄からプロンプトを送るか、ターミナルで対話すると、ここに ターンごとの Markdown で表示されます。"}
+              ? tr("mirror.no_history")
+              : tr("mirror.no_conversation")}
           </div>
         ) : (
           renderGroups(
@@ -1784,7 +1781,7 @@ export function MirrorView({
           <div className="mirror-turn assistant">
             <div className="mirror-turn-head">
               <span className="mt-who">Claude</span>
-              <span className="mt-model muted">プラン承認待ち</span>
+              <span className="mt-model muted">{tr("mirror.plan_pending")}</span>
             </div>
             <div className="mirror-turn-body">
               <PlanBlock
@@ -1814,12 +1811,12 @@ export function MirrorView({
           <div className="mirror-turn assistant">
             <div className="mirror-turn-head">
               <span className="mt-who">Claude</span>
-              <span className="mt-model muted">許可待ち</span>
+              <span className="mt-model muted">{tr("mirror.perm_pending")}</span>
             </div>
             <div className="mirror-turn-body">
               <div className="mt-perm">
                 <div className="mt-perm-head">
-                  <Icon name="shield" /> 許可を求めています（編集・コマンド等）
+                  <Icon name="shield" /> {tr("mirror.perm_asking")}
                 </div>
                 <div className="mt-perm-msg">{pendingPerm}</div>
                 <div className="mt-perm-actions">
@@ -1829,16 +1826,16 @@ export function MirrorView({
                     disabled={sending}
                     onClick={() => sendKeys(["Enter"])}
                   >
-                    <Icon name="check" /> 許可
+                    <Icon name="check" /> {tr("mirror.allow")}
                   </button>
                   <button
                     type="button"
                     className="ghost mt-perm-btn"
                     disabled={sending}
-                    title="以降このセッションでは自動許可（2番目の選択肢）"
+                    title={tr("mirror.auto_allow")}
                     onClick={() => sendKeys(["Down", "Enter"])}
                   >
-                    常に許可
+                    {tr("mirror.always_allow")}
                   </button>
                   <button
                     type="button"
@@ -1846,10 +1843,10 @@ export function MirrorView({
                     disabled={sending}
                     onClick={() => sendKeys(["Down", "Down", "Enter"])}
                   >
-                    <Icon name="close" /> 拒否
+                    <Icon name="close" /> {tr("mirror.deny")}
                   </button>
                 </div>
-                <div className="mt-perm-hint muted">対象（ファイル・コマンド）や差分はターミナルで確認できます</div>
+                <div className="mt-perm-hint muted">{tr("mirror.perm_hint")}</div>
               </div>
             </div>
           </div>
@@ -1858,7 +1855,7 @@ export function MirrorView({
           <div className="mirror-turn assistant">
             <div className="mirror-turn-head">
               <span className="mt-who">{agentName}</span>
-              <span className="mt-model muted">質問中</span>
+              <span className="mt-model muted">{tr("mirror.questioning")}</span>
             </div>
             <div className="mirror-turn-body">
               {pendingText && <MarkdownView source={pendingText} onOpenFile={openFile} />}
@@ -1882,7 +1879,7 @@ export function MirrorView({
           </div>
         )}
         {status === "working" && !pending && (
-          <div className="mirror-typing" aria-label={agentName + " が入力中"}>
+          <div className="mirror-typing" aria-label={tr("mirror.typing", { name: agentName })}>
             <span className="mt-who">{agentName}</span>
             <span className="typing-dots">
               <i />
@@ -1895,10 +1892,10 @@ export function MirrorView({
               type="button"
               className="ghost mirror-stop"
               disabled={sending}
-              title="実行を停止（Esc）"
+              title={tr("mirror.stop_run")}
               onClick={() => void sendInterrupt()}
             >
-              <Icon name="debug-stop" /> 停止
+              <Icon name="debug-stop" /> {tr("chat.stop")}
             </button>
           </div>
         )}
@@ -1913,16 +1910,16 @@ export function MirrorView({
             type="button"
             className="btn primary mirror-resume"
             disabled={!running}
-            title={running ? "このセッションを再開" : "ワークスペース停止中"}
+            title={running ? tr("mirror.resume_session") : tr("mirror.ws_stopped")}
             onClick={() => {
               wantResumeFocusRef.current = true;
               onResume?.();
             }}
           >
-            <Icon name="play" /> 再開して続ける
+            <Icon name="play" /> {tr("mirror.resume_continue")}
           </button>
           <span className="muted mirror-resume-hint">
-            {running ? "履歴を閲覧中（入力するには再開）" : "履歴を閲覧中（ワークスペース停止中）"}
+            {running ? tr("mirror.viewing_history_resume") : tr("mirror.viewing_history_ws_stopped")}
           </span>
         </div>
       ) : termState === "resume" ? (
@@ -1930,9 +1927,9 @@ export function MirrorView({
         // the menu) and send the user there to choose.
         <div className="mirror-compose mirror-compose-resume">
           <button type="button" className="btn primary mirror-resume" onClick={() => onToggleMirror(false)}>
-            <Icon name="terminal" /> ターミナルで選択
+            <Icon name="terminal" /> {tr("mirror.select_in_terminal")}
           </button>
-          <span className="muted mirror-resume-hint">再開方法の選択待ち（コンテキスト維持は「2」）</span>
+          <span className="muted mirror-resume-hint">{tr("mirror.resume_choice_hint")}</span>
         </div>
       ) : termState === "update" ? (
         // codex's update menu is up: block the composer (typed digits would pick menu
@@ -1947,7 +1944,7 @@ export function MirrorView({
               setTimeout(() => tickRef.current?.(), 500);
             }}
           >
-            スキップして続行
+            {tr("mirror.skip_continue")}
           </button>
           <button
             type="button"
@@ -1957,15 +1954,15 @@ export function MirrorView({
               setTimeout(() => tickRef.current?.(), 500);
             }}
           >
-            次の版までスキップ
+            {tr("mirror.skip_until_next")}
           </button>
-          <span className="muted mirror-resume-hint">アップデート確認の選択待ち</span>
+          <span className="muted mirror-resume-hint">{tr("mirror.update_choice_hint")}</span>
         </div>
       ) : !alive ? (
         // Attached but the session is still coming up (resume in flight).
         <div className="mirror-compose mirror-compose-resume">
           <span className="muted mirror-resuming">
-            <Icon name="loading" spin /> 再開中… 準備ができると入力できます
+            <Icon name="loading" spin /> {tr("mirror.resuming")}
           </span>
         </div>
       ) : (
@@ -1982,14 +1979,14 @@ export function MirrorView({
                       <span className="ma-fname-text">{a.name}</span>
                     </span>
                   )}
-                  <button type="button" className="ma-del" title="削除" onClick={() => removeAttachment(i)}>
+                  <button type="button" className="ma-del" title={tr("chat.remove")} onClick={() => removeAttachment(i)}>
                     <Icon name="close" />
                   </button>
                 </div>
               ))}
               {pasting && (
                 <span className="ma-loading">
-                  <Icon name="loading" spin /> アップロード中…
+                  <Icon name="loading" spin /> {tr("chat.uploading")}
                 </span>
               )}
             </div>
@@ -1999,7 +1996,7 @@ export function MirrorView({
             <button
               type="button"
               className="ghost mirror-hist-btn"
-              title="前の入力"
+              title={tr("mirror.prev_input")}
               disabled={!history.length}
               onClick={recallPrev}
             >
@@ -2008,7 +2005,7 @@ export function MirrorView({
             <button
               type="button"
               className="ghost mirror-hist-btn"
-              title="次の入力"
+              title={tr("mirror.next_input")}
               disabled={histIdx === null}
               onClick={recallNext}
             >
@@ -2033,7 +2030,7 @@ export function MirrorView({
               <button
                 type="button"
                 className="ghost mirror-attach-btn"
-                title="ファイルを添付（ドラッグ&ドロップも可）"
+                title={tr("mirror.attach_file")}
                 disabled={composerLocked || pasting}
                 onClick={() => filePickRef.current?.click()}
               >
@@ -2048,13 +2045,13 @@ export function MirrorView({
             placeholder={
               decisionPending
                 ? pendingPlan
-                  ? "プラン承認待ち：上のカードで承認 / 却下してください"
-                  : "許可待ち：上のカードで応答してください"
+                  ? tr("mirror.ph_plan_wait")
+                  : tr("mirror.ph_perm_wait")
                 : auqLocksComposer
-                  ? "上のカードから回答してください（自由入力はカード内の欄へ）"
+                  ? tr("mirror.ph_question")
                   : modSend
-                    ? "プロンプトを入力（Ctrl+Enter で送信 / Enter で改行）"
-                    : "プロンプトを入力（Enter で送信 / Shift+Enter で改行）"
+                    ? tr("mirror.ph_mod")
+                    : tr("mirror.ph_enter")
             }
             disabled={composerLocked}
             value={draft}
@@ -2074,7 +2071,7 @@ export function MirrorView({
                 type="button"
                 className={"mirror-mode" + (isPlan ? " on" : "")}
                 disabled={sending || decisionPending}
-                title="モードを切り替え（Plan ⇄ 実装）"
+                title={tr("mirror.toggle_mode")}
                 onClick={() => {
                   const toPlan = !isPlan;
                   // Optimistic label (codex/opencode only report the new mode after a turn);
@@ -2103,7 +2100,7 @@ export function MirrorView({
               className="btn primary mirror-send"
               disabled={(!draft.trim() && !attachments.length) || sending || composerLocked}
               onClick={send}
-              title="送信"
+              title={tr("chat.send")}
             >
               <Icon name="send" />
             </button>
@@ -2112,7 +2109,7 @@ export function MirrorView({
       )}
       {lightbox && (
         <div className="mirror-lightbox" onClick={() => setLightbox(null)} role="presentation">
-          <img src={lightbox} alt="貼り付け画像（拡大）" />
+          <img src={lightbox} alt={tr("mirror.pasted_image_zoom")} />
         </div>
       )}
       {managedSettingsOpen && (
@@ -2137,7 +2134,7 @@ export function MirrorView({
                 window.getSelection()?.removeAllRanges();
               }}
             >
-              <Icon name="unmute" /> ここから読み上げ
+              <Icon name="unmute" /> {tr("chat.read_from_here")}
             </button>
           </div>,
           document.body,
@@ -2506,9 +2503,9 @@ function CompactBlock({
     <details className="mirror-compact">
       <summary className="mirror-compact-head">
         <Icon name="archive" />
-        <span className="mc-title">コンテキストが圧縮されました</span>
+        <span className="mc-title">{tr("mirror.context_compacted")}</span>
         {hasEffect && (
-          <span className="mc-effect" title={`${before!.toLocaleString()} → ${after!.toLocaleString()} トークン`}>
+          <span className="mc-effect" title={tr("mirror.token_change", { before: before!.toLocaleString(), after: after!.toLocaleString() })}>
             {fmtTok(before!)} → {fmtTok(after!)}
             <span className="mc-effect-pct">−{pct}%</span>
           </span>
@@ -2519,14 +2516,14 @@ function CompactBlock({
         {hasEffect && (
           <div className="mc-bars" aria-hidden="true">
             <div className="mc-bar-row">
-              <span className="mc-bar-lbl">圧縮前</span>
+              <span className="mc-bar-lbl">{tr("mirror.before_compact")}</span>
               <span className="mc-bar-track">
                 <span className="mc-bar-fill before" style={{ width: "100%" }} />
               </span>
               <span className="mc-bar-val">{fmtTok(before!)}</span>
             </div>
             <div className="mc-bar-row">
-              <span className="mc-bar-lbl">圧縮後</span>
+              <span className="mc-bar-lbl">{tr("mirror.after_compact")}</span>
               <span className="mc-bar-track">
                 <span className="mc-bar-fill after" style={{ width: Math.max(2, (after! / before!) * 100) + "%" }} />
               </span>
@@ -2557,7 +2554,7 @@ function ThinkingBlock({
     <details className="mirror-thinking">
       <summary className="mirror-thinking-head">
         <Icon name="lightbulb" />
-        <span className="mth-title">思考</span>
+        <span className="mth-title">{tr("mirror.thinking_label")}</span>
       </summary>
       <div className="mirror-thinking-body">
         <MarkdownView source={text} baseDir={baseDir} onOpenFile={onOpenFile} />
@@ -2594,10 +2591,10 @@ function BashBlock({ command, stdout, stderr }: { command?: string; stdout?: str
             className="mt-bash-toggle"
             onClick={() => setOpen((o) => !o)}
             aria-expanded={open}
-            title={open ? "出力をたたむ" : "出力を表示"}
+            title={open ? tr("mirror.collapse_output") : tr("mirror.show_output")}
           >
             <Icon name={open ? "chevron-down" : "chevron-right"} />
-            <span>出力 ({lines} 行)</span>
+            <span>{tr("mirror.output_lines", { lines })}</span>
           </button>
           {open && (
             <pre className="mt-bash-output">
@@ -2661,9 +2658,10 @@ function WorkDisclosure({
     >
       <summary className="mt-work-head">
         <Icon name={open ? "chevron-down" : "chevron-right"} />
-        <span className="mt-work-title">作業過程</span>
+        <span className="mt-work-title">{tr("chat.work_process")}</span>
         <span className="mt-work-count muted">
-          ツール {tools}件{responses > 0 ? `・途中応答 ${responses}件` : ""}
+          {tCount("chat.tool_count", tools)}
+          {responses > 0 ? tCount("chat.interim_count", responses) : ""}
         </span>
       </summary>
       <div className="mt-work-body">{children}</div>
@@ -2704,7 +2702,7 @@ function Turn({
   isRejectedPlan: (plan: string) => boolean;
 }) {
   const isUser = turn.role === "user";
-  const who = isUser ? "あなた" : turn.sidechain ? "サブエージェント" : agentName;
+  const who = isUser ? tr("chat.you") : turn.sidechain ? tr("mirror.subagent") : agentName;
   const ctxTok = turn.inTok + turn.cacheRead + turn.cacheCreate;
   const spend = spendOf(turn);
   const bodyEl = useRef<HTMLDivElement>(null); // カラオケ朗読（turnTts）の本文 DOM
@@ -2753,20 +2751,20 @@ function Turn({
         {turn.queued ? (
           <span
             className="mt-pending mt-queued"
-            title="キュー済み。実行中のターンが区切りに達すると取り込まれます"
+            title={tr("mirror.queued_title")}
           >
-            <Icon name="history" /> キュー済み
+            <Icon name="history" /> {tr("mirror.queued")}
           </span>
         ) : (
           turn.pending && (
-            <span className="mt-pending" title="送信済み。claude が処理を始めると反映されます">
-              <Icon name="loading" spin /> 反映待ち
+            <span className="mt-pending" title={tr("mirror.pending_title")}>
+              <Icon name="loading" spin /> {tr("mirror.pending")}
             </span>
           )
         )}
         {!isUser && turn.model && <span className="mt-model">{prettyModel(turn.model)}</span>}
         {!isUser && turn.effort && (
-          <span className="mt-effort" title="推論の努力度（codex reasoning_effort / opencode variant）">
+          <span className="mt-effort" title={tr("mirror.effort_hint")}>
             {turn.effort}
           </span>
         )}
@@ -2825,7 +2823,7 @@ function Turn({
       <div className="mirror-turn-foot">
         {turn.ts && <span className="mt-time muted">{formatTS(turn.ts)}</span>}
         {turn.outTok > 0 && (
-          <span className="mt-tok muted" title="入力(文脈)↑ / 出力↓ トークン">
+          <span className="mt-tok muted" title={tr("mirror.token_hint")}>
             ↑{fmtTok(ctxTok)} ↓{fmtTok(turn.outTok)}
           </span>
         )}
@@ -2845,17 +2843,17 @@ function Turn({
 function DelegationCard({ p, agentName }: { p: Part; agentName: string }) {
   const status = p.status || "requested";
   const statusLabel: Record<string, string> = {
-    requested: "依頼済み",
-    running: "進行中",
-    completed: "完了",
-    failed: "失敗",
+    requested: tr("mirror.task.requested"),
+    running: tr("mirror.task.running"),
+    completed: tr("mirror.task.completed"),
+    failed: tr("mirror.task.failed"),
   };
   const detail = !!(p.prompt || p.output);
   return (
     <div className="mt-delegation">
       <div className="mt-delegation-head">
         <Icon name="repo-forked" />
-        <span className="mt-delegation-title">{agentName}サブエージェントに依頼</span>
+        <span className="mt-delegation-title">{tr("mirror.delegation_title", { name: agentName })}</span>
         <span className={"mt-delegation-status " + status}>{statusLabel[status] || status}</span>
       </div>
       {(p.info || p.agentType || p.model) && (
@@ -2867,16 +2865,16 @@ function DelegationCard({ p, agentName }: { p: Part; agentName: string }) {
       )}
       {detail && (
         <details className="mt-delegation-detail">
-          <summary>詳細</summary>
+          <summary>{tr("mirror.detail")}</summary>
           {p.prompt && (
             <div className="mt-delegation-section">
-              <div className="muted">委譲した指示</div>
+              <div className="muted">{tr("mirror.delegated_prompt")}</div>
               <pre>{p.prompt}</pre>
             </div>
           )}
           {p.output && (
             <div className="mt-delegation-section">
-              <div className="muted">結果</div>
+              <div className="muted">{tr("mirror.result")}</div>
               <pre>{p.output}</pre>
             </div>
           )}
@@ -2908,7 +2906,7 @@ function TurnTtsButtons({
       <button
         type="button"
         className="ghost mt-copy"
-        title="このターンを読み上げ"
+        title={tr("mirror.read_turn")}
         onClick={() => body.current && tts.start(turn.idx!, body.current)}
       >
         <Icon name="unmute" />
@@ -2921,12 +2919,12 @@ function TurnTtsButtons({
       <button
         type="button"
         className="ghost mt-copy"
-        title={paused ? "読み上げを再開" : "読み上げを一時停止"}
+        title={paused ? tr("mirror.tts_resume") : tr("mirror.tts_pause")}
         onClick={paused ? tts.resume : tts.pause}
       >
         <Icon name={paused ? "play" : "debug-pause"} />
       </button>
-      <button type="button" className="ghost mt-copy" title="読み上げを停止" onClick={tts.stop}>
+      <button type="button" className="ghost mt-copy" title={tr("mirror.tts_stop")} onClick={tts.stop}>
         <Icon name="debug-stop" />
       </button>
     </>
@@ -2941,8 +2939,13 @@ function TurnSpendBar({ fresh, create, out, max }: { fresh: number; create: numb
   const pct = (n: number) => (n / max) * 100 + "%";
   const total = fresh + create + out;
   const title =
-    `このターンの新規消費 ${total.toLocaleString()} トークン\n` +
-    `未キャッシュ入力 ${fresh.toLocaleString()} · 新規キャッシュ ${create.toLocaleString()} · 出力 ${out.toLocaleString()}`;
+    tr("mirror.turn_tokens", { total: total.toLocaleString() }) +
+    "\n" +
+    tr("mirror.turn_tokens_detail", {
+      fresh: fresh.toLocaleString(),
+      create: create.toLocaleString(),
+      out: out.toLocaleString(),
+    });
   return (
     <span className="mt-spend" title={title} aria-hidden="true">
       <span className="ts-seg ts-fresh" style={{ width: pct(fresh) }} />
@@ -2982,7 +2985,7 @@ function PastedThumb({ session, name, onOpen }: { session: string; name: string;
   }, [session, name]);
   if (failed) {
     return (
-      <span className="mt-img mt-img-loading" title="プレビューを取得できませんでした">
+      <span className="mt-img mt-img-loading" title={tr("chat.preview_failed")}>
         <Icon name="file-media" />
       </span>
     );
@@ -2995,8 +2998,8 @@ function PastedThumb({ session, name, onOpen }: { session: string; name: string;
     );
   }
   return (
-    <button type="button" className="mt-img" title="クリックで拡大" onClick={() => onOpen(url)}>
-      <img src={url} alt="貼り付け画像" />
+    <button type="button" className="mt-img" title={tr("chat.click_to_zoom")} onClick={() => onOpen(url)}>
+      <img src={url} alt={tr("chat.pasted_image_alt")} />
     </button>
   );
 }
@@ -3035,7 +3038,7 @@ function ToolTrace({ p, onOpenDiff }: { p: Part; onOpenDiff?: (p: Part) => void 
         type="button"
         className="mt-tool mt-tool-diff"
         onClick={() => onOpenDiff && onOpenDiff(p)}
-        title="差分を別ペインで開く"
+        title={tr("mirror.open_diff")}
       >
         <Icon name="diff" />
         <span className="mt-tool-name">{p.tool}</span>
@@ -3051,7 +3054,7 @@ function ToolTrace({ p, onOpenDiff }: { p: Part; onOpenDiff?: (p: Part) => void 
           className="mt-tool mt-tool-outhead"
           onClick={() => setOpen((o) => !o)}
           aria-expanded={open}
-          title={open ? "出力をたたむ" : "出力を表示"}
+          title={open ? tr("mirror.collapse_output") : tr("mirror.show_output")}
         >
           <Icon name={open ? "chevron-down" : "chevron-right"} />
           <span className="mt-tool-name">{p.tool}</span>
@@ -3095,10 +3098,10 @@ function ToolRun({ tools, onOpenDiff }: { tools: { p: Part; i: number }[]; onOpe
         className="mt-tool mt-toolrun-head"
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
-        title={open ? "ツールをたたむ" : "ツールを展開"}
+        title={open ? tr("mirror.collapse_tools") : tr("mirror.expand_tools")}
       >
         <Icon name={open ? "chevron-down" : "chevron-right"} />
-        <span className="mt-tool-name">{tools.length} 件のツール</span>
+        <span className="mt-tool-name">{tCount("mirror.tools_count", tools.length)}</span>
         <span className="mt-tool-info">{summary}</span>
       </button>
       {open && (
@@ -3305,7 +3308,7 @@ function PendingQuestions({
                 {qi + 1}/{qs.length}
               </span>
             )}
-            {qn.multiSelect && <span className="mq-multi muted">複数選択</span>}
+            {qn.multiSelect && <span className="mq-multi muted">{tr("mirror.multi_select")}</span>}
           </div>
           {qn.question && <div className="mq-text">{qn.question}</div>}
           <div className="mq-options">
@@ -3348,7 +3351,7 @@ function PendingQuestions({
             <textarea
               className="mq-freetext"
               rows={2}
-              placeholder="または自由入力（Type something / 改行可）"
+              placeholder={tr("mirror.freeform_ph")}
               value={freeText[qi] || ""}
               disabled={sending}
               onChange={(e) => setFree(qi, e.target.value, qn.multiSelect)}
@@ -3366,7 +3369,7 @@ function PendingQuestions({
             disabled={sending || !canSubmit}
             onClick={submit}
           >
-            回答を送信
+            {tr("mirror.submit_answer")}
           </button>
         </div>
       )}
@@ -3380,7 +3383,7 @@ function PendingQuestions({
             disabled={sending || !canSubmit}
             onClick={submitMenu}
           >
-            回答を送信
+            {tr("mirror.submit_answer")}
           </button>
         </div>
       )}
@@ -3388,7 +3391,7 @@ function PendingQuestions({
         // A multi-select menu (or a multi-question one on a dialog whose paging keys
         // aren't verified) we can't reliably drive from chat.
         <div className="mq-submit-row muted mq-terminal-hint">
-          この形式の質問はターミナルで回答してください
+          {tr("mirror.question_terminal")}
         </div>
       )}
     </div>
@@ -3447,8 +3450,8 @@ function QuestionBlock({
             <div className="mq-head">
               <Icon name="comment-discussion" />
               {qn.header && <span className="mq-header">{qn.header}</span>}
-              {qn.multiSelect && <span className="mq-multi muted">複数選択可</span>}
-              {answered && <span className="mq-done muted">回答済み</span>}
+              {qn.multiSelect && <span className="mq-multi muted">{tr("mirror.multi_select_ok")}</span>}
+              {answered && <span className="mq-done muted">{tr("mirror.answered")}</span>}
             </div>
             {qn.question && <div className="mq-text">{qn.question}</div>}
             <div className="mq-options">
@@ -3472,7 +3475,7 @@ function QuestionBlock({
               })}
             </div>
             {answered && extras.length > 0 && (
-              <div className="mq-answer muted">{chosenSet.size ? "自由入力: " : "回答: "}{extras.join("、")}</div>
+              <div className="mq-answer muted">{chosenSet.size ? tr("mirror.freeform_label") : tr("mirror.answer_label")}{extras.join(tr("common.list_sep"))}</div>
             )}
           </div>
         );
@@ -3518,32 +3521,32 @@ function PlanBlock({
       <div className="mt-plan-head">
         <Icon name="checklist" />
         <span className="mt-plan-title">{planTitle(plan)}</span>
-        {pending && <span className="mt-plan-badge">承認待ち</span>}
+        {pending && <span className="mt-plan-badge">{tr("mirror.approval_pending")}</span>}
         {answered && (
           <span className={"mt-plan-badge" + (approved ? " ok" : rejected ? " no" : "")}>
-            {approved ? "承認済み" : rejected ? "却下" : "決定済み"}
+            {approved ? tr("mirror.approved") : rejected ? tr("mirror.rejected") : tr("mirror.decided")}
           </span>
         )}
       </div>
       {planSummary(plan) && <div className="mt-plan-summary">{planSummary(plan)}</div>}
       <div className="mt-plan-actions">
         <button type="button" className="ghost mt-plan-open" onClick={onOpen}>
-          <Icon name="split-horizontal" /> 別ペインで開く
+          <Icon name="split-horizontal" /> {tr("mirror.open_in_pane_short")}
         </button>
         {pending && (
           <>
             <button type="button" className="btn primary mt-plan-approve" disabled={sending} onClick={onApprove}>
-              <Icon name="check" /> 承認して実行
+              <Icon name="check" /> {tr("mirror.approve_run")}
             </button>
             {onReject && (
               <button
                 type="button"
                 className="ghost mt-plan-reject"
                 disabled={sending}
-                title="このプランを承認せず、プランニングを続ける（フィードバックを入力できます）"
+                title={tr("mirror.plan_continue_title")}
                 onClick={onReject}
               >
-                <Icon name="close" /> 却下（続ける）
+                <Icon name="close" /> {tr("mirror.reject_continue")}
               </button>
             )}
           </>
@@ -3564,13 +3567,13 @@ function UserFileBlock({ files, caption, onOpen }: { files?: string[]; caption?:
     <div className="mt-files">
       <div className="mt-files-head">
         <Icon name="files" />
-        <span className="mt-files-title">共有ファイル</span>
+        <span className="mt-files-title">{tr("mirror.shared_files")}</span>
         {list.length > 1 && <span className="mt-files-count muted">{list.length}</span>}
       </div>
       {caption && <div className="mt-files-caption">{caption}</div>}
       <div className={"mt-files-list" + (list.length > 1 ? " grid" : "")}>
         {list.map((p, i) => (
-          <button key={p + i} type="button" className="mt-file-item" title={"別ペインで開く: " + p} onClick={() => onOpen(p)}>
+          <button key={p + i} type="button" className="mt-file-item" title={tr("mirror.open_in_pane", { path: p })} onClick={() => onOpen(p)}>
             <span className="mt-file-top">
               <FileIcon name={baseName(p)} />
               <span className="mt-file-name">{baseName(p)}</span>
@@ -3598,7 +3601,7 @@ function isRejected(outcome?: string) {
 // planTitle / planSummary derive a compact heading + lead line from the plan Markdown.
 function planTitle(md?: string) {
   const m = (md || "").match(/^#{1,3}\s+(.+)$/m);
-  return m ? m[1].trim() : "プラン";
+  return m ? m[1].trim() : tr("mirror.plan_fallback");
 }
 function planSummary(md?: string) {
   for (const line of (md || "").split("\n")) {
@@ -3626,10 +3629,10 @@ function CopyButton({ text }: { text: string }) {
     <button
       type="button"
       className="ghost mt-copy"
-      title="Markdown をコピー"
+      title={tr("chat.copy_md_title")}
       onClick={copy}
     >
-      <Icon name={done ? "check" : "copy"} /> {done ? "コピー済" : "コピー"}
+      <Icon name={done ? "check" : "copy"} /> {done ? tr("chat.copied") : tr("chat.copy")}
     </button>
   );
 }

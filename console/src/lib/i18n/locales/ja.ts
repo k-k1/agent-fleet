@@ -1022,4 +1022,143 @@ export const ja = {
   "chat.ph_mod": "メッセージを入力（Ctrl+Enter で送信 / Enter で改行）",
   "chat.ph_enter": "メッセージを入力（Enter で送信 / Shift+Enter で改行）",
   "chat.ph_loading": "読み込み中…",
+
+  // === P2 共通の細かな語 ===
+  "common.list_sep": "、",
+
+  // === P2 MirrorView（features/mirror/MirrorView.tsx）===
+  "mirror.session_fallback": "セッション",
+  // TTS 読み上げラベル（話者ソース／読み上げ本文の接頭・接尾）
+  "mirror.tts.summary_prefix": "要約。",
+  "mirror.tts.summary_suffix": "・要約",
+  "mirror.tts.work_suffix": "・作業過程",
+  "mirror.tts.confirm_suffix": "・確認",
+  "mirror.tts.plan_ready": "プランができました。承認待ちです。",
+  "mirror.tts.permission_wait": "許可待ちです。",
+  // トースト
+  "mirror.send_failed": "送信できませんでした",
+  "mirror.stop_failed": "停止できませんでした",
+  "mirror.answer_send_failed": "回答を送信できませんでした",
+  "mirror.attach_failed": "ファイルの添付に失敗しました",
+  "mirror.attach_failed_net": "ファイルの添付に失敗しました（通信エラー）",
+  // ヘッダ／実行設定
+  "mirror.exec_settings_edit": "モデル・推論 effort・モードを変更",
+  "mirror.exec_settings_after_resume": "再開後に実行設定を変更できます",
+  "mirror.exec_settings": "実行設定",
+  "mirror.plan_mode_note": "Plan モード — 承認するまで実装しません",
+  // 再開／アップデート注意カード
+  "mirror.resume_choice_note":
+    "ターミナルで再開方法の選択待ちです。コンテキストをそのまま維持するには「2. Resume full session as-is」を選んでください。",
+  "mirror.open_terminal": "ターミナルを開く",
+  "mirror.codex_update_note":
+    "codex のアップデート確認待ちです。「1. Update now」を選ぶとプロセスが終了しセッションが切れるため、スキップを推奨します（更新はイメージ再ビルドで反映）。",
+  "mirror.skip_continue": "スキップして続行",
+  "mirror.compacting": "コンテキストを圧縮中…",
+  // タイトル提案
+  "mirror.title_suggestion": "タイトル案: <0>{title}</0>",
+  "mirror.adopt": "採用",
+  "mirror.dismiss_suggestion": "この提案を今後表示しません",
+  // 履歴ロード
+  "mirror.load_earlier": "以前の会話を読み込む",
+  "mirror.ws_stopped_history": "ワークスペースが停止しています。上部の Start で起動すると履歴を表示できます。",
+  "mirror.no_history": "この会話に表示できる履歴はありません。",
+  "mirror.no_conversation":
+    "まだ会話はありません。下の欄からプロンプトを送るか、ターミナルで対話すると、ここに ターンごとの Markdown で表示されます。",
+  // 状態バッジ／許可カード
+  "mirror.plan_pending": "プラン承認待ち",
+  "mirror.perm_pending": "許可待ち",
+  "mirror.perm_asking": "許可を求めています（編集・コマンド等）",
+  "mirror.allow": "許可",
+  "mirror.auto_allow": "以降このセッションでは自動許可（2番目の選択肢）",
+  "mirror.always_allow": "常に許可",
+  "mirror.deny": "拒否",
+  "mirror.perm_hint": "対象（ファイル・コマンド）や差分はターミナルで確認できます",
+  "mirror.questioning": "質問中",
+  "mirror.typing": "{name} が入力中",
+  // 実行制御
+  "mirror.stop_run": "実行を停止（Esc）",
+  "mirror.resume_session": "このセッションを再開",
+  "mirror.ws_stopped": "ワークスペース停止中",
+  "mirror.resume_continue": "再開して続ける",
+  "mirror.viewing_history_resume": "履歴を閲覧中（入力するには再開）",
+  "mirror.viewing_history_ws_stopped": "履歴を閲覧中（ワークスペース停止中）",
+  "mirror.select_in_terminal": "ターミナルで選択",
+  "mirror.resume_choice_hint": "再開方法の選択待ち（コンテキスト維持は「2」）",
+  "mirror.skip_until_next": "次の版までスキップ",
+  "mirror.update_choice_hint": "アップデート確認の選択待ち",
+  "mirror.resuming": "再開中… 準備ができると入力できます",
+  // コンポーザ
+  "mirror.prev_input": "前の入力",
+  "mirror.next_input": "次の入力",
+  "mirror.attach_file": "ファイルを添付（ドラッグ&ドロップも可）",
+  "mirror.ph_plan_wait": "プラン承認待ち：上のカードで承認 / 却下してください",
+  "mirror.ph_perm_wait": "許可待ち：上のカードで応答してください",
+  "mirror.ph_question": "上のカードから回答してください（自由入力はカード内の欄へ）",
+  "mirror.ph_mod": "プロンプトを入力（Ctrl+Enter で送信 / Enter で改行）",
+  "mirror.ph_enter": "プロンプトを入力（Enter で送信 / Shift+Enter で改行）",
+  "mirror.toggle_mode": "モードを切り替え（Plan ⇄ 実装）",
+  "mirror.pasted_image_zoom": "貼り付け画像（拡大）",
+  // CompactBlock
+  "mirror.context_compacted": "コンテキストが圧縮されました",
+  "mirror.token_change": "{before} → {after} トークン",
+  "mirror.before_compact": "圧縮前",
+  "mirror.after_compact": "圧縮後",
+  // ThinkingBlock / BashBlock
+  "mirror.thinking_label": "思考",
+  "mirror.collapse_output": "出力をたたむ",
+  "mirror.show_output": "出力を表示",
+  "mirror.output_lines": "出力 ({lines} 行)",
+  // Turn
+  "mirror.subagent": "サブエージェント",
+  "mirror.queued_title": "キュー済み。実行中のターンが区切りに達すると取り込まれます",
+  "mirror.queued": "キュー済み",
+  "mirror.pending_title": "送信済み。claude が処理を始めると反映されます",
+  "mirror.pending": "反映待ち",
+  "mirror.effort_hint": "推論の努力度（codex reasoning_effort / opencode variant）",
+  "mirror.token_hint": "入力(文脈)↑ / 出力↓ トークン",
+  // DelegationCard
+  "mirror.task.requested": "依頼済み",
+  "mirror.task.running": "進行中",
+  "mirror.task.completed": "完了",
+  "mirror.task.failed": "失敗",
+  "mirror.delegation_title": "{name}サブエージェントに依頼",
+  "mirror.detail": "詳細",
+  "mirror.delegated_prompt": "委譲した指示",
+  "mirror.result": "結果",
+  // TurnTtsButtons
+  "mirror.read_turn": "このターンを読み上げ",
+  "mirror.tts_resume": "読み上げを再開",
+  "mirror.tts_pause": "読み上げを一時停止",
+  "mirror.tts_stop": "読み上げを停止",
+  // TurnSpendBar
+  "mirror.turn_tokens": "このターンの新規消費 {total} トークン",
+  "mirror.turn_tokens_detail": "未キャッシュ入力 {fresh} · 新規キャッシュ {create} · 出力 {out}",
+  // ToolTrace / ToolRun
+  "mirror.open_diff": "差分を別ペインで開く",
+  "mirror.collapse_tools": "ツールをたたむ",
+  "mirror.expand_tools": "ツールを展開",
+  "mirror.tools_count_one": "{count} 件のツール",
+  "mirror.tools_count_other": "{count} 件のツール",
+  // 質問
+  "mirror.multi_select": "複数選択",
+  "mirror.multi_select_ok": "複数選択可",
+  "mirror.freeform_ph": "または自由入力（Type something / 改行可）",
+  "mirror.submit_answer": "回答を送信",
+  "mirror.question_terminal": "この形式の質問はターミナルで回答してください",
+  "mirror.answered": "回答済み",
+  "mirror.freeform_label": "自由入力: ",
+  "mirror.answer_label": "回答: ",
+  // PlanBlock
+  "mirror.approval_pending": "承認待ち",
+  "mirror.approved": "承認済み",
+  "mirror.rejected": "却下",
+  "mirror.decided": "決定済み",
+  "mirror.open_in_pane_short": "別ペインで開く",
+  "mirror.approve_run": "承認して実行",
+  "mirror.plan_continue_title": "このプランを承認せず、プランニングを続ける（フィードバックを入力できます）",
+  "mirror.reject_continue": "却下（続ける）",
+  // UserFileBlock / planTitle
+  "mirror.shared_files": "共有ファイル",
+  "mirror.open_in_pane": "別ペインで開く: {path}",
+  "mirror.plan_fallback": "プラン",
 };
