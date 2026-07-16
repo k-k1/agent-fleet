@@ -823,4 +823,13 @@ export const en: Record<keyof typeof ja, string> = {
   "keys.kt.captureHint": "(Esc to cancel)",
   "keys.kt.unset": "Unbound",
   "keys.kt.conflict": "Conflicts with {names}",
+
+  // === P2: plural infra (tCount) example + <Trans> example. ===
+  "common.days_left_one": "{count} day left",
+  "common.days_left_other": "{count} days left",
+  "common.count_ken_one": "{count} item",
+  "common.count_ken_other": "{count} items",
+  // <Trans>: <0/>=line break, <1>…</1>=emphasis. Consumed by the session modals (P2).
+  "session.recreate_body":
+    "Starting “{name}” as a new session.<0/>The current conversation is <1>moved to the archive</1> and can be restored later.",
 };
