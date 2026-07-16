@@ -23,7 +23,11 @@ import { effectiveCommands, boundChord, APP_LEADER, APP_PALETTE, APP_CHEAT } fro
 // keydown, so a rebind in Settings takes effect immediately without re-wiring. "" means
 // the user unbound it (e.g. freed the leader for a pure terminal) — never matched.
 
-const LEADER_TIMEOUT = 3000; // ms: a dangling leader auto-cancels
+const LEADER_TIMEOUT = 3000; // ms: a dangling leader (overlay not yet shown) auto-cancels
+// Once the which-key overlay is actually visible the user is reading it, so a stray-press
+// guard no longer applies — give them a generous window to find the key before auto-cancel,
+// while still recovering if they walk away (never a permanently stuck overlay).
+const LEADER_TIMEOUT_OPEN = 15000;
 const WHICHKEY_DELAY = 350; // ms before the which-key overlay reveals
 
 function focusedKind(): KeyContext["focusedKind"] {
@@ -101,7 +105,13 @@ export function wireKeys(): () => void {
     clearTimers();
     useKeysStore.getState().setLeader(path);
     // Delay the overlay so a fast two-key sequence (e.g. leader p r) doesn't flash it.
-    whichKeyTimer = window.setTimeout(() => useKeysStore.getState().setWhichKey(true), WHICHKEY_DELAY);
+    whichKeyTimer = window.setTimeout(() => {
+      useKeysStore.getState().setWhichKey(true);
+      // The overlay is now on screen and the user is scanning it — swap the short stray-press
+      // guard for the longer reading window so the hint doesn't vanish mid-search.
+      if (leaderTimer != null) window.clearTimeout(leaderTimer);
+      leaderTimer = window.setTimeout(cancelLeader, LEADER_TIMEOUT_OPEN);
+    }, WHICHKEY_DELAY);
     leaderTimer = window.setTimeout(cancelLeader, LEADER_TIMEOUT);
   };
   const consume = (e: KeyboardEvent) => {

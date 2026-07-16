@@ -1892,6 +1892,8 @@ export const en: Record<keyof typeof ja, string> = {
   "ui.find_next": "Next match (Enter)",
   "ui.close_find": "Close find (Esc)",
   "ui.next_key": "Next key",
+  "ui.wk_groups": "Submenus",
+  "ui.wk_actions": "Actions",
   "ui.new_version_available": "A new version is available",
   "ui.update": "Update",
   "ui.recreate_failed": "Recreate failed",
