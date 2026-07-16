@@ -22,6 +22,12 @@ export function useRailRoving() {
     if (list.length === 0) return;
     const cur = document.activeElement as HTMLElement;
     const idx = list.indexOf(cur);
+    // Only rove when a rail row itself is focused. A widget opened from a rail row
+    // (e.g. the LaunchModal, or any input inside it) is a React-tree descendant of
+    // this <ul>, so even though the Modal portals to <body>, React bubbles its
+    // synthetic keydowns up to this handler. Without this guard Home/End/arrows would
+    // yank focus out of the modal into the tree while the user is typing.
+    if (idx < 0) return;
     const move = (to: number) => {
       const t = list[Math.max(0, Math.min(to, list.length - 1))];
       if (t) {
@@ -31,22 +37,19 @@ export function useRailRoving() {
     };
     switch (e.key) {
       case "ArrowDown":
-        return move(idx < 0 ? 0 : idx + 1);
+        return move(idx + 1);
       case "ArrowUp":
-        return move(idx < 0 ? 0 : idx - 1);
+        return move(idx - 1);
       case "Home":
         return move(0);
       case "End":
         return move(list.length - 1);
       case "Enter":
       case " ":
-        if (idx >= 0) {
-          e.preventDefault();
-          cur.click();
-        }
+        e.preventDefault();
+        cur.click();
         return;
       case "ArrowRight": {
-        if (idx < 0) return;
         const isRepo = cur.classList.contains("repo-card");
         const caret = isRepo ? caretFor(cur) : null;
         // Collapsed repo → expand; otherwise step to the next (child) row.
@@ -59,7 +62,6 @@ export function useRailRoving() {
         return;
       }
       case "ArrowLeft": {
-        if (idx < 0) return;
         const isRepo = cur.classList.contains("repo-card");
         const caret = isRepo ? caretFor(cur) : null;
         if (caret && caret.getAttribute("aria-expanded") === "true") {

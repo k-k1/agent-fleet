@@ -10,11 +10,16 @@
   container: paneview / inline-size;
 }
 
-/* shell / ssm are command-entry terminals. On browsers that expose IME control
-   (notably Firefox), focusing xterm's hidden textarea switches IME off. This is
-   deliberately scoped by TerminalView so agent prompts retain Japanese input. */
+/* shell / ssm are command-entry terminals, so the IME should default OFF there
+   (agent chat prompts keep normal Japanese input — the class is scoped by
+   TerminalView). `inactive` (not `disabled`) starts the field with IME off but
+   still lets the user switch it back on to type Japanese into the shell (e.g. an
+   inline git commit message). CAVEAT: `ime-mode` is a Firefox-only legacy feature
+   — Chrome/Edge/Safari IGNORE it, and no web API in those browsers can switch the
+   OS IME off for a text field. So on Chromium this is a no-op and the IME must be
+   toggled by the user. */
 .terminal-ime-disabled .xterm-helper-textarea {
-  ime-mode: disabled;
+  ime-mode: inactive;
 }
 
 /* Pane header: kind badge + session name + state pill. Leaves room for the
@@ -146,6 +151,11 @@
 .term-mask {
   position: absolute;
   inset: 0;
+  /* Above xterm's internal transparent hit-test layers (.xterm-link-layer z=2,
+     .xterm-helpers z=5) — same reason as .term-empty. Without it the overlay (and
+     the 再開 button inside .term-history-actions) sits UNDER those layers, which
+     swallow every click, so the button can't be pressed. */
+  z-index: 20;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -161,6 +171,9 @@
   position: absolute;
   right: 12px;
   bottom: 12px;
+  /* Sit above xterm's internal transparent hit-test layers (.xterm-helpers z=5),
+     which otherwise cover this and swallow clicks on the 再開 button. */
+  z-index: 20;
   display: flex;
   align-items: center;
   padding: 8px;
