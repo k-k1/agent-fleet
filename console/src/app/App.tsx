@@ -40,6 +40,7 @@ import { StartHost } from "../features/repos/StartHost.tsx";
 import { startNotificationPolling, useNotificationStore, wireNotificationReadOnActiveSession } from "../features/notifications/store.ts";
 import { WhichKey } from "../features/keys/WhichKey.tsx";
 import { CommandPalette } from "../features/keys/CommandPalette.tsx";
+import { useUpdateCheck } from "../lib/useUpdateCheck.tsx";
 
 // Refresh FILES (and repos/sessions/chat list on start) whenever the workspace
 // actually flips running↔stopped — including external changes the 4s sync catches
@@ -76,6 +77,9 @@ export function App() {
   const [booted, setBooted] = useState(false);
   const notificationSource = useNotificationStore((s) => s.sourceState);
   const workspaceRunning = useWorkspaceStore((s) => s.state) === "running";
+
+  // Detect a newer deployed build and offer a one-tap, cache-busting reload.
+  useUpdateCheck();
 
   // Left rail visibility. Desktop: leftOpen (persisted) + leftMode "push" (docks,
   // main reflows) / "overlay" (floats above main). Mobile (≤760px): the rail is an

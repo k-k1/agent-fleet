@@ -8,6 +8,7 @@ import { useSettingsUI } from "../features/settings/store.ts";
 import { rel, clearLocalState } from "../core/api/client.ts";
 import { useSettings, setSetting, THEMES, SURFACE_TARGETS } from "../lib/settings.ts";
 import { useIsMobile, isStandalonePWA } from "../lib/device.ts";
+import { buildInfo, buildLabel } from "../lib/version.ts";
 import { Icon } from "../ui/Icon.tsx";
 import { SwatchGrid } from "../ui/SwatchGrid.tsx";
 import { useDismiss } from "../lib/useDismiss.ts";
@@ -254,6 +255,12 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
                     </button>
                   </>
                 )}
+                {/* Build stamp — so the running version is visible at a glance (no more
+                    guessing which build a phone is on). Selectable for easy reporting. */}
+                <div className="acct-sep" />
+                <div className="acct-build" title={buildInfo.sha ? `commit ${buildInfo.sha}` : undefined}>
+                  <Icon name="tag" /> ビルド {buildLabel()}
+                </div>
               </div>
             )}
           </div>

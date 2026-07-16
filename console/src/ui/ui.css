@@ -259,6 +259,26 @@
   cursor: pointer;
   padding: 0 2px;
 }
+/* "新しいバージョンがあります" update toast: inline 更新 action button. */
+.update-toast {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+.update-toast-btn {
+  flex: none;
+  padding: 2px 10px;
+  border: 1px solid var(--btn-border);
+  border-radius: 4px;
+  background: var(--btn);
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.update-toast-btn:hover {
+  background: var(--btn-h);
+}
 
 /* ---- Section (left rail) ---- */
 .ui-section {
