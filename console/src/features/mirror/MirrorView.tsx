@@ -382,9 +382,11 @@ export function MirrorView({
   // 長い回答の要約読み上げ（設定 ttsSummaryRead）。この文字数を超える新着分は、全文を
   // 読む代わりにアシスタント（headless CLI・ツールなし one-shot）へ 2 文要約させて読む。
   const TTS_SUMMARY_MIN = 500;
+  // i18n-exempt-start: LLM プロンプト（表示でなくモデル挙動・docs/28 §4）
   const TTS_SUMMARY_PROMPT =
     "次のテキストはコーディングエージェントの回答です。音声で聞くための要約を、日本語で最大2文・120字以内で書いてください。" +
     "記号・コード・URL・箇条書きは使わず、プレーンな文章だけを返してください。要約以外の前置きや説明は書かないでください。\n\n---\n";
+  // i18n-exempt-end
   const ttsSummaryBusyRef = useRef(false); // 要約の生成中（1 本ずつ。終わるまでキューは待つ）
 
   // 要約を生成してアナウンス（announce = 再生が空くのを待つ直列キュー・TopBar 停止と統合）で

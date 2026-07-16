@@ -407,6 +407,7 @@ const DEFAULTS: Settings = {
 };
 
 // VOICEVOX ずんだもんのスタイル（speaker 番号 → ラベル）。設定 UI の話者選択に使う。
+// i18n-exempt-start: VOICEVOX スタイル名は固有名詞として未翻訳（docs/28 §6.4）
 export const VOICEVOX_ZUNDAMON: [string, string][] = [
   ["3", "ノーマル"],
   ["1", "あまあま"],
@@ -415,6 +416,7 @@ export const VOICEVOX_ZUNDAMON: [string, string][] = [
   ["22", "ささやき"],
   ["38", "ヒソヒソ"],
 ];
+// i18n-exempt-end
 
 // TTS プロバイダ（docs/24 Phase 2）。auto の使い分けは CP が決める。ラベルは i18n キー。
 export const TTS_PROVIDERS: [string, MsgKey][] = [
