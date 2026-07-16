@@ -5,8 +5,9 @@
 // Modes (cycle with Tab / Shift+Tab, re-pressing Ctrl/⌘+P, or the mode tabs):
 //   - command : every available command + the session list (fuzzy, all-locale search).
 //   - changed : working-tree changed files across all dirty repos → open each file's diff.
-// (A recursive file-search mode is the planned next step; it needs a flat-file backend
-// endpoint that api/fs/tree — per-directory — doesn't provide.)
+//   - file    : recursive filename search under ~/repos (server-side via /fs/search = ripgrep
+//               --files, .gitignore-honouring) → open the file. Unlike command/changed (a
+//               static list client-fuzzed), this queries the backend per keystroke.
 //
 // Search matches across ALL locales (cmdSearch) so typing English or Japanese finds a
 // command regardless of the current UI language; display uses the current locale.
@@ -22,7 +23,8 @@ import { useEscLayer } from "../../lib/escLayer.ts";
 import { useBackClose } from "../../lib/backClose.ts";
 import { t, useLocale, type MsgKey } from "../../lib/i18n/index.ts";
 import { coarsePointer } from "../../lib/device.ts";
-import { api } from "../../core/api/client.ts";
+import { api, fsSearch } from "../../core/api/client.ts";
+import { useLayoutStore } from "../../layout/store.ts";
 import { useKeysStore } from "./store.ts";
 import { useEffectiveCommands, boundChord, APP_LEADER } from "./bindings.ts";
 import { cmdLabel, cmdSearch } from "./labels.ts";
@@ -33,12 +35,16 @@ import { useReposStore } from "../repos/store.ts";
 import { openFileDiff } from "../scm/open.ts";
 import { agentOf } from "../../agents/registry.ts";
 
-type Mode = "command" | "changed";
-const MODES: Mode[] = ["command", "changed"];
+type Mode = "command" | "changed" | "file";
+const MODES: Mode[] = ["command", "changed", "file"];
 const MODE_LABEL: Record<Mode, MsgKey> = {
   command: "keys.palette.mode_command",
   changed: "keys.palette.mode_changed",
+  file: "keys.palette.mode_file",
 };
+// File search is rooted at ~/repos: the working-copy scope, so results are code files (the
+// backend excludes caches/packages), shown repo-relative like the changed-files mode.
+const FILE_ROOT = "repos";
 
 interface Item {
   id: string;
@@ -111,6 +117,23 @@ async function loadChangedItems(): Promise<Item[]> {
   return lists.flat();
 }
 
+// One /fs/search hit (a home-relative path like "repos/<repo>/<...>") → a palette row. Split
+// off the repo segment for the badge, show the in-repo path as the title, open it as a file.
+function fileItem(homeRel: string): Item {
+  const rel = homeRel.startsWith(FILE_ROOT + "/") ? homeRel.slice(FILE_ROOT.length + 1) : homeRel;
+  const slash = rel.indexOf("/");
+  const repo = slash > 0 ? rel.slice(0, slash) : "";
+  const inRepo = slash > 0 ? rel.slice(slash + 1) : rel;
+  return {
+    id: "file:" + homeRel,
+    title: inRepo,
+    sub: repo || rel,
+    search: rel,
+    keys: [],
+    run: () => useLayoutStore.getState().openTarget({ content: { kind: "file", filePath: homeRel } }),
+  };
+}
+
 export function CommandPalette() {
   const open = useKeysStore((s) => s.paletteOpen);
   const sessions = useSessionsStore((s) => s.sessions);
@@ -120,6 +143,7 @@ export function CommandPalette() {
   const [sel, setSel] = useState(0);
   const [mode, setMode] = useState<Mode>("command");
   const [changed, setChanged] = useState<Item[] | null>(null); // null = loading
+  const [fileHits, setFileHits] = useState<Item[] | null>(null); // null = searching (file mode)
   const inputRef = useRef<HTMLInputElement>(null);
   const openerRef = useRef<HTMLElement | null>(null);
 
@@ -159,6 +183,28 @@ export function CommandPalette() {
     };
   }, [open, mode]);
 
+  // File mode searches the backend per keystroke (debounced). An empty query yields nothing
+  // (there's no whole-tree listing to fuzz locally — the point of /fs/search is to not).
+  useEffect(() => {
+    if (!open || mode !== "file") return;
+    const query = q.trim();
+    if (!query) {
+      setFileHits([]);
+      return;
+    }
+    let alive = true;
+    setFileHits(null); // searching
+    const timer = setTimeout(() => {
+      fsSearch(FILE_ROOT, query)
+        .then((r) => alive && setFileHits(r.results.map(fileItem)))
+        .catch(() => alive && setFileHits([]));
+    }, 160);
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+    };
+  }, [open, mode, q]);
+
   const commandItems = useMemo<Item[]>(() => {
     if (!open) return [];
     void locale; // dep: recompute labels/search when the language changes
@@ -186,9 +232,15 @@ export function CommandPalette() {
     return [...cmds, ...sess];
   }, [open, sessions, commands, locale]);
 
-  const loading = mode === "changed" && changed === null;
-  const items = mode === "command" ? commandItems : (changed ?? []);
-  const filtered = useMemo(() => items.filter((it) => fuzzy(q, it.search + " " + it.sub)), [items, q]);
+  // command/changed are static lists filtered client-side; file is already server-filtered by q.
+  // File "loading" only counts with a live query — an empty query shows the type-to-search hint,
+  // never a spurious spinner from the initial null state.
+  const loading = (mode === "changed" && changed === null) || (mode === "file" && fileHits === null && !!q.trim());
+  const items = mode === "command" ? commandItems : mode === "changed" ? (changed ?? []) : (fileHits ?? []);
+  const filtered = useMemo(
+    () => (mode === "file" ? items : items.filter((it) => fuzzy(q, it.search + " " + it.sub))),
+    [items, q, mode],
+  );
 
   const switchMode = (m: Mode) => {
     setMode(m);
@@ -222,7 +274,13 @@ export function CommandPalette() {
           ref={inputRef}
           className="cp-input"
           value={q}
-          placeholder={t(mode === "changed" ? "keys.palette.placeholder_changed" : "keys.palette.placeholder")}
+          placeholder={t(
+            mode === "changed"
+              ? "keys.palette.placeholder_changed"
+              : mode === "file"
+                ? "keys.palette.placeholder_file"
+                : "keys.palette.placeholder",
+          )}
           aria-label={t("keys.palette.aria")}
           autoComplete="off"
           spellCheck={false}
@@ -271,8 +329,10 @@ export function CommandPalette() {
           <span className="cp-mode-hint">{t("keys.palette.mode_hint")}</span>
         </div>
         <div className="cp-list">
-          {loading ? (
-            <div className="cp-empty">{t("keys.palette.changed_loading")}</div>
+          {mode === "file" && !q.trim() ? (
+            <div className="cp-empty">{t("keys.palette.file_hint")}</div>
+          ) : loading ? (
+            <div className="cp-empty">{t(mode === "file" ? "keys.palette.file_searching" : "keys.palette.changed_loading")}</div>
           ) : filtered.length === 0 ? (
             <div className="cp-empty">{mode === "changed" ? t("keys.palette.changed_empty") : t("keys.palette.empty")}</div>
           ) : (
