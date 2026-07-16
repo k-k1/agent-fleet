@@ -837,4 +837,35 @@ export const ja = {
   // <Trans>: <0/>=改行, <1>…</1>=強調。session モーダル（P2 モーダル群）で消費。
   "session.recreate_body":
     "「{name}」を新しいセッションで開始します。<0/>今の会話は<1>アーカイブに退避</1>し、あとで復帰できます。",
+
+  // === P2 共有: セッション種別の起動ヒント（agents/registry.ts の launchHintKey）===
+  // kindLabel の値（claude/codex/opencode/shell/ssm）は固有語のため未翻訳（defaultModeLabel と同方針）。
+  "agent.launch_hint.claude": "Claude Code を起動",
+  "agent.launch_hint.codex": "Codex CLI を起動",
+  "agent.launch_hint.opencode": "opencode を起動",
+  "agent.launch_hint.shell": "通常のシェル (bash)",
+  "agent.launch_hint.ssm": "AWS EC2 に SSM ログイン",
+
+  // === P2 共有: セッション状態チップ（lib/sessionview.ts の stateInfo）===
+  "state.folder_missing": "フォルダ無し — 再開不可",
+  "state.stopped": "停止中",
+  "state.running": "起動中",
+  "state.compacting": "圧縮中…",
+  "state.working": "進行中…",
+  "state.question": "質問あり",
+  "state.plan": "プランあり",
+  "state.permission": "許可待ち",
+  "state.idle_bg": "入力待ち · BG実行中",
+  "state.idle": "入力待ち",
+
+  // === P2 共有: 異常終了ラベル（lib/sessionview.ts の exitLabel。hint はツールチップ）===
+  "exit.oom.text": "メモリ不足で終了",
+  "exit.oom.hint":
+    "メモリ不足でプロセスが強制終了されました（OOM kill / exit {code}）。ワークスペースのメモリ上限に達した可能性があります。",
+  "exit.killed.text": "強制終了",
+  "exit.killed.hint":
+    "プロセスが SIGKILL で強制終了されました（signal {signal}）。ホスト全体のメモリ逼迫などが原因の可能性があります。",
+  "exit.crashed.text": "異常終了",
+  "exit.crashed.hint_signal": "プロセスが signal {signal} で異常終了しました。",
+  "exit.crashed.hint_code": "プロセスが異常終了しました（exit code {code}）。",
 };

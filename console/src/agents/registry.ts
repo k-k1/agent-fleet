@@ -13,6 +13,7 @@ import type {
   SsmHost,
 } from "../types/session.ts";
 import { SESSION_KINDS } from "../types/session.ts";
+import type { MsgKey } from "../lib/i18n/index.ts";
 
 // Capability flags. The UI shows an affordance iff the attached session's agent
 // has the matching cap, so a new agent lights up the right controls by data alone.
@@ -58,7 +59,7 @@ export interface AgentDescriptor {
   short: string; // 2-char abbrev for tight headers (cc/cx/oc/sh/aw)
   cssClass: string; // .kind-<slug> color class slug
   // New Session dialog
-  launchHint: string; // the seg-button sub-label
+  launchHintKey: MsgKey; // the seg-button sub-label (i18n key; resolved at render via t())
   // repo-launch session-name suffix (so a repo's shell/oc/cx sessions stay distinct)
   launchSuffix: string;
   // the TUI key that cycles permission/collaboration mode (Shift+Tab for claude/codex,
@@ -115,7 +116,7 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     assistantName: "Claude",
     short: "cc",
     cssClass: "claude",
-    launchHint: "Claude Code を起動",
+    launchHintKey: "agent.launch_hint.claude",
     launchSuffix: "",
     planCycleKey: "BTab", // Shift+Tab cycles normal / auto-accept / plan (used to exit)
     planEnterCmd: "/plan", // claude has a direct command to enter plan mode
@@ -146,7 +147,7 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     assistantName: "Codex",
     short: "cx",
     cssClass: "codex",
-    launchHint: "Codex CLI を起動",
+    launchHintKey: "agent.launch_hint.codex",
     launchSuffix: "-cx",
     planCycleKey: "BTab", // Shift+Tab cycles the collaboration mode (used to exit plan)
     planEnterCmd: "/plan", // codex also has /plan ("switch to Plan mode")
@@ -185,7 +186,7 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     assistantName: "opencode",
     short: "oc",
     cssClass: "opencode",
-    launchHint: "opencode を起動",
+    launchHintKey: "agent.launch_hint.opencode",
     launchSuffix: "-oc",
     planCycleKey: "Tab", // Tab cycles the agent (build / plan)
     planEnterCmd: "",
@@ -228,7 +229,7 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     assistantName: "shell",
     short: "sh",
     cssClass: "shell",
-    launchHint: "通常のシェル (bash)",
+    launchHintKey: "agent.launch_hint.shell",
     launchSuffix: "-sh",
     planCycleKey: "",
     planEnterCmd: "",
@@ -250,7 +251,7 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
     assistantName: "ssm",
     short: "aw",
     cssClass: "ssm",
-    launchHint: "AWS EC2 に SSM ログイン",
+    launchHintKey: "agent.launch_hint.ssm",
     launchSuffix: "",
     planCycleKey: "",
     planEnterCmd: "",
