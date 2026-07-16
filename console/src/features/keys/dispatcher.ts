@@ -21,6 +21,7 @@ import { ALL_COMMANDS } from "./commands.ts";
 // Reserved app chords (rebindable in P5). Canonicalized so comparisons are exact.
 const LEADER = canonical("mod+k");
 const PALETTE = canonical("mod+p");
+const CHEAT = canonical("shift+/"); // "?" — the shortcut cheat-sheet
 
 const LEADER_TIMEOUT = 3000; // ms: a dangling leader auto-cancels
 const WHICHKEY_DELAY = 350; // ms before the which-key overlay reveals
@@ -120,6 +121,13 @@ export function wireKeys(): () => void {
     }
 
     const ctx = buildContext();
+    // "?" opens the cheat-sheet, but only when not typing — in a terminal/input it's a
+    // literal question mark. (The leader → ? path stays available regardless.)
+    if (chord === CHEAT && ctx.focusedKind !== "input" && ctx.focusedKind !== "terminal") {
+      consume(e);
+      useKeysStore.getState().openCheat();
+      return;
+    }
     const cmd = matchDirect(ALL_COMMANDS, chord, ctx);
     if (cmd) {
       consume(e);

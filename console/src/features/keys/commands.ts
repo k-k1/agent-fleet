@@ -119,4 +119,8 @@ export const ALL_COMMANDS: Command[] = [
   // ---- Top-level leader actions ----
   { id: "settings.open", title: "設定を開く", seq: ",", run: () => useSettingsUI.getState().openSettings() },
   { id: "guide.open", title: "はじめかたガイド", seq: "w g", run: () => useSettingsUI.getState().openGuide() },
+  // The "?" cheat-sheet. Also opens on a bare "?" when not typing (handled directly in
+  // the dispatcher so it stays out of the terminal/inputs); this leader entry makes it
+  // discoverable in which-key.
+  { id: "help.cheatsheet", title: "キーボードショートカット一覧", seq: "shift+/", run: () => useKeysStore.getState().openCheat() },
 ];
