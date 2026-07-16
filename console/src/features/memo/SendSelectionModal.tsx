@@ -12,6 +12,7 @@ import type { FormEvent } from "react";
 import { Modal } from "../../ui/Modal.tsx";
 import { Button } from "../../ui/Button.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
+import { t, useT } from "../../lib/i18n/index.ts";
 import { apiJSON, errText } from "../../core/api/client.ts";
 import { chatCreate, assistantList } from "../chat/api.ts";
 import { openChat } from "../chat/open.ts";
@@ -43,6 +44,7 @@ export function SendSelectionModal({ filePath, quote, startLine, endLine, onClos
   const layout = useLayoutStore((s) => s.layout);
   const bumpMemos = useMemoStore((s) => s.bump);
   const toast = useToast();
+  const tr = useT();
   const [assistants, setAssistants] = useState<Assistant[]>([]);
   const [comment, setComment] = useState("");
   const [target, setTarget] = useState(""); // "session:<name>" | "assistant:<id>"
@@ -109,10 +111,10 @@ export function SendSelectionModal({ filePath, quote, startLine, endLine, onClos
   const composed = useMemo(() => {
     if (fileMode) {
       const c = comment.trim();
-      return (c ? c + "\n\n" : "") + `対象ファイル: ${pathRef}`;
+      return (c ? c + "\n\n" : "") + t("send.target_file", { path: pathRef });
     }
     const fence = "```";
-    const body = `ファイル \`${filePath}\` の ${loc}:\n\n${fence}${langFor(filePath)}\n${quote}\n${fence}`;
+    const body = `${t("send.quote_file_loc", { file: filePath, loc })}\n\n${fence}${langFor(filePath)}\n${quote}\n${fence}`;
     return comment.trim() ? `${body}\n\n${comment.trim()}` : body;
   }, [fileMode, pathRef, filePath, loc, quote, comment]);
 
@@ -127,17 +129,17 @@ export function SendSelectionModal({ filePath, quote, startLine, endLine, onClos
         const id = target.slice("assistant:".length);
         // Open a chat with the file attached (context) and the quote prefilled — the user
         // reviews and sends (consistent with the other assistant-open flows).
-        const c = await chatCreate(id, `${baseName(filePath)} 引用`, { attachPath: filePath });
+        const c = await chatCreate(id, t("send.quote_title", { name: baseName(filePath) }), { attachPath: filePath });
         if (c && c.id) {
           openChat(c.id, composed);
           onClose();
-        } else toast("チャットの作成に失敗しました");
+        } else toast(t("send.chat_create_failed"));
       } else {
         const name = target.slice("session:".length);
         // apiJSON resolves (doesn't throw) on a non-2xx error body, so check res.error.
         const res = await apiJSON(`api/sessions/${encodeURIComponent(name)}/input`, "POST", { prompt: composed });
         if (res && res.error) {
-          toast(errText(res.error) || `${name} への送信に失敗しました`);
+          toast(errText(res.error) || t("send.send_failed_to", { name }));
           return;
         }
         localStorage.setItem(LAST_SESSION_KEY, name); // remember for next time
@@ -152,14 +154,14 @@ export function SendSelectionModal({ filePath, quote, startLine, endLine, onClos
                 {o.ordinal}
               </span>
             ))}
-            {(sent ? displayName(sent) : name) + " に送信しました"}
+            {tr("send.sent_to", { name: sent ? displayName(sent) : name })}
           </span>,
           { kind: "success" },
         );
         onClose();
       }
     } catch {
-      toast("送信に失敗しました");
+      toast(t("common.send_failed"));
     } finally {
       setBusy(false);
     }
@@ -178,14 +180,14 @@ export function SendSelectionModal({ filePath, quote, startLine, endLine, onClos
         : { kind: "text" as const, repo: fileRepo || "", category: category.trim(), body: composed };
       const res = await memoCreate(input);
       if ((res as { error?: unknown }).error) {
-        toast("メモの追加に失敗しました");
+        toast(t("memo.add_failed"));
         return;
       }
       bumpMemos();
-      toast("メモキューに追加しました", { kind: "success" });
+      toast(t("memo.added"), { kind: "success" });
       onClose();
     } catch {
-      toast("メモの追加に失敗しました");
+      toast(t("memo.add_failed"));
     } finally {
       setBusy(false);
     }
@@ -195,7 +197,7 @@ export function SendSelectionModal({ filePath, quote, startLine, endLine, onClos
 
   return (
     <Modal
-      title={fileMode ? "ファイルをセッションに送る" : "選択範囲をセッション/アシスタントに送る"}
+      title={fileMode ? tr("send.title_file") : tr("send.title_selection")}
       onClose={onClose}
       className="send-modal"
       as="form"
@@ -204,10 +206,10 @@ export function SendSelectionModal({ filePath, quote, startLine, endLine, onClos
     >
       <div className="ui-modal-body">
         <div className="ui-field">
-          <div className="ui-field-label">送信先</div>
+          <div className="ui-field-label">{tr("send.destination")}</div>
           {noTarget ? (
             <div className="ui-field-hint warn">
-              ⚠ 稼働中のセッションがありません。セッションを起動してから送ってください。
+              {tr("send.no_running")}
             </div>
           ) : (
             <select
@@ -219,17 +221,17 @@ export function SendSelectionModal({ filePath, quote, startLine, endLine, onClos
               }}
             >
               {sortedSessions.length > 0 && (
-                <optgroup label="セッション（直接送信）">
+                <optgroup label={tr("send.optgroup_session")}>
                   {sortedSessions.map((s) => (
                     <option key={s.name} value={`session:${s.name}`}>
                       {displayName(s)}（{s.name}・{stateInfo(s).text}
-                      {fileRepo && s.repo === fileRepo ? "・同レポ" : ""}）
+                      {fileRepo && s.repo === fileRepo ? tr("send.same_repo") : ""}）
                     </option>
                   ))}
                 </optgroup>
               )}
               {!fileMode && assistants.length > 0 && (
-                <optgroup label="アシスタント（チャットで開く）">
+                <optgroup label={tr("send.optgroup_assistant")}>
                   {assistants.map((a) => (
                     <option key={a.id} value={`assistant:${a.id}`}>
                       {a.name}
@@ -241,17 +243,17 @@ export function SendSelectionModal({ filePath, quote, startLine, endLine, onClos
           )}
           <div className={"ui-field-hint" + (sessionStopped ? " warn" : "")}>
             {sessionStopped
-              ? "⚠ このセッションは停止中です。送信できません（先に起動するか、別の送信先を選んでください）。"
+              ? tr("send.hint_stopped")
               : fileMode
-                ? "ファイルはパスで渡します（セッションが自分で読み取り・書き込みします）。大きなファイルの翻訳など、ファイル出力を伴う作業向けです。"
+                ? tr("send.hint_file")
                 : isAssistant
-                  ? "このアシスタントとのチャットを開き、引用を下書きします（送信は会話側で）。"
-                  : "選択したセッションに引用＋コメントを直接送信します。"}
+                  ? tr("send.hint_assistant")
+                  : tr("send.hint_session")}
           </div>
         </div>
 
         <div className="ui-field">
-          <div className="ui-field-label">コメント（指示）</div>
+          <div className="ui-field-label">{tr("send.comment_label")}</div>
           <textarea
             value={comment}
             onChange={(e) => setComment(e.target.value)}
@@ -265,21 +267,21 @@ export function SendSelectionModal({ filePath, quote, startLine, endLine, onClos
             rows={3}
             placeholder={
               fileMode
-                ? "例: 日本語に翻訳して <名前>.ja.md に保存して。長いので分割しながら進めて。（Ctrl+Enter で送信）"
-                : "例: この場面、テンポを上げて。/ この関数の境界条件を直して。（Ctrl+Enter で送信）"
+                ? tr("send.ph_file")
+                : tr("send.ph_selection")
             }
             autoFocus
           />
         </div>
 
         <div className="ui-field">
-          <div className="ui-field-label">カテゴリ（キューに追加する場合・任意）</div>
+          <div className="ui-field-label">{tr("send.category_label")}</div>
           <input
             type="text"
             list="sendsel-cat-suggest"
             value={category}
             onChange={(e) => setCategory(e.target.value)}
-            placeholder="例: frontend / api（メモキューでのグループ分け）"
+            placeholder={tr("send.category_ph")}
           />
           <datalist id="sendsel-cat-suggest">
             {catSuggest.map((c) => (
@@ -289,20 +291,20 @@ export function SendSelectionModal({ filePath, quote, startLine, endLine, onClos
         </div>
 
         <div className="ui-field">
-          <div className="ui-field-label">プレビュー（{loc}）</div>
+          <div className="ui-field-label">{tr("send.preview_label", { loc })}</div>
           <pre className="send-preview">{composed}</pre>
         </div>
       </div>
 
       <footer className="ui-modal-foot">
         <Button variant="ghost" onClick={onClose}>
-          キャンセル
+          {tr("common.cancel")}
         </Button>
         <Button variant="ghost" disabled={busy} onClick={() => void addToQueue()}>
-          キューに追加
+          {tr("send.add_to_queue")}
         </Button>
         <Button variant="primary" type="submit" disabled={!target || busy || sessionStopped}>
-          {isAssistant ? "アシスタントで開く" : "セッションに送信"}
+          {isAssistant ? tr("send.open_assistant") : tr("send.send_to_session")}
         </Button>
       </footer>
     </Modal>

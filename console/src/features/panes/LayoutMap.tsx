@@ -12,6 +12,8 @@ import { displayName, stateInfo } from "../../lib/sessionview.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 import type { Session } from "../../types/session.ts";
 import type { PaneKind } from "../../layout/types.ts";
+import { useT, t as tI18n } from "../../lib/i18n/index.ts";
+import type { MsgKey } from "../../lib/i18n/index.ts";
 
 // Short label / Japanese name for a non-session pane shown in a map cell.
 const KIND_ABBR: Partial<Record<PaneKind, string>> = {
@@ -24,22 +26,29 @@ const KIND_ABBR: Partial<Record<PaneKind, string>> = {
   diff: "diff",
   chat: "chat",
 };
-const KIND_JA: Partial<Record<PaneKind, string>> = {
-  file: "ファイル",
-  scm: "ソース管理",
-  changes: "変更",
-  commit: "コミット",
-  wtdiff: "ファイル差分",
-  doc: "ドキュメント",
-  diff: "差分",
-  chat: "チャット",
+const KIND_JA: Partial<Record<PaneKind, MsgKey>> = {
+  file: "pane.kind.file",
+  scm: "pane.kind.scm",
+  changes: "pane.kind.changes",
+  commit: "pane.kind.commit",
+  wtdiff: "pane.kind.wtdiff",
+  doc: "pane.kind.doc",
+  diff: "pane.kind.diff",
+  chat: "pane.kind.chat",
 };
+
+// Resolve a non-session pane kind to its localized label (falls back to the raw kind).
+function jaKind(k: PaneKind): string {
+  const key = KIND_JA[k];
+  return key ? tI18n(key) : k;
+}
 
 export function LayoutMap() {
   const layout = useLayoutStore((s) => s.layout);
   const setActive = useLayoutStore((s) => s.setActive);
   const sessions = useSessionsStore((s) => s.sessions);
   const { hover, setHover } = usePaneHover();
+  const tr = useT();
 
   const byName = useMemo(() => new Map(sessions.map((s) => [s.name, s] as const)), [sessions]);
   const rows = useMemo(() => paneRows(layout), [layout]);
@@ -50,8 +59,8 @@ export function LayoutMap() {
   const shortKind = layout.cols.length >= 3;
 
   return (
-    <div className="layoutmap" role="group" aria-label="ペイン配置">
-      <div className="lm-cap">レイアウト</div>
+    <div className="layoutmap" role="group" aria-label={tr("pane.map_aria")}>
+      <div className="lm-cap">{tr("pane.layout")}</div>
       <div className="lm-cols">
         {layout.cols.map((col) => (
           <div className="lm-col" key={col.id}>
@@ -69,18 +78,17 @@ export function LayoutMap() {
                   ? "empty"
                   : shortKind
                     ? KIND_ABBR[p.content.kind] || "–"
-                    : KIND_JA[p.content.kind] || p.content.kind;
+                    : jaKind(p.content.kind);
               const kindCls = s ? " kc-" + kindClass(s.kind) : "";
               const on = hoverMatches(hover, p.id, p.session);
               const label =
-                "ペイン" +
-                ord +
+                tr("pane.pane_n", { ord }) +
                 ": " +
                 (s
                   ? `${displayName(s)} · ${kindLabel(s.kind)}${st ? " · " + st.text : ""}`
                   : isTerm
-                    ? "セッション未接続"
-                    : KIND_JA[p.content.kind] || p.content.kind);
+                    ? tr("pane.no_session")
+                    : jaKind(p.content.kind));
               return (
                 <button
                   type="button"
