@@ -21,7 +21,10 @@ import { MarkdownView } from "./MarkdownView.tsx";
 import { MarpView } from "./MarpView.tsx";
 import { CodeView } from "./CodeView.tsx";
 import { ImageView } from "./ImageView.tsx";
+import { registerPaneViewActions } from "./paneViewActions.ts";
 import type { LineMarks } from "./CodeView.tsx";
+
+type MdMode = "preview" | "source" | "slides";
 
 // lineRangeOfSelection derives the 1-based line range + text of the current selection
 // within the code grid. Each code cell carries data-ln (its 1-based logical line), so
@@ -59,6 +62,9 @@ interface FileViewProps {
   targetLine?: number;
   targetColumn?: number;
   wrap?: boolean | null;
+  /** The host pane's id — lets global keyboard commands drive this view's local
+   * Markdown preview/source toggle via the pane-view action registry. */
+  paneId?: string;
 }
 
 interface FileData {
@@ -70,7 +76,7 @@ interface FileData {
   lfs?: boolean;
 }
 
-export function FileView({ filePath, targetLine, targetColumn, wrap }: FileViewProps) {
+export function FileView({ filePath, targetLine, targetColumn, wrap, paneId }: FileViewProps) {
   const tr = useT();
   const openTarget = useLayoutStore((s) => s.openTarget);
   const openTargetInNew = useLayoutStore((s) => s.openTargetInNew);
@@ -80,7 +86,7 @@ export function FileView({ filePath, targetLine, targetColumn, wrap }: FileViewP
   const wrapOn = wrap === undefined || wrap === null ? settings.wrap : wrap;
   const [data, setData] = useState<FileData | null>(null);
   const [err, setErr] = useState("");
-  const [mdMode, setMdMode] = useState<"preview" | "source" | "slides">("preview");
+  const [mdMode, setMdMode] = useState<MdMode>("preview");
   const [imgMode, setImgMode] = useState<"preview" | "source">("preview");
   const [imgDims, setImgDims] = useState<{ w: number; h: number } | null>(null);
   const [marks, setMarks] = useState<LineMarks | null>(null);
@@ -160,6 +166,18 @@ export function FileView({ filePath, targetLine, targetColumn, wrap }: FileViewP
 
   const showSlides = isMarp && mdMode === "slides";
   const showPreview = isMarkdown && mdMode === "preview";
+
+  // Expose the preview/source toggle to the keyboard system (viewer.mdMode command).
+  // Cycles the available modes: [slides,] preview, source. Registered only for Markdown,
+  // so the command no-ops on other files. Keyed by the host pane's id.
+  useEffect(() => {
+    if (!paneId || !isMarkdown) return;
+    const modes: MdMode[] = isMarp ? ["slides", "preview", "source"] : ["preview", "source"];
+    return registerPaneViewActions(paneId, {
+      toggleMdMode: () =>
+        setMdMode((prev) => modes[(modes.indexOf(prev) + 1) % modes.length]),
+    });
+  }, [paneId, isMarkdown, isMarp]);
 
   // Highlight once per file load; fall back to escaped plain text. Huge files
   // skip highlighting entirely (plain mode below). Markdown source is deliberately
