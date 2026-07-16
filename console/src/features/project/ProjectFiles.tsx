@@ -23,6 +23,7 @@ import { useFilesStore } from "../files/store.ts";
 import { useReposStore } from "../repos/store.ts";
 import { useFilesFilter } from "./filesFilter.ts";
 import { normQuery } from "./filter.ts";
+import { isContextMenuKey, menuAnchor } from "./contextMenuKey.ts";
 import { stickyAncestors } from "./stickyTree.ts";
 
 interface Entry {
@@ -384,6 +385,17 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo }: Proje
       const list = navigationRows;
       if (!list.length) return;
       const idx = list.findIndex((r) => r.path === selected);
+      // Menu key / Shift+F10 opens the selected row's right-click menu at its position.
+      if (isContextMenuKey(e)) {
+        const r = list[idx];
+        if (r) {
+          e.preventDefault();
+          const el = treeRef.current?.querySelector<HTMLElement>(`li[data-path="${CSS.escape(r.path)}"]`);
+          const a = el ? menuAnchor(el) : { x: 0, y: 0 };
+          setMenu({ x: a.x, y: a.y, row: r });
+        }
+        return;
+      }
       const pick = (to: number) => {
         const r = list[Math.max(0, Math.min(to, list.length - 1))];
         if (r) {

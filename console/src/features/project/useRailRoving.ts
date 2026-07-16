@@ -7,6 +7,7 @@
 // the app-wide :focus-visible ring, so no selection state is threaded through the tree.
 import { useCallback, useRef } from "react";
 import type { KeyboardEvent as RKeyboardEvent } from "react";
+import { isContextMenuKey, synthContextMenu } from "./contextMenuKey.ts";
 
 export function useRailRoving() {
   const ref = useRef<HTMLUListElement>(null);
@@ -28,6 +29,12 @@ export function useRailRoving() {
     // synthetic keydowns up to this handler. Without this guard Home/End/arrows would
     // yank focus out of the modal into the tree while the user is typing.
     if (idx < 0) return;
+    // Menu key / Shift+F10 opens the focused row's right-click menu (repo / session).
+    if (isContextMenuKey(e)) {
+      e.preventDefault();
+      synthContextMenu(cur);
+      return;
+    }
     const move = (to: number) => {
       const t = list[Math.max(0, Math.min(to, list.length - 1))];
       if (t) {

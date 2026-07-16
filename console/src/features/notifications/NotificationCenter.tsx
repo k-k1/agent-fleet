@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Icon } from "../../ui/Icon.tsx";
 import { useDismiss } from "../../lib/useDismiss.ts";
 import { TOAST_ICONS, useToast } from "../../ui/ToastProvider.tsx";
@@ -25,6 +25,45 @@ export function NotificationCenter() {
   const { items, unseenCount, maxSeq } = useNotificationStore();
   const logItems = useToastLog((st) => st.items);
   useDismiss(ref, open, () => setOpen(false));
+  // Keyboard selection: once the center opens, focus the first row and let ↑/↓ (Home/End)
+  // rove between rows; Enter activates the focused notification natively (each row is a
+  // button — Ctrl/⌘+Enter opens it in a new pane, handled in FleetRow). Escape closes via
+  // useDismiss. Log rows are made focusable so they're reachable in the sweep too.
+  useEffect(() => {
+    if (!open) return;
+    const list = ref.current?.querySelector<HTMLElement>(".notification-list");
+    if (!list) return;
+    const rowsOf = () => Array.from(list.querySelectorAll<HTMLElement>(".notification-item"));
+    for (const el of rowsOf()) if (el.tagName !== "BUTTON") el.tabIndex = 0;
+    // Focus the first row on open, but don't yank focus back to the top if the user is
+    // already roving (a new notification arriving mid-navigation would otherwise reset it).
+    const raf = requestAnimationFrame(() => {
+      if (!list.contains(document.activeElement)) rowsOf()[0]?.focus();
+    });
+    const onKey = (e: KeyboardEvent) => {
+      const l = rowsOf();
+      if (!l.length) return;
+      const i = l.indexOf(document.activeElement as HTMLElement);
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        l[i < 0 ? 0 : (i + 1) % l.length].focus();
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        l[i < 0 ? l.length - 1 : (i - 1 + l.length) % l.length].focus();
+      } else if (e.key === "Home") {
+        e.preventDefault();
+        l[0].focus();
+      } else if (e.key === "End") {
+        e.preventDefault();
+        l[l.length - 1].focus();
+      }
+    };
+    list.addEventListener("keydown", onKey);
+    return () => {
+      cancelAnimationFrame(raf);
+      list.removeEventListener("keydown", onKey);
+    };
+  }, [open, items.length, logItems.length]);
   // Badge counts both unseen server notifications and unseen local toast-log entries.
   const unseen = unseenCount + logItems.reduce((n, i) => (i.seen ? n : n + 1), 0);
   const show = () => {
@@ -87,6 +126,9 @@ function FleetRow({ n, onActivate }: { n: FleetNotification; onActivate: (n: Fle
     <Dot seen={n.seen} />
     <button className="notification-item"
       onClick={(e) => onActivate(n, e.ctrlKey || e.metaKey)}
+      // Enter opens in the active pane; Ctrl/⌘+Enter in a new pane. Handled here (not left
+      // to the native click) so the modifier is honored consistently across browsers.
+      onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); onActivate(n, e.ctrlKey || e.metaKey); } }}
       onMouseDown={(e) => e.button === 1 && e.preventDefault()}
       onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); onActivate(n, true); } }}>
       <Icon name={n.kind === "answer-ready" ? "check" : n.kind === "usage-reset" ? "pulse" : "comment-discussion"} />

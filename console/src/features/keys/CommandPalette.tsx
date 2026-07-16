@@ -30,8 +30,14 @@ import { useEffectiveCommands, boundChord, APP_LEADER } from "./bindings.ts";
 import { cmdLabel, cmdSearch } from "./labels.ts";
 import { buildContext } from "./dispatcher.ts";
 import { useSessionsStore } from "../sessions/store.ts";
-import { openSessionChat, openSessionTerminal } from "../sessions/open.ts";
+import {
+  openSessionChat,
+  openSessionChatSplit,
+  openSessionTerminal,
+  openSessionTerminalSplit,
+} from "../sessions/open.ts";
 import { useReposStore } from "../repos/store.ts";
+import { revealRepoInRail } from "../repos/reveal.ts";
 import { openFileDiff } from "../scm/open.ts";
 import { agentOf } from "../../agents/registry.ts";
 
@@ -149,6 +155,7 @@ function fileItem(homeRel: string): Item {
 export function CommandPalette() {
   const open = useKeysStore((s) => s.paletteOpen);
   const sessions = useSessionsStore((s) => s.sessions);
+  const repos = useReposStore((s) => s.repos);
   const commands = useEffectiveCommands();
   const locale = useLocale(); // re-render + recompute items when the UI language changes
   const [q, setQ] = useState("");
@@ -177,6 +184,7 @@ export function CommandPalette() {
     setQ("");
     setSel(0);
     setMode("command"); // always reopen in command mode
+    void useReposStore.getState().refresh(); // repos+worktrees are searchable in command mode
     const id = requestAnimationFrame(() => inputRef.current?.focus());
     return () => cancelAnimationFrame(id);
   }, [open]);
@@ -232,17 +240,38 @@ export function CommandPalette() {
     }));
     const sess: Item[] = sessions.map((s) => {
       const title = s.title || s.name;
+      const chat = agentOf(s.kind).caps.chat;
       return {
         id: "session:" + s.name,
         title,
         sub: t("keys.item.session"),
-        search: title,
+        search: title + " " + s.name,
         keys: [],
-        run: () => (agentOf(s.kind).caps.chat ? openSessionChat : openSessionTerminal)(s.name),
+        // Enter → open in the active pane; Ctrl/⌘+Enter → open in a new (split) pane.
+        run: (split) =>
+          (chat
+            ? split ? openSessionChatSplit : openSessionChat
+            : split ? openSessionTerminalSplit : openSessionTerminal)(s.name),
       };
     });
-    return [...cmds, ...sess];
-  }, [open, sessions, commands, locale]);
+    // Repos + worktrees: Enter → reveal + focus the working copy in the rail;
+    // Ctrl/⌘+Enter → open its Source Control. A worktree row is tagged so a search
+    // for "wt"/"worktree" surfaces it.
+    const repoItems: Item[] = repos.map((r) => ({
+      id: "repo:" + r.name,
+      title: r.name,
+      sub:
+        t(r.worktree ? "keys.item.worktree" : "keys.item.repo") +
+        (r.branch ? " · " + r.branch : ""),
+      search: r.name + " " + (r.branch || "") + " " + (r.worktree ? "worktree wt" : "repo"),
+      keys: [],
+      run: (split) =>
+        split
+          ? useLayoutStore.getState().openTarget({ content: { kind: "scm", scmRepo: r.name } })
+          : revealRepoInRail(r.name),
+    }));
+    return [...cmds, ...sess, ...repoItems];
+  }, [open, sessions, repos, commands, locale]);
 
   // command/changed are static lists filtered client-side; file is already server-filtered by q.
   // File "loading" only counts with a live query — an empty query shows the type-to-search hint,

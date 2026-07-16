@@ -34,6 +34,8 @@ interface LeftRailStore {
   swipeOverlay: boolean;
   toggle(): void;
   close(): void;
+  /** Dock the rail open (no-op if already open). */
+  ensureOpen(): void;
   toggleMode(): void;
   /** Tablet swipe-to-reveal (>760px, touch): open the rail floated as an overlay. */
   openOverlay(): void;
@@ -52,6 +54,12 @@ export const useLeftRail = create<LeftRailStore>((set) => ({
   close: () => {
     save("af-left-open", "0");
     set({ open: false, swipeOverlay: false });
+  },
+  /** Ensure the rail is docked open (no-op if already open). Used when a command
+   * reveals something in the rail — it must not toggle a visible rail shut. */
+  ensureOpen: () => {
+    save("af-left-open", "1");
+    set({ open: true });
   },
   toggleMode: () =>
     set((s) => {

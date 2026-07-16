@@ -6,12 +6,13 @@
 // project — that's how you focus on one ("畳む＝擬似集中"). The open state
 // persists per folder (af-proj-<repo>). File browsing lives in the rail-bottom
 // ファイル section (FilesSection), not inside the node.
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Icon } from "../../ui/Icon.tsx";
 import { useSessionsStore } from "../sessions/store.ts";
 import { SessionRow } from "../sessions/SessionRow.tsx";
 import type { SessionActions } from "../sessions/useSessionActions.tsx";
 import { RepoRowConnected } from "../repos/RepoRowConnected.tsx";
+import { useRepoReveal } from "../repos/store.ts";
 import type { RepoRailContext } from "../repos/useRepoRail.ts";
 import type { Repo } from "../repos/store.ts";
 import type { Session } from "../../types/session.ts";
@@ -60,6 +61,30 @@ export function RepoNode({ r, childRepos, ctx, actions }: RepoNodeProps) {
   const subtreeTotal =
     mine.length + (childRepos ?? []).reduce((n, c) => n + sessionsInFolder(sessions, c.name).length, 0);
   const node = usePersistedOpen(`af-proj-${r.name}`, subtreeTotal > 0);
+  // Reveal-in-rail (command palette repo row): expand this node when it's the target —
+  // or the base of a target worktree, so the worktree child mounts and focuses itself —
+  // then scroll + focus the target's row. Keyed on the reveal counter so a repeat reveal
+  // of the same repo still fires.
+  const revealN = useRepoReveal((s) => s.n);
+  useEffect(() => {
+    const target = useRepoReveal.getState().name;
+    if (!target) return;
+    const isTarget = target === r.name;
+    const isBaseOfTarget = (childRepos ?? []).some((c) => c.name === target);
+    if (isTarget || isBaseOfTarget) node.set(true);
+    if (isTarget) {
+      requestAnimationFrame(() => {
+        const sel = `[data-rail-repo="${typeof CSS !== "undefined" && CSS.escape ? CSS.escape(r.name) : r.name}"]`;
+        const el = document.querySelector<HTMLElement>(sel);
+        if (el) {
+          el.scrollIntoView({ block: "nearest" });
+          el.focus();
+        }
+      });
+    }
+    // node.set identity is stable enough; depend on the reveal counter only.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [revealN]);
   // While filtering, every visible node is forced open (the parent already
   // pruned the tree to matches) and only matching sessions render.
   const open = nq ? true : node.open;
