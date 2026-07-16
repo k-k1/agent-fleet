@@ -263,6 +263,20 @@
   font-size: 11px;
   color: var(--muted);
 }
+/* Build stamp at the foot of the account menu — selectable so it's easy to read out
+   when reporting which build is running. */
+.acct-build {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px 2px;
+  color: var(--muted);
+  font-size: 11px;
+  user-select: text;
+}
+.acct-build .codicon {
+  font-size: 12px;
+}
 .gear {
   font-size: 13px;
 }
