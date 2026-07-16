@@ -490,6 +490,17 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo }: Proje
         if (!alive) return;
       }
       setSelected(p);
+      // Selecting isn't enough — bring the revealed row into view. The row only
+      // mounts after the ancestor-expand re-render commits, so retry across a few
+      // frames until its <li> exists, then scroll it into the middle of the tree.
+      let tries = 0;
+      const scrollToRow = () => {
+        if (!alive) return;
+        const el = treeRef.current?.querySelector<HTMLElement>(`li[data-path="${CSS.escape(p)}"]`);
+        if (el) el.scrollIntoView({ block: "center" });
+        else if (tries++ < 10) requestAnimationFrame(scrollToRow);
+      };
+      requestAnimationFrame(scrollToRow);
     })();
     return () => {
       alive = false;
