@@ -1926,6 +1926,8 @@ export const ja = {
   "ui.find_next": "次の一致（Enter）",
   "ui.close_find": "検索を閉じる（Esc）",
   "ui.next_key": "次のキー",
+  "ui.wk_groups": "サブメニュー",
+  "ui.wk_actions": "アクション",
   "ui.new_version_available": "新しいバージョンがあります",
   "ui.update": "更新",
   "ui.recreate_failed": "作り直しに失敗しました",
