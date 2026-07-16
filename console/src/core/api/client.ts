@@ -399,6 +399,10 @@ export const chatRename = (id: string, title: string): Promise<Conversation> =>
   apiJSON(`api/chat/conversations/${encodeURIComponent(id)}`, "PATCH", { title });
 export const chatDelete = (id: string): Promise<Response> =>
   raw(`api/chat/conversations/${encodeURIComponent(id)}`, { method: "DELETE" });
+// Stop an in-flight assistant turn. The streaming turn is detached from its request
+// connection (survives a reload), so aborting the fetch no longer cancels it — this does.
+export const chatStop = (id: string): Promise<Response> =>
+  raw(`api/chat/conversations/${encodeURIComponent(id)}/stop`, { method: "POST" });
 // Send returns the assistant message + the updated conversation, or {error} on failure.
 export const chatSend = (
   id: string,

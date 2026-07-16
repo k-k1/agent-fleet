@@ -75,6 +75,11 @@ type chatConversation struct {
 	// Phase C) for the Console to prefill the composer. It is set AFTER saveConv, so it is
 	// never persisted — the composer owns it thereafter.
 	Seed string `json:"seed,omitempty"`
+	// InProgress is a transient flag set only by handleChatGet when an assistant turn is
+	// still running for this conversation (chat_live.go). It lets a client that reloaded
+	// mid-answer know the reply is still coming and poll for it. Never persisted (set only
+	// on the GET response, after load and never before saveConv).
+	InProgress bool `json:"in_progress,omitempty"`
 }
 
 // afToolsEnabled reports whether the fleet MCP tools attach to this chat at all (read

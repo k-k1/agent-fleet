@@ -8,6 +8,7 @@ export {
   chatDelete,
   chatSend,
   chatStream,
+  chatStop,
   chatPasteImage,
   assistantList,
   assistantGet,
