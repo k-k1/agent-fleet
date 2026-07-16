@@ -1,3 +1,5 @@
+import type { MsgKey } from "./i18n/index.ts";
+
 // Terminal background tints. Each session's terminal gets a subtle dark background so
 // the agent kind (and, for SSM, the target host) is recognizable at a glance without
 // hurting readability. The tint is a mostly-black base with a small amount of a vivid
@@ -17,17 +19,17 @@ const KIND_BASE: Record<string, string> = {
 // SSM host color palette offered in settings. The terminal shows a dark tint of the
 // chosen hue, so prod / staging / … hosts are visually distinct. "auto" derives a
 // stable hue from the host name.
-export const SSM_HOST_COLORS: { id: string; label: string; base: string }[] = [
-  { id: "auto", label: "自動", base: "" },
-  { id: "red", label: "レッド", base: "#e0574e" },
-  { id: "orange", label: "オレンジ", base: "#e8913a" },
-  { id: "yellow", label: "イエロー", base: "#d8b83a" },
-  { id: "green", label: "グリーン", base: "#4ec97a" },
-  { id: "teal", label: "ティール", base: "#46c9d0" },
-  { id: "blue", label: "ブルー", base: "#6d8bf5" },
-  { id: "purple", label: "パープル", base: "#b07cf2" },
-  { id: "pink", label: "ピンク", base: "#e069b0" },
-  { id: "gray", label: "グレー", base: "#8a94a6" },
+export const SSM_HOST_COLORS: { id: string; labelKey: MsgKey; base: string }[] = [
+  { id: "auto", labelKey: "color.auto", base: "" },
+  { id: "red", labelKey: "color.red", base: "#e0574e" },
+  { id: "orange", labelKey: "color.orange", base: "#e8913a" },
+  { id: "yellow", labelKey: "color.yellow", base: "#d8b83a" },
+  { id: "green", labelKey: "color.green", base: "#4ec97a" },
+  { id: "teal", labelKey: "color.teal", base: "#46c9d0" },
+  { id: "blue", labelKey: "color.blue", base: "#6d8bf5" },
+  { id: "purple", labelKey: "color.purple", base: "#b07cf2" },
+  { id: "pink", labelKey: "color.pink", base: "#e069b0" },
+  { id: "gray", labelKey: "color.gray", base: "#8a94a6" },
 ];
 
 // The default (untinted) terminal background, and how much hue to mix in.

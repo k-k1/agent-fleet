@@ -9,6 +9,7 @@ import { useReposStore } from "../repos/store.ts";
 import { useFilesStore } from "../files/store.ts";
 import { ConfirmDialog } from "../../ui/ConfirmDialog.tsx";
 import { Icon } from "../../ui/Icon.tsx";
+import { useT } from "../../lib/i18n/index.ts";
 
 // EnvTab selects the workspace toolchains: node (via nvm) and java (a pre-baked
 // Temurin JDK). Reads/writes via the Agent, so the workspace must be running.
@@ -16,6 +17,7 @@ import { Icon } from "../../ui/Icon.tsx";
 // selection at launch); already-running ones and the agent process itself pick it
 // up on the next Stop → Start.
 export function EnvTab() {
+  const tr = useT();
   const toast = useToast();
   const wsState = useWorkspaceStore((s) => s.state);
   const running = wsState === "running";
@@ -50,9 +52,9 @@ export function EnvTab() {
           /* ignore */
         }
         setD(cached);
-        if (!cached) setErr("Workspace を起動すると編集できます");
+        if (!cached) setErr(tr("env.load_ws_stopped"));
       });
-  }, [cacheKey]);
+  }, [cacheKey, tr]);
   useEffect(load, [load]);
 
   useEffect(() => {
@@ -64,7 +66,7 @@ export function EnvTab() {
   const setAgentUpdate = async (on: boolean) => {
     const res = await apiJSON("api/env/ws-settings", "PUT", { agentUpdate: on });
     if (res && !res.error) setAu(res);
-    else toast("保存に失敗しました");
+    else toast(tr("common.save_failed"));
   };
 
   const update = async (patch: Record<string, string>) => {
@@ -76,7 +78,7 @@ export function EnvTab() {
     };
     const res = await apiJSON("api/env/toolchains", "PUT", next);
     if (res && res.error) {
-      toast("保存に失敗: " + (res.error.message || ""));
+      toast(tr("env.save_failed_msg", { msg: res.error.message || "" }));
       return;
     }
     setD(res);
@@ -89,7 +91,7 @@ export function EnvTab() {
       ) : err ? (
         <p className="muted pad">{err}</p>
       ) : (
-        <p className="muted pad">読み込み中…</p>
+        <p className="muted pad">{tr("common.loading")}</p>
       )}
       {au && au.allowAgentUpdate && <AgentUpdateRow au={au} onChange={setAgentUpdate} />}
       <ToolVersions running={running} />
@@ -104,6 +106,7 @@ export function EnvTab() {
 // 起こり得る（override バッジ）。イメージ列にはビルド時ピンとのずれも出す（自己更新
 // opt-in で上がった場合など）。Agent 経由なので workspace が起動中のときだけ取れる。
 function ToolVersions({ running }: { running: boolean }) {
+  const tr = useT();
   const [tv, setTv] = useState<any>(null);
   const [busy, setBusy] = useState(false);
   const load = useCallback(
@@ -127,24 +130,24 @@ function ToolVersions({ running }: { running: boolean }) {
   return (
     <section className="ds-group">
       <h4 className="ds-title">
-        ツールのバージョン
+        {tr("env.tool_versions")}
         {running && (
           <button className="tool-ver-reload" disabled={busy} onClick={() => load(true)}>
-            {busy ? "取得中…" : "再取得"}
+            {busy ? tr("env.fetching") : tr("env.refetch")}
           </button>
         )}
       </h4>
       {!running ? (
-        <p className="muted ds-sub">Workspace を起動すると表示できます。</p>
+        <p className="muted ds-sub">{tr("env.tv_ws_stopped")}</p>
       ) : !tv ? (
-        <p className="muted ds-sub">{busy ? "読み込み中…" : "取得できませんでした"}</p>
+        <p className="muted ds-sub">{busy ? tr("common.loading") : tr("env.fetch_failed")}</p>
       ) : (
         <table className="tool-ver">
           <thead>
             <tr>
-              <th>ツール</th>
-              <th>実効</th>
-              <th>イメージ</th>
+              <th>{tr("env.th_tool")}</th>
+              <th>{tr("env.th_effective")}</th>
+              <th>{tr("env.th_image")}</th>
               <th>~/.local</th>
             </tr>
           </thead>
@@ -155,7 +158,7 @@ function ToolVersions({ running }: { running: boolean }) {
                 <td>
                   {cell(t.effective)}
                   {t.overridden && (
-                    <span className="tool-ver-badge" title="~/.local 側の実体が PATH でイメージ版より優先されています">
+                    <span className="tool-ver-badge" title={tr("env.override_title")}>
                       override
                     </span>
                   )}
@@ -163,8 +166,8 @@ function ToolVersions({ running }: { running: boolean }) {
                 <td>
                   {cell(t.baked)}
                   {t.pin && t.baked && t.baked.version !== t.pin && (
-                    <span className="tool-ver-pin" title="イメージビルド時のピンと現在の実体がずれています（自己更新など）">
-                      （ピン: {t.pin}）
+                    <span className="tool-ver-pin" title={tr("env.pin_title")}>
+                      {tr("env.pin_label", { pin: t.pin })}
                     </span>
                   )}
                 </td>
@@ -174,14 +177,13 @@ function ToolVersions({ running }: { running: boolean }) {
           </tbody>
         </table>
       )}
-      <p className="muted ds-sub">
-        実効 = PATH で解決される実体（~/.local/bin がイメージより優先）。セルにカーソルを載せるとパスと元の出力を表示します。
-      </p>
+      <p className="muted ds-sub">{tr("env.tv_note")}</p>
     </section>
   );
 }
 
 function Toolchains({ d, update, running }: { d: any; update: (patch: Record<string, string>) => void; running: boolean }) {
+  const tr = useT();
   const nodeOpts: string[] = d.node_options || ["system"];
   const javaOpts: string[] = d.java_available || [];
   const tz = d.timezone || "Asia/Tokyo";
@@ -191,14 +193,12 @@ function Toolchains({ d, update, running }: { d: any; update: (patch: Record<str
   return (
     <>
       <p className="muted ds-note">
-        変更は<strong>この後に起動するセッション/シェル</strong>に反映されます（起動中のものと既存プロセスは Stop → Start で反映）。
+        {tr("env.tc_note_1")}
+        <strong>{tr("env.tc_note_strong")}</strong>
+        {tr("env.tc_note_2")}
       </p>
-      {!running && (
-        <p className="muted ds-note">
-          Workspace が停止中です。起動すると変更できます。
-        </p>
-      )}
-      <Row label="タイムゾーン (TZ)">
+      {!running && <p className="muted ds-note">{tr("env.tc_ws_stopped")}</p>}
+      <Row label={tr("env.timezone")}>
         <select value={tz} disabled={!running} onChange={(e) => update({ timezone: e.target.value })}>
           {tzList.map((v) => (
             <option key={v} value={v}>
@@ -211,17 +211,17 @@ function Toolchains({ d, update, running }: { d: any; update: (patch: Record<str
         <select value={d.node || "system"} disabled={!running} onChange={(e) => update({ node: e.target.value })}>
           {nodeOpts.map((v) => (
             <option key={v} value={v}>
-              {v === "system" ? "既定 (image の node)" : "v" + v}
+              {v === "system" ? tr("env.node_default") : "v" + v}
             </option>
           ))}
         </select>
       </Row>
       <Row label="Java (JAVA_HOME)">
         {javaOpts.length === 0 ? (
-          <span className="muted">この workspace に JDK がありません</span>
+          <span className="muted">{tr("env.no_jdk")}</span>
         ) : (
           <select value={d.java || ""} disabled={!running} onChange={(e) => update({ java: e.target.value })}>
-            <option value="">未選択</option>
+            <option value="">{tr("env.unselected")}</option>
             {javaOpts.map((v) => (
               <option key={v} value={v}>
                 Temurin {v}
@@ -239,16 +239,15 @@ function Toolchains({ d, update, running }: { d: any; update: (patch: Record<str
 // workspace is STOPPED; the value is applied at the next container start. Shown only
 // when the operator allows it (tenant policy).
 function AgentUpdateRow({ au, onChange }: { au: any; onChange: (on: boolean) => void }) {
+  const tr = useT();
   return (
     <section className="ds-group">
-      <h4 className="ds-title">エージェント CLI の更新</h4>
+      <h4 className="ds-title">{tr("env.agent_update_title")}</h4>
       <label className="ds-check">
         <input type="checkbox" checked={!!au.agentUpdate} onChange={(e) => onChange(e.target.checked)} />
-        <span>起動時に claude / opencode / codex を最新へ更新する</span>
+        <span>{tr("env.agent_update_label")}</span>
       </label>
-      <p className="muted ds-sub">
-        OFF（既定）はシステムが焼いたイメージ版で固定。ON にすると次の起動時に最新へ更新します（Stop → Start で反映／OFF に戻して再起動すればイメージ版へ戻ります）。停止中でも変更できます。
-      </p>
+      <p className="muted ds-sub">{tr("env.agent_update_note")}</p>
     </section>
   );
 }
@@ -257,6 +256,7 @@ function AgentUpdateRow({ au, onChange }: { au: any; onChange: (on: boolean) => 
 // 設定 > 環境, behind a warning dialog — rather than on the always-visible WS bar,
 // since recreating discards sessions and cloned repos (logins/connections survive).
 function WorkspaceDangerZone() {
+  const tr = useT();
   const toast = useToast();
   // Recreate = reset the layout up front (everything the views point at is about
   // to go away; the terminal reconciler then disposes the other panes' xterms),
@@ -287,63 +287,71 @@ function WorkspaceDangerZone() {
       setBusy(false);
     }
   };
-  const doRecreate = () => run(() => useWorkspaceStore.getState().recreate(), "作り直しに失敗: ");
-  const doCleanHome = () => run(() => useWorkspaceStore.getState().cleanHome(), "掃除に失敗: ");
+  const doRecreate = () => run(() => useWorkspaceStore.getState().recreate(), tr("env.recreate_failed"));
+  const doCleanHome = () => run(() => useWorkspaceStore.getState().cleanHome(), tr("env.cleanhome_failed"));
 
   return (
     <section className="danger-zone">
       <h4 className="danger-zone-title">
-        <Icon name="warning" /> 危険な操作
+        <Icon name="warning" /> {tr("env.danger_zone")}
       </h4>
       <div className="danger-zone-row">
         <div className="danger-zone-text">
-          <strong>Workspace を作り直す</strong>
-          <span className="muted">コンテナを破棄し、最新イメージで再生成します（<code>~/repos</code> のみ削除。セッションは失われます）。</span>
+          <strong>{tr("env.recreate_head")}</strong>
+          <span className="muted">
+            {tr("env.recreate_desc_1")}
+            <code>~/repos</code>
+            {tr("env.recreate_desc_2")}
+          </span>
         </div>
         <button className="danger-btn" onClick={() => setConfirm("recreate")}>
-          作り直す
+          {tr("env.recreate_btn")}
         </button>
       </div>
       <div className="danger-zone-row">
         <div className="danger-zone-text">
-          <strong>ホームを掃除する</strong>
-          <span className="muted">ログイン・接続以外のホーム（<code>~/repos</code>・<code>~/.local</code>・各種キャッシュ）を消して作り直します。より深いリセット。</span>
+          <strong>{tr("env.cleanhome_head")}</strong>
+          <span className="muted">
+            {tr("env.cleanhome_desc_1")}
+            <code>~/repos</code>・<code>~/.local</code>
+            {tr("env.cleanhome_desc_2")}
+          </span>
         </div>
         <button className="danger-btn" onClick={() => setConfirm("cleanHome")}>
-          掃除する
+          {tr("env.cleanhome_btn")}
         </button>
       </div>
       {confirm === "recreate" && (
         <ConfirmDialog
-          title="Workspace を作り直しますか？"
-          confirmLabel="作り直す"
+          title={tr("env.recreate_confirm_title")}
+          confirmLabel={tr("env.recreate_btn")}
           busy={busy}
           onConfirm={doRecreate}
           onCancel={() => setConfirm(null)}
         >
-          <p>コンテナを破棄し、最新イメージで新しく作り直します。</p>
+          <p>{tr("env.recreate_confirm_body")}</p>
           <ul className="confirm-list">
-            <li className="keep"><Icon name="check" /> ログイン・接続（GitHub / Bitbucket / Claude）は保持されます</li>
-            <li className="keep"><Icon name="check" /> <code>~/repos</code> 以外のホーム（<code>~/.local</code> など）は残ります</li>
-            <li className="lose"><Icon name="close" /> 実行中のセッションは失われます</li>
-            <li className="lose"><Icon name="close" /> クローン済みリポジトリ（未コミット変更を含む）は削除されます</li>
+            <li className="keep"><Icon name="check" /> {tr("env.dz_keep_login")}</li>
+            <li className="keep"><Icon name="check" /> <code>~/repos</code>{tr("env.dz_keep_home_1")}<code>~/.local</code>{tr("env.dz_keep_home_2")}</li>
+            <li className="lose"><Icon name="close" /> {tr("env.dz_lose_sessions")}</li>
+            <li className="lose"><Icon name="close" /> {tr("env.dz_lose_repos")}</li>
           </ul>
         </ConfirmDialog>
       )}
       {confirm === "cleanHome" && (
         <ConfirmDialog
-          title="ホームを掃除しますか？"
-          confirmLabel="掃除する"
+          title={tr("env.cleanhome_confirm_title")}
+          confirmLabel={tr("env.cleanhome_btn")}
           busy={busy}
           onConfirm={doCleanHome}
           onCancel={() => setConfirm(null)}
         >
-          <p>ログイン・接続を除くホーム全体を削除し、最新イメージで作り直します。作り直しより深いリセットで、ホーム側が壊れて作り直しでも直らないときに使います。</p>
+          <p>{tr("env.cleanhome_confirm_body")}</p>
           <ul className="confirm-list">
-            <li className="keep"><Icon name="check" /> ログイン・接続（GitHub / Bitbucket / Claude）は保持されます</li>
-            <li className="lose"><Icon name="close" /> 実行中のセッションは失われます</li>
-            <li className="lose"><Icon name="close" /> クローン済みリポジトリ（未コミット変更を含む）は削除されます</li>
-            <li className="lose"><Icon name="close" /> <code>~/.local</code>・キャッシュ・設定など、ホームのその他はすべて削除されます</li>
+            <li className="keep"><Icon name="check" /> {tr("env.dz_keep_login")}</li>
+            <li className="lose"><Icon name="close" /> {tr("env.dz_lose_sessions")}</li>
+            <li className="lose"><Icon name="close" /> {tr("env.dz_lose_repos")}</li>
+            <li className="lose"><Icon name="close" /> <code>~/.local</code>{tr("env.dz_lose_home_rest")}</li>
           </ul>
         </ConfirmDialog>
       )}
