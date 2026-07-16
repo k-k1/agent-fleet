@@ -122,7 +122,23 @@ ON のとき、端末フォーカス中は全アプリショートカットを x
   「解除」（`""`）／「既定」（上書き削除）。`bindingConflicts()` で同一 chord の重複を各行に警告。
 - **キー記録**: 設定モーダルは overlay ゆえディスパッチャが不活性。記録用の capture-phase リスナが
   安全にキーを独占し、`Ctrl+P`（印刷）等だけ `preventDefault` で抑止。Esc で取消。
-- 文言は将来 [0016-i18n](decisions/0016-i18n.md) の lib/i18n 経由へ集約可能（レジストリ集約済で 1 か所）。
+
+### 5.5 i18n（日英）とパレットの日英マッチ
+
+コマンド/グループ名・各 overlay の文言は [0016-i18n](decisions/0016-i18n.md) の `lib/i18n` へ集約済み。
+`Command.title` は i18n メッセージキーで、表示は `cmdLabel()`（現ロケール）で解決する（`features/keys/labels.ts`）。
+**コマンドパレットの絞り込みは `cmdSearch()`＝全ロケール文言（ja＋en…）に対して曖昧マッチ**するので、
+UI 言語に関係なく日本語でも英語でも打ってヒットする（例: 英語 UI でも "分割" で「右に分割/Split right」に一致）。
+`lib/i18n` に `tLocales(key)`（全ロケール訳の配列）を追加。生成コマンド（ペイン N）は `keys.cmd.paneFocus|n=N`
+の `|k=v` 記法で `{n}` を運ぶ。
+
+### 5.6 overlay のフォーカス復帰
+
+コマンドパレット／チートシートは、**開いた時点のフォーカス元（opener）を記憶**し、**キャンセル
+（Esc / ブラウザ戻る / 背景クリック）時に opener へフォーカスを戻す**。入力中（コンポーザ等）に `Ctrl+P` →
+`Esc` でフォーカスが行方不明になる問題の対策。ただし**コマンド実行時は戻さない**（コマンドが意図的に
+フォーカスを移す＝ペインへ移動等のため）。タッチ端末ではソフトキーボード誤起動を避けて復帰しない
+（`coarsePointer()` ガード。既存 `useFocusTrap` と同方針）。
 
 ## 6. 実装ファイル早見
 
@@ -136,5 +152,7 @@ ON のとき、端末フォーカス中は全アプリショートカットを x
 | overlay 状態 store | `console/src/features/keys/store.ts` |
 | which-key / パレット / チートシート | `console/src/features/keys/{WhichKey,CommandPalette,CheatSheet}.tsx` |
 | ボタン inline ヒント | `console/src/features/keys/keyHint.ts` |
+| 文言解決（i18n 表示＋全ロケール検索） | `console/src/features/keys/labels.ts` |
+| 文言カタログ（`keys.*`） | `console/src/lib/i18n/locales/{ja,en}.ts` |
 | 設定タブ | `console/src/features/settings/KeysTab.tsx` |
 | 永続化（keybindings/terminalPriority） | `console/src/lib/settings.ts` |
