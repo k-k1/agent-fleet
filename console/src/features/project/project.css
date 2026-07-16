@@ -190,10 +190,13 @@
   gap: 1px;
 }
 
-/* Child worktree nodes' list. */
+/* Child worktree nodes' list. Hangs directly off the node (not inside the
+   bordered .proj-node-body), so each worktree shows only its own accent spine —
+   no redundant outer gray guide. Indented so the spine lands where that guide
+   used to be (aligned under the base row's caret), reclaiming the extra inset. */
 .proj-children {
   list-style: none;
-  margin: 1px 0 0;
+  margin: 1px 0 0 10px;
   padding: 0;
   display: flex;
   flex-direction: column;
