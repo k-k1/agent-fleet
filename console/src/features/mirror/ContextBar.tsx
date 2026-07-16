@@ -1,6 +1,8 @@
 import { fmtTok } from "../../lib/fmttok.ts";
 import { Icon } from "../../ui/Icon.tsx";
 import { Sparkline } from "../../ui/Sparkline.tsx";
+import { useT } from "../../lib/i18n/index.ts";
+import { fmtNum } from "../../lib/intl.ts";
 
 // contextWindow returns the model's context length. The current Claude family
 // (Opus 4.6/4.7/4.8, Sonnet 4.6, Fable/Mythos 5) is 1M-native — 1M is the default
@@ -32,6 +34,7 @@ interface ContextBarProps {
 // by the chat (MirrorView) and terminal (TerminalView) heads so the current context
 // fill is always visible, whichever view a claude pane is showing.
 export function ContextBar({ read, create, fresh, model, window: windowOverride, spends, maxSpend }: ContextBarProps) {
+  const tr = useT();
   const used = read + create + fresh;
   // Prefer the agent-reported window (exact); fall back to the model-name guess.
   const window = windowOverride && windowOverride > 0 ? windowOverride : contextWindow(model, used);
@@ -41,14 +44,15 @@ export function ContextBar({ read, create, fresh, model, window: windowOverride,
   // is approaching that zone instead of a full bar looking the same as an empty one.
   const level = pct >= 93 ? "full" : pct >= 80 ? "near" : "";
   const title =
-    `文脈 ${used.toLocaleString()} / ${window.toLocaleString()} トークン (${pct.toFixed(0)}%)\n` +
-    `キャッシュ再利用 ${read.toLocaleString()} · 新規キャッシュ ${create.toLocaleString()} · 未キャッシュ ${fresh.toLocaleString()}` +
-    (level ? "\nまもなく自動圧縮される可能性があります" : "");
+    tr("mirror.ctx_title", { used: fmtNum(used), window: fmtNum(window), pct: pct.toFixed(0) }) +
+    "\n" +
+    tr("mirror.ctx_breakdown", { read: fmtNum(read), create: fmtNum(create), fresh: fmtNum(fresh) }) +
+    (level ? "\n" + tr("mirror.ctx_near_compact") : "");
   return (
     <div className={"mirror-ctxbar" + (level ? " cb-" + level : "")} title={title}>
       <div className="cb-ctx">
         <span className="cb-ctx-label">
-          <span className="cb-lbl-full">コンテキスト</span>
+          <span className="cb-lbl-full">{tr("mirror.ctx_label")}</span>
           <span className="cb-lbl-short">ctx</span>
         </span>
         <div className="cb-track">
@@ -63,16 +67,13 @@ export function ContextBar({ read, create, fresh, model, window: windowOverride,
       {spends && spends.length >= 2 && (
         <>
           <span className="cb-div" aria-hidden="true" />
-          <span
-            className="cb-trend"
-            title="ターン毎の新規消費トークン（未キャッシュ入力＋新規キャッシュ＋出力）の推移"
-          >
+          <span className="cb-trend" title={tr("mirror.ctx_trend_title")}>
             <span className="cb-trend-label">
-              <span className="cb-lbl-full">トークン消費推移</span>
+              <span className="cb-lbl-full">{tr("mirror.ctx_trend_label")}</span>
               <span className="cb-lbl-short">token</span>
             </span>
             <Sparkline data={spends} width={120} height={14} />
-            <span className="cb-trend-peak">最大 {fmtTok(maxSpend ?? 0)}</span>
+            <span className="cb-trend-peak">{tr("mirror.ctx_trend_peak", { v: fmtTok(maxSpend ?? 0) })}</span>
           </span>
         </>
       )}

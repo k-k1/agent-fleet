@@ -7,7 +7,7 @@ import { Icon } from "../../ui/Icon.tsx";
 import { ConfirmDialog } from "../../ui/ConfirmDialog.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { kindLabel, kindClass, kindIcon } from "../../lib/sessionkind.ts";
-import { fmtDateTime, DATETIME_FULL } from "../../lib/intl.ts";
+import { fmtDateTime, DATETIME_FULL, compareText } from "../../lib/intl.ts";
 import { useLocale, useT } from "../../lib/i18n/index.ts";
 import { fmtGiB } from "../../lib/bytes.ts";
 import { stateInfo } from "../../lib/sessionview.ts";
@@ -347,7 +347,7 @@ function AllSessionsView({ tenants, isSuper }: { tenants: Tenant[]; isSuper: boo
               }
               const tName = (slugv: string) => tenants.find((t) => t.slug === slugv)?.name || slugv || tr("admin.unknown");
               return [...by.entries()]
-                .sort((a, b) => tName(a[0]).localeCompare(tName(b[0])))
+                .sort((a, b) => compareText(tName(a[0]), tName(b[0])))
                 .map(([tslug, list]) => (
                   <div key={tslug || "_"} className="asx-group">
                     <div className="asx-group-head">
