@@ -65,7 +65,12 @@
 /* Only the HEAD bar takes the top bar's surface (follows the 外観 top-bar color /
    theme) as an accent tying it to the same chrome; the body stays neutral (--bg, like
    any other modal) so a strong custom top-bar color doesn't flood the whole dialog. */
-.modal.settings-modal {
+/* Modal.tsx が付ける実クラスは `ui-modal settings-modal`（`.modal` は付かない）。
+   旧 `.modal.settings-modal` は Console リビルドのクラス改名で空振りしており、
+   primary ボタン／フォーカスリング（var(--accent) 直参照）が Top 色に追従して
+   いなかった。`.settings-modal` に直して retint を復活させる。アクティブタブ／
+   選択セグメントは元々 --sel-*（--sel-accent: --topbar-accent）で追従済みなので変化なし。 */
+.settings-modal {
   background: var(--bg);
   /* Retint accents (buttons, active tabs, …) to the top-bar surface, like the admin
      modal — --topbar-accent is concrete so rebinding --accent here can't cycle. */
@@ -152,7 +157,8 @@
 
 /* rtk 効果 panel (agents tab): workspace-level token-savings summary, moved here from
    the WsBar. Reuses the .wu-* meter + .ws-rtk-stats rows (globally bundled from
-   wsbar.css). Savings are positive, so the sparkline/meter are tinted with --ok. */
+   wsbar.css). Sparkline/meter follow the Top バー（外観）の色（--topbar-accent、未選択時は
+   --accent 既定へフォールバック）— 音量スライダー等の他アクセントと揃える。 */
 .rtk-gain-head {
   display: flex;
   align-items: center;
@@ -160,7 +166,7 @@
   margin-bottom: 12px;
 }
 .rtk-gain .spark {
-  color: var(--ok, #3fb950);
+  color: var(--topbar-accent, var(--accent));
   flex-shrink: 0;
 }
 .rtk-gain-headline {
@@ -176,7 +182,7 @@
   margin-bottom: 12px;
 }
 .rtk-gain .wu-bar-fill {
-  background: var(--ok, #3fb950);
+  background: var(--topbar-accent, var(--accent));
 }
 .rtk-gain .ws-rtk-stats {
   font-size: 12.5px;
@@ -257,6 +263,14 @@
 .ds-row input[type="number"] {
   font-size: 13px;
 }
+/* ds-select: 候補が多い設定（opencode の既定モデル等）はセグメントの代わりに素の
+   <select>。settings-modal の select 見た目を継ぎつつ、行内で広がり過ぎない幅に抑える。 */
+.ds-select {
+  font-size: 13px;
+  min-width: 200px;
+  max-width: min(320px, 60vw);
+  cursor: pointer;
+}
 /* 音量スライダー（docs/24）: レンジ入力＋現在値のパーセント表示。アクセントで塗る。 */
 .ds-slider {
   display: inline-flex;
@@ -267,7 +281,9 @@
 .ds-slider input[type="range"] {
   width: 160px;
   max-width: 46vw;
-  accent-color: var(--accent);
+  /* Top バー（外観）の色に追従。--topbar-accent は applyTheme が概ね常に定義（未選択でも
+     :root 既定へフォールバック）。--accent へ退避するのは念のため。 */
+  accent-color: var(--topbar-accent, var(--accent));
   cursor: pointer;
 }
 .ds-slider-val {
