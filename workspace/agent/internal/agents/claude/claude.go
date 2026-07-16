@@ -83,10 +83,20 @@ func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 			li.State = "idle"
 			status.Remove(sid)
 		}
-		// Idle by hook, but background work may still be running — surface it so 入力待ち
-		// isn't mistaken for "done". BackgroundBusy sees run_in_background worker
-		// processes under the pane; SubagentBusy sees in-process background subagents /
-		// Workflow agents (which spawn no such process) via their transcript freshness.
+		// Idle by hook, but the pane may actually be mid-turn: the "working" status file
+		// can go missing (never written, or removed by the self-heal above during a
+		// transient prompt frame) and no mid-turn hook rewrites it in bypass mode, so a
+		// busy session would wrongly read idle. IsBusy trusts the live TUI (interrupt
+		// affordance shown) and persists working — self-limiting to one capture per turn,
+		// since the next poll then reads "working" from the file.
+		if li.State == "idle" && tmuxx.IsBusy(m.Name) {
+			li.State = "working"
+			status.Persist(sid, "working")
+		}
+		// Still idle: background work may yet be running — surface it so 入力待ち isn't
+		// mistaken for "done". BackgroundBusy sees run_in_background worker processes under
+		// the pane; SubagentBusy sees in-process background subagents / Workflow agents
+		// (which spawn no such process) via their transcript freshness.
 		if li.State == "idle" {
 			li.BackgroundBusy = BackgroundBusy(m.Name) || SubagentBusy(sid)
 		}

@@ -387,7 +387,7 @@ func memberTools() []mcpTool {
 				"required": []string{"sessionName", "ids"},
 			},
 			run: func(ctx context.Context, a mcpAPI, res *resolved, args map[string]any) (string, error) {
-				out, aerr := memoFlushFor(ctx, a.mgr.store, res.rt, res.mv.MembershipID, argStr(args, "sessionName"), argStrings(args, "ids"))
+				out, aerr := memoFlushFor(ctx, a.mgr.store, res.rt, res.mv.MembershipID, argStr(args, "sessionName"), argStrings(args, "ids"), "")
 				if aerr != nil {
 					return "", fmt.Errorf("%s", aerr.message)
 				}

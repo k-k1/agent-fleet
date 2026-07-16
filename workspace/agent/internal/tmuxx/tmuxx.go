@@ -128,3 +128,24 @@ func AtIdlePrompt(name string) bool {
 	}
 	return strings.Contains(s, "shift+tab to cycle") || strings.Contains(s, "? for shortcuts")
 }
+
+// IsBusy reports whether a claude pane is actively running a turn — its footer shows
+// the "esc to interrupt" affordance, which appears only while a turn is in flight (a
+// thinking spinner or a running tool) and never at the ready prompt. It's the positive
+// inverse of AtIdlePrompt, used to *reverse*-heal a status cache that reads idle while
+// the pane is plainly working: the "working" status file can go missing (never written,
+// or removed by the working→idle self-heal during a transient prompt frame) and then no
+// mid-turn hook rewrites it — in bypass mode MessageDisplay/permtool don't touch status
+// — so a busy session would wrongly badge 入力待ち with no stop button until the next
+// Stop. Best-effort TUI read; false when the pane can't be read.
+func IsBusy(name string) bool {
+	pane := SessionPaneID(session.TmuxName(name))
+	if pane == "" {
+		return false
+	}
+	out, err := exec.Command("tmux", "capture-pane", "-p", "-t", pane).Output()
+	if err != nil {
+		return false
+	}
+	return strings.Contains(string(out), "esc to interrupt")
+}

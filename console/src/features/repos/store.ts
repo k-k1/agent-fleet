@@ -59,6 +59,21 @@ export const useLaunchTarget = create<LaunchTargetStore>((set) => ({
   clear: () => set({ target: null }),
 }));
 
+/** A first-prompt seed for the next launch (docs/21 UI刷新): the memo send modal's
+ * "新規セッションを起動" stashes the composed memo text here, then opens the launch hub.
+ * LaunchModal reads it once to prefill its prompt field, then it's cleared. */
+interface LaunchSeedStore {
+  prompt: string;
+  set(p: string): void;
+  clear(): void;
+}
+
+export const useLaunchSeed = create<LaunchSeedStore>((set) => ({
+  prompt: "",
+  set: (prompt) => set({ prompt }),
+  clear: () => set({ prompt: "" }),
+}));
+
 /** Poll every 60s while the tab is visible, so the origin-ahead badge (kept
  * fresh server-side by the Agent's auto-fetch) updates without a manual
  * refresh. Returns cleanup (StrictMode-safe). */
