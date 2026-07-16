@@ -5,7 +5,7 @@ import { Icon } from "../../ui/Icon.tsx";
 import { useLayoutStore } from "../../layout/store.ts";
 import { useTtsStore } from "../../core/store/tts.ts";
 import { useChatStore } from "./store.ts";
-import { chatGet, chatStream, chatCreate, assistantGet, chatPasteImage } from "./api.ts";
+import { chatGet, chatStream, chatStop, chatCreate, assistantGet, chatPasteImage } from "./api.ts";
 import { errText, raw } from "../../core/api/client.ts";
 import { takeChatSeed } from "../../lib/chatSeed.ts";
 import { useDraft, moveDraft, clearDraft } from "../../lib/draft.ts";
@@ -88,6 +88,8 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
   const [sending, setSending] = useState(false);
   const [streamText, setStreamText] = useState(""); // live-accumulating (tentative) answer
   const [streamSteps, setStreamSteps] = useState<ChatStep[]>([]); // working steps committed this turn (分離)
+  const [reattaching, setReattaching] = useState(false); // a reloaded turn is still running on the backend; polling for the reply
+  const [histIdx, setHistIdx] = useState<number | null>(null); // position in composer history (↑/↓ recall), or null
   const [karaoke, setKaraoke] = useState<string | null>(null); // 読み上げ中の文（ライブ配信カラオケ・docs/19）
   const [error, setError] = useState("");
   const [loadError, setLoadError] = useState("");
@@ -131,6 +133,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
     let cancelled = false;
     setError("");
     setLoadError("");
+    setHistIdx(null); // switching conversations/drafts resets composer history-recall
     if (conversationId) {
       if (convRef.current?.id === conversationId) return; // already have it (e.g. just promoted)
       applyConv(null);
@@ -174,6 +177,51 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
     if (cur && cur.id === snapshot.id && cur.updated_at >= snapshot.updated_at) return;
     applyConv(snapshot);
   }, [snapshot, conversationId]);
+
+  // Re-attach after a reload: a streaming turn is detached from its SSE request on the
+  // backend, so a browser reload aborts the stream but the turn keeps running and saves
+  // its reply. chatGet reports in_progress while that turn runs; poll until the reply
+  // lands so the answer isn't lost (it would otherwise show only the user's message and a
+  // frozen transcript). Skipped when THIS pane is the one sending — that path streams live.
+  const inProgress = !!conv?.in_progress;
+  useEffect(() => {
+    if (!conversationId || sending || !inProgress) {
+      setReattaching(false);
+      return;
+    }
+    setReattaching(true);
+    let alive = true;
+    let tries = 0;
+    const maxTries = 200; // ~280s at 1.4s — past the backend chatTimeout ceiling
+    let timer = 0;
+    const tick = async () => {
+      if (!alive) return;
+      try {
+        const c = await chatGet(conversationId);
+        if (!alive) return;
+        if (c && c.id) {
+          applyConv(c);
+          if (!c.in_progress) {
+            setReattaching(false);
+            return; // reply landed (or the turn ended) — stop polling
+          }
+        }
+      } catch {
+        /* transient fetch failure — keep polling */
+      }
+      if (++tries >= maxTries) {
+        setReattaching(false);
+        return;
+      }
+      timer = window.setTimeout(tick, 1400);
+    };
+    timer = window.setTimeout(tick, 1400);
+    return () => {
+      alive = false;
+      window.clearTimeout(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conversationId, inProgress, sending]);
 
   // Keep the transcript pinned to the newest turn (and to the thinking indicator). While
   // live karaoke is following the spoken sentence, defer to its scrollIntoView instead —
@@ -325,6 +373,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
     const userMsg: ChatMessage = { role: "user", content: prompt, ts: Date.now() };
     setConv((c) => (c ? { ...c, messages: [...c.messages, userMsg] } : c));
     setInput("");
+    setHistIdx(null); // sending leaves history-recall mode
     // Drop the stored draft synchronously: on a just-promoted first turn the key flip
     // makes useDraft reload from storage, which would resurrect the moved (now sent) text.
     clearDraft(chatDraftKey(target.id));
@@ -490,9 +539,12 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
     bumpChatList(); // a new/updated thread should surface in the rail list
   };
 
-  // Stop the in-flight turn: aborting the fetch cancels the request context up the chain
-  // (CP → Agent), which kills the headless `claude` process (docs/19).
+  // Stop the in-flight turn. The turn is now detached from its SSE request on the backend
+  // (so a reload can't kill it), which means aborting the fetch alone no longer cancels the
+  // headless process — an explicit stop call does. We still abort the local fetch to stop
+  // reading + tear down, and stop the 読み上げ.
   const stop = () => {
+    if (conversationId) void chatStop(conversationId); // cancel the detached backend turn
     abortRef.current?.abort();
     ttsRef.current?.stop(); // 読み上げも即停止（in-flight abort・再生停止・キュー破棄）
   };
@@ -500,10 +552,57 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
   // ペインを閉じる/アンマウント時は読み上げを止める（音声が居残らないように）。
   useEffect(() => () => stopTtsForReplacement(ttsRef.current), []);
 
+  // Composer history = the user's own prompts in this conversation, so ↑ recalls them even
+  // after a reload (built from conv, not just this mount). The visible words only — the
+  // machine-facing pasted-image instruction is stripped. Newest last, consecutive dupes folded.
+  const history: string[] = [];
+  for (const m of conv?.messages ?? []) {
+    if (m.role !== "user") continue;
+    const s = splitPastedImages(m.content).text.trim();
+    if (s && history[history.length - 1] !== s) history.push(s);
+  }
+
+  // Recall the previous / next prompt (shared by ↑/↓ and the on-screen buttons shown on
+  // phones, which have no arrow keys). Mirrors MirrorView's composer history.
+  const recallPrev = () => {
+    if (!history.length) return;
+    const ni = histIdx !== null ? Math.max(0, histIdx - 1) : history.length - 1;
+    setHistIdx(ni);
+    setInput(history[ni]);
+    inputRef.current?.focus();
+  };
+  const recallNext = () => {
+    if (histIdx === null) return;
+    const ni = histIdx + 1;
+    if (ni >= history.length) {
+      setHistIdx(null);
+      setInput("");
+    } else {
+      setHistIdx(ni);
+      setInput(history[ni]);
+    }
+    inputRef.current?.focus();
+  };
+
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     // Scroll the message list without leaving the composer: Shift+↑/↓ nudges, Ctrl/⌘+↑/↓
-    // and Ctrl/⌘+[ / ] page.
+    // and Ctrl/⌘+[ / ] page. Checked before history recall so the modified arrows don't get
+    // swallowed by the ↑/↓ recall path below.
     if (!e.nativeEvent.isComposing && scrollComposerViewport(e, scrollRef.current)) return;
+    // Shell-style history: ↑/↓ recall past prompts when the field is empty (or once recall
+    // is underway). With text present, arrows move the caret as usual.
+    if ((e.key === "ArrowUp" || e.key === "ArrowDown") && !e.nativeEvent.isComposing) {
+      if (e.key === "ArrowUp" && (input === "" || histIdx !== null) && history.length) {
+        e.preventDefault();
+        recallPrev();
+        return;
+      }
+      if (e.key === "ArrowDown" && histIdx !== null) {
+        e.preventDefault();
+        recallNext();
+        return;
+      }
+    }
     // Don't intercept Enter while an IME candidate window is open (JP/CJK input).
     if (e.key !== "Enter" || e.nativeEvent.isComposing) return;
     const mod = e.ctrlKey || e.metaKey;
@@ -520,9 +619,10 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
   const agent = agentKind ? agentOf(agentKind) : null;
   const title = conv?.title || (draftAsst && assistantName(draftAsst)) || t("chat.label");
   const isDraft = !conversationId && !!draftAssistantId;
-  // A turn may be in flight because THIS pane is sending, or because a background turn on
-  // this conversation (started before the pane was closed + re-opened) is still running.
-  const showStreaming = sending || storeBusy;
+  // A turn may be in flight because THIS pane is sending, because a background turn on this
+  // conversation (started before the pane was closed + re-opened) is still running, or
+  // because we reloaded into a detached turn and are polling for its reply (reattaching).
+  const showStreaming = sending || storeBusy || reattaching;
   const streamBody = sending ? streamText : (liveTurn?.text ?? "");
   const liveSteps = sending ? streamSteps : (liveTurn?.steps ?? []);
   const empty = (!conv || conv.messages.length === 0) && !loadError && !showStreaming;
@@ -683,6 +783,27 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
           </div>
         )}
         <div className="chat-composer-row">
+          {/* History nav for phones (no arrow keys); hidden on wider screens via CSS. */}
+          <div className="chat-hist">
+            <button
+              type="button"
+              className="btn chat-hist-btn"
+              title={tr("chat.prev_input")}
+              disabled={!history.length || (!conv && !isDraft) || showStreaming}
+              onClick={recallPrev}
+            >
+              <Icon name="chevron-up" />
+            </button>
+            <button
+              type="button"
+              className="btn chat-hist-btn"
+              title={tr("chat.next_input")}
+              disabled={histIdx === null || (!conv && !isDraft) || showStreaming}
+              onClick={recallNext}
+            >
+              <Icon name="chevron-down" />
+            </button>
+          </div>
           <textarea
             ref={inputRef}
             className="chat-input"
@@ -699,19 +820,23 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
                 : tr("chat.ph_loading")
             }
             disabled={(!conv && !isDraft) || showStreaming}
-            onChange={(e) => setInput(e.target.value)}
+            onChange={(e) => {
+              setInput(e.target.value);
+              setHistIdx(null); // typing leaves history-recall mode
+            }}
             onKeyDown={onKeyDown}
             onPaste={onPaste}
             rows={2}
           />
-          {sending ? (
+          {sending || reattaching ? (
+            // reattaching: reloaded into a detached turn — stop still works via chatStop.
             <button type="button" className="btn chat-send chat-stop" onClick={stop} title={tr("chat.stop")}>
               <Icon name="debug-stop" />
             </button>
           ) : (
             <button
               type="button"
-              className="btn chat-send"
+              className="btn primary chat-send"
               disabled={(!conv && !isDraft) || showStreaming || (!input.trim() && !attachments.length)}
               onClick={() => void send()}
               title={tr("chat.send")}
@@ -835,19 +960,90 @@ function ChatSteps({ steps, defaultOpen, live }: { steps: ChatStep[]; defaultOpe
         </span>
       </summary>
       <div className="mt-work-body">
-        {steps.map((s, i) => (
-          <div key={i} className="chat-step">
-            {s.text && <ChatMarkdown source={s.text} breaks />}
-            {s.tools?.map((tool, j) => (
-              <div key={j} className="mt-tool">
-                <Icon name="tools" />
-                <span className="mt-tool-name">{tool}</span>
-              </div>
-            ))}
-          </div>
-        ))}
+        {foldStepParts(steps).map((it, i) =>
+          it.kind === "text" ? (
+            <div key={i} className="chat-step">
+              <ChatMarkdown source={it.text} breaks />
+            </div>
+          ) : (
+            <ChatToolRun key={i} tools={it.tools} />
+          ),
+        )}
       </div>
     </details>
+  );
+}
+
+// Flatten a turn's 作業過程 into an ordered list of parts (narration text / tool name), then
+// coalesce each maximal run of CONSECUTIVE tool calls into one folded run — matching
+// MirrorView's foldParts/ToolRun. Narration between tools breaks a run (so a lone tool stays
+// on its own; back-to-back tool-only steps fold together).
+type StepItem = { kind: "text"; text: string } | { kind: "toolrun"; tools: string[] };
+function foldStepParts(steps: ChatStep[]): StepItem[] {
+  const items: StepItem[] = [];
+  const pushTool = (name: string) => {
+    const last = items[items.length - 1];
+    if (last && last.kind === "toolrun") last.tools.push(name);
+    else items.push({ kind: "toolrun", tools: [name] });
+  };
+  for (const s of steps) {
+    const text = s.text?.trim();
+    if (text) items.push({ kind: "text", text });
+    for (const tool of s.tools ?? []) pushTool(tool);
+  }
+  return items;
+}
+
+// ChatToolRun renders a run of consecutive tool/mcp calls in the 作業過程. A lone call shows
+// as a plain chip (as the mirror does for output-less traces); two or more fold into one
+// collapsed "N 件のツール · tally" summary that expands to the individual calls. Mirrors
+// MirrorView's ToolRun, reusing its .mt-toolrun / .mt-tool styling.
+function ChatToolRun({ tools }: { tools: string[] }) {
+  const tr = useT();
+  const [open, setOpen] = useState(false);
+  if (tools.length === 1) {
+    return (
+      <div className="mt-tool">
+        <Icon name="tools" />
+        <span className="mt-tool-name">{tools[0]}</span>
+      </div>
+    );
+  }
+  // Tally repeated names (Read×3 · Grep) so a long run reads at a glance.
+  const tally: [string, number][] = [];
+  const at: Record<string, number> = {};
+  for (const name of tools) {
+    if (at[name] === undefined) {
+      at[name] = tally.length;
+      tally.push([name, 0]);
+    }
+    tally[at[name]][1]++;
+  }
+  const summary = tally.map(([n, c]) => (c > 1 ? `${n}×${c}` : n)).join(" · ");
+  return (
+    <div className={"mt-toolrun" + (open ? " open" : "")}>
+      <button
+        type="button"
+        className="mt-tool mt-toolrun-head"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        title={open ? tr("mirror.collapse_tools") : tr("mirror.expand_tools")}
+      >
+        <Icon name={open ? "chevron-down" : "chevron-right"} />
+        <span className="mt-tool-name">{tCount("mirror.tools_count", tools.length)}</span>
+        <span className="mt-tool-info">{summary}</span>
+      </button>
+      {open && (
+        <div className="mt-toolrun-body">
+          {tools.map((name, i) => (
+            <div key={i} className="mt-tool">
+              <Icon name="tools" />
+              <span className="mt-tool-name">{name}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 

@@ -1029,6 +1029,8 @@ export const en: Record<keyof typeof ja, string> = {
   "chat.uploading": "Uploading…",
   "chat.stop": "Stop",
   "chat.send": "Send",
+  "chat.prev_input": "Previous input",
+  "chat.next_input": "Next input",
   "chat.work_process": "Working steps",
   "chat.tool_count_one": "{count} tool",
   "chat.tool_count_other": "{count} tools",
