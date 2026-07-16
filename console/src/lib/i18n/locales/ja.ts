@@ -1151,6 +1151,7 @@ export const ja = {
   // コンポーザ
   "mirror.prev_input": "前の入力",
   "mirror.next_input": "次の入力",
+  "mirror.todo_dismiss": "このToDoリストを消す",
   "mirror.attach_file": "ファイルを添付（ドラッグ&ドロップも可）",
   "mirror.ph_plan_wait": "プラン承認待ち：上のカードで承認 / 却下してください",
   "mirror.ph_perm_wait": "許可待ち：上のカードで応答してください",
