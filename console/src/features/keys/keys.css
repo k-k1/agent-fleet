@@ -134,9 +134,15 @@
   padding: 1px 8px;
   flex: none;
 }
+/* Shortcut keycaps on the right of a palette row. Holds a chord sequence (leader + seq
+   keys, or a single direct accelerator), so it lays its Kbd chips out in a row and never
+   shrinks — the title ellipsizes to make room instead. */
 .cp-kbd {
   margin-left: 2px;
   flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 
 /* ---- cheat-sheet (the "?" shortcut reference) ---- */
