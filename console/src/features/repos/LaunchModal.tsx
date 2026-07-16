@@ -310,7 +310,7 @@ export function LaunchModal({ repo, branch, path, kinds, allowWorktree = true, o
               >
                 <Icon name="terminal" /> CLI (TUI)
                 <span className="seg-sub">
-                  ターミナル操作可・メモリ +{agentOf(kind).tuiMemoryCost}
+                  ターミナル操作可・メモリ +{tr("common.approx", { v: agentOf(kind).tuiMemoryCost })}
                 </span>
               </button>
             </div>
