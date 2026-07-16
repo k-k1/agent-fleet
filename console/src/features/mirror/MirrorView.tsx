@@ -783,10 +783,11 @@ export function MirrorView({
   // poll replaces `pending` with a fresh array every tick, so an unconditional scroll here
   // yanked them back down every 1.2–3s.
   //
-  // When a NEW reply appears we do NOT jump to the bottom of it — a long answer would drop
-  // the user at the end, forcing them to scroll back up to read it from the start. Instead
-  // we bring the TOP of the reply to the top of the viewport once (tracked by its idx) and
-  // then leave the user alone as it streams, so they read it top-down at their own pace.
+  // While a reply is still WORKING we follow the bottom so the streamed 作業過程 / answer stays
+  // in view — the user watches progress live. We do NOT leave them stranded at the end of a
+  // long answer, though: the moment the reply COMPLETES we re-anchor once to the FINAL
+  // ANSWER's first line at the viewport top (tracked by its idx), so it reads from the start
+  // instead of the tail. After that anchor we leave the user alone.
   useEffect(() => {
     if (!atBottomRef.current) return;
     const el = bodyRef.current;
@@ -829,29 +830,24 @@ export function MirrorView({
     }
 
     if (replyIdx !== undefined) {
+      // Start tracking a newly-arrived reply, but do NOT anchor its top: while it streams we
+      // follow the bottom (below) so the user watches progress. answerAnchoredRef resets so the
+      // final-answer anchor fires once this reply completes.
       if (replyIdx !== anchoredIdxRef.current) {
-        // A new reply just appeared: bring its head to the viewport top (small gap so it
-        // isn't flush) so the user reads it from the first line, then leave them alone as
-        // it streams. Guard the scroll handler so this upward move isn't misread as the
-        // user scrolling up off the bottom.
         anchoredIdxRef.current = replyIdx;
         answerAnchoredRef.current = undefined; // this reply's final answer hasn't been anchored yet
-        const node = el.querySelector<HTMLElement>(`[data-turn-idx="${replyIdx}"]`);
-        if (node) {
-          const top = el.scrollTop + (node.getBoundingClientRect().top - el.getBoundingClientRect().top) - 12;
-          if (Math.abs(el.scrollTop - top) >= 1) {
-            selfScrollRef.current = true;
-            el.scrollTop = Math.max(0, top);
-          }
-        }
+      }
+      // Still working: follow the bottom so the streamed 作業過程 / answer tail stays in view.
+      if (status === "working") {
+        toBottom();
         return;
       }
-      // Already anchored this reply's top. Once it completes, a following pane collapses the
-      // 作業過程 into a disclosure (defaultWorkOpen=!atBottom) and the reply's top becomes that
-      // collapsed row — so re-anchor once to the FINAL ANSWER's first line at the viewport top.
-      // Only when work was actually folded; a reply with no foldable work already sits with its
-      // answer at the top, so just mark it done.
-      if (status !== "working" && answerAnchoredRef.current !== replyIdx) {
+      // Completed: a following pane collapses the 作業過程 into a disclosure (defaultWorkOpen=
+      // !atBottom, and we've been at the bottom) so the reply's top becomes that collapsed row —
+      // re-anchor once to the FINAL ANSWER's first line at the viewport top, so the user reads
+      // it from the start rather than the tail we followed to. Only when work was actually
+      // folded; a reply with no foldable work already sits with its answer at the top.
+      if (answerAnchoredRef.current !== replyIdx) {
         const body = el.querySelector<HTMLElement>(`[data-turn-idx="${replyIdx}"] .mirror-turn-body`);
         const work = body?.querySelector<HTMLElement>(":scope > .mt-work");
         const answer = work?.nextElementSibling as HTMLElement | null;
