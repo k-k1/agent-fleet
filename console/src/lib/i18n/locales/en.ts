@@ -848,6 +848,8 @@ export const en: Record<keyof typeof ja, string> = {
   "keys.palette.changed_empty": "No changed files",
   "keys.palette.file_hint": "Type to search files",
   "keys.palette.file_searching": "Searching…",
+  "keys.palette.open_here": "Open in active pane",
+  "keys.palette.open_split": "Open in new pane",
   "keys.item.command": "Command",
   "keys.item.session": "Session",
   "keys.cheat.title": "Keyboard shortcuts",

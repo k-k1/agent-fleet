@@ -56,7 +56,9 @@ interface Item {
    * direct accelerator is one chord (["alt+1"]); a leader command is the leader plus each
    * step (["mod+k","p","r"]). Empty when the command has no key (or a session/file row). */
   keys: string[];
-  run: () => void;
+  /** Activate the row. `split` (Ctrl/⌘+Enter) opens file/diff rows in a NEW pane; the
+   * plain Enter opens in the active pane. Command/session rows ignore split. */
+  run: (split: boolean) => void;
 }
 
 // One working-tree change from api/repos/{repo}/changes.
@@ -106,7 +108,12 @@ async function loadChangedItems(): Promise<Item[]> {
             sub: r.name,
             search: c.path + " " + r.name,
             keys: [],
-            run: () => openFileDiff(r.name, c.path, staged),
+            run: (split) =>
+              split
+                ? useLayoutStore
+                    .getState()
+                    .openTargetInNew({ content: { kind: "wtdiff", scmRepo: r.name, filePath: c.path, diffStaged: staged } })
+                : openFileDiff(r.name, c.path, staged),
           };
         });
       } catch {
@@ -130,7 +137,12 @@ function fileItem(homeRel: string): Item {
     sub: repo || rel,
     search: rel,
     keys: [],
-    run: () => useLayoutStore.getState().openTarget({ content: { kind: "file", filePath: homeRel } }),
+    run: (split) => {
+      const st = useLayoutStore.getState();
+      const content = { kind: "file", filePath: homeRel } as const;
+      if (split) st.openTargetInNew({ content });
+      else st.openTarget({ content });
+    },
   };
 }
 
@@ -216,7 +228,7 @@ export function CommandPalette() {
       sub: t("keys.item.command"),
       search: cmdSearch(c.title),
       keys: shortcutChords(c, leader),
-      run: () => c.run(ctx),
+      run: () => c.run(ctx), // commands ignore split
     }));
     const sess: Item[] = sessions.map((s) => {
       const title = s.title || s.name;
@@ -254,11 +266,13 @@ export function CommandPalette() {
 
   if (!open) return null;
 
-  const run = (it?: Item) => {
+  // split (Ctrl/⌘+Enter or Ctrl/⌘+click) opens a file/diff row in a new pane; plain opens
+  // in the active pane. The opened viewer takes focus via Pane's own scroller auto-focus.
+  const run = (it?: Item, split = false) => {
     if (!it) return;
     openerRef.current = null; // running/opening owns focus; don't restore to the opener
     close();
-    it.run();
+    it.run(split);
   };
 
   return (
@@ -306,7 +320,7 @@ export function CommandPalette() {
               setSel((s) => Math.max(s - 1, 0));
             } else if (e.key === "Enter") {
               e.preventDefault();
-              run(filtered[sel]);
+              run(filtered[sel], e.ctrlKey || e.metaKey); // Ctrl/⌘+Enter → new pane
             }
           }}
         />
@@ -343,7 +357,7 @@ export function CommandPalette() {
                 onMouseMove={() => setSel(i)}
                 onMouseDown={(e) => {
                   e.preventDefault();
-                  run(it);
+                  run(it, e.ctrlKey || e.metaKey); // Ctrl/⌘+click → new pane
                 }}
               >
                 <span className="cp-title">{it.title}</span>
@@ -359,6 +373,16 @@ export function CommandPalette() {
             ))
           )}
         </div>
+        {mode !== "command" && (
+          <div className="cp-foot">
+            <span>
+              <Kbd chord="enter" /> {t("keys.palette.open_here")}
+            </span>
+            <span>
+              <Kbd chord="mod+enter" /> {t("keys.palette.open_split")}
+            </span>
+          </div>
+        )}
       </div>
     </div>
   );

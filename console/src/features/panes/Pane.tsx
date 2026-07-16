@@ -22,6 +22,8 @@ import { DiffView } from "../viewer/DiffView.tsx";
 import type { DiffEdit } from "../viewer/DiffView.tsx";
 import { ChatView } from "../chat/ChatView.tsx";
 import { useSettings } from "../../lib/settings.ts";
+import { coarsePointer } from "../../lib/device.ts";
+import { findScroller, VIEWER_KINDS } from "../../lib/keyScroll.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import { IconButton } from "../../ui/Button.tsx";
 import { cx } from "../../ui/cx.ts";
@@ -77,6 +79,43 @@ export function Pane({
   // null when not a drop target; else the pointer's zone: 'center' → swap;
   // 'right'/'down' → tear the dragged pane off into a new split.
   const [zone, setZone] = useState<string | null>(null);
+
+  // Read-only viewer panes (file / diff / scm / …) have no input to autofocus, so opening one
+  // left the keyboard with no scroll target — ↑/↓ did nothing until you clicked the content.
+  // When such a pane is active or its content changes, move focus onto its scroller so the
+  // arrows/PageUp-Down/Space scroll it right away. Content loads async and each view uses a
+  // different scroller class, so we locate it by geometry (findScroller) and watch for it to
+  // appear via a MutationObserver rather than a single post-render attempt. Never steals focus
+  // already inside the pane (a clicked link/button); no-op on touch (would summon the keyboard).
+  const contentKey = JSON.stringify(pane.content); // re-focus when the opened target changes
+  useEffect(() => {
+    if (!active || coarsePointer() || !VIEWER_KINDS.has(pane.content.kind)) return;
+    const root = paneRef.current;
+    if (!root) return;
+    let done = false;
+    const tryFocus = () => {
+      if (done) return;
+      if (root.contains(document.activeElement)) {
+        done = true; // focus already inside (e.g. a clicked link) — leave it alone
+        return;
+      }
+      const el = findScroller(root);
+      if (!el) return; // scroller not present / not overflowing yet — keep watching
+      if (!el.hasAttribute("tabindex")) el.tabIndex = -1; // focusable, but out of Tab order
+      el.focus({ preventScroll: true });
+      done = true;
+    };
+    tryFocus(); // synchronous content (e.g. DiffView) lands immediately
+    if (done) return;
+    const obs = new MutationObserver(tryFocus); // async content (fetch → render) lands here
+    obs.observe(root, { childList: true, subtree: true });
+    const timer = window.setTimeout(() => obs.disconnect(), 3000);
+    return () => {
+      obs.disconnect();
+      window.clearTimeout(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active, contentKey]);
 
   // Markdown mirror (case-A): a claude session pane can swap its raw terminal for
   // a read-mostly chat view. A stopped session opened as chat starts DETACHED

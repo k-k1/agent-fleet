@@ -853,6 +853,8 @@ export const ja = {
   "keys.palette.changed_empty": "変更ファイルはありません",
   "keys.palette.file_hint": "文字を入力してファイルを検索",
   "keys.palette.file_searching": "検索中…",
+  "keys.palette.open_here": "アクティブなペインで開く",
+  "keys.palette.open_split": "新しいペインで開く",
   "keys.item.command": "コマンド",
   "keys.item.session": "セッション",
   "keys.cheat.title": "キーボードショートカット",
