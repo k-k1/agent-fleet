@@ -30,8 +30,10 @@ function buildTidyPrompt(memos: Memo[]): string {
     id: m.id,
     repo: m.repo,
     category: m.category,
+    // i18n-exempt: LLM プロンプトに渡すメモ本文（表示でなくモデル挙動・docs/28 §4）
     text: m.kind === "file" ? `対象ファイル ${m.refPath}${m.body ? " — " + m.body : ""}` : m.body,
   }));
+  // i18n-exempt-start: LLM プロンプト（表示でなくモデル挙動・docs/28 §4）
   return (
     "あなたはメモ整理アシスタントです。以下は開発者の走り書きメモです。各メモについて、" +
     "(1) 指示として明確な日本語に整形し、(2) サブプロジェクトを表す短いカテゴリ名を提案してください。" +
@@ -41,6 +43,7 @@ function buildTidyPrompt(memos: Memo[]): string {
     "メモ:\n" +
     JSON.stringify(items, null, 2)
   );
+  // i18n-exempt-end
 }
 
 // parseTidyReply pulls the JSON array out of a chat reply that may wrap it in prose or
