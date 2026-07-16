@@ -5,7 +5,7 @@ import { Icon } from "../../ui/Icon.tsx";
 import { useLayoutStore } from "../../layout/store.ts";
 import { useTtsStore } from "../../core/store/tts.ts";
 import { useChatStore } from "./store.ts";
-import { chatGet, chatStream, chatCreate, assistantGet, chatPasteImage } from "./api.ts";
+import { chatGet, chatStream, chatStop, chatCreate, assistantGet, chatPasteImage } from "./api.ts";
 import { errText, raw } from "../../core/api/client.ts";
 import { takeChatSeed } from "../../lib/chatSeed.ts";
 import { useDraft, moveDraft, clearDraft } from "../../lib/draft.ts";
@@ -87,6 +87,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
   const [sending, setSending] = useState(false);
   const [streamText, setStreamText] = useState(""); // live-accumulating (tentative) answer
   const [streamSteps, setStreamSteps] = useState<ChatStep[]>([]); // working steps committed this turn (分離)
+  const [reattaching, setReattaching] = useState(false); // a reloaded turn is still running on the backend; polling for the reply
   const [karaoke, setKaraoke] = useState<string | null>(null); // 読み上げ中の文（ライブ配信カラオケ・docs/19）
   const [error, setError] = useState("");
   const [loadError, setLoadError] = useState("");
@@ -173,6 +174,51 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
     if (cur && cur.id === snapshot.id && cur.updated_at >= snapshot.updated_at) return;
     applyConv(snapshot);
   }, [snapshot, conversationId]);
+
+  // Re-attach after a reload: a streaming turn is detached from its SSE request on the
+  // backend, so a browser reload aborts the stream but the turn keeps running and saves
+  // its reply. chatGet reports in_progress while that turn runs; poll until the reply
+  // lands so the answer isn't lost (it would otherwise show only the user's message and a
+  // frozen transcript). Skipped when THIS pane is the one sending — that path streams live.
+  const inProgress = !!conv?.in_progress;
+  useEffect(() => {
+    if (!conversationId || sending || !inProgress) {
+      setReattaching(false);
+      return;
+    }
+    setReattaching(true);
+    let alive = true;
+    let tries = 0;
+    const maxTries = 200; // ~280s at 1.4s — past the backend chatTimeout ceiling
+    let timer = 0;
+    const tick = async () => {
+      if (!alive) return;
+      try {
+        const c = await chatGet(conversationId);
+        if (!alive) return;
+        if (c && c.id) {
+          applyConv(c);
+          if (!c.in_progress) {
+            setReattaching(false);
+            return; // reply landed (or the turn ended) — stop polling
+          }
+        }
+      } catch {
+        /* transient fetch failure — keep polling */
+      }
+      if (++tries >= maxTries) {
+        setReattaching(false);
+        return;
+      }
+      timer = window.setTimeout(tick, 1400);
+    };
+    timer = window.setTimeout(tick, 1400);
+    return () => {
+      alive = false;
+      window.clearTimeout(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conversationId, inProgress, sending]);
 
   // Keep the transcript pinned to the newest turn (and to the thinking indicator). While
   // live karaoke is following the spoken sentence, defer to its scrollIntoView instead —
@@ -489,9 +535,12 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
     bumpChatList(); // a new/updated thread should surface in the rail list
   };
 
-  // Stop the in-flight turn: aborting the fetch cancels the request context up the chain
-  // (CP → Agent), which kills the headless `claude` process (docs/19).
+  // Stop the in-flight turn. The turn is now detached from its SSE request on the backend
+  // (so a reload can't kill it), which means aborting the fetch alone no longer cancels the
+  // headless process — an explicit stop call does. We still abort the local fetch to stop
+  // reading + tear down, and stop the 読み上げ.
   const stop = () => {
+    if (conversationId) void chatStop(conversationId); // cancel the detached backend turn
     abortRef.current?.abort();
     ttsRef.current?.stop(); // 読み上げも即停止（in-flight abort・再生停止・キュー破棄）
   };
@@ -516,9 +565,10 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
   const agent = agentKind ? agentOf(agentKind) : null;
   const title = conv?.title || (draftAsst && assistantName(draftAsst)) || t("chat.label");
   const isDraft = !conversationId && !!draftAssistantId;
-  // A turn may be in flight because THIS pane is sending, or because a background turn on
-  // this conversation (started before the pane was closed + re-opened) is still running.
-  const showStreaming = sending || storeBusy;
+  // A turn may be in flight because THIS pane is sending, because a background turn on this
+  // conversation (started before the pane was closed + re-opened) is still running, or
+  // because we reloaded into a detached turn and are polling for its reply (reattaching).
+  const showStreaming = sending || storeBusy || reattaching;
   const streamBody = sending ? streamText : (liveTurn?.text ?? "");
   const liveSteps = sending ? streamSteps : (liveTurn?.steps ?? []);
   const empty = (!conv || conv.messages.length === 0) && !loadError && !showStreaming;
@@ -700,7 +750,8 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
             onPaste={onPaste}
             rows={2}
           />
-          {sending ? (
+          {sending || reattaching ? (
+            // reattaching: reloaded into a detached turn — stop still works via chatStop.
             <button type="button" className="btn chat-send chat-stop" onClick={stop} title={tr("chat.stop")}>
               <Icon name="debug-stop" />
             </button>
