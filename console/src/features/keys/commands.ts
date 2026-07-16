@@ -77,6 +77,7 @@ export const GROUPS: Group[] = [
   { id: "s", title: "keys.grp.session" },
   { id: "w", title: "keys.grp.workspace" },
   { id: "g", title: "keys.grp.open" },
+  { id: "n", title: "keys.grp.memo" },
 ];
 
 // Alt+1..8 → focus pane N (also under leader: p 1..8). Matches the visible ordinal chip.
@@ -116,13 +117,14 @@ export const ALL_COMMANDS: Command[] = [
   // ---- Session (leader s) ----
   { id: "session.new", title: "keys.cmd.sessionNew", seq: "s n", run: () => useSessionsStore.getState().openStart() },
 
-  // ---- Memo (top-level leader m) ----
-  // Reveal the rail + memo composer for a quick note. A single leader key (not a group)
-  // because it's a one-shot action, mirroring "," (settings) / ";" (palette).
+  // ---- Memo (leader n) ----
+  // A memo group (leader → n) rather than a single key: the top-level single key "m" is
+  // the voice read-aloud toggle (tts.toggle, m = mute), which stays instant. Memo takes a
+  // two-key path (n a = note→add) so it never competes with that fast toggle.
   {
     id: "memo.add",
     title: "keys.cmd.memoAdd",
-    seq: "m",
+    seq: "n a",
     run: () => {
       if (!useLeftRail.getState().open) useLeftRail.getState().toggle();
       useMemoStore.getState().requestCompose();
