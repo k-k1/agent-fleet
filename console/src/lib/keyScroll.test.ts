@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { scrollComposerViewport, isScrollGesture } from "./keyScroll.ts";
+import { scrollComposerViewport, isScrollKey, paneScrollDelta } from "./keyScroll.ts";
 
 // A minimal scrollable-element stand-in (node env has no DOM). clientHeight 200,
 // scrollHeight 1000 → max scrollTop 800.
@@ -77,29 +77,51 @@ describe("scrollComposerViewport", () => {
   });
 });
 
-describe("isScrollGesture", () => {
-  const g = (key: string, m: Partial<{ shift: boolean; ctrl: boolean; meta: boolean; alt: boolean }> = {}) => ({
-    key,
-    shiftKey: !!m.shift,
-    ctrlKey: !!m.ctrl,
-    metaKey: !!m.meta,
-    altKey: !!m.alt,
+const g = (key: string, m: Partial<{ shift: boolean; ctrl: boolean; meta: boolean; alt: boolean }> = {}) => ({
+  key,
+  shiftKey: !!m.shift,
+  ctrlKey: !!m.ctrl,
+  metaKey: !!m.meta,
+  altKey: !!m.alt,
+});
+
+describe("isScrollKey", () => {
+  it("accepts the nav keys (unmodified state-agnostic), rejects typing and Alt", () => {
+    for (const k of ["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " ", "[", "]"])
+      expect(isScrollKey(g(k))).toBe(true);
+    expect(isScrollKey(g("a"))).toBe(false);
+    expect(isScrollKey(g("Enter"))).toBe(false);
+    expect(isScrollKey(g("ArrowUp", { alt: true }))).toBe(false); // Alt is pane-nav
+  });
+});
+
+describe("paneScrollDelta", () => {
+  // clientHeight 200 → page step = max(48, 200-48) = 152.
+  const el = { scrollHeight: 1000, clientHeight: 200 } as unknown as HTMLElement;
+  const PAGE = 152;
+
+  it("modified gestures drive regardless of focus", () => {
+    expect(paneScrollDelta(g("ArrowDown", { shift: true }), el, false)).toBe(48); // line
+    expect(paneScrollDelta(g("ArrowUp", { shift: true }), el, false)).toBe(-48);
+    expect(paneScrollDelta(g("ArrowDown", { ctrl: true }), el, false)).toBe(PAGE);
+    expect(paneScrollDelta(g("]", { meta: true }), el, false)).toBe(PAGE);
+    expect(paneScrollDelta(g("[", { ctrl: true }), el, false)).toBe(-PAGE);
   });
 
-  it("accepts Shift+↑/↓ and Ctrl/⌘+↑/↓ and Ctrl/⌘+[ / ]", () => {
-    expect(isScrollGesture(g("ArrowUp", { shift: true }))).toBe(true);
-    expect(isScrollGesture(g("ArrowDown", { shift: true }))).toBe(true);
-    expect(isScrollGesture(g("ArrowUp", { ctrl: true }))).toBe(true);
-    expect(isScrollGesture(g("ArrowDown", { meta: true }))).toBe(true);
-    expect(isScrollGesture(g("[", { ctrl: true }))).toBe(true);
-    expect(isScrollGesture(g("]", { meta: true }))).toBe(true);
+  it("plain nav keys only when the scroller is focused", () => {
+    expect(paneScrollDelta(g("ArrowDown"), el, false)).toBe(null); // not focused → ignored
+    expect(paneScrollDelta(g("ArrowDown"), el, true)).toBe(48);
+    expect(paneScrollDelta(g("ArrowUp"), el, true)).toBe(-48);
+    expect(paneScrollDelta(g("PageDown"), el, true)).toBe(PAGE);
+    expect(paneScrollDelta(g("PageUp"), el, true)).toBe(-PAGE);
+    expect(paneScrollDelta(g(" "), el, true)).toBe(PAGE); // Space pages down
+    expect(paneScrollDelta(g(" ", { shift: true }), el, true)).toBe(-PAGE); // Shift+Space up
+    expect(paneScrollDelta(g("Home"), el, true)).toBe(-1e9);
+    expect(paneScrollDelta(g("End"), el, true)).toBe(1e9);
   });
 
-  it("rejects unmodified, alt-modified, and mismatched combos", () => {
-    expect(isScrollGesture(g("ArrowUp"))).toBe(false); // plain arrow
-    expect(isScrollGesture(g("ArrowUp", { alt: true }))).toBe(false); // Alt is pane-nav
-    expect(isScrollGesture(g("ArrowUp", { ctrl: true, shift: true }))).toBe(false); // both mods
-    expect(isScrollGesture(g("[", { shift: true }))).toBe(false); // brackets need a mod, not shift
-    expect(isScrollGesture(g("a", { ctrl: true }))).toBe(false); // not an arrow/bracket
+  it("returns null for non-scroll keys and Alt", () => {
+    expect(paneScrollDelta(g("a"), el, true)).toBe(null);
+    expect(paneScrollDelta(g("ArrowDown", { alt: true }), el, true)).toBe(null);
   });
 });

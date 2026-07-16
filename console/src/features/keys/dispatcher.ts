@@ -18,7 +18,7 @@ import { matchDirect, resolveLeader, isLeaderPrefix } from "../../lib/keys/regis
 import type { KeyContext } from "../../lib/keys/registry.ts";
 import { useKeysStore } from "./store.ts";
 import { effectiveCommands, boundChord, APP_LEADER, APP_PALETTE, APP_CHEAT } from "./bindings.ts";
-import { isScrollGesture, findScroller, scrollComposerViewport } from "../../lib/keyScroll.ts";
+import { isScrollKey, findScroller, paneScrollDelta, SCROLLABLE_KINDS, VIEWER_KINDS } from "../../lib/keyScroll.ts";
 
 // The reserved app chords are read LIVE from the keybinding store (boundChord) on each
 // keydown, so a rebind in Settings takes effect immediately without re-wiring. "" means
@@ -30,11 +30,6 @@ const LEADER_TIMEOUT = 3000; // ms: a dangling leader (overlay not yet shown) au
 // while still recovering if they walk away (never a permanently stuck overlay).
 const LEADER_TIMEOUT_OPEN = 15000;
 const WHICHKEY_DELAY = 350; // ms before the which-key overlay reveals
-
-// Pane kinds whose body is read-only scrollable content, so the keyboard-scroll gesture
-// (Shift/Ctrl+↑/↓) drives them. Terminal panes own their arrows (xterm / the CLI); chat &
-// mirror scroll from their own composer handlers instead.
-const SCROLLABLE_KINDS = new Set(["file", "diff", "wtdiff", "scm", "changes", "commit", "read", "doc"]);
 
 function focusedKind(): KeyContext["focusedKind"] {
   const el = document.activeElement as HTMLElement | null;
@@ -131,13 +126,22 @@ export function wireKeys(): () => void {
   // per-view wiring. Bails out when typing (input/terminal), during a leader sequence, or with
   // an overlay open — those keep the arrows. Returns true once it has handled + consumed.
   const maybeScrollActivePane = (e: KeyboardEvent): boolean => {
-    if (!isScrollGesture(e) || e.isComposing || hasOpenOverlay()) return false;
+    if (!isScrollKey(e) || e.isComposing || hasOpenOverlay()) return false;
     if (useKeysStore.getState().leaderPending) return false;
     if (focusedKind() !== "other") return false; // an input/terminal owns its arrows
     const ap = activePane(useLayoutStore.getState().layout);
     if (!ap || !SCROLLABLE_KINDS.has(ap.content.kind)) return false;
     const paneEl = document.querySelector<HTMLElement>(`.pane[data-pane-id="${CSS.escape(ap.id)}"]`);
-    if (!scrollComposerViewport(e, findScroller(paneEl))) return false;
+    const el = findScroller(paneEl);
+    if (!el) return false;
+    // Plain nav keys (↑/↓, PageUp/Down, Home/End, Space) only on a PURE viewer whose scroller
+    // itself holds focus — so a focused button/link inside the view, or an interactive scm /
+    // changes pane, keeps its keys. Modified gestures (Shift/Ctrl+↑↓, Ctrl+[ ]) drive any
+    // scrollable pane regardless of focus.
+    const allowPlain = VIEWER_KINDS.has(ap.content.kind) && document.activeElement === el;
+    const delta = paneScrollDelta(e, el, allowPlain);
+    if (delta === null) return false;
+    el.scrollTop = Math.max(0, Math.min(el.scrollHeight - el.clientHeight, el.scrollTop + delta));
     consume(e);
     return true;
   };
