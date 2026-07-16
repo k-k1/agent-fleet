@@ -21,6 +21,7 @@ import type { Dir } from "../../layout/nav.ts";
 import { useLeftRail } from "../../core/store/leftRail.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { useSessionsStore } from "../sessions/store.ts";
+import { useMemoStore } from "../memo/store.ts";
 import { useSettingsUI } from "../settings/store.ts";
 import { getSettings, setSetting } from "../../lib/settings.ts";
 import { useKeysStore } from "./store.ts";
@@ -105,6 +106,7 @@ export const GROUPS: Group[] = [
   { id: "s", title: "keys.grp.session" },
   { id: "w", title: "keys.grp.workspace" },
   { id: "g", title: "keys.grp.open" },
+  { id: "n", title: "keys.grp.memo" },
   { id: "v", title: "keys.grp.view" },
 ];
 
@@ -144,6 +146,20 @@ export const ALL_COMMANDS: Command[] = [
 
   // ---- Session (leader s) ----
   { id: "session.new", title: "keys.cmd.sessionNew", seq: "s n", run: () => useSessionsStore.getState().openStart() },
+
+  // ---- Memo (leader n) ----
+  // A memo group (leader → n) rather than a single key: the top-level single key "m" is
+  // the voice read-aloud toggle (tts.toggle, m = mute), which stays instant. Memo takes a
+  // two-key path (n a = note→add) so it never competes with that fast toggle.
+  {
+    id: "memo.add",
+    title: "keys.cmd.memoAdd",
+    seq: "n a",
+    run: () => {
+      if (!useLeftRail.getState().open) useLeftRail.getState().toggle();
+      useMemoStore.getState().requestCompose();
+    },
+  },
 
   // ---- Workspace (leader w) ----
   { id: "workspace.toggle", title: "keys.cmd.workspaceToggle", seq: "w s", run: toggleWorkspace },

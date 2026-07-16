@@ -76,6 +76,14 @@ func driveState(m session.Meta, alive, heal bool) string {
 	if heal && state != "idle" && tmuxx.AtIdlePrompt(m.Name) {
 		state = "idle"
 		status.Remove(sid)
+	} else if heal && state == "idle" && tmuxx.IsBusy(m.Name) {
+		// Reverse-heal: the hook state reads idle (its "working" file was never written,
+		// or the self-heal above removed it during a transient prompt frame) but the pane
+		// is plainly mid-turn (interrupt affordance shown). Trust the live TUI and persist
+		// working so the chat shows 進行中 + the stop button, and the eventual Stop still
+		// fires the answer-ready notification (recorded off the previous "working" state).
+		state = "working"
+		status.Persist(sid, "working")
 	}
 	return state
 }

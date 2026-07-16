@@ -187,6 +187,70 @@ func TestSQLiteMemo(t *testing.T) {
 	}
 }
 
+// Memo categories (docs/21 UI刷新): first-class rows, membership-scoped, with a rename
+// that cascades onto the memos and ReassignMemoCategory that empties/moves them.
+func TestSQLiteMemoCategory(t *testing.T) {
+	ctx := context.Background()
+	st, err := openSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer st.Close()
+	if err := st.migrate(ctx); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
+	tn, _ := st.EnsureDefaultTenant(ctx)
+	iA, _ := st.UpsertIdentity(ctx, "a@x.com", "a-x-com", "")
+	memA, _ := st.EnsureMembership(ctx, iA.ID, tn.ID, "member")
+
+	// Two categories in the same repo bucket, plus a memo tagged with the first.
+	c1 := MemoCategory{ID: newID(), MembershipID: memA.ID, Repo: "repo-a", Name: "frontend", Position: 0, CreatedAt: nowTS()}
+	c2 := MemoCategory{ID: newID(), MembershipID: memA.ID, Repo: "repo-a", Name: "api", Position: 1, CreatedAt: nowTS()}
+	for _, c := range []MemoCategory{c1, c2} {
+		if err := st.CreateCategory(ctx, c); err != nil {
+			t.Fatalf("create cat: %v", err)
+		}
+	}
+	m := Memo{ID: newID(), MembershipID: memA.ID, Repo: "repo-a", Category: "frontend",
+		Kind: "text", Body: "note", CreatedAt: nowTS()}
+	if err := st.CreateMemo(ctx, m); err != nil {
+		t.Fatalf("create memo: %v", err)
+	}
+
+	// List returns both, ordered by position.
+	cats, err := st.ListCategories(ctx, memA.ID)
+	if err != nil || len(cats) != 2 || cats[0].Name != "frontend" || cats[1].Name != "api" {
+		t.Fatalf("list cats: err=%v %+v", err, cats)
+	}
+
+	// Rename cascade: category "frontend" -> "ui" must move the memo's category too.
+	if err := st.ReassignMemoCategory(ctx, memA.ID, "repo-a", "frontend", "ui"); err != nil {
+		t.Fatalf("reassign: %v", err)
+	}
+	c1.Name = "ui"
+	if err := st.UpdateCategory(ctx, c1); err != nil {
+		t.Fatalf("update cat: %v", err)
+	}
+	if got, _, _ := st.GetMemo(ctx, m.ID); got.Category != "ui" {
+		t.Fatalf("memo category not cascaded: %q", got.Category)
+	}
+
+	// Delete-empty: moving memos of "ui" to "" then deleting the row keeps the memo.
+	if err := st.ReassignMemoCategory(ctx, memA.ID, "repo-a", "ui", ""); err != nil {
+		t.Fatalf("reassign empty: %v", err)
+	}
+	if err := st.DeleteCategory(ctx, c1.ID, memA.ID); err != nil {
+		t.Fatalf("delete cat: %v", err)
+	}
+	if got, ok, _ := st.GetMemo(ctx, m.ID); !ok || got.Category != "" {
+		t.Fatalf("memo lost or not emptied on category delete: ok=%v %+v", ok, got)
+	}
+	if cats, _ := st.ListCategories(ctx, memA.ID); len(cats) != 1 || cats[0].Name != "api" {
+		t.Fatalf("cats after delete: %+v", cats)
+	}
+}
+
 // Showback usage accounting (P3-9): AddUsage must accumulate per (membership, day),
 // ListUsage must window by day + enrich with tenant slug / member key, and the
 // tenant filter must scope correctly.
