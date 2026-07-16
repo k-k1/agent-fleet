@@ -2,7 +2,7 @@
 // close. Backdrop click / Escape close unless `lockClose` (an operation in
 // flight — the panel goes inert and the close button becomes a spinner). Pass
 // `as="form"` + onSubmit for form dialogs. Port of the old components/Modal.
-import { useEffect, useRef } from "react";
+import { useEffect, useId, useRef } from "react";
 import { createPortal } from "react-dom";
 import type { ReactNode, MouseEvent, FormEvent } from "react";
 import { Icon } from "./Icon.tsx";
@@ -10,6 +10,7 @@ import { IconButton } from "./Button.tsx";
 import { coarsePointer } from "../lib/device.ts";
 import { useEscLayer } from "../lib/escLayer.ts";
 import { useBackClose } from "../lib/backClose.ts";
+import { useFocusTrap } from "../lib/focusTrap.ts";
 
 interface ModalProps {
   title?: ReactNode;
@@ -47,13 +48,24 @@ export function Modal({
     const el = document.activeElement as HTMLElement | null;
     if (el && panelRef.current?.contains(el)) el.blur();
   }, []);
+  // Trap Tab inside the dialog (keyboard-only users can't fall out behind it) and
+  // restore focus to the opener on close. Active for the whole mount (not tied to
+  // lockClose) so a mid-operation lock doesn't yank focus out. Desktop-only initial
+  // focus (see the hook).
+  useFocusTrap(panelRef, true);
+  const titleId = useId();
 
   const Panel = as;
   const panelProps: Record<string, unknown> = {
     ref: panelRef,
     className: ("ui-modal " + className).trim(),
     onClick: (e: MouseEvent) => e.stopPropagation(),
+    role: "dialog",
+    "aria-modal": true,
+    // Programmatic-focus fallback for the trap when the dialog has no focusable child.
+    tabIndex: -1,
   };
+  if (title) panelProps["aria-labelledby"] = titleId;
   if (as === "form") panelProps.onSubmit = onSubmit;
   // React 19 treats `inert` as a boolean prop.
   if (lockClose) panelProps.inert = true;
@@ -73,7 +85,7 @@ export function Modal({
     >
       <Panel {...panelProps}>
         <header className="ui-modal-head">
-          <h3 className="ui-modal-title">{title}</h3>
+          <h3 className="ui-modal-title" id={titleId}>{title}</h3>
           {lockClose ? (
             <Icon name="loading" spin title="処理中…" />
           ) : (

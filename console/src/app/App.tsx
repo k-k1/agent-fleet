@@ -40,6 +40,7 @@ import { StartHost } from "../features/repos/StartHost.tsx";
 import { startNotificationPolling, useNotificationStore, wireNotificationReadOnActiveSession } from "../features/notifications/store.ts";
 import { WhichKey } from "../features/keys/WhichKey.tsx";
 import { CommandPalette } from "../features/keys/CommandPalette.tsx";
+import { CheatSheet } from "../features/keys/CheatSheet.tsx";
 
 // Refresh FILES (and repos/sessions/chat list on start) whenever the workspace
 // actually flips running↔stopped — including external changes the 4s sync catches
@@ -333,6 +334,7 @@ export function App() {
       <AuthExpiredModal />
       <WhichKey />
       <CommandPalette />
+      <CheatSheet />
     </div>
   );
 }

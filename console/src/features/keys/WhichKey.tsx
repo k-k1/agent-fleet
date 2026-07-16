@@ -4,20 +4,22 @@
 import { Kbd } from "../../ui/Kbd.tsx";
 import { leaderChildren } from "../../lib/keys/registry.ts";
 import { useKeysStore } from "./store.ts";
-import { ALL_COMMANDS, GROUPS } from "./commands.ts";
+import { GROUPS } from "./commands.ts";
+import { useEffectiveCommands, boundChord, APP_LEADER } from "./bindings.ts";
 import { buildContext } from "./dispatcher.ts";
 
 export function WhichKey() {
   const open = useKeysStore((s) => s.whichKeyOpen);
   const path = useKeysStore((s) => s.leaderPath);
+  const commands = useEffectiveCommands();
   if (!open) return null;
-  const children = leaderChildren(ALL_COMMANDS, GROUPS, path, buildContext());
+  const children = leaderChildren(commands, GROUPS, path, buildContext());
   return (
     <div className="wk-overlay">
       <div className="wk-panel">
         <div className="wk-head">
           <span className="wk-seq">
-            <Kbd chord="mod+k" />
+            <Kbd chord={boundChord(APP_LEADER) || "mod+k"} />
             {path.map((k, i) => (
               <Kbd key={i} chord={k} />
             ))}

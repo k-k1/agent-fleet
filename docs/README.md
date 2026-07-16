@@ -21,6 +21,7 @@
 - [25-ops-monitoring.md](25-ops-monitoring.md) — サービス運用（監視・インシデント対応）向け拡張（📋 構想検討・意思決定前）
 - [26-agent-exit-recording.md](26-agent-exit-recording.md) — エージェントプロセスの終了理由記録（OOM / signal / crash）（📋 設計・実装未着手）
 - [27-agent-managed-driver.md](27-agent-managed-driver.md) — エージェント制御の Managed Driver 化（TUI スクレイプ → 共有 runtime＋構造化 RPC）（🚧 P1 Codex 観測拡張＋P1.5 Console 受け皿/Driver 層 IF 実装済み・次 = P2 OpenCode managed 化）
+- [29-keyboard-system.md](29-keyboard-system.md) — Console キーボード操作体系（capture-phase 単一ディスパッチャ＋Leader/パレット＋再割当/端末入力優先）（✅ P0〜P5 実装済み・残＝実機目視）
 
 > 完了した機能設計は history/ へ移動: [19 assistant-chat](history/19-assistant-chat.md) /
 > [21 memo-queue](history/21-memo-queue.md) / [22 console-rebuild](history/22-console-rebuild.md)。
@@ -57,6 +58,7 @@
 - [0012-go-internal-refactor.md](decisions/0012-go-internal-refactor.md) — Go バックエンド内部リファクタ：internal 層化・2 バイナリ維持・共有モジュール見送り（設計 [23](23-go-refactor.md)）
 - [0013-tts-zundamon.md](decisions/0013-tts-zundamon.md) — 回答の音声読み上げ：CP-native TTS・プロバイダ抽象・ずんだもん主役/Polly 受け皿・ECS オンデマンド（設計 [24](24-tts-zundamon.md)）
 - [0014-agent-exit-recording.md](decisions/0014-agent-exit-recording.md) — エージェント終了理由記録：pane ラッパーで exit code 捕捉・自 cgroup で OOM 帰属・意図停止フラグ不要・CP は cgroup 直読み（設計 [26](26-agent-exit-recording.md)）
+- [0017-keyboard-system.md](decisions/0017-keyboard-system.md) — Console キーボード操作体系：capture-phase 単一ディスパッチャで xterm を貫く・Leader(⌘K)/パレット/少数アクセラレータ・直接キー＋予約キーのみ再割当・端末入力優先は Leader だけ残す（設計 [29](29-keyboard-system.md)）
 
 ## history/ — 使い終わった実装プラン（P3-6 は ◐ 段1 完了・admin 残）
 
