@@ -1111,6 +1111,7 @@ export const en: Record<keyof typeof ja, string> = {
   "mirror.resuming": "Resuming… you can type once it's ready",
   "mirror.prev_input": "Previous input",
   "mirror.next_input": "Next input",
+  "mirror.todo_dismiss": "Dismiss this ToDo list",
   "mirror.attach_file": "Attach a file (drag & drop works too)",
   "mirror.ph_plan_wait": "Plan awaiting approval: approve / reject in the card above",
   "mirror.ph_perm_wait": "Awaiting permission: respond in the card above",

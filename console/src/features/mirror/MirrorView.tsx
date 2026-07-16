@@ -1648,7 +1648,7 @@ export function MirrorView({
       </header>
 
       {ctxUsage && <ContextBar {...ctxUsage} spends={spends} maxSpend={maxSpend} />}
-      {tasks.length > 0 && <TaskChecklist tasks={tasks} />}
+      {tasks.length > 0 && <TaskChecklist key={session} tasks={tasks} session={session} />}
       {isPlan && (
         <div className="mirror-planmode">
           <Icon name="debug-pause" /> {tr("mirror.plan_mode_note")}
@@ -2446,19 +2446,61 @@ function taskIcon(status: string): string {
   return "circle-large-outline";
 }
 
+// Small localStorage accessors for the ToDo panel's per-session UI state (open/dismissed).
+// Errors (private mode, quota) are swallowed — the state just won't persist. Mirrors the
+// swallow-and-continue pattern in lib/draft.ts.
+function readLS(key: string): string | null {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+function writeLS(key: string, value: string): void {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    /* storage unavailable — state just won't persist */
+  }
+}
+
 // TaskChecklist renders the current ToDo list (reconstructed from Task tool calls) as a
 // collapsed disclosure: a done/total count, the active task on the summary, and the full
-// list on expand. Open while work remains; collapses once everything is completed.
-function TaskChecklist({ tasks }: { tasks: TaskItem[] }) {
+// list on expand. The open/closed choice is remembered per session (localStorage), so it
+// survives ターミナル⇄チャット swaps and reloads; without a stored choice it defaults open
+// while work remains. A ✕ dismisses an abandoned list — the dismissal is keyed to the
+// current task set, so a newly-started ToDo (different task ids) re-appears on its own.
+// The parent re-keys this component by session, so switching sessions re-reads the right
+// per-session state. (See taskIcon: in_progress spins, visible in the summary too so the
+// running task's ぐるぐる shows even while collapsed.)
+function TaskChecklist({ tasks, session }: { tasks: TaskItem[]; session: string }) {
   const done = tasks.filter((t) => t.status === "completed").length;
   const total = tasks.length;
   const active = tasks.find((t) => t.status === "in_progress");
-  const [open, setOpen] = useState(done < total);
+  // A signature of the current task set — dismissing stores it, and the panel stays hidden
+  // only while it matches (a new list has different ids → shows again).
+  const sig = tasks.map((t) => t.id).join("|");
+  const openKey = "af.mirror-todo-open." + session;
+  const dismissKey = "af.mirror-todo-dismiss." + session;
+
+  const [dismissedSig, setDismissedSig] = useState<string | null>(() => readLS(dismissKey));
+  // Stored per-session choice wins; with none, open while work remains.
+  const [open, setOpen] = useState(() => {
+    const v = readLS(openKey);
+    return v === null ? done < total : v === "1";
+  });
+
+  if (dismissedSig === sig) return null; // this exact list was dismissed
+
   return (
     <details
       className="mirror-tasks"
       open={open}
-      onToggle={(e) => setOpen((e.currentTarget as HTMLDetailsElement).open)}
+      onToggle={(e) => {
+        const next = (e.currentTarget as HTMLDetailsElement).open;
+        setOpen(next);
+        writeLS(openKey, next ? "1" : "0");
+      }}
     >
       <summary className="mirror-tasks-head">
         <Icon name="checklist" />
@@ -2466,7 +2508,27 @@ function TaskChecklist({ tasks }: { tasks: TaskItem[] }) {
         <span className="mtk-count muted">
           {done}/{total}
         </span>
-        {active && <span className="mtk-active muted">{active.activeForm || active.subject}</span>}
+        {active && (
+          <span className="mtk-active muted">
+            {/* Spinner rides the summary so the running task's ぐるぐる is visible even
+                while the list is collapsed. */}
+            <Icon name="loading" spin className="mtk-active-mark" />
+            {active.activeForm || active.subject}
+          </span>
+        )}
+        <button
+          type="button"
+          className="mtk-dismiss"
+          title={tr("mirror.todo_dismiss")}
+          onClick={(e) => {
+            e.preventDefault(); // don't toggle the <summary>
+            e.stopPropagation();
+            setDismissedSig(sig);
+            writeLS(dismissKey, sig);
+          }}
+        >
+          <Icon name="close" />
+        </button>
       </summary>
       <ol className="mirror-tasks-list">
         {tasks.map((t) => (
