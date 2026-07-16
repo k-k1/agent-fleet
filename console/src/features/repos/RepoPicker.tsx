@@ -7,13 +7,14 @@ import { api } from "../../core/api/client.ts";
 import { BranchList, relTime } from "./BranchList.tsx";
 import type { Branch } from "./BranchList.tsx";
 import type { ConnectionsStatus } from "../../types/session.ts";
+import { useT } from "../../lib/i18n/index.ts";
 
 // Provider tabs, Bitbucket first (the default). "internal" is the tenant's
 // self-hosted git — its lists come from the CP (api/internal-git/*).
 const PROVIDERS: [string, string][] = [
   ["bitbucket.org", "Bitbucket"],
   ["github.com", "GitHub"],
-  ["internal", "内部"],
+  ["internal", ""],
 ];
 
 const CONN_KEY: Record<string, string> = {
@@ -41,6 +42,7 @@ interface RepoPickerProps {
 }
 
 export function RepoPicker({ onChange }: RepoPickerProps) {
+  const tr = useT();
   const [conns, setConns] = useState<ConnectionsStatus | null>(null);
   const [host, setHost] = useState("bitbucket.org");
   const [repos, setRepos] = useState<RepoItem[] | null>(null);
@@ -84,7 +86,7 @@ export function RepoPicker({ onChange }: RepoPickerProps) {
       .then((d) => {
         if (!alive) return;
         if (d && d.error) {
-          setReposErr(d.error.message || d.error.code || "取得に失敗しました");
+          setReposErr(d.error.message || d.error.code || tr("rp.fetch_failed"));
           setRepos([]);
         } else if (isInternal) {
           setRepos(
@@ -101,7 +103,7 @@ export function RepoPicker({ onChange }: RepoPickerProps) {
       })
       .catch(() => {
         if (!alive) return;
-        setReposErr("Workspace が起動しているか確認してください");
+        setReposErr(tr("rp.check_workspace"));
         setRepos([]);
       })
       .finally(() => alive && setLoadingRepos(false));
@@ -126,7 +128,7 @@ export function RepoPicker({ onChange }: RepoPickerProps) {
           : `api/connections/git/${host}/branches?repo=${encodeURIComponent(fn)}`,
       );
       if (d && d.error) {
-        setBranchErr(d.error.message || d.error.code || "ブランチ取得に失敗");
+        setBranchErr(d.error.message || d.error.code || tr("rp.branch_fetch_failed"));
         return;
       }
       // Internal branches are plain strings; external ones are Branch objects.
@@ -143,7 +145,7 @@ export function RepoPicker({ onChange }: RepoPickerProps) {
       setBranch(def);
       emit(fn, def);
     } catch {
-      setBranchErr("ブランチ取得に失敗");
+      setBranchErr(tr("rp.branch_fetch_failed"));
     } finally {
       setLoadingBranches(false);
     }
@@ -179,10 +181,10 @@ export function RepoPicker({ onChange }: RepoPickerProps) {
             type="button"
             className={"prov" + (host === h ? " active" : "")}
             disabled={!connected(h)}
-            title={connected(h) ? "" : "未接続（設定 → Git）"}
+            title={connected(h) ? "" : tr("rp.not_connected_git")}
             onClick={() => setHost(h)}
           >
-            {label}
+            {h === "internal" ? tr("rp.internal") : label}
             {!connected(h) && <span className="prov-off"> ○</span>}
           </button>
         ))}
@@ -191,28 +193,28 @@ export function RepoPicker({ onChange }: RepoPickerProps) {
       {!connected(host) ? (
         <p className="pick-muted">
           {host === "internal"
-            ? "内部リポジトリは利用できません（この環境では無効）。"
-            : `${host === "github.com" ? "GitHub" : "Bitbucket"} が未接続です。設定 → Git から繋いでください。`}
+            ? tr("rp.internal_unavailable")
+            : tr("rp.provider_not_connected", { provider: host === "github.com" ? "GitHub" : "Bitbucket" })}
         </p>
       ) : (
         <>
           <div className="pick-field">
-            <span>リポジトリ</span>
+            <span>{tr("rp.repositories")}</span>
             {loadingRepos ? (
-              <p className="pick-muted">読み込み中…</p>
+              <p className="pick-muted">{tr("rp.loading")}</p>
             ) : reposErr ? (
               <p className="pick-muted">{reposErr}</p>
             ) : (
               <div className="branchlist-wrap">
                 <input
                   className="branch-filter"
-                  placeholder="フィルタ（リポジトリ名）"
+                  placeholder={tr("rp.filter_repos")}
                   value={repoFilter}
                   onChange={(e) => setRepoFilter(e.target.value)}
                 />
                 {shownRepos.length === 0 ? (
                   <p className="pick-muted">
-                    {repoFilter ? "該当するリポジトリがありません" : "リポジトリがありません"}
+                    {repoFilter ? tr("rp.no_repos_match") : tr("rp.no_repos")}
                   </p>
                 ) : (
                   <ul className="branch-list repo-list">
@@ -245,9 +247,9 @@ export function RepoPicker({ onChange }: RepoPickerProps) {
           </div>
 
           <div className="pick-field">
-            <span>ブランチ</span>
+            <span>{tr("rp.branch")}</span>
             {!fullName ? (
-              <p className="pick-muted">先にリポジトリを選択</p>
+              <p className="pick-muted">{tr("rp.select_repo_first")}</p>
             ) : branchErr ? (
               <p className="pick-muted">{branchErr}</p>
             ) : (

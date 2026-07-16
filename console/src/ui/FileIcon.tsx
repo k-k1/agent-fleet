@@ -1,5 +1,6 @@
 import { resolveIcon, mark } from "../lib/fileicons.js";
 import { useSettings } from "../lib/settings.js";
+import { useT } from "../lib/i18n/index.ts";
 import { Icon } from "./Icon.tsx";
 
 // FileIcon renders the icon for a filename in the user's chosen set (Display
@@ -12,10 +13,11 @@ interface FileIconProps {
 }
 
 export default function FileIcon({ name }: FileIconProps) {
+  const tr = useT();
   const { iconSet } = useSettings();
   const m = mark(name);
-  if (m === "ai") return <Icon name="sparkle" className="fi-ai" title="AI 関連" />;
-  if (m === "secret") return <Icon name="key" className="fi-secret" title="機密" />;
+  if (m === "ai") return <Icon name="sparkle" className="fi-ai" title={tr("ui.ai_related")} />;
+  if (m === "secret") return <Icon name="key" className="fi-secret" title={tr("ui.secret")} />;
   const r = resolveIcon(iconSet, name);
   if (!r) return <Icon name="file" className="fi-generic" />;
   if (r.tint === "mask") {

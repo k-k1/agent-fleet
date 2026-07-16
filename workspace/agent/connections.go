@@ -78,7 +78,7 @@ func handlePutPagerDutyConn(w http.ResponseWriter, r *http.Request) {
 	}
 	key := strings.TrimSpace(req.APIKey)
 	if key == "" {
-		httpx.WriteErr(w, http.StatusBadRequest, "bad_token", "API キーを入力してください")
+		httpx.WriteErr(w, http.StatusBadRequest, errCodeConnAPIKeyRequired, "enter an API key")
 		return
 	}
 	s, err := secrets.Load()
@@ -136,11 +136,11 @@ func handlePutGrafanaConn(w http.ResponseWriter, r *http.Request) {
 	url := strings.TrimRight(strings.TrimSpace(req.URL), "/")
 	token := strings.TrimSpace(req.Token)
 	if url == "" || token == "" {
-		httpx.WriteErr(w, http.StatusBadRequest, "bad_token", "Grafana の URL とサービスアカウントトークンを入力してください")
+		httpx.WriteErr(w, http.StatusBadRequest, errCodeConnGrafanaFields, "enter the Grafana URL and service account token")
 		return
 	}
 	if !strings.HasPrefix(url, "http://") && !strings.HasPrefix(url, "https://") {
-		httpx.WriteErr(w, http.StatusBadRequest, "bad_url", "URL は http(s):// で始めてください")
+		httpx.WriteErr(w, http.StatusBadRequest, errCodeConnURLScheme, "URL must start with http(s)://")
 		return
 	}
 	s, err := secrets.Load()
@@ -218,12 +218,12 @@ func handlePutCloudWatchConn(w http.ResponseWriter, r *http.Request) {
 	}
 	profile := cloudwatchProfileRe.ReplaceAllString(strings.TrimSpace(req.Profile), "-")
 	if profile == "" || profile == "-" {
-		httpx.WriteErr(w, http.StatusBadRequest, "bad_profile", "AWS プロファイルを指定してください")
+		httpx.WriteErr(w, http.StatusBadRequest, errCodeConnAWSProfileRequired, "specify an AWS profile")
 		return
 	}
 	startURL := strings.TrimSpace(req.StartURL)
 	if startURL != "" && strings.TrimSpace(req.SSORegion) == "" {
-		httpx.WriteErr(w, http.StatusBadRequest, "bad_sso", "SSO リージョンがありません（SSM プロファイルの設定を確認してください）")
+		httpx.WriteErr(w, http.StatusBadRequest, errCodeConnSSORegionMissing, "no SSO region (check the SSM profile configuration)")
 		return
 	}
 	s, err := secrets.Load()

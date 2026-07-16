@@ -15,6 +15,7 @@ import { Icon } from "../../ui/Icon.tsx";
 import { useSettings, fontStack } from "../../lib/settings.ts";
 import { useLayoutStore } from "../../layout/store.ts";
 import { useFilesStore } from "../files/store.ts";
+import { useT } from "../../lib/i18n/index.ts";
 import { speakText } from "../chat/tts.ts";
 import { MarkdownView } from "./MarkdownView.tsx";
 import { MarpView } from "./MarpView.tsx";
@@ -70,6 +71,7 @@ interface FileData {
 }
 
 export function FileView({ filePath, targetLine, targetColumn, wrap }: FileViewProps) {
+  const tr = useT();
   const openTarget = useLayoutStore((s) => s.openTarget);
   const openTargetInNew = useLayoutStore((s) => s.openTargetInNew);
   const revealInFiles = useFilesStore((s) => s.revealInFiles);
@@ -118,10 +120,10 @@ export function FileView({ filePath, targetLine, targetColumn, wrap }: FileViewP
     api(`api/fs/file?path=${encodeURIComponent(filePath)}`)
       .then((d) => {
         if (!alive) return;
-        if (d && d.error) setErr(d.error.message || "読み込めません");
+        if (d && d.error) setErr(d.error.message || tr("view.cannot_load"));
         else setData(d);
       })
-      .catch(() => alive && setErr("読み込めません"));
+      .catch(() => alive && setErr(tr("view.cannot_load")));
     return () => {
       alive = false;
     };
@@ -245,55 +247,55 @@ export function FileView({ filePath, targetLine, targetColumn, wrap }: FileViewP
         <span className="fi-meta muted">
           {humanSize(data?.size)}
           {isImage && imgDims ? ` · ${imgDims.w}×${imgDims.h}` : ""}
-          {!isImage && isText ? ` · ${lines} 行` : ""}
-          {data?.truncated ? " · 先頭のみ" : ""}
+          {!isImage && isText ? tr("view.lines_meta", { n: lines }) : ""}
+          {data?.truncated ? tr("view.head_only") : ""}
         </span>
         {huge && (
-          <span className="fi-tag" title="巨大ファイル（または極端に長い行）のため、ハイライト・行番号なしのプレーン表示です">
-            プレーン表示
+          <span className="fi-tag" title={tr("view.plain_mode_tip")}>
+            {tr("view.plain_mode")}
           </span>
         )}
         {data?.lfs && (
-          <span className="fi-tag" title="Git LFS の実体は未取得です。端末で `git lfs pull` を実行してください。">
-            LFS ポインタ
+          <span className="fi-tag" title={tr("view.lfs_tip")}>
+            {tr("view.lfs_pointer")}
           </span>
         )}
         {isMarkdown && (
           <span className="ui-seg sm md-toggle">
             {isMarp && (
               <button type="button" className={"seg-btn" + (mdMode === "slides" ? " active" : "")} onClick={() => setMdMode("slides")}>
-                スライド
+                {tr("view.slides")}
               </button>
             )}
             <button type="button" className={"seg-btn" + (mdMode === "preview" ? " active" : "")} onClick={() => setMdMode("preview")}>
-              プレビュー
+              {tr("view.preview")}
             </button>
             <button type="button" className={"seg-btn" + (mdMode === "source" ? " active" : "")} onClick={() => setMdMode("source")}>
-              ソース
+              {tr("view.source")}
             </button>
           </span>
         )}
         {isImage && isText && (
           <span className="ui-seg sm md-toggle">
             <button type="button" className={"seg-btn" + (imgMode === "preview" ? " active" : "")} onClick={() => setImgMode("preview")}>
-              プレビュー
+              {tr("view.preview")}
             </button>
             <button type="button" className={"seg-btn" + (imgMode === "source" ? " active" : "")} onClick={() => setImgMode("source")}>
-              ソース
+              {tr("view.source")}
             </button>
           </span>
         )}
         {isText && !huge && (
           <span className="ui-seg sm md-toggle">
-            <button type="button" className="seg-btn" onClick={openReader} title="朗読ビューで開く（順次読み上げ＋縦書き閲覧）">
-              <Icon name="book" /> 朗読
+            <button type="button" className="seg-btn" onClick={openReader} title={tr("view.open_reader_tip")}>
+              <Icon name="book" /> {tr("view.read_aloud")}
             </button>
           </span>
         )}
         <span className="fi-path muted" title={filePath}>
           {filePath}
         </span>
-        <a className="fi-dl" href={downloadURL(filePath)} download={baseName(filePath)} title="ダウンロード">
+        <a className="fi-dl" href={downloadURL(filePath)} download={baseName(filePath)} title={tr("view.download")}>
           <Icon name="cloud-download" />
         </a>
       </header>
@@ -305,7 +307,7 @@ export function FileView({ filePath, targetLine, targetColumn, wrap }: FileViewP
       ) : isImage && (!isText || imgMode === "preview") ? (
         <ImageView src={downloadURL(filePath)} alt={baseName(filePath)} onLoad={setImgDims} />
       ) : data.binary ? (
-        <pre className="filebody muted">(バイナリ, {humanSize(data.size)})</pre>
+        <pre className="filebody muted">({tr("view.binary")}, {humanSize(data.size)})</pre>
       ) : huge ? (
         <pre className="filebody fb-plain">{data.content}</pre>
       ) : showSlides ? (
@@ -340,7 +342,7 @@ export function FileView({ filePath, targetLine, targetColumn, wrap }: FileViewP
               onMouseDown={(e) => e.preventDefault()} // keep the text selection alive through the click
               onClick={() => setSendOpen(true)}
             >
-              <Icon name="comment-discussion" /> 送る
+              <Icon name="comment-discussion" /> {tr("view.send")}
             </button>
             {/* 音声読み上げが有効なときだけ、選択範囲を読み上げるピルを併置（docs/24）。 */}
             {settings.ttsEnabled && (
@@ -348,9 +350,9 @@ export function FileView({ filePath, targetLine, targetColumn, wrap }: FileViewP
                 type="button"
                 className="sel-send-pill"
                 onMouseDown={(e) => e.preventDefault()}
-                onClick={() => speakText(sel.quote, "選択範囲")}
+                onClick={() => speakText(sel.quote, tr("view.selection"))}
               >
-                <Icon name="unmute" /> 読み上げ
+                <Icon name="unmute" /> {tr("view.read_out")}
               </button>
             )}
           </div>,

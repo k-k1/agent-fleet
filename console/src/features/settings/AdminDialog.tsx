@@ -8,8 +8,10 @@ import { useSettingsUI } from "./store.ts";
 import { AdminTab } from "./AdminTab.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { useEscLayer } from "../../lib/escLayer.ts";
+import { useT } from "../../lib/i18n/index.ts";
 
 export function AdminDialog() {
+  const tr = useT();
   const closeAdmin = useSettingsUI((s) => s.closeAdmin);
   // Escape closes fully (all drill levels), same as the × / backdrop — matches the
   // ui/Modal behavior the settings dialog gets for free. Layered: with a confirm
@@ -20,9 +22,9 @@ export function AdminDialog() {
       <div className="admin-surface" onClick={(e) => e.stopPropagation()}>
         <header className="admin-surface-head">
           <h3 className="modal-title">
-            <Icon name="shield" /> 管理
+            <Icon name="shield" /> {tr("admin.title")}
           </h3>
-          <button type="button" className="icon" title="閉じる" onClick={closeAdmin}>
+          <button type="button" className="icon" title={tr("common.close")} onClick={closeAdmin}>
             <Icon name="close" />
           </button>
         </header>

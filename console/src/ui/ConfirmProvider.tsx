@@ -7,6 +7,7 @@ import { createContext, useCallback, useContext, useEffect, useId, useRef, useSt
 import { createPortal } from "react-dom";
 import type { ReactNode, MouseEvent } from "react";
 import { Button } from "./Button.tsx";
+import { useT } from "../lib/i18n/index.ts";
 import { useEscLayer } from "../lib/escLayer.ts";
 import { useBackClose } from "../lib/backClose.ts";
 import { useFocusTrap } from "../lib/focusTrap.ts";
@@ -30,6 +31,7 @@ export function useConfirm(): ConfirmFn {
 }
 
 export function ConfirmProvider({ children }: { children: ReactNode }) {
+  const tr = useT();
   const [req, setReq] = useState<ConfirmOptions | null>(null);
   const resolver = useRef<((v: boolean) => void) | null>(null);
 
@@ -79,10 +81,10 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
               <div className="ui-confirm-body">{req.body}</div>
               <div className="ui-confirm-actions">
                 <Button variant="ghost" onClick={() => finish(false)}>
-                  キャンセル
+                  {tr("ui.cancel")}
                 </Button>
                 <Button variant={req.danger ?? true ? "danger" : "primary"} onClick={() => finish(true)}>
-                  {req.confirmLabel || "実行"}
+                  {req.confirmLabel || tr("ui.run")}
                 </Button>
               </div>
             </div>

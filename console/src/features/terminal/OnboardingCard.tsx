@@ -12,6 +12,7 @@
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { api } from "../../core/api/client.ts";
+import { useT } from "../../lib/i18n/index.ts";
 import { Icon } from "../../ui/Icon.tsx";
 import { Modal } from "../../ui/Modal.tsx";
 import { useWorkspaceStore, wsStartBusy } from "../../core/store/workspace.ts";
@@ -118,6 +119,7 @@ function StepRow({ s, next }: { s: Step; next: boolean }) {
 // (settings / new-session modal / a chat draft) — the modal closes itself there;
 // the overlay just stays behind whatever opened.
 function GuideBody({ g, onNavigate }: { g: GuideState; onNavigate?: () => void }) {
+  const tr = useT();
   const [track, setTrack] = useState<"dev" | null>(() => {
     try {
       return localStorage.getItem(TRACK_KEY) === "dev" ? "dev" : null;
@@ -138,28 +140,28 @@ function GuideBody({ g, onNavigate }: { g: GuideState; onNavigate?: () => void }
   };
 
   const setupDone = g.running && g.agentOk;
-  const wsFirst = g.running ? undefined : "先にワークスペースを起動してください";
+  const wsFirst = g.running ? undefined : tr("onb.ws_first");
 
   const common: Step[] = [
     {
       done: g.running,
-      label: "ワークスペースを起動",
-      hint: "あなた専用のコンテナを立ち上げます",
+      label: tr("onb.start_ws"),
+      hint: tr("onb.start_ws_hint"),
       // Power glyph (⏻) to match the WS バー's start/stop toggle — same metaphor.
       // Inert while a start is already under way (same guard as the WS バー) so
       // mashing the CTA can't fire concurrent start POSTs.
       cta: g.running
         ? null
-        : { text: g.startBusy ? "起動中…" : "起動", glyph: "⏻", disabled: g.startBusy, on: () => void g.startWs() },
+        : { text: g.startBusy ? tr("onb.starting") : tr("onb.start"), glyph: "⏻", disabled: g.startBusy, on: () => void g.startWs() },
     },
     {
       done: g.agentOk,
-      label: "エージェントを接続",
-      hint: "Claude / Codex / opencode のいずれかにサインイン",
+      label: tr("onb.connect_agent"),
+      hint: tr("onb.connect_agent_hint"),
       // Connecting runs through the in-container Agent, so it needs the workspace up.
       cta: g.agentOk
         ? null
-        : { text: "接続する", icon: "plug", disabled: !g.running, title: wsFirst, on: after(() => g.openSettings("agents")) },
+        : { text: tr("onb.connect"), icon: "plug", disabled: !g.running, title: wsFirst, on: after(() => g.openSettings("agents")) },
     },
   ];
   const dev: Step[] = [
@@ -167,19 +169,19 @@ function GuideBody({ g, onNavigate }: { g: GuideState; onNavigate?: () => void }
       done: g.gitOk,
       label: (
         <>
-          git プロバイダを接続<span className="onboard-opt">任意</span>
+          {tr("onb.connect_git")}<span className="onboard-opt">{tr("onb.optional")}</span>
         </>
       ),
-      hint: "private リポジトリをクローン / push するなら接続します",
+      hint: tr("onb.connect_git_hint"),
       cta: g.gitOk
         ? null
-        : { text: "接続する", icon: "plug", disabled: !g.running, title: wsFirst, on: after(() => g.openSettings("git")) },
+        : { text: tr("onb.connect"), icon: "plug", disabled: !g.running, title: wsFirst, on: after(() => g.openSettings("git")) },
     },
     {
       done: false, // done = the card itself disappears (a session exists)
-      label: "リポジトリをクローンしてセッション開始",
-      hint: "クローンと起動は「はじめる」からまとめて行えます",
-      cta: { text: "はじめる", icon: "rocket", disabled: !g.running, title: wsFirst, on: after(g.openStart) },
+      label: tr("onb.clone_start"),
+      hint: tr("onb.clone_start_hint"),
+      cta: { text: tr("onb.get_started"), icon: "rocket", disabled: !g.running, title: wsFirst, on: after(g.openStart) },
     },
   ];
 
@@ -196,31 +198,31 @@ function GuideBody({ g, onNavigate }: { g: GuideState; onNavigate?: () => void }
           <StepRow key={i} s={s} next={i === nextCommon} />
         ))}
       </ol>
-      <div className="onboard-div">どちらから始めますか？ — あとから両方使えます</div>
+      <div className="onboard-div">{tr("onb.which_start")}</div>
       <div className={"onboard-tiles" + (tilesHot ? " hot" : "")}>
         <div className="onboard-tile">
           <span className="onboard-tile-ic">
             <Icon name="comment-discussion" />
           </span>
-          <span className="onboard-tile-title">AI に質問・翻訳を頼む</span>
-          <span className="onboard-tile-desc">使い捨てのチャット。git もターミナルも不要で、そのまま使えます。</span>
+          <span className="onboard-tile-title">{tr("onb.tile_chat_title")}</span>
+          <span className="onboard-tile-desc">{tr("onb.tile_chat_desc")}</span>
           <button
             className={"onboard-cta" + (tilesHot ? " primary" : "")}
             disabled={!setupDone}
-            title={setupDone ? undefined : "上の2ステップを済ませると使えます"}
+            title={setupDone ? undefined : tr("onb.chat_needs_setup")}
             onClick={after(() => openAssistantDraft(AF_ASSISTANT_ID))}
           >
-            <Icon name="comment" /> チャットをはじめる
+            <Icon name="comment" /> {tr("onb.start_chat")}
           </button>
         </div>
         <div className={"onboard-tile" + (track === "dev" ? " on" : "")}>
           <span className="onboard-tile-ic">
             <Icon name="repo" />
           </span>
-          <span className="onboard-tile-title">リポジトリで開発する</span>
-          <span className="onboard-tile-desc">git を接続し、リポジトリをクローンして AI セッションを起動します。</span>
+          <span className="onboard-tile-title">{tr("onb.tile_dev_title")}</span>
+          <span className="onboard-tile-desc">{tr("onb.tile_dev_desc")}</span>
           <button className="onboard-cta" onClick={() => chooseDev(track !== "dev")}>
-            <Icon name={track === "dev" ? "chevron-up" : "chevron-down"} /> {track === "dev" ? "手順をたたむ" : "開発のセットアップへ"}
+            <Icon name={track === "dev" ? "chevron-up" : "chevron-down"} /> {track === "dev" ? tr("onb.collapse_steps") : tr("onb.to_dev_setup")}
           </button>
         </div>
       </div>
@@ -236,6 +238,7 @@ function GuideBody({ g, onNavigate }: { g: GuideState; onNavigate?: () => void }
 }
 
 export function OnboardingCard() {
+  const tr = useT();
   const sessions = useSessionsStore((s) => s.sessions);
   const chatTick = useChatStore((s) => s.listTick);
   const g = useGuideState();
@@ -274,12 +277,12 @@ export function OnboardingCard() {
   return (
     <div className="onboard">
       <div className="onboard-card">
-        <div className="onboard-title">Agent Fleet へようこそ</div>
-        <div className="onboard-sub">まず2ステップ。そのあとは目的を選ぶだけです</div>
+        <div className="onboard-title">{tr("onb.welcome")}</div>
+        <div className="onboard-sub">{tr("onb.welcome_sub")}</div>
         <GuideBody g={g} />
         <div className="onboard-foot">
           <button className="ghost" onClick={dismiss}>
-            あとで
+            {tr("onb.later")}
           </button>
         </div>
       </div>
@@ -291,12 +294,13 @@ export function OnboardingCard() {
 // account menu any time (the first-run card is gone once dismissed / set up, but
 // the guide should stay consultable). No dismiss / auto-hide rules here.
 export function GuideModal() {
+  const tr = useT();
   const closeGuide = useSettingsUI((s) => s.closeGuide);
   const g = useGuideState();
   return (
-    <Modal title="はじめかたガイド" onClose={closeGuide} className="guide-modal">
+    <Modal title={tr("onb.guide_title")} onClose={closeGuide} className="guide-modal">
       <div className="ui-modal-body onboard-scope">
-        <div className="onboard-sub">済んだ項目には自動でチェックが付きます</div>
+        <div className="onboard-sub">{tr("onb.guide_sub")}</div>
         {g.conns !== null && <GuideBody g={g} onNavigate={closeGuide} />}
       </div>
     </Modal>

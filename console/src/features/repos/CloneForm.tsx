@@ -6,10 +6,11 @@
 import { useEffect, useState } from "react";
 import { RepoPicker } from "./RepoPicker.tsx";
 import type { RepoSelection } from "./RepoPicker.tsx";
+import { useT, type MsgKey } from "../../lib/i18n/index.ts";
 
-const SOURCE_HELP: Record<string, string> = {
-  picker: "接続済みの GitHub / Bitbucket からリポジトリとブランチを選んでクローンします。",
-  url: "クローンURLを手入力します（接続していないリポジトリ向け）。",
+const SOURCE_HELP: Record<string, MsgKey> = {
+  picker: "rp.source_help_picker",
+  url: "rp.source_help_url",
 };
 
 export interface CloneSource {
@@ -22,6 +23,7 @@ interface CloneFormProps {
 }
 
 export function CloneForm({ onChange }: CloneFormProps) {
+  const tr = useT();
   const [source, setSource] = useState<"picker" | "url">("picker");
   const [sel, setSel] = useState<RepoSelection | null>(null);
   const [url, setUrl] = useState("");
@@ -39,12 +41,12 @@ export function CloneForm({ onChange }: CloneFormProps) {
 
   return (
     <div className="ui-field">
-      <span className="ui-field-label">取得元</span>
+      <span className="ui-field-label">{tr("rp.source")}</span>
       <div className="ui-seg">
         {(
           [
-            ["picker", "接続から選ぶ"],
-            ["url", "URL 手入力"],
+            ["picker", tr("rp.source_connected")],
+            ["url", tr("rp.source_url")],
           ] as const
         ).map(([v, label]) => (
           <button
@@ -57,19 +59,19 @@ export function CloneForm({ onChange }: CloneFormProps) {
           </button>
         ))}
       </div>
-      <span className="ui-field-hint">{SOURCE_HELP[source]}</span>
+      <span className="ui-field-hint">{tr(SOURCE_HELP[source])}</span>
 
       {source === "picker" ? (
         <RepoPicker onChange={setSel} />
       ) : (
         <>
           <label className="ui-field">
-            <span className="ui-field-label">クローンURL</span>
+            <span className="ui-field-label">{tr("rp.clone_url")}</span>
             <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://… / git@…" />
           </label>
           <label className="ui-field">
-            <span className="ui-field-label">ブランチ（任意）</span>
-            <input value={branch} onChange={(e) => setBranch(e.target.value)} placeholder="既定ブランチ" />
+            <span className="ui-field-label">{tr("rp.branch_optional")}</span>
+            <input value={branch} onChange={(e) => setBranch(e.target.value)} placeholder={tr("rp.default_branch")} />
           </label>
         </>
       )}

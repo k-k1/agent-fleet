@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { Modal } from "../../ui/Modal.tsx";
 import { Button } from "../../ui/Button.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
+import { useT } from "../../lib/i18n/index.ts";
 import { errText } from "../../core/api/client.ts";
 import { askAssistant } from "../chat/api.ts";
 import { memoUpdate } from "./api.ts";
@@ -30,8 +31,10 @@ function buildTidyPrompt(memos: Memo[]): string {
     id: m.id,
     repo: m.repo,
     category: m.category,
+    // i18n-exempt: LLM プロンプトに渡すメモ本文（表示でなくモデル挙動・docs/28 §4）
     text: m.kind === "file" ? `対象ファイル ${m.refPath}${m.body ? " — " + m.body : ""}` : m.body,
   }));
+  // i18n-exempt-start: LLM プロンプト（表示でなくモデル挙動・docs/28 §4）
   return (
     "あなたはメモ整理アシスタントです。以下は開発者の走り書きメモです。各メモについて、" +
     "(1) 指示として明確な日本語に整形し、(2) サブプロジェクトを表す短いカテゴリ名を提案してください。" +
@@ -41,6 +44,7 @@ function buildTidyPrompt(memos: Memo[]): string {
     "メモ:\n" +
     JSON.stringify(items, null, 2)
   );
+  // i18n-exempt-end
 }
 
 // parseTidyReply pulls the JSON array out of a chat reply that may wrap it in prose or
@@ -65,6 +69,7 @@ function parseTidyReply(reply: string): TidyRow[] {
 
 export function MemoTidyModal({ memos, onDone, onClose }: MemoTidyModalProps) {
   const toast = useToast();
+  const tr = useT();
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState<TidyRow[]>([]);
   const [pick, setPick] = useState<Record<string, boolean>>({}); // id → apply this row
@@ -80,13 +85,13 @@ export function MemoTidyModal({ memos, onDone, onClose }: MemoTidyModalProps) {
       .then((r) => {
         if (!alive) return;
         if (r.error) {
-          setErr(errText(r.error) || "整理に失敗しました");
+          setErr(errText(r.error) || tr("sx.tidy_failed"));
           return;
         }
         try {
           const parsed = parseTidyReply(r.reply || "").filter((row) => byId.has(row.id));
           if (parsed.length === 0) {
-            setErr("整理結果を解釈できませんでした（もう一度お試しください）。");
+            setErr(tr("sx.tidy_parse_retry"));
             return;
           }
           setRows(parsed);
@@ -98,10 +103,10 @@ export function MemoTidyModal({ memos, onDone, onClose }: MemoTidyModalProps) {
           }
           setPick(init);
         } catch {
-          setErr("整理結果を解釈できませんでした（JSON を返しませんでした）。");
+          setErr(tr("sx.tidy_parse_nojson"));
         }
       })
-      .catch(() => alive && setErr("整理に失敗しました"))
+      .catch(() => alive && setErr(tr("sx.tidy_failed")))
       .finally(() => alive && setLoading(false));
     return () => {
       alive = false;
@@ -123,10 +128,10 @@ export function MemoTidyModal({ memos, onDone, onClose }: MemoTidyModalProps) {
           patch.category = row.suggestedCategory;
         if (Object.keys(patch).length > 0) await memoUpdate(row.id, patch);
       }
-      toast(`${chosen.length} 件を整理しました`, { kind: "success" });
+      toast(tr("sx.tidied", { count: chosen.length }), { kind: "success" });
       onDone();
     } catch {
-      toast("整理の反映に失敗しました");
+      toast(tr("sx.tidy_apply_failed"));
     } finally {
       setBusy(false);
     }
@@ -135,17 +140,17 @@ export function MemoTidyModal({ memos, onDone, onClose }: MemoTidyModalProps) {
   const chosenCount = rows.filter((r) => pick[r.id]).length;
 
   return (
-    <Modal title="アシスタントで整理" onClose={onClose} className="memo-tidy-modal" lockClose={busy}>
+    <Modal title={tr("sx.tidy_title")} onClose={onClose} className="memo-tidy-modal" lockClose={busy}>
       <div className="ui-modal-body">
         {loading ? (
-          <div className="ui-field-hint">整理中…（アシスタントに問い合わせています）</div>
+          <div className="ui-field-hint">{tr("sx.tidy_loading")}</div>
         ) : err ? (
           <div className="ui-field-hint warn">⚠ {err}</div>
         ) : (
           <div className="memo-tidy-list">
             {rows.map((row) => {
               const m = byId.get(row.id)!;
-              const before = m.kind === "file" ? `対象ファイル ${m.refPath}${m.body ? " — " + m.body : ""}` : m.body;
+              const before = m.kind === "file" ? `${tr("sx.target_file")} ${m.refPath}${m.body ? " — " + m.body : ""}` : m.body;
               return (
                 <label key={row.id} className="memo-tidy-row">
                   <input
@@ -156,10 +161,10 @@ export function MemoTidyModal({ memos, onDone, onClose }: MemoTidyModalProps) {
                   <div className="memo-tidy-diff">
                     <div className="memo-tidy-before">{before}</div>
                     <div className="memo-tidy-after">
-                      {row.cleaned || <span className="muted">（変更なし）</span>}
+                      {row.cleaned || <span className="muted">{tr("sx.no_change")}</span>}
                       {row.suggestedCategory && (
                         <span className="memo-cat-tag">
-                          {m.category !== row.suggestedCategory ? `${m.category || "未分類"} → ` : ""}
+                          {m.category !== row.suggestedCategory ? `${m.category || tr("sx.uncategorized")} → ` : ""}
                           {row.suggestedCategory}
                         </span>
                       )}
@@ -173,10 +178,10 @@ export function MemoTidyModal({ memos, onDone, onClose }: MemoTidyModalProps) {
       </div>
       <footer className="ui-modal-foot">
         <Button variant="ghost" onClick={onClose}>
-          キャンセル
+          {tr("sx.cancel")}
         </Button>
         <Button variant="primary" disabled={loading || !!err || busy || chosenCount === 0} onClick={() => void apply()}>
-          {chosenCount > 0 ? `${chosenCount} 件を反映` : "反映"}
+          {chosenCount > 0 ? tr("sx.apply_count", { count: chosenCount }) : tr("sx.apply")}
         </Button>
       </footer>
     </Modal>

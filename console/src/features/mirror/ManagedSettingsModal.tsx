@@ -9,6 +9,7 @@ import { Modal } from "../../ui/Modal.tsx";
 import { Button } from "../../ui/Button.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
+import { useT } from "../../lib/i18n/index.ts";
 
 interface ManagedSettingsModalProps {
   session: string;
@@ -20,6 +21,7 @@ interface ManagedSettingsModalProps {
 
 export function ManagedSettingsModal({ session, kind, working, onApplied, onClose }: ManagedSettingsModalProps) {
   const toast = useToast();
+  const tr = useT();
   const [initial, setInitial] = useState<ManagedThreadSettings | null>(null);
   const [model, setModel] = useState("");
   const [effort, setEffort] = useState("");
@@ -33,7 +35,7 @@ export function ManagedSettingsModal({ session, kind, working, onApplied, onClos
       .then((r) => {
         if (!alive) return;
         if (r.error) {
-          setError(r.error.message || "設定を読み込めませんでした");
+          setError(r.error.message || tr("mgr.load_failed"));
           return;
         }
         const current: ManagedThreadSettings = {
@@ -49,7 +51,7 @@ export function ManagedSettingsModal({ session, kind, working, onApplied, onClos
         setEffort(current.effort);
         setMode(current.mode === "plan" ? "plan" : "normal");
       })
-      .catch(() => alive && setError("設定を読み込めませんでした（通信エラー）"));
+      .catch(() => alive && setError(tr("mgr.load_failed_network")));
     return () => {
       alive = false;
     };
@@ -75,25 +77,25 @@ export function ManagedSettingsModal({ session, kind, working, onApplied, onClos
     const res = await sessionSettings(session, patch);
     setBusy(false);
     if (!res.ok) {
-      setError(res.message || "設定を変更できませんでした");
+      setError(res.message || tr("mgr.change_failed"));
       return;
     }
     const next = res.settings || { ...initial, model, effort, mode };
     onApplied({ ...initial, ...next, model, effort, mode });
-    toast("実行設定を更新しました", { kind: "success" });
+    toast(tr("mgr.settings_updated"), { kind: "success" });
     onClose();
   };
 
   return (
-    <Modal title={<><Icon name="gear" /> 実行設定</>} onClose={onClose} lockClose={busy}>
+    <Modal title={<><Icon name="gear" /> {tr("mgr.run_settings")}</>} onClose={onClose} lockClose={busy}>
       <div className="ui-modal-body managed-settings-body">
-        {!initial && !error && <div className="pane-empty"><Icon name="loading" spin /> 設定を読み込み中…</div>}
+        {!initial && !error && <div className="pane-empty"><Icon name="loading" spin /> {tr("mgr.loading")}</div>}
         {error && <div className="managed-settings-error" role="alert">{error}</div>}
         {initial && (
           <>
             {initial.dynamicModel !== false && (
               <div className="ui-field">
-                <span className="ui-field-label">モデル</span>
+                <span className="ui-field-label">{tr("mgr.model")}</span>
                 <ModelPicker
                   kind={kind}
                   model={model}
@@ -108,30 +110,30 @@ export function ManagedSettingsModal({ session, kind, working, onApplied, onClos
               <div className="ui-field-row">
                 {initial.dynamicEffort !== false && (
                   <div className="ui-field">
-                    <span className="ui-field-label">推論 effort</span>
+                    <span className="ui-field-label">{tr("mgr.effort")}</span>
                     <EffortPicker kind={kind} model={model} effort={effort} onChange={setEffort} />
-                    <span className="ui-field-hint">既定は標準推論量へ戻します。</span>
+                    <span className="ui-field-hint">{tr("mgr.effort_hint")}</span>
                   </div>
                 )}
                 {initial.dynamicMode !== false && (
                   <div className="ui-field">
-                    <span className="ui-field-label">モード</span>
+                    <span className="ui-field-label">{tr("mgr.mode")}</span>
                     <select className="cinput" value={mode} onChange={(e) => setMode(e.target.value === "plan" ? "plan" : "normal")}>
-                      <option value="normal">通常（実装）</option>
+                      <option value="normal">{tr("mgr.mode_normal")}</option>
                       <option value="plan">Plan</option>
                     </select>
                   </div>
                 )}
               </div>
             )}
-            {working && <div className="ui-field-hint"><Icon name="info" /> 変更は次のターンから反映されます。</div>}
+            {working && <div className="ui-field-hint"><Icon name="info" /> {tr("mgr.next_turn_hint")}</div>}
           </>
         )}
       </div>
       <footer className="ui-modal-foot">
-        <Button variant="ghost" onClick={onClose} disabled={busy}>キャンセル</Button>
+        <Button variant="ghost" onClick={onClose} disabled={busy}>{tr("mgr.cancel")}</Button>
         <Button variant="primary" onClick={() => void apply()} disabled={!changed || busy || !!error}>
-          {busy ? "適用中…" : "適用"}
+          {busy ? tr("mgr.applying") : tr("mgr.apply")}
         </Button>
       </footer>
     </Modal>

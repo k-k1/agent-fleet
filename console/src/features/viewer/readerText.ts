@@ -119,7 +119,9 @@ function spokenOf(s: RubySeg): string {
 // buildReadUnits は本文を「行内は文、行末で区切り」の ReadUnit 列へ。原文の改行・行頭スペース・
 // ルビはすべて表示側（segs）に保持する。Markdown のコードフェンス内は表示するが読み上げない。
 // code を渡すとインラインコード（`…`）を省略読みにする（plainify に伝搬。表示は原文のまま）。
-export function buildReadUnits(content: string, isMarkdown: boolean, code?: CodeReadOpts): ReadUnit[] {
+// ruby=false（UI ロケールが非 ja のとき）は なろう形式ルビの解釈を無効化し、《》｜ を素の文字として
+// 扱う（日本語専用機能のロケールゲート・docs/28 §2.4）。
+export function buildReadUnits(content: string, isMarkdown: boolean, code?: CodeReadOpts, ruby = true): ReadUnit[] {
   const units: ReadUnit[] = [];
   const lines = content.split("\n");
   let inFence = false;
@@ -164,7 +166,7 @@ export function buildReadUnits(content: string, isMarkdown: boolean, code?: Code
       units.push({ segs: disp, spoken, preBeat, tameBeat, lineHead });
     };
 
-    for (const seg of parseRuby(line)) {
+    for (const seg of ruby ? parseRuby(line) : [{ base: line }]) {
       if (seg.ruby !== undefined) {
         cur.push(seg); // ルビは分割しない
         continue;

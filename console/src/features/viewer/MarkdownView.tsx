@@ -6,6 +6,7 @@ import { dirName, baseName, isExternalUrl, resolveMarkdownFileTarget, slug } fro
 import { api, downloadURL } from "../../core/api/client.ts";
 import { useSettings } from "../../lib/settings.ts";
 import { useToast } from "../../ui/ToastProvider.tsx";
+import { t } from "../../lib/i18n/index.ts";
 
 // MarkdownView renders Markdown to sanitized HTML, highlights fenced code blocks,
 // turns ```mermaid blocks into rendered diagrams (lazy-loaded), and wires links:
@@ -287,7 +288,7 @@ function addCopyButton(code: HTMLElement) {
   const btn = document.createElement("button");
   btn.type = "button";
   btn.className = "md-copy";
-  btn.title = "このコードをコピー";
+  btn.title = t("view.copy_this_code");
   btn.innerHTML = '<i class="codicon codicon-copy"></i>';
   btn.addEventListener("click", () => {
     const text = code.textContent || "";
@@ -340,17 +341,17 @@ async function openRepoTarget(
   try {
     d = await api(`api/fs/tree?path=${encodeURIComponent(dirName(target.path))}`);
   } catch {
-    onError?.(`ファイルを確認できません: ${target.path}`);
+    onError?.(t("view.cannot_check_file", { path: target.path }));
     return;
   }
   const entry = (d?.entries || []).find((e) => e.name === baseName(target.path));
   if (!entry) {
-    onError?.(`ファイルが見つかりません: ${target.path}`);
+    onError?.(t("view.file_not_found", { path: target.path }));
     return;
   }
   if (entry.type === "dir") onOpenDir?.(target.path);
   else if (onOpenFile) onOpenFile(target.path, target.line, target.column);
-  else onError?.(`この画面からファイルを開けません: ${target.path}`);
+  else onError?.(t("view.cannot_open_from_here", { path: target.path }));
 }
 
 // wireLinks classifies and rewires every <a> in the rendered markdown.
@@ -391,14 +392,16 @@ function wireLinks(
     a.classList.add("repo-link");
     const target = resolveMarkdownFileTarget(href, basePath, baseDir);
     if (target) {
-      a.title = target.line ? `${target.path}:${target.line} を別ペインで開く` : `${target.path} を別ペインで開く`;
-      a.setAttribute("aria-label", `${a.textContent || target.path}を別ペインで開く`);
+      a.title = target.line
+        ? t("view.open_in_pane_at_line", { path: target.path, line: target.line })
+        : t("view.open_in_pane", { path: target.path });
+      a.setAttribute("aria-label", t("view.open_in_pane_aria", { label: a.textContent || target.path }));
     }
     a.addEventListener("click", (e) => {
       e.preventDefault();
       const resolved = resolveMarkdownFileTarget(href, basePath, baseDir);
       if (resolved) openRepoTarget(resolved, onOpenFile, onOpenDir, onError);
-      else onError?.(`リンク先を解決できません: ${href}`);
+      else onError?.(t("view.cannot_resolve_link", { href }));
     });
   });
 }

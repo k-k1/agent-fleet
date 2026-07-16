@@ -68,6 +68,8 @@ jobs:
         run: npm ci
       - name: typecheck
         run: npm run typecheck
+      - name: i18n-lint
+        run: npm run i18n:lint
       - name: vitest
         run: npm test
       - name: build

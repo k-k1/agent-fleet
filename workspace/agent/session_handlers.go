@@ -394,11 +394,11 @@ func handleForkSession(w http.ResponseWriter, r *http.Request) {
 	ag := agentOf(src.Kind)
 	forker, canFork := ag.(agents.Forker)
 	if !canFork || !ag.Caps().CanFork {
-		httpx.WriteErr(w, http.StatusBadRequest, "unsupported_kind", "このセッション種別は分岐に対応していません")
+		httpx.WriteErr(w, http.StatusBadRequest, errCodeForkUnsupportedKind, "this session type does not support forking")
 		return
 	}
 	if !session.DirExists(src.Dir) {
-		httpx.WriteErr(w, http.StatusBadRequest, "bad_dir", "作業フォルダが存在しないため分岐できません")
+		httpx.WriteErr(w, http.StatusBadRequest, errCodeForkMissingDir, "cannot fork: the working folder does not exist")
 		return
 	}
 	forkFrom, err := forker.ForkSource(src)

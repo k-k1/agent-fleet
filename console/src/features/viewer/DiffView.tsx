@@ -1,6 +1,7 @@
 import { Icon } from "../../ui/Icon.tsx";
 import { useSettings, fontStack } from "../../lib/settings.ts";
 import { baseName } from "../../lib/filemeta.ts";
+import { useT } from "../../lib/i18n/index.ts";
 import type { CSSProperties } from "react";
 
 // DiffView renders the before/after of an edit-family tool (Edit/Write/MultiEdit) as a
@@ -30,6 +31,7 @@ interface DiffRow {
 }
 
 export function DiffView({ title, tool, edits, wrap }: DiffViewProps) {
+  const tr = useT();
   const settings = useSettings();
   const viewerStyle = {
     "--viewer-font": fontStack(settings.viewerFont),
@@ -51,7 +53,7 @@ export function DiffView({ title, tool, edits, wrap }: DiffViewProps) {
     <div className={"fileview diffview" + (wrap ? "" : " nowrap")} style={viewerStyle}>
       <header className="view-head fileinfo">
         <span className="fi-name mono" title={title}>
-          <Icon name="diff" /> {baseName(title || "") || title || "差分"}
+          <Icon name="diff" /> {baseName(title || "") || title || tr("view.diff")}
         </span>
         <span className="dv-stat">
           {tool && <span className="fi-tag">{tool}</span>}
@@ -62,7 +64,7 @@ export function DiffView({ title, tool, edits, wrap }: DiffViewProps) {
       <div className="dv-scroll">
         {hunks.map((rows, hi) => (
           <div className="dv-hunk" key={hi}>
-            {list.length > 1 && <div className="dv-hunk-head">変更 {hi + 1}</div>}
+            {list.length > 1 && <div className="dv-hunk-head">{tr("view.change")} {hi + 1}</div>}
             <table className="dv-table">
               <tbody>
                 {rows.map((r, i) => (

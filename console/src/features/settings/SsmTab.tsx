@@ -6,6 +6,7 @@ import { useConfirm } from "../../ui/ConfirmProvider.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { useSettings, setSetting } from "../../lib/settings.ts";
 import { SSM_HOST_COLORS, hostColorBase, termBackground } from "../../lib/termcolor.ts";
+import { useT, t } from "../../lib/i18n/index.ts";
 
 // SsmTab manages the member's own AWS SSM login config (docs/history/p3-ssm-session.md)
 // in two tiers so the form isn't cluttered:
@@ -24,16 +25,17 @@ async function postJSON(path: string, method: string, body: unknown, toast: (msg
   try {
     res = await rawJSON(path, method, body);
   } catch (e: any) {
-    toast("通信に失敗しました: " + (e?.message || e));
+    toast(t("ssm.comm_failed", { msg: String(e?.message || e) }));
     return false;
   }
   if (!res.ok) {
     const j = await res.json().catch(() => null);
-    toast(
-      "保存に失敗: HTTP " +
-        res.status +
-        (j?.error?.message ? " — " + j.error.message : res.status === 404 ? "（/api/ssm 未提供。CP の再起動が必要かもしれません）" : ""),
-    );
+    const detail = j?.error?.message
+      ? " — " + j.error.message
+      : res.status === 404
+        ? t("ssm.save_failed_404")
+        : "";
+    toast(t("ssm.save_failed_http", { status: res.status, detail }));
     return false;
   }
   return true;
@@ -94,6 +96,7 @@ function Field({
 }
 
 export function SsmTab() {
+  const tr = useT();
   const [profiles, setProfiles] = useState<any[] | null>(null);
   const [hosts, setHosts] = useState<any[] | null>(null);
   const profileLabelRef = useRef<HTMLInputElement>(null);
@@ -115,8 +118,11 @@ export function SsmTab() {
   return (
     <div className="ssm-tab">
       <p className="field-help">
-        自社 AWS の EC2 に SSM Session Manager でログインするための設定です。ここには <b>AWS の秘密情報は保存しません</b>
-        （短命の資格情報はセッション起動時に <code>aws sso login</code> でブラウザ認証し、ワークスペース内にのみ保持されます）。
+        {tr("ssm.intro_1")}
+        <b>{tr("ssm.intro_bold")}</b>
+        {tr("ssm.intro_2")}
+        <code>aws sso login</code>
+        {tr("ssm.intro_3")}
       </p>
       <ProfileSection
         profiles={profiles}
@@ -149,6 +155,7 @@ function ProfileSection({
   open: boolean;
   setOpen: (v: boolean) => void;
 }) {
+  const tr = useT();
   const askConfirm = useConfirm();
   const toast = useToast();
   const [f, setF] = useState<Record<string, string>>(emptyProfile);
@@ -178,9 +185,9 @@ function ProfileSection({
   };
   const remove = async (id: string) => {
     const ok = await askConfirm({
-      title: "プロファイルを削除",
-      body: "このプロファイルを削除します。参照中のホストはログインできなくなります。",
-      confirmLabel: "削除する",
+      title: tr("ssm.profile_del_title"),
+      body: tr("ssm.profile_del_body"),
+      confirmLabel: tr("common.delete_confirm"),
       danger: true,
     });
     if (!ok) return;
@@ -190,30 +197,31 @@ function ProfileSection({
 
   return (
     <section className="ssm-section">
-      <div className="conn-cat">プロファイル（共通設定）</div>
+      <div className="conn-cat">{tr("ssm.profile_cat")}</div>
       <div className="field-help">
-        AWS アクセスポータル（IAM Identity Center）と、その中のアカウント／ロール。複数のホストで使い回します。
-        1 つのプロファイル＝1 つの <code>~/.aws</code> プロファイル。
+        {tr("ssm.profile_help_1")}
+        <code>~/.aws</code>
+        {tr("ssm.profile_help_2")}
       </div>
       {profiles === null ? (
-        <p className="muted pad">読み込み中…</p>
+        <p className="muted pad">{tr("common.loading")}</p>
       ) : profiles.length === 0 ? (
-        <p className="muted">まだ登録がありません。まずここを 1 つ作成してください。</p>
+        <p className="muted">{tr("ssm.profile_empty")}</p>
       ) : (
         <ul className="ssm-list">
           {profiles.map((p) => (
             <li key={p.id} className="ssm-item">
               <div className="ssm-item-head">
                 <span className="ssm-alias">{p.label}</span>
-                <button className="ghost danger ssm-del" title="削除" onClick={() => remove(p.id)}>
-                  削除
+                <button className="ghost danger ssm-del" title={tr("common.delete")} onClick={() => remove(p.id)}>
+                  {tr("common.delete")}
                 </button>
               </div>
               <div className="ssm-meta">
-                <Meta k="アカウント" v={p.accountId} />
-                <Meta k="ロール" v={p.roleName} />
-                <Meta k="既定リージョン" v={p.region} />
-                <Meta k="SSO リージョン" v={p.ssoRegion} />
+                <Meta k={tr("ssm.meta_account")} v={p.accountId} />
+                <Meta k={tr("ssm.meta_role")} v={p.roleName} />
+                <Meta k={tr("ssm.meta_default_region")} v={p.region} />
+                <Meta k={tr("ssm.meta_sso_region")} v={p.ssoRegion} />
                 <Meta k="start URL" v={p.startUrl} wide />
               </div>
             </li>
@@ -223,7 +231,7 @@ function ProfileSection({
       {open ? (
         <div className="ssm-frm">
           <FieldGroup>
-            <Field label="ラベル" req hint="一覧・ホストの選択に出る表示名。">
+            <Field label={tr("ssm.f_label")} req hint={tr("ssm.f_label_hint")}>
               <input
                 ref={labelRef}
                 className="cinput"
@@ -233,7 +241,7 @@ function ProfileSection({
                 autoFocus
               />
             </Field>
-            <Field label="SSO リージョン" req hint="アクセスポータルのリージョン。">
+            <Field label={tr("ssm.meta_sso_region")} req hint={tr("ssm.f_sso_region_hint")}>
               <input className="cinput" placeholder="ap-northeast-1" value={f.ssoRegion} onChange={set("ssoRegion")} />
             </Field>
             <Field
@@ -242,7 +250,9 @@ function ProfileSection({
               wide
               hint={
                 <>
-                  IAM Identity Center のアクセスポータル URL（<code>https://…awsapps.com/start</code>）。
+                  {tr("ssm.f_starturl_hint_1")}
+                  <code>https://…awsapps.com/start</code>
+                  {tr("ssm.f_starturl_hint_2")}
                 </>
               }
             >
@@ -253,19 +263,19 @@ function ProfileSection({
                 onChange={set("startUrl")}
               />
             </Field>
-            <Field label="アカウント ID" hint="任意。未入力ならログイン時に選択。">
+            <Field label={tr("ssm.f_account_id")} hint={tr("ssm.f_optional_login_pick")}>
               <input className="cinput" placeholder="123456789012" value={f.accountId} onChange={set("accountId")} />
             </Field>
-            <Field label="ロール名" hint="任意。未入力ならログイン時に選択。">
+            <Field label={tr("ssm.f_role_name")} hint={tr("ssm.f_optional_login_pick")}>
               <input className="cinput" placeholder="AdministratorAccess" value={f.roleName} onChange={set("roleName")} />
             </Field>
-            <Field label="既定リージョン" hint="任意。セッションを開くリージョン。">
+            <Field label={tr("ssm.meta_default_region")} hint={tr("ssm.f_default_region_hint")}>
               <input className="cinput" placeholder="ap-northeast-1" value={f.region} onChange={set("region")} />
             </Field>
           </FieldGroup>
           <div className="ssm-frm-foot">
             <button className="primary" disabled={busy || !valid} onClick={add}>
-              プロファイルを追加
+              {tr("ssm.add_profile")}
             </button>
             <button
               className="ghost"
@@ -274,16 +284,16 @@ function ProfileSection({
                 setF(emptyProfile);
               }}
             >
-              キャンセル
+              {tr("common.cancel")}
             </button>
             <span className="req-note">
-              <b>*</b> は必須
+              <b>*</b> {tr("ssm.req_note")}
             </span>
           </div>
         </div>
       ) : (
         <button className="ghost ssm-add-toggle" onClick={() => setOpen(true)}>
-          <Icon name="add" /> プロファイルを追加
+          <Icon name="add" /> {tr("ssm.add_profile")}
         </button>
       )}
     </section>
@@ -297,13 +307,14 @@ function ProfileSection({
 // created (new sessions to this host pick it up). Swatches show the vivid hue; the
 // terminal itself renders a subtle dark tint of it.
 function HostColorPicker({ hostId }: { hostId: string }) {
+  const tr = useT();
   const settings = useSettings();
   const cur = settings.ssmHostColors?.[hostId] || "auto";
   const setColor = (id: string) =>
     setSetting("ssmHostColors", { ...(settings.ssmHostColors || {}), [hostId]: id });
   return (
     <div className="ssm-host-color">
-      <span className="ssm-meta-k">端末の色</span>
+      <span className="ssm-meta-k">{tr("ssm.term_color")}</span>
       <div className="ssm-swatches">
         {SSM_HOST_COLORS.map((c) => {
           const base = c.base || hostColorBase("auto", hostId); // vivid identity color
@@ -312,7 +323,7 @@ function HostColorPicker({ hostId }: { hostId: string }) {
               key={c.id}
               type="button"
               className={"ssm-swatch" + (cur === c.id ? " active" : "")}
-              title={c.id === "auto" ? "自動（ホスト名から決定）" : c.label}
+              title={c.id === "auto" ? tr("ssm.color_auto_title") : tr(c.labelKey)}
               style={{ background: base }}
               onClick={() => setColor(c.id)}
             >
@@ -320,8 +331,8 @@ function HostColorPicker({ hostId }: { hostId: string }) {
             </button>
           );
         })}
-        <span className="ssm-swatch-preview" title="端末での見え方" style={{ background: termBackground("ssm", hostColorBase(cur, hostId)) }}>
-          端末
+        <span className="ssm-swatch-preview" title={tr("ssm.term_preview_title")} style={{ background: termBackground("ssm", hostColorBase(cur, hostId)) }}>
+          {tr("ssm.term_label")}
         </span>
       </div>
     </div>
@@ -341,6 +352,7 @@ function HostSection({
   reload: () => void;
   onNeedProfile: () => void;
 }) {
+  const tr = useT();
   const askConfirm = useConfirm();
   const toast = useToast();
   const [f, setF] = useState<Record<string, string>>(emptyHost);
@@ -372,9 +384,9 @@ function HostSection({
   };
   const remove = async (id: string) => {
     const ok = await askConfirm({
-      title: "ホストを削除",
-      body: "このホストを削除します。",
-      confirmLabel: "削除する",
+      title: tr("ssm.host_del_title"),
+      body: tr("ssm.host_del_body"),
+      confirmLabel: tr("common.delete_confirm"),
       danger: true,
     });
     if (!ok) return;
@@ -384,30 +396,31 @@ function HostSection({
 
   return (
     <section className="ssm-section">
-      <div className="conn-cat">SSM ホスト（個別）</div>
+      <div className="conn-cat">{tr("ssm.host_cat")}</div>
       <div className="field-help">
-        ログイン先の別名 → インスタンス ID・run-as ドキュメント。認証はプロファイルを選ぶだけ。
-        <code>aws ssm start-session --target &lt;instance&gt; --document-name &lt;document&gt;</code> に対応します。
+        {tr("ssm.host_help_1")}
+        <code>aws ssm start-session --target &lt;instance&gt; --document-name &lt;document&gt;</code>
+        {tr("ssm.host_help_2")}
       </div>
       {hosts === null ? (
-        <p className="muted pad">読み込み中…</p>
+        <p className="muted pad">{tr("common.loading")}</p>
       ) : hosts.length === 0 ? (
-        <p className="muted">まだ登録がありません。</p>
+        <p className="muted">{tr("ssm.host_empty")}</p>
       ) : (
         <ul className="ssm-list">
           {hosts.map((h) => (
             <li key={h.id} className="ssm-item">
               <div className="ssm-item-head">
                 <span className="ssm-alias">{h.alias}</span>
-                <button className="ghost danger ssm-del" title="削除" onClick={() => remove(h.id)}>
-                  削除
+                <button className="ghost danger ssm-del" title={tr("common.delete")} onClick={() => remove(h.id)}>
+                  {tr("common.delete")}
                 </button>
               </div>
               <div className="ssm-meta">
-                <Meta k="インスタンス" v={h.instanceId} />
-                <Meta k="ドキュメント" v={h.documentName} />
-                <Meta k="リージョン" v={h.region} />
-                <Meta k="プロファイル" v={profileLabel(h.profileId)} mono={false} />
+                <Meta k={tr("ssm.meta_instance")} v={h.instanceId} />
+                <Meta k={tr("ssm.meta_document")} v={h.documentName} />
+                <Meta k={tr("ssm.meta_region")} v={h.region} />
+                <Meta k={tr("ssm.meta_profile")} v={profileLabel(h.profileId)} mono={false} />
               </div>
               <HostColorPicker hostId={h.id} />
             </li>
@@ -419,17 +432,17 @@ function HostSection({
           <span className="i">
             <Icon name="info" />
           </span>
-          <span className="t">ホストの登録には共通プロファイルが必要です。まず 1 つ作成してください。</span>
+          <span className="t">{tr("ssm.need_profile")}</span>
           <button className="primary" onClick={onNeedProfile}>
-            プロファイルを追加
+            {tr("ssm.add_profile")}
           </button>
         </div>
       ) : open ? (
         <div className="ssm-frm">
           <FieldGroup>
-            <Field label="使用するプロファイル" req wide hint="このホストの認証に使う共通プロファイル。まず選びます。">
+            <Field label={tr("ssm.f_use_profile")} req wide hint={tr("ssm.f_use_profile_hint")}>
               <select className="cinput" value={f.profileId} onChange={set("profileId")} autoFocus>
-                <option value="">プロファイルを選択</option>
+                <option value="">{tr("ssm.select_profile")}</option>
                 {(profiles || []).map((p) => (
                   <option key={p.id} value={p.id}>
                     {p.label}
@@ -437,22 +450,22 @@ function HostSection({
                 ))}
               </select>
             </Field>
-            <Field label="別名" req hint="起動メニューに出るログイン先の名前。">
+            <Field label={tr("ssm.f_alias")} req hint={tr("ssm.f_alias_hint")}>
               <input className="cinput" placeholder="admin@web-01" value={f.alias} onChange={set("alias")} />
             </Field>
-            <Field label="インスタンス ID" req hint={<>EC2 コンソール / <code>aws ec2 describe-instances</code>。</>}>
+            <Field label={tr("ssm.f_instance_id")} req hint={<>{tr("ssm.f_instance_hint_1")}<code>aws ec2 describe-instances</code>{tr("ssm.f_instance_hint_2")}</>}>
               <input className="cinput" placeholder="i-0123456789abcdef0" value={f.instanceId} onChange={set("instanceId")} />
             </Field>
-            <Field label="run-as ドキュメント" hint="任意。既定でよければ空のまま。">
+            <Field label={tr("ssm.f_document")} hint={tr("ssm.f_document_hint")}>
               <input className="cinput" placeholder="SSM-SessionManagerRunShell" value={f.documentName} onChange={set("documentName")} />
             </Field>
-            <Field label="リージョン" hint="任意。プロファイル既定を上書きしたい時だけ。">
-              <input className="cinput" placeholder="プロファイル既定を使用" value={f.region} onChange={set("region")} />
+            <Field label={tr("ssm.meta_region")} hint={tr("ssm.f_region_hint")}>
+              <input className="cinput" placeholder={tr("ssm.f_region_placeholder")} value={f.region} onChange={set("region")} />
             </Field>
           </FieldGroup>
           <div className="ssm-frm-foot">
             <button className="primary" disabled={busy || !valid} onClick={add}>
-              ホストを追加
+              {tr("ssm.add_host")}
             </button>
             <button
               className="ghost"
@@ -461,16 +474,16 @@ function HostSection({
                 setF(emptyHost);
               }}
             >
-              キャンセル
+              {tr("common.cancel")}
             </button>
             <span className="req-note">
-              <b>*</b> は必須
+              <b>*</b> {tr("ssm.req_note")}
             </span>
           </div>
         </div>
       ) : (
         <button className="ghost ssm-add-toggle" onClick={() => setOpen(true)}>
-          <Icon name="add" /> ホストを追加
+          <Icon name="add" /> {tr("ssm.add_host")}
         </button>
       )}
     </section>

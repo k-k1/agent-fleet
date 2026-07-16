@@ -7,8 +7,8 @@ import { Icon } from "../../ui/Icon.tsx";
 import { ConfirmDialog } from "../../ui/ConfirmDialog.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { kindLabel, kindClass, kindIcon } from "../../lib/sessionkind.ts";
-import { fmtDateTime, DATETIME_FULL } from "../../lib/intl.ts";
-import { useLocale } from "../../lib/i18n/index.ts";
+import { fmtDateTime, DATETIME_FULL, compareText } from "../../lib/intl.ts";
+import { useLocale, useT } from "../../lib/i18n/index.ts";
 import { fmtGiB } from "../../lib/bytes.ts";
 import { stateInfo } from "../../lib/sessionview.ts";
 import { setTenantDict } from "../chat/ttsDict.ts";
@@ -62,6 +62,7 @@ const fmtGbHint = (mb: number) => {
 };
 
 export function AdminTab() {
+  const tr = useT();
   // shared with the settings store so closeAdmin can pop all drill levels at once
   const [tenants, setTenants] = useState<Tenant[] | null>(null);
   const [forbidden, setForbidden] = useState(false);
@@ -143,8 +144,8 @@ export function AdminTab() {
     loadTenants();
   }, [loadTenants]);
 
-  if (forbidden) return <p className="muted pad">権限がありません（super_admin のみ）。</p>;
-  if (tenants === null) return <p className="muted pad">読み込み中…</p>;
+  if (forbidden) return <p className="muted pad">{tr("admin.forbidden")}</p>;
+  if (tenants === null) return <p className="muted pad">{tr("common.loading")}</p>;
 
   const tenant = view.slug ? tenants.find((t) => t.slug === view.slug) : null;
   const tenantName = tenant ? tenant.name : view.slug;
@@ -155,22 +156,22 @@ export function AdminTab() {
     <div className="admin">
       <div className="seg admin-modes">
         <button type="button" className={"seg-btn" + (mode === "manage" ? " active" : "")} onClick={() => setMode("manage")}>
-          <Icon name="organization" /> テナント管理
+          <Icon name="organization" /> {tr("admin.mode_manage")}
         </button>
         <button type="button" className={"seg-btn" + (mode === "sessions" ? " active" : "")} onClick={() => setMode("sessions")}>
-          <Icon name="list-tree" /> セッション
+          <Icon name="list-tree" /> {tr("admin.mode_sessions")}
         </button>
         <button type="button" className={"seg-btn" + (mode === "usage" ? " active" : "")} onClick={() => setMode("usage")}>
-          <Icon name="graph" /> 使用量
+          <Icon name="graph" /> {tr("admin.mode_usage")}
         </button>
         <button type="button" className={"seg-btn" + (mode === "audit" ? " active" : "")} onClick={() => setMode("audit")}>
-          <Icon name="history" /> 監査
+          <Icon name="history" /> {tr("admin.mode_audit")}
         </button>
         <button type="button" className={"seg-btn" + (mode === "egress" ? " active" : "")} onClick={() => setMode("egress")}>
-          <Icon name="globe" /> 通信
+          <Icon name="globe" /> {tr("admin.mode_egress")}
         </button>
         <button type="button" className={"seg-btn" + (mode === "tts" ? " active" : "")} onClick={() => setMode("tts")}>
-          <Icon name="unmute" /> 読み上げ
+          <Icon name="unmute" /> {tr("admin.mode_tts")}
         </button>
       </div>
 
@@ -185,7 +186,7 @@ export function AdminTab() {
       <div className="admin-nav">
         {view.stage !== "tenants" && (
           <button className="admin-back" onClick={goBack}>
-            <Icon name="arrow-left" /> 戻る
+            <Icon name="arrow-left" /> {tr("common.back")}
           </button>
         )}
         <nav className="admin-crumbs">
@@ -196,7 +197,7 @@ export function AdminTab() {
               if (d > 0) history.go(-d);
             }}
           >
-            <Icon name="organization" /> テナント
+            <Icon name="organization" /> {tr("admin.crumb_tenants")}
           </button>
           {view.slug && (
             <>
@@ -259,6 +260,7 @@ export function AdminTab() {
 // Polled like the per-member view; a client-side search narrows by user/label/repo.
 
 function AllSessionsView({ tenants, isSuper }: { tenants: Tenant[]; isSuper: boolean }) {
+  const tr = useT();
   const [tenant, setTenant] = useState(isSuper ? "" : tenants[0]?.slug || "");
   const [q, setQ] = useState("");
   const [rows, setRows] = useState<any[] | null>(null);
@@ -310,9 +312,9 @@ function AllSessionsView({ tenants, isSuper }: { tenants: Tenant[]; isSuper: boo
         <div className="usage-toolbar">
           {isSuper && (
             <label>
-              テナント
+              {tr("admin.tenant")}
               <select value={tenant} onChange={(e) => setTenant(e.target.value)}>
-                <option value="">全テナント</option>
+                <option value="">{tr("admin.all_tenants")}</option>
                 {tenants.map((t) => (
                   <option key={t.slug} value={t.slug}>{t.name}</option>
                 ))}
@@ -320,19 +322,19 @@ function AllSessionsView({ tenants, isSuper }: { tenants: Tenant[]; isSuper: boo
             </label>
           )}
           <label className="as-search">
-            検索
-            <input type="text" value={q} onChange={(e) => setQ(e.target.value)} placeholder="ユーザー / ラベル / リポジトリ" />
+            {tr("admin.search")}
+            <input type="text" value={q} onChange={(e) => setQ(e.target.value)} placeholder={tr("admin.search_ph_sessions")} />
           </label>
-          <span className="as-count muted">{all.length} 稼働中</span>
+          <span className="as-count muted">{tr("admin.running_count", { n: all.length })}</span>
         </div>
         {err && <p className="form-err">{err}</p>}
       </section>
 
       <section className="admin-panel">
         {rows === null ? (
-          <p className="muted">読み込み中…</p>
+          <p className="muted">{tr("common.loading")}</p>
         ) : shown.length === 0 ? (
-          <p className="muted">{all.length === 0 ? "稼働中のセッションはありません。" : "一致するセッションがありません。"}</p>
+          <p className="muted">{all.length === 0 ? tr("admin.no_running_sessions") : tr("admin.no_matching_sessions")}</p>
         ) : (
           <div className="all-sessions">
             {(() => {
@@ -343,9 +345,9 @@ function AllSessionsView({ tenants, isSuper }: { tenants: Tenant[]; isSuper: boo
                 const k = s.tenant || "";
                 (by.get(k) || by.set(k, []).get(k)!).push(s);
               }
-              const tName = (slugv: string) => tenants.find((t) => t.slug === slugv)?.name || slugv || "(不明)";
+              const tName = (slugv: string) => tenants.find((t) => t.slug === slugv)?.name || slugv || tr("admin.unknown");
               return [...by.entries()]
-                .sort((a, b) => tName(a[0]).localeCompare(tName(b[0])))
+                .sort((a, b) => compareText(tName(a[0]), tName(b[0])))
                 .map(([tslug, list]) => (
                   <div key={tslug || "_"} className="asx-group">
                     <div className="asx-group-head">
@@ -358,7 +360,7 @@ function AllSessionsView({ tenants, isSuper }: { tenants: Tenant[]; isSuper: boo
                           <span className={"kind-tag kind-" + kindClass(s.kind)}>
                             <Icon name={kindIcon(s.kind)} /> {kindLabel(s.kind)}
                           </span>
-                          <span className="asx-user mono" title={s.email || ""}>{s.user_key || "(不明)"}</span>
+                          <span className="asx-user mono" title={s.email || ""}>{s.user_key || tr("admin.unknown")}</span>
                           <span className="as-name mono" title={s.dir || ""}>{s.label ? s.label.replace(/^\[AF\]\s*/, "") : s.name}</span>
                           <span className="as-repo muted">{s.repo || ""}</span>
                           <span className={"session-state " + st.cls}>
@@ -392,6 +394,7 @@ const fmtAt = (iso: string) => {
 };
 
 function AuditView({ tenants, isSuper }: { tenants: Tenant[]; isSuper: boolean }) {
+  const tr = useT();
   const [tenant, setTenant] = useState(isSuper ? "" : tenants[0]?.slug || "");
   const [q, setQ] = useState("");
   const [rows, setRows] = useState<any[] | null>(null);
@@ -409,10 +412,10 @@ function AuditView({ tenants, isSuper }: { tenants: Tenant[]; isSuper: boolean }
       }
       setRows(d.audit || []);
     } catch {
-      setErr("読み込めません");
+      setErr(tr("admin.load_error"));
       setRows([]);
     }
-  }, [tenant]);
+  }, [tenant, tr]);
 
   useEffect(() => {
     load();
@@ -433,9 +436,9 @@ function AuditView({ tenants, isSuper }: { tenants: Tenant[]; isSuper: boolean }
         <div className="usage-toolbar">
           {isSuper && (
             <label>
-              テナント
+              {tr("admin.tenant")}
               <select value={tenant} onChange={(e) => setTenant(e.target.value)}>
-                <option value="">全テナント</option>
+                <option value="">{tr("admin.all_tenants")}</option>
                 {tenants.map((t) => (
                   <option key={t.slug} value={t.slug}>{t.name}</option>
                 ))}
@@ -443,22 +446,22 @@ function AuditView({ tenants, isSuper }: { tenants: Tenant[]; isSuper: boolean }
             </label>
           )}
           <label className="as-search">
-            検索
-            <input type="text" value={q} onChange={(e) => setQ(e.target.value)} placeholder="操作 / 対象 / ユーザー" />
+            {tr("admin.search")}
+            <input type="text" value={q} onChange={(e) => setQ(e.target.value)} placeholder={tr("admin.search_ph_audit")} />
           </label>
-          <button type="button" className="ghost" title="更新" onClick={load}>
+          <button type="button" className="ghost" title={tr("admin.refresh")} onClick={load}>
             <Icon name="refresh" />
           </button>
-          <span className="as-count muted">{(rows || []).length} 件</span>
+          <span className="as-count muted">{tr("admin.count_items", { n: (rows || []).length })}</span>
         </div>
         {err && <p className="form-err">{err}</p>}
       </section>
 
       <section className="admin-panel">
         {rows === null ? (
-          <p className="muted">読み込み中…</p>
+          <p className="muted">{tr("common.loading")}</p>
         ) : shown.length === 0 ? (
-          <p className="muted">{(rows || []).length === 0 ? "監査ログはまだありません。" : "一致するログがありません。"}</p>
+          <p className="muted">{(rows || []).length === 0 ? tr("admin.no_audit") : tr("admin.no_matching_audit")}</p>
         ) : (
           <div className="adm-audit">
             {shown.map((a: any) => (
@@ -483,6 +486,7 @@ function AuditView({ tenants, isSuper }: { tenants: Tenant[]; isSuper: boolean }
 // shows destination stats from the forward proxy (would-allow / would-block).
 
 function EgressView() {
+  const tr = useT();
   const [data, setData] = useState<any | null>(null); // { egress, mode, enforce }
   const [list, setList] = useState<any[] | null>(null); // allowlist entries
   const [err, setErr] = useState("");
@@ -505,9 +509,9 @@ function EgressView() {
       setData(d);
       setList(al?.allowlist || []);
     } catch {
-      setErr("読み込めません");
+      setErr(tr("admin.load_error"));
     }
-  }, [days]);
+  }, [days, tr]);
   useEffect(() => {
     load();
   }, [load]);
@@ -555,7 +559,7 @@ function EgressView() {
       {/* mode toggle */}
       <section className="admin-panel">
         <div className="usage-toolbar">
-          <span>モード</span>
+          <span>{tr("admin.mode_label")}</span>
           <span className="seg sm">
             <button
               type="button"
@@ -574,14 +578,14 @@ function EgressView() {
               enforce
             </button>
           </span>
-          <button type="button" className="ghost" title="更新" onClick={load}>
+          <button type="button" className="ghost" title={tr("admin.refresh")} onClick={load}>
             <Icon name="refresh" />
           </button>
         </div>
         {enforce ? (
-          <p className="form-err">enforce: 許可リスト外の通信を遮断します。先に log-only で実態を確認してから切替えてください。</p>
+          <p className="form-err">{tr("admin.egress_enforce_note")}</p>
         ) : (
-          <p className="muted">log-only: 観測のみで遮断しません。許可リストを固めてから enforce へ。</p>
+          <p className="muted">{tr("admin.egress_logonly_note")}</p>
         )}
         {err && <p className="form-err">{err}</p>}
       </section>
@@ -589,15 +593,15 @@ function EgressView() {
       {/* agent-proposed entries awaiting approval (docs/20 M4) */}
       {proposed.length > 0 && (
         <section className="admin-panel">
-          <h4 className="egress-h">提案中（要承認）</h4>
+          <h4 className="egress-h">{tr("admin.egress_proposed")}</h4>
           {proposed.map((e: any) => (
             <div key={e.id} className="adm-allow-row">
               <span className="as-name mono" title={e.entry}>{e.entry}</span>
               <span className="as-repo muted" title={e.reason}>{e.reason}</span>
               <span className="muted" title={e.added_by}>{e.added_by}</span>
               <span className="allow-acts">
-                <button type="button" className="btn xs" disabled={busy} onClick={() => setState(e.id, "active")}>承認</button>
-                <button type="button" className="ghost xs" disabled={busy} onClick={() => setState(e.id, "retired")}>却下</button>
+                <button type="button" className="btn xs" disabled={busy} onClick={() => setState(e.id, "active")}>{tr("admin.approve")}</button>
+                <button type="button" className="ghost xs" disabled={busy} onClick={() => setState(e.id, "retired")}>{tr("admin.reject")}</button>
               </span>
             </div>
           ))}
@@ -606,24 +610,24 @@ function EgressView() {
 
       {/* active allowlist + add */}
       <section className="admin-panel">
-        <h4 className="egress-h">許可リスト（追加分）</h4>
+        <h4 className="egress-h">{tr("admin.egress_allowlist")}</h4>
         <form className="egress-add" onSubmit={addEntry}>
           <input
             type="text"
             value={entry}
             onChange={(e) => setEntry(e.target.value)}
-            placeholder="host か .suffix.example.com"
+            placeholder={tr("admin.egress_entry_ph")}
           />
           <input
             type="text"
             value={reason}
             onChange={(e) => setReason(e.target.value)}
-            placeholder="理由（任意）"
+            placeholder={tr("admin.egress_reason_ph")}
           />
-          <button type="submit" className="btn" disabled={busy || !entry.trim()}>追加</button>
+          <button type="submit" className="btn" disabled={busy || !entry.trim()}>{tr("admin.add")}</button>
         </form>
         {active.length === 0 ? (
-          <p className="muted">追加の許可エントリはありません（製品既定の許可のみ有効）。</p>
+          <p className="muted">{tr("admin.egress_no_entries")}</p>
         ) : (
           active.map((e: any) => (
             <div key={e.id} className="adm-allow-row">
@@ -631,7 +635,7 @@ function EgressView() {
               <span className="as-repo muted" title={e.reason}>{e.reason}</span>
               <span className="muted" title={e.added_by}>{e.added_by}</span>
               <span className="allow-acts">
-                <button type="button" className="ghost xs" disabled={busy} onClick={() => setState(e.id, "retired")}>取消</button>
+                <button type="button" className="ghost xs" disabled={busy} onClick={() => setState(e.id, "retired")}>{tr("admin.retire")}</button>
               </span>
             </div>
           ))
@@ -641,27 +645,27 @@ function EgressView() {
       {/* observed destinations */}
       <section className="admin-panel">
         <div className="usage-toolbar">
-          <h4 className="egress-h">観測された宛先</h4>
+          <h4 className="egress-h">{tr("admin.egress_observed")}</h4>
           <label>
-            期間
+            {tr("admin.period")}
             <select value={days} onChange={(e) => setDays(Number(e.target.value))}>
-              <option value={1}>1日</option>
-              <option value={7}>7日</option>
-              <option value={30}>30日</option>
+              <option value={1}>{tr("admin.days_1")}</option>
+              <option value={7}>{tr("admin.days_7")}</option>
+              <option value={30}>{tr("admin.days_30")}</option>
             </select>
           </label>
         </div>
         {data === null ? (
-          <p className="muted">読み込み中…</p>
+          <p className="muted">{tr("common.loading")}</p>
         ) : stats.length === 0 ? (
-          <p className="muted">記録がありません（egress プロキシ未設定か、対象期間に通信なし）。</p>
+          <p className="muted">{tr("admin.egress_no_records")}</p>
         ) : (
           <div className="adm-egress">
             {stats.map((e: any) => (
               <div key={e.host} className="adm-egress-row">
                 <span className="as-name mono" title={e.host}>{e.host}</span>
-                <span className="egress-allow">{e.allowed} 許可</span>
-                {e.blocked > 0 && <span className="egress-block">{e.blocked} {enforce ? "遮断" : "遮断候補"}</span>}
+                <span className="egress-allow">{tr("admin.egress_allowed", { n: e.allowed })}</span>
+                {e.blocked > 0 && <span className="egress-block">{e.blocked} {enforce ? tr("admin.egress_blocked") : tr("admin.egress_blocked_candidate")}</span>}
               </div>
             ))}
           </div>
@@ -678,6 +682,7 @@ function EgressView() {
 // 常駐 docker 等）ではトグルはルーティングの有効/無効のみ。
 
 function TtsAdminView() {
+  const tr = useT();
   const [data, setData] = useState<any | null>(null); // { managed, enabled, engine, polly, dict }
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
@@ -700,9 +705,9 @@ function TtsAdminView() {
       setSavedDict(dv);
       setDict((cur) => (cur === null ? dv : cur)); // 編集中の入力はポーリングで潰さない
     } catch {
-      setErr("読み込めません");
+      setErr(tr("admin.load_error"));
     }
-  }, []);
+  }, [tr]);
   useEffect(() => {
     load();
   }, [load]);
@@ -747,20 +752,20 @@ function TtsAdminView() {
   const engineLabel = !data
     ? "…"
     : engine.ready
-      ? "稼働中"
+      ? tr("admin.tts_running")
       : engine.state === "starting"
-        ? "起動中（準備中）"
+        ? tr("admin.tts_starting")
         : engine.state === "running"
-          ? "稼働中（応答待ち）"
+          ? tr("admin.tts_running_waiting")
           : enabled && data.managed
-            ? "停止中"
-            : "停止中/未起動";
+            ? tr("admin.tts_stopped")
+            : tr("admin.tts_stopped_or_off");
 
   return (
     <div className="admin-stage">
       <section className="admin-panel">
         <div className="usage-toolbar">
-          <span>VOICEVOX エンジン（ずんだもん）</span>
+          <span>{tr("admin.tts_engine_label")}</span>
           <span className="seg sm">
             <button
               type="button"
@@ -768,7 +773,7 @@ function TtsAdminView() {
               disabled={busy || data === null}
               onClick={() => setEnabled(true)}
             >
-              有効
+              {tr("admin.enable")}
             </button>
             <button
               type="button"
@@ -776,45 +781,39 @@ function TtsAdminView() {
               disabled={busy || data === null}
               onClick={() => setEnabled(false)}
             >
-              無効
+              {tr("admin.disable")}
             </button>
           </span>
-          <button type="button" className="ghost" title="更新" onClick={load}>
+          <button type="button" className="ghost" title={tr("admin.refresh")} onClick={load}>
             <Icon name="refresh" />
           </button>
         </div>
         {data && (
           <>
             <p className={engine.ready ? "muted" : enabled ? "form-err" : "muted"}>
-              エンジン: {engineLabel}
-              {data.managed ? "（ECS 管理）" : "（外部管理: 常駐 docker 等）"}
-              {" ／ "}Polly: {data.polly?.ready ? "利用可" : "未設定"}
+              {tr("admin.tts_engine_prefix")}{engineLabel}
+              {data.managed ? tr("admin.tts_managed") : tr("admin.tts_external")}
+              {tr("admin.tts_polly_sep")}{data.polly?.ready ? tr("admin.tts_polly_ready") : tr("admin.tts_polly_unset")}
             </p>
             {enabled && !engine.ready && data.managed && (
-              <p className="muted">
-                起動には 1〜2 分かかります。準備が整うまで、日本語の読み上げは Polly が代読します
-                （Polly 未設定なら無音）。
-              </p>
+              <p className="muted">{tr("admin.tts_starting_note")}</p>
             )}
             {engine.error && <p className="form-err">{engine.error}</p>}
           </>
         )}
         {err && <p className="form-err">{err}</p>}
-        <p className="muted">
-          無効にすると、AWS では ECS の desired count を 0 にしてエンジンを停止します（停止中コスト 0）。
-          読み上げ自体はユーザー設定（音声読み上げ）側で ON/OFF します。
-        </p>
+        <p className="muted">{tr("admin.tts_disable_note")}</p>
       </section>
       <section className="admin-panel">
         <div className="usage-toolbar">
-          <span>テナント共通の読み仮名辞書</span>
+          <span>{tr("admin.tts_dict_title")}</span>
           <button
             type="button"
             className="btn primary"
             disabled={dictBusy || dict === null || dict === savedDict}
             onClick={saveDict}
           >
-            {dictBusy ? "保存中…" : "保存"}
+            {dictBusy ? tr("admin.saving") : tr("common.save")}
           </button>
         </div>
         <textarea
@@ -824,13 +823,9 @@ function TtsAdminView() {
           rows={8}
           spellCheck={false}
           disabled={dict === null}
-          placeholder={"表記=読み（1行に1件）\n例）agent-fleet=エージェントフリート\n# コメント行"}
+          placeholder={tr("admin.tts_dict_ph")}
         />
-        <p className="muted">
-          全ユーザーの読み上げに適用される共通辞書です（1 行に 1 件「表記=読み」、# 始まりはコメント）。
-          各ユーザーが設定（読み上げタブ）の読み仮名辞書に同じ表記を持つ場合は、そのユーザーの指定が
-          優先されます。保存後、他のユーザーには Console の次回ロードから反映されます。
-        </p>
+        <p className="muted">{tr("admin.tts_dict_note")}</p>
       </section>
     </div>
   );
@@ -849,6 +844,7 @@ function UsageView({ tenants, isSuper }: { tenants: Tenant[]; isSuper: boolean }
   // native <input type="date"> の表示形式を、ブラウザ言語ではなくアプリのロケールに追従させる
   // （lang を尊重する Chrome/Safari で有効。Firefox は OS ロケール依存で不変＝ブラウザ側の制約）。
   const locale = useLocale();
+  const tr = useT();
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   // Non-super callers must scope to a tenant they administer (the API rejects the
@@ -879,12 +875,12 @@ function UsageView({ tenants, isSuper }: { tenants: Tenant[]; isSuper: boolean }
         setData(d);
       }
     } catch {
-      setErr("読み込みに失敗しました。");
+      setErr(tr("admin.usage_load_error"));
       setData(null);
     } finally {
       setLoading(false);
     }
-  }, [usageQuery]);
+  }, [usageQuery, tr]);
 
   // Load once on mount and whenever the tenant filter changes; the date range is
   // applied explicitly via the 適用 button so typing a partial date doesn't refetch.
@@ -909,24 +905,22 @@ function UsageView({ tenants, isSuper }: { tenants: Tenant[]; isSuper: boolean }
   return (
     <div className="admin-stage usage-view">
       <section className="admin-panel">
-        <h4>使用量（Workspace 稼働時間）</h4>
-        <p className="muted" style={{ margin: "0 0 12px" }}>
-          インフラ占有＝Workspace が起動していた時間の集計です（Claude 利用料は各自のサブスクで、ここには含みません）。約 5 分ごとのサンプリングのため誤差があります。
-        </p>
+        <h4>{tr("admin.usage_title")}</h4>
+        <p className="muted" style={{ margin: "0 0 12px" }}>{tr("admin.usage_intro")}</p>
         <div className="usage-toolbar">
           <label>
-            開始
+            {tr("admin.from")}
             <input type="date" lang={locale} value={from} onChange={(e) => setFrom(e.target.value)} />
           </label>
           <label>
-            終了
+            {tr("admin.to")}
             <input type="date" lang={locale} value={to} onChange={(e) => setTo(e.target.value)} />
           </label>
           {isSuper && (
             <label>
-              テナント
+              {tr("admin.tenant")}
               <select value={tenant} onChange={(e) => setTenant(e.target.value)}>
-                <option value="">全テナント</option>
+                <option value="">{tr("admin.all_tenants")}</option>
                 {tenants.map((t) => (
                   <option key={t.slug} value={t.slug}>{t.name}</option>
                 ))}
@@ -934,7 +928,7 @@ function UsageView({ tenants, isSuper }: { tenants: Tenant[]; isSuper: boolean }
             </label>
           )}
           <button className="primary" onClick={load} disabled={loading}>
-            {loading ? "…" : "適用"}
+            {loading ? "…" : tr("admin.apply")}
           </button>
           <a className="ghost usage-csv" href={csvHref()} download>
             <Icon name="cloud-download" /> CSV
@@ -947,28 +941,26 @@ function UsageView({ tenants, isSuper }: { tenants: Tenant[]; isSuper: boolean }
         <div className="usage-summary">
           <div className="us-metric">
             <div className="us-val">{fmtHrs(grandSecs)}</div>
-            <div className="us-lab muted">合計稼働</div>
+            <div className="us-lab muted">{tr("admin.total_running")}</div>
           </div>
           <div className="us-metric">
             <div className="us-val">{totals.length}</div>
-            <div className="us-lab muted">メンバー</div>
+            <div className="us-lab muted">{tr("admin.members")}</div>
           </div>
           {data && (
-            <div className="us-range muted">
-              {data.from} 〜 {data.to}
-            </div>
+            <div className="us-range muted">{tr("admin.range", { from: data.from, to: data.to })}</div>
           )}
         </div>
 
         {data === null ? (
-          <p className="muted">読み込み中…</p>
+          <p className="muted">{tr("common.loading")}</p>
         ) : totals.length === 0 ? (
-          <p className="muted">この期間の稼働記録はありません。</p>
+          <p className="muted">{tr("admin.usage_no_records")}</p>
         ) : (
           <div className="usage-rows">
             {totals.map((t: any) => (
               <div key={(t.tenant || "") + "|" + t.user_key} className="usage-row">
-                <span className="ur-key mono" title={t.email || ""}>{t.user_key || "(不明)"}</span>
+                <span className="ur-key mono" title={t.email || ""}>{t.user_key || tr("admin.unknown")}</span>
                 {isSuper && !tenant && <span className="ur-tenant muted">{t.tenant}</span>}
                 <span className="ur-bar">
                   <span className="ur-fill" style={{ width: (maxSecs ? Math.round((t.running_secs / maxSecs) * 100) : 0) + "%" }} />
@@ -996,20 +988,21 @@ function TenantsList({
   onReload: () => void;
   onOpen: (slug: string) => void;
 }) {
+  const tr = useT();
   const [adding, setAdding] = useState(false);
   return (
     <div className="admin-stage">
       <div className="stage-head">
-        <h4>テナント一覧</h4>
+        <h4>{tr("admin.tenants_list")}</h4>
         {isSuper && (
           <button className="primary" onClick={() => setAdding((v) => !v)}>
-            <Icon name="add" /> 新規テナント
+            <Icon name="add" /> {tr("admin.new_tenant")}
           </button>
         )}
       </div>
       {isSuper && adding && <NewTenant onCreated={() => { setAdding(false); onReload(); }} onCancel={() => setAdding(false)} />}
       {tenants.length === 0 ? (
-        <p className="muted">テナントがありません。「新規テナント」から作成してください。</p>
+        <p className="muted">{tr("admin.no_tenants")}</p>
       ) : (
         <div className="tenant-cards">
           {tenants.map((t) => (
@@ -1019,13 +1012,13 @@ function TenantsList({
                 <span className="tc-slug mono">{t.slug}</span>
               </div>
               <div className="tc-stats">
-                <span title="メンバー数"><Icon name="person" /> {t.users} 人</span>
-                <span className={(t.running || 0) > 0 ? "tc-run on" : "tc-run"} title="起動中の Workspace">
-                  <Icon name="vm-running" /> {t.running} 起動中
+                <span title={tr("admin.member_count_title")}><Icon name="person" /> {tr("admin.person_count", { n: t.users ?? 0 })}</span>
+                <span className={(t.running || 0) > 0 ? "tc-run on" : "tc-run"} title={tr("admin.running_ws_title")}>
+                  <Icon name="vm-running" /> {tr("admin.running_ws", { n: t.running ?? 0 })}
                 </span>
               </div>
               <div className="tc-limits muted">
-                上限 — Workspace: {t.max_workspaces || "∞"} / Session: {t.max_sessions || "∞"}
+                {tr("admin.tenant_limits", { ws: t.max_workspaces || "∞", ss: t.max_sessions || "∞" })}
               </div>
             </button>
           ))}
@@ -1036,6 +1029,7 @@ function TenantsList({
 }
 
 function NewTenant({ onCreated, onCancel }: { onCreated: () => void; onCancel: () => void }) {
+  const tr = useT();
   const toast = useToast();
   const [slug, setSlug] = useState("");
   const [name, setName] = useState("");
@@ -1047,15 +1041,15 @@ function NewTenant({ onCreated, onCancel }: { onCreated: () => void; onCancel: (
       onCreated();
     } else {
       const er = await r.json().catch(() => ({}));
-      toast("作成に失敗: " + (er.error?.message || r.status));
+      toast(tr("admin.create_failed", { msg: er.error?.message || r.status }));
     }
   };
   return (
     <form className="new-tenant" onSubmit={submit}>
-      <input value={slug} onChange={(e) => setSlug(e.target.value)} placeholder="slug（英数字）" autoFocus />
-      <input value={name} onChange={(e) => setName(e.target.value)} placeholder="表示名（任意）" />
-      <button type="submit" className="primary">作成</button>
-      <button type="button" className="ghost" onClick={onCancel}>キャンセル</button>
+      <input value={slug} onChange={(e) => setSlug(e.target.value)} placeholder={tr("admin.slug_ph")} autoFocus />
+      <input value={name} onChange={(e) => setName(e.target.value)} placeholder={tr("admin.display_name_ph")} />
+      <button type="submit" className="primary">{tr("admin.create")}</button>
+      <button type="button" className="ghost" onClick={onCancel}>{tr("common.cancel")}</button>
     </form>
   );
 }
@@ -1075,6 +1069,7 @@ function TenantView({
   onChanged: () => void;
   onOpenMember: (m: Member) => void;
 }) {
+  const tr = useT();
   const [maxWs, setMaxWs] = useState<number | string>(tenant?.max_workspaces || 0);
   const [maxSs, setMaxSs] = useState<number | string>(tenant?.max_sessions || 0);
   const [maxRepos, setMaxRepos] = useState<number | string>(tenant?.max_git_repos || 0);
@@ -1141,98 +1136,94 @@ function TenantView({
       {isSuper && (
         <section className="admin-panel">
           <div className="admin-fgroup">
-            <h4>上限<span className="af-note">0 = 無制限</span></h4>
+            <h4>{tr("admin.limits")}<span className="af-note">{tr("admin.zero_unlimited")}</span></h4>
             <div className="admin-fgrid">
               <label className="admin-fld">
-                <span className="af-cap">最大 Workspace</span>
+                <span className="af-cap">{tr("admin.max_workspace")}</span>
                 <input type="number" min="0" value={maxWs} onChange={(e) => setMaxWs(e.target.value)} />
               </label>
               <label className="admin-fld">
-                <span className="af-cap">最大 Session</span>
+                <span className="af-cap">{tr("admin.max_session")}</span>
                 <input type="number" min="0" value={maxSs} onChange={(e) => setMaxSs(e.target.value)} />
               </label>
               <label className="admin-fld">
-                <span className="af-cap">最大 内部リポジトリ</span>
+                <span className="af-cap">{tr("admin.max_repos")}</span>
                 <input type="number" min="0" value={maxRepos} onChange={(e) => setMaxRepos(e.target.value)} />
               </label>
               <label className="admin-fld">
-                <span className="af-cap">最大 LFS 容量</span>
+                <span className="af-cap">{tr("admin.max_lfs")}</span>
                 <span className="af-inputwrap">
                   <input type="number" min="0" value={maxLfsMb} onChange={(e) => setMaxLfsMb(e.target.value)} />
                   <span className="af-suffix">MB</span>
                 </span>
               </label>
               <label className="admin-fld">
-                <span className="af-cap">Workspace 毎メモリ上限</span>
+                <span className="af-cap">{tr("admin.max_ws_mem")}</span>
                 <span className="af-inputwrap">
                   <input type="number" min="0" step="256" value={maxWsMemMb} onChange={(e) => setMaxWsMemMb(e.target.value)} />
                   <span className="af-suffix">MB</span>
                 </span>
-                <span className="af-unit">{+maxWsMemMb > 0 ? `= ${fmtGbHint(+maxWsMemMb)}／1 コンテナ` : "0 = テナント上限なし"}</span>
+                <span className="af-unit">{+maxWsMemMb > 0 ? tr("admin.per_container", { hint: fmtGbHint(+maxWsMemMb) }) : tr("admin.zero_no_tenant_cap")}</span>
               </label>
             </div>
             <p className="admin-hint">
-              「Workspace 毎メモリ上限」は 1 コンテナに割り当て可能なメモリの天井（テナント内の各ユーザー設定はこの範囲にクランプ）。0 = テナント上限なし（デプロイ既定 <code>WS_MEMORY</code> と、あればホスト天井 <code>AF_MAX_WORKSPACE_MEM</code> のみ）。個々の割当はメンバー詳細で設定し、<b>次回のコンテナ起動／作り直しで反映</b>されます。
+              {tr("admin.ws_mem_hint_1")}<code>WS_MEMORY</code>{tr("admin.ws_mem_hint_2")}<code>AF_MAX_WORKSPACE_MEM</code>{tr("admin.ws_mem_hint_3")}<b>{tr("admin.ws_mem_hint_bold")}</b>{tr("admin.ws_mem_hint_4")}
             </p>
           </div>
 
           <div className="admin-fgroup">
-            <h4>アイドル自動停止<span className="af-note">空 = デプロイ既定に従う</span></h4>
+            <h4>{tr("admin.idle_autostop")}<span className="af-note">{tr("admin.empty_deploy_default")}</span></h4>
             <div className="admin-fgrid">
               <label className="admin-fld">
-                <span className="af-cap">Session halt まで</span>
-                <input type="text" placeholder="例 30m（空=無効）" value={sessIdle} onChange={(e) => setSessIdle(e.target.value)} />
+                <span className="af-cap">{tr("admin.session_halt")}</span>
+                <input type="text" placeholder={tr("admin.idle_ph_30m")} value={sessIdle} onChange={(e) => setSessIdle(e.target.value)} />
               </label>
               <label className="admin-fld">
-                <span className="af-cap">Workspace 停止まで</span>
-                <input type="text" placeholder="例 60m（空=無効）" value={wsIdle} onChange={(e) => setWsIdle(e.target.value)} />
+                <span className="af-cap">{tr("admin.ws_stop")}</span>
+                <input type="text" placeholder={tr("admin.idle_ph_60m")} value={wsIdle} onChange={(e) => setWsIdle(e.target.value)} />
               </label>
             </div>
             <p className="admin-hint">
-              放置された claude セッションは Session halt まで で停止中（再開可）に畳まれ、接続も稼働も無い Workspace は Workspace 停止まで で docker 停止します。書式は <code>30m</code> / <code>2h</code> / <code>90s</code>。空欄はデプロイ既定（既定は無効）に従い、<code>0</code> で明示的に無効化します。
+              {tr("admin.idle_hint_1")}<code>30m</code> / <code>2h</code> / <code>90s</code>{tr("admin.idle_hint_2")}<code>0</code>{tr("admin.idle_hint_3")}
             </p>
           </div>
 
           <div className="admin-fgroup">
-            <h4>ターミナルログの保存</h4>
+            <h4>{tr("admin.term_log_title")}</h4>
             <label className="admin-fld">
-              <span className="af-cap">保持期間</span>
+              <span className="af-cap">{tr("admin.retention")}</span>
               <select value={termRetention} onChange={(e) => setTermRetention(Number(e.target.value))}>
-                <option value={0}>無効（標準の短命履歴のみ）</option>
-                <option value={1}>1日</option>
-                <option value={7}>7日</option>
-                <option value={30}>30日</option>
+                <option value={0}>{tr("admin.retention_off")}</option>
+                <option value={1}>{tr("admin.days_1")}</option>
+                <option value={7}>{tr("admin.days_7")}</option>
+                <option value={30}>{tr("admin.days_30")}</option>
               </select>
             </label>
-            <p className="admin-hint">
-              有効にすると、端末に表示された出力をWorkspaceの永続領域へ保存します。入力操作そのものは記録しませんが、コマンド出力に機密情報が含まれる可能性があります。変更は次回のWorkspace起動から反映されます。
-            </p>
+            <p className="admin-hint">{tr("admin.term_log_hint")}</p>
           </div>
 
           <div className="admin-fgroup">
-            <h4>エージェント CLI の更新</h4>
+            <h4>{tr("admin.agent_cli_update")}</h4>
             <label className="admin-check">
               <input type="checkbox" checked={allowUpd} onChange={(e) => setAllowUpd(e.target.checked)} />
-              <span>メンバーが claude / opencode / codex を自分で最新へ更新するのを許可</span>
+              <span>{tr("admin.allow_self_update")}</span>
             </label>
-            <p className="admin-hint">
-              OFF（既定）は全員がこのデプロイのイメージ版で固定。ON にすると各メンバーが自分の設定で「起動時に最新へ更新」を選べます（コンテナ内 in-place 更新・Stop → Start で反映／戻せます）。
-            </p>
+            <p className="admin-hint">{tr("admin.allow_self_update_hint")}</p>
           </div>
 
           <div className="admin-actions">
-            <button onClick={saveLimits} className="primary">保存</button>
-            {saved && <span className="saved-note"><Icon name="check" /> 保存しました</span>}
+            <button onClick={saveLimits} className="primary">{tr("common.save")}</button>
+            {saved && <span className="saved-note"><Icon name="check" /> {tr("admin.saved")}</span>}
           </div>
         </section>
       )}
 
       <section className="admin-panel">
-        <h4>メンバー</h4>
+        <h4>{tr("admin.members")}</h4>
         {members === null ? (
           <p className="muted">…</p>
         ) : members.length === 0 ? (
-          <p className="muted">メンバーがいません。下のフォームから追加してください。</p>
+          <p className="muted">{tr("admin.no_members")}</p>
         ) : (
           <div className="member-rows">
             {members.map((m) => (
@@ -1257,6 +1248,7 @@ function TenantView({
 }
 
 function AddMember({ slug, isSuper, onAdded }: { slug: string; isSuper: boolean; onAdded: () => void }) {
+  const tr = useT();
   const toast = useToast();
   const [email, setEmail] = useState("");
   const [key, setKey] = useState("");
@@ -1275,22 +1267,22 @@ function AddMember({ slug, isSuper, onAdded }: { slug: string; isSuper: boolean;
       onAdded();
     } else {
       const er = await r.json().catch(() => ({}));
-      toast("追加に失敗: " + (er.error?.message || r.status));
+      toast(tr("admin.add_failed", { msg: er.error?.message || r.status }));
     }
   };
   return (
     <form className="form add-member" onSubmit={submit}>
-      <div className="sub-head">メンバー追加</div>
+      <div className="sub-head">{tr("admin.add_member")}</div>
       <div className="form-row">
         <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="email" />
-        <input value={key} onChange={(e) => setKey(e.target.value)} placeholder="または user_key" />
+        <input value={key} onChange={(e) => setKey(e.target.value)} placeholder={tr("admin.or_user_key")} />
         {isSuper && (
           <select value={role} onChange={(e) => setRole(e.target.value)}>
             <option value="member">member</option>
             <option value="tenant_admin">tenant_admin</option>
           </select>
         )}
-        <button type="submit" className="primary">追加</button>
+        <button type="submit" className="primary">{tr("admin.add")}</button>
       </div>
     </form>
   );
@@ -1310,6 +1302,7 @@ function MemberView({
   onChanged: () => void;
   onBack?: () => void;
 }) {
+  const tr = useT();
   const [stats, setStats] = useState<any>(null);
   const [sessions, setSessions] = useState<any[] | null>(null);
   const [confirmStop, setConfirmStop] = useState(false);
@@ -1414,24 +1407,24 @@ function MemberView({
       <header className="member-head">
         <span className={"state-dot " + (stats == null ? "" : running ? "on" : "off")} />
         <span className={"state-word " + (stats == null ? "" : running ? "on" : "off")}>
-          {stats == null ? "確認中…" : running ? "稼働中" : "停止中"}
+          {stats == null ? tr("admin.checking") : running ? tr("admin.running_state") : tr("admin.stopped_state")}
         </span>
         <span className="mh-key mono">{key}</span>
-        {member.super_admin && <Icon name="star-full" className="mr-star" title="super_admin（デプロイ全体）" />}
-        <span className="mh-role">{role}{role === "tenant_admin" ? "（テナント管理者）" : ""}</span>
+        {member.super_admin && <Icon name="star-full" className="mr-star" title={tr("admin.super_admin_deploy_title")} />}
+        <span className="mh-role">{role}{role === "tenant_admin" ? tr("admin.tenant_admin_paren") : ""}</span>
         {member.email && <span className="mh-email muted">{member.email}</span>}
       </header>
 
       <section className="admin-panel">
-        <h4>Workspace リソース</h4>
+        <h4>{tr("admin.ws_resources")}</h4>
         {stats === null ? (
-          <p className="muted">読み込み中…</p>
+          <p className="muted">{tr("common.loading")}</p>
         ) : !running ? (
-          <p className="muted">Workspace は停止中です{stats.disk_used != null ? "（ディスク使用量のみ表示）" : ""}。</p>
+          <p className="muted">{tr("admin.ws_stopped", { suffix: stats.disk_used != null ? tr("admin.ws_stopped_disk_suffix") : "" })}</p>
         ) : null}
         <div className="res-tiles">
           <ResTile
-            label="メモリ"
+            label={tr("admin.res_memory")}
             value={stats?.mem_used != null ? fmtG(stats.mem_used) : "–"}
             sub={stats?.mem_max ? `/ ${fmtG(stats.mem_max)} · ${fmtPct(memRatio == null ? null : memRatio * 100)}` : ""}
             ratio={memRatio}
@@ -1441,13 +1434,13 @@ function MemberView({
           <ResTile
             label="CPU"
             value={stats?.cpu_pct != null ? fmtPct(stats.cpu_pct) : "–"}
-            sub="1コア = 100%"
+            sub={tr("admin.cpu_sub")}
             ratio={stats?.cpu_pct != null ? stats.cpu_pct / 100 : null}
             warn={0.6}
             crit={0.9}
           />
           <ResTile
-            label="ディスク"
+            label={tr("admin.res_disk")}
             value={stats?.disk_used != null ? fmtG(stats.disk_used) : "–"}
             sub={stats?.disk_quota ? `/ ${fmtG(stats.disk_quota)} · ${fmtPct(diskRatio == null ? null : diskRatio * 100)}` : "(home)"}
             ratio={diskRatio}
@@ -1458,11 +1451,11 @@ function MemberView({
       </section>
 
       <section className="admin-panel">
-        <h4>セッション {sessions ? `(${sessions.length})` : ""}</h4>
+        <h4>{tr("admin.sessions_heading")} {sessions ? `(${sessions.length})` : ""}</h4>
         {sessions === null ? (
-          <p className="muted">読み込み中…</p>
+          <p className="muted">{tr("common.loading")}</p>
         ) : sessions.length === 0 ? (
-          <p className="muted">セッションなし</p>
+          <p className="muted">{tr("admin.no_sessions")}</p>
         ) : (
           <div className="admin-sessions">
             {sessions.map((s: any) => {
@@ -1487,72 +1480,72 @@ function MemberView({
 
       {isSuper && (
         <section className="admin-panel">
-          <h4>権限</h4>
+          <h4>{tr("admin.permissions")}</h4>
           {member.super_admin ? (
             <p className="muted">
-              <Icon name="star-full" className="mr-star" /> このユーザーはデプロイ全体の super_admin です（env <code>SUPER_ADMIN_EMAILS</code> で管理）。
+              <Icon name="star-full" className="mr-star" /> {tr("admin.super_admin_note_1")}<code>SUPER_ADMIN_EMAILS</code>{tr("admin.super_admin_note_2")}
             </p>
           ) : (
             <div className="member-actions">
               {role === "tenant_admin" ? (
                 <>
-                  <span className="role-now"><Icon name="shield" /> テナント管理者（tenant_admin）</span>
+                  <span className="role-now"><Icon name="shield" /> {tr("admin.tenant_admin_role")}</span>
                   <button disabled={busy} onClick={() => setRoleTo("member")}>
-                    管理者権限を解除
+                    {tr("admin.revoke_admin")}
                   </button>
                 </>
               ) : (
                 <button className="primary" disabled={busy} onClick={() => setConfirmGrant(true)}>
-                  <Icon name="shield" /> このテナントの管理者にする
+                  <Icon name="shield" /> {tr("admin.make_admin")}
                 </button>
               )}
             </div>
           )}
           <p className="muted role-hint">
-            テナント管理者は <b>{slug}</b> 内のメンバー管理・リソース閲覧・Workspace 強制停止・セッション上限設定ができます（テナント作成・上限変更・home掃除・権限付与は不可）。
+            {tr("admin.tenant_admin_hint_1")}<b>{slug}</b>{tr("admin.tenant_admin_hint_2")}
           </p>
         </section>
       )}
 
       <section className="admin-panel">
-        <h4>操作</h4>
+        <h4>{tr("admin.operations")}</h4>
         <div className="member-actions">
           <button className="danger-btn" disabled={!running} onClick={() => setConfirmStop(true)}>
-            <Icon name="debug-stop" /> Workspace を強制停止
+            <Icon name="debug-stop" /> {tr("admin.force_stop_ws")}
           </button>
           <button onClick={() => { setLimit(member.max_sessions ?? 0); setMemMb(member.mem_limit ? Math.round(member.mem_limit / 1048576) : 0); setLimitOpen(true); }}>
-            <Icon name="settings" /> 上限を設定
+            <Icon name="settings" /> {tr("admin.set_limits")}
           </button>
           {isSuper && (
             <button className="danger-btn" onClick={() => setConfirmClean(true)}>
-              <Icon name="trash" /> home を掃除
+              <Icon name="trash" /> {tr("admin.clean_home")}
             </button>
           )}
         </div>
         {limitOpen && (
           <div className="limit-edit">
-            <div className="le-head">上限の設定</div>
+            <div className="le-head">{tr("admin.limits_edit_title")}</div>
             <div className="admin-fgrid">
               <label className="admin-fld">
-                <span className="af-cap">最大セッション数</span>
+                <span className="af-cap">{tr("admin.max_sessions_label")}</span>
                 <input type="number" min="0" value={limit} onChange={(e) => setLimit(e.target.value)} autoFocus />
-                <span className="af-unit">0 = 無制限</span>
+                <span className="af-unit">{tr("admin.zero_unlimited")}</span>
               </label>
               <label className="admin-fld">
-                <span className="af-cap">Workspace メモリ</span>
+                <span className="af-cap">{tr("admin.ws_memory")}</span>
                 <span className="af-inputwrap">
                   <input type="number" min="0" step="256" value={memMb} onChange={(e) => setMemMb(e.target.value)} />
                   <span className="af-suffix">MB</span>
                 </span>
-                <span className="af-unit">{+memMb > 0 ? `= ${fmtGbHint(+memMb)}` : "0 = デプロイ既定"}</span>
+                <span className="af-unit">{+memMb > 0 ? tr("admin.eq_hint", { hint: fmtGbHint(+memMb) }) : tr("admin.zero_deploy_default")}</span>
               </label>
             </div>
             <p className="admin-hint">
-              メモリはテナント上限にクランプされ、<b>次回のコンテナ起動／作り直しで反映</b>されます（実行中コンテナには即時反映されません）。
+              {tr("admin.mem_clamp_1")}<b>{tr("admin.ws_mem_hint_bold")}</b>{tr("admin.mem_clamp_2")}
             </p>
             <div className="le-actions">
-              <button className="primary" onClick={saveLimit}>保存</button>
-              <button className="ghost" onClick={() => setLimitOpen(false)}>キャンセル</button>
+              <button className="primary" onClick={saveLimit}>{tr("common.save")}</button>
+              <button className="ghost" onClick={() => setLimitOpen(false)}>{tr("common.cancel")}</button>
             </div>
           </div>
         )}
@@ -1560,39 +1553,39 @@ function MemberView({
 
       {confirmStop && (
         <ConfirmDialog
-          title={`${key} の Workspace を停止`}
-          confirmLabel="停止する"
+          title={tr("admin.stop_ws_title", { key })}
+          confirmLabel={tr("admin.stop_confirm")}
           busy={busy}
           onCancel={() => setConfirmStop(false)}
           onConfirm={stop}
         >
-          <p>このメンバーの {slug} の Workspace コンテナを停止します。</p>
+          <p>{tr("admin.stop_body", { slug })}</p>
         </ConfirmDialog>
       )}
       {confirmClean && (
         <ConfirmDialog
-          title={`${key} の home を掃除`}
-          confirmLabel="掃除する"
+          title={tr("admin.clean_title", { key })}
+          confirmLabel={tr("admin.clean_confirm")}
           busy={busy}
           onCancel={() => setConfirmClean(false)}
           onConfirm={cleanHome}
         >
-          <p>このユーザーの Workspace home を掃除します。コンテナは停止されます。</p>
-          <p className="muted">保持: 接続情報 / git 認証 / Claude・Codex ログイン</p>
-          <p className="muted">削除: repos（未コミット含む）/ キャッシュ / その他 home 配下</p>
+          <p>{tr("admin.clean_body")}</p>
+          <p className="muted">{tr("admin.clean_keep")}</p>
+          <p className="muted">{tr("admin.clean_delete")}</p>
         </ConfirmDialog>
       )}
       {confirmGrant && (
         <ConfirmDialog
-          title={`${key} を ${slug} の管理者にする`}
-          confirmLabel="管理者にする"
+          title={tr("admin.grant_title", { key, slug })}
+          confirmLabel={tr("admin.grant_confirm")}
           danger={false}
           busy={busy}
           onCancel={() => setConfirmGrant(false)}
           onConfirm={() => setRoleTo("tenant_admin")}
         >
-          <p>このメンバーに <b>{slug}</b> のテナント管理者権限を付与します。</p>
-          <p className="muted">付与後はこのテナント内のメンバー管理・リソース閲覧・Workspace 強制停止・セッション上限設定ができるようになります（他テナントには影響しません）。</p>
+          <p>{tr("admin.grant_body_1")}<b>{slug}</b>{tr("admin.grant_body_2")}</p>
+          <p className="muted">{tr("admin.grant_note")}</p>
         </ConfirmDialog>
       )}
     </div>
