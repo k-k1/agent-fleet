@@ -6,12 +6,15 @@ import { leaderChildren } from "../../lib/keys/registry.ts";
 import { useKeysStore } from "./store.ts";
 import { GROUPS } from "./commands.ts";
 import { useEffectiveCommands, boundChord, APP_LEADER } from "./bindings.ts";
+import { cmdLabel } from "./labels.ts";
+import { useLocale } from "../../lib/i18n/index.ts";
 import { buildContext } from "./dispatcher.ts";
 
 export function WhichKey() {
   const open = useKeysStore((s) => s.whichKeyOpen);
   const path = useKeysStore((s) => s.leaderPath);
   const commands = useEffectiveCommands();
+  useLocale(); // re-render on language change
   if (!open) return null;
   const children = leaderChildren(commands, GROUPS, path, buildContext());
   return (
@@ -31,7 +34,7 @@ export function WhichKey() {
             <div className={"wk-item" + (c.isGroup ? " wk-item-group" : "")} key={c.key}>
               <Kbd chord={c.key} />
               <span className="wk-label">
-                {c.title}
+                {cmdLabel(c.title)}
                 {c.isGroup && <span className="wk-more"> …</span>}
               </span>
             </div>
