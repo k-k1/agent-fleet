@@ -88,6 +88,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
   const [streamText, setStreamText] = useState(""); // live-accumulating (tentative) answer
   const [streamSteps, setStreamSteps] = useState<ChatStep[]>([]); // working steps committed this turn (分離)
   const [reattaching, setReattaching] = useState(false); // a reloaded turn is still running on the backend; polling for the reply
+  const [histIdx, setHistIdx] = useState<number | null>(null); // position in composer history (↑/↓ recall), or null
   const [karaoke, setKaraoke] = useState<string | null>(null); // 読み上げ中の文（ライブ配信カラオケ・docs/19）
   const [error, setError] = useState("");
   const [loadError, setLoadError] = useState("");
@@ -131,6 +132,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
     let cancelled = false;
     setError("");
     setLoadError("");
+    setHistIdx(null); // switching conversations/drafts resets composer history-recall
     if (conversationId) {
       if (convRef.current?.id === conversationId) return; // already have it (e.g. just promoted)
       applyConv(null);
@@ -370,6 +372,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
     const userMsg: ChatMessage = { role: "user", content: prompt, ts: Date.now() };
     setConv((c) => (c ? { ...c, messages: [...c.messages, userMsg] } : c));
     setInput("");
+    setHistIdx(null); // sending leaves history-recall mode
     // Drop the stored draft synchronously: on a just-promoted first turn the key flip
     // makes useDraft reload from storage, which would resurrect the moved (now sent) text.
     clearDraft(chatDraftKey(target.id));
@@ -548,7 +551,53 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
   // ペインを閉じる/アンマウント時は読み上げを止める（音声が居残らないように）。
   useEffect(() => () => stopTtsForReplacement(ttsRef.current), []);
 
+  // Composer history = the user's own prompts in this conversation, so ↑ recalls them even
+  // after a reload (built from conv, not just this mount). The visible words only — the
+  // machine-facing pasted-image instruction is stripped. Newest last, consecutive dupes folded.
+  const history: string[] = [];
+  for (const m of conv?.messages ?? []) {
+    if (m.role !== "user") continue;
+    const s = splitPastedImages(m.content).text.trim();
+    if (s && history[history.length - 1] !== s) history.push(s);
+  }
+
+  // Recall the previous / next prompt (shared by ↑/↓ and the on-screen buttons shown on
+  // phones, which have no arrow keys). Mirrors MirrorView's composer history.
+  const recallPrev = () => {
+    if (!history.length) return;
+    const ni = histIdx !== null ? Math.max(0, histIdx - 1) : history.length - 1;
+    setHistIdx(ni);
+    setInput(history[ni]);
+    inputRef.current?.focus();
+  };
+  const recallNext = () => {
+    if (histIdx === null) return;
+    const ni = histIdx + 1;
+    if (ni >= history.length) {
+      setHistIdx(null);
+      setInput("");
+    } else {
+      setHistIdx(ni);
+      setInput(history[ni]);
+    }
+    inputRef.current?.focus();
+  };
+
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    // Shell-style history: ↑/↓ recall past prompts when the field is empty (or once recall
+    // is underway). With text present, arrows move the caret as usual.
+    if ((e.key === "ArrowUp" || e.key === "ArrowDown") && !e.nativeEvent.isComposing) {
+      if (e.key === "ArrowUp" && (input === "" || histIdx !== null) && history.length) {
+        e.preventDefault();
+        recallPrev();
+        return;
+      }
+      if (e.key === "ArrowDown" && histIdx !== null) {
+        e.preventDefault();
+        recallNext();
+        return;
+      }
+    }
     // Don't intercept Enter while an IME candidate window is open (JP/CJK input).
     if (e.key !== "Enter" || e.nativeEvent.isComposing) return;
     const mod = e.ctrlKey || e.metaKey;
@@ -729,6 +778,27 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
           </div>
         )}
         <div className="chat-composer-row">
+          {/* History nav for phones (no arrow keys); hidden on wider screens via CSS. */}
+          <div className="chat-hist">
+            <button
+              type="button"
+              className="btn chat-hist-btn"
+              title={tr("chat.prev_input")}
+              disabled={!history.length || (!conv && !isDraft) || showStreaming}
+              onClick={recallPrev}
+            >
+              <Icon name="chevron-up" />
+            </button>
+            <button
+              type="button"
+              className="btn chat-hist-btn"
+              title={tr("chat.next_input")}
+              disabled={histIdx === null || (!conv && !isDraft) || showStreaming}
+              onClick={recallNext}
+            >
+              <Icon name="chevron-down" />
+            </button>
+          </div>
           <textarea
             ref={inputRef}
             className="chat-input"
@@ -745,7 +815,10 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
                 : tr("chat.ph_loading")
             }
             disabled={(!conv && !isDraft) || showStreaming}
-            onChange={(e) => setInput(e.target.value)}
+            onChange={(e) => {
+              setInput(e.target.value);
+              setHistIdx(null); // typing leaves history-recall mode
+            }}
             onKeyDown={onKeyDown}
             onPaste={onPaste}
             rows={2}

@@ -263,6 +263,26 @@
 .chat-stop {
   color: var(--danger, #e05a5a);
 }
+/* Composer history nav (↑/↓ recall) — for phones, which have no arrow keys. Hidden on
+   wider screens (where ArrowUp/ArrowDown drive the same recallPrev/recallNext). Mirrors
+   MirrorView's .mirror-hist. */
+.chat-hist {
+  display: none;
+  flex-direction: column;
+  gap: 2px;
+  flex: 0 0 auto;
+  align-self: stretch;
+}
+.chat-hist-btn {
+  flex: 1;
+  width: 34px;
+  padding: 0;
+}
+@media (max-width: 760px) {
+  .chat-hist {
+    display: flex;
+  }
+}
 /* Conversation-row status chip: compact, sits after the count (not far-right auto). */
 .chat-open .session-state {
   margin-left: 4px;

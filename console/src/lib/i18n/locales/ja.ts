@@ -1044,6 +1044,8 @@ export const ja = {
   "chat.uploading": "アップロード中…",
   "chat.stop": "停止",
   "chat.send": "送信",
+  "chat.prev_input": "前の入力",
+  "chat.next_input": "次の入力",
   "chat.work_process": "作業過程",
   "chat.tool_count_one": "ツール {count}件",
   "chat.tool_count_other": "ツール {count}件",
