@@ -1,32 +1,44 @@
-// Command palette — fuzzy-search every available command plus the session list, and
-// run/open the pick. Opened by Ctrl/⌘+P (dispatcher). Joins the Esc + browser-back
-// overlay stacks like every other dialog, so while it is open hasOpenOverlay() is true
-// and the dispatcher stays inert (the input owns the keyboard).
+// Command palette — a VS Code-style multi-mode quick-open. Opened by Ctrl/⌘+P (dispatcher).
+// Joins the Esc + browser-back overlay stacks like every other dialog, so while it is open
+// hasOpenOverlay() is true and the dispatcher stays inert (the input owns the keyboard).
+//
+// Modes (cycle with Tab / Shift+Tab, re-pressing Ctrl/⌘+P, or the mode tabs):
+//   - command : every available command + the session list (fuzzy, all-locale search).
+//   - changed : working-tree changed files across all dirty repos → open each file's diff.
+// (A recursive file-search mode is the planned next step; it needs a flat-file backend
+// endpoint that api/fs/tree — per-directory — doesn't provide.)
 //
 // Search matches across ALL locales (cmdSearch) so typing English or Japanese finds a
 // command regardless of the current UI language; display uses the current locale.
 //
 // Focus: opening from a composer/input must not strand focus. We remember the opener and,
-// on a CANCEL (Esc / browser-back / backdrop), return focus to it. Running a command does
-// NOT restore — the command may move focus deliberately (e.g. focus a pane).
-//
-// Scope: commands + sessions today. Files / repos are a fast follow (they need the same
-// open-target wiring the rails already have).
+// on a CANCEL (Esc / browser-back / backdrop), return focus to it. Running a command/opening
+// a file does NOT restore — it may move focus deliberately (e.g. focus a pane).
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Kbd } from "../../ui/Kbd.tsx";
 import { paletteCommands } from "../../lib/keys/registry.ts";
 import type { Command } from "../../lib/keys/registry.ts";
 import { useEscLayer } from "../../lib/escLayer.ts";
 import { useBackClose } from "../../lib/backClose.ts";
-import { t, useLocale } from "../../lib/i18n/index.ts";
+import { t, useLocale, type MsgKey } from "../../lib/i18n/index.ts";
 import { coarsePointer } from "../../lib/device.ts";
+import { api } from "../../core/api/client.ts";
 import { useKeysStore } from "./store.ts";
 import { useEffectiveCommands, boundChord, APP_LEADER } from "./bindings.ts";
 import { cmdLabel, cmdSearch } from "./labels.ts";
 import { buildContext } from "./dispatcher.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 import { openSessionChat, openSessionTerminal } from "../sessions/open.ts";
+import { useReposStore } from "../repos/store.ts";
+import { openFileDiff } from "../scm/open.ts";
 import { agentOf } from "../../agents/registry.ts";
+
+type Mode = "command" | "changed";
+const MODES: Mode[] = ["command", "changed"];
+const MODE_LABEL: Record<Mode, MsgKey> = {
+  command: "keys.palette.mode_command",
+  changed: "keys.palette.mode_changed",
+};
 
 interface Item {
   id: string;
@@ -36,9 +48,17 @@ interface Item {
   search: string;
   /** The effective shortcut as a chord sequence, rendered as keycaps on the right. A
    * direct accelerator is one chord (["alt+1"]); a leader command is the leader plus each
-   * step (["mod+k","p","r"]). Empty when the command has no key (or a session row). */
+   * step (["mod+k","p","r"]). Empty when the command has no key (or a session/file row). */
   keys: string[];
   run: () => void;
+}
+
+// One working-tree change from api/repos/{repo}/changes.
+interface Change {
+  path: string;
+  untracked?: boolean;
+  index?: string;
+  worktree?: string;
 }
 
 // The shortcut a palette row advertises: the command's direct accelerator if it has one
@@ -61,6 +81,36 @@ function fuzzy(query: string, text: string): boolean {
   return i === q.length;
 }
 
+// Load changed files across every dirty working copy. Refreshes the repo list first so the
+// dirty flags (hence which repos we hit for changes) are current, then fetches each dirty
+// repo's changes in parallel. A file's row opens its working diff (same target as ChangesView).
+async function loadChangedItems(): Promise<Item[]> {
+  await useReposStore.getState().refresh();
+  const repos = useReposStore.getState().repos.filter((r) => r.dirty);
+  const lists = await Promise.all(
+    repos.map(async (r) => {
+      try {
+        const d = await api(`api/repos/${encodeURIComponent(r.name)}/changes`);
+        const changes: Change[] = d.changes || [];
+        return changes.map((c): Item => {
+          const staged = !c.untracked && c.index !== " ";
+          return {
+            id: "chg:" + r.name + ":" + c.path,
+            title: c.path,
+            sub: r.name,
+            search: c.path + " " + r.name,
+            keys: [],
+            run: () => openFileDiff(r.name, c.path, staged),
+          };
+        });
+      } catch {
+        return [] as Item[];
+      }
+    }),
+  );
+  return lists.flat();
+}
+
 export function CommandPalette() {
   const open = useKeysStore((s) => s.paletteOpen);
   const sessions = useSessionsStore((s) => s.sessions);
@@ -68,6 +118,8 @@ export function CommandPalette() {
   const locale = useLocale(); // re-render + recompute items when the UI language changes
   const [q, setQ] = useState("");
   const [sel, setSel] = useState(0);
+  const [mode, setMode] = useState<Mode>("command");
+  const [changed, setChanged] = useState<Item[] | null>(null); // null = loading
   const inputRef = useRef<HTMLInputElement>(null);
   const openerRef = useRef<HTMLElement | null>(null);
 
@@ -88,11 +140,26 @@ export function CommandPalette() {
     openerRef.current = (document.activeElement as HTMLElement) ?? null;
     setQ("");
     setSel(0);
+    setMode("command"); // always reopen in command mode
     const id = requestAnimationFrame(() => inputRef.current?.focus());
     return () => cancelAnimationFrame(id);
   }, [open]);
 
-  const items = useMemo<Item[]>(() => {
+  // Fetch changed files whenever the changed mode is (re)entered while open. Re-shows the
+  // loading state each time so a stale list never flashes before the fresh fetch lands.
+  useEffect(() => {
+    if (!open || mode !== "changed") return;
+    let cancelled = false;
+    setChanged(null);
+    void loadChangedItems().then((items) => {
+      if (!cancelled) setChanged(items);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, mode]);
+
+  const commandItems = useMemo<Item[]>(() => {
     if (!open) return [];
     void locale; // dep: recompute labels/search when the language changes
     const ctx = buildContext();
@@ -119,13 +186,25 @@ export function CommandPalette() {
     return [...cmds, ...sess];
   }, [open, sessions, commands, locale]);
 
+  const loading = mode === "changed" && changed === null;
+  const items = mode === "command" ? commandItems : (changed ?? []);
   const filtered = useMemo(() => items.filter((it) => fuzzy(q, it.search + " " + it.sub)), [items, q]);
+
+  const switchMode = (m: Mode) => {
+    setMode(m);
+    setSel(0);
+    inputRef.current?.focus();
+  };
+  const cycleMode = (dir: number) => {
+    const i = MODES.indexOf(mode);
+    switchMode(MODES[(i + dir + MODES.length) % MODES.length]);
+  };
 
   if (!open) return null;
 
   const run = (it?: Item) => {
     if (!it) return;
-    openerRef.current = null; // running a command owns focus; don't restore to the opener
+    openerRef.current = null; // running/opening owns focus; don't restore to the opener
     close();
     it.run();
   };
@@ -143,7 +222,7 @@ export function CommandPalette() {
           ref={inputRef}
           className="cp-input"
           value={q}
-          placeholder={t("keys.palette.placeholder")}
+          placeholder={t(mode === "changed" ? "keys.palette.placeholder_changed" : "keys.palette.placeholder")}
           aria-label={t("keys.palette.aria")}
           autoComplete="off"
           spellCheck={false}
@@ -153,7 +232,15 @@ export function CommandPalette() {
           }}
           onKeyDown={(e) => {
             if (e.nativeEvent.isComposing) return;
-            if (e.key === "ArrowDown") {
+            // Mode cycling: Tab / Shift+Tab, or re-pressing Ctrl/⌘+P (preventDefault also
+            // stops the browser's print dialog on Ctrl+P).
+            if (e.key === "Tab") {
+              e.preventDefault();
+              cycleMode(e.shiftKey ? -1 : 1);
+            } else if ((e.ctrlKey || e.metaKey) && (e.key === "p" || e.key === "P")) {
+              e.preventDefault();
+              cycleMode(1);
+            } else if (e.key === "ArrowDown") {
               e.preventDefault();
               setSel((s) => Math.min(s + 1, filtered.length - 1));
             } else if (e.key === "ArrowUp") {
@@ -165,29 +252,52 @@ export function CommandPalette() {
             }
           }}
         />
-        <div className="cp-list">
-          {filtered.length === 0 && <div className="cp-empty">{t("keys.palette.empty")}</div>}
-          {filtered.map((it, i) => (
-            <div
-              key={it.id}
-              className={"cp-item" + (i === sel ? " sel" : "")}
-              onMouseMove={() => setSel(i)}
+        <div className="cp-modes" role="tablist">
+          {MODES.map((m) => (
+            <button
+              key={m}
+              type="button"
+              role="tab"
+              aria-selected={m === mode}
+              className={"cp-mode" + (m === mode ? " on" : "")}
               onMouseDown={(e) => {
-                e.preventDefault();
-                run(it);
+                e.preventDefault(); // keep focus in the search input
+                switchMode(m);
               }}
             >
-              <span className="cp-title">{it.title}</span>
-              <span className="cp-sub">{it.sub}</span>
-              {it.keys.length > 0 && (
-                <span className="cp-kbd">
-                  {it.keys.map((ch, k) => (
-                    <Kbd key={k} chord={ch} />
-                  ))}
-                </span>
-              )}
-            </div>
+              {t(MODE_LABEL[m])}
+            </button>
           ))}
+          <span className="cp-mode-hint">{t("keys.palette.mode_hint")}</span>
+        </div>
+        <div className="cp-list">
+          {loading ? (
+            <div className="cp-empty">{t("keys.palette.changed_loading")}</div>
+          ) : filtered.length === 0 ? (
+            <div className="cp-empty">{mode === "changed" ? t("keys.palette.changed_empty") : t("keys.palette.empty")}</div>
+          ) : (
+            filtered.map((it, i) => (
+              <div
+                key={it.id}
+                className={"cp-item" + (i === sel ? " sel" : "")}
+                onMouseMove={() => setSel(i)}
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  run(it);
+                }}
+              >
+                <span className="cp-title">{it.title}</span>
+                <span className="cp-sub">{it.sub}</span>
+                {it.keys.length > 0 && (
+                  <span className="cp-kbd">
+                    {it.keys.map((ch, k) => (
+                      <Kbd key={k} chord={ch} />
+                    ))}
+                  </span>
+                )}
+              </div>
+            ))
+          )}
         </div>
       </div>
     </div>
