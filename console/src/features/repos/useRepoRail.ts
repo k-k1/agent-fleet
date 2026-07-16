@@ -11,6 +11,7 @@ import { activePane } from "../../layout/ops.ts";
 import { repoPanes, sessionPanes, paneCount } from "../../layout/badges.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { useSessionsStore } from "../sessions/store.ts";
+import { useSettingsUI } from "../settings/store.ts";
 import type { ConnectionsStatus } from "../../types/session.ts";
 
 export interface RepoRailContext {
@@ -36,6 +37,9 @@ export function useRepoRailContext(): RepoRailContext {
   const running = useWorkspaceStore((s) => s.state) === "running";
 
   const [conns, setConns] = useState<ConnectionsStatus | null>(null);
+  // connTick bumps after a connect/disconnect in Settings; refetch so a newly
+  // authenticated agent lights up in the 起動 menu without a full reload.
+  const connTick = useSettingsUI((s) => s.connTick);
   // Agent connection state gates the 起動 menu. Unknown (null) → show all.
   useEffect(() => {
     let alive = true;
@@ -45,7 +49,7 @@ export function useRepoRailContext(): RepoRailContext {
     return () => {
       alive = false;
     };
-  }, []);
+  }, [connTick]);
   const ready = (k: string) => !conns || agentOf(k).available({ conns });
   const launchKinds = repoLaunchKinds.filter(ready);
 
