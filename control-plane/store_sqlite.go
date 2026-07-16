@@ -1327,6 +1327,75 @@ func (s *sqlStore) SweepSentMemos(ctx context.Context, retainBefore string) erro
 	return err
 }
 
+// --- Memo categories (docs/21 UI刷新) -------------------------------------------
+
+const memoCategoryCols = `SELECT id, membership_id, repo, name, position, created_at FROM memo_category`
+
+func scanMemoCategory(row scanner) (MemoCategory, error) {
+	var c MemoCategory
+	err := row.Scan(&c.ID, &c.MembershipID, &c.Repo, &c.Name, &c.Position, &c.CreatedAt)
+	return c, err
+}
+
+// ListCategories returns a membership's categories ordered by repo then explicit
+// position (created_at breaks ties so the order is stable).
+func (s *sqlStore) ListCategories(ctx context.Context, membershipID string) ([]MemoCategory, error) {
+	rows, err := s.db.QueryContext(ctx,
+		memoCategoryCols+` WHERE membership_id=? ORDER BY repo, position, created_at`, membershipID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []MemoCategory
+	for rows.Next() {
+		c, err := scanMemoCategory(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+func (s *sqlStore) GetCategory(ctx context.Context, id string) (MemoCategory, bool, error) {
+	c, err := scanMemoCategory(s.db.QueryRowContext(ctx, memoCategoryCols+` WHERE id=?`, id))
+	if err == sql.ErrNoRows {
+		return MemoCategory{}, false, nil
+	}
+	return c, err == nil, err
+}
+
+func (s *sqlStore) CreateCategory(ctx context.Context, c MemoCategory) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO memo_category(id, membership_id, repo, name, position, created_at)
+		 VALUES(?,?,?,?,?,?)`,
+		c.ID, c.MembershipID, c.Repo, c.Name, c.Position, c.CreatedAt)
+	return err
+}
+
+// UpdateCategory sets name + position on an owned category (membership_id in the WHERE).
+func (s *sqlStore) UpdateCategory(ctx context.Context, c MemoCategory) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE memo_category SET name=?, position=? WHERE id=? AND membership_id=?`,
+		c.Name, c.Position, c.ID, c.MembershipID)
+	return err
+}
+
+func (s *sqlStore) DeleteCategory(ctx context.Context, id, membershipID string) error {
+	_, err := s.db.ExecContext(ctx,
+		`DELETE FROM memo_category WHERE id=? AND membership_id=?`, id, membershipID)
+	return err
+}
+
+// ReassignMemoCategory rewrites memo.category from `from` to `to` for the caller's memos
+// in a repo bucket (ownership by membership_id in the WHERE).
+func (s *sqlStore) ReassignMemoCategory(ctx context.Context, membershipID, repo, from, to string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE memo SET category=? WHERE membership_id=? AND repo=? AND category=?`,
+		to, membershipID, repo, from)
+	return err
+}
+
 // --- Notification center -------------------------------------------------------
 
 const notificationCols = `SELECT seq, event_id, membership_id, kind, target_type, target_id, target_kind, display_name, payload, created_at, seen_at FROM notification`

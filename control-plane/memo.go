@@ -241,12 +241,16 @@ func (a memoAPI) flush(w http.ResponseWriter, r *http.Request, res *resolved) {
 	var in struct {
 		SessionName string   `json:"sessionName"`
 		IDs         []string `json:"ids"`
+		// Text, when non-empty, is sent verbatim instead of the server-composed
+		// message — the send modal lets the user edit the concatenated text before
+		// sending (docs/21 UI刷新). The ids still drive which memos get stamped sent.
+		Text string `json:"text"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid JSON body"})
 		return
 	}
-	out, aerr := memoFlushFor(r.Context(), a.store, res.rt, res.mv.MembershipID, in.SessionName, in.IDs)
+	out, aerr := memoFlushFor(r.Context(), a.store, res.rt, res.mv.MembershipID, in.SessionName, in.IDs, in.Text)
 	if aerr != nil {
 		writeAPIErr(w, aerr)
 		return
@@ -262,12 +266,182 @@ func (a memoAPI) delete(w http.ResponseWriter, r *http.Request, _ Identity, mv M
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// --- Memo categories (docs/21 UI刷新) -------------------------------------------
+// First-class categories: created ahead of any memo, reordered by drag-and-drop, kept
+// while empty. A category's NAME stays the grouping key (Memo.Category), so a rename
+// cascades onto the memos and a rename onto an existing name merges the two.
+
+type memoCategoryDTO struct {
+	ID        string `json:"id"`
+	Repo      string `json:"repo"`
+	Name      string `json:"name"`
+	Position  int    `json:"position"`
+	CreatedAt string `json:"createdAt"`
+}
+
+func memoCategoryToDTO(c MemoCategory) memoCategoryDTO {
+	return memoCategoryDTO{ID: c.ID, Repo: c.Repo, Name: c.Name, Position: c.Position, CreatedAt: c.CreatedAt}
+}
+
+func (a memoAPI) listCategories(w http.ResponseWriter, r *http.Request, _ Identity, mv MembershipView) {
+	rows, err := a.store.ListCategories(r.Context(), mv.MembershipID)
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	out := make([]memoCategoryDTO, 0, len(rows))
+	for _, c := range rows {
+		out = append(out, memoCategoryToDTO(c))
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// createCategory adds a category to a repo bucket, appended after the existing ones. A
+// duplicate (membership, repo, name) is a no-op that returns the existing row, so the
+// "＋カテゴリ" button is idempotent and never 409s.
+func (a memoAPI) createCategory(w http.ResponseWriter, r *http.Request, _ Identity, mv MembershipView) {
+	var in memoCategoryDTO
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid JSON body"})
+		return
+	}
+	repo := strings.TrimSpace(in.Repo)
+	name := strings.TrimSpace(in.Name)
+	if name == "" {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_name", "name is required"})
+		return
+	}
+	existing, err := a.store.ListCategories(r.Context(), mv.MembershipID)
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	maxPos := -1
+	for _, c := range existing {
+		if c.Repo == repo {
+			if c.Name == name {
+				writeJSON(w, http.StatusOK, memoCategoryToDTO(c))
+				return
+			}
+			if c.Position > maxPos {
+				maxPos = c.Position
+			}
+		}
+	}
+	c := MemoCategory{ID: newID(), MembershipID: mv.MembershipID, Repo: repo, Name: name, Position: maxPos + 1, CreatedAt: nowTS()}
+	if err := a.store.CreateCategory(r.Context(), c); err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	writeJSON(w, http.StatusCreated, memoCategoryToDTO(c))
+}
+
+// memoCategoryPatch carries a rename and/or reorder. Nil fields are unchanged, so a
+// drag reorder sends only position and a rename sends only name.
+type memoCategoryPatch struct {
+	Name     *string `json:"name"`
+	Position *int    `json:"position"`
+}
+
+// updateCategory renames and/or reorders an owned category. A rename cascades onto the
+// memos (Memo.Category is the name); renaming onto a name that already exists in the same
+// repo MERGES — the memos move to the survivor and the renamed row is deleted — because
+// the unique (membership, repo, name) index forbids two categories sharing a name.
+func (a memoAPI) updateCategory(w http.ResponseWriter, r *http.Request, _ Identity, mv MembershipView) {
+	var in memoCategoryPatch
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid JSON body"})
+		return
+	}
+	id := r.PathValue("id")
+	cur, found, err := a.store.GetCategory(r.Context(), id)
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	if !found || cur.MembershipID != mv.MembershipID {
+		writeAPIErr(w, &apiError{http.StatusNotFound, "not_found", "category not found"})
+		return
+	}
+	if in.Position != nil {
+		cur.Position = *in.Position
+	}
+	if in.Name != nil {
+		newName := strings.TrimSpace(*in.Name)
+		if newName == "" {
+			writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_name", "name is required"})
+			return
+		}
+		if newName != cur.Name {
+			// Move the memos onto the new name, then either merge into an existing
+			// same-name category or rename this row.
+			if err := a.store.ReassignMemoCategory(r.Context(), mv.MembershipID, cur.Repo, cur.Name, newName); err != nil {
+				writeAPIErr(w, internalErr(err))
+				return
+			}
+			if dup := a.findCategory(r.Context(), mv.MembershipID, cur.Repo, newName); dup != nil {
+				if err := a.store.DeleteCategory(r.Context(), cur.ID, mv.MembershipID); err != nil {
+					writeAPIErr(w, internalErr(err))
+					return
+				}
+				writeJSON(w, http.StatusOK, memoCategoryToDTO(*dup))
+				return
+			}
+			cur.Name = newName
+		}
+	}
+	if err := a.store.UpdateCategory(r.Context(), cur); err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	writeJSON(w, http.StatusOK, memoCategoryToDTO(cur))
+}
+
+// findCategory returns the caller's category with (repo, name), or nil. Small helper for
+// the merge-on-rename path.
+func (a memoAPI) findCategory(ctx context.Context, membershipID, repo, name string) *MemoCategory {
+	rows, err := a.store.ListCategories(ctx, membershipID)
+	if err != nil {
+		return nil
+	}
+	for i := range rows {
+		if rows[i].Repo == repo && rows[i].Name == name {
+			return &rows[i]
+		}
+	}
+	return nil
+}
+
+// deleteCategory removes a category and empties its memos (moves them to 未分類 rather
+// than deleting them — a category delete must never lose notes).
+func (a memoAPI) deleteCategory(w http.ResponseWriter, r *http.Request, _ Identity, mv MembershipView) {
+	id := r.PathValue("id")
+	cur, found, err := a.store.GetCategory(r.Context(), id)
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	if !found || cur.MembershipID != mv.MembershipID {
+		writeAPIErr(w, &apiError{http.StatusNotFound, "not_found", "category not found"})
+		return
+	}
+	if err := a.store.ReassignMemoCategory(r.Context(), mv.MembershipID, cur.Repo, cur.Name, ""); err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	if err := a.store.DeleteCategory(r.Context(), id, mv.MembershipID); err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // memoFlushFor resolves the requested ids to OWNED memos, concatenates them into one
 // message (category-grouped), sends it once to the session's input via the workspace
 // runtime, and stamps sent_at on those memos. Returns the flush summary. Shared core
 // between the session HTTP handler, the internal operator-token bridge, and the CP MCP
 // tool — every face funnels through this so the "send once + mark sent" stays atomic.
-func memoFlushFor(ctx context.Context, store MemoStore, rt Runtime, membershipID, sessionName string, ids []string) (map[string]any, *apiError) {
+func memoFlushFor(ctx context.Context, store MemoStore, rt Runtime, membershipID, sessionName string, ids []string, textOverride string) (map[string]any, *apiError) {
 	sessionName = strings.TrimSpace(sessionName)
 	if sessionName == "" {
 		return nil, &apiError{http.StatusBadRequest, "bad_session", "sessionName is required"}
@@ -292,7 +466,12 @@ func memoFlushFor(ctx context.Context, store MemoStore, rt Runtime, membershipID
 	// Group by category (stable within-category order preserved from ListMemos).
 	sort.SliceStable(memos, func(i, j int) bool { return memos[i].Category < memos[j].Category })
 
-	if aerr := sendMemoPrompt(ctx, rt, sessionName, buildFlushMessage(memos)); aerr != nil {
+	// Use the caller's edited text when provided; otherwise compose from the memos.
+	message := strings.TrimSpace(textOverride)
+	if message == "" {
+		message = buildFlushMessage(memos)
+	}
+	if aerr := sendMemoPrompt(ctx, rt, sessionName, message); aerr != nil {
 		return nil, aerr
 	}
 
