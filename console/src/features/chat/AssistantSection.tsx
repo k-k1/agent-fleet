@@ -10,6 +10,7 @@ import { Icon } from "../../ui/Icon.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { useConfirm } from "../../ui/ConfirmProvider.tsx";
 import { useDismiss } from "../../lib/useDismiss.ts";
+import { useMenuRoving } from "../../lib/useMenuRoving.ts";
 import { placeFixed } from "../../lib/placeFixed.ts";
 import { useLayoutStore } from "../../layout/store.ts";
 import { chatPanes, ordClass, paneCount } from "../../layout/badges.ts";
@@ -79,6 +80,7 @@ export function AssistantSection() {
     setMenu({ x: e.clientX, y: e.clientY, a });
   };
   useDismiss(menuRef, !!menu, () => setMenu(null));
+  useMenuRoving(menuRef, !!menu);
   // Clamped every render (no deps): the JSX re-applies the raw cursor coords as
   // inline style on re-renders, which would undo a one-shot clamp near the
   // viewport edge.

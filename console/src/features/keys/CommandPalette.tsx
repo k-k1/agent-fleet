@@ -11,7 +11,7 @@ import { paletteCommands } from "../../lib/keys/registry.ts";
 import { useEscLayer } from "../../lib/escLayer.ts";
 import { useBackClose } from "../../lib/backClose.ts";
 import { useKeysStore } from "./store.ts";
-import { ALL_COMMANDS } from "./commands.ts";
+import { useEffectiveCommands } from "./bindings.ts";
 import { buildContext } from "./dispatcher.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 import { openSessionChat, openSessionTerminal } from "../sessions/open.ts";
@@ -38,6 +38,7 @@ function fuzzy(query: string, text: string): boolean {
 export function CommandPalette() {
   const open = useKeysStore((s) => s.paletteOpen);
   const sessions = useSessionsStore((s) => s.sessions);
+  const commands = useEffectiveCommands();
   const [q, setQ] = useState("");
   const [sel, setSel] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -57,7 +58,7 @@ export function CommandPalette() {
   const items = useMemo<Item[]>(() => {
     if (!open) return [];
     const ctx = buildContext();
-    const cmds: Item[] = paletteCommands(ALL_COMMANDS, ctx).map((c) => ({
+    const cmds: Item[] = paletteCommands(commands, ctx).map((c) => ({
       id: c.id,
       title: c.title,
       sub: "コマンド",
@@ -71,7 +72,7 @@ export function CommandPalette() {
       run: () => (agentOf(s.kind).caps.chat ? openSessionChat : openSessionTerminal)(s.name),
     }));
     return [...cmds, ...sess];
-  }, [open, sessions]);
+  }, [open, sessions, commands]);
 
   const filtered = useMemo(() => items.filter((it) => fuzzy(q, it.title + " " + it.sub)), [items, q]);
 

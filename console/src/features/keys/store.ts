@@ -13,6 +13,8 @@ interface KeysStore {
   /** which-key overlay is visible (leaderPending + the short reveal delay elapsed). */
   whichKeyOpen: boolean;
   paletteOpen: boolean;
+  /** The "?" shortcut cheat-sheet overlay is open. */
+  cheatOpen: boolean;
   /** Which screen region has keyboard focus (drives F6 cycling + the focus ring). */
   activeRegion: Region;
   /** Bumped to ask the ACTIVE pane's PaneFind to open (it self-selects on `active`).
@@ -25,6 +27,8 @@ interface KeysStore {
   setWhichKey(open: boolean): void;
   openPalette(): void;
   closePalette(): void;
+  openCheat(): void;
+  closeCheat(): void;
   setRegion(r: Region): void;
   requestFind(): void;
 }
@@ -34,6 +38,7 @@ export const useKeysStore = create<KeysStore>((set) => ({
   leaderPath: [],
   whichKeyOpen: false,
   paletteOpen: false,
+  cheatOpen: false,
   activeRegion: "main",
   findSeq: 0,
 
@@ -44,8 +49,12 @@ export const useKeysStore = create<KeysStore>((set) => ({
         : { leaderPending: false, leaderPath: [], whichKeyOpen: false },
     ),
   setWhichKey: (open) => set({ whichKeyOpen: open }),
-  openPalette: () => set({ paletteOpen: true, leaderPending: false, leaderPath: [], whichKeyOpen: false }),
+  openPalette: () =>
+    set({ paletteOpen: true, cheatOpen: false, leaderPending: false, leaderPath: [], whichKeyOpen: false }),
   closePalette: () => set({ paletteOpen: false }),
+  openCheat: () =>
+    set({ cheatOpen: true, paletteOpen: false, leaderPending: false, leaderPath: [], whichKeyOpen: false }),
+  closeCheat: () => set({ cheatOpen: false }),
   setRegion: (r) => set({ activeRegion: r }),
   requestFind: () => set((s) => ({ findSeq: s.findSeq + 1 })),
 }));

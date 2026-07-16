@@ -11,6 +11,7 @@ import { useWorkspaceStore, wsStartBusy } from "../core/store/workspace.ts";
 import { useLayoutStore } from "../layout/store.ts";
 import { isBlankPane } from "../layout/ops.ts";
 import { useSessionsStore } from "../features/sessions/store.ts";
+import { hintSuffix } from "../features/keys/keyHint.ts";
 import { Icon } from "../ui/Icon.tsx";
 import { Sparkline } from "../ui/Sparkline.tsx";
 import { useConfirm } from "../ui/ConfirmProvider.tsx";
@@ -758,7 +759,7 @@ export function WsBar() {
         className="ghost ws-split ws-newsession"
         title={
           running
-            ? "はじめる（チャット / リポジトリ / クローン / shell）"
+            ? "はじめる（チャット / リポジトリ / クローン / shell）" + hintSuffix("session.new")
             : startQueued
               ? "起動中 — 準備ができたら開きます"
               : "はじめる（ワークスペースを起動して開始）"
@@ -770,7 +771,7 @@ export function WsBar() {
       </button>
       <button
         className="ghost ws-split"
-        title="右に分割"
+        title={"右に分割" + hintSuffix("pane.splitRight")}
         disabled={!canSplitRight}
         onClick={() => splitRight()}
       >
@@ -779,7 +780,7 @@ export function WsBar() {
       </button>
       <button
         className="ghost ws-split"
-        title="上下に分割（アクティブなペイン）"
+        title={"上下に分割（アクティブなペイン）" + hintSuffix("pane.splitDown")}
         disabled={!canSplitDown}
         onClick={() => activePaneId && splitDown(activePaneId)}
       >
@@ -788,7 +789,7 @@ export function WsBar() {
       </button>
       <button
         className="ghost ws-closeall"
-        title="全ペインを閉じる"
+        title={"全ペインを閉じる" + hintSuffix("pane.closeAll")}
         disabled={!canCloseAll}
         onClick={() => resetToTerminal()}
       >

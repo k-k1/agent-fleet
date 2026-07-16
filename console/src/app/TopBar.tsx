@@ -13,6 +13,7 @@ import { Icon } from "../ui/Icon.tsx";
 import { SwatchGrid } from "../ui/SwatchGrid.tsx";
 import { useDismiss } from "../lib/useDismiss.ts";
 import { NotificationCenter } from "../features/notifications/NotificationCenter.tsx";
+import { hintSuffix } from "../features/keys/keyHint.ts";
 
 interface TopBarProps {
   toggleNav: () => void;
@@ -103,7 +104,7 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
       <div className="topbar-left">
         <button
           className="nav-toggle"
-          title="左パネル: クリックで開閉 / ダブルクリックで表示切替（Push⇄オーバーレイ）"
+          title={"左パネル: クリックで開閉 / ダブルクリックで表示切替（Push⇄オーバーレイ）" + hintSuffix("workspace.toggleRail")}
           onClick={onHamburger}
         >
           <Icon name="menu" />
