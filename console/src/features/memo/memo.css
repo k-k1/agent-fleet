@@ -250,3 +250,333 @@
   border-radius: 8px;
   padding: 0 6px;
 }
+
+/* --- Memo queue UI刷新 (docs/21) ------------------------------------------------- */
+/* Checkboxes follow the left-pane accent (color theme), not the fixed app blue. */
+.memo-add-cat,
+.memo-cat-check,
+.memo-row > input[type="checkbox"] {
+  accent-color: var(--lp-accent, var(--accent));
+}
+/* Composer: revealed on ＋ / leader, focus-ringed so it reads as "now typing". */
+.memo-add {
+  border: 1px solid var(--lp-accent, var(--accent));
+  border-radius: 8px;
+  padding: 7px;
+  background: var(--bg);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--lp-accent, var(--accent)) 12%, transparent);
+}
+.memo-add-text:focus,
+.memo-add-cat:focus {
+  outline: none;
+  border-color: var(--lp-accent, var(--accent));
+}
+.memo-add-hint {
+  font-size: 10px;
+  color: var(--muted2);
+  margin-top: 5px;
+}
+/* Category header: grip + checkbox + name (rename on click) + count + send + delete. */
+.memo-cat-grip,
+.memo-grip {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  color: var(--muted2);
+  cursor: grab;
+  opacity: 0;
+  font-size: 12px;
+}
+.memo-cat-head:hover .memo-cat-grip,
+.memo-row:hover .memo-grip {
+  opacity: 0.7;
+}
+.memo-grip {
+  padding-top: 2px;
+  align-self: flex-start;
+}
+.memo-cat-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text, var(--fg));
+  cursor: text;
+  border-radius: 4px;
+  padding: 1px 3px;
+}
+.memo-cat-name:hover {
+  background: color-mix(in srgb, var(--fg) 7%, transparent);
+}
+.memo-cat-rename {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 1px 4px;
+  border: none;
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--fg);
+  box-shadow: 0 0 0 1px var(--lp-accent, var(--accent));
+}
+.memo-cat-rename:focus {
+  outline: none;
+}
+.memo-cat-send {
+  flex: none;
+  opacity: 0;
+}
+.memo-cat-head:hover .memo-cat-send {
+  opacity: 1;
+}
+.memo-cat-del {
+  flex: none;
+  background: none;
+  border: none;
+  color: var(--muted2);
+  cursor: pointer;
+  padding: 1px 3px;
+  opacity: 0;
+  display: inline-flex;
+}
+.memo-cat-head:hover .memo-cat-del {
+  opacity: 1;
+}
+.memo-cat-del:hover {
+  color: var(--del);
+}
+/* Drop target highlight while dragging a memo/category over a category. */
+.memo-cat.drop {
+  background: color-mix(in srgb, var(--lp-accent, var(--accent)) 10%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--lp-accent, var(--accent)) 45%, transparent);
+  border-radius: 8px;
+}
+/* ＋カテゴリ pill. */
+.memo-addcat {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin: 6px 2px 2px;
+  padding: 3px 9px 3px 6px;
+  font: inherit;
+  font-size: 11.5px;
+  color: var(--muted);
+  background: none;
+  border: 1px dashed var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+}
+.memo-addcat:hover {
+  color: var(--fg);
+  border-color: var(--muted);
+}
+/* Memo row: selected gets an lp-accent spine (matches sessions/repos rows). */
+.memo-row.sel {
+  background: color-mix(in srgb, var(--lp-accent, var(--accent)) 16%, var(--leftpane-bg, var(--panel)));
+  box-shadow: inset 2px 0 0 var(--lp-accent, var(--accent));
+}
+.memo-row.dragover {
+  box-shadow: inset 0 2px 0 var(--lp-accent, var(--accent));
+}
+.memo-row.editing {
+  background: none;
+}
+/* Collapsed body clamps to 2 lines; click expands (and a second click edits). */
+.memo-text {
+  cursor: pointer;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.memo-row.exp .memo-text {
+  -webkit-line-clamp: unset;
+  line-clamp: unset;
+  overflow: visible;
+}
+.memo-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 2px;
+}
+.memo-more {
+  font-size: 10px;
+  color: var(--muted2);
+}
+/* Inline edit. */
+.memo-edit {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 2px 0;
+}
+.memo-edit-text {
+  width: 100%;
+  resize: vertical;
+  font: inherit;
+  font-size: 12px;
+  padding: 6px 7px;
+  border: 1px solid var(--lp-accent, var(--accent));
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+  box-sizing: border-box;
+}
+.memo-edit-text:focus {
+  outline: none;
+}
+.memo-edit-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.memo-edit-cat {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: 11.5px;
+  padding: 4px 7px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--fg);
+}
+.memo-edit-hint {
+  font-size: 10px;
+  color: var(--muted2);
+}
+/* Selection bar pinned at the section foot. */
+.memo-selbar {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px -2px 0;
+  padding: 8px 4px 4px;
+  background: linear-gradient(to top, var(--leftpane-bg, var(--panel)) 78%, transparent);
+}
+.memo-selbar-n {
+  flex: 1;
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- Send-memo modal (docs/21 UI刷新) -------------------------------------------- */
+.memo-send-hint {
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--muted2);
+  font-size: 11px;
+}
+.memo-send-text {
+  width: 100%;
+  resize: vertical;
+  min-height: 150px;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--fg);
+  box-sizing: border-box;
+  tab-size: 2;
+}
+.memo-send-text:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.memo-targets {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.memo-tgroup {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted2);
+  margin: 4px 0 1px;
+}
+.memo-tgt {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 11px;
+  border-radius: 9px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  width: 100%;
+}
+.memo-tgt:hover {
+  border-color: var(--muted);
+}
+.memo-tgt.on {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg));
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.memo-tgt-av {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  display: grid;
+  place-items: center;
+  background: color-mix(in srgb, var(--fg) 10%, transparent);
+}
+.memo-tgt-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.memo-tgt-name {
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.memo-tgt-sub {
+  font-size: 11px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.memo-tgt-state {
+  flex: none;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 7px;
+  border-radius: 999px;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--muted) 16%, transparent);
+}
+.memo-tgt-state.ok {
+  color: var(--ok);
+  background: color-mix(in srgb, var(--ok) 20%, transparent);
+}
+.memo-tgt-state.new {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+}
