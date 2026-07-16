@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { scrollComposerViewport } from "./composerScroll.ts";
+import { scrollComposerViewport, isScrollGesture } from "./keyScroll.ts";
 
 // A minimal scrollable-element stand-in (node env has no DOM). clientHeight 200,
 // scrollHeight 1000 → max scrollTop 800.
@@ -74,5 +74,32 @@ describe("scrollComposerViewport", () => {
 
   it("no-ops on a null element", () => {
     expect(scrollComposerViewport(key("ArrowDown", { shift: true }).ev, null)).toBe(false);
+  });
+});
+
+describe("isScrollGesture", () => {
+  const g = (key: string, m: Partial<{ shift: boolean; ctrl: boolean; meta: boolean; alt: boolean }> = {}) => ({
+    key,
+    shiftKey: !!m.shift,
+    ctrlKey: !!m.ctrl,
+    metaKey: !!m.meta,
+    altKey: !!m.alt,
+  });
+
+  it("accepts Shift+↑/↓ and Ctrl/⌘+↑/↓ and Ctrl/⌘+[ / ]", () => {
+    expect(isScrollGesture(g("ArrowUp", { shift: true }))).toBe(true);
+    expect(isScrollGesture(g("ArrowDown", { shift: true }))).toBe(true);
+    expect(isScrollGesture(g("ArrowUp", { ctrl: true }))).toBe(true);
+    expect(isScrollGesture(g("ArrowDown", { meta: true }))).toBe(true);
+    expect(isScrollGesture(g("[", { ctrl: true }))).toBe(true);
+    expect(isScrollGesture(g("]", { meta: true }))).toBe(true);
+  });
+
+  it("rejects unmodified, alt-modified, and mismatched combos", () => {
+    expect(isScrollGesture(g("ArrowUp"))).toBe(false); // plain arrow
+    expect(isScrollGesture(g("ArrowUp", { alt: true }))).toBe(false); // Alt is pane-nav
+    expect(isScrollGesture(g("ArrowUp", { ctrl: true, shift: true }))).toBe(false); // both mods
+    expect(isScrollGesture(g("[", { shift: true }))).toBe(false); // brackets need a mod, not shift
+    expect(isScrollGesture(g("a", { ctrl: true }))).toBe(false); // not an arrow/bracket
   });
 });

@@ -9,7 +9,7 @@ import { chatGet, chatStream, chatStop, chatCreate, assistantGet, chatPasteImage
 import { errText, raw } from "../../core/api/client.ts";
 import { takeChatSeed } from "../../lib/chatSeed.ts";
 import { useDraft, moveDraft, clearDraft } from "../../lib/draft.ts";
-import { scrollComposerViewport } from "../../lib/composerScroll.ts";
+import { scrollComposerViewport } from "../../lib/keyScroll.ts";
 import { fmtDateTime } from "../../lib/intl.ts";
 import { t, tCount, useT } from "../../lib/i18n/index.ts";
 import { coarsePointer } from "../../lib/device.ts";
