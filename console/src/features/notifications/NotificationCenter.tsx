@@ -3,18 +3,14 @@ import { Icon } from "../../ui/Icon.tsx";
 import { useDismiss } from "../../lib/useDismiss.ts";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { openNotificationTarget, replayNotification, useNotificationStore, type FleetNotification } from "./store.ts";
+import { relTime } from "../../lib/intl.ts";
 
 const labels: Record<string, string> = {
   "answer-ready": "回答が返りました", question: "質問が来ています", "plan-approval": "プランの承認待ちです",
   "permission-request": "権限の確認が必要です", "usage-reset": "利用制限がリセットされました",
 };
-function relative(at: string): string {
-  const sec = Math.max(0, Math.floor((Date.now() - new Date(at).getTime()) / 1000));
-  if (sec < 60) return "たった今";
-  if (sec < 3600) return `${Math.floor(sec / 60)}分前`;
-  if (sec < 86400) return `${Math.floor(sec / 3600)}時間前`;
-  return `${Math.floor(sec / 86400)}日前`;
-}
+// 通知の相対時刻。共通実装（lib/intl）へ委譲する。
+const relative = (at: string): string => relTime(at);
 
 export function NotificationCenter() {
   const [open, setOpen] = useState(false);

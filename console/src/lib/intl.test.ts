@@ -1,0 +1,62 @@
+import { describe, it, expect, beforeEach } from "vitest";
+import { relTime, fmtDateTime, fmtNum, TIME_HM } from "./intl.ts";
+import { setLocale } from "./i18n/index.ts";
+
+const NOW = 1_700_000_000_000; // 固定基準（テスト決定性のため relTime に now を渡す）
+
+describe("intl.relTime", () => {
+  beforeEach(() => setLocale("ja"));
+
+  it("returns just-now under 60s (localized)", () => {
+    expect(relTime(NOW - 30_000, NOW)).toBe("たった今");
+    setLocale("en");
+    expect(relTime(NOW - 30_000, NOW)).toBe("just now");
+  });
+
+  it("formats past minutes/hours per locale", () => {
+    expect(relTime(NOW - 3 * 60_000, NOW)).toMatch(/3.*分.*前/); // ja: "3 分前"
+    setLocale("en");
+    expect(relTime(NOW - 3 * 60_000, NOW)).toBe("3 minutes ago");
+    expect(relTime(NOW - 2 * 3_600_000, NOW)).toBe("2 hours ago");
+  });
+
+  it("formats future instants", () => {
+    setLocale("en");
+    expect(relTime(NOW + 3_600_000, NOW)).toBe("in 1 hour");
+  });
+
+  it("returns empty for invalid / nullish input", () => {
+    expect(relTime("not-a-date", NOW)).toBe("");
+    expect(relTime(null, NOW)).toBe("");
+    expect(relTime(undefined, NOW)).toBe("");
+    expect(relTime("", NOW)).toBe("");
+  });
+});
+
+describe("intl.fmtDateTime", () => {
+  beforeEach(() => setLocale("ja"));
+
+  it("renders a M/D HH:MM style string (TZ-independent structure)", () => {
+    const out = fmtDateTime(NOW);
+    expect(out).toMatch(/\d+\/\d+/); // has a M/D part
+    expect(out).toMatch(/\d{2}:\d{2}/); // has a HH:MM part
+  });
+
+  it("TIME_HM renders HH:MM only", () => {
+    expect(fmtDateTime(NOW, TIME_HM)).toMatch(/^\d{2}:\d{2}$/);
+  });
+
+  it("passes through an unparseable string and empties other invalid input", () => {
+    expect(fmtDateTime("nope")).toBe("nope");
+    expect(fmtDateTime(NaN)).toBe("");
+  });
+});
+
+describe("intl.fmtNum", () => {
+  it("groups thousands (comma in both ja and en)", () => {
+    setLocale("ja");
+    expect(fmtNum(1234567)).toBe("1,234,567");
+    setLocale("en");
+    expect(fmtNum(1234567)).toBe("1,234,567");
+  });
+});

@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { laneColor, laneCount, layoutGraph } from "../../lib/gitgraph.ts";
 import type { GraphCommit, GraphRow } from "../../lib/gitgraph.ts";
+import { relTime } from "../../lib/intl.ts";
 
 // CommitGraph renders the lane-layout DAG (codeleaf CommitGraphScreen port). Each row is
 // a fixed-height flex line: an SVG graph cell (lanes + edges + node) beside a message
@@ -11,22 +12,8 @@ const ROW_H = 48;
 const LANE_W = 14;
 const NODE_R = 4;
 
-// relDate: an ISO instant → short Japanese "…前".
-function relDate(iso: string): string {
-  const t = new Date(iso).getTime();
-  if (isNaN(t)) return "";
-  const s = Math.floor((Date.now() - t) / 1000);
-  if (s < 60) return "たった今";
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m}分前`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h}時間前`;
-  const d = Math.floor(h / 24);
-  if (d < 30) return `${d}日前`;
-  const mo = Math.floor(d / 30);
-  if (mo < 12) return `${mo}ヶ月前`;
-  return `${Math.floor(mo / 12)}年前`;
-}
+// relDate: an ISO instant → short locale-aware "…前"（共通実装 lib/intl へ委譲）。
+const relDate = (iso: string): string => relTime(iso);
 
 export function CommitGraph({
   commits,

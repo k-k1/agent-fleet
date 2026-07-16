@@ -4,6 +4,7 @@ import type { ja } from "./ja.ts";
 
 export const en: Record<keyof typeof ja, string> = {
   // --- common / settings labels ---
+  "common.just_now": "just now",
   "settings.language": "Language",
   "theme.dark": "Dark",
   "theme.light": "Light",

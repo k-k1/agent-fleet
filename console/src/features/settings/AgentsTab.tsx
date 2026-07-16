@@ -6,6 +6,7 @@ import { EmptyState } from "../../ui/EmptyState.tsx";
 import { Button } from "../../ui/Button.tsx";
 import { Sparkline } from "../../ui/Sparkline.tsx";
 import { fmtTok } from "../../lib/fmttok.ts";
+import { fmtNum } from "../../lib/intl.ts";
 import { Choice, OnOff } from "./controls.tsx";
 import {
   agentLaunchDefault,
@@ -229,7 +230,7 @@ function RtkGainPanel({ gain }: { gain: any }) {
         </div>
         <div className="ws-rtk-stat">
           <span className="muted">実行コマンド</span>
-          <b>{(s.total_commands || 0).toLocaleString()}</b>
+          <b>{fmtNum(s.total_commands || 0)}</b>
         </div>
       </div>
       <p className="muted ds-note">
