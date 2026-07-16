@@ -113,4 +113,86 @@ export const en: Record<keyof typeof ja, string> = {
   "display.preview": "Preview",
   "display.smaller": "Smaller",
   "display.larger": "Larger",
+
+  // --- common ---
+  "common.close": "Close",
+
+  // --- tokens (MCP personal access tokens) ---
+  "tokens.fetch_failed": "Failed to fetch.",
+  "tokens.load_failed": "Failed to load.",
+  "tokens.issue_failed": "Failed to issue: {msg}",
+  "tokens.revoke_title": "Revoke token",
+  "tokens.revoke_body": "This revokes the token. Connections using it will start getting 401 from next time.",
+  "tokens.revoke_confirm": "Revoke",
+  "tokens.intro":
+    "A token for driving Workspace sessions over MCP from your local Claude (Claude Code / Desktop). It inherits the issuer's permissions; pick the scope here.",
+  "tokens.issued_head": "Token issued (you can't see it again once you close this).",
+  "tokens.copy_token": "Copy token",
+  "tokens.mcp_json_head_1": "For Claude Code: ",
+  "tokens.mcp_json_head_2": " (save at the project root, or add ",
+  "tokens.mcp_json_head_3": " to an existing file)",
+  "tokens.copy_mcp_json": "Copy .mcp.json",
+  "tokens.name": "Name",
+  "tokens.name_placeholder": "e.g. laptop-claude",
+  "tokens.scope": "Scope",
+  "tokens.scope_read": "read (view only)",
+  "tokens.scope_write": "write (drive sessions)",
+  "tokens.scope_admin": "admin:dangerous (elevated / admin)",
+  "tokens.expiry": "Expiry",
+  "tokens.ttl_90": "90 days (default)",
+  "tokens.ttl_30": "30 days",
+  "tokens.ttl_365": "365 days",
+  "tokens.ttl_never": "No expiry",
+  "tokens.issuing": "Issuing…",
+  "tokens.issue": "Issue token",
+  "tokens.mcp_endpoint_pre": "MCP endpoint: ",
+  "tokens.mcp_endpoint_mid1": " (Streamable HTTP. Set ",
+  "tokens.mcp_endpoint_mid2": " on the client.)",
+  "tokens.th_expiry": "Expires",
+  "tokens.th_last_used": "Last used",
+  "tokens.unnamed": "(unnamed)",
+  "tokens.revoked": "Revoked",
+  "tokens.revoke": "Revoke",
+
+  // --- common (load/start) ---
+  "common.loading": "Loading…",
+  "common.starting": "Starting…",
+
+  // --- shared connection cards ---
+  "conn.connected": "Connected",
+  "conn.disconnected": "Not connected",
+  "conn.connect": "Connect",
+  "conn.connect_failed": "Failed to connect: {msg}",
+  "provider.click_to_copy": "Click to copy",
+  "provider.disconnect": "Disconnect",
+  "provider.step_copy_code": "Copy the code",
+  "provider.step_open_link": "Open the link and paste",
+  "provider.open_url": "Open {url} ↗",
+  "provider.step_wait_approval": "Wait for approval",
+
+  // --- ops-tool connections (OpsTab) ---
+  "ops.ws_required_title": "Ops-tool connections run inside the workspace",
+  "ops.ws_required_hint": "The API keys are stored encrypted by the agent inside the container, so the workspace has to be running.",
+  "ops.start_ws": "Start workspace",
+  "ops.intro":
+    "Connections for incident response and monitoring. Once connected, the “SRE assistant” reads them read-only to help you think out loud. Connection changes take effect from the next chat message (no workspace restart needed).",
+  "ops.cat_incident": "Incident management",
+  "ops.cat_monitoring": "Monitoring / metrics",
+  "ops.pd_api_key_set": "API key set",
+  "ops.pd_api_key_placeholder": "PagerDuty API key",
+  "ops.pd_eu_region": "EU region",
+  "ops.pd_eu_sub": "Turn on only if you log in to PagerDuty at app.eu.pagerduty.com (normally leave it off).",
+  "ops.pd_hint":
+    "A read-only key is recommended (in PagerDuty, Integrations > API Access Keys, choose “Read-only”). The key is stored encrypted inside the workspace and passed only when the MCP server starts. Write actions (ack/resolve, etc.) are not enabled.",
+  "ops.grafana_connected_fallback": "Connection set",
+  "ops.grafana_url_placeholder": "Grafana URL (https://grafana.example.com)",
+  "ops.grafana_token_placeholder": "Service-account token",
+  "ops.grafana_hint":
+    "A Viewer-role service-account token is recommended. The token is stored encrypted inside the workspace and passed only when the MCP server starts (write/admin tools start disabled). For Amazon Managed Grafana, set the URL to the workspace endpoint (g-xxxx.grafana-workspace.<region>.amazonaws.com) — tokens expire after at most 30 days, so re-paste when they do.",
+  "ops.cw_profile_select": "Select a profile…",
+  "ops.cw_manual_option": "Manual entry (a profile in your own ~/.aws)",
+  "ops.cw_manual_placeholder": "Profile name in ~/.aws",
+  "ops.cw_region_placeholder": "Region (optional)",
+  "ops.cw_hint":
+    "No secret is stored. Pick an SSM connection profile and it generates a dedicated config file from that SSO setup (non-secret) and uses it. Read-only tools only — log search, alarm history, metric analysis, etc. If you haven't logged in to SSO (or it's expired), open the matching SSM session once, or run `AWS_CONFIG_FILE=~/.aws/af-ops/cloudwatch.config aws sso login --profile <profile>` in a terminal.",
 };

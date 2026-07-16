@@ -114,4 +114,86 @@ export const ja = {
   "display.preview": "プレビュー",
   "display.smaller": "小さく",
   "display.larger": "大きく",
+
+  // --- 共通 ---
+  "common.close": "閉じる",
+
+  // --- トークン（features/settings/TokensTab.tsx。MCP 用 PAT）---
+  "tokens.fetch_failed": "取得に失敗しました",
+  "tokens.load_failed": "読み込みに失敗しました",
+  "tokens.issue_failed": "発行に失敗: {msg}",
+  "tokens.revoke_title": "トークンを失効",
+  "tokens.revoke_body": "このトークンを失効します。使用中の接続は次回から 401 になります。",
+  "tokens.revoke_confirm": "失効する",
+  "tokens.intro":
+    "手元の Claude（Claude Code / Desktop）から MCP で Workspace のセッションを操作するためのトークンです。発行者の権限を継承し、スコープはここで選びます。",
+  "tokens.issued_head": "トークンを発行しました（この画面を閉じると再表示できません）",
+  "tokens.copy_token": "トークンをコピー",
+  "tokens.mcp_json_head_1": "Claude Code 用 ",
+  "tokens.mcp_json_head_2": "（プロジェクト直下に保存、または既存ファイルへ ",
+  "tokens.mcp_json_head_3": " を追記）",
+  "tokens.copy_mcp_json": ".mcp.json をコピー",
+  "tokens.name": "名前",
+  "tokens.name_placeholder": "例: laptop-claude",
+  "tokens.scope": "スコープ",
+  "tokens.scope_read": "read（閲覧のみ）",
+  "tokens.scope_write": "write（セッション駆動）",
+  "tokens.scope_admin": "admin:dangerous（強権・管理）",
+  "tokens.expiry": "有効期限",
+  "tokens.ttl_90": "90 日（既定）",
+  "tokens.ttl_30": "30 日",
+  "tokens.ttl_365": "365 日",
+  "tokens.ttl_never": "無期限",
+  "tokens.issuing": "発行中…",
+  "tokens.issue": "トークンを発行",
+  "tokens.mcp_endpoint_pre": "MCP エンドポイント: ",
+  "tokens.mcp_endpoint_mid1": "（Streamable HTTP。クライアントに ",
+  "tokens.mcp_endpoint_mid2": " で設定）",
+  "tokens.th_expiry": "期限",
+  "tokens.th_last_used": "最終使用",
+  "tokens.unnamed": "(無名)",
+  "tokens.revoked": "失効済",
+  "tokens.revoke": "失効",
+
+  // --- 共通（ロード/起動）---
+  "common.loading": "読み込み中…",
+  "common.starting": "起動中…",
+
+  // --- 接続カード共通（providerCard.tsx / conn 状態）---
+  "conn.connected": "接続済み",
+  "conn.disconnected": "未接続",
+  "conn.connect": "接続",
+  "conn.connect_failed": "接続に失敗: {msg}",
+  "provider.click_to_copy": "クリックでコピー",
+  "provider.disconnect": "切断",
+  "provider.step_copy_code": "コードをコピー",
+  "provider.step_open_link": "リンクを開いて貼り付け",
+  "provider.open_url": "{url} を開く ↗",
+  "provider.step_wait_approval": "承認を待つ",
+
+  // --- 運用ツール接続（features/settings/OpsTab.tsx）---
+  "ops.ws_required_title": "運用ツールの接続はワークスペース内で実行されます",
+  "ops.ws_required_hint": "API キーはコンテナ内の Agent が暗号化保存するため、ワークスペースの起動が必要です。",
+  "ops.start_ws": "ワークスペースを起動",
+  "ops.intro":
+    "インシデント対応・監視運用の連携です。接続すると「SRE アシスタント」がこれらを読み取り専用で参照して壁打ちに使います。接続の変更は次のチャット送信から反映されます（ワークスペースの再起動は不要）。",
+  "ops.cat_incident": "インシデント管理",
+  "ops.cat_monitoring": "監視 / メトリクス",
+  "ops.pd_api_key_set": "API キー設定済み",
+  "ops.pd_api_key_placeholder": "PagerDuty API キー",
+  "ops.pd_eu_region": "EU リージョン",
+  "ops.pd_eu_sub": "PagerDuty に app.eu.pagerduty.com でログインしている場合のみオン（通常はオフのまま）",
+  "ops.pd_hint":
+    "読み取り専用キーを推奨します（PagerDuty の Integrations > API Access Keys で「Read-only」を選択）。キーはワークスペース内に暗号化保存され、MCP サーバの起動時にだけ渡されます。書き込み操作（ack/resolve など）は有効化しません。",
+  "ops.grafana_connected_fallback": "接続設定済み",
+  "ops.grafana_url_placeholder": "Grafana URL（https://grafana.example.com）",
+  "ops.grafana_token_placeholder": "サービスアカウントトークン",
+  "ops.grafana_hint":
+    "Viewer 権限のサービスアカウントトークンを推奨します。トークンはワークスペース内に暗号化保存され、MCP サーバの起動時にだけ渡されます（書き込み・管理ツールは無効で起動）。Amazon Managed Grafana の場合は URL に workspace endpoint（g-xxxx.grafana-workspace.リージョン.amazonaws.com）を指定してください（トークンは最長30日で失効するため、失効したら貼り直します）。",
+  "ops.cw_profile_select": "プロファイルを選択…",
+  "ops.cw_manual_option": "手動入力（自分の ~/.aws のプロファイル）",
+  "ops.cw_manual_placeholder": "~/.aws のプロファイル名",
+  "ops.cw_region_placeholder": "リージョン（任意）",
+  "ops.cw_hint":
+    "秘密は保存しません。SSM 接続のプロファイルを選ぶと、その SSO 設定（非秘密）から専用の設定ファイルを生成して使います。ログの検索・アラーム履歴・メトリクス分析など読み取り専用ツールのみです。SSO ログインがまだ（または期限切れ）の場合は、該当の SSM セッションを一度開くか、ターミナルで `AWS_CONFIG_FILE=~/.aws/af-ops/cloudwatch.config aws sso login --profile プロファイル名` を実行してください。",
 };

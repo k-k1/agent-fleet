@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { api, apiJSON, raw, rel } from "../../core/api/client.ts";
 import { useConfirm } from "../../ui/ConfirmProvider.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
+import { useT } from "../../lib/i18n/index.ts";
 
 // TokensTab issues and revokes Personal Access Tokens for the MCP endpoint
 // (docs/decisions/0006, P3-6). A token carries the issuer's identity+membership;
@@ -22,6 +23,7 @@ interface PatToken {
 export function TokensTab() {
   const askConfirm = useConfirm();
   const toast = useToast();
+  const tr = useT();
   const [tokens, setTokens] = useState<PatToken[] | null>(null);
   const [ceiling, setCeiling] = useState("write");
   const [err, setErr] = useState("");
@@ -36,14 +38,14 @@ export function TokensTab() {
     api("api/pat")
       .then((res) => {
         if (res && res.error) {
-          setErr(res.error.message || "取得に失敗しました");
+          setErr(res.error.message || tr("tokens.fetch_failed"));
           return;
         }
         setTokens(res.tokens || []);
         if (res.ceiling) setCeiling(res.ceiling);
       })
-      .catch(() => setErr("読み込みに失敗しました"));
-  }, []);
+      .catch(() => setErr(tr("tokens.load_failed")));
+  }, [tr]);
   useEffect(load, [load]);
 
   const create = async () => {
@@ -55,7 +57,7 @@ export function TokensTab() {
     });
     setBusy(false);
     if (res && res.error) {
-      toast("発行に失敗: " + (res.error.message || ""));
+      toast(tr("tokens.issue_failed", { msg: res.error.message || "" }));
       return;
     }
     setIssued(res);
@@ -65,9 +67,9 @@ export function TokensTab() {
 
   const revoke = async (id: string) => {
     const ok = await askConfirm({
-      title: "トークンを失効",
-      body: "このトークンを失効します。使用中の接続は次回から 401 になります。",
-      confirmLabel: "失効する",
+      title: tr("tokens.revoke_title"),
+      body: tr("tokens.revoke_body"),
+      confirmLabel: tr("tokens.revoke_confirm"),
       danger: true,
     });
     if (!ok) return;
@@ -93,82 +95,84 @@ export function TokensTab() {
 
   return (
     <div className="display-settings">
-      <p className="muted ds-note">
-        手元の Claude（Claude Code / Desktop）から MCP で Workspace のセッションを操作するための
-        トークンです。発行者の権限を継承し、スコープはここで選びます。
-      </p>
+      <p className="muted ds-note">{tr("tokens.intro")}</p>
 
       {issued && (
         <div className="pat-issued">
-          <div className="pat-issued-head">
-            ✅ トークンを発行しました（この画面を閉じると再表示できません）
-          </div>
+          <div className="pat-issued-head">✅ {tr("tokens.issued_head")}</div>
           <code className="pat-secret">{issued.token}</code>
           <div className="pat-issued-actions">
             <button
               type="button"
               onClick={() => navigator.clipboard?.writeText(issued.token)}
             >
-              トークンをコピー
+              {tr("tokens.copy_token")}
             </button>
             <button type="button" className="btn-ghost" onClick={() => setIssued(null)}>
-              閉じる
+              {tr("common.close")}
             </button>
           </div>
 
           <div className="pat-tmpl-head">
-            Claude Code 用 <code>.mcp.json</code>（プロジェクト直下に保存、または既存ファイルへ <code>agent-fleet</code> を追記）
+            {tr("tokens.mcp_json_head_1")}
+            <code>.mcp.json</code>
+            {tr("tokens.mcp_json_head_2")}
+            <code>agent-fleet</code>
+            {tr("tokens.mcp_json_head_3")}
           </div>
           <pre className="pat-tmpl">{mcpJson}</pre>
           <div className="pat-issued-actions">
             <button type="button" onClick={() => navigator.clipboard?.writeText(mcpJson)}>
-              .mcp.json をコピー
+              {tr("tokens.copy_mcp_json")}
             </button>
           </div>
         </div>
       )}
 
       <div className="pat-form">
-        <Row label="名前">
+        <Row label={tr("tokens.name")}>
           <input
             type="text"
             value={name}
-            placeholder="例: laptop-claude"
+            placeholder={tr("tokens.name_placeholder")}
             onChange={(e) => setName(e.target.value)}
           />
         </Row>
-        <Row label="スコープ">
+        <Row label={tr("tokens.scope")}>
           <select value={scope} onChange={(e) => setScope(e.target.value)}>
             {scopeOptions.map((s) => (
               <option key={s} value={s}>
                 {s === "read"
-                  ? "read（閲覧のみ）"
+                  ? tr("tokens.scope_read")
                   : s === "write"
-                    ? "write（セッション駆動）"
-                    : "admin:dangerous（強権・管理）"}
+                    ? tr("tokens.scope_write")
+                    : tr("tokens.scope_admin")}
               </option>
             ))}
           </select>
         </Row>
-        <Row label="有効期限">
+        <Row label={tr("tokens.expiry")}>
           <select value={ttl} onChange={(e) => setTtl(e.target.value)}>
-            <option value="90">90 日（既定）</option>
-            <option value="30">30 日</option>
-            <option value="365">365 日</option>
-            <option value="-1">無期限</option>
+            <option value="90">{tr("tokens.ttl_90")}</option>
+            <option value="30">{tr("tokens.ttl_30")}</option>
+            <option value="365">{tr("tokens.ttl_365")}</option>
+            <option value="-1">{tr("tokens.ttl_never")}</option>
           </select>
         </Row>
         <div className="ds-row">
           <span className="ds-label" />
           <button type="button" onClick={create} disabled={busy}>
-            {busy ? "発行中…" : "トークンを発行"}
+            {busy ? tr("tokens.issuing") : tr("tokens.issue")}
           </button>
         </div>
       </div>
 
       <p className="muted ds-note">
-        MCP エンドポイント: <code>{mcpURL}</code>
-        （Streamable HTTP。クライアントに <code>Authorization: Bearer &lt;token&gt;</code> で設定）
+        {tr("tokens.mcp_endpoint_pre")}
+        <code>{mcpURL}</code>
+        {tr("tokens.mcp_endpoint_mid1")}
+        <code>Authorization: Bearer &lt;token&gt;</code>
+        {tr("tokens.mcp_endpoint_mid2")}
       </p>
 
       {err && <p className="muted pad">{err}</p>}
@@ -176,26 +180,26 @@ export function TokensTab() {
         <table className="pat-table">
           <thead>
             <tr>
-              <th>名前</th>
-              <th>スコープ</th>
-              <th>期限</th>
-              <th>最終使用</th>
+              <th>{tr("tokens.name")}</th>
+              <th>{tr("tokens.scope")}</th>
+              <th>{tr("tokens.th_expiry")}</th>
+              <th>{tr("tokens.th_last_used")}</th>
               <th />
             </tr>
           </thead>
           <tbody>
             {tokens.map((t) => (
               <tr key={t.id} className={t.revoked ? "pat-revoked" : ""}>
-                <td>{t.name || "(無名)"}</td>
+                <td>{t.name || tr("tokens.unnamed")}</td>
                 <td>{t.scope}</td>
-                <td>{fmtDate(t.expires_at) || "無期限"}</td>
+                <td>{fmtDate(t.expires_at) || tr("tokens.ttl_never")}</td>
                 <td>{fmtDate(t.last_used_at) || "—"}</td>
                 <td>
                   {t.revoked ? (
-                    <span className="muted">失効済</span>
+                    <span className="muted">{tr("tokens.revoked")}</span>
                   ) : (
                     <button type="button" className="btn-ghost" onClick={() => revoke(t.id)}>
-                      失効
+                      {tr("tokens.revoke")}
                     </button>
                   )}
                 </td>
