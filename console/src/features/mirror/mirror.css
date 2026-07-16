@@ -738,9 +738,42 @@
 .mirror-tasks-head .mtk-active {
   margin-left: auto;
   min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* The running task's spinner, shown on the summary so the ぐるぐる stays visible even
+   when the list is collapsed. Accent-colored to read as "work in progress". */
+.mtk-active-mark {
+  flex: none;
+  color: var(--chat-accent);
+}
+/* ✕ to dismiss an abandoned ToDo list. margin-left:auto pins it to the far right when
+   there's no active-task label to push it there. */
+.mtk-dismiss {
+  margin-left: auto;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.mtk-dismiss:hover {
+  color: var(--fg);
+  background: color-mix(in srgb, var(--fg) 10%, transparent);
+}
+.mtk-dismiss .codicon {
+  font-size: 13px;
 }
 .mirror-tasks[open] .mirror-tasks-head {
   border-bottom: 1px solid var(--border);
