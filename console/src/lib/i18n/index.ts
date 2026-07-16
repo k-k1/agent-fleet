@@ -59,6 +59,18 @@ export function tMaybe(key: string, vars?: Record<string, string | number>): str
   return s === undefined ? undefined : interpolate(s, vars);
 }
 
+// tLocales — あるキーの「全ロケール分の訳」を配列で返す（重複除去）。現ロケールに依存せず
+// ja/en 双方の文言を得るための検索インデックス用（コマンドパレットが日本語でも英語でも
+// マッチできるように使う）。キーが無ければ空配列。
+export function tLocales(key: string, vars?: Record<string, string | number>): string[] {
+  const out = new Set<string>();
+  for (const loc of SUPPORTED_LOCALES) {
+    const s = CATALOGS[loc][key];
+    if (s !== undefined) out.add(interpolate(s, vars));
+  }
+  return [...out];
+}
+
 // useT — ロケール変更で再レンダーさせたい React 側で使う。返す t は安定参照。
 export function useT(): typeof t {
   useSyncExternalStore(subscribeLocale, getLocale, getLocale);

@@ -30,11 +30,12 @@ export const APP_DEFAULTS: Record<string, string> = {
   [APP_CHEAT]: "shift+/",
 };
 
-/** Human titles for the three app chords (rebind UI + cheat-sheet). */
+/** i18n keys for the three app chords' titles (rebind UI + cheat-sheet). Resolve with
+ * cmdLabel (labels.ts) at the display site. */
 export const APP_TITLES: Record<string, string> = {
-  [APP_LEADER]: "リーダー（コマンドメニュー）",
-  [APP_PALETTE]: "コマンドパレット",
-  [APP_CHEAT]: "ショートカット一覧",
+  [APP_LEADER]: "keys.app.leader",
+  [APP_PALETTE]: "keys.app.palette",
+  [APP_CHEAT]: "keys.app.cheatsheet",
 };
 
 const EMPTY: Record<string, string> = {}; // stable fallback so the effectiveCommands cache key doesn't churn
@@ -91,6 +92,7 @@ export function resetBindings(): void {
 
 export interface Rebindable {
   id: string; // command id or app.* synthetic id
+  /** i18n key for the action name — resolve with cmdLabel at the display site. */
   title: string;
   /** The chord as currently bound (override or default; "" = unbound). */
   chord: string;
@@ -101,6 +103,7 @@ export interface Rebindable {
 }
 
 interface RebindSection {
+  /** i18n key for the section header — resolve with cmdLabel at the display site. */
   title: string;
   items: Rebindable[];
 }
@@ -117,15 +120,15 @@ function rebindable(id: string, title: string, def: string): Rebindable {
 export function rebindSections(): RebindSection[] {
   const secs: RebindSection[] = [
     {
-      title: "アプリ全体",
+      title: "keys.kt.secApp",
       items: [APP_LEADER, APP_PALETTE, APP_CHEAT].map((id) => rebindable(id, APP_TITLES[id], APP_DEFAULTS[id])),
     },
   ];
   const withKeys = ALL_COMMANDS.filter((c) => c.keys && c.keys.length);
   const groups: { title: string; test: (id: string) => boolean }[] = [
-    { title: "ペイン / レイアウト", test: (id) => id.startsWith("pane.") },
-    { title: "領域", test: (id) => id.startsWith("region.") },
-    { title: "ワークスペース", test: (id) => id.startsWith("workspace.") },
+    { title: "keys.grp.pane", test: (id) => id.startsWith("pane.") },
+    { title: "keys.kt.secRegion", test: (id) => id.startsWith("region.") },
+    { title: "keys.grp.workspace", test: (id) => id.startsWith("workspace.") },
   ];
   for (const g of groups) {
     const items = withKeys.filter((c) => g.test(c.id)).map((c) => rebindable(c.id, c.title, c.keys![0]));
@@ -134,7 +137,7 @@ export function rebindSections(): RebindSection[] {
   // Anything with a direct key that didn't land in a group above.
   const claimed = new Set(secs.flatMap((s) => s.items.map((i) => i.id)));
   const rest = withKeys.filter((c) => !claimed.has(c.id)).map((c) => rebindable(c.id, c.title, c.keys![0]));
-  if (rest.length) secs.push({ title: "その他", items: rest });
+  if (rest.length) secs.push({ title: "keys.kt.secOther", items: rest });
   return secs;
 }
 
