@@ -134,19 +134,28 @@ export function wireKeys(): () => void {
         cancelLeader();
         return;
       }
-      const nextPath = [...ks.leaderPath, chord];
       const ctx = buildContext();
-      const cmd = resolveLeader(commands, nextPath, ctx);
-      if (cmd) {
-        consume(e);
-        cancelLeader(); // hands focus back; a focus-moving command overrides it next
-        cmd.run(ctx);
-        return;
-      }
-      if (isLeaderPrefix(commands, nextPath, ctx)) {
-        consume(e);
-        enterLeader(nextPath);
-        return;
+      // Same layout tolerance as the direct-accelerator path below: a sequence key can be
+      // punctuation whose physical position differs by layout (JIS ] → .code "Backslash",
+      // so "p ]" would decode as "p \\" = wrap). Try the .key-derived chord first, then
+      // .code, and take whichever resolves to a command or a valid prefix. For non-
+      // punctuation keys eventKeyChordString returns null → candidates is just [chord].
+      const kchord = eventKeyChordString(e);
+      const candidates = kchord && kchord !== chord ? [kchord, chord] : [chord];
+      for (const c of candidates) {
+        const nextPath = [...ks.leaderPath, c];
+        const cmd = resolveLeader(commands, nextPath, ctx);
+        if (cmd) {
+          consume(e);
+          cancelLeader(); // hands focus back; a focus-moving command overrides it next
+          cmd.run(ctx);
+          return;
+        }
+        if (isLeaderPrefix(commands, nextPath, ctx)) {
+          consume(e);
+          enterLeader(nextPath);
+          return;
+        }
       }
       // Dead end: swallow (don't leak the key to the terminal) and cancel.
       consume(e);
