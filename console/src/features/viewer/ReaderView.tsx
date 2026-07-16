@@ -13,6 +13,7 @@ import { baseName, langFor } from "../../lib/filemeta.ts";
 import FileIcon from "../../ui/FileIcon.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { useSettings, setSetting, READER_FONTS, readerFontStack } from "../../lib/settings.ts";
+import { useLocale } from "../../lib/i18n/index.ts";
 import { startNarration, BLOCK_BEAT, SENT_BEAT, TAME_BEAT, readerVoiceChoices, voiceChoiceOpts, type NarrationHandle } from "../chat/tts.ts";
 import { effectiveDict } from "../chat/ttsDict.ts";
 import { loadSpeakers } from "../chat/ttsSpeakers.ts";
@@ -27,6 +28,9 @@ interface FileData {
 
 export function ReaderView({ filePath }: { filePath: string }) {
   const settings = useSettings();
+  // なろう形式ルビ・縦書きは日本語専用機能なので UI ロケールが ja のときだけ有効化する
+  // （非 ja ではルビ解釈を無効化し縦書きトグルも隠す・docs/28 §2.4）。
+  const ja = useLocale() === "ja";
   const [data, setData] = useState<FileData | null>(null);
   const [err, setErr] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -84,8 +88,8 @@ export function ReaderView({ filePath }: { filePath: string }) {
     [settings.ttsAbbrevCode, settings.ttsUserDict],
   );
   const units = useMemo(
-    () => (isText ? buildReadUnits(data!.content!, isMarkdown, codeOpts) : []),
-    [isText, data, isMarkdown, codeOpts],
+    () => (isText ? buildReadUnits(data!.content!, isMarkdown, codeOpts, ja) : []),
+    [isText, data, isMarkdown, codeOpts, ja],
   );
   // 読み上げ対象（spoken 非空）の単位に連番を振る。data-si=その連番、active と一致でハイライト。
   const spokenIdx = useMemo(() => {
@@ -114,7 +118,7 @@ export function ReaderView({ filePath }: { filePath: string }) {
     return { texts, origOf, head };
   }, [flat]);
 
-  const vertical = settings.readerVertical;
+  const vertical = ja && settings.readerVertical; // 縦書きは ja 限定（非 ja では常に横書き）
   const ttsOn = settings.ttsEnabled;
   const verticalRef = useRef(vertical);
   verticalRef.current = vertical;
@@ -307,16 +311,18 @@ export function ReaderView({ filePath }: { filePath: string }) {
             ))}
           </select>
         )}
-        <span className="ui-seg sm md-toggle">
-          <button
-            type="button"
-            className={"seg-btn" + (vertical ? " active" : "")}
-            onClick={() => setSetting("readerVertical", !vertical)}
-            title={vertical ? "横書きに切り替え" : "縦書きに切り替え"}
-          >
-            <Icon name="book" /> {vertical ? "横書き" : "縦書き"}
-          </button>
-        </span>
+        {ja && (
+          <span className="ui-seg sm md-toggle">
+            <button
+              type="button"
+              className={"seg-btn" + (vertical ? " active" : "")}
+              onClick={() => setSetting("readerVertical", !vertical)}
+              title={vertical ? "横書きに切り替え" : "縦書きに切り替え"}
+            >
+              <Icon name="book" /> {vertical ? "横書き" : "縦書き"}
+            </button>
+          </span>
+        )}
         <select
           className="reader-voice reader-font"
           value={settings.readerFont}
