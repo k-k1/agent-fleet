@@ -271,6 +271,12 @@ func registerMemoRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("PATCH /api/memos/{id}", memo.withMembership(memo.update))
 	mux.HandleFunc("DELETE /api/memos/{id}", memo.withMembership(memo.delete))
 
+	// First-class categories (docs/21 UI刷新): add empty, rename (cascades), reorder.
+	mux.HandleFunc("GET /api/memo-categories", memo.withMembership(memo.listCategories))
+	mux.HandleFunc("POST /api/memo-categories", memo.withMembership(memo.createCategory))
+	mux.HandleFunc("PATCH /api/memo-categories/{id}", memo.withMembership(memo.updateCategory))
+	mux.HandleFunc("DELETE /api/memo-categories/{id}", memo.withMembership(memo.deleteCategory))
+
 	// Internal (operator-token) face: an in-container フリート・オペレーター has no
 	// gateway session, so it hits these with its AF_MEMO_TOKEN Bearer (memo_bridge.go).
 	// /internal/* is session-exempt; auth + membership scoping live in withMemoToken.
@@ -279,6 +285,10 @@ func registerMemoRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("POST /internal/memos/flush", memo.withMemoTokenResolved(memo.flush))
 	mux.HandleFunc("PATCH /internal/memos/{id}", memo.withMemoToken(memo.update))
 	mux.HandleFunc("DELETE /internal/memos/{id}", memo.withMemoToken(memo.delete))
+	mux.HandleFunc("GET /internal/memo-categories", memo.withMemoToken(memo.listCategories))
+	mux.HandleFunc("POST /internal/memo-categories", memo.withMemoToken(memo.createCategory))
+	mux.HandleFunc("PATCH /internal/memo-categories/{id}", memo.withMemoToken(memo.updateCategory))
+	mux.HandleFunc("DELETE /internal/memo-categories/{id}", memo.withMemoToken(memo.deleteCategory))
 }
 
 // Repository ops + source-control view + file browser — proxied to the Workspace

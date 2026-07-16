@@ -124,6 +124,15 @@ type Memo struct {
 	CreatedAt, SentAt                string
 }
 
+// MemoCategory persists a memo category as a first-class row (docs/21 UI刷新), so a
+// category can exist while empty and carry an explicit order. Name is unique within a
+// (MembershipID, Repo) and stays the grouping key that Memo.Category references.
+type MemoCategory struct {
+	ID, MembershipID, Repo, Name string
+	Position                     int
+	CreatedAt                    string
+}
+
 // Notification is a membership-scoped, content-free activity record shared by
 // every browser the member uses. Payload contains only structured metadata; chat
 // answer/question text is deliberately never persisted here.
@@ -396,6 +405,18 @@ type MemoStore interface {
 	DeleteMemo(ctx context.Context, id, membershipID string) error
 	MarkMemosSent(ctx context.Context, membershipID string, ids []string, sentAt string) error
 	SweepSentMemos(ctx context.Context, retainBefore string) error
+
+	// Categories (docs/21 UI刷新). First-class so they can be created empty, reordered,
+	// and renamed (the rename cascades onto the memos via ReassignMemoCategory). All
+	// ownership-guarded by membership_id, like the memo methods above.
+	ListCategories(ctx context.Context, membershipID string) ([]MemoCategory, error)
+	GetCategory(ctx context.Context, id string) (MemoCategory, bool, error)
+	CreateCategory(ctx context.Context, c MemoCategory) error
+	UpdateCategory(ctx context.Context, c MemoCategory) error
+	DeleteCategory(ctx context.Context, id, membershipID string) error
+	// ReassignMemoCategory moves every owned memo in (repo, from) to category `to`
+	// (to="" empties them). Used by rename/merge and by category delete.
+	ReassignMemoCategory(ctx context.Context, membershipID, repo, from, to string) error
 }
 
 type NotificationStore interface {
