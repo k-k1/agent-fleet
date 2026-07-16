@@ -953,6 +953,24 @@
   border-color: var(--chat-accent);
   background: color-mix(in srgb, var(--chat-accent) 8%, var(--bg));
 }
+/* Inline image preview at the top of a shared-file card. Contained (never cropped)
+   so the whole picture is legible in the mirror; clicking the card still opens the
+   full FileView. Bounded height keeps a tall screenshot from dominating the thread. */
+.mt-file-thumb {
+  display: block;
+  width: 100%;
+  border-radius: 4px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--chat-accent) 5%, var(--bg));
+  border: 1px solid var(--border);
+  margin-bottom: 1px;
+}
+.mt-file-thumb img {
+  display: block;
+  width: 100%;
+  max-height: 240px;
+  object-fit: contain;
+}
 .mt-file-top {
   display: flex;
   align-items: center;
