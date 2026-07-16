@@ -2,22 +2,11 @@
 // branch-switch modal (local, checkout on pick) and the new-session repo picker
 // (remote, select on pick). Port of the old components/BranchList.
 import { useMemo, useState } from "react";
+import { relTime as intlRelTime } from "../../lib/intl.ts";
 
-// relTime renders a unix-seconds timestamp as a short Japanese "… ago" label.
-export function relTime(unix: number | undefined): string {
-  if (!unix) return "";
-  const s = Math.floor(Date.now() / 1000) - unix;
-  if (s < 60) return "たった今";
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m}分前`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h}時間前`;
-  const d = Math.floor(h / 24);
-  if (d < 30) return `${d}日前`;
-  const mo = Math.floor(d / 30);
-  if (mo < 12) return `${mo}ヶ月前`;
-  return `${Math.floor(mo / 12)}年前`;
-}
+// relTime renders a unix-seconds timestamp as a short locale-aware "… ago" label.
+// unix は秒なのでミリ秒へ直し、共通実装（lib/intl）へ委譲する（RepoPicker が import）。
+export const relTime = (unix: number | undefined): string => (unix ? intlRelTime(unix * 1000) : "");
 
 // A branch row: null = loading list, [] = none.
 export interface Branch {

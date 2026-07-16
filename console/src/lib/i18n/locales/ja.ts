@@ -4,6 +4,7 @@
 // 以降のフェーズで features 単位に追記していく。
 export const ja = {
   // --- 共通 / 設定ラベル ---
+  "common.just_now": "たった今",
   "settings.language": "言語",
   "theme.dark": "ダーク",
   "theme.light": "ライト",

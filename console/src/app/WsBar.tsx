@@ -16,6 +16,7 @@ import { Sparkline } from "../ui/Sparkline.tsx";
 import { useConfirm } from "../ui/ConfirmProvider.tsx";
 import { useIsMobile } from "../lib/device.ts";
 import { useDismiss } from "../lib/useDismiss.ts";
+import { fmtDateTime, TIME_HM } from "../lib/intl.ts";
 import { fmtGiB as fg } from "../lib/bytes.ts";
 import { useUsageResetNotify } from "./usageResetNotify.ts";
 
@@ -214,12 +215,7 @@ function untilText(iso: string) {
   if (min >= 60) return `あと${Math.round(min / 60)}時間`;
   return `あと${min}分`;
 }
-function whenText(iso: string) {
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return "";
-  const p = (n: number) => String(n).padStart(2, "0");
-  return `${d.getMonth() + 1}/${d.getDate()} ${p(d.getHours())}:${p(d.getMinutes())}`;
-}
+const whenText = (iso: string) => fmtDateTime(iso);
 
 function expiryText(iso: string) {
   const t = new Date(iso).getTime();
@@ -235,12 +231,10 @@ function expiryText(iso: string) {
 function resetChipText(iso: string) {
   const d = new Date(iso);
   if (isNaN(d.getTime())) return "";
-  const p = (n: number) => String(n).padStart(2, "0");
   const now = new Date();
   const sameDay =
     d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
-  const hm = `${p(d.getHours())}:${p(d.getMinutes())}`;
-  return sameDay ? hm : `${d.getMonth() + 1}/${d.getDate()} ${hm}`;
+  return sameDay ? fmtDateTime(d, TIME_HM) : fmtDateTime(d);
 }
 
 // Max付近しきい値: 枠の利用率がこの値以上なら、チップを「N% / M%」からその枠のリセット時刻

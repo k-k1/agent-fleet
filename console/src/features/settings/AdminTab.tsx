@@ -7,6 +7,7 @@ import { Icon } from "../../ui/Icon.tsx";
 import { ConfirmDialog } from "../../ui/ConfirmDialog.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { kindLabel, kindClass, kindIcon } from "../../lib/sessionkind.ts";
+import { fmtDateTime, DATETIME_FULL } from "../../lib/intl.ts";
 import { fmtGiB } from "../../lib/bytes.ts";
 import { stateInfo } from "../../lib/sessionview.ts";
 import { setTenantDict } from "../chat/ttsDict.ts";
@@ -386,7 +387,7 @@ const auditCat = (action: string) => action.split(".")[0]; // fs | git | repo | 
 const fmtAt = (iso: string) => {
   if (!iso) return "";
   const d = new Date(iso);
-  return isNaN(d.getTime()) ? iso : d.toLocaleString();
+  return isNaN(d.getTime()) ? iso : fmtDateTime(d, DATETIME_FULL);
 };
 
 function AuditView({ tenants, isSuper }: { tenants: Tenant[]; isSuper: boolean }) {
