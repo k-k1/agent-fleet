@@ -25,6 +25,8 @@ import { useMemoStore } from "../memo/store.ts";
 import { useSettingsUI } from "../settings/store.ts";
 import { getSettings, setSetting } from "../../lib/settings.ts";
 import { useKeysStore } from "./store.ts";
+import { useUiOpen } from "../../core/store/uiOpen.ts";
+import { toggleTtsPlayback } from "../../core/store/tts.ts";
 import { focusPaneContent, focusRegion } from "./focus.ts";
 
 const getLayout = () => useLayoutStore.getState().layout;
@@ -74,6 +76,7 @@ export const GROUPS: Group[] = [
   { id: "p", title: "keys.grp.pane" },
   { id: "s", title: "keys.grp.session" },
   { id: "w", title: "keys.grp.workspace" },
+  { id: "g", title: "keys.grp.open" },
 ];
 
 // Alt+1..8 → focus pane N (also under leader: p 1..8). Matches the visible ordinal chip.
@@ -144,4 +147,15 @@ export const ALL_COMMANDS: Command[] = [
   // the dispatcher so it stays out of the terminal/inputs); this leader entry makes it
   // discoverable in which-key.
   { id: "help.cheatsheet", title: "keys.cmd.cheatsheet", seq: "shift+/", run: () => useKeysStore.getState().openCheat() },
+
+  // ---- Open status surfaces (leader g) — toggle the always-mounted popovers that own
+  // their state via the uiOpen signal. Each no-ops gracefully when its chip is hidden
+  // (e.g. an agent with no usage reading, or the resource tiles on mobile). ----
+  { id: "open.notifications", title: "keys.cmd.openNotifications", seq: "g n", run: () => useUiOpen.getState().toggle("notifications") },
+  { id: "open.usageClaude", title: "keys.cmd.openUsageClaude", seq: "g c", run: () => useUiOpen.getState().toggle("usage-claude") },
+  { id: "open.usageCodex", title: "keys.cmd.openUsageCodex", seq: "g x", run: () => useUiOpen.getState().toggle("usage-codex") },
+  { id: "open.resources", title: "keys.cmd.openResources", seq: "g r", run: () => useUiOpen.getState().toggle("resources") },
+
+  // ---- Media: toggle voice read-aloud (mnemonic m = mute). Shares TopBar's stop+OFF logic. ----
+  { id: "tts.toggle", title: "keys.cmd.ttsToggle", seq: "m", run: toggleTtsPlayback },
 ];

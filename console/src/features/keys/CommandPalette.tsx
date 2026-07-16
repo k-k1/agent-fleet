@@ -1,32 +1,50 @@
-// Command palette — fuzzy-search every available command plus the session list, and
-// run/open the pick. Opened by Ctrl/⌘+P (dispatcher). Joins the Esc + browser-back
-// overlay stacks like every other dialog, so while it is open hasOpenOverlay() is true
-// and the dispatcher stays inert (the input owns the keyboard).
+// Command palette — a VS Code-style multi-mode quick-open. Opened by Ctrl/⌘+P (dispatcher).
+// Joins the Esc + browser-back overlay stacks like every other dialog, so while it is open
+// hasOpenOverlay() is true and the dispatcher stays inert (the input owns the keyboard).
+//
+// Modes (cycle with Tab / Shift+Tab, re-pressing Ctrl/⌘+P, or the mode tabs):
+//   - command : every available command + the session list (fuzzy, all-locale search).
+//   - changed : working-tree changed files across all dirty repos → open each file's diff.
+//   - file    : recursive filename search under ~/repos (server-side via /fs/search = ripgrep
+//               --files, .gitignore-honouring) → open the file. Unlike command/changed (a
+//               static list client-fuzzed), this queries the backend per keystroke.
 //
 // Search matches across ALL locales (cmdSearch) so typing English or Japanese finds a
 // command regardless of the current UI language; display uses the current locale.
 //
 // Focus: opening from a composer/input must not strand focus. We remember the opener and,
-// on a CANCEL (Esc / browser-back / backdrop), return focus to it. Running a command does
-// NOT restore — the command may move focus deliberately (e.g. focus a pane).
-//
-// Scope: commands + sessions today. Files / repos are a fast follow (they need the same
-// open-target wiring the rails already have).
+// on a CANCEL (Esc / browser-back / backdrop), return focus to it. Running a command/opening
+// a file does NOT restore — it may move focus deliberately (e.g. focus a pane).
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Kbd } from "../../ui/Kbd.tsx";
 import { paletteCommands } from "../../lib/keys/registry.ts";
 import type { Command } from "../../lib/keys/registry.ts";
 import { useEscLayer } from "../../lib/escLayer.ts";
 import { useBackClose } from "../../lib/backClose.ts";
-import { t, useLocale } from "../../lib/i18n/index.ts";
+import { t, useLocale, type MsgKey } from "../../lib/i18n/index.ts";
 import { coarsePointer } from "../../lib/device.ts";
+import { api, fsSearch } from "../../core/api/client.ts";
+import { useLayoutStore } from "../../layout/store.ts";
 import { useKeysStore } from "./store.ts";
 import { useEffectiveCommands, boundChord, APP_LEADER } from "./bindings.ts";
 import { cmdLabel, cmdSearch } from "./labels.ts";
 import { buildContext } from "./dispatcher.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 import { openSessionChat, openSessionTerminal } from "../sessions/open.ts";
+import { useReposStore } from "../repos/store.ts";
+import { openFileDiff } from "../scm/open.ts";
 import { agentOf } from "../../agents/registry.ts";
+
+type Mode = "command" | "changed" | "file";
+const MODES: Mode[] = ["command", "changed", "file"];
+const MODE_LABEL: Record<Mode, MsgKey> = {
+  command: "keys.palette.mode_command",
+  changed: "keys.palette.mode_changed",
+  file: "keys.palette.mode_file",
+};
+// File search is rooted at ~/repos: the working-copy scope, so results are code files (the
+// backend excludes caches/packages), shown repo-relative like the changed-files mode.
+const FILE_ROOT = "repos";
 
 interface Item {
   id: string;
@@ -36,9 +54,17 @@ interface Item {
   search: string;
   /** The effective shortcut as a chord sequence, rendered as keycaps on the right. A
    * direct accelerator is one chord (["alt+1"]); a leader command is the leader plus each
-   * step (["mod+k","p","r"]). Empty when the command has no key (or a session row). */
+   * step (["mod+k","p","r"]). Empty when the command has no key (or a session/file row). */
   keys: string[];
   run: () => void;
+}
+
+// One working-tree change from api/repos/{repo}/changes.
+interface Change {
+  path: string;
+  untracked?: boolean;
+  index?: string;
+  worktree?: string;
 }
 
 // The shortcut a palette row advertises: the command's direct accelerator if it has one
@@ -61,6 +87,53 @@ function fuzzy(query: string, text: string): boolean {
   return i === q.length;
 }
 
+// Load changed files across every dirty working copy. Refreshes the repo list first so the
+// dirty flags (hence which repos we hit for changes) are current, then fetches each dirty
+// repo's changes in parallel. A file's row opens its working diff (same target as ChangesView).
+async function loadChangedItems(): Promise<Item[]> {
+  await useReposStore.getState().refresh();
+  const repos = useReposStore.getState().repos.filter((r) => r.dirty);
+  const lists = await Promise.all(
+    repos.map(async (r) => {
+      try {
+        const d = await api(`api/repos/${encodeURIComponent(r.name)}/changes`);
+        const changes: Change[] = d.changes || [];
+        return changes.map((c): Item => {
+          const staged = !c.untracked && c.index !== " ";
+          return {
+            id: "chg:" + r.name + ":" + c.path,
+            title: c.path,
+            sub: r.name,
+            search: c.path + " " + r.name,
+            keys: [],
+            run: () => openFileDiff(r.name, c.path, staged),
+          };
+        });
+      } catch {
+        return [] as Item[];
+      }
+    }),
+  );
+  return lists.flat();
+}
+
+// One /fs/search hit (a home-relative path like "repos/<repo>/<...>") → a palette row. Split
+// off the repo segment for the badge, show the in-repo path as the title, open it as a file.
+function fileItem(homeRel: string): Item {
+  const rel = homeRel.startsWith(FILE_ROOT + "/") ? homeRel.slice(FILE_ROOT.length + 1) : homeRel;
+  const slash = rel.indexOf("/");
+  const repo = slash > 0 ? rel.slice(0, slash) : "";
+  const inRepo = slash > 0 ? rel.slice(slash + 1) : rel;
+  return {
+    id: "file:" + homeRel,
+    title: inRepo,
+    sub: repo || rel,
+    search: rel,
+    keys: [],
+    run: () => useLayoutStore.getState().openTarget({ content: { kind: "file", filePath: homeRel } }),
+  };
+}
+
 export function CommandPalette() {
   const open = useKeysStore((s) => s.paletteOpen);
   const sessions = useSessionsStore((s) => s.sessions);
@@ -68,6 +141,9 @@ export function CommandPalette() {
   const locale = useLocale(); // re-render + recompute items when the UI language changes
   const [q, setQ] = useState("");
   const [sel, setSel] = useState(0);
+  const [mode, setMode] = useState<Mode>("command");
+  const [changed, setChanged] = useState<Item[] | null>(null); // null = loading
+  const [fileHits, setFileHits] = useState<Item[] | null>(null); // null = searching (file mode)
   const inputRef = useRef<HTMLInputElement>(null);
   const openerRef = useRef<HTMLElement | null>(null);
 
@@ -88,11 +164,48 @@ export function CommandPalette() {
     openerRef.current = (document.activeElement as HTMLElement) ?? null;
     setQ("");
     setSel(0);
+    setMode("command"); // always reopen in command mode
     const id = requestAnimationFrame(() => inputRef.current?.focus());
     return () => cancelAnimationFrame(id);
   }, [open]);
 
-  const items = useMemo<Item[]>(() => {
+  // Fetch changed files whenever the changed mode is (re)entered while open. Re-shows the
+  // loading state each time so a stale list never flashes before the fresh fetch lands.
+  useEffect(() => {
+    if (!open || mode !== "changed") return;
+    let cancelled = false;
+    setChanged(null);
+    void loadChangedItems().then((items) => {
+      if (!cancelled) setChanged(items);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, mode]);
+
+  // File mode searches the backend per keystroke (debounced). An empty query yields nothing
+  // (there's no whole-tree listing to fuzz locally — the point of /fs/search is to not).
+  useEffect(() => {
+    if (!open || mode !== "file") return;
+    const query = q.trim();
+    if (!query) {
+      setFileHits([]);
+      return;
+    }
+    let alive = true;
+    setFileHits(null); // searching
+    const timer = setTimeout(() => {
+      fsSearch(FILE_ROOT, query)
+        .then((r) => alive && setFileHits(r.results.map(fileItem)))
+        .catch(() => alive && setFileHits([]));
+    }, 160);
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+    };
+  }, [open, mode, q]);
+
+  const commandItems = useMemo<Item[]>(() => {
     if (!open) return [];
     void locale; // dep: recompute labels/search when the language changes
     const ctx = buildContext();
@@ -119,13 +232,31 @@ export function CommandPalette() {
     return [...cmds, ...sess];
   }, [open, sessions, commands, locale]);
 
-  const filtered = useMemo(() => items.filter((it) => fuzzy(q, it.search + " " + it.sub)), [items, q]);
+  // command/changed are static lists filtered client-side; file is already server-filtered by q.
+  // File "loading" only counts with a live query — an empty query shows the type-to-search hint,
+  // never a spurious spinner from the initial null state.
+  const loading = (mode === "changed" && changed === null) || (mode === "file" && fileHits === null && !!q.trim());
+  const items = mode === "command" ? commandItems : mode === "changed" ? (changed ?? []) : (fileHits ?? []);
+  const filtered = useMemo(
+    () => (mode === "file" ? items : items.filter((it) => fuzzy(q, it.search + " " + it.sub))),
+    [items, q, mode],
+  );
+
+  const switchMode = (m: Mode) => {
+    setMode(m);
+    setSel(0);
+    inputRef.current?.focus();
+  };
+  const cycleMode = (dir: number) => {
+    const i = MODES.indexOf(mode);
+    switchMode(MODES[(i + dir + MODES.length) % MODES.length]);
+  };
 
   if (!open) return null;
 
   const run = (it?: Item) => {
     if (!it) return;
-    openerRef.current = null; // running a command owns focus; don't restore to the opener
+    openerRef.current = null; // running/opening owns focus; don't restore to the opener
     close();
     it.run();
   };
@@ -143,7 +274,13 @@ export function CommandPalette() {
           ref={inputRef}
           className="cp-input"
           value={q}
-          placeholder={t("keys.palette.placeholder")}
+          placeholder={t(
+            mode === "changed"
+              ? "keys.palette.placeholder_changed"
+              : mode === "file"
+                ? "keys.palette.placeholder_file"
+                : "keys.palette.placeholder",
+          )}
           aria-label={t("keys.palette.aria")}
           autoComplete="off"
           spellCheck={false}
@@ -153,7 +290,15 @@ export function CommandPalette() {
           }}
           onKeyDown={(e) => {
             if (e.nativeEvent.isComposing) return;
-            if (e.key === "ArrowDown") {
+            // Mode cycling: Tab / Shift+Tab, or re-pressing Ctrl/⌘+P (preventDefault also
+            // stops the browser's print dialog on Ctrl+P).
+            if (e.key === "Tab") {
+              e.preventDefault();
+              cycleMode(e.shiftKey ? -1 : 1);
+            } else if ((e.ctrlKey || e.metaKey) && (e.key === "p" || e.key === "P")) {
+              e.preventDefault();
+              cycleMode(1);
+            } else if (e.key === "ArrowDown") {
               e.preventDefault();
               setSel((s) => Math.min(s + 1, filtered.length - 1));
             } else if (e.key === "ArrowUp") {
@@ -165,29 +310,54 @@ export function CommandPalette() {
             }
           }}
         />
-        <div className="cp-list">
-          {filtered.length === 0 && <div className="cp-empty">{t("keys.palette.empty")}</div>}
-          {filtered.map((it, i) => (
-            <div
-              key={it.id}
-              className={"cp-item" + (i === sel ? " sel" : "")}
-              onMouseMove={() => setSel(i)}
+        <div className="cp-modes" role="tablist">
+          {MODES.map((m) => (
+            <button
+              key={m}
+              type="button"
+              role="tab"
+              aria-selected={m === mode}
+              className={"cp-mode" + (m === mode ? " on" : "")}
               onMouseDown={(e) => {
-                e.preventDefault();
-                run(it);
+                e.preventDefault(); // keep focus in the search input
+                switchMode(m);
               }}
             >
-              <span className="cp-title">{it.title}</span>
-              <span className="cp-sub">{it.sub}</span>
-              {it.keys.length > 0 && (
-                <span className="cp-kbd">
-                  {it.keys.map((ch, k) => (
-                    <Kbd key={k} chord={ch} />
-                  ))}
-                </span>
-              )}
-            </div>
+              {t(MODE_LABEL[m])}
+            </button>
           ))}
+          <span className="cp-mode-hint">{t("keys.palette.mode_hint")}</span>
+        </div>
+        <div className="cp-list">
+          {mode === "file" && !q.trim() ? (
+            <div className="cp-empty">{t("keys.palette.file_hint")}</div>
+          ) : loading ? (
+            <div className="cp-empty">{t(mode === "file" ? "keys.palette.file_searching" : "keys.palette.changed_loading")}</div>
+          ) : filtered.length === 0 ? (
+            <div className="cp-empty">{mode === "changed" ? t("keys.palette.changed_empty") : t("keys.palette.empty")}</div>
+          ) : (
+            filtered.map((it, i) => (
+              <div
+                key={it.id}
+                className={"cp-item" + (i === sel ? " sel" : "")}
+                onMouseMove={() => setSel(i)}
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  run(it);
+                }}
+              >
+                <span className="cp-title">{it.title}</span>
+                <span className="cp-sub">{it.sub}</span>
+                {it.keys.length > 0 && (
+                  <span className="cp-kbd">
+                    {it.keys.map((ch, k) => (
+                      <Kbd key={k} chord={ch} />
+                    ))}
+                  </span>
+                )}
+              </div>
+            ))
+          )}
         </div>
       </div>
     </div>

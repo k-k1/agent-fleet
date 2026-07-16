@@ -9,6 +9,7 @@ import { chatGet, chatStream, chatStop, chatCreate, assistantGet, chatPasteImage
 import { errText, raw } from "../../core/api/client.ts";
 import { takeChatSeed } from "../../lib/chatSeed.ts";
 import { useDraft, moveDraft, clearDraft } from "../../lib/draft.ts";
+import { scrollComposerViewport } from "../../lib/keyScroll.ts";
 import { fmtDateTime } from "../../lib/intl.ts";
 import { t, tCount, useT } from "../../lib/i18n/index.ts";
 import { coarsePointer } from "../../lib/device.ts";
@@ -584,6 +585,10 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
   };
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    // Scroll the message list without leaving the composer: Shift+↑/↓ nudges, Ctrl/⌘+↑/↓
+    // and Ctrl/⌘+[ / ] page. Checked before history recall so the modified arrows don't get
+    // swallowed by the ↑/↓ recall path below.
+    if (!e.nativeEvent.isComposing && scrollComposerViewport(e, scrollRef.current)) return;
     // Shell-style history: ↑/↓ recall past prompts when the field is empty (or once recall
     // is underway). With text present, arrows move the caret as usual.
     if ((e.key === "ArrowUp" || e.key === "ArrowDown") && !e.nativeEvent.isComposing) {
