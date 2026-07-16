@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../../core/api/client.ts";
 import { Modal } from "../../ui/Modal.tsx";
+import { useT } from "../../lib/i18n/index.ts";
 
 // InternalRepoBrowser: a clone-free, read-only view of an internal repo served by
 // the CP (api/internal-git/repos/{name}/tree|blob). Pick a branch, walk the tree via
@@ -22,6 +23,7 @@ interface Blob {
 }
 
 export function InternalRepoBrowser({ name, onClose }: { name: string; onClose: () => void }) {
+  const tr = useT();
   const [branches, setBranches] = useState<string[]>([]);
   const [ref, setRef] = useState("");
   const [path, setPath] = useState("");
@@ -54,13 +56,13 @@ export function InternalRepoBrowser({ name, onClose }: { name: string; onClose: 
       .then((d) => {
         if (!alive) return;
         if (d && d.error) {
-          setTreeErr(d.error.message || "取得に失敗しました");
+          setTreeErr(d.error.message || tr("tokens.fetch_failed"));
           setEntries([]);
         } else {
           setEntries(d.entries || []);
         }
       })
-      .catch(() => alive && (setTreeErr("取得に失敗しました"), setEntries([])));
+      .catch(() => alive && (setTreeErr(tr("tokens.fetch_failed")), setEntries([])));
     return () => {
       alive = false;
     };
@@ -100,11 +102,11 @@ export function InternalRepoBrowser({ name, onClose }: { name: string; onClose: 
   const segs = path ? path.split("/") : [];
 
   return (
-    <Modal title={`内部リポジトリ参照 — ${name}`} onClose={onClose} className="ig-browser">
+    <Modal title={tr("igb.title", { name })} onClose={onClose} className="ig-browser">
       <div className="ui-modal-body ig-body">
         <div className="ig-toolbar">
           <select value={ref} onChange={(e) => (setFile(null), setPath(""), setRef(e.target.value))}>
-            {branches.length === 0 && <option value={ref}>{ref || "(ブランチなし)"}</option>}
+            {branches.length === 0 && <option value={ref}>{ref || tr("igb.no_branch")}</option>}
             {branches.map((b) => (
               <option key={b} value={b}>
                 {b}
@@ -129,11 +131,11 @@ export function InternalRepoBrowser({ name, onClose }: { name: string; onClose: 
         <div className="ig-panes">
           <div className="ig-tree">
             {entries === null ? (
-              <p className="muted pad">読み込み中…</p>
+              <p className="muted pad">{tr("common.loading")}</p>
             ) : treeErr ? (
               <p className="muted pad">{treeErr}</p>
             ) : entries.length === 0 ? (
-              <p className="muted pad">（空）</p>
+              <p className="muted pad">{tr("igb.empty")}</p>
             ) : (
               <ul className="ig-entries">
                 {entries.map((e) => (
@@ -155,15 +157,15 @@ export function InternalRepoBrowser({ name, onClose }: { name: string; onClose: 
 
           <div className="ig-view">
             {!file ? (
-              <p className="muted pad">ファイルを選択してください</p>
+              <p className="muted pad">{tr("igb.select_file")}</p>
             ) : blob === null ? (
-              <p className="muted pad">読み込み中…</p>
+              <p className="muted pad">{tr("common.loading")}</p>
             ) : blob.too_large ? (
-              <p className="muted pad">プレビューには大きすぎます（{fmtSize(blob.size)}）。クローンして参照してください。</p>
+              <p className="muted pad">{tr("igb.too_large", { size: fmtSize(blob.size) })}</p>
             ) : blob.lfs ? (
-              <p className="muted pad">Git LFS オブジェクト{blob.lfs_oid ? `（sha256:${blob.lfs_oid.slice(0, 12)}…）` : ""}。クローンして取得してください。</p>
+              <p className="muted pad">{tr("igb.lfs", { oid: blob.lfs_oid ? `（sha256:${blob.lfs_oid.slice(0, 12)}…）` : "" })}</p>
             ) : blob.binary ? (
-              <p className="muted pad">バイナリファイル（{fmtSize(blob.size)}）はプレビューできません。</p>
+              <p className="muted pad">{tr("igb.binary", { size: fmtSize(blob.size) })}</p>
             ) : (
               <pre className="ig-blob">
                 <code>{blob.content}</code>
