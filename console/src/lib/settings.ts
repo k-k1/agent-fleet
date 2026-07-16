@@ -416,26 +416,26 @@ export const VOICEVOX_ZUNDAMON: [string, string][] = [
   ["38", "ヒソヒソ"],
 ];
 
-// TTS プロバイダ（docs/24 Phase 2）。auto の使い分けは CP が決める。
-export const TTS_PROVIDERS: [string, string][] = [
-  ["auto", "自動"],
-  ["voicevox", "ずんだもん"],
-  ["polly", "Polly"],
+// TTS プロバイダ（docs/24 Phase 2）。auto の使い分けは CP が決める。ラベルは i18n キー。
+export const TTS_PROVIDERS: [string, MsgKey][] = [
+  ["auto", "tts.provider_auto"],
+  ["voicevox", "tts.provider_voicevox"],
+  ["polly", "tts.provider_polly"],
 ];
 
-// Polly の日本語ニューラル話者（VoiceId → ラベル）。
-export const TTS_POLLY_VOICES: [string, string][] = [
-  ["Takumi", "Takumi（男性）"],
-  ["Kazuha", "Kazuha（女性）"],
-  ["Tomoko", "Tomoko（女性）"],
+// Polly の日本語ニューラル話者（VoiceId → i18n キー）。
+export const TTS_POLLY_VOICES: [string, MsgKey][] = [
+  ["Takumi", "tts.polly_takumi"],
+  ["Kazuha", "tts.polly_kazuha"],
+  ["Tomoko", "tts.polly_tomoko"],
 ];
 
-// 合成キャッシュの上限（合計再生秒数 → ラベル）。メモリ消費は PCM で約 0.1MB/秒。
-export const TTS_CACHE_SIZES: [number, string][] = [
-  [0, "なし"],
-  [300, "5分（約30MB）"],
-  [900, "15分（約90MB）"],
-  [1800, "30分（約180MB）"],
+// 合成キャッシュの上限（合計再生秒数 → i18n キー）。メモリ消費は PCM で約 0.1MB/秒。
+export const TTS_CACHE_SIZES: [number, MsgKey][] = [
+  [0, "tts.cache_none"],
+  [300, "tts.cache_5m"],
+  [900, "tts.cache_15m"],
+  [1800, "tts.cache_30m"],
 ];
 
 // 音声読み上げ設定の「初期状態」（設定タブのリセットボタンが書き戻す値）。DEFAULTS の TTS 関連
@@ -472,24 +472,24 @@ export const TTS_RESET: Partial<Settings> = Object.fromEntries(
   TTS_RESET_KEYS.map((k) => [k, DEFAULTS[k]]),
 ) as Partial<Settings>;
 
-// 読み上げ速度（speedScale）。
-export const TTS_SPEEDS: [number, string][] = [
-  [0.75, "ゆっくり"],
-  [1.0, "標準"],
-  [1.25, "はやめ"],
-  [1.5, "はやい"],
+// 読み上げ速度（speedScale）。ラベルは i18n キー。
+export const TTS_SPEEDS: [number, MsgKey][] = [
+  [0.75, "tts.speed_slow"],
+  [1.0, "tts.speed_normal"],
+  [1.25, "tts.speed_fast"],
+  [1.5, "tts.speed_faster"],
 ];
 
-export const TTS_WORK_READ_MODES: [string, string][] = [
-  ["off", "読まない"],
-  ["whisper", "ささやき"],
-  ["hushed", "ヒソヒソ"],
+export const TTS_WORK_READ_MODES: [string, MsgKey][] = [
+  ["off", "tts.work_off"],
+  ["whisper", "tts.work_whisper"],
+  ["hushed", "tts.work_hushed"],
 ];
 
-export const TTS_BACKGROUND_PLAYBACK_MODES: [string, string][] = [
-  ["mute", "再生しない"],
-  ["quiet", "音量を下げる"],
-  ["normal", "通常再生"],
+export const TTS_BACKGROUND_PLAYBACK_MODES: [string, MsgKey][] = [
+  ["mute", "tts.bg_mute"],
+  ["quiet", "tts.bg_quiet"],
+  ["normal", "tts.bg_normal"],
 ];
 
 // Assistant-chat output-language choices, shared by the settings UI. "auto" leaves the
