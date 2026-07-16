@@ -9,6 +9,7 @@
 // adjacently but NOT visually nested — they're peer nodes distinguished by branch.
 import type { Repo } from "../features/repos/store.ts";
 import type { Session } from "../types/session.ts";
+import { compareText } from "./intl.ts";
 
 // The working-copy folder a session runs in. Agent sessions carry `repo`
 // (the folder name); fall back to the working dir's basename so a session with a
@@ -31,13 +32,13 @@ export function sessionFolder(s: Session): string {
 // renders one visual cluster per group so a base and its worktrees read as one
 // project, separated from the next.
 export function groupedRepos(repos: Repo[]): Repo[][] {
-  const byName = (a: Repo, b: Repo) => a.name.localeCompare(b.name);
+  const byName = (a: Repo, b: Repo) => compareText(a.name, b.name);
   // Worktree order: createdAt ascending (RFC3339 UTC sorts chronologically as a
   // string), then name as a stable tie-break / fallback when a timestamp is absent.
   const byCreated = (a: Repo, b: Repo) => {
     const ca = a.createdAt || "";
     const cb = b.createdAt || "";
-    if (ca && cb && ca !== cb) return ca.localeCompare(cb);
+    if (ca && cb && ca !== cb) return compareText(ca, cb);
     return byName(a, b);
   };
   const bases = repos.filter((r) => r.worktree !== true).sort(byName);
@@ -71,7 +72,7 @@ export function orderedRepos(repos: Repo[]): Repo[] {
 export function sessionsInFolder(sessions: Session[], folderName: string): Session[] {
   return sessions
     .filter((s) => sessionFolder(s) === folderName)
-    .sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
+    .sort((a, b) => compareText(b.createdAt || "", a.createdAt || ""));
 }
 
 // orphanSessions returns sessions that belong to no known working copy — a folder
@@ -84,5 +85,5 @@ export function orphanSessions(sessions: Session[], repos: Repo[]): Session[] {
       const f = sessionFolder(s);
       return !f || !names.has(f);
     })
-    .sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
+    .sort((a, b) => compareText(b.createdAt || "", a.createdAt || ""));
 }

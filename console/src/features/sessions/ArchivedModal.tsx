@@ -11,6 +11,7 @@ import { api, raw } from "../../core/api/client.ts";
 import { kindIcon, kindLabel, kindClass } from "../../lib/sessionkind.ts";
 import { displayName } from "../../lib/sessionview.ts";
 import { t, useT } from "../../lib/i18n/index.ts";
+import { compareText } from "../../lib/intl.ts";
 import type { Session } from "../../types/session.ts";
 
 type ArchivedSession = Session & { started?: string };
@@ -80,7 +81,7 @@ export function ArchivedModal({ onClose, onRestored }: ArchivedModalProps) {
       else by.set(key, [s]);
     }
     const arr = [...by.entries()].map(([dir, list]) => {
-      list.sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
+      list.sort((a, b) => compareText(b.createdAt || "", a.createdAt || ""));
       const head = list[0];
       const heading = groupHeading(dir, head);
       return {
@@ -92,7 +93,7 @@ export function ArchivedModal({ onClose, onRestored }: ArchivedModalProps) {
         repoKey: head?.repo || heading.label,
       };
     });
-    arr.sort((a, b) => a.repoKey.localeCompare(b.repoKey) || b.newest.localeCompare(a.newest));
+    arr.sort((a, b) => compareText(a.repoKey, b.repoKey) || compareText(b.newest, a.newest));
     return arr;
   }, [filtered]);
 

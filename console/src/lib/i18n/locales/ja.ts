@@ -1176,6 +1176,14 @@ export const ja = {
   // TurnSpendBar
   "mirror.turn_tokens": "このターンの新規消費 {total} トークン",
   "mirror.turn_tokens_detail": "未キャッシュ入力 {fresh} · 新規キャッシュ {create} · 出力 {out}",
+  // ContextBar
+  "mirror.ctx_title": "文脈 {used} / {window} トークン ({pct}%)",
+  "mirror.ctx_breakdown": "キャッシュ再利用 {read} · 新規キャッシュ {create} · 未キャッシュ {fresh}",
+  "mirror.ctx_near_compact": "まもなく自動圧縮される可能性があります",
+  "mirror.ctx_label": "コンテキスト",
+  "mirror.ctx_trend_title": "ターン毎の新規消費トークン（未キャッシュ入力＋新規キャッシュ＋出力）の推移",
+  "mirror.ctx_trend_label": "トークン消費推移",
+  "mirror.ctx_trend_peak": "最大 {v}",
   // ToolTrace / ToolRun
   "mirror.open_diff": "差分を別ペインで開く",
   "mirror.collapse_tools": "ツールをたたむ",

@@ -13,7 +13,7 @@ import { Icon } from "../../ui/Icon.tsx";
 import FileIcon from "../../ui/FileIcon.tsx";
 import { baseName } from "../../lib/filemeta.ts";
 import { useDraft } from "../../lib/draft.ts";
-import { fmtDateTime } from "../../lib/intl.ts";
+import { fmtDateTime, fmtNum } from "../../lib/intl.ts";
 import { MarkdownView } from "../viewer/MarkdownView.tsx";
 import {
   readTurn,
@@ -2505,7 +2505,7 @@ function CompactBlock({
         <Icon name="archive" />
         <span className="mc-title">{tr("mirror.context_compacted")}</span>
         {hasEffect && (
-          <span className="mc-effect" title={tr("mirror.token_change", { before: before!.toLocaleString(), after: after!.toLocaleString() })}>
+          <span className="mc-effect" title={tr("mirror.token_change", { before: fmtNum(before!), after: fmtNum(after!) })}>
             {fmtTok(before!)} → {fmtTok(after!)}
             <span className="mc-effect-pct">−{pct}%</span>
           </span>
@@ -2939,12 +2939,12 @@ function TurnSpendBar({ fresh, create, out, max }: { fresh: number; create: numb
   const pct = (n: number) => (n / max) * 100 + "%";
   const total = fresh + create + out;
   const title =
-    tr("mirror.turn_tokens", { total: total.toLocaleString() }) +
+    tr("mirror.turn_tokens", { total: fmtNum(total) }) +
     "\n" +
     tr("mirror.turn_tokens_detail", {
-      fresh: fresh.toLocaleString(),
-      create: create.toLocaleString(),
-      out: out.toLocaleString(),
+      fresh: fmtNum(fresh),
+      create: fmtNum(create),
+      out: fmtNum(out),
     });
   return (
     <span className="mt-spend" title={title} aria-hidden="true">
