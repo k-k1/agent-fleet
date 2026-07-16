@@ -84,7 +84,7 @@ func handleChatCreate(w http.ResponseWriter, r *http.Request) {
 		// to the assistant leave existing threads untouched.
 		a, err := getAssistant(req.AssistantID)
 		if err != nil {
-			httpx.WriteErr(w, http.StatusBadRequest, "bad_assistant", "アシスタントが見つかりません")
+			httpx.WriteErr(w, http.StatusBadRequest, errCodeChatAssistantNotFound, "assistant not found")
 			return
 		}
 		c.AssistantID = a.ID
@@ -98,7 +98,7 @@ func handleChatCreate(w http.ResponseWriter, r *http.Request) {
 		// Legacy path: plain agent + optional model, generic persona, read-only fleet tools
 		// for claude (mirrors the pre-assistant default).
 		if _, ok := chatProviders[req.Agent]; !ok {
-			httpx.WriteErr(w, http.StatusBadRequest, "bad_agent", "未対応のエージェントです")
+			httpx.WriteErr(w, http.StatusBadRequest, errCodeChatAgentUnsupported, "unsupported agent")
 			return
 		}
 		c.Agent = req.Agent
@@ -153,12 +153,12 @@ func handleChatAsk(w http.ResponseWriter, r *http.Request) {
 	}
 	prompt := strings.TrimSpace(req.Prompt)
 	if prompt == "" {
-		httpx.WriteErr(w, http.StatusBadRequest, "empty", "prompt が空です")
+		httpx.WriteErr(w, http.StatusBadRequest, errCodeChatPromptEmpty, "prompt is empty")
 		return
 	}
 	a, err := resolveAssistant(strings.TrimSpace(req.Assistant))
 	if err != nil {
-		httpx.WriteErr(w, http.StatusNotFound, "not_found", "アシスタントが見つかりません")
+		httpx.WriteErr(w, http.StatusNotFound, errCodeChatAssistantNotFound, "assistant not found")
 		return
 	}
 	// Ephemeral, non-persisted conversation carrying the assistant's persona/model/knowledge
@@ -181,7 +181,7 @@ func handleChatAsk(w http.ResponseWriter, r *http.Request) {
 func handleChatGet(w http.ResponseWriter, r *http.Request) {
 	c, err := loadConv(r.PathValue("id"))
 	if err != nil {
-		httpx.WriteErr(w, http.StatusNotFound, "not_found", "会話が見つかりません")
+		httpx.WriteErr(w, http.StatusNotFound, errCodeChatConversationNotFnd, "conversation not found")
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, c)
@@ -201,14 +201,14 @@ func handleChatRename(w http.ResponseWriter, r *http.Request) {
 	}
 	title := strings.TrimSpace(req.Title)
 	if title == "" {
-		httpx.WriteErr(w, http.StatusBadRequest, "empty", "表示名が空です")
+		httpx.WriteErr(w, http.StatusBadRequest, errCodeChatTitleEmpty, "display name is empty")
 		return
 	}
 	unlock := lockConv(id) // serialize with an in-flight turn's load-modify-save
 	defer unlock()
 	c, err := loadConv(id)
 	if err != nil {
-		httpx.WriteErr(w, http.StatusNotFound, "not_found", "会話が見つかりません")
+		httpx.WriteErr(w, http.StatusNotFound, errCodeChatConversationNotFnd, "conversation not found")
 		return
 	}
 	c.Title = title
@@ -245,7 +245,7 @@ func handleChatSend(w http.ResponseWriter, r *http.Request) {
 	}
 	content := strings.TrimSpace(req.Content)
 	if content == "" {
-		httpx.WriteErr(w, http.StatusBadRequest, "empty", "メッセージが空です")
+		httpx.WriteErr(w, http.StatusBadRequest, errCodeChatMessageEmpty, "message is empty")
 		return
 	}
 
@@ -254,7 +254,7 @@ func handleChatSend(w http.ResponseWriter, r *http.Request) {
 
 	c, err := loadConv(id)
 	if err != nil {
-		httpx.WriteErr(w, http.StatusNotFound, "not_found", "会話が見つかりません")
+		httpx.WriteErr(w, http.StatusNotFound, errCodeChatConversationNotFnd, "conversation not found")
 		return
 	}
 	prov := chatProviderFor(c) // pinned agent, or the available fallback (claude-less WS)
@@ -298,7 +298,7 @@ func handleChatStream(w http.ResponseWriter, r *http.Request) {
 	}
 	content := strings.TrimSpace(req.Content)
 	if content == "" {
-		httpx.WriteErr(w, http.StatusBadRequest, "empty", "メッセージが空です")
+		httpx.WriteErr(w, http.StatusBadRequest, errCodeChatMessageEmpty, "message is empty")
 		return
 	}
 
@@ -307,7 +307,7 @@ func handleChatStream(w http.ResponseWriter, r *http.Request) {
 
 	c, err := loadConv(id)
 	if err != nil {
-		httpx.WriteErr(w, http.StatusNotFound, "not_found", "会話が見つかりません")
+		httpx.WriteErr(w, http.StatusNotFound, errCodeChatConversationNotFnd, "conversation not found")
 		return
 	}
 	prov := chatProviderFor(c) // pinned agent, or the available fallback (claude-less WS)

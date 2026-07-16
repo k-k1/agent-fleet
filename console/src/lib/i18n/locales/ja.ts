@@ -33,6 +33,49 @@ export const ja = {
   "err.send_failed": "送信に失敗しました",
   "err.network": "通信エラー",
   "err.settings_change_failed": "設定を変更できませんでした",
+  // docs/28 P3: workspace/agent ハンドラの安定コード（errcodes.go と対）。
+  "err.chat_assistant_not_found": "アシスタントが見つかりません",
+  "err.chat_agent_unsupported": "未対応のエージェントです",
+  "err.chat_prompt_empty": "プロンプトが空です",
+  "err.chat_title_empty": "表示名が空です",
+  "err.chat_message_empty": "メッセージが空です",
+  "err.chat_conversation_not_found": "会話が見つかりません",
+  "err.conn_api_key_required": "API キーを入力してください",
+  "err.conn_grafana_fields_required": "Grafana の URL とサービスアカウントトークンを入力してください",
+  "err.conn_url_scheme": "URL は http(s):// で始めてください",
+  "err.conn_aws_profile_required": "AWS プロファイルを指定してください",
+  "err.conn_sso_region_missing": "SSO リージョンがありません（SSM プロファイルの設定を確認してください）",
+  "err.assistant_not_found": "アシスタントが見つかりません",
+  "err.assistant_builtin_readonly_edit": "ビルトインは編集できません",
+  "err.assistant_builtin_readonly_delete": "ビルトインは削除できません",
+  "err.paste_too_large": "ファイルが大きすぎます",
+  "err.paste_unsupported_kind": "このセッション種別には画像を渡せません",
+  "err.paste_unsupported_agent": "画像を渡せるのは claude / codex のアシスタントのみです",
+  "err.fork_unsupported_kind": "このセッション種別は分岐に対応していません",
+  "err.fork_missing_dir": "作業フォルダが存在しないため分岐できません",
+  "err.title_feature_disabled": "AI 提案が無効です（表示設定のタイトル自動提案をオンに）",
+  "err.title_no_content": "会話がまだ足りません（数往復してから試してください）",
+
+  // --- ビルトインアシスタント（docs/28 P3。id は assistants.go の固定集合。Agent は
+  //     和文を返すが、表示は builtin のとき Console カタログが解決する）---
+  "assistant.af.name": "Agent Fleet アシスタント",
+  "assistant.af.desc":
+    "こんにちは。Agent Fleet の使い方を案内します。操作手順や、今のワークスペースの状態（動いているセッションなど）を実際に確認しながらお答えします。",
+  "assistant.operator.name": "フリート・オペレーター",
+  "assistant.operator.desc":
+    "フリートの司令塔です。走っているセッションを俯瞰し、必要ならセッションに指示を出したり新しいセッションを起こして作業を進めます（引き継ぎ・壁打ちからのタスク開始も可）。メモキューの確認・追加・一括送信もできます。専門的な判断は他のアシスタントにも相談します。実行前に内容を確認します。",
+  "assistant.sre.name": "SRE アシスタント",
+  "assistant.sre.desc":
+    "インシデント対応・監視運用の相談相手です（読み取り専用）。PagerDuty・Grafana・CloudWatch を接続しておくと、開いているインシデントやメトリクス・ログを実際に確認しながら、状況整理・原因の仮説出し・対外報告の草稿を手伝います。",
+  "assistant.integrity.name": "整合性チェッカー",
+  "assistant.integrity.desc":
+    "整合性チェッカーです。ファイルやディレクトリを渡してください。ドキュメントと実装の食い違い、用語・表記のゆれ、（物語なら）設定の矛盾や伏線の抜けを洗い出します。",
+  "assistant.general.name": "汎用アシスタント",
+  "assistant.general.desc":
+    "汎用アシスタントです。翻訳・要約・質問への回答など、幅広くお手伝いします。何でも聞いてください。",
+  "assistant.translate.name": "翻訳アシスタント",
+  "assistant.translate.desc":
+    "翻訳アシスタントです。文章を渡してください。日本語↔英語を自動判定して翻訳します（訳文だけを返します）。",
 
   // --- 通知（features/notifications/store.ts の wording。speech は読み上げ用の別形）---
   "notif.default_name": "セッション",

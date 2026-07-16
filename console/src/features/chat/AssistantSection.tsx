@@ -17,6 +17,8 @@ import { chatPanes, ordClass, paneCount } from "../../layout/badges.ts";
 import { useChatStore } from "./store.ts";
 import { openChat, openAssistantDraft, convTarget, draftTarget } from "./open.ts";
 import { AssistantModal } from "./AssistantModal.tsx";
+import { assistantName, assistantDesc } from "./assistantI18n.ts";
+import { useT } from "../../lib/i18n/index.ts";
 import {
   chatList,
   chatDelete,
@@ -39,6 +41,7 @@ export function AssistantSection() {
   const cPanes = multiPane ? chatPanes(layout) : null;
   const toast = useToast();
   const askConfirm = useConfirm();
+  useT(); // docs/28 P3: re-render builtin assistant names/descriptions on locale switch
   const [convs, setConvs] = useState<ConversationMeta[]>([]);
   const [assistants, setAssistants] = useState<Assistant[]>([]);
   const [editing, setEditing] = useState<Assistant | null>(null);
@@ -170,7 +173,7 @@ export function AssistantSection() {
                 <button
                   type="button"
                   className="ui-menu-item assistant-picker-open"
-                  title={a.description || a.name}
+                  title={assistantDesc(a) || assistantName(a)}
                   onClick={(e) => {
                     setPickerOpen(false);
                     if (e.ctrlKey || e.metaKey) openTargetInNew(draftTarget(a.id));
@@ -186,7 +189,7 @@ export function AssistantSection() {
                   onContextMenu={(e) => openMenu(e, a)}
                 >
                   <Icon name={a.icon || "comment-discussion"} className="assistant-ic" />
-                  <span className="chat-open-title">{a.name}</span>
+                  <span className="chat-open-title">{assistantName(a)}</span>
                   {a.builtin && <span className="assistant-badge">常設</span>}
                 </button>
                 {!a.builtin && (

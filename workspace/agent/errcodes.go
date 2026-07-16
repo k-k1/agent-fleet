@@ -11,3 +11,45 @@ const (
 	errCodeWorktreeRemoveFailed  = "worktree_remove_failed"
 	errCodeHasWorktrees          = "has_worktrees"
 )
+
+// docs/28 P3: 以前は各ハンドラに和文でハードコードされていたユーザー向けエラーを
+// 安定コード化したもの。backend の message は言語非依存の英語 developer fallback、
+// 表示文言は Console の "err.<code>" カタログ（console/src/lib/i18n/locales）が解決する。
+// コードは意味ごとに一意（旧 "not_found"/"empty" 等の使い回しを解消）— 追加・改名時は
+// 必ず i18n カタログ両言語（ja.ts / en.ts）にも "err.<code>" を足す。
+const (
+	// アシスタントチャット（chat_handlers.go）
+	errCodeChatAssistantNotFound  = "chat_assistant_not_found"
+	errCodeChatAgentUnsupported   = "chat_agent_unsupported"
+	errCodeChatPromptEmpty        = "chat_prompt_empty"
+	errCodeChatTitleEmpty         = "chat_title_empty"
+	errCodeChatMessageEmpty       = "chat_message_empty"
+	errCodeChatConversationNotFnd = "chat_conversation_not_found"
+
+	// 接続設定（connections.go）
+	errCodeConnAPIKeyRequired     = "conn_api_key_required"
+	errCodeConnGrafanaFields      = "conn_grafana_fields_required"
+	errCodeConnURLScheme          = "conn_url_scheme"
+	errCodeConnAWSProfileRequired = "conn_aws_profile_required"
+	errCodeConnSSORegionMissing   = "conn_sso_region_missing"
+
+	// アシスタント CRUD（assistants.go）
+	errCodeAssistantNotFound      = "assistant_not_found"
+	errCodeAssistantBuiltinEdit   = "assistant_builtin_readonly_edit"
+	errCodeAssistantBuiltinDelete = "assistant_builtin_readonly_delete"
+
+	// 画像貼り付け（session_paste.go）
+	errCodePasteTooLarge         = "paste_too_large"
+	errCodePasteUnsupportedKind  = "paste_unsupported_kind"
+	errCodePasteUnsupportedAgent = "paste_unsupported_agent"
+
+	// セッション分岐（session_handlers.go）
+	errCodeForkUnsupportedKind = "fork_unsupported_kind"
+	errCodeForkMissingDir      = "fork_missing_dir"
+
+	// AI タイトル提案（session_title.go）
+	// generation_failed は detail（CLI/auth の理由）を保持するため意図的にカタログ化せず、
+	// literal コードのまま英語 developer message を表示する（session_title.go 参照）。
+	errCodeTitleFeatureDisabled = "title_feature_disabled"
+	errCodeTitleNoContent       = "title_no_content"
+)

@@ -110,7 +110,7 @@ func savePastedImageTo(w http.ResponseWriter, r *http.Request, dir string) {
 		if err != nil || n > max {
 			_ = os.Remove(tmp.Name())
 			if n > max {
-				httpx.WriteErr(w, http.StatusRequestEntityTooLarge, "too_large", "ファイルが大きすぎます")
+				httpx.WriteErr(w, http.StatusRequestEntityTooLarge, errCodePasteTooLarge, "file is too large")
 			} else {
 				httpx.WriteErr(w, http.StatusInternalServerError, "write_failed", "upload failed")
 			}
@@ -194,7 +194,7 @@ func handlePasteImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !agentOf(meta.Kind).Caps().CanTranscript {
-		httpx.WriteErr(w, http.StatusBadRequest, "unsupported_kind", "このセッション種別には画像を渡せません")
+		httpx.WriteErr(w, http.StatusBadRequest, errCodePasteUnsupportedKind, "this session type cannot accept images")
 		return
 	}
 	savePastedImageTo(w, r, pastedDir(session.UUID(meta.Dir, name)))
@@ -228,7 +228,7 @@ func handleChatPasteImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if c.Agent != session.KindClaude && c.Agent != session.KindCodex {
-		httpx.WriteErr(w, http.StatusBadRequest, "unsupported_agent", "画像を渡せるのは claude / codex のアシスタントのみです")
+		httpx.WriteErr(w, http.StatusBadRequest, errCodePasteUnsupportedAgent, "only claude / codex assistants can accept images")
 		return
 	}
 	savePastedImageTo(w, r, chatPastedDir(id))

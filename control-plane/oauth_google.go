@@ -315,37 +315,91 @@ func (c config) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if next := sanitizeNext(r.URL.Query().Get("next")); next != "/" {
 		loginHref += "?next=" + url.QueryEscape(next)
 	}
+	lang := preferredUILang(r)
+	t := loginText[lang]
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	page := strings.NewReplacer(
-		"{{ERROR}}", loginErrorBlock(r.URL.Query().Get("error")),
+		"{{LANG}}", lang,
+		"{{TITLE}}", t.title,
+		"{{SIGNIN}}", t.signin,
+		"{{NOTE}}", t.note,
+		"{{ERROR}}", loginErrorBlock(r.URL.Query().Get("error"), lang),
 		"{{LOGIN_HREF}}", loginHref,
 	).Replace(loginPageHTML)
 	_, _ = w.Write([]byte(page))
 }
 
-func loginErrorBlock(code string) string {
+func loginErrorBlock(code, lang string) string {
+	t := loginText[lang]
 	var msg string
 	switch code {
 	case "forbidden":
-		msg = "このアカウントはアクセスを許可されていません。管理者にメールアドレスの追加を依頼してください。"
+		msg = t.errForbidden
 	case "denied":
-		msg = "サインインがキャンセルされました。もう一度お試しください。"
+		msg = t.errDenied
 	case "session", "exchange":
-		msg = "セッションの確立に失敗しました。もう一度サインインしてください。"
+		msg = t.errSession
 	default:
 		return ""
 	}
 	return `<div class="err">` + msg + `</div>`
 }
 
+// preferredUILang picks the UI language for CP-rendered pages (login / OAuth
+// callbacks) from Accept-Language, since these are served before any locale cookie
+// exists (docs/28 P3). It scans the header's language ranges in order and returns the
+// first supported one; Japanese is the default (the product's primary audience and the
+// prior hardcoded language). The Console SPA owns locale once signed in.
+func preferredUILang(r *http.Request) string {
+	for _, part := range strings.Split(r.Header.Get("Accept-Language"), ",") {
+		tag := strings.TrimSpace(part)
+		if i := strings.IndexByte(tag, ';'); i >= 0 { // drop the q-value
+			tag = tag[:i]
+		}
+		switch tag = strings.ToLower(strings.TrimSpace(tag)); {
+		case strings.HasPrefix(tag, "ja"):
+			return "ja"
+		case strings.HasPrefix(tag, "en"):
+			return "en"
+		}
+	}
+	return "ja"
+}
+
+// loginText holds the localized strings for the CP-rendered login page. ja is the
+// default; en is served when Accept-Language prefers English (preferredUILang).
+type loginStrings struct {
+	title, signin, note                 string
+	errForbidden, errDenied, errSession string
+}
+
+var loginText = map[string]loginStrings{
+	"ja": {
+		title:        "Agent Fleet — サインイン",
+		signin:       "Google でサインイン",
+		note:         "アクセスは許可されたアカウントに限定されています。",
+		errForbidden: "このアカウントはアクセスを許可されていません。管理者にメールアドレスの追加を依頼してください。",
+		errDenied:    "サインインがキャンセルされました。もう一度お試しください。",
+		errSession:   "セッションの確立に失敗しました。もう一度サインインしてください。",
+	},
+	"en": {
+		title:        "Agent Fleet — Sign in",
+		signin:       "Sign in with Google",
+		note:         "Access is limited to allowed accounts.",
+		errForbidden: "This account isn't allowed access. Ask an administrator to add your email address.",
+		errDenied:    "Sign-in was canceled. Please try again.",
+		errSession:   "Couldn't establish a session. Please sign in again.",
+	},
+}
+
 // loginPageHTML — self-contained (inline CSS, no external assets but the brand
 // banner). The banner carries the wordmark + tagline; if it fails to load the
 // text wordmark below it shows instead. Tokens {{ERROR}} and {{LOGIN_HREF}} are
 // substituted by handleLogin (no fmt verbs — the CSS contains literal % units).
-const loginPageHTML = `<!doctype html><html lang="ja"><head>
+const loginPageHTML = `<!doctype html><html lang="{{LANG}}"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Agent Fleet — サインイン</title>
+<title>{{TITLE}}</title>
 <style>
 :root{--teal:#2aa79b;--ink:#e8eef6;--muted:#9fb0c4}
 *{box-sizing:border-box}
@@ -382,9 +436,9 @@ body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;
     <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/>
     <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/>
    </svg>
-   Google でサインイン
+   {{SIGNIN}}
   </a>
-  <p class="note">アクセスは許可されたアカウントに限定されています。</p>
+  <p class="note">{{NOTE}}</p>
  </div>
 </main>
 </body></html>`

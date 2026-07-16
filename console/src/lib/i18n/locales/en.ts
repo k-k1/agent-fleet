@@ -32,6 +32,49 @@ export const en: Record<keyof typeof ja, string> = {
   "err.send_failed": "Failed to send.",
   "err.network": "Network error",
   "err.settings_change_failed": "Couldn't change the setting.",
+  // docs/28 P3: workspace/agent handler stable codes (mirror of errcodes.go).
+  "err.chat_assistant_not_found": "Assistant not found.",
+  "err.chat_agent_unsupported": "Unsupported agent.",
+  "err.chat_prompt_empty": "The prompt is empty.",
+  "err.chat_title_empty": "The display name is empty.",
+  "err.chat_message_empty": "The message is empty.",
+  "err.chat_conversation_not_found": "Conversation not found.",
+  "err.conn_api_key_required": "Enter an API key.",
+  "err.conn_grafana_fields_required": "Enter the Grafana URL and service account token.",
+  "err.conn_url_scheme": "The URL must start with http(s)://.",
+  "err.conn_aws_profile_required": "Specify an AWS profile.",
+  "err.conn_sso_region_missing": "No SSO region found (check the SSM profile configuration).",
+  "err.assistant_not_found": "Assistant not found.",
+  "err.assistant_builtin_readonly_edit": "Builtin assistants can't be edited.",
+  "err.assistant_builtin_readonly_delete": "Builtin assistants can't be deleted.",
+  "err.paste_too_large": "The file is too large.",
+  "err.paste_unsupported_kind": "This session type can't accept images.",
+  "err.paste_unsupported_agent": "Only claude / codex assistants can accept images.",
+  "err.fork_unsupported_kind": "This session type doesn't support forking.",
+  "err.fork_missing_dir": "Can't fork: the working folder doesn't exist.",
+  "err.title_feature_disabled": "AI suggestions are off (turn on title auto-suggestion in Display settings).",
+  "err.title_no_content": "Not enough conversation yet (try again after a few exchanges).",
+
+  // --- builtin assistants (docs/28 P3; ids are the fixed set in assistants.go. The
+  //     Agent returns Japanese, but for builtins the Console catalog resolves display) ---
+  "assistant.af.name": "Agent Fleet Assistant",
+  "assistant.af.desc":
+    "Hi! I'll guide you through using Agent Fleet. I answer while checking real things — how to do something, and the current state of your workspace (running sessions and so on).",
+  "assistant.operator.name": "Fleet Operator",
+  "assistant.operator.desc":
+    "The fleet's command center. I watch running sessions and, when needed, send them instructions or spin up new sessions to move work forward (including starting a task from a handoff or brainstorm). I can also review, add to, and bulk-send the memo queue. I consult other assistants for specialized calls, and I confirm before acting.",
+  "assistant.sre.name": "SRE Assistant",
+  "assistant.sre.desc":
+    "Your partner for incident response and monitoring ops (read-only). Connect PagerDuty, Grafana, and CloudWatch and I'll help triage the situation, hypothesize root causes, and draft external updates while looking at open incidents, metrics, and logs.",
+  "assistant.integrity.name": "Consistency Checker",
+  "assistant.integrity.desc":
+    "I'm a consistency checker. Hand me a file or directory and I'll surface mismatches between docs and implementation, inconsistent terminology and notation, and (for fiction) contradictions in the setting or dropped foreshadowing.",
+  "assistant.general.name": "General Assistant",
+  "assistant.general.desc":
+    "A general-purpose assistant. I help with a wide range of things — translation, summarizing, answering questions. Ask me anything.",
+  "assistant.translate.name": "Translation Assistant",
+  "assistant.translate.desc":
+    "A translation assistant. Give me text and I'll auto-detect and translate between Japanese and English (I return just the translation).",
 
   // --- notifications (speech is the spoken variant read by TTS) ---
   "notif.default_name": "Session",
