@@ -24,25 +24,28 @@
     box-shadow 0.12s ease;
 }
 .pane.active {
-  /* Keyboard-navigation focus ring — makes the active pane obvious when moving by
-     Alt+N / F6 (keyboard system). The ring + border take the pane's OWN ordinal color
-     (--ord, matching its rail row / mini-map chip), so it both stands out and says
-     WHICH pane; falls back to the neutral focus-ring / accent for panes past the 8
-     ordinal slots. 2px inset so it reads clearly and never bleeds into a neighbor. */
+  /* Active-pane marker — must be obvious when switching by Alt+N / F6 / Alt+[ ] AND
+     read the same on a light Mirror pane and a dark terminal. We do NOT dim the other
+     panes (they stay fully readable — the user reads inactive panes while working), so
+     the whole "which pane is active" signal lives here: the pane's OWN ordinal color
+     (--ord, matching its rail row / mini-map chip) as a bold double ring plus a colored
+     drop shadow that lifts it off the neighbors. Rings/shadow don't affect layout, so
+     there's no reflow on switch. Falls back to the neutral accent past the 8 ordinals. */
   border-color: var(--ord, var(--accent));
-  box-shadow: inset 0 0 0 2px var(--ord, var(--focus-ring));
+  box-shadow:
+    inset 0 0 0 2px var(--ord, var(--focus-ring)),
+    0 0 0 1px var(--ord, var(--accent)),
+    0 8px 22px -8px color-mix(in srgb, var(--ord, var(--accent)) 55%, transparent);
+  /* Lift above sibling panes so the outer ring / glow paints over the divider gap
+     instead of being covered by the next absolutely-positioned pane. */
+  z-index: 3;
 }
-/* Dim the OTHER panes so the focused one pops by contrast. Gated on :has(.active) so it
-   only kicks in with 2+ panes — a lone pane never gets .active (PaneHost: total > 1), so
-   without this guard the single pane would match :not(.active) and dim itself. Hovering
-   an inactive pane lifts the dim so the pointer can peek at its content. */
+/* Inactive panes are NOT dimmed (readability), but their chrome recedes so the active
+   one wins by contrast: a hairline, near-invisible border vs. the active pane's bold
+   colored ring. Gated on :has(.active) so a lone pane (never .active — PaneHost passes
+   active only when total > 1) keeps its normal border. */
 .panehost:has(> .pane.active) .pane:not(.active) {
-  opacity: 0.55;
-  filter: saturate(0.85);
-}
-.panehost:has(> .pane.active) .pane:not(.active):hover {
-  opacity: 1;
-  filter: none;
+  border-color: color-mix(in srgb, var(--border2) 55%, transparent);
 }
 .pane.droptarget {
   border-color: var(--accent);

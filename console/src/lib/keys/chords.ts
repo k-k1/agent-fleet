@@ -115,6 +115,22 @@ export function eventChordString(e: KeyboardEvent): string | null {
   return c ? formatChord(c) : null;
 }
 
+// eventKeyChordString: a SECONDARY chord built from KeyboardEvent.key instead of .code,
+// for punctuation whose physical position differs across keyboard layouts. Our .code map
+// uses US-keycap naming, so on a Japanese (JIS) keyboard Alt+] reports .code "Backslash"
+// → the primary chord is "alt+\\" and never matches an "alt+]" binding, even though .key
+// is still "]". The dispatcher tries this ONLY as a fallback when the .code chord matched
+// no command, so US bindings are untouched. Restricted to a single non-alphanumeric
+// printable char: letters/digits are already layout-stable via .code, and named keys
+// ("Enter", "Tab", "ArrowLeft") come through the .code map. .key already reflects Shift
+// (']' vs '}'), so shift is not folded in again.
+export function eventKeyChordString(e: KeyboardEvent): string | null {
+  if (MODIFIER_CODES.has(e.code)) return null;
+  const k = e.key;
+  if (!k || k.length !== 1 || /[a-z0-9]/i.test(k)) return null;
+  return formatChord({ mod: e.ctrlKey || e.metaKey, alt: e.altKey, shift: false, key: k.toLowerCase() });
+}
+
 // shouldIgnore: never dispatch while an IME is composing (Japanese input reports
 // isComposing / keyCode 229 during 変換), nor on auto-repeat (holding a key must not
 // fire a command over and over).
