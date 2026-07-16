@@ -44,6 +44,22 @@ export const useReposStore = create<ReposStore>((set) => ({
   },
 }));
 
+/** Reveal-a-repo-in-the-rail signal (mirrors useFilesStore.revealInFiles): the
+ * command palette's repo row lands here so the project tree expands the working
+ * copy's node (and its base, for a worktree), scrolls it into view, and focuses
+ * its row. `n` bumps per request so identical repeat reveals still fire. */
+interface RepoRevealStore {
+  name: string | null;
+  n: number;
+  reveal(name: string): void;
+}
+
+export const useRepoReveal = create<RepoRevealStore>((set) => ({
+  name: null,
+  n: 0,
+  reveal: (name) => set((s) => ({ name, n: s.n + 1 })),
+}));
+
 /** Cross-surface "open 作業を始める on this working copy" signal (起動導線
  * Ph2/Ph3): the はじめる hub's repo pick and the clone-only toast's このまま
  * はじめる both land here; StartHost renders the LaunchModal on it. */

@@ -139,6 +139,7 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
       <div
         className={"repo-card" + (running ? "" : " disabled")}
         data-rail-row=""
+        data-rail-repo={r.name}
         role="treeitem"
         tabIndex={-1}
         title={

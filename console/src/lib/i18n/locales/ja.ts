@@ -861,6 +861,8 @@ export const ja = {
   "keys.palette.open_split": "新しいペインで開く",
   "keys.item.command": "コマンド",
   "keys.item.session": "セッション",
+  "keys.item.repo": "リポジトリ",
+  "keys.item.worktree": "ワークツリー",
   "keys.cheat.title": "キーボードショートカット",
   "keys.cheat.filter": "絞り込み…",
   "keys.cheat.filterAria": "ショートカットを絞り込み",

@@ -856,6 +856,8 @@ export const en: Record<keyof typeof ja, string> = {
   "keys.palette.open_split": "Open in new pane",
   "keys.item.command": "Command",
   "keys.item.session": "Session",
+  "keys.item.repo": "Repository",
+  "keys.item.worktree": "Worktree",
   "keys.cheat.title": "Keyboard shortcuts",
   "keys.cheat.filter": "Filter…",
   "keys.cheat.filterAria": "Filter shortcuts",
