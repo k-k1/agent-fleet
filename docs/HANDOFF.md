@@ -57,7 +57,7 @@
 （[roadmap](roadmap.md)）。フェーズごとの実装記録は [history/](history/)、確定事項の背景は decisions/。
 
 - **仕様を知りたい** → [dev/](dev/README.md): アーキテクチャ(01) / Console(02) / Control Plane(03) / Agent(04) /
-  API 契約(05) / データモデル(06) / セキュリティ(07) / 外部連携(08) / デプロイ(09) / 開発作法(10) / コード地図(90)。
+  API 契約(05) / データモデル(06) / セキュリティ(07) / 外部連携(08) / デプロイ(09) / 開発作法(10) / コードマップ(90)。
 - **操作を知りたい** → [guide/](guide/README.md): member / admin / operator / lite の分冊。
 - **恒久的に有効な検証知見**: `/login` は localhost 非依存（`redirect_uri=platform.claude.com/oauth/code/callback`）で
   ヘッドレス/リモートに無条件成立、認証と onboarding は別物、`/login` URL 折返し復元 →
