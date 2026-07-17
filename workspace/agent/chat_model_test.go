@@ -15,7 +15,8 @@ func TestResolveChatModel(t *testing.T) {
 		{session.KindCodex, "", defaultCodexChatModel},
 		{session.KindCodex, "  gpt-5.6  ", "gpt-5.6"},
 		{session.KindClaude, "", ""},
-		{session.KindOpencode, "", ""},
+		{session.KindOpencode, "", defaultOpencodeChatModel},
+		{session.KindOpencode, "  anthropic/claude-opus-4-6  ", "anthropic/claude-opus-4-6"},
 	}
 	for _, tt := range tests {
 		if got := resolveChatModel(tt.agent, tt.model); got != tt.want {
