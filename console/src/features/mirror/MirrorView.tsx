@@ -2439,7 +2439,13 @@ function renderGroups(
           agentName={agentName}
           tts={tts}
           foldWork={!working || i < lastUser}
-          defaultWorkOpen={!autoCollapseWork}
+          // Keep the work process open on completion ONLY for the live exchange (the reply
+          // after the last user prompt): a reader who scrolled up into its streaming tool
+          // trace shouldn't have it yanked closed when it folds. Every earlier turn — and
+          // crucially any older page the infinite-scroll loader prepends while you're
+          // scrolled up (atBottom=false) — must default CLOSED, or it mounts expanded with
+          // no click and the reflow jumps the scroll.
+          defaultWorkOpen={!autoCollapseWork && i > lastUser}
           isRejectedPlan={isRejectedPlan}
         />
       ),

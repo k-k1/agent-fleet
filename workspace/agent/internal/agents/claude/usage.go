@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -36,6 +38,12 @@ const usageMinRefresh = 10 * time.Second
 // throttles retries (so we don't hammer the endpoint) but recovers within seconds.
 const usageFailTTL = 20 * time.Second
 
+// When the endpoint rate-limits us (429/503 with Retry-After), honor it: don't touch
+// the endpoint again until it says the window resets — retrying early just earns
+// another 429 and can prolong the throttle. Capped so a pathological value can't wedge
+// the chip's live numbers forever (the chip stays visible meanwhile via `authed`).
+const usageBackoffMax = 30 * time.Minute
+
 // usageWindow is one limit window: percent used (0–100) and the ISO reset instant
 // (the Console formats it as a relative "あとN時間/N日" + an absolute date-time).
 type usageWindow struct {
@@ -50,14 +58,20 @@ type usage struct {
 }
 
 var (
-	usageMu  sync.Mutex
-	usageAt  time.Time
-	usageVal usage
+	usageMu           sync.Mutex
+	usageAt           time.Time
+	usageVal          usage
+	usageBackoffUntil time.Time // don't hit the endpoint before this (server Retry-After)
 )
 
 // HandleUsage serves GET /claude/usage for the Console's WsBar chip.
 func HandleUsage(w http.ResponseWriter, r *http.Request) {
 	refresh := r.URL.Query().Get("refresh") == "1"
+	// authed reflects "a subscription token is present" — a cheap, current file check,
+	// independent of the (cached, network) usage read. The Console keeps the chip visible
+	// whenever authed even if the live numbers are momentarily unavailable, so a transient
+	// failure never hides it; only a truly signed-out agent has no chip.
+	authed := oauthToken() != ""
 
 	usageMu.Lock()
 	have := !usageAt.IsZero()
@@ -68,20 +82,30 @@ func HandleUsage(w http.ResponseWriter, r *http.Request) {
 	if have && !usageVal.OK {
 		ttl = usageFailTTL
 	}
+	// While the server has us backed off (Retry-After from a 429/503), never touch the
+	// endpoint — even on an explicit refresh — and just serve whatever we have.
+	backedOff := time.Now().Before(usageBackoffUntil)
 	// Hit the real endpoint only when the cache is empty or older than the TTL, or on
 	// an explicit refresh that isn't within the floor window. Else serve the cache.
-	fetch := !have || age >= ttl || (refresh && age >= usageMinRefresh)
+	fetch := !backedOff && (!have || age >= ttl || (refresh && age >= usageMinRefresh))
 	if !fetch {
 		v, at := usageVal, usageAt
 		usageMu.Unlock()
-		writeUsage(w, v, at)
+		writeUsage(w, v, at, authed)
 		return
 	}
 	usageMu.Unlock()
 
-	v := fetchUsage(r.Context())
+	v, retryAfter := fetchUsage(r.Context())
 
 	usageMu.Lock()
+	// A rate-limit signal parks the next fetch until the window resets (capped).
+	if retryAfter > 0 {
+		if retryAfter > usageBackoffMax {
+			retryAfter = usageBackoffMax
+		}
+		usageBackoffUntil = time.Now().Add(retryAfter)
+	}
 	// Keep the last good value if a refresh failed — don't blank a working chip; the
 	// growing age tells the user it's stale. Only overwrite on success (or first time).
 	if v.OK || !have {
@@ -89,13 +113,14 @@ func HandleUsage(w http.ResponseWriter, r *http.Request) {
 	}
 	rv, rat := usageVal, usageAt
 	usageMu.Unlock()
-	writeUsage(w, rv, rat)
+	writeUsage(w, rv, rat, authed)
 }
 
 // writeUsage emits the usage plus its age in seconds (so the Console can show
-// "N分前" and offer a manual refresh).
-func writeUsage(w http.ResponseWriter, v usage, at time.Time) {
-	out := map[string]any{"ok": v.OK, "fiveHour": v.FiveHour, "sevenDay": v.SevenDay}
+// "N分前" and offer a manual refresh) and whether the agent is signed in (so the
+// Console keeps a degraded chip visible when the live numbers are unavailable).
+func writeUsage(w http.ResponseWriter, v usage, at time.Time, authed bool) {
+	out := map[string]any{"ok": v.OK, "authed": authed, "fiveHour": v.FiveHour, "sevenDay": v.SevenDay}
 	if !at.IsZero() {
 		out["ageSec"] = int(time.Since(at).Seconds())
 	}
@@ -185,37 +210,45 @@ func fetchOrgUUID(ctx context.Context, tok string) string {
 	return raw.Organization.UUID
 }
 
-func fetchUsage(ctx context.Context) usage {
+// fetchUsage returns the current usage plus a Retry-After backoff (0 unless the
+// endpoint rate-limited us) so the caller can park the next fetch.
+func fetchUsage(ctx context.Context) (usage, time.Duration) {
 	tok := oauthToken()
 	if tok == "" {
-		return usage{OK: false}
+		return usage{OK: false}, 0
 	}
 	// Try the bare endpoint first — this is what personal Pro/Max accounts need,
 	// and it leaves their usage context untouched. ONLY when it rejects with 401
 	// (the Team-plan signal) do we resolve the org uuid and retry with
 	// ?organization_uuid=. Don't attach an org to a request that already works.
-	if u, status := getUsage(ctx, tok, usageURL); status == http.StatusOK {
-		return u
-	} else if status == http.StatusUnauthorized {
+	u, status, retry := getUsage(ctx, tok, usageURL)
+	if status == http.StatusOK {
+		return u, 0
+	}
+	if status == http.StatusUnauthorized {
 		if org := orgUUID(ctx, tok); org != "" {
 			// uuid chars are query-safe, no escaping needed.
-			u2, s2 := getUsage(ctx, tok, usageURL+"?organization_uuid="+org)
+			u2, s2, retry2 := getUsage(ctx, tok, usageURL+"?organization_uuid="+org)
 			if s2 == http.StatusOK {
-				return u2
+				return u2, 0
+			}
+			if retry2 > 0 {
+				retry = retry2
 			}
 		}
 	}
-	return usage{OK: false}
+	return usage{OK: false}, retry
 }
 
-// getUsage performs one usage GET and returns the parsed value plus the HTTP
-// status (0 on a transport/parse error). The caller decides whether to retry.
-func getUsage(ctx context.Context, tok, url string) (usage, int) {
+// getUsage performs one usage GET and returns the parsed value, the HTTP status
+// (0 on a transport/parse error), and any Retry-After the server asked for. The
+// caller decides whether to retry.
+func getUsage(ctx context.Context, tok, url string) (usage, int, time.Duration) {
 	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return usage{OK: false}, 0
+		return usage{OK: false}, 0, 0
 	}
 	req.Header.Set("Authorization", "Bearer "+tok)
 	req.Header.Set("anthropic-version", "2023-06-01")
@@ -223,11 +256,11 @@ func getUsage(ctx context.Context, tok, url string) (usage, int) {
 	req.Header.Set("User-Agent", "agent-fleet-console")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return usage{OK: false}, 0
+		return usage{OK: false}, 0, 0
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return usage{OK: false}, resp.StatusCode
+		return usage{OK: false}, resp.StatusCode, retryAfter(resp)
 	}
 	var raw struct {
 		FiveHour *struct {
@@ -240,7 +273,7 @@ func getUsage(ctx context.Context, tok, url string) (usage, int) {
 		} `json:"seven_day"`
 	}
 	if json.NewDecoder(resp.Body).Decode(&raw) != nil {
-		return usage{OK: false}, resp.StatusCode
+		return usage{OK: false}, resp.StatusCode, 0
 	}
 	out := usage{OK: true}
 	if raw.FiveHour != nil {
@@ -249,5 +282,26 @@ func getUsage(ctx context.Context, tok, url string) (usage, int) {
 	if raw.SevenDay != nil {
 		out.SevenDay = &usageWindow{Pct: raw.SevenDay.Utilization, ResetsAt: raw.SevenDay.ResetsAt}
 	}
-	return out, resp.StatusCode
+	return out, resp.StatusCode, 0
+}
+
+// retryAfter reads the Retry-After header (delta-seconds or an HTTP-date, per
+// RFC 9110) into a duration. 0 when absent, unparseable, or already elapsed.
+func retryAfter(resp *http.Response) time.Duration {
+	h := strings.TrimSpace(resp.Header.Get("Retry-After"))
+	if h == "" {
+		return 0
+	}
+	if secs, err := strconv.Atoi(h); err == nil {
+		if secs <= 0 {
+			return 0
+		}
+		return time.Duration(secs) * time.Second
+	}
+	if when, err := http.ParseTime(h); err == nil {
+		if d := time.Until(when); d > 0 {
+			return d
+		}
+	}
+	return 0
 }
