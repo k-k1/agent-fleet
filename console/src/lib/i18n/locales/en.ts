@@ -27,7 +27,7 @@ export const en: Record<keyof typeof ja, string> = {
   "err.question_pending":
     "The agent is waiting for an answer to its question. Answer it from the question card before sending.",
   "err.not_running": "The session is stopped. Resume it before sending.",
-  "err.driver_unavailable": "Chat execution isn't available for this agent.",
+  "err.driver_unavailable": "Managed execution isn't available for this agent.",
   "err.runtime_failed": "Couldn't start the agent. Wait a moment and try again.",
   "err.send_failed": "Failed to send.",
   "err.network": "Network error",
@@ -1347,10 +1347,10 @@ export const en: Record<keyof typeof ja, string> = {
   "sess.recreate_title": "Recreate with a new conversation",
   "sess.recreate_confirm": "Recreate",
   "sess.recreate_failed": "Failed to recreate",
-  "sess.switch_to_managed": "Switch to chat execution",
+  "sess.switch_to_managed": "Switch to managed execution",
   "sess.switch_to_tui": "Switch to terminal execution",
   "sess.switch_managed_body":
-    "Switch “{name}” to chat execution (recommended, low memory).<0/>The conversation carries over. The terminal screen becomes unavailable.",
+    "Switch “{name}” to managed execution (recommended, low memory).<0/>The conversation carries over. The terminal screen becomes unavailable.",
   "sess.switch_tui_body":
     "Switch “{name}” to terminal execution.<0/>The conversation carries over. It uses additional memory per session{cost}.",
   "sess.switch_confirm": "Switch",
@@ -1426,10 +1426,10 @@ export const en: Record<keyof typeof ja, string> = {
   "launch.title": "Start working: {repo}",
   "launch.plan_hint": "Plan devotes the first turn to investigation and planning.",
   "launch.field.driver": "Execution method",
-  "launch.driver_managed": "Chat (recommended)",
-  "launch.driver_terminal": "Terminal",
-  "launch.driver_managed_sub": "Conversation view · low memory",
-  "launch.tui_note": "Direct terminal access · memory +{cost}",
+  "launch.driver_managed": "Managed (recommended)",
+  "launch.driver_terminal": "Terminal (CLI)",
+  "launch.driver_managed_sub": "Chat controls · low memory",
+  "launch.tui_note": "Direct CLI access · memory +{cost}",
   "launch.worktree_direct_note":
     "Launches directly in this worktree (<0>{branch}</0>). Create a new worktree from the base repository.",
   "launch.current_wc": "current working copy",
@@ -1759,7 +1759,7 @@ export const en: Record<keyof typeof ja, string> = {
 
   // === P5 リポジトリ（RepoPicker/NewRepoModal/CloneForm/DirPicker/Branch* ほか） ===
   "rp.clone_failed": "Clone failed: {err}",
-  "rp.managed_unsupported": "This environment doesn't support chat execution; launching in terminal mode",
+  "rp.managed_unsupported": "This environment doesn't support managed execution; launching in terminal mode",
   "rp.worktree_launch_failed": "Worktree launch failed: {err}",
   "rp.launch_failed": "Launch failed: {err}",
   "rp.image_upload_failed": "Image upload failed: {err}",

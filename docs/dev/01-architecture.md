@@ -22,7 +22,7 @@
 | Workspace | メンバーシップ（identity×tenant）1 つに対応する永続コンテナ環境。ホーム・暗号ストア・working copy を保持 |
 | Working copy | Workspace 内に clone した git リポジトリの作業ディレクトリ（`~/repos/<name>`）|
 | Session | Working copy（または任意 dir）に紐づく、会話・設定・実行状態の論理単位。kind と driver を持ち、プロセスや tmux pane と 1:1 とは限らない |
-| Driver | Session の制御経路。`managed` は共有 runtime＋構造化 API、`tui` は tmux 内の CLI 画面。利用者向けには「チャット実行」「ターミナル実行」と呼ぶ |
+| Driver | Session の制御経路。`managed` は共有 runtime＋構造化 API、`tui` は tmux 内の CLI 画面。利用者向け UI では「実行方式」の「マネージド」「ターミナル（CLI）」と呼ぶ |
 | Control Plane (CP) | Workspace の外側で動く常駐バックエンド。認証・オーケストレーション・中継・永続化 |
 | Workspace Agent | 各 Workspace コンテナ内の常駐プロセス。tmux・git・fs・CLI エージェントを直接操作する唯一の主体 |
 | Console | ブラウザで動く SPA（React+Vite）。CP が静的配信 |
