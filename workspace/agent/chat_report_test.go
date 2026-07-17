@@ -172,16 +172,19 @@ func TestSessionReportDeliveredAfterHealWipedMarker(t *testing.T) {
 	status.Remove(sid)             // …the pane heal wipes the marker mid-turn
 	runSessionStatusHook([]string{"idle", sid})
 
-	// deliverSessionReport finishes in a goroutine off the handler.
+	// deliverSessionReport finishes in a goroutine off the handler. Read under the
+	// conversation lock like every real reader does: saveConv is a plain (non-atomic)
+	// os.WriteFile, so an unlocked poll can catch the file mid-truncate.
 	var got *chatMessage
 	for i := 0; i < 100 && got == nil; i++ {
+		unlock := lockConv(conv.ID)
 		c, err := loadConv(conv.ID)
-		if err != nil {
-			t.Fatal(err)
-		}
-		for j := range c.Messages {
-			if c.Messages[j].Role == "report" {
-				got = &c.Messages[j]
+		unlock()
+		if err == nil {
+			for j := range c.Messages {
+				if c.Messages[j].Role == "report" {
+					got = &c.Messages[j]
+				}
 			}
 		}
 		if got == nil {
