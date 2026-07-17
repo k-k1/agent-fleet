@@ -15,6 +15,7 @@ interface DocViewProps {
 
 export function DocView({ title, content }: DocViewProps) {
   const tr = useT();
+  const openTarget = useLayoutStore((s) => s.openTarget);
   const openTargetInNew = useLayoutStore((s) => s.openTargetInNew);
   const revealInFiles = useFilesStore((s) => s.revealInFiles);
   const settings = useSettings();
@@ -33,12 +34,11 @@ export function DocView({ title, content }: DocViewProps) {
       <div className="md-scroll">
         <MarkdownView
           source={content || ""}
-          onOpenFile={(path, line, column) =>
-            openTargetInNew(
-              { content: { kind: "file", filePath: path, targetLine: line, targetColumn: column } },
-              true,
-            )
-          }
+          onOpenFile={(path, line, column, openInNew) => {
+            const target = { content: { kind: "file" as const, filePath: path, targetLine: line, targetColumn: column } };
+            if (openInNew) openTargetInNew(target, true);
+            else openTarget(target);
+          }}
           onOpenDir={revealInFiles}
         />
       </div>
