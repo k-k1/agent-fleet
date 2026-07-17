@@ -89,6 +89,7 @@ func TestDriftCodexPaneMode(t *testing.T) {
 
 	// Default mode: footer is "<model> <effort> · <cwd>" with no "Plan mode" label.
 	if got := awaitPaneMode(t, tn, "Default"); got != "Default" {
+		diagnosePane(t, tn) // never blame the footer for a TUI that never drew
 		t.Fatalf("paneMode = %q, want \"Default\".\ncodex's composer footer no longer matches "+
 			"codexFooterEffortRe — the Console's mode chip is now blank for every codex "+
 			"session.\npane:\n%s", got, capturePane(tn))
@@ -99,18 +100,40 @@ func TestDriftCodexPaneMode(t *testing.T) {
 		t.Fatalf("send-keys BTab: %v: %s", err, out)
 	}
 	if got := awaitPaneMode(t, tn, "Plan"); got != "Plan" {
+		diagnosePane(t, tn)
 		t.Fatalf("after shift+tab paneMode = %q, want \"Plan\".\nEither the mode-cycle key "+
 			"changed or the footer no longer says \"Plan mode\".\npane:\n%s", got, capturePane(tn))
 	}
 	t.Log("ok: codex footer reads Default and Plan via the production launch plan")
 }
 
+// diagnosePane fails with the REAL reason when the pane never reached the composer, so
+// a slow start or a launch gate is never misreported as "codex changed its footer".
+// (Measured: the footer normally draws in well under a second, but a loaded host has
+// been seen to blow past a 45s budget — hence the generous deadline plus this triage.)
+func diagnosePane(t *testing.T, tn string) {
+	t.Helper()
+	s := capturePane(tn)
+	switch {
+	case strings.TrimSpace(s) == "":
+		t.Fatalf("the codex pane is still empty: the TUI never drew (slow host, or it died at " +
+			"launch). This says nothing about the footer format — re-run before suspecting drift.")
+	case strings.Contains(s, "Do you trust"):
+		t.Fatalf("codex is parked on the directory-trust gate — production's ensureFolderTrusted "+
+			"no longer satisfies it, so every codex TUI session would stall at launch.\n%s", s)
+	case strings.Contains(s, "Sign in with ChatGPT"), strings.Contains(s, "Provide your own API key"):
+		t.Fatalf("codex is showing its login screen: the dummy credential no longer skips "+
+			"onboarding (auth.json format changed?). This is a harness break, not footer drift.\n%s", s)
+	}
+}
+
 // awaitPaneMode polls paneMode until it reports want (the TUI needs a moment to draw,
-// and again to redraw after a mode switch). Returns the last value seen.
+// and again to redraw after a mode switch). Returns the last value seen. The deadline is
+// deliberately generous: a flaky drift detector gets ignored, which defeats the purpose.
 func awaitPaneMode(t *testing.T, tn, want string) string {
 	t.Helper()
 	last := ""
-	deadline := time.Now().Add(45 * time.Second)
+	deadline := time.Now().Add(120 * time.Second)
 	for time.Now().Before(deadline) {
 		if last = paneMode(session.KindCodex, tn); last == want {
 			return last
