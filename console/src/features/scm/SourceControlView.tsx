@@ -3,7 +3,7 @@
 // panes. Port of views/SourceControlView onto the zustand stores.
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { FormEvent, KeyboardEvent as RKeyboardEvent } from "react";
-import { api, apiJSON, errText } from "../../core/api/client.ts";
+import { api, apiJSON, errText, isTransientErr } from "../../core/api/client.ts";
 import { Icon } from "../../ui/Icon.tsx";
 import { Modal } from "../../ui/Modal.tsx";
 import { Button } from "../../ui/Button.tsx";
@@ -71,20 +71,33 @@ export function SourceControlView({ repo, path = "" }: { repo: string; path?: st
     };
   }, [menu]);
 
-  const refresh = useCallback(async () => {
+  // Load status + graph. Returns whether the load succeeded. A gateway/empty response
+  // while the workspace agent is still booting (WS just started) is resolved by api() as
+  // { error } — NOT a throw — so committing it would leave the pane on a "?" branch with
+  // コミットがありません forever; the mount effect retries instead (keepLoadingOnFail keeps
+  // the spinner up between attempts rather than flashing "no commits").
+  const refresh = useCallback(async (keepLoadingOnFail = false) => {
     setLoading(true);
+    let ok = true;
     try {
-      setStatus(await api(`api/repos/${enc}/status${path ? `?path=${encodeURIComponent(path)}` : ""}`));
-    } catch {}
+      const s = await api(`api/repos/${enc}/status${path ? `?path=${encodeURIComponent(path)}` : ""}`);
+      if (isTransientErr(s)) ok = false;
+      else setStatus(s);
+    } catch {
+      ok = false;
+    }
     try {
       const d = await api(`api/repos/${enc}/graph?limit=300${path ? `&path=${encodeURIComponent(path)}` : ""}`);
-      setCommits(d.commits || []);
-      setCurrent(d.current || "");
+      if (isTransientErr(d)) ok = false;
+      else {
+        setCommits(d.commits || []);
+        setCurrent(d.current || "");
+      }
     } catch {
-      setCommits([]);
-    } finally {
-      setLoading(false);
+      ok = false;
     }
+    if (ok || !keepLoadingOnFail) setLoading(false);
+    return ok;
   }, [enc, path]);
 
   useEffect(() => {
@@ -95,7 +108,30 @@ export function SourceControlView({ repo, path = "" }: { repo: string; path?: st
 
   useEffect(() => {
     setSelected("");
-    void refresh();
+    let cancelled = false;
+    let timer = 0;
+    let tries = 0;
+    const attempt = async () => {
+      const ok = await refresh(true); // keep the spinner up while retrying
+      if (cancelled || ok) return;
+      const delay = Math.min(5000, 700 * 2 ** Math.min(tries, 3));
+      tries++;
+      timer = window.setTimeout(() => void attempt(), delay);
+    };
+    void attempt();
+    const onVis = () => {
+      if (!document.hidden && !cancelled) {
+        tries = 0;
+        window.clearTimeout(timer);
+        void attempt();
+      }
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVis);
+    };
   }, [refresh]);
 
   const bodyRef = useRef<HTMLDivElement>(null);

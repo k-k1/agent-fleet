@@ -2,7 +2,8 @@
 // discard, commit box, repo identity). A file's diff opens in a SEPARATE pane
 // (openFileDiff). Port of views/ChangesView onto the zustand stores.
 import { useCallback, useEffect, useState } from "react";
-import { api, apiJSON, rawJSON } from "../../core/api/client.ts";
+import { api, apiJSON, rawJSON, isTransientErr } from "../../core/api/client.ts";
+import { useRetryLoad } from "../../lib/retryLoad.ts";
 import { Icon } from "../../ui/Icon.tsx";
 import { EmptyState } from "../../ui/EmptyState.tsx";
 import { useConfirm } from "../../ui/ConfirmProvider.tsx";
@@ -31,19 +32,26 @@ export function ChangesView({ repo }: { repo: string }) {
   const [msg, setMsg] = useState("");
   const [all, setAll] = useState(false);
 
-  const refresh = useCallback(async () => {
+  // Imperative refresh (after stage/commit/discard). Returns whether the load reached a
+  // terminal result; a transient gateway failure (WS agent still booting) reports false so
+  // the mount's retry loop keeps trying. Called with a signal from useRetryLoad, and with
+  // none from the action buttons.
+  const refresh = useCallback(async (signal?: AbortSignal) => {
     try {
       const d = await api(`api/repos/${enc}/changes`);
+      if (signal?.aborted) return true;
+      if (isTransientErr(d)) return false;
       setChanges(d.changes || []);
+      return true;
     } catch {
-      setChanges([]);
+      return false;
     }
   }, [enc]);
 
   useEffect(() => {
     setSelPath("");
-    void refresh();
-  }, [refresh]);
+  }, [enc]);
+  useRetryLoad((signal) => refresh(signal), [refresh]);
 
   const showDiff = (path: string, staged: boolean) => {
     setSelPath(path);

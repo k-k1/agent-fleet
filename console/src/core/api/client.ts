@@ -94,6 +94,19 @@ export type FsResult = { status: number } & Record<string, unknown>;
 // an unmapped code falls back to the server's message. Go 側の対は
 // control-plane/errcodes.go / workspace/agent/errcodes.go（docs/23 P0-3）— コードを増減・
 // 変更するときは必ず両側同時に、対応する "err.<code>" キーを i18n カタログにも足す。
+// isTransientErr reports whether an api() result is a gateway/transport failure the UI
+// should RETRY rather than treat as real (empty/not-found) data. api() synthesizes an
+// `http_<status>` code ONLY for a non-JSON/empty response — which is exactly what the CP
+// writes ("workspace agent unreachable", plain-text 502) while the workspace agent is
+// still booting after a WS start. App-level errors always carry their own JSON code
+// (chat_conversation_not_found, …) and are terminal, so a 5xx `http_*` code is a precise
+// "backend not ready yet" signal. A thrown fetch (network drop) is transient too, but
+// that surfaces as a rejected promise and is handled at the call site's .catch.
+export const isTransientErr = (d: unknown): boolean => {
+  const code = (d as { error?: { code?: string } } | null | undefined)?.error?.code;
+  return typeof code === "string" && /^http_5\d\d$/.test(code);
+};
+
 // errText turns a `res.error` ({code, message}) into a user-facing string.
 export const errText = (error: ApiError | string | null | undefined): string => {
   if (error && typeof error === "object") {
