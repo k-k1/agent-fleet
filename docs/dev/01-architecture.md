@@ -21,7 +21,8 @@
 |------|------|
 | Workspace | メンバーシップ（identity×tenant）1 つに対応する永続コンテナ環境。ホーム・暗号ストア・working copy を保持 |
 | Working copy | Workspace 内に clone した git リポジトリの作業ディレクトリ（`~/repos/<name>`）|
-| Session | Working copy（または任意 dir）に紐づく CLI エージェント 1 プロセス＝tmux セッション 1 本。kind = `claude` / `codex` / `opencode` / `shell` / `ssm` |
+| Session | Working copy（または任意 dir）に紐づく、会話・設定・実行状態の論理単位。kind と driver を持ち、プロセスや tmux pane と 1:1 とは限らない |
+| Driver | Session の制御経路。`managed` は共有 runtime＋構造化 API、`tui` は tmux 内の CLI 画面。利用者向け UI では「実行方式」の「マネージド」「ターミナル（CLI）」と呼ぶ |
 | Control Plane (CP) | Workspace の外側で動く常駐バックエンド。認証・オーケストレーション・中継・永続化 |
 | Workspace Agent | 各 Workspace コンテナ内の常駐プロセス。tmux・git・fs・CLI エージェントを直接操作する唯一の主体 |
 | Console | ブラウザで動く SPA（React+Vite）。CP が静的配信 |
@@ -47,12 +48,14 @@ Control Plane (Go 常駐, CP_ADDR 既定 :8080 / compose 127.0.0.1:8099)
    │  認証: Bearer AGENT_TOKEN（per-container、CP が起動時に注入）
    ▼
 Workspace Agent (Go, per-user コンテナ内, AGENT_ADDR 既定 :7700)
-   │  ・tmux セッション制御（1 tmux = 1 Session）
+   │  ・Session lifecycle / Driver 選択・復旧
+   │  ・managed runtime（Codex app-server / opencode serve、Workspace ごとに共有）
+   │  ・tmux/PTY（Claude、shell、SSM、CLI を選んだ Codex / opencode）
    │  ・git / fs / connections（暗号ストア secrets.enc）
    │  ・チャット（headless CLI）/ transcript / usage
    │  ・/proxy/{port} … コンテナ内サービスへの preview 中継
    ▼
-CLI エージェント（claude / codex / opencode）+ git working copy（~/repos）
+共有 runtime または CLI エージェント + git working copy（~/repos）
 ```
 
 - コンテナは `af-ws-<slug>-<key>` 命名、専用ネットワーク `af-net-<user>` で相互到達を遮断。
@@ -93,9 +96,11 @@ Console「Start」→ CP: workspace.state 確認
 ```
 Console: New session（kind, repo/dir, model, worktree 既定）
   → CP /api/sessions（クォータ検証・DB ミラー）→ Agent /sessions
-  → Agent: tmux new-session（決定論的 session-id）で CLI エージェント起動
-      claude: 履歴があれば --resume / 無ければ --session-id で新規
-  → Console: /ws/terminal でアタッチ
+  → Agent: メタを永続化し、driver ごとに起動
+      managed（Codex / opencode の既定）: 共有 runtime に thread を作成または resume
+      tui（Claude の既定、shell / SSM、明示選択した Codex / opencode）:
+        tmux session 内で CLI を起動し、履歴があれば resume
+  → Console: managed は会話 API、tui は会話 API または /ws/terminal で操作
 ```
 
 ### ターミナル接続
@@ -105,6 +110,10 @@ Browser xterm.js ──WSS /ws/terminal?session=&tenant=──▶ CP(proxyTermin
   → Agent /ws/pty へ Bearer 付き Dial → 双方向リレー（binary=PTY出力, text=入力/resize）
 切断しても tmux は存続。再接続で同一画面に復帰。複数タブ同時アタッチ可。
 ```
+
+この経路は `driver=tui` の Session だけが使う。`driver=managed` は pane を持たず、Console は
+`POST /sessions/{name}/turn|respond|settings` と transcript API で操作する。Session の停止・再開・
+archive・fork は driver 非依存の意味論を持ち、Agent が tmux または runtime handle へ振り分ける。
 
 ### リポジトリ clone
 ```
@@ -139,4 +148,4 @@ Console: Repos → URL 入力 → CP /api/repos → Agent: git clone
 | AWS アダプタ（ECS/EFS/SSM・CFN）| 🚧 実装済・実運用実績なし（[09](09-deploy.md)）|
 | KMS/Vault custodian | 📋 seam のみ |
 | agy（Antigravity CLI）kind | 📋 [decisions/0008](../decisions/0008-antigravity-cli-agent-kind.md) のみ |
-| Go 内部リファクタ | 進行中（docs/23・別ブランチ未マージ・ワイヤ互換。コード配置は [90](90-code-map.md)）|
+| Go 内部リファクタ | 大半を統合済み（CP 分割、Agent `internal/`・エージェント縦割り）。残作業は [docs/23](../23-go-refactor.md)、現配置は [90](90-code-map.md) |

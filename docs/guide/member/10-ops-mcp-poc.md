@@ -18,10 +18,10 @@ Zabbix など他ツールは、下の PoC 手順で手動接続できます（�
 
 ## （PoC）その他ツールを手動で繋ぐ 🧪
 
-**実験的な手順です**（[docs/25 サービス運用向け拡張](../../25-ops-monitoring.md) の Phase 0）。まだ「運用」タブに無いツール（CloudWatch / Zabbix など）や、チャットではなく**対話セッション**（tmux の claude）に繋ぎたい場合の手作業手順です。
+**実験的な手順です**（[docs/25 サービス運用向け拡張](../../25-ops-monitoring.md) の Phase 0）。まだ「運用」タブに無いツール（CloudWatch / Zabbix など）や、チャットではなく**ターミナル（CLI）の claude セッション**に繋ぎたい場合の手作業手順です。
 
-- 対象: 対話セッション（tmux の claude）。**チャット（アシスタント）には現状 MCP を足せません**（Phase 1 で対応予定）。
-- 前提: Workspace から各監視ツールのエンドポイントへ outbound が通ること。PyPI 系は `uvx` の初回取得で必要。
+- 対象: ターミナル（CLI）の claude セッション。**チャット（アシスタント）には現状 MCP を足せません**（Phase 1 で対応予定）。
+- 前提: ワークスペースから各監視ツールのエンドポイントへ outbound が通ること。PyPI 系は `uvx` の初回取得で必要。
 - ⚠️ **トークンの扱い（PoC 限定の妥協）**: `claude mcp add -e` で渡したトークンは `~/.claude.json` に**平文で保存されます**。home ボリューム内でコンテナ recreate では消えませんが、リポジトリには絶対に書かないこと・**read-only の専用トークンだけ**を使うこと。この平文問題の解消（Connections への統合）が Phase 1 の主目的です。
 
 ## 0. 下ごしらえ（1 回だけ・recreate 後も残る）
@@ -43,7 +43,7 @@ curl -sL https://github.com/grafana/mcp-grafana/releases/download/v0.17.1/mcp-gr
 
 # Grafana 側: 管理画面で Viewer 権限のサービスアカウントを作りトークン発行
 
-# claude に登録（user スコープ = この Workspace の全セッションで有効）
+# claude に登録（user スコープ = このワークスペースの全セッションで有効）
 claude mcp add -s user grafana \
   -e GRAFANA_URL=https://grafana.example.com \
   -e GRAFANA_SERVICE_ACCOUNT_TOKEN=<viewer-sa-token> \
@@ -78,7 +78,7 @@ claude mcp add -s user pagerduty \
 
 ### 3a. まずは MCP なしで: aws CLI で直接ログを見る（最速）
 
-対話セッション（tmux の claude）は Bash が使えるので、**MCP を繋がなくても焼き込み済みの aws CLI でログ確認の壁打ちができます**。SSM 接続で使っている SSO プロファイルでログインしてあれば追加設定ゼロです。claude に「`<ロググループ>` の直近 1 時間の ERROR を見て」と頼めば、以下のようなコマンドを自分で叩いて調べてくれます。
+ターミナル（CLI）の claude セッションは Bash が使えるので、**MCP を繋がなくても焼き込み済みの aws CLI でログ確認の壁打ちができます**。SSM 接続で使っている SSO プロファイルでログインしてあれば追加設定ゼロです。claude に「`<ロググループ>` の直近 1 時間の ERROR を見て」と頼めば、以下のようなコマンドを自分で叩いて調べてくれます。
 
 ```bash
 aws sso login --profile <sso-profile>          # オンコール開始時に済ませておく
@@ -111,7 +111,7 @@ claude mcp add -s user cloudwatch \
   -- ~/.local/bin/uvx awslabs.cloudwatch-mcp-server@latest
 ```
 
-※ チャットの SRE アシスタントで使うだけなら、この手順は不要です（冒頭の「運用」タブから接続してください）。この手順は対話セッション（tmux の claude）に繋ぎたい場合用です。
+※ チャットの SRE アシスタントで使うだけなら、この手順は不要です（冒頭の「運用」タブから接続してください）。この手順はターミナル（CLI）の claude セッションに繋ぎたい場合用です。
 
 Athena は (a) まず素の aws CLI（追加設定ゼロ、claude が Bash で叩ける）、(b) 本格的には `uvx awslabs.aws-dataprocessing-mcp-server@latest`。PoC では (a) で十分なことが多い。
 

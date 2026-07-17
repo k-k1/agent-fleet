@@ -30,9 +30,10 @@ from the latest image. The rule is simple:
 `.../projects/*/memory/`) lives on a *separate* dedicated mount, not in home. No
 Workspace operation removes it — not Stop/Start (only the container is removed; data
 stays), not "recreate" (touches only `~/repos`), not "clean home" (touches only home).
-There is no product action that wipes a Workspace's data; the container can go away
-and come back with memory intact. (Only an operator deleting the host data dir would
-remove it.)
+There is no product action that wipes this separate Claude state; the container can
+go away and come back with Claude memory intact. (Only an operator deleting the host
+data dir would remove it.) This does not change the recreate and clean-home deletion
+rules for `~/repos` and the regular home volume described above.
 
 ## Do not
 - **Do not leave uncommitted changes.** Recreating the container deletes cloned repos — commit / push often.
@@ -96,7 +97,7 @@ The shared host is memory-constrained; build tools are the main cause of OOM tro
   - Cap test-runner parallelism: `jest --maxWorkers=2`, `vitest --maxWorkers=2`. Defaults spawn one worker per CPU and balloon memory.
   - Do not leave dev servers or watchers running (`vite`, `next dev`, `tsc --watch`, `nodemon`); stop them when done.
   - Run one heavy build at a time; do not build several projects in parallel.
-- For long-running servers, open the port via the WS bar "Preview" instead of leaving ad-hoc processes up.
+- For long-running servers, open the port from the workspace action bar's "Preview" control instead of leaving ad-hoc processes up.
 
 ## Headless browser (UI verification / screenshots)
 Chromium's runtime libraries and fonts (DejaVu + Noto CJK — Japanese renders correctly)
@@ -112,6 +113,25 @@ are baked into the image; the browser binary is not. To verify web UIs headlessl
     `console-e2e/` (`@playwright/test`), not `console/`.
 - Run headless and short-lived; close the browser when done (memory-constrained host).
   Screenshots and WebGL (SwiftShader) work; there is no display for headful runs.
+
+## Agent Fleet sessions (do not assume a terminal)
+- A **session is a logical task/conversation**, not necessarily a tmux session or a
+  dedicated CLI process. Codex and OpenCode normally run through a shared managed
+  runtime and have no terminal pane; Claude, shell/SSM, and explicitly selected
+  terminal-mode sessions use a terminal.
+- Match the Console labels when explaining this to a user: **execution method**
+  (`実行方式`), **Managed** (`マネージド`), and **Terminal (CLI)**
+  (`ターミナル（CLI）`). `driver`, `runtime`, `TUI`, `PTY`, pane, and `tmux` are
+  implementation terms; explain them only when useful for debugging or when the user
+  explicitly asks how the system is built. TUI means the CLI's terminal interface;
+  tmux keeps that interface alive behind Terminal (CLI).
+- Do not advise a user to inspect, attach to, or kill tmux as the normal way to manage
+  Agent Fleet sessions. Use the Console or the `af_*` session tools. Stopping,
+  resuming, archiving, forking, and switching execution method are logical session
+  operations and are routed to the correct backend automatically.
+- A managed session can continue the same conversation after Agent/runtime restart
+  through reconciliation, and Codex/OpenCode can switch execution method while idle.
+  Do not infer that a missing terminal means the session stopped or lost its history.
 
 ## Answering questions about this Workspace / environment
 The agent-fleet docs you are allowed to see are mounted **read-only** at

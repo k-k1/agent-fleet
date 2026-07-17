@@ -1,7 +1,7 @@
 # 0008. Antigravity CLI（`agy`）を第4のエージェント種別として取り込む
 
 - 状態: 調査完了・**設計提案**（未実装）
-- 関連: [session.go](../../workspace/agent/session.go)（kind 分岐 / `startSessionTmux`）/ [codex_auth.go](../../workspace/agent/codex_auth.go)（device-auth 流用元）/ [0006-mcp-unified](0006-mcp-unified.md) / [HANDOFF §エージェント種別](../HANDOFF.md)
+- 関連: [session.go](../../workspace/agent/session.go)（セッション統合）/ [Codex auth](../../workspace/agent/internal/agents/codex/auth.go)（device-auth の現行実装）/ [0006-mcp-unified](0006-mcp-unified.md) / [HANDOFF §エージェント種別](../HANDOFF.md)
 - 出自: ユーザー依頼「antigravity cli を Agent-Fleet に組み込めないか検討」（2026-06-29〜30 調査）
 
 ## 背景

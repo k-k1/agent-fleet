@@ -54,7 +54,7 @@ React 19 + Vite 6 + TypeScript + zustand 5 の SPA。CP が `console/dist` を�
   （TermService・fetch 層）からは `getState()/setState()` で連携する。
 - ストア間連携は subscribe ベース。例: シェルの wireWorkspaceRefresh が workspace の
   stopped↔running **遷移エッジ**（starting 等の未確定状態は無視）で repos/sessions/files/chat を refresh。
-- ポーリング周期: workspace 4 秒 / sessions 4 秒 / repos 60 秒 / WS バーのリソース統計 4 秒。
+- ポーリング周期: workspace 4 秒 / sessions 4 秒 / repos 60 秒 / ワークスペース操作バーのリソース統計 4 秒。
   workspace の状態は CP の `running/starting/stopped/none` + `unknown`（fetch 失敗）で、
   末尾 `…` は楽観的 in-flight の印（ボタンとポーラーは busy として手を出さない）。
 - `core/api/client.ts` が `window.fetch` をラップし、全リクエストに `X-AF-Tenant` を注入
@@ -87,8 +87,8 @@ React 19 + Vite 6 + TypeScript + zustand 5 の SPA。CP が `console/dist` を�
 
 ## 2.5 IA（情報設計）
 
-- **2 段バー**: TOP（アプリ名・テナント picker〔単一所属時は非表示〕・外観ポップオーバー・アカウント
-  メニュー・設定・管理〔super_admin のみ〕）+ WS（workspace 状態と Start⇄Stop・リソースチップ +
+- **2 段バー**: 画面最上部（アプリ名・テナント picker〔単一所属時は非表示〕・外観ポップオーバー・アカウント
+  メニュー・設定・管理〔super_admin のみ〕）+ ワークスペース操作（workspace 状態と Start⇄Stop・リソースチップ +
   Sparkline・ポートプレビュー〔`/preview/{port}` を新タブで〕・Claude/Codex サブスク使用量・分割操作）。
 - **左ペイン**: LayoutMap + 常駐 3 セクション（アシスタント / メモキュー / プロジェクトツリー）+
   repo 外セッションの受け皿（無ければ非表示）。フラットな Sessions / Repos / Files セクションは
