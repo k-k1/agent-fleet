@@ -37,15 +37,36 @@
   （fstore。Meta には手を入れない — 動的状態を Meta と別ファイルに置くのは record-exit と
   同じ理由のレース回避）。
 - **arm**: `create_session`（report_to 付き）と `/input`（report_to 付き prompt 送信）の成功時。
-- **オペレーター報告（＋disarm）は終端イベントのみ**（`session_status.go` の hook 経路）:
+- **オペレーター報告（＋disarm）は終端イベントのみ**（判定は `session_status.go` の
+  `recordSessionNotification` 1 実装。hook 経路と managed driver 経路が共有する）:
   - 状態遷移 `answer-ready`（＝完了・入力待ち。`reportKindAnswerReady`）
   - 異常終了 `oom` / `crashed` / `killed`（`record_exit.go`。正常 exit / 意図停止は報告しない）
 - **中間の要対応イベント `question` / `plan-approval` / `permission-request` は
   オペレーター報告しない**（通知センター `notice` へは全 kind 出す）。**arm を消費させない**のが
   肝で、質問等で先に disarm されると「指示の完了」がオペレーターへ二度と届かない（実測不具合）。
   arm は `answer-ready` か異常終了まで生存する。
-- 次の `send_to_session` で再 arm。managed driver のセッションは hook 経路を通らないため
-  v1 の報告対象外（オペレーターの既定起動は claude tui）。
+- 次の `send_to_session` で再 arm。
+
+### managed driver（hook を持たないセッション）
+
+managed driver（docs/27: codex app-server / opencode serve）は hook を通らず driver 自身が
+status ストアを書くため、**当初は完了しても報告が構造的に飛ばなかった**（arm はされるが
+消費されない）。driver は `internal/agents` 配下にあり `package main` を import できないので、
+`internal/agents/notify.go` に通知 seam を置いて解消した:
+
+- main が起動時に `agents.SetStateNotifier(recordSessionNotification)` で判定を登録する
+  （app-server 起動・reconcile より前）。**判定ロジックは hook 経路と同じ 1 実装**で、
+  driver 側に第 2 の判定を持たせない。
+- driver は `status.Persist` を直接呼ばず `agents.MarkTurnStart` / `MarkTurnEnd(sid, TurnState)`
+  を通る。`MarkTurnEnd` が「前状態の読取 → idle 書込 → 通知」を hook 経路と同じ順で行う。
+- 通知は **非同期**（goroutine）。codex の `dispatchNotification` は全 handle 共有の
+  readLoop 1 goroutine で回っており、同期で `POST /chat/report` すると 1 セッションの報告が
+  全 codex managed セッションの通知配送を止める。
+- `TurnUnknown`（runtime 喪失）は idle を書くが**報告しない** — turn は相手側で走り続けて
+  いるかもしれず「完了しました」は嘘になる。arm は残し、本当の完了で報告する。
+- 報告の「直近の出力（抜粋）」は managed では**空**（claude の MessageDisplay hook に当たる
+  ストリーミング捕捉が無く、opencode は `/message` の本文を捨て、codex の `turn/completed` も
+  本文を運ばない）。報告は本文なしで届き、オペレーターは `get_session_output` で詳細を読む。
 
 ### 配送 — Agent 内で完結
 
@@ -89,9 +110,13 @@ hook / record-exit は独立プロセスなので、会話ファイルへの直�
 
 ## 制限 / 将来
 
-- managed driver（opencode/codex の pane なし）セッションは v1 報告対象外。
+- managed driver セッションの報告は本文抜粋なし（上記 — 完了の事実だけが飛ぶ）。
+- **managed driver の daemon 異常死は報告されない**: pane ラッパー経路（`record_exit.go`）は
+  oom/crashed/killed を報告するが、managed の daemon 死は `serve.go` が
+  `status.PersistExit` を書くだけで report kick を持たない（tui ルートとの非対称）。
 - opencode バックエンドの af_write 会話は report_to 自動付与なし。
 - 報告は `answer-ready`（完了・入力待ち）と異常終了のみ。中間の質問/承認/許可待ちは
   オペレーター報告しない（通知センターには出る）。キュー済みプロンプトが残っている等で
   厳密なタスク完了とずれることはあり得る（オペレーターが get_session_output で確認する前提）。
-- 将来: Meta への起動元（LaunchedBy）記録、managed driver 対応、報告のバッチング。
+- 将来: Meta への起動元（LaunchedBy）記録、managed 報告への本文抜粋、managed daemon 異常死の
+  報告、報告のバッチング。

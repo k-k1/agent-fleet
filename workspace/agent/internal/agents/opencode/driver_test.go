@@ -450,3 +450,33 @@ func TestManagedEnrich(t *testing.T) {
 		t.Errorf("tui meta must be untouched: %+v", td2)
 	}
 }
+
+// codex 側と同じ回帰: managed セッションの turn 完了が状態通知 seam
+// （agents.SetStateNotifier → package main の recordSessionNotification）へ届くこと。
+// hook を持たない managed driver は status を直接書いて誰にも知らせず、docs/30 の
+// 【セッション報告】が構造的に飛ばなかった。
+func TestManagedTurnNotifiesCompletion(t *testing.T) {
+	m, srv := newMockServe(t)
+	m.turnDelay = 20 * time.Millisecond
+	h := newTestHandle(t, srv)
+
+	got := make(chan [3]string, 8)
+	agents.SetStateNotifier(func(sid, previous, state, excerpt string) {
+		got <- [3]string{sid, previous, state}
+	})
+	t.Cleanup(func() { agents.SetStateNotifier(nil) })
+
+	if err := h.Send(agents.TurnInput{Prompt: "hi", ClientMessageID: "msg_report"}); err != nil {
+		t.Fatal(err)
+	}
+	waitState(t, h, agents.TurnCompleted)
+
+	select {
+	case tr := <-got:
+		if tr[0] != h.ocSid || tr[1] != "working" || tr[2] != "idle" {
+			t.Fatalf("transition = %v, want %s working→idle", tr, h.ocSid)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("turn completed without notifying the state seam — 報告が飛ばない")
+	}
+}

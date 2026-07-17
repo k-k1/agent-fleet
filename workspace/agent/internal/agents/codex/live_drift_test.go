@@ -487,6 +487,16 @@ func TestLiveDriftCodexManagedTurnNotifications(t *testing.T) {
 		failAuthAware(t, "managed Resume (thread/start)", err, err.Error())
 	}
 
+	// The docs/30 報告 seam: main wires recordSessionNotification here, and a managed
+	// turn's completion is what consumes the arm. Capture it from the real
+	// turn/completed rather than a mock, so a codex rename that stops driving the
+	// transition also surfaces as "報告が飛ばなくなった".
+	notified := make(chan [2]string, 8)
+	agents.SetStateNotifier(func(sid, previous, state, excerpt string) {
+		notified <- [2]string{previous, state}
+	})
+	defer agents.SetStateNotifier(nil)
+
 	// turn/started is transient (it lasts only as long as the turn), so watch for it
 	// from before the send rather than sampling after.
 	sawWorking := make(chan struct{})
@@ -540,6 +550,25 @@ func TestLiveDriftCodexManagedTurnNotifications(t *testing.T) {
 	if !waitStatus(slot, "idle", 20*time.Second) {
 		st, _ := status.Read(slot)
 		t.Fatalf("status = %+v after completion, want idle — turn/completed no longer persists idle", st)
+	}
+	// 完了が報告 seam へ届いたか（docs/30 — managed は hook を持たないので、ここが
+	// 切れると完了しても【セッション報告】が一切飛ばない）。
+	// 通知は非同期（readLoop を塞がないため）なので待って拾う。
+	var reported bool
+	for wait := time.After(10 * time.Second); !reported; {
+		select {
+		case tr := <-notified:
+			reported = tr[1] == "idle"
+		case <-wait:
+			goto checked
+		}
+	}
+checked:
+	if !reported {
+		t.Error("完了が状態通知 seam に届かなかった: managed セッションの turn/completed が " +
+			"agents.MarkTurnEnd を通っていない — オペレーターへの完了報告(docs/30)が飛ばない")
+	} else {
+		t.Log("ok: turn/completed -> 報告 seam (recordSessionNotification) へ通知")
 	}
 	logTurnCost(t, "managed", sids.Read(slot))
 	t.Log("ok: turn/completed -> status idle + TurnCompleted event")
