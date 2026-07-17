@@ -21,7 +21,7 @@ Zabbix など他ツールは、下の PoC 手順で手動接続できます（�
 **実験的な手順です**（[docs/25 サービス運用向け拡張](../../25-ops-monitoring.md) の Phase 0）。まだ「運用」タブに無いツール（CloudWatch / Zabbix など）や、チャットではなく**ターミナル（CLI）の claude セッション**に繋ぎたい場合の手作業手順です。
 
 - 対象: ターミナル（CLI）の claude セッション。**チャット（アシスタント）には現状 MCP を足せません**（Phase 1 で対応予定）。
-- 前提: Workspace から各監視ツールのエンドポイントへ outbound が通ること。PyPI 系は `uvx` の初回取得で必要。
+- 前提: ワークスペースから各監視ツールのエンドポイントへ outbound が通ること。PyPI 系は `uvx` の初回取得で必要。
 - ⚠️ **トークンの扱い（PoC 限定の妥協）**: `claude mcp add -e` で渡したトークンは `~/.claude.json` に**平文で保存されます**。home ボリューム内でコンテナ recreate では消えませんが、リポジトリには絶対に書かないこと・**read-only の専用トークンだけ**を使うこと。この平文問題の解消（Connections への統合）が Phase 1 の主目的です。
 
 ## 0. 下ごしらえ（1 回だけ・recreate 後も残る）
@@ -43,7 +43,7 @@ curl -sL https://github.com/grafana/mcp-grafana/releases/download/v0.17.1/mcp-gr
 
 # Grafana 側: 管理画面で Viewer 権限のサービスアカウントを作りトークン発行
 
-# claude に登録（user スコープ = この Workspace の全セッションで有効）
+# claude に登録（user スコープ = このワークスペースの全セッションで有効）
 claude mcp add -s user grafana \
   -e GRAFANA_URL=https://grafana.example.com \
   -e GRAFANA_SERVICE_ACCOUNT_TOKEN=<viewer-sa-token> \

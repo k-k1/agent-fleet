@@ -87,8 +87,8 @@ React 19 + Vite 6 + TypeScript + zustand 5 の SPA。CP が `console/dist` を�
 
 ## 2.5 IA（情報設計）
 
-- **2 段バー**: TOP（アプリ名・テナント picker〔単一所属時は非表示〕・外観ポップオーバー・アカウント
-  メニュー・設定・管理〔super_admin のみ〕）+ WS（workspace 状態と Start⇄Stop・リソースチップ +
+- **2 段バー**: 画面最上部（アプリ名・テナント picker〔単一所属時は非表示〕・外観ポップオーバー・アカウント
+  メニュー・設定・管理〔super_admin のみ〕）+ ワークスペース操作（workspace 状態と Start⇄Stop・リソースチップ +
   Sparkline・ポートプレビュー〔`/preview/{port}` を新タブで〕・Claude/Codex サブスク使用量・分割操作）。
 - **左ペイン**: LayoutMap + 常駐 3 セクション（アシスタント / メモキュー / プロジェクトツリー）+
   repo 外セッションの受け皿（無ければ非表示）。フラットな Sessions / Repos / Files セクションは
