@@ -13,8 +13,8 @@ import (
 // TestSafeBrowsePath covers path resolution for the read-only file browser. Relative paths
 // stay anchored on the browse root (denylist + traversal enforced); absolute paths — the
 // form SendUserFile leaves for a file outside the browse root — are served only when they
-// sit under an allowed read root (the browse root, or the /tmp/claude-<uid> scratch base),
-// so a shared scratchpad file opens instead of erroring.
+// sit under an allowed read root (the browse root, the /tmp/claude-<uid> scratch base,
+// or the role-scoped Agent Fleet docs mount), so a shared scratchpad or user guide opens.
 func TestSafeBrowsePath(t *testing.T) {
 	root := "/home/testuser"
 	t.Setenv("AF_BROWSE_ROOT", root)
@@ -39,6 +39,7 @@ func TestSafeBrowsePath(t *testing.T) {
 
 		// absolute under the scratch base → served, display path is the absolute path
 		{"abs in scratch", scratch + "/sess/scratchpad/compact-preview.png", scratch + "/sess/scratchpad/compact-preview.png", scratch + "/sess/scratchpad/compact-preview.png", true},
+		{"abs in staged docs", agentFleetDocsRoot() + "/guide/member/README.md", agentFleetDocsRoot() + "/guide/member/README.md", agentFleetDocsRoot() + "/guide/member/README.md", true},
 
 		// absolute outside every allowed root → refused
 		{"abs outside all", "/etc/passwd", "", "", false},
@@ -55,6 +56,15 @@ func TestSafeBrowsePath(t *testing.T) {
 		}
 		if full != filepath.Clean(c.wantFull) || rel != c.wantRel {
 			t.Errorf("%s: safeBrowsePath(%q) = (%q, %q), want (%q, %q)", c.name, c.p, full, rel, filepath.Clean(c.wantFull), c.wantRel)
+		}
+	}
+}
+
+func TestSafeWritableBrowsePathRefusesReadOnlyRoots(t *testing.T) {
+	t.Setenv("AF_BROWSE_ROOT", t.TempDir())
+	for _, p := range []string{scratchRoot() + "/note.txt", agentFleetDocsRoot() + "/guide/member/README.md"} {
+		if _, _, ok := safeWritableBrowsePath(p); ok {
+			t.Errorf("safeWritableBrowsePath(%q) unexpectedly allowed an absolute read-only path", p)
 		}
 	}
 }

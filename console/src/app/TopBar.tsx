@@ -3,6 +3,7 @@
 // App) and openSettings/openAdmin (→ features/settings/store).
 import { useEffect, useRef, useState } from "react";
 import { useTenantStore } from "../core/store/tenant.ts";
+import { useLayoutStore } from "../layout/store.ts";
 import { useTtsStore, toggleTtsPlayback } from "../core/store/tts.ts";
 import { useSettingsUI } from "../features/settings/store.ts";
 import { rel, clearLocalState } from "../core/api/client.ts";
@@ -94,6 +95,10 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
   const openSettings = useSettingsUI((st) => st.openSettings);
   const openAdmin = useSettingsUI((st) => st.openAdmin);
   const openGuide = useSettingsUI((st) => st.openGuide);
+  const openUserGuide = () =>
+    useLayoutStore.getState().openTarget({
+      content: { kind: "file", filePath: "/usr/local/share/agent-fleet/docs/guide/member/README.md" },
+    });
   const run = (fn: () => void) => {
     setMenuOpen(false);
     fn();
@@ -226,6 +231,9 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
                     <div className="acct-sep" />
                   </>
                 )}
+                <button className="acct-item" role="menuitem" onClick={() => run(openUserGuide)}>
+                  <Icon name="book" /> {tr("topbar.user_guide")}
+                </button>
                 {/* 初回カードを「あとで」で閉じたあとの再入口（起動導線 Ph1）。 */}
                 <button className="acct-item" role="menuitem" onClick={() => run(openGuide)}>
                   <Icon name="rocket" /> {tr("topbar.guide")}
