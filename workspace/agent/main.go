@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
@@ -77,6 +78,11 @@ func main() {
 	// handled separately via its settings.json hook.
 	reconcileAgentRTK()
 	startTerminalHistoryJanitor()
+	// managed driver（hook を持たない）の turn 完了を、hook 経路と同じ通知/報告
+	// （応答あり notice ＋ docs/30 のオペレーター報告）へ流す。driver は
+	// internal/agents 配下で package main を import できないため、判定の 1 実装を
+	// ここで seam に登録する。app-server 起動と reconcile より前に張ること。
+	agents.SetStateNotifier(recordSessionNotification)
 	// Codex sessions use a shared local app-server when available（P3 からは
 	// codex.Serve() の RuntimeSupervisor が daemon を所有する）。AF attaches
 	// a read-only observer per loaded thread: compaction state, rate limits, and

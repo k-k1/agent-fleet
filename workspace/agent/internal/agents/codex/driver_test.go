@@ -546,3 +546,35 @@ func TestManagedEnrich(t *testing.T) {
 		t.Fatalf("tui meta changed: %+v", td2)
 	}
 }
+
+// managed セッションの完了が状態通知 seam（agents.SetStateNotifier → package main の
+// recordSessionNotification）へ届くことの回帰テスト。docs/30 の報告は hook 経路にしか
+// 配線されておらず、managed driver は status を直接書いて誰にも知らせなかったため、
+// 完了しても【セッション報告】が構造的に飛ばなかった。ここでは実 turn をモック
+// app-server で走らせ、driver が seam を通ることを端から確かめる。
+func TestManagedTurnNotifiesCompletion(t *testing.T) {
+	m, cl := newMockCodexServer(t)
+	m.autoComplete = true
+	h := newCodexTestHandle(t, cl, "codex-report")
+	registerCodexTestHandle(t, h)
+
+	got := make(chan [3]string, 8)
+	agents.SetStateNotifier(func(sid, previous, state, excerpt string) {
+		got <- [3]string{sid, previous, state}
+	})
+	t.Cleanup(func() { agents.SetStateNotifier(nil) })
+
+	if err := h.Send(agents.TurnInput{Prompt: "hello", ClientMessageID: "af_report"}); err != nil {
+		t.Fatal(err)
+	}
+	waitCodexState(t, h, agents.TurnCompleted)
+
+	select {
+	case tr := <-got:
+		if tr[0] != h.slotSid || tr[2] != "idle" {
+			t.Fatalf("transition = %v, want %s …→idle", tr, h.slotSid)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("turn completed without notifying the state seam — 報告が飛ばない")
+	}
+}
