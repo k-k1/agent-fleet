@@ -1438,7 +1438,8 @@ export const ja = {
   "srow.rename": "タイトルを変更",
   "srow.rename_branch": "ブランチ名を変更",
   "srow.fork": "分岐（会話を引き継いで新規）",
-  "srow.fork_to": "{agent} へ分岐（会話を引き継ぐ）",
+  "srow.fork_to": "{agent} への引継ぎを準備",
+  "srow.handoff_title": "{name} の引継ぎ",
   "srow.archive": "アーカイブする（一覧から消す）",
   "srow.recreate": "作り直す（今の会話はアーカイブへ）",
 
