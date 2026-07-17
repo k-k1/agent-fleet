@@ -30,6 +30,10 @@ WS_MEMORY="${WS_MEMORY:-5g}"
 # Shared Temurin JDKs live here on the host (provisioned once below) and are
 # bind-mounted read-only into every workspace at /usr/lib/jvm.
 WS_JVM_DIR="${WS_JVM_DIR:-$WS_DATA/shared/jvm}"
+# The host-run Control Plane is not built from control-plane/Dockerfile, so it
+# does not have the baked docs tree. Point staging at this checkout by default.
+# A caller may override this for a different docs source.
+AF_DOCS_DIR="${AF_DOCS_DIR:-$ROOT/docs}"
 
 # git-provider OAuth config (contains a secret -> git-ignored). If present, export
 # GITHUB_OAUTH_CLIENT_ID / BITBUCKET_OAUTH_KEY / BITBUCKET_OAUTH_SECRET / PUBLIC_BASE_URL.
@@ -95,6 +99,7 @@ exec env \
   WS_DATA="$WS_DATA" \
   WS_MEMORY="$WS_MEMORY" \
   ${WS_JVM_DIR:+WS_JVM_DIR="$WS_JVM_DIR"} \
+  ${AF_DOCS_DIR:+AF_DOCS_DIR="$AF_DOCS_DIR"} \
   ${AUTH:+AUTH="$AUTH"} \
   ${DEV_USER:+DEV_USER="$DEV_USER"} \
   ${AUTH_EMAIL_HEADER:+AUTH_EMAIL_HEADER="$AUTH_EMAIL_HEADER"} \
