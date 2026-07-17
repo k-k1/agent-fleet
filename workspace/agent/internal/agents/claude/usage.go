@@ -29,6 +29,13 @@ const usageURL = "https://api.anthropic.com/api/oauth/usage"
 const usageTTL = 5 * time.Minute
 const usageMinRefresh = 10 * time.Second
 
+// A cached *failure* (ok:false) gets a much shorter life than a success. Without this,
+// a single transient failure on an empty cache — likely right after the agent process
+// restarts, or when the rate-limited endpoint returns 429 — would be served for the
+// full usageTTL and hide the Console's chip for 5 minutes. A short negative TTL still
+// throttles retries (so we don't hammer the endpoint) but recovers within seconds.
+const usageFailTTL = 20 * time.Second
+
 // usageWindow is one limit window: percent used (0–100) and the ISO reset instant
 // (the Console formats it as a relative "あとN時間/N日" + an absolute date-time).
 type usageWindow struct {
@@ -55,9 +62,15 @@ func HandleUsage(w http.ResponseWriter, r *http.Request) {
 	usageMu.Lock()
 	have := !usageAt.IsZero()
 	age := time.Since(usageAt)
+	// A cached failure expires far sooner than a good value, so a transient error can't
+	// hide the chip for the full TTL — it just retries on the next poll.
+	ttl := usageTTL
+	if have && !usageVal.OK {
+		ttl = usageFailTTL
+	}
 	// Hit the real endpoint only when the cache is empty or older than the TTL, or on
 	// an explicit refresh that isn't within the floor window. Else serve the cache.
-	fetch := !have || age >= usageTTL || (refresh && age >= usageMinRefresh)
+	fetch := !have || age >= ttl || (refresh && age >= usageMinRefresh)
 	if !fetch {
 		v, at := usageVal, usageAt
 		usageMu.Unlock()
