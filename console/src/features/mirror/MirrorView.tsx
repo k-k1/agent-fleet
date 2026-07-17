@@ -1879,6 +1879,10 @@ export function MirrorView({
                   // がトーストで知らせる。
                   managed ? (answers) => void sendRespond(pending[0]?.id || "", answers) : undefined
                 }
+                // Cancel maps to the same stop primitive as the chat 停止 button: TUI sends
+                // Escape (dismisses the AUQ modal, doesn't mark a turn), managed calls
+                // Interrupt. Either way the pending question clears and the composer is free.
+                onCancel={() => void sendInterrupt()}
                 answerMode={sessionMeta?.kind === "claude" ? "claude" : "menu"}
                 multiPage={sessionMeta?.kind === "codex"}
               />
@@ -3208,6 +3212,9 @@ function PendingQuestions({
   // 質問ごとに 1 エントリ・順序どおり）。渡されたら全経路が semantic 応答になり、
   // 下の TUI キー駆動（モーダルの挙動に縛られたシーケンス組み立て）は一切通らない。
   onRespond?: (answers: InteractionAnswer[]) => void;
+  // onCancel: dismiss the pending question without answering (Escape / Interrupt) so the
+  // conversation can continue with a fresh prompt instead of an answer.
+  onCancel?: () => void;
   sending: boolean;
   // "claude": AskUserQuestion's tabbed modal (free-text single / Down-Enter-Right multi).
   // "menu": codex/opencode ask via a simple option menu — a single-select question is
@@ -3428,10 +3435,25 @@ function PendingQuestions({
           )}
         </div>
       ))}
-      {!menu && (
-        // For a single question the options click-to-send, so canSubmit is only true once
-        // free text is typed — the button then submits that via submit()'s free-text path.
-        <div className="mq-submit-row">
+      <div className="mq-submit-row mq-footer">
+        {onCancel && (
+          // Cancel the question without answering — dismiss the AUQ (Escape for TUI,
+          // Interrupt for managed) so the user can steer into a normal discussion instead
+          // of being forced to pick an option first. Always available, even for forms we
+          // can't drive from chat (the terminal-hint case).
+          <button
+            type="button"
+            className="ghost mq-cancel"
+            disabled={sending}
+            title={tr("mirror.question_cancel_title")}
+            onClick={onCancel}
+          >
+            <Icon name="close" /> {tr("mirror.question_cancel")}
+          </button>
+        )}
+        {!menu && (
+          // For a single question the options click-to-send, so canSubmit is only true once
+          // free text is typed — the button then submits that via submit()'s free-text path.
           <button
             type="button"
             className="btn primary mq-submit"
@@ -3440,12 +3462,10 @@ function PendingQuestions({
           >
             {tr("mirror.submit_answer")}
           </button>
-        </div>
-      )}
-      {menu && menuDrivable && !single && (
-        // A paged multi-question menu (codex): pick an option per question above, then
-        // submit all pages' key sequences at once.
-        <div className="mq-submit-row">
+        )}
+        {menu && menuDrivable && !single && (
+          // A paged multi-question menu (codex): pick an option per question above, then
+          // submit all pages' key sequences at once.
           <button
             type="button"
             className="btn primary mq-submit"
@@ -3454,15 +3474,13 @@ function PendingQuestions({
           >
             {tr("mirror.submit_answer")}
           </button>
-        </div>
-      )}
-      {menu && !menuDrivable && (
-        // A multi-select menu (or a multi-question one on a dialog whose paging keys
-        // aren't verified) we can't reliably drive from chat.
-        <div className="mq-submit-row muted mq-terminal-hint">
-          {tr("mirror.question_terminal")}
-        </div>
-      )}
+        )}
+        {menu && !menuDrivable && (
+          // A multi-select menu (or a multi-question one on a dialog whose paging keys
+          // aren't verified) we can't reliably drive from chat.
+          <span className="muted mq-terminal-hint">{tr("mirror.question_terminal")}</span>
+        )}
+      </div>
     </div>
   );
 }

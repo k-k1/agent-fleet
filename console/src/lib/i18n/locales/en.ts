@@ -1190,6 +1190,8 @@ export const en: Record<keyof typeof ja, string> = {
   "mirror.multi_select_ok": "Multiple selection allowed",
   "mirror.freeform_ph": "or type your own (Type something / newlines ok)",
   "mirror.submit_answer": "Submit answer",
+  "mirror.question_cancel": "Cancel — back to chat",
+  "mirror.question_cancel_title": "Dismiss this question without answering and return to normal conversation (Esc)",
   "mirror.question_terminal": "Answer this kind of question in the terminal",
   "mirror.answered": "Answered",
   "mirror.freeform_label": "Free text: ",
