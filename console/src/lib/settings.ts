@@ -209,6 +209,11 @@ export interface Settings {
   // Agent reads this key from ui-prefs live. User-defined assistants keep their own
   // per-assistant agent choice.
   assistantAgent: string;
+  // Auto turn on session reports (docs/30): when a session an af_write assistant
+  // launched/steered reports back, the assistant runs one turn automatically to
+  // process it. Default ON; the backend caps unattended turns at 10 per conversation
+  // (reset by a user message) regardless of this switch.
+  assistantAutoTurn: boolean;
   // Per-SSM-host terminal color: host id → color id (see lib/termcolor SSM_HOST_COLORS).
   // Applied to a session's terminal background when it's created (sent as its color).
   ssmHostColors: Record<string, string>;
@@ -366,6 +371,7 @@ const DEFAULTS: Settings = {
   autoTitleSuggest: true,
   outputLanguage: "auto",
   assistantAgent: "auto",
+  assistantAutoTurn: true,
   ssmHostColors: {},
   // 音声読み上げの初期値＝おすすめ設定。設定タブの「リセット」ボタンが戻す値（TTS_RESET）と
   // 同じで、新規ユーザー（と未設定の既存ユーザー）はこの状態から始まる。読み上げ本体・音声通知

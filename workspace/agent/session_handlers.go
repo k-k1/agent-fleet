@@ -167,6 +167,12 @@ type createReq struct {
 	// AND hand it the first task in one call. The Console delivers its own launch prompt
 	// client-side (open.ts) and leaves this empty.
 	InitialPrompt string `json:"initial_prompt"`
+	// ReportTo (docs/30) links the new session to an assistant conversation and arms a
+	// one-shot completion report: the first awaiting-input / abnormal-exit event after
+	// launch posts a report message into that conversation. Set by the af_write MCP's
+	// create_session (which knows its own conversation id via --conv); Console creates
+	// leave it empty.
+	ReportTo string `json:"report_to"`
 	// Optional clone-then-start: when remote_url is set, the repo is cloned
 	// (or reused) under ~/repos and its path becomes the session CWD, ignoring dir.
 	// RepoName overrides the target folder so two branches of the same repo can
@@ -360,6 +366,12 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 				markSessionWorking(name)
 			}
 		}
+		// docs/30: arm the one-shot report link. Note managed sessions don't run the
+		// session-status hook subcommand, so v1 reports fire for tui sessions only —
+		// the link is still recorded for forward-compat.
+		if req.ReportTo != "" {
+			armSessionReport(name, req.ReportTo)
+		}
 		httpx.WriteJSON(w, http.StatusCreated, wireSession(meta, true))
 		return
 	}
@@ -373,6 +385,11 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	// response returns the session immediately so the caller can start polling).
 	if strings.TrimSpace(req.InitialPrompt) != "" {
 		go deliverInitialPrompt(name, req.InitialPrompt)
+	}
+	// docs/30: arm the one-shot completion report to the creating conversation. Armed
+	// even without an initial_prompt — the operator may steer the session manually next.
+	if req.ReportTo != "" {
+		armSessionReport(name, req.ReportTo)
 	}
 
 	httpx.WriteJSON(w, http.StatusCreated, wireSession(meta, true))

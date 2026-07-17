@@ -8,13 +8,14 @@ import { announce, sessionVoiceOpts } from "../chat/tts.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 import { agentOf } from "../../agents/registry.ts";
 import { openSessionChat, openSessionChatSplit, openSessionTerminal, openSessionTerminalSplit } from "../sessions/open.ts";
+import { openChat } from "../chat/open.ts";
 import { unseenSessionEventIDs } from "./read.ts";
 
 export type NotificationSourceState = "unknown" | "ready" | "offline" | "unsupported";
 export interface FleetNotification {
   seq: number;
   id: string;
-  kind: "answer-ready" | "question" | "plan-approval" | "permission-request" | "usage-reset" | string;
+  kind: "answer-ready" | "question" | "plan-approval" | "permission-request" | "session-report" | "usage-reset" | string;
   target: { type: string; id: string; kind?: string };
   displayName: string;
   payload: Record<string, unknown>;
@@ -43,6 +44,11 @@ function wording(n: FleetNotification): { title: string; body: string; speech: s
   if (n.kind === "question") return { title: t("notif.question.title"), body: name, speech: t("notif.question.speech", { name }) };
   if (n.kind === "plan-approval") return { title: t("notif.plan_approval.title"), body: name, speech: t("notif.plan_approval.speech", { name }) };
   if (n.kind === "permission-request") return { title: t("notif.permission_request.title"), body: name, speech: t("notif.permission_request.speech", { name }) };
+  if (n.kind === "session-report") {
+    // A session reported back to its operator conversation (docs/30); the body names
+    // the reporting session, the click target is the conversation.
+    return { title: t("notif.session_report.title"), body: name, speech: t("notif.session_report.speech", { name }) };
+  }
   const rawSource = String(n.payload.source || n.displayName || "AI");
   const source = rawSource === "claude" ? "Claude" : rawSource === "codex" ? "Codex" : rawSource;
   const win = n.payload.windowKey === "5h" ? t("notif.window.5h") : t("notif.window.week");
@@ -83,6 +89,12 @@ async function deliver(n: FleetNotification): Promise<void> {
 }
 
 export async function openNotificationTarget(n: FleetNotification, split: boolean): Promise<boolean> {
+  // A session report's destination is the operator CONVERSATION, not the reporting
+  // session (docs/30) — the conversation id rides the payload.
+  if (n.kind === "session-report" && typeof n.payload.conversation_id === "string" && n.payload.conversation_id) {
+    openChat(n.payload.conversation_id);
+    return true;
+  }
   if (n.target.type !== "session" || !n.target.id) return false;
   let session = useSessionsStore.getState().sessions.find((s) => s.name === n.target.id);
   if (!session) {

@@ -223,6 +223,34 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [conversationId, inProgress, sending]);
 
+  // af_write conversations receive server-pushed session reports and auto turns
+  // (docs/30) with no client-initiated request, so poll lightly while the pane is
+  // active to pick them up. A fresher updated_at adopts the server copy; a turn in
+  // flight flips in_progress, which the reattach poller above then takes over.
+  const reportCapable = conv?.tools === "af_write";
+  useEffect(() => {
+    if (!conversationId || !active || !reportCapable) return;
+    let alive = true;
+    const timer = window.setInterval(async () => {
+      if (!alive || sending) return;
+      try {
+        const c = await chatGet(conversationId);
+        if (!alive || sending || !c || !c.id) return;
+        const cur = convRef.current;
+        if (!cur || cur.id !== c.id || c.updated_at > cur.updated_at || !!c.in_progress !== !!cur.in_progress) {
+          applyConv(c);
+        }
+      } catch {
+        /* transient — keep polling */
+      }
+    }, 5000);
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conversationId, active, reportCapable, sending]);
+
   // Keep the transcript pinned to the newest turn (and to the thinking indicator). While
   // live karaoke is following the spoken sentence, defer to its scrollIntoView instead —
   // otherwise bottom-pin and the karaoke follow fight over the scroll position.
@@ -690,6 +718,24 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
           <div className="chat-empty">{tr("chat.empty_hint")}</div>
         )}
         {conv?.messages.map((m, i) => {
+          // Session reports (docs/30) render as a session-origin card — the sender is
+          // the reporting session, not the user or the assistant.
+          if (m.role === "report") {
+            return (
+              <div key={i} className="chat-msg role-report">
+                <div className="chat-role">
+                  <Icon name="broadcast" /> {tr("chat.report_role")}
+                  {m.session && <span className="chat-report-session">{m.session}</span>}
+                </div>
+                <div className="chat-body">
+                  <ChatMarkdown source={m.content} breaks />
+                </div>
+                <div className="chat-msg-foot">
+                  {m.ts > 0 && <span className="cm-time">{formatMsgTS(m.ts)}</span>}
+                </div>
+              </div>
+            );
+          }
           // Assistant replies render through AssistantTurn, which owns the bubble ref so
           // its footer can karaoke-read the rendered Markdown (docs/24).
           if (m.role === "assistant") {

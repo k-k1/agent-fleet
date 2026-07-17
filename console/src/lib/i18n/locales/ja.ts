@@ -87,6 +87,8 @@ export const ja = {
   "notif.plan_approval.speech": "{name} がプランの承認を求めています。",
   "notif.permission_request.title": "権限の確認が必要です",
   "notif.permission_request.speech": "{name} が権限の確認を求めています。",
+  "notif.session_report.title": "セッションから報告が届きました",
+  "notif.session_report.speech": "{name} からアシスタントに報告が届きました。",
   "notif.usage_reset.title": "{source} の制限がリセットされました",
   "notif.usage_reset.body": "{window}がリセットされました。",
   "notif.usage_reset.speech": "{source}の{window}がリセットされました。",
@@ -570,6 +572,9 @@ export const ja = {
   "agents.assistant_agent": "アシスタントのエージェント",
   "agents.note_assistant_agent":
     "アシスタント・チャットとタイトル案の生成を動かす CLI です。「自動」は接続済みのものを Claude → Codex → opencode の順で選びます。固定した CLI が未接続のときは自動選択に戻ります。反映はビルトインアシスタントの新しい会話から（カスタムアシスタントは各自のエージェント設定が優先）。",
+  "agents.assistant_auto_turn": "セッション報告への自動応答",
+  "agents.note_assistant_auto_turn":
+    "フリート・オペレーター等（AF 書き込み許可のアシスタント）が起こした・指示したセッションから完了報告が届いたとき、アシスタントが自動で 1 ターン動いて後続を処理します。暴走防止のため、あなたの発言なしで動ける自動ターンは会話ごとに最大 10 回です（発言でリセット）。",
   "agents.ws_required_title": "設定はワークスペース内で実行されます",
   "agents.ws_required_hint": "接続とエージェント設定はコンテナ内の Agent / CLI を経由するため、ワークスペースの起動が必要です。",
   "agents.note_apply": "接続の変更は即時、挙動設定は各エージェントの新しいセッションから反映されます。",
@@ -1062,6 +1067,7 @@ export const ja = {
   "chat.empty_hint":
     "メッセージを送って会話を始めましょう。Markdown 文書の翻訳や要約、質問への回答などを依頼できます。",
   "chat.you": "あなた",
+  "chat.report_role": "セッション報告",
   "chat.working": "作業中…",
   "chat.thinking": "考え中…",
   "chat.remove": "削除",

@@ -276,10 +276,14 @@ func handleChatSend(w http.ResponseWriter, r *http.Request) {
 	prov := chatProviderFor(c) // pinned agent, or the available fallback (claude-less WS)
 
 	c.Messages = append(c.Messages, chatMessage{Role: "user", Content: content, TS: nowMs()})
+	// docs/30: reports that never got their own auto turn ride the next prompt, and a
+	// user message resets the unattended auto-turn budget.
+	prompt, pendingReports := injectPendingReports(c, content)
+	c.AutoTurns = 0
 
 	ctx, cancel := context.WithTimeout(r.Context(), chatTimeout)
 	defer cancel()
-	reply, err := prov.send(ctx, c, content)
+	reply, err := prov.send(ctx, c, prompt)
 	if err != nil {
 		// Persist the user turn + resume handle even on failure so a retry continues.
 		c.UpdatedAt = nowMs()
@@ -287,6 +291,7 @@ func handleChatSend(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadGateway, "provider", err.Error())
 		return
 	}
+	markReportsDelivered(pendingReports)
 
 	assistant := chatMessage{Role: "assistant", Content: reply, TS: nowMs()}
 	c.Messages = append(c.Messages, assistant)
@@ -329,6 +334,10 @@ func handleChatStream(w http.ResponseWriter, r *http.Request) {
 	prov := chatProviderFor(c) // pinned agent, or the available fallback (claude-less WS)
 
 	c.Messages = append(c.Messages, chatMessage{Role: "user", Content: content, TS: nowMs()})
+	// docs/30: undelivered session reports ride this prompt; a user message resets the
+	// unattended auto-turn budget.
+	prompt, pendingReports := injectPendingReports(c, content)
+	c.AutoTurns = 0
 
 	// From here the response is an SSE stream; per-frame errors ride the stream body.
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -356,7 +365,7 @@ func handleChatStream(w http.ResponseWriter, r *http.Request) {
 	var reply string
 	var steps []chatStep
 	if sp, ok := prov.(streamingProvider); ok {
-		reply, steps, err = sp.sendStream(ctx, c, content, func(ev chatStreamEvent) {
+		reply, steps, err = sp.sendStream(ctx, c, prompt, func(ev chatStreamEvent) {
 			if ev.Step != nil {
 				emit(map[string]any{"step": ev.Step}) // a completed 作業過程 item
 			} else if ev.Delta != "" {
@@ -364,7 +373,7 @@ func handleChatStream(w http.ResponseWriter, r *http.Request) {
 			}
 		})
 	} else {
-		reply, err = prov.send(ctx, c, content)
+		reply, err = prov.send(ctx, c, prompt)
 		if err == nil {
 			emit(map[string]string{"delta": reply})
 		}
@@ -375,6 +384,7 @@ func handleChatStream(w http.ResponseWriter, r *http.Request) {
 		emit(map[string]any{"error": err.Error()})
 		return
 	}
+	markReportsDelivered(pendingReports)
 
 	assistant := chatMessage{Role: "assistant", Content: reply, Steps: steps, TS: nowMs()}
 	c.Messages = append(c.Messages, assistant)

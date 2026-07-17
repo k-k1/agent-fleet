@@ -72,6 +72,10 @@ func buildMux() *http.ServeMux {
 	// Assistant-to-assistant consult (docs/19): af_write orchestrators' ask_assistant tool
 	// hits this via the local stdio MCP. Internal (Agent REST) only — not proxied by the CP.
 	mux.HandleFunc("POST /chat/ask", handleChatAsk)
+	// Session report kick (docs/30): the session-status hook / record-exit process posts
+	// here when an operator-armed session reaches an awaiting-input / abnormal-exit
+	// state. Internal (Agent REST) only — not proxied by the CP.
+	mux.HandleFunc("POST /chat/report", handleChatReport)
 
 	// Assistant templates — configurable chat personas (docs/19 Q2). Builtins are
 	// code-injected; user-defined ones are stored under ~/.config/agent-fleet/assistants.
