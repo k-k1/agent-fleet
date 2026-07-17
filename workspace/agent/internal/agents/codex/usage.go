@@ -56,7 +56,10 @@ type resetCredits struct {
 // HandleUsage serves GET /codex/usage for the Console's WsBar chip.
 func HandleUsage(w http.ResponseWriter, r *http.Request) {
 	u := readUsage()
-	out := map[string]any{"ok": u.OK, "fiveHour": u.FiveHour, "sevenDay": u.SevenDay}
+	// authed = a ChatGPT-subscription login is present. The Console keeps the chip
+	// visible whenever authed even if no rollout reading is available yet, so the chip
+	// never vanishes on a transient miss; a codex the user isn't signed into has none.
+	out := map[string]any{"ok": u.OK, "authed": codexAuthed(), "fiveHour": u.FiveHour, "sevenDay": u.SevenDay}
 	if resets, ok := fetchResetCredits(r.Context()); ok {
 		out["resetCredits"] = resets
 		// Reset credits alone are enough to keep the Codex WS-bar chip visible.
@@ -81,19 +84,38 @@ type usage struct {
 
 const resetCreditsURL = "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits"
 
-func fetchResetCredits(ctx context.Context) (resetCredits, bool) {
+type codexAuth struct {
+	AuthMode string `json:"auth_mode"`
+	Tokens   struct {
+		AccessToken string `json:"access_token"`
+		AccountID   string `json:"account_id"`
+	} `json:"tokens"`
+}
+
+// readCodexAuth loads the ChatGPT-subscription login codex stores in auth.json. ok is
+// false when the file is absent/unparseable or it isn't a chatgpt login with a token.
+func readCodexAuth() (codexAuth, bool) {
 	b, err := os.ReadFile(filepath.Join(paths.HomeDir(), ".codex", "auth.json"))
 	if err != nil {
-		return resetCredits{}, false
+		return codexAuth{}, false
 	}
-	var auth struct {
-		AuthMode string `json:"auth_mode"`
-		Tokens   struct {
-			AccessToken string `json:"access_token"`
-			AccountID   string `json:"account_id"`
-		} `json:"tokens"`
-	}
+	var auth codexAuth
 	if json.Unmarshal(b, &auth) != nil || auth.AuthMode != "chatgpt" || auth.Tokens.AccessToken == "" {
+		return codexAuth{}, false
+	}
+	return auth, true
+}
+
+// codexAuthed reports whether a ChatGPT-subscription login is present — used to keep
+// the WsBar chip visible even when no live reading is available.
+func codexAuthed() bool {
+	_, ok := readCodexAuth()
+	return ok
+}
+
+func fetchResetCredits(ctx context.Context) (resetCredits, bool) {
+	auth, ok := readCodexAuth()
+	if !ok {
 		return resetCredits{}, false
 	}
 	return getResetCredits(ctx, http.DefaultClient, resetCreditsURL, auth.Tokens.AccessToken, auth.Tokens.AccountID)

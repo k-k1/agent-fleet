@@ -58,6 +58,11 @@ var (
 // HandleUsage serves GET /claude/usage for the Console's WsBar chip.
 func HandleUsage(w http.ResponseWriter, r *http.Request) {
 	refresh := r.URL.Query().Get("refresh") == "1"
+	// authed reflects "a subscription token is present" — a cheap, current file check,
+	// independent of the (cached, network) usage read. The Console keeps the chip visible
+	// whenever authed even if the live numbers are momentarily unavailable, so a transient
+	// failure never hides it; only a truly signed-out agent has no chip.
+	authed := oauthToken() != ""
 
 	usageMu.Lock()
 	have := !usageAt.IsZero()
@@ -74,7 +79,7 @@ func HandleUsage(w http.ResponseWriter, r *http.Request) {
 	if !fetch {
 		v, at := usageVal, usageAt
 		usageMu.Unlock()
-		writeUsage(w, v, at)
+		writeUsage(w, v, at, authed)
 		return
 	}
 	usageMu.Unlock()
@@ -89,13 +94,14 @@ func HandleUsage(w http.ResponseWriter, r *http.Request) {
 	}
 	rv, rat := usageVal, usageAt
 	usageMu.Unlock()
-	writeUsage(w, rv, rat)
+	writeUsage(w, rv, rat, authed)
 }
 
 // writeUsage emits the usage plus its age in seconds (so the Console can show
-// "N分前" and offer a manual refresh).
-func writeUsage(w http.ResponseWriter, v usage, at time.Time) {
-	out := map[string]any{"ok": v.OK, "fiveHour": v.FiveHour, "sevenDay": v.SevenDay}
+// "N分前" and offer a manual refresh) and whether the agent is signed in (so the
+// Console keeps a degraded chip visible when the live numbers are unavailable).
+func writeUsage(w http.ResponseWriter, v usage, at time.Time, authed bool) {
+	out := map[string]any{"ok": v.OK, "authed": authed, "fiveHour": v.FiveHour, "sevenDay": v.SevenDay}
 	if !at.IsZero() {
 		out["ageSec"] = int(time.Since(at).Seconds())
 	}
