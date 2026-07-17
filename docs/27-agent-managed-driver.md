@@ -286,8 +286,16 @@ bearer token を再検討。opencode serve のローカル API 認証有無は �
 
 現行の 3 種 one-shot（`codex exec --json` / `claude -p` / `opencode run`、別ホーム隔離）を**維持**。
 共有 daemon の thread へ統合すると隔離 CODEX_HOME（`chat_providers.go:360` `chatCodexHome`——ユーザ MCP を
-毎ターン起動させない・`~/.codex/sessions` を汚さない）が壊れるため、**thread 単位 config で隔離相当を
-再現できると確認できるまで見送り**。将来の受け皿は Capabilities の `EphemeralThread` として予約。
+毎ターン起動させない・`~/.codex/sessions` を汚さない）が壊れるため、**グローバル MCP を遮断した thread
+単位 config で隔離相当を再現できると確認できるまで見送り**。将来の受け皿は Capabilities の
+`EphemeralThread` として予約。
+
+確認済み（Codex 0.144.5）: `thread/start` / `thread/resume` は任意 `config` を受け、`config.mcp_servers`
+で MCP を thread ごとに追加できる。`mcpServerStatus/list {threadId}` を使う credential-free drift test
+（`TestDriftCodexThreadMCPConfigIsScoped`）では、異なる MCP を持つ 2 本の ephemeral thread 間で MCP が
+混入しないことを実 app-server で確認した。未確認かつチャット managed 化の残ゲートは、共有 app-server が
+読み込むグローバル MCP を空の thread 設定で**完全に置換・遮断**できるかである。追加だけでは
+`none` / `af_read` / `af_write` の権限境界にならない。
 
 ### 9.4 config
 
