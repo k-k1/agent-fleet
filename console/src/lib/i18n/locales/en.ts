@@ -86,6 +86,8 @@ export const en: Record<keyof typeof ja, string> = {
   "notif.plan_approval.speech": "{name} is asking you to approve a plan.",
   "notif.permission_request.title": "Permission needed",
   "notif.permission_request.speech": "{name} is asking for permission.",
+  "notif.session_report.title": "A session reported back",
+  "notif.session_report.speech": "{name} reported back to the assistant.",
   "notif.usage_reset.title": "{source} limit has reset",
   "notif.usage_reset.body": "The {window} has reset.",
   "notif.usage_reset.speech": "{source}'s {window} has reset.",
@@ -565,6 +567,9 @@ export const en: Record<keyof typeof ja, string> = {
   "agents.assistant_agent": "Assistant agent",
   "agents.note_assistant_agent":
     "The CLI that powers the assistant chat and title suggestions. “Auto” picks a connected one in the order Claude → Codex → opencode. A fixed CLI falls back to auto when it isn't connected. Takes effect from a new conversation with the built-in assistant (custom assistants prefer their own agent setting).",
+  "agents.assistant_auto_turn": "Auto-respond to session reports",
+  "agents.note_assistant_auto_turn":
+    "When a session launched or steered by the Fleet Operator (or another assistant with AF write access) reports back, the assistant runs one turn automatically to process it. As a runaway guard, at most 10 unattended turns run per conversation (reset whenever you send a message).",
   "agents.ws_required_title": "Settings run inside the workspace",
   "agents.ws_required_hint": "Connections and agent settings go through the agent / CLI inside the container, so the workspace has to be running.",
   "agents.note_apply": "Connection changes are immediate; behavior settings take effect from each agent's new sessions.",
@@ -1047,6 +1052,7 @@ export const en: Record<keyof typeof ja, string> = {
   "chat.empty_hint":
     "Send a message to start the conversation. You can ask it to translate or summarize a Markdown document, answer questions, and more.",
   "chat.you": "You",
+  "chat.report_role": "Session report",
   "chat.working": "Working…",
   "chat.thinking": "Thinking…",
   "chat.remove": "Remove",

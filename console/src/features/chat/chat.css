@@ -83,6 +83,27 @@
 .chat-msg.role-user .chat-body {
   background: color-mix(in srgb, var(--chat-accent, var(--accent)) 12%, var(--panel));
 }
+/* セッション報告カード（docs/30）: 送信者はユーザーでもアシスタントでもなく「セッション」。
+   破線ボーダー＋左アクセントで由来の違いを示す。 */
+.chat-msg.role-report .chat-role {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.chat-report-session {
+  font-weight: 400;
+  font-family: var(--mono, monospace);
+  font-size: 10px;
+  padding: 0 5px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted);
+}
+.chat-msg.role-report .chat-body {
+  border-style: dashed;
+  border-left: 3px solid var(--chat-accent, var(--accent));
+  background: color-mix(in srgb, var(--chat-accent, var(--accent)) 5%, var(--panel));
+}
 /* 作業過程はミラービューの .mt-work / .mt-tool をそのまま使う。チャットの
    flex レイアウト内で横幅だけ補い、両画面の表示密度と開閉操作を揃える。 */
 .chat-steps {
