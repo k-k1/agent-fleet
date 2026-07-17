@@ -383,7 +383,7 @@ function UsageChip({ src, tenant }: { src: UsageSource; tenant: string | null })
         <div className="ws-usage-pop">
           <div className="wu-title">{tr("wsbar.usage.pop_title", { name: src.name })}</div>
           {unavailable ? (
-            <div className="wu-note muted">{tr("wsbar.usage.unavailable_note")}</div>
+            <div className="wu-note muted">{tr("wsbar.usage.unavailable_note", { name: src.name })}</div>
           ) : (
             <>
               {uh && <UsageRow label={fiveLabel} w={uh} />}
