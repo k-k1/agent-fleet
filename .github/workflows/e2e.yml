@@ -2,12 +2,12 @@
 # Dockerfile ARG ピン等）→ L2（e2e/: CP をヘッドレス起動して workspace/session 疎通）→
 # L3（console-e2e/: Playwright でブラウザ→CP→コンテナの縦串）を検証する。イメージ build が
 # 重いので ci.yml から分離し、関係パスの変更時 + 週次 cron（コード無変更でも上流 CLI の
-# 破壊を検出）+ 手動のみ実行する。
+# 破壊を検出）+ 手動のみ実行する。L4（実クレデンシャルの claude 疎通）は枠を消費するため
+# workflow_dispatch の live 入力を立てた時だけ走る。
 #
-# 課金を伴うジョブは workflow_dispatch の入力を立てた時だけ走り、**エージェント毎に入力が
-# 別**（枠の消費先が違うので、片方だけ回せる必要がある）:
-#   - live_claude → live-smoke（L4・実 API キー / OAuth トークンで claude 疎通）
-#   - live_codex  → codex-live-drift（Tier2・ChatGPT サブスク枠で実ターン）
+# エージェント CLI の contract / ドリフト検知はここには置かない（別ファイル・イメージ
+# build 不要）: claude-tui-contract.yml / codex-contract.yml / opencode-contract.yml。
+# 版ズレそのものの監視は cli-drift.yml。構成の全体像は docs/dev/10-development.md。
 # 注: rtk は git-ignored のホスト vendor 品なので CI は「rtk なし」パスの検証になる。
 name: e2e
 
@@ -34,14 +34,12 @@ on:
     - cron: "0 21 * * 0" # 毎週月曜 6:00 JST — 上流 CLI / base image の破壊検出
   workflow_dispatch:
     inputs:
-      # 課金を伴うジョブは**エージェント毎に**入力を分ける。1 つの live 入力を共有すると
-      # claude のサブスク枠と ChatGPT(codex) のサブスク枠が同時に減り、片方だけ回せない。
-      live_claude:
+      # 課金/枠消費を伴う入力は**そのワークフローが回すエージェント 1 種類だけ**を指す。
+      # 以前ここの live 入力を codex の Tier2 ジョブと共有しており、1 回の dispatch で
+      # Anthropic と ChatGPT の枠が同時に減った（片方だけ回せなかった）。codex は
+      # codex-contract.yml へ分離済み ＝ この入力は claude の live-smoke 専用。
+      live:
         description: "L4: claude 疎通スモーク（live-smoke）を実行する — Anthropic のサブスク枠 / API 課金を消費"
-        type: boolean
-        default: false
-      live_codex:
-        description: "Tier2: codex ドリフト検知（codex-live-drift）を実行する — ChatGPT(codex) のサブスク枠を消費（実測 ~45k tokens/回）"
         type: boolean
         default: false
 
@@ -131,98 +129,11 @@ jobs:
           path: console-e2e/test-results/
           if-no-files-found: ignore
 
-  codex-drift:
-    # codex CLI ドリフト検知（Tier 1）。実 codex バイナリ＋実 tmux ペインに当てて、
-    # hooks スキーマ・-c config キー・TUI フッタ仕様の破壊を検出する（workspace/agent の
-    # `-tags drift` テスト）。上の e2e ジョブと違いイメージ build が要らないので数十秒で終わる。
-    #
-    # 無料・無認証: 検証する経路（features list / config 検証 / UserPromptSubmit の発火 /
-    # フッタ描画）は全て API 呼び出しの前に完結する（実測）。実ターンを要する Stop hook・
-    # rollout イベント・turn/* 通知は Tier 2（要課金）で、ここには含めない。
-    #
-    # 版は Dockerfile の ARG ピンに合わせる（＝実際に焼き込まれる版を検証する）。
-    # 注: self-update opt-in の Workspace は @latest で動くため、この版と実フリートの
-    # 稼働版がずれることがある。latest も回すかは運用判断（未決）。
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: workspace/agent/go.mod
-          cache-dependency-path: workspace/agent/go.sum
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - name: install pinned codex + tmux
-        run: |
-          PIN=$(sed -n 's/^ARG CODEX_VERSION=//p' workspace/Dockerfile | head -1)
-          [ -n "$PIN" ] || { echo "::error::ARG CODEX_VERSION が workspace/Dockerfile に無い"; exit 1; }
-          echo "pinned codex: $PIN"
-          npm install -g "@openai/codex@$PIN"
-          codex --version
-          sudo apt-get update && sudo apt-get install -y tmux
-      - name: codex drift (Tier 1)
-        working-directory: workspace/agent
-        env:
-          # 未インストールを skip でなく失敗にする（silent skip は false green）。
-          E2E_REQUIRE: "1"
-        run: go test -tags drift -run TestDrift -v -timeout 10m ./...
-
-  codex-live-drift:
-    # codex CLI ドリフト検知（Tier 2 / **実ターンを消費する**）。上の codex-drift（Tier 1・
-    # 無料）では観測できない4点だけを実ターンで見る: Stop hook→idle / rollout の
-    # task_started・task_complete / request_user_input の function_call / managed の
-    # turn/started・turn/completed。
-    #
-    # live-smoke と同型で **workflow_dispatch の live_codex 入力を立てた時だけ**走る（cron 無し）。
-    # live_claude とは独立 ＝ claude 側の枠を消費せずに codex だけ回せる。
-    # 実測コスト: 1実行あたり概ね 45k tokens 前後（内訳はジョブログの `MEASURED COST` 行）。
-    # auth_mode="chatgpt" ならサブスク枠の消費（API 課金ではない）。
-    #
-    # 認証: secrets.E2E_CODEX_AUTH_JSON = `codex login` 後の ~/.codex/auth.json の中身。
-    # chatgpt トークンは refresh_token 前提で in-place 更新されるため、**CI に置いたコピーは
-    # いずれ失効する**（ローテートされた新トークンを CI 側は保持できない）。失効時に
-    # 「謎の 401」で終わらないよう、テスト側がターン前の `codex login status` と
-    # ターン中の 401 文面を分類し、再 login → secret 更新まで書いたメッセージで落とす。
-    if: github.event_name == 'workflow_dispatch' && inputs.live_codex
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: workspace/agent/go.mod
-          cache-dependency-path: workspace/agent/go.sum
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - name: guard secret
-        env:
-          AUTH: ${{ secrets.E2E_CODEX_AUTH_JSON }}
-        run: |
-          if [ -z "$AUTH" ]; then
-            # 注: バッククォートは書かない（"..." 内ではコマンド置換として実行されてしまう）
-            echo '::error::secrets.E2E_CODEX_AUTH_JSON を登録してください（codex login 後の ~/.codex/auth.json の中身をそのまま貼る）'
-            exit 1
-          fi
-      - name: install pinned codex + tmux
-        run: |
-          PIN=$(sed -n 's/^ARG CODEX_VERSION=//p' workspace/Dockerfile | head -1)
-          [ -n "$PIN" ] || { echo "::error::ARG CODEX_VERSION が workspace/Dockerfile に無い"; exit 1; }
-          npm install -g "@openai/codex@$PIN"
-          codex --version
-          sudo apt-get update && sudo apt-get install -y tmux
-      - name: codex live drift (Tier 2)
-        working-directory: workspace/agent
-        env:
-          E2E_CODEX_AUTH_JSON: ${{ secrets.E2E_CODEX_AUTH_JSON }}
-        run: go test -tags driftlive -run TestLiveDrift -v -timeout 20m ./...
-
   live-smoke:
     # L4: 実 API キーで claude -p の疎通を見る。手動 + 明示 opt-in のみ（課金あり）。
-    # codex 側（codex-live-drift）とは入力が別 ＝ 片方だけ回せる。
-    if: github.event_name == 'workflow_dispatch' && inputs.live_claude
+    # 注: これは headless の `claude -p` ＝ TUI もフッタも描画されない。状態検出の契約は
+    # ここでは見えないので claude-tui-contract.yml が別途見る。
+    if: github.event_name == 'workflow_dispatch' && inputs.live
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:

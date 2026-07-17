@@ -1,0 +1,109 @@
+# codex CLI contract（ドリフト検知）。実 codex バイナリ＋実 tmux ペインに当てて、
+# hooks スキーマ・-c config キー・TUI フッタ仕様・rollout イベントの破壊を検出する。
+#
+# なぜ e2e.yml から独立しているか: e2e.yml はイメージ build → L1/L2/L3 の縦串が本題で、
+# トリガのパス条件も workspace/** control-plane/** console/** と広い。パス条件は
+# **ワークフロー単位**なので、ここに同居すると console の変更でも codex の contract が
+# 走る（逆にこちらの都合で e2e.yml のパス条件を広げると全ジョブが釣られる）。加えて
+# workflow_dispatch の入力もワークフロー単位で、実際 codex の Tier2 と claude の
+# live-smoke が 1 つの `live` 入力を共有していて片方だけ回せない不具合を起こしていた
+# （ed0bcd7 で分離）。エージェント毎に別ファイルなら、この結合が構造的に起きない。
+# 同型: opencode-contract.yml / claude-tui-contract.yml。版ズレの監視は cli-drift.yml。
+name: codex-contract
+
+on:
+  push:
+    paths:
+      - "workspace/agent/internal/agents/codex/**"
+      - "workspace/agent/session_io.go" # paneMode の codex 分岐
+      - "workspace/agent/codex_pane_drift_test.go"
+      - "workspace/Dockerfile" # CODEX_VERSION ピン
+      - ".github/workflows/codex-contract.yml"
+      - ".github/actions/setup-agent-cli/action.yml"
+  pull_request:
+    paths:
+      - "workspace/agent/internal/agents/codex/**"
+      - "workspace/agent/session_io.go"
+      - "workspace/agent/codex_pane_drift_test.go"
+      - "workspace/Dockerfile"
+      - ".github/workflows/codex-contract.yml"
+      - ".github/actions/setup-agent-cli/action.yml"
+  schedule:
+    - cron: "0 21 * * 0" # 毎週月曜 6:00 JST — コード無変更でも上流 codex の破壊を検出
+  workflow_dispatch:
+    inputs:
+      live:
+        description: "Tier2: 実ターンを消費するドリフト検知も走らせる — ChatGPT(codex) のサブスク枠を消費（実測 ~45k tokens/回）"
+        type: boolean
+        default: false
+
+concurrency:
+  group: codex-contract-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  drift:
+    # Tier 1。実 codex バイナリ＋実 tmux ペインに当てて、hooks スキーマ・-c config キー・
+    # TUI フッタ仕様の破壊を検出する（workspace/agent の `-tags drift` テスト）。
+    # イメージ build が要らないので数十秒で終わる。
+    #
+    # 無料・無認証: 検証する経路（features list / config 検証 / UserPromptSubmit の発火 /
+    # フッタ描画）は全て API 呼び出しの前に完結する（実測）。実ターンを要する Stop hook・
+    # rollout イベント・turn/* 通知は下の live-drift（要課金）で見る。
+    #
+    # 版は Dockerfile の ARG ピンに合わせる（＝実際に焼き込まれる版を検証する）。
+    # 注: self-update opt-in の Workspace は @latest で動くため、この版と実フリートの
+    # 稼働版がずれることがある。ズレ自体の監視は cli-drift.yml（毎日・issue 通知）。
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-agent-cli
+        with:
+          agent: codex
+          version: pinned
+      - name: codex drift (Tier 1)
+        working-directory: workspace/agent
+        env:
+          # 未インストールを skip でなく失敗にする（silent skip は false green）。
+          E2E_REQUIRE: "1"
+        run: go test -tags drift -run TestDrift -v -timeout 10m ./...
+
+  live-drift:
+    # Tier 2 / **実ターンを消費する**。Tier 1（無料）では観測できない4点だけを実ターンで
+    # 見る: Stop hook→idle / rollout の task_started・task_complete / request_user_input の
+    # function_call / managed の turn/started・turn/completed。
+    #
+    # **workflow_dispatch の live 入力を立てた時だけ**走る（cron 無し）。claude 側の
+    # live-smoke（e2e.yml）とは入力もワークフローも別 ＝ 枠の消費先が混ざらない。
+    # 実測コスト: 1実行あたり概ね 45k tokens 前後（内訳はジョブログの `MEASURED COST` 行）。
+    # auth_mode="chatgpt" ならサブスク枠の消費（API 課金ではない）。
+    #
+    # 認証: secrets.E2E_CODEX_AUTH_JSON = `codex login` 後の ~/.codex/auth.json の中身。
+    # chatgpt トークンは refresh_token 前提で in-place 更新されるため、**CI に置いたコピーは
+    # いずれ失効する**（ローテートされた新トークンを CI 側は保持できない）。失効時に
+    # 「謎の 401」で終わらないよう、テスト側がターン前の `codex login status` と
+    # ターン中の 401 文面を分類し、再 login → secret 更新まで書いたメッセージで落とす。
+    if: github.event_name == 'workflow_dispatch' && inputs.live
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: guard secret
+        env:
+          AUTH: ${{ secrets.E2E_CODEX_AUTH_JSON }}
+        run: |
+          if [ -z "$AUTH" ]; then
+            # 注: バッククォートは書かない（"..." 内ではコマンド置換として実行されてしまう）
+            echo '::error::secrets.E2E_CODEX_AUTH_JSON を登録してください（codex login 後の ~/.codex/auth.json の中身をそのまま貼る）'
+            exit 1
+          fi
+      - uses: ./.github/actions/setup-agent-cli
+        with:
+          agent: codex
+          version: pinned
+      - name: codex live drift (Tier 2)
+        working-directory: workspace/agent
+        env:
+          E2E_CODEX_AUTH_JSON: ${{ secrets.E2E_CODEX_AUTH_JSON }}
+        run: go test -tags driftlive -run TestLiveDrift -v -timeout 20m ./...
