@@ -7,10 +7,26 @@ package tmuxx
 
 import (
 	"os/exec"
+	"regexp"
 	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
+
+// spinnerRe matches claude's live working-spinner footer — the "<glyph> Word… (<elapsed>
+// · <n> tokens · …)" line that ticks while a turn is in flight. Newer claude builds no
+// longer keep "esc to interrupt" pinned in that line (they rotate it out for a random
+// Tip) and leave the mode-cycle footer ("shift+tab to cycle") visible even mid-turn, so
+// neither of those alone tells busy from idle. The elapsed-timer + token counter, though,
+// shows only while working and never at the ready prompt — e.g. "(17m 38s · ↓ 57.1k
+// tokens · thought for 2s)" or "(12s · ↑ 3.4k tokens)". Best-effort; one captured frame.
+var spinnerRe = regexp.MustCompile(`\([0-9]+(?:h|m|s)[^\n]*· [^\n]*tokens`)
+
+// spinnerActive reports whether the captured pane text shows a turn actively running —
+// either the classic "esc to interrupt" affordance or the elapsed/token spinner header.
+func spinnerActive(s string) bool {
+	return strings.Contains(s, "esc to interrupt") || spinnerRe.MatchString(s)
+}
 
 func HasSession(tn string) bool {
 	return exec.Command("tmux", "has-session", "-t", session.ExactTarget(tn)).Run() == nil
@@ -118,8 +134,14 @@ func AtIdlePrompt(name string) bool {
 		return false
 	}
 	s := string(out)
+	// A live turn's spinner (esc-to-interrupt OR the elapsed/token header) means NOT idle
+	// — checked first because newer claude keeps "shift+tab to cycle" in the footer even
+	// mid-turn, so the mode-cycle marker below no longer implies the ready prompt on its own.
+	if spinnerActive(s) {
+		return false
+	}
 	for _, busy := range []string{
-		"esc to interrupt", "Enter to select", "Esc to cancel", "to approve",
+		"Enter to select", "Esc to cancel", "to approve",
 		"Do you want to", "Would you like to proceed", "Ready to submit",
 	} {
 		if strings.Contains(s, busy) {
@@ -129,9 +151,10 @@ func AtIdlePrompt(name string) bool {
 	return strings.Contains(s, "shift+tab to cycle") || strings.Contains(s, "? for shortcuts")
 }
 
-// IsBusy reports whether a claude pane is actively running a turn — its footer shows
-// the "esc to interrupt" affordance, which appears only while a turn is in flight (a
-// thinking spinner or a running tool) and never at the ready prompt. It's the positive
+// IsBusy reports whether a claude pane is actively running a turn — its footer shows the
+// live spinner (the "esc to interrupt" affordance OR the elapsed-time/token header, see
+// spinnerActive), which appears only while a turn is in flight (a thinking spinner or a
+// running tool) and never at the ready prompt. It's the positive
 // inverse of AtIdlePrompt, used to *reverse*-heal a status cache that reads idle while
 // the pane is plainly working: the "working" status file can go missing (never written,
 // or removed by the working→idle self-heal during a transient prompt frame) and then no
@@ -147,5 +170,5 @@ func IsBusy(name string) bool {
 	if err != nil {
 		return false
 	}
-	return strings.Contains(string(out), "esc to interrupt")
+	return spinnerActive(string(out))
 }
