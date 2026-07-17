@@ -66,6 +66,16 @@ export function WhichKey() {
         {groups.length > 0 && <Grid items={groups} />}
         {split && <div className="wk-section">{tr("ui.wk_actions")}</div>}
         {actions.length > 0 && <Grid items={actions} />}
+        <div className="wk-foot">
+          {path.length > 0 && (
+            <span className="wk-nav">
+              <Kbd chord="backspace" /> {tr("ui.wk_back")}
+            </span>
+          )}
+          <span className="wk-nav">
+            <Kbd chord="escape" /> {tr("ui.wk_cancel")}
+          </span>
+        </div>
       </div>
     </div>
   );

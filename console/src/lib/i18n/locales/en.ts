@@ -1963,6 +1963,8 @@ export const en: Record<keyof typeof ja, string> = {
   "ui.next_key": "Next key",
   "ui.wk_groups": "Submenus",
   "ui.wk_actions": "Actions",
+  "ui.wk_back": "back",
+  "ui.wk_cancel": "cancel",
   "ui.new_version_available": "A new version is available",
   "ui.update": "Update",
   "ui.recreate_failed": "Recreate failed",

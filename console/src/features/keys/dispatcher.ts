@@ -102,17 +102,25 @@ export function wireKeys(): () => void {
     useKeysStore.getState().setLeader(null);
     restoreFocus();
   };
-  const enterLeader = (path: string[]) => {
+  // `immediate` reveals the overlay without the WHICHKEY_DELAY — used when stepping BACK
+  // (Backspace) while the overlay is already open, so the shorter path repaints in place
+  // with no flash-off/flash-on. Fresh entries (leader just pressed) keep the delay so a
+  // fast two-key sequence never flashes the hint.
+  const enterLeader = (path: string[], immediate = false) => {
     clearTimers();
     useKeysStore.getState().setLeader(path);
-    // Delay the overlay so a fast two-key sequence (e.g. leader p r) doesn't flash it.
-    whichKeyTimer = window.setTimeout(() => {
+    const reveal = () => {
       useKeysStore.getState().setWhichKey(true);
       // The overlay is now on screen and the user is scanning it — swap the short stray-press
       // guard for the longer reading window so the hint doesn't vanish mid-search.
-      if (leaderTimer != null) window.clearTimeout(leaderTimer);
       leaderTimer = window.setTimeout(cancelLeader, LEADER_TIMEOUT_OPEN);
-    }, WHICHKEY_DELAY);
+    };
+    if (immediate) {
+      reveal();
+      return;
+    }
+    // Delay the overlay so a fast two-key sequence (e.g. leader p r) doesn't flash it.
+    whichKeyTimer = window.setTimeout(reveal, WHICHKEY_DELAY);
     leaderTimer = window.setTimeout(cancelLeader, LEADER_TIMEOUT);
   };
   const consume = (e: KeyboardEvent) => {
@@ -172,6 +180,18 @@ export function wireKeys(): () => void {
       if (chord === "escape" || chord === LEADER) {
         consume(e);
         cancelLeader();
+        return;
+      }
+      // Backspace steps ONE level back up the sequence (which-key convention), vs. Escape's
+      // full cancel. From a submenu (e.g. "p") it returns to the ROOT menu (path []), which is
+      // itself a valid open state showing the top-level groups — so it stays open. Only a
+      // Backspace at that already-empty root has nowhere to go and backs out entirely. Re-enter
+      // with an immediate reveal when the overlay is already up so the breadcrumb repaints
+      // without a flash-off/flash-on.
+      if (chord === "backspace") {
+        consume(e);
+        if (ks.leaderPath.length === 0) cancelLeader();
+        else enterLeader(ks.leaderPath.slice(0, -1), ks.whichKeyOpen);
         return;
       }
       const ctx = buildContext();
