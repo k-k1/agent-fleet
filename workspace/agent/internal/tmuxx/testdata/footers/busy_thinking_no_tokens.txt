@@ -1,0 +1,23 @@
+
+  Little has changed since. Alacritty and kitty push glyphs through GPUs;
+  Windows Terminal draws on a compositor. Yet all of them still speak escape
+  sequences designed for a discontinued Massachusetts machine, and still
+  introduce themselves as xterm-256color. We compute inside a careful
+  reenactment of 1978.
+
+  ---
+  That's ~200 words. Happy to adjust the depth, era focus, or tone if you want a
+  different cut.
+
+✻ Sautéed for 20s
+
+❯ Write a 200-word essay about the history of the terminal emulator.
+
+✢ Tempering… (6s · thinking with high effort)
+  ⎿  Tip: Share Claude Code and earn $10 in usage credits · /passes
+
+────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────
+                                                                            /rc
+  ⏸ plan mode on (shift+tab to cycle) · ← for agents

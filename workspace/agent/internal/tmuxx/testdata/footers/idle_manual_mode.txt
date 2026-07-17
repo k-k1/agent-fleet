@@ -1,0 +1,23 @@
+│                        ▘▘ ▝▝                       │ `/fork` now copies you… │
+│   Opus 4.8 (1M context) with hi… · Claude Max ·    │ Added `claude auto-mod… │
+│   dev@example.com's Organization                   │ Added a session-wide l… │
+│                /…/scratchpad/probe                 │ /release-notes for more │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+ ⚠ 3 MCP servers need authentication · run /mcp
+
+❯ Run the bash command: echo hello-perm
+
+● I'll run that command.
+
+  Ran 1 shell command
+
+● The command ran and printed hello-perm.
+
+✻ Churned for 4s
+
+────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────
+                                                                            /rc
+  ⏸ manual mode on · ← for agents

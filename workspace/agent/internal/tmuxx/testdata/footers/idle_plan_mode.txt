@@ -1,0 +1,23 @@
+
+✻ Sautéed for 20s
+
+❯ Write a 200-word essay about the history of the terminal emulator.
+
+● That's the same request I just answered — the essay is in my previous message,
+  right above this one.
+
+  Before I write another: did that response not come through on your end, or are
+  you after a different take on the topic? If it's the latter, tell me the
+  angle and I'll write a fresh one — options that come to mind are a
+  hardware-centric version (Teletype through DEC's product line), one focused on
+  the escape-sequence standards fight, or one about why the emulation layer
+  never went away. If it's just a display issue, say so and I'll repost it
+  verbatim.
+
+✻ Sautéed for 14s
+
+────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────
+                                                                            /rc
+  ⏸ plan mode on (shift+tab to cycle) · ← for agents
