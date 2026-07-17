@@ -96,9 +96,9 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
   const openAdmin = useSettingsUI((st) => st.openAdmin);
   const openGuide = useSettingsUI((st) => st.openGuide);
   const openUserGuide = () =>
-    useLayoutStore.getState().openTarget({
+    useLayoutStore.getState().openTargetInNew({
       content: { kind: "file", filePath: "/usr/local/share/agent-fleet/docs/guide/member/README.md" },
-    });
+    }, true);
   const run = (fn: () => void) => {
     setMenuOpen(false);
     fn();
