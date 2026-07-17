@@ -1,10 +1,16 @@
 package main
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 )
 
 // withTempHome points HOME at a temp dir so the fstore/conversation stores write
@@ -127,6 +133,69 @@ func TestMCPConvArgParsing(t *testing.T) {
 	runMCPStdio([]string{"--write", "--conv", "abc-123"})
 	if !mcpWriteEnabled || mcpConvID != "abc-123" {
 		t.Fatalf("write=%v conv=%q", mcpWriteEnabled, mcpConvID)
+	}
+}
+
+// End-to-end over real HTTP: the claude Stop hook entrypoint → recordSessionNotification
+// → kickSessionReport → POST /chat/report → deliverSessionReport → the 【セッション報告】
+// card in the operator's conversation. Driven in the incident's exact shape — the pane
+// heal wiped the "working" marker before Stop fired — which used to end in silence.
+func TestSessionReportDeliveredAfterHealWipedMarker(t *testing.T) {
+	home := withTempHome(t)
+	// The report's auto turn would call a real provider; the delivery under test is the
+	// report card itself, so pin the toggle off (設定 > エージェント「報告への自動応答」).
+	if err := os.MkdirAll(filepath.Join(home, ".config", "agent-fleet"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".config", "agent-fleet", "ui-prefs.json"),
+		[]byte(`{"assistantAutoTurn":false}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /chat/report", handleChatReport)
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	t.Setenv("AGENT_ADDR", strings.TrimPrefix(srv.URL, "http://"))
+
+	conv := &chatConversation{ID: randUUID(), Agent: "claude", Messages: []chatMessage{}}
+	if err := saveConv(conv); err != nil {
+		t.Fatal(err)
+	}
+	m := session.Meta{Name: "slot42", Dir: t.TempDir(), Kind: session.KindClaude, Title: "検証タスク"}
+	session.WriteMeta(m)
+	sid := session.UUID(m.Dir, m.Name)
+
+	armSessionReport(m.Name, conv.ID) // create_session / send_to_session with report_to
+
+	status.Persist(sid, "working") // the operator's instruction starts a turn
+	status.Remove(sid)             // …the pane heal wipes the marker mid-turn
+	runSessionStatusHook([]string{"idle", sid})
+
+	// deliverSessionReport finishes in a goroutine off the handler.
+	var got *chatMessage
+	for i := 0; i < 100 && got == nil; i++ {
+		c, err := loadConv(conv.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for j := range c.Messages {
+			if c.Messages[j].Role == "report" {
+				got = &c.Messages[j]
+			}
+		}
+		if got == nil {
+			time.Sleep(20 * time.Millisecond)
+		}
+	}
+	if got == nil {
+		t.Fatal("no session report reached the operator conversation")
+	}
+	if got.Session != m.Name || !strings.Contains(got.Content, "検証タスク") || !strings.Contains(got.Content, "入力待ち") {
+		t.Fatalf("report card = %+v", got)
+	}
+	if reportArmed(m.Name) {
+		t.Fatal("arm must be consumed by the delivered report (指示1件=報告1回)")
 	}
 }
 
