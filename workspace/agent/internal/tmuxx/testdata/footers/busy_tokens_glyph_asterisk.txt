@@ -1,0 +1,23 @@
+│                        ▘▘ ▝▝                       │ `/fork` now copies you… │
+│   Opus 4.8 (1M context) with hi… · Claude Max ·    │ Added `claude auto-mod… │
+│   dev@example.com's Organization                   │ Added a session-wide l… │
+│                /…/scratchpad/probe                 │ /release-notes for more │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+ ⚠ 3 MCP servers need authentication · run /mcp
+
+❯ Run the bash command: sleep 6 && echo probe-done. Then reply with just the
+  word FINISHED.
+
+● I'll run that command now.
+
+  Running 1 shell command…
+  ⎿  $ sleep 6 && echo probe-done
+
+* Wibbling… (14s · ↓ 101 tokens)
+
+────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────
+                                                                            /rc
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents

@@ -1,0 +1,23 @@
+
+● I'll run that command now.
+
+  Ran 1 shell command
+
+● FINISHED
+
+✻ Churned for 25s
+
+❯ Use the Bash tool with run_in_background set to true to run: sleep 400. Then
+  reply with just OK.
+
+  Ran 1 shell command
+
+● OK
+
+✻ Sautéed for 5s · 1 shell still running
+
+────────────────────────────────────────────────────────────────────────────────
+❯ check if it's still running
+────────────────────────────────────────────────────────────────────────────────
+                                                                            /rc
+  ⏵⏵ bypass permissions on · 1 shell · ← for agents
