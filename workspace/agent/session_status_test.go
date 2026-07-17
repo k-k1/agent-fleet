@@ -41,6 +41,47 @@ func TestWorkingToIdleQueuesDurableNotification(t *testing.T) {
 	}
 }
 
+// The pane-based idle heal (claude WireLive) calls status.Remove(sid) when the TUI looks
+// like it's back at the ready prompt — which a footer-string drift makes fire MID-turn.
+// That wipe deletes the "working" marker, so the Stop hook legitimately ending the turn
+// later reads previous=="" instead of "working". Keying answer-ready on previous=="working"
+// alone then dropped the terminal transition on the floor: no 応答あり notification and no
+// operator session report (docs/30) — the instruction's completion never reached the
+// operator, while the session still read idle (LiveState defaults to idle with no file).
+func TestIdleReportsAfterHealWipedWorkingMarker(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	m := session.Meta{Name: "s1", Dir: t.TempDir(), Kind: session.KindClaude, Title: "Project"}
+	session.WriteMeta(m)
+	sid := session.UUID(m.Dir, m.Name)
+
+	status.Persist(sid, "working")
+	status.Remove(sid) // the WireLive heal wipes the marker mid-turn
+
+	runSessionStatusHook([]string{"idle", sid})
+
+	events := notice.List()
+	if len(events) != 1 || events[0].Kind != "answer-ready" {
+		t.Fatalf("completion lost after the heal wiped the working marker: events=%+v", events)
+	}
+}
+
+// Guard the widened rule: an idle→idle repeat (a Stop with no turn in between, or the
+// boot reset that already persisted idle) is NOT a completion and must stay silent, or
+// every poll would re-report.
+func TestIdleFromIdleDoesNotReport(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	m := session.Meta{Name: "s1", Dir: t.TempDir(), Kind: session.KindClaude, Title: "Project"}
+	session.WriteMeta(m)
+	sid := session.UUID(m.Dir, m.Name)
+
+	status.Persist(sid, "idle")
+	runSessionStatusHook([]string{"idle", sid})
+
+	if events := notice.List(); len(events) != 0 {
+		t.Fatalf("idle→idle must not report: events=%+v", events)
+	}
+}
+
 // A permission prompt for AskUserQuestion fires between that tool's PreToolUse and
 // PostToolUse. It must NOT destroy the captured question — otherwise the Console loses
 // the options and shows only the bare permission block.
