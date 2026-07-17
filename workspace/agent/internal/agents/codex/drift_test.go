@@ -239,10 +239,22 @@ func TestDriftCodexThreadMCPConfigIsScoped(t *testing.T) {
 	}
 }
 
+// TestDriftCodexThreadMCPConfigCannotClearGlobalServers captures the remaining
+// docs/27 §9.3 gate. A thread-local empty mcp_servers map is not an allowlist:
+// app-server still exposes a server inherited from the daemon configuration.
+// Do not invert this assertion until the managed chat implementation has a
+// replacement/deny mechanism and updates the security contract with it.
+func TestDriftCodexThreadMCPConfigCannotClearGlobalServers(t *testing.T) {
+	const globalServer = "af_drift_global"
+	cl := startDriftAppServer(t, "-c", "mcp_servers."+globalServer+`.command="/bin/true"`)
+	threadID := startDriftThread(t, cl, map[string]any{"mcp_servers": map[string]any{}})
+	waitDriftMCPServer(t, cl, threadID, globalServer)
+}
+
 // startDriftAppServer launches an isolated, credential-free app-server over a
 // Unix socket. newAppClient performs the real initialize handshake, so this
 // exercises the production JSON-RPC wire rather than a schema fixture.
-func startDriftAppServer(t *testing.T) *appClient {
+func startDriftAppServer(t *testing.T, configArgs ...string) *appClient {
 	t.Helper()
 	// Codex intentionally refuses to create its helper aliases under /tmp. Use a
 	// short-lived directory beneath the real home instead; HOME is still fully
@@ -259,7 +271,9 @@ func startDriftAppServer(t *testing.T) *appClient {
 	socket := filepath.Join(t.TempDir(), "app-server.sock")
 	ctx, cancel := context.WithCancel(context.Background())
 	var output bytes.Buffer
-	cmd := exec.CommandContext(ctx, codexBin(t), "app-server", "--listen", "unix://"+socket)
+	args := append([]string{"app-server"}, configArgs...)
+	args = append(args, "--listen", "unix://"+socket)
+	cmd := exec.CommandContext(ctx, codexBin(t), args...)
 	cmd.Env = append(os.Environ(), "HOME="+home)
 	cmd.Stdout = &output
 	cmd.Stderr = &output
@@ -292,19 +306,24 @@ func startDriftAppServer(t *testing.T) *appClient {
 // placement without invoking a model or a real integration.
 func startDriftMCPThread(t *testing.T, cl *appClient, name string) string {
 	t.Helper()
-	res, err := cl.call("thread/start", map[string]any{
-		"cwd":       t.TempDir(),
-		"ephemeral": true,
-		"config": map[string]any{
-			"mcp_servers": map[string]any{name: map[string]any{"command": "/bin/true"}},
-		},
-	}, 10*time.Second)
+	return startDriftThread(t, cl, map[string]any{
+		"mcp_servers": map[string]any{name: map[string]any{"command": "/bin/true"}},
+	})
+}
+
+func startDriftThread(t *testing.T, cl *appClient, config map[string]any) string {
+	t.Helper()
+	params := map[string]any{"cwd": t.TempDir(), "ephemeral": true}
+	if config != nil {
+		params["config"] = config
+	}
+	res, err := cl.call("thread/start", params, 10*time.Second)
 	if err != nil {
-		t.Fatalf("thread/start with MCP %q: %v", name, err)
+		t.Fatalf("thread/start: %v", err)
 	}
 	st, err := parseThreadResult(res)
 	if err != nil || st.threadID == "" {
-		t.Fatalf("thread/start with MCP %q returned no thread id: %v", name, err)
+		t.Fatalf("thread/start returned no thread id: %v", err)
 	}
 	return st.threadID
 }
