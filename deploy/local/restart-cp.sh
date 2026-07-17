@@ -23,6 +23,9 @@ export WS_IMAGE="${WS_IMAGE:-agent-fleet/workspace:dev}"
 export WS_DATA="${WS_DATA:-$HOME/.local/share/agent-fleet}"
 export WS_MEMORY="${WS_MEMORY:-5g}"
 export WS_JVM_DIR="${WS_JVM_DIR:-$WS_DATA/shared/jvm}"
+# The host-run Control Plane needs an explicit source for the role-scoped docs
+# mount; the containerized CP instead gets this tree from its image.
+export AF_DOCS_DIR="${AF_DOCS_DIR:-$ROOT/docs}"
 CP_ADDR="${CP_ADDR:-127.0.0.1:8099}"
 PORT="${CP_ADDR##*:}"
 
@@ -53,7 +56,7 @@ for _ in $(seq 1 50); do ss -ltn 2>/dev/null | grep -q ":${PORT} " || break; sle
 echo "==> starting af-cp on $CP_ADDR (log: /tmp/af-cp.log)"
 cd "$ROOT/control-plane"
 setsid env CP_ADDR="$CP_ADDR" CONSOLE_DIR="$CONSOLE_DIR" \
-  WS_IMAGE="$WS_IMAGE" WS_DATA="$WS_DATA" WS_MEMORY="$WS_MEMORY" WS_JVM_DIR="$WS_JVM_DIR" \
+  WS_IMAGE="$WS_IMAGE" WS_DATA="$WS_DATA" WS_MEMORY="$WS_MEMORY" WS_JVM_DIR="$WS_JVM_DIR" AF_DOCS_DIR="$AF_DOCS_DIR" \
   /tmp/af-cp >>/tmp/af-cp.log 2>&1 < /dev/null &
 disown || true
 
