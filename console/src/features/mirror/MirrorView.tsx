@@ -1879,6 +1879,10 @@ export function MirrorView({
                   // がトーストで知らせる。
                   managed ? (answers) => void sendRespond(pending[0]?.id || "", answers) : undefined
                 }
+                // Cancel maps to the same stop primitive as the chat 停止 button: TUI sends
+                // Escape (dismisses the AUQ modal, doesn't mark a turn), managed calls
+                // Interrupt. Either way the pending question clears and the composer is free.
+                onCancel={() => void sendInterrupt()}
                 answerMode={sessionMeta?.kind === "claude" ? "claude" : "menu"}
                 multiPage={sessionMeta?.kind === "codex"}
               />
@@ -3208,6 +3212,9 @@ function PendingQuestions({
   // 質問ごとに 1 エントリ・順序どおり）。渡されたら全経路が semantic 応答になり、
   // 下の TUI キー駆動（モーダルの挙動に縛られたシーケンス組み立て）は一切通らない。
   onRespond?: (answers: InteractionAnswer[]) => void;
+  // onCancel: dismiss the pending question without answering (Escape / Interrupt) so the
+  // conversation can continue with a fresh prompt instead of an answer.
+  onCancel?: () => void;
   sending: boolean;
   // "claude": AskUserQuestion's tabbed modal (free-text single / Down-Enter-Right multi).
   // "menu": codex/opencode ask via a simple option menu — a single-select question is
@@ -3428,10 +3435,25 @@ function PendingQuestions({
           )}
         </div>
       ))}
-      {!menu && (
-        // For a single question the options click-to-send, so canSubmit is only true once
-        // free text is typed — the button then submits that via submit()'s free-text path.
-        <div className="mq-submit-row">
+      <div className="mq-submit-row mq-footer">
+        {onCancel && (
+          // Cancel the question without answering — dismiss the AUQ (Escape for TUI,
+          // Interrupt for managed) so the user can steer into a normal discussion instead
+          // of being forced to pick an option first. Always available, even for forms we
+          // can't drive from chat (the terminal-hint case).
+          <button
+            type="button"
+            className="ghost mq-cancel"
+            disabled={sending}
+            title={tr("mirror.question_cancel_title")}
+            onClick={onCancel}
+          >
+            <Icon name="close" /> {tr("mirror.question_cancel")}
+          </button>
+        )}
+        {!menu && (
+          // For a single question the options click-to-send, so canSubmit is only true once
+          // free text is typed — the button then submits that via submit()'s free-text path.
           <button
             type="button"
             className="btn primary mq-submit"
@@ -3440,12 +3462,10 @@ function PendingQuestions({
           >
             {tr("mirror.submit_answer")}
           </button>
-        </div>
-      )}
-      {menu && menuDrivable && !single && (
-        // A paged multi-question menu (codex): pick an option per question above, then
-        // submit all pages' key sequences at once.
-        <div className="mq-submit-row">
+        )}
+        {menu && menuDrivable && !single && (
+          // A paged multi-question menu (codex): pick an option per question above, then
+          // submit all pages' key sequences at once.
           <button
             type="button"
             className="btn primary mq-submit"
@@ -3454,15 +3474,13 @@ function PendingQuestions({
           >
             {tr("mirror.submit_answer")}
           </button>
-        </div>
-      )}
-      {menu && !menuDrivable && (
-        // A multi-select menu (or a multi-question one on a dialog whose paging keys
-        // aren't verified) we can't reliably drive from chat.
-        <div className="mq-submit-row muted mq-terminal-hint">
-          {tr("mirror.question_terminal")}
-        </div>
-      )}
+        )}
+        {menu && !menuDrivable && (
+          // A multi-select menu (or a multi-question one on a dialog whose paging keys
+          // aren't verified) we can't reliably drive from chat.
+          <span className="muted mq-terminal-hint">{tr("mirror.question_terminal")}</span>
+        )}
+      </div>
     </div>
   );
 }
@@ -3486,14 +3504,18 @@ function QuestionBlock({
   // whole raw string. Falls back to the raw text if the format ever changes.
   const pairs = [...norm.matchAll(/"[^"]*"\s*=\s*"([^"]*)"/g)].map((m) => m[1].trim());
   const answerAt = (qi: number) => (pairs.length ? pairs[qi] || "" : norm);
-  // Which options an answer picked: match each label present as a token, falling back to
-  // containment. The answer may list several labels ("AWS, セルフホスト").
+  // The answer value is a list of picked option labels and/or a free-text ("Type
+  // something") entry, joined by ", " (localized "、"). Split on that list separator
+  // ONLY and match labels by EXACT segment equality — never tokenize on whitespace/"/"
+  // (which would shred a label like "バッファ上限/メモリ保護"), and never fall back to
+  // substring containment: a free-text reply that merely CONTAINS an option label as a
+  // substring ("AWSは使わない" vs option "AWS") must not count as picking it, or the
+  // wrong option gets checked and the typed text vanishes from the card.
+  const segmentsOf = (a: string) => a.split(/\s*[,、，]\s*/).map((s) => s.trim()).filter(Boolean);
   const chosenFor = (a: string, opts: QuestionOption[]) => {
     if (!answered || !a) return new Set<QuestionOption>();
-    const tokens = a.split(/[,、\/\s]+/).map((s) => s.trim()).filter(Boolean);
-    let chosen = opts.filter((o) => tokens.includes(o.label));
-    if (!chosen.length) chosen = opts.filter((o) => a.includes(o.label));
-    return new Set(chosen);
+    const segs = segmentsOf(a);
+    return new Set(opts.filter((o) => segs.includes(o.label)));
   };
   return (
     <div className={"mt-question" + (answered ? " answered" : "")}>
@@ -3501,19 +3523,13 @@ function QuestionBlock({
         const opts = qn.options || [];
         const a = answerAt(qi);
         const chosenSet = chosenFor(a, opts);
-        // Any part of the answer that isn't a listed option is a custom "Type something"
-        // entry (multi-select can COMBINE checked options with a custom one). Show it even
-        // when an option also matched — otherwise the custom text silently vanishes from
-        // the answered card. Split on the tool_result's ", " join; drop tokens that are (or
-        // contain) a listed label so only genuine free text remains.
+        // Any segment that isn't a listed option is a custom "Type something" entry
+        // (multi-select can COMBINE checked options with a custom one). Show it even when
+        // an option also matched — otherwise the custom text silently vanishes from the
+        // answered card. Same segment split as chosenFor; a segment is free text iff it
+        // exactly equals no option label.
         const optLabels = opts.map((o) => o.label);
-        const extras = !answered
-          ? []
-          : a
-              .split(/[,、]/)
-              .map((s) => s.trim())
-              .filter(Boolean)
-              .filter((t) => !optLabels.some((l) => t === l || t.includes(l)));
+        const extras = !answered ? [] : segmentsOf(a).filter((t) => !optLabels.includes(t));
         return (
           <div className="mq" key={qi}>
             <div className="mq-head">
@@ -3534,7 +3550,7 @@ function QuestionBlock({
                     disabled
                     title={o.description || o.label}
                   >
-                    <span className="mq-mark">{sel ? "✔" : qn.multiSelect ? "☐" : "○"}</span>
+                    <span className="mq-mark">{sel ? "☑" : "☐"}</span>
                     <span className="mq-opt-body">
                       <span className="mq-opt-label">{o.label}</span>
                       {o.description && <span className="mq-opt-desc">{o.description}</span>}
@@ -3544,7 +3560,13 @@ function QuestionBlock({
               })}
             </div>
             {answered && extras.length > 0 && (
-              <div className="mq-answer muted">{chosenSet.size ? tr("mirror.freeform_label") : tr("mirror.answer_label")}{extras.join(tr("common.list_sep"))}</div>
+              // A free-text ("Type something") reply is the user's actual words — surface it as
+              // an accented callout, not a muted footnote, so it doesn't get lost next to the
+              // (possibly none) highlighted options.
+              <div className="mq-answer mq-free">
+                <span className="mq-free-tag">{chosenSet.size ? tr("mirror.freeform_label") : tr("mirror.answer_label")}</span>
+                <span className="mq-free-text">{extras.join(tr("common.list_sep"))}</span>
+              </div>
             )}
           </div>
         );
