@@ -29,7 +29,9 @@ on:
       - ".github/workflows/codex-contract.yml"
       - ".github/actions/setup-agent-cli/action.yml"
   schedule:
-    - cron: "0 21 * * 0" # 毎週月曜 6:00 JST — コード無変更でも上流 codex の破壊を検出
+    # 毎週月曜 6:15 JST — コード無変更でも上流 codex の破壊を検出。
+    # e2e.yml（0 21）/ opencode-contract.yml（30 21）とずらす（週次を同時刻に固めない）。
+    - cron: "15 21 * * 0"
   workflow_dispatch:
     inputs:
       live:
