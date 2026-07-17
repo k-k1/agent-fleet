@@ -54,7 +54,7 @@ docker compose up -d --build
 | [05-api-contracts](docs/dev/05-api-contracts.md) / [06-data-model](docs/dev/06-data-model.md) | API 境界・中継 / データモデル |
 | [07-security](docs/dev/07-security.md) / [08-integrations](docs/dev/08-integrations.md) | 脅威モデル・認証・暗号 / 外部連携 |
 | [09-deploy](docs/dev/09-deploy.md) / [10-development](docs/dev/10-development.md) | デプロイ・ポータビリティ / 開発作法 |
-| [90-code-map](docs/dev/90-code-map.md) / [91-internal-git](docs/dev/91-internal-git.md) | コード地図 / 内部 git プロバイダ |
+| [90-code-map](docs/dev/90-code-map.md) / [91-internal-git](docs/dev/91-internal-git.md) | コードマップ / 内部 git プロバイダ |
 
 **利用者向け [docs/guide/](docs/guide/README.md)**: ペルソナ別分冊（member / admin / operator / lite）。
 
