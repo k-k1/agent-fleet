@@ -225,11 +225,15 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
 
   // af_write conversations receive server-pushed session reports and auto turns
   // (docs/30) with no client-initiated request, so poll lightly while the pane is
-  // active to pick them up. A fresher updated_at adopts the server copy; a turn in
-  // flight flips in_progress, which the reattach poller above then takes over.
+  // OPEN — not just while it's the focused pane — to pick them up. Gating this on
+  // `active` (= single || focused) meant a report/auto-turn never surfaced in an open
+  // but unfocused operator pane until it was closed and reopened (the mount refetch);
+  // it also starved the reattach poller below, which only kicks in once THIS client has
+  // observed in_progress. A fresher updated_at adopts the server copy; a turn in flight
+  // flips in_progress, which the reattach poller above then takes over.
   const reportCapable = conv?.tools === "af_write";
   useEffect(() => {
-    if (!conversationId || !active || !reportCapable) return;
+    if (!conversationId || !reportCapable) return;
     let alive = true;
     const timer = window.setInterval(async () => {
       if (!alive || sending) return;
@@ -249,7 +253,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
       window.clearInterval(timer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [conversationId, active, reportCapable, sending]);
+  }, [conversationId, reportCapable, sending]);
 
   // Keep the transcript pinned to the newest turn (and to the thinking indicator). While
   // live karaoke is following the spoken sentence, defer to its scrollIntoView instead —

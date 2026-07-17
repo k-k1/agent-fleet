@@ -128,10 +128,11 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo }: Proje
   const openVerbChat = useCallback(
     async (filePath: string, verb: "translate" | "summarize") => {
       try {
-        const c = await chatCreate("", t("proj.verb_title." + verb, { name: baseName(filePath) }), {
-          attachPath: filePath,
-          seedVerb: verb,
-        });
+        const title =
+          verb === "translate"
+            ? t("proj.verb_title.translate", { name: baseName(filePath) })
+            : t("proj.verb_title.summarize", { name: baseName(filePath) });
+        const c = await chatCreate("", title, { attachPath: filePath, seedVerb: verb });
         if (c && c.id) openChat(c.id, c.seed);
         else toast(t("send.chat_create_failed"));
       } catch {

@@ -3201,6 +3201,7 @@ function PendingQuestions({
   onSubmitKeys,
   onSubmitSeq,
   onRespond,
+  onCancel,
   sending,
   answerMode = "claude",
   multiPage = false,
