@@ -71,10 +71,13 @@ export default defineConfig({
     chunkSizeWarningLimit: 1500,
   },
   // vitest — pure-logic tests only (layout ops, parsers, stores); node env, no DOM.
+  // .tsx is included so component tests that assert on renderToStaticMarkup output run
+  // too: CommitGraph.test.tsx sat here silently unexecuted under a .ts-only glob while
+  // the graph it covers shipped with broken merge edges.
   // Worker cap per the shared-host memory rule (workspace notes).
   test: {
     environment: "node",
-    include: ["src/**/*.test.ts"],
+    include: ["src/**/*.test.{ts,tsx}"],
     maxWorkers: 2,
     minWorkers: 1,
   },

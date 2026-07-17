@@ -135,7 +135,10 @@
 .cgraph-row.active {
   background: var(--active-bg);
 }
-.cgraph-row.dim {
+/* Off-branch commits fade only their message column. The graph keeps full opacity —
+   a lane's colour is its identity, and dimming it mid-lane breaks the line's continuity
+   for every commit below. The hollow node already marks the commit as off-branch. */
+.cgraph-row.dim .cgraph-msg {
   opacity: 0.55;
 }
 .cgraph-svg {
