@@ -45,4 +45,7 @@ func TestMCPCreateSessionForwardsWorktreeOptions(t *testing.T) {
 	if body["worktree"] != true || body["branch"] != "main" || body["new_branch"] != "feat/mcp-wt" {
 		t.Fatalf("forwarded body = %#v", body)
 	}
+	if body["driver"] != "managed" {
+		t.Fatalf("driver = %#v, want managed", body["driver"])
+	}
 }

@@ -23,3 +23,12 @@ func TestCreateSessionToolAdvertisesWorktreeOptions(t *testing.T) {
 	}
 	t.Fatal("create_session tool not found")
 }
+
+func TestCreateSessionToolHasLiveModelCatalog(t *testing.T) {
+	for _, tool := range memberTools() {
+		if tool.name == "list_models" {
+			return
+		}
+	}
+	t.Fatal("list_models tool not found")
+}

@@ -180,13 +180,24 @@ var mcpStdioTools = []map[string]any{
 // (the sub-turn runs with no tools), so they can't loop or escalate.
 var mcpStdioWriteTools = []map[string]any{
 	{
+		"name":        "list_models",
+		"description": "指定エージェントで現在選べるモデル一覧を返す。Codex／OpenCode を model 指定で create_session する前には必ず呼び、返った id を使うこと。利用者が terra のような略称で指定した場合も、一覧から対応する完全な id（例: gpt-5.6-terra）を選ぶ。",
+		"inputSchema": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"kind": map[string]any{"type": "string", "description": "codex または opencode"},
+			},
+			"required": []string{"kind"},
+		},
+	},
+	{
 		"name": "create_session",
 		"description": "新しいコーディングセッションを起こす。dir（作業ディレクトリ）で指定したリポジトリで claude 等を起動する。" +
 			"worktree=true なら dir のリポジトリから新しい独立 worktree を作って起動する（branch は基点、省略時は現在の HEAD。new_branch は新規ブランチ名、省略時は仮ブランチを自動生成）。" +
 			"initial_prompt を渡すと、起動後に最初のタスクとして自動で送信される（別コールの send_to_session は不要）。" +
 			"用途例：あるセッションの内容を引き継いで別セッションで続ける（先に get_session_output で文脈を読み、要約を initial_prompt に入れる）／壁打ちで固めた作業を新規セッションで開始する。" +
 			"dir は list_my_sessions の dir（走っているセッションと同じ場所）か list_repos の path から選ぶ。新規セッションはリソースを消費するので、起こす前に利用者へ一言確認すること。" +
-			"作成したセッションが入力待ちになる／異常終了すると、この会話に自動で報告が届くのでポーリングは不要。報告が届いたら内容（必要なら get_session_output）を確認して次の行動を決める。",
+			"Codex／OpenCode を指定する場合は managed で開始する（TUI は使わない）。model を指定する前には必ず list_models で利用可能な id を確認し、その id を渡す。作成したセッションが入力待ちになる／異常終了すると、この会話に自動で報告が届くのでポーリングは不要。報告が届いたら内容（必要なら get_session_output）を確認して次の行動を決める。",
 		"inputSchema": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -314,6 +325,15 @@ func mcpStdioCall(req mcpReq) []byte {
 	// (available to af_read too); the mutating ones require --write. The tool args match
 	// the CP wire shape, so p.Args is forwarded as the request body verbatim.
 	switch p.Name {
+	case "list_models":
+		if a.Kind != "codex" && a.Kind != "opencode" {
+			return mcpToolErr(req.ID, "kind には codex または opencode を指定してください")
+		}
+		out, err := agentGET("/agents/" + url.PathEscape(a.Kind) + "/models")
+		if err != nil {
+			return mcpToolErr(req.ID, "モデル一覧の取得に失敗しました: "+err.Error())
+		}
+		return mcpTextResult(req.ID, out)
 	case "list_memos":
 		out, err := cpMemoDo(http.MethodGet, "/internal/memos", nil)
 		if err != nil {
@@ -370,6 +390,10 @@ func mcpStdioCall(req mcpReq) []byte {
 		if !mcpWriteEnabled {
 			return mcpToolErr(req.ID, "このアシスタントはセッションの作成を許可されていません")
 		}
+		driver := ""
+		if a.Kind == "codex" || a.Kind == "opencode" {
+			driver = "managed"
+		}
 		reqBody, _ := json.Marshal(map[string]any{
 			"dir":            a.Dir,
 			"title":          a.Title,
@@ -379,6 +403,7 @@ func mcpStdioCall(req mcpReq) []byte {
 			"worktree":       a.Worktree,
 			"branch":         a.Branch,
 			"new_branch":     a.NewBranch,
+			"driver":         driver,
 			"report_to":      mcpConvID, // docs/30: 完了報告をこの会話へ（空なら無効）
 		})
 		out, err := agentPOST("/sessions", reqBody)
