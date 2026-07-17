@@ -28,7 +28,7 @@
 - opencode バックエンドは対象外（write 用 opencode.json が grant 単位の共有ディレクトリで
   会話 id を焼き込めない）。claude / codex の af_write 会話で有効。
 
-### arm/disarm — 「指示1件につき報告1回」
+### arm/disarm — 「指示1件につき報告1回・報告は完了（終端）で」
 
 「完了」という状態は存在しない（Stop hook は**毎ターン**発火する）。素朴に配線すると
 報告がターンごとに飛ぶため、one-shot の arm/disarm にする:
@@ -37,10 +37,13 @@
   （fstore。Meta には手を入れない — 動的状態を Meta と別ファイルに置くのは record-exit と
   同じ理由のレース回避）。
 - **arm**: `create_session`（report_to 付き）と `/input`（report_to 付き prompt 送信）の成功時。
-- **報告（＋disarm）**: arm 中に最初に起きた下記イベントで1回だけ:
-  - 状態遷移 `answer-ready` / `question` / `plan-approval` / `permission-request`
-    （`session_status.go` の hook 経路 — claude/codex/opencode の tui はすべてここを通る）
+- **オペレーター報告（＋disarm）は終端イベントのみ**（`session_status.go` の hook 経路）:
+  - 状態遷移 `answer-ready`（＝完了・入力待ち。`reportKindAnswerReady`）
   - 異常終了 `oom` / `crashed` / `killed`（`record_exit.go`。正常 exit / 意図停止は報告しない）
+- **中間の要対応イベント `question` / `plan-approval` / `permission-request` は
+  オペレーター報告しない**（通知センター `notice` へは全 kind 出す）。**arm を消費させない**のが
+  肝で、質問等で先に disarm されると「指示の完了」がオペレーターへ二度と届かない（実測不具合）。
+  arm は `answer-ready` か異常終了まで生存する。
 - 次の `send_to_session` で再 arm。managed driver のセッションは hook 経路を通らないため
   v1 の報告対象外（オペレーターの既定起動は claude tui）。
 
@@ -88,6 +91,7 @@ hook / record-exit は独立プロセスなので、会話ファイルへの直�
 
 - managed driver（opencode/codex の pane なし）セッションは v1 報告対象外。
 - opencode バックエンドの af_write 会話は report_to 自動付与なし。
-- 報告は「入力待ちになった最初のイベント」。キュー済みプロンプトが残っている場合など、
-  厳密なタスク完了とはずれることがある（オペレーターが get_session_output で確認する前提）。
+- 報告は `answer-ready`（完了・入力待ち）と異常終了のみ。中間の質問/承認/許可待ちは
+  オペレーター報告しない（通知センターには出る）。キュー済みプロンプトが残っている等で
+  厳密なタスク完了とずれることはあり得る（オペレーターが get_session_output で確認する前提）。
 - 将来: Meta への起動元（LaunchedBy）記録、managed driver 対応、報告のバッチング。

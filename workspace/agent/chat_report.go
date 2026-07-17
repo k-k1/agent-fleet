@@ -59,6 +59,13 @@ func reportArmed(name string) bool {
 	return ok && l.Armed && l.Conv != ""
 }
 
+// reportKindAnswerReady is the one TERMINAL state-transition report kind (an
+// instruction's completion). Only it (and an abnormal "exit", record_exit.go)
+// reports to the operator and disarms; interim kinds (question / plan-approval /
+// permission-request) go to the notification center only and leave the arm intact,
+// so the completion report is never pre-empted (docs/30).
+const reportKindAnswerReady = "answer-ready"
+
 // maxAutoTurns caps the operator turns run WITHOUT a user message in between
 // (reset on every user send). A hard constant — no unlimited mode (docs/30):
 // this is the structural stop for a runaway follow-up loop.
