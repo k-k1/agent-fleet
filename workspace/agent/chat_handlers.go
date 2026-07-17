@@ -109,7 +109,7 @@ func handleChatCreate(w http.ResponseWriter, r *http.Request) {
 		}
 		c.AssistantID = a.ID
 		c.Agent = a.Agent
-		c.Model = a.Model
+		c.Model = resolveChatModel(a.Agent, a.Model)
 		c.Persona = a.Persona
 		c.Tools = a.Tools
 		c.Knowledge = a.Knowledge
@@ -120,6 +120,7 @@ func handleChatCreate(w http.ResponseWriter, r *http.Request) {
 		// Read-only (the attached file arrives via knowledge --add-dir below); SeedVerb is
 		// persisted so languageRule() keeps a translate thread language-agnostic.
 		c.Agent = preferredHeadlessAgent()
+		c.Model = resolveChatModel(c.Agent, "")
 		c.Persona = verbPersona(req.SeedVerb)
 		c.Tools = toolsNone
 		c.SeedVerb = req.SeedVerb
@@ -131,7 +132,7 @@ func handleChatCreate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		c.Agent = req.Agent
-		c.Model = strings.TrimSpace(req.Model)
+		c.Model = resolveChatModel(req.Agent, req.Model)
 		if req.Agent == session.KindClaude {
 			c.Tools = toolsAFRead
 		} else {
@@ -193,7 +194,7 @@ func handleChatAsk(w http.ResponseWriter, r *http.Request) {
 	// Ephemeral, non-persisted conversation carrying the assistant's persona/model/knowledge
 	// but NO tools (advisory only).
 	c := &chatConversation{
-		ID: randUUID(), Agent: a.Agent, Model: a.Model,
+		ID: randUUID(), Agent: a.Agent, Model: resolveChatModel(a.Agent, a.Model),
 		Persona: a.Persona, Tools: toolsNone, Knowledge: a.Knowledge,
 	}
 	prov := chatProviderFor(c) // pinned agent, or the available fallback (claude-less WS)

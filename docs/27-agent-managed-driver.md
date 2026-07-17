@@ -286,8 +286,26 @@ bearer token を再検討。opencode serve のローカル API 認証有無は �
 
 現行の 3 種 one-shot（`codex exec --json` / `claude -p` / `opencode run`、別ホーム隔離）を**維持**。
 共有 daemon の thread へ統合すると隔離 CODEX_HOME（`chat_providers.go:360` `chatCodexHome`——ユーザ MCP を
-毎ターン起動させない・`~/.codex/sessions` を汚さない）が壊れるため、**thread 単位 config で隔離相当を
-再現できると確認できるまで見送り**。将来の受け皿は Capabilities の `EphemeralThread` として予約。
+毎ターン起動させない・`~/.codex/sessions` を汚さない）が壊れるため、**グローバル MCP を遮断した thread
+単位 config で隔離相当を再現できると確認できるまで見送り**。将来の受け皿は Capabilities の
+`EphemeralThread` として予約。
+
+確認済み（Codex 0.144.5）: `thread/start` / `thread/resume` は任意 `config` を受け、`config.mcp_servers`
+で MCP を thread ごとに追加できる。`mcpServerStatus/list {threadId}` を使う credential-free drift test
+（`TestDriftCodexThreadMCPConfigIsScoped`）では、異なる MCP を持つ 2 本の ephemeral thread 間で MCP が
+混入しないことを実 app-server で確認した。
+
+同時に**遮断はできない**ことも確認した。daemon 起動時に構成した MCP は、thread の
+`config.mcp_servers = {}` を渡しても `mcpServerStatus/list` に残る
+（`TestDriftCodexThreadMCPConfigCannotClearGlobalServers`）。すなわち現行 shared app-server の thread
+config は追加・thread 間分離の口ではあっても allowlist / replace の口ではない。これでは `none` /
+`af_read` / `af_write` の権限境界にならないため、Codex アシスタントチャットを shared managed runtime
+へ直結してはならない。統合には upstream の thread 単位 replace/deny API、または会話の許可集合ごとに
+設定を固定した別 runtime を必要とする。
+
+2026-07-17 の利用者判断で、アシスタントチャットに対するグローバル MCP の透過は許容する方針へ変更した。
+従って上記は権限隔離を要求するデプロイでは維持すべき制約だが、このワークスペースでの Codex managed
+チャット統合を妨げる条件ではない。会話固有の AF MCP は追加設定として thread ごとに分離する。
 
 ### 9.4 config
 
