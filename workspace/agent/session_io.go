@@ -133,6 +133,10 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 			K string `json:"k"` // a whitelisted named key
 			T string `json:"t"` // literal text (send-keys -l)
 		} `json:"seq"`
+		// ReportTo (docs/30) arms a one-shot session report to this conversation once
+		// the prompt's turn reaches an awaiting-input state. Sent by the af_write MCP's
+		// send_to_session, which carries its own conversation id (--conv).
+		ReportTo string `json:"report_to"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&body); err != nil {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_body", "invalid JSON body")
@@ -230,6 +234,10 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 	}
 	if !submitPromptTUI(w, name, pane, body.Prompt) {
 		return
+	}
+	// Each delivered instruction re-arms exactly one report (docs/30 の指示1件=報告1回).
+	if body.ReportTo != "" {
+		armSessionReport(name, body.ReportTo)
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"sent": name})
 }

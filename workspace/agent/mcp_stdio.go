@@ -33,12 +33,24 @@ const mcpStdioProtocol = "2025-06-18"
 // serving exactly one chat conversation.
 var mcpWriteEnabled bool
 
+// mcpConvID is the owning conversation's id, passed as `--conv <id>` by chat.go's
+// MCP config (docs/30). create_session / send_to_session forward it as report_to so
+// the spawned/steered session reports back to THIS conversation automatically — the
+// link is tool-side plumbing, never something the model has to remember.
+var mcpConvID string
+
 // runMCPStdio is the `workspace-agent mcp-stdio` subcommand: a blocking stdio loop.
 // Pass --write to additionally expose the write tools (docs/19 Q2 af_write opt-in).
 func runMCPStdio(args []string) {
-	for _, a := range args {
-		if a == "--write" {
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--write":
 			mcpWriteEnabled = true
+		case "--conv":
+			if i+1 < len(args) {
+				i++
+				mcpConvID = args[i]
+			}
 		}
 	}
 	r := bufio.NewReaderSize(os.Stdin, 1<<20)
@@ -173,7 +185,8 @@ var mcpStdioWriteTools = []map[string]any{
 			"worktree=true なら dir のリポジトリから新しい独立 worktree を作って起動する（branch は基点、省略時は現在の HEAD。new_branch は新規ブランチ名、省略時は仮ブランチを自動生成）。" +
 			"initial_prompt を渡すと、起動後に最初のタスクとして自動で送信される（別コールの send_to_session は不要）。" +
 			"用途例：あるセッションの内容を引き継いで別セッションで続ける（先に get_session_output で文脈を読み、要約を initial_prompt に入れる）／壁打ちで固めた作業を新規セッションで開始する。" +
-			"dir は list_my_sessions の dir（走っているセッションと同じ場所）か list_repos の path から選ぶ。新規セッションはリソースを消費するので、起こす前に利用者へ一言確認すること。作成後は返る name を使って get_session_status / get_session_output で進行を確認する。",
+			"dir は list_my_sessions の dir（走っているセッションと同じ場所）か list_repos の path から選ぶ。新規セッションはリソースを消費するので、起こす前に利用者へ一言確認すること。" +
+			"作成したセッションが入力待ちになる／異常終了すると、この会話に自動で報告が届くのでポーリングは不要。報告が届いたら内容（必要なら get_session_output）を確認して次の行動を決める。",
 		"inputSchema": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -242,7 +255,7 @@ var mcpStdioWriteTools = []map[string]any{
 	},
 	{
 		"name":        "send_to_session",
-		"description": "指定セッションにプロンプト（テキスト）を送信して実行させる（末尾に Enter）。すぐ返るので、応答は get_session_status で稼働確認後 get_session_output で取得する。利用者が「s7 に○○を伝えて/やらせて」等の作業依頼をした時に呼ぶ。",
+		"description": "指定セッションにプロンプト（テキスト）を送信して実行させる（末尾に Enter）。すぐ返る。送信後にそのセッションが入力待ちになる／異常終了すると、この会話に自動で報告が届くのでポーリングは不要（すぐ結果が要る時だけ get_session_status / get_session_output で確認）。利用者が「s7 に○○を伝えて/やらせて」等の作業依頼をした時に呼ぶ。",
 		"inputSchema": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -366,6 +379,7 @@ func mcpStdioCall(req mcpReq) []byte {
 			"worktree":       a.Worktree,
 			"branch":         a.Branch,
 			"new_branch":     a.NewBranch,
+			"report_to":      mcpConvID, // docs/30: 完了報告をこの会話へ（空なら無効）
 		})
 		out, err := agentPOST("/sessions", reqBody)
 		if err != nil {
@@ -382,7 +396,7 @@ func mcpStdioCall(req mcpReq) []byte {
 		if a.Prompt == "" {
 			return mcpToolErr(req.ID, "prompt（送信本文）が必要です")
 		}
-		reqBody, _ := json.Marshal(map[string]string{"prompt": a.Prompt})
+		reqBody, _ := json.Marshal(map[string]string{"prompt": a.Prompt, "report_to": mcpConvID})
 		out, err := agentPOST("/sessions/"+url.PathEscape(a.Name)+"/input", reqBody)
 		if err != nil {
 			return mcpToolErr(req.ID, "Agent への送信に失敗しました: "+err.Error())

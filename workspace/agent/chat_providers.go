@@ -331,7 +331,7 @@ func (codexChat) send(ctx context.Context, c *chatConversation, prompt string) (
 		args = append(args, "-m", c.Model)
 	}
 	if c.afToolsEnabled() {
-		args = append(args, codexMCPArgs(c.afWriteEnabled())...)
+		args = append(args, codexMCPArgs(c.afWriteEnabled(), c.ID)...)
 	}
 	if c.CodexSessionID != "" {
 		args = append(args, "resume", c.CodexSessionID)
@@ -390,10 +390,11 @@ func chatCodexCmd(ctx context.Context, args ...string) *exec.Cmd {
 
 // codexMCPArgs attaches the local Agent Fleet stdio MCP server to a codex exec via
 // -c config overrides (codex's mcp_servers table) — the codex analog of chatMCPArgs.
-func codexMCPArgs(write bool) []string {
+// convID rides along for write grants (docs/30 report_to auto-attach; see mcpConfigArgs).
+func codexMCPArgs(write bool, convID string) []string {
 	serverArgs := `["mcp-stdio"]`
 	if write {
-		serverArgs = `["mcp-stdio","--write"]`
+		serverArgs = `["mcp-stdio","--write","--conv",` + tomlString(convID) + `]`
 	}
 	return []string{
 		"-c", "mcp_servers.af.command=" + tomlString(paths.ExePath()),
@@ -806,7 +807,10 @@ func (c *chatConversation) mcpConfigArgs() []string {
 	if c.afToolsEnabled() {
 		sargs := []any{"mcp-stdio"}
 		if c.afWriteEnabled() {
-			sargs = []any{"mcp-stdio", "--write"}
+			// --conv hands the server its owning conversation id so create_session /
+			// send_to_session auto-attach report_to (docs/30) — the report link is
+			// tool-side plumbing, never something the model has to carry.
+			sargs = []any{"mcp-stdio", "--write", "--conv", c.ID}
 		}
 		servers["af"] = map[string]any{"command": exe, "args": sargs}
 	}

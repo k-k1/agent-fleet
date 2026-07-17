@@ -78,12 +78,15 @@ func runSessionStatusHook(args []string) {
 		return
 	}
 	previous, _ := status.Read(sid)
+	// Capture the turn's streamed text BEFORE applyPendingPayloads clears it on idle:
+	// it becomes the session report's "直近の出力（抜粋）" (docs/30).
+	turnText, _ := status.ReadPendingText(sid)
 	status.Persist(sid, state)
 	applyPendingPayloads(sid, state, h)
-	recordSessionNotification(sid, previous.State, state)
+	recordSessionNotification(sid, previous.State, state, turnText)
 }
 
-func recordSessionNotification(sid, previous, state string) {
+func recordSessionNotification(sid, previous, state, turnText string) {
 	kind := ""
 	switch {
 	case state == "idle" && previous == "working":
@@ -110,6 +113,12 @@ func recordSessionNotification(sid, previous, state string) {
 			continue
 		}
 		_ = notice.Put(notice.New(kind, m.Name, m.Kind, session.Display(m)))
+		// One-shot session report to the operator conversation that armed this
+		// session (docs/30). The server validates + disarms; skipping the kick when
+		// nothing is armed keeps the common case free of an HTTP round trip.
+		if reportArmed(m.Name) {
+			kickSessionReport(m.Name, kind, turnText, "")
+		}
 		return
 	}
 }

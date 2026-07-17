@@ -33,12 +33,19 @@ type chatStep struct {
 
 // chatMessage is one turn in a conversation.
 type chatMessage struct {
-	Role    string `json:"role"` // "user" | "assistant"
+	Role    string `json:"role"` // "user" | "assistant" | "report" (docs/30 セッション報告)
 	Content string `json:"content"`
 	TS      int64  `json:"ts"` // unix millis
 	// Steps is the assistant turn's working process (narration before each tool call),
 	// separated from Content (the final answer). Empty for user turns and tool-less replies.
 	Steps []chatStep `json:"steps,omitempty"`
+	// Session names the reporting session for role=="report" (docs/30) — the Console
+	// renders these as a session-origin card, not a user/assistant bubble.
+	Session string `json:"session,omitempty"`
+	// Delivered marks a report that has been fed into the provider's context (either
+	// by its own auto turn or injected into a later prompt). An undelivered report
+	// exists in the stored thread but the LLM hasn't seen it yet.
+	Delivered bool `json:"delivered,omitempty"`
 }
 
 // chatConversation is the persisted record (one JSON file per conversation).
@@ -80,6 +87,10 @@ type chatConversation struct {
 	// mid-answer know the reply is still coming and poll for it. Never persisted (set only
 	// on the GET response, after load and never before saveConv).
 	InProgress bool `json:"in_progress,omitempty"`
+	// AutoTurns counts the operator turns run automatically off session reports since
+	// the user's last message (docs/30). Capped at maxAutoTurns; reset on every user
+	// send — the structural stop for an unattended follow-up loop.
+	AutoTurns int `json:"auto_turns,omitempty"`
 }
 
 // afToolsEnabled reports whether the fleet MCP tools attach to this chat at all (read
