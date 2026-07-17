@@ -2,8 +2,12 @@
 # Dockerfile ARG ピン等）→ L2（e2e/: CP をヘッドレス起動して workspace/session 疎通）→
 # L3（console-e2e/: Playwright でブラウザ→CP→コンテナの縦串）を検証する。イメージ build が
 # 重いので ci.yml から分離し、関係パスの変更時 + 週次 cron（コード無変更でも上流 CLI の
-# 破壊を検出）+ 手動のみ実行する。L4（実 API キーの claude 疎通）は課金を伴うため
-# workflow_dispatch の live 入力を立てた時だけ走る（secrets.E2E_ANTHROPIC_API_KEY が必要）。
+# 破壊を検出）+ 手動のみ実行する。
+#
+# 課金を伴うジョブは workflow_dispatch の入力を立てた時だけ走り、**エージェント毎に入力が
+# 別**（枠の消費先が違うので、片方だけ回せる必要がある）:
+#   - live_claude → live-smoke（L4・実 API キー / OAuth トークンで claude 疎通）
+#   - live_codex  → codex-live-drift（Tier2・ChatGPT サブスク枠で実ターン）
 # 注: rtk は git-ignored のホスト vendor 品なので CI は「rtk なし」パスの検証になる。
 name: e2e
 
@@ -30,8 +34,14 @@ on:
     - cron: "0 21 * * 0" # 毎週月曜 6:00 JST — 上流 CLI / base image の破壊検出
   workflow_dispatch:
     inputs:
-      live:
-        description: "L4: 実 API キーで claude 疎通スモークを実行する（課金あり）"
+      # 課金を伴うジョブは**エージェント毎に**入力を分ける。1 つの live 入力を共有すると
+      # claude のサブスク枠と ChatGPT(codex) のサブスク枠が同時に減り、片方だけ回せない。
+      live_claude:
+        description: "L4: claude 疎通スモーク（live-smoke）を実行する — Anthropic のサブスク枠 / API 課金を消費"
+        type: boolean
+        default: false
+      live_codex:
+        description: "Tier2: codex ドリフト検知（codex-live-drift）を実行する — ChatGPT(codex) のサブスク枠を消費（実測 ~45k tokens/回）"
         type: boolean
         default: false
 
@@ -165,7 +175,8 @@ jobs:
     # task_started・task_complete / request_user_input の function_call / managed の
     # turn/started・turn/completed。
     #
-    # live-smoke と同型で **workflow_dispatch の live 入力を立てた時だけ**走る（cron 無し）。
+    # live-smoke と同型で **workflow_dispatch の live_codex 入力を立てた時だけ**走る（cron 無し）。
+    # live_claude とは独立 ＝ claude 側の枠を消費せずに codex だけ回せる。
     # 実測コスト: 1実行あたり概ね 45k tokens 前後（内訳はジョブログの `MEASURED COST` 行）。
     # auth_mode="chatgpt" ならサブスク枠の消費（API 課金ではない）。
     #
@@ -174,7 +185,7 @@ jobs:
     # いずれ失効する**（ローテートされた新トークンを CI 側は保持できない）。失効時に
     # 「謎の 401」で終わらないよう、テスト側がターン前の `codex login status` と
     # ターン中の 401 文面を分類し、再 login → secret 更新まで書いたメッセージで落とす。
-    if: github.event_name == 'workflow_dispatch' && inputs.live
+    if: github.event_name == 'workflow_dispatch' && inputs.live_codex
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -210,7 +221,8 @@ jobs:
 
   live-smoke:
     # L4: 実 API キーで claude -p の疎通を見る。手動 + 明示 opt-in のみ（課金あり）。
-    if: github.event_name == 'workflow_dispatch' && inputs.live
+    # codex 側（codex-live-drift）とは入力が別 ＝ 片方だけ回せる。
+    if: github.event_name == 'workflow_dispatch' && inputs.live_claude
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:

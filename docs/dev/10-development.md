@@ -51,10 +51,15 @@ CLI 3 種（claude / opencode / codex）・gh・Go の版を上げるときは�
    L1（**実版 = ピンの一致**・versions.json）→ L2（フリート疎通）→ L3（Console UI）を
    自動検証する。`gh run watch $(gh run list --workflow e2e --limit 1 --json databaseId --jq '.[0].databaseId')`
    で完走を見届ける。red のまま先へ進まない。
-5. **（大きめの版上げのみ）L4 実クレデンシャル・スモーク**: claude のメジャー更新や
-   認証・API まわりの変更が疑われるときは `gh workflow run e2e -f live=true`。
-   secret `E2E_CLAUDE_OAUTH_TOKEN`（`claude setup-token` で発行、Max/Pro 枠・追加課金なし）
-   使用。失効時（トークン再発行時）は setup-token をやり直して secret を更新する。
+5. **（大きめの版上げのみ）実クレデンシャルを使うジョブ**: 枠の消費先が違うので入力は
+   エージェント毎に分かれている。**回したい方だけ**立てる（既定はどちらも false）。
+   - claude のメジャー更新や認証・API まわりが疑わしいとき（L4 疎通スモーク）:
+     `gh workflow run e2e -f live_claude=true`。secret `E2E_CLAUDE_OAUTH_TOKEN`
+     （`claude setup-token` で発行、Max/Pro 枠・追加課金なし）使用。失効時（トークン
+     再発行時）は setup-token をやり直して secret を更新する。
+   - codex の版上げで状態検出（Stop hook / rollout / turn 通知）が疑わしいとき（Tier2
+     ドリフト検知）: `gh workflow run e2e -f live_codex=true`。secret
+     `E2E_CODEX_AUTH_JSON` 使用・ChatGPT サブスク枠を実測 ~45k tokens/回 消費する。
 6. **ホスト反映**: ホストで `deploy/local/run-dev.sh`。イメージ再ビルド直後に
    `e2e-smoke.sh`（L1）が自動で走り、版一致を再検証する。rtk もこのとき自動更新される。
    ⚠️ ホストはメモリ制約 — 重いビルドを並走させない（[HANDOFF §2](../HANDOFF.md)）。
