@@ -23,7 +23,9 @@
 package codex
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -208,6 +210,155 @@ func TestDriftCodexConfigOverridesValidated(t *testing.T) {
 		t.Fatal("--strict-config accepted a bogus key: this detector is no longer able " +
 			"to catch config drift, so TestDriftCodexConfigOverridesValidated is now vacuous")
 	}
+}
+
+// TestDriftCodexThreadMCPConfigIsScoped verifies the prerequisite recorded in
+// docs/27 §9.3: app-server accepts an MCP configuration on a thread and does
+// not leak that configuration into another concurrently loaded thread.
+//
+// This is deliberately a drift (not live) test. It starts a credential-free,
+// isolated app-server and only launches /bin/true as a deliberately invalid
+// MCP stdio endpoint; no model turn is started. The useful contract is the
+// per-thread MCP inventory, not successful MCP tool execution.
+func TestDriftCodexThreadMCPConfigIsScoped(t *testing.T) {
+	cl := startDriftAppServer(t)
+	const (
+		readServer  = "af_drift_read"
+		writeServer = "af_drift_write"
+	)
+	readThread := startDriftMCPThread(t, cl, readServer)
+	waitDriftMCPServer(t, cl, readThread, readServer)
+	writeThread := startDriftMCPThread(t, cl, writeServer)
+	waitDriftMCPServer(t, cl, writeThread, writeServer)
+
+	if names := driftMCPServerNames(t, cl, readThread); names[writeServer] {
+		t.Fatalf("thread %s inherited %q from another thread: %v", readThread, writeServer, names)
+	}
+	if names := driftMCPServerNames(t, cl, writeThread); names[readServer] {
+		t.Fatalf("thread %s inherited %q from another thread: %v", writeThread, readServer, names)
+	}
+}
+
+// TestDriftCodexThreadMCPConfigCannotClearGlobalServers captures the remaining
+// docs/27 §9.3 gate. A thread-local empty mcp_servers map is not an allowlist:
+// app-server still exposes a server inherited from the daemon configuration.
+// Do not invert this assertion until the managed chat implementation has a
+// replacement/deny mechanism and updates the security contract with it.
+func TestDriftCodexThreadMCPConfigCannotClearGlobalServers(t *testing.T) {
+	const globalServer = "af_drift_global"
+	cl := startDriftAppServer(t, "-c", "mcp_servers."+globalServer+`.command="/bin/true"`)
+	threadID := startDriftThread(t, cl, map[string]any{"mcp_servers": map[string]any{}})
+	waitDriftMCPServer(t, cl, threadID, globalServer)
+}
+
+// startDriftAppServer launches an isolated, credential-free app-server over a
+// Unix socket. newAppClient performs the real initialize handshake, so this
+// exercises the production JSON-RPC wire rather than a schema fixture.
+func startDriftAppServer(t *testing.T, configArgs ...string) *appClient {
+	t.Helper()
+	// Codex intentionally refuses to create its helper aliases under /tmp. Use a
+	// short-lived directory beneath the real home instead; HOME is still fully
+	// isolated, so no user config/MCP/auth state is visible to this process.
+	base, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatalf("resolve home for isolated app-server: %v", err)
+	}
+	home, err := os.MkdirTemp(filepath.Join(base, ".cache"), "af-codex-drift-")
+	if err != nil {
+		t.Fatalf("make isolated app-server home: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(home) })
+	socket := filepath.Join(t.TempDir(), "app-server.sock")
+	ctx, cancel := context.WithCancel(context.Background())
+	var output bytes.Buffer
+	args := append([]string{"app-server"}, configArgs...)
+	args = append(args, "--listen", "unix://"+socket)
+	cmd := exec.CommandContext(ctx, codexBin(t), args...)
+	cmd.Env = append(os.Environ(), "HOME="+home)
+	cmd.Stdout = &output
+	cmd.Stderr = &output
+	if err := cmd.Start(); err != nil {
+		cancel()
+		t.Fatalf("start isolated app-server: %v", err)
+	}
+	t.Cleanup(func() {
+		cancel()
+		_ = cmd.Wait()
+	})
+
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		cl, err := newAppClient("unix://" + socket)
+		if err == nil {
+			go cl.readLoop()
+			t.Cleanup(cl.close)
+			return cl
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("isolated app-server did not become ready:\n%s", output.String())
+	return nil
+}
+
+// startDriftMCPThread creates an ephemeral thread with exactly one unique MCP
+// server. The command intentionally fails its MCP handshake; app-server still
+// records it in mcpServerStatus/list, which is enough to prove configuration
+// placement without invoking a model or a real integration.
+func startDriftMCPThread(t *testing.T, cl *appClient, name string) string {
+	t.Helper()
+	return startDriftThread(t, cl, map[string]any{
+		"mcp_servers": map[string]any{name: map[string]any{"command": "/bin/true"}},
+	})
+}
+
+func startDriftThread(t *testing.T, cl *appClient, config map[string]any) string {
+	t.Helper()
+	params := map[string]any{"cwd": t.TempDir(), "ephemeral": true}
+	if config != nil {
+		params["config"] = config
+	}
+	res, err := cl.call("thread/start", params, 10*time.Second)
+	if err != nil {
+		t.Fatalf("thread/start: %v", err)
+	}
+	st, err := parseThreadResult(res)
+	if err != nil || st.threadID == "" {
+		t.Fatalf("thread/start returned no thread id: %v", err)
+	}
+	return st.threadID
+}
+
+func waitDriftMCPServer(t *testing.T, cl *appClient, threadID, name string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if driftMCPServerNames(t, cl, threadID)[name] {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("MCP %q did not appear in thread %s", name, threadID)
+}
+
+func driftMCPServerNames(t *testing.T, cl *appClient, threadID string) map[string]bool {
+	t.Helper()
+	res, err := cl.call("mcpServerStatus/list", map[string]any{"threadId": threadID}, 5*time.Second)
+	if err != nil {
+		t.Fatalf("mcpServerStatus/list for %s: %v", threadID, err)
+	}
+	var body struct {
+		Data []struct {
+			Name string `json:"name"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(res, &body); err != nil {
+		t.Fatalf("decode mcpServerStatus/list for %s: %v", threadID, err)
+	}
+	names := make(map[string]bool, len(body.Data))
+	for _, server := range body.Data {
+		names[server.Name] = true
+	}
+	return names
 }
 
 // TestDriftCodexUserPromptSubmitHookFires runs the real CLI with production's own hook
