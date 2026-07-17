@@ -37,12 +37,18 @@ func scratchRoot() string {
 	return filepath.Join(os.TempDir(), "claude-"+strconv.Itoa(os.Getuid()))
 }
 
+// agentFleetDocsRoot is staged by the Control Plane per membership role and mounted
+// read-only into the workspace. It is outside home, so add it explicitly to the
+// read-only file-view roots; this lets the Console open the user guide without
+// duplicating its Markdown in the frontend bundle.
+func agentFleetDocsRoot() string { return "/usr/local/share/agent-fleet/docs" }
+
 // allowedReadRoots are the absolute roots the file browser may serve a file from when the
 // query path is itself absolute (a SendUserFile path that landed outside the browse root).
 // The browse root comes first so an absolute path under home maps back to a home-relative
 // display path.
 func allowedReadRoots() []string {
-	return []string{browseRoot(), scratchRoot()}
+	return []string{browseRoot(), scratchRoot(), agentFleetDocsRoot()}
 }
 
 // resolveAbs handles an absolute query path (see safeBrowsePath). It serves the file only
@@ -65,7 +71,7 @@ func resolveAbs(clean, root string) (full, rel string, ok bool) {
 			}
 			return clean, r, true
 		}
-		return clean, clean, true // under a non-home root (scratch): display the absolute path
+		return clean, clean, true // under a non-home root (scratch or staged docs): display the absolute path
 	}
 	return "", "", false
 }
@@ -99,8 +105,9 @@ func isDenied(rel string) bool {
 //     rejected.
 //   - absolute (leading slash): a SendUserFile path that resolved outside the browse root
 //     (e.g. a /tmp/claude-<uid> scratchpad, left absolute by toBrowseRel). Served only when
-//     it sits under an allowed read root — the browse root itself or the scratch base — so a
-//     shared scratchpad file opens in the viewer instead of erroring. See resolveAbs.
+//     it sits under an allowed read root — the browse root itself, the scratch base, or the
+//     role-scoped documentation mount — so a shared scratchpad or user-guide file opens in
+//     the viewer instead of erroring. See resolveAbs.
 func safeBrowsePath(p string) (full, rel string, ok bool) {
 	root := browseRoot()
 	p = strings.TrimSpace(p)
@@ -126,6 +133,16 @@ func safeBrowsePath(p string) (full, rel string, ok bool) {
 		return "", "", false
 	}
 	return full, rel, true
+}
+
+// safeWritableBrowsePath deliberately keeps mutations inside the user's home.
+// safeBrowsePath also admits read-only roots (scratch and the role-scoped guide),
+// which must never become writable through the file API.
+func safeWritableBrowsePath(p string) (full, rel string, ok bool) {
+	if filepath.IsAbs(strings.TrimSpace(p)) {
+		return "", "", false
+	}
+	return safeBrowsePath(p)
 }
 
 type fsEntry struct {
@@ -286,7 +303,7 @@ func maxUploadBytes() int64 {
 // returns 409 with the conflicting names unless ?overwrite=1. Writes go via a
 // temp file + rename so a failed upload never leaves a partial file.
 func handleFSUpload(w http.ResponseWriter, r *http.Request) {
-	dirFull, dirRel, ok := safeBrowsePath(r.URL.Query().Get("path"))
+	dirFull, dirRel, ok := safeWritableBrowsePath(r.URL.Query().Get("path"))
 	if !ok {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_path", "invalid path")
 		return
@@ -363,7 +380,7 @@ func handleFSUpload(w http.ResponseWriter, r *http.Request) {
 // handleFSMkdir creates a new directory at path. The parent must already exist
 // (os.Mkdir, not MkdirAll — no accidental deep create). 409 if it exists.
 func handleFSMkdir(w http.ResponseWriter, r *http.Request) {
-	full, rel, ok := safeBrowsePath(r.URL.Query().Get("path"))
+	full, rel, ok := safeWritableBrowsePath(r.URL.Query().Get("path"))
 	if !ok || rel == "" {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_path", "invalid path")
 		return
@@ -381,7 +398,7 @@ func handleFSMkdir(w http.ResponseWriter, r *http.Request) {
 
 // handleFSNewFile creates an empty file at path (O_EXCL => 409 if it exists).
 func handleFSNewFile(w http.ResponseWriter, r *http.Request) {
-	full, rel, ok := safeBrowsePath(r.URL.Query().Get("path"))
+	full, rel, ok := safeWritableBrowsePath(r.URL.Query().Get("path"))
 	if !ok || rel == "" {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_path", "invalid path")
 		return
@@ -403,8 +420,8 @@ func handleFSNewFile(w http.ResponseWriter, r *http.Request) {
 // (traversal + denylist); the destination must not already exist.
 func handleFSRename(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	srcFull, srcRel, ok1 := safeBrowsePath(q.Get("from"))
-	dstFull, dstRel, ok2 := safeBrowsePath(q.Get("to"))
+	srcFull, srcRel, ok1 := safeWritableBrowsePath(q.Get("from"))
+	dstFull, dstRel, ok2 := safeWritableBrowsePath(q.Get("to"))
 	if !ok1 || !ok2 || srcRel == "" || dstRel == "" {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_path", "invalid path")
 		return
@@ -427,7 +444,7 @@ func handleFSRename(w http.ResponseWriter, r *http.Request) {
 // handleFSDelete removes a file or directory (recursive). Refuses the browse
 // root and denylisted paths (safeBrowsePath). The Console confirms first.
 func handleFSDelete(w http.ResponseWriter, r *http.Request) {
-	full, rel, ok := safeBrowsePath(r.URL.Query().Get("path"))
+	full, rel, ok := safeWritableBrowsePath(r.URL.Query().Get("path"))
 	if !ok || rel == "" {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_path", "invalid path")
 		return

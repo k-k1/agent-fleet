@@ -1023,6 +1023,7 @@ export const en: Record<keyof typeof ja, string> = {
   "topbar.appearance_title": "Appearance (theme, colors)",
   "topbar.appearance": "Appearance",
   "topbar.tenant": "Tenant",
+  "topbar.user_guide": "User guide",
   "topbar.guide": "Getting-started guide",
   "topbar.settings": "Settings",
   "topbar.admin": "Admin",

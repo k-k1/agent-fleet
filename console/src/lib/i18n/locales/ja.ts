@@ -1038,6 +1038,7 @@ export const ja = {
   "topbar.appearance_title": "外観（テーマ・配色）",
   "topbar.appearance": "外観",
   "topbar.tenant": "テナント",
+  "topbar.user_guide": "利用ガイド",
   "topbar.guide": "はじめかたガイド",
   "topbar.settings": "設定",
   "topbar.admin": "管理",
