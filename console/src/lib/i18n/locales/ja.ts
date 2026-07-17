@@ -975,6 +975,9 @@ export const ja = {
   "wsbar.usage.fetched": "取得 {ago}",
   "wsbar.usage.refresh": "更新",
   "wsbar.usage.open_page": "使用状況ページを開く",
+  "wsbar.usage.unavailable_title": "{name} 使用量 — 一時的に取得できません。使用状況ページで確認してください。",
+  "wsbar.usage.unavailable_note":
+    "現在の使用量を取得できませんでした（非公式・レート制限ありのため）。更新するか、下の使用状況ページで正確な数値を確認してください。",
   // 電源トグル／状態チップのツールチップ
   "wsbar.stop_ws": "ワークスペースを停止",
   "wsbar.start_ws": "ワークスペースを起動",
