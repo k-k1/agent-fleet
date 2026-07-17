@@ -223,6 +223,11 @@ const defaultChatModel = "claude-sonnet-5"
 // explicitly in their template.
 const defaultCodexChatModel = "gpt-5.6-luna"
 
+// defaultOpencodeChatModel favors the capable general-purpose model in the
+// currently connected OpenCode catalog. An assistant can still pin a different
+// provider/model explicitly in its template.
+const defaultOpencodeChatModel = "opencode/nemotron-3-ultra-free"
+
 // resolveChatModel applies an agent-specific default only when the assistant did not
 // pin a model. The resolved value is snapshotted onto a new conversation, so an
 // existing thread keeps its prior model selection.
@@ -232,6 +237,9 @@ func resolveChatModel(agent, model string) string {
 	}
 	if agent == session.KindCodex {
 		return defaultCodexChatModel
+	}
+	if agent == session.KindOpencode {
+		return defaultOpencodeChatModel
 	}
 	return ""
 }
