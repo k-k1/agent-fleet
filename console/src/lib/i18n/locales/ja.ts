@@ -1184,6 +1184,8 @@ export const ja = {
   "mirror.queued": "キュー済み",
   "mirror.pending_title": "送信済み。claude が処理を始めると反映されます",
   "mirror.pending": "反映待ち",
+  "mirror.from_operator": "オペレーターから",
+  "mirror.from_operator_title": "フリート・オペレーター（アシスタント）が注入した指示です。あなたが入力したものではありません。",
   "mirror.effort_hint": "推論の努力度（codex reasoning_effort / opencode variant）",
   "mirror.token_hint": "入力(文脈)↑ / 出力↓ トークン",
   // DelegationCard

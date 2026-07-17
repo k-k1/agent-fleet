@@ -106,6 +106,7 @@ interface Turn {
   idx?: number;
   pending?: boolean; // optimistic local echo of a just-sent prompt, not yet in the jsonl
   queued?: boolean; // sitting in claude's mid-run queue (enqueued, awaiting injection)
+  source?: string; // user turn origin: "operator" = fleet-operator injected (docs/30 ②), else own input
   parts?: Part[];
   sidechain?: boolean;
   compact?: boolean;
@@ -142,6 +143,7 @@ interface Group {
   idx?: number;
   pending?: boolean; // holds an optimistic local echo awaiting its real transcript turn
   queued?: boolean; // holds a prompt claude reports queued for the running turn
+  source?: string; // user group origin: "operator" = fleet-operator injected (docs/30 ②)
 }
 // foldParts output: a run of tool traces, or a single passthrough part.
 type FoldItem =
@@ -2301,6 +2303,7 @@ function groupTurns(turns: Turn[]): Group[] {
       last.parts.push(...parts);
       if (t.pending) last.pending = true;
       if (t.queued) last.queued = true;
+      if (t.source) last.source = t.source; // operator origin survives a same-role merge
       if (t.text) last.text += (last.text ? "\n\n" : "") + t.text;
       if (!last.model && t.model) last.model = t.model;
       if (!last.effort && t.effort) last.effort = t.effort;
@@ -2333,6 +2336,7 @@ function groupTurns(turns: Turn[]): Group[] {
         idx: t.idx,
         pending: !!t.pending,
         queued: !!t.queued,
+        source: t.source,
       });
     }
   }
@@ -2820,13 +2824,26 @@ function Turn({
         <MarkdownView key={item.i} source={item.p.text} baseDir={turn.cwd} onOpenFile={onOpenFile} />
       ),
     );
+  const fromOperator = isUser && turn.source === "operator";
   return (
     <div
-      className={"mirror-turn " + (isUser ? "user" : "assistant") + (turn.sidechain ? " sidechain" : "")}
+      className={
+        "mirror-turn " +
+        (isUser ? "user" : "assistant") +
+        (turn.sidechain ? " sidechain" : "") +
+        (fromOperator ? " from-operator" : "")
+      }
       data-turn-idx={turn.idx}
     >
       <div className="mirror-turn-head">
         <span className="mt-who">{who}</span>
+        {fromOperator && (
+          // This user turn was injected by the fleet operator (docs/30 ②), not typed by
+          // the user — badge it so the two are never confused.
+          <span className="mt-op" title={tr("mirror.from_operator_title")}>
+            <Icon name="broadcast" /> {tr("mirror.from_operator")}
+          </span>
+        )}
         {turn.queued ? (
           <span
             className="mt-pending mt-queued"

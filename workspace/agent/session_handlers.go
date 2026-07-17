@@ -371,6 +371,7 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		// the link is still recorded for forward-compat.
 		if req.ReportTo != "" {
 			armSessionReport(name, req.ReportTo)
+			recordOperatorInjection(name, req.InitialPrompt) // operator-driven start (docs/30 ②)
 		}
 		httpx.WriteJSON(w, http.StatusCreated, wireSession(meta, true))
 		return
@@ -388,8 +389,11 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	}
 	// docs/30: arm the one-shot completion report to the creating conversation. Armed
 	// even without an initial_prompt — the operator may steer the session manually next.
+	// The initial_prompt, when present, is an operator injection (docs/30 ②) — remember it
+	// so the mirror badges its user turn.
 	if req.ReportTo != "" {
 		armSessionReport(name, req.ReportTo)
+		recordOperatorInjection(name, req.InitialPrompt)
 	}
 
 	httpx.WriteJSON(w, http.StatusCreated, wireSession(meta, true))
