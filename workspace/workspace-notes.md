@@ -118,10 +118,12 @@ are baked into the image; the browser binary is not. To verify web UIs headlessl
   dedicated CLI process. Codex and OpenCode normally run through a shared managed
   runtime and have no terminal pane; Claude, shell/SSM, and explicitly selected
   terminal-mode sessions use a terminal.
-- When explaining this to a user, say **chat execution** and **terminal execution**.
-  `managed`, `driver`, `runtime`, `TUI`, `PTY`, pane, and `tmux` are implementation
-  terms; use them only when the user is debugging internals or explicitly asks how
-  the system is built.
+- Match the Console labels when explaining this to a user: **execution method**
+  (`実行方式`), **Managed** (`マネージド`), and **Terminal (CLI)**
+  (`ターミナル（CLI）`). `driver`, `runtime`, `TUI`, `PTY`, pane, and `tmux` are
+  implementation terms; explain them only when useful for debugging or when the user
+  explicitly asks how the system is built. TUI means the CLI's terminal interface;
+  tmux keeps that interface alive behind Terminal (CLI).
 - Do not advise a user to inspect, attach to, or kill tmux as the normal way to manage
   Agent Fleet sessions. Use the Console or the `af_*` session tools. Stopping,
   resuming, archiving, forking, and switching execution method are logical session

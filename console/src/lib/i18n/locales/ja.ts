@@ -28,7 +28,7 @@ export const ja = {
   "err.question_pending":
     "エージェントが質問への回答を待っています。質問カードから回答してから送信してください。",
   "err.not_running": "セッションが停止しています。再開してから送信してください。",
-  "err.driver_unavailable": "このエージェントではチャット実行を利用できません。",
+  "err.driver_unavailable": "このエージェントではマネージド実行を利用できません。",
   "err.runtime_failed": "エージェントを起動できませんでした。しばらく待ってから再試行してください。",
   "err.send_failed": "送信に失敗しました",
   "err.network": "通信エラー",
@@ -1381,15 +1381,15 @@ export const ja = {
   "sess.recreate_title": "新しい会話で作り直す",
   "sess.recreate_confirm": "作り直す",
   "sess.recreate_failed": "作り直しに失敗しました",
-  "sess.switch_to_managed": "チャット実行に切り替え",
-  "sess.switch_to_tui": "ターミナル実行に切り替え",
+  "sess.switch_to_managed": "マネージドに切り替え",
+  "sess.switch_to_tui": "ターミナル（CLI）に切り替え",
   "sess.switch_managed_body":
-    "「{name}」をチャット実行（推奨・省メモリ）へ切り替えます。<0/>会話は引き継がれます。ターミナル画面は使えなくなります。",
+    "「{name}」をマネージド実行（推奨・省メモリ）へ切り替えます。<0/>会話は引き継がれます。ターミナル画面は使えなくなります。",
   "sess.switch_tui_body":
     "「{name}」をターミナル実行へ切り替えます。<0/>会話は引き継がれます。セッションごとに追加のメモリ{cost}を消費します。",
   "sess.switch_confirm": "切り替える",
   "sess.switch_busy": "実行中のターンがあります。完了を待つか停止してから切り替えてください",
-  "sess.switch_failed": "実行方法の切り替えに失敗しました",
+  "sess.switch_failed": "実行方式の切り替えに失敗しました",
   "sess.fork_failed": "分岐に失敗しました",
 
   // === P2 アーカイブモーダル（features/sessions/ArchivedModal.tsx）===
@@ -1459,11 +1459,11 @@ export const ja = {
   "launch.history": "履歴",
   "launch.title": "作業を始める: {repo}",
   "launch.plan_hint": "Plan は最初のターンを調査・計画に専念。",
-  "launch.field.driver": "実行方法",
-  "launch.driver_managed": "チャット（推奨）",
-  "launch.driver_terminal": "ターミナル",
-  "launch.driver_managed_sub": "会話画面で操作・省メモリ",
-  "launch.tui_note": "黒い画面を直接操作・メモリ +{cost}",
+  "launch.field.driver": "実行方式",
+  "launch.driver_managed": "マネージド（推奨）",
+  "launch.driver_terminal": "ターミナル（CLI）",
+  "launch.driver_managed_sub": "チャットで操作・省メモリ",
+  "launch.tui_note": "CLI 画面を直接操作・メモリ +{cost}",
   "launch.worktree_direct_note":
     "この worktree（<0>{branch}</0>）で直接起動します。新しい worktree はベースのリポジトリから作成してください。",
   "launch.current_wc": "現在の作業コピー",
@@ -1793,7 +1793,7 @@ export const ja = {
 
   // === P5 リポジトリ（RepoPicker/NewRepoModal/CloneForm/DirPicker/Branch* ほか） ===
   "rp.clone_failed": "クローンに失敗: {err}",
-  "rp.managed_unsupported": "この環境はチャット実行に未対応のため、ターミナル実行で起動します",
+  "rp.managed_unsupported": "この環境はマネージドに未対応のため、ターミナル（CLI）で起動します",
   "rp.worktree_launch_failed": "worktree 起動に失敗: {err}",
   "rp.launch_failed": "起動に失敗: {err}",
   "rp.image_upload_failed": "画像のアップロードに失敗しました: {err}",
