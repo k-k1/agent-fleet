@@ -75,6 +75,20 @@
 .wk-section:first-of-type {
   margin-top: 2px;
 }
+.wk-foot {
+  display: flex;
+  gap: 14px;
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border2);
+  font-size: 12px;
+  color: var(--muted);
+}
+.wk-nav {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
 
 /* ---- command palette: centered modal near the top ---- */
 .cp-overlay {

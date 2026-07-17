@@ -1997,6 +1997,8 @@ export const ja = {
   "ui.next_key": "次のキー",
   "ui.wk_groups": "サブメニュー",
   "ui.wk_actions": "アクション",
+  "ui.wk_back": "1つ戻る",
+  "ui.wk_cancel": "キャンセル",
   "ui.new_version_available": "新しいバージョンがあります",
   "ui.update": "更新",
   "ui.recreate_failed": "作り直しに失敗しました",

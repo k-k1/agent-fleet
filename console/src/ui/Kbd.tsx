@@ -11,6 +11,7 @@ const SYMBOL: Record<string, string> = {
   arrowright: "→",
   enter: "⏎",
   escape: "Esc",
+  backspace: "⌫",
   space: "Space",
   tab: "Tab",
 };
