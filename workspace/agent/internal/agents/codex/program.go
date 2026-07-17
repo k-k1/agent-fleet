@@ -62,6 +62,17 @@ func buildProgram(model, effort, slotSid, codexResumeID, forkFrom string) string
 		parts = append(parts, "fork", session.ShellQuote(forkFrom))
 	}
 	parts = append(parts, flags)
+	// request_user_input (codex's AskUserQuestion) is gated OFF in the TUI's Default
+	// mode — the model is told "the tool is unavailable in Default mode" and answers
+	// itself instead of asking. Without this the 質問あり chip / notification on the CLI
+	// route can never fire: WireLive's HasPendingQuestion probe looks for a pending
+	// request_user_input call in the rollout, and none is ever recorded. Plan mode
+	// enables the tool on its own, so only Default mode needed the opt-in — which is
+	// why this went unnoticed. Verified on codex 0.144.3 (the pinned build) and 0.144.5:
+	// without the flag the tool is refused in Default mode, with it the question dialog
+	// renders and the rollout records the function_call the probe keys on. Mirrors the
+	// managed driver, which passes the same feature per-thread (see threadFeatures).
+	parts = append(parts, "-c", session.ShellQuote("features.default_mode_request_user_input=true"))
 	parts = append(parts, hookFlag("UserPromptSubmit", "working"))
 	parts = append(parts, hookFlag("Stop", "idle"))
 	if model != "" {
