@@ -293,6 +293,16 @@ export function App() {
       <TopBar toggleNav={toggleNav} toggleLeft={toggleLeft} toggleLeftMode={toggleLeftMode} />
       <WsBar />
       <div className="app-body">
+        {/* Desktop mouse-only: hovering the left edge while the rail is
+            collapsed peeks it open, mirroring the tablet edge-swipe below.
+            Hidden via CSS (hover:hover + pointer:fine) on touch/mobile, so
+            this never fires from a tap there. */}
+        <div
+          className="app-edge-hotzone"
+          onMouseEnter={() => {
+            if (!useLeftRail.getState().open) useLeftRail.getState().openOverlay();
+          }}
+        />
         <nav className="app-rail">
           <LayoutMap />
           {/* Project-first IA: Assistant + Memo pinned on top (global tools), then
