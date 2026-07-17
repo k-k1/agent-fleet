@@ -28,6 +28,9 @@ import (
 //     tokens have accrued, so a turn that is still thinking renders bare
 //     "(6s · thinking with high effort)". Requiring "tokens" (as we did) therefore
 //     false-idles the whole thinking phase — and a short turn start to finish;
+//   - the timer is not even first inside the parens: while a hook runs, claude renders
+//     "… (running stop hook · 6s · ↓ 279 tokens)" (found by the live contract probe,
+//     tui_contract_test.go). Hence [^)\n]* before the timer.
 //   - "shift+tab to cycle" stays visible mid-turn, so it can't tell busy from idle.
 //
 // It must not match the post-turn summary claude leaves in the transcript
@@ -37,7 +40,7 @@ import (
 // renders at column 0) so an indented transcript line that merely quotes a spinner —
 // including this file's own examples, when a session is asked to debug the TUI — doesn't
 // read as busy. Best-effort; one captured frame.
-var spinnerRe = regexp.MustCompile(`(?m)^\S? ?[A-Z][^\s(]*\x{2026} \([0-9]+(?:h|m|s)\b`)
+var spinnerRe = regexp.MustCompile(`(?m)^\S? ?[A-Z][^\s(]*\x{2026} \([^)\n]*[0-9]+(?:h|m|s)\b`)
 
 // spinnerActive reports whether the captured pane text shows a turn actively running —
 // either the classic "esc to interrupt" affordance or the live spinner header (see
