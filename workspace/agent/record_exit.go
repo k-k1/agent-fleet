@@ -51,10 +51,19 @@ func runRecordExit(args []string) {
 	if code >= 128 {
 		sig = code - 128
 	}
+	reason := status.ExitReasonFor(code, sig, oomDuringSession)
 	status.PersistExit(name, status.ExitInfo{
-		Reason: status.ExitReasonFor(code, sig, oomDuringSession),
+		Reason: reason,
 		Code:   code, Signal: sig,
 		At:      time.Now().Format(time.RFC3339),
 		OOMBase: base.OOMBase,
 	})
+	// Abnormal death of an operator-armed session reports to its conversation
+	// (docs/30) — a clean quit / graceful stop is not report-worthy.
+	switch reason {
+	case "oom", "crashed", "killed":
+		if reportArmed(name) {
+			kickSessionReport(name, "exit", "", reason)
+		}
+	}
 }

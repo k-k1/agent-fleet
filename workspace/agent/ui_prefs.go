@@ -61,6 +61,15 @@ func assistantAgentPref() string {
 	}
 }
 
+// chatAutoTurnEnabled is the global ON/OFF for the operator's automatic turn on a
+// session report (docs/30, 設定 > エージェント「報告への自動応答」). Missing/invalid
+// key ⇒ true, matching the frontend default — the feature ships ON, with the
+// per-conversation maxAutoTurns cap as the safety stop.
+func chatAutoTurnEnabled() bool {
+	v, ok := readUIPrefs()["assistantAutoTurn"].(bool)
+	return !ok || v
+}
+
 // chatOutputLanguage returns the user's forced chat output language ("ja" | "en"),
 // or "" when unset/"auto"/invalid — meaning "follow the input" (no language rule is
 // injected, preserving the persona-driven default). Read live per turn from ui-prefs

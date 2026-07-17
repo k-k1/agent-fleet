@@ -13,10 +13,15 @@ export interface ChatStep {
 }
 
 export interface ChatMessage {
-  role: "user" | "assistant";
+  role: "user" | "assistant" | "report";
   content: string;
   ts: number; // unix millis
   steps?: ChatStep[]; // assistant working process, separated from the final content
+  // role==="report" (docs/30): the reporting session's name — rendered as a
+  // session-origin card, not a user/assistant bubble.
+  session?: string;
+  // report only: whether the report has been fed into the provider's context yet.
+  delivered?: boolean;
 }
 
 // Light shape from GET /api/chat/conversations (no message bodies).
@@ -48,4 +53,8 @@ export interface Conversation {
   // A client that reloaded mid-answer uses it to keep the thinking indicator up and
   // poll until the reply lands (the detached turn survives the reload). Never persisted.
   in_progress?: boolean;
+  // Tool grant snapshot ("none" | "af_read" | "af_write"). af_write conversations can
+  // receive server-pushed session reports (docs/30), so ChatView keeps them fresh with
+  // a light poll while the pane is active.
+  tools?: string;
 }
