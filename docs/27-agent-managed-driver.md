@@ -561,6 +561,12 @@ turn 完走まで確認した。以下が `internal/agents/codex` の Driver/Sup
    `{answers:{<questionId>:{answers:[<label or free text>,…]}}}` を返すと turn が続行する。ただし app-server thread
    では request_user_input が既定無効で、`thread/start` / `thread/resume` の thread 単位 config に
    `features.default_mode_request_user_input=true` が必要（無い場合は tool が unavailable）。
+   **追記（2026-07-17 実測・訂正）**: これは app-server 固有ではない。**TUI（CLI ルート）も Default mode
+   では同じく既定無効**（"The request_user_input tool is unavailable in Default mode." と返り、モデルは
+   質問せず自答する）で、当初の「TUI は自前で有効化している」という前提は誤りだった。Plan mode のみ
+   自動で有効。よって CLI ルートでも `buildProgram` が同じ feature を `-c` で渡す（無いと
+   `HasPendingQuestion` が拾う function_call が rollout に一切現れず、質問あり状態が永久に点かない）。
+   codex 0.144.3（ピン）/ 0.144.5（実効）双方で確認。
 4. **未応答質問の reconciliation は runtime 自身で成立する**: 質問 request を未応答のまま writer 接続を
    切り、別接続から同じ thread を feature config 付きで resume すると、未解決の request が新しい接続へ
    再配送された。AF 側で質問イベントを journal/replay する必要はなく、Interaction id は安定した `itemId`、
