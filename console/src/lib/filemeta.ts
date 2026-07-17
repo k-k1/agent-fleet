@@ -119,6 +119,11 @@ export function resolveMarkdownFileTarget(
   } else {
     const dir = normalizedBaseDir || dirName(normalizedBasePath);
     path = joinPath(dir, ref);
+    // FileView can also open an explicitly allowed absolute path outside home
+    // (the role-scoped user guide is one). Preserve that root when following a
+    // relative Markdown link; joinPath deliberately normalizes to a slashless
+    // path for home-relative files.
+    if (dir.startsWith("/")) path = "/" + path;
   }
   if (!path) return null;
   return { path, ...(line && line > 0 ? { line } : {}), ...(column && column > 0 ? { column } : {}) };
