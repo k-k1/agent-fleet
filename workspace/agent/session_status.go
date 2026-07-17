@@ -103,7 +103,17 @@ func runSessionStatusHook(args []string) {
 func recordSessionNotification(sid, previous, state, turnText string) {
 	kind := ""
 	switch {
-	case state == "idle" && previous == "working":
+	// A turn that ENDED: the marker said "working", or it is GONE. The pane-based idle
+	// heal (WireLive / liveStateOf) does status.Remove(sid) whenever the TUI *looks* like
+	// it is back at the ready prompt, which a footer-string drift makes fire mid-turn. Its
+	// reverse-heal only restores "working" if a poll happens to catch IsBusy, so the
+	// marker can simply stay gone — and keying answer-ready on previous=="working" alone
+	// then dropped the real Stop on the floor: no 応答あり notification and no operator
+	// report (docs/30), while the session still read idle (LiveState defaults to idle with
+	// no file). A completion must not hinge on a tmux-string heuristic never misfiring, so
+	// an absent marker counts as a turn that ended. Interim states (question/plan/
+	// permission) stay excluded — they are not completions and must not consume the arm.
+	case state == "idle" && (previous == "working" || previous == ""):
 		kind = reportKindAnswerReady
 	case state == "question" && previous != "question":
 		kind = "question"
