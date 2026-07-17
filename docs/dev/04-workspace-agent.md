@@ -5,47 +5,59 @@
 ## 4.1 位置づけ
 
 per-user コンテナ内で常駐する Go プロセス。コンテナの PID 1 は `--init`（tini、ゾンビ reap のため）で、
-その配下で非特権ユーザーとして動く。CP から見た**唯一の実行主体**——tmux・git・fs・CLI エージェントに
+その配下で非特権ユーザーとして動く。CP から見た**唯一の実行主体**——runtime・tmux・git・fs・CLI エージェントに
 触るのは必ず Agent（CP は中継のみ、[05](05-api-contracts.md)）。全 API は `requireToken`（Bearer
 `AGENT_TOKEN`）で保護（[07 §7.5](07-security.md)）。コンテナ netns を共有するため、コンテナ内サービスへ
 loopback で届く（preview の下請け `/proxy/{port}`）。
 
 ## 4.2 セッションモデル
 
-**1 Session = tmux セッション 1 本**（プレフィクス `claude_`）。決定的 sid = uuidv5(dir, name)。
+**1 Session = 会話・作業 dir・設定・実行状態を束ねる論理スロット**。`kind` はエージェント種別、
+`driver` は制御経路を表す。`driver=tui` だけが tmux session（プレフィクス `claude_`）を 1 本持ち、
+`driver=managed` は Workspace 単位の共有 runtime 上の thread なので pane もセッション専用プロセスも持たない。
+決定的 sid = uuidv5(dir, name) は status 等の AF 内部キーであり、エージェント自身の会話 ID は別に保存する。
 
 - **メタ永続**: per-session メタ（kind/dir/model/repo/createdAt/stoppedAt/Archived）を
   `~/.config/agent-fleet/sessions`（denylist 配下・home volume、`AF_SESSIONS_DIR`）に保存。
   **Stop→Start を跨いで一覧と再開が生きる**。停止 TTL は `AF_SESSION_STOPPED_TTL`（既定 7d）で剪定。
-- **一覧はメタ駆動 + live tmux マージ**。メタの無い生 `claude_*` tmux（孤児）も列挙し、ペインの起動
-  コマンドから kind を sniff——「動いているのに一覧に出ない」手詰まりを封じる。
+- **一覧はメタ駆動 + driver ごとの live 状態マージ**。managed は runtime handle、tui は tmux を生存判定に使う。
+  メタの無い生 `claude_*` tmux（孤児）も列挙し、ペインの起動コマンドから kind を sniff——
+  「動いているのに一覧に出ない」手詰まりを封じる。
 - **止め方の 3 すくみ + 1**:
-  - `halt` = tmux kill・メタ保持 → 停止中として一覧に残る（再開可）
-  - `stop` = tmux kill・メタ破棄 → 一覧から消える（会話履歴 jsonl は残る）
+  - `halt` = 現 driver を停止・メタ保持 → 停止中として一覧に残る（再開可）
+  - `stop` = 現 driver を停止・メタ破棄 → 一覧から消える（エージェント native の会話履歴は残る）
   - `archive`/`restore` = メタ+履歴保持で非表示 ↔ stopped 復帰
-  - `recreate` = 過去履歴を捨て**同一スロットで新規会話**
-- **再開**: claude/opencode は**作業 dir 消失で再開不可**（resumable=false、home フォールバックしない）。
-  shell は home フォールバック。claude の resume 判定は jsonl に実会話行（user/assistant）があるか——
+  - `recreate` = 旧メタと履歴を archive し、同じ dir/kind/driver で新しい slug の会話を起動
+- **再開**: managed は保存した native conversation ID を共有 runtime へ resume し、Agent / daemon 再起動時は
+  reconciliation で live handle を再構築する。claude/codex/opencode は driver にかかわらず
+  **作業 dir 消失で再開不可**（resumable=false、home フォールバックしない）。shell は home フォールバック。claude の resume 判定は
+  jsonl に実会話行（user/assistant）があるか——
   ⚠️ Remote Control 既定 ON では会話前でも `bridge-session` 1 行が書かれるため「jsonl 存在=resume 可」に
   すると `--resume` が即死する。non-resumable なら jsonl を捨てて `--session-id` 新規。
 - ⚠️ **tmux の `-t` は前方一致**（exact→prefix→fnmatch）。`claude_foo` が `claude_foo-sh` に一致して
   誤判定・誤 kill しうるため、target 参照は全て `=name` の exact 形式で行うのが本リポジトリの規約。
 - **DB ミラー（B 案）**: CP の `GET /api/sessions` は running 時に Agent から取得して DB を洗い替え、
   stopped 時は DB から `alive:false` 配信＝**Workspace 停止中でも一覧が見える**（[06 §6.3](06-data-model.md)）。
-- **fork**: claude の会話履歴を引き継いだ新セッションを別スロットに分岐（`POST /sessions/{name}/fork`）。
+- **fork**: claude/codex/opencode の会話履歴を引き継いだ新セッションを別スロットに分岐
+  （`POST /sessions/{name}/fork`）。新スロットは元の kind と driver を引き継ぐ。
+- **driver 切替**: Codex / OpenCode は `POST /sessions/{name}/driver` で同じ会話を `managed` ⇄ `tui` に
+  stop→resume する。実行中 turn がある間は `409 busy_switch`。kind・dir・native conversation ID は維持する。
 - **ブランチ支援**: `suggest-branch`（セッション会話を要約して AI がブランチ名を提案）/ `rename-branch`。
 - タイトル系（`/title/{suggest,accept,dismiss,regenerate,set}`）は会話からの表示名提案。
 
-## 4.3 エージェント kind 統合パターン
+## 4.3 エージェント kind / driver 統合パターン
 
 kind = `claude` / `codex` / `opencode` / `shell` / `ssm`（+ 📋 agy、[decisions/0008](../decisions/0008-antigravity-cli-agent-kind.md)）。
+Codex / OpenCode は managed が新規既定で、tui は明示選択。Claude / shell / SSM は tui のみ。
 **新 kind を足すときに埋める面**は毎回同じ（雛形は opencode 追加時に確立、codex で再利用）:
 
 | 面 | claude | codex | opencode |
 |----|--------|-------|----------|
-| 起動コマンド構築 | `--session-id`/`--resume` + `--name` ラベル + `--model` | `codex` + `AGENT_CODEX_FLAGS`（bypass 系）+ resume は捕捉した id で `codex resume` | `opencode`（保存 sid あれば `--session <id>`）|
-| resume 戦略 | 決定的 sid + jsonl 判定（§4.2）| **独自 sid をフック stdin から捕捉**して保存（ピン留め不可）| プラグインが `session.created` の sid を捕捉して per-slot 保存（`--continue` は同 dir 他スロットを掴むため不使用）|
-| 状態通知 | settings.json の hooks（§4.4）| **claude と同型のフック**を起動時 `-c` で注入（per-slot sid をコマンドに埋める）| 同梱プラグインがイベント購読して通知 |
+| 既定 driver | tui | managed（app-server）| managed（serve）|
+| tui 起動 | `--session-id`/`--resume` + `--name` + `--model` | `codex --remote … resume`、旧会話 ID は hook で捕捉 | `opencode --session <id>`、ID は plugin で捕捉 |
+| managed 起動 | — | 共有 app-server の `thread/start|resume` | 共有 serve の v1 session API |
+| 会話正本 | JSONL | rollout JSONL（両 driver 共通）| SQLite `message` / `part`（両 driver 共通）|
+| live 状態 | hooks + tmux probe | managed=RPC event、tui=hooks/probe＋observer | managed=SSE event、tui=plugin/probe |
 | 認証経路 | `claude auth login --claudeai`（[08 §8.5](08-integrations.md)）| `codex login`（API キー / device flow）| env キーを**コマンド前置**で注入（`secrets.enc` 保存）|
 | 資格の置き場 | `CLAUDE_CONFIG_DIR`（home 外退避）| `~/.codex`（CLI 所有）| `secrets.enc`（Agent 所有）|
 | fs denylist | `.claude`・`.claude.json` ほか | `~/.codex` | `~/.local/share/opencode` |
@@ -61,14 +73,22 @@ kind = `claude` / `codex` / `opencode` / `shell` / `ssm`（+ 📋 agy、[decisio
   指示ブロック（**ベストエフォート**）。codex/opencode の on/off 実体は artifact の有無で、永続 pref
   `~/.config/agent-fleet/rtk.json` を正として起動時と `GET/PUT /agents/rtk` が pref→artifact を適用。
 
+managed の共通境界は `Driver` / `ThreadHandle` / `RuntimeSupervisor`。`/turn`・`/respond`・`/settings` は
+意味論 API として driver 非依存に受け、managed は構造化 API、tui は既存のキー入力経路へ委譲する。
+会話本文を AF 独自ストアへ複製せず、native store を read の正本として transcript を正規化する。
+実装判断とプロトコル実測は [ADR 0015](../decisions/0015-agent-managed-driver.md) と
+[実装記録](../27-agent-managed-driver.md) を参照。
+
 ## 4.4 状態バッジ機構
 
-claude の hooks が `workspace-agent session-status <state> <sid>` を発火し
+状態の外向き語彙は `working` / `idle` / `question` に正規化する。claude の hooks が
+`workspace-agent session-status <state> <sid>` を発火し
 `~/.config/agent-fleet/session-status/<sid>.json` に記録。状態は
 **working**（UserPromptSubmit）/ **idle**（Stop=入力待ち）/ **question**（PreToolUse matcher
 `AskUserQuestion`）。hooks はセッション起動毎に加算マージし、PreToolUse は **matcher 単位**で
 RTK（`Bash`）と状態（`AskUserQuestion`）が共存できる（トグルが互いを壊さない）。
-codex は同型フック（question は出ない）、opencode はプラグイン通知（working/idle のみ）。
+Codex / OpenCode の managed driver は runtime event から同じ status store と通知 seam へ書く。
+tui では codex は同型フック＋observer、opencode はプラグイン通知を使う。
 Console は 4 秒ポーリングで ● 進行中 / ❓ 質問 / ✓ 入力待ち / 停止中を描画し、idle/question 遷移で
 ブラウザ通知。
 
@@ -113,7 +133,7 @@ Console は 4 秒ポーリングで ● 進行中 / ❓ 質問 / ✓ 入力待�
 - claude の会話 jsonl は**末尾ウィンドウ読み込み + 逆方向ページング**で返す
   （`GET /sessions/{name}/messages`、[decisions/0009](../decisions/0009-transcript-paging.md)）。
 - codex / opencode にも各 CLI の保存形式（jsonl / SQLite store）を読む transcript リーダーがあり、
-  出力は共通の turn 形に揃える（パーサは統合しない——docs/23 の方針）。
+  driver にかかわらず出力を共通の turn 形に揃える（パーサは統合しない——docs/23 の方針）。
 - usage: `GET /claude/usage`・`GET /codex/usage`（各 CLI のローカル記録から集計）。
 
 ## 4.8 secrets（Agent 側の責務）

@@ -27,8 +27,8 @@ export const en: Record<keyof typeof ja, string> = {
   "err.question_pending":
     "The agent is waiting for an answer to its question. Answer it from the question card before sending.",
   "err.not_running": "The session is stopped. Resume it before sending.",
-  "err.driver_unavailable": "The managed driver isn't available yet for this agent type.",
-  "err.runtime_failed": "Couldn't connect to the agent's shared runtime.",
+  "err.driver_unavailable": "Chat execution isn't available for this agent.",
+  "err.runtime_failed": "Couldn't start the agent. Wait a moment and try again.",
   "err.send_failed": "Failed to send.",
   "err.network": "Network error",
   "err.settings_change_failed": "Couldn't change the setting.",
@@ -1347,15 +1347,15 @@ export const en: Record<keyof typeof ja, string> = {
   "sess.recreate_title": "Recreate with a new conversation",
   "sess.recreate_confirm": "Recreate",
   "sess.recreate_failed": "Failed to recreate",
-  "sess.switch_to_managed": "Switch to the Managed driver",
-  "sess.switch_to_tui": "Switch to the CLI (TUI) driver",
+  "sess.switch_to_managed": "Switch to chat execution",
+  "sess.switch_to_tui": "Switch to terminal execution",
   "sess.switch_managed_body":
-    "Switch “{name}” to shared-runtime driving (chat-only, low memory).<0/>The conversation carries over. The terminal screen becomes unavailable.",
+    "Switch “{name}” to chat execution (recommended, low memory).<0/>The conversation carries over. The terminal screen becomes unavailable.",
   "sess.switch_tui_body":
-    "Switch “{name}” to terminal (TUI) driving.<0/>The conversation carries over. It uses one TUI process worth of memory per session{cost}.",
+    "Switch “{name}” to terminal execution.<0/>The conversation carries over. It uses additional memory per session{cost}.",
   "sess.switch_confirm": "Switch",
   "sess.switch_busy": "A turn is running. Wait for it to finish or stop it before switching.",
-  "sess.switch_failed": "Failed to switch the driver",
+  "sess.switch_failed": "Failed to switch the execution method",
   "sess.fork_failed": "Failed to fork",
 
   // === P2 archived modal (features/sessions/ArchivedModal.tsx) ===
@@ -1425,9 +1425,11 @@ export const en: Record<keyof typeof ja, string> = {
   "launch.history": "History",
   "launch.title": "Start working: {repo}",
   "launch.plan_hint": "Plan devotes the first turn to investigation and planning.",
-  "launch.field.driver": "Driver",
-  "launch.driver_managed_sub": "Shared runtime · chat-only · low memory",
-  "launch.tui_note": "Terminal access · memory +{cost}",
+  "launch.field.driver": "Execution method",
+  "launch.driver_managed": "Chat (recommended)",
+  "launch.driver_terminal": "Terminal",
+  "launch.driver_managed_sub": "Conversation view · low memory",
+  "launch.tui_note": "Direct terminal access · memory +{cost}",
   "launch.worktree_direct_note":
     "Launches directly in this worktree (<0>{branch}</0>). Create a new worktree from the base repository.",
   "launch.current_wc": "current working copy",
@@ -1757,7 +1759,7 @@ export const en: Record<keyof typeof ja, string> = {
 
   // === P5 リポジトリ（RepoPicker/NewRepoModal/CloneForm/DirPicker/Branch* ほか） ===
   "rp.clone_failed": "Clone failed: {err}",
-  "rp.managed_unsupported": "This environment doesn't support managed; launching via CLI (TUI)",
+  "rp.managed_unsupported": "This environment doesn't support chat execution; launching in terminal mode",
   "rp.worktree_launch_failed": "Worktree launch failed: {err}",
   "rp.launch_failed": "Launch failed: {err}",
   "rp.image_upload_failed": "Image upload failed: {err}",

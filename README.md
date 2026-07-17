@@ -101,7 +101,8 @@ docker compose up -d --build
 
 - **Workspace** — ユーザー 1 人に対応する永続コンテナ環境。ホームボリュームと稼働プロセスを持つ。
 - **Working copy** — Workspace 内に clone した Bitbucket リポジトリの作業ディレクトリ。
-- **Session** — Working copy に紐づく Claude CLI プロセス（tmux セッション 1 本）。
+- **Session** — Working copy に紐づく会話・設定・実行状態の論理単位。Codex / OpenCode は
+  共有 runtime 上でも動き、必ずしも専用 CLI プロセスや tmux session を持たない。
 
 ## ライセンス
 

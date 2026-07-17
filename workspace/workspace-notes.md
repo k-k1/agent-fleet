@@ -113,6 +113,23 @@ are baked into the image; the browser binary is not. To verify web UIs headlessl
 - Run headless and short-lived; close the browser when done (memory-constrained host).
   Screenshots and WebGL (SwiftShader) work; there is no display for headful runs.
 
+## Agent Fleet sessions (do not assume a terminal)
+- A **session is a logical task/conversation**, not necessarily a tmux session or a
+  dedicated CLI process. Codex and OpenCode normally run through a shared managed
+  runtime and have no terminal pane; Claude, shell/SSM, and explicitly selected
+  terminal-mode sessions use a terminal.
+- When explaining this to a user, say **chat execution** and **terminal execution**.
+  `managed`, `driver`, `runtime`, `TUI`, `PTY`, pane, and `tmux` are implementation
+  terms; use them only when the user is debugging internals or explicitly asks how
+  the system is built.
+- Do not advise a user to inspect, attach to, or kill tmux as the normal way to manage
+  Agent Fleet sessions. Use the Console or the `af_*` session tools. Stopping,
+  resuming, archiving, forking, and switching execution method are logical session
+  operations and are routed to the correct backend automatically.
+- A managed session can continue the same conversation after Agent/runtime restart
+  through reconciliation, and Codex/OpenCode can switch execution method while idle.
+  Do not infer that a missing terminal means the session stopped or lost its history.
+
 ## Answering questions about this Workspace / environment
 The agent-fleet docs you are allowed to see are mounted **read-only** at
 `/usr/local/share/agent-fleet/docs` — the set is scoped to your access level, so just
