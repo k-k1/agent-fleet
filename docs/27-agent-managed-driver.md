@@ -303,6 +303,10 @@ config は追加・thread 間分離の口ではあっても allowlist / replace 
 へ直結してはならない。統合には upstream の thread 単位 replace/deny API、または会話の許可集合ごとに
 設定を固定した別 runtime を必要とする。
 
+2026-07-17 の利用者判断で、アシスタントチャットに対するグローバル MCP の透過は許容する方針へ変更した。
+従って上記は権限隔離を要求するデプロイでは維持すべき制約だが、このワークスペースでの Codex managed
+チャット統合を妨げる条件ではない。会話固有の AF MCP は追加設定として thread ごとに分離する。
+
 ### 9.4 config
 
 ネイティブ設定ファイルと既存 settings API（`internal/agents/codex/settings.go` の regex ベース原子的更新、

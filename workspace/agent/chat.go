@@ -19,6 +19,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
 // chatStep is one "作業過程" item of an assistant turn (docs/19): the narration the model
@@ -215,6 +217,24 @@ const chatPersona = "あなたは Agent Fleet 利用者の作業を補助する�
 // (or conversation) doesn't pin one — Sonnet keeps assistant chats fast/cheap. Override
 // deployment-wide with AF_CHAT_MODEL. An explicit per-assistant model still wins.
 const defaultChatModel = "claude-sonnet-5"
+
+// defaultCodexChatModel favors the high-volume Luna tier for conversational
+// assistants. Assistants that need deeper coding/reasoning can still pin gpt-5.6
+// explicitly in their template.
+const defaultCodexChatModel = "gpt-5.6-luna"
+
+// resolveChatModel applies an agent-specific default only when the assistant did not
+// pin a model. The resolved value is snapshotted onto a new conversation, so an
+// existing thread keeps its prior model selection.
+func resolveChatModel(agent, model string) string {
+	if model = strings.TrimSpace(model); model != "" {
+		return model
+	}
+	if agent == session.KindCodex {
+		return defaultCodexChatModel
+	}
+	return ""
+}
 
 // chatModel resolves the --model for a conversation: its own model if set, else the
 // deployment default (AF_CHAT_MODEL or defaultChatModel).
