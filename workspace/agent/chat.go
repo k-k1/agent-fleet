@@ -82,6 +82,11 @@ type chatConversation struct {
 	// Phase C) for the Console to prefill the composer. It is set AFTER saveConv, so it is
 	// never persisted — the composer owns it thereafter.
 	Seed string `json:"seed,omitempty"`
+	// SeedVerb records the ad-hoc Files verb that created this thread ("translate" |
+	// "summarize"), when the chat was opened without a standing assistant (docs/30 ②).
+	// It drives the persona-embedded verb behaviour — notably the translate language
+	// exemption below — so deleting the old 翻訳/汎用 builtins costs no capability.
+	SeedVerb string `json:"seed_verb,omitempty"`
 	// InProgress is a transient flag set only by handleChatGet when an assistant turn is
 	// still running for this conversation (chat_live.go). It lets a client that reloaded
 	// mid-answer know the reply is still coming and poll for it. Never persisted (set only
@@ -129,10 +134,12 @@ const (
 )
 
 // languageRule returns the forced-output-language directive for this conversation, or ""
-// to leave language to the input/persona. The translate assistant is exempt: its whole
-// job is auto-detecting direction (JA↔EN), which a forced language would break.
+// to leave language to the input/persona. Translation is exempt: its whole job is
+// auto-detecting direction (JA↔EN), which a forced language would break. That is now the
+// ad-hoc "translate" verb (docs/30 ②); the AssistantID check keeps threads created by the
+// old 翻訳 builtin exempt too.
 func (c *chatConversation) languageRule() string {
-	if c.AssistantID == "translate" {
+	if c.SeedVerb == "translate" || c.AssistantID == "translate" {
 		return ""
 	}
 	switch chatOutputLanguage() {

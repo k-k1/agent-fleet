@@ -40,6 +40,25 @@ type chatCreateReq struct {
 	SeedVerb   string `json:"seed_verb"` // "translate" | "summarize" | "" (open-ended ask)
 }
 
+// verbPersona is the persona-embedded instruction for an ad-hoc Files verb (docs/30 ②).
+// A translate/summarize chat opened from Files carries its own persona instead of pointing
+// at a standing 翻訳/汎用 assistant, so those builtins could be removed with no loss. Any
+// other verb ("") falls through to the generic chatPersona.
+func verbPersona(verb string) string {
+	switch verb {
+	case "translate":
+		return "あなたは翻訳アシスタントです。" +
+			"渡された文章を、指定がなければ日本語↔英語を自動判定して自然に翻訳してください。" +
+			"訳文のみを返し、余計な前置きや解説は付けないでください。Markdown の書式は保持します。"
+	case "summarize":
+		return "あなたは要約アシスタントです。" +
+			"渡された文章の要点を、原文の言語に合わせて簡潔にまとめてください。" +
+			"重要な項目は箇条書きにし、余計な前置きは付けないでください。"
+	default:
+		return ""
+	}
+}
+
 // seedFor composes the first-turn prompt for an attached file/dir. The absolute path is
 // used verbatim so the assistant's Read (scoped by --add-dir) resolves it directly.
 func seedFor(verb, abs string, isDir bool) string {
@@ -79,7 +98,8 @@ func handleChatCreate(w http.ResponseWriter, r *http.Request) {
 		ID: randUUID(), Title: title, CreatedAt: now, UpdatedAt: now, Messages: []chatMessage{},
 	}
 
-	if req.AssistantID != "" {
+	switch {
+	case req.AssistantID != "":
 		// Snapshot the assistant's settings onto the conversation (docs/19 Q2): later edits
 		// to the assistant leave existing threads untouched.
 		a, err := getAssistant(req.AssistantID)
@@ -94,7 +114,16 @@ func handleChatCreate(w http.ResponseWriter, r *http.Request) {
 		c.Tools = a.Tools
 		c.Knowledge = a.Knowledge
 		c.Integrations = a.Integrations
-	} else {
+	case verbPersona(req.SeedVerb) != "":
+		// Ad-hoc persona-embedded verb (docs/30 ②): a Files 翻訳/要約 opens a standalone chat
+		// carrying the verb persona directly — no standing 翻訳/汎用 assistant to point at.
+		// Read-only (the attached file arrives via knowledge --add-dir below); SeedVerb is
+		// persisted so languageRule() keeps a translate thread language-agnostic.
+		c.Agent = preferredHeadlessAgent()
+		c.Persona = verbPersona(req.SeedVerb)
+		c.Tools = toolsNone
+		c.SeedVerb = req.SeedVerb
+	default:
 		// Legacy path: plain agent + optional model, generic persona, read-only fleet tools
 		// for claude (mirrors the pre-assistant default).
 		if _, ok := chatProviders[req.Agent]; !ok {

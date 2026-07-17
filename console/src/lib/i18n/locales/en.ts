@@ -66,15 +66,6 @@ export const en: Record<keyof typeof ja, string> = {
   "assistant.sre.name": "SRE Assistant",
   "assistant.sre.desc":
     "Your partner for incident response and monitoring ops (read-only). Connect PagerDuty, Grafana, and CloudWatch and I'll help triage the situation, hypothesize root causes, and draft external updates while looking at open incidents, metrics, and logs.",
-  "assistant.integrity.name": "Consistency Checker",
-  "assistant.integrity.desc":
-    "I'm a consistency checker. Hand me a file or directory and I'll surface mismatches between docs and implementation, inconsistent terminology and notation, and (for fiction) contradictions in the setting or dropped foreshadowing.",
-  "assistant.general.name": "General Assistant",
-  "assistant.general.desc":
-    "A general-purpose assistant. I help with a wide range of things — translation, summarizing, answering questions. Ask me anything.",
-  "assistant.translate.name": "Translation Assistant",
-  "assistant.translate.desc":
-    "A translation assistant. Give me text and I'll auto-detect and translate between Japanese and English (I return just the translation).",
 
   // --- notifications (speech is the spoken variant read by TTS) ---
   "notif.default_name": "Session",
@@ -1575,6 +1566,10 @@ export const en: Record<keyof typeof ja, string> = {
   "proj.copy_rel_path": "Copy the relative path",
   "proj.open_reader": "Open in reader",
   "proj.download": "Download",
+  "proj.translate": "Translate with assistant",
+  "proj.summarize": "Summarize with assistant",
+  "proj.verb_title.translate": "Translation of {name}",
+  "proj.verb_title.summarize": "Summary of {name}",
   "proj.rename": "Rename",
 
   // === P5 アシスタント UI（AssistantModal/AssistantSection） ===

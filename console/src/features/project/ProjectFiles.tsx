@@ -25,6 +25,8 @@ import { useFilesFilter } from "./filesFilter.ts";
 import { normQuery } from "./filter.ts";
 import { isContextMenuKey, menuAnchor } from "./contextMenuKey.ts";
 import { stickyAncestors } from "./stickyTree.ts";
+import { chatCreate } from "../chat/api.ts";
+import { openChat } from "../chat/open.ts";
 
 interface Entry {
   name: string;
@@ -118,6 +120,26 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo }: Proje
 
   const showFile = useCallback((p: string) => openTarget({ content: { kind: "file", filePath: p } }), [openTarget]);
   const showFileSplit = useCallback((p: string) => openTargetInNew({ content: { kind: "file", filePath: p } }), [openTargetInNew]);
+
+  // Open an ad-hoc assistant chat for a Files verb (docs/30 ②): translate / summarize
+  // the file with the verb persona baked in — no standing assistant. The Agent attaches
+  // the file's dir as knowledge and returns a seed prompt; openChat prefills the composer
+  // (never auto-sent — the user reviews and hits Enter).
+  const openVerbChat = useCallback(
+    async (filePath: string, verb: "translate" | "summarize") => {
+      try {
+        const c = await chatCreate("", t("proj.verb_title." + verb, { name: baseName(filePath) }), {
+          attachPath: filePath,
+          seedVerb: verb,
+        });
+        if (c && c.id) openChat(c.id, c.seed);
+        else toast(t("send.chat_create_failed"));
+      } catch {
+        toast(t("send.chat_create_failed"));
+      }
+    },
+    [toast],
+  );
 
   // Load (mount / manual refresh via files tick): fetch the root folder's children
   // and re-fetch every currently-open dir, preserving expansion + selection.
@@ -867,6 +889,20 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo }: Proje
                 <a className="ui-menu-item files-ctx-a" href={downloadURL(menu.row.path)} download onClick={() => setMenu(null)}>
                   <Icon name="cloud-download" /> {tr("proj.download")}
                 </a>
+              </li>
+            )}
+            {menu.row.type === "file" && (
+              <li>
+                <button type="button" className="ui-menu-item" onClick={() => runMenu(() => void openVerbChat(menu.row.path, "translate"))}>
+                  <Icon name="globe" /> {tr("proj.translate")}
+                </button>
+              </li>
+            )}
+            {menu.row.type === "file" && (
+              <li>
+                <button type="button" className="ui-menu-item" onClick={() => runMenu(() => void openVerbChat(menu.row.path, "summarize"))}>
+                  <Icon name="list-selection" /> {tr("proj.summarize")}
+                </button>
               </li>
             )}
             <li>
