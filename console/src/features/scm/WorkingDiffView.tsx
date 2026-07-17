@@ -1,7 +1,8 @@
 // WorkingDiffView — ONE working-tree file's diff in its own pane, opened from
 // the 変更 view. Port of views/WorkingDiffView.
-import { useEffect, useState } from "react";
-import { api } from "../../core/api/client.ts";
+import { useState } from "react";
+import { api, isTransientErr } from "../../core/api/client.ts";
+import { useRetryLoad } from "../../lib/retryLoad.ts";
 import { Icon } from "../../ui/Icon.tsx";
 import { useT } from "../../lib/i18n/index.ts";
 import { Diff } from "./GitDiff.tsx";
@@ -19,24 +20,23 @@ export function WorkingDiffView({
 }) {
   const tr = useT();
   const [diff, setDiff] = useState("");
-  useEffect(() => {
+  // WS 起動直後は agent 不通で api() が http_5xx を返すので過渡的失敗は再試行（isTransientErr）。
+  useRetryLoad(async (signal) => {
     if (!repo || !path) {
       setDiff("");
-      return;
+      return true;
     }
-    let alive = true;
     const q = `path=${encodeURIComponent(path)}${staged ? "&staged=1" : ""}`;
-    api(`api/repos/${encodeURIComponent(repo)}/diff?${q}`)
-      .then((d) => {
-        if (!alive) return;
-        setDiff(d.diff && d.diff.length ? d.diff : tr("scm.no_diff"));
-      })
-      .catch(() => {
-        if (alive) setDiff(tr("scm.diff_load_failed"));
-      });
-    return () => {
-      alive = false;
-    };
+    let d;
+    try {
+      d = await api(`api/repos/${encodeURIComponent(repo)}/diff?${q}`);
+    } catch {
+      return false; // network drop — retry
+    }
+    if (signal.aborted) return true;
+    if (isTransientErr(d)) return false;
+    setDiff(d.diff && d.diff.length ? d.diff : tr("scm.no_diff"));
+    return true;
   }, [repo, path, staged]);
 
   return (

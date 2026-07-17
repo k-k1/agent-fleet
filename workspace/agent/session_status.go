@@ -56,6 +56,20 @@ func runSessionStatusHook(args []string) {
 	if sid == "" {
 		return
 	}
+	// boot: the SessionStart hook. Reset a fresh or resumed session to idle so a stale
+	// "working" status file (killed mid-turn, then resumed — no Stop ever fired) doesn't
+	// badge 進行中 forever. Two guards: (1) skip source=="compact", which resumes the SAME
+	// in-flight turn after an auto-compaction — idling it there would false-idle live work;
+	// (2) never recordSessionNotification, since a stale working→idle reset here is not a
+	// real answer-ready and must not fire the 応答あり notification.
+	if state == "boot" {
+		if h.source == "compact" {
+			return
+		}
+		status.Persist(sid, "idle")
+		applyPendingPayloads(sid, "idle", h)
+		return
+	}
 	// message: the MessageDisplay hook fires as the assistant's text streams (before
 	// the turn's tool_use — verified: the prose reaches the pending card). We accumulate
 	// the chunks so a pending AskUserQuestion can show the prose that preceded it, which
@@ -155,6 +169,7 @@ type hookInput struct {
 	ntype      string
 	toolDetail string
 	delta      string // MessageDisplay: a streaming chunk of the assistant's text
+	source     string // SessionStart: startup | resume | clear | compact
 }
 
 func decodeHookStdin() hookInput {
@@ -164,6 +179,7 @@ func decodeHookStdin() hookInput {
 		NotificationType string `json:"notification_type"` // Notification
 		Delta            string `json:"delta"`             // MessageDisplay (streaming text chunk)
 		ToolName         string `json:"tool_name"`         // PreToolUse
+		Source           string `json:"source"`            // SessionStart (startup/resume/clear/compact)
 		ToolInput        struct {
 			Questions    json.RawMessage `json:"questions"` // AskUserQuestion
 			Plan         string          `json:"plan"`      // ExitPlanMode
@@ -181,6 +197,7 @@ func decodeHookStdin() hookInput {
 		message:    in.Message,
 		ntype:      in.NotificationType,
 		delta:      in.Delta,
+		source:     in.Source,
 		toolDetail: permToolDetail(in.ToolName, in.ToolInput.FilePath, in.ToolInput.NotebookPath, in.ToolInput.Path, in.ToolInput.Command),
 	}
 }

@@ -8,7 +8,7 @@ import { createPortal } from "react-dom";
 import type { CSSProperties } from "react";
 import { SendSelectionModal } from "../memo/SendSelectionModal.tsx";
 import hljs from "highlight.js/lib/common";
-import { api, downloadURL } from "../../core/api/client.ts";
+import { api, downloadURL, isTransientErr } from "../../core/api/client.ts";
 import { baseName, langFor, langLabel, humanSize, countLines, isMarpDoc, imageFormat } from "../../lib/filemeta.ts";
 import FileIcon from "../../ui/FileIcon.tsx";
 import { Icon } from "../../ui/Icon.tsx";
@@ -119,20 +119,49 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, paneId }: F
   useEffect(() => {
     if (!filePath) return;
     let alive = true;
+    let timer = 0;
+    let tries = 0;
+    let settled = false; // a terminal result (content or a real error) has landed
     setData(null);
     setErr("");
     setImgDims(null);
     setImgMode("preview");
-    api(`api/fs/file?path=${encodeURIComponent(filePath)}`)
-      .then((d) => {
-        if (!alive) return;
-        if (d && d.error) setErr(d.error.message || tr("view.cannot_load"));
-        else setData(d);
-      })
-      .catch(() => alive && setErr(tr("view.cannot_load")));
+    // Load the file, retrying transient gateway failures. Right after a WS start the agent
+    // is briefly unreachable and api() resolves an http_5xx error (not a throw); committing
+    // that as a real error would leave the pane stuck on "(…cannot load)" forever. Genuine
+    // errors (missing file, permission) carry an app code and stay terminal.
+    const retry = () => {
+      if (!alive) return;
+      const delay = Math.min(5000, 700 * 2 ** Math.min(tries, 3));
+      tries++;
+      timer = window.setTimeout(load, delay);
+    };
+    const load = () => {
+      api(`api/fs/file?path=${encodeURIComponent(filePath)}`)
+        .then((d) => {
+          if (!alive) return;
+          if (isTransientErr(d)) return retry();
+          settled = true;
+          if (d && d.error) setErr(d.error.message || tr("view.cannot_load"));
+          else setData(d);
+        })
+        .catch(() => alive && retry());
+    };
+    const onVis = () => {
+      if (!document.hidden && alive && !settled) {
+        tries = 0;
+        window.clearTimeout(timer);
+        load();
+      }
+    };
+    load();
+    document.addEventListener("visibilitychange", onVis);
     return () => {
       alive = false;
+      window.clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVis);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filePath]);
 
   const isText = !!data && !data.binary && typeof data.content === "string";

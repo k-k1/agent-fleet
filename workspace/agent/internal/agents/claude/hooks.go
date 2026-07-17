@@ -36,8 +36,9 @@ const permToolMatcher = "Write|Edit|MultiEdit|NotebookEdit|Bash"
 //
 //	UserPromptSubmit → working   (user sent a prompt)
 //	Stop             → idle      (response done / awaiting user)
+//	SessionStart     → boot      (fresh/resumed → idle; skips auto-compact)
 //	PreToolUse(AskUserQuestion)  → question (claude is asking the user; QA来た)
-//	PostToolUse(AskUserQuestion) → working  (question answered, continuing)
+//	PostToolUse(*)   → working   (every completed tool re-asserts working — heartbeat)
 func EnsureStatusHooks() {
 	m := readSettings()
 	hooks := hooksMap(m)
@@ -46,7 +47,7 @@ func EnsureStatusHooks() {
 	// Simple (matcher-less) events. MessageDisplay fires as the assistant's text streams
 	// (before the turn's tool_use); we buffer it (state "message" never changes status)
 	// so a pending AskUserQuestion can surface the prose that preceded it.
-	for event, state := range map[string]string{"UserPromptSubmit": "working", "Stop": "idle", "MessageDisplay": "message"} {
+	for event, state := range map[string]string{"UserPromptSubmit": "working", "Stop": "idle", "MessageDisplay": "message", "SessionStart": "boot"} {
 		if b, _ := json.Marshal(hooks[event]); !strings.Contains(string(b), "session-status") {
 			hooks[event] = []any{map[string]any{
 				"hooks": []any{map[string]any{"type": "command", "command": statusHookCmd(state)}},
@@ -73,12 +74,16 @@ func EnsureStatusHooks() {
 		ensurePreToolUseMatcher(hooks, permToolMatcher, statusHookCmd("permtool"))
 		changed = true
 	}
-	// PostToolUse: both resume to working once answered/approved. Re-set when the
-	// ExitPlanMode matcher is missing (older settings only had AskUserQuestion).
-	if b, _ := json.Marshal(hooks["PostToolUse"]); !strings.Contains(string(b), "ExitPlanMode") {
+	// PostToolUse(*) → working: a catch-all heartbeat. Every completed tool re-asserts
+	// "working", so a long turn can't false-idle if the working status file is lost
+	// mid-turn (a transient prompt frame's self-heal, or bypass mode where MessageDisplay/
+	// permtool don't Persist). It also subsumes the old per-tool resumes — an answered
+	// AskUserQuestion / approved ExitPlanMode / granted permission all fire their tool's
+	// PostToolUse on resolution, landing back on working. Empty matcher matches all tools.
+	// Migrate older settings that carried the two specific matchers instead.
+	if b, _ := json.Marshal(hooks["PostToolUse"]); !strings.Contains(string(b), `"matcher":""`) {
 		hooks["PostToolUse"] = []any{
-			map[string]any{"matcher": "AskUserQuestion", "hooks": []any{map[string]any{"type": "command", "command": statusHookCmd("working")}}},
-			map[string]any{"matcher": "ExitPlanMode", "hooks": []any{map[string]any{"type": "command", "command": statusHookCmd("working")}}},
+			map[string]any{"matcher": "", "hooks": []any{map[string]any{"type": "command", "command": statusHookCmd("working")}}},
 		}
 		changed = true
 	}

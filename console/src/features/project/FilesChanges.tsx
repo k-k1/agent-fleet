@@ -4,8 +4,9 @@
 // viewer (same as the SCM pane's changes list); untracked/added files without a
 // diff still open it — DiffView falls back sensibly. Revived from the old
 // FilesSection (deleted eeded8a), minus its file-management extras.
-import { useEffect, useState } from "react";
-import { api } from "../../core/api/client.ts";
+import { useState } from "react";
+import { api, isTransientErr } from "../../core/api/client.ts";
+import { useRetryLoad } from "../../lib/retryLoad.ts";
 import FileIcon from "../../ui/FileIcon.tsx";
 import { EmptyState } from "../../ui/EmptyState.tsx";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
@@ -38,16 +39,20 @@ export function FilesChanges() {
   const filesTick = useFilesStore((s) => s.tick);
   const [changes, setChanges] = useState<FsChange[] | null>(null);
 
-  useEffect(() => {
-    if (!running) return;
-    let alive = true;
+  // WS 起動直後は agent 不通で api() が http_5xx を返すので過渡的失敗は再試行（isTransientErr）。
+  useRetryLoad(async (signal) => {
+    if (!running) return true; // nothing to load while the WS is stopped
     setChanges(null);
-    api("api/fs/changes")
-      .then((d) => alive && setChanges(d.changes || []))
-      .catch(() => alive && setChanges([]));
-    return () => {
-      alive = false;
-    };
+    let d;
+    try {
+      d = await api("api/fs/changes");
+    } catch {
+      return false; // network drop — retry
+    }
+    if (signal.aborted) return true;
+    if (isTransientErr(d)) return false;
+    setChanges(d.changes || []);
+    return true;
   }, [running, filesTick]);
 
   if (!running) return <EmptyState icon="debug-disconnect" title={tr("pj.ws_stopped")} />;

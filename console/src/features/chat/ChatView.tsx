@@ -6,7 +6,7 @@ import { useLayoutStore } from "../../layout/store.ts";
 import { useTtsStore } from "../../core/store/tts.ts";
 import { useChatStore } from "./store.ts";
 import { chatGet, chatStream, chatStop, chatCreate, assistantGet, chatPasteImage } from "./api.ts";
-import { errText, raw } from "../../core/api/client.ts";
+import { errText, raw, isTransientErr } from "../../core/api/client.ts";
 import { takeChatSeed } from "../../lib/chatSeed.ts";
 import { useDraft, moveDraft, clearDraft } from "../../lib/draft.ts";
 import { scrollComposerViewport } from "../../lib/keyScroll.ts";
@@ -93,6 +93,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
   const [karaoke, setKaraoke] = useState<string | null>(null); // 読み上げ中の文（ライブ配信カラオケ・docs/19）
   const [error, setError] = useState("");
   const [loadError, setLoadError] = useState("");
+  const [loadingConv, setLoadingConv] = useState(false); // fetching the conversation (with retry while the WS agent boots)
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const convRef = useRef<Conversation | null>(null); // mirror of conv, to guard reloads
@@ -131,6 +132,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
   // interrupt the in-flight first turn — convRef already holds that conversation.
   useEffect(() => {
     let cancelled = false;
+    let timer = 0;
     setError("");
     setLoadError("");
     setHistIdx(null); // switching conversations/drafts resets composer history-recall
@@ -142,16 +144,60 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
       // useDraft reloads on the key change) is left standing.
       const seed = takeChatSeed(conversationId);
       if (seed !== undefined) setInput(seed);
-      chatGet(conversationId)
-        .then((c) => {
-          if (cancelled) return;
-          if (c && c.id) applyConv(c);
-          else setLoadError(t("chat.not_found"));
-        })
-        .catch(() => {
-          if (!cancelled) setLoadError(t("chat.load_failed"));
-        });
+      // Load the conversation, retrying transient failures. When the workspace agent is
+      // still booting (WS just started), the CP answers with an empty/gateway response
+      // that api() resolves as { error } (NOT a throw) — reading that as "no id" would
+      // stick the pane on 会話が見つかりません forever. So only a genuine 404
+      // (chat_conversation_not_found = the conversation was deleted) is terminal; anything
+      // else is retried with backoff until the backend is reachable, and we also retry
+      // when the tab regains focus.
+      let tries = 0;
+      const retry = () => {
+        if (cancelled) return;
+        const delay = Math.min(5000, 700 * 2 ** Math.min(tries, 3));
+        tries++;
+        timer = window.setTimeout(load, delay);
+      };
+      const load = () => {
+        setLoadingConv(true);
+        chatGet(conversationId)
+          .then((c) => {
+            if (cancelled) return;
+            if (c && c.id) {
+              setLoadingConv(false);
+              applyConv(c);
+              return;
+            }
+            // A transient gateway failure (agent still booting) is retried; a genuine
+            // 404 (code chat_conversation_not_found) or any other resolved-but-empty
+            // response is terminal → 会話が見つかりません.
+            if (isTransientErr(c)) {
+              retry(); // keep the loading state up and try again
+              return;
+            }
+            setLoadingConv(false);
+            setLoadError(t("chat.not_found"));
+          })
+          .catch(() => {
+            if (!cancelled) retry();
+          });
+      };
+      const onVis = () => {
+        if (!document.hidden && !cancelled && !convRef.current) {
+          tries = 0;
+          window.clearTimeout(timer);
+          load();
+        }
+      };
+      load();
+      document.addEventListener("visibilitychange", onVis);
+      return () => {
+        cancelled = true;
+        window.clearTimeout(timer);
+        document.removeEventListener("visibilitychange", onVis);
+      };
     } else if (draftAssistantId) {
+      setLoadingConv(false);
       applyConv(null);
       setDraftAsst(null);
       assistantGet(draftAssistantId)
@@ -160,11 +206,13 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
         })
         .catch(() => {});
     } else {
+      setLoadingConv(false);
       applyConv(null);
       setDraftAsst(null);
     }
     return () => {
       cancelled = true;
+      window.clearTimeout(timer);
     };
   }, [conversationId, draftAssistantId]);
 
@@ -657,7 +705,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
   const showStreaming = sending || storeBusy || reattaching;
   const streamBody = sending ? streamText : (liveTurn?.text ?? "");
   const liveSteps = sending ? streamSteps : (liveTurn?.steps ?? []);
-  const empty = (!conv || conv.messages.length === 0) && !loadError && !showStreaming;
+  const empty = (!conv || conv.messages.length === 0) && !loadError && !showStreaming && !loadingConv;
   // Status chip like the Sessions list / MirrorView header: 進行中 while streaming, else 待機中.
   const stateChip = showStreaming
     ? { cls: "working", icon: "loading", spin: true, text: tr("chat.state_running") }
@@ -700,6 +748,13 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
         {loadError && (
           <div className="chat-error" role="alert">
             {loadError}
+          </div>
+        )}
+        {/* Fetching the conversation (retried while the WS agent boots) — a spinner beats
+            flashing the empty hint or a spurious "not found". */}
+        {loadingConv && !conv && !loadError && (
+          <div className="chat-empty">
+            <Icon name="loading" spin /> {tr("common.loading")}
           </div>
         )}
         {/* Greeting: the assistant introduces itself while the chat hasn't started. */}
