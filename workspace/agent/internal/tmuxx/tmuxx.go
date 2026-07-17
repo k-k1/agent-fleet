@@ -181,23 +181,31 @@ func AtIdlePrompt(name string) bool {
 	if err != nil {
 		return false
 	}
-	s := string(out)
-	// A live turn's spinner (esc-to-interrupt OR the elapsed/token header) means NOT idle
-	// — checked first because the footer strip stays drawn mid-turn, so it alone does not
-	// imply the ready prompt.
+	return atIdlePrompt(string(out))
+}
+
+// modalMarkers are fragments of the dialogs that claude draws OVER the input box
+// (permission prompt, plan approval, folder trust, AskUserQuestion). Matched against a
+// width-wrapped capture, so only fragments that survive wrapping are reliable:
+// "Would you like to proceed" wraps mid-phrase in an 80-col pane, where the plan dialog is
+// caught by "to approve" instead. Mostly redundant now that idle requires the footer strip
+// (a dialog replaces it), but kept as defence in depth.
+var modalMarkers = []string{
+	"Enter to select", "Esc to cancel", "to approve",
+	"Do you want to", "Would you like to proceed", "Ready to submit",
+}
+
+// atIdlePrompt is the pure decision over one captured frame — split out from AtIdlePrompt
+// (which supplies the frame) so the real judgement, not a reimplementation of it, can be
+// replayed against the recorded panes in testdata/footers.
+func atIdlePrompt(s string) bool {
+	// A live turn's spinner means NOT idle — checked first because the footer strip stays
+	// drawn mid-turn, so it alone does not imply the ready prompt.
 	if spinnerActive(s) {
 		return false
 	}
-	// Modal guard. Mostly redundant now that idle requires the footer strip (a dialog
-	// replaces it), but kept as defence in depth — and note these are matched against a
-	// width-wrapped capture, so only fragments that survive wrapping are reliable:
-	// "Would you like to proceed" wraps mid-phrase in an 80-col pane, where the plan
-	// dialog is caught by "to approve" instead.
-	for _, busy := range []string{
-		"Enter to select", "Esc to cancel", "to approve",
-		"Do you want to", "Would you like to proceed", "Ready to submit",
-	} {
-		if strings.Contains(s, busy) {
+	for _, m := range modalMarkers {
+		if strings.Contains(s, m) {
 			return false
 		}
 	}

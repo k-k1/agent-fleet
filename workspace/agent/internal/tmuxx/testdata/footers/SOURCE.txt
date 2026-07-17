@@ -1,0 +1,69 @@
+claude TUI ペインの実キャプチャ集（ゴールデンコーパス）
+=======================================================
+
+出所: claude CLI **2.1.212**（2026-07-17 実測）。`tmux capture-pane -p` の生出力を
+そのまま置いている。手打ちの文字列ではなく実物なので、フッタ/スピナーの仕様変更が
+起きたときに「何が変わったか」を diff で読める。
+
+なぜ実物が要るか
+----------------
+状態検出（tmuxx.go の spinnerActive / atPromptFooter）は claude の TUI 文字列という
+非契約・無版管理の表示に依存しており、2026-07-17 時点で 3 回壊れている
+（bb7e695 → 8ec4c91 → d969d35）。3 回とも単体テストは緑のままだった: 手打ちの固定
+文字列は実 CLI と会話しないので、CLI 側が変わっても何も教えてくれない。このコーパスは
+その手打ちを実測フレームに置き換えたもの。
+
+**限界（重要）**: これ自体はドリフト「検知器」ではなく「ロック」である。CLI が 4 度目の
+ドリフトを起こしてもこのテストは緑のままになる。検知するには実 CLI を実際に走らせて
+このコーパスを取り直し、diff を見る必要がある（P1: TUI フッタ契約プローブ）。
+新しい CLI 版で取り直したら、ここのファイルを差し替えて差分をレビューすること。
+
+取得方法（再取得の手順）
+------------------------
+制御プローブを立てて実ターンを走らせ、ペインを 0.5s 間隔でサンプリングした:
+
+    tmux new-session -d -s probe -x 200 -y 50 -c <scratch dir> "claude"
+    # フォルダ信頼ダイアログを Enter で抜ける
+    (for i in $(seq 1 100); do tmux capture-pane -p -t probe > frame_$i.txt; sleep 0.5; done) &
+    tmux send-keys -t probe "<prompt>"; sleep 1; tmux send-keys -t probe Enter
+
+勘所:
+- **サンプラを先に回してからプロンプトを投入する**。go test の起動待ちを挟むと
+  ターンを丸ごと取り逃がす（実際に一度誤って「壊れていない」と誤結論しかけた）。
+- **実フリートのペインを眺めるだけでは不十分**。長い/トークンの多いターンばかりで
+  トークン無しスピナー（下記 busy_thinking_no_tokens）が現れず、真因が隠れる。
+- モードごとにフッタが違うので manual / plan / bypass を個別に取る。
+
+各ファイル
+----------
+busy_thinking_no_tokens.txt    思考中スピナー「✢ Tempering… (6s · thinking with high
+                               effort)」= **トークンセグメント無し**。d969d35 が直した
+                               回帰そのもの。旧 spinnerRe は tokens 必須だったため、
+                               このフレームを含む 14 秒ターンを 100 フレーム中 0 しか
+                               busy と判定できなかった。
+busy_tokens_early.txt          トークンが乗り始めた直後「✻ Wibbling… (3s · ↓ 28 tokens)」。
+busy_tokens_glyph_asterisk.txt 同じターンの後半。グリフが「*」に変化する例
+                               「* Wibbling… (14s · ↓ 101 tokens)」= グリフは固定でない。
+idle_manual_mode.txt           既定(manual)モードの idle。フッタは「⏸ manual mode on ·
+                               ← for agents」で **(shift+tab to cycle) が無い**。旧
+                               AtIdlePrompt が false を返し続けた回帰そのもの。
+idle_bypass_bg_shell.txt       bypass + バックグラウンド shell 実行中の idle。ヒントが
+                               「· 1 shell ·」に押し出される＝ヒント枠は文脈依存。
+idle_bypass_hint.txt           bypass の idle（ヒントが出ている素直なケース）。
+idle_plan_mode.txt             plan モードの idle。
+idle_post_turn_summary.txt     ターン終了後の要約「✻ Sautéed for 20s」。過去形動詞・
+                               「…」無し・括弧無しで、**どれだけ長いターンでもトークンは
+                               出ない**（13m53s のターンでも確認済）。busy と誤判定しては
+                               ならない。
+modal_plan_approval.txt        プラン承認ダイアログ。**モード表示フッタごと消える**ので、
+                               フッタ不在自体がダイアログ表示中のシグナルになる。なお
+                               「Would you like to proceed」は 80 桁で行折返しするため
+                               実際は「to approve」で拾えている（幅依存の脆さ）。
+modal_folder_trust.txt         起動時のフォルダ信頼ダイアログ（「Esc to cancel」で拾う）。
+
+備考
+----
+- 取得元は全て**自分で立てた制御プローブ**。実フリートの他セッションのペインは実作業の
+  内容が写るのでコーパスには入れない。
+- ウェルカムボックス内のメールアドレスのみ dev@example.com へ置換した（枠の桁ずれが
+  起きないよう同幅で置換）。それ以外は生のまま。
