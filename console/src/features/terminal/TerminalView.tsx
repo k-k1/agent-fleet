@@ -157,15 +157,32 @@ export function TerminalView({
       return;
     }
     const connect = !!session && attached && running;
-    const raf = requestAnimationFrame(() => {
-      if (connect) ensureAttached(paneId, session!);
-      revealTerm(paneId);
+    // One frame is not enough here: xterm resumes its renderer through an
+    // IntersectionObserver after the display:none ancestor is revealed. A refresh
+    // in the first frame can therefore still be discarded as "not visible". Wait
+    // through the following paint so both layout and xterm's visibility state have
+    // settled before rebuilding the renderer and repainting its buffer.
+    let revealRaf = 0;
+    const layoutRaf = requestAnimationFrame(() => {
+      revealRaf = requestAnimationFrame(() => {
+        if (connect) ensureAttached(paneId, session!);
+        revealTerm(paneId);
+      });
     });
     const timers = connect
-      ? [1500, 4000, 9000].map((ms) => setTimeout(() => ensureAttached(paneId, session!), ms))
+      ? [1500, 4000, 9000].map((ms) =>
+          setTimeout(() => {
+            ensureAttached(paneId, session!);
+            // The socket retry used to leave an already-connected but unpainted
+            // terminal black forever. Retry the renderer side as well; once the
+            // pane is visible this is an inexpensive full-buffer repaint.
+            revealTerm(paneId);
+          }, ms),
+        )
       : [];
     return () => {
-      cancelAnimationFrame(raf);
+      cancelAnimationFrame(layoutRaf);
+      cancelAnimationFrame(revealRaf);
       timers.forEach(clearTimeout);
     };
   }, [shown, paneId, session, attached, running]);
