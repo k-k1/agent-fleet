@@ -24,6 +24,11 @@ func TestSpinnerActive(t *testing.T) {
 		"✻ Wibbling… (1s · ↓ 4 tokens)",
 		"· Manifesting… (2s · ↓ 132 tokens · thinking with high effort)", // glyph dims to "·"
 		"✻ Topsy-turvying… (3s)",                                         // hyphenated verb, no extras at all
+		"✻ Fluttering… (12s · still thinking with high effort)",          // "still" thinking
+		// The timer is not always the first segment inside the parens: while a hook runs,
+		// the phase leads. Captured live by the contract probe (tui_contract_test.go) — the
+		// regex missed this, so a turn read idle for the whole stop-hook window.
+		"· Tomfoolering… (running stop hook · 6s · ↓ 279 tokens)",
 	}
 	for _, s := range busy {
 		if !spinnerActive(s) {
