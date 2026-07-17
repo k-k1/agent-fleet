@@ -121,6 +121,44 @@ jobs:
           path: console-e2e/test-results/
           if-no-files-found: ignore
 
+  codex-drift:
+    # codex CLI ドリフト検知（Tier 1）。実 codex バイナリ＋実 tmux ペインに当てて、
+    # hooks スキーマ・-c config キー・TUI フッタ仕様の破壊を検出する（workspace/agent の
+    # `-tags drift` テスト）。上の e2e ジョブと違いイメージ build が要らないので数十秒で終わる。
+    #
+    # 無料・無認証: 検証する経路（features list / config 検証 / UserPromptSubmit の発火 /
+    # フッタ描画）は全て API 呼び出しの前に完結する（実測）。実ターンを要する Stop hook・
+    # rollout イベント・turn/* 通知は Tier 2（要課金）で、ここには含めない。
+    #
+    # 版は Dockerfile の ARG ピンに合わせる（＝実際に焼き込まれる版を検証する）。
+    # 注: self-update opt-in の Workspace は @latest で動くため、この版と実フリートの
+    # 稼働版がずれることがある。latest も回すかは運用判断（未決）。
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: workspace/agent/go.mod
+          cache-dependency-path: workspace/agent/go.sum
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: install pinned codex + tmux
+        run: |
+          PIN=$(sed -n 's/^ARG CODEX_VERSION=//p' workspace/Dockerfile | head -1)
+          [ -n "$PIN" ] || { echo "::error::ARG CODEX_VERSION が workspace/Dockerfile に無い"; exit 1; }
+          echo "pinned codex: $PIN"
+          npm install -g "@openai/codex@$PIN"
+          codex --version
+          sudo apt-get update && sudo apt-get install -y tmux
+      - name: codex drift (Tier 1)
+        working-directory: workspace/agent
+        env:
+          # 未インストールを skip でなく失敗にする（silent skip は false green）。
+          E2E_REQUIRE: "1"
+        run: go test -tags drift -run TestDrift -v -timeout 10m ./...
+
   live-smoke:
     # L4: 実 API キーで claude -p の疎通を見る。手動 + 明示 opt-in のみ（課金あり）。
     if: github.event_name == 'workflow_dispatch' && inputs.live
