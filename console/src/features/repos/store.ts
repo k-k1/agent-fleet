@@ -1,7 +1,7 @@
 // Repos store (zustand): working copies under ~/repos. Replaces the old
 // reposKey bump counter — sections call refresh() directly.
 import { create } from "zustand";
-import { api } from "../../core/api/client.ts";
+import { api, isTransientErr } from "../../core/api/client.ts";
 
 // A working copy from GET /api/repos.
 export interface Repo {
@@ -29,19 +29,34 @@ export interface Repo {
 
 interface ReposStore {
   repos: Repo[];
-  refresh(): Promise<void>;
+  /** Loads GET /api/repos. Resolves false when the load failed TRANSIENTLY — the CP's
+   * plain-text 502 while the workspace agent is still booting, or a dropped fetch — and
+   * leaves `repos` untouched: a 502 carries no repos, which is NOT the same as "there are
+   * no repos", and committing its empty body is what used to wedge the rail on
+   * リポジトリがありません. Resolves true once a real result is committed.
+   * A *stopped* workspace answers with the very same 502 (control-plane/proxy.go), so only
+   * a caller that knows the workspace state can tell "booting → retry" from "stopped →
+   * show empty"; see ProjectTree's useRetryLoad + clear(). */
+  refresh(): Promise<boolean>;
+  /** Settle to empty. For a caller that knows the repos really are gone/unreachable
+   * (a stopped workspace), since refresh() alone never blanks the list. */
+  clear(): void;
 }
 
 export const useReposStore = create<ReposStore>((set) => ({
   repos: [],
   async refresh() {
+    let d: { repos?: Repo[] };
     try {
-      const d = await api("api/repos");
-      set({ repos: d.repos || [] });
+      d = await api("api/repos");
     } catch {
-      set({ repos: [] });
+      return false; // network drop — transient; keep what the rail has.
     }
+    if (isTransientErr(d)) return false;
+    set({ repos: d.repos || [] });
+    return true;
   },
+  clear: () => set({ repos: [] }),
 }));
 
 /** Reveal-a-repo-in-the-rail signal (mirrors useFilesStore.revealInFiles): the

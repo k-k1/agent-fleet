@@ -3,13 +3,16 @@
 // conversation history list. Picking an assistant opens a DRAFT — nothing is
 // persisted until the first message. Port onto the zustand stores.
 import { createPortal } from "react-dom";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent as RMouseEvent } from "react";
 import { Section } from "../../ui/Section.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { useConfirm } from "../../ui/ConfirmProvider.tsx";
 import { useDismiss } from "../../lib/useDismiss.ts";
+import { useRetryLoad } from "../../lib/retryLoad.ts";
+import { isTransientErr } from "../../core/api/client.ts";
+import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { useMenuRoving } from "../../lib/useMenuRoving.ts";
 import { placeFixed } from "../../lib/placeFixed.ts";
 import { useLayoutStore } from "../../layout/store.ts";
@@ -37,6 +40,7 @@ export function AssistantSection() {
   const openTargetInNew = useLayoutStore((s) => s.openTargetInNew);
   const chatListTick = useChatStore((s) => s.listTick);
   const chatBusy = useChatStore((s) => s.busy);
+  const running = useWorkspaceStore((s) => s.state) === "running";
   const multiPane = paneCount(layout) > 1;
   const cPanes = multiPane ? chatPanes(layout) : null;
   const toast = useToast();
@@ -60,9 +64,23 @@ export function AssistantSection() {
       .then((r) => setAssistants(r.assistants || []))
       .catch(() => {});
   }, []);
-  useEffect(() => {
-    refresh();
-  }, [refresh, chatListTick]); // tick bumps when a draft becomes a real thread
+  // 一覧は agent へプロキシされるので、WS 起動直後は不通で {error: http_5xx} が返る（api() は
+  // これを例外にせず解決するため上の .catch は拾わない）。この欄は他の左ペイン欄と違ってポーリングが
+  // 無く、過渡応答を空と確定すると次の listTick まで「チャットはまだありません」のまま無期限に固着
+  // していた。running 中の過渡的失敗はバックオフ再試行し、停止中（同じ 502 が返る）は空を確定する。
+  // deps の chatListTick は、下書きが実スレッドになったときに再取得させるためのもの。
+  useRetryLoad(
+    async (signal) => {
+      const [c, a] = await Promise.all([chatList().catch(() => null), assistantList().catch(() => null)]);
+      if (signal.aborted) return true;
+      const stalled = (r: unknown) => r === null || isTransientErr(r); // 例外＝通信断も過渡的
+      if (running && (stalled(c) || stalled(a))) return false; // agent still booting — retry
+      setConvs(c?.conversations || []);
+      setAssistants(a?.assistants || []);
+      return true;
+    },
+    [chatListTick, running],
+  );
 
   useDismiss([pickerRef, pickerMenuRef], pickerOpen, () => setPickerOpen(false));
   // Anchor the popover below the ＋ button, viewport-clamped.
