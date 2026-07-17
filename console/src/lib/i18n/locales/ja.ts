@@ -67,15 +67,6 @@ export const ja = {
   "assistant.sre.name": "SRE アシスタント",
   "assistant.sre.desc":
     "インシデント対応・監視運用の相談相手です（読み取り専用）。PagerDuty・Grafana・CloudWatch を接続しておくと、開いているインシデントやメトリクス・ログを実際に確認しながら、状況整理・原因の仮説出し・対外報告の草稿を手伝います。",
-  "assistant.integrity.name": "整合性チェッカー",
-  "assistant.integrity.desc":
-    "整合性チェッカーです。ファイルやディレクトリを渡してください。ドキュメントと実装の食い違い、用語・表記のゆれ、（物語なら）設定の矛盾や伏線の抜けを洗い出します。",
-  "assistant.general.name": "汎用アシスタント",
-  "assistant.general.desc":
-    "汎用アシスタントです。翻訳・要約・質問への回答など、幅広くお手伝いします。何でも聞いてください。",
-  "assistant.translate.name": "翻訳アシスタント",
-  "assistant.translate.desc":
-    "翻訳アシスタントです。文章を渡してください。日本語↔英語を自動判定して翻訳します（訳文だけを返します）。",
 
   // --- 通知（features/notifications/store.ts の wording。speech は読み上げ用の別形）---
   "notif.default_name": "セッション",
@@ -1609,6 +1600,10 @@ export const ja = {
   "proj.copy_rel_path": "相対パスをコピー",
   "proj.open_reader": "朗読で開く",
   "proj.download": "ダウンロード",
+  "proj.translate": "アシスタントで翻訳",
+  "proj.summarize": "アシスタントで要約",
+  "proj.verb_title.translate": "{name} の翻訳",
+  "proj.verb_title.summarize": "{name} の要約",
   "proj.rename": "名前を変更",
 
   // === P5 アシスタント UI（AssistantModal/AssistantSection） ===

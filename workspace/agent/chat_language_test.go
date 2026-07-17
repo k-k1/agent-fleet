@@ -32,19 +32,22 @@ func TestPersonaOfLanguageRule(t *testing.T) {
 		name        string
 		lang        string
 		assistantID string
+		seedVerb    string
 		want        string // substring that must appear; "" = neither rule
 	}{
-		{"unset follows input", "", "general", ""},
-		{"auto follows input", "auto", "general", ""},
-		{"ja forces japanese", "ja", "general", langRuleJA},
-		{"en forces english", "en", "general", langRuleEN},
-		{"invalid falls through", "fr", "general", ""},
-		{"translate is exempt even with ja", "ja", "translate", ""},
+		{"unset follows input", "", "custom", "", ""},
+		{"auto follows input", "auto", "custom", "", ""},
+		{"ja forces japanese", "ja", "custom", "", langRuleJA},
+		{"en forces english", "en", "custom", "", langRuleEN},
+		{"invalid falls through", "fr", "custom", "", ""},
+		{"translate verb is exempt even with ja", "ja", "", "translate", ""},
+		{"summarize verb still forces language", "ja", "", "summarize", langRuleJA},
+		{"legacy translate assistant stays exempt", "ja", "translate", "", ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			writeUIPrefsLang(t, tc.lang)
-			c := &chatConversation{AssistantID: tc.assistantID}
+			c := &chatConversation{AssistantID: tc.assistantID, SeedVerb: tc.seedVerb}
 			got := c.personaOf()
 			// The base persona + global output rule are always present.
 			if !strings.Contains(got, chatOutputRule) {

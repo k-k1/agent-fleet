@@ -272,7 +272,7 @@ var mcpStdioWriteTools = []map[string]any{
 	},
 	{
 		"name":        "ask_assistant",
-		"description": "別の専門アシスタントに助言を求める。相手は読み取り専用で1ターンだけ走り、助言テキストのみ返す（副作用なし・こちらの作業は代行しない）。例：整合性チェッカーに差分/原稿を見てもらう、用語集アシスタントに用語を確認する。まず list_assistants で相手を選ぶこと。",
+		"description": "別の専門アシスタントに助言を求める。相手は読み取り専用で1ターンだけ走り、助言テキストのみ返す（副作用なし・こちらの作業は代行しない）。例：SRE アシスタントにインシデント状況を見てもらう、ユーザー定義の専門アシスタントに設計を確認する。まず list_assistants で相手を選ぶこと。",
 		"inputSchema": map[string]any{
 			"type": "object",
 			"properties": map[string]any{
