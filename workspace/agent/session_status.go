@@ -90,7 +90,7 @@ func recordSessionNotification(sid, previous, state, turnText string) {
 	kind := ""
 	switch {
 	case state == "idle" && previous == "working":
-		kind = "answer-ready"
+		kind = reportKindAnswerReady
 	case state == "question" && previous != "question":
 		kind = "question"
 	case state == "plan" && previous != "plan":
@@ -114,9 +114,13 @@ func recordSessionNotification(sid, previous, state, turnText string) {
 		}
 		_ = notice.Put(notice.New(kind, m.Name, m.Kind, session.Display(m)))
 		// One-shot session report to the operator conversation that armed this
-		// session (docs/30). The server validates + disarms; skipping the kick when
-		// nothing is armed keeps the common case free of an HTTP round trip.
-		if reportArmed(m.Name) {
+		// session (docs/30). Only TERMINAL events report to the operator: an
+		// instruction's report must be its COMPLETION, so an interim attention event
+		// (question / plan-approval / permission-request) must NOT consume the arm —
+		// otherwise the eventual completion never reaches the operator (that was the
+		// observed bug). Interim events still hit the notification center above; the
+		// arm survives until answer-ready (here) or an abnormal exit (record_exit.go).
+		if kind == reportKindAnswerReady && reportArmed(m.Name) {
 			kickSessionReport(m.Name, kind, turnText, "")
 		}
 		return
