@@ -16,6 +16,9 @@
   flex: 1;
   min-height: 0;
 }
+.app-edge-hotzone {
+  display: none;
+}
 .app-rail {
   width: 340px; /* wider than the old console's 300px: the project tree nests
                    (repo → sessions/files) and indentation eats the name column */
@@ -78,6 +81,22 @@
     inset: 0;
     z-index: 15;
     background: rgba(0, 0, 0, 0.35);
+  }
+}
+/* Mouse-only edge hotzone: hovering the left screen edge while the rail is
+   collapsed peeks it open (openOverlay, App.tsx onMouseEnter). Gated to
+   hover:hover + pointer:fine so touch (tablet edge-swipe already covers
+   that, App.tsx onStart) never reserves this strip — a tap there would
+   otherwise do nothing useful. */
+@media (min-width: 761px) and (hover: hover) and (pointer: fine) {
+  .app-shell.left-collapsed .app-edge-hotzone {
+    display: block;
+    position: fixed;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 10px;
+    z-index: 25;
   }
 }
 .app-nav-backdrop {
