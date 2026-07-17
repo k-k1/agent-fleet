@@ -212,6 +212,44 @@ type createReq struct {
 	SSMForceLogin bool `json:"ssm_force_login"`
 }
 
+// resolveLiveModel turns a picker label or a short, unambiguous family name into
+// the exact live catalog slug.  Orchestrators often receive a human request such
+// as "terra" rather than the CLI spelling "gpt-5.6-terra"; passing the former to
+// Codex defers a simple validation error until after the session has been created.
+// An unavailable/ambiguous requested model is rejected before clone/worktree side
+// effects.  If the live catalog cannot be read (offline/CLI not installed), retain
+// the requested value: the normal launch path remains usable in that degraded mode.
+func resolveLiveModel(requested string, choices []agents.ModelChoice) (string, error) {
+	requested = strings.TrimSpace(requested)
+	if requested == "" || len(choices) == 0 {
+		return requested, nil
+	}
+	norm := func(s string) string {
+		return strings.ToLower(strings.TrimSpace(s))
+	}
+	want := norm(requested)
+	var matches []string
+	for _, choice := range choices {
+		id, label := norm(choice.ID), norm(choice.Label)
+		if want == id || want == label ||
+			strings.HasSuffix(id, "-"+want) || strings.HasSuffix(label, "-"+want) ||
+			strings.HasPrefix(id, want+"-") || strings.HasPrefix(label, want+"-") {
+			matches = append(matches, choice.ID)
+		}
+	}
+	if len(matches) == 1 {
+		return matches[0], nil
+	}
+	available := make([]string, 0, len(choices))
+	for _, choice := range choices {
+		available = append(available, choice.ID)
+	}
+	if len(matches) > 1 {
+		return "", fmt.Errorf("モデル %q は曖昧です。利用可能なモデルから完全名を指定してください: %s", requested, strings.Join(matches, ", "))
+	}
+	return "", fmt.Errorf("モデル %q は利用できません。利用可能なモデル: %s", requested, strings.Join(available, ", "))
+}
+
 // handleCreateSession launches a claude session inside a detached tmux session.
 func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	var req createReq
@@ -246,6 +284,26 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	default:
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_driver", "unknown driver: "+req.Driver)
 		return
+	}
+	if normalizeKind(req.Kind) == session.KindCodex && strings.TrimSpace(req.Model) != "" {
+		model, err := resolveLiveModel(req.Model, codex.Models())
+		if err != nil {
+			httpx.WriteErr(w, http.StatusBadRequest, "bad_model", err.Error())
+			return
+		}
+		req.Model = model
+	} else if normalizeKind(req.Kind) == session.KindOpencode && strings.TrimSpace(req.Model) != "" {
+		ids := opencode.Models()
+		choices := make([]agents.ModelChoice, 0, len(ids))
+		for _, id := range ids {
+			choices = append(choices, agents.ModelChoice{ID: id, Label: id})
+		}
+		model, err := resolveLiveModel(req.Model, choices)
+		if err != nil {
+			httpx.WriteErr(w, http.StatusBadRequest, "bad_model", err.Error())
+			return
+		}
+		req.Model = model
 	}
 	// Worktree-then-start: spin a git worktree off an existing working copy (req.Dir =
 	// the parent) and use it as the CWD, so a decided task branches into its own dir +
