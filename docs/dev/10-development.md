@@ -106,6 +106,7 @@ Go は **2 モジュール**（`control-plane/` と `workspace/agent/`）でそ�
   store 両実装など）。Postgres 系は `AF_TEST_DATABASE_URL` 未設定なら skip。
 - CI（GitHub Actions）: `ci.yml` が push/PR ごとに 3 コンポーネント（CP / Agent / Console）の
   fmt・vet・test・build を検証。`e2e.yml`（下記 E2E）はイメージ build が重いため分離。
+  上流 CLI の破壊検知は別系統（`cli-drift.yml` + エージェント毎の `*-contract.yml`・後述）。
 - Console:
 
 ```bash
@@ -161,6 +162,44 @@ cd console-e2e && npm ci && npx playwright test                                 
   `live` 入力 + secret（`E2E_ANTHROPIC_API_KEY` または `E2E_CLAUDE_OAUTH_TOKEN`）で明示 opt-in。
   rtk は git-ignored のホスト vendor 品のため CI は「rtk なし」パスの検証になる（rtk 込みは
   ホストで run-dev.sh / 本テストを回して確認）。
+
+### 上流 CLI の破壊検知（版ドリフト監視 + contract テスト）
+
+**なぜ E2E だけでは足りないか**: `e2e.yml` は build-args を渡さないので常に
+`workspace/Dockerfile` の **ARG ピン版**を検証する。一方 self-update を opt-in した
+Workspace（`AF_AGENT_SELF_UPDATE_ALLOWED=1` かつ `AF_AGENT_SELF_UPDATE=1`）は entrypoint が
+起動毎に `@latest` を入れる ＝ **CI が見ている版と実フリートが走らせる版が別物**。さらに
+L4 は headless の `claude -p` で TUI もフッタも描画されない。この 2 つの穴のせいで、claude の
+状態検出（`internal/tmuxx`）の破壊は 3 回とも CI 緑のまま実フリートで人力発見された。
+
+塞ぎ方は **2 系統**（重複ではなく補完関係。片方だけでは機能しない）:
+
+| | `cli-drift.yml` | `*-contract.yml` |
+|---|---|---|
+| 見る物 | 版**番号**のズレ（ピン vs npm latest） | **挙動**（実 CLI に当てて壊れたか） |
+| 答える問い | 「見に行くべき時か？」 | 「実際に壊れたか？」 |
+| 費用 | 無料（`npm view` だけ） | 無料〜サブスク枠（Tier で違う） |
+| 頻度 | 毎日 cron | 関連パスの push + 週次 cron |
+| 赤くなる時 | 検査自体の失敗のみ（ドリフトは issue upsert） | 契約が破れた時 |
+
+ドリフトは**常態**（claude は数日で版が進む）なので `cli-drift.yml` は赤くせず追跡 issue を
+1 本 upsert する（解消で自動 close）。合図は「issue が来たら contract を叩く」。
+
+**ワークフローはエージェント毎に 1 ファイル**（`claude-tui-contract.yml` /
+`codex-contract.yml` / `opencode-contract.yml`）。パス条件も `workflow_dispatch` の入力も
+**ワークフロー単位**なので、`e2e.yml` に同居させると (1) 無関係な変更で走り、(2) 入力が
+他エージェントと混ざる（実際 codex の Tier2 と claude の live-smoke が 1 つの `live` 入力を
+共有し、1 回の dispatch で両方の枠が減っていた）。分離すればこの結合が構造的に起きない。
+`cli-drift.yml` だけは 3 CLI 横断・`issues: write` が要る・毎日回す、と性質が違うので独立のまま。
+
+共通セットアップ（Go / Node / tmux / 実 CLI 導入）は
+**`.github/actions/setup-agent-cli`**（composite action）に集約。`version: pinned|latest|<版>`
+で「今焼く版」と「フリートが走らせる版」を撃ち分ける。`claude-tui-contract.yml` だけは
+実イメージを build してコンテナ内で TUI を起動するため、この action を使わない（意図的）。
+
+> 既知の非対称（未整理）: build tag が codex=`drift`/`driftlive`、opencode=`clicontract`、
+> claude=`tui_contract` と 3 流儀。揃えるならテスト側の tag と `-run` の対応も動くため、
+> ワークフロー整理とは別で扱う。
 
 ## 10.5 コミット規約・ブランチ運用
 
