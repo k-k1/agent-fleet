@@ -53,6 +53,13 @@ func main() {
 		runMCPRun(os.Args[2:])
 		return
 	}
+	// claude statusLine capture: claude pipes the session JSON (incl. rate_limits) on
+	// stdin every render; we persist the 5h/weekly usage locally for the WsBar chip —
+	// no network, so the rate-limited /api/oauth/usage endpoint is no longer used.
+	if len(os.Args) > 1 && os.Args[1] == "statusline" {
+		claude.RunStatusLine(os.Args[2:])
+		return
+	}
 
 	// Fold any pre-A3 plaintext credential files into the encrypted store.
 	migrateLegacySecrets()
@@ -62,6 +69,9 @@ func main() {
 	seedInternalGit()
 	// Make claude emit working/idle/question via hooks into the status files.
 	claude.EnsureStatusHooks()
+	// Wire claude's statusLine to us so we capture its rate_limits (5h/weekly usage)
+	// locally for the WsBar chip. Wraps a user's own statusLine rather than clobbering.
+	claude.EnsureStatusLine()
 	// Apply the durable codex/opencode rtk prefs to their artifacts (the entrypoint
 	// reseeded the base AGENTS.md / status plugin just before us). claude's rtk is
 	// handled separately via its settings.json hook.
