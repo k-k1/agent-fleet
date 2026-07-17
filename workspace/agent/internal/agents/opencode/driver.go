@@ -313,6 +313,12 @@ func (h *threadHandle) setState(st agents.TurnState) {
 	h.emit(agents.Event{Kind: "turn_state", TurnState: st})
 }
 
+func (h *threadHandle) currentState() agents.TurnState {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.state
+}
+
 // runtimeLost drops the handle to unknown（§6-1: 切断時の正直な状態）。The blocked
 // turn call (if any) unblocks with a transport error and keeps unknown until
 // reconcile resolves it.
@@ -435,8 +441,10 @@ func (h *threadHandle) pump() {
 // 優先するが、フォールバックと anySessionWorking（graceful shutdown の待ち条件）が
 // ここを読む。turn の終端で idle に戻さないと 進行中 に張り付く。
 func (h *threadHandle) runTurn(in agents.TurnInput) {
-	status.Persist(h.ocSid, "working")
-	defer status.Persist(h.ocSid, "idle")
+	agents.MarkTurnStart(h.ocSid)
+	// 終端の turn 状態で idle を刻む（＋完了なら docs/30 の報告を出す）。以下の return
+	// 経路はすべて手前で setState 済みなので、defer 時点の state が turn の終端。
+	defer func() { agents.MarkTurnEnd(h.ocSid, h.currentState()) }()
 	h.setState(agents.TurnStarting)
 	h.mu.Lock()
 	addr, ses := h.addr, h.ses
