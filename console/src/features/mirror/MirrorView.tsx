@@ -2125,11 +2125,13 @@ export function MirrorView({
           </div>
         </div>
       )}
-      {lightbox && (
-        <div className="mirror-lightbox" onClick={() => setLightbox(null)} role="presentation">
-          <img src={lightbox} alt={tr("mirror.pasted_image_zoom")} />
-        </div>
-      )}
+      {lightbox &&
+        createPortal(
+          <div className="mirror-lightbox" onClick={() => setLightbox(null)} role="presentation">
+            <img src={lightbox} alt={tr("mirror.pasted_image_zoom")} />
+          </div>,
+          document.body,
+        )}
       {managedSettingsOpen && (
         <ManagedSettingsModal
           session={session}
