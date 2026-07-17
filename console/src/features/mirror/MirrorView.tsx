@@ -4,7 +4,7 @@ import type { CSSProperties, KeyboardEvent as RKeyboardEvent, ClipboardEvent as 
 import { api, apiJSON, raw, errText, pasteImage, sessionTurn, sessionRespond, sessionSettings, downloadURL } from "../../core/api/client.ts";
 import type { InteractionAnswer, ManagedThreadSettings, TurnResult } from "../../core/api/client.ts";
 import { isManagedSession } from "../../types/session.ts";
-import { splitPastedImages, buildImagePrompt, samePastedPrompt } from "../../lib/pastedImages.ts";
+import { splitPastedImages, buildImagePrompt } from "../../lib/pastedImages.ts";
 import { useSettings, chatFontStack, surfaceBg, surfaceAccent, effectiveTheme } from "../../lib/settings.ts";
 import { useLayoutStore } from "../../layout/store.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
@@ -50,6 +50,7 @@ import { agentOf } from "../../agents/registry.ts";
 import { hasLaunchSeed, takeLaunchSeed } from "../../lib/launchSeed.ts";
 import { displayName, stateInfo } from "../../lib/sessionview.ts";
 import { confirmedWorkEnd, latestWorkPromptIndex, textOfParts, workSplit } from "./mirrorParts.ts";
+import { echoLanded, type PendingEcho } from "./pendingEcho.ts";
 import { coarsePointer } from "../../lib/device.ts";
 import { ManagedSettingsModal } from "./ManagedSettingsModal.tsx";
 
@@ -167,7 +168,7 @@ interface TurnTtsWiring {
 // restored on mount and removed exactly as before — when the real turn lands or the POST
 // fails. The id counter is module-level for the same reason: a remount must not reissue
 // ids still held by stashed echoes.
-type SendEcho = { id: number; text: string; sinceIdx: number };
+type SendEcho = PendingEcho & { id: number };
 const echoStore = new Map<string, SendEcho[]>();
 let echoSeqCounter = 0;
 
@@ -778,12 +779,13 @@ export function MirrorView({
   }, [session]);
 
   // Reconcile optimistic echoes: once a sent prompt's real user turn lands in the
-  // transcript (a non-noise user turn past the echo's anchor idx with the same text),
+  // transcript (a matching non-noise user turn; managed attachments also have a unique
+  // saved-path fallback),
   // drop the echo so the message isn't shown twice.
   useEffect(() => {
     applyEchoes((prev) => {
       if (!prev.length) return prev;
-      const next = prev.filter((e) => !echoLanded(e, turns));
+      const next = prev.filter((e) => !echoLanded(e, turns, isNoise));
       return next.length === prev.length ? prev : next;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1049,7 +1051,7 @@ export function MirrorView({
     // Show the message immediately (optimistic echo) so it never looks lost while claude
     // is busy — reconciled away once its real user turn appears in the transcript.
     const echoId = ++echoSeqCounter;
-    applyEchoes((p) => [...p, { id: echoId, text: t, sinceIdx: newestIdx() }]);
+    applyEchoes((p) => [...p, { id: echoId, text: t, sinceIdx: newestIdx(), attachmentPaths: attachments }]);
     const res = await postInput(t, op, attachments);
     if (!res.ok) {
       // 送信は受理されていない: echo を残すと「送れたように見える」ので消し、理由を
@@ -1468,7 +1470,7 @@ export function MirrorView({
     return true;
   };
   const echoTurns: Turn[] = pendingSends
-    .filter((e) => !echoLanded(e, turns)) // hide at render the instant the real turn lands
+    .filter((e) => !echoLanded(e, turns, isNoise)) // hide at render the instant the real turn lands
     .map((e) => ({
       role: "user",
       text: e.text,
@@ -2258,17 +2260,6 @@ function coalesceUserActions(turns: Turn[]): Turn[] {
 // echoLanded reports whether an optimistic echo's real user turn has appeared in the
 // transcript: a non-noise user turn past the echo's anchor idx with the same text. Used
 // both to hide a landed echo at render time (no 1-frame double) and to prune it from state.
-function echoLanded(e: { text: string; sinceIdx: number }, turns: Turn[]): boolean {
-  return turns.some(
-    (t) =>
-      t.role === "user" &&
-      t.idx !== undefined &&
-      (t.idx as number) > e.sinceIdx &&
-      !isNoise(t) &&
-      samePastedPrompt(t.text || "", e.text),
-  );
-}
-
 // partsOf returns a turn's ordered parts, synthesizing a single text part for turns
 // from an older Agent that predates the parts field (backward compatible).
 function partsOf(t: Turn): Part[] {
