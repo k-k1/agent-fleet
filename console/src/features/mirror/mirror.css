@@ -437,6 +437,24 @@
   background: color-mix(in srgb, var(--accent) 14%, transparent);
   color: var(--accent);
 }
+/* Operator-injected user turn (docs/30 ②): the prompt came from the fleet operator
+   assistant, not the user's own keyboard. A distinct pill + a left accent on the bubble
+   so the two are never confused. */
+.mt-op {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 8px;
+  padding: 0 6px;
+  font-size: 10px;
+  line-height: 1.6;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--warn, #e0a45e) 18%, transparent);
+  color: var(--warn, #e0a45e);
+}
+.mirror-turn.user.from-operator {
+  border-left: 2px solid color-mix(in srgb, var(--warn, #e0a45e) 55%, var(--border));
+}
 /* Reasoning effort/variant chip (codex reasoning_effort / opencode variant), shown
    right after the model. A faint pill so it reads as secondary metadata. */
 .mt-effort {

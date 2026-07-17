@@ -1157,6 +1157,8 @@ export const en: Record<keyof typeof ja, string> = {
   "mirror.queued": "Queued",
   "mirror.pending_title": "Sent. It's reflected once claude starts processing.",
   "mirror.pending": "Awaiting reflection",
+  "mirror.from_operator": "From operator",
+  "mirror.from_operator_title": "An instruction injected by the fleet operator (assistant) — not typed by you.",
   "mirror.effort_hint": "Reasoning effort (codex reasoning_effort / opencode variant)",
   "mirror.token_hint": "Input (context) ↑ / output ↓ tokens",
   "mirror.task.requested": "Requested",

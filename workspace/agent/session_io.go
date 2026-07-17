@@ -235,9 +235,12 @@ func handleSessionInput(w http.ResponseWriter, r *http.Request) {
 	if !submitPromptTUI(w, name, pane, body.Prompt) {
 		return
 	}
-	// Each delivered instruction re-arms exactly one report (docs/30 の指示1件=報告1回).
+	// Each delivered instruction re-arms exactly one report (docs/30 の指示1件=報告1回)
+	// and — being operator-originated (report_to present) — is remembered so the mirror
+	// can badge the resulting user turn (docs/30 ②).
 	if body.ReportTo != "" {
 		armSessionReport(name, body.ReportTo)
+		recordOperatorInjection(name, body.Prompt)
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"sent": name})
 }

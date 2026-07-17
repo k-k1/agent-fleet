@@ -56,6 +56,11 @@ type Turn struct {
 	Role      string `json:"role"`                // "user" | "assistant"
 	Parts     []Part `json:"parts"`               // ordered text/tool pieces
 	Text      string `json:"text"`                // concatenated text only (for copy / fallback)
+	// Source attributes a user turn's origin: "operator" = injected by the fleet operator
+	// (an af_write assistant's create_session / send_to_session), "" = the user's own input
+	// (composer or raw terminal). Set server-side by matching the operator-injection store
+	// (docs/30 ②), so the mirror can badge operator-driven prompts distinctly.
+	Source string `json:"source,omitempty"`
 	Model     string `json:"model,omitempty"`     // assistant only: the model that answered
 	Effort    string `json:"effort,omitempty"`    // assistant only: reasoning effort/variant (codex reasoning_effort, opencode variant); "" when the agent records none (claude)
 	CtxWindow int    `json:"ctxWindow,omitempty"` // assistant only: the model's real context-window size when the agent records it (codex model_context_window); 0 = let the Console guess from the model name
