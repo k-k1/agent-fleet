@@ -293,9 +293,15 @@ bearer token を再検討。opencode serve のローカル API 認証有無は �
 確認済み（Codex 0.144.5）: `thread/start` / `thread/resume` は任意 `config` を受け、`config.mcp_servers`
 で MCP を thread ごとに追加できる。`mcpServerStatus/list {threadId}` を使う credential-free drift test
 （`TestDriftCodexThreadMCPConfigIsScoped`）では、異なる MCP を持つ 2 本の ephemeral thread 間で MCP が
-混入しないことを実 app-server で確認した。未確認かつチャット managed 化の残ゲートは、共有 app-server が
-読み込むグローバル MCP を空の thread 設定で**完全に置換・遮断**できるかである。追加だけでは
-`none` / `af_read` / `af_write` の権限境界にならない。
+混入しないことを実 app-server で確認した。
+
+同時に**遮断はできない**ことも確認した。daemon 起動時に構成した MCP は、thread の
+`config.mcp_servers = {}` を渡しても `mcpServerStatus/list` に残る
+（`TestDriftCodexThreadMCPConfigCannotClearGlobalServers`）。すなわち現行 shared app-server の thread
+config は追加・thread 間分離の口ではあっても allowlist / replace の口ではない。これでは `none` /
+`af_read` / `af_write` の権限境界にならないため、Codex アシスタントチャットを shared managed runtime
+へ直結してはならない。統合には upstream の thread 単位 replace/deny API、または会話の許可集合ごとに
+設定を固定した別 runtime を必要とする。
 
 ### 9.4 config
 
