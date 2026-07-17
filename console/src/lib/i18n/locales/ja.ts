@@ -1222,6 +1222,8 @@ export const ja = {
   "mirror.multi_select_ok": "複数選択可",
   "mirror.freeform_ph": "または自由入力（Type something / 改行可）",
   "mirror.submit_answer": "回答を送信",
+  "mirror.question_cancel": "キャンセルして会話に戻る",
+  "mirror.question_cancel_title": "この質問に答えず、通常の会話に戻る（Esc）",
   "mirror.question_terminal": "この形式の質問はターミナルで回答してください",
   "mirror.answered": "回答済み",
   "mirror.freeform_label": "自由入力: ",

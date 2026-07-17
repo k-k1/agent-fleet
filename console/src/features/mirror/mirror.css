@@ -1581,6 +1581,24 @@ button.mt-bash-toggle:hover {
   justify-content: flex-end;
   margin-top: 10px;
 }
+/* Footer holds the cancel action (left) and the submit/hint (right). Cancel keeps its
+   left slot even when there is no submit button (single-select before free text, or a
+   terminal-hint form), so the two never collapse onto each other. */
+.mq-footer {
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.mq-footer .mq-terminal-hint {
+  font-size: 12px;
+}
+.mq-cancel {
+  margin-right: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
 .mq-submit {
   padding: 6px 14px;
 }
