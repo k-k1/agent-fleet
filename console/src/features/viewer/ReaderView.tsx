@@ -8,7 +8,8 @@
 // 「朗読」ボタンから開く。
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
-import { api } from "../../core/api/client.ts";
+import { api, isTransientErr } from "../../core/api/client.ts";
+import { useRetryLoad } from "../../lib/retryLoad.ts";
 import { baseName, langFor } from "../../lib/filemeta.ts";
 import FileIcon from "../../ui/FileIcon.tsx";
 import { Icon } from "../../ui/Icon.tsx";
@@ -57,9 +58,10 @@ export function ReaderView({ filePath }: { filePath: string }) {
   const readerVoice = voiceChoices.some(([v]) => v === settings.readerVoice) ? settings.readerVoice : "";
 
   // 本文取得（FileView と同じ /api/fs/file）。ファイルが変わったら朗読を止めてリセット。
-  useEffect(() => {
-    if (!filePath) return;
-    let alive = true;
+  // WS 起動直後は agent が一時的に不通で api() が http_5xx を返す（例外ではない）ため、
+  // 過渡的な失敗はバックオフ再試行する（isTransientErr）。恒久的なエラーだけを表示する。
+  useRetryLoad(async (signal) => {
+    if (!filePath) return true;
     handleRef.current?.stop("replaced");
     setData(null);
     setErr("");
@@ -67,16 +69,17 @@ export function ReaderView({ filePath }: { filePath: string }) {
     setReading(false);
     setPaused(false);
     setSelPill(null);
-    api(`api/fs/file?path=${encodeURIComponent(filePath)}`)
-      .then((d) => {
-        if (!alive) return;
-        if (d && d.error) setErr(d.error.message || tr("view.cannot_load"));
-        else setData(d);
-      })
-      .catch(() => alive && setErr(tr("view.cannot_load")));
-    return () => {
-      alive = false;
-    };
+    let d;
+    try {
+      d = await api(`api/fs/file?path=${encodeURIComponent(filePath)}`);
+    } catch {
+      return false; // network drop — retry
+    }
+    if (signal.aborted) return true;
+    if (isTransientErr(d)) return false;
+    if (d && d.error) setErr(d.error.message || tr("view.cannot_load"));
+    else setData(d);
+    return true;
   }, [filePath]);
 
   const isText = !!data && !data.binary && typeof data.content === "string";

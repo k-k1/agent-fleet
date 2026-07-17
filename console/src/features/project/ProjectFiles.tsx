@@ -8,7 +8,8 @@
 import { createPortal } from "react-dom";
 import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent as RMouseEvent, DragEvent as RDragEvent, KeyboardEvent as RKeyboardEvent } from "react";
-import { api, uploadFiles, downloadURL, fsMkdir, fsNewFile, fsRename, fsDelete, fsSearch } from "../../core/api/client.ts";
+import { api, uploadFiles, downloadURL, fsMkdir, fsNewFile, fsRename, fsDelete, fsSearch, isTransientErr } from "../../core/api/client.ts";
+import { useRetryLoad } from "../../lib/retryLoad.ts";
 import FileIcon, { DirIcon } from "../../ui/FileIcon.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { EmptyState } from "../../ui/EmptyState.tsx";
@@ -144,28 +145,26 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo }: Proje
 
   // Load (mount / manual refresh via files tick): fetch the root folder's children
   // and re-fetch every currently-open dir, preserving expansion + selection.
-  useEffect(() => {
-    let alive = true;
-    void (async () => {
-      const r = await fsList(root);
-      if (!alive) return;
-      setEntries(r.entries || []);
-      const opened = [...open];
-      if (opened.length) {
-        const pairs = await Promise.all(opened.map(async (p) => [p, (await fsList(p)).entries || []] as const));
-        if (!alive) return;
-        setCache((c) => {
-          const n = { ...c };
-          for (const [p, e] of pairs) n[p] = e;
-          return n;
-        });
-      }
-    })();
-    return () => {
-      alive = false;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [root, filesTick]);
+  // WS 起動直後は agent 不通で fsList が {error: http_5xx} を返す（fsList の .catch は本物の
+  // 例外だけ拾う）。running 中の過渡的失敗はバックオフ再試行し、停止中はそのまま空を確定して
+  // 無駄なポーリングを避ける。
+  useRetryLoad(async (signal) => {
+    const r = await fsList(root);
+    if (signal.aborted) return true;
+    if (isTransientErr(r) && running) return false; // WS agent still booting — retry
+    setEntries(r.entries || []);
+    const opened = [...open];
+    if (opened.length) {
+      const pairs = await Promise.all(opened.map(async (p) => [p, (await fsList(p)).entries || []] as const));
+      if (signal.aborted) return true;
+      setCache((c) => {
+        const n = { ...c };
+        for (const [p, e] of pairs) n[p] = e;
+        return n;
+      });
+    }
+    return true;
+  }, [root, filesTick, running]);
 
   const fetchInto = useCallback(
     async (path: string) => {

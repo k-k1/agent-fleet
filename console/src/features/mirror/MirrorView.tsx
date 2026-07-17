@@ -292,6 +292,7 @@ export function MirrorView({
   const topSentinelRef = useRef<HTMLDivElement>(null);
   const diagRef = useRef(""); // last transcript-diagnostic signature (warn once per change)
   const statusRef = useRef("");
+  const bgBusyRef = useRef(false); // mirrors bgBusy for the poll-cadence closure (fast-poll while BG runs)
   const tickRef = useRef<(() => void) | null>(null); // lets send() trigger an immediate refresh
   const bodyRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -738,6 +739,7 @@ export function MirrorView({
           // Track liveness so a read-only (history) view can enable its composer the
           // moment a background resume brings the session up.
           setAlive(!!d.alive);
+          bgBusyRef.current = !!d.backgroundBusy;
           setBgBusy(!!d.backgroundBusy);
           setTasks(Array.isArray(d.tasks) ? d.tasks : []);
           setQueuedPrompts(Array.isArray(d.queuedPrompts) ? d.queuedPrompts : []);
@@ -761,7 +763,7 @@ export function MirrorView({
         /* transient; retry on the next tick */
       }
       if (!alive) return;
-      timer = setTimeout(tick, statusRef.current === "working" ? 1200 : 3000);
+      timer = setTimeout(tick, statusRef.current === "working" || bgBusyRef.current ? 1200 : 3000);
     };
     tickRef.current = () => {
       if (timer) clearTimeout(timer);
@@ -846,8 +848,9 @@ export function MirrorView({
         anchoredIdxRef.current = replyIdx;
         answerAnchoredRef.current = undefined; // this reply's final answer hasn't been anchored yet
       }
-      // Still working: follow the bottom so the streamed 作業過程 / answer tail stays in view.
-      if (status === "working") {
+      // Still working — or idle but a background run (サブエージェント/Workflow) is still
+      // appending output — follow the bottom so the streamed 作業過程 / answer tail stays in view.
+      if (status === "working" || bgBusy) {
         toBottom();
         return;
       }
@@ -880,7 +883,7 @@ export function MirrorView({
     // fresh on every run; keeping them out of the deps avoids re-firing on unrelated
     // re-renders (e.g. every composer keystroke).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [turns, pending, pendingPlan, pendingPerm, status, pendingSends, queuedPrompts]);
+  }, [turns, pending, pendingPlan, pendingPerm, status, bgBusy, pendingSends, queuedPrompts]);
 
   // Keep the latest message in view when the body's OWN height changes — the ToDo /
   // 消費推移 / コンテキスト panels opening above it, the composer auto-growing, or a
@@ -1178,7 +1181,8 @@ export function MirrorView({
 
   // sendInterrupt stops the running turn — turn/interrupt 相当。tui では Escape に
   // 落ちる（opencode のサブエージェント詳細ビュー特例は /turn のサーバ側が面倒を
-  // 見る）。停止ボタンは working 中しか出ないので楽観的な状態変更は不要。
+  // 見る）。停止ボタンは working 中か BG 実行中しか出ず、いずれも次ポーリングが実状態へ
+  // 再同期するので楽観的な状態変更は不要。
   const sendInterrupt = async () => {
     if (sending) return;
     setSending(true);
@@ -1891,7 +1895,7 @@ export function MirrorView({
             </div>
           </div>
         )}
-        {status === "working" && !pending && (
+        {(status === "working" || bgBusy) && !pending && (
           <div className="mirror-typing" aria-label={tr("mirror.typing", { name: agentName })}>
             <span className="mt-who">{agentName}</span>
             <span className="typing-dots">
@@ -1899,8 +1903,9 @@ export function MirrorView({
               <i />
               <i />
             </span>
-            {/* Stop the running turn (Escape) — lives with the typing indicator so it only
-                shows while working, and never shifts the composer. */}
+            {/* Stop the running turn (Escape) — lives with the typing indicator so it shows
+                while working OR while a background run (サブエージェント/Workflow) lingers on an
+                otherwise-idle session, and never shifts the composer. */}
             <button
               type="button"
               className="ghost mirror-stop"

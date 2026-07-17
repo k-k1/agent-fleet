@@ -1,7 +1,8 @@
 // CommitDetailView — one commit's detail/diff in its own pane (opened from the
 // graph). Port of views/CommitDetailView.
-import { useEffect, useState } from "react";
-import { api } from "../../core/api/client.ts";
+import { useState } from "react";
+import { api, isTransientErr } from "../../core/api/client.ts";
+import { useRetryLoad } from "../../lib/retryLoad.ts";
 import { Icon } from "../../ui/Icon.tsx";
 import { EmptyState } from "../../ui/EmptyState.tsx";
 import { useT } from "../../lib/i18n/index.ts";
@@ -17,19 +18,24 @@ export function CommitDetailView({ repo, path, sha, wrap }: { repo: string; path
   const [fold, setFold] = useState<FoldSignal | undefined>(undefined);
   const foldAll = (open: boolean) => setFold((f) => ({ n: (f?.n ?? 0) + 1, open }));
 
-  useEffect(() => {
+  // WS 起動直後は agent 不通で api() が http_5xx を返すので過渡的失敗は再試行（isTransientErr）。
+  // agent 由来の本物のエラー（{error}）だけを恒久表示する。
+  useRetryLoad(async (signal) => {
     if (!repo || !sha) {
       setCommit(null);
-      return;
+      return true;
     }
-    let alive = true;
     setCommit(null);
-    api(`api/repos/${enc}/show?sha=${encodeURIComponent(sha)}${path ? `&path=${encodeURIComponent(path)}` : ""}`)
-      .then((d) => alive && setCommit(d))
-      .catch(() => alive && setCommit({ error: true }));
-    return () => {
-      alive = false;
-    };
+    let d;
+    try {
+      d = await api(`api/repos/${enc}/show?sha=${encodeURIComponent(sha)}${path ? `&path=${encodeURIComponent(path)}` : ""}`);
+    } catch {
+      return false; // network drop — retry
+    }
+    if (signal.aborted) return true;
+    if (isTransientErr(d)) return false;
+    setCommit(d);
+    return true;
   }, [enc, sha, repo, path]);
 
   if (!sha) {
