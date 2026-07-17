@@ -85,23 +85,30 @@ function CommitRow({
       segs.push(<line key={"a" + j} x1={laneX(j)} y1={0} x2={laneX(j)} y2={cy} stroke={color} strokeWidth={2} strokeLinecap="round" />);
     }
   });
-  // Bottom half: each outgoing lane. A lane unchanged from above passes straight down;
-  // the node's parents fan out from the node to their lanes.
+  // Bottom half, part 1: lanes that merely pass this row by (content unchanged from
+  // above) run straight down. They belong to other commits' lines, so they are drawn
+  // regardless of what this node does.
   lanesBelow.forEach((sha, j) => {
-    if (!sha) return;
-    const color = laneColor(j);
-    const passThrough = lanesAbove[j] === sha && j !== nodeLane;
-    if (passThrough) {
-      segs.push(<line key={"b" + j} x1={laneX(j)} y1={cy} x2={laneX(j)} y2={ROW_H} stroke={color} strokeWidth={2} strokeLinecap="round" />);
-      // A pass-through lane can still be one of THIS merge's parents (the parent already
-      // had an active lane, so layout assigned it no new one) — join the node into it.
-      if (commit.parents.includes(sha)) {
-        segs.push(<line key={"m" + j} x1={nodeX} y1={cy} x2={laneX(j)} y2={ROW_H} stroke={color} strokeWidth={2} strokeLinecap="round" />);
-      }
-    } else {
-      segs.push(<line key={"b" + j} x1={nodeX} y1={cy} x2={laneX(j)} y2={ROW_H} stroke={color} strokeWidth={2} strokeLinecap="round" />);
-    }
+    if (!sha || j === nodeLane || lanesAbove[j] !== sha) return;
+    segs.push(<line key={"b" + j} x1={laneX(j)} y1={cy} x2={laneX(j)} y2={ROW_H} stroke={laneColor(j)} strokeWidth={2} strokeLinecap="round" />);
   });
+  // Bottom half, part 2: exactly ONE edge per parent, from the node to the lane that
+  // carries that parent downward. The first parent always continues in the node's own
+  // lane; a merge's extra parents live wherever layout put them (a fresh lane, or one
+  // that was already waiting for them — the join edge a merge needs).
+  //
+  // Picking the lane per-parent rather than per-lane is what keeps a branch point clean:
+  // when a commit has several children, every child's lane is simultaneously waiting for
+  // it, and a lane-driven walk would emit a redundant diagonal from each sibling lane on
+  // top of the node's own line (both colors leaving one node). The lanes converge once,
+  // at the parent's own row, via the bend-in edges drawn by the top half above.
+  const drawn = new Set<number>();
+  for (const p of commit.parents) {
+    const lane = lanesBelow[nodeLane] === p ? nodeLane : lanesBelow.indexOf(p);
+    if (lane < 0 || drawn.has(lane)) continue;
+    drawn.add(lane);
+    segs.push(<line key={"p" + lane} x1={nodeX} y1={cy} x2={laneX(lane)} y2={ROW_H} stroke={laneColor(lane)} strokeWidth={2} strokeLinecap="round" />);
+  }
 
   const nodeColor = laneColor(nodeLane);
   return (
