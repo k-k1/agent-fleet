@@ -1,12 +1,12 @@
-# 90. コード地図
+# 90. コードマップ
 
-> ⚠️ 本書は dev/ で唯一、ファイルパス・パッケージ名の列挙を許すファイルであり、**陳腐化しうる**。Go 内部リファクタ（docs/23、別ブランチで進行中・ワイヤ完全互換）がパスを動かす。**パス移動を伴う PR は本書の更新を必須とする**。正はコード。
+> ⚠️ 本書は dev/ で唯一、ファイルパス・パッケージ名の列挙を許すファイルであり、**陳腐化しうる**。
+> **パス移動を伴う PR は本書の更新を必須とする**。正はコード。
 >
 > 正: コード / 主な更新トリガ: ファイル・パッケージの移動 / 最終確認: 2026-07
 
-本書は **main の現状**を基準に書く（grep の起点になるため）。Go リファクタの到達点・目標構造は
-各節末の注記に分離してある — 別ブランチ（`refactor/agent-control-plane-refactor`、docs/23 は同ブランチにのみ存在）
-をチェックアウトしない限り、注記のパスは手元に存在しない。
+本書は**現在のツリー**を基準に、grep の起点だけを記す。Go リファクタの履歴と残作業は
+[docs/23](../23-go-refactor.md) に分離する。
 
 ## 90.1 トップレベル
 
@@ -20,19 +20,20 @@
 | `console-e2e/` | Console UI E2E（Playwright、L3）。global-setup が CP/コンテナを起動、ブラウザ打鍵 → fs API で観測 |
 | `docs/` | dev/（本体系）・guide/・decisions/（ADR）・HANDOFF・番号付き計画文書（19〜23…）|
 
-## 90.2 control-plane/ — フラットな `package main`
+## 90.2 control-plane/ — 責務別ファイルに分割した `package main`
 
-実装 35 + テスト 20 = 55 ファイル。ルート登録（約 180 本）と authGate 配線は `main.go` にインライン。
+ルートは `routes.go` の機能別 register 関数へ集約し、`main.go` は初期化と配線を担う。
 
 | ファイル | 責務 |
 |----------|------|
-| `main.go` | 起動と配線: env/フラグ → Store/Runtime/manager/バックグラウンドジョブ初期化 → 全ルート登録。`writeJSON`/`writeErr` もここ |
+| `main.go` / `routes.go` / `httpapi.go` | 起動と配線 / 機能別ルート登録 / HTTP 共通処理 |
 | `oauth_google.go` | L1 認証（AUTH=oauth/proxy/dev）・authGate・署名 cookie・`isAuthExempt` |
 | `oauth_bitbucket.go` | Bitbucket OAuth ブローカ（Connections 向けトークン取得の CP 側） |
 | `pat.go` | PAT（Bearer トークン）発行・ハッシュ・スコープ天井 |
 | `tenants.go` | tenant / identity / membership の CRUD・limits・admin API |
-| `manager.go` | god オブジェクト: identity/RBAC 解決・workspace lifecycle・runtime キャッシュ・DEK unwrap・env 注入（`workspaceExtraEnv`）・docker exec |
-| `runtime.go` | `Runtime`/`RuntimeFactory` ポート + docker 実装 + workspace 系 HTTP ハンドラ（同居） |
+| `manager.go` / `resolver.go` | 依存の保持 / identity・membership・RBAC 解決 |
+| `workspace_lifecycle.go` / `workspace_handlers.go` / `agent_client.go` / `dek.go` | Workspace lifecycle / HTTP / Agent 通信 / DEK unwrap・env 注入 |
+| `runtime.go` / `runtime_docker.go` | `Runtime`/`RuntimeFactory` ポート / Docker 実装 |
 | `runtime_ecs.go` | AWS ECS アダプタ 🚧 |
 | `ssm.go` | SSM プロファイル/ホスト管理 API（kind=ssm の土台） |
 | `proxy.go` | 中継 4 経路のうち 3 つ: `proxyAgentREST` / `proxyAgentStream`(SSE) / `proxyTerminal`(WS リレー) |
@@ -45,58 +46,54 @@
 | `egress.go` / `egress_policy.go` / `egress_proxy.go` | ポリシー API + 監査 ingest / allowlist 判定 / forward proxy（サブコマンド起動） |
 | `audit.go` / `claude_audit.go` | admin 監査閲覧 API / Claude transcript から監査イベントを抽出する常駐 sweeper |
 | `metrics.go` / `usage.go` | ホスト・コンテナ統計（cgroup 読み）/ 使用時間サンプラ + showback 集計 |
-| `memo.go` | メモキュー API（docs/21） |
+| `memo.go` / `memo_bridge.go` | メモキュー API / セッションへの配送 |
+| `notification.go` | 通知センター API と永続化 |
+| `tts.go` / `tts_{polly,ecs}.go` / `enkana*.go` | 読み上げの共通面 / provider / 日本語読み正規化 |
+| `workspace_docs.go` | ロール別 docs を Workspace へ read-only ステージ |
 | `mcp.go` | CP 側 MCP サーバ（`/mcp`） |
 | `ws_settings.go` | workspace 毎の設定（agent 自動更新など） |
 | `admin_sessions.go` / `admin_stats.go` | admin 横断セッション一覧 / メンバー統計 |
 
-**リファクタ到達点（別ブランチ・main 未マージ）**: パッケージは flat のまま、`main.go` を配線のみに縮小し
-`routes.go`（機能別 register 関数 17 + authGate 除外レジストリ）へ分散。`manager.go` を
-`resolver.go` / `workspace_lifecycle.go` / `workspace_handlers.go` / `dek.go` / `agent_client.go` に分割、
-`runtime.go` をポートのみに縮小し `runtime_docker.go` / `httpapi.go` を分離。`Store` は機能別
-サブインターフェース 17 個に再構成。`errcodes.go` / `limits.go` 追加。
-**目標（docs/23、未着手分）**: `config`（133 ハンドラ）の機能別ハンドラ struct 化 + `resolvedFor` プリアンブルの
-ラッパー化、`internal/runtime` などへのパッケージ層化。
+## 90.3 workspace/agent/ — HTTP 配線層 + `internal/` ドメイン層
 
-## 90.3 workspace/agent/ — フラットな `package main`
-
-実装 42 + テスト 23 = 65 ファイル + `knowledge/af-usage.md`（`//go:embed`。移動時は
-`workspace/.dockerignore` の `!` 復帰と同伴必須）。main には `internal/` は**無い**。
+ルート直下の `package main` は HTTP・Console ワイヤ・サブシステム配線を担う。共有モデルと
+エージェント固有実装は `internal/` に分離済み。
 
 | ファイル | 責務 |
 |----------|------|
-| `main.go` | 起動・ルート登録（インライン）・`requireToken`・`writeJSON`/`writeErr` |
-| `agent.go` | `Agent` インターフェース + kind registry + caps（kind 分岐の集約点） |
+| `main.go` / `routes.go` | 起動・依存配線 / ルート登録・認証 |
+| `agent.go` / `agent_models.go` / `agent_shell_ssm.go` | Agent registry の main 側アダプタ / model catalog / shell・SSM |
 | `agent_rtk.go` | rtk（トークン節約 proxy）の on/off を CLI 3 種の成果物（hook / plugin / AGENTS.md）へ反映 |
-| `session.go` | セッション中核: メタ永続化・tmux 起動・CLI コマンド構築・ワイヤ変換・HTTP ハンドラ（約 1,200 行の god） |
+| `session_handlers.go` / `session_tmux.go` / `session_driver.go` | lifecycle とワイヤ変換 / tui 起動 / driver 切替 |
+| `session_turn.go` | driver 非依存の `/turn`・`/respond`・`/settings` 意味論 API |
 | `session_io.go` / `session_paste.go` | pane capture・入力送信・slash コマンド / 画像ペーストの保存・配信 |
-| `session_status.go` / `session_terminal_state.go` / `session_bg.go` / `session_context.go` | 状態フック（per-sid ファイルストア）/ 端末状態判定 / バックグラウンド busy（/proc 走査）/ コンテキスト使用率 |
+| `session_status.go` / `session_terminal_state.go` / `session_injections.go` | 状態フック / 端末状態判定 / prompt 注入 |
 | `session_name.go` / `session_title.go` | セッション slug 採番 / 自動タイトル + ブランチ名提案（headless claude） |
 | `session_transcript.go` | transcript ウィンドウ API（パーサ 3 本の共通の出口・ページング） |
 | `session_ssm.go` | kind=ssm の起動・ログイン状態検出 |
 | `chat.go` / `assistants.go` | アシスタントチャット（headless CLI、docs/19。約 970 行）/ アシスタント定義（persona・knowledge） |
-| `claude_auth.go` / `claude_settings.go` / `claude_usage.go` | Claude: /login コード貼り戻し / settings.json・trust 管理 / usage 読み取り |
-| `codex_auth.go` / `codex_usage.go` / `codex_transcript.go` | codex: 認証 / usage / transcript パーサ |
-| `opencode_auth.go` / `opencode_transcript.go` | opencode: 認証 / transcript パーサ |
+| `codex_appserver.go` | Codex app-server の起動と read-only observer（managed writer は internal 側） |
 | `git.go` | 作業コピー操作: clone（`ensureRepo`）・status・checkout・worktree・push 等 |
 | `git_view.go` / `fs_git.go` | SCM 閲覧（changes/diff/log/graph）/ エディタ用の行差分マーク |
 | `git_remote.go` / `git_oauth.go` / `git_identity.go` | リモート repo/branch 一覧（GitHub/Bitbucket REST）/ GitHub device flow・Bitbucket creds / commit identity |
 | `fetch_loop.go` | origin 自動 fetch + FF 可否バッジ |
 | `fs.go` | ファイル閲覧・操作 API（`fs/*`） |
-| `secrets.go` | 暗号ストア `secrets.enc`（AES-256-GCM）・統一 cred helper・内部 git seed |
+| `cred_helper.go` | 暗号ストアを使う git credential helper の CLI 受け口 |
 | `connections.go` | Connections 状態 API（git ホスト / internal / bitbucket） |
-| `mcp_stdio.go` | コンテナ内 stdio MCP サーバ（read-only fleet ツール） |
+| `mcp_stdio.go` / `mcp_run.go` | コンテナ内 stdio MCP サーバ / MCP プロセス実行 |
 | `preview.go` / `terminal.go` | `/proxy/{port}` コンテナ内中継 / `/ws/pty`（WebSocket PTY） |
 | `env_toolchains.go` / `env_tool_versions.go` / `ui_prefs.go` / `repo_prompts.go` | Java/Node/TZ ツールチェーン解決 / バンドルツール版レポート（実効・焼き込み・~/.local・ピン）/ UI プリファレンス / リポの command・skill テンプレ列挙 |
-| `shutdown.go` / `uuid.go` | graceful shutdown（作業中セッション考慮）/ ID 生成 |
+| `shutdown.go` / `record_exit.go` | graceful shutdown / tui pane の終了理由記録 |
 
-**リファクタ到達点（別ブランチ・main 未マージ）**: `internal/{httpx,gitx,fstore,transcript}` の 4 パッケージを
-切り出し済み（docs/23 の表では `internal/store` だが実装名は `fstore`）。`session.go` は
-`session_handlers.go` / `session_meta.go` / `session_program.go` / `session_tmux.go` 等に分割、`agent.go` は
-`agent_{claude,codex,opencode,shell_ssm}.go` に CLI 縦割り（ファイルレベル）。`routes.go` / `paths.go` /
-`errcodes.go` 追加。
-**目標（docs/23 P1 の最終形、未着手分）**: `internal/{httpx,store,gitx,agents/{claude,codex,opencode},transcript,session,chat,title,remote}`。
-残りは agents の**パッケージ**化（`internal/session` 抽出が前提）と `chat.go` の分割。
+| internal package | 責務 |
+|------------------|------|
+| `internal/session` | Session wire/meta、kind・driver、ID、永続化 |
+| `internal/agents` | read IF、managed Driver/ThreadHandle、通知 seam、message ledger |
+| `internal/agents/claude` | Claude の起動・auth・settings・hooks・transcript・usage・BG 判定 |
+| `internal/agents/codex` | Codex read 層、app-server managed Driver/RuntimeSupervisor、auth・models |
+| `internal/agents/opencode` | OpenCode read 層、serve managed Driver/RuntimeSupervisor、auth・models |
+| `internal/{status,tmuxx,transcript}` | 共通状態ストア / tmux exact 操作・probe / transcript wire |
+| `internal/{httpx,gitx,fstore,paths,secrets,notice}` | HTTP / git / file store / path / 暗号ストア / 通知補助 |
 
 ## 90.4 console/src/（設計は [02](02-console.md)。ここでは配置と規模のみ）
 

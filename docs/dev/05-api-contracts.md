@@ -16,7 +16,7 @@ L1 認証（authGate）通過後に到達。認可は「自分のリソースの
 |----------|---------|----------|------|
 | identity / tenant | `GET /api/whoami`・`GET /api/tenants` | CP | [03](03-control-plane.md) |
 | workspace | `GET /api/workspace`・`POST /api/workspace/{start,stop,recreate,clean-home}`・`GET /api/workspace/stats` | CP（Runtime）| [03](03-control-plane.md) |
-| sessions | `GET/POST /api/sessions`・`POST /api/sessions/{name}/{stop,halt,recreate,archive,restore,fork,start,input,paste-image,suggest-branch,rename-branch}`・`GET …/{status,output,messages}`・`POST …/title/*`・`GET /api/sessions/archived` | 生成/fork/start=CP→Agent、他は中継 | [04](04-workspace-agent.md) |
+| sessions | `GET/POST /api/sessions`・lifecycle `POST …/{stop,halt,recreate,archive,restore,fork,start}`・意味論操作 `POST …/{turn,respond,settings,driver}`・端末操作 `POST …/{input,paste-image}`・`GET …/{status,output,messages,settings}`・title/branch 系・`GET /api/sessions/archived` | 生成/fork/start=CP→Agent、他は中継 | [04](04-workspace-agent.md) |
 | repos (SCM) | `GET/POST /api/repos`・`/api/repos/{name}/{status,branches,checkout,fetch,ff,changes,diff,log,graph,show,stage,unstage,discard,commit,identity,prompt-templates}` | 中継 | [04](04-workspace-agent.md) |
 | fs | `GET /api/fs/{tree,file,download,changes,linemarks}`・`POST /api/fs/{upload,mkdir,newfile,rename,delete}` | 中継 | [04](04-workspace-agent.md) |
 | connections | `GET /api/connections`・git `PUT/DELETE /api/connections/git/{host}`（+ GitHub Device / Bitbucket OAuth / claude / codex / opencode）| 中継（Bitbucket OAuth 開始と callback のみ CP）| [08](08-integrations.md) |
@@ -48,8 +48,13 @@ L1 認証（authGate）通過後に到達。認可は「自分のリソースの
 - パス規約: CP は公開パスから **`/api` を剥がして**そのまま Agent へ転送する
   （例 `/api/sessions/x/stop` → `<agent>/sessions/x/stop`）。Agent 固有の面は
   `/ws/pty`（PTY）と `/proxy/{port}/{rest...}`（preview 下請け）。
-- Agent のグループ構成は公開面と同型: `/sessions`(24)・`/repos`(20)・`/connections`(18)・
+- Agent のグループ構成は公開面と同型: `/sessions`・`/repos`・`/connections`・
   `/fs`(10)・`/chat`(10)・`/assistants`・`/env`・`/claude`・`/codex`・`/git`・`/agents`。
+
+Session API は論理操作と端末操作を分ける。`/turn`（start/steer/interrupt）・`/respond`・
+`/settings` は driver 非依存の意味論で、Agent が managed の構造化 API または tui のキー入力へ
+振り分ける。`/input`・`/output`・`/ws/pty` は pane を持つ tui 専用。`/driver` は Codex / OpenCode の
+同一会話を stop→resume で切り替え、busy 中は `409 busy_switch` を返す。
 
 ## 5.3 中継の 4 経路（CP の proxy 層）
 

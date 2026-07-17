@@ -25,7 +25,7 @@ agent-fleet の**開発者向け**体系ドキュメント。読者は「新規�
 | [08-integrations.md](08-integrations.md) | 外部システム連携（Google/GitHub/Bitbucket/Claude/codex/opencode/MCP/AWS）|
 | [09-deploy.md](09-deploy.md) | デプロイ3形態・ポート&アダプタ・env 索引 |
 | [10-development.md](10-development.md) | ビルド反映早見表・テスト・規約・ドキュメント更新責務 |
-| [90-code-map.md](90-code-map.md) | コード地図（**ファイルパス列挙を許す唯一のファイル**・陳腐化前提）|
+| [90-code-map.md](90-code-map.md) | コードマップ（**ファイルパス列挙を許す唯一のファイル**・陳腐化前提）|
 | [91-internal-git.md](91-internal-git.md) | 内部 git プロバイダ（bare + smart-HTTP + LFS）|
 | [92-tui-modal-driving.md](92-tui-modal-driving.md) | TUI モーダル駆動（AUQ ほか）の実測検証プレイブックと挙動記録 |
 

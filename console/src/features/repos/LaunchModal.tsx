@@ -304,7 +304,7 @@ export function LaunchModal({ repo, branch, path, kinds, allowWorktree = true, o
                 className={"seg-btn" + (driver === "managed" ? " active" : "")}
                 onClick={() => setDriver("managed")}
               >
-                <Icon name="server-process" /> Managed
+                <Icon name="server-process" /> {tr("launch.driver_managed")}
                 <span className="seg-sub">{tr("launch.driver_managed_sub")}</span>
               </button>
               <button
@@ -312,7 +312,7 @@ export function LaunchModal({ repo, branch, path, kinds, allowWorktree = true, o
                 className={"seg-btn" + (driver !== "managed" ? " active" : "")}
                 onClick={() => setDriver("")}
               >
-                <Icon name="terminal" /> CLI (TUI)
+                <Icon name="terminal" /> {tr("launch.driver_terminal")}
                 <span className="seg-sub">
                   {tr("launch.tui_note", { cost: tr("common.approx", { v: agentOf(kind).tuiMemoryCost }) })}
                 </span>

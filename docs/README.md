@@ -13,17 +13,20 @@
 | 意思決定（なぜ）| [decisions/](decisions/) | 採否の記録・捨てた選択肢（追記型・不変）|
 | 使い終わった計画 | [history/](history/) | 完了済みフェーズの実装プラン・機能設計（記録）|
 
-## 進行中の機能設計（番号付き）
+## 番号付きの機能設計・実装記録
 
 - [20-container-audit-egress.md](20-container-audit-egress.md) — コンテナ内操作の監査ログ & egress 統制（enforce 未了・進行中）
 - [23-go-refactor.md](23-go-refactor.md) — Go バックエンド内部リファクタ（CP / Agent、機能不変・ワイヤ互換。残=④契約の型化のみ）
-- [24-tts-zundamon.md](24-tts-zundamon.md) — エージェント回答の音声読み上げ（VOICEVOX/ずんだもん・Polly、CP-native・未着手）
+- [24-tts-zundamon.md](24-tts-zundamon.md) — エージェント回答の音声読み上げ（✅ Phase 1〜2 実装済み、実環境検証待ち）
 - [25-ops-monitoring.md](25-ops-monitoring.md) — サービス運用（監視・インシデント対応）向け拡張（📋 構想検討・意思決定前）
-- [26-agent-exit-recording.md](26-agent-exit-recording.md) — エージェントプロセスの終了理由記録（OOM / signal / crash）（📋 設計・実装未着手）
-- [27-agent-managed-driver.md](27-agent-managed-driver.md) — エージェント制御の Managed Driver 化（TUI スクレイプ → 共有 runtime＋構造化 RPC）（🚧 P1 Codex 観測拡張＋P1.5 Console 受け皿/Driver 層 IF 実装済み・次 = P2 OpenCode managed 化）
+- [26-agent-exit-recording.md](26-agent-exit-recording.md) — エージェントプロセスの終了理由記録（✅ Agent / CP / UI 実装済み、実機目視待ち）
+- [27-agent-managed-driver.md](27-agent-managed-driver.md) — エージェント制御の Managed Driver 化（✅ P1〜P3 実装済み。Codex / OpenCode は managed が既定、CLI ルート常設。プロトコル実測を含む実装記録）
+- [28-i18n.md](28-i18n.md) — Console 全面 i18n（✅ P0〜P5 実装済み、実機目視待ち）
 - [29-keyboard-system.md](29-keyboard-system.md) — Console キーボード操作体系（capture-phase 単一ディスパッチャ＋Leader/パレット＋再割当/端末入力優先）（✅ P0〜P5 実装済み・残＝実機目視）
+- [30-session-report.md](30-session-report.md) — フリート・オペレーターへセッション完了・質問・異常終了を自動報告（✅ 実装済み）
 
-> 完了した機能設計は history/ へ移動: [19 assistant-chat](history/19-assistant-chat.md) /
+> 完了後も実装契約や実測リファレンスとしてコードから参照する 24・26〜30 は番号付きのまま残す。
+> 時系列の実装プランとして役目を終えたものは history/ へ移動: [19 assistant-chat](history/19-assistant-chat.md) /
 > [21 memo-queue](history/21-memo-queue.md) / [22 console-rebuild](history/22-console-rebuild.md)。
 
 ## reference/ は dev/ へ再編しました（2026-07）
@@ -58,6 +61,7 @@
 - [0012-go-internal-refactor.md](decisions/0012-go-internal-refactor.md) — Go バックエンド内部リファクタ：internal 層化・2 バイナリ維持・共有モジュール見送り（設計 [23](23-go-refactor.md)）
 - [0013-tts-zundamon.md](decisions/0013-tts-zundamon.md) — 回答の音声読み上げ：CP-native TTS・プロバイダ抽象・ずんだもん主役/Polly 受け皿・ECS オンデマンド（設計 [24](24-tts-zundamon.md)）
 - [0014-agent-exit-recording.md](decisions/0014-agent-exit-recording.md) — エージェント終了理由記録：pane ラッパーで exit code 捕捉・自 cgroup で OOM 帰属・意図停止フラグ不要・CP は cgroup 直読み（設計 [26](26-agent-exit-recording.md)）
+- [0015-agent-managed-driver.md](decisions/0015-agent-managed-driver.md) — Codex / OpenCode は共有 runtime の managed を既定、CLI ルートを常設（実装記録 [27](27-agent-managed-driver.md)）
 - [0017-keyboard-system.md](decisions/0017-keyboard-system.md) — Console キーボード操作体系：capture-phase 単一ディスパッチャで xterm を貫く・Leader(⌘K)/パレット/少数アクセラレータ・直接キー＋予約キーのみ再割当・端末入力優先は Leader だけ残す（設計 [29](29-keyboard-system.md)）
 
 ## history/ — 使い終わった実装プラン（P3-6 は ◐ 段1 完了・admin 残）
