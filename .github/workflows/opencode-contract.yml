@@ -1,0 +1,101 @@
+# opencode CLI contract（ドリフト検知）。既存 e2e.yml の L1 は「イメージ内の実版 ==
+# Dockerfile ARG ピン」を照合する*ピン適合*チェックなので、新しい opencode が我々の
+# パースを壊しても緑のまま通る。一方フリートは entrypoint.sh のオプトイン自己更新で
+# @latest を走らせる（ピンはベースイメージ側の既定値・フォールバック）ため、CI は
+# フリートが動かしていない版を検証している。claude の false-idle が実フリートに到達し
+# 人力発見された構造的な穴がこれ。
+#
+# ここでは実 opencode バイナリ・実ストア・実 app-server・実 tmux ペインに対して
+# contract を表明する（-tags clicontract）。opencode は無料 OpenCode Zen モデルを同梱し
+# ログイン無しで composer も実ターンも動くので、claude の L4 と違い**課金も secrets も不要**。
+#
+# 版は matrix で 2 本走らせ、「自分が壊した」と「上流が動いた」を切り分ける:
+#   - pinned: Dockerfile の ARG ピン（= 今イメージに焼く版）
+#   - latest: フリートが実際に走らせる版
+#
+# 注: イメージ build は不要（runner に node+tmux+Go だけ）なので e2e.yml から独立させ、
+# 数分で終わる。opencode 専用の別ファイルにしてあるのは、claude/codex 向けの同種の
+# 仕組みを別途追加中で、共有 e2e.yml の同時編集による衝突を避けるため（main マージ時に
+# 3 種まとめて e2e.yml へ畳む想定）。
+name: opencode-contract
+
+on:
+  push:
+    paths:
+      - "workspace/agent/internal/agents/opencode/**"
+      - "workspace/agent/session_io.go" # paneMode / opencodeInSubagentView
+      - "workspace/agent/opencode_contract_test.go"
+      - "workspace/Dockerfile" # OPENCODE_VERSION ピン
+      - ".github/workflows/opencode-contract.yml"
+  pull_request:
+    paths:
+      - "workspace/agent/internal/agents/opencode/**"
+      - "workspace/agent/session_io.go"
+      - "workspace/agent/opencode_contract_test.go"
+      - "workspace/Dockerfile"
+      - ".github/workflows/opencode-contract.yml"
+  schedule:
+    - cron: "30 21 * * 0" # 毎週月曜 6:30 JST — コード無変更でも上流 opencode の破壊を検出
+  workflow_dispatch:
+
+concurrency:
+  group: opencode-contract-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false # pinned が壊れても latest の結果は見たい（逆も同じ）
+      matrix:
+        version: [pinned, latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: workspace/agent/go.mod
+          cache-dependency-path: workspace/agent/go.sum
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: install tmux
+        run: sudo apt-get update && sudo apt-get install -y tmux
+
+      - name: resolve opencode version
+        id: ver
+        run: |
+          if [ "${{ matrix.version }}" = "pinned" ]; then
+            v="$(sed -n 's/^ARG OPENCODE_VERSION=//p' workspace/Dockerfile | head -1)"
+            [ -n "$v" ] || { echo "ARG OPENCODE_VERSION not found in workspace/Dockerfile"; exit 1; }
+          else
+            v="latest"
+          fi
+          echo "spec=$v" >> "$GITHUB_OUTPUT"
+          echo "opencode spec: $v"
+
+      - name: install opencode
+        run: |
+          npm install -g "opencode-ai@${{ steps.ver.outputs.spec }}"
+          echo "effective: $(opencode --version)"
+
+      # Tier A: 決定的・LLM 呼び出し無し。ストア schema / app-server プロトコル /
+      # TUI フッタ（paneMode）の contract を実物に対して表明する。ここが赤 = 上流が
+      # 我々の読み取り面を動かした、が確定する。
+      - name: tier A — store / app-server / TUI contract
+        working-directory: workspace/agent
+        env:
+          E2E_REQUIRE: "1" # バイナリ不在なら skip でなく fail
+        run: go test -tags clicontract -run TestContract -v -count=1 -timeout 15m ./internal/agents/opencode/ ./
+
+      # Tier B: 無料 Zen モデルで実ターンを回し、message/part の JSON payload 形と
+      # LiveState の working→idle 遷移まで確かめる。外部サービス依存でフレークしうるので
+      # 非ブロッキング（報告のみ）。赤くはしないがログに残す。
+      - name: tier B — live free-model turn (non-blocking)
+        continue-on-error: true
+        working-directory: workspace/agent
+        env:
+          E2E_REQUIRE: "1"
+          OPENCODE_CONTRACT_LIVE: "1"
+        run: go test -tags clicontract -run TestContractLive -v -count=1 -timeout 15m ./internal/agents/opencode/
