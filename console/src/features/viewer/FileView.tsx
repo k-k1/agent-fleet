@@ -94,11 +94,11 @@ export function FileView({ filePath, targetLine, targetColumn, wrap, paneId }: F
   const [sel, setSel] = useState<{ quote: string; startLine: number; endLine: number; x: number; y: number } | null>(null);
   const [sendOpen, setSendOpen] = useState(false);
 
-  const showFile = (path: string, line?: number, column?: number) =>
-    openTargetInNew(
-      { content: { kind: "file", filePath: path, targetLine: line, targetColumn: column } },
-      true,
-    );
+  const showFile = (path: string, line?: number, column?: number, openInNew = false) => {
+    const target = { content: { kind: "file" as const, filePath: path, targetLine: line, targetColumn: column } };
+    if (openInNew) openTargetInNew(target, true);
+    else openTarget(target);
+  };
 
   const imgFmt = imageFormat(filePath);
   const isImage = !!imgFmt;

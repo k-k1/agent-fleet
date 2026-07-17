@@ -25,7 +25,8 @@ interface MarkdownViewProps {
   // buttons are skipped; the finished message re-renders through the full path anyway.
   // A blinking caret marks the tail of the last block.
   streaming?: boolean;
-  onOpenFile?: (path: string, line?: number, column?: number) => void;
+  /** openInNew is true for Ctrl/Cmd-click or a middle click. */
+  onOpenFile?: (path: string, line?: number, column?: number, openInNew?: boolean) => void;
   onOpenDir?: (path: string) => void; // a relative link to a directory → reveal in FILES
 }
 
@@ -84,7 +85,7 @@ export function MarkdownView({
       el,
       basePath,
       baseDir,
-      (p, line, column) => onOpenFileRef.current?.(p, line, column),
+      (p, line, column, openInNew) => onOpenFileRef.current?.(p, line, column, openInNew),
       (p) => onOpenDirRef.current?.(p),
       (message) => toast(message),
     );
@@ -333,9 +334,10 @@ function wireImages(el: HTMLElement, basePath: string) {
 // request; missing, denied, and unreachable targets are reported instead of doing nothing.
 async function openRepoTarget(
   target: { path: string; line?: number; column?: number },
-  onOpenFile?: (p: string, line?: number, column?: number) => void,
+  onOpenFile?: (p: string, line?: number, column?: number, openInNew?: boolean) => void,
   onOpenDir?: (p: string) => void,
   onError?: (message: string) => void,
+  openInNew = false,
 ) {
   let d: { entries?: { name: string; type: string }[] } | null = null;
   try {
@@ -350,7 +352,7 @@ async function openRepoTarget(
     return;
   }
   if (entry.type === "dir") onOpenDir?.(target.path);
-  else if (onOpenFile) onOpenFile(target.path, target.line, target.column);
+  else if (onOpenFile) onOpenFile(target.path, target.line, target.column, openInNew);
   else onError?.(t("view.cannot_open_from_here", { path: target.path }));
 }
 
@@ -359,7 +361,7 @@ function wireLinks(
   el: HTMLElement,
   basePath: string,
   baseDir: string,
-  onOpenFile?: (path: string, line?: number, column?: number) => void,
+  onOpenFile?: (path: string, line?: number, column?: number, openInNew?: boolean) => void,
   onOpenDir?: (path: string) => void,
   onError?: (message: string) => void,
 ) {
@@ -397,11 +399,20 @@ function wireLinks(
         : t("view.open_in_pane", { path: target.path });
       a.setAttribute("aria-label", t("view.open_in_pane_aria", { label: a.textContent || target.path }));
     }
+    const openTarget = (openInNew: boolean) => {
+      const resolved = resolveMarkdownFileTarget(href, basePath, baseDir);
+      if (resolved) openRepoTarget(resolved, onOpenFile, onOpenDir, onError, openInNew);
+      else onError?.(t("view.cannot_resolve_link", { href }));
+    };
     a.addEventListener("click", (e) => {
       e.preventDefault();
-      const resolved = resolveMarkdownFileTarget(href, basePath, baseDir);
-      if (resolved) openRepoTarget(resolved, onOpenFile, onOpenDir, onError);
-      else onError?.(t("view.cannot_resolve_link", { href }));
+      const mouse = e as MouseEvent;
+      openTarget(mouse.ctrlKey || mouse.metaKey);
+    });
+    a.addEventListener("auxclick", (e) => {
+      if (e.button !== 1) return;
+      e.preventDefault();
+      openTarget(true);
     });
   });
 }
