@@ -159,8 +159,9 @@ function useUsage(tenant: string | null, endpoint: string) {
       if (document.hidden && !force) return;
       if (force) setRefreshing(true);
       api(endpoint + (force ? "?refresh=1" : ""))
-        // Keep the last value on a transient error (don't blank); only replace on ok.
-        .then((d) => setUsage(d && d.ok ? d : force ? null : (u: any) => u))
+        // Keep the last value on a transient error (don't blank a working chip), whether
+        // the read was a background poll or a manual refresh; only replace on ok.
+        .then((d) => setUsage((u: any) => (d && d.ok ? d : u)))
         .catch(() => {})
         .finally(() => force && setRefreshing(false));
     },
