@@ -9,7 +9,9 @@ import { useLayoutStore } from "../../layout/store.ts";
 import { displayName } from "../../lib/sessionview.ts";
 import { agentOf } from "../../agents/registry.ts";
 import { useSessionsStore } from "./store.ts";
-import { openSessionChat, openSessionChatSplit, openSessionTerminal } from "./open.ts";
+import { openSessionChat, openSessionTerminal } from "./open.ts";
+import { chatCreate } from "../chat/api.ts";
+import { openChat } from "../chat/open.ts";
 import { t, useT } from "../../lib/i18n/index.ts";
 import { Trans } from "../../lib/i18n/Trans.tsx";
 import type { Session } from "../../types/session.ts";
@@ -28,7 +30,7 @@ export interface SessionActions {
   halt(name: string, display: string): Promise<void>;
   /** Mint a NEW live session (fresh slug, same title/dir/model), archive the old. */
   recreate(name: string, display: string): Promise<void>;
-  /** Branch a conversation into a NEW session, optionally handing it to another agent. */
+  /** Ask the operator to extract a hand-off and obtain consent before creating a session. */
   fork(name: string, kind?: string): Promise<void>;
   /** ドライバ排他切替（docs/27 P3 §2）: tui ⇄ managed を stop→drain→resume で。 */
   switchDriver(s: Session): Promise<void>;
@@ -234,19 +236,22 @@ export function useSessionActions(): SessionActions {
   };
 
   const fork = async (name: string, kind?: string) => {
-    const res = await raw(`api/sessions/${encodeURIComponent(name)}/fork`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(kind ? { kind } : {}),
-    });
-    const j = await res.json().catch(() => ({}) as any);
-    if (!res.ok || !j.name) {
-      toast(j?.error?.message || j?.error || t("sess.fork_failed"));
-      return;
+    const target = kind || "claude";
+    const prompt =
+      `セッション「${name}」の会話を ${target} へ引き継いで新規セッションを始めたいです。` +
+      "まず get_session_output で元セッションの状況を確認し、新しいエージェントに必要な要点、未完了タスク、" +
+      "変更済みファイル、次の作業を簡潔な引継ぎ案として提示してください。この時点ではセッションを作成せず、" +
+      "引継ぎ案・作業フォルダ・開始エージェントを私に確認してください。私が明示的に同意した後だけ、" +
+      `kind=${target} で create_session を呼び、承認した引継ぎ案を initial_prompt に設定してください。`;
+    try {
+      // A dedicated conversation preserves any unfinished operator draft. The prompt
+      // is prefilled for review, so the user explicitly starts the extraction turn.
+      const conv = await chatCreate("operator", tr("srow.handoff_title", { name }));
+      if (!conv?.id) throw new Error("conversation was not created");
+      openChat(conv.id, prompt);
+    } catch {
+      toast(t("sess.fork_failed"));
     }
-    void refreshSessions();
-    openSessionChatSplit(j.name); // the fork inherits the history → open as chat
-    setTimeout(() => void refreshSessions(), 1200);
   };
 
   return { archive, deleteSession, clearStopped, clearOrphans, halt, recreate, fork, switchDriver };

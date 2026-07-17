@@ -15,14 +15,12 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
 
 // managedAlive reports a managed session's liveness — the runtime-handle
@@ -407,26 +405,12 @@ func handleCreateSession(w http.ResponseWriter, r *http.Request) {
 // leaving the source running/intact (claude --fork-session / opencode --session
 // --fork / codex fork). The per-kind source id comes from agents.Forker; the fork's
 // first launch (via ForkFrom) materializes the copy, and later launches resume it.
-type forkReq struct {
-	// Kind is optional for backwards compatibility. Empty means the source agent,
-	// which uses its native, lossless fork implementation.
-	Kind string `json:"kind"`
-}
-
 func handleForkSession(w http.ResponseWriter, r *http.Request) {
-	var req forkReq
-	if !httpx.DecodeJSON(w, r, &req) {
-		return
-	}
 	name := r.PathValue("name")
 	src, ok := session.ReadMeta(name)
 	if !ok {
 		httpx.WriteErr(w, http.StatusNotFound, "no_session", "session not found: "+name)
 		return
-	}
-	targetKind := normalizeKind(req.Kind)
-	if req.Kind == "" {
-		targetKind = src.Kind
 	}
 	ag := agentOf(src.Kind)
 	forker, canFork := ag.(agents.Forker)
@@ -438,50 +422,23 @@ func handleForkSession(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, errCodeForkMissingDir, "cannot fork: the working folder does not exist")
 		return
 	}
-	// A native fork can only be resumed by the same agent. For a different agent,
-	// carry the readable conversation as the first prompt instead. This preserves
-	// the useful context without pretending provider-specific session IDs are
-	// interchangeable.
-	forkFrom := ""
-	initialPrompt := ""
-	if targetKind == src.Kind {
-		var err error
-		forkFrom, err = forker.ForkSource(src)
-		if err != nil {
-			httpx.WriteErr(w, http.StatusBadRequest, "not_resumable", err.Error())
-			return
-		}
-	} else {
-		if !agentOf(targetKind).Caps().CanTranscript {
-			httpx.WriteErr(w, http.StatusBadRequest, errCodeForkUnsupportedKind, "the selected agent cannot receive a conversation fork")
-			return
-		}
-		var ok bool
-		initialPrompt, ok = forkContext(src)
-		if !ok {
-			httpx.WriteErr(w, http.StatusBadRequest, "not_resumable", "the source conversation has no readable messages")
-			return
-		}
+	forkFrom, err := forker.ForkSource(src)
+	if err != nil {
+		httpx.WriteErr(w, http.StatusBadRequest, "not_resumable", err.Error())
+		return
 	}
 	forkName := allocSessionName(src.Dir)
 	title, _ := cleanTitle(forkTitle(src))
-	// 同じ agent では driver も継承する（managed の分岐は runtime の fork API
-	// で複製）。agent を変える場合は対象 agent の既定 driver で新規開始する。
+	// Driver は継承する — managed セッションの分岐は managed のまま（runtime の
+	// fork API で複製、docs/27 P2）。tui は従来の CLI fork 起動。
 	meta := session.Meta{
 		Name: forkName, Dir: src.Dir, Model: src.Model, Effort: src.Effort, Mode: src.Mode,
-		Kind: targetKind, Driver: src.Driver, Title: title,
+		Kind: src.Kind, Driver: src.Driver, Title: title,
 		Repo:      filepath.Base(src.Dir),
 		Branch:    gitCurrentBranch(src.Dir),
 		CreatedAt: time.Now().Format(time.RFC3339), ForkFrom: forkFrom,
 	}
-	if targetKind != src.Kind {
-		meta.Driver = ""
-		meta.Model, meta.Effort, meta.Mode = "", "", ""
-		if targetKind == session.KindCodex || targetKind == session.KindOpencode {
-			meta.Driver = session.DriverManaged
-		}
-	}
-	if agentOf(targetKind).Caps().UsesLabel {
+	if ag.Caps().UsesLabel {
 		meta.Label = sessionLabelFor(src.Dir, title)
 	}
 	if meta.DriverKind() == session.DriverManaged {
@@ -491,17 +448,11 @@ func handleForkSession(w http.ResponseWriter, r *http.Request) {
 				"managed driver はこの kind ではまだ利用できません")
 			return
 		}
-		h, err := d.Resume(meta)
-		if err != nil {
+		if _, err := d.Resume(meta); err != nil {
 			httpx.WriteErr(w, http.StatusBadGateway, "runtime_failed", err.Error())
 			return
 		}
 		session.WriteMeta(meta)
-		if initialPrompt != "" {
-			if err := h.Send(agents.TurnInput{Prompt: initialPrompt}); err != nil {
-				log.Printf("fork context delivery %s: %v", meta.Name, err)
-			}
-		}
 		httpx.WriteJSON(w, http.StatusCreated, wireSession(meta, true))
 		return
 	}
@@ -510,50 +461,7 @@ func handleForkSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	session.WriteMeta(meta)
-	if initialPrompt != "" {
-		go deliverInitialPrompt(meta.Name, initialPrompt)
-	}
 	httpx.WriteJSON(w, http.StatusCreated, wireSession(meta, true))
-}
-
-// forkContext converts the visible exchange into an agent-neutral hand-off. Tool
-// traces are deliberately excluded: they are often provider-specific and the files
-// remain available in the shared working directory. Keep a bounded tail so a long
-// transcript cannot exceed an agent's first-turn input limit.
-func forkContext(src session.Meta) (string, bool) {
-	var turns []transcript.Turn
-	if src.Kind == session.KindClaude {
-		lines, _, _ := claude.TranscriptRead(session.UUID(src.Dir, src.Name))
-		turns = claude.CollectTurns(lines, 0, len(lines))
-	} else if td, ok := agentOf(src.Kind).Transcript(src); ok {
-		turns = td.Turns
-	}
-	var b strings.Builder
-	b.WriteString("以下は別エージェントから引き継いだ会話です。内容を把握し、以後の作業を継続してください。\n\n")
-	for _, turn := range turns {
-		if turn.Sidechain || strings.TrimSpace(turn.Text) == "" {
-			continue
-		}
-		role := "利用者"
-		if turn.Role == "assistant" {
-			role = "前のエージェント"
-		}
-		fmt.Fprintf(&b, "## %s\n%s\n\n", role, turn.Text)
-	}
-	const maxContext = 100_000
-	s := b.String()
-	if len(s) <= len("以下は別エージェントから引き継いだ会話です。内容を把握し、以後の作業を継続してください。\n\n") {
-		return "", false
-	}
-	if len(s) > maxContext {
-		start := len(s) - maxContext
-		// Do not cut a UTF-8 character in half when taking the tail.
-		for start < len(s) && (s[start]&0xc0) == 0x80 {
-			start++
-		}
-		s = "会話の末尾のみを引き継ぎます。\n\n" + s[start:]
-	}
-	return s, true
 }
 
 // handleStopSession kills the tmux session and forgets its meta so it stops
