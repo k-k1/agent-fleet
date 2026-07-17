@@ -5,7 +5,8 @@
 // decorated flat list — and folding the base folds the whole project. The
 // section header carries the repo actions (clone / 更新) and the
 // session-maintenance actions (整理 / アーカイブ).
-import { useEffect, useState } from "react";
+import { useState } from "react";
+import { useRetryLoad } from "../../lib/retryLoad.ts";
 import { Section } from "../../ui/Section.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { Button, IconButton } from "../../ui/Button.tsx";
@@ -36,6 +37,7 @@ export function ProjectTree() {
   const tr = useT();
   const repos = useReposStore((s) => s.repos);
   const refreshRepos = useReposStore((s) => s.refresh);
+  const clearRepos = useReposStore((s) => s.clear);
   const sessions = useSessionsStore((s) => s.sessions);
   const openArchived = useSessionUI((u) => u.openArchived);
   const toast = useToast();
@@ -50,9 +52,23 @@ export function ProjectTree() {
   const nq = normQuery(q);
   const rail = useRailRoving();
 
-  useEffect(() => {
-    void refreshRepos();
-  }, [refreshRepos]);
+  // WS 起動直後は agent がまだ不通で、CP が GET /api/repos にプレーンテキストの 502 を返す。
+  // store の refresh() はこれを過渡的失敗として repos を保持したまま false を返すので、running
+  // 中はバックオフ再試行して agent 復帰を待つ（さもないと 60s ポーリングが来るまで
+  // リポジトリがありません のまま固着し、セッションは全て その他のセッション に落ちる）。
+  // 停止中の WS も同じ 502 を返す＝両者は running でしか判別できないため、停止中は空を確定して
+  // 無駄な再試行を避ける（ProjectFiles と同じ形）。
+  useRetryLoad(
+    async (signal) => {
+      const settled = await refreshRepos();
+      if (signal.aborted) return true;
+      if (settled) return true;
+      if (running) return false; // agent still booting — retry
+      clearRepos(); // stopped WS — settle to empty
+      return true;
+    },
+    [refreshRepos, clearRepos, running],
+  );
 
   // Filtering: a working copy is visible when it matches itself or hosts a
   // matching session; a base also stays as the anchor of a matching worktree.
