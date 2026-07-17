@@ -136,9 +136,9 @@ func handleSessionMessages(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	turns := claude.CollectTurns(lines, lo, hi)
-	resolveUserFiles(turns)   // SendUserFile paths → browse-root-relative, per each turn's cwd
+	resolveUserFiles(turns)       // SendUserFile paths → browse-root-relative, per each turn's cwd
 	tagOperatorTurns(name, turns) // Source="operator" on operator-injected user turns (docs/30 ②)
-	mt := jsonlMtime(jpath) // hoisted: also feeds the title-suggestion idle check below
+	mt := jsonlMtime(jpath)       // hoisted: also feeds the title-suggestion idle check below
 	if autoTitleSuggestEnabled() && meta.Title == "" && meta.SuggestedTitle == "" &&
 		!meta.SuggestedTitleDismissed && titleGenReady(name) {
 		// Full-transcript parse — expensive, so only reached once the cheap field/backoff

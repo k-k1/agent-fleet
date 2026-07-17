@@ -1,0 +1,121 @@
+package tmuxx
+
+import (
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"testing"
+)
+
+// verdict is what the pane-reading pair (IsBusy / AtIdlePrompt) should conclude about a
+// frame. They are not mutually exclusive by construction — busy and idle are independent
+// predicates — so the corpus pins BOTH for every frame, which is what catches a change
+// that makes a frame read as neither (or both).
+type verdict struct {
+	busy bool
+	idle bool
+}
+
+var (
+	busyV    = verdict{busy: true, idle: false}  // a turn is in flight
+	idleV    = verdict{busy: false, idle: true}  // sitting at the ready input box
+	modalV   = verdict{busy: false, idle: false} // a dialog is up: neither working nor takeable as idle
+	corpusWD = "testdata/footers"
+)
+
+// corpus pins the expected reading of every recorded pane in testdata/footers. See that
+// directory's SOURCE.txt for provenance (claude 2.1.212) and how to re-capture.
+//
+// This locks the two regressions that shipped to the fleet on 2026-07-17:
+//   - busy_thinking_no_tokens: the spinner carries NO token count while claude is still
+//     thinking. The old spinnerRe required "tokens" and false-idled the whole phase.
+//   - idle_manual_mode / idle_bypass_bg_shell: the footer's trailing hint is contextual —
+//     absent in the default mode, displaced by "· 1 shell ·" when background work runs.
+//     The old AtIdlePrompt keyed on that hint and never fired the stale→idle self-heal.
+//
+// NOTE ON WHAT THIS CANNOT DO: these are recordings, so they cannot detect a FUTURE drift
+// — a 4th change in claude's TUI would leave this test green. It guards the code against
+// regressing on formats we have already seen. Detecting new drift needs the real CLI
+// driven live and this corpus re-captured (see SOURCE.txt).
+var corpus = map[string]verdict{
+	"busy_thinking_no_tokens.txt":    busyV,
+	"busy_tokens_early.txt":          busyV,
+	"busy_tokens_glyph_asterisk.txt": busyV,
+	"idle_manual_mode.txt":           idleV,
+	"idle_bypass_bg_shell.txt":       idleV,
+	"idle_bypass_hint.txt":           idleV,
+	"idle_plan_mode.txt":             idleV,
+	"idle_post_turn_summary.txt":     idleV,
+	"modal_plan_approval.txt":        modalV,
+	"modal_folder_trust.txt":         modalV,
+}
+
+// TestFooterCorpus replays every recorded pane through the real predicates.
+func TestFooterCorpus(t *testing.T) {
+	for _, name := range corpusFiles(t) {
+		t.Run(name, func(t *testing.T) {
+			want, ok := corpus[name]
+			if !ok {
+				t.Fatalf("%s is in testdata/footers but not in the corpus table — add it with its expected verdict (or delete the file)", name)
+			}
+			s := readFrame(t, name)
+			if got := spinnerActive(s); got != want.busy {
+				t.Errorf("IsBusy(%s) = %v, want %v\nspinner line: %s", name, got, want.busy, spinnerLine(s))
+			}
+			if got := atIdlePrompt(s); got != want.idle {
+				t.Errorf("AtIdlePrompt(%s) = %v, want %v\nfooter line: %s", name, got, want.idle, footerLine(s))
+			}
+		})
+	}
+}
+
+// TestFooterCorpusComplete fails when a frame is recorded but never pinned. Without it a
+// dropped table entry would silently shrink the coverage this corpus exists to provide.
+func TestFooterCorpusComplete(t *testing.T) {
+	files := corpusFiles(t)
+	if len(files) != len(corpus) {
+		t.Errorf("testdata/footers has %d frames but the corpus table pins %d — they must agree\nframes: %v", len(files), len(corpus), files)
+	}
+}
+
+// corpusFiles lists the recorded frames (SOURCE.txt is prose, not a frame).
+func corpusFiles(t *testing.T) []string {
+	t.Helper()
+	es, err := os.ReadDir(corpusWD)
+	if err != nil {
+		t.Fatalf("read %s: %v", corpusWD, err)
+	}
+	var out []string
+	for _, e := range es {
+		if e.Name() == "SOURCE.txt" || !strings.HasSuffix(e.Name(), ".txt") {
+			continue
+		}
+		out = append(out, e.Name())
+	}
+	sort.Strings(out)
+	return out
+}
+
+func readFrame(t *testing.T, name string) string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(corpusWD, name))
+	if err != nil {
+		t.Fatalf("read %s: %v", name, err)
+	}
+	return string(b)
+}
+
+// spinnerLine / footerLine surface the line a failure is about, so a drift shows the
+// actual new wording in the test output instead of just a false/true.
+func spinnerLine(s string) string { return findLine(s, spinnerRe.MatchString) }
+func footerLine(s string) string  { return findLine(s, modeFooterRe.MatchString) }
+
+func findLine(s string, match func(string) bool) string {
+	for _, ln := range strings.Split(s, "\n") {
+		if match(ln) {
+			return strings.TrimSpace(ln)
+		}
+	}
+	return "(none in frame)"
+}

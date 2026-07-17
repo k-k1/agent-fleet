@@ -130,3 +130,49 @@ func TestIdleClearsPendingQuestion(t *testing.T) {
 		t.Fatal("idle should clear the pending question")
 	}
 }
+
+// boot (the SessionStart hook) resets a session to idle, so a session killed mid-turn and
+// then resumed — where no Stop ever fired — doesn't badge 進行中 forever off a stale
+// "working" status file.
+func TestBootResetsStaleWorkingToIdle(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	for _, source := range []string{"startup", "resume", "clear"} {
+		t.Run(source, func(t *testing.T) {
+			sid := "sess-boot-" + source
+			status.Persist(sid, "working") // stale: killed mid-turn, never got a Stop
+			feedStatusHook(t, "boot", `{"session_id":"`+sid+`","source":"`+source+`"}`)
+			if got := status.LiveState(sid); got != "idle" {
+				t.Errorf("after boot(source=%s): state = %q, want idle", source, got)
+			}
+		})
+	}
+}
+
+// ...but source=="compact" must NOT reset, because auto-compaction resumes the SAME
+// in-flight turn: SessionStart fires mid-turn there, and idling it would false-idle live
+// work — the very bug the reverse-heal exists to undo. This guard has no other test and
+// its loss is silent (the session merely reads idle while claude is still working), so it
+// is pinned here explicitly.
+func TestBootSkipsAutoCompactToAvoidFalseIdle(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	const sid = "sess-boot-compact"
+	status.Persist(sid, "working") // a real, live turn
+	feedStatusHook(t, "boot", `{"session_id":"`+sid+`","source":"compact"}`)
+	if got := status.LiveState(sid); got != "working" {
+		t.Errorf("boot(source=compact) reset a live turn to %q — auto-compaction resumes the same turn, so it must stay working", got)
+	}
+}
+
+// A boot reset is not an answer — it must not queue the 応答あり notification. Otherwise
+// resuming a session killed mid-turn would ping the user as though claude had replied.
+func TestBootDoesNotQueueAnswerReadyNotification(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	m := session.Meta{Name: "s-boot", Dir: t.TempDir(), Kind: session.KindClaude, Title: "Project"}
+	session.WriteMeta(m)
+	sid := session.UUID(m.Dir, m.Name)
+	status.Persist(sid, "working")
+	feedStatusHook(t, "boot", `{"session_id":"`+sid+`","source":"resume"}`)
+	if events := notice.List(); len(events) != 0 {
+		t.Errorf("boot queued %d notification(s), want 0: %+v", len(events), events)
+	}
+}

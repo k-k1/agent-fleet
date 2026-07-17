@@ -1,0 +1,105 @@
+# CLI 版ドリフト監視（P0）。
+#
+# 検知したいこと: **CI が検証している版と、実フリートが走らせている版のズレ**。
+# workspace/Dockerfile の ARG ピンは焼き込み時にしか効かず、self-update を opt-in した
+# Workspace（AF_AGENT_SELF_UPDATE_ALLOWED=1 かつ AF_AGENT_SELF_UPDATE=1）は entrypoint.sh
+# が起動毎に @latest を入れる。一方 e2e.yml は build-args を渡さないので常にピン版の
+# イメージを検証する ＝ 新版が壊しても CI は緑のまま（claude の状態検出が 3 回とも人力で
+# 発見された理由）。
+#
+# このジョブは破壊そのものは検知しない（それは実 CLI を走らせる契約テスト＝P1 の仕事）。
+# ここで分かるのは「見に行くべき時」だけ。それでも、誰も新版に気づかない現状よりは良い。
+#
+# ノイズ設計: ドリフトは**常態**（claude は数日で版が進む）。毎晩赤くすると即座に無視
+# されるので、ドリフト時はジョブを赤くせず**追跡 issue を 1 本だけ upsert** する
+# （解消したら自動で閉じる）。ジョブが赤くなるのは検査自体が壊れた時（npm 取得失敗等）。
+#
+# 注: schedule はデフォルトブランチでしか走らない ＝ main マージまで cron は動かない。
+name: cli-drift
+
+on:
+  schedule:
+    - cron: "0 20 * * *" # 毎日 5:00 JST
+  workflow_dispatch:
+  push:
+    paths:
+      - "deploy/local/cli-drift-check.sh"
+      - ".github/workflows/cli-drift.yml"
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: cli-drift
+  cancel-in-progress: false
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      TITLE: "CLI 版ドリフト: Dockerfile のピンが npm latest から遅れています"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: check drift
+        id: check
+        run: |
+          set +e
+          deploy/local/cli-drift-check.sh > /tmp/drift.txt 2>&1
+          code=$?
+          set -e
+          cat /tmp/drift.txt
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          # 2 = 検査自体の失敗（ARG が読めない / npm view 失敗）→ ここで赤くする。
+          # 1 = ドリフト（=常態）。issue 側で扱うのでジョブは緑のままにする。
+          if [ "$code" = 2 ]; then exit 2; fi
+
+      - name: find tracking issue
+        id: issue
+        run: |
+          num="$(gh issue list --state open --search "in:title CLI 版ドリフト" --json number,title \
+                 --jq ".[] | select(.title == \"$TITLE\") | .number" | head -1)"
+          echo "num=$num" >> "$GITHUB_OUTPUT"
+
+      - name: open / update tracking issue
+        if: steps.check.outputs.code == '1'
+        run: |
+          # 本文は heredoc をクォートして組む（レポート本文をシェルに解釈させない）。
+          {
+            cat <<'HEAD'
+          `workspace/Dockerfile` の ARG ピンが npm の latest から遅れています。
+
+          ```
+          HEAD
+            cat /tmp/drift.txt
+            cat <<'TAIL'
+          ```
+
+          **self-update を opt-in した Workspace はこの latest を走らせています**（CI が検証して
+          いるのはピン版）。上流の破壊が紛れていないか確認してください:
+
+          1. 実機で `claude --version` を見て実効版を確認する（ピンを信じない）。
+          2. 状態検出のフッタ契約を再確認する — `workspace/agent/internal/tmuxx/testdata/footers/SOURCE.txt`
+             の手順で実ペインを取り直し、ゴールデンコーパスと diff する。
+          3. 問題なければ ARG を bump（＝ CI の検証対象を実フリートに追いつかせる）。
+
+          <sub>cli-drift.yml が自動更新しています。ピンが latest に追いつけば自動で閉じます。</sub>
+          TAIL
+          } > /tmp/body.md
+
+          gh label create cli-drift --color FBCA04 --description "上流 CLI の版ドリフト" 2>/dev/null || true
+          if [ -n "${{ steps.issue.outputs.num }}" ]; then
+            gh issue edit "${{ steps.issue.outputs.num }}" --body-file /tmp/body.md
+            echo "updated issue #${{ steps.issue.outputs.num }}"
+          else
+            gh issue create --title "$TITLE" --body-file /tmp/body.md --label cli-drift
+          fi
+
+      - name: close tracking issue when back in sync
+        if: steps.check.outputs.code == '0' && steps.issue.outputs.num != ''
+        run: |
+          gh issue close "${{ steps.issue.outputs.num }}" \
+            --comment "ピンが npm latest に追いつきました（cli-drift.yml）。"

@@ -1,0 +1,96 @@
+# claude TUI フッタ契約プローブ（P1）。**手動実行のみ**。
+#
+# 何を見るか: 実 CLI の対話 TUI を tmux で起動して実ターンを走らせ、状態検出
+# （internal/tmuxx の IsBusy / AtIdlePrompt）が現物のフッタ/スピナーに追随できているかを
+# 実物で確かめる。既存の L4（e2e/live_test.go）は headless の `claude -p` なので**フッタも
+# スピナーも描画されず**、状態検出の破壊を 1 度も検知できなかった（2026-07-17 時点で 3 回、
+# いずれも CI 緑のまま実フリートで人力発見）。
+#
+# 既定で **@latest** を焼く: e2e.yml は build-args を渡さずピン版を検証するが、self-update を
+# opt-in した Workspace は latest を走らせる＝検証対象と本番が別物。ここはその本番側を見る。
+# cli_version に版を明示すれば A/B 比較もできる。
+#
+# なぜ cron を付けないか: 資格情報（OAuth トークン）の失効という運用負荷があり、失効すると
+# 定期ジョブが赤くなって放置され、やがて無視される。まずは手動運用で実績を見てから常時化を
+# 判断する。運用上の合図は cli-drift.yml（毎日・無資格・issue 通知）が出すので、
+# 「ドリフト issue が来たらこのジョブを叩く」で大半の価値は取れる。
+#
+# 課金: 実ターンを 2 本（manual / bypass）。短文エッセイ 1 本ずつで数百トークン程度。
+# E2E_CLAUDE_OAUTH_TOKEN（`claude setup-token` のトークン＝Max/Pro サブスク枠）なら
+# 追加課金なし。E2E_ANTHROPIC_API_KEY は従量課金。
+name: claude-tui-contract
+
+on:
+  workflow_dispatch:
+    inputs:
+      cli_version:
+        description: "焼き込む claude CLI の版（latest 推奨。特定版で A/B したい時だけ番号を入れる）"
+        type: string
+        default: "latest"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: claude-tui-contract
+  cancel-in-progress: false
+
+jobs:
+  tui-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      WS_IMAGE: agent-fleet/workspace:tui-contract
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+
+      - name: guard secret
+        env:
+          KEY: ${{ secrets.E2E_ANTHROPIC_API_KEY }}
+          TOKEN: ${{ secrets.E2E_CLAUDE_OAUTH_TOKEN }}
+        run: |
+          if [ -z "$KEY" ] && [ -z "$TOKEN" ]; then
+            echo "::error::secrets.E2E_CLAUDE_OAUTH_TOKEN（claude setup-token のトークン・サブスク枠・推奨）か secrets.E2E_ANTHROPIC_API_KEY（従量課金）のどちらかを登録してください"
+            exit 1
+          fi
+
+      - name: build workspace image (claude=${{ inputs.cli_version }})
+        uses: docker/build-push-action@v6
+        with:
+          context: workspace
+          tags: ${{ env.WS_IMAGE }}
+          load: true
+          build-args: |
+            CLAUDE_CODE_VERSION=${{ inputs.cli_version }}
+          cache-from: type=gha
+
+      - name: claude version in image
+        run: docker run --rm --entrypoint /bin/bash "$WS_IMAGE" -lc "claude --version"
+
+      # 資格情報は env で渡す（打鍵・ログに載せない）。ソースは read-only マウントし、
+      # Go のキャッシュ類は書き込める /tmp に逃がす（マウント元は runner 所有のため）。
+      - name: TUI contract probe
+        env:
+          TOKEN: ${{ secrets.E2E_CLAUDE_OAUTH_TOKEN }}
+          KEY: ${{ secrets.E2E_ANTHROPIC_API_KEY }}
+        run: |
+          docker run --rm \
+            -e CLAUDE_CODE_OAUTH_TOKEN="$TOKEN" \
+            -e ANTHROPIC_API_KEY="$KEY" \
+            -e GOCACHE=/tmp/gocache -e GOMODCACHE=/tmp/gomod -e GOPATH=/tmp/gopath \
+            -v "$PWD/workspace:/src/workspace:ro" \
+            -w /src/workspace/agent \
+            --entrypoint /bin/bash \
+            "$WS_IMAGE" -lc \
+            "go test -tags tui_contract ./internal/tmuxx/ -run TestClaudeTUIContractLive -v -timeout 20m" \
+            2>&1 | tee /tmp/contract.log
+
+      # 緑でも文言のドリフトは目視できるようにする（観測した spinner/footer 行が出る）。
+      - name: upload observed frames
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: claude-tui-contract-log
+          path: /tmp/contract.log
+          if-no-files-found: ignore

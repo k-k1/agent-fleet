@@ -2,10 +2,11 @@ package tmuxx
 
 import "testing"
 
-// TestSpinnerActive locks the live-turn detection against real captured footers. Newer
-// claude builds rotate "esc to interrupt" out for a Tip and keep "shift+tab to cycle"
-// visible mid-turn, so the elapsed-time/token header must be recognised as busy too —
-// otherwise a working session false-idles (入力待ち with no 停止 button).
+// TestSpinnerActive locks the live-turn detection against real captured spinners. The
+// only dependable parts of that line are the gerund + "…" and the parenthesised elapsed
+// timer: "esc to interrupt" rotates out for a Tip, and the "· ↓ <n> tokens" segment shows
+// only once output tokens have accrued. Keying on tokens (as we did) false-idles every
+// turn that is still thinking — 入力待ち with no 停止 button while claude is plainly working.
 func TestSpinnerActive(t *testing.T) {
 	busy := []string{
 		"✽ Zigzagging… (17m 38s · ↓ 57.1k tokens · thought for 2s)",
@@ -13,6 +14,21 @@ func TestSpinnerActive(t *testing.T) {
 		"✳ Zigzagging… (10m 52s · ↓ 34.0k tokens)",
 		"✳ Cerebrating… (esc to interrupt · 12s)", // classic hint still counts
 		"  ⎿  Tip: … without interrupting Claude's current work\n✳ Working… (1m 2s · ↓ 900 tokens)",
+		// Live 2.1.212 captures (claude_sqicn4e / claude_spz7az5 panes).
+		"✽ Perusing… (5m 42s · ↓ 17.8k tokens · thought for 3s)",
+		"✻ Meandering… (2m 3s · ↓ 8.1k tokens · thinking with high effort)",
+		// The regression: a turn still thinking has NO token segment. Real 2.1.212
+		// captures — the whole 14s turn these came from read idle before this fix.
+		"✢ Tempering… (6s · thinking with high effort)",
+		"✢ Tempering… (2s · thinking with high effort)",
+		"✻ Wibbling… (1s · ↓ 4 tokens)",
+		"· Manifesting… (2s · ↓ 132 tokens · thinking with high effort)", // glyph dims to "·"
+		"✻ Topsy-turvying… (3s)",                                         // hyphenated verb, no extras at all
+		"✻ Fluttering… (12s · still thinking with high effort)",          // "still" thinking
+		// The timer is not always the first segment inside the parens: while a hook runs,
+		// the phase leads. Captured live by the contract probe (tui_contract_test.go) — the
+		// regex missed this, so a turn read idle for the whole stop-hook window.
+		"· Tomfoolering… (running stop hook · 6s · ↓ 279 tokens)",
 	}
 	for _, s := range busy {
 		if !spinnerActive(s) {
@@ -26,10 +42,63 @@ func TestSpinnerActive(t *testing.T) {
 		"? for shortcuts",
 		"some transcript body that merely mentions 500 tokens in prose",
 		"", // empty capture
+		// The post-turn summary claude leaves in place of the spinner: a past-tense verb,
+		// no "…", no parenthesised timer. It reports elapsed time but never a token count,
+		// so however long the turn ran it must not read busy — real 2.1.212 captures.
+		"✻ Worked for 13m 53s",
+		"✻ Churned for 25s",
+		"✻ Sautéed for 5s · 1 shell still running",
+		// An indented transcript line quoting a spinner is not a spinner. Keeps a session
+		// asked to debug the TUI (this very task) from reading its own pane as busy.
+		"  ✢ Tempering… (6s · thinking with high effort)",
+		"  the footer showed ✽ Perusing… (5m 42s · ↓ 17.8k tokens) at that point",
+		// Truncated prose ends in an ellipsis too — it just isn't followed by a timer.
+		"tmux focus-events off · add 'set -g focus-events on' to ~/.tmux.conf and rea…",
 	}
 	for _, s := range idle {
 		if spinnerActive(s) {
 			t.Errorf("spinnerActive(%q) = true, want false", s)
+		}
+	}
+}
+
+// TestAtPromptFooter locks the ready-prompt detection against the real footer strips of
+// claude 2.1.212. The trailing hint is contextual — absent in the default (manual) mode,
+// and replaced by other segments while background shells run — so the mode indicator
+// itself has to carry the signal. Regressing to a hint-only check false-negatives every
+// default-mode session, which strands it badged 実行中 (the stale-status→idle self-heal
+// can never fire).
+func TestAtPromptFooter(t *testing.T) {
+	atPrompt := []string{
+		// Every permission mode, captured live from a 2.1.212 pane.
+		"  ⏸ manual mode on · ← for agents",                              // default: no hint at all
+		"  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents",          //
+		"  ⏵⏵ accept edits on (shift+tab to cycle) · ← for agents",       //
+		"  ⏸ plan mode on (shift+tab to cycle) · ← for agents",           //
+		"  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents", //
+		"  ⏵⏵ bypass permissions on · 1 shell · ← for agents",            // hint yields to background work
+		// Older builds, still supported (the image pins a CLI, which may lag).
+		"? for shortcuts",
+		"  ⏵⏵ bypass permissions on (shift+tab to cycle)",
+	}
+	for _, s := range atPrompt {
+		if !atPromptFooter(s) {
+			t.Errorf("atPromptFooter(%q) = false, want true", s)
+		}
+	}
+
+	notAtPrompt := []string{
+		"", // empty capture
+		// A modal draws over the input box: the footer strip is gone entirely. Real capture
+		// of the 2.1.212 plan-approval dialog (trimmed).
+		"   Claude has written up a plan and is ready to execute. Would you like to\n   proceed?\n\n   ❯ 1. Yes, and use auto mode\n     2. Yes, manually approve edits\n\n   ctrl+g to edit in Vim ·",
+		// Prose that merely names a mode must not match — the strip is line-anchored.
+		"I switched it to plan mode on the second run",
+		"the session had auto mode on earlier",
+	}
+	for _, s := range notAtPrompt {
+		if atPromptFooter(s) {
+			t.Errorf("atPromptFooter(%q) = true, want false", s)
 		}
 	}
 }

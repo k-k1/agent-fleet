@@ -1,0 +1,23 @@
+
+╭─── Claude Code v2.1.212 ─────────────────────────────────────────────────────╮
+│                                                    │ Tips for getting        │
+│           Welcome back Sample User Name!           │ started                 │
+│                                                    │ Run /init to create a … │
+│                       ▐▛███▜▌                      │ ─────────────────────── │
+│                      ▝▜█████▛▘                     │ What's new              │
+│                        ▘▘ ▝▝                       │ `/fork` now copies you… │
+│   Opus 4.8 (1M context) with hi… · Claude Max ·    │ Added `claude auto-mod… │
+│   dev@example.com's Organization                   │ Added a session-wide l… │
+│                /…/scratchpad/probe                 │ /release-notes for more │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+ ⚠ 3 MCP servers need authentication · run /mcp
+
+
+
+  tmux focus-events off · add 'set -g focus-events on' to ~/.tmux.conf and rea…
+────────────────────────────────────────────────────────────────────────────────
+❯ 
+────────────────────────────────────────────────────────────────────────────────
+                                                                            /rc
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents

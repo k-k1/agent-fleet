@@ -13,19 +13,70 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
-// spinnerRe matches claude's live working-spinner footer — the "<glyph> Word… (<elapsed>
-// · <n> tokens · …)" line that ticks while a turn is in flight. Newer claude builds no
-// longer keep "esc to interrupt" pinned in that line (they rotate it out for a random
-// Tip) and leave the mode-cycle footer ("shift+tab to cycle") visible even mid-turn, so
-// neither of those alone tells busy from idle. The elapsed-timer + token counter, though,
-// shows only while working and never at the ready prompt — e.g. "(17m 38s · ↓ 57.1k
-// tokens · thought for 2s)" or "(12s · ↑ 3.4k tokens)". Best-effort; one captured frame.
-var spinnerRe = regexp.MustCompile(`\([0-9]+(?:h|m|s)[^\n]*· [^\n]*tokens`)
+// spinnerRe matches claude's live working-spinner header — the "<glyph> <Gerund>…
+// (<elapsed> · …)" line that ticks while a turn is in flight, e.g.
+//
+//	✢ Tempering… (6s · thinking with high effort)
+//	✽ Perusing… (5m 42s · ↓ 17.8k tokens · thought for 3s)
+//
+// Only two parts of that line are dependable, and this regex uses exactly those: the
+// gerund + "…", and the parenthesised elapsed timer. Everything else rotates:
+//
+//   - "esc to interrupt" is swapped out for a random Tip (hence the separate check in
+//     spinnerActive, which still honours it on older builds);
+//   - the "· ↓ <n> tokens" segment is NOT always there. It appears only once output
+//     tokens have accrued, so a turn that is still thinking renders bare
+//     "(6s · thinking with high effort)". Requiring "tokens" (as we did) therefore
+//     false-idles the whole thinking phase — and a short turn start to finish;
+//   - the timer is not even first inside the parens: while a hook runs, claude renders
+//     "… (running stop hook · 6s · ↓ 279 tokens)" (found by the live contract probe,
+//     tui_contract_test.go). Hence [^)\n]* before the timer.
+//   - "shift+tab to cycle" stays visible mid-turn, so it can't tell busy from idle.
+//
+// It must not match the post-turn summary claude leaves in the transcript
+// ("✻ Worked for 13m 53s", "✻ Sautéed for 5s · 1 shell still running"): those use a
+// past-tense verb with no "…" and no parenthesised timer, so the ellipsis is what
+// separates a live turn from a finished one. Anchored at line start (the spinner always
+// renders at column 0) so an indented transcript line that merely quotes a spinner —
+// including this file's own examples, when a session is asked to debug the TUI — doesn't
+// read as busy. Best-effort; one captured frame.
+var spinnerRe = regexp.MustCompile(`(?m)^\S? ?[A-Z][^\s(]*\x{2026} \([^)\n]*[0-9]+(?:h|m|s)\b`)
 
 // spinnerActive reports whether the captured pane text shows a turn actively running —
-// either the classic "esc to interrupt" affordance or the elapsed/token spinner header.
+// either the classic "esc to interrupt" affordance or the live spinner header (see
+// spinnerRe).
 func spinnerActive(s string) bool {
 	return strings.Contains(s, "esc to interrupt") || spinnerRe.MatchString(s)
+}
+
+// modeFooterRe matches claude's permission-mode footer strip — the "⏸ manual mode on" /
+// "⏵⏵ auto mode on" / "⏵⏵ accept edits on" / "⏸ plan mode on" / "⏵⏵ bypass permissions on"
+// line drawn under the input box. It is the one part of that strip that is always
+// rendered, so it — not the hint that trails it — is what tells us the TUI is sitting at
+// its input box.
+//
+// The trailing hint is contextual and must NOT be relied on: claude 2.1.212 omits
+// "(shift+tab to cycle)" entirely in the default (manual) mode, and swaps it for other
+// segments when there is background work to report ("⏵⏵ bypass permissions on · 1 shell ·
+// ← for agents"). "? for shortcuts", which used to stand in as the default-mode footer,
+// is gone from that strip too. Keying idle off those hints (as we did) false-negatives on
+// every default-mode session — the stale-status→idle self-heal then never fires and a
+// session that is plainly at its prompt stays badged 実行中 with a 停止 bar.
+//
+// Anchored at line start so prose in the transcript that merely quotes a mode name can't
+// match. Both symbols are matched: ⏵⏵ (U+23F5 ×2) for the go-ahead modes, ⏸ (U+23F8) for
+// manual/plan.
+var modeFooterRe = regexp.MustCompile(`(?m)^\s*(?:\x{23F5}\x{23F5}|\x{23F8}) .*\bon\b`)
+
+// atPromptFooter reports whether the capture shows claude's input-box footer — the
+// permission-mode strip, or the older builds' mode-cycle / shortcuts hints (kept so a
+// pinned-older CLI still reads correctly). Modals draw over the strip instead of under
+// it: a permission or plan-approval dialog replaces the whole input box + footer, so a
+// missing footer is itself a signal that a dialog is up.
+func atPromptFooter(s string) bool {
+	return modeFooterRe.MatchString(s) ||
+		strings.Contains(s, "shift+tab to cycle") ||
+		strings.Contains(s, "? for shortcuts")
 }
 
 func HasSession(tn string) bool {
@@ -118,10 +169,10 @@ func PaneKind(name string) string {
 
 // AtIdlePrompt reports whether a claude pane is sitting at its ready input
 // prompt — used to self-heal a stale status cache (a killed+resumed session, or a
-// rejected permission / abandoned question, where no resolving hook fired). The
-// mode-cycle footer ("shift+tab to cycle" / "? for shortcuts") shows only at the ready
-// prompt; a busy spinner ("esc to interrupt") or any modal ("Enter to select", "Esc to
-// cancel", "Do you want to", …) means NOT idle. Best-effort TUI read.
+// rejected permission / abandoned question, where no resolving hook fired). Idle means
+// the input-box footer is drawn (atPromptFooter) with no live spinner (spinnerActive) and
+// no modal over it ("Enter to select", "Esc to cancel", "Do you want to", …).
+// Best-effort TUI read.
 func AtIdlePrompt(name string) bool {
 	// capture-pane needs a PANE target; the "=name" exact-SESSION form fails with
 	// "can't find pane" (same reason send-keys resolves a %N pane id first).
@@ -133,28 +184,41 @@ func AtIdlePrompt(name string) bool {
 	if err != nil {
 		return false
 	}
-	s := string(out)
-	// A live turn's spinner (esc-to-interrupt OR the elapsed/token header) means NOT idle
-	// — checked first because newer claude keeps "shift+tab to cycle" in the footer even
-	// mid-turn, so the mode-cycle marker below no longer implies the ready prompt on its own.
+	return atIdlePrompt(string(out))
+}
+
+// modalMarkers are fragments of the dialogs that claude draws OVER the input box
+// (permission prompt, plan approval, folder trust, AskUserQuestion). Matched against a
+// width-wrapped capture, so only fragments that survive wrapping are reliable:
+// "Would you like to proceed" wraps mid-phrase in an 80-col pane, where the plan dialog is
+// caught by "to approve" instead. Mostly redundant now that idle requires the footer strip
+// (a dialog replaces it), but kept as defence in depth.
+var modalMarkers = []string{
+	"Enter to select", "Esc to cancel", "to approve",
+	"Do you want to", "Would you like to proceed", "Ready to submit",
+}
+
+// atIdlePrompt is the pure decision over one captured frame — split out from AtIdlePrompt
+// (which supplies the frame) so the real judgement, not a reimplementation of it, can be
+// replayed against the recorded panes in testdata/footers.
+func atIdlePrompt(s string) bool {
+	// A live turn's spinner means NOT idle — checked first because the footer strip stays
+	// drawn mid-turn, so it alone does not imply the ready prompt.
 	if spinnerActive(s) {
 		return false
 	}
-	for _, busy := range []string{
-		"Enter to select", "Esc to cancel", "to approve",
-		"Do you want to", "Would you like to proceed", "Ready to submit",
-	} {
-		if strings.Contains(s, busy) {
+	for _, m := range modalMarkers {
+		if strings.Contains(s, m) {
 			return false
 		}
 	}
-	return strings.Contains(s, "shift+tab to cycle") || strings.Contains(s, "? for shortcuts")
+	return atPromptFooter(s)
 }
 
-// IsBusy reports whether a claude pane is actively running a turn — its footer shows the
-// live spinner (the "esc to interrupt" affordance OR the elapsed-time/token header, see
-// spinnerActive), which appears only while a turn is in flight (a thinking spinner or a
-// running tool) and never at the ready prompt. It's the positive
+// IsBusy reports whether a claude pane is actively running a turn — its transcript shows
+// the live spinner header (see spinnerActive), which ticks only while a turn is in flight
+// (thinking or a running tool) and is replaced by a past-tense summary the moment the turn
+// ends. It's the positive
 // inverse of AtIdlePrompt, used to *reverse*-heal a status cache that reads idle while
 // the pane is plainly working: the "working" status file can go missing (never written,
 // or removed by the working→idle self-heal during a transient prompt frame) and then no
