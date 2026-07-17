@@ -38,6 +38,15 @@ describe("resolveMarkdownFileTarget", () => {
     });
   });
 
+  it("keeps an allowed absolute document root when following a relative link", () => {
+    expect(resolveMarkdownFileTarget(
+      "06-agents.md",
+      "/usr/local/share/agent-fleet/docs/guide/member/README.md",
+    )).toEqual({
+      path: "/usr/local/share/agent-fleet/docs/guide/member/06-agents.md",
+    });
+  });
+
   it("decodes Japanese paths and ignores external URLs", () => {
     expect(resolveMarkdownFileTarget("docs/%E8%A8%AD%E8%A8%88.md:20", "", "repos/app")).toEqual({
       path: "repos/app/docs/設計.md",
