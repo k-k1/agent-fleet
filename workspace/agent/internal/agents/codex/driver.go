@@ -616,7 +616,7 @@ func (h *threadHandle) pump() {
 // anySessionWorking が読む）は dispatcher（turn/started・turn/completed）が正で、
 // ここでは楽観の working だけ先に刻む。
 func (h *threadHandle) runTurn(in agents.TurnInput, gen int) {
-	status.Persist(h.slotSid, "working")
+	agents.MarkTurnStart(h.slotSid)
 	h.setState(agents.TurnStarting)
 	h.mu.Lock()
 	cl, tid := h.client, h.tid
@@ -640,13 +640,13 @@ func (h *threadHandle) runTurn(in agents.TurnInput, gen int) {
 		if !sameGen {
 			return // reconciliation が新世代の snapshot を既に置いた
 		}
-		status.Persist(h.slotSid, "idle")
+		st := agents.TurnUnknown // 切断 — §6 に委ねる（報告はしない）
 		if alive {
 			log.Printf("codex managed: turn/start %s: %v", h.name, err)
-			h.setState(agents.TurnFailed)
-		} else {
-			h.setState(agents.TurnUnknown) // 切断 — §6 に委ねる
+			st = agents.TurnFailed
 		}
+		agents.MarkTurnEnd(h.slotSid, st)
+		h.setState(st)
 		return
 	}
 	var tr struct {
@@ -996,7 +996,7 @@ func dispatchNotification(msg rpcMsg) {
 			h.mu.Lock()
 			h.turnID = p.Turn.ID
 			h.mu.Unlock()
-			status.Persist(h.slotSid, "working")
+			agents.MarkTurnStart(h.slotSid)
 		}
 	case "turn/completed":
 		var p struct {
@@ -1017,7 +1017,7 @@ func dispatchNotification(msg rpcMsg) {
 			case "interrupted":
 				st = agents.TurnCancelled
 			}
-			status.Persist(h.slotSid, "idle")
+			agents.MarkTurnEnd(h.slotSid, st)
 			h.mu.Lock()
 			end := h.turnEnd
 			if h.turnID == p.Turn.ID {
