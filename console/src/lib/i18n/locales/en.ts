@@ -969,6 +969,9 @@ export const en: Record<keyof typeof ja, string> = {
   "wsbar.usage.fetched": "Fetched {ago}",
   "wsbar.usage.refresh": "Refresh",
   "wsbar.usage.open_page": "Open usage page",
+  "wsbar.usage.unavailable_title": "{name} usage — momentarily unavailable. Open the usage page to check.",
+  "wsbar.usage.unavailable_note":
+    "Couldn't read the current usage (the endpoint is unofficial and rate-limited). Retry, or check the exact numbers on the usage page below.",
   "wsbar.stop_ws": "Stop workspace",
   "wsbar.start_ws": "Start workspace",
   "wsbar.state_title.none": "Stopped (no container — removed by Stop. Data persists; Start recreates it)",

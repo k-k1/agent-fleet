@@ -159,9 +159,11 @@ function useUsage(tenant: string | null, endpoint: string) {
       if (document.hidden && !force) return;
       if (force) setRefreshing(true);
       api(endpoint + (force ? "?refresh=1" : ""))
-        // Keep the last value on a transient error (don't blank a working chip), whether
-        // the read was a background poll or a manual refresh; only replace on ok.
-        .then((d) => setUsage((u: any) => (d && d.ok ? d : u)))
+        // Prefer a fresh ok reading. On a failed read keep the last good value (don't
+        // blank a working chip), whether it was a background poll or a manual refresh —
+        // but if we have nothing yet, still adopt the failed payload so its `authed` flag
+        // can render the degraded "unavailable" chip instead of hiding entirely.
+        .then((d) => setUsage((u: any) => (d && (d.ok || !u) ? d : u)))
         .catch(() => {})
         .finally(() => force && setRefreshing(false));
     },
@@ -320,32 +322,41 @@ function UsageChip({ src, tenant }: { src: UsageSource; tenant: string | null })
   const fullResets = (usage?.resetCredits?.credits || [])
     .filter((r: any) => r?.expiresAt && !isNaN(new Date(r.expiresAt).getTime()))
     .sort((a: any, b: any) => new Date(a.expiresAt).getTime() - new Date(b.expiresAt).getTime());
-  if (!uh && !uw && !resetCount) return null; // no reading yet → hide the chip entirely
+  // Hide the chip only when the user isn't signed into this agent (nothing to show, and
+  // never will be). If they ARE signed in but the (unofficial, rate-limited) reading is
+  // momentarily unavailable, keep a degraded chip so it never vanishes on a transient
+  // failure — its dropdown links out to the vendor's own usage page to check manually.
+  const unavailable = !uh && !uw && !resetCount;
+  if (unavailable && !usage?.authed) return null;
 
   // Max付近（利用率 ≥ NEAR_MAX_PCT）の枠があれば、% ではなく「いつ解放されるか」を出す。候補は
   // Max付近の枠だけ、その中で最も早くリセットする枠（＝最初に解放される時刻）を 1 つだけ。両枠
   // とも Max付近なら近い方（通常は5時間枠）になる。詳細（どの枠か・%・相対）はツールチップへ。
   const nearMax: { label: string; pct: number; resetsAt: string }[] = [];
-  if (usage.fiveHour && usage.fiveHour.pct >= NEAR_MAX_PCT && usage.fiveHour.resetsAt)
+  if (usage?.fiveHour && usage.fiveHour.pct >= NEAR_MAX_PCT && usage.fiveHour.resetsAt)
     nearMax.push({ label: fiveLabel, ...usage.fiveHour });
-  if (usage.sevenDay && usage.sevenDay.pct >= NEAR_MAX_PCT && usage.sevenDay.resetsAt)
+  if (usage?.sevenDay && usage.sevenDay.pct >= NEAR_MAX_PCT && usage.sevenDay.resetsAt)
     nearMax.push({ label: weekLabel, ...usage.sevenDay });
   const bind = nearMax.length
     ? nearMax.reduce((a, b) => (new Date(a.resetsAt).getTime() <= new Date(b.resetsAt).getTime() ? a : b))
     : null;
 
-  const label = bind
-    ? resetChipText(bind.resetsAt)
-    : [uh && `${uh.pct}%`, uw && `${uw.pct}%`].filter(Boolean).join(" / ");
-  const chipTitle = bind
-    ? tr("wsbar.usage.chip_bind_title", {
-        name: src.name,
-        label: bind.label,
-        pct: Math.round(bind.pct),
-        until: untilText(bind.resetsAt),
-        when: whenText(bind.resetsAt),
-      })
-    : tr("wsbar.usage.title", { name: src.name });
+  const label = unavailable
+    ? "—"
+    : bind
+      ? resetChipText(bind.resetsAt)
+      : [uh && `${uh.pct}%`, uw && `${uw.pct}%`].filter(Boolean).join(" / ");
+  const chipTitle = unavailable
+    ? tr("wsbar.usage.unavailable_title", { name: src.name })
+    : bind
+      ? tr("wsbar.usage.chip_bind_title", {
+          name: src.name,
+          label: bind.label,
+          pct: Math.round(bind.pct),
+          until: untilText(bind.resetsAt),
+          when: whenText(bind.resetsAt),
+        })
+      : tr("wsbar.usage.title", { name: src.name });
 
   return (
     <div className="ws-usage-wrap" ref={ref}>
@@ -359,7 +370,7 @@ function UsageChip({ src, tenant }: { src: UsageSource; tenant: string | null })
         onClick={() => setOpen((o) => !o)}
       >
         <Icon name={src.icon} />
-        <span className={"ws-usage-nums" + (bind ? " crit" : "")}>{label}</span>
+        <span className={"ws-usage-nums" + (bind ? " crit" : unavailable ? " muted" : "")}>{label}</span>
         {!!resetCount && (
           <span className={"ws-reset-count" + (fullResets.length && new Date(fullResets[0].expiresAt).getTime() - Date.now() <= 7 * 86400000 ? " warn" : "")}
             title={tCount("wsbar.usage.full_reset", resetCount) + (fullResets.length ? tr("wsbar.usage.full_reset_soonest", { when: whenText(fullResets[0].expiresAt) }) : "")}>
@@ -371,28 +382,34 @@ function UsageChip({ src, tenant }: { src: UsageSource; tenant: string | null })
       {open && (
         <div className="ws-usage-pop">
           <div className="wu-title">{tr("wsbar.usage.pop_title", { name: src.name })}</div>
-          {uh && <UsageRow label={fiveLabel} w={uh} />}
-          {uw && <UsageRow label={weekLabel} w={uw} />}
-          {!!resetCount && (
-            <div className="wu-full-resets">
-              <div className="wu-row-head"><span className="wu-label">{tr("wsbar.usage.full_reset_label")}</span><span>{tr("wsbar.usage.count_ken", { count: resetCount })}</span></div>
-              {fullResets.map((reset: any, i: number) => (
-                <div className="wu-expiry" key={`${reset.expiresAt}-${i}`}>
-                  <span>{tr("wsbar.usage.expires", { date: whenText(reset.expiresAt).split(" ")[0] })}</span>
-                  <span className={new Date(reset.expiresAt).getTime() - Date.now() <= 7 * 86400000 ? "warn" : "muted"}>{expiryText(reset.expiresAt)}</span>
+          {unavailable ? (
+            <div className="wu-note muted">{tr("wsbar.usage.unavailable_note")}</div>
+          ) : (
+            <>
+              {uh && <UsageRow label={fiveLabel} w={uh} />}
+              {uw && <UsageRow label={weekLabel} w={uw} />}
+              {!!resetCount && (
+                <div className="wu-full-resets">
+                  <div className="wu-row-head"><span className="wu-label">{tr("wsbar.usage.full_reset_label")}</span><span>{tr("wsbar.usage.count_ken", { count: resetCount })}</span></div>
+                  {fullResets.map((reset: any, i: number) => (
+                    <div className="wu-expiry" key={`${reset.expiresAt}-${i}`}>
+                      <span>{tr("wsbar.usage.expires", { date: whenText(reset.expiresAt).split(" ")[0] })}</span>
+                      <span className={new Date(reset.expiresAt).getTime() - Date.now() <= 7 * 86400000 ? "warn" : "muted"}>{expiryText(reset.expiresAt)}</span>
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
+              )}
+            </>
           )}
           <div className="wu-foot">
-            <span className="wu-ago muted">{tr("wsbar.usage.fetched", { ago: agoText(usage.ageSec) })}</span>
+            {!unavailable && <span className="wu-ago muted">{tr("wsbar.usage.fetched", { ago: agoText(usage.ageSec) })}</span>}
             {src.live && (
               <button type="button" className="ghost wu-reload" onClick={refresh} disabled={refreshing}>
                 <Icon name="refresh" spin={refreshing} /> {tr("wsbar.usage.refresh")}
               </button>
             )}
           </div>
-          {!src.live && src.noteKey && <div className="wu-note muted">{tr(src.noteKey)}</div>}
+          {!unavailable && !src.live && src.noteKey && <div className="wu-note muted">{tr(src.noteKey)}</div>}
           {src.manageURL && (
             <a className="wu-manage" href={src.manageURL} target="_blank" rel="noopener">
               <Icon name="link-external" /> {tr("wsbar.usage.open_page")}
