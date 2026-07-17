@@ -21,10 +21,10 @@ func TestOperatorInjectionTagging(t *testing.T) {
 	}
 
 	turns := []transcript.Turn{
-		{Role: "user", Text: "リファクタして"},        // operator (matches, trimmed)
-		{Role: "user", Text: "自分で打った質問"},       // user's own — untagged
-		{Role: "assistant", Text: "テストも直して"},    // assistant echo — never tagged (role guard)
-		{Role: "user", Text: "  テストも直して  "},    // operator (matches after trim)
+		{Role: "user", Text: "リファクタして"},      // operator (matches, trimmed)
+		{Role: "user", Text: "自分で打った質問"},     // user's own — untagged
+		{Role: "assistant", Text: "テストも直して"}, // assistant echo — never tagged (role guard)
+		{Role: "user", Text: "  テストも直して  "},  // operator (matches after trim)
 	}
 	tagOperatorTurns("slot01", turns)
 
