@@ -2,7 +2,7 @@
 
 // codex CLI ドリフト検知（Tier 2 / **実ターンを消費する**）。build tag `driftlive` で
 // 通常の `go test ./...` からも Tier 1（tag `drift`）からも隔離され、CI では
-// workflow_dispatch の live 入力を立てた時だけ走る（e2e.yml の codex-live-drift）。
+// workflow_dispatch の live 入力を立てた時だけ走る（codex-contract.yml の live-drift）。
 //
 // Tier 1（drift_test.go）は API 到達前で完結する範囲＝無料・無認証を扱う。ここは
 // 「実際に1ターン回さないと観測できない」4点だけを担当する:
