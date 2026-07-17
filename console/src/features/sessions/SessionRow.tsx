@@ -31,7 +31,7 @@ import {
 } from "./open.ts";
 import { useSessionUI } from "./ui.ts";
 import type { SessionActions } from "./useSessionActions.tsx";
-import type { Session } from "../../types/session.ts";
+import type { Session, SessionKind } from "../../types/session.ts";
 
 interface SessionRowProps {
   s: Session;
@@ -311,16 +311,21 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
                   </button>
                 )}
                 {agentOf(s.kind).caps.fork && !dead && running && (
-                  <button
-                    type="button"
-                    className="ui-menu-item"
-                    onClick={() => {
-                      setMenuOpen(false);
-                      void actions.fork(s.name);
-                    }}
-                  >
-                    <Icon name="git-branch" /> {tr("srow.fork")}
-                  </button>
+                  <>
+                    {(["claude", "codex", "opencode"] as SessionKind[]).map((kind) => (
+                      <button
+                        key={kind}
+                        type="button"
+                        className="ui-menu-item"
+                        onClick={() => {
+                          setMenuOpen(false);
+                          void actions.fork(s.name, kind);
+                        }}
+                      >
+                        <Icon name={kind === s.kind ? "git-branch" : agentOf(kind).icon} /> {tr("srow.fork_to", { agent: agentOf(kind).label })}
+                      </button>
+                    ))}
+                  </>
                 )}
                 {agentOf(s.kind).caps.ephemeral ? (
                   <button

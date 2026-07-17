@@ -1404,6 +1404,7 @@ export const en: Record<keyof typeof ja, string> = {
   "srow.rename": "Rename",
   "srow.rename_branch": "Rename the branch",
   "srow.fork": "Fork (new session, keeps the conversation)",
+  "srow.fork_to": "Fork to {agent} (keeps the conversation)",
   "srow.archive": "Archive (remove from the list)",
   "srow.recreate": "Recreate (current conversation goes to the archive)",
 

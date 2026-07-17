@@ -28,8 +28,8 @@ export interface SessionActions {
   halt(name: string, display: string): Promise<void>;
   /** Mint a NEW live session (fresh slug, same title/dir/model), archive the old. */
   recreate(name: string, display: string): Promise<void>;
-  /** Branch a claude conversation into a NEW session (source kept); open the fork. */
-  fork(name: string): Promise<void>;
+  /** Branch a conversation into a NEW session, optionally handing it to another agent. */
+  fork(name: string, kind?: string): Promise<void>;
   /** ドライバ排他切替（docs/27 P3 §2）: tui ⇄ managed を stop→drain→resume で。 */
   switchDriver(s: Session): Promise<void>;
 }
@@ -233,8 +233,12 @@ export function useSessionActions(): SessionActions {
     setTimeout(() => void refreshSessions(), 1200);
   };
 
-  const fork = async (name: string) => {
-    const res = await raw(`api/sessions/${encodeURIComponent(name)}/fork`, { method: "POST" });
+  const fork = async (name: string, kind?: string) => {
+    const res = await raw(`api/sessions/${encodeURIComponent(name)}/fork`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(kind ? { kind } : {}),
+    });
     const j = await res.json().catch(() => ({}) as any);
     if (!res.ok || !j.name) {
       toast(j?.error?.message || j?.error || t("sess.fork_failed"));
