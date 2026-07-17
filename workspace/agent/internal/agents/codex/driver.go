@@ -71,7 +71,9 @@ func (managedDriver) Capabilities() agents.Capabilities {
 
 // threadFeatures は thread/start・thread/resume に毎回渡す thread 単位 config。
 // request_user_input ツールは app-server スレッドでは既定無効（実測: "unavailable in
-// this mode"）— TUI は自前で有効化しており、managed はここで対称にする。
+// this mode"）。**TUI が自前で有効化するという当初の前提は誤りだった**（実測 0.144.3 /
+// 0.144.5: TUI も Default mode では同じく拒否する — Plan mode だけが自動で有効）。CLI
+// ルートは buildProgram が同じ feature を -c で渡して対称にしている。
 var threadFeatures = map[string]any{"features": map[string]any{"default_mode_request_user_input": true}}
 
 // bypassPolicies は AF の無人運転ポリシー（TUI ルートの --dangerously-bypass-… と
