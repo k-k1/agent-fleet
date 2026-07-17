@@ -14,9 +14,16 @@
 #   - latest: フリートが実際に走らせる版
 #
 # 注: イメージ build は不要（runner に node+tmux+Go だけ）なので e2e.yml から独立させ、
-# 数分で終わる。opencode 専用の別ファイルにしてあるのは、claude/codex 向けの同種の
-# 仕組みを別途追加中で、共有 e2e.yml の同時編集による衝突を避けるため（main マージ時に
-# 3 種まとめて e2e.yml へ畳む想定）。
+# 数分で終わる。
+#
+# 別ファイルのままにしてある理由（当初は「main マージ時に 3 種まとめて e2e.yml へ畳む」
+# 想定だったが、畳まない判断に変えた）: パス条件も workflow_dispatch の入力も
+# **ワークフロー単位**なので、e2e.yml に同居させると (1) console/** 等の変更でも
+# opencode の contract が走り、(2) 入力が他エージェントと混ざる。実際 codex の Tier2 と
+# claude の live-smoke は 1 つの `live` 入力を共有していて片方だけ回せない不具合になった
+# （ed0bcd7 で分離）。エージェント毎に別ファイルなら、この結合が構造的に起きない。
+# 同型: codex-contract.yml / claude-tui-contract.yml。版ズレの監視は cli-drift.yml。
+# 共通セットアップ（Go/Node/tmux/CLI 導入）は .github/actions/setup-agent-cli。
 name: opencode-contract
 
 on:
@@ -27,6 +34,7 @@ on:
       - "workspace/agent/opencode_contract_test.go"
       - "workspace/Dockerfile" # OPENCODE_VERSION ピン
       - ".github/workflows/opencode-contract.yml"
+      - ".github/actions/setup-agent-cli/action.yml"
   pull_request:
     paths:
       - "workspace/agent/internal/agents/opencode/**"
@@ -34,6 +42,7 @@ on:
       - "workspace/agent/opencode_contract_test.go"
       - "workspace/Dockerfile"
       - ".github/workflows/opencode-contract.yml"
+      - ".github/actions/setup-agent-cli/action.yml"
   schedule:
     - cron: "30 21 * * 0" # 毎週月曜 6:30 JST — コード無変更でも上流 opencode の破壊を検出
   workflow_dispatch:
@@ -52,33 +61,10 @@ jobs:
         version: [pinned, latest]
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: ./.github/actions/setup-agent-cli
         with:
-          go-version-file: workspace/agent/go.mod
-          cache-dependency-path: workspace/agent/go.sum
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-
-      - name: install tmux
-        run: sudo apt-get update && sudo apt-get install -y tmux
-
-      - name: resolve opencode version
-        id: ver
-        run: |
-          if [ "${{ matrix.version }}" = "pinned" ]; then
-            v="$(sed -n 's/^ARG OPENCODE_VERSION=//p' workspace/Dockerfile | head -1)"
-            [ -n "$v" ] || { echo "ARG OPENCODE_VERSION not found in workspace/Dockerfile"; exit 1; }
-          else
-            v="latest"
-          fi
-          echo "spec=$v" >> "$GITHUB_OUTPUT"
-          echo "opencode spec: $v"
-
-      - name: install opencode
-        run: |
-          npm install -g "opencode-ai@${{ steps.ver.outputs.spec }}"
-          echo "effective: $(opencode --version)"
+          agent: opencode
+          version: ${{ matrix.version }}
 
       # Tier A: 決定的・LLM 呼び出し無し。ストア schema / app-server プロトコル /
       # TUI フッタ（paneMode）の contract を実物に対して表明する。ここが赤 = 上流が

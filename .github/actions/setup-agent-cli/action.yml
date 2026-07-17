@@ -1,0 +1,96 @@
+# エージェント CLI の contract / ドリフト検知テストを runner 上で走らせるための共通土台。
+#
+# 何を揃えるか: Go（workspace/agent の go.mod 準拠）+ Node + tmux + 指定エージェントの
+# 実 CLI。これらの step は codex / opencode の各ワークフローで個別に書かれていて、
+# 「Dockerfile の ARG ピンを sed で読む」という同じ仕掛けが 3 箇所に写経されていた。
+#
+# 版指定（version 入力）は pinned / latest を選べる。この 2 つは**別物**である:
+#   - pinned: workspace/Dockerfile の ARG ピン ＝ イメージに焼かれる版 ＝ CI が普段見る版
+#   - latest: npm の最新 ＝ **self-update を opt-in した Workspace が実際に走らせる版**
+# claude の状態検出が 3 回とも CI 緑のまま実フリートで壊れたのは、CI が pinned しか
+# 見ていなかったから（詳細は deploy/local/cli-drift-check.sh の頭）。
+#
+# 注: claude の TUI 契約（claude-tui-contract.yml）はこの action を使わない。あちらは
+# 実ワークスペースイメージを build してコンテナ内で TUI を起動する必要があり、runner に
+# CLI を入れる本 action とは戦略が違う（意図的な非対称）。
+name: setup-agent-cli
+description: Go / Node / tmux と指定エージェントの実 CLI を runner に入れる（contract・ドリフト検知テスト用）
+
+inputs:
+  agent:
+    description: "claude | codex | opencode"
+    required: true
+  version:
+    description: "pinned（Dockerfile の ARG ピン）| latest（実フリートが走らせる版）| 明示の版（例 0.144.3）"
+    required: false
+    default: pinned
+
+outputs:
+  spec:
+    description: "インストールを要求した版指定（pinned は解決後の実番号になる）"
+    value: ${{ steps.resolve.outputs.spec }}
+  version:
+    description: "実際に入った版（CLI 自身の --version 出力）"
+    value: ${{ steps.install.outputs.version }}
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-go@v5
+      with:
+        go-version-file: workspace/agent/go.mod
+        cache-dependency-path: workspace/agent/go.sum
+
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 22
+
+    - name: install tmux
+      shell: bash
+      run: sudo apt-get update && sudo apt-get install -y tmux
+
+    - name: resolve ${{ inputs.agent }} version
+      id: resolve
+      shell: bash
+      env:
+        AGENT: ${{ inputs.agent }}
+        VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        # agent -> Dockerfile の ARG 名 / npm パッケージ名
+        # （deploy/local/cli-drift-check.sh の TARGETS と同じ対応表。片方だけ足すとズレる）
+        case "$AGENT" in
+          claude)   arg=CLAUDE_CODE_VERSION; pkg="@anthropic-ai/claude-code" ;;
+          codex)    arg=CODEX_VERSION;       pkg="@openai/codex" ;;
+          opencode) arg=OPENCODE_VERSION;    pkg="opencode-ai" ;;
+          *) echo "::error::agent 入力が不正: '$AGENT'（claude | codex | opencode）"; exit 1 ;;
+        esac
+
+        if [ "$VERSION" = pinned ]; then
+          spec="$(sed -n "s/^ARG $arg=//p" workspace/Dockerfile | head -1)"
+          # 空を素通しすると「@」だけの spec になり latest が入る＝ピン検証のつもりで
+          # latest を見る事故になる。ARG が読めない時点で必ず落とす。
+          [ -n "$spec" ] || { echo "::error::ARG $arg が workspace/Dockerfile に無い（ピンを解決できない）"; exit 1; }
+        else
+          spec="$VERSION"
+        fi
+
+        echo "spec=$spec" >> "$GITHUB_OUTPUT"
+        echo "pkg=$pkg" >> "$GITHUB_OUTPUT"
+        echo "$AGENT spec: $spec（version 入力 = $VERSION）"
+
+    - name: install ${{ inputs.agent }}
+      id: install
+      shell: bash
+      env:
+        AGENT: ${{ inputs.agent }}
+        PKG: ${{ steps.resolve.outputs.pkg }}
+        SPEC: ${{ steps.resolve.outputs.spec }}
+      run: |
+        set -euo pipefail
+        npm install -g "$PKG@$SPEC"
+        v="$("$AGENT" --version 2>&1 | head -1)"
+        echo "version=$v" >> "$GITHUB_OUTPUT"
+        echo "effective $AGENT: $v"
+        # 実効版はジョブログを遡らなくても分かるようにサマリへ出す（ドリフト調査の起点）。
+        echo "- \`$AGENT\` spec=\`$SPEC\` → 実効 \`$v\`" >> "$GITHUB_STEP_SUMMARY"
