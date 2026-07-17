@@ -30,9 +30,10 @@ from the latest image. The rule is simple:
 `.../projects/*/memory/`) lives on a *separate* dedicated mount, not in home. No
 Workspace operation removes it — not Stop/Start (only the container is removed; data
 stays), not "recreate" (touches only `~/repos`), not "clean home" (touches only home).
-There is no product action that wipes a Workspace's data; the container can go away
-and come back with memory intact. (Only an operator deleting the host data dir would
-remove it.)
+There is no product action that wipes this separate Claude state; the container can
+go away and come back with Claude memory intact. (Only an operator deleting the host
+data dir would remove it.) This does not change the recreate and clean-home deletion
+rules for `~/repos` and the regular home volume described above.
 
 ## Do not
 - **Do not leave uncommitted changes.** Recreating the container deletes cloned repos — commit / push often.
@@ -96,7 +97,7 @@ The shared host is memory-constrained; build tools are the main cause of OOM tro
   - Cap test-runner parallelism: `jest --maxWorkers=2`, `vitest --maxWorkers=2`. Defaults spawn one worker per CPU and balloon memory.
   - Do not leave dev servers or watchers running (`vite`, `next dev`, `tsc --watch`, `nodemon`); stop them when done.
   - Run one heavy build at a time; do not build several projects in parallel.
-- For long-running servers, open the port via the WS bar "Preview" instead of leaving ad-hoc processes up.
+- For long-running servers, open the port from the workspace action bar's "Preview" control instead of leaving ad-hoc processes up.
 
 ## Headless browser (UI verification / screenshots)
 Chromium's runtime libraries and fonts (DejaVu + Noto CJK — Japanese renders correctly)

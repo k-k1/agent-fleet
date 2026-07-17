@@ -49,7 +49,7 @@ air-gapped の各手順）は [deploy/compose/README.md](../../../deploy/compose
 クリーンなホスト、またはデータ喪失後の復旧手順です。コマンドは runbook の "Backup & restore"。
 
 流れは「`.env` を用意（**バックアップ元と同一の `AF_MASTER_KEY`** を金庫から復元）→ `restore.sh
-<archive>` → `docker compose up -d` → Console から各 Workspace を **Start**」です。要点を 3 つ。
+<archive>` → `docker compose up -d` → Console から各 Workspace を**起動**」です。要点を 3 つ。
 
 1. **`AF_MASTER_KEY` は元と同一値でなければならない。** 違う／欠落していると wrapped DEK を
    unwrap できず、資格情報は復号できません。金庫からの復元を最初に確認します。
@@ -57,8 +57,8 @@ air-gapped の各手順）は [deploy/compose/README.md](../../../deploy/compose
    起動時に各 Workspace の on-disk root を現在の `DATA_DIR` へ付け替えます。ただしアーカイブ先頭の
    ディレクトリ名（= 元 `DATA_DIR` の basename）と、復元先 `DATA_DIR` の basename は**一致**させて
    ください。`restore.sh` がこれを検証し、不一致なら拒否します。
-3. **Workspace は Console からの Start で再水和する。** リストア直後には Workspace コンテナは
-   存在しません（compose 管理外だから）。ユーザー（または管理者）が Console で Start すると、CP が
+3. **Workspace は Console からの「起動」で再水和する。** リストア直後には Workspace コンテナは
+   存在しません（compose 管理外だから）。ユーザー（または管理者）が Console で「起動」を押すと、CP が
    復元済み DB のポート/トークンで `af-ws-*` を再作成し、home の `secrets.enc` と `claude-config`
    からユーザーの接続と Claude ログインが復活します。
 
