@@ -385,6 +385,98 @@ func TestOpencodeLiveStateQuestion(t *testing.T) {
 	}
 }
 
+// newOpencodeLiveStore builds the store at the path LiveState actually opens
+// ($HOME/.local/share/opencode/opencode.db) and returns an open handle — the setup
+// TestOpencodeLiveStateQuestion does inline, shared by the LiveState tests below.
+func newOpencodeLiveStore(t *testing.T) *sql.DB {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dbDir := filepath.Join(home, ".local", "share", "opencode")
+	if err := os.MkdirAll(dbDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", "file:"+filepath.Join(dbDir, "opencode.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	for _, s := range []string{
+		`CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT)`,
+		`CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT, session_id TEXT, time_created INTEGER, data TEXT)`,
+		`CREATE TABLE session (id TEXT PRIMARY KEY, parent_id TEXT, directory TEXT, time_created INTEGER, time_compacting INTEGER)`,
+	} {
+		if _, err := db.Exec(s); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return db
+}
+
+// A real store error must degrade to "" (unknown → the caller falls back to the plugin
+// status), never to "idle". opencode's schema is its own unversioned contract and it
+// does migrate; answering "idle" from a failed read would silently flip a live turn to
+// 入力待ち with no stop button — the claude false-idle bug, reached through the store
+// contract instead of a TUI string, and with no reverse-heal to catch it.
+func TestOpencodeLiveStateStoreErrorIsUnknown(t *testing.T) {
+	db := newOpencodeLiveStore(t)
+	dir, ses := "/home/dev/repos/x", "ses_err"
+	if _, err := db.Exec(`INSERT INTO session(id,parent_id,directory,time_created) VALUES(?,NULL,?,1)`, ses, dir); err != nil {
+		t.Fatal(err)
+	}
+	insMsg(t, db, "m1", ses, 1000, `{"role":"assistant","time":{}}`) // in-flight turn
+	m := session.Meta{Dir: dir, Name: "n"}
+	if got := LiveState(m); got != "working" {
+		t.Fatalf("baseline LiveState = %q, want working", got)
+	}
+
+	// Simulate a future opencode migration renaming the v1 table this reads.
+	if _, err := db.Exec(`ALTER TABLE message RENAME TO message_v3`); err != nil {
+		t.Fatal(err)
+	}
+	// (a) store-derived resolution: activeSessionErr's query itself fails.
+	if got := LiveState(m); got != "" {
+		t.Errorf("after schema change LiveState = %q, want %q (unknown); a silent \"idle\" is the false-idle bug", got, "")
+	}
+	// (b) plugin-mapped resolution: the slot resolves without touching `message`, so the
+	// failure surfaces on LiveState's own message query instead.
+	sids.Write(session.UUID(dir, "n"), ses)
+	t.Cleanup(func() { sids.Remove(session.UUID(dir, "n")) })
+	if got := LiveState(m); got != "" {
+		t.Errorf("mapped slot after schema change LiveState = %q, want %q (unknown)", got, "")
+	}
+}
+
+// The ErrNoRows guard: the plugin records session.created before the first message, so a
+// mapped-but-empty conversation is genuinely sitting at the composer. That must stay
+// "idle" and not get swept into the unknown branch above.
+func TestOpencodeLiveStateNoMessagesIsIdle(t *testing.T) {
+	db := newOpencodeLiveStore(t)
+	dir, ses := "/home/dev/repos/y", "ses_empty"
+	if _, err := db.Exec(`INSERT INTO session(id,parent_id,directory,time_created) VALUES(?,NULL,?,1)`, ses, dir); err != nil {
+		t.Fatal(err)
+	}
+	sids.Write(session.UUID(dir, "n2"), ses)
+	t.Cleanup(func() { sids.Remove(session.UUID(dir, "n2")) })
+	if got := LiveState(session.Meta{Dir: dir, Name: "n2"}); got != "idle" {
+		t.Fatalf("conversation with no messages yet: LiveState = %q, want idle", got)
+	}
+}
+
+// A message payload that isn't the shape we parse is the same contract break as a schema
+// change — unknown, not idle.
+func TestOpencodeLiveStateBadPayloadIsUnknown(t *testing.T) {
+	db := newOpencodeLiveStore(t)
+	dir, ses := "/home/dev/repos/z", "ses_bad"
+	if _, err := db.Exec(`INSERT INTO session(id,parent_id,directory,time_created) VALUES(?,NULL,?,1)`, ses, dir); err != nil {
+		t.Fatal(err)
+	}
+	insMsg(t, db, "m1", ses, 1000, `{"role":`) // truncated / unparsable
+	if got := LiveState(session.Meta{Dir: dir, Name: "n3"}); got != "" {
+		t.Fatalf("unparsable message payload: LiveState = %q, want %q (unknown)", got, "")
+	}
+}
+
 func TestOpencodeActiveSession(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home) // sids store lives under $HOME/.config/agent-fleet

@@ -3,6 +3,7 @@ package opencode
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -59,17 +60,32 @@ func openRO() (*sql.DB, bool) {
 // hijack (and resume) the dir's most recent OLD conversation — 実例: 新規スロット
 // szyyh2f が ~/repos/temp の9日前の会話を --session で引き継いでしまった。
 func activeSession(db *sql.DB, m session.Meta) string {
+	id, _ := activeSessionErr(db, m)
+	return id
+}
+
+// activeSessionErr is activeSession keeping the store error apart from "no conversation
+// yet" (sql.ErrNoRows → "", nil). Only LiveState needs the distinction: a real query
+// error means opencode's store contract moved under us (see LiveState), not that the
+// slot is idle. Other callers take activeSession and treat both as "no conversation".
+func activeSessionErr(db *sql.DB, m session.Meta) (string, error) {
 	if id := sids.Read(session.UUID(m.Dir, m.Name)); id != "" && sessionExists(db, id) {
-		return id
+		return id, nil
 	}
 	var id string
-	_ = db.QueryRow(
+	err := db.QueryRow(
 		`SELECT s.id FROM session s JOIN message msg ON msg.session_id = s.id
 		 WHERE s.directory = ? AND (s.parent_id IS NULL OR s.parent_id = '')
 		   AND s.time_created >= ?
 		 GROUP BY s.id ORDER BY MAX(msg.time_created) DESC LIMIT 1`, m.Dir, metaCreatedMs(m),
 	).Scan(&id)
-	return id
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil // no conversation this slot opened — a normal, empty result
+	}
+	if err != nil {
+		return "", err
+	}
+	return id, nil
 }
 
 // sessionExists guards a stale plugin mapping (a deleted/imported-away session id)
@@ -98,21 +114,39 @@ func metaCreatedMs(m session.Meta) int64 {
 // session's newest message isn't a completed assistant reply, and an in-flight turn
 // whose question tool is running is "question" — the same state claude raises, so the
 // sessions list chip (質問あり) and desktop notifications light up for opencode too.
-// Returns "" when the db can't be read (caller falls back to the plugin status store).
+// Returns "" when the state can't be derived (caller falls back to the plugin status
+// store): the db can't be read, OR the store answered but not in the shape we parse.
+//
+// Why "" and not "idle" on a store error: opencode's schema is its own private,
+// unversioned contract and it does migrate (the store carries ~38 applied migrations,
+// and a v2 session_message store already exists alongside the v1 message/part one this
+// reads). Returning "idle" on a broken read would assert the *strongest* claim — the
+// turn is done — from the *least* information, and it fails silently: a schema change
+// would flip a live turn's state to 入力待ち with no stop button, which is exactly the
+// claude false-idle bug (there, a TUI footer string moved). It can't self-heal either,
+// because a non-empty "idle" short-circuits driveState before the reverse-heal, and
+// claude's spinner probe doesn't match opencode's footer anyway. "" degrades to the
+// plugin status instead of guessing. Verified: renaming `message` turns a live
+// "working" into "" (fallback), not a silent "idle".
 func LiveState(m session.Meta) string {
 	db, ok := openRO()
 	if !ok {
 		return ""
 	}
 	defer db.Close()
-	ses := activeSession(db, m)
+	ses, err := activeSessionErr(db, m)
+	if err != nil {
+		return "" // store contract moved — unknown, not idle
+	}
 	if ses == "" {
 		return "idle" // no conversation yet — sitting at the composer
 	}
 	var data []byte
-	err := db.QueryRow(`SELECT data FROM message WHERE session_id = ? ORDER BY time_created DESC LIMIT 1`, ses).Scan(&data)
-	if err != nil {
-		return "idle"
+	switch err := db.QueryRow(`SELECT data FROM message WHERE session_id = ? ORDER BY time_created DESC LIMIT 1`, ses).Scan(&data); {
+	case errors.Is(err, sql.ErrNoRows):
+		return "idle" // a conversation with no messages yet — genuinely at the composer
+	case err != nil:
+		return "" // store contract moved — unknown, not idle
 	}
 	var md struct {
 		Role string `json:"role"`
@@ -121,7 +155,7 @@ func LiveState(m session.Meta) string {
 		} `json:"time"`
 	}
 	if json.Unmarshal(data, &md) != nil {
-		return "idle"
+		return "" // message payload isn't the shape we parse — unknown, not idle
 	}
 	if md.Role == "assistant" && md.Time.Completed > 0 {
 		return "idle"
