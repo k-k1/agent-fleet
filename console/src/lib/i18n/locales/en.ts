@@ -2050,6 +2050,9 @@ export const en: Record<keyof typeof ja, string> = {
   "view.cannot_read_file": "(This file cannot be read aloud)",
   "view.no_text_to_read": "(No text to read aloud)",
   "view.read_from_here": "Read from here",
+  "view.open_commit": "Open commit {sha}",
+  "view.commit_not_found": "Commit not found: {sha}",
+  "view.open_session": "Open session {name}",
 
 
   // === P5 ログイン切れモーダル（AuthExpiredModal） ===
