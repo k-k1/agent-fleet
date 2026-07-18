@@ -29,6 +29,11 @@ func TestSpinnerActive(t *testing.T) {
 		// the phase leads. Captured live by the contract probe (tui_contract_test.go) — the
 		// regex missed this, so a turn read idle for the whole stop-hook window.
 		"· Tomfoolering… (running stop hook · 6s · ↓ 279 tokens)",
+		// A todo in progress replaces the whimsical single-word gerund with that item's
+		// multi-word activeForm — real capture (claude_srtaoqr). The old [^\s(]* stopped at
+		// the first space and read this idle: 入力待ち with no 停止 button while plainly working.
+		"✢ Adding regression tests… (13m 31s · ↓ 48.5k tokens)",
+		"✳ Verifying with real Chromium… (2m 3s)",
 	}
 	for _, s := range busy {
 		if !spinnerActive(s) {
