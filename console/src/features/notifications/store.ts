@@ -15,7 +15,7 @@ export type NotificationSourceState = "unknown" | "ready" | "offline" | "unsuppo
 export interface FleetNotification {
   seq: number;
   id: string;
-  kind: "answer-ready" | "question" | "plan-approval" | "permission-request" | "session-report" | "usage-reset" | string;
+  kind: "answer-ready" | "question" | "plan-approval" | "permission-request" | "session-report" | "chat-auto-paused" | "usage-reset" | string;
   target: { type: string; id: string; kind?: string };
   displayName: string;
   payload: Record<string, unknown>;
@@ -48,6 +48,12 @@ function wording(n: FleetNotification): { title: string; body: string; speech: s
     // A session reported back to its operator conversation (docs/30); the body names
     // the reporting session, the click target is the conversation.
     return { title: t("notif.session_report.title"), body: name, speech: t("notif.session_report.speech", { name }) };
+  }
+  if (n.kind === "chat-auto-paused") {
+    // The operator's unattended auto-turn budget ran out and the loop paused (docs/30).
+    // The body names the conversation; clicking opens it so the user can reply to resume.
+    const title = String(n.payload.conversationTitle || name);
+    return { title: t("notif.chat_auto_paused.title"), body: title, speech: t("notif.chat_auto_paused.speech") };
   }
   const rawSource = String(n.payload.source || n.displayName || "AI");
   const source = rawSource === "claude" ? "Claude" : rawSource === "codex" ? "Codex" : rawSource;
@@ -91,7 +97,7 @@ async function deliver(n: FleetNotification): Promise<void> {
 export async function openNotificationTarget(n: FleetNotification, split: boolean): Promise<boolean> {
   // A session report's destination is the operator CONVERSATION, not the reporting
   // session (docs/30) — the conversation id rides the payload.
-  if (n.kind === "session-report" && typeof n.payload.conversation_id === "string" && n.payload.conversation_id) {
+  if ((n.kind === "session-report" || n.kind === "chat-auto-paused") && typeof n.payload.conversation_id === "string" && n.payload.conversation_id) {
     openChat(n.payload.conversation_id);
     return true;
   }

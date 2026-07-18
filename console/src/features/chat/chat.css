@@ -104,6 +104,34 @@
   border-left: 3px solid var(--chat-accent, var(--accent));
   background: color-mix(in srgb, var(--chat-accent, var(--accent)) 5%, var(--panel));
 }
+/* システム通知カード（docs/30）: 自動応答が上限に達して停止した等、システム由来の告知。
+   ユーザー/アシスタントのバブルと区別し、中央寄せの控えめな帯で表示する。 */
+.chat-msg.role-notice {
+  align-self: stretch;
+  max-width: 100%;
+}
+.chat-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 11px;
+  border-radius: 8px;
+  border: 1px dashed var(--border);
+  background: color-mix(in srgb, var(--warn, var(--accent)) 8%, var(--panel));
+  color: var(--muted);
+  font-size: 13px;
+}
+.chat-notice .codicon {
+  margin-top: 2px;
+  color: var(--warn, var(--accent));
+  flex: 0 0 auto;
+}
+.chat-notice-body {
+  min-width: 0;
+}
+.chat-notice-body :last-child {
+  margin-bottom: 0;
+}
 /* 作業過程はミラービューの .mt-work / .mt-tool をそのまま使う。チャットの
    flex レイアウト内で横幅だけ補い、両画面の表示密度と開閉操作を揃える。 */
 .chat-steps {

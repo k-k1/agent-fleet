@@ -811,6 +811,21 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active }: C
               </div>
             );
           }
+          // System notices (docs/30) — e.g. the operator's auto-turn budget ran out and
+          // the loop paused. Rendered as a centered informational card, not a bubble; it
+          // tells the user why the operator went quiet and how to resume.
+          if (m.role === "notice") {
+            return (
+              <div key={i} className="chat-msg role-notice">
+                <div className="chat-notice">
+                  <Icon name="info" />
+                  <div className="chat-notice-body">
+                    <ChatMarkdown source={m.content} breaks />
+                  </div>
+                </div>
+              </div>
+            );
+          }
           // Assistant replies render through AssistantTurn, which owns the bubble ref so
           // its footer can karaoke-read the rendered Markdown (docs/24).
           if (m.role === "assistant") {

@@ -35,7 +35,7 @@ type chatStep struct {
 
 // chatMessage is one turn in a conversation.
 type chatMessage struct {
-	Role    string `json:"role"` // "user" | "assistant" | "report" (docs/30 セッション報告)
+	Role    string `json:"role"` // "user" | "assistant" | "report" (docs/30 セッション報告) | "notice" (システム通知)
 	Content string `json:"content"`
 	TS      int64  `json:"ts"` // unix millis
 	// Steps is the assistant turn's working process (narration before each tool call),
@@ -98,6 +98,11 @@ type chatConversation struct {
 	// the user's last message (docs/30). Capped at maxAutoTurns; reset on every user
 	// send — the structural stop for an unattended follow-up loop.
 	AutoTurns int `json:"auto_turns,omitempty"`
+	// AutoPausedNotified marks that the "自動応答の上限に達しました" pause notice has
+	// already been appended for the CURRENT cap-reach, so the user is told exactly once
+	// per unattended run instead of on every further report while capped. Reset with
+	// AutoTurns on every user send.
+	AutoPausedNotified bool `json:"auto_paused_notified,omitempty"`
 }
 
 // afToolsEnabled reports whether the fleet MCP tools attach to this chat at all (read

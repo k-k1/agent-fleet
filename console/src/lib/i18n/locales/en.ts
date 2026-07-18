@@ -79,6 +79,8 @@ export const en: Record<keyof typeof ja, string> = {
   "notif.permission_request.speech": "{name} is asking for permission.",
   "notif.session_report.title": "A session reported back",
   "notif.session_report.speech": "{name} reported back to the assistant.",
+  "notif.chat_auto_paused.title": "Auto-replies paused at the limit",
+  "notif.chat_auto_paused.speech": "The assistant paused after reaching its auto-reply limit. Send a message to continue.",
   "notif.usage_reset.title": "{source} limit has reset",
   "notif.usage_reset.body": "The {window} has reset.",
   "notif.usage_reset.speech": "{source}'s {window} has reset.",

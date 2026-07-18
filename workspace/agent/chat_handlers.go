@@ -309,7 +309,7 @@ func handleChatSend(w http.ResponseWriter, r *http.Request) {
 	// docs/30: reports that never got their own auto turn ride the next prompt, and a
 	// user message resets the unattended auto-turn budget.
 	prompt, pendingReports := injectPendingReports(c, content)
-	c.AutoTurns = 0
+	c.AutoTurns, c.AutoPausedNotified = 0, false
 
 	ctx, cancel := context.WithTimeout(r.Context(), chatTimeout)
 	defer cancel()
@@ -367,7 +367,7 @@ func handleChatStream(w http.ResponseWriter, r *http.Request) {
 	// docs/30: undelivered session reports ride this prompt; a user message resets the
 	// unattended auto-turn budget.
 	prompt, pendingReports := injectPendingReports(c, content)
-	c.AutoTurns = 0
+	c.AutoTurns, c.AutoPausedNotified = 0, false
 
 	// From here the response is an SSE stream; per-frame errors ride the stream body.
 	w.Header().Set("Content-Type", "text/event-stream")
