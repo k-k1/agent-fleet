@@ -5,7 +5,7 @@
 ## 2.1 スタックと設計原則
 
 React 19 + Vite 6 + TypeScript + zustand 5 の SPA。CP が `console/dist` を静的配信し（[05 §5.4](05-api-contracts.md)）、
-バックエンドとは `/api` REST・SSE・`/ws/terminal` のみで会話する。2026-07 に機能パリティを保った全面リビルド
+バックエンドとは `/api` REST・SSE・`/ws/terminal`・`/ws/browser` で会話する。2026-07 に機能パリティを保った全面リビルド
 （[../22-console-rebuild.md](../history/22-console-rebuild.md)）で God-context 構造を廃した — 経緯と決定は
 [decisions/0011](../decisions/0011-console-rebuild.md)。設計原則:
 
@@ -36,6 +36,7 @@ React 19 + Vite 6 + TypeScript + zustand 5 の SPA。CP が `console/dist` を�
 |---------|------|
 | `panes` | PaneHost（flat-absolute 描画・drag swap・drop-to-split）・Pane・左上 LayoutMap |
 | `terminal` | TerminalView（PTY 常駐・未 attach ブランドアート）・モバイル TermKeys・OnboardingCard |
+| `browser` | BrowserPane（canvas/toolbar/IME）・paneId keyed BrowserController/Registry・wire v1変換 |
 | `sessions` | セッション行・作成/改名/アーカイブ等のモーダル群・アクション hook・4 秒ポーリングストア・状態変化のブラウザ通知 |
 | `repos` | clone/起動/ブランチ系モーダル・RepoPicker/DirPicker・repo ストア（60 秒ポーリング）|
 | `project` | 左ペインの working-copy ツリー: base clone + worktree をプロジェクト単位に束ね、ノード配下にセッションとファイルをネスト。repo 外セッションの受け皿も持つ |
@@ -65,7 +66,7 @@ React 19 + Vite 6 + TypeScript + zustand 5 の SPA。CP が `console/dist` を�
 ## 2.4 Pane / レイアウトと TermService
 
 - Layout = 最大 4 カラム × 各 1–2 ペイン。`Pane.content` は判別 union
-  （terminal / file / scm / changes / commit / wtdiff / doc / diff / chat）。`session` は content でなく
+  （terminal / browser / file / scm / changes / commit / wtdiff / doc / diff / chat）。`session` は content でなく
   **ペインレベル**に持つ: ビューを切り替えても PTY ソケットとスクロールバックは hidden のまま温存され、
   端末ビューへ戻すと同じセッションが現れる。
 - **paneId 契約（ハード不変条件）**: pane の id ＝ ターミナルの同一性。xterm インスタンス・WebSocket・
@@ -81,6 +82,9 @@ React 19 + Vite 6 + TypeScript + zustand 5 の SPA。CP が `console/dist` を�
   ソケット検出、WebGL 描画と context-loss 復旧、フォーカス時 Keyboard Lock（全画面時にブラウザキーを
   端末へ）、左ドラッグ選択で自動コピーするクリップボード統合、ソフトキーボード追従（visualViewport fit）。
   DOM コンテナは常駐（hidden 切替のみ、re-parent しない = PaneHost の flat-absolute 戦略）。
+- **BrowserRegistry**（`features/browser/service.ts`）もpaneId keyedでPage/socket/canvasを所有する。
+  layoutに永続化するのは`{kind:"browser", port, path}`だけで、ephemeralなbrowserIdは保存しない。
+  非表示は`visibility=false`、60秒後にPageを破棄し、再表示・reload・Workspace再起動時はport/pathから再生成する。
 - `agents/registry.ts` = kind（claude / codex / opencode / shell / ssm）の**単一真実源**。kind ごとに
   descriptor（表示・availability 述語・capability set: chat / transcript / model / fork / planMode /
   ephemeral 等）を 1 個持ち、UI は capability を見て分岐する。エージェント追加 = descriptor 追加。
