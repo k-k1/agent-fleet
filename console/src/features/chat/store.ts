@@ -59,3 +59,15 @@ export const useChatStore = create<ChatStore>((set) => ({
   snapshots: {},
   publishSnapshot: (c) => set((s) => ({ snapshots: { ...s.snapshots, [c.id]: c } })),
 }));
+
+/** Poll every 15s while the tab is visible: bump listTick so AssistantSection's
+ * useRetryLoad re-fetches. Unlike sessions/repos, chats are edited from any
+ * browser on the account with no push channel between them — without this, a
+ * tab open before a chat was created elsewhere never learns about it. No
+ * immediate call: AssistantSection already fetches once on its own mount. */
+export function startChatPolling(): () => void {
+  const t = setInterval(() => {
+    if (!document.hidden) useChatStore.getState().bumpList();
+  }, 15000);
+  return () => clearInterval(t);
+}

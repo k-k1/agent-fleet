@@ -19,7 +19,7 @@ import { AuthExpiredModal } from "../features/auth/AuthExpiredModal.tsx";
 import { useSessionNotifications } from "../features/sessions/useSessionNotifications.ts";
 import { useReposStore, startReposPolling } from "../features/repos/store.ts";
 import { useFilesStore } from "../features/files/store.ts";
-import { useChatStore } from "../features/chat/store.ts";
+import { useChatStore, startChatPolling } from "../features/chat/store.ts";
 import { hydrateUIPrefs } from "../lib/settings.ts";
 import { MOBILE_QUERY, coarsePointer } from "../lib/device.ts";
 import { PaneHost } from "../features/panes/PaneHost.tsx";
@@ -244,6 +244,7 @@ export function App() {
     const stopWsPoll = startWorkspacePolling();
     const stopSessPoll = startSessionsPolling();
     const stopReposPoll = startReposPolling();
+    const stopChatPoll = startChatPolling();
     const stopNotificationPoll = startNotificationPolling();
     const unNotificationRead = wireNotificationReadOnActiveSession();
     void (async () => {
@@ -260,6 +261,7 @@ export function App() {
       stopWsPoll();
       stopSessPoll();
       stopReposPoll();
+      stopChatPoll();
       stopNotificationPoll();
       unNotificationRead();
     };
