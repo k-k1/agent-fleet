@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -31,6 +32,11 @@ type fakeBrowserCDP struct {
 	done      chan error
 	closeOnce sync.Once
 	fail      map[string]error
+	// transient per-method failures: while count > 0 the method returns transientErr
+	// and the counter is decremented. Lets a test model a call that fails a few times
+	// then succeeds (e.g. Page.startScreencast during the initial navigation commit).
+	transient    map[string]int
+	transientErr error
 }
 
 func newFakeBrowserCDP() *fakeBrowserCDP {
@@ -45,6 +51,12 @@ func (f *fakeBrowserCDP) Call(_ context.Context, method string, params any, sess
 	}
 	f.mu.Lock()
 	f.calls = append(f.calls, fakeBrowserCall{Method: method, SessionID: session, Params: values})
+	if f.transient[method] > 0 {
+		f.transient[method]--
+		terr := f.transientErr
+		f.mu.Unlock()
+		return terr
+	}
 	err := f.fail[method]
 	f.mu.Unlock()
 	if err != nil {
@@ -347,6 +359,69 @@ func TestBrowserScreencastAbsorbsInFlightBurst(t *testing.T) {
 		}
 	}) {
 		t.Fatal("latest-only buffer never converged to the final frame")
+	}
+}
+
+// TestBrowserScreencastRetriesFrameNotActive covers the immediate-attach race: a
+// viewer attaches right after POST returns, while the page target is still swapping
+// from about:blank to the navigated document, so the first Page.startScreencast
+// calls are rejected with "Not attached to an active page". startScreencast must
+// retry that transient rejection until the frame is live rather than surfacing it as
+// a fatal error that crashes the whole pane with zero frames.
+func TestBrowserScreencastRetriesFrameNotActive(t *testing.T) {
+	cdp := newFakeBrowserCDP()
+	cdp.transient = map[string]int{"Page.startScreencast": 3}
+	cdp.transientErr = fmt.Errorf("CDP Page.startScreencast (-32000): Not attached to an active page")
+	m := fakeBrowserManager(cdp)
+	t.Cleanup(m.Close)
+	created, err := m.Create(browserCreateRequest{Port: 3000, Path: "/", Viewport: browserViewportRequest{Width: 900, Height: 600, DeviceScaleFactor: 1}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.mu.Lock()
+	p := m.pages[created.ID]
+	m.mu.Unlock()
+	p.mu.Lock()
+	p.visible = true
+	p.mu.Unlock()
+
+	if err := p.startScreencast(); err != nil {
+		t.Fatalf("startScreencast should retry the transient not-active rejection, got %v", err)
+	}
+	p.castMu.Lock()
+	casting := p.casting
+	p.castMu.Unlock()
+	if !casting {
+		t.Fatal("screencast did not arm after the transient rejections cleared")
+	}
+	// It should have taken more than one attempt (3 failures + 1 success).
+	n := 0
+	for _, mth := range cdp.methods() {
+		if mth == "Page.startScreencast" {
+			n++
+		}
+	}
+	if n < 4 {
+		t.Fatalf("expected startScreencast to be retried (>=4 calls), got %d", n)
+	}
+
+	// A non-transient error must NOT be retried: it returns immediately.
+	p.stopScreencast()
+	cdp.mu.Lock()
+	cdp.fail = map[string]error{"Page.startScreencast": fmt.Errorf("CDP Page.startScreencast (-32000): some other failure")}
+	cdp.calls = nil
+	cdp.mu.Unlock()
+	if err := p.startScreencast(); err == nil {
+		t.Fatal("a non-transient startScreencast error should be returned, not swallowed")
+	}
+	n = 0
+	for _, mth := range cdp.methods() {
+		if mth == "Page.startScreencast" {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("non-transient error must not be retried, got %d calls", n)
 	}
 }
 
