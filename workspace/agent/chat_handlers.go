@@ -245,8 +245,8 @@ func handleChatRename(w http.ResponseWriter, r *http.Request) {
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
-	title := strings.TrimSpace(req.Title)
-	if title == "" {
+	title, ok := cleanTitle(req.Title) // same control-char/length gate as a session rename
+	if !ok || title == "" {
 		httpx.WriteErr(w, http.StatusBadRequest, errCodeChatTitleEmpty, "display name is empty")
 		return
 	}

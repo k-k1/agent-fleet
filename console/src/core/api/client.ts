@@ -419,6 +419,10 @@ export const chatGet = (id: string): Promise<Conversation> =>
 // Rename a conversation's display title (docs/19).
 export const chatRename = (id: string, title: string): Promise<Conversation> =>
   apiJSON(`api/chat/conversations/${encodeURIComponent(id)}`, "PATCH", { title });
+// Preview-only AI title suggestion (mirrors the session /title/suggest endpoint): never
+// writes the conversation's title, just returns a candidate for the rename dialog.
+export const chatSuggestTitle = (id: string): Promise<{ suggestedTitle?: string; error?: ApiError }> =>
+  apiJSON(`api/chat/conversations/${encodeURIComponent(id)}/title/suggest`, "POST");
 export const chatDelete = (id: string): Promise<Response> =>
   raw(`api/chat/conversations/${encodeURIComponent(id)}`, { method: "DELETE" });
 // Stop an in-flight assistant turn. The streaming turn is detached from its request

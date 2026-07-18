@@ -5,6 +5,7 @@ export {
   chatCreate,
   chatGet,
   chatRename,
+  chatSuggestTitle,
   chatDelete,
   chatSend,
   chatStream,
