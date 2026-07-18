@@ -148,4 +148,5 @@ Console: Repos → URL 入力 → CP /api/repos → Agent: git clone
 | AWS アダプタ（ECS/EFS/SSM・CFN）| 🚧 実装済・実運用実績なし（[09](09-deploy.md)）|
 | KMS/Vault custodian | 📋 seam のみ |
 | agy（Antigravity CLI）kind | 📋 [decisions/0008](../decisions/0008-antigravity-cli-agent-kind.md) のみ |
+| コンテナ内ブラウザペイン | 📋 設計確定・未実装（[decisions/0018](../decisions/0018-container-browser-pane.md) / [設計31](../31-container-browser-pane.md)）|
 | Go 内部リファクタ | 大半を統合済み（CP 分割、Agent `internal/`・エージェント縦割り）。残作業は [docs/23](../23-go-refactor.md)、現配置は [90](90-code-map.md) |
